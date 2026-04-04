@@ -1,6 +1,7 @@
 import { memo, useMemo } from 'react';
 import { Handle, Position, type NodeProps } from '@xyflow/react';
 import { Sparkle, Zap, Star, Search, CheckCircle2, Pencil, Clock, Lightbulb } from 'lucide-react';
+import { Button } from '@/components/design/Button';
 
 // ── 节点数据类型 ──
 export interface EmergenceNodeData {
@@ -16,94 +17,110 @@ export interface EmergenceNodeData {
   bridgeAssumptions: string[];
   tags: string[];
   onExplore?: () => void;
-  onEmerge?: () => void;
 }
 
 type EmergenceNodeType = NodeProps & { data: EmergenceNodeData };
 
-// 维度样式配置
-const dimensionStyles: Record<number, { bg: string; border: string; glow: string; label: string; icon: typeof Zap }> = {
-  1: { bg: 'rgba(59,130,246,0.08)', border: 'rgba(59,130,246,0.4)', glow: '', label: '一维·系统内', icon: Zap },
-  2: { bg: 'rgba(147,51,234,0.08)', border: 'rgba(147,51,234,0.4)', glow: '', label: '二维·跨系统', icon: Sparkle },
-  3: { bg: 'rgba(234,179,8,0.06)', border: 'rgba(234,179,8,0.4)', glow: '0 0 20px rgba(234,179,8,0.15)', label: '三维·幻想', icon: Star },
+// ── 维度视觉配���（使用项目色彩规范 rgba 格式）──
+const dimensionConfig: Record<number, {
+  accent: string; accentBg: string; accentBorder: string;
+  label: string; Icon: typeof Zap;
+}> = {
+  1: {
+    accent: 'rgba(59,130,246,0.85)', accentBg: 'rgba(59,130,246,0.08)', accentBorder: 'rgba(59,130,246,0.15)',
+    label: '系统内', Icon: Zap,
+  },
+  2: {
+    accent: 'rgba(147,51,234,0.85)', accentBg: 'rgba(147,51,234,0.08)', accentBorder: 'rgba(147,51,234,0.15)',
+    label: '跨系统', Icon: Sparkle,
+  },
+  3: {
+    accent: 'rgba(234,179,8,0.85)', accentBg: 'rgba(234,179,8,0.08)', accentBorder: 'rgba(234,179,8,0.15)',
+    label: '幻想', Icon: Star,
+  },
 };
 
 const statusIcons: Record<string, typeof CheckCircle2> = {
-  idea: Lightbulb,
-  planned: Clock,
-  building: Pencil,
-  done: CheckCircle2,
+  idea: Lightbulb, planned: Clock, building: Pencil, done: CheckCircle2,
 };
 
 function StarRating({ score, max = 5 }: { score: number; max?: number }) {
   return (
-    <span style={{ display: 'inline-flex', gap: 1 }}>
+    <span className="inline-flex gap-px">
       {Array.from({ length: max }, (_, i) => (
-        <span key={i} style={{ opacity: i < score ? 1 : 0.2, fontSize: 10 }}>★</span>
+        <span key={i} className="text-[10px]" style={{ opacity: i < score ? 1 : 0.2 }}>★</span>
       ))}
     </span>
   );
 }
 
 function EmergenceNodeInner({ data, selected }: EmergenceNodeType) {
-  const dim = dimensionStyles[data.dimension] ?? dimensionStyles[1];
-  const DimIcon = dim.icon;
+  const dim = dimensionConfig[data.dimension] ?? dimensionConfig[1];
   const StatusIcon = statusIcons[data.status] ?? Lightbulb;
   const isSeed = data.nodeType === 'seed';
 
-  const nodeStyle = useMemo(() => ({
-    background: dim.bg,
-    border: `1.5px ${data.dimension === 2 ? 'dashed' : 'solid'} ${dim.border}`,
-    borderRadius: 12,
-    padding: '12px 14px',
+  const cardStyle = useMemo((): React.CSSProperties => ({
+    background: `linear-gradient(180deg, var(--glass-bg-start) 0%, var(--glass-bg-end) 100%)`,
+    border: `1px ${data.dimension === 2 ? 'dashed' : 'solid'} ${dim.accentBorder.replace('0.15', selected ? '0.4' : '0.18')}`,
+    borderRadius: 16,
+    boxShadow: [
+      selected ? `0 0 0 2px ${dim.accent.replace('0.85', '0.3')}` : '',
+      '0 8px 16px -4px rgba(0, 0, 0, 0.3)',
+      'inset 0 1px 1px rgba(255, 255, 255, 0.08)',
+      data.dimension === 3 ? `0 0 24px -4px rgba(234,179,8,0.12)` : '',
+    ].filter(Boolean).join(', '),
+    backdropFilter: 'blur(40px) saturate(180%)',
+    WebkitBackdropFilter: 'blur(40px) saturate(180%)',
     minWidth: 220,
     maxWidth: 300,
-    boxShadow: selected
-      ? `0 0 0 2px ${dim.border}, ${dim.glow}`
-      : dim.glow || 'none',
-    transition: 'box-shadow 0.2s, border-color 0.2s',
-    cursor: 'default',
   }), [dim, selected, data.dimension]);
 
   return (
-    <div style={nodeStyle}>
-      {/* 顶部入口 Handle */}
+    <div style={cardStyle} className="p-3">
+      {/* 入口 Handle */}
       {!isSeed && (
-        <Handle type="target" position={Position.Top} style={{ background: dim.border, width: 8, height: 8 }} />
+        <Handle type="target" position={Position.Top}
+          style={{ background: dim.accent, width: 8, height: 8, border: 'none' }} />
       )}
 
       {/* 标题行 */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 6 }}>
-        <DimIcon size={14} style={{ color: dim.border, flexShrink: 0 }} />
-        <span style={{ fontWeight: 600, fontSize: 13, flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-          {data.label}
-        </span>
-        <StatusIcon size={12} style={{ opacity: 0.6, flexShrink: 0 }} />
+      <div className="flex items-center gap-2 mb-2">
+        <div className="w-7 h-7 rounded-[8px] flex items-center justify-center flex-shrink-0"
+          style={{ background: dim.accentBg, border: `1px solid ${dim.accentBorder}` }}>
+          <dim.Icon size={13} style={{ color: dim.accent }} />
+        </div>
+        <div className="min-w-0 flex-1">
+          <div className="text-[13px] font-semibold truncate" style={{ color: 'var(--text-primary)' }}>
+            {data.label}
+          </div>
+        </div>
+        <StatusIcon size={12} style={{ color: 'var(--text-muted)', flexShrink: 0 }} />
       </div>
 
       {/* 描述 */}
-      <div style={{ fontSize: 11, opacity: 0.7, lineHeight: 1.4, marginBottom: 8, display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>
+      <p className="text-[11px] leading-[1.5] mb-2"
+        style={{ color: 'var(--text-muted)', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>
         {data.description}
-      </div>
+      </p>
 
-      {/* 评分 */}
-      <div style={{ display: 'flex', gap: 12, fontSize: 10, opacity: 0.6, marginBottom: 6 }}>
+      {/* 评��行 */}
+      <div className="flex items-center gap-3 text-[11px] mb-2" style={{ color: 'var(--text-muted)' }}>
         <span>价值 <StarRating score={data.valueScore} /></span>
         <span>难度 <StarRating score={data.difficultyScore} /></span>
       </div>
 
-      {/* 假设条件（二维/三维节点） */}
+      {/* 假设条件（二维/三维） */}
       {data.bridgeAssumptions?.length > 0 && (
-        <div style={{ fontSize: 10, opacity: 0.55, marginBottom: 6, fontStyle: 'italic' }}>
-          假设：{data.bridgeAssumptions.slice(0, 2).join('；')}
-        </div>
+        <p className="text-[10px] italic mb-2" style={{ color: 'var(--text-muted)', opacity: 0.7 }}>
+          假设���{data.bridgeAssumptions.slice(0, 2).join('；')}
+        </p>
       )}
 
       {/* 标签 */}
       {data.tags?.length > 0 && (
-        <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', marginBottom: 8 }}>
+        <div className="flex gap-1 flex-wrap mb-2">
           {data.tags.slice(0, 3).map((tag) => (
-            <span key={tag} style={{ fontSize: 10, padding: '1px 6px', borderRadius: 4, background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.1)' }}>
+            <span key={tag} className="surface-row text-[10px] px-1.5 py-0.5 rounded-[6px]">
               {tag}
             </span>
           ))}
@@ -111,19 +128,21 @@ function EmergenceNodeInner({ data, selected }: EmergenceNodeType) {
       )}
 
       {/* 操作按钮 */}
-      <div style={{ display: 'flex', gap: 6 }}>
-        {data.onExplore && (
+      {data.onExplore && (
+        <div className="pt-2" style={{ borderTop: '1px solid rgba(255,255,255,0.05)' }}>
           <button
             onClick={(e) => { e.stopPropagation(); data.onExplore?.(); }}
-            style={{ fontSize: 11, padding: '3px 10px', borderRadius: 6, border: `1px solid ${dim.border}`, background: 'transparent', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 4, color: 'inherit' }}
+            className="h-7 w-full rounded-[8px] text-[11px] font-semibold flex items-center justify-center gap-1.5 cursor-pointer transition-colors duration-200"
+            style={{ background: dim.accentBg, border: `1px solid ${dim.accentBorder}`, color: dim.accent }}
           >
-            <Search size={11} /> 探索
+            <Search size={11} /> ��索
           </button>
-        )}
-      </div>
+        </div>
+      )}
 
-      {/* 底部出口 Handle */}
-      <Handle type="source" position={Position.Bottom} style={{ background: dim.border, width: 8, height: 8 }} />
+      {/* 出口 Handle */}
+      <Handle type="source" position={Position.Bottom}
+        style={{ background: dim.accent, width: 8, height: 8, border: 'none' }} />
     </div>
   );
 }
