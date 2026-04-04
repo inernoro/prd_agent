@@ -921,6 +921,22 @@ export const api = {
     adminWithdraw: (id: string) => `/api/submissions/${id}/admin-withdraw`,
   },
 
+  // ============ Document Store 文档空间 ============
+  documentStore: {
+    stores: {
+      list: () => '/api/document-store/stores',
+      create: () => '/api/document-store/stores',
+      detail: (storeId: string) => `/api/document-store/stores/${storeId}`,
+    },
+    entries: {
+      list: (storeId: string) => `/api/document-store/stores/${storeId}/entries`,
+      add: (storeId: string) => `/api/document-store/stores/${storeId}/entries`,
+      detail: (entryId: string) => `/api/document-store/entries/${entryId}`,
+      update: (entryId: string) => `/api/document-store/entries/${entryId}`,
+      delete: (entryId: string) => `/api/document-store/entries/${entryId}`,
+    },
+  },
+
   // ============ Emergence Explorer 涌现探索器 ============
   emergence: {
     trees: {

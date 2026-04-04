@@ -1502,6 +1502,25 @@ export type {
   ReviewWebhookConfig,
 } from '@/services/real/reviewAgent';
 
+// ── Document Store 文档空间 ──
+export {
+  createDocumentStoreReal as createDocumentStore,
+  listDocumentStoresReal as listDocumentStores,
+  getDocumentStoreReal as getDocumentStore,
+  updateDocumentStoreReal as updateDocumentStore,
+  deleteDocumentStoreReal as deleteDocumentStore,
+  addDocumentEntryReal as addDocumentEntry,
+  listDocumentEntriesReal as listDocumentEntries,
+  updateDocumentEntryReal as updateDocumentEntry,
+  deleteDocumentEntryReal as deleteDocumentEntry,
+} from '@/services/real/documentStore';
+export type {
+  DocumentStore,
+  DocumentEntry,
+  CreateDocumentStoreInput,
+  AddDocumentEntryInput,
+} from '@/services/contracts/documentStore';
+
 // ── Emergence Explorer 涌现探索器 ──
 export {
   createEmergenceTreeReal as createEmergenceTree,

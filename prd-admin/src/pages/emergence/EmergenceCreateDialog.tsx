@@ -8,6 +8,10 @@ import { GlassCard } from '@/components/design/GlassCard';
 interface Props {
   onClose: () => void;
   onCreated: (treeId: string) => void;
+  /** 从文档空间跳转来时预填的种子内容 */
+  initialSeedContent?: string;
+  initialSeedSourceType?: string;
+  initialSeedSourceId?: string;
 }
 
 type InputMode = 'upload' | 'select' | 'text';
@@ -24,10 +28,10 @@ function readFileAsText(file: File): Promise<string> {
   });
 }
 
-export function EmergenceCreateDialog({ onClose, onCreated }: Props) {
-  const [title, setTitle] = useState('');
-  const [seedContent, setSeedContent] = useState('');
-  const [seedSourceType, setSeedSourceType] = useState<string>('text');
+export function EmergenceCreateDialog({ onClose, onCreated, initialSeedContent, initialSeedSourceType, initialSeedSourceId }: Props) {
+  const [title, setTitle] = useState(initialSeedContent ?? '');
+  const [seedContent, setSeedContent] = useState(initialSeedContent ?? '');
+  const [seedSourceType, setSeedSourceType] = useState<string>(initialSeedSourceType ?? 'text');
   const [injectSystem, setInjectSystem] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -106,6 +110,7 @@ export function EmergenceCreateDialog({ onClose, onCreated }: Props) {
       title: title.trim() || undefined,
       seedContent: seedContent.trim(),
       seedSourceType,
+      seedSourceId: initialSeedSourceId ?? undefined,
       injectSystemCapabilities: injectSystem,
     });
     if (res.success) {

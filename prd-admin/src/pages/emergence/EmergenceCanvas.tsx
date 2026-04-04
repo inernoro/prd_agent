@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import {
   ReactFlow,
   Background,
@@ -373,10 +374,21 @@ function EmergenceCanvasInner({ treeId, onBack }: CanvasProps) {
 
 // ── 页面入口���树列表 + 画布切换 ──
 export function EmergenceExplorerPage() {
+  const [searchParams, setSearchParams] = useSearchParams();
   const [selectedTreeId, setSelectedTreeId] = useState<string | null>(null);
   const [showCreate, setShowCreate] = useState(false);
   const [trees, setTrees] = useState<Array<{ id: string; title: string; description?: string; nodeCount: number; updatedAt: string }>>([]);
   const [loading, setLoading] = useState(true);
+
+  // 从文档空间跳转来的参数
+  const seedFromUrl = searchParams.get('seedContent');
+  const seedSourceType = searchParams.get('seedSourceType');
+  const seedSourceId = searchParams.get('seedSourceId');
+
+  // 自动打开创建对话框（如果有 URL 参数）
+  useEffect(() => {
+    if (seedFromUrl) setShowCreate(true);
+  }, [seedFromUrl]);
 
   const loadTrees = useCallback(async () => {
     setLoading(true);
@@ -515,8 +527,19 @@ export function EmergenceExplorerPage() {
       {/* 创建对话框 */}
       {showCreate && (
         <EmergenceCreateDialog
-          onClose={() => setShowCreate(false)}
-          onCreated={(treeId) => { setShowCreate(false); setSelectedTreeId(treeId); }}
+          onClose={() => {
+            setShowCreate(false);
+            // 清除 URL 参数
+            if (seedFromUrl) setSearchParams({}, { replace: true });
+          }}
+          onCreated={(treeId) => {
+            setShowCreate(false);
+            setSelectedTreeId(treeId);
+            if (seedFromUrl) setSearchParams({}, { replace: true });
+          }}
+          initialSeedContent={seedFromUrl ? decodeURIComponent(seedFromUrl) : undefined}
+          initialSeedSourceType={seedSourceType ?? undefined}
+          initialSeedSourceId={seedSourceId ?? undefined}
         />
       )}
     </div>
