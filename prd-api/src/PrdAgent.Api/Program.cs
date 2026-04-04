@@ -211,6 +211,7 @@ builder.Services.AddHostedService<PrdAgent.Api.Services.WorkflowRunWorker>();
 builder.Services.AddScoped<PrdAgent.Api.Services.WorkflowAiFillService>();
 
 // 涌现探索器
+builder.Services.AddSingleton<PrdAgent.Api.Services.SystemCapabilityScanner>();
 builder.Services.AddScoped<PrdAgent.Api.Services.EmergenceService>();
 
 // 视频生成后台执行器（文章→脚本→Remotion��染→字幕→���包）

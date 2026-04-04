@@ -23,12 +23,18 @@ public class EmergenceService
 {
     private readonly ILlmGateway _gateway;
     private readonly MongoDbContext _db;
+    private readonly SystemCapabilityScanner _capabilityScanner;
     private readonly ILogger<EmergenceService> _logger;
 
-    public EmergenceService(ILlmGateway gateway, MongoDbContext db, ILogger<EmergenceService> logger)
+    public EmergenceService(
+        ILlmGateway gateway,
+        MongoDbContext db,
+        SystemCapabilityScanner capabilityScanner,
+        ILogger<EmergenceService> logger)
     {
         _gateway = gateway;
         _db = db;
+        _capabilityScanner = capabilityScanner;
         _logger = logger;
     }
 
@@ -53,7 +59,8 @@ public class EmergenceService
             .Project(n => n.Title)
             .ToListAsync(CancellationToken.None);
 
-        var systemPrompt = BuildExploreSystemPrompt(parentNode, existingNodes);
+        var capabilities = _capabilityScanner.GetCapabilities();
+        var systemPrompt = BuildExploreSystemPrompt(parentNode, existingNodes, capabilities);
         var userMessage = $"请基于以下节点进行一维探索（系统内能力），生成 3-5 个可直接实现的子功能。\n\n" +
                          $"当前节点：{parentNode.Title}\n" +
                          $"节点描述：{parentNode.Description}\n" +
@@ -130,7 +137,8 @@ public class EmergenceService
 
         if (leafNodes.Count < 2) leafNodes = allNodes; // 如果叶子不够，用全部节点
 
-        var systemPrompt = BuildEmergeSystemPrompt(allNodes, leafNodes, includeFantasy);
+        var capabilities = _capabilityScanner.GetCapabilities();
+        var systemPrompt = BuildEmergeSystemPrompt(allNodes, leafNodes, includeFantasy, capabilities);
         var userMessage = BuildEmergeUserMessage(leafNodes, includeFantasy);
 
         var request = new GatewayRequest
@@ -182,51 +190,7 @@ public class EmergenceService
 
     // ── Prompt 构建 ──
 
-    /// <summary>系统真实能力清单，注入到 AI prompt 中，让涌现基于现实</summary>
-    private const string SystemCapabilities = """
-        ## 当前系统已有能力（AI 必须基于这些能力推演，不能凭空编造）
-
-        ### 后端基础设施（.NET 8 / C# 12 / MongoDB）
-        - ILlmGateway：统一 LLM 调用网关，支持流式/非流式、模型池三级调度、健康管理
-        - Run/Worker：长任务异步执行模式，SSE afterSeq 断线续传
-        - RBAC：SystemRole + AdminPermissionCatalog (60+ 权限点) + Middleware
-        - 附件系统：Attachment 模型，支持 PDF/Word/Excel 文本提取（ExtractedText）
-        - Markdown 解析：ParsedPrd 模型，分节解析（Sections: Level/Title/Content）
-        - 文档空间：DocumentStore + DocumentEntry，支持文档存储与知识管理
-        - 水印系统：WatermarkConfig + 字体资产 + 渲染器
-        - 配置市场：IForkable 白名单复制 + CONFIG_TYPE_REGISTRY
-        - 工作流引擎：WorkflowNode/Edge DAG + CapsuleExecutor + 30+ 舱类型
-        - 分享链接：Token + 过期 + 访问计数模式（DefectShareLink 可参照）
-        - Webhook：WebhookDeliveryLog + 通知投递
-
-        ### 已有 Agent
-        - PRD Agent：PRD 解读与问答（appKey: prd-agent）
-        - Visual Agent：视觉创作（appKey: visual-agent）
-        - Literary Agent：文学创作配图（appKey: literary-agent）
-        - Defect Agent：缺陷管理 + AI 分析 + 修复报告（appKey: defect-agent）
-        - Video Agent：文章转视频教程（appKey: video-agent）
-        - Report Agent：周报管理 Phase 1-4（appKey: report-agent）
-
-        ### 前端基础设施（React 18 / Vite / Zustand / Radix UI）
-        - React Flow（@xyflow/react）：已用于工作流画布，支持自定义节点/边
-        - GlassCard：液态玻璃容器组件（macOS 风格 backdrop-filter）
-        - TabBar / PageHeader：统一导航栏
-        - SSE 流式组件：SsePhaseBar + SseTypingBlock + SseStreamPanel
-        - ECharts：数据可视化
-        - Three.js + React Three Fiber：3D 可视化
-        - Framer Motion：动画引擎
-        - Lexical：富文本编辑器
-
-        ### 数据资产（101 个 MongoDB 集合）
-        - 用户/群组/权限/会话/消息/附件/文档/评论
-        - 模型配置/平台/日志/调度/模型池/测试桩
-        - 图片资产/工作空间/画布/水印
-        - 缺陷报告/模板/项目/Webhook
-        - 周报/团队/模板/数据源/提交记录
-        - 工作流/执行记录/调度/密钥
-        """;
-
-    private static string BuildExploreSystemPrompt(EmergenceNode parent, List<string> existingTitles)
+    private static string BuildExploreSystemPrompt(EmergenceNode parent, List<string> existingTitles, string capabilities)
     {
         var sb = new StringBuilder();
         sb.AppendLine("你是一个涌现探索引擎。你必须基于用户提供的种子内容和下方的系统真实能力清单，推演出可直接实现的子功能。");
@@ -237,7 +201,7 @@ public class EmergenceService
         sb.AppendLine("3. 生成的节点不能与已有节点重复");
         sb.AppendLine("4. techPlan 必须具体到「用哪个 Service / Controller / 模型完成」，不要泛泛而谈");
         sb.AppendLine();
-        sb.Append(SystemCapabilities);
+        sb.Append(capabilities);
         sb.AppendLine();
         sb.AppendLine("## 已有节点（避免重复）");
         foreach (var title in existingTitles.Take(20))
@@ -266,7 +230,8 @@ public class EmergenceService
     private static string BuildEmergeSystemPrompt(
         List<EmergenceNode> allNodes,
         List<EmergenceNode> leafNodes,
-        bool includeFantasy)
+        bool includeFantasy,
+        string capabilities)
     {
         var sb = new StringBuilder();
         sb.AppendLine("你是一个涌现组合引擎。你的任务是将多个已有功能节点交叉组合，发现「A + B 自然产生 C」的涌现价值。");
@@ -287,7 +252,7 @@ public class EmergenceService
             sb.AppendLine();
         }
 
-        sb.Append(SystemCapabilities);
+        sb.Append(capabilities);
         sb.AppendLine();
         sb.AppendLine("## 输出格式（严格 JSON 数组，2-4 个节点）");
         sb.AppendLine("```json");
