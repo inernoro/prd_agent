@@ -643,14 +643,14 @@ export function buildWidgetScript(branchId: string, branchName: string): string 
 
   function scheduleOpsAutoHide(){
     clearOpsAutoHide();
-    opsAutoHideTimer=setTimeout(function(){
+    opsAutoHideTimer=setTimeout(function(){/* 15s auto-hide */
       // Only hide if all steps are done/error
       var allDone=true;
       for(var i=0;i<opsSteps.length;i++){
         if(opsSteps[i].status==='running'||opsSteps[i].status==='pending'){allDone=false;break;}
       }
       if(allDone){opsVisible=false;renderOpsPanel();}
-    },5000);
+    },15000);
   }
 
   function clearOpsAutoHide(){
@@ -758,29 +758,32 @@ export function buildWidgetScript(branchId: string, branchName: string): string 
   }
 
   // ── Animated action execution (cursor → highlight → execute) ──
+  // Cursor and highlight STAY visible after execution — they persist until the
+  // next command arrives, so the user can always see where AI last operated.
   function executeWithAnimation(el,action,params,callback){
     if(!el){
       // No element to animate (snapshot, scroll, navigate, evaluate)
+      // Hide cursor for non-targeted actions
+      if(action==='snapshot'){/* keep cursor where it was */}
+      else{hideCursor();removeHighlight();}
       var result=executeAction(action,params);
       if(callback)callback(result);
       return;
     }
+    // Clear previous highlight (will re-apply to new target)
+    removeHighlight();
     // Step 1: Move cursor to element center
     var rect=el.getBoundingClientRect();
     var cx=rect.left+rect.width/2;
     var cy=rect.top+rect.height/2;
     moveCursorTo(cx,cy,function(){
-      // Step 2: Highlight element
+      // Step 2: Highlight element (stays visible!)
       highlightElement(el);
       // Step 3: Execute after brief highlight display
       setTimeout(function(){
         var result=executeAction(action,params);
-        // Step 4: Hide cursor after action
-        setTimeout(function(){
-          hideCursor();
-          removeHighlight();
-          if(callback)callback(result);
-        },400);
+        // Cursor and highlight STAY — user can see what AI just operated
+        if(callback)callback(result);
       },200);
     });
   }
