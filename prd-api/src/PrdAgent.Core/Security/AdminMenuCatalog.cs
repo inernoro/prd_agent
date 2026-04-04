@@ -29,6 +29,7 @@ public static class AdminMenuCatalog
         new("my-assets", "/my-assets", "我的资源", "图片、文档与附件", "FolderOpen", 40, "personal"),
         new("web-pages", "/web-pages", "网页托管", "创建与管理网页", "Globe", 45, "personal"),
         new("document-store", "/document-store", "文档空间", "文档存储与知识管理", "Library", 46, "personal"),
+        new("emergence", "/emergence", "涌现探索", "可视化功能涌现与创意探索", "Sparkle", 47, "personal"),
 
         // ── 系统管理 (admin) ──
         new("mds", "/mds", "模型中心", "模型、提示词与实验室", "Cpu", 50, "admin"),
@@ -66,7 +67,7 @@ public static class AdminMenuCatalog
         foreach (var menu in All)
         {
             // 基础功能：只需要基础访问权限
-            if (menu.AppKey is "home" or "ai-toolbox" or "my-assets" or "settings" or "arena" or "shortcuts-agent" or "marketplace" or "web-pages" or "document-store")
+            if (menu.AppKey is "home" or "ai-toolbox" or "my-assets" or "settings" or "arena" or "shortcuts-agent" or "marketplace" or "web-pages" or "document-store" or "emergence")
             {
                 if (permSet.Contains(AdminPermissionCatalog.Access))
                 {

@@ -920,6 +920,23 @@ export const api = {
     migrateLiterary: () => '/api/submissions/migrate-literary',
     adminWithdraw: (id: string) => `/api/submissions/${id}/admin-withdraw`,
   },
+
+  // ============ Emergence Explorer 涌现探索器 ============
+  emergence: {
+    trees: {
+      list: () => '/api/emergence/trees',
+      create: () => '/api/emergence/trees',
+      detail: (treeId: string) => `/api/emergence/trees/${treeId}`,
+      delete: (treeId: string) => `/api/emergence/trees/${treeId}`,
+      emerge: (treeId: string) => `/api/emergence/trees/${treeId}/emerge`,
+      export: (treeId: string) => `/api/emergence/trees/${treeId}/export`,
+    },
+    nodes: {
+      update: (nodeId: string) => `/api/emergence/nodes/${nodeId}`,
+      delete: (nodeId: string) => `/api/emergence/nodes/${nodeId}`,
+      explore: (nodeId: string) => `/api/emergence/nodes/${nodeId}/explore`,
+    },
+  },
 } as const;
 
 export default api;

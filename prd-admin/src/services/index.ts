@@ -1501,3 +1501,20 @@ export type {
   ReviewResult,
   ReviewWebhookConfig,
 } from '@/services/real/reviewAgent';
+
+// ── Emergence Explorer 涌现探索器 ──
+export {
+  createEmergenceTreeReal as createEmergenceTree,
+  listEmergenceTreesReal as listEmergenceTrees,
+  getEmergenceTreeReal as getEmergenceTree,
+  deleteEmergenceTreeReal as deleteEmergenceTree,
+  updateEmergenceNodeReal as updateEmergenceNode,
+  deleteEmergenceNodeReal as deleteEmergenceNode,
+  exportEmergenceTreeReal as exportEmergenceTree,
+} from '@/services/real/emergence';
+export type {
+  EmergenceTree,
+  EmergenceNode,
+  CreateEmergenceTreeInput,
+  UpdateEmergenceNodeInput,
+} from '@/services/contracts/emergence';

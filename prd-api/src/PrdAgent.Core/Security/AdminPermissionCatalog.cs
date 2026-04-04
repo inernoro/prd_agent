@@ -195,6 +195,16 @@ public static class AdminPermissionCatalog
     public const string DocumentStoreWrite = "document-store.write";
 
     /// <summary>
+    /// 涌现探索器权限（读）：查看涌现树
+    /// </summary>
+    public const string EmergenceRead = "emergence.read";
+
+    /// <summary>
+    /// 涌现探索器权限（写）：创建/探索/涌现
+    /// </summary>
+    public const string EmergenceWrite = "emergence.write";
+
+    /// <summary>
     /// 超级权限（当路由未配置映射时，用于兜底放行；同时也可用于 root 破窗全权限）。
     /// </summary>
     public const string Super = "super";
@@ -274,6 +284,9 @@ public static class AdminPermissionCatalog
 
         new(DocumentStoreRead, "文档空间-读", "查看文档空间与文档列表"),
         new(DocumentStoreWrite, "文档空间-写", "创建/编辑/删除文档空间与文档"),
+
+        new(EmergenceRead, "涌现探索-读", "查看涌现树与节点"),
+        new(EmergenceWrite, "涌现探索-写", "创建涌现树、探索、涌现"),
 
         new(Super, "超级权限", "兜底放行：建议仅给 root/超级管理员"),
     };

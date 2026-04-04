@@ -211,6 +211,10 @@ public class MongoDbContext
     public IMongoCollection<DocumentStore> DocumentStores => _database.GetCollection<DocumentStore>("document_stores");
     public IMongoCollection<DocumentEntry> DocumentEntries => _database.GetCollection<DocumentEntry>("document_entries");
 
+    // Emergence Explorer 涌现探索器
+    public IMongoCollection<EmergenceTree> EmergenceTrees => _database.GetCollection<EmergenceTree>("emergence_trees");
+    public IMongoCollection<EmergenceNode> EmergenceNodes => _database.GetCollection<EmergenceNode>("emergence_nodes");
+
     private void CreateIndexes()
     {
         static bool IsIndexConflict(MongoCommandException ex)

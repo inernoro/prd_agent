@@ -210,7 +210,10 @@ builder.Services.AddHostedService<PrdAgent.Api.Services.ChatRunWorker>();
 builder.Services.AddHostedService<PrdAgent.Api.Services.WorkflowRunWorker>();
 builder.Services.AddScoped<PrdAgent.Api.Services.WorkflowAiFillService>();
 
-// 视频生成后台执行器（文章→脚本→Remotion渲染→字幕→打包）
+// 涌现探索器
+builder.Services.AddScoped<PrdAgent.Api.Services.EmergenceService>();
+
+// 视频生成后台执行器（文章→脚本→Remotion��染→字幕→���包）
 builder.Services.AddHostedService<PrdAgent.Api.Services.VideoGenRunWorker>();
 
 // 视频转文档后台执行器（视频→音频提取→STT转写→多模态LLM分析→Markdown文档）
