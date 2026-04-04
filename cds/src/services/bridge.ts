@@ -76,7 +76,7 @@ interface BridgeConnection {
 // ── Bridge Service ──
 
 const COMMAND_TIMEOUT = 15_000;
-const CONNECTION_TTL = 15_000; // connection considered dead if no heartbeat for 15s
+const CONNECTION_TTL = 20_000; // connection considered dead if no heartbeat for 20s (widget polls every 5s)
 
 export class BridgeService {
   private connections = new Map<string, BridgeConnection>();

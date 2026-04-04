@@ -1032,8 +1032,8 @@ export function buildWidgetScript(branchId: string, branchName: string): string 
     });
   }
 
-  // Start polling every 2 seconds
-  bridgePollTimer=setInterval(bridgePoll,2000);
+  // Start polling every 5 seconds (enough for agent-driven operations)
+  bridgePollTimer=setInterval(bridgePoll,5000);
   // First poll immediately
   bridgePoll();
 
@@ -1088,7 +1088,7 @@ export function buildWidgetScript(branchId: string, branchName: string): string 
       })
       .catch(function(){});
   }
-  bridgeNavPollTimer=setInterval(pollNavigateRequests,3000);
+  bridgeNavPollTimer=setInterval(pollNavigateRequests,10000);
 
   function renderNavRequest(){
     var existing=document.getElementById('cds-nav-request');

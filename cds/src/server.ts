@@ -469,6 +469,8 @@ export function createServer(deps: ServerDeps): express.Express {
     // Skip dashboard auto-poll requests (X-CDS-Poll: true) — they are noise
     const isPoll = req.headers['x-cds-poll'] === 'true';
     if (isPoll) return next();
+    // Skip Bridge internal polling (heartbeat, navigate-request polls) — internal communication
+    if (req.path.startsWith('/bridge/heartbeat') || req.path.startsWith('/bridge/navigate-requests/')) return next();
 
     const start = Date.now();
     const origEnd = res.end.bind(res);
