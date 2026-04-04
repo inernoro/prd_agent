@@ -205,13 +205,11 @@ cd prd-api && dotnet build --no-restore 2>&1 | grep -E "error CS|warning CS" | h
 | **ai-defect-resolve** | `修复缺陷` | 输入缺陷链接 → 按标准工作流（列清单→评论→修复→验收）自动化修复 |
 | **remotion-scene-codegen** | `优化场景` | 输入场景需求 → 提供 Remotion API 上下文，生成高质量视频场景代码 |
 
-### 文档写作技能（建议合并，见 `doc/guide.skill-catalog.md`）
+### 文档写作与设计技能
 
 | 技能 | 触发词 | 输入 → 输出 |
 |------|--------|-------------|
-| **documentation-writer** | — | 输入文档需求 → 按 Diátaxis 框架（教程/操作/参考/解释）生成技术文档 |
-| **technical-writing** | — | 输入文档需求 → 生成技术规格/架构文档/运维手册/API 文档 |
-| **user-guide-writing** | — | 输入功能描述 → 生成面向终端用户的操作指南/FAQ/教程 |
+| **technical-documentation** | — | 输入文档需求 → Diátaxis 工作流 + 8 种模板（Spec/Architecture/Runbook/API/Quick Start/How-to/FAQ/Tutorial） |
 | **ui-ux-pro-max** | — | 输入设计需求 → 67 种风格 + 96 种配色 + 57 种字体搭配，支持 13 种技术栈 |
 
 ### 元技能

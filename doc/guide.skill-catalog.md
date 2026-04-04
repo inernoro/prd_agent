@@ -6,7 +6,7 @@
 
 ---
 
-## 技能总览（37 个）
+## 技能总览（35 个）
 
 | # | 分类 | 技能名 | 触发词 | 一句话说明 |
 |---|------|--------|--------|-----------|
@@ -40,37 +40,31 @@
 | 28 | 🔨 专项修复 | release-version | `/release` | 自动检测版本 + 分析变更 + 执行 patch/minor/major 发版 |
 | 29 | 🔨 专项修复 | ai-defect-resolve | `修复缺陷` | 通过缺陷链接自动化：列清单→评论→修复→验收 |
 | 30 | 🔨 专项修复 | remotion-scene-codegen | `优化场景` | Remotion API 上下文 + 视频场景代码生成 |
-| 31 | 📝 文档写作 | documentation-writer | — | Diátaxis 框架（教程/操作/参考/解释）技术文档 |
-| 32 | 📝 文档写作 | technical-writing | — | 技术规格/架构文档/运维手册/API 文档 |
-| 33 | 📝 文档写作 | user-guide-writing | — | 终端用户操作指南/FAQ/教程 |
-| 34 | 📝 文档写作 | ui-ux-pro-max | — | 67 风格 + 96 配色 + 57 字体搭配设计系统 |
-| 35 | 🧩 元技能 | find-skills | `找技能` | 搜索并推荐可安装的第三方技能 |
-| 36 | 🧩 元技能 | api-debug | — | 查询真实 API 数据辅助调试 |
-| 37 | 🧩 元技能 | dev-setup | `装环境` | 自动检测并安装 SDK + 执行 API 测试 |
+| 31 | 📝 文档写作 | technical-documentation | — | Diátaxis 工作流 + 8 种模板（Spec/Architecture/Runbook/API/Quick Start/How-to/FAQ/Tutorial） |
+| 32 | 📝 文档写作 | ui-ux-pro-max | — | 67 风格 + 96 配色 + 57 字体搭配设计系统 |
+| 33 | 🧩 元技能 | find-skills | `找技能` | 搜索并推荐可安装的第三方技能 |
+| 34 | 🧩 元技能 | api-debug | — | 查询真实 API 数据辅助调试 |
+| 35 | 🧩 元技能 | dev-setup | `装环境` | 自动检测并安装 SDK + 执行 API 测试 |
 
 ---
 
-## 合并/清理建议
+## 已完成的合并/清理
 
-### 建议合并：4 个文档写作技能 → 2 个
+### 已合并：4 个文档写作技能 → 2 个（2026-04-04）
 
-| 当前技能 | 问题 | 建议 |
-|----------|------|------|
-| **doc-writer** | 定位清晰：`doc/` 目录的命名和格式守护 | **保留**，职责不变 |
-| **documentation-writer** | 与 technical-writing、user-guide-writing 高度重叠 | **合并为 `technical-documentation`** |
-| **technical-writing** | 与 documentation-writer 目标受众相同 | 合并入上述新技能 |
-| **user-guide-writing** | 只是 documentation-writer 的子场景 | 合并入上述新技能 |
+| 原技能 | 操作 | 结果 |
+|--------|------|------|
+| **doc-writer** | 保留 | `doc/` 目录命名和格式守护（元数据治理） |
+| **documentation-writer** | 已删除 | 合并入 `technical-documentation` |
+| **technical-writing** | 已删除 | 合并入 `technical-documentation` |
+| **user-guide-writing** | 已删除 | 合并入 `technical-documentation` |
 
-合并后：
-- `doc-writer`：守护 `doc/` 目录结构和命名规范（元数据治理）
-- `technical-documentation`：实际写文档内容（合并 Diátaxis 框架 + 技术模板 + 用户指南模板）
+### 已区分触发词：flow-trace vs deep-trace（2026-04-04）
 
-### 建议区分触发词：flow-trace vs deep-trace
-
-| 技能 | 当前触发词 | 问题 | 建议 |
-|------|-----------|------|------|
-| **flow-trace** | `/trace` | 两个技能都可能被 `/trace` 触发 | 保持 `/trace`（更常用） |
-| **deep-trace** | `/trace` | 与 flow-trace 冲突 | 改为 `/deep-trace`（验证变更正确性场景） |
+| 技能 | 原触发词 | 新触发词 |
+|------|---------|---------|
+| **flow-trace** | `/trace` | `/trace`（不变，更常用） |
+| **deep-trace** | `/trace` | `/deep-trace`（避免冲突） |
 
 ### 无需动作
 
