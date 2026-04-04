@@ -27,6 +27,8 @@ export function buildWidgetScript(branchId: string, branchName: string): string 
   css.textContent=\`
     @keyframes cds-spin{to{transform:rotate(360deg)}}
     @keyframes cds-ai-border-glow{0%,100%{box-shadow:inset 0 0 12px 4px rgba(96,165,250,0.5),inset 0 0 36px 2px rgba(167,139,250,0.15)}50%{box-shadow:inset 0 0 20px 6px rgba(96,165,250,0.7),inset 0 0 50px 4px rgba(167,139,250,0.25)}}
+    @keyframes cds-highlight-pulse{0%,100%{box-shadow:0 0 0 3px rgba(96,165,250,0.6),0 0 12px 4px rgba(96,165,250,0.3)}50%{box-shadow:0 0 0 5px rgba(96,165,250,0.8),0 0 20px 8px rgba(96,165,250,0.4)}}
+    @keyframes cds-step-in{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:translateY(0)}}
     .cds-ai-active{position:fixed;inset:0;z-index:99998;pointer-events:none;border:none;background:none;animation:cds-ai-border-glow 2.5s ease-in-out infinite}
     .cds-ai-badge{position:fixed;top:10px;left:50%;transform:translateX(-50%);z-index:99999;display:flex;align-items:center;gap:6px;padding:4px 12px;border-radius:20px;background:rgba(22,27,34,0.9);backdrop-filter:blur(8px);border:1px solid rgba(96,165,250,0.4);box-shadow:0 2px 12px rgba(96,165,250,0.3);font-family:ui-monospace,SFMono-Regular,"SF Mono",Menlo,monospace;font-size:11px;color:#e2e8f0;white-space:nowrap;pointer-events:none}
     .cds-ai-badge-dot{width:6px;height:6px;border-radius:50%;background:#60a5fa;box-shadow:0 0 6px #60a5fa;animation:cds-blink 1.5s ease-in-out infinite}
@@ -74,6 +76,24 @@ export function buildWidgetScript(branchId: string, branchName: string): string 
     #cds-widget .cds-step.done{color:#3fb950}
     #cds-widget .cds-step.error{color:#f85149}
     #cds-widget .cds-icon{flex-shrink:0;width:13px;height:13px}
+    #cds-bridge-ops{position:fixed;z-index:99999;min-width:280px;max-width:380px;padding:0;border-radius:10px;background:rgba(22,27,34,0.95);backdrop-filter:blur(12px);border:1px solid rgba(96,165,250,0.3);box-shadow:0 4px 20px rgba(0,0,0,0.4);font-family:ui-monospace,SFMono-Regular,"SF Mono",Menlo,monospace;font-size:12px;color:#e2e8f0;overflow:hidden;transition:opacity 0.3s,transform 0.3s}
+    #cds-bridge-ops .ops-header{display:flex;align-items:center;gap:6px;padding:8px 12px;border-bottom:1px solid rgba(96,165,250,0.15);background:rgba(96,165,250,0.08)}
+    #cds-bridge-ops .ops-header-dot{width:7px;height:7px;border-radius:50%;background:#60a5fa;box-shadow:0 0 8px #60a5fa;animation:cds-blink 1.5s ease-in-out infinite;flex-shrink:0}
+    #cds-bridge-ops .ops-header-text{font-size:11px;font-weight:600;color:#93c5fd}
+    #cds-bridge-ops .ops-body{padding:8px 12px;max-height:240px;overflow-y:auto}
+    #cds-bridge-ops .ops-step{display:flex;align-items:flex-start;gap:8px;padding:5px 0;animation:cds-step-in 0.3s ease-out}
+    #cds-bridge-ops .ops-step+.ops-step{border-top:1px solid rgba(255,255,255,0.04)}
+    #cds-bridge-ops .ops-step-icon{width:16px;height:16px;border-radius:50%;flex-shrink:0;display:flex;align-items:center;justify-content:center;font-size:9px;margin-top:1px}
+    #cds-bridge-ops .ops-step-icon.pending{border:1.5px solid #484f58;color:#484f58}
+    #cds-bridge-ops .ops-step-icon.running{border:1.5px solid #60a5fa;color:#60a5fa;animation:cds-blink 1s ease-in-out infinite}
+    #cds-bridge-ops .ops-step-icon.done{background:#238636;border:none;color:#fff}
+    #cds-bridge-ops .ops-step-icon.error{background:#da3633;border:none;color:#fff}
+    #cds-bridge-ops .ops-step-text{font-size:11px;color:#c9d1d9;line-height:1.4}
+    #cds-bridge-ops .ops-step-text.running{color:#93c5fd}
+    #cds-bridge-ops .ops-step-text.done{color:#8b949e}
+    #cds-bridge-ops .ops-step-text.error{color:#f85149}
+    #cds-bridge-ops .ops-step-detail{font-size:10px;color:#6e7681;margin-top:1px}
+    .cds-el-highlight{outline:3px solid rgba(96,165,250,0.7)!important;outline-offset:2px!important;animation:cds-highlight-pulse 1s ease-in-out infinite!important;position:relative;z-index:99990!important;border-radius:4px!important}
   \`;
   document.head.appendChild(css);
 
@@ -584,6 +604,114 @@ export function buildWidgetScript(branchId: string, branchName: string): string 
   var bridgeConnected=false;
   var bridgePollTimer=null;
 
+  // ── AI Operation Panel state ──
+  var opsSteps=[];        // [{id, action, description, status:'pending'|'running'|'done'|'error', detail:''}]
+  var opsVisible=false;
+  var opsAutoHideTimer=null;
+  var highlightedEl=null;
+
+  function addOpsStep(id,action,description){
+    opsSteps.push({id:id,action:action,description:description||actionLabel(action),status:'running',detail:''});
+    // Keep last 8 steps
+    if(opsSteps.length>8)opsSteps.shift();
+    opsVisible=true;
+    clearOpsAutoHide();
+    renderOpsPanel();
+  }
+
+  function updateOpsStep(id,status,detail){
+    for(var i=opsSteps.length-1;i>=0;i--){
+      if(opsSteps[i].id===id){
+        opsSteps[i].status=status;
+        if(detail)opsSteps[i].detail=detail;
+        break;
+      }
+    }
+    renderOpsPanel();
+    if(status==='done'||status==='error'){
+      scheduleOpsAutoHide();
+    }
+  }
+
+  function actionLabel(action){
+    var labels={click:'点击元素',type:'输入文本',scroll:'滚动页面',navigate:'页面导航',evaluate:'执行脚本',snapshot:'读取页面'};
+    return labels[action]||action;
+  }
+
+  function scheduleOpsAutoHide(){
+    clearOpsAutoHide();
+    opsAutoHideTimer=setTimeout(function(){
+      // Only hide if all steps are done/error
+      var allDone=true;
+      for(var i=0;i<opsSteps.length;i++){
+        if(opsSteps[i].status==='running'||opsSteps[i].status==='pending'){allDone=false;break;}
+      }
+      if(allDone){opsVisible=false;renderOpsPanel();}
+    },5000);
+  }
+
+  function clearOpsAutoHide(){
+    if(opsAutoHideTimer){clearTimeout(opsAutoHideTimer);opsAutoHideTimer=null;}
+  }
+
+  function renderOpsPanel(){
+    var panel=document.getElementById('cds-bridge-ops');
+    if(!opsVisible||opsSteps.length===0){
+      if(panel)panel.remove();
+      return;
+    }
+    if(!panel){
+      panel=document.createElement('div');
+      panel.id='cds-bridge-ops';
+      panel.setAttribute('data-page-agent-ignore','');
+      document.body.appendChild(panel);
+    }
+    panel.style.left=pos.x+'px';
+    panel.style.bottom=(pos.y+42)+'px';
+
+    var h='<div class="ops-header">';
+    h+='<span class="ops-header-dot"></span>';
+    h+='<span class="ops-header-text">AI 正在操作</span>';
+    h+='</div>';
+    h+='<div class="ops-body">';
+    for(var i=0;i<opsSteps.length;i++){
+      var s=opsSteps[i];
+      var iconCls='ops-step-icon '+s.status;
+      var textCls='ops-step-text '+s.status;
+      var icon='';
+      if(s.status==='pending')icon='○';
+      else if(s.status==='running')icon='◎';
+      else if(s.status==='done')icon='✓';
+      else if(s.status==='error')icon='✗';
+      h+='<div class="ops-step">';
+      h+='<span class="'+iconCls+'">'+icon+'</span>';
+      h+='<div><div class="'+textCls+'">'+s.description+'</div>';
+      if(s.detail)h+='<div class="ops-step-detail">'+s.detail+'</div>';
+      h+='</div></div>';
+    }
+    h+='</div>';
+    panel.innerHTML=h;
+    // Scroll to bottom
+    var body=panel.querySelector('.ops-body');
+    if(body)body.scrollTop=body.scrollHeight;
+  }
+
+  // ── Element highlight ──
+  function highlightElement(el){
+    removeHighlight();
+    if(!el)return;
+    highlightedEl=el;
+    el.classList.add('cds-el-highlight');
+    el.scrollIntoView({block:'center',behavior:'smooth'});
+  }
+
+  function removeHighlight(){
+    if(highlightedEl){
+      highlightedEl.classList.remove('cds-el-highlight');
+      highlightedEl=null;
+    }
+  }
+
   // ── Console / Network interceptors ──
   var origConsoleError=console.error;
   console.error=function(){
@@ -759,6 +887,8 @@ export function buildWidgetScript(branchId: string, branchName: string): string 
       if(action==='click'){
         var clickEl=bridgeInteractiveElements[params.index];
         if(!clickEl)return {success:false,error:'element index '+params.index+' not found'};
+        // Highlight target element
+        highlightElement(clickEl);
         // Scroll into view
         clickEl.scrollIntoView({block:'center',behavior:'instant'});
         // Full click simulation
@@ -777,6 +907,7 @@ export function buildWidgetScript(branchId: string, branchName: string): string 
       if(action==='type'){
         var typeEl=bridgeInteractiveElements[params.index];
         if(!typeEl)return {success:false,error:'element index '+params.index+' not found'};
+        highlightElement(typeEl);
         typeEl.focus();
         if(params.clear){
           // Use native setter for React compatibility
@@ -862,10 +993,19 @@ export function buildWidgetScript(branchId: string, branchName: string): string 
       // Check if there's a pending command
       var cmd=d.command;
       if(cmd&&cmd.id&&cmd.action){
-        console.log('[CDS Bridge] Executing: '+cmd.action);
+        var desc=cmd.description||actionLabel(cmd.action);
+        console.log('[CDS Bridge] Executing: '+cmd.action+' — '+desc);
+        // Show in operation panel
+        addOpsStep(cmd.id,cmd.action,desc);
         var result=executeAction(cmd.action,cmd.params||{});
+        if(!result.success){
+          updateOpsStep(cmd.id,'error',result.error||'');
+          removeHighlight();
+        }
         // Wait for DOM to stabilize, then send result
         setTimeout(function(){
+          removeHighlight();
+          if(result.success)updateOpsStep(cmd.id,'done','');
           var newState=collectPageState();
           var response={
             branchId:BRANCH_ID,

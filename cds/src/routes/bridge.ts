@@ -73,7 +73,7 @@ export function createBridgeRouter(deps: BridgeRouterDeps): Router {
   // POST /api/bridge/command/:branchId — Send command to widget (waits for result)
   router.post('/command/:branchId', async (req, res) => {
     const { branchId } = req.params;
-    const { action, params } = req.body || {};
+    const { action, params, description } = req.body || {};
 
     if (!action) {
       res.status(400).json({ error: 'action is required' });
@@ -95,6 +95,7 @@ export function createBridgeRouter(deps: BridgeRouterDeps): Router {
       id: crypto.randomBytes(4).toString('hex'),
       action: action as 'click' | 'type' | 'scroll' | 'navigate' | 'evaluate' | 'snapshot',
       params: params || {},
+      description: description as string | undefined,
     };
 
     try {

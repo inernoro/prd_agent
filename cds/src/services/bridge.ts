@@ -39,6 +39,8 @@ export interface BridgeCommand {
   id: string;
   action: 'click' | 'type' | 'scroll' | 'navigate' | 'evaluate' | 'snapshot';
   params: Record<string, unknown>;
+  /** Human-readable description shown in the operation panel (e.g. "点击「登录」按钮") */
+  description?: string;
 }
 
 export interface BridgeResponse {
