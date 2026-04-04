@@ -103,6 +103,7 @@ function resolveApiLabel(method: string, path: string): string {
     'POST /ai/request-access': 'AI 请求连接',
     'GET /bridge/connections': '查看 Bridge 连接',
     'POST /bridge/navigate-request': 'AI 请求用户导航',
+    'POST /bridge/end-session': 'AI 操作完成',
   };
 
   const key = `${method} ${p}`;
@@ -469,8 +470,8 @@ export function createServer(deps: ServerDeps): express.Express {
     // Skip dashboard auto-poll requests (X-CDS-Poll: true) — they are noise
     const isPoll = req.headers['x-cds-poll'] === 'true';
     if (isPoll) return next();
-    // Skip Bridge internal polling (heartbeat, navigate-request polls) — internal communication
-    if (req.path.startsWith('/bridge/heartbeat') || req.path.startsWith('/bridge/navigate-requests/')) return next();
+    // Skip Bridge internal polling and results — internal communication, not user-facing
+    if (req.path.startsWith('/bridge/heartbeat') || req.path.startsWith('/bridge/navigate-requests/') || req.path === '/bridge/result') return next();
 
     const start = Date.now();
     const origEnd = res.end.bind(res);

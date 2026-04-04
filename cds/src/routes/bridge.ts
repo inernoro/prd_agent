@@ -129,5 +129,22 @@ export function createBridgeRouter(deps: BridgeRouterDeps): Router {
     res.json({ success: true });
   });
 
+  // POST /api/bridge/end-session — AI signals it's done operating
+  router.post('/end-session', (req, res) => {
+    const { branchId, summary } = req.body || {};
+    if (!branchId) {
+      res.status(400).json({ error: 'branchId is required' });
+      return;
+    }
+    // Send end command to widget so it can show "AI 操作完成" and hide cursor
+    bridgeService.sendCommand(branchId, {
+      id: crypto.randomBytes(4).toString('hex'),
+      action: 'snapshot' as const,
+      params: { __end_session: true, summary: summary || '' },
+      description: summary || 'AI 操作完成',
+    }).catch(() => {});
+    res.json({ success: true });
+  });
+
   return router;
 }

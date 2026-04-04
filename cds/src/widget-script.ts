@@ -94,9 +94,14 @@ export function buildWidgetScript(branchId: string, branchName: string): string 
     #cds-bridge-ops .ops-step-text.error{color:#f85149}
     #cds-bridge-ops .ops-step-detail{font-size:10px;color:#6e7681;margin-top:1px}
     .cds-el-highlight{outline:3px solid rgba(96,165,250,0.7)!important;outline-offset:2px!important;animation:cds-highlight-pulse 1s ease-in-out infinite!important;position:relative;z-index:99990!important;border-radius:4px!important}
-    #cds-ai-cursor{position:fixed;z-index:100001;pointer-events:none;transition:left 0.4s cubic-bezier(.4,0,.2,1),top 0.4s cubic-bezier(.4,0,.2,1),opacity 0.2s;opacity:0}
+    .cds-el-highlight-fade{animation:cds-highlight-fade 3s ease-out forwards!important;outline:3px solid rgba(96,165,250,0.7)!important;outline-offset:2px!important;position:relative;z-index:99990!important;border-radius:4px!important}
+    @keyframes cds-cursor-glow{0%,100%{filter:drop-shadow(0 0 6px rgba(96,165,250,0.8)) drop-shadow(0 0 12px rgba(56,189,248,0.4))}50%{filter:drop-shadow(0 0 10px rgba(96,165,250,1)) drop-shadow(0 0 20px rgba(56,189,248,0.6))}}
+    @keyframes cds-ring-rotate{to{transform:rotate(360deg)}}
+    @keyframes cds-highlight-fade{0%{opacity:1}70%{opacity:1}100%{opacity:0}}
+    #cds-ai-cursor{position:fixed;z-index:100001;pointer-events:none;transition:left 0.4s cubic-bezier(.4,0,.2,1),top 0.4s cubic-bezier(.4,0,.2,1),opacity 0.25s;opacity:0;animation:cds-cursor-glow 2s ease-in-out infinite}
     #cds-ai-cursor.visible{opacity:1}
-    #cds-ai-cursor .cursor-ring{position:absolute;left:-12px;top:-12px;width:24px;height:24px;border-radius:50%;border:2px solid rgba(96,165,250,0.6);animation:cds-highlight-pulse 1.2s ease-in-out infinite}
+    #cds-ai-cursor .cursor-ring{position:absolute;left:-16px;top:-16px;width:32px;height:32px;border-radius:50%;border:2px solid transparent;border-top-color:#60a5fa;border-right-color:#38bdf8;animation:cds-ring-rotate 1.5s linear infinite;opacity:0.7}
+    #cds-ai-cursor .cursor-ring2{position:absolute;left:-10px;top:-10px;width:20px;height:20px;border-radius:50%;background:radial-gradient(circle,rgba(96,165,250,0.3) 0%,transparent 70%)}
   \`;
   document.head.appendChild(css);
 
@@ -724,7 +729,7 @@ export function buildWidgetScript(branchId: string, branchName: string): string 
     var el=document.createElement('div');
     el.id='cds-ai-cursor';
     el.setAttribute('data-page-agent-ignore','');
-    el.innerHTML='<svg width="20" height="20" viewBox="0 0 24 24" fill="none" style="filter:drop-shadow(0 2px 4px rgba(0,0,0,0.4))"><path d="M5.5 3.21V20.8a.5.5 0 00.86.35l4.38-4.58 3.8 8.41a.5.5 0 00.67.26l2.5-1.13a.5.5 0 00.26-.67L14.2 15l6.08-.86a.5.5 0 00.18-.91L5.94 3.05a.5.5 0 00-.44.16z" fill="#60a5fa" stroke="#1e3a5f" stroke-width="1"/></svg><div class="cursor-ring"></div>';
+    el.innerHTML='<svg width="18" height="22" viewBox="0 0 18 22" fill="none" style="position:relative;z-index:2"><defs><linearGradient id="cds-cg" x1="0" y1="0" x2="18" y2="22"><stop offset="0%" stop-color="#60a5fa"/><stop offset="100%" stop-color="#38bdf8"/></linearGradient></defs><path d="M1.5 1v17.5l4.5-4.5 3 7 2.5-1-3-7h6.5L1.5 1z" fill="url(#cds-cg)" stroke="#1e3a5f" stroke-width="0.8" stroke-linejoin="round"/><path d="M4 14.5l1 2" stroke="#fff" stroke-width="0.5" opacity="0.5"/></svg><div class="cursor-ring"></div><div class="cursor-ring2"></div>';
     el.style.left=aiCursorPos.x+'px';
     el.style.top=aiCursorPos.y+'px';
     document.body.appendChild(el);
@@ -763,26 +768,34 @@ export function buildWidgetScript(branchId: string, branchName: string): string 
   function executeWithAnimation(el,action,params,callback){
     if(!el){
       // No element to animate (snapshot, scroll, navigate, evaluate)
-      // Hide cursor for non-targeted actions
-      if(action==='snapshot'){/* keep cursor where it was */}
-      else{hideCursor();removeHighlight();}
+      if(action!=='snapshot'){removeHighlight();}
       var result=executeAction(action,params);
       if(callback)callback(result);
       return;
     }
-    // Clear previous highlight (will re-apply to new target)
+    // Clear previous highlight
     removeHighlight();
     // Step 1: Move cursor to element center
     var rect=el.getBoundingClientRect();
     var cx=rect.left+rect.width/2;
     var cy=rect.top+rect.height/2;
     moveCursorTo(cx,cy,function(){
-      // Step 2: Highlight element (stays visible!)
+      // Step 2: Highlight element (pulsing ring)
       highlightElement(el);
       // Step 3: Execute after brief highlight display
       setTimeout(function(){
         var result=executeAction(action,params);
-        // Cursor and highlight STAY — user can see what AI just operated
+        // Step 4: After click, switch highlight to fade-out (3s)
+        // Cursor STAYS at position — user sees where AI clicked
+        if(highlightedEl){
+          highlightedEl.classList.remove('cds-el-highlight');
+          highlightedEl.classList.add('cds-el-highlight-fade');
+          var fadeEl=highlightedEl;
+          setTimeout(function(){
+            fadeEl.classList.remove('cds-el-highlight-fade');
+          },3000);
+          highlightedEl=null;
+        }
         if(callback)callback(result);
       },200);
     });
@@ -1125,6 +1138,21 @@ export function buildWidgetScript(branchId: string, branchName: string): string 
         var targetEl=null;
         if((cmd.action==='click'||cmd.action==='type')&&cmd.params&&cmd.params.index!==undefined){
           targetEl=bridgeInteractiveElements[cmd.params.index]||null;
+        }
+        // Check for end-session signal
+        if(cmd.params&&cmd.params.__end_session){
+          updateOpsStep(cmd.id,'done',cmd.params.summary||'');
+          // Add completion marker
+          addOpsStep('end','snapshot','✅ AI 操作完成');
+          updateOpsStep('end','done','');
+          hideCursor();
+          removeHighlight();
+          // Auto-hide panel after 8s
+          setTimeout(function(){opsVisible=false;renderOpsPanel();},8000);
+          // Send result immediately
+          var endState=collectPageState();
+          fetch(API+'/bridge/result',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({branchId:BRANCH_ID,id:cmd.id,success:true,state:endState})}).catch(function(){});
+          return;
         }
         // Animate cursor → highlight → execute
         executeWithAnimation(targetEl,cmd.action,cmd.params||{},function(result){
