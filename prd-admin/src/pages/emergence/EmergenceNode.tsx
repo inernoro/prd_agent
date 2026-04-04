@@ -17,6 +17,7 @@ export interface EmergenceNodeData {
   bridgeAssumptions: string[];
   tags: string[];
   onExplore?: () => void;
+  onStatusChange?: (newStatus: string) => void;
 }
 
 type EmergenceNodeType = NodeProps & { data: EmergenceNodeData };
@@ -40,8 +41,11 @@ const dimensionConfig: Record<number, {
   },
 };
 
-const statusIcons: Record<string, typeof CheckCircle2> = {
-  idea: Lightbulb, planned: Clock, building: Pencil, done: CheckCircle2,
+const statusConfig: Record<string, { icon: typeof CheckCircle2; label: string; color: string; bg: string; next: string }> = {
+  idea: { icon: Lightbulb, label: '想法', color: 'rgba(255,255,255,0.5)', bg: 'rgba(255,255,255,0.04)', next: 'planned' },
+  planned: { icon: Clock, label: '计划中', color: 'rgba(59,130,246,0.85)', bg: 'rgba(59,130,246,0.08)', next: 'building' },
+  building: { icon: Pencil, label: '开发中', color: 'rgba(234,179,8,0.85)', bg: 'rgba(234,179,8,0.08)', next: 'done' },
+  done: { icon: CheckCircle2, label: '已完成', color: 'rgba(34,197,94,0.85)', bg: 'rgba(34,197,94,0.08)', next: 'idea' },
 };
 
 function StarRating({ score, max = 5 }: { score: number; max?: number }) {
@@ -56,7 +60,7 @@ function StarRating({ score, max = 5 }: { score: number; max?: number }) {
 
 function EmergenceNodeInner({ data, selected }: EmergenceNodeType) {
   const dim = dimensionConfig[data.dimension] ?? dimensionConfig[1];
-  const StatusIcon = statusIcons[data.status] ?? Lightbulb;
+  const sc = statusConfig[data.status] ?? statusConfig.idea;
   const isSeed = data.nodeType === 'seed';
 
   const cardStyle = useMemo((): React.CSSProperties => ({
@@ -94,7 +98,16 @@ function EmergenceNodeInner({ data, selected }: EmergenceNodeType) {
             {data.label}
           </div>
         </div>
-        <StatusIcon size={12} style={{ color: 'var(--text-muted)', flexShrink: 0 }} />
+        {/* 可点击状态徽章 */}
+        <button
+          onClick={(e) => { e.stopPropagation(); data.onStatusChange?.(sc.next); }}
+          className="flex items-center gap-1 px-1.5 py-0.5 rounded-[6px] cursor-pointer transition-all duration-200 flex-shrink-0 hover:brightness-125"
+          style={{ background: sc.bg, border: `1px solid ${sc.color.replace('0.85', '0.2')}` }}
+          title={`点击切换状态 → ${statusConfig[sc.next]?.label}`}
+        >
+          <sc.icon size={10} style={{ color: sc.color }} />
+          <span className="text-[9px] font-semibold" style={{ color: sc.color }}>{sc.label}</span>
+        </button>
       </div>
 
       {/* 描述 */}

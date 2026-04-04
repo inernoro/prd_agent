@@ -44,6 +44,7 @@ const dimColor: Record<number, string> = {
 function toFlowNodes(
   nodes: EmergenceNodeType[],
   onExplore: (nodeId: string) => void,
+  onStatusChange?: (nodeId: string, newStatus: string) => void,
 ): Node<EmergenceNodeData>[] {
   // BFS 计算深度
   const depthMap = new Map<string, number>();
@@ -105,6 +106,7 @@ function toFlowNodes(
         bridgeAssumptions: n.bridgeAssumptions ?? [],
         tags: n.tags ?? [],
         onExplore: () => onExplore(n.id),
+        onStatusChange: onStatusChange ? (s: string) => onStatusChange(n.id, s) : undefined,
       } satisfies EmergenceNodeData,
     };
   });
@@ -153,7 +155,7 @@ function EmergenceCanvasInner({ treeId, onBack }: CanvasProps) {
       phaseEvent: 'stage',
       itemEvent: 'node',
       onItem: (newNode) => {
-        const [flowNode] = toFlowNodes([newNode], handleExplore);
+        const [flowNode] = toFlowNodes([newNode], handleExplore, handleStatusChange);
         if (flowNode) {
           setNodes(prev => [...prev, flowNode]);
           setEdges(prev => [...prev, ...toFlowEdges([newNode])]);
@@ -170,7 +172,7 @@ function EmergenceCanvasInner({ treeId, onBack }: CanvasProps) {
       phaseEvent: 'stage',
       itemEvent: 'node',
       onItem: (newNode) => {
-        const [flowNode] = toFlowNodes([newNode], handleExplore);
+        const [flowNode] = toFlowNodes([newNode], handleExplore, handleStatusChange);
         if (flowNode) {
           setNodes(prev => [...prev, flowNode]);
           setEdges(prev => [...prev, ...toFlowEdges([newNode])]);
@@ -186,7 +188,7 @@ function EmergenceCanvasInner({ treeId, onBack }: CanvasProps) {
     const { tree, nodes: backendNodes } = res.data;
     setTreeTitle(tree.title);
     setNodeCount(tree.nodeCount);
-    setNodes(toFlowNodes(backendNodes, handleExplore));
+    setNodes(toFlowNodes(backendNodes, handleExplore, handleStatusChange));
     setEdges(toFlowEdges(backendNodes));
   }, [treeId]);
 
@@ -197,6 +199,15 @@ function EmergenceCanvasInner({ treeId, onBack }: CanvasProps) {
     if (isExploring || isEmerging) return;
     startExplore({ url: api.emergence.nodes.explore(nodeId) });
   }, [isExploring, isEmerging, startExplore]);
+
+  const handleStatusChange = useCallback(async (nodeId: string, newStatus: string) => {
+    const { updateEmergenceNode } = await import('@/services');
+    await updateEmergenceNode(nodeId, { status: newStatus });
+    // 更新本地节点状态
+    setNodes(prev => prev.map(n =>
+      n.id === nodeId ? { ...n, data: { ...n.data, status: newStatus as EmergenceNodeData['status'] } } : n
+    ));
+  }, [setNodes]);
 
   const handleEmerge = useCallback((fantasy: boolean) => {
     if (isExploring || isEmerging) return;

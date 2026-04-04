@@ -182,28 +182,77 @@ public class EmergenceService
 
     // ── Prompt 构建 ──
 
+    /// <summary>系统真实能力清单，注入到 AI prompt 中，让涌现基于现实</summary>
+    private const string SystemCapabilities = """
+        ## 当前系统已有能力（AI 必须基于这些能力推演，不能凭空编造）
+
+        ### 后端基础设施（.NET 8 / C# 12 / MongoDB）
+        - ILlmGateway：统一 LLM 调用网关，支持流式/非流式、模型池三级调度、健康管理
+        - Run/Worker：长任务异步执行模式，SSE afterSeq 断线续传
+        - RBAC：SystemRole + AdminPermissionCatalog (60+ 权限点) + Middleware
+        - 附件系统：Attachment 模型，支持 PDF/Word/Excel 文本提取（ExtractedText）
+        - Markdown 解析：ParsedPrd 模型，分节解析（Sections: Level/Title/Content）
+        - 文档空间：DocumentStore + DocumentEntry，支持文档存储与知识管理
+        - 水印系统：WatermarkConfig + 字体资产 + 渲染器
+        - 配置市场：IForkable 白名单复制 + CONFIG_TYPE_REGISTRY
+        - 工作流引擎：WorkflowNode/Edge DAG + CapsuleExecutor + 30+ 舱类型
+        - 分享链接：Token + 过期 + 访问计数模式（DefectShareLink 可参照）
+        - Webhook：WebhookDeliveryLog + 通知投递
+
+        ### 已有 Agent
+        - PRD Agent：PRD 解读与问答（appKey: prd-agent）
+        - Visual Agent：视觉创作（appKey: visual-agent）
+        - Literary Agent：文学创作配图（appKey: literary-agent）
+        - Defect Agent：缺陷管理 + AI 分析 + 修复报告（appKey: defect-agent）
+        - Video Agent：文章转视频教程（appKey: video-agent）
+        - Report Agent：周报管理 Phase 1-4（appKey: report-agent）
+
+        ### 前端基础设施（React 18 / Vite / Zustand / Radix UI）
+        - React Flow（@xyflow/react）：已用于工作流画布，支持自定义节点/边
+        - GlassCard：液态玻璃容器组件（macOS 风格 backdrop-filter）
+        - TabBar / PageHeader：统一导航栏
+        - SSE 流式组件：SsePhaseBar + SseTypingBlock + SseStreamPanel
+        - ECharts：数据可视化
+        - Three.js + React Three Fiber：3D 可视化
+        - Framer Motion：动画引擎
+        - Lexical：富文本编辑器
+
+        ### 数据资产（101 个 MongoDB 集合）
+        - 用户/群组/权限/会话/消息/附件/文档/评论
+        - 模型配置/平台/日志/调度/模型池/测试桩
+        - 图片资产/工作空间/画布/水印
+        - 缺陷报告/模板/项目/Webhook
+        - 周报/团队/模板/数据源/提交记录
+        - 工作流/执行记录/调度/密钥
+        """;
+
     private static string BuildExploreSystemPrompt(EmergenceNode parent, List<string> existingTitles)
     {
         var sb = new StringBuilder();
-        sb.AppendLine("你是一个涌现探索引擎，遵循「反向自洽」原则：");
-        sb.AppendLine("1. 每个生成的节点必须有现实锚点（grounding），标明它依赖的具体代码/API/文档");
-        sb.AppendLine("2. 不能凭空编造功能，必须基于父节点的现实能力向下派生");
+        sb.AppendLine("你是一个涌现探索引擎。你必须基于用户提供的种子内容和下方的系统真实能力清单，推演出可直接实现的子功能。");
+        sb.AppendLine();
+        sb.AppendLine("## 反向自洽原则");
+        sb.AppendLine("1. 每个节点必须有现实锚点——标明它依赖系统中哪个具体能力（ILlmGateway / Attachment.ExtractedText / WorkflowNode 等）");
+        sb.AppendLine("2. 禁止编造系统不存在的能力。如果需要系统没有的能力，在 groundingContent 中明确标注「需新建」");
         sb.AppendLine("3. 生成的节点不能与已有节点重复");
+        sb.AppendLine("4. techPlan 必须具体到「用哪个 Service / Controller / 模型完成」，不要泛泛而谈");
+        sb.AppendLine();
+        sb.Append(SystemCapabilities);
         sb.AppendLine();
         sb.AppendLine("## 已有节点（避免重复）");
         foreach (var title in existingTitles.Take(20))
             sb.AppendLine($"- {title}");
         sb.AppendLine();
-        sb.AppendLine("## 输出格式（严格 JSON 数组）");
+        sb.AppendLine("## 输出格式（严格 JSON 数组，3-5 个节点）");
         sb.AppendLine("```json");
         sb.AppendLine("[");
         sb.AppendLine("  {");
-        sb.AppendLine("    \"title\": \"功能名称\",");
-        sb.AppendLine("    \"description\": \"一句话描述\",");
-        sb.AppendLine("    \"groundingContent\": \"现实锚点：这个功能依赖什么已有能力（代码路径/API/模型）\",");
+        sb.AppendLine("    \"title\": \"功能名称（简洁，4-10 字）\",");
+        sb.AppendLine("    \"description\": \"一句话描述用户价值（不是技术描述）\",");
+        sb.AppendLine("    \"groundingContent\": \"依赖已有能力：XXX（具体到组件/API/模型名）\",");
         sb.AppendLine("    \"groundingType\": \"capability|code|api|document\",");
-        sb.AppendLine("    \"groundingRef\": \"具体引用（文件路径或 API 路由）\",");
-        sb.AppendLine("    \"techPlan\": \"简要技术方案（2-3 句）\",");
+        sb.AppendLine("    \"groundingRef\": \"具体引用（如 ILlmGateway.SendAsync / Attachment.ExtractedText）\",");
+        sb.AppendLine("    \"techPlan\": \"用 XXService 调用 YY，在 ZZController 暴露 API，前端用 AAComponent 展示\",");
         sb.AppendLine("    \"valueScore\": 4,");
         sb.AppendLine("    \"difficultyScore\": 2,");
         sb.AppendLine("    \"tags\": [\"标签1\", \"标签2\"]");
@@ -220,32 +269,36 @@ public class EmergenceService
         bool includeFantasy)
     {
         var sb = new StringBuilder();
-        sb.AppendLine("你是一个涌现组合引擎，遵循「反向自洽」原则：");
-        sb.AppendLine("1. 涌现 = 将多个已知节点交叉组合，发现新的可能性");
-        sb.AppendLine("2. 每个涌现节点必须标明它组合了哪些源节点（parentTitles）");
-        sb.AppendLine("3. 必须标注「桥梁假设」——组合成立需要的前提条件（可控未知数）");
-        sb.AppendLine("4. 涌现不是随机拼凑，而是「A + B 自然产生 C」的逻辑推演");
+        sb.AppendLine("你是一个涌现组合引擎。你的任务是将多个已有功能节点交叉组合，发现「A + B 自然产生 C」的涌现价值。");
+        sb.AppendLine();
+        sb.AppendLine("## 反向自洽原则");
+        sb.AppendLine("1. 涌现 ≠ 随机拼凑。每个组合必须有逻辑推演：A 提供 X 能力 + B 提供 Y 能力 → 自然产生 Z");
+        sb.AppendLine("2. 必须标注「桥梁假设」——这个组合成立需要什么前提条件");
+        sb.AppendLine("3. 每个涌现节点必须标明它组合了哪些源节点（parentTitles 必须是下方节点的确切标题）");
         sb.AppendLine();
 
         if (includeFantasy)
         {
-            sb.AppendLine("## 三维幻想模式已开启");
-            sb.AppendLine("在二维组合的基础上，可以放宽技术约束，想象 3-5 年后的可能性。");
-            sb.AppendLine("但仍然必须标注「假设条件」——幻想的前提是什么。");
-            sb.AppendLine("幻想不是胡说，是「如果 X 成立，那么 Y 就自然涌现」的有根推演。");
+            sb.AppendLine("## 三维幻想模式");
+            sb.AppendLine("放宽技术约束，想象 3-5 年后的可能性。但仍然必须：");
+            sb.AppendLine("- 标注假设条件（如「假设已有 Embedding 向量服务」「假设用户量 > 10000」）");
+            sb.AppendLine("- 从现有节点出发推演，不是天马行空");
+            sb.AppendLine("- 幻想是「如果 X 成立，那么 Y 就自然涌现」的有根推演");
             sb.AppendLine();
         }
 
-        sb.AppendLine("## 输出格式（严格 JSON 数组）");
+        sb.Append(SystemCapabilities);
+        sb.AppendLine();
+        sb.AppendLine("## 输出格式（严格 JSON 数组，2-4 个节点）");
         sb.AppendLine("```json");
         sb.AppendLine("[");
         sb.AppendLine("  {");
-        sb.AppendLine("    \"title\": \"涌现功能名称\",");
-        sb.AppendLine("    \"description\": \"一句话描述\",");
-        sb.AppendLine("    \"parentTitles\": [\"源节点A\", \"源节点B\"],");
-        sb.AppendLine("    \"groundingContent\": \"组合逻辑：A 提供 X 能力 + B 提供 Y 能力 = 自然产生 Z\",");
-        sb.AppendLine("    \"bridgeAssumptions\": [\"假设条件1\", \"假设条件2\"],");
-        sb.AppendLine("    \"techPlan\": \"简要技术方案（2-3 句）\",");
+        sb.AppendLine("    \"title\": \"涌现功能名称（简洁，4-10 字）\",");
+        sb.AppendLine("    \"description\": \"一句话描述用户价值\",");
+        sb.AppendLine("    \"parentTitles\": [\"源节点A的确切标题\", \"源节点B的确切标题\"],");
+        sb.AppendLine("    \"groundingContent\": \"A 提供 X + B 提供 Y = 自然产生 Z（具体到组件名）\",");
+        sb.AppendLine("    \"bridgeAssumptions\": [\"假设条件（具体、可验证）\"],");
+        sb.AppendLine("    \"techPlan\": \"用 XXService 结合 YY，在 ZZController 暴露 API\",");
         sb.AppendLine("    \"valueScore\": 5,");
         sb.AppendLine("    \"difficultyScore\": 3,");
         sb.AppendLine("    \"tags\": [\"标签1\"]");
