@@ -94,6 +94,9 @@ export function buildWidgetScript(branchId: string, branchName: string): string 
     #cds-bridge-ops .ops-step-text.error{color:#f85149}
     #cds-bridge-ops .ops-step-detail{font-size:10px;color:#6e7681;margin-top:1px}
     .cds-el-highlight{outline:3px solid rgba(96,165,250,0.7)!important;outline-offset:2px!important;animation:cds-highlight-pulse 1s ease-in-out infinite!important;position:relative;z-index:99990!important;border-radius:4px!important}
+    #cds-ai-cursor{position:fixed;z-index:100001;pointer-events:none;transition:left 0.4s cubic-bezier(.4,0,.2,1),top 0.4s cubic-bezier(.4,0,.2,1),opacity 0.2s;opacity:0}
+    #cds-ai-cursor.visible{opacity:1}
+    #cds-ai-cursor .cursor-ring{position:absolute;left:-12px;top:-12px;width:24px;height:24px;border-radius:50%;border:2px solid rgba(96,165,250,0.6);animation:cds-highlight-pulse 1.2s ease-in-out infinite}
   \`;
   document.head.appendChild(css);
 
@@ -634,7 +637,7 @@ export function buildWidgetScript(branchId: string, branchName: string): string 
   }
 
   function actionLabel(action){
-    var labels={click:'点击元素',type:'输入文本',scroll:'滚动页面',navigate:'页面导航',evaluate:'执行脚本',snapshot:'读取页面'};
+    var labels={click:'点击元素',type:'输入文本',scroll:'滚动页面',navigate:'页面导航','spa-navigate':'SPA 页面跳转',evaluate:'执行脚本',snapshot:'读取页面'};
     return labels[action]||action;
   }
 
@@ -710,6 +713,76 @@ export function buildWidgetScript(branchId: string, branchName: string): string 
       highlightedEl.classList.remove('cds-el-highlight');
       highlightedEl=null;
     }
+  }
+
+  // ── AI Cursor (SVG pointer + trajectory animation) ──
+  var aiCursorEl=null;
+  var aiCursorPos={x:-40,y:-40};
+
+  function ensureCursor(){
+    if(aiCursorEl)return aiCursorEl;
+    var el=document.createElement('div');
+    el.id='cds-ai-cursor';
+    el.setAttribute('data-page-agent-ignore','');
+    el.innerHTML='<svg width="20" height="20" viewBox="0 0 24 24" fill="none" style="filter:drop-shadow(0 2px 4px rgba(0,0,0,0.4))"><path d="M5.5 3.21V20.8a.5.5 0 00.86.35l4.38-4.58 3.8 8.41a.5.5 0 00.67.26l2.5-1.13a.5.5 0 00.26-.67L14.2 15l6.08-.86a.5.5 0 00.18-.91L5.94 3.05a.5.5 0 00-.44.16z" fill="#60a5fa" stroke="#1e3a5f" stroke-width="1"/></svg><div class="cursor-ring"></div>';
+    el.style.left=aiCursorPos.x+'px';
+    el.style.top=aiCursorPos.y+'px';
+    document.body.appendChild(el);
+    aiCursorEl=el;
+    return el;
+  }
+
+  function moveCursorTo(x,y,callback){
+    var cursor=ensureCursor();
+    cursor.classList.add('visible');
+    // Start from current position
+    cursor.style.left=aiCursorPos.x+'px';
+    cursor.style.top=aiCursorPos.y+'px';
+    // Trigger reflow for transition
+    cursor.offsetHeight;
+    // Animate to target
+    aiCursorPos.x=x;
+    aiCursorPos.y=y;
+    cursor.style.left=x+'px';
+    cursor.style.top=y+'px';
+    // Wait for transition to complete (400ms) + dwell (300ms)
+    setTimeout(function(){
+      if(callback)callback();
+    },700);
+  }
+
+  function hideCursor(){
+    if(aiCursorEl){
+      aiCursorEl.classList.remove('visible');
+    }
+  }
+
+  // ── Animated action execution (cursor → highlight → execute) ──
+  function executeWithAnimation(el,action,params,callback){
+    if(!el){
+      // No element to animate (snapshot, scroll, navigate, evaluate)
+      var result=executeAction(action,params);
+      if(callback)callback(result);
+      return;
+    }
+    // Step 1: Move cursor to element center
+    var rect=el.getBoundingClientRect();
+    var cx=rect.left+rect.width/2;
+    var cy=rect.top+rect.height/2;
+    moveCursorTo(cx,cy,function(){
+      // Step 2: Highlight element
+      highlightElement(el);
+      // Step 3: Execute after brief highlight display
+      setTimeout(function(){
+        var result=executeAction(action,params);
+        // Step 4: Hide cursor after action
+        setTimeout(function(){
+          hideCursor();
+          removeHighlight();
+          if(callback)callback(result);
+        },400);
+      },200);
+    });
   }
 
   // ── Console / Network interceptors ──
@@ -957,6 +1030,54 @@ export function buildWidgetScript(branchId: string, branchName: string): string 
         window.location.href=navUrl;
         return {success:true};
       }
+      if(action==='spa-navigate'){
+        // SPA navigation without page reload — preserves sessionStorage token
+        var spaUrl=params.url;
+        if(!spaUrl)return {success:false,error:'url is required'};
+        // Strategy 1: Find a React Router <a> with matching href and click it
+        var links=document.querySelectorAll('a[href]');
+        for(var li=0;li<links.length;li++){
+          var href=links[li].getAttribute('href');
+          if(href===spaUrl){
+            links[li].click();
+            return {success:true};
+          }
+        }
+        // Strategy 2: Find React Router internals via __reactContainer
+        try{
+          var rRoot=document.getElementById('root');
+          if(rRoot){
+            var rKey=Object.keys(rRoot).find(function(k){return k.startsWith('__reactContainer')});
+            if(rKey){
+              var rFiber=rRoot[rKey];
+              // Walk fiber tree to find Router context with navigate
+              function findNav(f,d){
+                if(!f||d>60)return null;
+                // Check memoizedState for router with navigate
+                var s=f.memoizedState;
+                while(s){
+                  if(s.memoizedState&&typeof s.memoizedState==='object'){
+                    var ms=s.memoizedState;
+                    if(ms.router&&typeof ms.router.navigate==='function')return ms.router;
+                    if(ms.navigation&&typeof ms.navigate==='function')return ms;
+                  }
+                  s=s.next;
+                }
+                return findNav(f.child,d+1)||findNav(f.sibling,d+1);
+              }
+              var router=findNav(rFiber,0);
+              if(router&&router.navigate){
+                router.navigate(spaUrl);
+                return {success:true};
+              }
+            }
+          }
+        }catch(e){/* fall through */}
+        // Strategy 3: Fallback — use history.pushState + popstate
+        history.pushState({},'',spaUrl);
+        window.dispatchEvent(new PopStateEvent('popstate',{state:{}}));
+        return {success:true,data:'fallback:pushState'};
+      }
       if(action==='evaluate'){
         var result;
         try{result=eval(params.script);}catch(e){return {success:false,error:e.message};}
@@ -997,30 +1118,36 @@ export function buildWidgetScript(branchId: string, branchName: string): string 
         console.log('[CDS Bridge] Executing: '+cmd.action+' — '+desc);
         // Show in operation panel
         addOpsStep(cmd.id,cmd.action,desc);
-        var result=executeAction(cmd.action,cmd.params||{});
-        if(!result.success){
-          updateOpsStep(cmd.id,'error',result.error||'');
-          removeHighlight();
+        // Determine target element for cursor animation
+        var targetEl=null;
+        if((cmd.action==='click'||cmd.action==='type')&&cmd.params&&cmd.params.index!==undefined){
+          targetEl=bridgeInteractiveElements[cmd.params.index]||null;
         }
-        // Wait for DOM to stabilize, then send result
-        setTimeout(function(){
-          removeHighlight();
-          if(result.success)updateOpsStep(cmd.id,'done','');
-          var newState=collectPageState();
-          var response={
-            branchId:BRANCH_ID,
-            id:cmd.id,
-            success:result.success,
-            error:result.error||undefined,
-            data:result.data||undefined,
-            state:newState
-          };
-          fetch(API+'/bridge/result',{
-            method:'POST',
-            headers:{'Content-Type':'application/json'},
-            body:JSON.stringify(response)
-          }).catch(function(){});
-        },cmd.action==='navigate'?1000:300);
+        // Animate cursor → highlight → execute
+        executeWithAnimation(targetEl,cmd.action,cmd.params||{},function(result){
+          if(!result.success){
+            updateOpsStep(cmd.id,'error',result.error||'');
+          }
+          // Wait for DOM to stabilize, then send result
+          var delay=(cmd.action==='navigate'||cmd.action==='spa-navigate')?1500:300;
+          setTimeout(function(){
+            if(result.success)updateOpsStep(cmd.id,'done','');
+            var newState=collectPageState();
+            var response={
+              branchId:BRANCH_ID,
+              id:cmd.id,
+              success:result.success,
+              error:result.error||undefined,
+              data:result.data||undefined,
+              state:newState
+            };
+            fetch(API+'/bridge/result',{
+              method:'POST',
+              headers:{'Content-Type':'application/json'},
+              body:JSON.stringify(response)
+            }).catch(function(){});
+          },delay);
+        });
       }
     })
     .catch(function(){

@@ -151,6 +151,7 @@ cd prd-api && dotnet build --no-restore 2>&1 | grep -E "error CS|warning CS" | h
 | `snapshot-fallback.md` | `Controllers/**/*.cs`, `Services/**/*.cs` | 快照反规范化必须有等价覆盖的兜底查询路径 |
 | `enum-ripple-audit.md` | `Enums/**/*.cs`, `types/**/*.ts` | 枚举/常量扩展时全栈 6 层涟漪审计 |
 | `codebase-snapshot.md` | 无 glob (手动维护) | 项目快照：架构模式、功能注册表、98 个 MongoDB 集合 |
+| `bridge-ops.md` | `cds/src/**/*.ts` | Bridge 操作规范：鼠标轨迹 + spa-navigate + description 必填 |
 
 ---
 
@@ -183,6 +184,7 @@ cd prd-api && dotnet build --no-restore 2>&1 | grep -E "error CS|warning CS" | h
 | **theme-transition** | `/theme-transition` | 主题切换圆形过渡动效 (View Transition API) |
 | **agent-guide** | `/help` | Agent 开发新手引导：阶段跟踪 + 技能推荐 + 进度管理 |
 | **scope-check** | `/scope-check` | 分支受控检查：变更文件分类 + 越界检测 + append-only 审计 |
+| **bridge** | `/bridge` | Page Agent Bridge：通过 CDS 预览页面远程操作浏览器（鼠标轨迹 + DOM 读取 + 点击/输入） |
 
 ### 使用指引
 

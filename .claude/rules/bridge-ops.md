@@ -1,0 +1,61 @@
+# Page Agent Bridge 操作规范
+
+Agent 通过 CDS Bridge 操作预览页面时的强制规则。
+
+## 强制规则
+
+### 1. 操作前必须带 description
+
+每条 `POST /api/bridge/command` 必须包含 `description` 字段，用中文描述操作意图。用户在 Widget 操作面板中看到的就是这个文字。
+
+```json
+// ✅ 正确
+{"action":"click","params":{"index":6},"description":"点击「登录」按钮"}
+// ❌ 禁止
+{"action":"click","params":{"index":6}}
+```
+
+### 2. 页面内跳转用 `spa-navigate`，禁止 `navigate`
+
+`navigate` 会全页面刷新，导致 `sessionStorage` 中的登录 token 丢失。登录后的所有页面跳转必须使用 `spa-navigate`。
+
+```json
+// ✅ 登录后跳转
+{"action":"spa-navigate","params":{"url":"/literary"},"description":"跳转到文学创作页面"}
+// ❌ 会丢 session
+{"action":"navigate","params":{"url":"/literary"}}
+```
+
+`navigate` 仅用于：登录页（未登录状态，不怕丢 token）。
+
+### 3. 操作前先 snapshot
+
+每次操作序列开始时，先发一条 `snapshot` 获取最新 DOM 和元素索引。元素索引在页面变化后会失效。
+
+### 4. 登录流程标准化
+
+```
+1. navigate → /login              （未登录可用 navigate）
+2. type index:0 "用户名" clear:true
+3. type index:1 "密码" clear:true
+4. click index:2                   （登录按钮）
+5. 等待 5s
+6. snapshot                        （确认登录成功）
+7. 之后只用 spa-navigate 和 click
+```
+
+### 5. 鼠标轨迹自动触发
+
+`click` 和 `type` 操作会自动触发鼠标轨迹动画（光标移动 → 目标高亮 → 执行）。Agent 无需额外操作，Widget 自动处理视觉反馈。
+
+## 指令参考
+
+| action | 参数 | 说明 |
+|--------|------|------|
+| `snapshot` | `{}` | 读取页面 DOM + 状态 |
+| `click` | `{index}` | 点击第 N 个可交互元素（带鼠标动画） |
+| `type` | `{index, text, clear?}` | 在输入框中输入文本（带鼠标动画） |
+| `scroll` | `{direction, pixels?}` | 滚动页面 |
+| `spa-navigate` | `{url}` | SPA 内部跳转（不刷新页面） |
+| `navigate` | `{url}` | 全页面跳转（仅用于登录页） |
+| `evaluate` | `{script}` | 执行 JS（调试用） |

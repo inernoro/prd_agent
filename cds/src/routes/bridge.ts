@@ -80,7 +80,7 @@ export function createBridgeRouter(deps: BridgeRouterDeps): Router {
       return;
     }
 
-    const validActions = ['click', 'type', 'scroll', 'navigate', 'evaluate', 'snapshot'];
+    const validActions = ['click', 'type', 'scroll', 'navigate', 'spa-navigate', 'evaluate', 'snapshot'];
     if (!validActions.includes(action)) {
       res.status(400).json({ error: `invalid action: ${action}. Valid: ${validActions.join(', ')}` });
       return;

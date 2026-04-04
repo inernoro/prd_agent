@@ -37,7 +37,7 @@ export interface PageState {
 
 export interface BridgeCommand {
   id: string;
-  action: 'click' | 'type' | 'scroll' | 'navigate' | 'evaluate' | 'snapshot';
+  action: 'click' | 'type' | 'scroll' | 'navigate' | 'spa-navigate' | 'evaluate' | 'snapshot';
   params: Record<string, unknown>;
   /** Human-readable description shown in the operation panel (e.g. "点击「登录」按钮") */
   description?: string;
