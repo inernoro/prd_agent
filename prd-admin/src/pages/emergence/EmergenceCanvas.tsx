@@ -13,7 +13,7 @@ import {
   Panel,
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
-import { Sparkle, TreePine, Download, Plus, Star } from 'lucide-react';
+import { Sparkle, TreePine, Download, Plus, Star, MousePointerClick, Zap, X } from 'lucide-react';
 import { useSseStream } from '@/lib/useSseStream';
 import { SsePhaseBar } from '@/components/sse/SsePhaseBar';
 import { GlassCard } from '@/components/design/GlassCard';
@@ -215,9 +215,28 @@ function EmergenceCanvasInner({ treeId, onBack }: CanvasProps) {
     URL.revokeObjectURL(url);
   }, [treeId, treeTitle]);
 
+  // ── 引导状态 ──
+  const [guideStep, setGuideStep] = useState<'seed' | 'explored' | 'emerged' | 'dismissed'>('seed');
+  const [guideDismissed, setGuideDismissed] = useState(false);
+
+  // 根据节点数量自动推进引导
+  useEffect(() => {
+    if (guideDismissed) return;
+    if (nodeCount <= 1) setGuideStep('seed');
+    else if (nodeCount < 5) setGuideStep('explored');
+    else setGuideStep('emerged');
+  }, [nodeCount, guideDismissed]);
+
   const isStreaming = isExploring || isEmerging;
   const currentPhase = isExploring ? explorePhase : emergePhase;
   const currentMsg = isExploring ? exploreMsg : emergeMsg;
+
+  // 引导文案
+  const guideContent: Record<string, { title: string; desc: string; icon: typeof Zap }> = {
+    seed: { title: '点击种子节点的「探索」按钮', desc: 'AI 会基于种子内容，在系统内寻找可实现的子功能', icon: MousePointerClick },
+    explored: { title: '继续探索，或尝试涌现', desc: '节点达到 3 个后，顶部会出现「二维涌现」按钮——AI 将组合多个节点发现新可能', icon: Sparkle },
+    emerged: { title: '尝试三维幻想', desc: '放宽技术约束，想象 3-5 年后的可能性。每个幻想仍需标注假设条件', icon: Star },
+  };
 
   return (
     <div className="h-full min-h-0 flex flex-col">
@@ -285,6 +304,55 @@ function EmergenceCanvasInner({ treeId, onBack }: CanvasProps) {
               <span style={{ color: dimColor[3] }}>★ 三维·幻想</span>
             </div>
           </Panel>
+
+          {/* 引导面板 */}
+          {!guideDismissed && guideContent[guideStep] && !isStreaming && (
+            <Panel position="bottom-right">
+              {(() => {
+                const g = guideContent[guideStep];
+                return (
+                  <div className="w-[260px] p-3.5 rounded-[12px] relative"
+                    style={{
+                      background: 'linear-gradient(180deg, var(--glass-bg-start) 0%, var(--glass-bg-end) 100%)',
+                      border: '1px solid rgba(147,51,234,0.18)',
+                      backdropFilter: 'blur(40px) saturate(180%)',
+                      boxShadow: '0 8px 24px -4px rgba(0,0,0,0.4), inset 0 1px 1px rgba(255,255,255,0.08)',
+                    }}>
+                    <button
+                      onClick={() => setGuideDismissed(true)}
+                      className="absolute top-2 right-2 w-5 h-5 rounded-[6px] flex items-center justify-center cursor-pointer hover:bg-white/6 transition-colors duration-200"
+                      style={{ color: 'var(--text-muted)' }}>
+                      <X size={11} />
+                    </button>
+                    <div className="flex items-start gap-2.5">
+                      <div className="w-7 h-7 rounded-[8px] flex items-center justify-center flex-shrink-0 mt-0.5"
+                        style={{ background: 'rgba(147,51,234,0.1)', border: '1px solid rgba(147,51,234,0.15)' }}>
+                        <g.icon size={13} style={{ color: 'rgba(147,51,234,0.9)' }} />
+                      </div>
+                      <div className="min-w-0 pr-4">
+                        <p className="text-[12px] font-semibold mb-1" style={{ color: 'var(--text-primary)' }}>
+                          {g.title}
+                        </p>
+                        <p className="text-[11px] leading-[1.5]" style={{ color: 'var(--text-muted)' }}>
+                          {g.desc}
+                        </p>
+                      </div>
+                    </div>
+                    {/* 进度指示 */}
+                    <div className="flex gap-1.5 mt-3 justify-center">
+                      {['seed', 'explored', 'emerged'].map((s, i) => (
+                        <div key={s} className="h-1 rounded-full transition-all duration-300"
+                          style={{
+                            width: s === guideStep ? 20 : 6,
+                            background: s === guideStep ? 'rgba(147,51,234,0.7)' : 'rgba(255,255,255,0.1)',
+                          }} />
+                      ))}
+                    </div>
+                  </div>
+                );
+              })()}
+            </Panel>
+          )}
         </ReactFlow>
       </div>
     </div>
@@ -338,16 +406,39 @@ export function EmergenceExplorerPage() {
             <span className="ml-2 text-[12px]" style={{ color: 'var(--text-muted)' }}>加载中...</span>
           </div>
         ) : trees.length === 0 ? (
-          <div className="flex flex-col items-center justify-center py-16">
-            <TreePine size={48} style={{ color: 'var(--text-muted)', opacity: 0.3, marginBottom: 16 }} />
-            <p className="text-[14px] font-semibold mb-1" style={{ color: 'var(--text-secondary)' }}>
-              还没有涌现树
+          <div className="flex flex-col items-center justify-center py-12">
+            <TreePine size={44} style={{ color: 'var(--text-muted)', opacity: 0.3, marginBottom: 20 }} />
+            <p className="text-[16px] font-semibold mb-1" style={{ color: 'var(--text-primary)' }}>
+              涌现探索器
             </p>
-            <p className="text-[12px] mb-4" style={{ color: 'var(--text-muted)' }}>
-              从一颗种子开始，探索 → 组合 → 涌现
+            <p className="text-[12px] mb-6" style={{ color: 'var(--text-muted)' }}>
+              从一颗种子开始，AI 帮你发现下一步做什么
             </p>
-            <Button variant="primary" size="xs" onClick={() => setShowCreate(true)}>
-              <Plus size={13} /> 开始涌现
+
+            {/* 三步引导 */}
+            <div className="grid grid-cols-3 gap-4 mb-8 max-w-[560px] w-full">
+              {[
+                { step: '1', icon: TreePine, title: '种下种子', desc: '上传一段文档或方案作为起点' },
+                { step: '2', icon: Zap, title: '探索生长', desc: '点击节点，AI 基于现实能力生成子功能' },
+                { step: '3', icon: Sparkle, title: '涌现组合', desc: '多个节点交叉组合，发现意想不到的可能' },
+              ].map(s => (
+                <div key={s.step} className="surface-inset rounded-[12px] p-4 flex flex-col items-center text-center">
+                  <div className="w-8 h-8 rounded-full flex items-center justify-center mb-2.5"
+                    style={{ background: 'rgba(147,51,234,0.08)', border: '1px solid rgba(147,51,234,0.12)' }}>
+                    <s.icon size={14} style={{ color: 'rgba(147,51,234,0.85)' }} />
+                  </div>
+                  <p className="text-[12px] font-semibold mb-1" style={{ color: 'var(--text-primary)' }}>
+                    {s.title}
+                  </p>
+                  <p className="text-[11px] leading-[1.5]" style={{ color: 'var(--text-muted)' }}>
+                    {s.desc}
+                  </p>
+                </div>
+              ))}
+            </div>
+
+            <Button variant="primary" size="md" onClick={() => setShowCreate(true)}>
+              <Plus size={15} /> 种下第一颗种子
             </Button>
           </div>
         ) : (
