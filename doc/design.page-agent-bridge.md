@@ -1,6 +1,6 @@
 # Page Agent Bridge — 编码 Agent 的浏览器之眼
 
-> **日期**：2026-04-04 | **状态**：设计中
+> **日期**：2026-04-04 | **状态**：已落地（HTTP 轮询模式）
 >
 > 让编码 Agent 通过 CDS 预览页面的 Badge 读取 DOM、执行操作，形成"感知→决策→操作→反馈"闭环。
 
@@ -44,21 +44,22 @@
 │      ├── DOM 提取器: 遍历 DOM → 简化文本格式                  │
 │      ├── 操作执行器: click / type / scroll / evaluate         │
 │      ├── 状态采集器: console 错误 / 网络异常 / 路由变化        │
-│      └── WebSocket 客户端 → CDS Bridge                       │
+│      └── HTTP 轮询客户端 → /_cds/api/bridge/*                │
 │                                                              │
 └──────────────────────────────┬────────────────────────────────┘
-                               │ WebSocket (ws://cds:9900/bridge/ws)
+                               │ HTTP 轮询 (每 2s，复用 /_cds/api 通道)
                                ▼
 ┌─ CDS Server ────────────────────────────────────────────────┐
 │                                                              │
 │  Bridge 端点 (新增)                                          │
-│  ├── WebSocket Hub: 管理每个分支的 Bridge 连接                │
+│  ├── POST /api/bridge/heartbeat         ← Widget 心跳+上报状态│
+│  ├── POST /api/bridge/result            ← Widget 回传指令结果 │
 │  ├── GET  /api/bridge/state/:branchId   → Agent 读取页面状态 │
 │  ├── POST /api/bridge/command/:branchId → Agent 下发操作指令 │
 │  ├── POST /api/bridge/navigate-request  → Agent 请求用户导航 │
 │  └── GET  /api/bridge/connections       → 查看所有活跃连接   │
 │                                                              │
-│  分支隔离: WebSocket 按 branchId 分组，一个分支一个连接       │
+│  分支隔离: 按 branchId 分组，一个分支一个连接                 │
 │                                                              │
 └──────────────────────────────┬────────────────────────────────┘
                                │ REST API
@@ -169,51 +170,30 @@ window.fetch = function() {
 
 ## 五、CDS Bridge 端点
 
-### 5.1 WebSocket Hub
+### 5.1 通信模式：HTTP 轮询
+
+> **设计决策**：最初设计为 WebSocket，但实测发现 WebSocket 通过 Cloudflare → Nginx → Worker Proxy → Master 四层代理链路不稳定（心跳 PING 帧在代理传递中导致断连）。改用 Widget 已有的 `/_cds/api/` HTTP 通道，该通道已被部署/拉取等功能长期验证。
+
+Widget 每 2 秒轮询一次：
 
 ```
-ws://cds-host:9900/bridge/ws?branchId=xxx
+POST /api/bridge/heartbeat     ← 上报 branchId + 当前 PageState，返回待执行指令
+POST /api/bridge/result        ← 回传指令执行结果 + 执行后的 PageState
 ```
 
-- 每个 `branchId` 最多一个活跃 WebSocket 连接（后连接替换前连接）
-- 连接建立后立即发送一次 `snapshot` 指令，获取初始页面状态
-- 心跳：每 15 秒 ping/pong
-- 断线后 Widget 自动重连（指数退避 1s → 2s → 4s → 8s，最大 30s）
-
-**消息协议**：
-
-```typescript
-// CDS → Widget（下行指令）
-interface BridgeCommand {
-  id: string;          // 指令 ID（用于匹配响应）
-  action: 'click' | 'type' | 'scroll' | 'navigate' | 'evaluate' | 'snapshot';
-  params: Record<string, unknown>;
-}
-
-// Widget → CDS（上行响应）
-interface BridgeResponse {
-  id: string;          // 对应的指令 ID
-  success: boolean;
-  error?: string;
-  state: PageState;    // 操作后的页面状态
-}
-
-// Widget → CDS（主动上报）
-interface BridgeEvent {
-  type: 'connected' | 'disconnected' | 'page-changed' | 'error';
-  state?: PageState;
-  error?: string;
-}
-```
+连接存活判定：15 秒内有 heartbeat 即视为活跃，超时自动清理。
 
 ### 5.2 REST API
 
-| 端点 | 方法 | 用途 | 请求体 | 响应 |
-|------|------|------|--------|------|
-| `/api/bridge/connections` | GET | 查看所有活跃 Bridge 连接 | — | `{ connections: [{ branchId, url, connectedAt }] }` |
-| `/api/bridge/state/:branchId` | GET | 读取页面状态 | — | `PageState \| { error: 'no connection' }` |
-| `/api/bridge/command/:branchId` | POST | 下发操作指令 | `BridgeCommand` | `BridgeResponse`（同步等待） |
-| `/api/bridge/navigate-request` | POST | 请求用户打开页面 | `{ branchId, url, reason }` | `{ requestId }` |
+| 端点 | 方法 | 消费方 | 用途 |
+|------|------|--------|------|
+| `/api/bridge/heartbeat` | POST | Widget | 心跳 + 上报状态，返回待执行指令 |
+| `/api/bridge/result` | POST | Widget | 回传指令执行结果 |
+| `/api/bridge/connections` | GET | Agent | 查看所有活跃连接 |
+| `/api/bridge/state/:branchId` | GET | Agent | 读取最新页面状态 |
+| `/api/bridge/command/:branchId` | POST | Agent | 下发操作指令（同步等待结果） |
+| `/api/bridge/navigate-request` | POST | Agent | 请求用户打开页面 |
+| `/api/bridge/navigate-requests/:branchId` | GET | Widget | 轮询待处理导航请求 |
 
 **指令执行流程**（同步等待模式）：
 
@@ -221,11 +201,11 @@ interface BridgeEvent {
 Agent POST /api/bridge/command/my-branch
   body: { action: "click", params: { index: 7 } }
     ↓
-CDS 通过 WebSocket 发给 Widget
+Widget 下次轮询 heartbeat 时获取指令
     ↓
 Widget 执行 click → 等待 DOM 稳定（300ms）→ 采集新状态
     ↓
-Widget 通过 WebSocket 返回 BridgeResponse
+Widget POST /api/bridge/result 回传执行结果
     ↓
 CDS 返回给 Agent
     ↓
@@ -290,7 +270,7 @@ Agent 轮询 /api/bridge/state/:branchId 等待连接就绪
 | AI 占用检测（`aiOccupant` + SSE） | Bridge 连接时自动触发 AI 占用状态 |
 | Activity Stream | Bridge 操作记录为 `source: 'ai'` 的 activity 事件 |
 | 分支 Badge（`BranchBadge.tsx`） | 共存，Bridge 状态指示器附加到 CDS Widget Badge 旁 |
-| CDS WebSocket Proxy（`proxy.ts`） | Bridge WebSocket 走 CDS master 端点，不走分支 proxy |
+| `/_cds/api` HTTP 通道（`proxy.ts`） | Bridge 复用已有的 HTTP 代理通道，不需额外协议 |
 
 ---
 
