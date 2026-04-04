@@ -57,6 +57,7 @@ public class EmergenceController : ControllerBase
             SeedSourceType = request.SeedSourceType ?? EmergenceSeedSourceType.Text,
             SeedSourceId = request.SeedSourceId,
             OwnerId = userId,
+            InjectSystemCapabilities = request.InjectSystemCapabilities,
             NodeCount = 1,
             MaxDepth = 0,
         };
@@ -411,6 +412,8 @@ public class CreateEmergenceTreeRequest
     public string SeedContent { get; set; } = string.Empty;
     public string? SeedSourceType { get; set; }
     public string? SeedSourceId { get; set; }
+    /// <summary>是否注入本系统能力（分析本系统时开启，分析外部系统时关闭）</summary>
+    public bool InjectSystemCapabilities { get; set; }
 }
 
 public class UpdateEmergenceNodeRequest

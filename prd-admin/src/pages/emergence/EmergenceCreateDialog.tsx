@@ -28,6 +28,7 @@ export function EmergenceCreateDialog({ onClose, onCreated }: Props) {
   const [title, setTitle] = useState('');
   const [seedContent, setSeedContent] = useState('');
   const [seedSourceType, setSeedSourceType] = useState<string>('text');
+  const [injectSystem, setInjectSystem] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
@@ -105,6 +106,7 @@ export function EmergenceCreateDialog({ onClose, onCreated }: Props) {
       title: title.trim() || undefined,
       seedContent: seedContent.trim(),
       seedSourceType,
+      injectSystemCapabilities: injectSystem,
     });
     if (res.success) {
       onCreated(res.data.tree.id);
@@ -321,6 +323,36 @@ export function EmergenceCreateDialog({ onClose, onCreated }: Props) {
               </p>
             </div>
           )}
+        </div>
+
+        {/* 结合本系统能力开关 */}
+        <div className="mb-4 flex items-center justify-between p-3 rounded-[10px]"
+          style={{ background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.06)' }}>
+          <div>
+            <p className="text-[12px] font-semibold" style={{ color: 'var(--text-primary)' }}>
+              结合本系统能力
+            </p>
+            <p className="text-[10px] mt-0.5" style={{ color: 'var(--text-muted)' }}>
+              开启后 AI 会参考本系统已有的 API、模型、组件进行涌现
+            </p>
+          </div>
+          <button
+            onClick={() => setInjectSystem(!injectSystem)}
+            className="w-10 h-[22px] rounded-full cursor-pointer transition-all duration-200 flex-shrink-0"
+            style={{
+              background: injectSystem ? 'rgba(34,197,94,0.5)' : 'rgba(255,255,255,0.1)',
+              border: `1px solid ${injectSystem ? 'rgba(34,197,94,0.3)' : 'rgba(255,255,255,0.1)'}`,
+              position: 'relative',
+            }}
+          >
+            <div
+              className="w-4 h-4 rounded-full absolute top-[2px] transition-all duration-200"
+              style={{
+                left: injectSystem ? 21 : 2,
+                background: injectSystem ? '#fff' : 'rgba(255,255,255,0.4)',
+              }}
+            />
+          </button>
         </div>
 
         {/* 错误提示 */}

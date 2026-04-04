@@ -53,15 +53,27 @@ public class EmergenceService
 
         if (parentNode == null) yield break;
 
+        // 获取树的配置（决定是否注入系统能力）
+        var tree = await _db.EmergenceTrees
+            .Find(t => t.Id == treeId)
+            .FirstOrDefaultAsync(CancellationToken.None);
+
+        if (tree == null) yield break;
+
         // 收集当前树的已有节点作为上下文（避免重复生成）
         var existingNodes = await _db.EmergenceNodes
             .Find(n => n.TreeId == treeId)
             .Project(n => n.Title)
             .ToListAsync(CancellationToken.None);
 
-        var capabilities = _capabilityScanner.GetCapabilities();
-        var systemPrompt = BuildExploreSystemPrompt(parentNode, existingNodes, capabilities);
-        var userMessage = $"请基于以下节点进行一维探索（系统内能力），生成 3-5 个可直接实现的子功能。\n\n" +
+        // 种子内容 = 主上下文（永远是根）
+        // 系统能力 = 可选辅助上下文（用户选择时才注入）
+        var systemContext = tree.InjectSystemCapabilities
+            ? _capabilityScanner.GetCapabilities()
+            : null;
+
+        var systemPrompt = BuildExploreSystemPrompt(parentNode, existingNodes, tree.SeedContent, systemContext);
+        var userMessage = $"请基于以下节点进行探索，生成 3-5 个子功能。\n\n" +
                          $"当前节点：{parentNode.Title}\n" +
                          $"节点描述：{parentNode.Description}\n" +
                          $"现实锚点：{parentNode.GroundingContent}\n" +
@@ -135,10 +147,19 @@ public class EmergenceService
             allNodes.Where(n => n.ParentId != null).Select(n => n.ParentId!)).ToHashSet();
         var leafNodes = allNodes.Where(n => !parentIds.Contains(n.Id)).ToList();
 
-        if (leafNodes.Count < 2) leafNodes = allNodes; // 如果叶子不够，用全部节点
+        if (leafNodes.Count < 2) leafNodes = allNodes;
 
-        var capabilities = _capabilityScanner.GetCapabilities();
-        var systemPrompt = BuildEmergeSystemPrompt(allNodes, leafNodes, includeFantasy, capabilities);
+        var tree = await _db.EmergenceTrees
+            .Find(t => t.Id == treeId)
+            .FirstOrDefaultAsync(CancellationToken.None);
+
+        if (tree == null) yield break;
+
+        var systemContext = tree.InjectSystemCapabilities
+            ? _capabilityScanner.GetCapabilities()
+            : null;
+
+        var systemPrompt = BuildEmergeSystemPrompt(allNodes, leafNodes, includeFantasy, tree.SeedContent, systemContext);
         var userMessage = BuildEmergeUserMessage(leafNodes, includeFantasy);
 
         var request = new GatewayRequest
@@ -190,25 +211,33 @@ public class EmergenceService
 
     // ── Prompt 构建 ──
 
-    private static string BuildExploreSystemPrompt(EmergenceNode parent, List<string> existingTitles, string capabilities)
+    private static string BuildExploreSystemPrompt(
+        EmergenceNode parent, List<string> existingTitles,
+        string seedContent, string? systemCapabilities)
     {
         var sb = new StringBuilder();
-        sb.AppendLine("你是一个涌现探索引擎。你必须基于用户提供的种子内容和下方的系统真实能力清单，推演出可直接实现的子功能。");
+        sb.AppendLine("你是一个通用涌现探索引擎。你的任务是深入分析用户提供的种子文档，从中推演出可行的子功能或子方向。");
         sb.AppendLine();
-        sb.AppendLine("## 反向自洽 + 无根之木禁令");
-        sb.AppendLine("1. 每个节点必须有现实锚点——标明它依赖系统中哪个具体能力");
-        sb.AppendLine("2. **禁止编造系统不存在的能力**。能力清单中没有的，就是没有");
-        sb.AppendLine("3. 如果某个功能需要系统目前没有的能力，必须在 missingCapabilities 字段中明确列出，并建议借用方式");
-        sb.AppendLine("4. 生成的节点不能与已有节点重复");
-        sb.AppendLine("5. techPlan 必须具体到 Service / Controller / Component 名称");
+
+        // ── 种子文档 = 主上下文（永远是根）──
+        sb.AppendLine("## 种子文档（你的分析基础，所有涌现必须从这里出发）");
+        sb.AppendLine(seedContent.Length > 3000 ? seedContent[..3000] + "\n...(已截取)" : seedContent);
         sb.AppendLine();
-        sb.AppendLine("## 借用法则");
-        sb.AppendLine("本系统是思考中枢，不是执行中枢。缺失的能力不要强做，而是建议借用：");
-        sb.AppendLine("- 缺 Embedding/RAG → 建议借用外部 Embedding Agent");
-        sb.AppendLine("- 缺代码扫描 → 建议借用 Claude Code Agent");
-        sb.AppendLine("- 缺数据分析 → 建议借用已有 ECharts 组件或外部 BI");
-        sb.AppendLine();
-        sb.Append(capabilities);
+
+        // ── 系统能力 = 可选辅助上下文 ──
+        if (systemCapabilities != null)
+        {
+            sb.AppendLine("## 辅助上下文：当前系统已有能力（可选参考）");
+            sb.AppendLine("以下是运行时扫描的系统真实能力。涌现时可以结合这些已有能力，但不限于此。");
+            sb.Append(systemCapabilities);
+            sb.AppendLine();
+        }
+
+        sb.AppendLine("## 原则");
+        sb.AppendLine("1. 每个节点必须有现实锚点——标明它依据种子文档中的哪段内容推演而来");
+        sb.AppendLine("2. 如果结合了系统能力，标明依赖哪个具体组件");
+        sb.AppendLine("3. 如果功能需要当前不具备的能力，在 missingCapabilities 中列出，并建议借用方式");
+        sb.AppendLine("4. 节点不能与已有节点重复");
         sb.AppendLine();
         sb.AppendLine("## 已有节点（避免重复）");
         foreach (var title in existingTitles.Take(20))
@@ -216,23 +245,20 @@ public class EmergenceService
         sb.AppendLine();
         sb.AppendLine("## 输出格式（严格 JSON 数组，3-5 个节点）");
         sb.AppendLine("```json");
-        sb.AppendLine("[");
-        sb.AppendLine("  {");
-        sb.AppendLine("    \"title\": \"功能名称（简洁，4-10 字）\",");
-        sb.AppendLine("    \"description\": \"一句话描述用户价值（不是技术描述）\",");
-        sb.AppendLine("    \"groundingContent\": \"依赖已有能力：XXX（具体到组件/API/模型名）\",");
-        sb.AppendLine("    \"groundingType\": \"capability|code|api|document\",");
-        sb.AppendLine("    \"groundingRef\": \"具体引用（如 ILlmGateway.SendAsync / Attachment.ExtractedText）\",");
-        sb.AppendLine("    \"techPlan\": \"用 XXService 调用 YY，在 ZZController 暴露 API，前端用 AAComponent 展示\",");
-        sb.AppendLine("    \"missingCapabilities\": [\"需要 Embedding 服务（建议借用外部 Agent）\"],");
-        sb.AppendLine("    \"valueScore\": 4,");
-        sb.AppendLine("    \"difficultyScore\": 2,");
-        sb.AppendLine("    \"tags\": [\"标签1\", \"标签2\"]");
-        sb.AppendLine("  }");
-        sb.AppendLine("]");
+        sb.AppendLine("[{");
+        sb.AppendLine("  \"title\": \"功能名称（4-10 字）\",");
+        sb.AppendLine("  \"description\": \"一句话描述用户价值\",");
+        sb.AppendLine("  \"groundingContent\": \"源自种子文档：'XXX' → 推演出 YYY\",");
+        sb.AppendLine("  \"groundingType\": \"document|capability|code|api\",");
+        sb.AppendLine("  \"groundingRef\": \"种子文档关键段落 或 系统组件引用\",");
+        sb.AppendLine("  \"techPlan\": \"实现思路（2-3 句）\",");
+        sb.AppendLine("  \"missingCapabilities\": [],");
+        sb.AppendLine("  \"valueScore\": 4, \"difficultyScore\": 2,");
+        sb.AppendLine("  \"tags\": [\"标签\"]");
+        sb.AppendLine("}]");
         sb.AppendLine("```");
-        sb.AppendLine("missingCapabilities：如果功能完全基于已有能力可实现，传空数组 []。如果需要系统目前没有的能力，列出缺什么、建议怎么借用。");
-        sb.AppendLine("只输出 JSON，不要多余解释。");
+        sb.AppendLine("missingCapabilities：完全可实现传 []，需要外部能力则列出缺什么+建议借用方式。");
+        sb.AppendLine("只输出 JSON。");
         return sb.ToString();
     }
 
@@ -240,46 +266,54 @@ public class EmergenceService
         List<EmergenceNode> allNodes,
         List<EmergenceNode> leafNodes,
         bool includeFantasy,
-        string capabilities)
+        string seedContent,
+        string? systemCapabilities)
     {
         var sb = new StringBuilder();
-        sb.AppendLine("你是一个涌现组合引擎。你的任务是将多个已有功能节点交叉组合，发现「A + B 自然产生 C」的涌现价值。");
-        sb.AppendLine();
-        sb.AppendLine("## 反向自洽原则");
-        sb.AppendLine("1. 涌现 ≠ 随机拼凑。每个组合必须有逻辑推演：A 提供 X 能力 + B 提供 Y 能力 → 自然产生 Z");
-        sb.AppendLine("2. 必须标注「桥梁假设」——这个组合成立需要什么前提条件");
-        sb.AppendLine("3. 每个涌现节点必须标明它组合了哪些源节点（parentTitles 必须是下方节点的确切标题）");
+        sb.AppendLine("你是一个通用涌现组合引擎。将多个已有节点交叉组合，发现「A + B 自然产生 C」的涌现价值。");
         sb.AppendLine();
 
-        if (includeFantasy)
+        // 种子文档始终在场
+        sb.AppendLine("## 种子文档（涌现的源头）");
+        sb.AppendLine(seedContent.Length > 2000 ? seedContent[..2000] + "\n...(已截取)" : seedContent);
+        sb.AppendLine();
+
+        if (systemCapabilities != null)
         {
-            sb.AppendLine("## 三维幻想模式");
-            sb.AppendLine("放宽技术约束，想象 3-5 年后的可能性。但仍然必须：");
-            sb.AppendLine("- 标注假设条件（如「假设已有 Embedding 向量服务」「假设用户量 > 10000」）");
-            sb.AppendLine("- 从现有节点出发推演，不是天马行空");
-            sb.AppendLine("- 幻想是「如果 X 成立，那么 Y 就自然涌现」的有根推演");
+            sb.AppendLine("## 辅助上下文：系统已有能力");
+            sb.Append(systemCapabilities);
             sb.AppendLine();
         }
 
-        sb.Append(capabilities);
+        sb.AppendLine("## 原则");
+        sb.AppendLine("1. 涌现 ≠ 随机拼凑。A 提供 X + B 提供 Y → 自然产生 Z");
+        sb.AppendLine("2. 必须标注「桥梁假设」——组合成立需要什么前提");
+        sb.AppendLine("3. parentTitles 必须是下方节点的确切标题");
+        sb.AppendLine("4. 缺失能力写入 missingCapabilities，建议借用方式");
+
+        if (includeFantasy)
+        {
+            sb.AppendLine();
+            sb.AppendLine("## 三维幻想模式");
+            sb.AppendLine("放宽约束，想象 3-5 年后。但仍需标注假设条件，从现有节点出发推演。");
+        }
+
         sb.AppendLine();
         sb.AppendLine("## 输出格式（严格 JSON 数组，2-4 个节点）");
         sb.AppendLine("```json");
-        sb.AppendLine("[");
-        sb.AppendLine("  {");
-        sb.AppendLine("    \"title\": \"涌现功能名称（简洁，4-10 字）\",");
-        sb.AppendLine("    \"description\": \"一句话描述用户价值\",");
-        sb.AppendLine("    \"parentTitles\": [\"源节点A的确切标题\", \"源节点B的确切标题\"],");
-        sb.AppendLine("    \"groundingContent\": \"A 提供 X + B 提供 Y = 自然产生 Z（具体到组件名）\",");
-        sb.AppendLine("    \"bridgeAssumptions\": [\"假设条件（具体、可验证）\"],");
-        sb.AppendLine("    \"techPlan\": \"用 XXService 结合 YY，在 ZZController 暴露 API\",");
-        sb.AppendLine("    \"valueScore\": 5,");
-        sb.AppendLine("    \"difficultyScore\": 3,");
-        sb.AppendLine("    \"tags\": [\"标签1\"]");
-        sb.AppendLine("  }");
-        sb.AppendLine("]");
+        sb.AppendLine("[{");
+        sb.AppendLine("  \"title\": \"涌现功能名称（4-10 字）\",");
+        sb.AppendLine("  \"description\": \"一句话描述用户价值\",");
+        sb.AppendLine("  \"parentTitles\": [\"源节点A的确切标题\", \"源节点B的确切标题\"],");
+        sb.AppendLine("  \"groundingContent\": \"A 提供 X + B 提供 Y = 自然产生 Z\",");
+        sb.AppendLine("  \"bridgeAssumptions\": [\"假设条件\"],");
+        sb.AppendLine("  \"missingCapabilities\": [],");
+        sb.AppendLine("  \"techPlan\": \"实现思路\",");
+        sb.AppendLine("  \"valueScore\": 5, \"difficultyScore\": 3,");
+        sb.AppendLine("  \"tags\": [\"标签\"]");
+        sb.AppendLine("}]");
         sb.AppendLine("```");
-        sb.AppendLine("只输出 JSON，不要多余解释。");
+        sb.AppendLine("只输出 JSON。");
         return sb.ToString();
     }
 

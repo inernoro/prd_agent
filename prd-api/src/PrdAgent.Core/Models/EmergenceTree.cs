@@ -32,6 +32,13 @@ public class EmergenceTree
 
     public bool IsPublic { get; set; }
 
+    /// <summary>
+    /// 是否注入本系统能力作为辅助上下文。
+    /// true = 种子内容 + 系统注册表（分析本系统时开启）
+    /// false = 纯粹基于种子内容涌现（分析外部系统/通用场景）
+    /// </summary>
+    public bool InjectSystemCapabilities { get; set; }
+
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
 }

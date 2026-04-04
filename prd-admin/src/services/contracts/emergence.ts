@@ -50,6 +50,8 @@ export type CreateEmergenceTreeInput = {
   seedContent: string;
   seedSourceType?: string;
   seedSourceId?: string;
+  /** 是否注入本系统能力（分析本系统时开启） */
+  injectSystemCapabilities?: boolean;
 };
 
 export type UpdateEmergenceNodeInput = {
