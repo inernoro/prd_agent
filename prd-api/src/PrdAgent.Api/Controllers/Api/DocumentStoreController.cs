@@ -385,7 +385,7 @@ public class DocumentStoreController : ControllerBase
         }
 
         // 1) 存储到 COS / 本地
-        var stored = await _assetStorage.SaveAsync(bytes, mime, ct, domain: "document-store", type: "doc");
+        var stored = await _assetStorage.SaveAsync(bytes, mime, ct, domain: "prd-agent", type: "doc");
 
         // 2) 提取文本内容
         string? extractedText = null;
