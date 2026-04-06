@@ -17,6 +17,7 @@ import '@xyflow/react/dist/style.css';
 import { Sparkle, TreePine, Download, Plus, Star, MousePointerClick, Zap, X } from 'lucide-react';
 import { useSseStream } from '@/lib/useSseStream';
 import { SsePhaseBar } from '@/components/sse/SsePhaseBar';
+import { toast } from '@/lib/toast';
 import { GlassCard } from '@/components/design/GlassCard';
 import { TabBar } from '@/components/design/TabBar';
 import { Button } from '@/components/design/Button';
@@ -41,7 +42,7 @@ const dimColor: Record<number, string> = {
   3: 'rgba(234,179,8,0.7)',
 };
 
-// ── 数据转换：后端����� → React Flow 节点 ──
+// ── 数据转换：后端节点 → React Flow 节点 ──
 function toFlowNodes(
   nodes: EmergenceNodeType[],
   onExplore: (nodeId: string) => void,
@@ -164,6 +165,17 @@ function EmergenceCanvasInner({ treeId, onBack }: CanvasProps) {
           setNodeCount(c => c + 1);
         }
       },
+      onDone: (data) => {
+        const d = data as { totalNew?: number };
+        if (!d.totalNew || d.totalNew === 0) {
+          toast.warning('探索未生成节点', '可能是 LLM 模型池未配置，或种子内容过短。请检查模型中心配置。');
+        } else {
+          toast.success('探索完成', `新增 ${d.totalNew} 个节点`);
+        }
+      },
+      onError: (msg) => {
+        toast.error('探索失败', msg);
+      },
     });
 
   // ── 涌现 SSE ──
@@ -180,6 +192,17 @@ function EmergenceCanvasInner({ treeId, onBack }: CanvasProps) {
           setEdges(prev => [...prev, ...toFlowEdges([newNode])]);
           setNodeCount(c => c + 1);
         }
+      },
+      onDone: (data) => {
+        const d = data as { totalNew?: number };
+        if (!d.totalNew || d.totalNew === 0) {
+          toast.warning('涌现未生成节点', '可能是 LLM 模型池未配置，或已有节点不足以组合。');
+        } else {
+          toast.success('涌现完成', `新增 ${d.totalNew} 个组合节点`);
+        }
+      },
+      onError: (msg) => {
+        toast.error('涌现失败', msg);
       },
     });
 
@@ -303,8 +326,11 @@ function EmergenceCanvasInner({ treeId, onBack }: CanvasProps) {
         >
           <Background variant={BackgroundVariant.Dots} gap={20} size={1} color="rgba(255,255,255,0.03)" />
           <MiniMap
-            style={{ background: 'rgba(0,0,0,0.3)', borderRadius: 12, border: '1px solid rgba(255,255,255,0.08)' }}
+            style={{ background: 'rgba(0,0,0,0.4)', borderRadius: 12, border: '1px solid rgba(255,255,255,0.08)' }}
+            maskColor="rgba(0,0,0,0.6)"
             nodeColor={(n) => dimColor[(n.data as EmergenceNodeData)?.dimension ?? 1] ?? dimColor[1]}
+            pannable
+            zoomable={false}
           />
           <Controls style={{ borderRadius: 10 }} />
 
@@ -372,7 +398,7 @@ function EmergenceCanvasInner({ treeId, onBack }: CanvasProps) {
   );
 }
 
-// ── 页面入口���树列表 + 画布切换 ──
+// ── 页面入口：树列表 + 画布切换 ──
 export function EmergenceExplorerPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const [selectedTreeId, setSelectedTreeId] = useState<string | null>(null);
@@ -399,7 +425,7 @@ export function EmergenceExplorerPage() {
 
   useEffect(() => { loadTrees(); }, [loadTrees]);
 
-  // 画布模��
+  // 画布模式
   if (selectedTreeId) {
     return (
       <ReactFlowProvider>
@@ -413,7 +439,7 @@ export function EmergenceExplorerPage() {
     <div className="h-full min-h-0 flex flex-col overflow-x-hidden overflow-y-auto gap-5">
       {/* 标题栏 */}
       <TabBar
-        title="涌现探��器"
+        title="涌现探索器"
         icon={<TreePine size={14} />}
         actions={
           <Button variant="primary" size="xs" onClick={() => setShowCreate(true)}>

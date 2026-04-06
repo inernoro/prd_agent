@@ -23,7 +23,7 @@ export interface EmergenceNodeData {
 
 type EmergenceNodeType = NodeProps & { data: EmergenceNodeData };
 
-// ── 维度视觉配���（使用项目色彩规范 rgba 格式）──
+// ── 维度视觉配置（使用项目色彩规范 rgba 格式）──
 const dimensionConfig: Record<number, {
   accent: string; accentBg: string; accentBorder: string;
   label: string; Icon: typeof Zap;
@@ -117,7 +117,7 @@ function EmergenceNodeInner({ data, selected }: EmergenceNodeType) {
         {data.description}
       </p>
 
-      {/* 评��行 */}
+      {/* 评分行 */}
       <div className="flex items-center gap-3 text-[11px] mb-2" style={{ color: 'var(--text-muted)' }}>
         <span>价值 <StarRating score={data.valueScore} /></span>
         <span>难度 <StarRating score={data.difficultyScore} /></span>
@@ -126,7 +126,7 @@ function EmergenceNodeInner({ data, selected }: EmergenceNodeType) {
       {/* 假设条件（二维/三维） */}
       {data.bridgeAssumptions?.length > 0 && (
         <p className="text-[10px] italic mb-2" style={{ color: 'var(--text-muted)', opacity: 0.7 }}>
-          假设���{data.bridgeAssumptions.slice(0, 2).join('；')}
+          假设：{data.bridgeAssumptions.slice(0, 2).join('；')}
         </p>
       )}
 
@@ -165,7 +165,7 @@ function EmergenceNodeInner({ data, selected }: EmergenceNodeType) {
             className="h-7 w-full rounded-[8px] text-[11px] font-semibold flex items-center justify-center gap-1.5 cursor-pointer transition-colors duration-200"
             style={{ background: dim.accentBg, border: `1px solid ${dim.accentBorder}`, color: dim.accent }}
           >
-            <Search size={11} /> ��索
+            <Search size={11} /> 探索
           </button>
         </div>
       )}

@@ -36,8 +36,8 @@ export function EmergenceCreateDialog({ onClose, onCreated, initialSeedContent, 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
-  // 输入模式
-  const [activeMode, setActiveMode] = useState<InputMode>('upload');
+  // 输入模式 — 从文档跳转来时自动切到手动输入模式
+  const [activeMode, setActiveMode] = useState<InputMode>(initialSeedContent ? 'text' : 'upload');
 
   // 文件上传
   const [dragging, setDragging] = useState(false);
