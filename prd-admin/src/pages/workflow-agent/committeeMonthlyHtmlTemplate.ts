@@ -3,8 +3,18 @@
 // 数据结构: { input1: "LLM分析文本", input2: { input1: storyStats, input2: defectStats, input3: inspectionData, input4: rectificationData } }
 
 export const committeeMonthlyHtmlGenCode = `var raw = Array.isArray(data) ? data[0] : data;
-var analysis = (typeof raw.input1 === "string") ? raw.input1 : "";
-var stats = raw.input2 || {};
+// merge-final 输出的 key 是 artifact Name: "报告"(LLM文本) 和 "合并结果"(统计数据)
+// 兼容 input1/input2 和中文 key 两种情况
+var analysis = "";
+var stats = {};
+var keys = Object.keys(raw || {});
+keys.forEach(function(k) {
+  var v = raw[k];
+  if (typeof v === "string" && v.length > 20) analysis = v;
+  else if (typeof v === "object" && v !== null) stats = v;
+});
+if (!analysis) analysis = raw.input1 || raw["报告"] || "";
+if (!stats || Object.keys(stats).length === 0) stats = raw.input2 || raw["合并结果"] || {};
 var story = stats.input1 || { total:0, statusDistribution:{}, handlerDistribution:{}, priorityDistribution:{}, customerAnalysis:[], details:[] };
 var defect = stats.input2 || { total:0, statusDistribution:{}, categoryDistribution:{}, handlerDistribution:{}, priorityDistribution:{}, severityDistribution:{}, details:[] };
 var inspection = stats.input3 || { items:[] };
