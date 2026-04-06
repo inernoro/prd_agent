@@ -10,6 +10,30 @@ import { BranchBadge } from '@/components/BranchBadge';
 import { useBreakpoint } from '@/hooks/useBreakpoint';
 import { SuspenseVideoLoader } from '@/components/ui/VideoLoader';
 
+/**
+ * NavigationBridge — Exposes React Router's navigate() to non-React code.
+ *
+ * CDS Widget's Page Agent Bridge needs to trigger SPA navigation from outside React.
+ * This component listens for a custom DOM event and calls navigate() internally.
+ *
+ * Usage from Widget (or any non-React JS):
+ *   window.dispatchEvent(new CustomEvent('bridge:navigate', { detail: { path: '/report-agent' } }));
+ */
+function NavigationBridge() {
+  const navigate = useNavigate();
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const path = (e as CustomEvent).detail?.path;
+      if (path && typeof path === 'string') {
+        navigate(path);
+      }
+    };
+    window.addEventListener('bridge:navigate', handler);
+    return () => window.removeEventListener('bridge:navigate', handler);
+  }, [navigate]);
+  return null;
+}
+
 // ── Route-level lazy loading ──
 // Each page is loaded on-demand, drastically reducing initial bundle in dev mode.
 // Default exports use lazy() directly; named exports use .then() to re-export as default.
@@ -205,6 +229,7 @@ export default function App() {
     <AgentSwitcherProvider>
       <ToastContainer />
       <BranchBadge />
+      <NavigationBridge />
       <Suspense fallback={<SuspenseVideoLoader />}>
       <Routes location={location}>
         {/* Landing page - public */}

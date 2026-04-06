@@ -1046,62 +1046,13 @@ export function buildWidgetScript(branchId: string, branchName: string): string 
         return {success:true};
       }
       if(action==='spa-navigate'){
-        // SPA navigation without page reload — preserves sessionStorage token
+        // SPA navigation without page reload — preserves sessionStorage token.
+        // Uses CustomEvent dispatched to window, caught by React's NavigationBridge
+        // component which calls useNavigate() internally.
         var spaUrl=params.url;
         if(!spaUrl)return {success:false,error:'url is required'};
-        var spaUsed='';
-
-        // Strategy 1: Find existing <a> in the page with matching href and click it
-        // This works because React Router's <Link> renders <a> that intercepts clicks
-        var links=document.querySelectorAll('a[href]');
-        for(var li=0;li<links.length;li++){
-          var href=links[li].getAttribute('href');
-          if(href===spaUrl){
-            links[li].click();
-            return {success:true,data:'strategy:existing-link'};
-          }
-        }
-
-        // Strategy 2: Create a temporary <a> inside the React app root and click it
-        // React Router's BrowserRouter intercepts clicks on <a> within its tree
-        try{
-          var appRoot=document.getElementById('root');
-          if(appRoot){
-            var tempLink=document.createElement('a');
-            tempLink.href=spaUrl;
-            tempLink.style.display='none';
-            appRoot.appendChild(tempLink);
-            tempLink.click();
-            appRoot.removeChild(tempLink);
-            spaUsed='strategy:injected-link';
-            // Verify navigation happened
-            setTimeout(function(){},50);
-            return {success:true,data:spaUsed};
-          }
-        }catch(e){/* fall through */}
-
-        // Strategy 3: Fallback — direct click on any visible element whose text/title matches the route
-        try{
-          var routeLabel={'literary':'文学','visual':'视觉','defect':'缺陷','report':'周报','prd':'PRD'};
-          var routeKey=spaUrl.charAt(0)==='/'?spaUrl.substring(1).split('/')[0]:spaUrl.split('/')[0];
-          for(var rlk in routeLabel){
-            if(routeKey.indexOf(rlk)>=0){
-              var btns=document.querySelectorAll('button,a,[role=button]');
-              for(var bi=0;bi<btns.length;bi++){
-                var bt=btns[bi].textContent.trim();
-                if(bt.indexOf(routeLabel[rlk])>=0&&btns[bi].offsetParent&&bt.length<20){
-                  btns[bi].click();
-                  return {success:true,data:'strategy:text-match('+bt+')'};
-                }
-              }
-            }
-          }
-        }catch(e){/* fall through */}
-
-        // Strategy 4: Last resort — pushState (may not trigger React Router)
-        history.pushState({},'',spaUrl);
-        window.dispatchEvent(new PopStateEvent('popstate',{state:{}}));
-        return {success:true,data:'strategy:pushState(may-not-work)'};
+        window.dispatchEvent(new CustomEvent('bridge:navigate',{detail:{path:spaUrl}}));
+        return {success:true,data:'bridge:navigate dispatched'};
       }
       if(action==='evaluate'){
         var result;
