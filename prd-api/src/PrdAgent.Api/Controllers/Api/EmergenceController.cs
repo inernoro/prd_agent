@@ -276,15 +276,22 @@ public class EmergenceController : ControllerBase
         // 阶段提示：开始探索
         await WriteSseEvent("stage", new { stage = "exploring", message = "正在基于现实锚点探索子能力…" });
 
+        string? llmError = null;
         var count = 0;
-        await foreach (var newNode in _emergenceService.ExploreAsync(node.TreeId, nodeId, userId))
+        await foreach (var newNode in _emergenceService.ExploreAsync(
+            node.TreeId, nodeId, userId,
+            onError: err => llmError = err))
         {
             count++;
             await WriteSseEvent("node", newNode);
             await WriteSseEvent("stage", new { stage = "growing", message = $"已生长 {count} 个节点…" });
         }
 
-        await WriteSseEvent("done", new { totalNew = count });
+        if (llmError != null)
+        {
+            await WriteSseEvent("error", new { message = llmError });
+        }
+        await WriteSseEvent("done", new { totalNew = count, error = llmError });
     }
 
     /// <summary>涌现（二维+三维，SSE 流式返回新组合的节点）</summary>
@@ -309,15 +316,22 @@ public class EmergenceController : ControllerBase
         var dimensionLabel = fantasy ? "三维幻想" : "二维跨系统";
         await WriteSseEvent("stage", new { stage = "emerging", message = $"正在进行{dimensionLabel}涌现…" });
 
+        string? llmError = null;
         var count = 0;
-        await foreach (var newNode in _emergenceService.EmergeAsync(treeId, fantasy, userId))
+        await foreach (var newNode in _emergenceService.EmergeAsync(
+            treeId, fantasy, userId,
+            onError: err => llmError = err))
         {
             count++;
             await WriteSseEvent("node", newNode);
             await WriteSseEvent("stage", new { stage = "combining", message = $"已涌现 {count} 个组合节点…" });
         }
 
-        await WriteSseEvent("done", new { totalNew = count, dimension = fantasy ? 3 : 2 });
+        if (llmError != null)
+        {
+            await WriteSseEvent("error", new { message = llmError });
+        }
+        await WriteSseEvent("done", new { totalNew = count, dimension = fantasy ? 3 : 2, error = llmError });
     }
 
     /// <summary>导出涌现树为 Markdown</summary>

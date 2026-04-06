@@ -166,9 +166,11 @@ function EmergenceCanvasInner({ treeId, onBack }: CanvasProps) {
         }
       },
       onDone: (data) => {
-        const d = data as { totalNew?: number };
-        if (!d.totalNew || d.totalNew === 0) {
-          toast.warning('探索未生成节点', '可能是 LLM 模型池未配置，或种子内容过短。请检查模型中心配置。');
+        const d = data as { totalNew?: number; error?: string };
+        if (d.error) {
+          toast.error('探索失败', d.error);
+        } else if (!d.totalNew || d.totalNew === 0) {
+          toast.warning('探索未生成节点', '可能是种子内容过短，请尝试提供更详细的描述。');
         } else {
           toast.success('探索完成', `新增 ${d.totalNew} 个节点`);
         }
@@ -194,9 +196,11 @@ function EmergenceCanvasInner({ treeId, onBack }: CanvasProps) {
         }
       },
       onDone: (data) => {
-        const d = data as { totalNew?: number };
-        if (!d.totalNew || d.totalNew === 0) {
-          toast.warning('涌现未生成节点', '可能是 LLM 模型池未配置，或已有节点不足以组合。');
+        const d = data as { totalNew?: number; error?: string };
+        if (d.error) {
+          toast.error('涌现失败', d.error);
+        } else if (!d.totalNew || d.totalNew === 0) {
+          toast.warning('涌现未生成节点', '已有节点可能不足以组合，请先探索更多节点。');
         } else {
           toast.success('涌现完成', `新增 ${d.totalNew} 个组合节点`);
         }
