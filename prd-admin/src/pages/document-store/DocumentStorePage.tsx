@@ -174,10 +174,10 @@ function EntryDetailPanel({ entry, onClose, onDelete, onUpdate }: {
   const isSubscription = entry.sourceType === 'subscription';
 
   return (
-    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center"
+    <div className="fixed inset-0 z-50 flex items-center justify-center"
       style={{ background: 'rgba(0,0,0,0.5)', backdropFilter: 'blur(8px)' }}
       onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
-      <div className="w-full sm:w-[600px] max-h-[85vh] rounded-t-[16px] sm:rounded-[16px] p-6 overflow-y-auto"
+      <div className="w-[520px] max-w-[92vw] max-h-[80vh] rounded-[16px] p-6 overflow-y-auto"
         style={{
           background: 'linear-gradient(180deg, var(--glass-bg-start) 0%, var(--glass-bg-end) 100%)',
           border: '1px solid rgba(255,255,255,0.08)',
@@ -537,7 +537,7 @@ function SubscribeDialog({ storeId, onClose, onCreated }: {
     <div className="fixed inset-0 z-50 flex items-center justify-center"
       style={{ background: 'rgba(0,0,0,0.5)', backdropFilter: 'blur(8px)' }}
       onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
-      <div className="w-[460px] max-w-[92vw] rounded-[16px] p-6"
+      <div className="w-[560px] max-w-[92vw] rounded-[16px] p-6"
         style={{
           background: 'linear-gradient(180deg, var(--glass-bg-start) 0%, var(--glass-bg-end) 100%)',
           border: '1px solid rgba(255,255,255,0.08)',
