@@ -152,15 +152,24 @@ export function createBridgeRouter(deps: BridgeRouterDeps): Router {
       res.status(400).json({ error: 'branchId is required' });
       return;
     }
-    // Send end command to widget so it can show "AI 操作完成" and stop polling
-    bridgeService.sendCommand(branchId, {
+    // Send end command to widget so it can show "AI 操作完成" and stop polling.
+    // Use sendCommand so it goes through the queue and gets picked up on next poll.
+    // Widget will stop polling when it processes __end_session.
+    const endCmd = {
       id: crypto.randomBytes(4).toString('hex'),
       action: 'snapshot' as const,
       params: { __end_session: true, summary: summary || '' },
       description: summary || 'AI 操作完成',
-    }).catch(() => {});
-    // Deactivate session after a delay (let the end command be picked up first)
-    setTimeout(() => { bridgeService.endSession(branchId); }, 10_000);
+    };
+    bridgeService.sendCommand(branchId, endCmd)
+      .then(() => {
+        // Widget picked up and responded — safe to clean up now
+        bridgeService.endSession(branchId);
+      })
+      .catch(() => {
+        // Timeout or error — clean up anyway
+        bridgeService.endSession(branchId);
+      });
     res.json({ success: true });
   });
 

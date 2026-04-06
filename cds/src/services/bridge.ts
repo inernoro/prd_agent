@@ -64,8 +64,8 @@ interface BridgeConnection {
   connectedAt: string;
   lastHeartbeat: number;
   lastState: PageState | null;
-  /** Pending command waiting to be picked up by widget */
-  pendingCommand: BridgeCommand | null;
+  /** Pending commands waiting to be picked up by widget (FIFO queue) */
+  pendingCommands: BridgeCommand[];
   /** Resolvers waiting for command result from widget */
   pendingResolvers: Map<string, {
     resolve: (resp: BridgeResponse) => void;
@@ -114,7 +114,7 @@ export class BridgeService {
         connectedAt: new Date().toISOString(),
         lastHeartbeat: Date.now(),
         lastState: state,
-        pendingCommand: null,
+        pendingCommands: [],
         pendingResolvers: new Map(),
       };
       this.connections.set(branchId, conn);
@@ -125,13 +125,10 @@ export class BridgeService {
       if (state) conn.lastState = state;
     }
 
-    // Return pending command if any
-    const cmd = conn.pendingCommand;
-    if (cmd) {
-      conn.pendingCommand = null; // consumed
-    }
+    // Return next pending command (FIFO)
+    const cmd = conn.pendingCommands.length > 0 ? conn.pendingCommands.shift()! : null;
 
-    // If new connection, request initial snapshot
+    // If new connection and no queued command, request initial snapshot
     if (isNew && !cmd) {
       return { command: { id: crypto.randomBytes(4).toString('hex'), action: 'snapshot', params: {} } };
     }
@@ -164,16 +161,16 @@ export class BridgeService {
       return { id: command.id, success: false, error: 'no connection', state: emptyState() };
     }
 
-    // Queue the command
-    conn.pendingCommand = command;
+    // Queue the command (FIFO — multiple commands can be queued)
+    conn.pendingCommands.push(command);
 
     // Wait for result
     return new Promise<BridgeResponse>((resolve) => {
       const timer = setTimeout(() => {
         conn.pendingResolvers.delete(command.id);
-        if (conn.pendingCommand?.id === command.id) {
-          conn.pendingCommand = null; // not picked up
-        }
+        // Remove from queue if not yet picked up
+        const idx = conn.pendingCommands.findIndex(c => c.id === command.id);
+        if (idx !== -1) conn.pendingCommands.splice(idx, 1);
         resolve({
           id: command.id,
           success: false,

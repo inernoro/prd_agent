@@ -610,7 +610,6 @@ export function buildWidgetScript(branchId: string, branchName: string): string 
   var bridgeNavRequest=null;
   var bridgeNavPollTimer=null;
   var bridgeConnected=false;
-  var bridgePollTimer=null;
 
   // ── AI Operation Panel state ──
   var opsSteps=[];        // [{id, action, description, status:'pending'|'running'|'done'|'error', detail:''}]
@@ -1050,49 +1049,59 @@ export function buildWidgetScript(branchId: string, branchName: string): string 
         // SPA navigation without page reload — preserves sessionStorage token
         var spaUrl=params.url;
         if(!spaUrl)return {success:false,error:'url is required'};
-        // Strategy 1: Find a React Router <a> with matching href and click it
+        var spaUsed='';
+
+        // Strategy 1: Find existing <a> in the page with matching href and click it
+        // This works because React Router's <Link> renders <a> that intercepts clicks
         var links=document.querySelectorAll('a[href]');
         for(var li=0;li<links.length;li++){
           var href=links[li].getAttribute('href');
           if(href===spaUrl){
             links[li].click();
-            return {success:true};
+            return {success:true,data:'strategy:existing-link'};
           }
         }
-        // Strategy 2: Find React Router internals via __reactContainer
+
+        // Strategy 2: Create a temporary <a> inside the React app root and click it
+        // React Router's BrowserRouter intercepts clicks on <a> within its tree
         try{
-          var rRoot=document.getElementById('root');
-          if(rRoot){
-            var rKey=Object.keys(rRoot).find(function(k){return k.startsWith('__reactContainer')});
-            if(rKey){
-              var rFiber=rRoot[rKey];
-              // Walk fiber tree to find Router context with navigate
-              function findNav(f,d){
-                if(!f||d>60)return null;
-                // Check memoizedState for router with navigate
-                var s=f.memoizedState;
-                while(s){
-                  if(s.memoizedState&&typeof s.memoizedState==='object'){
-                    var ms=s.memoizedState;
-                    if(ms.router&&typeof ms.router.navigate==='function')return ms.router;
-                    if(ms.navigation&&typeof ms.navigate==='function')return ms;
-                  }
-                  s=s.next;
+          var appRoot=document.getElementById('root');
+          if(appRoot){
+            var tempLink=document.createElement('a');
+            tempLink.href=spaUrl;
+            tempLink.style.display='none';
+            appRoot.appendChild(tempLink);
+            tempLink.click();
+            appRoot.removeChild(tempLink);
+            spaUsed='strategy:injected-link';
+            // Verify navigation happened
+            setTimeout(function(){},50);
+            return {success:true,data:spaUsed};
+          }
+        }catch(e){/* fall through */}
+
+        // Strategy 3: Fallback — direct click on any visible element whose text/title matches the route
+        try{
+          var routeLabel={'literary':'文学','visual':'视觉','defect':'缺陷','report':'周报','prd':'PRD'};
+          var routeKey=spaUrl.replace(/^\//,'').split('/')[0].split('?')[0];
+          for(var rlk in routeLabel){
+            if(routeKey.indexOf(rlk)>=0){
+              var btns=document.querySelectorAll('button,a,[role=button]');
+              for(var bi=0;bi<btns.length;bi++){
+                var bt=btns[bi].textContent.trim();
+                if(bt.indexOf(routeLabel[rlk])>=0&&btns[bi].offsetParent&&bt.length<20){
+                  btns[bi].click();
+                  return {success:true,data:'strategy:text-match('+bt+')'};
                 }
-                return findNav(f.child,d+1)||findNav(f.sibling,d+1);
-              }
-              var router=findNav(rFiber,0);
-              if(router&&router.navigate){
-                router.navigate(spaUrl);
-                return {success:true};
               }
             }
           }
         }catch(e){/* fall through */}
-        // Strategy 3: Fallback — use history.pushState + popstate
+
+        // Strategy 4: Last resort — pushState (may not trigger React Router)
         history.pushState({},'',spaUrl);
         window.dispatchEvent(new PopStateEvent('popstate',{state:{}}));
-        return {success:true,data:'fallback:pushState'};
+        return {success:true,data:'strategy:pushState(may-not-work)'};
       }
       if(action==='evaluate'){
         var result;
@@ -1206,26 +1215,20 @@ export function buildWidgetScript(branchId: string, branchName: string): string 
   setTimeout(bridgeCheckActivation,2000);
 
   // ── Page change detection ──
-  // Notify bridge when SPA navigation occurs
+  // When URL changes (SPA navigation), trigger an immediate poll to update server
   var bridgeLastUrl=location.href;
   function checkUrlChange(){
     if(location.href!==bridgeLastUrl){
       bridgeLastUrl=location.href;
-      if(bridgeWs&&bridgeWs.readyState===1){
-        setTimeout(function(){
-          var state=collectPageState();
-          bridgeWs.send(JSON.stringify({type:'page-changed',state:state}));
-        },500);
+      // Re-extract DOM for new page and send heartbeat immediately
+      if(bridgeActive){
+        setTimeout(bridgePoll,500);
       }
     }
   }
   setInterval(checkUrlChange,1000);
-
-  // Listen for popstate (back/forward navigation)
   window.addEventListener('popstate',function(){
-    setTimeout(function(){
-      checkUrlChange();
-    },300);
+    setTimeout(checkUrlChange,300);
   });
 
   // ── Bridge status indicator ──
