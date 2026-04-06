@@ -51,10 +51,10 @@ export function GenerateDialog({ open, onOpenChange, item, templates }: Generate
                   onClick={() => setSelectedTemplateId(t.id)}
                   className={`surface-row w-full text-left px-3 py-2.5 rounded-lg transition-colors text-sm ${
                     selectedTemplateId === t.id
-                      ? 'bg-primary/10'
-                      : ''
+                      ? 'border border-primary/30'
+                      : 'border border-transparent'
                   }`}
-                  style={selectedTemplateId === t.id ? { background: 'var(--bg-input-hover)', border: '1px solid hsl(var(--primary) / 0.3)' } : undefined}
+                  data-active={selectedTemplateId === t.id || undefined}
                 >
                   <div className="font-medium">{t.name}</div>
                   {t.description && (

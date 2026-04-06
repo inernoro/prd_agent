@@ -64,10 +64,11 @@ export function SegmentRow({ segment, index, isActive, onSeek, onTextChange, row
     >
       {/* Timestamp */}
       <span
-        className={`font-mono text-xs pt-0.5 w-16 shrink-0 text-right tabular-nums cursor-pointer transition-colors ${
-          isActive ? 'text-primary/60' : 'text-muted-foreground/60 hover:text-muted-foreground'
+        className={`font-mono text-xs pt-0.5 w-16 shrink-0 text-right tabular-nums cursor-pointer transition-colors hover:text-primary ${
+          isActive ? 'text-primary' : 'text-muted-foreground/60'
         }`}
         onClick={onSeek}
+        title="点击跳转到此时间"
       >
         {formatTime(segment.start)}
       </span>
@@ -84,10 +85,11 @@ export function SegmentRow({ segment, index, isActive, onSeek, onTextChange, row
         />
       ) : (
         <span
-          className={`text-sm leading-relaxed flex-1 ${
+          className={`text-sm leading-relaxed flex-1 cursor-text rounded px-1 -mx-1 transition-colors hover:bg-muted/30 hover:underline hover:decoration-dotted hover:decoration-muted-foreground/40 ${
             isActive ? 'text-foreground' : 'text-foreground/80'
           }`}
           onClick={() => setIsEditing(true)}
+          title="点击编辑"
         >
           {segment.text}
         </span>

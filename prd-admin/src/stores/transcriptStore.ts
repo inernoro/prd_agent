@@ -30,6 +30,7 @@ interface TranscriptState {
   deleteRun: (runId: string) => Promise<void>;
   renameItem: (itemId: string, newName: string) => Promise<void>;
   updateSegments: (itemId: string, segments: TranscriptSegment[]) => Promise<void>;
+  saveRunResult: (runId: string, result: string) => Promise<void>;
   refreshItems: () => Promise<void>;
 }
 
@@ -160,6 +161,18 @@ export const useTranscriptStore = create<TranscriptState>((set, get) => ({
       set(s => ({
         items: s.items.map(i => i.id === itemId ? { ...i, segments } : i),
       }));
+    }
+  },
+
+  saveRunResult: async (runId: string, result: string) => {
+    const res = await svc.updateRunResult(runId, result);
+    if (res.success) {
+      set(s => ({
+        runs: s.runs.map(r => r.id === runId ? { ...r, result } : r),
+      }));
+      toast.success('已保存');
+    } else {
+      toast.error('保存失败');
     }
   },
 
