@@ -1130,19 +1130,22 @@ export function buildWidgetScript(branchId: string, branchName: string): string 
   // Lightweight check: is there an active session for this branch? (no body, no state)
   function bridgeCheckActivation(){
     fetch(API+'/bridge/check/'+BRANCH_ID)
-      .then(function(r){return r.ok?r.json():null;})
+      .then(function(r){
+        if(!r.ok){console.warn('[CDS Bridge] Check returned '+r.status);return null;}
+        return r.json();
+      })
       .then(function(d){
-        if(d&&d.active&&!bridgeActive){
-          // Agent started a session — begin full polling
+        if(!d)return;
+        if(d.active&&!bridgeActive){
           bridgeActive=true;
           bridgeConnected=true;
           console.log('[CDS Bridge] Activated by Agent');
           renderBridgeIndicator();
-          bridgePoll(); // immediate first poll
-          bridgeActiveTimer=setInterval(bridgePoll,3000); // 3s poll when active
+          bridgePoll();
+          bridgeActiveTimer=setInterval(bridgePoll,3000);
         }
       })
-      .catch(function(){});
+      .catch(function(e){console.error('[CDS Bridge] Check error:',e);});
   }
 
   // Full heartbeat poll (only runs when activated)
@@ -1210,9 +1213,18 @@ export function buildWidgetScript(branchId: string, branchName: string): string 
   }
 
   // Start lightweight activation check every 10s (very low overhead, no body)
-  bridgeCheckTimer=setInterval(bridgeCheckActivation,10000);
-  // First check after 2s (give page time to settle)
-  setTimeout(bridgeCheckActivation,2000);
+  try{
+    bridgeCheckTimer=setInterval(bridgeCheckActivation,10000);
+    // First check after 2s (give page time to settle)
+    setTimeout(bridgeCheckActivation,2000);
+    // Also try immediately (in case 2s is too early and an error suppresses it)
+    setTimeout(function(){
+      try{bridgeCheckActivation();}catch(e){console.error('[CDS Bridge] Activation check error:',e);}
+    },5000);
+    console.log('[CDS Bridge] Initialization complete, check interval started');
+  }catch(e){
+    console.error('[CDS Bridge] Failed to initialize:',e);
+  }
 
   // ── Page change detection ──
   // When URL changes (SPA navigation), trigger an immediate poll to update server
