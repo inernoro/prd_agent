@@ -1343,6 +1343,17 @@ select optgroup {
     inset 0 1px 0 0 rgba(255, 255, 255, 0.04);
 }
 
+/* ── .surface-row 选中态 — 优先级高于 hover，用 data-active 驱动 ── */
+.surface-row[data-active="true"] {
+  background: var(--bg-input-hover, rgba(255, 255, 255, 0.10)) !important;
+  border-left: 2px solid hsl(var(--primary));
+}
+
+.surface-row[data-active="true"]:hover {
+  background: var(--bg-card-hover, rgba(255, 255, 255, 0.11)) !important;
+  border-left: 2px solid hsl(var(--primary));
+}
+
 /* ── .surface-interactive — 可点击卡片（上浮 + 光晕） ── */
 .surface-interactive {
   transition: transform 0.25s cubic-bezier(0.4, 0, 0.2, 1),
