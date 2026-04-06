@@ -1083,7 +1083,7 @@ export function buildWidgetScript(branchId: string, branchName: string): string 
         // Strategy 3: Fallback — direct click on any visible element whose text/title matches the route
         try{
           var routeLabel={'literary':'文学','visual':'视觉','defect':'缺陷','report':'周报','prd':'PRD'};
-          var routeKey=spaUrl.replace(/^\//,'').split('/')[0].split('?')[0];
+          var routeKey=spaUrl.charAt(0)==='/'?spaUrl.substring(1).split('/')[0]:spaUrl.split('/')[0];
           for(var rlk in routeLabel){
             if(routeKey.indexOf(rlk)>=0){
               var btns=document.querySelectorAll('button,a,[role=button]');
