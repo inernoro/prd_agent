@@ -3,7 +3,7 @@ import {
   Database, Globe, Brain, Code2, Filter, Merge, Repeat, BarChart3,
   Clock, GitBranch,
   FileText, Download, Send, Bell, Box, AppWindow, GlobeLock, Mail,
-  Video, PenTool,
+  Video, PenTool, Terminal,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 
@@ -239,6 +239,18 @@ export const CAPSULE_TYPE_REGISTRY: Record<string, CapsuleTypeDef> = {
     testable: true,
   },
 
+  // ──────── CLI Agent 执行器 ────────
+  'cli-agent-executor': {
+    typeKey: 'cli-agent-executor',
+    name: 'CLI Agent 执行器',
+    description: '调度 Docker 容器中的 CLI 编码工具生成页面/项目，支持多轮迭代',
+    Icon: Terminal,
+    emoji: '🐳',
+    category: 'processor',
+    accentHue: 280,
+    testable: true,
+  },
+
   // ──────── 流程控制类 ────────
   'delay': {
     typeKey: 'delay',
@@ -399,6 +411,7 @@ const ICON_MAP: Record<string, LucideIcon> = {
   'mail': Mail,
   'video': Video,
   'pen-tool': PenTool,
+  'terminal': Terminal,
 };
 
 const EMOJI_MAP: Record<string, string> = {
@@ -429,6 +442,7 @@ const EMOJI_MAP: Record<string, string> = {
   'video-downloader': '📥',
   'video-to-text': '📝',
   'text-to-copywriting': '✍️',
+  'cli-agent-executor': '🐳',
 };
 
 const CATEGORY_EMOJI: Record<string, string> = {
