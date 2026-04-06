@@ -1513,6 +1513,10 @@ export {
   listDocumentEntriesReal as listDocumentEntries,
   updateDocumentEntryReal as updateDocumentEntry,
   deleteDocumentEntryReal as deleteDocumentEntry,
+  uploadDocumentFile,
+  getDocumentContent,
+  addSubscription,
+  triggerSync,
 } from '@/services/real/documentStore';
 export type {
   DocumentStore,

@@ -6,13 +6,15 @@ import {
   Upload,
   Search,
   Trash2,
-  Edit3,
   Sparkle,
   Loader2,
   FolderOpen,
   ArrowLeft,
   X,
   File,
+  RefreshCw,
+  Rss,
+  Globe,
 } from 'lucide-react';
 import { GlassCard } from '@/components/design/GlassCard';
 import { TabBar } from '@/components/design/TabBar';
@@ -23,24 +25,18 @@ import {
   createDocumentStore,
   deleteDocumentStore,
   listDocumentEntries,
-  addDocumentEntry,
   deleteDocumentEntry,
+  uploadDocumentFile,
+  getDocumentContent,
+  addSubscription,
+  triggerSync,
 } from '@/services';
 import type {
   DocumentStore,
   DocumentEntry,
 } from '@/services/contracts/documentStore';
 import { useNavigate } from 'react-router-dom';
-
-// ── 文件上传读取 ──
-function readFileAsText(file: File): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(reader.result as string);
-    reader.onerror = reject;
-    reader.readAsText(file);
-  });
-}
+import { toast } from '@/lib/toast';
 
 const ACCEPT_TYPES = '.md,.txt,.pdf,.doc,.docx,.json,.yaml,.yml,.csv';
 
@@ -139,19 +135,49 @@ function CreateStoreDialog({ onClose, onCreated }: {
   );
 }
 
-// ── 文档条目详情面板 ──
-function EntryDetailPanel({ entry, onClose, onDelete }: {
+// ── 文档条目详情面板（含内容预览 + 同步控制）──
+function EntryDetailPanel({ entry, onClose, onDelete, onUpdate }: {
   entry: DocumentEntry;
   onClose: () => void;
   onDelete: (entryId: string) => void;
+  onUpdate?: (entry: DocumentEntry) => void;
 }) {
   const navigate = useNavigate();
+  const [content, setContent] = useState<string | null>(null);
+  const [contentLoading, setContentLoading] = useState(false);
+  const [showContent, setShowContent] = useState(false);
+  const [syncing, setSyncing] = useState(false);
+
+  const loadContent = useCallback(async () => {
+    setContentLoading(true);
+    const res = await getDocumentContent(entry.id);
+    if (res.success && res.data.hasContent) {
+      setContent(res.data.content);
+    } else {
+      setContent(null);
+    }
+    setContentLoading(false);
+    setShowContent(true);
+  }, [entry.id]);
+
+  const handleSync = useCallback(async () => {
+    setSyncing(true);
+    const res = await triggerSync(entry.id);
+    if (res.success) {
+      toast.info('同步已触发', '后台正在拉取最新内容…');
+    } else {
+      toast.error('同步失败', res.error?.message);
+    }
+    setSyncing(false);
+  }, [entry.id]);
+
+  const isSubscription = entry.sourceType === 'subscription';
 
   return (
     <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center"
       style={{ background: 'rgba(0,0,0,0.5)', backdropFilter: 'blur(8px)' }}
       onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
-      <div className="w-full sm:w-[520px] max-h-[85vh] rounded-t-[16px] sm:rounded-[16px] p-6 overflow-y-auto"
+      <div className="w-full sm:w-[600px] max-h-[85vh] rounded-t-[16px] sm:rounded-[16px] p-6 overflow-y-auto"
         style={{
           background: 'linear-gradient(180deg, var(--glass-bg-start) 0%, var(--glass-bg-end) 100%)',
           border: '1px solid rgba(255,255,255,0.08)',
@@ -171,16 +197,19 @@ function EntryDetailPanel({ entry, onClose, onDelete }: {
           <p className="text-[12px] leading-[1.6] mb-4" style={{ color: 'var(--text-secondary)' }}>{entry.summary}</p>
         )}
 
-        <div className="space-y-2 mb-5">
+        <div className="space-y-2 mb-4">
           {[
-            { label: '来源', value: entry.sourceType },
+            { label: '来源', value: isSubscription ? `订阅源` : entry.sourceType },
+            ...(isSubscription && entry.sourceUrl ? [{ label: '源地址', value: entry.sourceUrl }] : []),
             { label: '类型', value: entry.contentType || '未知' },
             { label: '大小', value: formatFileSize(entry.fileSize) },
             { label: '创建时间', value: new Date(entry.createdAt).toLocaleString() },
+            ...(entry.lastSyncAt ? [{ label: '上次同步', value: new Date(entry.lastSyncAt).toLocaleString() }] : []),
+            ...(entry.syncStatus && entry.syncStatus !== 'idle' ? [{ label: '同步状态', value: entry.syncStatus === 'error' ? `错误: ${entry.syncError || '未知'}` : entry.syncStatus }] : []),
           ].map(r => (
-            <div key={r.label} className="flex items-center justify-between text-[12px]">
-              <span style={{ color: 'var(--text-muted)' }}>{r.label}</span>
-              <span style={{ color: 'var(--text-secondary)' }}>{r.value}</span>
+            <div key={r.label} className="flex items-center justify-between text-[12px] gap-2">
+              <span className="flex-shrink-0" style={{ color: 'var(--text-muted)' }}>{r.label}</span>
+              <span className="truncate text-right" style={{ color: 'var(--text-secondary)' }}>{r.value}</span>
             </div>
           ))}
         </div>
@@ -196,13 +225,39 @@ function EntryDetailPanel({ entry, onClose, onDelete }: {
           </div>
         )}
 
+        {/* 内容预览 */}
+        {!showContent ? (
+          <button onClick={loadContent} disabled={contentLoading}
+            className="w-full py-2.5 rounded-[10px] text-[12px] font-semibold cursor-pointer transition-colors duration-200 mb-4"
+            style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.08)', color: 'var(--text-secondary)' }}>
+            {contentLoading ? '加载中…' : '查看文档内容'}
+          </button>
+        ) : content ? (
+          <div className="mb-4 p-3 rounded-[10px] max-h-[300px] overflow-y-auto"
+            style={{ background: 'rgba(0,0,0,0.2)', border: '1px solid rgba(255,255,255,0.06)' }}>
+            <pre className="text-[11px] leading-[1.6] whitespace-pre-wrap break-words" style={{ color: 'var(--text-secondary)' }}>
+              {content.slice(0, 5000)}{content.length > 5000 ? '\n\n…（内容过长，已截取前 5000 字符）' : ''}
+            </pre>
+          </div>
+        ) : (
+          <p className="text-[11px] mb-4" style={{ color: 'var(--text-muted)' }}>无文本内容（可能是二进制文件）</p>
+        )}
+
         <div className="flex justify-between gap-2 pt-3" style={{ borderTop: '1px solid rgba(255,255,255,0.06)' }}>
-          <Button variant="primary" size="xs" onClick={() => {
-            onClose();
-            navigate(`/emergence?seedSourceType=document&seedSourceId=${entry.id}&seedContent=${encodeURIComponent(entry.title)}`);
-          }}>
-            <Sparkle size={13} /> 从此文档涌现
-          </Button>
+          <div className="flex gap-2">
+            <Button variant="primary" size="xs" onClick={() => {
+              onClose();
+              navigate(`/emergence?seedSourceType=document&seedSourceId=${entry.id}&seedContent=${encodeURIComponent(entry.title)}`);
+            }}>
+              <Sparkle size={13} /> 涌现
+            </Button>
+            {isSubscription && (
+              <Button variant="secondary" size="xs" onClick={handleSync} disabled={syncing}>
+                {syncing ? <Loader2 size={13} className="animate-spin" /> : <RefreshCw size={13} />}
+                同步
+              </Button>
+            )}
+          </div>
           <Button variant="ghost" size="xs" onClick={() => { onDelete(entry.id); onClose(); }}
             style={{ color: 'rgba(239,68,68,0.7)' }}>
             <Trash2 size={13} /> 删除
@@ -222,6 +277,7 @@ function StoreDetailView({ store, onBack }: {
   const [loading, setLoading] = useState(true);
   const [keyword, setKeyword] = useState('');
   const [selectedEntry, setSelectedEntry] = useState<DocumentEntry | null>(null);
+  const [showSubscribe, setShowSubscribe] = useState(false);
 
   // 文件上传状态
   const [uploading, setUploading] = useState(false);
@@ -238,26 +294,21 @@ function StoreDetailView({ store, onBack }: {
 
   useEffect(() => { loadEntries(); }, [loadEntries]);
 
-  // 文件上传处理
+  // 文件上传处理 — 调用真实上传端点（文件存盘 + 文本提取 + 解析）
   const handleFiles = useCallback(async (files: File[]) => {
     setUploading(true);
+    let successCount = 0;
     for (const file of files) {
-      let summary: string | undefined;
-      try {
-        const text = await readFileAsText(file);
-        summary = text.slice(0, 200).trim() || undefined;
-      } catch { /* binary file, skip summary */ }
-
-      const res = await addDocumentEntry(store.id, {
-        title: file.name.replace(/\.[^.]+$/, ''),
-        summary,
-        sourceType: 'upload',
-        contentType: file.type || 'application/octet-stream',
-        fileSize: file.size,
-      });
+      const res = await uploadDocumentFile(store.id, file);
       if (res.success) {
-        setEntries(prev => [res.data, ...prev]);
+        setEntries(prev => [res.data.entry, ...prev]);
+        successCount++;
+      } else {
+        toast.error(`上传失败: ${file.name}`, res.error?.message);
       }
+    }
+    if (successCount > 0) {
+      toast.success(`上传完成`, `${successCount} 个文件已存储`);
     }
     setUploading(false);
   }, [store.id]);
@@ -310,6 +361,9 @@ function StoreDetailView({ store, onBack }: {
         }
         actions={
           <div className="flex items-center gap-2">
+            <Button variant="secondary" size="xs" onClick={() => setShowSubscribe(true)}>
+              <Rss size={13} /> 添加订阅
+            </Button>
             <Button variant="primary" size="xs" onClick={() => fileInputRef.current?.click()} disabled={uploading}>
               {uploading ? <Loader2 size={13} className="animate-spin" /> : <Upload size={13} />}
               {uploading ? '上传中…' : '上传文档'}
@@ -376,8 +430,13 @@ function StoreDetailView({ store, onBack }: {
                 className="group" onClick={() => setSelectedEntry(entry)}>
                 <div className="flex items-center gap-3 px-4 py-3">
                   <div className="w-9 h-9 rounded-[10px] flex items-center justify-center flex-shrink-0"
-                    style={{ background: 'rgba(59,130,246,0.06)', border: '1px solid rgba(59,130,246,0.1)' }}>
-                    {entry.contentType.startsWith('text/') ? (
+                    style={{
+                      background: entry.sourceType === 'subscription' ? 'rgba(234,179,8,0.06)' : 'rgba(59,130,246,0.06)',
+                      border: `1px solid ${entry.sourceType === 'subscription' ? 'rgba(234,179,8,0.1)' : 'rgba(59,130,246,0.1)'}`,
+                    }}>
+                    {entry.sourceType === 'subscription' ? (
+                      <Rss size={16} style={{ color: 'rgba(234,179,8,0.7)' }} />
+                    ) : entry.contentType.startsWith('text/') ? (
                       <FileText size={16} style={{ color: 'rgba(59,130,246,0.7)' }} />
                     ) : (
                       <File size={16} style={{ color: 'rgba(59,130,246,0.7)' }} />
@@ -430,6 +489,116 @@ function StoreDetailView({ store, onBack }: {
       {selectedEntry && (
         <EntryDetailPanel entry={selectedEntry} onClose={() => setSelectedEntry(null)} onDelete={handleDeleteEntry} />
       )}
+
+      {/* 添加订阅对话框 */}
+      {showSubscribe && (
+        <SubscribeDialog
+          storeId={store.id}
+          onClose={() => setShowSubscribe(false)}
+          onCreated={(entry) => { setShowSubscribe(false); setEntries(prev => [entry, ...prev]); }}
+        />
+      )}
+    </div>
+  );
+}
+
+// ── 订阅源对话框 ──
+function SubscribeDialog({ storeId, onClose, onCreated }: {
+  storeId: string;
+  onClose: () => void;
+  onCreated: (entry: DocumentEntry) => void;
+}) {
+  const [title, setTitle] = useState('');
+  const [sourceUrl, setSourceUrl] = useState('');
+  const [interval, setInterval] = useState(60);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+
+  const handleCreate = async () => {
+    if (!title.trim()) { setError('标题不能为空'); return; }
+    if (!sourceUrl.trim()) { setError('源地址不能为空'); return; }
+    setLoading(true);
+    setError('');
+    const res = await addSubscription(storeId, {
+      title: title.trim(),
+      sourceUrl: sourceUrl.trim(),
+      syncIntervalMinutes: interval,
+    });
+    if (res.success) {
+      toast.success('订阅添加成功', '后台将按设定间隔自动拉取内容');
+      onCreated(res.data);
+    } else {
+      setError(res.error?.message ?? '创建失败');
+    }
+    setLoading(false);
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center"
+      style={{ background: 'rgba(0,0,0,0.5)', backdropFilter: 'blur(8px)' }}
+      onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+      <div className="w-[460px] max-w-[92vw] rounded-[16px] p-6"
+        style={{
+          background: 'linear-gradient(180deg, var(--glass-bg-start) 0%, var(--glass-bg-end) 100%)',
+          border: '1px solid rgba(255,255,255,0.08)',
+          backdropFilter: 'blur(40px) saturate(180%)',
+          boxShadow: '0 24px 48px -12px rgba(0,0,0,0.5)',
+        }}>
+        <div className="flex items-center justify-between mb-5">
+          <div className="flex items-center gap-2.5">
+            <div className="w-8 h-8 rounded-[10px] flex items-center justify-center"
+              style={{ background: 'rgba(234,179,8,0.08)', border: '1px solid rgba(234,179,8,0.12)' }}>
+              <Rss size={15} style={{ color: 'rgba(234,179,8,0.85)' }} />
+            </div>
+            <span className="text-[15px] font-semibold" style={{ color: 'var(--text-primary)' }}>添加订阅源</span>
+          </div>
+          <button onClick={onClose}
+            className="w-7 h-7 rounded-[8px] flex items-center justify-center cursor-pointer hover:bg-white/6 transition-colors duration-200"
+            style={{ color: 'var(--text-muted)' }}>
+            <X size={15} />
+          </button>
+        </div>
+
+        <div className="space-y-4 mb-4">
+          <div>
+            <label className="block text-[12px] mb-1.5" style={{ color: 'var(--text-muted)' }}>标题</label>
+            <input value={title} onChange={e => setTitle(e.target.value)} placeholder="如：React 官方博客"
+              className="w-full h-9 px-3 rounded-[10px] text-[13px] outline-none"
+              style={{ background: 'var(--input-bg, rgba(255,255,255,0.05))', border: '1px solid var(--border-subtle, rgba(255,255,255,0.1))', color: 'var(--text-primary)' }} />
+          </div>
+          <div>
+            <label className="block text-[12px] mb-1.5" style={{ color: 'var(--text-muted)' }}>源地址（RSS / 网页 URL）</label>
+            <input value={sourceUrl} onChange={e => setSourceUrl(e.target.value)} placeholder="https://example.com/feed.xml"
+              className="w-full h-9 px-3 rounded-[10px] text-[13px] outline-none"
+              style={{ background: 'var(--input-bg, rgba(255,255,255,0.05))', border: '1px solid var(--border-subtle, rgba(255,255,255,0.1))', color: 'var(--text-primary)' }} />
+          </div>
+          <div>
+            <label className="block text-[12px] mb-1.5" style={{ color: 'var(--text-muted)' }}>同步间隔</label>
+            <div className="flex gap-2">
+              {[15, 60, 360, 1440].map(m => (
+                <button key={m} onClick={() => setInterval(m)}
+                  className="flex-1 py-1.5 rounded-[8px] text-[11px] font-semibold cursor-pointer transition-all duration-200"
+                  style={{
+                    background: interval === m ? 'rgba(234,179,8,0.1)' : 'rgba(255,255,255,0.02)',
+                    border: interval === m ? '1px solid rgba(234,179,8,0.2)' : '1px solid rgba(255,255,255,0.06)',
+                    color: interval === m ? 'rgba(234,179,8,0.9)' : 'var(--text-muted)',
+                  }}>
+                  {m < 60 ? `${m}分钟` : m < 1440 ? `${m / 60}小时` : '每天'}
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+
+        {error && <p className="text-[12px] mb-3" style={{ color: 'rgba(239,68,68,0.9)' }}>{error}</p>}
+
+        <div className="flex justify-end gap-2">
+          <Button variant="ghost" size="xs" onClick={onClose}>取消</Button>
+          <Button variant="primary" size="xs" onClick={handleCreate} disabled={loading}>
+            {loading ? '添加中…' : '添加订阅'}
+          </Button>
+        </div>
+      </div>
     </div>
   );
 }

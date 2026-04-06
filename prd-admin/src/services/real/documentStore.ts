@@ -69,3 +69,67 @@ export const deleteDocumentEntryReal: DeleteDocumentEntryContract = async (entry
     method: 'DELETE',
   });
 };
+
+/**
+ * 上传文件到文档空间（multipart/form-data）。
+ * ⚠️ 不能用 apiRequest（会 JSON.stringify body），直接 fetch。
+ */
+export async function uploadDocumentFile(storeId: string, file: File): Promise<import('@/types/api').ApiResponse<{
+  entry: import('@/services/contracts/documentStore').DocumentEntry;
+  attachmentId: string;
+  documentId?: string;
+  fileUrl: string;
+}>> {
+  const { useAuthStore } = await import('@/stores/authStore');
+  const token = useAuthStore.getState().token;
+  const formData = new FormData();
+  formData.append('file', file);
+
+  const res = await fetch(api.documentStore.entries.upload(storeId), {
+    method: 'POST',
+    headers: {
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+    body: formData,
+  });
+
+  if (!res.ok) {
+    const text = await res.text().catch(() => '');
+    return { success: false, data: null as never, error: { code: 'UPLOAD_FAILED', message: text || `HTTP ${res.status}` } };
+  }
+  return await res.json();
+}
+
+/** 获取文档内容 */
+export async function getDocumentContent(entryId: string) {
+  return await apiRequest<{
+    entryId: string;
+    title: string;
+    content: string | null;
+    contentType: string;
+    fileUrl: string | null;
+    hasContent: boolean;
+  }>(api.documentStore.entries.content(entryId), { method: 'GET' });
+}
+
+/** 添加订阅源 */
+export async function addSubscription(storeId: string, input: {
+  title: string;
+  description?: string;
+  sourceUrl: string;
+  syncIntervalMinutes?: number;
+  tags?: string[];
+}) {
+  return await apiRequest<import('@/services/contracts/documentStore').DocumentEntry>(
+    api.documentStore.entries.subscribe(storeId),
+    { method: 'POST', body: input },
+  );
+}
+
+/** 手动触发同步 */
+export async function triggerSync(entryId: string) {
+  return await apiRequest<{ triggered: boolean }>(
+    api.documentStore.entries.sync(entryId),
+    { method: 'POST' },
+  );
+}

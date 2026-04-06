@@ -41,6 +41,23 @@ public class DocumentEntry
     /// <summary>上传/创建者 UserId</summary>
     public string CreatedBy { get; set; } = string.Empty;
 
+    // ── 定期同步字段（功能二：订阅外部源自动更新）──
+
+    /// <summary>外部数据源 URL（RSS/网页/API），为空表示手动上传的文档</summary>
+    public string? SourceUrl { get; set; }
+
+    /// <summary>同步间隔（分钟），0 或 null 表示不自动同步</summary>
+    public int? SyncIntervalMinutes { get; set; }
+
+    /// <summary>上次同步时间</summary>
+    public DateTime? LastSyncAt { get; set; }
+
+    /// <summary>同步状态：idle / syncing / error</summary>
+    public string? SyncStatus { get; set; }
+
+    /// <summary>同步错误信息</summary>
+    public string? SyncError { get; set; }
+
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
@@ -63,5 +80,16 @@ public static class DocumentSourceType
     /// <summary>外部导入（API / 第三方）</summary>
     public const string Import = "import";
 
-    public static readonly string[] All = { Upload, Migration, Reference, Import };
+    /// <summary>订阅源（定期自动拉取）</summary>
+    public const string Subscription = "subscription";
+
+    public static readonly string[] All = { Upload, Migration, Reference, Import, Subscription };
+}
+
+/// <summary>同步状态常量</summary>
+public static class DocumentSyncStatus
+{
+    public const string Idle = "idle";
+    public const string Syncing = "syncing";
+    public const string Error = "error";
 }

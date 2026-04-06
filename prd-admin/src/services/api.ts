@@ -931,7 +931,11 @@ export const api = {
     entries: {
       list: (storeId: string) => `/api/document-store/stores/${storeId}/entries`,
       add: (storeId: string) => `/api/document-store/stores/${storeId}/entries`,
+      upload: (storeId: string) => `/api/document-store/stores/${storeId}/upload`,
+      subscribe: (storeId: string) => `/api/document-store/stores/${storeId}/subscribe`,
       detail: (entryId: string) => `/api/document-store/entries/${entryId}`,
+      content: (entryId: string) => `/api/document-store/entries/${entryId}/content`,
+      sync: (entryId: string) => `/api/document-store/entries/${entryId}/sync`,
       update: (entryId: string) => `/api/document-store/entries/${entryId}`,
       delete: (entryId: string) => `/api/document-store/entries/${entryId}`,
     },

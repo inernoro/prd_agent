@@ -2,9 +2,12 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using MongoDB.Driver;
 using PrdAgent.Api.Extensions;
+using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
 using PrdAgent.Core.Security;
 using PrdAgent.Infrastructure.Database;
+using PrdAgent.Infrastructure.Services;
+using PrdAgent.Infrastructure.Services.AssetStorage;
 
 namespace PrdAgent.Api.Controllers.Api;
 
@@ -19,11 +22,25 @@ namespace PrdAgent.Api.Controllers.Api;
 public class DocumentStoreController : ControllerBase
 {
     private readonly MongoDbContext _db;
+    private readonly IAssetStorage _assetStorage;
+    private readonly IFileContentExtractor _fileContentExtractor;
+    private readonly IDocumentService _documentService;
     private readonly ILogger<DocumentStoreController> _logger;
 
-    public DocumentStoreController(MongoDbContext db, ILogger<DocumentStoreController> logger)
+    /// <summary>20 MB per file</summary>
+    private const long MaxUploadBytes = 20 * 1024 * 1024;
+
+    public DocumentStoreController(
+        MongoDbContext db,
+        IAssetStorage assetStorage,
+        IFileContentExtractor fileContentExtractor,
+        IDocumentService documentService,
+        ILogger<DocumentStoreController> logger)
     {
         _db = db;
+        _assetStorage = assetStorage;
+        _fileContentExtractor = fileContentExtractor;
+        _documentService = documentService;
         _logger = logger;
     }
 
@@ -313,6 +330,275 @@ public class DocumentStoreController : ControllerBase
 
         return Ok(ApiResponse<object>.Ok(new { deleted = true }));
     }
+
+    // ─────────────────────────────────────────────
+    // 文件上传（真实存盘）
+    // ─────────────────────────────────────────────
+
+    /// <summary>
+    /// 上传文件到文档空间（multipart/form-data）。
+    /// 文件存储到 IAssetStorage，文本内容提取后存到 ParsedPrd，
+    /// 创建 DocumentEntry 关联 AttachmentId + DocumentId。
+    /// </summary>
+    [HttpPost("stores/{storeId}/upload")]
+    [RequestSizeLimit(MaxUploadBytes)]
+    public async Task<IActionResult> UploadFile(string storeId, [FromForm] IFormFile file, CancellationToken ct)
+    {
+        var userId = GetUserId();
+        var store = await _db.DocumentStores.Find(s => s.Id == storeId && s.OwnerId == userId).FirstOrDefaultAsync(ct);
+        if (store == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "文档空间不存在"));
+
+        if (file == null || file.Length == 0)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "请选择要上传的文件"));
+
+        if (file.Length > MaxUploadBytes)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, $"文件大小不能超过 {MaxUploadBytes / 1024 / 1024}MB"));
+
+        // MIME 推断
+        var mime = file.ContentType?.ToLowerInvariant() ?? "application/octet-stream";
+        if (mime == "application/octet-stream" && !string.IsNullOrWhiteSpace(file.FileName))
+        {
+            var ext = Path.GetExtension(file.FileName).ToLowerInvariant();
+            mime = ext switch
+            {
+                ".md" or ".mdc" => "text/markdown",
+                ".txt" => "text/plain",
+                ".pdf" => "application/pdf",
+                ".doc" => "application/msword",
+                ".docx" => "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                ".json" => "application/json",
+                ".yaml" or ".yml" => "text/yaml",
+                ".csv" => "text/csv",
+                ".xml" => "application/xml",
+                ".html" or ".htm" => "text/html",
+                _ => mime,
+            };
+        }
+
+        // 读取文件字节
+        byte[] bytes;
+        await using (var ms = new MemoryStream())
+        {
+            await file.CopyToAsync(ms, ct);
+            bytes = ms.ToArray();
+        }
+
+        // 1) 存储到 COS / 本地
+        var stored = await _assetStorage.SaveAsync(bytes, mime, ct, domain: "document-store", type: "doc");
+
+        // 2) 提取文本内容
+        string? extractedText = null;
+        if (_fileContentExtractor.IsSupported(mime))
+        {
+            extractedText = _fileContentExtractor.Extract(bytes, mime, file.FileName);
+        }
+        else if (mime.StartsWith("text/") || mime == "application/json" || mime == "application/xml")
+        {
+            // 纯文本格式直接读取
+            extractedText = System.Text.Encoding.UTF8.GetString(bytes);
+        }
+
+        // 3) 创建 Attachment 记录
+        var attachment = new Attachment
+        {
+            UploaderId = userId,
+            FileName = file.FileName,
+            MimeType = mime,
+            Size = file.Length,
+            Url = stored.Url,
+            Type = AttachmentType.Document,
+            UploadedAt = DateTime.UtcNow,
+            ExtractedText = extractedText?.Length > 50000 ? extractedText[..50000] : extractedText,
+        };
+        await _db.Attachments.InsertOneAsync(attachment, cancellationToken: ct);
+
+        // 4) 如果有提取到的文本，解析为 ParsedPrd 存储
+        string? documentId = null;
+        if (!string.IsNullOrWhiteSpace(extractedText))
+        {
+            var parsed = await _documentService.ParseAsync(extractedText);
+            parsed.Title = Path.GetFileNameWithoutExtension(file.FileName);
+            await _documentService.SaveAsync(parsed);
+            documentId = parsed.Id;
+        }
+
+        // 5) 创建 DocumentEntry（关联 Attachment + ParsedPrd）
+        var title = Path.GetFileNameWithoutExtension(file.FileName);
+        var summary = extractedText?.Length > 200 ? extractedText[..200] : extractedText;
+
+        var entry = new DocumentEntry
+        {
+            StoreId = storeId,
+            AttachmentId = attachment.AttachmentId,
+            DocumentId = documentId,
+            Title = title,
+            Summary = summary?.Trim(),
+            SourceType = DocumentSourceType.Upload,
+            ContentType = mime,
+            FileSize = file.Length,
+            CreatedBy = userId,
+        };
+        await _db.DocumentEntries.InsertOneAsync(entry, cancellationToken: ct);
+
+        // 更新空间文档计数
+        await _db.DocumentStores.UpdateOneAsync(
+            s => s.Id == storeId,
+            Builders<DocumentStore>.Update
+                .Inc(s => s.DocumentCount, 1)
+                .Set(s => s.UpdatedAt, DateTime.UtcNow),
+            cancellationToken: ct);
+
+        _logger.LogInformation("[document-store] File uploaded: {EntryId} '{FileName}' ({Size}B) to store {StoreId} by {UserId}",
+            entry.Id, file.FileName, file.Length, storeId, userId);
+
+        return Ok(ApiResponse<object>.Ok(new
+        {
+            entry,
+            attachmentId = attachment.AttachmentId,
+            documentId,
+            fileUrl = stored.Url,
+        }));
+    }
+
+    // ─────────────────────────────────────────────
+    // 文档内容读取
+    // ─────────────────────────────────────────────
+
+    /// <summary>获取文档条目的文本内容（从 ParsedPrd 或 Attachment.ExtractedText）</summary>
+    [HttpGet("entries/{entryId}/content")]
+    public async Task<IActionResult> GetEntryContent(string entryId)
+    {
+        var userId = GetUserId();
+        var entry = await _db.DocumentEntries.Find(e => e.Id == entryId).FirstOrDefaultAsync();
+        if (entry == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "文档条目不存在"));
+
+        var store = await _db.DocumentStores.Find(s => s.Id == entry.StoreId).FirstOrDefaultAsync();
+        if (store == null || (store.OwnerId != userId && !store.IsPublic))
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "文档条目不存在"));
+
+        // 优先从 ParsedPrd 读取完整内容
+        string? content = null;
+        string? title = null;
+        if (!string.IsNullOrEmpty(entry.DocumentId))
+        {
+            var doc = await _documentService.GetByIdAsync(entry.DocumentId);
+            if (doc != null)
+            {
+                content = doc.RawContent;
+                title = doc.Title;
+            }
+        }
+
+        // 兜底：从 Attachment.ExtractedText 读取
+        if (string.IsNullOrEmpty(content) && !string.IsNullOrEmpty(entry.AttachmentId))
+        {
+            var att = await _db.Attachments
+                .Find(a => a.AttachmentId == entry.AttachmentId)
+                .FirstOrDefaultAsync();
+            if (att != null)
+            {
+                content = att.ExtractedText;
+                title = att.FileName;
+            }
+        }
+
+        // 文件下载 URL
+        string? fileUrl = null;
+        if (!string.IsNullOrEmpty(entry.AttachmentId))
+        {
+            var att = await _db.Attachments
+                .Find(a => a.AttachmentId == entry.AttachmentId)
+                .FirstOrDefaultAsync();
+            fileUrl = att?.Url;
+        }
+
+        return Ok(ApiResponse<object>.Ok(new
+        {
+            entryId = entry.Id,
+            title = title ?? entry.Title,
+            content,
+            contentType = entry.ContentType,
+            fileUrl,
+            hasContent = !string.IsNullOrEmpty(content),
+        }));
+    }
+
+    // ─────────────────────────────────────────────
+    // 订阅源管理
+    // ─────────────────────────────────────────────
+
+    /// <summary>添加订阅源（定期从 URL 拉取内容更新文档）</summary>
+    [HttpPost("stores/{storeId}/subscribe")]
+    public async Task<IActionResult> AddSubscription(string storeId, [FromBody] AddSubscriptionRequest request)
+    {
+        var userId = GetUserId();
+        var store = await _db.DocumentStores.Find(s => s.Id == storeId && s.OwnerId == userId).FirstOrDefaultAsync();
+        if (store == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "文档空间不存在"));
+
+        if (string.IsNullOrWhiteSpace(request.SourceUrl))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "源地址不能为空"));
+
+        if (string.IsNullOrWhiteSpace(request.Title))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "标题不能为空"));
+
+        var interval = Math.Clamp(request.SyncIntervalMinutes ?? 60, 5, 1440); // 5分钟 ~ 24小时
+
+        var entry = new DocumentEntry
+        {
+            StoreId = storeId,
+            Title = request.Title.Trim(),
+            Summary = request.Description?.Trim(),
+            SourceType = DocumentSourceType.Subscription,
+            SourceUrl = request.SourceUrl.Trim(),
+            SyncIntervalMinutes = interval,
+            SyncStatus = DocumentSyncStatus.Idle,
+            ContentType = "text/html",
+            Tags = request.Tags ?? new List<string>(),
+            CreatedBy = userId,
+        };
+
+        await _db.DocumentEntries.InsertOneAsync(entry);
+
+        await _db.DocumentStores.UpdateOneAsync(
+            s => s.Id == storeId,
+            Builders<DocumentStore>.Update
+                .Inc(s => s.DocumentCount, 1)
+                .Set(s => s.UpdatedAt, DateTime.UtcNow));
+
+        _logger.LogInformation("[document-store] Subscription added: {EntryId} '{Url}' every {Interval}min to store {StoreId}",
+            entry.Id, request.SourceUrl, interval, storeId);
+
+        return Ok(ApiResponse<DocumentEntry>.Ok(entry));
+    }
+
+    /// <summary>手动触发同步</summary>
+    [HttpPost("entries/{entryId}/sync")]
+    public async Task<IActionResult> TriggerSync(string entryId)
+    {
+        var userId = GetUserId();
+        var entry = await _db.DocumentEntries.Find(e => e.Id == entryId).FirstOrDefaultAsync();
+        if (entry == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "文档条目不存在"));
+
+        var store = await _db.DocumentStores.Find(s => s.Id == entry.StoreId && s.OwnerId == userId).FirstOrDefaultAsync();
+        if (store == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "文档条目不存在"));
+
+        if (string.IsNullOrEmpty(entry.SourceUrl))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "该文档不是订阅源"));
+
+        // 标记为同步中（BackgroundService 会拾取）
+        await _db.DocumentEntries.UpdateOneAsync(
+            e => e.Id == entryId,
+            Builders<DocumentEntry>.Update
+                .Set(e => e.SyncStatus, DocumentSyncStatus.Syncing)
+                .Set(e => e.UpdatedAt, DateTime.UtcNow));
+
+        return Ok(ApiResponse<object>.Ok(new { triggered = true }));
+    }
 }
 
 // ─────────────────────────────────────────────
@@ -355,4 +641,13 @@ public class UpdateDocumentEntryRequest
     public string? Summary { get; set; }
     public List<string>? Tags { get; set; }
     public Dictionary<string, string>? Metadata { get; set; }
+}
+
+public class AddSubscriptionRequest
+{
+    public string Title { get; set; } = string.Empty;
+    public string? Description { get; set; }
+    public string SourceUrl { get; set; } = string.Empty;
+    public int? SyncIntervalMinutes { get; set; }
+    public List<string>? Tags { get; set; }
 }
