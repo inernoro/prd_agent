@@ -4424,7 +4424,7 @@ function escapeHtml(s) {
 
 let migrationTasks = [];
 let migrationToolInstalled = null;
-let loadedCollections = []; // cached collection list for picker
+let loadedCollections = [];
 
 async function loadMigrations() {
   try { migrationTasks = await api('GET', '/data-migrations'); } catch { migrationTasks = []; }
@@ -4438,9 +4438,7 @@ function formatConnSummary(conn) {
   if (!conn) return '—';
   const db = conn.database ? `/${conn.database}` : '';
   if (conn.type === 'local') return `本机 MongoDB${db}`;
-  const host = conn.host || '?';
-  const port = conn.port || 27017;
-  return `${host}:${port}${db}`;
+  return `${conn.host || '?'}:${conn.port || 27017}${db}`;
 }
 
 function formatDuration(startIso, endIso) {
@@ -4449,9 +4447,13 @@ function formatDuration(startIso, endIso) {
   if (ms < 1000) return `${ms}ms`;
   const s = Math.floor(ms / 1000);
   if (s < 60) return `${s}秒`;
-  const m = Math.floor(s / 60);
-  const rs = s % 60;
-  return `${m}分${rs}秒`;
+  return `${Math.floor(s / 60)}分${s % 60}秒`;
+}
+
+function formatSize(bytes) {
+  if (!bytes || bytes < 1024) return '';
+  if (bytes < 1048576) return `${(bytes / 1024).toFixed(0)} KB`;
+  return `${(bytes / 1048576).toFixed(1)} MB`;
 }
 
 function renderMigrationCard(m) {
@@ -4460,12 +4462,10 @@ function renderMigrationCard(m) {
   const tgtLabel = formatConnSummary(m.target);
   const colsLabel = m.collections?.length ? `${m.collections.length} 个集合` : '全部集合';
   const colsDetail = m.collections?.length
-    ? (m.collections.length <= 4
-      ? m.collections.join(', ')
-      : m.collections.slice(0, 3).join(', ') + ` +${m.collections.length - 3}`)
+    ? (m.collections.length <= 4 ? m.collections.join(', ') : m.collections.slice(0, 3).join(', ') + ` +${m.collections.length - 3}`)
     : '';
   const duration = formatDuration(m.startedAt, m.finishedAt);
-  const canRun = m.status === 'pending' || m.status === 'completed' || m.status === 'failed';
+  const canRun = m.status !== 'running';
 
   return `
     <div class="mig-card" style="border-left-color:${borderColor}">
@@ -4504,19 +4504,15 @@ async function openMigrationModal() {
   const listHtml = migrationTasks.length === 0
     ? '<div class="config-empty">暂无迁移任务。点击"新建迁移"开始配置。</div>'
     : migrationTasks.slice().reverse().map(renderMigrationCard).join('');
-
-  const html = `
-    <p class="config-panel-desc">
-      MongoDB 数据迁移。支持全库迁移或选择指定集合，可配置 SSH 隧道。
-    </p>
+  openConfigModal('数据迁移', `
+    <p class="config-panel-desc">MongoDB 数据迁移。支持全库或指定集合迁移，可配置 SSH 隧道。</p>
     <div class="config-panel-actions" style="margin-bottom:10px;display:flex;gap:6px;flex-wrap:wrap">
       <button class="sm primary" onclick="openNewMigrationModal()">+ 新建迁移</button>
       <button class="sm" onclick="checkMigrationTools()">🔧 工具状态</button>
     </div>
     <div id="migrationToolStatus" style="font-size:12px;margin-bottom:8px;display:none"></div>
     <div id="migrationListInModal">${listHtml}</div>
-  `;
-  openConfigModal('数据迁移', html);
+  `);
 }
 
 async function checkMigrationTools() {
@@ -4546,9 +4542,7 @@ async function installMigrationTools() {
       const { done, value } = await reader.read();
       if (done) break;
       buffer += decoder.decode(value, { stream: true });
-      const lines = buffer.split('\n');
-      buffer = lines.pop() || '';
-      for (const line of lines) {
+      for (const line of buffer.split('\n')) {
         if (line.startsWith('data: ')) {
           try {
             const d = JSON.parse(line.substring(6));
@@ -4557,23 +4551,23 @@ async function installMigrationTools() {
           } catch {}
         }
       }
+      buffer = '';
     }
   } catch (e) { el.innerHTML = `<span style="color:var(--red)">✗ ${esc(e.message)}</span>`; }
 }
 
-function buildConnectionForm(prefix, defaultType, showCollPicker) {
+// ── Connection form builder ──
+
+function buildConnectionForm(prefix, defaultType, isSource) {
   const mongoSvc = infraServices.find(s => s.id === 'mongodb');
   const hasLocalMongo = !!mongoSvc;
   return `
     <div class="migration-conn-panel">
-      <div class="form-row" style="margin-bottom:8px">
-        <label style="font-size:12px;font-weight:600;display:flex;align-items:center;gap:6px">
-          连接类型:
-          <select id="${prefix}Type" class="form-input sm" onchange="toggleConnType('${prefix}')" style="flex:1">
-            ${hasLocalMongo ? `<option value="local" ${defaultType === 'local' ? 'selected' : ''}>本机 MongoDB${mongoSvc?.status === 'running' ? ' ●' : ''}</option>` : ''}
-            <option value="remote" ${defaultType === 'remote' || !hasLocalMongo ? 'selected' : ''}>远程 MongoDB</option>
-          </select>
-        </label>
+      <div class="form-row" style="margin-bottom:6px">
+        <select id="${prefix}Type" class="form-input" onchange="onConnTypeChange('${prefix}', ${isSource})" style="font-size:12px">
+          ${hasLocalMongo ? `<option value="local" ${defaultType === 'local' ? 'selected' : ''}>本机 MongoDB${mongoSvc?.status === 'running' ? ' ●' : ''}</option>` : ''}
+          <option value="remote" ${defaultType === 'remote' || !hasLocalMongo ? 'selected' : ''}>远程 MongoDB</option>
+        </select>
       </div>
       <div id="${prefix}RemoteFields" style="${defaultType === 'local' && hasLocalMongo ? 'display:none' : ''}">
         <div class="form-row">
@@ -4588,12 +4582,16 @@ function buildConnectionForm(prefix, defaultType, showCollPicker) {
           <input id="${prefix}AuthDb" class="form-input" placeholder="认证库 (默认 admin)">
         </div>
       </div>
-      <div class="form-row">
-        <input id="${prefix}Database" class="form-input" placeholder="数据库名 (留空=全部)">
+      <div id="${prefix}DbArea">
+        <div class="form-row">
+          <select id="${prefix}Database" class="form-input" style="font-size:12px" onchange="onDbChange('${prefix}', ${isSource})">
+            <option value="">加载中...</option>
+          </select>
+        </div>
       </div>
-      ${showCollPicker ? `<div id="${prefix}CollectionPicker" style="margin-top:6px"></div>` : ''}
-      <div style="margin-top:8px">
-        <label style="font-size:12px;display:flex;align-items:center;gap:6px;cursor:pointer">
+      ${isSource ? `<div id="srcCollectionPicker" style="margin-top:4px"></div>` : ''}
+      <div style="margin-top:6px">
+        <label style="font-size:11px;display:flex;align-items:center;gap:6px;cursor:pointer;color:var(--fg-muted)">
           <input type="checkbox" id="${prefix}SshEnabled" onchange="toggleSshTunnel('${prefix}')">
           SSH 隧道
         </label>
@@ -4604,38 +4602,108 @@ function buildConnectionForm(prefix, defaultType, showCollPicker) {
           </div>
           <div class="form-row">
             <input id="${prefix}SshUser" class="form-input" placeholder="SSH 用户名">
-            <input id="${prefix}SshKey" class="form-input" placeholder="私钥路径 (如 ~/.ssh/id_rsa)">
+            <input id="${prefix}SshKey" class="form-input" placeholder="私钥路径">
           </div>
         </div>
       </div>
-      <div style="margin-top:8px;display:flex;align-items:center;gap:6px;flex-wrap:wrap">
-        <button class="sm" onclick="testConnection('${prefix}')">测试连接</button>
-        ${showCollPicker ? `<button class="sm" onclick="loadCollections()">加载集合</button>` : ''}
-        <span id="${prefix}TestResult" style="font-size:12px"></span>
-      </div>
+      <div id="${prefix}ConnStatus" style="font-size:11px;margin-top:6px;color:var(--fg-muted)"></div>
     </div>
   `;
 }
 
-function toggleConnType(prefix) {
-  const type = document.getElementById(`${prefix}Type`)?.value;
-  const fields = document.getElementById(`${prefix}RemoteFields`);
-  if (fields) fields.style.display = type === 'local' ? 'none' : '';
+function toggleSshTunnel(prefix) {
+  const el = document.getElementById(`${prefix}SshFields`);
+  if (el) el.style.display = document.getElementById(`${prefix}SshEnabled`)?.checked ? '' : 'none';
 }
 
-function toggleSshTunnel(prefix) {
-  const enabled = document.getElementById(`${prefix}SshEnabled`)?.checked;
-  const fields = document.getElementById(`${prefix}SshFields`);
-  if (fields) fields.style.display = enabled ? '' : 'none';
+function onConnTypeChange(prefix, isSource) {
+  const type = document.getElementById(`${prefix}Type`)?.value;
+  const remoteFields = document.getElementById(`${prefix}RemoteFields`);
+  if (remoteFields) remoteFields.style.display = type === 'local' ? 'none' : '';
+  // Auto-load databases for this connection
+  loadDatabases(prefix, isSource);
+}
+
+async function loadDatabases(prefix, isSource) {
+  const dbSelect = document.getElementById(`${prefix}Database`);
+  const statusEl = document.getElementById(`${prefix}ConnStatus`);
+  if (!dbSelect) return;
+  dbSelect.innerHTML = '<option value="">加载中...</option>';
+  dbSelect.disabled = true;
+  if (statusEl) statusEl.innerHTML = '<span class="btn-spinner"></span> 连接中...';
+
+  try {
+    const conn = readConnectionConfig(prefix);
+    const d = await api('POST', '/data-migrations/list-databases', { connection: conn });
+    const dbs = d.databases || [];
+    if (d.error) throw new Error(d.error);
+    if (dbs.length === 0) throw new Error('无法获取数据库列表');
+
+    dbSelect.innerHTML = '<option value="">(全部数据库)</option>' + dbs.map(db =>
+      `<option value="${esc(db.name)}">${esc(db.name)} ${formatSize(db.sizeOnDisk) ? '(' + formatSize(db.sizeOnDisk) + ')' : ''}</option>`
+    ).join('');
+    dbSelect.disabled = false;
+    if (statusEl) statusEl.innerHTML = `<span style="color:var(--green)">✓ 已连接 · ${dbs.length} 个数据库</span>`;
+  } catch (e) {
+    dbSelect.innerHTML = '<option value="">(连接失败)</option>';
+    dbSelect.disabled = false;
+    if (statusEl) statusEl.innerHTML = `<span style="color:var(--red)">✗ ${esc(e.message)}</span>`;
+    // Fallback: allow manual input
+    const dbArea = document.getElementById(`${prefix}DbArea`);
+    if (dbArea) {
+      dbArea.innerHTML = `<div class="form-row"><input id="${prefix}Database" class="form-input" placeholder="手动输入数据库名" style="font-size:12px" oninput="onDbChange('${prefix}', ${isSource})"></div>`;
+    }
+  }
+}
+
+function onDbChange(prefix, isSource) {
+  if (!isSource) return;
+  const srcDb = document.getElementById('srcDatabase')?.value;
+  // Auto-sync target database name
+  const tgtDb = document.getElementById('tgtDatabase');
+  if (tgtDb && srcDb) {
+    // Only auto-fill if target is empty or was auto-filled before
+    if (!tgtDb.value || tgtDb.dataset.autoFilled === 'true') {
+      tgtDb.value = srcDb;
+      tgtDb.dataset.autoFilled = 'true';
+      // If it's a select, check if option exists
+      if (tgtDb.tagName === 'SELECT') {
+        const exists = Array.from(tgtDb.options).some(o => o.value === srcDb);
+        if (!exists) {
+          tgtDb.insertAdjacentHTML('beforeend', `<option value="${esc(srcDb)}">${esc(srcDb)} (同源)</option>`);
+          tgtDb.value = srcDb;
+        }
+      }
+    }
+  }
+  // Auto-load collections for source
+  if (srcDb) loadCollections();
+  // Auto-generate task name
+  autoGenerateName();
+}
+
+function autoGenerateName() {
+  const nameEl = document.getElementById('migName');
+  if (!nameEl || (nameEl.value && !nameEl.dataset.autoGenerated)) return;
+  const srcType = document.getElementById('srcType')?.value;
+  const tgtType = document.getElementById('tgtType')?.value;
+  const srcDb = document.getElementById('srcDatabase')?.value || '';
+  const srcLabel = srcType === 'local' ? '本机' : (document.getElementById('srcHost')?.value || '远程');
+  const tgtLabel = tgtType === 'local' ? '本机' : (document.getElementById('tgtHost')?.value || '远程');
+  const db = srcDb ? `/${srcDb}` : '';
+  nameEl.value = `${srcLabel}${db} → ${tgtLabel}`;
+  nameEl.dataset.autoGenerated = 'true';
 }
 
 function readConnectionConfig(prefix) {
   const type = document.getElementById(`${prefix}Type`)?.value || 'remote';
+  const dbEl = document.getElementById(`${prefix}Database`);
+  const dbVal = dbEl?.value?.trim() || '';
   const conn = {
     type,
     host: document.getElementById(`${prefix}Host`)?.value?.trim() || '127.0.0.1',
     port: parseInt(document.getElementById(`${prefix}Port`)?.value) || 27017,
-    database: document.getElementById(`${prefix}Database`)?.value?.trim() || undefined,
+    database: dbVal || undefined,
     username: document.getElementById(`${prefix}Username`)?.value?.trim() || undefined,
     password: document.getElementById(`${prefix}Password`)?.value?.trim() || undefined,
     authDatabase: document.getElementById(`${prefix}AuthDb`)?.value?.trim() || undefined,
@@ -4654,46 +4722,29 @@ function readConnectionConfig(prefix) {
 }
 
 function readSelectedCollections() {
-  const checks = document.querySelectorAll('input[name="migCollection"]:checked');
-  return Array.from(checks).map(c => c.value);
-}
-
-async function testConnection(prefix) {
-  const el = document.getElementById(`${prefix}TestResult`);
-  if (!el) return;
-  el.innerHTML = '<span class="btn-spinner"></span> 测试中...';
-  try {
-    const conn = readConnectionConfig(prefix);
-    const d = await api('POST', '/data-migrations/test-connection', { connection: conn });
-    if (d.success) {
-      const info = d.databases ? ` (${d.databases.length} 个库)` : '';
-      el.innerHTML = `<span style="color:var(--green)">✓ 连接成功${info}</span>`;
-    } else {
-      el.innerHTML = `<span style="color:var(--red)">✗ ${esc(d.error)}</span>`;
-    }
-  } catch (e) { el.innerHTML = `<span style="color:var(--red)">✗ ${esc(e.message)}</span>`; }
+  return Array.from(document.querySelectorAll('input[name="migCollection"]:checked')).map(c => c.value);
 }
 
 async function loadCollections() {
   const picker = document.getElementById('srcCollectionPicker');
   if (!picker) return;
   const conn = readConnectionConfig('src');
-  if (!conn.database) { showToast('请先输入源数据库名', 'error'); return; }
-  picker.innerHTML = '<div style="font-size:12px"><span class="btn-spinner"></span> 加载集合列表...</div>';
+  if (!conn.database) { picker.innerHTML = ''; loadedCollections = []; return; }
+  picker.innerHTML = '<div style="font-size:11px"><span class="btn-spinner"></span> 加载集合...</div>';
   try {
     const d = await api('POST', '/data-migrations/list-collections', { connection: conn });
     loadedCollections = d.collections || [];
     if (loadedCollections.length === 0) {
-      picker.innerHTML = '<div style="font-size:12px;color:var(--fg-muted)">未发现集合</div>';
+      picker.innerHTML = '<div style="font-size:11px;color:var(--fg-muted)">该库暂无集合</div>';
       return;
     }
     picker.innerHTML = `
       <div class="coll-picker">
         <div class="coll-picker-header">
-          <span style="font-size:12px;font-weight:600">选择集合 (不选=全部迁移)</span>
-          <span style="font-size:11px;margin-left:auto">
+          <span>选择集合 <span style="color:var(--fg-muted)">(不选=全部迁移)</span></span>
+          <span style="margin-left:auto">
             <a href="#" onclick="toggleAllCollections(true);return false">全选</a> ·
-            <a href="#" onclick="toggleAllCollections(false);return false">取消</a>
+            <a href="#" onclick="toggleAllCollections(false);return false">清空</a>
           </span>
         </div>
         <div class="coll-picker-list">
@@ -4701,37 +4752,39 @@ async function loadCollections() {
             <label class="coll-picker-item">
               <input type="checkbox" name="migCollection" value="${esc(c.name)}">
               <span class="coll-name">${esc(c.name)}</span>
-              <span class="coll-count">${c.count.toLocaleString()} docs</span>
+              <span class="coll-count">${c.count.toLocaleString()}</span>
             </label>
           `).join('')}
         </div>
       </div>
     `;
   } catch (e) {
-    picker.innerHTML = `<div style="font-size:12px;color:var(--red)">✗ ${esc(e.message)}</div>`;
+    picker.innerHTML = `<div style="font-size:11px;color:var(--red)">✗ ${esc(e.message)}</div>`;
   }
 }
 
-function toggleAllCollections(selectAll) {
-  document.querySelectorAll('input[name="migCollection"]').forEach(c => { c.checked = selectAll; });
+function toggleAllCollections(sel) {
+  document.querySelectorAll('input[name="migCollection"]').forEach(c => { c.checked = sel; });
 }
+
+// ── New Migration Modal ──
 
 function openNewMigrationModal(prefill) {
   const html = `
-    <div class="form-row" style="margin-bottom:12px">
-      <input id="migName" class="form-input" placeholder="迁移任务名称 (如: 生产→测试)" style="flex:1">
+    <div class="form-row" style="margin-bottom:10px">
+      <input id="migName" class="form-input" placeholder="任务名称 (自动生成)" style="flex:1" oninput="this.dataset.autoGenerated=''">
     </div>
     <div class="migration-dual-panel">
       <div class="migration-side">
         <div class="migration-side-title">📤 源数据库</div>
-        ${buildConnectionForm('src', 'local', true)}
+        ${buildConnectionForm('src', prefill?.source?.type || 'local', true)}
       </div>
       <div class="migration-arrow">
         <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
       </div>
       <div class="migration-side">
         <div class="migration-side-title">📥 目标数据库</div>
-        ${buildConnectionForm('tgt', 'remote', false)}
+        ${buildConnectionForm('tgt', prefill?.target?.type || 'remote', false)}
       </div>
     </div>
     <div class="form-row" style="margin-top:12px;gap:6px">
@@ -4742,25 +4795,32 @@ function openNewMigrationModal(prefill) {
   `;
   openConfigModal('新建数据迁移', html);
 
-  // Pre-fill if cloning
-  if (prefill) {
-    setTimeout(() => {
-      const nameEl = document.getElementById('migName');
-      if (nameEl) nameEl.value = prefill.name + ' (副本)';
+  // Auto-load databases on open (or prefill)
+  setTimeout(() => {
+    if (prefill) {
       fillConnectionFields('src', prefill.source);
       fillConnectionFields('tgt', prefill.target);
-    }, 0);
-  }
+      const nameEl = document.getElementById('migName');
+      if (nameEl) { nameEl.value = prefill.name + ' (副本)'; nameEl.dataset.autoGenerated = ''; }
+    } else {
+      // Auto-load for default connection types
+      loadDatabases('src', true);
+      loadDatabases('tgt', false);
+    }
+  }, 50);
 }
 
 function fillConnectionFields(prefix, conn) {
   if (!conn) return;
   const typeEl = document.getElementById(`${prefix}Type`);
-  if (typeEl) { typeEl.value = conn.type || 'remote'; toggleConnType(prefix); }
-  const set = (id, val) => { const el = document.getElementById(id); if (el && val) el.value = val; };
+  if (typeEl) {
+    typeEl.value = conn.type || 'remote';
+    const remoteFields = document.getElementById(`${prefix}RemoteFields`);
+    if (remoteFields) remoteFields.style.display = conn.type === 'local' ? 'none' : '';
+  }
+  const set = (id, val) => { const el = document.getElementById(id); if (el && val != null) el.value = val; };
   set(`${prefix}Host`, conn.host);
   set(`${prefix}Port`, conn.port);
-  set(`${prefix}Database`, conn.database);
   set(`${prefix}Username`, conn.username);
   set(`${prefix}Password`, conn.password);
   set(`${prefix}AuthDb`, conn.authDatabase);
@@ -4772,26 +4832,40 @@ function fillConnectionFields(prefix, conn) {
     set(`${prefix}SshUser`, conn.sshTunnel.username);
     set(`${prefix}SshKey`, conn.sshTunnel.privateKeyPath);
   }
+  // Load databases then select the right one
+  loadDatabases(prefix, prefix === 'src').then(() => {
+    if (conn.database) {
+      const dbEl = document.getElementById(`${prefix}Database`);
+      if (dbEl) {
+        if (dbEl.tagName === 'SELECT') {
+          const exists = Array.from(dbEl.options).some(o => o.value === conn.database);
+          if (!exists) dbEl.insertAdjacentHTML('beforeend', `<option value="${esc(conn.database)}">${esc(conn.database)}</option>`);
+        }
+        dbEl.value = conn.database;
+      }
+    }
+    if (prefix === 'src' && conn.database) loadCollections();
+  });
 }
 
 function cloneMigration(id) {
   const m = migrationTasks.find(t => t.id === id);
-  if (!m) { showToast('任务不存在', 'error'); return; }
+  if (!m) return;
   openNewMigrationModal(m);
 }
 
 function collectMigrationBody() {
   const name = document.getElementById('migName')?.value?.trim();
-  if (!name) { showToast('请输入迁移任务名称', 'error'); return null; }
   const source = readConnectionConfig('src');
   const target = readConnectionConfig('tgt');
+  // Auto-generate name if empty
+  const finalName = name || `${formatConnSummary(source)} → ${formatConnSummary(target)}`;
   const collections = readSelectedCollections();
-  return { name, dbType: 'mongodb', source, target, collections: collections.length ? collections : undefined };
+  return { name: finalName, dbType: 'mongodb', source, target, collections: collections.length ? collections : undefined };
 }
 
 async function saveMigrationOnly() {
   const body = collectMigrationBody();
-  if (!body) return;
   try {
     await api('POST', '/data-migrations', body);
     showToast('迁移任务已保存', 'success');
@@ -4801,10 +4875,10 @@ async function saveMigrationOnly() {
 
 async function createAndExecuteMigration() {
   const body = collectMigrationBody();
-  if (!body) return;
   try {
     const mig = await api('POST', '/data-migrations', body);
-    showToast('任务已创建，开始执行...', 'info');
+    showToast('开始执行迁移...', 'info');
+    await loadMigrations(); // refresh list for executeMigration to find it
     executeMigration(mig.id);
   } catch (e) { showToast(e.message, 'error'); }
 }
@@ -4813,21 +4887,19 @@ async function executeMigration(id) {
   const mig = migrationTasks.find(t => t.id === id);
   const title = mig ? esc(mig.name) : '执行迁移';
   openConfigModal(title, `
-    <div style="padding:16px 0">
-      <div class="mig-exec-info">
-        ${mig ? `
-          <div class="mig-card-flow" style="justify-content:center;margin-bottom:12px">
-            <span class="mig-conn-label">${esc(formatConnSummary(mig.source))}</span>
-            <span class="mig-flow-arrow">→</span>
-            <span class="mig-conn-label">${esc(formatConnSummary(mig.target))}</span>
-          </div>
-          ${mig.collections?.length ? `<div style="text-align:center;font-size:12px;color:var(--fg-muted);margin-bottom:8px">📦 ${mig.collections.join(', ')}</div>` : ''}
-        ` : ''}
-      </div>
-      <div class="mig-progress-bar" style="height:8px;margin-bottom:12px"><div id="migProgressFill" class="mig-progress-fill" style="width:0%"></div></div>
+    <div style="padding:12px 0">
+      ${mig ? `
+        <div class="mig-card-flow" style="justify-content:center;margin-bottom:10px">
+          <span class="mig-conn-label">${esc(formatConnSummary(mig.source))}</span>
+          <span class="mig-flow-arrow">→</span>
+          <span class="mig-conn-label">${esc(formatConnSummary(mig.target))}</span>
+        </div>
+        ${mig.collections?.length ? `<div style="text-align:center;font-size:11px;color:var(--fg-muted);margin-bottom:8px">📦 ${mig.collections.join(', ')}</div>` : ''}
+      ` : ''}
+      <div class="mig-progress-bar" style="height:8px;margin-bottom:10px"><div id="migProgressFill" class="mig-progress-fill" style="width:0%"></div></div>
       <div id="migProgressText" style="font-size:13px;text-align:center;margin-bottom:4px">准备中...</div>
       <div id="migProgressPct" style="font-size:28px;font-weight:bold;color:var(--blue);text-align:center">0%</div>
-      <div style="margin-top:16px;text-align:center">
+      <div style="margin-top:14px;text-align:center">
         <button class="sm" onclick="openMigrationModal()" style="display:none" id="migBackBtn">← 返回列表</button>
       </div>
     </div>
@@ -4856,10 +4928,7 @@ async function executeMigration(id) {
           } catch {}
         }
         if (line.startsWith('event: done')) {
-          const fill = document.getElementById('migProgressFill');
-          const text = document.getElementById('migProgressText');
-          const pct = document.getElementById('migProgressPct');
-          const btn = document.getElementById('migBackBtn');
+          const fill = document.getElementById('migProgressFill'), text = document.getElementById('migProgressText'), pct = document.getElementById('migProgressPct'), btn = document.getElementById('migBackBtn');
           if (fill) { fill.style.width = '100%'; fill.style.background = 'var(--green)'; }
           if (pct) { pct.textContent = '✓'; pct.style.color = 'var(--green)'; }
           if (text) text.textContent = '迁移完成！';
@@ -4867,9 +4936,7 @@ async function executeMigration(id) {
           showToast('数据迁移完成！', 'success');
         }
         if (line.startsWith('event: error')) {
-          const fill = document.getElementById('migProgressFill');
-          const pct = document.getElementById('migProgressPct');
-          const btn = document.getElementById('migBackBtn');
+          const fill = document.getElementById('migProgressFill'), pct = document.getElementById('migProgressPct'), btn = document.getElementById('migBackBtn');
           if (fill) fill.style.background = 'var(--red)';
           if (pct) pct.style.color = 'var(--red)';
           if (btn) btn.style.display = '';
@@ -4877,8 +4944,7 @@ async function executeMigration(id) {
       }
     }
   } catch (e) {
-    const text = document.getElementById('migProgressText');
-    const btn = document.getElementById('migBackBtn');
+    const text = document.getElementById('migProgressText'), btn = document.getElementById('migBackBtn');
     if (text) text.innerHTML = `<span style="color:var(--red)">✗ ${esc(e.message)}</span>`;
     if (btn) btn.style.display = '';
     showToast('迁移失败: ' + e.message, 'error');

@@ -3091,6 +3091,32 @@ export function createBranchRouter(deps: RouterDeps): Router {
     }
   });
 
+  // POST /api/data-migrations/list-databases — list databases with sizes
+  router.post('/data-migrations/list-databases', async (req, res) => {
+    const { connection } = req.body as { connection: MongoConnectionConfig };
+    if (!connection) { res.status(400).json({ error: '缺少 connection 参数' }); return; }
+    try {
+      const conn = resolveMongoConn(connection);
+      const evalScript = `JSON.stringify(db.adminCommand({listDatabases:1}).databases.map(d=>({name:d.name,sizeOnDisk:d.sizeOnDisk})))`;
+      const cmd = `mongosh --host ${conn.host} --port ${conn.port}${mongoAuthArgs(conn)} --eval "${evalScript}" --quiet 2>/dev/null`;
+      const result = await shell.exec(cmd, { timeout: 15000 });
+      let databases: Array<{ name: string; sizeOnDisk: number }> = [];
+      if (result.exitCode === 0) {
+        const lines = result.stdout.trim().split('\n');
+        for (const line of lines) {
+          const trimmed = line.trim();
+          if (trimmed.startsWith('[')) { try { databases = JSON.parse(trimmed); break; } catch { /* */ } }
+        }
+      }
+      // Filter out system databases for cleaner UX
+      const userDbs = databases.filter(d => !['admin', 'config', 'local'].includes(d.name));
+      const sysDbs = databases.filter(d => ['admin', 'config', 'local'].includes(d.name));
+      res.json({ databases: [...userDbs, ...sysDbs] });
+    } catch (e) {
+      res.json({ databases: [], error: (e as Error).message });
+    }
+  });
+
   // POST /api/data-migrations/list-collections — list collections in a database with doc counts
   router.post('/data-migrations/list-collections', async (req, res) => {
     const { connection } = req.body as { connection: MongoConnectionConfig };
