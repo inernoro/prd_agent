@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { X, Plus, Trash2, TestTube, Bell, Pencil, Check } from 'lucide-react';
+import { X, Plus, Trash2, TestTube, Bell, Check } from 'lucide-react';
 import {
   listReviewWebhooks,
   createReviewWebhook,
@@ -31,7 +31,7 @@ export function ReviewAgentWebhookModal({ open, onClose }: Props) {
 
   // Create form
   const [showForm, setShowForm] = useState(false);
-  const [formChannel, setFormChannel] = useState('wecom');
+  const [formChannel, setFormChannel] = useState<string>('wecom');
   const [formUrl, setFormUrl] = useState('');
   const [formName, setFormName] = useState('');
   const [formMentionAll, setFormMentionAll] = useState(false);

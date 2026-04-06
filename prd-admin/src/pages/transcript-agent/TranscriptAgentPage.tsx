@@ -1,5 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
-import { Button } from '@/components/design/Button';
+import { useEffect, useState } from 'react';
 import { useTranscriptStore } from '@/stores/transcriptStore';
 import { TranscriptSidebar } from '@/components/transcript/TranscriptSidebar';
 import { TranscriptEditor } from '@/components/transcript/TranscriptEditor';
