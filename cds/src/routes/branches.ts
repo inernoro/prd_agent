@@ -2728,6 +2728,26 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
   // ── Data Migration ──
 
+  /** Resolve 'local' MongoDB connection to actual host:port from infra */
+  function resolveMongoConn(conn: MongoConnectionConfig): MongoConnectionConfig {
+    if (conn.type === 'local') {
+      const mongoInfra = stateService.getInfraServices().find(s => s.id === 'mongodb');
+      if (!mongoInfra) throw new Error('本机 MongoDB 未在 CDS 基础设施中注册');
+      const dockerHost = stateService.getCdsEnvVars()['CDS_HOST'] || '172.17.0.1';
+      return { ...conn, host: dockerHost, port: mongoInfra.hostPort };
+    }
+    return conn;
+  }
+
+  /** Build mongosh auth args */
+  function mongoAuthArgs(conn: MongoConnectionConfig): string {
+    let args = '';
+    if (conn.username) args += ` -u ${conn.username}`;
+    if (conn.password) args += ` -p ${conn.password}`;
+    if (conn.authDatabase) args += ` --authenticationDatabase ${conn.authDatabase}`;
+    return args;
+  }
+
   // GET /api/data-migrations — list all migration tasks
   router.get('/data-migrations', (_req, res) => {
     res.json(stateService.getDataMigrations());
@@ -2735,11 +2755,12 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
   // POST /api/data-migrations — create a new migration task
   router.post('/data-migrations', (req, res) => {
-    const { name, dbType, source, target } = req.body as {
+    const { name, dbType, source, target, collections } = req.body as {
       name: string;
       dbType: 'mongodb';
       source: MongoConnectionConfig;
       target: MongoConnectionConfig;
+      collections?: string[];
     };
     if (!name || !dbType || !source || !target) {
       res.status(400).json({ error: '缺少必填字段: name, dbType, source, target' });
@@ -2752,6 +2773,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       dbType,
       source,
       target,
+      collections: collections?.length ? collections : undefined,
       status: 'pending',
       progress: 0,
       createdAt: new Date().toISOString(),
@@ -2870,19 +2892,8 @@ export function createBranchRouter(deps: RouterDeps): Router {
     const appendLog = (line: string) => { logOutput += line + '\n'; };
 
     try {
-      // Resolve local MongoDB connection if source/target is 'local'
-      const resolveConn = (conn: MongoConnectionConfig): MongoConnectionConfig => {
-        if (conn.type === 'local') {
-          const mongoInfra = stateService.getInfraServices().find(s => s.id === 'mongodb');
-          if (!mongoInfra) throw new Error('本机 MongoDB 未在 CDS 基础设施中注册');
-          const dockerHost = stateService.getCdsEnvVars()['CDS_HOST'] || '172.17.0.1';
-          return { ...conn, host: dockerHost, port: mongoInfra.hostPort };
-        }
-        return conn;
-      };
-
-      const src = resolveConn(migration.source);
-      const tgt = resolveConn(migration.target);
+      const src = resolveMongoConn(migration.source);
+      const tgt = resolveMongoConn(migration.target);
 
       send(5, '正在检查迁移工具...');
       const toolCheck = await shell.exec('which mongodump && which mongorestore');
@@ -2922,68 +2933,77 @@ export function createBranchRouter(deps: RouterDeps): Router {
         appendLog(`SSH tunnel (target): localhost:${localPort} -> ${tgt.host}:${tgt.port} via ${tunnel.host}`);
       }
 
-      // Build mongodump command
-      send(20, '正在导出源数据库...');
+      // Prepare dump directory
       const dumpDir = `/tmp/cds-migration-${id}`;
       await shell.exec(`rm -rf ${dumpDir} && mkdir -p ${dumpDir}`);
 
-      let dumpCmd = `mongodump --host=${srcHost} --port=${srcPort}`;
-      if (src.username) dumpCmd += ` --username=${src.username}`;
-      if (src.password) dumpCmd += ` --password=${src.password}`;
-      if (src.authDatabase) dumpCmd += ` --authenticationDatabase=${src.authDatabase}`;
-      if (src.database) dumpCmd += ` --db=${src.database}`;
-      dumpCmd += ` --out=${dumpDir}`;
+      // Build base auth args
+      let srcAuth = '';
+      if (src.username) srcAuth += ` --username=${src.username}`;
+      if (src.password) srcAuth += ` --password=${src.password}`;
+      if (src.authDatabase) srcAuth += ` --authenticationDatabase=${src.authDatabase}`;
+      let tgtAuth = '';
+      if (tgt.username) tgtAuth += ` --username=${tgt.username}`;
+      if (tgt.password) tgtAuth += ` --password=${tgt.password}`;
+      if (tgt.authDatabase) tgtAuth += ` --authenticationDatabase=${tgt.authDatabase}`;
 
-      appendLog(`dump cmd: mongodump --host=${srcHost} --port=${srcPort} ${src.database ? '--db=' + src.database : '(all dbs)'}`);
+      const cols = migration.collections?.length ? migration.collections : null;
+      const totalSteps = cols ? cols.length * 2 : 2; // dump + restore per collection (or 1 each for full)
+      let currentStep = 0;
+      const stepProgress = (step: number) => Math.round(20 + (step / totalSteps) * 70); // 20% → 90%
 
-      const dumpResult = await shell.exec(dumpCmd, {
-        timeout: 600000,
-        onData: (chunk) => {
-          appendLog(chunk);
-          // Parse progress from mongodump output if possible
-          if (chunk.includes('done dumping')) {
-            send(50, '导出完成，准备导入...');
-          }
+      if (cols) {
+        // ── Per-collection migration ──
+        appendLog(`Per-collection migration: ${cols.length} collections`);
+        for (let i = 0; i < cols.length; i++) {
+          const col = cols[i];
+          // Dump
+          send(stepProgress(currentStep), `正在导出 ${col} (${i + 1}/${cols.length})...`);
+          let dumpCmd = `mongodump --host=${srcHost} --port=${srcPort}${srcAuth}`;
+          if (src.database) dumpCmd += ` --db=${src.database}`;
+          dumpCmd += ` --collection=${col} --out=${dumpDir}`;
+          appendLog(`dump: ${col}`);
+          const dumpResult = await shell.exec(dumpCmd, { timeout: 600000, onData: (c) => appendLog(c) });
+          if (dumpResult.exitCode !== 0) throw new Error(`mongodump ${col} 失败: ${dumpResult.stderr || dumpResult.stdout}`);
+          currentStep++;
+
+          // Restore
+          send(stepProgress(currentStep), `正在导入 ${col} (${i + 1}/${cols.length})...`);
+          const restorePath = src.database ? `${dumpDir}/${src.database}` : dumpDir;
+          let restoreCmd = `mongorestore --host=${tgtHost} --port=${tgtPort}${tgtAuth}`;
+          if (tgt.database) restoreCmd += ` --db=${tgt.database}`;
+          restoreCmd += ` --collection=${col} --drop ${restorePath}/${col}.bson`;
+          appendLog(`restore: ${col}`);
+          const restoreResult = await shell.exec(restoreCmd, { timeout: 600000, onData: (c) => appendLog(c) });
+          if (restoreResult.exitCode !== 0) throw new Error(`mongorestore ${col} 失败: ${restoreResult.stderr || restoreResult.stdout}`);
+          currentStep++;
         }
-      });
+      } else {
+        // ── Full database/instance migration ──
+        send(20, '正在导出源数据库...');
+        let dumpCmd = `mongodump --host=${srcHost} --port=${srcPort}${srcAuth}`;
+        if (src.database) dumpCmd += ` --db=${src.database}`;
+        dumpCmd += ` --out=${dumpDir}`;
+        appendLog(`dump: ${src.database || '(all dbs)'}`);
 
-      if (dumpResult.exitCode !== 0) {
-        throw new Error(`mongodump 失败: ${dumpResult.stderr || dumpResult.stdout}`);
-      }
+        const dumpResult = await shell.exec(dumpCmd, {
+          timeout: 600000,
+          onData: (chunk) => { appendLog(chunk); if (chunk.includes('done dumping')) send(50, '导出完成，准备导入...'); }
+        });
+        if (dumpResult.exitCode !== 0) throw new Error(`mongodump 失败: ${dumpResult.stderr || dumpResult.stdout}`);
 
-      send(55, '正在导入到目标数据库...');
-
-      // Build mongorestore command
-      let restoreCmd = `mongorestore --host=${tgtHost} --port=${tgtPort}`;
-      if (tgt.username) restoreCmd += ` --username=${tgt.username}`;
-      if (tgt.password) restoreCmd += ` --password=${tgt.password}`;
-      if (tgt.authDatabase) restoreCmd += ` --authenticationDatabase=${tgt.authDatabase}`;
-      if (tgt.database) restoreCmd += ` --db=${tgt.database}`;
-      restoreCmd += ` --drop ${dumpDir}`;
-      // If source had specific db, restore from that subfolder
-      if (src.database) {
-        restoreCmd = `mongorestore --host=${tgtHost} --port=${tgtPort}`;
-        if (tgt.username) restoreCmd += ` --username=${tgt.username}`;
-        if (tgt.password) restoreCmd += ` --password=${tgt.password}`;
-        if (tgt.authDatabase) restoreCmd += ` --authenticationDatabase=${tgt.authDatabase}`;
+        send(55, '正在导入到目标数据库...');
+        const restorePath = src.database ? `${dumpDir}/${src.database}` : dumpDir;
+        let restoreCmd = `mongorestore --host=${tgtHost} --port=${tgtPort}${tgtAuth}`;
         if (tgt.database) restoreCmd += ` --db=${tgt.database}`;
-        restoreCmd += ` --drop ${dumpDir}/${src.database}`;
-      }
+        restoreCmd += ` --drop ${restorePath}`;
+        appendLog(`restore: ${tgt.database || '(all dbs)'}`);
 
-      appendLog(`restore cmd: mongorestore --host=${tgtHost} --port=${tgtPort} ${tgt.database ? '--db=' + tgt.database : '(all dbs)'}`);
-
-      const restoreResult = await shell.exec(restoreCmd, {
-        timeout: 600000,
-        onData: (chunk) => {
-          appendLog(chunk);
-          if (chunk.includes('done')) {
-            send(85, '正在完成导入...');
-          }
-        }
-      });
-
-      if (restoreResult.exitCode !== 0) {
-        throw new Error(`mongorestore 失败: ${restoreResult.stderr || restoreResult.stdout}`);
+        const restoreResult = await shell.exec(restoreCmd, {
+          timeout: 600000,
+          onData: (chunk) => { appendLog(chunk); if (chunk.includes('done')) send(85, '正在完成导入...'); }
+        });
+        if (restoreResult.exitCode !== 0) throw new Error(`mongorestore 失败: ${restoreResult.stderr || restoreResult.stdout}`);
       }
 
       // Cleanup dump files
@@ -3068,6 +3088,39 @@ export function createBranchRouter(deps: RouterDeps): Router {
       }
     } catch (e) {
       res.json({ success: false, error: (e as Error).message });
+    }
+  });
+
+  // POST /api/data-migrations/list-collections — list collections in a database with doc counts
+  router.post('/data-migrations/list-collections', async (req, res) => {
+    const { connection } = req.body as { connection: MongoConnectionConfig };
+    if (!connection) { res.status(400).json({ error: '缺少 connection 参数' }); return; }
+    if (!connection.database) { res.status(400).json({ error: '请指定数据库名' }); return; }
+
+    try {
+      const conn = resolveMongoConn(connection);
+      const db = conn.database!;
+      const evalScript = `JSON.stringify(db.getSiblingDB('${db}').getCollectionInfos({type:'collection'}).map(c=>({name:c.name,count:db.getSiblingDB('${db}').getCollection(c.name).estimatedDocumentCount()})))`;
+      let cmd = `mongosh --host ${conn.host} --port ${conn.port}${mongoAuthArgs(conn)} --eval "${evalScript}" --quiet 2>/dev/null`;
+
+      const result = await shell.exec(cmd, { timeout: 15000 });
+      if (result.exitCode !== 0) {
+        res.json({ collections: [], error: result.stderr || 'mongosh 执行失败' });
+        return;
+      }
+      // Parse JSON — mongosh may output extra lines, find the JSON array line
+      const lines = result.stdout.trim().split('\n');
+      let collections: Array<{ name: string; count: number }> = [];
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (trimmed.startsWith('[')) {
+          try { collections = JSON.parse(trimmed); break; } catch { /* try next line */ }
+        }
+      }
+      collections.sort((a, b) => a.name.localeCompare(b.name));
+      res.json({ collections });
+    } catch (e) {
+      res.json({ collections: [], error: (e as Error).message });
     }
   });
 

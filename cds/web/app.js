@@ -4423,60 +4423,95 @@ function escapeHtml(s) {
 // ── Data Migration ──
 
 let migrationTasks = [];
-let migrationToolInstalled = null; // null = unknown, true/false
+let migrationToolInstalled = null;
+let loadedCollections = []; // cached collection list for picker
 
 async function loadMigrations() {
   try { migrationTasks = await api('GET', '/data-migrations'); } catch { migrationTasks = []; }
 }
 
-function migrationStatusDot(status) {
-  const map = { pending: '⚪', running: '🔵', completed: '🟢', failed: '🔴' };
-  return map[status] || '⚪';
+function migStatusColor(s) { return { pending: 'var(--fg-muted)', running: 'var(--blue)', completed: 'var(--green)', failed: 'var(--red)' }[s] || 'var(--fg-muted)'; }
+function migStatusLabel(s) { return { pending: '待执行', running: '运行中', completed: '已完成', failed: '失败' }[s] || s; }
+function migStatusIcon(s) { return { pending: '○', running: '◉', completed: '●', failed: '✗' }[s] || '○'; }
+
+function formatConnSummary(conn) {
+  if (!conn) return '—';
+  const db = conn.database ? `/${conn.database}` : '';
+  if (conn.type === 'local') return `本机 MongoDB${db}`;
+  const host = conn.host || '?';
+  const port = conn.port || 27017;
+  return `${host}:${port}${db}`;
 }
 
-function migrationStatusLabel(status) {
-  const map = { pending: '待执行', running: '运行中', completed: '已完成', failed: '失败' };
-  return map[status] || status;
+function formatDuration(startIso, endIso) {
+  if (!startIso || !endIso) return '—';
+  const ms = new Date(endIso) - new Date(startIso);
+  if (ms < 1000) return `${ms}ms`;
+  const s = Math.floor(ms / 1000);
+  if (s < 60) return `${s}秒`;
+  const m = Math.floor(s / 60);
+  const rs = s % 60;
+  return `${m}分${rs}秒`;
+}
+
+function renderMigrationCard(m) {
+  const borderColor = migStatusColor(m.status);
+  const srcLabel = formatConnSummary(m.source);
+  const tgtLabel = formatConnSummary(m.target);
+  const colsLabel = m.collections?.length ? `${m.collections.length} 个集合` : '全部集合';
+  const colsDetail = m.collections?.length
+    ? (m.collections.length <= 4
+      ? m.collections.join(', ')
+      : m.collections.slice(0, 3).join(', ') + ` +${m.collections.length - 3}`)
+    : '';
+  const duration = formatDuration(m.startedAt, m.finishedAt);
+  const canRun = m.status === 'pending' || m.status === 'completed' || m.status === 'failed';
+
+  return `
+    <div class="mig-card" style="border-left-color:${borderColor}">
+      <div class="mig-card-header">
+        <span class="mig-status-badge" style="color:${borderColor}">${migStatusIcon(m.status)} ${migStatusLabel(m.status)}</span>
+        <strong class="mig-card-name">${esc(m.name)}</strong>
+        <span class="mig-card-time">${relativeTime(m.createdAt)}</span>
+      </div>
+      <div class="mig-card-flow">
+        <span class="mig-conn-label">${esc(srcLabel)}</span>
+        <span class="mig-flow-arrow">→</span>
+        <span class="mig-conn-label">${esc(tgtLabel)}</span>
+      </div>
+      <div class="mig-card-meta">
+        <span title="${esc(colsDetail)}">📦 ${colsLabel}</span>
+        ${m.startedAt ? `<span>⏱ ${duration}</span>` : ''}
+        ${m.source.sshTunnel?.enabled || m.target.sshTunnel?.enabled ? '<span>🔒 SSH</span>' : ''}
+      </div>
+      ${m.errorMessage ? `<div class="mig-card-error">⚠ ${esc(m.errorMessage)}</div>` : ''}
+      ${m.status === 'running' ? `
+        <div class="mig-progress-bar"><div class="mig-progress-fill" style="width:${m.progress || 0}%"></div></div>
+        <div class="mig-progress-text">${esc(m.progressMessage || '准备中...')} · ${m.progress || 0}%</div>
+      ` : ''}
+      <div class="mig-card-actions">
+        ${canRun ? `<button class="sm" onclick="executeMigration('${m.id}')">▶ 执行</button>` : ''}
+        <button class="sm" onclick="cloneMigration('${m.id}')">⧉ 克隆</button>
+        ${m.log ? `<button class="sm" onclick="showMigrationLog('${m.id}')">📋 日志</button>` : ''}
+        ${m.status !== 'running' ? `<button class="sm danger-text" onclick="deleteMigration('${m.id}')">删除</button>` : ''}
+      </div>
+    </div>
+  `;
 }
 
 async function openMigrationModal() {
   await loadMigrations();
   const listHtml = migrationTasks.length === 0
     ? '<div class="config-empty">暂无迁移任务。点击"新建迁移"开始配置。</div>'
-    : migrationTasks.slice().reverse().map(m => `
-      <div class="config-item" style="flex-direction:column;align-items:stretch;gap:6px">
-        <div style="display:flex;align-items:center;gap:8px">
-          <span>${migrationStatusDot(m.status)}</span>
-          <strong style="flex:1">${esc(m.name)}</strong>
-          <code style="font-size:11px;opacity:0.6">${m.dbType}</code>
-          <span style="font-size:11px;color:var(--fg-muted)">${relativeTime(m.createdAt)}</span>
-        </div>
-        <div style="display:flex;align-items:center;gap:4px;font-size:12px">
-          <span style="color:var(--fg-muted)">${migrationStatusLabel(m.status)}</span>
-          ${m.status === 'running' ? `<span style="margin-left:8px;color:var(--blue)">${m.progress || 0}%</span>` : ''}
-          ${m.errorMessage ? `<span style="color:var(--red);margin-left:8px" title="${esc(m.errorMessage)}">⚠ ${esc(m.errorMessage).substring(0, 50)}</span>` : ''}
-          <span style="margin-left:auto;display:flex;gap:4px">
-            ${m.status === 'pending' || m.status === 'failed' ? `<button class="icon-btn xs" onclick="executeMigration('${m.id}')" title="执行迁移">▶</button>` : ''}
-            ${m.log ? `<button class="icon-btn xs" onclick="showMigrationLog('${m.id}')" title="查看日志">📋</button>` : ''}
-            ${m.status !== 'running' ? `<button class="icon-btn xs danger-icon" onclick="deleteMigration('${m.id}')" title="删除">&times;</button>` : ''}
-          </span>
-        </div>
-        ${m.status === 'running' ? `
-        <div style="background:var(--bg-tertiary);border-radius:4px;height:6px;overflow:hidden;margin-top:2px">
-          <div style="background:var(--blue);height:100%;width:${m.progress || 0}%;transition:width 0.5s ease"></div>
-        </div>
-        <div style="font-size:11px;color:var(--fg-muted)">${esc(m.progressMessage || '准备中...')}</div>
-        ` : ''}
-      </div>
-    `).join('');
+    : migrationTasks.slice().reverse().map(renderMigrationCard).join('');
 
   const html = `
     <p class="config-panel-desc">
-      数据库迁移工具。支持在不同 MongoDB 实例之间迁移数据，可配置 SSH 隧道。
+      MongoDB 数据迁移。支持全库迁移或选择指定集合，可配置 SSH 隧道。
     </p>
     <div class="config-panel-actions" style="margin-bottom:10px;display:flex;gap:6px;flex-wrap:wrap">
       <button class="sm primary" onclick="openNewMigrationModal()">+ 新建迁移</button>
-      <button class="sm" onclick="checkMigrationTools()">🔧 检查工具</button>
+      <button class="sm" onclick="checkMigrationTools()">🔧 工具状态</button>
     </div>
     <div id="migrationToolStatus" style="font-size:12px;margin-bottom:8px;display:none"></div>
     <div id="migrationListInModal">${listHtml}</div>
@@ -4485,35 +4520,28 @@ async function openMigrationModal() {
 }
 
 async function checkMigrationTools() {
-  const statusEl = document.getElementById('migrationToolStatus');
-  if (!statusEl) return;
-  statusEl.style.display = 'block';
-  statusEl.innerHTML = '<span class="btn-spinner"></span> 正在检查迁移工具...';
+  const el = document.getElementById('migrationToolStatus');
+  if (!el) return;
+  el.style.display = 'block';
+  el.innerHTML = '<span class="btn-spinner"></span> 检查中...';
   try {
-    const data = await api('POST', '/data-migrations/check-tools');
-    if (data.installed) {
-      statusEl.innerHTML = `<span style="color:var(--green)">✓ 已安装: ${esc(data.version)}</span>`;
-      migrationToolInstalled = true;
-    } else {
-      statusEl.innerHTML = `<span style="color:var(--yellow)">⚠ 未安装</span> <button class="sm" onclick="installMigrationTools()" style="margin-left:8px">一键安装</button>`;
-      migrationToolInstalled = false;
-    }
-  } catch (e) {
-    statusEl.innerHTML = `<span style="color:var(--red)">✗ 检查失败: ${esc(e.message)}</span>`;
-  }
+    const d = await api('POST', '/data-migrations/check-tools');
+    el.innerHTML = d.installed
+      ? `<span style="color:var(--green)">✓ ${esc(d.version)}</span>`
+      : `<span style="color:var(--yellow)">⚠ 未安装</span> <button class="sm" onclick="installMigrationTools()" style="margin-left:8px">安装</button>`;
+    migrationToolInstalled = d.installed;
+  } catch (e) { el.innerHTML = `<span style="color:var(--red)">✗ ${esc(e.message)}</span>`; }
 }
 
 async function installMigrationTools() {
-  const statusEl = document.getElementById('migrationToolStatus');
-  if (!statusEl) return;
-  statusEl.innerHTML = '<span class="btn-spinner"></span> 正在安装...';
-
+  const el = document.getElementById('migrationToolStatus');
+  if (!el) return;
+  el.innerHTML = '<span class="btn-spinner"></span> 安装中...';
   try {
     const res = await fetch(`${API}/data-migrations/install-tools`, { method: 'POST', headers: { 'Content-Type': 'application/json' } });
     const reader = res.body.getReader();
     const decoder = new TextDecoder();
     let buffer = '';
-
     while (true) {
       const { done, value } = await reader.read();
       if (done) break;
@@ -4523,25 +4551,17 @@ async function installMigrationTools() {
       for (const line of lines) {
         if (line.startsWith('data: ')) {
           try {
-            const data = JSON.parse(line.substring(6));
-            if (data.message) statusEl.innerHTML = `<span class="btn-spinner"></span> ${esc(data.message)}`;
-            if (data.installed) {
-              statusEl.innerHTML = `<span style="color:var(--green)">✓ 已安装: ${esc(data.version)}</span>`;
-              migrationToolInstalled = true;
-            }
+            const d = JSON.parse(line.substring(6));
+            if (d.message) el.innerHTML = `<span class="btn-spinner"></span> ${esc(d.message)}`;
+            if (d.installed) { el.innerHTML = `<span style="color:var(--green)">✓ ${esc(d.version)}</span>`; migrationToolInstalled = true; }
           } catch {}
-        }
-        if (line.startsWith('event: error')) {
-          // Next data line has the error
         }
       }
     }
-  } catch (e) {
-    statusEl.innerHTML = `<span style="color:var(--red)">✗ 安装失败: ${esc(e.message)}</span>`;
-  }
+  } catch (e) { el.innerHTML = `<span style="color:var(--red)">✗ ${esc(e.message)}</span>`; }
 }
 
-function buildConnectionForm(prefix, defaultType) {
+function buildConnectionForm(prefix, defaultType, showCollPicker) {
   const mongoSvc = infraServices.find(s => s.id === 'mongodb');
   const hasLocalMongo = !!mongoSvc;
   return `
@@ -4550,7 +4570,7 @@ function buildConnectionForm(prefix, defaultType) {
         <label style="font-size:12px;font-weight:600;display:flex;align-items:center;gap:6px">
           连接类型:
           <select id="${prefix}Type" class="form-input sm" onchange="toggleConnType('${prefix}')" style="flex:1">
-            ${hasLocalMongo ? `<option value="local" ${defaultType === 'local' ? 'selected' : ''}>本机 MongoDB${mongoSvc?.status === 'running' ? ' (运行中)' : ''}</option>` : ''}
+            ${hasLocalMongo ? `<option value="local" ${defaultType === 'local' ? 'selected' : ''}>本机 MongoDB${mongoSvc?.status === 'running' ? ' ●' : ''}</option>` : ''}
             <option value="remote" ${defaultType === 'remote' || !hasLocalMongo ? 'selected' : ''}>远程 MongoDB</option>
           </select>
         </label>
@@ -4561,9 +4581,6 @@ function buildConnectionForm(prefix, defaultType) {
           <input id="${prefix}Port" class="form-input sm" placeholder="端口" value="27017" type="number" style="flex:0.4">
         </div>
         <div class="form-row">
-          <input id="${prefix}Database" class="form-input" placeholder="数据库名 (留空=全部)">
-        </div>
-        <div class="form-row">
           <input id="${prefix}Username" class="form-input" placeholder="用户名 (可选)">
           <input id="${prefix}Password" class="form-input" placeholder="密码 (可选)" type="password">
         </div>
@@ -4571,6 +4588,10 @@ function buildConnectionForm(prefix, defaultType) {
           <input id="${prefix}AuthDb" class="form-input" placeholder="认证库 (默认 admin)">
         </div>
       </div>
+      <div class="form-row">
+        <input id="${prefix}Database" class="form-input" placeholder="数据库名 (留空=全部)">
+      </div>
+      ${showCollPicker ? `<div id="${prefix}CollectionPicker" style="margin-top:6px"></div>` : ''}
       <div style="margin-top:8px">
         <label style="font-size:12px;display:flex;align-items:center;gap:6px;cursor:pointer">
           <input type="checkbox" id="${prefix}SshEnabled" onchange="toggleSshTunnel('${prefix}')">
@@ -4587,22 +4608,23 @@ function buildConnectionForm(prefix, defaultType) {
           </div>
         </div>
       </div>
-      <div style="margin-top:8px">
+      <div style="margin-top:8px;display:flex;align-items:center;gap:6px;flex-wrap:wrap">
         <button class="sm" onclick="testConnection('${prefix}')">测试连接</button>
-        <span id="${prefix}TestResult" style="font-size:12px;margin-left:8px"></span>
+        ${showCollPicker ? `<button class="sm" onclick="loadCollections()">加载集合</button>` : ''}
+        <span id="${prefix}TestResult" style="font-size:12px"></span>
       </div>
     </div>
   `;
 }
 
 function toggleConnType(prefix) {
-  const type = document.getElementById(`${prefix}Type`).value;
+  const type = document.getElementById(`${prefix}Type`)?.value;
   const fields = document.getElementById(`${prefix}RemoteFields`);
   if (fields) fields.style.display = type === 'local' ? 'none' : '';
 }
 
 function toggleSshTunnel(prefix) {
-  const enabled = document.getElementById(`${prefix}SshEnabled`).checked;
+  const enabled = document.getElementById(`${prefix}SshEnabled`)?.checked;
   const fields = document.getElementById(`${prefix}SshFields`);
   if (fields) fields.style.display = enabled ? '' : 'none';
 }
@@ -4631,25 +4653,70 @@ function readConnectionConfig(prefix) {
   return conn;
 }
 
+function readSelectedCollections() {
+  const checks = document.querySelectorAll('input[name="migCollection"]:checked');
+  return Array.from(checks).map(c => c.value);
+}
+
 async function testConnection(prefix) {
-  const resultEl = document.getElementById(`${prefix}TestResult`);
-  if (!resultEl) return;
-  resultEl.innerHTML = '<span class="btn-spinner"></span> 测试中...';
+  const el = document.getElementById(`${prefix}TestResult`);
+  if (!el) return;
+  el.innerHTML = '<span class="btn-spinner"></span> 测试中...';
   try {
-    const connection = readConnectionConfig(prefix);
-    const data = await api('POST', '/data-migrations/test-connection', { connection });
-    if (data.success) {
-      const dbInfo = data.databases ? ` (${data.databases.length} 个数据库)` : '';
-      resultEl.innerHTML = `<span style="color:var(--green)">✓ 连接成功${dbInfo}</span>`;
+    const conn = readConnectionConfig(prefix);
+    const d = await api('POST', '/data-migrations/test-connection', { connection: conn });
+    if (d.success) {
+      const info = d.databases ? ` (${d.databases.length} 个库)` : '';
+      el.innerHTML = `<span style="color:var(--green)">✓ 连接成功${info}</span>`;
     } else {
-      resultEl.innerHTML = `<span style="color:var(--red)">✗ ${esc(data.error)}</span>`;
+      el.innerHTML = `<span style="color:var(--red)">✗ ${esc(d.error)}</span>`;
     }
+  } catch (e) { el.innerHTML = `<span style="color:var(--red)">✗ ${esc(e.message)}</span>`; }
+}
+
+async function loadCollections() {
+  const picker = document.getElementById('srcCollectionPicker');
+  if (!picker) return;
+  const conn = readConnectionConfig('src');
+  if (!conn.database) { showToast('请先输入源数据库名', 'error'); return; }
+  picker.innerHTML = '<div style="font-size:12px"><span class="btn-spinner"></span> 加载集合列表...</div>';
+  try {
+    const d = await api('POST', '/data-migrations/list-collections', { connection: conn });
+    loadedCollections = d.collections || [];
+    if (loadedCollections.length === 0) {
+      picker.innerHTML = '<div style="font-size:12px;color:var(--fg-muted)">未发现集合</div>';
+      return;
+    }
+    picker.innerHTML = `
+      <div class="coll-picker">
+        <div class="coll-picker-header">
+          <span style="font-size:12px;font-weight:600">选择集合 (不选=全部迁移)</span>
+          <span style="font-size:11px;margin-left:auto">
+            <a href="#" onclick="toggleAllCollections(true);return false">全选</a> ·
+            <a href="#" onclick="toggleAllCollections(false);return false">取消</a>
+          </span>
+        </div>
+        <div class="coll-picker-list">
+          ${loadedCollections.map(c => `
+            <label class="coll-picker-item">
+              <input type="checkbox" name="migCollection" value="${esc(c.name)}">
+              <span class="coll-name">${esc(c.name)}</span>
+              <span class="coll-count">${c.count.toLocaleString()} docs</span>
+            </label>
+          `).join('')}
+        </div>
+      </div>
+    `;
   } catch (e) {
-    resultEl.innerHTML = `<span style="color:var(--red)">✗ ${esc(e.message)}</span>`;
+    picker.innerHTML = `<div style="font-size:12px;color:var(--red)">✗ ${esc(e.message)}</div>`;
   }
 }
 
-function openNewMigrationModal() {
+function toggleAllCollections(selectAll) {
+  document.querySelectorAll('input[name="migCollection"]').forEach(c => { c.checked = selectAll; });
+}
+
+function openNewMigrationModal(prefill) {
   const html = `
     <div class="form-row" style="margin-bottom:12px">
       <input id="migName" class="form-input" placeholder="迁移任务名称 (如: 生产→测试)" style="flex:1">
@@ -4657,71 +4724,120 @@ function openNewMigrationModal() {
     <div class="migration-dual-panel">
       <div class="migration-side">
         <div class="migration-side-title">📤 源数据库</div>
-        ${buildConnectionForm('src', 'local')}
+        ${buildConnectionForm('src', 'local', true)}
       </div>
       <div class="migration-arrow">
-        <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
+        <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
       </div>
       <div class="migration-side">
         <div class="migration-side-title">📥 目标数据库</div>
-        ${buildConnectionForm('tgt', 'remote')}
+        ${buildConnectionForm('tgt', 'remote', false)}
       </div>
     </div>
     <div class="form-row" style="margin-top:12px;gap:6px">
-      <button class="primary sm" onclick="createAndExecuteMigration()">🚀 创建并执行</button>
+      <button class="primary sm" onclick="createAndExecuteMigration()">▶ 创建并执行</button>
       <button class="sm" onclick="saveMigrationOnly()">💾 仅保存</button>
       <button class="sm" onclick="openMigrationModal()">取消</button>
     </div>
   `;
   openConfigModal('新建数据迁移', html);
+
+  // Pre-fill if cloning
+  if (prefill) {
+    setTimeout(() => {
+      const nameEl = document.getElementById('migName');
+      if (nameEl) nameEl.value = prefill.name + ' (副本)';
+      fillConnectionFields('src', prefill.source);
+      fillConnectionFields('tgt', prefill.target);
+    }, 0);
+  }
+}
+
+function fillConnectionFields(prefix, conn) {
+  if (!conn) return;
+  const typeEl = document.getElementById(`${prefix}Type`);
+  if (typeEl) { typeEl.value = conn.type || 'remote'; toggleConnType(prefix); }
+  const set = (id, val) => { const el = document.getElementById(id); if (el && val) el.value = val; };
+  set(`${prefix}Host`, conn.host);
+  set(`${prefix}Port`, conn.port);
+  set(`${prefix}Database`, conn.database);
+  set(`${prefix}Username`, conn.username);
+  set(`${prefix}Password`, conn.password);
+  set(`${prefix}AuthDb`, conn.authDatabase);
+  if (conn.sshTunnel?.enabled) {
+    const sshCb = document.getElementById(`${prefix}SshEnabled`);
+    if (sshCb) { sshCb.checked = true; toggleSshTunnel(prefix); }
+    set(`${prefix}SshHost`, conn.sshTunnel.host);
+    set(`${prefix}SshPort`, conn.sshTunnel.port);
+    set(`${prefix}SshUser`, conn.sshTunnel.username);
+    set(`${prefix}SshKey`, conn.sshTunnel.privateKeyPath);
+  }
+}
+
+function cloneMigration(id) {
+  const m = migrationTasks.find(t => t.id === id);
+  if (!m) { showToast('任务不存在', 'error'); return; }
+  openNewMigrationModal(m);
+}
+
+function collectMigrationBody() {
+  const name = document.getElementById('migName')?.value?.trim();
+  if (!name) { showToast('请输入迁移任务名称', 'error'); return null; }
+  const source = readConnectionConfig('src');
+  const target = readConnectionConfig('tgt');
+  const collections = readSelectedCollections();
+  return { name, dbType: 'mongodb', source, target, collections: collections.length ? collections : undefined };
 }
 
 async function saveMigrationOnly() {
-  const name = document.getElementById('migName')?.value?.trim();
-  if (!name) { showToast('请输入迁移任务名称', 'error'); return; }
-  const source = readConnectionConfig('src');
-  const target = readConnectionConfig('tgt');
+  const body = collectMigrationBody();
+  if (!body) return;
   try {
-    await api('POST', '/data-migrations', { name, dbType: 'mongodb', source, target });
+    await api('POST', '/data-migrations', body);
     showToast('迁移任务已保存', 'success');
     openMigrationModal();
   } catch (e) { showToast(e.message, 'error'); }
 }
 
 async function createAndExecuteMigration() {
-  const name = document.getElementById('migName')?.value?.trim();
-  if (!name) { showToast('请输入迁移任务名称', 'error'); return; }
-  const source = readConnectionConfig('src');
-  const target = readConnectionConfig('tgt');
+  const body = collectMigrationBody();
+  if (!body) return;
   try {
-    const mig = await api('POST', '/data-migrations', { name, dbType: 'mongodb', source, target });
-    showToast('任务已创建，开始执行迁移...', 'info');
+    const mig = await api('POST', '/data-migrations', body);
+    showToast('任务已创建，开始执行...', 'info');
     executeMigration(mig.id);
   } catch (e) { showToast(e.message, 'error'); }
 }
 
 async function executeMigration(id) {
-  // Show progress modal
-  openConfigModal('执行迁移', `
-    <div style="text-align:center;padding:20px">
-      <div id="migProgressBar" style="background:var(--bg-tertiary);border-radius:6px;height:10px;overflow:hidden;margin-bottom:12px">
-        <div id="migProgressFill" style="background:var(--blue);height:100%;width:0%;transition:width 0.5s ease"></div>
+  const mig = migrationTasks.find(t => t.id === id);
+  const title = mig ? esc(mig.name) : '执行迁移';
+  openConfigModal(title, `
+    <div style="padding:16px 0">
+      <div class="mig-exec-info">
+        ${mig ? `
+          <div class="mig-card-flow" style="justify-content:center;margin-bottom:12px">
+            <span class="mig-conn-label">${esc(formatConnSummary(mig.source))}</span>
+            <span class="mig-flow-arrow">→</span>
+            <span class="mig-conn-label">${esc(formatConnSummary(mig.target))}</span>
+          </div>
+          ${mig.collections?.length ? `<div style="text-align:center;font-size:12px;color:var(--fg-muted);margin-bottom:8px">📦 ${mig.collections.join(', ')}</div>` : ''}
+        ` : ''}
       </div>
-      <div id="migProgressText" style="font-size:14px;margin-bottom:8px">准备中...</div>
-      <div id="migProgressPct" style="font-size:24px;font-weight:bold;color:var(--blue)">0%</div>
-      <div id="migProgressLog" style="max-height:200px;overflow:auto;background:var(--bg-tertiary);padding:8px;border-radius:6px;font-size:11px;text-align:left;margin-top:12px;display:none"></div>
+      <div class="mig-progress-bar" style="height:8px;margin-bottom:12px"><div id="migProgressFill" class="mig-progress-fill" style="width:0%"></div></div>
+      <div id="migProgressText" style="font-size:13px;text-align:center;margin-bottom:4px">准备中...</div>
+      <div id="migProgressPct" style="font-size:28px;font-weight:bold;color:var(--blue);text-align:center">0%</div>
+      <div style="margin-top:16px;text-align:center">
+        <button class="sm" onclick="openMigrationModal()" style="display:none" id="migBackBtn">← 返回列表</button>
+      </div>
     </div>
   `);
 
   try {
-    const res = await fetch(`${API}/data-migrations/${id}/execute`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-    });
+    const res = await fetch(`${API}/data-migrations/${id}/execute`, { method: 'POST', headers: { 'Content-Type': 'application/json' } });
     const reader = res.body.getReader();
     const decoder = new TextDecoder();
     let buffer = '';
-
     while (true) {
       const { done, value } = await reader.read();
       if (done) break;
@@ -4731,39 +4847,40 @@ async function executeMigration(id) {
       for (const line of lines) {
         if (line.startsWith('data: ')) {
           try {
-            const data = JSON.parse(line.substring(6));
-            const fillEl = document.getElementById('migProgressFill');
-            const textEl = document.getElementById('migProgressText');
-            const pctEl = document.getElementById('migProgressPct');
-            if (data.progress !== undefined && fillEl) {
-              fillEl.style.width = data.progress + '%';
-              if (pctEl) pctEl.textContent = data.progress + '%';
-            }
-            if (data.message && textEl) textEl.textContent = data.message;
+            const d = JSON.parse(line.substring(6));
+            const fill = document.getElementById('migProgressFill');
+            const text = document.getElementById('migProgressText');
+            const pct = document.getElementById('migProgressPct');
+            if (d.progress !== undefined && fill) { fill.style.width = d.progress + '%'; if (pct) pct.textContent = d.progress + '%'; }
+            if (d.message && text) text.textContent = d.message;
           } catch {}
         }
         if (line.startsWith('event: done')) {
-          const fillEl = document.getElementById('migProgressFill');
-          const textEl = document.getElementById('migProgressText');
-          const pctEl = document.getElementById('migProgressPct');
-          if (fillEl) fillEl.style.width = '100%';
-          if (fillEl) fillEl.style.background = 'var(--green)';
-          if (pctEl) { pctEl.textContent = '100%'; pctEl.style.color = 'var(--green)'; }
-          if (textEl) textEl.textContent = '✓ 迁移完成！';
+          const fill = document.getElementById('migProgressFill');
+          const text = document.getElementById('migProgressText');
+          const pct = document.getElementById('migProgressPct');
+          const btn = document.getElementById('migBackBtn');
+          if (fill) { fill.style.width = '100%'; fill.style.background = 'var(--green)'; }
+          if (pct) { pct.textContent = '✓'; pct.style.color = 'var(--green)'; }
+          if (text) text.textContent = '迁移完成！';
+          if (btn) btn.style.display = '';
           showToast('数据迁移完成！', 'success');
         }
         if (line.startsWith('event: error')) {
-          const fillEl = document.getElementById('migProgressFill');
-          const pctEl = document.getElementById('migProgressPct');
-          if (fillEl) fillEl.style.background = 'var(--red)';
-          if (pctEl) pctEl.style.color = 'var(--red)';
-          // Error data will come in next data: line
+          const fill = document.getElementById('migProgressFill');
+          const pct = document.getElementById('migProgressPct');
+          const btn = document.getElementById('migBackBtn');
+          if (fill) fill.style.background = 'var(--red)';
+          if (pct) pct.style.color = 'var(--red)';
+          if (btn) btn.style.display = '';
         }
       }
     }
   } catch (e) {
-    const textEl = document.getElementById('migProgressText');
-    if (textEl) textEl.innerHTML = `<span style="color:var(--red)">✗ 执行失败: ${esc(e.message)}</span>`;
+    const text = document.getElementById('migProgressText');
+    const btn = document.getElementById('migBackBtn');
+    if (text) text.innerHTML = `<span style="color:var(--red)">✗ ${esc(e.message)}</span>`;
+    if (btn) btn.style.display = '';
     showToast('迁移失败: ' + e.message, 'error');
   }
 }
@@ -4771,26 +4888,18 @@ async function executeMigration(id) {
 async function showMigrationLog(id) {
   openConfigModal('迁移日志', '<div class="config-empty"><span class="btn-spinner"></span> 加载中...</div>');
   try {
-    const data = await api('GET', `/data-migrations/${id}/log`);
-    const html = `
-      <pre style="max-height:400px;overflow:auto;background:var(--bg-tertiary);padding:12px;border-radius:6px;font-size:11px;line-height:1.5;white-space:pre-wrap;word-break:break-all">${esc(data.log || '(空)')}</pre>
-      <div class="form-row" style="margin-top:8px">
-        <button class="sm" onclick="openMigrationModal()">返回</button>
-      </div>
-    `;
-    openConfigModal('迁移日志', html);
-  } catch (e) {
-    openConfigModal('迁移日志', `<div class="config-empty" style="color:var(--red)">${esc(e.message)}</div>`);
-  }
+    const d = await api('GET', `/data-migrations/${id}/log`);
+    openConfigModal('迁移日志', `
+      <pre style="max-height:400px;overflow:auto;background:var(--bg-tertiary);padding:12px;border-radius:6px;font-size:11px;line-height:1.5;white-space:pre-wrap;word-break:break-all">${esc(d.log || '(空)')}</pre>
+      <div class="form-row" style="margin-top:8px"><button class="sm" onclick="openMigrationModal()">返回</button></div>
+    `);
+  } catch (e) { openConfigModal('迁移日志', `<div class="config-empty" style="color:var(--red)">${esc(e.message)}</div>`); }
 }
 
 async function deleteMigration(id) {
   if (!confirm('确定删除此迁移任务？')) return;
-  try {
-    await api('DELETE', `/data-migrations/${id}`);
-    showToast('已删除', 'success');
-    openMigrationModal();
-  } catch (e) { showToast(e.message, 'error'); }
+  try { await api('DELETE', `/data-migrations/${id}`); showToast('已删除', 'success'); openMigrationModal(); }
+  catch (e) { showToast(e.message, 'error'); }
 }
 
 // ── Init activity monitor & AI pairing ──

@@ -242,6 +242,8 @@ export interface DataMigration {
   source: MongoConnectionConfig;
   /** Target connection */
   target: MongoConnectionConfig;
+  /** Specific collections to migrate (empty/undefined = all collections) */
+  collections?: string[];
   /** Migration status */
   status: 'pending' | 'running' | 'completed' | 'failed';
   /** Progress percentage 0-100 */
