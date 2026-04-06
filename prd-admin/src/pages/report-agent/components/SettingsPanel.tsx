@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Link2, FileBarChart, Building2, Sparkles, ChevronRight } from 'lucide-react';
+import { Link2, FileBarChart, Building2, Sparkles, Bell, ChevronRight } from 'lucide-react';
 import { GlassCard } from '@/components/design/GlassCard';
 import { useAuthStore } from '@/stores/authStore';
 import { PersonalSourcesPanel } from './PersonalSourcesPanel';
@@ -7,8 +7,9 @@ import { AiPromptSettingsPanel } from './AiPromptSettingsPanel';
 import { TeamAiPromptSettingsPanel } from './TeamAiPromptSettingsPanel';
 import { TemplateManager } from './TemplateManager';
 import { TeamManager } from './TeamManager';
+import { WebhookSettingsPanel } from './WebhookSettingsPanel';
 
-type SettingsSection = 'overview' | 'my-sources' | 'ai-prompt' | 'team-ai-prompt' | 'templates' | 'teams';
+type SettingsSection = 'overview' | 'my-sources' | 'ai-prompt' | 'team-ai-prompt' | 'templates' | 'teams' | 'webhooks';
 
 interface SectionDef {
   key: SettingsSection;
@@ -51,6 +52,14 @@ const SECTIONS: SectionDef[] = [
     desc: '配置团队周报AI分析汇总使用的系统默认与团队自定义 Prompt',
     icon: Sparkles,
     color: 'rgba(14, 165, 233, 0.9)',
+    requirePerm: 'report-agent.team.manage',
+  },
+  {
+    key: 'webhooks',
+    label: 'Webhook 通知',
+    desc: '配置企微/钉钉/飞书群消息推送',
+    icon: Bell,
+    color: 'rgba(34, 197, 94, 0.85)',
     requirePerm: 'report-agent.team.manage',
   },
   {
@@ -138,6 +147,7 @@ export function SettingsPanel() {
         {activeSection === 'ai-prompt' && <AiPromptSettingsPanel />}
         {activeSection === 'team-ai-prompt' && <TeamAiPromptSettingsPanel />}
         {activeSection === 'templates' && <TemplateManager />}
+        {activeSection === 'webhooks' && <WebhookSettingsPanel />}
         {activeSection === 'teams' && <TeamManager />}
       </div>
     </div>

@@ -219,6 +219,10 @@ builder.Services.AddHostedService<PrdAgent.Api.Services.VideoToDocRunWorker>();
 // 竞技场 Run 后台执行器（多模型并行 + afterSeq 断线重连）
 builder.Services.AddHostedService<PrdAgent.Api.Services.ArenaRunWorker>();
 
+// 转录 Agent 后台执行器（ASR 转写 + 模板转文案）
+builder.Services.AddHostedService<PrdAgent.Api.Services.TranscriptRunWorker>();
+builder.Services.AddSingleton<PrdAgent.Api.Services.DoubaoStreamAsrService>();
+
 // 权限字符串迁移服务（启动时自动迁移旧格式 admin.xxx → 新格式 appKey.action）
 builder.Services.AddHostedService<PrdAgent.Api.Services.PermissionMigrationService>();
 // 应用调用者同步：已移除自动启动同步，改为管理后台手动点击「初始化应用」触发
@@ -244,6 +248,7 @@ builder.Services.AddScoped<PrdAgent.Api.Services.ReportAgent.ReportGenerationSer
 builder.Services.AddHostedService<PrdAgent.Api.Services.ReportAgent.GitSyncWorker>();
 builder.Services.AddHostedService<PrdAgent.Api.Services.ReportAgent.ReportAutoGenerateWorker>();
 // Report Agent Phase 3: 管理增强服务
+builder.Services.AddScoped<PrdAgent.Api.Services.ReportAgent.ReportWebhookService>();
 builder.Services.AddScoped<PrdAgent.Api.Services.ReportAgent.ReportNotificationService>();
 builder.Services.AddScoped<PrdAgent.Api.Services.ReportAgent.TeamSummaryService>();
 // Report Agent v2.0: 工作流管道 + 个人数据源
@@ -254,6 +259,9 @@ builder.Services.AddScoped<PrdAgent.Api.Services.ReportAgent.PersonalSourceServi
 // Defect Agent: 催办 Worker + Webhook 通知服务
 builder.Services.AddHostedService<PrdAgent.Api.Services.DefectAgent.DefectEscalationWorker>();
 builder.Services.AddScoped<PrdAgent.Infrastructure.Services.DefectWebhookService>();
+
+// Review Agent: Webhook 通知服务
+builder.Services.AddScoped<PrdAgent.Api.Services.ReviewAgent.ReviewWebhookService>();
 
 // ImageMaster 资产存储：默认本地文件（可替换为对象存储实现）
 builder.Services.AddSingleton<IAssetStorage>(sp =>

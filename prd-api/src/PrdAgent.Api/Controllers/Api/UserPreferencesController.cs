@@ -48,7 +48,8 @@ public class UserPreferencesController : ControllerBase
         {
             navOrder = prefs?.NavOrder ?? new List<string>(),
             themeConfig = prefs?.ThemeConfig,
-            visualAgentPreferences = prefs?.VisualAgentPreferences
+            visualAgentPreferences = prefs?.VisualAgentPreferences,
+            literaryAgentPreferences = prefs?.LiteraryAgentPreferences
         }));
     }
 
@@ -126,6 +127,30 @@ public class UserPreferencesController : ControllerBase
 
         return Ok(ApiResponse<object>.Ok(new { }));
     }
+    /// <summary>
+    /// 更新文学创作 Agent 偏好
+    /// </summary>
+    [HttpPut("literary-agent")]
+    public async Task<IActionResult> UpdateLiteraryAgentPreferences([FromBody] UpdateLiteraryAgentPreferencesRequest request)
+    {
+        var userId = GetCurrentUserId();
+        if (string.IsNullOrEmpty(userId))
+            return Unauthorized(ApiResponse<object>.Fail("UNAUTHORIZED", "未登录"));
+
+        if (request.LiteraryAgentPreferences == null)
+            return BadRequest(ApiResponse<object>.Fail("INVALID_FORMAT", "literaryAgentPreferences 不能为空"));
+
+        var update = Builders<UserPreferences>.Update
+            .Set(x => x.LiteraryAgentPreferences, request.LiteraryAgentPreferences)
+            .Set(x => x.UpdatedAt, DateTime.UtcNow);
+
+        await _db.UserPreferences.UpdateOneAsync(
+            x => x.UserId == userId,
+            update,
+            new UpdateOptions { IsUpsert = true });
+
+        return Ok(ApiResponse<object>.Ok(new { }));
+    }
 }
 
 public class UpdateNavOrderRequest
@@ -141,4 +166,9 @@ public class UpdateThemeConfigRequest
 public class UpdateVisualAgentPreferencesRequest
 {
     public VisualAgentPreferences? VisualAgentPreferences { get; set; }
+}
+
+public class UpdateLiteraryAgentPreferencesRequest
+{
+    public LiteraryAgentPreferences? LiteraryAgentPreferences { get; set; }
 }

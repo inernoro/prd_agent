@@ -8,13 +8,17 @@ import {
   updateExchange,
   deleteExchange,
   getTransformerTypes,
+  getExchangeTemplates,
+  importExchangeFromTemplate,
 } from '@/services/real/exchanges';
-import type { ModelExchange, CreateExchangeRequest, UpdateExchangeRequest, TransformerTypeOption } from '@/types/exchange';
+import type { ModelExchange, CreateExchangeRequest, UpdateExchangeRequest, TransformerTypeOption, ExchangeTemplate } from '@/types/exchange';
 import { AUTH_SCHEME_OPTIONS } from '@/types/exchange';
 import { ExchangeTestPanel } from '@/components/exchange/ExchangeTestPanel';
 import {
   ArrowLeftRight,
+  Box,
   Copy,
+  Download,
   Edit,
   FlaskConical,
   Plus,
@@ -25,6 +29,19 @@ import {
 import { useEffect, useState } from 'react';
 import { systemDialog } from '@/lib/systemDialog';
 import { toast } from '@/lib/toast';
+import { ModelGroupsService } from '@/services/real/modelGroups';
+import type { CreateModelGroupRequest } from '@/types/modelGroup';
+import { PoolStrategyType } from '@/types/modelGroup';
+
+const modelGroupsService = new ModelGroupsService();
+
+/** 推断 Exchange 转换器类型对应的模型类型 */
+function inferModelType(transformerType: string): string {
+  if (transformerType.startsWith('doubao-asr') || transformerType.includes('asr')) return 'asr';
+  if (transformerType.startsWith('fal-image')) return 'generation';
+  if (transformerType === 'tts' || transformerType.includes('tts')) return 'tts';
+  return 'chat';
+}
 
 type ExchangeForm = {
   name: string;
@@ -69,6 +86,70 @@ export function ExchangeManagePage() {
   const [form, setForm] = useState<ExchangeForm>(defaultForm);
   const [saving, setSaving] = useState(false);
   const [testingExchange, setTestingExchange] = useState<ModelExchange | null>(null);
+
+  // 导入模板状态
+  const [showTemplateDialog, setShowTemplateDialog] = useState(false);
+  const [templates, setTemplates] = useState<ExchangeTemplate[]>([]);
+  const [templatesLoading, setTemplatesLoading] = useState(false);
+  const [selectedTemplate, setSelectedTemplate] = useState<ExchangeTemplate | null>(null);
+  const [templateApiKey, setTemplateApiKey] = useState('');
+  const [importing, setImporting] = useState(false);
+
+  // 一键创建模型池状态
+  const [showPoolDialog, setShowPoolDialog] = useState(false);
+  const [poolExchange, setPoolExchange] = useState<ModelExchange | null>(null);
+  const [poolForm, setPoolForm] = useState({
+    name: '',
+    code: '',
+    modelType: 'asr',
+    isDefaultForType: false,
+  });
+  const [creatingPool, setCreatingPool] = useState(false);
+
+  const handleOpenPoolDialog = (exchange: ModelExchange) => {
+    const modelType = inferModelType(exchange.transformerType);
+    setPoolExchange(exchange);
+    setPoolForm({
+      name: `${exchange.name} 模型池`,
+      code: `pool-${exchange.modelAlias}`,
+      modelType,
+      isDefaultForType: false,
+    });
+    setShowPoolDialog(true);
+  };
+
+  const handleCreatePool = async () => {
+    if (!poolExchange) return;
+    if (!poolForm.name.trim()) { toast.error('请填写模型池名称'); return; }
+    if (!poolForm.code.trim()) { toast.error('请填写模型池代码'); return; }
+
+    setCreatingPool(true);
+    try {
+      const req: CreateModelGroupRequest = {
+        name: poolForm.name.trim(),
+        code: poolForm.code.trim(),
+        priority: 50,
+        modelType: poolForm.modelType,
+        isDefaultForType: poolForm.isDefaultForType,
+        strategyType: PoolStrategyType.FailFast,
+        models: [{
+          modelId: poolExchange.modelAlias,
+          platformId: poolExchange.platformId,
+          priority: 0,
+          healthStatus: 'Healthy' as any,
+          consecutiveFailures: 0,
+          consecutiveSuccesses: 0,
+        }],
+      };
+      await modelGroupsService.createModelGroup(req);
+      toast.success(`模型池「${poolForm.name}」已创建，包含模型 ${poolExchange.modelAlias}`);
+      setShowPoolDialog(false);
+    } catch (err: any) {
+      toast.error(err.message ?? '创建模型池失败');
+    } finally {
+      setCreatingPool(false);
+    }
+  };
 
   const loadData = async () => {
     setLoading(true);
@@ -192,6 +273,37 @@ export function ExchangeManagePage() {
     toast.success(`已复制: ${alias}`);
   };
 
+  const handleOpenTemplates = async () => {
+    setShowTemplateDialog(true);
+    setSelectedTemplate(null);
+    setTemplateApiKey('');
+    setTemplatesLoading(true);
+    try {
+      const res = await getExchangeTemplates();
+      if (res.success) setTemplates(res.data);
+    } finally {
+      setTemplatesLoading(false);
+    }
+  };
+
+  const handleImportTemplate = async () => {
+    if (!selectedTemplate) { toast.error('请选择模板'); return; }
+    if (!templateApiKey.trim()) { toast.error('请填写 API Key'); return; }
+    setImporting(true);
+    try {
+      const res = await importExchangeFromTemplate(selectedTemplate.id, templateApiKey.trim());
+      if (res.success) {
+        toast.success(`已导入: ${res.data.name} (${res.data.modelAlias})`);
+        setShowTemplateDialog(false);
+        loadData();
+      } else {
+        toast.error(res.error?.message ?? '导入失败');
+      }
+    } finally {
+      setImporting(false);
+    }
+  };
+
   return (
     <div className="space-y-4">
       {/* 顶部工具栏 */}
@@ -199,9 +311,14 @@ export function ExchangeManagePage() {
         <div className="text-sm text-muted-foreground">
           模型中继将非标准 API 伪装为标准接口，使模型池可以像使用普通模型一样调用非标准模型。
         </div>
-        <Button size="sm" onClick={handleCreate}>
-          <Plus size={14} className="mr-1" /> 新建中继
-        </Button>
+        <div className="flex items-center gap-2">
+          <Button size="sm" variant="secondary" onClick={handleOpenTemplates}>
+            <Download size={14} className="mr-1" /> 从模板导入
+          </Button>
+          <Button size="sm" onClick={handleCreate}>
+            <Plus size={14} className="mr-1" /> 新建中继
+          </Button>
+        </div>
       </div>
 
       {/* 列表 */}
@@ -240,6 +357,10 @@ export function ExchangeManagePage() {
                   )}
                 </div>
                 <div className="flex items-center gap-1 ml-2 shrink-0">
+                  <button className="p-1 rounded hover:bg-muted/50 transition-colors text-muted-foreground hover:text-foreground"
+                    onClick={() => handleOpenPoolDialog(exchange)} title="一键添加到模型池">
+                    <Box size={14} />
+                  </button>
                   <button className="p-1 rounded hover:bg-muted/50 transition-colors text-muted-foreground hover:text-foreground"
                     onClick={() => setTestingExchange(exchange)} title="测试">
                     <FlaskConical size={14} />
@@ -306,6 +427,164 @@ export function ExchangeManagePage() {
               exchange={testingExchange}
               onClose={() => setTestingExchange(null)}
             />
+          ) : <div />
+        }
+      />
+
+      {/* 模板导入对话框 */}
+      <Dialog
+        open={showTemplateDialog}
+        onOpenChange={setShowTemplateDialog}
+        title="从模板导入中继"
+        maxWidth={560}
+        content={
+          <div className="space-y-4 pt-2">
+            {templatesLoading ? (
+              <div className="text-center py-8 text-muted-foreground text-sm">加载模板中...</div>
+            ) : templates.length === 0 ? (
+              <div className="text-center py-8 text-muted-foreground text-sm">暂无可用模板</div>
+            ) : (
+              <>
+                <div className="text-sm text-muted-foreground">
+                  选择预设模板，只需填写 API Key 即可一键创建中继配置。
+                </div>
+                <div className="space-y-2">
+                  {templates.map(tpl => (
+                    <button
+                      key={tpl.id}
+                      className={`w-full text-left p-3 rounded-lg border transition-colors ${
+                        selectedTemplate?.id === tpl.id
+                          ? 'border-primary bg-primary/5'
+                          : 'border-border hover:border-primary/50 hover:bg-muted/30'
+                      }`}
+                      onClick={() => { setSelectedTemplate(tpl); setTemplateApiKey(''); }}
+                    >
+                      <div className="font-medium text-sm">{tpl.name}</div>
+                      <div className="text-xs text-muted-foreground mt-0.5">{tpl.description}</div>
+                      <div className="flex items-center gap-3 mt-1.5 text-[11px] text-muted-foreground/70">
+                        <span>转换器: <code className="px-1 py-0.5 rounded bg-muted/40">{tpl.preset.transformerType}</code></span>
+                        <span>认证: {tpl.preset.targetAuthScheme}</span>
+                      </div>
+                    </button>
+                  ))}
+                </div>
+
+                {selectedTemplate && (
+                  <div className="space-y-3 pt-2 border-t border-border/30">
+                    <div>
+                      <label className="block text-sm font-medium mb-1">
+                        API Key
+                      </label>
+                      <input
+                        type="password"
+                        className="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm"
+                        placeholder={selectedTemplate.apiKeyPlaceholder}
+                        value={templateApiKey}
+                        onChange={e => setTemplateApiKey(e.target.value)}
+                      />
+                      <div className="text-[11px] text-muted-foreground mt-1">
+                        {selectedTemplate.apiKeyHint}
+                      </div>
+                    </div>
+
+                    <div className="text-xs text-muted-foreground space-y-1 p-2 rounded bg-muted/20">
+                      <div>将创建: <strong>{selectedTemplate.preset.name}</strong></div>
+                      <div>模型别名: <code className="px-1 py-0.5 rounded bg-muted/40">{selectedTemplate.preset.modelAlias}</code></div>
+                      <div className="truncate">目标: {selectedTemplate.preset.targetUrl}</div>
+                    </div>
+                  </div>
+                )}
+
+                <div className="flex justify-end gap-2 pt-2">
+                  <Button variant="secondary" size="sm" onClick={() => setShowTemplateDialog(false)}>
+                    取消
+                  </Button>
+                  <Button size="sm" onClick={handleImportTemplate} disabled={importing || !selectedTemplate || !templateApiKey.trim()}>
+                    {importing ? '导入中...' : '导入'}
+                  </Button>
+                </div>
+              </>
+            )}
+          </div>
+        }
+      />
+
+      {/* 一键创建模型池对话框 */}
+      <Dialog
+        open={showPoolDialog}
+        onOpenChange={setShowPoolDialog}
+        title="一键创建模型池"
+        maxWidth={480}
+        content={
+          poolExchange ? (
+            <div className="space-y-4 pt-2">
+              <div className="text-sm text-muted-foreground">
+                为中继「{poolExchange.name}」创建专属模型池，自动关联模型 <code className="px-1 py-0.5 rounded bg-muted/40 text-[11px]">{poolExchange.modelAlias}</code>。
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium mb-1">模型池名称</label>
+                <input
+                  className="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm"
+                  value={poolForm.name}
+                  onChange={e => setPoolForm(f => ({ ...f, name: e.target.value }))}
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium mb-1">模型池代码</label>
+                <input
+                  className="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm font-mono"
+                  value={poolForm.code}
+                  onChange={e => setPoolForm(f => ({ ...f, code: e.target.value }))}
+                />
+                <div className="text-[11px] text-muted-foreground mt-1">
+                  用于 Gateway 调度匹配，建议使用 kebab-case
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium mb-1">模型类型</label>
+                <select
+                  className="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm"
+                  value={poolForm.modelType}
+                  onChange={e => setPoolForm(f => ({ ...f, modelType: e.target.value }))}
+                >
+                  <option value="chat">对话 (chat)</option>
+                  <option value="vision">视觉 (vision)</option>
+                  <option value="generation">图片生成 (generation)</option>
+                  <option value="asr">语音识别 (asr)</option>
+                  <option value="tts">语音合成 (tts)</option>
+                  <option value="video-gen">视频生成 (video-gen)</option>
+                </select>
+              </div>
+
+              <div className="flex items-center gap-2">
+                <input
+                  type="checkbox"
+                  id="pool-default"
+                  checked={poolForm.isDefaultForType}
+                  onChange={e => setPoolForm(f => ({ ...f, isDefaultForType: e.target.checked }))}
+                  className="rounded"
+                />
+                <label htmlFor="pool-default" className="text-sm">设为该类型的默认模型池</label>
+              </div>
+
+              <div className="p-2 rounded bg-muted/20 text-[11px] text-muted-foreground space-y-1">
+                <div>平台: <strong>{poolExchange.platformName}</strong></div>
+                <div>模型: <code className="px-1 py-0.5 rounded bg-muted/40">{poolExchange.modelAlias}</code></div>
+                <div>策略: FailFast（快速失败，单模型推荐）</div>
+              </div>
+
+              <div className="flex justify-end gap-2 pt-2">
+                <Button variant="secondary" size="sm" onClick={() => setShowPoolDialog(false)}>
+                  取消
+                </Button>
+                <Button size="sm" onClick={handleCreatePool} disabled={creatingPool}>
+                  {creatingPool ? '创建中...' : '创建模型池'}
+                </Button>
+              </div>
+            </div>
           ) : <div />
         }
       />

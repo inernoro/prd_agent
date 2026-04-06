@@ -10,7 +10,15 @@ public record GenerateArticleMarkersRequest(
     /// <summary>
     /// 插入模式："legacy" = LLM 返回完整文章（默认，向后兼容），"anchor" = LLM 只返回锚点插入指令
     /// </summary>
-    string? InsertionMode
+    string? InsertionMode,
+    /// <summary>
+    /// 用户指定的平台 ID（可选，用于模型切换，不传则走模型池自动解析）
+    /// </summary>
+    string? PlatformId,
+    /// <summary>
+    /// 用户指定的模型 ID（可选，用于模型切换，不传则走模型池自动解析）
+    /// </summary>
+    string? ModelId
 );
 
 /// <summary>

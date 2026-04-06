@@ -104,6 +104,12 @@ import type {
   PersonalSource,
   PersonalStats,
   TeamWorkflowInfo,
+  ReportWebhookConfig,
+  ListWebhooksContract,
+  CreateWebhookContract,
+  UpdateWebhookContract,
+  DeleteWebhookContract,
+  TestWebhookContract,
 } from '../contracts/reportAgent';
 
 type RefreshOkData = { accessToken: string; refreshToken: string; sessionKey: string };
@@ -851,5 +857,45 @@ export const seedSystemTemplatesReal: SeedSystemTemplatesContract = async () => 
   return await apiRequest<{ inserted: string[]; skipped: number }>(
     api.reportAgent.seedTemplates(),
     { method: 'POST' }
+  );
+};
+
+// ========== Webhooks ==========
+
+export const listWebhooksReal: ListWebhooksContract = async (input) => {
+  return await apiRequest<{ items: ReportWebhookConfig[] }>(
+    api.reportAgent.webhooks.list(encodeURIComponent(input.teamId)),
+    { method: 'GET' }
+  );
+};
+
+export const createWebhookReal: CreateWebhookContract = async (input) => {
+  const { teamId, ...body } = input;
+  return await apiRequest<{ webhook: ReportWebhookConfig }>(
+    api.reportAgent.webhooks.list(encodeURIComponent(teamId)),
+    { method: 'POST', body }
+  );
+};
+
+export const updateWebhookReal: UpdateWebhookContract = async (input) => {
+  const { teamId, webhookId, ...body } = input;
+  return await apiRequest<{ webhook: ReportWebhookConfig }>(
+    api.reportAgent.webhooks.byId(encodeURIComponent(teamId), encodeURIComponent(webhookId)),
+    { method: 'PUT', body }
+  );
+};
+
+export const deleteWebhookReal: DeleteWebhookContract = async (input) => {
+  return await apiRequest<{ deleted: boolean }>(
+    api.reportAgent.webhooks.byId(encodeURIComponent(input.teamId), encodeURIComponent(input.webhookId)),
+    { method: 'DELETE' }
+  );
+};
+
+export const testWebhookReal: TestWebhookContract = async (input) => {
+  const { teamId, ...body } = input;
+  return await apiRequest<{ success: boolean; error?: string }>(
+    api.reportAgent.webhooks.test(encodeURIComponent(teamId)),
+    { method: 'POST', body }
   );
 };

@@ -40,10 +40,19 @@ export type VisualAgentPreferences = {
   quickActions?: QuickActionConfig[];
 };
 
+/** 文学创作 Agent 偏好设置 */
+export type LiteraryAgentPreferences = {
+  /** 用户选择的生图模型池 ID */
+  imageModelId?: string;
+  /** 用户选择的文生提示词（对话/标记生成）模型池 ID */
+  chatModelId?: string;
+};
+
 export type UserPreferences = {
   navOrder: string[];
   themeConfig?: ThemeConfigResponse;
   visualAgentPreferences?: VisualAgentPreferences;
+  literaryAgentPreferences?: LiteraryAgentPreferences;
 };
 
 export type GetUserPreferencesContract = () => Promise<ApiResponse<UserPreferences>>;
@@ -53,3 +62,5 @@ export type UpdateNavOrderContract = (navOrder: string[]) => Promise<ApiResponse
 export type UpdateThemeConfigContract = (themeConfig: ThemeConfig) => Promise<ApiResponse<void>>;
 
 export type UpdateVisualAgentPreferencesContract = (prefs: VisualAgentPreferences) => Promise<ApiResponse<void>>;
+
+export type UpdateLiteraryAgentPreferencesContract = (prefs: LiteraryAgentPreferences) => Promise<ApiResponse<void>>;

@@ -113,8 +113,11 @@ export const api = {
       list: () => '/api/mds/exchanges',
       byId: (id: string) => `/api/mds/exchanges/${id}`,
       test: (id: string) => `/api/mds/exchanges/${id}/test`,
+      testStreamAsrSse: (id: string) => `/api/mds/exchanges/${id}/test-stream-asr/sse`,
       transformerTypes: () => '/api/mds/exchanges/transformer-types',
       forPool: () => '/api/mds/exchanges/for-pool',
+      templates: () => '/api/mds/exchanges/templates',
+      importFromTemplate: () => '/api/mds/exchanges/import-from-template',
     },
 
     // 调度器配置
@@ -278,6 +281,7 @@ export const api = {
       navOrder: () => '/api/dashboard/user-preferences/nav-order',
       theme: () => '/api/dashboard/user-preferences/theme',
       visualAgent: () => '/api/dashboard/user-preferences/visual-agent',
+      literaryAgent: () => '/api/dashboard/user-preferences/literary-agent',
     },
     stats: {
       overview: () => '/api/dashboard/stats/overview',
@@ -397,6 +401,10 @@ export const api = {
         unpublish: (id: string) => `/api/literary-agent/config/reference-images/${id}/unpublish`,
         fork: (id: string) => `/api/literary-agent/config/reference-images/${id}/fork`,
       },
+      /** 获取统一模型池列表（文生图 + 图生图，合并去重） */
+      models: () => '/api/literary-agent/config/models',
+      /** 获取对话/标记生成模型池列表 */
+      modelsChatPools: () => '/api/literary-agent/config/models/chat',
       /** 获取文生图模型池（无参考图场景） */
       modelsText2Img: () => '/api/literary-agent/config/models/text2img',
       /** 获取图生图模型池（有风格参考图场景） */
@@ -564,6 +572,11 @@ export const api = {
     identityMappings: (teamId: string, userId: string) =>
       `/api/report-agent/teams/${teamId}/members/${userId}/identity-mappings`,
     seedTemplates: () => '/api/report-agent/templates/seed',
+    webhooks: {
+      list: (teamId: string) => `/api/report-agent/teams/${teamId}/webhooks`,
+      byId: (teamId: string, webhookId: string) => `/api/report-agent/teams/${teamId}/webhooks/${webhookId}`,
+      test: (teamId: string) => `/api/report-agent/teams/${teamId}/webhooks/test`,
+    },
   },
 
   // ============ Open Platform 开放平台 ============
@@ -708,6 +721,22 @@ export const api = {
     run: (runId: string) => `/api/ai-toolbox/runs/${runId}`,
     execute: (runId: string) => `/api/ai-toolbox/runs/${runId}/execute`,
     stream: (runId: string) => `/api/ai-toolbox/runs/${runId}/stream`,
+  },
+
+  // ============ Transcript Agent 音视频转录 ============
+  transcriptAgent: {
+    workspaces: () => '/api/transcript-agent/workspaces',
+    workspace: (id: string) => `/api/transcript-agent/workspaces/${id}`,
+    items: (workspaceId: string) => `/api/transcript-agent/workspaces/${workspaceId}/items`,
+    uploadItem: (workspaceId: string) => `/api/transcript-agent/workspaces/${workspaceId}/items/upload`,
+    deleteItem: (itemId: string) => `/api/transcript-agent/items/${itemId}`,
+    updateSegments: (itemId: string) => `/api/transcript-agent/items/${itemId}/segments`,
+    templates: () => '/api/transcript-agent/templates',
+    createCopywrite: (itemId: string) => `/api/transcript-agent/items/${itemId}/copywrite`,
+    run: (runId: string) => `/api/transcript-agent/runs/${runId}`,
+    runProgress: (runId: string) => `/api/transcript-agent/runs/${runId}/progress`,
+    workspaceRuns: (workspaceId: string) => `/api/transcript-agent/workspaces/${workspaceId}/runs`,
+    exportItem: (itemId: string) => `/api/transcript-agent/items/${itemId}/export`,
   },
 
   // ============ V1 API (用户端) ============

@@ -3,6 +3,8 @@ import express from 'express';
 import path from 'node:path';
 import { execSync } from 'node:child_process';
 import { loadConfig } from './config.js';
+import { discoverComposeFiles, parseCdsCompose } from './services/compose-parser.js';
+import fs from 'node:fs';
 import { createServer, broadcastActivity, nextActivitySeq } from './server.js';
 import type { ActivityEvent } from './server.js';
 import { ShellExecutor } from './services/shell-executor.js';
@@ -24,6 +26,27 @@ const shell = new ShellExecutor();
 const stateFile = path.join(config.repoRoot, '.cds', 'state.json');
 const stateService = new StateService(stateFile, config.repoRoot);
 stateService.load();
+
+// ── Sync deploy modes from compose file into existing profiles ──
+{
+  const composeFiles = discoverComposeFiles(config.repoRoot);
+  for (const file of composeFiles) {
+    try {
+      const yaml = fs.readFileSync(file, 'utf-8');
+      const cds = parseCdsCompose(yaml);
+      if (!cds) continue;
+      for (const bp of cds.buildProfiles) {
+        if (!bp.deployModes || Object.keys(bp.deployModes).length === 0) continue;
+        const existing = stateService.getBuildProfile(bp.id);
+        if (existing) {
+          stateService.updateBuildProfile(bp.id, { deployModes: bp.deployModes });
+        }
+      }
+      stateService.save();
+      break; // Only process first matching compose file
+    } catch { /* skip */ }
+  }
+}
 
 // ── Apply custom env overrides to config ──
 // Users set these in CDS custom env vars (UI),

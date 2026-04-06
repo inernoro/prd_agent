@@ -933,6 +933,52 @@ export type GetPersonalStatsContract = (input?: {
   weekNumber?: number;
 }) => Promise<ApiResponse<PersonalStats>>;
 
+// --- Webhook Config ---
+export interface ReportWebhookConfig {
+  id: string;
+  teamId: string;
+  channel: string;
+  webhookUrl: string;
+  triggerEvents: string[];
+  isEnabled: boolean;
+  name?: string;
+  createdBy: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export const WebhookChannels = {
+  WeCom: 'wecom',
+  DingTalk: 'dingtalk',
+  Feishu: 'feishu',
+  Custom: 'custom',
+} as const;
+
+export const WebhookChannelLabels: Record<string, string> = {
+  wecom: '企业微信',
+  dingtalk: '钉钉',
+  feishu: '飞书',
+  custom: '自定义',
+};
+
+export const ReportEventTypes = {
+  Submitted: 'submitted',
+  AllSubmitted: 'all_submitted',
+  Reviewed: 'reviewed',
+  Returned: 'returned',
+  DeadlineApproaching: 'deadline_approaching',
+  Overdue: 'overdue',
+} as const;
+
+export const ReportEventLabels: Record<string, string> = {
+  submitted: '周报已提交',
+  all_submitted: '全员已提交',
+  reviewed: '周报已审阅',
+  returned: '周报被退回',
+  deadline_approaching: '截止提醒',
+  overdue: '逾期通知',
+};
+
 // --- Team Workflow ---
 export interface TeamWorkflowInfo {
   workflowId?: string;
@@ -966,3 +1012,38 @@ export type UpdateIdentityMappingsContract = (input: {
 
 // --- Seed Templates ---
 export type SeedSystemTemplatesContract = () => Promise<ApiResponse<{ inserted: string[]; skipped: number }>>;
+
+// --- Webhooks ---
+export type ListWebhooksContract = (input: {
+  teamId: string;
+}) => Promise<ApiResponse<{ items: ReportWebhookConfig[] }>>;
+
+export type CreateWebhookContract = (input: {
+  teamId: string;
+  channel: string;
+  webhookUrl: string;
+  triggerEvents?: string[];
+  isEnabled?: boolean;
+  name?: string;
+}) => Promise<ApiResponse<{ webhook: ReportWebhookConfig }>>;
+
+export type UpdateWebhookContract = (input: {
+  teamId: string;
+  webhookId: string;
+  channel?: string;
+  webhookUrl?: string;
+  triggerEvents?: string[];
+  isEnabled?: boolean;
+  name?: string;
+}) => Promise<ApiResponse<{ webhook: ReportWebhookConfig }>>;
+
+export type DeleteWebhookContract = (input: {
+  teamId: string;
+  webhookId: string;
+}) => Promise<ApiResponse<{ deleted: boolean }>>;
+
+export type TestWebhookContract = (input: {
+  teamId: string;
+  webhookUrl: string;
+  channel?: string;
+}) => Promise<ApiResponse<{ success: boolean; error?: string }>>;

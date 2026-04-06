@@ -573,12 +573,8 @@ public class ExecutiveController : ControllerBase
 
         foreach (var appKey in knownAgents)
         {
-            if (!agentUserCounts.TryGetValue(appKey, out var vals)) continue;
-            dimensions.Add(new { key = appKey, name = ResolveAgentName(appKey), category = "agent", values = vals });
-        }
-        foreach (var kv in agentUserCounts.Where(kv => !knownAgents.Contains(kv.Key)))
-        {
-            dimensions.Add(new { key = kv.Key, name = ResolveAgentName(kv.Key), category = "agent", values = kv.Value });
+            agentUserCounts.TryGetValue(appKey, out var vals);
+            dimensions.Add(new { key = appKey, name = ResolveAgentName(appKey), category = "agent", values = vals ?? new Dictionary<string, int>() });
         }
 
         dimensions.Add(new { key = "defects-created", name = "缺陷提交", category = "activity", values = defectsCreatedByUser });

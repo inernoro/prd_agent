@@ -2,9 +2,28 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
-import type { IShellExecutor, CdsConfig, BuildProfile, BranchEntry, ServiceState, InfraService } from '../types.js';
+import type { IShellExecutor, CdsConfig, BuildProfile, BranchEntry, ServiceState, InfraService, DeployModeOverride } from '../types.js';
 import { combinedOutput } from '../types.js';
 import { resolveEnvTemplates } from './compose-parser.js';
+
+/**
+ * Resolve a BuildProfile with active deploy mode overrides applied.
+ * Returns a new profile object with command/dockerImage/env merged from the mode.
+ */
+export function resolveProfileWithMode(profile: BuildProfile): BuildProfile {
+  const mode = profile.activeDeployMode;
+  if (!mode || !profile.deployModes?.[mode]) return profile;
+
+  const override = profile.deployModes[mode];
+  return {
+    ...profile,
+    command: override.command ?? profile.command,
+    dockerImage: override.dockerImage ?? profile.dockerImage,
+    env: override.env
+      ? { ...profile.env, ...override.env }
+      : profile.env,
+  };
+}
 
 export class ContainerService {
   constructor(
@@ -115,6 +134,26 @@ export class ContainerService {
       }
     }
 
+    // ffmpeg: 静态编译版 bind mount（零依赖，单文件）
+    // 优先使用 /opt/ffmpeg-static/（用户下载的静态版），否则尝试宿主机 /usr/bin/ffmpeg
+    const ffmpegPaths = ['/opt/ffmpeg-static/ffmpeg', '/usr/local/bin/ffmpeg', '/usr/bin/ffmpeg'];
+    const ffprobePaths = ['/opt/ffmpeg-static/ffprobe', '/usr/local/bin/ffprobe', '/usr/bin/ffprobe'];
+    const findResult = await this.shell.exec(
+      `for p in ${ffmpegPaths.join(' ')}; do [ -f "$p" ] && echo "$p" && break; done`
+    );
+    const ffmpegPath = findResult.stdout?.trim();
+    if (ffmpegPath) {
+      volumeFlags.push(`-v "${ffmpegPath}:/usr/local/bin/ffmpeg:ro"`);
+      // ffprobe
+      const findProbe = await this.shell.exec(
+        `for p in ${ffprobePaths.join(' ')}; do [ -f "$p" ] && echo "$p" && break; done`
+      );
+      const ffprobePath = findProbe.stdout?.trim();
+      if (ffprobePath) {
+        volumeFlags.push(`-v "${ffprobePath}:/usr/local/bin/ffprobe:ro"`);
+      }
+    }
+
     try {
       const command = profile.command || '';
       if (!command) {
@@ -125,6 +164,7 @@ export class ContainerService {
       if (isNodeContainer) {
         onOutput?.(`── Node.js 容器: node_modules 已隔离到 Docker volume ──\n`);
       }
+
       const runCmd = [
         'docker run -d',
         `--name ${service.containerName}`,

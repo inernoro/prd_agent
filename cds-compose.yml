@@ -18,6 +18,40 @@ x-cds-env:
   JWT_SECRET: "TODO: 请填写实际值"
   AI_ACCESS_KEY: "TODO: 请填写实际值"
 
+# 部署模式 — 每个服务可在 CDS 左侧面板下拉切换
+# dev: 热重载开发模式（改代码自动刷新）
+# static: 静态编译模式（一次编译、启动快）
+x-cds-deploy-modes:
+  api:
+    dev:
+      label: "开发模式 (热重载)"
+      command: >-
+        dotnet restore &&
+        dotnet build --no-restore &&
+        dotnet watch run --project src/PrdAgent.Api --urls http://0.0.0.0:5000
+    static:
+      label: "静态部署 (publish)"
+      command: >-
+        dotnet restore &&
+        dotnet publish src/PrdAgent.Api -c Release -o /publish --no-restore &&
+        dotnet /publish/PrdAgent.Api.dll --urls http://0.0.0.0:5000
+      env:
+        ASPNETCORE_ENVIRONMENT: Production
+  admin:
+    dev:
+      label: "开发模式 (Vite HMR)"
+      command: >-
+        corepack enable &&
+        pnpm install --frozen-lockfile &&
+        pnpm exec vite --host 0.0.0.0 --port 8000
+    static:
+      label: "静态部署 (build+serve)"
+      command: >-
+        corepack enable &&
+        pnpm install --frozen-lockfile &&
+        pnpm run build &&
+        npx -y serve -s dist -l 8000 --listen 0.0.0.0
+
 services:
   # ── App Services (有相对路径 volume mount) ──
 
@@ -26,12 +60,13 @@ services:
     working_dir: /app
     volumes:
       - ./prd-api:/app
+      - api-nuget-cache:/root/.nuget/packages
     ports:
       - "5000"
     command: >-
       dotnet restore &&
       dotnet build --no-restore &&
-      dotnet run --project src/PrdAgent.Api --urls http://0.0.0.0:5000
+      dotnet run --project src/PrdAgent.Api --no-build --urls http://0.0.0.0:5000
     depends_on:
       mongodb: { condition: service_healthy }
       redis: { condition: service_healthy }
@@ -41,7 +76,7 @@ services:
       MongoDB__ConnectionString: "mongodb://${CDS_HOST}:${CDS_MONGODB_PORT}"
       MongoDB__DatabaseName: prdagent
       Redis__ConnectionString: "${CDS_HOST}:${CDS_REDIS_PORT}"
-      Jwt__Secret: "${JWT_SECRET}"
+      # Jwt__Secret 由全局 x-cds-env.JWT_SECRET 自动注入，不在此声明
       Jwt__Issuer: prdagent
     labels:
       cds.path-prefix: "/api/"
@@ -87,3 +122,4 @@ services:
 volumes:
   mongodb-data:
   redis-data:
+  api-nuget-cache:

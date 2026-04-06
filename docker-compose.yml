@@ -65,6 +65,8 @@ services:
       # Root 破窗账户（可选，生产环境建议不配置或只临时使用）
       - ROOT_ACCESS_USERNAME=${ROOT_ACCESS_USERNAME:-}
       - ROOT_ACCESS_PASSWORD=${ROOT_ACCESS_PASSWORD:-}
+      # Webhook 通知中「查看详情」链接的前端基地址（如 https://example.com）
+      - App__FrontendBaseUrl=${FRONTEND_BASE_URL:-}
     # 重要：此 API 容器建议只读，避免任何本地落盘（你这种“可写层 1MB”环境必开）
     read_only: true
     # 允许少量临时写入到内存（tmpfs），避免 .NET/HTTP 栈因无 /tmp 可写而异常；不会落到磁盘
@@ -72,6 +74,10 @@ services:
       - /tmp
     volumes:
       - ./deploy/assets/fonts:/app/Assets/Fonts
+      # ffmpeg 静态编译版（转录工作台 ASR 音频格式转换用）
+      # 安装：curl -L https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-amd64-static.tar.xz | tar xJ -C /opt/ffmpeg-static --strip-components=1
+      - ${FFMPEG_PATH:-/opt/ffmpeg-static/ffmpeg}:/usr/local/bin/ffmpeg:ro
+      - ${FFPROBE_PATH:-/opt/ffmpeg-static/ffprobe}:/usr/local/bin/ffprobe:ro
     depends_on:
       - mongodb
       - redis

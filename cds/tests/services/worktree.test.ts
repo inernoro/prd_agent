@@ -14,6 +14,7 @@ describe('WorktreeService', () => {
   describe('create', () => {
     it('should fetch then create a worktree', async () => {
       mock.addResponsePattern(/git fetch/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
+      mock.addResponsePattern(/git worktree prune/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
       mock.addResponsePattern(/test -d/, () => ({ stdout: '', stderr: '', exitCode: 1 }));
       mock.addResponsePattern(/git worktree add/, () => ({ stdout: 'Preparing worktree', stderr: '', exitCode: 0 }));
 
@@ -48,6 +49,7 @@ describe('WorktreeService', () => {
 
     it('should throw if worktree add fails', async () => {
       mock.addResponsePattern(/git fetch/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
+      mock.addResponsePattern(/git worktree prune/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
       mock.addResponsePattern(/test -d/, () => ({ stdout: '', stderr: '', exitCode: 1 }));
       mock.addResponsePattern(/git worktree add/, () => ({
         stdout: '',

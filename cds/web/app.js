@@ -19,7 +19,7 @@ const ICON = {
   commit: '<svg class="inline-icon" width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M11.93 8.5a4.002 4.002 0 01-7.86 0H.75a.75.75 0 010-1.5h3.32a4.002 4.002 0 017.86 0h3.32a.75.75 0 010 1.5h-3.32zM8 10.5a2.5 2.5 0 100-5 2.5 2.5 0 000 5z"/></svg>',
   pr: '<svg class="inline-icon" width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M5.45 5.154A4.25 4.25 0 009.25 7.5h1.378a2.251 2.251 0 110 1.5H9.25A5.734 5.734 0 015 7.123v3.505a2.25 2.25 0 11-1.5 0V5.372a2.25 2.25 0 111.95-.218zM4.25 13.5a.75.75 0 100-1.5.75.75 0 000 1.5zm8.5-4.5a.75.75 0 100-1.5.75.75 0 000 1.5zM5 3.25a.75.75 0 10-1.5 0 .75.75 0 001.5 0z"/></svg>',
   pull: '<svg class="inline-icon" width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M8 2.004a.75.75 0 01.75.75v5.689l1.97-1.97a.749.749 0 111.06 1.06l-3.25 3.25a.749.749 0 01-1.06 0L4.22 7.533a.749.749 0 111.06-1.06l1.97 1.97V2.754a.75.75 0 01.75-.75zM2.75 12.5h10.5a.75.75 0 010 1.5H2.75a.75.75 0 010-1.5z"/></svg>',
-  preview: '<svg class="inline-icon" width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M0 8s3-5.5 8-5.5S16 8 16 8s-3 5.5-8 5.5S0 8 0 8zm8 3.5a3.5 3.5 0 100-7 3.5 3.5 0 000 7zm0-1.5a2 2 0 110-4 2 2 0 010 4z"/></svg>',
+  preview: '<svg class="inline-icon" width="18" height="18" viewBox="0 0 16 16" fill="currentColor"><path d="M0 8s3-5.5 8-5.5S16 8 16 8s-3 5.5-8 5.5S0 8 0 8zm8 3.5a3.5 3.5 0 100-7 3.5 3.5 0 000 7zm0-1.5a2 2 0 110-4 2 2 0 010 4z"/></svg>',
   deploy: '<svg class="inline-icon deploy-hammer-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 12-8.373 8.373a1 1 0 1 1-3-3L12 9"/><path d="m18 15 4-4"/><path d="m21.5 11.5c.7-1 .5-2.4-.3-3.2L17 4.2c-.8-.8-2.2-1-3.2-.3L12 5.5l6.5 6.5z"/></svg>',
   trash: '<svg class="inline-icon" width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M6.5 1.75a.25.25 0 01.25-.25h2.5a.25.25 0 01.25.25V3h-3V1.75zM11 3V1.75A1.75 1.75 0 009.25 0h-2.5A1.75 1.75 0 005 1.75V3H2.75a.75.75 0 000 1.5h.3l.8 8.2A1.75 1.75 0 005.6 14.5h4.8a1.75 1.75 0 001.75-1.8l.8-8.2h.3a.75.75 0 000-1.5H11z"/></svg>',
   reset: '<svg class="inline-icon" width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M8 2.5a5.487 5.487 0 00-4.131 1.869l1.204 1.204A.25.25 0 014.896 6H1.25A.25.25 0 011 5.75V2.104a.25.25 0 01.427-.177l1.38 1.38A7.002 7.002 0 0115 8a.75.75 0 01-1.5 0A5.5 5.5 0 008 2.5z"/></svg>',
@@ -277,6 +277,11 @@ async function loadConfig() {
     cdsMode = data.mode || 'standalone';
     executors = data.executors || [];
     renderExecutorPanel();
+    // Show CDS commit hash in header
+    if (data.cdsCommitHash) {
+      const el = document.getElementById('cdsCommitHash');
+      if (el) el.textContent = data.cdsCommitHash;
+    }
   } catch (e) { console.error('loadConfig:', e); }
 }
 
@@ -377,11 +382,20 @@ async function removeExecutor(id) {
 
 // ── Check updates (global refresh) ──
 
+/** 合并刷新：同时刷新远程候选列表 + 检查所有分支更新 */
+async function refreshAll() {
+  const btn = document.getElementById('refreshRemoteBtn');
+  if (btn) btn.classList.add('spinning');
+  try {
+    await Promise.all([checkAllUpdates(), refreshRemoteCandidates()]);
+  } finally {
+    if (btn) btn.classList.remove('spinning');
+  }
+}
+
 async function checkAllUpdates() {
   if (isCheckingUpdates) return;
   isCheckingUpdates = true;
-  const btn = document.getElementById('globalRefreshBtn');
-  if (btn) btn.classList.add('spinning');
   try {
     const data = await api('GET', '/check-updates');
     branchUpdates = data.updates || {};
@@ -404,7 +418,6 @@ async function checkAllUpdates() {
     showToast('检查更新失败: ' + e.message, 'error');
   }
   isCheckingUpdates = false;
-  if (btn) btn.classList.remove('spinning');
 }
 
 function confirmOpenGithub(event) {
@@ -445,6 +458,16 @@ function updatePreviewModeUI() {
   const label = document.querySelector('.preview-mode-label');
   const labels = { simple: '简洁', port: '端口直连', multi: '子域名' };
   if (label) label.textContent = labels[previewMode] || previewMode;
+  // Update title brand color based on preview mode
+  const titleEl = document.querySelector('.title-static');
+  if (titleEl) {
+    const gradients = {
+      simple: 'linear-gradient(120deg, var(--accent) 0%, var(--blue) 50%, var(--accent) 100%)',
+      port: 'linear-gradient(120deg, var(--orange, #f59e0b) 0%, var(--yellow, #eab308) 50%, var(--orange, #f59e0b) 100%)',
+      multi: 'linear-gradient(120deg, var(--green, #10b981) 0%, var(--cyan, #06b6d4) 50%, var(--green, #10b981) 100%)',
+    };
+    titleEl.style.backgroundImage = gradients[previewMode] || gradients.simple;
+  }
 }
 
 // ── Mirror acceleration ──
@@ -1102,25 +1125,20 @@ async function previewBranch(id) {
     return;
   }
 
-  // ── Mode: port (direct port access — no proxy, no cache issues) ──
+  // ── Mode: port (dynamic preview port with path-prefix routing) ──
   if (previewMode === 'port') {
     const branch = branches.find(b => b.id === slug);
     if (!branch || branch.status !== 'running') {
-      showToast('分支未运行，无法通过端口预览', 'error');
+      showToast('分支未运行，无法预览', 'error');
       return;
     }
-    const services = Object.entries(branch.services || {});
-    // Find the web/frontend service (first non-API service, or first service)
-    const webService = services.find(([pid]) => !pid.includes('api') && !pid.includes('backend'))
-      || services.find(([pid]) => pid.includes('web') || pid.includes('frontend') || pid.includes('admin'))
-      || services[0];
-    if (!webService) {
-      showToast('未找到可预览的服务端口', 'error');
-      return;
+    try {
+      const result = await api('POST', `/branches/${slug}/preview-port`);
+      const url = `${location.protocol}//${location.hostname}:${result.port}`;
+      window.open(url, '_blank');
+    } catch (e) {
+      showToast('创建预览端口失败: ' + e.message, 'error');
     }
-    const [, svc] = webService;
-    const url = `${location.protocol}//${location.hostname}:${svc.hostPort}`;
-    window.open(url, '_blank');
     return;
   }
 
@@ -1239,11 +1257,13 @@ async function toggleColorMark(id, event) {
     const btnRect = btn.getBoundingClientRect();
     const x = btnRect.left + btnRect.width / 2 - cardRect.left;
     const y = btnRect.top + btnRect.height / 2 - cardRect.top;
+    // +4px 余量确保圆弧完全覆盖 border-box 角落（含 2px border + 圆角）
     const maxRadius = Math.ceil(Math.sqrt(
       Math.max(x, cardRect.width - x) ** 2 +
       Math.max(y, cardRect.height - y) ** 2
-    ));
+    )) + 4;
 
+    // Tint overlay (content area)
     const overlay = document.createElement('div');
     overlay.className = 'color-mark-ripple';
     overlay.style.setProperty('--cm-ripple-x', `${x}px`);
@@ -1251,12 +1271,40 @@ async function toggleColorMark(id, event) {
     overlay.style.setProperty('--cm-ripple-radius', `${maxRadius}px`);
     overlay.classList.add(newVal ? 'ripple-marked' : 'ripple-normal');
     card.appendChild(overlay);
+
+    // Border overlay: gold background with inner circle cutout → animated ring
+    const borderEl = document.createElement('div');
+    borderEl.className = 'cm-border-ring';
+    borderEl.style.setProperty('--cm-ripple-x', `${x}px`);
+    borderEl.style.setProperty('--cm-ripple-y', `${y}px`);
+    borderEl.style.setProperty('--cm-ripple-radius', `${maxRadius}px`);
+    borderEl.classList.add(newVal ? 'ring-marked' : 'ring-normal');
+    card.appendChild(borderEl);
+
+    // Arc ring: gold circle that expands from click point (visible shockwave)
+    const arcRing = document.createElement('div');
+    arcRing.className = 'cm-arc-ring';
+    const diameter = maxRadius * 2;
+    arcRing.style.width = `${diameter}px`;
+    arcRing.style.height = `${diameter}px`;
+    arcRing.style.left = `${x - maxRadius}px`;
+    arcRing.style.top = `${y - maxRadius}px`;
+    if (!newVal) {
+      arcRing.style.borderColor = 'rgba(180,180,180,0.4)';
+      arcRing.style.boxShadow = '0 0 8px 1px rgba(180,180,180,0.15)';
+    }
+    card.appendChild(arcRing);
+
     overlay.offsetHeight;
     overlay.classList.add('animate');
-    overlay.addEventListener('animationend', () => {
-      // Apply the actual class change after the ripple covers the card
+    borderEl.classList.add('animate');
+    arcRing.classList.add('animate');
+
+    borderEl.addEventListener('animationend', () => {
       card.classList.toggle('is-color-marked', newVal);
       overlay.remove();
+      borderEl.remove();
+      arcRing.remove();
     }, { once: true });
   } else {
     // No card element — apply immediately
@@ -1316,6 +1364,30 @@ async function removeTagFromBranch(id, tag, event) {
   renderTagFilterBar();
   try {
     await api('PATCH', `/branches/${id}`, { tags });
+  } catch (e) {
+    branch.tags = oldTags;
+    renderBranches();
+    renderTagFilterBar();
+    showToast(e.message, 'error');
+  }
+}
+
+async function editBranchTags(id, event) {
+  event.stopPropagation();
+  const branch = branches.find(b => b.id === id);
+  if (!branch) return;
+  const currentTags = (branch.tags || []).join(', ');
+  const input = prompt('编辑标签（逗号分隔）:', currentTags);
+  if (input === null) return; // cancelled
+  const newTags = input.split(/[,，]/).map(t => t.trim()).filter(Boolean);
+  const oldTags = [...(branch.tags || [])];
+  // Optimistic update
+  branch.tags = newTags;
+  renderBranches();
+  renderTagFilterBar();
+  try {
+    await api('PATCH', `/branches/${id}`, { tags: newTags });
+    showToast('标签已保存', 'success');
   } catch (e) {
     branch.tags = oldTags;
     renderBranches();
@@ -1399,7 +1471,7 @@ async function pruneStaleBranches() {
         <p>删除本地 git 分支中不在 CDS 部署列表上的分支</p>
         <p style="color:var(--text-muted);font-size:12px">保护分支（main/master/develop/当前分支）不会被删除</p>
       </div>
-      <pre id="pruneLog" style="text-align:left;font-size:11px;color:var(--text-secondary);background:rgba(8,12,28,0.6);border:1px solid var(--border);border-radius:var(--radius-sm);padding:10px 12px;margin:12px 0;max-height:200px;overflow-y:auto;white-space:pre-wrap;font-family:var(--font-mono)">正在扫描本地分支...</pre>
+      <pre id="pruneLog" style="text-align:left;font-size:11px;color:var(--text-secondary);background:var(--bg-code-block, rgba(8,12,28,0.6));border:1px solid var(--border);border-radius:var(--radius-sm);padding:10px 12px;margin:12px 0;max-height:200px;overflow-y:auto;white-space:pre-wrap;font-family:var(--font-mono)">正在扫描本地分支...</pre>
       <div class="capacity-warning-actions" id="pruneActions">
         <button class="sm" disabled><span class="btn-spinner"></span>扫描中...</button>
       </div>
@@ -1459,7 +1531,7 @@ async function cleanupOrphans() {
         <p>正在拉取远程分支列表并检测孤儿分支...</p>
         <p style="color:var(--text-muted);font-size:12px">孤儿分支 = 本地存在但远程已删除的分支</p>
       </div>
-      <pre id="orphanCleanupLog" style="text-align:left;font-size:11px;color:var(--text-secondary);background:rgba(8,12,28,0.6);border:1px solid var(--border);border-radius:var(--radius-sm);padding:10px 12px;margin:12px 0;max-height:200px;overflow-y:auto;white-space:pre-wrap;font-family:var(--font-mono)">正在获取远程分支信息...</pre>
+      <pre id="orphanCleanupLog" style="text-align:left;font-size:11px;color:var(--text-secondary);background:var(--bg-code-block, rgba(8,12,28,0.6));border:1px solid var(--border);border-radius:var(--radius-sm);padding:10px 12px;margin:12px 0;max-height:200px;overflow-y:auto;white-space:pre-wrap;font-family:var(--font-mono)">正在获取远程分支信息...</pre>
       <div class="capacity-warning-actions" id="orphanCleanupActions">
         <button class="sm" disabled><span class="btn-spinner"></span>检测中...</button>
       </div>
@@ -1832,14 +1904,6 @@ function toggleSettingsMenu(event) {
         </span>
       </span>
     </div>
-    <div class="settings-menu-item settings-menu-switch" onclick="toggleTheme(event)">
-      <span class="settings-menu-switch-label">白天模式</span>
-      <span class="settings-switch settings-switch-theme ${cdsTheme === 'light' ? 'on' : ''}">
-        <span class="settings-switch-track">
-          <span class="settings-switch-thumb"></span>
-        </span>
-      </span>
-    </div>
     <div class="settings-menu-item settings-menu-switch" onclick="toggleTabTitle()">
       <span class="settings-menu-switch-label">标签页标题</span>
       <span class="settings-switch settings-switch-tabtitle ${tabTitleEnabled ? 'on' : ''}">
@@ -1848,30 +1912,14 @@ function toggleSettingsMenu(event) {
         </span>
       </span>
     </div>
-    <div class="settings-menu-item" onclick="closeSettingsMenu(); exportConfig()">
-      <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M3.5 13a.5.5 0 01-.5-.5V3a.5.5 0 01.5-.5h5.586a.5.5 0 01.354.146l3.414 3.414a.5.5 0 01.146.354V12.5a.5.5 0 01-.5.5h-9zM3.5 1A1.5 1.5 0 002 2.5v11A1.5 1.5 0 003.5 15h9a1.5 1.5 0 001.5-1.5V6.414a1.5 1.5 0 00-.44-1.06L10.147 1.94A1.5 1.5 0 009.086 1.5H3.5z"/></svg>
-      导出配置
-    </div>
-    <div class="settings-menu-item" onclick="closeSettingsMenu(); exportSkill()">
-      <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M3.5 1.75a.25.25 0 01.25-.25h3.5a.75.75 0 000-1.5h-3.5A1.75 1.75 0 002 1.75v11.5c0 .966.784 1.75 1.75 1.75h8.5A1.75 1.75 0 0014 13.25v-6a.75.75 0 00-1.5 0v6a.25.25 0 01-.25.25h-8.5a.25.25 0 01-.25-.25V1.75z"/><path d="M11.78.22a.75.75 0 00-1.06 0L6.22 4.72a.75.75 0 000 1.06l.53.53-2.97 2.97a.75.75 0 101.06 1.06l2.97-2.97.53.53a.75.75 0 001.06 0l4.5-4.5a.75.75 0 000-1.06L11.78.22z"/></svg>
-      导出部署技能
-    </div>
     <div class="settings-menu-item" onclick="closeSettingsMenu(); openSelfUpdate()">
       <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M8 2.5a5.487 5.487 0 00-4.131 1.869l1.204 1.204A.25.25 0 014.896 6H1.25A.25.25 0 011 5.75V2.104a.25.25 0 01.427-.177l1.38 1.38A7.002 7.002 0 0114.95 7.16a.75.75 0 01-1.49.178A5.5 5.5 0 008 2.5zm6.294 5.505a.75.75 0 01.834.656 5.5 5.5 0 01-9.592 2.97l1.204-1.204a.25.25 0 00-.177-.427H3.354a.25.25 0 01-.354-.354l1.38-1.38A7.002 7.002 0 0014.95 7.16z"/><circle cx="8" cy="8" r="2"/></svg>
       自动更新
     </div>
     <div class="settings-menu-divider"></div>
-    <div class="settings-menu-item danger" onclick="closeSettingsMenu(); pruneStaleBranches()">
-      <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M1.5 3.25a2.25 2.25 0 113 2.122v5.256a2.251 2.251 0 11-1.5 0V5.372A2.25 2.25 0 011.5 3.25zm5.677-.177L9.573.677A.25.25 0 0110 .854V2.5h1A2.5 2.5 0 0113.5 5v5.628a2.251 2.251 0 11-1.5 0V5a1 1 0 00-1-1h-1v1.646a.25.25 0 01-.427.177L7.177 3.427a.25.25 0 010-.354z"/></svg>
-      清理非列表分支
-    </div>
-    <div class="settings-menu-item danger" onclick="closeSettingsMenu(); cleanupOrphans()">
-      <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M5 3.254V3.25a.75.75 0 01.75-.75h4.5a.75.75 0 01.75.75v.004a2.5 2.5 0 011.94 2.204l.089.713a.75.75 0 11-1.486.186l-.089-.714A1 1 0 0010.47 4.75H5.53a1 1 0 00-.984.893l-.089.714a.75.75 0 01-1.486-.186l.089-.714A2.5 2.5 0 015 3.254zM4.07 6.5l.7 5.95c.09.747.71 1.3 1.46 1.3h3.54c.75 0 1.37-.553 1.46-1.3l.7-5.95H4.07z"/></svg>
-      清理孤儿分支
-    </div>
-    <div class="settings-menu-item danger" onclick="closeSettingsMenu(); cleanupAll()">
+    <div class="settings-menu-item danger" onclick="closeSettingsMenu(); openCleanupModal()">
       <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M6.5 1.75a.25.25 0 01.25-.25h2.5a.25.25 0 01.25.25V3h-3V1.75zM11 3V1.75A1.75 1.75 0 009.25 0h-2.5A1.75 1.75 0 005 1.75V3H2.75a.75.75 0 000 1.5h.3l.8 8.2A1.75 1.75 0 005.6 14.5h4.8a1.75 1.75 0 001.75-1.8l.8-8.2h.3a.75.75 0 000-1.5H11z"/></svg>
-      清理全部分支
+      清理分支
     </div>
     <div class="settings-menu-item danger" onclick="closeSettingsMenu(); factoryReset()">
       <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M1.705 8.005a.75.75 0 0 1 .834.656 5.5 5.5 0 0 0 9.592 2.97l-1.204-1.204a.25.25 0 0 1 .177-.427h3.646a.25.25 0 0 1 .25.25v3.646a.25.25 0 0 1-.427.177l-1.38-1.38A7.002 7.002 0 0 1 1.05 8.84a.75.75 0 0 1 .656-.834ZM8 2.5a5.487 5.487 0 0 0-4.131 1.869l1.204 1.204A.25.25 0 0 1 4.896 6H1.25A.25.25 0 0 1 1 5.75V2.104a.25.25 0 0 1 .427-.177l1.38 1.38A7.002 7.002 0 0 1 14.95 7.16a.75.75 0 0 1-1.49.178A5.5 5.5 0 0 0 8 2.5Z"/></svg>
@@ -1891,6 +1939,61 @@ function closeSettingsMenu() {
   settingsMenuOpen = false;
   const el = document.getElementById('settings-menu-portal');
   if (el) el.remove();
+}
+
+// ── Export modal (merged 导出配置 + 导出部署技能) ──
+
+function openExportModal() {
+  const html = `
+    <div style="display:flex;flex-direction:column;gap:10px">
+      <button class="btn-export-option" onclick="closeConfigModal(); exportConfig()">
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M3.5 13a.5.5 0 01-.5-.5V3a.5.5 0 01.5-.5h5.586a.5.5 0 01.354.146l3.414 3.414a.5.5 0 01.146.354V12.5a.5.5 0 01-.5.5h-9z"/></svg>
+        <div>
+          <div style="font-weight:600;font-size:14px">导出配置</div>
+          <div style="font-size:12px;color:var(--text-muted);margin-top:2px">导出 CDS Compose YAML（构建配置 + 环境变量）</div>
+        </div>
+      </button>
+      <button class="btn-export-option" onclick="closeConfigModal(); exportSkill()">
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M3.5 1.75a.25.25 0 01.25-.25h3.5a.75.75 0 000-1.5h-3.5A1.75 1.75 0 002 1.75v11.5c0 .966.784 1.75 1.75 1.75h8.5A1.75 1.75 0 0014 13.25v-6a.75.75 0 00-1.5 0v6a.25.25 0 01-.25.25h-8.5a.25.25 0 01-.25-.25V1.75z"/><path d="M11.78.22a.75.75 0 00-1.06 0L6.22 4.72a.75.75 0 000 1.06l.53.53-2.97 2.97a.75.75 0 101.06 1.06l2.97-2.97.53.53a.75.75 0 001.06 0l4.5-4.5a.75.75 0 000-1.06L11.78.22z"/></svg>
+        <div>
+          <div style="font-weight:600;font-size:14px">导出部署技能</div>
+          <div style="font-size:12px;color:var(--text-muted);margin-top:2px">生成 AI Agent 可用的 CDS 部署技能文件</div>
+        </div>
+      </button>
+    </div>
+  `;
+  openConfigModal('导出', html);
+}
+
+// ── Cleanup modal (merged 3 cleanup actions) ──
+
+function openCleanupModal() {
+  const html = `
+    <div style="display:flex;flex-direction:column;gap:10px">
+      <button class="btn-export-option btn-danger-option" onclick="closeConfigModal(); pruneStaleBranches()">
+        <span style="font-size:20px">🧹</span>
+        <div>
+          <div style="font-weight:600;font-size:14px">清理非列表分支</div>
+          <div style="font-size:12px;color:var(--text-muted);margin-top:2px">删除本地 git 中不在 CDS 部署列表上的分支</div>
+        </div>
+      </button>
+      <button class="btn-export-option btn-danger-option" onclick="closeConfigModal(); cleanupOrphans()">
+        <span style="font-size:20px">🔍</span>
+        <div>
+          <div style="font-weight:600;font-size:14px">清理孤儿分支</div>
+          <div style="font-size:12px;color:var(--text-muted);margin-top:2px">清理本地存在但远程已删除的分支</div>
+        </div>
+      </button>
+      <button class="btn-export-option btn-danger-option" onclick="closeConfigModal(); cleanupAll()">
+        <span style="font-size:20px">🗑️</span>
+        <div>
+          <div style="font-weight:600;font-size:14px">清理全部分支</div>
+          <div style="font-size:12px;color:var(--text-muted);margin-top:2px">停止并删除所有非默认分支的容器和 worktree</div>
+        </div>
+      </button>
+    </div>
+  `;
+  openConfigModal('清理分支', html);
 }
 
 // ── Recently-touched visual feedback ──
@@ -1918,9 +2021,7 @@ function renderBranches() {
   // Save scroll position before re-render
   const scrollY = window.scrollY;
   const el = document.getElementById('branchList');
-  const count = document.getElementById('branchCount');
-  const modeLabel = cdsMode === 'scheduler' ? ' · 调度端' : cdsMode === 'executor' ? ' · 执行端' : '';
-  count.textContent = `${branches.length} 个分支${modeLabel}`;
+  // 分支数量已从 header 移除，标题区仅显示 "Cloud Dev Suite"
 
   if (branches.length === 0) {
     el.innerHTML = '<div class="empty-state">暂无分支，请在上方搜索并添加。</div>';
@@ -1958,9 +2059,29 @@ function renderBranches() {
     const btnLabel = (action, label) => isLoading(b.id, action) ? `<span class="btn-spinner"></span>${label}` : label;
 
     // Build deploy dropdown items for single-service redeploy
-    const deployMenuItems = buildProfiles.map(p =>
-      `<div class="deploy-menu-item" onclick="deploySingleService('${esc(b.id)}', '${esc(p.id)}')">${esc(p.name)}</div>`
-    ).join('');
+    const deployMenuItems = buildProfiles.map(p => {
+      const modeTag = p.activeDeployMode && p.deployModes?.[p.activeDeployMode]
+        ? ` <span style="font-size:10px;opacity:0.6">(${esc(p.deployModes[p.activeDeployMode].label)})</span>`
+        : '';
+      return `<div class="deploy-menu-item" onclick="deploySingleService('${esc(b.id)}', '${esc(p.id)}')">${esc(p.name)}${modeTag}</div>`;
+    }).join('');
+
+    // Build deploy mode menu items for the left deploy button
+    const allModes = [];
+    for (const p of buildProfiles) {
+      if (p.deployModes && Object.keys(p.deployModes).length > 0) {
+        for (const [modeId, mode] of Object.entries(p.deployModes)) {
+          allModes.push({ profileId: p.id, profileName: p.name, modeId, label: mode.label || modeId, active: p.activeDeployMode === modeId });
+        }
+      }
+    }
+    const hasDeployModes = allModes.length > 0;
+    const deployModeMenuItems = hasDeployModes
+      ? allModes.map(m => {
+          const check = m.active ? '✓ ' : '';
+          return `<div class="deploy-menu-item" onclick="event.stopPropagation(); closeDeployMenu(); switchModeAndDeploy('${esc(b.id)}', '${esc(m.profileId)}', '${esc(m.modeId)}')">${check}${esc(m.profileName)}: ${esc(m.label)}</div>`;
+        }).join('')
+      : '';
 
     // Build stop menu item for deploy dropdown
     const stopMenuItem = isRunning ? `<div class="deploy-menu-divider"></div><div class="deploy-menu-item deploy-menu-item-danger" onclick="event.stopPropagation(); closeDeployMenu('${esc(b.id)}'); stopBranch('${esc(b.id)}')">停止所有服务</div>` : '';
@@ -1989,6 +2110,7 @@ function renderBranches() {
           </span>
         `).join('')}
         <span class="branch-tag-add" onclick="addTagToBranch('${esc(b.id)}', event)" title="添加标签">+ 标签</span>
+        <span class="branch-tag-edit" onclick="editBranchTags('${esc(b.id)}', event)" title="编辑标签">${ICON.edit}</span>
       </div>
     `;
 
@@ -1996,6 +2118,22 @@ function renderBranches() {
     // When container not running (stopped/idle): only show deploy button
     let actionsLeftHtml = '';
     let actionsRightHtml = '';
+
+    // Unified deploy menu template (shared across states)
+    const deployMenuTpl = `
+      <template id="deploy-menu-tpl-${esc(b.id)}">
+        ${hasMultipleProfiles ? `<div class="deploy-menu-header">选择服务</div>${deployMenuItems}` : ''}
+        ${hasDeployModes ? `${hasMultipleProfiles ? '<div class="deploy-menu-divider"></div>' : ''}<div class="deploy-menu-header">部署模式</div>${deployModeMenuItems}` : ''}
+        ${isRunning ? `<div class="deploy-menu-divider"></div>
+        <div class="deploy-menu-item" onclick="event.stopPropagation(); closeDeployMenu('${esc(b.id)}'); viewBranchLogs('${esc(b.id)}')"><svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor" style="vertical-align:-1px;margin-right:4px"><path d="M1 2.75C1 1.784 1.784 1 2.75 1h10.5c.966 0 1.75.784 1.75 1.75v7.5A1.75 1.75 0 0113.25 12H9.06l-2.573 2.573A1.458 1.458 0 014 13.543V12H2.75A1.75 1.75 0 011 10.25v-7.5zm1.5 0a.25.25 0 01.25-.25h10.5a.25.25 0 01.25.25v7.5a.25.25 0 01-.25.25h-4.5a.75.75 0 00-.75.75v2.19l-2.72-2.72a.75.75 0 00-.53-.22H2.75a.25.25 0 01-.25-.25v-7.5z"/></svg>部署日志</div>
+        ${stopMenuItem}` : ''}
+        <div class="deploy-menu-divider"></div>
+        <div class="deploy-menu-item deploy-menu-item-danger" onclick="event.stopPropagation(); closeDeployMenu('${esc(b.id)}'); removeBranch('${esc(b.id)}')">${ICON.trash} 删除分支</div>
+      </template>
+    `;
+
+    const hasDropdown = hasMultipleProfiles || hasDeployModes || isRunning;
+    const deployBtnLabel = isRunning ? '更新' : '部署';
 
     if (isStopping) {
       actionsLeftHtml = `
@@ -2008,35 +2146,27 @@ function renderBranches() {
       `;
       actionsRightHtml = `
         <div class="split-btn">
-          <button class="sm split-btn-main deploy-glow-btn" onclick="deployBranch('${esc(b.id)}')" ${isBusy ? 'disabled' : ''} title="重新部署">${ICON.deploy} 部署</button>
-          <button class="sm split-btn-toggle" onclick="toggleDeployMenu('${esc(b.id)}', event)" ${isBusy ? 'disabled' : ''}>
+          <button class="sm split-btn-main deploy-glow-btn" onclick="deployBranch('${esc(b.id)}')" ${isBusy ? 'disabled' : ''} title="拉取最新代码并重新部署">${ICON.deploy} ${deployBtnLabel}</button>
+          ${hasDropdown ? `<button class="sm split-btn-toggle" onclick="toggleDeployMenu('${esc(b.id)}', event)" ${isBusy ? 'disabled' : ''}>
             <svg width="10" height="6" viewBox="0 0 10 6" fill="currentColor"><path d="M1 1l4 4 4-4"/></svg>
-          </button>
-          <template id="deploy-menu-tpl-${esc(b.id)}">
-            ${hasMultipleProfiles ? `<div class="deploy-menu-header">选择重部署的服务</div>${deployMenuItems}` : ''}
-            <div class="deploy-menu-item" onclick="event.stopPropagation(); closeDeployMenu('${esc(b.id)}'); viewBranchLogs('${esc(b.id)}')"><svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor" style="vertical-align:-1px;margin-right:4px"><path d="M1 2.75C1 1.784 1.784 1 2.75 1h10.5c.966 0 1.75.784 1.75 1.75v7.5A1.75 1.75 0 0113.25 12H9.06l-2.573 2.573A1.458 1.458 0 014 13.543V12H2.75A1.75 1.75 0 011 10.25v-7.5zm1.5 0a.25.25 0 01.25-.25h10.5a.25.25 0 01.25.25v7.5a.25.25 0 01-.25.25h-4.5a.75.75 0 00-.75.75v2.19l-2.72-2.72a.75.75 0 00-.53-.22H2.75a.25.25 0 01-.25-.25v-7.5z"/></svg>部署日志</div>
-            ${stopMenuItem}
-            <div class="deploy-menu-divider"></div>
-            <div class="deploy-menu-item deploy-menu-item-danger" onclick="event.stopPropagation(); closeDeployMenu('${esc(b.id)}'); removeBranch('${esc(b.id)}')">${ICON.trash} 删除分支</div>
-          </template>
+          </button>` : ''}
+          ${deployMenuTpl}
         </div>
       `;
-    } else if (isStopped) {
-      // Container exists but stopped — neutral deploy, not primary
-      actionsLeftHtml = `
-        <button class="sm deploy-glow-btn" onclick="deployBranch('${esc(b.id)}')" ${isBusy ? 'disabled' : ''} title="部署">${ICON.deploy} 部署</button>
-      `;
-      actionsRightHtml = `
-        <button class="sm danger" onclick="removeBranch('${esc(b.id)}')" ${isBusy ? 'disabled' : ''}>${ICON.trash}</button>
-      `;
     } else {
-      // Idle (never deployed) or building — neutral deploy button
+      // Stopped / idle / error — single deploy button with optional dropdown
       actionsLeftHtml = `
-        <button class="sm deploy-glow-btn" onclick="deployBranch('${esc(b.id)}')" ${isBusy ? 'disabled' : ''} title="部署">${ICON.deploy} 部署</button>
+        <div class="split-btn">
+          <button class="sm split-btn-main deploy-glow-btn" onclick="deployBranch('${esc(b.id)}')" ${isBusy ? 'disabled' : ''} title="${deployBtnLabel}">${ICON.deploy} ${deployBtnLabel}</button>
+          ${hasDropdown ? `<button class="sm split-btn-toggle" onclick="toggleDeployMenu('${esc(b.id)}', event)" ${isBusy ? 'disabled' : ''}>
+            <svg width="10" height="6" viewBox="0 0 10 6" fill="currentColor"><path d="M1 1l4 4 4-4"/></svg>
+          </button>` : ''}
+          ${deployMenuTpl}
+        </div>
       `;
       actionsRightHtml = `
         ${hasError ? `<button class="sm" onclick="resetBranch('${esc(b.id)}')" ${btnDisabled('reset')}>${btnLabel('reset', ICON.reset + ' 重置')}</button>` : ''}
-        <button class="sm danger" onclick="removeBranch('${esc(b.id)}')" ${isBusy ? 'disabled' : ''}>${ICON.trash}</button>
+        ${!hasDropdown ? `<button class="sm danger" onclick="removeBranch('${esc(b.id)}')" ${isBusy ? 'disabled' : ''}>${ICON.trash}</button>` : ''}
       `;
     }
 
@@ -2127,9 +2257,8 @@ function renderBranches() {
               </button>
             </span>
           </div>
-          ${b.subject ? `<div class="branch-card-row2">
-            ${b.pinnedCommit ? `<span class="pinned-commit-badge" onclick="event.stopPropagation(); checkoutCommit('${esc(b.id)}', '', true, '')" title="已固定到历史提交 ${esc(b.pinnedCommit)}，点击恢复最新">📌 ${esc(b.pinnedCommit)}</span>` : ''}
-            <span class="branch-commit-msg" title="${esc(b.subject)}">${commitIcon(b.subject)} ${esc(b.subject)}</span>
+          ${b.pinnedCommit ? `<div class="branch-card-row2">
+            <span class="pinned-commit-badge" onclick="event.stopPropagation(); checkoutCommit('${esc(b.id)}', '', true, '')" title="已固定到历史提交 ${esc(b.pinnedCommit)}，点击恢复最新">📌 ${esc(b.pinnedCommit)}</span>
           </div>` : ''}
           ${portBadgesHtml ? `<div class="branch-card-ports">${portBadgesHtml}</div>` : ''}
           ${b.executorId ? `<span class="executor-tag" title="部署在执行器 ${esc(b.executorId)}">⚡ ${esc(b.executorId.replace(/^executor-/, '').slice(0, 20))}</span>` : ''}
@@ -2406,6 +2535,9 @@ function openImportModal() {
       <button class="sm" id="importApplyBtn" disabled onclick="applyImportConfig()">仅导入配置</button>
       <button class="sm accent" id="importInitBtn" disabled onclick="importAndInit()">导入并初始化</button>
       <button class="sm" onclick="closeConfigModal()">取消</button>
+      <span style="flex:1"></span>
+      <button class="sm" onclick="closeConfigModal(); exportConfig()" title="导出 CDS Compose YAML"><svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor" style="vertical-align:-2px;margin-right:3px"><path d="M2.75 14A1.75 1.75 0 011 12.25v-2.5a.75.75 0 011.5 0v2.5c0 .138.112.25.25.25h10.5a.25.25 0 00.25-.25v-2.5a.75.75 0 011.5 0v2.5A1.75 1.75 0 0113.25 14H2.75zm3.22-7.53a.75.75 0 001.06 1.06L8 6.56V1.75a.75.75 0 00-1.5 0v4.81L5.53 5.59a.75.75 0 00-1.06 1.06l2.5 2.5a.75.75 0 001.06 0l2.5-2.5z"/></svg>导出配置</button>
+      <button class="sm" onclick="closeConfigModal(); exportSkill()" title="生成 AI Agent 部署技能文件"><svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor" style="vertical-align:-2px;margin-right:3px"><path d="M3.5 1.75a.25.25 0 01.25-.25h3.5a.75.75 0 000-1.5h-3.5A1.75 1.75 0 002 1.75v11.5c0 .966.784 1.75 1.75 1.75h8.5A1.75 1.75 0 0014 13.25v-6a.75.75 0 00-1.5 0v6a.25.25 0 01-.25.25h-8.5a.25.25 0 01-.25-.25V1.75z"/><path d="M11.78.22a.75.75 0 00-1.06 0L6.22 4.72a.75.75 0 000 1.06l.53.53-2.97 2.97a.75.75 0 101.06 1.06l2.97-2.97.53.53a.75.75 0 001.06 0l4.5-4.5a.75.75 0 000-1.06L11.78.22z"/></svg>导出技能</button>
     </div>
     <div style="margin-top:4px;font-size:11px;color:var(--fg-muted)">
       「仅导入配置」只写入配置不启动服务；「导入并初始化」会自动启动基础设施、创建主分支并部署。
@@ -2704,7 +2836,7 @@ async function openSelfUpdate() {
     return;
   }
 
-  const { current, branches } = data;
+  const { current, commitHash, branches } = data;
   const branchItems = branches.map(b =>
     `<div class="combobox-item${b === current ? ' active' : ''}" data-value="${esc(b)}" onclick="selectComboItem(this)">
       ${b === current ? '<span style="color:var(--green);margin-right:4px">✓</span>' : ''}${esc(b)}${b === current ? ' <span style="color:var(--fg-muted);font-size:11px">(当前)</span>' : ''}
@@ -2732,7 +2864,7 @@ async function openSelfUpdate() {
       </div>
     </div>
     <div class="form-row" style="margin-top:4px;font-size:12px;color:var(--fg-muted)">
-      当前分支：<code>${esc(current)}</code>
+      当前分支：<code>${esc(current)}</code>${commitHash ? ` @ <code style="color:var(--blue)">${esc(commitHash)}</code>` : ''}
     </div>
     <div id="selfUpdateProgress" style="display:none;margin-top:12px">
       <div id="selfUpdateSteps" style="display:flex;flex-direction:column;gap:6px"></div>
@@ -3224,7 +3356,18 @@ async function deleteRuleAndRefresh(id) {
 function openProfileModal() {
   const listHtml = buildProfiles.length === 0
     ? '<div class="config-empty">暂无构建配置，请添加一个。</div>'
-    : buildProfiles.map(p => `
+    : buildProfiles.map(p => {
+        const modeHtml = p.deployModes && Object.keys(p.deployModes).length > 0
+          ? `<div style="margin-top:4px;display:flex;align-items:center;gap:6px">
+              <span style="font-size:11px;color:var(--text-muted)">部署模式:</span>
+              <select style="font-size:11px;padding:2px 6px;border-radius:4px;border:1px solid var(--border);background:var(--bg-secondary);color:var(--text-primary);cursor:pointer" onchange="switchDeployMode('${esc(p.id)}', this.value)">
+                ${Object.entries(p.deployModes).map(([k, m]) =>
+                  `<option value="${esc(k)}"${p.activeDeployMode === k ? ' selected' : ''}>${esc(m.label || k)}</option>`
+                ).join('')}
+              </select>
+            </div>`
+          : '';
+        return `
         <div class="config-item">
           <div class="config-item-main">
             <span style="opacity:0.7">${getPortIcon(p.id, p)}</span>
@@ -3232,12 +3375,13 @@ function openProfileModal() {
             <code class="config-item-match">${esc(p.dockerImage)}</code>
             <span class="config-item-detail">${esc(p.workDir || '.')} :${p.containerPort}${p.pathPrefixes?.length ? ' → ' + p.pathPrefixes.join(', ') : ''}</span>
             <code class="config-item-cmd" title="${esc(p.runCommand)}">${esc(p.runCommand)}</code>
+            ${modeHtml}
           </div>
           <div class="config-item-actions">
             <button class="icon-btn xs danger-icon" onclick="deleteProfileAndRefresh('${esc(p.id)}')" title="删除">&times;</button>
           </div>
         </div>
-      `).join('');
+      `;}).join('');
 
   const html = `
     <p class="config-panel-desc">
@@ -3341,6 +3485,22 @@ async function deleteProfileAndRefresh(id) {
     showToast('配置已删除', 'success');
     await loadProfiles();
     openProfileModal();
+  } catch (e) { showToast(e.message, 'error'); }
+}
+
+async function switchDeployMode(profileId, mode) {
+  try {
+    await api('PUT', `/build-profiles/${profileId}/deploy-mode`, { mode });
+    showToast(`已切换部署模式`, 'success');
+    await loadProfiles();
+  } catch (e) { showToast(e.message, 'error'); }
+}
+
+async function switchModeAndDeploy(branchId, profileId, modeId) {
+  try {
+    await api('PUT', `/build-profiles/${profileId}/deploy-mode`, { mode: modeId });
+    await loadProfiles();
+    deployBranch(branchId);
   } catch (e) { showToast(e.message, 'error'); }
 }
 
@@ -3895,15 +4055,15 @@ function renderActivityItem(event) {
   });
 
   let html = '';
+  // AI badge first — always at the front for visibility
+  if (isAi) {
+    const agentShort = (event.agent || 'AI').replace(/\s*\(static key\)/, '');
+    html += `<span class="activity-source ai" title="${escapeHtml(event.agent || 'AI')}">${escapeHtml(agentShort)}</span>`;
+  }
   // Branch label: prefer tags, fallback to last ID segment
   if (event.branchId) {
     const branchLabel = getBranchDisplayLabel(event.branchId, event.branchTags);
     html += `<span class="activity-source" style="background:var(--accent-bg);color:var(--accent);font-size:9px;font-weight:600;padding:1px 4px;border-radius:3px" title="${escapeHtml(event.branchId)}">${escapeHtml(branchLabel)}</span>`;
-  }
-  // AI badge if applicable
-  if (isAi) {
-    const agentShort = (event.agent || 'AI').replace(/\s*\(static key\)/, '');
-    html += `<span class="activity-source ai" title="${escapeHtml(event.agent || 'AI')}">${escapeHtml(agentShort)}</span>`;
   }
   html += `<span class="activity-method ${event.method}">${event.method}</span>`;
   // Show Chinese label (golden glow) if available, path as tooltip

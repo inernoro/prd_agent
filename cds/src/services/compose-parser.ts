@@ -14,7 +14,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import yaml from 'js-yaml';
-import type { InfraService, InfraVolume, InfraHealthCheck, BuildProfile, RoutingRule } from '../types.js';
+import type { InfraService, InfraVolume, InfraHealthCheck, BuildProfile, RoutingRule, DeployModeOverride } from '../types.js';
 
 /** Parsed infrastructure service from a compose file */
 export interface ComposeServiceDef {
@@ -45,6 +45,16 @@ interface ComposeFile {
     priority?: number;
     enabled?: boolean;
   }>;
+  /**
+   * CDS extension: deploy mode alternatives per service.
+   * Keys are service IDs, values are mode maps: { modeId: { label, command?, image?, env? } }
+   */
+  'x-cds-deploy-modes'?: Record<string, Record<string, {
+    label?: string;
+    command?: string;
+    image?: string;
+    env?: Record<string, string>;
+  }>>;
 }
 
 interface ComposeServiceEntry {
@@ -83,6 +93,7 @@ export interface CdsComposeConfig {
     pathPrefixes?: string[];
     dependsOn?: string[];
     readinessProbe?: { path?: string; intervalSeconds?: number; timeoutSeconds?: number };
+    deployModes?: Record<string, DeployModeOverride>;
   }>;
   envVars: Record<string, string>;
   infraServices: ComposeServiceDef[];
@@ -264,7 +275,7 @@ export function parseCdsCompose(yamlString: string): CdsComposeConfig | null {
   const doc = yaml.load(yamlString) as ComposeFile | null;
   if (!doc) return null;
 
-  const hasCdsExtensions = doc['x-cds-env'] || doc['x-cds-project'] || doc['x-cds-routing'];
+  const hasCdsExtensions = doc['x-cds-env'] || doc['x-cds-project'] || doc['x-cds-routing'] || doc['x-cds-deploy-modes'];
 
   // Check for app services: any service with a relative volume mount
   const hasAppServices = doc.services
@@ -344,6 +355,25 @@ function parseStandardCompose(doc: ComposeFile): CdsComposeConfig {
           healthCheck: extractHealthCheck(entry.healthcheck),
         });
       }
+    }
+  }
+
+  // Attach deploy modes from x-cds-deploy-modes extension
+  const deployModesConfig = doc['x-cds-deploy-modes'];
+  if (deployModesConfig) {
+    for (const bp of buildProfiles) {
+      const modes = deployModesConfig[bp.id];
+      if (!modes) continue;
+      const parsed: Record<string, DeployModeOverride> = {};
+      for (const [modeId, mode] of Object.entries(modes)) {
+        parsed[modeId] = {
+          label: mode.label || modeId,
+          command: mode.command,
+          dockerImage: mode.image,
+          env: mode.env,
+        };
+      }
+      bp.deployModes = parsed;
     }
   }
 
@@ -483,6 +513,26 @@ export function toCdsCompose(
     doc['x-cds-env'] = { ...envVars };
   }
 
+  // Optional x-cds-deploy-modes
+  const deployModesOut: Record<string, Record<string, { label: string; command?: string; image?: string; env?: Record<string, string> }>> = {};
+  for (const p of profiles) {
+    if (p.deployModes && Object.keys(p.deployModes).length > 0) {
+      const modes: Record<string, { label: string; command?: string; image?: string; env?: Record<string, string> }> = {};
+      for (const [modeId, mode] of Object.entries(p.deployModes)) {
+        modes[modeId] = {
+          label: mode.label,
+          ...(mode.command ? { command: mode.command } : {}),
+          ...(mode.dockerImage ? { image: mode.dockerImage } : {}),
+          ...(mode.env ? { env: mode.env } : {}),
+        };
+      }
+      deployModesOut[p.id] = modes;
+    }
+  }
+  if (Object.keys(deployModesOut).length > 0) {
+    doc['x-cds-deploy-modes'] = deployModesOut;
+  }
+
   // Optional x-cds-routing
   if (routingRules.length > 0) {
     doc['x-cds-routing'] = routingRules.map(r => ({
@@ -507,7 +557,8 @@ export function toCdsCompose(
 }
 
 /**
- * Resolve ${CDS_*} env var templates in a value string.
+ * Resolve ${VAR} env var templates in a value string.
+ * Lookup order: cdsVars → process.env (host) → default → empty string.
  * Supports ${VAR} and ${VAR:-default} syntax.
  */
 export function resolveEnvTemplates(
@@ -517,7 +568,7 @@ export function resolveEnvTemplates(
   const result: Record<string, string> = {};
   for (const [key, value] of Object.entries(env)) {
     result[key] = value.replace(/\$\{(\w+)(?::-(.*?))?\}/g, (_match, name, defaultVal) => {
-      return cdsVars[name] ?? defaultVal ?? '';
+      return cdsVars[name] ?? process.env[name] ?? defaultVal ?? '';
     });
   }
   return result;

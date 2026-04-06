@@ -68,7 +68,7 @@
   --shadow-lg: 0 16px 48px rgba(0,0,0,0.6);
   --safe-bottom: env(safe-area-inset-bottom, 0px);
   --transition: 0.2s cubic-bezier(0.4, 0, 0.2, 1);
-  --font-mono: 'Cascadia Code', 'JetBrains Mono', 'Fira Code', 'Source Code Pro', 'SF Mono', Menlo, Consolas, 'Courier New', monospace;
+  --font-mono: 'JetBrains Mono', 'Cascadia Code', 'Fira Code', 'SF Mono', Menlo, Consolas, monospace;
 }
 
 /* ════════════════ Light Theme ════════════════ */
@@ -131,6 +131,9 @@
   --purple: #8a45c0;
   --cyan: #1a8f8f;
 
+  /* Code block background — light mode needs readable contrast */
+  --bg-code-block: #f1eae4;
+
   /* Background glow — warm peach radials */
   --bg-glow-1: #ffe1d4;      /* H18 S100 L92 */
   --bg-glow-2: #ffe8d8;      /* H25 S100 L93 */
@@ -182,7 +185,6 @@
 
 [data-theme="light"] .branch-card {
   background: #ffffff;
-  border-left-color: #2a1f1920;
   box-shadow: 0 1px 4px #2c1c140d, 0 0 0 1px #2a1f190a;
 }
 [data-theme="light"] .branch-card:hover {
@@ -191,7 +193,6 @@
 }
 [data-theme="light"] .branch-card.status-idle,
 [data-theme="light"] .branch-card.status-stopped {
-  border-left-color: #2a1f1920;
 }
 
 [data-theme="light"] .port-badge.port-idle { background: #2a1f1908; }
@@ -247,15 +248,13 @@
 [data-theme="light"] .term-result { color: var(--text-secondary); }
 
 
-[data-theme="light"] .branch-card.status-running { border-left-color: var(--green); }
-[data-theme="light"] .branch-card.status-building { border-left-color: var(--blue); }
-[data-theme="light"] .branch-card.status-starting { border-left-color: var(--yellow); }
-[data-theme="light"] .branch-card.status-error { border-left-color: var(--red); }
-[data-theme="light"] .branch-card.status-stopping { border-left-color: var(--red); }
-[data-theme="light"] .branch-card.status-deleting { border-left-color: var(--red); }
+/* 卡片左侧状态色边框已移除 — 状态通过圆点指示器区分 */
 
 [data-theme="light"] .port-badge.run-port {
-  color: var(--green); background: var(--green-bg); border-color: var(--green-border);
+  color: #0f7d65; background: rgba(16, 125, 101, 0.13); border-color: rgba(16, 125, 101, 0.28);
+}
+[data-theme="light"] .port-badge.port-idle {
+  color: var(--text-muted); background: rgba(42, 31, 25, 0.04); border-color: rgba(42, 31, 25, 0.10);
 }
 
 [data-theme="light"] select {
@@ -266,7 +265,7 @@
 /* ════════════════ Grid Background ════════════════ */
 
 body {
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Noto Sans SC', sans-serif;
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Noto Sans SC', sans-serif;
   background: var(--bg-primary);
   color: var(--text-primary);
   min-height: 100vh;
@@ -496,6 +495,7 @@ button.accent:hover {
 button.preview {
   background: none; border-color: transparent;
   color: var(--blue); font-weight: 500;
+  display: inline-flex; align-items: center; vertical-align: middle;
 }
 button.preview:hover {
   background: rgba(92, 158, 255, 0.08);
@@ -749,6 +749,7 @@ button.text-btn:hover { color: var(--accent); }
 
 .branch-list {
   display: flex; flex-direction: column; gap: 10px; margin-bottom: 24px;
+  padding-bottom: 60px; /* 为底部 Activity 浮窗留出空间 */
 }
 
 @media (min-width: 768px) {
@@ -764,7 +765,7 @@ button.text-btn:hover { color: var(--accent); }
   display: flex; flex-direction: column; gap: 0;
   padding: 14px 20px;
   background: var(--bg-card);
-  border: 1px solid var(--card-border);
+  border: 2px solid var(--card-border);
   border-radius: var(--radius);
   transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
@@ -822,18 +823,19 @@ button.text-btn:hover { color: var(--accent); }
 
 /* AI occupation — rotating gradient border + breathing glow on card */
 .branch-card.is-ai-occupied {
-  border-image: none;
-  border-color: transparent;
-  background-origin: border-box;
-  background-clip: padding-box, border-box;
+  border: 2px solid transparent;
   background-image:
     linear-gradient(var(--bg-card), var(--bg-card)),
-    conic-gradient(from var(--ai-border-angle, 0deg), #a78bfa, #60a5fa, #c084fc, #818cf8, #a78bfa);
-  border: 2px solid transparent;
-  animation: ai-border-spin 3s linear infinite, ai-border-glow 2s ease-in-out infinite;
+    linear-gradient(135deg, #a78bfa, #60a5fa, #c084fc, #f43f5e, #38bdf8, #fbbf24, #10b981, #a78bfa);
+  background-origin: border-box;
+  background-clip: padding-box, border-box;
+  background-size: 100% 100%, 400% 400%;
+  animation: ai-border-flow 4s linear infinite, ai-border-glow 2s ease-in-out infinite;
+  border-radius: var(--radius);
 }
-@keyframes ai-border-spin {
-  to { --ai-border-angle: 360deg; }
+@keyframes ai-border-flow {
+  0%   { background-position: 0 0, 0% 0%; }
+  100% { background-position: 0 0, 400% 400%; }
 }
 @keyframes ai-border-glow {
   0%, 100% {
@@ -922,6 +924,14 @@ button.text-btn:hover { color: var(--accent); }
   background: var(--green);
   opacity: 1;
   box-shadow: 0 0 6px var(--green);
+}
+[data-theme="light"] .status-dot-running {
+  background: #0f7d65;
+  box-shadow: 0 0 8px rgba(15, 125, 101, 0.4);
+}
+[data-theme="light"] .status-dot {
+  background: #c4b8b0;
+  opacity: 0.6;
 }
 @keyframes status-dot-blink {
   0%, 100% { opacity: 1; box-shadow: 0 0 6px var(--green); }
@@ -1044,11 +1054,13 @@ button.text-btn:hover { color: var(--accent); }
   transition: color var(--transition);
 }
 a.branch-name:hover { color: var(--accent); }
-/* Quick actions (copy + jump) — visible on row hover, hidden otherwise to not steal branch name space */
+/* Quick actions (copy + jump) — visible on row hover, uses visibility to avoid layout shift */
 .branch-quick-actions {
-  display: none; gap: 2px; align-items: center; flex-shrink: 0;
+  display: inline-flex; gap: 2px; align-items: center; flex-shrink: 0;
+  visibility: hidden; opacity: 0;
+  transition: opacity 0.15s ease;
 }
-.branch-card-row1:hover .branch-quick-actions { display: inline-flex; }
+.branch-card-row1:hover .branch-quick-actions { visibility: visible; opacity: 1; }
 .branch-quick-btn {
   display: inline-flex; align-items: center; justify-content: center;
   width: 22px; height: 22px; border: none; border-radius: 4px;
@@ -1158,13 +1170,22 @@ a.branch-name:hover { color: var(--accent); }
   background: linear-gradient(90deg, rgba(56, 189, 248, 0.04) 0%, var(--bg-card) 40%);
 }
 .branch-card.has-updates.active {
-  background: linear-gradient(90deg, rgba(56, 189, 248, 0.03) 0%, rgba(16, 185, 129, 0.03) 20%, var(--bg-card) 40%);
+  background: linear-gradient(90deg, rgba(56, 189, 248, 0.04) 0%, var(--bg-card) 40%);
 }
 
 /* Card-level recently-touched indicator — bold blue border so you know which card you just operated on */
 .branch-card.recently-touched {
   border: 3px solid var(--blue);
   box-shadow: 0 0 12px rgba(56, 189, 248, 0.35), 0 0 4px rgba(56, 189, 248, 0.2);
+}
+/* has-updates / recently-touched must override ai-occupied rainbow border */
+.branch-card.has-updates.is-ai-occupied,
+.branch-card.recently-touched.is-ai-occupied {
+  background-image: none;
+  background-clip: padding-box;
+  background-origin: padding-box;
+  background-size: auto;
+  animation: none;
 }
 
 /* Duplicate-add: gold flash 3 times then settle to blue */
@@ -1297,6 +1318,16 @@ a.branch-name:hover { color: var(--accent); }
 }
 .branch-card:hover .branch-tag-add { opacity: 0.6; }
 .branch-tag-add:hover { opacity: 1 !important; color: var(--accent); border-color: var(--accent-border); }
+.branch-tag-edit {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 22px; height: 22px; border-radius: 6px;
+  color: var(--text-muted); cursor: pointer;
+  transition: all var(--transition);
+  opacity: 0;
+}
+.branch-card:hover .branch-tag-edit { opacity: 0.6; }
+.branch-tag-edit:hover { opacity: 1 !important; color: var(--accent); background: rgba(99, 179, 237, 0.1); }
+.branch-tag-edit svg.inline-icon { width: 12px; height: 12px; }
 
 /* ── Commit Log Dropdown ── */
 
@@ -1372,11 +1403,13 @@ a.branch-name:hover { color: var(--accent); }
 .split-btn-toggle svg { pointer-events: none; }
 
 .deploy-menu {
-  position: fixed; min-width: 140px;
+  position: fixed; min-width: 160px;
   background: var(--bg-card-solid);
   border: 1px solid var(--card-border);
   border-radius: var(--radius-sm); overflow: hidden;
-  box-shadow: 0 8px 30px rgba(0,0,0,0.5);
+  box-shadow: 0 8px 30px rgba(0,0,0,0.7);
+  z-index: 10000;
+  backdrop-filter: none;
 }
 .deploy-menu-header {
   padding: 6px 10px; font-size: 10px; color: var(--text-muted);
@@ -1552,6 +1585,7 @@ a.branch-name:hover { color: var(--accent); }
   width: 100%; max-width: 740px; max-height: 85vh;
   display: flex; flex-direction: column;
   box-shadow: 0 -8px 40px rgba(0,0,0,0.5);
+  margin-bottom: 60px; /* 为底部 Activity 浮窗留出空间 */
 }
 .modal-header {
   display: flex; justify-content: space-between; align-items: center;
@@ -1767,15 +1801,15 @@ a.branch-name:hover { color: var(--accent); }
   header { margin-bottom: 16px; padding-bottom: 12px; }
 
   /* Header actions */
-  .header-actions { gap: 4px; }
-  .icon-btn.labeled { padding: 0 8px; }
-  .icon-btn-label { font-size: 12px; }
+  .header-actions { gap: 3px; }
+  .icon-btn { width: 32px; height: 32px; }
+  .ai-pairing-indicator { padding: 3px 8px; height: 26px; gap: 4px; }
+  .ai-label { font-size: 11px; }
 
   /* Cards — slightly stronger borders for mobile */
   .branch-card {
     padding: 12px 12px;
     border: 1px solid rgba(255, 255, 255, 0.15);
-    border-left: 2px solid rgba(255, 255, 255, 0.10);
   }
   .branch-card + .branch-card { margin-top: 8px; }
 
@@ -1823,6 +1857,9 @@ a.branch-name:hover { color: var(--accent); }
   .branch-tag-add { opacity: 0.5; }
   .branch-card:hover .branch-tag-add { opacity: 0.5; }
   .branch-tag-add:active { opacity: 1; color: var(--accent); border-color: var(--accent-border); }
+  .branch-tag-edit { opacity: 0.5; }
+  .branch-card:hover .branch-tag-edit { opacity: 0.5; }
+  .branch-tag-edit:active { opacity: 1; color: var(--accent); }
 
   /* Update-pull group: touch target */
   .update-pull-group { padding: 4px 8px; min-height: 36px; }
@@ -1843,8 +1880,8 @@ a.branch-name:hover { color: var(--accent); }
   /* Inline deploy log: responsive */
 
 
-  /* Commit info: hide on mobile to save space, show on expand */
-  .branch-actions-commit { display: none; }
+  /* Commit info: compact on mobile, single line with truncation */
+  .branch-actions-commit { font-size: 10px; }
 
   /* Dropdown/menu items: bigger touch targets */
   .branch-dropdown-item { padding: 10px 14px; min-height: 44px; }
@@ -1952,91 +1989,110 @@ a.branch-name:hover { color: var(--accent); }
   transform: scale(0.95);
 }
 
-/* ── Color-marked card — high-contrast vivid styling ── */
+/* ── Color-marked card — amber/gold static highlight ── */
+/* border-color 和 ripple ::after 的 border 完全一致，无闪烁 */
 .branch-card.is-color-marked {
-  --cm-glow: rgba(244, 63, 94, 0.12);
-  border-image: linear-gradient(135deg, #f43f5e, #38bdf8, #fbbf24, #10b981) 1;
-  border-width: 2px;
-  border-style: solid;
-  border-radius: 0; /* border-image doesn't support border-radius, use outline trick */
+  border-color: rgba(245, 178, 11, 0.85);
   box-shadow:
-    0 0 0 1px rgba(0,0,0,0.1),
-    0 0 16px 2px var(--cm-glow),
+    0 0 14px 3px rgba(245, 158, 11, 0.25),
+    0 0 4px 1px rgba(245, 158, 11, 0.4),
     0 2px 8px rgba(0,0,0,0.2);
   position: relative;
 }
-/* Restore rounded corners via outline + clip approach */
-.branch-card.is-color-marked {
-  border-image: none;
-  border: 2px solid transparent;
-  background-image:
-    linear-gradient(var(--bg-card), var(--bg-card)),
-    linear-gradient(135deg, #f43f5e, #38bdf8, #fbbf24, #10b981);
-  background-origin: border-box;
-  background-clip: padding-box, border-box;
-  border-radius: var(--radius);
-}
-/* Override status left-border: gradient takes priority for marked cards */
-.branch-card.is-color-marked.status-running,
-.branch-card.is-color-marked.status-idle,
-.branch-card.is-color-marked.status-stopped,
-.branch-card.is-color-marked.status-building,
-.branch-card.is-color-marked.status-starting,
-.branch-card.is-color-marked.status-error {
-  border-left-color: transparent;
-}
-/* Subtle animated gradient glow */
-.branch-card.is-color-marked::before {
-  content: '';
-  position: absolute; inset: -1px;
-  border-radius: var(--radius);
-  background: linear-gradient(135deg, rgba(244,63,94,0.06), rgba(56,189,248,0.06), rgba(251,191,36,0.06), rgba(16,185,129,0.06));
-  pointer-events: none;
-  z-index: 0;
-}
 
-/* Light theme adjustments */
+/* Light theme */
 [data-theme="light"] .branch-card.is-color-marked {
-  --cm-glow: rgba(244, 63, 94, 0.08);
-  background-image:
-    linear-gradient(var(--bg-card), var(--bg-card)),
-    linear-gradient(135deg, #e65c46, #3a8fa8, #c48b2a, #1a9b7e);
-  background-origin: border-box;
-  background-clip: padding-box, border-box;
+  border-color: rgba(217, 119, 6, 0.5);
+  box-shadow:
+    0 0 8px 1px rgba(217, 119, 6, 0.12),
+    inset 0 0 12px 2px rgba(217, 119, 6, 0.04),
+    0 2px 8px rgba(0,0,0,0.06);
 }
 
 /* ── Ripple overlay for color-mark transition ── */
 .color-mark-ripple {
   position: absolute;
-  inset: 0;
+  inset: -2px; /* 覆盖 border 区域 */
   border-radius: inherit;
   pointer-events: none;
   z-index: 2;
-  overflow: hidden;
 }
+/* ::after = 内容 tint 层 */
 .color-mark-ripple::after {
   content: '';
   position: absolute;
-  inset: 0;
+  inset: 2px;
+  border-radius: calc(var(--radius) - 2px);
   clip-path: circle(0% at var(--cm-ripple-x, 50%) var(--cm-ripple-y, 50%));
 }
-/* Ripple in: opaque card bg + subtle gradient tint (masks the old state) */
 .color-mark-ripple.ripple-marked::after {
-  background:
-    linear-gradient(135deg,
-      rgba(244,63,94,0.10),
-      rgba(56,189,248,0.10),
-      rgba(251,191,36,0.10),
-      rgba(16,185,129,0.10)),
-    var(--bg-card);
+  background: rgba(245, 158, 11, 0.04);
 }
-/* Ripple out: normal card bg (masks the marked state) */
+
+/* ── 金色圆弧冲击波：独立圆环元素，scale 扩展 ── */
+.cm-arc-ring {
+  position: absolute;
+  border-radius: 50%;
+  border: 3px solid rgba(245, 178, 11, 0.85);
+  box-shadow: 0 0 14px 3px rgba(245, 158, 11, 0.35), inset 0 0 6px 1px rgba(245, 158, 11, 0.15);
+  pointer-events: none;
+  z-index: 4;
+  transform: scale(0);
+}
+.cm-arc-ring.animate {
+  animation: cm-arc-expand 0.5s cubic-bezier(0.4, 0, 0.2, 1) forwards;
+}
+@keyframes cm-arc-expand {
+  0%   { transform: scale(0); opacity: 1; }
+  80%  { opacity: 0.7; }
+  100% { transform: scale(1); opacity: 0; }
+}
+[data-theme="light"] .cm-arc-ring {
+  border-color: rgba(217, 119, 6, 0.7);
+  box-shadow: 0 0 10px 2px rgba(217, 119, 6, 0.25);
+}
 .color-mark-ripple.ripple-normal::after {
-  background: var(--bg-card);
+  background: transparent;
+}
+[data-theme="light"] .color-mark-ripple.ripple-marked::after {
+  background: rgba(217, 119, 6, 0.04);
 }
 .color-mark-ripple.animate::after {
-  animation: cm-ripple-expand 0.45s cubic-bezier(0.4, 0, 0.2, 1) forwards;
+  animation: cm-ripple-expand 0.5s cubic-bezier(0.4, 0, 0.2, 1) forwards;
 }
+/* ── Gold border ring: solid gold bg masked to show only 2px edge ── */
+.cm-border-ring {
+  position: absolute;
+  inset: -2px;
+  border-radius: inherit;
+  pointer-events: none;
+  z-index: 3;
+  background: rgba(245, 178, 11, 0.9);
+  box-shadow: 0 0 16px 4px rgba(245, 158, 11, 0.35), 0 0 4px 1px rgba(245, 158, 11, 0.5);
+  -webkit-mask:
+    linear-gradient(#000 0 0) content-box,
+    linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask:
+    linear-gradient(#000 0 0) content-box,
+    linear-gradient(#000 0 0);
+  mask-composite: exclude;
+  padding: 3px;
+  /* Clip to expanding circle */
+  clip-path: circle(0% at var(--cm-ripple-x, 50%) var(--cm-ripple-y, 50%));
+}
+.cm-border-ring.ring-normal {
+  background: var(--card-border);
+  box-shadow: none;
+}
+[data-theme="light"] .cm-border-ring.ring-marked {
+  background: rgba(217, 119, 6, 0.6);
+  box-shadow: 0 0 8px 1px rgba(217, 119, 6, 0.15);
+}
+.cm-border-ring.animate {
+  animation: cm-ripple-expand 0.5s cubic-bezier(0.4, 0, 0.2, 1) forwards;
+}
+
 @keyframes cm-ripple-expand {
   to {
     clip-path: circle(var(--cm-ripple-radius, 150%) at var(--cm-ripple-x, 50%) var(--cm-ripple-y, 50%));
@@ -2547,23 +2603,150 @@ a.branch-name:hover { color: var(--accent); }
   margin: 0;
 }
 
+/* ════════════════ CDS Loading Animation (MAP style) ════════════════ */
+
+.cds-loading-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 48px 0 20px;
+  position: relative;
+  user-select: none;
+}
+
+.cds-loading-glow {
+  position: absolute;
+  width: 200px;
+  height: 200px;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(255,255,255,0.03) 0%, transparent 70%);
+  animation: cds-glow-pulse 3s ease-in-out infinite;
+}
+
+.cds-loading-letters {
+  display: flex;
+  gap: 4px;
+  position: relative;
+}
+
+.cds-letter {
+  font-size: 36px;
+  font-weight: 700;
+  font-family: 'Inter', 'SF Pro Display', -apple-system, system-ui, sans-serif;
+  letter-spacing: 0.08em;
+  color: var(--color);
+  opacity: 0;
+  background: linear-gradient(90deg, var(--color) 40%, rgba(255,255,255,0.5) 50%, var(--color) 60%);
+  background-size: 200% 100%;
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+  animation: cds-letter-in 600ms cubic-bezier(0.16, 1, 0.3, 1) var(--delay) forwards,
+             cds-shimmer 2.4s linear 800ms infinite;
+}
+
+.cds-loading-bar {
+  margin-top: 16px;
+  width: 80px;
+  height: 1.5px;
+  border-radius: 1px;
+  background: linear-gradient(90deg, transparent, var(--text-muted), transparent);
+  transform-origin: center;
+  animation: cds-bar-scan 2s ease-in-out 400ms infinite;
+}
+
+.cds-loading-hint {
+  margin-top: 12px;
+  font-size: 12px;
+  color: var(--text-muted);
+  opacity: 0;
+  animation: cds-hint-in 600ms ease 600ms forwards;
+}
+
+@keyframes cds-letter-in {
+  0%   { opacity: 0; transform: translateY(10px) scale(0.92); filter: blur(4px); }
+  60%  { opacity: 1; transform: translateY(-2px) scale(1.02); filter: blur(0); }
+  100% { opacity: 1; transform: translateY(0) scale(1); filter: blur(0); }
+}
+
+@keyframes cds-shimmer {
+  0%   { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+
+@keyframes cds-bar-scan {
+  0%   { transform: scaleX(0); opacity: 0.5; }
+  50%  { transform: scaleX(1); opacity: 1; }
+  100% { transform: scaleX(0); opacity: 0.5; }
+}
+
+@keyframes cds-glow-pulse {
+  0%, 100% { opacity: 0; }
+  50%      { opacity: 0.15; }
+}
+
+@keyframes cds-hint-in {
+  0%   { opacity: 0; transform: translateY(4px); }
+  100% { opacity: 1; transform: translateY(0); }
+}
+
+/* Light mode: letters use warm colors */
+[data-theme="light"] .cds-letter {
+  --fallback-shimmer: rgba(42, 31, 25, 0.15);
+}
+
+[data-theme="light"] .cds-loading-glow {
+  background: radial-gradient(circle, rgba(230, 92, 70, 0.06) 0%, transparent 70%);
+}
+
+/* ════════════════ Export / Cleanup option buttons ════════════════ */
+
+.btn-export-option {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  padding: 12px 14px;
+  border-radius: var(--radius-sm);
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  cursor: pointer;
+  text-align: left;
+  color: var(--text-primary);
+  transition: background 0.15s, border-color 0.15s;
+}
+
+.btn-export-option:hover {
+  background: var(--accent-bg);
+  border-color: var(--accent);
+}
+
+.btn-export-option svg {
+  flex-shrink: 0;
+  color: var(--text-secondary);
+}
+
+.btn-danger-option:hover {
+  border-color: var(--red);
+  background: rgba(248, 81, 73, 0.06);
+}
+
 /* ════════════════ AI Pairing Indicator ════════════════ */
 
 .ai-pairing-indicator {
-  position: fixed;
-  top: 14px;
-  right: 70px;
-  z-index: 9999;
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 5px 12px;
-  border-radius: 20px;
+  gap: 5px;
+  padding: 4px 10px;
+  border-radius: 16px;
   background: linear-gradient(135deg, rgba(192, 132, 252, 0.15), rgba(96, 165, 250, 0.15));
   border: 1px solid rgba(192, 132, 252, 0.3);
   cursor: pointer;
   animation: ai-glow 1.5s ease-in-out infinite;
   transition: all 0.2s;
+  height: 28px;
+  flex-shrink: 0;
 }
 
 .ai-pairing-indicator:hover {
@@ -2572,7 +2755,7 @@ a.branch-name:hover { color: var(--accent); }
 }
 
 .ai-pairing-indicator.hidden {
-  display: none;
+  display: none !important;
 }
 
 @keyframes ai-glow {

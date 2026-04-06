@@ -578,6 +578,16 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                     Content = new StringContent(jsonContent, System.Text.Encoding.UTF8, "application/json")
                 };
                 requestBodyForLog = jsonContent;
+
+                // Exchange 转换器额外 headers（如 X-Api-Resource-Id）
+                var extraTransformerHeaders = transformer.GetExtraHeaders(resolution.ExchangeTransformerConfig);
+                if (extraTransformerHeaders != null)
+                {
+                    foreach (var (key, value) in extraTransformerHeaders)
+                    {
+                        httpRequest.Headers.TryAddWithoutValidation(key, value);
+                    }
+                }
             }
             else if (request.IsMultipart)
             {
@@ -683,6 +693,111 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             else
             {
                 responseBody = await response.Content.ReadAsStringAsync(ct);
+            }
+
+            // 6.5 Exchange 异步轮询（submit+query 模式）
+            var submitResponseHeaders = new Dictionary<string, string>();
+            foreach (var h in response.Headers)
+                submitResponseHeaders[h.Key] = string.Join(", ", h.Value);
+
+            if (isExchange && _transformerRegistry.Get(resolution.ExchangeTransformerType) is IAsyncExchangeTransformer asyncTransformer)
+            {
+                // 检查 submit 响应状态
+                if (asyncTransformer.IsTaskFailed((int)response.StatusCode, submitResponseHeaders, responseBody, out var submitError))
+                {
+                    var endedNow = DateTime.UtcNow;
+                    var dur = (long)(endedNow - startedAt).TotalMilliseconds;
+                    await FinishRawLogAsync(logId, (int)response.StatusCode, responseBody, dur, ct);
+                    return GatewayRawResponse.Fail("EXCHANGE_ASYNC_SUBMIT_FAILED", submitError, (int)response.StatusCode);
+                }
+
+                if (asyncTransformer.IsTaskPending((int)response.StatusCode, submitResponseHeaders, responseBody)
+                    || asyncTransformer.IsTaskComplete((int)response.StatusCode, submitResponseHeaders, responseBody) == false)
+                {
+                    _logger.LogInformation("[LlmGateway.Exchange.Async] 进入轮询模式, Exchange={ExchangeName}", resolution.ExchangeName);
+
+                    var (queryUrl, queryBody, queryExtraHeaders) = asyncTransformer.BuildQueryRequest(
+                        endpoint, (int)response.StatusCode, submitResponseHeaders, responseBody, resolution.ExchangeTransformerConfig);
+
+                    var pollAttempt = 0;
+                    while (pollAttempt < asyncTransformer.MaxPollAttempts)
+                    {
+                        await Task.Delay(asyncTransformer.PollIntervalMs, CancellationToken.None);
+                        pollAttempt++;
+
+                        var queryRequest = new HttpRequestMessage(HttpMethod.Post, queryUrl)
+                        {
+                            Content = new StringContent(
+                                queryBody?.ToJsonString() ?? "{}",
+                                System.Text.Encoding.UTF8, "application/json")
+                        };
+
+                        // 设置认证头（与 submit 相同）
+                        if (!string.IsNullOrWhiteSpace(resolution.ApiKey))
+                        {
+                            var authScheme = resolution.ExchangeAuthScheme ?? "Bearer";
+                            SetAuthHeader(queryRequest, authScheme, resolution.ApiKey);
+                        }
+
+                        // 添加 query 额外 headers（包含 X-Tt-Logid 等）
+                        foreach (var (key, value) in queryExtraHeaders)
+                            queryRequest.Headers.TryAddWithoutValidation(key, value);
+
+                        // 传递 submit 时的 X-Api-Request-Id（豆包 query 需要）
+                        string? submitRequestId = null;
+                        if (submitResponseHeaders.TryGetValue("X-Api-Request-Id", out var reqId))
+                            submitRequestId = reqId;
+                        else if (httpRequest.Headers.TryGetValues("X-Api-Request-Id", out var reqIdValues))
+                            submitRequestId = reqIdValues.FirstOrDefault();
+                        if (submitRequestId != null)
+                            queryRequest.Headers.TryAddWithoutValidation("X-Api-Request-Id", submitRequestId);
+
+                        var queryClient = _httpClientFactory.CreateClient();
+                        queryClient.Timeout = TimeSpan.FromSeconds(30);
+                        var queryResp = await queryClient.SendAsync(queryRequest, CancellationToken.None);
+
+                        var queryHeaders = new Dictionary<string, string>();
+                        foreach (var h in queryResp.Headers)
+                            queryHeaders[h.Key] = string.Join(", ", h.Value);
+
+                        responseBody = await queryResp.Content.ReadAsStringAsync(CancellationToken.None);
+                        response = queryResp;
+
+                        if (asyncTransformer.IsTaskComplete((int)queryResp.StatusCode, queryHeaders, responseBody))
+                        {
+                            _logger.LogInformation(
+                                "[LlmGateway.Exchange.Async] 任务完成, Exchange={ExchangeName}, pollAttempts={Attempts}",
+                                resolution.ExchangeName, pollAttempt);
+                            // 更新 submitResponseHeaders 为最终的 headers
+                            submitResponseHeaders = queryHeaders;
+                            break;
+                        }
+
+                        if (asyncTransformer.IsTaskFailed((int)queryResp.StatusCode, queryHeaders, responseBody, out var queryError))
+                        {
+                            var endedNow = DateTime.UtcNow;
+                            var dur = (long)(endedNow - startedAt).TotalMilliseconds;
+                            await FinishRawLogAsync(logId, (int)queryResp.StatusCode, responseBody, dur, ct);
+                            return GatewayRawResponse.Fail("EXCHANGE_ASYNC_QUERY_FAILED", queryError, (int)queryResp.StatusCode);
+                        }
+
+                        if (pollAttempt % 10 == 0)
+                        {
+                            _logger.LogInformation(
+                                "[LlmGateway.Exchange.Async] 轮询中... Exchange={ExchangeName}, attempt={Attempt}",
+                                resolution.ExchangeName, pollAttempt);
+                        }
+                    }
+
+                    if (pollAttempt >= asyncTransformer.MaxPollAttempts)
+                    {
+                        var endedNow = DateTime.UtcNow;
+                        var dur = (long)(endedNow - startedAt).TotalMilliseconds;
+                        await FinishRawLogAsync(logId, 408, "轮询超时", dur, ct);
+                        return GatewayRawResponse.Fail("EXCHANGE_ASYNC_TIMEOUT",
+                            $"异步任务超时，已轮询 {pollAttempt} 次 ({pollAttempt * asyncTransformer.PollIntervalMs / 1000}秒)", 408);
+                    }
+                }
             }
 
             var endedAt = DateTime.UtcNow;
@@ -834,6 +949,15 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             case "key":
                 httpRequest.Headers.Authorization =
                     new System.Net.Http.Headers.AuthenticationHeaderValue("Key", apiKey);
+                break;
+            case "doubao-asr":
+                // 豆包 ASR 认证：apiKey 格式 "appId|accessToken"
+                // Resource-Id / Request-Id / Sequence 由转换器 GetExtraHeaders 提供
+                var parts = apiKey.Split('|', 2);
+                var appId = parts.Length > 1 ? parts[0] : "";
+                var accessToken = parts.Length > 1 ? parts[1] : apiKey;
+                httpRequest.Headers.TryAddWithoutValidation("X-Api-App-Key", appId);
+                httpRequest.Headers.TryAddWithoutValidation("X-Api-Access-Key", accessToken);
                 break;
             default: // "bearer" or anything else
                 httpRequest.Headers.Authorization =
@@ -1226,7 +1350,8 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
         string modelType,
         int maxTokens = 4096,
         double temperature = 0.2,
-        bool includeThinking = false)
+        bool includeThinking = false,
+        string? expectedModel = null)
     {
         if (!TryValidateAppCaller(appCallerCode, modelType, out var error))
         {
@@ -1243,7 +1368,8 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             maxTokens: maxTokens,
             temperature: temperature,
             includeThinking: includeThinking,
-            contextAccessor: _contextAccessor);
+            contextAccessor: _contextAccessor,
+            expectedModel: expectedModel);
     }
 
     private static bool TryValidateAppCaller(string appCallerCode, string modelType, out string error)

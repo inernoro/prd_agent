@@ -1,3 +1,4 @@
+import http from 'node:http';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -6,6 +7,7 @@ import { createGzip } from 'node:zlib';
 import { Router } from 'express';
 import { StateService } from '../services/state.js';
 import type { WorktreeService } from '../services/worktree.js';
+import { resolveProfileWithMode } from '../services/container.js';
 import type { ContainerService } from '../services/container.js';
 import type { BranchEntry, CdsConfig, IShellExecutor, OperationLog, OperationLogEvent, BuildProfile, RoutingRule, ServiceState, InfraService } from '../types.js';
 import { discoverComposeFiles, parseComposeFile, parseComposeString, toComposeYaml, parseCdsCompose, toCdsCompose } from '../services/compose-parser.js';
@@ -31,6 +33,23 @@ export function createBranchRouter(deps: RouterDeps): Router {
   } = deps;
 
   const router = Router();
+
+  // ── Preview port servers (port mode: per-branch proxy with path-prefix routing) ──
+  const previewServers = new Map<string, http.Server>();
+
+  function cleanupPreviewServer(branchId: string) {
+    const server = previewServers.get(branchId);
+    if (server) {
+      server.close();
+      previewServers.delete(branchId);
+      const entry = stateService.getBranch(branchId);
+      if (entry) {
+        delete entry.previewPort;
+        stateService.save();
+      }
+      console.log(`[preview] Closed preview proxy for "${branchId}"`);
+    }
+  }
 
   // ── Helper: merged env (CDS_* auto vars + customEnv, later wins) ──
   function getMergedEnv(): Record<string, string> {
@@ -377,11 +396,16 @@ export function createBranchRouter(deps: RouterDeps): Router {
         const layerStartTime = Date.now();
 
         await Promise.all(layer.items.map(async (profile) => {
+          // Resolve deploy mode overrides (e.g., dev → static)
+          const effectiveProfile = resolveProfileWithMode(profile);
+          const modeLabel = profile.activeDeployMode && profile.deployModes?.[profile.activeDeployMode]
+            ? ` [${profile.deployModes[profile.activeDeployMode].label}]`
+            : '';
           const serviceStartTime = Date.now();
           logEvent({
             step: `build-${profile.id}`,
             status: 'running',
-            title: `正在构建 ${profile.name}...`,
+            title: `正在构建 ${profile.name}${modeLabel}...`,
             timestamp: new Date().toISOString(),
           });
 
@@ -399,15 +423,16 @@ export function createBranchRouter(deps: RouterDeps): Router {
             logEvent({
               step: `env-${profile.id}`,
               status: 'info',
-              title: `${profile.name} 环境变量`,
+              title: `${effectiveProfile.name} 环境变量`,
               detail: {
                 cdsVars: maskSecrets(cdsVars),
-                profileEnvKeys: Object.keys(profile.env ?? {}),
+                profileEnvKeys: Object.keys(effectiveProfile.env ?? {}),
+                deployMode: profile.activeDeployMode || 'default',
               },
               timestamp: new Date().toISOString(),
             });
 
-            await containerService.runService(entry, profile, svc, (chunk) => {
+            await containerService.runService(entry, effectiveProfile, svc, (chunk) => {
               sendSSE(res, 'log', { profileId: profile.id, chunk });
               for (const line of chunk.split('\n')) {
                 if (line.trim()) {
@@ -577,8 +602,14 @@ export function createBranchRouter(deps: RouterDeps): Router {
         stateService.save();
       }
 
+      // Resolve deploy mode overrides
+      const effectiveProfile = resolveProfileWithMode(profile);
+      const modeLabel = profile.activeDeployMode && profile.deployModes?.[profile.activeDeployMode]
+        ? ` [${profile.deployModes[profile.activeDeployMode].label}]`
+        : '';
+
       // Build & run the single profile
-      logEvent({ step: `build-${profile.id}`, status: 'running', title: `正在构建 ${profile.name}...`, timestamp: new Date().toISOString() });
+      logEvent({ step: `build-${profile.id}`, status: 'running', title: `正在构建 ${profile.name}${modeLabel}...`, timestamp: new Date().toISOString() });
 
       if (!entry.services[profile.id]) {
         const hostPort = stateService.allocatePort(config.portStart);
@@ -596,7 +627,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
       try {
         const mergedEnv = getMergedEnv();
-        await containerService.runService(entry, profile, svc, (chunk) => {
+        await containerService.runService(entry, effectiveProfile, svc, (chunk) => {
           sendSSE(res, 'log', { profileId: profile.id, chunk });
           for (const line of chunk.split('\n')) {
             if (line.trim()) logDeploy(id, line);
@@ -688,6 +719,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
         svc.status = 'stopped';
       }
       entry.status = 'idle';
+      cleanupPreviewServer(id);
       stateService.save();
       res.json({ message: '所有服务已停止' });
     } catch (err) {
@@ -707,6 +739,163 @@ export function createBranchRouter(deps: RouterDeps): Router {
     stateService.setDefaultBranch(id);
     stateService.save();
     res.json({ message: `Default branch set to "${id}"` });
+  });
+
+  // ── Preview port (port mode: per-branch proxy with path-prefix routing) ──
+
+  router.post('/branches/:id/preview-port', async (req, res) => {
+    const { id } = req.params;
+    const entry = stateService.getBranch(id);
+    if (!entry) {
+      res.status(404).json({ error: `分支 "${id}" 不存在` });
+      return;
+    }
+    if (entry.status !== 'running') {
+      res.status(400).json({ error: '分支未运行' });
+      return;
+    }
+
+    // Reuse existing preview port if still alive
+    if (entry.previewPort && previewServers.has(id)) {
+      res.json({ port: entry.previewPort });
+      return;
+    }
+
+    // Allocate a new port
+    const port = stateService.allocatePort(config.portStart);
+    const profiles = stateService.getBuildProfiles();
+
+    // Create a lightweight HTTP proxy that routes by path-prefix
+    const server = http.createServer((proxyReq, proxyRes) => {
+      const url = proxyReq.url || '/';
+
+      // Detect which profile handles this path (reuse same logic as main proxy)
+      const profileIds = Object.keys(entry.services);
+      let targetProfileId: string | undefined;
+
+      // Phase 1: explicit pathPrefixes
+      const profilesWithRoutes = profiles
+        .filter(p => p.pathPrefixes && p.pathPrefixes.length > 0 && profileIds.includes(p.id))
+        .sort((a, b) => {
+          const maxA = Math.max(...(a.pathPrefixes || []).map(s => s.length));
+          const maxB = Math.max(...(b.pathPrefixes || []).map(s => s.length));
+          return maxB - maxA;
+        });
+      for (const profile of profilesWithRoutes) {
+        if (profile.pathPrefixes!.some(prefix => url.startsWith(prefix))) {
+          targetProfileId = profile.id;
+          break;
+        }
+      }
+      // Phase 2: convention fallback
+      if (!targetProfileId) {
+        if (url.startsWith('/api/')) {
+          targetProfileId = profileIds.find(pid => pid.includes('api') || pid.includes('backend'));
+        }
+        if (!targetProfileId) {
+          targetProfileId = profileIds.find(pid => pid.includes('web') || pid.includes('frontend') || pid.includes('admin'))
+            || profileIds[0];
+        }
+      }
+
+      const svc = targetProfileId ? entry.services[targetProfileId] : undefined;
+      if (!svc || svc.status !== 'running') {
+        proxyRes.writeHead(502, { 'Content-Type': 'application/json' });
+        proxyRes.end(JSON.stringify({ error: `Service "${targetProfileId}" not running` }));
+        return;
+      }
+
+      const upstream = `http://127.0.0.1:${svc.hostPort}`;
+      const upstreamUrl = new URL(upstream);
+      const opts: http.RequestOptions = {
+        hostname: upstreamUrl.hostname,
+        port: upstreamUrl.port,
+        path: proxyReq.url,
+        method: proxyReq.method,
+        headers: { ...proxyReq.headers, host: `${upstreamUrl.hostname}:${upstreamUrl.port}` },
+      };
+
+      const upReq = http.request(opts, (upRes) => {
+        proxyRes.writeHead(upRes.statusCode || 200, upRes.headers);
+        upRes.pipe(proxyRes, { end: true });
+      });
+      upReq.on('error', () => {
+        if (!proxyRes.headersSent) {
+          proxyRes.writeHead(502, { 'Content-Type': 'application/json' });
+          proxyRes.end(JSON.stringify({ error: 'Upstream connection failed' }));
+        }
+      });
+      proxyReq.pipe(upReq, { end: true });
+    });
+
+    // WebSocket upgrade support (for Vite HMR)
+    server.on('upgrade', (proxyReq, socket, head) => {
+      const url = proxyReq.url || '/';
+      const profileIds = Object.keys(entry.services);
+      let targetProfileId: string | undefined;
+
+      // Same path-prefix detection as above
+      const profilesWithRoutes2 = profiles
+        .filter(p => p.pathPrefixes && p.pathPrefixes.length > 0 && profileIds.includes(p.id))
+        .sort((a, b) => {
+          const maxA = Math.max(...(a.pathPrefixes || []).map(s => s.length));
+          const maxB = Math.max(...(b.pathPrefixes || []).map(s => s.length));
+          return maxB - maxA;
+        });
+      for (const profile of profilesWithRoutes2) {
+        if (profile.pathPrefixes!.some(prefix => url.startsWith(prefix))) {
+          targetProfileId = profile.id;
+          break;
+        }
+      }
+      if (!targetProfileId) {
+        targetProfileId = profileIds.find(pid => pid.includes('web') || pid.includes('frontend') || pid.includes('admin'))
+          || profileIds[0];
+      }
+
+      const svc = targetProfileId ? entry.services[targetProfileId] : undefined;
+      if (!svc || svc.status !== 'running') { socket.destroy(); return; }
+
+      const upstream = `http://127.0.0.1:${svc.hostPort}`;
+      const upstreamUrl = new URL(upstream);
+      const opts: http.RequestOptions = {
+        hostname: upstreamUrl.hostname,
+        port: upstreamUrl.port,
+        path: proxyReq.url,
+        method: 'GET',
+        headers: { ...proxyReq.headers, host: `${upstreamUrl.hostname}:${upstreamUrl.port}` },
+      };
+
+      const upReq = http.request(opts);
+      upReq.on('upgrade', (upRes, upSocket, upHead) => {
+        let raw = `HTTP/${upRes.httpVersion} ${upRes.statusCode} ${upRes.statusMessage}\r\n`;
+        for (let i = 0; i < upRes.rawHeaders.length; i += 2) {
+          raw += `${upRes.rawHeaders[i]}: ${upRes.rawHeaders[i + 1]}\r\n`;
+        }
+        raw += '\r\n';
+        socket.write(raw);
+        if (upHead.length > 0) socket.write(upHead);
+        if (head.length > 0) upSocket.write(head);
+        upSocket.pipe(socket);
+        socket.pipe(upSocket);
+      });
+      upReq.on('error', () => socket.destroy());
+      socket.on('error', () => upReq.destroy());
+      upReq.end();
+    });
+
+    server.listen(port, '0.0.0.0', () => {
+      entry.previewPort = port;
+      previewServers.set(id, server);
+      stateService.save();
+      console.log(`[preview] Branch "${id}" preview proxy on port ${port}`);
+      res.json({ port });
+    });
+
+    server.on('error', (err) => {
+      console.error(`[preview] Failed to start preview proxy for "${id}":`, err);
+      res.status(500).json({ error: `Preview port allocation failed: ${(err as Error).message}` });
+    });
   });
 
   // ── Update branch metadata (favorite, notes) ──
@@ -1083,6 +1272,32 @@ export function createBranchRouter(deps: RouterDeps): Router {
     }
   });
 
+  // ── Deploy mode switching ──
+
+  router.put('/build-profiles/:id/deploy-mode', (req, res) => {
+    try {
+      const { id } = req.params;
+      const { mode } = req.body as { mode?: string };
+      const profile = stateService.getBuildProfile(id);
+      if (!profile) {
+        res.status(404).json({ error: `构建配置 "${id}" 不存在` });
+        return;
+      }
+      // Validate mode exists (or null/empty to reset to default)
+      if (mode && (!profile.deployModes || !profile.deployModes[mode])) {
+        const available = profile.deployModes ? Object.keys(profile.deployModes).join(', ') : '无';
+        res.status(400).json({ error: `部署模式 "${mode}" 不存在，可用: ${available}` });
+        return;
+      }
+      stateService.updateBuildProfile(id, { activeDeployMode: mode || undefined });
+      stateService.save();
+      const label = mode && profile.deployModes?.[mode]?.label || 'default';
+      res.json({ message: `已切换为 ${label}`, mode: mode || null });
+    } catch (err) {
+      res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
   // ── Docker images (for dropdown selection) ──
 
   router.get('/docker-images', async (_req, res) => {
@@ -1334,9 +1549,17 @@ export function createBranchRouter(deps: RouterDeps): Router {
       } catch { /* ignore */ }
     }
 
+    // CDS git commit short hash for version identification
+    let cdsCommitHash = '';
+    try {
+      const result = await shell.exec('git rev-parse --short HEAD', { cwd: config.repoRoot, timeout: 3000 });
+      cdsCommitHash = result.stdout.trim();
+    } catch { /* ignore */ }
+
     res.json({
       ...config,
       githubRepoUrl,
+      cdsCommitHash,
       jwt: { ...config.jwt, secret: '***' },
       executorToken: config.executorToken ? '***' : undefined,
       sharedEnv: Object.fromEntries(
@@ -2502,7 +2725,14 @@ export function createBranchRouter(deps: RouterDeps): Router {
       // Merge and deduplicate
       const allBranches = [...new Set([...localBranches, ...remoteBranches])].sort();
 
-      res.json({ current: currentBranch, branches: allBranches });
+      // Get current commit short hash
+      let commitHash = '';
+      try {
+        const hashResult = await shell.exec('git rev-parse --short HEAD', { cwd: config.repoRoot });
+        commitHash = hashResult.stdout.trim();
+      } catch { /* ignore */ }
+
+      res.json({ current: currentBranch, commitHash, branches: allBranches });
     } catch (e) {
       res.status(500).json({ error: '获取分支列表失败: ' + (e as Error).message });
     }
@@ -2564,9 +2794,11 @@ export function createBranchRouter(deps: RouterDeps): Router {
       sendSSE(res, 'done', { message: 'CDS 即将重启，页面将在几秒后自动刷新...' });
       res.end();
 
-      // Give time for response to flush, then spawn detached restart.
-      // exec_cds.sh uses "pnpm serve" (no file watcher) in background mode,
-      // so git pull changing files won't trigger a competing restart.
+      // Spawn detached restart script, then exit ourselves.
+      // Previous approach relied on exec_cds.sh killing the old process (us),
+      // but macOS process group kill behaves differently from Linux.
+      // Self-exit is more reliable: we release the port, then exec_cds.sh
+      // finds it free and starts the new process cleanly.
       setTimeout(() => {
         const cdsDir = path.join(repoRoot, 'cds');
         const child = spawn('bash', ['./exec_cds.sh', '--background'], {
@@ -2576,7 +2808,8 @@ export function createBranchRouter(deps: RouterDeps): Router {
           env: { ...process.env },
         });
         child.unref();
-        // exec_cds.sh will kill the old process (us) via PID file + port reclaim
+        // Exit ourselves after a brief delay to ensure the child is running
+        setTimeout(() => process.exit(0), 1000);
       }, 500);
     } catch (err) {
       send('error', 'error', `更新失败: ${(err as Error).message}`);
