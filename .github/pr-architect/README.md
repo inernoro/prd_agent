@@ -12,6 +12,17 @@
 
 目标是减少逐行审查成本，同时降低架构偏离与漏检风险。
 
+### 1.1 设计前提（固定不变）
+
+本方案严格基于以下固定前提，不随项目阶段改变：
+
+- 顶层设计基线：锚定项 + DDD
+- 执行组织方式：分配垂直切片任务
+- 开发方式：开发者使用项目内 skills 体系完成切片实现
+- 审批职责：最终合并审批责任由 Architect 承担
+
+若以上任一前提缺失，Agent 仅能输出建议，不应作为合并门禁。
+
 ## 2. 外部顶层设计上传机制
 
 ### 2.1 设计包（Design Bundle）最小结构
@@ -39,7 +50,7 @@ Agent 预审时从 `design-sources.yml` 获取当前生效版本，校验 PR 声
 - 顶层设计者（Architect）
   - 维护顶层设计约束（DDD、锚定项、上下文边界）
   - 维护 `design-sources.yml` 的激活版本
-  - 对 PR 做最终裁决：`Approve` / `Request Changes` / `Block`
+  - 对 PR 做最终裁决：`Approve` / `Approve with Guardrails` / `Request Changes` / `Block`
 - 开发者（Slice Owner）
   - 只在分配的垂直切片内开发
   - 按 PR 模板完整提交元数据与测试证据
@@ -86,8 +97,9 @@ Agent 先校验以下条件：
 Agent 按 `review-rules.yml` 执行：
 
 1. 硬规则（命中即阻断）
-2. 软评分（生成风险级别与建议）
-3. 输出决策卡（`decision-card-template.md`）
+2. 软规则（仅提示，不自动阻断）
+3. 软评分（仅用于排序与关注，不直接阻断）
+4. 输出决策卡（`decision-card-template.md`）
 
 ### 4.6 architect-decision
 
@@ -98,10 +110,21 @@ Agent 按 `review-rules.yml` 执行：
 1. 若存在任意阻断项，直接 `Block`
 2. 否则根据风险分执行：
    - `0-20`: `Approve`
-   - `21-49`: `Request Changes`
-   - `>=50`: `Block`
-3. 对于连续两轮修订仍不达标的 PR，升级为 `Type C`（设计回炉）
-4. 若设计包版本不一致或锚定项无法解析，优先按 `Type C` 处理
+   - `21-39`: `Approve with Guardrails`
+   - `>=40`: `Request Changes`
+3. V1 阶段不允许仅凭风险分直接 `Block`
+4. 对于连续两轮修订仍不达标的 PR，升级为 `Type C`（设计回炉）
+5. 若设计包版本不一致或锚定项无法解析，优先按 `Type C` 处理
+
+### 5.1 护栏通过（Approve with Guardrails）
+
+当结论为 `Approve with Guardrails` 时，必须补充以下内容：
+
+- `guardrail_plan`：灰度范围、监控指标、回滚阈值
+- `rollback_trigger`：触发回滚的明确条件
+- `owner_on_call`：风险接管责任人
+
+缺失任一项，则降级为 `Request Changes`
 
 ## 6. 退回机制（PR 不符合预期）
 

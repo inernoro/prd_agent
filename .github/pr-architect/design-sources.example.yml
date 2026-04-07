@@ -5,6 +5,7 @@ profile: top-design-sources
 # 1) 将本文件复制为 `.github/pr-architect/design-sources.yml`
 # 2) 为当前项目填入你的顶层设计文档来源（仓库路径 / URL / Artifact）
 # 3) PR 模板中的 `design_source_id` 与 `design_source_version` 必须引用这里的记录
+# 4) 尽量补齐 anchors/slices/contexts 清单位置，便于自动校验
 
 defaults:
   active_source_id: "local-ddd-anchor"
@@ -15,19 +16,34 @@ sources:
     type: "repo-file"
     location: "doc/top-design/main.md"
     version: "v1.0.0"
+    checksum: "sha256:replace-with-real-checksum"
     owner: "architect"
     description: "本仓库内维护的顶层设计主文档"
+    manifests:
+      anchors: "doc/top-design/anchors.yml"
+      slices: "doc/top-design/slices.yml"
+      contexts: "doc/top-design/contexts.yml"
 
   - id: "remote-ddd-anchor"
     type: "url"
     location: "https://example.com/design/top-design-v1.2.0.md"
     version: "v1.2.0"
+    checksum: "sha256:replace-with-real-checksum"
     owner: "architect"
     description: "外部文档平台托管的顶层设计文档"
+    manifests:
+      anchors: "https://example.com/design/anchors-v1.2.0.yml"
+      slices: "https://example.com/design/slices-v1.2.0.yml"
+      contexts: "https://example.com/design/contexts-v1.2.0.yml"
 
   - id: "artifact-ddd-anchor"
     type: "artifact"
     location: "artifact://top-design/2026-04-07/design-pack.zip"
     version: "v2.0.0-beta"
+    checksum: "sha256:replace-with-real-checksum"
     owner: "architect"
     description: "通过上传产物提供的顶层设计包"
+    manifests:
+      anchors: "artifact://top-design/2026-04-07/anchors.yml"
+      slices: "artifact://top-design/2026-04-07/slices.yml"
+      contexts: "artifact://top-design/2026-04-07/contexts.yml"

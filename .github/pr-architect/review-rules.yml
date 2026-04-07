@@ -1,15 +1,36 @@
-version: 1
-profile: ddd-anchor-pr-review
+version: 2
+profile: ddd-anchor-pr-review-v1-minimal
 
 metadata:
   owner_role: architect
-  intent: "用于 DDD + 锚定项 + 垂直切片协作模式下的 PR 自动预审与裁决建议"
+  intent: "在保证质量前提下，以最小复杂度实现可复用 PR 裁决能力"
+  objective: "先稳定命中高确定性问题，再逐步扩展结构与语义能力"
 
 references:
   collaboration_guide: ".github/pr-architect/README.md"
   decision_card_template: ".github/pr-architect/decision-card-template.md"
   label_taxonomy: ".github/pr-architect/label-taxonomy.md"
   design_sources_registry: ".github/pr-architect/design-sources.yml"
+
+evaluation_model:
+  tiers:
+    - id: "l1-deterministic"
+      behavior: "auto-block"
+      description: "仅包含机器可稳定判定的规则"
+    - id: "l2-structural"
+      behavior: "advisory-only"
+      description: "结构风险，默认不自动阻断"
+    - id: "l3-semantic"
+      behavior: "advisory-only"
+      description: "语义风险，默认只提示并人工裁决"
+  rollout:
+    phase: "v1"
+    auto_block_tiers:
+      - "l1-deterministic"
+    promote_policy:
+      calibration_pr_count: 30
+      min_precision_to_promote: 0.95
+      min_recall_to_promote: 0.90
 
 required_pr_metadata:
   - key: "design_source_id"
@@ -24,63 +45,97 @@ required_pr_metadata:
     required: true
   - key: "skills_used"
     required: true
+  - key: "skills_traceability_attached"
+    required: true
   - key: "out_of_slice_changes"
     required: true
   - key: "tests_evidence"
     required: true
+  - key: "contract_change_declared"
+    required: true
+  - key: "critical_path_changed"
+    required: true
 
 hard_block_rules:
   - id: "missing-required-metadata"
+    tier: "l1-deterministic"
     severity: "block"
     condition: "any_required_pr_metadata_missing"
     message: "PR 元数据缺失，无法进行架构层裁决。"
 
+  - id: "design-sources-registry-invalid"
+    tier: "l1-deterministic"
+    severity: "block"
+    condition: "design_sources_registry_missing_or_invalid"
+    message: "design-sources.yml 不存在或格式无效。"
+
   - id: "design-source-unregistered"
+    tier: "l1-deterministic"
     severity: "block"
     condition: "design_source_id_not_found_in_registry"
     message: "design_source_id 未在设计源注册表中声明，无法建立顶设对齐基线。"
 
   - id: "design-source-version-mismatch"
+    tier: "l1-deterministic"
     severity: "block"
     condition: "design_source_version_not_active_or_not_allowed_for_design_source_id"
     message: "PR 声明的设计源版本与注册表不一致。"
 
   - id: "anchor-not-in-design-source"
+    tier: "l1-deterministic"
     severity: "block"
     condition: "anchor_refs_not_resolved_in_declared_design_source"
     message: "anchor_refs 无法在声明的设计源中解析。"
 
-  - id: "unapproved-cross-context-coupling"
-    severity: "block"
-    condition: "cross_bounded_context_call_detected_without_contract"
-    message: "检测到跨 bounded context 的未授权直接耦合。"
-
   - id: "out-of-slice-without-adr"
+    tier: "l1-deterministic"
     severity: "block"
     condition: "out_of_slice_changes_is_true_and_adr_link_missing"
     message: "存在越界改动但未提供 ADR 或等效设计说明。"
 
-  - id: "domain-invariant-broken"
-    severity: "block"
-    condition: "aggregate_boundary_or_domain_invariant_broken"
-    message: "疑似破坏领域不变量或聚合边界。"
+advisory_rules:
+  - id: "skills-traceability-missing"
+    tier: "l2-structural"
+    severity: "medium"
+    condition: "skills_used_declared_but_traceability_missing"
+    message: "skills 已声明但缺少版本/执行记录追溯信息。"
+    recommended_action: "Request Changes"
+
+  - id: "unapproved-cross-context-coupling"
+    tier: "l2-structural"
+    severity: "high"
+    condition: "cross_bounded_context_call_detected_without_contract"
+    message: "检测到跨 bounded context 的未授权直接耦合。"
+    recommended_action: "Request Changes"
 
   - id: "contract-changed-without-compat-plan"
-    severity: "block"
-    condition: "api_or_event_contract_changed_without_migration_or_compatibility_notes"
-    message: "关键契约发生变化但缺失兼容/迁移说明。"
+    tier: "l2-structural"
+    severity: "high"
+    condition: "contract_change_declared_is_true_and_compatibility_plan_missing"
+    message: "声明存在契约变更但缺失兼容/迁移说明。"
+    recommended_action: "Request Changes"
 
   - id: "critical-path-without-tests"
-    severity: "block"
-    condition: "critical_path_changed_and_tests_evidence_insufficient"
+    tier: "l2-structural"
+    severity: "medium"
+    condition: "critical_path_changed_is_true_and_tests_evidence_insufficient"
     message: "关键路径改动缺乏最低测试证据。"
+    recommended_action: "Request Changes"
+
+  - id: "domain-invariant-risk"
+    tier: "l3-semantic"
+    severity: "high"
+    condition: "aggregate_boundary_or_domain_invariant_risk_detected"
+    message: "疑似破坏领域不变量或聚合边界，需要架构师重点复核。"
+    recommended_action: "Request Changes"
 
 scoring:
-  mode: "risk"
+  mode: "risk-priority"
+  use_for: "advisory_sorting_only"
   thresholds:
     approve_max: 20
-    request_changes_max: 49
-    block_min: 50
+    approve_with_guardrails_max: 39
+    request_changes_min: 40
   dimensions:
     - key: "design_alignment"
       weight: 30
@@ -106,10 +161,13 @@ decision_policy:
   when_no_blockers:
     - if: "score <= 20"
       decision: "Approve"
-    - if: "score >= 21 and score <= 49"
+    - if: "score >= 21 and score <= 39"
+      decision: "Approve with Guardrails"
+    - if: "score >= 40"
       decision: "Request Changes"
-    - if: "score >= 50"
-      decision: "Block"
+  notes:
+    - "v1 阶段不允许仅凭评分直接自动 Block。"
+    - "语义规则仅用于提醒，不直接触发阻断。"
 
 return_policy:
   rework_types:
@@ -120,18 +178,26 @@ return_policy:
     max_rework_rounds: 2
     on_exceed: "Type C"
 
+quality_targets:
+  calibration_pr_count: 30
+  false_block_rate_max: 0.05
+  missed_block_rate_max: 0.10
+  architect_decision_time_reduction_min: 0.30
+  template_completeness_rate_min: 0.95
+
 architect_focus_questions:
   max_items: 3
   focus:
     - "该 PR 是否对齐声明的 design_source_id 与 design_source_version"
     - "是否偏离既定 bounded context 边界"
     - "是否破坏 anchor 对应的核心约束"
-    - "是否需要灰度、开关或分阶段发布"
+    - "是否已定义明确的护栏与回滚触发条件"
 
 output_contract:
   sections:
     - "recommended_decision"
     - "blockers"
+    - "advisories"
     - "risks"
     - "architect_focus_questions"
     - "resubmission_criteria"

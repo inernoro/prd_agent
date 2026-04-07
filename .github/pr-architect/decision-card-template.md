@@ -15,10 +15,13 @@
 
 ## B. 裁决建议
 
-- 建议：`Approve` / `Request Changes` / `Block`
+- 建议：`Approve` / `Approve with Guardrails` / `Request Changes` / `Block`
 - 风险分：`<SCORE>/100`
 - 置信度：`<CONFIDENCE>`
 - 触发硬阻断：`Yes` / `No`
+- 护栏（仅当建议为 `Approve with Guardrails` 时必填）：
+  1. `<GUARDRAIL_1>`
+  2. `<GUARDRAIL_2>`
 
 ## C. 阻断项（必须修复）
 
@@ -53,5 +56,5 @@
 
 ## G. 架构师最终裁决（人工填写）
 
-- 最终结论：`Approve` / `Request Changes` / `Block`
+- 最终结论：`Approve` / `Approve with Guardrails` / `Request Changes` / `Block`
 - 最终意见：`<FINAL_NOTE>`

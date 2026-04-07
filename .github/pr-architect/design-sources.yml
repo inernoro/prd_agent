@@ -4,5 +4,6 @@ profile: top-design-sources
 defaults:
   active_source_id: ""
   active_version: ""
+  enforce_manifests: true
 
 sources: []

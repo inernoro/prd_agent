@@ -1,4 +1,4 @@
-# PR 标签规范（DDD Anchor 协作）
+# PR 标签规范（DDD Anchor 协作，V1 最小可复用）
 
 ## 1. 目标
 
@@ -43,6 +43,7 @@
 | 标签 | 含义 |
 |---|---|
 | `decision:approve` | 可合并 |
+| `decision:approve-with-guardrails` | 带护栏通过（需满足监控/开关/回滚条件） |
 | `decision:request-changes` | 需要修订 |
 | `decision:block` | 阻断合并 |
 | `decision:type-a` | 同 PR 修复 |
@@ -72,5 +73,8 @@
    - 缺失则打 `anchor:missing` 并标记 `agent:precheck-failed`
 2. 规则命中硬阻断：
    - 打 `risk:high` + `architect:review-required`
-3. 风险分 <= 20 且无阻断：
-   - 打 `risk:low` + `agent:precheck-passed`
+3. 无硬阻断且 advisory 风险可控：
+   - 打 `agent:precheck-passed`
+4. 架构师最终审批后：
+   - 若结论为 `Approve with Guardrails`，必须加 `decision:approve-with-guardrails`
+   - 若结论为 `Approve`，可加 `ready-to-merge`（仍需 CI 通过）
