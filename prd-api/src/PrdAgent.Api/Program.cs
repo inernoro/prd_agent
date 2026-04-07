@@ -211,6 +211,14 @@ builder.Services.AddHostedService<PrdAgent.Api.Services.ChatRunWorker>();
 builder.Services.AddHostedService<PrdAgent.Api.Services.WorkflowRunWorker>();
 builder.Services.AddScoped<PrdAgent.Api.Services.WorkflowAiFillService>();
 
+// 涌现探索器
+builder.Services.AddSingleton<PrdAgent.Api.Services.SystemCapabilityScanner>();
+builder.Services.AddScoped<PrdAgent.Api.Services.EmergenceService>();
+
+// 文档订阅同步引擎
+builder.Services.AddHttpClient("DocumentSync");
+builder.Services.AddHostedService<PrdAgent.Api.Services.DocumentSyncWorker>();
+
 // 视频生成后台执行器（文章→脚本→Remotion渲染→字幕→打包）
 builder.Services.AddHostedService<PrdAgent.Api.Services.VideoGenRunWorker>();
 

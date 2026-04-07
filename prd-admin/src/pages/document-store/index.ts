@@ -1,0 +1,1 @@
+export { DocumentStorePage } from './DocumentStorePage';

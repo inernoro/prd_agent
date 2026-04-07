@@ -919,6 +919,33 @@ public static class ReviewAgent
         public const string Chat = "review-agent.review::chat";
     }
 }
+
+public static class EmergenceExplorer
+{
+    public const string AppName = "Emergence Explorer";
+
+    public static class Explore
+    {
+        [AppCallerMetadata(
+            "涌现探索",
+            "从种子文档出发，基于现实锚点向下探索子功能",
+            ModelTypes = new[] { ModelTypes.Chat },
+            Category = "Emergence"
+        )]
+        public const string Chat = "emergence-explorer.explore::chat";
+    }
+
+    public static class Emerge
+    {
+        [AppCallerMetadata(
+            "涌现组合",
+            "交叉组合多个已有节点，发现涌现价值",
+            ModelTypes = new[] { ModelTypes.Chat },
+            Category = "Emergence"
+        )]
+        public const string Chat = "emergence-explorer.emerge::chat";
+    }
+}
 }
 
 /// <summary>

@@ -358,6 +358,22 @@ export default function AgentLauncherPage() {
   // 静态实用工具入口（不来自后端 toolbox）
   const staticUtilities: ToolboxItem[] = useMemo(() => [
     {
+      id: '__document-store__',
+      name: '知识库',
+      description: '文档存储与知识管理，支持文件夹、GitHub 同步',
+      icon: 'Library',
+      tags: ['文档', '知识', '知识库', 'docs'],
+      routePath: '/document-store',
+    } as ToolboxItem,
+    {
+      id: '__emergence__',
+      name: '涌现探索',
+      description: '从文档出发，AI 辅助发现功能创意与交叉价值',
+      icon: 'Sparkle',
+      tags: ['涌现', '探索', 'AI', '创意'],
+      routePath: '/emergence',
+    } as ToolboxItem,
+    {
       id: '__web-pages__',
       name: '网页托管',
       description: '上传 HTML 或 ZIP，托管并分享你的网页',
