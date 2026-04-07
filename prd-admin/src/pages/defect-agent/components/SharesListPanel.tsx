@@ -19,11 +19,11 @@ interface SharesListPanelProps {
   onClose: () => void;
   /** 自动打开某个 share 的报告 (从通知跳转) */
   autoOpenShareId?: string;
-  /** 当前页面选中的项目 ID，传入后批量分享仅包含该项目的缺陷 */
-  projectId?: string;
+  /** 当前列表页可见的缺陷 ID 列表，确保分享内容与用户看到的一致 */
+  visibleDefectIds?: string[];
 }
 
-export function SharesListPanel({ open, onClose, autoOpenShareId, projectId }: SharesListPanelProps) {
+export function SharesListPanel({ open, onClose, autoOpenShareId, visibleDefectIds }: SharesListPanelProps) {
   const [shares, setShares] = useState<DefectShareLink[]>([]);
   const [loading, setLoading] = useState(true);
   const [reportShareId, setReportShareId] = useState<string | null>(null);
@@ -231,7 +231,10 @@ export function SharesListPanel({ open, onClose, autoOpenShareId, projectId }: S
   const handleBatchShare = async () => {
     setBatchLoading(true);
     try {
-      const res = await createBatchShare({ expiresInDays: 7, projectId: projectId || undefined });
+      const res = await createBatchShare({
+        expiresInDays: 7,
+        defectIds: visibleDefectIds?.length ? visibleDefectIds : undefined,
+      });
       if (res.success && res.data) {
         loadShares();
         startScoringStream(res.data.shareLink.id);

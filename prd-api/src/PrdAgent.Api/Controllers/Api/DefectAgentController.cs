@@ -2486,7 +2486,23 @@ public class DefectAgentController : ControllerBase
         // 只分享打开的缺陷（排除已关闭和已驳回）
         var closedStatuses = new[] { DefectStatus.Closed, DefectStatus.Rejected };
 
-        if (!string.IsNullOrWhiteSpace(request.ProjectId))
+        if (request.DefectIds is { Count: > 0 })
+        {
+            // 前端传入了具体的缺陷 ID 列表（与列表页当前可见内容一致）
+            var isAdmin = HasManagePermission();
+            var idFilter = Builders<DefectReport>.Filter.In(x => x.Id, request.DefectIds);
+            var accessFilter = isAdmin
+                ? Builders<DefectReport>.Filter.Where(x => !x.IsDeleted)
+                : Builders<DefectReport>.Filter.Where(x => !x.IsDeleted && (x.ReporterId == userId || x.AssigneeId == userId));
+
+            defects = await _db.DefectReports
+                .Find(idFilter & accessFilter)
+                .SortByDescending(x => x.CreatedAt)
+                .ToListAsync(ct);
+
+            title = request.Title?.Trim() ?? $"全部打开的缺陷分享（AI 评分）";
+        }
+        else if (!string.IsNullOrWhiteSpace(request.ProjectId))
         {
             var project = await _db.DefectProjects.Find(x => x.Id == request.ProjectId).FirstOrDefaultAsync(ct);
             if (project == null)
@@ -3965,6 +3981,8 @@ public class CreateBatchShareRequest
     public string? FolderId { get; set; }
     public string? Title { get; set; }
     public int ExpiresInDays { get; set; } = 7;
+    /// <summary>前端传入当前可见的缺陷 ID 列表，确保分享内容与列表一致</summary>
+    public List<string>? DefectIds { get; set; }
 }
 
 public class UpdateDefectFixStatusRequest
