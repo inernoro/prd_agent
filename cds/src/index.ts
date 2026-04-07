@@ -12,6 +12,7 @@ import { StateService } from './services/state.js';
 import { WorktreeService } from './services/worktree.js';
 import { ContainerService } from './services/container.js';
 import { ProxyService } from './services/proxy.js';
+import { BridgeService } from './services/bridge.js';
 import { ExecutorAgent } from './executor/agent.js';
 import { createExecutorRouter } from './executor/routes.js';
 import { ExecutorRegistry } from './scheduler/executor-registry.js';
@@ -64,6 +65,7 @@ const worktreeService = new WorktreeService(shell, config.repoRoot);
 const containerService = new ContainerService(shell, config);
 const proxyService = new ProxyService(stateService, config);
 proxyService.setWorktreeService(worktreeService);
+const bridgeService = new BridgeService();
 
 // ── Discover and reconcile infrastructure containers ──
 (async () => {
@@ -549,6 +551,7 @@ const app = createServer({
   worktreeService,
   containerService,
   proxyService,
+  bridgeService,
   shell,
   config,
 });
@@ -659,12 +662,30 @@ if (mode === 'executor') {
   listenWithRetry(app, config.masterPort, 'Dashboard', () => {
     console.log(`  Dashboard:  http://localhost:${config.masterPort}`);
     console.log(`  Worker:     http://localhost:${config.workerPort}`);
+    console.log(`  Bridge:     http://localhost:${config.masterPort}/api/bridge/ (HTTP polling)`);
     if (config.switchDomain) console.log(`  Switch:     ${config.switchDomain} → ${config.mainDomain || '(main domain not set)'}`);
     if (config.previewDomain) console.log(`  Preview:    *.<${config.previewDomain}>`);
     console.log(`  State file: ${stateFile}`);
     console.log(`  Repo root:  ${config.repoRoot}`);
     console.log('');
   }, { force: true });
+
+  // ── Bridge activity tracking ──
+  bridgeService.onActivity((branchId, action) => {
+    const branchTags = stateService.getBranch(branchId)?.tags ?? [];
+    broadcastActivity({
+      id: nextActivitySeq(),
+      ts: new Date().toISOString(),
+      method: 'BRIDGE',
+      path: action,
+      status: 200,
+      duration: 0,
+      type: 'cds',
+      source: 'ai',
+      branchId,
+      branchTags: branchTags.length ? branchTags : undefined,
+    });
+  });
 
   // ── Worker server (reverse proxy on workerPort) ──
   const workerServer = http.createServer((req, res) => {
