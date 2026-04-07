@@ -272,6 +272,7 @@ export default function DefectAgentPage() {
         <SharesListPanel
           open={showSharesPanel}
           onClose={() => setShowSharesPanel(false)}
+          projectId={projectFilter}
         />
       )}
     </div>
