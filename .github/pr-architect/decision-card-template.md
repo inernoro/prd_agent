@@ -10,6 +10,8 @@
 - `slice_id`：`<SLICE_ID>`
 - `bounded_context`：`<BOUNDED_CONTEXT>`
 - `anchor_refs`：`<ANCHOR_REFS>`
+- `design_source_id`：`<DESIGN_SOURCE_ID>`
+- `design_source_version`：`<DESIGN_SOURCE_VERSION>`
 
 ## B. 裁决建议
 
@@ -22,7 +24,7 @@
 
 | ID | 证据 | 违背点 | 期望改法 |
 |---|---|---|---|
-| `<RULE_ID>` | `<FILE_OR_BEHAVIOR>` | `<ANCHOR_OR_DDD_RULE>` | `<ACTIONABLE_FIX>` |
+| `<RULE_ID>` | `<FILE_OR_BEHAVIOR>` | `<ANCHOR_OR_DDD_RULE_OR_DESIGN_VERSION>` | `<ACTIONABLE_FIX>` |
 
 > 无阻断项时填写：`None`
 

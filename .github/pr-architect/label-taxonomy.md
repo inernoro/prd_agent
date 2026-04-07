@@ -23,6 +23,8 @@
 | 标签 | 设置方 | 含义 |
 |---|---|---|
 | `anchor:missing` | Agent | 缺失锚定项映射或映射不完整 |
+| `design-pack:missing` | Agent | 未声明或无法解析顶层设计包来源 |
+| `design-pack:version-mismatch` | Agent | PR 声明的设计包版本与当前生效版本不一致 |
 | `scope:out-of-slice` | Agent | 检测到越界改动 |
 | `ddd:boundary-risk` | Agent | 疑似破坏 DDD 边界 |
 | `contract:changed` | Agent | API/事件契约发生变更 |

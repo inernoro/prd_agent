@@ -1,0 +1,33 @@
+version: 1
+profile: top-design-sources
+
+# 使用方式：
+# 1) 将本文件复制为 `.github/pr-architect/design-sources.yml`
+# 2) 为当前项目填入你的顶层设计文档来源（仓库路径 / URL / Artifact）
+# 3) PR 模板中的 `design_source_id` 与 `design_source_version` 必须引用这里的记录
+
+defaults:
+  active_source_id: "local-ddd-anchor"
+  active_version: "v1.0.0"
+
+sources:
+  - id: "local-ddd-anchor"
+    type: "repo-file"
+    location: "doc/top-design/main.md"
+    version: "v1.0.0"
+    owner: "architect"
+    description: "本仓库内维护的顶层设计主文档"
+
+  - id: "remote-ddd-anchor"
+    type: "url"
+    location: "https://example.com/design/top-design-v1.2.0.md"
+    version: "v1.2.0"
+    owner: "architect"
+    description: "外部文档平台托管的顶层设计文档"
+
+  - id: "artifact-ddd-anchor"
+    type: "artifact"
+    location: "artifact://top-design/2026-04-07/design-pack.zip"
+    version: "v2.0.0-beta"
+    owner: "architect"
+    description: "通过上传产物提供的顶层设计包"

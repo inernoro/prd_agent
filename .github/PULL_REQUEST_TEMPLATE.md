@@ -1,4 +1,4 @@
-# PR 提交模板（DDD + Anchor + Vertical Slice）
+# PR 提交模板（DDD + Anchor + Vertical Slice + 外置设计源）
 
 > 说明：本模板用于“顶层设计裁决”流程。未完整填写必填项的 PR 将被自动判定为不合格提交。
 
@@ -11,12 +11,16 @@ anchor_refs: []          # 例如: [ANCHOR-101, ANCHOR-203]
 task_link:
 owner:
 skills_used: []          # 例如: [skill-a@1.0.0, skill-b@2.1.3]
+design_source_id:        # 设计源标识，例如: system-main
+design_source_version:   # 设计版本，例如: 2026.04.1
 ```
 
 ## 2) 需求与设计映射（必填）
 
 - 本 PR 解决的问题：
 - 与顶层设计的映射关系（必须对应 anchor_refs）：
+- 顶层设计包位置（URL/文件路径）：
+- 设计源校验方式（tag/commit-hash/checksum 任选其一）：
 - 本 PR 是否改变既有 DDD 边界：
   - [ ] 否
   - [ ] 是（若选“是”，必须在下方提供 ADR 链接）

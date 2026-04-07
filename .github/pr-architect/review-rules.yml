@@ -9,11 +9,13 @@ references:
   collaboration_guide: ".github/pr-architect/README.md"
   decision_card_template: ".github/pr-architect/decision-card-template.md"
   label_taxonomy: ".github/pr-architect/label-taxonomy.md"
-  top_design_docs:
-    - "doc/spec.srs.md"
-    - "doc/spec.prd.md"
+  design_sources_registry: ".github/pr-architect/design-sources.yml"
 
 required_pr_metadata:
+  - key: "design_source_id"
+    required: true
+  - key: "design_source_version"
+    required: true
   - key: "slice_id"
     required: true
   - key: "bounded_context"
@@ -32,6 +34,21 @@ hard_block_rules:
     severity: "block"
     condition: "any_required_pr_metadata_missing"
     message: "PR 元数据缺失，无法进行架构层裁决。"
+
+  - id: "design-source-unregistered"
+    severity: "block"
+    condition: "design_source_id_not_found_in_registry"
+    message: "design_source_id 未在设计源注册表中声明，无法建立顶设对齐基线。"
+
+  - id: "design-source-version-mismatch"
+    severity: "block"
+    condition: "design_source_version_not_active_or_not_allowed_for_design_source_id"
+    message: "PR 声明的设计源版本与注册表不一致。"
+
+  - id: "anchor-not-in-design-source"
+    severity: "block"
+    condition: "anchor_refs_not_resolved_in_declared_design_source"
+    message: "anchor_refs 无法在声明的设计源中解析。"
 
   - id: "unapproved-cross-context-coupling"
     severity: "block"
@@ -106,6 +123,7 @@ return_policy:
 architect_focus_questions:
   max_items: 3
   focus:
+    - "该 PR 是否对齐声明的 design_source_id 与 design_source_version"
     - "是否偏离既定 bounded context 边界"
     - "是否破坏 anchor 对应的核心约束"
     - "是否需要灰度、开关或分阶段发布"

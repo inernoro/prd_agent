@@ -2,32 +2,59 @@
 
 ## 1. 目标
 
-本目录用于支持“顶层设计者裁决”场景：
+本目录用于支持“顶层设计者裁决”场景，并且默认采用“顶层设计外部上传”模式：
 
+- 顶层设计文档不内置到 Agent 逻辑中
+- 通过设计包（bundle）实现跨项目复用
 - 开发者按垂直切片提交 PR
 - Agent 先进行预审并产出决策卡
 - 顶层设计者仅基于关键证据做合并决策
 
 目标是减少逐行审查成本，同时降低架构偏离与漏检风险。
 
-## 2. 角色分工
+## 2. 外部顶层设计上传机制
+
+### 2.1 设计包（Design Bundle）最小结构
+
+顶层设计者需要维护一个可版本化的设计包，建议包含：
+
+- `bundle_id`：设计包唯一标识
+- `bundle_version`：版本号（建议语义化）
+- `anchors_manifest`：锚定项清单（ID、约束、适用边界）
+- `slices_manifest`：垂直切片清单（slice 与 owner 映射）
+- `bounded_context_manifest`：上下文边界定义
+- `checksum`：设计包完整性校验值（如 sha256）
+
+### 2.2 激活方式
+
+仓库内仅存放“设计源注册信息”，不强制存放设计正文：
+
+- `design-sources.yml`：当前激活设计包引用
+- 设计正文可放在对象存储、知识库或独立仓库
+
+Agent 预审时从 `design-sources.yml` 获取当前生效版本，校验 PR 声明是否匹配。
+
+## 3. 角色分工
 
 - 顶层设计者（Architect）
   - 维护顶层设计约束（DDD、锚定项、上下文边界）
+  - 维护 `design-sources.yml` 的激活版本
   - 对 PR 做最终裁决：`Approve` / `Request Changes` / `Block`
 - 开发者（Slice Owner）
   - 只在分配的垂直切片内开发
   - 按 PR 模板完整提交元数据与测试证据
+  - 明确声明本 PR 绑定的 `design_source_id` 与 `design_source_version`
 - PR Agent（DDD-Anchor 裁决官）
+  - 先校验设计源是否可用、版本是否匹配
   - 执行硬规则门禁
   - 进行风险评分
   - 输出决策卡与退回建议
 
-## 3. 流程状态机
+## 4. 流程状态机
 
-`task-assigned -> dev-selfcheck -> pr-open -> agent-precheck -> architect-decision -> merge/rework`
+`task-assigned -> design-source-bound -> dev-selfcheck -> pr-open -> design-sync-gate -> agent-precheck -> architect-decision -> merge/rework`
 
-### 3.1 task-assigned
+### 4.1 task-assigned
 
 任务分配时必须绑定以下信息：
 
@@ -36,11 +63,25 @@
 - `anchor_refs`
 - `acceptance_criteria`
 
-### 3.2 pr-open
+### 4.2 design-source-bound
+
+顶层设计者确认并激活本轮使用的设计包（`design-sources.yml`）。
+
+### 4.3 pr-open
 
 开发者创建 PR 并填写模板必填字段，缺失字段视为不合格提交。
 
-### 3.3 agent-precheck
+### 4.4 design-sync-gate
+
+Agent 先校验以下条件：
+
+1. `design-sources.yml` 存在且字段完整
+2. PR 声明的 `design_source_id`、`design_source_version` 与激活版本一致
+3. `anchor_refs` 能在当前 anchor 清单中找到
+
+任一失败直接阻断，不进入下一阶段。
+
+### 4.5 agent-precheck
 
 Agent 按 `review-rules.yml` 执行：
 
@@ -48,11 +89,11 @@ Agent 按 `review-rules.yml` 执行：
 2. 软评分（生成风险级别与建议）
 3. 输出决策卡（`decision-card-template.md`）
 
-### 3.4 architect-decision
+### 4.6 architect-decision
 
 顶层设计者根据决策卡做最终判断，不再以逐行代码浏览为主。
 
-## 4. 裁决逻辑（Architect）
+## 5. 裁决逻辑（Architect）
 
 1. 若存在任意阻断项，直接 `Block`
 2. 否则根据风险分执行：
@@ -60,12 +101,13 @@ Agent 按 `review-rules.yml` 执行：
    - `21-49`: `Request Changes`
    - `>=50`: `Block`
 3. 对于连续两轮修订仍不达标的 PR，升级为 `Type C`（设计回炉）
+4. 若设计包版本不一致或锚定项无法解析，优先按 `Type C` 处理
 
-## 5. 退回机制（PR 不符合预期）
+## 6. 退回机制（PR 不符合预期）
 
 所有退回必须使用统一结构，禁止模糊反馈。
 
-### 5.1 退回单结构
+### 6.1 退回单结构
 
 1. 结论（`Request Changes` 或 `Block`）
 2. 证据（文件/模块/行为）
@@ -73,15 +115,17 @@ Agent 按 `review-rules.yml` 执行：
 4. 期望改法（可执行）
 5. 重审条件（可验证）
 
-### 5.2 退回类型
+### 6.2 退回类型
 
 - Type A：同 PR 修复（局部问题）
 - Type B：拆分 PR（范围失控，需拆切片）
-- Type C：设计回炉（与顶设冲突，需先补 ADR）
+- Type C：设计回炉（与顶设冲突，需先补 ADR 或修正设计包绑定）
 
-## 6. 文件说明
+## 7. 文件说明
 
-- `../PULL_REQUEST_TEMPLATE.md`：开发者提交模板
+- `../PULL_REQUEST_TEMPLATE.md`：开发者提交模板（包含设计包绑定字段）
 - `review-rules.yml`：门禁规则、风险评分与退回策略
 - `decision-card-template.md`：Agent 输出卡模板
 - `label-taxonomy.md`：标签规范与自动化策略
+- `design-sources.yml`：当前生效的顶层设计包引用
+- `design-sources.example.yml`：设计源注册示例
