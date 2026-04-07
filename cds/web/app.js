@@ -2869,7 +2869,7 @@ async function openSelfUpdate() {
       </div>
     </div>
     <div class="form-row" style="margin-top:4px;font-size:12px;color:var(--fg-muted)">
-      当前分支：<code>${esc(current)}</code>${commitHash ? ` @ <code style="color:var(--blue)">${esc(commitHash)}</code>` : ''}
+      当前分支：<code style="word-break:break-all">${esc(current)}</code>${commitHash ? `<span style="white-space:nowrap"> @ <code style="color:var(--blue)">${esc(commitHash)}</code></span>` : ''}
     </div>
     <div id="selfUpdateProgress" style="display:none;margin-top:12px">
       <div id="selfUpdateSteps" style="display:flex;flex-direction:column;gap:6px"></div>
