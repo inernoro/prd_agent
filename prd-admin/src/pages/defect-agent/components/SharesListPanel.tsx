@@ -301,7 +301,7 @@ export function SharesListPanel({ open, onClose, autoOpenShareId }: SharesListPa
               className="w-full"
             >
               {batchLoading ? <MapSpinner size={14} /> : <Zap size={14} />}
-              {batchLoading ? '创建中...' : '一键分享所有缺陷（AI 评分）'}
+              {batchLoading ? '创建中...' : '一键分享所有打开的缺陷（AI 评分）'}
             </Button>
 
             {loading && <p className="text-sm" style={{ color: 'var(--text-muted)' }}>加载中...</p>}

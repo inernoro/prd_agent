@@ -2483,6 +2483,9 @@ public class DefectAgentController : ControllerBase
         List<DefectReport> defects;
         string title;
 
+        // 只分享打开的缺陷（排除已关闭和已驳回）
+        var closedStatuses = new[] { DefectStatus.Closed, DefectStatus.Rejected };
+
         if (!string.IsNullOrWhiteSpace(request.ProjectId))
         {
             var project = await _db.DefectProjects.Find(x => x.Id == request.ProjectId).FirstOrDefaultAsync(ct);
@@ -2490,30 +2493,32 @@ public class DefectAgentController : ControllerBase
                 return NotFound(ApiResponse<object>.Fail(ErrorCodes.DOCUMENT_NOT_FOUND, "项目不存在"));
 
             defects = await _db.DefectReports
-                .Find(x => x.ProjectId == request.ProjectId && !x.IsDeleted)
+                .Find(x => x.ProjectId == request.ProjectId && !x.IsDeleted && !closedStatuses.Contains(x.Status))
                 .SortByDescending(x => x.CreatedAt)
                 .Limit(200)
                 .ToListAsync(ct);
 
-            title = $"项目「{project.Name}」全部缺陷分享（AI 评分）";
+            title = $"项目「{project.Name}」打开的缺陷分享（AI 评分）";
         }
         else if (!string.IsNullOrWhiteSpace(request.FolderId))
         {
             defects = await _db.DefectReports
-                .Find(x => x.FolderId == request.FolderId && !x.IsDeleted)
+                .Find(x => x.FolderId == request.FolderId && !x.IsDeleted && !closedStatuses.Contains(x.Status))
                 .SortByDescending(x => x.CreatedAt)
                 .Limit(200)
                 .ToListAsync(ct);
 
-            title = request.Title?.Trim() ?? "缺陷批量分享（AI 评分）";
+            title = request.Title?.Trim() ?? "打开的缺陷批量分享（AI 评分）";
         }
         else
         {
             // 分享当前用户能看到的所有缺陷
             var isAdmin = HasManagePermission();
-            var filter = isAdmin
+            var statusFilter = Builders<DefectReport>.Filter.Nin(x => x.Status, closedStatuses);
+            var baseFilter = isAdmin
                 ? Builders<DefectReport>.Filter.Where(x => !x.IsDeleted)
                 : Builders<DefectReport>.Filter.Where(x => !x.IsDeleted && (x.ReporterId == userId || x.AssigneeId == userId));
+            var filter = baseFilter & statusFilter;
 
             defects = await _db.DefectReports
                 .Find(filter)
@@ -2521,7 +2526,7 @@ public class DefectAgentController : ControllerBase
                 .Limit(200)
                 .ToListAsync(ct);
 
-            title = request.Title?.Trim() ?? "全部缺陷分享（AI 评分）";
+            title = request.Title?.Trim() ?? "全部打开的缺陷分享（AI 评分）";
         }
 
         if (defects.Count == 0)
