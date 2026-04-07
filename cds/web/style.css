@@ -1054,6 +1054,11 @@ button.text-btn:hover { color: var(--accent); }
   transition: color var(--transition);
 }
 a.branch-name:hover { color: var(--accent); }
+/* Dim branch name when not deployed */
+.branch-card.status-idle .branch-name,
+.branch-card.status-error .branch-name { opacity: 0.5; }
+.branch-card.status-idle .branch-name:hover,
+.branch-card.status-error .branch-name:hover { opacity: 1; }
 /* Quick actions (copy + jump) — visible on row hover, uses visibility to avoid layout shift */
 .branch-quick-actions {
   display: inline-flex; gap: 2px; align-items: center; flex-shrink: 0;
