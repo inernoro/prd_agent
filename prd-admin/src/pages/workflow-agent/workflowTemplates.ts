@@ -322,7 +322,7 @@ var aiFeeMonthlyStats = Object.keys(aiFeeMap).sort().map(function(month, idx, ar
 });
 
 result = {
-  title: "TAPD 缺陷质量分析报告",
+  title: "技术月度简报",
   generatedAt: ts,
   total: total,
   kpis: [

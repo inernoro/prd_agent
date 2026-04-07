@@ -135,7 +135,7 @@ H.push('</style></head><body>');
 // HERO HEADER
 // ═══════════════════════════════════════════════════════════════
 H.push('<header class="hero"><div class="ctn">');
-H.push('<div class="hero-title">' + (d.title || "TAPD 缺陷质量分析报告") + '</div>');
+H.push('<div class="hero-title">' + (d.title || "技术月度简报") + '</div>');
 H.push('<div class="hero-divider"></div>');
 H.push('<div class="hero-sub">');
 H.push('<span>&#128197; 生成时间：' + (d.generatedAt || "") + '</span>');
