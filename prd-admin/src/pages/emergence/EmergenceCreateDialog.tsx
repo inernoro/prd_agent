@@ -3,7 +3,6 @@ import { createEmergenceTree, getDocumentContent } from '@/services';
 import { TreePine, X, Upload, FileText, Loader2, Keyboard } from 'lucide-react';
 import { Button } from '@/components/design/Button';
 import { glassPanel } from '@/lib/glassStyles';
-import { GlassCard } from '@/components/design/GlassCard';
 
 interface Props {
   onClose: () => void;

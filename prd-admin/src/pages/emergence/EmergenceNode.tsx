@@ -1,7 +1,6 @@
 import { memo, useMemo } from 'react';
 import { Handle, Position, type NodeProps } from '@xyflow/react';
 import { Sparkle, Zap, Star, Search, CheckCircle2, Pencil, Clock, Lightbulb, AlertTriangle } from 'lucide-react';
-import { Button } from '@/components/design/Button';
 
 // ── 节点数据类型 ──
 export interface EmergenceNodeData {

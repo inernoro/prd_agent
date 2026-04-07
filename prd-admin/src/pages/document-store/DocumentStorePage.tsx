@@ -2,20 +2,15 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   Library,
   Plus,
-  FileText,
   Upload,
-  Search,
-  Trash2,
-  Sparkle,
   Loader2,
   FolderOpen,
   ArrowLeft,
   X,
-  File,
-  RefreshCw,
   Rss,
-  Globe,
   Github,
+  Sparkle,
+  Trash2,
 } from 'lucide-react';
 import { GlassCard } from '@/components/design/GlassCard';
 import { TabBar } from '@/components/design/TabBar';
@@ -26,31 +21,21 @@ import {
   createDocumentStore,
   deleteDocumentStore,
   listDocumentEntries,
-  deleteDocumentEntry,
   uploadDocumentFile,
   getDocumentContent,
   addSubscription,
   addGitHubSubscription,
   setPrimaryEntry,
   createFolder,
-  triggerSync,
 } from '@/services';
 import { DocBrowser } from '@/components/doc-browser/DocBrowser';
 import type {
   DocumentStore,
   DocumentEntry,
 } from '@/services/contracts/documentStore';
-import { useNavigate } from 'react-router-dom';
 import { toast } from '@/lib/toast';
 
 const ACCEPT_TYPES = '.md,.txt,.pdf,.doc,.docx,.json,.yaml,.yml,.csv';
-
-function formatFileSize(bytes: number): string {
-  if (bytes === 0) return '0 B';
-  const units = ['B', 'KB', 'MB', 'GB'];
-  const i = Math.floor(Math.log(bytes) / Math.log(1024));
-  return `${(bytes / Math.pow(1024, i)).toFixed(i > 0 ? 1 : 0)} ${units[i]}`;
-}
 
 // ── 创建空间对话框 ──
 function CreateStoreDialog({ onClose, onCreated }: {
@@ -140,138 +125,7 @@ function CreateStoreDialog({ onClose, onCreated }: {
   );
 }
 
-// ── 文档条目详情面板（含内容预览 + 同步控制）──
-function EntryDetailPanel({ entry, onClose, onDelete, onUpdate }: {
-  entry: DocumentEntry;
-  onClose: () => void;
-  onDelete: (entryId: string) => void;
-  onUpdate?: (entry: DocumentEntry) => void;
-}) {
-  const navigate = useNavigate();
-  const [content, setContent] = useState<string | null>(null);
-  const [contentLoading, setContentLoading] = useState(false);
-  const [showContent, setShowContent] = useState(false);
-  const [syncing, setSyncing] = useState(false);
-
-  const loadContent = useCallback(async () => {
-    setContentLoading(true);
-    const res = await getDocumentContent(entry.id);
-    if (res.success && res.data.hasContent) {
-      setContent(res.data.content);
-    } else {
-      setContent(null);
-    }
-    setContentLoading(false);
-    setShowContent(true);
-  }, [entry.id]);
-
-  const handleSync = useCallback(async () => {
-    setSyncing(true);
-    const res = await triggerSync(entry.id);
-    if (res.success) {
-      toast.info('同步已触发', '后台正在拉取最新内容…');
-    } else {
-      toast.error('同步失败', res.error?.message);
-    }
-    setSyncing(false);
-  }, [entry.id]);
-
-  const isSubscription = entry.sourceType === 'subscription';
-
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center"
-      style={{ background: 'rgba(0,0,0,0.5)', backdropFilter: 'blur(8px)' }}
-      onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
-      <div className="w-[520px] max-w-[92vw] max-h-[80vh] rounded-[16px] p-6 overflow-y-auto"
-        style={{
-          background: 'linear-gradient(180deg, var(--glass-bg-start) 0%, var(--glass-bg-end) 100%)',
-          border: '1px solid rgba(255,255,255,0.08)',
-          backdropFilter: 'blur(40px) saturate(180%)',
-          boxShadow: '0 24px 48px -12px rgba(0,0,0,0.5)',
-        }}>
-        <div className="flex items-center justify-between mb-4">
-          <h3 className="text-[15px] font-semibold" style={{ color: 'var(--text-primary)' }}>{entry.title}</h3>
-          <button onClick={onClose}
-            className="w-7 h-7 rounded-[8px] flex items-center justify-center cursor-pointer hover:bg-white/6 transition-colors duration-200"
-            style={{ color: 'var(--text-muted)' }}>
-            <X size={15} />
-          </button>
-        </div>
-
-        {entry.summary && (
-          <p className="text-[12px] leading-[1.6] mb-4" style={{ color: 'var(--text-secondary)' }}>{entry.summary}</p>
-        )}
-
-        <div className="space-y-2 mb-4">
-          {[
-            { label: '来源', value: isSubscription ? `订阅源` : entry.sourceType },
-            ...(isSubscription && entry.sourceUrl ? [{ label: '源地址', value: entry.sourceUrl }] : []),
-            { label: '类型', value: entry.contentType || '未知' },
-            { label: '大小', value: formatFileSize(entry.fileSize) },
-            { label: '创建时间', value: new Date(entry.createdAt).toLocaleString() },
-            ...(entry.lastSyncAt ? [{ label: '上次同步', value: new Date(entry.lastSyncAt).toLocaleString() }] : []),
-            ...(entry.syncStatus && entry.syncStatus !== 'idle' ? [{ label: '同步状态', value: entry.syncStatus === 'error' ? `错误: ${entry.syncError || '未知'}` : entry.syncStatus }] : []),
-          ].map(r => (
-            <div key={r.label} className="flex items-center justify-between text-[12px] gap-2">
-              <span className="flex-shrink-0" style={{ color: 'var(--text-muted)' }}>{r.label}</span>
-              <span className="truncate text-right" style={{ color: 'var(--text-secondary)' }}>{r.value}</span>
-            </div>
-          ))}
-        </div>
-
-        {entry.tags.length > 0 && (
-          <div className="flex flex-wrap gap-1.5 mb-4">
-            {entry.tags.map(t => (
-              <span key={t} className="px-2 py-0.5 rounded-[6px] text-[10px]"
-                style={{ background: 'rgba(59,130,246,0.08)', border: '1px solid rgba(59,130,246,0.12)', color: 'rgba(59,130,246,0.85)' }}>
-                {t}
-              </span>
-            ))}
-          </div>
-        )}
-
-        {/* 内容预览 */}
-        {!showContent ? (
-          <button onClick={loadContent} disabled={contentLoading}
-            className="w-full py-2.5 rounded-[10px] text-[12px] font-semibold cursor-pointer transition-colors duration-200 mb-4"
-            style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.08)', color: 'var(--text-secondary)' }}>
-            {contentLoading ? '加载中…' : '查看文档内容'}
-          </button>
-        ) : content ? (
-          <div className="mb-4 p-3 rounded-[10px] max-h-[300px] overflow-y-auto"
-            style={{ background: 'rgba(0,0,0,0.2)', border: '1px solid rgba(255,255,255,0.06)' }}>
-            <pre className="text-[11px] leading-[1.6] whitespace-pre-wrap break-words" style={{ color: 'var(--text-secondary)' }}>
-              {content.slice(0, 5000)}{content.length > 5000 ? '\n\n…（内容过长，已截取前 5000 字符）' : ''}
-            </pre>
-          </div>
-        ) : (
-          <p className="text-[11px] mb-4" style={{ color: 'var(--text-muted)' }}>无文本内容（可能是二进制文件）</p>
-        )}
-
-        <div className="flex justify-between gap-2 pt-3" style={{ borderTop: '1px solid rgba(255,255,255,0.06)' }}>
-          <div className="flex gap-2">
-            <Button variant="primary" size="xs" onClick={() => {
-              onClose();
-              navigate(`/emergence?seedSourceType=document&seedSourceId=${entry.id}&seedTitle=${encodeURIComponent(entry.title)}`);
-            }}>
-              <Sparkle size={13} /> 涌现
-            </Button>
-            {isSubscription && (
-              <Button variant="secondary" size="xs" onClick={handleSync} disabled={syncing}>
-                {syncing ? <Loader2 size={13} className="animate-spin" /> : <RefreshCw size={13} />}
-                同步
-              </Button>
-            )}
-          </div>
-          <Button variant="ghost" size="xs" onClick={() => { onDelete(entry.id); onClose(); }}
-            style={{ color: 'rgba(239,68,68,0.7)' }}>
-            <Trash2 size={13} /> 删除
-          </Button>
-        </div>
-      </div>
-    </div>
-  );
-}
+// ── 文档条目详情面板已移除，由 DocBrowser 替代 ──
 
 // ── 空间详情视图（文档列表 + 上传）──
 function StoreDetailView({ store: initialStore, onBack }: {

@@ -146,7 +146,7 @@ interface CanvasProps { treeId: string; onBack: () => void }
 
 function EmergenceCanvasInner({ treeId, onBack }: CanvasProps) {
   const [nodes, setNodes, onNodesChange] = useNodesState<Node<EmergenceNodeData>>([]);
-  const [edges, setEdges, onEdgesChange] = useEdgesState([]);
+  const [edges, setEdges, onEdgesChange] = useEdgesState([] as Edge[]);
   const [treeTitle, setTreeTitle] = useState('');
   const [nodeCount, setNodeCount] = useState(0);
 
@@ -383,7 +383,7 @@ function EmergenceCanvasInner({ treeId, onBack }: CanvasProps) {
                     </div>
                     {/* 进度指示 */}
                     <div className="flex gap-1.5 mt-3 justify-center">
-                      {['seed', 'explored', 'emerged'].map((s, i) => (
+                      {['seed', 'explored', 'emerged'].map((s) => (
                         <div key={s} className="h-1 rounded-full transition-all duration-300"
                           style={{
                             width: s === guideStep ? 20 : 6,
