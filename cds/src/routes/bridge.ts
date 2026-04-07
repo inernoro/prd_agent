@@ -20,10 +20,7 @@ export function createBridgeRouter(deps: BridgeRouterDeps): Router {
 
   // ── Widget endpoints ──
 
-  // POST /api/bridge/heartbeat — Widget heartbeat (long-polling)
-  // If a command is ready, returns immediately. Otherwise holds the request
-  // open for up to 10 seconds, returning instantly when a command arrives.
-  // This eliminates the 3-second polling gap — commands are delivered in ~50ms.
+  // POST /api/bridge/heartbeat — Widget heartbeat (fast polling, 500ms interval)
   router.post('/heartbeat', (req, res) => {
     const { branchId, state } = req.body || {};
     if (!branchId) {
@@ -31,33 +28,7 @@ export function createBridgeRouter(deps: BridgeRouterDeps): Router {
       return;
     }
     const result = bridgeService.heartbeat(branchId, state || null);
-
-    // If there's already a command, return immediately
-    if (result.command) {
-      res.json(result);
-      return;
-    }
-
-    // No command — long-poll: wait up to 10s for a command to arrive
-    const startTime = Date.now();
-    const maxWait = 10_000;
-    const checkInterval = 100; // check every 100ms
-
-    const poller = setInterval(() => {
-      const cmd = bridgeService.pollCommand(branchId);
-      if (cmd) {
-        clearInterval(poller);
-        if (!res.headersSent) res.json({ command: cmd });
-        return;
-      }
-      if (Date.now() - startTime >= maxWait) {
-        clearInterval(poller);
-        if (!res.headersSent) res.json({ command: null });
-      }
-    }, checkInterval);
-
-    // Client disconnect cleanup
-    req.on('close', () => { clearInterval(poller); });
+    res.json(result);
   });
 
   // POST /api/bridge/result — Widget submits command execution result
