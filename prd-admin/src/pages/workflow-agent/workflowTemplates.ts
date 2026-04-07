@@ -269,14 +269,60 @@ data.forEach(function(i) {
     }
   });
 });
+var aiFeeDocLinks = docLinks.filter(function(dl) {
+  var u = String(dl.url || "").toLowerCase();
+  return u.indexOf("ai") >= 0 || u.indexOf("fee") >= 0 || u.indexOf("service") >= 0 || u.indexOf("账单") >= 0 || u.indexOf("费用") >= 0;
+}).slice(0, 8).map(function(dl, idx) {
+  return {
+    url: dl.url,
+    label: dl.fromBug ? ("来源缺陷：" + dl.fromBug) : ("费用依据链接 " + (idx + 1))
+  };
+});
 
 // 时间戳
 var now = new Date();
 var pad = function(n) { return String(n).padStart(2, "0"); };
 var ts = now.getFullYear()+"-"+pad(now.getMonth()+1)+"-"+pad(now.getDate())+" "+pad(now.getHours())+":"+pad(now.getMinutes());
+var reportMonth = now.getFullYear()+"-"+pad(now.getMonth()+1);
+
+// AI 技术服务费逐月统计（用于技术专业委员会月度简报）
+var aiFeeMap = {};
+var parseMoney = function(v) {
+  if (v === undefined || v === null) return null;
+  var num = parseFloat(String(v).replace(/[^0-9.-]/g, ""));
+  return isNaN(num) ? null : num;
+};
+data.forEach(function(i) {
+  var feeVal = i["AI技术服务费"];
+  if (feeVal === undefined || feeVal === null || feeVal === "") feeVal = i["AI 技术服务费"];
+  if (feeVal === undefined || feeVal === null || feeVal === "") feeVal = i["AI服务费"];
+  var feeNum = parseMoney(feeVal);
+  if (feeNum === null) return;
+
+  var monthRaw = String(i["创建时间"] || i["创建日期"] || "").trim();
+  var monthKey = /^\\d{4}-\\d{2}/.test(monthRaw) ? monthRaw.slice(0, 7) : reportMonth;
+  aiFeeMap[monthKey] = (aiFeeMap[monthKey] || 0) + feeNum;
+});
+if (Object.keys(aiFeeMap).length === 0) aiFeeMap[reportMonth] = 0;
+var aiFeeMonthlyStats = Object.keys(aiFeeMap).sort().map(function(month, idx, arr) {
+  var amount = parseFloat((aiFeeMap[month] || 0).toFixed(2));
+  var prevMonth = idx > 0 ? arr[idx - 1] : "";
+  var prevAmount = prevMonth ? (aiFeeMap[prevMonth] || 0) : 0;
+  var momRate = prevMonth && prevAmount !== 0 ? parseFloat((((amount - prevAmount) / prevAmount) * 100).toFixed(2)) : null;
+  return {
+    month: month,
+    amount: amount,
+    prevMonth: prevMonth || "-",
+    prevAmount: parseFloat(prevAmount.toFixed(2)),
+    momRate: momRate,
+    analysis: momRate === null
+      ? "作为月度基线值，后续按月持续对比"
+      : (momRate >= 0 ? "较上月上升 " + momRate + "%" : "较上月下降 " + Math.abs(momRate) + "%")
+  };
+});
 
 result = {
-  title: "TAPD 缺陷质量分析报告",
+  title: "技术月度简报",
   generatedAt: ts,
   total: total,
   kpis: [
@@ -294,6 +340,12 @@ result = {
   problemItems: problemItems,
   defectDetails: defectDetails,
   docLinks: docLinks,
+  // 技术专业委员会月报刚性要求（固定项）
+  monthlyBriefingRequirements: [
+    { code: "1p", text: "AI技术服务费要列入技术专业委员会月度简报内逐月统计分析" }
+  ],
+  aiServiceFeeMonthlyStats: aiFeeMonthlyStats,
+  aiServiceFeeLinks: aiFeeDocLinks,
   summary: summary,
   verification: {
     severityOk: p0.length+p1.length+p2.length+p3.length+p4.length <= techBugs.length,
