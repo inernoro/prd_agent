@@ -1299,6 +1299,8 @@ a.branch-name:hover { color: var(--accent); }
   transition: all var(--transition);
 }
 .branch-tag:hover { background: rgba(179, 136, 255, 0.15); border-color: rgba(179, 136, 255, 0.3); }
+.branch-tag-dim { color: var(--text-muted); background: transparent; border-color: var(--border); opacity: 0.5; }
+.branch-tag-dim:hover { color: var(--purple); background: rgba(179, 136, 255, 0.08); border-color: rgba(179, 136, 255, 0.18); opacity: 1; }
 .branch-tag svg.inline-icon { width: 11px; height: 11px; }
 .branch-tag-remove {
   display: inline-flex; align-items: center; justify-content: center;

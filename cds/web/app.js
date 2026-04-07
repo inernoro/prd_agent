@@ -2103,12 +2103,13 @@ function renderBranches() {
               </span>`;
     }).join('') : '';
 
-    // Tags — shown below header
+    // Tags — shown below header (dimmed when not deployed)
     const branchTags = b.tags || [];
+    const tagDimClass = isRunning ? '' : ' branch-tag-dim';
     const tagsHtml = `
       <div class="branch-tags-line">
         ${branchTags.map(t => `
-          <span class="branch-tag" onclick="event.stopPropagation(); filterByTag('${esc(t)}')" title="筛选标签: ${esc(t)}">
+          <span class="branch-tag${tagDimClass}" onclick="event.stopPropagation(); filterByTag('${esc(t)}')" title="筛选标签: ${esc(t)}">
             ${ICON.tag} ${esc(t)}
             <span class="branch-tag-remove" onclick="event.stopPropagation(); removeTagFromBranch('${esc(b.id)}', '${esc(t)}', event)" title="删除标签">&times;</span>
           </span>
