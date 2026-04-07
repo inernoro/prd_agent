@@ -338,7 +338,7 @@ public class DocumentStoreController : ControllerBase
 
         var total = await _db.DocumentEntries.CountDocumentsAsync(filter);
         var items = await _db.DocumentEntries.Find(filter)
-            .SortBy(e => e.IsFolder ? 0 : 1) // 文件夹优先
+            .SortByDescending(e => e.IsFolder) // 文件夹优先
             .ThenByDescending(e => e.CreatedAt)
             .Skip((page - 1) * pageSize)
             .Limit(pageSize)
