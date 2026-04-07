@@ -247,7 +247,7 @@ function EntryDetailPanel({ entry, onClose, onDelete, onUpdate }: {
           <div className="flex gap-2">
             <Button variant="primary" size="xs" onClick={() => {
               onClose();
-              navigate(`/emergence?seedSourceType=document&seedSourceId=${entry.id}&seedContent=${encodeURIComponent(entry.title)}`);
+              navigate(`/emergence?seedSourceType=document&seedSourceId=${entry.id}&seedTitle=${encodeURIComponent(entry.title)}`);
             }}>
               <Sparkle size={13} /> 涌现
             </Button>
@@ -466,7 +466,7 @@ function StoreDetailView({ store, onBack }: {
                       title="从此文档涌现"
                       onClick={(e) => {
                         e.stopPropagation();
-                        navigate(`/emergence?seedSourceType=document&seedSourceId=${entry.id}&seedContent=${encodeURIComponent(entry.title)}`);
+                        navigate(`/emergence?seedSourceType=document&seedSourceId=${entry.id}&seedTitle=${encodeURIComponent(entry.title)}`);
                       }}
                       style={{ color: 'rgba(147,51,234,0.7)' }}>
                       <Sparkle size={14} />

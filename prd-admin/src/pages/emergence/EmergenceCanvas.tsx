@@ -411,14 +411,14 @@ export function EmergenceExplorerPage() {
   const [loading, setLoading] = useState(true);
 
   // 从文档空间跳转来的参数
-  const seedFromUrl = searchParams.get('seedContent');
+  const seedTitle = searchParams.get('seedTitle');
   const seedSourceType = searchParams.get('seedSourceType');
   const seedSourceId = searchParams.get('seedSourceId');
 
   // 自动打开创建对话框（如果有 URL 参数）
   useEffect(() => {
-    if (seedFromUrl) setShowCreate(true);
-  }, [seedFromUrl]);
+    if (seedSourceId) setShowCreate(true);
+  }, [seedSourceId]);
 
   const loadTrees = useCallback(async () => {
     setLoading(true);
@@ -559,15 +559,14 @@ export function EmergenceExplorerPage() {
         <EmergenceCreateDialog
           onClose={() => {
             setShowCreate(false);
-            // 清除 URL 参数
-            if (seedFromUrl) setSearchParams({}, { replace: true });
+            if (seedSourceId) setSearchParams({}, { replace: true });
           }}
           onCreated={(treeId) => {
             setShowCreate(false);
             setSelectedTreeId(treeId);
-            if (seedFromUrl) setSearchParams({}, { replace: true });
+            if (seedSourceId) setSearchParams({}, { replace: true });
           }}
-          initialSeedContent={seedFromUrl ? decodeURIComponent(seedFromUrl) : undefined}
+          initialSeedTitle={seedTitle ? decodeURIComponent(seedTitle) : undefined}
           initialSeedSourceType={seedSourceType ?? undefined}
           initialSeedSourceId={seedSourceId ?? undefined}
         />

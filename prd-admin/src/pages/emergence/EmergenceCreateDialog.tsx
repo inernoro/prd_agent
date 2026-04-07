@@ -1,5 +1,5 @@
-import { useState, useCallback, useRef } from 'react';
-import { createEmergenceTree, listEmergenceTrees } from '@/services';
+import { useState, useCallback, useRef, useEffect } from 'react';
+import { createEmergenceTree, getDocumentContent } from '@/services';
 import { TreePine, X, Upload, FileText, Loader2, Keyboard } from 'lucide-react';
 import { Button } from '@/components/design/Button';
 import { glassPanel } from '@/lib/glassStyles';
@@ -8,9 +8,10 @@ import { GlassCard } from '@/components/design/GlassCard';
 interface Props {
   onClose: () => void;
   onCreated: (treeId: string) => void;
-  /** 从文档空间跳转来时预填的种子内容 */
-  initialSeedContent?: string;
+  /** 从文档空间跳转来时预填的标题 */
+  initialSeedTitle?: string;
   initialSeedSourceType?: string;
+  /** 文档条目 ID — 有值时自动拉取文档全文作为种子 */
   initialSeedSourceId?: string;
 }
 
@@ -28,16 +29,33 @@ function readFileAsText(file: File): Promise<string> {
   });
 }
 
-export function EmergenceCreateDialog({ onClose, onCreated, initialSeedContent, initialSeedSourceType, initialSeedSourceId }: Props) {
-  const [title, setTitle] = useState(initialSeedContent ?? '');
-  const [seedContent, setSeedContent] = useState(initialSeedContent ?? '');
+export function EmergenceCreateDialog({ onClose, onCreated, initialSeedTitle, initialSeedSourceType, initialSeedSourceId }: Props) {
+  const [title, setTitle] = useState(initialSeedTitle ?? '');
+  const [seedContent, setSeedContent] = useState('');
   const [seedSourceType, setSeedSourceType] = useState<string>(initialSeedSourceType ?? 'text');
   const [injectSystem, setInjectSystem] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [fetchingDoc, setFetchingDoc] = useState(false);
 
   // 输入模式 — 从文档跳转来时自动切到手动输入模式
-  const [activeMode, setActiveMode] = useState<InputMode>(initialSeedContent ? 'text' : 'upload');
+  const [activeMode, setActiveMode] = useState<InputMode>(initialSeedSourceId ? 'text' : 'upload');
+
+  // 从文档空间跳转来时，自动拉取文档全文
+  useEffect(() => {
+    if (!initialSeedSourceId) return;
+    setFetchingDoc(true);
+    (async () => {
+      const res = await getDocumentContent(initialSeedSourceId);
+      if (res.success && res.data.content) {
+        setSeedContent(res.data.content);
+        if (!title && res.data.title) setTitle(res.data.title);
+      } else {
+        setError('无法加载文档内容，请手动输入');
+      }
+      setFetchingDoc(false);
+    })();
+  }, [initialSeedSourceId]);
 
   // 文件上传
   const [dragging, setDragging] = useState(false);
@@ -305,18 +323,26 @@ export function EmergenceCreateDialog({ onClose, onCreated, initialSeedContent, 
 
           {/* 手动输入模式 */}
           {activeMode === 'text' && (
-            <textarea
-              value={seedContent}
-              onChange={e => { setSeedContent(e.target.value); setSeedSourceType('text'); }}
-              placeholder={'输入一段文档、产品方案、功能标题、或一段对话…'}
-              rows={5}
-              className="w-full px-3 py-2.5 rounded-[10px] text-[13px] outline-none resize-y leading-[1.6] transition-colors duration-200"
-              style={{
-                background: 'var(--input-bg, rgba(255,255,255,0.05))',
-                border: '1px solid var(--border-subtle, rgba(255,255,255,0.1))',
-                color: 'var(--text-primary)',
-              }}
-            />
+            fetchingDoc ? (
+              <div className="flex items-center justify-center py-8 rounded-[10px]"
+                style={{ background: 'var(--input-bg, rgba(255,255,255,0.05))', border: '1px solid var(--border-subtle, rgba(255,255,255,0.1))' }}>
+                <Loader2 size={16} className="animate-spin mr-2" style={{ color: 'var(--text-muted)' }} />
+                <span className="text-[12px]" style={{ color: 'var(--text-muted)' }}>正在加载文档内容…</span>
+              </div>
+            ) : (
+              <textarea
+                value={seedContent}
+                onChange={e => { setSeedContent(e.target.value); setSeedSourceType('text'); }}
+                placeholder={'输入一段文档、产品方案、功能标题、或一段对话…'}
+                rows={seedContent.length > 500 ? 8 : 5}
+                className="w-full px-3 py-2.5 rounded-[10px] text-[13px] outline-none resize-y leading-[1.6] transition-colors duration-200"
+                style={{
+                  background: 'var(--input-bg, rgba(255,255,255,0.05))',
+                  border: '1px solid var(--border-subtle, rgba(255,255,255,0.1))',
+                  color: 'var(--text-primary)',
+                }}
+              />
+            )
           )}
 
           {/* 种子预览（上传或选择后显示） */}
