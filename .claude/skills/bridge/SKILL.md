@@ -123,7 +123,48 @@ curl -sf ... -d '{"action":"scroll","params":{"direction":"down","pixels":500},"
 3. **操作面板**：Badge 上方弹出步骤列表（◎执行中 → ✓完成 / ✗失败）
 4. **导航请求**：蓝色发光面板提示用户打开页面
 
+## 使用方式
+
+### Agent 自动触发
+
+当 Agent 需要验证页面效果（如部署后检查 UI、操作 Agent 功能）时，Agent 自行调用 Bridge API。用户无需做任何配置，只需**在浏览器中打开预览页面**即可。
+
+### 用户手动触发
+
+在 Claude Code 中输入 `/bridge` 或说"操作页面"、"帮我操作"，Agent 会进入 Bridge 操作模式。
+
+### 完整操作流程
+
+```
+1. 用户打开预览页：https://{branch-id}.miduo.org/
+2. Agent 调用 start-session → Widget 激活（左下角出现蓝色指示点）
+3. Agent 发送操作指令 → 用户看到鼠标移动 + 目标高亮 + 操作面板
+4. Agent 调用 end-session → Widget 显示"✅ AI 操作完成"后恢复静默
+```
+
+### 用户需要配合的动作
+
+| 场景 | 用户操作 |
+|------|---------|
+| 首次使用 | 在浏览器中打开预览页面 |
+| 收到导航请求 | 点击 Widget 弹出的"打开页面"按钮 |
+| 需要登录 | 无需操作——Agent 会自动输入账号密码并点击登录 |
+| 操作结束 | 无需操作——Agent 会自动 end-session |
+
+## 已知局限
+
+| # | 局限 | 表现 | 规避方式 |
+|---|------|------|---------|
+| 1 | **`navigate` 会丢 session** | 全页面刷新清空 sessionStorage | 登录后只用 `spa-navigate` 或 `click` |
+| 2 | **首页 Agent 卡片文字为空** | DOM 提取拿不到图片/CSS 渲染的内容 | 用 `evaluate` 搜索 textContent 并点击 |
+| 3 | **操作不触发 `:hover` 效果** | 合成事件不触发 CSS 伪类 | 不影响功能，仅视觉差异 |
+| 4 | **命令最大延迟 ~500ms** | 轮询间隔决定（非即时） | 对自动化场景可接受 |
+| 5 | **需要用户打开页面** | Agent 不能自行打开浏览器 | Agent 发 navigate-request，用户点击打开 |
+| 6 | **页面刷新后需重新激活** | navigate 或手动刷新会销毁 Widget | Agent 检测到断连后重新 start-session |
+| 7 | **鼠标动画是渲染层叠加** | 非真实系统光标（与 Manus/page-agent 相同） | 不影响操作，仅视觉表演 |
+| 8 | **模板字符串中不能用正则** | `\/` 在 TS 模板中转义失效 | Widget 代码中用字符串方法替代正则 |
+
 ## 相关文档
 
-- `doc/design.page-agent-bridge.md` — 技术设计
-- `.claude/rules/bridge-ops.md` — 操作规范（按需加载）
+- `doc/design.page-agent-bridge.md` — 技术设计（架构图 + 数据流 + 超时参数）
+- `.claude/rules/bridge-ops.md` — 操作规范（按需加载，编辑 `cds/src/**/*.ts` 时触发）

@@ -142,7 +142,7 @@ function resolveApiLabel(method: string, path: string): string {
     [/^POST \/ai\/approve\/(.+)$/, '批准 AI 连接'],
     [/^POST \/ai\/reject\/(.+)$/, '拒绝 AI 连接'],
     [/^GET \/bridge\/state\/(.+)$/, '读取页面状态'],
-    [/^POST \/bridge\/command\/(.+)$/, '下发 Bridge 指令'],
+    [/^POST \/bridge\/command\/(.+)$/, 'AI 操作页面'],
     [/^GET \/bridge\/navigate-requests\/(.+)$/, '查看导航请求'],
   ];
 
