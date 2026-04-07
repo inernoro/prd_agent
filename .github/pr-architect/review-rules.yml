@@ -53,6 +53,8 @@ required_pr_metadata:
     required: true
   - key: "contract_change_declared"
     required: true
+  - key: "compatibility_plan_attached"
+    required: true
   - key: "critical_path_changed"
     required: true
 
@@ -111,7 +113,7 @@ advisory_rules:
   - id: "contract-changed-without-compat-plan"
     tier: "l2-structural"
     severity: "high"
-    condition: "contract_change_declared_is_true_and_compatibility_plan_missing"
+    condition: "contract_change_declared_is_true_and_compatibility_plan_attached_is_false"
     message: "声明存在契约变更但缺失兼容/迁移说明。"
     recommended_action: "Request Changes"
 
@@ -191,7 +193,6 @@ architect_focus_questions:
     - "该 PR 是否对齐声明的 design_source_id 与 design_source_version"
     - "是否偏离既定 bounded context 边界"
     - "是否破坏 anchor 对应的核心约束"
-    - "是否已定义明确的护栏与回滚触发条件"
 
 output_contract:
   sections:

@@ -55,6 +55,7 @@ Agent 预审时从 `design-sources.yml` 获取当前生效版本，校验 PR 声
   - 只在分配的垂直切片内开发
   - 按 PR 模板完整提交元数据与测试证据
   - 明确声明本 PR 绑定的 `design_source_id` 与 `design_source_version`
+  - 当 `contract_change_declared=true` 时，必须设置 `compatibility_plan_attached=true` 并附引用
 - PR Agent（DDD-Anchor 裁决官）
   - 先校验设计源是否可用、版本是否匹配
   - 执行硬规则门禁
@@ -152,3 +153,5 @@ Agent 按 `review-rules.yml` 执行：
 - `label-taxonomy.md`：标签规范与自动化策略
 - `design-sources.yml`：当前生效的顶层设计包引用
 - `design-sources.example.yml`：设计源注册示例
+- `../scripts/pr_architect_check.py`：PR 门禁脚本（V1 仅执行 L1 硬阻断）
+- `../workflows/pr-architect-check.yml`：PR 自动校验工作流

@@ -16,6 +16,7 @@ design_source_id:        # 设计源标识，例如: system-main
 design_source_version:   # 设计版本，例如: 2026.04.1
 out_of_slice_changes: false
 contract_change_declared: false
+compatibility_plan_attached: false
 critical_path_changed: false
 ```
 
@@ -61,6 +62,12 @@ skills_traceability:
 - 涉及契约变更时是否补充兼容/迁移说明：
   - [ ] 是
   - [ ] 否（说明原因）
+
+```yaml
+compatibility_plan:
+  attached: false
+  ref: ""   # 契约兼容说明文档/ADR/变更单链接
+```
 
 ## 5) 自检清单（提交前必须全选）
 

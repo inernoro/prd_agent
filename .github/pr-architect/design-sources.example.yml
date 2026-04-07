@@ -10,6 +10,7 @@ profile: top-design-sources
 defaults:
   active_source_id: "local-ddd-anchor"
   active_version: "v1.0.0"
+  enforce_manifests: true
 
 sources:
   - id: "local-ddd-anchor"

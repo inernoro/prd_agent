@@ -1,0 +1,6 @@
+version: 1
+slices:
+  - id: "governance-pr-architect"
+    owner: "architect"
+    context: "engineering-governance"
+    description: "PR 架构裁决规则与模板治理切片"
