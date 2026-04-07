@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import type { CdsState, BranchEntry, BuildProfile, RoutingRule, OperationLog, InfraService, ExecutorNode } from '../types.js';
+import type { CdsState, BranchEntry, BuildProfile, RoutingRule, OperationLog, InfraService, ExecutorNode, DataMigration } from '../types.js';
 
 const MAX_LOGS_PER_BRANCH = 10;
 
@@ -52,6 +52,7 @@ export class StateService {
       if (this.state.mirrorEnabled === undefined) this.state.mirrorEnabled = false;
       if (this.state.tabTitleEnabled === undefined) this.state.tabTitleEnabled = true;
       if (!this.state.executors) this.state.executors = {};
+      if (!this.state.dataMigrations) this.state.dataMigrations = [];
       // Migrate: backfill cacheMounts for existing build profiles
       this.migrateCacheMounts();
       // Migrate: ensure deployModes field exists on profiles (no-op if already present)
@@ -361,6 +362,32 @@ export class StateService {
     if (this.state.executors) {
       delete this.state.executors[id];
     }
+  }
+
+  // ── Data migrations ──
+
+  getDataMigrations(): DataMigration[] {
+    return this.state.dataMigrations || [];
+  }
+
+  getDataMigration(id: string): DataMigration | undefined {
+    return (this.state.dataMigrations || []).find(m => m.id === id);
+  }
+
+  addDataMigration(migration: DataMigration): void {
+    if (!this.state.dataMigrations) this.state.dataMigrations = [];
+    this.state.dataMigrations.push(migration);
+  }
+
+  updateDataMigration(id: string, updates: Partial<DataMigration>): void {
+    const list = this.state.dataMigrations || [];
+    const idx = list.findIndex(m => m.id === id);
+    if (idx === -1) throw new Error(`迁移任务 "${id}" 不存在`);
+    Object.assign(list[idx], updates);
+  }
+
+  removeDataMigration(id: string): void {
+    this.state.dataMigrations = (this.state.dataMigrations || []).filter(m => m.id !== id);
   }
 
   /**

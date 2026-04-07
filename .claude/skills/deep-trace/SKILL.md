@@ -1,6 +1,6 @@
 ---
 name: deep-trace
-description: Performs end-to-end cross-layer data flow tracing for untrusted code changes. Traces data from entry to exit across backend C#, Rust Tauri, and frontend React layers, verifying field names, types, serialization rules, and error handling at every seam. Trigger words: "/trace", "追踪一下", "深度追踪", "deep trace".
+description: Performs end-to-end cross-layer data flow tracing for untrusted code changes. Traces data from entry to exit across backend C#, Rust Tauri, and frontend React layers, verifying field names, types, serialization rules, and error handling at every seam. Trigger words: "/deep-trace", "深度追踪", "deep trace".
 ---
 
 # Deep Trace - 跨层数据流深度追踪
@@ -13,7 +13,7 @@ description: Performs end-to-end cross-layer data flow tracing for untrusted cod
 
 ## 触发条件
 
-- 用户说 "/trace"、"追踪一下"、"深度追踪"、"deep trace"
+- 用户说 "/deep-trace"、"深度追踪"、"deep trace"
 - 涉及跨层数据流（API -> 中间层 -> 前端）
 - 涉及新增或修改 API 端点
 - 涉及序列化/反序列化边界

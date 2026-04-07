@@ -1,5 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
-import { Button } from '@/components/design/Button';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useTranscriptStore } from '@/stores/transcriptStore';
 import { TranscriptSidebar } from '@/components/transcript/TranscriptSidebar';
 import { TranscriptEditor } from '@/components/transcript/TranscriptEditor';
@@ -9,27 +8,30 @@ import type { TranscriptItem } from '@/services/contracts/transcriptAgent';
 
 export default function TranscriptAgentPage() {
   const { items, templates, refreshItems, fetchTemplates } = useTranscriptStore();
-  const [selectedItem, setSelectedItem] = useState<TranscriptItem | null>(null);
+  const [selectedItemId, setSelectedItemId] = useState<string | null>(null);
   const [generateItem, setGenerateItem] = useState<TranscriptItem | null>(null);
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
 
+  // Derive selectedItem from store (single source of truth)
+  const selectedItem = useMemo(
+    () => items.find(i => i.id === selectedItemId) ?? null,
+    [items, selectedItemId],
+  );
+
   useEffect(() => { fetchTemplates(); }, []);
 
-  // Auto-poll pending/processing items
+  // Auto-poll pending/processing items — use ref to avoid dep on items
+  const itemsRef = useRef(items);
+  itemsRef.current = items;
   useEffect(() => {
-    const pending = items.filter(i => i.transcribeStatus === 'pending' || i.transcribeStatus === 'processing');
-    if (pending.length === 0) return;
-    const timer = setInterval(() => refreshItems(), 3000);
+    const timer = setInterval(() => {
+      const pending = itemsRef.current.filter(
+        i => i.transcribeStatus === 'pending' || i.transcribeStatus === 'processing',
+      );
+      if (pending.length > 0) refreshItems();
+    }, 3000);
     return () => clearInterval(timer);
-  }, [items, refreshItems]);
-
-  // Keep selectedItem in sync with store items
-  useEffect(() => {
-    if (selectedItem) {
-      const updated = items.find(i => i.id === selectedItem.id);
-      if (updated) setSelectedItem(updated);
-    }
-  }, [items]);
+  }, [refreshItems]);
 
   return (
     <div className="h-full min-h-0 flex flex-col gap-4">
@@ -37,9 +39,9 @@ export default function TranscriptAgentPage() {
         {/* 左侧：工作区+素材列表 */}
         <GlassCard animated glow className="flex flex-col min-h-0 p-0 overflow-hidden">
           <TranscriptSidebar
-            selectedItemId={selectedItem?.id ?? null}
+            selectedItemId={selectedItemId}
             selectedRunId={selectedRunId}
-            onSelectItem={(item) => { setSelectedItem(item); setSelectedRunId(null); }}
+            onSelectItem={(item) => { setSelectedItemId(item?.id ?? null); setSelectedRunId(null); }}
             onGenerate={setGenerateItem}
             onSelectRun={(runId) => setSelectedRunId(runId)}
           />
@@ -50,7 +52,7 @@ export default function TranscriptAgentPage() {
           <TranscriptEditor
             item={selectedItem}
             selectedRunId={selectedRunId}
-            onItemDeleted={() => { setSelectedItem(null); setSelectedRunId(null); }}
+            onItemDeleted={() => { setSelectedItemId(null); setSelectedRunId(null); }}
             onCloseRun={() => setSelectedRunId(null)}
           />
         </GlassCard>

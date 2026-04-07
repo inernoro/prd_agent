@@ -1,6 +1,71 @@
 # PRD Agent
 
-PRD Agent is a multi-platform intelligent assistant for **product requirement documents and team collaboration**. Starting as a PRD reader, it has evolved into a full-featured AI workspace with six specialized agents, an LLM gateway with advanced model scheduling, a configuration marketplace, and a desktop client — all backed by a unified .NET 8 API.
+> Full-stack AI workspace with six specialized agents, an LLM gateway, and a configuration marketplace.
+
+---
+
+## Project Structure
+
+```
+prd_agent/
+├── prd-api/          # .NET 8 backend (C# 12)        → prd-api/CLAUDE.md
+├── prd-admin/        # React 18 admin console (Vite)  → prd-admin/CLAUDE.md
+├── prd-desktop/      # Tauri 2.0 desktop client       → prd-desktop/CLAUDE.md
+├── prd-video/        # Remotion 4.0 video engine
+├── cds/              # Cloud Dev Suite (branch deployment dashboard)
+├── changelogs/       # Changelog fragments (one file per PR, merged on release)
+├── doc/              # Structured docs (spec/design/plan/rule/guide/report)
+└── scripts/          # Build & deployment scripts
+```
+
+## Quick Start
+
+### Docker Compose (recommended)
+
+```bash
+docker compose -f docker-compose.dev.yml up -d --build
+```
+
+| Service | URL |
+|---------|-----|
+| Web (Gateway + Admin) | http://localhost:5500 |
+| API | http://localhost:5000 |
+| MongoDB | mongodb://localhost:18081 |
+| Redis | localhost:18082 |
+
+### Local Development
+
+```powershell
+# Windows
+.\quick.ps1           # Backend only
+.\quick.ps1 all       # API + Admin + Desktop
+```
+
+```bash
+# Linux / macOS
+./quick.sh            # Backend only
+./quick.sh all        # All services
+```
+
+### Start Components Individually
+
+```bash
+# Backend API
+cd prd-api && dotnet watch run --project src/PrdAgent.Api    # http://localhost:5000
+
+# Admin console
+cd prd-admin && pnpm install && pnpm dev                     # http://localhost:8000
+
+# Desktop app
+cd prd-desktop && pnpm install && pnpm tauri:dev             # http://localhost:1420
+
+# Video engine
+cd prd-video && pnpm install && pnpm start
+```
+
+See each sub-directory's `CLAUDE.md` for module-specific build commands.
+
+---
 
 ## Key Features
 
@@ -18,31 +83,29 @@ PRD Agent is a multi-platform intelligent assistant for **product requirement do
 
 ### LLM Gateway
 
-All LLM calls flow through a unified **LLM Gateway** (`ILlmGateway`) that provides:
+All LLM calls flow through a unified **LLM Gateway** (`ILlmGateway`):
 
 - **Three-tier model scheduling** — Dedicated pool → Default pool → Legacy config fallback
-- **AppCallerCode routing** — Each feature registers a caller code (e.g. `visual-agent.image.vision::generation`) for automatic model matching
+- **AppCallerCode routing** — Each feature registers a caller code (e.g. `visual-agent.image.vision::generation`)
 - **Health management** — Automatic health scoring with failure demotion and recovery promotion
 - **Unified logging** — Every request logs expected vs. actual model, tokens, latency, and resolution source
 
 ### Model Pool Engine
 
-The **Model Pool** (`Infrastructure/ModelPool/`) is a standalone strategy engine with six scheduling strategies:
+Six scheduling strategies in `Infrastructure/ModelPool/`:
 
 | Strategy | Behavior |
 |----------|----------|
-| **FailFast** | Try one model, fail immediately on error |
-| **Sequential** | Ordered fallback chain |
-| **RoundRobin** | Even load distribution across models |
-| **WeightedRandom** | Probability-based selection |
-| **LeastLatency** | Route to the fastest responding model |
-| **Race** | Parallel requests, return first success |
-
-Includes `PoolHealthTracker` for automatic model health monitoring and `HttpPoolDispatcher` for external endpoint pooling.
+| FailFast | Try one model, fail immediately on error |
+| Sequential | Ordered fallback chain |
+| RoundRobin | Even load distribution |
+| WeightedRandom | Probability-based selection |
+| LeastLatency | Route to fastest model |
+| Race | Parallel requests, return first success |
 
 ### Configuration Marketplace
 
-A built-in marketplace ("Seafood Market") for sharing and forking configurations across teams:
+A built-in marketplace for sharing and forking configurations:
 
 - **Type registry** — Prompt templates, reference images, watermark configs (extensible via `CONFIG_TYPE_REGISTRY`)
 - **Fork with whitelist** — `IForkable` interface ensures only safe fields are copied
@@ -59,41 +122,24 @@ OpenAI-compatible API for external integrations:
 ### Additional Capabilities
 
 - **RBAC** — 60+ granular permissions with `AdminPermissionMiddleware`
-- **Run/Worker pattern** — Long tasks (chat, image gen, video render) decoupled from HTTP; SSE streaming with `afterSeq` reconnection
-- **Server authority** — Client disconnect never cancels server-side work; only explicit cancel API stops a task
+- **Run/Worker pattern** — Long tasks decoupled from HTTP; SSE streaming with `afterSeq` reconnection
+- **Server authority** — Client disconnect never cancels server-side work
 - **Watermark system** — Per-app watermark configs with font management and ImageSharp rendering
 - **Web hosting** — Publish HTML pages to COS with shareable links
-- **Skill system** — Server-side public skills + client-side custom skills
+- **Skill system** — 37 Claude Code skills for the full development lifecycle (see below)
 - **Desktop auto-update** — Tauri 2.0 built-in updater
 - **Rate limiting** — Redis-based sliding window (Lua script)
-- **Attachments** — Image paste/drag-drop/upload as message context
 
 ### Cloud Dev Suite (CDS)
 
-A built-in **branch preview and testing platform** that lets teams run and test multiple git branches in parallel without touching the production environment.
+Branch preview and testing platform for parallel development:
 
-- **On-demand branch builds** — Visit an unbuilt branch and CDS automatically creates a git worktree, builds Docker containers, and streams live progress via SSE
-- **Smart routing** — Requests are routed to the correct branch container via `X-Branch` header, `cds_branch` cookie, subdomain pattern (`<slug>.preview.example.com`), or configurable routing rules
-- **Build profiles** — Define how each service is built and run (Docker image, commands, ports, shared cache mounts). Multiple profiles can coexist for API, frontend, etc.
-- **Dashboard UI** (`:9900`) — Branch CRUD, build profile management, routing rules, per-branch environment variables, real-time deployment logs, and container status
-- **Container orchestration** — Auto port allocation, Docker network isolation, health tracking, and environment file injection without shell escaping issues
-- **Git worktree management** — Safe creation/removal, branch suffix matching, remote sync, and cleanup
+- **On-demand branch builds** — Visit an unbuilt branch → CDS auto-creates worktree, builds containers, streams progress via SSE
+- **Smart routing** — `X-Branch` header, `cds_branch` cookie, subdomain pattern (`<slug>.preview.example.com`)
+- **Build profiles** — Docker image, commands, ports, shared cache mounts
+- **Dashboard UI** (`:9900`) — Branch CRUD, build profiles, routing rules, deployment logs
 
-```
-CDS Architecture:
-
-  :9900 — Dashboard (Express.js)
-  :5500 — Worker (HTTP reverse proxy)
-
-  Docker Network (cds-network)
-  ├── mongodb (shared)
-  ├── redis (shared)
-  ├── prd-api-feature-a  :9001
-  ├── prd-api-feature-b  :9002
-  └── prd-api-hotfix-c   :9003
-```
-
-Launch with `./exec_cds.sh` (production) or `./exec_cds.sh dev` (hot reload). See `doc/design.cds.md` for full design documentation.
+---
 
 ## Architecture
 
@@ -123,176 +169,129 @@ Launch with `./exec_cds.sh` (production) or `./exec_cds.sh dev` (hot reload). Se
      └────────┘  └─────────┘
 ```
 
-## Repository Layout
+### Core Architecture Patterns
 
-```
-prd_agent/
-├── prd-api/               # .NET 8 backend (C# 12)
-│   └── src/
-│       ├── PrdAgent.Api/           # Controllers, Middleware, Workers
-│       ├── PrdAgent.Core/          # Models, Interfaces, Security
-│       └── PrdAgent.Infrastructure/# LLM clients, DB, Services, ModelPool/
-├── prd-admin/             # React 18 admin console (Vite, Zustand, Radix UI)
-├── prd-desktop/           # Tauri 2.0 desktop app (Rust + React)
-├── prd-video/             # Remotion 4.0 video engine
-├── cds/                   # Cloud Dev Suite (branch deployment dashboard)
-├── doc/                   # Structured documentation (spec/design/plan/rule/guide/report)
-├── deploy/                # Nginx config + static assets
-├── scripts/               # Build & deployment scripts
-├── docker-compose.yml     # Production stack (pulls API image)
-├── docker-compose.dev.yml # Dev stack (builds from source)
-└── quick.ps1 / quick.sh   # Convenience launchers
-```
+| Pattern | Description |
+|---------|-------------|
+| **Run/Worker** | Conversation creates Run → Worker executes in background → SSE with `afterSeq` reconnection |
+| **Platform + Model** | `(platformId, modelId)` replaces legacy Provider concept |
+| **App Identity** | Controllers hardcode `appKey` — never passed from frontend |
+| **RBAC** | `SystemRole` + `AdminPermissionCatalog` (60+) + Middleware |
+| **LLM Gateway** | `ILlmGateway` + `ModelResolver` + three-tier scheduling + health management |
+| **Marketplace** | `CONFIG_TYPE_REGISTRY` + `IForkable` whitelist copy |
 
-## Quick Start
+---
 
-### Prerequisites
+## Mandatory Rules
 
-- Docker + Docker Compose
-- Node.js 18+ and pnpm 8+
-- .NET 8 SDK (for local backend development)
-- Rust 1.70+ (for desktop app development only)
+### 1. Frontend Package Manager: pnpm Only
 
-### 1. Docker Compose (recommended)
+All frontend projects (`prd-admin`, `prd-desktop`, `prd-video`) use **pnpm**. No npm/yarn. Only `pnpm-lock.yaml` is committed.
 
-**Development stack** — builds everything from source:
+### 2. C# Static Analysis
+
+After any `.cs` change:
 
 ```bash
-docker compose -f docker-compose.dev.yml up -d --build
+cd prd-api && dotnet build --no-restore 2>&1 | grep -E "error CS|warning CS" | head -30
 ```
 
-| Service | URL |
-|---------|-----|
-| Web (Gateway + Admin) | http://localhost:5500 |
-| API | http://localhost:5000 |
-| MongoDB | mongodb://localhost:18081 |
-| Redis | localhost:18082 |
+- `error CS*` — must fix
+- `warning CS*` — evaluate if introduced by current change
 
-**Production-like stack** — pulls pre-built API image:
+### 3. Changelog Fragments
 
-```bash
-JWT_SECRET="your-strong-secret" docker compose up -d
+Code changes to `prd-api/`, `prd-admin/`, `prd-desktop/`, `prd-video/` require a fragment file in `changelogs/` before commit. Never edit `CHANGELOG.md` directly.
+
+- Filename: `changelogs/YYYY-MM-DD_<short-desc>.md`
+- Content: table rows (no header), one record per line:
+  ```
+  | feat | prd-admin | Added XX feature |
+  | fix | prd-api | Fixed XX issue |
+  ```
+- On release: `bash scripts/assemble-changelog.sh` merges fragments into `CHANGELOG.md`
+
+### 4. LLM Interaction Visibility
+
+Any LLM-calling feature must show interaction progress — no blank waiting:
+
+- **Streaming** — SSE push, frontend renders character-by-character
+- **Progress** — Batch tasks push progress events (e.g. "Analyzing defect 3/45…")
+- **Stage indicators** — Long tasks show phase transitions (Preparing → Analyzing → Generating → Done)
+
+### 5. Server Authority
+
+Client disconnection never cancels server-side work. Only an explicit cancel API stops a task.
+
+- LLM calls and DB writes use `CancellationToken.None`
+- SSE writes catch `OperationCanceledException` — skip write but continue processing
+- Long tasks decouple via Run/Worker pattern
+
+---
+
+## Architecture Rules (`.claude/rules/`)
+
+Rules are loaded on-demand when editing matching files:
+
+| Rule | Trigger Scope | Summary |
+|------|---------------|---------|
+| `app-identity.md` | `prd-api/src/**/*.cs` | Controllers hardcode `appKey`, 6 app identities |
+| `data-audit.md` | `Models/**/*.cs`, `Controllers/**/*.cs` | New entity references must audit all consuming endpoints |
+| `llm-gateway.md` | `prd-api/src/**/*.cs` | All LLM calls go through `ILlmGateway` |
+| `frontend-architecture.md` | `**/*.{ts,tsx}` | No business state in frontend + SSOT + component reuse |
+| `server-authority.md` | `prd-api/src/**/*.cs` | `CancellationToken.None` + Run/Worker + SSE heartbeat |
+| `doc-types.md` | `doc/**/*.md` | 6 document prefixes (spec/design/plan/rule/guide/report) |
+| `marketplace.md` | Marketplace files | `CONFIG_TYPE_REGISTRY` + `IForkable` whitelist copy |
+| `snapshot-fallback.md` | `Controllers/**/*.cs`, `Services/**/*.cs` | Snapshot denormalization must have equivalent fallback query path |
+| `enum-ripple-audit.md` | `Enums/**/*.cs`, `types/**/*.ts` | Full-stack 6-layer ripple audit on enum/constant changes |
+| `codebase-snapshot.md` | Manual | Project snapshot: architecture patterns, feature registry, 101 MongoDB collections |
+
+---
+
+## Quality Assurance Skill Chain
+
+37 Claude Code skills cover the full development lifecycle:
+
+```
+Requirement → /validate → Design → /plan-first → /risk → /trace → Implement → /verify → /scope-check → /cds-deploy → /smoke → /preview → /handoff → /weekly
 ```
 
-### 2. Local Development
+### Lifecycle Skills
 
-**Start all services (Windows):**
+| Skill | Trigger | Input → Output |
+|-------|---------|----------------|
+| **skill-validation** | `/validate` | Requirement description → 8-smell detection + deduplication + 7-dimension score report |
+| **plan-first** | `/plan-first` | Task description → Implementation plan + impact analysis, waits for user approval |
+| **risk-matrix** | `/risk` | Change scope → MECE 6-dimension risk matrix (correctness/compat/perf/security/ops/UX) |
+| **flow-trace** | `/trace` | Feature name → End-to-end data flow + control flow path diagram |
+| **human-verify** | `/verify` | Code changes → Devil's advocate + reverse verification + boundary + scenario review |
+| **scope-check** | `/scope-check` | Current branch → File classification (owned/shared/foreign) + boundary violation report |
+| **cds-deploy-pipeline** | `/cds-deploy` | Code commit → Push to staging, wait for containers, run smoke tests |
+| **smoke-test** | `/smoke` | Module name → Chained curl script scanning all Controller endpoints |
+| **preview-url** | `/preview` | Current branch → Preview URL (`branch-name.miduo.org`) |
+| **task-handoff-checklist** | `/handoff` | Current changes → 8-dimension handoff checklist |
+| **weekly-update-summary** | `/weekly` | Time range → Categorized weekly report from git history |
 
-```powershell
-.\quick.ps1 all     # API + Admin + Desktop
-.\quick.ps1          # API only
-.\quick.ps1 admin    # Admin only
-.\quick.ps1 desktop  # Desktop only
+### Workflow
+
+```
+0. First time?     → /help       (guided onboarding)
+1. New requirement → /validate   (quality gate)
+2. Design phase    → /plan-first (plan before code)
+3. Review phase    → /risk + /trace
+4. After coding    → /verify + /scope-check
+5. Deploy & test   → /cds-deploy + /smoke
+6. Acceptance      → /preview
+7. Before PR       → /resolve    (merge main, resolve conflicts)
+8. Ship            → /handoff
+9. Friday wrap-up  → /weekly     (auto-triggers /doc-sync)
+10. Writing docs   → /doc
+11. Post-refactor  → /hygiene
 ```
 
-**Start all services (Linux/macOS):**
+Full skill catalog with consolidation recommendations: `doc/guide.skill-catalog.md`
 
-```bash
-./quick.sh all
-./quick.sh           # API only
-```
-
-**Start components individually:**
-
-```bash
-# Backend API
-cd prd-api
-dotnet watch run --project src/PrdAgent.Api    # http://localhost:5000
-
-# Admin console
-cd prd-admin
-pnpm install && pnpm dev                       # http://localhost:8000
-
-# Desktop app
-cd prd-desktop
-pnpm install && pnpm tauri:dev                 # http://localhost:1420
-```
-
-### 3. Build Admin for Gateway
-
-The Nginx gateway serves the admin build from `deploy/web/dist/`:
-
-```bash
-pnpm -C prd-admin install
-pnpm -C prd-admin build
-cp -r prd-admin/dist/* deploy/web/dist/
-```
-
-## Configuration
-
-### Environment Variables
-
-Copy `.env.template` to `.env` and configure:
-
-| Variable | Required | Description |
-|----------|----------|-------------|
-| `MongoDB__ConnectionString` | Yes | MongoDB connection string |
-| `MongoDB__DatabaseName` | Yes | Database name |
-| `Redis__ConnectionString` | Yes | Redis connection string |
-| `Jwt__Secret` | Production | JWT signing secret |
-| `ASSETS_PROVIDER` | No | `tencentCos`, `local`, or `auto` |
-| `Session__TimeoutMinutes` | No | Session timeout (default: 30) |
-
-For Tencent COS storage: `TENCENT_COS_BUCKET`, `TENCENT_COS_REGION`, `TENCENT_COS_SECRET_ID`, `TENCENT_COS_SECRET_KEY`, `TENCENT_COS_PUBLIC_BASE_URL`, `TENCENT_COS_PREFIX`.
-
-### LLM Configuration
-
-Models are configured through the **Admin console** (recommended) and stored in MongoDB. The LLM Gateway handles all routing automatically.
-
-For quick local development without the admin UI:
-
-- `LLM__ClaudeApiKey` — API key for Claude
-- `LLM__Model` — Model name (defaults to `claude-3-5-sonnet-20241022`)
-
-Never commit secrets. Use environment variables or a secret manager.
-
-## Testing
-
-```bash
-# Backend unit tests
-cd prd-api && dotnet test PrdAgent.sln
-
-# Unit tests only (skip integration)
-dotnet test PrdAgent.sln --filter "Category!=Integration"
-
-# Admin lint + type check
-cd prd-admin && pnpm lint && pnpm tsc
-
-# Admin unit tests
-cd prd-admin && pnpm test
-
-# Full CI check (Windows)
-.\quick.ps1 ci
-```
-
-## Deployment
-
-### Docker Build (no SDK required)
-
-```bash
-./scripts/build-server-docker.sh
-```
-
-Output goes to `prd-api/output/`. Run directly:
-
-```bash
-dotnet prd-api/output/PrdAgent.Api.dll
-```
-
-### Production Deployment
-
-```bash
-# One-line deploy (downloads release, validates checksums, starts containers)
-./exec_dep.sh
-```
-
-### Desktop Versioning
-
-Desktop version must stay in sync across `package.json`, `tauri.conf.json`, and `Cargo.toml`:
-
-```bash
-./quick.sh version vX.Y.Z
-```
+---
 
 ## Tech Stack
 
@@ -307,9 +306,53 @@ Desktop version must stay in sync across `package.json`, `tauri.conf.json`, and 
 | Gateway | Nginx |
 | Package Manager | pnpm |
 
+## Configuration
+
+### Environment Variables
+
+Copy `.env.template` to `.env` and configure:
+
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `MongoDB__ConnectionString` | Yes | MongoDB connection string |
+| `MongoDB__DatabaseName` | Yes | Database name |
+| `Redis__ConnectionString` | Yes | Redis connection string |
+| `Jwt__Secret` | Production | JWT signing secret |
+| `ASSETS_PROVIDER` | No | `tencentCos`, `local`, or `auto` |
+
+### LLM Configuration
+
+Models are configured through the **Admin console** and stored in MongoDB. The LLM Gateway handles all routing automatically.
+
+For quick local development: `LLM__ClaudeApiKey` and `LLM__Model`.
+
+## Testing
+
+```bash
+# Backend
+cd prd-api && dotnet test PrdAgent.sln
+dotnet test PrdAgent.sln --filter "Category!=Integration"    # Skip integration tests
+
+# Frontend
+cd prd-admin && pnpm lint && pnpm tsc && pnpm test
+```
+
+## Deployment
+
+```bash
+# Docker build (no SDK required)
+./scripts/build-server-docker.sh
+
+# Production deploy
+./exec_dep.sh
+
+# Desktop version sync
+./quick.sh version vX.Y.Z
+```
+
 ## Documentation
 
-Structured docs live in `doc/` with six standardized types:
+Structured docs in `doc/` with six standardized types:
 
 | Prefix | Purpose | Examples |
 |--------|---------|---------|
@@ -317,7 +360,7 @@ Structured docs live in `doc/` with six standardized types:
 | `design.*` | How to build it | Architecture designs, technical analysis |
 | `plan.*` | When to build it | Implementation plans |
 | `rule.*` | Constraints | Coding standards, audit reports |
-| `guide.*` | How to operate | Dev guides, runbooks |
+| `guide.*` | How to operate | Dev guides, runbooks, skill catalog |
 | `report.*` | What happened | Weekly reports |
 
 ## License
