@@ -1127,24 +1127,40 @@ export function buildWidgetScript(branchId: string, branchName: string): string 
           updateOpsStep(cmd.id,'done',cmd.params.summary||'');
           addOpsStep('end','snapshot','✅ AI 操作完成');
           updateOpsStep('end','done','');
-          hideCursor();
+          // Fully clean up cursor and highlight
+          if(aiCursorEl){aiCursorEl.remove();aiCursorEl=null;}
           removeHighlight();
-          // Stop active polling, go back to lightweight check
+          // Stop active polling
           bridgeActive=false;
           bridgeConnected=false;
-          if(bridgeActiveTimer){clearInterval(bridgeActiveTimer);bridgeActiveTimer=null;}
           renderBridgeIndicator();
-          setTimeout(function(){opsVisible=false;renderOpsPanel();},8000);
+          // Hide panel after 5s
+          setTimeout(function(){opsVisible=false;renderOpsPanel();},5000);
           var endState=collectPageState();
           fetch(API+'/bridge/result',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({branchId:BRANCH_ID,id:cmd.id,success:true,state:endState})}).catch(function(){});
           return;
         }
-        // Animate cursor → highlight → execute
+        // For navigate: send result BEFORE executing (page reload will destroy Widget)
+        if(cmd.action==='navigate'){
+          var preState=collectPageState();
+          updateOpsStep(cmd.id,'done','');
+          fetch(API+'/bridge/result',{
+            method:'POST',
+            headers:{'Content-Type':'application/json'},
+            body:JSON.stringify({branchId:BRANCH_ID,id:cmd.id,success:true,state:preState})
+          }).then(function(){
+            executeAction('navigate',cmd.params||{});
+          }).catch(function(){
+            executeAction('navigate',cmd.params||{});
+          });
+          return;
+        }
+        // For all other actions: animate cursor → highlight → execute
         executeWithAnimation(targetEl,cmd.action,cmd.params||{},function(result){
           if(!result.success){
             updateOpsStep(cmd.id,'error',result.error||'');
           }
-          var delay=(cmd.action==='navigate'||cmd.action==='spa-navigate')?1500:300;
+          var delay=(cmd.action==='spa-navigate')?1500:300;
           setTimeout(function(){
             if(result.success)updateOpsStep(cmd.id,'done','');
             var newState=collectPageState();
