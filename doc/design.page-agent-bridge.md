@@ -152,14 +152,28 @@ interface PageState {
 | `navigate` | `{url}` | — | 全页面跳转（**仅登录页**） |
 | `evaluate` | `{script}` | — | 执行 JS，返回值截断 10KB |
 
-### spa-navigate 四级策略
+### spa-navigate 实现
 
-| 优先级 | 策略 | 原理 | 可靠性 |
-|--------|------|------|:---:|
-| 1 | 找现有 `<a href>` 点击 | React Router 的 `<Link>` 渲染的 `<a>` 会拦截点击 | ★★★★ |
-| 2 | 在 React root 内注入临时 `<a>` 点击 | BrowserRouter 拦截子树内的 `<a>` 点击 | ★★★ |
-| 3 | 按文字匹配 sidebar 按钮点击 | 找到含"文学/视觉/缺陷/周报"文字的按钮 | ★★★ |
-| 4 | `history.pushState` + `popstate` | 可能不触发 React Router | ★ |
+> **设计决策**：最初尝试了四种策略（找 `<a>` 点击 → 注入 `<a>` → 文字匹配按钮 → pushState），全部失败——React Router v6 BrowserRouter 不拦截原生 `<a>` 点击，pushState 不触发路由更新。
+
+**最终方案：CustomEvent + NavigationBridge 组件**
+
+```
+Widget (非 React)                         React App
+  │                                         │
+  │ dispatchEvent(CustomEvent               │
+  │   'bridge:navigate',                    │
+  │   {detail:{path:'/report-agent'}})      │
+  │ ─────────────────────────────────────>  │
+  │                                         │ NavigationBridge 组件
+  │                                         │ useEffect 监听 'bridge:navigate'
+  │                                         │ → navigate(path)
+  │                                         │ React Router 正常 SPA 导航
+```
+
+- **React 端**：`App.tsx` 新增 `NavigationBridge` 组件，用 `useNavigate()` 监听 window 的 `bridge:navigate` CustomEvent
+- **Widget 端**：`spa-navigate` 简化为一行 `dispatchEvent`
+- **为什么可靠**：CustomEvent 是标准 DOM API，不受框架限制；`useNavigate()` 是 React Router 官方导航方式
 
 ---
 
@@ -195,6 +209,7 @@ interface PageState {
 | 命令队列 | 数组 FIFO（非单槽） | 防止 Agent 连发命令覆盖丢失 |
 | Activity 过滤 | heartbeat/result/check 隐藏 | 只保留有意义的 start/command/end |
 | Session 存储 | sessionStorage（非 localStorage） | 项目规则禁止 localStorage |
+| SPA 导航 | CustomEvent + React NavigationBridge | useNavigate() 只能在组件内，CustomEvent 是唯一可靠的跨层通信 |
 | DOM 提取格式 | `[index]<tag attrs> text />`  | 参考 page-agent 的 flatTreeToString |
 | end-session 清理 | Widget 响应后清理（非固定延迟） | 避免"Widget 已停止但连接仍在"的窗口 |
 
@@ -226,6 +241,7 @@ interface PageState {
 | 集成层 | `cds/src/server.ts` | 路由挂载 + Activity 过滤 |
 | 初始化 | `cds/src/index.ts` | BridgeService 实例化 + activity 回调 |
 | 浏览器端 | `cds/src/widget-script.ts` | Bridge Client 全部逻辑（DOM 提取/操作执行/动画/轮询） |
+| React 桥接 | `prd-admin/src/app/App.tsx` | NavigationBridge 组件（监听 CustomEvent → useNavigate） |
 | 规则 | `.claude/rules/bridge-ops.md` | Agent 使用 Bridge 的强制规则 |
 | 技能 | `.claude/skills/bridge/SKILL.md` | `/bridge` 技能文档 |
 
@@ -239,6 +255,16 @@ interface PageState {
 | 2 | 首页卡片文字为空 | DOM 提取拿不到图片/CSS 渲染的内容 | 用 `evaluate` 搜索 textContent |
 | 3 | 命令最大延迟 3s | 轮询间隔决定 | 可调小但增加服务器负载 |
 | 4 | 需要用户打开页面 | Agent 不能自行打开浏览器 | 发 navigate-request 请用户打开 |
+| 5 | 模板字符串中正则转义 | `\/` 在 TS 模板中变成 `/` | 避免正则，用字符串方法替代 |
+
+### 已解决的历史限制
+
+| 问题 | 解决方案 |
+|------|---------|
+| SPA 导航不生效 | `NavigationBridge` 组件 + `CustomEvent`（`prd-admin/src/app/App.tsx`）|
+| 命令连发覆盖丢失 | 单槽改为 FIFO 数组队列 |
+| Widget 自动连接噪音 | 按需激活（start-session / end-session）|
+| WebSocket 四层代理断连 | 改用 HTTP 轮询 |
 
 ---
 
