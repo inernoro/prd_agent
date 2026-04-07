@@ -172,9 +172,20 @@ export function buildWidgetScript(branchId: string, branchName: string): string 
       try{
         var evt=JSON.parse(msg.data);
         if(evt.source==='ai'&&evt.branchId===BRANCH_ID){
-          aiOccupant=evt.agent||'AI';
-          aiLastSeen=Date.now();
-          updateAiOverlay();
+          // Only trigger AI occupation for actual operations, not queries
+          // Also ignore stale events from history buffer (>30s old)
+          var p=evt.path||'';
+          var evtAge=evt.ts?Date.now()-new Date(evt.ts).getTime():0;
+          if(evtAge>30000){}  // skip stale history events
+          else if(p.indexOf('end-session')>=0||p.indexOf('Bridge 已断开')>=0){
+            aiOccupant=null;
+            updateAiOverlay();
+          }
+          else if(p.indexOf('start-session')>=0||p.indexOf('command/')>=0||p.indexOf('Bridge 已连接')>=0){
+            aiOccupant=evt.agent||'AI';
+            aiLastSeen=Date.now();
+            updateAiOverlay();
+          }
         }
       }catch(e){}
     };
