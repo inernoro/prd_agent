@@ -26,6 +26,9 @@ public class DocumentStore
     /// <summary>是否公开（其他用户可浏览）</summary>
     public bool IsPublic { get; set; }
 
+    /// <summary>主文档条目 ID（进入空间时默认展示的文档，类似 GitHub README）</summary>
+    public string? PrimaryEntryId { get; set; }
+
     /// <summary>空间内文档数量（冗余计数，便于列表展示）</summary>
     public int DocumentCount { get; set; }
 

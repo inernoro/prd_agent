@@ -927,6 +927,7 @@ export const api = {
       list: () => '/api/document-store/stores',
       create: () => '/api/document-store/stores',
       detail: (storeId: string) => `/api/document-store/stores/${storeId}`,
+      primaryEntry: (storeId: string) => `/api/document-store/stores/${storeId}/primary-entry`,
     },
     entries: {
       list: (storeId: string) => `/api/document-store/stores/${storeId}/entries`,

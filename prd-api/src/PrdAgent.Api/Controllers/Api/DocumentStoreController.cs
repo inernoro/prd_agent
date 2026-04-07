@@ -142,6 +142,36 @@ public class DocumentStoreController : ControllerBase
         return Ok(ApiResponse<DocumentStore>.Ok(updated!));
     }
 
+    /// <summary>设置/清除主文档</summary>
+    [HttpPut("stores/{storeId}/primary-entry")]
+    public async Task<IActionResult> SetPrimaryEntry(string storeId, [FromBody] SetPrimaryEntryRequest request)
+    {
+        var userId = GetUserId();
+        var store = await _db.DocumentStores.Find(s => s.Id == storeId && s.OwnerId == userId).FirstOrDefaultAsync();
+        if (store == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "文档空间不存在"));
+
+        // 如果设置主文档，校验条目存在且属于该空间
+        if (!string.IsNullOrEmpty(request.EntryId))
+        {
+            var entry = await _db.DocumentEntries.Find(
+                e => e.Id == request.EntryId && e.StoreId == storeId).FirstOrDefaultAsync();
+            if (entry == null)
+                return BadRequest(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "文档条目不存在或不属于此空间"));
+        }
+
+        await _db.DocumentStores.UpdateOneAsync(
+            s => s.Id == storeId,
+            Builders<DocumentStore>.Update
+                .Set(s => s.PrimaryEntryId, string.IsNullOrEmpty(request.EntryId) ? null : request.EntryId)
+                .Set(s => s.UpdatedAt, DateTime.UtcNow));
+
+        _logger.LogInformation("[document-store] Primary entry set: store={StoreId} entry={EntryId} by {UserId}",
+            storeId, request.EntryId ?? "(cleared)", userId);
+
+        return Ok(ApiResponse<object>.Ok(new { primaryEntryId = request.EntryId }));
+    }
+
     /// <summary>删除文档空间（同时删除空间内所有条目）</summary>
     [HttpDelete("stores/{storeId}")]
     public async Task<IActionResult> DeleteStore(string storeId)
@@ -737,4 +767,10 @@ public class AddGitHubSubscriptionRequest
     public string? Title { get; set; }
     public int? SyncIntervalMinutes { get; set; }
     public List<string>? Tags { get; set; }
+}
+
+public class SetPrimaryEntryRequest
+{
+    /// <summary>文档条目 ID，null 或空表示清除主文档</summary>
+    public string? EntryId { get; set; }
 }

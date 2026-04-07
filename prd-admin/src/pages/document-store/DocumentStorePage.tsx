@@ -31,8 +31,10 @@ import {
   getDocumentContent,
   addSubscription,
   addGitHubSubscription,
+  setPrimaryEntry,
   triggerSync,
 } from '@/services';
+import { DocBrowser } from '@/components/doc-browser/DocBrowser';
 import type {
   DocumentStore,
   DocumentEntry,
@@ -271,14 +273,14 @@ function EntryDetailPanel({ entry, onClose, onDelete, onUpdate }: {
 }
 
 // ── 空间详情视图（文档列表 + 上传）──
-function StoreDetailView({ store, onBack }: {
+function StoreDetailView({ store: initialStore, onBack }: {
   store: DocumentStore;
   onBack: () => void;
 }) {
+  const [store, setStore] = useState(initialStore);
   const [entries, setEntries] = useState<DocumentEntry[]>([]);
   const [loading, setLoading] = useState(true);
-  const [keyword, setKeyword] = useState('');
-  const [selectedEntry, setSelectedEntry] = useState<DocumentEntry | null>(null);
+  const [selectedEntryId, setSelectedEntryId] = useState<string | undefined>(undefined);
   const [showSubscribe, setShowSubscribe] = useState(false);
 
   // 文件上传状态
@@ -289,10 +291,10 @@ function StoreDetailView({ store, onBack }: {
 
   const loadEntries = useCallback(async () => {
     setLoading(true);
-    const res = await listDocumentEntries(store.id, 1, 100, keyword || undefined);
+    const res = await listDocumentEntries(store.id, 1, 200);
     if (res.success) setEntries(res.data.items);
     setLoading(false);
-  }, [store.id, keyword]);
+  }, [store.id]);
 
   useEffect(() => { loadEntries(); }, [loadEntries]);
 
@@ -334,15 +336,22 @@ function StoreDetailView({ store, onBack }: {
     if (files.length > 0) handleFiles(files);
   }, [handleFiles]);
 
-  const handleDeleteEntry = useCallback(async (entryId: string) => {
-    const res = await deleteDocumentEntry(entryId);
-    if (res.success) setEntries(prev => prev.filter(e => e.id !== entryId));
+  const handleSetPrimary = useCallback(async (entryId: string) => {
+    const res = await setPrimaryEntry(store.id, entryId);
+    if (res.success) {
+      setStore(prev => ({ ...prev, primaryEntryId: entryId }));
+      toast.success('已设为主文档');
+    }
+  }, [store.id]);
+
+  const loadContent = useCallback(async (entryId: string): Promise<string | null> => {
+    const res = await getDocumentContent(entryId);
+    if (res.success && res.data.hasContent) return res.data.content;
+    return null;
   }, []);
 
-  const navigate = useNavigate();
-
   return (
-    <div className="h-full min-h-0 flex flex-col overflow-x-hidden overflow-y-auto gap-5"
+    <div className="h-full min-h-0 flex flex-col overflow-hidden"
       onDragEnter={handleDragEnter} onDragLeave={handleDragLeave}
       onDragOver={handleDragOver} onDrop={handleDrop}>
       <input ref={fileInputRef} type="file" className="hidden" accept={ACCEPT_TYPES} multiple
@@ -358,7 +367,7 @@ function StoreDetailView({ store, onBack }: {
             </button>
             <Library size={14} style={{ color: 'var(--text-muted)' }} />
             <span className="text-[13px] font-semibold" style={{ color: 'var(--text-primary)' }}>{store.name}</span>
-            <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>{entries.length} 个文档</span>
+            <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>{entries.filter(e => e.sourceType !== 'github_directory').length} 个文档</span>
           </div>
         }
         actions={
@@ -385,116 +394,28 @@ function StoreDetailView({ store, onBack }: {
         </div>
       )}
 
-      <div className="px-5 pb-6 w-full">
-        {/* 搜索栏 */}
-        <div className="mb-4 relative">
-          <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2"
-            style={{ color: 'var(--text-muted)' }} />
-          <input
-            value={keyword}
-            onChange={e => setKeyword(e.target.value)}
-            placeholder="搜索文档…"
-            className="w-full h-9 pl-9 pr-3 rounded-[10px] text-[13px] outline-none transition-colors duration-200"
-            style={{
-              background: 'var(--input-bg, rgba(255,255,255,0.05))',
-              border: '1px solid var(--border-subtle, rgba(255,255,255,0.1))',
-              color: 'var(--text-primary)',
-            }}
-          />
-        </div>
-
-        {loading ? (
-          <div className="flex items-center justify-center py-16">
-            <MapSpinner size={16} />
-            <span className="ml-2 text-[12px]" style={{ color: 'var(--text-muted)' }}>加载中...</span>
-          </div>
-        ) : entries.length === 0 ? (
-          /* 空状态 — 带引导 */
-          <div className="flex flex-col items-center justify-center py-16">
-            <FolderOpen size={44} style={{ color: 'var(--text-muted)', opacity: 0.3, marginBottom: 20 }} />
-            <p className="text-[14px] font-semibold mb-1" style={{ color: 'var(--text-primary)' }}>
-              {keyword ? '没有找到匹配的文档' : '还没有文档'}
-            </p>
-            <p className="text-[12px] mb-6" style={{ color: 'var(--text-muted)' }}>
-              {keyword ? '换个关键词试试' : '上传文档到这个空间，或直接拖拽文件到页面'}
-            </p>
-            {!keyword && (
+      {/* 左右分栏文档浏览器 */}
+      <div className="flex-1 min-h-0 px-5 pb-4 pt-3">
+        <DocBrowser
+          entries={entries}
+          primaryEntryId={store.primaryEntryId}
+          selectedEntryId={selectedEntryId}
+          onSelectEntry={setSelectedEntryId}
+          onSetPrimary={handleSetPrimary}
+          loadContent={loadContent}
+          loading={loading}
+          emptyState={
+            <div className="flex-1 flex flex-col items-center justify-center py-16">
+              <FolderOpen size={44} style={{ color: 'var(--text-muted)', opacity: 0.3, marginBottom: 20 }} />
+              <p className="text-[14px] font-semibold mb-1" style={{ color: 'var(--text-primary)' }}>还没有文档</p>
+              <p className="text-[12px] mb-6" style={{ color: 'var(--text-muted)' }}>上传文档到这个空间，或直接拖拽文件到页面</p>
               <Button variant="primary" size="md" onClick={() => fileInputRef.current?.click()}>
                 <Upload size={15} /> 上传第一个文档
               </Button>
-            )}
-          </div>
-        ) : (
-          /* 文档列表 */
-          <div className="space-y-2">
-            {entries.map(entry => (
-              <GlassCard key={entry.id} animated interactive padding="none"
-                className="group" onClick={() => setSelectedEntry(entry)}>
-                <div className="flex items-center gap-3 px-4 py-3">
-                  <div className="w-9 h-9 rounded-[10px] flex items-center justify-center flex-shrink-0"
-                    style={{
-                      background: entry.sourceType === 'github_directory' ? 'rgba(130,80,223,0.06)'
-                        : entry.sourceType === 'subscription' ? 'rgba(234,179,8,0.06)' : 'rgba(59,130,246,0.06)',
-                      border: `1px solid ${entry.sourceType === 'github_directory' ? 'rgba(130,80,223,0.1)'
-                        : entry.sourceType === 'subscription' ? 'rgba(234,179,8,0.1)' : 'rgba(59,130,246,0.1)'}`,
-                    }}>
-                    {entry.sourceType === 'github_directory' ? (
-                      <Github size={16} style={{ color: 'rgba(130,80,223,0.7)' }} />
-                    ) : entry.sourceType === 'subscription' ? (
-                      <Rss size={16} style={{ color: 'rgba(234,179,8,0.7)' }} />
-                    ) : entry.contentType.startsWith('text/') ? (
-                      <FileText size={16} style={{ color: 'rgba(59,130,246,0.7)' }} />
-                    ) : (
-                      <File size={16} style={{ color: 'rgba(59,130,246,0.7)' }} />
-                    )}
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <h4 className="text-[13px] font-semibold truncate" style={{ color: 'var(--text-primary)' }}>
-                      {entry.title}
-                    </h4>
-                    <div className="flex items-center gap-3 mt-0.5">
-                      {entry.summary && (
-                        <span className="text-[11px] truncate flex-1 min-w-0" style={{ color: 'var(--text-muted)' }}>
-                          {entry.summary.slice(0, 80)}
-                        </span>
-                      )}
-                      <span className="text-[10px] flex-shrink-0" style={{ color: 'var(--text-muted)' }}>
-                        {formatFileSize(entry.fileSize)}
-                      </span>
-                      <span className="text-[10px] flex-shrink-0" style={{ color: 'var(--text-muted)' }}>
-                        {new Date(entry.createdAt).toLocaleDateString()}
-                      </span>
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                    <button
-                      className="w-7 h-7 rounded-[8px] flex items-center justify-center cursor-pointer hover:bg-white/6 transition-colors duration-200"
-                      title="从此文档涌现"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        navigate(`/emergence?seedSourceType=document&seedSourceId=${entry.id}&seedTitle=${encodeURIComponent(entry.title)}`);
-                      }}
-                      style={{ color: 'rgba(147,51,234,0.7)' }}>
-                      <Sparkle size={14} />
-                    </button>
-                    <button
-                      className="w-7 h-7 rounded-[8px] flex items-center justify-center cursor-pointer hover:bg-white/6 transition-colors duration-200"
-                      title="删除"
-                      onClick={(e) => { e.stopPropagation(); handleDeleteEntry(entry.id); }}
-                      style={{ color: 'rgba(239,68,68,0.5)' }}>
-                      <Trash2 size={14} />
-                    </button>
-                  </div>
-                </div>
-              </GlassCard>
-            ))}
-          </div>
-        )}
+            </div>
+          }
+        />
       </div>
-
-      {selectedEntry && (
-        <EntryDetailPanel entry={selectedEntry} onClose={() => setSelectedEntry(null)} onDelete={handleDeleteEntry} />
-      )}
 
       {/* 添加订阅对话框 */}
       {showSubscribe && (

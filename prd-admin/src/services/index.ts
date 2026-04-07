@@ -1517,6 +1517,7 @@ export {
   getDocumentContent,
   addSubscription,
   addGitHubSubscription,
+  setPrimaryEntry,
   triggerSync,
 } from '@/services/real/documentStore';
 export type {

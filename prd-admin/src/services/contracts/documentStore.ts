@@ -10,6 +10,7 @@ export type DocumentStore = {
   appKey?: string;
   tags: string[];
   isPublic: boolean;
+  primaryEntryId?: string;
   documentCount: number;
   createdAt: string;
   updatedAt: string;

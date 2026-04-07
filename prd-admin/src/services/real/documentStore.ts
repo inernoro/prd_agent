@@ -126,6 +126,14 @@ export async function addSubscription(storeId: string, input: {
   );
 }
 
+/** 设置/清除主文档 */
+export async function setPrimaryEntry(storeId: string, entryId: string | null) {
+  return await apiRequest<{ primaryEntryId: string | null }>(
+    api.documentStore.stores.primaryEntry(storeId),
+    { method: 'PUT', body: { entryId } },
+  );
+}
+
 /** 添加 GitHub 目录订阅 */
 export async function addGitHubSubscription(storeId: string, input: {
   githubUrl: string;
