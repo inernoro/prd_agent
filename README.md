@@ -81,6 +81,22 @@ See each sub-directory's `CLAUDE.md` for module-specific build commands.
 | **Report Agent** | Weekly report management — team structure, daily logs, data source integration, AI-assisted summaries, and review workflows |
 | **Workflow Agent** | Visual workflow builder — drag-and-drop capsules, scheduled execution, secret management, and video generation integration |
 
+#### Workflow Agent Template Update: TAPD Defect Collection & Analysis
+
+To support monthly governance requirements, the **TAPD Defect Collection & Analysis** template now includes a mandatory committee reporting block:
+
+- **Purpose**: Ensure `AI technical service fee` is included in the technical committee monthly briefing with month-by-month analysis.
+- **Automatic extraction fields** (if present in source data):
+  - `AI技术服务费`
+  - `AI 技术服务费`
+  - `AI服务费`
+- **Generated output fields**:
+  - `monthlyBriefingRequirements`: fixed policy item, code `1p`
+  - `aiServiceFeeMonthlyStats`: monthly amount, previous month amount, month-over-month rate, analysis text
+- **HTML report rendering**:
+  - Adds a dedicated section in the summary area showing the `1p` policy requirement
+  - Adds a month-by-month fee table for direct use in the technical committee monthly briefing
+
 ### LLM Gateway
 
 All LLM calls flow through a unified **LLM Gateway** (`ILlmGateway`):

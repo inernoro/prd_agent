@@ -1,7 +1,8 @@
 // ═══ TAPD 缺陷质量报告 HTML 渲染模板 ═══
 // 消费 n-agg 输出的结构化 JSON，生成专业级质量分析报告
 // 数据字段: title, generatedAt, total, kpis, severity, processingStatus,
-//           rootCauses, criticalAlerts, problemItems, defectDetails, docLinks, summary
+//           rootCauses, criticalAlerts, problemItems, defectDetails, docLinks,
+//           monthlyBriefingRequirements, aiServiceFeeMonthlyStats, summary
 
 export const tapdHtmlGenCode = `// data = upstream stats JSON (may be wrapped in array when source ref is passed through)
 var d = Array.isArray(data) ? data[0] : data;
@@ -16,6 +17,8 @@ var dets = d.defectDetails || [];
 var probs = d.problemItems || [];
 var alerts = d.criticalAlerts || [];
 var dls = d.docLinks || [];
+var monthlyReqs = d.monthlyBriefingRequirements || [];
+var aiFeeStats = d.aiServiceFeeMonthlyStats || [];
 var totalTech = 0;
 (d.kpis || []).forEach(function(k){ if(k.label==="技术缺陷总数") totalTech=k.value; });
 
@@ -289,6 +292,35 @@ if (rcs.length > 0) {
   H.push('</div>');
 }
 H.push('</div></div>');
+
+// 月度简报补充（1p）
+if (monthlyReqs.length > 0 || aiFeeStats.length > 0) {
+  H.push('<div class="edit-sec"><h4>技术专业委员会月度简报补充（1p）</h4>');
+  if (monthlyReqs.length > 0) {
+    H.push('<div style="padding:12px 14px;background:var(--blue-bg);border:1px solid var(--bdr);border-radius:8px;margin-bottom:12px">');
+    monthlyReqs.forEach(function(req, idx) {
+      H.push('<div style="font-size:0.86rem;color:var(--t1);line-height:1.8">' + (idx + 1) + '. [' + (req.code || '-') + '] ' + (req.text || '-') + '</div>');
+    });
+    H.push('</div>');
+  }
+  if (aiFeeStats.length > 0) {
+    H.push('<div class="tbl-wrap"><table class="dtbl">');
+    H.push('<thead><tr><th style="width:110px">月份</th><th style="width:140px">AI技术服务费(元)</th><th style="width:110px">上月费用(元)</th><th style="width:90px">环比</th><th>分析说明</th></tr></thead><tbody>');
+    aiFeeStats.forEach(function(row) {
+      var momText = row.momRate === null || row.momRate === undefined ? '-' : (row.momRate + '%');
+      H.push('<tr><td>' + (row.month || '-') + '</td>');
+      H.push('<td>' + (row.amount === undefined ? '-' : row.amount) + '</td>');
+      H.push('<td>' + (row.prevAmount === undefined ? '-' : row.prevAmount) + '</td>');
+      H.push('<td>' + momText + '</td>');
+      H.push('<td style="color:var(--t2);font-size:0.8rem">' + (row.analysis || '-') + '</td></tr>');
+    });
+    H.push('</tbody></table></div>');
+  } else {
+    H.push('<div style="font-size:0.82rem;color:var(--t3)">未识别到 AI 技术服务费字段（支持字段：AI技术服务费 / AI 技术服务费 / AI服务费），已按当前月份预置为 0。</div>');
+  }
+  H.push('<div class="edit-hint">* 本区块用于技术专业委员会月度简报的逐月统计分析，可在导出前复核口径</div>');
+  H.push('</div>');
+}
 
 // Editable area
 H.push('<div class="edit-sec"><h4>补充说明（会后编辑）</h4>');
