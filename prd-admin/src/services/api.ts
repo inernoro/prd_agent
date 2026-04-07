@@ -932,6 +932,7 @@ export const api = {
     entries: {
       list: (storeId: string) => `/api/document-store/stores/${storeId}/entries`,
       add: (storeId: string) => `/api/document-store/stores/${storeId}/entries`,
+      folders: (storeId: string) => `/api/document-store/stores/${storeId}/folders`,
       upload: (storeId: string) => `/api/document-store/stores/${storeId}/upload`,
       subscribe: (storeId: string) => `/api/document-store/stores/${storeId}/subscribe`,
       subscribeGithub: (storeId: string) => `/api/document-store/stores/${storeId}/subscribe-github`,

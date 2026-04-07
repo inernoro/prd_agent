@@ -210,6 +210,7 @@ public class DocumentStoreController : ControllerBase
         var entry = new DocumentEntry
         {
             StoreId = storeId,
+            ParentId = string.IsNullOrEmpty(request.ParentId) ? null : request.ParentId,
             DocumentId = request.DocumentId,
             AttachmentId = request.AttachmentId,
             Title = request.Title.Trim(),
@@ -239,14 +240,62 @@ public class DocumentStoreController : ControllerBase
         return Ok(ApiResponse<DocumentEntry>.Ok(entry));
     }
 
-    /// <summary>获取空间内的文档条目列表</summary>
+    /// <summary>创建文件夹</summary>
+    [HttpPost("stores/{storeId}/folders")]
+    public async Task<IActionResult> CreateFolder(string storeId, [FromBody] CreateFolderRequest request)
+    {
+        var userId = GetUserId();
+        var store = await _db.DocumentStores.Find(s => s.Id == storeId && s.OwnerId == userId).FirstOrDefaultAsync();
+        if (store == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "文档空间不存在"));
+
+        if (string.IsNullOrWhiteSpace(request.Name))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "文件夹名称不能为空"));
+
+        // 校验父文件夹存在且是文件夹
+        if (!string.IsNullOrEmpty(request.ParentId))
+        {
+            var parent = await _db.DocumentEntries.Find(
+                e => e.Id == request.ParentId && e.StoreId == storeId && e.IsFolder).FirstOrDefaultAsync();
+            if (parent == null)
+                return BadRequest(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "父文件夹不存在"));
+        }
+
+        var folder = new DocumentEntry
+        {
+            StoreId = storeId,
+            ParentId = string.IsNullOrEmpty(request.ParentId) ? null : request.ParentId,
+            IsFolder = true,
+            Title = request.Name.Trim(),
+            SourceType = DocumentSourceType.Upload,
+            ContentType = "application/x-folder",
+            CreatedBy = userId,
+        };
+
+        await _db.DocumentEntries.InsertOneAsync(folder);
+
+        await _db.DocumentStores.UpdateOneAsync(
+            s => s.Id == storeId,
+            Builders<DocumentStore>.Update
+                .Inc(s => s.DocumentCount, 1)
+                .Set(s => s.UpdatedAt, DateTime.UtcNow));
+
+        _logger.LogInformation("[document-store] Folder created: {FolderId} '{Name}' in store {StoreId}",
+            folder.Id, request.Name, storeId);
+
+        return Ok(ApiResponse<DocumentEntry>.Ok(folder));
+    }
+
+    /// <summary>获取空间内的文档条目列表（支持 parentId 过滤层级）</summary>
     [HttpGet("stores/{storeId}/entries")]
     public async Task<IActionResult> ListEntries(
         string storeId,
         [FromQuery] int page = 1,
-        [FromQuery] int pageSize = 20,
+        [FromQuery] int pageSize = 200,
         [FromQuery] string? sourceType = null,
-        [FromQuery] string? keyword = null)
+        [FromQuery] string? keyword = null,
+        [FromQuery] string? parentId = null,
+        [FromQuery] bool all = false)
     {
         var userId = GetUserId();
         var store = await _db.DocumentStores.Find(s => s.Id == storeId).FirstOrDefaultAsync();
@@ -256,11 +305,20 @@ public class DocumentStoreController : ControllerBase
         if (store.OwnerId != userId && !store.IsPublic)
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "文档空间不存在"));
 
-        pageSize = Math.Clamp(pageSize, 1, 100);
+        pageSize = Math.Clamp(pageSize, 1, 500);
         page = Math.Max(1, page);
 
         var filterBuilder = Builders<DocumentEntry>.Filter;
         var filter = filterBuilder.Eq(e => e.StoreId, storeId);
+
+        // 按层级过滤：all=true 返回全部，否则按 parentId 过滤
+        if (!all && string.IsNullOrWhiteSpace(keyword))
+        {
+            if (string.IsNullOrEmpty(parentId))
+                filter &= filterBuilder.Eq(e => e.ParentId, null);
+            else
+                filter &= filterBuilder.Eq(e => e.ParentId, parentId);
+        }
 
         if (!string.IsNullOrWhiteSpace(sourceType))
             filter &= filterBuilder.Eq(e => e.SourceType, sourceType);
@@ -275,7 +333,8 @@ public class DocumentStoreController : ControllerBase
 
         var total = await _db.DocumentEntries.CountDocumentsAsync(filter);
         var items = await _db.DocumentEntries.Find(filter)
-            .SortByDescending(e => e.CreatedAt)
+            .SortBy(e => e.IsFolder ? 0 : 1) // 文件夹优先
+            .ThenByDescending(e => e.CreatedAt)
             .Skip((page - 1) * pageSize)
             .Limit(pageSize)
             .ToListAsync();
@@ -373,7 +432,7 @@ public class DocumentStoreController : ControllerBase
     /// </summary>
     [HttpPost("stores/{storeId}/upload")]
     [RequestSizeLimit(MaxUploadBytes)]
-    public async Task<IActionResult> UploadFile(string storeId, [FromForm] IFormFile file, CancellationToken ct)
+    public async Task<IActionResult> UploadFile(string storeId, [FromForm] IFormFile file, [FromForm] string? parentId = null, CancellationToken ct = default)
     {
         var userId = GetUserId();
         var store = await _db.DocumentStores.Find(s => s.Id == storeId && s.OwnerId == userId).FirstOrDefaultAsync(ct);
@@ -461,6 +520,7 @@ public class DocumentStoreController : ControllerBase
         var entry = new DocumentEntry
         {
             StoreId = storeId,
+            ParentId = string.IsNullOrEmpty(parentId) ? null : parentId,
             AttachmentId = attachment.AttachmentId,
             DocumentId = documentId,
             Title = title,
@@ -733,6 +793,7 @@ public class UpdateDocumentStoreRequest
 
 public class AddDocumentEntryRequest
 {
+    public string? ParentId { get; set; }
     public string? DocumentId { get; set; }
     public string? AttachmentId { get; set; }
     public string Title { get; set; } = string.Empty;
@@ -742,6 +803,12 @@ public class AddDocumentEntryRequest
     public long FileSize { get; set; }
     public List<string>? Tags { get; set; }
     public Dictionary<string, string>? Metadata { get; set; }
+}
+
+public class CreateFolderRequest
+{
+    public string Name { get; set; } = string.Empty;
+    public string? ParentId { get; set; }
 }
 
 public class UpdateDocumentEntryRequest

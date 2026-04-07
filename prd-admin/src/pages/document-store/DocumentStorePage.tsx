@@ -32,6 +32,7 @@ import {
   addSubscription,
   addGitHubSubscription,
   setPrimaryEntry,
+  createFolder,
   triggerSync,
 } from '@/services';
 import { DocBrowser } from '@/components/doc-browser/DocBrowser';
@@ -350,6 +351,16 @@ function StoreDetailView({ store: initialStore, onBack }: {
     return null;
   }, []);
 
+  const handleCreateFolder = useCallback(async (name: string) => {
+    const res = await createFolder(store.id, name);
+    if (res.success) {
+      setEntries(prev => [res.data, ...prev]);
+      toast.success('文件夹已创建');
+    } else {
+      toast.error('创建失败', res.error?.message);
+    }
+  }, [store.id]);
+
   return (
     <div className="h-full min-h-0 flex flex-col overflow-hidden"
       onDragEnter={handleDragEnter} onDragLeave={handleDragLeave}
@@ -403,6 +414,7 @@ function StoreDetailView({ store: initialStore, onBack }: {
           onSelectEntry={setSelectedEntryId}
           onSetPrimary={handleSetPrimary}
           loadContent={loadContent}
+          onCreateFolder={handleCreateFolder}
           loading={loading}
           emptyState={
             <div className="flex-1 flex flex-col items-center justify-center py-16">

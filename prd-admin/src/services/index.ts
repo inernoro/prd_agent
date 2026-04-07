@@ -1518,6 +1518,7 @@ export {
   addSubscription,
   addGitHubSubscription,
   setPrimaryEntry,
+  createFolder,
   triggerSync,
 } from '@/services/real/documentStore';
 export type {

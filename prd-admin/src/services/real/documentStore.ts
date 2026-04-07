@@ -51,8 +51,8 @@ export const addDocumentEntryReal: AddDocumentEntryContract = async (storeId, in
   });
 };
 
-export const listDocumentEntriesReal: ListDocumentEntriesContract = async (storeId, page = 1, pageSize = 20, keyword) => {
-  let url = `${api.documentStore.entries.list(storeId)}?page=${page}&pageSize=${pageSize}`;
+export const listDocumentEntriesReal: ListDocumentEntriesContract = async (storeId, page = 1, pageSize = 200, keyword) => {
+  let url = `${api.documentStore.entries.list(storeId)}?page=${page}&pageSize=${pageSize}&all=true`;
   if (keyword) url += `&keyword=${encodeURIComponent(keyword)}`;
   return await apiRequest(url, { method: 'GET' });
 };
@@ -123,6 +123,14 @@ export async function addSubscription(storeId: string, input: {
   return await apiRequest<import('@/services/contracts/documentStore').DocumentEntry>(
     api.documentStore.entries.subscribe(storeId),
     { method: 'POST', body: input },
+  );
+}
+
+/** 创建文件夹 */
+export async function createFolder(storeId: string, name: string, parentId?: string) {
+  return await apiRequest<import('@/services/contracts/documentStore').DocumentEntry>(
+    api.documentStore.entries.folders(storeId),
+    { method: 'POST', body: { name, parentId: parentId || null } },
   );
 }
 

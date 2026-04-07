@@ -19,6 +19,8 @@ export type DocumentStore = {
 export type DocumentEntry = {
   id: string;
   storeId: string;
+  parentId?: string;
+  isFolder: boolean;
   documentId?: string;
   attachmentId?: string;
   title: string;

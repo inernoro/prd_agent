@@ -11,6 +11,12 @@ public class DocumentEntry
     /// <summary>所属文档空间 ID</summary>
     public string StoreId { get; set; } = string.Empty;
 
+    /// <summary>父文件夹 ID（null 表示根级）</summary>
+    public string? ParentId { get; set; }
+
+    /// <summary>是否为文件夹</summary>
+    public bool IsFolder { get; set; }
+
     /// <summary>关联的解析文档 ID（文本类文档，指向 ParsedPrd）</summary>
     public string? DocumentId { get; set; }
 
