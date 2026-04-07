@@ -15,6 +15,7 @@ import {
   RefreshCw,
   Rss,
   Globe,
+  Github,
 } from 'lucide-react';
 import { GlassCard } from '@/components/design/GlassCard';
 import { TabBar } from '@/components/design/TabBar';
@@ -29,6 +30,7 @@ import {
   uploadDocumentFile,
   getDocumentContent,
   addSubscription,
+  addGitHubSubscription,
   triggerSync,
 } from '@/services';
 import type {
@@ -431,10 +433,14 @@ function StoreDetailView({ store, onBack }: {
                 <div className="flex items-center gap-3 px-4 py-3">
                   <div className="w-9 h-9 rounded-[10px] flex items-center justify-center flex-shrink-0"
                     style={{
-                      background: entry.sourceType === 'subscription' ? 'rgba(234,179,8,0.06)' : 'rgba(59,130,246,0.06)',
-                      border: `1px solid ${entry.sourceType === 'subscription' ? 'rgba(234,179,8,0.1)' : 'rgba(59,130,246,0.1)'}`,
+                      background: entry.sourceType === 'github_directory' ? 'rgba(130,80,223,0.06)'
+                        : entry.sourceType === 'subscription' ? 'rgba(234,179,8,0.06)' : 'rgba(59,130,246,0.06)',
+                      border: `1px solid ${entry.sourceType === 'github_directory' ? 'rgba(130,80,223,0.1)'
+                        : entry.sourceType === 'subscription' ? 'rgba(234,179,8,0.1)' : 'rgba(59,130,246,0.1)'}`,
                     }}>
-                    {entry.sourceType === 'subscription' ? (
+                    {entry.sourceType === 'github_directory' ? (
+                      <Github size={16} style={{ color: 'rgba(130,80,223,0.7)' }} />
+                    ) : entry.sourceType === 'subscription' ? (
                       <Rss size={16} style={{ color: 'rgba(234,179,8,0.7)' }} />
                     ) : entry.contentType.startsWith('text/') ? (
                       <FileText size={16} style={{ color: 'rgba(59,130,246,0.7)' }} />
@@ -502,36 +508,57 @@ function StoreDetailView({ store, onBack }: {
   );
 }
 
-// ── 订阅源对话框 ──
+// ── 订阅源对话框（支持 URL 订阅 + GitHub 目录同步）──
 function SubscribeDialog({ storeId, onClose, onCreated }: {
   storeId: string;
   onClose: () => void;
   onCreated: (entry: DocumentEntry) => void;
 }) {
+  const [mode, setMode] = useState<'url' | 'github'>('url');
   const [title, setTitle] = useState('');
   const [sourceUrl, setSourceUrl] = useState('');
+  const [githubUrl, setGithubUrl] = useState('');
   const [interval, setInterval] = useState(60);
+  const [githubInterval, setGithubInterval] = useState(1440);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
   const handleCreate = async () => {
-    if (!title.trim()) { setError('标题不能为空'); return; }
-    if (!sourceUrl.trim()) { setError('源地址不能为空'); return; }
     setLoading(true);
     setError('');
-    const res = await addSubscription(storeId, {
-      title: title.trim(),
-      sourceUrl: sourceUrl.trim(),
-      syncIntervalMinutes: interval,
-    });
-    if (res.success) {
-      toast.success('订阅添加成功', '后台将按设定间隔自动拉取内容');
-      onCreated(res.data);
+
+    if (mode === 'github') {
+      if (!githubUrl.trim()) { setError('GitHub 地址不能为空'); setLoading(false); return; }
+      const res = await addGitHubSubscription(storeId, {
+        githubUrl: githubUrl.trim(),
+        title: title.trim() || undefined,
+        syncIntervalMinutes: githubInterval,
+      });
+      if (res.success) {
+        toast.success('GitHub 目录订阅已添加', '后台将立即开始首次同步');
+        onCreated(res.data);
+      } else {
+        setError(res.error?.message ?? '创建失败');
+      }
     } else {
-      setError(res.error?.message ?? '创建失败');
+      if (!title.trim()) { setError('标题不能为空'); setLoading(false); return; }
+      if (!sourceUrl.trim()) { setError('源地址不能为空'); setLoading(false); return; }
+      const res = await addSubscription(storeId, {
+        title: title.trim(),
+        sourceUrl: sourceUrl.trim(),
+        syncIntervalMinutes: interval,
+      });
+      if (res.success) {
+        toast.success('订阅添加成功', '后台将按设定间隔自动拉取内容');
+        onCreated(res.data);
+      } else {
+        setError(res.error?.message ?? '创建失败');
+      }
     }
     setLoading(false);
   };
+
+  const accentColor = mode === 'github' ? '130,80,223' : '234,179,8';
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center"
@@ -547,8 +574,8 @@ function SubscribeDialog({ storeId, onClose, onCreated }: {
         <div className="flex items-center justify-between mb-5">
           <div className="flex items-center gap-2.5">
             <div className="w-8 h-8 rounded-[10px] flex items-center justify-center"
-              style={{ background: 'rgba(234,179,8,0.08)', border: '1px solid rgba(234,179,8,0.12)' }}>
-              <Rss size={15} style={{ color: 'rgba(234,179,8,0.85)' }} />
+              style={{ background: `rgba(${accentColor},0.08)`, border: `1px solid rgba(${accentColor},0.12)` }}>
+              {mode === 'github' ? <Github size={15} style={{ color: `rgba(${accentColor},0.85)` }} /> : <Rss size={15} style={{ color: `rgba(${accentColor},0.85)` }} />}
             </div>
             <span className="text-[15px] font-semibold" style={{ color: 'var(--text-primary)' }}>添加订阅源</span>
           </div>
@@ -559,35 +586,89 @@ function SubscribeDialog({ storeId, onClose, onCreated }: {
           </button>
         </div>
 
+        {/* 模式切换 */}
+        <div className="flex gap-2 mb-4">
+          {([['url', 'URL 订阅', Rss], ['github', 'GitHub 目录', Github]] as const).map(([m, label, Icon]) => (
+            <button key={m} onClick={() => { setMode(m); setError(''); }}
+              className="flex-1 py-2 rounded-[10px] text-[12px] font-semibold cursor-pointer flex items-center justify-center gap-1.5 transition-all duration-200"
+              style={{
+                background: mode === m ? `rgba(${m === 'github' ? '130,80,223' : '234,179,8'},0.1)` : 'rgba(255,255,255,0.02)',
+                border: mode === m ? `1px solid rgba(${m === 'github' ? '130,80,223' : '234,179,8'},0.2)` : '1px solid rgba(255,255,255,0.06)',
+                color: mode === m ? `rgba(${m === 'github' ? '130,80,223' : '234,179,8'},0.9)` : 'var(--text-muted)',
+              }}>
+              <Icon size={13} /> {label}
+            </button>
+          ))}
+        </div>
+
         <div className="space-y-4 mb-4">
-          <div>
-            <label className="block text-[12px] mb-1.5" style={{ color: 'var(--text-muted)' }}>标题</label>
-            <input value={title} onChange={e => setTitle(e.target.value)} placeholder="如：React 官方博客"
-              className="w-full h-9 px-3 rounded-[10px] text-[13px] outline-none"
-              style={{ background: 'var(--input-bg, rgba(255,255,255,0.05))', border: '1px solid var(--border-subtle, rgba(255,255,255,0.1))', color: 'var(--text-primary)' }} />
-          </div>
-          <div>
-            <label className="block text-[12px] mb-1.5" style={{ color: 'var(--text-muted)' }}>源地址（RSS / 网页 URL）</label>
-            <input value={sourceUrl} onChange={e => setSourceUrl(e.target.value)} placeholder="https://example.com/feed.xml"
-              className="w-full h-9 px-3 rounded-[10px] text-[13px] outline-none"
-              style={{ background: 'var(--input-bg, rgba(255,255,255,0.05))', border: '1px solid var(--border-subtle, rgba(255,255,255,0.1))', color: 'var(--text-primary)' }} />
-          </div>
-          <div>
-            <label className="block text-[12px] mb-1.5" style={{ color: 'var(--text-muted)' }}>同步间隔</label>
-            <div className="flex gap-2">
-              {[15, 60, 360, 1440].map(m => (
-                <button key={m} onClick={() => setInterval(m)}
-                  className="flex-1 py-1.5 rounded-[8px] text-[11px] font-semibold cursor-pointer transition-all duration-200"
-                  style={{
-                    background: interval === m ? 'rgba(234,179,8,0.1)' : 'rgba(255,255,255,0.02)',
-                    border: interval === m ? '1px solid rgba(234,179,8,0.2)' : '1px solid rgba(255,255,255,0.06)',
-                    color: interval === m ? 'rgba(234,179,8,0.9)' : 'var(--text-muted)',
-                  }}>
-                  {m < 60 ? `${m}分钟` : m < 1440 ? `${m / 60}小时` : '每天'}
-                </button>
-              ))}
-            </div>
-          </div>
+          {mode === 'github' ? (
+            <>
+              <div>
+                <label className="block text-[12px] mb-1.5" style={{ color: 'var(--text-muted)' }}>GitHub 目录地址</label>
+                <input value={githubUrl} onChange={e => setGithubUrl(e.target.value)}
+                  placeholder="https://github.com/owner/repo/tree/main/doc"
+                  className="w-full h-9 px-3 rounded-[10px] text-[13px] outline-none"
+                  style={{ background: 'var(--input-bg, rgba(255,255,255,0.05))', border: '1px solid var(--border-subtle, rgba(255,255,255,0.1))', color: 'var(--text-primary)' }} />
+                <p className="text-[11px] mt-1" style={{ color: 'var(--text-muted)' }}>
+                  自动同步目录下所有 .md 文件，支持增量更新（SHA 去重）
+                </p>
+              </div>
+              <div>
+                <label className="block text-[12px] mb-1.5" style={{ color: 'var(--text-muted)' }}>标题（可选，默认用仓库名）</label>
+                <input value={title} onChange={e => setTitle(e.target.value)} placeholder="如：项目文档"
+                  className="w-full h-9 px-3 rounded-[10px] text-[13px] outline-none"
+                  style={{ background: 'var(--input-bg, rgba(255,255,255,0.05))', border: '1px solid var(--border-subtle, rgba(255,255,255,0.1))', color: 'var(--text-primary)' }} />
+              </div>
+              <div>
+                <label className="block text-[12px] mb-1.5" style={{ color: 'var(--text-muted)' }}>同步间隔</label>
+                <div className="flex gap-2">
+                  {[60, 360, 720, 1440].map(m => (
+                    <button key={m} onClick={() => setGithubInterval(m)}
+                      className="flex-1 py-1.5 rounded-[8px] text-[11px] font-semibold cursor-pointer transition-all duration-200"
+                      style={{
+                        background: githubInterval === m ? 'rgba(130,80,223,0.1)' : 'rgba(255,255,255,0.02)',
+                        border: githubInterval === m ? '1px solid rgba(130,80,223,0.2)' : '1px solid rgba(255,255,255,0.06)',
+                        color: githubInterval === m ? 'rgba(130,80,223,0.9)' : 'var(--text-muted)',
+                      }}>
+                      {m < 1440 ? `${m / 60}小时` : '每天'}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </>
+          ) : (
+            <>
+              <div>
+                <label className="block text-[12px] mb-1.5" style={{ color: 'var(--text-muted)' }}>标题</label>
+                <input value={title} onChange={e => setTitle(e.target.value)} placeholder="如：React 官方博客"
+                  className="w-full h-9 px-3 rounded-[10px] text-[13px] outline-none"
+                  style={{ background: 'var(--input-bg, rgba(255,255,255,0.05))', border: '1px solid var(--border-subtle, rgba(255,255,255,0.1))', color: 'var(--text-primary)' }} />
+              </div>
+              <div>
+                <label className="block text-[12px] mb-1.5" style={{ color: 'var(--text-muted)' }}>源地址（RSS / 网页 URL）</label>
+                <input value={sourceUrl} onChange={e => setSourceUrl(e.target.value)} placeholder="https://example.com/feed.xml"
+                  className="w-full h-9 px-3 rounded-[10px] text-[13px] outline-none"
+                  style={{ background: 'var(--input-bg, rgba(255,255,255,0.05))', border: '1px solid var(--border-subtle, rgba(255,255,255,0.1))', color: 'var(--text-primary)' }} />
+              </div>
+              <div>
+                <label className="block text-[12px] mb-1.5" style={{ color: 'var(--text-muted)' }}>同步间隔</label>
+                <div className="flex gap-2">
+                  {[15, 60, 360, 1440].map(m => (
+                    <button key={m} onClick={() => setInterval(m)}
+                      className="flex-1 py-1.5 rounded-[8px] text-[11px] font-semibold cursor-pointer transition-all duration-200"
+                      style={{
+                        background: interval === m ? 'rgba(234,179,8,0.1)' : 'rgba(255,255,255,0.02)',
+                        border: interval === m ? '1px solid rgba(234,179,8,0.2)' : '1px solid rgba(255,255,255,0.06)',
+                        color: interval === m ? 'rgba(234,179,8,0.9)' : 'var(--text-muted)',
+                      }}>
+                      {m < 60 ? `${m}分钟` : m < 1440 ? `${m / 60}小时` : '每天'}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </>
+          )}
         </div>
 
         {error && <p className="text-[12px] mb-3" style={{ color: 'rgba(239,68,68,0.9)' }}>{error}</p>}
@@ -595,7 +676,7 @@ function SubscribeDialog({ storeId, onClose, onCreated }: {
         <div className="flex justify-end gap-2">
           <Button variant="ghost" size="xs" onClick={onClose}>取消</Button>
           <Button variant="primary" size="xs" onClick={handleCreate} disabled={loading}>
-            {loading ? '添加中…' : '添加订阅'}
+            {loading ? '添加中…' : mode === 'github' ? '添加 GitHub 同步' : '添加订阅'}
           </Button>
         </div>
       </div>

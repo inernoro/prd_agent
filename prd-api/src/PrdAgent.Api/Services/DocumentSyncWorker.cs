@@ -57,11 +57,14 @@ public class DocumentSyncWorker : BackgroundService
         var now = DateTime.UtcNow;
 
         // 查找需要同步的条目：
-        // 1. 有 SourceUrl
+        // 1. 有 SourceUrl 或 SourceType == github_directory
         // 2. 有 SyncIntervalMinutes > 0
         // 3. SyncStatus == Syncing (手动触发) 或 距上次同步已超过间隔
         var filter = Builders<DocumentEntry>.Filter.And(
-            Builders<DocumentEntry>.Filter.Ne(e => e.SourceUrl, null),
+            Builders<DocumentEntry>.Filter.Or(
+                Builders<DocumentEntry>.Filter.Ne(e => e.SourceUrl, null),
+                Builders<DocumentEntry>.Filter.Eq(e => e.SourceType, DocumentSourceType.GithubDirectory)
+            ),
             Builders<DocumentEntry>.Filter.Gt(e => e.SyncIntervalMinutes, 0),
             Builders<DocumentEntry>.Filter.Or(
                 // 手动触发
@@ -90,7 +93,50 @@ public class DocumentSyncWorker : BackgroundService
 
         foreach (var entry in dueEntries)
         {
-            await SyncSingleEntryAsync(db, documentService, entry, ct);
+            if (entry.SourceType == DocumentSourceType.GithubDirectory)
+                await SyncGitHubDirectoryAsync(db, documentService, entry, ct);
+            else
+                await SyncSingleEntryAsync(db, documentService, entry, ct);
+        }
+    }
+
+    private async Task SyncGitHubDirectoryAsync(
+        MongoDbContext db,
+        IDocumentService documentService,
+        DocumentEntry entry,
+        CancellationToken ct)
+    {
+        try
+        {
+            // 标记为同步中
+            await db.DocumentEntries.UpdateOneAsync(
+                e => e.Id == entry.Id,
+                Builders<DocumentEntry>.Update
+                    .Set(e => e.SyncStatus, DocumentSyncStatus.Syncing),
+                cancellationToken: CancellationToken.None);
+
+            var githubSyncService = new GitHubDirectorySyncService(
+                _scopeFactory.CreateScope().ServiceProvider
+                    .GetRequiredService<ILogger<GitHubDirectorySyncService>>());
+
+            await githubSyncService.SyncDirectoryAsync(db, documentService, entry, ct);
+
+            // 标记同步完成
+            await db.DocumentEntries.UpdateOneAsync(
+                e => e.Id == entry.Id,
+                Builders<DocumentEntry>.Update
+                    .Set(e => e.SyncStatus, DocumentSyncStatus.Idle)
+                    .Set(e => e.SyncError, null)
+                    .Set(e => e.LastSyncAt, DateTime.UtcNow)
+                    .Set(e => e.UpdatedAt, DateTime.UtcNow),
+                cancellationToken: CancellationToken.None);
+
+            _logger.LogInformation("[DocumentSyncWorker] GitHub directory sync completed for {EntryId}", entry.Id);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogWarning(ex, "[DocumentSyncWorker] GitHub directory sync failed for {EntryId}", entry.Id);
+            await MarkSyncError(db, entry.Id, ex.Message);
         }
     }
 

@@ -1516,6 +1516,7 @@ export {
   uploadDocumentFile,
   getDocumentContent,
   addSubscription,
+  addGitHubSubscription,
   triggerSync,
 } from '@/services/real/documentStore';
 export type {

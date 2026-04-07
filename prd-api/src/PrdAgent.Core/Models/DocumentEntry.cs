@@ -83,7 +83,10 @@ public static class DocumentSourceType
     /// <summary>订阅源（定期自动拉取）</summary>
     public const string Subscription = "subscription";
 
-    public static readonly string[] All = { Upload, Migration, Reference, Import, Subscription };
+    /// <summary>GitHub 目录同步（自动拉取指定目录下所有文件）</summary>
+    public const string GithubDirectory = "github_directory";
+
+    public static readonly string[] All = { Upload, Migration, Reference, Import, Subscription, GithubDirectory };
 }
 
 /// <summary>同步状态常量</summary>

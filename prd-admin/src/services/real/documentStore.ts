@@ -126,6 +126,19 @@ export async function addSubscription(storeId: string, input: {
   );
 }
 
+/** 添加 GitHub 目录订阅 */
+export async function addGitHubSubscription(storeId: string, input: {
+  githubUrl: string;
+  title?: string;
+  syncIntervalMinutes?: number;
+  tags?: string[];
+}) {
+  return await apiRequest<import('@/services/contracts/documentStore').DocumentEntry>(
+    api.documentStore.entries.subscribeGithub(storeId),
+    { method: 'POST', body: input },
+  );
+}
+
 /** 手动触发同步 */
 export async function triggerSync(entryId: string) {
   return await apiRequest<{ triggered: boolean }>(

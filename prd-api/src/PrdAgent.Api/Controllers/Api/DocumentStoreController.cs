@@ -7,6 +7,7 @@ using PrdAgent.Core.Models;
 using PrdAgent.Core.Security;
 using PrdAgent.Infrastructure.Database;
 using PrdAgent.Infrastructure.Services;
+using PrdAgent.Api.Services;
 using PrdAgent.Infrastructure.Services.AssetStorage;
 
 namespace PrdAgent.Api.Controllers.Api;
@@ -574,6 +575,84 @@ public class DocumentStoreController : ControllerBase
         return Ok(ApiResponse<DocumentEntry>.Ok(entry));
     }
 
+    /// <summary>添加 GitHub 目录订阅（自动同步 GitHub 仓库目录下所有 .md 文件）</summary>
+    [HttpPost("stores/{storeId}/subscribe-github")]
+    public async Task<IActionResult> AddGitHubSubscription(string storeId, [FromBody] AddGitHubSubscriptionRequest request)
+    {
+        var userId = GetUserId();
+        var store = await _db.DocumentStores.Find(s => s.Id == storeId && s.OwnerId == userId).FirstOrDefaultAsync();
+        if (store == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "文档空间不存在"));
+
+        if (string.IsNullOrWhiteSpace(request.GithubUrl))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "GitHub 地址不能为空"));
+
+        // 解析 GitHub URL
+        string owner, repo, path, branch;
+        try
+        {
+            (owner, repo, path, branch) = GitHubDirectorySyncService.ParseGitHubUrl(request.GithubUrl.Trim());
+        }
+        catch (Exception ex)
+        {
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, $"GitHub 地址格式无效: {ex.Message}"));
+        }
+
+        // 去重：检查是否已有相同仓库+路径+分支的订阅
+        var existingFilter = Builders<DocumentEntry>.Filter.And(
+            Builders<DocumentEntry>.Filter.Eq(e => e.StoreId, storeId),
+            Builders<DocumentEntry>.Filter.Eq(e => e.SourceType, DocumentSourceType.GithubDirectory));
+        var existingEntries = await _db.DocumentEntries.Find(existingFilter).ToListAsync();
+        var duplicate = existingEntries.FirstOrDefault(e =>
+            e.Metadata.GetValueOrDefault("github_owner") == owner &&
+            e.Metadata.GetValueOrDefault("github_repo") == repo &&
+            e.Metadata.GetValueOrDefault("github_path") == path &&
+            e.Metadata.GetValueOrDefault("github_branch") == branch);
+        if (duplicate != null)
+            return BadRequest(ApiResponse<object>.Fail("ALREADY_EXISTS", $"该目录已订阅 (ID: {duplicate.Id})"));
+
+        var interval = Math.Clamp(request.SyncIntervalMinutes ?? 1440, 60, 1440); // 1小时 ~ 24小时，默认每天
+
+        var title = request.Title?.Trim();
+        if (string.IsNullOrEmpty(title))
+            title = string.IsNullOrEmpty(path) ? $"{owner}/{repo}" : $"{owner}/{repo}/{path}";
+
+        var entry = new DocumentEntry
+        {
+            StoreId = storeId,
+            Title = title,
+            Summary = $"GitHub 目录同步: {owner}/{repo}/{path}@{branch}",
+            SourceType = DocumentSourceType.GithubDirectory,
+            SourceUrl = request.GithubUrl.Trim(),
+            SyncIntervalMinutes = interval,
+            SyncStatus = DocumentSyncStatus.Syncing, // 立即触发首次同步
+            ContentType = "application/x-github-directory",
+            CreatedBy = userId,
+            Metadata = new Dictionary<string, string>
+            {
+                ["github_owner"] = owner,
+                ["github_repo"] = repo,
+                ["github_path"] = path,
+                ["github_branch"] = branch,
+            },
+            Tags = request.Tags ?? new List<string>(),
+        };
+
+        await _db.DocumentEntries.InsertOneAsync(entry);
+
+        await _db.DocumentStores.UpdateOneAsync(
+            s => s.Id == storeId,
+            Builders<DocumentStore>.Update
+                .Inc(s => s.DocumentCount, 1)
+                .Set(s => s.UpdatedAt, DateTime.UtcNow));
+
+        _logger.LogInformation(
+            "[document-store] GitHub subscription added: {EntryId} {Owner}/{Repo}/{Path}@{Branch} to store {StoreId}",
+            entry.Id, owner, repo, path, branch, storeId);
+
+        return Ok(ApiResponse<DocumentEntry>.Ok(entry));
+    }
+
     /// <summary>手动触发同步</summary>
     [HttpPost("entries/{entryId}/sync")]
     public async Task<IActionResult> TriggerSync(string entryId)
@@ -587,7 +666,7 @@ public class DocumentStoreController : ControllerBase
         if (store == null)
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "文档条目不存在"));
 
-        if (string.IsNullOrEmpty(entry.SourceUrl))
+        if (string.IsNullOrEmpty(entry.SourceUrl) && entry.SourceType != DocumentSourceType.GithubDirectory)
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "该文档不是订阅源"));
 
         // 标记为同步中（BackgroundService 会拾取）
@@ -648,6 +727,14 @@ public class AddSubscriptionRequest
     public string Title { get; set; } = string.Empty;
     public string? Description { get; set; }
     public string SourceUrl { get; set; } = string.Empty;
+    public int? SyncIntervalMinutes { get; set; }
+    public List<string>? Tags { get; set; }
+}
+
+public class AddGitHubSubscriptionRequest
+{
+    public string GithubUrl { get; set; } = string.Empty;
+    public string? Title { get; set; }
     public int? SyncIntervalMinutes { get; set; }
     public List<string>? Tags { get; set; }
 }

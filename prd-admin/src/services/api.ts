@@ -933,6 +933,7 @@ export const api = {
       add: (storeId: string) => `/api/document-store/stores/${storeId}/entries`,
       upload: (storeId: string) => `/api/document-store/stores/${storeId}/upload`,
       subscribe: (storeId: string) => `/api/document-store/stores/${storeId}/subscribe`,
+      subscribeGithub: (storeId: string) => `/api/document-store/stores/${storeId}/subscribe-github`,
       detail: (entryId: string) => `/api/document-store/entries/${entryId}`,
       content: (entryId: string) => `/api/document-store/entries/${entryId}/content`,
       sync: (entryId: string) => `/api/document-store/entries/${entryId}/sync`,
