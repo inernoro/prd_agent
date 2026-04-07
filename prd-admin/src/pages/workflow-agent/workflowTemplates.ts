@@ -269,6 +269,15 @@ data.forEach(function(i) {
     }
   });
 });
+var aiFeeDocLinks = docLinks.filter(function(dl) {
+  var u = String(dl.url || "").toLowerCase();
+  return u.indexOf("ai") >= 0 || u.indexOf("fee") >= 0 || u.indexOf("service") >= 0 || u.indexOf("账单") >= 0 || u.indexOf("费用") >= 0;
+}).slice(0, 8).map(function(dl, idx) {
+  return {
+    url: dl.url,
+    label: dl.fromBug ? ("来源缺陷：" + dl.fromBug) : ("费用依据链接 " + (idx + 1))
+  };
+});
 
 // 时间戳
 var now = new Date();
@@ -336,6 +345,7 @@ result = {
     { code: "1p", text: "AI技术服务费要列入技术专业委员会月度简报内逐月统计分析" }
   ],
   aiServiceFeeMonthlyStats: aiFeeMonthlyStats,
+  aiServiceFeeLinks: aiFeeDocLinks,
   summary: summary,
   verification: {
     severityOk: p0.length+p1.length+p2.length+p3.length+p4.length <= techBugs.length,

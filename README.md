@@ -96,6 +96,10 @@ To support monthly governance requirements, the **TAPD Defect Collection & Analy
 - **HTML report rendering**:
   - Adds a dedicated section in the summary area showing the `1p` policy requirement
   - Adds a month-by-month fee table for direct use in the technical committee monthly briefing
+  - Adds clickable fee evidence links (prefer defect title as link text) for traceability
+- **Editor UX improvements**:
+  - Script code input area is enlarged for easier editing
+  - Supports fullscreen script editing with JavaScript syntax highlighting preview
 
 ### LLM Gateway
 

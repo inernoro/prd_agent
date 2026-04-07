@@ -19,6 +19,7 @@ var alerts = d.criticalAlerts || [];
 var dls = d.docLinks || [];
 var monthlyReqs = d.monthlyBriefingRequirements || [];
 var aiFeeStats = d.aiServiceFeeMonthlyStats || [];
+var aiFeeLinks = d.aiServiceFeeLinks || [];
 var totalTech = 0;
 (d.kpis || []).forEach(function(k){ if(k.label==="技术缺陷总数") totalTech=k.value; });
 
@@ -317,6 +318,15 @@ if (monthlyReqs.length > 0 || aiFeeStats.length > 0) {
     H.push('</tbody></table></div>');
   } else {
     H.push('<div style="font-size:0.82rem;color:var(--t3)">未识别到 AI 技术服务费字段（支持字段：AI技术服务费 / AI 技术服务费 / AI服务费），已按当前月份预置为 0。</div>');
+  }
+  if (aiFeeLinks.length > 0) {
+    H.push('<div style="margin-top:10px">');
+    H.push('<div style="font-size:0.78rem;color:var(--t3);margin-bottom:6px">相关费用依据链接：</div>');
+    H.push('<div style="display:flex;flex-wrap:wrap;gap:8px">');
+    aiFeeLinks.forEach(function(lk) {
+      H.push('<a href="' + lk.url + '" target="_blank" rel="noopener" style="display:inline-flex;align-items:center;gap:4px;padding:3px 10px;border-radius:999px;background:var(--blue-bg);color:var(--blue);text-decoration:none;font-size:0.76rem;border:1px solid rgba(22,93,255,0.2)">' + (lk.label || "费用依据") + ' &rarr;</a>');
+    });
+    H.push('</div></div>');
   }
   H.push('<div class="edit-hint">* 本区块用于技术专业委员会月度简报的逐月统计分析，可在导出前复核口径</div>');
   H.push('</div>');
