@@ -1,0 +1,119 @@
+version: 1
+profile: ddd-anchor-pr-review
+
+metadata:
+  owner_role: architect
+  intent: "用于 DDD + 锚定项 + 垂直切片协作模式下的 PR 自动预审与裁决建议"
+
+references:
+  collaboration_guide: ".github/pr-architect/README.md"
+  decision_card_template: ".github/pr-architect/decision-card-template.md"
+  label_taxonomy: ".github/pr-architect/label-taxonomy.md"
+  top_design_docs:
+    - "doc/spec.srs.md"
+    - "doc/spec.prd.md"
+
+required_pr_metadata:
+  - key: "slice_id"
+    required: true
+  - key: "bounded_context"
+    required: true
+  - key: "anchor_refs"
+    required: true
+  - key: "skills_used"
+    required: true
+  - key: "out_of_slice_changes"
+    required: true
+  - key: "tests_evidence"
+    required: true
+
+hard_block_rules:
+  - id: "missing-required-metadata"
+    severity: "block"
+    condition: "any_required_pr_metadata_missing"
+    message: "PR 元数据缺失，无法进行架构层裁决。"
+
+  - id: "unapproved-cross-context-coupling"
+    severity: "block"
+    condition: "cross_bounded_context_call_detected_without_contract"
+    message: "检测到跨 bounded context 的未授权直接耦合。"
+
+  - id: "out-of-slice-without-adr"
+    severity: "block"
+    condition: "out_of_slice_changes_is_true_and_adr_link_missing"
+    message: "存在越界改动但未提供 ADR 或等效设计说明。"
+
+  - id: "domain-invariant-broken"
+    severity: "block"
+    condition: "aggregate_boundary_or_domain_invariant_broken"
+    message: "疑似破坏领域不变量或聚合边界。"
+
+  - id: "contract-changed-without-compat-plan"
+    severity: "block"
+    condition: "api_or_event_contract_changed_without_migration_or_compatibility_notes"
+    message: "关键契约发生变化但缺失兼容/迁移说明。"
+
+  - id: "critical-path-without-tests"
+    severity: "block"
+    condition: "critical_path_changed_and_tests_evidence_insufficient"
+    message: "关键路径改动缺乏最低测试证据。"
+
+scoring:
+  mode: "risk"
+  thresholds:
+    approve_max: 20
+    request_changes_max: 49
+    block_min: 50
+  dimensions:
+    - key: "design_alignment"
+      weight: 30
+      description: "与 anchor 与 DDD 边界的一致性"
+    - key: "boundary_safety"
+      weight: 20
+      description: "跨上下文边界与职责隔离风险"
+    - key: "contract_impact"
+      weight: 15
+      description: "对 API/事件契约的影响"
+    - key: "data_change_risk"
+      weight: 15
+      description: "数据模型或迁移风险"
+    - key: "test_sufficiency"
+      weight: 10
+      description: "测试证据覆盖充分性"
+    - key: "security_and_ops"
+      weight: 10
+      description: "鉴权、安全、可运维性风险"
+
+decision_policy:
+  when_blockers_exist: "Block"
+  when_no_blockers:
+    - if: "score <= 20"
+      decision: "Approve"
+    - if: "score >= 21 and score <= 49"
+      decision: "Request Changes"
+    - if: "score >= 50"
+      decision: "Block"
+
+return_policy:
+  rework_types:
+    type_a: "同 PR 修复，适用于局部可控问题"
+    type_b: "拆分 PR，适用于范围失控或切片混杂"
+    type_c: "设计回炉，适用于与顶设冲突或连续修订失败"
+  escalation:
+    max_rework_rounds: 2
+    on_exceed: "Type C"
+
+architect_focus_questions:
+  max_items: 3
+  focus:
+    - "是否偏离既定 bounded context 边界"
+    - "是否破坏 anchor 对应的核心约束"
+    - "是否需要灰度、开关或分阶段发布"
+
+output_contract:
+  sections:
+    - "recommended_decision"
+    - "blockers"
+    - "risks"
+    - "architect_focus_questions"
+    - "resubmission_criteria"
