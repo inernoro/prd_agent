@@ -34,6 +34,7 @@ import { getIconForCapsule, getEmojiForCapsule, getCategoryEmoji } from './capsu
 import { MapSpinner } from '@/components/ui/VideoLoader';
 import { Button } from '@/components/design/Button';
 import { TabBar } from '@/components/design/TabBar';
+import { Dialog } from '@/components/ui/Dialog';
 import { listCapsuleTypes, updateWorkflow, executeWorkflow, getExecution, cancelExecution, testRunCapsule } from '@/services';
 import { replayNode } from '@/services/real/workflowAgent';
 import { useAuthStore } from '@/stores/authStore';
@@ -43,6 +44,8 @@ import { useCanvasHistory } from './useCanvasHistory';
 import { HttpConfigPanel } from './HttpConfigPanel';
 import { WorkflowChatPanel } from './WorkflowChatPanel';
 import { ArtifactPreviewModal } from './ArtifactPreviewModal';
+import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
+import { oneDark } from 'react-syntax-highlighter/dist/esm/styles/prism';
 import type {
   Workflow, WorkflowNode, WorkflowEdge as WfEdge,
   CapsuleTypeMeta, CapsuleCategoryInfo, WorkflowExecution,
@@ -2160,6 +2163,134 @@ function NodeContextMenu({
 
 // ─── 配置字段输入组件 ───
 
+function ScriptCodeEditorInput({
+  value,
+  accentHue,
+  onChange,
+  placeholder,
+}: {
+  value: string;
+  accentHue: number;
+  onChange: (next: string) => void;
+  placeholder?: string;
+}) {
+  const [fullscreenOpen, setFullscreenOpen] = useState(false);
+  const baseInputStyle = {
+    background: 'rgba(255,255,255,0.04)',
+    border: '1px solid rgba(255,255,255,0.1)',
+    color: 'var(--text-primary, #e8e6e3)',
+  };
+  const focusBorder = `hsla(${accentHue}, 60%, 55%, 0.4)`;
+
+  function normalizeCode(input: string) {
+    return input
+      .split('\n')
+      .map((line) => line.replace(/\s+$/g, ''))
+      .join('\n')
+      .trimEnd();
+  }
+
+  function handleFormat() {
+    onChange(normalizeCode(value));
+  }
+
+  return (
+    <div className="space-y-1.5">
+      <div className="flex items-center justify-end gap-1.5">
+        <button
+          type="button"
+          onClick={handleFormat}
+          className="h-7 px-2.5 rounded-[8px] text-[10px] font-medium transition-all"
+          style={{
+            border: '1px solid rgba(255,255,255,0.08)',
+            background: 'rgba(255,255,255,0.04)',
+            color: 'var(--text-secondary, #aaa)',
+          }}
+        >
+          格式化
+        </button>
+        <button
+          type="button"
+          onClick={() => setFullscreenOpen(true)}
+          className="h-7 px-2.5 rounded-[8px] text-[10px] font-medium transition-all inline-flex items-center gap-1"
+          style={{
+            border: '1px solid rgba(59,130,246,0.25)',
+            background: 'rgba(59,130,246,0.08)',
+            color: 'rgba(59,130,246,0.9)',
+          }}
+          title="全屏编辑"
+        >
+          <Maximize2 className="w-3 h-3" />
+          全屏编辑
+        </button>
+      </div>
+      <textarea
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder={placeholder}
+        rows={12}
+        className="w-full px-2.5 py-1.5 rounded-lg text-[12px] outline-none resize-y font-mono"
+        style={{ ...baseInputStyle, minHeight: 280, lineHeight: 1.65 }}
+        onFocus={(e) => { e.currentTarget.style.borderColor = focusBorder; }}
+        onBlur={(e) => { e.currentTarget.style.borderColor = 'rgba(255,255,255,0.1)'; }}
+      />
+
+      <Dialog
+        open={fullscreenOpen}
+        onOpenChange={setFullscreenOpen}
+        title="脚本全屏编辑器"
+        maxWidth={1200}
+        contentStyle={{ width: '96vw' }}
+        titleAction={(
+          <button
+            type="button"
+            onClick={handleFormat}
+            className="h-8 px-3 rounded-[10px] text-[11px] font-medium transition-all"
+            style={{
+              border: '1px solid rgba(255,255,255,0.08)',
+              background: 'rgba(255,255,255,0.05)',
+              color: 'var(--text-secondary, #aaa)',
+            }}
+          >
+            格式化代码
+          </button>
+        )}
+        content={(
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-3 h-[72vh]">
+            <div className="min-h-0 flex flex-col">
+              <div className="text-[11px] mb-1" style={{ color: 'var(--text-muted, #888)' }}>编辑区</div>
+              <textarea
+                value={value}
+                onChange={(e) => onChange(e.target.value)}
+                placeholder={placeholder}
+                className="w-full flex-1 min-h-0 px-2.5 py-1.5 rounded-lg text-[12px] outline-none resize-none font-mono"
+                style={{ ...baseInputStyle, lineHeight: 1.7 }}
+              />
+            </div>
+            <div className="min-h-0 flex flex-col">
+              <div className="text-[11px] mb-1" style={{ color: 'var(--text-muted, #888)' }}>高亮预览</div>
+              <div
+                className="flex-1 min-h-0 rounded-[8px] overflow-auto"
+                style={{ border: '1px solid rgba(255,255,255,0.08)' }}
+              >
+                <SyntaxHighlighter
+                  language="javascript"
+                  style={oneDark}
+                  showLineNumbers
+                  wrapLongLines
+                  customStyle={{ margin: 0, minHeight: '100%', fontSize: '12px' }}
+                >
+                  {value || '// 在左侧输入脚本，右侧自动高亮预览'}
+                </SyntaxHighlighter>
+              </div>
+            </div>
+          </div>
+        )}
+      />
+    </div>
+  );
+}
+
 function ConfigFieldInput({
   field,
   value,
@@ -2215,6 +2346,13 @@ function ConfigFieldInput({
           style={baseInputStyle}
           onFocus={(e) => { e.currentTarget.style.borderColor = focusBorder; }}
           onBlur={(e) => { e.currentTarget.style.borderColor = 'rgba(255,255,255,0.1)'; }}
+        />
+      ) : field.fieldType === 'code' ? (
+        <ScriptCodeEditorInput
+          value={strVal}
+          accentHue={accentHue}
+          onChange={(next) => onChange(next)}
+          placeholder={field.placeholder}
         />
       ) : field.fieldType === 'number' ? (
         <input
