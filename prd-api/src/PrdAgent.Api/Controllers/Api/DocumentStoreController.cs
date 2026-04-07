@@ -242,7 +242,7 @@ public class DocumentStoreController : ControllerBase
 
     /// <summary>创建文件夹</summary>
     [HttpPost("stores/{storeId}/folders")]
-    public async Task<IActionResult> CreateFolder(string storeId, [FromBody] CreateFolderRequest request)
+    public async Task<IActionResult> CreateFolder(string storeId, [FromBody] CreateDocStoreFolderRequest request)
     {
         var userId = GetUserId();
         var store = await _db.DocumentStores.Find(s => s.Id == storeId && s.OwnerId == userId).FirstOrDefaultAsync();
@@ -805,7 +805,7 @@ public class AddDocumentEntryRequest
     public Dictionary<string, string>? Metadata { get; set; }
 }
 
-public class CreateFolderRequest
+public class CreateDocStoreFolderRequest
 {
     public string Name { get; set; } = string.Empty;
     public string? ParentId { get; set; }
