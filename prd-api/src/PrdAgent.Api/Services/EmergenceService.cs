@@ -103,21 +103,29 @@ public class EmergenceService
             _logger.LogInformation("[emergence] Explore: sending LLM request for node {NodeId}, AppCaller={AppCaller}",
                 parentNodeId, request.AppCallerCode);
             response = await _gateway.SendAsync(request, CancellationToken.None);
-            _logger.LogInformation("[emergence] Explore: LLM response received, content length={Len}",
-                response.Content?.Length ?? 0);
+            _logger.LogInformation("[emergence] Explore: LLM response received, success={Success}, content length={Len}, error={Error}",
+                response.Success, response.Content?.Length ?? 0, response.ErrorMessage);
         }
         catch (Exception ex)
         {
-            var errMsg = $"LLM 调用失败: {ex.Message}";
+            var errMsg = $"LLM 调用异常: {ex.Message}";
             _logger.LogError(ex, "[emergence] Explore LLM call failed for node {NodeId}: {Error}", parentNodeId, ex.Message);
+            onError?.Invoke(errMsg);
+            yield break;
+        }
+
+        if (!response.Success)
+        {
+            var errMsg = $"LLM 调用失败: {response.ErrorMessage ?? response.ErrorCode ?? "未知错误"}";
+            _logger.LogWarning("[emergence] Explore: LLM returned error for node {NodeId}: {Error}", parentNodeId, errMsg);
             onError?.Invoke(errMsg);
             yield break;
         }
 
         if (string.IsNullOrWhiteSpace(response.Content))
         {
-            var errMsg = "LLM 返回空内容（可能模型池未配置或 AppCallerCode 无对应模型组）";
-            _logger.LogWarning("[emergence] Explore: empty response for node {NodeId}", parentNodeId);
+            var errMsg = "LLM 返回空内容（模型响应为空）";
+            _logger.LogWarning("[emergence] Explore: empty content for node {NodeId}", parentNodeId);
             onError?.Invoke(errMsg);
             yield break;
         }
@@ -200,15 +208,22 @@ public class EmergenceService
         }
         catch (Exception ex)
         {
-            var errMsg = $"LLM 调用失败: {ex.Message}";
+            var errMsg = $"LLM 调用异常: {ex.Message}";
             _logger.LogError(ex, "[emergence] Emerge LLM call failed for tree {TreeId}: {Error}", treeId, ex.Message);
+            onError?.Invoke(errMsg);
+            yield break;
+        }
+
+        if (!response.Success)
+        {
+            var errMsg = $"LLM 调用失败: {response.ErrorMessage ?? response.ErrorCode ?? "未知错误"}";
             onError?.Invoke(errMsg);
             yield break;
         }
 
         if (string.IsNullOrWhiteSpace(response.Content))
         {
-            onError?.Invoke("LLM 返回空内容（可能模型池未配置或 AppCallerCode 无对应模型组）");
+            onError?.Invoke("LLM 返回空内容（模型响应为空）");
             yield break;
         }
 
