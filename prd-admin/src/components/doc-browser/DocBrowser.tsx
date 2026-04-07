@@ -190,7 +190,7 @@ export function DocBrowser({
 
   return (
     <div className="flex-1 min-h-0 flex gap-0 rounded-[12px] overflow-hidden"
-      style={{ border: '1px solid rgba(255,255,255,0.06)', background: 'rgba(0,0,0,0.12)' }}>
+      style={{ border: '1px solid rgba(255,255,255,0.06)', background: 'rgba(0,0,0,0.12)', minHeight: 'calc(100vh - 160px)' }}>
 
       {/* 左侧：文件列表 */}
       <div className="w-[260px] min-w-[220px] max-w-[320px] flex flex-col border-r"

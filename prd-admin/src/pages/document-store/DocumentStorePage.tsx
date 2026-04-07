@@ -395,7 +395,7 @@ function StoreDetailView({ store: initialStore, onBack }: {
       )}
 
       {/* 左右分栏文档浏览器 */}
-      <div className="flex-1 min-h-0 px-5 pb-4 pt-3">
+      <div className="flex-1 min-h-0 flex flex-col px-5 pb-4 pt-3">
         <DocBrowser
           entries={entries}
           primaryEntryId={store.primaryEntryId}
