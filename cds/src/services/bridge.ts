@@ -154,6 +154,14 @@ export class BridgeService {
     }
   }
 
+  /** Long-poll: peek and shift the next command without creating a new connection */
+  pollCommand(branchId: string): BridgeCommand | null {
+    const conn = this.connections.get(branchId);
+    if (!conn) return null;
+    conn.lastHeartbeat = Date.now();
+    return conn.pendingCommands.length > 0 ? conn.pendingCommands.shift()! : null;
+  }
+
   /** Agent sends a command — queues it and waits for widget to execute */
   async sendCommand(branchId: string, command: BridgeCommand): Promise<BridgeResponse> {
     const conn = this.connections.get(branchId);

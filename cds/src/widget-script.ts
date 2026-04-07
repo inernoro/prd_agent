@@ -1092,14 +1092,16 @@ export function buildWidgetScript(branchId: string, branchName: string): string 
           bridgeConnected=true;
           console.log('[CDS Bridge] Activated by Agent');
           renderBridgeIndicator();
+          // Start long-polling loop (no setInterval — each poll chains to the next)
           bridgePoll();
-          bridgeActiveTimer=setInterval(bridgePoll,3000);
         }
       })
       .catch(function(e){console.error('[CDS Bridge] Check error:',e);});
   }
 
-  // Full heartbeat poll (only runs when activated)
+  // Long-polling heartbeat loop.
+  // Server holds request up to 10s, returns instantly when a command arrives.
+  // After each response, immediately sends the next heartbeat (no interval gap).
   function bridgePoll(){
     if(!bridgeActive)return;
     var state=collectPageState();
@@ -1110,7 +1112,7 @@ export function buildWidgetScript(branchId: string, branchName: string): string 
     })
     .then(function(r){return r.ok?r.json():null;})
     .then(function(d){
-      if(!d)return;
+      if(!d){bridgePoll();return;} // re-poll immediately
       var cmd=d.command;
       if(cmd&&cmd.id&&cmd.action){
         var desc=cmd.description||actionLabel(cmd.action);
@@ -1150,9 +1152,16 @@ export function buildWidgetScript(branchId: string, branchName: string): string 
               method:'POST',
               headers:{'Content-Type':'application/json'},
               body:JSON.stringify({branchId:BRANCH_ID,id:cmd.id,success:result.success,error:result.error||undefined,data:result.data||undefined,state:newState})
-            }).catch(function(){});
+            }).then(function(){
+              bridgePoll(); // chain next long-poll immediately
+            }).catch(function(){
+              if(bridgeActive) setTimeout(bridgePoll,1000);
+            });
           },delay);
         });
+      } else {
+        // No command — chain next long-poll immediately
+        bridgePoll();
       }
     })
     .catch(function(){
@@ -1160,6 +1169,8 @@ export function buildWidgetScript(branchId: string, branchName: string): string 
         bridgeConnected=false;
         renderBridgeIndicator();
       }
+      // Retry after 2s on error (network issue, CDS restarting)
+      if(bridgeActive) setTimeout(bridgePoll,2000);
     });
   }
 
