@@ -315,7 +315,12 @@ public class DocumentStoreController : ControllerBase
         if (!all && string.IsNullOrWhiteSpace(keyword))
         {
             if (string.IsNullOrEmpty(parentId))
-                filter &= filterBuilder.Eq(e => e.ParentId, null);
+            {
+                // 根级：ParentId == null 或 ParentId 字段不存在（兼容旧数据）
+                filter &= filterBuilder.Or(
+                    filterBuilder.Eq(e => e.ParentId, null),
+                    filterBuilder.Exists(e => e.ParentId, false));
+            }
             else
                 filter &= filterBuilder.Eq(e => e.ParentId, parentId);
         }

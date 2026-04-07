@@ -93,7 +93,7 @@ function CreateStoreDialog({ onClose, onCreated }: {
               <Library size={15} style={{ color: 'rgba(59,130,246,0.85)' }} />
             </div>
             <span className="text-[15px] font-semibold" style={{ color: 'var(--text-primary)' }}>
-              新建文档空间
+              新建知识库
             </span>
           </div>
           <button onClick={onClose}
@@ -642,7 +642,7 @@ export function DocumentStorePage() {
   return (
     <div className="h-full min-h-0 flex flex-col overflow-x-hidden overflow-y-auto gap-5">
       <TabBar
-        title="文档空间"
+        title="知识库"
         icon={<Library size={14} />}
         actions={
           <Button variant="primary" size="xs" onClick={() => setShowCreate(true)}>
@@ -662,7 +662,7 @@ export function DocumentStorePage() {
           <div className="flex flex-col items-center justify-center py-16">
             <Library size={48} style={{ color: 'var(--text-muted)', opacity: 0.3, marginBottom: 20 }} />
             <p className="text-[16px] font-semibold mb-1" style={{ color: 'var(--text-primary)' }}>
-              文档空间
+              知识库
             </p>
             <p className="text-[12px] mb-2" style={{ color: 'var(--text-muted)' }}>
               集中存储文档，作为 AI 涌现探索的种子来源
