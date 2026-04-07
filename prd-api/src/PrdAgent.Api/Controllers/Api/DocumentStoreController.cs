@@ -295,7 +295,8 @@ public class DocumentStoreController : ControllerBase
         [FromQuery] string? sourceType = null,
         [FromQuery] string? keyword = null,
         [FromQuery] string? parentId = null,
-        [FromQuery] bool all = false)
+        [FromQuery] bool all = false,
+        [FromQuery] bool searchContent = false)
     {
         var userId = GetUserId();
         var store = await _db.DocumentStores.Find(s => s.Id == storeId).FirstOrDefaultAsync();
@@ -331,9 +332,20 @@ public class DocumentStoreController : ControllerBase
         if (!string.IsNullOrWhiteSpace(keyword))
         {
             var kw = keyword.Trim();
-            filter &= filterBuilder.Or(
+            var searchFilters = new List<FilterDefinition<DocumentEntry>>
+            {
                 filterBuilder.Regex(e => e.Title, new MongoDB.Bson.BsonRegularExpression(kw, "i")),
-                filterBuilder.Regex(e => e.Summary, new MongoDB.Bson.BsonRegularExpression(kw, "i")));
+                filterBuilder.Regex(e => e.Summary, new MongoDB.Bson.BsonRegularExpression(kw, "i")),
+            };
+
+            // 启用内容搜索时，同时搜索 ContentIndex 字段
+            if (searchContent)
+            {
+                searchFilters.Add(
+                    filterBuilder.Regex(e => e.ContentIndex, new MongoDB.Bson.BsonRegularExpression(kw, "i")));
+            }
+
+            filter &= filterBuilder.Or(searchFilters);
         }
 
         var total = await _db.DocumentEntries.CountDocumentsAsync(filter);
@@ -522,6 +534,9 @@ public class DocumentStoreController : ControllerBase
         var title = Path.GetFileNameWithoutExtension(file.FileName);
         var summary = extractedText?.Length > 200 ? extractedText[..200] : extractedText;
 
+        // 截取前 2000 字符作为内容索引（供内容搜索使用）
+        var contentIndex = extractedText?.Length > 2000 ? extractedText[..2000] : extractedText;
+
         var entry = new DocumentEntry
         {
             StoreId = storeId,
@@ -534,6 +549,7 @@ public class DocumentStoreController : ControllerBase
             ContentType = mime,
             FileSize = file.Length,
             CreatedBy = userId,
+            ContentIndex = contentIndex?.Trim(),
         };
         await _db.DocumentEntries.InsertOneAsync(entry, cancellationToken: ct);
 
@@ -748,6 +764,103 @@ public class DocumentStoreController : ControllerBase
         return Ok(ApiResponse<DocumentEntry>.Ok(entry));
     }
 
+    /// <summary>置顶/取消置顶文档条目（支持多个置顶）</summary>
+    [HttpPut("stores/{storeId}/pinned-entries")]
+    public async Task<IActionResult> TogglePinnedEntry(string storeId, [FromBody] TogglePinRequest request)
+    {
+        var userId = GetUserId();
+        var store = await _db.DocumentStores.Find(s => s.Id == storeId && s.OwnerId == userId).FirstOrDefaultAsync();
+        if (store == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "文档空间不存在"));
+
+        if (string.IsNullOrEmpty(request.EntryId))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "条目 ID 不能为空"));
+
+        var entry = await _db.DocumentEntries.Find(
+            e => e.Id == request.EntryId && e.StoreId == storeId).FirstOrDefaultAsync();
+        if (entry == null)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "文档条目不存在或不属于此空间"));
+
+        var pinnedIds = store.PinnedEntryIds ?? new List<string>();
+        if (request.Pin)
+        {
+            if (!pinnedIds.Contains(request.EntryId))
+                pinnedIds.Add(request.EntryId);
+        }
+        else
+        {
+            pinnedIds.Remove(request.EntryId);
+        }
+
+        await _db.DocumentStores.UpdateOneAsync(
+            s => s.Id == storeId,
+            Builders<DocumentStore>.Update
+                .Set(s => s.PinnedEntryIds, pinnedIds)
+                .Set(s => s.UpdatedAt, DateTime.UtcNow));
+
+        _logger.LogInformation("[document-store] Entry {Action}: store={StoreId} entry={EntryId} by {UserId}",
+            request.Pin ? "pinned" : "unpinned", storeId, request.EntryId, userId);
+
+        return Ok(ApiResponse<object>.Ok(new { pinnedEntryIds = pinnedIds }));
+    }
+
+    /// <summary>获取文档空间列表（含最近文档预览，用于卡片展示）</summary>
+    [HttpGet("stores/with-preview")]
+    public async Task<IActionResult> ListStoresWithPreview([FromQuery] int page = 1, [FromQuery] int pageSize = 20)
+    {
+        var userId = GetUserId();
+        pageSize = Math.Clamp(pageSize, 1, 100);
+        page = Math.Max(1, page);
+
+        var filter = Builders<DocumentStore>.Filter.Eq(s => s.OwnerId, userId);
+        var total = await _db.DocumentStores.CountDocumentsAsync(filter);
+        var stores = await _db.DocumentStores.Find(filter)
+            .SortByDescending(s => s.UpdatedAt)
+            .Skip((page - 1) * pageSize)
+            .Limit(pageSize)
+            .ToListAsync();
+
+        // 批量获取每个空间的最近 3 个文档（用于卡片预览）
+        var storeIds = stores.Select(s => s.Id).ToList();
+        var recentEntries = await _db.DocumentEntries
+            .Find(Builders<DocumentEntry>.Filter.And(
+                Builders<DocumentEntry>.Filter.In(e => e.StoreId, storeIds),
+                Builders<DocumentEntry>.Filter.Eq(e => e.IsFolder, false),
+                Builders<DocumentEntry>.Filter.Ne(e => e.SourceType, DocumentSourceType.GithubDirectory)))
+            .SortByDescending(e => e.UpdatedAt)
+            .Limit(storeIds.Count * 3) // 最多取 N*3 条
+            .ToListAsync();
+
+        var entriesByStore = recentEntries
+            .GroupBy(e => e.StoreId)
+            .ToDictionary(g => g.Key, g => g.Take(3).Select(e => new
+            {
+                id = e.Id,
+                title = e.Title,
+                updatedAt = e.UpdatedAt,
+                contentType = e.ContentType,
+            }).ToList());
+
+        var items = stores.Select(s => new
+        {
+            s.Id,
+            s.Name,
+            s.Description,
+            s.OwnerId,
+            s.AppKey,
+            s.Tags,
+            s.IsPublic,
+            s.PrimaryEntryId,
+            s.PinnedEntryIds,
+            s.DocumentCount,
+            s.CreatedAt,
+            s.UpdatedAt,
+            recentEntries = entriesByStore.GetValueOrDefault(s.Id, new()),
+        }).ToList();
+
+        return Ok(ApiResponse<object>.Ok(new { items, total, page, pageSize }));
+    }
+
     /// <summary>手动触发同步</summary>
     [HttpPost("entries/{entryId}/sync")]
     public async Task<IActionResult> TriggerSync(string entryId)
@@ -845,4 +958,13 @@ public class SetPrimaryEntryRequest
 {
     /// <summary>文档条目 ID，null 或空表示清除主文档</summary>
     public string? EntryId { get; set; }
+}
+
+public class TogglePinRequest
+{
+    /// <summary>文档条目 ID</summary>
+    public string EntryId { get; set; } = string.Empty;
+
+    /// <summary>true=置顶, false=取消置顶</summary>
+    public bool Pin { get; set; }
 }

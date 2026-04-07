@@ -29,6 +29,9 @@ public class DocumentStore
     /// <summary>主文档条目 ID（进入空间时默认展示的文档，类似 GitHub README）</summary>
     public string? PrimaryEntryId { get; set; }
 
+    /// <summary>置顶条目 ID 列表（多个文档可置顶，影响排序）</summary>
+    public List<string> PinnedEntryIds { get; set; } = new();
+
     /// <summary>空间内文档数量（冗余计数，便于列表展示）</summary>
     public int DocumentCount { get; set; }
 

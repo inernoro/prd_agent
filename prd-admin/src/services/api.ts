@@ -925,9 +925,11 @@ export const api = {
   documentStore: {
     stores: {
       list: () => '/api/document-store/stores',
+      listWithPreview: () => '/api/document-store/stores/with-preview',
       create: () => '/api/document-store/stores',
       detail: (storeId: string) => `/api/document-store/stores/${storeId}`,
       primaryEntry: (storeId: string) => `/api/document-store/stores/${storeId}/primary-entry`,
+      pinnedEntries: (storeId: string) => `/api/document-store/stores/${storeId}/pinned-entries`,
     },
     entries: {
       list: (storeId: string) => `/api/document-store/stores/${storeId}/entries`,

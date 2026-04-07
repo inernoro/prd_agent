@@ -1520,10 +1520,14 @@ export {
   setPrimaryEntry,
   createFolder,
   triggerSync,
+  togglePinnedEntry,
+  listDocumentStoresWithPreview,
+  searchDocumentEntries,
 } from '@/services/real/documentStore';
 export type {
   DocumentStore,
   DocumentEntry,
+  DocumentStoreWithPreview,
   CreateDocumentStoreInput,
   AddDocumentEntryInput,
 } from '@/services/contracts/documentStore';

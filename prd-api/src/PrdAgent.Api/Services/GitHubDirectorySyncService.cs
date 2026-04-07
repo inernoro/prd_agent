@@ -173,6 +173,7 @@ public class GitHubDirectorySyncService
             entry.ContentType = "text/markdown";
             entry.FileSize = Encoding.UTF8.GetByteCount(content);
             entry.Summary = summary.Trim();
+            entry.ContentIndex = content.Length > 2000 ? content[..2000] : content;
             entry.SyncStatus = DocumentSyncStatus.Idle;
             entry.SyncError = null;
             entry.LastSyncAt = DateTime.UtcNow;

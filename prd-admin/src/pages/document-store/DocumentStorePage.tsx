@@ -11,13 +11,14 @@ import {
   Github,
   Sparkle,
   Trash2,
+  FileText,
 } from 'lucide-react';
 import { GlassCard } from '@/components/design/GlassCard';
 import { TabBar } from '@/components/design/TabBar';
 import { Button } from '@/components/design/Button';
 import { MapSpinner } from '@/components/ui/VideoLoader';
 import {
-  listDocumentStores,
+  listDocumentStoresWithPreview,
   createDocumentStore,
   deleteDocumentStore,
   listDocumentEntries,
@@ -27,12 +28,17 @@ import {
   addGitHubSubscription,
   setPrimaryEntry,
   createFolder,
+  togglePinnedEntry,
+  searchDocumentEntries,
+  getDocumentStore,
 } from '@/services';
 import { DocBrowser } from '@/components/doc-browser/DocBrowser';
 import type {
   DocumentStore,
+  DocumentStoreWithPreview,
   DocumentEntry,
 } from '@/services/contracts/documentStore';
+import type { DocBrowserEntry } from '@/components/doc-browser/DocBrowser';
 import { toast } from '@/lib/toast';
 
 const ACCEPT_TYPES = '.md,.txt,.pdf,.doc,.docx,.json,.yaml,.yml,.csv';
@@ -125,14 +131,12 @@ function CreateStoreDialog({ onClose, onCreated }: {
   );
 }
 
-// ── 文档条目详情面板已移除，由 DocBrowser 替代 ──
-
 // ── 空间详情视图（文档列表 + 上传）──
-function StoreDetailView({ store: initialStore, onBack }: {
-  store: DocumentStore;
+function StoreDetailView({ storeId, onBack }: {
+  storeId: string;
   onBack: () => void;
 }) {
-  const [store, setStore] = useState(initialStore);
+  const [store, setStore] = useState<DocumentStore | null>(null);
   const [entries, setEntries] = useState<DocumentEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedEntryId, setSelectedEntryId] = useState<string | undefined>(undefined);
@@ -144,21 +148,30 @@ function StoreDetailView({ store: initialStore, onBack }: {
   const dragCounter = useRef(0);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  // 加载空间详情和条目
+  const loadStore = useCallback(async () => {
+    const res = await getDocumentStore(storeId);
+    if (res.success) setStore(res.data);
+  }, [storeId]);
+
   const loadEntries = useCallback(async () => {
     setLoading(true);
-    const res = await listDocumentEntries(store.id, 1, 200);
+    const res = await listDocumentEntries(storeId, 1, 200);
     if (res.success) setEntries(res.data.items);
     setLoading(false);
-  }, [store.id]);
+  }, [storeId]);
 
-  useEffect(() => { loadEntries(); }, [loadEntries]);
+  useEffect(() => {
+    loadStore();
+    loadEntries();
+  }, [loadStore, loadEntries]);
 
-  // 文件上传处理 — 调用真实上传端点（文件存盘 + 文本提取 + 解析）
+  // 文件上传处理
   const handleFiles = useCallback(async (files: File[]) => {
     setUploading(true);
     let successCount = 0;
     for (const file of files) {
-      const res = await uploadDocumentFile(store.id, file);
+      const res = await uploadDocumentFile(storeId, file);
       if (res.success) {
         setEntries(prev => [res.data.entry, ...prev]);
         successCount++;
@@ -170,7 +183,7 @@ function StoreDetailView({ store: initialStore, onBack }: {
       toast.success(`上传完成`, `${successCount} 个文件已存储`);
     }
     setUploading(false);
-  }, [store.id]);
+  }, [storeId]);
 
   const handleDragEnter = useCallback((e: React.DragEvent) => {
     e.preventDefault(); e.stopPropagation();
@@ -192,12 +205,20 @@ function StoreDetailView({ store: initialStore, onBack }: {
   }, [handleFiles]);
 
   const handleSetPrimary = useCallback(async (entryId: string) => {
-    const res = await setPrimaryEntry(store.id, entryId);
+    const res = await setPrimaryEntry(storeId, entryId);
     if (res.success) {
-      setStore(prev => ({ ...prev, primaryEntryId: entryId }));
+      setStore(prev => prev ? { ...prev, primaryEntryId: entryId } : prev);
       toast.success('已设为主文档');
     }
-  }, [store.id]);
+  }, [storeId]);
+
+  const handleTogglePin = useCallback(async (entryId: string, pin: boolean) => {
+    const res = await togglePinnedEntry(storeId, entryId, pin);
+    if (res.success) {
+      setStore(prev => prev ? { ...prev, pinnedEntryIds: res.data.pinnedEntryIds } : prev);
+      toast.success(pin ? '已置顶' : '已取消置顶');
+    }
+  }, [storeId]);
 
   const loadContent = useCallback(async (entryId: string): Promise<string | null> => {
     const res = await getDocumentContent(entryId);
@@ -206,14 +227,28 @@ function StoreDetailView({ store: initialStore, onBack }: {
   }, []);
 
   const handleCreateFolder = useCallback(async (name: string) => {
-    const res = await createFolder(store.id, name);
+    const res = await createFolder(storeId, name);
     if (res.success) {
       setEntries(prev => [res.data, ...prev]);
       toast.success('文件夹已创建');
     } else {
       toast.error('创建失败', res.error?.message);
     }
-  }, [store.id]);
+  }, [storeId]);
+
+  const handleSearch = useCallback(async (keyword: string, contentSearch: boolean): Promise<DocBrowserEntry[] | null> => {
+    const res = await searchDocumentEntries(storeId, keyword, contentSearch);
+    if (res.success) return res.data.items;
+    return null;
+  }, [storeId]);
+
+  if (!store) {
+    return (
+      <div className="flex-1 flex items-center justify-center" style={{ minHeight: 'calc(100vh - 160px)' }}>
+        <MapSpinner size={16} />
+      </div>
+    );
+  }
 
   return (
     <div className="h-full min-h-0 flex flex-col overflow-hidden"
@@ -264,11 +299,14 @@ function StoreDetailView({ store: initialStore, onBack }: {
         <DocBrowser
           entries={entries}
           primaryEntryId={store.primaryEntryId}
+          pinnedEntryIds={store.pinnedEntryIds ?? []}
           selectedEntryId={selectedEntryId}
           onSelectEntry={setSelectedEntryId}
           onSetPrimary={handleSetPrimary}
+          onTogglePin={handleTogglePin}
           loadContent={loadContent}
           onCreateFolder={handleCreateFolder}
+          onSearch={handleSearch}
           loading={loading}
           emptyState={
             <div className="flex-1 flex flex-col items-center justify-center py-16">
@@ -286,7 +324,7 @@ function StoreDetailView({ store: initialStore, onBack }: {
       {/* 添加订阅对话框 */}
       {showSubscribe && (
         <SubscribeDialog
-          storeId={store.id}
+          storeId={storeId}
           onClose={() => setShowSubscribe(false)}
           onCreated={(entry) => { setShowSubscribe(false); setEntries(prev => [entry, ...prev]); }}
         />
@@ -473,23 +511,35 @@ function SubscribeDialog({ storeId, onClose, onCreated }: {
 
 // ── 主页面 ──
 export function DocumentStorePage() {
-  const [stores, setStores] = useState<DocumentStore[]>([]);
+  const [stores, setStores] = useState<DocumentStoreWithPreview[]>([]);
   const [loading, setLoading] = useState(true);
   const [showCreate, setShowCreate] = useState(false);
-  const [selectedStore, setSelectedStore] = useState<DocumentStore | null>(null);
+  // 使用 storeId 而不是 store 对象，这样刷新后可以从 URL 或 sessionStorage 恢复
+  const [selectedStoreId, setSelectedStoreId] = useState<string | null>(() => {
+    return sessionStorage.getItem('doc-store-selected-id');
+  });
 
   const loadStores = useCallback(async () => {
     setLoading(true);
-    const res = await listDocumentStores(1, 50);
+    const res = await listDocumentStoresWithPreview(1, 50);
     if (res.success) setStores(res.data.items);
     setLoading(false);
   }, []);
 
   useEffect(() => { loadStores(); }, [loadStores]);
 
+  // 持久化选中的 storeId 到 sessionStorage（修复刷新丢失 bug）
+  useEffect(() => {
+    if (selectedStoreId) {
+      sessionStorage.setItem('doc-store-selected-id', selectedStoreId);
+    } else {
+      sessionStorage.removeItem('doc-store-selected-id');
+    }
+  }, [selectedStoreId]);
+
   // 空间详情视图
-  if (selectedStore) {
-    return <StoreDetailView store={selectedStore} onBack={() => { setSelectedStore(null); loadStores(); }} />;
+  if (selectedStoreId) {
+    return <StoreDetailView storeId={selectedStoreId} onBack={() => { setSelectedStoreId(null); loadStores(); }} />;
   }
 
   // 空间列表视图
@@ -548,14 +598,14 @@ export function DocumentStorePage() {
             </Button>
           </div>
         ) : (
-          /* 空间列表 */
+          /* 空间列表 - 增大卡片高度，显示文档预览 */
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 items-stretch">
             {stores.map(s => (
               <GlassCard key={s.id} animated interactive padding="none"
                 className="group flex flex-col h-full"
-                onClick={() => setSelectedStore(s)}>
-                <div className="p-4 pb-3 flex-1 flex flex-col">
-                  <div className="flex items-start justify-between gap-2 mb-3">
+                onClick={() => setSelectedStoreId(s.id)}>
+                <div className="p-4 pb-2 flex-1 flex flex-col">
+                  <div className="flex items-start justify-between gap-2 mb-2">
                     <div className="flex items-center gap-2.5 min-w-0">
                       <div className="w-9 h-9 rounded-[10px] flex items-center justify-center flex-shrink-0"
                         style={{ background: 'rgba(59,130,246,0.08)', border: '1px solid rgba(59,130,246,0.12)' }}>
@@ -574,8 +624,28 @@ export function DocumentStorePage() {
                     </div>
                   </div>
 
-                  <div className="flex-1" />
-                  <div className="flex items-center justify-between mt-3 pt-2.5"
+                  {/* 最近文档预览列表 */}
+                  <div className="flex-1 mt-1.5 space-y-0.5 min-h-[60px]">
+                    {(s.recentEntries?.length ?? 0) > 0 ? (
+                      s.recentEntries.map((entry) => (
+                        <div key={entry.id} className="flex items-center gap-1.5 py-1 px-1 rounded-[6px] transition-colors hover:bg-white/3">
+                          <FileText size={11} className="flex-shrink-0" style={{ color: 'rgba(59,130,246,0.5)' }} />
+                          <span className="flex-1 text-[11px] truncate" style={{ color: 'var(--text-secondary)' }}>
+                            {entry.title}
+                          </span>
+                          <span className="text-[9px] flex-shrink-0" style={{ color: 'var(--text-muted)' }}>
+                            {new Date(entry.updatedAt).toLocaleDateString()}
+                          </span>
+                        </div>
+                      ))
+                    ) : (
+                      <div className="flex items-center justify-center h-full">
+                        <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>知识库暂无内容</span>
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="flex items-center justify-between mt-2 pt-2.5"
                     style={{ borderTop: '1px solid rgba(255,255,255,0.05)' }}>
                     <div className="flex items-center gap-3 text-[11px]" style={{ color: 'var(--text-muted)' }}>
                       <span><span style={{ color: 'var(--text-secondary)' }}>{s.documentCount}</span> 个文档</span>
@@ -613,7 +683,7 @@ export function DocumentStorePage() {
       {showCreate && (
         <CreateStoreDialog
           onClose={() => setShowCreate(false)}
-          onCreated={(s) => { setShowCreate(false); setSelectedStore(s); }}
+          onCreated={(s) => { setShowCreate(false); setSelectedStoreId(s.id); }}
         />
       )}
     </div>

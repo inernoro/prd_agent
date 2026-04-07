@@ -11,6 +11,7 @@ export type DocumentStore = {
   tags: string[];
   isPublic: boolean;
   primaryEntryId?: string;
+  pinnedEntryIds: string[];
   documentCount: number;
   createdAt: string;
   updatedAt: string;
@@ -37,8 +38,13 @@ export type DocumentEntry = {
   lastSyncAt?: string;
   syncStatus?: string;
   syncError?: string;
+  contentIndex?: string;
   createdAt: string;
   updatedAt: string;
+};
+
+export type DocumentStoreWithPreview = DocumentStore & {
+  recentEntries: { id: string; title: string; updatedAt: string; contentType: string }[];
 };
 
 // ── 请求类型 ──

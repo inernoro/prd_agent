@@ -57,6 +57,13 @@ export const listDocumentEntriesReal: ListDocumentEntriesContract = async (store
   return await apiRequest(url, { method: 'GET' });
 };
 
+/** 搜索文档条目（支持内容搜索） */
+export async function searchDocumentEntries(storeId: string, keyword: string, searchContent: boolean) {
+  let url = `${api.documentStore.entries.list(storeId)}?page=1&pageSize=200&all=true&keyword=${encodeURIComponent(keyword)}`;
+  if (searchContent) url += '&searchContent=true';
+  return await apiRequest<{ items: import('@/services/contracts/documentStore').DocumentEntry[]; total: number }>(url, { method: 'GET' });
+}
+
 export const updateDocumentEntryReal: UpdateDocumentEntryContract = async (entryId, input) => {
   return await apiRequest(api.documentStore.entries.update(entryId), {
     method: 'PUT',
@@ -139,6 +146,22 @@ export async function setPrimaryEntry(storeId: string, entryId: string | null) {
   return await apiRequest<{ primaryEntryId: string | null }>(
     api.documentStore.stores.primaryEntry(storeId),
     { method: 'PUT', body: { entryId } },
+  );
+}
+
+/** 置顶/取消置顶文档条目 */
+export async function togglePinnedEntry(storeId: string, entryId: string, pin: boolean) {
+  return await apiRequest<{ pinnedEntryIds: string[] }>(
+    api.documentStore.stores.pinnedEntries(storeId),
+    { method: 'PUT', body: { entryId, pin } },
+  );
+}
+
+/** 获取文档空间列表（含最近文档预览） */
+export async function listDocumentStoresWithPreview(page = 1, pageSize = 20) {
+  return await apiRequest<{ items: import('@/services/contracts/documentStore').DocumentStoreWithPreview[]; total: number; page: number; pageSize: number }>(
+    `${api.documentStore.stores.listWithPreview()}?page=${page}&pageSize=${pageSize}`,
+    { method: 'GET' },
   );
 }
 
