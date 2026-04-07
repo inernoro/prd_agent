@@ -5,7 +5,7 @@ import {
   Download, FileText, ArrowLeft, Save, Plus,
   ChevronDown, ChevronRight, Settings2, XCircle,
   Zap, FlaskConical, Trash2, Wand2, Terminal, Eye, Copy, Check, CirclePause, Sparkles,
-  Camera,
+  Camera, Maximize2,
 } from 'lucide-react';
 import {
   getWorkflow, updateWorkflow, executeWorkflow, getExecution,
@@ -24,6 +24,7 @@ import { GlassCard } from '@/components/design/GlassCard';
 import { Badge } from '@/components/design/Badge';
 import { Button } from '@/components/design/Button';
 import { TabBar } from '@/components/design/TabBar';
+import { Dialog } from '@/components/ui/Dialog';
 import {
   getCapsuleType, getIconForCapsule, getEmojiForCapsule, getCategoryEmoji,
 } from './capsuleRegistry';
@@ -32,6 +33,8 @@ import { HttpConfigPanel } from './HttpConfigPanel';
 import { WorkflowChatPanel } from './WorkflowChatPanel';
 import { ArtifactPreviewModal } from './ArtifactPreviewModal';
 import type { WorkflowChatGenerated } from '@/services/contracts/workflowAgent';
+import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
+import { oneDark } from 'react-syntax-highlighter/dist/esm/styles/prism';
 
 // ═══════════════════════════════════════════════════════════════
 // 工作流直接编辑页
@@ -394,6 +397,130 @@ function CurlExportButton({ values }: { values: Record<string, string> }) {
   );
 }
 
+function ScriptCodeEditorField({
+  value,
+  onChange,
+  placeholder,
+  disabled,
+}: {
+  value: string;
+  onChange: (next: string) => void;
+  placeholder?: string;
+  disabled?: boolean;
+}) {
+  const [fullscreenOpen, setFullscreenOpen] = useState(false);
+
+  function normalizeCode(input: string) {
+    return input
+      .split('\n')
+      .map((line) => line.replace(/\s+$/g, ''))
+      .join('\n')
+      .trimEnd();
+  }
+
+  function handleFormat() {
+    onChange(normalizeCode(value));
+  }
+
+  return (
+    <div className="space-y-1.5">
+      <div className="flex items-center justify-end gap-1.5">
+        <button
+          type="button"
+          onClick={handleFormat}
+          disabled={disabled}
+          className="h-7 px-2.5 rounded-[8px] text-[10px] font-medium transition-all disabled:opacity-40"
+          style={{
+            border: '1px solid rgba(255,255,255,0.08)',
+            background: 'rgba(255,255,255,0.04)',
+            color: 'var(--text-secondary)',
+          }}
+        >
+          格式化
+        </button>
+        <button
+          type="button"
+          onClick={() => setFullscreenOpen(true)}
+          disabled={disabled}
+          className="h-7 px-2.5 rounded-[8px] text-[10px] font-medium transition-all disabled:opacity-40 inline-flex items-center gap-1"
+          style={{
+            border: '1px solid rgba(59,130,246,0.25)',
+            background: 'rgba(59,130,246,0.08)',
+            color: 'rgba(59,130,246,0.9)',
+          }}
+          title="放大到全屏编辑"
+        >
+          <Maximize2 className="w-3 h-3" />
+          全屏编辑
+        </button>
+      </div>
+      <textarea
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder={placeholder}
+        disabled={disabled}
+        rows={12}
+        className="prd-field w-full px-3 py-2 rounded-[8px] text-[12px] outline-none disabled:opacity-50 transition-all resize-y font-mono"
+        style={{ minHeight: 280, lineHeight: 1.65 }}
+      />
+      <Dialog
+        open={fullscreenOpen}
+        onOpenChange={setFullscreenOpen}
+        title="脚本全屏编辑器"
+        maxWidth={1200}
+        contentStyle={{ width: '96vw' }}
+        titleAction={(
+          <button
+            type="button"
+            onClick={handleFormat}
+            disabled={disabled}
+            className="h-8 px-3 rounded-[10px] text-[11px] font-medium transition-all disabled:opacity-40"
+            style={{
+              border: '1px solid rgba(255,255,255,0.08)',
+              background: 'rgba(255,255,255,0.05)',
+              color: 'var(--text-secondary)',
+            }}
+          >
+            格式化代码
+          </button>
+        )}
+        content={(
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-3 h-[72vh]">
+            <div className="min-h-0 flex flex-col">
+              <div className="text-[11px] mb-1" style={{ color: 'var(--text-muted)' }}>编辑区</div>
+              <textarea
+                value={value}
+                onChange={(e) => onChange(e.target.value)}
+                placeholder={placeholder}
+                disabled={disabled}
+                className="prd-field w-full flex-1 min-h-0 px-3 py-2 rounded-[8px] text-[12px] outline-none disabled:opacity-50 transition-all resize-none font-mono"
+                style={{ lineHeight: 1.7 }}
+              />
+            </div>
+            <div className="min-h-0 flex flex-col">
+              <div className="text-[11px] mb-1" style={{ color: 'var(--text-muted)' }}>高亮预览</div>
+              <div
+                className="flex-1 min-h-0 rounded-[8px] overflow-auto"
+                style={{ border: '1px solid rgba(255,255,255,0.08)' }}
+              >
+                <SyntaxHighlighter
+                  language="javascript"
+                  style={oneDark}
+                  showLineNumbers
+                  wrapLongLines
+                  customStyle={{ margin: 0, minHeight: '100%', fontSize: '12px' }}
+                >
+                  {value || '// 在左侧输入脚本，右侧自动高亮预览'}
+                </SyntaxHighlighter>
+              </div>
+            </div>
+          </div>
+        )}
+      />
+    </div>
+  );
+}
+
 // ──── 舱配置表单 ────
 
 function CapsuleConfigForm({ fields, values, onChange, onBatchChange, disabled, nodeType }: {
@@ -405,6 +532,8 @@ function CapsuleConfigForm({ fields, values, onChange, onBatchChange, disabled, 
   nodeType?: string;
 }) {
   const supportssCurl = nodeType === 'http-request' || nodeType === 'smart-http';
+  // curlCommand 文本框自动解析：粘贴 cURL 命令后自动填充 url/method/headers/body
+  const [curlParsed, setCurlParsed] = useState(false);
 
   if (fields.length === 0 && !supportssCurl) return (
     <p className="text-[11px]" style={{ color: 'var(--text-muted)' }}>此舱无需额外配置</p>
@@ -437,8 +566,6 @@ function CapsuleConfigForm({ fields, values, onChange, onBatchChange, disabled, 
     onBatchChange(batch);
   }
 
-  // curlCommand 文本框自动解析：粘贴 cURL 命令后自动填充 url/method/headers/body
-  const [curlParsed, setCurlParsed] = useState(false);
   function handleCurlCommandPaste(e: React.ClipboardEvent<HTMLTextAreaElement>) {
     const text = e.clipboardData.getData('text/plain');
     if (!text) return;
@@ -469,14 +596,21 @@ function CapsuleConfigForm({ fields, values, onChange, onBatchChange, disabled, 
               </span>
             )}
           </label>
-          {field.fieldType === 'textarea' || field.fieldType === 'code' ? (
+          {field.fieldType === 'code' ? (
+            <ScriptCodeEditorField
+              value={values[field.key] || field.defaultValue || ''}
+              onChange={(next) => onChange(field.key, next)}
+              placeholder={field.placeholder}
+              disabled={disabled}
+            />
+          ) : field.fieldType === 'textarea' ? (
             <textarea
               value={values[field.key] || field.defaultValue || ''}
               onChange={(e) => onChange(field.key, e.target.value)}
               onPaste={field.key === 'curlCommand' && supportssCurl ? handleCurlCommandPaste : undefined}
               placeholder={field.placeholder}
               disabled={disabled}
-              rows={field.fieldType === 'code' ? 8 : 4}
+              rows={4}
               className="prd-field w-full px-3 py-2 rounded-[8px] text-[12px] outline-none disabled:opacity-50 transition-all resize-y font-mono"
             />
           ) : field.fieldType === 'json' ? (
@@ -627,7 +761,8 @@ function CapsuleCard({ node, index, nodeExec, nodeOutput, streamingText, isExpan
   function toggleArtifact(id: string) {
     setExpandedArtifacts((prev) => {
       const next = new Set(prev);
-      next.has(id) ? next.delete(id) : next.add(id);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
       return next;
     });
   }

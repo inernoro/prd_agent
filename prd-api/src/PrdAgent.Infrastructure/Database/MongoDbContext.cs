@@ -188,6 +188,9 @@ public class MongoDbContext
     public IMongoCollection<WebPageShareLink> WebPageShareLinks => _database.GetCollection<WebPageShareLink>("web_page_share_links");
     public IMongoCollection<ShareViewLog> ShareViewLogs => _database.GetCollection<ShareViewLog>("share_view_logs");
 
+    // Workspace 工作空间
+    public IMongoCollection<Workspace> Workspaces => _database.GetCollection<Workspace>("workspaces");
+
     // Video Agent 视频转文档
     public IMongoCollection<VideoToDocRun> VideoToDocRuns => _database.GetCollection<VideoToDocRun>("video_to_doc_runs");
 

@@ -3,10 +3,12 @@ import crypto from 'node:crypto';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createBranchRouter } from './routes/branches.js';
+import { createBridgeRouter } from './routes/bridge.js';
 import type { StateService } from './services/state.js';
 import type { WorktreeService } from './services/worktree.js';
 import type { ContainerService } from './services/container.js';
 import type { ProxyService } from './services/proxy.js';
+import type { BridgeService } from './services/bridge.js';
 import type { CdsConfig, IShellExecutor } from './types.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -16,6 +18,7 @@ export interface ServerDeps {
   worktreeService: WorktreeService;
   containerService: ContainerService;
   proxyService: ProxyService;
+  bridgeService: BridgeService;
   shell: IShellExecutor;
   config: CdsConfig;
 }
@@ -98,6 +101,10 @@ function resolveApiLabel(method: string, path: string): string {
     'GET /ai/pending': '查看待处理 AI 请求',
     'GET /ai/sessions': '查看 AI 会话',
     'POST /ai/request-access': 'AI 请求连接',
+    'GET /bridge/connections': '查看 Bridge 连接',
+    'POST /bridge/navigate-request': 'AI 请求用户导航',
+    'POST /bridge/start-session': 'AI 开始操作页面',
+    'POST /bridge/end-session': 'AI 操作完成',
   };
 
   const key = `${method} ${p}`;
@@ -134,6 +141,9 @@ function resolveApiLabel(method: string, path: string): string {
     [/^DELETE \/ai\/sessions\/(.+)$/, '撤销 AI 会话'],
     [/^POST \/ai\/approve\/(.+)$/, '批准 AI 连接'],
     [/^POST \/ai\/reject\/(.+)$/, '拒绝 AI 连接'],
+    [/^GET \/bridge\/state\/(.+)$/, '读取页面状态'],
+    [/^POST \/bridge\/command\/(.+)$/, 'AI 操作页面'],
+    [/^GET \/bridge\/navigate-requests\/(.+)$/, '查看导航请求'],
   ];
 
   for (const [regex, label] of patterns) {
@@ -461,6 +471,8 @@ export function createServer(deps: ServerDeps): express.Express {
     // Skip dashboard auto-poll requests (X-CDS-Poll: true) — they are noise
     const isPoll = req.headers['x-cds-poll'] === 'true';
     if (isPoll) return next();
+    // Skip Bridge internal polling and results — internal communication, not user-facing
+    if (req.path.startsWith('/bridge/heartbeat') || req.path.startsWith('/bridge/navigate-requests/') || req.path === '/bridge/result' || req.path.startsWith('/bridge/check/')) return next();
 
     const start = Date.now();
     const origEnd = res.end.bind(res);
@@ -509,6 +521,7 @@ export function createServer(deps: ServerDeps): express.Express {
   });
 
   // API routes
+  app.use('/api/bridge', createBridgeRouter({ bridgeService: deps.bridgeService }));
   app.use('/api', createBranchRouter(deps));
 
   // Dashboard static files

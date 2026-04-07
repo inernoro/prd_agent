@@ -266,7 +266,7 @@ export function WebhookSettingsPanel() {
                   color: 'var(--text-primary)',
                 }}
                 value={formChannel}
-                onChange={(e) => setFormChannel(e.target.value)}
+                onChange={(e) => setFormChannel(e.target.value as typeof formChannel)}
               >
                 {CHANNEL_OPTIONS.map((ch) => (
                   <option key={ch.value} value={ch.value}>{ch.label}</option>

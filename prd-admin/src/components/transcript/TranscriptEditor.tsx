@@ -1,5 +1,6 @@
-import { useState, useCallback, useEffect } from 'react';
-import { Mic, Trash2, Download, AlertCircle, Loader2, CheckCircle2, ArrowLeft, Copy } from 'lucide-react';
+import { useState, useCallback, useEffect, useRef } from 'react';
+import { Mic, Trash2, Download, AlertCircle, Loader2, CheckCircle2, ArrowLeft, Copy, Save } from 'lucide-react';
+import ReactMarkdown from 'react-markdown';
 import { Button } from '@/components/design/Button';
 import { useTranscriptStore } from '@/stores/transcriptStore';
 import { TranscribeProgress } from './TranscribeProgress';
@@ -17,7 +18,7 @@ interface TranscriptEditorProps {
 }
 
 export function TranscriptEditor({ item, selectedRunId, onItemDeleted, onCloseRun }: TranscriptEditorProps) {
-  const { deleteItem, updateSegments, runs, refreshItems, renameItem } = useTranscriptStore();
+  const { deleteItem, updateSegments, runs, refreshItems, renameItem, saveRunResult } = useTranscriptStore();
   const [exportFormats, setExportFormats] = useState<Set<string>>(new Set(['timestamped']));
   const [exporting, setExporting] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
@@ -57,10 +58,15 @@ export function TranscriptEditor({ item, selectedRunId, onItemDeleted, onCloseRu
     requestAnimationFrame(() => setSeekTo(undefined));
   }, []);
 
+  // Debounced segment text change — saves 500ms after last keystroke
+  const segmentTimerRef = useRef<ReturnType<typeof setTimeout>>();
   const handleTextChange = useCallback((index: number, newText: string) => {
     if (!item?.segments) return;
     const updated = item.segments.map((s, i) => i === index ? { ...s, text: newText } : s);
-    updateSegments(item.id, updated);
+    clearTimeout(segmentTimerRef.current);
+    segmentTimerRef.current = setTimeout(() => {
+      updateSegments(item.id, updated);
+    }, 500);
   }, [item, updateSegments]);
 
   // ── Empty state ──
@@ -120,7 +126,7 @@ export function TranscriptEditor({ item, selectedRunId, onItemDeleted, onCloseRu
 
   const statusIcon = (status: string) => {
     switch (status) {
-      case 'completed': return <CheckCircle2 className="w-3.5 h-3.5 text-green-500" />;
+      case 'completed': return <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />;
       case 'processing': case 'pending': return <Loader2 className="w-3.5 h-3.5 text-primary animate-spin" />;
       case 'failed': return <AlertCircle className="w-3.5 h-3.5 text-destructive" />;
       default: return null;
@@ -226,15 +232,15 @@ export function TranscriptEditor({ item, selectedRunId, onItemDeleted, onCloseRu
             </div>
           </div>
           {/* Preview / Edit toggle */}
-          <div className="flex items-center gap-1 text-xs">
+          <div className="flex items-center bg-muted/30 rounded-lg p-0.5 text-xs">
             <button
-              className={`px-2 py-1 rounded transition-colors ${previewMode ? 'bg-muted text-foreground' : 'text-muted-foreground hover:text-foreground'}`}
+              className={`px-3 py-1 rounded-md transition-colors font-medium ${previewMode ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground'}`}
               onClick={() => setPreviewMode(true)}
             >
               预览
             </button>
             <button
-              className={`px-2 py-1 rounded transition-colors ${!previewMode ? 'bg-muted text-foreground' : 'text-muted-foreground hover:text-foreground'}`}
+              className={`px-3 py-1 rounded-md transition-colors font-medium ${!previewMode ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground'}`}
               onClick={() => setPreviewMode(false)}
             >
               编辑
@@ -246,13 +252,11 @@ export function TranscriptEditor({ item, selectedRunId, onItemDeleted, onCloseRu
         <div className="flex-1 overflow-y-auto px-6 py-4 min-h-0">
           {previewMode ? (
             <div className="prose prose-invert prose-sm max-w-none">
-              <pre className="text-sm text-foreground/80 whitespace-pre-wrap leading-relaxed font-sans">
-                {selectedRun.result}
-              </pre>
+              <ReactMarkdown>{selectedRun.result ?? ''}</ReactMarkdown>
             </div>
           ) : (
             <textarea
-              className="w-full h-full text-sm text-foreground/80 bg-transparent outline-none resize-none leading-relaxed"
+              className="w-full h-full text-sm text-foreground/80 bg-muted/10 border border-border/50 rounded-lg p-4 outline-none resize-none leading-relaxed ring-1 ring-primary/20 focus:ring-primary/40 transition-shadow"
               value={editDraft}
               onChange={e => setEditDraft(e.target.value)}
             />
@@ -261,8 +265,18 @@ export function TranscriptEditor({ item, selectedRunId, onItemDeleted, onCloseRu
 
         {/* Footer */}
         <div className="border-t border-border/50 px-6 py-3 flex items-center justify-between">
-          <span className="text-xs text-muted-foreground">{(previewMode ? selectedRun.result : editDraft)?.length ?? 0} 字</span>
           <div className="flex items-center gap-2">
+            <span className="text-xs text-muted-foreground">{(previewMode ? selectedRun.result : editDraft)?.length ?? 0} 字</span>
+            {!previewMode && editDraft !== (selectedRun.result ?? '') && (
+              <span className="text-xs text-amber-400">未保存</span>
+            )}
+          </div>
+          <div className="flex items-center gap-2">
+            {!previewMode && editDraft !== (selectedRun.result ?? '') && (
+              <Button size="sm" variant="ghost" onClick={() => saveRunResult(selectedRun.id, editDraft)}>
+                <Save className="w-4 h-4 mr-1" /> 保存
+              </Button>
+            )}
             <Button size="sm" variant="ghost" onClick={() => { navigator.clipboard.writeText(previewMode ? (selectedRun.result ?? '') : editDraft); toast.success('已复制'); }}>
               <Copy className="w-4 h-4 mr-1" /> 复制
             </Button>

@@ -25,22 +25,52 @@ public class TranscriptRunWorker : BackgroundService
         _logger = logger;
     }
 
+    private string? _currentRunId;
+
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         _logger.LogInformation("[transcript-agent] Worker started");
 
-        while (!stoppingToken.IsCancellationRequested)
+        try
         {
-            try
+            while (!stoppingToken.IsCancellationRequested)
             {
-                await ProcessNextRunAsync();
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "[transcript-agent] Worker loop error");
-            }
+                try
+                {
+                    await ProcessNextRunAsync();
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "[transcript-agent] Worker loop error");
+                }
 
-            await Task.Delay(3000, stoppingToken);
+                await Task.Delay(3000, stoppingToken);
+            }
+        }
+        finally
+        {
+            // Worker 关闭时，将当前处理中的 run 标记为失败
+            if (_currentRunId != null)
+            {
+                try
+                {
+                    using var scope = _scopeFactory.CreateScope();
+                    var db = scope.ServiceProvider.GetRequiredService<MongoDbContext>();
+                    await db.TranscriptRuns.UpdateOneAsync(
+                        Builders<TranscriptRun>.Filter.Eq(r => r.Id, _currentRunId) &
+                        Builders<TranscriptRun>.Filter.Eq(r => r.Status, "processing"),
+                        Builders<TranscriptRun>.Update
+                            .Set(r => r.Status, "failed")
+                            .Set(r => r.Error, "Worker 关闭，任务被中断")
+                            .Set(r => r.UpdatedAt, DateTime.UtcNow),
+                        cancellationToken: CancellationToken.None);
+                    _logger.LogInformation("[transcript-agent] Marked run {RunId} as failed on shutdown", _currentRunId);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "[transcript-agent] Failed to cleanup run {RunId} on shutdown", _currentRunId);
+                }
+            }
         }
     }
 
@@ -63,6 +93,7 @@ public class TranscriptRunWorker : BackgroundService
 
         if (run == null) return;
 
+        _currentRunId = run.Id;
         _logger.LogInformation("[transcript-agent] Processing run {RunId}, type={Type}", run.Id, run.Type);
 
         try
@@ -79,10 +110,12 @@ public class TranscriptRunWorker : BackgroundService
                     .Set(r => r.Progress, 100)
                     .Set(r => r.UpdatedAt, DateTime.UtcNow));
 
+            _currentRunId = null;
             _logger.LogInformation("[transcript-agent] Run {RunId} completed", run.Id);
         }
         catch (Exception ex)
         {
+            _currentRunId = null;
             _logger.LogError(ex, "[transcript-agent] Run {RunId} failed", run.Id);
 
             await db.TranscriptRuns.UpdateOneAsync(
