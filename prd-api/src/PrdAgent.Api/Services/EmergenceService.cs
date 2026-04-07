@@ -93,7 +93,7 @@ public class EmergenceService
                 },
                 ["temperature"] = 0.7,
             },
-            TimeoutSeconds = 60,
+            TimeoutSeconds = 120,
             Context = new GatewayRequestContext { UserId = userId }
         };
 
@@ -197,7 +197,7 @@ public class EmergenceService
                 },
                 ["temperature"] = includeFantasy ? 0.9 : 0.7,
             },
-            TimeoutSeconds = 90,
+            TimeoutSeconds = 120,
             Context = new GatewayRequestContext { UserId = userId }
         };
 
