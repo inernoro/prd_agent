@@ -248,6 +248,10 @@ export default function App() {
         <Route path="/_dev/rich-composer-lab" element={<RichComposerLab />} />
         <Route path="/_dev/mobile-audit" element={<MobileAuditPage />} />
 
+        {/* 智识殿堂 - 独立全屏页面（实验性 claymorphism 风格），不使用 AppShell 布局 */}
+        <Route path="/library" element={<LibraryLandingPage />} />
+        <Route path="/library/:storeId" element={<LibraryStoreDetailPage />} />
+
         {/* 视觉创作 Agent - 独立全屏页面，不使用 AppShell 布局 */}
         <Route
           path="/visual-agent"
@@ -354,8 +358,6 @@ export default function App() {
         <Route path="web-pages" element={<RequirePermission perm="web-pages.read"><WebPagesPage /></RequirePermission>} />
         <Route path="marketplace" element={<RequirePermission perm="access"><MarketplacePage /></RequirePermission>} />
         <Route path="document-store" element={<RequirePermission perm="access"><DocumentStorePage /></RequirePermission>} />
-        <Route path="library" element={<LibraryLandingPage />} />
-        <Route path="library/:storeId" element={<LibraryStoreDetailPage />} />
         <Route path="emergence" element={<RequirePermission perm="access"><EmergenceExplorerPage /></RequirePermission>} />
         <Route path="arena" element={<RequirePermission perm="arena-agent.use"><ArenaPage /></RequirePermission>} />
         <Route path="lab" element={<RequirePermission perm="lab.read"><LabPage /></RequirePermission>} />

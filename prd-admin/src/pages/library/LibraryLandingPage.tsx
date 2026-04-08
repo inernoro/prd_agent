@@ -90,11 +90,12 @@ export function LibraryLandingPage() {
     <div
       className="min-h-screen w-full overflow-y-auto"
       style={{
+        // 提高对比度：更饱和的底色 + 更明显的色块
         background:
-          'radial-gradient(ellipse at 20% 0%, rgba(251,191,36,0.25) 0%, transparent 50%),' +
-          'radial-gradient(ellipse at 80% 30%, rgba(59,130,246,0.18) 0%, transparent 50%),' +
-          'radial-gradient(ellipse at 50% 100%, rgba(236,72,153,0.15) 0%, transparent 60%),' +
-          'linear-gradient(180deg, #FFF7ED 0%, #FEF3C7 100%)',
+          'radial-gradient(ellipse 900px 700px at 15% 0%, rgba(251,146,60,0.40) 0%, transparent 60%),' +
+          'radial-gradient(ellipse 700px 600px at 85% 25%, rgba(59,130,246,0.25) 0%, transparent 60%),' +
+          'radial-gradient(ellipse 800px 600px at 50% 100%, rgba(236,72,153,0.22) 0%, transparent 60%),' +
+          'linear-gradient(180deg, #FFEDD5 0%, #FEF3C7 40%, #FED7AA 100%)',
         fontFamily: "'Nunito', system-ui, sans-serif",
         color: '#1E1B4B',
       }}

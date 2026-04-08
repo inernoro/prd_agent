@@ -29,7 +29,7 @@ export function buildWidgetScript(branchId: string, branchName: string): string 
     @keyframes cds-ai-border-glow{0%,100%{box-shadow:inset 0 0 12px 4px rgba(96,165,250,0.5),inset 0 0 36px 2px rgba(167,139,250,0.15)}50%{box-shadow:inset 0 0 20px 6px rgba(96,165,250,0.7),inset 0 0 50px 4px rgba(167,139,250,0.25)}}
     @keyframes cds-highlight-pulse{0%,100%{box-shadow:0 0 0 3px rgba(96,165,250,0.6),0 0 12px 4px rgba(96,165,250,0.3)}50%{box-shadow:0 0 0 5px rgba(96,165,250,0.8),0 0 20px 8px rgba(96,165,250,0.4)}}
     @keyframes cds-step-in{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:translateY(0)}}
-    @keyframes cds-handshake-pop{0%{opacity:0;transform:scale(0.8) translateY(12px)}60%{opacity:1;transform:scale(1.05) translateY(-2px)}100%{opacity:1;transform:scale(1) translateY(0)}}
+    @keyframes cds-scroll-bounce{0%{opacity:0;transform:translateY(-8px) scale(0.8)}40%{opacity:1;transform:translateY(0) scale(1.1)}100%{opacity:1;transform:translateY(12px) scale(1)}}
     .cds-ai-active{position:fixed;inset:0;z-index:99998;pointer-events:none;border:none;background:none;animation:cds-ai-border-glow 2.5s ease-in-out infinite}
     .cds-ai-badge{position:fixed;top:10px;left:50%;transform:translateX(-50%);z-index:99999;display:flex;align-items:center;gap:6px;padding:4px 12px;border-radius:20px;background:rgba(22,27,34,0.9);backdrop-filter:blur(8px);border:1px solid rgba(96,165,250,0.4);box-shadow:0 2px 12px rgba(96,165,250,0.3);font-family:ui-monospace,SFMono-Regular,"SF Mono",Menlo,monospace;font-size:11px;color:#e2e8f0;white-space:nowrap;pointer-events:none}
     .cds-ai-badge-dot{width:6px;height:6px;border-radius:50%;background:#60a5fa;box-shadow:0 0 6px #60a5fa;animation:cds-blink 1.5s ease-in-out infinite}
@@ -780,6 +780,28 @@ export function buildWidgetScript(branchId: string, branchName: string): string 
     if(!el){
       // No element to animate (snapshot, scroll, navigate, evaluate)
       if(action!=='snapshot'){removeHighlight();}
+      // 特殊处理：scroll 显示鼠标到视口中央 + 上下箭头指示
+      if(action==='scroll'){
+        var cx=window.innerWidth/2;
+        var cy=window.innerHeight/2;
+        moveCursorTo(cx,cy,function(){
+          // 显示滚动方向指示（上下箭头小标签）
+          var dir=(params&&params.direction)||'down';
+          var indicator=document.createElement('div');
+          indicator.setAttribute('data-page-agent-ignore','');
+          indicator.style.cssText='position:fixed;left:'+(cx-18)+'px;top:'+(cy-60)+'px;z-index:100002;width:36px;height:36px;border-radius:50%;background:rgba(96,165,250,0.2);border:2px solid rgba(96,165,250,0.8);backdrop-filter:blur(6px);display:flex;align-items:center;justify-content:center;font-size:18px;color:#93c5fd;box-shadow:0 0 16px rgba(96,165,250,0.5);pointer-events:none;animation:cds-scroll-bounce 0.6s ease-in-out';
+          indicator.innerHTML=dir==='up'?'↑':'↓';
+          document.body.appendChild(indicator);
+          setTimeout(function(){
+            var result=executeAction(action,params);
+            setTimeout(function(){
+              indicator.remove();
+              if(callback)callback(result);
+            },400);
+          },150);
+        });
+        return;
+      }
       var result=executeAction(action,params);
       if(callback)callback(result);
       return;
@@ -1283,36 +1305,27 @@ export function buildWidgetScript(branchId: string, branchName: string): string 
     var panel=document.createElement('div');
     panel.id='cds-handshake-request';
     panel.setAttribute('data-page-agent-ignore','');
-    // Fluffy claymorphism look — soft rounded, thick border, double shadow
-    panel.style.cssText='position:fixed;left:'+pos.x+'px;bottom:'+(pos.y+42)+'px;z-index:99999;min-width:280px;max-width:400px;padding:16px 18px;border-radius:20px;background:linear-gradient(180deg,#fff7ed,#fef3c7);border:3px solid #f97316;box-shadow:6px 6px 0 rgba(249,115,22,0.2),inset -2px -2px 6px rgba(249,115,22,0.08),inset 2px 2px 6px rgba(255,255,255,0.9);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif;font-size:13px;color:#1e1b4b;animation:cds-handshake-pop 0.4s cubic-bezier(0.34,1.56,0.64,1)';
+    // 保持与 cds-nav-request 一致的深色科技风
+    panel.style.cssText='position:fixed;left:'+pos.x+'px;bottom:'+(pos.y+42)+'px;z-index:99999;min-width:280px;max-width:400px;padding:12px 14px;border-radius:10px;background:rgba(22,27,34,0.95);backdrop-filter:blur(12px);border:1px solid rgba(96,165,250,0.4);box-shadow:0 4px 20px rgba(96,165,250,0.25);font-family:ui-monospace,SFMono-Regular,"SF Mono",Menlo,monospace;font-size:12px;color:#e2e8f0;animation:cds-ai-border-glow 2.5s ease-in-out infinite';
 
-    var h='<div style="display:flex;align-items:center;gap:8px;margin-bottom:10px">';
-    h+='<span style="width:28px;height:28px;border-radius:10px;background:linear-gradient(135deg,#fb923c,#f97316);display:inline-flex;align-items:center;justify-content:center;box-shadow:2px 2px 0 rgba(249,115,22,0.3),inset -1px -1px 3px rgba(0,0,0,0.12),inset 1px 1px 3px rgba(255,255,255,0.5);font-size:15px">🤖</span>';
-    h+='<div><div style="font-weight:700;color:#1e1b4b;font-size:14px">'+(r.agentName||'AI')+' 请求操作此页面</div>';
-    h+='<div style="font-size:11px;color:#78350f;margin-top:1px">同意后 AI 可以查看和操作当前页面内容</div></div>';
+    var h='<div style="display:flex;align-items:center;gap:6px;margin-bottom:8px">';
+    h+='<span style="width:8px;height:8px;border-radius:50%;background:#60a5fa;box-shadow:0 0 8px #60a5fa;animation:cds-blink 1.5s ease-in-out infinite"></span>';
+    h+='<span style="font-weight:600;color:#60a5fa">'+(r.agentName||'AI')+' 请求操作此页面</span>';
     h+='</div>';
     if(r.reason){
-      h+='<div style="background:rgba(255,255,255,0.7);padding:8px 10px;border-radius:12px;margin-bottom:10px;font-size:12px;color:#1e1b4b;line-height:1.5;border:1.5px solid rgba(249,115,22,0.2)">'+r.reason+'</div>';
+      h+='<div style="background:rgba(96,165,250,0.08);padding:8px 10px;border-radius:6px;margin-bottom:8px;font-size:11px;color:#c9d1d9;line-height:1.5;border:1px solid rgba(96,165,250,0.12)">'+r.reason+'</div>';
     }
-    h+='<div style="display:flex;gap:8px">';
-    h+='<button id="cds-handshake-approve" style="flex:1;padding:9px 14px;border-radius:14px;border:2.5px solid #15803d;background:linear-gradient(180deg,#22c55e,#16a34a);color:#fff;font-size:13px;font-weight:700;cursor:pointer;font-family:inherit;box-shadow:0 3px 0 #15803d,inset -1px -1px 2px rgba(0,0,0,0.15),inset 1px 1px 2px rgba(255,255,255,0.3);transition:all 0.15s ease-out">✓ 同意</button>';
-    h+='<button id="cds-handshake-reject" style="padding:9px 14px;border-radius:14px;border:2.5px solid #9ca3af;background:linear-gradient(180deg,#f3f4f6,#e5e7eb);color:#374151;font-size:12px;font-weight:600;cursor:pointer;font-family:inherit;box-shadow:0 3px 0 #9ca3af;transition:all 0.15s ease-out">拒绝</button>';
+    h+='<div style="font-size:10px;color:#8b949e;margin-bottom:8px">同意后 AI 可以查看和操作当前页面</div>';
+    h+='<div style="display:flex;gap:6px">';
+    h+='<button id="cds-handshake-approve" style="flex:1;padding:6px 12px;border-radius:6px;border:1px solid rgba(96,165,250,0.5);background:rgba(96,165,250,0.2);color:#93c5fd;font-size:12px;font-weight:600;cursor:pointer;font-family:inherit">同意</button>';
+    h+='<button id="cds-handshake-reject" style="padding:6px 12px;border-radius:6px;border:1px solid #30363d;background:#21262d;color:#8b949e;font-size:11px;cursor:pointer;font-family:inherit">拒绝</button>';
     h+='</div>';
 
     panel.innerHTML=h;
     document.body.appendChild(panel);
 
-    // Press-down animation (clay feel)
-    var pressDown=function(btn,shadowColor){
-      btn.addEventListener('mousedown',function(){btn.style.transform='translateY(2px)';btn.style.boxShadow='0 1px 0 '+shadowColor+',inset -1px -1px 2px rgba(0,0,0,0.15),inset 1px 1px 2px rgba(255,255,255,0.3)';});
-      btn.addEventListener('mouseup',function(){btn.style.transform='';btn.style.boxShadow='';});
-      btn.addEventListener('mouseleave',function(){btn.style.transform='';btn.style.boxShadow='';});
-    };
-
     var approveBtn=document.getElementById('cds-handshake-approve');
     var rejectBtn=document.getElementById('cds-handshake-reject');
-    pressDown(approveBtn,'#15803d');
-    pressDown(rejectBtn,'#9ca3af');
 
     approveBtn.onclick=function(){
       var reqId=bridgeHandshakeRequest.id;
@@ -1324,14 +1337,12 @@ export function buildWidgetScript(branchId: string, branchName: string): string 
           bridgeHandshakeRequest=null;
           panel.remove();
           if(d&&d.success){
-            // Show success toast
-            showHandshakeToast('✓ 已授权 AI 操作此页面','#16a34a');
-            // Force immediate activation check — Widget will begin heartbeat
+            showHandshakeToast('✓ 已授权 AI 操作此页面','#60a5fa');
             setTimeout(bridgeCheckActivation,300);
           }
         })
         .catch(function(){
-          approveBtn.innerText='✓ 同意';
+          approveBtn.innerText='同意';
           approveBtn.disabled=false;
         });
     };
@@ -1341,7 +1352,7 @@ export function buildWidgetScript(branchId: string, branchName: string): string 
       bridgeHandshakeRequest=null;
       panel.remove();
       fetch(API+'/bridge/handshake-requests/'+reqId+'/reject',{method:'POST'}).catch(function(){});
-      showHandshakeToast('已拒绝 AI 操作请求','#9ca3af');
+      showHandshakeToast('已拒绝 AI 操作请求','#8b949e');
     };
 
     // Auto-dismiss after 2min
@@ -1356,7 +1367,7 @@ export function buildWidgetScript(branchId: string, branchName: string): string 
   function showHandshakeToast(text,color){
     var t=document.createElement('div');
     t.setAttribute('data-page-agent-ignore','');
-    t.style.cssText='position:fixed;left:'+pos.x+'px;bottom:'+(pos.y+42)+'px;z-index:99999;padding:10px 16px;border-radius:14px;background:#fff;border:3px solid '+color+';box-shadow:4px 4px 0 '+color+'33;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif;font-size:13px;font-weight:600;color:'+color+';animation:cds-handshake-pop 0.4s cubic-bezier(0.34,1.56,0.64,1)';
+    t.style.cssText='position:fixed;left:'+pos.x+'px;bottom:'+(pos.y+42)+'px;z-index:99999;padding:8px 12px;border-radius:8px;background:rgba(22,27,34,0.95);backdrop-filter:blur(12px);border:1px solid '+color+';box-shadow:0 4px 20px rgba(0,0,0,0.4);font-family:ui-monospace,SFMono-Regular,"SF Mono",Menlo,monospace;font-size:11px;font-weight:600;color:'+color+'';
     t.innerText=text;
     document.body.appendChild(t);
     setTimeout(function(){t.style.opacity='0';t.style.transition='opacity 0.3s';setTimeout(function(){t.remove();},300);},2500);
