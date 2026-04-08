@@ -10,9 +10,19 @@ import {
   Upload, Link, LayoutTemplate, Bot, Pencil, Save, X,
 } from 'lucide-react';
 import { getFileTypeConfig } from '@/lib/fileTypeRegistry';
+import type { FilePreviewKind } from '@/lib/fileTypeRegistry';
 import { MapSpinner, MapSectionLoader } from '@/components/ui/VideoLoader';
 
 // ── 类型 ──
+
+export type EntryPreview = {
+  /** 文本内容（Markdown/纯文本/提取后的 Office 文本） */
+  text: string | null;
+  /** 二进制文件 URL（图片/视频/音频/PDF 等） */
+  fileUrl: string | null;
+  /** MIME 类型 */
+  contentType: string;
+};
 
 export type DocBrowserEntry = {
   id: string;
@@ -41,7 +51,12 @@ export type DocBrowserProps = {
   onCreateFolder?: (name: string, parentId?: string) => Promise<void>;
   onCreateDocument?: () => void;
   onUploadFile?: () => void;
-  loadContent: (entryId: string) => Promise<string | null>;
+  /**
+   * 加载文档预览数据。
+   * 返回包含文本内容 + 二进制文件 URL + MIME 类型的对象，
+   * 由 DocBrowser 根据 fileTypeRegistry 的 preview 字段选择渲染方式。
+   */
+  loadContent: (entryId: string) => Promise<EntryPreview | null>;
   onSearch?: (keyword: string, searchContent: boolean) => Promise<DocBrowserEntry[] | null>;
   emptyState?: React.ReactNode;
   loading?: boolean;
@@ -388,6 +403,114 @@ function MarkdownViewer({ content }: { content: string }) {
   );
 }
 
+// ── 文件预览组件（按 fileTypeRegistry.preview 字段路由到不同渲染器） ──
+
+function FilePreview({ entry, preview }: { entry?: DocBrowserEntry; preview: EntryPreview | null }) {
+  if (!entry) {
+    return (
+      <div className="text-center py-12 text-[12px]" style={{ color: 'var(--text-muted)' }}>
+        请选择文件
+      </div>
+    );
+  }
+  if (entry.isFolder) {
+    return (
+      <div className="text-center py-12 text-[12px]" style={{ color: 'var(--text-muted)' }}>
+        请选择文件夹中的文件查看内容
+      </div>
+    );
+  }
+
+  const cfg = getFileTypeConfig(entry.title, entry.contentType);
+  const kind: FilePreviewKind = cfg.preview;
+  const fileUrl = preview?.fileUrl ?? null;
+  const text = preview?.text ?? null;
+
+  // 图片预览
+  if (kind === 'image' && fileUrl) {
+    return (
+      <div className="flex items-center justify-center py-4">
+        <img
+          src={fileUrl}
+          alt={entry.title}
+          className="max-w-full max-h-[80vh] rounded-lg"
+          style={{ border: '1px solid rgba(255,255,255,0.06)', boxShadow: '0 8px 32px rgba(0,0,0,0.3)' }}
+        />
+      </div>
+    );
+  }
+
+  // 视频预览
+  if (kind === 'video' && fileUrl) {
+    return (
+      <div className="flex items-center justify-center py-4">
+        <video
+          src={fileUrl}
+          controls
+          className="max-w-full max-h-[80vh] rounded-lg"
+          style={{ border: '1px solid rgba(255,255,255,0.06)' }}
+        />
+      </div>
+    );
+  }
+
+  // 音频预览
+  if (kind === 'audio' && fileUrl) {
+    return (
+      <div className="flex flex-col items-center justify-center py-12 gap-4">
+        <cfg.icon size={48} style={{ color: cfg.color }} />
+        <p className="text-[13px] font-semibold" style={{ color: 'var(--text-primary)' }}>{entry.title}</p>
+        <audio src={fileUrl} controls className="w-[400px] max-w-full" />
+      </div>
+    );
+  }
+
+  // PDF 预览（iframe 嵌入，浏览器原生支持）
+  if (kind === 'pdf' && fileUrl) {
+    return (
+      <iframe
+        src={fileUrl}
+        title={entry.title}
+        className="w-full rounded-lg"
+        style={{ height: 'calc(100vh - 220px)', border: '1px solid rgba(255,255,255,0.06)' }}
+      />
+    );
+  }
+
+  // 文本预览（Markdown / 提取后的 Office 文本 / 代码）
+  if (kind === 'text' && text) {
+    return <MarkdownViewer content={text} />;
+  }
+
+  // 兜底：有 fileUrl 但无可用预览方式 → 显示下载链接
+  if (fileUrl) {
+    return (
+      <div className="flex flex-col items-center justify-center py-16 gap-4">
+        <cfg.icon size={48} style={{ color: cfg.color }} />
+        <p className="text-[13px] font-semibold" style={{ color: 'var(--text-primary)' }}>{entry.title}</p>
+        <p className="text-[11px]" style={{ color: 'var(--text-muted)' }}>{cfg.label} 文件不支持在线预览</p>
+        <a
+          href={fileUrl}
+          target="_blank"
+          rel="noopener noreferrer"
+          download={entry.title}
+          className="h-8 px-4 rounded-[8px] text-[12px] font-semibold flex items-center gap-1.5 cursor-pointer transition-colors"
+          style={{ background: 'rgba(59,130,246,0.1)', border: '1px solid rgba(59,130,246,0.2)', color: 'rgba(59,130,246,0.9)' }}
+        >
+          下载文件
+        </a>
+      </div>
+    );
+  }
+
+  // 完全无内容
+  return (
+    <div className="text-center py-12 text-[12px]" style={{ color: 'var(--text-muted)' }}>
+      暂无可预览的内容
+    </div>
+  );
+}
+
 // ── DocBrowser 主组件 ──
 
 export function DocBrowser({
@@ -413,7 +536,7 @@ export function DocBrowser({
   const [searchContent, setSearchContent] = useState(false);
   const [searchResults, setSearchResults] = useState<DocBrowserEntry[] | null>(null);
   const [searching, setSearching] = useState(false);
-  const [content, setContent] = useState<string | null>(null);
+  const [preview, setPreview] = useState<EntryPreview | null>(null);
   const [contentLoading, setContentLoading] = useState(false);
   const [loadedEntryId, setLoadedEntryId] = useState<string | null>(null);
   const [expandedFolders, setExpandedFolders] = useState<Set<string>>(new Set());
@@ -627,13 +750,13 @@ export function DocBrowser({
   const loadEntryContent = useCallback(async (entryId: string) => {
     if (entryId === loadedEntryId) return;
     setContentLoading(true);
-    setContent(null);
+    setPreview(null);
     try {
-      const text = await loadContent(entryId);
-      setContent(text);
+      const data = await loadContent(entryId);
+      setPreview(data);
       setLoadedEntryId(entryId);
     } catch {
-      setContent(null);
+      setPreview(null);
     }
     setContentLoading(false);
   }, [loadContent, loadedEntryId]);
@@ -916,46 +1039,52 @@ export function DocBrowser({
                   置顶
                 </span>
               )}
-              {/* 编辑/保存按钮 */}
-              {onSaveContent && !entries.find(e => e.id === selectedEntryId)?.isFolder && (
-                <div className="ml-auto flex items-center gap-1.5">
-                  {editMode ? (
-                    <>
+              {/* 编辑/保存按钮（仅对可编辑类型显示） */}
+              {(() => {
+                const sel = entries.find(e => e.id === selectedEntryId);
+                if (!sel || sel.isFolder || !onSaveContent) return null;
+                const cfg = getFileTypeConfig(sel.title, sel.contentType);
+                if (!cfg.editable) return null;
+                return (
+                  <div className="ml-auto flex items-center gap-1.5">
+                    {editMode ? (
+                      <>
+                        <button
+                          onClick={async () => {
+                            if (!selectedEntryId) return;
+                            setSaving(true);
+                            try {
+                              await onSaveContent(selectedEntryId, editContent);
+                              setPreview(prev => prev ? { ...prev, text: editContent } : prev);
+                              setEditMode(false);
+                            } finally {
+                              setSaving(false);
+                            }
+                          }}
+                          disabled={saving}
+                          className="h-7 px-2.5 rounded-[8px] text-[11px] font-semibold flex items-center gap-1 cursor-pointer"
+                          style={{ background: 'rgba(34,197,94,0.1)', border: '1px solid rgba(34,197,94,0.2)', color: 'rgba(34,197,94,0.9)' }}>
+                          {saving ? <MapSpinner size={12} color="rgba(34,197,94,0.9)" /> : <Save size={11} />}
+                          保存
+                        </button>
+                        <button
+                          onClick={() => setEditMode(false)}
+                          className="h-7 px-2.5 rounded-[8px] text-[11px] font-semibold flex items-center gap-1 cursor-pointer"
+                          style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)', color: 'var(--text-muted)' }}>
+                          <X size={11} /> 取消
+                        </button>
+                      </>
+                    ) : (
                       <button
-                        onClick={async () => {
-                          if (!selectedEntryId) return;
-                          setSaving(true);
-                          try {
-                            await onSaveContent(selectedEntryId, editContent);
-                            setContent(editContent);
-                            setEditMode(false);
-                          } finally {
-                            setSaving(false);
-                          }
-                        }}
-                        disabled={saving}
+                        onClick={() => { setEditContent(preview?.text ?? ''); setEditMode(true); }}
                         className="h-7 px-2.5 rounded-[8px] text-[11px] font-semibold flex items-center gap-1 cursor-pointer"
-                        style={{ background: 'rgba(34,197,94,0.1)', border: '1px solid rgba(34,197,94,0.2)', color: 'rgba(34,197,94,0.9)' }}>
-                        {saving ? <MapSpinner size={12} color="rgba(34,197,94,0.9)" /> : <Save size={11} />}
-                        保存
+                        style={{ background: 'rgba(59,130,246,0.08)', border: '1px solid rgba(59,130,246,0.15)', color: 'rgba(59,130,246,0.9)' }}>
+                        <Pencil size={11} /> 编辑
                       </button>
-                      <button
-                        onClick={() => setEditMode(false)}
-                        className="h-7 px-2.5 rounded-[8px] text-[11px] font-semibold flex items-center gap-1 cursor-pointer"
-                        style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)', color: 'var(--text-muted)' }}>
-                        <X size={11} /> 取消
-                      </button>
-                    </>
-                  ) : (
-                    <button
-                      onClick={() => { setEditContent(content ?? ''); setEditMode(true); }}
-                      className="h-7 px-2.5 rounded-[8px] text-[11px] font-semibold flex items-center gap-1 cursor-pointer"
-                      style={{ background: 'rgba(59,130,246,0.08)', border: '1px solid rgba(59,130,246,0.15)', color: 'rgba(59,130,246,0.9)' }}>
-                      <Pencil size={11} /> 编辑
-                    </button>
-                  )}
-                </div>
-              )}
+                    )}
+                  </div>
+                );
+              })()}
             </div>
             {/* 内容区 */}
             <div className="flex-1 overflow-y-auto px-6 py-4">
@@ -976,14 +1105,11 @@ export function DocBrowser({
                   }}
                   placeholder="在此编辑文档内容..."
                 />
-              ) : content ? (
-                <MarkdownViewer content={content} />
               ) : (
-                <div className="text-center py-12 text-[12px]" style={{ color: 'var(--text-muted)' }}>
-                  {entries.find(e => e.id === selectedEntryId)?.isFolder
-                    ? '请选择文件夹中的文件查看内容'
-                    : '无文本内容（可能是二进制文件）'}
-                </div>
+                <FilePreview
+                  entry={entries.find(e => e.id === selectedEntryId)}
+                  preview={preview}
+                />
               )}
             </div>
           </>

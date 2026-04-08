@@ -21,6 +21,9 @@ import {
   Archive,
 } from 'lucide-react';
 
+/** 预览类型枚举 */
+export type FilePreviewKind = 'text' | 'image' | 'video' | 'audio' | 'pdf' | 'none';
+
 export interface FileTypeConfig {
   /** 标准扩展名列表（含点，小写） */
   extensions: string[];
@@ -32,6 +35,10 @@ export interface FileTypeConfig {
   color: string;
   /** 人类可读标签 */
   label: string;
+  /** 预览方式（用于右侧预览面板渲染） */
+  preview: FilePreviewKind;
+  /** 是否支持在线编辑（仅文本类） */
+  editable?: boolean;
 }
 
 /** 文件类型注册表 — 新增类型在此处添加 */
@@ -42,6 +49,8 @@ export const FILE_TYPE_REGISTRY: Record<string, FileTypeConfig> = {
     icon: FileText,
     color: 'rgba(59,130,246,0.8)',
     label: 'Markdown',
+    preview: 'text',
+    editable: true,
   },
   pdf: {
     extensions: ['.pdf'],
@@ -49,6 +58,7 @@ export const FILE_TYPE_REGISTRY: Record<string, FileTypeConfig> = {
     icon: FileText,
     color: 'rgba(239,68,68,0.8)',
     label: 'PDF',
+    preview: 'pdf',
   },
   word: {
     extensions: ['.doc', '.docx'],
@@ -56,6 +66,7 @@ export const FILE_TYPE_REGISTRY: Record<string, FileTypeConfig> = {
     icon: FileText,
     color: 'rgba(37,99,235,0.85)',
     label: 'Word',
+    preview: 'text',
   },
   powerpoint: {
     extensions: ['.ppt', '.pptx'],
@@ -63,6 +74,7 @@ export const FILE_TYPE_REGISTRY: Record<string, FileTypeConfig> = {
     icon: Presentation,
     color: 'rgba(234,88,12,0.85)',
     label: 'PowerPoint',
+    preview: 'text',
   },
   excel: {
     extensions: ['.xls', '.xlsx'],
@@ -70,6 +82,7 @@ export const FILE_TYPE_REGISTRY: Record<string, FileTypeConfig> = {
     icon: FileSpreadsheet,
     color: 'rgba(34,197,94,0.85)',
     label: 'Excel',
+    preview: 'text',
   },
   csv: {
     extensions: ['.csv'],
@@ -77,6 +90,8 @@ export const FILE_TYPE_REGISTRY: Record<string, FileTypeConfig> = {
     icon: FileSpreadsheet,
     color: 'rgba(34,197,94,0.7)',
     label: 'CSV',
+    preview: 'text',
+    editable: true,
   },
   code: {
     extensions: ['.js', '.ts', '.tsx', '.jsx', '.py', '.cs', '.go', '.rs', '.java', '.cpp', '.c', '.sh', '.rb', '.php'],
@@ -84,6 +99,8 @@ export const FILE_TYPE_REGISTRY: Record<string, FileTypeConfig> = {
     icon: FileCode,
     color: 'rgba(168,85,247,0.8)',
     label: 'Code',
+    preview: 'text',
+    editable: true,
   },
   json: {
     extensions: ['.json'],
@@ -91,6 +108,8 @@ export const FILE_TYPE_REGISTRY: Record<string, FileTypeConfig> = {
     icon: FileJson,
     color: 'rgba(234,179,8,0.8)',
     label: 'JSON',
+    preview: 'text',
+    editable: true,
   },
   yaml: {
     extensions: ['.yaml', '.yml'],
@@ -98,6 +117,8 @@ export const FILE_TYPE_REGISTRY: Record<string, FileTypeConfig> = {
     icon: FileJson,
     color: 'rgba(234,179,8,0.7)',
     label: 'YAML',
+    preview: 'text',
+    editable: true,
   },
   xml: {
     extensions: ['.xml', '.html', '.htm'],
@@ -105,6 +126,8 @@ export const FILE_TYPE_REGISTRY: Record<string, FileTypeConfig> = {
     icon: FileCode,
     color: 'rgba(168,85,247,0.7)',
     label: 'Markup',
+    preview: 'text',
+    editable: true,
   },
   image: {
     extensions: ['.png', '.jpg', '.jpeg', '.gif', '.webp', '.svg', '.bmp', '.ico'],
@@ -112,6 +135,7 @@ export const FILE_TYPE_REGISTRY: Record<string, FileTypeConfig> = {
     icon: FileImage,
     color: 'rgba(236,72,153,0.8)',
     label: 'Image',
+    preview: 'image',
   },
   video: {
     extensions: ['.mp4', '.mov', '.avi', '.mkv', '.webm'],
@@ -119,6 +143,7 @@ export const FILE_TYPE_REGISTRY: Record<string, FileTypeConfig> = {
     icon: FileVideo,
     color: 'rgba(168,85,247,0.85)',
     label: 'Video',
+    preview: 'video',
   },
   audio: {
     extensions: ['.mp3', '.wav', '.flac', '.ogg', '.m4a'],
@@ -126,6 +151,7 @@ export const FILE_TYPE_REGISTRY: Record<string, FileTypeConfig> = {
     icon: FileAudio,
     color: 'rgba(236,72,153,0.7)',
     label: 'Audio',
+    preview: 'audio',
   },
   archive: {
     extensions: ['.zip', '.rar', '.tar', '.gz', '.7z'],
@@ -133,6 +159,7 @@ export const FILE_TYPE_REGISTRY: Record<string, FileTypeConfig> = {
     icon: Archive,
     color: 'rgba(148,163,184,0.8)',
     label: 'Archive',
+    preview: 'none',
   },
   text: {
     extensions: ['.txt', '.log'],
@@ -140,6 +167,8 @@ export const FILE_TYPE_REGISTRY: Record<string, FileTypeConfig> = {
     icon: FileText,
     color: 'rgba(148,163,184,0.85)',
     label: 'Text',
+    preview: 'text',
+    editable: true,
   },
 };
 
@@ -150,6 +179,7 @@ export const DEFAULT_FILE_TYPE: FileTypeConfig = {
   icon: File,
   color: 'rgba(148,163,184,0.7)',
   label: 'File',
+  preview: 'text',
 };
 
 /** 从文件名提取扩展名（小写，含点；无扩展名返回空串） */

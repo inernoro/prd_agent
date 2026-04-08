@@ -43,7 +43,7 @@ import type {
   DocumentStoreWithPreview,
   DocumentEntry,
 } from '@/services/contracts/documentStore';
-import type { DocBrowserEntry } from '@/components/doc-browser/DocBrowser';
+import type { DocBrowserEntry, EntryPreview } from '@/components/doc-browser/DocBrowser';
 import { toast } from '@/lib/toast';
 
 const ACCEPT_TYPES = '.md,.txt,.pdf,.doc,.docx,.json,.yaml,.yml,.csv';
@@ -290,10 +290,14 @@ function StoreDetailView({ storeId, onBack }: {
     }
   }, []);
 
-  const loadContent = useCallback(async (entryId: string): Promise<string | null> => {
+  const loadContent = useCallback(async (entryId: string): Promise<EntryPreview | null> => {
     const res = await getDocumentContent(entryId);
-    if (res.success && res.data.hasContent) return res.data.content;
-    return null;
+    if (!res.success) return null;
+    return {
+      text: res.data.hasContent ? res.data.content : null,
+      fileUrl: res.data.fileUrl,
+      contentType: res.data.contentType,
+    };
   }, []);
 
   const handleCreateFolder = useCallback(async (name: string) => {
