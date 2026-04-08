@@ -3,3 +3,4 @@
 | refactor | prd-admin | 分享管理用两个复制按钮替代一键分享+AI评分，直接导出用户原话+评论+VLM内容 |
 | feat | prd-admin | 缺陷列表行显示缺陷编号(defectNo) |
 | feat | prd-admin | 缺陷列表新增搜索框，支持按编号、标题、内容模糊搜索 |
+| feat | prd-admin | 分享面板支持勾选缺陷+三种复制模式（含原图base64/含图链/含VLM描述），图片以 图1/图2 代称引用 |
