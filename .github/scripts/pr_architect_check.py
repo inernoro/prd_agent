@@ -330,9 +330,9 @@ def resolve_repo_binding(
         return repository, {}
 
     required_checks = selected.get("required_checks") or []
-    if "PR Architect L1 Gate" not in required_checks:
+    if "PR审查棱镜 L1 Gate" not in required_checks:
         result.error(
-            "repository binding missing required check 'PR Architect L1 Gate'; "
+            "repository binding missing required check 'PR审查棱镜 L1 Gate'; "
             "branch protection would be inconsistent."
         )
         return repository, {}
@@ -619,7 +619,7 @@ def write_summary(result: GateResult) -> None:
         return
 
     lines = [
-        "# PR Architect Check (V1 / L1)",
+        "# PR审查棱镜 Check (V1 / L1)",
         "",
         f"- errors: {len(result.errors)}",
         f"- advisories: {len(result.advisories)}",

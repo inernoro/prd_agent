@@ -1,4 +1,4 @@
-name: PR Architect Comment Actions
+name: PR Review Prism Comment Actions
 
 on:
   issue_comment:
@@ -11,7 +11,7 @@ permissions:
 
 jobs:
   pr-architect-comment-actions:
-    name: PR Architect Type A/B/C Helper
+    name: PR审查棱镜 Type A/B/C 退回助手
     runs-on: ubuntu-latest
     if: github.event.issue.pull_request != null
     steps:

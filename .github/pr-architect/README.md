@@ -1,4 +1,4 @@
-# DDD Anchor PR 协作流程
+# PR审查棱镜（PR Review Prism）协作流程
 
 ## 1. 目标
 
@@ -179,7 +179,7 @@ Agent 按 `review-rules.yml` 执行：
 
 ### 8.2 T2 — 模板自动回填
 
-`pr-architect-prefill` 工作流会在 PR 打开/编辑时自动补齐 section-1 的缺省字段：
+`PR Review Prism Prefill` 工作流会在 PR 打开/编辑时自动补齐 section-1 的缺省字段：
 
 - `design_source_id` / `design_source_version`
 - `owner` / `bounded_context`
@@ -189,7 +189,7 @@ Agent 按 `review-rules.yml` 执行：
 
 ### 8.3 T3 — 统一检查与结果产物
 
-`pr-architect-check` 在单次执行中完成：
+`PR Review Prism Check` 在单次执行中完成：
 
 1. L1 硬门禁
 2. Advisory 提示
@@ -199,16 +199,16 @@ Agent 按 `review-rules.yml` 执行：
 
 ### 8.4 T4 — 决策卡单评论更新
 
-`pr-architect-publish` 会读取 `review_run.json`，并在 PR 中维护一条固定 marker 评论：
+`PR Review Prism Publish` 会读取 `review_run.json`，并在 PR 中维护一条固定 marker 评论：
 
-- marker：`<!-- pr-architect-decision-card:begin --> ... <!-- pr-architect-decision-card:end -->`
+- marker：`<!-- pr-review-prism-decision-card:begin --> ... <!-- pr-review-prism-decision-card:end -->`
 - 行为：已存在则更新，不存在则创建
 
 从而避免评论刷屏，确保 Architect 总是看到“最新一版”决策卡。
 
 ### 8.5 T5 — Type A/B/C 命令化退回
 
-`pr-architect-comment-actions` 监听评论命令：
+`PR Review Prism Comment Actions` 监听评论命令：
 
 - `/type-a`
 - `/type-b`
@@ -236,7 +236,7 @@ guardrails:
 
 ### 8.7 T7 — 指标自动汇总
 
-`pr-architect-metrics` 基于 `review_run.json` 生成 JSONL 指标记录并上传 Artifact，用于观测：
+`PR Review Prism Metrics` 基于 `review_run.json` 生成 JSONL 指标记录并上传 Artifact，用于观测：
 
 - 模板完整率
 - advisory 命中情况

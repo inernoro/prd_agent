@@ -1,4 +1,4 @@
-name: PR Architect Metrics
+name: PR Review Prism Metrics
 
 on:
   workflow_dispatch:
@@ -11,7 +11,7 @@ permissions:
 
 jobs:
   pr-architect-metrics:
-    name: PR Architect Metrics Export
+    name: PR审查棱镜 指标导出
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -27,18 +27,18 @@ jobs:
 
       - name: Export metrics summary
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GITHUB_REPOSITORY: ${{ github.repository }}
+          PR_ARCHITECT_METRICS_INPUT: artifacts/pr-architect
+          PR_ARCHITECT_METRICS_OUTPUT: metrics/pr-review-prism-metrics.jsonl
         run: python .github/scripts/pr_architect_metrics.py
 
       - name: Commit metrics snapshot if changed
         run: |
-          if git diff --quiet -- artifacts/pr-architect/metrics.json; then
+          if git diff --quiet -- metrics/pr-review-prism-metrics.jsonl; then
             echo "No metrics changes."
             exit 0
           fi
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add artifacts/pr-architect/metrics.json
-          git commit -m "chore: update pr-architect metrics snapshot"
+          git add metrics/pr-review-prism-metrics.jsonl
+          git commit -m "chore: update pr-review-prism metrics snapshot"
           git push

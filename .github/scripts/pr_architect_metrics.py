@@ -32,7 +32,7 @@ def github_api_request(token: str, url: str) -> Any:
             "Authorization": f"Bearer {token}",
             "Accept": "application/vnd.github+json",
             "X-GitHub-Api-Version": "2022-11-28",
-            "User-Agent": "pr-architect-metrics",
+            "User-Agent": "pr-review-prism-metrics",
         },
     )
     try:
@@ -79,7 +79,7 @@ def safe_ratio(n: int, d: int) -> float:
 
 def main() -> int:
     input_dir = Path(os.getenv("PR_ARCHITECT_METRICS_INPUT", "artifacts/pr-architect"))
-    out_path = Path(os.getenv("PR_ARCHITECT_METRICS_OUTPUT", "metrics/pr-architect-metrics.jsonl"))
+    out_path = Path(os.getenv("PR_ARCHITECT_METRICS_OUTPUT", "metrics/pr-review-prism-metrics.jsonl"))
 
     runs = iter_review_runs(input_dir)
     total = len(runs)

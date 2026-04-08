@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""PR Architect slash command actions for Type A/B/C return templates."""
+"""PR Review Prism slash command actions for Type A/B/C return templates."""
 
 from __future__ import annotations
 
@@ -90,7 +90,7 @@ def is_actor_authorized(actor: str, binding: dict[str, Any]) -> bool:
 
 def comment_template(return_type: str) -> str:
     return (
-        "## PR Architect 退回单\n\n"
+        "## PR审查棱镜 退回单\n\n"
         f"- 结论：`Request Changes`\n"
         f"- 退回类型：`{return_type}`\n"
         "- 证据：\n"

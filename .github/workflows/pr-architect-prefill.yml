@@ -1,4 +1,4 @@
-name: PR Architect Prefill
+name: PR Review Prism Prefill
 
 on:
   pull_request:
@@ -11,7 +11,7 @@ permissions:
 
 jobs:
   pr-architect-prefill:
-    name: PR Architect Template Prefill
+    name: PR审查棱镜 模板预填
     runs-on: ubuntu-latest
     if: github.event.pull_request.draft == false
     steps:

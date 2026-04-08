@@ -12,8 +12,10 @@ from pathlib import Path
 from typing import Any
 
 
-MARKER_BEGIN = "<!-- pr-architect-decision-card:begin -->"
-MARKER_END = "<!-- pr-architect-decision-card:end -->"
+MARKER_BEGIN = "<!-- pr-review-prism-decision-card:begin -->"
+MARKER_END = "<!-- pr-review-prism-decision-card:end -->"
+LEGACY_MARKER_BEGIN = "<!-- pr-architect-decision-card:begin -->"
+LEGACY_MARKER_END = "<!-- pr-architect-decision-card:end -->"
 
 
 def gh_request(token: str, method: str, url: str, payload: dict[str, Any] | None = None) -> Any:
@@ -115,7 +117,7 @@ def build_card(payload: dict[str, Any], repo_name: str, pr_number: int) -> str:
 
     lines: list[str] = []
     lines.append(MARKER_BEGIN)
-    lines.append("## PR 决策卡（自动更新）")
+    lines.append("## PR审查棱镜 决策卡（自动更新）")
     lines.append("")
     lines.append("### A. 基础信息")
     lines.append(f"- PR: `{repo_name}#{pr_number}`")
@@ -175,7 +177,9 @@ def find_existing_comment(token: str, repo: str, pr_number: int) -> dict[str, An
         if not isinstance(item, dict):
             continue
         body = str(item.get("body") or "")
-        if MARKER_BEGIN in body and MARKER_END in body:
+        if (MARKER_BEGIN in body and MARKER_END in body) or (
+            LEGACY_MARKER_BEGIN in body and LEGACY_MARKER_END in body
+        ):
             return item
     return None
 

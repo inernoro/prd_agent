@@ -4,8 +4,8 @@ profile: pr-architect-repo-bindings
 defaults:
   enabled: true
   required_checks:
-    - "PR Architect L1 Gate"
-    - "PR Architect Advisory"
+    - "PR审查棱镜 L1 Gate"
+    - "PR审查棱镜 Advisory"
   architects:
     - "inernoro"
 
@@ -19,7 +19,7 @@ repositories:
     default_anchor_refs:
       - "ANCHOR-PR-REVIEW-01"
     required_checks:
-      - "PR Architect L1 Gate"
-      - "PR Architect Advisory"
+      - "PR审查棱镜 L1 Gate"
+      - "PR审查棱镜 Advisory"
     architects:
       - "inernoro"

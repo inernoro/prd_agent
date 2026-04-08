@@ -1,8 +1,8 @@
-name: PR Architect Publish
+name: PR Review Prism Publish
 
 on:
   workflow_run:
-    workflows: ["PR Architect Check"]
+    workflows: ["PR Review Prism Check"]
     types: [completed]
 
 permissions:
@@ -12,7 +12,7 @@ permissions:
 
 jobs:
   pr-architect-publish:
-    name: PR Architect Decision Card Publish
+    name: PR审查棱镜 决策卡发布
     runs-on: ubuntu-latest
     if: >
       github.event.workflow_run.conclusion == 'success' ||

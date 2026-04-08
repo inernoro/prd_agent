@@ -1,4 +1,4 @@
-name: PR Architect Check
+name: PR Review Prism Check
 
 on:
   pull_request:
@@ -12,7 +12,7 @@ permissions:
 
 jobs:
   pr-architect-check:
-    name: PR Architect L1 Gate
+    name: PR审查棱镜 L1 Gate
     runs-on: ubuntu-latest
     if: github.event.pull_request.draft == false
     steps:
@@ -29,7 +29,7 @@ jobs:
 
       - name: Run PR architect gate check
         env:
-          PR_ARCHITECT_RESULT_PATH: .github/pr-architect/review-run.json
+          PR_ARCHITECT_RESULT_PATH: artifacts/pr-architect/review_run.json
         run: python .github/scripts/pr_architect_check.py
 
       - name: Upload PR architect result JSON
@@ -38,10 +38,3 @@ jobs:
         with:
           name: pr-architect-review-run
           path: artifacts/pr-architect/review_run.json
-
-      - name: Upload PR architect run artifact
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: pr-architect-summary
-          path: .github/pr-architect/review-run.json
