@@ -12,6 +12,7 @@ import {
   Sparkles,
   Download,
   Paperclip,
+  ClipboardCheck,
   type LucideIcon,
 } from 'lucide-react';
 import { useAuthStore } from '@/stores/authStore';
@@ -31,12 +32,21 @@ interface QuickAgent {
   bg: string;
 }
 
-const QUICK_AGENTS: QuickAgent[] = [
+const QUICK_AGENTS_BASE: QuickAgent[] = [
   { key: 'prd',      label: 'PRD',    icon: MessageSquare, path: '/prd-agent',      color: '#818CF8', bg: 'rgba(129,140,248,0.15)' },
   { key: 'visual',   label: '视觉',   icon: Image,         path: '/visual-agent',   color: '#FB923C', bg: 'rgba(251,146,60,0.15)' },
   { key: 'literary', label: '文学',   icon: PenLine,       path: '/literary-agent', color: '#34D399', bg: 'rgba(52,211,153,0.15)' },
   { key: 'showcase', label: '广场',   icon: Sparkles,      path: '/showcase',       color: '#A78BFA', bg: 'rgba(167,139,250,0.15)' },
 ];
+
+const QUICK_AGENT_REVIEW_PRISM: QuickAgent = {
+  key: 'review-prism',
+  label: 'PR审查棱镜',
+  icon: ClipboardCheck,
+  path: '/pr-review-prism',
+  color: '#A5B4FC',
+  bg: 'rgba(99,102,241,0.18)',
+};
 
 /* ── Feed 项类型图标 ── */
 const FEED_ICON: Record<string, { icon: LucideIcon; color: string }> = {
@@ -68,6 +78,7 @@ const STAT_CARDS: StatCard[] = [
 export default function MobileHomePage() {
   const navigate = useNavigate();
   const user = useAuthStore((s) => s.user);
+  const permissions = useAuthStore((s) => s.permissions ?? []);
   const [notifications, setNotifications] = useState<AdminNotificationItem[]>([]);
   const [feed, setFeed] = useState<FeedItem[]>([]);
   const [stats, setStats] = useState<MobileStats | null>(null);
@@ -96,6 +107,14 @@ export default function MobileHomePage() {
   }, []);
 
   const avatarUrl = user ? resolveAvatarUrl(user) : null;
+
+  const quickAgents = useMemo(() => {
+    const list = [...QUICK_AGENTS_BASE];
+    if (permissions.includes('pr-review-prism.use')) {
+      list.unshift(QUICK_AGENT_REVIEW_PRISM);
+    }
+    return list;
+  }, [permissions]);
 
   return (
     <div className="h-full min-h-0 overflow-auto" style={{ background: 'var(--bg-base)' }}>
@@ -128,8 +147,8 @@ export default function MobileHomePage() {
           <div className="text-xs font-medium mb-3" style={{ color: 'var(--text-muted)' }}>
             快捷入口
           </div>
-          <div className="grid grid-cols-4 gap-3">
-            {QUICK_AGENTS.map((agent) => {
+          <div className={`grid gap-3 ${quickAgents.length > 4 ? 'grid-cols-5' : 'grid-cols-4'}`}>
+            {quickAgents.map((agent) => {
               const AgentIcon = agent.icon;
               return (
                 <button
@@ -143,7 +162,10 @@ export default function MobileHomePage() {
                   >
                     <AgentIcon size={20} style={{ color: agent.color }} />
                   </div>
-                  <span className="text-[11px] font-medium" style={{ color: 'var(--text-secondary)' }}>
+                  <span
+                    className="text-[10px] font-medium text-center leading-tight px-0.5 line-clamp-2"
+                    style={{ color: 'var(--text-secondary)' }}
+                  >
                     {agent.label}
                   </span>
                 </button>

@@ -38,6 +38,8 @@ App (appKey)
 | `defect-agent` | 缺陷管理 Agent | 缺陷提交与跟踪 |
 | `video-agent` | 视频 Agent | 文章转视频教程 |
 | `report-agent` | 周报管理 Agent | 周报创建、提交、审阅 |
+| `review-agent` | 产品评审员 | 产品方案（如 .md）多维度评审 |
+| `pr-review-prism` | PR审查棱镜 | PR/MR 变更专项审查（与产品评审员独立） |
 
 **代码示例**：
 ```csharp
