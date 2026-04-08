@@ -9,6 +9,7 @@ import re
 import sys
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 try:
     import yaml
@@ -20,6 +21,7 @@ except Exception as exc:  # pragma: no cover
 ROOT = Path(__file__).resolve().parents[2]
 RULES_PATH = ROOT / ".github/pr-architect/review-rules.yml"
 SOURCES_PATH = ROOT / ".github/pr-architect/design-sources.yml"
+REPO_BINDINGS_PATH = ROOT / ".github/pr-architect/repo-bindings.yml"
 
 
 class GateResult:
@@ -39,6 +41,17 @@ class GateResult:
     def info(self, message: str) -> None:
         self.infos.append(message)
         print(f"[INFO] {message}")
+
+    def to_payload(self, repository: str, pr_number: int | None, head_sha: str) -> dict[str, Any]:
+        return {
+            "repository": repository,
+            "pr_number": pr_number,
+            "head_sha": head_sha,
+            "errors": self.errors,
+            "advisories": self.advisories,
+            "infos": self.infos,
+            "status": "fail" if self.errors else "pass",
+        }
 
 
 def load_yaml_file(path: Path, result: GateResult, label: str) -> dict[str, Any]:
@@ -189,6 +202,120 @@ def get_required_keys(rules: dict[str, Any]) -> list[str]:
             if key:
                 required.append(key)
     return required
+
+
+def infer_repository_name(event: dict[str, Any]) -> str:
+    repo_obj = event.get("repository") or {}
+    if isinstance(repo_obj, dict):
+        full_name = str(repo_obj.get("full_name") or "").strip()
+        if full_name:
+            return full_name
+
+    pr_obj = event.get("pull_request") or {}
+    if isinstance(pr_obj, dict):
+        html_url = str(pr_obj.get("html_url") or "").strip()
+        if html_url:
+            parsed = urlparse(html_url)
+            path_parts = [p for p in parsed.path.split("/") if p]
+            if len(path_parts) >= 2:
+                return f"{path_parts[0]}/{path_parts[1]}"
+
+    env_repo = str(os.getenv("GITHUB_REPOSITORY", "")).strip()
+    if env_repo:
+        return env_repo
+    return ""
+
+
+def resolve_repo_binding(
+    event: dict[str, Any],
+    bindings: dict[str, Any],
+    result: GateResult,
+) -> tuple[str, dict[str, Any]]:
+    repository = infer_repository_name(event)
+    if not repository:
+        result.error("cannot infer repository full name from event payload")
+        return "", {}
+
+    defaults = bindings.get("defaults")
+    if not isinstance(defaults, dict):
+        result.error("repo-bindings.yml missing defaults object")
+        return repository, {}
+
+    repos = bindings.get("repositories")
+    if not isinstance(repos, list) or len(repos) == 0:
+        result.error("repo-bindings.yml repositories must be a non-empty list")
+        return repository, {}
+
+    default_enabled = bool(defaults.get("enabled", False))
+    default_checks = defaults.get("required_checks")
+    if not isinstance(default_checks, list):
+        default_checks = []
+
+    selected: dict[str, Any] | None = None
+    for item in repos:
+        if not isinstance(item, dict):
+            continue
+        repo_name = str(item.get("repo", "")).strip()
+        if repo_name and repo_name.lower() == repository.lower():
+            selected = dict(item)
+            break
+
+    if selected is None:
+        result.error(f"repository not found in repo-bindings.yml: {repository}")
+        return repository, {}
+
+    if "enabled" not in selected:
+        selected["enabled"] = default_enabled
+    if "required_checks" not in selected or not isinstance(selected.get("required_checks"), list):
+        selected["required_checks"] = list(default_checks)
+
+    enabled = bool(selected.get("enabled", False))
+    if not enabled:
+        result.error(f"repository binding exists but disabled: {repository}")
+        return repository, {}
+
+    required_checks = selected.get("required_checks") or []
+    if "PR Architect L1 Gate" not in required_checks:
+        result.error(
+            "repository binding missing required check 'PR Architect L1 Gate'; "
+            "branch protection would be inconsistent."
+        )
+        return repository, {}
+
+    for key in ("design_source_id", "design_source_version"):
+        if is_blank(selected.get(key)):
+            result.error(f"repository binding missing required key: {key}")
+
+    if not result.errors:
+        result.info(
+            f"resolved repository binding for {repository}: "
+            f"{selected.get('design_source_id')}@{selected.get('design_source_version')}"
+        )
+    return repository, selected if not result.errors else {}
+
+
+def enforce_binding_alignment(
+    metadata: dict[str, Any],
+    binding: dict[str, Any],
+    result: GateResult,
+) -> None:
+    if not binding:
+        return
+    bind_source = str(binding.get("design_source_id", "")).strip()
+    bind_version = str(binding.get("design_source_version", "")).strip()
+    pr_source = str(metadata.get("design_source_id", "")).strip()
+    pr_version = str(metadata.get("design_source_version", "")).strip()
+
+    if bind_source and pr_source and bind_source != pr_source:
+        result.error(
+            "design source mismatch with repository binding: "
+            f"expected {bind_source}, got {pr_source}"
+        )
+    if bind_version and pr_version and bind_version != pr_version:
+        result.error(
+            "design source version mismatch with repository binding: "
+            f"expected {bind_version}, got {pr_version}"
+        )
 
 
 def validate_required_metadata(
@@ -396,18 +523,45 @@ def write_summary(result: GateResult) -> None:
         f.write("\n".join(lines) + "\n")
 
 
+def write_json_result(payload: dict[str, Any]) -> None:
+    output_path = os.getenv("PR_ARCHITECT_RESULT_PATH")
+    if output_path:
+        path = Path(output_path)
+    else:
+        path = ROOT / "artifacts/pr-architect/review_run.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", encoding="utf-8") as f:
+        json.dump(payload, f, ensure_ascii=False, indent=2)
+    print(f"[INFO] result JSON written: {path}")
+
+
 def main() -> int:
     result = GateResult()
 
     rules = load_yaml_file(RULES_PATH, result, "review-rules")
     registry = load_yaml_file(SOURCES_PATH, result, "design-sources")
+    repo_bindings = load_yaml_file(REPO_BINDINGS_PATH, result, "repo-bindings")
     if result.errors:
+        write_json_result(
+            result.to_payload(
+                repository=str(os.getenv("GITHUB_REPOSITORY", "")).strip(),
+                pr_number=None,
+                head_sha="",
+            )
+        )
         write_summary(result)
         return 1
 
     event_path = os.getenv("GITHUB_EVENT_PATH")
     if not event_path:
         result.error("GITHUB_EVENT_PATH is missing")
+        write_json_result(
+            result.to_payload(
+                repository=str(os.getenv("GITHUB_REPOSITORY", "")).strip(),
+                pr_number=None,
+                head_sha="",
+            )
+        )
         write_summary(result)
         return 1
 
@@ -416,13 +570,26 @@ def main() -> int:
             event = json.load(f)
     except Exception as exc:
         result.error(f"failed to load GitHub event payload: {exc}")
+        write_json_result(
+            result.to_payload(
+                repository=str(os.getenv("GITHUB_REPOSITORY", "")).strip(),
+                pr_number=None,
+                head_sha="",
+            )
+        )
         write_summary(result)
         return 1
 
+    repository, binding = resolve_repo_binding(event, repo_bindings, result)
     pr = event.get("pull_request") or {}
     pr_body = str(pr.get("body") or "")
+    pr_number = pr.get("number")
+    head_obj = pr.get("head") or {}
+    head_sha = str(head_obj.get("sha") or "")
+
     if not pr_body.strip():
         result.error("PR body is empty; cannot parse metadata")
+        write_json_result(result.to_payload(repository, pr_number, head_sha))
         write_summary(result)
         return 1
 
@@ -430,18 +597,21 @@ def main() -> int:
     metadata = extract_metadata(pr_body, yaml_blocks)
     if not metadata:
         result.error("failed to parse metadata YAML from PR body section 1")
+        write_json_result(result.to_payload(repository, pr_number, head_sha))
         write_summary(result)
         return 1
 
     required_keys = get_required_keys(rules)
     metadata = hydrate_metadata_from_blocks(metadata, yaml_blocks, required_keys)
     validate_required_metadata(metadata, required_keys, result)
+    enforce_binding_alignment(metadata, binding, result)
     check_design_source_and_anchors(metadata, registry, result)
     check_out_of_slice_adr(metadata, pr_body, result)
 
     # Advisory-only checks for V1.
     run_advisory_checks(metadata, yaml_blocks, result)
 
+    write_json_result(result.to_payload(repository, pr_number, head_sha))
     write_summary(result)
     if result.errors:
         return 1

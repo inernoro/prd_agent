@@ -1,0 +1,20 @@
+version: 1
+profile: pr-architect-repo-bindings
+
+defaults:
+  enabled: true
+  required_checks:
+    - "PR Architect L1 Gate"
+    - "PR Architect Advisory"
+  architects: []
+
+repositories:
+  - repo: "inernoro/prd_agent"
+    enabled: true
+    design_source_id: "bootstrap-ddd-anchor"
+    design_source_version: "v1.0.0"
+    required_checks:
+      - "PR Architect L1 Gate"
+      - "PR Architect Advisory"
+    architects:
+      - "inernoro"

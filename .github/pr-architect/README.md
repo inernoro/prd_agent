@@ -153,5 +153,40 @@ Agent 按 `review-rules.yml` 执行：
 - `label-taxonomy.md`：标签规范与自动化策略
 - `design-sources.yml`：当前生效的顶层设计包引用
 - `design-sources.example.yml`：设计源注册示例
+- `repo-bindings.yml`：仓库到设计源/审批策略的绑定表（T1）
 - `../scripts/pr_architect_check.py`：PR 门禁脚本（V1 仅执行 L1 硬阻断）
+- `../scripts/pr_architect_prefill.py`：PR 模板字段自动回填脚本（T2）
 - `../workflows/pr-architect-check.yml`：PR 自动校验工作流
+- `../workflows/pr-architect-prefill.yml`：PR 自动回填工作流（T2）
+
+## 8. P0 自动化能力（T1-T3）
+
+### 8.1 T1 — 仓库绑定中心
+
+通过 `repo-bindings.yml` 声明每个仓库的：
+
+- `design_source_id` / `design_source_version`
+- `required_checks`
+- `architects`
+
+门禁脚本会优先读取仓库绑定，不允许未绑定仓库直接进入规则判断。
+
+### 8.2 T2 — 模板自动回填
+
+`pr-architect-prefill` 工作流会在 PR 打开/编辑时自动补齐 section-1 的缺省字段：
+
+- `design_source_id` / `design_source_version`
+- `owner` / `bounded_context`
+- 布尔字段默认值（如 `out_of_slice_changes=false`）
+
+原则：仅填空，不覆盖开发者已填写值。
+
+### 8.3 T3 — 统一检查与结果产物
+
+`pr-architect-check` 在单次执行中完成：
+
+1. L1 硬门禁
+2. Advisory 提示
+3. 产出结构化结果 JSON：`artifacts/pr-architect/review_run.json`
+
+该 JSON 可作为后续决策卡发布、指标统计和审计追踪的统一输入。

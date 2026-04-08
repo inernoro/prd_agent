@@ -8,6 +8,7 @@ on:
 permissions:
   contents: read
   pull-requests: read
+  actions: read
 
 jobs:
   pr-architect-check:
@@ -28,3 +29,10 @@ jobs:
 
       - name: Run PR architect gate check
         run: python .github/scripts/pr_architect_check.py
+
+      - name: Upload PR architect run artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pr-architect-review-run
+          path: .github/pr-architect/review-run.json
