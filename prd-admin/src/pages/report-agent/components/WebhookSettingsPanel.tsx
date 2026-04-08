@@ -21,7 +21,9 @@ import {
   WebhookChannels,
 } from '@/services/contracts/reportAgent';
 
-const CHANNEL_OPTIONS = [
+type WebhookChannelValue = (typeof WebhookChannels)[keyof typeof WebhookChannels];
+
+const CHANNEL_OPTIONS: { value: WebhookChannelValue; label: string }[] = [
   { value: WebhookChannels.WeCom, label: '企业微信' },
   { value: WebhookChannels.DingTalk, label: '钉钉' },
   { value: WebhookChannels.Feishu, label: '飞书' },
@@ -50,7 +52,7 @@ export function WebhookSettingsPanel() {
 
   // Create form state
   const [showForm, setShowForm] = useState(false);
-  const [formChannel, setFormChannel] = useState(WebhookChannels.WeCom);
+  const [formChannel, setFormChannel] = useState<WebhookChannelValue>(WebhookChannels.WeCom);
   const [formUrl, setFormUrl] = useState('');
   const [formName, setFormName] = useState('');
   const [formEvents, setFormEvents] = useState<string[]>([...ALL_EVENTS]);
@@ -266,7 +268,7 @@ export function WebhookSettingsPanel() {
                   color: 'var(--text-primary)',
                 }}
                 value={formChannel}
-                onChange={(e) => setFormChannel(e.target.value)}
+                onChange={(e) => setFormChannel(e.target.value as WebhookChannelValue)}
               >
                 {CHANNEL_OPTIONS.map((ch) => (
                   <option key={ch.value} value={ch.value}>{ch.label}</option>

@@ -21,6 +21,7 @@ import {
   Workflow,
   Zap,
   Globe,
+  ClipboardCheck,
   type LucideIcon,
 } from 'lucide-react';
 import { MapSpinner } from '@/components/ui/VideoLoader';
@@ -122,11 +123,29 @@ function getGreeting(): string {
   return '晚上好';
 }
 
-const QUICK_LINKS = [
+type HomeQuickLink = {
+  icon: LucideIcon;
+  label: string;
+  desc: string;
+  path: string;
+  accent: string;
+  gradient: string;
+};
+
+const QUICK_LINKS_BASE: HomeQuickLink[] = [
   { icon: Store, label: '海鲜市场', desc: '发现和 Fork 优质提示词与配置', path: '/marketplace', accent: '#F59E0B', gradient: 'linear-gradient(135deg, #F59E0B, #F97316)' },
   { icon: GraduationCap, label: '使用教程', desc: '从入门到进阶的操作指南', path: '/tutorials', accent: '#3B82F6', gradient: 'linear-gradient(135deg, #3B82F6, #6366F1)' },
   { icon: Sparkles, label: '作品广场', desc: '探索 AI 驱动的创意作品与灵感', path: '/showcase', accent: '#A855F7', gradient: 'linear-gradient(135deg, #A855F7, #6366F1)' },
-] as const;
+];
+
+const QUICK_LINK_REVIEW_PRISM: HomeQuickLink = {
+  icon: ClipboardCheck,
+  label: 'PR审查棱镜',
+  desc: '提交 PR 变更，多维度 AI 评审与结论',
+  path: '/review-agent',
+  accent: '#818CF8',
+  gradient: 'linear-gradient(135deg, #6366F1, #A855F7)',
+};
 
 // ── Featured Agent Card (large, with cover image) ──
 
@@ -350,6 +369,15 @@ export default function AgentLauncherPage() {
   const { isMobile } = useBreakpoint();
   const navigate = useNavigate();
   const user = useAuthStore((s) => s.user);
+  const permissions = useAuthStore((s) => s.permissions ?? []);
+
+  const quickLinks = useMemo(() => {
+    const base = [...QUICK_LINKS_BASE];
+    if (permissions.includes('review-agent.use')) {
+      base.unshift(QUICK_LINK_REVIEW_PRISM);
+    }
+    return base;
+  }, [permissions]);
 
   useEffect(() => {
     loadItems();
@@ -517,8 +545,9 @@ export default function AgentLauncherPage() {
                 className={`flex items-stretch ${isMobile ? 'flex-col' : ''}`}
                 style={{ minHeight: isMobile ? undefined : 80 }}
               >
-                {QUICK_LINKS.map((link, i) => {
+                {quickLinks.map((link, i) => {
                   const Icon = link.icon;
+                  const n = quickLinks.length;
                   return (
                     <button
                       key={link.path}
@@ -528,15 +557,15 @@ export default function AgentLauncherPage() {
                         isMobile ? 'px-5 py-4' : 'px-6 py-5'
                       }`}
                       style={{
-                        borderRight: !isMobile && i < QUICK_LINKS.length - 1
+                        borderRight: !isMobile && i < n - 1
                           ? '1px solid rgba(255,255,255,0.06)'
                           : undefined,
-                        borderBottom: isMobile && i < QUICK_LINKS.length - 1
+                        borderBottom: isMobile && i < n - 1
                           ? '1px solid rgba(255,255,255,0.06)'
                           : undefined,
                         borderRadius: isMobile
-                          ? (i === 0 ? '12px 12px 0 0' : i === QUICK_LINKS.length - 1 ? '0 0 12px 12px' : '0')
-                          : (i === 0 ? '12px 0 0 12px' : i === QUICK_LINKS.length - 1 ? '0 12px 12px 0' : '0'),
+                          ? (i === 0 ? '12px 12px 0 0' : i === n - 1 ? '0 0 12px 12px' : '0')
+                          : (i === 0 ? '12px 0 0 12px' : i === n - 1 ? '0 12px 12px 0' : '0'),
                       }}
                     >
                       <div
