@@ -89,6 +89,28 @@ def extract_metadata(pr_body: str, blocks: list[dict[str, Any]]) -> dict[str, An
     return blocks[0] if blocks else {}
 
 
+def hydrate_metadata_from_blocks(
+    metadata: dict[str, Any],
+    blocks: list[dict[str, Any]],
+    required_keys: list[str],
+) -> dict[str, Any]:
+    """Fill missing required metadata keys from other YAML blocks in PR body.
+
+    This keeps section-1 metadata as the source of truth while supporting
+    template sections that place required objects (for example tests_evidence)
+    in later YAML blocks.
+    """
+    merged = dict(metadata)
+    for key in required_keys:
+        if key in merged and not is_blank(merged.get(key)):
+            continue
+        for block in blocks:
+            if isinstance(block, dict) and key in block:
+                merged[key] = block[key]
+                break
+    return merged
+
+
 def extract_adr_link(pr_body: str) -> str:
     match = re.search(r"ADR 链接（如无则填 N/A）[:：]\s*(.+)", pr_body)
     return match.group(1).strip() if match else ""
@@ -412,6 +434,7 @@ def main() -> int:
         return 1
 
     required_keys = get_required_keys(rules)
+    metadata = hydrate_metadata_from_blocks(metadata, yaml_blocks, required_keys)
     validate_required_metadata(metadata, required_keys, result)
     check_design_source_and_anchors(metadata, registry, result)
     check_out_of_slice_adr(metadata, pr_body, result)
