@@ -1,0 +1,1 @@
+| chore | scripts | 新增 scripts/migrations/ 目录，提供 replace-cdn-domain.js 和 verify-cdn-domain.js，用于将 MongoDB 中残留的旧 CDN 域名 i.pa.759800.com 批量替换为 i.miduo.org（递归扫描所有集合的字符串字段，含 hosted_sites/submissions 等嵌套结构，默认 dry-run） |
