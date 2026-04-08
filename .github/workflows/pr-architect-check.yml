@@ -7,7 +7,7 @@ on:
 
 permissions:
   contents: read
-  pull-requests: read
+  pull-requests: write
   actions: read
 
 jobs:
@@ -28,11 +28,20 @@ jobs:
         run: python -m pip install --upgrade pip pyyaml
 
       - name: Run PR architect gate check
+        env:
+          PR_ARCHITECT_RESULT_PATH: .github/pr-architect/review-run.json
         run: python .github/scripts/pr_architect_check.py
+
+      - name: Upload PR architect result JSON
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pr-architect-review-run
+          path: artifacts/pr-architect/review_run.json
 
       - name: Upload PR architect run artifact
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: pr-architect-review-run
+          name: pr-architect-summary
           path: .github/pr-architect/review-run.json

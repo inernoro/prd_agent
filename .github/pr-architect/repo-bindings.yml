@@ -6,13 +6,18 @@ defaults:
   required_checks:
     - "PR Architect L1 Gate"
     - "PR Architect Advisory"
-  architects: []
+  architects:
+    - "inernoro"
 
 repositories:
   - repo: "inernoro/prd_agent"
     enabled: true
     design_source_id: "bootstrap-ddd-anchor"
     design_source_version: "v1.0.0"
+    default_owner: "inernoro"
+    default_context: "engineering-governance"
+    default_anchor_refs:
+      - "ANCHOR-PR-REVIEW-01"
     required_checks:
       - "PR Architect L1 Gate"
       - "PR Architect Advisory"

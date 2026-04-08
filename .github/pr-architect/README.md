@@ -154,12 +154,18 @@ Agent 按 `review-rules.yml` 执行：
 - `design-sources.yml`：当前生效的顶层设计包引用
 - `design-sources.example.yml`：设计源注册示例
 - `repo-bindings.yml`：仓库到设计源/审批策略的绑定表（T1）
-- `../scripts/pr_architect_check.py`：PR 门禁脚本（V1 仅执行 L1 硬阻断）
+- `../scripts/pr_architect_check.py`：PR 门禁脚本（L1 阻断 + advisory + 决策建议）
 - `../scripts/pr_architect_prefill.py`：PR 模板字段自动回填脚本（T2）
+- `../scripts/pr_architect_publish.py`：决策卡单评论发布脚本（T4）
+- `../scripts/pr_architect_comment_actions.py`：Type A/B/C 命令化退回脚本（T5）
+- `../scripts/pr_architect_metrics.py`：PR 架构审查指标汇总脚本（T7）
 - `../workflows/pr-architect-check.yml`：PR 自动校验工作流
 - `../workflows/pr-architect-prefill.yml`：PR 自动回填工作流（T2）
+- `../workflows/pr-architect-publish.yml`：决策卡发布工作流（T4）
+- `../workflows/pr-architect-comment-actions.yml`：评论命令动作工作流（T5）
+- `../workflows/pr-architect-metrics.yml`：指标汇总工作流（T7）
 
-## 8. P0 自动化能力（T1-T3）
+## 8. P0 自动化能力（T1-T7）
 
 ### 8.1 T1 — 仓库绑定中心
 
@@ -190,3 +196,50 @@ Agent 按 `review-rules.yml` 执行：
 3. 产出结构化结果 JSON：`artifacts/pr-architect/review_run.json`
 
 该 JSON 可作为后续决策卡发布、指标统计和审计追踪的统一输入。
+
+### 8.4 T4 — 决策卡单评论更新
+
+`pr-architect-publish` 会读取 `review_run.json`，并在 PR 中维护一条固定 marker 评论：
+
+- marker：`<!-- pr-architect-decision-card:begin --> ... <!-- pr-architect-decision-card:end -->`
+- 行为：已存在则更新，不存在则创建
+
+从而避免评论刷屏，确保 Architect 总是看到“最新一版”决策卡。
+
+### 8.5 T5 — Type A/B/C 命令化退回
+
+`pr-architect-comment-actions` 监听评论命令：
+
+- `/type-a`
+- `/type-b`
+- `/type-c`
+
+命令触发后自动发布对应退回模板，且仅允许绑定表中的 architect 账号执行。
+
+### 8.6 T6 — Guardrails 结构化强制
+
+当决策建议为 `Approve with Guardrails` 时，门禁脚本会强制要求：
+
+- `guardrail_plan`
+- `rollback_trigger`
+- `owner_on_call`
+
+缺失任一项将降级为 `Request Changes`（advisory），确保风险接管可执行。
+同时在模板中建议提供结构化 YAML：
+
+```yaml
+guardrails:
+  plan: ""
+  rollback_trigger: ""
+  owner_on_call: ""
+```
+
+### 8.7 T7 — 指标自动汇总
+
+`pr-architect-metrics` 基于 `review_run.json` 生成 JSONL 指标记录并上传 Artifact，用于观测：
+
+- 模板完整率
+- advisory 命中情况
+- 通过/失败趋势
+
+为后续规则升阶（L2 提升为阻断）提供数据依据。

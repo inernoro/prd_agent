@@ -7,6 +7,7 @@ import json
 import os
 import re
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
@@ -42,11 +43,32 @@ class GateResult:
         self.infos.append(message)
         print(f"[INFO] {message}")
 
-    def to_payload(self, repository: str, pr_number: int | None, head_sha: str) -> dict[str, Any]:
+    def to_payload(
+        self,
+        repository: str,
+        pr_number: int | None,
+        head_sha: str,
+        metadata: dict[str, Any] | None = None,
+        metadata_quality: dict[str, Any] | None = None,
+        binding: dict[str, Any] | None = None,
+        recommended_decision: str = "Approve",
+        focus_questions: list[str] | None = None,
+        final_decision: str | None = None,
+        guardrails_complete: bool | None = None,
+    ) -> dict[str, Any]:
         return {
+            "generated_at_utc": datetime.now(timezone.utc).isoformat(),
             "repository": repository,
             "pr_number": pr_number,
             "head_sha": head_sha,
+            "metadata": metadata or {},
+            "metadata_quality": metadata_quality or {},
+            "template_completeness_rate": (metadata_quality or {}).get("completeness_rate", 0.0),
+            "binding": binding or {},
+            "recommended_decision": recommended_decision,
+            "architect_focus_questions": focus_questions or [],
+            "final_decision": final_decision,
+            "guardrails_complete": guardrails_complete,
             "errors": self.errors,
             "advisories": self.advisories,
             "infos": self.infos,
@@ -202,6 +224,39 @@ def get_required_keys(rules: dict[str, Any]) -> list[str]:
             if key:
                 required.append(key)
     return required
+
+
+def build_metadata_quality(metadata: dict[str, Any], required_keys: list[str]) -> dict[str, Any]:
+    missing: list[str] = []
+    for key in required_keys:
+        if key not in metadata:
+            missing.append(key)
+            continue
+        if is_blank(metadata.get(key)):
+            missing.append(key)
+    total = len(required_keys)
+    present = max(0, total - len(missing))
+    rate = (present / total) if total > 0 else 1.0
+    return {
+        "required_keys_total": total,
+        "required_keys_present": present,
+        "required_keys_missing": missing,
+        "completeness_rate": round(rate, 4),
+    }
+
+
+def get_focus_questions(rules: dict[str, Any]) -> list[str]:
+    focus_cfg = rules.get("architect_focus_questions")
+    if not isinstance(focus_cfg, dict):
+        return []
+    max_items = focus_cfg.get("max_items")
+    if not isinstance(max_items, int) or max_items <= 0:
+        max_items = 3
+    raw = focus_cfg.get("focus")
+    if not isinstance(raw, list):
+        return []
+    items = [str(i).strip() for i in raw if str(i).strip()]
+    return items[:max_items]
 
 
 def infer_repository_name(event: dict[str, Any]) -> str:
@@ -460,6 +515,75 @@ def check_out_of_slice_adr(metadata: dict[str, Any], pr_body: str, result: GateR
         result.error("out_of_slice_changes=true requires a non-N/A ADR link")
 
 
+def parse_final_decision(pr_body: str) -> str | None:
+    match = re.search(r"最终裁决[:：]\s*(.+)", pr_body)
+    if not match:
+        return None
+    tail = match.group(1).strip()
+    # 未填写时模板通常带 "/" 多选项，判定为未声明
+    if "/" in tail:
+        return None
+    # 去掉 markdown backticks 和项目符号残留
+    cleaned = tail.replace("`", "").strip().lstrip("-").strip()
+    allowed = {
+        "Approve",
+        "Approve with Guardrails",
+        "Request Changes",
+        "Block",
+    }
+    return cleaned if cleaned in allowed else None
+
+
+def check_guardrails_requirements(
+    final_decision: str | None,
+    pr_body: str,
+    yaml_blocks: list[dict[str, Any]],
+    result: GateResult,
+) -> bool | None:
+    if final_decision != "Approve with Guardrails":
+        return None
+
+    block = find_yaml_block_with_key(yaml_blocks, "guardrails")
+    if block and isinstance(block.get("guardrails"), dict):
+        guardrails = block["guardrails"]
+        required = ["plan", "rollback_trigger", "owner_on_call"]
+        missing = [k for k in required if is_blank(guardrails.get(k))]
+        if missing:
+            result.advisory(
+                "final decision is Approve with Guardrails but guardrails fields are incomplete: "
+                + ", ".join(missing)
+            )
+            return False
+        return True
+
+    line_match = re.search(r"护栏条件（开关/灰度/监控/回滚触发）[:：]\s*(.+)", pr_body)
+    if line_match:
+        text = line_match.group(1).strip()
+        if text and text.lower() != "n/a":
+            return True
+
+    result.advisory(
+        "final decision is Approve with Guardrails but guardrails block/field is missing"
+    )
+    return False
+
+
+def derive_recommended_decision(
+    result: GateResult,
+    final_decision: str | None,
+    guardrails_complete: bool | None,
+) -> str:
+    if result.errors:
+        return "Block"
+    if final_decision == "Approve with Guardrails":
+        if guardrails_complete is True and not result.advisories:
+            return "Approve with Guardrails"
+        return "Request Changes"
+    if result.advisories:
+        return "Request Changes"
+    return "Approve"
+
+
 def run_advisory_checks(
     metadata: dict[str, Any],
     yaml_blocks: list[dict[str, Any]],
@@ -603,6 +727,7 @@ def main() -> int:
 
     required_keys = get_required_keys(rules)
     metadata = hydrate_metadata_from_blocks(metadata, yaml_blocks, required_keys)
+    metadata_quality = build_metadata_quality(metadata, required_keys)
     validate_required_metadata(metadata, required_keys, result)
     enforce_binding_alignment(metadata, binding, result)
     check_design_source_and_anchors(metadata, registry, result)
@@ -610,8 +735,34 @@ def main() -> int:
 
     # Advisory-only checks for V1.
     run_advisory_checks(metadata, yaml_blocks, result)
+    final_decision = parse_final_decision(pr_body)
+    guardrails_complete = check_guardrails_requirements(
+        final_decision,
+        pr_body,
+        yaml_blocks,
+        result,
+    )
+    recommended_decision = derive_recommended_decision(
+        result,
+        final_decision,
+        guardrails_complete,
+    )
+    focus_questions = get_focus_questions(rules)
 
-    write_json_result(result.to_payload(repository, pr_number, head_sha))
+    write_json_result(
+        result.to_payload(
+            repository,
+            pr_number,
+            head_sha,
+            metadata=metadata,
+            metadata_quality=metadata_quality,
+            binding=binding,
+            recommended_decision=recommended_decision,
+            focus_questions=focus_questions,
+            final_decision=final_decision,
+            guardrails_complete=guardrails_complete,
+        )
+    )
     write_summary(result)
     if result.errors:
         return 1
