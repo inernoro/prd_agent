@@ -41,6 +41,7 @@ export default function DefectAgentPage() {
     teamFilter,
     setProjectFilter,
     setTeamFilter,
+    searchQuery,
   } = useDefectStore();
 
   const userId = useAuthStore((s) => s.user?.userId);
@@ -54,8 +55,16 @@ export default function DefectAgentPage() {
     let filtered = defects;
     if (userId && filter === 'submitted') filtered = defects.filter((d) => d.reporterId === userId);
     else if (userId && filter === 'assigned') filtered = defects.filter((d) => d.assigneeId === userId);
+    if (searchQuery.trim()) {
+      const q = searchQuery.trim().toLowerCase();
+      filtered = filtered.filter((d) =>
+        d.defectNo?.toLowerCase().includes(q) ||
+        d.title?.toLowerCase().includes(q) ||
+        d.rawContent?.toLowerCase().includes(q)
+      );
+    }
     return filtered.filter((d) => !archivedStatuses.includes(d.status as typeof DefectStatus.Closed)).map((d) => d.id);
-  }, [defects, filter, userId]);
+  }, [defects, filter, userId, searchQuery]);
 
   useEffect(() => {
     void loadAll();
