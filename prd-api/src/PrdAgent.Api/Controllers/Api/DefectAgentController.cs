@@ -35,6 +35,7 @@ public class DefectAgentController : ControllerBase
     private readonly IOpenPlatformService _openPlatformService;
     private readonly ILLMRequestContextAccessor _llmRequestContext;
     private readonly IConfiguration _config;
+    private readonly IHttpClientFactory _httpClientFactory;
     private static readonly TimeSpan ClientBindingTtl = TimeSpan.FromDays(3);
 
     public DefectAgentController(
@@ -46,7 +47,8 @@ public class DefectAgentController : ControllerBase
         DefectWebhookService webhookService,
         IOpenPlatformService openPlatformService,
         ILLMRequestContextAccessor llmRequestContext,
-        IConfiguration config)
+        IConfiguration config,
+        IHttpClientFactory httpClientFactory)
     {
         _db = db;
         _gateway = gateway;
@@ -57,6 +59,7 @@ public class DefectAgentController : ControllerBase
         _openPlatformService = openPlatformService;
         _llmRequestContext = llmRequestContext;
         _config = config;
+        _httpClientFactory = httpClientFactory;
     }
 
     private string GetUserId() => this.GetRequiredUserId();
@@ -1331,6 +1334,42 @@ public class DefectAgentController : ControllerBase
         await _db.DefectReports.ReplaceOneAsync(x => x.Id == defectId, defect, cancellationToken: ct);
 
         return Ok(ApiResponse<object>.Ok(new { deleted = true }));
+    }
+
+    /// <summary>
+    /// 通过缺陷附件 ID 代理下载图片（解决前端跨域 CORS 问题）。
+    /// 仅允许下载当前用户可访问的缺陷的附件。
+    /// </summary>
+    [HttpGet("defects/{defectId}/attachments/{attachmentId}/proxy")]
+    public async Task<IActionResult> ProxyAttachment(string defectId, string attachmentId, CancellationToken ct)
+    {
+        var userId = GetUserId();
+        var isAdmin = HasManagePermission();
+
+        var defect = await _db.DefectReports.Find(x => x.Id == defectId && !x.IsDeleted).FirstOrDefaultAsync(ct);
+        if (defect == null)
+            return NotFound();
+
+        // 权限校验：管理员或本人相关缺陷
+        if (!isAdmin && defect.ReporterId != userId && defect.AssigneeId != userId)
+            return StatusCode(403);
+
+        var attachment = defect.Attachments.FirstOrDefault(a => a.Id == attachmentId);
+        if (attachment == null || string.IsNullOrEmpty(attachment.Url))
+            return NotFound();
+
+        try
+        {
+            var client = _httpClientFactory.CreateClient();
+            client.Timeout = TimeSpan.FromSeconds(15);
+            var stream = await client.GetStreamAsync(attachment.Url, ct);
+            return File(stream, attachment.MimeType ?? "application/octet-stream", attachment.FileName);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to proxy attachment {AttachmentId} for defect {DefectId}", attachmentId, defectId);
+            return StatusCode(502);
+        }
     }
 
     #endregion

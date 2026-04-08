@@ -150,7 +150,7 @@ export function SharesListPanel({ open, onClose, autoOpenShareId, visibleDefectI
         })
       );
 
-      // 2. base64 模式：并行抓取所有图片
+      // 2. base64 模式：通过后端代理并行抓取所有图片（解决跨域 CORS）
       const imageDataMap = new Map<string, string>();
       let base64FailCount = 0;
       if (mode === 'base64') {
@@ -159,7 +159,7 @@ export function SharesListPanel({ open, onClose, autoOpenShareId, visibleDefectI
           (d.attachments ?? []).forEach((a) => {
             if (a.mimeType?.startsWith('image/') && a.url) {
               tasks.push(
-                fetchImageAsBase64(a.url)
+                fetchAttachmentAsBase64(d.id, a.id)
                   .then((data) => {
                     if (data) imageDataMap.set(a.id, data);
                     else base64FailCount++;
@@ -172,8 +172,10 @@ export function SharesListPanel({ open, onClose, autoOpenShareId, visibleDefectI
         await Promise.allSettled(tasks);
       }
 
-      // 3. 组装文本
-      const text = buildClipboardText(selected, messagesMap, mode, imageDataMap);
+      // 3. 组装文本（含 AI 工作流提示词）
+      const username = useAuthStore.getState().user?.username ?? 'admin';
+      const baseUrl = window.location.origin;
+      const text = buildClipboardText(selected, messagesMap, mode, imageDataMap, { username, baseUrl });
       await navigator.clipboard.writeText(text);
 
       const modeLabel = mode === 'base64' ? '原图' : mode === 'url' ? '图片地址' : '图片描述';
@@ -518,10 +520,14 @@ export function SharesListPanel({ open, onClose, autoOpenShareId, visibleDefectI
   );
 }
 
-/** 抓取图片转 base64 data url */
-async function fetchImageAsBase64(url: string): Promise<string | null> {
+/** 通过后端代理抓取附件并转 base64 data url（解决 CORS） */
+async function fetchAttachmentAsBase64(defectId: string, attachmentId: string): Promise<string | null> {
   try {
-    const res = await fetch(url);
+    const token = useAuthStore.getState().token;
+    if (!token) return null;
+    const baseUrl = (import.meta.env.VITE_API_BASE_URL as string | undefined)?.trim().replace(/\/+$/, '') ?? '';
+    const url = `${baseUrl}/api/defect-agent/defects/${encodeURIComponent(defectId)}/attachments/${encodeURIComponent(attachmentId)}/proxy`;
+    const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
     if (!res.ok) return null;
     const blob = await res.blob();
     return await new Promise<string>((resolve, reject) => {
@@ -541,9 +547,80 @@ function buildClipboardText(
   messagesMap: Map<string, string[]>,
   mode: ImageMode,
   imageDataMap: Map<string, string>,
+  context: { username: string; baseUrl: string },
 ): string {
+  const { username, baseUrl } = context;
   const lines: string[] = [
-    `## 缺陷清单（共 ${defects.length} 个）`,
+    `# 缺陷修复任务`,
+    ``,
+    `我有 ${defects.length} 个软件缺陷需要你帮忙分析和修复。所有数据已附在下方，无需调用 API 获取。`,
+    ``,
+    `---`,
+    ``,
+    `## 工作流程（必须按顺序执行）`,
+    ``,
+    `### 阶段 1：分析缺陷`,
+    ``,
+    `仔细阅读每个缺陷的截图描述、日志和用户描述。**分析优先级**：截图（描述）> 日志 > 评论 > 用户描述。`,
+    ``,
+    `### 阶段 2：制定修复计划`,
+    ``,
+    `**在动手修改任何代码之前，必须先列出完整的修复清单**：`,
+    `- 逐条列出每个缺陷的修复方案`,
+    `- 标记安全修复（无副作用）和有争议/破坏性修改`,
+    `- **有争议或破坏性的修改必须先和人类确认**，不要自行决定`,
+    ``,
+    `### 阶段 3：发评论沟通进度（可选但推荐）`,
+    ``,
+    `修复过程中通过以下接口在缺陷对话中发表评论。评论会标记为 AI 来源并通知缺陷提交者：`,
+    ``,
+    '```http',
+    `POST ${baseUrl}/api/defect-agent/defects/{defectId}/messages`,
+    `Content-Type: application/json`,
+    `X-AI-Access-Key: $AI_ACCESS_KEY`,
+    `X-AI-Impersonate: ${username}`,
+    ``,
+    `{`,
+    `  "content": "评论内容（支持 Markdown）",`,
+    `  "agentName": "你的名称（如 Claude Code）"`,
+    `}`,
+    '```',
+    ``,
+    `**评论场景**：开始修复前发计划 / 遇到问题时说阻碍 / 修复完成后说明验收方式`,
+    ``,
+    `### 阶段 4：执行修复`,
+    ``,
+    `按计划修改代码。`,
+    ``,
+    `### 阶段 5：标记修复完成`,
+    ``,
+    `修复完成后，**先在评论中说明验收方式**，然后调用此接口标记为已解决：`,
+    ``,
+    '```http',
+    `POST ${baseUrl}/api/defect-agent/defects/{defectId}/resolve`,
+    `Content-Type: application/json`,
+    `X-AI-Access-Key: $AI_ACCESS_KEY`,
+    `X-AI-Impersonate: ${username}`,
+    ``,
+    `{`,
+    `  "resolution": "修复说明（必须包含验收方式）"`,
+    `}`,
+    '```',
+    ``,
+    `---`,
+    ``,
+    `## 重要规则`,
+    ``,
+    `1. **先列清单再动手**：修复前必须列出所有缺陷的修复方案清单`,
+    `2. **有争议的找人确认**：破坏性修改、架构变更、删除代码等操作必须先和人类确认`,
+    `3. **全程发评论**：通过评论接口沟通进度，不要默默工作`,
+    `4. **说明验收方式**：标记完成时必须告诉提交者如何验证修复效果`,
+    ``,
+    `> **认证说明**：\`AI_ACCESS_KEY\` 从环境变量读取（Header 名称区分大小写：\`X-AI-Access-Key\`）。\`X-AI-Impersonate\` 是要"代理操作"的用户名。`,
+    ``,
+    `---`,
+    ``,
+    `## 缺陷数据（共 ${defects.length} 个）`,
     '',
   ];
 
