@@ -66,7 +66,7 @@ echo "⏳ 请在浏览器左下角点击「同意」按钮授权 AI 操作..."
 
 # Step 3: 轮询等待批准（最多 2 分钟）
 for i in $(seq 1 40); do
-  STATUS=$(curl -sf "$CDS/api/bridge/handshake-status/$REQUEST_ID" | python3 -c "import json,sys;print(json.load(sys.stdin)['status'])")
+  STATUS=$(curl -sf -H "X-AI-Access-Key: $AI_ACCESS_KEY" "$CDS/api/bridge/handshake-status/$REQUEST_ID" | python3 -c "import json,sys;print(json.load(sys.stdin)['status'])")
   case "$STATUS" in
     approved) echo "✓ 用户已授权"; break ;;
     rejected) echo "✗ 用户拒绝"; exit 1 ;;
