@@ -14,6 +14,7 @@ function emptyState(): CdsState {
     defaultBranch: null,
     customEnv: {},
     infraServices: [],
+    previewMode: 'multi',
   };
 }
 
@@ -51,6 +52,7 @@ export class StateService {
       if (!this.state.infraServices) this.state.infraServices = [];
       if (this.state.mirrorEnabled === undefined) this.state.mirrorEnabled = false;
       if (this.state.tabTitleEnabled === undefined) this.state.tabTitleEnabled = true;
+      if (this.state.previewMode === undefined) this.state.previewMode = 'multi';
       if (!this.state.executors) this.state.executors = {};
       if (!this.state.dataMigrations) this.state.dataMigrations = [];
       // Migrate: backfill cacheMounts for existing build profiles
@@ -341,6 +343,16 @@ export class StateService {
 
   setTabTitleEnabled(enabled: boolean): void {
     this.state.tabTitleEnabled = enabled;
+  }
+
+  // ── Preview mode ──
+
+  getPreviewMode(): 'simple' | 'port' | 'multi' {
+    return this.state.previewMode || 'multi';
+  }
+
+  setPreviewMode(mode: 'simple' | 'port' | 'multi'): void {
+    this.state.previewMode = mode;
   }
 
   // ── Executor management ──

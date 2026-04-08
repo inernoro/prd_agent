@@ -1552,6 +1552,24 @@ export function createBranchRouter(deps: RouterDeps): Router {
     res.json({ message: enabled ? '标签页标题已开启' : '标签页标题已关闭', enabled });
   });
 
+  // ── Preview mode (server-authoritative, shared across all users) ──
+
+  router.get('/preview-mode', (_req, res) => {
+    res.json({ mode: stateService.getPreviewMode() });
+  });
+
+  router.put('/preview-mode', (req, res) => {
+    const { mode } = req.body as { mode?: string };
+    if (mode !== 'simple' && mode !== 'port' && mode !== 'multi') {
+      res.status(400).json({ error: "mode 必须是 'simple' | 'port' | 'multi'" });
+      return;
+    }
+    stateService.setPreviewMode(mode);
+    stateService.save();
+    const labels: Record<string, string> = { simple: '简洁', port: '端口直连', multi: '子域名' };
+    res.json({ message: `预览模式已切换为：${labels[mode]}`, mode });
+  });
+
   // ── Config (read-only) ──
 
   router.get('/config', async (_req, res) => {
@@ -1591,6 +1609,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
         Object.entries(config.sharedEnv).map(([k, v]) => [k, k.includes('PASSWORD') || k.includes('SECRET') ? '***' : v]),
       ),
       executors: Object.values(stateService.getExecutors()),
+      previewMode: stateService.getPreviewMode(),
     });
   });
 
