@@ -11,6 +11,13 @@ import {
   Sparkle,
   Trash2,
   FileText,
+  Share2,
+  Globe,
+  Lock as GlobeLock,
+  Copy,
+  Link as LinkIcon,
+  Calendar,
+  Eye,
 } from 'lucide-react';
 import { GlassCard } from '@/components/design/GlassCard';
 import { TabBar } from '@/components/design/TabBar';
@@ -36,12 +43,17 @@ import {
   setFolderPrimaryChild,
   rebuildContentIndex,
   addDocumentEntry,
+  updateDocumentStore,
+  createDocStoreShareLink,
+  listDocStoreShareLinks,
+  revokeDocStoreShareLink,
 } from '@/services';
 import { DocBrowser } from '@/components/doc-browser/DocBrowser';
 import type {
   DocumentStore,
   DocumentStoreWithPreview,
   DocumentEntry,
+  DocumentStoreShareLink,
 } from '@/services/contracts/documentStore';
 import type { DocBrowserEntry, EntryPreview } from '@/components/doc-browser/DocBrowser';
 import { toast } from '@/lib/toast';
@@ -136,6 +148,220 @@ function CreateStoreDialog({ onClose, onCreated }: {
   );
 }
 
+// ── 分享对话框（创建短链 + 列表 + 撤销） ──
+function ShareDialog({ storeId, storeName, isPublic, onClose }: {
+  storeId: string;
+  storeName: string;
+  isPublic: boolean;
+  onClose: () => void;
+}) {
+  const [links, setLinks] = useState<DocumentStoreShareLink[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [creating, setCreating] = useState(false);
+  const [title, setTitle] = useState('');
+  const [expiresInDays, setExpiresInDays] = useState(0);
+
+  const loadLinks = useCallback(async () => {
+    setLoading(true);
+    const res = await listDocStoreShareLinks(storeId);
+    if (res.success) setLinks(res.data.items);
+    setLoading(false);
+  }, [storeId]);
+
+  useEffect(() => { loadLinks(); }, [loadLinks]);
+
+  const handleCreate = async () => {
+    setCreating(true);
+    const res = await createDocStoreShareLink(storeId, { title: title.trim() || undefined, expiresInDays });
+    if (res.success) {
+      setLinks(prev => [res.data, ...prev]);
+      setTitle('');
+      toast.success('分享链接已创建', '快去复制吧');
+    } else {
+      toast.error('创建失败', res.error?.message);
+    }
+    setCreating(false);
+  };
+
+  const handleRevoke = async (linkId: string) => {
+    if (!confirm('确认撤销此分享链接？已访问的用户无法再次打开。')) return;
+    const res = await revokeDocStoreShareLink(linkId);
+    if (res.success) {
+      setLinks(prev => prev.map(l => l.id === linkId ? { ...l, isRevoked: true } : l));
+      toast.success('已撤销');
+    }
+  };
+
+  const copyLink = (token: string) => {
+    const url = `${window.location.origin}/library/share/${token}`;
+    navigator.clipboard.writeText(url).then(() => toast.success('链接已复制'));
+  };
+
+  const directLink = `${window.location.origin}/library/${storeId}`;
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center"
+      style={{ background: 'rgba(0,0,0,0.5)', backdropFilter: 'blur(8px)' }}
+      onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+      <div className="w-[640px] max-w-[92vw] max-h-[85vh] flex flex-col rounded-[16px] p-6"
+        style={{
+          background: 'linear-gradient(180deg, var(--glass-bg-start) 0%, var(--glass-bg-end) 100%)',
+          border: '1px solid rgba(255,255,255,0.08)',
+          backdropFilter: 'blur(40px) saturate(180%)',
+          boxShadow: '0 24px 48px -12px rgba(0,0,0,0.5)',
+        }}>
+        <div className="flex items-center justify-between mb-5 flex-shrink-0">
+          <div className="flex items-center gap-2.5">
+            <div className="w-8 h-8 rounded-[10px] flex items-center justify-center"
+              style={{ background: 'rgba(168,85,247,0.1)', border: '1px solid rgba(168,85,247,0.2)' }}>
+              <Share2 size={15} style={{ color: 'rgba(168,85,247,0.9)' }} />
+            </div>
+            <span className="text-[15px] font-semibold" style={{ color: 'var(--text-primary)' }}>
+              分享「{storeName}」
+            </span>
+          </div>
+          <button onClick={onClose}
+            className="w-7 h-7 rounded-[8px] flex items-center justify-center cursor-pointer hover:bg-white/6 transition-colors"
+            style={{ color: 'var(--text-muted)' }}>
+            <X size={15} />
+          </button>
+        </div>
+
+        {/* 公开访问直链 */}
+        {isPublic && (
+          <div className="mb-5 p-4 rounded-[12px]"
+            style={{ background: 'rgba(168,85,247,0.06)', border: '1px solid rgba(168,85,247,0.15)' }}>
+            <div className="flex items-center gap-2 mb-2">
+              <Globe size={12} style={{ color: 'rgba(168,85,247,0.9)' }} />
+              <span className="text-[12px] font-semibold" style={{ color: 'rgba(216,180,254,0.95)' }}>
+                公开访问链接
+              </span>
+            </div>
+            <p className="text-[11px] mb-3" style={{ color: 'var(--text-muted)' }}>
+              已发布到智识殿堂，任何人都可以通过此链接访问
+            </p>
+            <div className="flex items-center gap-2">
+              <input value={directLink} readOnly
+                className="flex-1 h-8 px-3 rounded-[8px] text-[11px] outline-none font-mono"
+                style={{ background: 'rgba(0,0,0,0.2)', border: '1px solid rgba(255,255,255,0.06)', color: 'var(--text-primary)' }} />
+              <button
+                onClick={() => navigator.clipboard.writeText(directLink).then(() => toast.success('已复制'))}
+                className="h-8 px-3 rounded-[8px] text-[11px] font-semibold cursor-pointer flex items-center gap-1"
+                style={{ background: 'rgba(168,85,247,0.15)', border: '1px solid rgba(168,85,247,0.3)', color: 'rgba(216,180,254,0.95)' }}>
+                <Copy size={11} /> 复制
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* 创建分享链接 */}
+        <div className="mb-5">
+          <div className="text-[12px] font-semibold mb-3" style={{ color: 'var(--text-primary)' }}>
+            创建分享短链
+          </div>
+          <div className="space-y-2">
+            <input value={title} onChange={e => setTitle(e.target.value)}
+              placeholder="自定义标题（可选）"
+              className="w-full h-9 px-3 rounded-[10px] text-[12px] outline-none"
+              style={{
+                background: 'var(--input-bg, rgba(255,255,255,0.05))',
+                border: '1px solid rgba(255,255,255,0.08)',
+                color: 'var(--text-primary)',
+              }} />
+            <div className="flex gap-2">
+              <select value={expiresInDays} onChange={e => setExpiresInDays(Number(e.target.value))}
+                className="flex-1 h-9 px-3 rounded-[10px] text-[12px] outline-none cursor-pointer"
+                style={{
+                  background: 'var(--input-bg, rgba(255,255,255,0.05))',
+                  border: '1px solid rgba(255,255,255,0.08)',
+                  color: 'var(--text-primary)',
+                }}>
+                <option value={0}>永不过期</option>
+                <option value={1}>1 天后过期</option>
+                <option value={7}>7 天后过期</option>
+                <option value={30}>30 天后过期</option>
+                <option value={90}>90 天后过期</option>
+              </select>
+              <Button variant="primary" size="xs" onClick={handleCreate} disabled={creating}>
+                {creating ? <MapSpinner size={12} /> : <LinkIcon size={12} />}
+                {creating ? '创建中…' : '生成链接'}
+              </Button>
+            </div>
+          </div>
+        </div>
+
+        {/* 分享链接列表 */}
+        <div className="flex-1 min-h-0 overflow-y-auto">
+          <div className="text-[12px] font-semibold mb-3 sticky top-0 py-1" style={{ color: 'var(--text-primary)' }}>
+            已有分享链接 ({links.filter(l => !l.isRevoked).length})
+          </div>
+          {loading ? (
+            <div className="flex justify-center py-6"><MapSpinner size={14} /></div>
+          ) : links.length === 0 ? (
+            <p className="text-[11px] text-center py-6" style={{ color: 'var(--text-muted)' }}>
+              暂无分享链接，创建一个开始分享吧
+            </p>
+          ) : (
+            <div className="space-y-2">
+              {links.map(link => (
+                <div key={link.id} className="p-3 rounded-[10px]"
+                  style={{
+                    background: link.isRevoked ? 'rgba(0,0,0,0.15)' : 'rgba(255,255,255,0.03)',
+                    border: '1px solid rgba(255,255,255,0.06)',
+                    opacity: link.isRevoked ? 0.5 : 1,
+                  }}>
+                  <div className="flex items-start justify-between gap-2 mb-2">
+                    <div className="flex-1 min-w-0">
+                      <div className="text-[12px] font-semibold truncate" style={{ color: 'var(--text-primary)' }}>
+                        {link.title || '未命名分享'}
+                      </div>
+                      <div className="text-[10px] mt-0.5 font-mono truncate" style={{ color: 'var(--text-muted)' }}>
+                        /library/share/{link.token}
+                      </div>
+                    </div>
+                    {!link.isRevoked && (
+                      <div className="flex items-center gap-1 flex-shrink-0">
+                        <button
+                          onClick={() => copyLink(link.token)}
+                          className="w-7 h-7 rounded-[6px] flex items-center justify-center cursor-pointer hover:bg-white/6"
+                          style={{ color: 'var(--text-muted)' }}
+                          title="复制链接">
+                          <Copy size={12} />
+                        </button>
+                        <button
+                          onClick={() => handleRevoke(link.id)}
+                          className="w-7 h-7 rounded-[6px] flex items-center justify-center cursor-pointer hover:bg-white/6"
+                          style={{ color: 'rgba(239,68,68,0.7)' }}
+                          title="撤销">
+                          <Trash2 size={12} />
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-3 text-[10px]" style={{ color: 'var(--text-muted)' }}>
+                    <span className="flex items-center gap-1">
+                      <Eye size={9} /> {link.viewCount}
+                    </span>
+                    {link.expiresAt && (
+                      <span className="flex items-center gap-1">
+                        <Calendar size={9} />
+                        {new Date(link.expiresAt).toLocaleDateString()} 过期
+                      </span>
+                    )}
+                    {link.isRevoked && (
+                      <span style={{ color: 'rgba(239,68,68,0.8)' }}>已撤销</span>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ── 空间详情视图（文档列表 + 上传）──
 function StoreDetailView({ storeId, onBack }: {
   storeId: string;
@@ -146,6 +372,8 @@ function StoreDetailView({ storeId, onBack }: {
   const [loading, setLoading] = useState(true);
   const [selectedEntryId, setSelectedEntryId] = useState<string | undefined>(undefined);
   const [showSubscribe, setShowSubscribe] = useState(false);
+  const [showShareDialog, setShowShareDialog] = useState(false);
+  const [publishing, setPublishing] = useState(false);
 
   // 文件上传状态
   const [uploading, setUploading] = useState(false);
@@ -337,6 +565,24 @@ function StoreDetailView({ storeId, onBack }: {
     return null;
   }, [storeId]);
 
+  // 切换发布到智识殿堂
+  const handleTogglePublish = useCallback(async () => {
+    if (!store) return;
+    setPublishing(true);
+    const newVal = !store.isPublic;
+    const res = await updateDocumentStore(storeId, { isPublic: newVal });
+    if (res.success) {
+      setStore(prev => prev ? { ...prev, isPublic: newVal } : prev);
+      toast.success(
+        newVal ? '已发布到智识殿堂' : '已取消发布',
+        newVal ? '其他用户现在可以浏览你的知识库了' : '知识库已设为私有',
+      );
+    } else {
+      toast.error('操作失败', res.error?.message);
+    }
+    setPublishing(false);
+  }, [store, storeId]);
+
   if (!store) {
     return (
       <div className="flex-1 flex items-center justify-center" style={{ minHeight: 'calc(100vh - 160px)' }}>
@@ -367,6 +613,24 @@ function StoreDetailView({ storeId, onBack }: {
         }
         actions={
           <div className="flex items-center gap-2">
+            {/* 发布到智识殿堂开关 */}
+            <button
+              onClick={handleTogglePublish}
+              disabled={publishing}
+              className="h-7 px-3 rounded-[8px] text-[11px] font-semibold flex items-center gap-1.5 cursor-pointer transition-all"
+              style={{
+                background: store.isPublic ? 'rgba(168,85,247,0.15)' : 'rgba(255,255,255,0.04)',
+                border: store.isPublic ? '1px solid rgba(168,85,247,0.35)' : '1px solid rgba(255,255,255,0.08)',
+                color: store.isPublic ? 'rgba(216,180,254,0.95)' : 'var(--text-muted)',
+              }}
+              title={store.isPublic ? '已发布到智识殿堂，点击取消发布' : '发布到智识殿堂，让更多人看到'}
+            >
+              {publishing ? <MapSpinner size={11} /> : (store.isPublic ? <Globe size={11} /> : <GlobeLock size={11} />)}
+              {store.isPublic ? '已发布' : '发布到智识殿堂'}
+            </button>
+            <Button variant="secondary" size="xs" onClick={() => setShowShareDialog(true)}>
+              <Share2 size={13} /> 分享
+            </Button>
             <Button variant="secondary" size="xs" onClick={() => setShowSubscribe(true)}>
               <Rss size={13} /> 添加订阅
             </Button>
@@ -427,6 +691,16 @@ function StoreDetailView({ storeId, onBack }: {
           storeId={storeId}
           onClose={() => setShowSubscribe(false)}
           onCreated={(entry) => { setShowSubscribe(false); setEntries(prev => [entry, ...prev]); }}
+        />
+      )}
+
+      {/* 分享对话框 */}
+      {showShareDialog && (
+        <ShareDialog
+          storeId={storeId}
+          storeName={store.name}
+          isPublic={store.isPublic}
+          onClose={() => setShowShareDialog(false)}
         />
       )}
     </div>

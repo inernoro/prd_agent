@@ -197,6 +197,98 @@ export async function rebuildContentIndex(storeId: string) {
   );
 }
 
+/** 获取所有公开知识库（首页/library 页用） */
+export async function listPublicDocumentStores(page = 1, pageSize = 24, sort: 'hot' | 'new' | 'popular' | 'viewed' = 'hot') {
+  return await apiRequest<{ items: import('@/services/contracts/documentStore').PublicDocumentStore[]; total: number; page: number; pageSize: number }>(
+    `${api.documentStore.stores.publicList()}?page=${page}&pageSize=${pageSize}&sort=${sort}`,
+    { method: 'GET' },
+  );
+}
+
+/** 获取公开知识库详情 */
+export async function getPublicDocumentStore(storeId: string) {
+  return await apiRequest<import('@/services/contracts/documentStore').PublicStoreDetail>(
+    api.documentStore.stores.publicDetail(storeId),
+    { method: 'GET' },
+  );
+}
+
+/** 获取公开知识库内文档列表 */
+export async function listPublicStoreEntries(storeId: string) {
+  return await apiRequest<{ items: import('@/services/contracts/documentStore').DocumentEntry[]; total: number }>(
+    api.documentStore.stores.publicEntries(storeId),
+    { method: 'GET' },
+  );
+}
+
+/** 获取公开文档内容 */
+export async function getPublicEntryContent(entryId: string) {
+  return await apiRequest<{
+    entryId: string;
+    title: string;
+    content: string | null;
+    contentType: string;
+    fileUrl: string | null;
+    hasContent: boolean;
+  }>(api.documentStore.stores.publicEntryContent(entryId), { method: 'GET' });
+}
+
+/** 点赞知识库 */
+export async function likeDocumentStore(storeId: string) {
+  return await apiRequest<{ liked: boolean; likeCount: number }>(
+    api.documentStore.stores.like(storeId),
+    { method: 'POST' },
+  );
+}
+
+/** 取消点赞 */
+export async function unlikeDocumentStore(storeId: string) {
+  return await apiRequest<{ liked: boolean; likeCount: number }>(
+    api.documentStore.stores.like(storeId),
+    { method: 'DELETE' },
+  );
+}
+
+/** 收藏知识库 */
+export async function favoriteDocumentStore(storeId: string) {
+  return await apiRequest<{ favorited: boolean; favoriteCount: number }>(
+    api.documentStore.stores.favorite(storeId),
+    { method: 'POST' },
+  );
+}
+
+/** 取消收藏 */
+export async function unfavoriteDocumentStore(storeId: string) {
+  return await apiRequest<{ favorited: boolean; favoriteCount: number }>(
+    api.documentStore.stores.favorite(storeId),
+    { method: 'DELETE' },
+  );
+}
+
+/** 创建分享链接 */
+export async function createShareLink(storeId: string, input: { title?: string; description?: string; expiresInDays?: number }) {
+  return await apiRequest<import('@/services/contracts/documentStore').DocumentStoreShareLink>(
+    api.documentStore.stores.shareLinks(storeId),
+    { method: 'POST', body: { ...input, expiresInDays: input.expiresInDays ?? 0 } },
+  );
+}
+
+/** 列出分享链接 */
+export async function listShareLinks(storeId: string) {
+  return await apiRequest<{ items: import('@/services/contracts/documentStore').DocumentStoreShareLink[] }>(
+    api.documentStore.stores.shareLinks(storeId),
+    { method: 'GET' },
+  );
+}
+
+/** 撤销分享链接 */
+export async function revokeShareLink(linkId: string) {
+  return await apiRequest<{ revoked: boolean }>(
+    api.documentStore.stores.shareLinkDetail(linkId),
+    { method: 'DELETE' },
+  );
+}
+
 /** 添加 GitHub 目录订阅 */
 export async function addGitHubSubscription(storeId: string, input: {
   githubUrl: string;

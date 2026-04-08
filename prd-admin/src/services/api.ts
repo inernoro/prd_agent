@@ -931,6 +931,19 @@ export const api = {
       primaryEntry: (storeId: string) => `/api/document-store/stores/${storeId}/primary-entry`,
       pinnedEntries: (storeId: string) => `/api/document-store/stores/${storeId}/pinned-entries`,
       rebuildContentIndex: (storeId: string) => `/api/document-store/stores/${storeId}/rebuild-content-index`,
+      // 公开访问端点
+      publicList: () => '/api/document-store/public/stores',
+      publicDetail: (storeId: string) => `/api/document-store/public/stores/${storeId}`,
+      publicEntries: (storeId: string) => `/api/document-store/public/stores/${storeId}/entries`,
+      publicEntryContent: (entryId: string) => `/api/document-store/public/entries/${entryId}/content`,
+      publicShare: (token: string) => `/api/document-store/public/share/${token}`,
+      // 互动
+      like: (storeId: string) => `/api/document-store/stores/${storeId}/like`,
+      favorite: (storeId: string) => `/api/document-store/stores/${storeId}/favorite`,
+      myFavorites: () => '/api/document-store/favorites/mine',
+      // 分享链接
+      shareLinks: (storeId: string) => `/api/document-store/stores/${storeId}/share-links`,
+      shareLinkDetail: (linkId: string) => `/api/document-store/share-links/${linkId}`,
     },
     entries: {
       list: (storeId: string) => `/api/document-store/stores/${storeId}/entries`,
