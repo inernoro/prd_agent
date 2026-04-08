@@ -3,7 +3,6 @@ import {
   Library,
   Plus,
   Upload,
-  Loader2,
   FolderOpen,
   ArrowLeft,
   X,
@@ -368,7 +367,7 @@ function StoreDetailView({ storeId, onBack }: {
               <Rss size={13} /> 添加订阅
             </Button>
             <Button variant="primary" size="xs" onClick={() => fileInputRef.current?.click()} disabled={uploading}>
-              {uploading ? <Loader2 size={13} className="animate-spin" /> : <Upload size={13} />}
+              {uploading ? <MapSpinner size={14} /> : <Upload size={13} />}
               {uploading ? '上传中…' : '上传文档'}
             </Button>
           </div>

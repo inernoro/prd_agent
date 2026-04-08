@@ -5,11 +5,12 @@ import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { oneDark } from 'react-syntax-highlighter/dist/esm/styles/prism';
 import {
   FileText, FolderOpen, FolderClosed, Star, Rss, Github,
-  Loader2, Search, ChevronRight, ChevronDown, Plus, Pin, PinOff,
+  Search, ChevronRight, ChevronDown, Plus, Pin, PinOff,
   FileSearch, ToggleLeft, ToggleRight, Trash2, FilePlus, FolderPlus,
   Upload, Link, LayoutTemplate, Bot, Pencil, Save, X,
 } from 'lucide-react';
 import { getFileTypeConfig } from '@/lib/fileTypeRegistry';
+import { MapSpinner, MapSectionLoader } from '@/components/ui/VideoLoader';
 
 // ── 类型 ──
 
@@ -675,7 +676,7 @@ export function DocBrowser({
   if (loading) {
     return (
       <div className="flex-1 flex items-center justify-center" style={{ minHeight: 'calc(100vh - 160px)' }}>
-        <Loader2 size={20} className="animate-spin" style={{ color: 'var(--text-muted)' }} />
+        <MapSectionLoader />
       </div>
     );
   }
@@ -733,7 +734,9 @@ export function DocBrowser({
                 style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.06)', color: 'var(--text-primary)' }}
               />
               {searching && (
-                <Loader2 size={10} className="absolute right-2.5 top-1/2 -translate-y-1/2 animate-spin" style={{ color: 'var(--text-muted)' }} />
+                <span className="absolute right-2.5 top-1/2 -translate-y-1/2">
+                  <MapSpinner size={12} />
+                </span>
               )}
             </div>
             <div ref={addMenuRef} className="relative">
@@ -933,7 +936,7 @@ export function DocBrowser({
                         disabled={saving}
                         className="h-7 px-2.5 rounded-[8px] text-[11px] font-semibold flex items-center gap-1 cursor-pointer"
                         style={{ background: 'rgba(34,197,94,0.1)', border: '1px solid rgba(34,197,94,0.2)', color: 'rgba(34,197,94,0.9)' }}>
-                        {saving ? <Loader2 size={11} className="animate-spin" /> : <Save size={11} />}
+                        {saving ? <MapSpinner size={12} color="rgba(34,197,94,0.9)" /> : <Save size={11} />}
                         保存
                       </button>
                       <button
@@ -957,9 +960,7 @@ export function DocBrowser({
             {/* 内容区 */}
             <div className="flex-1 overflow-y-auto px-6 py-4">
               {contentLoading ? (
-                <div className="flex items-center justify-center py-12">
-                  <Loader2 size={18} className="animate-spin" style={{ color: 'var(--text-muted)' }} />
-                </div>
+                <MapSectionLoader text="加载文档内容…" />
               ) : editMode ? (
                 <textarea
                   value={editContent}

@@ -96,6 +96,43 @@ function FileIcon({ mimeType }: Props) {
 
 **问题**：新增类型要改这个组件 + 可能还有其他地方在做同样的判断。无法复用、无法统一维护。
 
+## 统一加载组件（MAP Loader）
+
+**强制规则**：所有加载状态必须使用 `@/components/ui/VideoLoader` 提供的统一组件，**禁止直接使用 `lucide-react` 的 `<Loader2 className="animate-spin" />`**。
+
+### 三个层级（按场景选择）
+
+| 组件 | 场景 | 尺寸 |
+|------|------|------|
+| `PageTransitionLoader` (`mode="fullscreen"` 或 `"inline"`) | Suspense fallback、路由过渡 | 全屏 / 内联 |
+| `MapSectionLoader` | 区块居中加载（替代居中 Loader2） | 自适应父容器 |
+| `MapSpinner` | 行内 / 按钮 loading 态 | 14-32px |
+
+### 使用示例
+
+```tsx
+import { MapSpinner, MapSectionLoader } from '@/components/ui/VideoLoader';
+
+// 区块加载
+{loading ? <MapSectionLoader text="正在加载…" /> : <Content />}
+
+// 按钮内加载
+<Button disabled={saving}>
+  {saving ? <MapSpinner size={14} /> : <Save size={14} />}
+  保存
+</Button>
+```
+
+### 反面案例（禁止）
+
+```tsx
+// ❌ 直接用 lucide-react 的 Loader2
+import { Loader2 } from 'lucide-react';
+{loading && <Loader2 className="animate-spin" />}
+```
+
+**理由**：MAP 加载组件统一了品牌色、动效语言（扫光条 + 字母淡入），避免各处样式不一致。
+
 ## 默认可编辑原则
 
 除非业务明确禁止或具有破坏性，所有表单字段默认可编辑，不主动加 `disabled` / `readOnly`。
