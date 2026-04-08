@@ -8,7 +8,7 @@
 //   - 每个命中的集合: 命中文档数 + 命中字段路径(去重) + 一条样例 _id
 //   - 总命中集合/文档数
 
-if (typeof OLD_DOMAIN === "undefined") { var OLD_DOMAIN = "i.pa.759800.com"; }
+if (typeof OLD_DOMAIN === "undefined") { var OLD_DOMAIN = "pa.759800.com"; }
 if (typeof MAX_PATHS_PER_COLLECTION === "undefined") { var MAX_PATHS_PER_COLLECTION = 30; }
 
 function isPlainObject(v) {
