@@ -29,6 +29,73 @@ globs: ["prd-admin/src/**/*.{ts,tsx}", "prd-desktop/src/**/*.{ts,tsx}"]
 - 两个以上页面出现同一业务概念 → 必须提取 `src/components/` 共享组件
 - 数据源统一维护在 `src/lib/` 下
 
+## 注册表模式（Registry Pattern）
+
+**强制规则**：任何基于"类型 key → 图标/组件/配置/标签"的映射关系，必须采用注册表模式，**禁止在组件内硬编码 `switch` / `if-else`**。
+
+### 判定标准
+
+凡满足以下任一条件，必须用注册表而非 switch：
+
+1. 有 3+ 分支的"类型→样式/图标/组件"映射（文件扩展名、枚举值、sourceType 等）
+2. 同一映射关系可能在多个组件中被复用
+3. 后续新增类型时，会需要改动多处代码
+
+### 命名约定
+
+| 后缀 | 含义 | 示例 |
+|------|------|------|
+| `*_REGISTRY` | 完整配置对象（含 icon + label + color + 组件等多字段） | `CONFIG_TYPE_REGISTRY`, `CAPSULE_TYPE_REGISTRY`, `FILE_TYPE_REGISTRY` |
+| `*_DEFINITIONS` | 结构化数组定义 | `MODEL_TYPE_DEFINITIONS` |
+| `*_MAP` | 简单键值映射（如 `Record<string, LucideIcon>`） | `ICON_MAP`, `ICON_HUE_MAP` |
+
+### 标准位置
+
+- 共享的注册表：`src/lib/xxxRegistry.ts` 或 `src/lib/xxxTypes.tsx`
+- 单页面私有注册表：该页面目录下 `xxxRegistry.tsx`
+
+### 标准结构
+
+```typescript
+// src/lib/fileTypeRegistry.ts
+export interface FileTypeConfig {
+  extensions: string[];
+  icon: LucideIcon;
+  color: string;
+  label: string;
+}
+
+export const FILE_TYPE_REGISTRY: Record<string, FileTypeConfig> = {
+  markdown: { extensions: ['.md'], icon: FileText, color: '...', label: 'Markdown' },
+  pdf: { extensions: ['.pdf'], icon: FileText, color: '...', label: 'PDF' },
+  // ...
+};
+
+export function getFileTypeConfig(filename: string, mimeType?: string): FileTypeConfig {
+  // 查找逻辑...
+}
+```
+
+### 参考范例
+
+- `src/lib/marketplaceTypes.tsx` → `CONFIG_TYPE_REGISTRY`（海鲜市场配置类型）
+- `src/pages/workflow-agent/capsuleRegistry.tsx` → `CAPSULE_TYPE_REGISTRY`（工作流胶囊）
+- `src/lib/fileTypeRegistry.ts` → `FILE_TYPE_REGISTRY`（文件扩展名 → 图标）
+
+### 反面案例（禁止）
+
+```tsx
+// ❌ 在组件中硬编码类型判断
+function FileIcon({ mimeType }: Props) {
+  if (mimeType === 'text/markdown') return <FileText />;
+  if (mimeType === 'application/pdf') return <FileText color="red" />;
+  if (mimeType.includes('presentation')) return <Presentation />;
+  return <File />;
+}
+```
+
+**问题**：新增类型要改这个组件 + 可能还有其他地方在做同样的判断。无法复用、无法统一维护。
+
 ## 默认可编辑原则
 
 除非业务明确禁止或具有破坏性，所有表单字段默认可编辑，不主动加 `disabled` / `readOnly`。

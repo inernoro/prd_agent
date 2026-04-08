@@ -4,11 +4,12 @@ import remarkGfm from 'remark-gfm';
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { oneDark } from 'react-syntax-highlighter/dist/esm/styles/prism';
 import {
-  FileText, File, FolderOpen, FolderClosed, Star, Rss, Github,
+  FileText, FolderOpen, FolderClosed, Star, Rss, Github,
   Loader2, Search, ChevronRight, ChevronDown, Plus, Pin, PinOff,
   FileSearch, ToggleLeft, ToggleRight, Trash2, FilePlus, FolderPlus,
   Upload, Link, LayoutTemplate, Bot, Pencil, Save, X,
 } from 'lucide-react';
+import { getFileTypeConfig } from '@/lib/fileTypeRegistry';
 
 // ── 类型 ──
 
@@ -45,7 +46,7 @@ export type DocBrowserProps = {
   loading?: boolean;
 };
 
-// ── 文件图标 ──
+// ── 文件图标（所有类型映射通过 FILE_TYPE_REGISTRY 注册表） ──
 
 function EntryIcon({ entry, isPrimary, isPinned, isOpen }: { entry: DocBrowserEntry; isPrimary: boolean; isPinned: boolean; isOpen?: boolean }) {
   if (entry.isFolder) {
@@ -57,8 +58,11 @@ function EntryIcon({ entry, isPrimary, isPinned, isOpen }: { entry: DocBrowserEn
   if (isPinned) return <Pin size={14} style={{ color: 'rgba(59,130,246,0.7)' }} />;
   if (entry.sourceType === 'github_directory') return <Github size={14} style={{ color: 'rgba(130,80,223,0.7)' }} />;
   if (entry.sourceType === 'subscription') return <Rss size={14} style={{ color: 'rgba(234,179,8,0.7)' }} />;
-  if (entry.contentType?.startsWith('text/')) return <FileText size={14} style={{ color: 'rgba(59,130,246,0.7)' }} />;
-  return <File size={14} style={{ color: 'rgba(59,130,246,0.7)' }} />;
+
+  // 通过注册表按文件名/MIME 类型查找对应图标
+  const cfg = getFileTypeConfig(entry.title, entry.contentType);
+  const Icon = cfg.icon;
+  return <Icon size={14} style={{ color: cfg.color }} />;
 }
 
 // ── 获取文档显示标题 ──

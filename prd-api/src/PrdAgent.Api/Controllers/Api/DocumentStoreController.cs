@@ -649,6 +649,10 @@ public class DocumentStoreController : ControllerBase
                 ".pdf" => "application/pdf",
                 ".doc" => "application/msword",
                 ".docx" => "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                ".ppt" => "application/vnd.ms-powerpoint",
+                ".pptx" => "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+                ".xls" => "application/vnd.ms-excel",
+                ".xlsx" => "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                 ".json" => "application/json",
                 ".yaml" or ".yml" => "text/yaml",
                 ".csv" => "text/csv",
@@ -706,7 +710,8 @@ public class DocumentStoreController : ControllerBase
         }
 
         // 5) 创建 DocumentEntry（关联 Attachment + ParsedPrd）
-        var title = Path.GetFileNameWithoutExtension(file.FileName);
+        // 保留完整文件名（含扩展名），便于前端按扩展名显示图标
+        var title = file.FileName ?? Path.GetFileNameWithoutExtension(file.FileName);
         var summary = extractedText?.Length > 200 ? extractedText[..200] : extractedText;
 
         // 截取前 2000 字符作为内容索引（供内容搜索使用）
