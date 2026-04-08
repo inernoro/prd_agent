@@ -6,7 +6,8 @@ import { oneDark } from 'react-syntax-highlighter/dist/esm/styles/prism';
 import {
   FileText, File, FolderOpen, FolderClosed, Star, Rss, Github,
   Loader2, Search, ChevronRight, ChevronDown, Plus, Pin, PinOff,
-  FileSearch, ToggleLeft, ToggleRight,
+  FileSearch, ToggleLeft, ToggleRight, Trash2, FilePlus, FolderPlus,
+  Upload, Link, LayoutTemplate, Bot, Pencil, Save, X,
 } from 'lucide-react';
 
 // ── 类型 ──
@@ -32,8 +33,13 @@ export type DocBrowserProps = {
   onSelectEntry: (entryId: string) => void;
   onSetPrimary?: (entryId: string) => void;
   onTogglePin?: (entryId: string, pin: boolean) => void;
-  loadContent: (entryId: string) => Promise<string | null>;
+  onDeleteEntry?: (entryId: string) => void;
+  onMoveEntry?: (entryId: string, targetFolderId: string | null) => void;
+  onSaveContent?: (entryId: string, content: string) => Promise<void>;
   onCreateFolder?: (name: string, parentId?: string) => Promise<void>;
+  onCreateDocument?: () => void;
+  onUploadFile?: () => void;
+  loadContent: (entryId: string) => Promise<string | null>;
   onSearch?: (keyword: string, searchContent: boolean) => Promise<DocBrowserEntry[] | null>;
   emptyState?: React.ReactNode;
   loading?: boolean;
@@ -65,7 +71,7 @@ function getDisplayTitle(entry: DocBrowserEntry, useContentTitle: boolean, conte
 }
 
 // ── 右键菜单 ──
-function ContextMenu({ x, y, entry, isPrimary, isPinned, onSetPrimary, onTogglePin, onClose }: {
+function ContextMenu({ x, y, entry, isPrimary, isPinned, onSetPrimary, onTogglePin, onDelete, onClose }: {
   x: number;
   y: number;
   entry: DocBrowserEntry;
@@ -73,6 +79,7 @@ function ContextMenu({ x, y, entry, isPrimary, isPinned, onSetPrimary, onToggleP
   isPinned: boolean;
   onSetPrimary?: (entryId: string) => void;
   onTogglePin?: (entryId: string, pin: boolean) => void;
+  onDelete?: (entryId: string) => void;
   onClose: () => void;
 }) {
   const menuRef = useRef<HTMLDivElement>(null);
@@ -85,8 +92,6 @@ function ContextMenu({ x, y, entry, isPrimary, isPinned, onSetPrimary, onToggleP
     return () => document.removeEventListener('mousedown', handleClick);
   }, [onClose]);
 
-  if (entry.isFolder) return null;
-
   return (
     <div ref={menuRef} className="fixed z-50 min-w-[160px] py-1 rounded-[10px]"
       style={{
@@ -96,7 +101,7 @@ function ContextMenu({ x, y, entry, isPrimary, isPinned, onSetPrimary, onToggleP
         backdropFilter: 'blur(40px) saturate(180%)',
         boxShadow: '0 12px 32px -8px rgba(0,0,0,0.5)',
       }}>
-      {onTogglePin && (
+      {!entry.isFolder && onTogglePin && (
         <button
           className="w-full px-3 py-1.5 text-left text-[12px] flex items-center gap-2 cursor-pointer transition-colors hover:bg-white/6"
           style={{ color: 'var(--text-secondary)' }}
@@ -105,7 +110,7 @@ function ContextMenu({ x, y, entry, isPrimary, isPinned, onSetPrimary, onToggleP
           {isPinned ? '取消置顶' : '置顶文档'}
         </button>
       )}
-      {onSetPrimary && !isPrimary && (
+      {!entry.isFolder && onSetPrimary && !isPrimary && (
         <button
           className="w-full px-3 py-1.5 text-left text-[12px] flex items-center gap-2 cursor-pointer transition-colors hover:bg-white/6"
           style={{ color: 'var(--text-secondary)' }}
@@ -113,6 +118,18 @@ function ContextMenu({ x, y, entry, isPrimary, isPinned, onSetPrimary, onToggleP
           <Star size={12} />
           设为主文档
         </button>
+      )}
+      {onDelete && (
+        <>
+          <div className="my-1" style={{ borderTop: '1px solid rgba(255,255,255,0.06)' }} />
+          <button
+            className="w-full px-3 py-1.5 text-left text-[12px] flex items-center gap-2 cursor-pointer transition-colors hover:bg-white/6"
+            style={{ color: 'rgba(239,68,68,0.8)' }}
+            onClick={() => { onDelete(entry.id); onClose(); }}>
+            <Trash2 size={12} />
+            删除
+          </button>
+        </>
       )}
     </div>
   );
@@ -127,12 +144,14 @@ function TreeNode({
   selectedEntryId,
   primaryEntryId,
   pinnedEntryIds,
+  folderPrimaryMap,
   expandedFolders,
   useContentTitle,
   contentFirstLines,
   onToggleFolder,
   onSelectEntry,
   onContextMenu,
+  onMoveEntry,
 }: {
   entry: DocBrowserEntry;
   childrenMap: Map<string, DocBrowserEntry[]>;
@@ -140,20 +159,23 @@ function TreeNode({
   selectedEntryId?: string;
   primaryEntryId?: string;
   pinnedEntryIds: Set<string>;
+  folderPrimaryMap: Map<string, string>;
   expandedFolders: Set<string>;
   useContentTitle: boolean;
   contentFirstLines: Map<string, string>;
   onToggleFolder: (id: string) => void;
   onSelectEntry: (id: string) => void;
   onContextMenu: (e: React.MouseEvent, entry: DocBrowserEntry) => void;
+  onMoveEntry?: (entryId: string, targetFolderId: string | null) => void;
 }) {
   const isFolder = entry.isFolder;
   const isOpen = expandedFolders.has(entry.id);
   const isSelected = entry.id === selectedEntryId;
-  const isPrimary = entry.id === primaryEntryId;
+  const isPrimary = entry.id === primaryEntryId || (entry.parentId ? folderPrimaryMap.get(entry.parentId) === entry.id : false);
   const isPinned = pinnedEntryIds.has(entry.id);
   const children = childrenMap.get(entry.id) ?? [];
   const displayTitle = getDisplayTitle(entry, useContentTitle, contentFirstLines);
+  const [dragOver, setDragOver] = useState(false);
 
   return (
     <>
@@ -166,23 +188,44 @@ function TreeNode({
           e.preventDefault();
           onContextMenu(e, entry);
         }}
+        draggable={!isFolder}
+        onDragStart={(e) => {
+          if (isFolder) return;
+          e.dataTransfer.setData('text/plain', entry.id);
+          e.dataTransfer.effectAllowed = 'move';
+        }}
+        onDragOver={(e) => {
+          if (!isFolder) return;
+          e.preventDefault();
+          e.dataTransfer.dropEffect = 'move';
+          setDragOver(true);
+        }}
+        onDragLeave={() => setDragOver(false)}
+        onDrop={(e) => {
+          if (!isFolder) return;
+          e.preventDefault();
+          setDragOver(false);
+          const draggedId = e.dataTransfer.getData('text/plain');
+          if (draggedId && draggedId !== entry.id && onMoveEntry) {
+            onMoveEntry(draggedId, entry.id);
+          }
+        }}
         className="w-full flex items-center gap-1.5 py-[5px] text-left cursor-pointer transition-all duration-100 group"
         style={{
-          paddingLeft: `${12 + depth * 16}px`,
+          paddingLeft: `${8 + depth * 16}px`,
           paddingRight: '8px',
-          background: isSelected && !isFolder ? 'rgba(59,130,246,0.08)' : 'transparent',
+          background: dragOver ? 'rgba(59,130,246,0.12)' : (isSelected && !isFolder ? 'rgba(59,130,246,0.08)' : 'transparent'),
           borderLeft: isSelected && !isFolder ? '2px solid rgba(59,130,246,0.6)' : '2px solid transparent',
+          outline: dragOver ? '1px dashed rgba(59,130,246,0.4)' : 'none',
         }}
-        title={isFolder ? '点击展开/折叠' : isPrimary ? '主文档' : '右键打开菜单'}
+        title={isFolder ? '点击展开/折叠（可拖拽文件到此）' : isPrimary ? '主文档' : '右键打开菜单'}
       >
-        {/* 展开/折叠箭头 */}
-        {isFolder ? (
+        {/* 展开/折叠箭头（仅文件夹显示，非文件夹不占位） */}
+        {isFolder && (
           <span className="w-3.5 flex-shrink-0 flex items-center justify-center">
             {isOpen ? <ChevronDown size={11} style={{ color: 'var(--text-muted)' }} />
                     : <ChevronRight size={11} style={{ color: 'var(--text-muted)' }} />}
           </span>
-        ) : (
-          <span className="w-3.5 flex-shrink-0" />
         )}
 
         <EntryIcon entry={entry} isPrimary={isPrimary} isPinned={isPinned} isOpen={isOpen} />
@@ -224,12 +267,14 @@ function TreeNode({
           selectedEntryId={selectedEntryId}
           primaryEntryId={primaryEntryId}
           pinnedEntryIds={pinnedEntryIds}
+          folderPrimaryMap={folderPrimaryMap}
           expandedFolders={expandedFolders}
           useContentTitle={useContentTitle}
           contentFirstLines={contentFirstLines}
           onToggleFolder={onToggleFolder}
           onSelectEntry={onSelectEntry}
           onContextMenu={onContextMenu}
+          onMoveEntry={onMoveEntry}
         />
       ))}
     </>
@@ -348,8 +393,13 @@ export function DocBrowser({
   onSelectEntry,
   onSetPrimary,
   onTogglePin,
+  onDeleteEntry,
+  onMoveEntry,
+  onSaveContent,
   loadContent,
   onCreateFolder,
+  onCreateDocument,
+  onUploadFile,
   onSearch,
   emptyState,
   loading,
@@ -367,8 +417,24 @@ export function DocBrowser({
   const [useContentTitle, setUseContentTitle] = useState(true);
   const [contentFirstLines, setContentFirstLines] = useState<Map<string, string>>(new Map());
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; entry: DocBrowserEntry } | null>(null);
+  const [showAddMenu, setShowAddMenu] = useState(false);
+  const [editMode, setEditMode] = useState(false);
+  const [editContent, setEditContent] = useState('');
+  const [saving, setSaving] = useState(false);
   const searchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const addMenuRef = useRef<HTMLDivElement>(null);
   const pinnedSet = useMemo(() => new Set(pinnedIds), [pinnedIds]);
+
+  // 从 entries 的 metadata 中构建每个文件夹的主文档映射
+  const folderPrimaryMap = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const e of entries) {
+      if (e.isFolder && e.metadata?.primaryChildId) {
+        map.set(e.id, e.metadata.primaryChildId);
+      }
+    }
+    return map;
+  }, [entries]);
 
   // 构建树结构
   const { rootEntries, childrenMap, fileCount } = useMemo(() => {
@@ -417,6 +483,16 @@ export function DocBrowser({
     setContentFirstLines(lines);
   }, [entries]);
 
+  // 添加菜单 click outside
+  useEffect(() => {
+    if (!showAddMenu) return;
+    const handleClick = (e: MouseEvent) => {
+      if (addMenuRef.current && !addMenuRef.current.contains(e.target as Node)) setShowAddMenu(false);
+    };
+    document.addEventListener('mousedown', handleClick);
+    return () => document.removeEventListener('mousedown', handleClick);
+  }, [showAddMenu]);
+
   // 搜索过滤（本地 title 搜索 + 可选后端内容搜索）
   const { filteredRoots, filteredChildrenMap } = useMemo(() => {
     if (!search.trim() || searchResults !== null) {
@@ -429,12 +505,16 @@ export function DocBrowser({
       return { filteredRoots: rootEntries, filteredChildrenMap: childrenMap };
     }
 
-    // 本地搜索（仅 title）
+    // 本地搜索（title + summary + 正文第一行）
     const kw = search.toLowerCase();
     const matchIds = new Set<string>();
     const entryMap = new Map(entries.map(e => [e.id, e]));
     for (const e of entries) {
-      if (e.title.toLowerCase().includes(kw) && e.sourceType !== 'github_directory') {
+      if (e.sourceType === 'github_directory') continue;
+      const titleMatch = e.title.toLowerCase().includes(kw);
+      const summaryMatch = e.summary?.toLowerCase().includes(kw) ?? false;
+      const firstLineMatch = contentFirstLines.get(e.id)?.toLowerCase().includes(kw) ?? false;
+      if (titleMatch || summaryMatch || firstLineMatch) {
         matchIds.add(e.id);
         let cur = e;
         while (cur.parentId) {
@@ -454,7 +534,7 @@ export function DocBrowser({
     }
 
     return { filteredRoots: fRoots, filteredChildrenMap: fMap };
-  }, [search, searchResults, rootEntries, childrenMap, entries]);
+  }, [search, searchResults, rootEntries, childrenMap, entries, contentFirstLines]);
 
   // 搜索处理（防抖 + 内容搜索走后端）
   const handleSearchChange = useCallback((value: string) => {
@@ -556,7 +636,6 @@ export function DocBrowser({
   }, [newFolderName, onCreateFolder]);
 
   const handleContextMenu = useCallback((e: React.MouseEvent, entry: DocBrowserEntry) => {
-    if (entry.isFolder) return;
     setContextMenu({ x: e.clientX, y: e.clientY, entry });
   }, []);
 
@@ -617,16 +696,81 @@ export function DocBrowser({
                 <Loader2 size={10} className="absolute right-2.5 top-1/2 -translate-y-1/2 animate-spin" style={{ color: 'var(--text-muted)' }} />
               )}
             </div>
-            {onCreateFolder && (
+            <div ref={addMenuRef} className="relative">
               <button
-                onClick={() => setCreatingFolder(!creatingFolder)}
+                onClick={() => setShowAddMenu(v => !v)}
                 className="h-7 w-7 flex items-center justify-center rounded-[8px] cursor-pointer transition-colors"
                 style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.06)', color: 'var(--text-muted)' }}
-                title="新建文件夹"
+                title="新建"
               >
                 <Plus size={12} />
               </button>
-            )}
+              {showAddMenu && (
+                <div className="absolute right-0 top-[30px] z-50 min-w-[180px] py-1 rounded-[10px]"
+                  style={{
+                    background: 'linear-gradient(180deg, var(--glass-bg-start) 0%, var(--glass-bg-end) 100%)',
+                    border: '1px solid rgba(255,255,255,0.1)',
+                    backdropFilter: 'blur(40px) saturate(180%)',
+                    boxShadow: '0 12px 32px -8px rgba(0,0,0,0.5)',
+                  }}>
+                  {/* 可用操作 */}
+                  {onCreateDocument && (
+                    <button
+                      className="w-full px-3 py-1.5 text-left text-[12px] flex items-center gap-2 cursor-pointer transition-colors hover:bg-white/6"
+                      style={{ color: 'var(--text-secondary)' }}
+                      onClick={() => { onCreateDocument(); setShowAddMenu(false); }}>
+                      <FilePlus size={12} style={{ color: 'rgba(59,130,246,0.8)' }} />
+                      文档
+                    </button>
+                  )}
+                  {onUploadFile && (
+                    <button
+                      className="w-full px-3 py-1.5 text-left text-[12px] flex items-center gap-2 cursor-pointer transition-colors hover:bg-white/6"
+                      style={{ color: 'var(--text-secondary)' }}
+                      onClick={() => { onUploadFile(); setShowAddMenu(false); }}>
+                      <Upload size={12} style={{ color: 'rgba(59,130,246,0.8)' }} />
+                      上传文件
+                    </button>
+                  )}
+                  {onCreateFolder && (
+                    <button
+                      className="w-full px-3 py-1.5 text-left text-[12px] flex items-center gap-2 cursor-pointer transition-colors hover:bg-white/6"
+                      style={{ color: 'var(--text-secondary)' }}
+                      onClick={() => { setCreatingFolder(true); setShowAddMenu(false); }}>
+                      <FolderPlus size={12} style={{ color: 'rgba(234,179,8,0.8)' }} />
+                      新建文件夹
+                    </button>
+                  )}
+                  {/* 分隔线 */}
+                  <div className="my-1" style={{ borderTop: '1px solid rgba(255,255,255,0.06)' }} />
+                  {/* 尚未实现：置灰 */}
+                  <button
+                    className="w-full px-3 py-1.5 text-left text-[12px] flex items-center gap-2 cursor-not-allowed"
+                    style={{ color: 'var(--text-muted)', opacity: 0.4 }}
+                    disabled
+                    title="暂未实现">
+                    <LayoutTemplate size={12} />
+                    从模板新建
+                  </button>
+                  <button
+                    className="w-full px-3 py-1.5 text-left text-[12px] flex items-center gap-2 cursor-not-allowed"
+                    style={{ color: 'var(--text-muted)', opacity: 0.4 }}
+                    disabled
+                    title="暂未实现">
+                    <Bot size={12} />
+                    AI 帮你写
+                  </button>
+                  <button
+                    className="w-full px-3 py-1.5 text-left text-[12px] flex items-center gap-2 cursor-not-allowed"
+                    style={{ color: 'var(--text-muted)', opacity: 0.4 }}
+                    disabled
+                    title="暂未实现">
+                    <Link size={12} />
+                    添加链接
+                  </button>
+                </div>
+              )}
+            </div>
           </div>
           {creatingFolder && (
             <div className="flex gap-1.5">
@@ -663,15 +807,29 @@ export function DocBrowser({
               selectedEntryId={selectedEntryId}
               primaryEntryId={primaryEntryId}
               pinnedEntryIds={pinnedSet}
+              folderPrimaryMap={folderPrimaryMap}
               expandedFolders={expandedFolders}
               useContentTitle={useContentTitle}
               contentFirstLines={contentFirstLines}
               onToggleFolder={toggleFolder}
               onSelectEntry={onSelectEntry}
               onContextMenu={handleContextMenu}
+              onMoveEntry={onMoveEntry}
             />
           ))}
         </div>
+        {/* 根级放置区域 - 允许拖到根级别 */}
+        {onMoveEntry && (
+          <div
+            className="h-2"
+            onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; }}
+            onDrop={(e) => {
+              e.preventDefault();
+              const draggedId = e.dataTransfer.getData('text/plain');
+              if (draggedId) onMoveEntry(draggedId, null);
+            }}
+          />
+        )}
 
         {/* 底部统计 */}
         <div className="px-3 py-2 text-[10px]" style={{ borderTop: '1px solid rgba(255,255,255,0.04)', color: 'var(--text-muted)' }}>
@@ -699,6 +857,46 @@ export function DocBrowser({
                   置顶
                 </span>
               )}
+              {/* 编辑/保存按钮 */}
+              {onSaveContent && !entries.find(e => e.id === selectedEntryId)?.isFolder && (
+                <div className="ml-auto flex items-center gap-1.5">
+                  {editMode ? (
+                    <>
+                      <button
+                        onClick={async () => {
+                          if (!selectedEntryId) return;
+                          setSaving(true);
+                          try {
+                            await onSaveContent(selectedEntryId, editContent);
+                            setContent(editContent);
+                            setEditMode(false);
+                          } finally {
+                            setSaving(false);
+                          }
+                        }}
+                        disabled={saving}
+                        className="h-7 px-2.5 rounded-[8px] text-[11px] font-semibold flex items-center gap-1 cursor-pointer"
+                        style={{ background: 'rgba(34,197,94,0.1)', border: '1px solid rgba(34,197,94,0.2)', color: 'rgba(34,197,94,0.9)' }}>
+                        {saving ? <Loader2 size={11} className="animate-spin" /> : <Save size={11} />}
+                        保存
+                      </button>
+                      <button
+                        onClick={() => setEditMode(false)}
+                        className="h-7 px-2.5 rounded-[8px] text-[11px] font-semibold flex items-center gap-1 cursor-pointer"
+                        style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)', color: 'var(--text-muted)' }}>
+                        <X size={11} /> 取消
+                      </button>
+                    </>
+                  ) : (
+                    <button
+                      onClick={() => { setEditContent(content ?? ''); setEditMode(true); }}
+                      className="h-7 px-2.5 rounded-[8px] text-[11px] font-semibold flex items-center gap-1 cursor-pointer"
+                      style={{ background: 'rgba(59,130,246,0.08)', border: '1px solid rgba(59,130,246,0.15)', color: 'rgba(59,130,246,0.9)' }}>
+                      <Pencil size={11} /> 编辑
+                    </button>
+                  )}
+                </div>
+              )}
             </div>
             {/* 内容区 */}
             <div className="flex-1 overflow-y-auto px-6 py-4">
@@ -706,6 +904,21 @@ export function DocBrowser({
                 <div className="flex items-center justify-center py-12">
                   <Loader2 size={18} className="animate-spin" style={{ color: 'var(--text-muted)' }} />
                 </div>
+              ) : editMode ? (
+                <textarea
+                  value={editContent}
+                  onChange={(e) => setEditContent(e.target.value)}
+                  spellCheck={false}
+                  className="w-full h-full min-h-[400px] resize-none outline-none text-[13px] font-mono leading-relaxed"
+                  style={{
+                    background: 'rgba(0,0,0,0.2)',
+                    border: '1px solid rgba(255,255,255,0.08)',
+                    borderRadius: '8px',
+                    padding: '12px 16px',
+                    color: 'var(--text-primary)',
+                  }}
+                  placeholder="在此编辑文档内容..."
+                />
               ) : content ? (
                 <MarkdownViewer content={content} />
               ) : (
@@ -738,10 +951,15 @@ export function DocBrowser({
           x={contextMenu.x}
           y={contextMenu.y}
           entry={contextMenu.entry}
-          isPrimary={contextMenu.entry.id === primaryEntryId}
+          isPrimary={contextMenu.entry.id === primaryEntryId || (contextMenu.entry.parentId ? folderPrimaryMap.get(contextMenu.entry.parentId) === contextMenu.entry.id : false)}
           isPinned={pinnedSet.has(contextMenu.entry.id)}
           onSetPrimary={onSetPrimary}
           onTogglePin={onTogglePin}
+          onDelete={onDeleteEntry ? (entryId) => {
+            if (confirm(`确定删除「${contextMenu.entry.title}」？${contextMenu.entry.isFolder ? '(仅删除文件夹本身)' : ''}`)) {
+              onDeleteEntry(entryId);
+            }
+          } : undefined}
           onClose={() => setContextMenu(null)}
         />
       )}

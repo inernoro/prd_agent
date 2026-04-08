@@ -165,6 +165,38 @@ export async function listDocumentStoresWithPreview(page = 1, pageSize = 20) {
   );
 }
 
+/** 移动文档条目到指定文件夹 */
+export async function moveDocumentEntry(entryId: string, parentId: string | null) {
+  return await apiRequest<{ moved: boolean }>(
+    api.documentStore.entries.move(entryId),
+    { method: 'PUT', body: { parentId } },
+  );
+}
+
+/** 更新文档内容（在线编辑） */
+export async function updateDocumentContent(entryId: string, content: string) {
+  return await apiRequest<{ updated: boolean }>(
+    api.documentStore.entries.content(entryId),
+    { method: 'PUT', body: { content } },
+  );
+}
+
+/** 设置文件夹内的主文档 */
+export async function setFolderPrimaryChild(folderId: string, entryId: string | null) {
+  return await apiRequest<{ primaryChildId: string | null }>(
+    api.documentStore.entries.primaryChild(folderId),
+    { method: 'PUT', body: { entryId } },
+  );
+}
+
+/** 回填文档内容索引（供内容搜索使用） */
+export async function rebuildContentIndex(storeId: string) {
+  return await apiRequest<{ total: number; updated: number }>(
+    api.documentStore.stores.rebuildContentIndex(storeId),
+    { method: 'POST' },
+  );
+}
+
 /** 添加 GitHub 目录订阅 */
 export async function addGitHubSubscription(storeId: string, input: {
   githubUrl: string;

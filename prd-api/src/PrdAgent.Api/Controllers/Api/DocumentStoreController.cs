@@ -438,6 +438,181 @@ public class DocumentStoreController : ControllerBase
         return Ok(ApiResponse<object>.Ok(new { deleted = true }));
     }
 
+    /// <summary>移动文档条目到其他文件夹</summary>
+    [HttpPut("entries/{entryId}/move")]
+    public async Task<IActionResult> MoveEntry(string entryId, [FromBody] MoveEntryRequest request)
+    {
+        var userId = GetUserId();
+        var entry = await _db.DocumentEntries.Find(e => e.Id == entryId).FirstOrDefaultAsync();
+        if (entry == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "文档条目不存在"));
+
+        var store = await _db.DocumentStores.Find(s => s.Id == entry.StoreId && s.OwnerId == userId).FirstOrDefaultAsync();
+        if (store == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "文档条目不存在"));
+
+        // 验证目标文件夹存在
+        if (!string.IsNullOrEmpty(request.ParentId))
+        {
+            var folder = await _db.DocumentEntries.Find(
+                e => e.Id == request.ParentId && e.StoreId == entry.StoreId && e.IsFolder).FirstOrDefaultAsync();
+            if (folder == null)
+                return BadRequest(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "目标文件夹不存在"));
+        }
+
+        await _db.DocumentEntries.UpdateOneAsync(
+            e => e.Id == entryId,
+            Builders<DocumentEntry>.Update
+                .Set(e => e.ParentId, string.IsNullOrEmpty(request.ParentId) ? null : request.ParentId)
+                .Set(e => e.UpdatedAt, DateTime.UtcNow));
+
+        return Ok(ApiResponse<object>.Ok(new { moved = true }));
+    }
+
+    /// <summary>更新文档内容（在线编辑）</summary>
+    [HttpPut("entries/{entryId}/content")]
+    public async Task<IActionResult> UpdateEntryContent(string entryId, [FromBody] UpdateEntryContentRequest request)
+    {
+        var userId = GetUserId();
+        var entry = await _db.DocumentEntries.Find(e => e.Id == entryId).FirstOrDefaultAsync();
+        if (entry == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "文档条目不存在"));
+
+        var store = await _db.DocumentStores.Find(s => s.Id == entry.StoreId && s.OwnerId == userId).FirstOrDefaultAsync();
+        if (store == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "文档条目不存在"));
+
+        if (entry.IsFolder)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "文件夹不支持编辑"));
+
+        var content = request.Content ?? string.Empty;
+
+        // 更新或创建 ParsedPrd
+        if (!string.IsNullOrEmpty(entry.DocumentId))
+        {
+            var doc = await _documentService.GetByIdAsync(entry.DocumentId);
+            if (doc != null)
+            {
+                // 重新解析并保存
+                var parsed = await _documentService.ParseAsync(content);
+                parsed.Id = doc.Id;
+                parsed.Title = doc.Title;
+                await _documentService.SaveAsync(parsed);
+            }
+        }
+        else
+        {
+            // 无关联文档时创建新的 ParsedPrd
+            var parsed = await _documentService.ParseAsync(content);
+            parsed.Title = entry.Title;
+            await _documentService.SaveAsync(parsed);
+            entry.DocumentId = parsed.Id;
+        }
+
+        // 更新 DocumentEntry 的摘要和内容索引
+        var summary = content.Length > 200 ? content[..200] : content;
+        var contentIndex = content.Length > 2000 ? content[..2000] : content;
+
+        await _db.DocumentEntries.UpdateOneAsync(
+            e => e.Id == entryId,
+            Builders<DocumentEntry>.Update
+                .Set(e => e.DocumentId, entry.DocumentId)
+                .Set(e => e.Summary, summary.Trim())
+                .Set(e => e.ContentIndex, contentIndex.Trim())
+                .Set(e => e.UpdatedAt, DateTime.UtcNow));
+
+        return Ok(ApiResponse<object>.Ok(new { updated = true }));
+    }
+
+    /// <summary>设置文件夹内的主文档</summary>
+    [HttpPut("entries/{folderId}/primary-child")]
+    public async Task<IActionResult> SetFolderPrimaryChild(string folderId, [FromBody] SetPrimaryEntryRequest request)
+    {
+        var userId = GetUserId();
+        var folder = await _db.DocumentEntries.Find(e => e.Id == folderId && e.IsFolder).FirstOrDefaultAsync();
+        if (folder == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "文件夹不存在"));
+
+        var store = await _db.DocumentStores.Find(s => s.Id == folder.StoreId && s.OwnerId == userId).FirstOrDefaultAsync();
+        if (store == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "文件夹不存在"));
+
+        if (!string.IsNullOrEmpty(request.EntryId))
+        {
+            var child = await _db.DocumentEntries.Find(
+                e => e.Id == request.EntryId && e.ParentId == folderId).FirstOrDefaultAsync();
+            if (child == null)
+                return BadRequest(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "文档条目不存在或不在此文件夹内"));
+        }
+
+        var metadata = folder.Metadata ?? new Dictionary<string, string>();
+        if (string.IsNullOrEmpty(request.EntryId))
+            metadata.Remove("primaryChildId");
+        else
+            metadata["primaryChildId"] = request.EntryId;
+
+        await _db.DocumentEntries.UpdateOneAsync(
+            e => e.Id == folderId,
+            Builders<DocumentEntry>.Update
+                .Set(e => e.Metadata, metadata)
+                .Set(e => e.UpdatedAt, DateTime.UtcNow));
+
+        return Ok(ApiResponse<object>.Ok(new { primaryChildId = request.EntryId }));
+    }
+
+    /// <summary>为空间内的文档回填内容索引（ContentIndex），供内容搜索使用</summary>
+    [HttpPost("stores/{storeId}/rebuild-content-index")]
+    public async Task<IActionResult> RebuildContentIndex(string storeId)
+    {
+        var userId = GetUserId();
+        var store = await _db.DocumentStores.Find(s => s.Id == storeId && s.OwnerId == userId).FirstOrDefaultAsync();
+        if (store == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "文档空间不存在"));
+
+        // 查找没有 ContentIndex 的条目
+        var entries = await _db.DocumentEntries.Find(
+            Builders<DocumentEntry>.Filter.And(
+                Builders<DocumentEntry>.Filter.Eq(e => e.StoreId, storeId),
+                Builders<DocumentEntry>.Filter.Eq(e => e.IsFolder, false),
+                Builders<DocumentEntry>.Filter.Or(
+                    Builders<DocumentEntry>.Filter.Eq(e => e.ContentIndex, null),
+                    Builders<DocumentEntry>.Filter.Exists(e => e.ContentIndex, false))))
+            .ToListAsync();
+
+        var updated = 0;
+        foreach (var entry in entries)
+        {
+            string? text = null;
+
+            // 优先从 ParsedPrd 获取
+            if (!string.IsNullOrEmpty(entry.DocumentId))
+            {
+                var doc = await _documentService.GetByIdAsync(entry.DocumentId);
+                if (doc != null) text = doc.RawContent;
+            }
+
+            // 兜底从 Attachment.ExtractedText 获取
+            if (string.IsNullOrEmpty(text) && !string.IsNullOrEmpty(entry.AttachmentId))
+            {
+                var att = await _db.Attachments
+                    .Find(a => a.AttachmentId == entry.AttachmentId)
+                    .FirstOrDefaultAsync();
+                if (att != null) text = att.ExtractedText;
+            }
+
+            if (!string.IsNullOrEmpty(text))
+            {
+                var contentIndex = text.Length > 2000 ? text[..2000] : text;
+                await _db.DocumentEntries.UpdateOneAsync(
+                    e => e.Id == entry.Id,
+                    Builders<DocumentEntry>.Update.Set(e => e.ContentIndex, contentIndex));
+                updated++;
+            }
+        }
+
+        return Ok(ApiResponse<object>.Ok(new { total = entries.Count, updated }));
+    }
+
     // ─────────────────────────────────────────────
     // 文件上传（真实存盘）
     // ─────────────────────────────────────────────
@@ -967,4 +1142,16 @@ public class TogglePinRequest
 
     /// <summary>true=置顶, false=取消置顶</summary>
     public bool Pin { get; set; }
+}
+
+public class MoveEntryRequest
+{
+    /// <summary>目标文件夹 ID，null 或空表示移到根级</summary>
+    public string? ParentId { get; set; }
+}
+
+public class UpdateEntryContentRequest
+{
+    /// <summary>文档内容（Markdown/纯文本）</summary>
+    public string Content { get; set; } = string.Empty;
 }

@@ -1523,6 +1523,10 @@ export {
   togglePinnedEntry,
   listDocumentStoresWithPreview,
   searchDocumentEntries,
+  moveDocumentEntry,
+  updateDocumentContent,
+  setFolderPrimaryChild,
+  rebuildContentIndex,
 } from '@/services/real/documentStore';
 export type {
   DocumentStore,

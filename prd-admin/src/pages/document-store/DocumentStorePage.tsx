@@ -31,6 +31,12 @@ import {
   togglePinnedEntry,
   searchDocumentEntries,
   getDocumentStore,
+  deleteDocumentEntry,
+  moveDocumentEntry,
+  updateDocumentContent,
+  setFolderPrimaryChild,
+  rebuildContentIndex,
+  addDocumentEntry,
 } from '@/services';
 import { DocBrowser } from '@/components/doc-browser/DocBrowser';
 import type {
@@ -204,13 +210,33 @@ function StoreDetailView({ storeId, onBack }: {
     if (files.length > 0) handleFiles(files);
   }, [handleFiles]);
 
+  // 设置主文档：根级条目设为 store 主文档，文件夹内条目设为该文件夹主文档
   const handleSetPrimary = useCallback(async (entryId: string) => {
-    const res = await setPrimaryEntry(storeId, entryId);
-    if (res.success) {
-      setStore(prev => prev ? { ...prev, primaryEntryId: entryId } : prev);
-      toast.success('已设为主文档');
+    const entry = entries.find(e => e.id === entryId);
+    if (!entry) return;
+
+    if (entry.parentId) {
+      // 文件夹内条目：设为文件夹的主子项
+      const res = await setFolderPrimaryChild(entry.parentId, entryId);
+      if (res.success) {
+        // 更新本地 entries 中父文件夹的 metadata
+        setEntries(prev => prev.map(e =>
+          e.id === entry.parentId
+            ? { ...e, metadata: { ...(e.metadata ?? {}), primaryChildId: entryId } }
+            : e));
+        toast.success('已设为此文件夹的主文档');
+      } else {
+        toast.error('设置失败', res.error?.message);
+      }
+    } else {
+      // 根级条目：设为 store 主文档
+      const res = await setPrimaryEntry(storeId, entryId);
+      if (res.success) {
+        setStore(prev => prev ? { ...prev, primaryEntryId: entryId } : prev);
+        toast.success('已设为主文档');
+      }
     }
-  }, [storeId]);
+  }, [storeId, entries]);
 
   const handleTogglePin = useCallback(async (entryId: string, pin: boolean) => {
     const res = await togglePinnedEntry(storeId, entryId, pin);
@@ -219,6 +245,42 @@ function StoreDetailView({ storeId, onBack }: {
       toast.success(pin ? '已置顶' : '已取消置顶');
     }
   }, [storeId]);
+
+  const handleDeleteEntry = useCallback(async (entryId: string) => {
+    const res = await deleteDocumentEntry(entryId);
+    if (res.success) {
+      setEntries(prev => prev.filter(e => e.id !== entryId));
+      if (selectedEntryId === entryId) setSelectedEntryId(undefined);
+      toast.success('已删除');
+    } else {
+      toast.error('删除失败', res.error?.message);
+    }
+  }, [selectedEntryId]);
+
+  const handleMoveEntry = useCallback(async (entryId: string, targetFolderId: string | null) => {
+    const res = await moveDocumentEntry(entryId, targetFolderId);
+    if (res.success) {
+      setEntries(prev => prev.map(e =>
+        e.id === entryId ? { ...e, parentId: targetFolderId ?? undefined } : e));
+      toast.success('已移动');
+    } else {
+      toast.error('移动失败', res.error?.message);
+    }
+  }, []);
+
+  const handleSaveContent = useCallback(async (entryId: string, newContent: string) => {
+    const res = await updateDocumentContent(entryId, newContent);
+    if (res.success) {
+      // 更新本地 entries 中的 summary（前 200 字）
+      const summary = newContent.length > 200 ? newContent.slice(0, 200) : newContent;
+      setEntries(prev => prev.map(e =>
+        e.id === entryId ? { ...e, summary: summary.trim() } : e));
+      toast.success('已保存');
+    } else {
+      toast.error('保存失败', res.error?.message);
+      throw new Error(res.error?.message ?? '保存失败');
+    }
+  }, []);
 
   const loadContent = useCallback(async (entryId: string): Promise<string | null> => {
     const res = await getDocumentContent(entryId);
@@ -236,7 +298,28 @@ function StoreDetailView({ storeId, onBack }: {
     }
   }, [storeId]);
 
+  const handleCreateDocument = useCallback(async () => {
+    // 直接创建一个空白文档，后续支持在 Edit 模式中填充
+    const res = await addDocumentEntry(storeId, {
+      title: '新建文档',
+      sourceType: 'upload',
+      contentType: 'text/markdown',
+      summary: '',
+    });
+    if (res.success) {
+      setEntries(prev => [res.data, ...prev]);
+      setSelectedEntryId(res.data.id);
+      toast.success('已创建文档，点击编辑按钮开始写作');
+    } else {
+      toast.error('创建失败', res.error?.message);
+    }
+  }, [storeId]);
+
   const handleSearch = useCallback(async (keyword: string, contentSearch: boolean): Promise<DocBrowserEntry[] | null> => {
+    // 启用内容搜索时，先触发一次 ContentIndex 回填（后端对已有 ContentIndex 的条目会跳过）
+    if (contentSearch) {
+      await rebuildContentIndex(storeId);
+    }
     const res = await searchDocumentEntries(storeId, keyword, contentSearch);
     if (res.success) return res.data.items;
     return null;
@@ -304,8 +387,13 @@ function StoreDetailView({ storeId, onBack }: {
           onSelectEntry={setSelectedEntryId}
           onSetPrimary={handleSetPrimary}
           onTogglePin={handleTogglePin}
+          onDeleteEntry={handleDeleteEntry}
+          onMoveEntry={handleMoveEntry}
+          onSaveContent={handleSaveContent}
           loadContent={loadContent}
           onCreateFolder={handleCreateFolder}
+          onCreateDocument={handleCreateDocument}
+          onUploadFile={() => fileInputRef.current?.click()}
           onSearch={handleSearch}
           loading={loading}
           emptyState={

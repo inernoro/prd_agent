@@ -930,6 +930,7 @@ export const api = {
       detail: (storeId: string) => `/api/document-store/stores/${storeId}`,
       primaryEntry: (storeId: string) => `/api/document-store/stores/${storeId}/primary-entry`,
       pinnedEntries: (storeId: string) => `/api/document-store/stores/${storeId}/pinned-entries`,
+      rebuildContentIndex: (storeId: string) => `/api/document-store/stores/${storeId}/rebuild-content-index`,
     },
     entries: {
       list: (storeId: string) => `/api/document-store/stores/${storeId}/entries`,
@@ -940,6 +941,8 @@ export const api = {
       subscribeGithub: (storeId: string) => `/api/document-store/stores/${storeId}/subscribe-github`,
       detail: (entryId: string) => `/api/document-store/entries/${entryId}`,
       content: (entryId: string) => `/api/document-store/entries/${entryId}/content`,
+      move: (entryId: string) => `/api/document-store/entries/${entryId}/move`,
+      primaryChild: (folderId: string) => `/api/document-store/entries/${folderId}/primary-child`,
       sync: (entryId: string) => `/api/document-store/entries/${entryId}/sync`,
       update: (entryId: string) => `/api/document-store/entries/${entryId}`,
       delete: (entryId: string) => `/api/document-store/entries/${entryId}`,
