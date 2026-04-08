@@ -54,8 +54,10 @@ let branchUpdates = JSON.parse(localStorage.getItem('cds_branch_updates') || '{}
 const recentlyTouched = new Map(); // { branchId: timestamp } — branches user just operated on
 let isCheckingUpdates = false;
 
-// ── Preview mode: 'simple' (set default + open main) or 'multi' (subdomain per branch) ──
-let previewMode = localStorage.getItem('cds_preview_mode') || 'simple';
+// ── Preview mode: 'simple' (set default + open main) | 'port' (dynamic port) | 'multi' (subdomain per branch) ──
+// Server-authoritative: loaded from GET /config, persisted via PUT /preview-mode.
+// Default 'multi' matches server; overridden by loadConfig() on init.
+let previewMode = 'multi';
 
 // ── Mirror acceleration (npm/docker registry mirrors) ──
 let mirrorEnabled = false;
@@ -276,6 +278,10 @@ async function loadConfig() {
     workerPort = data.workerPort || '';
     cdsMode = data.mode || 'standalone';
     executors = data.executors || [];
+    // Server-authoritative preview mode (shared across all users)
+    if (data.previewMode === 'simple' || data.previewMode === 'port' || data.previewMode === 'multi') {
+      previewMode = data.previewMode;
+    }
     renderExecutorPanel();
     // Show CDS commit hash in header
     if (data.cdsCommitHash) {
@@ -436,19 +442,30 @@ function copyBranchName(name) {
   });
 }
 
-function cyclePreviewMode() {
+async function cyclePreviewMode() {
   // Cycle: simple → port → multi → simple
   const modes = ['simple', 'port', 'multi'];
   const idx = modes.indexOf(previewMode);
-  previewMode = modes[(idx + 1) % modes.length];
-  localStorage.setItem('cds_preview_mode', previewMode);
+  const nextMode = modes[(idx + 1) % modes.length];
+  // Persist to server (shared across all users). Revert UI on failure.
+  const prev = previewMode;
+  previewMode = nextMode;
   updatePreviewModeUI();
   renderBranches();
+  try {
+    await api('PUT', '/preview-mode', { mode: nextMode });
+  } catch (e) {
+    previewMode = prev;
+    updatePreviewModeUI();
+    renderBranches();
+    showToast('切换预览模式失败: ' + e.message, 'error');
+    return;
+  }
   const labels = { simple: '简洁模式（cookie 切换）', port: '端口直连模式（无缓存问题）', multi: '子域名模式（需 PREVIEW_DOMAIN）' };
-  if (previewMode === 'multi' && !previewDomain) {
+  if (nextMode === 'multi' && !previewDomain) {
     showToast('已开启子域名预览模式，但 PREVIEW_DOMAIN 未配置，预览将回退到简洁模式。请在「变量」中设置 PREVIEW_DOMAIN。', 'error');
   } else {
-    showToast(`预览：${labels[previewMode]}`, 'info');
+    showToast(`预览：${labels[nextMode]}`, 'info');
   }
 }
 

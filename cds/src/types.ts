@@ -195,6 +195,8 @@ export interface CdsState {
   mirrorEnabled?: boolean;
   /** Tab title override enabled (updates browser tab title with tag or branch short name) */
   tabTitleEnabled?: boolean;
+  /** Preview mode: 'simple' (cookie switch + main domain), 'port' (dynamic preview port), 'multi' (subdomain per branch). Default: 'multi' */
+  previewMode?: 'simple' | 'port' | 'multi';
   /** Registered executor nodes (scheduler mode) */
   executors?: Record<string, ExecutorNode>;
   /** Data migration task history */
