@@ -59,6 +59,7 @@ interface DefectState {
   statusFilter: string;
   projectFilter: string;
   teamFilter: string;
+  searchQuery: string;
   selectedDefectId: string | null;
   showSubmitPanel: boolean;
   showTemplateDialog: boolean;
@@ -74,6 +75,7 @@ interface DefectState {
   loadTeams: () => Promise<void>;
   loadAll: () => Promise<void>;
 
+  setSearchQuery: (query: string) => void;
   setFilter: (filter: FilterType) => void;
   setStatusFilter: (status: string) => void;
   setProjectFilter: (projectId: string) => void;
@@ -107,6 +109,7 @@ export const useDefectStore = create<DefectState>((set, get) => ({
   loading: false,
   error: '',
   filter: 'assigned',
+  searchQuery: '',
   statusFilter: '',
   projectFilter: '',
   teamFilter: '',
@@ -213,6 +216,8 @@ export const useDefectStore = create<DefectState>((set, get) => ({
   },
 
   // Setters
+  setSearchQuery: (query) => set({ searchQuery: query }),
+
   setFilter: (filter) => {
     set({ filter });
     get().loadDefects();

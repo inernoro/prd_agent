@@ -3,6 +3,7 @@ import { GlassCard } from '@/components/design/GlassCard';
 import { Button } from '@/components/design/Button';
 import { TabBar } from '@/components/design/TabBar';
 import { useDefectStore } from '@/stores/defectStore';
+import { useAuthStore } from '@/stores/authStore';
 import { toast } from '@/lib/toast';
 import { DefectStatus } from '@/services/contracts/defectAgent';
 import { Bug, Plus, FileText, RefreshCw, LayoutGrid, List, Columns3, BarChart3, FolderKanban } from 'lucide-react';
@@ -40,11 +41,30 @@ export default function DefectAgentPage() {
     teamFilter,
     setProjectFilter,
     setTeamFilter,
+    searchQuery,
   } = useDefectStore();
 
+  const userId = useAuthStore((s) => s.user?.userId);
   const [showProjectDialog, setShowProjectDialog] = useState(false);
   const [showSharesPanel, setShowSharesPanel] = useState(false);
   const notifiedRef = useRef(false);
+
+  // 与 DefectList 一致的客户端过滤逻辑，计算当前可见的缺陷 ID
+  const visibleDefectIds = useMemo(() => {
+    const archivedStatuses = [DefectStatus.Closed, DefectStatus.Rejected];
+    let filtered = defects;
+    if (userId && filter === 'submitted') filtered = defects.filter((d) => d.reporterId === userId);
+    else if (userId && filter === 'assigned') filtered = defects.filter((d) => d.assigneeId === userId);
+    if (searchQuery.trim()) {
+      const q = searchQuery.trim().toLowerCase();
+      filtered = filtered.filter((d) =>
+        d.defectNo?.toLowerCase().includes(q) ||
+        d.title?.toLowerCase().includes(q) ||
+        d.rawContent?.toLowerCase().includes(q)
+      );
+    }
+    return filtered.filter((d) => !archivedStatuses.includes(d.status as typeof DefectStatus.Closed)).map((d) => d.id);
+  }, [defects, filter, userId, searchQuery]);
 
   useEffect(() => {
     void loadAll();
@@ -272,6 +292,7 @@ export default function DefectAgentPage() {
         <SharesListPanel
           open={showSharesPanel}
           onClose={() => setShowSharesPanel(false)}
+          visibleDefectIds={visibleDefectIds}
         />
       )}
     </div>
