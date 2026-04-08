@@ -23,6 +23,8 @@ globs: ["prd-api/src/**/*.cs"]
 | `defect-agent` | 缺陷管理 |
 | `video-agent` | 视频生成 |
 | `report-agent` | 周报管理 |
+| `review-agent` | 产品评审员 |
+| `pr-review-prism` | PR审查棱镜 |
 
 ## 水印配置
 

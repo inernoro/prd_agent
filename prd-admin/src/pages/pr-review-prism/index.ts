@@ -1,0 +1,1 @@
+export { PrReviewPrismPage } from './PrReviewPrismPage';

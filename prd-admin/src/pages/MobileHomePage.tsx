@@ -43,7 +43,7 @@ const QUICK_AGENT_REVIEW_PRISM: QuickAgent = {
   key: 'review-prism',
   label: 'PR审查棱镜',
   icon: ClipboardCheck,
-  path: '/review-agent',
+  path: '/pr-review-prism',
   color: '#A5B4FC',
   bg: 'rgba(99,102,241,0.18)',
 };
@@ -110,7 +110,7 @@ export default function MobileHomePage() {
 
   const quickAgents = useMemo(() => {
     const list = [...QUICK_AGENTS_BASE];
-    if (permissions.includes('review-agent.use')) {
+    if (permissions.includes('pr-review-prism.use')) {
       list.unshift(QUICK_AGENT_REVIEW_PRISM);
     }
     return list;

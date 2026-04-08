@@ -105,6 +105,12 @@ export const menuList: MenuDef[] = [
     permissions: ['review-agent.use', 'review-agent.view-all', 'review-agent.manage'],
   },
   {
+    appKey: 'pr-review-prism',
+    label: 'PR审查棱镜',
+    icon: 'ScanSearch',
+    permissions: ['pr-review-prism.use'],
+  },
+  {
     appKey: 'defect-agent',
     label: '缺陷管理 Agent',
     icon: 'Bug',
@@ -251,6 +257,7 @@ export const allPermissions: PermissionDef[] = [
   { key: 'review-agent.use', label: '产品评审员', description: '提交方案并查看自己的评审结果', category: 'use' },
   { key: 'review-agent.view-all', label: '产品评审员 - 查看全部', description: '查看所有提交记录和评审结果', category: 'read' },
   { key: 'review-agent.manage', label: '产品评审员 - 管理', description: '自定义评审维度配置', category: 'manage' },
+  { key: 'pr-review-prism.use', label: 'PR审查棱镜', description: 'PR/MR 变更专项审查（独立于产品评审员）', category: 'use' },
   { key: 'defect-agent.use', label: '缺陷管理 Agent', description: '提交和查看缺陷', category: 'use' },
   { key: 'defect-agent.manage', label: '缺陷管理 Agent - 管理', description: '设置模板、指派处理人', category: 'manage' },
   { key: 'arena-agent.use', label: '竞技场 Agent', description: '模型盲评对战', category: 'use' },

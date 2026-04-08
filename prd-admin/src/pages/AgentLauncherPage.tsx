@@ -22,6 +22,7 @@ import {
   Zap,
   Globe,
   ClipboardCheck,
+  ScanSearch,
   type LucideIcon,
 } from 'lucide-react';
 import { MapSpinner } from '@/components/ui/VideoLoader';
@@ -36,7 +37,7 @@ import { ReviewAgentCardArt } from '@/pages/ai-toolbox/components/ReviewAgentCar
 // ── Icon & Color mapping (self-contained, doesn't touch ToolCard) ──
 
 const ICON_MAP: Record<string, LucideIcon> = {
-  FileText, Palette, PenTool, Bug, Video, Swords, FileBarChart, Code2, Languages, FileSearch, BarChart3, Bot, Workflow, Zap, Globe,
+  FileText, Palette, PenTool, Bug, Video, Swords, FileBarChart, Code2, Languages, FileSearch, BarChart3, Bot, Workflow, Zap, Globe, ClipboardCheck, ScanSearch,
 };
 
 /** Agent 封面图 CDN 路径 */
@@ -82,6 +83,8 @@ const ACCENT: Record<string, { from: string; to: string }> = {
   Workflow:  { from: '#14B8A6', to: '#5EEAD4' },
   Zap:       { from: '#F59E0B', to: '#FCD34D' },
   Globe:     { from: '#0EA5E9', to: '#38BDF8' },
+  ClipboardCheck: { from: '#6366F1', to: '#A5B4FC' },
+  ScanSearch: { from: '#8B5CF6', to: '#C4B5FD' },
 };
 
 function getAccent(icon: string) {
@@ -139,12 +142,12 @@ const QUICK_LINKS_BASE: HomeQuickLink[] = [
 ];
 
 const QUICK_LINK_REVIEW_PRISM: HomeQuickLink = {
-  icon: ClipboardCheck,
+  icon: ScanSearch,
   label: 'PR审查棱镜',
-  desc: '提交 PR 变更，多维度 AI 评审与结论',
-  path: '/review-agent',
-  accent: '#818CF8',
-  gradient: 'linear-gradient(135deg, #6366F1, #A855F7)',
+  desc: 'PR/MR 变更专项审查（与产品评审员独立）',
+  path: '/pr-review-prism',
+  accent: '#A78BFA',
+  gradient: 'linear-gradient(135deg, #8B5CF6, #6366F1)',
 };
 
 // ── Featured Agent Card (large, with cover image) ──
@@ -371,13 +374,16 @@ export default function AgentLauncherPage() {
   const user = useAuthStore((s) => s.user);
   const permissions = useAuthStore((s) => s.permissions ?? []);
 
+  const canUseReviewAgent = permissions.includes('review-agent.use');
+  const canUsePrReviewPrism = permissions.includes('pr-review-prism.use');
+
   const quickLinks = useMemo(() => {
     const base = [...QUICK_LINKS_BASE];
-    if (permissions.includes('review-agent.use')) {
+    if (canUsePrReviewPrism) {
       base.unshift(QUICK_LINK_REVIEW_PRISM);
     }
     return base;
-  }, [permissions]);
+  }, [canUsePrReviewPrism]);
 
   useEffect(() => {
     loadItems();
@@ -397,7 +403,14 @@ export default function AgentLauncherPage() {
 
   // Split into featured (customized agents with routePath) and compact (utility agents)
   const { featured, utilities, filtered } = useMemo(() => {
-    const allItems = [...items, ...staticUtilities];
+    const filterByPerm = (list: ToolboxItem[]) =>
+      list.filter((i) => {
+        if (i.agentKey === 'review-agent' && !canUseReviewAgent) return false;
+        if (i.agentKey === 'pr-review-prism' && !canUsePrReviewPrism) return false;
+        return true;
+      });
+
+    const allItems = filterByPerm([...items, ...staticUtilities]);
     const query = searchQuery.trim().toLowerCase();
     if (query) {
       const matched = allItems.filter(
@@ -411,12 +424,14 @@ export default function AgentLauncherPage() {
     const feat: ToolboxItem[] = [];
     const util: ToolboxItem[] = [];
     for (const item of items) {
+      if (item.agentKey === 'review-agent' && !canUseReviewAgent) continue;
+      if (item.agentKey === 'pr-review-prism' && !canUsePrReviewPrism) continue;
       if (item.routePath) feat.push(item);
       else util.push(item);
     }
     util.push(...staticUtilities);
     return { featured: feat, utilities: util, filtered: [] };
-  }, [items, staticUtilities, searchQuery]);
+  }, [items, staticUtilities, searchQuery, canUseReviewAgent, canUsePrReviewPrism]);
 
   const handleClick = (item: ToolboxItem) => {
     if (item.agentKey === 'prd-agent') {
