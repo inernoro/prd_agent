@@ -1,17 +1,24 @@
 /**
- * LibrarySection — 首页「智识殿堂」预览板块
+ * LibrarySection — 首页「智识殿堂」预览板块（claymorphism 风格）
  *
  * 展示社区共享的公共知识库（IsPublic=true 的 DocumentStore），
  * 替代原 TutorialSection 在首页的位置。
- *
- * 数据源：listPublicDocumentStores API。
  */
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Library, BookOpen, Heart, Eye, ArrowRight } from 'lucide-react';
+import { BookOpen, Heart, Eye, ArrowRight, Sparkles } from 'lucide-react';
 import { listPublicDocumentStores } from '@/services';
 import type { PublicDocumentStore } from '@/services/contracts/documentStore';
 import { MapSpinner } from '@/components/ui/VideoLoader';
+
+const CARD_PALETTES = [
+  { bg: '#FEF3C7', border: '#F59E0B', shadow: '#D97706', icon: '#F59E0B' },
+  { bg: '#DBEAFE', border: '#3B82F6', shadow: '#2563EB', icon: '#2563EB' },
+  { bg: '#FCE7F3', border: '#EC4899', shadow: '#DB2777', icon: '#DB2777' },
+  { bg: '#D1FAE5', border: '#10B981', shadow: '#059669', icon: '#059669' },
+  { bg: '#EDE9FE', border: '#A855F7', shadow: '#9333EA', icon: '#9333EA' },
+  { bg: '#FED7AA', border: '#F97316', shadow: '#EA580C', icon: '#EA580C' },
+];
 
 export function LibrarySection() {
   const navigate = useNavigate();
@@ -19,6 +26,16 @@ export function LibrarySection() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
+    // 注入字体
+    const id = 'library-claymorphism-fonts';
+    if (!document.getElementById(id)) {
+      const link = document.createElement('link');
+      link.id = id;
+      link.rel = 'stylesheet';
+      link.href = 'https://fonts.googleapis.com/css2?family=Fredoka:wght@400;500;600;700&family=Nunito:wght@400;500;600;700;800&display=swap';
+      document.head.appendChild(link);
+    }
+
     let mounted = true;
     listPublicDocumentStores(1, 6).then((res) => {
       if (!mounted) return;
@@ -29,42 +46,40 @@ export function LibrarySection() {
   }, []);
 
   return (
-    <section className="relative py-24 px-6 overflow-hidden">
-      {/* 背景：图书馆氛围（径向光晕） */}
-      <div
-        className="absolute inset-0 pointer-events-none"
-        style={{
-          background:
-            'radial-gradient(ellipse at 30% 20%, rgba(168,85,247,0.08) 0%, transparent 50%),' +
-            'radial-gradient(ellipse at 70% 80%, rgba(59,130,246,0.08) 0%, transparent 50%)',
-        }}
-      />
-
+    <section
+      className="relative py-24 px-6 overflow-hidden"
+      style={{
+        background: 'linear-gradient(180deg, #FFF7ED 0%, #FEF3C7 50%, #FFF7ED 100%)',
+        fontFamily: "'Nunito', system-ui, sans-serif",
+      }}
+    >
       <div className="max-w-7xl mx-auto relative">
         {/* 标题区 */}
         <div className="text-center mb-16">
-          <div className="inline-flex items-center gap-2 px-4 py-1.5 rounded-full mb-6"
+          <div
+            className="inline-flex items-center gap-2 px-4 py-2 rounded-full mb-6"
             style={{
-              background: 'linear-gradient(135deg, rgba(168,85,247,0.15), rgba(59,130,246,0.15))',
-              border: '1px solid rgba(168,85,247,0.25)',
-            }}>
-            <Library size={14} style={{ color: 'rgba(168,85,247,0.9)' }} />
-            <span className="text-[12px] font-semibold tracking-wider"
-              style={{ color: 'rgba(255,255,255,0.85)' }}>
-              SHARED KNOWLEDGE
+              background: '#D1FAE5',
+              border: '2.5px solid #10B981',
+              boxShadow: '0 3px 0 #059669',
+            }}
+          >
+            <Sparkles size={14} style={{ color: '#D97706' }} strokeWidth={2.8} />
+            <span className="text-[12px] font-bold" style={{ color: '#064E3B' }}>
+              SHARED KNOWLEDGE · 社区共建
             </span>
           </div>
-          <h2 className="text-[48px] md:text-[64px] font-bold leading-[1.05] mb-4"
+          <h2
+            className="text-[48px] md:text-[72px] font-bold leading-[0.95] mb-4"
             style={{
-              background: 'linear-gradient(180deg, #ffffff 0%, rgba(255,255,255,0.6) 100%)',
-              WebkitBackgroundClip: 'text',
-              WebkitTextFillColor: 'transparent',
-              backgroundClip: 'text',
-            }}>
-            智识殿堂
+              fontFamily: "'Fredoka', sans-serif",
+              color: '#1E1B4B',
+              letterSpacing: '-0.02em',
+            }}
+          >
+            智识<span style={{ color: '#F97316' }}>殿堂</span>。
           </h2>
-          <p className="text-[15px] md:text-[17px] max-w-2xl mx-auto"
-            style={{ color: 'rgba(255,255,255,0.55)' }}>
+          <p className="text-[15px] md:text-[17px] max-w-2xl mx-auto font-semibold" style={{ color: '#64748B' }}>
             社区共建的知识图书馆 · 收录开发者倾囊相授的洞见与心得
           </p>
         </div>
@@ -75,83 +90,126 @@ export function LibrarySection() {
             <MapSpinner size={20} />
           </div>
         ) : stores.length === 0 ? (
-          <div className="text-center py-16">
-            <BookOpen size={48} className="mx-auto mb-4" style={{ color: 'rgba(255,255,255,0.15)' }} />
-            <p className="text-[14px]" style={{ color: 'rgba(255,255,255,0.4)' }}>
-              暂无公开知识库，成为第一个分享者吧
+          <div
+            className="max-w-md mx-auto text-center p-10 rounded-[28px]"
+            style={{
+              background: '#FFFFFF',
+              border: '4px solid #1E1B4B',
+              boxShadow: '8px 8px 0 #1E1B4B',
+            }}
+          >
+            <div
+              className="w-20 h-20 rounded-3xl flex items-center justify-center mx-auto mb-5"
+              style={{
+                background: '#FEF3C7',
+                border: '3px solid #F59E0B',
+                boxShadow: '0 4px 0 #D97706',
+              }}
+            >
+              <BookOpen size={32} style={{ color: '#F59E0B' }} strokeWidth={2.5} />
+            </div>
+            <p
+              className="text-[18px] font-bold mb-2"
+              style={{ fontFamily: "'Fredoka', sans-serif", color: '#1E1B4B' }}
+            >
+              殿堂尚待第一卷藏书
+            </p>
+            <p className="text-[13px]" style={{ color: '#64748B' }}>
+              成为第一位分享者吧
             </p>
           </div>
         ) : (
           <>
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 mb-12">
-              {stores.map((s) => (
-                <button
-                  key={s.id}
-                  onClick={() => navigate(`/library/${s.id}`)}
-                  className="group relative text-left p-6 rounded-[20px] transition-all duration-300 hover:-translate-y-1 cursor-pointer"
-                  style={{
-                    background: 'linear-gradient(135deg, rgba(255,255,255,0.04) 0%, rgba(255,255,255,0.01) 100%)',
-                    border: '1px solid rgba(255,255,255,0.08)',
-                    backdropFilter: 'blur(20px)',
-                  }}
-                >
-                  {/* 渐变光晕 */}
-                  <div className="absolute inset-0 rounded-[20px] opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none"
+              {stores.map((s, idx) => {
+                const p = CARD_PALETTES[idx % CARD_PALETTES.length];
+                return (
+                  <button
+                    key={s.id}
+                    onClick={() => navigate(`/library/${s.id}`)}
+                    className="group relative text-left p-6 rounded-[24px] cursor-pointer transition-all active:translate-y-1"
                     style={{
-                      background: 'radial-gradient(circle at 50% 0%, rgba(168,85,247,0.12), transparent 70%)',
+                      background: '#FFFFFF',
+                      border: '3px solid #1E1B4B',
+                      boxShadow: '6px 6px 0 #1E1B4B',
                     }}
-                  />
-                  <div className="relative">
-                    <div className="w-12 h-12 rounded-[14px] flex items-center justify-center mb-4"
+                    onMouseDown={(e) => {
+                      (e.currentTarget as HTMLButtonElement).style.boxShadow = '2px 2px 0 #1E1B4B';
+                    }}
+                    onMouseUp={(e) => {
+                      (e.currentTarget as HTMLButtonElement).style.boxShadow = '6px 6px 0 #1E1B4B';
+                    }}
+                    onMouseLeave={(e) => {
+                      (e.currentTarget as HTMLButtonElement).style.boxShadow = '6px 6px 0 #1E1B4B';
+                    }}
+                  >
+                    <div
+                      className="w-14 h-14 rounded-2xl flex items-center justify-center mb-4"
                       style={{
-                        background: 'linear-gradient(135deg, rgba(168,85,247,0.15), rgba(59,130,246,0.15))',
-                        border: '1px solid rgba(168,85,247,0.25)',
-                      }}>
-                      <Library size={20} style={{ color: 'rgba(168,85,247,0.9)' }} />
+                        background: p.bg,
+                        border: `2.5px solid ${p.border}`,
+                        boxShadow: `0 3px 0 ${p.shadow}`,
+                      }}
+                    >
+                      <BookOpen size={24} style={{ color: p.icon }} strokeWidth={2.5} />
                     </div>
-                    <h3 className="text-[18px] font-bold mb-2 line-clamp-1"
-                      style={{ color: 'rgba(255,255,255,0.95)' }}>
+                    <h3
+                      className="text-[20px] font-bold mb-2 line-clamp-1"
+                      style={{ fontFamily: "'Fredoka', sans-serif", color: '#1E1B4B' }}
+                    >
                       {s.name}
                     </h3>
                     {s.description && (
-                      <p className="text-[13px] line-clamp-2 mb-5"
-                        style={{ color: 'rgba(255,255,255,0.5)' }}>
+                      <p className="text-[13px] line-clamp-2 mb-5 font-medium" style={{ color: '#64748B' }}>
                         {s.description}
                       </p>
                     )}
-                    <div className="flex items-center gap-4 text-[11px]"
-                      style={{ color: 'rgba(255,255,255,0.4)' }}>
+                    <div
+                      className="flex items-center gap-4 text-[12px] font-bold pt-4"
+                      style={{ borderTop: '2px dashed #E5E7EB', color: '#64748B' }}
+                    >
                       <span className="flex items-center gap-1">
-                        <BookOpen size={11} />
-                        {s.documentCount} 篇
+                        <BookOpen size={12} strokeWidth={2.8} />
+                        {s.documentCount}
                       </span>
                       <span className="flex items-center gap-1">
-                        <Heart size={11} />
+                        <Heart size={12} style={{ color: '#EC4899' }} fill="#FCE7F3" strokeWidth={2.8} />
                         {s.likeCount}
                       </span>
                       <span className="flex items-center gap-1">
-                        <Eye size={11} />
+                        <Eye size={12} strokeWidth={2.8} />
                         {s.viewCount}
                       </span>
                     </div>
-                  </div>
-                </button>
-              ))}
+                  </button>
+                );
+              })}
             </div>
 
             {/* 查看全部按钮 */}
             <div className="text-center">
               <button
                 onClick={() => navigate('/library')}
-                className="inline-flex items-center gap-2 px-6 py-3 rounded-full text-[14px] font-semibold cursor-pointer transition-all hover:scale-105"
+                className="inline-flex items-center gap-2 px-8 py-4 rounded-2xl text-[16px] font-bold cursor-pointer transition-all active:translate-y-1"
                 style={{
-                  background: 'linear-gradient(135deg, rgba(168,85,247,0.15), rgba(59,130,246,0.15))',
-                  border: '1px solid rgba(168,85,247,0.3)',
-                  color: 'rgba(255,255,255,0.95)',
+                  background: '#F97316',
+                  border: '3px solid #1E1B4B',
+                  boxShadow: '0 4px 0 #1E1B4B',
+                  color: '#FFFFFF',
+                  fontFamily: "'Nunito', sans-serif",
+                }}
+                onMouseDown={(e) => {
+                  (e.currentTarget as HTMLButtonElement).style.boxShadow = '0 1px 0 #1E1B4B';
+                }}
+                onMouseUp={(e) => {
+                  (e.currentTarget as HTMLButtonElement).style.boxShadow = '0 4px 0 #1E1B4B';
+                }}
+                onMouseLeave={(e) => {
+                  (e.currentTarget as HTMLButtonElement).style.boxShadow = '0 4px 0 #1E1B4B';
                 }}
               >
                 走进智识殿堂
-                <ArrowRight size={14} />
+                <ArrowRight size={18} strokeWidth={3} />
               </button>
             </div>
           </>

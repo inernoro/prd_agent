@@ -1,13 +1,20 @@
 /**
- * LibraryStoreDetailPage — 公开知识库详情页
+ * LibraryStoreDetailPage — 公开知识库详情页（claymorphism 风格）
  *
  * 路径：/library/:storeId
- * 复用 DocBrowser 展示文件树 + 内容预览，但隐藏所有写操作（编辑、删除、移动、新建）。
- * 顶部增加：作者信息 + 点赞 / 收藏 / 分享 按钮。
+ * 复用 DocBrowser 只读模式 + 顶部 claymorphism 互动按钮（点赞/收藏/分享）
  */
 import { useEffect, useState, useCallback } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { ArrowLeft, Heart, Star, Share2, Eye, BookOpen, Library, Loader2 } from 'lucide-react';
+import {
+  ArrowLeft,
+  Heart,
+  Star,
+  Share2,
+  Eye,
+  BookOpen,
+  Library,
+} from 'lucide-react';
 import { DocBrowser } from '@/components/doc-browser/DocBrowser';
 import type { EntryPreview } from '@/components/doc-browser/DocBrowser';
 import {
@@ -21,13 +28,27 @@ import {
 } from '@/services';
 import type { PublicStoreDetail, DocumentEntry } from '@/services/contracts/documentStore';
 import { useAuthStore } from '@/stores/authStore';
-import { MapSectionLoader } from '@/components/ui/VideoLoader';
+import { MapSectionLoader, MapSpinner } from '@/components/ui/VideoLoader';
 import { toast } from '@/lib/toast';
+
+/** 注入 Fredoka + Nunito 字体 */
+function useFredokaFonts() {
+  useEffect(() => {
+    const id = 'library-claymorphism-fonts';
+    if (document.getElementById(id)) return;
+    const link = document.createElement('link');
+    link.id = id;
+    link.rel = 'stylesheet';
+    link.href = 'https://fonts.googleapis.com/css2?family=Fredoka:wght@400;500;600;700&family=Nunito:wght@400;500;600;700;800&display=swap';
+    document.head.appendChild(link);
+  }, []);
+}
 
 export function LibraryStoreDetailPage() {
   const { storeId } = useParams<{ storeId: string }>();
   const navigate = useNavigate();
   const isLoggedIn = useAuthStore((s) => Boolean(s.token));
+  useFredokaFonts();
 
   const [store, setStore] = useState<PublicStoreDetail | null>(null);
   const [entries, setEntries] = useState<DocumentEntry[]>([]);
@@ -101,14 +122,18 @@ export function LibraryStoreDetailPage() {
     });
   }, [store]);
 
+  const bg = {
+    background:
+      'radial-gradient(ellipse at 20% 0%, rgba(251,191,36,0.22) 0%, transparent 50%),' +
+      'radial-gradient(ellipse at 80% 30%, rgba(59,130,246,0.15) 0%, transparent 50%),' +
+      'linear-gradient(180deg, #FFF7ED 0%, #FEF3C7 100%)',
+    fontFamily: "'Nunito', system-ui, sans-serif",
+    color: '#1E1B4B',
+  } as const;
+
   if (loading) {
     return (
-      <div
-        className="min-h-screen flex items-center justify-center"
-        style={{
-          background: 'linear-gradient(180deg, #0a0a14 0%, #0f0f1a 100%)',
-        }}
-      >
+      <div className="min-h-screen flex items-center justify-center" style={bg}>
         <MapSectionLoader text="正在打开藏书阁..." />
       </div>
     );
@@ -116,21 +141,28 @@ export function LibraryStoreDetailPage() {
 
   if (!store) {
     return (
-      <div
-        className="min-h-screen flex flex-col items-center justify-center gap-4"
-        style={{ background: 'linear-gradient(180deg, #0a0a14 0%, #0f0f1a 100%)' }}
-      >
-        <BookOpen size={48} style={{ color: 'rgba(255,255,255,0.2)' }} />
-        <p className="text-[14px]" style={{ color: 'rgba(255,255,255,0.5)' }}>
+      <div className="min-h-screen flex flex-col items-center justify-center gap-5" style={bg}>
+        <div
+          className="w-20 h-20 rounded-3xl flex items-center justify-center"
+          style={{
+            background: '#FEF3C7',
+            border: '4px solid #1E1B4B',
+            boxShadow: '6px 6px 0 #1E1B4B',
+          }}
+        >
+          <BookOpen size={32} style={{ color: '#F59E0B' }} strokeWidth={2.5} />
+        </div>
+        <p className="text-[16px] font-semibold" style={{ color: '#64748B' }}>
           这间藏书阁尚未对外开放
         </p>
         <button
           onClick={() => navigate('/library')}
-          className="px-5 py-2.5 rounded-full text-[13px] font-semibold cursor-pointer"
+          className="px-6 py-3 rounded-2xl text-[14px] font-bold cursor-pointer transition-all active:translate-y-1"
           style={{
-            background: 'rgba(168,85,247,0.15)',
-            border: '1px solid rgba(168,85,247,0.3)',
-            color: 'rgba(255,255,255,0.9)',
+            background: '#F97316',
+            border: '3px solid #1E1B4B',
+            boxShadow: '0 4px 0 #1E1B4B',
+            color: '#FFFFFF',
           }}
         >
           返回殿堂
@@ -140,137 +172,162 @@ export function LibraryStoreDetailPage() {
   }
 
   return (
-    <div
-      className="min-h-screen w-full overflow-y-auto"
-      style={{
-        background:
-          'radial-gradient(ellipse at 20% 0%, rgba(168,85,247,0.08) 0%, transparent 50%),' +
-          'radial-gradient(ellipse at 80% 30%, rgba(59,130,246,0.06) 0%, transparent 50%),' +
-          'linear-gradient(180deg, #0a0a14 0%, #0f0f1a 100%)',
-      }}
-    >
-      {/* 返回按钮 */}
+    <div className="min-h-screen w-full overflow-y-auto" style={bg}>
+      {/* 返回按钮 clay */}
       <button
         onClick={() => navigate('/library')}
-        className="fixed top-6 left-6 z-50 w-10 h-10 rounded-full flex items-center justify-center cursor-pointer transition-all hover:scale-110 backdrop-blur-xl"
+        className="fixed top-6 left-6 z-50 w-12 h-12 rounded-2xl flex items-center justify-center cursor-pointer transition-all active:translate-y-0.5"
         style={{
-          background: 'rgba(255,255,255,0.06)',
-          border: '1px solid rgba(255,255,255,0.1)',
-          color: 'rgba(255,255,255,0.9)',
+          background: '#FFFFFF',
+          border: '3px solid #1E1B4B',
+          boxShadow: '0 4px 0 #1E1B4B',
+          color: '#1E1B4B',
         }}
         title="返回殿堂"
       >
-        <ArrowLeft size={18} />
+        <ArrowLeft size={20} strokeWidth={2.8} />
       </button>
 
       {/* Hero 头部 */}
-      <section className="relative pt-24 pb-10 px-6">
+      <section className="relative pt-24 pb-8 px-6">
         <div className="max-w-6xl mx-auto">
-          <div className="flex flex-col md:flex-row items-start gap-8">
-            {/* 大图标 */}
-            <div className="w-24 h-24 rounded-[28px] flex items-center justify-center flex-shrink-0"
-              style={{
-                background: 'linear-gradient(135deg, rgba(168,85,247,0.2), rgba(59,130,246,0.2))',
-                border: '1px solid rgba(168,85,247,0.3)',
-                boxShadow: '0 12px 32px rgba(168,85,247,0.2)',
-              }}>
-              <Library size={36} style={{ color: 'rgba(168,85,247,0.95)' }} />
-            </div>
-
-            {/* 文字信息 */}
-            <div className="flex-1 min-w-0">
-              <div className="flex items-center gap-2 mb-3">
-                <span className="text-[11px] font-semibold tracking-wider px-2 py-0.5 rounded-full"
-                  style={{
-                    background: 'rgba(168,85,247,0.15)',
-                    border: '1px solid rgba(168,85,247,0.3)',
-                    color: 'rgba(216,180,254,0.9)',
-                  }}>
-                  KNOWLEDGE BASE
-                </span>
-                <span className="text-[11px]" style={{ color: 'rgba(255,255,255,0.4)' }}>
-                  · {store.documentCount} 篇文档
-                </span>
-              </div>
-              <h1 className="text-[36px] md:text-[44px] font-black leading-tight mb-3"
-                style={{ color: 'rgba(255,255,255,0.95)' }}>
-                {store.name}
-              </h1>
-              {store.description && (
-                <p className="text-[15px] mb-5 max-w-3xl" style={{ color: 'rgba(255,255,255,0.6)' }}>
-                  {store.description}
-                </p>
-              )}
-              {/* 作者 + 统计 */}
-              <div className="flex items-center gap-4 flex-wrap text-[12px]" style={{ color: 'rgba(255,255,255,0.5)' }}>
-                <span className="flex items-center gap-2">
-                  <div className="w-7 h-7 rounded-full flex items-center justify-center text-[11px] font-bold"
-                    style={{ background: 'rgba(168,85,247,0.2)', color: 'rgba(216,180,254,0.95)' }}>
-                    {store.ownerName.charAt(0)}
-                  </div>
-                  {store.ownerName}
-                </span>
-                <span className="flex items-center gap-1.5">
-                  <Eye size={12} />
-                  {store.viewCount} 次浏览
-                </span>
-                <span>
-                  {new Date(store.updatedAt).toLocaleDateString()} 更新
-                </span>
-              </div>
-            </div>
-
-            {/* 互动按钮 */}
-            <div className="flex items-center gap-2 flex-shrink-0">
-              <InteractionButton
-                active={store.likedByMe}
-                count={store.likeCount}
-                icon={Heart}
-                activeColor="rgba(244,63,94,0.95)"
-                label="点赞"
-                onClick={handleLike}
-                disabled={interacting}
-              />
-              <InteractionButton
-                active={store.favoritedByMe}
-                count={store.favoriteCount}
-                icon={Star}
-                activeColor="rgba(234,179,8,0.95)"
-                label="收藏"
-                onClick={handleFavorite}
-                disabled={interacting}
-              />
-              <button
-                onClick={handleShare}
-                className="h-10 px-4 rounded-full flex items-center gap-2 cursor-pointer transition-all hover:scale-105 text-[12px] font-semibold"
+          <div
+            className="p-8 rounded-[32px] relative"
+            style={{
+              background: '#FFFFFF',
+              border: '4px solid #1E1B4B',
+              boxShadow: '8px 8px 0 #1E1B4B',
+            }}
+          >
+            <div className="flex flex-col md:flex-row items-start gap-6">
+              {/* 大图标 */}
+              <div
+                className="w-24 h-24 rounded-3xl flex items-center justify-center flex-shrink-0"
                 style={{
-                  background: 'rgba(255,255,255,0.06)',
-                  border: '1px solid rgba(255,255,255,0.12)',
-                  color: 'rgba(255,255,255,0.9)',
-                  backdropFilter: 'blur(20px)',
+                  background: '#FEF3C7',
+                  border: '4px solid #F59E0B',
+                  boxShadow: '0 5px 0 #D97706',
                 }}
               >
-                <Share2 size={14} />
-                分享
-              </button>
+                <Library size={42} style={{ color: '#D97706' }} strokeWidth={2.5} />
+              </div>
+
+              {/* 文字 */}
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center gap-2 mb-3 flex-wrap">
+                  <span
+                    className="inline-flex items-center gap-1 px-3 py-1 rounded-full text-[11px] font-bold"
+                    style={{
+                      background: '#D1FAE5',
+                      border: '2.5px solid #10B981',
+                      boxShadow: '0 2px 0 #059669',
+                      color: '#064E3B',
+                    }}
+                  >
+                    KNOWLEDGE BASE
+                  </span>
+                  <span
+                    className="text-[12px] font-bold"
+                    style={{ color: '#64748B' }}
+                  >
+                    · {store.documentCount} 篇文档
+                  </span>
+                </div>
+                <h1
+                  className="text-[36px] md:text-[48px] font-bold leading-tight mb-3"
+                  style={{ fontFamily: "'Fredoka', sans-serif", color: '#1E1B4B' }}
+                >
+                  {store.name}
+                </h1>
+                {store.description && (
+                  <p className="text-[15px] mb-5 max-w-3xl font-medium" style={{ color: '#475569', lineHeight: 1.6 }}>
+                    {store.description}
+                  </p>
+                )}
+                {/* 作者 + 元数据 */}
+                <div className="flex items-center gap-4 flex-wrap text-[12px] font-semibold" style={{ color: '#64748B' }}>
+                  <span className="flex items-center gap-2">
+                    <div
+                      className="w-8 h-8 rounded-full flex items-center justify-center text-[12px] font-bold"
+                      style={{
+                        background: '#FCE7F3',
+                        border: '2px solid #EC4899',
+                        color: '#831843',
+                      }}
+                    >
+                      {store.ownerName.charAt(0)}
+                    </div>
+                    <span style={{ color: '#1E1B4B' }}>{store.ownerName}</span>
+                  </span>
+                  <span className="flex items-center gap-1.5">
+                    <Eye size={13} strokeWidth={2.8} /> {store.viewCount} 次浏览
+                  </span>
+                  <span>{new Date(store.updatedAt).toLocaleDateString()} 更新</span>
+                </div>
+              </div>
+
+              {/* 互动按钮组 */}
+              <div className="flex items-center gap-3 flex-wrap flex-shrink-0">
+                <InteractionButton
+                  active={store.likedByMe}
+                  count={store.likeCount}
+                  icon={Heart}
+                  activeColor="#EC4899"
+                  activeShadow="#DB2777"
+                  onClick={handleLike}
+                  disabled={interacting}
+                />
+                <InteractionButton
+                  active={store.favoritedByMe}
+                  count={store.favoriteCount}
+                  icon={Star}
+                  activeColor="#F59E0B"
+                  activeShadow="#D97706"
+                  onClick={handleFavorite}
+                  disabled={interacting}
+                />
+                <button
+                  onClick={handleShare}
+                  className="h-12 px-5 rounded-2xl flex items-center gap-2 cursor-pointer transition-all active:translate-y-1 text-[13px] font-bold"
+                  style={{
+                    background: '#A855F7',
+                    border: '3px solid #1E1B4B',
+                    boxShadow: '0 4px 0 #1E1B4B',
+                    color: '#FFFFFF',
+                  }}
+                >
+                  <Share2 size={15} strokeWidth={2.8} />
+                  分享
+                </button>
+              </div>
             </div>
           </div>
         </div>
       </section>
 
-      {/* 文档浏览器 */}
+      {/* 文档浏览器 — 在 claymorphism 白色卡片内 */}
       <section className="relative px-6 pb-16">
-        <div className="max-w-6xl mx-auto h-[calc(100vh-280px)] min-h-[500px]">
-          <DocBrowser
-            entries={entries}
-            primaryEntryId={store.primaryEntryId}
-            pinnedEntryIds={store.pinnedEntryIds ?? []}
-            selectedEntryId={selectedEntryId}
-            onSelectEntry={setSelectedEntryId}
-            loadContent={loadContent}
-            // 公开页只读，不传任何写操作回调
-            loading={false}
-          />
+        <div className="max-w-6xl mx-auto">
+          <div
+            className="rounded-[28px] overflow-hidden"
+            style={{
+              background: '#FFFFFF',
+              border: '4px solid #1E1B4B',
+              boxShadow: '8px 8px 0 #1E1B4B',
+              height: 'calc(100vh - 320px)',
+              minHeight: 500,
+            }}
+          >
+            <DocBrowser
+              entries={entries}
+              primaryEntryId={store.primaryEntryId}
+              pinnedEntryIds={store.pinnedEntryIds ?? []}
+              selectedEntryId={selectedEntryId}
+              onSelectEntry={setSelectedEntryId}
+              loadContent={loadContent}
+              loading={false}
+            />
+          </div>
         </div>
       </section>
     </div>
@@ -282,6 +339,7 @@ function InteractionButton({
   count,
   icon: Icon,
   activeColor,
+  activeShadow,
   onClick,
   disabled,
 }: {
@@ -289,7 +347,7 @@ function InteractionButton({
   count: number;
   icon: typeof Heart;
   activeColor: string;
-  label: string;
+  activeShadow: string;
   onClick: () => void;
   disabled?: boolean;
 }) {
@@ -297,19 +355,19 @@ function InteractionButton({
     <button
       onClick={onClick}
       disabled={disabled}
-      className="h-10 px-4 rounded-full flex items-center gap-2 cursor-pointer transition-all hover:scale-105 text-[12px] font-semibold"
+      className="h-12 px-5 rounded-2xl flex items-center gap-2 cursor-pointer transition-all active:translate-y-1 text-[13px] font-bold disabled:opacity-70"
       style={{
-        background: active
-          ? `${activeColor.replace('0.95', '0.15')}`
-          : 'rgba(255,255,255,0.06)',
-        border: active
-          ? `1px solid ${activeColor.replace('0.95', '0.4')}`
-          : '1px solid rgba(255,255,255,0.12)',
-        color: active ? activeColor : 'rgba(255,255,255,0.9)',
-        backdropFilter: 'blur(20px)',
+        background: active ? activeColor : '#FFFFFF',
+        border: `3px solid ${active ? activeShadow : '#1E1B4B'}`,
+        boxShadow: `0 4px 0 ${active ? activeShadow : '#1E1B4B'}`,
+        color: active ? '#FFFFFF' : '#1E1B4B',
       }}
     >
-      {disabled ? <Loader2 size={14} className="animate-spin" /> : <Icon size={14} fill={active ? activeColor : 'none'} />}
+      {disabled ? (
+        <MapSpinner size={14} color={active ? '#FFFFFF' : '#1E1B4B'} />
+      ) : (
+        <Icon size={15} strokeWidth={2.8} fill={active ? '#FFFFFF' : 'none'} />
+      )}
       {count}
     </button>
   );

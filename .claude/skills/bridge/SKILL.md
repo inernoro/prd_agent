@@ -19,31 +19,78 @@ triggers:
 
 - `/bridge` / "操作页面" / "打开预览" / "帮我操作"
 
+## ⚠️ 核心架构：需要用户握手授权
+
+Widget **默认不轮询** heartbeat（节省流量）。Agent 必须先通过以下方式之一让 Widget 进入激活状态：
+
+### 方式 A：握手请求（推荐，有用户同意 ✓）
+
+1. AI 调 `POST /api/bridge/handshake-request { branchId, reason, agentName }`
+2. Widget 在**用户浏览器左下角弹出 clay 风格面板**，展示 `reason`
+3. 用户点击「**同意**」→ Widget 自动 start-session + heartbeat 开始
+4. AI 轮询 `GET /api/bridge/handshake-status/:id` → 看到 `approved` → 开始操作
+
+### 方式 B：直接激活（无用户同意，兼容旧流程）
+
+1. AI 调 `POST /api/bridge/start-session { branchId }`
+2. Widget 在下一次 check 周期（最多 10s）后开始 heartbeat
+3. 注意：此方式没有用户同意步骤，仅用于自动化测试场景
+
+> **强制规则**：如果是用户在对话中说「帮我操作此页面」，**必须**用方式 A（握手请求），让用户在浏览器里手动同意。方式 B 仅用于 `/cds-deploy` 流水线的自动化冒烟测试。
+
 ## 前置条件
 
 1. 当前分支已部署到 CDS（用 `/cds-deploy`）
-2. 用户已在浏览器中打开预览页面
+2. 用户已在浏览器中打开预览页面（任意 URL，只要是该分支的预览域名）
 3. 环境变量 `CDS_HOST` 和 `AI_ACCESS_KEY` 已配置
 
 ## 操作流程
 
-### Phase 1: 确认连接
+### Phase 1: 握手请求（推荐流程）
+
+当用户在对话中说「帮我操作这个页面」之类的话时，AI 必须执行以下步骤：
 
 ```bash
 CDS="https://$CDS_HOST"
 BRANCH_ID=$(git branch --show-current | tr '/' '-' | tr '[:upper:]' '[:lower:]')
 
-# 检查是否有活跃连接
+# Step 1: 发起握手请求（包含清晰的 reason 给用户看）
+RESP=$(curl -sf -H "X-AI-Access-Key: $AI_ACCESS_KEY" \
+  -H "Content-Type: application/json" \
+  -X POST "$CDS/api/bridge/handshake-request" \
+  -d "{\"branchId\":\"$BRANCH_ID\",\"agentName\":\"Claude Code\",\"reason\":\"我想验证「智识殿堂」页面的渲染和交互\"}")
+REQUEST_ID=$(echo "$RESP" | python3 -c "import json,sys;print(json.load(sys.stdin)['requestId'])")
+
+# Step 2: 告诉用户去浏览器左下角点「同意」
+echo "⏳ 请在浏览器左下角点击「同意」按钮授权 AI 操作..."
+
+# Step 3: 轮询等待批准（最多 2 分钟）
+for i in $(seq 1 40); do
+  STATUS=$(curl -sf "$CDS/api/bridge/handshake-status/$REQUEST_ID" | python3 -c "import json,sys;print(json.load(sys.stdin)['status'])")
+  case "$STATUS" in
+    approved) echo "✓ 用户已授权"; break ;;
+    rejected) echo "✗ 用户拒绝"; exit 1 ;;
+    expired)  echo "✗ 握手请求超时"; exit 1 ;;
+    pending)  sleep 3 ;;
+  esac
+done
+
+# Step 4: 等 3-5s 让 Widget heartbeat 注册（活动连接）
+sleep 3
+
+# Step 5: 检查连接已建立
 curl -sf -H "X-AI-Access-Key: $AI_ACCESS_KEY" "$CDS/api/bridge/connections"
 ```
 
-如果无连接，发导航请求让用户打开页面：
+### Phase 1B: 直接激活（旧流程，仅用于自动化场景）
 
 ```bash
+# 仅用于 cds-deploy 冒烟测试等无人值守场景
 curl -sf -H "X-AI-Access-Key: $AI_ACCESS_KEY" \
   -H "Content-Type: application/json" \
-  -X POST "$CDS/api/bridge/navigate-request" \
-  -d "{\"branchId\":\"$BRANCH_ID\",\"url\":\"/\",\"reason\":\"需要操作预览页面\"}"
+  -X POST "$CDS/api/bridge/start-session" \
+  -d "{\"branchId\":\"$BRANCH_ID\"}"
+sleep 12  # 等 Widget 下次 check (最多 10s)
 ```
 
 ### Phase 2: 读取页面
@@ -155,6 +202,7 @@ curl -sf ... -d '{"action":"scroll","params":{"direction":"down","pixels":500},"
 
 | # | 局限 | 表现 | 规避方式 |
 |---|------|------|---------|
+| 0 | **必须先握手或 start-session** | 跳过这一步直接查 connections 永远为空 | 走 Phase 1 的握手流程或 Phase 1B 的 start-session |
 | 1 | **`navigate` 会丢 session** | 全页面刷新清空 sessionStorage | 登录后只用 `spa-navigate` 或 `click` |
 | 2 | **首页 Agent 卡片文字为空** | DOM 提取拿不到图片/CSS 渲染的内容 | 用 `evaluate` 搜索 textContent 并点击 |
 | 3 | **操作不触发 `:hover` 效果** | 合成事件不触发 CSS 伪类 | 不影响功能，仅视觉差异 |
