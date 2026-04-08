@@ -19,3 +19,6 @@
 | feat | prd-api | 新增 PUT /entries/{entryId}/content 文档内容在线编辑端点 |
 | feat | prd-api | 新增 PUT /entries/{folderId}/primary-child 设置文件夹主文档端点 |
 | feat | prd-api | 新增 POST /stores/{storeId}/rebuild-content-index 回填内容索引端点 |
+| fix | prd-admin | 修复拖拽文件树条目时误触发右侧上传遮罩（仅响应外部 Files 拖入） |
+| feat | prd-admin | 文档浏览器左侧导航支持鼠标拖拽调整宽度（200~560px，sessionStorage 持久化） |
+| feat | prd-admin | 文档浏览器左侧导航应用液态玻璃效果（backdrop-filter blur + saturate） |

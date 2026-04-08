@@ -421,9 +421,38 @@ export function DocBrowser({
   const [editMode, setEditMode] = useState(false);
   const [editContent, setEditContent] = useState('');
   const [saving, setSaving] = useState(false);
+  // 左侧面板宽度（可拖拽调整，sessionStorage 持久化）
+  const [sidebarWidth, setSidebarWidth] = useState<number>(() => {
+    const saved = sessionStorage.getItem('doc-browser-sidebar-width');
+    return saved ? parseInt(saved, 10) : 280;
+  });
+  const [resizing, setResizing] = useState(false);
   const searchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const addMenuRef = useRef<HTMLDivElement>(null);
   const pinnedSet = useMemo(() => new Set(pinnedIds), [pinnedIds]);
+
+  // 拖拽调整宽度
+  useEffect(() => {
+    if (!resizing) return;
+    const handleMove = (e: MouseEvent) => {
+      const newWidth = Math.min(560, Math.max(200, e.clientX - 20));
+      setSidebarWidth(newWidth);
+    };
+    const handleUp = () => {
+      setResizing(false);
+      sessionStorage.setItem('doc-browser-sidebar-width', String(sidebarWidth));
+    };
+    document.addEventListener('mousemove', handleMove);
+    document.addEventListener('mouseup', handleUp);
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
+    return () => {
+      document.removeEventListener('mousemove', handleMove);
+      document.removeEventListener('mouseup', handleUp);
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+    };
+  }, [resizing, sidebarWidth]);
 
   // 从 entries 的 metadata 中构建每个文件夹的主文档映射
   const folderPrimaryMap = useMemo(() => {
@@ -655,9 +684,16 @@ export function DocBrowser({
     <div className="flex-1 min-h-0 flex gap-0 rounded-[12px] overflow-hidden"
       style={{ border: '1px solid rgba(255,255,255,0.06)', background: 'rgba(0,0,0,0.12)', minHeight: 'calc(100vh - 160px)' }}>
 
-      {/* 左侧：文件树 */}
-      <div className="w-[260px] min-w-[220px] max-w-[320px] flex flex-col border-r"
-        style={{ borderColor: 'rgba(255,255,255,0.06)', background: 'rgba(255,255,255,0.01)' }}>
+      {/* 左侧：文件树（液态玻璃效果 + 可拖拽调整宽度） */}
+      <div className="flex flex-col flex-shrink-0 relative"
+        style={{
+          width: `${sidebarWidth}px`,
+          background: 'linear-gradient(180deg, rgba(255,255,255,0.045) 0%, rgba(255,255,255,0.02) 100%)',
+          backdropFilter: 'blur(40px) saturate(180%)',
+          WebkitBackdropFilter: 'blur(40px) saturate(180%)',
+          borderRight: '1px solid rgba(255,255,255,0.08)',
+          boxShadow: 'inset -1px 0 0 rgba(255,255,255,0.04), 0 4px 20px -8px rgba(0,0,0,0.3)',
+        }}>
 
         {/* 标题显示切换 + 搜索 + 新建文件夹 */}
         <div className="p-2.5 space-y-2" style={{ borderBottom: '1px solid rgba(255,255,255,0.04)' }}>
@@ -835,6 +871,22 @@ export function DocBrowser({
         <div className="px-3 py-2 text-[10px]" style={{ borderTop: '1px solid rgba(255,255,255,0.04)', color: 'var(--text-muted)' }}>
           <FolderOpen size={10} className="inline mr-1" />
           {fileCount} 个文件
+        </div>
+
+        {/* 拖拽调整宽度的把手 */}
+        <div
+          className="absolute top-0 right-0 h-full w-1 cursor-col-resize group/resize"
+          onMouseDown={(e) => { e.preventDefault(); setResizing(true); }}
+          style={{ zIndex: 10 }}
+        >
+          <div
+            className="absolute top-0 left-0 h-full transition-all duration-150"
+            style={{
+              width: resizing ? '2px' : '1px',
+              background: resizing ? 'rgba(59,130,246,0.6)' : 'transparent',
+            }}
+          />
+          <div className="absolute top-0 left-0 h-full w-1 group-hover/resize:bg-[rgba(59,130,246,0.3)] transition-colors duration-150" />
         </div>
       </div>
 

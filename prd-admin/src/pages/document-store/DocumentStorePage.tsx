@@ -191,18 +191,27 @@ function StoreDetailView({ storeId, onBack }: {
     setUploading(false);
   }, [storeId]);
 
+  // 仅响应外部文件拖入（排除内部条目拖拽，避免误触发上传遮罩）
+  const isFileDrag = (e: React.DragEvent) => e.dataTransfer.types.includes('Files');
+
   const handleDragEnter = useCallback((e: React.DragEvent) => {
+    if (!isFileDrag(e)) return;
     e.preventDefault(); e.stopPropagation();
     dragCounter.current += 1;
     if (dragCounter.current === 1) setDragging(true);
   }, []);
   const handleDragLeave = useCallback((e: React.DragEvent) => {
+    if (!isFileDrag(e)) return;
     e.preventDefault(); e.stopPropagation();
     dragCounter.current -= 1;
     if (dragCounter.current === 0) setDragging(false);
   }, []);
-  const handleDragOver = useCallback((e: React.DragEvent) => { e.preventDefault(); }, []);
+  const handleDragOver = useCallback((e: React.DragEvent) => {
+    if (!isFileDrag(e)) return;
+    e.preventDefault();
+  }, []);
   const handleDrop = useCallback((e: React.DragEvent) => {
+    if (!isFileDrag(e)) return;
     e.preventDefault(); e.stopPropagation();
     setDragging(false);
     dragCounter.current = 0;
