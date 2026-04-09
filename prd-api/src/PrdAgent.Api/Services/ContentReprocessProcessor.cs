@@ -43,7 +43,7 @@ public class ContentReprocessProcessor
         if (!string.IsNullOrEmpty(entry.DocumentId))
         {
             var doc = await _documentService.GetByIdAsync(entry.DocumentId);
-            sourceContent = doc?.Content;
+            sourceContent = doc?.RawContent;
         }
         if (string.IsNullOrWhiteSpace(sourceContent))
             sourceContent = entry.ContentIndex; // 兜底用索引
