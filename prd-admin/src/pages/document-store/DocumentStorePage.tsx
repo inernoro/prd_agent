@@ -155,27 +155,65 @@ function CreateStoreDialog({ onClose, onCreated }: {
   );
 }
 
-// ── 重命名知识库对话框 ──
-function RenameStoreDialog({ storeId, initialName, onClose, onRenamed }: {
+// ── 编辑知识库对话框（重命名 + 打标签） ──
+function EditStoreDialog({ storeId, initialName, initialTags, onClose, onSaved }: {
   storeId: string;
   initialName: string;
+  initialTags: string[];
   onClose: () => void;
-  onRenamed: (newName: string) => void;
+  onSaved: (patch: { name: string; tags: string[] }) => void;
 }) {
   const [name, setName] = useState(initialName);
+  const [tags, setTags] = useState<string[]>(initialTags);
+  const [tagInput, setTagInput] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
+  const addTag = (raw: string) => {
+    const trimmed = raw.trim().replace(/^#/, '');
+    if (!trimmed) return;
+    if (trimmed.length > 20) { setError('单个标签最多 20 个字'); return; }
+    if (tags.includes(trimmed)) { setTagInput(''); return; }
+    if (tags.length >= 10) { setError('最多 10 个标签'); return; }
+    setError('');
+    setTags(prev => [...prev, trimmed]);
+    setTagInput('');
+  };
+
+  const removeTag = (t: string) => setTags(prev => prev.filter(x => x !== t));
+
+  const handleTagKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Enter' || e.key === ',' || e.key === '，') {
+      e.preventDefault();
+      addTag(tagInput);
+    } else if (e.key === 'Backspace' && !tagInput && tags.length > 0) {
+      removeTag(tags[tags.length - 1]);
+    }
+  };
+
+  const sameAsInitial = (a: string[], b: string[]) =>
+    a.length === b.length && a.every((v, i) => v === b[i]);
+
   const handleSave = async () => {
-    const trimmed = name.trim();
-    if (!trimmed) { setError('空间名称不能为空'); return; }
-    if (trimmed === initialName) { onClose(); return; }
+    const trimmedName = name.trim();
+    if (!trimmedName) { setError('空间名称不能为空'); return; }
+    // 把未提交的输入也当作一个标签
+    const pendingTag = tagInput.trim().replace(/^#/, '');
+    const finalTags = pendingTag && !tags.includes(pendingTag) ? [...tags, pendingTag] : tags;
+
+    const nameChanged = trimmedName !== initialName;
+    const tagsChanged = !sameAsInitial(finalTags, initialTags);
+    if (!nameChanged && !tagsChanged) { onClose(); return; }
+
     setLoading(true);
     setError('');
-    const res = await updateDocumentStore(storeId, { name: trimmed });
+    const res = await updateDocumentStore(storeId, {
+      ...(nameChanged ? { name: trimmedName } : {}),
+      ...(tagsChanged ? { tags: finalTags } : {}),
+    });
     if (res.success) {
-      onRenamed(trimmed);
-      toast.success('名称已更新');
+      onSaved({ name: trimmedName, tags: finalTags });
+      toast.success('已更新');
       onClose();
     } else {
       setError(res.error?.message ?? '更新失败');
@@ -187,7 +225,7 @@ function RenameStoreDialog({ storeId, initialName, onClose, onRenamed }: {
     <div className="fixed inset-0 z-50 flex items-center justify-center"
       style={{ background: 'rgba(0,0,0,0.5)', backdropFilter: 'blur(8px)' }}
       onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
-      <div className="w-[420px] max-w-[92vw] rounded-[16px] p-6"
+      <div className="w-[440px] max-w-[92vw] rounded-[16px] p-6"
         style={{
           background: 'linear-gradient(180deg, var(--glass-bg-start) 0%, var(--glass-bg-end) 100%)',
           border: '1px solid rgba(255,255,255,0.08)',
@@ -201,7 +239,7 @@ function RenameStoreDialog({ storeId, initialName, onClose, onRenamed }: {
               <Pencil size={14} style={{ color: 'rgba(59,130,246,0.85)' }} />
             </div>
             <span className="text-[15px] font-semibold" style={{ color: 'var(--text-primary)' }}>
-              重命名知识库
+              编辑知识库
             </span>
           </div>
           <button onClick={onClose}
@@ -226,6 +264,45 @@ function RenameStoreDialog({ storeId, initialName, onClose, onRenamed }: {
             }}
             onKeyDown={e => { if (e.key === 'Enter') handleSave(); }}
           />
+        </div>
+
+        <div className="mb-4">
+          <label className="block text-[12px] mb-1.5" style={{ color: 'var(--text-muted)' }}>
+            标签 <span className="text-[10px]" style={{ color: 'var(--text-muted)' }}>（回车或逗号分隔，最多 10 个）</span>
+          </label>
+          <div
+            className="min-h-9 px-2 py-1.5 rounded-[10px] flex flex-wrap items-center gap-1.5"
+            style={{
+              background: 'var(--input-bg, rgba(255,255,255,0.05))',
+              border: '1px solid var(--border-subtle, rgba(255,255,255,0.1))',
+            }}>
+            {tags.map(t => (
+              <span key={t}
+                className="inline-flex items-center gap-1 h-6 px-2 rounded-[6px] text-[11px] font-medium"
+                style={{
+                  background: 'rgba(59,130,246,0.1)',
+                  border: '1px solid rgba(59,130,246,0.2)',
+                  color: 'rgba(59,130,246,0.9)',
+                }}>
+                # {t}
+                <button
+                  onClick={() => removeTag(t)}
+                  className="ml-0.5 cursor-pointer flex items-center justify-center"
+                  style={{ color: 'rgba(59,130,246,0.7)' }}
+                  title="移除">
+                  <X size={10} />
+                </button>
+              </span>
+            ))}
+            <input
+              value={tagInput}
+              onChange={e => setTagInput(e.target.value)}
+              onKeyDown={handleTagKeyDown}
+              placeholder={tags.length === 0 ? '如：产品、需求' : ''}
+              className="flex-1 min-w-[80px] h-6 bg-transparent outline-none text-[12px]"
+              style={{ color: 'var(--text-primary)' }}
+            />
+          </div>
         </div>
 
         {error && <p className="text-[12px] mb-3" style={{ color: 'rgba(239,68,68,0.9)' }}>{error}</p>}
@@ -990,7 +1067,7 @@ export function DocumentStorePage() {
   const [likes, setLikes] = useState<InteractionStoreCard[]>([]);
   const [loading, setLoading] = useState(true);
   const [showCreate, setShowCreate] = useState(false);
-  const [renameTarget, setRenameTarget] = useState<{ id: string; name: string } | null>(null);
+  const [editTarget, setEditTarget] = useState<{ id: string; name: string; tags: string[] } | null>(null);
   // 使用 storeId 而不是 store 对象，这样刷新后可以从 URL 或 sessionStorage 恢复
   const [selectedStoreId, setSelectedStoreId] = useState<string | null>(() => {
     return sessionStorage.getItem('doc-store-selected-id');
@@ -1188,16 +1265,38 @@ export function DocumentStorePage() {
                       {tab === 'mine' && (
                         <button
                           className="surface-row h-6 w-6 rounded-[6px] flex items-center justify-center cursor-pointer opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0"
-                          title="重命名"
+                          title="编辑名称与标签"
                           onClick={(e) => {
                             e.stopPropagation();
-                            setRenameTarget({ id: s.id, name: s.name });
+                            setEditTarget({ id: s.id, name: s.name, tags: s.tags ?? [] });
                           }}
                           style={{ color: 'rgba(59,130,246,0.7)' }}>
                           <Pencil size={11} />
                         </button>
                       )}
                     </div>
+
+                    {/* 标签展示 */}
+                    {(s.tags?.length ?? 0) > 0 && (
+                      <div className="flex flex-wrap gap-1 mt-1.5">
+                        {s.tags.slice(0, 4).map(t => (
+                          <span key={t}
+                            className="inline-flex items-center h-5 px-1.5 rounded-[5px] text-[10px] font-medium"
+                            style={{
+                              background: 'rgba(59,130,246,0.08)',
+                              border: '1px solid rgba(59,130,246,0.15)',
+                              color: 'rgba(59,130,246,0.85)',
+                            }}>
+                            # {t}
+                          </span>
+                        ))}
+                        {s.tags.length > 4 && (
+                          <span className="text-[10px] self-center" style={{ color: 'var(--text-muted)' }}>
+                            +{s.tags.length - 4}
+                          </span>
+                        )}
+                      </div>
+                    )}
 
                     {/* 最近文档预览列表 */}
                     <div className="flex-1 mt-1.5 space-y-0.5 min-h-[60px]">
@@ -1265,13 +1364,14 @@ export function DocumentStorePage() {
         />
       )}
 
-      {renameTarget && (
-        <RenameStoreDialog
-          storeId={renameTarget.id}
-          initialName={renameTarget.name}
-          onClose={() => setRenameTarget(null)}
-          onRenamed={(newName) => {
-            setStores(prev => prev.map(x => x.id === renameTarget.id ? { ...x, name: newName } : x));
+      {editTarget && (
+        <EditStoreDialog
+          storeId={editTarget.id}
+          initialName={editTarget.name}
+          initialTags={editTarget.tags}
+          onClose={() => setEditTarget(null)}
+          onSaved={(patch) => {
+            setStores(prev => prev.map(x => x.id === editTarget.id ? { ...x, name: patch.name, tags: patch.tags } : x));
           }}
         />
       )}
