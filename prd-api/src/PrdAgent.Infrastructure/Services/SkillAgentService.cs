@@ -107,10 +107,10 @@ public class SkillAgentService
         session.Messages.Add(new SkillAgentMessage("assistant", displayText));
 
         // Process stage data and advance stage if applicable
-        if (stageData != null)
+        if (stageData is { } sd)
         {
-            ApplyStageData(session, stageData);
-            yield return new SseChunk("stage_data", stageData);
+            ApplyStageData(session, sd);
+            yield return new SseChunk("stage_data", sd);
         }
 
         yield return new SseChunk("done", new
