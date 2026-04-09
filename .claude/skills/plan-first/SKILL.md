@@ -24,6 +24,14 @@ Your proposed approach: what you'll change, how, and why. Keep this concrete —
 **涉及改动（可选）**
 If the scope involves specific files, functions, or lines, list them briefly so the user can assess the footprint. Skip this if the change is conceptual or doesn't involve code.
 
+**导航位置（新 Agent / 新页面必填）**
+Declare where users will find the new entry. Default is 百宝箱. See `.claude/rules/navigation-registry.md`.
+
+```
+【位置】百宝箱 / 左侧导航"XX" / 首页快捷入口
+【路径】登录后首页 → 1) 点击 → 2) 点击 → 3) 到达
+```
+
 End with a clear waiting signal, e.g.: "确认后执行" or "等待您确认后动手。"
 
 ## Key principles

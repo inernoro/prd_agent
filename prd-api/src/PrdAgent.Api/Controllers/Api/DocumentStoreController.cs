@@ -1541,7 +1541,7 @@ public class DocumentStoreController : ControllerBase
         return Ok(ApiResponse<object>.Ok(new { favorited = false, favoriteCount = store?.FavoriteCount ?? 0 }));
     }
 
-    /// <summary>列出我收藏的知识库</summary>
+    /// <summary>列出我收藏的知识库（含最近文档预览 + 店主信息，用于卡片展示）</summary>
     [HttpGet("favorites/mine")]
     public async Task<IActionResult> ListMyFavorites()
     {
@@ -1552,8 +1552,91 @@ public class DocumentStoreController : ControllerBase
             .ToListAsync();
 
         var storeIds = favs.Select(f => f.StoreId).ToList();
+        var items = await BuildInteractionStoreCardsAsync(storeIds, userId);
+        return Ok(ApiResponse<object>.Ok(new { items }));
+    }
+
+    /// <summary>列出我点赞的知识库（含最近文档预览 + 店主信息，用于卡片展示）</summary>
+    [HttpGet("likes/mine")]
+    public async Task<IActionResult> ListMyLikes()
+    {
+        var userId = GetUserId();
+        var likes = await _db.DocumentStoreLikes
+            .Find(l => l.UserId == userId)
+            .SortByDescending(l => l.CreatedAt)
+            .ToListAsync();
+
+        var storeIds = likes.Select(l => l.StoreId).ToList();
+        var items = await BuildInteractionStoreCardsAsync(storeIds, userId);
+        return Ok(ApiResponse<object>.Ok(new { items }));
+    }
+
+    /// <summary>
+    /// 为我的收藏/点赞列表构造卡片数据：按传入 storeId 顺序保留 + 附加最近 3 个文档 + 店主信息。
+    /// 不存在的 store（已被删除）会被静默跳过。
+    /// </summary>
+    private async Task<List<object>> BuildInteractionStoreCardsAsync(List<string> storeIds, string currentUserId)
+    {
+        if (storeIds.Count == 0) return new List<object>();
+
         var stores = await _db.DocumentStores.Find(s => storeIds.Contains(s.Id)).ToListAsync();
-        return Ok(ApiResponse<object>.Ok(new { items = stores }));
+        var storeMap = stores.ToDictionary(s => s.Id, s => s);
+
+        // 最近 3 个文档预览（每个空间）
+        var recentEntries = await _db.DocumentEntries
+            .Find(Builders<DocumentEntry>.Filter.And(
+                Builders<DocumentEntry>.Filter.In(e => e.StoreId, storeIds),
+                Builders<DocumentEntry>.Filter.Eq(e => e.IsFolder, false),
+                Builders<DocumentEntry>.Filter.Ne(e => e.SourceType, DocumentSourceType.GithubDirectory)))
+            .SortByDescending(e => e.UpdatedAt)
+            .Limit(storeIds.Count * 3)
+            .ToListAsync();
+
+        var entriesByStore = recentEntries
+            .GroupBy(e => e.StoreId)
+            .ToDictionary(g => g.Key, g => g.Take(3).Select(e => new
+            {
+                id = e.Id,
+                title = e.Title,
+                updatedAt = e.UpdatedAt,
+                contentType = e.ContentType,
+            }).ToList());
+
+        // 店主信息
+        var ownerIds = stores.Select(s => s.OwnerId).Distinct().ToList();
+        var owners = await _db.Users.Find(u => ownerIds.Contains(u.UserId)).ToListAsync();
+        var ownerMap = owners.ToDictionary(u => u.UserId, u => new { u.DisplayName, u.AvatarFileName });
+
+        // 保留 storeIds 传入顺序（即互动时间顺序）
+        var result = new List<object>();
+        foreach (var id in storeIds)
+        {
+            if (!storeMap.TryGetValue(id, out var s)) continue;
+            result.Add(new
+            {
+                s.Id,
+                s.Name,
+                s.Description,
+                s.OwnerId,
+                s.AppKey,
+                s.Tags,
+                s.IsPublic,
+                s.PrimaryEntryId,
+                s.PinnedEntryIds,
+                s.DocumentCount,
+                s.LikeCount,
+                s.ViewCount,
+                s.FavoriteCount,
+                s.CoverImageUrl,
+                s.CreatedAt,
+                s.UpdatedAt,
+                ownerName = ownerMap.GetValueOrDefault(s.OwnerId)?.DisplayName ?? "未知用户",
+                ownerAvatar = ownerMap.GetValueOrDefault(s.OwnerId)?.AvatarFileName,
+                isOwner = s.OwnerId == currentUserId,
+                recentEntries = entriesByStore.GetValueOrDefault(s.Id, new()),
+            });
+        }
+        return result;
     }
 
     /// <summary>创建分享链接</summary>

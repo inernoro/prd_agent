@@ -941,6 +941,7 @@ export const api = {
       like: (storeId: string) => `/api/document-store/stores/${storeId}/like`,
       favorite: (storeId: string) => `/api/document-store/stores/${storeId}/favorite`,
       myFavorites: () => '/api/document-store/favorites/mine',
+      myLikes: () => '/api/document-store/likes/mine',
       // 分享链接
       shareLinks: (storeId: string) => `/api/document-store/stores/${storeId}/share-links`,
       shareLinkDetail: (linkId: string) => `/api/document-store/share-links/${linkId}`,

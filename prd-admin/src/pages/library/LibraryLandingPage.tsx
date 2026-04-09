@@ -179,9 +179,14 @@ export function LibraryLandingPage() {
               </div>
             </div>
 
-            {/* 右侧 Mock Card */}
+            {/* 右侧 Feature Card —— 用排序下的 #1 知识库的真实数据驱动 */}
             <div className="hidden md:block">
-              <HeroMockCard />
+              <HeroFeatureCard
+                store={stores[0]}
+                loading={loading}
+                onView={(id) => navigate(`/library/${id}`)}
+                onPublish={() => navigate('/document-store')}
+              />
             </div>
           </div>
         </div>
@@ -485,8 +490,91 @@ function Stat({ num, label }: { num: number; label: string }) {
   );
 }
 
-// ── Hero 右侧 Mock Card ──
-function HeroMockCard() {
+// ── Hero 右侧 Feature Card（真实数据，展示当前排序下的 #1 知识库） ──
+function HeroFeatureCard({
+  store,
+  loading,
+  onView,
+  onPublish,
+}: {
+  store?: PublicDocumentStore;
+  loading: boolean;
+  onView: (id: string) => void;
+  onPublish: () => void;
+}) {
+  // 加载态：骨架卡片，避免空白
+  if (loading) {
+    return (
+      <div className="relative max-w-md ml-auto">
+        <div
+          className="p-6 rounded-[28px]"
+          style={{
+            background: '#FFFFFF',
+            border: '4px solid #1E1B4B',
+            boxShadow: '8px 8px 0 #1E1B4B',
+            minHeight: 260,
+          }}
+        >
+          <MapSectionLoader text="正在加载特色知识库…" />
+        </div>
+      </div>
+    );
+  }
+
+  // 空数据态：引导发布
+  if (!store) {
+    return (
+      <div className="relative max-w-md ml-auto">
+        <div
+          className="p-8 rounded-[28px] text-center"
+          style={{
+            background: '#FFFFFF',
+            border: '4px solid #1E1B4B',
+            boxShadow: '8px 8px 0 #1E1B4B',
+          }}
+        >
+          <div
+            className="w-16 h-16 rounded-2xl mx-auto mb-4 flex items-center justify-center"
+            style={{
+              background: '#FECACA',
+              border: '3px solid #1E1B4B',
+              boxShadow: '0 3px 0 #1E1B4B',
+            }}
+          >
+            <BookOpen size={26} style={{ color: '#DC2626' }} strokeWidth={2.5} />
+          </div>
+          <div
+            className="text-[20px] mb-2"
+            style={{ fontFamily: "'Fredoka', sans-serif", fontWeight: 700, color: '#1E1B4B' }}
+          >
+            等待第一卷藏书
+          </div>
+          <p className="text-[13px] mb-6 font-medium" style={{ color: '#64748B' }}>
+            成为第一位向社区分享知识的人
+          </p>
+          <button
+            onClick={onPublish}
+            className="w-full py-4 rounded-2xl text-[15px] font-black cursor-pointer transition-all hover:-translate-y-0.5"
+            style={{
+              background: '#16A34A',
+              border: '3px solid #1E1B4B',
+              boxShadow: '0 4px 0 #1E1B4B',
+              color: '#FFFFFF',
+              fontFamily: "'Nunito', sans-serif",
+            }}
+          >
+            发布我的知识 →
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  // 真实数据：用渐近曲线把 (likes + views/5) 映射到 0-100% 热度
+  // 0 = 0%, combined=15 → 50%, combined=60 → 80%, combined=∞ → 100%
+  const combined = store.likeCount + Math.floor(store.viewCount / 5);
+  const heatPct = Math.round((combined / (combined + 15)) * 100);
+
   return (
     <div className="relative max-w-md ml-auto">
       <div
@@ -508,19 +596,20 @@ function HeroMockCard() {
           >
             <BookOpen size={24} style={{ color: '#2563EB' }} strokeWidth={2.5} />
           </div>
-          <div>
+          <div className="min-w-0 flex-1">
             <div
-              className="text-[18px] leading-tight"
+              className="text-[18px] leading-tight truncate"
               style={{
                 fontFamily: "'Fredoka', sans-serif",
                 fontWeight: 700,
                 color: '#1E1B4B',
               }}
+              title={store.name}
             >
-              React 工程实战
+              {store.name}
             </div>
-            <div className="text-[12px] font-bold mt-0.5" style={{ color: '#64748B' }}>
-              12 lessons · 4h 30m
+            <div className="text-[12px] font-bold mt-0.5 truncate" style={{ color: '#64748B' }}>
+              {store.documentCount} 篇文档 · by {store.ownerName}
             </div>
           </div>
         </div>
@@ -528,7 +617,7 @@ function HeroMockCard() {
         <div className="mb-4">
           <div className="flex justify-between items-center mb-2">
             <span className="text-[13px] font-bold" style={{ color: '#64748B' }}>
-              Progress
+              热度
             </span>
             <span
               className="text-[15px]"
@@ -538,7 +627,7 @@ function HeroMockCard() {
                 color: '#16A34A',
               }}
             >
-              65%
+              {heatPct}%
             </span>
           </div>
           <div
@@ -546,16 +635,34 @@ function HeroMockCard() {
             style={{ background: '#F3F4F6', border: '2.5px solid #1E1B4B' }}
           >
             <div
-              className="h-full"
+              className="h-full transition-all duration-500"
               style={{
-                width: '65%',
+                width: `${heatPct}%`,
                 background: '#16A34A',
               }}
             />
           </div>
+          <div
+            className="flex items-center gap-4 mt-3 text-[11px] font-bold"
+            style={{ color: '#64748B' }}
+          >
+            <span className="flex items-center gap-1">
+              <Heart size={12} strokeWidth={2.8} style={{ color: '#EC4899' }} fill="#FCE7F3" />
+              {store.likeCount}
+            </span>
+            <span className="flex items-center gap-1">
+              <Eye size={12} strokeWidth={2.8} />
+              {store.viewCount}
+            </span>
+            <span className="flex items-center gap-1">
+              <BookOpen size={12} strokeWidth={2.8} />
+              {store.documentCount}
+            </span>
+          </div>
         </div>
 
         <button
+          onClick={() => onView(store.id)}
           className="w-full py-4 rounded-2xl text-[15px] font-black cursor-pointer transition-all hover:-translate-y-0.5"
           style={{
             background: '#16A34A',
@@ -565,7 +672,7 @@ function HeroMockCard() {
             fontFamily: "'Nunito', sans-serif",
           }}
         >
-          继续阅读 →
+          立即查看 →
         </button>
       </div>
 
