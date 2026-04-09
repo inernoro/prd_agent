@@ -11,6 +11,8 @@ import {
   deleteSkillAgentSession,
   listPersonalSkills,
   deletePersonalSkill,
+  getSkillMd,
+  updateSkillFromMd,
   type SkillAgentStage,
   type PersonalSkillItem,
 } from '@/services/real/skillAgent';
@@ -18,7 +20,7 @@ import { useAuthStore } from '@/stores/authStore';
 import { glassBar } from '@/lib/glassStyles';
 import {
   Send, Save, FileText, Archive, RotateCcw, Wand2, ArrowLeft, Check,
-  Loader2, Bot, User, CheckCircle2, Plus, Trash2, Zap, Play, X,
+  Loader2, Bot, User, CheckCircle2, Plus, Trash2, Zap, Play, Copy, ClipboardCheck, ChevronLeft,
 } from 'lucide-react';
 
 /** Strip ```json:stage_result ... ``` blocks from display text */
@@ -437,7 +439,7 @@ function MySkillsTab({ onSwitchToCreate }: { onSwitchToCreate: () => void }) {
   const [skills, setSkills] = useState<PersonalSkillItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [deleting, setDeleting] = useState<string | null>(null);
-  const [testingSkill, setTestingSkill] = useState<PersonalSkillItem | null>(null);
+  const [selectedSkill, setSelectedSkill] = useState<PersonalSkillItem | null>(null);
 
   const loadSkills = useCallback(async () => {
     setLoading(true);
@@ -471,6 +473,17 @@ function MySkillsTab({ onSwitchToCreate }: { onSwitchToCreate: () => void }) {
     optimization: '#EC4899', general: '#6366F1', other: '#64748B',
   };
 
+  // Detail view: selected skill
+  if (selectedSkill) {
+    return (
+      <SkillDetailView
+        skill={selectedSkill}
+        onBack={() => { setSelectedSkill(null); loadSkills(); }}
+        onDelete={() => { handleDelete(selectedSkill.skillKey); setSelectedSkill(null); }}
+      />
+    );
+  }
+
   if (loading) {
     return (
       <div className="flex-1 flex items-center justify-center">
@@ -487,12 +500,8 @@ function MySkillsTab({ onSwitchToCreate }: { onSwitchToCreate: () => void }) {
           <Zap size={28} style={{ color: '#8B5CF6' }} />
         </div>
         <div className="text-center">
-          <div className="text-sm font-medium mb-1" style={{ color: 'var(--text-primary)' }}>
-            还没有个人技能
-          </div>
-          <div className="text-xs" style={{ color: 'var(--text-muted)' }}>
-            用 AI 助手创建你的第一个技能吧
-          </div>
+          <div className="text-sm font-medium mb-1" style={{ color: 'var(--text-primary)' }}>还没有个人技能</div>
+          <div className="text-xs" style={{ color: 'var(--text-muted)' }}>用 AI 助手创建你的第一个技能吧</div>
         </div>
         <button onClick={onSwitchToCreate}
           className="flex items-center gap-1.5 px-4 py-2 rounded-xl text-[13px] font-medium"
@@ -509,7 +518,8 @@ function MySkillsTab({ onSwitchToCreate }: { onSwitchToCreate: () => void }) {
         {skills.map((skill) => {
           const accent = CATEGORY_COLORS[skill.category] ?? '#6366F1';
           return (
-            <GlassCard key={skill.skillKey} padding="none" interactive className="group">
+            <GlassCard key={skill.skillKey} padding="none" interactive className="group cursor-pointer"
+              onClick={() => setSelectedSkill(skill)}>
               <div className="px-4 py-3.5">
                 <div className="flex items-start gap-3">
                   <div className="shrink-0 w-9 h-9 rounded-xl flex items-center justify-center text-lg"
@@ -517,48 +527,27 @@ function MySkillsTab({ onSwitchToCreate }: { onSwitchToCreate: () => void }) {
                     {skill.icon || '⚡'}
                   </div>
                   <div className="flex-1 min-w-0">
-                    <div className="text-[13px] font-semibold truncate" style={{ color: 'var(--text-primary)' }}>
-                      {skill.title}
-                    </div>
-                    <div className="text-[11px] mt-0.5 line-clamp-2" style={{ color: 'var(--text-muted)' }}>
-                      {skill.description || '暂无描述'}
-                    </div>
+                    <div className="text-[13px] font-semibold truncate" style={{ color: 'var(--text-primary)' }}>{skill.title}</div>
+                    <div className="text-[11px] mt-0.5 line-clamp-2" style={{ color: 'var(--text-muted)' }}>{skill.description || '暂无描述'}</div>
                   </div>
                   <div className="shrink-0 flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-all">
-                    <button
-                      onClick={(e) => { e.stopPropagation(); setTestingSkill(skill); }}
-                      className="p-1.5 rounded-lg transition-colors hover:bg-purple-500/10"
-                      style={{ color: 'rgba(139,92,246,0.7)' }}
-                      title="试用">
-                      <Play size={13} />
-                    </button>
-                    <button
-                      onClick={(e) => { e.stopPropagation(); handleDelete(skill.skillKey); }}
+                    <button onClick={(e) => { e.stopPropagation(); handleDelete(skill.skillKey); }}
                       disabled={deleting === skill.skillKey}
                       className="p-1.5 rounded-lg transition-colors hover:bg-red-500/10"
-                      style={{ color: 'rgba(239,68,68,0.7)' }}
-                      title="删除">
+                      style={{ color: 'rgba(239,68,68,0.7)' }} title="删除">
                       {deleting === skill.skillKey ? <Loader2 size={13} className="animate-spin" /> : <Trash2 size={13} />}
                     </button>
                   </div>
                 </div>
-
-                {/* Tags & Meta */}
                 <div className="flex items-center gap-1.5 mt-2.5 flex-wrap">
                   <span className="text-[10px] px-1.5 py-0.5 rounded-md font-medium"
-                    style={{ background: `${accent}15`, color: accent, border: `1px solid ${accent}20` }}>
-                    {skill.category}
-                  </span>
+                    style={{ background: `${accent}15`, color: accent, border: `1px solid ${accent}20` }}>{skill.category}</span>
                   {skill.tags.slice(0, 3).map((tag) => (
                     <span key={tag} className="text-[10px] px-1.5 py-0.5 rounded-md"
-                      style={{ background: 'rgba(255,255,255,0.04)', color: 'var(--text-muted)', border: '1px solid rgba(255,255,255,0.06)' }}>
-                      {tag}
-                    </span>
+                      style={{ background: 'rgba(255,255,255,0.04)', color: 'var(--text-muted)', border: '1px solid rgba(255,255,255,0.06)' }}>{tag}</span>
                   ))}
                   {skill.usageCount > 0 && (
-                    <span className="text-[10px] ml-auto" style={{ color: 'var(--text-muted)' }}>
-                      {skill.usageCount} 次使用
-                    </span>
+                    <span className="text-[10px] ml-auto" style={{ color: 'var(--text-muted)' }}>{skill.usageCount} 次使用</span>
                   )}
                 </div>
               </div>
@@ -566,20 +555,25 @@ function MySkillsTab({ onSwitchToCreate }: { onSwitchToCreate: () => void }) {
           );
         })}
       </div>
-
-      {/* Skill Test Panel */}
-      {testingSkill && (
-        <SkillTestPanel skill={testingSkill} onClose={() => setTestingSkill(null)} />
-      )}
     </div>
   );
 }
 
-// ━━━ Skill Test Panel ━━━━━━━━
+// ━━━ Skill Detail View (left: md editor, right: test) ━━━━━━━━
 
-function SkillTestPanel({ skill, onClose }: { skill: PersonalSkillItem; onClose: () => void }) {
+function SkillDetailView({ skill, onBack, onDelete }: {
+  skill: PersonalSkillItem; onBack: () => void; onDelete: () => void;
+}) {
+  const [mdContent, setMdContent] = useState('');
+  const [loadingMd, setLoadingMd] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [saveMsg, setSaveMsg] = useState<string | null>(null);
+  const [dirty, setDirty] = useState(false);
+
+  // Test state
   const [testInput, setTestInput] = useState('');
   const [testResult, setTestResult] = useState('');
+  const [copied, setCopied] = useState<'text' | 'md' | null>(null);
   const resultRef = useRef<HTMLDivElement>(null);
 
   const { typing: testTyping, isStreaming: testStreaming, start: startTest, reset: resetTest } = useSseStream({
@@ -587,83 +581,175 @@ function SkillTestPanel({ skill, onClose }: { skill: PersonalSkillItem; onClose:
     method: 'POST',
   });
 
-  useEffect(() => {
-    if (testTyping) setTestResult(testTyping);
-  }, [testTyping]);
+  useEffect(() => { if (testTyping) setTestResult(testTyping); }, [testTyping]);
+  useEffect(() => { resultRef.current?.scrollTo({ top: resultRef.current.scrollHeight, behavior: 'smooth' }); }, [testResult]);
 
+  // Load SKILL.md
   useEffect(() => {
-    resultRef.current?.scrollTo({ top: resultRef.current.scrollHeight, behavior: 'smooth' });
-  }, [testResult]);
+    (async () => {
+      setLoadingMd(true);
+      const res = await getSkillMd(skill.skillKey);
+      if (res.success && res.data) setMdContent(res.data.skillMd);
+      setLoadingMd(false);
+    })();
+  }, [skill.skillKey]);
+
+  const handleSave = async () => {
+    setSaving(true); setSaveMsg(null);
+    const res = await updateSkillFromMd(skill.skillKey, mdContent);
+    if (res.success) { setSaveMsg('已保存'); setDirty(false); setTimeout(() => setSaveMsg(null), 2000); }
+    else { setSaveMsg('保存失败'); }
+    setSaving(false);
+  };
 
   const handleTest = async () => {
     if (testStreaming) return;
-    setTestResult('');
-    resetTest();
-    await startTest({
-      url: api.skillAgent.testSkill(skill.skillKey),
-      body: { userInput: testInput },
-    });
+    setTestResult(''); resetTest();
+    await startTest({ url: api.skillAgent.testSkill(skill.skillKey), body: { userInput: testInput } });
+  };
+
+  const handleCopyText = async () => {
+    await navigator.clipboard.writeText(testResult);
+    setCopied('text'); setTimeout(() => setCopied(null), 1500);
+  };
+
+  const handleCopyMd = async () => {
+    // Write both text/plain and text/html to clipboard for rich paste
+    const htmlContent = `<pre>${testResult.replace(/&/g, '&amp;').replace(/</g, '&lt;')}</pre>`;
+    await navigator.clipboard.write([
+      new ClipboardItem({
+        'text/plain': new Blob([testResult], { type: 'text/plain' }),
+        'text/html': new Blob([htmlContent], { type: 'text/html' }),
+      }),
+    ]);
+    setCopied('md'); setTimeout(() => setCopied(null), 1500);
   };
 
   return (
-    <div className="fixed inset-0 flex items-center justify-center" style={{ zIndex: 200 }}>
-      <div className="absolute inset-0 bg-black/60" onClick={onClose} />
-      <div className="relative w-[90vw] max-w-[640px] max-h-[80vh] flex flex-col rounded-2xl overflow-hidden"
-        style={{ background: 'var(--bg-elevated, #1a1a1e)', border: '1px solid rgba(255,255,255,0.1)' }}>
-        {/* Header */}
-        <div className="flex items-center gap-3 px-5 py-3.5" style={{ borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
-          <div className="text-lg">{skill.icon || '⚡'}</div>
-          <div className="flex-1 min-w-0">
-            <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
-              试用「{skill.title}」
-            </div>
-            <div className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
-              {skill.description}
-            </div>
-          </div>
-          <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-white/5" style={{ color: 'var(--text-muted)' }}>
-            <X size={16} />
-          </button>
-        </div>
+    <div className="flex-1 min-h-0 flex flex-col px-3 pb-3 pt-2">
+      {/* Breadcrumb */}
+      <div className="shrink-0 flex items-center gap-2 mb-2">
+        <button onClick={onBack}
+          className="flex items-center gap-1 text-[12px] font-medium px-2 py-1 rounded-lg transition-colors hover:bg-white/5"
+          style={{ color: 'var(--text-muted)' }}>
+          <ChevronLeft size={14} /> 返回列表
+        </button>
+        <span className="text-lg">{skill.icon || '⚡'}</span>
+        <span className="text-[13px] font-semibold" style={{ color: 'var(--text-primary)' }}>{skill.title}</span>
+        <span className="text-[11px] px-1.5 py-0.5 rounded-md" style={{ background: 'rgba(139,92,246,0.1)', color: '#8B5CF6' }}>{skill.category}</span>
+        <div className="flex-1" />
+        <button onClick={onDelete}
+          className="flex items-center gap-1 text-[11px] px-2 py-1 rounded-lg transition-colors hover:bg-red-500/10"
+          style={{ color: 'rgba(239,68,68,0.7)' }}>
+          <Trash2 size={12} /> 删除
+        </button>
+      </div>
 
-        {/* Input */}
-        <div className="px-5 py-3">
-          <label className="text-[11px] font-medium mb-1.5 block" style={{ color: 'var(--text-secondary)' }}>
-            输入测试内容
-          </label>
-          <textarea
-            value={testInput}
-            onChange={(e) => setTestInput(e.target.value)}
-            placeholder="输入要处理的内容…"
-            rows={3}
-            className="w-full resize-none rounded-xl px-4 py-2.5 text-[13px] outline-none"
-            style={{ background: 'rgba(255,255,255,0.04)', color: 'var(--text-primary)', border: '1px solid rgba(255,255,255,0.08)' }}
-            onFocus={(e) => { e.currentTarget.style.borderColor = 'rgba(139,92,246,0.4)'; }}
-            onBlur={(e) => { e.currentTarget.style.borderColor = 'rgba(255,255,255,0.08)'; }}
-          />
-          <button onClick={handleTest} disabled={testStreaming}
-            className="mt-2 flex items-center gap-1.5 px-4 py-2 rounded-xl text-[13px] font-medium transition-all"
-            style={{
-              background: testStreaming ? 'rgba(139,92,246,0.15)' : 'linear-gradient(135deg,#8B5CF6,#6366F1)',
-              color: testStreaming ? '#C4B5FD' : 'white',
-            }}>
-            {testStreaming ? <Loader2 size={14} className="animate-spin" /> : <Play size={14} />}
-            {testStreaming ? '生成中…' : '运行测试'}
-          </button>
-        </div>
-
-        {/* Result */}
-        {testResult && (
-          <div ref={resultRef} className="flex-1 min-h-0 overflow-y-auto px-5 pb-4" style={{ maxHeight: '40vh' }}>
-            <label className="text-[11px] font-medium mb-1.5 block" style={{ color: 'var(--text-secondary)' }}>
-              输出结果
-            </label>
-            <div className="rounded-xl px-4 py-3 text-[13px] leading-relaxed whitespace-pre-wrap"
-              style={{ background: 'rgba(255,255,255,0.03)', color: 'var(--text-primary)', border: '1px solid rgba(255,255,255,0.06)' }}>
-              {testResult}
-            </div>
+      {/* Main: left editor + right test */}
+      <div className="flex-1 min-h-0 flex gap-3">
+        {/* Left: SKILL.md Editor */}
+        <GlassCard className="flex-1 flex flex-col" padding="none" style={{ overflow: 'hidden' }}>
+          <div className="shrink-0 flex items-center gap-2 px-4 py-2.5" style={{ borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
+            <FileText size={13} style={{ color: '#8B5CF6' }} />
+            <span className="text-[12px] font-semibold" style={{ color: 'var(--text-primary)' }}>SKILL.md</span>
+            {dirty && <span className="text-[10px] px-1.5 py-0.5 rounded-md" style={{ background: 'rgba(245,158,11,0.1)', color: '#F59E0B' }}>未保存</span>}
+            <div className="flex-1" />
+            {saveMsg && (
+              <span className="text-[11px] flex items-center gap-1" style={{ color: saveMsg === '已保存' ? '#22C55E' : '#EF4444' }}>
+                {saveMsg === '已保存' && <CheckCircle2 size={12} />} {saveMsg}
+              </span>
+            )}
+            <button onClick={handleSave} disabled={saving || !dirty}
+              className="flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-medium transition-all"
+              style={{
+                background: dirty ? 'linear-gradient(135deg,#8B5CF6,#6366F1)' : 'rgba(255,255,255,0.04)',
+                color: dirty ? 'white' : 'rgba(255,255,255,0.3)',
+              }}>
+              <Save size={11} /> {saving ? '保存中…' : '保存'}
+            </button>
           </div>
-        )}
+          <div className="flex-1 min-h-0">
+            {loadingMd ? (
+              <div className="flex items-center justify-center h-full">
+                <Loader2 size={20} className="animate-spin" style={{ color: '#8B5CF6' }} />
+              </div>
+            ) : (
+              <textarea
+                value={mdContent}
+                onChange={(e) => { setMdContent(e.target.value); setDirty(true); }}
+                className="w-full h-full resize-none px-4 py-3 text-[12px] leading-relaxed font-mono outline-none"
+                style={{ background: 'transparent', color: 'var(--text-primary)', border: 'none' }}
+                spellCheck={false}
+              />
+            )}
+          </div>
+        </GlassCard>
+
+        {/* Right: Test Panel */}
+        <div className="flex flex-col gap-3 w-[380px] shrink-0">
+          {/* Input */}
+          <GlassCard className="flex flex-col" padding="none" style={{ overflow: 'hidden' }}>
+            <div className="px-4 py-2.5 flex items-center gap-2" style={{ borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
+              <Play size={13} style={{ color: '#8B5CF6' }} />
+              <span className="text-[12px] font-semibold" style={{ color: 'var(--text-primary)' }}>测试输入</span>
+            </div>
+            <div className="p-3">
+              <textarea
+                value={testInput}
+                onChange={(e) => setTestInput(e.target.value)}
+                placeholder="输入要处理的内容…"
+                rows={4}
+                className="w-full resize-none rounded-xl px-3 py-2.5 text-[13px] outline-none"
+                style={{ background: 'rgba(255,255,255,0.04)', color: 'var(--text-primary)', border: '1px solid rgba(255,255,255,0.08)' }}
+                onFocus={(e) => { e.currentTarget.style.borderColor = 'rgba(139,92,246,0.4)'; }}
+                onBlur={(e) => { e.currentTarget.style.borderColor = 'rgba(255,255,255,0.08)'; }}
+              />
+              <button onClick={handleTest} disabled={testStreaming}
+                className="mt-2 w-full flex items-center justify-center gap-1.5 px-4 py-2 rounded-xl text-[13px] font-medium transition-all"
+                style={{
+                  background: testStreaming ? 'rgba(139,92,246,0.15)' : 'linear-gradient(135deg,#8B5CF6,#6366F1)',
+                  color: testStreaming ? '#C4B5FD' : 'white',
+                }}>
+                {testStreaming ? <Loader2 size={14} className="animate-spin" /> : <Play size={14} />}
+                {testStreaming ? '生成中…' : '运行测试'}
+              </button>
+            </div>
+          </GlassCard>
+
+          {/* Result */}
+          <GlassCard className="flex-1 flex flex-col" padding="none" style={{ overflow: 'hidden', minHeight: 0 }}>
+            <div className="shrink-0 px-4 py-2.5 flex items-center gap-2" style={{ borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
+              <Bot size={13} style={{ color: '#22C55E' }} />
+              <span className="text-[12px] font-semibold" style={{ color: 'var(--text-primary)' }}>输出结果</span>
+              <div className="flex-1" />
+              {testResult && (
+                <div className="flex items-center gap-1">
+                  <button onClick={handleCopyText}
+                    className="flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-medium transition-colors hover:bg-white/5"
+                    style={{ color: copied === 'text' ? '#22C55E' : 'var(--text-muted)' }}>
+                    {copied === 'text' ? <ClipboardCheck size={11} /> : <Copy size={11} />} 复制文本
+                  </button>
+                  <button onClick={handleCopyMd}
+                    className="flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-medium transition-colors hover:bg-white/5"
+                    style={{ color: copied === 'md' ? '#22C55E' : 'var(--text-muted)' }}>
+                    {copied === 'md' ? <ClipboardCheck size={11} /> : <Copy size={11} />} 复制 Markdown
+                  </button>
+                </div>
+              )}
+            </div>
+            <div ref={resultRef} className="flex-1 overflow-y-auto px-4 py-3" style={{ minHeight: 0 }}>
+              {testResult ? (
+                <pre className="text-[13px] leading-relaxed whitespace-pre-wrap" style={{ color: 'var(--text-primary)' }}>
+                  {testResult}
+                </pre>
+              ) : (
+                <div className="flex items-center justify-center h-full text-[12px]" style={{ color: 'var(--text-muted)' }}>
+                  运行测试后结果会显示在这里
+                </div>
+              )}
+            </div>
+          </GlassCard>
+        </div>
       </div>
     </div>
   );

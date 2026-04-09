@@ -106,3 +106,14 @@ export async function deletePersonalSkill(skillKey: string) {
     method: 'DELETE',
   });
 }
+
+export async function getSkillMd(skillKey: string) {
+  return apiRequest<{ skillMd: string; skillKey: string }>(api.skillAgent.skillMd(skillKey));
+}
+
+export async function updateSkillFromMd(skillKey: string, skillMd: string) {
+  return apiRequest<{ skillKey: string; title: string }>(api.skillAgent.skillMd(skillKey), {
+    method: 'PUT',
+    body: { skillMd },
+  });
+}

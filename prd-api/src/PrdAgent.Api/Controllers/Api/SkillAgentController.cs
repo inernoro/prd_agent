@@ -4,6 +4,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using PrdAgent.Api.Extensions;
 using PrdAgent.Core.Helpers;
+using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
 using PrdAgent.Core.Security;
 using PrdAgent.Infrastructure.Services;
@@ -28,13 +29,16 @@ public class SkillAgentController : ControllerBase
     private static readonly TimeSpan SessionExpiry = TimeSpan.FromHours(2);
 
     private readonly SkillAgentService _service;
+    private readonly ISkillService _skillService;
     private readonly ILogger<SkillAgentController> _logger;
 
     public SkillAgentController(
         SkillAgentService service,
+        ISkillService skillService,
         ILogger<SkillAgentController> logger)
     {
         _service = service;
+        _skillService = skillService;
         _logger = logger;
     }
 
@@ -254,6 +258,47 @@ public class SkillAgentController : ControllerBase
         }
     }
 
+    // ━━━ Skill Detail CRUD ━━━━━━━━
+
+    /// <summary>
+    /// 获取技能的 SKILL.md 内容（用于编辑器展示）
+    /// </summary>
+    [HttpGet("skills/{skillKey}/md")]
+    public async Task<IActionResult> GetSkillMd(string skillKey, CancellationToken ct)
+    {
+        var userId = GetUserId();
+        var skill = await _skillService.GetByKeyAsync(skillKey, ct);
+        if (skill == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "技能不存在"));
+        if (skill.Visibility == SkillVisibility.Personal && skill.OwnerUserId != userId)
+            return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "无权访问"));
+
+        var md = SkillMdFormat.Serialize(skill);
+        return Ok(ApiResponse<object>.Ok(new { skillMd = md, skillKey = skill.SkillKey }));
+    }
+
+    /// <summary>
+    /// 通过 SKILL.md 文本更新技能（编辑器保存）
+    /// </summary>
+    [HttpPut("skills/{skillKey}/md")]
+    public async Task<IActionResult> UpdateSkillFromMd(string skillKey, [FromBody] UpdateSkillMdRequest request, CancellationToken ct)
+    {
+        var userId = GetUserId();
+        if (string.IsNullOrWhiteSpace(request.SkillMd))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "内容不能为空"));
+
+        var parsed = SkillMdFormat.Deserialize(request.SkillMd);
+        if (parsed == null)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "SKILL.md 格式解析失败"));
+
+        var updated = await _skillService.UpdatePersonalSkillAsync(userId, skillKey, parsed, ct);
+        if (!updated)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "技能不存在或无权修改"));
+
+        _logger.LogInformation("[skill-agent] Skill updated from md: {SkillKey} by {UserId}", skillKey, userId);
+        return Ok(ApiResponse<object>.Ok(new { skillKey, title = parsed.Title }));
+    }
+
     // ━━━ Helpers ━━━━━━━━
 
     private async Task WriteSseEvent(string eventName, object data)
@@ -292,4 +337,9 @@ public class SkillAgentMessageRequest
 public class SkillTestRequest
 {
     public string? UserInput { get; set; }
+}
+
+public class UpdateSkillMdRequest
+{
+    public string SkillMd { get; set; } = string.Empty;
 }

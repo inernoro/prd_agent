@@ -199,6 +199,7 @@ export const api = {
     exportMd: (sessionId: string) => `/api/skill-agent/sessions/${sessionId}/export/md`,
     exportZip: (sessionId: string) => `/api/skill-agent/sessions/${sessionId}/export/zip`,
     testSkill: (skillKey: string) => `/api/skill-agent/test/${encodeURIComponent(skillKey)}`,
+    skillMd: (skillKey: string) => `/api/skill-agent/skills/${encodeURIComponent(skillKey)}/md`,
   },
 
   // ============ Prompts (系统提示词 + 覆盖) ============
