@@ -93,6 +93,33 @@ export type DocumentEntry = {
   updatedAt: string;
 };
 
+/** 知识库 Agent Run（字幕生成 + 文档再加工共用） */
+export type DocumentStoreAgentRun = {
+  id: string;
+  kind: 'subtitle' | 'reprocess';
+  sourceEntryId: string;
+  storeId: string;
+  userId: string;
+  status: 'queued' | 'running' | 'done' | 'failed' | 'cancelled';
+  phase: string;
+  progress: number;
+  errorMessage?: string;
+  outputEntryId?: string;
+  templateKey?: string;
+  customPrompt?: string;
+  generatedText?: string;
+  createdAt: string;
+  startedAt?: string;
+  endedAt?: string;
+};
+
+/** 再加工模板定义 */
+export type ReprocessTemplate = {
+  key: string;
+  label: string;
+  description: string;
+};
+
 /** 订阅同步日志中的单条事件（只包含 change/error，不包含无变化的心跳） */
 export type DocumentSyncLogEntry = {
   id: string;

@@ -1522,6 +1522,11 @@ export {
   triggerSync,
   listSubscriptionDetail,
   updateSubscription,
+  generateSubtitle,
+  listReprocessTemplates,
+  startReprocess,
+  getAgentRun,
+  getLatestAgentRun,
   togglePinnedEntry,
   listDocumentStoresWithPreview,
   searchDocumentEntries,
@@ -1555,6 +1560,8 @@ export type {
   AddDocumentEntryInput,
   DocumentSyncLogEntry,
   SubscriptionDetail,
+  DocumentStoreAgentRun,
+  ReprocessTemplate,
 } from '@/services/contracts/documentStore';
 
 // ── Emergence Explorer 涌现探索器 ──

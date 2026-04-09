@@ -66,6 +66,8 @@ import type { DocBrowserEntry, EntryPreview } from '@/components/doc-browser/Doc
 import { toast } from '@/lib/toast';
 import { systemDialog } from '@/lib/systemDialog';
 import { SubscriptionDetailDrawer } from './SubscriptionDetailDrawer';
+import { SubtitleGenerationDrawer } from './SubtitleGenerationDrawer';
+import { ReprocessDrawer } from './ReprocessDrawer';
 
 const ACCEPT_TYPES = '.md,.txt,.pdf,.doc,.docx,.json,.yaml,.yml,.csv';
 
@@ -548,6 +550,10 @@ function StoreDetailView({ storeId, onBack }: {
   const [publishing, setPublishing] = useState(false);
   /** 当前打开的订阅详情 entryId（null = 未打开） */
   const [subscriptionDetailId, setSubscriptionDetailId] = useState<string | null>(null);
+  /** 当前打开的字幕生成 Drawer 目标 entry（null = 未打开） */
+  const [subtitleTarget, setSubtitleTarget] = useState<{ id: string; title: string } | null>(null);
+  /** 当前打开的再加工 Drawer 目标 entry（null = 未打开） */
+  const [reprocessTarget, setReprocessTarget] = useState<{ id: string; title: string } | null>(null);
 
   // 文件上传状态
   const [uploading, setUploading] = useState(false);
@@ -846,6 +852,14 @@ function StoreDetailView({ storeId, onBack }: {
           onUploadFile={() => fileInputRef.current?.click()}
           onSearch={handleSearch}
           onOpenSubscription={(id) => setSubscriptionDetailId(id)}
+          onGenerateSubtitle={(id) => {
+            const entry = entries.find(e => e.id === id);
+            if (entry) setSubtitleTarget({ id, title: entry.title });
+          }}
+          onReprocess={(id) => {
+            const entry = entries.find(e => e.id === id);
+            if (entry) setReprocessTarget({ id, title: entry.title });
+          }}
           loading={loading}
           emptyState={
             <div className="flex-1 flex flex-col items-center justify-center py-16">
@@ -885,6 +899,32 @@ function StoreDetailView({ storeId, onBack }: {
           entryId={subscriptionDetailId}
           onClose={() => setSubscriptionDetailId(null)}
           onChanged={() => loadEntries()}
+        />
+      )}
+
+      {/* 字幕生成抽屉 */}
+      {subtitleTarget && (
+        <SubtitleGenerationDrawer
+          entryId={subtitleTarget.id}
+          entryTitle={subtitleTarget.title}
+          onClose={() => setSubtitleTarget(null)}
+          onDone={(newId) => {
+            loadEntries();
+            setSelectedEntryId(newId);
+          }}
+        />
+      )}
+
+      {/* 文档再加工抽屉 */}
+      {reprocessTarget && (
+        <ReprocessDrawer
+          entryId={reprocessTarget.id}
+          entryTitle={reprocessTarget.title}
+          onClose={() => setReprocessTarget(null)}
+          onDone={(newId) => {
+            loadEntries();
+            setSelectedEntryId(newId);
+          }}
         />
       )}
     </div>

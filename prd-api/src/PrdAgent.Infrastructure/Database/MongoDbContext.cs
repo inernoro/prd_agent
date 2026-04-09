@@ -217,6 +217,7 @@ public class MongoDbContext
     public IMongoCollection<DocumentStoreFavorite> DocumentStoreFavorites => _database.GetCollection<DocumentStoreFavorite>("document_store_favorites");
     public IMongoCollection<DocumentStoreShareLink> DocumentStoreShareLinks => _database.GetCollection<DocumentStoreShareLink>("document_store_share_links");
     public IMongoCollection<DocumentSyncLog> DocumentSyncLogs => _database.GetCollection<DocumentSyncLog>("document_sync_logs");
+    public IMongoCollection<DocumentStoreAgentRun> DocumentStoreAgentRuns => _database.GetCollection<DocumentStoreAgentRun>("document_store_agent_runs");
 
     // Emergence Explorer 涌现探索器
     public IMongoCollection<EmergenceTree> EmergenceTrees => _database.GetCollection<EmergenceTree>("emergence_trees");

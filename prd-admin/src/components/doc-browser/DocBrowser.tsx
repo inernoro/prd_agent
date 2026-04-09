@@ -27,6 +27,7 @@ import {
   Search, ChevronRight, ChevronDown, Plus, Pin, PinOff,
   FileSearch, ToggleLeft, ToggleRight, Trash2, FilePlus, FolderPlus,
   Upload, Link, LayoutTemplate, Bot, Pencil, Save, X,
+  Sparkles, Wand2,
 } from 'lucide-react';
 import { getFileTypeConfig } from '@/lib/fileTypeRegistry';
 import type { FilePreviewKind } from '@/lib/fileTypeRegistry';
@@ -84,6 +85,10 @@ export type DocBrowserProps = {
   onSearch?: (keyword: string, searchContent: boolean) => Promise<DocBrowserEntry[] | null>;
   /** 点击订阅条目右侧的状态徽标时触发，用于打开订阅详情面板 */
   onOpenSubscription?: (entryId: string) => void;
+  /** 点击"生成字幕"时触发（仅 audio/video/image entries 显示） */
+  onGenerateSubtitle?: (entryId: string) => void;
+  /** 点击"再加工"时触发（仅 text entries 显示） */
+  onReprocess?: (entryId: string) => void;
   emptyState?: React.ReactNode;
   loading?: boolean;
 };
@@ -124,8 +129,27 @@ function getDisplayTitle(entry: DocBrowserEntry, useContentTitle: boolean, conte
   return entry.title;
 }
 
-// ── 右键菜单 ──
-function ContextMenu({ x, y, entry, isPrimary, isPinned, onSetPrimary, onTogglePin, onDelete, onClose }: {
+// ── 判断 entry 可以发起的 Agent 操作 ──
+function canGenerateSubtitle(entry: DocBrowserEntry): boolean {
+  if (entry.isFolder) return false;
+  const ct = (entry.contentType ?? '').toLowerCase();
+  return ct.startsWith('audio/') || ct.startsWith('video/') || ct.startsWith('image/');
+}
+
+function canReprocess(entry: DocBrowserEntry): boolean {
+  if (entry.isFolder) return false;
+  const ct = (entry.contentType ?? '').toLowerCase();
+  // 文字类（markdown / 字幕 / 纯文本 / JSON / YAML 等）才能再加工
+  return ct.startsWith('text/') || ct.includes('markdown') || ct === '';
+}
+
+// ── 右键/⋯ 菜单 ──
+function ContextMenu({
+  x, y, entry, isPrimary, isPinned,
+  onSetPrimary, onTogglePin, onDelete,
+  onGenerateSubtitle, onReprocess,
+  onClose,
+}: {
   x: number;
   y: number;
   entry: DocBrowserEntry;
@@ -134,6 +158,8 @@ function ContextMenu({ x, y, entry, isPrimary, isPinned, onSetPrimary, onToggleP
   onSetPrimary?: (entryId: string) => void;
   onTogglePin?: (entryId: string, pin: boolean) => void;
   onDelete?: (entryId: string) => void;
+  onGenerateSubtitle?: (entryId: string) => void;
+  onReprocess?: (entryId: string) => void;
   onClose: () => void;
 }) {
   const menuRef = useRef<HTMLDivElement>(null);
@@ -146,8 +172,11 @@ function ContextMenu({ x, y, entry, isPrimary, isPinned, onSetPrimary, onToggleP
     return () => document.removeEventListener('mousedown', handleClick);
   }, [onClose]);
 
+  const showSubtitle = canGenerateSubtitle(entry) && !!onGenerateSubtitle;
+  const showReprocess = canReprocess(entry) && !!onReprocess;
+
   return (
-    <div ref={menuRef} className="fixed z-50 min-w-[160px] py-1 rounded-[10px]"
+    <div ref={menuRef} className="fixed z-50 min-w-[170px] py-1 rounded-[10px]"
       style={{
         left: x, top: y,
         background: 'linear-gradient(180deg, var(--glass-bg-start) 0%, var(--glass-bg-end) 100%)',
@@ -155,6 +184,27 @@ function ContextMenu({ x, y, entry, isPrimary, isPinned, onSetPrimary, onToggleP
         backdropFilter: 'blur(40px) saturate(180%)',
         boxShadow: '0 12px 32px -8px rgba(0,0,0,0.5)',
       }}>
+      {showSubtitle && (
+        <button
+          className="w-full px-3 py-1.5 text-left text-[12px] flex items-center gap-2 cursor-pointer transition-colors hover:bg-white/6"
+          style={{ color: 'rgba(216,180,254,0.95)' }}
+          onClick={() => { onGenerateSubtitle!(entry.id); onClose(); }}>
+          <Sparkles size={12} />
+          生成字幕
+        </button>
+      )}
+      {showReprocess && (
+        <button
+          className="w-full px-3 py-1.5 text-left text-[12px] flex items-center gap-2 cursor-pointer transition-colors hover:bg-white/6"
+          style={{ color: 'rgba(96,165,250,0.95)' }}
+          onClick={() => { onReprocess!(entry.id); onClose(); }}>
+          <Wand2 size={12} />
+          再加工
+        </button>
+      )}
+      {(showSubtitle || showReprocess) && (
+        <div className="my-1" style={{ borderTop: '1px solid rgba(255,255,255,0.06)' }} />
+      )}
       {!entry.isFolder && onTogglePin && (
         <button
           className="w-full px-3 py-1.5 text-left text-[12px] flex items-center gap-2 cursor-pointer transition-colors hover:bg-white/6"
@@ -662,6 +712,8 @@ export function DocBrowser({
   onUploadFile,
   onSearch,
   onOpenSubscription,
+  onGenerateSubtitle,
+  onReprocess,
   emptyState,
   loading,
 }: DocBrowserProps) {
@@ -1214,6 +1266,46 @@ export function DocBrowser({
                   </>
                 );
               })()}
+              {/* 知识库 Agent 按钮：生成字幕 / 再加工 */}
+              {(() => {
+                const sel = entries.find(e => e.id === selectedEntryId);
+                if (!sel || sel.isFolder) return null;
+                const showSubtitle = canGenerateSubtitle(sel) && !!onGenerateSubtitle;
+                const showReprocess = canReprocess(sel) && !!onReprocess;
+                if (!showSubtitle && !showReprocess) return null;
+                return (
+                  <>
+                    {showSubtitle && (
+                      <button
+                        onClick={() => onGenerateSubtitle!(sel.id)}
+                        className="h-6 px-2 rounded-[8px] text-[10px] font-semibold flex items-center gap-1 cursor-pointer transition-colors flex-shrink-0"
+                        style={{
+                          background: 'rgba(168,85,247,0.1)',
+                          border: '1px solid rgba(168,85,247,0.22)',
+                          color: 'rgba(216,180,254,0.95)',
+                        }}
+                        title="一键生成字幕"
+                      >
+                        <Sparkles size={11} /> 生成字幕
+                      </button>
+                    )}
+                    {showReprocess && (
+                      <button
+                        onClick={() => onReprocess!(sel.id)}
+                        className="h-6 px-2 rounded-[8px] text-[10px] font-semibold flex items-center gap-1 cursor-pointer transition-colors flex-shrink-0"
+                        style={{
+                          background: 'rgba(59,130,246,0.08)',
+                          border: '1px solid rgba(59,130,246,0.18)',
+                          color: 'rgba(96,165,250,0.95)',
+                        }}
+                        title="按模板再加工文档"
+                      >
+                        <Wand2 size={11} /> 再加工
+                      </button>
+                    )}
+                  </>
+                );
+              })()}
               {/* 编辑/保存按钮（仅对可编辑类型显示） */}
               {(() => {
                 const sel = entries.find(e => e.id === selectedEntryId);
@@ -1334,6 +1426,8 @@ export function DocBrowser({
             });
             if (confirmed) onDeleteEntry(entryId);
           } : undefined}
+          onGenerateSubtitle={onGenerateSubtitle}
+          onReprocess={onReprocess}
           onClose={() => setContextMenu(null)}
         />
       )}

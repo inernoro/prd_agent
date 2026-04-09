@@ -26,22 +26,30 @@ public class DocumentStoreController : ControllerBase
     private readonly IAssetStorage _assetStorage;
     private readonly IFileContentExtractor _fileContentExtractor;
     private readonly IDocumentService _documentService;
+    private readonly IRunEventStore _runEventStore;
     private readonly ILogger<DocumentStoreController> _logger;
 
     /// <summary>20 MB per file</summary>
     private const long MaxUploadBytes = 20 * 1024 * 1024;
+
+    private static readonly System.Text.Json.JsonSerializerOptions AgentRunJsonOptions = new()
+    {
+        PropertyNamingPolicy = System.Text.Json.JsonNamingPolicy.CamelCase,
+    };
 
     public DocumentStoreController(
         MongoDbContext db,
         IAssetStorage assetStorage,
         IFileContentExtractor fileContentExtractor,
         IDocumentService documentService,
+        IRunEventStore runEventStore,
         ILogger<DocumentStoreController> logger)
     {
         _db = db;
         _assetStorage = assetStorage;
         _fileContentExtractor = fileContentExtractor;
         _documentService = documentService;
+        _runEventStore = runEventStore;
         _logger = logger;
     }
 
@@ -1277,6 +1285,246 @@ public class DocumentStoreController : ControllerBase
     }
 
     // ─────────────────────────────────────────────
+    // 知识库 Agent：字幕生成 + 文档再加工
+    // ─────────────────────────────────────────────
+
+    /// <summary>列出文档再加工的可用模板</summary>
+    [HttpGet("reprocess-templates")]
+    public IActionResult ListReprocessTemplates()
+    {
+        var items = ReprocessTemplateRegistry.Templates.Select(t => new
+        {
+            key = t.Key,
+            label = t.Label,
+            description = t.Description,
+        }).ToList();
+        return Ok(ApiResponse<object>.Ok(new { items }));
+    }
+
+    /// <summary>发起字幕生成任务（音视频 → ASR，图片 → Vision）</summary>
+    [HttpPost("entries/{entryId}/generate-subtitle")]
+    public async Task<IActionResult> GenerateSubtitle(string entryId)
+    {
+        var (entry, store, err) = await LoadOwnedEntryAsync(entryId);
+        if (err != null) return err;
+        if (entry!.IsFolder)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "文件夹不支持生成字幕"));
+
+        var ct = (entry.ContentType ?? "").ToLowerInvariant();
+        if (!ct.StartsWith("audio/") && !ct.StartsWith("video/") && !ct.StartsWith("image/"))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "仅支持音频 / 视频 / 图片生成字幕"));
+
+        // 去重：同一 entry 已有 queued 或 running 的 subtitle run → 直接返回
+        var existing = await _db.DocumentStoreAgentRuns.Find(r =>
+            r.SourceEntryId == entryId &&
+            r.Kind == DocumentStoreAgentRunKind.Subtitle &&
+            (r.Status == DocumentStoreRunStatus.Queued || r.Status == DocumentStoreRunStatus.Running)
+        ).FirstOrDefaultAsync();
+        if (existing != null)
+            return Ok(ApiResponse<object>.Ok(new { runId = existing.Id, status = existing.Status, reused = true }));
+
+        var userId = GetUserId();
+        var run = new DocumentStoreAgentRun
+        {
+            Kind = DocumentStoreAgentRunKind.Subtitle,
+            SourceEntryId = entryId,
+            StoreId = store!.Id,
+            UserId = userId,
+            Status = DocumentStoreRunStatus.Queued,
+            Phase = "排队中",
+        };
+        await _db.DocumentStoreAgentRuns.InsertOneAsync(run);
+
+        _logger.LogInformation("[doc-store-agent] Subtitle run queued: {RunId} entry={EntryId}", run.Id, entryId);
+        return Ok(ApiResponse<object>.Ok(new { runId = run.Id, status = run.Status, reused = false }));
+    }
+
+    /// <summary>发起文档再加工任务（流式 LLM 改写）</summary>
+    [HttpPost("entries/{entryId}/reprocess")]
+    public async Task<IActionResult> Reprocess(string entryId, [FromBody] ReprocessRequest request)
+    {
+        var (entry, store, err) = await LoadOwnedEntryAsync(entryId);
+        if (err != null) return err;
+        if (entry!.IsFolder)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "文件夹不支持再加工"));
+
+        var templateKey = (request.TemplateKey ?? "").Trim();
+        if (string.IsNullOrEmpty(templateKey))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "templateKey 不能为空"));
+
+        if (templateKey == "custom")
+        {
+            if (string.IsNullOrWhiteSpace(request.CustomPrompt))
+                return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "自定义模板需要提供 customPrompt"));
+        }
+        else if (ReprocessTemplateRegistry.FindByKey(templateKey) == null)
+        {
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, $"未知模板: {templateKey}"));
+        }
+
+        var userId = GetUserId();
+        var run = new DocumentStoreAgentRun
+        {
+            Kind = DocumentStoreAgentRunKind.Reprocess,
+            SourceEntryId = entryId,
+            StoreId = store!.Id,
+            UserId = userId,
+            TemplateKey = templateKey,
+            CustomPrompt = request.CustomPrompt,
+            Status = DocumentStoreRunStatus.Queued,
+            Phase = "排队中",
+        };
+        await _db.DocumentStoreAgentRuns.InsertOneAsync(run);
+
+        _logger.LogInformation(
+            "[doc-store-agent] Reprocess run queued: {RunId} entry={EntryId} template={Template}",
+            run.Id, entryId, templateKey);
+        return Ok(ApiResponse<object>.Ok(new { runId = run.Id, status = run.Status }));
+    }
+
+    /// <summary>获取 Run 当前状态（用于 Drawer 打开时判断）</summary>
+    [HttpGet("agent-runs/{runId}")]
+    public async Task<IActionResult> GetAgentRun(string runId)
+    {
+        var userId = GetUserId();
+        var run = await _db.DocumentStoreAgentRuns.Find(r => r.Id == runId && r.UserId == userId).FirstOrDefaultAsync();
+        if (run == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "Run 不存在"));
+        return Ok(ApiResponse<DocumentStoreAgentRun>.Ok(run));
+    }
+
+    /// <summary>获取某个 entry 的最近一次 agent run（某 kind，用于打开按钮时判断是否已生成过）</summary>
+    [HttpGet("entries/{entryId}/agent-runs/latest")]
+    public async Task<IActionResult> GetLatestAgentRun(string entryId, [FromQuery] string kind)
+    {
+        var (_, _, err) = await LoadOwnedEntryAsync(entryId);
+        if (err != null) return err;
+        if (string.IsNullOrEmpty(kind))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "kind 不能为空"));
+
+        var run = await _db.DocumentStoreAgentRuns
+            .Find(r => r.SourceEntryId == entryId && r.Kind == kind)
+            .SortByDescending(r => r.CreatedAt)
+            .FirstOrDefaultAsync();
+        return Ok(ApiResponse<DocumentStoreAgentRun?>.Ok(run));
+    }
+
+    /// <summary>SSE 订阅 Run 事件流（支持 afterSeq 断线续传）</summary>
+    [HttpGet("agent-runs/{runId}/stream")]
+    [Produces("text/event-stream")]
+    public async Task StreamAgentRun(string runId, [FromQuery] long? afterSeq, CancellationToken cancellationToken)
+    {
+        Response.ContentType = "text/event-stream";
+        Response.Headers.CacheControl = "no-cache";
+        Response.Headers.Connection = "keep-alive";
+
+        var userId = GetUserId();
+        var run = await _db.DocumentStoreAgentRuns.Find(r => r.Id == runId && r.UserId == userId).FirstOrDefaultAsync(cancellationToken);
+        if (run == null)
+        {
+            await WriteSseEventAsync(null, "error", System.Text.Json.JsonSerializer.Serialize(
+                new { code = ErrorCodes.NOT_FOUND, message = "Run 不存在" }, AgentRunJsonOptions), cancellationToken);
+            return;
+        }
+
+        var kindKey = run.Kind == DocumentStoreAgentRunKind.Subtitle
+            ? DocumentStoreRunKinds.Subtitle
+            : DocumentStoreRunKinds.Reprocess;
+
+        long lastSeq = afterSeq ?? 0;
+        var lastKeepAliveAt = DateTime.UtcNow;
+
+        while (!cancellationToken.IsCancellationRequested)
+        {
+            IReadOnlyList<RunEventRecord> events;
+            try
+            {
+                events = await _runEventStore.GetEventsAsync(kindKey, runId, lastSeq, 100, cancellationToken);
+            }
+            catch (OperationCanceledException) { break; }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "[doc-store-agent] SSE GetEvents failed");
+                events = Array.Empty<RunEventRecord>();
+            }
+
+            if (events.Count > 0)
+            {
+                foreach (var ev in events)
+                {
+                    try
+                    {
+                        await WriteSseEventAsync(ev.Seq.ToString(), ev.EventName, ev.PayloadJson, cancellationToken);
+                    }
+                    catch (OperationCanceledException) { return; }
+                    catch (ObjectDisposedException) { return; }
+                    lastSeq = ev.Seq;
+                }
+                lastKeepAliveAt = DateTime.UtcNow;
+            }
+            else
+            {
+                if ((DateTime.UtcNow - lastKeepAliveAt).TotalSeconds >= 10)
+                {
+                    try
+                    {
+                        await Response.WriteAsync(": keepalive\n\n", cancellationToken);
+                        await Response.Body.FlushAsync(cancellationToken);
+                    }
+                    catch (OperationCanceledException) { return; }
+                    catch (ObjectDisposedException) { return; }
+                    lastKeepAliveAt = DateTime.UtcNow;
+                }
+
+                // run 已结束且事件已追完 → 关闭 SSE
+                var refreshed = await _db.DocumentStoreAgentRuns.Find(r => r.Id == runId).FirstOrDefaultAsync(cancellationToken);
+                if (refreshed == null) break;
+                if (refreshed.Status is DocumentStoreRunStatus.Done or DocumentStoreRunStatus.Failed or DocumentStoreRunStatus.Cancelled)
+                {
+                    // 再跑一次 GetEvents，追最后一批
+                    var tail = await _runEventStore.GetEventsAsync(kindKey, runId, lastSeq, 100, cancellationToken);
+                    foreach (var ev in tail)
+                    {
+                        try { await WriteSseEventAsync(ev.Seq.ToString(), ev.EventName, ev.PayloadJson, cancellationToken); }
+                        catch { /* ignore */ }
+                        lastSeq = ev.Seq;
+                    }
+                    break;
+                }
+
+                try { await Task.Delay(500, cancellationToken); }
+                catch (OperationCanceledException) { return; }
+            }
+        }
+    }
+
+    // ── 知识库 Agent 内部辅助 ──
+
+    private async Task<(DocumentEntry? entry, DocumentStore? store, IActionResult? err)>
+        LoadOwnedEntryAsync(string entryId)
+    {
+        var userId = GetUserId();
+        var entry = await _db.DocumentEntries.Find(e => e.Id == entryId).FirstOrDefaultAsync();
+        if (entry == null)
+            return (null, null, NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "文档条目不存在")));
+
+        var store = await _db.DocumentStores.Find(s => s.Id == entry.StoreId && s.OwnerId == userId).FirstOrDefaultAsync();
+        if (store == null)
+            return (null, null, NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "文档条目不存在")));
+
+        return (entry, store, null);
+    }
+
+    private async Task WriteSseEventAsync(string? id, string eventName, string dataJson, CancellationToken ct)
+    {
+        if (!string.IsNullOrWhiteSpace(id))
+            await Response.WriteAsync($"id: {id}\n", ct);
+        await Response.WriteAsync($"event: {eventName}\n", ct);
+        await Response.WriteAsync($"data: {dataJson}\n\n", ct);
+        await Response.Body.FlushAsync(ct);
+    }
+
+    // ─────────────────────────────────────────────
     // 公开知识库 / 点赞 / 收藏 / 分享
     // ─────────────────────────────────────────────
 
@@ -1818,6 +2066,15 @@ public class UpdateSubscriptionRequest
 
     /// <summary>新的同步间隔（分钟，null 表示不修改）</summary>
     public int? SyncIntervalMinutes { get; set; }
+}
+
+public class ReprocessRequest
+{
+    /// <summary>模板 key（summary / minutes / blog / notes / custom）</summary>
+    public string TemplateKey { get; set; } = string.Empty;
+
+    /// <summary>自定义提示词（templateKey == custom 时必填）</summary>
+    public string? CustomPrompt { get; set; }
 }
 
 public class SetPrimaryEntryRequest

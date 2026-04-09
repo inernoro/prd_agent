@@ -344,3 +344,48 @@ export async function updateSubscription(entryId: string, input: {
     { method: 'PATCH', body: input },
   );
 }
+
+// ── 知识库 Agent：字幕生成 + 文档再加工 ──
+
+/** 发起字幕生成任务 */
+export async function generateSubtitle(entryId: string) {
+  return await apiRequest<{ runId: string; status: string; reused: boolean }>(
+    api.documentStore.entries.generateSubtitle(entryId),
+    { method: 'POST' },
+  );
+}
+
+/** 获取再加工可用模板列表 */
+export async function listReprocessTemplates() {
+  return await apiRequest<{ items: import('@/services/contracts/documentStore').ReprocessTemplate[] }>(
+    api.documentStore.stores.reprocessTemplates(),
+    { method: 'GET' },
+  );
+}
+
+/** 发起文档再加工任务 */
+export async function startReprocess(entryId: string, input: {
+  templateKey: string;
+  customPrompt?: string;
+}) {
+  return await apiRequest<{ runId: string; status: string }>(
+    api.documentStore.entries.reprocess(entryId),
+    { method: 'POST', body: input },
+  );
+}
+
+/** 获取 Agent Run 当前状态 */
+export async function getAgentRun(runId: string) {
+  return await apiRequest<import('@/services/contracts/documentStore').DocumentStoreAgentRun>(
+    api.documentStore.stores.agentRun(runId),
+    { method: 'GET' },
+  );
+}
+
+/** 查询某 entry 最近一次 Agent Run（按 kind 过滤） */
+export async function getLatestAgentRun(entryId: string, kind: 'subtitle' | 'reprocess') {
+  return await apiRequest<import('@/services/contracts/documentStore').DocumentStoreAgentRun | null>(
+    `${api.documentStore.entries.latestAgentRun(entryId)}?kind=${kind}`,
+    { method: 'GET' },
+  );
+}

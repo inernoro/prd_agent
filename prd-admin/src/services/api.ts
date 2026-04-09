@@ -945,6 +945,11 @@ export const api = {
       // 分享链接
       shareLinks: (storeId: string) => `/api/document-store/stores/${storeId}/share-links`,
       shareLinkDetail: (linkId: string) => `/api/document-store/share-links/${linkId}`,
+      // 知识库 Agent：再加工模板列表
+      reprocessTemplates: () => `/api/document-store/reprocess-templates`,
+      // 知识库 Agent：Run 状态查询与 SSE 流
+      agentRun: (runId: string) => `/api/document-store/agent-runs/${runId}`,
+      agentRunStream: (runId: string) => `/api/document-store/agent-runs/${runId}/stream`,
     },
     entries: {
       list: (storeId: string) => `/api/document-store/stores/${storeId}/entries`,
@@ -960,6 +965,9 @@ export const api = {
       sync: (entryId: string) => `/api/document-store/entries/${entryId}/sync`,
       syncLogs: (entryId: string) => `/api/document-store/entries/${entryId}/sync-logs`,
       subscriptionUpdate: (entryId: string) => `/api/document-store/entries/${entryId}/subscription`,
+      generateSubtitle: (entryId: string) => `/api/document-store/entries/${entryId}/generate-subtitle`,
+      reprocess: (entryId: string) => `/api/document-store/entries/${entryId}/reprocess`,
+      latestAgentRun: (entryId: string) => `/api/document-store/entries/${entryId}/agent-runs/latest`,
       update: (entryId: string) => `/api/document-store/entries/${entryId}`,
       delete: (entryId: string) => `/api/document-store/entries/${entryId}`,
     },
