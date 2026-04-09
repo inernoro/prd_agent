@@ -137,6 +137,145 @@ public class PrReviewPrismApiIntegrationTests : IClassFixture<WebApplicationFact
     }
 
     [Fact]
+    public async Task List_QueryAndGateStatus_ShouldKeepCountsConsistent()
+    {
+        if (!HasToken)
+        {
+            Log("[Skip] no token");
+            return;
+        }
+
+        var client = CreateAuthenticatedClient();
+        if (!await EnsurePrReviewPrismAccessibleAsync(client))
+        {
+            return;
+        }
+
+        var keyword = $"it-prism-filter-{Guid.NewGuid():N}";
+        var prNumber1 = Random.Shared.Next(10000000, 19999999);
+        var prNumber2 = Random.Shared.Next(20000000, 29999999);
+        var url1 = $"https://github.com/inernoro/prd_agent/pull/{prNumber1}";
+        var url2 = $"https://github.com/inernoro/prd_agent/pull/{prNumber2}";
+        var createdIds = new List<string>();
+
+        try
+        {
+            var create1 = await client.PostAsJsonAsync("/api/pr-review-prism/submissions", new
+            {
+                pullRequestUrl = url1,
+                note = $"{keyword}-1"
+            });
+            var create1Body = await create1.Content.ReadAsStringAsync();
+            Assert.Equal(HttpStatusCode.OK, create1.StatusCode);
+            using (var doc1 = JsonDocument.Parse(create1Body))
+            {
+                var id1 = doc1.RootElement.GetProperty("data").GetProperty("submission").GetProperty("id").GetString();
+                if (!string.IsNullOrWhiteSpace(id1))
+                {
+                    createdIds.Add(id1);
+                }
+            }
+
+            var create2 = await client.PostAsJsonAsync("/api/pr-review-prism/submissions", new
+            {
+                pullRequestUrl = url2,
+                note = $"{keyword}-2"
+            });
+            var create2Body = await create2.Content.ReadAsStringAsync();
+            Assert.Equal(HttpStatusCode.OK, create2.StatusCode);
+            using (var doc2 = JsonDocument.Parse(create2Body))
+            {
+                var id2 = doc2.RootElement.GetProperty("data").GetProperty("submission").GetProperty("id").GetString();
+                if (!string.IsNullOrWhiteSpace(id2))
+                {
+                    createdIds.Add(id2);
+                }
+            }
+
+            var listAllResponse = await client.GetAsync($"/api/pr-review-prism/submissions?page=1&pageSize=50&q={Uri.EscapeDataString(keyword)}");
+            var listAllBody = await listAllResponse.Content.ReadAsStringAsync();
+            Assert.Equal(HttpStatusCode.OK, listAllResponse.StatusCode);
+
+            string selectedGateStatus;
+            int selectedGateCount;
+            int allTotal;
+            int pendingCount;
+            int completedCount;
+            int missingCount;
+            int errorCount;
+
+            using (var allDoc = JsonDocument.Parse(listAllBody))
+            {
+                Assert.True(allDoc.RootElement.GetProperty("success").GetBoolean());
+                var data = allDoc.RootElement.GetProperty("data");
+                allTotal = data.GetProperty("total").GetInt32();
+                var counts = data.GetProperty("gateStatusCounts");
+                pendingCount = counts.GetProperty("pending").GetInt32();
+                completedCount = counts.GetProperty("completed").GetInt32();
+                missingCount = counts.GetProperty("missing").GetInt32();
+                errorCount = counts.GetProperty("error").GetInt32();
+
+                Assert.Equal(allTotal, pendingCount + completedCount + missingCount + errorCount);
+
+                if (pendingCount > 0)
+                {
+                    selectedGateStatus = "pending";
+                    selectedGateCount = pendingCount;
+                }
+                else if (completedCount > 0)
+                {
+                    selectedGateStatus = "completed";
+                    selectedGateCount = completedCount;
+                }
+                else if (missingCount > 0)
+                {
+                    selectedGateStatus = "missing";
+                    selectedGateCount = missingCount;
+                }
+                else
+                {
+                    selectedGateStatus = "error";
+                    selectedGateCount = errorCount;
+                }
+            }
+
+            Assert.True(selectedGateCount > 0);
+
+            var filteredResponse = await client.GetAsync(
+                $"/api/pr-review-prism/submissions?page=1&pageSize=50&q={Uri.EscapeDataString(keyword)}&gateStatus={selectedGateStatus}");
+            var filteredBody = await filteredResponse.Content.ReadAsStringAsync();
+            Assert.Equal(HttpStatusCode.OK, filteredResponse.StatusCode);
+
+            using (var filteredDoc = JsonDocument.Parse(filteredBody))
+            {
+                Assert.True(filteredDoc.RootElement.GetProperty("success").GetBoolean());
+                var data = filteredDoc.RootElement.GetProperty("data");
+                var filteredTotal = data.GetProperty("total").GetInt32();
+                Assert.Equal(selectedGateCount, filteredTotal);
+
+                var items = data.GetProperty("items");
+                foreach (var item in items.EnumerateArray())
+                {
+                    Assert.Equal(selectedGateStatus, item.GetProperty("gateStatus").GetString());
+                }
+
+                var counts = data.GetProperty("gateStatusCounts");
+                Assert.Equal(pendingCount, counts.GetProperty("pending").GetInt32());
+                Assert.Equal(completedCount, counts.GetProperty("completed").GetInt32());
+                Assert.Equal(missingCount, counts.GetProperty("missing").GetInt32());
+                Assert.Equal(errorCount, counts.GetProperty("error").GetInt32());
+            }
+        }
+        finally
+        {
+            foreach (var id in createdIds)
+            {
+                _ = await client.DeleteAsync($"/api/pr-review-prism/submissions/{id}");
+            }
+        }
+    }
+
+    [Fact]
     public async Task SubmissionWorkflow_CreateReuseListGetRefreshDelete_ShouldSucceed()
     {
         if (!HasToken)

@@ -15,3 +15,4 @@
 | feat | prd-api | PR审查棱镜列表接口新增 gateStatusCounts 全局计数返回，支持筛选标签展示真实总量 |
 | feat | prd-admin | PR审查棱镜筛选标签计数改为服务端 gateStatusCounts，避免仅当前页统计偏差 |
 | fix | prd-api | PR审查棱镜集成测试补充列表响应 gateStatusCounts 结构断言 |
+| fix | prd-api | PR审查棱镜集成测试新增 q + gateStatus + gateStatusCounts 一致性校验，覆盖筛选与计数联动行为 |
