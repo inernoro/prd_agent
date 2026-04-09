@@ -129,6 +129,92 @@ public class PrReviewPrismApiIntegrationTests : IClassFixture<WebApplicationFact
     }
 
     [Fact]
+    public async Task List_WithRepoFilter_ShouldOnlyReturnTargetRepositoryItems()
+    {
+        if (!HasToken)
+        {
+            Log("[Skip] no token");
+            return;
+        }
+
+        var client = CreateAuthenticatedClient();
+        if (!await EnsurePrReviewPrismAccessibleAsync(client))
+        {
+            return;
+        }
+
+        var repoA = "inernoro/prd_agent";
+        var repoB = "inernoro/prd-admin";
+        var prA = Random.Shared.Next(50000000, 59999999);
+        var prB = Random.Shared.Next(60000000, 69999999);
+        var urlA = $"https://github.com/{repoA}/pull/{prA}";
+        var urlB = $"https://github.com/{repoB}/pull/{prB}";
+        var note = $"it-prism-repo-filter-{Guid.NewGuid():N}";
+        var createdIds = new List<string>();
+
+        try
+        {
+            var createA = await client.PostAsJsonAsync("/api/pr-review-prism/submissions", new
+            {
+                pullRequestUrl = urlA,
+                note = $"{note}-a"
+            });
+            var bodyA = await createA.Content.ReadAsStringAsync();
+            Assert.Equal(HttpStatusCode.OK, createA.StatusCode);
+            using (var docA = JsonDocument.Parse(bodyA))
+            {
+                var idA = docA.RootElement.GetProperty("data").GetProperty("submission").GetProperty("id").GetString();
+                if (!string.IsNullOrWhiteSpace(idA))
+                {
+                    createdIds.Add(idA);
+                }
+            }
+
+            var createB = await client.PostAsJsonAsync("/api/pr-review-prism/submissions", new
+            {
+                pullRequestUrl = urlB,
+                note = $"{note}-b"
+            });
+            var bodyB = await createB.Content.ReadAsStringAsync();
+            Assert.Equal(HttpStatusCode.OK, createB.StatusCode);
+            using (var docB = JsonDocument.Parse(bodyB))
+            {
+                var idB = docB.RootElement.GetProperty("data").GetProperty("submission").GetProperty("id").GetString();
+                if (!string.IsNullOrWhiteSpace(idB))
+                {
+                    createdIds.Add(idB);
+                }
+            }
+
+            var listResponse = await client.GetAsync($"/api/pr-review-prism/submissions?page=1&pageSize=50&q={Uri.EscapeDataString(note)}&repo={Uri.EscapeDataString(repoA)}");
+            var listBody = await listResponse.Content.ReadAsStringAsync();
+            Assert.Equal(HttpStatusCode.OK, listResponse.StatusCode);
+
+            using var listDoc = JsonDocument.Parse(listBody);
+            Assert.True(listDoc.RootElement.GetProperty("success").GetBoolean());
+            var data = listDoc.RootElement.GetProperty("data");
+            Assert.Equal(repoA, data.GetProperty("repo").GetString());
+
+            var items = data.GetProperty("items");
+            Assert.NotEqual(0, items.GetArrayLength());
+            foreach (var item in items.EnumerateArray())
+            {
+                var owner = item.GetProperty("repoOwner").GetString();
+                var repo = item.GetProperty("repoName").GetString();
+                Assert.Equal("inernoro", owner);
+                Assert.Equal("prd_agent", repo);
+            }
+        }
+        finally
+        {
+            foreach (var id in createdIds)
+            {
+                _ = await client.DeleteAsync($"/api/pr-review-prism/submissions/{id}");
+            }
+        }
+    }
+
+    [Fact]
     public async Task SetupStatus_WithInvalidRepoParam_ShouldReturnGuidance()
     {
         if (!HasToken)

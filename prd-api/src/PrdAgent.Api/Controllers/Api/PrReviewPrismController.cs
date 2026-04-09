@@ -251,10 +251,19 @@ public sealed class PrReviewPrismController : ControllerBase
         [FromQuery] int page = 1,
         [FromQuery] int pageSize = 20,
         [FromQuery] string? gateStatus = null,
-        [FromQuery] string? q = null)
+        [FromQuery] string? q = null,
+        [FromQuery] string? repo = null)
     {
         page = Math.Max(1, page);
         pageSize = Math.Clamp(pageSize, 1, 100);
+
+        var targetRepo = NormalizeRepoKey(repo);
+        if (!string.IsNullOrWhiteSpace(repo) && targetRepo == null)
+        {
+            return BadRequest(ApiResponse<object>.Fail(
+                ErrorCodes.INVALID_FORMAT,
+                "repo 参数格式错误，应为 owner/repo 或 GitHub PR 链接"));
+        }
 
         var userId = this.GetRequiredUserId();
         var filterBuilder = Builders<PrReviewPrismSubmission>.Filter;
@@ -278,6 +287,15 @@ public sealed class PrReviewPrismController : ControllerBase
         }
 
         var baseFilter = filterBuilder.Eq(x => x.OwnerUserId, userId);
+        if (!string.IsNullOrWhiteSpace(targetRepo))
+        {
+            var slashIndex = targetRepo.IndexOf('/');
+            var repoOwner = targetRepo[..slashIndex];
+            var repoName = targetRepo[(slashIndex + 1)..];
+            baseFilter &= filterBuilder.Eq(x => x.RepoOwner, repoOwner)
+                          & filterBuilder.Eq(x => x.RepoName, repoName);
+        }
+
         if (!string.IsNullOrWhiteSpace(q))
         {
             var keyword = q.Trim();
@@ -320,7 +338,7 @@ public sealed class PrReviewPrismController : ControllerBase
             .Limit(pageSize)
             .ToListAsync(CancellationToken.None);
 
-        return Ok(ApiResponse<object>.Ok(new { items, total, page, pageSize, gateStatusCounts }));
+        return Ok(ApiResponse<object>.Ok(new { items, total, page, pageSize, gateStatusCounts, repo = targetRepo }));
     }
 
     [HttpGet("submissions/{id}")]

@@ -127,13 +127,15 @@ export async function listPrReviewPrismSubmissions(
   page = 1,
   pageSize = 20,
   q?: string,
-  gateStatus?: PrReviewPrismGateStatus
+  gateStatus?: PrReviewPrismGateStatus,
+  repo?: string
 ): Promise<ApiResponse<{
   items: PrReviewPrismSubmission[];
   total: number;
   page: number;
   pageSize: number;
   gateStatusCounts: PrReviewPrismGateStatusCounts;
+  repo?: string | null;
 }>> {
   const params = new URLSearchParams({
     page: String(page),
@@ -144,6 +146,9 @@ export async function listPrReviewPrismSubmissions(
   }
   if (gateStatus) {
     params.set('gateStatus', gateStatus);
+  }
+  if (repo && repo.trim()) {
+    params.set('repo', repo.trim());
   }
   return apiRequest(`${api.prReviewPrism.submissions.list()}?${params.toString()}`);
 }

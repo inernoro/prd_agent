@@ -33,6 +33,43 @@ import JSZip from 'jszip';
 
 const bootstrapInitCommand = 'bash scripts/bootstrap-pr-prism.sh';
 const bootstrapGuidePath = 'doc/guide.pr-prism-bootstrap-package.md';
+const prismRepoWorkspaceStorageKey = 'prReviewPrism.workspaceRepo';
+const prismRepoWorkspaceParamsStorageKey = 'prReviewPrism.workspaceRepoParams';
+const prismRecentReposStorageKey = 'prReviewPrism.recentRepos';
+const defaultRepoOwner = 'your-github-id';
+const defaultRepoContext = 'engineering-governance';
+const defaultRepoAnchorId = 'ANCHOR-CORE-01';
+
+type RepoWorkspaceParams = {
+  owner: string;
+  context: string;
+  anchorId: string;
+  updatedAt: number;
+};
+
+function normalizeRepoKey(raw: string): string {
+  const parsed = parseRepoFromPrUrl(raw);
+  return (parsed ?? raw).trim().toLowerCase();
+}
+
+function isValidRepoKey(repo: string): boolean {
+  return /^[^/\s]+\/[^/\s]+$/.test(repo);
+}
+
+function readStorageJson<T>(storageKey: string, fallback: T): T {
+  if (typeof window === 'undefined') {
+    return fallback;
+  }
+  try {
+    const raw = window.localStorage.getItem(storageKey);
+    if (!raw) {
+      return fallback;
+    }
+    return JSON.parse(raw) as T;
+  } catch {
+    return fallback;
+  }
+}
 
 function parseRepoFromPrUrl(raw: string): string | null {
   const text = raw.trim();
@@ -74,12 +111,25 @@ export function PrReviewPrismPage() {
   const [setupStatus, setSetupStatus] = useState<PrReviewPrismSetupStatus | null>(null);
   const [setupActionMessage, setSetupActionMessage] = useState<string | null>(null);
   const [bindingRepoInput, setBindingRepoInput] = useState('');
-  const [selectedRepo, setSelectedRepo] = useState('');
+  const [selectedRepo, setSelectedRepo] = useState(() => {
+    if (typeof window === 'undefined') {
+      return '';
+    }
+    return window.localStorage.getItem(prismRepoWorkspaceStorageKey) ?? '';
+  });
   const [bootstrapDownloading, setBootstrapDownloading] = useState(false);
   const [showDesignBasisPanel, setShowDesignBasisPanel] = useState(false);
-  const [ownerInput, setOwnerInput] = useState('your-github-id');
-  const [contextInput, setContextInput] = useState('engineering-governance');
-  const [anchorInput, setAnchorInput] = useState('ANCHOR-CORE-01');
+  const [ownerInput, setOwnerInput] = useState(defaultRepoOwner);
+  const [contextInput, setContextInput] = useState(defaultRepoContext);
+  const [anchorInput, setAnchorInput] = useState(defaultRepoAnchorId);
+  const [repoWorkspaceParamsMap, setRepoWorkspaceParamsMap] = useState<Record<string, RepoWorkspaceParams>>(() =>
+    readStorageJson<Record<string, RepoWorkspaceParams>>(prismRepoWorkspaceParamsStorageKey, {})
+  );
+  const [recentRepos, setRecentRepos] = useState<string[]>(() =>
+    readStorageJson<string[]>(prismRecentReposStorageKey, [])
+      .map(normalizeRepoKey)
+      .filter(isValidRepoKey)
+  );
   const [gateStatusCounts, setGateStatusCounts] = useState<{
     all: number;
     completed: number;
@@ -116,10 +166,39 @@ export function PrReviewPrismPage() {
     const parsed = parseRepoFromPrUrl(raw);
     return parsed ?? raw;
   }, [bindingRepoInput]);
-  const isBindingRepoValid = useMemo(() => /^[^/\s]+\/[^/\s]+$/.test(normalizedBindingRepo), [normalizedBindingRepo]);
-  const normalizedOwner = useMemo(() => ownerInput.trim() || 'your-github-id', [ownerInput]);
-  const normalizedContext = useMemo(() => contextInput.trim() || 'engineering-governance', [contextInput]);
-  const normalizedAnchor = useMemo(() => anchorInput.trim() || 'ANCHOR-CORE-01', [anchorInput]);
+  const normalizedSelectedRepo = useMemo(() => {
+    const raw = selectedRepo.trim();
+    if (!raw) {
+      return '';
+    }
+    const parsed = parseRepoFromPrUrl(raw);
+    return (parsed ?? raw).toLowerCase();
+  }, [selectedRepo]);
+  const isBindingRepoValid = useMemo(() => isValidRepoKey(normalizedBindingRepo), [normalizedBindingRepo]);
+  const normalizedOwner = useMemo(() => ownerInput.trim() || defaultRepoOwner, [ownerInput]);
+  const normalizedContext = useMemo(() => contextInput.trim() || defaultRepoContext, [contextInput]);
+  const normalizedAnchor = useMemo(() => anchorInput.trim() || defaultRepoAnchorId, [anchorInput]);
+  const observedRepos = useMemo(
+    () => Array.from(new Set(items.map(x => `${x.repoOwner}/${x.repoName}`.toLowerCase()))),
+    [items]
+  );
+  const visibleRepoCandidates = useMemo(() => {
+    const ordered = [
+      ...(normalizedSelectedRepo ? [normalizedSelectedRepo] : []),
+      ...recentRepos.map(x => x.toLowerCase()),
+      ...observedRepos,
+    ];
+    const set = new Set<string>();
+    const list: string[] = [];
+    for (const repo of ordered) {
+      if (!repo || set.has(repo)) {
+        continue;
+      }
+      set.add(repo);
+      list.push(repo);
+    }
+    return list;
+  }, [normalizedSelectedRepo, observedRepos, recentRepos]);
   const repoScopedBootstrapCommand = useMemo(() => {
     if (!isBindingRepoValid) {
       return bootstrapInitCommand;
@@ -278,6 +357,28 @@ slices:
     }
     return '请先完成新仓库接入向导后再提交 PR';
   }, [canSubmitPr, setupStatus]);
+  const touchRecentRepo = useCallback((repo: string) => {
+    const normalized = repo.trim().toLowerCase();
+    if (!normalized) {
+      return;
+    }
+    setRecentRepos(prev => [normalized, ...prev.filter(x => x !== normalized)].slice(0, 12));
+  }, [setRecentRepos]);
+  const syncRepoWorkspaceParams = useCallback((repo: string, owner: string, context: string, anchorId: string) => {
+    const normalizedRepo = repo.trim().toLowerCase();
+    if (!normalizedRepo) {
+      return;
+    }
+    setRepoWorkspaceParamsMap(prev => ({
+      ...prev,
+      [normalizedRepo]: {
+        owner,
+        context,
+        anchorId,
+        updatedAt: Date.now(),
+      },
+    }));
+  }, [setRepoWorkspaceParamsMap]);
 
   const copyToClipboard = useCallback(async (text: string, successMessage: string) => {
     try {
@@ -437,14 +538,21 @@ ${repoBindingSnippet}
   }, [isBindingRepoValid, normalizedBindingRepo]);
 
   const loadList = useCallback(
-    async (targetPage = page, keyword?: string, targetPageSize = pageSize, gateStatus = activeGateFilter) => {
+    async (
+      targetPage = page,
+      keyword?: string,
+      targetPageSize = pageSize,
+      gateStatus = activeGateFilter,
+      repoFilter?: string
+    ) => {
       setLoading(true);
       setListError(null);
       const res = await listPrReviewPrismSubmissions(
         targetPage,
         targetPageSize,
         keyword,
-        gateStatus === 'all' ? undefined : gateStatus
+        gateStatus === 'all' ? undefined : gateStatus,
+        repoFilter
       );
       if (res.success && res.data) {
         setItems(res.data.items);
@@ -489,8 +597,8 @@ ${repoBindingSnippet}
   useEffect(() => {
     void loadStatus();
     void loadSetupStatus();
-    void loadList();
-  }, [loadList, loadSetupStatus, loadStatus]);
+    void loadList(1, search.trim() || undefined, pageSize, activeGateFilter, normalizedSelectedRepo || undefined);
+  }, [activeGateFilter, loadList, loadSetupStatus, loadStatus, normalizedSelectedRepo, pageSize, search]);
 
   useEffect(() => {
     setSelectedId(prev => {
@@ -508,20 +616,74 @@ ${repoBindingSnippet}
   }, [prUrl]);
   useEffect(() => {
     if (isBindingRepoValid) {
-      setSelectedRepo(normalizedBindingRepo);
+      const normalized = normalizedBindingRepo.toLowerCase();
+      setSelectedRepo(normalized);
+      touchRecentRepo(normalized);
     }
-  }, [isBindingRepoValid, normalizedBindingRepo]);
+  }, [isBindingRepoValid, normalizedBindingRepo, touchRecentRepo]);
   useEffect(() => {
-    if (bindingRepoInput.trim()) {
+    if (bindingRepoInput.trim() || normalizedSelectedRepo) {
       return;
     }
     if (selected?.repoOwner && selected.repoName) {
-      setBindingRepoInput(`${selected.repoOwner}/${selected.repoName}`);
+      const initialRepo = `${selected.repoOwner}/${selected.repoName}`.toLowerCase();
+      setBindingRepoInput(initialRepo);
+      setSelectedRepo(initialRepo);
+      if (typeof window !== 'undefined') {
+        window.localStorage.setItem(prismRepoWorkspaceStorageKey, initialRepo);
+      }
     }
-  }, [bindingRepoInput, selected]);
+  }, [bindingRepoInput, normalizedSelectedRepo, selected]);
+  useEffect(() => {
+    if (typeof window === 'undefined') {
+      return;
+    }
+    if (normalizedSelectedRepo) {
+      window.localStorage.setItem(prismRepoWorkspaceStorageKey, normalizedSelectedRepo);
+      return;
+    }
+    window.localStorage.removeItem(prismRepoWorkspaceStorageKey);
+  }, [normalizedSelectedRepo]);
+  useEffect(() => {
+    if (typeof window === 'undefined') {
+      return;
+    }
+    window.localStorage.setItem(prismRecentReposStorageKey, JSON.stringify(recentRepos));
+  }, [recentRepos]);
+  useEffect(() => {
+    if (typeof window === 'undefined') {
+      return;
+    }
+    window.localStorage.setItem(prismRepoWorkspaceParamsStorageKey, JSON.stringify(repoWorkspaceParamsMap));
+  }, [repoWorkspaceParamsMap]);
+  useEffect(() => {
+    if (!normalizedSelectedRepo) {
+      return;
+    }
+    const params = repoWorkspaceParamsMap[normalizedSelectedRepo];
+    if (!params) {
+      return;
+    }
+    if (params.owner) {
+      setOwnerInput(params.owner);
+    }
+    if (params.context) {
+      setContextInput(params.context);
+    }
+    if (params.anchorId) {
+      setAnchorInput(params.anchorId);
+    }
+  }, [normalizedSelectedRepo, repoWorkspaceParamsMap]);
+  useEffect(() => {
+    const activeRepo = normalizedSelectedRepo || (isBindingRepoValid ? normalizedBindingRepo.toLowerCase() : '');
+    if (!activeRepo) {
+      return;
+    }
+    syncRepoWorkspaceParams(activeRepo, normalizedOwner, normalizedContext, normalizedAnchor);
+  }, [isBindingRepoValid, normalizedAnchor, normalizedBindingRepo, normalizedContext, normalizedOwner, normalizedSelectedRepo, syncRepoWorkspaceParams]);
 
   async function handleSearch() {
-    await loadList(1, search.trim() || undefined, pageSize, activeGateFilter);
+    await loadList(1, search.trim() || undefined, pageSize, activeGateFilter, normalizedSelectedRepo || undefined);
   }
 
   async function handleSubmit() {
@@ -546,7 +708,22 @@ ${repoBindingSnippet}
 
     setPrUrl('');
     setNote('');
-    await loadList(1, search.trim() || undefined, pageSize, activeGateFilter);
+    const parsedRepo = parseRepoFromPrUrl(normalizedUrl);
+    if (parsedRepo) {
+      const nextRepo = parsedRepo.toLowerCase();
+      setSelectedRepo(nextRepo);
+      setBindingRepoInput(nextRepo);
+      touchRecentRepo(nextRepo);
+      syncRepoWorkspaceParams(nextRepo, normalizedOwner, normalizedContext, normalizedAnchor);
+    }
+    const submitRepoFilter = (parsedRepo ?? normalizedSelectedRepo ?? '').toLowerCase() || undefined;
+    await loadList(
+      1,
+      search.trim() || undefined,
+      pageSize,
+      activeGateFilter,
+      submitRepoFilter
+    );
     await loadSetupStatus();
     setSelectedId(res.data.submission.id);
     setSubmitting(false);
@@ -668,7 +845,7 @@ ${repoBindingSnippet}
       setSelectedId(next[0]?.id ?? null);
     }
     if (next.length === 0 && page > 1) {
-      await loadList(page - 1, search.trim() || undefined, pageSize, activeGateFilter);
+      await loadList(page - 1, search.trim() || undefined, pageSize, activeGateFilter, normalizedSelectedRepo || undefined);
     }
     setDeletingId(null);
   }
@@ -753,18 +930,47 @@ ${repoBindingSnippet}
       <div className="grid grid-cols-1 lg:grid-cols-[260px_1fr] gap-4 mb-5">
         <div className="rounded-xl p-4 border border-white/10 bg-white/[0.03]">
           <p className="text-sm font-medium text-white mb-3">我的仓库（可切换）</p>
+          {normalizedSelectedRepo && (
+            <p className="text-[11px] text-violet-200/80 mb-2 break-all">当前仓库：{normalizedSelectedRepo}</p>
+          )}
+          {normalizedSelectedRepo && (
+            <div className="mb-2">
+              <button
+                type="button"
+                onClick={() => {
+                  setSelectedRepo('');
+                  setSetupActionMessage(null);
+                  void loadList(1, search.trim() || undefined, pageSize, activeGateFilter, undefined);
+                  void loadSetupStatus();
+                }}
+                className="inline-flex items-center gap-1 rounded border border-white/20 bg-white/10 px-2 py-1 text-[11px] text-white/80 hover:bg-white/15 whitespace-nowrap"
+              >
+                清除仓库过滤
+              </button>
+            </div>
+          )}
           <div className="space-y-2 max-h-72 overflow-auto pr-1">
-            {Array.from(new Set(items.map(x => `${x.repoOwner}/${x.repoName}`))).map(repo => (
+            {visibleRepoCandidates.map(repo => (
               <button
                 key={repo}
                 type="button"
                 onClick={() => {
-                  setSelectedRepo(repo);
-                  setBindingRepoInput(repo);
+                  const normalizedRepo = repo.toLowerCase();
+                  setSelectedRepo(normalizedRepo);
+                  setBindingRepoInput(normalizedRepo);
+                  touchRecentRepo(normalizedRepo);
+                  const params = repoWorkspaceParamsMap[normalizedRepo];
+                  if (params) {
+                    setOwnerInput(params.owner || 'your-github-id');
+                    setContextInput(params.context || 'engineering-governance');
+                    setAnchorInput(params.anchorId || 'ANCHOR-CORE-01');
+                  }
                   setSetupActionMessage(null);
+                  void loadList(1, search.trim() || undefined, pageSize, activeGateFilter, normalizedRepo);
+                  void loadSetupStatus();
                 }}
                 className={`w-full text-left rounded-lg border px-2.5 py-2 text-xs whitespace-nowrap ${
-                  (selectedRepo || normalizedBindingRepo) === repo
+                  (normalizedSelectedRepo || normalizedBindingRepo.toLowerCase()) === repo.toLowerCase()
                     ? 'border-violet-400/50 bg-violet-500/15 text-violet-200'
                     : 'border-white/10 bg-white/5 text-white/70 hover:bg-white/10'
                 }`}
@@ -772,7 +978,7 @@ ${repoBindingSnippet}
                 {repo}
               </button>
             ))}
-            {Array.from(new Set(items.map(x => `${x.repoOwner}/${x.repoName}`))).length === 0 && (
+            {visibleRepoCandidates.length === 0 && (
               <p className="text-xs text-white/40">暂无仓库，先提交一个 PR 链接即可加入列表。</p>
             )}
           </div>
@@ -852,6 +1058,11 @@ ${repoBindingSnippet}
               {!isBindingRepoValid && (
                 <p className="mt-1 text-[11px] text-amber-200/80">
                   请输入目标仓库（owner/repo）或粘贴该仓库 PR 链接，系统自动识别。
+                </p>
+              )}
+              {isBindingRepoValid && (
+                <p className="mt-1 text-[11px] text-amber-200/80">
+                  当前仓库参数会自动保存，下次切回该仓库时自动恢复 owner/context/anchor。
                 </p>
               )}
               <p className="mt-2 font-medium">Step 2 / 4：执行该仓库初始化命令</p>
@@ -1083,7 +1294,7 @@ ${repoBindingSnippet}
                 type="button"
                 onClick={() => {
                   setActiveGateFilter('all');
-                  void loadList(1, search.trim() || undefined, pageSize, 'all');
+                  void loadList(1, search.trim() || undefined, pageSize, 'all', normalizedSelectedRepo || undefined);
                 }}
                 className={`px-2.5 py-1 text-xs rounded-md border transition-colors ${
                   activeGateFilter === 'all'
@@ -1097,7 +1308,7 @@ ${repoBindingSnippet}
                 type="button"
                 onClick={() => {
                   setActiveGateFilter('completed');
-                  void loadList(1, search.trim() || undefined, pageSize, 'completed');
+                  void loadList(1, search.trim() || undefined, pageSize, 'completed', normalizedSelectedRepo || undefined);
                 }}
                 className={`px-2.5 py-1 text-xs rounded-md border transition-colors ${
                   activeGateFilter === 'completed'
@@ -1111,7 +1322,7 @@ ${repoBindingSnippet}
                 type="button"
                 onClick={() => {
                   setActiveGateFilter('pending');
-                  void loadList(1, search.trim() || undefined, pageSize, 'pending');
+                  void loadList(1, search.trim() || undefined, pageSize, 'pending', normalizedSelectedRepo || undefined);
                 }}
                 className={`px-2.5 py-1 text-xs rounded-md border transition-colors ${
                   activeGateFilter === 'pending'
@@ -1125,7 +1336,7 @@ ${repoBindingSnippet}
                 type="button"
                 onClick={() => {
                   setActiveGateFilter('missing');
-                  void loadList(1, search.trim() || undefined, pageSize, 'missing');
+                  void loadList(1, search.trim() || undefined, pageSize, 'missing', normalizedSelectedRepo || undefined);
                 }}
                 className={`px-2.5 py-1 text-xs rounded-md border transition-colors ${
                   activeGateFilter === 'missing'
@@ -1139,7 +1350,7 @@ ${repoBindingSnippet}
                 type="button"
                 onClick={() => {
                   setActiveGateFilter('error');
-                  void loadList(1, search.trim() || undefined, pageSize, 'error');
+                  void loadList(1, search.trim() || undefined, pageSize, 'error', normalizedSelectedRepo || undefined);
                 }}
                 className={`px-2.5 py-1 text-xs rounded-md border transition-colors ${
                   activeGateFilter === 'error'
@@ -1214,7 +1425,7 @@ ${repoBindingSnippet}
                   value={pageSize}
                   onChange={e => {
                     const nextPageSize = Number(e.target.value) || 20;
-                    void loadList(1, search.trim() || undefined, nextPageSize, activeGateFilter);
+                    void loadList(1, search.trim() || undefined, nextPageSize, activeGateFilter, normalizedSelectedRepo || undefined);
                   }}
                   className="bg-white/5 border border-white/10 rounded-md px-2 py-1 text-xs text-white"
                 >
@@ -1225,7 +1436,9 @@ ${repoBindingSnippet}
                 <button
                   type="button"
                   disabled={page <= 1 || loading}
-                  onClick={() => void loadList(page - 1, search.trim() || undefined, pageSize, activeGateFilter)}
+                  onClick={() =>
+                    void loadList(page - 1, search.trim() || undefined, pageSize, activeGateFilter, normalizedSelectedRepo || undefined)
+                  }
                   className="px-2.5 py-1 text-xs rounded-md border border-white/10 bg-white/5 hover:bg-white/10 text-white/70 disabled:opacity-50"
                 >
                   上一页
@@ -1233,7 +1446,9 @@ ${repoBindingSnippet}
                 <button
                   type="button"
                   disabled={page >= totalPages || loading}
-                  onClick={() => void loadList(page + 1, search.trim() || undefined, pageSize, activeGateFilter)}
+                  onClick={() =>
+                    void loadList(page + 1, search.trim() || undefined, pageSize, activeGateFilter, normalizedSelectedRepo || undefined)
+                  }
                   className="px-2.5 py-1 text-xs rounded-md border border-white/10 bg-white/5 hover:bg-white/10 text-white/70 disabled:opacity-50"
                 >
                   下一页
