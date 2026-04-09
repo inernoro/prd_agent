@@ -193,6 +193,7 @@ cd prd-api && dotnet build --no-restore 2>&1 | grep -E "error CS|warning CS" | h
 | **llm-visibility** | `/visibility` | 输入代码变更 → 扫描所有 LLM 调用点，检查是否符合「禁止空白等待」原则，输出合规报告 |
 | **document-emerge** | `/emerge` | 输入文档空间 → 对标竞品功能矩阵，涌现式设计下一个最有价值的文档功能 |
 | **cn-brief-summary** | `200字总结` | 无需输入 → 在回复末尾自动追加 ≤200 字中文通俗总结 |
+| **dev-completion-report** | `/dev-report` | 开发完成后 → 输出三段式报告：200 字总结 + 总结清单（改动/风险/测试/验收）+ 行业对比分析 |
 | **create-skill-file** | `/create-skill` | 输入技能需求 → 生成符合规范的 SKILL.md 文件并评分 |
 | **cds-project-scan** | `/cds-scan` | 输入项目目录 → 自动检测技术栈和基础设施，生成 CDS docker-compose YAML |
 | **theme-transition** | `/theme-transition` | 输入项目 → 添加 View Transition API 圆形水波纹主题切换动效（含降级方案） |
