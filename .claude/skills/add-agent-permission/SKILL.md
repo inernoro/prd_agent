@@ -90,6 +90,11 @@ new(NewAgentUse, "新 Agent 名称", "功能描述"),
 } />
 ```
 
+#### 3.6 百宝箱注册（默认必做）
+**文件**: `prd-admin/src/stores/toolboxStore.ts`
+
+在 `BUILTIN_TOOLS` 追加条目，参考现有条目（如 `builtin-prd-agent`）格式。**新条目必须带 `wip: true`**，卡片会显示"施工中"徽章；通过 CLAUDE.md 规则 #8 完成标准验收后才删除该字段。详见 `.claude/rules/navigation-registry.md`。
+
 ### Step 4: 更新规则文档
 
 将新权限登记到 `doc/rule.agent-permissions.md` 的对应表格中。
@@ -103,6 +108,7 @@ new(NewAgentUse, "新 Agent 名称", "功能描述"),
 - [ ] Controller — `[AdminController]` 属性正确
 - [ ] `authzMenuMapping.ts` — menuList + allPermissions
 - [ ] `App.tsx` — `RequirePermission` 使用正确权限
+- [ ] `toolboxStore.ts` — `BUILTIN_TOOLS` 已追加条目（默认必做）
 - [ ] `doc/rule.agent-permissions.md` — 已登记
 
 ## 禁止事项
