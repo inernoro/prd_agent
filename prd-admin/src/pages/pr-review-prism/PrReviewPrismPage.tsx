@@ -21,6 +21,7 @@ import {
   getPrReviewPrismStatus,
   listPrReviewPrismSubmissions,
   refreshPrReviewPrismSubmission,
+  type PrReviewPrismGateStatus,
   type PrReviewPrismSubmission,
 } from '@/services';
 
@@ -33,16 +34,38 @@ export function PrReviewPrismPage() {
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [items, setItems] = useState<PrReviewPrismSubmission[]>([]);
   const [total, setTotal] = useState(0);
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(20);
   const [search, setSearch] = useState('');
+  const [activeGateFilter, setActiveGateFilter] = useState<'all' | PrReviewPrismGateStatus>('all');
   const [prUrl, setPrUrl] = useState('');
   const [note, setNote] = useState('');
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [formError, setFormError] = useState<string | null>(null);
   const [listError, setListError] = useState<string | null>(null);
 
+  const filteredItems = useMemo(() => {
+    if (activeGateFilter === 'all') {
+      return items;
+    }
+    return items.filter(x => x.gateStatus === activeGateFilter);
+  }, [activeGateFilter, items]);
+
+  const gateCounts = useMemo(
+    () => ({
+      completed: items.filter(x => x.gateStatus === 'completed').length,
+      pending: items.filter(x => x.gateStatus === 'pending').length,
+      missing: items.filter(x => x.gateStatus === 'missing').length,
+      error: items.filter(x => x.gateStatus === 'error').length,
+    }),
+    [items]
+  );
+
+  const totalPages = Math.max(1, Math.ceil(total / pageSize));
+
   const selected = useMemo(
-    () => items.find(x => x.id === selectedId) ?? null,
-    [items, selectedId]
+    () => filteredItems.find(x => x.id === selectedId) ?? null,
+    [filteredItems, selectedId]
   );
 
   const loadStatus = useCallback(async () => {
@@ -53,13 +76,15 @@ export function PrReviewPrismPage() {
   }, []);
 
   const loadList = useCallback(
-    async (keyword?: string) => {
+    async (targetPage = page, keyword?: string, targetPageSize = pageSize) => {
       setLoading(true);
       setListError(null);
-      const res = await listPrReviewPrismSubmissions(1, 100, keyword);
+      const res = await listPrReviewPrismSubmissions(targetPage, targetPageSize, keyword);
       if (res.success && res.data) {
         setItems(res.data.items);
         setTotal(res.data.total);
+        setPage(res.data.page);
+        setPageSize(res.data.pageSize);
         setSelectedId(prev => {
           if (prev && res.data.items.some(x => x.id === prev)) {
             return prev;
@@ -74,7 +99,7 @@ export function PrReviewPrismPage() {
       }
       setLoading(false);
     },
-    []
+    [page, pageSize]
   );
 
   useEffect(() => {
@@ -82,8 +107,17 @@ export function PrReviewPrismPage() {
     void loadList();
   }, [loadList, loadStatus]);
 
+  useEffect(() => {
+    setSelectedId(prev => {
+      if (prev && filteredItems.some(x => x.id === prev)) {
+        return prev;
+      }
+      return filteredItems[0]?.id ?? null;
+    });
+  }, [filteredItems]);
+
   async function handleSearch() {
-    await loadList(search.trim() || undefined);
+    await loadList(1, search.trim() || undefined, pageSize);
   }
 
   async function handleSubmit() {
@@ -108,7 +142,7 @@ export function PrReviewPrismPage() {
 
     setPrUrl('');
     setNote('');
-    await loadList(search.trim() || undefined);
+    await loadList(1, search.trim() || undefined, pageSize);
     setSelectedId(res.data.submission.id);
     setSubmitting(false);
   }
@@ -138,7 +172,21 @@ export function PrReviewPrismPage() {
     if (selectedId === id) {
       setSelectedId(next[0]?.id ?? null);
     }
+    if (next.length === 0 && page > 1) {
+      await loadList(page - 1, search.trim() || undefined, pageSize);
+    }
     setDeletingId(null);
+  }
+
+  function formatDateTime(value?: string | null) {
+    if (!value) {
+      return '-';
+    }
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) {
+      return '-';
+    }
+    return date.toLocaleString('zh-CN', { hour12: false });
   }
 
   function gateBadge(item: PrReviewPrismSubmission) {
@@ -244,7 +292,9 @@ export function PrReviewPrismPage() {
           <div className="rounded-xl border border-white/10 bg-white/[0.03] p-4">
             <div className="flex items-center justify-between mb-3">
               <p className="text-sm font-medium text-white">提交列表</p>
-              <span className="text-xs text-white/45">{total} 条</span>
+              <span className="text-xs text-white/45">
+                总 {total} 条 / 当前页筛选 {filteredItems.length} 条
+              </span>
             </div>
             <div className="flex gap-2 mb-3">
               <div className="relative flex-1">
@@ -270,16 +320,73 @@ export function PrReviewPrismPage() {
                 搜索
               </button>
             </div>
+            <div className="flex flex-wrap gap-2 mb-3">
+              <button
+                type="button"
+                onClick={() => setActiveGateFilter('all')}
+                className={`px-2.5 py-1 text-xs rounded-md border transition-colors ${
+                  activeGateFilter === 'all'
+                    ? 'border-violet-400/50 bg-violet-500/15 text-violet-200'
+                    : 'border-white/10 bg-white/5 text-white/65 hover:bg-white/10'
+                }`}
+              >
+                全部 ({items.length})
+              </button>
+              <button
+                type="button"
+                onClick={() => setActiveGateFilter('completed')}
+                className={`px-2.5 py-1 text-xs rounded-md border transition-colors ${
+                  activeGateFilter === 'completed'
+                    ? 'border-violet-400/50 bg-violet-500/15 text-violet-200'
+                    : 'border-white/10 bg-white/5 text-white/65 hover:bg-white/10'
+                }`}
+              >
+                completed ({gateCounts.completed})
+              </button>
+              <button
+                type="button"
+                onClick={() => setActiveGateFilter('pending')}
+                className={`px-2.5 py-1 text-xs rounded-md border transition-colors ${
+                  activeGateFilter === 'pending'
+                    ? 'border-violet-400/50 bg-violet-500/15 text-violet-200'
+                    : 'border-white/10 bg-white/5 text-white/65 hover:bg-white/10'
+                }`}
+              >
+                pending ({gateCounts.pending})
+              </button>
+              <button
+                type="button"
+                onClick={() => setActiveGateFilter('missing')}
+                className={`px-2.5 py-1 text-xs rounded-md border transition-colors ${
+                  activeGateFilter === 'missing'
+                    ? 'border-violet-400/50 bg-violet-500/15 text-violet-200'
+                    : 'border-white/10 bg-white/5 text-white/65 hover:bg-white/10'
+                }`}
+              >
+                missing ({gateCounts.missing})
+              </button>
+              <button
+                type="button"
+                onClick={() => setActiveGateFilter('error')}
+                className={`px-2.5 py-1 text-xs rounded-md border transition-colors ${
+                  activeGateFilter === 'error'
+                    ? 'border-violet-400/50 bg-violet-500/15 text-violet-200'
+                    : 'border-white/10 bg-white/5 text-white/65 hover:bg-white/10'
+                }`}
+              >
+                error ({gateCounts.error})
+              </button>
+            </div>
             {listError && <p className="text-xs text-red-300 mb-2">{listError}</p>}
             {loading ? (
               <div className="h-28 flex items-center justify-center">
                 <Loader2 className="w-5 h-5 text-violet-300 animate-spin" />
               </div>
-            ) : items.length === 0 ? (
+            ) : filteredItems.length === 0 ? (
               <div className="h-28 flex items-center justify-center text-sm text-white/35">暂无提交记录</div>
             ) : (
               <div className="space-y-2 max-h-[520px] overflow-auto pr-1">
-                {items.map(item => (
+                {filteredItems.map(item => (
                   <button
                     key={item.id}
                     type="button"
@@ -299,11 +406,49 @@ export function PrReviewPrismPage() {
                     <p className="text-xs text-white/40 truncate mt-1">
                       {item.pullRequestTitle || '尚未拉取标题'}
                     </p>
+                    <p className="text-[11px] text-white/35 mt-1">
+                      更新时间：{formatDateTime(item.updatedAt)}
+                    </p>
                     <div className="mt-2">{gateBadge(item)}</div>
                   </button>
                 ))}
               </div>
             )}
+            <div className="mt-3 pt-3 border-t border-white/10 flex items-center justify-between gap-2">
+              <div className="text-xs text-white/45">
+                第 {page} / {totalPages} 页
+              </div>
+              <div className="flex items-center gap-2">
+                <select
+                  value={pageSize}
+                  onChange={e => {
+                    const nextPageSize = Number(e.target.value) || 20;
+                    void loadList(1, search.trim() || undefined, nextPageSize);
+                  }}
+                  className="bg-white/5 border border-white/10 rounded-md px-2 py-1 text-xs text-white"
+                >
+                  <option value={10}>10 / 页</option>
+                  <option value={20}>20 / 页</option>
+                  <option value={50}>50 / 页</option>
+                </select>
+                <button
+                  type="button"
+                  disabled={page <= 1 || loading}
+                  onClick={() => void loadList(page - 1, search.trim() || undefined, pageSize)}
+                  className="px-2.5 py-1 text-xs rounded-md border border-white/10 bg-white/5 hover:bg-white/10 text-white/70 disabled:opacity-50"
+                >
+                  上一页
+                </button>
+                <button
+                  type="button"
+                  disabled={page >= totalPages || loading}
+                  onClick={() => void loadList(page + 1, search.trim() || undefined, pageSize)}
+                  className="px-2.5 py-1 text-xs rounded-md border border-white/10 bg-white/5 hover:bg-white/10 text-white/70 disabled:opacity-50"
+                >
+                  下一页
+                </button>
+              </div>
+            </div>
           </div>
         </div>
 
@@ -365,12 +510,27 @@ export function PrReviewPrismPage() {
                     {selected.confidencePercent != null ? `${selected.confidencePercent}%` : '-'}
                   </p>
                 </div>
+                <div className="rounded-lg border border-white/10 bg-white/5 p-3">
+                  <p className="text-xs text-white/40">创建时间</p>
+                  <p className="text-sm text-white mt-1">{formatDateTime(selected.createdAt)}</p>
+                </div>
+                <div className="rounded-lg border border-white/10 bg-white/5 p-3">
+                  <p className="text-xs text-white/40">最近刷新</p>
+                  <p className="text-sm text-white mt-1">{formatDateTime(selected.lastRefreshedAt)}</p>
+                </div>
               </div>
 
               <div className="rounded-lg border border-white/10 bg-white/5 p-3">
                 <p className="text-xs text-white/40 mb-1">决策建议</p>
                 <p className="text-sm text-white/85">{selected.decisionSuggestion || '暂无'}</p>
               </div>
+
+              {selected.note && (
+                <div className="rounded-lg border border-white/10 bg-white/5 p-3">
+                  <p className="text-xs text-white/40 mb-1">备注</p>
+                  <p className="text-sm text-white/85">{selected.note}</p>
+                </div>
+              )}
 
               <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
                 <div className="rounded-lg border border-white/10 bg-white/5 p-3">
