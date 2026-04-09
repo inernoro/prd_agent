@@ -65,7 +65,7 @@ public class SubtitleGenerationProcessor
         string? fileUrl = null;
         if (!string.IsNullOrEmpty(entry.AttachmentId))
         {
-            var att = await db.Attachments.Find(a => a.Id == entry.AttachmentId).FirstOrDefaultAsync();
+            var att = await db.Attachments.Find(a => a.AttachmentId == entry.AttachmentId).FirstOrDefaultAsync();
             fileUrl = att?.Url;
         }
         if (string.IsNullOrEmpty(fileUrl))
@@ -165,7 +165,7 @@ public class SubtitleGenerationProcessor
 
         // 解析 ASR 模型（豆包流式）
         var resolution = await _modelResolver.ResolveAsync(
-            DocumentStoreAgent.Subtitle.Audio, ModelTypes.Asr);
+            AppCallerRegistry.DocumentStoreAgent.Subtitle.Audio, ModelTypes.Asr);
         if (!resolution.Success)
             throw new InvalidOperationException($"ASR 模型调度失败: {resolution.ErrorMessage}");
         if (!resolution.IsExchange || resolution.ExchangeTransformerType != "doubao-asr-stream")
@@ -288,7 +288,7 @@ public class SubtitleGenerationProcessor
         await UpdateProgressAsync(db, runStore, run, 30, "视觉识别中");
 
         var client = _llmGateway.CreateClient(
-            DocumentStoreAgent.Subtitle.Vision,
+            AppCallerRegistry.DocumentStoreAgent.Subtitle.Vision,
             ModelTypes.Vision,
             maxTokens: 4096,
             temperature: 0.0);

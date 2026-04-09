@@ -74,7 +74,7 @@ public class ContentReprocessProcessor
 
         // 3) 流式调用
         var client = _llmGateway.CreateClient(
-            DocumentStoreAgent.Reprocess.Generate,
+            AppCallerRegistry.DocumentStoreAgent.Reprocess.Generate,
             ModelTypes.Chat,
             maxTokens: 4096,
             temperature: 0.4);

@@ -213,7 +213,7 @@ public class DocumentStoreController : ControllerBase
         long attachmentsDeleted = 0;
         if (attachmentIds.Count > 0)
         {
-            var res = await _db.Attachments.DeleteManyAsync(a => attachmentIds.Contains(a.Id));
+            var res = await _db.Attachments.DeleteManyAsync(a => attachmentIds.Contains(a.AttachmentId));
             attachmentsDeleted = res.DeletedCount;
         }
 
@@ -522,7 +522,7 @@ public class DocumentStoreController : ControllerBase
         long attachmentsDeleted = 0;
         if (attachmentIds.Count > 0)
         {
-            var r = await _db.Attachments.DeleteManyAsync(a => attachmentIds.Contains(a.Id));
+            var r = await _db.Attachments.DeleteManyAsync(a => attachmentIds.Contains(a.AttachmentId));
             attachmentsDeleted = r.DeletedCount;
         }
 
