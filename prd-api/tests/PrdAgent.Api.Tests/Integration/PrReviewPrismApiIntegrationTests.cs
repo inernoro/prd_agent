@@ -89,6 +89,32 @@ public class PrReviewPrismApiIntegrationTests : IClassFixture<WebApplicationFact
     }
 
     [Fact]
+    public async Task BatchRefresh_EmptyIds_ShouldReturn400()
+    {
+        if (!HasToken)
+        {
+            Log("[Skip] no token");
+            return;
+        }
+
+        var client = CreateAuthenticatedClient();
+        if (!await EnsurePrReviewPrismAccessibleAsync(client))
+        {
+            return;
+        }
+
+        var response = await client.PostAsJsonAsync("/api/pr-review-prism/submissions/batch-refresh", new
+        {
+            ids = Array.Empty<string>()
+        });
+
+        var body = await response.Content.ReadAsStringAsync();
+        Log($"[BatchRefreshEmptyIds] {response.StatusCode} - {Truncate(body, 200)}");
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        AssertErrorCode(body, "INVALID_FORMAT");
+    }
+
+    [Fact]
     public async Task SubmissionWorkflow_CreateReuseListGetRefreshDelete_ShouldSucceed()
     {
         if (!HasToken)
@@ -190,7 +216,25 @@ public class PrReviewPrismApiIntegrationTests : IClassFixture<WebApplicationFact
                 Assert.Equal(submissionId, submission.GetProperty("id").GetString());
             }
 
-            // 6) Delete
+            // 6) Batch refresh
+            var batchRefreshResponse = await client.PostAsJsonAsync("/api/pr-review-prism/submissions/batch-refresh", new
+            {
+                ids = new[] { submissionId }
+            });
+            var batchRefreshBody = await batchRefreshResponse.Content.ReadAsStringAsync();
+            Log($"[BatchRefresh] {batchRefreshResponse.StatusCode} - {Truncate(batchRefreshBody, 240)}");
+            Assert.Equal(HttpStatusCode.OK, batchRefreshResponse.StatusCode);
+
+            using (var batchRefreshDoc = JsonDocument.Parse(batchRefreshBody))
+            {
+                Assert.True(batchRefreshDoc.RootElement.GetProperty("success").GetBoolean());
+                var data = batchRefreshDoc.RootElement.GetProperty("data");
+                Assert.Equal(1, data.GetProperty("total").GetInt32());
+                Assert.Equal(1, data.GetProperty("successCount").GetInt32());
+                Assert.Equal(0, data.GetProperty("failureCount").GetInt32());
+            }
+
+            // 7) Delete
             var deleteResponse = await client.DeleteAsync($"/api/pr-review-prism/submissions/{submissionId}");
             var deleteBody = await deleteResponse.Content.ReadAsStringAsync();
             Log($"[Delete] {deleteResponse.StatusCode}");
@@ -202,7 +246,7 @@ public class PrReviewPrismApiIntegrationTests : IClassFixture<WebApplicationFact
                 Assert.True(deleteDoc.RootElement.GetProperty("data").GetProperty("deleted").GetBoolean());
             }
 
-            // 7) Get deleted -> 404
+            // 8) Get deleted -> 404
             var getDeletedResponse = await client.GetAsync($"/api/pr-review-prism/submissions/{submissionId}");
             var getDeletedBody = await getDeletedResponse.Content.ReadAsStringAsync();
             Log($"[GetDeleted] {getDeletedResponse.StatusCode}");

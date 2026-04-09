@@ -6,3 +6,6 @@
 | feat | prd-admin | PR审查棱镜页面增强交互：状态筛选、分页控制、更新时间展示与详情时间信息补全 |
 | feat | prd-admin | PR审查棱镜新增“批量刷新当前筛选结果”与刷新进度反馈，便于批量回看多条提交 |
 | feat | prd-admin | 新增 prReviewPrism 前端 API 路由与 real service，并导出统一 services 接口 |
+| feat | prd-api | PR审查棱镜新增批量刷新接口 submissions/batch-refresh，单次支持最多100条并返回逐条失败原因 |
+| feat | prd-admin | PR审查棱镜批量刷新切换为后端批量接口，接口不可用时自动降级逐条刷新并维持进度反馈 |
+| fix | prd-api | PR审查棱镜集成测试补充批量刷新流程覆盖与空 ids 参数 400 校验 |

@@ -40,6 +40,20 @@ export interface PrReviewPrismSubmission {
   updatedAt: string;
 }
 
+export interface PrReviewPrismBatchRefreshFailure {
+  id: string;
+  code: string;
+  message: string;
+}
+
+export interface PrReviewPrismBatchRefreshResult {
+  total: number;
+  successCount: number;
+  failureCount: number;
+  submissions: PrReviewPrismSubmission[];
+  failures: PrReviewPrismBatchRefreshFailure[];
+}
+
 export async function getPrReviewPrismStatus(): Promise<ApiResponse<PrReviewPrismStatus>> {
   return apiRequest(api.prReviewPrism.status());
 }
@@ -79,6 +93,15 @@ export async function refreshPrReviewPrismSubmission(
   id: string
 ): Promise<ApiResponse<{ submission: PrReviewPrismSubmission }>> {
   return apiRequest(api.prReviewPrism.submissions.refresh(id), { method: 'POST' });
+}
+
+export async function batchRefreshPrReviewPrismSubmissions(
+  ids: string[]
+): Promise<ApiResponse<PrReviewPrismBatchRefreshResult>> {
+  return apiRequest(api.prReviewPrism.submissions.batchRefresh(), {
+    method: 'POST',
+    body: { ids },
+  });
 }
 
 export async function deletePrReviewPrismSubmission(id: string): Promise<ApiResponse<{ deleted: boolean }>> {

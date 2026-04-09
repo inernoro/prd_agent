@@ -220,6 +220,97 @@ public sealed class PrReviewPrismController : ControllerBase
         return Ok(ApiResponse<object>.Ok(new { submission = item }));
     }
 
+    [HttpPost("submissions/batch-refresh")]
+    public async Task<IActionResult> BatchRefreshSubmissions([FromBody] BatchRefreshPrReviewPrismSubmissionsRequest req)
+    {
+        if (req.Ids == null || req.Ids.Count == 0)
+        {
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "ids 不能为空"));
+        }
+
+        if (req.Ids.Count > 100)
+        {
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "ids 最多支持 100 条"));
+        }
+
+        var targetIds = req.Ids
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .Select(x => x.Trim())
+            .Distinct(StringComparer.Ordinal)
+            .ToList();
+
+        if (targetIds.Count == 0)
+        {
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "ids 不能为空"));
+        }
+
+        var userId = this.GetRequiredUserId();
+        var items = await _db.PrReviewPrismSubmissions
+            .Find(x => x.OwnerUserId == userId && targetIds.Contains(x.Id))
+            .ToListAsync(CancellationToken.None);
+        var itemById = items.ToDictionary(x => x.Id, StringComparer.Ordinal);
+
+        var refreshedSubmissions = new List<PrReviewPrismSubmission>(items.Count);
+        var failures = new List<PrReviewPrismBatchRefreshFailure>();
+        var successCount = 0;
+
+        foreach (var submissionId in targetIds)
+        {
+            if (!itemById.TryGetValue(submissionId, out var item))
+            {
+                failures.Add(new PrReviewPrismBatchRefreshFailure
+                {
+                    Id = submissionId,
+                    Code = ErrorCodes.NOT_FOUND,
+                    Message = "提交记录不存在",
+                });
+                continue;
+            }
+
+            var refreshSucceeded = true;
+            try
+            {
+                var snapshot = await _snapshotBuilder.BuildSnapshotAsync(item.RepoOwner, item.RepoName, item.PullRequestNumber);
+                ApplySnapshot(item, snapshot);
+                item.LastRefreshError = null;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "PrReviewPrism batch refresh failed: {Id}", submissionId);
+                item.LastRefreshError = ex.Message;
+                item.GateStatus = PrReviewPrismGateStatuses.Error;
+                item.UpdatedAt = DateTime.UtcNow;
+                refreshSucceeded = false;
+                failures.Add(new PrReviewPrismBatchRefreshFailure
+                {
+                    Id = submissionId,
+                    Code = ErrorCodes.LLM_ERROR,
+                    Message = ex.Message,
+                });
+            }
+
+            await _db.PrReviewPrismSubmissions.ReplaceOneAsync(
+                x => x.Id == item.Id,
+                item,
+                cancellationToken: CancellationToken.None);
+
+            refreshedSubmissions.Add(item);
+            if (refreshSucceeded)
+            {
+                successCount += 1;
+            }
+        }
+
+        return Ok(ApiResponse<object>.Ok(new
+        {
+            total = targetIds.Count,
+            successCount,
+            failureCount = failures.Count,
+            submissions = refreshedSubmissions,
+            failures,
+        }));
+    }
+
     [HttpDelete("submissions/{id}")]
     public async Task<IActionResult> DeleteSubmission(string id)
     {
@@ -267,4 +358,16 @@ public sealed class CreatePrReviewPrismSubmissionRequest
 {
     public string PullRequestUrl { get; set; } = string.Empty;
     public string? Note { get; set; }
+}
+
+public sealed class BatchRefreshPrReviewPrismSubmissionsRequest
+{
+    public List<string> Ids { get; set; } = new();
+}
+
+public sealed class PrReviewPrismBatchRefreshFailure
+{
+    public string Id { get; set; } = string.Empty;
+    public string Code { get; set; } = string.Empty;
+    public string Message { get; set; } = string.Empty;
 }

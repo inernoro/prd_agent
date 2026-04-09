@@ -375,6 +375,7 @@ export const api = {
       create: () => '/api/pr-review-prism/submissions',
       byId: (id: string) => `/api/pr-review-prism/submissions/${id}`,
       refresh: (id: string) => `/api/pr-review-prism/submissions/${id}/refresh`,
+      batchRefresh: () => '/api/pr-review-prism/submissions/batch-refresh',
       delete: (id: string) => `/api/pr-review-prism/submissions/${id}`,
     },
   },

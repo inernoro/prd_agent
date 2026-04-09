@@ -1509,9 +1509,12 @@ export {
   listPrReviewPrismSubmissions,
   getPrReviewPrismSubmission,
   refreshPrReviewPrismSubmission,
+  batchRefreshPrReviewPrismSubmissions,
   deletePrReviewPrismSubmission,
 } from '@/services/real/prReviewPrism';
 export type {
+  PrReviewPrismBatchRefreshFailure,
+  PrReviewPrismBatchRefreshResult,
   PrReviewPrismGateStatus,
   PrReviewPrismSubmission,
   PrReviewPrismStatus,

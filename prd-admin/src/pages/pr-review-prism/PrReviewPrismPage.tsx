@@ -20,9 +20,11 @@ import {
   deletePrReviewPrismSubmission,
   getPrReviewPrismStatus,
   listPrReviewPrismSubmissions,
+  batchRefreshPrReviewPrismSubmissions,
   refreshPrReviewPrismSubmission,
   type PrReviewPrismGateStatus,
   type PrReviewPrismSubmission,
+  type PrReviewPrismBatchRefreshFailure,
 } from '@/services';
 
 export function PrReviewPrismPage() {
@@ -196,7 +198,46 @@ export function PrReviewPrismPage() {
     let success = 0;
     let failed = 0;
     let done = 0;
+    const updateBatchProgress = () => {
+      setBatchProgress({
+        total: targetIds.length,
+        done,
+        success,
+        failed,
+      });
+    };
+    const appendBatchError = (id: string, message: string) => {
+      setListError(prev => {
+        if (!prev) {
+          return `${id}: ${message}`;
+        }
+        if (prev.length > 800) {
+          return `${prev.slice(0, 800)}...`;
+        }
+        return `${prev}; ${id}: ${message}`;
+      });
+    };
 
+    const batchRes = await batchRefreshPrReviewPrismSubmissions(targetIds);
+    if (batchRes.success && batchRes.data) {
+      const refreshed = new Map(batchRes.data.submissions.map(x => [x.id, x]));
+      setItems(prev => prev.map(x => refreshed.get(x.id) ?? x));
+      success = batchRes.data.successCount;
+      failed = batchRes.data.failureCount;
+      done = batchRes.data.total;
+      updateBatchProgress();
+      if (failed > 0 && batchRes.data.failures.length > 0) {
+        const topFailures = batchRes.data.failures
+          .slice(0, 5)
+          .map((x: PrReviewPrismBatchRefreshFailure) => `${x.id}: ${x.message}`)
+          .join('; ');
+        setListError(`批量刷新部分失败（${failed} 条）：${topFailures}`);
+      }
+      setBatchRefreshing(false);
+      return;
+    }
+
+    // 兜底：如果批量接口不可用或失败，降级为逐条刷新，避免功能不可用
     for (const id of targetIds) {
       const res = await refreshPrReviewPrismSubmission(id);
       if (res.success && res.data?.submission) {
@@ -204,17 +245,18 @@ export function PrReviewPrismPage() {
         setItems(prev => prev.map(x => (x.id === id ? res.data!.submission : x)));
       } else {
         failed += 1;
+        appendBatchError(id, res.error?.message ?? '刷新失败');
       }
       done += 1;
-      setBatchProgress({
-        total: targetIds.length,
-        done,
-        success,
-        failed,
-      });
+      updateBatchProgress();
     }
 
-    if (failed > 0) {
+    if (failed > 0 && !batchRes.success) {
+      setListError(prev => {
+        const prefix = `批量接口失败（已降级逐条刷新）：${batchRes.error?.message ?? '未知错误'}`;
+        return prev ? `${prefix}; ${prev}` : prefix;
+      });
+    } else if (failed > 0) {
       setListError(`批量刷新完成：成功 ${success}，失败 ${failed}`);
     }
 
