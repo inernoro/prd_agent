@@ -31,37 +31,6 @@ import {
 
 const bootstrapInitCommand = 'bash scripts/bootstrap-pr-prism.sh';
 const bootstrapGuidePath = 'doc/guide.pr-prism-bootstrap-package.md';
-const topDesignBasisTemplateText = `# doc/top-design/main.md
-# Top Design Baseline
-
-## Bounded Context
-- engineering-governance
-
-## Core Anchor
-- ANCHOR-CORE-01
-
-# doc/top-design/anchors.yml
-version: 1
-anchors:
-  - id: "ANCHOR-CORE-01"
-    title: "Core governance anchor"
-    description: "Keep PR review metadata, boundary and evidence consistent."
-
-# doc/top-design/contexts.yml
-version: 1
-contexts:
-  - id: "engineering-governance"
-    name: "engineering-governance"
-    description: "Primary governance bounded context for this repository."
-
-# doc/top-design/slices.yml
-version: 1
-slices:
-  - id: "slice-governance-core"
-    owner: "architect"
-    context: "engineering-governance"
-    description: "Initial slice for governance baseline."
-`;
 
 function parseRepoFromPrUrl(raw: string): string | null {
   const text = raw.trim();
@@ -103,6 +72,9 @@ export function PrReviewPrismPage() {
   const [setupStatus, setSetupStatus] = useState<PrReviewPrismSetupStatus | null>(null);
   const [setupActionMessage, setSetupActionMessage] = useState<string | null>(null);
   const [bindingRepoInput, setBindingRepoInput] = useState('');
+  const [ownerInput, setOwnerInput] = useState('your-github-id');
+  const [contextInput, setContextInput] = useState('engineering-governance');
+  const [anchorInput, setAnchorInput] = useState('ANCHOR-CORE-01');
   const [gateStatusCounts, setGateStatusCounts] = useState<{
     all: number;
     completed: number;
@@ -140,12 +112,15 @@ export function PrReviewPrismPage() {
     return parsed ?? raw;
   }, [bindingRepoInput]);
   const isBindingRepoValid = useMemo(() => /^[^/\s]+\/[^/\s]+$/.test(normalizedBindingRepo), [normalizedBindingRepo]);
+  const normalizedOwner = useMemo(() => ownerInput.trim() || 'your-github-id', [ownerInput]);
+  const normalizedContext = useMemo(() => contextInput.trim() || 'engineering-governance', [contextInput]);
+  const normalizedAnchor = useMemo(() => anchorInput.trim() || 'ANCHOR-CORE-01', [anchorInput]);
   const repoScopedBootstrapCommand = useMemo(() => {
     if (!isBindingRepoValid) {
       return bootstrapInitCommand;
     }
-    return `bash scripts/bootstrap-pr-prism.sh --repo "${normalizedBindingRepo}" --owner "your-github-id"`;
-  }, [isBindingRepoValid, normalizedBindingRepo]);
+    return `bash scripts/bootstrap-pr-prism.sh --repo "${normalizedBindingRepo}" --owner "${normalizedOwner}" --context "${normalizedContext}"`;
+  }, [isBindingRepoValid, normalizedBindingRepo, normalizedOwner, normalizedContext]);
   const repoBindingSnippet = useMemo(() => {
     if (!isBindingRepoValid) {
       return '';
@@ -154,12 +129,104 @@ export function PrReviewPrismPage() {
   enabled: true
   design_source_id: "local-ddd-anchor"
   design_source_version: "v1.0.0"
-  default_owner: "your-github-id"
-  default_context: "engineering-governance"
+  default_owner: "${normalizedOwner}"
+  default_context: "${normalizedContext}"
+  default_anchor_refs:
+    - "${normalizedAnchor}"
   required_checks:
     - "PR审查棱镜 L1 Gate"
     - "PR审查棱镜 Advisory"`;
-  }, [isBindingRepoValid, normalizedBindingRepo]);
+  }, [isBindingRepoValid, normalizedBindingRepo, normalizedOwner, normalizedContext, normalizedAnchor]);
+  const topDesignBasisTemplateText = useMemo(
+    () => `# doc/top-design/main.md
+# Top Design Baseline
+
+## Bounded Context
+- ${normalizedContext}
+
+## Core Anchor
+- ${normalizedAnchor}
+
+# doc/top-design/anchors.yml
+version: 1
+anchors:
+  - id: "${normalizedAnchor}"
+    title: "Core governance anchor"
+    description: "Keep PR review metadata, boundary and evidence consistent."
+
+# doc/top-design/contexts.yml
+version: 1
+contexts:
+  - id: "${normalizedContext}"
+    name: "${normalizedContext}"
+    description: "Primary governance bounded context for this repository."
+
+# doc/top-design/slices.yml
+version: 1
+slices:
+  - id: "slice-governance-core"
+    owner: "${normalizedOwner}"
+    context: "${normalizedContext}"
+    description: "Initial slice for governance baseline."
+`,
+    [normalizedAnchor, normalizedContext, normalizedOwner]
+  );
+  const fullRepoOnboardingYaml = useMemo(() => {
+    if (!isBindingRepoValid) {
+      return `# 请先输入 owner/repo 后再生成完整配置`;
+    }
+    return `# .github/pr-architect/design-sources.yml
+version: 1
+profile: top-design-sources
+defaults:
+  active_source_id: "local-ddd-anchor"
+  active_version: "v1.0.0"
+  enforce_manifests: true
+sources:
+  - id: "local-ddd-anchor"
+    type: "repo-file"
+    location: "doc/top-design/main.md"
+    version: "v1.0.0"
+    checksum: "sha256:replace-with-real-checksum"
+    owner: "${normalizedOwner}"
+    description: "Repository local top-design baseline for PR Review Prism"
+    manifests:
+      anchors: "doc/top-design/anchors.yml"
+      slices: "doc/top-design/slices.yml"
+      contexts: "doc/top-design/contexts.yml"
+
+# .github/pr-architect/repo-bindings.yml (append to repositories)
+${repoBindingSnippet}
+
+# doc/top-design/anchors.yml
+version: 1
+anchors:
+  - id: "${normalizedAnchor}"
+    title: "Core governance anchor"
+    description: "Keep PR review metadata, boundary and evidence consistent."
+
+# doc/top-design/contexts.yml
+version: 1
+contexts:
+  - id: "${normalizedContext}"
+    name: "${normalizedContext}"
+    description: "Primary governance bounded context for this repository."
+
+# doc/top-design/slices.yml
+version: 1
+slices:
+  - id: "slice-governance-core"
+    owner: "${normalizedOwner}"
+    context: "${normalizedContext}"
+    description: "Initial slice for governance baseline."
+`;
+  }, [
+    isBindingRepoValid,
+    normalizedOwner,
+    normalizedAnchor,
+    normalizedContext,
+    repoBindingSnippet,
+  ]);
   const canSubmitPr = Boolean(setupStatus?.readyForFullRefresh);
   const onboardingSteps = useMemo(
     () => [
@@ -619,6 +686,38 @@ export function PrReviewPrismPage() {
                 </p>
               )}
               <p className="mt-2 font-medium">Step 2 / 4：执行该仓库初始化命令</p>
+              <div className="mt-2 grid grid-cols-1 md:grid-cols-3 gap-2">
+                <div>
+                  <p className="text-[11px] text-amber-100/80 mb-1">仓库 owner</p>
+                  <input
+                    type="text"
+                    value={ownerInput}
+                    onChange={e => setOwnerInput(e.target.value)}
+                    placeholder="your-github-id"
+                    className="w-full bg-black/20 border border-white/15 rounded px-2 py-1.5 text-[11px] text-amber-50 placeholder-amber-100/40 focus:outline-none focus:border-amber-300/40"
+                  />
+                </div>
+                <div>
+                  <p className="text-[11px] text-amber-100/80 mb-1">bounded context</p>
+                  <input
+                    type="text"
+                    value={contextInput}
+                    onChange={e => setContextInput(e.target.value)}
+                    placeholder="engineering-governance"
+                    className="w-full bg-black/20 border border-white/15 rounded px-2 py-1.5 text-[11px] text-amber-50 placeholder-amber-100/40 focus:outline-none focus:border-amber-300/40"
+                  />
+                </div>
+                <div>
+                  <p className="text-[11px] text-amber-100/80 mb-1">anchor id</p>
+                  <input
+                    type="text"
+                    value={anchorInput}
+                    onChange={e => setAnchorInput(e.target.value)}
+                    placeholder="ANCHOR-CORE-01"
+                    className="w-full bg-black/20 border border-white/15 rounded px-2 py-1.5 text-[11px] text-amber-50 placeholder-amber-100/40 focus:outline-none focus:border-amber-300/40"
+                  />
+                </div>
+              </div>
               <code className="block mt-1 rounded bg-black/25 px-2 py-1 whitespace-pre-wrap break-all">
                 {repoScopedBootstrapCommand}
               </code>
@@ -649,6 +748,14 @@ export function PrReviewPrismPage() {
                   className="inline-flex items-center gap-1 rounded border border-white/20 bg-white/10 px-2.5 py-1 text-[11px] text-white hover:bg-white/15 whitespace-nowrap"
                 >
                   复制顶层设计依据模板
+                </button>
+                <button
+                  type="button"
+                  disabled={!isBindingRepoValid}
+                  onClick={() => void copyToClipboard(fullRepoOnboardingYaml, '已复制完整仓库接入 YAML 配置')}
+                  className="inline-flex items-center gap-1 rounded border border-white/20 bg-white/10 px-2.5 py-1 text-[11px] text-white hover:bg-white/15 whitespace-nowrap disabled:opacity-50"
+                >
+                  复制完整接入 YAML
                 </button>
                 <button
                   type="button"
