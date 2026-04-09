@@ -276,6 +276,92 @@ public class PrReviewPrismApiIntegrationTests : IClassFixture<WebApplicationFact
     }
 
     [Fact]
+    public async Task BatchRefresh_MixedExistingAndMissingIds_ShouldKeepResultConsistent()
+    {
+        if (!HasToken)
+        {
+            Log("[Skip] no token");
+            return;
+        }
+
+        var client = CreateAuthenticatedClient();
+        if (!await EnsurePrReviewPrismAccessibleAsync(client))
+        {
+            return;
+        }
+
+        var prNumber = Random.Shared.Next(30000000, 39999999);
+        var url = $"https://github.com/inernoro/prd_agent/pull/{prNumber}";
+        var note = $"it-prism-batch-mixed-{Guid.NewGuid():N}";
+        var missingId = Guid.NewGuid().ToString("N");
+        string? existingId = null;
+
+        try
+        {
+            var createResponse = await client.PostAsJsonAsync("/api/pr-review-prism/submissions", new
+            {
+                pullRequestUrl = url,
+                note
+            });
+            var createBody = await createResponse.Content.ReadAsStringAsync();
+            Assert.Equal(HttpStatusCode.OK, createResponse.StatusCode);
+
+            using (var createDoc = JsonDocument.Parse(createBody))
+            {
+                Assert.True(createDoc.RootElement.GetProperty("success").GetBoolean());
+                existingId = createDoc.RootElement.GetProperty("data").GetProperty("submission").GetProperty("id").GetString();
+                Assert.False(string.IsNullOrWhiteSpace(existingId));
+            }
+
+            var batchResponse = await client.PostAsJsonAsync("/api/pr-review-prism/submissions/batch-refresh", new
+            {
+                ids = new[] { existingId, missingId }
+            });
+            var batchBody = await batchResponse.Content.ReadAsStringAsync();
+            Log($"[BatchRefreshMixed] {batchResponse.StatusCode} - {Truncate(batchBody, 240)}");
+            Assert.Equal(HttpStatusCode.OK, batchResponse.StatusCode);
+
+            using (var batchDoc = JsonDocument.Parse(batchBody))
+            {
+                Assert.True(batchDoc.RootElement.GetProperty("success").GetBoolean());
+                var data = batchDoc.RootElement.GetProperty("data");
+
+                Assert.Equal(2, data.GetProperty("total").GetInt32());
+                var successCount = data.GetProperty("successCount").GetInt32();
+                var failureCount = data.GetProperty("failureCount").GetInt32();
+                Assert.Equal(2, successCount + failureCount);
+
+                var submissions = data.GetProperty("submissions");
+                Assert.Contains(submissions.EnumerateArray(), x => x.GetProperty("id").GetString() == existingId);
+                Assert.DoesNotContain(submissions.EnumerateArray(), x => x.GetProperty("id").GetString() == missingId);
+
+                var failures = data.GetProperty("failures");
+                var failureItems = 0;
+                var hasMissingNotFound = false;
+                foreach (var failure in failures.EnumerateArray())
+                {
+                    failureItems += 1;
+                    if (failure.GetProperty("id").GetString() == missingId &&
+                        failure.GetProperty("code").GetString() == "NOT_FOUND")
+                    {
+                        hasMissingNotFound = true;
+                    }
+                }
+
+                Assert.Equal(failureCount, failureItems);
+                Assert.True(hasMissingNotFound);
+            }
+        }
+        finally
+        {
+            if (!string.IsNullOrWhiteSpace(existingId))
+            {
+                _ = await client.DeleteAsync($"/api/pr-review-prism/submissions/{existingId}");
+            }
+        }
+    }
+
+    [Fact]
     public async Task SubmissionWorkflow_CreateReuseListGetRefreshDelete_ShouldSucceed()
     {
         if (!HasToken)
