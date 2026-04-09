@@ -21,6 +21,7 @@ import {
   Workflow,
   Zap,
   Globe,
+  Wand2,
   type LucideIcon,
 } from 'lucide-react';
 import { MapSpinner } from '@/components/ui/VideoLoader';
@@ -30,12 +31,13 @@ import { useBreakpoint } from '@/hooks/useBreakpoint';
 import type { ToolboxItem } from '@/services';
 import { ShowcaseGallery } from '@/components/showcase/ShowcaseGallery';
 import { DesktopDownloadDialog } from '@/components/ui/DesktopDownloadDialog';
+import { SkillAgentDialog } from '@/components/skills/SkillAgentDialog';
 import { ReviewAgentCardArt } from '@/pages/ai-toolbox/components/ReviewAgentCardArt';
 
 // ── Icon & Color mapping (self-contained, doesn't touch ToolCard) ──
 
 const ICON_MAP: Record<string, LucideIcon> = {
-  FileText, Palette, PenTool, Bug, Video, Swords, FileBarChart, Code2, Languages, FileSearch, BarChart3, Bot, Workflow, Zap, Globe,
+  FileText, Palette, PenTool, Bug, Video, Swords, FileBarChart, Code2, Languages, FileSearch, BarChart3, Bot, Workflow, Zap, Globe, Wand2,
 };
 
 /** Agent 封面图 CDN 路径 */
@@ -81,6 +83,7 @@ const ACCENT: Record<string, { from: string; to: string }> = {
   Workflow:  { from: '#14B8A6', to: '#5EEAD4' },
   Zap:       { from: '#F59E0B', to: '#FCD34D' },
   Globe:     { from: '#0EA5E9', to: '#38BDF8' },
+  Wand2:     { from: '#8B5CF6', to: '#C4B5FD' },
 };
 
 function getAccent(icon: string) {
@@ -346,6 +349,7 @@ const AUTO_GRID_COMPACT: React.CSSProperties = {
 export default function AgentLauncherPage() {
   const [searchQuery, setSearchQuery] = useState('');
   const [downloadDialogOpen, setDownloadDialogOpen] = useState(false);
+  const [skillAgentOpen, setSkillAgentOpen] = useState(false);
   const { items, itemsLoading, loadItems } = useToolboxStore();
   const { isMobile } = useBreakpoint();
   const navigate = useNavigate();
@@ -381,6 +385,14 @@ export default function AgentLauncherPage() {
       tags: ['托管', '网页', 'hosting'],
       routePath: '/web-pages',
     } as ToolboxItem,
+    {
+      id: '__skill-agent__',
+      name: '技能创建助手',
+      description: 'AI 引导你逐步创建可复用的技能模板',
+      icon: 'Wand2',
+      tags: ['技能', 'skill', 'AI', '创建', '模板'],
+      agentKey: 'skill-agent',
+    } as ToolboxItem,
   ], []);
 
   // Split into featured (customized agents with routePath) and compact (utility agents)
@@ -409,6 +421,10 @@ export default function AgentLauncherPage() {
   const handleClick = (item: ToolboxItem) => {
     if (item.agentKey === 'prd-agent') {
       setDownloadDialogOpen(true);
+      return;
+    }
+    if (item.agentKey === 'skill-agent') {
+      setSkillAgentOpen(true);
       return;
     }
     if (item.routePath) {
@@ -660,6 +676,7 @@ export default function AgentLauncherPage() {
       </div>
 
       <DesktopDownloadDialog open={downloadDialogOpen} onOpenChange={setDownloadDialogOpen} />
+      <SkillAgentDialog open={skillAgentOpen} onOpenChange={setSkillAgentOpen} />
     </div>
   );
 }
