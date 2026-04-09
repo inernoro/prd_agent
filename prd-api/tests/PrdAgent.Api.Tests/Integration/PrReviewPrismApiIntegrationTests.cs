@@ -115,6 +115,28 @@ public class PrReviewPrismApiIntegrationTests : IClassFixture<WebApplicationFact
     }
 
     [Fact]
+    public async Task List_InvalidGateStatus_ShouldReturn400()
+    {
+        if (!HasToken)
+        {
+            Log("[Skip] no token");
+            return;
+        }
+
+        var client = CreateAuthenticatedClient();
+        if (!await EnsurePrReviewPrismAccessibleAsync(client))
+        {
+            return;
+        }
+
+        var response = await client.GetAsync("/api/pr-review-prism/submissions?page=1&pageSize=20&gateStatus=unknown");
+        var body = await response.Content.ReadAsStringAsync();
+        Log($"[ListInvalidGateStatus] {response.StatusCode} - {Truncate(body, 200)}");
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        AssertErrorCode(body, "INVALID_FORMAT");
+    }
+
+    [Fact]
     public async Task SubmissionWorkflow_CreateReuseListGetRefreshDelete_ShouldSucceed()
     {
         if (!HasToken)

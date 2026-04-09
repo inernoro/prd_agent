@@ -53,12 +53,7 @@ export function PrReviewPrismPage() {
   const [formError, setFormError] = useState<string | null>(null);
   const [listError, setListError] = useState<string | null>(null);
 
-  const filteredItems = useMemo(() => {
-    if (activeGateFilter === 'all') {
-      return items;
-    }
-    return items.filter(x => x.gateStatus === activeGateFilter);
-  }, [activeGateFilter, items]);
+  const filteredItems = useMemo(() => items, [items]);
 
   const gateCounts = useMemo(
     () => ({
@@ -91,10 +86,15 @@ export function PrReviewPrismPage() {
   }, []);
 
   const loadList = useCallback(
-    async (targetPage = page, keyword?: string, targetPageSize = pageSize) => {
+    async (targetPage = page, keyword?: string, targetPageSize = pageSize, gateStatus = activeGateFilter) => {
       setLoading(true);
       setListError(null);
-      const res = await listPrReviewPrismSubmissions(targetPage, targetPageSize, keyword);
+      const res = await listPrReviewPrismSubmissions(
+        targetPage,
+        targetPageSize,
+        keyword,
+        gateStatus === 'all' ? undefined : gateStatus
+      );
       if (res.success && res.data) {
         setItems(res.data.items);
         setTotal(res.data.total);
@@ -114,7 +114,7 @@ export function PrReviewPrismPage() {
       }
       setLoading(false);
     },
-    [page, pageSize]
+    [activeGateFilter, page, pageSize]
   );
 
   useEffect(() => {
@@ -132,7 +132,7 @@ export function PrReviewPrismPage() {
   }, [filteredItems]);
 
   async function handleSearch() {
-    await loadList(1, search.trim() || undefined, pageSize);
+    await loadList(1, search.trim() || undefined, pageSize, activeGateFilter);
   }
 
   async function handleSubmit() {
@@ -157,7 +157,7 @@ export function PrReviewPrismPage() {
 
     setPrUrl('');
     setNote('');
-    await loadList(1, search.trim() || undefined, pageSize);
+    await loadList(1, search.trim() || undefined, pageSize, activeGateFilter);
     setSelectedId(res.data.submission.id);
     setSubmitting(false);
   }
@@ -278,7 +278,7 @@ export function PrReviewPrismPage() {
       setSelectedId(next[0]?.id ?? null);
     }
     if (next.length === 0 && page > 1) {
-      await loadList(page - 1, search.trim() || undefined, pageSize);
+      await loadList(page - 1, search.trim() || undefined, pageSize, activeGateFilter);
     }
     setDeletingId(null);
   }
@@ -406,7 +406,7 @@ export function PrReviewPrismPage() {
                   onClick={() => void handleBatchRefreshCurrentFiltered()}
                   disabled={loading || batchRefreshing || filteredItems.length === 0}
                   className="inline-flex items-center gap-1 px-2.5 py-1 text-xs rounded-md border border-white/10 bg-white/5 hover:bg-white/10 text-white/70 disabled:opacity-50 whitespace-nowrap"
-                  title="按当前筛选结果逐条刷新"
+                  title="按当前筛选结果批量刷新"
                 >
                   {batchRefreshing ? <Loader2 className="w-3 h-3 animate-spin" /> : <RefreshCw className="w-3 h-3" />}
                   {batchRefreshing
@@ -442,7 +442,10 @@ export function PrReviewPrismPage() {
             <div className="flex flex-wrap gap-2 mb-3">
               <button
                 type="button"
-                onClick={() => setActiveGateFilter('all')}
+                onClick={() => {
+                  setActiveGateFilter('all');
+                  void loadList(1, search.trim() || undefined, pageSize, 'all');
+                }}
                 className={`px-2.5 py-1 text-xs rounded-md border transition-colors ${
                   activeGateFilter === 'all'
                     ? 'border-violet-400/50 bg-violet-500/15 text-violet-200'
@@ -453,7 +456,10 @@ export function PrReviewPrismPage() {
               </button>
               <button
                 type="button"
-                onClick={() => setActiveGateFilter('completed')}
+                onClick={() => {
+                  setActiveGateFilter('completed');
+                  void loadList(1, search.trim() || undefined, pageSize, 'completed');
+                }}
                 className={`px-2.5 py-1 text-xs rounded-md border transition-colors ${
                   activeGateFilter === 'completed'
                     ? 'border-violet-400/50 bg-violet-500/15 text-violet-200'
@@ -464,7 +470,10 @@ export function PrReviewPrismPage() {
               </button>
               <button
                 type="button"
-                onClick={() => setActiveGateFilter('pending')}
+                onClick={() => {
+                  setActiveGateFilter('pending');
+                  void loadList(1, search.trim() || undefined, pageSize, 'pending');
+                }}
                 className={`px-2.5 py-1 text-xs rounded-md border transition-colors ${
                   activeGateFilter === 'pending'
                     ? 'border-violet-400/50 bg-violet-500/15 text-violet-200'
@@ -475,7 +484,10 @@ export function PrReviewPrismPage() {
               </button>
               <button
                 type="button"
-                onClick={() => setActiveGateFilter('missing')}
+                onClick={() => {
+                  setActiveGateFilter('missing');
+                  void loadList(1, search.trim() || undefined, pageSize, 'missing');
+                }}
                 className={`px-2.5 py-1 text-xs rounded-md border transition-colors ${
                   activeGateFilter === 'missing'
                     ? 'border-violet-400/50 bg-violet-500/15 text-violet-200'
@@ -486,7 +498,10 @@ export function PrReviewPrismPage() {
               </button>
               <button
                 type="button"
-                onClick={() => setActiveGateFilter('error')}
+                onClick={() => {
+                  setActiveGateFilter('error');
+                  void loadList(1, search.trim() || undefined, pageSize, 'error');
+                }}
                 className={`px-2.5 py-1 text-xs rounded-md border transition-colors ${
                   activeGateFilter === 'error'
                     ? 'border-violet-400/50 bg-violet-500/15 text-violet-200'
@@ -560,7 +575,7 @@ export function PrReviewPrismPage() {
                   value={pageSize}
                   onChange={e => {
                     const nextPageSize = Number(e.target.value) || 20;
-                    void loadList(1, search.trim() || undefined, nextPageSize);
+                    void loadList(1, search.trim() || undefined, nextPageSize, activeGateFilter);
                   }}
                   className="bg-white/5 border border-white/10 rounded-md px-2 py-1 text-xs text-white"
                 >
@@ -571,7 +586,7 @@ export function PrReviewPrismPage() {
                 <button
                   type="button"
                   disabled={page <= 1 || loading}
-                  onClick={() => void loadList(page - 1, search.trim() || undefined, pageSize)}
+                  onClick={() => void loadList(page - 1, search.trim() || undefined, pageSize, activeGateFilter)}
                   className="px-2.5 py-1 text-xs rounded-md border border-white/10 bg-white/5 hover:bg-white/10 text-white/70 disabled:opacity-50"
                 >
                   上一页
@@ -579,7 +594,7 @@ export function PrReviewPrismPage() {
                 <button
                   type="button"
                   disabled={page >= totalPages || loading}
-                  onClick={() => void loadList(page + 1, search.trim() || undefined, pageSize)}
+                  onClick={() => void loadList(page + 1, search.trim() || undefined, pageSize, activeGateFilter)}
                   className="px-2.5 py-1 text-xs rounded-md border border-white/10 bg-white/5 hover:bg-white/10 text-white/70 disabled:opacity-50"
                 >
                   下一页

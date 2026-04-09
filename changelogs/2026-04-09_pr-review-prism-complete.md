@@ -9,3 +9,6 @@
 | feat | prd-api | PR审查棱镜新增批量刷新接口 submissions/batch-refresh，单次支持最多100条并返回逐条失败原因 |
 | feat | prd-admin | PR审查棱镜批量刷新切换为后端批量接口，接口不可用时自动降级逐条刷新并维持进度反馈 |
 | fix | prd-api | PR审查棱镜集成测试补充批量刷新流程覆盖与空 ids 参数 400 校验 |
+| feat | prd-api | PR审查棱镜 submissions 列表新增 gateStatus 服务端筛选，支持 all/pending/completed/missing/error |
+| feat | prd-admin | PR审查棱镜状态筛选切换为服务端查询，分页/批量刷新与筛选条件一致 |
+| fix | prd-api | PR审查棱镜集成测试新增非法 gateStatus 参数 400 校验 |

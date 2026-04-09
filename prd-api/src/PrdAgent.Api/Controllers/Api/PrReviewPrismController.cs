@@ -138,6 +138,7 @@ public sealed class PrReviewPrismController : ControllerBase
     public async Task<IActionResult> ListSubmissions(
         [FromQuery] int page = 1,
         [FromQuery] int pageSize = 20,
+        [FromQuery] string? gateStatus = null,
         [FromQuery] string? q = null)
     {
         page = Math.Max(1, page);
@@ -146,6 +147,25 @@ public sealed class PrReviewPrismController : ControllerBase
         var userId = this.GetRequiredUserId();
         var filterBuilder = Builders<PrReviewPrismSubmission>.Filter;
         var filter = filterBuilder.Eq(x => x.OwnerUserId, userId);
+        if (!string.IsNullOrWhiteSpace(gateStatus))
+        {
+            var normalizedGateStatus = gateStatus.Trim().ToLowerInvariant();
+            var allowedGateStatus = new[]
+            {
+                PrReviewPrismGateStatuses.Pending,
+                PrReviewPrismGateStatuses.Completed,
+                PrReviewPrismGateStatuses.Missing,
+                PrReviewPrismGateStatuses.Error
+            };
+            if (!allowedGateStatus.Contains(normalizedGateStatus))
+            {
+                return BadRequest(ApiResponse<object>.Fail(
+                    ErrorCodes.INVALID_FORMAT,
+                    $"gateStatus 不支持：{gateStatus}"));
+            }
+
+            filter &= filterBuilder.Eq(x => x.GateStatus, normalizedGateStatus);
+        }
 
         if (!string.IsNullOrWhiteSpace(q))
         {
