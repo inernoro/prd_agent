@@ -160,6 +160,52 @@ export function PrReviewPrismPage() {
     - "PR审查棱镜 L1 Gate"
     - "PR审查棱镜 Advisory"`;
   }, [isBindingRepoValid, normalizedBindingRepo]);
+  const canSubmitPr = Boolean(setupStatus?.readyForFullRefresh);
+  const onboardingSteps = useMemo(
+    () => [
+      {
+        key: 'token',
+        title: '配置 GitHub Token',
+        done: Boolean(setupStatus?.githubTokenConfigured),
+      },
+      {
+        key: 'repo',
+        title: '绑定目标仓库',
+        done: isBindingRepoValid,
+      },
+      {
+        key: 'topDesign',
+        title: '落地顶层设计依据',
+        done: Boolean(setupStatus?.topDesign.ready),
+      },
+      {
+        key: 'verify',
+        title: '验证后开始审查',
+        done: Boolean(setupStatus?.readyForFullRefresh),
+      },
+    ],
+    [isBindingRepoValid, setupStatus]
+  );
+  const onboardingDoneCount = useMemo(
+    () => onboardingSteps.filter(x => x.done).length,
+    [onboardingSteps]
+  );
+  const onboardingProgressPercent = useMemo(
+    () => Math.round((onboardingDoneCount / onboardingSteps.length) * 100),
+    [onboardingDoneCount, onboardingSteps.length]
+  );
+  const submissionBlockReason = useMemo(() => {
+    if (canSubmitPr) {
+      return '';
+    }
+    if (!setupStatus) {
+      return '配置状态加载失败，请先点击“重新检测配置”';
+    }
+    if (setupStatus.guidance.length > 0) {
+      return setupStatus.guidance[0];
+    }
+    return '请先完成新仓库接入向导后再提交 PR';
+  }, [canSubmitPr, setupStatus]);
 
   const copyToClipboard = useCallback(async (text: string, successMessage: string) => {
     try {
@@ -496,7 +542,36 @@ export function PrReviewPrismPage() {
       </div>
 
       <div className="rounded-xl p-4 border border-white/10 bg-white/[0.03] mb-5">
-        <p className="text-sm font-medium text-white mb-2">初始化与配置检查</p>
+        <div className="flex items-center justify-between gap-3 mb-3">
+          <p className="text-sm font-medium text-white">新仓库接入向导</p>
+          <span className="text-xs text-white/55 whitespace-nowrap">
+            {onboardingDoneCount}/{onboardingSteps.length} 已完成
+          </span>
+        </div>
+        <div className="mb-3 rounded-lg border border-white/10 bg-white/5 p-2">
+          <div className="flex items-center justify-between text-[11px] text-white/55 px-1 mb-1">
+            <span>接入进度</span>
+            <span>{onboardingProgressPercent}%</span>
+          </div>
+          <div className="h-1.5 rounded bg-white/10 overflow-hidden">
+            <div className="h-full bg-violet-400/80 transition-all" style={{ width: `${onboardingProgressPercent}%` }} />
+          </div>
+        </div>
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-2 mb-3">
+          {onboardingSteps.map((step, idx) => (
+            <div
+              key={step.key}
+              className={`rounded-lg border px-3 py-2 ${
+                step.done
+                  ? 'border-emerald-400/30 bg-emerald-500/10'
+                  : 'border-amber-400/25 bg-amber-500/10'
+              }`}
+            >
+              <p className="text-[11px] text-white/55">步骤 {idx + 1}</p>
+              <p className={`text-xs mt-0.5 ${step.done ? 'text-emerald-200' : 'text-amber-100'}`}>{step.title}</p>
+            </div>
+          ))}
+        </div>
         {setupStatus ? (
           <div className="space-y-2 text-xs">
             <div className="flex flex-wrap gap-2">
@@ -518,75 +593,87 @@ export function PrReviewPrismPage() {
               >
                 顶层设计基线：{setupStatus.topDesign.ready ? '已就绪' : '待初始化'}
               </span>
+              <span
+                className={`inline-flex items-center gap-1 px-2 py-1 rounded border ${
+                  canSubmitPr
+                    ? 'border-emerald-400/30 bg-emerald-500/10 text-emerald-200'
+                    : 'border-slate-400/30 bg-slate-500/10 text-slate-200'
+                }`}
+              >
+                审查执行：{canSubmitPr ? '可提交 PR' : '需先完成接入'}
+              </span>
             </div>
 
-            {!setupStatus.readyForFullRefresh && setupStatus.guidance.length > 0 && (
-              <div className="rounded-lg border border-amber-400/20 bg-amber-500/10 p-3 text-amber-100">
-                <p className="font-medium mb-1">当前无法完整拉取审查结果，请先完成以下配置：</p>
-                <ul className="list-disc ml-4 space-y-1">
+            <div className="rounded-lg border border-amber-400/20 bg-amber-500/10 p-3 text-amber-100">
+              <p className="font-medium mb-1">Step 1 / 4：绑定目标仓库（每个新仓库都要配置）</p>
+              <input
+                type="text"
+                value={bindingRepoInput}
+                onChange={e => setBindingRepoInput(e.target.value)}
+                placeholder="owner/repo 或 https://github.com/owner/repo/pull/123"
+                className="w-full mt-1 bg-black/20 border border-white/15 rounded px-2 py-1.5 text-[11px] text-amber-50 placeholder-amber-100/40 focus:outline-none focus:border-amber-300/40"
+              />
+              {!isBindingRepoValid && (
+                <p className="mt-1 text-[11px] text-amber-200/80">
+                  请输入目标仓库（owner/repo）或粘贴该仓库 PR 链接，系统自动识别。
+                </p>
+              )}
+              <p className="mt-2 font-medium">Step 2 / 4：执行该仓库初始化命令</p>
+              <code className="block mt-1 rounded bg-black/25 px-2 py-1 whitespace-pre-wrap break-all">
+                {repoScopedBootstrapCommand}
+              </code>
+              <p className="mt-2 font-medium">Step 3 / 4：将仓库条目写入 repo-bindings.yml</p>
+              <code className="block mt-1 rounded bg-black/25 px-2 py-1 whitespace-pre-wrap break-all">
+                {repoBindingSnippet || '# 先填写 owner/repo 后生成'}
+              </code>
+              <p className="mt-2 font-medium">Step 4 / 4：重新检测接入状态后提交 PR 审查</p>
+              <div className="mt-2 flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  onClick={() => void copyToClipboard(repoScopedBootstrapCommand, '已复制该仓库初始化命令')}
+                  className="inline-flex items-center gap-1 rounded border border-white/20 bg-white/10 px-2.5 py-1 text-[11px] text-white hover:bg-white/15 whitespace-nowrap"
+                >
+                  复制该仓库初始化命令
+                </button>
+                <button
+                  type="button"
+                  disabled={!isBindingRepoValid}
+                  onClick={() => void copyToClipboard(repoBindingSnippet, '已复制该仓库 bindings 片段')}
+                  className="inline-flex items-center gap-1 rounded border border-white/20 bg-white/10 px-2.5 py-1 text-[11px] text-white hover:bg-white/15 whitespace-nowrap disabled:opacity-50"
+                >
+                  复制该仓库 bindings 片段
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void copyToClipboard(topDesignBasisTemplateText, '已复制顶层设计依据模板')}
+                  className="inline-flex items-center gap-1 rounded border border-white/20 bg-white/10 px-2.5 py-1 text-[11px] text-white hover:bg-white/15 whitespace-nowrap"
+                >
+                  复制顶层设计依据模板
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void window.open(bootstrapGuidePath, '_blank', 'noopener,noreferrer')}
+                  className="inline-flex items-center gap-1 rounded border border-white/20 bg-white/10 px-2.5 py-1 text-[11px] text-white hover:bg-white/15 whitespace-nowrap"
+                >
+                  打开接入说明
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void loadSetupStatus()}
+                  className="inline-flex items-center gap-1 rounded border border-white/20 bg-white/10 px-2.5 py-1 text-[11px] text-white hover:bg-white/15 whitespace-nowrap"
+                >
+                  重新检测接入状态
+                </button>
+              </div>
+              {setupActionMessage && <p className="mt-2 text-[11px] text-emerald-200">{setupActionMessage}</p>}
+              {!canSubmitPr && setupStatus.guidance.length > 0 && (
+                <ul className="list-disc ml-4 mt-2 space-y-1 text-[11px] text-amber-100">
                   {setupStatus.guidance.map((x, idx) => (
                     <li key={`${idx}-${x}`}>{x}</li>
                   ))}
                 </ul>
-                <div className="mt-2 text-amber-100/80">
-                  <p>按新项目仓库绑定后的初始化命令：</p>
-                  <input
-                    type="text"
-                    value={bindingRepoInput}
-                    onChange={e => setBindingRepoInput(e.target.value)}
-                    placeholder="owner/repo 或 https://github.com/owner/repo/pull/123"
-                    className="w-full mt-1 bg-black/20 border border-white/15 rounded px-2 py-1.5 text-[11px] text-amber-50 placeholder-amber-100/40 focus:outline-none focus:border-amber-300/40"
-                  />
-                  {!isBindingRepoValid && (
-                    <p className="mt-1 text-[11px] text-amber-200/80">
-                      请输入目标仓库（owner/repo）或粘贴该仓库的 PR 链接，系统将自动识别。
-                    </p>
-                  )}
-                  <code className="block mt-1 rounded bg-black/25 px-2 py-1 whitespace-pre-wrap break-all">
-                    {repoScopedBootstrapCommand}
-                  </code>
-                  <div className="mt-2 flex flex-wrap gap-2">
-                    <button
-                      type="button"
-                      onClick={() => void copyToClipboard(repoScopedBootstrapCommand, '已复制该仓库初始化命令')}
-                      className="inline-flex items-center gap-1 rounded border border-white/20 bg-white/10 px-2.5 py-1 text-[11px] text-white hover:bg-white/15 whitespace-nowrap"
-                    >
-                      复制该仓库初始化命令
-                    </button>
-                    <button
-                      type="button"
-                      disabled={!isBindingRepoValid}
-                      onClick={() => void copyToClipboard(repoBindingSnippet, '已复制该仓库 bindings 片段')}
-                      className="inline-flex items-center gap-1 rounded border border-white/20 bg-white/10 px-2.5 py-1 text-[11px] text-white hover:bg-white/15 whitespace-nowrap disabled:opacity-50"
-                    >
-                      复制该仓库 bindings 片段
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => void copyToClipboard(topDesignBasisTemplateText, '已复制顶层设计依据模板')}
-                      className="inline-flex items-center gap-1 rounded border border-white/20 bg-white/10 px-2.5 py-1 text-[11px] text-white hover:bg-white/15 whitespace-nowrap"
-                    >
-                      复制顶层设计依据模板
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => void copyToClipboard(bootstrapGuidePath, '已复制顶层设计说明文档路径')}
-                      className="inline-flex items-center gap-1 rounded border border-white/20 bg-white/10 px-2.5 py-1 text-[11px] text-white hover:bg-white/15 whitespace-nowrap"
-                    >
-                      复制说明文档路径
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => void window.open(bootstrapGuidePath, '_blank', 'noopener,noreferrer')}
-                      className="inline-flex items-center gap-1 rounded border border-white/20 bg-white/10 px-2.5 py-1 text-[11px] text-white hover:bg-white/15 whitespace-nowrap"
-                    >
-                      打开顶层设计说明
-                    </button>
-                  </div>
-                  {setupActionMessage && <p className="mt-2 text-[11px] text-emerald-200">{setupActionMessage}</p>}
-                </div>
-              </div>
-            )}
+              )}
+            </div>
           </div>
         ) : (
           <p className="text-xs text-white/40">配置状态加载失败，请稍后重试。</p>
@@ -618,12 +705,18 @@ export function PrReviewPrismPage() {
               <button
                 type="button"
                 onClick={handleSubmit}
-                disabled={submitting}
-                className="w-full inline-flex items-center justify-center gap-2 rounded-lg bg-violet-600 hover:bg-violet-500 text-white text-sm font-medium py-2.5 transition-colors disabled:opacity-60"
+                disabled={!canSubmitPr || submitting}
+                className={`w-full inline-flex items-center justify-center gap-2 rounded-lg text-white text-sm font-medium py-2.5 transition-colors disabled:opacity-60 ${
+                  canSubmitPr
+                    ? 'bg-violet-600 hover:bg-violet-500'
+                    : 'bg-slate-600 cursor-not-allowed'
+                }`}
+                title={canSubmitPr ? '提交并拉取审查结果' : '请先完成新仓库接入向导'}
               >
                 {submitting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}
-                {submitting ? '提交中...' : '提交并拉取'}
+                {submitting ? '提交中...' : canSubmitPr ? '提交并拉取' : '先完成接入向导'}
               </button>
+              {!canSubmitPr && <p className="text-[11px] text-amber-200/85">{submissionBlockReason}</p>}
             </div>
           </div>
 
