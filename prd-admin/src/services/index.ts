@@ -1506,6 +1506,7 @@ export type {
 export {
   getPrReviewPrismStatus,
   getPrReviewPrismSetupStatus,
+  downloadPrReviewPrismRepoBootstrapSkill,
   createPrReviewPrismSubmission,
   listPrReviewPrismSubmissions,
   getPrReviewPrismSubmission,
@@ -1520,5 +1521,7 @@ export type {
   PrReviewPrismSubmission,
   PrReviewPrismSetupStatus,
   PrReviewPrismTopDesignSetupStatus,
+  PrReviewPrismRepoSkillPackageRequest,
+  PrReviewPrismRepoSkillPackageResponse,
   PrReviewPrismStatus,
 } from '@/services/real/prReviewPrism';

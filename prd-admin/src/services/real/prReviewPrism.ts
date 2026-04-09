@@ -32,6 +32,18 @@ export interface PrReviewPrismSetupStatus {
   guidance: string[];
 }
 
+export interface PrReviewPrismRepoSkillPackageRequest {
+  repo: string;
+  owner: string;
+  context: string;
+  anchorId: string;
+}
+
+export interface PrReviewPrismRepoSkillPackageResponse {
+  fileName: string;
+  contentBase64: string;
+}
+
 export interface PrReviewPrismSubmission {
   id: string;
   ownerUserId: string;
@@ -88,8 +100,27 @@ export async function getPrReviewPrismStatus(): Promise<ApiResponse<PrReviewPris
   return apiRequest(api.prReviewPrism.status());
 }
 
-export async function getPrReviewPrismSetupStatus(): Promise<ApiResponse<PrReviewPrismSetupStatus>> {
-  return apiRequest(api.prReviewPrism.setupStatus());
+export async function getPrReviewPrismSetupStatus(repo?: string): Promise<ApiResponse<PrReviewPrismSetupStatus>> {
+  const params = new URLSearchParams();
+  if (repo && repo.trim()) {
+    params.set('repo', repo.trim());
+  }
+  const path = params.size > 0 ? `${api.prReviewPrism.setupStatus()}?${params.toString()}` : api.prReviewPrism.setupStatus();
+  return apiRequest(path);
+}
+
+export async function downloadPrReviewPrismRepoBootstrapSkill(
+  req: PrReviewPrismRepoSkillPackageRequest
+): Promise<ApiResponse<PrReviewPrismRepoSkillPackageResponse>> {
+  return apiRequest(api.prReviewPrism.bootstrapSkillPackage(), {
+    method: 'POST',
+    body: {
+      repo: req.repo,
+      owner: req.owner,
+      context: req.context,
+      anchorId: req.anchorId,
+    },
+  });
 }
 
 export async function listPrReviewPrismSubmissions(

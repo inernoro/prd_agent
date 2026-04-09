@@ -2170,7 +2170,8 @@ sequenceDiagram
 
 **API 端点**：
 - `GET /api/pr-review-prism/status` — 功能状态与提示信息
-- `GET /api/pr-review-prism/setup-status` — 初始化与配置状态（GitHub Token、顶层设计基线、可执行 guidance）
+- `GET /api/pr-review-prism/setup-status` — 初始化与配置状态（GitHub Token、顶层设计基线、可执行 guidance）；支持 `repo` 参数（`owner/repo` 或 PR URL）做仓库级校验
+- `POST /api/pr-review-prism/bootstrap-skill-package` — 导出仓库专属接入 zip（含 scripts + skill 模板 + onboarding 指南）
 - `POST /api/pr-review-prism/submissions` — 提交 PR 链接并创建/复用记录
 - `GET /api/pr-review-prism/submissions` — 当前用户提交列表（支持 `q` 检索）
 - `GET /api/pr-review-prism/submissions?gateStatus={status}` — 按 Gate 状态筛选（`pending/completed/missing/error`）
@@ -2203,6 +2204,10 @@ sequenceDiagram
    - 标准 Skill：`.claude/skills/pr-prism-bootstrap/SKILL.md`
    - 兼容模板入口：`.github/pr-architect/skill-template.pr-prism-bootstrap.md`
    - 执行后应生成最薄文档与绑定配置，并使 setup-status 返回 `readyForFullRefresh=true`（在 GitHub Token 已配置前提下）。
+7. 管理端支持按仓库导出“接入即用”压缩包（`bootstrap-skill-package`）：
+   - 输入：`repo / owner / context / anchorId`
+   - 输出：`fileName` + `contentBase64`
+   - 包含文件：`scripts/bootstrap-pr-prism.sh`、`scripts/init-pr-prism-basis.sh`、`.claude/skills/pr-prism-bootstrap/SKILL.md`、`doc/guide.pr-prism-bootstrap-package.md`
 
 **验收标准**：
 - [ ] 可从 PR 链接正确解析 owner/repo/number

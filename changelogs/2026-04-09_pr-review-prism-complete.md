@@ -29,3 +29,7 @@
 | feat | scripts | init-pr-prism-basis 支持零参数自动识别仓库与 owner，显著降低新仓库初始化成本 |
 | feat | prd-api | PR审查棱镜 setup-status 返回 skillTemplatePath 与零参数初始化命令，支持新仓库技能模板化接入 |
 | feat | doc | 新增 PR 审查棱镜 skill 模板文档，明确“顶层设计上传 → design-sources 激活 → gate 校验”最佳路径 |
+| feat | prd-api | PR审查棱镜新增 bootstrap-skill-package 导出接口，返回仓库专属 Skill 包 zip（含脚本与模板） |
+| feat | prd-api | PR审查棱镜 setup-status 支持 repo 参数按仓库校验绑定状态，并返回 targetRepo/match 信息 |
+| fix | prd-api | PR审查棱镜集成测试新增 setup-status 仓库参数与 bootstrap-skill-package 鉴权/入参/zip 响应覆盖 |
+| feat | prd-admin | PR审查棱镜页面新增“我的仓库”切换、仓库级 setup-status 检查与仓库专属 Skill 包导出入口 |

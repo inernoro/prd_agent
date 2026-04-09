@@ -1,6 +1,7 @@
 using System.Net;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
+using System.IO.Compression;
 using System.Text.Json;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Xunit;
@@ -99,6 +100,143 @@ public class PrReviewPrismApiIntegrationTests : IClassFixture<WebApplicationFact
         Assert.True(data.TryGetProperty("readyForFullRefresh", out _));
         Assert.True(data.TryGetProperty("guidance", out var guidance));
         Assert.Equal(JsonValueKind.Array, guidance.ValueKind);
+    }
+
+    [Fact]
+    public async Task SetupStatus_WithRepoParam_ShouldReturnNormalizedTargetRepo()
+    {
+        if (!HasToken)
+        {
+            Log("[Skip] no token");
+            return;
+        }
+
+        var client = CreateAuthenticatedClient();
+        if (!await EnsurePrReviewPrismAccessibleAsync(client))
+        {
+            return;
+        }
+
+        var response = await client.GetAsync("/api/pr-review-prism/setup-status?repo=Inernoro/Prd_Agent");
+        var body = await response.Content.ReadAsStringAsync();
+        Log($"[SetupStatusRepo] {response.StatusCode} - {Truncate(body, 220)}");
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+
+        using var doc = JsonDocument.Parse(body);
+        Assert.True(doc.RootElement.GetProperty("success").GetBoolean());
+        var topDesign = doc.RootElement.GetProperty("data").GetProperty("topDesign");
+        Assert.Equal("inernoro/prd_agent", topDesign.GetProperty("targetRepo").GetString());
+    }
+
+    [Fact]
+    public async Task SetupStatus_WithInvalidRepoParam_ShouldReturnGuidance()
+    {
+        if (!HasToken)
+        {
+            Log("[Skip] no token");
+            return;
+        }
+
+        var client = CreateAuthenticatedClient();
+        if (!await EnsurePrReviewPrismAccessibleAsync(client))
+        {
+            return;
+        }
+
+        var response = await client.GetAsync("/api/pr-review-prism/setup-status?repo=invalid-repo-format");
+        var body = await response.Content.ReadAsStringAsync();
+        Log($"[SetupStatusInvalidRepo] {response.StatusCode} - {Truncate(body, 220)}");
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+
+        using var doc = JsonDocument.Parse(body);
+        Assert.True(doc.RootElement.GetProperty("success").GetBoolean());
+        var guidance = doc.RootElement.GetProperty("data").GetProperty("guidance");
+        Assert.Contains(guidance.EnumerateArray(), x => (x.GetString() ?? string.Empty).Contains("repo 参数格式错误", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task BootstrapSkillPackage_NoAuth_ShouldReturn401()
+    {
+        var client = _factory.CreateClient();
+        var response = await client.PostAsJsonAsync("/api/pr-review-prism/bootstrap-skill-package", new
+        {
+            repo = "inernoro/prd_agent",
+            owner = "inernoro",
+            context = "engineering-governance",
+            anchorId = "ANCHOR-CORE-01",
+        });
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task BootstrapSkillPackage_InvalidRepo_ShouldReturn400()
+    {
+        if (!HasToken)
+        {
+            Log("[Skip] no token");
+            return;
+        }
+
+        var client = CreateAuthenticatedClient();
+        if (!await EnsurePrReviewPrismAccessibleAsync(client))
+        {
+            return;
+        }
+
+        var response = await client.PostAsJsonAsync("/api/pr-review-prism/bootstrap-skill-package", new
+        {
+            repo = "invalid-repo",
+            owner = "inernoro",
+            context = "engineering-governance",
+            anchorId = "ANCHOR-CORE-01",
+        });
+        var body = await response.Content.ReadAsStringAsync();
+        Log($"[BootstrapSkillInvalidRepo] {response.StatusCode} - {Truncate(body, 220)}");
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        AssertErrorCode(body, "INVALID_FORMAT");
+    }
+
+    [Fact]
+    public async Task BootstrapSkillPackage_WithAuth_ShouldReturnZipPayload()
+    {
+        if (!HasToken)
+        {
+            Log("[Skip] no token");
+            return;
+        }
+
+        var client = CreateAuthenticatedClient();
+        if (!await EnsurePrReviewPrismAccessibleAsync(client))
+        {
+            return;
+        }
+
+        var response = await client.PostAsJsonAsync("/api/pr-review-prism/bootstrap-skill-package", new
+        {
+            repo = "inernoro/prd_agent",
+            owner = "inernoro",
+            context = "engineering-governance",
+            anchorId = "ANCHOR-CORE-01",
+        });
+        var body = await response.Content.ReadAsStringAsync();
+        Log($"[BootstrapSkill] {response.StatusCode} - {Truncate(body, 220)}");
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+
+        using var doc = JsonDocument.Parse(body);
+        Assert.True(doc.RootElement.GetProperty("success").GetBoolean());
+        var data = doc.RootElement.GetProperty("data");
+        var fileName = data.GetProperty("fileName").GetString();
+        var contentBase64 = data.GetProperty("contentBase64").GetString();
+        Assert.False(string.IsNullOrWhiteSpace(fileName));
+        Assert.EndsWith(".zip", fileName, StringComparison.OrdinalIgnoreCase);
+        Assert.False(string.IsNullOrWhiteSpace(contentBase64));
+
+        var zipBytes = Convert.FromBase64String(contentBase64!);
+        using var stream = new MemoryStream(zipBytes);
+        using var archive = new ZipArchive(stream, ZipArchiveMode.Read);
+        Assert.Contains(archive.Entries, x => x.FullName == "scripts/bootstrap-pr-prism.sh");
+        Assert.Contains(archive.Entries, x => x.FullName == "scripts/init-pr-prism-basis.sh");
+        Assert.Contains(archive.Entries, x => x.FullName == ".claude/skills/pr-prism-bootstrap/SKILL.md");
     }
 
     [Fact]

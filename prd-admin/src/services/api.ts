@@ -371,6 +371,7 @@ export const api = {
   prReviewPrism: {
     status: () => '/api/pr-review-prism/status',
     setupStatus: () => '/api/pr-review-prism/setup-status',
+    bootstrapSkillPackage: () => '/api/pr-review-prism/bootstrap-skill-package',
     submissions: {
       list: () => '/api/pr-review-prism/submissions',
       create: () => '/api/pr-review-prism/submissions',

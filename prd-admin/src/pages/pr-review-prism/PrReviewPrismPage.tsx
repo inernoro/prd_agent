@@ -18,6 +18,7 @@ import { useNavigate } from 'react-router-dom';
 import {
   createPrReviewPrismSubmission,
   deletePrReviewPrismSubmission,
+  downloadPrReviewPrismRepoBootstrapSkill,
   getPrReviewPrismStatus,
   getPrReviewPrismSetupStatus,
   listPrReviewPrismSubmissions,
@@ -73,6 +74,9 @@ export function PrReviewPrismPage() {
   const [setupStatus, setSetupStatus] = useState<PrReviewPrismSetupStatus | null>(null);
   const [setupActionMessage, setSetupActionMessage] = useState<string | null>(null);
   const [bindingRepoInput, setBindingRepoInput] = useState('');
+  const [selectedRepo, setSelectedRepo] = useState('');
+  const [bootstrapDownloading, setBootstrapDownloading] = useState(false);
+  const [showDesignBasisPanel, setShowDesignBasisPanel] = useState(false);
   const [ownerInput, setOwnerInput] = useState('your-github-id');
   const [contextInput, setContextInput] = useState('engineering-governance');
   const [anchorInput, setAnchorInput] = useState('ANCHOR-CORE-01');
@@ -378,6 +382,43 @@ ${repoBindingSnippet}
     normalizedOwner,
     repoBindingSnippet,
   ]);
+  const downloadRepoSkillPackage = useCallback(async () => {
+    if (!isBindingRepoValid) {
+      setSetupActionMessage('请先填写有效仓库（owner/repo）后再导出仓库专属 Skill 包');
+      return;
+    }
+    setBootstrapDownloading(true);
+    try {
+      const res = await downloadPrReviewPrismRepoBootstrapSkill({
+        repo: normalizedBindingRepo,
+        owner: normalizedOwner,
+        context: normalizedContext,
+        anchorId: normalizedAnchor,
+      });
+      if (!res.success || !res.data) {
+        setSetupActionMessage(res.error?.message ?? '导出 Skill 包失败');
+        setBootstrapDownloading(false);
+        return;
+      }
+
+      const bytes = Uint8Array.from(atob(res.data.contentBase64), c => c.charCodeAt(0));
+      const blob = new Blob([bytes], { type: 'application/zip' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = res.data.fileName || `pr-prism-bootstrap-skill-${normalizedBindingRepo.replace('/', '-')}.zip`;
+      a.rel = 'noopener';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      setSetupActionMessage('已导出仓库专属 Skill 包：复制到新仓库执行一次即可完成接入');
+    } catch {
+      setSetupActionMessage('导出 Skill 包失败，请稍后重试');
+    } finally {
+      setBootstrapDownloading(false);
+    }
+  }, [isBindingRepoValid, normalizedAnchor, normalizedBindingRepo, normalizedContext, normalizedOwner]);
 
   const loadStatus = useCallback(async () => {
     const res = await getPrReviewPrismStatus();
@@ -387,13 +428,13 @@ ${repoBindingSnippet}
   }, []);
 
   const loadSetupStatus = useCallback(async () => {
-    const res = await getPrReviewPrismSetupStatus();
+    const res = await getPrReviewPrismSetupStatus(isBindingRepoValid ? normalizedBindingRepo : undefined);
     if (res.success && res.data) {
       setSetupStatus(res.data);
     } else {
       setSetupStatus(null);
     }
-  }, []);
+  }, [isBindingRepoValid, normalizedBindingRepo]);
 
   const loadList = useCallback(
     async (targetPage = page, keyword?: string, targetPageSize = pageSize, gateStatus = activeGateFilter) => {
@@ -465,6 +506,11 @@ ${repoBindingSnippet}
       setBindingRepoInput(parsed);
     }
   }, [prUrl]);
+  useEffect(() => {
+    if (isBindingRepoValid) {
+      setSelectedRepo(normalizedBindingRepo);
+    }
+  }, [isBindingRepoValid, normalizedBindingRepo]);
   useEffect(() => {
     if (bindingRepoInput.trim()) {
       return;
@@ -704,7 +750,34 @@ ${repoBindingSnippet}
         {hint}
       </div>
 
-      <div className="rounded-xl p-4 border border-white/10 bg-white/[0.03] mb-5">
+      <div className="grid grid-cols-1 lg:grid-cols-[260px_1fr] gap-4 mb-5">
+        <div className="rounded-xl p-4 border border-white/10 bg-white/[0.03]">
+          <p className="text-sm font-medium text-white mb-3">我的仓库（可切换）</p>
+          <div className="space-y-2 max-h-72 overflow-auto pr-1">
+            {Array.from(new Set(items.map(x => `${x.repoOwner}/${x.repoName}`))).map(repo => (
+              <button
+                key={repo}
+                type="button"
+                onClick={() => {
+                  setSelectedRepo(repo);
+                  setBindingRepoInput(repo);
+                  setSetupActionMessage(null);
+                }}
+                className={`w-full text-left rounded-lg border px-2.5 py-2 text-xs whitespace-nowrap ${
+                  (selectedRepo || normalizedBindingRepo) === repo
+                    ? 'border-violet-400/50 bg-violet-500/15 text-violet-200'
+                    : 'border-white/10 bg-white/5 text-white/70 hover:bg-white/10'
+                }`}
+              >
+                {repo}
+              </button>
+            ))}
+            {Array.from(new Set(items.map(x => `${x.repoOwner}/${x.repoName}`))).length === 0 && (
+              <p className="text-xs text-white/40">暂无仓库，先提交一个 PR 链接即可加入列表。</p>
+            )}
+          </div>
+        </div>
+        <div className="rounded-xl p-4 border border-white/10 bg-white/[0.03]">
         <div className="flex items-center justify-between gap-3 mb-3">
           <p className="text-sm font-medium text-white">新仓库接入向导</p>
           <span className="text-xs text-white/55 whitespace-nowrap">
@@ -840,10 +913,10 @@ ${repoBindingSnippet}
                 </button>
                 <button
                   type="button"
-                  onClick={() => void copyToClipboard(topDesignBasisTemplateText, '已复制顶层设计依据模板')}
+                  onClick={() => setShowDesignBasisPanel(prev => !prev)}
                   className="inline-flex items-center gap-1 rounded border border-white/20 bg-white/10 px-2.5 py-1 text-[11px] text-white hover:bg-white/15 whitespace-nowrap"
                 >
-                  复制顶层设计依据模板
+                  {showDesignBasisPanel ? '收起顶层设计依据' : '展开顶层设计依据'}
                 </button>
                 <button
                   type="button"
@@ -870,6 +943,14 @@ ${repoBindingSnippet}
                 </button>
                 <button
                   type="button"
+                  disabled={bootstrapDownloading}
+                  onClick={() => void downloadRepoSkillPackage()}
+                  className="inline-flex items-center gap-1 rounded border border-violet-300/40 bg-violet-500/20 px-2.5 py-1 text-[11px] text-violet-100 hover:bg-violet-500/25 whitespace-nowrap disabled:opacity-50"
+                >
+                  {bootstrapDownloading ? '导出中...' : '导出仓库专属 Skill 包'}
+                </button>
+                <button
+                  type="button"
                   onClick={() => void loadSetupStatus()}
                   className="inline-flex items-center gap-1 rounded border border-white/20 bg-white/10 px-2.5 py-1 text-[11px] text-white hover:bg-white/15 whitespace-nowrap"
                 >
@@ -884,11 +965,32 @@ ${repoBindingSnippet}
                   ))}
                 </ul>
               )}
+              {showDesignBasisPanel && (
+                <div className="mt-3 rounded-lg border border-white/15 bg-black/20 p-3">
+                  <p className="text-xs font-medium text-white mb-1">仓库级顶层设计依据（独立可调整）</p>
+                  <p className="text-[11px] text-white/70 mb-2">
+                    该内容与“接入向导”解耦，支持审批期间持续打磨；当前展示为该仓库的初始化版本。
+                  </p>
+                  <code className="block rounded bg-black/25 px-2 py-1 whitespace-pre-wrap break-all text-[11px]">
+                    {topDesignBasisTemplateText}
+                  </code>
+                  <div className="mt-2">
+                    <button
+                      type="button"
+                      onClick={() => void copyToClipboard(topDesignBasisTemplateText, '已复制顶层设计依据模板')}
+                      className="inline-flex items-center gap-1 rounded border border-white/20 bg-white/10 px-2.5 py-1 text-[11px] text-white hover:bg-white/15 whitespace-nowrap"
+                    >
+                      复制顶层设计依据模板
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
           </div>
         ) : (
           <p className="text-xs text-white/40">配置状态加载失败，请稍后重试。</p>
         )}
+      </div>
       </div>
 
       <div className="grid grid-cols-1 xl:grid-cols-[360px_1fr] gap-5">

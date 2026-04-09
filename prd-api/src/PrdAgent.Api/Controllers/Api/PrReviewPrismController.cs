@@ -6,6 +6,8 @@ using PrdAgent.Api.Services.PrReviewPrism;
 using PrdAgent.Core.Models;
 using PrdAgent.Core.Security;
 using PrdAgent.Infrastructure.Database;
+using System.IO.Compression;
+using System.Text.RegularExpressions;
 
 namespace PrdAgent.Api.Controllers.Api;
 
@@ -52,12 +54,18 @@ public sealed class PrReviewPrismController : ControllerBase
     /// 返回 PR 审查棱镜可用性与初始化配置状态（GitHub Token + 顶层设计基线）。
     /// </summary>
     [HttpGet("setup-status")]
-    public IActionResult GetSetupStatus()
+    public IActionResult GetSetupStatus([FromQuery] string? repo = null)
     {
+        var targetRepo = NormalizeRepoKey(repo);
         var githubTokenConfigured = IsGitHubTokenConfigured();
-        var topDesign = InspectTopDesignSetup();
+        var topDesign = InspectTopDesignSetup(targetRepo);
 
         var guidance = new List<string>();
+        if (!string.IsNullOrWhiteSpace(repo) && targetRepo == null)
+        {
+            guidance.Add("repo 参数格式错误，应为 owner/repo 或 GitHub PR 链接");
+        }
+
         if (!githubTokenConfigured)
         {
             guidance.Add("请先在后端配置 GitHub Token（GitHub:Token 或 PR_REVIEW_PRISM_GITHUB_TOKEN）");
@@ -82,6 +90,10 @@ public sealed class PrReviewPrismController : ControllerBase
             {
                 guidance.Add("请在 .github/pr-architect/repo-bindings.yml 配置当前仓库绑定");
             }
+            else if (!string.IsNullOrWhiteSpace(targetRepo) && !topDesign.RepoBindingMatchedTargetRepo)
+            {
+                guidance.Add($"仓库 {targetRepo} 尚未在 repo-bindings.yml 中完成绑定");
+            }
 
             if (!topDesign.TopDesignDocExists || !topDesign.AnchorsExists || !topDesign.ContextsExists || !topDesign.SlicesExists)
             {
@@ -95,6 +107,56 @@ public sealed class PrReviewPrismController : ControllerBase
             topDesign,
             readyForFullRefresh = githubTokenConfigured && topDesign.Ready,
             guidance,
+        }));
+    }
+
+    /// <summary>
+    /// 导出“仓库专属 Skill 包”（zip），用于在新仓库一键落地 PR 审查棱镜最小接入。
+    /// </summary>
+    [HttpPost("bootstrap-skill-package")]
+    public IActionResult ExportBootstrapSkillPackage([FromBody] PrReviewPrismRepoSkillPackageRequest req)
+    {
+        var normalizedRepo = NormalizeRepoKey(req.Repo);
+        if (normalizedRepo == null)
+        {
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "repo 参数格式错误，应为 owner/repo"));
+        }
+
+        var normalizedContext = NormalizeContextId(req.Context);
+        var repoSlug = normalizedRepo.Replace("/", "-", StringComparison.Ordinal).ToLowerInvariant();
+        var normalizedOwner = NormalizeGitHubOwner(req.Owner, fallback: normalizedRepo.Split('/')[0]);
+        var normalizedAnchorId = NormalizeAnchorId(req.AnchorId, fallback: $"ANCHOR-{repoSlug.ToUpperInvariant()}-01");
+
+        var root = TryFindRepoRoot();
+        if (root == null)
+        {
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "未检测到仓库根目录，暂时无法导出接入包"));
+        }
+
+        var bootstrapScriptPath = Path.Combine(root, "scripts", "bootstrap-pr-prism.sh");
+        var initScriptPath = Path.Combine(root, "scripts", "init-pr-prism-basis.sh");
+        if (!System.IO.File.Exists(bootstrapScriptPath) || !System.IO.File.Exists(initScriptPath))
+        {
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "缺少 bootstrap 脚本，请先确保 scripts/bootstrap-pr-prism.sh 与 scripts/init-pr-prism-basis.sh 存在"));
+        }
+
+        var bootstrapScript = System.IO.File.ReadAllText(bootstrapScriptPath);
+        var initScript = System.IO.File.ReadAllText(initScriptPath);
+        var skillMarkdown = BuildRepoBootstrapSkillMarkdown(normalizedRepo, normalizedOwner, normalizedContext, normalizedAnchorId);
+        var guideMarkdown = BuildRepoBootstrapGuideMarkdown(normalizedRepo, normalizedOwner, normalizedContext, normalizedAnchorId);
+
+        var zipBytes = BuildBootstrapSkillPackageZip(new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            ["scripts/bootstrap-pr-prism.sh"] = bootstrapScript,
+            ["scripts/init-pr-prism-basis.sh"] = initScript,
+            [".claude/skills/pr-prism-bootstrap/SKILL.md"] = skillMarkdown,
+            ["doc/guide.pr-prism-bootstrap-package.md"] = guideMarkdown,
+        });
+
+        return Ok(ApiResponse<object>.Ok(new
+        {
+            fileName = $"pr-prism-bootstrap-skill-{repoSlug}.zip",
+            contentBase64 = Convert.ToBase64String(zipBytes),
         }));
     }
 
@@ -456,14 +518,15 @@ public sealed class PrReviewPrismController : ControllerBase
         return !string.IsNullOrWhiteSpace(token);
     }
 
-    private static PrReviewPrismTopDesignSetupStatus InspectTopDesignSetup()
+    private static PrReviewPrismTopDesignSetupStatus InspectTopDesignSetup(string? targetRepo)
     {
         var root = TryFindRepoRoot();
         if (root == null)
         {
             return new PrReviewPrismTopDesignSetupStatus
             {
-                RepoRootDetected = false
+                RepoRootDetected = false,
+                TargetRepo = targetRepo,
             };
         }
 
@@ -478,6 +541,7 @@ public sealed class PrReviewPrismController : ControllerBase
         {
             RepoRootDetected = true,
             RepoRoot = root,
+            TargetRepo = targetRepo,
             DesignSourcesExists = System.IO.File.Exists(designSourcesPath),
             RepoBindingsExists = System.IO.File.Exists(repoBindingsPath),
             TopDesignDocExists = System.IO.File.Exists(topDesignDocPath),
@@ -501,11 +565,20 @@ public sealed class PrReviewPrismController : ControllerBase
         {
             var text = System.IO.File.ReadAllText(repoBindingsPath);
             status.RepoBindingsHasRepositoryEntry = text.Contains("- repo:", StringComparison.OrdinalIgnoreCase);
+            status.RepoBindingMatchedTargetRepo = string.IsNullOrWhiteSpace(targetRepo)
+                ? status.RepoBindingsHasRepositoryEntry
+                : text.Contains($"repo: \"{targetRepo}\"", StringComparison.OrdinalIgnoreCase)
+                  || text.Contains($"repo: '{targetRepo}'", StringComparison.OrdinalIgnoreCase)
+                  || text.Contains($"repo: {targetRepo}", StringComparison.OrdinalIgnoreCase);
         }
+
+        var repoBindingReady = string.IsNullOrWhiteSpace(targetRepo)
+            ? status.RepoBindingsHasRepositoryEntry
+            : status.RepoBindingMatchedTargetRepo;
 
         status.Ready = status.DesignSourcesExists
                        && status.RepoBindingsExists
-                       && status.RepoBindingsHasRepositoryEntry
+                       && repoBindingReady
                        && !status.UsesBootstrapPlaceholder
                        && status.TopDesignDocExists
                        && status.AnchorsExists
@@ -558,18 +631,164 @@ public sealed class PrReviewPrismController : ControllerBase
 
         return null;
     }
+
+    private static string? NormalizeRepoKey(string? repo)
+    {
+        if (string.IsNullOrWhiteSpace(repo))
+        {
+            return null;
+        }
+
+        var trimmed = repo.Trim();
+        var fromPrUrl = Regex.Match(trimmed, @"^https?://github\.com/(?<owner>[^/\s]+)/(?<name>[^/\s]+)/pull/\d+", RegexOptions.IgnoreCase);
+        if (fromPrUrl.Success)
+        {
+            return $"{fromPrUrl.Groups["owner"].Value.ToLowerInvariant()}/{fromPrUrl.Groups["name"].Value.ToLowerInvariant()}";
+        }
+
+        var fromRepo = Regex.Match(trimmed, @"^(?<owner>[^/\s]+)/(?<name>[^/\s]+)$", RegexOptions.IgnoreCase);
+        if (fromRepo.Success)
+        {
+            return $"{fromRepo.Groups["owner"].Value.ToLowerInvariant()}/{fromRepo.Groups["name"].Value.ToLowerInvariant()}";
+        }
+
+        return null;
+    }
+
+    private static byte[] BuildBootstrapSkillPackageZip(IReadOnlyDictionary<string, string> files)
+    {
+        using var memory = new MemoryStream();
+        using (var zip = new ZipArchive(memory, ZipArchiveMode.Create, leaveOpen: true))
+        {
+            foreach (var (path, content) in files)
+            {
+                var entry = zip.CreateEntry(path, CompressionLevel.NoCompression);
+                using var stream = entry.Open();
+                using var writer = new StreamWriter(stream);
+                writer.Write(content);
+            }
+        }
+
+        return memory.ToArray();
+    }
+
+    private static string NormalizeGitHubOwner(string? value, string fallback)
+    {
+        var candidate = (value ?? string.Empty).Trim();
+        if (Regex.IsMatch(candidate, "^[A-Za-z0-9-]+$"))
+        {
+            return candidate;
+        }
+
+        return fallback;
+    }
+
+    private static string NormalizeContextId(string? value)
+    {
+        var candidate = (value ?? string.Empty).Trim().ToLowerInvariant();
+        if (string.IsNullOrWhiteSpace(candidate))
+        {
+            return "engineering-governance";
+        }
+
+        var normalized = Regex.Replace(candidate, "[^a-z0-9-]+", "-").Trim('-');
+        return string.IsNullOrWhiteSpace(normalized) ? "engineering-governance" : normalized;
+    }
+
+    private static string NormalizeAnchorId(string? value, string fallback)
+    {
+        var candidate = (value ?? string.Empty).Trim();
+        if (!string.IsNullOrWhiteSpace(candidate))
+        {
+            return candidate;
+        }
+
+        return fallback;
+    }
+
+    private static string BuildRepoBootstrapSkillMarkdown(string repo, string owner, string context, string anchorId)
+    {
+        return $"""
+---
+name: pr-prism-bootstrap
+description: 一键初始化新仓库的 PR 审查棱镜依据（最薄顶层设计 + 绑定配置）。
+---
+
+# PR Review Prism Bootstrap（仓库专属模板）
+
+目标仓库：`{repo}`
+
+## 零参数初始化（推荐）
+
+```bash
+bash scripts/bootstrap-pr-prism.sh
+```
+
+## 显式参数初始化（可复制直接用）
+
+```bash
+bash scripts/bootstrap-pr-prism.sh --repo "{repo}" --owner "{owner}" --context "{context}"
+```
+
+## 验收要点
+
+1. `doc/top-design/*` 文件已生成；
+2. `.github/pr-architect/design-sources.yml` active source 不再是占位；
+3. `.github/pr-architect/repo-bindings.yml` 存在 `repo: "{repo}"`；
+4. `anchor id` 建议使用：`{anchorId}`。
+""";
+    }
+
+    private static string BuildRepoBootstrapGuideMarkdown(string repo, string owner, string context, string anchorId)
+    {
+        return $"""
+# PR审查棱镜接入包（仓库专属）
+
+目标仓库：`{repo}`
+
+## 1. 把 zip 内容解压到仓库根目录
+
+应包含：
+
+- `scripts/bootstrap-pr-prism.sh`
+- `scripts/init-pr-prism-basis.sh`
+- `.claude/skills/pr-prism-bootstrap/SKILL.md`
+
+## 2. 执行初始化
+
+推荐：
+
+```bash
+bash scripts/bootstrap-pr-prism.sh
+```
+
+失败兜底：
+
+```bash
+bash scripts/bootstrap-pr-prism.sh --repo "{repo}" --owner "{owner}" --context "{context}"
+```
+
+## 3. 最小验收
+
+- `doc/top-design/main.md` 已生成；
+- `doc/top-design/anchors.yml` 包含 `{anchorId}`；
+- `.github/pr-architect/repo-bindings.yml` 存在 `repo: "{repo}"`。
+""";
+    }
 }
 
 public sealed class PrReviewPrismTopDesignSetupStatus
 {
     public bool RepoRootDetected { get; set; }
     public string? RepoRoot { get; set; }
+    public string? TargetRepo { get; set; }
     public bool DesignSourcesExists { get; set; }
     public string? ActiveSourceId { get; set; }
     public string? ActiveVersion { get; set; }
     public bool UsesBootstrapPlaceholder { get; set; }
     public bool RepoBindingsExists { get; set; }
     public bool RepoBindingsHasRepositoryEntry { get; set; }
+    public bool RepoBindingMatchedTargetRepo { get; set; }
     public bool TopDesignDocExists { get; set; }
     public bool AnchorsExists { get; set; }
     public bool ContextsExists { get; set; }
@@ -593,4 +812,12 @@ public sealed class PrReviewPrismBatchRefreshFailure
     public string Id { get; set; } = string.Empty;
     public string Code { get; set; } = string.Empty;
     public string Message { get; set; } = string.Empty;
+}
+
+public sealed class PrReviewPrismRepoSkillPackageRequest
+{
+    public string Repo { get; set; } = string.Empty;
+    public string? Owner { get; set; }
+    public string? Context { get; set; }
+    public string? AnchorId { get; set; }
 }
