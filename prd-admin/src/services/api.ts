@@ -198,6 +198,7 @@ export const api = {
     save: (sessionId: string) => `/api/skill-agent/sessions/${sessionId}/save`,
     exportMd: (sessionId: string) => `/api/skill-agent/sessions/${sessionId}/export/md`,
     exportZip: (sessionId: string) => `/api/skill-agent/sessions/${sessionId}/export/zip`,
+    testSkill: (skillKey: string) => `/api/skill-agent/test/${encodeURIComponent(skillKey)}`,
   },
 
   // ============ Prompts (系统提示词 + 覆盖) ============

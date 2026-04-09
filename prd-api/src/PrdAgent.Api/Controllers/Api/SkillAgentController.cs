@@ -229,6 +229,31 @@ public class SkillAgentController : ControllerBase
         return Ok(ApiResponse<object>.Ok(new { deleted = true }));
     }
 
+    /// <summary>
+    /// 试用技能：输入测试内容，LLM 用技能的 prompt template 生成结果（SSE 流式）
+    /// </summary>
+    [HttpPost("test/{skillKey}")]
+    [Produces("text/event-stream")]
+    public async Task TestSkill(string skillKey, [FromBody] SkillTestRequest request)
+    {
+        var userId = GetUserId();
+
+        var skill = await _service.GetSkillForTestAsync(skillKey, userId);
+        if (skill == null)
+        {
+            Response.StatusCode = 404;
+            return;
+        }
+
+        Response.ContentType = "text/event-stream; charset=utf-8";
+        Response.Headers.CacheControl = "no-cache";
+
+        await foreach (var chunk in _service.TestSkillAsync(skill, request.UserInput ?? "", userId))
+        {
+            await WriteSseEvent(chunk.Event, chunk.Data);
+        }
+    }
+
     // ━━━ Helpers ━━━━━━━━
 
     private async Task WriteSseEvent(string eventName, object data)
@@ -262,4 +287,9 @@ public class SkillAgentController : ControllerBase
 public class SkillAgentMessageRequest
 {
     public string Message { get; set; } = string.Empty;
+}
+
+public class SkillTestRequest
+{
+    public string? UserInput { get; set; }
 }

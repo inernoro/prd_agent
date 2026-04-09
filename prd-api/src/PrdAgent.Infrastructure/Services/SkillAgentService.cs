@@ -248,6 +248,66 @@ public class SkillAgentService
         return await _skillService.CreatePersonalSkillAsync(userId, session.SkillDraft);
     }
 
+    // ━━━ Skill Test ━━━━━━━━
+
+    /// <summary>
+    /// Get a skill for testing (personal skill owned by user)
+    /// </summary>
+    public async Task<Skill?> GetSkillForTestAsync(string skillKey, string userId)
+    {
+        var skill = await _skillService.GetByKeyAsync(skillKey);
+        if (skill == null) return null;
+        // Only allow testing personal skills owned by this user, or public/system skills
+        if (skill.Visibility == SkillVisibility.Personal && skill.OwnerUserId != userId)
+            return null;
+        return skill;
+    }
+
+    /// <summary>
+    /// Test a skill: run the prompt template with user input and stream the result
+    /// </summary>
+    public async IAsyncEnumerable<SseChunk> TestSkillAsync(Skill skill, string userInput, string userId)
+    {
+        var appCallerCode = AppCallerRegistry.SkillAgent.Guide.Chat;
+        var requestId = Guid.NewGuid().ToString();
+
+        using var _ = _llmRequestContext.BeginScope(new LlmRequestContext(
+            RequestId: requestId,
+            GroupId: null,
+            SessionId: null,
+            UserId: userId,
+            ViewRole: null,
+            DocumentChars: userInput.Length,
+            DocumentHash: null,
+            SystemPromptRedacted: "skill-agent-test",
+            RequestType: "skill-agent-test",
+            AppCallerCode: appCallerCode));
+
+        var llmClient = _gateway.CreateClient(appCallerCode, "chat", maxTokens: 4096, temperature: 0.3);
+
+        // Build the prompt: replace {{userInput}} placeholder
+        var prompt = skill.Execution.PromptTemplate;
+        if (!string.IsNullOrWhiteSpace(userInput))
+            prompt = prompt.Replace("{{userInput}}", userInput);
+
+        var systemPrompt = skill.Execution.SystemPromptOverride ?? "你是一个专业的 AI 助手。请根据指令完成任务。";
+        var messages = new List<LLMMessage> { new() { Role = "user", Content = prompt } };
+
+        yield return new SseChunk("start", new { skillKey = skill.SkillKey, title = skill.Title });
+
+        var resultBuilder = new StringBuilder();
+        await foreach (var chunk in llmClient.StreamGenerateAsync(systemPrompt, messages, false, CancellationToken.None))
+        {
+            if (chunk.Type == "delta" && !string.IsNullOrEmpty(chunk.Content))
+            {
+                resultBuilder.Append(chunk.Content);
+                yield return new SseChunk("typing", new { text = chunk.Content });
+            }
+        }
+
+        yield return new SseChunk("done", new { totalChars = resultBuilder.Length });
+    }
+
     public string? ExportAsMarkdown(SkillAgentSession session)
     {
         if (session.SkillDraft == null) return null;
@@ -283,12 +343,14 @@ public class SkillAgentService
 
 技能 = 预设提示词模板 + 输入/输出配置。
 
-你必须在回复末尾输出一个 JSON 块，格式：
+【输出格式 - 严格遵守】
+1. 先用通俗易懂的中文回复用户（禁止出现任何 JSON、代码块、字段名、技术术语）
+2. 回复末尾附上一个系统解析用的 JSON 块：
 ```json:stage_result
 { ... }
 ```
-JSON 块用 ```json:stage_result 和 ``` 包裹，系统解析用，不展示给用户。
-在 JSON 块之前输出简洁的自然语言说明。";
+3. JSON 块之外的文字中禁止出现 stageComplete、nextStage、contextScope、acceptsUserInput 等字段名
+4. 用日常用语代替技术概念，如说「需要你提供额外内容」而不是「acceptsUserInput: true」";
 
         var autoSuffix = isAutoRun ? "\n\n【重要】这是自动流转阶段，不要向用户提问，直接给出你的最佳判断并输出 JSON 结果。保持简洁，不超过 3 句话说明即可。" : "";
 

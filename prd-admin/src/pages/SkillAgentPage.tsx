@@ -1,7 +1,6 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useSseStream } from '@/lib/useSseStream';
-import { SsePhaseBar } from '@/components/sse/SsePhaseBar';
 import { GlassCard } from '@/components/design/GlassCard';
 import { api } from '@/services/api';
 import {
@@ -19,8 +18,13 @@ import { useAuthStore } from '@/stores/authStore';
 import { glassBar } from '@/lib/glassStyles';
 import {
   Send, Save, FileText, Archive, RotateCcw, Wand2, ArrowLeft, Check,
-  Loader2, Bot, User, CheckCircle2, Plus, Trash2, Zap,
+  Loader2, Bot, User, CheckCircle2, Plus, Trash2, Zap, Play, X,
 } from 'lucide-react';
+
+/** Strip ```json:stage_result ... ``` blocks from display text */
+function stripJsonBlocks(text: string): string {
+  return text.replace(/```json:stage_result[\s\S]*?```/g, '').trim();
+}
 
 // ━━━ Types ━━━━━━━━
 
@@ -126,7 +130,7 @@ function CreateTab() {
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
   const {
-    phase, phaseMessage, typing, isStreaming,
+    typing, isStreaming,
     start: startStream, reset: resetStream,
   } = useSseStream({
     url: '',
@@ -148,15 +152,17 @@ function CreateTab() {
     },
   });
 
-  // Accumulate typing into the last assistant message
+  // Accumulate typing into the last assistant message, filtering out JSON blocks
   useEffect(() => {
     if (!typing) return;
+    const clean = stripJsonBlocks(typing);
+    if (!clean) return;
     setMessages((prev) => {
       const last = prev[prev.length - 1];
       if (last?.role === 'assistant') {
-        return [...prev.slice(0, -1), { ...last, content: typing }];
+        return [...prev.slice(0, -1), { ...last, content: clean }];
       }
-      return [...prev, { role: 'assistant', content: typing }];
+      return [...prev, { role: 'assistant', content: clean }];
     });
   }, [typing]);
 
@@ -289,13 +295,6 @@ function CreateTab() {
                 style={{ color: 'var(--text-muted)' }}>
                 <RotateCcw size={11} /> 重置
               </button>
-            </div>
-          )}
-
-          {/* Streaming indicator */}
-          {(phase === 'connecting' || phase === 'streaming') && (
-            <div className="shrink-0 px-4 pt-2">
-              <SsePhaseBar phase={phase} message={phaseMessage} />
             </div>
           )}
 
@@ -438,16 +437,17 @@ function MySkillsTab({ onSwitchToCreate }: { onSwitchToCreate: () => void }) {
   const [skills, setSkills] = useState<PersonalSkillItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [deleting, setDeleting] = useState<string | null>(null);
+  const [testingSkill, setTestingSkill] = useState<PersonalSkillItem | null>(null);
 
   const loadSkills = useCallback(async () => {
     setLoading(true);
     try {
       const res = await listPersonalSkills();
       if (res.success && res.data) {
-        // Only show personal skills (filter out system/public)
-        const personal = (Array.isArray(res.data) ? res.data : []).filter(
-          (s) => s.visibility === 'personal'
-        );
+        // API returns { skills: [...] }, extract the array and filter personal only
+        const raw = res.data as unknown as { skills?: PersonalSkillItem[] };
+        const all = Array.isArray(raw.skills) ? raw.skills : Array.isArray(res.data) ? res.data : [];
+        const personal = all.filter((s) => s.visibility === 'personal');
         setSkills(personal);
       }
     } finally { setLoading(false); }
@@ -524,13 +524,23 @@ function MySkillsTab({ onSwitchToCreate }: { onSwitchToCreate: () => void }) {
                       {skill.description || '暂无描述'}
                     </div>
                   </div>
-                  <button
-                    onClick={(e) => { e.stopPropagation(); handleDelete(skill.skillKey); }}
-                    disabled={deleting === skill.skillKey}
-                    className="shrink-0 p-1.5 rounded-lg opacity-0 group-hover:opacity-100 transition-all hover:bg-red-500/10"
-                    style={{ color: 'rgba(239,68,68,0.7)' }}>
-                    {deleting === skill.skillKey ? <Loader2 size={13} className="animate-spin" /> : <Trash2 size={13} />}
-                  </button>
+                  <div className="shrink-0 flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-all">
+                    <button
+                      onClick={(e) => { e.stopPropagation(); setTestingSkill(skill); }}
+                      className="p-1.5 rounded-lg transition-colors hover:bg-purple-500/10"
+                      style={{ color: 'rgba(139,92,246,0.7)' }}
+                      title="试用">
+                      <Play size={13} />
+                    </button>
+                    <button
+                      onClick={(e) => { e.stopPropagation(); handleDelete(skill.skillKey); }}
+                      disabled={deleting === skill.skillKey}
+                      className="p-1.5 rounded-lg transition-colors hover:bg-red-500/10"
+                      style={{ color: 'rgba(239,68,68,0.7)' }}
+                      title="删除">
+                      {deleting === skill.skillKey ? <Loader2 size={13} className="animate-spin" /> : <Trash2 size={13} />}
+                    </button>
+                  </div>
                 </div>
 
                 {/* Tags & Meta */}
@@ -555,6 +565,105 @@ function MySkillsTab({ onSwitchToCreate }: { onSwitchToCreate: () => void }) {
             </GlassCard>
           );
         })}
+      </div>
+
+      {/* Skill Test Panel */}
+      {testingSkill && (
+        <SkillTestPanel skill={testingSkill} onClose={() => setTestingSkill(null)} />
+      )}
+    </div>
+  );
+}
+
+// ━━━ Skill Test Panel ━━━━━━━━
+
+function SkillTestPanel({ skill, onClose }: { skill: PersonalSkillItem; onClose: () => void }) {
+  const [testInput, setTestInput] = useState('');
+  const [testResult, setTestResult] = useState('');
+  const resultRef = useRef<HTMLDivElement>(null);
+
+  const { typing: testTyping, isStreaming: testStreaming, start: startTest, reset: resetTest } = useSseStream({
+    url: '',
+    method: 'POST',
+  });
+
+  useEffect(() => {
+    if (testTyping) setTestResult(testTyping);
+  }, [testTyping]);
+
+  useEffect(() => {
+    resultRef.current?.scrollTo({ top: resultRef.current.scrollHeight, behavior: 'smooth' });
+  }, [testResult]);
+
+  const handleTest = async () => {
+    if (testStreaming) return;
+    setTestResult('');
+    resetTest();
+    await startTest({
+      url: api.skillAgent.testSkill(skill.skillKey),
+      body: { userInput: testInput },
+    });
+  };
+
+  return (
+    <div className="fixed inset-0 flex items-center justify-center" style={{ zIndex: 200 }}>
+      <div className="absolute inset-0 bg-black/60" onClick={onClose} />
+      <div className="relative w-[90vw] max-w-[640px] max-h-[80vh] flex flex-col rounded-2xl overflow-hidden"
+        style={{ background: 'var(--bg-elevated, #1a1a1e)', border: '1px solid rgba(255,255,255,0.1)' }}>
+        {/* Header */}
+        <div className="flex items-center gap-3 px-5 py-3.5" style={{ borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
+          <div className="text-lg">{skill.icon || '⚡'}</div>
+          <div className="flex-1 min-w-0">
+            <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
+              试用「{skill.title}」
+            </div>
+            <div className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
+              {skill.description}
+            </div>
+          </div>
+          <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-white/5" style={{ color: 'var(--text-muted)' }}>
+            <X size={16} />
+          </button>
+        </div>
+
+        {/* Input */}
+        <div className="px-5 py-3">
+          <label className="text-[11px] font-medium mb-1.5 block" style={{ color: 'var(--text-secondary)' }}>
+            输入测试内容
+          </label>
+          <textarea
+            value={testInput}
+            onChange={(e) => setTestInput(e.target.value)}
+            placeholder="输入要处理的内容…"
+            rows={3}
+            className="w-full resize-none rounded-xl px-4 py-2.5 text-[13px] outline-none"
+            style={{ background: 'rgba(255,255,255,0.04)', color: 'var(--text-primary)', border: '1px solid rgba(255,255,255,0.08)' }}
+            onFocus={(e) => { e.currentTarget.style.borderColor = 'rgba(139,92,246,0.4)'; }}
+            onBlur={(e) => { e.currentTarget.style.borderColor = 'rgba(255,255,255,0.08)'; }}
+          />
+          <button onClick={handleTest} disabled={testStreaming}
+            className="mt-2 flex items-center gap-1.5 px-4 py-2 rounded-xl text-[13px] font-medium transition-all"
+            style={{
+              background: testStreaming ? 'rgba(139,92,246,0.15)' : 'linear-gradient(135deg,#8B5CF6,#6366F1)',
+              color: testStreaming ? '#C4B5FD' : 'white',
+            }}>
+            {testStreaming ? <Loader2 size={14} className="animate-spin" /> : <Play size={14} />}
+            {testStreaming ? '生成中…' : '运行测试'}
+          </button>
+        </div>
+
+        {/* Result */}
+        {testResult && (
+          <div ref={resultRef} className="flex-1 min-h-0 overflow-y-auto px-5 pb-4" style={{ maxHeight: '40vh' }}>
+            <label className="text-[11px] font-medium mb-1.5 block" style={{ color: 'var(--text-secondary)' }}>
+              输出结果
+            </label>
+            <div className="rounded-xl px-4 py-3 text-[13px] leading-relaxed whitespace-pre-wrap"
+              style={{ background: 'rgba(255,255,255,0.03)', color: 'var(--text-primary)', border: '1px solid rgba(255,255,255,0.06)' }}>
+              {testResult}
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );
