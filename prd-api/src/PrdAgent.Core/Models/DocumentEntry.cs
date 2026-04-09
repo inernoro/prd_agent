@@ -47,6 +47,9 @@ public class DocumentEntry
     /// <summary>上传/创建者 UserId</summary>
     public string CreatedBy { get; set; } = string.Empty;
 
+    /// <summary>文档正文的文本索引（用于内容搜索，截取前 2000 字符存入 MongoDB）</summary>
+    public string? ContentIndex { get; set; }
+
     // ── 定期同步字段（功能二：订阅外部源自动更新）──
 
     /// <summary>外部数据源 URL（RSS/网页/API），为空表示手动上传的文档</summary>

@@ -3,7 +3,6 @@ import {
   Library,
   Plus,
   Upload,
-  Loader2,
   FolderOpen,
   ArrowLeft,
   X,
@@ -11,13 +10,21 @@ import {
   Github,
   Sparkle,
   Trash2,
+  FileText,
+  Share2,
+  Globe,
+  Lock as GlobeLock,
+  Copy,
+  Link as LinkIcon,
+  Calendar,
+  Eye,
 } from 'lucide-react';
 import { GlassCard } from '@/components/design/GlassCard';
 import { TabBar } from '@/components/design/TabBar';
 import { Button } from '@/components/design/Button';
 import { MapSpinner } from '@/components/ui/VideoLoader';
 import {
-  listDocumentStores,
+  listDocumentStoresWithPreview,
   createDocumentStore,
   deleteDocumentStore,
   listDocumentEntries,
@@ -27,12 +34,28 @@ import {
   addGitHubSubscription,
   setPrimaryEntry,
   createFolder,
+  togglePinnedEntry,
+  searchDocumentEntries,
+  getDocumentStore,
+  deleteDocumentEntry,
+  moveDocumentEntry,
+  updateDocumentContent,
+  setFolderPrimaryChild,
+  rebuildContentIndex,
+  addDocumentEntry,
+  updateDocumentStore,
+  createDocStoreShareLink,
+  listDocStoreShareLinks,
+  revokeDocStoreShareLink,
 } from '@/services';
 import { DocBrowser } from '@/components/doc-browser/DocBrowser';
 import type {
   DocumentStore,
+  DocumentStoreWithPreview,
   DocumentEntry,
+  DocumentStoreShareLink,
 } from '@/services/contracts/documentStore';
+import type { DocBrowserEntry, EntryPreview } from '@/components/doc-browser/DocBrowser';
 import { toast } from '@/lib/toast';
 
 const ACCEPT_TYPES = '.md,.txt,.pdf,.doc,.docx,.json,.yaml,.yml,.csv';
@@ -125,18 +148,232 @@ function CreateStoreDialog({ onClose, onCreated }: {
   );
 }
 
-// ── 文档条目详情面板已移除，由 DocBrowser 替代 ──
+// ── 分享对话框（创建短链 + 列表 + 撤销） ──
+function ShareDialog({ storeId, storeName, isPublic, onClose }: {
+  storeId: string;
+  storeName: string;
+  isPublic: boolean;
+  onClose: () => void;
+}) {
+  const [links, setLinks] = useState<DocumentStoreShareLink[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [creating, setCreating] = useState(false);
+  const [title, setTitle] = useState('');
+  const [expiresInDays, setExpiresInDays] = useState(0);
+
+  const loadLinks = useCallback(async () => {
+    setLoading(true);
+    const res = await listDocStoreShareLinks(storeId);
+    if (res.success) setLinks(res.data.items);
+    setLoading(false);
+  }, [storeId]);
+
+  useEffect(() => { loadLinks(); }, [loadLinks]);
+
+  const handleCreate = async () => {
+    setCreating(true);
+    const res = await createDocStoreShareLink(storeId, { title: title.trim() || undefined, expiresInDays });
+    if (res.success) {
+      setLinks(prev => [res.data, ...prev]);
+      setTitle('');
+      toast.success('分享链接已创建', '快去复制吧');
+    } else {
+      toast.error('创建失败', res.error?.message);
+    }
+    setCreating(false);
+  };
+
+  const handleRevoke = async (linkId: string) => {
+    if (!confirm('确认撤销此分享链接？已访问的用户无法再次打开。')) return;
+    const res = await revokeDocStoreShareLink(linkId);
+    if (res.success) {
+      setLinks(prev => prev.map(l => l.id === linkId ? { ...l, isRevoked: true } : l));
+      toast.success('已撤销');
+    }
+  };
+
+  const copyLink = (token: string) => {
+    const url = `${window.location.origin}/library/share/${token}`;
+    navigator.clipboard.writeText(url).then(() => toast.success('链接已复制'));
+  };
+
+  const directLink = `${window.location.origin}/library/${storeId}`;
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center"
+      style={{ background: 'rgba(0,0,0,0.5)', backdropFilter: 'blur(8px)' }}
+      onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+      <div className="w-[640px] max-w-[92vw] max-h-[85vh] flex flex-col rounded-[16px] p-6"
+        style={{
+          background: 'linear-gradient(180deg, var(--glass-bg-start) 0%, var(--glass-bg-end) 100%)',
+          border: '1px solid rgba(255,255,255,0.08)',
+          backdropFilter: 'blur(40px) saturate(180%)',
+          boxShadow: '0 24px 48px -12px rgba(0,0,0,0.5)',
+        }}>
+        <div className="flex items-center justify-between mb-5 flex-shrink-0">
+          <div className="flex items-center gap-2.5">
+            <div className="w-8 h-8 rounded-[10px] flex items-center justify-center"
+              style={{ background: 'rgba(168,85,247,0.1)', border: '1px solid rgba(168,85,247,0.2)' }}>
+              <Share2 size={15} style={{ color: 'rgba(168,85,247,0.9)' }} />
+            </div>
+            <span className="text-[15px] font-semibold" style={{ color: 'var(--text-primary)' }}>
+              分享「{storeName}」
+            </span>
+          </div>
+          <button onClick={onClose}
+            className="w-7 h-7 rounded-[8px] flex items-center justify-center cursor-pointer hover:bg-white/6 transition-colors"
+            style={{ color: 'var(--text-muted)' }}>
+            <X size={15} />
+          </button>
+        </div>
+
+        {/* 公开访问直链 */}
+        {isPublic && (
+          <div className="mb-5 p-4 rounded-[12px]"
+            style={{ background: 'rgba(168,85,247,0.06)', border: '1px solid rgba(168,85,247,0.15)' }}>
+            <div className="flex items-center gap-2 mb-2">
+              <Globe size={12} style={{ color: 'rgba(168,85,247,0.9)' }} />
+              <span className="text-[12px] font-semibold" style={{ color: 'rgba(216,180,254,0.95)' }}>
+                公开访问链接
+              </span>
+            </div>
+            <p className="text-[11px] mb-3" style={{ color: 'var(--text-muted)' }}>
+              已发布到智识殿堂，任何人都可以通过此链接访问
+            </p>
+            <div className="flex items-center gap-2">
+              <input value={directLink} readOnly
+                className="flex-1 h-8 px-3 rounded-[8px] text-[11px] outline-none font-mono"
+                style={{ background: 'rgba(0,0,0,0.2)', border: '1px solid rgba(255,255,255,0.06)', color: 'var(--text-primary)' }} />
+              <button
+                onClick={() => navigator.clipboard.writeText(directLink).then(() => toast.success('已复制'))}
+                className="h-8 px-3 rounded-[8px] text-[11px] font-semibold cursor-pointer flex items-center gap-1"
+                style={{ background: 'rgba(168,85,247,0.15)', border: '1px solid rgba(168,85,247,0.3)', color: 'rgba(216,180,254,0.95)' }}>
+                <Copy size={11} /> 复制
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* 创建分享链接 */}
+        <div className="mb-5">
+          <div className="text-[12px] font-semibold mb-3" style={{ color: 'var(--text-primary)' }}>
+            创建分享短链
+          </div>
+          <div className="space-y-2">
+            <input value={title} onChange={e => setTitle(e.target.value)}
+              placeholder="自定义标题（可选）"
+              className="w-full h-9 px-3 rounded-[10px] text-[12px] outline-none"
+              style={{
+                background: 'var(--input-bg, rgba(255,255,255,0.05))',
+                border: '1px solid rgba(255,255,255,0.08)',
+                color: 'var(--text-primary)',
+              }} />
+            <div className="flex gap-2">
+              <select value={expiresInDays} onChange={e => setExpiresInDays(Number(e.target.value))}
+                className="flex-1 h-9 px-3 rounded-[10px] text-[12px] outline-none cursor-pointer"
+                style={{
+                  background: 'var(--input-bg, rgba(255,255,255,0.05))',
+                  border: '1px solid rgba(255,255,255,0.08)',
+                  color: 'var(--text-primary)',
+                }}>
+                <option value={0}>永不过期</option>
+                <option value={1}>1 天后过期</option>
+                <option value={7}>7 天后过期</option>
+                <option value={30}>30 天后过期</option>
+                <option value={90}>90 天后过期</option>
+              </select>
+              <Button variant="primary" size="xs" onClick={handleCreate} disabled={creating}>
+                {creating ? <MapSpinner size={12} /> : <LinkIcon size={12} />}
+                {creating ? '创建中…' : '生成链接'}
+              </Button>
+            </div>
+          </div>
+        </div>
+
+        {/* 分享链接列表 */}
+        <div className="flex-1 min-h-0 overflow-y-auto">
+          <div className="text-[12px] font-semibold mb-3 sticky top-0 py-1" style={{ color: 'var(--text-primary)' }}>
+            已有分享链接 ({links.filter(l => !l.isRevoked).length})
+          </div>
+          {loading ? (
+            <div className="flex justify-center py-6"><MapSpinner size={14} /></div>
+          ) : links.length === 0 ? (
+            <p className="text-[11px] text-center py-6" style={{ color: 'var(--text-muted)' }}>
+              暂无分享链接，创建一个开始分享吧
+            </p>
+          ) : (
+            <div className="space-y-2">
+              {links.map(link => (
+                <div key={link.id} className="p-3 rounded-[10px]"
+                  style={{
+                    background: link.isRevoked ? 'rgba(0,0,0,0.15)' : 'rgba(255,255,255,0.03)',
+                    border: '1px solid rgba(255,255,255,0.06)',
+                    opacity: link.isRevoked ? 0.5 : 1,
+                  }}>
+                  <div className="flex items-start justify-between gap-2 mb-2">
+                    <div className="flex-1 min-w-0">
+                      <div className="text-[12px] font-semibold truncate" style={{ color: 'var(--text-primary)' }}>
+                        {link.title || '未命名分享'}
+                      </div>
+                      <div className="text-[10px] mt-0.5 font-mono truncate" style={{ color: 'var(--text-muted)' }}>
+                        /library/share/{link.token}
+                      </div>
+                    </div>
+                    {!link.isRevoked && (
+                      <div className="flex items-center gap-1 flex-shrink-0">
+                        <button
+                          onClick={() => copyLink(link.token)}
+                          className="w-7 h-7 rounded-[6px] flex items-center justify-center cursor-pointer hover:bg-white/6"
+                          style={{ color: 'var(--text-muted)' }}
+                          title="复制链接">
+                          <Copy size={12} />
+                        </button>
+                        <button
+                          onClick={() => handleRevoke(link.id)}
+                          className="w-7 h-7 rounded-[6px] flex items-center justify-center cursor-pointer hover:bg-white/6"
+                          style={{ color: 'rgba(239,68,68,0.7)' }}
+                          title="撤销">
+                          <Trash2 size={12} />
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-3 text-[10px]" style={{ color: 'var(--text-muted)' }}>
+                    <span className="flex items-center gap-1">
+                      <Eye size={9} /> {link.viewCount}
+                    </span>
+                    {link.expiresAt && (
+                      <span className="flex items-center gap-1">
+                        <Calendar size={9} />
+                        {new Date(link.expiresAt).toLocaleDateString()} 过期
+                      </span>
+                    )}
+                    {link.isRevoked && (
+                      <span style={{ color: 'rgba(239,68,68,0.8)' }}>已撤销</span>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
 
 // ── 空间详情视图（文档列表 + 上传）──
-function StoreDetailView({ store: initialStore, onBack }: {
-  store: DocumentStore;
+function StoreDetailView({ storeId, onBack }: {
+  storeId: string;
   onBack: () => void;
 }) {
-  const [store, setStore] = useState(initialStore);
+  const [store, setStore] = useState<DocumentStore | null>(null);
   const [entries, setEntries] = useState<DocumentEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedEntryId, setSelectedEntryId] = useState<string | undefined>(undefined);
   const [showSubscribe, setShowSubscribe] = useState(false);
+  const [showShareDialog, setShowShareDialog] = useState(false);
+  const [publishing, setPublishing] = useState(false);
 
   // 文件上传状态
   const [uploading, setUploading] = useState(false);
@@ -144,21 +381,30 @@ function StoreDetailView({ store: initialStore, onBack }: {
   const dragCounter = useRef(0);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  // 加载空间详情和条目
+  const loadStore = useCallback(async () => {
+    const res = await getDocumentStore(storeId);
+    if (res.success) setStore(res.data);
+  }, [storeId]);
+
   const loadEntries = useCallback(async () => {
     setLoading(true);
-    const res = await listDocumentEntries(store.id, 1, 200);
+    const res = await listDocumentEntries(storeId, 1, 200);
     if (res.success) setEntries(res.data.items);
     setLoading(false);
-  }, [store.id]);
+  }, [storeId]);
 
-  useEffect(() => { loadEntries(); }, [loadEntries]);
+  useEffect(() => {
+    loadStore();
+    loadEntries();
+  }, [loadStore, loadEntries]);
 
-  // 文件上传处理 — 调用真实上传端点（文件存盘 + 文本提取 + 解析）
+  // 文件上传处理
   const handleFiles = useCallback(async (files: File[]) => {
     setUploading(true);
     let successCount = 0;
     for (const file of files) {
-      const res = await uploadDocumentFile(store.id, file);
+      const res = await uploadDocumentFile(storeId, file);
       if (res.success) {
         setEntries(prev => [res.data.entry, ...prev]);
         successCount++;
@@ -170,20 +416,29 @@ function StoreDetailView({ store: initialStore, onBack }: {
       toast.success(`上传完成`, `${successCount} 个文件已存储`);
     }
     setUploading(false);
-  }, [store.id]);
+  }, [storeId]);
+
+  // 仅响应外部文件拖入（排除内部条目拖拽，避免误触发上传遮罩）
+  const isFileDrag = (e: React.DragEvent) => e.dataTransfer.types.includes('Files');
 
   const handleDragEnter = useCallback((e: React.DragEvent) => {
+    if (!isFileDrag(e)) return;
     e.preventDefault(); e.stopPropagation();
     dragCounter.current += 1;
     if (dragCounter.current === 1) setDragging(true);
   }, []);
   const handleDragLeave = useCallback((e: React.DragEvent) => {
+    if (!isFileDrag(e)) return;
     e.preventDefault(); e.stopPropagation();
     dragCounter.current -= 1;
     if (dragCounter.current === 0) setDragging(false);
   }, []);
-  const handleDragOver = useCallback((e: React.DragEvent) => { e.preventDefault(); }, []);
+  const handleDragOver = useCallback((e: React.DragEvent) => {
+    if (!isFileDrag(e)) return;
+    e.preventDefault();
+  }, []);
   const handleDrop = useCallback((e: React.DragEvent) => {
+    if (!isFileDrag(e)) return;
     e.preventDefault(); e.stopPropagation();
     setDragging(false);
     dragCounter.current = 0;
@@ -191,29 +446,150 @@ function StoreDetailView({ store: initialStore, onBack }: {
     if (files.length > 0) handleFiles(files);
   }, [handleFiles]);
 
+  // 设置主文档：根级条目设为 store 主文档，文件夹内条目设为该文件夹主文档
   const handleSetPrimary = useCallback(async (entryId: string) => {
-    const res = await setPrimaryEntry(store.id, entryId);
-    if (res.success) {
-      setStore(prev => ({ ...prev, primaryEntryId: entryId }));
-      toast.success('已设为主文档');
-    }
-  }, [store.id]);
+    const entry = entries.find(e => e.id === entryId);
+    if (!entry) return;
 
-  const loadContent = useCallback(async (entryId: string): Promise<string | null> => {
+    if (entry.parentId) {
+      // 文件夹内条目：设为文件夹的主子项
+      const res = await setFolderPrimaryChild(entry.parentId, entryId);
+      if (res.success) {
+        // 更新本地 entries 中父文件夹的 metadata
+        setEntries(prev => prev.map(e =>
+          e.id === entry.parentId
+            ? { ...e, metadata: { ...(e.metadata ?? {}), primaryChildId: entryId } }
+            : e));
+        toast.success('已设为此文件夹的主文档');
+      } else {
+        toast.error('设置失败', res.error?.message);
+      }
+    } else {
+      // 根级条目：设为 store 主文档
+      const res = await setPrimaryEntry(storeId, entryId);
+      if (res.success) {
+        setStore(prev => prev ? { ...prev, primaryEntryId: entryId } : prev);
+        toast.success('已设为主文档');
+      }
+    }
+  }, [storeId, entries]);
+
+  const handleTogglePin = useCallback(async (entryId: string, pin: boolean) => {
+    const res = await togglePinnedEntry(storeId, entryId, pin);
+    if (res.success) {
+      setStore(prev => prev ? { ...prev, pinnedEntryIds: res.data.pinnedEntryIds } : prev);
+      toast.success(pin ? '已置顶' : '已取消置顶');
+    }
+  }, [storeId]);
+
+  const handleDeleteEntry = useCallback(async (entryId: string) => {
+    const res = await deleteDocumentEntry(entryId);
+    if (res.success) {
+      setEntries(prev => prev.filter(e => e.id !== entryId));
+      if (selectedEntryId === entryId) setSelectedEntryId(undefined);
+      toast.success('已删除');
+    } else {
+      toast.error('删除失败', res.error?.message);
+    }
+  }, [selectedEntryId]);
+
+  const handleMoveEntry = useCallback(async (entryId: string, targetFolderId: string | null) => {
+    const res = await moveDocumentEntry(entryId, targetFolderId);
+    if (res.success) {
+      setEntries(prev => prev.map(e =>
+        e.id === entryId ? { ...e, parentId: targetFolderId ?? undefined } : e));
+      toast.success('已移动');
+    } else {
+      toast.error('移动失败', res.error?.message);
+    }
+  }, []);
+
+  const handleSaveContent = useCallback(async (entryId: string, newContent: string) => {
+    const res = await updateDocumentContent(entryId, newContent);
+    if (res.success) {
+      // 更新本地 entries 中的 summary（前 200 字）
+      const summary = newContent.length > 200 ? newContent.slice(0, 200) : newContent;
+      setEntries(prev => prev.map(e =>
+        e.id === entryId ? { ...e, summary: summary.trim() } : e));
+      toast.success('已保存');
+    } else {
+      toast.error('保存失败', res.error?.message);
+      throw new Error(res.error?.message ?? '保存失败');
+    }
+  }, []);
+
+  const loadContent = useCallback(async (entryId: string): Promise<EntryPreview | null> => {
     const res = await getDocumentContent(entryId);
-    if (res.success && res.data.hasContent) return res.data.content;
-    return null;
+    if (!res.success) return null;
+    return {
+      text: res.data.hasContent ? res.data.content : null,
+      fileUrl: res.data.fileUrl,
+      contentType: res.data.contentType,
+    };
   }, []);
 
   const handleCreateFolder = useCallback(async (name: string) => {
-    const res = await createFolder(store.id, name);
+    const res = await createFolder(storeId, name);
     if (res.success) {
       setEntries(prev => [res.data, ...prev]);
       toast.success('文件夹已创建');
     } else {
       toast.error('创建失败', res.error?.message);
     }
-  }, [store.id]);
+  }, [storeId]);
+
+  const handleCreateDocument = useCallback(async () => {
+    // 直接创建一个空白文档，后续支持在 Edit 模式中填充
+    const res = await addDocumentEntry(storeId, {
+      title: '新建文档',
+      sourceType: 'upload',
+      contentType: 'text/markdown',
+      summary: '',
+    });
+    if (res.success) {
+      setEntries(prev => [res.data, ...prev]);
+      setSelectedEntryId(res.data.id);
+      toast.success('已创建文档，点击编辑按钮开始写作');
+    } else {
+      toast.error('创建失败', res.error?.message);
+    }
+  }, [storeId]);
+
+  const handleSearch = useCallback(async (keyword: string, contentSearch: boolean): Promise<DocBrowserEntry[] | null> => {
+    // 启用内容搜索时，先触发一次 ContentIndex 回填（后端对已有 ContentIndex 的条目会跳过）
+    if (contentSearch) {
+      await rebuildContentIndex(storeId);
+    }
+    const res = await searchDocumentEntries(storeId, keyword, contentSearch);
+    if (res.success) return res.data.items;
+    return null;
+  }, [storeId]);
+
+  // 切换发布到智识殿堂
+  const handleTogglePublish = useCallback(async () => {
+    if (!store) return;
+    setPublishing(true);
+    const newVal = !store.isPublic;
+    const res = await updateDocumentStore(storeId, { isPublic: newVal });
+    if (res.success) {
+      setStore(prev => prev ? { ...prev, isPublic: newVal } : prev);
+      toast.success(
+        newVal ? '已发布到智识殿堂' : '已取消发布',
+        newVal ? '其他用户现在可以浏览你的知识库了' : '知识库已设为私有',
+      );
+    } else {
+      toast.error('操作失败', res.error?.message);
+    }
+    setPublishing(false);
+  }, [store, storeId]);
+
+  if (!store) {
+    return (
+      <div className="flex-1 flex items-center justify-center" style={{ minHeight: 'calc(100vh - 160px)' }}>
+        <MapSpinner size={16} />
+      </div>
+    );
+  }
 
   return (
     <div className="h-full min-h-0 flex flex-col overflow-hidden"
@@ -237,11 +613,29 @@ function StoreDetailView({ store: initialStore, onBack }: {
         }
         actions={
           <div className="flex items-center gap-2">
+            {/* 发布到智识殿堂开关 */}
+            <button
+              onClick={handleTogglePublish}
+              disabled={publishing}
+              className="h-7 px-3 rounded-[8px] text-[11px] font-semibold flex items-center gap-1.5 cursor-pointer transition-all"
+              style={{
+                background: store.isPublic ? 'rgba(168,85,247,0.15)' : 'rgba(255,255,255,0.04)',
+                border: store.isPublic ? '1px solid rgba(168,85,247,0.35)' : '1px solid rgba(255,255,255,0.08)',
+                color: store.isPublic ? 'rgba(216,180,254,0.95)' : 'var(--text-muted)',
+              }}
+              title={store.isPublic ? '已发布到智识殿堂，点击取消发布' : '发布到智识殿堂，让更多人看到'}
+            >
+              {publishing ? <MapSpinner size={11} /> : (store.isPublic ? <Globe size={11} /> : <GlobeLock size={11} />)}
+              {store.isPublic ? '已发布' : '发布到智识殿堂'}
+            </button>
+            <Button variant="secondary" size="xs" onClick={() => setShowShareDialog(true)}>
+              <Share2 size={13} /> 分享
+            </Button>
             <Button variant="secondary" size="xs" onClick={() => setShowSubscribe(true)}>
               <Rss size={13} /> 添加订阅
             </Button>
             <Button variant="primary" size="xs" onClick={() => fileInputRef.current?.click()} disabled={uploading}>
-              {uploading ? <Loader2 size={13} className="animate-spin" /> : <Upload size={13} />}
+              {uploading ? <MapSpinner size={14} /> : <Upload size={13} />}
               {uploading ? '上传中…' : '上传文档'}
             </Button>
           </div>
@@ -264,11 +658,19 @@ function StoreDetailView({ store: initialStore, onBack }: {
         <DocBrowser
           entries={entries}
           primaryEntryId={store.primaryEntryId}
+          pinnedEntryIds={store.pinnedEntryIds ?? []}
           selectedEntryId={selectedEntryId}
           onSelectEntry={setSelectedEntryId}
           onSetPrimary={handleSetPrimary}
+          onTogglePin={handleTogglePin}
+          onDeleteEntry={handleDeleteEntry}
+          onMoveEntry={handleMoveEntry}
+          onSaveContent={handleSaveContent}
           loadContent={loadContent}
           onCreateFolder={handleCreateFolder}
+          onCreateDocument={handleCreateDocument}
+          onUploadFile={() => fileInputRef.current?.click()}
+          onSearch={handleSearch}
           loading={loading}
           emptyState={
             <div className="flex-1 flex flex-col items-center justify-center py-16">
@@ -286,9 +688,19 @@ function StoreDetailView({ store: initialStore, onBack }: {
       {/* 添加订阅对话框 */}
       {showSubscribe && (
         <SubscribeDialog
-          storeId={store.id}
+          storeId={storeId}
           onClose={() => setShowSubscribe(false)}
           onCreated={(entry) => { setShowSubscribe(false); setEntries(prev => [entry, ...prev]); }}
+        />
+      )}
+
+      {/* 分享对话框 */}
+      {showShareDialog && (
+        <ShareDialog
+          storeId={storeId}
+          storeName={store.name}
+          isPublic={store.isPublic}
+          onClose={() => setShowShareDialog(false)}
         />
       )}
     </div>
@@ -473,23 +885,35 @@ function SubscribeDialog({ storeId, onClose, onCreated }: {
 
 // ── 主页面 ──
 export function DocumentStorePage() {
-  const [stores, setStores] = useState<DocumentStore[]>([]);
+  const [stores, setStores] = useState<DocumentStoreWithPreview[]>([]);
   const [loading, setLoading] = useState(true);
   const [showCreate, setShowCreate] = useState(false);
-  const [selectedStore, setSelectedStore] = useState<DocumentStore | null>(null);
+  // 使用 storeId 而不是 store 对象，这样刷新后可以从 URL 或 sessionStorage 恢复
+  const [selectedStoreId, setSelectedStoreId] = useState<string | null>(() => {
+    return sessionStorage.getItem('doc-store-selected-id');
+  });
 
   const loadStores = useCallback(async () => {
     setLoading(true);
-    const res = await listDocumentStores(1, 50);
+    const res = await listDocumentStoresWithPreview(1, 50);
     if (res.success) setStores(res.data.items);
     setLoading(false);
   }, []);
 
   useEffect(() => { loadStores(); }, [loadStores]);
 
+  // 持久化选中的 storeId 到 sessionStorage（修复刷新丢失 bug）
+  useEffect(() => {
+    if (selectedStoreId) {
+      sessionStorage.setItem('doc-store-selected-id', selectedStoreId);
+    } else {
+      sessionStorage.removeItem('doc-store-selected-id');
+    }
+  }, [selectedStoreId]);
+
   // 空间详情视图
-  if (selectedStore) {
-    return <StoreDetailView store={selectedStore} onBack={() => { setSelectedStore(null); loadStores(); }} />;
+  if (selectedStoreId) {
+    return <StoreDetailView storeId={selectedStoreId} onBack={() => { setSelectedStoreId(null); loadStores(); }} />;
   }
 
   // 空间列表视图
@@ -548,14 +972,14 @@ export function DocumentStorePage() {
             </Button>
           </div>
         ) : (
-          /* 空间列表 */
+          /* 空间列表 - 增大卡片高度，显示文档预览 */
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 items-stretch">
             {stores.map(s => (
               <GlassCard key={s.id} animated interactive padding="none"
                 className="group flex flex-col h-full"
-                onClick={() => setSelectedStore(s)}>
-                <div className="p-4 pb-3 flex-1 flex flex-col">
-                  <div className="flex items-start justify-between gap-2 mb-3">
+                onClick={() => setSelectedStoreId(s.id)}>
+                <div className="p-4 pb-2 flex-1 flex flex-col">
+                  <div className="flex items-start justify-between gap-2 mb-2">
                     <div className="flex items-center gap-2.5 min-w-0">
                       <div className="w-9 h-9 rounded-[10px] flex items-center justify-center flex-shrink-0"
                         style={{ background: 'rgba(59,130,246,0.08)', border: '1px solid rgba(59,130,246,0.12)' }}>
@@ -574,8 +998,28 @@ export function DocumentStorePage() {
                     </div>
                   </div>
 
-                  <div className="flex-1" />
-                  <div className="flex items-center justify-between mt-3 pt-2.5"
+                  {/* 最近文档预览列表 */}
+                  <div className="flex-1 mt-1.5 space-y-0.5 min-h-[60px]">
+                    {(s.recentEntries?.length ?? 0) > 0 ? (
+                      s.recentEntries.map((entry) => (
+                        <div key={entry.id} className="flex items-center gap-1.5 py-1 px-1 rounded-[6px] transition-colors hover:bg-white/3">
+                          <FileText size={11} className="flex-shrink-0" style={{ color: 'rgba(59,130,246,0.5)' }} />
+                          <span className="flex-1 text-[11px] truncate" style={{ color: 'var(--text-secondary)' }}>
+                            {entry.title}
+                          </span>
+                          <span className="text-[9px] flex-shrink-0" style={{ color: 'var(--text-muted)' }}>
+                            {new Date(entry.updatedAt).toLocaleDateString()}
+                          </span>
+                        </div>
+                      ))
+                    ) : (
+                      <div className="flex items-center justify-center h-full">
+                        <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>知识库暂无内容</span>
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="flex items-center justify-between mt-2 pt-2.5"
                     style={{ borderTop: '1px solid rgba(255,255,255,0.05)' }}>
                     <div className="flex items-center gap-3 text-[11px]" style={{ color: 'var(--text-muted)' }}>
                       <span><span style={{ color: 'var(--text-secondary)' }}>{s.documentCount}</span> 个文档</span>
@@ -613,7 +1057,7 @@ export function DocumentStorePage() {
       {showCreate && (
         <CreateStoreDialog
           onClose={() => setShowCreate(false)}
-          onCreated={(s) => { setShowCreate(false); setSelectedStore(s); }}
+          onCreated={(s) => { setShowCreate(false); setSelectedStoreId(s.id); }}
         />
       )}
     </div>

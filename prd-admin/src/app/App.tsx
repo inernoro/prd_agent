@@ -59,6 +59,8 @@ const WorkflowEditorPage = lazy(() => import('@/pages/workflow-agent').then(m =>
 const WorkflowCanvasPage = lazy(() => import('@/pages/workflow-agent').then(m => ({ default: m.WorkflowCanvasPage })));
 const MarketplacePage = lazy(() => import('@/pages/marketplace').then(m => ({ default: m.MarketplacePage })));
 const DocumentStorePage = lazy(() => import('@/pages/document-store').then(m => ({ default: m.DocumentStorePage })));
+const LibraryLandingPage = lazy(() => import('@/pages/library/LibraryLandingPage').then(m => ({ default: m.LibraryLandingPage })));
+const LibraryStoreDetailPage = lazy(() => import('@/pages/library/LibraryStoreDetailPage').then(m => ({ default: m.LibraryStoreDetailPage })));
 const EmergenceExplorerPage = lazy(() => import('@/pages/emergence').then(m => ({ default: m.EmergenceExplorerPage })));
 const AiToolboxPage = lazy(() => import('@/pages/ai-toolbox').then(m => ({ default: m.AiToolboxPage })));
 const SharedConversation = lazy(() => import('@/pages/ai-toolbox/SharedConversation').then(m => ({ default: m.SharedConversation })));
@@ -76,8 +78,6 @@ const WebPagesPage = lazy(() => import('@/pages/WebPagesPage'));
 const ShareViewPage = lazy(() => import('@/pages/ShareViewPage'));
 const ExecutiveDashboardPage = lazy(() => import('@/pages/ExecutiveDashboardPage'));
 const PrdAgentTabsPage = lazy(() => import('@/pages/PrdAgentTabsPage').then(m => ({ default: m.PrdAgentTabsPage })));
-const TutorialsPage = lazy(() => import('@/pages/TutorialsPage'));
-const TutorialDetailPage = lazy(() => import('@/pages/tutorials/TutorialDetailPage'));
 const AgentLauncherPage = lazy(() => import('@/pages/AgentLauncherPage'));
 const MobileHomePage = lazy(() => import('@/pages/MobileHomePage'));
 const MobileAssetsPage = lazy(() => import('@/pages/MobileAssetsPage'));
@@ -248,6 +248,10 @@ export default function App() {
         <Route path="/_dev/rich-composer-lab" element={<RichComposerLab />} />
         <Route path="/_dev/mobile-audit" element={<MobileAuditPage />} />
 
+        {/* 智识殿堂 - 独立全屏页面（实验性 claymorphism 风格），不使用 AppShell 布局 */}
+        <Route path="/library" element={<LibraryLandingPage />} />
+        <Route path="/library/:storeId" element={<LibraryStoreDetailPage />} />
+
         {/* 视觉创作 Agent - 独立全屏页面，不使用 AppShell 布局 */}
         <Route
           path="/visual-agent"
@@ -352,8 +356,6 @@ export default function App() {
         <Route path="assets" element={<RequirePermission perm="assets.read"><AssetsManagePage /></RequirePermission>} />
         <Route path="skills" element={<RequirePermission perm="skills.read"><SkillsPage /></RequirePermission>} />
         <Route path="web-pages" element={<RequirePermission perm="web-pages.read"><WebPagesPage /></RequirePermission>} />
-        <Route path="tutorials" element={<RequirePermission perm="access"><TutorialsPage /></RequirePermission>} />
-        <Route path="tutorials/:id" element={<RequirePermission perm="access"><TutorialDetailPage /></RequirePermission>} />
         <Route path="marketplace" element={<RequirePermission perm="access"><MarketplacePage /></RequirePermission>} />
         <Route path="document-store" element={<RequirePermission perm="access"><DocumentStorePage /></RequirePermission>} />
         <Route path="emergence" element={<RequirePermission perm="access"><EmergenceExplorerPage /></RequirePermission>} />

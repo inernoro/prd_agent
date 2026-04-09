@@ -145,6 +145,68 @@ export function createBridgeRouter(deps: BridgeRouterDeps): Router {
     res.json({ success: true });
   });
 
+  // ── Handshake endpoints (user-approval flow) ──
+  // Flow: AI creates request → Widget shows panel → User approves/rejects →
+  //       auto-activates session if approved → AI polls status to begin operation
+
+  // POST /api/bridge/handshake-request — AI asks user to approve a Bridge session
+  router.post('/handshake-request', (req, res) => {
+    const { branchId, reason, agentName } = req.body || {};
+    if (!branchId) {
+      res.status(400).json({ error: 'branchId is required' });
+      return;
+    }
+    const request = bridgeService.addHandshakeRequest(
+      branchId,
+      reason || '',
+      agentName || 'Claude Code',
+    );
+    res.json({
+      requestId: request.id,
+      message: '握手请求已发送，请用户在浏览器左下角点击「同意」批准',
+      expiresIn: 300,
+    });
+  });
+
+  // GET /api/bridge/handshake-requests/:branchId — Widget polls for pending handshake
+  router.get('/handshake-requests/:branchId', (req, res) => {
+    res.json({ requests: bridgeService.getPendingHandshakeRequests(req.params.branchId) });
+  });
+
+  // POST /api/bridge/handshake-requests/:id/approve — User approves (from Widget)
+  router.post('/handshake-requests/:id/approve', (req, res) => {
+    const approved = bridgeService.approveHandshake(req.params.id);
+    if (!approved) {
+      res.status(404).json({ error: '握手请求不存在或已过期' });
+      return;
+    }
+    res.json({ success: true, branchId: approved.branchId });
+  });
+
+  // POST /api/bridge/handshake-requests/:id/reject — User rejects (from Widget)
+  router.post('/handshake-requests/:id/reject', (req, res) => {
+    const rejected = bridgeService.rejectHandshake(req.params.id);
+    if (!rejected) {
+      res.status(404).json({ error: '握手请求不存在或已过期' });
+      return;
+    }
+    res.json({ success: true });
+  });
+
+  // GET /api/bridge/handshake-status/:id — AI polls for approval status
+  router.get('/handshake-status/:id', (req, res) => {
+    const status = bridgeService.getHandshakeStatus(req.params.id);
+    if (!status) {
+      res.json({ status: 'expired' });
+      return;
+    }
+    res.json({
+      status: status.status,
+      branchId: status.branchId,
+      approvedAt: status.approvedAt,
+    });
+  });
+
   // POST /api/bridge/end-session — AI signals it's done operating
   router.post('/end-session', (req, res) => {
     const { branchId, summary } = req.body || {};

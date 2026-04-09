@@ -59,6 +59,32 @@ export interface NavigateRequest {
   createdAt: string;
 }
 
+/**
+ * Handshake request — user-approval flow for AI to operate a page.
+ *
+ * Flow:
+ *   1. AI calls POST /bridge/handshake-request   (status=pending)
+ *   2. Widget polls GET /bridge/handshake-requests/:branchId and shows panel
+ *   3. User clicks "同意" → POST /bridge/handshake-requests/:id/approve
+ *      → CDS marks approved + auto-calls startSession(branchId)
+ *      → Widget starts heartbeat immediately
+ *   4. AI polls GET /bridge/handshake-status/:id → sees "approved" → starts sending commands
+ *
+ * This avoids the chicken-and-egg problem where AI's start-session silently
+ * activates a session the user never agreed to.
+ */
+export interface HandshakeRequest {
+  id: string;
+  branchId: string;
+  /** Natural-language reason from AI, e.g. "帮你验证「智识殿堂」页面" */
+  reason: string;
+  /** Agent name (from query param or body) */
+  agentName: string;
+  status: 'pending' | 'approved' | 'rejected';
+  createdAt: string;
+  approvedAt?: string;
+}
+
 interface BridgeConnection {
   branchId: string;
   connectedAt: string;
@@ -81,6 +107,7 @@ const CONNECTION_TTL = 20_000; // connection considered dead if no heartbeat for
 export class BridgeService {
   private connections = new Map<string, BridgeConnection>();
   private navigateRequests = new Map<string, NavigateRequest>();
+  private handshakeRequests = new Map<string, HandshakeRequest>();
   private activeSessions = new Set<string>(); // branches with active AI sessions
   private onActivityCallback: ((branchId: string, action: string) => void) | null = null;
   private cleanupTimer: ReturnType<typeof setInterval>;
@@ -277,6 +304,62 @@ export class BridgeService {
   /** Dismiss a navigate request */
   dismissNavigateRequest(id: string): void {
     this.navigateRequests.delete(id);
+  }
+
+  // ── Handshake requests (user-approval flow) ──
+
+  /** AI creates a handshake request. User must approve via Widget before session activates. */
+  addHandshakeRequest(branchId: string, reason: string, agentName: string): HandshakeRequest {
+    const req: HandshakeRequest = {
+      id: crypto.randomBytes(8).toString('hex'),
+      branchId,
+      reason: reason.slice(0, 500),
+      agentName: agentName.slice(0, 100),
+      status: 'pending',
+      createdAt: new Date().toISOString(),
+    };
+    this.handshakeRequests.set(req.id, req);
+    // Auto-expire after 5 minutes if not approved
+    setTimeout(() => {
+      const current = this.handshakeRequests.get(req.id);
+      if (current && current.status === 'pending') {
+        this.handshakeRequests.delete(req.id);
+      }
+    }, 5 * 60 * 1000);
+    return req;
+  }
+
+  /** Widget polls this to get pending handshake requests for its branch. */
+  getPendingHandshakeRequests(branchId: string): HandshakeRequest[] {
+    return Array.from(this.handshakeRequests.values())
+      .filter(r => r.branchId === branchId && r.status === 'pending');
+  }
+
+  /** User approves handshake via Widget. Auto-activates session. */
+  approveHandshake(id: string): HandshakeRequest | null {
+    const req = this.handshakeRequests.get(id);
+    if (!req || req.status !== 'pending') return null;
+    req.status = 'approved';
+    req.approvedAt = new Date().toISOString();
+    // Auto-start the bridge session so Widget begins heartbeat immediately
+    this.startSession(req.branchId);
+    // Keep approved record for 5 min so AI can poll status
+    setTimeout(() => { this.handshakeRequests.delete(id); }, 5 * 60 * 1000);
+    return req;
+  }
+
+  /** User rejects handshake via Widget. */
+  rejectHandshake(id: string): HandshakeRequest | null {
+    const req = this.handshakeRequests.get(id);
+    if (!req || req.status !== 'pending') return null;
+    req.status = 'rejected';
+    setTimeout(() => { this.handshakeRequests.delete(id); }, 60_000);
+    return req;
+  }
+
+  /** AI polls this to check if user approved the handshake. */
+  getHandshakeStatus(id: string): HandshakeRequest | null {
+    return this.handshakeRequests.get(id) || null;
   }
 }
 

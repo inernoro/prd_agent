@@ -295,7 +295,8 @@ public class DocumentStoreController : ControllerBase
         [FromQuery] string? sourceType = null,
         [FromQuery] string? keyword = null,
         [FromQuery] string? parentId = null,
-        [FromQuery] bool all = false)
+        [FromQuery] bool all = false,
+        [FromQuery] bool searchContent = false)
     {
         var userId = GetUserId();
         var store = await _db.DocumentStores.Find(s => s.Id == storeId).FirstOrDefaultAsync();
@@ -331,9 +332,20 @@ public class DocumentStoreController : ControllerBase
         if (!string.IsNullOrWhiteSpace(keyword))
         {
             var kw = keyword.Trim();
-            filter &= filterBuilder.Or(
+            var searchFilters = new List<FilterDefinition<DocumentEntry>>
+            {
                 filterBuilder.Regex(e => e.Title, new MongoDB.Bson.BsonRegularExpression(kw, "i")),
-                filterBuilder.Regex(e => e.Summary, new MongoDB.Bson.BsonRegularExpression(kw, "i")));
+                filterBuilder.Regex(e => e.Summary, new MongoDB.Bson.BsonRegularExpression(kw, "i")),
+            };
+
+            // 启用内容搜索时，同时搜索 ContentIndex 字段
+            if (searchContent)
+            {
+                searchFilters.Add(
+                    filterBuilder.Regex(e => e.ContentIndex, new MongoDB.Bson.BsonRegularExpression(kw, "i")));
+            }
+
+            filter &= filterBuilder.Or(searchFilters);
         }
 
         var total = await _db.DocumentEntries.CountDocumentsAsync(filter);
@@ -426,6 +438,181 @@ public class DocumentStoreController : ControllerBase
         return Ok(ApiResponse<object>.Ok(new { deleted = true }));
     }
 
+    /// <summary>移动文档条目到其他文件夹</summary>
+    [HttpPut("entries/{entryId}/move")]
+    public async Task<IActionResult> MoveEntry(string entryId, [FromBody] MoveEntryRequest request)
+    {
+        var userId = GetUserId();
+        var entry = await _db.DocumentEntries.Find(e => e.Id == entryId).FirstOrDefaultAsync();
+        if (entry == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "文档条目不存在"));
+
+        var store = await _db.DocumentStores.Find(s => s.Id == entry.StoreId && s.OwnerId == userId).FirstOrDefaultAsync();
+        if (store == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "文档条目不存在"));
+
+        // 验证目标文件夹存在
+        if (!string.IsNullOrEmpty(request.ParentId))
+        {
+            var folder = await _db.DocumentEntries.Find(
+                e => e.Id == request.ParentId && e.StoreId == entry.StoreId && e.IsFolder).FirstOrDefaultAsync();
+            if (folder == null)
+                return BadRequest(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "目标文件夹不存在"));
+        }
+
+        await _db.DocumentEntries.UpdateOneAsync(
+            e => e.Id == entryId,
+            Builders<DocumentEntry>.Update
+                .Set(e => e.ParentId, string.IsNullOrEmpty(request.ParentId) ? null : request.ParentId)
+                .Set(e => e.UpdatedAt, DateTime.UtcNow));
+
+        return Ok(ApiResponse<object>.Ok(new { moved = true }));
+    }
+
+    /// <summary>更新文档内容（在线编辑）</summary>
+    [HttpPut("entries/{entryId}/content")]
+    public async Task<IActionResult> UpdateEntryContent(string entryId, [FromBody] UpdateEntryContentRequest request)
+    {
+        var userId = GetUserId();
+        var entry = await _db.DocumentEntries.Find(e => e.Id == entryId).FirstOrDefaultAsync();
+        if (entry == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "文档条目不存在"));
+
+        var store = await _db.DocumentStores.Find(s => s.Id == entry.StoreId && s.OwnerId == userId).FirstOrDefaultAsync();
+        if (store == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "文档条目不存在"));
+
+        if (entry.IsFolder)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "文件夹不支持编辑"));
+
+        var content = request.Content ?? string.Empty;
+
+        // 更新或创建 ParsedPrd
+        if (!string.IsNullOrEmpty(entry.DocumentId))
+        {
+            var doc = await _documentService.GetByIdAsync(entry.DocumentId);
+            if (doc != null)
+            {
+                // 重新解析并保存
+                var parsed = await _documentService.ParseAsync(content);
+                parsed.Id = doc.Id;
+                parsed.Title = doc.Title;
+                await _documentService.SaveAsync(parsed);
+            }
+        }
+        else
+        {
+            // 无关联文档时创建新的 ParsedPrd
+            var parsed = await _documentService.ParseAsync(content);
+            parsed.Title = entry.Title;
+            await _documentService.SaveAsync(parsed);
+            entry.DocumentId = parsed.Id;
+        }
+
+        // 更新 DocumentEntry 的摘要和内容索引
+        var summary = content.Length > 200 ? content[..200] : content;
+        var contentIndex = content.Length > 2000 ? content[..2000] : content;
+
+        await _db.DocumentEntries.UpdateOneAsync(
+            e => e.Id == entryId,
+            Builders<DocumentEntry>.Update
+                .Set(e => e.DocumentId, entry.DocumentId)
+                .Set(e => e.Summary, summary.Trim())
+                .Set(e => e.ContentIndex, contentIndex.Trim())
+                .Set(e => e.UpdatedAt, DateTime.UtcNow));
+
+        return Ok(ApiResponse<object>.Ok(new { updated = true }));
+    }
+
+    /// <summary>设置文件夹内的主文档</summary>
+    [HttpPut("entries/{folderId}/primary-child")]
+    public async Task<IActionResult> SetFolderPrimaryChild(string folderId, [FromBody] SetPrimaryEntryRequest request)
+    {
+        var userId = GetUserId();
+        var folder = await _db.DocumentEntries.Find(e => e.Id == folderId && e.IsFolder).FirstOrDefaultAsync();
+        if (folder == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "文件夹不存在"));
+
+        var store = await _db.DocumentStores.Find(s => s.Id == folder.StoreId && s.OwnerId == userId).FirstOrDefaultAsync();
+        if (store == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "文件夹不存在"));
+
+        if (!string.IsNullOrEmpty(request.EntryId))
+        {
+            var child = await _db.DocumentEntries.Find(
+                e => e.Id == request.EntryId && e.ParentId == folderId).FirstOrDefaultAsync();
+            if (child == null)
+                return BadRequest(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "文档条目不存在或不在此文件夹内"));
+        }
+
+        var metadata = folder.Metadata ?? new Dictionary<string, string>();
+        if (string.IsNullOrEmpty(request.EntryId))
+            metadata.Remove("primaryChildId");
+        else
+            metadata["primaryChildId"] = request.EntryId;
+
+        await _db.DocumentEntries.UpdateOneAsync(
+            e => e.Id == folderId,
+            Builders<DocumentEntry>.Update
+                .Set(e => e.Metadata, metadata)
+                .Set(e => e.UpdatedAt, DateTime.UtcNow));
+
+        return Ok(ApiResponse<object>.Ok(new { primaryChildId = request.EntryId }));
+    }
+
+    /// <summary>为空间内的文档回填内容索引（ContentIndex），供内容搜索使用</summary>
+    [HttpPost("stores/{storeId}/rebuild-content-index")]
+    public async Task<IActionResult> RebuildContentIndex(string storeId)
+    {
+        var userId = GetUserId();
+        var store = await _db.DocumentStores.Find(s => s.Id == storeId && s.OwnerId == userId).FirstOrDefaultAsync();
+        if (store == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "文档空间不存在"));
+
+        // 查找没有 ContentIndex 的条目
+        var entries = await _db.DocumentEntries.Find(
+            Builders<DocumentEntry>.Filter.And(
+                Builders<DocumentEntry>.Filter.Eq(e => e.StoreId, storeId),
+                Builders<DocumentEntry>.Filter.Eq(e => e.IsFolder, false),
+                Builders<DocumentEntry>.Filter.Or(
+                    Builders<DocumentEntry>.Filter.Eq(e => e.ContentIndex, null),
+                    Builders<DocumentEntry>.Filter.Exists(e => e.ContentIndex, false))))
+            .ToListAsync();
+
+        var updated = 0;
+        foreach (var entry in entries)
+        {
+            string? text = null;
+
+            // 优先从 ParsedPrd 获取
+            if (!string.IsNullOrEmpty(entry.DocumentId))
+            {
+                var doc = await _documentService.GetByIdAsync(entry.DocumentId);
+                if (doc != null) text = doc.RawContent;
+            }
+
+            // 兜底从 Attachment.ExtractedText 获取
+            if (string.IsNullOrEmpty(text) && !string.IsNullOrEmpty(entry.AttachmentId))
+            {
+                var att = await _db.Attachments
+                    .Find(a => a.AttachmentId == entry.AttachmentId)
+                    .FirstOrDefaultAsync();
+                if (att != null) text = att.ExtractedText;
+            }
+
+            if (!string.IsNullOrEmpty(text))
+            {
+                var contentIndex = text.Length > 2000 ? text[..2000] : text;
+                await _db.DocumentEntries.UpdateOneAsync(
+                    e => e.Id == entry.Id,
+                    Builders<DocumentEntry>.Update.Set(e => e.ContentIndex, contentIndex));
+                updated++;
+            }
+        }
+
+        return Ok(ApiResponse<object>.Ok(new { total = entries.Count, updated }));
+    }
+
     // ─────────────────────────────────────────────
     // 文件上传（真实存盘）
     // ─────────────────────────────────────────────
@@ -462,6 +649,10 @@ public class DocumentStoreController : ControllerBase
                 ".pdf" => "application/pdf",
                 ".doc" => "application/msword",
                 ".docx" => "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                ".ppt" => "application/vnd.ms-powerpoint",
+                ".pptx" => "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+                ".xls" => "application/vnd.ms-excel",
+                ".xlsx" => "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                 ".json" => "application/json",
                 ".yaml" or ".yml" => "text/yaml",
                 ".csv" => "text/csv",
@@ -519,8 +710,12 @@ public class DocumentStoreController : ControllerBase
         }
 
         // 5) 创建 DocumentEntry（关联 Attachment + ParsedPrd）
-        var title = Path.GetFileNameWithoutExtension(file.FileName);
+        // 保留完整文件名（含扩展名），便于前端按扩展名显示图标
+        var title = file.FileName ?? Path.GetFileNameWithoutExtension(file.FileName);
         var summary = extractedText?.Length > 200 ? extractedText[..200] : extractedText;
+
+        // 截取前 2000 字符作为内容索引（供内容搜索使用）
+        var contentIndex = extractedText?.Length > 2000 ? extractedText[..2000] : extractedText;
 
         var entry = new DocumentEntry
         {
@@ -534,6 +729,7 @@ public class DocumentStoreController : ControllerBase
             ContentType = mime,
             FileSize = file.Length,
             CreatedBy = userId,
+            ContentIndex = contentIndex?.Trim(),
         };
         await _db.DocumentEntries.InsertOneAsync(entry, cancellationToken: ct);
 
@@ -748,6 +944,103 @@ public class DocumentStoreController : ControllerBase
         return Ok(ApiResponse<DocumentEntry>.Ok(entry));
     }
 
+    /// <summary>置顶/取消置顶文档条目（支持多个置顶）</summary>
+    [HttpPut("stores/{storeId}/pinned-entries")]
+    public async Task<IActionResult> TogglePinnedEntry(string storeId, [FromBody] TogglePinRequest request)
+    {
+        var userId = GetUserId();
+        var store = await _db.DocumentStores.Find(s => s.Id == storeId && s.OwnerId == userId).FirstOrDefaultAsync();
+        if (store == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "文档空间不存在"));
+
+        if (string.IsNullOrEmpty(request.EntryId))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "条目 ID 不能为空"));
+
+        var entry = await _db.DocumentEntries.Find(
+            e => e.Id == request.EntryId && e.StoreId == storeId).FirstOrDefaultAsync();
+        if (entry == null)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "文档条目不存在或不属于此空间"));
+
+        var pinnedIds = store.PinnedEntryIds ?? new List<string>();
+        if (request.Pin)
+        {
+            if (!pinnedIds.Contains(request.EntryId))
+                pinnedIds.Add(request.EntryId);
+        }
+        else
+        {
+            pinnedIds.Remove(request.EntryId);
+        }
+
+        await _db.DocumentStores.UpdateOneAsync(
+            s => s.Id == storeId,
+            Builders<DocumentStore>.Update
+                .Set(s => s.PinnedEntryIds, pinnedIds)
+                .Set(s => s.UpdatedAt, DateTime.UtcNow));
+
+        _logger.LogInformation("[document-store] Entry {Action}: store={StoreId} entry={EntryId} by {UserId}",
+            request.Pin ? "pinned" : "unpinned", storeId, request.EntryId, userId);
+
+        return Ok(ApiResponse<object>.Ok(new { pinnedEntryIds = pinnedIds }));
+    }
+
+    /// <summary>获取文档空间列表（含最近文档预览，用于卡片展示）</summary>
+    [HttpGet("stores/with-preview")]
+    public async Task<IActionResult> ListStoresWithPreview([FromQuery] int page = 1, [FromQuery] int pageSize = 20)
+    {
+        var userId = GetUserId();
+        pageSize = Math.Clamp(pageSize, 1, 100);
+        page = Math.Max(1, page);
+
+        var filter = Builders<DocumentStore>.Filter.Eq(s => s.OwnerId, userId);
+        var total = await _db.DocumentStores.CountDocumentsAsync(filter);
+        var stores = await _db.DocumentStores.Find(filter)
+            .SortByDescending(s => s.UpdatedAt)
+            .Skip((page - 1) * pageSize)
+            .Limit(pageSize)
+            .ToListAsync();
+
+        // 批量获取每个空间的最近 3 个文档（用于卡片预览）
+        var storeIds = stores.Select(s => s.Id).ToList();
+        var recentEntries = await _db.DocumentEntries
+            .Find(Builders<DocumentEntry>.Filter.And(
+                Builders<DocumentEntry>.Filter.In(e => e.StoreId, storeIds),
+                Builders<DocumentEntry>.Filter.Eq(e => e.IsFolder, false),
+                Builders<DocumentEntry>.Filter.Ne(e => e.SourceType, DocumentSourceType.GithubDirectory)))
+            .SortByDescending(e => e.UpdatedAt)
+            .Limit(storeIds.Count * 3) // 最多取 N*3 条
+            .ToListAsync();
+
+        var entriesByStore = recentEntries
+            .GroupBy(e => e.StoreId)
+            .ToDictionary(g => g.Key, g => g.Take(3).Select(e => new
+            {
+                id = e.Id,
+                title = e.Title,
+                updatedAt = e.UpdatedAt,
+                contentType = e.ContentType,
+            }).ToList());
+
+        var items = stores.Select(s => new
+        {
+            s.Id,
+            s.Name,
+            s.Description,
+            s.OwnerId,
+            s.AppKey,
+            s.Tags,
+            s.IsPublic,
+            s.PrimaryEntryId,
+            s.PinnedEntryIds,
+            s.DocumentCount,
+            s.CreatedAt,
+            s.UpdatedAt,
+            recentEntries = entriesByStore.GetValueOrDefault(s.Id, new()),
+        }).ToList();
+
+        return Ok(ApiResponse<object>.Ok(new { items, total, page, pageSize }));
+    }
+
     /// <summary>手动触发同步</summary>
     [HttpPost("entries/{entryId}/sync")]
     public async Task<IActionResult> TriggerSync(string entryId)
@@ -772,6 +1065,391 @@ public class DocumentStoreController : ControllerBase
                 .Set(e => e.UpdatedAt, DateTime.UtcNow));
 
         return Ok(ApiResponse<object>.Ok(new { triggered = true }));
+    }
+
+    // ─────────────────────────────────────────────
+    // 公开知识库 / 点赞 / 收藏 / 分享
+    // ─────────────────────────────────────────────
+
+    /// <summary>获取所有公开知识库列表（IsPublic=true，匿名可访问）</summary>
+    [HttpGet("public/stores")]
+    [AllowAnonymous]
+    public async Task<IActionResult> ListPublicStores([FromQuery] int page = 1, [FromQuery] int pageSize = 24, [FromQuery] string? sort = "hot")
+    {
+        pageSize = Math.Clamp(pageSize, 1, 100);
+        page = Math.Max(1, page);
+
+        var filter = Builders<DocumentStore>.Filter.Eq(s => s.IsPublic, true);
+        var total = await _db.DocumentStores.CountDocumentsAsync(filter);
+
+        SortDefinition<DocumentStore> sortDef = sort switch
+        {
+            "new" => Builders<DocumentStore>.Sort.Descending(s => s.CreatedAt),
+            "popular" => Builders<DocumentStore>.Sort.Descending(s => s.LikeCount),
+            "viewed" => Builders<DocumentStore>.Sort.Descending(s => s.ViewCount),
+            _ => Builders<DocumentStore>.Sort
+                .Descending(s => s.LikeCount)
+                .Descending(s => s.ViewCount), // hot
+        };
+
+        var stores = await _db.DocumentStores.Find(filter)
+            .Sort(sortDef)
+            .Skip((page - 1) * pageSize)
+            .Limit(pageSize)
+            .ToListAsync();
+
+        // 获取所有店主信息（一次性加载，避免 N+1）
+        var ownerIds = stores.Select(s => s.OwnerId).Distinct().ToList();
+        var owners = await _db.Users.Find(u => ownerIds.Contains(u.UserId)).ToListAsync();
+        var ownerMap = owners.ToDictionary(u => u.UserId, u => new { u.DisplayName, u.AvatarFileName });
+
+        var items = stores.Select(s => new
+        {
+            s.Id,
+            s.Name,
+            s.Description,
+            s.Tags,
+            s.DocumentCount,
+            s.LikeCount,
+            s.ViewCount,
+            s.FavoriteCount,
+            s.CoverImageUrl,
+            s.CreatedAt,
+            s.UpdatedAt,
+            ownerName = ownerMap.GetValueOrDefault(s.OwnerId)?.DisplayName ?? "未知用户",
+            ownerAvatar = ownerMap.GetValueOrDefault(s.OwnerId)?.AvatarFileName,
+        }).ToList();
+
+        return Ok(ApiResponse<object>.Ok(new { items, total, page, pageSize }));
+    }
+
+    /// <summary>获取公开知识库详情（匿名可访问，自动 +1 ViewCount）</summary>
+    [HttpGet("public/stores/{storeId}")]
+    [AllowAnonymous]
+    public async Task<IActionResult> GetPublicStore(string storeId)
+    {
+        var store = await _db.DocumentStores.Find(s => s.Id == storeId && s.IsPublic).FirstOrDefaultAsync();
+        if (store == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "知识库不存在或未公开"));
+
+        // 异步累加查看数（不阻塞响应）
+        _ = _db.DocumentStores.UpdateOneAsync(
+            s => s.Id == storeId,
+            Builders<DocumentStore>.Update.Inc(s => s.ViewCount, 1),
+            cancellationToken: CancellationToken.None);
+
+        var owner = await _db.Users.Find(u => u.UserId == store.OwnerId).FirstOrDefaultAsync();
+
+        // 当前登录用户（如已登录，匿名访问时为空）
+        var userId = User?.FindFirst("sub")?.Value
+            ?? User?.FindFirst("userId")?.Value;
+        var likedByMe = false;
+        var favoritedByMe = false;
+        if (!string.IsNullOrEmpty(userId))
+        {
+            likedByMe = await _db.DocumentStoreLikes.Find(l => l.StoreId == storeId && l.UserId == userId).AnyAsync();
+            favoritedByMe = await _db.DocumentStoreFavorites.Find(f => f.StoreId == storeId && f.UserId == userId).AnyAsync();
+        }
+
+        return Ok(ApiResponse<object>.Ok(new
+        {
+            store.Id,
+            store.Name,
+            store.Description,
+            store.Tags,
+            store.PrimaryEntryId,
+            store.PinnedEntryIds,
+            store.DocumentCount,
+            store.LikeCount,
+            store.ViewCount,
+            store.FavoriteCount,
+            store.CoverImageUrl,
+            store.CreatedAt,
+            store.UpdatedAt,
+            ownerName = owner?.DisplayName ?? "未知用户",
+            ownerAvatar = owner?.AvatarFileName,
+            likedByMe,
+            favoritedByMe,
+        }));
+    }
+
+    /// <summary>获取公开知识库的文档列表（匿名可访问）</summary>
+    [HttpGet("public/stores/{storeId}/entries")]
+    [AllowAnonymous]
+    public async Task<IActionResult> ListPublicStoreEntries(string storeId)
+    {
+        var store = await _db.DocumentStores.Find(s => s.Id == storeId && s.IsPublic).FirstOrDefaultAsync();
+        if (store == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "知识库不存在或未公开"));
+
+        var items = await _db.DocumentEntries.Find(e => e.StoreId == storeId)
+            .SortByDescending(e => e.IsFolder)
+            .ThenByDescending(e => e.CreatedAt)
+            .Limit(500)
+            .ToListAsync();
+
+        return Ok(ApiResponse<object>.Ok(new { items, total = items.Count }));
+    }
+
+    /// <summary>获取公开知识库内单个文档的内容（匿名可访问）</summary>
+    [HttpGet("public/entries/{entryId}/content")]
+    [AllowAnonymous]
+    public async Task<IActionResult> GetPublicEntryContent(string entryId)
+    {
+        var entry = await _db.DocumentEntries.Find(e => e.Id == entryId).FirstOrDefaultAsync();
+        if (entry == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "文档不存在"));
+
+        var store = await _db.DocumentStores.Find(s => s.Id == entry.StoreId && s.IsPublic).FirstOrDefaultAsync();
+        if (store == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "文档不存在或所在知识库未公开"));
+
+        string? content = null;
+        string? title = null;
+        if (!string.IsNullOrEmpty(entry.DocumentId))
+        {
+            var doc = await _documentService.GetByIdAsync(entry.DocumentId);
+            if (doc != null) { content = doc.RawContent; title = doc.Title; }
+        }
+        if (string.IsNullOrEmpty(content) && !string.IsNullOrEmpty(entry.AttachmentId))
+        {
+            var att = await _db.Attachments.Find(a => a.AttachmentId == entry.AttachmentId).FirstOrDefaultAsync();
+            if (att != null) { content = att.ExtractedText; title ??= att.FileName; }
+        }
+
+        string? fileUrl = null;
+        if (!string.IsNullOrEmpty(entry.AttachmentId))
+        {
+            var att = await _db.Attachments.Find(a => a.AttachmentId == entry.AttachmentId).FirstOrDefaultAsync();
+            fileUrl = att?.Url;
+        }
+
+        return Ok(ApiResponse<object>.Ok(new
+        {
+            entryId = entry.Id,
+            title = title ?? entry.Title,
+            content,
+            contentType = entry.ContentType,
+            fileUrl,
+            hasContent = !string.IsNullOrEmpty(content),
+        }));
+    }
+
+    /// <summary>点赞知识库</summary>
+    [HttpPost("stores/{storeId}/like")]
+    public async Task<IActionResult> LikeStore(string storeId)
+    {
+        var userId = GetUserId();
+        var store = await _db.DocumentStores.Find(s => s.Id == storeId).FirstOrDefaultAsync();
+        if (store == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "知识库不存在"));
+
+        // 幂等：已点赞则跳过
+        var existing = await _db.DocumentStoreLikes
+            .Find(l => l.StoreId == storeId && l.UserId == userId).FirstOrDefaultAsync();
+        if (existing != null)
+            return Ok(ApiResponse<object>.Ok(new { liked = true, likeCount = store.LikeCount }));
+
+        var user = await _db.Users.Find(u => u.UserId == userId).FirstOrDefaultAsync();
+        var like = new DocumentStoreLike
+        {
+            StoreId = storeId,
+            UserId = userId,
+            UserName = user?.DisplayName ?? "未知用户",
+            AvatarFileName = user?.AvatarFileName,
+        };
+        await _db.DocumentStoreLikes.InsertOneAsync(like);
+
+        await _db.DocumentStores.UpdateOneAsync(
+            s => s.Id == storeId,
+            Builders<DocumentStore>.Update.Inc(s => s.LikeCount, 1));
+
+        return Ok(ApiResponse<object>.Ok(new { liked = true, likeCount = store.LikeCount + 1 }));
+    }
+
+    /// <summary>取消点赞</summary>
+    [HttpDelete("stores/{storeId}/like")]
+    public async Task<IActionResult> UnlikeStore(string storeId)
+    {
+        var userId = GetUserId();
+        var del = await _db.DocumentStoreLikes.DeleteOneAsync(l => l.StoreId == storeId && l.UserId == userId);
+        if (del.DeletedCount > 0)
+        {
+            await _db.DocumentStores.UpdateOneAsync(
+                s => s.Id == storeId,
+                Builders<DocumentStore>.Update.Inc(s => s.LikeCount, -1));
+        }
+
+        var store = await _db.DocumentStores.Find(s => s.Id == storeId).FirstOrDefaultAsync();
+        return Ok(ApiResponse<object>.Ok(new { liked = false, likeCount = store?.LikeCount ?? 0 }));
+    }
+
+    /// <summary>收藏知识库</summary>
+    [HttpPost("stores/{storeId}/favorite")]
+    public async Task<IActionResult> FavoriteStore(string storeId)
+    {
+        var userId = GetUserId();
+        var store = await _db.DocumentStores.Find(s => s.Id == storeId).FirstOrDefaultAsync();
+        if (store == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "知识库不存在"));
+
+        var existing = await _db.DocumentStoreFavorites
+            .Find(f => f.StoreId == storeId && f.UserId == userId).FirstOrDefaultAsync();
+        if (existing != null)
+            return Ok(ApiResponse<object>.Ok(new { favorited = true, favoriteCount = store.FavoriteCount }));
+
+        var user = await _db.Users.Find(u => u.UserId == userId).FirstOrDefaultAsync();
+        var fav = new DocumentStoreFavorite
+        {
+            StoreId = storeId,
+            UserId = userId,
+            UserName = user?.DisplayName ?? "未知用户",
+            AvatarFileName = user?.AvatarFileName,
+        };
+        await _db.DocumentStoreFavorites.InsertOneAsync(fav);
+
+        await _db.DocumentStores.UpdateOneAsync(
+            s => s.Id == storeId,
+            Builders<DocumentStore>.Update.Inc(s => s.FavoriteCount, 1));
+
+        return Ok(ApiResponse<object>.Ok(new { favorited = true, favoriteCount = store.FavoriteCount + 1 }));
+    }
+
+    /// <summary>取消收藏</summary>
+    [HttpDelete("stores/{storeId}/favorite")]
+    public async Task<IActionResult> UnfavoriteStore(string storeId)
+    {
+        var userId = GetUserId();
+        var del = await _db.DocumentStoreFavorites.DeleteOneAsync(f => f.StoreId == storeId && f.UserId == userId);
+        if (del.DeletedCount > 0)
+        {
+            await _db.DocumentStores.UpdateOneAsync(
+                s => s.Id == storeId,
+                Builders<DocumentStore>.Update.Inc(s => s.FavoriteCount, -1));
+        }
+
+        var store = await _db.DocumentStores.Find(s => s.Id == storeId).FirstOrDefaultAsync();
+        return Ok(ApiResponse<object>.Ok(new { favorited = false, favoriteCount = store?.FavoriteCount ?? 0 }));
+    }
+
+    /// <summary>列出我收藏的知识库</summary>
+    [HttpGet("favorites/mine")]
+    public async Task<IActionResult> ListMyFavorites()
+    {
+        var userId = GetUserId();
+        var favs = await _db.DocumentStoreFavorites
+            .Find(f => f.UserId == userId)
+            .SortByDescending(f => f.CreatedAt)
+            .ToListAsync();
+
+        var storeIds = favs.Select(f => f.StoreId).ToList();
+        var stores = await _db.DocumentStores.Find(s => storeIds.Contains(s.Id)).ToListAsync();
+        return Ok(ApiResponse<object>.Ok(new { items = stores }));
+    }
+
+    /// <summary>创建分享链接</summary>
+    [HttpPost("stores/{storeId}/share-links")]
+    public async Task<IActionResult> CreateShareLink(string storeId, [FromBody] CreateShareLinkRequest request)
+    {
+        var userId = GetUserId();
+        var store = await _db.DocumentStores.Find(s => s.Id == storeId && s.OwnerId == userId).FirstOrDefaultAsync();
+        if (store == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "知识库不存在"));
+
+        var user = await _db.Users.Find(u => u.UserId == userId).FirstOrDefaultAsync();
+        var link = new DocumentStoreShareLink
+        {
+            StoreId = storeId,
+            StoreName = store.Name,
+            Title = request.Title?.Trim(),
+            Description = request.Description?.Trim(),
+            CreatedBy = userId,
+            CreatedByName = user?.DisplayName,
+            ExpiresAt = request.ExpiresInDays > 0 ? DateTime.UtcNow.AddDays(request.ExpiresInDays) : null,
+        };
+        await _db.DocumentStoreShareLinks.InsertOneAsync(link);
+
+        return Ok(ApiResponse<DocumentStoreShareLink>.Ok(link));
+    }
+
+    /// <summary>列出某知识库的所有分享链接</summary>
+    [HttpGet("stores/{storeId}/share-links")]
+    public async Task<IActionResult> ListShareLinks(string storeId)
+    {
+        var userId = GetUserId();
+        var store = await _db.DocumentStores.Find(s => s.Id == storeId && s.OwnerId == userId).FirstOrDefaultAsync();
+        if (store == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "知识库不存在"));
+
+        var links = await _db.DocumentStoreShareLinks
+            .Find(l => l.StoreId == storeId)
+            .SortByDescending(l => l.CreatedAt)
+            .ToListAsync();
+
+        return Ok(ApiResponse<object>.Ok(new { items = links }));
+    }
+
+    /// <summary>撤销分享链接</summary>
+    [HttpDelete("share-links/{linkId}")]
+    public async Task<IActionResult> RevokeShareLink(string linkId)
+    {
+        var userId = GetUserId();
+        var link = await _db.DocumentStoreShareLinks.Find(l => l.Id == linkId).FirstOrDefaultAsync();
+        if (link == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "分享链接不存在"));
+
+        if (link.CreatedBy != userId)
+            return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "无权撤销此分享"));
+
+        await _db.DocumentStoreShareLinks.UpdateOneAsync(
+            l => l.Id == linkId,
+            Builders<DocumentStoreShareLink>.Update.Set(l => l.IsRevoked, true));
+
+        return Ok(ApiResponse<object>.Ok(new { revoked = true }));
+    }
+
+    /// <summary>通过 token 访问分享链接（匿名可访问）</summary>
+    [HttpGet("public/share/{token}")]
+    [AllowAnonymous]
+    public async Task<IActionResult> AccessShareLink(string token)
+    {
+        var link = await _db.DocumentStoreShareLinks.Find(l => l.Token == token).FirstOrDefaultAsync();
+        if (link == null || link.IsRevoked)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "分享链接不存在或已撤销"));
+
+        if (link.ExpiresAt.HasValue && link.ExpiresAt.Value < DateTime.UtcNow)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "分享链接已过期"));
+
+        // 异步累加查看数
+        _ = _db.DocumentStoreShareLinks.UpdateOneAsync(
+            l => l.Id == link.Id,
+            Builders<DocumentStoreShareLink>.Update
+                .Inc(l => l.ViewCount, 1)
+                .Set(l => l.LastViewedAt, DateTime.UtcNow),
+            cancellationToken: CancellationToken.None);
+
+        var store = await _db.DocumentStores.Find(s => s.Id == link.StoreId).FirstOrDefaultAsync();
+        if (store == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "关联知识库已删除"));
+
+        return Ok(ApiResponse<object>.Ok(new
+        {
+            link.Token,
+            link.Title,
+            link.Description,
+            link.CreatedByName,
+            store = new
+            {
+                store.Id,
+                store.Name,
+                store.Description,
+                store.PrimaryEntryId,
+                store.PinnedEntryIds,
+                store.DocumentCount,
+                store.LikeCount,
+                store.ViewCount,
+            },
+        }));
     }
 }
 
@@ -845,4 +1523,37 @@ public class SetPrimaryEntryRequest
 {
     /// <summary>文档条目 ID，null 或空表示清除主文档</summary>
     public string? EntryId { get; set; }
+}
+
+public class TogglePinRequest
+{
+    /// <summary>文档条目 ID</summary>
+    public string EntryId { get; set; } = string.Empty;
+
+    /// <summary>true=置顶, false=取消置顶</summary>
+    public bool Pin { get; set; }
+}
+
+public class MoveEntryRequest
+{
+    /// <summary>目标文件夹 ID，null 或空表示移到根级</summary>
+    public string? ParentId { get; set; }
+}
+
+public class UpdateEntryContentRequest
+{
+    /// <summary>文档内容（Markdown/纯文本）</summary>
+    public string Content { get; set; } = string.Empty;
+}
+
+public class CreateShareLinkRequest
+{
+    /// <summary>分享标题（可选，自定义对外展示名）</summary>
+    public string? Title { get; set; }
+
+    /// <summary>分享描述（可选）</summary>
+    public string? Description { get; set; }
+
+    /// <summary>过期天数（0 表示永不过期）</summary>
+    public int ExpiresInDays { get; set; }
 }

@@ -57,6 +57,13 @@ export const listDocumentEntriesReal: ListDocumentEntriesContract = async (store
   return await apiRequest(url, { method: 'GET' });
 };
 
+/** 搜索文档条目（支持内容搜索） */
+export async function searchDocumentEntries(storeId: string, keyword: string, searchContent: boolean) {
+  let url = `${api.documentStore.entries.list(storeId)}?page=1&pageSize=200&all=true&keyword=${encodeURIComponent(keyword)}`;
+  if (searchContent) url += '&searchContent=true';
+  return await apiRequest<{ items: import('@/services/contracts/documentStore').DocumentEntry[]; total: number }>(url, { method: 'GET' });
+}
+
 export const updateDocumentEntryReal: UpdateDocumentEntryContract = async (entryId, input) => {
   return await apiRequest(api.documentStore.entries.update(entryId), {
     method: 'PUT',
@@ -139,6 +146,146 @@ export async function setPrimaryEntry(storeId: string, entryId: string | null) {
   return await apiRequest<{ primaryEntryId: string | null }>(
     api.documentStore.stores.primaryEntry(storeId),
     { method: 'PUT', body: { entryId } },
+  );
+}
+
+/** 置顶/取消置顶文档条目 */
+export async function togglePinnedEntry(storeId: string, entryId: string, pin: boolean) {
+  return await apiRequest<{ pinnedEntryIds: string[] }>(
+    api.documentStore.stores.pinnedEntries(storeId),
+    { method: 'PUT', body: { entryId, pin } },
+  );
+}
+
+/** 获取文档空间列表（含最近文档预览） */
+export async function listDocumentStoresWithPreview(page = 1, pageSize = 20) {
+  return await apiRequest<{ items: import('@/services/contracts/documentStore').DocumentStoreWithPreview[]; total: number; page: number; pageSize: number }>(
+    `${api.documentStore.stores.listWithPreview()}?page=${page}&pageSize=${pageSize}`,
+    { method: 'GET' },
+  );
+}
+
+/** 移动文档条目到指定文件夹 */
+export async function moveDocumentEntry(entryId: string, parentId: string | null) {
+  return await apiRequest<{ moved: boolean }>(
+    api.documentStore.entries.move(entryId),
+    { method: 'PUT', body: { parentId } },
+  );
+}
+
+/** 更新文档内容（在线编辑） */
+export async function updateDocumentContent(entryId: string, content: string) {
+  return await apiRequest<{ updated: boolean }>(
+    api.documentStore.entries.content(entryId),
+    { method: 'PUT', body: { content } },
+  );
+}
+
+/** 设置文件夹内的主文档 */
+export async function setFolderPrimaryChild(folderId: string, entryId: string | null) {
+  return await apiRequest<{ primaryChildId: string | null }>(
+    api.documentStore.entries.primaryChild(folderId),
+    { method: 'PUT', body: { entryId } },
+  );
+}
+
+/** 回填文档内容索引（供内容搜索使用） */
+export async function rebuildContentIndex(storeId: string) {
+  return await apiRequest<{ total: number; updated: number }>(
+    api.documentStore.stores.rebuildContentIndex(storeId),
+    { method: 'POST' },
+  );
+}
+
+/** 获取所有公开知识库（首页/library 页用） */
+export async function listPublicDocumentStores(page = 1, pageSize = 24, sort: 'hot' | 'new' | 'popular' | 'viewed' = 'hot') {
+  return await apiRequest<{ items: import('@/services/contracts/documentStore').PublicDocumentStore[]; total: number; page: number; pageSize: number }>(
+    `${api.documentStore.stores.publicList()}?page=${page}&pageSize=${pageSize}&sort=${sort}`,
+    { method: 'GET' },
+  );
+}
+
+/** 获取公开知识库详情 */
+export async function getPublicDocumentStore(storeId: string) {
+  return await apiRequest<import('@/services/contracts/documentStore').PublicStoreDetail>(
+    api.documentStore.stores.publicDetail(storeId),
+    { method: 'GET' },
+  );
+}
+
+/** 获取公开知识库内文档列表 */
+export async function listPublicStoreEntries(storeId: string) {
+  return await apiRequest<{ items: import('@/services/contracts/documentStore').DocumentEntry[]; total: number }>(
+    api.documentStore.stores.publicEntries(storeId),
+    { method: 'GET' },
+  );
+}
+
+/** 获取公开文档内容 */
+export async function getPublicEntryContent(entryId: string) {
+  return await apiRequest<{
+    entryId: string;
+    title: string;
+    content: string | null;
+    contentType: string;
+    fileUrl: string | null;
+    hasContent: boolean;
+  }>(api.documentStore.stores.publicEntryContent(entryId), { method: 'GET' });
+}
+
+/** 点赞知识库 */
+export async function likeDocumentStore(storeId: string) {
+  return await apiRequest<{ liked: boolean; likeCount: number }>(
+    api.documentStore.stores.like(storeId),
+    { method: 'POST' },
+  );
+}
+
+/** 取消点赞 */
+export async function unlikeDocumentStore(storeId: string) {
+  return await apiRequest<{ liked: boolean; likeCount: number }>(
+    api.documentStore.stores.like(storeId),
+    { method: 'DELETE' },
+  );
+}
+
+/** 收藏知识库 */
+export async function favoriteDocumentStore(storeId: string) {
+  return await apiRequest<{ favorited: boolean; favoriteCount: number }>(
+    api.documentStore.stores.favorite(storeId),
+    { method: 'POST' },
+  );
+}
+
+/** 取消收藏 */
+export async function unfavoriteDocumentStore(storeId: string) {
+  return await apiRequest<{ favorited: boolean; favoriteCount: number }>(
+    api.documentStore.stores.favorite(storeId),
+    { method: 'DELETE' },
+  );
+}
+
+/** 创建分享链接 */
+export async function createShareLink(storeId: string, input: { title?: string; description?: string; expiresInDays?: number }) {
+  return await apiRequest<import('@/services/contracts/documentStore').DocumentStoreShareLink>(
+    api.documentStore.stores.shareLinks(storeId),
+    { method: 'POST', body: { ...input, expiresInDays: input.expiresInDays ?? 0 } },
+  );
+}
+
+/** 列出分享链接 */
+export async function listShareLinks(storeId: string) {
+  return await apiRequest<{ items: import('@/services/contracts/documentStore').DocumentStoreShareLink[] }>(
+    api.documentStore.stores.shareLinks(storeId),
+    { method: 'GET' },
+  );
+}
+
+/** 撤销分享链接 */
+export async function revokeShareLink(linkId: string) {
+  return await apiRequest<{ revoked: boolean }>(
+    api.documentStore.stores.shareLinkDetail(linkId),
+    { method: 'DELETE' },
   );
 }
 

@@ -472,7 +472,7 @@ export function createServer(deps: ServerDeps): express.Express {
     const isPoll = req.headers['x-cds-poll'] === 'true';
     if (isPoll) return next();
     // Skip Bridge internal polling and results — internal communication, not user-facing
-    if (req.path.startsWith('/bridge/heartbeat') || req.path.startsWith('/bridge/navigate-requests/') || req.path === '/bridge/result' || req.path.startsWith('/bridge/check/')) return next();
+    if (req.path.startsWith('/bridge/heartbeat') || req.path.startsWith('/bridge/navigate-requests/') || req.path.startsWith('/bridge/handshake-requests/') || req.path === '/bridge/result' || req.path.startsWith('/bridge/check/')) return next();
 
     const start = Date.now();
     const origEnd = res.end.bind(res);
