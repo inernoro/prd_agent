@@ -9,7 +9,7 @@ import { Dialog } from '@/components/ui/Dialog';
 import { readSseStream } from '@/lib/sse';
 import { useAuthStore } from '@/stores/authStore';
 import { SystemPromptsPanel } from '@/components/skills/SystemPromptsPanel';
-import { SkillAgentDialog } from '@/components/skills/SkillAgentDialog';
+import { useNavigate } from 'react-router-dom';
 import { Sparkles, Square, Copy, Save, Wand2 } from 'lucide-react';
 import {
   listAdminSkills,
@@ -249,7 +249,7 @@ export default function SkillsPage() {
   const [categoryFilter, setCategoryFilter] = useState<string>('all');
   const [listCollapsed, setListCollapsed] = useState(false);
   const [advancedOpen, setAdvancedOpen] = useState(false);
-  const [showAiCreate, setShowAiCreate] = useState(false);
+  const skillAgentNav = useNavigate();
 
   // ━━━ 表单状态 ━━━
 
@@ -655,7 +655,7 @@ export default function SkillsPage() {
           activeTab === 'skills' ? (
             <div className="flex items-center gap-2">
               <button
-                onClick={() => setShowAiCreate(true)}
+                onClick={() => skillAgentNav('/skill-agent')}
                 className="flex items-center gap-1 text-xs px-3 py-1.5 rounded-lg transition"
                 style={{
                   background: 'linear-gradient(135deg, #8b5cf6 0%, #6366f1 100%)',
@@ -1260,12 +1260,6 @@ export default function SkillsPage() {
         }
       `}</style>
 
-      {/* AI 技能创建对话框 */}
-      <SkillAgentDialog
-        open={showAiCreate}
-        onOpenChange={setShowAiCreate}
-        onSkillCreated={fetchSkills}
-      />
     </div>
   );
 }

@@ -31,7 +31,6 @@ import { useBreakpoint } from '@/hooks/useBreakpoint';
 import type { ToolboxItem } from '@/services';
 import { ShowcaseGallery } from '@/components/showcase/ShowcaseGallery';
 import { DesktopDownloadDialog } from '@/components/ui/DesktopDownloadDialog';
-import { SkillAgentDialog } from '@/components/skills/SkillAgentDialog';
 import { ReviewAgentCardArt } from '@/pages/ai-toolbox/components/ReviewAgentCardArt';
 
 // ── Icon & Color mapping (self-contained, doesn't touch ToolCard) ──
@@ -349,7 +348,6 @@ const AUTO_GRID_COMPACT: React.CSSProperties = {
 export default function AgentLauncherPage() {
   const [searchQuery, setSearchQuery] = useState('');
   const [downloadDialogOpen, setDownloadDialogOpen] = useState(false);
-  const [skillAgentOpen, setSkillAgentOpen] = useState(false);
   const { items, itemsLoading, loadItems } = useToolboxStore();
   const { isMobile } = useBreakpoint();
   const navigate = useNavigate();
@@ -391,7 +389,7 @@ export default function AgentLauncherPage() {
       description: 'AI 引导你逐步创建可复用的技能模板',
       icon: 'Wand2',
       tags: ['技能', 'skill', 'AI', '创建', '模板'],
-      agentKey: 'skill-agent',
+      routePath: '/skill-agent',
     } as ToolboxItem,
   ], []);
 
@@ -421,10 +419,6 @@ export default function AgentLauncherPage() {
   const handleClick = (item: ToolboxItem) => {
     if (item.agentKey === 'prd-agent') {
       setDownloadDialogOpen(true);
-      return;
-    }
-    if (item.agentKey === 'skill-agent') {
-      setSkillAgentOpen(true);
       return;
     }
     if (item.routePath) {
@@ -676,7 +670,6 @@ export default function AgentLauncherPage() {
       </div>
 
       <DesktopDownloadDialog open={downloadDialogOpen} onOpenChange={setDownloadDialogOpen} />
-      <SkillAgentDialog open={skillAgentOpen} onOpenChange={setSkillAgentOpen} />
     </div>
   );
 }

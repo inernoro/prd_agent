@@ -60,6 +60,7 @@ const WorkflowCanvasPage = lazy(() => import('@/pages/workflow-agent').then(m =>
 const MarketplacePage = lazy(() => import('@/pages/marketplace').then(m => ({ default: m.MarketplacePage })));
 const DocumentStorePage = lazy(() => import('@/pages/document-store').then(m => ({ default: m.DocumentStorePage })));
 const EmergenceExplorerPage = lazy(() => import('@/pages/emergence').then(m => ({ default: m.EmergenceExplorerPage })));
+const SkillAgentPage = lazy(() => import('@/pages/SkillAgentPage'));
 const AiToolboxPage = lazy(() => import('@/pages/ai-toolbox').then(m => ({ default: m.AiToolboxPage })));
 const SharedConversation = lazy(() => import('@/pages/ai-toolbox/SharedConversation').then(m => ({ default: m.SharedConversation })));
 const ArenaPage = lazy(() => import('@/pages/arena/ArenaPage').then(m => ({ default: m.ArenaPage })));
@@ -357,6 +358,7 @@ export default function App() {
         <Route path="marketplace" element={<RequirePermission perm="access"><MarketplacePage /></RequirePermission>} />
         <Route path="document-store" element={<RequirePermission perm="access"><DocumentStorePage /></RequirePermission>} />
         <Route path="emergence" element={<RequirePermission perm="access"><EmergenceExplorerPage /></RequirePermission>} />
+        <Route path="skill-agent" element={<RequirePermission perm="access"><SkillAgentPage /></RequirePermission>} />
         <Route path="arena" element={<RequirePermission perm="arena-agent.use"><ArenaPage /></RequirePermission>} />
         <Route path="lab" element={<RequirePermission perm="lab.read"><LabPage /></RequirePermission>} />
         <Route path="settings" element={<RequirePermission perm="access"><SettingsPage /></RequirePermission>} />
