@@ -84,9 +84,49 @@ export type DocumentEntry = {
   lastSyncAt?: string;
   syncStatus?: string;
   syncError?: string;
+  isPaused?: boolean;
+  /** 最近一次"内容真正发生变化"的时间，用于在文件树上展示 (new) 徽标 */
+  lastChangedAt?: string;
+  contentHash?: string;
   contentIndex?: string;
   createdAt: string;
   updatedAt: string;
+};
+
+/** 订阅同步日志中的单条事件（只包含 change/error，不包含无变化的心跳） */
+export type DocumentSyncLogEntry = {
+  id: string;
+  syncedAt: string;
+  /** "change" 表示内容变化；"error" 表示同步出错 */
+  kind: 'change' | 'error';
+  /** 一句话描述本次变化（如 "正文 +120 字节"、"+3 ~2 -1 文件"） */
+  changeSummary?: string;
+  /** GitHub 目录同步时的逐文件变化（其他类型为空） */
+  fileChanges?: { path: string; action: 'added' | 'updated' | 'deleted' }[];
+  previousLength?: number;
+  currentLength?: number;
+  errorMessage?: string;
+  durationMs: number;
+};
+
+/** 订阅详情接口的响应：当前订阅状态 + 最近变化日志列表 */
+export type SubscriptionDetail = {
+  entry: {
+    id: string;
+    title: string;
+    sourceType: string;
+    sourceUrl?: string;
+    syncIntervalMinutes?: number;
+    syncStatus?: string;
+    syncError?: string;
+    lastSyncAt?: string;
+    lastChangedAt?: string;
+    isPaused: boolean;
+    contentHash?: string;
+    metadata: Record<string, string>;
+    nextSyncAt?: string;
+  };
+  logs: DocumentSyncLogEntry[];
 };
 
 export type DocumentStoreWithPreview = DocumentStore & {

@@ -309,3 +309,22 @@ export async function triggerSync(entryId: string) {
     { method: 'POST' },
   );
 }
+
+/** 获取订阅条目的最近同步日志（含当前订阅状态 + 下次同步时间） */
+export async function listSubscriptionDetail(entryId: string, limit = 20) {
+  return await apiRequest<import('@/services/contracts/documentStore').SubscriptionDetail>(
+    `${api.documentStore.entries.syncLogs(entryId)}?limit=${limit}`,
+    { method: 'GET' },
+  );
+}
+
+/** 更新订阅可变状态：暂停/恢复 + 同步间隔 */
+export async function updateSubscription(entryId: string, input: {
+  isPaused?: boolean;
+  syncIntervalMinutes?: number;
+}) {
+  return await apiRequest<import('@/services/contracts/documentStore').DocumentEntry>(
+    api.documentStore.entries.subscriptionUpdate(entryId),
+    { method: 'PATCH', body: input },
+  );
+}

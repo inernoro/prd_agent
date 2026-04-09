@@ -57,6 +57,7 @@ import type {
 } from '@/services/contracts/documentStore';
 import type { DocBrowserEntry, EntryPreview } from '@/components/doc-browser/DocBrowser';
 import { toast } from '@/lib/toast';
+import { SubscriptionDetailDrawer } from './SubscriptionDetailDrawer';
 
 const ACCEPT_TYPES = '.md,.txt,.pdf,.doc,.docx,.json,.yaml,.yml,.csv';
 
@@ -374,6 +375,8 @@ function StoreDetailView({ storeId, onBack }: {
   const [showSubscribe, setShowSubscribe] = useState(false);
   const [showShareDialog, setShowShareDialog] = useState(false);
   const [publishing, setPublishing] = useState(false);
+  /** 当前打开的订阅详情 entryId（null = 未打开） */
+  const [subscriptionDetailId, setSubscriptionDetailId] = useState<string | null>(null);
 
   // 文件上传状态
   const [uploading, setUploading] = useState(false);
@@ -671,6 +674,7 @@ function StoreDetailView({ storeId, onBack }: {
           onCreateDocument={handleCreateDocument}
           onUploadFile={() => fileInputRef.current?.click()}
           onSearch={handleSearch}
+          onOpenSubscription={(id) => setSubscriptionDetailId(id)}
           loading={loading}
           emptyState={
             <div className="flex-1 flex flex-col items-center justify-center py-16">
@@ -701,6 +705,15 @@ function StoreDetailView({ storeId, onBack }: {
           storeName={store.name}
           isPublic={store.isPublic}
           onClose={() => setShowShareDialog(false)}
+        />
+      )}
+
+      {/* 订阅详情抽屉 */}
+      {subscriptionDetailId && (
+        <SubscriptionDetailDrawer
+          entryId={subscriptionDetailId}
+          onClose={() => setSubscriptionDetailId(null)}
+          onChanged={() => loadEntries()}
         />
       )}
     </div>

@@ -1057,6 +1057,10 @@ public class DocumentStoreController : ControllerBase
         if (string.IsNullOrEmpty(entry.SourceUrl) && entry.SourceType != DocumentSourceType.GithubDirectory)
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "该文档不是订阅源"));
 
+        // 暂停状态下不允许手动触发
+        if (entry.IsPaused)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "订阅已暂停，请先恢复"));
+
         // 标记为同步中（BackgroundService 会拾取）
         await _db.DocumentEntries.UpdateOneAsync(
             e => e.Id == entryId,
@@ -1065,6 +1069,108 @@ public class DocumentStoreController : ControllerBase
                 .Set(e => e.UpdatedAt, DateTime.UtcNow));
 
         return Ok(ApiResponse<object>.Ok(new { triggered = true }));
+    }
+
+    /// <summary>获取订阅条目的最近同步日志（只包含 change/error 事件，无变化的同步不在此列表中）</summary>
+    [HttpGet("entries/{entryId}/sync-logs")]
+    public async Task<IActionResult> ListSyncLogs(string entryId, [FromQuery] int limit = 20)
+    {
+        var userId = GetUserId();
+        var entry = await _db.DocumentEntries.Find(e => e.Id == entryId).FirstOrDefaultAsync();
+        if (entry == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "文档条目不存在"));
+
+        var store = await _db.DocumentStores.Find(s => s.Id == entry.StoreId && s.OwnerId == userId).FirstOrDefaultAsync();
+        if (store == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "文档条目不存在"));
+
+        limit = Math.Clamp(limit, 1, 100);
+
+        var logs = await _db.DocumentSyncLogs
+            .Find(l => l.EntryId == entryId)
+            .SortByDescending(l => l.SyncedAt)
+            .Limit(limit)
+            .ToListAsync();
+
+        // 计算下次同步时间（基于 LastSyncAt + SyncIntervalMinutes）
+        DateTime? nextSyncAt = null;
+        if (entry.LastSyncAt.HasValue && entry.SyncIntervalMinutes is > 0 && !entry.IsPaused)
+            nextSyncAt = entry.LastSyncAt.Value.AddMinutes(entry.SyncIntervalMinutes.Value);
+
+        return Ok(ApiResponse<object>.Ok(new
+        {
+            entry = new
+            {
+                id = entry.Id,
+                title = entry.Title,
+                sourceType = entry.SourceType,
+                sourceUrl = entry.SourceUrl,
+                syncIntervalMinutes = entry.SyncIntervalMinutes,
+                syncStatus = entry.SyncStatus,
+                syncError = entry.SyncError,
+                lastSyncAt = entry.LastSyncAt,
+                lastChangedAt = entry.LastChangedAt,
+                isPaused = entry.IsPaused,
+                contentHash = entry.ContentHash,
+                metadata = entry.Metadata,
+                nextSyncAt,
+            },
+            logs = logs.Select(l => new
+            {
+                id = l.Id,
+                syncedAt = l.SyncedAt,
+                kind = l.Kind,
+                changeSummary = l.ChangeSummary,
+                fileChanges = l.FileChanges,
+                previousLength = l.PreviousLength,
+                currentLength = l.CurrentLength,
+                errorMessage = l.ErrorMessage,
+                durationMs = l.DurationMs,
+            }).ToList(),
+        }));
+    }
+
+    /// <summary>更新订阅条目的可变状态（暂停/恢复 + 调整同步间隔）</summary>
+    [HttpPatch("entries/{entryId}/subscription")]
+    public async Task<IActionResult> UpdateSubscription(string entryId, [FromBody] UpdateSubscriptionRequest request)
+    {
+        var userId = GetUserId();
+        var entry = await _db.DocumentEntries.Find(e => e.Id == entryId).FirstOrDefaultAsync();
+        if (entry == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "文档条目不存在"));
+
+        var store = await _db.DocumentStores.Find(s => s.Id == entry.StoreId && s.OwnerId == userId).FirstOrDefaultAsync();
+        if (store == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "文档条目不存在"));
+
+        if (string.IsNullOrEmpty(entry.SourceUrl) && entry.SourceType != DocumentSourceType.GithubDirectory)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "该文档不是订阅源"));
+
+        var update = Builders<DocumentEntry>.Update.Set(e => e.UpdatedAt, DateTime.UtcNow);
+        var changed = false;
+
+        if (request.IsPaused.HasValue)
+        {
+            update = update.Set(e => e.IsPaused, request.IsPaused.Value);
+            changed = true;
+        }
+
+        if (request.SyncIntervalMinutes.HasValue)
+        {
+            // GitHub 目录类型最低 1 小时（避免 GitHub API 限流），其他 5 分钟起
+            var min = entry.SourceType == DocumentSourceType.GithubDirectory ? 60 : 5;
+            var clamped = Math.Clamp(request.SyncIntervalMinutes.Value, min, 1440);
+            update = update.Set(e => e.SyncIntervalMinutes, clamped);
+            changed = true;
+        }
+
+        if (!changed)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "未提供任何可更新字段"));
+
+        await _db.DocumentEntries.UpdateOneAsync(e => e.Id == entryId, update);
+
+        var refreshed = await _db.DocumentEntries.Find(e => e.Id == entryId).FirstOrDefaultAsync();
+        return Ok(ApiResponse<DocumentEntry>.Ok(refreshed!));
     }
 
     // ─────────────────────────────────────────────
@@ -1517,6 +1623,15 @@ public class AddGitHubSubscriptionRequest
     public string? Title { get; set; }
     public int? SyncIntervalMinutes { get; set; }
     public List<string>? Tags { get; set; }
+}
+
+public class UpdateSubscriptionRequest
+{
+    /// <summary>是否暂停订阅（null 表示不修改）</summary>
+    public bool? IsPaused { get; set; }
+
+    /// <summary>新的同步间隔（分钟，null 表示不修改）</summary>
+    public int? SyncIntervalMinutes { get; set; }
 }
 
 public class SetPrimaryEntryRequest

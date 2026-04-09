@@ -32,13 +32,16 @@ public class GitHubDirectorySyncService
     /// 同步 GitHub 目录到文档空间。
     /// parentEntry 是 github_directory 类型的"目录条目"，Metadata 中存储 github_owner/repo/path/branch。
     /// 每个文件对应一个 sourceType=subscription 的子 entry。
+    /// 返回 GitHubDirectoryDiff 描述本次同步的增删改情况，由 Worker 决定是否落日志。
     /// </summary>
-    public async Task SyncDirectoryAsync(
+    public async Task<GitHubDirectoryDiff> SyncDirectoryAsync(
         MongoDbContext db,
         IDocumentService documentService,
         DocumentEntry parentEntry,
         CancellationToken ct)
     {
+        var diff = new GitHubDirectoryDiff();
+
         var meta = parentEntry.Metadata;
         if (!meta.TryGetValue("github_owner", out var owner) ||
             !meta.TryGetValue("github_repo", out var repo))
@@ -56,7 +59,7 @@ public class GitHubDirectorySyncService
         var files = await ListDirectoryFilesAsync(owner, repo, path, branch, ct);
         _logger.LogInformation("[GitHubSync] Found {Count} files in {Owner}/{Repo}/{Path}", files.Count, owner, repo, path);
 
-        if (files.Count == 0) return;
+        if (files.Count == 0) return diff;
 
         // 2) 查找该 Store 下已有的同步子条目（SourceType=subscription + github_parent_id）
         var existingEntries = await db.DocumentEntries.Find(
@@ -68,9 +71,6 @@ public class GitHubDirectorySyncService
 
         var existingByUrl = existingEntries.ToDictionary(e => e.SourceUrl ?? "", e => e);
 
-        var syncedCount = 0;
-        var createdCount = 0;
-        var skippedCount = 0;
         var processedUrls = new HashSet<string>();
 
         foreach (var file in files)
@@ -79,21 +79,27 @@ public class GitHubDirectorySyncService
 
             if (existingByUrl.TryGetValue(file.DownloadUrl, out var existing))
             {
-                // 已存在 → 比较 SHA 决定是否需要更新
+                // 已存在 → 比较 SHA 决定是否需要更新（GitHub SHA 即版本号，O(1) 命中判定）
                 var existingSha = existing.Metadata.GetValueOrDefault("github_sha", "");
                 if (existingSha == file.Sha)
                 {
-                    skippedCount++;
+                    diff.SkippedCount++;
                     continue;
                 }
 
                 // SHA 变了 → 重新拉取内容并更新
                 await SyncSingleFileAsync(db, documentService, existing, file, ct);
-                syncedCount++;
+                diff.UpdatedCount++;
+                diff.FileChanges.Add(new DocumentSyncFileChange
+                {
+                    Path = file.Path,
+                    Action = DocumentSyncFileAction.Updated,
+                });
             }
             else
             {
                 // 新文件 → 创建条目
+                var now = DateTime.UtcNow;
                 var entry = new DocumentEntry
                 {
                     StoreId = parentEntry.StoreId,
@@ -104,6 +110,7 @@ public class GitHubDirectorySyncService
                     SyncStatus = DocumentSyncStatus.Idle,
                     ContentType = "text/markdown",
                     CreatedBy = parentEntry.CreatedBy,
+                    LastChangedAt = now,
                     Metadata = new Dictionary<string, string>
                     {
                         ["github_parent_id"] = parentEntry.Id,
@@ -113,18 +120,27 @@ public class GitHubDirectorySyncService
                 };
 
                 await SyncSingleFileAsync(db, documentService, entry, file, ct, isNew: true);
-                createdCount++;
+                diff.AddedCount++;
+                diff.FileChanges.Add(new DocumentSyncFileChange
+                {
+                    Path = file.Path,
+                    Action = DocumentSyncFileAction.Added,
+                });
             }
         }
 
         // 3) 删除远端已不存在的条目
-        var deletedCount = 0;
         foreach (var (url, entry) in existingByUrl)
         {
             if (!processedUrls.Contains(url))
             {
                 await db.DocumentEntries.DeleteOneAsync(e => e.Id == entry.Id, cancellationToken: CancellationToken.None);
-                deletedCount++;
+                diff.DeletedCount++;
+                diff.FileChanges.Add(new DocumentSyncFileChange
+                {
+                    Path = entry.Metadata.GetValueOrDefault("github_path", entry.Title),
+                    Action = DocumentSyncFileAction.Deleted,
+                });
             }
         }
 
@@ -139,8 +155,10 @@ public class GitHubDirectorySyncService
             cancellationToken: CancellationToken.None);
 
         _logger.LogInformation(
-            "[GitHubSync] Done: created={Created} updated={Updated} skipped={Skipped} deleted={Deleted}",
-            createdCount, syncedCount, skippedCount, deletedCount);
+            "[GitHubSync] Done: added={Added} updated={Updated} skipped={Skipped} deleted={Deleted}",
+            diff.AddedCount, diff.UpdatedCount, diff.SkippedCount, diff.DeletedCount);
+
+        return diff;
     }
 
     private async Task SyncSingleFileAsync(
@@ -177,6 +195,7 @@ public class GitHubDirectorySyncService
             entry.SyncStatus = DocumentSyncStatus.Idle;
             entry.SyncError = null;
             entry.LastSyncAt = DateTime.UtcNow;
+            entry.LastChangedAt = DateTime.UtcNow; // SHA 变了才会进入此函数（除新建外），即真的有变化
             entry.UpdatedAt = DateTime.UtcNow;
             entry.Metadata["github_sha"] = file.Sha;
 
@@ -273,5 +292,29 @@ public class GitHubDirectorySyncService
         public string Sha { get; set; } = "";
         public long Size { get; set; }
         public string DownloadUrl { get; set; } = "";
+    }
+}
+
+/// <summary>
+/// GitHub 目录同步本次执行结果（增删改计数 + 逐文件变化）。
+/// 由 Worker 决定是否将变化落入 DocumentSyncLog。
+/// </summary>
+public class GitHubDirectoryDiff
+{
+    public int AddedCount { get; set; }
+    public int UpdatedCount { get; set; }
+    public int DeletedCount { get; set; }
+    public int SkippedCount { get; set; }
+    public List<DocumentSyncFileChange> FileChanges { get; set; } = new();
+
+    public bool HasChanges => AddedCount > 0 || UpdatedCount > 0 || DeletedCount > 0;
+
+    public string BuildSummary()
+    {
+        var parts = new List<string>();
+        if (AddedCount > 0) parts.Add($"+{AddedCount} 新增");
+        if (UpdatedCount > 0) parts.Add($"~{UpdatedCount} 修改");
+        if (DeletedCount > 0) parts.Add($"-{DeletedCount} 删除");
+        return parts.Count > 0 ? string.Join(" / ", parts) : "无变化";
     }
 }

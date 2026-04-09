@@ -34,6 +34,10 @@ export type DocBrowserEntry = {
   fileSize: number;
   summary?: string;
   syncStatus?: string;
+  /** 是否暂停（订阅类型） */
+  isPaused?: boolean;
+  /** 最近一次"内容真正发生变化"的时间，用于显示 (new) 徽标 */
+  lastChangedAt?: string;
   metadata?: Record<string, string>;
 };
 
@@ -58,9 +62,19 @@ export type DocBrowserProps = {
    */
   loadContent: (entryId: string) => Promise<EntryPreview | null>;
   onSearch?: (keyword: string, searchContent: boolean) => Promise<DocBrowserEntry[] | null>;
+  /** 点击订阅条目右侧的状态徽标时触发，用于打开订阅详情面板 */
+  onOpenSubscription?: (entryId: string) => void;
   emptyState?: React.ReactNode;
   loading?: boolean;
 };
+
+// ── (new) 徽标判定：lastChangedAt 在 24 小时以内 ──
+function isRecentlyChanged(iso?: string): boolean {
+  if (!iso) return false;
+  const t = new Date(iso).getTime();
+  if (Number.isNaN(t)) return false;
+  return Date.now() - t < 24 * 60 * 60 * 1000;
+}
 
 // ── 文件图标（所有类型映射通过 FILE_TYPE_REGISTRY 注册表） ──
 
@@ -172,6 +186,7 @@ function TreeNode({
   onSelectEntry,
   onContextMenu,
   onMoveEntry,
+  onOpenSubscription,
 }: {
   entry: DocBrowserEntry;
   childrenMap: Map<string, DocBrowserEntry[]>;
@@ -187,6 +202,7 @@ function TreeNode({
   onSelectEntry: (id: string) => void;
   onContextMenu: (e: React.MouseEvent, entry: DocBrowserEntry) => void;
   onMoveEntry?: (entryId: string, targetFolderId: string | null) => void;
+  onOpenSubscription?: (entryId: string) => void;
 }) {
   const isFolder = entry.isFolder;
   const isOpen = expandedFolders.has(entry.id);
@@ -258,6 +274,47 @@ function TreeNode({
           {displayTitle}
         </span>
 
+        {/* (new) 徽标：lastChangedAt 在 24 小时以内 */}
+        {!isFolder && isRecentlyChanged(entry.lastChangedAt) && (
+          <span
+            className="text-[9px] px-1.5 py-0.5 rounded-full flex-shrink-0 font-bold"
+            style={{
+              background: 'rgba(34,197,94,0.12)',
+              color: 'rgba(74,222,128,0.95)',
+              border: '1px solid rgba(34,197,94,0.25)',
+              letterSpacing: '0.3px',
+            }}
+            title={`最近更新: ${entry.lastChangedAt ? new Date(entry.lastChangedAt).toLocaleString('zh-CN') : ''}`}
+          >
+            new
+          </span>
+        )}
+
+        {/* 订阅状态徽标：点击打开订阅详情面板 */}
+        {!isFolder && entry.sourceType === 'subscription' && onOpenSubscription && (
+          <span
+            onClick={(e) => { e.stopPropagation(); onOpenSubscription(entry.id); }}
+            className="flex-shrink-0 cursor-pointer"
+            title={
+              entry.isPaused ? '订阅已暂停（点击查看详情）'
+              : entry.syncStatus === 'syncing' ? '同步中（点击查看详情）'
+              : entry.syncStatus === 'error' ? '同步出错（点击查看详情）'
+              : '订阅源（点击查看详情）'
+            }
+          >
+            <span
+              className="block w-1.5 h-1.5 rounded-full"
+              style={{
+                background: entry.isPaused ? 'rgba(148,163,184,0.7)'
+                  : entry.syncStatus === 'syncing' ? 'rgba(96,165,250,0.85)'
+                  : entry.syncStatus === 'error' ? 'rgba(248,113,113,0.85)'
+                  : 'rgba(74,222,128,0.85)',
+                boxShadow: entry.syncStatus === 'syncing' ? '0 0 6px rgba(96,165,250,0.6)' : 'none',
+              }}
+            />
+          </span>
+        )}
+
         {isPrimary && (
           <span className="text-[9px] px-1.5 py-0.5 rounded-full flex-shrink-0"
             style={{ background: 'rgba(234,179,8,0.1)', color: 'rgba(234,179,8,0.8)' }}>
@@ -295,6 +352,7 @@ function TreeNode({
           onSelectEntry={onSelectEntry}
           onContextMenu={onContextMenu}
           onMoveEntry={onMoveEntry}
+          onOpenSubscription={onOpenSubscription}
         />
       ))}
     </>
@@ -529,6 +587,7 @@ export function DocBrowser({
   onCreateDocument,
   onUploadFile,
   onSearch,
+  onOpenSubscription,
   emptyState,
   loading,
 }: DocBrowserProps) {
@@ -981,6 +1040,7 @@ export function DocBrowser({
               onSelectEntry={onSelectEntry}
               onContextMenu={handleContextMenu}
               onMoveEntry={onMoveEntry}
+              onOpenSubscription={onOpenSubscription}
             />
           ))}
         </div>
@@ -1039,6 +1099,47 @@ export function DocBrowser({
                   置顶
                 </span>
               )}
+              {/* 当前文件最近更新徽标 + 订阅来源版本信息（git 类订阅独有） */}
+              {(() => {
+                const sel = entries.find(e => e.id === selectedEntryId);
+                if (!sel || sel.isFolder) return null;
+                const recentlyChanged = isRecentlyChanged(sel.lastChangedAt);
+                const isSubscription = sel.sourceType === 'subscription';
+                const githubSha = sel.metadata?.github_sha;
+                if (!recentlyChanged && !isSubscription) return null;
+                return (
+                  <>
+                    {recentlyChanged && (
+                      <span
+                        className="text-[10px] px-2 py-0.5 rounded-full flex-shrink-0 font-bold"
+                        style={{
+                          background: 'rgba(34,197,94,0.1)',
+                          color: 'rgba(74,222,128,0.95)',
+                          border: '1px solid rgba(34,197,94,0.25)',
+                          letterSpacing: '0.3px',
+                        }}
+                        title={sel.lastChangedAt ? `最近更新: ${new Date(sel.lastChangedAt).toLocaleString('zh-CN')}` : ''}
+                      >
+                        new
+                      </span>
+                    )}
+                    {isSubscription && onOpenSubscription && (
+                      <button
+                        onClick={() => onOpenSubscription(sel.id)}
+                        className="h-6 px-2 rounded-[8px] text-[10px] font-semibold flex items-center gap-1 cursor-pointer transition-colors flex-shrink-0"
+                        style={{
+                          background: 'rgba(59,130,246,0.08)',
+                          border: '1px solid rgba(59,130,246,0.18)',
+                          color: 'rgba(96,165,250,0.95)',
+                        }}
+                        title={githubSha ? `GitHub 版本 ${githubSha.slice(0, 7)}（点击查看同步详情）` : '查看订阅同步详情'}
+                      >
+                        {githubSha ? `#${githubSha.slice(0, 7)}` : '订阅信息'}
+                      </button>
+                    )}
+                  </>
+                );
+              })()}
               {/* 编辑/保存按钮（仅对可编辑类型显示） */}
               {(() => {
                 const sel = entries.find(e => e.id === selectedEntryId);

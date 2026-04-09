@@ -1520,6 +1520,8 @@ export {
   setPrimaryEntry,
   createFolder,
   triggerSync,
+  listSubscriptionDetail,
+  updateSubscription,
   togglePinnedEntry,
   listDocumentStoresWithPreview,
   searchDocumentEntries,
@@ -1548,6 +1550,8 @@ export type {
   DocumentStoreShareLink,
   CreateDocumentStoreInput,
   AddDocumentEntryInput,
+  DocumentSyncLogEntry,
+  SubscriptionDetail,
 } from '@/services/contracts/documentStore';
 
 // ── Emergence Explorer 涌现探索器 ──

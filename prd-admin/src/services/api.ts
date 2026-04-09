@@ -957,6 +957,8 @@ export const api = {
       move: (entryId: string) => `/api/document-store/entries/${entryId}/move`,
       primaryChild: (folderId: string) => `/api/document-store/entries/${folderId}/primary-child`,
       sync: (entryId: string) => `/api/document-store/entries/${entryId}/sync`,
+      syncLogs: (entryId: string) => `/api/document-store/entries/${entryId}/sync-logs`,
+      subscriptionUpdate: (entryId: string) => `/api/document-store/entries/${entryId}/subscription`,
       update: (entryId: string) => `/api/document-store/entries/${entryId}`,
       delete: (entryId: string) => `/api/document-store/entries/${entryId}`,
     },
