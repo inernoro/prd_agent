@@ -29,6 +29,53 @@ import {
   type PrReviewPrismSetupStatus,
 } from '@/services';
 
+const bootstrapInitCommand = 'bash scripts/bootstrap-pr-prism.sh';
+const bootstrapGuidePath = 'doc/guide.pr-prism-bootstrap-package.md';
+const prPrismSkillTemplateText = `# Skill: PR Review Prism Bootstrap
+
+## Goal
+Initialize minimal top-design basis for a new repository.
+
+## Steps
+1. Copy scripts/bootstrap-pr-prism.sh and scripts/init-pr-prism-basis.sh into target repo.
+2. Run:
+   bash scripts/bootstrap-pr-prism.sh
+3. Commit generated baseline files:
+   git add doc/top-design .github/pr-architect scripts
+   git commit -m "chore: bootstrap pr prism basis"
+`;
+const topDesignBasisTemplateText = `# doc/top-design/main.md
+# Top Design Baseline
+
+## Bounded Context
+- engineering-governance
+
+## Core Anchor
+- ANCHOR-CORE-01
+
+# doc/top-design/anchors.yml
+version: 1
+anchors:
+  - id: "ANCHOR-CORE-01"
+    title: "Core governance anchor"
+    description: "Keep PR review metadata, boundary and evidence consistent."
+
+# doc/top-design/contexts.yml
+version: 1
+contexts:
+  - id: "engineering-governance"
+    name: "engineering-governance"
+    description: "Primary governance bounded context for this repository."
+
+# doc/top-design/slices.yml
+version: 1
+slices:
+  - id: "slice-governance-core"
+    owner: "architect"
+    context: "engineering-governance"
+    description: "Initial slice for governance baseline."
+`;
+
 export function PrReviewPrismPage() {
   const navigate = useNavigate();
   const [hint, setHint] = useState<string>('正在连接服务...');
@@ -55,6 +102,7 @@ export function PrReviewPrismPage() {
   const [formError, setFormError] = useState<string | null>(null);
   const [listError, setListError] = useState<string | null>(null);
   const [setupStatus, setSetupStatus] = useState<PrReviewPrismSetupStatus | null>(null);
+  const [setupActionMessage, setSetupActionMessage] = useState<string | null>(null);
   const [gateStatusCounts, setGateStatusCounts] = useState<{
     all: number;
     completed: number;
@@ -83,6 +131,15 @@ export function PrReviewPrismPage() {
     () => filteredItems.find(x => x.id === selectedId) ?? null,
     [filteredItems, selectedId]
   );
+
+  const copyToClipboard = useCallback(async (text: string, successMessage: string) => {
+    try {
+      await navigator.clipboard.writeText(text);
+      setSetupActionMessage(successMessage);
+    } catch {
+      setSetupActionMessage('复制失败，请手动复制下方代码块内容');
+    }
+  }, []);
 
   const loadStatus = useCallback(async () => {
     const res = await getPrReviewPrismStatus();
@@ -431,8 +488,39 @@ export function PrReviewPrismPage() {
                 <div className="mt-2 text-amber-100/80">
                   <p>推荐初始化命令：</p>
                   <code className="block mt-1 rounded bg-black/25 px-2 py-1 whitespace-pre-wrap break-all">
-                    bash scripts/init-pr-prism-basis.sh
+                    {bootstrapInitCommand}
                   </code>
+                  <div className="mt-2 flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      onClick={() => void copyToClipboard(bootstrapInitCommand, '已复制初始化命令')}
+                      className="inline-flex items-center gap-1 rounded border border-white/20 bg-white/10 px-2.5 py-1 text-[11px] text-white hover:bg-white/15 whitespace-nowrap"
+                    >
+                      复制初始化命令
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => void copyToClipboard(prPrismSkillTemplateText, '已复制 Skill 模板内容')}
+                      className="inline-flex items-center gap-1 rounded border border-white/20 bg-white/10 px-2.5 py-1 text-[11px] text-white hover:bg-white/15 whitespace-nowrap"
+                    >
+                      复制 Skill 模板
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => void copyToClipboard(topDesignBasisTemplateText, '已复制顶层设计依据模板')}
+                      className="inline-flex items-center gap-1 rounded border border-white/20 bg-white/10 px-2.5 py-1 text-[11px] text-white hover:bg-white/15 whitespace-nowrap"
+                    >
+                      复制顶层设计依据模板
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => void copyToClipboard(bootstrapGuidePath, '已复制顶层设计说明文档路径')}
+                      className="inline-flex items-center gap-1 rounded border border-white/20 bg-white/10 px-2.5 py-1 text-[11px] text-white hover:bg-white/15 whitespace-nowrap"
+                    >
+                      复制说明文档路径
+                    </button>
+                  </div>
+                  {setupActionMessage && <p className="mt-2 text-[11px] text-emerald-200">{setupActionMessage}</p>}
                 </div>
               </div>
             )}
