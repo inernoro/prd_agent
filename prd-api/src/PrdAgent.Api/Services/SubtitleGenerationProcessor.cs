@@ -4,7 +4,8 @@ using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Interfaces.LlmGateway;
 using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Database;
-using PrdAgent.Infrastructure.LlmGateway;
+// 避免 ILlmGateway 在两个命名空间冲突：只用类型别名导入 IModelResolver
+using IModelResolver = PrdAgent.Infrastructure.LlmGateway.IModelResolver;
 
 namespace PrdAgent.Api.Services;
 
