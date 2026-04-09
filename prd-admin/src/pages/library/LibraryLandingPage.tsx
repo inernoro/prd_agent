@@ -33,6 +33,7 @@ import {
 import { listPublicDocumentStores } from '@/services';
 import type { PublicDocumentStore } from '@/services/contracts/documentStore';
 import { MapSectionLoader } from '@/components/ui/VideoLoader';
+import { ClayButton } from './ClayButton';
 
 type SortKey = 'hot' | 'new' | 'popular' | 'viewed';
 
@@ -107,7 +108,7 @@ export function LibraryLandingPage() {
       />
 
       {/* ── Hero 区 ── */}
-      <section className="relative px-6 pt-32 pb-16">
+      <section className="relative px-6 pt-44 pb-16">
         <div className="max-w-6xl mx-auto">
           <div className="grid md:grid-cols-2 gap-12 items-center">
             {/* 左侧文字 */}
@@ -156,7 +157,8 @@ export function LibraryLandingPage() {
               {/* 双按钮 */}
               <div className="flex flex-wrap gap-4 mb-14">
                 <ClayButton
-                  primary
+                  size="lg"
+                  variant="primary"
                   onClick={() => {
                     const el = document.getElementById('catalog');
                     el?.scrollIntoView({ behavior: 'smooth' });
@@ -164,7 +166,7 @@ export function LibraryLandingPage() {
                 >
                   开始探索 <ArrowRight size={18} strokeWidth={3} />
                 </ClayButton>
-                <ClayButton onClick={() => navigate('/document-store')}>
+                <ClayButton size="lg" variant="secondary" onClick={() => navigate('/document-store')}>
                   发布我的知识
                 </ClayButton>
               </div>
@@ -226,24 +228,17 @@ export function LibraryLandingPage() {
 
           {/* 排序切换 */}
           <div className="flex items-center justify-center gap-3 mb-12 flex-wrap">
-            {SORT_OPTIONS.map((opt) => {
-              const active = sort === opt.key;
-              return (
-                <button
-                  key={opt.key}
-                  onClick={() => setSort(opt.key)}
-                  className="px-5 py-2.5 rounded-full text-[13px] font-black cursor-pointer transition-all hover:-translate-y-0.5"
-                  style={{
-                    background: active ? '#16A34A' : '#FFFFFF',
-                    border: '3px solid #1E1B4B',
-                    boxShadow: active ? '0 4px 0 #1E1B4B' : '0 3px 0 #1E1B4B',
-                    color: active ? '#FFFFFF' : '#1E1B4B',
-                  }}
-                >
-                  {opt.label}
-                </button>
-              );
-            })}
+            {SORT_OPTIONS.map((opt) => (
+              <ClayButton
+                key={opt.key}
+                size="sm"
+                variant={sort === opt.key ? 'primary' : 'white'}
+                active={sort === opt.key}
+                onClick={() => setSort(opt.key)}
+              >
+                {opt.label}
+              </ClayButton>
+            ))}
           </div>
 
           {loading ? (
@@ -267,6 +262,8 @@ export function LibraryLandingPage() {
           {stores.length > 0 && (
             <div className="text-center mt-12">
               <ClayButton
+                size="lg"
+                variant="secondary"
                 onClick={() => {
                   const el = document.getElementById('why');
                   el?.scrollIntoView({ behavior: 'smooth' });
@@ -373,19 +370,11 @@ export function LibraryLandingPage() {
             >
               加入社区，把你的知识变成一本永不过时的书
             </p>
-            <button
-              onClick={() => navigate('/document-store')}
-              className="inline-flex items-center gap-2 px-8 py-4 rounded-2xl text-[16px] font-black cursor-pointer transition-all hover:-translate-y-1"
-              style={{
-                background: '#FFFFFF',
-                border: '3px solid #1E1B4B',
-                boxShadow: '0 5px 0 #1E1B4B',
-                color: '#1E1B4B',
-                fontFamily: "'Nunito', sans-serif",
-              }}
-            >
-              前往我的知识库 <ArrowRight size={20} strokeWidth={3} />
-            </button>
+            <div className="inline-block">
+              <ClayButton size="lg" variant="white" onClick={() => navigate('/document-store')}>
+                前往我的知识库 <ArrowRight size={18} strokeWidth={3} />
+              </ClayButton>
+            </div>
           </div>
         </div>
       </section>
@@ -465,49 +454,12 @@ function FloatingNavbar({ onStartExplore, onBack }: { onStartExplore: () => void
             <ArrowLeft size={14} strokeWidth={2.8} />
             返回
           </button>
-          <button
-            onClick={onStartExplore}
-            className="px-5 py-2.5 rounded-2xl text-[14px] font-black cursor-pointer transition-all hover:-translate-y-0.5"
-            style={{
-              background: '#16A34A',
-              border: '3px solid #1E1B4B',
-              boxShadow: '0 4px 0 #1E1B4B',
-              color: '#FFFFFF',
-              fontFamily: "'Nunito', sans-serif",
-            }}
-          >
+          <ClayButton size="md" variant="primary" onClick={onStartExplore}>
             开始探索
-          </button>
+          </ClayButton>
         </div>
       </div>
     </nav>
-  );
-}
-
-// ── 通用按钮 ──
-function ClayButton({
-  children,
-  primary,
-  onClick,
-}: {
-  children: React.ReactNode;
-  primary?: boolean;
-  onClick?: () => void;
-}) {
-  return (
-    <button
-      onClick={onClick}
-      className="px-7 py-4 rounded-2xl text-[15px] font-black flex items-center gap-2 cursor-pointer transition-all hover:-translate-y-1"
-      style={{
-        background: primary ? '#16A34A' : '#BFDBFE',
-        border: '3px solid #1E1B4B',
-        boxShadow: '0 5px 0 #1E1B4B',
-        color: primary ? '#FFFFFF' : '#1E1B4B',
-        fontFamily: "'Nunito', sans-serif",
-      }}
-    >
-      {children}
-    </button>
   );
 }
 
@@ -824,7 +776,7 @@ function EmptyState({ onPublish }: { onPublish: () => void }) {
       >
         成为第一位向社区分享知识的开发者吧
       </p>
-      <ClayButton primary onClick={onPublish}>
+      <ClayButton size="lg" variant="primary" onClick={onPublish}>
         前往我的知识库 <ArrowRight size={18} strokeWidth={3} />
       </ClayButton>
     </div>

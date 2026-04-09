@@ -17,6 +17,7 @@ import {
 } from 'lucide-react';
 import { LibraryDocReader } from './LibraryDocReader';
 import type { LibraryDocReaderPreview } from './LibraryDocReader';
+import { ClayButton } from './ClayButton';
 import {
   getPublicDocumentStore,
   listPublicStoreEntries,
@@ -152,18 +153,9 @@ export function LibraryStoreDetailPage() {
         <p className="text-[16px] font-semibold" style={{ color: '#64748B' }}>
           这间藏书阁尚未对外开放
         </p>
-        <button
-          onClick={() => navigate('/library')}
-          className="px-6 py-3 rounded-2xl text-[14px] font-bold cursor-pointer transition-all active:translate-y-1"
-          style={{
-            background: '#F97316',
-            border: '3px solid #1E1B4B',
-            boxShadow: '0 4px 0 #1E1B4B',
-            color: '#FFFFFF',
-          }}
-        >
+        <ClayButton size="md" variant="primary" onClick={() => navigate('/library')}>
           返回殿堂
-        </button>
+        </ClayButton>
       </div>
     );
   }
@@ -276,12 +268,18 @@ export function LibraryStoreDetailPage() {
                 />
                 <button
                   onClick={handleShare}
-                  className="h-12 px-5 rounded-2xl flex items-center gap-2 cursor-pointer transition-all active:translate-y-1 text-[13px] font-bold"
+                  className="rounded-2xl flex items-center justify-center transition-all hover:-translate-y-0.5 cursor-pointer"
                   style={{
+                    padding: '12px 24px',
+                    fontSize: 14,
+                    fontWeight: 900,
+                    gap: 8,
                     background: '#A855F7',
                     border: '3px solid #1E1B4B',
                     boxShadow: '0 4px 0 #1E1B4B',
                     color: '#FFFFFF',
+                    fontFamily: "'Nunito', sans-serif",
+                    lineHeight: 1,
                   }}
                 >
                   <Share2 size={15} strokeWidth={2.8} />
@@ -363,20 +361,10 @@ function DetailNavbar({
           正在阅读 · <span style={{ color: '#1E1B4B' }}>{storeName}</span>
         </div>
 
-        <button
-          onClick={onBack}
-          className="flex items-center gap-1.5 px-4 py-2 rounded-2xl text-[13px] font-black cursor-pointer transition-all hover:-translate-y-0.5"
-          style={{
-            background: '#BFDBFE',
-            border: '3px solid #1E1B4B',
-            boxShadow: '0 4px 0 #1E1B4B',
-            color: '#1E1B4B',
-            fontFamily: "'Nunito', sans-serif",
-          }}
-        >
+        <ClayButton size="md" variant="secondary" onClick={onBack}>
           <ArrowLeft size={14} strokeWidth={3} />
           返回殿堂
-        </button>
+        </ClayButton>
       </div>
     </nav>
   );
