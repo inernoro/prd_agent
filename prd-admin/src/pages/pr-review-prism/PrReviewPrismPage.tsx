@@ -32,6 +32,13 @@ export function PrReviewPrismPage() {
   const [submitting, setSubmitting] = useState(false);
   const [refreshingId, setRefreshingId] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [batchRefreshing, setBatchRefreshing] = useState(false);
+  const [batchProgress, setBatchProgress] = useState<{
+    total: number;
+    done: number;
+    success: number;
+    failed: number;
+  } | null>(null);
   const [items, setItems] = useState<PrReviewPrismSubmission[]>([]);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
@@ -62,6 +69,12 @@ export function PrReviewPrismPage() {
   );
 
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
+  const batchProgressPercent = useMemo(() => {
+    if (!batchProgress || batchProgress.total <= 0) {
+      return 0;
+    }
+    return Math.min(100, Math.round((batchProgress.done / batchProgress.total) * 100));
+  }, [batchProgress]);
 
   const selected = useMemo(
     () => filteredItems.find(x => x.id === selectedId) ?? null,
@@ -148,6 +161,9 @@ export function PrReviewPrismPage() {
   }
 
   async function handleRefresh(id: string) {
+    if (batchRefreshing) {
+      return;
+    }
     setRefreshingId(id);
     const res = await refreshPrReviewPrismSubmission(id);
     if (res.success && res.data?.submission) {
@@ -156,6 +172,53 @@ export function PrReviewPrismPage() {
       setListError(res.error?.message ?? '刷新失败');
     }
     setRefreshingId(null);
+  }
+
+  async function handleBatchRefreshCurrentFiltered() {
+    if (batchRefreshing || loading) {
+      return;
+    }
+
+    const targetIds = filteredItems.map(x => x.id);
+    if (targetIds.length === 0) {
+      return;
+    }
+
+    setBatchRefreshing(true);
+    setListError(null);
+    setBatchProgress({
+      total: targetIds.length,
+      done: 0,
+      success: 0,
+      failed: 0,
+    });
+
+    let success = 0;
+    let failed = 0;
+    let done = 0;
+
+    for (const id of targetIds) {
+      const res = await refreshPrReviewPrismSubmission(id);
+      if (res.success && res.data?.submission) {
+        success += 1;
+        setItems(prev => prev.map(x => (x.id === id ? res.data!.submission : x)));
+      } else {
+        failed += 1;
+      }
+      done += 1;
+      setBatchProgress({
+        total: targetIds.length,
+        done,
+        success,
+        failed,
+      });
+    }
+
+    if (failed > 0) {
+      setListError(`批量刷新完成：成功 ${success}，失败 ${failed}`);
+    }
+
+    setBatchRefreshing(false);
   }
 
   async function handleDelete(id: string) {
@@ -292,9 +355,23 @@ export function PrReviewPrismPage() {
           <div className="rounded-xl border border-white/10 bg-white/[0.03] p-4">
             <div className="flex items-center justify-between mb-3">
               <p className="text-sm font-medium text-white">提交列表</p>
-              <span className="text-xs text-white/45">
-                总 {total} 条 / 当前页筛选 {filteredItems.length} 条
-              </span>
+              <div className="flex items-center gap-2">
+                <span className="text-xs text-white/45 whitespace-nowrap">
+                  总 {total} 条 / 当前页筛选 {filteredItems.length} 条
+                </span>
+                <button
+                  type="button"
+                  onClick={() => void handleBatchRefreshCurrentFiltered()}
+                  disabled={loading || batchRefreshing || filteredItems.length === 0}
+                  className="inline-flex items-center gap-1 px-2.5 py-1 text-xs rounded-md border border-white/10 bg-white/5 hover:bg-white/10 text-white/70 disabled:opacity-50 whitespace-nowrap"
+                  title="按当前筛选结果逐条刷新"
+                >
+                  {batchRefreshing ? <Loader2 className="w-3 h-3 animate-spin" /> : <RefreshCw className="w-3 h-3" />}
+                  {batchRefreshing
+                    ? `批量刷新 ${batchProgress?.done ?? 0}/${batchProgress?.total ?? 0}`
+                    : '批量刷新'}
+                </button>
+              </div>
             </div>
             <div className="flex gap-2 mb-3">
               <div className="relative flex-1">
@@ -377,6 +454,24 @@ export function PrReviewPrismPage() {
                 error ({gateCounts.error})
               </button>
             </div>
+            {batchProgress && (
+              <div className="mb-3 rounded-md border border-white/10 bg-white/5 px-3 py-2">
+                <div className="flex items-center justify-between text-[11px] text-white/60">
+                  <span>
+                    刷新进度 {batchProgress.done}/{batchProgress.total}
+                  </span>
+                  <span>
+                    成功 {batchProgress.success} / 失败 {batchProgress.failed}
+                  </span>
+                </div>
+                <div className="mt-1.5 h-1.5 rounded bg-white/10 overflow-hidden">
+                  <div
+                    className="h-full bg-violet-400/80 transition-all"
+                    style={{ width: `${batchProgressPercent}%` }}
+                  />
+                </div>
+              </div>
+            )}
             {listError && <p className="text-xs text-red-300 mb-2">{listError}</p>}
             {loading ? (
               <div className="h-28 flex items-center justify-center">
@@ -473,7 +568,7 @@ export function PrReviewPrismPage() {
                   <button
                     type="button"
                     onClick={() => void handleRefresh(selected.id)}
-                    disabled={refreshingId === selected.id}
+                    disabled={refreshingId === selected.id || batchRefreshing}
                     className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-lg border border-white/10 bg-white/5 hover:bg-white/10 text-white/75 disabled:opacity-60"
                   >
                     {refreshingId === selected.id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />}

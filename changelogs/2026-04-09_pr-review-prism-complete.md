@@ -4,4 +4,5 @@
 | fix | prd-api | 新增 PR审查棱镜 API 集成测试：鉴权、非法参数、提交复用、列表/详情、刷新、删除与删除后 404 |
 | feat | prd-admin | PR审查棱镜页面从占位升级为可用界面：提交 PR 链接、列表检索、详情可视化、刷新与删除 |
 | feat | prd-admin | PR审查棱镜页面增强交互：状态筛选、分页控制、更新时间展示与详情时间信息补全 |
+| feat | prd-admin | PR审查棱镜新增“批量刷新当前筛选结果”与刷新进度反馈，便于批量回看多条提交 |
 | feat | prd-admin | 新增 prReviewPrism 前端 API 路由与 real service，并导出统一 services 接口 |
