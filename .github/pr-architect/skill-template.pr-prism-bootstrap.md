@@ -6,10 +6,15 @@
 
 推荐在新项目中直接复制上述目录（含 `SKILL.md`），即可作为标准技能导入并执行。
 
+若目标项目希望“只拷贝两个文件就能跑”，请使用 bootstrap package：
+
+- 文档：`doc/guide.pr-prism-bootstrap-package.md`
+- 文件：`scripts/bootstrap-pr-prism.sh` + `scripts/init-pr-prism-basis.sh`
+
 若只需立即初始化，也可直接运行：
 
 ```bash
-bash scripts/init-pr-prism-basis.sh
+bash scripts/bootstrap-pr-prism.sh
 ```
 
 说明：

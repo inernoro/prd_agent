@@ -25,12 +25,17 @@ description: 一键初始化新仓库的 PR 审查棱镜依据（最薄顶层设
 
 ## 执行步骤（必须顺序）
 
-### Step 1: 在仓库根目录执行零参数初始化
+### Step 1: 使用最小两文件包执行零参数初始化
+
+推荐把以下 2 个文件复制到目标仓库：
+
+- `scripts/bootstrap-pr-prism.sh`
+- `scripts/init-pr-prism-basis.sh`
 
 优先使用零参数命令：
 
 ```bash
-bash scripts/init-pr-prism-basis.sh
+bash scripts/bootstrap-pr-prism.sh
 ```
 
 脚本会自动探测：
@@ -52,6 +57,7 @@ bash scripts/init-pr-prism-basis.sh
 ### Step 3: 最小自检
 
 ```bash
+bash -n scripts/bootstrap-pr-prism.sh
 bash -n scripts/init-pr-prism-basis.sh
 python3 -m py_compile .github/scripts/pr_architect_check.py
 ```
@@ -74,5 +80,5 @@ python3 -m py_compile .github/scripts/pr_architect_check.py
 如果自动探测失败，改用显式参数：
 
 ```bash
-bash scripts/init-pr-prism-basis.sh --repo "owner/repo" --owner "your-github-id" --context "engineering-governance"
+bash scripts/bootstrap-pr-prism.sh --repo "owner/repo" --owner "your-github-id" --context "engineering-governance"
 ```
