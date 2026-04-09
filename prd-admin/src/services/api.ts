@@ -190,6 +190,16 @@ export const api = {
     byKey: (skillKey: string) => `/api/skills/${encodeURIComponent(skillKey)}`,
   },
 
+  // ============ Skill Agent 技能引导创建 ============
+  skillAgent: {
+    createSession: () => '/api/skill-agent/sessions',
+    session: (sessionId: string) => `/api/skill-agent/sessions/${sessionId}`,
+    sendMessage: (sessionId: string) => `/api/skill-agent/sessions/${sessionId}/messages`,
+    save: (sessionId: string) => `/api/skill-agent/sessions/${sessionId}/save`,
+    exportMd: (sessionId: string) => `/api/skill-agent/sessions/${sessionId}/export/md`,
+    exportZip: (sessionId: string) => `/api/skill-agent/sessions/${sessionId}/export/zip`,
+  },
+
   // ============ Prompts (系统提示词 + 覆盖) ============
   prompts: {
     system: {

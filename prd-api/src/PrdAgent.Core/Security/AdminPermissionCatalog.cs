@@ -215,6 +215,11 @@ public static class AdminPermissionCatalog
     public const string WorkspacesWrite = "workspaces.write";
 
     /// <summary>
+    /// 技能引导 Agent 权限：AI 引导创建技能
+    /// </summary>
+    public const string SkillAgentUse = "skill-agent.use";
+
+    /// <summary>
     /// 超级权限（当路由未配置映射时，用于兜底放行；同时也可用于 root 破窗全权限）。
     /// </summary>
     public const string Super = "super";
@@ -300,6 +305,8 @@ public static class AdminPermissionCatalog
 
         new(WorkspacesRead, "工作空间-读", "查看工作空间列表与详情"),
         new(WorkspacesWrite, "工作空间-写", "创建/编辑/删除工作空间、发送指令"),
+
+        new(SkillAgentUse, "技能引导 Agent", "AI 引导创建技能、导出技能包"),
 
         new(Super, "超级权限", "兜底放行：建议仅给 root/超级管理员"),
     };

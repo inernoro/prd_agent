@@ -946,6 +946,34 @@ public static class EmergenceExplorer
         public const string Chat = "emergence-explorer.emerge::chat";
     }
 }
+
+/// <summary>
+/// Skill Agent 技能引导创建
+/// </summary>
+public static class SkillAgent
+{
+    public static class Guide
+    {
+        [AppCallerMetadata(
+            "技能引导-对话",
+            "引导用户逐步创建技能的对话模型",
+            ModelTypes = new[] { ModelTypes.Chat },
+            Category = "Skill"
+        )]
+        public const string Chat = "skill-agent.guide::chat";
+    }
+
+    public static class Export
+    {
+        [AppCallerMetadata(
+            "技能导出-生成说明",
+            "为技能导出包生成 README 和使用示例",
+            ModelTypes = new[] { ModelTypes.Chat },
+            Category = "Skill"
+        )]
+        public const string GenerateReadme = "skill-agent.export.readme::chat";
+    }
+}
 }
 
 /// <summary>
