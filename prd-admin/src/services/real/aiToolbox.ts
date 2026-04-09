@@ -39,6 +39,8 @@ export interface ToolboxItem {
   tags: string[];
   createdAt: string;
   updatedAt?: string;
+  /** 未正式发布：卡片左下角显示"施工中"徽章 */
+  wip?: boolean;
 }
 
 export interface ToolboxItemRun {
