@@ -135,26 +135,14 @@ cd prd-api && dotnet build --no-restore 2>&1 | grep -E "error CS|warning CS" | h
 
 ### 9. 新功能/新 Agent 导航默认去百宝箱 + 必须声明位置
 
-任何新建的智能体或新增功能，**默认且必须**注册到百宝箱（AI Toolbox，`/ai-toolbox`），并在交付消息中明确告诉用户"在哪里能看到"。杜绝"只有路由甚至连路由都没有"的交付。
+新 Agent 默认注册到百宝箱（`prd-admin/src/stores/toolboxStore.ts` 的 `BUILTIN_TOOLS`），左侧导航和首页快捷为可选升级。交付消息必须包含两行：
 
-**默认位置**：
-- 新 Agent 必须注册到 `prd-admin/src/stores/toolboxStore.ts` 的 `BUILTIN_TOOLS` 数组
-- 左侧导航（`AdminMenuCatalog.cs` + `authzMenuMapping.ts`）和首页快捷入口（`LandingPage.tsx` / `MobileHomePage.tsx` 的 `QUICK_AGENTS`）为**可选升级**，仅当用户明确要求时才追加
-- 多处注册时同一 `routePath` 必须保持一致，禁止分叉
-
-**交付时必须包含位置声明**（两行格式，不可省略）：
 ```
-【位置】百宝箱（AI 百宝箱 → 搜索 "XXX"）/ 左侧导航"XX"菜单 / 首页快捷入口
-【路径】登录后首页 → 1) 点击 X → 2) 点击 Y → 3) 到达目标页
+【位置】百宝箱 / 左侧导航"XX"菜单 / 首页快捷入口
+【路径】登录后首页 → 1) 点击 → 2) 点击 → 3) 到达
 ```
 
-**禁止**：
-- 只给路由路径（如 "访问 `/new-agent` 即可"）
-- 只给功能名不给位置（如 "功能已上线"）
-- 位置模糊（如 "在管理后台可以看到"）
-- 未注册百宝箱就声称"完成"——百宝箱是最低配置
-
-详细规则见 `.claude/rules/navigation-registry.md`。
+禁止只给路由、位置模糊、未注册百宝箱就声称完成。详见 `.claude/rules/navigation-registry.md`。
 
 ---
 

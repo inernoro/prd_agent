@@ -90,41 +90,10 @@ new(NewAgentUse, "新 Agent 名称", "功能描述"),
 } />
 ```
 
-#### 3.6 百宝箱注册（默认必做，不可省略）
+#### 3.6 百宝箱注册（默认必做）
 **文件**: `prd-admin/src/stores/toolboxStore.ts`
 
-> 根据 `.claude/rules/navigation-registry.md`，任何新 Agent 默认入口就是百宝箱，不在这里出现就等于"用户找不到"。
-
-在 `BUILTIN_TOOLS` 数组中追加条目：
-
-```typescript
-{
-  id: 'builtin-new-agent',
-  name: '新 Agent 名称',
-  description: '一句话说明 Agent 做什么',
-  icon: 'IconName',           // Lucide 图标名
-  category: 'builtin',
-  type: 'builtin',
-  agentKey: 'new-agent',
-  routePath: '/new-agent',    // 定制版才填；普通对话型可省略
-  tags: ['标签1', '标签2'],
-  usageCount: 0,
-  createdAt: new Date().toISOString(),
-},
-```
-
-**分区说明**：
-- 有专门页面 → 放在"定制版 Agent"区（需要 `routePath`）
-- 走统一对话界面 → 放在"普通版 Agent"区（需要 `systemPrompt`）
-
-#### 3.7 左侧导航 / 首页快捷（仅当用户明确要求时追加）
-
-**默认不做**。只有当用户在需求中写了"加到左侧导航"/"放到首页"时才执行：
-
-- 左侧导航：`prd-api/src/PrdAgent.Core/Security/AdminMenuCatalog.cs`（后端权威定义）
-- 首页快捷：`prd-admin/src/pages/home/MobileHomePage.tsx` 的 `QUICK_AGENTS` 数组 + `LandingPage.tsx` 的 `AgentShowcase`
-
-三处同时注册时 `routePath` 必须一致，禁止分叉。
+在 `BUILTIN_TOOLS` 追加条目，参考现有条目（如 `builtin-prd-agent`）格式。详见 `.claude/rules/navigation-registry.md`。
 
 ### Step 4: 更新规则文档
 
@@ -139,18 +108,8 @@ new(NewAgentUse, "新 Agent 名称", "功能描述"),
 - [ ] Controller — `[AdminController]` 属性正确
 - [ ] `authzMenuMapping.ts` — menuList + allPermissions
 - [ ] `App.tsx` — `RequirePermission` 使用正确权限
-- [ ] **`toolboxStore.ts` — `BUILTIN_TOOLS` 已追加条目（默认必做）**
-- [ ] 如用户要求：`AdminMenuCatalog.cs` / `QUICK_AGENTS` 已同步
+- [ ] `toolboxStore.ts` — `BUILTIN_TOOLS` 已追加条目（默认必做）
 - [ ] `doc/rule.agent-permissions.md` — 已登记
-
-### Step 6: 向用户声明位置（必须）
-
-完成后回复用户时，包含以下两行（严格格式）：
-
-```
-【位置】百宝箱（AI 百宝箱 → 搜索 "XXX"）/ 左侧导航"XX"菜单 / 首页快捷入口
-【路径】登录后首页 → 1) 点击左侧【AI 百宝箱】 → 2) 搜索 "XXX" → 3) 打开
-```
 
 ## 禁止事项
 
