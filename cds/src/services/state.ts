@@ -3,6 +3,8 @@ import path from 'node:path';
 import type { CdsState, BranchEntry, BuildProfile, RoutingRule, OperationLog, InfraService, ExecutorNode, DataMigration } from '../types.js';
 
 const MAX_LOGS_PER_BRANCH = 10;
+/** Max rolling backups of state.json kept on disk. See design.cds-resilience.md §5. */
+const MAX_STATE_BACKUPS = 10;
 
 function emptyState(): CdsState {
   return {
@@ -39,10 +41,45 @@ export class StateService {
       .toLowerCase();
   }
 
-  load(): void {
+  /**
+   * Try to parse a state file. On JSON error, attempt to recover from the most
+   * recent .bak.* file. Returns the loaded state, or null if nothing is readable.
+   */
+  private tryLoadStateFile(): CdsState | null {
     if (fs.existsSync(this.filePath)) {
-      const raw = fs.readFileSync(this.filePath, 'utf-8');
-      this.state = JSON.parse(raw) as CdsState;
+      try {
+        const raw = fs.readFileSync(this.filePath, 'utf-8');
+        return JSON.parse(raw) as CdsState;
+      } catch (err) {
+        console.error(`[state] primary state.json unreadable: ${(err as Error).message}`);
+        console.error('[state] attempting to recover from rolling backups...');
+      }
+    }
+    // Fallback: scan .bak.* files, newest first
+    const dir = path.dirname(this.filePath);
+    const base = path.basename(this.filePath);
+    if (!fs.existsSync(dir)) return null;
+    const backups = fs.readdirSync(dir)
+      .filter(f => f.startsWith(`${base}.bak.`))
+      .sort()
+      .reverse();
+    for (const bak of backups) {
+      try {
+        const raw = fs.readFileSync(path.join(dir, bak), 'utf-8');
+        const parsed = JSON.parse(raw) as CdsState;
+        console.warn(`[state] RECOVERED state from backup ${bak}`);
+        return parsed;
+      } catch {
+        // try next backup
+      }
+    }
+    return null;
+  }
+
+  load(): void {
+    const loaded = this.tryLoadStateFile();
+    if (loaded) {
+      this.state = loaded;
       // Migrate older state files
       if (!this.state.logs) this.state.logs = {};
       if (!this.state.routingRules) this.state.routingRules = [];
@@ -124,15 +161,76 @@ export class StateService {
     this.onSaveListeners.push(fn);
   }
 
+  /**
+   * Atomic state write with rolling backup.
+   *
+   * Flow (crash-safe):
+   *   1. Serialize state to JSON
+   *   2. Write to `state.json.tmp`
+   *   3. fsync the temp file (persist bytes to disk, not just page cache)
+   *   4. Rename tmp → state.json (POSIX atomic)
+   *   5. Copy previous state.json → state.json.bak.<timestamp>
+   *   6. Prune backups to keep only the most recent MAX_STATE_BACKUPS
+   *
+   * On failure of step 2/3/4, state.json is untouched. Step 5/6 failures
+   * are logged but do not propagate — the main write already succeeded.
+   *
+   * See doc/design.cds-resilience.md §5.
+   */
   save(): void {
     const dir = path.dirname(this.filePath);
     if (!fs.existsSync(dir)) {
       fs.mkdirSync(dir, { recursive: true });
     }
-    fs.writeFileSync(this.filePath, JSON.stringify(this.state, null, 2));
+
+    const serialized = JSON.stringify(this.state, null, 2);
+    const tmpPath = `${this.filePath}.tmp`;
+
+    // Atomic write: tmp → fsync → rename
+    const fd = fs.openSync(tmpPath, 'w');
+    try {
+      fs.writeSync(fd, serialized);
+      fs.fsyncSync(fd);
+    } finally {
+      fs.closeSync(fd);
+    }
+    fs.renameSync(tmpPath, this.filePath);
+
+    // Rolling backup (best-effort; failures don't fail the save)
+    try {
+      this.rollBackups(serialized);
+    } catch (err) {
+      console.warn(`[state] backup rotation failed: ${(err as Error).message}`);
+    }
+
     // Notify listeners
     for (const fn of this.onSaveListeners) {
       try { fn(); } catch { /* ignore */ }
+    }
+  }
+
+  /**
+   * Write a .bak.<timestamp> snapshot and prune old backups.
+   * We use the already-serialized string to avoid double serialization.
+   */
+  private rollBackups(serialized: string): void {
+    const dir = path.dirname(this.filePath);
+    const base = path.basename(this.filePath);
+    const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+    const backupPath = path.join(dir, `${base}.bak.${stamp}`);
+    fs.writeFileSync(backupPath, serialized);
+
+    // Prune: keep MAX_STATE_BACKUPS newest, delete the rest
+    const backups = fs.readdirSync(dir)
+      .filter(f => f.startsWith(`${base}.bak.`))
+      .sort()  // ISO timestamps sort chronologically
+      .reverse();
+    for (let i = MAX_STATE_BACKUPS; i < backups.length; i++) {
+      try {
+        fs.unlinkSync(path.join(dir, backups[i]));
+      } catch {
+        // ignore individual deletion failures
+      }
     }
   }
 

@@ -9,6 +9,7 @@ import { StateService } from '../services/state.js';
 import type { WorktreeService } from '../services/worktree.js';
 import { resolveProfileWithMode } from '../services/container.js';
 import type { ContainerService } from '../services/container.js';
+import type { SchedulerService } from '../services/scheduler.js';
 import type { BranchEntry, CdsConfig, IShellExecutor, OperationLog, OperationLogEvent, BuildProfile, RoutingRule, ServiceState, InfraService, DataMigration, MongoConnectionConfig } from '../types.js';
 import { discoverComposeFiles, parseComposeFile, parseComposeString, toComposeYaml, parseCdsCompose, toCdsCompose } from '../services/compose-parser.js';
 import type { ComposeServiceDef } from '../services/compose-parser.js';
@@ -21,6 +22,8 @@ export interface RouterDeps {
   containerService: ContainerService;
   shell: IShellExecutor;
   config: CdsConfig;
+  /** Optional warm-pool scheduler (v3.1). When absent, scheduler API returns disabled. */
+  schedulerService?: SchedulerService;
 }
 
 export function createBranchRouter(deps: RouterDeps): Router {
@@ -30,6 +33,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
     containerService,
     shell,
     config,
+    schedulerService,
   } = deps;
 
   const router = Router();
@@ -3290,6 +3294,76 @@ export function createBranchRouter(deps: RouterDeps): Router {
       send('error', 'error', `更新失败: ${(err as Error).message}`);
       sendSSE(res, 'error', { message: (err as Error).message });
       res.end();
+    }
+  });
+
+  // ─────────────────────────────────────────────────────────────────────
+  // Warm-pool scheduler API (v3.1)
+  // See doc/design.cds-resilience.md §九.
+  // When schedulerService is not wired in, these endpoints return a
+  // consistent "disabled" payload so Dashboard UIs can degrade gracefully.
+  // ─────────────────────────────────────────────────────────────────────
+
+  router.get('/scheduler/state', (_req, res) => {
+    if (!schedulerService) {
+      res.json({
+        enabled: false,
+        config: null,
+        hot: [],
+        cold: [],
+        capacityUsage: { current: 0, max: 0 },
+      });
+      return;
+    }
+    res.json(schedulerService.getSnapshot());
+  });
+
+  router.post('/scheduler/pin/:slug', (req, res) => {
+    if (!schedulerService) {
+      res.status(503).json({ error: 'Scheduler not enabled' });
+      return;
+    }
+    try {
+      schedulerService.pin(req.params.slug);
+      res.json({ ok: true, slug: req.params.slug, pinned: true });
+    } catch (err) {
+      res.status(404).json({ error: (err as Error).message });
+    }
+  });
+
+  router.post('/scheduler/unpin/:slug', (req, res) => {
+    if (!schedulerService) {
+      res.status(503).json({ error: 'Scheduler not enabled' });
+      return;
+    }
+    try {
+      schedulerService.unpin(req.params.slug);
+      res.json({ ok: true, slug: req.params.slug, pinned: false });
+    } catch (err) {
+      res.status(404).json({ error: (err as Error).message });
+    }
+  });
+
+  router.post('/scheduler/cool/:slug', async (req, res) => {
+    if (!schedulerService) {
+      res.status(503).json({ error: 'Scheduler not enabled' });
+      return;
+    }
+    const slug = req.params.slug;
+    const branch = stateService.getBranch(slug);
+    if (!branch) {
+      res.status(404).json({ error: `分支 "${slug}" 不存在` });
+      return;
+    }
+    if (schedulerService.isPinned(branch)) {
+      res.status(409).json({ error: `分支 "${slug}" 已固定,无法手动休眠` });
+      return;
+    }
+    try {
+      await schedulerService.markCold(slug);
+      res.json({ ok: true, slug, heatState: 'cold' });
+    } catch (err) {
+      res.status(500).json({ error: (err as Error).message });
     }
   });
 

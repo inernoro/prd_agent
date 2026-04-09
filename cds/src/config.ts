@@ -28,6 +28,16 @@ const DEFAULT_CONFIG: CdsConfig = {
   schedulerUrl: process.env.CDS_SCHEDULER_URL || undefined,
   executorPort: parseInt(process.env.CDS_EXECUTOR_PORT || '9901', 10),
   executorToken: process.env.CDS_EXECUTOR_TOKEN || undefined,
+  // Warm-pool scheduler — disabled by default for backward compatibility.
+  // Opt-in via cds.config.json { "scheduler": { "enabled": true, ... } }.
+  // See doc/design.cds-resilience.md.
+  scheduler: {
+    enabled: false,
+    maxHotBranches: 3,
+    idleTTLSeconds: 900,
+    tickIntervalSeconds: 60,
+    pinnedBranches: [],
+  },
 };
 
 export function loadConfig(configPath?: string): CdsConfig {

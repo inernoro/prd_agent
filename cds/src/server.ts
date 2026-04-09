@@ -9,6 +9,7 @@ import type { WorktreeService } from './services/worktree.js';
 import type { ContainerService } from './services/container.js';
 import type { ProxyService } from './services/proxy.js';
 import type { BridgeService } from './services/bridge.js';
+import type { SchedulerService } from './services/scheduler.js';
 import type { CdsConfig, IShellExecutor } from './types.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -21,6 +22,8 @@ export interface ServerDeps {
   bridgeService: BridgeService;
   shell: IShellExecutor;
   config: CdsConfig;
+  /** Optional warm-pool scheduler (v3.1). */
+  schedulerService?: SchedulerService;
 }
 
 function makeToken(user: string, pass: string): string {
