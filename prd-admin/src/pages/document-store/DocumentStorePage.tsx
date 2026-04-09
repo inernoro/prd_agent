@@ -18,7 +18,11 @@ import {
   Link as LinkIcon,
   Calendar,
   Eye,
+  Pencil,
+  Heart,
+  Bookmark,
 } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
 import { GlassCard } from '@/components/design/GlassCard';
 import { TabBar } from '@/components/design/TabBar';
 import { Button } from '@/components/design/Button';
@@ -47,6 +51,8 @@ import {
   createDocStoreShareLink,
   listDocStoreShareLinks,
   revokeDocStoreShareLink,
+  listMyFavoriteDocumentStores,
+  listMyLikedDocumentStores,
 } from '@/services';
 import { DocBrowser } from '@/components/doc-browser/DocBrowser';
 import type {
@@ -54,6 +60,7 @@ import type {
   DocumentStoreWithPreview,
   DocumentEntry,
   DocumentStoreShareLink,
+  InteractionStoreCard,
 } from '@/services/contracts/documentStore';
 import type { DocBrowserEntry, EntryPreview } from '@/components/doc-browser/DocBrowser';
 import { toast } from '@/lib/toast';
@@ -141,6 +148,92 @@ function CreateStoreDialog({ onClose, onCreated }: {
           <Button variant="ghost" size="xs" onClick={onClose}>取消</Button>
           <Button variant="primary" size="xs" onClick={handleCreate} disabled={loading}>
             {loading ? '创建中…' : '创建'}
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── 重命名知识库对话框 ──
+function RenameStoreDialog({ storeId, initialName, onClose, onRenamed }: {
+  storeId: string;
+  initialName: string;
+  onClose: () => void;
+  onRenamed: (newName: string) => void;
+}) {
+  const [name, setName] = useState(initialName);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+
+  const handleSave = async () => {
+    const trimmed = name.trim();
+    if (!trimmed) { setError('空间名称不能为空'); return; }
+    if (trimmed === initialName) { onClose(); return; }
+    setLoading(true);
+    setError('');
+    const res = await updateDocumentStore(storeId, { name: trimmed });
+    if (res.success) {
+      onRenamed(trimmed);
+      toast.success('名称已更新');
+      onClose();
+    } else {
+      setError(res.error?.message ?? '更新失败');
+    }
+    setLoading(false);
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center"
+      style={{ background: 'rgba(0,0,0,0.5)', backdropFilter: 'blur(8px)' }}
+      onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+      <div className="w-[420px] max-w-[92vw] rounded-[16px] p-6"
+        style={{
+          background: 'linear-gradient(180deg, var(--glass-bg-start) 0%, var(--glass-bg-end) 100%)',
+          border: '1px solid rgba(255,255,255,0.08)',
+          backdropFilter: 'blur(40px) saturate(180%)',
+          boxShadow: '0 24px 48px -12px rgba(0,0,0,0.5)',
+        }}>
+        <div className="flex items-center justify-between mb-5">
+          <div className="flex items-center gap-2.5">
+            <div className="w-8 h-8 rounded-[10px] flex items-center justify-center"
+              style={{ background: 'rgba(59,130,246,0.08)', border: '1px solid rgba(59,130,246,0.12)' }}>
+              <Pencil size={14} style={{ color: 'rgba(59,130,246,0.85)' }} />
+            </div>
+            <span className="text-[15px] font-semibold" style={{ color: 'var(--text-primary)' }}>
+              重命名知识库
+            </span>
+          </div>
+          <button onClick={onClose}
+            className="w-7 h-7 rounded-[8px] flex items-center justify-center cursor-pointer hover:bg-white/6 transition-colors duration-200"
+            style={{ color: 'var(--text-muted)' }}>
+            <X size={15} />
+          </button>
+        </div>
+
+        <div className="mb-4">
+          <label className="block text-[12px] mb-1.5" style={{ color: 'var(--text-muted)' }}>空间名称</label>
+          <input
+            autoFocus
+            value={name}
+            onChange={e => setName(e.target.value)}
+            placeholder="如：产品文档库"
+            className="w-full h-9 px-3 rounded-[10px] text-[13px] outline-none transition-colors duration-200"
+            style={{
+              background: 'var(--input-bg, rgba(255,255,255,0.05))',
+              border: '1px solid var(--border-subtle, rgba(255,255,255,0.1))',
+              color: 'var(--text-primary)',
+            }}
+            onKeyDown={e => { if (e.key === 'Enter') handleSave(); }}
+          />
+        </div>
+
+        {error && <p className="text-[12px] mb-3" style={{ color: 'rgba(239,68,68,0.9)' }}>{error}</p>}
+
+        <div className="flex justify-end gap-2">
+          <Button variant="ghost" size="xs" onClick={onClose}>取消</Button>
+          <Button variant="primary" size="xs" onClick={handleSave} disabled={loading}>
+            {loading ? '保存中…' : '保存'}
           </Button>
         </div>
       </div>
@@ -883,11 +976,21 @@ function SubscribeDialog({ storeId, onClose, onCreated }: {
   );
 }
 
+type StoreTab = 'mine' | 'favorites' | 'likes';
+
 // ── 主页面 ──
 export function DocumentStorePage() {
+  const navigate = useNavigate();
+  const [tab, setTab] = useState<StoreTab>(() => {
+    const saved = sessionStorage.getItem('doc-store-tab') as StoreTab | null;
+    return saved === 'favorites' || saved === 'likes' ? saved : 'mine';
+  });
   const [stores, setStores] = useState<DocumentStoreWithPreview[]>([]);
+  const [favorites, setFavorites] = useState<InteractionStoreCard[]>([]);
+  const [likes, setLikes] = useState<InteractionStoreCard[]>([]);
   const [loading, setLoading] = useState(true);
   const [showCreate, setShowCreate] = useState(false);
+  const [renameTarget, setRenameTarget] = useState<{ id: string; name: string } | null>(null);
   // 使用 storeId 而不是 store 对象，这样刷新后可以从 URL 或 sessionStorage 恢复
   const [selectedStoreId, setSelectedStoreId] = useState<string | null>(() => {
     return sessionStorage.getItem('doc-store-selected-id');
@@ -900,9 +1003,27 @@ export function DocumentStorePage() {
     setLoading(false);
   }, []);
 
-  useEffect(() => { loadStores(); }, [loadStores]);
+  const loadFavorites = useCallback(async () => {
+    setLoading(true);
+    const res = await listMyFavoriteDocumentStores();
+    if (res.success) setFavorites(res.data.items);
+    setLoading(false);
+  }, []);
 
-  // 持久化选中的 storeId 到 sessionStorage（修复刷新丢失 bug）
+  const loadLikes = useCallback(async () => {
+    setLoading(true);
+    const res = await listMyLikedDocumentStores();
+    if (res.success) setLikes(res.data.items);
+    setLoading(false);
+  }, []);
+
+  useEffect(() => {
+    if (tab === 'mine') loadStores();
+    else if (tab === 'favorites') loadFavorites();
+    else loadLikes();
+  }, [tab, loadStores, loadFavorites, loadLikes]);
+
+  // 持久化选中的 storeId / tab 到 sessionStorage
   useEffect(() => {
     if (selectedStoreId) {
       sessionStorage.setItem('doc-store-selected-id', selectedStoreId);
@@ -911,10 +1032,25 @@ export function DocumentStorePage() {
     }
   }, [selectedStoreId]);
 
-  // 空间详情视图
+  useEffect(() => {
+    sessionStorage.setItem('doc-store-tab', tab);
+  }, [tab]);
+
+  // 空间详情视图（仅 mine 标签下可进入编辑视图）
   if (selectedStoreId) {
     return <StoreDetailView storeId={selectedStoreId} onBack={() => { setSelectedStoreId(null); loadStores(); }} />;
   }
+
+  const tabs: { key: StoreTab; label: string; icon: typeof Library }[] = [
+    { key: 'mine', label: '我的空间', icon: Library },
+    { key: 'favorites', label: '我的收藏', icon: Bookmark },
+    { key: 'likes', label: '我的点赞', icon: Heart },
+  ];
+
+  const currentList: InteractionStoreCard[] | DocumentStoreWithPreview[] =
+    tab === 'mine' ? stores : tab === 'favorites' ? favorites : likes;
+
+  const isEmpty = currentList.length === 0;
 
   // 空间列表视图
   return (
@@ -923,11 +1059,34 @@ export function DocumentStorePage() {
         title="知识库"
         icon={<Library size={14} />}
         actions={
-          <Button variant="primary" size="xs" onClick={() => setShowCreate(true)}>
-            <Plus size={13} /> 新建空间
-          </Button>
+          tab === 'mine' ? (
+            <Button variant="primary" size="xs" onClick={() => setShowCreate(true)}>
+              <Plus size={13} /> 新建空间
+            </Button>
+          ) : null
         }
       />
+
+      {/* 标签切换 */}
+      <div className="px-5 flex items-center gap-2">
+        {tabs.map(t => {
+          const active = tab === t.key;
+          const Icon = t.icon;
+          return (
+            <button
+              key={t.key}
+              onClick={() => setTab(t.key)}
+              className="h-8 px-3 rounded-[10px] text-[12px] font-semibold flex items-center gap-1.5 cursor-pointer transition-all duration-200"
+              style={{
+                background: active ? 'rgba(59,130,246,0.1)' : 'rgba(255,255,255,0.03)',
+                border: active ? '1px solid rgba(59,130,246,0.2)' : '1px solid rgba(255,255,255,0.06)',
+                color: active ? 'rgba(59,130,246,0.9)' : 'var(--text-muted)',
+              }}>
+              <Icon size={12} /> {t.label}
+            </button>
+          );
+        })}
+      </div>
 
       <div className="px-5 pb-6 w-full">
         {loading ? (
@@ -935,8 +1094,8 @@ export function DocumentStorePage() {
             <MapSpinner size={16} />
             <span className="ml-2 text-[12px]" style={{ color: 'var(--text-muted)' }}>加载中...</span>
           </div>
-        ) : stores.length === 0 ? (
-          /* 空状态引导 */
+        ) : isEmpty && tab === 'mine' ? (
+          /* 我的空间 空状态引导 */
           <div className="flex flex-col items-center justify-center py-16">
             <Library size={48} style={{ color: 'var(--text-muted)', opacity: 0.3, marginBottom: 20 }} />
             <p className="text-[16px] font-semibold mb-1" style={{ color: 'var(--text-primary)' }}>
@@ -971,85 +1130,130 @@ export function DocumentStorePage() {
               <Plus size={15} /> 创建第一个空间
             </Button>
           </div>
+        ) : isEmpty ? (
+          /* 收藏 / 点赞 空状态 */
+          <div className="flex flex-col items-center justify-center py-16">
+            {tab === 'favorites'
+              ? <Bookmark size={40} style={{ color: 'var(--text-muted)', opacity: 0.3, marginBottom: 16 }} />
+              : <Heart size={40} style={{ color: 'var(--text-muted)', opacity: 0.3, marginBottom: 16 }} />}
+            <p className="text-[13px] font-semibold mb-1" style={{ color: 'var(--text-primary)' }}>
+              {tab === 'favorites' ? '还没有收藏' : '还没有点赞'}
+            </p>
+            <p className="text-[11px] mb-4" style={{ color: 'var(--text-muted)' }}>
+              去智识殿堂发现感兴趣的知识库吧
+            </p>
+            <Button variant="ghost" size="xs" onClick={() => navigate('/library')}>
+              <Globe size={12} /> 浏览智识殿堂
+            </Button>
+          </div>
         ) : (
           /* 空间列表 - 增大卡片高度，显示文档预览 */
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 items-stretch">
-            {stores.map(s => (
-              <GlassCard key={s.id} animated interactive padding="none"
-                className="group flex flex-col h-full"
-                onClick={() => setSelectedStoreId(s.id)}>
-                <div className="p-4 pb-2 flex-1 flex flex-col">
-                  <div className="flex items-start justify-between gap-2 mb-2">
-                    <div className="flex items-center gap-2.5 min-w-0">
-                      <div className="w-9 h-9 rounded-[10px] flex items-center justify-center flex-shrink-0"
-                        style={{ background: 'rgba(59,130,246,0.08)', border: '1px solid rgba(59,130,246,0.12)' }}>
-                        <Library size={16} style={{ color: 'rgba(59,130,246,0.85)' }} />
+            {(currentList as (DocumentStoreWithPreview | InteractionStoreCard)[]).map(s => {
+              const isInteraction = tab !== 'mine';
+              const ownerName = isInteraction ? (s as InteractionStoreCard).ownerName : undefined;
+              const isOwnInteraction = isInteraction && (s as InteractionStoreCard).isOwner;
+              return (
+                <GlassCard key={s.id} animated interactive padding="none"
+                  className="group flex flex-col h-full"
+                  onClick={() => {
+                    if (tab === 'mine' || isOwnInteraction) {
+                      setSelectedStoreId(s.id);
+                    } else {
+                      navigate(`/library/${s.id}`);
+                    }
+                  }}>
+                  <div className="p-4 pb-2 flex-1 flex flex-col">
+                    <div className="flex items-start justify-between gap-2 mb-2">
+                      <div className="flex items-center gap-2.5 min-w-0 flex-1">
+                        <div className="w-9 h-9 rounded-[10px] flex items-center justify-center flex-shrink-0"
+                          style={{ background: 'rgba(59,130,246,0.08)', border: '1px solid rgba(59,130,246,0.12)' }}>
+                          <Library size={16} style={{ color: 'rgba(59,130,246,0.85)' }} />
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <h3 className="text-[13px] font-semibold truncate" style={{ color: 'var(--text-primary)' }}>
+                            {s.name}
+                          </h3>
+                          {s.description ? (
+                            <p className="text-[11px] truncate mt-0.5" style={{ color: 'var(--text-muted)' }}>
+                              {s.description}
+                            </p>
+                          ) : ownerName ? (
+                            <p className="text-[11px] truncate mt-0.5" style={{ color: 'var(--text-muted)' }}>
+                              @{ownerName}
+                            </p>
+                          ) : null}
+                        </div>
                       </div>
-                      <div className="min-w-0 flex-1">
-                        <h3 className="text-[13px] font-semibold truncate" style={{ color: 'var(--text-primary)' }}>
-                          {s.name}
-                        </h3>
-                        {s.description && (
-                          <p className="text-[11px] truncate mt-0.5" style={{ color: 'var(--text-muted)' }}>
-                            {s.description}
-                          </p>
-                        )}
+                      {tab === 'mine' && (
+                        <button
+                          className="surface-row h-6 w-6 rounded-[6px] flex items-center justify-center cursor-pointer opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0"
+                          title="重命名"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setRenameTarget({ id: s.id, name: s.name });
+                          }}
+                          style={{ color: 'rgba(59,130,246,0.7)' }}>
+                          <Pencil size={11} />
+                        </button>
+                      )}
+                    </div>
+
+                    {/* 最近文档预览列表 */}
+                    <div className="flex-1 mt-1.5 space-y-0.5 min-h-[60px]">
+                      {(s.recentEntries?.length ?? 0) > 0 ? (
+                        s.recentEntries.map((entry) => (
+                          <div key={entry.id} className="flex items-center gap-1.5 py-1 px-1 rounded-[6px] transition-colors hover:bg-white/3">
+                            <FileText size={11} className="flex-shrink-0" style={{ color: 'rgba(59,130,246,0.5)' }} />
+                            <span className="flex-1 text-[11px] truncate" style={{ color: 'var(--text-secondary)' }}>
+                              {entry.title}
+                            </span>
+                            <span className="text-[9px] flex-shrink-0" style={{ color: 'var(--text-muted)' }}>
+                              {new Date(entry.updatedAt).toLocaleDateString()}
+                            </span>
+                          </div>
+                        ))
+                      ) : (
+                        <div className="flex items-center justify-center h-full">
+                          <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>知识库暂无内容</span>
+                        </div>
+                      )}
+                    </div>
+
+                    <div className="flex items-center justify-between mt-2 pt-2.5"
+                      style={{ borderTop: '1px solid rgba(255,255,255,0.05)' }}>
+                      <div className="flex items-center gap-3 text-[11px]" style={{ color: 'var(--text-muted)' }}>
+                        <span><span style={{ color: 'var(--text-secondary)' }}>{s.documentCount}</span> 个文档</span>
                       </div>
+                      <span className="text-[10px]" style={{ color: 'var(--text-muted)' }}>
+                        {new Date(s.updatedAt).toLocaleDateString()}
+                      </span>
                     </div>
                   </div>
 
-                  {/* 最近文档预览列表 */}
-                  <div className="flex-1 mt-1.5 space-y-0.5 min-h-[60px]">
-                    {(s.recentEntries?.length ?? 0) > 0 ? (
-                      s.recentEntries.map((entry) => (
-                        <div key={entry.id} className="flex items-center gap-1.5 py-1 px-1 rounded-[6px] transition-colors hover:bg-white/3">
-                          <FileText size={11} className="flex-shrink-0" style={{ color: 'rgba(59,130,246,0.5)' }} />
-                          <span className="flex-1 text-[11px] truncate" style={{ color: 'var(--text-secondary)' }}>
-                            {entry.title}
-                          </span>
-                          <span className="text-[9px] flex-shrink-0" style={{ color: 'var(--text-muted)' }}>
-                            {new Date(entry.updatedAt).toLocaleDateString()}
-                          </span>
-                        </div>
-                      ))
-                    ) : (
-                      <div className="flex items-center justify-center h-full">
-                        <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>知识库暂无内容</span>
-                      </div>
+                  <div className="flex items-center gap-1.5 px-4 py-2.5 mt-auto"
+                    style={{ background: 'rgba(255,255,255,0.03)', borderTop: '1px solid rgba(255,255,255,0.05)' }}>
+                    <button className="surface-row flex-1 h-7 rounded-[8px] text-[11px] font-semibold flex items-center justify-center gap-1 cursor-pointer"
+                      style={{ background: 'rgba(59,130,246,0.08)', border: '1px solid rgba(59,130,246,0.15)', color: 'rgba(59,130,246,0.85)' }}>
+                      <FolderOpen size={11} /> 打开
+                    </button>
+                    {tab === 'mine' && (
+                      <button
+                        className="surface-row h-7 w-7 rounded-[8px] flex items-center justify-center cursor-pointer opacity-0 group-hover:opacity-100 transition-opacity"
+                        title="删除空间"
+                        onClick={async (e) => {
+                          e.stopPropagation();
+                          const res = await deleteDocumentStore(s.id);
+                          if (res.success) setStores(prev => prev.filter(x => x.id !== s.id));
+                        }}
+                        style={{ color: 'rgba(239,68,68,0.5)' }}>
+                        <Trash2 size={12} />
+                      </button>
                     )}
                   </div>
-
-                  <div className="flex items-center justify-between mt-2 pt-2.5"
-                    style={{ borderTop: '1px solid rgba(255,255,255,0.05)' }}>
-                    <div className="flex items-center gap-3 text-[11px]" style={{ color: 'var(--text-muted)' }}>
-                      <span><span style={{ color: 'var(--text-secondary)' }}>{s.documentCount}</span> 个文档</span>
-                    </div>
-                    <span className="text-[10px]" style={{ color: 'var(--text-muted)' }}>
-                      {new Date(s.updatedAt).toLocaleDateString()}
-                    </span>
-                  </div>
-                </div>
-
-                <div className="flex items-center gap-1.5 px-4 py-2.5 mt-auto"
-                  style={{ background: 'rgba(255,255,255,0.03)', borderTop: '1px solid rgba(255,255,255,0.05)' }}>
-                  <button className="surface-row flex-1 h-7 rounded-[8px] text-[11px] font-semibold flex items-center justify-center gap-1 cursor-pointer"
-                    style={{ background: 'rgba(59,130,246,0.08)', border: '1px solid rgba(59,130,246,0.15)', color: 'rgba(59,130,246,0.85)' }}>
-                    <FolderOpen size={11} /> 打开
-                  </button>
-                  <button
-                    className="surface-row h-7 w-7 rounded-[8px] flex items-center justify-center cursor-pointer opacity-0 group-hover:opacity-100 transition-opacity"
-                    title="删除空间"
-                    onClick={async (e) => {
-                      e.stopPropagation();
-                      const res = await deleteDocumentStore(s.id);
-                      if (res.success) setStores(prev => prev.filter(x => x.id !== s.id));
-                    }}
-                    style={{ color: 'rgba(239,68,68,0.5)' }}>
-                    <Trash2 size={12} />
-                  </button>
-                </div>
-              </GlassCard>
-            ))}
+                </GlassCard>
+              );
+            })}
           </div>
         )}
       </div>
@@ -1058,6 +1262,17 @@ export function DocumentStorePage() {
         <CreateStoreDialog
           onClose={() => setShowCreate(false)}
           onCreated={(s) => { setShowCreate(false); setSelectedStoreId(s.id); }}
+        />
+      )}
+
+      {renameTarget && (
+        <RenameStoreDialog
+          storeId={renameTarget.id}
+          initialName={renameTarget.name}
+          onClose={() => setRenameTarget(null)}
+          onRenamed={(newName) => {
+            setStores(prev => prev.map(x => x.id === renameTarget.id ? { ...x, name: newName } : x));
+          }}
         />
       )}
     </div>

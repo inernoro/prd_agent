@@ -265,6 +265,22 @@ export async function unfavoriteDocumentStore(storeId: string) {
   );
 }
 
+/** 列出我收藏的知识库（含最近文档预览 + 店主信息） */
+export async function listMyFavoriteDocumentStores() {
+  return await apiRequest<{ items: import('@/services/contracts/documentStore').InteractionStoreCard[] }>(
+    api.documentStore.stores.myFavorites(),
+    { method: 'GET' },
+  );
+}
+
+/** 列出我点赞的知识库（含最近文档预览 + 店主信息） */
+export async function listMyLikedDocumentStores() {
+  return await apiRequest<{ items: import('@/services/contracts/documentStore').InteractionStoreCard[] }>(
+    api.documentStore.stores.myLikes(),
+    { method: 'GET' },
+  );
+}
+
 /** 创建分享链接 */
 export async function createShareLink(storeId: string, input: { title?: string; description?: string; expiresInDays?: number }) {
   return await apiRequest<import('@/services/contracts/documentStore').DocumentStoreShareLink>(
