@@ -208,8 +208,14 @@ public class PrReviewPrismApiIntegrationTests : IClassFixture<WebApplicationFact
             using (var listDoc = JsonDocument.Parse(listBody))
             {
                 Assert.True(listDoc.RootElement.GetProperty("success").GetBoolean());
-                var items = listDoc.RootElement.GetProperty("data").GetProperty("items");
+                var data = listDoc.RootElement.GetProperty("data");
+                var items = data.GetProperty("items");
                 Assert.Contains(items.EnumerateArray(), x => x.GetProperty("id").GetString() == submissionId);
+                var gateStatusCounts = data.GetProperty("gateStatusCounts");
+                Assert.True(gateStatusCounts.TryGetProperty("pending", out _));
+                Assert.True(gateStatusCounts.TryGetProperty("completed", out _));
+                Assert.True(gateStatusCounts.TryGetProperty("missing", out _));
+                Assert.True(gateStatusCounts.TryGetProperty("error", out _));
             }
 
             // 4) Get by id

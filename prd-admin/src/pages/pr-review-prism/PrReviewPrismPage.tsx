@@ -52,18 +52,21 @@ export function PrReviewPrismPage() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [formError, setFormError] = useState<string | null>(null);
   const [listError, setListError] = useState<string | null>(null);
+  const [gateStatusCounts, setGateStatusCounts] = useState<{
+    all: number;
+    completed: number;
+    pending: number;
+    missing: number;
+    error: number;
+  }>({
+    all: 0,
+    completed: 0,
+    pending: 0,
+    missing: 0,
+    error: 0,
+  });
 
   const filteredItems = useMemo(() => items, [items]);
-
-  const gateCounts = useMemo(
-    () => ({
-      completed: items.filter(x => x.gateStatus === 'completed').length,
-      pending: items.filter(x => x.gateStatus === 'pending').length,
-      missing: items.filter(x => x.gateStatus === 'missing').length,
-      error: items.filter(x => x.gateStatus === 'error').length,
-    }),
-    [items]
-  );
 
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
   const batchProgressPercent = useMemo(() => {
@@ -100,6 +103,17 @@ export function PrReviewPrismPage() {
         setTotal(res.data.total);
         setPage(res.data.page);
         setPageSize(res.data.pageSize);
+        setGateStatusCounts({
+          all:
+            res.data.gateStatusCounts.completed +
+            res.data.gateStatusCounts.pending +
+            res.data.gateStatusCounts.missing +
+            res.data.gateStatusCounts.error,
+          completed: res.data.gateStatusCounts.completed,
+          pending: res.data.gateStatusCounts.pending,
+          missing: res.data.gateStatusCounts.missing,
+          error: res.data.gateStatusCounts.error,
+        });
         setSelectedId(prev => {
           if (prev && res.data.items.some(x => x.id === prev)) {
             return prev;
@@ -109,6 +123,13 @@ export function PrReviewPrismPage() {
       } else {
         setItems([]);
         setTotal(0);
+        setGateStatusCounts({
+          all: 0,
+          completed: 0,
+          pending: 0,
+          missing: 0,
+          error: 0,
+        });
         setSelectedId(null);
         setListError(res.error?.message ?? '加载提交记录失败');
       }
@@ -452,7 +473,7 @@ export function PrReviewPrismPage() {
                     : 'border-white/10 bg-white/5 text-white/65 hover:bg-white/10'
                 }`}
               >
-                全部 ({items.length})
+                全部 ({gateStatusCounts.all})
               </button>
               <button
                 type="button"
@@ -466,7 +487,7 @@ export function PrReviewPrismPage() {
                     : 'border-white/10 bg-white/5 text-white/65 hover:bg-white/10'
                 }`}
               >
-                completed ({gateCounts.completed})
+                completed ({gateStatusCounts.completed})
               </button>
               <button
                 type="button"
@@ -480,7 +501,7 @@ export function PrReviewPrismPage() {
                     : 'border-white/10 bg-white/5 text-white/65 hover:bg-white/10'
                 }`}
               >
-                pending ({gateCounts.pending})
+                pending ({gateStatusCounts.pending})
               </button>
               <button
                 type="button"
@@ -494,7 +515,7 @@ export function PrReviewPrismPage() {
                     : 'border-white/10 bg-white/5 text-white/65 hover:bg-white/10'
                 }`}
               >
-                missing ({gateCounts.missing})
+                missing ({gateStatusCounts.missing})
               </button>
               <button
                 type="button"
@@ -508,7 +529,7 @@ export function PrReviewPrismPage() {
                     : 'border-white/10 bg-white/5 text-white/65 hover:bg-white/10'
                 }`}
               >
-                error ({gateCounts.error})
+                error ({gateStatusCounts.error})
               </button>
             </div>
             {batchProgress && (

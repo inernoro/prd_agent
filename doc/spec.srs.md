@@ -2173,6 +2173,7 @@ sequenceDiagram
 - `POST /api/pr-review-prism/submissions` — 提交 PR 链接并创建/复用记录
 - `GET /api/pr-review-prism/submissions` — 当前用户提交列表（支持 `q` 检索）
 - `GET /api/pr-review-prism/submissions?gateStatus={status}` — 按 Gate 状态筛选（`pending/completed/missing/error`）
+- `GET /api/pr-review-prism/submissions` 响应附带 `gateStatusCounts`，用于前端展示全局筛选计数
 - `GET /api/pr-review-prism/submissions/{id}` — 提交详情
 - `POST /api/pr-review-prism/submissions/{id}/refresh` — 手动刷新快照
 - `POST /api/pr-review-prism/submissions/batch-refresh` — 批量刷新提交快照（最多 100 条）

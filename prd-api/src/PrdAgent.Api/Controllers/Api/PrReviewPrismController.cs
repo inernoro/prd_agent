@@ -146,37 +146,59 @@ public sealed class PrReviewPrismController : ControllerBase
 
         var userId = this.GetRequiredUserId();
         var filterBuilder = Builders<PrReviewPrismSubmission>.Filter;
-        var filter = filterBuilder.Eq(x => x.OwnerUserId, userId);
+        var allowedGateStatus = new[]
+        {
+            PrReviewPrismGateStatuses.Pending,
+            PrReviewPrismGateStatuses.Completed,
+            PrReviewPrismGateStatuses.Missing,
+            PrReviewPrismGateStatuses.Error
+        };
+        string? normalizedGateStatus = null;
         if (!string.IsNullOrWhiteSpace(gateStatus))
         {
-            var normalizedGateStatus = gateStatus.Trim().ToLowerInvariant();
-            var allowedGateStatus = new[]
-            {
-                PrReviewPrismGateStatuses.Pending,
-                PrReviewPrismGateStatuses.Completed,
-                PrReviewPrismGateStatuses.Missing,
-                PrReviewPrismGateStatuses.Error
-            };
+            normalizedGateStatus = gateStatus.Trim().ToLowerInvariant();
             if (!allowedGateStatus.Contains(normalizedGateStatus))
             {
                 return BadRequest(ApiResponse<object>.Fail(
                     ErrorCodes.INVALID_FORMAT,
                     $"gateStatus 不支持：{gateStatus}"));
             }
-
-            filter &= filterBuilder.Eq(x => x.GateStatus, normalizedGateStatus);
         }
 
+        var baseFilter = filterBuilder.Eq(x => x.OwnerUserId, userId);
         if (!string.IsNullOrWhiteSpace(q))
         {
             var keyword = q.Trim();
             var regex = new MongoDB.Bson.BsonRegularExpression(keyword, "i");
-            filter &= filterBuilder.Or(
+            baseFilter &= filterBuilder.Or(
                 filterBuilder.Regex(x => x.PullRequestTitle, regex),
                 filterBuilder.Regex(x => x.RepoOwner, regex),
                 filterBuilder.Regex(x => x.RepoName, regex),
                 filterBuilder.Regex(x => x.Note, regex));
         }
+
+        var filter = baseFilter;
+        if (!string.IsNullOrWhiteSpace(normalizedGateStatus))
+        {
+            filter &= filterBuilder.Eq(x => x.GateStatus, normalizedGateStatus);
+        }
+
+        var gateStatusCounts = new
+        {
+            all = await _db.PrReviewPrismSubmissions.CountDocumentsAsync(baseFilter, cancellationToken: CancellationToken.None),
+            pending = await _db.PrReviewPrismSubmissions.CountDocumentsAsync(
+                baseFilter & filterBuilder.Eq(x => x.GateStatus, PrReviewPrismGateStatuses.Pending),
+                cancellationToken: CancellationToken.None),
+            completed = await _db.PrReviewPrismSubmissions.CountDocumentsAsync(
+                baseFilter & filterBuilder.Eq(x => x.GateStatus, PrReviewPrismGateStatuses.Completed),
+                cancellationToken: CancellationToken.None),
+            missing = await _db.PrReviewPrismSubmissions.CountDocumentsAsync(
+                baseFilter & filterBuilder.Eq(x => x.GateStatus, PrReviewPrismGateStatuses.Missing),
+                cancellationToken: CancellationToken.None),
+            error = await _db.PrReviewPrismSubmissions.CountDocumentsAsync(
+                baseFilter & filterBuilder.Eq(x => x.GateStatus, PrReviewPrismGateStatuses.Error),
+                cancellationToken: CancellationToken.None),
+        };
 
         var total = await _db.PrReviewPrismSubmissions.CountDocumentsAsync(filter, cancellationToken: CancellationToken.None);
         var items = await _db.PrReviewPrismSubmissions
@@ -186,7 +208,7 @@ public sealed class PrReviewPrismController : ControllerBase
             .Limit(pageSize)
             .ToListAsync(CancellationToken.None);
 
-        return Ok(ApiResponse<object>.Ok(new { items, total, page, pageSize }));
+        return Ok(ApiResponse<object>.Ok(new { items, total, page, pageSize, gateStatusCounts }));
     }
 
     [HttpGet("submissions/{id}")]

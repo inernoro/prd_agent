@@ -54,6 +54,13 @@ export interface PrReviewPrismBatchRefreshResult {
   failures: PrReviewPrismBatchRefreshFailure[];
 }
 
+export interface PrReviewPrismGateStatusCounts {
+  completed: number;
+  pending: number;
+  missing: number;
+  error: number;
+}
+
 export async function getPrReviewPrismStatus(): Promise<ApiResponse<PrReviewPrismStatus>> {
   return apiRequest(api.prReviewPrism.status());
 }
@@ -63,7 +70,13 @@ export async function listPrReviewPrismSubmissions(
   pageSize = 20,
   q?: string,
   gateStatus?: PrReviewPrismGateStatus
-): Promise<ApiResponse<{ items: PrReviewPrismSubmission[]; total: number; page: number; pageSize: number }>> {
+): Promise<ApiResponse<{
+  items: PrReviewPrismSubmission[];
+  total: number;
+  page: number;
+  pageSize: number;
+  gateStatusCounts: PrReviewPrismGateStatusCounts;
+}>> {
   const params = new URLSearchParams({
     page: String(page),
     pageSize: String(pageSize),
