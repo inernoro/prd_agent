@@ -135,7 +135,7 @@ cd prd-api && dotnet build --no-restore 2>&1 | grep -E "error CS|warning CS" | h
 
 ### 9. 新功能/新 Agent 导航默认去百宝箱 + 必须声明位置
 
-新 Agent 默认注册到百宝箱（`prd-admin/src/stores/toolboxStore.ts` 的 `BUILTIN_TOOLS`），左侧导航和首页快捷为可选升级。交付消息必须包含两行：
+新 Agent 默认注册到百宝箱（`prd-admin/src/stores/toolboxStore.ts` 的 `BUILTIN_TOOLS`），左侧导航和首页快捷为可选升级。**新条目必须带 `wip: true`**，通过规则 #8 完成标准验收后才删除该字段转为正式发布。交付消息必须包含两行：
 
 ```
 【位置】百宝箱 / 左侧导航"XX"菜单 / 首页快捷入口
