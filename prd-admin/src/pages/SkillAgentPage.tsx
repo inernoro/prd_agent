@@ -559,7 +559,7 @@ function MySkillsTab({ onSwitchToCreate }: { onSwitchToCreate: () => void }) {
   );
 }
 
-// ━━━ Skill Detail View (left: md editor, right: test) ━━━━━━━━
+// ━━━ Skill Detail View (left: md editor 6, right: test 4) ━━━━━━━━
 
 function SkillDetailView({ skill, onBack, onDelete }: {
   skill: PersonalSkillItem; onBack: () => void; onDelete: () => void;
@@ -614,7 +614,6 @@ function SkillDetailView({ skill, onBack, onDelete }: {
   };
 
   const handleCopyMd = async () => {
-    // Write both text/plain and text/html to clipboard for rich paste
     const htmlContent = `<pre>${testResult.replace(/&/g, '&amp;').replace(/</g, '&lt;')}</pre>`;
     await navigator.clipboard.write([
       new ClipboardItem({
@@ -624,6 +623,8 @@ function SkillDetailView({ skill, onBack, onDelete }: {
     ]);
     setCopied('md'); setTimeout(() => setCopied(null), 1500);
   };
+
+  const showResult = testResult || testStreaming;
 
   return (
     <div className="flex-1 min-h-0 flex flex-col px-3 pb-3 pt-2">
@@ -645,10 +646,10 @@ function SkillDetailView({ skill, onBack, onDelete }: {
         </button>
       </div>
 
-      {/* Main: left editor + right test */}
+      {/* Main: left editor (flex:6) + right test (flex:4) */}
       <div className="flex-1 min-h-0 flex gap-3">
-        {/* Left: SKILL.md Editor */}
-        <GlassCard className="flex-1 flex flex-col" padding="none" style={{ overflow: 'hidden' }}>
+        {/* Left: SKILL.md Editor — flex:6 */}
+        <GlassCard className="flex flex-col" padding="none" style={{ overflow: 'hidden', flex: '6 6 0%', minWidth: 0 }}>
           <div className="shrink-0 flex items-center gap-2 px-4 py-2.5" style={{ borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
             <FileText size={13} style={{ color: '#8B5CF6' }} />
             <span className="text-[12px] font-semibold" style={{ color: 'var(--text-primary)' }}>SKILL.md</span>
@@ -685,10 +686,10 @@ function SkillDetailView({ skill, onBack, onDelete }: {
           </div>
         </GlassCard>
 
-        {/* Right: Test Panel */}
-        <div className="flex flex-col gap-3 w-[380px] shrink-0">
-          {/* Input */}
-          <GlassCard className="flex flex-col" padding="none" style={{ overflow: 'hidden' }}>
+        {/* Right: Test Panel — flex:4 */}
+        <div className="flex flex-col gap-3" style={{ flex: '4 4 0%', minWidth: 0 }}>
+          {/* Input area */}
+          <GlassCard className="flex flex-col shrink-0" padding="none" style={{ overflow: 'hidden' }}>
             <div className="px-4 py-2.5 flex items-center gap-2" style={{ borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
               <Play size={13} style={{ color: '#8B5CF6' }} />
               <span className="text-[12px] font-semibold" style={{ color: 'var(--text-primary)' }}>测试输入</span>
@@ -711,18 +712,23 @@ function SkillDetailView({ skill, onBack, onDelete }: {
                   color: testStreaming ? '#C4B5FD' : 'white',
                 }}>
                 {testStreaming ? <Loader2 size={14} className="animate-spin" /> : <Play size={14} />}
-                {testStreaming ? '生成中…' : '运行测试'}
+                {testStreaming ? '正在生成…' : '运行测试'}
               </button>
             </div>
           </GlassCard>
 
-          {/* Result */}
+          {/* Result area — fills remaining space */}
           <GlassCard className="flex-1 flex flex-col" padding="none" style={{ overflow: 'hidden', minHeight: 0 }}>
             <div className="shrink-0 px-4 py-2.5 flex items-center gap-2" style={{ borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
               <Bot size={13} style={{ color: '#22C55E' }} />
               <span className="text-[12px] font-semibold" style={{ color: 'var(--text-primary)' }}>输出结果</span>
+              {testStreaming && (
+                <span className="flex items-center gap-1 text-[10px]" style={{ color: '#8B5CF6' }}>
+                  <Loader2 size={10} className="animate-spin" /> 生成中
+                </span>
+              )}
               <div className="flex-1" />
-              {testResult && (
+              {testResult && !testStreaming && (
                 <div className="flex items-center gap-1">
                   <button onClick={handleCopyText}
                     className="flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-medium transition-colors hover:bg-white/5"
@@ -738,13 +744,19 @@ function SkillDetailView({ skill, onBack, onDelete }: {
               )}
             </div>
             <div ref={resultRef} className="flex-1 overflow-y-auto px-4 py-3" style={{ minHeight: 0 }}>
-              {testResult ? (
-                <pre className="text-[13px] leading-relaxed whitespace-pre-wrap" style={{ color: 'var(--text-primary)' }}>
-                  {testResult}
-                </pre>
+              {showResult ? (
+                <div>
+                  <pre className="text-[13px] leading-relaxed whitespace-pre-wrap" style={{ color: 'var(--text-primary)' }}>
+                    {testResult}
+                    {testStreaming && <span className="inline-block w-[2px] h-[14px] ml-0.5 animate-pulse" style={{ background: '#8B5CF6', verticalAlign: 'text-bottom' }} />}
+                  </pre>
+                </div>
               ) : (
-                <div className="flex items-center justify-center h-full text-[12px]" style={{ color: 'var(--text-muted)' }}>
-                  运行测试后结果会显示在这里
+                <div className="flex flex-col items-center justify-center h-full gap-2">
+                  <Bot size={24} style={{ color: 'rgba(255,255,255,0.08)' }} />
+                  <span className="text-[12px]" style={{ color: 'var(--text-muted)' }}>
+                    输入内容后点击运行，结果将实时显示
+                  </span>
                 </div>
               )}
             </div>

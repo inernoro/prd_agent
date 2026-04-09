@@ -290,7 +290,11 @@ public class SkillAgentService
         if (!string.IsNullOrWhiteSpace(userInput))
             prompt = prompt.Replace("{{userInput}}", userInput);
 
-        var systemPrompt = skill.Execution.SystemPromptOverride ?? "你是一个专业的 AI 助手。请根据指令完成任务。";
+        var systemPrompt = skill.Execution.SystemPromptOverride ??
+            "你是一位资深专家级 AI 助手。请严格按照指令要求完成任务。" +
+            "输出要求：结构清晰、逻辑严谨、语言专业、格式规范。" +
+            "如果指令要求特定输出格式（表格、列表、分段等），必须严格遵循。" +
+            "对于分析类任务，要有明确的结论和可操作的建议。";
         var messages = new List<LLMMessage> { new() { Role = "user", Content = prompt } };
 
         yield return new SseChunk("start", new { skillKey = skill.SkillKey, title = skill.Title });
