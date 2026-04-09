@@ -397,7 +397,15 @@ export function LibraryLandingPage() {
 
 function FloatingNavbar({ onStartExplore, onBack }: { onStartExplore: () => void; onBack: () => void }) {
   return (
-    <nav className="sticky top-6 z-50 px-4 md:px-6 pt-0">
+    <nav
+      className="z-50 px-4 md:px-6"
+      style={{
+        position: 'fixed',
+        top: 24,
+        left: 0,
+        right: 0,
+      }}
+    >
       <div
         className="max-w-6xl mx-auto rounded-[28px] px-5 md:px-6 py-3 flex items-center justify-between"
         style={{
@@ -749,16 +757,22 @@ function Testimonial({
 }) {
   return (
     <div
-      className="p-7 rounded-[24px] transition-all hover:-translate-y-1 cursor-default"
+      className="rounded-[24px] transition-all hover:-translate-y-1 cursor-default"
       style={{
         background: '#FFFFFF',
         border: '3px solid #1E1B4B',
         boxShadow: '6px 6px 0 #1E1B4B',
+        padding: 28,
       }}
     >
       <div
-        className="w-16 h-16 rounded-2xl flex items-center justify-center mb-5"
+        className="rounded-2xl flex items-center justify-center"
         style={{
+          width: 64,
+          height: 64,
+          minWidth: 64,
+          minHeight: 64,
+          marginBottom: 20,
           background: iconBg,
           border: '3px solid #1E1B4B',
           boxShadow: '0 4px 0 #1E1B4B',
@@ -767,17 +781,18 @@ function Testimonial({
         <Icon size={26} style={{ color: iconColor }} strokeWidth={2.5} />
       </div>
       <h3
-        className="text-[22px] mb-3"
         style={{
           fontFamily: "'Fredoka', sans-serif",
           fontWeight: 700,
           color: '#1E1B4B',
           letterSpacing: '-0.01em',
+          fontSize: 22,
+          marginBottom: 12,
         }}
       >
         {title}
       </h3>
-      <p className="text-[14px] font-medium" style={{ color: '#64748B', lineHeight: 1.65 }}>
+      <p style={{ color: '#64748B', lineHeight: 1.65, fontSize: 14, fontWeight: 500 }}>
         {body}
       </p>
     </div>

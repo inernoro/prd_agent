@@ -177,7 +177,7 @@ export function LibraryStoreDetailPage() {
       />
 
       {/* Hero 头部 */}
-      <section className="relative pt-8 pb-8 px-6">
+      <section className="relative pt-32 pb-8 px-6">
         <div className="max-w-6xl mx-auto">
           <div
             className="p-8 rounded-[32px] relative"
@@ -317,7 +317,15 @@ function DetailNavbar({
   onBack: () => void;
 }) {
   return (
-    <nav className="sticky top-6 z-50 px-4 md:px-6 pt-0">
+    <nav
+      className="z-50 px-4 md:px-6"
+      style={{
+        position: 'fixed',
+        top: 24,
+        left: 0,
+        right: 0,
+      }}
+    >
       <div
         className="max-w-6xl mx-auto rounded-[28px] px-5 md:px-6 py-3 flex items-center justify-between gap-4"
         style={{
