@@ -22,6 +22,8 @@ import {
   ChevronRight,
   ChevronDown,
   BookOpen,
+  Maximize2,
+  Minimize2,
 } from 'lucide-react';
 import type { DocumentEntry } from '@/services/contracts/documentStore';
 import { getFileTypeConfig } from '@/lib/fileTypeRegistry';
@@ -52,8 +54,24 @@ export function LibraryDocReader({
   const [loading, setLoading] = useState(false);
   const [loadedId, setLoadedId] = useState<string | null>(null);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const [fullscreen, setFullscreen] = useState(false);
 
   const pinnedSet = useMemo(() => new Set(pinnedEntryIds), [pinnedEntryIds]);
+
+  // 全屏时锁定 body 滚动 + 监听 ESC 退出
+  useEffect(() => {
+    if (!fullscreen) return;
+    const prevOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setFullscreen(false);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => {
+      document.body.style.overflow = prevOverflow;
+      window.removeEventListener('keydown', onKey);
+    };
+  }, [fullscreen]);
 
   // 构建树（过滤掉 github_directory）
   const { roots, childrenMap } = useMemo(() => {
@@ -129,15 +147,57 @@ export function LibraryDocReader({
 
   return (
     <div
-      className="flex h-full overflow-hidden"
+      className="flex overflow-hidden relative"
       style={{
         background: '#FFFBF0',
-        borderRadius: 24,
-        border: '4px solid #1E1B4B',
-        boxShadow: '8px 8px 0 #1E1B4B',
+        borderRadius: fullscreen ? 0 : 24,
+        border: fullscreen ? 'none' : '4px solid #1E1B4B',
+        boxShadow: fullscreen ? 'none' : '8px 8px 0 #1E1B4B',
         fontFamily: "'Nunito', system-ui, sans-serif",
+        ...(fullscreen
+          ? {
+              position: 'fixed',
+              top: 0,
+              left: 0,
+              right: 0,
+              bottom: 0,
+              width: '100vw',
+              height: '100vh',
+              zIndex: 9999,
+            }
+          : {
+              height: '100%',
+            }),
       }}
     >
+      {/* 右上角浮动按钮：全屏 / 退出全屏 */}
+      <button
+        onClick={() => setFullscreen((f) => !f)}
+        title={fullscreen ? '退出全屏 (ESC)' : '全屏阅读'}
+        aria-label={fullscreen ? '退出全屏' : '全屏阅读'}
+        className="absolute hover:-translate-y-0.5 transition-transform cursor-pointer"
+        style={{
+          top: 14,
+          right: 14,
+          zIndex: 30,
+          width: 40,
+          height: 40,
+          borderRadius: 12,
+          background: '#FFFFFF',
+          border: '3px solid #1E1B4B',
+          boxShadow: '0 3px 0 #1E1B4B',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+        }}
+      >
+        {fullscreen ? (
+          <Minimize2 size={16} strokeWidth={2.8} style={{ color: '#1E1B4B' }} />
+        ) : (
+          <Maximize2 size={16} strokeWidth={2.8} style={{ color: '#1E1B4B' }} />
+        )}
+      </button>
+
       {/* 左侧文件树 */}
       <div
         className="w-[300px] flex-shrink-0 flex flex-col overflow-hidden"
