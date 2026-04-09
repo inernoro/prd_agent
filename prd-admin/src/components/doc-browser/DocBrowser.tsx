@@ -1,8 +1,27 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import remarkMath from 'remark-math';
+import rehypeKatex from 'rehype-katex';
+import 'katex/dist/katex.min.css';
+import GithubSlugger from 'github-slugger';
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { oneDark } from 'react-syntax-highlighter/dist/esm/styles/prism';
+
+// ── Markdown heading slug 辅助 ──
+function childrenToText(children: unknown): string {
+  if (children == null) return '';
+  if (typeof children === 'string') return children;
+  if (Array.isArray(children)) return children.map(childrenToText).join('');
+  if (typeof children === 'object' && children !== null && 'props' in children) {
+    const props = (children as { props?: { children?: unknown } }).props;
+    return childrenToText(props?.children);
+  }
+  return '';
+}
+function normalizeHeadingText(raw: string): string {
+  return String(raw || '').replace(/\s+#+\s*$/, '').replace(/\s+/g, ' ').trim();
+}
 import {
   FileText, FolderOpen, FolderClosed, Star, Rss, Github,
   Search, ChevronRight, ChevronDown, Plus, Pin, PinOff,
@@ -12,6 +31,7 @@ import {
 import { getFileTypeConfig } from '@/lib/fileTypeRegistry';
 import type { FilePreviewKind } from '@/lib/fileTypeRegistry';
 import { MapSpinner, MapSectionLoader } from '@/components/ui/VideoLoader';
+import { systemDialog } from '@/lib/systemDialog';
 
 // ── 类型 ──
 
@@ -405,20 +425,74 @@ function Breadcrumbs({ entryId, entries }: { entryId: string; entries: DocBrowse
 // ── Markdown 渲染器 ──
 
 function MarkdownViewer({ content }: { content: string }) {
+  // 每次 content 变化都重建 slugger，确保同名 heading 得到稳定干净的 slug
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const slugger = useMemo(() => new GithubSlugger(), [content]);
+  const mkHeading = useCallback(
+    (Tag: 'h1' | 'h2' | 'h3' | 'h4' | 'h5' | 'h6') => ({ children }: { children?: React.ReactNode }) => {
+      const text = normalizeHeadingText(childrenToText(children));
+      const id = text ? slugger.slug(text) : undefined;
+      const classesByTag: Record<string, string> = {
+        h1: 'text-[22px] font-bold mt-6 mb-3 pb-2 scroll-mt-24',
+        h2: 'text-[18px] font-bold mt-5 mb-2.5 pb-1.5 scroll-mt-24',
+        h3: 'text-[15px] font-semibold mt-4 mb-2 scroll-mt-24',
+        h4: 'text-[14px] font-semibold mt-3 mb-1.5 scroll-mt-24',
+        h5: 'text-[13px] font-semibold mt-3 mb-1 scroll-mt-24',
+        h6: 'text-[12px] font-semibold mt-2 mb-1 scroll-mt-24',
+      };
+      const style: React.CSSProperties =
+        Tag === 'h1'
+          ? { borderBottom: '1px solid rgba(255,255,255,0.06)', color: 'var(--text-primary)' }
+          : Tag === 'h2'
+            ? { borderBottom: '1px solid rgba(255,255,255,0.04)', color: 'var(--text-primary)' }
+            : { color: 'var(--text-primary)' };
+      return <Tag id={id} className={classesByTag[Tag]} style={style}>{children}</Tag>;
+    },
+    [slugger],
+  );
   return (
     <div className="prose-invert max-w-none text-[13px] leading-relaxed">
       <ReactMarkdown
-        remarkPlugins={[remarkGfm]}
+        remarkPlugins={[remarkGfm, remarkMath]}
+        rehypePlugins={[rehypeKatex]}
         components={{
-          h1: ({ children }) => <h1 className="text-[22px] font-bold mt-6 mb-3 pb-2" style={{ borderBottom: '1px solid rgba(255,255,255,0.06)', color: 'var(--text-primary)' }}>{children}</h1>,
-          h2: ({ children }) => <h2 className="text-[18px] font-bold mt-5 mb-2.5 pb-1.5" style={{ borderBottom: '1px solid rgba(255,255,255,0.04)', color: 'var(--text-primary)' }}>{children}</h2>,
-          h3: ({ children }) => <h3 className="text-[15px] font-semibold mt-4 mb-2" style={{ color: 'var(--text-primary)' }}>{children}</h3>,
-          h4: ({ children }) => <h4 className="text-[14px] font-semibold mt-3 mb-1.5" style={{ color: 'var(--text-primary)' }}>{children}</h4>,
+          h1: mkHeading('h1'),
+          h2: mkHeading('h2'),
+          h3: mkHeading('h3'),
+          h4: mkHeading('h4'),
+          h5: mkHeading('h5'),
+          h6: mkHeading('h6'),
           p: ({ children }) => <p className="my-2 whitespace-pre-wrap break-words" style={{ color: 'var(--text-secondary, rgba(255,255,255,0.78))' }}>{children}</p>,
-          a: ({ href, children }) => <a href={href} target="_blank" rel="noopener noreferrer" className="underline underline-offset-2" style={{ color: 'rgba(96,165,250,0.9)' }}>{children}</a>,
-          ul: ({ children }) => <ul className="list-disc pl-5 my-2 space-y-0.5" style={{ color: 'var(--text-secondary)' }}>{children}</ul>,
+          a: ({ href, children }) => {
+            // 锚点 → SPA 内 scroll，不新开标签页
+            if (href && href.startsWith('#')) {
+              return (
+                <a href={href} className="underline underline-offset-2" style={{ color: 'rgba(96,165,250,0.9)' }}
+                  onClick={(e) => {
+                    e.preventDefault();
+                    const id = decodeURIComponent(href.slice(1));
+                    const target = document.getElementById(id);
+                    if (target) target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                  }}>
+                  {children}
+                </a>
+              );
+            }
+            return <a href={href} target="_blank" rel="noopener noreferrer" className="underline underline-offset-2" style={{ color: 'rgba(96,165,250,0.9)' }}>{children}</a>;
+          },
+          ul: ({ children, className }) => {
+            const isTaskList = className?.includes('contains-task-list');
+            return (
+              <ul className={`${isTaskList ? 'list-none pl-2' : 'list-disc pl-5'} my-2 space-y-0.5`} style={{ color: 'var(--text-secondary)' }}>
+                {children}
+              </ul>
+            );
+          },
           ol: ({ children }) => <ol className="list-decimal pl-5 my-2 space-y-0.5" style={{ color: 'var(--text-secondary)' }}>{children}</ol>,
-          li: ({ children }) => <li className="text-[13px]">{children}</li>,
+          li: ({ children, className }) => {
+            const isTaskItem = className?.includes('task-list-item');
+            return <li className={`text-[13px] ${isTaskItem ? 'flex items-start gap-2' : ''}`}>{children}</li>;
+          },
           blockquote: ({ children }) => (
             <blockquote className="my-3 pl-3 py-1" style={{ borderLeft: '3px solid rgba(96,165,250,0.3)', color: 'var(--text-muted)' }}>{children}</blockquote>
           ),
@@ -1239,10 +1313,26 @@ export function DocBrowser({
           isPinned={pinnedSet.has(contextMenu.entry.id)}
           onSetPrimary={onSetPrimary}
           onTogglePin={onTogglePin}
-          onDelete={onDeleteEntry ? (entryId) => {
-            if (confirm(`确定删除「${contextMenu.entry.title}」？${contextMenu.entry.isFolder ? '(仅删除文件夹本身)' : ''}`)) {
-              onDeleteEntry(entryId);
-            }
+          onDelete={onDeleteEntry ? async (entryId) => {
+            const target = contextMenu.entry;
+            const isFolder = target.isFolder;
+            const isGithub = target.sourceType === 'github_directory';
+            const isSubscription = target.sourceType === 'subscription' || isGithub;
+            const consequence = isGithub
+              ? '所有同步来的子文档、解析正文、附件、同步日志'
+              : isFolder
+                ? '文件夹下所有子文档、解析正文、附件、同步日志'
+                : isSubscription
+                  ? '解析正文、同步日志'
+                  : '解析正文、附件文件';
+            const confirmed = await systemDialog.confirm({
+              title: `确认删除${isFolder ? '文件夹' : '文档'}`,
+              message: `删除「${target.title}」将永久清除：\n  · ${consequence}\n\n此操作不可恢复。`,
+              tone: 'danger',
+              confirmText: '永久删除',
+              cancelText: '取消',
+            });
+            if (confirmed) onDeleteEntry(entryId);
           } : undefined}
           onClose={() => setContextMenu(null)}
         />

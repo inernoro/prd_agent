@@ -57,6 +57,7 @@ import type {
 } from '@/services/contracts/documentStore';
 import type { DocBrowserEntry, EntryPreview } from '@/components/doc-browser/DocBrowser';
 import { toast } from '@/lib/toast';
+import { systemDialog } from '@/lib/systemDialog';
 import { SubscriptionDetailDrawer } from './SubscriptionDetailDrawer';
 
 const ACCEPT_TYPES = '.md,.txt,.pdf,.doc,.docx,.json,.yaml,.yml,.csv';
@@ -1054,8 +1055,22 @@ export function DocumentStorePage() {
                     title="删除空间"
                     onClick={async (e) => {
                       e.stopPropagation();
+                      const entryCount = s.documentCount ?? 0;
+                      const confirmed = await systemDialog.confirm({
+                        title: '确认删除知识库',
+                        message: `删除「${s.name}」将永久清除：\n  · ${entryCount} 个文档条目\n  · 所有订阅同步日志\n  · 所有附件文件与解析正文\n  · 所有点赞 / 收藏 / 分享链接\n\n此操作不可恢复。`,
+                        tone: 'danger',
+                        confirmText: '永久删除',
+                        cancelText: '取消',
+                      });
+                      if (!confirmed) return;
                       const res = await deleteDocumentStore(s.id);
-                      if (res.success) setStores(prev => prev.filter(x => x.id !== s.id));
+                      if (res.success) {
+                        setStores(prev => prev.filter(x => x.id !== s.id));
+                        toast.success('知识库已删除', '关联数据已全部清理');
+                      } else {
+                        toast.error('删除失败', res.error?.message);
+                      }
                     }}
                     style={{ color: 'rgba(239,68,68,0.5)' }}>
                     <Trash2 size={12} />

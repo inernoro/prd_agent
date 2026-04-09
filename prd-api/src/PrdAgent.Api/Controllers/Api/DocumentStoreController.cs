@@ -172,7 +172,7 @@ public class DocumentStoreController : ControllerBase
         return Ok(ApiResponse<object>.Ok(new { primaryEntryId = request.EntryId }));
     }
 
-    /// <summary>删除文档空间（同时删除空间内所有条目）</summary>
+    /// <summary>删除文档空间（级联清理所有关联数据）</summary>
     [HttpDelete("stores/{storeId}")]
     public async Task<IActionResult> DeleteStore(string storeId)
     {
@@ -181,14 +181,53 @@ public class DocumentStoreController : ControllerBase
         if (store == null)
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "文档空间不存在"));
 
-        // 删除空间内所有条目
-        var deleteResult = await _db.DocumentEntries.DeleteManyAsync(e => e.StoreId == storeId);
+        // 1) 先拿到所有条目，收集正文/附件 ID 列表
+        var entries = await _db.DocumentEntries.Find(e => e.StoreId == storeId).ToListAsync();
+        var documentIds = entries.Where(e => !string.IsNullOrEmpty(e.DocumentId)).Select(e => e.DocumentId!).ToList();
+        var attachmentIds = entries.Where(e => !string.IsNullOrEmpty(e.AttachmentId)).Select(e => e.AttachmentId!).ToList();
+
+        // 2) 级联清理关联数据（顺序不敏感，失败任何一步都不回滚——MongoDB 无事务）
+        var entriesResult = await _db.DocumentEntries.DeleteManyAsync(e => e.StoreId == storeId);
+        var syncLogsResult = await _db.DocumentSyncLogs.DeleteManyAsync(l => l.StoreId == storeId);
+        var likesResult = await _db.DocumentStoreLikes.DeleteManyAsync(l => l.StoreId == storeId);
+        var favoritesResult = await _db.DocumentStoreFavorites.DeleteManyAsync(f => f.StoreId == storeId);
+        var shareLinksResult = await _db.DocumentStoreShareLinks.DeleteManyAsync(s => s.StoreId == storeId);
+
+        // 正文：只有通过此 Store 关联的 ParsedPrd 才删（其他模块可能也引用 documents 集合，所以按 ID 列表删）
+        long documentsDeleted = 0;
+        if (documentIds.Count > 0)
+        {
+            var res = await _db.Documents.DeleteManyAsync(d => documentIds.Contains(d.Id));
+            documentsDeleted = res.DeletedCount;
+        }
+
+        // 附件
+        long attachmentsDeleted = 0;
+        if (attachmentIds.Count > 0)
+        {
+            var res = await _db.Attachments.DeleteManyAsync(a => attachmentIds.Contains(a.Id));
+            attachmentsDeleted = res.DeletedCount;
+        }
+
+        // 3) 最后删 store 自身
         await _db.DocumentStores.DeleteOneAsync(s => s.Id == storeId);
 
-        _logger.LogInformation("[document-store] Store deleted: {StoreId} with {Count} entries by {UserId}",
-            storeId, deleteResult.DeletedCount, userId);
+        _logger.LogInformation(
+            "[document-store] Store cascaded deleted: {StoreId} by {UserId} | entries={Entries} syncLogs={Logs} docs={Docs} attachments={Atts} likes={Likes} favorites={Favs} shareLinks={Links}",
+            storeId, userId, entriesResult.DeletedCount, syncLogsResult.DeletedCount,
+            documentsDeleted, attachmentsDeleted,
+            likesResult.DeletedCount, favoritesResult.DeletedCount, shareLinksResult.DeletedCount);
 
-        return Ok(ApiResponse<object>.Ok(new { deletedEntries = deleteResult.DeletedCount }));
+        return Ok(ApiResponse<object>.Ok(new
+        {
+            deletedEntries = entriesResult.DeletedCount,
+            deletedSyncLogs = syncLogsResult.DeletedCount,
+            deletedDocuments = documentsDeleted,
+            deletedAttachments = attachmentsDeleted,
+            deletedLikes = likesResult.DeletedCount,
+            deletedFavorites = favoritesResult.DeletedCount,
+            deletedShareLinks = shareLinksResult.DeletedCount,
+        }));
     }
 
     // ─────────────────────────────────────────────
@@ -410,7 +449,7 @@ public class DocumentStoreController : ControllerBase
         return Ok(ApiResponse<DocumentEntry>.Ok(updated!));
     }
 
-    /// <summary>删除文档条目</summary>
+    /// <summary>删除文档条目（级联清理同步日志 + 正文 + 附件；文件夹会级联删除子条目）</summary>
     [HttpDelete("entries/{entryId}")]
     public async Task<IActionResult> DeleteEntry(string entryId)
     {
@@ -423,19 +462,83 @@ public class DocumentStoreController : ControllerBase
         if (store == null)
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "文档条目不存在"));
 
-        await _db.DocumentEntries.DeleteOneAsync(e => e.Id == entryId);
+        // 收集要级联清理的条目 ID 列表
+        var idsToDelete = new List<string> { entryId };
 
-        // 更新空间文档计数
+        // 如果是文件夹，递归收集所有后代
+        if (entry.IsFolder)
+        {
+            var all = await _db.DocumentEntries.Find(e => e.StoreId == entry.StoreId).ToListAsync();
+            var childrenByParent = all.GroupBy(e => e.ParentId ?? "").ToDictionary(g => g.Key, g => g.ToList());
+            var queue = new Queue<string>();
+            queue.Enqueue(entryId);
+            while (queue.Count > 0)
+            {
+                var cur = queue.Dequeue();
+                if (childrenByParent.TryGetValue(cur, out var kids))
+                {
+                    foreach (var k in kids)
+                    {
+                        idsToDelete.Add(k.Id);
+                        if (k.IsFolder) queue.Enqueue(k.Id);
+                    }
+                }
+            }
+        }
+        // 如果是 GitHub 目录订阅，还要清理所有以它为 parent 的子条目
+        else if (entry.SourceType == DocumentSourceType.GithubDirectory)
+        {
+            var ghChildren = await _db.DocumentEntries.Find(
+                e => e.StoreId == entry.StoreId &&
+                     e.Metadata.ContainsKey("github_parent_id") &&
+                     e.Metadata["github_parent_id"] == entryId
+            ).ToListAsync();
+            idsToDelete.AddRange(ghChildren.Select(c => c.Id));
+        }
+
+        // 收集被删条目引用的 DocumentId / AttachmentId
+        var targets = await _db.DocumentEntries.Find(e => idsToDelete.Contains(e.Id)).ToListAsync();
+        var documentIds = targets.Where(e => !string.IsNullOrEmpty(e.DocumentId)).Select(e => e.DocumentId!).ToList();
+        var attachmentIds = targets.Where(e => !string.IsNullOrEmpty(e.AttachmentId)).Select(e => e.AttachmentId!).ToList();
+
+        // 级联清理
+        var entriesResult = await _db.DocumentEntries.DeleteManyAsync(e => idsToDelete.Contains(e.Id));
+        var syncLogsResult = await _db.DocumentSyncLogs.DeleteManyAsync(l => idsToDelete.Contains(l.EntryId));
+
+        long documentsDeleted = 0;
+        if (documentIds.Count > 0)
+        {
+            var r = await _db.Documents.DeleteManyAsync(d => documentIds.Contains(d.Id));
+            documentsDeleted = r.DeletedCount;
+        }
+        long attachmentsDeleted = 0;
+        if (attachmentIds.Count > 0)
+        {
+            var r = await _db.Attachments.DeleteManyAsync(a => attachmentIds.Contains(a.Id));
+            attachmentsDeleted = r.DeletedCount;
+        }
+
+        // 更新空间文档计数（按真实剩余数重算，避免负数或偏差）
+        var remaining = await _db.DocumentEntries.CountDocumentsAsync(e => e.StoreId == entry.StoreId);
         await _db.DocumentStores.UpdateOneAsync(
             s => s.Id == entry.StoreId,
             Builders<DocumentStore>.Update
-                .Inc(s => s.DocumentCount, -1)
+                .Set(s => s.DocumentCount, (int)remaining)
                 .Set(s => s.UpdatedAt, DateTime.UtcNow));
 
-        _logger.LogInformation("[document-store] Entry deleted: {EntryId} from store {StoreId} by {UserId}",
-            entryId, entry.StoreId, userId);
+        _logger.LogInformation(
+            "[document-store] Entry cascaded deleted: {EntryId} from store {StoreId} by {UserId} | entries={Entries} syncLogs={Logs} docs={Docs} attachments={Atts}",
+            entryId, entry.StoreId, userId,
+            entriesResult.DeletedCount, syncLogsResult.DeletedCount, documentsDeleted, attachmentsDeleted);
 
-        return Ok(ApiResponse<object>.Ok(new { deleted = true }));
+        return Ok(ApiResponse<object>.Ok(new
+        {
+            deleted = true,
+            deletedEntries = entriesResult.DeletedCount,
+            deletedSyncLogs = syncLogsResult.DeletedCount,
+            deletedDocuments = documentsDeleted,
+            deletedAttachments = attachmentsDeleted,
+        }));
     }
 
     /// <summary>移动文档条目到其他文件夹</summary>
