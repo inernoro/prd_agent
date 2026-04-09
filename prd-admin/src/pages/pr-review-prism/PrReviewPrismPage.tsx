@@ -19,12 +19,14 @@ import {
   createPrReviewPrismSubmission,
   deletePrReviewPrismSubmission,
   getPrReviewPrismStatus,
+  getPrReviewPrismSetupStatus,
   listPrReviewPrismSubmissions,
   batchRefreshPrReviewPrismSubmissions,
   refreshPrReviewPrismSubmission,
   type PrReviewPrismGateStatus,
   type PrReviewPrismSubmission,
   type PrReviewPrismBatchRefreshFailure,
+  type PrReviewPrismSetupStatus,
 } from '@/services';
 
 export function PrReviewPrismPage() {
@@ -52,6 +54,7 @@ export function PrReviewPrismPage() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [formError, setFormError] = useState<string | null>(null);
   const [listError, setListError] = useState<string | null>(null);
+  const [setupStatus, setSetupStatus] = useState<PrReviewPrismSetupStatus | null>(null);
   const [gateStatusCounts, setGateStatusCounts] = useState<{
     all: number;
     completed: number;
@@ -85,6 +88,15 @@ export function PrReviewPrismPage() {
     const res = await getPrReviewPrismStatus();
     if (res.success && res.data?.message) {
       setHint(res.data.message);
+    }
+  }, []);
+
+  const loadSetupStatus = useCallback(async () => {
+    const res = await getPrReviewPrismSetupStatus();
+    if (res.success && res.data) {
+      setSetupStatus(res.data);
+    } else {
+      setSetupStatus(null);
     }
   }, []);
 
@@ -140,8 +152,9 @@ export function PrReviewPrismPage() {
 
   useEffect(() => {
     void loadStatus();
+    void loadSetupStatus();
     void loadList();
-  }, [loadList, loadStatus]);
+  }, [loadList, loadSetupStatus, loadStatus]);
 
   useEffect(() => {
     setSelectedId(prev => {
@@ -179,6 +192,7 @@ export function PrReviewPrismPage() {
     setPrUrl('');
     setNote('');
     await loadList(1, search.trim() || undefined, pageSize, activeGateFilter);
+    await loadSetupStatus();
     setSelectedId(res.data.submission.id);
     setSubmitting(false);
   }
@@ -379,6 +393,53 @@ export function PrReviewPrismPage() {
 
       <div className="rounded-xl p-4 border border-white/10 bg-white/[0.03] text-sm text-white/60 mb-5">
         {hint}
+      </div>
+
+      <div className="rounded-xl p-4 border border-white/10 bg-white/[0.03] mb-5">
+        <p className="text-sm font-medium text-white mb-2">初始化与配置检查</p>
+        {setupStatus ? (
+          <div className="space-y-2 text-xs">
+            <div className="flex flex-wrap gap-2">
+              <span
+                className={`inline-flex items-center gap-1 px-2 py-1 rounded border ${
+                  setupStatus.githubTokenConfigured
+                    ? 'border-emerald-400/30 bg-emerald-500/10 text-emerald-200'
+                    : 'border-red-400/30 bg-red-500/10 text-red-200'
+                }`}
+              >
+                GitHub Token：{setupStatus.githubTokenConfigured ? '已配置' : '未配置'}
+              </span>
+              <span
+                className={`inline-flex items-center gap-1 px-2 py-1 rounded border ${
+                  setupStatus.topDesign.ready
+                    ? 'border-emerald-400/30 bg-emerald-500/10 text-emerald-200'
+                    : 'border-amber-400/30 bg-amber-500/10 text-amber-200'
+                }`}
+              >
+                顶层设计基线：{setupStatus.topDesign.ready ? '已就绪' : '待初始化'}
+              </span>
+            </div>
+
+            {!setupStatus.readyForFullRefresh && setupStatus.guidance.length > 0 && (
+              <div className="rounded-lg border border-amber-400/20 bg-amber-500/10 p-3 text-amber-100">
+                <p className="font-medium mb-1">当前无法完整拉取审查结果，请先完成以下配置：</p>
+                <ul className="list-disc ml-4 space-y-1">
+                  {setupStatus.guidance.map((x, idx) => (
+                    <li key={`${idx}-${x}`}>{x}</li>
+                  ))}
+                </ul>
+                <div className="mt-2 text-amber-100/80">
+                  <p>推荐初始化命令：</p>
+                  <code className="block mt-1 rounded bg-black/25 px-2 py-1 whitespace-pre-wrap break-all">
+                    bash scripts/init-pr-prism-basis.sh --repo "your-org/your-repo" --owner "your-github-id"
+                  </code>
+                </div>
+              </div>
+            )}
+          </div>
+        ) : (
+          <p className="text-xs text-white/40">配置状态加载失败，请稍后重试。</p>
+        )}
       </div>
 
       <div className="grid grid-cols-1 xl:grid-cols-[360px_1fr] gap-5">

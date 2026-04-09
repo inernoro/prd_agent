@@ -2170,6 +2170,7 @@ sequenceDiagram
 
 **API 端点**：
 - `GET /api/pr-review-prism/status` — 功能状态与提示信息
+- `GET /api/pr-review-prism/setup-status` — 初始化与配置状态（GitHub Token、顶层设计基线、可执行 guidance）
 - `POST /api/pr-review-prism/submissions` — 提交 PR 链接并创建/复用记录
 - `GET /api/pr-review-prism/submissions` — 当前用户提交列表（支持 `q` 检索）
 - `GET /api/pr-review-prism/submissions?gateStatus={status}` — 按 Gate 状态筛选（`pending/completed/missing/error`）

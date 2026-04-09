@@ -370,6 +370,7 @@ export const api = {
   // ============ PR Review Prism ============
   prReviewPrism: {
     status: () => '/api/pr-review-prism/status',
+    setupStatus: () => '/api/pr-review-prism/setup-status',
     submissions: {
       list: () => '/api/pr-review-prism/submissions',
       create: () => '/api/pr-review-prism/submissions',

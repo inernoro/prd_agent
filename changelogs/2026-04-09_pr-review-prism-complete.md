@@ -23,3 +23,6 @@
 | feat | scripts | 新增 init-pr-prism-basis 一键初始化脚本，自动生成最薄顶设文档与 pr-architect 绑定配置 |
 | feat | doc | 新增 PR审查棱镜新仓库接入指南，提供 10 分钟初始化步骤与验收命令 |
 | fix | prd-api | PR审查相关 workflow 触发分支扩展至 main/develop/master/trunk，避免默认分支差异导致门禁不触发 |
+| feat | prd-api | PR审查棱镜新增 setup-status 配置检查接口，返回 GitHub Token 与顶层设计基线就绪状态及可执行指引 |
+| feat | prd-admin | PR审查棱镜页面新增“初始化与配置检查”面板，显式展示 Token/顶设状态并提供初始化命令提示 |
+| fix | prd-api | PR审查棱镜集成测试新增 setup-status 鉴权与响应结构断言，防止配置可见性能力回归 |

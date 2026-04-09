@@ -9,6 +9,29 @@ export interface PrReviewPrismStatus {
   message: string;
 }
 
+export interface PrReviewPrismTopDesignSetupStatus {
+  repoRootDetected: boolean;
+  repoRoot?: string | null;
+  designSourcesExists: boolean;
+  activeSourceId?: string | null;
+  activeVersion?: string | null;
+  usesBootstrapPlaceholder: boolean;
+  repoBindingsExists: boolean;
+  repoBindingsHasRepositoryEntry: boolean;
+  topDesignDocExists: boolean;
+  anchorsExists: boolean;
+  contextsExists: boolean;
+  slicesExists: boolean;
+  ready: boolean;
+}
+
+export interface PrReviewPrismSetupStatus {
+  githubTokenConfigured: boolean;
+  topDesign: PrReviewPrismTopDesignSetupStatus;
+  readyForFullRefresh: boolean;
+  guidance: string[];
+}
+
 export interface PrReviewPrismSubmission {
   id: string;
   ownerUserId: string;
@@ -63,6 +86,10 @@ export interface PrReviewPrismGateStatusCounts {
 
 export async function getPrReviewPrismStatus(): Promise<ApiResponse<PrReviewPrismStatus>> {
   return apiRequest(api.prReviewPrism.status());
+}
+
+export async function getPrReviewPrismSetupStatus(): Promise<ApiResponse<PrReviewPrismSetupStatus>> {
+  return apiRequest(api.prReviewPrism.setupStatus());
 }
 
 export async function listPrReviewPrismSubmissions(

@@ -1505,6 +1505,7 @@ export type {
 // ── PR Review Prism 审查棱镜 ──
 export {
   getPrReviewPrismStatus,
+  getPrReviewPrismSetupStatus,
   createPrReviewPrismSubmission,
   listPrReviewPrismSubmissions,
   getPrReviewPrismSubmission,
@@ -1517,5 +1518,7 @@ export type {
   PrReviewPrismBatchRefreshResult,
   PrReviewPrismGateStatus,
   PrReviewPrismSubmission,
+  PrReviewPrismSetupStatus,
+  PrReviewPrismTopDesignSetupStatus,
   PrReviewPrismStatus,
 } from '@/services/real/prReviewPrism';

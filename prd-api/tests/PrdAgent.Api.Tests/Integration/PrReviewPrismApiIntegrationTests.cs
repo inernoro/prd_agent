@@ -62,6 +62,46 @@ public class PrReviewPrismApiIntegrationTests : IClassFixture<WebApplicationFact
     }
 
     [Fact]
+    public async Task SetupStatus_NoAuth_ShouldReturn401()
+    {
+        var client = _factory.CreateClient();
+        var response = await client.GetAsync("/api/pr-review-prism/setup-status");
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task SetupStatus_WithAuth_ShouldReturnStructuredPayload()
+    {
+        if (!HasToken)
+        {
+            Log("[Skip] no token");
+            return;
+        }
+
+        var client = CreateAuthenticatedClient();
+        if (!await EnsurePrReviewPrismAccessibleAsync(client))
+        {
+            return;
+        }
+
+        var response = await client.GetAsync("/api/pr-review-prism/setup-status");
+        var body = await response.Content.ReadAsStringAsync();
+        Log($"[SetupStatus] {response.StatusCode} - {Truncate(body, 220)}");
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+
+        using var doc = JsonDocument.Parse(body);
+        Assert.True(doc.RootElement.GetProperty("success").GetBoolean());
+        var data = doc.RootElement.GetProperty("data");
+
+        Assert.True(data.TryGetProperty("githubTokenConfigured", out _));
+        Assert.True(data.TryGetProperty("topDesign", out var topDesign));
+        Assert.True(topDesign.TryGetProperty("ready", out _));
+        Assert.True(data.TryGetProperty("readyForFullRefresh", out _));
+        Assert.True(data.TryGetProperty("guidance", out var guidance));
+        Assert.Equal(JsonValueKind.Array, guidance.ValueKind);
+    }
+
+    [Fact]
     public async Task Create_InvalidPullRequestUrl_ShouldReturn400()
     {
         if (!HasToken)
