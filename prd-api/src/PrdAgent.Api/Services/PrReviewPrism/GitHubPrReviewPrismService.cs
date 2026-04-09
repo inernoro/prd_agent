@@ -59,14 +59,22 @@ public sealed class GitHubPrReviewPrismService
             return false;
         }
 
-        owner = match.Groups["owner"].Value.Trim();
-        repo = match.Groups["repo"].Value.Trim();
-        if (!int.TryParse(match.Groups["number"].Value, out prNumber) || prNumber <= 0)
+        var parsedOwner = match.Groups["owner"].Value.Trim();
+        var parsedRepo = match.Groups["repo"].Value.Trim();
+        if (!int.TryParse(match.Groups["number"].Value, out var parsedPrNumber) || parsedPrNumber <= 0)
         {
             return false;
         }
 
-        return !string.IsNullOrWhiteSpace(owner) && !string.IsNullOrWhiteSpace(repo);
+        if (string.IsNullOrWhiteSpace(parsedOwner) || string.IsNullOrWhiteSpace(parsedRepo))
+        {
+            return false;
+        }
+
+        owner = parsedOwner;
+        repo = parsedRepo;
+        prNumber = parsedPrNumber;
+        return true;
     }
 
     public async Task<PrReviewPrismSnapshot> BuildSnapshotAsync(string repoOwner, string repoName, int prNumber)

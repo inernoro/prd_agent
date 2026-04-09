@@ -18,3 +18,4 @@
 | fix | prd-api | PR审查棱镜集成测试新增 q + gateStatus + gateStatusCounts 一致性校验，覆盖筛选与计数联动行为 |
 | fix | prd-api | PR审查棱镜集成测试新增 batch-refresh 部分失败一致性校验（successCount/failureCount/failures/submissions） |
 | fix | prd-api | PR审查棱镜集成测试新增 batch-refresh 上限 100 与重复 id 去重统计一致性校验 |
+| fix | prd-api | 修复 PR URL 解析失败时 out 参数泄漏，确保非法编号（如 pull/0）返回 false 且 owner/repo/prNumber 保持空值 |
