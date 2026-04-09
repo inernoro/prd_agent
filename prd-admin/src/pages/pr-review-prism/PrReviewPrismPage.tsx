@@ -28,6 +28,7 @@ import {
   type PrReviewPrismBatchRefreshFailure,
   type PrReviewPrismSetupStatus,
 } from '@/services';
+import JSZip from 'jszip';
 
 const bootstrapInitCommand = 'bash scripts/bootstrap-pr-prism.sh';
 const bootstrapGuidePath = 'doc/guide.pr-prism-bootstrap-package.md';
@@ -282,6 +283,101 @@ slices:
       setSetupActionMessage('复制失败，请手动复制下方代码块内容');
     }
   }, []);
+  const downloadOnboardingZip = useCallback(async () => {
+    if (!isBindingRepoValid) {
+      setSetupActionMessage('请先填写有效仓库（owner/repo）后再下载接入文件包');
+      return;
+    }
+    try {
+      const zip = new JSZip();
+      const mainMd = `# Top Design Baseline
+
+Repository: \`${normalizedBindingRepo}\`
+
+## Bounded Context
+- \`${normalizedContext}\`
+
+## Core Anchor
+- \`${normalizedAnchor}\`
+`;
+      const anchorsYml = `version: 1
+anchors:
+  - id: "${normalizedAnchor}"
+    title: "Core governance anchor"
+    description: "Keep PR review metadata, boundary and evidence consistent."
+`;
+      const contextsYml = `version: 1
+contexts:
+  - id: "${normalizedContext}"
+    name: "${normalizedContext}"
+    description: "Primary governance bounded context for this repository."
+`;
+      const slicesYml = `version: 1
+slices:
+  - id: "slice-governance-core"
+    owner: "${normalizedOwner}"
+    context: "${normalizedContext}"
+    description: "Initial slice for governance baseline."
+`;
+      const designSourcesYml = `version: 1
+profile: top-design-sources
+defaults:
+  active_source_id: "local-ddd-anchor"
+  active_version: "v1.0.0"
+  enforce_manifests: true
+sources:
+  - id: "local-ddd-anchor"
+    type: "repo-file"
+    location: "doc/top-design/main.md"
+    version: "v1.0.0"
+    checksum: "sha256:replace-with-real-checksum"
+    owner: "${normalizedOwner}"
+    description: "Repository local top-design baseline for PR Review Prism"
+    manifests:
+      anchors: "doc/top-design/anchors.yml"
+      slices: "doc/top-design/slices.yml"
+      contexts: "doc/top-design/contexts.yml"
+`;
+      const repoBindingsYml = `version: 1
+profile: pr-architect-repo-bindings
+defaults:
+  enabled: true
+  required_checks:
+    - "PR审查棱镜 L1 Gate"
+    - "PR审查棱镜 Advisory"
+  architects:
+    - "${normalizedOwner}"
+repositories:
+${repoBindingSnippet}
+`;
+      zip.file('doc/top-design/main.md', mainMd);
+      zip.file('doc/top-design/anchors.yml', anchorsYml);
+      zip.file('doc/top-design/contexts.yml', contextsYml);
+      zip.file('doc/top-design/slices.yml', slicesYml);
+      zip.file('.github/pr-architect/design-sources.yml', designSourcesYml);
+      zip.file('.github/pr-architect/repo-bindings.yml', repoBindingsYml);
+      const blob = await zip.generateAsync({ type: 'blob' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `pr-prism-onboarding-${normalizedBindingRepo.replace('/', '-')}.zip`;
+      a.rel = 'noopener';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      setSetupActionMessage('已下载接入文件包（zip）');
+    } catch {
+      setSetupActionMessage('下载 zip 失败，请稍后重试');
+    }
+  }, [
+    isBindingRepoValid,
+    normalizedAnchor,
+    normalizedBindingRepo,
+    normalizedContext,
+    normalizedOwner,
+    repoBindingSnippet,
+  ]);
 
   const loadStatus = useCallback(async () => {
     const res = await getPrReviewPrismStatus();
@@ -756,6 +852,14 @@ slices:
                   className="inline-flex items-center gap-1 rounded border border-white/20 bg-white/10 px-2.5 py-1 text-[11px] text-white hover:bg-white/15 whitespace-nowrap disabled:opacity-50"
                 >
                   复制完整接入 YAML
+                </button>
+                <button
+                  type="button"
+                  disabled={!isBindingRepoValid}
+                  onClick={() => void downloadOnboardingZip()}
+                  className="inline-flex items-center gap-1 rounded border border-white/20 bg-white/10 px-2.5 py-1 text-[11px] text-white hover:bg-white/15 whitespace-nowrap disabled:opacity-50"
+                >
+                  下载接入文件包（zip）
                 </button>
                 <button
                   type="button"
