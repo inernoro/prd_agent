@@ -44,7 +44,23 @@ export interface SkillAgentExportMdResponse {
   fileName: string;
 }
 
-// ━━━ API Functions ━━━━━━━━
+/** Personal skill item returned by list API */
+export interface PersonalSkillItem {
+  skillKey: string;
+  title: string;
+  description: string;
+  icon?: string;
+  category: string;
+  tags: string[];
+  visibility: string;
+  isEnabled: boolean;
+  isBuiltIn: boolean;
+  usageCount: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+// ━━━ Skill Agent Session APIs ━━━━━━━━
 
 export async function createSkillAgentSession() {
   return apiRequest<SkillAgentSessionResponse>(api.skillAgent.createSession(), {
@@ -72,6 +88,21 @@ export function getExportZipUrl(sessionId: string) {
 
 export async function deleteSkillAgentSession(sessionId: string) {
   return apiRequest<{ deleted: boolean }>(api.skillAgent.session(sessionId), {
+    method: 'DELETE',
+  });
+}
+
+// ━━━ Personal Skills Management APIs ━━━━━━━━
+// Uses existing PrdAgentSkillsController endpoints
+
+const PERSONAL_SKILLS_BASE = '/api/prd-agent/skills';
+
+export async function listPersonalSkills() {
+  return apiRequest<PersonalSkillItem[]>(PERSONAL_SKILLS_BASE);
+}
+
+export async function deletePersonalSkill(skillKey: string) {
+  return apiRequest<Record<string, never>>(`${PERSONAL_SKILLS_BASE}/${encodeURIComponent(skillKey)}`, {
     method: 'DELETE',
   });
 }

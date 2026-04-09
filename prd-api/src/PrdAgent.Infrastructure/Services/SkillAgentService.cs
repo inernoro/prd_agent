@@ -10,7 +10,7 @@ using Microsoft.Extensions.Logging;
 namespace PrdAgent.Infrastructure.Services;
 
 /// <summary>
-/// 技能引导 Agent 服务 — 5 阶段对话式引导用户创建技能
+/// 技能引导 Agent 服务 — 用户描述意图后自动连跑 scope→draft→metadata→preview
 /// </summary>
 public class SkillAgentService
 {
@@ -35,6 +35,9 @@ public class SkillAgentService
 
     public static readonly string[] Stages = { "intent", "scope", "draft", "metadata", "preview" };
 
+    // Stages that auto-advance without user input after intent is confirmed
+    private static readonly string[] AutoRunStages = { "scope", "draft", "metadata", "preview" };
+
     public static string GetStageLabel(string stage) => stage switch
     {
         "intent" => "意图理解",
@@ -48,15 +51,103 @@ public class SkillAgentService
     // ━━━ Guided Conversation ━━━━━━━━
 
     /// <summary>
-    /// 处理用户消息并返回 AI 引导回复（流式）
+    /// 处理用户消息：Stage 1 需要对话；Stage 1 完成后自动连跑 2-5
+    /// 如果用户在 preview 阶段提修改意见，回到 draft 阶段局部迭代后再自动连跑
     /// </summary>
     public async IAsyncEnumerable<SseChunk> ProcessMessageAsync(
         SkillAgentSession session,
         string userMessage,
         string userId)
     {
-        var requestId = Guid.NewGuid().ToString();
+        // Record user message
+        session.Messages.Add(new SkillAgentMessage("user", userMessage));
+
+        // Run the current stage with user input
+        var stageCompleted = false;
+        await foreach (var chunk in RunSingleStageAsync(session, userMessage, userId))
+        {
+            yield return chunk;
+            if (chunk.Event == "stage_complete") stageCompleted = true;
+        }
+
+        // If the current stage completed and next stage is auto-runnable, keep going
+        if (stageCompleted && AutoRunStages.Contains(session.CurrentStage))
+        {
+            await foreach (var chunk in RunAutoStagesAsync(session, userId))
+            {
+                yield return chunk;
+            }
+        }
+
+        // Final done event with full state
+        yield return new SseChunk("done", new
+        {
+            currentStage = session.CurrentStage,
+            stageLabel = GetStageLabel(session.CurrentStage),
+            stageIndex = Array.IndexOf(Stages, session.CurrentStage),
+            skillDraft = session.SkillDraft != null ? SerializeSkillPreview(session.SkillDraft) : null,
+        });
+    }
+
+    /// <summary>
+    /// Auto-run stages that don't need user input (scope → draft → metadata → preview)
+    /// Each stage gets a synthetic "continue" instruction and runs LLM autonomously
+    /// </summary>
+    private async IAsyncEnumerable<SseChunk> RunAutoStagesAsync(
+        SkillAgentSession session,
+        string userId)
+    {
+        while (AutoRunStages.Contains(session.CurrentStage) && session.CurrentStage != "preview")
+        {
+            // Notify frontend: advancing to next stage
+            yield return new SseChunk("stage_advance", new
+            {
+                stage = session.CurrentStage,
+                stageLabel = GetStageLabel(session.CurrentStage),
+                stageIndex = Array.IndexOf(Stages, session.CurrentStage),
+            });
+
+            // Build a synthetic instruction for this auto-stage
+            var autoInstruction = BuildAutoInstruction(session);
+
+            var stageCompleted = false;
+            await foreach (var chunk in RunSingleStageAsync(session, autoInstruction, userId, isAutoRun: true))
+            {
+                yield return chunk;
+                if (chunk.Event == "stage_complete") stageCompleted = true;
+            }
+
+            // If stage didn't complete (LLM didn't produce valid JSON), stop auto-run
+            if (!stageCompleted) break;
+        }
+
+        // Handle preview stage
+        if (session.CurrentStage == "preview" && session.SkillDraft != null)
+        {
+            yield return new SseChunk("stage_advance", new
+            {
+                stage = "preview",
+                stageLabel = GetStageLabel("preview"),
+                stageIndex = Array.IndexOf(Stages, "preview"),
+            });
+
+            // Auto-complete preview — just notify, no LLM call needed
+            session.Messages.Add(new SkillAgentMessage("assistant",
+                $"技能「{session.SkillDraft.Title}」已生成完毕！你可以在右侧预览效果，点击保存或导出。如果需要修改，直接告诉我。"));
+        }
+    }
+
+    /// <summary>
+    /// Run a single stage: call LLM, parse result, advance if complete
+    /// </summary>
+    private async IAsyncEnumerable<SseChunk> RunSingleStageAsync(
+        SkillAgentSession session,
+        string userMessage,
+        string userId,
+        bool isAutoRun = false)
+    {
         var appCallerCode = AppCallerRegistry.SkillAgent.Guide.Chat;
+        var requestId = Guid.NewGuid().ToString();
 
         using var _ = _llmRequestContext.BeginScope(new LlmRequestContext(
             RequestId: requestId,
@@ -70,16 +161,23 @@ public class SkillAgentService
             RequestType: "skill-agent-guide",
             AppCallerCode: appCallerCode));
 
-        var llmClient = _gateway.CreateClient(appCallerCode, "chat", maxTokens: 4096, temperature: 0.4);
-        var systemPrompt = BuildSystemPrompt(session);
+        var llmClient = _gateway.CreateClient(appCallerCode, "chat", maxTokens: 4096, temperature: 0.3);
+        var systemPrompt = BuildSystemPrompt(session, isAutoRun);
 
-        // Build message history
+        // Build message history (keep recent context, not full history for auto-runs)
         var messages = new List<LLMMessage>();
-        foreach (var msg in session.Messages)
+        if (isAutoRun)
         {
-            messages.Add(new LLMMessage { Role = msg.Role, Content = msg.Content });
+            // For auto-run, just provide the essential context
+            messages.Add(new LLMMessage { Role = "user", Content = userMessage });
         }
-        messages.Add(new LLMMessage { Role = "user", Content = userMessage });
+        else
+        {
+            foreach (var msg in session.Messages)
+            {
+                messages.Add(new LLMMessage { Role = msg.Role, Content = msg.Content });
+            }
+        }
 
         var resultBuilder = new StringBuilder();
         await foreach (var chunk in llmClient.StreamGenerateAsync(systemPrompt, messages, false, CancellationToken.None))
@@ -92,34 +190,40 @@ public class SkillAgentService
         }
 
         var fullResponse = resultBuilder.ToString().Trim();
-
         if (string.IsNullOrWhiteSpace(fullResponse))
         {
             yield return new SseChunk("error", new { message = "AI 未生成有效回复" });
             yield break;
         }
 
-        // Parse structured output (JSON block at end of response)
         var (displayText, stageData) = ExtractStageData(fullResponse);
 
-        // Record messages
-        session.Messages.Add(new SkillAgentMessage("user", userMessage));
+        // Record assistant message
         session.Messages.Add(new SkillAgentMessage("assistant", displayText));
 
-        // Process stage data and advance stage if applicable
         if (stageData is { } sd)
         {
             ApplyStageData(session, sd);
-            yield return new SseChunk("stage_data", sd);
+            yield return new SseChunk("stage_complete", new
+            {
+                stage = session.CurrentStage,
+                stageIndex = Array.IndexOf(Stages, session.CurrentStage),
+            });
         }
+    }
 
-        yield return new SseChunk("done", new
+    /// <summary>
+    /// Build synthetic instruction for auto-run stages (no user interaction needed)
+    /// </summary>
+    private static string BuildAutoInstruction(SkillAgentSession session)
+    {
+        return session.CurrentStage switch
         {
-            currentStage = session.CurrentStage,
-            stageLabel = GetStageLabel(session.CurrentStage),
-            stageIndex = Array.IndexOf(Stages, session.CurrentStage),
-            skillDraft = session.SkillDraft != null ? SerializeSkillPreview(session.SkillDraft) : null,
-        });
+            "scope" => $"用户想要的技能：{session.Intent ?? "未知"}。请根据这个意图，自动判断最合适的输入配置（contextScope、acceptsUserInput、acceptsAttachments），直接给出结论并输出 JSON 结果。",
+            "draft" => $"用户意图：{session.Intent ?? "未知"}。输入配置：contextScope={session.SkillDraft?.Input.ContextScope ?? "none"}, acceptsUserInput={session.SkillDraft?.Input.AcceptsUserInput ?? true}。请直接生成高质量的 prompt template，不需要询问用户意见，直接输出完整内容和 JSON 结果。",
+            "metadata" => $"用户意图：{session.Intent ?? "未知"}。Prompt 模板已生成。请直接推荐最佳的 title/icon/category/tags/description，不需要询问用户，直接输出 JSON 结果。",
+            _ => "请继续。",
+        };
     }
 
     /// <summary>
@@ -127,49 +231,35 @@ public class SkillAgentService
     /// </summary>
     public SseChunk GenerateWelcome()
     {
-        const string welcome = "你好！我是技能创建助手，帮你把重复性工作变成一键可用的 AI 技能。\n\n" +
-                               "**什么是技能？** 就是一个预设好的 AI 指令模板，下次遇到类似任务时一键调用。\n\n" +
-                               "请告诉我：**你想让 AI 帮你做什么？** 描述一下你平时重复做的任务就好，比如：\n" +
-                               "- 「帮我把会议纪要整理成待办事项」\n" +
-                               "- 「分析一段代码的安全隐患」\n" +
+        const string welcome = "你好！我是技能创建助手。\n\n" +
+                               "只需一句话告诉我**你想让 AI 帮你做什么**，我会自动帮你生成完整的技能模板。\n\n" +
+                               "比如：\n" +
+                               "- 「把会议纪要整理成待办事项」\n" +
+                               "- 「分析代码的安全隐患」\n" +
                                "- 「把英文技术文档翻译成中文摘要」";
         return new SseChunk("welcome", new { message = welcome, stage = "intent", stageLabel = "意图理解" });
     }
 
     // ━━━ Skill Save & Export ━━━━━━━━
 
-    /// <summary>
-    /// Save the current draft as a personal skill
-    /// </summary>
     public async Task<Skill?> SaveAsPersonalSkillAsync(SkillAgentSession session, string userId)
     {
-        if (session.SkillDraft == null)
-            return null;
-
-        var skill = session.SkillDraft;
-        return await _skillService.CreatePersonalSkillAsync(userId, skill);
+        if (session.SkillDraft == null) return null;
+        return await _skillService.CreatePersonalSkillAsync(userId, session.SkillDraft);
     }
 
-    /// <summary>
-    /// Export the current draft as SKILL.md string
-    /// </summary>
     public string? ExportAsMarkdown(SkillAgentSession session)
     {
         if (session.SkillDraft == null) return null;
         return SkillMdFormat.Serialize(session.SkillDraft);
     }
 
-    /// <summary>
-    /// Export the current draft as a ZIP package (SKILL.md + README.md + examples/)
-    /// </summary>
     public async Task<byte[]?> ExportAsZipAsync(SkillAgentSession session, string userId)
     {
         if (session.SkillDraft == null) return null;
 
         var skill = session.SkillDraft;
         var skillMd = SkillMdFormat.Serialize(skill);
-
-        // Generate README and example via LLM
         var (readme, example) = await GenerateExportDocsAsync(skill, userId);
 
         using var memoryStream = new MemoryStream();
@@ -185,108 +275,86 @@ public class SkillAgentService
 
     // ━━━ Private: System Prompt Building ━━━━━━━━
 
-    private string BuildSystemPrompt(SkillAgentSession session)
+    private string BuildSystemPrompt(SkillAgentSession session, bool isAutoRun)
     {
         var stage = session.CurrentStage;
-        var basePrompt = @"你是一个技能创建引导助手。你的任务是通过友好的对话，帮用户把一个重复性的工作任务变成可复用的 AI 技能。
 
-技能 = 一个预设好的提示词模板 + 输入/输出配置，用户下次遇到类似任务时可一键调用。
+        var basePrompt = @"你是一个技能创建引导助手。你的任务是帮用户把重复性工作变成可复用的 AI 技能。
 
-你在每个阶段结束时，必须输出一个 JSON 块标记阶段完成，格式为：
+技能 = 预设提示词模板 + 输入/输出配置。
+
+你必须在回复末尾输出一个 JSON 块，格式：
 ```json:stage_result
 { ... }
 ```
+JSON 块用 ```json:stage_result 和 ``` 包裹，系统解析用，不展示给用户。
+在 JSON 块之前输出简洁的自然语言说明。";
 
-注意：JSON 块必须用 ```json:stage_result 和 ``` 包裹，这是系统解析用的，不会展示给用户。
-在 JSON 块之前先输出给用户看的自然语言回复。";
+        var autoSuffix = isAutoRun ? "\n\n【重要】这是自动流转阶段，不要向用户提问，直接给出你的最佳判断并输出 JSON 结果。保持简洁，不超过 3 句话说明即可。" : "";
 
         var stagePrompt = stage switch
         {
             "intent" => @"
-当前阶段：意图理解（Stage 1/5）
+当前阶段：意图理解
 
-你的目标：理解用户想自动化什么任务。
+理解用户想自动化什么任务。如果描述清晰，确认并总结。如果模糊，追问一个关键问题。
 
-引导方式：
-1. 如果用户描述模糊，追问具体场景（在什么情况下做、输入是什么、期望输出是什么）
-2. 如果用户描述清晰，确认理解并总结
-
-当你确认理解了用户意图后，输出：
+理解后输出：
 ```json:stage_result
-{""stageComplete"": true, ""intent"": ""一句话描述用户意图"", ""nextStage"": ""scope""}
-```
+{""stageComplete"": true, ""intent"": ""一句话描述意图"", ""nextStage"": ""scope""}
+```",
 
-如果还需要追问，不输出 JSON 块。",
+            "scope" => $@"
+当前阶段：范围界定
 
-            "scope" => @"
-当前阶段：范围界定（Stage 2/5）
+用户意图：{session.Intent ?? "未知"}
 
-你的目标：确定这个技能需要什么输入。
+根据意图判断输入配置：
+- contextScope: ""prd""/""all""/""current""/""none""（是否需要文档上下文）
+- acceptsUserInput: true/false（是否需要用户额外输入）
+- acceptsAttachments: true/false（是否接受附件）
 
-需要明确的配置项：
-- contextScope: 是否需要文档上下文？(""prd""=PRD文档, ""all""=所有文档, ""current""=当前对话, ""none""=不需要)
-- acceptsUserInput: 用户是否需要额外输入？(true/false)
-- acceptsAttachments: 是否接受附件？(true/false)
-
-用自然语言询问用户，比如：「这个技能运行时需要读取什么内容？是基于文档来分析，还是用户手输内容就够了？」
-
-当配置明确后输出：
+输出：
 ```json:stage_result
-{""stageComplete"": true, ""contextScope"": ""prd"", ""acceptsUserInput"": true, ""acceptsAttachments"": false, ""nextStage"": ""draft""}
+{{""stageComplete"": true, ""contextScope"": ""..."", ""acceptsUserInput"": true, ""acceptsAttachments"": false, ""nextStage"": ""draft""}}
 ```",
 
             "draft" => $@"
-当前阶段：Prompt 草稿（Stage 3/5）
+当前阶段：生成 Prompt 模板
 
-你的目标：生成一个高质量的 prompt template。
+用户意图：{session.Intent ?? "未知"}
+输入配置：contextScope={session.SkillDraft?.Input.ContextScope ?? "none"}, acceptsUserInput={session.SkillDraft?.Input.AcceptsUserInput ?? true}
 
-已知意图：{session.Intent ?? "未知"}
-已知输入配置：contextScope={session.SkillDraft?.Input.ContextScope ?? "prd"}, acceptsUserInput={session.SkillDraft?.Input.AcceptsUserInput ?? false}, acceptsAttachments={session.SkillDraft?.Input.AcceptsAttachments ?? false}
-
-prompt template 编写规则：
+生成高质量 prompt template：
 1. 用 {{{{userInput}}}} 作为用户输入占位符
-2. 如果需要文档上下文，可以用「请基于以下文档内容」开头（系统会自动注入上下文）
-3. 明确输出格式（表格、列表、分段等）
-4. 包含约束条件和注意事项
-5. 语气专业但不啰嗦
+2. 明确输出格式（表格/列表/分段）
+3. 包含约束和注意事项
+4. 专业简洁
 
-先给用户展示草稿，询问是否需要修改。
-用户确认满意后输出：
+输出：
 ```json:stage_result
-{{""stageComplete"": true, ""promptTemplate"": ""完整的 prompt template 内容"", ""nextStage"": ""metadata""}}
-```
-
-如果用户要求修改，调整后再次展示，不输出 JSON 块直到用户满意。",
+{{""stageComplete"": true, ""promptTemplate"": ""完整 prompt template"", ""nextStage"": ""metadata""}}
+```",
 
             "metadata" => $@"
-当前阶段：元数据补全（Stage 4/5）
+当前阶段：元数据生成
 
-你的目标：为技能补全元数据（名称、图标、分类、标签）。
+用户意图：{session.Intent ?? "未知"}
 
-已知意图：{session.Intent ?? "未知"}
-
-基于你对这个技能的理解，建议以下元数据：
-- title: 2-8 个字的简洁名称
-- icon: 一个最匹配的 emoji
-- category: 从以下选择一个：general/analysis/generation/extraction/translation/summary/check/optimization/other
+直接推荐最佳元数据：
+- title: 2-8 字简洁名称
+- icon: 最匹配的 emoji
+- category: general/analysis/generation/extraction/translation/summary/check/optimization/other
 - tags: 2-4 个标签
-- description: 一句话描述技能用途
+- description: 一句话描述
 
-向用户展示建议，询问是否要修改。
-用户确认后输出：
+输出：
 ```json:stage_result
-{{""stageComplete"": true, ""title"": ""技能名称"", ""icon"": ""emoji"", ""category"": ""分类"", ""tags"": [""标签1"", ""标签2""], ""description"": ""描述"", ""nextStage"": ""preview""}}
+{{""stageComplete"": true, ""title"": ""名称"", ""icon"": ""emoji"", ""category"": ""分类"", ""tags"": [""标签1"", ""标签2""], ""description"": ""描述"", ""nextStage"": ""preview""}}
 ```",
 
             "preview" => @"
-当前阶段：预览与导出（Stage 5/5）
-
-技能已创建完成！向用户展示完整的技能预览，并告知可以：
-1. 保存为个人技能（立即可用）
-2. 导出为 .md 文件（分享给他人）
-3. 导出为 .zip 包（包含说明文档和使用示例）
-
-直接输出：
+技能已完成。简洁告知用户可以保存或导出。
 ```json:stage_result
 {""stageComplete"": true, ""action"": ""preview""}
 ```",
@@ -294,7 +362,7 @@ prompt template 编写规则：
             _ => ""
         };
 
-        return basePrompt + stagePrompt;
+        return basePrompt + stagePrompt + autoSuffix;
     }
 
     // ━━━ Private: Stage Data Extraction ━━━━━━━━
@@ -372,17 +440,14 @@ prompt template 编写规则：
                         .Where(s => !string.IsNullOrWhiteSpace(s))
                         .ToList();
                 }
-                // Generate skillKey from title
                 if (!string.IsNullOrWhiteSpace(session.SkillDraft.Title))
                     session.SkillDraft.SkillKey = ToKebabCase(session.SkillDraft.Title);
                 break;
 
             case "preview":
-                // No additional data to apply
                 break;
         }
 
-        // Advance to next stage
         if (data.TryGetProperty("nextStage", out var ns))
         {
             var nextStage = ns.GetString();
@@ -412,30 +477,13 @@ prompt template 编写规则：
 
         var llmClient = _gateway.CreateClient(appCallerCode, "chat", maxTokens: 2048, temperature: 0.3);
 
-        var systemPrompt = @"你是技能文档生成器。用户给你一个技能的信息，你需要输出两个文档。
+        var systemPrompt = @"你是技能文档生成器。输出两段，用 === README === 和 === EXAMPLE === 分隔。
+README: 技能名称和描述、使用场景、如何导入、注意事项。
+EXAMPLE: 一个完整使用示例。中文 Markdown 格式。";
 
-用 === README === 和 === EXAMPLE === 分隔两段内容。
+        var userContent = $"技能名称：{skill.Title}\n描述：{skill.Description}\n分类：{skill.Category}\n标签：{string.Join(", ", skill.Tags)}\nPrompt Template:\n{skill.Execution.PromptTemplate}";
 
-README 内容：
-- 技能名称和描述
-- 使用场景（2-3 个）
-- 如何导入和使用
-- 注意事项
-
-EXAMPLE 内容：
-- 一个完整的使用示例（模拟用户输入和 AI 输出）
-
-用中文撰写，Markdown 格式。";
-
-        var userContent = $"技能名称：{skill.Title}\n描述：{skill.Description}\n" +
-                          $"分类：{skill.Category}\n标签：{string.Join(", ", skill.Tags)}\n" +
-                          $"Prompt Template:\n{skill.Execution.PromptTemplate}";
-
-        var messages = new List<LLMMessage>
-        {
-            new() { Role = "user", Content = userContent }
-        };
-
+        var messages = new List<LLMMessage> { new() { Role = "user", Content = userContent } };
         var result = new StringBuilder();
         await foreach (var chunk in llmClient.StreamGenerateAsync(systemPrompt, messages, false, CancellationToken.None))
         {
@@ -446,15 +494,10 @@ EXAMPLE 内容：
         var fullText = result.ToString();
         var parts = fullText.Split("=== EXAMPLE ===", 2, StringSplitOptions.TrimEntries);
         var readmePart = parts[0].Replace("=== README ===", "").Trim();
-        var examplePart = parts.Length > 1 ? parts[1].Trim() : $"# 使用示例\n\n（请参考 SKILL.md 中的 prompt template 构造输入）";
+        var examplePart = parts.Length > 1 ? parts[1].Trim() : "# 使用示例\n\n（请参考 SKILL.md 中的 prompt template 构造输入）";
 
-        // Ensure README has a title
-        if (!readmePart.StartsWith("#"))
-            readmePart = $"# {skill.Title}\n\n{readmePart}";
-
-        // Ensure example has a title
-        if (!examplePart.StartsWith("#"))
-            examplePart = $"# {skill.Title} — 使用示例\n\n{examplePart}";
+        if (!readmePart.StartsWith("#")) readmePart = $"# {skill.Title}\n\n{readmePart}";
+        if (!examplePart.StartsWith("#")) examplePart = $"# {skill.Title} — 使用示例\n\n{examplePart}";
 
         return (readmePart, examplePart);
     }
@@ -468,39 +511,24 @@ EXAMPLE 内容：
         writer.Write(content);
     }
 
-    private static string? SerializeSkillPreview(Skill skill)
-    {
-        return SkillMdFormat.Serialize(skill);
-    }
+    private static string? SerializeSkillPreview(Skill skill) => SkillMdFormat.Serialize(skill);
 
     private static string ToKebabCase(string input)
     {
         if (string.IsNullOrWhiteSpace(input)) return "untitled-skill";
-
-        // For Chinese text, just use pinyin-style or keep simple
         var sb = new StringBuilder();
         foreach (var ch in input.Trim().ToLowerInvariant())
         {
-            if (char.IsLetterOrDigit(ch))
-                sb.Append(ch);
-            else if (ch == ' ' || ch == '-' || ch == '_')
-                sb.Append('-');
-            // Skip other characters (Chinese, etc.)
+            if (char.IsLetterOrDigit(ch)) sb.Append(ch);
+            else if (ch is ' ' or '-' or '_') sb.Append('-');
         }
-
         var result = sb.ToString().Trim('-');
-        if (string.IsNullOrWhiteSpace(result))
-            result = $"skill-{Guid.NewGuid().ToString("N")[..8]}";
-
-        return result;
+        return string.IsNullOrWhiteSpace(result) ? $"skill-{Guid.NewGuid().ToString("N")[..8]}" : result;
     }
 }
 
 // ━━━ Models ━━━━━━━━
 
-/// <summary>
-/// 技能引导会话（内存态，不持久化到数据库）
-/// </summary>
 public class SkillAgentSession
 {
     public string Id { get; set; } = Guid.NewGuid().ToString("N");
@@ -514,8 +542,4 @@ public class SkillAgentSession
 }
 
 public record SkillAgentMessage(string Role, string Content);
-
-/// <summary>
-/// SSE chunk for streaming responses
-/// </summary>
 public record SseChunk(string Event, object Data);
