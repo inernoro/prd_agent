@@ -501,6 +501,7 @@ export const api = {
       byId: (id: string) => `/api/report-agent/teams/${id}`,
       leave: (id: string) => `/api/report-agent/teams/${id}/leave`,
       members: (id: string) => `/api/report-agent/teams/${id}/members`,
+      membersBatch: (id: string) => `/api/report-agent/teams/${id}/members/batch`,
       member: (id: string, userId: string) => `/api/report-agent/teams/${id}/members/${userId}`,
       dashboard: (id: string) => `/api/report-agent/teams/${id}/dashboard`,
       reportsView: (id: string) => `/api/report-agent/teams/${id}/reports/view`,

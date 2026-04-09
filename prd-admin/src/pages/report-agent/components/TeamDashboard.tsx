@@ -23,7 +23,7 @@ import { toast } from '@/lib/toast';
 import { useReportAgentStore } from '@/stores/reportAgentStore';
 import { useAuthStore } from '@/stores/authStore';
 import {
-  addReportTeamMember,
+  batchAddReportTeamMembers,
   generateTeamSummary,
   getTeamReportsView,
   getTeamSummaryView,
@@ -31,7 +31,8 @@ import {
   removeReportTeamMember,
 } from '@/services';
 import { ReportTeamRole, WeeklyReportStatus } from '@/services/contracts/reportAgent';
-import type { ReportUser, TeamReportsViewData, TeamSummaryViewData } from '@/services/contracts/reportAgent';
+import type { TeamReportsViewData, TeamSummaryViewData } from '@/services/contracts/reportAgent';
+import { UserMultiSearchSelect } from '@/components/UserMultiSearchSelect';
 
 function getISOWeek(date: Date): { weekYear: number; weekNumber: number } {
   const d = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()));
@@ -73,7 +74,7 @@ function getMemberPriority(status?: string): number {
 type ViewMode = 'report_list' | 'ai_summary';
 
 export function TeamDashboard() {
-  const { teams, users, loadUsers, loadTeams } = useReportAgentStore();
+  const { teams, loadTeams } = useReportAgentStore();
   const userId = useAuthStore((s) => s.user?.userId);
   const navigate = useNavigate();
 
@@ -96,7 +97,7 @@ export function TeamDashboard() {
   const [generatingSummary, setGeneratingSummary] = useState(false);
 
   const [memberFormOpen, setMemberFormOpen] = useState(false);
-  const [memberUserId, setMemberUserId] = useState('');
+  const [memberUserIds, setMemberUserIds] = useState<string[]>([]);
   const [memberRole, setMemberRole] = useState<string>(ReportTeamRole.Member);
   const [memberJobTitle, setMemberJobTitle] = useState('');
   const [memberSaving, setMemberSaving] = useState(false);
@@ -196,10 +197,6 @@ export function TeamDashboard() {
   }, [loadReportsView, loadSummaryView, viewMode]);
 
   useEffect(() => {
-    void loadUsers();
-  }, [loadUsers]);
-
-  useEffect(() => {
     if (!hasScopedTeams) {
       setSelectedTeamId('');
       setReportsView(null);
@@ -262,11 +259,6 @@ export function TeamDashboard() {
     });
   }, [reportsView]);
 
-  const availableUsers = useMemo<ReportUser[]>(() => {
-    const memberIds = new Set((reportsView?.members ?? []).map((member) => member.userId));
-    return users.filter((user) => !memberIds.has(user.id));
-  }, [reportsView, users]);
-
   const handlePrevWeek = () => {
     if (weekNumber <= 1) {
       setWeekYear((v) => v - 1);
@@ -320,14 +312,14 @@ export function TeamDashboard() {
   };
 
   const handleAddMember = async () => {
-    if (!selectedTeamId || !memberUserId) {
+    if (!selectedTeamId || memberUserIds.length === 0) {
       toast.error('请选择要添加的成员');
       return;
     }
     setMemberSaving(true);
-    const res = await addReportTeamMember({
+    const res = await batchAddReportTeamMembers({
       teamId: selectedTeamId,
-      userId: memberUserId,
+      userIds: memberUserIds,
       role: memberRole,
       jobTitle: memberJobTitle.trim() || undefined,
     });
@@ -336,9 +328,15 @@ export function TeamDashboard() {
       toast.error(res.error?.message || '添加失败');
       return;
     }
-    toast.success('成员已添加');
+    const addedCount = res.data.added.length;
+    const skippedCount = res.data.skipped.length;
+    if (skippedCount > 0) {
+      toast.success(`已添加 ${addedCount} 名成员，${skippedCount} 人已在团队中`);
+    } else {
+      toast.success(`已添加 ${addedCount} 名成员`);
+    }
     setMemberFormOpen(false);
-    setMemberUserId('');
+    setMemberUserIds([]);
     setMemberRole(ReportTeamRole.Member);
     setMemberJobTitle('');
     await loadTeams();
@@ -413,10 +411,12 @@ export function TeamDashboard() {
               {canManageMembers && memberFormOpen && (
                 <div className="surface-inset rounded-xl p-3 space-y-3">
                   <div className="text-[12px] font-medium" style={{ color: 'var(--text-secondary)' }}>新增成员</div>
-                  <select className="surface-inset w-full rounded-xl px-3 py-2.5 text-[13px]" value={memberUserId} onChange={(e) => setMemberUserId(e.target.value)}>
-                    <option value="">选择成员</option>
-                    {availableUsers.map((user) => <option key={user.id} value={user.id}>{user.displayName || user.username}</option>)}
-                  </select>
+                  <UserMultiSearchSelect
+                    value={memberUserIds}
+                    onChange={setMemberUserIds}
+                    excludeUserIds={(reportsView?.members ?? []).map((m) => m.userId)}
+                    placeholder="搜索并选择成员..."
+                  />
                   <select className="surface-inset w-full rounded-xl px-3 py-2.5 text-[13px]" value={memberRole} onChange={(e) => setMemberRole(e.target.value)}>
                     <option value={ReportTeamRole.Member}>成员</option>
                     <option value={ReportTeamRole.Deputy}>副负责人</option>
@@ -425,8 +425,8 @@ export function TeamDashboard() {
                   <input className="surface-inset w-full rounded-xl px-3 py-2.5 text-[13px]" placeholder="岗位（可选）" value={memberJobTitle} onChange={(e) => setMemberJobTitle(e.target.value)} />
                   <div className="flex justify-end gap-2">
                     <Button variant="ghost" size="sm" onClick={() => setMemberFormOpen(false)}>取消</Button>
-                    <Button variant="primary" size="sm" onClick={handleAddMember} disabled={memberSaving || !memberUserId}>
-                      {memberSaving ? '添加中...' : '确认添加'}
+                    <Button variant="primary" size="sm" onClick={handleAddMember} disabled={memberSaving || memberUserIds.length === 0}>
+                      {memberSaving ? '添加中...' : memberUserIds.length > 1 ? `添加 ${memberUserIds.length} 人` : '确认添加'}
                     </Button>
                   </div>
                 </div>
