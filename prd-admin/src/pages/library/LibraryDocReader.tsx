@@ -10,6 +10,7 @@
  * 只读，没有编辑/上传/删除/拖拽等写操作。
  */
 import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
+import { useNavigate } from 'react-router-dom';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import remarkMath from 'remark-math';
@@ -18,6 +19,7 @@ import 'katex/dist/katex.min.css';
 import GithubSlugger from 'github-slugger';
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { oneLight } from 'react-syntax-highlighter/dist/esm/styles/prism';
+import { toast } from '@/lib/toast';
 import {
   FolderOpen,
   FolderClosed,
@@ -54,18 +56,107 @@ function normalizeHeadingText(raw: string): string {
     .trim();
 }
 
-// 判断 href 类型，决定点击行为
-type LinkKind = 'anchor' | 'internal' | 'external';
-function classifyHref(href: string | undefined): LinkKind {
-  if (!href) return 'external';
-  if (href.startsWith('#')) return 'anchor';
-  // 相对路径 或 同源绝对路径 视为站内链接
-  if (href.startsWith('/') && !href.startsWith('//')) return 'internal';
-  try {
-    const url = new URL(href, window.location.origin);
-    if (url.origin === window.location.origin) return 'internal';
-  } catch { /* 非法 URL，按外链处理 */ }
-  return 'external';
+// 链接类型判定结果
+type ResolvedLink =
+  | { kind: 'anchor'; hash: string }                             // 页内锚点
+  | { kind: 'entry'; entryId: string; hash?: string }            // 同知识库内的文档引用
+  | { kind: 'route'; path: string }                              // 其他 SPA 路由（/library/xxx、/... 等）
+  | { kind: 'external'; href: string }                           // 外链（新标签页）
+  | { kind: 'unresolved'; href: string };                        // 相对路径但在 entries 里找不到
+
+/**
+ * 尝试把相对路径的 "文档名" 映射到知识库里的某个 entry。
+ * 支持的匹配规则（按优先级）：
+ *   1. entry.title 完全等于 name（含或不含 .md）
+ *   2. entry.metadata.github_path 末段等于 name
+ *   3. entry.title 去掉扩展名后等于 name 去掉扩展名
+ * 找不到返回 undefined。
+ */
+function findEntryByRelativeName(
+  name: string,
+  entries: DocumentEntry[],
+): DocumentEntry | undefined {
+  const cleaned = name.trim().replace(/^\.\//, '');
+  if (!cleaned) return undefined;
+  const withMd = cleaned.endsWith('.md') ? cleaned : `${cleaned}.md`;
+  const withoutMd = cleaned.replace(/\.md$/i, '');
+
+  // 规则 1：title 直接等于
+  let hit = entries.find(
+    (e) => !e.isFolder && (e.title === cleaned || e.title === withMd || e.title === withoutMd),
+  );
+  if (hit) return hit;
+
+  // 规则 2：github_path 末段等于
+  hit = entries.find((e) => {
+    if (e.isFolder) return false;
+    const ghPath = e.metadata?.github_path;
+    if (!ghPath) return false;
+    const base = ghPath.split('/').pop() ?? '';
+    return base === cleaned || base === withMd;
+  });
+  if (hit) return hit;
+
+  // 规则 3：去扩展名比对 title
+  hit = entries.find((e) => {
+    if (e.isFolder) return false;
+    const titleBase = e.title.replace(/\.[^.]+$/, '');
+    return titleBase === withoutMd;
+  });
+  return hit;
+}
+
+/**
+ * 根据 href 判断应该怎么处理这个链接。
+ *
+ * - `#xxx`                 → 页内锚点
+ * - `https://foo.bar/...`  → 外链
+ * - `/library/...`         → SPA 路由（走 react-router navigate）
+ * - `design.visual-agent`  → 相对文档引用，尝试在 entries 里找，找不到就算 unresolved
+ * - `./design.visual-agent.md` 同上
+ * - `/some/absolute/path`  → 如果是站内路由白名单就走 route，否则 unresolved（防止误跳 /library/{name}）
+ */
+function resolveLink(
+  href: string | undefined,
+  entries: DocumentEntry[],
+): ResolvedLink {
+  if (!href) return { kind: 'external', href: '' };
+
+  // 页内锚点
+  if (href.startsWith('#')) return { kind: 'anchor', hash: href.slice(1) };
+
+  // 协议开头 → 判断同源还是外链
+  if (/^[a-z][a-z0-9+.-]*:/i.test(href)) {
+    try {
+      const url = new URL(href);
+      if (url.origin !== window.location.origin) {
+        return { kind: 'external', href };
+      }
+      // 同源绝对 URL：按路由处理，保留 hash
+      return { kind: 'route', path: url.pathname + url.search + url.hash };
+    } catch {
+      return { kind: 'external', href };
+    }
+  }
+
+  // 绝对路径 /library/xxx 或其他 SPA 路由：允许
+  if (href.startsWith('/') && !href.startsWith('//')) {
+    return { kind: 'route', path: href };
+  }
+
+  // 相对路径：只能是"同知识库内的文档引用"。从 href 里把纯文档名抠出来（去掉 query 和 hash）
+  const qMark = href.indexOf('?');
+  const hMark = href.indexOf('#');
+  const firstSep = [qMark, hMark].filter((i) => i >= 0).sort((a, b) => a - b)[0] ?? href.length;
+  const namePart = href.slice(0, firstSep);
+  const hashPart = hMark >= 0 ? href.slice(hMark + 1) : undefined;
+
+  const hit = findEntryByRelativeName(namePart, entries);
+  if (hit) {
+    return { kind: 'entry', entryId: hit.id, hash: hashPart };
+  }
+
+  return { kind: 'unresolved', href };
 }
 
 export type LibraryDocReaderPreview = {
@@ -87,6 +178,7 @@ export function LibraryDocReader({
   pinnedEntryIds = [],
   loadContent,
 }: Props) {
+  const navigate = useNavigate();
   const [selectedId, setSelectedId] = useState<string | undefined>(primaryEntryId);
   const [preview, setPreview] = useState<LibraryDocReaderPreview | null>(null);
   const [loading, setLoading] = useState(false);
@@ -247,10 +339,11 @@ export function LibraryDocReader({
     return () => window.removeEventListener('hashchange', onHashChange);
   }, []);
 
-  // 切换选中文档时，清除 URL 上的旧 hash（避免旧 hash 把新文档 scroll 到错的位置）
-  const handleSelectEntry = useCallback((id: string) => {
+  // 切换选中文档时，默认清除 URL 上的旧 hash（避免旧 hash 把新文档 scroll 到错的位置）。
+  // 来自相对路径文档引用（带 hash 的跳转）时，调用方会在切换后自行 replaceState 新 hash。
+  const handleSelectEntry = useCallback((id: string, keepHash = false) => {
     setSelectedId(id);
-    if (window.location.hash) {
+    if (!keepHash && window.location.hash) {
       const { pathname, search } = window.location;
       window.history.replaceState(null, '', pathname + search);
     }
@@ -385,6 +478,9 @@ export function LibraryDocReader({
           <ContentArea
             entry={entries.find((e) => e.id === selectedId)}
             preview={preview}
+            entries={entries}
+            onSelectEntry={handleSelectEntry}
+            navigate={navigate}
           />
         )}
       </div>
@@ -528,9 +624,15 @@ function TreeNode({
 function ContentArea({
   entry,
   preview,
+  entries,
+  onSelectEntry,
+  navigate,
 }: {
   entry?: DocumentEntry;
   preview: LibraryDocReaderPreview | null;
+  entries: DocumentEntry[];
+  onSelectEntry: (id: string) => void;
+  navigate: ReturnType<typeof useNavigate>;
 }) {
   if (!entry) return <EmptyRight />;
   if (entry.isFolder) {
@@ -598,7 +700,12 @@ function ContentArea({
           }}
         />
       ) : text ? (
-        <ClayMarkdown content={text} />
+        <ClayMarkdown
+          content={text}
+          entries={entries}
+          onSelectEntry={onSelectEntry}
+          navigate={navigate}
+        />
       ) : fileUrl ? (
         <div className="text-center py-16">
           <cfg.icon
@@ -663,7 +770,17 @@ function EmptyRight() {
 
 // ── Markdown Viewer with claymorphism-compatible light theme ──
 
-function ClayMarkdown({ content }: { content: string }) {
+function ClayMarkdown({
+  content,
+  entries,
+  onSelectEntry,
+  navigate,
+}: {
+  content: string;
+  entries: DocumentEntry[];
+  onSelectEntry: (id: string) => void;
+  navigate: ReturnType<typeof useNavigate>;
+}) {
   // 为每次渲染创建新 slugger（确保同一标题首次出现得到干净 slug）
   // eslint-disable-next-line react-hooks/exhaustive-deps
   const slugger = useMemo(() => new GithubSlugger(), [content]);
@@ -762,12 +879,13 @@ function ClayMarkdown({ content }: { content: string }) {
             </p>
           ),
           a: ({ href, children }) => {
-            const kind = classifyHref(href);
+            const resolved = resolveLink(href, entries);
+
             // 外链：新标签页
-            if (kind === 'external') {
+            if (resolved.kind === 'external') {
               return (
                 <a
-                  href={href}
+                  href={resolved.href}
                   target="_blank"
                   rel="noopener noreferrer"
                   className="font-bold underline decoration-[2px] underline-offset-4"
@@ -777,27 +895,64 @@ function ClayMarkdown({ content }: { content: string }) {
                 </a>
               );
             }
-            // 锚点 / 站内链接：拦截默认行为，SPA 内 scroll 或 history.pushState
+
+            // 找不到目标的相对路径：灰显 + 禁用点击 + tooltip
+            if (resolved.kind === 'unresolved') {
+              return (
+                <span
+                  className="font-bold decoration-[2px] underline-offset-4"
+                  style={{
+                    color: '#94A3B8',
+                    textDecoration: 'line-through wavy',
+                    cursor: 'not-allowed',
+                  }}
+                  title={`未在本知识库中找到该文档：${resolved.href}`}
+                  onClick={(e) => {
+                    e.preventDefault();
+                    toast.warning('链接无效', `未找到文档：${resolved.href}`);
+                  }}
+                >
+                  {children}
+                </span>
+              );
+            }
+
             return (
               <a
                 href={href}
                 className="font-bold underline decoration-[2px] underline-offset-4"
                 style={{ color: '#F97316' }}
                 onClick={(e) => {
-                  if (!href) return;
                   e.preventDefault();
-                  if (kind === 'anchor') {
-                    const id = decodeURIComponent(href.slice(1));
+                  if (resolved.kind === 'anchor') {
+                    // 页内锚点：scroll 到对应 heading
+                    const id = decodeURIComponent(resolved.hash);
                     const target = document.getElementById(id);
                     if (target) {
                       target.scrollIntoView({ behavior: 'smooth', block: 'start' });
-                      // 更新 URL hash 但不触发 hashchange 副作用
-                      window.history.replaceState(null, '', `${window.location.pathname}${window.location.search}#${id}`);
+                      window.history.replaceState(
+                        null,
+                        '',
+                        `${window.location.pathname}${window.location.search}#${id}`,
+                      );
+                    } else {
+                      toast.warning('未找到章节', `#${id}`);
                     }
-                  } else {
-                    // 站内链接：使用 pushState（整站无 Router ref 时至少 SPA 内不会丢状态）
-                    window.history.pushState(null, '', href);
-                    window.dispatchEvent(new PopStateEvent('popstate'));
+                  } else if (resolved.kind === 'entry') {
+                    // 相对路径命中知识库内的文档：先写 hash，再切换 entry，避免 handleSelectEntry 把 hash 清掉
+                    if (resolved.hash) {
+                      window.history.replaceState(
+                        null,
+                        '',
+                        `${window.location.pathname}${window.location.search}#${resolved.hash}`,
+                      );
+                      onSelectEntry(resolved.entryId);
+                    } else {
+                      onSelectEntry(resolved.entryId);
+                    }
+                  } else if (resolved.kind === 'route') {
+                    // 站内其他路由（如 /library/{其他知识库 ID}）：react-router 导航
+                    navigate(resolved.path);
                   }
                 }}
               >
