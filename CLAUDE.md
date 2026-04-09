@@ -133,6 +133,29 @@ cd prd-api && dotnet build --no-restore 2>&1 | grep -E "error CS|warning CS" | h
 - 绕过真实访问路径测试——container-exec 是诊断工具，不是验收工具
 - 不主动查系统能力——需要模型池就去查平台有没有，需要用户就去查数据库有哪些
 
+### 9. 新功能/新 Agent 导航默认去百宝箱 + 必须声明位置
+
+任何新建的智能体或新增功能，**默认且必须**注册到百宝箱（AI Toolbox，`/ai-toolbox`），并在交付消息中明确告诉用户"在哪里能看到"。杜绝"只有路由甚至连路由都没有"的交付。
+
+**默认位置**：
+- 新 Agent 必须注册到 `prd-admin/src/stores/toolboxStore.ts` 的 `BUILTIN_TOOLS` 数组
+- 左侧导航（`AdminMenuCatalog.cs` + `authzMenuMapping.ts`）和首页快捷入口（`LandingPage.tsx` / `MobileHomePage.tsx` 的 `QUICK_AGENTS`）为**可选升级**，仅当用户明确要求时才追加
+- 多处注册时同一 `routePath` 必须保持一致，禁止分叉
+
+**交付时必须包含位置声明**（两行格式，不可省略）：
+```
+【位置】百宝箱（AI 百宝箱 → 搜索 "XXX"）/ 左侧导航"XX"菜单 / 首页快捷入口
+【路径】登录后首页 → 1) 点击 X → 2) 点击 Y → 3) 到达目标页
+```
+
+**禁止**：
+- 只给路由路径（如 "访问 `/new-agent` 即可"）
+- 只给功能名不给位置（如 "功能已上线"）
+- 位置模糊（如 "在管理后台可以看到"）
+- 未注册百宝箱就声称"完成"——百宝箱是最低配置
+
+详细规则见 `.claude/rules/navigation-registry.md`。
+
 ---
 
 ## 架构规则索引
@@ -155,6 +178,7 @@ cd prd-api && dotnet build --no-restore 2>&1 | grep -E "error CS|warning CS" | h
 | `guided-exploration.md` | `**/*.{ts,tsx}` | 陌生页面 3 秒内知道做什么，空状态必须有引导 |
 | `no-rootless-tree.md` | `**/*.{cs,ts,tsx}` | 无根之木禁令 + 借用法则：不假定不存在的能力，缺什么借什么 |
 | `bridge-ops.md` | `cds/src/**/*.ts` | Bridge 操作规范：鼠标轨迹 + spa-navigate + description 必填 |
+| `navigation-registry.md` | 新 Agent / 新功能入口 | 默认注册百宝箱 + 交付必须声明"位置"与"点击路径"，禁止只给路由 |
 
 ---
 

@@ -24,6 +24,16 @@ Your proposed approach: what you'll change, how, and why. Keep this concrete —
 **涉及改动（可选）**
 If the scope involves specific files, functions, or lines, list them briefly so the user can assess the footprint. Skip this if the change is conceptual or doesn't involve code.
 
+**导航位置（新 Agent / 新页面必填）**
+If the plan introduces a new agent, a new page, or a new user-facing entry, you MUST declare where users will find it, using this exact format:
+
+```
+【位置】百宝箱（默认）/ 左侧导航"XX" / 首页快捷入口
+【路径】登录后首页 → 1) 点击 X → 2) 点击 Y → 3) 到达
+```
+
+Per `.claude/rules/navigation-registry.md`, the default location for any new agent is the 百宝箱 (`toolboxStore.ts` BUILTIN_TOOLS). Only add to the left sidebar or homepage when the user explicitly asks. Skip this field only when the change doesn't introduce any new user-facing entry.
+
 End with a clear waiting signal, e.g.: "确认后执行" or "等待您确认后动手。"
 
 ## Key principles
