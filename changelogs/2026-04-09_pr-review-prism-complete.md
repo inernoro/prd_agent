@@ -26,3 +26,6 @@
 | feat | prd-api | PR审查棱镜新增 setup-status 配置检查接口，返回 GitHub Token 与顶层设计基线就绪状态及可执行指引 |
 | feat | prd-admin | PR审查棱镜页面新增“初始化与配置检查”面板，显式展示 Token/顶设状态并提供初始化命令提示 |
 | fix | prd-api | PR审查棱镜集成测试新增 setup-status 鉴权与响应结构断言，防止配置可见性能力回归 |
+| feat | scripts | init-pr-prism-basis 支持零参数自动识别仓库与 owner，显著降低新仓库初始化成本 |
+| feat | prd-api | PR审查棱镜 setup-status 返回 skillTemplatePath 与零参数初始化命令，支持新仓库技能模板化接入 |
+| feat | doc | 新增 PR 审查棱镜 skill 模板文档，明确“顶层设计上传 → design-sources 激活 → gate 校验”最佳路径 |

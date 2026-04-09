@@ -85,7 +85,7 @@ public sealed class PrReviewPrismController : ControllerBase
 
             if (!topDesign.TopDesignDocExists || !topDesign.AnchorsExists || !topDesign.ContextsExists || !topDesign.SlicesExists)
             {
-                guidance.Add("建议执行 `bash scripts/init-pr-prism-basis.sh --repo \"<org>/<repo>\" --owner \"<architect>\"` 初始化最薄顶设文档");
+                guidance.Add("建议执行 `bash scripts/init-pr-prism-basis.sh`（零参数自动识别）初始化最薄顶设文档");
             }
         }
 

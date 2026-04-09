@@ -431,7 +431,7 @@ export function PrReviewPrismPage() {
                 <div className="mt-2 text-amber-100/80">
                   <p>推荐初始化命令：</p>
                   <code className="block mt-1 rounded bg-black/25 px-2 py-1 whitespace-pre-wrap break-all">
-                    bash scripts/init-pr-prism-basis.sh --repo "your-org/your-repo" --owner "your-github-id"
+                    bash scripts/init-pr-prism-basis.sh
                   </code>
                 </div>
               </div>

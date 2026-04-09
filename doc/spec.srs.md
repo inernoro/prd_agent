@@ -2194,6 +2194,13 @@ sequenceDiagram
 2. 读取对应 commit check-runs，定位名称为 `PR审查棱镜 L1 Gate` 的检查项，映射 `gateStatus` 与 `gateConclusion`。
 3. 读取 PR 评论，识别决策卡标记块（兼容新旧 marker），解析建议、风险分、置信度、硬阻断、阻断项、建议项、关注问题。
 4. 解析失败或外部调用异常时，记录 `lastRefreshError` 并将 `gateStatus` 置为 `error`，避免静默失败。
+5. 顶层设计审查依据采用 **design-sources + repo-bindings** 双文件绑定机制：
+   - 上传/维护位置：仓库内 `doc/top-design/*`（V1 推荐）或外部设计源注册到 `.github/pr-architect/design-sources.yml`
+   - 激活方式：`design-sources.yml` 的 `defaults.active_source_id/active_version`
+   - 仓库绑定：`.github/pr-architect/repo-bindings.yml` 的 `repositories[].repo`
+6. 新仓库初始化支持通过模板化 Skill 执行：
+   - 模板：`.github/pr-architect/skill-template.pr-prism-bootstrap.md`
+   - 执行后应生成最薄文档与绑定配置，并使 setup-status 返回 `readyForFullRefresh=true`（在 GitHub Token 已配置前提下）。
 
 **验收标准**：
 - [ ] 可从 PR 链接正确解析 owner/repo/number

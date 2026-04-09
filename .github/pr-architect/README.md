@@ -259,6 +259,12 @@ bash scripts/init-pr-prism-basis.sh \
   --context "engineering-governance"
 ```
 
+默认支持**零参数**执行（自动从 git remote 推断 repo，优先用 `git config user.name` 作为 owner）：
+
+```bash
+bash scripts/init-pr-prism-basis.sh
+```
+
 脚本会生成/更新：
 
 - `doc/top-design/main.md`（薄顶设主文档）
@@ -279,3 +285,21 @@ bash scripts/init-pr-prism-basis.sh \
 2. `repo-bindings.yml` 包含当前仓库条目，且开启 `PR审查棱镜 L1 Gate`；
 3. PR 模板中 `design_source_id/version` 能被 prefill 自动补齐；
 4. 提交一个示例 PR 后，`PR审查棱镜 L1 Gate` 成功执行并可解析 `anchor_refs`。
+
+### 9.4 顶层设计上传（审查依据）最佳方案
+
+当前 V1 的最佳实践是“两阶段”：
+
+1. **先用仓库内薄文档跑通门禁**（初始化脚本自动完成）；
+2. **再上传正式顶层设计正文**，并通过 `design-sources.yml` 做版本绑定。
+
+推荐做法：
+
+- 正式顶设正文放到 `doc/top-design/main.md`（或你们团队规范路径）；
+- 将 anchors/contexts/slices 保持 repo-file manifests（V1 必须）；
+- 每次顶设升级，仅更新：
+  - `design-sources.yml` 的 `active_version` / `sources[].version`
+  - 对应 manifests 内容（必要时）
+
+同时可将初始化动作封装为可复用 skill，模板见：
+- `.github/pr-architect/skill-template.pr-prism-bootstrap.md`

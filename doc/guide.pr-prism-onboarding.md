@@ -15,13 +15,18 @@ PR审查棱镜在 V1 阶段要求：
 
 如果仓库仍使用 `.github/pr-architect/top-design.bootstrap.md` 占位设计源，会被 Gate 阻断。
 
-## 2. 一条命令初始化（推荐）
+## 2. 一条命令初始化（推荐，零参数）
 
 在仓库根目录执行：
 
 ```bash
-bash scripts/init-pr-prism-basis.sh --repo "your-org/your-repo" --owner "your-github-id"
+bash scripts/init-pr-prism-basis.sh
 ```
+
+脚本会自动探测：
+
+- `repo`：优先从 `origin` remote 推导（`https://github.com/{org}/{repo}.git` 或 `git@github.com:{org}/{repo}.git`），失败时回退 `git config github.repo`
+- `owner`：优先当前 git 用户（`user.name`），为空时使用 `architect`
 
 脚本会：
 
@@ -76,7 +81,7 @@ slices:
 
 ## 4. 新仓库接入清单
 
-- [ ] 运行初始化脚本：`bash scripts/init-pr-prism-basis.sh --repo "your-org/your-repo" --owner "your-github-id"`
+- [ ] 运行初始化脚本：`bash scripts/init-pr-prism-basis.sh`
 - [ ] 提交生成文件到仓库
 - [ ] 在 GitHub 分支保护中配置 required check：`PR审查棱镜 L1 Gate`
 - [ ] 创建一个测试 PR，确认：
@@ -84,7 +89,36 @@ slices:
   - check 工作流通过或返回可解释阻断信息
   - publish 工作流能更新单条决策卡评论
 
-## 5. 常见问题
+## 5. 在“新项目上传 skill 一键执行”中的用法
+
+为降低操作成本，仓库已提供可复用 skill 模板：
+
+- `.github/pr-architect/skill-template.pr-prism-bootstrap.md`
+
+建议在新项目的 Agent/技能系统里创建一个 `pr-prism-bootstrap` skill，执行步骤为：
+
+1. `bash scripts/init-pr-prism-basis.sh`
+2. `git add doc/top-design .github/pr-architect scripts/init-pr-prism-basis.sh`
+3. `git commit -m "chore: bootstrap pr prism basis"`
+
+这样新仓库无需手工填参数即可完成初始化。
+
+## 6. 顶层设计（审查依据）上传最佳方案
+
+### 6.1 V1 最佳方案（当前推荐）
+
+当前 Gate 对 anchors 校验只支持 repo-file manifests，因此最佳方案是：
+
+1. 先将顶层设计落地到仓库（`doc/top-design/*`）
+2. `design-sources.yml` 指向本地 `repo-file`
+3. 通过 PR 审查门禁稳定运行
+
+### 6.2 完整设计源升级（后续）
+
+当规则升级支持 URL/artifact anchors 后，再切换到远程设计包托管。
+V1 阶段不建议直接走 URL/artifact，否则会被 Gate 阻断。
+
+## 7. 常见问题
 
 ### Q1：为什么 URL/artifact 设计源没法直接用？
 

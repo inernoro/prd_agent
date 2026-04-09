@@ -4,7 +4,7 @@ set -euo pipefail
 usage() {
   cat <<'EOF'
 Usage:
-  scripts/init-pr-prism-basis.sh --repo owner/repo [--architect architect] [--context engineering-governance]
+  scripts/init-pr-prism-basis.sh [--repo owner/repo] [--architect architect] [--context engineering-governance]
 
 Description:
   Initialize the minimum PR Review Prism top-design basis for a new repository.
@@ -19,11 +19,13 @@ Description:
 Notes:
   - Safe for repeated runs (idempotent overwrite of the above files).
   - Designed for V1 checker (repo-file manifests only).
+  - When --repo is omitted, auto-detects from git remote origin.
+  - When --architect/--owner is omitted, auto-detects from `gh api user` or git user.name.
 EOF
 }
 
 REPO=""
-ARCHITECT="architect"
+ARCHITECT=""
 CONTEXT="engineering-governance"
 
 while [[ $# -gt 0 ]]; do
@@ -52,16 +54,84 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
+detect_repo_from_git() {
+  local remote_url
+  remote_url="$(git config --get remote.origin.url 2>/dev/null || true)"
+  if [[ -z "$remote_url" ]]; then
+    return 1
+  fi
+
+  # Supports:
+  # - https://github.com/org/repo.git
+  # - git@github.com:org/repo.git
+  # - https://x-access-token:***@github.com/org/repo
+  local normalized="$remote_url"
+  normalized="${normalized%.git}"
+
+  if [[ "$normalized" == *github.com* ]]; then
+    normalized="${normalized#*github.com[:/]}"
+  elif [[ "$normalized" == *:*/* ]]; then
+    normalized="${normalized#*:}"
+  fi
+
+  # For HTTPS with embedded credentials, strip only credentials segment.
+  # Keep owner/repo intact for plain URLs like https://github.com/owner/repo.
+  if [[ "$normalized" == *"@"* ]]; then
+    normalized="${normalized#*@}"
+  fi
+
+  if [[ "$normalized" == */* ]]; then
+    local owner="${normalized%%/*}"
+    local repo="${normalized##*/}"
+    if [[ -n "$owner" && -n "$repo" ]]; then
+      printf '%s/%s\n' "$owner" "$repo"
+      return 0
+    fi
+  fi
+
+  return 1
+}
+
+detect_architect() {
+  if [[ -n "$ARCHITECT" ]]; then
+    return 0
+  fi
+
+  if command -v gh >/dev/null 2>&1; then
+    local gh_login
+    gh_login="$(gh api user --jq '.login' 2>/dev/null || true)"
+    if [[ -n "$gh_login" ]]; then
+      ARCHITECT="$gh_login"
+      return 0
+    fi
+  fi
+
+  local git_user
+  git_user="$(git config user.name 2>/dev/null || true)"
+  if [[ -n "$git_user" ]]; then
+    ARCHITECT="$git_user"
+    return 0
+  fi
+
+  ARCHITECT="architect"
+}
+
 if [[ -z "$REPO" ]]; then
-  echo "Error: --repo is required (example: --repo inernoro/prd_agent)." >&2
-  usage
-  exit 1
+  if REPO="$(detect_repo_from_git)"; then
+    echo "Auto-detected repo: $REPO"
+  else
+    echo "Error: unable to detect repo from git remote. Please pass --repo owner/repo." >&2
+    usage
+    exit 1
+  fi
 fi
 
 if [[ "$REPO" != */* ]]; then
   echo "Error: --repo must be in owner/repo format." >&2
   exit 1
 fi
+
+detect_architect
 
 REPO_SLUG="${REPO//\//-}"
 SOURCE_ID="local-ddd-anchor"
@@ -169,3 +239,4 @@ echo "Initialized PR Review Prism basis for ${REPO}"
 echo "Generated source: ${SOURCE_ID}@${SOURCE_VERSION}"
 echo "Anchor: ${ANCHOR_ID}"
 echo "Slice: ${SLICE_ID}"
+echo "Architect: ${ARCHITECT}"
