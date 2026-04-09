@@ -1512,6 +1512,7 @@ export {
   deletePrReviewPrismSubmission,
 } from '@/services/real/prReviewPrism';
 export type {
+  PrReviewPrismGateStatus,
   PrReviewPrismSubmission,
   PrReviewPrismStatus,
 } from '@/services/real/prReviewPrism';
