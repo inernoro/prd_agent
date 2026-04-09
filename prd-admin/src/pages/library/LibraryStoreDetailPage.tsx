@@ -122,12 +122,8 @@ export function LibraryStoreDetailPage() {
   }, [store]);
 
   const bg = {
-    // 加深对比度：更饱和的奶油色 + 更明显的色块
-    background:
-      'radial-gradient(ellipse 800px 600px at 10% 0%, rgba(251,146,60,0.35) 0%, transparent 60%),' +
-      'radial-gradient(ellipse 600px 500px at 90% 20%, rgba(59,130,246,0.22) 0%, transparent 60%),' +
-      'radial-gradient(ellipse 700px 500px at 80% 100%, rgba(236,72,153,0.18) 0%, transparent 60%),' +
-      'linear-gradient(180deg, #FFEDD5 0%, #FEF3C7 50%, #FED7AA 100%)',
+    // 纯奶油色背景（与 landing page 一致，无 gradient）
+    background: '#FEF3C7',
     fontFamily: "'Nunito', system-ui, sans-serif",
     color: '#1E1B4B',
   } as const;
@@ -174,23 +170,14 @@ export function LibraryStoreDetailPage() {
 
   return (
     <div className="min-h-screen w-full overflow-y-auto" style={bg}>
-      {/* 返回按钮 clay */}
-      <button
-        onClick={() => navigate('/library')}
-        className="fixed top-6 left-6 z-50 w-12 h-12 rounded-2xl flex items-center justify-center cursor-pointer transition-all active:translate-y-0.5"
-        style={{
-          background: '#FFFFFF',
-          border: '3px solid #1E1B4B',
-          boxShadow: '0 4px 0 #1E1B4B',
-          color: '#1E1B4B',
-        }}
-        title="返回殿堂"
-      >
-        <ArrowLeft size={20} strokeWidth={2.8} />
-      </button>
+      {/* 顶部悬浮 Navbar — 与 landing page 一致 */}
+      <DetailNavbar
+        storeName={store.name}
+        onBack={() => navigate('/library')}
+      />
 
       {/* Hero 头部 */}
-      <section className="relative pt-24 pb-8 px-6">
+      <section className="relative pt-8 pb-8 px-6">
         <div className="max-w-6xl mx-auto">
           <div
             className="p-8 rounded-[32px] relative"
@@ -318,6 +305,72 @@ export function LibraryStoreDetailPage() {
         </div>
       </section>
     </div>
+  );
+}
+
+// ── 顶部悬浮 Navbar（详情页版本） ──
+function DetailNavbar({
+  storeName,
+  onBack,
+}: {
+  storeName: string;
+  onBack: () => void;
+}) {
+  return (
+    <nav className="sticky top-6 z-50 px-4 md:px-6 pt-0">
+      <div
+        className="max-w-6xl mx-auto rounded-[28px] px-5 md:px-6 py-3 flex items-center justify-between gap-4"
+        style={{
+          background: '#FFFFFF',
+          border: '4px solid #1E1B4B',
+          boxShadow: '0 6px 0 #1E1B4B',
+        }}
+      >
+        <button
+          onClick={onBack}
+          className="flex items-center gap-3 cursor-pointer hover:-translate-y-0.5 transition-transform"
+        >
+          <div
+            className="w-11 h-11 rounded-2xl flex items-center justify-center flex-shrink-0"
+            style={{
+              background: '#FECACA',
+              border: '3px solid #1E1B4B',
+              boxShadow: '0 3px 0 #1E1B4B',
+            }}
+          >
+            <BookOpen size={20} style={{ color: '#DC2626' }} strokeWidth={2.8} />
+          </div>
+          <span
+            className="text-[18px] md:text-[20px] font-black hidden sm:inline"
+            style={{ fontFamily: "'Fredoka', sans-serif", color: '#1E1B4B' }}
+          >
+            智识殿堂
+          </span>
+        </button>
+
+        <div
+          className="flex-1 text-center text-[13px] md:text-[14px] font-bold truncate hidden md:block"
+          style={{ color: '#64748B' }}
+        >
+          正在阅读 · <span style={{ color: '#1E1B4B' }}>{storeName}</span>
+        </div>
+
+        <button
+          onClick={onBack}
+          className="flex items-center gap-1.5 px-4 py-2 rounded-2xl text-[13px] font-black cursor-pointer transition-all hover:-translate-y-0.5"
+          style={{
+            background: '#BFDBFE',
+            border: '3px solid #1E1B4B',
+            boxShadow: '0 4px 0 #1E1B4B',
+            color: '#1E1B4B',
+            fontFamily: "'Nunito', sans-serif",
+          }}
+        >
+          <ArrowLeft size={14} strokeWidth={3} />
+          返回殿堂
+        </button>
+      </div>
+    </nav>
   );
 }
 

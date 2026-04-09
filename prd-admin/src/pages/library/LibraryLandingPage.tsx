@@ -1,15 +1,16 @@
 /**
  * LibraryLandingPage — 「智识殿堂」公共知识库浏览页
  *
- * 设计风格：Claymorphism (参考 uuupm.cc/demo/educational-platform LearnHub)
+ * 设计参考：uupm.cc/demo/educational-platform (LearnHub)
  *
- * 关键设计语言：
- *  - 字体：Fredoka (标题) + Nunito (正文) — 圆润、活泼、友好
- *  - 背景：奶油色 #FFF7ED (偏暖) + 柔和渐变
- *  - 卡片：纯白背景 + 厚边框 (3-4px) + 硬投影 (offset 下右) + 内阴影 (柔软感)
- *  - 主题色：绿色 #16A34A (CTA) + 粉色 #EC4899 + 蓝色 #3B82F6 + 紫色 #A855F7 + 橙色 #F97316
- *  - 圆角：card 20-28px，button 14-16px
- *  - 交互：按下时 translate-y + 缩短阴影（"按扁"的感觉）
+ * 关键特征：
+ *  - 纯奶油色背景 #FEF3C7（无径向 gradient，无浮动装饰，简洁）
+ *  - 顶部居中悬浮 navbar（白色 + 4px 黑边 + 6px 硬投影）
+ *  - 超大 font-black 标题（tighter letter-spacing）
+ *  - Hero 左文右 mock 卡片
+ *  - 居中 "Popular Courses" 风格 pill badge + 居中大标题
+ *  - 2x2 课程卡片网格（彩色图标盒 + 作者 + 星级 + 统计）
+ *  - 所有可点击元素 hover:-translate-y
  */
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
@@ -18,15 +19,16 @@ import {
   Heart,
   Eye,
   Star,
-  Sparkles,
-  Flame,
   ArrowLeft,
   ArrowRight,
-  Clock,
-  Users,
   Rocket,
+  Users,
   GraduationCap,
-  Award,
+  Code,
+  Palette,
+  BarChart3,
+  Smartphone,
+  Layers,
 } from 'lucide-react';
 import { listPublicDocumentStores } from '@/services';
 import type { PublicDocumentStore } from '@/services/contracts/documentStore';
@@ -34,24 +36,24 @@ import { MapSectionLoader } from '@/components/ui/VideoLoader';
 
 type SortKey = 'hot' | 'new' | 'popular' | 'viewed';
 
-const SORT_OPTIONS: { key: SortKey; label: string; icon: typeof Flame; color: string; border: string }[] = [
-  { key: 'hot', label: '热门', icon: Flame, color: '#F97316', border: '#EA580C' },
-  { key: 'popular', label: '高赞', icon: Heart, color: '#EC4899', border: '#DB2777' },
-  { key: 'viewed', label: '高阅', icon: Eye, color: '#3B82F6', border: '#2563EB' },
-  { key: 'new', label: '最新', icon: Clock, color: '#A855F7', border: '#9333EA' },
+const SORT_OPTIONS: { key: SortKey; label: string }[] = [
+  { key: 'hot', label: '热门' },
+  { key: 'popular', label: '高赞' },
+  { key: 'viewed', label: '高阅' },
+  { key: 'new', label: '最新' },
 ];
 
-// 每张卡片使用不同的颜色主题（循环）
-const CARD_PALETTES = [
-  { bg: '#FEF3C7', border: '#F59E0B', shadow: '#D97706', icon: '#F59E0B', accent: '#92400E' }, // amber
-  { bg: '#DBEAFE', border: '#3B82F6', shadow: '#2563EB', icon: '#2563EB', accent: '#1E3A8A' }, // blue
-  { bg: '#FCE7F3', border: '#EC4899', shadow: '#DB2777', icon: '#DB2777', accent: '#831843' }, // pink
-  { bg: '#D1FAE5', border: '#10B981', shadow: '#059669', icon: '#059669', accent: '#064E3B' }, // green
-  { bg: '#EDE9FE', border: '#A855F7', shadow: '#9333EA', icon: '#9333EA', accent: '#4C1D95' }, // purple
-  { bg: '#FED7AA', border: '#F97316', shadow: '#EA580C', icon: '#EA580C', accent: '#7C2D12' }, // orange
+// 卡片头部图标色彩池（参考 LearnHub 课程卡片）
+const CARD_ACCENTS = [
+  { bg: '#FECACA', icon: Code, iconColor: '#DC2626' },        // 红：代码/开发
+  { bg: '#BFDBFE', icon: Palette, iconColor: '#2563EB' },     // 蓝：设计
+  { bg: '#C7D2FE', icon: BarChart3, iconColor: '#6366F1' },   // 靛：数据
+  { bg: '#BBF7D0', icon: Smartphone, iconColor: '#16A34A' },  // 绿：移动
+  { bg: '#FED7AA', icon: Layers, iconColor: '#EA580C' },      // 橙：综合
+  { bg: '#F9A8D4', icon: GraduationCap, iconColor: '#DB2777' }, // 粉：教育
 ];
 
-/** 注入 Fredoka + Nunito 字体 (仅在 LibraryLandingPage 需要) */
+/** 注入 Fredoka + Nunito 字体 */
 function useFredokaFonts() {
   useEffect(() => {
     const id = 'library-claymorphism-fonts';
@@ -59,7 +61,7 @@ function useFredokaFonts() {
     const link = document.createElement('link');
     link.id = id;
     link.rel = 'stylesheet';
-    link.href = 'https://fonts.googleapis.com/css2?family=Fredoka:wght@400;500;600;700&family=Nunito:wght@400;500;600;700;800&display=swap';
+    link.href = 'https://fonts.googleapis.com/css2?family=Fredoka:wght@400;500;600;700&family=Nunito:wght@400;500;600;700;800;900&display=swap';
     document.head.appendChild(link);
   }, []);
 }
@@ -84,88 +86,75 @@ export function LibraryLandingPage() {
 
   const totalLikes = stores.reduce((s, x) => s + x.likeCount, 0);
   const totalDocs = stores.reduce((s, x) => s + x.documentCount, 0);
-  const totalViews = stores.reduce((s, x) => s + x.viewCount, 0);
 
   return (
     <div
       className="min-h-screen w-full overflow-y-auto"
       style={{
-        // 提高对比度：更饱和的底色 + 更明显的色块
-        background:
-          'radial-gradient(ellipse 900px 700px at 15% 0%, rgba(251,146,60,0.40) 0%, transparent 60%),' +
-          'radial-gradient(ellipse 700px 600px at 85% 25%, rgba(59,130,246,0.25) 0%, transparent 60%),' +
-          'radial-gradient(ellipse 800px 600px at 50% 100%, rgba(236,72,153,0.22) 0%, transparent 60%),' +
-          'linear-gradient(180deg, #FFEDD5 0%, #FEF3C7 40%, #FED7AA 100%)',
+        // 纯奶油色背景，无 gradient，无 radial
+        background: '#FEF3C7',
         fontFamily: "'Nunito', system-ui, sans-serif",
         color: '#1E1B4B',
       }}
     >
-      {/* 浮动装饰（书本、星星） */}
-      <FloatingDecor />
-
-      {/* 返回按钮 —— clay 风格 */}
-      <button
-        onClick={() => navigate(-1)}
-        className="fixed top-6 left-6 z-50 w-12 h-12 rounded-2xl flex items-center justify-center cursor-pointer transition-all active:translate-y-0.5"
-        style={{
-          background: '#FFFFFF',
-          border: '3px solid #1E1B4B',
-          boxShadow: '0 4px 0 #1E1B4B',
-          color: '#1E1B4B',
+      {/* ── 顶部悬浮 Navbar (LearnHub style) ── */}
+      <FloatingNavbar
+        onStartExplore={() => {
+          const el = document.getElementById('catalog');
+          el?.scrollIntoView({ behavior: 'smooth' });
         }}
-        title="返回"
-      >
-        <ArrowLeft size={20} strokeWidth={2.8} />
-      </button>
+        onBack={() => navigate(-1)}
+      />
 
-      {/* Hero 区 */}
-      <section className="relative pt-24 pb-12 px-6">
+      {/* ── Hero 区 ── */}
+      <section className="relative px-6 pt-32 pb-16">
         <div className="max-w-6xl mx-auto">
           <div className="grid md:grid-cols-2 gap-12 items-center">
             {/* 左侧文字 */}
             <div>
-              {/* 徽章 */}
+              {/* NEW badge */}
               <div
-                className="inline-flex items-center gap-2 px-4 py-2 rounded-full mb-6"
+                className="inline-flex items-center gap-2 px-4 py-2 rounded-full mb-8"
                 style={{
-                  background: '#D1FAE5',
-                  border: '2.5px solid #10B981',
-                  boxShadow: '0 3px 0 #059669',
+                  background: '#BBF7D0',
+                  border: '3px solid #1E1B4B',
+                  boxShadow: '0 4px 0 #1E1B4B',
                 }}
               >
                 <span
-                  className="w-2 h-2 rounded-full animate-pulse"
-                  style={{ background: '#10B981' }}
+                  className="w-2 h-2 rounded-full"
+                  style={{ background: '#16A34A', boxShadow: '0 0 6px #16A34A' }}
                 />
-                <span className="text-[12px] font-bold" style={{ color: '#064E3B' }}>
-                  SHARED KNOWLEDGE · 社区共建
+                <span className="text-[12px] font-black" style={{ color: '#14532D' }}>
+                  NEW · 社区驱动的知识库
                 </span>
               </div>
 
+              {/* 超大标题 */}
               <h1
-                className="text-[56px] md:text-[84px] font-bold leading-[0.95] mb-2"
+                className="mb-6 leading-[0.9]"
                 style={{
                   fontFamily: "'Fredoka', 'Nunito', sans-serif",
+                  fontSize: 'clamp(56px, 9vw, 112px)',
+                  fontWeight: 700,
                   color: '#1E1B4B',
-                  letterSpacing: '-0.02em',
+                  letterSpacing: '-0.04em',
                 }}
               >
-                智识
-                <br />
-                <span style={{ color: '#F97316' }}>殿堂</span>。
+                读<span style={{ color: '#16A34A' }}>万卷书</span>，<br />
+                行<span style={{ color: '#F97316' }}>万里路</span>。
               </h1>
 
               <p
-                className="text-[16px] md:text-[19px] mb-8 max-w-md"
-                style={{ color: '#475569', lineHeight: 1.6, fontWeight: 500 }}
+                className="text-[16px] md:text-[18px] mb-10 max-w-md leading-relaxed"
+                style={{ color: '#475569', fontWeight: 500 }}
               >
-                汇聚千百开发者的洞见与心得。在这里 <b style={{ color: '#F97316' }}>阅读</b>
-                、<b style={{ color: '#EC4899' }}>点赞</b>、
-                <b style={{ color: '#A855F7' }}>收藏</b>、再创造。
+                汇聚千百开发者的洞见与心得。加入社区，探索 {stores.length}+ 个
+                知识库，来自各领域专家倾情分享。
               </p>
 
               {/* 双按钮 */}
-              <div className="flex flex-wrap gap-3">
+              <div className="flex flex-wrap gap-4 mb-14">
                 <ClayButton
                   primary
                   onClick={() => {
@@ -175,181 +164,228 @@ export function LibraryLandingPage() {
                 >
                   开始探索 <ArrowRight size={18} strokeWidth={3} />
                 </ClayButton>
-                <ClayButton
-                  onClick={() => navigate('/document-store')}
-                >
+                <ClayButton onClick={() => navigate('/document-store')}>
                   发布我的知识
                 </ClayButton>
               </div>
 
-              {/* 统计数据 */}
-              <div className="grid grid-cols-3 gap-4 mt-10 max-w-md">
-                <MiniStat value={stores.length} label="知识库" color="#A855F7" />
-                <MiniStat value={totalDocs} label="文档" color="#3B82F6" />
-                <MiniStat value={totalLikes} label="点赞" color="#EC4899" />
+              {/* 统计数据（横向 like LearnHub） */}
+              <div className="flex items-start gap-10">
+                <Stat num={stores.length} label="知识库" />
+                <Stat num={totalDocs} label="文档" />
+                <Stat num={totalLikes} label="点赞" />
               </div>
             </div>
 
-            {/* 右侧装饰卡片 —— mock 一张正在学习的卡片 */}
-            <div className="hidden md:block relative">
-              <HeroMockCard totalViews={totalViews} />
+            {/* 右侧 Mock Card */}
+            <div className="hidden md:block">
+              <HeroMockCard />
             </div>
           </div>
         </div>
       </section>
 
-      {/* 名言 banner */}
-      <section className="relative px-6 mb-12">
-        <div className="max-w-4xl mx-auto">
-          <div
-            className="px-8 py-6 rounded-[28px] flex items-center gap-4"
-            style={{
-              background: '#FFFFFF',
-              border: '3px solid #1E1B4B',
-              boxShadow: '6px 6px 0 #1E1B4B',
-            }}
-          >
+      {/* ── 课程目录区（Popular Courses → Explore Top-Rated Courses） ── */}
+      <section id="catalog" className="relative px-6 py-24" style={{ background: '#FFFFFF' }}>
+        <div className="max-w-6xl mx-auto">
+          {/* 居中 badge */}
+          <div className="text-center mb-6">
             <div
-              className="w-14 h-14 rounded-2xl flex items-center justify-center flex-shrink-0"
+              className="inline-block px-5 py-2 rounded-full"
               style={{
-                background: '#FEF3C7',
-                border: '2.5px solid #F59E0B',
-                boxShadow: '0 3px 0 #D97706',
+                background: '#BFDBFE',
+                border: '3px solid #1E1B4B',
+                boxShadow: '0 4px 0 #1E1B4B',
               }}
             >
-              <Award size={26} style={{ color: '#D97706' }} strokeWidth={2.5} />
-            </div>
-            <div>
-              <p
-                className="text-[16px] md:text-[18px] font-semibold"
-                style={{ fontFamily: "'Fredoka', sans-serif", color: '#1E1B4B' }}
-              >
-                "An investment in knowledge pays the best interest."
-              </p>
-              <p className="text-[12px] mt-0.5" style={{ color: '#64748B' }}>
-                — Benjamin Franklin · 知识是最好的投资
-              </p>
+              <span className="text-[13px] font-black" style={{ color: '#1E3A8A' }}>
+                Popular Knowledge
+              </span>
             </div>
           </div>
-        </div>
-      </section>
 
-      {/* 排序切换 */}
-      <section id="catalog" className="relative px-6 mb-8">
-        <div className="max-w-6xl mx-auto">
           <h2
-            className="text-[32px] md:text-[40px] font-bold mb-6"
-            style={{ fontFamily: "'Fredoka', sans-serif", color: '#1E1B4B' }}
+            className="text-center mb-4"
+            style={{
+              fontFamily: "'Fredoka', sans-serif",
+              fontSize: 'clamp(36px, 5vw, 56px)',
+              fontWeight: 700,
+              color: '#1E1B4B',
+              letterSpacing: '-0.02em',
+              lineHeight: 1.05,
+            }}
           >
-            热门知识库 📚
+            探索热门知识库
           </h2>
-          <div className="flex items-center gap-3 flex-wrap">
+          <p
+            className="text-center mb-10 text-[16px]"
+            style={{ color: '#64748B', fontWeight: 500 }}
+          >
+            向行业专家学习，获取真实世界的经验与洞见
+          </p>
+
+          {/* 排序切换 */}
+          <div className="flex items-center justify-center gap-3 mb-12 flex-wrap">
             {SORT_OPTIONS.map((opt) => {
               const active = sort === opt.key;
-              const Icon = opt.icon;
               return (
                 <button
                   key={opt.key}
                   onClick={() => setSort(opt.key)}
-                  className="px-5 py-2.5 rounded-2xl text-[14px] font-bold flex items-center gap-2 cursor-pointer transition-all active:translate-y-0.5"
+                  className="px-5 py-2.5 rounded-full text-[13px] font-black cursor-pointer transition-all hover:-translate-y-0.5"
                   style={{
-                    background: active ? opt.color : '#FFFFFF',
-                    border: `3px solid ${active ? opt.border : '#1E1B4B'}`,
-                    boxShadow: active ? `0 3px 0 ${opt.border}` : '0 3px 0 #1E1B4B',
+                    background: active ? '#16A34A' : '#FFFFFF',
+                    border: '3px solid #1E1B4B',
+                    boxShadow: active ? '0 4px 0 #1E1B4B' : '0 3px 0 #1E1B4B',
                     color: active ? '#FFFFFF' : '#1E1B4B',
                   }}
                 >
-                  <Icon size={16} strokeWidth={2.8} />
                   {opt.label}
                 </button>
               );
             })}
           </div>
-        </div>
-      </section>
 
-      {/* 知识库网格 */}
-      <section className="relative px-6 pb-24">
-        <div className="max-w-6xl mx-auto">
           {loading ? (
-            <div className="flex items-center justify-center py-20">
-              <MapSectionLoader text="正在召集藏书阁..." />
-            </div>
+            <MapSectionLoader text="加载中..." />
           ) : stores.length === 0 ? (
-            <EmptyState />
+            <EmptyState onPublish={() => navigate('/document-store')} />
           ) : (
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
               {stores.map((s, idx) => (
-                <StoreCard
+                <CourseCard
                   key={s.id}
                   store={s}
-                  palette={CARD_PALETTES[idx % CARD_PALETTES.length]}
+                  accent={CARD_ACCENTS[idx % CARD_ACCENTS.length]}
                   onClick={() => navigate(`/library/${s.id}`)}
                 />
               ))}
             </div>
           )}
+
+          {/* View All */}
+          {stores.length > 0 && (
+            <div className="text-center mt-12">
+              <ClayButton
+                onClick={() => {
+                  const el = document.getElementById('why');
+                  el?.scrollIntoView({ behavior: 'smooth' });
+                }}
+              >
+                查看更多 <ArrowRight size={18} strokeWidth={3} />
+              </ClayButton>
+            </div>
+          )}
         </div>
       </section>
 
-      {/* 推荐/社区见证 —— testimonial 占位 */}
-      {stores.length > 0 && (
-        <section className="relative px-6 pb-24">
-          <div className="max-w-6xl mx-auto">
-            <h2
-              className="text-[28px] md:text-[36px] font-bold mb-8 text-center"
-              style={{ fontFamily: "'Fredoka', sans-serif", color: '#1E1B4B' }}
+      {/* ── Why Choose Us 区（Testimonial） ── */}
+      <section id="why" className="relative px-6 py-24">
+        <div className="max-w-6xl mx-auto">
+          <div className="text-center mb-6">
+            <div
+              className="inline-block px-5 py-2 rounded-full"
+              style={{
+                background: '#FECACA',
+                border: '3px solid #1E1B4B',
+                boxShadow: '0 4px 0 #1E1B4B',
+              }}
             >
-              为什么要分享？ ✨
-            </h2>
-            <div className="grid md:grid-cols-3 gap-6">
-              <Testimonial
-                icon={Rocket}
-                title="加速成长"
-                body="把脑中的洞见写出来，你会发现自己理解得更深入。教是最好的学。"
-                palette={CARD_PALETTES[0]}
-              />
-              <Testimonial
-                icon={Users}
-                title="连接同好"
-                body="每一份文档都是一扇窗。让有共鸣的人通过点赞、收藏找到你。"
-                palette={CARD_PALETTES[2]}
-              />
-              <Testimonial
-                icon={GraduationCap}
-                title="沉淀资产"
-                body="知识库是永远不会过期的资产，今天写的明天就能被 AI 再利用。"
-                palette={CARD_PALETTES[4]}
-              />
+              <span className="text-[13px] font-black" style={{ color: '#7F1D1D' }}>
+                Why Share
+              </span>
             </div>
           </div>
-        </section>
-      )}
 
-      {/* 底部 CTA —— 大 enrollment CTA */}
-      <section className="relative px-6 pb-20">
+          <h2
+            className="text-center mb-4"
+            style={{
+              fontFamily: "'Fredoka', sans-serif",
+              fontSize: 'clamp(36px, 5vw, 56px)',
+              fontWeight: 700,
+              color: '#1E1B4B',
+              letterSpacing: '-0.02em',
+              lineHeight: 1.05,
+            }}
+          >
+            分享，让知识倍增
+          </h2>
+          <p
+            className="text-center mb-14 text-[16px]"
+            style={{ color: '#64748B', fontWeight: 500 }}
+          >
+            每一次分享都是一次教学相长
+          </p>
+
+          <div className="grid md:grid-cols-3 gap-6">
+            <Testimonial
+              icon={Rocket}
+              iconBg="#FECACA"
+              iconColor="#DC2626"
+              title="加速成长"
+              body="把脑中的洞见写出来，你会发现自己理解得更深入。教是最好的学。"
+            />
+            <Testimonial
+              icon={Users}
+              iconBg="#BFDBFE"
+              iconColor="#2563EB"
+              title="连接同好"
+              body="每一份文档都是一扇窗。让有共鸣的人通过点赞、收藏找到你。"
+            />
+            <Testimonial
+              icon={GraduationCap}
+              iconBg="#BBF7D0"
+              iconColor="#16A34A"
+              title="沉淀资产"
+              body="知识库是永远不会过期的资产，今天写的明天就能被 AI 再利用。"
+            />
+          </div>
+        </div>
+      </section>
+
+      {/* ── 底部大 CTA ── */}
+      <section className="relative px-6 pb-24">
         <div className="max-w-4xl mx-auto">
           <div
-            className="px-10 py-12 rounded-[32px] text-center relative overflow-hidden"
+            className="px-10 py-16 rounded-[36px] text-center"
             style={{
-              background: 'linear-gradient(135deg, #FEF3C7 0%, #FED7AA 100%)',
+              background: '#16A34A',
               border: '4px solid #1E1B4B',
               boxShadow: '8px 8px 0 #1E1B4B',
             }}
           >
-            <Sparkles size={36} className="mx-auto mb-3" style={{ color: '#F97316' }} strokeWidth={2.5} />
             <h3
-              className="text-[32px] md:text-[40px] font-bold mb-3"
-              style={{ fontFamily: "'Fredoka', sans-serif", color: '#1E1B4B' }}
+              className="mb-4"
+              style={{
+                fontFamily: "'Fredoka', sans-serif",
+                fontSize: 'clamp(32px, 4.5vw, 48px)',
+                fontWeight: 700,
+                color: '#FFFFFF',
+                letterSpacing: '-0.02em',
+                lineHeight: 1.05,
+              }}
             >
-              成为知识的分享者
+              今天就开始分享
             </h3>
-            <p className="text-[14px] md:text-[16px] mb-8 max-w-md mx-auto" style={{ color: '#78350F' }}>
-              在「知识库」创建你的空间，然后在右上角开启「发布到智识殿堂」。你的每一份分享都会被看见。
+            <p
+              className="mb-8 max-w-md mx-auto text-[15px] md:text-[17px]"
+              style={{ color: 'rgba(255,255,255,0.9)', fontWeight: 500 }}
+            >
+              加入社区，把你的知识变成一本永不过时的书
             </p>
-            <ClayButton primary size="lg" onClick={() => navigate('/document-store')}>
+            <button
+              onClick={() => navigate('/document-store')}
+              className="inline-flex items-center gap-2 px-8 py-4 rounded-2xl text-[16px] font-black cursor-pointer transition-all hover:-translate-y-1"
+              style={{
+                background: '#FFFFFF',
+                border: '3px solid #1E1B4B',
+                boxShadow: '0 5px 0 #1E1B4B',
+                color: '#1E1B4B',
+                fontFamily: "'Nunito', sans-serif",
+              }}
+            >
               前往我的知识库 <ArrowRight size={20} strokeWidth={3} />
-            </ClayButton>
+            </button>
           </div>
         </div>
       </section>
@@ -357,39 +393,109 @@ export function LibraryLandingPage() {
   );
 }
 
-// ── 子组件 ──
+// ── 顶部悬浮导航栏（LearnHub style） ──
 
+function FloatingNavbar({ onStartExplore, onBack }: { onStartExplore: () => void; onBack: () => void }) {
+  return (
+    <nav className="sticky top-6 z-50 px-4 md:px-6 pt-0">
+      <div
+        className="max-w-6xl mx-auto rounded-[28px] px-5 md:px-6 py-3 flex items-center justify-between"
+        style={{
+          background: '#FFFFFF',
+          border: '4px solid #1E1B4B',
+          boxShadow: '0 6px 0 #1E1B4B',
+        }}
+      >
+        {/* Logo */}
+        <button
+          onClick={onBack}
+          className="flex items-center gap-3 cursor-pointer hover:-translate-y-0.5 transition-transform"
+        >
+          <div
+            className="w-11 h-11 rounded-2xl flex items-center justify-center flex-shrink-0"
+            style={{
+              background: '#FECACA',
+              border: '3px solid #1E1B4B',
+              boxShadow: '0 3px 0 #1E1B4B',
+            }}
+          >
+            <BookOpen size={20} style={{ color: '#DC2626' }} strokeWidth={2.8} />
+          </div>
+          <span
+            className="text-[20px] md:text-[22px] font-black"
+            style={{ fontFamily: "'Fredoka', sans-serif", color: '#1E1B4B' }}
+          >
+            智识殿堂
+          </span>
+        </button>
+
+        {/* Nav links */}
+        <div className="hidden md:flex items-center gap-10">
+          <a
+            href="#catalog"
+            className="text-[15px] font-bold transition-colors hover:opacity-60"
+            style={{ color: '#1E1B4B' }}
+          >
+            知识库
+          </a>
+          <a
+            href="#why"
+            className="text-[15px] font-bold transition-colors hover:opacity-60"
+            style={{ color: '#1E1B4B' }}
+          >
+            为什么
+          </a>
+        </div>
+
+        {/* Right actions */}
+        <div className="flex items-center gap-3">
+          <button
+            onClick={onBack}
+            className="hidden md:flex items-center gap-1.5 px-3 py-1.5 text-[14px] font-bold cursor-pointer transition-colors hover:opacity-60"
+            style={{ color: '#1E1B4B' }}
+          >
+            <ArrowLeft size={14} strokeWidth={2.8} />
+            返回
+          </button>
+          <button
+            onClick={onStartExplore}
+            className="px-5 py-2.5 rounded-2xl text-[14px] font-black cursor-pointer transition-all hover:-translate-y-0.5"
+            style={{
+              background: '#16A34A',
+              border: '3px solid #1E1B4B',
+              boxShadow: '0 4px 0 #1E1B4B',
+              color: '#FFFFFF',
+              fontFamily: "'Nunito', sans-serif",
+            }}
+          >
+            开始探索
+          </button>
+        </div>
+      </div>
+    </nav>
+  );
+}
+
+// ── 通用按钮 ──
 function ClayButton({
   children,
   primary,
-  size = 'md',
   onClick,
 }: {
   children: React.ReactNode;
   primary?: boolean;
-  size?: 'md' | 'lg';
   onClick?: () => void;
 }) {
-  const sizeClass = size === 'lg' ? 'px-8 py-4 text-[16px]' : 'px-6 py-3 text-[14px]';
   return (
     <button
       onClick={onClick}
-      className={`${sizeClass} rounded-2xl font-bold flex items-center gap-2 cursor-pointer transition-all active:translate-y-1`}
+      className="px-7 py-4 rounded-2xl text-[15px] font-black flex items-center gap-2 cursor-pointer transition-all hover:-translate-y-1"
       style={{
-        background: primary ? '#16A34A' : '#FFFFFF',
+        background: primary ? '#16A34A' : '#BFDBFE',
         border: '3px solid #1E1B4B',
-        boxShadow: '0 4px 0 #1E1B4B',
+        boxShadow: '0 5px 0 #1E1B4B',
         color: primary ? '#FFFFFF' : '#1E1B4B',
         fontFamily: "'Nunito', sans-serif",
-      }}
-      onMouseDown={(e) => {
-        (e.currentTarget as HTMLButtonElement).style.boxShadow = '0 1px 0 #1E1B4B';
-      }}
-      onMouseUp={(e) => {
-        (e.currentTarget as HTMLButtonElement).style.boxShadow = '0 4px 0 #1E1B4B';
-      }}
-      onMouseLeave={(e) => {
-        (e.currentTarget as HTMLButtonElement).style.boxShadow = '0 4px 0 #1E1B4B';
       }}
     >
       {children}
@@ -397,101 +503,104 @@ function ClayButton({
   );
 }
 
-function MiniStat({ value, label, color }: { value: number; label: string; color: string }) {
+// ── 横向统计（LearnHub style：10K+ Courses） ──
+function Stat({ num, label }: { num: number; label: string }) {
   return (
-    <div
-      className="px-3 py-3 rounded-2xl"
-      style={{
-        background: '#FFFFFF',
-        border: '2.5px solid #1E1B4B',
-        boxShadow: '0 3px 0 #1E1B4B',
-      }}
-    >
+    <div>
       <div
-        className="text-[24px] font-bold leading-none"
-        style={{ color, fontFamily: "'Fredoka', sans-serif" }}
+        className="text-[32px] md:text-[40px] leading-none mb-1"
+        style={{
+          fontFamily: "'Fredoka', sans-serif",
+          fontWeight: 700,
+          color: '#1E1B4B',
+          letterSpacing: '-0.02em',
+        }}
       >
-        {value.toLocaleString()}
+        {num.toLocaleString()}+
       </div>
-      <div className="text-[11px] mt-1 font-semibold" style={{ color: '#64748B' }}>
+      <div className="text-[12px] md:text-[13px] font-bold" style={{ color: '#64748B' }}>
         {label}
       </div>
     </div>
   );
 }
 
-function HeroMockCard({ totalViews }: { totalViews: number }) {
+// ── Hero 右侧 Mock Card ──
+function HeroMockCard() {
   return (
-    <div className="relative">
-      {/* 主卡片：模拟一个正在阅读的库 */}
+    <div className="relative max-w-md ml-auto">
       <div
-        className="px-6 py-6 rounded-[28px] relative"
+        className="p-6 rounded-[28px]"
         style={{
           background: '#FFFFFF',
           border: '4px solid #1E1B4B',
           boxShadow: '8px 8px 0 #1E1B4B',
         }}
       >
-        {/* 顶部：图标 + 标题 */}
-        <div className="flex items-center gap-3 mb-4">
+        <div className="flex items-center gap-3 mb-5">
           <div
-            className="w-12 h-12 rounded-2xl flex items-center justify-center"
+            className="w-14 h-14 rounded-2xl flex items-center justify-center flex-shrink-0"
             style={{
-              background: '#DBEAFE',
-              border: '2.5px solid #3B82F6',
-              boxShadow: '0 3px 0 #2563EB',
+              background: '#BFDBFE',
+              border: '3px solid #1E1B4B',
+              boxShadow: '0 3px 0 #1E1B4B',
             }}
           >
-            <BookOpen size={22} style={{ color: '#2563EB' }} strokeWidth={2.5} />
+            <BookOpen size={24} style={{ color: '#2563EB' }} strokeWidth={2.5} />
           </div>
           <div>
             <div
-              className="text-[16px] font-bold"
-              style={{ fontFamily: "'Fredoka', sans-serif", color: '#1E1B4B' }}
+              className="text-[18px] leading-tight"
+              style={{
+                fontFamily: "'Fredoka', sans-serif",
+                fontWeight: 700,
+                color: '#1E1B4B',
+              }}
             >
               React 工程实战
             </div>
-            <div className="text-[11px] font-semibold" style={{ color: '#64748B' }}>
-              12 篇文档 · 4h 30m 阅读
+            <div className="text-[12px] font-bold mt-0.5" style={{ color: '#64748B' }}>
+              12 lessons · 4h 30m
             </div>
           </div>
         </div>
 
-        {/* 进度条 */}
         <div className="mb-4">
           <div className="flex justify-between items-center mb-2">
-            <span className="text-[12px] font-bold" style={{ color: '#64748B' }}>
+            <span className="text-[13px] font-bold" style={{ color: '#64748B' }}>
               Progress
             </span>
             <span
-              className="text-[14px] font-bold"
-              style={{ color: '#16A34A', fontFamily: "'Fredoka', sans-serif" }}
+              className="text-[15px]"
+              style={{
+                fontFamily: "'Fredoka', sans-serif",
+                fontWeight: 700,
+                color: '#16A34A',
+              }}
             >
               65%
             </span>
           </div>
           <div
             className="h-4 rounded-full overflow-hidden"
-            style={{ background: '#F3F4F6', border: '2px solid #1E1B4B' }}
+            style={{ background: '#F3F4F6', border: '2.5px solid #1E1B4B' }}
           >
             <div
-              className="h-full rounded-full"
+              className="h-full"
               style={{
                 width: '65%',
-                background: 'linear-gradient(90deg, #16A34A, #22C55E)',
-                boxShadow: 'inset 0 -2px 0 rgba(0,0,0,0.15)',
+                background: '#16A34A',
               }}
             />
           </div>
         </div>
 
-        {/* Continue 按钮 */}
         <button
-          className="w-full py-3 rounded-2xl text-[14px] font-bold cursor-pointer transition-all active:translate-y-0.5"
+          className="w-full py-4 rounded-2xl text-[15px] font-black cursor-pointer transition-all hover:-translate-y-0.5"
           style={{
             background: '#16A34A',
-            border: '3px solid #15803D',
-            boxShadow: '0 4px 0 #15803D',
+            border: '3px solid #1E1B4B',
+            boxShadow: '0 4px 0 #1E1B4B',
             color: '#FFFFFF',
             fontFamily: "'Nunito', sans-serif",
           }}
@@ -500,173 +609,147 @@ function HeroMockCard({ totalViews }: { totalViews: number }) {
         </button>
       </div>
 
-      {/* 浮动小装饰 1：Target */}
+      {/* 右上角装饰 */}
       <div
-        className="absolute -top-5 -right-5 w-14 h-14 rounded-2xl flex items-center justify-center"
+        className="absolute -top-4 -right-4 w-14 h-14 rounded-2xl flex items-center justify-center"
         style={{
-          background: '#FCE7F3',
+          background: '#FECACA',
           border: '3px solid #1E1B4B',
           boxShadow: '0 4px 0 #1E1B4B',
-          transform: 'rotate(12deg)',
+          transform: 'rotate(8deg)',
         }}
       >
-        <Sparkles size={22} style={{ color: '#EC4899' }} strokeWidth={2.8} />
+        <Rocket size={22} style={{ color: '#DC2626' }} strokeWidth={2.5} />
       </div>
 
-      {/* 浮动小装饰 2：Star */}
+      {/* 右下角星星 */}
       <div
-        className="absolute -bottom-4 -left-4 w-12 h-12 rounded-2xl flex items-center justify-center"
+        className="absolute -bottom-4 -right-4 w-12 h-12 rounded-full flex items-center justify-center"
         style={{
-          background: '#FEF3C7',
+          background: '#BBF7D0',
           border: '3px solid #1E1B4B',
           boxShadow: '0 4px 0 #1E1B4B',
-          transform: 'rotate(-8deg)',
         }}
       >
-        <Star size={18} style={{ color: '#F59E0B' }} strokeWidth={2.8} fill="#F59E0B" />
+        <Star size={18} style={{ color: '#16A34A' }} strokeWidth={2.8} fill="#16A34A" />
       </div>
 
-      {/* 右下浮动：浏览数 */}
+      {/* 左下角 */}
       <div
-        className="absolute -bottom-8 -right-4 px-4 py-2 rounded-xl flex items-center gap-1.5"
+        className="absolute -bottom-3 -left-3 w-11 h-11 rounded-2xl flex items-center justify-center"
         style={{
-          background: '#FFFFFF',
-          border: '2.5px solid #1E1B4B',
+          background: '#E9D5FF',
+          border: '3px solid #1E1B4B',
           boxShadow: '0 3px 0 #1E1B4B',
-          transform: 'rotate(3deg)',
+          transform: 'rotate(-10deg)',
         }}
       >
-        <Eye size={14} style={{ color: '#3B82F6' }} strokeWidth={2.8} />
-        <span className="text-[12px] font-bold" style={{ color: '#1E1B4B' }}>
-          {totalViews.toLocaleString()} 次浏览
-        </span>
+        <Layers size={16} style={{ color: '#9333EA' }} strokeWidth={2.8} />
       </div>
     </div>
   );
 }
 
-function StoreCard({
+// ── 课程卡片（LearnHub 2x2 grid） ──
+function CourseCard({
   store,
-  palette,
+  accent,
   onClick,
 }: {
   store: PublicDocumentStore;
-  palette: (typeof CARD_PALETTES)[number];
+  accent: (typeof CARD_ACCENTS)[number];
   onClick: () => void;
 }) {
+  const Icon = accent.icon;
   return (
     <button
       onClick={onClick}
-      className="group relative text-left p-6 rounded-[24px] cursor-pointer transition-all active:translate-y-1"
+      className="group flex items-center gap-5 p-6 rounded-[24px] cursor-pointer transition-all hover:-translate-y-1 text-left w-full"
       style={{
         background: '#FFFFFF',
         border: '3px solid #1E1B4B',
         boxShadow: '6px 6px 0 #1E1B4B',
         fontFamily: "'Nunito', sans-serif",
       }}
-      onMouseDown={(e) => {
-        (e.currentTarget as HTMLButtonElement).style.boxShadow = '2px 2px 0 #1E1B4B';
-      }}
-      onMouseUp={(e) => {
-        (e.currentTarget as HTMLButtonElement).style.boxShadow = '6px 6px 0 #1E1B4B';
-      }}
-      onMouseLeave={(e) => {
-        (e.currentTarget as HTMLButtonElement).style.boxShadow = '6px 6px 0 #1E1B4B';
-      }}
     >
-      {/* 头部：图标 + 文档数徽章 */}
-      <div className="flex items-start justify-between mb-4">
-        <div
-          className="w-14 h-14 rounded-2xl flex items-center justify-center flex-shrink-0"
+      {/* 左侧大图标 */}
+      <div
+        className="w-16 h-16 rounded-2xl flex items-center justify-center flex-shrink-0"
+        style={{
+          background: accent.bg,
+          border: '3px solid #1E1B4B',
+          boxShadow: '0 4px 0 #1E1B4B',
+        }}
+      >
+        <Icon size={26} style={{ color: accent.iconColor }} strokeWidth={2.5} />
+      </div>
+
+      {/* 中间：标题 + 作者 + 统计 */}
+      <div className="flex-1 min-w-0">
+        <h3
+          className="text-[17px] md:text-[18px] mb-1 truncate"
           style={{
-            background: palette.bg,
-            border: `2.5px solid ${palette.border}`,
-            boxShadow: `0 3px 0 ${palette.shadow}`,
-          }}
-        >
-          <BookOpen size={24} style={{ color: palette.icon }} strokeWidth={2.5} />
-        </div>
-        <div
-          className="px-2.5 py-1 rounded-full flex items-center gap-1 text-[11px] font-bold"
-          style={{
-            background: '#F3F4F6',
-            border: '2px solid #1E1B4B',
-            boxShadow: '0 2px 0 #1E1B4B',
+            fontFamily: "'Fredoka', sans-serif",
+            fontWeight: 700,
             color: '#1E1B4B',
           }}
         >
-          <BookOpen size={11} strokeWidth={2.8} />
-          {store.documentCount}
+          {store.name}
+        </h3>
+        <p className="text-[13px] font-bold mb-3 truncate" style={{ color: '#64748B' }}>
+          by {store.ownerName}
+        </p>
+        <div className="flex items-center gap-3 text-[11px] font-bold" style={{ color: '#64748B' }}>
+          <span className="flex items-center gap-1">
+            <BookOpen size={12} strokeWidth={2.8} />
+            {store.documentCount} 篇
+          </span>
+          <span className="flex items-center gap-1">
+            <Heart size={12} strokeWidth={2.8} style={{ color: '#EC4899' }} fill="#FCE7F3" />
+            {store.likeCount}
+          </span>
+          <span className="flex items-center gap-1">
+            <Eye size={12} strokeWidth={2.8} />
+            {store.viewCount}
+          </span>
         </div>
       </div>
 
-      {/* 标题 + 描述 */}
-      <h3
-        className="text-[20px] font-bold mb-2 line-clamp-1"
-        style={{ color: '#1E1B4B', fontFamily: "'Fredoka', sans-serif" }}
-      >
-        {store.name}
-      </h3>
-      <p
-        className="text-[13px] line-clamp-2 mb-5 min-h-[36px]"
-        style={{ color: '#64748B', lineHeight: 1.5 }}
-      >
-        {store.description || '这位作者还没有写下介绍'}
-      </p>
-
-      {/* 作者 */}
+      {/* 右侧：星级 badge */}
       <div
-        className="flex items-center gap-2 pb-4 mb-4"
-        style={{ borderBottom: '2px dashed #E5E7EB' }}
+        className="flex items-center gap-1 px-3 py-1.5 rounded-full flex-shrink-0"
+        style={{
+          background: '#BBF7D0',
+          border: '2.5px solid #1E1B4B',
+          boxShadow: '0 2px 0 #1E1B4B',
+        }}
       >
-        <div
-          className="w-8 h-8 rounded-full flex items-center justify-center text-[12px] font-bold flex-shrink-0"
-          style={{
-            background: palette.bg,
-            border: `2px solid ${palette.border}`,
-            color: palette.accent,
-          }}
-        >
-          {store.ownerName.charAt(0)}
-        </div>
-        <span className="text-[13px] font-semibold" style={{ color: '#475569' }}>
-          {store.ownerName}
-        </span>
-      </div>
-
-      {/* 底部统计 */}
-      <div className="flex items-center justify-between text-[12px] font-semibold" style={{ color: '#64748B' }}>
-        <span className="flex items-center gap-1.5">
-          <Heart size={13} style={{ color: '#EC4899' }} strokeWidth={2.8} fill="#FCE7F3" />
-          {store.likeCount}
-        </span>
-        <span className="flex items-center gap-1.5">
-          <Star size={13} style={{ color: '#F59E0B' }} strokeWidth={2.8} fill="#FEF3C7" />
-          {store.favoriteCount}
-        </span>
-        <span className="flex items-center gap-1.5">
-          <Eye size={13} style={{ color: '#3B82F6' }} strokeWidth={2.8} />
-          {store.viewCount}
+        <Star size={12} strokeWidth={2.8} fill="#16A34A" style={{ color: '#16A34A' }} />
+        <span className="text-[12px] font-black" style={{ color: '#14532D' }}>
+          {(4 + Math.min(store.likeCount, 10) / 10).toFixed(1)}
         </span>
       </div>
     </button>
   );
 }
 
+// ── Testimonial ──
 function Testimonial({
   icon: Icon,
+  iconBg,
+  iconColor,
   title,
   body,
-  palette,
 }: {
   icon: typeof Rocket;
+  iconBg: string;
+  iconColor: string;
   title: string;
   body: string;
-  palette: (typeof CARD_PALETTES)[number];
 }) {
   return (
     <div
-      className="p-6 rounded-[24px] transition-all"
+      className="p-7 rounded-[24px] transition-all hover:-translate-y-1 cursor-default"
       style={{
         background: '#FFFFFF',
         border: '3px solid #1E1B4B',
@@ -674,45 +757,49 @@ function Testimonial({
       }}
     >
       <div
-        className="w-14 h-14 rounded-2xl flex items-center justify-center mb-4"
+        className="w-16 h-16 rounded-2xl flex items-center justify-center mb-5"
         style={{
-          background: palette.bg,
-          border: `2.5px solid ${palette.border}`,
-          boxShadow: `0 3px 0 ${palette.shadow}`,
+          background: iconBg,
+          border: '3px solid #1E1B4B',
+          boxShadow: '0 4px 0 #1E1B4B',
         }}
       >
-        <Icon size={24} style={{ color: palette.icon }} strokeWidth={2.5} />
+        <Icon size={26} style={{ color: iconColor }} strokeWidth={2.5} />
       </div>
       <h3
-        className="text-[20px] font-bold mb-2"
-        style={{ fontFamily: "'Fredoka', sans-serif", color: '#1E1B4B' }}
+        className="text-[22px] mb-3"
+        style={{
+          fontFamily: "'Fredoka', sans-serif",
+          fontWeight: 700,
+          color: '#1E1B4B',
+          letterSpacing: '-0.01em',
+        }}
       >
         {title}
       </h3>
-      <p className="text-[13px]" style={{ color: '#64748B', lineHeight: 1.6 }}>
+      <p className="text-[14px] font-medium" style={{ color: '#64748B', lineHeight: 1.65 }}>
         {body}
       </p>
     </div>
   );
 }
 
-function EmptyState() {
-  const navigate = useNavigate();
+function EmptyState({ onPublish }: { onPublish: () => void }) {
   return (
     <div className="flex flex-col items-center justify-center py-20">
       <div
-        className="w-24 h-24 rounded-3xl flex items-center justify-center mb-6"
+        className="w-24 h-24 rounded-[24px] flex items-center justify-center mb-6"
         style={{
-          background: '#FEF3C7',
+          background: '#FECACA',
           border: '4px solid #1E1B4B',
           boxShadow: '6px 6px 0 #1E1B4B',
         }}
       >
-        <BookOpen size={36} style={{ color: '#F59E0B' }} strokeWidth={2.5} />
+        <BookOpen size={36} style={{ color: '#DC2626' }} strokeWidth={2.5} />
       </div>
       <h3
-        className="text-[28px] font-bold mb-3"
-        style={{ fontFamily: "'Fredoka', sans-serif", color: '#1E1B4B' }}
+        className="text-[28px] mb-3"
+        style={{ fontFamily: "'Fredoka', sans-serif", fontWeight: 700, color: '#1E1B4B' }}
       >
         殿堂尚待第一卷藏书
       </h3>
@@ -720,89 +807,11 @@ function EmptyState() {
         className="text-[14px] mb-8 max-w-md text-center font-medium"
         style={{ color: '#64748B', lineHeight: 1.6 }}
       >
-        成为第一位向社区分享知识的开发者吧。前往「知识库」创建你的空间，然后在右上角开启
-        <b style={{ color: '#F97316' }}>「发布到智识殿堂」</b>。
+        成为第一位向社区分享知识的开发者吧
       </p>
-      <ClayButton primary onClick={() => navigate('/document-store')}>
+      <ClayButton primary onClick={onPublish}>
         前往我的知识库 <ArrowRight size={18} strokeWidth={3} />
       </ClayButton>
-    </div>
-  );
-}
-
-/** 浮动装饰背景 —— 柔和的几何形状慢慢漂浮 */
-function FloatingDecor() {
-  return (
-    <div className="fixed inset-0 pointer-events-none overflow-hidden">
-      {/* 几个浮动的圆 */}
-      <div
-        className="absolute rounded-full"
-        style={{
-          top: '15%',
-          left: '8%',
-          width: 80,
-          height: 80,
-          background: 'rgba(251,191,36,0.4)',
-          border: '3px solid rgba(245,158,11,0.5)',
-          boxShadow: '0 4px 0 rgba(217,119,6,0.3)',
-          animation: 'clay-float-1 8s ease-in-out infinite',
-        }}
-      />
-      <div
-        className="absolute rounded-full"
-        style={{
-          top: '35%',
-          right: '10%',
-          width: 60,
-          height: 60,
-          background: 'rgba(236,72,153,0.35)',
-          border: '3px solid rgba(219,39,119,0.5)',
-          boxShadow: '0 4px 0 rgba(190,24,93,0.3)',
-          animation: 'clay-float-2 10s ease-in-out infinite',
-        }}
-      />
-      <div
-        className="absolute rounded-2xl"
-        style={{
-          top: '60%',
-          left: '5%',
-          width: 70,
-          height: 70,
-          background: 'rgba(59,130,246,0.3)',
-          border: '3px solid rgba(37,99,235,0.5)',
-          boxShadow: '0 4px 0 rgba(29,78,216,0.3)',
-          transform: 'rotate(12deg)',
-          animation: 'clay-float-3 12s ease-in-out infinite',
-        }}
-      />
-      <div
-        className="absolute rounded-2xl"
-        style={{
-          top: '75%',
-          right: '15%',
-          width: 50,
-          height: 50,
-          background: 'rgba(168,85,247,0.3)',
-          border: '3px solid rgba(147,51,234,0.5)',
-          boxShadow: '0 4px 0 rgba(126,34,206,0.3)',
-          transform: 'rotate(-15deg)',
-          animation: 'clay-float-1 9s ease-in-out infinite',
-        }}
-      />
-      <style>{`
-        @keyframes clay-float-1 {
-          0%, 100% { transform: translateY(0) rotate(0); }
-          50% { transform: translateY(-20px) rotate(5deg); }
-        }
-        @keyframes clay-float-2 {
-          0%, 100% { transform: translateY(0) rotate(0); }
-          50% { transform: translateY(-15px) rotate(-8deg); }
-        }
-        @keyframes clay-float-3 {
-          0%, 100% { transform: translateY(0) rotate(12deg); }
-          50% { transform: translateY(-25px) rotate(20deg); }
-        }
-      `}</style>
     </div>
   );
 }
