@@ -19,3 +19,7 @@
 | fix | prd-api | PR审查棱镜集成测试新增 batch-refresh 部分失败一致性校验（successCount/failureCount/failures/submissions） |
 | fix | prd-api | PR审查棱镜集成测试新增 batch-refresh 上限 100 与重复 id 去重统计一致性校验 |
 | fix | prd-api | 修复 PR URL 解析失败时 out 参数泄漏，确保非法编号（如 pull/0）返回 false 且 owner/repo/prNumber 保持空值 |
+| feat | prd-api | PR审查棱镜门禁新增 bootstrap 顶设占位防呆阻断，避免新仓库在未初始化真实依据时误通过 |
+| feat | scripts | 新增 init-pr-prism-basis 一键初始化脚本，自动生成最薄顶设文档与 pr-architect 绑定配置 |
+| feat | doc | 新增 PR审查棱镜新仓库接入指南，提供 10 分钟初始化步骤与验收命令 |
+| fix | prd-api | PR审查相关 workflow 触发分支扩展至 main/develop/master/trunk，避免默认分支差异导致门禁不触发 |

@@ -2,7 +2,7 @@ name: PR Review Prism Check
 
 on:
   pull_request:
-    branches: [main, develop]
+    branches: [main, develop, master, trunk]
     types: [opened, reopened, edited, synchronize, ready_for_review]
 
 permissions:

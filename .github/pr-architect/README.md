@@ -243,3 +243,39 @@ guardrails:
 - 通过/失败趋势
 
 为后续规则升阶（L2 提升为阻断）提供数据依据。
+
+## 9. 新仓库初始化（最小可运行方案）
+
+> 目标：在新项目/新仓库中，用最少文件快速建立“可校验”的 PR 审查依据。
+
+### 9.1 一键初始化
+
+在仓库根目录执行：
+
+```bash
+bash scripts/init-pr-prism-basis.sh \
+  --repo "your-org/your-repo" \
+  --owner "your-github-id" \
+  --context "engineering-governance"
+```
+
+脚本会生成/更新：
+
+- `doc/top-design/main.md`（薄顶设主文档）
+- `doc/top-design/anchors.yml`（至少 1 个 anchor）
+- `doc/top-design/contexts.yml`（至少 1 个 bounded context）
+- `doc/top-design/slices.yml`（至少 1 个 slice）
+- `.github/pr-architect/design-sources.yml`（激活 `local-ddd-anchor`）
+- `.github/pr-architect/repo-bindings.yml`（写入目标仓库绑定）
+
+### 9.2 为什么要求 repo-file 设计源
+
+当前 V1 Gate 的 anchors 校验只支持 **repo-file** manifest，不支持 URL/artifact 作为 anchors 清单来源（会直接阻断）。
+因此新仓库初始化建议先落地为仓库内薄文档，待后续规则版本升级后再切换远程设计包。
+
+### 9.3 验收标准（初始化后）
+
+1. `design-sources.yml` 不是 bootstrap 占位源；
+2. `repo-bindings.yml` 包含当前仓库条目，且开启 `PR审查棱镜 L1 Gate`；
+3. PR 模板中 `design_source_id/version` 能被 prefill 自动补齐；
+4. 提交一个示例 PR 后，`PR审查棱镜 L1 Gate` 成功执行并可解析 `anchor_refs`。
