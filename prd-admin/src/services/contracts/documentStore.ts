@@ -93,6 +93,13 @@ export type DocumentStoreWithPreview = DocumentStore & {
   recentEntries: { id: string; title: string; updatedAt: string; contentType: string }[];
 };
 
+/** 我收藏/点赞的知识库（用于 DocumentStorePage 的"我的收藏"/"我的点赞"标签） */
+export type InteractionStoreCard = DocumentStoreWithPreview & {
+  ownerName: string;
+  ownerAvatar?: string;
+  isOwner: boolean;
+};
+
 // ── 请求类型 ──
 
 export type CreateDocumentStoreInput = {
