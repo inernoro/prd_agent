@@ -1220,32 +1220,48 @@ public class ReportGenerationService
             sb.AppendLine();
         }
 
-        sb.AppendLine("### 系统活动统计");
-        sb.AppendLine($"- PRD 对话会话: {activity.PrdSessions} 次");
-        if (activity.PrdMessageCount > 0)
-            sb.AppendLine($"- PRD 对话消息: {activity.PrdMessageCount} 条");
-        sb.AppendLine($"- 缺陷提交: {activity.DefectsSubmitted} 个");
-        if (activity.DefectDetails is { Resolved: > 0 })
-            sb.AppendLine($"  · 已解决 {activity.DefectDetails.Resolved} 个，平均 {activity.DefectDetails.AvgResolutionHours} 小时");
-        sb.AppendLine($"- 视觉创作会话: {activity.VisualSessions} 次");
-        if (activity.ImageGenCompletedCount > 0)
-            sb.AppendLine($"- 图片生成完成: {activity.ImageGenCompletedCount} 次");
-        if (activity.VideoGenCompletedCount > 0)
-            sb.AppendLine($"- 视频生成完成: {activity.VideoGenCompletedCount} 次");
-        if (activity.DocumentEditCount > 0)
-            sb.AppendLine($"- 文档编辑/创建: {activity.DocumentEditCount} 篇");
-        if (activity.WorkflowExecutionCount > 0)
-            sb.AppendLine($"- 自动化工作流执行: {activity.WorkflowExecutionCount} 次");
-        if (activity.ToolboxRunCount > 0)
-            sb.AppendLine($"- AI 工具箱使用: {activity.ToolboxRunCount} 次");
-        if (activity.WebPagePublishCount > 0)
-            sb.AppendLine($"- 网页发布/更新: {activity.WebPagePublishCount} 次");
-        if (activity.AttachmentUploadCount > 0)
-            sb.AppendLine($"- 附件上传: {activity.AttachmentUploadCount} 个");
-        sb.AppendLine($"- AI 调用: {activity.LlmCalls} 次");
-        sb.AppendLine();
+        var hasAnySystemStats = activity.PrdSessions > 0 || activity.PrdMessageCount > 0
+            || activity.DefectsSubmitted > 0 || activity.VisualSessions > 0
+            || activity.ImageGenCompletedCount > 0 || activity.VideoGenCompletedCount > 0
+            || activity.DocumentEditCount > 0 || activity.WorkflowExecutionCount > 0
+            || activity.ToolboxRunCount > 0 || activity.WebPagePublishCount > 0
+            || activity.AttachmentUploadCount > 0 || activity.LlmCalls > 0;
+
+        if (hasAnySystemStats)
+        {
+            sb.AppendLine("### 系统活动统计");
+            if (activity.PrdSessions > 0)
+                sb.AppendLine($"- PRD 对话会话: {activity.PrdSessions} 次");
+            if (activity.PrdMessageCount > 0)
+                sb.AppendLine($"- PRD 对话消息: {activity.PrdMessageCount} 条");
+            if (activity.DefectsSubmitted > 0)
+            {
+                sb.AppendLine($"- 缺陷提交: {activity.DefectsSubmitted} 个");
+                if (activity.DefectDetails is { Resolved: > 0 })
+                    sb.AppendLine($"  · 已解决 {activity.DefectDetails.Resolved} 个，平均 {activity.DefectDetails.AvgResolutionHours} 小时");
+            }
+            if (activity.VisualSessions > 0)
+                sb.AppendLine($"- 视觉创作会话: {activity.VisualSessions} 次");
+            if (activity.ImageGenCompletedCount > 0)
+                sb.AppendLine($"- 图片生成完成: {activity.ImageGenCompletedCount} 次");
+            if (activity.VideoGenCompletedCount > 0)
+                sb.AppendLine($"- 视频生成完成: {activity.VideoGenCompletedCount} 次");
+            if (activity.DocumentEditCount > 0)
+                sb.AppendLine($"- 文档编辑/创建: {activity.DocumentEditCount} 篇");
+            if (activity.WorkflowExecutionCount > 0)
+                sb.AppendLine($"- 自动化工作流执行: {activity.WorkflowExecutionCount} 次");
+            if (activity.ToolboxRunCount > 0)
+                sb.AppendLine($"- AI 工具箱使用: {activity.ToolboxRunCount} 次");
+            if (activity.WebPagePublishCount > 0)
+                sb.AppendLine($"- 网页发布/更新: {activity.WebPagePublishCount} 次");
+            if (activity.AttachmentUploadCount > 0)
+                sb.AppendLine($"- 附件上传: {activity.AttachmentUploadCount} 个");
+            if (activity.LlmCalls > 0)
+                sb.AppendLine($"- AI 调用: {activity.LlmCalls} 次");
+            sb.AppendLine();
+        }
         sb.AppendLine("请基于以上数据生成周报，source 可选值: map-platform / github / yuque / daily-log / ai");
-        sb.AppendLine("重要：即使数据较少，也要基于已有数据写出有价值的总结，不要输出「无数据」。");
+        sb.AppendLine("重要：只基于实际存在的数据生成内容，没有数据的活动类型不要提及或编造。如果某个板块确实没有相关数据，可以写较少的条目，但内容必须真实。");
 
         return sb.ToString();
     }
