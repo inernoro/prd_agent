@@ -19,7 +19,10 @@ Description:
 Notes:
   - Safe for repeated runs (idempotent overwrite of the above files).
   - Designed for V1 checker (repo-file manifests only).
-  - When --repo is omitted, auto-detects from git remote origin.
+  - When --repo is omitted, auto-detect order:
+      1) git remote origin
+      2) gh repo view --json nameWithOwner
+      3) git config github.repo
   - When --architect/--owner is omitted, auto-detects from `gh api user` or git user.name.
 EOF
 }
@@ -92,6 +95,32 @@ detect_repo_from_git() {
   return 1
 }
 
+detect_repo_from_gh() {
+  if ! command -v gh >/dev/null 2>&1; then
+    return 1
+  fi
+
+  local repo
+  repo="$(gh repo view --json nameWithOwner --jq '.nameWithOwner' 2>/dev/null || true)"
+  if [[ -n "$repo" && "$repo" == */* ]]; then
+    printf '%s\n' "$repo"
+    return 0
+  fi
+
+  return 1
+}
+
+detect_repo_from_git_config() {
+  local repo
+  repo="$(git config --get github.repo 2>/dev/null || true)"
+  if [[ -n "$repo" && "$repo" == */* ]]; then
+    printf '%s\n' "$repo"
+    return 0
+  fi
+
+  return 1
+}
+
 detect_architect() {
   if [[ -n "$ARCHITECT" ]]; then
     return 0
@@ -100,7 +129,8 @@ detect_architect() {
   if command -v gh >/dev/null 2>&1; then
     local gh_login
     gh_login="$(gh api user --jq '.login' 2>/dev/null || true)"
-    if [[ -n "$gh_login" ]]; then
+    # Guard against non-login payloads from restricted gh environments.
+    if [[ -n "$gh_login" && "$gh_login" =~ ^[A-Za-z0-9-]+$ ]]; then
       ARCHITECT="$gh_login"
       return 0
     fi
@@ -119,8 +149,12 @@ detect_architect() {
 if [[ -z "$REPO" ]]; then
   if REPO="$(detect_repo_from_git)"; then
     echo "Auto-detected repo: $REPO"
+  elif REPO="$(detect_repo_from_gh)"; then
+    echo "Auto-detected repo via gh: $REPO"
+  elif REPO="$(detect_repo_from_git_config)"; then
+    echo "Auto-detected repo via git config github.repo: $REPO"
   else
-    echo "Error: unable to detect repo from git remote. Please pass --repo owner/repo." >&2
+    echo "Error: unable to auto-detect repo (git remote / gh / git config). Please pass --repo owner/repo." >&2
     usage
     exit 1
   fi

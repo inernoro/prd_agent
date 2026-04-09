@@ -2198,8 +2198,9 @@ sequenceDiagram
    - 上传/维护位置：仓库内 `doc/top-design/*`（V1 推荐）或外部设计源注册到 `.github/pr-architect/design-sources.yml`
    - 激活方式：`design-sources.yml` 的 `defaults.active_source_id/active_version`
    - 仓库绑定：`.github/pr-architect/repo-bindings.yml` 的 `repositories[].repo`
-6. 新仓库初始化支持通过模板化 Skill 执行：
-   - 模板：`.github/pr-architect/skill-template.pr-prism-bootstrap.md`
+6. 新仓库初始化支持通过标准 Skill 执行：
+   - 标准 Skill：`.claude/skills/pr-prism-bootstrap/SKILL.md`
+   - 兼容模板入口：`.github/pr-architect/skill-template.pr-prism-bootstrap.md`
    - 执行后应生成最薄文档与绑定配置，并使 setup-status 返回 `readyForFullRefresh=true`（在 GitHub Token 已配置前提下）。
 
 **验收标准**：

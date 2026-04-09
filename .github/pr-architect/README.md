@@ -250,19 +250,24 @@ guardrails:
 
 ### 9.1 一键初始化
 
-在仓库根目录执行：
+在仓库根目录执行（推荐零参数）：
+
+```bash
+bash scripts/init-pr-prism-basis.sh
+```
+
+自动探测顺序：
+
+1. `repo`：`git remote origin` -> `gh repo view` -> `git config github.repo`
+2. `owner`：`gh api user` -> `git config user.name` -> `architect`
+
+若自动探测失败，再使用显式参数：
 
 ```bash
 bash scripts/init-pr-prism-basis.sh \
   --repo "your-org/your-repo" \
   --owner "your-github-id" \
   --context "engineering-governance"
-```
-
-默认支持**零参数**执行（自动从 git remote 推断 repo，优先用 `git config user.name` 作为 owner）：
-
-```bash
-bash scripts/init-pr-prism-basis.sh
 ```
 
 脚本会生成/更新：
@@ -301,5 +306,5 @@ bash scripts/init-pr-prism-basis.sh
   - `design-sources.yml` 的 `active_version` / `sources[].version`
   - 对应 manifests 内容（必要时）
 
-同时可将初始化动作封装为可复用 skill，模板见：
-- `.github/pr-architect/skill-template.pr-prism-bootstrap.md`
+同时可将初始化动作封装为可复用 skill，标准入口见：
+- `.claude/skills/pr-prism-bootstrap/SKILL.md`

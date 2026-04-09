@@ -91,14 +91,18 @@ slices:
 
 ## 5. 在“新项目上传 skill 一键执行”中的用法
 
-为降低操作成本，仓库已提供可复用 skill 模板：
+为降低操作成本，仓库已提供标准可执行 Skill：
 
-- `.github/pr-architect/skill-template.pr-prism-bootstrap.md`
+- `.claude/skills/pr-prism-bootstrap/SKILL.md`
 
-建议在新项目的 Agent/技能系统里创建一个 `pr-prism-bootstrap` skill，执行步骤为：
+若目标平台暂不支持直接导入 `.claude/skills/` 目录，可使用兼容入口：
+
+- `.github/pr-architect/skill-template.pr-prism-bootstrap.md`（指向标准 Skill）
+
+建议在新项目中直接导入并执行 `pr-prism-bootstrap`，核心动作保持为：
 
 1. `bash scripts/init-pr-prism-basis.sh`
-2. `git add doc/top-design .github/pr-architect scripts/init-pr-prism-basis.sh`
+2. `git add doc/top-design .github/pr-architect scripts/init-pr-prism-basis.sh .claude/skills/pr-prism-bootstrap`
 3. `git commit -m "chore: bootstrap pr prism basis"`
 
 这样新仓库无需手工填参数即可完成初始化。
