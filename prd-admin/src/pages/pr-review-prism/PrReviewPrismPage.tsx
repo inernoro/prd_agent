@@ -31,19 +31,6 @@ import {
 
 const bootstrapInitCommand = 'bash scripts/bootstrap-pr-prism.sh';
 const bootstrapGuidePath = 'doc/guide.pr-prism-bootstrap-package.md';
-const prPrismSkillTemplateText = `# Skill: PR Review Prism Bootstrap
-
-## Goal
-Initialize minimal top-design basis for a new repository.
-
-## Steps
-1. Copy scripts/bootstrap-pr-prism.sh and scripts/init-pr-prism-basis.sh into target repo.
-2. Run:
-   bash scripts/bootstrap-pr-prism.sh
-3. Commit generated baseline files:
-   git add doc/top-design .github/pr-architect scripts
-   git commit -m "chore: bootstrap pr prism basis"
-`;
 const topDesignBasisTemplateText = `# doc/top-design/main.md
 # Top Design Baseline
 
@@ -76,6 +63,18 @@ slices:
     description: "Initial slice for governance baseline."
 `;
 
+function parseRepoFromPrUrl(raw: string): string | null {
+  const text = raw.trim();
+  if (!text) {
+    return null;
+  }
+  const match = text.match(/^https?:\/\/github\.com\/([^/\s]+)\/([^/\s]+)\/pull\/\d+/i);
+  if (!match) {
+    return null;
+  }
+  return `${match[1]}/${match[2]}`;
+}
+
 export function PrReviewPrismPage() {
   const navigate = useNavigate();
   const [hint, setHint] = useState<string>('正在连接服务...');
@@ -103,6 +102,7 @@ export function PrReviewPrismPage() {
   const [listError, setListError] = useState<string | null>(null);
   const [setupStatus, setSetupStatus] = useState<PrReviewPrismSetupStatus | null>(null);
   const [setupActionMessage, setSetupActionMessage] = useState<string | null>(null);
+  const [bindingRepoInput, setBindingRepoInput] = useState('');
   const [gateStatusCounts, setGateStatusCounts] = useState<{
     all: number;
     completed: number;
@@ -131,6 +131,35 @@ export function PrReviewPrismPage() {
     () => filteredItems.find(x => x.id === selectedId) ?? null,
     [filteredItems, selectedId]
   );
+  const normalizedBindingRepo = useMemo(() => {
+    const raw = bindingRepoInput.trim();
+    if (!raw) {
+      return '';
+    }
+    const parsed = parseRepoFromPrUrl(raw);
+    return parsed ?? raw;
+  }, [bindingRepoInput]);
+  const isBindingRepoValid = useMemo(() => /^[^/\s]+\/[^/\s]+$/.test(normalizedBindingRepo), [normalizedBindingRepo]);
+  const repoScopedBootstrapCommand = useMemo(() => {
+    if (!isBindingRepoValid) {
+      return bootstrapInitCommand;
+    }
+    return `bash scripts/bootstrap-pr-prism.sh --repo "${normalizedBindingRepo}" --owner "your-github-id"`;
+  }, [isBindingRepoValid, normalizedBindingRepo]);
+  const repoBindingSnippet = useMemo(() => {
+    if (!isBindingRepoValid) {
+      return '';
+    }
+    return `- repo: "${normalizedBindingRepo}"
+  enabled: true
+  design_source_id: "local-ddd-anchor"
+  design_source_version: "v1.0.0"
+  default_owner: "your-github-id"
+  default_context: "engineering-governance"
+  required_checks:
+    - "PR审查棱镜 L1 Gate"
+    - "PR审查棱镜 Advisory"`;
+  }, [isBindingRepoValid, normalizedBindingRepo]);
 
   const copyToClipboard = useCallback(async (text: string, successMessage: string) => {
     try {
@@ -221,6 +250,20 @@ export function PrReviewPrismPage() {
       return filteredItems[0]?.id ?? null;
     });
   }, [filteredItems]);
+  useEffect(() => {
+    const parsed = parseRepoFromPrUrl(prUrl);
+    if (parsed) {
+      setBindingRepoInput(parsed);
+    }
+  }, [prUrl]);
+  useEffect(() => {
+    if (bindingRepoInput.trim()) {
+      return;
+    }
+    if (selected?.repoOwner && selected.repoName) {
+      setBindingRepoInput(`${selected.repoOwner}/${selected.repoName}`);
+    }
+  }, [bindingRepoInput, selected]);
 
   async function handleSearch() {
     await loadList(1, search.trim() || undefined, pageSize, activeGateFilter);
@@ -486,24 +529,37 @@ export function PrReviewPrismPage() {
                   ))}
                 </ul>
                 <div className="mt-2 text-amber-100/80">
-                  <p>推荐初始化命令：</p>
+                  <p>按新项目仓库绑定后的初始化命令：</p>
+                  <input
+                    type="text"
+                    value={bindingRepoInput}
+                    onChange={e => setBindingRepoInput(e.target.value)}
+                    placeholder="owner/repo 或 https://github.com/owner/repo/pull/123"
+                    className="w-full mt-1 bg-black/20 border border-white/15 rounded px-2 py-1.5 text-[11px] text-amber-50 placeholder-amber-100/40 focus:outline-none focus:border-amber-300/40"
+                  />
+                  {!isBindingRepoValid && (
+                    <p className="mt-1 text-[11px] text-amber-200/80">
+                      请输入目标仓库（owner/repo）或粘贴该仓库的 PR 链接，系统将自动识别。
+                    </p>
+                  )}
                   <code className="block mt-1 rounded bg-black/25 px-2 py-1 whitespace-pre-wrap break-all">
-                    {bootstrapInitCommand}
+                    {repoScopedBootstrapCommand}
                   </code>
                   <div className="mt-2 flex flex-wrap gap-2">
                     <button
                       type="button"
-                      onClick={() => void copyToClipboard(bootstrapInitCommand, '已复制初始化命令')}
+                      onClick={() => void copyToClipboard(repoScopedBootstrapCommand, '已复制该仓库初始化命令')}
                       className="inline-flex items-center gap-1 rounded border border-white/20 bg-white/10 px-2.5 py-1 text-[11px] text-white hover:bg-white/15 whitespace-nowrap"
                     >
-                      复制初始化命令
+                      复制该仓库初始化命令
                     </button>
                     <button
                       type="button"
-                      onClick={() => void copyToClipboard(prPrismSkillTemplateText, '已复制 Skill 模板内容')}
-                      className="inline-flex items-center gap-1 rounded border border-white/20 bg-white/10 px-2.5 py-1 text-[11px] text-white hover:bg-white/15 whitespace-nowrap"
+                      disabled={!isBindingRepoValid}
+                      onClick={() => void copyToClipboard(repoBindingSnippet, '已复制该仓库 bindings 片段')}
+                      className="inline-flex items-center gap-1 rounded border border-white/20 bg-white/10 px-2.5 py-1 text-[11px] text-white hover:bg-white/15 whitespace-nowrap disabled:opacity-50"
                     >
-                      复制 Skill 模板
+                      复制该仓库 bindings 片段
                     </button>
                     <button
                       type="button"
@@ -518,6 +574,13 @@ export function PrReviewPrismPage() {
                       className="inline-flex items-center gap-1 rounded border border-white/20 bg-white/10 px-2.5 py-1 text-[11px] text-white hover:bg-white/15 whitespace-nowrap"
                     >
                       复制说明文档路径
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => void window.open(bootstrapGuidePath, '_blank', 'noopener,noreferrer')}
+                      className="inline-flex items-center gap-1 rounded border border-white/20 bg-white/10 px-2.5 py-1 text-[11px] text-white hover:bg-white/15 whitespace-nowrap"
+                    >
+                      打开顶层设计说明
                     </button>
                   </div>
                   {setupActionMessage && <p className="mt-2 text-[11px] text-emerald-200">{setupActionMessage}</p>}
