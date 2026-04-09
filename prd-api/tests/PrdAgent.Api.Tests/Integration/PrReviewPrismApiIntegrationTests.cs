@@ -115,6 +115,33 @@ public class PrReviewPrismApiIntegrationTests : IClassFixture<WebApplicationFact
     }
 
     [Fact]
+    public async Task BatchRefresh_TooManyIds_ShouldReturn400()
+    {
+        if (!HasToken)
+        {
+            Log("[Skip] no token");
+            return;
+        }
+
+        var client = CreateAuthenticatedClient();
+        if (!await EnsurePrReviewPrismAccessibleAsync(client))
+        {
+            return;
+        }
+
+        var tooManyIds = Enumerable.Range(1, 101).Select(_ => Guid.NewGuid().ToString("N")).ToArray();
+        var response = await client.PostAsJsonAsync("/api/pr-review-prism/submissions/batch-refresh", new
+        {
+            ids = tooManyIds
+        });
+
+        var body = await response.Content.ReadAsStringAsync();
+        Log($"[BatchRefreshTooManyIds] {response.StatusCode} - {Truncate(body, 200)}");
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        AssertErrorCode(body, "INVALID_FORMAT");
+    }
+
+    [Fact]
     public async Task List_InvalidGateStatus_ShouldReturn400()
     {
         if (!HasToken)
@@ -357,6 +384,78 @@ public class PrReviewPrismApiIntegrationTests : IClassFixture<WebApplicationFact
             if (!string.IsNullOrWhiteSpace(existingId))
             {
                 _ = await client.DeleteAsync($"/api/pr-review-prism/submissions/{existingId}");
+            }
+        }
+    }
+
+    [Fact]
+    public async Task BatchRefresh_DuplicateIds_ShouldBeDeduplicated()
+    {
+        if (!HasToken)
+        {
+            Log("[Skip] no token");
+            return;
+        }
+
+        var client = CreateAuthenticatedClient();
+        if (!await EnsurePrReviewPrismAccessibleAsync(client))
+        {
+            return;
+        }
+
+        var prNumber = Random.Shared.Next(40000000, 49999999);
+        var url = $"https://github.com/inernoro/prd_agent/pull/{prNumber}";
+        var note = $"it-prism-batch-dup-{Guid.NewGuid():N}";
+        string? submissionId = null;
+
+        try
+        {
+            var createResponse = await client.PostAsJsonAsync("/api/pr-review-prism/submissions", new
+            {
+                pullRequestUrl = url,
+                note
+            });
+            var createBody = await createResponse.Content.ReadAsStringAsync();
+            Assert.Equal(HttpStatusCode.OK, createResponse.StatusCode);
+
+            using (var createDoc = JsonDocument.Parse(createBody))
+            {
+                Assert.True(createDoc.RootElement.GetProperty("success").GetBoolean());
+                submissionId = createDoc.RootElement.GetProperty("data").GetProperty("submission").GetProperty("id").GetString();
+                Assert.False(string.IsNullOrWhiteSpace(submissionId));
+            }
+
+            var batchResponse = await client.PostAsJsonAsync("/api/pr-review-prism/submissions/batch-refresh", new
+            {
+                ids = new[] { submissionId, submissionId }
+            });
+            var batchBody = await batchResponse.Content.ReadAsStringAsync();
+            Log($"[BatchRefreshDuplicateIds] {batchResponse.StatusCode} - {Truncate(batchBody, 240)}");
+            Assert.Equal(HttpStatusCode.OK, batchResponse.StatusCode);
+
+            using (var batchDoc = JsonDocument.Parse(batchBody))
+            {
+                Assert.True(batchDoc.RootElement.GetProperty("success").GetBoolean());
+                var data = batchDoc.RootElement.GetProperty("data");
+
+                Assert.Equal(1, data.GetProperty("total").GetInt32());
+                Assert.Equal(1, data.GetProperty("successCount").GetInt32());
+                Assert.Equal(0, data.GetProperty("failureCount").GetInt32());
+
+                var submissions = data.GetProperty("submissions");
+                var submissionsCount = submissions.GetArrayLength();
+                Assert.Equal(1, submissionsCount);
+                Assert.Equal(submissionId, submissions[0].GetProperty("id").GetString());
+
+                var failures = data.GetProperty("failures");
+                Assert.Equal(0, failures.GetArrayLength());
+            }
+        }
+        finally
+        {
+            if (!string.IsNullOrWhiteSpace(submissionId))
+            {
+                _ = await client.DeleteAsync($"/api/pr-review-prism/submissions/{submissionId}");
             }
         }
     }

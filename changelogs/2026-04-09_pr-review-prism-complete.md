@@ -17,3 +17,4 @@
 | fix | prd-api | PR审查棱镜集成测试补充列表响应 gateStatusCounts 结构断言 |
 | fix | prd-api | PR审查棱镜集成测试新增 q + gateStatus + gateStatusCounts 一致性校验，覆盖筛选与计数联动行为 |
 | fix | prd-api | PR审查棱镜集成测试新增 batch-refresh 部分失败一致性校验（successCount/failureCount/failures/submissions） |
+| fix | prd-api | PR审查棱镜集成测试新增 batch-refresh 上限 100 与重复 id 去重统计一致性校验 |
