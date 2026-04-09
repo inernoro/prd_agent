@@ -93,6 +93,11 @@
 | `defect_webhook_configs` | `DefectWebhookConfig` | 缺陷事件 Webhook 推送配置（WeCom/DingTalk/Feishu/Custom） | `(teamId, projectId)` |
 | `defect_share_links` | `DefectShareLink` | 缺陷分享链接（Token + 范围 + 过期时间），外部 Agent 通过开放平台 API Key 认证后凭 token 读取缺陷 | `token` 唯一；`(createdBy, createdAt desc)` |
 | `defect_fix_reports` | `DefectFixReport` | 外部 Agent 提交的缺陷修复分析报告（含逐条可信度评分 + 接受/拒绝审核流程） | `shareLinkId`；`shareToken` |
+| `review_submissions` | `ReviewSubmission` | 产品评审员提交记录（标题、附件、状态机） | `submitterId`；`submittedAt desc`；`status` |
+| `review_results` | `ReviewResult` | 产品评审员评分结果（分项评分、总分、结论） | `submissionId` 唯一；`scoredAt desc` |
+| `review_dimension_configs` | `ReviewDimensionConfig` | 产品评审评分维度配置（权重/说明） | `key` 唯一；`orderIndex` |
+| `review_webhook_configs` | `ReviewWebhookConfig` | 产品评审完成通知 Webhook 配置 | `isEnabled`；`createdAt desc` |
+| `pr_review_prism_submissions` | `PrReviewPrismSubmission` | PR 审查棱镜提交与快照（PR 基本信息、L1 Gate、决策卡解析结果、刷新状态） | `(ownerUserId, updatedAt desc)`；`(ownerUserId, repoOwner, repoName, pullRequestNumber)` 唯一 |
 | `hosted_sites` | `HostedSite` | 托管站点（用户上传 HTML/ZIP 或工作流生成的可运行网页） | `(ownerUserId, createdAt desc)`；`tags` 多值索引；`(ownerUserId, sourceType)`；`(ownerUserId, folder)` |
 | `web_page_share_links` | `WebPageShareLink` | 网页分享链接（Token + 密码保护 + 过期时间） | `token` 唯一；`(createdBy, createdAt desc)` |
 

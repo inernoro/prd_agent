@@ -1501,3 +1501,17 @@ export type {
   ReviewResult,
   ReviewWebhookConfig,
 } from '@/services/real/reviewAgent';
+
+// ── PR Review Prism 审查棱镜 ──
+export {
+  getPrReviewPrismStatus,
+  createPrReviewPrismSubmission,
+  listPrReviewPrismSubmissions,
+  getPrReviewPrismSubmission,
+  refreshPrReviewPrismSubmission,
+  deletePrReviewPrismSubmission,
+} from '@/services/real/prReviewPrism';
+export type {
+  PrReviewPrismSubmission,
+  PrReviewPrismStatus,
+} from '@/services/real/prReviewPrism';

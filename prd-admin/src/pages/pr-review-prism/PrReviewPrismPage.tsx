@@ -1,33 +1,189 @@
-import { useEffect, useState } from 'react';
-import { ScanSearch, ArrowLeft } from 'lucide-react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import {
+  ScanSearch,
+  ArrowLeft,
+  Plus,
+  RefreshCw,
+  Trash2,
+  ExternalLink,
+  CheckCircle2,
+  AlertTriangle,
+  Clock3,
+  HelpCircle,
+  Loader2,
+  Search,
+  CircleDot,
+} from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
-import { apiRequest } from '@/services/real/apiClient';
+import {
+  createPrReviewPrismSubmission,
+  deletePrReviewPrismSubmission,
+  getPrReviewPrismStatus,
+  listPrReviewPrismSubmissions,
+  refreshPrReviewPrismSubmission,
+  type PrReviewPrismSubmission,
+} from '@/services';
 
-/**
- * PR审查棱镜：与「产品评审员」(review-agent) 为独立应用；当前为占位页，后续接入 PR 审查主流程。
- */
 export function PrReviewPrismPage() {
   const navigate = useNavigate();
-  const [hint, setHint] = useState<string | null>(null);
+  const [hint, setHint] = useState<string>('正在连接服务...');
+  const [loading, setLoading] = useState(true);
+  const [submitting, setSubmitting] = useState(false);
+  const [refreshingId, setRefreshingId] = useState<string | null>(null);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [items, setItems] = useState<PrReviewPrismSubmission[]>([]);
+  const [total, setTotal] = useState(0);
+  const [search, setSearch] = useState('');
+  const [prUrl, setPrUrl] = useState('');
+  const [note, setNote] = useState('');
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [formError, setFormError] = useState<string | null>(null);
+  const [listError, setListError] = useState<string | null>(null);
 
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      const res = await apiRequest<{ appKey: string; phase: string; message: string }>(
-        '/api/pr-review-prism/status',
-        { method: 'GET' }
-      );
-      if (!cancelled && res.success && res.data?.message) {
-        setHint(res.data.message);
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
+  const selected = useMemo(
+    () => items.find(x => x.id === selectedId) ?? null,
+    [items, selectedId]
+  );
+
+  const loadStatus = useCallback(async () => {
+    const res = await getPrReviewPrismStatus();
+    if (res.success && res.data?.message) {
+      setHint(res.data.message);
+    }
   }, []);
 
+  const loadList = useCallback(
+    async (keyword?: string) => {
+      setLoading(true);
+      setListError(null);
+      const res = await listPrReviewPrismSubmissions(1, 100, keyword);
+      if (res.success && res.data) {
+        setItems(res.data.items);
+        setTotal(res.data.total);
+        setSelectedId(prev => {
+          if (prev && res.data.items.some(x => x.id === prev)) {
+            return prev;
+          }
+          return res.data.items[0]?.id ?? null;
+        });
+      } else {
+        setItems([]);
+        setTotal(0);
+        setSelectedId(null);
+        setListError(res.error?.message ?? '加载提交记录失败');
+      }
+      setLoading(false);
+    },
+    []
+  );
+
+  useEffect(() => {
+    void loadStatus();
+    void loadList();
+  }, [loadList, loadStatus]);
+
+  async function handleSearch() {
+    await loadList(search.trim() || undefined);
+  }
+
+  async function handleSubmit() {
+    const normalizedUrl = prUrl.trim();
+    if (!normalizedUrl) {
+      setFormError('请输入 GitHub PR 链接');
+      return;
+    }
+    if (!/^https?:\/\/github\.com\/[^/]+\/[^/]+\/pull\/\d+/i.test(normalizedUrl)) {
+      setFormError('PR 链接格式错误，应为 https://github.com/{owner}/{repo}/pull/{number}');
+      return;
+    }
+
+    setSubmitting(true);
+    setFormError(null);
+    const res = await createPrReviewPrismSubmission(normalizedUrl, note.trim() || undefined);
+    if (!res.success || !res.data?.submission) {
+      setFormError(res.error?.message ?? '提交失败');
+      setSubmitting(false);
+      return;
+    }
+
+    setPrUrl('');
+    setNote('');
+    await loadList(search.trim() || undefined);
+    setSelectedId(res.data.submission.id);
+    setSubmitting(false);
+  }
+
+  async function handleRefresh(id: string) {
+    setRefreshingId(id);
+    const res = await refreshPrReviewPrismSubmission(id);
+    if (res.success && res.data?.submission) {
+      setItems(prev => prev.map(x => (x.id === id ? res.data!.submission : x)));
+    } else {
+      setListError(res.error?.message ?? '刷新失败');
+    }
+    setRefreshingId(null);
+  }
+
+  async function handleDelete(id: string) {
+    setDeletingId(id);
+    const res = await deletePrReviewPrismSubmission(id);
+    if (!res.success) {
+      setListError(res.error?.message ?? '删除失败');
+      setDeletingId(null);
+      return;
+    }
+    const next = items.filter(x => x.id !== id);
+    setItems(next);
+    setTotal(Math.max(0, total - 1));
+    if (selectedId === id) {
+      setSelectedId(next[0]?.id ?? null);
+    }
+    setDeletingId(null);
+  }
+
+  function gateBadge(item: PrReviewPrismSubmission) {
+    if (item.gateStatus === 'completed') {
+      if (item.gateConclusion === 'success') {
+        return (
+          <span className="inline-flex items-center gap-1 text-emerald-300 text-xs">
+            <CheckCircle2 className="w-3.5 h-3.5" />
+            L1 通过
+          </span>
+        );
+      }
+      return (
+        <span className="inline-flex items-center gap-1 text-orange-300 text-xs">
+          <AlertTriangle className="w-3.5 h-3.5" />
+          L1 未通过
+        </span>
+      );
+    }
+    if (item.gateStatus === 'pending') {
+      return (
+        <span className="inline-flex items-center gap-1 text-amber-300 text-xs">
+          <Clock3 className="w-3.5 h-3.5" />
+          L1 进行中
+        </span>
+      );
+    }
+    if (item.gateStatus === 'missing') {
+      return (
+        <span className="inline-flex items-center gap-1 text-slate-300 text-xs">
+          <HelpCircle className="w-3.5 h-3.5" />
+          L1 缺失
+        </span>
+      );
+    }
+    return (
+      <span className="inline-flex items-center gap-1 text-red-300 text-xs">
+        <AlertTriangle className="w-3.5 h-3.5" />
+        刷新异常
+      </span>
+    );
+  }
+
   return (
-    <div className="max-w-2xl mx-auto px-4 py-8">
+    <div className="max-w-6xl mx-auto px-4 py-8">
       <button
         type="button"
         onClick={() => navigate('/')}
@@ -47,15 +203,256 @@ export function PrReviewPrismPage() {
         </div>
       </div>
 
-      <div
-        className="rounded-xl p-5 border text-sm leading-relaxed"
-        style={{
-          background: 'var(--bg-elevated, rgba(255,255,255,0.03))',
-          borderColor: 'rgba(255,255,255,0.08)',
-          color: 'var(--text-muted, rgba(255,255,255,0.55))',
-        }}
-      >
-        {hint ?? '正在连接服务…'}
+      <div className="rounded-xl p-4 border border-white/10 bg-white/[0.03] text-sm text-white/60 mb-5">
+        {hint}
+      </div>
+
+      <div className="grid grid-cols-1 xl:grid-cols-[360px_1fr] gap-5">
+        <div className="space-y-4">
+          <div className="rounded-xl border border-white/10 bg-white/[0.03] p-4">
+            <p className="text-sm font-medium text-white mb-3">提交 GitHub PR</p>
+            <div className="space-y-3">
+              <input
+                type="text"
+                value={prUrl}
+                onChange={e => setPrUrl(e.target.value)}
+                placeholder="https://github.com/org/repo/pull/123"
+                className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-white placeholder-white/30 focus:outline-none focus:border-violet-500/50"
+                disabled={submitting}
+              />
+              <input
+                type="text"
+                value={note}
+                onChange={e => setNote(e.target.value)}
+                placeholder="备注（可选）"
+                className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-white placeholder-white/30 focus:outline-none focus:border-violet-500/50"
+                disabled={submitting}
+              />
+              {formError && <p className="text-xs text-red-300">{formError}</p>}
+              <button
+                type="button"
+                onClick={handleSubmit}
+                disabled={submitting}
+                className="w-full inline-flex items-center justify-center gap-2 rounded-lg bg-violet-600 hover:bg-violet-500 text-white text-sm font-medium py-2.5 transition-colors disabled:opacity-60"
+              >
+                {submitting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}
+                {submitting ? '提交中...' : '提交并拉取'}
+              </button>
+            </div>
+          </div>
+
+          <div className="rounded-xl border border-white/10 bg-white/[0.03] p-4">
+            <div className="flex items-center justify-between mb-3">
+              <p className="text-sm font-medium text-white">提交列表</p>
+              <span className="text-xs text-white/45">{total} 条</span>
+            </div>
+            <div className="flex gap-2 mb-3">
+              <div className="relative flex-1">
+                <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-white/35" />
+                <input
+                  type="text"
+                  value={search}
+                  onChange={e => setSearch(e.target.value)}
+                  onKeyDown={e => {
+                    if (e.key === 'Enter') {
+                      void handleSearch();
+                    }
+                  }}
+                  placeholder="搜索 repo / 标题 / 备注"
+                  className="w-full bg-white/5 border border-white/10 rounded-lg pl-8 pr-3 py-2 text-sm text-white placeholder-white/30 focus:outline-none focus:border-violet-500/50"
+                />
+              </div>
+              <button
+                type="button"
+                onClick={() => void handleSearch()}
+                className="px-3 py-2 text-xs rounded-lg border border-white/10 bg-white/5 hover:bg-white/10 text-white/70"
+              >
+                搜索
+              </button>
+            </div>
+            {listError && <p className="text-xs text-red-300 mb-2">{listError}</p>}
+            {loading ? (
+              <div className="h-28 flex items-center justify-center">
+                <Loader2 className="w-5 h-5 text-violet-300 animate-spin" />
+              </div>
+            ) : items.length === 0 ? (
+              <div className="h-28 flex items-center justify-center text-sm text-white/35">暂无提交记录</div>
+            ) : (
+              <div className="space-y-2 max-h-[520px] overflow-auto pr-1">
+                {items.map(item => (
+                  <button
+                    key={item.id}
+                    type="button"
+                    onClick={() => setSelectedId(item.id)}
+                    className={`w-full text-left rounded-lg border px-3 py-2.5 transition-colors ${
+                      selectedId === item.id
+                        ? 'border-violet-400/40 bg-violet-500/10'
+                        : 'border-white/10 bg-white/5 hover:bg-white/10'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between gap-2">
+                      <p className="text-sm text-white truncate">
+                        {item.repoOwner}/{item.repoName}#{item.pullRequestNumber}
+                      </p>
+                      {selectedId === item.id && <CircleDot className="w-3.5 h-3.5 text-violet-300 shrink-0" />}
+                    </div>
+                    <p className="text-xs text-white/40 truncate mt-1">
+                      {item.pullRequestTitle || '尚未拉取标题'}
+                    </p>
+                    <div className="mt-2">{gateBadge(item)}</div>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+
+        <div className="rounded-xl border border-white/10 bg-white/[0.03] p-4 min-h-[560px]">
+          {!selected ? (
+            <div className="h-full min-h-[420px] flex items-center justify-center text-sm text-white/35">
+              请选择一条提交记录查看详情
+            </div>
+          ) : (
+            <div className="space-y-5">
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <h2 className="text-base font-semibold text-white">
+                    {selected.repoOwner}/{selected.repoName}#{selected.pullRequestNumber}
+                  </h2>
+                  <p className="text-sm text-white/55 mt-1">
+                    {selected.pullRequestTitle || '暂无标题'}
+                  </p>
+                  <div className="mt-2">{gateBadge(selected)}</div>
+                </div>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => void handleRefresh(selected.id)}
+                    disabled={refreshingId === selected.id}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-lg border border-white/10 bg-white/5 hover:bg-white/10 text-white/75 disabled:opacity-60"
+                  >
+                    {refreshingId === selected.id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />}
+                    刷新
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void handleDelete(selected.id)}
+                    disabled={deletingId === selected.id}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-lg border border-red-400/30 bg-red-500/10 hover:bg-red-500/15 text-red-200 disabled:opacity-60"
+                  >
+                    {deletingId === selected.id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />}
+                    删除
+                  </button>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                <div className="rounded-lg border border-white/10 bg-white/5 p-3">
+                  <p className="text-xs text-white/40">PR 状态</p>
+                  <p className="text-sm text-white mt-1">{selected.pullRequestState}</p>
+                </div>
+                <div className="rounded-lg border border-white/10 bg-white/5 p-3">
+                  <p className="text-xs text-white/40">PR 作者</p>
+                  <p className="text-sm text-white mt-1">{selected.pullRequestAuthor || '-'}</p>
+                </div>
+                <div className="rounded-lg border border-white/10 bg-white/5 p-3">
+                  <p className="text-xs text-white/40">风险分</p>
+                  <p className="text-sm text-white mt-1">{selected.riskScore ?? '-'}</p>
+                </div>
+                <div className="rounded-lg border border-white/10 bg-white/5 p-3">
+                  <p className="text-xs text-white/40">置信度</p>
+                  <p className="text-sm text-white mt-1">
+                    {selected.confidencePercent != null ? `${selected.confidencePercent}%` : '-'}
+                  </p>
+                </div>
+              </div>
+
+              <div className="rounded-lg border border-white/10 bg-white/5 p-3">
+                <p className="text-xs text-white/40 mb-1">决策建议</p>
+                <p className="text-sm text-white/85">{selected.decisionSuggestion || '暂无'}</p>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                <div className="rounded-lg border border-white/10 bg-white/5 p-3">
+                  <p className="text-xs text-white/40 mb-2">阻断项</p>
+                  {selected.blockers.length === 0 ? (
+                    <p className="text-sm text-white/55">无</p>
+                  ) : (
+                    <ul className="list-disc ml-4 space-y-1 text-sm text-white/85">
+                      {selected.blockers.map((x, idx) => (
+                        <li key={`${idx}-${x}`}>{x}</li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+                <div className="rounded-lg border border-white/10 bg-white/5 p-3">
+                  <p className="text-xs text-white/40 mb-2">风险建议</p>
+                  {selected.advisories.length === 0 ? (
+                    <p className="text-sm text-white/55">无</p>
+                  ) : (
+                    <ul className="list-disc ml-4 space-y-1 text-sm text-white/85">
+                      {selected.advisories.map((x, idx) => (
+                        <li key={`${idx}-${x}`}>{x}</li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+                <div className="rounded-lg border border-white/10 bg-white/5 p-3">
+                  <p className="text-xs text-white/40 mb-2">架构师关注问题</p>
+                  {selected.focusQuestions.length === 0 ? (
+                    <p className="text-sm text-white/55">无</p>
+                  ) : (
+                    <ol className="list-decimal ml-4 space-y-1 text-sm text-white/85">
+                      {selected.focusQuestions.map((x, idx) => (
+                        <li key={`${idx}-${x}`}>{x}</li>
+                      ))}
+                    </ol>
+                  )}
+                </div>
+              </div>
+
+              <div className="flex flex-wrap gap-2">
+                <a
+                  href={selected.pullRequestUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="inline-flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg border border-white/10 bg-white/5 hover:bg-white/10 text-white/75"
+                >
+                  PR 链接
+                  <ExternalLink className="w-3.5 h-3.5" />
+                </a>
+                {selected.gateDetailsUrl && (
+                  <a
+                    href={selected.gateDetailsUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="inline-flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg border border-white/10 bg-white/5 hover:bg-white/10 text-white/75"
+                  >
+                    L1 Gate 详情
+                    <ExternalLink className="w-3.5 h-3.5" />
+                  </a>
+                )}
+                {selected.decisionCardCommentUrl && (
+                  <a
+                    href={selected.decisionCardCommentUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="inline-flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg border border-white/10 bg-white/5 hover:bg-white/10 text-white/75"
+                  >
+                    决策卡评论
+                    <ExternalLink className="w-3.5 h-3.5" />
+                  </a>
+                )}
+              </div>
+
+              {selected.lastRefreshError && (
+                <div className="rounded-lg border border-red-400/25 bg-red-500/10 p-3 text-sm text-red-200">
+                  最近刷新错误：{selected.lastRefreshError}
+                </div>
+              )}
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );

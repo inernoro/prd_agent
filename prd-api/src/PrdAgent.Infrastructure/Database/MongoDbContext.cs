@@ -109,6 +109,8 @@ public class MongoDbContext
     public IMongoCollection<ReviewResult> ReviewResults => _database.GetCollection<ReviewResult>("review_results");
     public IMongoCollection<ReviewDimensionConfig> ReviewDimensionConfigs => _database.GetCollection<ReviewDimensionConfig>("review_dimension_configs");
     public IMongoCollection<ReviewWebhookConfig> ReviewWebhookConfigs => _database.GetCollection<ReviewWebhookConfig>("review_webhook_configs");
+    // PR Review Prism 审查棱镜
+    public IMongoCollection<PrReviewPrismSubmission> PrReviewPrismSubmissions => _database.GetCollection<PrReviewPrismSubmission>("pr_review_prism_submissions");
 
     // Report Agent 周报管理
     public IMongoCollection<ReportTeam> ReportTeams => _database.GetCollection<ReportTeam>("report_teams");
@@ -913,6 +915,25 @@ public class MongoDbContext
         DefectFixReports.Indexes.CreateOne(new CreateIndexModel<DefectFixReport>(
             Builders<DefectFixReport>.IndexKeys.Ascending(x => x.ShareToken),
             new CreateIndexOptions { Name = "idx_defect_fix_reports_token" }));
+
+        // PR审查棱镜：按 owner 查询列表；同用户下同仓库同 PR 去重
+        PrReviewPrismSubmissions.Indexes.CreateOne(new CreateIndexModel<PrReviewPrismSubmission>(
+            Builders<PrReviewPrismSubmission>.IndexKeys.Ascending(x => x.OwnerUserId).Descending(x => x.UpdatedAt),
+            new CreateIndexOptions { Name = "idx_pr_review_prism_owner_updated" }));
+        try
+        {
+            PrReviewPrismSubmissions.Indexes.CreateOne(new CreateIndexModel<PrReviewPrismSubmission>(
+                Builders<PrReviewPrismSubmission>.IndexKeys
+                    .Ascending(x => x.OwnerUserId)
+                    .Ascending(x => x.RepoOwner)
+                    .Ascending(x => x.RepoName)
+                    .Ascending(x => x.PullRequestNumber),
+                new CreateIndexOptions { Name = "uniq_pr_review_prism_owner_repo_pr", Unique = true }));
+        }
+        catch (MongoCommandException ex) when (IsIndexConflict(ex))
+        {
+            // ignore
+        }
 
         // ========== Channel Adapter 多通道适配器索引 ==========
 

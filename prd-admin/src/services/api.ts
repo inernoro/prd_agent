@@ -367,6 +367,18 @@ export const api = {
     },
   },
 
+  // ============ PR Review Prism ============
+  prReviewPrism: {
+    status: () => '/api/pr-review-prism/status',
+    submissions: {
+      list: () => '/api/pr-review-prism/submissions',
+      create: () => '/api/pr-review-prism/submissions',
+      byId: (id: string) => `/api/pr-review-prism/submissions/${id}`,
+      refresh: (id: string) => `/api/pr-review-prism/submissions/${id}/refresh`,
+      delete: (id: string) => `/api/pr-review-prism/submissions/${id}`,
+    },
+  },
+
   // ============ Literary Agent 文学创作 ============
   literaryAgent: {
     prompts: {

@@ -2149,6 +2149,54 @@ sequenceDiagram
 
 **设计文档**：`doc/spec.report-agent.v2.md`
 
+### 4.24 PR 审查棱镜（PR Review Prism）
+
+#### 4.24.1 PRP-001 提交 PR 链接并建立审查快照
+
+| 属性 | 描述 |
+|------|------|
+| 需求编号 | PRP-001 |
+| 需求名称 | 提交 GitHub PR 链接 |
+| 优先级 | **[必须]** |
+| 实现层 | Web 管理后台 + 后端服务 |
+
+**功能详述**：
+1. 管理端用户可提交 GitHub PR 链接（`https://github.com/{owner}/{repo}/pull/{number}`）创建审查记录。
+2. 同一用户下 `(repoOwner, repoName, pullRequestNumber)` 唯一；重复提交时复用已有记录并刷新快照。
+3. 后端在创建时即时拉取 GitHub 快照：PR 基本信息、L1 Gate 检查状态、决策卡评论解析结果。
+4. 用户可填写可选备注（note），用于后续检索与回顾。
+
+**数据模型**：`PrReviewPrismSubmission`（集合：`pr_review_prism_submissions`）
+
+**API 端点**：
+- `GET /api/pr-review-prism/status` — 功能状态与提示信息
+- `POST /api/pr-review-prism/submissions` — 提交 PR 链接并创建/复用记录
+- `GET /api/pr-review-prism/submissions` — 当前用户提交列表（支持 `q` 检索）
+- `GET /api/pr-review-prism/submissions/{id}` — 提交详情
+- `POST /api/pr-review-prism/submissions/{id}/refresh` — 手动刷新快照
+- `DELETE /api/pr-review-prism/submissions/{id}` — 删除记录
+
+#### 4.24.2 PRP-002 GitHub 快照拉取与决策卡解析
+
+| 属性 | 描述 |
+|------|------|
+| 需求编号 | PRP-002 |
+| 需求名称 | GitHub 审查结果集成 |
+| 优先级 | **[必须]** |
+| 实现层 | 后端服务 |
+
+**功能详述**：
+1. 使用配置中的 GitHub Token 调用 GitHub API，读取 PR 元数据与 head SHA。
+2. 读取对应 commit check-runs，定位名称为 `PR审查棱镜 L1 Gate` 的检查项，映射 `gateStatus` 与 `gateConclusion`。
+3. 读取 PR 评论，识别决策卡标记块（兼容新旧 marker），解析建议、风险分、置信度、硬阻断、阻断项、建议项、关注问题。
+4. 解析失败或外部调用异常时，记录 `lastRefreshError` 并将 `gateStatus` 置为 `error`，避免静默失败。
+
+**验收标准**：
+- [ ] 可从 PR 链接正确解析 owner/repo/number
+- [ ] Gate 状态至少区分 `pending/completed/missing/error`
+- [ ] 决策卡解析支持阻断项、建议项、关注问题（最多 3 条）
+- [ ] 异常可追踪（`lastRefreshError`）
+
 ---
 
 ## 第五章 外部接口需求
