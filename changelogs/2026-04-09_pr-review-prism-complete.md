@@ -47,4 +47,6 @@
 | fix | prd-api | PR审查棱镜 setup-status guidance 升级为“页面配置优先 + 环境变量兜底”提示，降低小白配置门槛 |
 | fix | prd-api | PR审查棱镜集成测试新增 token-config 鉴权与返回结构断言，防止可视化配置能力回归 |
 | fix | prd-admin | PR审查棱镜 Step4 收敛为单一智能主按钮，自动按“快速接入/含顶设接入”给出一致动作与提示，降低新手决策成本 |
+| fix | prd-admin | PR审查棱镜仓库列表“待接入/可审查”状态口径统一为快速接入规则（Step1+Step2），避免与提交按钮判定不一致 |
+| fix | prd-api | PR审查棱镜 GitHub 拉取失败信息细化为“权限不足/PR不存在/HTTP错误”，便于定位 Token 与仓库访问问题 |
 | fix | prd-admin | PR审查棱镜页面增强 localStorage 兼容清洗，遇到历史/异常缓存结构时自动降级默认值，避免 CDS 环境白屏 |

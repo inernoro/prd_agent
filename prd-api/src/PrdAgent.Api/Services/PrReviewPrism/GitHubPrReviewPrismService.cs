@@ -100,11 +100,12 @@ public sealed class GitHubPrReviewPrismService
         client.DefaultRequestHeaders.Remove("X-GitHub-Api-Version");
         client.DefaultRequestHeaders.Add("X-GitHub-Api-Version", "2022-11-28");
 
-        var pr = await GetPullRequestAsync(client, repoOwner, repoName, prNumber, CancellationToken.None);
-        if (pr == null)
+        var prResult = await GetPullRequestAsync(client, repoOwner, repoName, prNumber, CancellationToken.None);
+        if (prResult.Data == null)
         {
-            throw new InvalidOperationException("无法获取 GitHub PR 信息，请检查仓库权限与链接");
+            throw new InvalidOperationException(prResult.ErrorMessage ?? "无法获取 GitHub PR 信息，请检查仓库权限与链接");
         }
+        var pr = prResult.Data;
 
         var snapshot = new PrReviewPrismSnapshot
         {
@@ -173,7 +174,7 @@ public sealed class GitHubPrReviewPrismService
         return _config["Jwt:Secret"] ?? "DefaultEncryptionKey32Bytes!!!!";
     }
 
-    private static async Task<PullRequestDto?> GetPullRequestAsync(
+    private static async Task<(PullRequestDto? Data, string? ErrorMessage)> GetPullRequestAsync(
         HttpClient client,
         string owner,
         string repo,
@@ -184,11 +185,21 @@ public sealed class GitHubPrReviewPrismService
         using var resp = await client.GetAsync(url, ct);
         if (!resp.IsSuccessStatusCode)
         {
-            return null;
+            var code = (int)resp.StatusCode;
+            if (code == 401 || code == 403)
+            {
+                return (null, "GitHub Token 对该仓库无访问权限（请确认 Token 权限和仓库可见性）");
+            }
+            if (code == 404)
+            {
+                return (null, "未找到该 PR（请确认 owner/repo/pull 编号是否正确）");
+            }
+            return (null, $"GitHub API 拉取 PR 失败（HTTP {code}）");
         }
 
         await using var stream = await resp.Content.ReadAsStreamAsync(ct);
-        return await JsonSerializer.DeserializeAsync<PullRequestDto>(stream, JsonOptions, ct);
+        var data = await JsonSerializer.DeserializeAsync<PullRequestDto>(stream, JsonOptions, ct);
+        return (data, null);
     }
 
     private static async Task<CheckRunDto?> GetGateCheckRunAsync(

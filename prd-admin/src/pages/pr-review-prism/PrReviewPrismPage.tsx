@@ -1015,7 +1015,7 @@ slices:
                     if (!repoStatus) {
                       return <span className="text-[10px] text-white/35 shrink-0">未检测</span>;
                     }
-                    const ok = repoStatus.githubTokenConfigured && repoStatus.topDesign.ready && repoStatus.readyForFullRefresh;
+                    const ok = repoStatus.githubTokenConfigured && isValidRepoKey(repo);
                     return (
                       <span className={`text-[10px] shrink-0 ${ok ? 'text-emerald-200' : 'text-amber-200'}`}>
                         {ok ? '可审查' : '待接入'}
@@ -1110,12 +1110,12 @@ slices:
               </span>
               <span
                 className={`inline-flex items-center gap-1 px-2 py-1 rounded border ${
-                  canSubmitPr
+                  canStartReviewNow
                     ? 'border-emerald-400/30 bg-emerald-500/10 text-emerald-200'
                     : 'border-slate-400/30 bg-slate-500/10 text-slate-200'
                 }`}
               >
-                审查执行：{canSubmitPr ? '可提交 PR' : '需先完成接入'}
+                审查执行：{canStartReviewNow ? '可提交 PR' : '需先完成接入'}
               </span>
             </div>
 
@@ -1271,7 +1271,7 @@ slices:
               </div>
               <p className="mt-1 text-[11px] text-emerald-200/85">{smartOnboardingActionHint}</p>
               {setupActionMessage && <p className="mt-2 text-[11px] text-emerald-200">{setupActionMessage}</p>}
-              {!canSubmitPr && setupStatus.guidance.length > 0 && (
+              {!canStartReviewNow && setupStatus.guidance.length > 0 && (
                 <ul className="list-disc ml-4 mt-2 space-y-1 text-[11px] text-amber-100">
                   {setupStatus.guidance.map((x, idx) => (
                     <li key={`${idx}-${x}`}>{x}</li>
