@@ -407,20 +407,22 @@ cds_start_foreground() {
 
 read_default() {
   local var="$1" default="$2" input
-  printf "  %s%s%s [%s]: " "$B" "$var" "$N" "$default"
-  read -r input
+  # Prompt goes to /dev/tty so it isn't captured by $() substitution;
+  # read also reads from /dev/tty so piped stdin doesn't interfere.
+  printf "  %s%s%s [%s]: " "$B" "$var" "$N" "$default" >/dev/tty
+  read -r input </dev/tty
   printf '%s' "${input:-$default}"
 }
 
 read_secret() {
   local var="$1" hint="$2" input
   if [ -n "$hint" ]; then
-    printf "  %s%s%s (%s): " "$B" "$var" "$N" "$hint"
+    printf "  %s%s%s (%s): " "$B" "$var" "$N" "$hint" >/dev/tty
   else
-    printf "  %s%s%s: " "$B" "$var" "$N"
+    printf "  %s%s%s: " "$B" "$var" "$N" >/dev/tty
   fi
-  read -rs input
-  echo
+  read -rs input </dev/tty
+  printf '\n' >/dev/tty
   printf '%s' "$input"
 }
 
