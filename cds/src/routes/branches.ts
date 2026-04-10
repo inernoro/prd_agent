@@ -1516,10 +1516,16 @@ export function createBranchRouter(deps: RouterDeps): Router {
   // Helper: sync CDS-relevant env vars into runtime config
   function syncCdsConfig() {
     const env = stateService.getCustomEnv();
+    if (env.ROOT_DOMAINS) config.rootDomains = env.ROOT_DOMAINS.split(',').map(v => v.trim()).filter(Boolean);
     if (env.SWITCH_DOMAIN) config.switchDomain = env.SWITCH_DOMAIN;
     if (env.MAIN_DOMAIN) config.mainDomain = env.MAIN_DOMAIN;
     if (env.DASHBOARD_DOMAIN) config.dashboardDomain = env.DASHBOARD_DOMAIN;
     if (env.PREVIEW_DOMAIN) config.previewDomain = env.PREVIEW_DOMAIN;
+    if (config.rootDomains?.length) {
+      if (!env.MAIN_DOMAIN) config.mainDomain = config.rootDomains[0];
+      if (!env.DASHBOARD_DOMAIN) config.dashboardDomain = config.rootDomains[0];
+      if (!env.PREVIEW_DOMAIN) config.previewDomain = config.rootDomains[0];
+    }
     // Repo root & worktree base: allow UI override for directory isolation
     if (env.CDS_REPO_ROOT) {
       config.repoRoot = env.CDS_REPO_ROOT;

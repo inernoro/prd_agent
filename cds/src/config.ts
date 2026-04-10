@@ -2,11 +2,20 @@ import fs from 'node:fs';
 import path from 'node:path';
 import type { CdsConfig, CdsMode } from './types.js';
 
+function parseCsv(value: string | undefined): string[] | undefined {
+  if (!value) return undefined;
+  const items = value.split(',').map(v => v.trim()).filter(Boolean);
+  return items.length > 0 ? items : undefined;
+}
+
 function resolveMode(): CdsMode {
   const env = (process.env.CDS_MODE || '').toLowerCase();
   if (env === 'scheduler' || env === 'executor') return env;
   return 'standalone';
 }
+
+const configuredRootDomains = parseCsv(process.env.CDS_ROOT_DOMAINS || process.env.ROOT_DOMAINS);
+const primaryRootDomain = configuredRootDomains?.[0];
 
 const DEFAULT_CONFIG: CdsConfig = {
   repoRoot: path.resolve(process.cwd(), '..'),
@@ -18,9 +27,10 @@ const DEFAULT_CONFIG: CdsConfig = {
   sharedEnv: {},
   // CDS_ prefix preferred; legacy names (SWITCH_DOMAIN, etc.) kept for backward compat
   switchDomain: process.env.CDS_SWITCH_DOMAIN || process.env.SWITCH_DOMAIN || undefined,
-  mainDomain: process.env.CDS_MAIN_DOMAIN || process.env.MAIN_DOMAIN || undefined,
-  dashboardDomain: process.env.CDS_DASHBOARD_DOMAIN || process.env.DASHBOARD_DOMAIN || undefined,
-  previewDomain: process.env.CDS_PREVIEW_DOMAIN || process.env.PREVIEW_DOMAIN || undefined,
+  mainDomain: process.env.CDS_MAIN_DOMAIN || process.env.MAIN_DOMAIN || primaryRootDomain || undefined,
+  dashboardDomain: process.env.CDS_DASHBOARD_DOMAIN || process.env.DASHBOARD_DOMAIN || primaryRootDomain || undefined,
+  rootDomains: configuredRootDomains,
+  previewDomain: process.env.CDS_PREVIEW_DOMAIN || process.env.PREVIEW_DOMAIN || primaryRootDomain || undefined,
   jwt: {
     secret: process.env.CDS_JWT_SECRET ?? process.env.JWT_SECRET ?? 'dev-only-change-me-32bytes-minimum!!',
     issuer: 'prdagent',

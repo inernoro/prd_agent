@@ -4,8 +4,8 @@
 #
 # 功能：
 #   1. 交互式收集配置（账号密码、域名等）
-#   2. 写入 ~/.bashrc（CDS 系统层环境变量）
-#   3. 生成 CDS 自带 Nginx 配置、Compose 与证书脚本
+#   2. 写入 cds/.cds.env（唯一用户配置入口）
+#   3. 自动生成 CDS 自带 Nginx 配置、Compose 与证书脚本
 #
 # 用法：
 #   ./exec_setup.sh              # 交互式配置
@@ -17,7 +17,6 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 TEMPLATE_DIR="$SCRIPT_DIR/nginx"
-BASHRC="$HOME/.bashrc"
 LOCAL_ENV_FILE="$SCRIPT_DIR/.cds.env"
 NGINX_DIR="$SCRIPT_DIR/nginx"
 NGINX_DOMAIN_ENV="$NGINX_DIR/domain.env"
@@ -35,7 +34,7 @@ ok()    { echo -e "${GREEN}[OK]${NC} $*"; }
 warn()  { echo -e "${YELLOW}[WARN]${NC} $*"; }
 err()   { echo -e "${RED}[ERROR]${NC} $*"; }
 
-# ── Helper: read current value from local env / bashrc ──
+# ── Helper: read current value from local env / legacy env ──
 get_config_var() {
     local var_name="$1"
     local val=""
@@ -46,7 +45,7 @@ get_config_var() {
         printf '%s\n' "$val"
         return 0
     fi
-    grep "^export ${var_name}=" "$BASHRC" 2>/dev/null | tail -1 | sed "s/^export ${var_name}=\"\(.*\)\"/\1/" || echo ""
+    printf '%s\n' "${!var_name:-}"
 }
 
 # ── Helper: prompt with default ──
@@ -88,7 +87,7 @@ show_config() {
     echo -e "  ${BOLD}CDS 当前配置${NC}"
     echo "  ─────────────────────────────"
 
-    local vars=(CDS_USERNAME CDS_PASSWORD CDS_JWT_SECRET CDS_SWITCH_DOMAIN CDS_MAIN_DOMAIN CDS_PREVIEW_DOMAIN CDS_DASHBOARD_DOMAIN)
+    local vars=(CDS_USERNAME CDS_PASSWORD CDS_JWT_SECRET CDS_ROOT_DOMAINS)
     local secrets=(CDS_PASSWORD CDS_JWT_SECRET)
 
     for var in "${vars[@]}"; do
@@ -100,10 +99,7 @@ show_config() {
                 CDS_USERNAME) val=$(get_config_var "BT_USERNAME") ;;
                 CDS_PASSWORD) val=$(get_config_var "BT_PASSWORD") ;;
                 CDS_JWT_SECRET) val=$(get_config_var "JWT_SECRET") ;;
-                CDS_SWITCH_DOMAIN) val=$(get_config_var "SWITCH_DOMAIN") ;;
-                CDS_MAIN_DOMAIN) val=$(get_config_var "MAIN_DOMAIN") ;;
-                CDS_PREVIEW_DOMAIN) val=$(get_config_var "PREVIEW_DOMAIN") ;;
-                CDS_DASHBOARD_DOMAIN) val=$(get_config_var "DASHBOARD_DOMAIN") ;;
+                CDS_ROOT_DOMAINS) val=$(get_config_var "ROOT_DOMAINS") ;;
             esac
         fi
 
@@ -118,34 +114,46 @@ show_config() {
     echo ""
 }
 
+cleanup_generated_nginx() {
+    local output_dir="${1:-$NGINX_DIR}"
+    rm -f \
+      "${output_dir}/domain.env" \
+      "${output_dir}/nginx.conf" \
+      "${output_dir}/cds-nginx.conf" \
+      "${output_dir}/cds-nginx.http.conf" \
+      "${output_dir}/acme_apply.sh" \
+      "${output_dir}/nginx.compose.yml"
+}
+
 # ── Generate nginx config from template ──
 generate_nginx() {
-    local main_domain="$1"
-    local preview_domain="$2"
-    local switch_domain="${3:-switch.${main_domain}}"
-    local dashboard_domain="${4:-cds.${main_domain}}"
-    local worker_port="${5:-5500}"
-    local master_port="${6:-9900}"
-    local output_dir="${7:-$SCRIPT_DIR/nginx}"
+    local root_domains_csv="$1"
+    local worker_port="${2:-5500}"
+    local master_port="${3:-9900}"
+    local output_dir="${4:-$SCRIPT_DIR/nginx}"
+    local source_env="${5:-$LOCAL_ENV_FILE}"
     local domain_env="${output_dir}/domain.env"
-    local tls_domains
+    local primary_domain tls_domains
 
-    tls_domains="${main_domain},${switch_domain}"
-    if [ "$dashboard_domain" != "$main_domain" ] && [ "$dashboard_domain" != "$switch_domain" ]; then
-        tls_domains="${tls_domains},${dashboard_domain}"
+    primary_domain="$(printf '%s' "$root_domains_csv" | cut -d',' -f1 | xargs)"
+    if [ -z "$primary_domain" ]; then
+        err "ROOT_DOMAINS 不能为空"
+        return 1
     fi
 
+    tls_domains="$root_domains_csv"
+
+    cleanup_generated_nginx "$output_dir"
     mkdir -p "${output_dir}/certs" "${output_dir}/www/.well-known/acme-challenge"
 
     cat > "$domain_env" <<EOF
-MAIN_DOMAIN="${main_domain}"
-SWITCH_DOMAIN="${switch_domain}"
-DASHBOARD_DOMAIN="${dashboard_domain}"
-PREVIEW_DOMAIN="${preview_domain}"
-ENABLE_PREVIEW_SERVER="1"
+# internal generated file; edit cds/.cds.env then rerun ./exec_setup.sh or ./exec_cds.sh nginx render
+# source: ${source_env}
+ROOT_DOMAINS="${root_domains_csv}"
+PRIMARY_DOMAIN="${primary_domain}"
 WORKER_PORT="${worker_port}"
 DASHBOARD_PORT="${master_port}"
-CERT_EMAIL="admin@${main_domain}"
+CERT_EMAIL="admin@${primary_domain}"
 NGINX_CONTAINER="nginx_miduo"
 LOCAL_TLS_HOST="127.0.0.1"
 TLS_DOMAINS="${tls_domains}"
@@ -168,20 +176,19 @@ write_local_env() {
     local username="$1"
     local password="$2"
     local jwt_secret="$3"
-    local switch_domain="$4"
-    local main_domain="$5"
-    local preview_domain="$6"
-    local dashboard_domain="${7:-cds.${main_domain}}"
+    local root_domains_csv="$4"
+    local primary_domain
+    primary_domain="$(printf '%s' "$root_domains_csv" | cut -d',' -f1 | xargs)"
 
     cat > "$LOCAL_ENV_FILE" << EOF
 # ── CDS 本地环境配置 (由 exec_setup.sh 生成，$(date +%Y-%m-%d)) ──
 export CDS_USERNAME="${username}"
 export CDS_PASSWORD="${password}"
 export CDS_JWT_SECRET="${jwt_secret}"
-export CDS_SWITCH_DOMAIN="${switch_domain}"
-export CDS_MAIN_DOMAIN="${main_domain}"
-export CDS_PREVIEW_DOMAIN="${preview_domain}"
-export CDS_DASHBOARD_DOMAIN="${dashboard_domain}"
+export CDS_ROOT_DOMAINS="${root_domains_csv}"
+export CDS_MAIN_DOMAIN="${primary_domain}"
+export CDS_PREVIEW_DOMAIN="${primary_domain}"
+export CDS_DASHBOARD_DOMAIN="${primary_domain}"
 EOF
 
     chmod 600 "$LOCAL_ENV_FILE"
@@ -202,48 +209,44 @@ main() {
             return 0
             ;;
         --nginx-only)
-            local domain
-            domain=$(get_config_var "CDS_MAIN_DOMAIN")
-            if [ -z "$domain" ]; then
-                domain=$(get_config_var "MAIN_DOMAIN")
+            local root_domains
+            root_domains=$(get_config_var "CDS_ROOT_DOMAINS")
+            if [ -z "$root_domains" ]; then
+                root_domains=$(get_config_var "ROOT_DOMAINS")
             fi
-            if [ -z "$domain" ]; then
-                err "未找到 CDS_MAIN_DOMAIN，请先运行 ./exec_setup.sh 完成完整配置"
+            if [ -z "$root_domains" ]; then
+                local legacy_domain
+                legacy_domain=$(get_config_var "CDS_MAIN_DOMAIN")
+                [ -z "$legacy_domain" ] && legacy_domain=$(get_config_var "MAIN_DOMAIN")
+                [ -z "$legacy_domain" ] && legacy_domain=$(get_config_var "CDS_DASHBOARD_DOMAIN")
+                [ -z "$legacy_domain" ] && legacy_domain=$(get_config_var "DASHBOARD_DOMAIN")
+                root_domains="$legacy_domain"
+            fi
+            if [ -z "$root_domains" ]; then
+                err "未找到 CDS_ROOT_DOMAINS，请先运行 ./exec_setup.sh 完成完整配置"
                 return 1
             fi
-            local preview
-            preview=$(get_config_var "CDS_PREVIEW_DOMAIN")
-            [ -z "$preview" ] && preview=$(get_config_var "PREVIEW_DOMAIN")
-            [ -z "$preview" ] && preview="$domain"
-            local switch
-            switch=$(get_config_var "CDS_SWITCH_DOMAIN")
-            [ -z "$switch" ] && switch=$(get_config_var "SWITCH_DOMAIN")
-            [ -z "$switch" ] && switch="switch.${domain}"
-            local dashboard
-            dashboard=$(get_config_var "CDS_DASHBOARD_DOMAIN")
-            [ -z "$dashboard" ] && dashboard=$(get_config_var "DASHBOARD_DOMAIN")
-            [ -z "$dashboard" ] && dashboard="cds.${domain}"
-            generate_nginx "$domain" "$preview" "$switch" "$dashboard"
+            generate_nginx "$root_domains" "5500" "9900" "$NGINX_DIR" "$LOCAL_ENV_FILE"
             return 0
             ;;
     esac
 
     # ── Step 1: Collect current values as defaults ──
-    local cur_user cur_pass cur_jwt cur_switch cur_main cur_preview cur_dashboard
+    local cur_user cur_pass cur_jwt cur_roots
     cur_user=$(get_config_var "CDS_USERNAME")
     [ -z "$cur_user" ] && cur_user=$(get_config_var "BT_USERNAME")
     cur_pass=$(get_config_var "CDS_PASSWORD")
     [ -z "$cur_pass" ] && cur_pass=$(get_config_var "BT_PASSWORD")
     cur_jwt=$(get_config_var "CDS_JWT_SECRET")
     [ -z "$cur_jwt" ] && cur_jwt=$(get_config_var "JWT_SECRET")
-    cur_switch=$(get_config_var "CDS_SWITCH_DOMAIN")
-    [ -z "$cur_switch" ] && cur_switch=$(get_config_var "SWITCH_DOMAIN")
-    cur_main=$(get_config_var "CDS_MAIN_DOMAIN")
-    [ -z "$cur_main" ] && cur_main=$(get_config_var "MAIN_DOMAIN")
-    cur_preview=$(get_config_var "CDS_PREVIEW_DOMAIN")
-    [ -z "$cur_preview" ] && cur_preview=$(get_config_var "PREVIEW_DOMAIN")
-    cur_dashboard=$(get_config_var "CDS_DASHBOARD_DOMAIN")
-    [ -z "$cur_dashboard" ] && cur_dashboard=$(get_config_var "DASHBOARD_DOMAIN")
+    cur_roots=$(get_config_var "CDS_ROOT_DOMAINS")
+    [ -z "$cur_roots" ] && cur_roots=$(get_config_var "ROOT_DOMAINS")
+    if [ -z "$cur_roots" ]; then
+        cur_roots=$(get_config_var "CDS_MAIN_DOMAIN")
+        [ -z "$cur_roots" ] && cur_roots=$(get_config_var "MAIN_DOMAIN")
+        [ -z "$cur_roots" ] && cur_roots=$(get_config_var "CDS_DASHBOARD_DOMAIN")
+        [ -z "$cur_roots" ] && cur_roots=$(get_config_var "DASHBOARD_DOMAIN")
+    fi
 
     # ── Step 2: Interactive prompts ──
     echo -e "  ${CYAN}步骤 1/4${NC}: Dashboard 认证"
@@ -275,15 +278,12 @@ main() {
 
     echo -e "  ${CYAN}步骤 3/4${NC}: 域名配置"
     echo "  ──────────────────────────"
-    local new_main new_switch new_preview new_dashboard
-    prompt new_main    "主分支域名 (如 miduo.org)" "${cur_main:-}"
-    if [ -z "$new_main" ]; then
-        err "主域名不能为空"
+    local new_roots
+    prompt new_roots "根域名列表（逗号分隔，如 miduo.org,example.com）" "${cur_roots:-}"
+    if [ -z "$new_roots" ]; then
+        err "根域名不能为空"
         return 1
     fi
-    prompt new_dashboard "CDS 控制台域名" "${cur_dashboard:-cds.${new_main}}"
-    prompt new_switch  "分支切换域名" "${cur_switch:-switch.${new_main}}"
-    prompt new_preview "预览域名后缀" "${cur_preview:-${new_main}}"
     echo ""
 
     # ── Step 3: Confirm ──
@@ -292,10 +292,8 @@ main() {
     echo -e "  用户名:       ${GREEN}${new_user}${NC}"
     echo -e "  密码:         ****${new_pass: -4}"
     echo -e "  JWT Secret:   ****${new_jwt: -4}"
-    echo -e "  主域名:       ${GREEN}${new_main}${NC}"
-    echo -e "  CDS 域名:     ${GREEN}${new_dashboard}${NC}"
-    echo -e "  切换域名:     ${GREEN}${new_switch}${NC}"
-    echo -e "  预览域名:     ${GREEN}${new_preview}${NC}"
+    echo -e "  根域名:       ${GREEN}${new_roots}${NC}"
+    echo -e "  路由规则:     ${GREEN}根域名 → Dashboard；任意子域名 → Preview${NC}"
     echo ""
     echo -en "  确认写入? [Y/n]: "
     read -r confirm
@@ -307,10 +305,13 @@ main() {
     # ── Step 4: Write ──
     echo ""
     info "写入 CDS 本地环境文件 ..."
-    write_local_env "$new_user" "$new_pass" "$new_jwt" "$new_switch" "$new_main" "$new_preview" "$new_dashboard"
+    write_local_env "$new_user" "$new_pass" "$new_jwt" "$new_roots"
 
     info "生成 Nginx 配置 ..."
-    generate_nginx "$new_main" "$new_preview" "$new_switch" "$new_dashboard"
+    generate_nginx "$new_roots" "5500" "9900" "$NGINX_DIR" "$LOCAL_ENV_FILE"
+
+    local first_domain
+    first_domain="$(printf '%s' "$new_roots" | cut -d',' -f1 | xargs)"
 
     echo ""
     echo "  ════════════════════════════════"
@@ -318,10 +319,10 @@ main() {
     echo "  ════════════════════════════════"
     echo ""
     echo "  下一步："
-    echo "    1. 启动 Nginx: cd $NGINX_DIR && ./start_nginx.sh"
-    echo "    2. 如需证书: cd $NGINX_DIR && ./acme_apply.sh"
-    echo "    3. cd $SCRIPT_DIR && ./exec_cds.sh"
-    echo "    4. 访问 https://${new_dashboard}"
+    echo "    1. 启动 CDS 与 Nginx: cd $SCRIPT_DIR && ./exec_cds.sh"
+    echo "    2. 如需签发证书:      cd $SCRIPT_DIR && ./exec_cds.sh cert"
+    echo "    3. 查看 Nginx 状态:   cd $SCRIPT_DIR && ./exec_cds.sh nginx status"
+    echo "    4. 访问 https://${first_domain}"
     echo ""
 }
 

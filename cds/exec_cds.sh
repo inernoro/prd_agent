@@ -1,10 +1,17 @@
 #!/usr/bin/env bash
 # ──────────────────────────────────────────────
-# CDS 一键启动脚本
+# CDS 统一入口脚本
 #
 # 用法：
-#   ./exec_cds.sh                # 前台运行
-#   ./exec_cds.sh --background   # 后台运行
+#   ./exec_cds.sh                  # 前台运行 CDS，并自动准备/启动 nginx
+#   ./exec_cds.sh --background     # 后台运行 CDS，并自动准备/启动 nginx
+#   ./exec_cds.sh setup            # 交互式初始化，唯一用户配置入口是 cds/.cds.env
+#   ./exec_cds.sh nginx up         # 根目录管理 nginx
+#   ./exec_cds.sh nginx restart
+#   ./exec_cds.sh nginx status
+#   ./exec_cds.sh nginx logs
+#   ./exec_cds.sh nginx render     # 只重建内部 nginx 配置
+#   ./exec_cds.sh cert             # 在根目录发起证书签发
 #
 # 环境变量（可选）：
 #   CDS_USERNAME       — 登录用户名（不设置则不启用认证）
@@ -14,7 +21,6 @@
 #   CDS_MAIN_DOMAIN    — 主域名
 #   CDS_PREVIEW_DOMAIN — 预览域名后缀
 #   CDS_CONFIG         — 配置文件路径（默认 cds.config.json）
-#   CDS_NGINX_ENABLE   — 设为 1 启用 nginx 转发（端口 58000）
 # ──────────────────────────────────────────────
 
 set -euo pipefail
@@ -25,9 +31,13 @@ cd "$SCRIPT_DIR"
 CONFIG_FILE="${CDS_CONFIG:-${BT_CONFIG:-cds.config.json}}"
 NGINX_DOMAIN_ENV="$SCRIPT_DIR/nginx/domain.env"
 LOCAL_ENV_FILE="$SCRIPT_DIR/.cds.env"
+NGINX_START_SCRIPT="$SCRIPT_DIR/nginx/start_nginx.sh"
+ACME_SCRIPT="$SCRIPT_DIR/nginx/acme_apply.sh"
 BACKGROUND=false
 LOG_FILE="cds.log"
 PID_FILE=".cds/cds.pid"
+ROOT_COMMAND="${1:-start}"
+ROOT_SUBCOMMAND="${2:-}"
 
 # Parse args
 for arg in "$@"; do
@@ -36,10 +46,16 @@ for arg in "$@"; do
   esac
 done
 
-ensure_domain_bootstrap() {
-  local main_domain="${CDS_MAIN_DOMAIN:-${MAIN_DOMAIN:-}}"
+sync_nginx_internal_files() {
+  if [ ! -f "$LOCAL_ENV_FILE" ]; then
+    return 1
+  fi
+  ./exec_setup.sh --nginx-only >/dev/null
+}
 
-  if [ -f "$NGINX_DOMAIN_ENV" ]; then
+ensure_domain_bootstrap() {
+  if [ -f "$LOCAL_ENV_FILE" ]; then
+    sync_nginx_internal_files
     return 0
   fi
 
@@ -50,17 +66,19 @@ ensure_domain_bootstrap() {
   echo ""
 
   if [ ! -t 0 ]; then
-    echo "ERROR: 当前为非交互环境，且缺少 nginx/domain.env 或 CDS_MAIN_DOMAIN。"
+    echo "ERROR: 当前为非交互环境，且缺少 .cds.env。"
     echo "请先手动执行: ./exec_setup.sh"
     exit 1
   fi
 
   ./exec_setup.sh
 
-  if [ ! -f "$NGINX_DOMAIN_ENV" ]; then
+  if [ ! -f "$LOCAL_ENV_FILE" ]; then
     echo "ERROR: 初始化未完成，已取消启动。"
     exit 1
   fi
+
+  sync_nginx_internal_files
 }
 
 load_domain_env() {
@@ -78,11 +96,62 @@ load_domain_env() {
   . "$NGINX_DOMAIN_ENV"
   set +a
 
-  export CDS_MAIN_DOMAIN="${CDS_MAIN_DOMAIN:-${MAIN_DOMAIN:-}}"
+  local primary_domain="${PRIMARY_DOMAIN:-}"
+  if [ -z "$primary_domain" ] && [ -n "${ROOT_DOMAINS:-}" ]; then
+    primary_domain="$(printf '%s' "${ROOT_DOMAINS}" | cut -d',' -f1 | xargs)"
+  fi
+
+  export CDS_ROOT_DOMAINS="${CDS_ROOT_DOMAINS:-${ROOT_DOMAINS:-}}"
+  export CDS_MAIN_DOMAIN="${CDS_MAIN_DOMAIN:-${MAIN_DOMAIN:-${primary_domain}}}"
   export CDS_SWITCH_DOMAIN="${CDS_SWITCH_DOMAIN:-${SWITCH_DOMAIN:-}}"
-  export CDS_PREVIEW_DOMAIN="${CDS_PREVIEW_DOMAIN:-${PREVIEW_DOMAIN:-${MAIN_DOMAIN:-}}}"
-  export CDS_DASHBOARD_DOMAIN="${CDS_DASHBOARD_DOMAIN:-${DASHBOARD_DOMAIN:-cds.${MAIN_DOMAIN:-}}}"
+  export CDS_PREVIEW_DOMAIN="${CDS_PREVIEW_DOMAIN:-${PREVIEW_DOMAIN:-${primary_domain}}}"
+  export CDS_DASHBOARD_DOMAIN="${CDS_DASHBOARD_DOMAIN:-${DASHBOARD_DOMAIN:-${primary_domain}}}"
 }
+
+run_root_nginx_action() {
+  local action="${1:-up}"
+  ensure_domain_bootstrap
+  load_domain_env
+
+  case "$action" in
+    render)
+      ./exec_setup.sh --nginx-only
+      ;;
+    up|down|restart|reload|status|logs)
+      ./exec_setup.sh --nginx-only >/dev/null
+      "$NGINX_START_SCRIPT" "$action"
+      ;;
+    *)
+      echo "Unknown nginx action: $action"
+      echo "Usage: ./exec_cds.sh nginx [up|down|restart|reload|status|logs|render]"
+      exit 1
+      ;;
+  esac
+}
+
+run_root_cert_action() {
+  ensure_domain_bootstrap
+  load_domain_env
+  ./exec_setup.sh --nginx-only >/dev/null
+  "$ACME_SCRIPT" "$@"
+}
+
+case "$ROOT_COMMAND" in
+  setup|init|config)
+    exec ./exec_setup.sh
+    ;;
+  nginx)
+    run_root_nginx_action "${ROOT_SUBCOMMAND:-up}"
+    exit 0
+    ;;
+  cert|tls)
+    shift || true
+    run_root_cert_action "$@"
+    exit 0
+    ;;
+  start|--background|-d)
+    ;;
+esac
 
 echo ""
 echo "  CDS Startup"
@@ -91,8 +160,7 @@ echo "  Directory:  $SCRIPT_DIR"
 echo "  Config:     $CONFIG_FILE"
 CDS_AUTH_USER="${CDS_USERNAME:-${BT_USERNAME:-}}"
 echo "  Auth:       ${CDS_AUTH_USER:+enabled (user: $CDS_AUTH_USER)}${CDS_AUTH_USER:-disabled}"
-CDS_NGINX="${CDS_NGINX_ENABLE:-${BT_NGINX_ENABLE:-}}"
-echo "  Nginx:      ${CDS_NGINX:+enabled (port 58000)}${CDS_NGINX:-disabled}"
+echo "  Nginx:      auto-managed from ./exec_cds.sh nginx <action>"
 echo ""
 
 ensure_domain_bootstrap
@@ -123,22 +191,17 @@ else
   echo "[1/3] Dependencies OK"
 fi
 
-# ── 3. Setup nginx (optional) ──
-if [ "${CDS_NGINX}" = "1" ]; then
-  echo "[2/3] Setting up nginx reverse proxy on :58000..."
-  NGINX_CONF_DIR="/etc/nginx/conf.d"
-  CDS_NGINX_CONF="$SCRIPT_DIR/nginx/cds-nginx.conf"
-
-  if [ -f "$CDS_NGINX_CONF" ]; then
-    if [ -d "$NGINX_CONF_DIR" ]; then
-      sudo cp "$CDS_NGINX_CONF" "$NGINX_CONF_DIR/cds.conf"
-      sudo nginx -t 2>/dev/null && sudo nginx -s reload 2>/dev/null && echo "  Nginx: OK (port 58000)" || echo "  Nginx: config test failed (skipped)"
-    else
-      echo "  Nginx: $NGINX_CONF_DIR not found (skipped)"
-    fi
+# ── 3. Setup nginx ──
+echo "[2/3] Preparing nginx..."
+if [ -x "$NGINX_START_SCRIPT" ]; then
+  ./exec_setup.sh --nginx-only >/dev/null
+  if "$NGINX_START_SCRIPT" up; then
+    echo "  Nginx: OK"
+  else
+    echo "  [WARN] Nginx failed to start automatically. Use ./exec_cds.sh nginx logs to inspect."
   fi
 else
-  echo "[2/3] Nginx: skipped (set CDS_NGINX_ENABLE=1 to enable)"
+  echo "  [WARN] Nginx start script missing: $NGINX_START_SCRIPT"
 fi
 
 # ── 4. Start CDS ──
@@ -274,7 +337,7 @@ reuse_running_cds_if_present() {
   echo "  Log:        $SCRIPT_DIR/$LOG_FILE"
   echo "  Dashboard:  http://localhost:${MASTER_PORT}"
   echo "  Gateway:    http://localhost:${WORKER_PORT}"
-  [ "${CDS_NGINX}" = "1" ] && echo "  Nginx:      http://localhost:58000"
+  echo "  Nginx:      ./exec_cds.sh nginx status"
   echo ""
   echo "  Stop: kill \$(cat $PID_FILE)"
   echo "  Logs: tail -f $LOG_FILE"
@@ -349,7 +412,7 @@ if [ "$BACKGROUND" = true ]; then
   echo "  Log:        $SCRIPT_DIR/$LOG_FILE"
   echo "  Dashboard:  http://localhost:${MASTER_PORT}"
   echo "  Gateway:    http://localhost:${WORKER_PORT}"
-  [ "${CDS_NGINX}" = "1" ] && echo "  Nginx:      http://localhost:58000"
+  echo "  Nginx:      ./exec_cds.sh nginx status"
   echo ""
   echo "  Stop: kill \$(cat $PID_FILE)"
   echo "  Logs: tail -f $LOG_FILE"

@@ -20,7 +20,8 @@ Usage:
 
 说明:
   - 默认动作是 up
-  - 会读取 ./domain.env 中的 NGINX_CONTAINER
+  - 会读取内部生成的 ./domain.env
+  - 正常使用请在 cds 根目录执行: ./exec_cds.sh nginx <action>
   - 会自动检查 ./nginx.conf 与 ./cds-nginx.conf 是否存在
 EOF
 }
@@ -28,10 +29,11 @@ EOF
 ACTION="${1:-up}"
 
 if [ ! -f "$CONFIG_FILE" ]; then
-  echo "ERROR: 配置文件不存在: $CONFIG_FILE"
-  echo "先执行:"
-  echo "  cp ${SCRIPT_DIR}/domain.env.example ${SCRIPT_DIR}/domain.env"
-  echo "  ${SCRIPT_DIR}/init_domain.sh"
+  echo "ERROR: 内部配置文件不存在: $CONFIG_FILE"
+  echo "请回到 cds 根目录执行:"
+  echo "  ./exec_setup.sh"
+  echo "或"
+  echo "  ./exec_cds.sh nginx render"
   exit 1
 fi
 
@@ -45,10 +47,10 @@ set -a
 set +a
 
 NGINX_CONTAINER="${NGINX_CONTAINER:-nginx_miduo}"
-MAIN_DOMAIN="${MAIN_DOMAIN:-}"
+PRIMARY_DOMAIN="${PRIMARY_DOMAIN:-${MAIN_DOMAIN:-}}"
 
 has_cert() {
-  [ -f "${SCRIPT_DIR}/certs/${MAIN_DOMAIN}.crt" ] && [ -f "${SCRIPT_DIR}/certs/${MAIN_DOMAIN}.key" ]
+  [ -f "${SCRIPT_DIR}/certs/${PRIMARY_DOMAIN}.crt" ] && [ -f "${SCRIPT_DIR}/certs/${PRIMARY_DOMAIN}.key" ]
 }
 
 render_compose() {
@@ -60,8 +62,8 @@ render_compose() {
 
 ensure_rendered() {
   if [ ! -f "${SCRIPT_DIR}/nginx.conf" ] || [ ! -f "${SCRIPT_DIR}/cds-nginx.conf" ]; then
-    echo "ERROR: nginx 配置不存在，请先执行:"
-    echo "  ${SCRIPT_DIR}/init_domain.sh"
+    echo "ERROR: nginx 配置不存在，请回到 cds 根目录执行:"
+    echo "  ./exec_cds.sh nginx render"
     exit 1
   fi
   mkdir -p "${SCRIPT_DIR}/certs" "${SCRIPT_DIR}/www/.well-known/acme-challenge"
@@ -71,10 +73,10 @@ ensure_rendered() {
     SERVER_CONF_FILE="cds-nginx.http.conf"
     if [ ! -f "${SCRIPT_DIR}/${SERVER_CONF_FILE}" ]; then
       echo "ERROR: 缺少 HTTP bootstrap 配置: ${SCRIPT_DIR}/${SERVER_CONF_FILE}"
-      echo "请先执行: ${SCRIPT_DIR}/init_domain.sh"
+      echo "请回到 cds 根目录执行: ./exec_cds.sh nginx render"
       exit 1
     fi
-    echo "No certificate found for ${MAIN_DOMAIN}, starting nginx in HTTP bootstrap mode."
+    echo "No certificate found for ${PRIMARY_DOMAIN}, starting nginx in HTTP bootstrap mode."
   fi
   render_compose
 }
