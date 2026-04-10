@@ -46,3 +46,4 @@
 | feat | prd-admin | PR审查棱镜接入向导 Step1 新增 Token 输入与保存，支持来源提示、脱敏状态、无权限提示与一键重新检测 |
 | fix | prd-api | PR审查棱镜 setup-status guidance 升级为“页面配置优先 + 环境变量兜底”提示，降低小白配置门槛 |
 | fix | prd-api | PR审查棱镜集成测试新增 token-config 鉴权与返回结构断言，防止可视化配置能力回归 |
+| fix | prd-admin | PR审查棱镜 Step4 收敛为单一智能主按钮，自动按“快速接入/含顶设接入”给出一致动作与提示，降低新手决策成本 |

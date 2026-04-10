@@ -314,8 +314,16 @@ slices:
     () => Math.round((onboardingDoneCount / Math.max(1, requiredOnboardingSteps.length)) * 100),
     [onboardingDoneCount, requiredOnboardingSteps.length]
   );
+  const canQuickOnboard = Boolean(tokenConfig?.tokenConfigured) && isBindingRepoValid;
+  const canStartReviewNow = canQuickOnboard;
+  const smartOnboardingActionLabel = canSubmitPr
+    ? '完成接入并开始审查（含顶设）'
+    : '完成接入并开始审查';
+  const smartOnboardingActionHint = canSubmitPr
+    ? '已包含顶层设计基线状态'
+    : '将按快速接入（Step1+Step2）继续，顶设可后续完善';
   const submissionBlockReason = useMemo(() => {
-    if (canSubmitPr) {
+    if (canStartReviewNow) {
       return '';
     }
     if (!setupStatus) {
@@ -325,7 +333,7 @@ slices:
       return setupStatus.guidance[0];
     }
     return '请先完成新仓库接入向导后再提交 PR';
-  }, [canSubmitPr, setupStatus]);
+  }, [canStartReviewNow, setupStatus]);
   const touchRecentRepo = useCallback((repo: string) => {
     const normalized = repo.trim().toLowerCase();
     if (!normalized) {
@@ -1199,31 +1207,25 @@ slices:
                 </button>
                 <button
                   type="button"
-                  disabled={!tokenConfig?.tokenConfigured || !isBindingRepoValid}
+                  disabled={!canQuickOnboard}
                   onClick={() => {
-                    if (!tokenConfig?.tokenConfigured || !isBindingRepoValid) {
+                    if (!canQuickOnboard) {
                       setSetupActionMessage('请先完成 Step1（Token）和 Step2（仓库绑定）');
                       return;
                     }
                     setShowOnboardingWizard(false);
-                    setSetupActionMessage('新仓库接入已完成（Step1+Step2），可以立即提交 PR 审查');
+                    setSetupActionMessage(
+                      canSubmitPr
+                        ? '接入已完成（含顶设基线），可以提交 PR 审查了'
+                        : '接入已完成（快速模式：Step1+Step2），可以立即提交 PR 审查'
+                    );
                   }}
                   className="inline-flex items-center gap-1 rounded border border-emerald-300/40 bg-emerald-500/20 px-2.5 py-1 text-[11px] text-emerald-100 hover:bg-emerald-500/25 whitespace-nowrap disabled:opacity-50"
                 >
-                  完成接入（不含顶设）
-                </button>
-                <button
-                  type="button"
-                  disabled={!canSubmitPr}
-                  onClick={() => {
-                    setShowOnboardingWizard(false);
-                    setSetupActionMessage('接入已完成（含顶设基线），可以提交 PR 审查了');
-                  }}
-                  className="inline-flex items-center gap-1 rounded border border-emerald-300/40 bg-emerald-500/20 px-2.5 py-1 text-[11px] text-emerald-100 hover:bg-emerald-500/25 whitespace-nowrap disabled:opacity-50"
-                >
-                  开始审查（含顶设）
+                  {smartOnboardingActionLabel}
                 </button>
               </div>
+              <p className="mt-1 text-[11px] text-emerald-200/85">{smartOnboardingActionHint}</p>
               {setupActionMessage && <p className="mt-2 text-[11px] text-emerald-200">{setupActionMessage}</p>}
               {!canSubmitPr && setupStatus.guidance.length > 0 && (
                 <ul className="list-disc ml-4 mt-2 space-y-1 text-[11px] text-amber-100">
@@ -1287,18 +1289,18 @@ slices:
               <button
                 type="button"
                 onClick={handleSubmit}
-                disabled={!canSubmitPr || submitting}
+                disabled={!canStartReviewNow || submitting}
                 className={`w-full inline-flex items-center justify-center gap-2 rounded-lg text-white text-sm font-medium py-2.5 transition-colors disabled:opacity-60 ${
-                  canSubmitPr
+                  canStartReviewNow
                     ? 'bg-violet-600 hover:bg-violet-500'
                     : 'bg-slate-600 cursor-not-allowed'
                 }`}
-                title={canSubmitPr ? '提交并拉取审查结果' : '请先完成新仓库接入向导'}
+                title={canStartReviewNow ? '提交并拉取审查结果' : '请先完成新仓库接入向导'}
               >
                 {submitting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}
-                {submitting ? '提交中...' : canSubmitPr ? '提交并拉取' : '先完成接入向导'}
+                {submitting ? '提交中...' : canStartReviewNow ? '提交并拉取' : '先完成接入向导'}
               </button>
-              {!canSubmitPr && <p className="text-[11px] text-amber-200/85">{submissionBlockReason}</p>}
+              {!canStartReviewNow && <p className="text-[11px] text-amber-200/85">{submissionBlockReason}</p>}
             </div>
           </div>
 
