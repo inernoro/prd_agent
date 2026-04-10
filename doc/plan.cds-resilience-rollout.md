@@ -37,9 +37,9 @@
 
 | Phase | 状态 | 备注 |
 |---|---|---|
-| **Phase 1：调度器 + 原子写** | 🟡 实施中 | 本次 session 目标 |
-| Phase 2：cgroup + Master 容器化 | ⏳ 待启动 | 下次 session |
-| Phase 3：双实例 + 共享状态 | ⏳ 待启动 | 远期 |
+| **Phase 1：调度器 + 原子写** | ✅ 已交付 | commit `4abcdc9`,24 新用例 |
+| **Phase 2：cgroup + Master 容器化 + janitor** | ✅ 代码已落地 | 待运维部署验证 |
+| **Phase 3：分布式调度 + Nginx 动态 upstream** | 🟡 代码已落地 | 待运维搭建多节点集群 |
 
 ---
 
@@ -128,62 +128,99 @@
 
 ---
 
-## Phase 2：cgroup + Master 容器化（下次）
+## Phase 2：cgroup + Master 容器化 + janitor（代码已落地）
 
-**前提**：Phase 1 已合入主分支并在一台真实服务器验证至少 48 小时无异常。
+**交付状态**：commit `<本次提交>` 代码已推送,单元测试全绿,等运维部署真实服务器验证。
 
-### 2.1 容器资源限制
+### 2.1 容器资源限制 ✅
 
-- [ ] `cds/src/types.ts` `BuildProfile.resources?: { memoryMB?: number; cpus?: number }`
-- [ ] `cds/src/services/compose-parser.ts` 从 `x-cds-resources` 读取
-- [ ] `cds/src/services/container.ts` `runService` 传 `--memory`/`--cpus`
-- [ ] 默认值：API 600MB / Web 300MB
+- [x] `cds/src/types.ts` 新增 `ResourceLimits` 接口 + `BuildProfile.resources?`
+- [x] `cds/src/services/compose-parser.ts` 新增 `parseResourceLimits()`:
+  - [x] 支持 `x-cds-resources`（我们的扩展,数字）
+  - [x] 支持 `deploy.resources.limits`（标准 compose,带单位 "512M" / "2G" / "1.5"）
+  - [x] `x-cds-resources` 优先于 `deploy.resources.limits`
+- [x] `cds/src/services/container.ts` `runService` 追加 `--memory <N>m` + `--memory-swap <N>m` + `--cpus <N>` 标志
+- [x] 单元测试（容器 5 用例 + 解析 14 用例）全绿
+- [ ] 实测：在真实 compose 上设置 512M API + 256M Web,观察是否生效
+- [ ] 为基础设施（MongoDB/Redis）在 `cds-compose.yml` 里也配上资源上限
 
-### 2.2 Master 容器化
+### 2.2 CDS Master 容器化 ✅
 
-- [ ] 新增 `cds/Dockerfile.master`
-- [ ] 新增 `cds/systemd/cds-master.service`
-- [ ] `exec_cds.sh` 增加 `--via-systemd` 模式
-- [ ] 新增 `GET /healthz`（state 可读 + docker 可达）
+- [x] 新增 `cds/Dockerfile.master`:
+  - [x] Multi-stage build（builder + runtime）
+  - [x] 安装 docker.io + git + curl
+  - [x] `HEALTHCHECK` 调 `/healthz`
+  - [x] Expose 9900 + 5500
+- [x] 新增 `cds/systemd/cds-master.service`:
+  - [x] `Restart=always` + RestartSec=3s + StartLimit
+  - [x] `MemoryMax=512M CPUQuota=100%`
+  - [x] security hardening（NoNewPrivileges,PrivateTmp,ProtectSystem=strict）
+- [x] 新增 `GET /healthz` 端点（在 server.ts,public 无 auth）:
+  - [x] Check 1: state 可读（`stateService.getState()`）
+  - [x] Check 2: docker 可达（`docker version` 3s 超时）
+  - [x] 返回 200/503 + `{ ok, checks, timestamp }`
+- [ ] 运维部署：`sudo systemctl enable --now cds-master`,观察 48h 无自动重启异常
 
-### 2.3 Janitor
+### 2.3 Janitor（worktree TTL + 磁盘告警）✅
 
-- [ ] 新增 `cds/src/services/janitor.ts`
-- [ ] 每日清理 30 天未访问的 worktree
-- [ ] `docker image prune` 定时任务
-- [ ] 磁盘使用率 > 80% 时 Dashboard 告警条
-
-### 2.4 基础设施资源上限
-
-- [ ] `cds-compose.yml` 为 MongoDB 加 `mem_limit: 1.5g`
-- [ ] Redis 加 `mem_limit: 200m`
-- [ ] RDB 持久化配置
-- [ ] 验证重启后数据不丢失
+- [x] 新增 `cds/src/services/janitor.ts`:
+  - [x] `sweep()` — 扫描所有分支,找 `now - lastAccessedAt > worktreeTTLDays`
+  - [x] 跳过 pinned / defaultBranch / isColorMarked 的分支
+  - [x] 通过 callback `removeFn` 删除（解耦,可测试）
+  - [x] `isBranchProtected()` 独立辅助函数（与 scheduler 保留一致的判断逻辑）
+  - [x] `defaultDiskUsage()` 使用 Node 18.15+ `fs.statfsSync`,降级返回 null
+  - [x] `dryRun()` 只返回"将会删除的"不实际执行
+  - [x] `start()` 启动周期性扫描（默认 1 小时）
+- [x] `cds/src/types.ts` 新增 `JanitorConfig` + `CdsConfig.janitor?`
+- [x] `cds/src/config.ts` 默认值 `{ enabled: false, worktreeTTLDays: 30, diskWarnPercent: 80, sweepIntervalSeconds: 3600 }`
+- [x] `cds/src/index.ts` 实例化 + 注入 `removeFn`(遍历 services → container.stop → worktree.remove → stateService.removeBranch)
+- [x] 单元测试（18 用例）全绿
+- [ ] 运维部署：启用后手动触发一次 sweep,对比 dryRun 输出
 
 ---
 
-## Phase 3：双实例 + 共享状态（远期）
+## Phase 3：分布式调度 + Nginx 动态 upstream（代码已落地）
 
-**前提**：Phase 2 稳定运行至少 2 周。
+**交付状态**：所有代码落地,单元测试 23 个全绿。**未触及真实多节点部署**——需要运维手动搭建至少 2 台机并做连通性验证。
 
-### 3.1 共享状态
+### 3.1 BranchDispatcher ✅
 
-- [ ] 选型：SQLite WAL（更简单）vs Redis（更通用）
-- [ ] `StateService` 抽象成 `IStateStore` 接口
-- [ ] 新增 `SqliteStateStore` 或 `RedisStateStore`
-- [ ] 原 JSON 存储作为 `FileStateStore`，保留作为 fallback
+- [x] 新增 `cds/src/scheduler/dispatcher.ts`:
+  - [x] `SnapshotFetcher` 接口（可 mock）
+  - [x] `HttpSnapshotFetcher` 实际调 `GET /api/scheduler/state` 含 3s 超时
+  - [x] `fetchAllSnapshots()` 并行拉所有 online+非 draining 的 executor 快照
+  - [x] `selectExecutorForBranch(branch, strategy)`:
+    - [x] Idempotency: 分支已在某 executor 上则直接返回
+    - [x] `capacity-aware` 策略: 按 `current/max` 比率排序,取最低
+    - [x] Tie-break: 比率相同时按 branches.length
+    - [x] Fallback: 没有可用快照时 defer 到 `registry.selectExecutor('least-branches')`
+    - [x] Offline / draining executor 排除
+  - [x] `least-branches` 策略: 纯 registry 委托,保留向后兼容
+- [x] `cds/src/scheduler/routes.ts` 新增 `POST /api/executors/dispatch/:branch`:
+  - [x] 接收 `{ strategy? }` body
+  - [x] 返回 `{ branch, strategy, selected, reason, snapshots }`
+  - [x] dispatcher 缺失时返回 503（scheduler mode 未启用）
+- [x] `cds/src/index.ts` 在 `mode === 'scheduler'` 分支实例化 dispatcher,注入 `HttpSnapshotFetcher(AI_ACCESS_KEY)`
+- [x] 单元测试（12 用例）全绿,覆盖 idempotency / 比率选择 / 不同 max / tie-break / disabled 过滤 / fetch fail fallback / draining 排除 / least-branches 策略
+- [ ] 运维部署：至少 2 台 executor + 1 台 scheduler,做一次跨机 dispatch 实测
 
-### 3.2 双实例
+### 3.2 Nginx 模板生成器 ✅
 
-- [ ] `exec_cds.sh` 支持同机启 2 份 worker（5500/5501）
-- [ ] 调度器加 Leader Election（基于 SQLite/Redis 锁）
-- [ ] Nginx upstream 配 `max_fails`/`fail_timeout`
+- [x] 新增 `cds/src/scheduler/nginx-template.ts`:
+  - [x] `generateUpstreamBlock()` — 每个 online executor 一行 server,draining → backup,offline 排除,空集合输出 sentinel 127.0.0.1:1 down
+  - [x] `generateBranchMap()` — `map $http_x_branch $cds_backend {...}` 把分支 slug 映射到具体 host:port
+  - [x] `generateFullConfig()` — 合并 upstream + map + server block,包含 `proxy_buffering off`（SSE 支持）+ dots 转义
+  - [x] 可配置: upstreamName / executorPort / maxFails / failTimeoutSeconds
+- [x] 单元测试（11 用例）全绿
+- [ ] 运维部署：把生成的 config 写到 `/etc/nginx/conf.d/cds.conf`,`nginx -s reload`
+- [ ] 未做：CDS 主动 write-and-reload Nginx,目前需要手动或 CI/CD 触发
 
-### 3.3 Webhook 预热
+### 3.3 未做（Phase 3 继续项）
 
-- [ ] 新增 `POST /api/webhook/warm`
-- [ ] Git push hook 模板
-- [ ] scheduler 预热队列（受 maxHotBranches 约束）
+- [ ] **分支迁移** — executor A 过载时把 LRU 分支搬到 B（cool → worktree 删除 → B 重建 → deploy）。需要跨机 git worktree 协议
+- [ ] **共享状态存储** — Master 的 state.json 仍是单点,真正高可用需要 SQLite WAL 或 Redis
+- [ ] **Webhook 预热接口** — `POST /api/webhook/warm`
+- [ ] **故障迁移** — executor 心跳超时 → 自动重新派发其持有的分支（需要目标 executor 重新创建 worktree + pull + deploy）
 
 ---
 

@@ -232,6 +232,52 @@ export function createServer(deps: ServerDeps): express.Express {
 
   const webDir = path.resolve(__dirname, '..', 'web');
 
+  // ── Liveness / readiness probe (public, no auth) ──
+  // Used by:
+  //   1. Dockerfile HEALTHCHECK
+  //   2. Nginx upstream health check
+  //   3. systemd WatchdogSec (future)
+  //   4. Load balancer active health probes
+  //
+  // Returns 200 when CDS can read its state file AND reach the Docker socket.
+  // Returns 503 on either failure so upstream knows to avoid this instance.
+  // See doc/design.cds-resilience.md Phase 2.
+  app.get('/healthz', async (_req, res) => {
+    const checks: Record<string, { ok: boolean; detail?: string }> = {};
+    let overallOk = true;
+
+    // Check 1: state readable
+    try {
+      const state = deps.stateService.getState();
+      checks.state = {
+        ok: true,
+        detail: `branches=${Object.keys(state.branches).length}`,
+      };
+    } catch (err) {
+      checks.state = { ok: false, detail: (err as Error).message };
+      overallOk = false;
+    }
+
+    // Check 2: docker reachable (use a lightweight `docker version --format` call)
+    try {
+      const result = await deps.shell.exec('docker version --format "{{.Server.Version}}"', { timeout: 3000 });
+      checks.docker = {
+        ok: result.exitCode === 0,
+        detail: result.exitCode === 0 ? result.stdout.trim() : result.stderr.trim(),
+      };
+      if (result.exitCode !== 0) overallOk = false;
+    } catch (err) {
+      checks.docker = { ok: false, detail: (err as Error).message };
+      overallOk = false;
+    }
+
+    res.status(overallOk ? 200 : 503).json({
+      ok: overallOk,
+      checks,
+      timestamp: new Date().toISOString(),
+    });
+  });
+
   // ── Switch domain middleware (before auth) ──
   const switchDomain = deps.config.switchDomain?.toLowerCase();
   if (switchDomain) {

@@ -38,6 +38,14 @@ const DEFAULT_CONFIG: CdsConfig = {
     tickIntervalSeconds: 60,
     pinnedBranches: [],
   },
+  // Janitor (Phase 2) — off by default, same opt-in philosophy as scheduler.
+  // Disk warnings still fire when enabled=true even if nothing to delete.
+  janitor: {
+    enabled: false,
+    worktreeTTLDays: 30,
+    diskWarnPercent: 80,
+    sweepIntervalSeconds: 3600,
+  },
 };
 
 export function loadConfig(configPath?: string): CdsConfig {

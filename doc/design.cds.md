@@ -307,22 +307,28 @@ CDS Compose YAML 解析与生成。
 
 ---
 
-## 8. 高可用与容量（v3.1）
+## 8. 高可用、容量与分布式（v3.1 / v3.2 / v3.3）
 
-小服务器场景下 CDS 有几个致命风险：单分支 runaway、state.json 损坏、Master 崩溃、磁盘爆满。v3.1 通过**分支温池 + 原子写 + 滚动备份**解决其中一部分，详见：
+小服务器场景下 CDS 有几个致命风险：单分支 runaway、state.json 损坏、Master 崩溃、磁盘爆满、单点宕机。这一块通过**分支温池 + cgroup 限制 + Janitor + Master 容器化 + 分布式调度**逐层解决，详见：
 
-- **设计文档**：`doc/design.cds-resilience.md`
-- **落地进度**：`doc/plan.cds-resilience-rollout.md`
+- **设计文档**：`doc/design.cds-resilience.md`（Phase 1-3 完整方案）
+- **落地进度**：`doc/plan.cds-resilience-rollout.md`（可续传 checklist）
 
 三个层次的改造：
 
 | 层次 | 内容 | 状态 |
 |---|---|---|
-| Phase 1 | 调度器（温池 + LRU） + state 原子写 + API | 本版本 ✅ |
-| Phase 2 | cgroup 限制 + Master 容器化 + janitor | 下版本 ⏳ |
-| Phase 3 | 双实例 + Nginx upstream + 共享状态 | 远期 ⏳ |
+| **v3.1 Phase 1** | 调度器（温池 + LRU） + state 原子写 + API | ✅ 已发布 |
+| **v3.2 Phase 2** | 容器 cgroup + Janitor + CDS Master 容器化 + `/healthz` + systemd unit | ✅ 代码已落地 |
+| **v3.3 Phase 3** | BranchDispatcher（跨机容量派发） + Nginx upstream 模板生成器 + POST /api/executors/dispatch/:branch | ✅ 代码已落地 |
+| Phase 3 后续 | 分支迁移 + 共享状态存储 + Webhook 预热 | ⏳ 待规划 |
 
-核心理念：**CDS 不追求"所有分支常驻"，而追求"按需唤醒、快速命中、永不超载"**。在 4GB 机器上默认 `maxHotBranches=3`，通过 LRU 驱逐让温池保持可预测的资源消耗。
+核心理念：
+- **单机层**："CDS 不追求所有分支常驻,而追求按需唤醒、快速命中、永不超载"。`maxHotBranches=3` + LRU 驱逐
+- **集群层**："Master 不做单机决策,只做派发决策。它读每个 executor 的 `/api/scheduler/state`,按 `capacityUsage.current/max` 比率选最空闲的"
+- **三层独立演进**：Layer 1（per-node warm pool）/ Layer 2（cluster scheduler）/ Layer 3（edge nginx）各自有接口,上层不假设下层实现
+
+**Phase 1 的 SchedulerService 就是 Layer 1**——把它部署到每个 executor 节点,集群能力自动浮现。这是 Phase 1+2+3 一次性交付的战略价值：代码层面三层 ready,运维可以只用单机 Phase 1+2 起步,等团队壮大时无缝升级到 Phase 3 分布式,不需要重写。
 
 ---
 

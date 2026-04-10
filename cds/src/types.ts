@@ -81,6 +81,14 @@ export interface BuildProfile {
    * Currently active deploy mode. null/undefined = use profile defaults (first mode or raw command).
    */
   activeDeployMode?: string;
+  /**
+   * Per-container cgroup limits (Phase 2 of resilience plan).
+   * When set, `docker run` gets `--memory <N>m` and/or `--cpus <N>` flags.
+   * Unset = no limit (legacy behavior).
+   *
+   * Derived from compose `deploy.resources.limits` or `x-cds-resources`.
+   */
+  resources?: ResourceLimits;
 }
 
 /** Readiness probe configuration for app services */
@@ -111,6 +119,22 @@ export interface CacheMount {
   hostPath: string;
   /** Container path where it gets mounted */
   containerPath: string;
+}
+
+/**
+ * Per-container resource limits enforced via Docker cgroup flags.
+ *
+ * Phase 2 of the CDS resilience plan: prevent a single runaway container
+ * from draining the whole host. Configured via compose
+ * `deploy.resources.limits` (standard) or `x-cds-resources` (our extension).
+ *
+ * See `doc/design.cds-resilience.md` Phase 2.
+ */
+export interface ResourceLimits {
+  /** Max memory in MB. Docker flag: --memory <N>m */
+  memoryMB?: number;
+  /** Max CPU cores (fractional allowed, e.g. 1.5). Docker flag: --cpus <N> */
+  cpus?: number;
 }
 
 /**
@@ -352,6 +376,21 @@ export interface ExecutorNode {
 }
 
 /**
+ * Janitor (Phase 2) config — worktree TTL cleanup + disk watermark warning.
+ * See `doc/design.cds-resilience.md` Phase 2.
+ */
+export interface JanitorConfig {
+  /** Enable the janitor. Default: false (backward compatible). */
+  enabled: boolean;
+  /** Remove worktrees not accessed in this many days. Default: 30. */
+  worktreeTTLDays: number;
+  /** Emit warning when disk usage exceeds this percent. Default: 80. */
+  diskWarnPercent: number;
+  /** How often to run the sweep. Default: 3600 (hourly). */
+  sweepIntervalSeconds: number;
+}
+
+/**
  * Warm-pool scheduler configuration.
  * When `enabled=false`, the scheduler becomes a no-op and CDS behaves exactly
  * like pre-v3.1 (all branches stay running until manually stopped).
@@ -413,6 +452,11 @@ export interface CdsConfig {
    * legacy behavior where all branches stay running.
    */
   scheduler?: SchedulerConfig;
+  /**
+   * Janitor config (v3.1 Phase 2). Optional; absent or enabled=false disables
+   * TTL cleanup (disk warnings still work if enabled).
+   */
+  janitor?: JanitorConfig;
 }
 
 /** Shell execution result */

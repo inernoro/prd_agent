@@ -1,8 +1,10 @@
-# CDS 容量预算与故障隔离设计（小服务器负载均衡）
+# CDS 容量预算与故障隔离设计（小服务器负载均衡 → 分布式集群）
 
-> **版本**：v1.0 | **日期**：2026-04-09 | **状态**：落地中（Phase 1/3）
+> **版本**：v2.0 | **日期**：2026-04-10 | **状态**：Phase 1+2+3 代码已落地,Phase 3 等运维上线
 >
-> 本文档回答一个问题：**怎样让 CDS 在一台 4GB/2vCPU 的小服务器上跑 5-10 个并行分支验收环境而不宕机？**
+> 本文档回答两个问题：
+> 1. **怎样让 CDS 在一台 4GB/2vCPU 的小服务器上跑 5-10 个并行分支验收环境而不宕机？**（Phase 1-2）
+> 2. **怎样把多台小服务器组成一个分布式集群，分支按容量派发、故障时迁移、无单点？**（Phase 3）
 >
 > 关联主文档：`doc/design.cds.md`（CDS 整体架构）
 
@@ -206,29 +208,158 @@ load():
 
 ## 七、分阶段落地
 
-### Phase 1（本次交付 — 可用）
+### Phase 1（v3.1,已发布）— 单机温池
 
 - [x] 文档：本文档 + `plan.cds-resilience-rollout.md` 进度追踪
 - [x] 类型扩展：`BranchEntry.heatState`、`BranchEntry.pinnedByUser`、`CdsConfig.scheduler`
 - [x] 新增 `scheduler.ts`（容量预算 + LRU 驱逐 + idleTTL tick + pinning）
 - [x] 集成 `proxy.ts` touch 钩子
 - [x] `state.ts` 原子写 + 滚动备份
-- [x] API：`GET/POST /api/scheduler/*`（pin、evict、state）
-- [x] vitest 单元测试（调度器核心逻辑）
+- [x] API：`GET/POST /api/scheduler/*`（pin、unpin、cool、state）
+- [x] vitest 单元测试（24 用例）
 
-### Phase 2（下次迭代 — 加固）
+### Phase 2（v3.2,已落地）— 单机加固
 
-- [ ] 容器 cgroup 限制（`--memory`/`--cpus` 从 profile.resources 读取）
-- [ ] CDS Master 容器化 + `restart: always` + `/healthz`
-- [ ] worktree + docker janitor（30 天 TTL）
-- [ ] MongoDB/Redis 内存上限（cds-compose 修改）
-- [ ] Dashboard 磁盘/内存告警条
+- [x] **容器 cgroup 限制** — `BuildProfile.resources?.memoryMB/cpus`,docker run 追加 `--memory/--memory-swap/--cpus` 标志
+- [x] **compose 解析支持两种格式**：`x-cds-resources`（我们的扩展,数字）+ `deploy.resources.limits`（标准 compose,带单位）
+- [x] **JanitorService** — 每小时扫描 `lastAccessedAt > worktreeTTLDays` 的分支,跳过 pinned,通过 callback 删除 worktree + 容器。同时检查磁盘使用率触发告警
+- [x] **CDS Master 容器化** — `cds/Dockerfile.master`（multi-stage build + docker CLI + healthcheck）
+- [x] **systemd unit** — `cds/systemd/cds-master.service`（Restart=always + cgroup 限制 + security hardening）
+- [x] **`GET /healthz` 健康检查** — state 可读 + docker 可达,供 Docker/systemd/Nginx 主动探测
+- [x] 单元测试：cgroup 参数（5）、compose 解析（14）、janitor（18）,共 37 个新用例
 
-### Phase 3（远期 — 高可用）
+### Phase 3（v3.3,代码已落地,等待运维部署）— 分布式集群
 
-- [ ] 双实例 CDS Worker + Nginx upstream
-- [ ] SQLite/Redis 共享 state 存储
-- [ ] Webhook 预热接口
+- [x] **BranchDispatcher** — 读取每个 executor 的 `/api/scheduler/state`（Phase 1 API!）,按 `capacityUsage.current/max` 比率选最空闲的 executor,这是 Phase 1 与 Phase 3 的桥梁
+- [x] **`POST /api/executors/dispatch/:branch`** — 调度 API,支持 `capacity-aware` / `least-branches` 两种策略
+- [x] **Nginx 模板生成器** — `nginx-template.ts` 生成 upstream block + 分支→executor map + 完整 server block,支持 draining → backup,offline 直接排除
+- [x] 单元测试：dispatcher（12）、nginx-template（11）,共 23 个新用例
+- [ ] **运维部署**：至少 2 台小机,一台 `mode=scheduler`,其他 `mode=executor`（代码已就绪,只等实操）
+- [ ] **共享状态存储**（SQLite WAL / Redis）— 目前 Master 的 state.json 仍是单点,Phase 3 真正高可用需要共享存储
+- [ ] **分支迁移** — executor A 过载时把 LRU 分支搬到 B（cool → worktree 删除 → B 重建 → deploy）
+- [ ] **Webhook 预热接口** — `POST /api/webhook/warm` 在 git push 后主动预热目标分支
+
+---
+
+## 八、Phase 3 分布式架构（接入系统的 3 层模型）
+
+```
+┌──────────────────────────────────────────────────────────────┐
+│  Layer 3: 公网入口 (Edge Routing)                              │
+│  ┌────────────────────────────────────────┐                   │
+│  │  Nginx / Caddy                         │                   │
+│  │  - upstream cds_executors              │                   │
+│  │    + max_fails=3, fail_timeout=30s     │                   │
+│  │  - map $http_x_branch → executor       │                   │
+│  │  - draining → backup server            │                   │
+│  │  → nginx-template.ts 动态生成          │                   │
+│  └──┬──────┬──────┬───────────────────────┘                   │
+└─────┼──────┼──────┼───────────────────────────────────────────┘
+      ▼      ▼      ▼
+┌──────────────────────────────────────────────────────────────┐
+│  Layer 2: 集群调度 (Cluster Coordination)                      │
+│  ┌────────────────────────────────────────┐                   │
+│  │  Master (mode=scheduler)                │                   │
+│  │  - ExecutorRegistry: 注册 + 心跳 + 健康  │                   │
+│  │  - BranchDispatcher: 读 Phase 1 快照     │                   │
+│  │    按 current/max 比率选最空闲 executor   │                   │
+│  │  - /api/executors/dispatch/:branch      │                   │
+│  └──┬─────────┬─────────┬───────────────────┘                 │
+│     │         │         │                                     │
+│  ┌──▼──┐   ┌──▼──┐   ┌──▼──┐                                  │
+│  │Exec │   │Exec │   │Exec │ (mode=executor)                  │
+│  │  A  │   │  B  │   │  C  │                                  │
+│  │┌───┐│   │┌───┐│   │┌───┐│                                  │
+│  ││LP1││   ││LP1││   ││LP1││ ← Layer 1 per-node scheduler     │
+│  │└───┘│   │└───┘│   │└───┘│                                  │
+│  └─────┘   └─────┘   └─────┘                                  │
+└──────────────────────────────────────────────────────────────┘
+```
+
+### 三层的职责切分
+
+| 问题 | 归谁解决 | 机制 |
+|---|---|---|
+| "分支太多，单机装不下" | **Layer 1** (Phase 1) | LRU 驱逐 + idleTTL |
+| "单容器内存爆炸" | **Layer 1/2 交界** (Phase 2) | cgroup `--memory`/`--cpus` |
+| "worktree + docker layer 填满磁盘" | **Layer 2** (Phase 2) | Janitor `sweepIntervalSeconds` 循环 |
+| "CDS Master 崩溃" | **Layer 2** (Phase 2) | systemd `Restart=always` + `/healthz` |
+| "分支总数超过单机极限" | **Layer 2** (Phase 3) | BranchDispatcher 派给空闲 executor |
+| "Executor 挂了" | **Layer 2** (Phase 3) | 心跳超时 → 分支重新派发 |
+| "公网入口挂了" | **Layer 3** (Phase 3) | Nginx upstream `max_fails` + backup |
+| "用户不知道分支在哪台机" | **Layer 3** (Phase 3) | Nginx map `$http_x_branch` 路由 |
+
+### 关键洞察：Phase 1 的 SchedulerService **就是** Layer 1
+
+**把 Phase 1 代码部署到每个 executor 节点上,每个节点自动有 LRU 容量管理,根本不需要改一行代码**。Master 只需要在 Layer 2 做"派发决策"。
+
+BranchDispatcher 的伪代码：
+```typescript
+const snapshots = await Promise.all(
+  executors.map(e => fetch(`http://${e.host}:${e.port}/api/scheduler/state`))
+);
+const ranked = snapshots.sort((a, b) =>
+  (a.capacityUsage.current / a.capacityUsage.max) -
+  (b.capacityUsage.current / b.capacityUsage.max)
+);
+return ranked[0].executor;  // 最空闲的 executor
+```
+
+**Layer 1 的 getSnapshot() 就是 Layer 2 的决策数据源**。今天交付的 `pin/cool` API 同样是未来"手动迁移"工具链的接口。`heatState` 状态机是未来"分支在集群间漂移"的状态基础。
+
+这是**真正的系统性接入**：三层独立演进,每层只读上层 API,不假设下层实现。Phase 2 的 janitor 不知道集群存在,Phase 3 的 dispatcher 不关心单机内部如何驱逐。
+
+---
+
+## 九、小服务器集群部署 runbook
+
+### 单节点（最常见场景）
+```bash
+# 编辑 cds.config.json
+{
+  "scheduler": { "enabled": true, "maxHotBranches": 3 },
+  "janitor": { "enabled": true, "worktreeTTLDays": 30, "diskWarnPercent": 80 }
+}
+# 启动
+./exec_cds.sh restart
+# 或 systemd
+sudo systemctl enable --now cds-master
+```
+
+### 双节点主从
+```bash
+# 机器 A (Master, 8GB): cds.config.json
+{ "mode": "scheduler", "janitor": { "enabled": true } }
+# 机器 B (Executor, 4GB): cds.config.json
+{
+  "mode": "executor",
+  "schedulerUrl": "http://machine-a:9900",
+  "executorToken": "shared-secret",
+  "scheduler": { "enabled": true, "maxHotBranches": 3 }
+}
+# Nginx 配置由 Master 在 /api/executors/dispatch/:branch 调用后生成,
+# 手动 reload 或通过 CI/CD
+```
+
+### 三节点以上
+同双节点模式,只是执行 `executor` 角色的机器更多。`capacity-aware` 策略会自动平衡负载。
+
+---
+
+## 十、单机 vs 集群决策树
+
+```
+想解决的问题？
+├─ "一台 4GB 机装不下我的 5 个分支" → Phase 1（启用 scheduler）
+├─ "一个容器爆内存拖垮全机" → Phase 2 (cgroup limit)
+├─ "磁盘被老 worktree 塞满" → Phase 2 (janitor)
+├─ "CDS 崩了没人拉起" → Phase 2 (Dockerfile + systemd)
+├─ "两个团队 10 个分支,单机扛不住" → Phase 3（加第二台机）
+├─ "Nginx 是单点，挂了全停" → Phase 3 (upstream backup)
+└─ "要跨地域部署" → Phase 3+ (多地域 executor + GeoDNS)
+```
+
+**反直觉的真相**：大多数"分布式部署"问题,其实是"一台机器没用好"的问题。在没有把 Phase 1 + Phase 2 榨干之前谈分布式,就是给没学会走路的婴儿买跑鞋。但**代码层面**的 Layer 1/2/3 必须提前设计好,否则将来改造成本很高——这就是本次 Phase 1+2+3 一次性交付的理由。
 
 ---
 

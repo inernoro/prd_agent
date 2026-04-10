@@ -13,7 +13,9 @@ import { WorktreeService } from './services/worktree.js';
 import { ContainerService } from './services/container.js';
 import { ProxyService } from './services/proxy.js';
 import { SchedulerService } from './services/scheduler.js';
+import { JanitorService } from './services/janitor.js';
 import { BridgeService } from './services/bridge.js';
+import { BranchDispatcher, HttpSnapshotFetcher } from './scheduler/dispatcher.js';
 import { ExecutorAgent } from './executor/agent.js';
 import { createExecutorRouter } from './executor/routes.js';
 import { ExecutorRegistry } from './scheduler/executor-registry.js';
@@ -108,6 +110,36 @@ schedulerService.setCoolFn(async (slug: string) => {
 // work (Phase 2) may introduce a lighter-weight restart path.
 proxyService.setScheduler(schedulerService);
 
+// ── Janitor (Phase 2 resilience) ──
+// Disabled by default. Opt-in via cds.config.json { "janitor": { "enabled": true, ... } }.
+// Sweeps stale worktrees (> worktreeTTLDays idle) and warns on disk usage.
+// See doc/design.cds-resilience.md Phase 2.
+const janitorService = new JanitorService(
+  stateService,
+  config.janitor || {
+    enabled: false,
+    worktreeTTLDays: 30,
+    diskWarnPercent: 80,
+    sweepIntervalSeconds: 3600,
+  },
+  config.worktreeBase,
+);
+janitorService.setRemoveFn(async (slug: string) => {
+  // Reuse the existing removal path: stop containers → git worktree remove → drop state.
+  const branch = stateService.getBranch(slug);
+  if (!branch) return;
+  for (const svc of Object.values(branch.services)) {
+    try { await containerService.stop(svc.containerName); } catch { /* best effort */ }
+  }
+  try { await worktreeService.remove(branch.worktreePath); } catch { /* best effort */ }
+  stateService.removeBranch(slug);
+  stateService.save();
+});
+
+// The BranchDispatcher (Phase 3) is instantiated later, inside the scheduler-mode
+// block where ExecutorRegistry becomes available. See the `if (mode === 'scheduler')`
+// branch near the bottom of this file.
+
 // ── Discover and reconcile infrastructure containers ──
 (async () => {
   try {
@@ -195,12 +227,15 @@ proxyService.setScheduler(schedulerService);
     stateService.save();
     schedulerService.start();
   }
+
+  // Start janitor (Phase 2) — safe to call even when disabled (internal no-op).
+  janitorService.start();
 })();
 
-// Shut the scheduler down cleanly on process exit so the tick doesn't keep
-// running orphaned.
-process.on('SIGTERM', () => { schedulerService.stop(); });
-process.on('SIGINT', () => { schedulerService.stop(); });
+// Shut the scheduler/janitor down cleanly on process exit so background timers
+// don't keep running orphaned.
+process.on('SIGTERM', () => { schedulerService.stop(); janitorService.stop(); });
+process.on('SIGINT', () => { schedulerService.stop(); janitorService.stop(); });
 
 // Configure proxy: resolve branch slug → upstream URL
 proxyService.setResolveUpstream((branchId, profileId) => {
@@ -762,14 +797,21 @@ if (mode === 'executor') {
     console.log('');
   }, { optional: true });
 
-  // ── Scheduler mode: also start executor registry ──
+  // ── Scheduler mode: also start executor registry + dispatcher ──
   if (mode === 'scheduler') {
     const registry = new ExecutorRegistry(stateService);
     registry.startHealthChecks();
 
+    // Phase 3: BranchDispatcher combines registry with Phase 1 scheduler
+    // snapshots for capacity-aware executor selection.
+    const dispatcher = new BranchDispatcher(
+      registry,
+      new HttpSnapshotFetcher(process.env.AI_ACCESS_KEY || undefined),
+    );
+
     // Mount scheduler API routes on the dashboard server
-    app.use('/api/executors', createSchedulerRouter({ registry, config }));
-    console.log(`  Scheduler: executor management API mounted at /api/executors`);
+    app.use('/api/executors', createSchedulerRouter({ registry, config, dispatcher }));
+    console.log(`  Scheduler: executor management API mounted at /api/executors (dispatcher enabled)`);
   }
 
   // ── Standalone mode: register a local executor implicitly ──
