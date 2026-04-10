@@ -3846,8 +3846,14 @@ export function createBranchRouter(deps: RouterDeps): Router {
         else res.end();
       } catch { /* */ }
     });
-    // If the client disconnects, kill the dump
-    req.on('close', () => { try { child.kill('SIGKILL'); } catch { /* */ } });
+    // If the client aborts the download, kill the dump.
+    // IMPORTANT: use res.on('close'), NOT req.on('close'). In Node.js 18+,
+    // req.on('close') fires as soon as express.json() finishes reading the
+    // request body (before the handler even writes output), which would
+    // kill mongodump immediately and return an empty 0-byte response.
+    res.on('close', () => {
+      if (!res.writableEnded) { try { child.kill('SIGKILL'); } catch { /* */ } }
+    });
   });
 
   // POST /api/data-migrations/local-restore — pipes request body into
