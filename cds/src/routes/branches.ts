@@ -1,4 +1,5 @@
 import http from 'node:http';
+import https from 'node:https';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -10,7 +11,7 @@ import type { WorktreeService } from '../services/worktree.js';
 import { resolveProfileWithMode } from '../services/container.js';
 import type { ContainerService } from '../services/container.js';
 import type { SchedulerService } from '../services/scheduler.js';
-import type { BranchEntry, CdsConfig, IShellExecutor, OperationLog, OperationLogEvent, BuildProfile, RoutingRule, ServiceState, InfraService, DataMigration, MongoConnectionConfig } from '../types.js';
+import type { BranchEntry, CdsConfig, IShellExecutor, OperationLog, OperationLogEvent, BuildProfile, RoutingRule, ServiceState, InfraService, DataMigration, MongoConnectionConfig, CdsPeer } from '../types.js';
 import { discoverComposeFiles, parseComposeFile, parseComposeString, toComposeYaml, parseCdsCompose, toCdsCompose } from '../services/compose-parser.js';
 import type { ComposeServiceDef } from '../services/compose-parser.js';
 import { combinedOutput } from '../types.js';
@@ -142,6 +143,137 @@ export function createBranchRouter(deps: RouterDeps): Router {
       );
     }
     send('MongoDB 工具已安装');
+  }
+
+  // ─────────────────────────────────────────────────────────────────
+  //   Migration pipeline helpers (shared by /execute, local-dump, local-restore)
+  // ─────────────────────────────────────────────────────────────────
+
+  /**
+   * Build the mongodump argument list for a resolved connection.
+   * Always uses `--archive --gzip` so the output is a single streamable blob.
+   */
+  function buildMongodumpArgs(
+    host: string,
+    port: number,
+    auth: { username?: string; password?: string; authDatabase?: string },
+    database: string | undefined,
+    collections: string[] | undefined,
+  ): string[] {
+    const args: string[] = ['--host', host, '--port', String(port), '--archive', '--gzip'];
+    if (auth.username) args.push('--username', auth.username);
+    if (auth.password) args.push('--password', auth.password);
+    if (auth.authDatabase) args.push('--authenticationDatabase', auth.authDatabase);
+    if (database) args.push('--db', database);
+    if (collections && collections.length === 1) {
+      // mongodump only supports --collection when --db is set + single collection
+      args.push('--collection', collections[0]);
+    }
+    // For multi-collection migrations, dump the whole db and let --nsInclude filter on restore
+    return args;
+  }
+
+  function buildMongorestoreArgs(
+    host: string,
+    port: number,
+    auth: { username?: string; password?: string; authDatabase?: string },
+    opts: { drop: boolean; sourceDb?: string; targetDb?: string; collections?: string[] },
+  ): string[] {
+    const args: string[] = ['--host', host, '--port', String(port), '--archive', '--gzip'];
+    if (auth.username) args.push('--username', auth.username);
+    if (auth.password) args.push('--password', auth.password);
+    if (auth.authDatabase) args.push('--authenticationDatabase', auth.authDatabase);
+    if (opts.drop) args.push('--drop');
+    // Cross-database rename: --nsFrom="srcDb.*" --nsTo="tgtDb.*"
+    if (opts.sourceDb && opts.targetDb && opts.sourceDb !== opts.targetDb) {
+      args.push('--nsFrom', `${opts.sourceDb}.*`, '--nsTo', `${opts.targetDb}.*`);
+    }
+    if (opts.sourceDb && opts.collections && opts.collections.length > 0) {
+      // Filter to only these collections
+      for (const col of opts.collections) {
+        args.push('--nsInclude', `${opts.sourceDb}.${col}`);
+      }
+    }
+    return args;
+  }
+
+  /**
+   * Parse a line of mongodump/mongorestore progress output and return a
+   * human-readable one-liner, or null if the line carries no useful signal.
+   *
+   * Example inputs:
+   *   "2026-04-10T23:41:12.419+0200 [####........] prdagent.users 500/4105 (12.2%)"
+   *   "2026-04-10T23:41:10.660+0200 writing prdagent.users to /dev/stdout"
+   *   "2026-04-10T23:41:30.660+0200 done dumping prdagent.users (4105 documents)"
+   */
+  function parseMongoProgressLine(line: string): string | null {
+    const trimmed = line.trim();
+    if (!trimmed) return null;
+    // Progress bar line: "[####....] db.col 500/4105 (12.2%)"
+    const bar = trimmed.match(/\]\s+([^\s]+)\s+(\d+)\/(\d+)\s+\(([\d.]+)%\)/);
+    if (bar) return `${bar[1]} ${bar[4]}%  (${bar[2]}/${bar[3]})`;
+    // "writing db.col to ..."
+    const writing = trimmed.match(/writing\s+([^\s]+)\s+to/);
+    if (writing) return `写入 ${writing[1]}...`;
+    // "done dumping db.col (N documents)"
+    const doneDump = trimmed.match(/done dumping\s+([^\s]+)\s+\((\d+)\s+documents?\)/);
+    if (doneDump) return `✓ 导出 ${doneDump[1]} (${doneDump[2]})`;
+    // "finished restoring db.col (N documents, 0 failures)"
+    const doneRestore = trimmed.match(/finished restoring\s+([^\s]+)\s+\((\d+)\s+documents?/);
+    if (doneRestore) return `✓ 导入 ${doneRestore[1]} (${doneRestore[2]})`;
+    // "preparing collections to restore from"
+    if (trimmed.includes('preparing collections')) return '准备还原集合...';
+    // Error-ish lines
+    if (/error|failed|fatal/i.test(trimmed)) return trimmed.slice(0, 200);
+    return null;
+  }
+
+  /**
+   * Build the SSH command prefix used to run mongodump/mongorestore on a
+   * remote jump host. The resulting array starts with 'ssh' and ends with
+   * the username@host argument, ready to be appended with the remote shell
+   * command as the last argv item.
+   */
+  function buildSshBase(tunnel: NonNullable<MongoConnectionConfig['sshTunnel']>): string[] {
+    const args = [
+      '-o', 'BatchMode=yes',
+      '-o', 'StrictHostKeyChecking=no',
+      '-o', 'UserKnownHostsFile=/dev/null',
+      '-o', 'ConnectTimeout=10',
+      // Keepalive: critical for long dumps — send a probe every 30s, tolerate 10 misses.
+      '-o', 'ServerAliveInterval=30',
+      '-o', 'ServerAliveCountMax=10',
+      '-o', 'TCPKeepAlive=yes',
+      '-p', String(tunnel.port || 22),
+    ];
+    if (tunnel.privateKeyPath) args.unshift('-i', tunnel.privateKeyPath);
+    args.push(`${tunnel.username}@${tunnel.host}`);
+    return args;
+  }
+
+  /**
+   * Shell-quote a single argument (single-quote style, safe for POSIX sh).
+   */
+  function shq(s: string): string {
+    return `'${String(s).replace(/'/g, `'"'"'`)}'`;
+  }
+
+  /**
+   * Build the remote command string for mongodump/mongorestore over SSH,
+   * optionally wrapped in `docker exec <container> sh -c ...`.
+   */
+  function buildRemoteMongoCmd(
+    tool: 'mongodump' | 'mongorestore',
+    args: string[],
+    dockerContainer: string | undefined,
+  ): string {
+    const inner = [tool, ...args.map(shq)].join(' ');
+    if (dockerContainer) {
+      // docker exec -i for restore (stdin), no -i for dump
+      const flags = tool === 'mongorestore' ? '-i' : '';
+      return `docker exec ${flags} ${shq(dockerContainer)} sh -c ${shq(inner)}`.replace(/  +/g, ' ');
+    }
+    return inner;
   }
 
   // ── Remote branches ──
@@ -2815,6 +2947,69 @@ export function createBranchRouter(deps: RouterDeps): Router {
     return args;
   }
 
+  /** Get this CDS's own AI access key (used to display to the user for copy/paste) */
+  function getLocalAccessKey(): string | null {
+    return stateService.getCustomEnv()['AI_ACCESS_KEY'] || process.env.AI_ACCESS_KEY || null;
+  }
+
+  /** Best-effort public base URL of this CDS, derived from the current request */
+  function guessLocalBaseUrl(req: import('express').Request): string {
+    const proto = (req.headers['x-forwarded-proto'] as string) || req.protocol || 'https';
+    const host = (req.headers['x-forwarded-host'] as string) || req.headers.host || 'localhost';
+    return `${proto}://${host}`;
+  }
+
+  /**
+   * Make an authenticated HTTP/S request to a CDS peer. Returns the raw
+   * response object so the caller can stream the body.
+   */
+  function peerRequest(
+    peer: CdsPeer,
+    apiPath: string,
+    method: 'GET' | 'POST' | 'PUT' | 'DELETE',
+    body?: unknown,
+  ): Promise<http.IncomingMessage> {
+    return new Promise((resolve, reject) => {
+      let url: URL;
+      try { url = new URL(peer.baseUrl.replace(/\/$/, '') + apiPath); } catch (e) { reject(e); return; }
+      const lib = url.protocol === 'https:' ? https : http;
+      const payload = body !== undefined ? Buffer.from(JSON.stringify(body)) : null;
+      const req = lib.request({
+        method,
+        protocol: url.protocol,
+        hostname: url.hostname,
+        port: url.port || (url.protocol === 'https:' ? 443 : 80),
+        path: url.pathname + url.search,
+        headers: {
+          'X-AI-Access-Key': peer.accessKey,
+          'X-CDS-Peer-Call': '1',
+          Accept: 'application/json, application/octet-stream',
+          ...(payload ? { 'Content-Type': 'application/json', 'Content-Length': String(payload.length) } : {}),
+        },
+        // Large dumps can take many minutes — disable the 2-minute default.
+        timeout: 0,
+      }, (res) => resolve(res));
+      req.on('error', reject);
+      req.setTimeout(0);
+      if (payload) req.write(payload);
+      req.end();
+    });
+  }
+
+  /** Make a peer request and parse the response body as JSON */
+  async function peerRequestJson<T>(peer: CdsPeer, apiPath: string, method: 'GET' | 'POST' | 'PUT' | 'DELETE', body?: unknown): Promise<T> {
+    const res = await peerRequest(peer, apiPath, method, body);
+    const chunks: Buffer[] = [];
+    for await (const c of res) chunks.push(c as Buffer);
+    const text = Buffer.concat(chunks).toString('utf-8');
+    if ((res.statusCode || 500) >= 400) {
+      let err = text;
+      try { const j = JSON.parse(text); err = j.error || j.message || text; } catch { /* raw */ }
+      throw new Error(`远程 CDS 返回 ${res.statusCode}: ${err}`);
+    }
+    try { return JSON.parse(text) as T; } catch { return text as unknown as T; }
+  }
+
   // GET /api/data-migrations — list all migration tasks
   router.get('/data-migrations', (_req, res) => {
     res.json(stateService.getDataMigrations());
@@ -2937,7 +3132,41 @@ export function createBranchRouter(deps: RouterDeps): Router {
     }
   });
 
-  // POST /api/data-migrations/:id/execute — execute a migration task (SSE stream)
+  // PUT /api/data-migrations/:id — edit a migration task (name, source, target, collections)
+  router.put('/data-migrations/:id', (req, res) => {
+    const { id } = req.params;
+    const existing = stateService.getDataMigration(id);
+    if (!existing) { res.status(404).json({ error: '迁移任务不存在' }); return; }
+    if (existing.status === 'running') { res.status(400).json({ error: '任务正在运行中，无法编辑' }); return; }
+    const { name, source, target, collections } = req.body as Partial<DataMigration>;
+    const updates: Partial<DataMigration> = {};
+    if (name !== undefined) updates.name = name;
+    if (source !== undefined) updates.source = source;
+    if (target !== undefined) updates.target = target;
+    // collections === [] means "all collections" (undefined), non-empty = subset
+    if (collections !== undefined) updates.collections = (collections && collections.length) ? collections : undefined;
+    updates.updatedAt = new Date().toISOString();
+    stateService.updateDataMigration(id, updates);
+    stateService.save();
+    res.json(stateService.getDataMigration(id));
+  });
+
+  // POST /api/data-migrations/:id/execute — execute a migration task (SSE stream, streaming pipeline)
+  //
+  // Pipeline:
+  //   source producer (mongodump stdout) → pipe → target consumer (mongorestore stdin)
+  //
+  // Producers (by source.type):
+  //   - local  : spawn mongodump against CDS infra MongoDB
+  //   - remote : spawn mongodump; or ssh jump → remote mongodump (pipe mode, no port forwarding)
+  //   - cds    : HTTP POST to peer's /local-dump endpoint, read response body
+  //
+  // Consumers (by target.type):
+  //   - local  : spawn mongorestore against CDS infra MongoDB, write to stdin
+  //   - remote : spawn mongorestore; or ssh jump → remote mongorestore (stdin pipe)
+  //   - cds    : HTTP POST to peer's /local-restore endpoint, request body is the stream
+  //
+  // Zero temp files. Archive+gzip throughout. SSH keepalive so long dumps don't drop.
   router.post('/data-migrations/:id/execute', async (req, res) => {
     const { id } = req.params;
     const migration = stateService.getDataMigration(id);
@@ -2948,139 +3177,87 @@ export function createBranchRouter(deps: RouterDeps): Router {
     const send = (progress: number, message: string) => {
       sendSSE(res, 'progress', { progress, message });
       stateService.updateDataMigration(id, { progress, progressMessage: message });
-      stateService.save();
     };
+
+    // SSE keepalive — prevents proxies from closing the connection on long dumps
+    const keepAlive = setInterval(() => { try { res.write(`:ka\n\n`); } catch { /* client gone */ } }, 15000);
 
     // Mark as running
     stateService.updateDataMigration(id, { status: 'running', startedAt: new Date().toISOString(), progress: 0, errorMessage: undefined, log: '' });
     stateService.save();
 
     let logOutput = '';
-    const appendLog = (line: string) => { logOutput += line + '\n'; };
+    const MAX_LOG = 64 * 1024;
+    const appendLog = (line: string) => {
+      logOutput += line;
+      if (!line.endsWith('\n')) logOutput += '\n';
+      if (logOutput.length > MAX_LOG) logOutput = '...(truncated)...\n' + logOutput.slice(-MAX_LOG);
+    };
+
+    // Persist log + progress periodically (not on every chunk) to avoid disk thrash
+    let lastPersistAt = 0;
+    const maybePersist = () => {
+      const now = Date.now();
+      if (now - lastPersistAt > 2000) {
+        lastPersistAt = now;
+        stateService.updateDataMigration(id, { log: logOutput });
+        stateService.save();
+      }
+    };
+
+    // Resources to clean up on exit
+    const children: Array<{ kill: () => void }> = [];
+    const cleanup = () => {
+      clearInterval(keepAlive);
+      for (const c of children) { try { c.kill(); } catch { /* */ } }
+    };
+
+    // Track the most recent progress line so we can turn it into SSE progress
+    let fakeProgress = 20; // ratchet 20→90 based on line activity
+    const bumpProgress = (delta: number) => { fakeProgress = Math.min(90, fakeProgress + delta); };
+    const updateProgressFromLine = (line: string) => {
+      const parsed = parseMongoProgressLine(line);
+      if (parsed) {
+        bumpProgress(1);
+        send(fakeProgress, parsed);
+      }
+    };
 
     try {
-      const src = resolveMongoConn(migration.source);
-      const tgt = resolveMongoConn(migration.target);
+      const cols = migration.collections?.length ? migration.collections : undefined;
 
-      send(5, '正在检查迁移工具...');
-      const toolCheck = await shell.exec('which mongodump && which mongorestore');
-      if (toolCheck.exitCode !== 0) {
-        throw new Error('mongodump/mongorestore 未安装。请先在迁移面板点击"初始化工具"');
-      }
+      send(2, '准备迁移管道...');
 
-      // Build SSH tunnel if needed
-      let srcHost = src.host;
-      let srcPort = src.port;
-      let tgtHost = tgt.host;
-      let tgtPort = tgt.port;
+      // ── Build producer ──
+      const producer = await buildSourceProducer(
+        migration.source,
+        cols,
+        { appendLog, onProgressLine: updateProgressFromLine, send },
+      );
+      children.push(producer);
 
-      if (src.sshTunnel?.enabled) {
-        send(10, '正在建立源数据库 SSH 隧道...');
-        const localPort = 27100 + Math.floor(Math.random() * 100);
-        const tunnel = src.sshTunnel;
-        const keyArg = tunnel.privateKeyPath ? `-i ${tunnel.privateKeyPath}` : '';
-        const sshCmd = `ssh -f -N -L ${localPort}:${src.host}:${src.port} ${keyArg} -p ${tunnel.port} ${tunnel.username}@${tunnel.host} -o StrictHostKeyChecking=no -o ConnectTimeout=10`;
-        const sshResult = await shell.exec(sshCmd, { timeout: 15000 });
-        if (sshResult.exitCode !== 0) throw new Error(`SSH 隧道建立失败: ${sshResult.stderr}`);
-        srcHost = '127.0.0.1';
-        srcPort = localPort;
-        appendLog(`SSH tunnel (source): localhost:${localPort} -> ${src.host}:${src.port} via ${tunnel.host}`);
-      }
+      // ── Build consumer ──
+      const consumer = await buildTargetConsumer(
+        migration.target,
+        migration.source,
+        cols,
+        { appendLog, onProgressLine: updateProgressFromLine, send },
+      );
+      children.push(consumer);
 
-      if (tgt.sshTunnel?.enabled) {
-        send(15, '正在建立目标数据库 SSH 隧道...');
-        const localPort = 27200 + Math.floor(Math.random() * 100);
-        const tunnel = tgt.sshTunnel;
-        const keyArg = tunnel.privateKeyPath ? `-i ${tunnel.privateKeyPath}` : '';
-        const sshCmd = `ssh -f -N -L ${localPort}:${tgt.host}:${tgt.port} ${keyArg} -p ${tunnel.port} ${tunnel.username}@${tunnel.host} -o StrictHostKeyChecking=no -o ConnectTimeout=10`;
-        const sshResult = await shell.exec(sshCmd, { timeout: 15000 });
-        if (sshResult.exitCode !== 0) throw new Error(`SSH 隧道建立失败: ${sshResult.stderr}`);
-        tgtHost = '127.0.0.1';
-        tgtPort = localPort;
-        appendLog(`SSH tunnel (target): localhost:${localPort} -> ${tgt.host}:${tgt.port} via ${tunnel.host}`);
-      }
+      send(15, '管道已建立，开始传输...');
 
-      // Prepare dump directory
-      const dumpDir = `/tmp/cds-migration-${id}`;
-      await shell.exec(`rm -rf ${dumpDir} && mkdir -p ${dumpDir}`);
+      // Pipe producer → consumer with error propagation
+      producer.stdout.on('error', (err: Error) => appendLog(`[pipe] producer error: ${err.message}`));
+      consumer.stdin.on('error', (err: Error) => appendLog(`[pipe] consumer error: ${err.message}`));
+      producer.stdout.pipe(consumer.stdin);
 
-      // Build base auth args
-      let srcAuth = '';
-      if (src.username) srcAuth += ` --username=${src.username}`;
-      if (src.password) srcAuth += ` --password=${src.password}`;
-      if (src.authDatabase) srcAuth += ` --authenticationDatabase=${src.authDatabase}`;
-      let tgtAuth = '';
-      if (tgt.username) tgtAuth += ` --username=${tgt.username}`;
-      if (tgt.password) tgtAuth += ` --password=${tgt.password}`;
-      if (tgt.authDatabase) tgtAuth += ` --authenticationDatabase=${tgt.authDatabase}`;
+      // Persist log every few seconds while streaming
+      const persistTimer = setInterval(maybePersist, 2000);
 
-      const cols = migration.collections?.length ? migration.collections : null;
-      const totalSteps = cols ? cols.length * 2 : 2; // dump + restore per collection (or 1 each for full)
-      let currentStep = 0;
-      const stepProgress = (step: number) => Math.round(20 + (step / totalSteps) * 70); // 20% → 90%
-
-      if (cols) {
-        // ── Per-collection migration ──
-        appendLog(`Per-collection migration: ${cols.length} collections`);
-        for (let i = 0; i < cols.length; i++) {
-          const col = cols[i];
-          // Dump
-          send(stepProgress(currentStep), `正在导出 ${col} (${i + 1}/${cols.length})...`);
-          let dumpCmd = `mongodump --host=${srcHost} --port=${srcPort}${srcAuth}`;
-          if (src.database) dumpCmd += ` --db=${src.database}`;
-          dumpCmd += ` --collection=${col} --out=${dumpDir}`;
-          appendLog(`dump: ${col}`);
-          const dumpResult = await shell.exec(dumpCmd, { timeout: 600000, onData: (c) => appendLog(c) });
-          if (dumpResult.exitCode !== 0) throw new Error(`mongodump ${col} 失败: ${dumpResult.stderr || dumpResult.stdout}`);
-          currentStep++;
-
-          // Restore
-          send(stepProgress(currentStep), `正在导入 ${col} (${i + 1}/${cols.length})...`);
-          const restorePath = src.database ? `${dumpDir}/${src.database}` : dumpDir;
-          let restoreCmd = `mongorestore --host=${tgtHost} --port=${tgtPort}${tgtAuth}`;
-          if (tgt.database) restoreCmd += ` --db=${tgt.database}`;
-          restoreCmd += ` --collection=${col} --drop ${restorePath}/${col}.bson`;
-          appendLog(`restore: ${col}`);
-          const restoreResult = await shell.exec(restoreCmd, { timeout: 600000, onData: (c) => appendLog(c) });
-          if (restoreResult.exitCode !== 0) throw new Error(`mongorestore ${col} 失败: ${restoreResult.stderr || restoreResult.stdout}`);
-          currentStep++;
-        }
-      } else {
-        // ── Full database/instance migration ──
-        send(20, '正在导出源数据库...');
-        let dumpCmd = `mongodump --host=${srcHost} --port=${srcPort}${srcAuth}`;
-        if (src.database) dumpCmd += ` --db=${src.database}`;
-        dumpCmd += ` --out=${dumpDir}`;
-        appendLog(`dump: ${src.database || '(all dbs)'}`);
-
-        const dumpResult = await shell.exec(dumpCmd, {
-          timeout: 600000,
-          onData: (chunk) => { appendLog(chunk); if (chunk.includes('done dumping')) send(50, '导出完成，准备导入...'); }
-        });
-        if (dumpResult.exitCode !== 0) throw new Error(`mongodump 失败: ${dumpResult.stderr || dumpResult.stdout}`);
-
-        send(55, '正在导入到目标数据库...');
-        const restorePath = src.database ? `${dumpDir}/${src.database}` : dumpDir;
-        let restoreCmd = `mongorestore --host=${tgtHost} --port=${tgtPort}${tgtAuth}`;
-        if (tgt.database) restoreCmd += ` --db=${tgt.database}`;
-        restoreCmd += ` --drop ${restorePath}`;
-        appendLog(`restore: ${tgt.database || '(all dbs)'}`);
-
-        const restoreResult = await shell.exec(restoreCmd, {
-          timeout: 600000,
-          onData: (chunk) => { appendLog(chunk); if (chunk.includes('done')) send(85, '正在完成导入...'); }
-        });
-        if (restoreResult.exitCode !== 0) throw new Error(`mongorestore 失败: ${restoreResult.stderr || restoreResult.stdout}`);
-      }
-
-      // Cleanup dump files
-      send(95, '正在清理临时文件...');
-      await shell.exec(`rm -rf ${dumpDir}`);
-
-      // Kill SSH tunnels if any
-      if (src.sshTunnel?.enabled || tgt.sshTunnel?.enabled) {
-        await shell.exec('pkill -f "ssh -f -N -L 271"').catch(() => {});
-      }
+      // Wait for both producer and consumer to finish
+      await Promise.all([producer.done, consumer.done]);
+      clearInterval(persistTimer);
 
       send(100, '迁移完成！');
       stateService.updateDataMigration(id, {
@@ -3092,10 +3269,10 @@ export function createBranchRouter(deps: RouterDeps): Router {
       });
       stateService.save();
       sendSSE(res, 'done', { message: '迁移完成' });
+      cleanup();
       res.end();
-
     } catch (e) {
-      const errMsg = (e as Error).message;
+      const errMsg = (e as Error).message || String(e);
       appendLog(`ERROR: ${errMsg}`);
       stateService.updateDataMigration(id, {
         status: 'failed',
@@ -3105,13 +3282,221 @@ export function createBranchRouter(deps: RouterDeps): Router {
       });
       stateService.save();
       sendSSE(res, 'error', { message: errMsg });
+      cleanup();
       res.end();
-
-      // Cleanup
-      await shell.exec(`rm -rf /tmp/cds-migration-${id}`).catch(() => {});
-      await shell.exec('pkill -f "ssh -f -N -L 271"').catch(() => {});
     }
   });
+
+  /**
+   * Build a producer that emits a `mongodump --archive --gzip` byte stream.
+   * Returns a handle with a readable `stdout`, a `done` promise, and `kill()`.
+   */
+  async function buildSourceProducer(
+    source: MongoConnectionConfig,
+    cols: string[] | undefined,
+    cb: {
+      appendLog: (s: string) => void;
+      onProgressLine: (line: string) => void;
+      send: (progress: number, message: string) => void;
+    },
+  ): Promise<{ stdout: NodeJS.ReadableStream; stdin?: NodeJS.WritableStream; done: Promise<void>; kill: () => void }> {
+    // ── CDS peer source ── fetch from peer's local-dump
+    if (source.type === 'cds') {
+      const peer = stateService.getCdsPeer(source.cdsPeerId || '');
+      if (!peer) throw new Error(`源 CDS 密钥不存在: ${source.cdsPeerId}`);
+      cb.send(8, `连接源 CDS 「${peer.name}」...`);
+      const peerRes = await peerRequest(peer, '/api/data-migrations/local-dump', 'POST', {
+        database: source.database,
+        collections: cols,
+      });
+      if ((peerRes.statusCode || 500) >= 400) {
+        const chunks: Buffer[] = [];
+        for await (const c of peerRes) chunks.push(c as Buffer);
+        throw new Error(`源 CDS 返回 ${peerRes.statusCode}: ${Buffer.concat(chunks).toString('utf-8').slice(0, 400)}`);
+      }
+      cb.appendLog(`[source] CDS peer ${peer.name} (${peer.baseUrl}) streaming`);
+      const done = new Promise<void>((resolve, reject) => {
+        peerRes.on('end', resolve);
+        peerRes.on('error', reject);
+      });
+      return {
+        stdout: peerRes,
+        done,
+        kill: () => { try { peerRes.destroy(); } catch { /* */ } },
+      };
+    }
+
+    // ── Local / remote via mongodump ──
+    const eff = source.type === 'local' ? resolveMongoConn(source) : source;
+    const dumpArgs = buildMongodumpArgs(
+      eff.host, eff.port,
+      { username: eff.username, password: eff.password, authDatabase: eff.authDatabase },
+      eff.database, cols,
+    );
+
+    let cmd: string;
+    let argv: string[];
+    if (source.sshTunnel?.enabled) {
+      cb.send(8, `通过 SSH 连接 ${source.sshTunnel.host}...`);
+      const sshBase = buildSshBase(source.sshTunnel);
+      const remoteCmd = buildRemoteMongoCmd('mongodump', dumpArgs, source.sshTunnel.dockerContainer);
+      cb.appendLog(`[source] ssh ${source.sshTunnel.username}@${source.sshTunnel.host}: ${remoteCmd}`);
+      cmd = 'ssh';
+      argv = [...sshBase, remoteCmd];
+    } else {
+      cb.appendLog(`[source] mongodump ${dumpArgs.join(' ')}`);
+      cmd = 'mongodump';
+      argv = dumpArgs;
+    }
+
+    const child = spawn(cmd, argv, { stdio: ['ignore', 'pipe', 'pipe'] });
+    let stderrTail = '';
+    child.stderr!.on('data', (d: Buffer) => {
+      const s = d.toString();
+      stderrTail = (stderrTail + s).slice(-2000);
+      for (const line of s.split('\n')) {
+        if (line) { cb.appendLog(`[dump] ${line}`); cb.onProgressLine(line); }
+      }
+    });
+    const done = new Promise<void>((resolve, reject) => {
+      child.on('close', (code) => {
+        if (code === 0) resolve();
+        else reject(new Error(`mongodump 失败 (exit ${code}): ${stderrTail.slice(-400)}`));
+      });
+      child.on('error', (err) => reject(new Error(`无法启动 mongodump: ${err.message}`)));
+    });
+    return {
+      stdout: child.stdout!,
+      done,
+      kill: () => { try { child.kill('SIGKILL'); } catch { /* */ } },
+    };
+  }
+
+  /**
+   * Build a consumer that accepts a `mongodump --archive --gzip` byte stream.
+   * Returns a handle with a writable `stdin`, a `done` promise, and `kill()`.
+   */
+  async function buildTargetConsumer(
+    target: MongoConnectionConfig,
+    source: MongoConnectionConfig,
+    cols: string[] | undefined,
+    cb: {
+      appendLog: (s: string) => void;
+      onProgressLine: (line: string) => void;
+      send: (progress: number, message: string) => void;
+    },
+  ): Promise<{ stdin: NodeJS.WritableStream; done: Promise<void>; kill: () => void }> {
+    // ── CDS peer target ──
+    if (target.type === 'cds') {
+      const peer = stateService.getCdsPeer(target.cdsPeerId || '');
+      if (!peer) throw new Error(`目标 CDS 密钥不存在: ${target.cdsPeerId}`);
+      cb.send(12, `连接目标 CDS 「${peer.name}」...`);
+      // Build URL with query params for target rename + collection filter
+      const qs = new URLSearchParams();
+      if (source.database) qs.set('sourceDb', source.database);
+      if (target.database) qs.set('targetDb', target.database);
+      if (cols && cols.length) qs.set('collections', cols.join(','));
+      const apiPath = '/api/data-migrations/local-restore' + (qs.toString() ? '?' + qs.toString() : '');
+      const url = new URL(peer.baseUrl.replace(/\/$/, '') + apiPath);
+      const lib = url.protocol === 'https:' ? https : http;
+      const httpReq = lib.request({
+        method: 'POST',
+        protocol: url.protocol,
+        hostname: url.hostname,
+        port: url.port || (url.protocol === 'https:' ? 443 : 80),
+        path: url.pathname + url.search,
+        headers: {
+          'X-AI-Access-Key': peer.accessKey,
+          'X-CDS-Peer-Call': '1',
+          'Content-Type': 'application/octet-stream',
+          // Chunked transfer (no Content-Length, just stream)
+          'Transfer-Encoding': 'chunked',
+        },
+        timeout: 0,
+      });
+      httpReq.setTimeout(0);
+      cb.appendLog(`[target] CDS peer ${peer.name} → ${apiPath}`);
+
+      const done = new Promise<void>((resolve, reject) => {
+        httpReq.on('response', (peerRes) => {
+          const chunks: Buffer[] = [];
+          peerRes.on('data', (d) => chunks.push(d as Buffer));
+          peerRes.on('end', () => {
+            const text = Buffer.concat(chunks).toString('utf-8');
+            try {
+              const j = JSON.parse(text);
+              if (j && j.log) for (const line of String(j.log).split('\n')) if (line) { cb.appendLog(`[restore] ${line}`); cb.onProgressLine(line); }
+            } catch { cb.appendLog(`[target] ${text.slice(0, 500)}`); }
+            if ((peerRes.statusCode || 500) >= 400) {
+              reject(new Error(`目标 CDS 返回 ${peerRes.statusCode}: ${text.slice(0, 400)}`));
+            } else {
+              resolve();
+            }
+          });
+          peerRes.on('error', reject);
+        });
+        httpReq.on('error', (err) => reject(new Error(`连接目标 CDS 失败: ${err.message}`)));
+      });
+
+      return {
+        stdin: httpReq,
+        done,
+        kill: () => { try { httpReq.destroy(); } catch { /* */ } },
+      };
+    }
+
+    // ── Local / remote via mongorestore ──
+    const eff = target.type === 'local' ? resolveMongoConn(target) : target;
+    const restoreArgs = buildMongorestoreArgs(
+      eff.host, eff.port,
+      { username: eff.username, password: eff.password, authDatabase: eff.authDatabase },
+      {
+        drop: true,
+        sourceDb: source.type !== 'cds' ? source.database : undefined,
+        targetDb: eff.database,
+        collections: cols,
+      },
+    );
+
+    let cmd: string;
+    let argv: string[];
+    if (target.sshTunnel?.enabled) {
+      cb.send(12, `通过 SSH 连接 ${target.sshTunnel.host}...`);
+      const sshBase = buildSshBase(target.sshTunnel);
+      const remoteCmd = buildRemoteMongoCmd('mongorestore', restoreArgs, target.sshTunnel.dockerContainer);
+      cb.appendLog(`[target] ssh ${target.sshTunnel.username}@${target.sshTunnel.host}: ${remoteCmd}`);
+      cmd = 'ssh';
+      argv = [...sshBase, remoteCmd];
+    } else {
+      cb.appendLog(`[target] mongorestore ${restoreArgs.join(' ')}`);
+      cmd = 'mongorestore';
+      argv = restoreArgs;
+    }
+
+    const child = spawn(cmd, argv, { stdio: ['pipe', 'pipe', 'pipe'] });
+    let stderrTail = '';
+    const mirror = (prefix: string) => (d: Buffer) => {
+      const s = d.toString();
+      stderrTail = (stderrTail + s).slice(-2000);
+      for (const line of s.split('\n')) {
+        if (line) { cb.appendLog(`[${prefix}] ${line}`); cb.onProgressLine(line); }
+      }
+    };
+    child.stderr!.on('data', mirror('restore'));
+    child.stdout!.on('data', mirror('restore'));
+    const done = new Promise<void>((resolve, reject) => {
+      child.on('close', (code) => {
+        if (code === 0) resolve();
+        else reject(new Error(`mongorestore 失败 (exit ${code}): ${stderrTail.slice(-400)}`));
+      });
+      child.on('error', (err) => reject(new Error(`无法启动 mongorestore: ${err.message}`)));
+    });
+    return {
+      stdin: child.stdin!,
+      done,
+      kill: () => { try { child.kill('SIGKILL'); } catch { /* */ } },
+    };
+  }
 
   // POST /api/data-migrations/:id/test-connection — test a MongoDB connection
   router.post('/data-migrations/test-connection', async (req, res) => {
@@ -3222,6 +3607,302 @@ export function createBranchRouter(deps: RouterDeps): Router {
     const migration = stateService.getDataMigration(req.params.id);
     if (!migration) { res.status(404).json({ error: '迁移任务不存在' }); return; }
     res.json({ log: migration.log || '' });
+  });
+
+  // POST /api/data-migrations/test-tunnel — verify an SSH tunnel config
+  // Runs `ssh user@host echo __cds_ok__` with the supplied credentials.
+  router.post('/data-migrations/test-tunnel', async (req, res) => {
+    const { sshTunnel } = req.body as { sshTunnel: MongoConnectionConfig['sshTunnel'] };
+    if (!sshTunnel || !sshTunnel.host || !sshTunnel.username) {
+      res.json({ success: false, error: '请填写 SSH 主机和用户名' });
+      return;
+    }
+    try {
+      const sshBase = buildSshBase(sshTunnel);
+      // Add 'echo __cds_ok__' as the remote command and enforce a 15s timeout on client side
+      const argv = [...sshBase, `echo __cds_ok__`];
+      const result = await new Promise<{ code: number; stdout: string; stderr: string }>((resolve) => {
+        const child = spawn('ssh', argv, { stdio: ['ignore', 'pipe', 'pipe'] });
+        let stdout = ''; let stderr = '';
+        const timer = setTimeout(() => { try { child.kill('SIGKILL'); } catch { /* */ } }, 15000);
+        child.stdout.on('data', (d) => { stdout += d.toString(); });
+        child.stderr.on('data', (d) => { stderr += d.toString(); });
+        child.on('close', (code) => { clearTimeout(timer); resolve({ code: code ?? 1, stdout, stderr }); });
+        child.on('error', (err) => { clearTimeout(timer); resolve({ code: 1, stdout, stderr: err.message }); });
+      });
+      if (result.code === 0 && result.stdout.includes('__cds_ok__')) {
+        // Optional: also check mongodump availability on the remote side
+        let mongoNote = '';
+        if (sshTunnel.dockerContainer) {
+          mongoNote = `（通过容器 ${sshTunnel.dockerContainer}）`;
+        } else {
+          const toolCheck = await new Promise<{ code: number; stdout: string }>((resolve) => {
+            const child = spawn('ssh', [...sshBase, 'which mongodump 2>/dev/null || echo NOT_FOUND'], { stdio: ['ignore', 'pipe', 'pipe'] });
+            let stdout = '';
+            const timer = setTimeout(() => { try { child.kill('SIGKILL'); } catch { /* */ } }, 10000);
+            child.stdout.on('data', (d) => { stdout += d.toString(); });
+            child.on('close', (code) => { clearTimeout(timer); resolve({ code: code ?? 1, stdout }); });
+            child.on('error', () => { clearTimeout(timer); resolve({ code: 1, stdout: '' }); });
+          });
+          if (toolCheck.stdout.includes('NOT_FOUND')) {
+            mongoNote = '（⚠ 远程未找到 mongodump；建议配置 docker 容器名）';
+          } else {
+            mongoNote = '（远程 mongodump 可用）';
+          }
+        }
+        res.json({ success: true, message: `SSH 连接成功 ${mongoNote}` });
+      } else {
+        res.json({ success: false, error: (result.stderr || 'SSH 连接失败').trim().slice(0, 400) });
+      }
+    } catch (e) {
+      res.json({ success: false, error: (e as Error).message });
+    }
+  });
+
+  // ─────────────────────────────────────────────────────────────────
+  //   CDS Peer Registry (one-click cross-CDS migration)
+  // ─────────────────────────────────────────────────────────────────
+
+  // GET /api/data-migrations/my-key — return this CDS's own access key so the user can copy it.
+  //
+  // Response:
+  //   { accessKey: string|null, baseUrl: string, label: string, hint: string }
+  //
+  // If no key is configured, `accessKey` is null and the caller can show a
+  // "set AI_ACCESS_KEY first" banner.
+  router.get('/data-migrations/my-key', (req, res) => {
+    const accessKey = getLocalAccessKey();
+    const baseUrl = guessLocalBaseUrl(req);
+    const label = `${baseUrl}`;
+    res.json({
+      accessKey,
+      baseUrl,
+      label,
+      hint: accessKey
+        ? '复制下面的 baseUrl + 访问密钥，在另一台 CDS 的「CDS 密钥管理」中添加即可双向迁移。'
+        : '当前 CDS 未设置 AI_ACCESS_KEY，请先在「设置 → 环境变量」中配置 AI_ACCESS_KEY 后再试。',
+    });
+  });
+
+  // GET /api/data-migrations/peers — list registered peers (access keys are returned masked)
+  router.get('/data-migrations/peers', (_req, res) => {
+    const peers = stateService.getCdsPeers().map(p => ({
+      ...p,
+      // Mask the key — show only last 6 chars so the user can recognize it without leaking it in HTTP logs
+      accessKey: p.accessKey ? `••••${p.accessKey.slice(-6)}` : '',
+    }));
+    res.json(peers);
+  });
+
+  // POST /api/data-migrations/peers — add a new peer. Auto-verifies by calling the peer's /my-key.
+  router.post('/data-migrations/peers', async (req, res) => {
+    const { name, baseUrl, accessKey } = req.body as { name?: string; baseUrl?: string; accessKey?: string };
+    if (!name || !baseUrl || !accessKey) {
+      res.status(400).json({ error: '缺少必填字段: name, baseUrl, accessKey' });
+      return;
+    }
+    try { new URL(baseUrl); } catch { res.status(400).json({ error: 'baseUrl 格式错误' }); return; }
+    const peer: CdsPeer = {
+      id: `peer-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`,
+      name,
+      baseUrl: baseUrl.replace(/\/$/, ''),
+      accessKey,
+      createdAt: new Date().toISOString(),
+    };
+    // Verify — call /my-key to confirm the access key works
+    try {
+      const probe = await peerRequestJson<{ baseUrl: string; accessKey: string | null }>(peer, '/api/data-migrations/my-key', 'GET');
+      peer.lastVerifiedAt = new Date().toISOString();
+      peer.remoteLabel = probe.baseUrl || baseUrl;
+    } catch (e) {
+      res.status(400).json({ error: `验证失败: ${(e as Error).message}` });
+      return;
+    }
+    stateService.addCdsPeer(peer);
+    stateService.save();
+    // Return masked version
+    res.json({ ...peer, accessKey: `••••${accessKey.slice(-6)}` });
+  });
+
+  // PUT /api/data-migrations/peers/:id — update peer (name / baseUrl / accessKey)
+  router.put('/data-migrations/peers/:id', async (req, res) => {
+    const { id } = req.params;
+    const existing = stateService.getCdsPeer(id);
+    if (!existing) { res.status(404).json({ error: 'CDS 密钥不存在' }); return; }
+    const { name, baseUrl, accessKey } = req.body as { name?: string; baseUrl?: string; accessKey?: string };
+    const updates: Partial<CdsPeer> = {};
+    if (name !== undefined) updates.name = name;
+    if (baseUrl !== undefined) updates.baseUrl = baseUrl.replace(/\/$/, '');
+    // Only update accessKey if caller provided a value that doesn't look masked (••••)
+    if (accessKey !== undefined && !accessKey.startsWith('•')) updates.accessKey = accessKey;
+    stateService.updateCdsPeer(id, updates);
+    stateService.save();
+    const updated = stateService.getCdsPeer(id)!;
+    res.json({ ...updated, accessKey: `••••${updated.accessKey.slice(-6)}` });
+  });
+
+  // DELETE /api/data-migrations/peers/:id
+  router.delete('/data-migrations/peers/:id', (req, res) => {
+    const { id } = req.params;
+    if (!stateService.getCdsPeer(id)) { res.status(404).json({ error: 'CDS 密钥不存在' }); return; }
+    stateService.removeCdsPeer(id);
+    stateService.save();
+    res.json({ message: '已删除' });
+  });
+
+  // POST /api/data-migrations/peers/:id/test — verify a peer's connectivity
+  router.post('/data-migrations/peers/:id/test', async (req, res) => {
+    const peer = stateService.getCdsPeer(req.params.id);
+    if (!peer) { res.status(404).json({ error: 'CDS 密钥不存在' }); return; }
+    try {
+      const probe = await peerRequestJson<{ baseUrl: string; accessKey: string | null }>(peer, '/api/data-migrations/my-key', 'GET');
+      stateService.updateCdsPeer(peer.id, { lastVerifiedAt: new Date().toISOString(), remoteLabel: probe.baseUrl });
+      stateService.save();
+      res.json({ success: true, remoteLabel: probe.baseUrl, verifiedAt: new Date().toISOString() });
+    } catch (e) {
+      res.json({ success: false, error: (e as Error).message });
+    }
+  });
+
+  // POST /api/data-migrations/peers/:id/list-databases — proxy to peer's list-databases for its local infra MongoDB
+  router.post('/data-migrations/peers/:id/list-databases', async (req, res) => {
+    const peer = stateService.getCdsPeer(req.params.id);
+    if (!peer) { res.status(404).json({ error: 'CDS 密钥不存在' }); return; }
+    try {
+      const result = await peerRequestJson<{ databases: Array<{ name: string; sizeOnDisk: number }>; error?: string }>(
+        peer,
+        '/api/data-migrations/list-databases',
+        'POST',
+        { connection: { type: 'local', host: '', port: 0 } },
+      );
+      res.json(result);
+    } catch (e) {
+      res.json({ databases: [], error: (e as Error).message });
+    }
+  });
+
+  // POST /api/data-migrations/peers/:id/list-collections — proxy list-collections for a database on the peer
+  router.post('/data-migrations/peers/:id/list-collections', async (req, res) => {
+    const peer = stateService.getCdsPeer(req.params.id);
+    if (!peer) { res.status(404).json({ error: 'CDS 密钥不存在' }); return; }
+    const { database } = req.body as { database?: string };
+    if (!database) { res.status(400).json({ error: '请指定 database' }); return; }
+    try {
+      const result = await peerRequestJson<{ collections: Array<{ name: string; count: number }>; error?: string }>(
+        peer,
+        '/api/data-migrations/list-collections',
+        'POST',
+        { connection: { type: 'local', host: '', port: 0, database } },
+      );
+      res.json(result);
+    } catch (e) {
+      res.json({ collections: [], error: (e as Error).message });
+    }
+  });
+
+  // ─────────────────────────────────────────────────────────────────
+  //   Streaming endpoints called by remote peers (auth-protected)
+  // ─────────────────────────────────────────────────────────────────
+
+  // POST /api/data-migrations/local-dump — streams mongodump bytes for this
+  // CDS's local infra MongoDB. Authorized via the standard CDS middleware
+  // (cds cookie / X-AI-Access-Key). Used by remote peers to pull data.
+  //
+  // Body: { database?: string, collections?: string[] }
+  router.post('/data-migrations/local-dump', async (req, res) => {
+    const body = (req.body || {}) as { database?: string; collections?: string[] };
+    let eff: MongoConnectionConfig;
+    try {
+      eff = resolveMongoConn({ type: 'local', host: '', port: 0, database: body.database });
+    } catch (e) {
+      res.status(500).json({ error: (e as Error).message });
+      return;
+    }
+    const dumpArgs = buildMongodumpArgs(
+      eff.host, eff.port,
+      {},
+      body.database,
+      body.collections,
+    );
+    res.writeHead(200, {
+      'Content-Type': 'application/octet-stream',
+      'Cache-Control': 'no-cache',
+      'X-Accel-Buffering': 'no',
+    });
+    const child = spawn('mongodump', dumpArgs, { stdio: ['ignore', 'pipe', 'pipe'] });
+    let stderrTail = '';
+    child.stderr.on('data', (d) => { stderrTail = (stderrTail + d.toString()).slice(-2000); });
+    child.stdout.pipe(res);
+    child.on('close', (code) => {
+      if (code !== 0) {
+        // We may already have sent headers — append a trailer-like marker
+        try { res.write(`\n__CDS_DUMP_ERROR__:${stderrTail.slice(-400)}`); } catch { /* */ }
+      }
+      try { res.end(); } catch { /* */ }
+    });
+    child.on('error', (err) => {
+      try {
+        if (!res.headersSent) res.status(500).json({ error: err.message });
+        else res.end();
+      } catch { /* */ }
+    });
+    // If the client disconnects, kill the dump
+    req.on('close', () => { try { child.kill('SIGKILL'); } catch { /* */ } });
+  });
+
+  // POST /api/data-migrations/local-restore — pipes request body into
+  // mongorestore against this CDS's local infra MongoDB.
+  //
+  // Query params: sourceDb, targetDb, collections (comma-separated)
+  router.post('/data-migrations/local-restore', async (req, res) => {
+    const sourceDb = (req.query.sourceDb as string | undefined) || undefined;
+    const targetDb = (req.query.targetDb as string | undefined) || undefined;
+    const colsParam = req.query.collections as string | undefined;
+    const collections = colsParam ? colsParam.split(',').filter(Boolean) : undefined;
+
+    let eff: MongoConnectionConfig;
+    try {
+      eff = resolveMongoConn({ type: 'local', host: '', port: 0, database: targetDb });
+    } catch (e) {
+      res.status(500).json({ error: (e as Error).message });
+      return;
+    }
+    const restoreArgs = buildMongorestoreArgs(
+      eff.host, eff.port,
+      {},
+      { drop: true, sourceDb, targetDb, collections },
+    );
+    const child = spawn('mongorestore', restoreArgs, { stdio: ['pipe', 'pipe', 'pipe'] });
+    let stderrTail = '';
+    const logLines: string[] = [];
+    const mirror = (d: Buffer) => {
+      const s = d.toString();
+      stderrTail = (stderrTail + s).slice(-4000);
+      for (const line of s.split('\n')) if (line) logLines.push(line);
+    };
+    child.stderr.on('data', mirror);
+    child.stdout.on('data', mirror);
+
+    // Pipe request body into mongorestore stdin
+    req.pipe(child.stdin);
+
+    // If the client aborts upload, kill the restore process
+    req.on('error', () => { try { child.kill('SIGKILL'); } catch { /* */ } });
+    req.on('close', () => {
+      // End of request body — close stdin so mongorestore can finish
+      try { child.stdin.end(); } catch { /* */ }
+    });
+
+    child.on('close', (code) => {
+      if (code === 0) {
+        res.json({ success: true, log: logLines.join('\n') });
+      } else {
+        res.status(500).json({ success: false, error: stderrTail.slice(-400) || `mongorestore exited ${code}`, log: logLines.join('\n') });
+      }
+    });
+    child.on('error', (err) => {
+      if (!res.headersSent) res.status(500).json({ success: false, error: err.message });
+    });
   });
 
   // GET /api/self-branches — list git branches of the CDS repo itself

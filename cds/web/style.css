@@ -3241,6 +3241,90 @@ a.branch-name:hover { color: var(--accent); }
 .migration-conn-panel .form-row { margin-bottom: 5px; }
 .migration-conn-panel .form-input { font-size: 12px; padding: 4px 8px; }
 
+/* mc-row / mc-input: strictly clamped rows for the connection form. */
+/* All inputs shrink freely (min-width: 0) so host + port never overflow the panel. */
+.mc-row {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 5px;
+  align-items: center;
+}
+.mc-input {
+  flex: 1 1 0;
+  min-width: 0;
+  box-sizing: border-box;
+  max-width: 100% !important;
+}
+.mc-host { flex: 2 1 0; }
+.mc-port { flex: 0 0 68px; max-width: 68px !important; }
+.mc-btn  { flex: 0 0 auto; white-space: nowrap; }
+
+/* CDS peer registry */
+.peer-mykey-box {
+  border: 1px dashed var(--border);
+  border-radius: 8px;
+  padding: 10px 12px;
+  background: var(--bg-tertiary);
+  margin-bottom: 10px;
+}
+.peer-mykey-title {
+  font-size: 12px;
+  font-weight: 600;
+  margin-bottom: 6px;
+  color: var(--fg-muted);
+}
+.peer-mykey-hint {
+  font-weight: 400;
+  font-size: 11px;
+  color: var(--fg-muted);
+}
+.peer-card {
+  display: flex;
+  gap: 10px;
+  padding: 10px 12px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  margin-bottom: 6px;
+  align-items: center;
+}
+.peer-card-main { flex: 1; min-width: 0; }
+.peer-card-name { font-size: 13px; font-weight: 600; }
+.peer-card-url {
+  font-size: 11px;
+  color: var(--fg-muted);
+  font-family: monospace;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.peer-card-meta {
+  font-size: 11px;
+  color: var(--fg-muted);
+  display: flex;
+  gap: 10px;
+  margin-top: 2px;
+}
+.peer-card-actions {
+  display: flex;
+  gap: 4px;
+  flex-shrink: 0;
+}
+.peer-card-actions .sm { font-size: 11px; padding: 2px 8px; }
+.peer-form {
+  margin-top: 10px;
+  padding: 10px 12px;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+.peer-form-title {
+  font-size: 12px;
+  font-weight: 600;
+  margin-bottom: 8px;
+  color: var(--fg-muted);
+}
+
 /* Collection picker */
 .coll-picker {
   border: 1px solid var(--border);
