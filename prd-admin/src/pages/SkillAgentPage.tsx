@@ -132,6 +132,7 @@ function CreateTab() {
   const [autoTestInput, setAutoTestInput] = useState<string | null>(null);
   const [autoTestResult, setAutoTestResult] = useState('');
   const [autoTestPhase, setAutoTestPhase] = useState<string | null>(null);
+  const [descOptimized, setDescOptimized] = useState<{ oldDescription: string; newDescription: string; score: number } | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
@@ -170,6 +171,10 @@ function CreateTab() {
       test_input: (raw: unknown) => {
         const d = raw as { input?: string };
         if (d.input) setAutoTestInput(d.input);
+      },
+      desc_optimized: (raw: unknown) => {
+        const d = raw as { oldDescription?: string; newDescription?: string; score?: number };
+        if (d.newDescription) setDescOptimized({ oldDescription: d.oldDescription ?? '', newDescription: d.newDescription, score: d.score ?? 0 });
       },
     },
   });
@@ -245,11 +250,11 @@ function CreateTab() {
   };
 
   const handleAdjust = () => {
-    // Go back to chat mode for iteration
     setSaved(false);
     setAutoTestInput(null);
     setAutoTestResult('');
     setAutoTestPhase(null);
+    setDescOptimized(null);
     setMessages((prev) => [...prev, { role: 'system', content: '请告诉我哪里需要调整，我会重新生成。' }]);
     setTimeout(() => inputRef.current?.focus(), 200);
   };
@@ -289,6 +294,7 @@ function CreateTab() {
     if (sessionId) deleteSkillAgentSession(sessionId);
     setSessionId(null); setMessages([]); setStages([]); setCurrentStageIndex(0);
     setSkillPreview(null); setInput(''); setSaved(false);
+    setAutoTestInput(null); setAutoTestResult(''); setAutoTestPhase(null); setDescOptimized(null);
     resetStream();
     initSession();
   };
@@ -451,6 +457,25 @@ function CreateTab() {
                   ) : null}
                 </div>
               </GlassCard>
+
+              {/* Description optimization result */}
+              {descOptimized && (
+                <GlassCard padding="sm" className="flex flex-col gap-1.5">
+                  <div className="flex items-center gap-1.5">
+                    <CheckCircle2 size={12} style={{ color: '#22C55E' }} />
+                    <span className="text-[11px] font-semibold" style={{ color: '#22C55E' }}>描述已自动优化</span>
+                    <span className="text-[10px] px-1.5 py-0.5 rounded-md ml-auto" style={{ background: 'rgba(34,197,94,0.1)', color: '#22C55E' }}>
+                      匹配率 {descOptimized.score}%
+                    </span>
+                  </div>
+                  {descOptimized.oldDescription !== descOptimized.newDescription && (
+                    <div className="text-[10px] leading-relaxed" style={{ color: 'var(--text-muted)' }}>
+                      <span style={{ textDecoration: 'line-through', opacity: 0.5 }}>{descOptimized.oldDescription}</span>
+                      <br />→ {descOptimized.newDescription}
+                    </div>
+                  )}
+                </GlassCard>
+              )}
 
               {/* Feedback buttons */}
               {!testStreaming && autoTestResult && (

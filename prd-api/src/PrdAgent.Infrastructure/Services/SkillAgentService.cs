@@ -272,6 +272,173 @@ public class SkillAgentService
         {
             yield return chunk;
         }
+
+        // Step 3: Optimize description for better trigger matching
+        yield return new SseChunk("phase", new { message = "正在优化技能描述…" });
+
+        var optimizeResult = await OptimizeDescriptionAsync(skill, session.Intent ?? "", userId);
+        if (optimizeResult != null)
+        {
+            // Update the draft and persist
+            var oldDesc = skill.Description;
+            skill.Description = optimizeResult.BestDescription;
+
+            // Try to update in DB if already saved
+            await _skillService.UpdatePersonalSkillAsync(userId, skill.SkillKey, skill);
+
+            yield return new SseChunk("desc_optimized", new
+            {
+                oldDescription = oldDesc,
+                newDescription = optimizeResult.BestDescription,
+                score = optimizeResult.BestScore,
+                candidates = optimizeResult.CandidateCount,
+            });
+        }
+    }
+
+    // ━━━ Description Optimization ━━━━━━━━
+
+    /// <summary>
+    /// Optimize skill description: generate 3 candidates + 5 test queries → score matrix → pick best
+    /// </summary>
+    private async Task<DescriptionOptimizeResult?> OptimizeDescriptionAsync(Skill skill, string intent, string userId)
+    {
+        var appCallerCode = AppCallerRegistry.SkillAgent.Guide.Chat;
+        var requestId = Guid.NewGuid().ToString();
+
+        using var _ = _llmRequestContext.BeginScope(new LlmRequestContext(
+            RequestId: requestId,
+            GroupId: null,
+            SessionId: null,
+            UserId: userId,
+            ViewRole: null,
+            DocumentChars: null,
+            DocumentHash: null,
+            SystemPromptRedacted: "skill-agent-desc-optimize",
+            RequestType: "skill-agent-desc-optimize",
+            AppCallerCode: appCallerCode));
+
+        try
+        {
+            // Call 1: Generate 3 candidate descriptions + 5 test queries
+            var llmClient = _gateway.CreateClient(appCallerCode, "chat", maxTokens: 2048, temperature: 0.5);
+
+            var genPrompt = $@"你是一个技能匹配优化专家。用户有一个技能：
+
+名称：{skill.Title}
+意图：{intent}
+当前描述：{skill.Description}
+
+请输出 JSON（不要代码块包裹）：
+{{
+  ""candidates"": [
+    ""简洁型描述：一句话直奔功能"",
+    ""场景型描述：描述用户典型使用场景，如'当你收到XX需要快速YY时'"",
+    ""激进型描述：尽可能覆盖多种触发词和使用场景""
+  ],
+  ""queries"": [
+    ""用户可能怎么搜/说来触发这个技能的5条模拟查询（口语化、有细节）""
+  ]
+}}
+
+3 个候选描述风格各异但都准确，5 条查询要像真实用户说的话（不是抽象关键词）。";
+
+            var genMessages = new List<LLMMessage> { new() { Role = "user", Content = genPrompt } };
+            var genResult = new StringBuilder();
+            await foreach (var chunk in llmClient.StreamGenerateAsync(
+                "输出纯 JSON，不要解释。", genMessages, false, CancellationToken.None))
+            {
+                if (chunk.Type == "delta" && !string.IsNullOrEmpty(chunk.Content))
+                    genResult.Append(chunk.Content);
+            }
+
+            var genJson = genResult.ToString().Trim();
+            // Strip markdown code block if present
+            if (genJson.StartsWith("```")) genJson = genJson.Split('\n', 2).Length > 1
+                ? genJson.Split('\n', 2)[1] : genJson;
+            if (genJson.EndsWith("```")) genJson = genJson[..genJson.LastIndexOf("```", StringComparison.Ordinal)];
+            genJson = genJson.Trim();
+
+            using var genDoc = JsonDocument.Parse(genJson);
+            var candidates = genDoc.RootElement.GetProperty("candidates")
+                .EnumerateArray().Select(e => e.GetString() ?? "").Where(s => s.Length > 0).ToList();
+            var queries = genDoc.RootElement.GetProperty("queries")
+                .EnumerateArray().Select(e => e.GetString() ?? "").Where(s => s.Length > 0).ToList();
+
+            if (candidates.Count == 0 || queries.Count == 0) return null;
+
+            // Include the original description as a candidate
+            candidates.Insert(0, skill.Description);
+
+            // Call 2: Score each candidate against each query
+            var scoreClient = _gateway.CreateClient(appCallerCode, "chat", maxTokens: 1024, temperature: 0.1);
+
+            var scorePrompt = $@"你是技能匹配引擎。给每个描述对每条查询打匹配分（0-10，10=完美匹配）。
+
+描述列表：
+{string.Join("\n", candidates.Select((c, i) => $"{i}: {c}"))}
+
+查询列表：
+{string.Join("\n", queries.Select((q, i) => $"{i}: {q}"))}
+
+输出 JSON（不要代码块）：
+{{""scores"": [[描述0对查询0的分, 描述0对查询1的分, ...], [描述1对查询0的分, ...], ...]}}";
+
+            var scoreMessages = new List<LLMMessage> { new() { Role = "user", Content = scorePrompt } };
+            var scoreResult = new StringBuilder();
+            await foreach (var chunk in scoreClient.StreamGenerateAsync(
+                "输出纯 JSON。", scoreMessages, false, CancellationToken.None))
+            {
+                if (chunk.Type == "delta" && !string.IsNullOrEmpty(chunk.Content))
+                    scoreResult.Append(chunk.Content);
+            }
+
+            var scoreJson = scoreResult.ToString().Trim();
+            if (scoreJson.StartsWith("```")) scoreJson = scoreJson.Split('\n', 2).Length > 1
+                ? scoreJson.Split('\n', 2)[1] : scoreJson;
+            if (scoreJson.EndsWith("```")) scoreJson = scoreJson[..scoreJson.LastIndexOf("```", StringComparison.Ordinal)];
+            scoreJson = scoreJson.Trim();
+
+            using var scoreDoc = JsonDocument.Parse(scoreJson);
+            var scoresArray = scoreDoc.RootElement.GetProperty("scores");
+
+            // Calculate total score for each candidate
+            var bestIdx = 0;
+            var bestTotal = 0.0;
+            var idx = 0;
+            foreach (var row in scoresArray.EnumerateArray())
+            {
+                var total = row.EnumerateArray().Sum(v => v.TryGetDouble(out var d) ? d : 0);
+                if (total > bestTotal) { bestTotal = total; bestIdx = idx; }
+                idx++;
+            }
+
+            var bestDesc = candidates[bestIdx];
+            var maxPossible = queries.Count * 10.0;
+
+            _logger.LogInformation(
+                "[skill-agent] Description optimized for {SkillKey}: picked candidate {Idx} with score {Score}/{Max}",
+                skill.SkillKey, bestIdx, bestTotal, maxPossible);
+
+            return new DescriptionOptimizeResult
+            {
+                BestDescription = bestDesc,
+                BestScore = Math.Round(bestTotal / maxPossible * 100),
+                CandidateCount = candidates.Count,
+            };
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "[skill-agent] Description optimization failed for {SkillKey}, skipping", skill.SkillKey);
+            return null;
+        }
+    }
+
+    private class DescriptionOptimizeResult
+    {
+        public string BestDescription { get; set; } = "";
+        public double BestScore { get; set; }
+        public int CandidateCount { get; set; }
     }
 
     /// <summary>
