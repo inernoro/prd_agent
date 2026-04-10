@@ -352,7 +352,7 @@ public class SkillAgentController : ControllerBase
         // Get author info
         var user = await _db.Users.Find(u => u.Id == userId).FirstOrDefaultAsync(ct);
         var authorName = GetUsername() ?? user?.DisplayName ?? "匿名用户";
-        var authorAvatar = user?.Avatar;
+        var authorAvatar = user?.AvatarFileName;
 
         var update = Builders<Skill>.Update
             .Set(s => s.IsPublic, true)
