@@ -278,33 +278,41 @@ slices:
       {
         key: 'token',
         title: '配置 GitHub Token',
+        required: true,
         done: Boolean(setupStatus?.githubTokenConfigured),
       },
       {
         key: 'repo',
         title: '绑定目标仓库',
+        required: true,
         done: isBindingRepoValid,
       },
       {
         key: 'topDesign',
-        title: '落地顶层设计依据',
+        title: '可选：落地顶层设计依据',
+        required: false,
         done: Boolean(setupStatus?.topDesign.ready),
       },
       {
         key: 'verify',
         title: '验证后开始审查',
-        done: Boolean(setupStatus?.readyForFullRefresh),
+        required: true,
+        done: Boolean(setupStatus?.githubTokenConfigured) && isBindingRepoValid,
       },
     ],
     [isBindingRepoValid, setupStatus]
   );
-  const onboardingDoneCount = useMemo(
-    () => onboardingSteps.filter(x => x.done).length,
+  const requiredOnboardingSteps = useMemo(
+    () => onboardingSteps.filter(x => x.required),
     [onboardingSteps]
   );
+  const onboardingDoneCount = useMemo(
+    () => requiredOnboardingSteps.filter(x => x.done).length,
+    [requiredOnboardingSteps]
+  );
   const onboardingProgressPercent = useMemo(
-    () => Math.round((onboardingDoneCount / onboardingSteps.length) * 100),
-    [onboardingDoneCount, onboardingSteps.length]
+    () => Math.round((onboardingDoneCount / Math.max(1, requiredOnboardingSteps.length)) * 100),
+    [onboardingDoneCount, requiredOnboardingSteps.length]
   );
   const submissionBlockReason = useMemo(() => {
     if (canSubmitPr) {
@@ -1129,7 +1137,10 @@ slices:
                   当前仓库参数会自动保存，下次切回该仓库时自动恢复 owner/context/anchor。
                 </p>
               )}
-              <p className="mt-2 font-medium">Step 3 / 4：执行该仓库初始化命令</p>
+              <p className="mt-2 font-medium">Step 3 / 4（可选增强）：落地顶层设计依据（不阻塞接入）</p>
+              <p className="mt-1 text-[11px] text-amber-200/80">
+                这一步不是新仓库接入的必要条件。你可以先完成接入并开始审查，后续再持续调整该仓库的顶层设计依据。
+              </p>
               <div className="mt-2 grid grid-cols-1 md:grid-cols-3 gap-2">
                 <div>
                   <p className="text-[11px] text-amber-100/80 mb-1">仓库 owner</p>
@@ -1165,11 +1176,11 @@ slices:
               <code className="block mt-1 rounded bg-black/25 px-2 py-1 whitespace-pre-wrap break-all">
                 {repoScopedBootstrapCommand}
               </code>
-              <p className="mt-2 font-medium">将仓库条目写入 repo-bindings.yml</p>
+              <p className="mt-2 font-medium">可选：将仓库条目写入 repo-bindings.yml（后续可随时调整）</p>
               <code className="block mt-1 rounded bg-black/25 px-2 py-1 whitespace-pre-wrap break-all">
                 {repoBindingSnippet || '# 先填写 owner/repo 后生成'}
               </code>
-              <p className="mt-2 font-medium">Step 4 / 4：重新检测接入状态后提交 PR 审查</p>
+              <p className="mt-2 font-medium">Step 4 / 4：完成接入校验并开始审查</p>
               <div className="mt-2 flex flex-wrap gap-2">
                 <button
                   type="button"
@@ -1188,14 +1199,29 @@ slices:
                 </button>
                 <button
                   type="button"
-                  disabled={!canSubmitPr}
+                  disabled={!tokenConfig?.tokenConfigured || !isBindingRepoValid}
                   onClick={() => {
+                    if (!tokenConfig?.tokenConfigured || !isBindingRepoValid) {
+                      setSetupActionMessage('请先完成 Step1（Token）和 Step2（仓库绑定）');
+                      return;
+                    }
                     setShowOnboardingWizard(false);
-                    setSetupActionMessage('接入已完成，可以提交 PR 审查了');
+                    setSetupActionMessage('新仓库接入已完成（Step1+Step2），可以立即提交 PR 审查');
                   }}
                   className="inline-flex items-center gap-1 rounded border border-emerald-300/40 bg-emerald-500/20 px-2.5 py-1 text-[11px] text-emerald-100 hover:bg-emerald-500/25 whitespace-nowrap disabled:opacity-50"
                 >
-                  开始审查
+                  完成接入（不含顶设）
+                </button>
+                <button
+                  type="button"
+                  disabled={!canSubmitPr}
+                  onClick={() => {
+                    setShowOnboardingWizard(false);
+                    setSetupActionMessage('接入已完成（含顶设基线），可以提交 PR 审查了');
+                  }}
+                  className="inline-flex items-center gap-1 rounded border border-emerald-300/40 bg-emerald-500/20 px-2.5 py-1 text-[11px] text-emerald-100 hover:bg-emerald-500/25 whitespace-nowrap disabled:opacity-50"
+                >
+                  开始审查（含顶设）
                 </button>
               </div>
               {setupActionMessage && <p className="mt-2 text-[11px] text-emerald-200">{setupActionMessage}</p>}

@@ -40,6 +40,7 @@
 | feat | prd-admin | 首页仅保留一个 PR审查棱镜主图入口，移除快捷条重复入口并补充专属主图插画 |
 | feat | prd-admin | PR审查棱镜将“新仓库接入向导”改为从“我的仓库”点击新增后展开，并收敛为充分必要按钮（导出Skill包/重新检测/开始审查） |
 | feat | prd-admin | PR审查棱镜新增仓库级接入状态卡（Token/顶设/可审查）与接入完成自动回流（入库、选中、收起向导） |
+| fix | prd-admin | 新仓库接入向导调整为“Step3 顶设可选增强且不阻塞接入”，Step4 支持仅凭 Token+仓库绑定完成有效接入并开始审查 |
 | feat | prd-api | PR审查棱镜新增 token-config 读写接口，支持页面内配置 GitHub Token（AppSettings 加密存储 + 脱敏回显） |
 | feat | prd-api | PR审查棱镜 GitHub 拉取逻辑改为优先读取 AppSettings Token，缺省回退环境变量，兼容旧部署方式 |
 | feat | prd-admin | PR审查棱镜接入向导 Step1 新增 Token 输入与保存，支持来源提示、脱敏状态、无权限提示与一键重新检测 |
