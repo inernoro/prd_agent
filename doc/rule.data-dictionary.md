@@ -95,6 +95,15 @@
 | `defect_fix_reports` | `DefectFixReport` | 外部 Agent 提交的缺陷修复分析报告（含逐条可信度评分 + 接受/拒绝审核流程） | `shareLinkId`；`shareToken` |
 | `hosted_sites` | `HostedSite` | 托管站点（用户上传 HTML/ZIP 或工作流生成的可运行网页） | `(ownerUserId, createdAt desc)`；`tags` 多值索引；`(ownerUserId, sourceType)`；`(ownerUserId, folder)` |
 | `web_page_share_links` | `WebPageShareLink` | 网页分享链接（Token + 密码保护 + 过期时间） | `token` 唯一；`(createdBy, createdAt desc)` |
+| `document_stores` | `DocumentStore` | 知识库（文档空间）主记录：名称/描述/tags/是否公开/主文档/置顶/点赞收藏计数 | （未显式创建额外索引；owner 查询走 `OwnerId`） |
+| `document_entries` | `DocumentEntry` | 知识库内的文档条目：文件/文件夹/订阅源；含 `sourceType`(upload/subscription/github_directory)、同步字段（`SyncIntervalMinutes` / `LastSyncAt` / `IsPaused` / `ContentHash` / `LastETag` / `LastChangedAt`）、软链到 `ParsedPrd.Id` / `attachments.Id` | （未显式创建额外索引；按 `StoreId`、`ParentId` 查询） |
+| `document_sync_logs` | `DocumentSyncLog` | 知识库订阅同步日志（**只记录 change / error 事件**，无变化不落库）。GitHub 目录类型含 `FileChanges: [{path, action}]` | （按 `EntryId`、`SyncedAt desc` 查询） |
+| `document_store_likes` | `DocumentStoreLike` | 知识库点赞记录（快照作者名+头像） | `(StoreId, UserId)` 去重 |
+| `document_store_favorites` | `DocumentStoreFavorite` | 知识库收藏记录 | `(StoreId, UserId)` 去重 |
+| `document_store_share_links` | `DocumentStoreShareLink` | 知识库分享链接（Token + 过期时间 + 访问计数） | `token` 唯一；`StoreId` |
+| `document_store_agent_runs` | `DocumentStoreAgentRun` | 知识库 Agent 任务（`Kind`: subtitle 字幕生成 / reprocess 文档再加工）。含 Run 状态机、流式产物、模板 key、自定义提示词 | （按 `SourceEntryId`、`Kind`、`Status` 查询；事件流走 `IRunEventStore`） |
+| `document_store_view_events` | `DocumentStoreViewEvent` | 知识库浏览事件（谁访问了哪篇文档、停留多久）。含匿名访客 `AnonSessionToken`、`EnteredAt`、`LeftAt`、`DurationMs`、`UserAgent`、`Referer` | （按 `StoreId`、`EnteredAt desc` 查询） |
+| `document_inline_comments` | `DocumentInlineComment` | 文档划词评论（按 `SelectedText + ContextBefore/After` 锚定，非整章评论）。`Status`: active/orphaned；正文更新时由 `InlineCommentRebinder.TryRebind` 重锚定 | （按 `EntryId`、`CreatedAt` 查询） |
 
 ---
 

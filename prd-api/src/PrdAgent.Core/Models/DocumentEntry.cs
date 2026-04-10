@@ -67,6 +67,21 @@ public class DocumentEntry
     /// <summary>同步错误信息</summary>
     public string? SyncError { get; set; }
 
+    /// <summary>是否已暂停订阅（true 时 Worker 跳过该条目）</summary>
+    public bool IsPaused { get; set; }
+
+    /// <summary>正文内容 SHA256（hex），用于跨次同步对比是否变化，避免无意义写库</summary>
+    public string? ContentHash { get; set; }
+
+    /// <summary>HTTP ETag 头（用于条件请求 If-None-Match，避免重复拉取被封控）</summary>
+    public string? LastETag { get; set; }
+
+    /// <summary>HTTP Last-Modified 头（用于条件请求 If-Modified-Since）</summary>
+    public string? LastModifiedHeader { get; set; }
+
+    /// <summary>最近一次"内容真正发生变化"的时间（用于 UI 显示 (new) 徽标）</summary>
+    public DateTime? LastChangedAt { get; set; }
+
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;

@@ -21,6 +21,7 @@ import {
   Pencil,
   Heart,
   Bookmark,
+  Users,
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { GlassCard } from '@/components/design/GlassCard';
@@ -64,6 +65,11 @@ import type {
 } from '@/services/contracts/documentStore';
 import type { DocBrowserEntry, EntryPreview } from '@/components/doc-browser/DocBrowser';
 import { toast } from '@/lib/toast';
+import { systemDialog } from '@/lib/systemDialog';
+import { SubscriptionDetailDrawer } from './SubscriptionDetailDrawer';
+import { SubtitleGenerationDrawer } from './SubtitleGenerationDrawer';
+import { ReprocessDrawer } from './ReprocessDrawer';
+import { ViewersDrawer } from './ViewersDrawer';
 
 const ACCEPT_TYPES = '.md,.txt,.pdf,.doc,.docx,.json,.yaml,.yml,.csv';
 
@@ -543,7 +549,14 @@ function StoreDetailView({ storeId, onBack }: {
   const [selectedEntryId, setSelectedEntryId] = useState<string | undefined>(undefined);
   const [showSubscribe, setShowSubscribe] = useState(false);
   const [showShareDialog, setShowShareDialog] = useState(false);
+  const [showViewers, setShowViewers] = useState(false);
   const [publishing, setPublishing] = useState(false);
+  /** 当前打开的订阅详情 entryId（null = 未打开） */
+  const [subscriptionDetailId, setSubscriptionDetailId] = useState<string | null>(null);
+  /** 当前打开的字幕生成 Drawer 目标 entry（null = 未打开） */
+  const [subtitleTarget, setSubtitleTarget] = useState<{ id: string; title: string } | null>(null);
+  /** 当前打开的再加工 Drawer 目标 entry（null = 未打开） */
+  const [reprocessTarget, setReprocessTarget] = useState<{ id: string; title: string } | null>(null);
 
   // 文件上传状态
   const [uploading, setUploading] = useState(false);
@@ -798,6 +811,9 @@ function StoreDetailView({ storeId, onBack }: {
               {publishing ? <MapSpinner size={11} /> : (store.isPublic ? <Globe size={11} /> : <GlobeLock size={11} />)}
               {store.isPublic ? '已发布' : '发布到智识殿堂'}
             </button>
+            <Button variant="secondary" size="xs" onClick={() => setShowViewers(true)}>
+              <Users size={13} /> 访客
+            </Button>
             <Button variant="secondary" size="xs" onClick={() => setShowShareDialog(true)}>
               <Share2 size={13} /> 分享
             </Button>
@@ -841,6 +857,15 @@ function StoreDetailView({ storeId, onBack }: {
           onCreateDocument={handleCreateDocument}
           onUploadFile={() => fileInputRef.current?.click()}
           onSearch={handleSearch}
+          onOpenSubscription={(id) => setSubscriptionDetailId(id)}
+          onGenerateSubtitle={(id) => {
+            const entry = entries.find(e => e.id === id);
+            if (entry) setSubtitleTarget({ id, title: entry.title });
+          }}
+          onReprocess={(id) => {
+            const entry = entries.find(e => e.id === id);
+            if (entry) setReprocessTarget({ id, title: entry.title });
+          }}
           loading={loading}
           emptyState={
             <div className="flex-1 flex flex-col items-center justify-center py-16">
@@ -871,6 +896,50 @@ function StoreDetailView({ storeId, onBack }: {
           storeName={store.name}
           isPublic={store.isPublic}
           onClose={() => setShowShareDialog(false)}
+        />
+      )}
+
+      {/* 订阅详情抽屉 */}
+      {subscriptionDetailId && (
+        <SubscriptionDetailDrawer
+          entryId={subscriptionDetailId}
+          onClose={() => setSubscriptionDetailId(null)}
+          onChanged={() => loadEntries()}
+        />
+      )}
+
+      {/* 字幕生成抽屉 */}
+      {subtitleTarget && (
+        <SubtitleGenerationDrawer
+          entryId={subtitleTarget.id}
+          entryTitle={subtitleTarget.title}
+          onClose={() => setSubtitleTarget(null)}
+          onDone={(newId) => {
+            loadEntries();
+            setSelectedEntryId(newId);
+          }}
+        />
+      )}
+
+      {/* 文档再加工抽屉 */}
+      {reprocessTarget && (
+        <ReprocessDrawer
+          entryId={reprocessTarget.id}
+          entryTitle={reprocessTarget.title}
+          onClose={() => setReprocessTarget(null)}
+          onDone={(newId) => {
+            loadEntries();
+            setSelectedEntryId(newId);
+          }}
+        />
+      )}
+
+      {/* 访客记录抽屉（批次 C） */}
+      {showViewers && (
+        <ViewersDrawer
+          storeId={storeId}
+          storeName={store.name}
+          onClose={() => setShowViewers(false)}
         />
       )}
     </div>
@@ -1342,8 +1411,22 @@ export function DocumentStorePage() {
                         title="删除空间"
                         onClick={async (e) => {
                           e.stopPropagation();
+                          const entryCount = s.documentCount ?? 0;
+                          const confirmed = await systemDialog.confirm({
+                            title: '确认删除知识库',
+                            message: `删除「${s.name}」将永久清除：\n  · ${entryCount} 个文档条目\n  · 所有订阅同步日志\n  · 所有附件文件与解析正文\n  · 所有点赞 / 收藏 / 分享链接\n\n此操作不可恢复。`,
+                            tone: 'danger',
+                            confirmText: '永久删除',
+                            cancelText: '取消',
+                          });
+                          if (!confirmed) return;
                           const res = await deleteDocumentStore(s.id);
-                          if (res.success) setStores(prev => prev.filter(x => x.id !== s.id));
+                          if (res.success) {
+                            setStores(prev => prev.filter(x => x.id !== s.id));
+                            toast.success('知识库已删除', '关联数据已全部清理');
+                          } else {
+                            toast.error('删除失败', res.error?.message);
+                          }
                         }}
                         style={{ color: 'rgba(239,68,68,0.5)' }}>
                         <Trash2 size={12} />

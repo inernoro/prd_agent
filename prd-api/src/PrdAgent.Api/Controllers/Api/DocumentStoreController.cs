@@ -9,6 +9,7 @@ using PrdAgent.Infrastructure.Database;
 using PrdAgent.Infrastructure.Services;
 using PrdAgent.Api.Services;
 using PrdAgent.Infrastructure.Services.AssetStorage;
+using DocStoreServices = PrdAgent.Infrastructure.Services.DocumentStore;
 
 namespace PrdAgent.Api.Controllers.Api;
 
@@ -26,22 +27,30 @@ public class DocumentStoreController : ControllerBase
     private readonly IAssetStorage _assetStorage;
     private readonly IFileContentExtractor _fileContentExtractor;
     private readonly IDocumentService _documentService;
+    private readonly IRunEventStore _runEventStore;
     private readonly ILogger<DocumentStoreController> _logger;
 
     /// <summary>20 MB per file</summary>
     private const long MaxUploadBytes = 20 * 1024 * 1024;
+
+    private static readonly System.Text.Json.JsonSerializerOptions AgentRunJsonOptions = new()
+    {
+        PropertyNamingPolicy = System.Text.Json.JsonNamingPolicy.CamelCase,
+    };
 
     public DocumentStoreController(
         MongoDbContext db,
         IAssetStorage assetStorage,
         IFileContentExtractor fileContentExtractor,
         IDocumentService documentService,
+        IRunEventStore runEventStore,
         ILogger<DocumentStoreController> logger)
     {
         _db = db;
         _assetStorage = assetStorage;
         _fileContentExtractor = fileContentExtractor;
         _documentService = documentService;
+        _runEventStore = runEventStore;
         _logger = logger;
     }
 
@@ -172,7 +181,7 @@ public class DocumentStoreController : ControllerBase
         return Ok(ApiResponse<object>.Ok(new { primaryEntryId = request.EntryId }));
     }
 
-    /// <summary>删除文档空间（同时删除空间内所有条目）</summary>
+    /// <summary>删除文档空间（级联清理所有关联数据）</summary>
     [HttpDelete("stores/{storeId}")]
     public async Task<IActionResult> DeleteStore(string storeId)
     {
@@ -181,14 +190,60 @@ public class DocumentStoreController : ControllerBase
         if (store == null)
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "文档空间不存在"));
 
-        // 删除空间内所有条目
-        var deleteResult = await _db.DocumentEntries.DeleteManyAsync(e => e.StoreId == storeId);
+        // 1) 先拿到所有条目，收集正文/附件 ID 列表
+        var entries = await _db.DocumentEntries.Find(e => e.StoreId == storeId).ToListAsync();
+        var documentIds = entries.Where(e => !string.IsNullOrEmpty(e.DocumentId)).Select(e => e.DocumentId!).ToList();
+        var attachmentIds = entries.Where(e => !string.IsNullOrEmpty(e.AttachmentId)).Select(e => e.AttachmentId!).ToList();
+
+        // 2) 级联清理关联数据（顺序不敏感，失败任何一步都不回滚——MongoDB 无事务）
+        var entriesResult = await _db.DocumentEntries.DeleteManyAsync(e => e.StoreId == storeId);
+        var syncLogsResult = await _db.DocumentSyncLogs.DeleteManyAsync(l => l.StoreId == storeId);
+        var likesResult = await _db.DocumentStoreLikes.DeleteManyAsync(l => l.StoreId == storeId);
+        var favoritesResult = await _db.DocumentStoreFavorites.DeleteManyAsync(f => f.StoreId == storeId);
+        var shareLinksResult = await _db.DocumentStoreShareLinks.DeleteManyAsync(s => s.StoreId == storeId);
+        var viewEventsResult = await _db.DocumentStoreViewEvents.DeleteManyAsync(v => v.StoreId == storeId);
+        var inlineCommentsResult = await _db.DocumentInlineComments.DeleteManyAsync(c => c.StoreId == storeId);
+        var agentRunsResult = await _db.DocumentStoreAgentRuns.DeleteManyAsync(r => r.StoreId == storeId);
+
+        // 正文：只有通过此 Store 关联的 ParsedPrd 才删（其他模块可能也引用 documents 集合，所以按 ID 列表删）
+        long documentsDeleted = 0;
+        if (documentIds.Count > 0)
+        {
+            var res = await _db.Documents.DeleteManyAsync(d => documentIds.Contains(d.Id));
+            documentsDeleted = res.DeletedCount;
+        }
+
+        // 附件
+        long attachmentsDeleted = 0;
+        if (attachmentIds.Count > 0)
+        {
+            var res = await _db.Attachments.DeleteManyAsync(a => attachmentIds.Contains(a.AttachmentId));
+            attachmentsDeleted = res.DeletedCount;
+        }
+
+        // 3) 最后删 store 自身
         await _db.DocumentStores.DeleteOneAsync(s => s.Id == storeId);
 
-        _logger.LogInformation("[document-store] Store deleted: {StoreId} with {Count} entries by {UserId}",
-            storeId, deleteResult.DeletedCount, userId);
+        _logger.LogInformation(
+            "[document-store] Store cascaded deleted: {StoreId} by {UserId} | entries={Entries} syncLogs={Logs} docs={Docs} attachments={Atts} likes={Likes} favorites={Favs} shareLinks={Links} views={Views} inlineComments={Comments} agentRuns={Runs}",
+            storeId, userId, entriesResult.DeletedCount, syncLogsResult.DeletedCount,
+            documentsDeleted, attachmentsDeleted,
+            likesResult.DeletedCount, favoritesResult.DeletedCount, shareLinksResult.DeletedCount,
+            viewEventsResult.DeletedCount, inlineCommentsResult.DeletedCount, agentRunsResult.DeletedCount);
 
-        return Ok(ApiResponse<object>.Ok(new { deletedEntries = deleteResult.DeletedCount }));
+        return Ok(ApiResponse<object>.Ok(new
+        {
+            deletedEntries = entriesResult.DeletedCount,
+            deletedSyncLogs = syncLogsResult.DeletedCount,
+            deletedDocuments = documentsDeleted,
+            deletedAttachments = attachmentsDeleted,
+            deletedLikes = likesResult.DeletedCount,
+            deletedFavorites = favoritesResult.DeletedCount,
+            deletedShareLinks = shareLinksResult.DeletedCount,
+            deletedViewEvents = viewEventsResult.DeletedCount,
+            deletedInlineComments = inlineCommentsResult.DeletedCount,
+            deletedAgentRuns = agentRunsResult.DeletedCount,
+        }));
     }
 
     // ─────────────────────────────────────────────
@@ -410,7 +465,7 @@ public class DocumentStoreController : ControllerBase
         return Ok(ApiResponse<DocumentEntry>.Ok(updated!));
     }
 
-    /// <summary>删除文档条目</summary>
+    /// <summary>删除文档条目（级联清理同步日志 + 正文 + 附件；文件夹会级联删除子条目）</summary>
     [HttpDelete("entries/{entryId}")]
     public async Task<IActionResult> DeleteEntry(string entryId)
     {
@@ -423,19 +478,90 @@ public class DocumentStoreController : ControllerBase
         if (store == null)
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "文档条目不存在"));
 
-        await _db.DocumentEntries.DeleteOneAsync(e => e.Id == entryId);
+        // 收集要级联清理的条目 ID 列表
+        var idsToDelete = new List<string> { entryId };
 
-        // 更新空间文档计数
+        // 如果是文件夹，递归收集所有后代
+        if (entry.IsFolder)
+        {
+            var all = await _db.DocumentEntries.Find(e => e.StoreId == entry.StoreId).ToListAsync();
+            var childrenByParent = all.GroupBy(e => e.ParentId ?? "").ToDictionary(g => g.Key, g => g.ToList());
+            var queue = new Queue<string>();
+            queue.Enqueue(entryId);
+            while (queue.Count > 0)
+            {
+                var cur = queue.Dequeue();
+                if (childrenByParent.TryGetValue(cur, out var kids))
+                {
+                    foreach (var k in kids)
+                    {
+                        idsToDelete.Add(k.Id);
+                        if (k.IsFolder) queue.Enqueue(k.Id);
+                    }
+                }
+            }
+        }
+        // 如果是 GitHub 目录订阅，还要清理所有以它为 parent 的子条目
+        else if (entry.SourceType == DocumentSourceType.GithubDirectory)
+        {
+            var ghChildren = await _db.DocumentEntries.Find(
+                e => e.StoreId == entry.StoreId &&
+                     e.Metadata.ContainsKey("github_parent_id") &&
+                     e.Metadata["github_parent_id"] == entryId
+            ).ToListAsync();
+            idsToDelete.AddRange(ghChildren.Select(c => c.Id));
+        }
+
+        // 收集被删条目引用的 DocumentId / AttachmentId
+        var targets = await _db.DocumentEntries.Find(e => idsToDelete.Contains(e.Id)).ToListAsync();
+        var documentIds = targets.Where(e => !string.IsNullOrEmpty(e.DocumentId)).Select(e => e.DocumentId!).ToList();
+        var attachmentIds = targets.Where(e => !string.IsNullOrEmpty(e.AttachmentId)).Select(e => e.AttachmentId!).ToList();
+
+        // 级联清理
+        var entriesResult = await _db.DocumentEntries.DeleteManyAsync(e => idsToDelete.Contains(e.Id));
+        var syncLogsResult = await _db.DocumentSyncLogs.DeleteManyAsync(l => idsToDelete.Contains(l.EntryId));
+        var viewEventsResult = await _db.DocumentStoreViewEvents.DeleteManyAsync(v => v.EntryId != null && idsToDelete.Contains(v.EntryId));
+        var inlineCommentsResult = await _db.DocumentInlineComments.DeleteManyAsync(c => idsToDelete.Contains(c.EntryId));
+        var agentRunsResult = await _db.DocumentStoreAgentRuns.DeleteManyAsync(r => idsToDelete.Contains(r.SourceEntryId));
+
+        long documentsDeleted = 0;
+        if (documentIds.Count > 0)
+        {
+            var r = await _db.Documents.DeleteManyAsync(d => documentIds.Contains(d.Id));
+            documentsDeleted = r.DeletedCount;
+        }
+        long attachmentsDeleted = 0;
+        if (attachmentIds.Count > 0)
+        {
+            var r = await _db.Attachments.DeleteManyAsync(a => attachmentIds.Contains(a.AttachmentId));
+            attachmentsDeleted = r.DeletedCount;
+        }
+
+        // 更新空间文档计数（按真实剩余数重算，避免负数或偏差）
+        var remaining = await _db.DocumentEntries.CountDocumentsAsync(e => e.StoreId == entry.StoreId);
         await _db.DocumentStores.UpdateOneAsync(
             s => s.Id == entry.StoreId,
             Builders<DocumentStore>.Update
-                .Inc(s => s.DocumentCount, -1)
+                .Set(s => s.DocumentCount, (int)remaining)
                 .Set(s => s.UpdatedAt, DateTime.UtcNow));
 
-        _logger.LogInformation("[document-store] Entry deleted: {EntryId} from store {StoreId} by {UserId}",
-            entryId, entry.StoreId, userId);
+        _logger.LogInformation(
+            "[document-store] Entry cascaded deleted: {EntryId} from store {StoreId} by {UserId} | entries={Entries} syncLogs={Logs} docs={Docs} attachments={Atts} views={Views} inlineComments={Comments} agentRuns={Runs}",
+            entryId, entry.StoreId, userId,
+            entriesResult.DeletedCount, syncLogsResult.DeletedCount, documentsDeleted, attachmentsDeleted,
+            viewEventsResult.DeletedCount, inlineCommentsResult.DeletedCount, agentRunsResult.DeletedCount);
 
-        return Ok(ApiResponse<object>.Ok(new { deleted = true }));
+        return Ok(ApiResponse<object>.Ok(new
+        {
+            deleted = true,
+            deletedEntries = entriesResult.DeletedCount,
+            deletedSyncLogs = syncLogsResult.DeletedCount,
+            deletedDocuments = documentsDeleted,
+            deletedAttachments = attachmentsDeleted,
+            deletedViewEvents = viewEventsResult.DeletedCount,
+            deletedInlineComments = inlineCommentsResult.DeletedCount,
+            deletedAgentRuns = agentRunsResult.DeletedCount,
+        }));
     }
 
     /// <summary>移动文档条目到其他文件夹</summary>
@@ -521,7 +647,77 @@ public class DocumentStoreController : ControllerBase
                 .Set(e => e.ContentIndex, contentIndex.Trim())
                 .Set(e => e.UpdatedAt, DateTime.UtcNow));
 
-        return Ok(ApiResponse<object>.Ok(new { updated = true }));
+        // 重锚定划词评论：正文更新后，遍历所有 active 评论，用 SelectedText + context 重新定位
+        var rebindStats = await RebindInlineCommentsAsync(entryId, content);
+
+        return Ok(ApiResponse<object>.Ok(new
+        {
+            updated = true,
+            inlineCommentsRebound = rebindStats.rebound,
+            inlineCommentsOrphaned = rebindStats.orphaned,
+        }));
+    }
+
+    /// <summary>
+    /// 文档正文更新后重新锚定划词评论。
+    /// 算法（按成本递增）：
+    ///   1) SelectedText 在新正文中唯一出现 → 直接更新 offset
+    ///   2) 多处出现 → 用 ContextBefore/ContextAfter 前后文进行消歧，取最佳匹配位置
+    ///   3) 零出现 → 状态改为 orphaned，评论保留但前端不再高亮正文
+    /// </summary>
+    private async Task<(int rebound, int orphaned)> RebindInlineCommentsAsync(string entryId, string newContent)
+    {
+        var comments = await _db.DocumentInlineComments
+            .Find(c => c.EntryId == entryId && c.Status == DocumentInlineCommentStatus.Active)
+            .ToListAsync();
+
+        if (comments.Count == 0) return (0, 0);
+
+        var newHash = ComputeSha256(newContent);
+        int rebound = 0, orphaned = 0;
+
+        foreach (var c in comments)
+        {
+            // 哈希未变（理论上不应走到这里，但保险）
+            if (c.ContentHash == newHash) { rebound++; continue; }
+
+            // 委托给纯函数做重锚定（便于单元测试覆盖）
+            var result = DocStoreServices.InlineCommentRebinder.TryRebind(
+                newContent,
+                c.SelectedText ?? string.Empty,
+                c.ContextBefore ?? string.Empty,
+                c.ContextAfter ?? string.Empty);
+
+            if (result is null)
+            {
+                await MarkCommentOrphaned(c.Id, newHash);
+                orphaned++;
+                continue;
+            }
+
+            await _db.DocumentInlineComments.UpdateOneAsync(
+                x => x.Id == c.Id,
+                Builders<DocumentInlineComment>.Update
+                    .Set(x => x.StartOffset, result.StartOffset)
+                    .Set(x => x.EndOffset, result.EndOffset)
+                    .Set(x => x.ContextBefore, result.ContextBefore)
+                    .Set(x => x.ContextAfter, result.ContextAfter)
+                    .Set(x => x.ContentHash, newHash)
+                    .Set(x => x.UpdatedAt, DateTime.UtcNow));
+            rebound++;
+        }
+
+        return (rebound, orphaned);
+    }
+
+    private async Task MarkCommentOrphaned(string commentId, string newHash)
+    {
+        await _db.DocumentInlineComments.UpdateOneAsync(
+            x => x.Id == commentId,
+            Builders<DocumentInlineComment>.Update
+                .Set(x => x.Status, DocumentInlineCommentStatus.Orphaned)
+                .Set(x => x.ContentHash, newHash)
+                .Set(x => x.UpdatedAt, DateTime.UtcNow));
     }
 
     /// <summary>设置文件夹内的主文档</summary>
@@ -1057,6 +1253,10 @@ public class DocumentStoreController : ControllerBase
         if (string.IsNullOrEmpty(entry.SourceUrl) && entry.SourceType != DocumentSourceType.GithubDirectory)
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "该文档不是订阅源"));
 
+        // 暂停状态下不允许手动触发
+        if (entry.IsPaused)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "订阅已暂停，请先恢复"));
+
         // 标记为同步中（BackgroundService 会拾取）
         await _db.DocumentEntries.UpdateOneAsync(
             e => e.Id == entryId,
@@ -1065,6 +1265,348 @@ public class DocumentStoreController : ControllerBase
                 .Set(e => e.UpdatedAt, DateTime.UtcNow));
 
         return Ok(ApiResponse<object>.Ok(new { triggered = true }));
+    }
+
+    /// <summary>获取订阅条目的最近同步日志（只包含 change/error 事件，无变化的同步不在此列表中）</summary>
+    [HttpGet("entries/{entryId}/sync-logs")]
+    public async Task<IActionResult> ListSyncLogs(string entryId, [FromQuery] int limit = 20)
+    {
+        var userId = GetUserId();
+        var entry = await _db.DocumentEntries.Find(e => e.Id == entryId).FirstOrDefaultAsync();
+        if (entry == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "文档条目不存在"));
+
+        var store = await _db.DocumentStores.Find(s => s.Id == entry.StoreId && s.OwnerId == userId).FirstOrDefaultAsync();
+        if (store == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "文档条目不存在"));
+
+        limit = Math.Clamp(limit, 1, 100);
+
+        var logs = await _db.DocumentSyncLogs
+            .Find(l => l.EntryId == entryId)
+            .SortByDescending(l => l.SyncedAt)
+            .Limit(limit)
+            .ToListAsync();
+
+        // 计算下次同步时间（基于 LastSyncAt + SyncIntervalMinutes）
+        DateTime? nextSyncAt = null;
+        if (entry.LastSyncAt.HasValue && entry.SyncIntervalMinutes is > 0 && !entry.IsPaused)
+            nextSyncAt = entry.LastSyncAt.Value.AddMinutes(entry.SyncIntervalMinutes.Value);
+
+        return Ok(ApiResponse<object>.Ok(new
+        {
+            entry = new
+            {
+                id = entry.Id,
+                title = entry.Title,
+                sourceType = entry.SourceType,
+                sourceUrl = entry.SourceUrl,
+                syncIntervalMinutes = entry.SyncIntervalMinutes,
+                syncStatus = entry.SyncStatus,
+                syncError = entry.SyncError,
+                lastSyncAt = entry.LastSyncAt,
+                lastChangedAt = entry.LastChangedAt,
+                isPaused = entry.IsPaused,
+                contentHash = entry.ContentHash,
+                metadata = entry.Metadata,
+                nextSyncAt,
+            },
+            logs = logs.Select(l => new
+            {
+                id = l.Id,
+                syncedAt = l.SyncedAt,
+                kind = l.Kind,
+                changeSummary = l.ChangeSummary,
+                fileChanges = l.FileChanges,
+                previousLength = l.PreviousLength,
+                currentLength = l.CurrentLength,
+                errorMessage = l.ErrorMessage,
+                durationMs = l.DurationMs,
+            }).ToList(),
+        }));
+    }
+
+    /// <summary>更新订阅条目的可变状态（暂停/恢复 + 调整同步间隔）</summary>
+    [HttpPatch("entries/{entryId}/subscription")]
+    public async Task<IActionResult> UpdateSubscription(string entryId, [FromBody] UpdateSubscriptionRequest request)
+    {
+        var userId = GetUserId();
+        var entry = await _db.DocumentEntries.Find(e => e.Id == entryId).FirstOrDefaultAsync();
+        if (entry == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "文档条目不存在"));
+
+        var store = await _db.DocumentStores.Find(s => s.Id == entry.StoreId && s.OwnerId == userId).FirstOrDefaultAsync();
+        if (store == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "文档条目不存在"));
+
+        if (string.IsNullOrEmpty(entry.SourceUrl) && entry.SourceType != DocumentSourceType.GithubDirectory)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "该文档不是订阅源"));
+
+        var update = Builders<DocumentEntry>.Update.Set(e => e.UpdatedAt, DateTime.UtcNow);
+        var changed = false;
+
+        if (request.IsPaused.HasValue)
+        {
+            update = update.Set(e => e.IsPaused, request.IsPaused.Value);
+            changed = true;
+        }
+
+        if (request.SyncIntervalMinutes.HasValue)
+        {
+            // GitHub 目录类型最低 1 小时（避免 GitHub API 限流），其他 5 分钟起
+            var min = entry.SourceType == DocumentSourceType.GithubDirectory ? 60 : 5;
+            var clamped = Math.Clamp(request.SyncIntervalMinutes.Value, min, 1440);
+            update = update.Set(e => e.SyncIntervalMinutes, clamped);
+            changed = true;
+        }
+
+        if (!changed)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "未提供任何可更新字段"));
+
+        await _db.DocumentEntries.UpdateOneAsync(e => e.Id == entryId, update);
+
+        var refreshed = await _db.DocumentEntries.Find(e => e.Id == entryId).FirstOrDefaultAsync();
+        return Ok(ApiResponse<DocumentEntry>.Ok(refreshed!));
+    }
+
+    // ─────────────────────────────────────────────
+    // 知识库 Agent：字幕生成 + 文档再加工
+    // ─────────────────────────────────────────────
+
+    /// <summary>列出文档再加工的可用模板</summary>
+    [HttpGet("reprocess-templates")]
+    public IActionResult ListReprocessTemplates()
+    {
+        var items = ReprocessTemplateRegistry.Templates.Select(t => new
+        {
+            key = t.Key,
+            label = t.Label,
+            description = t.Description,
+        }).ToList();
+        return Ok(ApiResponse<object>.Ok(new { items }));
+    }
+
+    /// <summary>发起字幕生成任务（音视频 → ASR，图片 → Vision）</summary>
+    [HttpPost("entries/{entryId}/generate-subtitle")]
+    public async Task<IActionResult> GenerateSubtitle(string entryId)
+    {
+        var (entry, store, err) = await LoadOwnedEntryAsync(entryId);
+        if (err != null) return err;
+        if (entry!.IsFolder)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "文件夹不支持生成字幕"));
+
+        var ct = (entry.ContentType ?? "").ToLowerInvariant();
+        if (!ct.StartsWith("audio/") && !ct.StartsWith("video/") && !ct.StartsWith("image/"))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "仅支持音频 / 视频 / 图片生成字幕"));
+
+        // 去重：同一 entry 已有 queued 或 running 的 subtitle run → 直接返回
+        var existing = await _db.DocumentStoreAgentRuns.Find(r =>
+            r.SourceEntryId == entryId &&
+            r.Kind == DocumentStoreAgentRunKind.Subtitle &&
+            (r.Status == DocumentStoreRunStatus.Queued || r.Status == DocumentStoreRunStatus.Running)
+        ).FirstOrDefaultAsync();
+        if (existing != null)
+            return Ok(ApiResponse<object>.Ok(new { runId = existing.Id, status = existing.Status, reused = true }));
+
+        var userId = GetUserId();
+        var run = new DocumentStoreAgentRun
+        {
+            Kind = DocumentStoreAgentRunKind.Subtitle,
+            SourceEntryId = entryId,
+            StoreId = store!.Id,
+            UserId = userId,
+            Status = DocumentStoreRunStatus.Queued,
+            Phase = "排队中",
+        };
+        await _db.DocumentStoreAgentRuns.InsertOneAsync(run);
+
+        _logger.LogInformation("[doc-store-agent] Subtitle run queued: {RunId} entry={EntryId}", run.Id, entryId);
+        return Ok(ApiResponse<object>.Ok(new { runId = run.Id, status = run.Status, reused = false }));
+    }
+
+    /// <summary>发起文档再加工任务（流式 LLM 改写）</summary>
+    [HttpPost("entries/{entryId}/reprocess")]
+    public async Task<IActionResult> Reprocess(string entryId, [FromBody] ReprocessRequest request)
+    {
+        var (entry, store, err) = await LoadOwnedEntryAsync(entryId);
+        if (err != null) return err;
+        if (entry!.IsFolder)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "文件夹不支持再加工"));
+
+        var templateKey = (request.TemplateKey ?? "").Trim();
+        if (string.IsNullOrEmpty(templateKey))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "templateKey 不能为空"));
+
+        if (templateKey == "custom")
+        {
+            if (string.IsNullOrWhiteSpace(request.CustomPrompt))
+                return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "自定义模板需要提供 customPrompt"));
+        }
+        else if (ReprocessTemplateRegistry.FindByKey(templateKey) == null)
+        {
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, $"未知模板: {templateKey}"));
+        }
+
+        var userId = GetUserId();
+        var run = new DocumentStoreAgentRun
+        {
+            Kind = DocumentStoreAgentRunKind.Reprocess,
+            SourceEntryId = entryId,
+            StoreId = store!.Id,
+            UserId = userId,
+            TemplateKey = templateKey,
+            CustomPrompt = request.CustomPrompt,
+            Status = DocumentStoreRunStatus.Queued,
+            Phase = "排队中",
+        };
+        await _db.DocumentStoreAgentRuns.InsertOneAsync(run);
+
+        _logger.LogInformation(
+            "[doc-store-agent] Reprocess run queued: {RunId} entry={EntryId} template={Template}",
+            run.Id, entryId, templateKey);
+        return Ok(ApiResponse<object>.Ok(new { runId = run.Id, status = run.Status }));
+    }
+
+    /// <summary>获取 Run 当前状态（用于 Drawer 打开时判断）</summary>
+    [HttpGet("agent-runs/{runId}")]
+    public async Task<IActionResult> GetAgentRun(string runId)
+    {
+        var userId = GetUserId();
+        var run = await _db.DocumentStoreAgentRuns.Find(r => r.Id == runId && r.UserId == userId).FirstOrDefaultAsync();
+        if (run == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "Run 不存在"));
+        return Ok(ApiResponse<DocumentStoreAgentRun>.Ok(run));
+    }
+
+    /// <summary>获取某个 entry 的最近一次 agent run（某 kind，用于打开按钮时判断是否已生成过）</summary>
+    [HttpGet("entries/{entryId}/agent-runs/latest")]
+    public async Task<IActionResult> GetLatestAgentRun(string entryId, [FromQuery] string kind)
+    {
+        var (_, _, err) = await LoadOwnedEntryAsync(entryId);
+        if (err != null) return err;
+        if (string.IsNullOrEmpty(kind))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "kind 不能为空"));
+
+        var run = await _db.DocumentStoreAgentRuns
+            .Find(r => r.SourceEntryId == entryId && r.Kind == kind)
+            .SortByDescending(r => r.CreatedAt)
+            .FirstOrDefaultAsync();
+        return Ok(ApiResponse<DocumentStoreAgentRun?>.Ok(run));
+    }
+
+    /// <summary>SSE 订阅 Run 事件流（支持 afterSeq 断线续传）</summary>
+    [HttpGet("agent-runs/{runId}/stream")]
+    [Produces("text/event-stream")]
+    public async Task StreamAgentRun(string runId, [FromQuery] long? afterSeq, CancellationToken cancellationToken)
+    {
+        Response.ContentType = "text/event-stream";
+        Response.Headers.CacheControl = "no-cache";
+        Response.Headers.Connection = "keep-alive";
+
+        var userId = GetUserId();
+        var run = await _db.DocumentStoreAgentRuns.Find(r => r.Id == runId && r.UserId == userId).FirstOrDefaultAsync(cancellationToken);
+        if (run == null)
+        {
+            await WriteSseEventAsync(null, "error", System.Text.Json.JsonSerializer.Serialize(
+                new { code = ErrorCodes.NOT_FOUND, message = "Run 不存在" }, AgentRunJsonOptions), cancellationToken);
+            return;
+        }
+
+        var kindKey = run.Kind == DocumentStoreAgentRunKind.Subtitle
+            ? DocumentStoreRunKinds.Subtitle
+            : DocumentStoreRunKinds.Reprocess;
+
+        long lastSeq = afterSeq ?? 0;
+        var lastKeepAliveAt = DateTime.UtcNow;
+
+        while (!cancellationToken.IsCancellationRequested)
+        {
+            IReadOnlyList<RunEventRecord> events;
+            try
+            {
+                events = await _runEventStore.GetEventsAsync(kindKey, runId, lastSeq, 100, cancellationToken);
+            }
+            catch (OperationCanceledException) { break; }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "[doc-store-agent] SSE GetEvents failed");
+                events = Array.Empty<RunEventRecord>();
+            }
+
+            if (events.Count > 0)
+            {
+                foreach (var ev in events)
+                {
+                    try
+                    {
+                        await WriteSseEventAsync(ev.Seq.ToString(), ev.EventName, ev.PayloadJson, cancellationToken);
+                    }
+                    catch (OperationCanceledException) { return; }
+                    catch (ObjectDisposedException) { return; }
+                    lastSeq = ev.Seq;
+                }
+                lastKeepAliveAt = DateTime.UtcNow;
+            }
+            else
+            {
+                if ((DateTime.UtcNow - lastKeepAliveAt).TotalSeconds >= 10)
+                {
+                    try
+                    {
+                        await Response.WriteAsync(": keepalive\n\n", cancellationToken);
+                        await Response.Body.FlushAsync(cancellationToken);
+                    }
+                    catch (OperationCanceledException) { return; }
+                    catch (ObjectDisposedException) { return; }
+                    lastKeepAliveAt = DateTime.UtcNow;
+                }
+
+                // run 已结束且事件已追完 → 关闭 SSE
+                var refreshed = await _db.DocumentStoreAgentRuns.Find(r => r.Id == runId).FirstOrDefaultAsync(cancellationToken);
+                if (refreshed == null) break;
+                if (refreshed.Status is DocumentStoreRunStatus.Done or DocumentStoreRunStatus.Failed or DocumentStoreRunStatus.Cancelled)
+                {
+                    // 再跑一次 GetEvents，追最后一批
+                    var tail = await _runEventStore.GetEventsAsync(kindKey, runId, lastSeq, 100, cancellationToken);
+                    foreach (var ev in tail)
+                    {
+                        try { await WriteSseEventAsync(ev.Seq.ToString(), ev.EventName, ev.PayloadJson, cancellationToken); }
+                        catch { /* ignore */ }
+                        lastSeq = ev.Seq;
+                    }
+                    break;
+                }
+
+                try { await Task.Delay(500, cancellationToken); }
+                catch (OperationCanceledException) { return; }
+            }
+        }
+    }
+
+    // ── 知识库 Agent 内部辅助 ──
+
+    private async Task<(DocumentEntry? entry, DocumentStore? store, IActionResult? err)>
+        LoadOwnedEntryAsync(string entryId)
+    {
+        var userId = GetUserId();
+        var entry = await _db.DocumentEntries.Find(e => e.Id == entryId).FirstOrDefaultAsync();
+        if (entry == null)
+            return (null, null, NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "文档条目不存在")));
+
+        var store = await _db.DocumentStores.Find(s => s.Id == entry.StoreId && s.OwnerId == userId).FirstOrDefaultAsync();
+        if (store == null)
+            return (null, null, NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "文档条目不存在")));
+
+        return (entry, store, null);
+    }
+
+    private async Task WriteSseEventAsync(string? id, string eventName, string dataJson, CancellationToken ct)
+    {
+        if (!string.IsNullOrWhiteSpace(id))
+            await Response.WriteAsync($"id: {id}\n", ct);
+        await Response.WriteAsync($"event: {eventName}\n", ct);
+        await Response.WriteAsync($"data: {dataJson}\n\n", ct);
+        await Response.Body.FlushAsync(ct);
     }
 
     // ─────────────────────────────────────────────
@@ -1534,6 +2076,263 @@ public class DocumentStoreController : ControllerBase
             },
         }));
     }
+
+    // ─────────────────────────────────────────────
+    // 批次 C：浏览事件埋点 + 访客统计
+    // ─────────────────────────────────────────────
+
+    /// <summary>记录一次浏览事件（进入文档时调用，返回 viewEventId 供前端补时长）</summary>
+    [HttpPost("entries/{entryId}/view")]
+    [AllowAnonymous]
+    public async Task<IActionResult> LogEntryView(string entryId, [FromBody] LogViewRequest? request)
+    {
+        var entry = await _db.DocumentEntries.Find(e => e.Id == entryId).FirstOrDefaultAsync();
+        if (entry == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "文档条目不存在"));
+
+        var store = await _db.DocumentStores.Find(s => s.Id == entry.StoreId).FirstOrDefaultAsync();
+        if (store == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "文档空间不存在"));
+
+        // 私有知识库只允许 owner 浏览统计
+        var isOwner = false;
+        string? viewerId = null;
+        var viewerName = "匿名访客";
+        string? viewerAvatar = null;
+        try
+        {
+            viewerId = this.GetRequiredUserId();
+            isOwner = store.OwnerId == viewerId;
+            var userDoc = await _db.Users.Find(u => u.Id == viewerId).FirstOrDefaultAsync();
+            if (userDoc != null)
+            {
+                viewerName = !string.IsNullOrWhiteSpace(userDoc.DisplayName) ? userDoc.DisplayName : userDoc.Username;
+                viewerAvatar = userDoc.AvatarFileName;
+            }
+        }
+        catch
+        {
+            // 匿名访问
+        }
+
+        if (!store.IsPublic && !isOwner)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "文档条目不存在"));
+
+        var ua = Request.Headers.UserAgent.ToString();
+        if (ua.Length > 200) ua = ua[..200];
+        var referer = Request.Headers.Referer.ToString();
+        if (referer.Length > 500) referer = referer[..500];
+
+        var evt = new DocumentStoreViewEvent
+        {
+            StoreId = entry.StoreId,
+            EntryId = entryId,
+            ViewerUserId = viewerId,
+            ViewerName = viewerName,
+            ViewerAvatar = viewerAvatar,
+            AnonSessionToken = viewerId == null ? request?.AnonSessionToken : null,
+            UserAgent = string.IsNullOrEmpty(ua) ? null : ua,
+            Referer = string.IsNullOrEmpty(referer) ? null : referer,
+        };
+        await _db.DocumentStoreViewEvents.InsertOneAsync(evt);
+
+        // 递增 store 的冗余计数
+        await _db.DocumentStores.UpdateOneAsync(
+            s => s.Id == entry.StoreId,
+            Builders<DocumentStore>.Update.Inc(s => s.ViewCount, 1));
+
+        return Ok(ApiResponse<object>.Ok(new { viewEventId = evt.Id }));
+    }
+
+    /// <summary>补写浏览时长（用户离开或切换文档时调用，由 sendBeacon 发起，永远不失败）</summary>
+    [HttpPost("view-events/{viewEventId}/leave")]
+    [AllowAnonymous]
+    public async Task<IActionResult> LeaveEntryView(string viewEventId, [FromBody] LeaveViewRequest? request)
+    {
+        var durationMs = request?.DurationMs ?? 0;
+        if (durationMs < 0) durationMs = 0;
+        if (durationMs > 24 * 60 * 60 * 1000) durationMs = 24 * 60 * 60 * 1000; // clamp 到 24 小时
+
+        await _db.DocumentStoreViewEvents.UpdateOneAsync(
+            e => e.Id == viewEventId,
+            Builders<DocumentStoreViewEvent>.Update
+                .Set(e => e.LeftAt, DateTime.UtcNow)
+                .Set(e => e.DurationMs, durationMs));
+
+        return Ok(ApiResponse<object>.Ok(new { }));
+    }
+
+    /// <summary>获取知识库的访客列表（仅 owner 可访问）</summary>
+    [HttpGet("stores/{storeId}/view-events")]
+    public async Task<IActionResult> ListStoreViewEvents(
+        string storeId,
+        [FromQuery] int limit = 50)
+    {
+        var userId = GetUserId();
+        var store = await _db.DocumentStores.Find(s => s.Id == storeId && s.OwnerId == userId).FirstOrDefaultAsync();
+        if (store == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "文档空间不存在"));
+
+        limit = Math.Clamp(limit, 1, 200);
+
+        var events = await _db.DocumentStoreViewEvents
+            .Find(e => e.StoreId == storeId)
+            .SortByDescending(e => e.EnteredAt)
+            .Limit(limit)
+            .ToListAsync();
+
+        // 聚合统计：总访问量、独立访客数、总停留时长
+        var totalViews = await _db.DocumentStoreViewEvents.CountDocumentsAsync(e => e.StoreId == storeId);
+        var uniqueVisitorIds = events
+            .Select(e => e.ViewerUserId ?? e.AnonSessionToken ?? e.Id)
+            .Distinct()
+            .Count();
+        var totalDurationMs = events.Sum(e => e.DurationMs ?? 0);
+
+        // 补 entry 标题供前端展示
+        var entryIds = events.Where(e => e.EntryId != null).Select(e => e.EntryId!).Distinct().ToList();
+        var entries = await _db.DocumentEntries
+            .Find(e => entryIds.Contains(e.Id))
+            .ToListAsync();
+        var entryTitles = entries.ToDictionary(e => e.Id, e => e.Title);
+
+        return Ok(ApiResponse<object>.Ok(new
+        {
+            stats = new
+            {
+                totalViews,
+                uniqueVisitors = uniqueVisitorIds,
+                totalDurationMs,
+            },
+            events = events.Select(e => new
+            {
+                e.Id,
+                e.EntryId,
+                entryTitle = e.EntryId != null && entryTitles.ContainsKey(e.EntryId) ? entryTitles[e.EntryId] : null,
+                e.ViewerUserId,
+                e.ViewerName,
+                e.ViewerAvatar,
+                e.EnteredAt,
+                e.LeftAt,
+                e.DurationMs,
+                e.UserAgent,
+                e.Referer,
+            }),
+        }));
+    }
+
+    // ─────────────────────────────────────────────
+    // 批次 D：文档划词评论
+    // ─────────────────────────────────────────────
+
+    /// <summary>创建划词评论</summary>
+    [HttpPost("entries/{entryId}/inline-comments")]
+    public async Task<IActionResult> CreateInlineComment(string entryId, [FromBody] CreateInlineCommentRequest request)
+    {
+        var userId = GetUserId();
+        var entry = await _db.DocumentEntries.Find(e => e.Id == entryId).FirstOrDefaultAsync();
+        if (entry == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "文档条目不存在"));
+
+        var store = await _db.DocumentStores.Find(s => s.Id == entry.StoreId).FirstOrDefaultAsync();
+        if (store == null || store.OwnerId != userId)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "文档条目不存在"));
+
+        if (string.IsNullOrWhiteSpace(request.SelectedText))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "选中内容不能为空"));
+        if (string.IsNullOrWhiteSpace(request.Content))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "评论内容不能为空"));
+        if (string.IsNullOrEmpty(entry.DocumentId))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "该条目尚未关联正文"));
+
+        var userDoc = await _db.Users.Find(u => u.Id == userId).FirstOrDefaultAsync();
+        var authorName = userDoc != null && !string.IsNullOrWhiteSpace(userDoc.DisplayName)
+            ? userDoc.DisplayName
+            : (userDoc?.Username ?? "未知用户");
+
+        // 读取当前正文计算 hash
+        var parsed = await _db.Documents.Find(d => d.Id == entry.DocumentId).FirstOrDefaultAsync();
+        var contentHash = parsed != null ? ComputeSha256(parsed.RawContent ?? "") : null;
+
+        var comment = new DocumentInlineComment
+        {
+            StoreId = entry.StoreId,
+            EntryId = entryId,
+            DocumentId = entry.DocumentId!,
+            ContentHash = contentHash,
+            SelectedText = request.SelectedText,
+            ContextBefore = request.ContextBefore ?? string.Empty,
+            ContextAfter = request.ContextAfter ?? string.Empty,
+            StartOffset = request.StartOffset,
+            EndOffset = request.EndOffset,
+            Content = request.Content.Trim(),
+            AuthorUserId = userId,
+            AuthorDisplayName = authorName,
+            AuthorAvatar = userDoc?.AvatarFileName,
+        };
+        await _db.DocumentInlineComments.InsertOneAsync(comment);
+        return Ok(ApiResponse<DocumentInlineComment>.Ok(comment));
+    }
+
+    /// <summary>列出文档的划词评论（owner 和公开库访客都能读）</summary>
+    [HttpGet("entries/{entryId}/inline-comments")]
+    [AllowAnonymous]
+    public async Task<IActionResult> ListInlineComments(string entryId)
+    {
+        var entry = await _db.DocumentEntries.Find(e => e.Id == entryId).FirstOrDefaultAsync();
+        if (entry == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "文档条目不存在"));
+
+        var store = await _db.DocumentStores.Find(s => s.Id == entry.StoreId).FirstOrDefaultAsync();
+        if (store == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "文档条目不存在"));
+
+        // 非 owner + 非公开 → 403
+        var isOwner = false;
+        try
+        {
+            var currentUser = this.GetRequiredUserId();
+            isOwner = store.OwnerId == currentUser;
+        }
+        catch { }
+        if (!isOwner && !store.IsPublic)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "文档条目不存在"));
+
+        var comments = await _db.DocumentInlineComments
+            .Find(c => c.EntryId == entryId)
+            .SortBy(c => c.CreatedAt)
+            .ToListAsync();
+
+        return Ok(ApiResponse<object>.Ok(new { items = comments, canCreate = isOwner }));
+    }
+
+    /// <summary>删除划词评论</summary>
+    [HttpDelete("inline-comments/{commentId}")]
+    public async Task<IActionResult> DeleteInlineComment(string commentId)
+    {
+        var userId = GetUserId();
+        var comment = await _db.DocumentInlineComments.Find(c => c.Id == commentId).FirstOrDefaultAsync();
+        if (comment == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "评论不存在"));
+
+        // 仅作者或 store owner 可删
+        var store = await _db.DocumentStores.Find(s => s.Id == comment.StoreId).FirstOrDefaultAsync();
+        if (store == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "评论不存在"));
+
+        if (comment.AuthorUserId != userId && store.OwnerId != userId)
+            return StatusCode(403, ApiResponse<object>.Fail("FORBIDDEN", "无权删除此评论"));
+
+        await _db.DocumentInlineComments.DeleteOneAsync(c => c.Id == commentId);
+        return Ok(ApiResponse<object>.Ok(new { deleted = true }));
+    }
+
+    private static string ComputeSha256(string content)
+    {
+        var bytes = System.Text.Encoding.UTF8.GetBytes(content);
+        var hash = System.Security.Cryptography.SHA256.HashData(bytes);
+        return Convert.ToHexString(hash);
+    }
 }
 
 // ─────────────────────────────────────────────
@@ -1602,6 +2401,24 @@ public class AddGitHubSubscriptionRequest
     public List<string>? Tags { get; set; }
 }
 
+public class UpdateSubscriptionRequest
+{
+    /// <summary>是否暂停订阅（null 表示不修改）</summary>
+    public bool? IsPaused { get; set; }
+
+    /// <summary>新的同步间隔（分钟，null 表示不修改）</summary>
+    public int? SyncIntervalMinutes { get; set; }
+}
+
+public class ReprocessRequest
+{
+    /// <summary>模板 key（summary / minutes / blog / notes / custom）</summary>
+    public string TemplateKey { get; set; } = string.Empty;
+
+    /// <summary>自定义提示词（templateKey == custom 时必填）</summary>
+    public string? CustomPrompt { get; set; }
+}
+
 public class SetPrimaryEntryRequest
 {
     /// <summary>文档条目 ID，null 或空表示清除主文档</summary>
@@ -1639,4 +2456,37 @@ public class CreateShareLinkRequest
 
     /// <summary>过期天数（0 表示永不过期）</summary>
     public int ExpiresInDays { get; set; }
+}
+
+public class LogViewRequest
+{
+    /// <summary>匿名访客 session token（匿名访问时由前端生成存 sessionStorage）</summary>
+    public string? AnonSessionToken { get; set; }
+}
+
+public class LeaveViewRequest
+{
+    /// <summary>停留时长（毫秒，前端用 Date.now() 差值计算）</summary>
+    public long DurationMs { get; set; }
+}
+
+public class CreateInlineCommentRequest
+{
+    /// <summary>被选中的原文片段</summary>
+    public string SelectedText { get; set; } = string.Empty;
+
+    /// <summary>选中片段前的上下文（约 50 字符）</summary>
+    public string? ContextBefore { get; set; }
+
+    /// <summary>选中片段后的上下文（约 50 字符）</summary>
+    public string? ContextAfter { get; set; }
+
+    /// <summary>起始字符偏移量</summary>
+    public int StartOffset { get; set; }
+
+    /// <summary>结束字符偏移量</summary>
+    public int EndOffset { get; set; }
+
+    /// <summary>评论内容</summary>
+    public string Content { get; set; } = string.Empty;
 }

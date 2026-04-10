@@ -747,6 +747,44 @@ public static class TranscriptAgent
 }
 
 /// <summary>
+/// 知识库（文档空间）
+/// </summary>
+public static class DocumentStoreAgent
+{
+    public const string AppName = "知识库";
+
+    public static class Subtitle
+    {
+        [AppCallerMetadata(
+            "知识库字幕生成-音频",
+            "将音视频文件直译成带时间戳的字幕 Markdown",
+            ModelTypes = new[] { ModelTypes.Asr },
+            Category = "DocumentStore"
+        )]
+        public const string Audio = "document-store.subtitle::asr";
+
+        [AppCallerMetadata(
+            "知识库字幕生成-图片",
+            "对图片做 OCR/Vision 识别生成纯文字字幕",
+            ModelTypes = new[] { ModelTypes.Vision },
+            Category = "DocumentStore"
+        )]
+        public const string Vision = "document-store.subtitle::vision";
+    }
+
+    public static class Reprocess
+    {
+        [AppCallerMetadata(
+            "知识库文档再加工",
+            "基于已有文档/字幕按模板或自定义提示词生成新文档",
+            ModelTypes = new[] { ModelTypes.Chat },
+            Category = "DocumentStore"
+        )]
+        public const string Generate = "document-store.reprocess::chat";
+    }
+}
+
+/// <summary>
 /// Admin 管理后台
 /// </summary>
 public static class Admin

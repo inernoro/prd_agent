@@ -1520,6 +1520,21 @@ export {
   setPrimaryEntry,
   createFolder,
   triggerSync,
+  listSubscriptionDetail,
+  updateSubscription,
+  generateSubtitle,
+  listReprocessTemplates,
+  startReprocess,
+  getAgentRun,
+  getLatestAgentRun,
+  // 批次 C：浏览事件埋点
+  logEntryView,
+  leaveEntryView,
+  listStoreViewEvents,
+  // 批次 D：划词评论
+  createInlineComment,
+  listInlineComments,
+  deleteInlineComment,
   togglePinnedEntry,
   listDocumentStoresWithPreview,
   searchDocumentEntries,
@@ -1551,6 +1566,13 @@ export type {
   DocumentStoreShareLink,
   CreateDocumentStoreInput,
   AddDocumentEntryInput,
+  DocumentSyncLogEntry,
+  SubscriptionDetail,
+  DocumentStoreAgentRun,
+  ReprocessTemplate,
+  DocumentStoreViewEvent,
+  DocumentStoreViewStats,
+  DocumentInlineComment,
 } from '@/services/contracts/documentStore';
 
 // ── Emergence Explorer 涌现探索器 ──

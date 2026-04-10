@@ -1,17 +1,42 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import remarkMath from 'remark-math';
+import rehypeKatex from 'rehype-katex';
+import 'katex/dist/katex.min.css';
+import GithubSlugger from 'github-slugger';
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { oneDark } from 'react-syntax-highlighter/dist/esm/styles/prism';
+
+// ── Markdown heading slug 辅助 ──
+function childrenToText(children: unknown): string {
+  if (children == null) return '';
+  if (typeof children === 'string') return children;
+  if (Array.isArray(children)) return children.map(childrenToText).join('');
+  if (typeof children === 'object' && children !== null && 'props' in children) {
+    const props = (children as { props?: { children?: unknown } }).props;
+    return childrenToText(props?.children);
+  }
+  return '';
+}
+function normalizeHeadingText(raw: string): string {
+  return String(raw || '').replace(/\s+#+\s*$/, '').replace(/\s+/g, ' ').trim();
+}
 import {
   FileText, FolderOpen, FolderClosed, Star, Rss, Github,
   Search, ChevronRight, ChevronDown, Plus, Pin, PinOff,
   FileSearch, ToggleLeft, ToggleRight, Trash2, FilePlus, FolderPlus,
   Upload, Link, LayoutTemplate, Bot, Pencil, Save, X,
+  Sparkles, Wand2,
 } from 'lucide-react';
 import { getFileTypeConfig } from '@/lib/fileTypeRegistry';
 import type { FilePreviewKind } from '@/lib/fileTypeRegistry';
 import { MapSpinner, MapSectionLoader } from '@/components/ui/VideoLoader';
+import { systemDialog } from '@/lib/systemDialog';
+import { useViewTracking } from '@/lib/useViewTracking';
+import { useContentSelection, type ContentSelectionInfo } from '@/lib/useContentSelection';
+import { MessageSquareText, MessageSquarePlus } from 'lucide-react';
+import { InlineCommentDrawer, type PendingSelection } from '@/pages/document-store/InlineCommentDrawer';
 
 // ── 类型 ──
 
@@ -34,6 +59,10 @@ export type DocBrowserEntry = {
   fileSize: number;
   summary?: string;
   syncStatus?: string;
+  /** 是否暂停（订阅类型） */
+  isPaused?: boolean;
+  /** 最近一次"内容真正发生变化"的时间，用于显示 (new) 徽标 */
+  lastChangedAt?: string;
   metadata?: Record<string, string>;
 };
 
@@ -58,9 +87,23 @@ export type DocBrowserProps = {
    */
   loadContent: (entryId: string) => Promise<EntryPreview | null>;
   onSearch?: (keyword: string, searchContent: boolean) => Promise<DocBrowserEntry[] | null>;
+  /** 点击订阅条目右侧的状态徽标时触发，用于打开订阅详情面板 */
+  onOpenSubscription?: (entryId: string) => void;
+  /** 点击"生成字幕"时触发（仅 audio/video/image entries 显示） */
+  onGenerateSubtitle?: (entryId: string) => void;
+  /** 点击"再加工"时触发（仅 text entries 显示） */
+  onReprocess?: (entryId: string) => void;
   emptyState?: React.ReactNode;
   loading?: boolean;
 };
+
+// ── (new) 徽标判定：lastChangedAt 在 24 小时以内 ──
+function isRecentlyChanged(iso?: string): boolean {
+  if (!iso) return false;
+  const t = new Date(iso).getTime();
+  if (Number.isNaN(t)) return false;
+  return Date.now() - t < 24 * 60 * 60 * 1000;
+}
 
 // ── 文件图标（所有类型映射通过 FILE_TYPE_REGISTRY 注册表） ──
 
@@ -90,8 +133,27 @@ function getDisplayTitle(entry: DocBrowserEntry, useContentTitle: boolean, conte
   return entry.title;
 }
 
-// ── 右键菜单 ──
-function ContextMenu({ x, y, entry, isPrimary, isPinned, onSetPrimary, onTogglePin, onDelete, onClose }: {
+// ── 判断 entry 可以发起的 Agent 操作 ──
+function canGenerateSubtitle(entry: DocBrowserEntry): boolean {
+  if (entry.isFolder) return false;
+  const ct = (entry.contentType ?? '').toLowerCase();
+  return ct.startsWith('audio/') || ct.startsWith('video/') || ct.startsWith('image/');
+}
+
+function canReprocess(entry: DocBrowserEntry): boolean {
+  if (entry.isFolder) return false;
+  const ct = (entry.contentType ?? '').toLowerCase();
+  // 文字类（markdown / 字幕 / 纯文本 / JSON / YAML 等）才能再加工
+  return ct.startsWith('text/') || ct.includes('markdown') || ct === '';
+}
+
+// ── 右键/⋯ 菜单 ──
+function ContextMenu({
+  x, y, entry, isPrimary, isPinned,
+  onSetPrimary, onTogglePin, onDelete,
+  onGenerateSubtitle, onReprocess,
+  onClose,
+}: {
   x: number;
   y: number;
   entry: DocBrowserEntry;
@@ -100,6 +162,8 @@ function ContextMenu({ x, y, entry, isPrimary, isPinned, onSetPrimary, onToggleP
   onSetPrimary?: (entryId: string) => void;
   onTogglePin?: (entryId: string, pin: boolean) => void;
   onDelete?: (entryId: string) => void;
+  onGenerateSubtitle?: (entryId: string) => void;
+  onReprocess?: (entryId: string) => void;
   onClose: () => void;
 }) {
   const menuRef = useRef<HTMLDivElement>(null);
@@ -112,8 +176,11 @@ function ContextMenu({ x, y, entry, isPrimary, isPinned, onSetPrimary, onToggleP
     return () => document.removeEventListener('mousedown', handleClick);
   }, [onClose]);
 
+  const showSubtitle = canGenerateSubtitle(entry) && !!onGenerateSubtitle;
+  const showReprocess = canReprocess(entry) && !!onReprocess;
+
   return (
-    <div ref={menuRef} className="fixed z-50 min-w-[160px] py-1 rounded-[10px]"
+    <div ref={menuRef} className="fixed z-50 min-w-[170px] py-1 rounded-[10px]"
       style={{
         left: x, top: y,
         background: 'linear-gradient(180deg, var(--glass-bg-start) 0%, var(--glass-bg-end) 100%)',
@@ -121,6 +188,27 @@ function ContextMenu({ x, y, entry, isPrimary, isPinned, onSetPrimary, onToggleP
         backdropFilter: 'blur(40px) saturate(180%)',
         boxShadow: '0 12px 32px -8px rgba(0,0,0,0.5)',
       }}>
+      {showSubtitle && (
+        <button
+          className="w-full px-3 py-1.5 text-left text-[12px] flex items-center gap-2 cursor-pointer transition-colors hover:bg-white/6"
+          style={{ color: 'rgba(216,180,254,0.95)' }}
+          onClick={() => { onGenerateSubtitle!(entry.id); onClose(); }}>
+          <Sparkles size={12} />
+          生成字幕
+        </button>
+      )}
+      {showReprocess && (
+        <button
+          className="w-full px-3 py-1.5 text-left text-[12px] flex items-center gap-2 cursor-pointer transition-colors hover:bg-white/6"
+          style={{ color: 'rgba(96,165,250,0.95)' }}
+          onClick={() => { onReprocess!(entry.id); onClose(); }}>
+          <Wand2 size={12} />
+          再加工
+        </button>
+      )}
+      {(showSubtitle || showReprocess) && (
+        <div className="my-1" style={{ borderTop: '1px solid rgba(255,255,255,0.06)' }} />
+      )}
       {!entry.isFolder && onTogglePin && (
         <button
           className="w-full px-3 py-1.5 text-left text-[12px] flex items-center gap-2 cursor-pointer transition-colors hover:bg-white/6"
@@ -172,6 +260,7 @@ function TreeNode({
   onSelectEntry,
   onContextMenu,
   onMoveEntry,
+  onOpenSubscription,
 }: {
   entry: DocBrowserEntry;
   childrenMap: Map<string, DocBrowserEntry[]>;
@@ -187,6 +276,7 @@ function TreeNode({
   onSelectEntry: (id: string) => void;
   onContextMenu: (e: React.MouseEvent, entry: DocBrowserEntry) => void;
   onMoveEntry?: (entryId: string, targetFolderId: string | null) => void;
+  onOpenSubscription?: (entryId: string) => void;
 }) {
   const isFolder = entry.isFolder;
   const isOpen = expandedFolders.has(entry.id);
@@ -258,6 +348,47 @@ function TreeNode({
           {displayTitle}
         </span>
 
+        {/* (new) 徽标：lastChangedAt 在 24 小时以内 */}
+        {!isFolder && isRecentlyChanged(entry.lastChangedAt) && (
+          <span
+            className="text-[9px] px-1.5 py-0.5 rounded-full flex-shrink-0 font-bold"
+            style={{
+              background: 'rgba(34,197,94,0.12)',
+              color: 'rgba(74,222,128,0.95)',
+              border: '1px solid rgba(34,197,94,0.25)',
+              letterSpacing: '0.3px',
+            }}
+            title={`最近更新: ${entry.lastChangedAt ? new Date(entry.lastChangedAt).toLocaleString('zh-CN') : ''}`}
+          >
+            new
+          </span>
+        )}
+
+        {/* 订阅状态徽标：点击打开订阅详情面板 */}
+        {!isFolder && entry.sourceType === 'subscription' && onOpenSubscription && (
+          <span
+            onClick={(e) => { e.stopPropagation(); onOpenSubscription(entry.id); }}
+            className="flex-shrink-0 cursor-pointer"
+            title={
+              entry.isPaused ? '订阅已暂停（点击查看详情）'
+              : entry.syncStatus === 'syncing' ? '同步中（点击查看详情）'
+              : entry.syncStatus === 'error' ? '同步出错（点击查看详情）'
+              : '订阅源（点击查看详情）'
+            }
+          >
+            <span
+              className="block w-1.5 h-1.5 rounded-full"
+              style={{
+                background: entry.isPaused ? 'rgba(148,163,184,0.7)'
+                  : entry.syncStatus === 'syncing' ? 'rgba(96,165,250,0.85)'
+                  : entry.syncStatus === 'error' ? 'rgba(248,113,113,0.85)'
+                  : 'rgba(74,222,128,0.85)',
+                boxShadow: entry.syncStatus === 'syncing' ? '0 0 6px rgba(96,165,250,0.6)' : 'none',
+              }}
+            />
+          </span>
+        )}
+
         {isPrimary && (
           <span className="text-[9px] px-1.5 py-0.5 rounded-full flex-shrink-0"
             style={{ background: 'rgba(234,179,8,0.1)', color: 'rgba(234,179,8,0.8)' }}>
@@ -295,6 +426,7 @@ function TreeNode({
           onSelectEntry={onSelectEntry}
           onContextMenu={onContextMenu}
           onMoveEntry={onMoveEntry}
+          onOpenSubscription={onOpenSubscription}
         />
       ))}
     </>
@@ -347,20 +479,74 @@ function Breadcrumbs({ entryId, entries }: { entryId: string; entries: DocBrowse
 // ── Markdown 渲染器 ──
 
 function MarkdownViewer({ content }: { content: string }) {
+  // 每次 content 变化都重建 slugger，确保同名 heading 得到稳定干净的 slug
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const slugger = useMemo(() => new GithubSlugger(), [content]);
+  const mkHeading = useCallback(
+    (Tag: 'h1' | 'h2' | 'h3' | 'h4' | 'h5' | 'h6') => ({ children }: { children?: React.ReactNode }) => {
+      const text = normalizeHeadingText(childrenToText(children));
+      const id = text ? slugger.slug(text) : undefined;
+      const classesByTag: Record<string, string> = {
+        h1: 'text-[22px] font-bold mt-6 mb-3 pb-2 scroll-mt-24',
+        h2: 'text-[18px] font-bold mt-5 mb-2.5 pb-1.5 scroll-mt-24',
+        h3: 'text-[15px] font-semibold mt-4 mb-2 scroll-mt-24',
+        h4: 'text-[14px] font-semibold mt-3 mb-1.5 scroll-mt-24',
+        h5: 'text-[13px] font-semibold mt-3 mb-1 scroll-mt-24',
+        h6: 'text-[12px] font-semibold mt-2 mb-1 scroll-mt-24',
+      };
+      const style: React.CSSProperties =
+        Tag === 'h1'
+          ? { borderBottom: '1px solid rgba(255,255,255,0.06)', color: 'var(--text-primary)' }
+          : Tag === 'h2'
+            ? { borderBottom: '1px solid rgba(255,255,255,0.04)', color: 'var(--text-primary)' }
+            : { color: 'var(--text-primary)' };
+      return <Tag id={id} className={classesByTag[Tag]} style={style}>{children}</Tag>;
+    },
+    [slugger],
+  );
   return (
     <div className="prose-invert max-w-none text-[13px] leading-relaxed">
       <ReactMarkdown
-        remarkPlugins={[remarkGfm]}
+        remarkPlugins={[remarkGfm, remarkMath]}
+        rehypePlugins={[rehypeKatex]}
         components={{
-          h1: ({ children }) => <h1 className="text-[22px] font-bold mt-6 mb-3 pb-2" style={{ borderBottom: '1px solid rgba(255,255,255,0.06)', color: 'var(--text-primary)' }}>{children}</h1>,
-          h2: ({ children }) => <h2 className="text-[18px] font-bold mt-5 mb-2.5 pb-1.5" style={{ borderBottom: '1px solid rgba(255,255,255,0.04)', color: 'var(--text-primary)' }}>{children}</h2>,
-          h3: ({ children }) => <h3 className="text-[15px] font-semibold mt-4 mb-2" style={{ color: 'var(--text-primary)' }}>{children}</h3>,
-          h4: ({ children }) => <h4 className="text-[14px] font-semibold mt-3 mb-1.5" style={{ color: 'var(--text-primary)' }}>{children}</h4>,
+          h1: mkHeading('h1'),
+          h2: mkHeading('h2'),
+          h3: mkHeading('h3'),
+          h4: mkHeading('h4'),
+          h5: mkHeading('h5'),
+          h6: mkHeading('h6'),
           p: ({ children }) => <p className="my-2 whitespace-pre-wrap break-words" style={{ color: 'var(--text-secondary, rgba(255,255,255,0.78))' }}>{children}</p>,
-          a: ({ href, children }) => <a href={href} target="_blank" rel="noopener noreferrer" className="underline underline-offset-2" style={{ color: 'rgba(96,165,250,0.9)' }}>{children}</a>,
-          ul: ({ children }) => <ul className="list-disc pl-5 my-2 space-y-0.5" style={{ color: 'var(--text-secondary)' }}>{children}</ul>,
+          a: ({ href, children }) => {
+            // 锚点 → SPA 内 scroll，不新开标签页
+            if (href && href.startsWith('#')) {
+              return (
+                <a href={href} className="underline underline-offset-2" style={{ color: 'rgba(96,165,250,0.9)' }}
+                  onClick={(e) => {
+                    e.preventDefault();
+                    const id = decodeURIComponent(href.slice(1));
+                    const target = document.getElementById(id);
+                    if (target) target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                  }}>
+                  {children}
+                </a>
+              );
+            }
+            return <a href={href} target="_blank" rel="noopener noreferrer" className="underline underline-offset-2" style={{ color: 'rgba(96,165,250,0.9)' }}>{children}</a>;
+          },
+          ul: ({ children, className }) => {
+            const isTaskList = className?.includes('contains-task-list');
+            return (
+              <ul className={`${isTaskList ? 'list-none pl-2' : 'list-disc pl-5'} my-2 space-y-0.5`} style={{ color: 'var(--text-secondary)' }}>
+                {children}
+              </ul>
+            );
+          },
           ol: ({ children }) => <ol className="list-decimal pl-5 my-2 space-y-0.5" style={{ color: 'var(--text-secondary)' }}>{children}</ol>,
-          li: ({ children }) => <li className="text-[13px]">{children}</li>,
+          li: ({ children, className }) => {
+            const isTaskItem = className?.includes('task-list-item');
+            return <li className={`text-[13px] ${isTaskItem ? 'flex items-start gap-2' : ''}`}>{children}</li>;
+          },
           blockquote: ({ children }) => (
             <blockquote className="my-3 pl-3 py-1" style={{ borderLeft: '3px solid rgba(96,165,250,0.3)', color: 'var(--text-muted)' }}>{children}</blockquote>
           ),
@@ -529,6 +715,9 @@ export function DocBrowser({
   onCreateDocument,
   onUploadFile,
   onSearch,
+  onOpenSubscription,
+  onGenerateSubtitle,
+  onReprocess,
   emptyState,
   loading,
 }: DocBrowserProps) {
@@ -558,6 +747,29 @@ export function DocBrowser({
   const searchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const addMenuRef = useRef<HTMLDivElement>(null);
   const pinnedSet = useMemo(() => new Set(pinnedIds), [pinnedIds]);
+
+  // 批次 C：只对选中的非文件夹条目埋点
+  const trackedEntryId = useMemo(() => {
+    if (!selectedEntryId) return null;
+    const e = entries.find(x => x.id === selectedEntryId);
+    return e && !e.isFolder ? selectedEntryId : null;
+  }, [selectedEntryId, entries]);
+  useViewTracking(trackedEntryId);
+
+  // 批次 D：划词评论
+  const contentAreaRef = useRef<HTMLDivElement>(null);
+  const [inlineCommentsOpen, setInlineCommentsOpen] = useState(false);
+  const [pendingSelection, setPendingSelection] = useState<PendingSelection | null>(null);
+  const { selection: liveSelection, clear: clearLiveSelection } = useContentSelection(
+    contentAreaRef,
+    preview?.text,
+    Boolean(selectedEntryId && !contentLoading && !editMode),
+  );
+  const trackedEntryForComments = useMemo(() => {
+    if (!selectedEntryId) return null;
+    const e = entries.find(x => x.id === selectedEntryId);
+    return e && !e.isFolder ? e : null;
+  }, [selectedEntryId, entries]);
 
   // 拖拽调整宽度
   useEffect(() => {
@@ -981,6 +1193,7 @@ export function DocBrowser({
               onSelectEntry={onSelectEntry}
               onContextMenu={handleContextMenu}
               onMoveEntry={onMoveEntry}
+              onOpenSubscription={onOpenSubscription}
             />
           ))}
         </div>
@@ -1039,6 +1252,102 @@ export function DocBrowser({
                   置顶
                 </span>
               )}
+              {/* 当前文件最近更新徽标 + 订阅来源版本信息（git 类订阅独有） */}
+              {(() => {
+                const sel = entries.find(e => e.id === selectedEntryId);
+                if (!sel || sel.isFolder) return null;
+                const recentlyChanged = isRecentlyChanged(sel.lastChangedAt);
+                const isSubscription = sel.sourceType === 'subscription';
+                const githubSha = sel.metadata?.github_sha;
+                if (!recentlyChanged && !isSubscription) return null;
+                return (
+                  <>
+                    {recentlyChanged && (
+                      <span
+                        className="text-[10px] px-2 py-0.5 rounded-full flex-shrink-0 font-bold"
+                        style={{
+                          background: 'rgba(34,197,94,0.1)',
+                          color: 'rgba(74,222,128,0.95)',
+                          border: '1px solid rgba(34,197,94,0.25)',
+                          letterSpacing: '0.3px',
+                        }}
+                        title={sel.lastChangedAt ? `最近更新: ${new Date(sel.lastChangedAt).toLocaleString('zh-CN')}` : ''}
+                      >
+                        new
+                      </span>
+                    )}
+                    {isSubscription && onOpenSubscription && (
+                      <button
+                        onClick={() => onOpenSubscription(sel.id)}
+                        className="h-6 px-2 rounded-[8px] text-[10px] font-semibold flex items-center gap-1 cursor-pointer transition-colors flex-shrink-0"
+                        style={{
+                          background: 'rgba(59,130,246,0.08)',
+                          border: '1px solid rgba(59,130,246,0.18)',
+                          color: 'rgba(96,165,250,0.95)',
+                        }}
+                        title={githubSha ? `GitHub 版本 ${githubSha.slice(0, 7)}（点击查看同步详情）` : '查看订阅同步详情'}
+                      >
+                        {githubSha ? `#${githubSha.slice(0, 7)}` : '订阅信息'}
+                      </button>
+                    )}
+                  </>
+                );
+              })()}
+              {/* 知识库 Agent 按钮：生成字幕 / 再加工 */}
+              {(() => {
+                const sel = entries.find(e => e.id === selectedEntryId);
+                if (!sel || sel.isFolder) return null;
+                const showSubtitle = canGenerateSubtitle(sel) && !!onGenerateSubtitle;
+                const showReprocess = canReprocess(sel) && !!onReprocess;
+                if (!showSubtitle && !showReprocess) return null;
+                return (
+                  <>
+                    {showSubtitle && (
+                      <button
+                        onClick={() => onGenerateSubtitle!(sel.id)}
+                        className="h-6 px-2 rounded-[8px] text-[10px] font-semibold flex items-center gap-1 cursor-pointer transition-colors flex-shrink-0"
+                        style={{
+                          background: 'rgba(168,85,247,0.1)',
+                          border: '1px solid rgba(168,85,247,0.22)',
+                          color: 'rgba(216,180,254,0.95)',
+                        }}
+                        title="一键生成字幕"
+                      >
+                        <Sparkles size={11} /> 生成字幕
+                      </button>
+                    )}
+                    {showReprocess && (
+                      <button
+                        onClick={() => onReprocess!(sel.id)}
+                        className="h-6 px-2 rounded-[8px] text-[10px] font-semibold flex items-center gap-1 cursor-pointer transition-colors flex-shrink-0"
+                        style={{
+                          background: 'rgba(59,130,246,0.08)',
+                          border: '1px solid rgba(59,130,246,0.18)',
+                          color: 'rgba(96,165,250,0.95)',
+                        }}
+                        title="按模板再加工文档"
+                      >
+                        <Wand2 size={11} /> 再加工
+                      </button>
+                    )}
+                  </>
+                );
+              })()}
+              {/* 批次 D：划词评论开关按钮 */}
+              {trackedEntryForComments && (
+                <button
+                  onClick={() => setInlineCommentsOpen(true)}
+                  className="h-6 px-2 rounded-[8px] text-[10px] font-semibold flex items-center gap-1 cursor-pointer transition-colors flex-shrink-0"
+                  style={{
+                    background: 'rgba(168,85,247,0.08)',
+                    border: '1px solid rgba(168,85,247,0.18)',
+                    color: 'rgba(216,180,254,0.95)',
+                  }}
+                  title="查看或添加划词评论"
+                >
+                  <MessageSquareText size={11} /> 评论
+                </button>
+              )}
               {/* 编辑/保存按钮（仅对可编辑类型显示） */}
               {(() => {
                 const sel = entries.find(e => e.id === selectedEntryId);
@@ -1087,7 +1396,7 @@ export function DocBrowser({
               })()}
             </div>
             {/* 内容区 */}
-            <div className="flex-1 overflow-y-auto px-6 py-4">
+            <div ref={contentAreaRef} className="flex-1 overflow-y-auto px-6 py-4 relative">
               {contentLoading ? (
                 <MapSectionLoader text="加载文档内容…" />
               ) : editMode ? (
@@ -1109,6 +1418,24 @@ export function DocBrowser({
                 <FilePreview
                   entry={entries.find(e => e.id === selectedEntryId)}
                   preview={preview}
+                />
+              )}
+              {/* 划词选中时的浮层"添加评论"按钮 */}
+              {liveSelection && !editMode && (
+                <SelectionActionPopover
+                  selection={liveSelection}
+                  onAddComment={() => {
+                    setPendingSelection({
+                      selectedText: liveSelection.selectedText,
+                      contextBefore: liveSelection.contextBefore,
+                      contextAfter: liveSelection.contextAfter,
+                      startOffset: liveSelection.startOffset,
+                      endOffset: liveSelection.endOffset,
+                    });
+                    setInlineCommentsOpen(true);
+                    clearLiveSelection();
+                    window.getSelection()?.removeAllRanges();
+                  }}
                 />
               )}
             </div>
@@ -1138,14 +1465,115 @@ export function DocBrowser({
           isPinned={pinnedSet.has(contextMenu.entry.id)}
           onSetPrimary={onSetPrimary}
           onTogglePin={onTogglePin}
-          onDelete={onDeleteEntry ? (entryId) => {
-            if (confirm(`确定删除「${contextMenu.entry.title}」？${contextMenu.entry.isFolder ? '(仅删除文件夹本身)' : ''}`)) {
-              onDeleteEntry(entryId);
-            }
+          onDelete={onDeleteEntry ? async (entryId) => {
+            const target = contextMenu.entry;
+            const isFolder = target.isFolder;
+            const isGithub = target.sourceType === 'github_directory';
+            const isSubscription = target.sourceType === 'subscription' || isGithub;
+            const consequence = isGithub
+              ? '所有同步来的子文档、解析正文、附件、同步日志'
+              : isFolder
+                ? '文件夹下所有子文档、解析正文、附件、同步日志'
+                : isSubscription
+                  ? '解析正文、同步日志'
+                  : '解析正文、附件文件';
+            const confirmed = await systemDialog.confirm({
+              title: `确认删除${isFolder ? '文件夹' : '文档'}`,
+              message: `删除「${target.title}」将永久清除：\n  · ${consequence}\n\n此操作不可恢复。`,
+              tone: 'danger',
+              confirmText: '永久删除',
+              cancelText: '取消',
+            });
+            if (confirmed) onDeleteEntry(entryId);
           } : undefined}
+          onGenerateSubtitle={onGenerateSubtitle}
+          onReprocess={onReprocess}
           onClose={() => setContextMenu(null)}
+        />
+      )}
+
+      {/* 批次 D：划词评论抽屉 */}
+      {inlineCommentsOpen && trackedEntryForComments && (
+        <InlineCommentDrawer
+          entryId={trackedEntryForComments.id}
+          entryTitle={trackedEntryForComments.title}
+          pendingSelection={pendingSelection}
+          onClearPending={() => setPendingSelection(null)}
+          onLocate={(text) => {
+            // 在 content area 的 DOM 里查找文本并 scroll / 高亮
+            scrollToTextInContainer(contentAreaRef.current, text);
+          }}
+          onClose={() => {
+            setInlineCommentsOpen(false);
+            setPendingSelection(null);
+          }}
         />
       )}
     </div>
   );
+}
+
+// ── 批次 D：划词选中时的浮层按钮 ──
+
+function SelectionActionPopover({
+  selection,
+  onAddComment,
+}: {
+  selection: ContentSelectionInfo;
+  onAddComment: () => void;
+}) {
+  // 浮层定位：选中区上方；跨出视口时转到下方
+  const top = Math.max(8, selection.rect.top - 38);
+  const left = Math.max(8, Math.min(window.innerWidth - 140, selection.rect.left + selection.rect.width / 2 - 60));
+  return (
+    <div
+      className="fixed z-40 h-8 px-3 rounded-[10px] flex items-center gap-1.5 cursor-pointer transition-all"
+      style={{
+        top,
+        left,
+        background: 'rgba(20,20,30,0.92)',
+        border: '1px solid rgba(168,85,247,0.4)',
+        boxShadow: '0 8px 24px rgba(0,0,0,0.4)',
+        backdropFilter: 'blur(12px)',
+      }}
+      onMouseDown={(e) => e.preventDefault()}
+      onClick={onAddComment}
+    >
+      <MessageSquarePlus size={13} style={{ color: 'rgba(216,180,254,0.95)' }} />
+      <span className="text-[11px] font-semibold" style={{ color: 'rgba(216,180,254,0.95)' }}>
+        添加评论
+      </span>
+    </div>
+  );
+}
+
+/**
+ * 批次 D：在容器 DOM 里查找指定文本并 scroll + 闪烁高亮。
+ * 使用 TreeWalker 遍历所有 text node，找到第一处匹配即停。
+ */
+function scrollToTextInContainer(container: HTMLElement | null, text: string) {
+  if (!container || !text) return;
+  const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT);
+  let node: Node | null;
+  while ((node = walker.nextNode())) {
+    const textContent = node.textContent ?? '';
+    const idx = textContent.indexOf(text);
+    if (idx >= 0) {
+      const range = document.createRange();
+      range.setStart(node, idx);
+      range.setEnd(node, idx + text.length);
+      const el = (node.parentElement ?? container) as HTMLElement;
+      el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      // 闪烁高亮：短暂添加一个 class
+      const originalBg = el.style.backgroundColor;
+      const originalTransition = el.style.transition;
+      el.style.transition = 'background-color 0.6s';
+      el.style.backgroundColor = 'rgba(168,85,247,0.22)';
+      window.setTimeout(() => {
+        el.style.backgroundColor = originalBg;
+        window.setTimeout(() => { el.style.transition = originalTransition; }, 600);
+      }, 1200);
+      return;
+    }
+  }
 }

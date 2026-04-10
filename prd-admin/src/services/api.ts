@@ -945,6 +945,11 @@ export const api = {
       // 分享链接
       shareLinks: (storeId: string) => `/api/document-store/stores/${storeId}/share-links`,
       shareLinkDetail: (linkId: string) => `/api/document-store/share-links/${linkId}`,
+      // 知识库 Agent：再加工模板列表
+      reprocessTemplates: () => `/api/document-store/reprocess-templates`,
+      // 知识库 Agent：Run 状态查询与 SSE 流
+      agentRun: (runId: string) => `/api/document-store/agent-runs/${runId}`,
+      agentRunStream: (runId: string) => `/api/document-store/agent-runs/${runId}/stream`,
     },
     entries: {
       list: (storeId: string) => `/api/document-store/stores/${storeId}/entries`,
@@ -958,6 +963,18 @@ export const api = {
       move: (entryId: string) => `/api/document-store/entries/${entryId}/move`,
       primaryChild: (folderId: string) => `/api/document-store/entries/${folderId}/primary-child`,
       sync: (entryId: string) => `/api/document-store/entries/${entryId}/sync`,
+      syncLogs: (entryId: string) => `/api/document-store/entries/${entryId}/sync-logs`,
+      subscriptionUpdate: (entryId: string) => `/api/document-store/entries/${entryId}/subscription`,
+      generateSubtitle: (entryId: string) => `/api/document-store/entries/${entryId}/generate-subtitle`,
+      reprocess: (entryId: string) => `/api/document-store/entries/${entryId}/reprocess`,
+      latestAgentRun: (entryId: string) => `/api/document-store/entries/${entryId}/agent-runs/latest`,
+      // 批次 C：浏览事件埋点
+      logView: (entryId: string) => `/api/document-store/entries/${entryId}/view`,
+      leaveView: (viewEventId: string) => `/api/document-store/view-events/${viewEventId}/leave`,
+      storeViewEvents: (storeId: string) => `/api/document-store/stores/${storeId}/view-events`,
+      // 批次 D：划词评论
+      inlineComments: (entryId: string) => `/api/document-store/entries/${entryId}/inline-comments`,
+      inlineCommentDetail: (commentId: string) => `/api/document-store/inline-comments/${commentId}`,
       update: (entryId: string) => `/api/document-store/entries/${entryId}`,
       delete: (entryId: string) => `/api/document-store/entries/${entryId}`,
     },

@@ -84,9 +84,76 @@ export type DocumentEntry = {
   lastSyncAt?: string;
   syncStatus?: string;
   syncError?: string;
+  isPaused?: boolean;
+  /** 最近一次"内容真正发生变化"的时间，用于在文件树上展示 (new) 徽标 */
+  lastChangedAt?: string;
+  contentHash?: string;
   contentIndex?: string;
   createdAt: string;
   updatedAt: string;
+};
+
+/** 知识库 Agent Run（字幕生成 + 文档再加工共用） */
+export type DocumentStoreAgentRun = {
+  id: string;
+  kind: 'subtitle' | 'reprocess';
+  sourceEntryId: string;
+  storeId: string;
+  userId: string;
+  status: 'queued' | 'running' | 'done' | 'failed' | 'cancelled';
+  phase: string;
+  progress: number;
+  errorMessage?: string;
+  outputEntryId?: string;
+  templateKey?: string;
+  customPrompt?: string;
+  generatedText?: string;
+  createdAt: string;
+  startedAt?: string;
+  endedAt?: string;
+};
+
+/** 再加工模板定义 */
+export type ReprocessTemplate = {
+  key: string;
+  label: string;
+  description: string;
+};
+
+/** 订阅同步日志中的单条事件（只包含 change/error，不包含无变化的心跳） */
+export type DocumentSyncLogEntry = {
+  id: string;
+  syncedAt: string;
+  /** "change" 表示内容变化；"error" 表示同步出错 */
+  kind: 'change' | 'error';
+  /** 一句话描述本次变化（如 "正文 +120 字节"、"+3 ~2 -1 文件"） */
+  changeSummary?: string;
+  /** GitHub 目录同步时的逐文件变化（其他类型为空） */
+  fileChanges?: { path: string; action: 'added' | 'updated' | 'deleted' }[];
+  previousLength?: number;
+  currentLength?: number;
+  errorMessage?: string;
+  durationMs: number;
+};
+
+/** 订阅详情接口的响应：当前订阅状态 + 最近变化日志列表 */
+export type SubscriptionDetail = {
+  entry: {
+    id: string;
+    title: string;
+    sourceType: string;
+    sourceUrl?: string;
+    syncIntervalMinutes?: number;
+    syncStatus?: string;
+    syncError?: string;
+    lastSyncAt?: string;
+    lastChangedAt?: string;
+    isPaused: boolean;
+    contentHash?: string;
+    metadata: Record<string, string>;
+    nextSyncAt?: string;
+  };
+  logs: DocumentSyncLogEntry[];
 };
 
 export type DocumentStoreWithPreview = DocumentStore & {
@@ -180,3 +247,48 @@ export type UpdateDocumentEntryContract = (
 export type DeleteDocumentEntryContract = (
   entryId: string,
 ) => Promise<ApiResponse<{ deleted: boolean }>>;
+
+// ── 批次 C：浏览事件 ──
+
+export type DocumentStoreViewEvent = {
+  id: string;
+  entryId?: string;
+  entryTitle?: string | null;
+  viewerUserId?: string;
+  viewerName: string;
+  viewerAvatar?: string;
+  enteredAt: string;
+  leftAt?: string;
+  durationMs?: number;
+  userAgent?: string;
+  referer?: string;
+};
+
+export type DocumentStoreViewStats = {
+  totalViews: number;
+  uniqueVisitors: number;
+  totalDurationMs: number;
+};
+
+// ── 批次 D：划词评论 ──
+
+export type DocumentInlineComment = {
+  id: string;
+  storeId: string;
+  entryId: string;
+  documentId: string;
+  contentHash?: string;
+  selectedText: string;
+  contextBefore: string;
+  contextAfter: string;
+  startOffset: number;
+  endOffset: number;
+  content: string;
+  authorUserId: string;
+  authorDisplayName: string;
+  authorAvatar?: string;
+  /** active = 在当前正文里能找到并高亮；orphaned = 文档更新后失锚 */
+  status: 'active' | 'orphaned';
+  createdAt: string;
+  updatedAt?: string;
+};
