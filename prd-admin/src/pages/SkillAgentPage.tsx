@@ -2,6 +2,7 @@ import { useState, useRef, useCallback, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useSseStream } from '@/lib/useSseStream';
 import { GlassCard } from '@/components/design/GlassCard';
+import { MarkdownContent } from '@/components/ui/MarkdownContent';
 import { api } from '@/services/api';
 import {
   createSkillAgentSession,
@@ -354,14 +355,18 @@ function CreateTab() {
                     {msg.role === 'user' ? <User size={11} color="white" /> : <Bot size={11} color="white" />}
                   </div>
                 )}
-                <div className={`max-w-[80%] rounded-2xl px-3.5 py-2.5 text-[13px] leading-relaxed whitespace-pre-wrap ${msg.role === 'system' ? 'mx-auto text-center' : ''}`}
+                <div className={`max-w-[80%] rounded-2xl px-3.5 py-2.5 ${msg.role === 'system' ? 'mx-auto text-center' : ''}`}
                   style={msg.role === 'user'
                     ? { background: 'rgba(59,130,246,0.12)', color: 'var(--text-primary)', border: '1px solid rgba(59,130,246,0.15)', borderBottomRightRadius: 6 }
                     : msg.role === 'system'
                       ? { background: 'rgba(34,197,94,0.08)', color: 'rgba(34,197,94,0.9)', border: '1px solid rgba(34,197,94,0.12)' }
                       : { background: 'rgba(255,255,255,0.03)', color: 'var(--text-primary)', border: '1px solid rgba(255,255,255,0.06)', borderBottomLeftRadius: 6 }
                   }>
-                  {msg.content}
+                  {msg.role === 'assistant' ? (
+                    <MarkdownContent content={msg.content} className="text-[13px] leading-relaxed" />
+                  ) : (
+                    <span className="text-[13px] leading-relaxed whitespace-pre-wrap">{msg.content}</span>
+                  )}
                 </div>
               </div>
             ))}
@@ -446,10 +451,10 @@ function CreateTab() {
                 </div>
                 <div className="flex-1 overflow-y-auto px-4 py-2.5" style={{ minHeight: 0 }}>
                   {autoTestResult ? (
-                    <pre className="text-[12px] leading-relaxed whitespace-pre-wrap" style={{ color: 'var(--text-primary)' }}>
-                      {autoTestResult}
+                    <div>
+                      <MarkdownContent content={autoTestResult} className="text-[12px] leading-relaxed" />
                       {testStreaming && <span className="inline-block w-[2px] h-[13px] ml-0.5 animate-pulse" style={{ background: '#8B5CF6', verticalAlign: 'text-bottom' }} />}
-                    </pre>
+                    </div>
                   ) : autoTestInput ? (
                     <div className="flex items-center gap-1.5 text-[11px]" style={{ color: 'var(--text-muted)' }}>
                       <Loader2 size={12} className="animate-spin" style={{ color: '#8B5CF6' }} /> 正在试跑技能…
@@ -873,10 +878,8 @@ function SkillDetailView({ skill, onBack, onDelete }: {
             <div ref={resultRef} className="flex-1 overflow-y-auto px-4 py-3" style={{ minHeight: 0 }}>
               {showResult ? (
                 <div>
-                  <pre className="text-[13px] leading-relaxed whitespace-pre-wrap" style={{ color: 'var(--text-primary)' }}>
-                    {testResult}
-                    {testStreaming && <span className="inline-block w-[2px] h-[14px] ml-0.5 animate-pulse" style={{ background: '#8B5CF6', verticalAlign: 'text-bottom' }} />}
-                  </pre>
+                  <MarkdownContent content={testResult} className="text-[13px] leading-relaxed" />
+                  {testStreaming && <span className="inline-block w-[2px] h-[14px] ml-0.5 animate-pulse" style={{ background: '#8B5CF6', verticalAlign: 'text-bottom' }} />}
                 </div>
               ) : (
                 <div className="flex flex-col items-center justify-center h-full gap-2">
