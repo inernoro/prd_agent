@@ -1,0 +1,127 @@
+# ──────────────────────────────────────────────────────────────
+# CDS HTTP Bootstrap Config
+#
+# Used before certificates exist. Only listens on port 80 so ACME
+# webroot validation can succeed. After certificates are issued,
+# switch back to cds-nginx.conf.
+# ──────────────────────────────────────────────────────────────
+
+upstream cds_worker {
+    server 127.0.0.1:{{WORKER_PORT}};
+    keepalive 16;
+}
+
+upstream cds_dashboard {
+    server 127.0.0.1:{{MASTER_PORT}};
+    keepalive 8;
+}
+
+server {
+    listen 80;
+    listen [::]:80;
+    server_name {{MAIN_DOMAIN}};
+
+    location ^~ /.well-known/acme-challenge/ {
+        root /var/www/html;
+        allow all;
+    }
+
+    location / {
+        proxy_pass http://cds_worker;
+        proxy_http_version 1.1;
+        proxy_set_header Host              $host;
+        proxy_set_header X-Real-IP         $remote_addr;
+        proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header X-Forwarded-Host  $host;
+        proxy_set_header X-Forwarded-Port  $server_port;
+        proxy_set_header Upgrade           $http_upgrade;
+        proxy_set_header Connection        $connection_upgrade;
+        proxy_buffering off;
+        proxy_cache     off;
+        proxy_read_timeout 3600s;
+        proxy_send_timeout 3600s;
+    }
+}
+
+server {
+    listen 80;
+    listen [::]:80;
+    server_name switch.{{MAIN_DOMAIN}};
+
+    location ^~ /.well-known/acme-challenge/ {
+        root /var/www/html;
+        allow all;
+    }
+
+    location / {
+        proxy_pass http://cds_worker;
+        proxy_http_version 1.1;
+        proxy_set_header Host              $host;
+        proxy_set_header X-Real-IP         $remote_addr;
+        proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header X-Forwarded-Host  $host;
+        proxy_set_header X-Forwarded-Port  $server_port;
+        proxy_set_header Upgrade           $http_upgrade;
+        proxy_set_header Connection        $connection_upgrade;
+        proxy_buffering off;
+        proxy_cache     off;
+        proxy_read_timeout 3600s;
+        proxy_send_timeout 3600s;
+    }
+}
+
+server {
+    listen 80;
+    listen [::]:80;
+    server_name cds.{{MAIN_DOMAIN}};
+
+    location ^~ /.well-known/acme-challenge/ {
+        root /var/www/html;
+        allow all;
+    }
+
+    location / {
+        proxy_pass http://cds_dashboard;
+        proxy_http_version 1.1;
+        proxy_set_header Host              $host;
+        proxy_set_header X-Real-IP         $remote_addr;
+        proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Port  $server_port;
+        proxy_set_header Upgrade           $http_upgrade;
+        proxy_set_header Connection        $connection_upgrade;
+        proxy_buffering off;
+        proxy_cache     off;
+        proxy_read_timeout 3600s;
+        proxy_send_timeout 3600s;
+    }
+}
+
+server {
+    listen 80;
+    listen [::]:80;
+    server_name *.{{PREVIEW_DOMAIN}};
+
+    location ^~ /.well-known/acme-challenge/ {
+        root /var/www/html;
+        allow all;
+    }
+
+    location / {
+        proxy_pass http://cds_worker;
+        proxy_http_version 1.1;
+        proxy_set_header Host              $host;
+        proxy_set_header X-Real-IP         $remote_addr;
+        proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header X-Forwarded-Host  $host;
+        proxy_set_header X-Forwarded-Port  $server_port;
+        proxy_set_header Upgrade           $http_upgrade;
+        proxy_set_header Connection        $connection_upgrade;
+        proxy_buffering off;
+        proxy_cache     off;
+        proxy_read_timeout 3600s;
+        proxy_send_timeout 3600s;
+    }
+}

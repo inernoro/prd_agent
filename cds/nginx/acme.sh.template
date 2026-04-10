@@ -42,6 +42,7 @@ CERT_DIR="${BASE_DIR}/certs"
 WEBROOT_DIR="${BASE_DIR}/www"
 ACME_HOME="${HOME}/.acme.sh"
 ACME="${ACME_HOME}/acme.sh"
+START_NGINX="${BASE_DIR}/start_nginx.sh"
 
 if [ -z "$MAIN_DOMAIN" ]; then
   echo "ERROR: MAIN_DOMAIN 不能为空"
@@ -56,8 +57,9 @@ if [ "${CHECK_ONLY}" -eq 1 ]; then
 fi
 
 if ! docker ps --format '{{.Names}}' | grep -qx "${NGINX_CONTAINER}"; then
-  echo "ERROR: 找不到正在运行的 nginx 容器: ${NGINX_CONTAINER}"
-  exit 1
+  if [ -x "${START_NGINX}" ]; then
+    "${START_NGINX}" up
+  fi
 fi
 
 if ! docker inspect "${NGINX_CONTAINER}" --format '{{json .Mounts}}' | grep -q "/var/www/html"; then
@@ -95,5 +97,9 @@ fi
   --key-file       "${CERT_DIR}/${MAIN_DOMAIN}.key" \
   --fullchain-file "${CERT_DIR}/${MAIN_DOMAIN}.crt" \
   --reloadcmd      "docker exec ${NGINX_CONTAINER} nginx -s reload"
+
+if [ -x "${START_NGINX}" ]; then
+  "${START_NGINX}" restart
+fi
 
 echo | openssl s_client -connect "${LOCAL_TLS_HOST}:443" -servername "${MAIN_DOMAIN}" 2>/dev/null | openssl x509 -noout -dates -issuer -subject || true
