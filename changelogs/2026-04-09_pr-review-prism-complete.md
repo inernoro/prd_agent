@@ -37,3 +37,4 @@
 | feat | prd-api | PR审查棱镜 submissions 列表新增 repo 参数过滤与回显，支持 owner/repo 或 PR URL 格式 |
 | fix | prd-api | PR审查棱镜集成测试新增 submissions repo 过滤场景，验证跨仓库结果隔离与回显字段 |
 | feat | prd-admin | PR审查棱镜支持仓库工作区持久化：最近仓库快捷切换、按仓库过滤列表、按仓库记忆 owner/context/anchor 参数 |
+| feat | prd-admin | 首页仅保留一个 PR审查棱镜主图入口，移除快捷条重复入口并补充专属主图插画 |
