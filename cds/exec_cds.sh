@@ -81,6 +81,7 @@ load_domain_env() {
   export CDS_MAIN_DOMAIN="${CDS_MAIN_DOMAIN:-${MAIN_DOMAIN:-}}"
   export CDS_SWITCH_DOMAIN="${CDS_SWITCH_DOMAIN:-${SWITCH_DOMAIN:-}}"
   export CDS_PREVIEW_DOMAIN="${CDS_PREVIEW_DOMAIN:-${PREVIEW_DOMAIN:-${MAIN_DOMAIN:-}}}"
+  export CDS_ACCESS_MODE="${CDS_ACCESS_MODE:-${ACCESS_MODE:-prefixed}}"
 }
 
 echo ""

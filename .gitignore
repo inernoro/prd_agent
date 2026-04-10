@@ -91,6 +91,7 @@ cds/nginx/certs/
 cds/nginx/www/
 cds/nginx/nginx.conf
 cds/nginx/cds-nginx.conf
+cds/nginx/cds-nginx.http.conf
 cds/nginx/acme_apply.sh
 cds/nginx/nginx.compose.yml
 cds/.cds.env
