@@ -230,3 +230,62 @@ curl -X POST http://localhost:9900/api/scheduler/cool/feature-a
 - **现有 `onAutoBuild` 路径已经处理了 status != 'running' 的分支**：所以 cool 后的分支被访问时会自动走 SSE 构建页，无需新增唤醒 UI。这就是 ADR-1 的依据。
 - **defaultBranch 必须 pinned**：否则冷启动期间可能找不到默认分支。
 - **`scheduler.enabled = false` 是默认值**：老用户升级 CDS 时不会感知任何变化，必须显式打开才启用温池。
+
+## Phase 1.5 验证记录（2026-04-10）
+
+> 触发 `/cds-deploy` pipeline 验证本次改动时发现的 **3 个 pre-existing bug** + **1 个设计自证故障**。
+
+### Pipeline 结果
+
+| # | 阶段 | 状态 | 备注 |
+|---|------|------|------|
+| 0 | 环境预检 | ✓ | |
+| 1 | Git Push | ✓ | commit 4abcdc9 |
+| 1.5 | CDS Self-Update | ⚠️ 人工介入 | 遇到 bug #1（见下），用户手动 `./exec_cds.sh` 拉起 |
+| 1.5v | 验证新分支 + scheduler API | ✓ | `/api/scheduler/state` 返回 `enabled:false, capacityUsage:{current:5, max:3}` — **代码已加载，API 存活** |
+| 2 | CDS Pull | ✓ | HEAD=4abcdc95 |
+| 3 | CDS Deploy | ❌ 阻塞 | **设计自证故障**（见下） |
+| 4-5 | Readiness + Smoke | ⊘ | 未执行 |
+
+### 暴露的 3 个 pre-existing bug（commit `<待补>`）
+
+#### Bug #1：`exec_cds.sh` 不认识 `--background` 参数
+
+- **根因**：`cds/src/routes/branches.ts` self-update handler 调用 `spawn('bash', ['./exec_cds.sh', '--background'])`，但 exec_cds.sh 的 case 语句只识别 `start|daemon|dev|fg|stop|restart|status|logs|help`，`--background` 进 `*)` 分支 exit 1。
+- **后果**：self-update 成功 checkout + pull + 老进程 exit，但新进程从未启动 → CDS 宿主机整体 502 → 必须 SSH 手动拉起。
+- **静默性**：`stdio: 'ignore'` 把 exec_cds.sh 的报错吞掉，无任何日志。
+- **修复**：
+  1. `exec_cds.sh` 的 case 加 `start|daemon|--background) start_daemon ;;` 作为别名
+  2. 同时把 self-update 的 spawn 参数从 `--background` 改为更规范的 `daemon`
+  3. `stdio: ['ignore', out, errFd]` 把子进程输出写到 `.cds/self-update-error.log` 留痕
+
+#### Bug #2：self-update spawn 失败静默
+
+- **根因**：`stdio: 'ignore'` + 无 `child.on('error')` 监听 + 无 PID 探测 = 任何 spawn 失败都是无声的。
+- **修复**：新增 `.cds/self-update-error.log` 记录所有 spawn 尝试 + stdout/stderr 重定向到该文件 + `child.on('error')` 兜底。
+
+#### Bug #3：deploy 端点无容量检查
+
+- **根因**：`GET /api/branches` 的响应体里有 `capacity: { maxContainers, runningContainers }` 字段，但 `POST /branches/:id/deploy` 完全不看这个值，即使已经 10/6 超售 167% 也照样创建新容器。
+- **后果**：宿主机 OOM → 所有分支级联死亡。
+- **修复**：新增 `computeCapacity()` 辅助函数，deploy 入口在 pull 之前发一个 SSE `capacity-warn` 事件。**非阻塞**（保持向后兼容），但至少用户能看到警告。Phase 2 再考虑硬拒绝或自动调度。
+
+### 设计自证故障：Phase 3 deploy 阻塞
+
+部署触发后宿主机被彻底拖垮（HTTP=000 > 3 分钟）。根因：
+
+```
+GET /api/branches → capacity: {maxContainers: 6, runningContainers: 10, totalMemGB: 4}
+  ↑
+  已经 167% 超售，再 +2 个新容器（.NET SDK 1.5GB + Vite 500MB）直接 OOM
+```
+
+这 **100% 是本次 Phase 1 要解决的故障模式**。scheduler 代码已部署但 `enabled:false`，所以没生效。
+
+### 对 Phase 2 的启示
+
+原本计划 Phase 2 才做的"cgroup 资源限制 + Master 容器化 + janitor"，**必要性从"P1"升级到"P0"**。特别是：
+
+1. **cgroup limit 是硬性必须**：就算不启用 scheduler，单容器也必须有 `--memory` 上限，否则一个 runaway .NET 编译就能杀死整台机
+2. **deploy 入口容量硬拒绝**：Bug #3 的 warning 不够，`scheduler.enabled=false` 且超售时应该 **硬拒绝 deploy** 并给出明确修复指引（手动停哪些容器）
+3. **Master 自愈**：本次 CDS 死了两次都必须人工拉起。systemd Restart=always 优先级提到 Phase 2 第一项
