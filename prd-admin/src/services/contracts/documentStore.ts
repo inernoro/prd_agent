@@ -247,3 +247,48 @@ export type UpdateDocumentEntryContract = (
 export type DeleteDocumentEntryContract = (
   entryId: string,
 ) => Promise<ApiResponse<{ deleted: boolean }>>;
+
+// ── 批次 C：浏览事件 ──
+
+export type DocumentStoreViewEvent = {
+  id: string;
+  entryId?: string;
+  entryTitle?: string | null;
+  viewerUserId?: string;
+  viewerName: string;
+  viewerAvatar?: string;
+  enteredAt: string;
+  leftAt?: string;
+  durationMs?: number;
+  userAgent?: string;
+  referer?: string;
+};
+
+export type DocumentStoreViewStats = {
+  totalViews: number;
+  uniqueVisitors: number;
+  totalDurationMs: number;
+};
+
+// ── 批次 D：划词评论 ──
+
+export type DocumentInlineComment = {
+  id: string;
+  storeId: string;
+  entryId: string;
+  documentId: string;
+  contentHash?: string;
+  selectedText: string;
+  contextBefore: string;
+  contextAfter: string;
+  startOffset: number;
+  endOffset: number;
+  content: string;
+  authorUserId: string;
+  authorDisplayName: string;
+  authorAvatar?: string;
+  /** active = 在当前正文里能找到并高亮；orphaned = 文档更新后失锚 */
+  status: 'active' | 'orphaned';
+  createdAt: string;
+  updatedAt?: string;
+};

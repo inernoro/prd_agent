@@ -968,6 +968,13 @@ export const api = {
       generateSubtitle: (entryId: string) => `/api/document-store/entries/${entryId}/generate-subtitle`,
       reprocess: (entryId: string) => `/api/document-store/entries/${entryId}/reprocess`,
       latestAgentRun: (entryId: string) => `/api/document-store/entries/${entryId}/agent-runs/latest`,
+      // 批次 C：浏览事件埋点
+      logView: (entryId: string) => `/api/document-store/entries/${entryId}/view`,
+      leaveView: (viewEventId: string) => `/api/document-store/view-events/${viewEventId}/leave`,
+      storeViewEvents: (storeId: string) => `/api/document-store/stores/${storeId}/view-events`,
+      // 批次 D：划词评论
+      inlineComments: (entryId: string) => `/api/document-store/entries/${entryId}/inline-comments`,
+      inlineCommentDetail: (commentId: string) => `/api/document-store/inline-comments/${commentId}`,
       update: (entryId: string) => `/api/document-store/entries/${entryId}`,
       delete: (entryId: string) => `/api/document-store/entries/${entryId}`,
     },

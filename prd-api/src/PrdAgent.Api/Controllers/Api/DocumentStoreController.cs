@@ -632,7 +632,157 @@ public class DocumentStoreController : ControllerBase
                 .Set(e => e.ContentIndex, contentIndex.Trim())
                 .Set(e => e.UpdatedAt, DateTime.UtcNow));
 
-        return Ok(ApiResponse<object>.Ok(new { updated = true }));
+        // 重锚定划词评论：正文更新后，遍历所有 active 评论，用 SelectedText + context 重新定位
+        var rebindStats = await RebindInlineCommentsAsync(entryId, content);
+
+        return Ok(ApiResponse<object>.Ok(new
+        {
+            updated = true,
+            inlineCommentsRebound = rebindStats.rebound,
+            inlineCommentsOrphaned = rebindStats.orphaned,
+        }));
+    }
+
+    /// <summary>
+    /// 文档正文更新后重新锚定划词评论。
+    /// 算法（按成本递增）：
+    ///   1) SelectedText 在新正文中唯一出现 → 直接更新 offset
+    ///   2) 多处出现 → 用 ContextBefore/ContextAfter 前后文进行消歧，取最佳匹配位置
+    ///   3) 零出现 → 状态改为 orphaned，评论保留但前端不再高亮正文
+    /// </summary>
+    private async Task<(int rebound, int orphaned)> RebindInlineCommentsAsync(string entryId, string newContent)
+    {
+        var comments = await _db.DocumentInlineComments
+            .Find(c => c.EntryId == entryId && c.Status == DocumentInlineCommentStatus.Active)
+            .ToListAsync();
+
+        if (comments.Count == 0) return (0, 0);
+
+        var newHash = ComputeSha256(newContent);
+        int rebound = 0, orphaned = 0;
+
+        foreach (var c in comments)
+        {
+            // 哈希未变（理论上不应走到这里，但保险）
+            if (c.ContentHash == newHash) { rebound++; continue; }
+
+            var sel = c.SelectedText ?? string.Empty;
+            if (string.IsNullOrEmpty(sel))
+            {
+                await MarkCommentOrphaned(c.Id, newHash);
+                orphaned++;
+                continue;
+            }
+
+            // Step 1: 收集所有出现位置
+            var positions = new List<int>();
+            int idx = 0;
+            while ((idx = newContent.IndexOf(sel, idx, StringComparison.Ordinal)) >= 0)
+            {
+                positions.Add(idx);
+                idx += 1;
+            }
+
+            if (positions.Count == 0)
+            {
+                await MarkCommentOrphaned(c.Id, newHash);
+                orphaned++;
+                continue;
+            }
+
+            int chosenStart;
+            if (positions.Count == 1)
+            {
+                chosenStart = positions[0];
+            }
+            else
+            {
+                // 多处命中：用 contextBefore/contextAfter 评分消歧
+                chosenStart = ChooseBestPositionByContext(
+                    newContent, positions, sel, c.ContextBefore ?? string.Empty, c.ContextAfter ?? string.Empty);
+            }
+
+            var chosenEnd = chosenStart + sel.Length;
+            var newContextBefore = SliceAround(newContent, chosenStart, -50);
+            var newContextAfter = SliceAround(newContent, chosenEnd, 50);
+
+            await _db.DocumentInlineComments.UpdateOneAsync(
+                x => x.Id == c.Id,
+                Builders<DocumentInlineComment>.Update
+                    .Set(x => x.StartOffset, chosenStart)
+                    .Set(x => x.EndOffset, chosenEnd)
+                    .Set(x => x.ContextBefore, newContextBefore)
+                    .Set(x => x.ContextAfter, newContextAfter)
+                    .Set(x => x.ContentHash, newHash)
+                    .Set(x => x.UpdatedAt, DateTime.UtcNow));
+            rebound++;
+        }
+
+        return (rebound, orphaned);
+    }
+
+    private async Task MarkCommentOrphaned(string commentId, string newHash)
+    {
+        await _db.DocumentInlineComments.UpdateOneAsync(
+            x => x.Id == commentId,
+            Builders<DocumentInlineComment>.Update
+                .Set(x => x.Status, DocumentInlineCommentStatus.Orphaned)
+                .Set(x => x.ContentHash, newHash)
+                .Set(x => x.UpdatedAt, DateTime.UtcNow));
+    }
+
+    /// <summary>
+    /// 多处命中时的消歧：对每个候选位置提取前后 50 字符，与原 contextBefore/After 做"相同字符数"打分。
+    /// </summary>
+    private static int ChooseBestPositionByContext(
+        string content, List<int> positions, string selected,
+        string origBefore, string origAfter)
+    {
+        int bestPos = positions[0];
+        int bestScore = -1;
+        foreach (var pos in positions)
+        {
+            var before = SliceAround(content, pos, -50);
+            var after = SliceAround(content, pos + selected.Length, 50);
+            int score = CountMatchingChars(before, origBefore) + CountMatchingChars(after, origAfter);
+            if (score > bestScore)
+            {
+                bestScore = score;
+                bestPos = pos;
+            }
+        }
+        return bestPos;
+    }
+
+    /// <summary>
+    /// 取 pos 附近 length 个字符（length 为负表示往前取）。
+    /// </summary>
+    private static string SliceAround(string content, int pos, int length)
+    {
+        if (length < 0)
+        {
+            int start = Math.Max(0, pos + length);
+            return content.Substring(start, pos - start);
+        }
+        else
+        {
+            int end = Math.Min(content.Length, pos + length);
+            return content.Substring(pos, end - pos);
+        }
+    }
+
+    /// <summary>
+    /// 简单比较：两个字符串相同位置字符一致的个数。用于 rebind 时的上下文打分。
+    /// </summary>
+    private static int CountMatchingChars(string a, string b)
+    {
+        int n = Math.Min(a.Length, b.Length);
+        int match = 0;
+        for (int i = 0; i < n; i++)
+        {
+            if (a[i] == b[i]) match++;
+        }
+        return match;
     }
 
     /// <summary>设置文件夹内的主文档</summary>
@@ -1991,6 +2141,263 @@ public class DocumentStoreController : ControllerBase
             },
         }));
     }
+
+    // ─────────────────────────────────────────────
+    // 批次 C：浏览事件埋点 + 访客统计
+    // ─────────────────────────────────────────────
+
+    /// <summary>记录一次浏览事件（进入文档时调用，返回 viewEventId 供前端补时长）</summary>
+    [HttpPost("entries/{entryId}/view")]
+    [AllowAnonymous]
+    public async Task<IActionResult> LogEntryView(string entryId, [FromBody] LogViewRequest? request)
+    {
+        var entry = await _db.DocumentEntries.Find(e => e.Id == entryId).FirstOrDefaultAsync();
+        if (entry == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "文档条目不存在"));
+
+        var store = await _db.DocumentStores.Find(s => s.Id == entry.StoreId).FirstOrDefaultAsync();
+        if (store == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "文档空间不存在"));
+
+        // 私有知识库只允许 owner 浏览统计
+        var isOwner = false;
+        string? viewerId = null;
+        var viewerName = "匿名访客";
+        string? viewerAvatar = null;
+        try
+        {
+            viewerId = this.GetRequiredUserId();
+            isOwner = store.OwnerId == viewerId;
+            var userDoc = await _db.Users.Find(u => u.Id == viewerId).FirstOrDefaultAsync();
+            if (userDoc != null)
+            {
+                viewerName = !string.IsNullOrWhiteSpace(userDoc.DisplayName) ? userDoc.DisplayName : userDoc.Username;
+                viewerAvatar = userDoc.AvatarFileName;
+            }
+        }
+        catch
+        {
+            // 匿名访问
+        }
+
+        if (!store.IsPublic && !isOwner)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "文档条目不存在"));
+
+        var ua = Request.Headers.UserAgent.ToString();
+        if (ua.Length > 200) ua = ua[..200];
+        var referer = Request.Headers.Referer.ToString();
+        if (referer.Length > 500) referer = referer[..500];
+
+        var evt = new DocumentStoreViewEvent
+        {
+            StoreId = entry.StoreId,
+            EntryId = entryId,
+            ViewerUserId = viewerId,
+            ViewerName = viewerName,
+            ViewerAvatar = viewerAvatar,
+            AnonSessionToken = viewerId == null ? request?.AnonSessionToken : null,
+            UserAgent = string.IsNullOrEmpty(ua) ? null : ua,
+            Referer = string.IsNullOrEmpty(referer) ? null : referer,
+        };
+        await _db.DocumentStoreViewEvents.InsertOneAsync(evt);
+
+        // 递增 store 的冗余计数
+        await _db.DocumentStores.UpdateOneAsync(
+            s => s.Id == entry.StoreId,
+            Builders<DocumentStore>.Update.Inc(s => s.ViewCount, 1));
+
+        return Ok(ApiResponse<object>.Ok(new { viewEventId = evt.Id }));
+    }
+
+    /// <summary>补写浏览时长（用户离开或切换文档时调用，由 sendBeacon 发起，永远不失败）</summary>
+    [HttpPost("view-events/{viewEventId}/leave")]
+    [AllowAnonymous]
+    public async Task<IActionResult> LeaveEntryView(string viewEventId, [FromBody] LeaveViewRequest? request)
+    {
+        var durationMs = request?.DurationMs ?? 0;
+        if (durationMs < 0) durationMs = 0;
+        if (durationMs > 24 * 60 * 60 * 1000) durationMs = 24 * 60 * 60 * 1000; // clamp 到 24 小时
+
+        await _db.DocumentStoreViewEvents.UpdateOneAsync(
+            e => e.Id == viewEventId,
+            Builders<DocumentStoreViewEvent>.Update
+                .Set(e => e.LeftAt, DateTime.UtcNow)
+                .Set(e => e.DurationMs, durationMs));
+
+        return Ok(ApiResponse<object>.Ok(new { }));
+    }
+
+    /// <summary>获取知识库的访客列表（仅 owner 可访问）</summary>
+    [HttpGet("stores/{storeId}/view-events")]
+    public async Task<IActionResult> ListStoreViewEvents(
+        string storeId,
+        [FromQuery] int limit = 50)
+    {
+        var userId = GetUserId();
+        var store = await _db.DocumentStores.Find(s => s.Id == storeId && s.OwnerId == userId).FirstOrDefaultAsync();
+        if (store == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "文档空间不存在"));
+
+        limit = Math.Clamp(limit, 1, 200);
+
+        var events = await _db.DocumentStoreViewEvents
+            .Find(e => e.StoreId == storeId)
+            .SortByDescending(e => e.EnteredAt)
+            .Limit(limit)
+            .ToListAsync();
+
+        // 聚合统计：总访问量、独立访客数、总停留时长
+        var totalViews = await _db.DocumentStoreViewEvents.CountDocumentsAsync(e => e.StoreId == storeId);
+        var uniqueVisitorIds = events
+            .Select(e => e.ViewerUserId ?? e.AnonSessionToken ?? e.Id)
+            .Distinct()
+            .Count();
+        var totalDurationMs = events.Sum(e => e.DurationMs ?? 0);
+
+        // 补 entry 标题供前端展示
+        var entryIds = events.Where(e => e.EntryId != null).Select(e => e.EntryId!).Distinct().ToList();
+        var entries = await _db.DocumentEntries
+            .Find(e => entryIds.Contains(e.Id))
+            .ToListAsync();
+        var entryTitles = entries.ToDictionary(e => e.Id, e => e.Title);
+
+        return Ok(ApiResponse<object>.Ok(new
+        {
+            stats = new
+            {
+                totalViews,
+                uniqueVisitors = uniqueVisitorIds,
+                totalDurationMs,
+            },
+            events = events.Select(e => new
+            {
+                e.Id,
+                e.EntryId,
+                entryTitle = e.EntryId != null && entryTitles.ContainsKey(e.EntryId) ? entryTitles[e.EntryId] : null,
+                e.ViewerUserId,
+                e.ViewerName,
+                e.ViewerAvatar,
+                e.EnteredAt,
+                e.LeftAt,
+                e.DurationMs,
+                e.UserAgent,
+                e.Referer,
+            }),
+        }));
+    }
+
+    // ─────────────────────────────────────────────
+    // 批次 D：文档划词评论
+    // ─────────────────────────────────────────────
+
+    /// <summary>创建划词评论</summary>
+    [HttpPost("entries/{entryId}/inline-comments")]
+    public async Task<IActionResult> CreateInlineComment(string entryId, [FromBody] CreateInlineCommentRequest request)
+    {
+        var userId = GetUserId();
+        var entry = await _db.DocumentEntries.Find(e => e.Id == entryId).FirstOrDefaultAsync();
+        if (entry == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "文档条目不存在"));
+
+        var store = await _db.DocumentStores.Find(s => s.Id == entry.StoreId).FirstOrDefaultAsync();
+        if (store == null || store.OwnerId != userId)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "文档条目不存在"));
+
+        if (string.IsNullOrWhiteSpace(request.SelectedText))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "选中内容不能为空"));
+        if (string.IsNullOrWhiteSpace(request.Content))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "评论内容不能为空"));
+        if (string.IsNullOrEmpty(entry.DocumentId))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "该条目尚未关联正文"));
+
+        var userDoc = await _db.Users.Find(u => u.Id == userId).FirstOrDefaultAsync();
+        var authorName = userDoc != null && !string.IsNullOrWhiteSpace(userDoc.DisplayName)
+            ? userDoc.DisplayName
+            : (userDoc?.Username ?? "未知用户");
+
+        // 读取当前正文计算 hash
+        var parsed = await _db.Documents.Find(d => d.Id == entry.DocumentId).FirstOrDefaultAsync();
+        var contentHash = parsed != null ? ComputeSha256(parsed.RawContent ?? "") : null;
+
+        var comment = new DocumentInlineComment
+        {
+            StoreId = entry.StoreId,
+            EntryId = entryId,
+            DocumentId = entry.DocumentId!,
+            ContentHash = contentHash,
+            SelectedText = request.SelectedText,
+            ContextBefore = request.ContextBefore ?? string.Empty,
+            ContextAfter = request.ContextAfter ?? string.Empty,
+            StartOffset = request.StartOffset,
+            EndOffset = request.EndOffset,
+            Content = request.Content.Trim(),
+            AuthorUserId = userId,
+            AuthorDisplayName = authorName,
+            AuthorAvatar = userDoc?.AvatarFileName,
+        };
+        await _db.DocumentInlineComments.InsertOneAsync(comment);
+        return Ok(ApiResponse<DocumentInlineComment>.Ok(comment));
+    }
+
+    /// <summary>列出文档的划词评论（owner 和公开库访客都能读）</summary>
+    [HttpGet("entries/{entryId}/inline-comments")]
+    [AllowAnonymous]
+    public async Task<IActionResult> ListInlineComments(string entryId)
+    {
+        var entry = await _db.DocumentEntries.Find(e => e.Id == entryId).FirstOrDefaultAsync();
+        if (entry == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "文档条目不存在"));
+
+        var store = await _db.DocumentStores.Find(s => s.Id == entry.StoreId).FirstOrDefaultAsync();
+        if (store == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "文档条目不存在"));
+
+        // 非 owner + 非公开 → 403
+        var isOwner = false;
+        try
+        {
+            var currentUser = this.GetRequiredUserId();
+            isOwner = store.OwnerId == currentUser;
+        }
+        catch { }
+        if (!isOwner && !store.IsPublic)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "文档条目不存在"));
+
+        var comments = await _db.DocumentInlineComments
+            .Find(c => c.EntryId == entryId)
+            .SortBy(c => c.CreatedAt)
+            .ToListAsync();
+
+        return Ok(ApiResponse<object>.Ok(new { items = comments, canCreate = isOwner }));
+    }
+
+    /// <summary>删除划词评论</summary>
+    [HttpDelete("inline-comments/{commentId}")]
+    public async Task<IActionResult> DeleteInlineComment(string commentId)
+    {
+        var userId = GetUserId();
+        var comment = await _db.DocumentInlineComments.Find(c => c.Id == commentId).FirstOrDefaultAsync();
+        if (comment == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "评论不存在"));
+
+        // 仅作者或 store owner 可删
+        var store = await _db.DocumentStores.Find(s => s.Id == comment.StoreId).FirstOrDefaultAsync();
+        if (store == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "评论不存在"));
+
+        if (comment.AuthorUserId != userId && store.OwnerId != userId)
+            return StatusCode(403, ApiResponse<object>.Fail("FORBIDDEN", "无权删除此评论"));
+
+        await _db.DocumentInlineComments.DeleteOneAsync(c => c.Id == commentId);
+        return Ok(ApiResponse<object>.Ok(new { deleted = true }));
+    }
+
+    private static string ComputeSha256(string content)
+    {
+        var bytes = System.Text.Encoding.UTF8.GetBytes(content);
+        var hash = System.Security.Cryptography.SHA256.HashData(bytes);
+        return Convert.ToHexString(hash);
+    }
 }
 
 // ─────────────────────────────────────────────
@@ -2114,4 +2521,37 @@ public class CreateShareLinkRequest
 
     /// <summary>过期天数（0 表示永不过期）</summary>
     public int ExpiresInDays { get; set; }
+}
+
+public class LogViewRequest
+{
+    /// <summary>匿名访客 session token（匿名访问时由前端生成存 sessionStorage）</summary>
+    public string? AnonSessionToken { get; set; }
+}
+
+public class LeaveViewRequest
+{
+    /// <summary>停留时长（毫秒，前端用 Date.now() 差值计算）</summary>
+    public long DurationMs { get; set; }
+}
+
+public class CreateInlineCommentRequest
+{
+    /// <summary>被选中的原文片段</summary>
+    public string SelectedText { get; set; } = string.Empty;
+
+    /// <summary>选中片段前的上下文（约 50 字符）</summary>
+    public string? ContextBefore { get; set; }
+
+    /// <summary>选中片段后的上下文（约 50 字符）</summary>
+    public string? ContextAfter { get; set; }
+
+    /// <summary>起始字符偏移量</summary>
+    public int StartOffset { get; set; }
+
+    /// <summary>结束字符偏移量</summary>
+    public int EndOffset { get; set; }
+
+    /// <summary>评论内容</summary>
+    public string Content { get; set; } = string.Empty;
 }

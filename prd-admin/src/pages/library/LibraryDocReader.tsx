@@ -38,6 +38,7 @@ import type { DocumentEntry } from '@/services/contracts/documentStore';
 import { getFileTypeConfig } from '@/lib/fileTypeRegistry';
 import type { FilePreviewKind } from '@/lib/fileTypeRegistry';
 import { MapSectionLoader } from '@/components/ui/VideoLoader';
+import { useViewTracking } from '@/lib/useViewTracking';
 
 // ── slug 辅助 ──
 function childrenToText(children: unknown): string {
@@ -192,6 +193,14 @@ export function LibraryDocReader({
   const contentScrollRef = useRef<HTMLDivElement>(null);
 
   const pinnedSet = useMemo(() => new Set(pinnedEntryIds), [pinnedEntryIds]);
+
+  // 批次 C：智识殿堂访问埋点（只对非文件夹的选中条目生效）
+  const trackedEntryId = useMemo(() => {
+    if (!selectedId) return null;
+    const e = entries.find(x => x.id === selectedId);
+    return e && !e.isFolder ? selectedId : null;
+  }, [selectedId, entries]);
+  useViewTracking(trackedEntryId);
 
   // 从 entry.summary 提取正文第一行作为"正文标题"
   const contentFirstLines = useMemo(() => {

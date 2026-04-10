@@ -1527,6 +1527,14 @@ export {
   startReprocess,
   getAgentRun,
   getLatestAgentRun,
+  // 批次 C：浏览事件埋点
+  logEntryView,
+  leaveEntryView,
+  listStoreViewEvents,
+  // 批次 D：划词评论
+  createInlineComment,
+  listInlineComments,
+  deleteInlineComment,
   togglePinnedEntry,
   listDocumentStoresWithPreview,
   searchDocumentEntries,
@@ -1562,6 +1570,9 @@ export type {
   SubscriptionDetail,
   DocumentStoreAgentRun,
   ReprocessTemplate,
+  DocumentStoreViewEvent,
+  DocumentStoreViewStats,
+  DocumentInlineComment,
 } from '@/services/contracts/documentStore';
 
 // ── Emergence Explorer 涌现探索器 ──

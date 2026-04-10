@@ -21,6 +21,7 @@ import {
   Pencil,
   Heart,
   Bookmark,
+  Users,
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { GlassCard } from '@/components/design/GlassCard';
@@ -68,6 +69,7 @@ import { systemDialog } from '@/lib/systemDialog';
 import { SubscriptionDetailDrawer } from './SubscriptionDetailDrawer';
 import { SubtitleGenerationDrawer } from './SubtitleGenerationDrawer';
 import { ReprocessDrawer } from './ReprocessDrawer';
+import { ViewersDrawer } from './ViewersDrawer';
 
 const ACCEPT_TYPES = '.md,.txt,.pdf,.doc,.docx,.json,.yaml,.yml,.csv';
 
@@ -547,6 +549,7 @@ function StoreDetailView({ storeId, onBack }: {
   const [selectedEntryId, setSelectedEntryId] = useState<string | undefined>(undefined);
   const [showSubscribe, setShowSubscribe] = useState(false);
   const [showShareDialog, setShowShareDialog] = useState(false);
+  const [showViewers, setShowViewers] = useState(false);
   const [publishing, setPublishing] = useState(false);
   /** 当前打开的订阅详情 entryId（null = 未打开） */
   const [subscriptionDetailId, setSubscriptionDetailId] = useState<string | null>(null);
@@ -808,6 +811,9 @@ function StoreDetailView({ storeId, onBack }: {
               {publishing ? <MapSpinner size={11} /> : (store.isPublic ? <Globe size={11} /> : <GlobeLock size={11} />)}
               {store.isPublic ? '已发布' : '发布到智识殿堂'}
             </button>
+            <Button variant="secondary" size="xs" onClick={() => setShowViewers(true)}>
+              <Users size={13} /> 访客
+            </Button>
             <Button variant="secondary" size="xs" onClick={() => setShowShareDialog(true)}>
               <Share2 size={13} /> 分享
             </Button>
@@ -925,6 +931,15 @@ function StoreDetailView({ storeId, onBack }: {
             loadEntries();
             setSelectedEntryId(newId);
           }}
+        />
+      )}
+
+      {/* 访客记录抽屉（批次 C） */}
+      {showViewers && (
+        <ViewersDrawer
+          storeId={storeId}
+          storeName={store.name}
+          onClose={() => setShowViewers(false)}
         />
       )}
     </div>

@@ -389,3 +389,68 @@ export async function getLatestAgentRun(entryId: string, kind: 'subtitle' | 'rep
     { method: 'GET' },
   );
 }
+
+// ── 批次 C：浏览事件埋点 + 访客统计 ──
+
+/** 记录一次浏览事件（进入文档时调用，返回 viewEventId 供后续补时长） */
+export async function logEntryView(entryId: string, anonSessionToken?: string) {
+  return await apiRequest<{ viewEventId: string }>(
+    api.documentStore.entries.logView(entryId),
+    { method: 'POST', body: { anonSessionToken: anonSessionToken ?? null } },
+  );
+}
+
+/** 补写浏览时长（离开/切换文档时调用；推荐用 navigator.sendBeacon 走一次） */
+export async function leaveEntryView(viewEventId: string, durationMs: number) {
+  return await apiRequest<object>(
+    api.documentStore.entries.leaveView(viewEventId),
+    { method: 'POST', body: { durationMs } },
+  );
+}
+
+/** 获取知识库访客统计（仅 owner） */
+export async function listStoreViewEvents(storeId: string, limit = 50) {
+  return await apiRequest<{
+    stats: import('@/services/contracts/documentStore').DocumentStoreViewStats;
+    events: import('@/services/contracts/documentStore').DocumentStoreViewEvent[];
+  }>(
+    `${api.documentStore.entries.storeViewEvents(storeId)}?limit=${limit}`,
+    { method: 'GET' },
+  );
+}
+
+// ── 批次 D：划词评论 ──
+
+/** 创建划词评论 */
+export async function createInlineComment(entryId: string, input: {
+  selectedText: string;
+  contextBefore?: string;
+  contextAfter?: string;
+  startOffset: number;
+  endOffset: number;
+  content: string;
+}) {
+  return await apiRequest<import('@/services/contracts/documentStore').DocumentInlineComment>(
+    api.documentStore.entries.inlineComments(entryId),
+    { method: 'POST', body: input },
+  );
+}
+
+/** 列出文档的划词评论（owner 与公开库访客都能读） */
+export async function listInlineComments(entryId: string) {
+  return await apiRequest<{
+    items: import('@/services/contracts/documentStore').DocumentInlineComment[];
+    canCreate: boolean;
+  }>(
+    api.documentStore.entries.inlineComments(entryId),
+    { method: 'GET' },
+  );
+}
+
+/** 删除划词评论（仅作者或 store owner） */
+export async function deleteInlineComment(commentId: string) {
+  return await apiRequest<{ deleted: boolean }>(
+    api.documentStore.entries.inlineCommentDetail(commentId),
+    { method: 'DELETE' },
+  );
+}
