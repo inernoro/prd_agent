@@ -201,6 +201,13 @@ function updateBranchFeedRoller(event) {
   feed.innerHTML = `<div class="roller-line roller-flip">${html}</div>`;
 }
 
+// Kick off host stats polling (5s cadence). See pollHostStats / renderHostStats.
+if (typeof window !== 'undefined') {
+  // Initial fetch ASAP so widget appears quickly
+  setTimeout(() => { try { pollHostStats(); } catch { /* not yet loaded */ } }, 500);
+  setInterval(() => { try { pollHostStats(); } catch { /* ignore */ } }, 5000);
+}
+
 // Periodically expire stale AI occupations and refresh cards
 setInterval(() => {
   let changed = false;
@@ -971,6 +978,126 @@ async function showCapacityDetails(event) {
 }
 
 // (escapeHtml is defined later in the file and hoisted — reused by the popover above)
+
+// ── Host stats pulse (bottom-right MEM + CPU widget) ──
+//
+// Poll /api/host-stats every 5s and render compact MEM + CPU bars in the
+// bottom-right, above the Activity Monitor. Complements the header's
+// container capacity badge:
+//   - Header badge: "how many containers" (business/capacity view)
+//   - This widget: "how stressed is the host" (raw resource view)
+//
+// Hidden until the first successful fetch to avoid rendering "--".
+// Disabled entirely if CDS is unreachable (fetch silently fails, widget
+// fades out via CSS transition).
+
+let _hostStatsLastData = null;
+let _hostStatsFailCount = 0;
+
+async function pollHostStats() {
+  try {
+    const data = await api('GET', '/host-stats', null, { poll: true });
+    _hostStatsLastData = data;
+    _hostStatsFailCount = 0;
+    renderHostStats(data);
+  } catch (err) {
+    _hostStatsFailCount++;
+    // Hide widget after 3 consecutive failures (probably CDS restart in progress)
+    if (_hostStatsFailCount >= 3) {
+      const el = document.getElementById('hostStatsWidget');
+      if (el) el.classList.add('hidden');
+    }
+  }
+}
+
+function renderHostStats(data) {
+  const el = document.getElementById('hostStatsWidget');
+  if (!el) return;
+  el.classList.remove('hidden');
+
+  const memPct = data.mem?.usedPercent ?? 0;
+  const cpuPct = data.cpu?.loadPercent ?? 0;
+
+  // Memory bar
+  const memFill = document.getElementById('hsMemFill');
+  const memValue = document.getElementById('hsMemValue');
+  if (memFill) {
+    memFill.style.width = `${Math.min(memPct, 100)}%`;
+    memFill.dataset.tier = tierForPercent(memPct);
+  }
+  if (memValue) memValue.textContent = `${memPct}%`;
+
+  // CPU bar — loadPercent can exceed 100 on oversubscribed hosts, cap the fill
+  const cpuFill = document.getElementById('hsCpuFill');
+  const cpuValue = document.getElementById('hsCpuValue');
+  if (cpuFill) {
+    cpuFill.style.width = `${Math.min(cpuPct, 100)}%`;
+    cpuFill.dataset.tier = tierForPercent(cpuPct);
+  }
+  if (cpuValue) cpuValue.textContent = `${cpuPct}%`;
+
+  // Whole-widget warning if either metric is critical (>= 90%)
+  el.dataset.stress = (memPct >= 90 || cpuPct >= 90) ? '1' : '0';
+}
+
+function tierForPercent(pct) {
+  if (pct >= 90) return 'red';
+  if (pct >= 75) return 'orange';
+  if (pct >= 50) return 'blue';
+  return 'green';
+}
+
+async function showHostStatsDetails(event) {
+  event.stopPropagation();
+  const d = _hostStatsLastData;
+  if (!d) return;
+  const uptimeDays = Math.floor(d.uptimeSeconds / 86400);
+  const uptimeHours = Math.floor((d.uptimeSeconds % 86400) / 3600);
+  const uptimeMinutes = Math.floor((d.uptimeSeconds % 3600) / 60);
+  const uptimeStr = uptimeDays > 0
+    ? `${uptimeDays}d ${uptimeHours}h`
+    : uptimeHours > 0
+    ? `${uptimeHours}h ${uptimeMinutes}m`
+    : `${uptimeMinutes}m`;
+
+  openConfigModal('宿主机实时负载', `
+    <div class="cap-pop">
+      <div class="cap-pop-stats">
+        <div class="cap-pop-stat">
+          <div class="cap-pop-stat-label">内存使用</div>
+          <div class="cap-pop-stat-value">${d.mem.usedPercent}%</div>
+          <div class="cap-pop-help">${Math.round((d.mem.totalMB - d.mem.freeMB) / 1024 * 10) / 10} / ${Math.round(d.mem.totalMB / 1024 * 10) / 10} GB</div>
+        </div>
+        <div class="cap-pop-stat">
+          <div class="cap-pop-stat-label">CPU 负载</div>
+          <div class="cap-pop-stat-value">${d.cpu.loadPercent}%</div>
+          <div class="cap-pop-help">${d.cpu.loadAvg1} / ${d.cpu.cores} 核</div>
+        </div>
+        <div class="cap-pop-stat">
+          <div class="cap-pop-stat-label">系统运行</div>
+          <div class="cap-pop-stat-value">${uptimeStr}</div>
+          <div class="cap-pop-help">uptime</div>
+        </div>
+      </div>
+      <div class="cap-pop-scheduler">
+        <strong>负载历史 (loadavg)</strong>
+        <div class="cap-pop-help" style="margin-top:6px">
+          1 分钟: <strong>${d.cpu.loadAvg1}</strong> &nbsp;·&nbsp;
+          5 分钟: <strong>${d.cpu.loadAvg5}</strong> &nbsp;·&nbsp;
+          15 分钟: <strong>${d.cpu.loadAvg15}</strong>
+        </div>
+        <div class="cap-pop-help" style="margin-top:6px">
+          宿主机共 ${d.cpu.cores} 个逻辑核,loadavg > ${d.cpu.cores} 时 CPU 过载。
+        </div>
+      </div>
+      <div class="cap-pop-help">
+        这是 Node.js <code>os.totalmem()</code> + <code>os.loadavg()</code> 的实时快照,
+        每 5 秒通过 <code>/api/host-stats</code> 轮询。
+        <br>和 header 上的"容器容量"互为补充:一个看业务维度(容器数),一个看资源维度(内存/CPU)。
+      </div>
+    </div>
+  `);
+}
 
 // ── Container capacity check ──
 

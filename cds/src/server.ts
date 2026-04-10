@@ -1,5 +1,6 @@
 import express from 'express';
 import crypto from 'node:crypto';
+import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createBranchRouter } from './routes/branches.js';
@@ -274,6 +275,53 @@ export function createServer(deps: ServerDeps): express.Express {
     res.status(overallOk ? 200 : 503).json({
       ok: overallOk,
       checks,
+      timestamp: new Date().toISOString(),
+    });
+  });
+
+  // ── Host stats (public, no auth) — real-time host memory + CPU ──
+  //
+  // Used by the Dashboard footer widget for a "pulse" display of the machine
+  // beneath CDS. Separate from /api/branches `capacity` field which only
+  // knows container count, not host memory/CPU load.
+  //
+  // Returned fields:
+  //   mem.totalMB       — os.totalmem() / 1024 / 1024
+  //   mem.freeMB        — os.freemem() / 1024 / 1024 (NOT "available" — kernel-specific)
+  //   mem.usedPercent   — (total - free) / total × 100
+  //   cpu.cores         — os.cpus().length
+  //   cpu.loadAvg1      — 1-minute load average (unix only; 0 on Windows)
+  //   cpu.loadPercent   — loadAvg1 / cores × 100 (rough "how busy is the CPU")
+  //   uptimeSeconds     — os.uptime()
+  //
+  // Polled by the frontend every 5s. Cheap enough to not need caching.
+  // See doc/design.cds-resilience.md §八.
+  app.get('/api/host-stats', (_req, res) => {
+    const totalBytes = os.totalmem();
+    const freeBytes = os.freemem();
+    const usedBytes = totalBytes - freeBytes;
+    const totalMB = Math.round(totalBytes / (1024 * 1024));
+    const freeMB = Math.round(freeBytes / (1024 * 1024));
+    const usedPercent = totalBytes > 0 ? Math.round((usedBytes / totalBytes) * 100) : 0;
+
+    const cores = os.cpus().length || 1;
+    const loadAvg = os.loadavg(); // [1m, 5m, 15m] — 0 on Windows
+    const loadPercent = Math.round((loadAvg[0] / cores) * 100);
+
+    res.json({
+      mem: {
+        totalMB,
+        freeMB,
+        usedPercent,
+      },
+      cpu: {
+        cores,
+        loadAvg1: Number(loadAvg[0].toFixed(2)),
+        loadAvg5: Number(loadAvg[1].toFixed(2)),
+        loadAvg15: Number(loadAvg[2].toFixed(2)),
+        loadPercent,
+      },
+      uptimeSeconds: Math.round(os.uptime()),
       timestamp: new Date().toISOString(),
     });
   });

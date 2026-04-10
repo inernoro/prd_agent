@@ -2296,6 +2296,104 @@ a.branch-name:hover { color: var(--accent); }
 
 /* ════════════════ API Activity Monitor ════════════════ */
 
+/* ── Host stats pulse widget (bottom-right, above Activity Monitor) ── */
+/* Real-time mem + cpu bars. Complements the header's container capacity badge */
+/* See doc/design.cds-resilience.md §八 */
+.host-stats {
+  position: fixed;
+  /* Stack above the collapsed Activity Monitor (40px) + margin */
+  bottom: 66px;
+  right: 16px;
+  z-index: 9997;
+  padding: 8px 12px;
+  border-radius: 8px;
+  background: var(--bg-card);
+  border: 1px solid var(--card-border);
+  box-shadow: var(--shadow-lg);
+  backdrop-filter: blur(16px);
+  cursor: pointer;
+  user-select: none;
+  transition: opacity 0.25s ease, transform 0.2s ease, box-shadow 0.2s ease;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 190px;
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Consolas, monospace;
+  font-size: 11px;
+  line-height: 1;
+}
+.host-stats.hidden {
+  opacity: 0;
+  pointer-events: none;
+}
+.host-stats:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35);
+}
+.host-stats-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.host-stats-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-muted, #8b949e);
+  width: 12px;
+  flex-shrink: 0;
+}
+.host-stats-label {
+  color: var(--text-muted, #8b949e);
+  font-weight: 500;
+  letter-spacing: 0.05em;
+  width: 26px;
+  flex-shrink: 0;
+}
+.host-stats-bar {
+  flex: 1;
+  height: 6px;
+  background: rgba(139, 148, 158, 0.15);
+  border-radius: 3px;
+  overflow: hidden;
+  min-width: 70px;
+}
+.host-stats-bar-fill {
+  display: block;
+  height: 100%;
+  width: 0%;
+  border-radius: 3px;
+  transition: width 0.5s ease, background-color 0.3s ease;
+  background: #3fb950;
+}
+.host-stats-bar-fill[data-tier="green"]  { background: #3fb950; }
+.host-stats-bar-fill[data-tier="blue"]   { background: #58a6ff; }
+.host-stats-bar-fill[data-tier="orange"] { background: #f0883e; }
+.host-stats-bar-fill[data-tier="red"]    { background: #f85149; }
+
+.host-stats-value {
+  font-variant-numeric: tabular-nums;
+  width: 36px;
+  text-align: right;
+  color: var(--text, #c9d1d9);
+  flex-shrink: 0;
+}
+
+/* When either metric hits critical, pulse the whole widget */
+.host-stats[data-stress="1"] {
+  border-color: rgba(248, 81, 73, 0.5);
+  animation: host-stats-pulse 1.8s ease-in-out infinite;
+}
+@keyframes host-stats-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(248, 81, 73, 0.4); }
+  50%      { box-shadow: 0 0 0 5px rgba(248, 81, 73, 0); }
+}
+
+/* On small screens, hide to avoid crowding */
+@media (max-width: 640px) {
+  .host-stats { display: none; }
+}
+
 .activity-monitor {
   position: fixed;
   bottom: 16px;
