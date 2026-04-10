@@ -82,6 +82,17 @@ __pycache__/
 
 # CDS runtime state (contains env secrets, port allocations, container status)
 .cds/state.json
+cds/.cds/
+cds/.bt/
+cds/cds.log
+cds/.bt.log
+cds/nginx/domain.env
+cds/nginx/certs/
+cds/nginx/www/
+cds/nginx/nginx.conf
+cds/nginx/cds-nginx.conf
+cds/nginx/acme_apply.sh
+cds/.cds.env
 
 # Agent development workspace (per-developer progress tracking)
 .agent-workspace/

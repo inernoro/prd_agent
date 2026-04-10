@@ -23,6 +23,8 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "$SCRIPT_DIR"
 
 CONFIG_FILE="${CDS_CONFIG:-${BT_CONFIG:-cds.config.json}}"
+NGINX_DOMAIN_ENV="$SCRIPT_DIR/nginx/domain.env"
+LOCAL_ENV_FILE="$SCRIPT_DIR/.cds.env"
 BACKGROUND=false
 LOG_FILE="cds.log"
 PID_FILE=".cds/cds.pid"
@@ -34,6 +36,53 @@ for arg in "$@"; do
   esac
 done
 
+ensure_domain_bootstrap() {
+  local main_domain="${CDS_MAIN_DOMAIN:-${MAIN_DOMAIN:-}}"
+
+  if [ -f "$NGINX_DOMAIN_ENV" ]; then
+    return 0
+  fi
+
+  echo ""
+  echo "  CDS 首次初始化"
+  echo "  ─────────────────────"
+  echo "  缺少域名初始化信息，将先执行 ./exec_setup.sh"
+  echo ""
+
+  if [ ! -t 0 ]; then
+    echo "ERROR: 当前为非交互环境，且缺少 nginx/domain.env 或 CDS_MAIN_DOMAIN。"
+    echo "请先手动执行: ./exec_setup.sh"
+    exit 1
+  fi
+
+  ./exec_setup.sh
+
+  if [ ! -f "$NGINX_DOMAIN_ENV" ]; then
+    echo "ERROR: 初始化未完成，已取消启动。"
+    exit 1
+  fi
+}
+
+load_domain_env() {
+  if [ -f "$LOCAL_ENV_FILE" ]; then
+    set -a
+    . "$LOCAL_ENV_FILE"
+    set +a
+  fi
+
+  if [ ! -f "$NGINX_DOMAIN_ENV" ]; then
+    return 0
+  fi
+
+  set -a
+  . "$NGINX_DOMAIN_ENV"
+  set +a
+
+  export CDS_MAIN_DOMAIN="${CDS_MAIN_DOMAIN:-${MAIN_DOMAIN:-}}"
+  export CDS_SWITCH_DOMAIN="${CDS_SWITCH_DOMAIN:-${SWITCH_DOMAIN:-}}"
+  export CDS_PREVIEW_DOMAIN="${CDS_PREVIEW_DOMAIN:-${PREVIEW_DOMAIN:-${MAIN_DOMAIN:-}}}"
+}
+
 echo ""
 echo "  CDS Startup"
 echo "  ─────────────────────"
@@ -44,6 +93,9 @@ echo "  Auth:       ${CDS_AUTH_USER:+enabled (user: $CDS_AUTH_USER)}${CDS_AUTH_U
 CDS_NGINX="${CDS_NGINX_ENABLE:-${BT_NGINX_ENABLE:-}}"
 echo "  Nginx:      ${CDS_NGINX:+enabled (port 58000)}${CDS_NGINX:-disabled}"
 echo ""
+
+ensure_domain_bootstrap
+load_domain_env
 
 # ── 1. Check dependencies ──
 if ! command -v pnpm >/dev/null 2>&1; then
@@ -102,7 +154,7 @@ mkdir -p .cds
 kill_cds_on_port() {
   local port="$1"
   local pids
-  pids=$(lsof -ti :"$port" 2>/dev/null || true)
+  pids=$(ss -tlnp "( sport = :$port )" 2>/dev/null | grep -o 'pid=[0-9]*' | cut -d= -f2 | sort -u || true)
   [ -z "$pids" ] && return 0
 
   local killed=false
@@ -134,13 +186,13 @@ kill_cds_on_port() {
   if [ "$killed" = true ]; then
     # Wait up to 5 seconds for process to exit (increased from 3 for reliability)
     for i in 1 2 3 4 5; do
-      if ! lsof -ti :"$port" >/dev/null 2>&1; then
+      if ! ss -tlnp "( sport = :$port )" 2>/dev/null | grep -q 'pid='; then
         return 0
       fi
       sleep 1
     done
     # Force kill only node/tsx processes still alive (by process group)
-    pids=$(lsof -ti :"$port" 2>/dev/null || true)
+    pids=$(ss -tlnp "( sport = :$port )" 2>/dev/null | grep -o 'pid=[0-9]*' | cut -d= -f2 | sort -u || true)
     for pid in $pids; do
       local cmd
       cmd=$(ps -p "$pid" -o comm= 2>/dev/null || true)
@@ -162,10 +214,70 @@ kill_cds_on_port() {
   fi
 
   # Final check: if port still occupied (by non-CDS process), warn and abort
-  if lsof -ti :"$port" >/dev/null 2>&1; then
+  if ss -tlnp "( sport = :$port )" 2>/dev/null | grep -q 'pid='; then
     echo "  [ERROR] Port $port is still in use by another program. Please free it manually."
     exit 1
   fi
+}
+
+find_cds_listener_pid() {
+  local port="$1"
+  local pids
+  pids=$(ss -tlnp "( sport = :$port )" 2>/dev/null | grep -o 'pid=[0-9]*' | cut -d= -f2 | sort -u || true)
+  [ -z "$pids" ] && return 1
+
+  for pid in $pids; do
+    local cmd
+    cmd=$(ps -p "$pid" -o comm= 2>/dev/null || true)
+    case "$cmd" in
+      node|tsx|ts-node|npx)
+        printf '%s\n' "$pid"
+        return 0
+        ;;
+    esac
+  done
+
+  return 1
+}
+
+wait_for_cds_listener() {
+  local port="$1"
+  local timeout_seconds="${2:-20}"
+  local elapsed=0
+
+  while [ "$elapsed" -lt "$timeout_seconds" ]; do
+    local pid=""
+    pid=$(find_cds_listener_pid "$port" || true)
+    if [ -n "$pid" ]; then
+      printf '%s\n' "$pid"
+      return 0
+    fi
+    sleep 1
+    elapsed=$((elapsed + 1))
+  done
+
+  return 1
+}
+
+reuse_running_cds_if_present() {
+  local pid=""
+  pid=$(find_cds_listener_pid "$MASTER_PORT" || true)
+  if [ -z "$pid" ]; then
+    return 1
+  fi
+
+  echo "$pid" > "$PID_FILE"
+  echo ""
+  echo "  CDS already running"
+  echo "  PID:        $pid"
+  echo "  Log:        $SCRIPT_DIR/$LOG_FILE"
+  echo "  Dashboard:  http://localhost:${MASTER_PORT}"
+  echo "  Gateway:    http://localhost:${WORKER_PORT}"
+  [ "${CDS_NGINX}" = "1" ] && echo "  Nginx:      http://localhost:58000"
+  echo ""
+  echo "  Stop: kill \$(cat $PID_FILE)"
+  echo "  Logs: tail -f $LOG_FILE"
+  return 0
 }
 
 # Read masterPort and workerPort from config
@@ -176,6 +288,10 @@ if [ -f "$CONFIG_FILE" ]; then
   _wp=$(grep -o '"workerPort"\s*:\s*[0-9]*' "$CONFIG_FILE" 2>/dev/null | grep -o '[0-9]*' || true)
   [ -n "$_mp" ] && MASTER_PORT="$_mp"
   [ -n "$_wp" ] && WORKER_PORT="$_wp"
+fi
+
+if [ "$BACKGROUND" = true ] && reuse_running_cds_if_present; then
+  exit 0
 fi
 
 echo "[3/3] Starting CDS..."
@@ -212,15 +328,26 @@ if [ "$BACKGROUND" = true ]; then
   # during self-update (git pull changes files → tsx watch restarts → two instances
   # compete for port 9900 → ~20% chance of 502). Background mode doesn't need hot-reload.
   nohup pnpm serve -- "$CONFIG_FILE" > "$LOG_FILE" 2>&1 &
-  CDS_PID=$!
+  BOOTSTRAP_PID=$!
+
+  CDS_PID="$(wait_for_cds_listener "$MASTER_PORT" 20 || true)"
+  if [ -z "$CDS_PID" ]; then
+    echo "  [ERROR] CDS 未能在 ${MASTER_PORT} 端口完成启动。"
+    echo "  请检查日志: $SCRIPT_DIR/$LOG_FILE"
+    exit 1
+  fi
+
   echo "$CDS_PID" > "$PID_FILE"
 
   echo ""
   echo "  CDS started in background"
   echo "  PID:        $CDS_PID"
+  if [ "$BOOTSTRAP_PID" != "$CDS_PID" ]; then
+    echo "  Bootstrap:  $BOOTSTRAP_PID"
+  fi
   echo "  Log:        $SCRIPT_DIR/$LOG_FILE"
-  echo "  Dashboard:  http://localhost:9900"
-  echo "  Gateway:    http://localhost:5500"
+  echo "  Dashboard:  http://localhost:${MASTER_PORT}"
+  echo "  Gateway:    http://localhost:${WORKER_PORT}"
   [ "${CDS_NGINX}" = "1" ] && echo "  Nginx:      http://localhost:58000"
   echo ""
   echo "  Stop: kill \$(cat $PID_FILE)"
