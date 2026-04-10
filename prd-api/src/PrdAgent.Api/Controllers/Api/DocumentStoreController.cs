@@ -9,6 +9,7 @@ using PrdAgent.Infrastructure.Database;
 using PrdAgent.Infrastructure.Services;
 using PrdAgent.Api.Services;
 using PrdAgent.Infrastructure.Services.AssetStorage;
+using DocStoreServices = PrdAgent.Infrastructure.Services.DocumentStore;
 
 namespace PrdAgent.Api.Controllers.Api;
 
@@ -200,6 +201,9 @@ public class DocumentStoreController : ControllerBase
         var likesResult = await _db.DocumentStoreLikes.DeleteManyAsync(l => l.StoreId == storeId);
         var favoritesResult = await _db.DocumentStoreFavorites.DeleteManyAsync(f => f.StoreId == storeId);
         var shareLinksResult = await _db.DocumentStoreShareLinks.DeleteManyAsync(s => s.StoreId == storeId);
+        var viewEventsResult = await _db.DocumentStoreViewEvents.DeleteManyAsync(v => v.StoreId == storeId);
+        var inlineCommentsResult = await _db.DocumentInlineComments.DeleteManyAsync(c => c.StoreId == storeId);
+        var agentRunsResult = await _db.DocumentStoreAgentRuns.DeleteManyAsync(r => r.StoreId == storeId);
 
         // 正文：只有通过此 Store 关联的 ParsedPrd 才删（其他模块可能也引用 documents 集合，所以按 ID 列表删）
         long documentsDeleted = 0;
@@ -221,10 +225,11 @@ public class DocumentStoreController : ControllerBase
         await _db.DocumentStores.DeleteOneAsync(s => s.Id == storeId);
 
         _logger.LogInformation(
-            "[document-store] Store cascaded deleted: {StoreId} by {UserId} | entries={Entries} syncLogs={Logs} docs={Docs} attachments={Atts} likes={Likes} favorites={Favs} shareLinks={Links}",
+            "[document-store] Store cascaded deleted: {StoreId} by {UserId} | entries={Entries} syncLogs={Logs} docs={Docs} attachments={Atts} likes={Likes} favorites={Favs} shareLinks={Links} views={Views} inlineComments={Comments} agentRuns={Runs}",
             storeId, userId, entriesResult.DeletedCount, syncLogsResult.DeletedCount,
             documentsDeleted, attachmentsDeleted,
-            likesResult.DeletedCount, favoritesResult.DeletedCount, shareLinksResult.DeletedCount);
+            likesResult.DeletedCount, favoritesResult.DeletedCount, shareLinksResult.DeletedCount,
+            viewEventsResult.DeletedCount, inlineCommentsResult.DeletedCount, agentRunsResult.DeletedCount);
 
         return Ok(ApiResponse<object>.Ok(new
         {
@@ -235,6 +240,9 @@ public class DocumentStoreController : ControllerBase
             deletedLikes = likesResult.DeletedCount,
             deletedFavorites = favoritesResult.DeletedCount,
             deletedShareLinks = shareLinksResult.DeletedCount,
+            deletedViewEvents = viewEventsResult.DeletedCount,
+            deletedInlineComments = inlineCommentsResult.DeletedCount,
+            deletedAgentRuns = agentRunsResult.DeletedCount,
         }));
     }
 
@@ -512,6 +520,9 @@ public class DocumentStoreController : ControllerBase
         // 级联清理
         var entriesResult = await _db.DocumentEntries.DeleteManyAsync(e => idsToDelete.Contains(e.Id));
         var syncLogsResult = await _db.DocumentSyncLogs.DeleteManyAsync(l => idsToDelete.Contains(l.EntryId));
+        var viewEventsResult = await _db.DocumentStoreViewEvents.DeleteManyAsync(v => v.EntryId != null && idsToDelete.Contains(v.EntryId));
+        var inlineCommentsResult = await _db.DocumentInlineComments.DeleteManyAsync(c => idsToDelete.Contains(c.EntryId));
+        var agentRunsResult = await _db.DocumentStoreAgentRuns.DeleteManyAsync(r => idsToDelete.Contains(r.SourceEntryId));
 
         long documentsDeleted = 0;
         if (documentIds.Count > 0)
@@ -535,9 +546,10 @@ public class DocumentStoreController : ControllerBase
                 .Set(s => s.UpdatedAt, DateTime.UtcNow));
 
         _logger.LogInformation(
-            "[document-store] Entry cascaded deleted: {EntryId} from store {StoreId} by {UserId} | entries={Entries} syncLogs={Logs} docs={Docs} attachments={Atts}",
+            "[document-store] Entry cascaded deleted: {EntryId} from store {StoreId} by {UserId} | entries={Entries} syncLogs={Logs} docs={Docs} attachments={Atts} views={Views} inlineComments={Comments} agentRuns={Runs}",
             entryId, entry.StoreId, userId,
-            entriesResult.DeletedCount, syncLogsResult.DeletedCount, documentsDeleted, attachmentsDeleted);
+            entriesResult.DeletedCount, syncLogsResult.DeletedCount, documentsDeleted, attachmentsDeleted,
+            viewEventsResult.DeletedCount, inlineCommentsResult.DeletedCount, agentRunsResult.DeletedCount);
 
         return Ok(ApiResponse<object>.Ok(new
         {
@@ -546,6 +558,9 @@ public class DocumentStoreController : ControllerBase
             deletedSyncLogs = syncLogsResult.DeletedCount,
             deletedDocuments = documentsDeleted,
             deletedAttachments = attachmentsDeleted,
+            deletedViewEvents = viewEventsResult.DeletedCount,
+            deletedInlineComments = inlineCommentsResult.DeletedCount,
+            deletedAgentRuns = agentRunsResult.DeletedCount,
         }));
     }
 
@@ -666,53 +681,27 @@ public class DocumentStoreController : ControllerBase
             // 哈希未变（理论上不应走到这里，但保险）
             if (c.ContentHash == newHash) { rebound++; continue; }
 
-            var sel = c.SelectedText ?? string.Empty;
-            if (string.IsNullOrEmpty(sel))
+            // 委托给纯函数做重锚定（便于单元测试覆盖）
+            var result = DocStoreServices.InlineCommentRebinder.TryRebind(
+                newContent,
+                c.SelectedText ?? string.Empty,
+                c.ContextBefore ?? string.Empty,
+                c.ContextAfter ?? string.Empty);
+
+            if (result is null)
             {
                 await MarkCommentOrphaned(c.Id, newHash);
                 orphaned++;
                 continue;
             }
-
-            // Step 1: 收集所有出现位置
-            var positions = new List<int>();
-            int idx = 0;
-            while ((idx = newContent.IndexOf(sel, idx, StringComparison.Ordinal)) >= 0)
-            {
-                positions.Add(idx);
-                idx += 1;
-            }
-
-            if (positions.Count == 0)
-            {
-                await MarkCommentOrphaned(c.Id, newHash);
-                orphaned++;
-                continue;
-            }
-
-            int chosenStart;
-            if (positions.Count == 1)
-            {
-                chosenStart = positions[0];
-            }
-            else
-            {
-                // 多处命中：用 contextBefore/contextAfter 评分消歧
-                chosenStart = ChooseBestPositionByContext(
-                    newContent, positions, sel, c.ContextBefore ?? string.Empty, c.ContextAfter ?? string.Empty);
-            }
-
-            var chosenEnd = chosenStart + sel.Length;
-            var newContextBefore = SliceAround(newContent, chosenStart, -50);
-            var newContextAfter = SliceAround(newContent, chosenEnd, 50);
 
             await _db.DocumentInlineComments.UpdateOneAsync(
                 x => x.Id == c.Id,
                 Builders<DocumentInlineComment>.Update
-                    .Set(x => x.StartOffset, chosenStart)
-                    .Set(x => x.EndOffset, chosenEnd)
-                    .Set(x => x.ContextBefore, newContextBefore)
-                    .Set(x => x.ContextAfter, newContextAfter)
+                    .Set(x => x.StartOffset, result.StartOffset)
+                    .Set(x => x.EndOffset, result.EndOffset)
+                    .Set(x => x.ContextBefore, result.ContextBefore)
+                    .Set(x => x.ContextAfter, result.ContextAfter)
                     .Set(x => x.ContentHash, newHash)
                     .Set(x => x.UpdatedAt, DateTime.UtcNow));
             rebound++;
@@ -729,60 +718,6 @@ public class DocumentStoreController : ControllerBase
                 .Set(x => x.Status, DocumentInlineCommentStatus.Orphaned)
                 .Set(x => x.ContentHash, newHash)
                 .Set(x => x.UpdatedAt, DateTime.UtcNow));
-    }
-
-    /// <summary>
-    /// 多处命中时的消歧：对每个候选位置提取前后 50 字符，与原 contextBefore/After 做"相同字符数"打分。
-    /// </summary>
-    private static int ChooseBestPositionByContext(
-        string content, List<int> positions, string selected,
-        string origBefore, string origAfter)
-    {
-        int bestPos = positions[0];
-        int bestScore = -1;
-        foreach (var pos in positions)
-        {
-            var before = SliceAround(content, pos, -50);
-            var after = SliceAround(content, pos + selected.Length, 50);
-            int score = CountMatchingChars(before, origBefore) + CountMatchingChars(after, origAfter);
-            if (score > bestScore)
-            {
-                bestScore = score;
-                bestPos = pos;
-            }
-        }
-        return bestPos;
-    }
-
-    /// <summary>
-    /// 取 pos 附近 length 个字符（length 为负表示往前取）。
-    /// </summary>
-    private static string SliceAround(string content, int pos, int length)
-    {
-        if (length < 0)
-        {
-            int start = Math.Max(0, pos + length);
-            return content.Substring(start, pos - start);
-        }
-        else
-        {
-            int end = Math.Min(content.Length, pos + length);
-            return content.Substring(pos, end - pos);
-        }
-    }
-
-    /// <summary>
-    /// 简单比较：两个字符串相同位置字符一致的个数。用于 rebind 时的上下文打分。
-    /// </summary>
-    private static int CountMatchingChars(string a, string b)
-    {
-        int n = Math.Min(a.Length, b.Length);
-        int match = 0;
-        for (int i = 0; i < n; i++)
-        {
-            if (a[i] == b[i]) match++;
-        }
-        return match;
     }
 
     /// <summary>设置文件夹内的主文档</summary>
