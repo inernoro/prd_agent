@@ -1,8 +1,10 @@
 # CDS (Cloud Development Suite) 技术架构文档
 
-> **版本**：v3.1 | **日期**：2026-04-09 | **状态**：已落地
+> **版本**：v3.2 | **日期**：2026-04-10 | **状态**：已落地
 >
-> 本文档是 CDS 的**主入口文档**，聚焦**核心思想 + 技术架构**。功能需求见 `doc/spec.cds.md`，容量与故障隔离见 `doc/design.cds-resilience.md`。
+> 本文档是 CDS 的**主入口文档**，聚焦**核心思想 + 技术架构**。功能需求见 `doc/spec.cds.md`，容量与故障隔离（含跨机负载均衡）见 `doc/design.cds-resilience.md`。
+>
+> **v3.2 关键变更**：运维入口统一为单一 `cds/exec_cds.sh init|start|stop|restart` 脚本；Nginx 配置改为启动时按 `.cds.env` 幂等渲染，支持 `CDS_ROOT_DOMAINS` 逗号分隔的多根域名，无需域名迁移即可同时承载 `miduo.org` / `mycds.net` 等多套入口。
 
 ## 一、管理摘要
 
@@ -51,9 +53,10 @@ CDS 的文档按职责划分，推荐按以下顺序阅读：
 ```
 主入口：design.cds.md  ← 你在这里
     │
+    ├─ 一分钟起步      → guide.quickstart.md
+    ├─ 环境变量与多域名 → guide.cds-env.md
     ├─ 功能是什么      → spec.cds.md
-    ├─ 怎么装          → guide.cds-env.md
-    ├─ 怎么不宕机      → design.cds-resilience.md   【本次新增】
+    ├─ 怎么不宕机      → design.cds-resilience.md
     ├─ 怎么部署        → plan.cds-deployment.md
     ├─ 路线图          → plan.cds-roadmap.md
     ├─ 一键导入配置    → design.cds-onboarding.md
@@ -65,10 +68,11 @@ CDS 的文档按职责划分，推荐按以下顺序阅读：
 | 文档 | 类型 | 什么时候读 |
 |---|---|---|
 | **design.cds.md** | design | 首次了解 CDS、理解整体架构 |
+| **guide.quickstart.md** | guide | 立刻上手 init/start/stop/restart + 多根域名 |
+| **guide.cds-env.md** | guide | 配置 .cds.env、理解 CDS_ROOT_DOMAINS 的路由生成规则 |
 | **spec.cds.md** | spec | 想知道 CDS 具体能做什么（功能清单 F1-F11） |
-| **design.cds-resilience.md** | design | 在小服务器部署、关心容量与宕机恢复 |
+| **design.cds-resilience.md** | design | 在小服务器部署、关心容量/温池调度/跨机负载均衡 |
 | **plan.cds-deployment.md** | plan | 要真实上线一台服务器，需要部署步骤 |
-| **guide.cds-env.md** | guide | 配置环境变量、调试启动问题 |
 | **guide.cds-ai-auth.md** | guide | 遇到认证/JWT 问题排查 |
 | **design.cds-onboarding.md** | design | 要做"一键从项目导入 CDS 配置"的功能 |
 | **design.cds-data-migration.md** | design | 涉及跨环境数据迁移 |
@@ -81,21 +85,28 @@ CDS 的文档按职责划分，推荐按以下顺序阅读：
 ### 前置条件
 
 - Node.js >= 20
-- Docker（用于管理分支容器）
+- pnpm
+- Docker（用于管理分支容器 + 宿主 nginx 容器）
 - Git（用于 worktree 管理）
 
-### 一键启动
+### 一键启动（v3.2 统一入口）
 
 ```bash
 cd cds
 
-./exec_cds.sh              # 前台
-./exec_cds.sh dev          # 开发（热重载）
-./exec_cds.sh --background # 后台
-./exec_cds.sh stop         # 停止
-./exec_cds.sh status       # 查看状态
-./exec_cds.sh logs         # 查看日志
+./exec_cds.sh init        # 首次初始化：交互式写 .cds.env + 渲染 nginx 配置
+./exec_cds.sh start       # 默认后台启动 (等同 daemon / --background / -d)
+./exec_cds.sh start --fg  # 前台启动 (调试)
+./exec_cds.sh stop        # 停止 CDS + Nginx
+./exec_cds.sh restart     # 重启
+./exec_cds.sh status      # 查看 CDS / Nginx 运行状态
+./exec_cds.sh logs        # 跟随 cds.log (Ctrl+C 退出)
+./exec_cds.sh cert        # 为 CDS_ROOT_DOMAINS 的每个域名签发 Let's Encrypt 证书
 ```
+
+根目录下的 `prd_agent/exec_cds.sh` 是转发器，等价于 `cds/exec_cds.sh`——无需 `cd cds/` 也能调用。
+
+所有命令都会 source `cds/.cds.env`（唯一用户配置入口），不再依赖 `.bashrc` 或环境变量。`daemon` / `--background` / `-d` 保留为 `start` 的历史别名，供 CDS 自更新（`branches.ts` 里 spawn `./exec_cds.sh daemon`）继续使用。
 
 ### 运行测试
 
@@ -261,24 +272,23 @@ CDS Compose YAML 解析与生成。
 
 | 层 | 存储位置 | 用途 | 变量前缀 |
 |----|----------|------|----------|
-| 系统层 | `.bashrc` | CDS 自身配置 | `CDS_` |
+| 系统层 | `cds/.cds.env` | CDS 自身配置 | `CDS_` |
 | 项目层 | `.cds/state.json` | 注入业务容器 | 无限制 |
 
-### 系统层变量
+**v3.2 变更**：系统层变量统一收拢到 `cds/.cds.env`，由 `./exec_cds.sh init` 交互式生成；**不再使用 `.bashrc`**，避免与宿主其他 CDS_* 环境变量冲突。所有命令启动时自动 `source` 这一个文件，保证开发机和 systemd 服务的行为一致。
+
+### 系统层变量（收敛为 4 个）
 
 | 变量 | 默认值 | 说明 |
 |------|--------|------|
-| `CDS_USERNAME` | — | Dashboard 登录用户名 |
+| `CDS_USERNAME` | — | Dashboard 登录用户名（设置后启用认证） |
 | `CDS_PASSWORD` | — | Dashboard 登录密码 |
-| `CDS_JWT_SECRET` | dev 默认值 | JWT 签名密钥 (>= 32 字节) |
-| `CDS_SWITCH_DOMAIN` | — | 分支切换域名 |
-| `CDS_MAIN_DOMAIN` | — | 主域名 |
-| `CDS_PREVIEW_DOMAIN` | — | 预览域名后缀 |
-| `CDS_NGINX_ENABLE` | — | 启用 Nginx 反向代理 |
+| `CDS_JWT_SECRET` | init 自动生成 | JWT 签名密钥（>= 32 字节，首次运行自动 `openssl rand -base64 32`） |
+| `CDS_ROOT_DOMAINS` | — | 根域名列表，逗号分隔（如 `miduo.org,mycds.net`） |
 
-> 向后兼容：旧前缀 `BT_*` / 无前缀变量仍可使用，`CDS_` 优先。
+旧的 `CDS_SWITCH_DOMAIN` / `CDS_MAIN_DOMAIN` / `CDS_PREVIEW_DOMAIN` / `CDS_DASHBOARD_DOMAIN` / `CDS_NGINX_ENABLE` 均已废弃。`src/config.ts` 保留对它们的读取作为临时兼容，但 `.cds.env` 只写 4 个变量；新的部署推荐只认 `CDS_ROOT_DOMAINS`。
 
-详细配置指南见 `doc/guide.cds-env.md`。
+详细配置指南见 `doc/guide.cds-env.md`，Quickstart 另见 `doc/guide.quickstart.md`。
 
 ---
 
@@ -304,6 +314,114 @@ CDS Compose YAML 解析与生成。
 ```
 
 `scheduler` 段为 v3.1 新增，用于启用分支温池调度器。详见 `doc/design.cds-resilience.md §四、八`。
+
+---
+
+## 7.5 运维入口与 Nginx 渲染（v3.2 新增）
+
+### 7.5.1 为什么只留一个脚本
+
+v3.1 之前 CDS 的运维脚本散落成：
+
+```
+prd_agent/exec_cds.sh          # 根目录旧转发器，init/daemon 分叉
+cds/exec_cds.sh                # cds/ 里另一个 start/daemon 实现
+cds/exec_setup.sh              # 交互式配置写 .cds.env
+cds/nginx/init_domain.sh       # 从 domain.env 生成 nginx 配置
+cds/nginx/start_nginx.sh       # 起 nginx compose 容器
+cds/nginx/acme_apply.sh        # 证书签发
+cds/host-env.example.sh        # 遗留的环境变量样板
+```
+
+三个配置源（`.cds.env` / `domain.env` / `.bashrc`）相互覆盖、命令行参数十几种、每个命令调用链要跨 2-3 个脚本——自更新日志里出现任何 nginx/配置相关字样都无法判断是正常还是异常。
+
+**v3.2 统一为**：
+
+```
+cds/exec_cds.sh    # 唯一运维入口，包含 init/start/stop/restart/status/logs/cert
+cds/.cds.env       # 唯一用户配置 (只有 4 个变量)
+cds/nginx/*.conf   # 纯生成产物，gitignore
+```
+
+根目录 `prd_agent/exec_cds.sh` 只是一条 `exec "$SCRIPT_DIR/cds/exec_cds.sh" "$@"` 的转发器，不含任何业务逻辑。
+
+### 7.5.2 Nginx 多根域名路由规则
+
+**硬性规则**：对 `CDS_ROOT_DOMAINS` 中的每一个根域名 `D`，自动生成三条固定路由：
+
+| Host | 目标 | 说明 |
+|------|------|------|
+| `D` | Dashboard (master) | 例如 `miduo.org` → `http://127.0.0.1:9900` |
+| `cds.D` | Dashboard (master) | 别名，例如 `cds.miduo.org` 同样到 Dashboard |
+| `*.D` | Preview (worker) | 任意子域名 → `http://127.0.0.1:5500`，典型 `feat-abc.miduo.org` |
+
+nginx 的精确匹配优先级天然高于通配符，`cds.D` 不会被 `*.D` 误吞。多个根域名相互独立，配置 `CDS_ROOT_DOMAINS="miduo.org,mycds.net"` 即**同时**承载 6 组入口，无需域名迁移。
+
+```
+                         ┌────────────────┐
+  miduo.org ──────┐      │                │
+  cds.miduo.org ──┤      │                │
+  mycds.net ──────┼──────┤  cds_master    ├──► 127.0.0.1:9900 (Dashboard)
+  cds.mycds.net ──┘      │                │
+                         └────────────────┘
+
+                         ┌────────────────┐
+  *.miduo.org ────┐      │                │
+  *.mycds.net ────┼──────┤  cds_worker    ├──► 127.0.0.1:5500 (Preview)
+                  │      │                │
+                         └────────────────┘
+```
+
+### 7.5.3 TLS：每根域名独立签发 + 渐进式 HTTPS
+
+- `cds/nginx/certs/<D>.crt` + `<D>.key` 存在 → 该域名 server block 同时监听 80 和 443
+- 不存在 → 该域名只监听 80（HTTP-only 兜底）
+- `./exec_cds.sh cert` 遍历 `CDS_ROOT_DOMAINS`，对每个 `D` 用 `acme.sh` webroot 模式签发 `D + cds.D`
+- 一个根域名签发失败不影响其它根域名继续用 HTTP；已签发的域名下次 `restart` 自动升级到 HTTPS
+
+通配符 `*.D` 的 HTTPS 需要 DNS 挑战（本脚本未内置）。需要子域名 HTTPS 时，可自行用 DNS API 签发后把证书落到 `cds/nginx/certs/`，渲染器会自动捡起来。
+
+### 7.5.4 幂等渲染：自更新不噪音、不丢配置
+
+`render_nginx()` 的 3 个产物（`nginx.conf` / `cds-site.conf` / `nginx.compose.yml`）都走 `write_if_changed` 对比写入：
+
+```bash
+write_if_changed() {
+  local target="$1" content="$2"
+  if [ -f "$target" ] && printf '%s' "$content" | cmp -s - "$target"; then
+    return 0                                 # 内容无变化 → 不触碰文件
+  fi
+  printf '%s' "$content" > "$target"
+  NGINX_CHANGED_FILES+="$(basename "$target") "
+}
+```
+
+`nginx_up()` 根据 `NGINX_CHANGED_FILES` 的内容分三档响应：
+
+| 变化范围 | 动作 | 用户影响 |
+|---------|------|---------|
+| 容器未运行 **或** `nginx.compose.yml` 变了 | `docker compose up -d` | 约 1 秒停机（容器重建） |
+| 仅 `cds-site.conf` / `nginx.conf` 变了（容器在跑） | `docker exec … nginx -t && nginx -s reload` | 零停机热重载 |
+| 什么都没变 | 静默跳过 | 零影响 |
+
+这直接服务于 CDS 自更新：`branches.ts:3341` 里 spawn 的 `./exec_cds.sh daemon` 每次启动都会走 `nginx_up`，但在配置无变化时**完全不打印**任何 nginx 相关日志、也不触碰 nginx 容器，自更新窗口的影响仅限于 `npx tsc` + `node dist/index.js` 的几秒内核切换。
+
+### 7.5.5 单节点 nginx 与跨机 dispatcher 的边界
+
+v3.2 的 `exec_cds.sh` 只解决**单节点 Layer 3 入口**问题，与 v3.3 Phase 3 的分布式 `nginx-template.ts` 互为补充、互不替代：
+
+| 层次 | 由谁生成 | 何时用 |
+|------|----------|-------|
+| **单节点入口** | `exec_cds.sh render_nginx` | 单机部署；本地/小团队；每根域名 = 一组固定 server block | 
+| **跨机入口** | `src/scheduler/nginx-template.ts` | Phase 3 集群调度；Master + N 个 Executor；按 `$http_x_branch` 在 executors 间路由 | 
+
+两者生成的配置文件**不会同时存在**：单机模式下 `exec_cds.sh` 输出 `cds-site.conf`，集群模式下由 dispatcher 下发的 `nginx-template.ts` 结果由运维贴到边缘网关。升级到集群时，只需在边缘网关改用后者即可，CDS 内部的调度器逻辑（Phase 1 的 `SchedulerService`）不变。
+
+详见：
+
+- 单节点入口设计 → 本节
+- 温池调度与容量算法 → `doc/design.cds-resilience.md §二、四`
+- 跨机 dispatcher + Layer 3 edge nginx 生成器 → `doc/design.cds-resilience.md §八`
 
 ---
 
@@ -366,12 +484,13 @@ target: `http://localhost:${process.env.VITE_API_PORT || 5000}`
 
 | 文档 | 内容 |
 |---|---|
+| `guide.quickstart.md` | init/start/stop/restart 快速上手 + 多根域名速查 |
+| `guide.cds-env.md` | `.cds.env` 配置、`CDS_ROOT_DOMAINS` 多域名路由规则 |
 | `spec.cds.md` | 功能规格 F1-F11 |
-| `design.cds-resilience.md` | 容量预算、LRU 调度、故障矩阵 |
+| `design.cds-resilience.md` | 容量预算、LRU 调度、故障矩阵、跨机负载均衡 |
 | `design.cds-onboarding.md` | 一键导入配置 + AI 项目扫描 |
 | `design.cds-data-migration.md` | 跨环境数据迁移 |
 | `plan.cds-deployment.md` | 三种部署模式对比 + 端口分配 |
 | `plan.cds-roadmap.md` | Phase 0-3 里程碑 |
 | `plan.cds-resilience-rollout.md` | 高可用改造落地进度（可续传）|
-| `guide.cds-env.md` | 环境变量配置指南 |
 | `guide.cds-ai-auth.md` | 认证问题故障排查 |
