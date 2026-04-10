@@ -13,11 +13,11 @@ set -a
 . "$CONFIG_FILE"
 set +a
 
-MAIN_DOMAIN="${MAIN_DOMAIN:-}"
-CERT_EMAIL="${CERT_EMAIL:-admin@${MAIN_DOMAIN}}"
+PRIMARY_DOMAIN="${PRIMARY_DOMAIN:-${MAIN_DOMAIN:-}}"
+CERT_EMAIL="${CERT_EMAIL:-admin@${PRIMARY_DOMAIN}}"
 NGINX_CONTAINER="${NGINX_CONTAINER:-nginx_miduo}"
 LOCAL_TLS_HOST="${LOCAL_TLS_HOST:-127.0.0.1}"
-TLS_DOMAINS="${TLS_DOMAINS:-${MAIN_DOMAIN}}"
+TLS_DOMAINS="${TLS_DOMAINS:-${PRIMARY_DOMAIN}}"
 
 FORCE_RENEW=0
 CHECK_ONLY=0
@@ -44,15 +44,15 @@ ACME_HOME="${HOME}/.acme.sh"
 ACME="${ACME_HOME}/acme.sh"
 START_NGINX="${BASE_DIR}/start_nginx.sh"
 
-if [ -z "$MAIN_DOMAIN" ]; then
-  echo "ERROR: MAIN_DOMAIN 不能为空"
+if [ -z "$PRIMARY_DOMAIN" ]; then
+  echo "ERROR: PRIMARY_DOMAIN 不能为空"
   exit 1
 fi
 
 mkdir -p "${CERT_DIR}" "${WEBROOT_DIR}/.well-known/acme-challenge"
 
 if [ "${CHECK_ONLY}" -eq 1 ]; then
-  echo | openssl s_client -connect "${LOCAL_TLS_HOST}:443" -servername "${MAIN_DOMAIN}" 2>/dev/null | openssl x509 -noout -dates -issuer -subject || true
+  echo | openssl s_client -connect "${LOCAL_TLS_HOST}:443" -servername "${PRIMARY_DOMAIN}" 2>/dev/null | openssl x509 -noout -dates -issuer -subject || true
   exit 0
 fi
 
@@ -92,14 +92,14 @@ if [ "${ISSUE_STATUS}" -ne 0 ] && ! printf '%s\n' "${ISSUE_OUTPUT}" | grep -q "S
   exit "${ISSUE_STATUS}"
 fi
 
-"${ACME}" --install-cert -d "${MAIN_DOMAIN}" \
+"${ACME}" --install-cert -d "${PRIMARY_DOMAIN}" \
   --ecc \
-  --key-file       "${CERT_DIR}/${MAIN_DOMAIN}.key" \
-  --fullchain-file "${CERT_DIR}/${MAIN_DOMAIN}.crt" \
+  --key-file       "${CERT_DIR}/${PRIMARY_DOMAIN}.key" \
+  --fullchain-file "${CERT_DIR}/${PRIMARY_DOMAIN}.crt" \
   --reloadcmd      "docker exec ${NGINX_CONTAINER} nginx -s reload"
 
 if [ -x "${START_NGINX}" ]; then
   "${START_NGINX}" restart
 fi
 
-echo | openssl s_client -connect "${LOCAL_TLS_HOST}:443" -servername "${MAIN_DOMAIN}" 2>/dev/null | openssl x509 -noout -dates -issuer -subject || true
+echo | openssl s_client -connect "${LOCAL_TLS_HOST}:443" -servername "${PRIMARY_DOMAIN}" 2>/dev/null | openssl x509 -noout -dates -issuer -subject || true

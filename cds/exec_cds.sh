@@ -96,10 +96,16 @@ load_domain_env() {
   . "$NGINX_DOMAIN_ENV"
   set +a
 
-  export CDS_MAIN_DOMAIN="${CDS_MAIN_DOMAIN:-${MAIN_DOMAIN:-}}"
+  local primary_domain="${PRIMARY_DOMAIN:-}"
+  if [ -z "$primary_domain" ] && [ -n "${ROOT_DOMAINS:-}" ]; then
+    primary_domain="$(printf '%s' "${ROOT_DOMAINS}" | cut -d',' -f1 | xargs)"
+  fi
+
+  export CDS_ROOT_DOMAINS="${CDS_ROOT_DOMAINS:-${ROOT_DOMAINS:-}}"
+  export CDS_MAIN_DOMAIN="${CDS_MAIN_DOMAIN:-${MAIN_DOMAIN:-${primary_domain}}}"
   export CDS_SWITCH_DOMAIN="${CDS_SWITCH_DOMAIN:-${SWITCH_DOMAIN:-}}"
-  export CDS_PREVIEW_DOMAIN="${CDS_PREVIEW_DOMAIN:-${PREVIEW_DOMAIN:-${MAIN_DOMAIN:-}}}"
-  export CDS_DASHBOARD_DOMAIN="${CDS_DASHBOARD_DOMAIN:-${DASHBOARD_DOMAIN:-cds.${MAIN_DOMAIN:-}}}"
+  export CDS_PREVIEW_DOMAIN="${CDS_PREVIEW_DOMAIN:-${PREVIEW_DOMAIN:-${primary_domain}}}"
+  export CDS_DASHBOARD_DOMAIN="${CDS_DASHBOARD_DOMAIN:-${DASHBOARD_DOMAIN:-${primary_domain}}}"
 }
 
 run_root_nginx_action() {

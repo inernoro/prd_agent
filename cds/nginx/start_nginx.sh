@@ -47,10 +47,10 @@ set -a
 set +a
 
 NGINX_CONTAINER="${NGINX_CONTAINER:-nginx_miduo}"
-MAIN_DOMAIN="${MAIN_DOMAIN:-}"
+PRIMARY_DOMAIN="${PRIMARY_DOMAIN:-${MAIN_DOMAIN:-}}"
 
 has_cert() {
-  [ -f "${SCRIPT_DIR}/certs/${MAIN_DOMAIN}.crt" ] && [ -f "${SCRIPT_DIR}/certs/${MAIN_DOMAIN}.key" ]
+  [ -f "${SCRIPT_DIR}/certs/${PRIMARY_DOMAIN}.crt" ] && [ -f "${SCRIPT_DIR}/certs/${PRIMARY_DOMAIN}.key" ]
 }
 
 render_compose() {
@@ -76,7 +76,7 @@ ensure_rendered() {
       echo "请回到 cds 根目录执行: ./exec_cds.sh nginx render"
       exit 1
     fi
-    echo "No certificate found for ${MAIN_DOMAIN}, starting nginx in HTTP bootstrap mode."
+    echo "No certificate found for ${PRIMARY_DOMAIN}, starting nginx in HTTP bootstrap mode."
   fi
   render_compose
 }

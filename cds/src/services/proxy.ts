@@ -175,12 +175,16 @@ export class ProxyService {
    * Returns the branch slug extracted from the subdomain, or null.
    */
   private extractPreviewBranch(host: string): string | null {
-    const previewDomain = this.config?.previewDomain;
-    if (!previewDomain) return null;
     const h = host.split(':')[0].toLowerCase();
-    const suffix = `.${previewDomain.toLowerCase()}`;
-    if (h.endsWith(suffix) && h.length > suffix.length) {
-      return h.slice(0, -suffix.length);
+    const rootDomains = this.config?.rootDomains?.length
+      ? this.config.rootDomains
+      : (this.config?.previewDomain ? [this.config.previewDomain] : []);
+
+    for (const rootDomain of rootDomains) {
+      const suffix = `.${rootDomain.toLowerCase()}`;
+      if (h.endsWith(suffix) && h.length > suffix.length) {
+        return h.slice(0, -suffix.length);
+      }
     }
     return null;
   }

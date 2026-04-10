@@ -18,6 +18,12 @@ import { createExecutorRouter } from './executor/routes.js';
 import { ExecutorRegistry } from './scheduler/executor-registry.js';
 import { createSchedulerRouter } from './scheduler/routes.js';
 
+function parseCsv(value: string | undefined): string[] | undefined {
+  if (!value) return undefined;
+  const items = value.split(',').map(v => v.trim()).filter(Boolean);
+  return items.length > 0 ? items : undefined;
+}
+
 const configPath = process.argv[2] || undefined;
 const config = loadConfig(configPath);
 
@@ -53,10 +59,16 @@ stateService.load();
 // Users set these in CDS custom env vars (UI),
 // but config.ts only reads process.env at startup. Merge them here.
 const customEnv = stateService.getCustomEnv();
+if (customEnv.ROOT_DOMAINS && !config.rootDomains?.length) config.rootDomains = parseCsv(customEnv.ROOT_DOMAINS);
 if (customEnv.SWITCH_DOMAIN && !config.switchDomain) config.switchDomain = customEnv.SWITCH_DOMAIN;
 if (customEnv.MAIN_DOMAIN && !config.mainDomain) config.mainDomain = customEnv.MAIN_DOMAIN;
 if (customEnv.DASHBOARD_DOMAIN && !config.dashboardDomain) config.dashboardDomain = customEnv.DASHBOARD_DOMAIN;
 if (customEnv.PREVIEW_DOMAIN && !config.previewDomain) config.previewDomain = customEnv.PREVIEW_DOMAIN;
+if (config.rootDomains?.length) {
+  if (!config.dashboardDomain) config.dashboardDomain = config.rootDomains[0];
+  if (!config.previewDomain) config.previewDomain = config.rootDomains[0];
+  if (!config.mainDomain) config.mainDomain = config.rootDomains[0];
+}
 // Directory isolation: allow UI to override repo root and worktree base
 if (customEnv.CDS_REPO_ROOT) config.repoRoot = customEnv.CDS_REPO_ROOT;
 if (customEnv.CDS_WORKTREE_BASE) config.worktreeBase = customEnv.CDS_WORKTREE_BASE;
@@ -664,9 +676,9 @@ if (mode === 'executor') {
     console.log(`  Dashboard:  http://localhost:${config.masterPort}`);
     console.log(`  Worker:     http://localhost:${config.workerPort}`);
     console.log(`  Bridge:     http://localhost:${config.masterPort}/api/bridge/ (HTTP polling)`);
-    if (config.dashboardDomain) console.log(`  Dashboard Domain: https://${config.dashboardDomain}`);
-    if (config.switchDomain) console.log(`  Switch:     ${config.switchDomain} → ${config.mainDomain || '(main domain not set)'}`);
-    if (config.previewDomain) console.log(`  Preview:    *.<${config.previewDomain}>`);
+    if (config.rootDomains?.length) console.log(`  Domains:    ${config.rootDomains.join(', ')}`);
+    if (config.dashboardDomain) console.log(`  Routing:    exact root domain -> Dashboard (${config.dashboardDomain})`);
+    if (config.rootDomains?.length) console.log(`  Preview:    any subdomain under configured root domains`);
     console.log(`  State file: ${stateFile}`);
     console.log(`  Repo root:  ${config.repoRoot}`);
     console.log('');
