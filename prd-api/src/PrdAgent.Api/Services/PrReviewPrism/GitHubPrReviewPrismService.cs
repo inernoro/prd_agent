@@ -1,7 +1,10 @@
 using System.Net.Http.Headers;
 using System.Text.Json;
 using System.Text.RegularExpressions;
+using MongoDB.Driver;
+using PrdAgent.Core.Helpers;
 using PrdAgent.Core.Models;
+using PrdAgent.Infrastructure.Database;
 
 namespace PrdAgent.Api.Services.PrReviewPrism;
 
@@ -24,13 +27,16 @@ public sealed class GitHubPrReviewPrismService
 
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly IConfiguration _config;
+    private readonly MongoDbContext _db;
 
     public GitHubPrReviewPrismService(
         IHttpClientFactory httpClientFactory,
-        IConfiguration config)
+        IConfiguration config,
+        MongoDbContext db)
     {
         _httpClientFactory = httpClientFactory;
         _config = config;
+        _db = db;
     }
 
     public static bool TryParsePullRequestUrl(
@@ -146,10 +152,25 @@ public sealed class GitHubPrReviewPrismService
 
     private string? ResolveGitHubToken()
     {
+        var appSettings = _db.AppSettings.Find(x => x.Id == "global").FirstOrDefault(CancellationToken.None);
+        if (!string.IsNullOrWhiteSpace(appSettings?.PrReviewPrismGitHubTokenEncrypted))
+        {
+            var token = ApiKeyCrypto.Decrypt(appSettings!.PrReviewPrismGitHubTokenEncrypted!, GetJwtSecret());
+            if (!string.IsNullOrWhiteSpace(token))
+            {
+                return token;
+            }
+        }
+
         return _config["GitHub:Token"]
             ?? _config["GitHub:ApiToken"]
             ?? _config["GitHub__Token"]
             ?? _config["PR_REVIEW_PRISM_GITHUB_TOKEN"];
+    }
+
+    private string GetJwtSecret()
+    {
+        return _config["Jwt:Secret"] ?? "DefaultEncryptionKey32Bytes!!!!";
     }
 
     private static async Task<PullRequestDto?> GetPullRequestAsync(

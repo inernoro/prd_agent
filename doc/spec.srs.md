@@ -2171,6 +2171,8 @@ sequenceDiagram
 **API 端点**：
 - `GET /api/pr-review-prism/status` — 功能状态与提示信息
 - `GET /api/pr-review-prism/setup-status` — 初始化与配置状态（GitHub Token、顶层设计基线、可执行 guidance）；支持 `repo` 参数（`owner/repo` 或 PR URL）做仓库级校验
+- `GET /api/pr-review-prism/token-config` — 获取 Token 配置状态（脱敏、来源、可写权限、操作指引）
+- `PUT /api/pr-review-prism/token-config` — 保存/清空 Token（写入 AppSettings 加密字段，要求 `settings.write`）
 - `POST /api/pr-review-prism/bootstrap-skill-package` — 导出仓库专属接入 zip（含 scripts + skill 模板 + onboarding 指南）
 - `POST /api/pr-review-prism/submissions` — 提交 PR 链接并创建/复用记录
 - `GET /api/pr-review-prism/submissions` — 当前用户提交列表（支持 `q` 检索与 `repo` 仓库过滤，`repo` 可为 `owner/repo` 或 PR URL）
@@ -2208,6 +2210,11 @@ sequenceDiagram
    - 输入：`repo / owner / context / anchorId`
    - 输出：`fileName` + `contentBase64`
    - 包含文件：`scripts/bootstrap-pr-prism.sh`、`scripts/init-pr-prism-basis.sh`、`.claude/skills/pr-prism-bootstrap/SKILL.md`、`doc/guide.pr-prism-bootstrap-package.md`
+8. GitHub Token 支持“页面可视化配置”：
+   - 配置入口：PR审查棱镜接入向导 Step 1（管理员）
+   - 后端存储：`AppSettings.PrReviewPrismGitHubTokenEncrypted`（AES 加密，密钥来源 `Jwt:Secret`）
+   - 优先级：页面配置 Token > 环境变量 Token（`GitHub:Token` / `PR_REVIEW_PRISM_GITHUB_TOKEN`）
+   - 权限：读取遵循 `pr-review-prism.use`；写入要求 `settings.write`
 
 **验收标准**：
 - [ ] 可从 PR 链接正确解析 owner/repo/number

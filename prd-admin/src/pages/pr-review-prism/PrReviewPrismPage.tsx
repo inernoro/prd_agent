@@ -21,13 +21,16 @@ import {
   downloadPrReviewPrismRepoBootstrapSkill,
   getPrReviewPrismStatus,
   getPrReviewPrismSetupStatus,
+  getPrReviewPrismTokenConfigStatus,
   listPrReviewPrismSubmissions,
   batchRefreshPrReviewPrismSubmissions,
   refreshPrReviewPrismSubmission,
+  updatePrReviewPrismTokenConfig,
   type PrReviewPrismGateStatus,
   type PrReviewPrismSubmission,
   type PrReviewPrismBatchRefreshFailure,
   type PrReviewPrismSetupStatus,
+  type PrReviewPrismTokenConfigStatus,
 } from '@/services';
 
 const bootstrapInitCommand = 'bash scripts/bootstrap-pr-prism.sh';
@@ -107,6 +110,9 @@ export function PrReviewPrismPage() {
   const [formError, setFormError] = useState<string | null>(null);
   const [listError, setListError] = useState<string | null>(null);
   const [setupStatus, setSetupStatus] = useState<PrReviewPrismSetupStatus | null>(null);
+  const [tokenConfig, setTokenConfig] = useState<PrReviewPrismTokenConfigStatus | null>(null);
+  const [tokenInput, setTokenInput] = useState('');
+  const [savingToken, setSavingToken] = useState(false);
   const [setupActionMessage, setSetupActionMessage] = useState<string | null>(null);
   const [bindingRepoInput, setBindingRepoInput] = useState('');
   const [selectedRepo, setSelectedRepo] = useState(() => {
@@ -388,6 +394,15 @@ slices:
     }
   }, []);
 
+  const loadTokenConfigStatus = useCallback(async () => {
+    const res = await getPrReviewPrismTokenConfigStatus();
+    if (res.success && res.data) {
+      setTokenConfig(res.data);
+      return;
+    }
+    setTokenConfig(null);
+  }, []);
+
   const loadSetupStatus = useCallback(async () => {
     const res = await getPrReviewPrismSetupStatus(isBindingRepoValid ? normalizedBindingRepo : undefined);
     if (res.success && res.data) {
@@ -460,9 +475,10 @@ slices:
 
   useEffect(() => {
     void loadStatus();
+    void loadTokenConfigStatus();
     void loadSetupStatus();
     void loadList(1, search.trim() || undefined, pageSize, activeGateFilter, normalizedSelectedRepo || undefined);
-  }, [activeGateFilter, loadList, loadSetupStatus, loadStatus, normalizedSelectedRepo, pageSize, search]);
+  }, [activeGateFilter, loadList, loadSetupStatus, loadStatus, loadTokenConfigStatus, normalizedSelectedRepo, pageSize, search]);
 
   useEffect(() => {
     setSelectedId(prev => {
@@ -553,6 +569,38 @@ slices:
 
   async function handleSearch() {
     await loadList(1, search.trim() || undefined, pageSize, activeGateFilter, normalizedSelectedRepo || undefined);
+  }
+
+  async function handleSaveToken() {
+    if (savingToken) {
+      return;
+    }
+    if (!tokenConfig?.canWrite) {
+      setSetupActionMessage('当前账号缺少 settings.write 权限，无法保存 Token');
+      return;
+    }
+    setSavingToken(true);
+    const normalizedToken = tokenInput.trim();
+    if (!normalizedToken && tokenConfig?.tokenConfigured && tokenConfig.source === 'environment') {
+      setSetupActionMessage('当前生效的是环境变量 Token，无需在页面重复保存');
+      setSavingToken(false);
+      return;
+    }
+    const res = await updatePrReviewPrismTokenConfig(normalizedToken);
+    if (!res.success || !res.data) {
+      setSetupActionMessage(res.error?.message ?? '保存 Token 失败');
+      setSavingToken(false);
+      return;
+    }
+    setTokenConfig(res.data);
+    setTokenInput('');
+    if (!normalizedToken && tokenConfig?.tokenConfigured) {
+      setSetupActionMessage('已清空页面保存的 Token（如有环境变量，系统会自动回退使用）');
+    } else {
+      setSetupActionMessage(res.data.tokenConfigured ? 'GitHub Token 保存成功' : '当前未检测到可用 Token');
+    }
+    await loadSetupStatus();
+    setSavingToken(false);
   }
 
   async function handleSubmit() {
@@ -1012,7 +1060,58 @@ slices:
             </div>
 
             <div className="rounded-lg border border-amber-400/20 bg-amber-500/10 p-3 text-amber-100">
-              <p className="font-medium mb-1">Step 1 / 4：绑定目标仓库（每个新仓库都要配置）</p>
+              <p className="font-medium mb-1">Step 1 / 4：配置 GitHub Token（仅首次需要）</p>
+              <input
+                type="password"
+                value={tokenInput}
+                onChange={e => setTokenInput(e.target.value)}
+                placeholder="粘贴 GitHub Personal Access Token（ghp_xxx）"
+                className="w-full mt-1 bg-black/20 border border-white/15 rounded px-2 py-1.5 text-[11px] text-amber-50 placeholder-amber-100/40 focus:outline-none focus:border-amber-300/40"
+              />
+              <div className="mt-2 flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  disabled={savingToken || !tokenConfig?.canWrite}
+                  onClick={() => void handleSaveToken()}
+                  className="inline-flex items-center gap-1 rounded border border-violet-300/40 bg-violet-500/20 px-2.5 py-1 text-[11px] text-violet-100 hover:bg-violet-500/25 whitespace-nowrap disabled:opacity-50"
+                >
+                  {savingToken ? '保存中...' : '保存 Token'}
+                </button>
+                {tokenConfig?.canWrite && (
+                  <button
+                    type="button"
+                    disabled={savingToken}
+                    onClick={() => setTokenInput('')}
+                    className="inline-flex items-center gap-1 rounded border border-white/20 bg-white/10 px-2.5 py-1 text-[11px] text-white hover:bg-white/15 whitespace-nowrap disabled:opacity-50"
+                    title="清空输入框；如需清空已保存 Token，请点击保存"
+                  >
+                    清空输入
+                  </button>
+                )}
+              </div>
+              <p className="mt-1 text-[11px] text-amber-200/80">
+                当前状态：
+                {tokenConfig?.tokenConfigured ? '已配置' : '未配置'}
+                {tokenConfig?.tokenMasked ? `（${tokenConfig.tokenMasked}）` : ''}
+                {tokenConfig?.source
+                  ? `，来源：${
+                      tokenConfig.source === 'appSettings'
+                        ? '页面配置'
+                        : tokenConfig.source === 'environment'
+                          ? '环境变量'
+                          : '未配置'
+                    }`
+                  : ''}
+              </p>
+              {!!tokenConfig?.guidance?.length && (
+                <ul className="list-disc ml-4 mt-1 space-y-1 text-[11px] text-amber-100">
+                  {tokenConfig.guidance.map((x, idx) => (
+                    <li key={`token-guidance-${idx}`}>{x}</li>
+                  ))}
+                </ul>
+              )}
+
+              <p className="font-medium mt-3 mb-1">Step 2 / 4：绑定目标仓库（每个新仓库都要配置）</p>
               <input
                 type="text"
                 value={bindingRepoInput}
@@ -1030,7 +1129,7 @@ slices:
                   当前仓库参数会自动保存，下次切回该仓库时自动恢复 owner/context/anchor。
                 </p>
               )}
-              <p className="mt-2 font-medium">Step 2 / 4：执行该仓库初始化命令</p>
+              <p className="mt-2 font-medium">Step 3 / 4：执行该仓库初始化命令</p>
               <div className="mt-2 grid grid-cols-1 md:grid-cols-3 gap-2">
                 <div>
                   <p className="text-[11px] text-amber-100/80 mb-1">仓库 owner</p>
@@ -1066,7 +1165,7 @@ slices:
               <code className="block mt-1 rounded bg-black/25 px-2 py-1 whitespace-pre-wrap break-all">
                 {repoScopedBootstrapCommand}
               </code>
-              <p className="mt-2 font-medium">Step 3 / 4：将仓库条目写入 repo-bindings.yml</p>
+              <p className="mt-2 font-medium">将仓库条目写入 repo-bindings.yml</p>
               <code className="block mt-1 rounded bg-black/25 px-2 py-1 whitespace-pre-wrap break-all">
                 {repoBindingSnippet || '# 先填写 owner/repo 后生成'}
               </code>

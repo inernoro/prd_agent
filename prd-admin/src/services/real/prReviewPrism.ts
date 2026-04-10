@@ -12,6 +12,7 @@ export interface PrReviewPrismStatus {
 export interface PrReviewPrismTopDesignSetupStatus {
   repoRootDetected: boolean;
   repoRoot?: string | null;
+  targetRepo?: string | null;
   designSourcesExists: boolean;
   activeSourceId?: string | null;
   activeVersion?: string | null;
@@ -29,6 +30,14 @@ export interface PrReviewPrismSetupStatus {
   githubTokenConfigured: boolean;
   topDesign: PrReviewPrismTopDesignSetupStatus;
   readyForFullRefresh: boolean;
+  guidance: string[];
+}
+
+export interface PrReviewPrismTokenConfigStatus {
+  tokenConfigured: boolean;
+  tokenMasked?: string | null;
+  source: 'none' | 'environment' | 'appSettings';
+  canWrite: boolean;
   guidance: string[];
 }
 
@@ -107,6 +116,19 @@ export async function getPrReviewPrismSetupStatus(repo?: string): Promise<ApiRes
   }
   const path = params.size > 0 ? `${api.prReviewPrism.setupStatus()}?${params.toString()}` : api.prReviewPrism.setupStatus();
   return apiRequest(path);
+}
+
+export async function getPrReviewPrismTokenConfigStatus(): Promise<ApiResponse<PrReviewPrismTokenConfigStatus>> {
+  return apiRequest(api.prReviewPrism.tokenConfig.status());
+}
+
+export async function updatePrReviewPrismTokenConfig(
+  token: string
+): Promise<ApiResponse<PrReviewPrismTokenConfigStatus>> {
+  return apiRequest(api.prReviewPrism.tokenConfig.update(), {
+    method: 'PUT',
+    body: { token },
+  });
 }
 
 export async function downloadPrReviewPrismRepoBootstrapSkill(

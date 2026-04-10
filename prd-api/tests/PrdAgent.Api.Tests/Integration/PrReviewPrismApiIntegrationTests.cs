@@ -129,6 +129,102 @@ public class PrReviewPrismApiIntegrationTests : IClassFixture<WebApplicationFact
     }
 
     [Fact]
+    public async Task TokenConfig_NoAuth_ShouldReturn401()
+    {
+        var client = _factory.CreateClient();
+        var response = await client.GetAsync("/api/pr-review-prism/token-config");
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task TokenConfig_WithAuth_ShouldReturnStructuredPayload()
+    {
+        if (!HasToken)
+        {
+            Log("[Skip] no token");
+            return;
+        }
+
+        var client = CreateAuthenticatedClient();
+        if (!await EnsurePrReviewPrismAccessibleAsync(client))
+        {
+            return;
+        }
+
+        var response = await client.GetAsync("/api/pr-review-prism/token-config");
+        var body = await response.Content.ReadAsStringAsync();
+        Log($"[TokenConfig] {response.StatusCode} - {Truncate(body, 220)}");
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+
+        using var doc = JsonDocument.Parse(body);
+        Assert.True(doc.RootElement.GetProperty("success").GetBoolean());
+        var data = doc.RootElement.GetProperty("data");
+        Assert.True(data.TryGetProperty("tokenConfigured", out _));
+        Assert.True(data.TryGetProperty("source", out _));
+        Assert.True(data.TryGetProperty("canWrite", out _));
+        Assert.True(data.TryGetProperty("guidance", out var guidance));
+        Assert.Equal(JsonValueKind.Array, guidance.ValueKind);
+    }
+
+    [Fact]
+    public async Task TokenConfig_Update_NoAuth_ShouldReturn401()
+    {
+        var client = _factory.CreateClient();
+        var response = await client.PutAsJsonAsync("/api/pr-review-prism/token-config", new
+        {
+            token = "ghp_dummy_token_for_test"
+        });
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task TokenConfig_Update_WithAuth_ShouldRespectCanWriteAndReturnStructuredPayload()
+    {
+        if (!HasToken)
+        {
+            Log("[Skip] no token");
+            return;
+        }
+
+        var client = CreateAuthenticatedClient();
+        if (!await EnsurePrReviewPrismAccessibleAsync(client))
+        {
+            return;
+        }
+
+        var getResponse = await client.GetAsync("/api/pr-review-prism/token-config");
+        var getBody = await getResponse.Content.ReadAsStringAsync();
+        Assert.Equal(HttpStatusCode.OK, getResponse.StatusCode);
+
+        using var getDoc = JsonDocument.Parse(getBody);
+        Assert.True(getDoc.RootElement.GetProperty("success").GetBoolean());
+        var canWrite = getDoc.RootElement.GetProperty("data").GetProperty("canWrite").GetBoolean();
+        if (!canWrite)
+        {
+            Log("[Skip] no settings.write permission");
+            return;
+        }
+
+        var putResponse = await client.PutAsJsonAsync("/api/pr-review-prism/token-config", new
+        {
+            token = "ghp_dummy_token_for_test"
+        });
+        var putBody = await putResponse.Content.ReadAsStringAsync();
+        Log($"[TokenConfigUpdate] {putResponse.StatusCode} - {Truncate(putBody, 220)}");
+        Assert.Equal(HttpStatusCode.OK, putResponse.StatusCode);
+
+        using var putDoc = JsonDocument.Parse(putBody);
+        Assert.True(putDoc.RootElement.GetProperty("success").GetBoolean());
+        var data = putDoc.RootElement.GetProperty("data");
+        Assert.True(data.GetProperty("tokenConfigured").GetBoolean());
+        Assert.True(data.TryGetProperty("tokenMasked", out _));
+        Assert.Equal("appSettings", data.GetProperty("source").GetString());
+        Assert.True(data.GetProperty("canWrite").GetBoolean());
+        Assert.True(data.TryGetProperty("guidance", out var guidance));
+        Assert.Equal(JsonValueKind.Array, guidance.ValueKind);
+    }
+
+    [Fact]
     public async Task List_WithRepoFilter_ShouldOnlyReturnTargetRepositoryItems()
     {
         if (!HasToken)

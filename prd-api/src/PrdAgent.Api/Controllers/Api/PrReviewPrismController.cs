@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Mvc;
 using MongoDB.Driver;
 using PrdAgent.Api.Extensions;
 using PrdAgent.Api.Services.PrReviewPrism;
+using PrdAgent.Core.Helpers;
 using PrdAgent.Core.Models;
 using PrdAgent.Core.Security;
 using PrdAgent.Infrastructure.Database;
@@ -68,7 +69,7 @@ public sealed class PrReviewPrismController : ControllerBase
 
         if (!githubTokenConfigured)
         {
-            guidance.Add("请先在后端配置 GitHub Token（GitHub:Token 或 PR_REVIEW_PRISM_GITHUB_TOKEN）");
+            guidance.Add("请先配置 GitHub Token（可在当前页面 Step 1 保存，或通过环境变量 GitHub:Token / PR_REVIEW_PRISM_GITHUB_TOKEN 配置）");
         }
 
         if (!topDesign.RepoRootDetected)
@@ -107,6 +108,89 @@ public sealed class PrReviewPrismController : ControllerBase
             topDesign,
             readyForFullRefresh = githubTokenConfigured && topDesign.Ready,
             guidance,
+        }));
+    }
+
+    /// <summary>
+    /// 获取 GitHub Token 配置状态（脱敏）。
+    /// </summary>
+    [HttpGet("token-config")]
+    public async Task<IActionResult> GetTokenConfig(CancellationToken ct)
+    {
+        var appSettings = await _db.AppSettings.Find(x => x.Id == "global").FirstOrDefaultAsync(ct);
+        var jwtSecret = GetJwtSecret();
+
+        var appSettingsToken = string.IsNullOrWhiteSpace(appSettings?.PrReviewPrismGitHubTokenEncrypted)
+            ? null
+            : ApiKeyCrypto.Decrypt(appSettings!.PrReviewPrismGitHubTokenEncrypted!, jwtSecret);
+        var envToken = ResolveGitHubTokenFromEnvironment();
+
+        var source = "none";
+        var effectiveToken = string.Empty;
+        if (!string.IsNullOrWhiteSpace(appSettingsToken))
+        {
+            source = "appSettings";
+            effectiveToken = appSettingsToken;
+        }
+        else if (!string.IsNullOrWhiteSpace(envToken))
+        {
+            source = "environment";
+            effectiveToken = envToken;
+        }
+
+        return Ok(ApiResponse<object>.Ok(new
+        {
+            tokenConfigured = !string.IsNullOrWhiteSpace(effectiveToken),
+            tokenMasked = string.IsNullOrWhiteSpace(effectiveToken) ? null : ApiKeyCrypto.Mask(effectiveToken),
+            source,
+            canWrite = HasSettingsWritePermission(),
+            guidance = BuildTokenConfigGuidance(source)
+        }));
+    }
+
+    /// <summary>
+    /// 保存/清空 GitHub Token（保存到 AppSettings，加密存储）。
+    /// </summary>
+    [HttpPut("token-config")]
+    public async Task<IActionResult> UpdateTokenConfig([FromBody] PrReviewPrismTokenConfigUpdateRequest req, CancellationToken ct)
+    {
+        if (!HasSettingsWritePermission())
+        {
+            return StatusCode(StatusCodes.Status403Forbidden, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "缺少 settings.write 权限"));
+        }
+
+        var token = (req.Token ?? string.Empty).Trim();
+        if (token.Length > 4096)
+        {
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "token 长度过长，最大 4096 字符"));
+        }
+
+        var now = DateTime.UtcNow;
+        var encrypted = string.IsNullOrWhiteSpace(token) ? null : ApiKeyCrypto.Encrypt(token, GetJwtSecret());
+        var update = Builders<AppSettings>.Update
+            .Set(x => x.PrReviewPrismGitHubTokenEncrypted, encrypted)
+            .Set(x => x.UpdatedAt, now);
+        await _db.AppSettings.UpdateOneAsync(
+            x => x.Id == "global",
+            update,
+            new UpdateOptions { IsUpsert = true },
+            ct);
+
+        var settingsService = HttpContext.RequestServices.GetRequiredService<PrdAgent.Core.Interfaces.IAppSettingsService>();
+        await settingsService.RefreshAsync(ct);
+
+        var source = string.IsNullOrWhiteSpace(token) && !string.IsNullOrWhiteSpace(ResolveGitHubTokenFromEnvironment())
+            ? "environment"
+            : string.IsNullOrWhiteSpace(token) ? "none" : "appSettings";
+        var effectiveToken = string.IsNullOrWhiteSpace(token) ? ResolveGitHubTokenFromEnvironment() ?? string.Empty : token;
+
+        return Ok(ApiResponse<object>.Ok(new
+        {
+            tokenConfigured = !string.IsNullOrWhiteSpace(effectiveToken),
+            tokenMasked = string.IsNullOrWhiteSpace(effectiveToken) ? null : ApiKeyCrypto.Mask(effectiveToken),
+            source,
+            canWrite = true,
+            guidance = BuildTokenConfigGuidance(source)
         }));
     }
 
@@ -527,13 +611,66 @@ public sealed class PrReviewPrismController : ControllerBase
 
     private bool IsGitHubTokenConfigured()
     {
-        var token = HttpContext.RequestServices
-            .GetRequiredService<IConfiguration>()["GitHub:Token"]
-            ?? HttpContext.RequestServices.GetRequiredService<IConfiguration>()["GitHub:ApiToken"]
-            ?? HttpContext.RequestServices.GetRequiredService<IConfiguration>()["GitHub__Token"]
-            ?? HttpContext.RequestServices.GetRequiredService<IConfiguration>()["PR_REVIEW_PRISM_GITHUB_TOKEN"];
-
+        var token = ResolveGitHubToken();
         return !string.IsNullOrWhiteSpace(token);
+    }
+
+    private string? ResolveGitHubToken()
+    {
+        var appSettings = _db.AppSettings.Find(x => x.Id == "global").FirstOrDefault(CancellationToken.None);
+        if (!string.IsNullOrWhiteSpace(appSettings?.PrReviewPrismGitHubTokenEncrypted))
+        {
+            var decrypted = ApiKeyCrypto.Decrypt(appSettings!.PrReviewPrismGitHubTokenEncrypted!, GetJwtSecret());
+            if (!string.IsNullOrWhiteSpace(decrypted))
+            {
+                return decrypted;
+            }
+        }
+
+        return ResolveGitHubTokenFromEnvironment();
+    }
+
+    private string? ResolveGitHubTokenFromEnvironment()
+    {
+        var cfg = HttpContext.RequestServices.GetRequiredService<IConfiguration>();
+        return cfg["GitHub:Token"]
+            ?? cfg["GitHub:ApiToken"]
+            ?? cfg["GitHub__Token"]
+            ?? cfg["PR_REVIEW_PRISM_GITHUB_TOKEN"];
+    }
+
+    private string GetJwtSecret()
+    {
+        return HttpContext.RequestServices.GetRequiredService<IConfiguration>()["Jwt:Secret"]
+               ?? "DefaultEncryptionKey32Bytes!!!!";
+    }
+
+    private bool HasSettingsWritePermission()
+    {
+        var permissions = User.FindAll("permissions").Select(c => c.Value).ToList();
+        return permissions.Contains(AdminPermissionCatalog.SettingsWrite)
+               || permissions.Contains(AdminPermissionCatalog.Super);
+    }
+
+    private static List<string> BuildTokenConfigGuidance(string source)
+    {
+        var result = new List<string>();
+        if (string.Equals(source, "appSettings", StringComparison.Ordinal))
+        {
+            result.Add("当前使用页面保存的 Token（加密存储于 AppSettings）");
+            result.Add("如需切换 Token，可直接在页面重新保存");
+            return result;
+        }
+
+        if (string.Equals(source, "environment", StringComparison.Ordinal))
+        {
+            result.Add("当前使用环境变量中的 Token（GitHub:Token 或 PR_REVIEW_PRISM_GITHUB_TOKEN）");
+            result.Add("页面保存后将优先使用页面配置值");
+            return result;
+        }
+
+        result.Add("当前未检测到可用 Token，请在页面粘贴并保存，或配置后端环境变量");
+        return result;
     }
 
     private static PrReviewPrismTopDesignSetupStatus InspectTopDesignSetup(string? targetRepo)
@@ -838,4 +975,9 @@ public sealed class PrReviewPrismRepoSkillPackageRequest
     public string? Owner { get; set; }
     public string? Context { get; set; }
     public string? AnchorId { get; set; }
+}
+
+public sealed class PrReviewPrismTokenConfigUpdateRequest
+{
+    public string? Token { get; set; }
 }

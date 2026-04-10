@@ -1506,6 +1506,8 @@ export type {
 export {
   getPrReviewPrismStatus,
   getPrReviewPrismSetupStatus,
+  getPrReviewPrismTokenConfigStatus,
+  updatePrReviewPrismTokenConfig,
   downloadPrReviewPrismRepoBootstrapSkill,
   createPrReviewPrismSubmission,
   listPrReviewPrismSubmissions,
@@ -1520,6 +1522,7 @@ export type {
   PrReviewPrismGateStatus,
   PrReviewPrismSubmission,
   PrReviewPrismSetupStatus,
+  PrReviewPrismTokenConfigStatus,
   PrReviewPrismTopDesignSetupStatus,
   PrReviewPrismRepoSkillPackageRequest,
   PrReviewPrismRepoSkillPackageResponse,
