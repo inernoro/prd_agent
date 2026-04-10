@@ -51,10 +51,11 @@ public class ReportGenerationServiceBuildPromptTests
 
         Assert.DoesNotContain("MAP 平台工作记录（行为统计）", prompt);
         Assert.DoesNotContain("MAP 平台工作记录（代码提交）", prompt);
-        Assert.DoesNotContain("PRD 对话会话", prompt);
-        Assert.DoesNotContain("缺陷提交", prompt);
-        Assert.DoesNotContain("视觉创作会话", prompt);
-        Assert.DoesNotContain("AI 调用", prompt);
+        // 数据段落不能出现（「- 指标名: 数值」格式）
+        Assert.DoesNotContain("- PRD 对话会话", prompt);
+        Assert.DoesNotContain("- 缺陷提交", prompt);
+        Assert.DoesNotContain("- 视觉创作会话", prompt);
+        Assert.DoesNotContain("- AI 调用", prompt);
     }
 
     [Fact]
@@ -81,11 +82,11 @@ public class ReportGenerationServiceBuildPromptTests
         Assert.Contains("创建 PRD 项目: 3 个", prompt);
         Assert.Contains("自动化工作流执行: 5 次", prompt);
 
-        // 零值指标绝对不应出现（既不能 "PRD 对话会话: 0 次" 也不能 "PRD 对话会话"）
-        Assert.DoesNotContain("PRD 对话会话", prompt);
-        Assert.DoesNotContain("缺陷提交", prompt);
-        Assert.DoesNotContain("视觉创作会话", prompt);
-        Assert.DoesNotContain("AI 调用", prompt);
+        // 零值指标的数据行（「- 指标名: N 次」）绝对不应出现
+        Assert.DoesNotContain("- PRD 对话会话", prompt);
+        Assert.DoesNotContain("- 缺陷提交", prompt);
+        Assert.DoesNotContain("- 视觉创作会话", prompt);
+        Assert.DoesNotContain("- AI 调用", prompt);
     }
 
     [Fact]
@@ -109,8 +110,8 @@ public class ReportGenerationServiceBuildPromptTests
         Assert.Contains("MAP 平台工作记录（代码提交）", prompt);
         Assert.Contains("fix: login bug", prompt);
         Assert.Contains("feat: add search", prompt);
-        // PRD 会话为 0，不应出现
-        Assert.DoesNotContain("PRD 对话会话", prompt);
+        // PRD 会话为 0，对应数据行不应出现
+        Assert.DoesNotContain("- PRD 对话会话", prompt);
     }
 
     [Fact]
@@ -126,11 +127,41 @@ public class ReportGenerationServiceBuildPromptTests
         var prompt = ReportGenerationService.BuildUserPrompt(
             CreateSimpleTemplate(), activity, 2026, 15, MapEnabledPrefs, "写作要求");
 
-        // 新指令必须明确禁止编造
-        Assert.Contains("只基于实际存在的数据", prompt);
-        Assert.Contains("不要提及或编造", prompt);
+        // 新指令：严格约束条款必须存在
+        Assert.Contains("严格约束", prompt);
+        Assert.Contains("只基于", prompt);
+        Assert.Contains("禁止凭空编造", prompt);
+        Assert.Contains("不要把指标名称改写成其他活动", prompt);
+        Assert.Contains("指标数值必须与采集结果完全一致", prompt);
+        Assert.Contains("禁止凑整、放大、捏造修饰语", prompt);
         // 旧指令必须被移除
         Assert.DoesNotContain("即使数据较少，也要基于已有数据写出有价值的总结", prompt);
+    }
+
+    [Fact]
+    public void BuildUserPrompt_WithPrdGroupCount_ShouldNotLeakOldDocumentLabel()
+    {
+        // 模拟「余瑞鹏」场景：新用户只有 2 个创建的 PRD 项目，其他全部为 0
+        // 修复前：DocumentEditCount 统计全站 Documents = 122，被当成用户行为喂给 AI
+        // 修复后：DocumentEditCount 统计 Groups.OwnerId == userId = 2，且以「创建 PRD 项目」呈现
+        var activity = new CollectedActivity
+        {
+            UserId = "yurp",
+            DocumentEditCount = 2,
+            // 所有其他指标都是 0
+            Commits = new List<ReportCommit>(),
+            DailyLogs = new List<ReportDailyLog>()
+        };
+
+        var prompt = ReportGenerationService.BuildUserPrompt(
+            CreateSimpleTemplate(), activity, 2026, 15, MapEnabledPrefs, "写作要求");
+
+        Assert.Contains("创建 PRD 项目: 2 个", prompt);
+        // 旧标签必须彻底清除，防止 AI 基于旧词改写
+        Assert.DoesNotContain("文档编辑/创建", prompt);
+        Assert.DoesNotContain("编辑与创建", prompt);
+        // 122 这种虚假放大的数字绝对不能出现
+        Assert.DoesNotContain("122", prompt);
     }
 
     [Fact]
@@ -165,10 +196,12 @@ public class ReportGenerationServiceBuildPromptTests
             effectivePrompt: "写作要求");
 
         Assert.DoesNotContain("### 系统活动统计", prompt);
-        Assert.DoesNotContain("PRD 对话会话", prompt);
-        Assert.DoesNotContain("缺陷提交", prompt);
-        Assert.DoesNotContain("AI 调用", prompt);
-        Assert.Contains("只基于实际存在的数据", prompt);
+        // 数据行不应出现
+        Assert.DoesNotContain("- PRD 对话会话", prompt);
+        Assert.DoesNotContain("- 缺陷提交", prompt);
+        Assert.DoesNotContain("- AI 调用", prompt);
+        Assert.Contains("严格约束", prompt);
+        Assert.Contains("禁止凭空编造", prompt);
         Assert.DoesNotContain("即使数据较少", prompt);
     }
 
@@ -221,7 +254,7 @@ public class ReportGenerationServiceBuildPromptTests
 
         // MAP 完全关闭时，整个 MAP 章节都不应该出现
         Assert.DoesNotContain("MAP 平台工作记录", prompt);
-        Assert.DoesNotContain("PRD 对话会话", prompt);
+        Assert.DoesNotContain("- PRD 对话会话", prompt);
         Assert.DoesNotContain("some commit", prompt);
     }
 }

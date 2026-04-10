@@ -87,12 +87,21 @@ public class MapActivityCollector
         }, ct));
 
         // 4. LLM 调用次数
+        // 重要：必须排除 report-agent.* 的 AppCallerCode，否则出现自噬循环：
+        //   报告生成过程本身调用 LLM Gateway 时会将 Context.UserId 写成「被报告用户」
+        //   → 下次生成时这些日志被计入「用户行为」→ AI 根据虚假计数编造出
+        //   「本周调用 AI 辅助功能 N 次」这样的伪工作记录。
+        // 同时排除 TeamSummary 的调用（同样是系统代用户调用，不是用户亲自发起）。
         tasks.Add(Task.Run(async () =>
         {
             try
             {
                 var count = await _db.LlmRequestLogs.Find(
-                    l => l.UserId == userId && l.StartedAt >= periodStart && l.StartedAt <= periodEnd
+                    l => l.UserId == userId
+                         && l.StartedAt >= periodStart
+                         && l.StartedAt <= periodEnd
+                         && (l.AppCallerCode == null
+                             || (!l.AppCallerCode.StartsWith("report-agent.")))
                 ).CountDocumentsAsync(ct);
                 result.LlmCalls = (int)count;
             }
@@ -240,6 +249,21 @@ public class MapActivityCollector
 
         await Task.WhenAll(tasks);
         return result;
+    }
+
+    /// <summary>
+    /// 判定一条 LlmRequestLog 是否应计入「用户 AI 调用」统计。
+    /// 抽取为可测试的静态方法，与 CollectAsync 中的 Find 表达式保持同一语义。
+    /// 规则：
+    /// - AppCallerCode 为空 → 计入（兼容历史日志）
+    /// - 以 "report-agent." 开头 → 不计入（报告生成自身的调用会被写到被报告用户名下，属于系统代调用）
+    /// - 其他 → 计入
+    /// </summary>
+    internal static bool ShouldCountLlmLog(string? appCallerCode)
+    {
+        if (string.IsNullOrEmpty(appCallerCode)) return true;
+        if (appCallerCode.StartsWith("report-agent.", StringComparison.Ordinal)) return false;
+        return true;
     }
 }
 
