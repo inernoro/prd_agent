@@ -58,6 +58,42 @@ ok()    { printf "%s[OK]%s   %s\n" "$G" "$N" "$*"; }
 warn()  { printf "%s[WARN]%s %s\n" "$Y" "$N" "$*"; }
 err()   { printf "%s[ERR]%s  %s\n" "$R" "$N" "$*" >&2; }
 
+# Bootstrap token lifetime — short enough to limit leak impact, long enough
+# for a human to copy-paste it to another machine. See
+# doc/design.cds-cluster-bootstrap.md §6.3.
+BOOTSTRAP_TOKEN_TTL_SECONDS=900  # 15 minutes
+
+# Generate a cryptographically-random hex token (32 bytes → 64 hex chars).
+random_token() {
+  openssl rand -hex 32 2>/dev/null \
+    || head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n'
+}
+
+# ISO timestamp offset from now (GNU date + BSD date compat).
+iso_offset_seconds() {
+  local offset="$1"
+  date -u -d "+${offset} seconds" '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null \
+    || date -u -v "+${offset}S" '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null \
+    || python3 -c "import datetime;print((datetime.datetime.utcnow()+datetime.timedelta(seconds=${offset})).strftime('%Y-%m-%dT%H:%M:%SZ'))"
+}
+
+# Atomically upsert or remove a `export KEY="value"` line in .cds.env.
+# Usage: env_upsert KEY VALUE   (VALUE="" removes the line)
+env_upsert() {
+  local key="$1" value="$2"
+  local tmp="${ENV_FILE}.tmp.$$"
+  [ -f "$ENV_FILE" ] || {
+    touch "$ENV_FILE"
+    chmod 600 "$ENV_FILE"
+  }
+  awk -v k="$key" '$0 !~ "^export "k"=" { print }' "$ENV_FILE" > "$tmp"
+  if [ -n "$value" ]; then
+    printf 'export %s="%s"\n' "$key" "$value" >> "$tmp"
+  fi
+  mv -f "$tmp" "$ENV_FILE"
+  chmod 600 "$ENV_FILE"
+}
+
 # Load the only env file the script recognises.
 load_env() {
   [ -f "$ENV_FILE" ] || return 0
@@ -631,11 +667,238 @@ cert_cmd() {
   ok "证书签发流程完成"
 }
 
+# ══ cluster bootstrap (connect / disconnect / issue-token / cluster) ═════════
+#
+# See doc/design.cds-cluster-bootstrap.md for the full design.
+# Goal: two-command cluster formation.
+#   Machine A (master):  ./exec_cds.sh issue-token         → outputs <token>
+#   Machine B (worker):  ./exec_cds.sh connect https://A <token>
+# After this, B's resources are added to A's cluster capacity automatically.
+
+# Issue a fresh bootstrap token on the LOCAL machine (becomes/is the master).
+# Overwrites any existing token. The token is written to .cds.env and
+# consumed server-side on the next successful /api/executors/register.
+issue_token_cmd() {
+  load_env
+  local token; token="$(random_token)"
+  [ -n "$token" ] || { err "无法生成 bootstrap token (缺少 openssl 或 /dev/urandom)"; exit 1; }
+  local expires_at; expires_at="$(iso_offset_seconds "$BOOTSTRAP_TOKEN_TTL_SECONDS")"
+  [ -n "$expires_at" ] || { err "无法计算过期时间 (date 命令不支持)"; exit 1; }
+
+  env_upsert CDS_BOOTSTRAP_TOKEN "$token"
+  env_upsert CDS_BOOTSTRAP_TOKEN_EXPIRES_AT "$expires_at"
+  ok "已生成 bootstrap token (有效期 15 分钟)"
+
+  if cds_is_running; then
+    warn "CDS 正在运行，请重启以加载新 token: ./exec_cds.sh restart"
+    warn "或在启动时会自动读取新值 (未启动可忽略)"
+  fi
+
+  local master_url
+  master_url="${CDS_MASTER_URL:-$(read_env_value CDS_MAIN_DOMAIN)}"
+  if [ -z "$master_url" ]; then
+    master_url="$(read_env_value CDS_ROOT_DOMAINS | cut -d',' -f1 | xargs)"
+    [ -n "$master_url" ] && master_url="https://${master_url}"
+  fi
+  [ -z "$master_url" ] && master_url="https://<本机公网域名>"
+
+  echo
+  printf "  %s下一步%s — 在要加入集群的新机器上执行:\n" "$B" "$N"
+  echo
+  printf "    %s./exec_cds.sh connect %s %s%s\n" "$G" "$master_url" "$token" "$N"
+  echo
+  echo "  Token 过期时间: $expires_at"
+  echo "  Token 消费后会自动清理并换成永久 token"
+  echo
+}
+
+# Connect THIS machine to a master as an executor.
+# Usage: connect <master-url> <bootstrap-token>
+connect_cmd() {
+  local master_url="${1:-}" token="${2:-}"
+  if [ -z "$master_url" ] || [ -z "$token" ]; then
+    err "用法: ./exec_cds.sh connect <master-url> <bootstrap-token>"
+    echo
+    echo "  示例: ./exec_cds.sh connect https://cds.miduo.org abc123..."
+    echo "  获取 token: 在主节点执行 ./exec_cds.sh issue-token"
+    exit 1
+  fi
+
+  # Normalize URL: strip trailing slash
+  master_url="${master_url%/}"
+
+  # Sanity-check master reachability before touching local config.
+  info "验证主节点可达: ${master_url}/healthz"
+  if ! curl -fsSL -m 10 "${master_url}/healthz" >/dev/null 2>&1; then
+    err "无法连接主节点 ${master_url}，请检查网络 / URL / 防火墙"
+    exit 1
+  fi
+  ok "主节点可达"
+
+  load_env
+
+  # Persist connection info. CDS reads these on startup.
+  env_upsert CDS_MODE "executor"
+  env_upsert CDS_MASTER_URL "$master_url"
+  env_upsert CDS_SCHEDULER_URL "$master_url"  # legacy compat with ExecutorAgent
+  env_upsert CDS_BOOTSTRAP_TOKEN "$token"
+  # No expiry on client side — master enforces; client just presents whatever it has.
+  env_upsert CDS_BOOTSTRAP_TOKEN_EXPIRES_AT "$(iso_offset_seconds "$BOOTSTRAP_TOKEN_TTL_SECONDS")"
+  # Clear any stale permanent token from previous connections.
+  env_upsert CDS_EXECUTOR_TOKEN ""
+  ok "已写入 executor 配置 -> $ENV_FILE"
+
+  # Restart CDS so the new mode takes effect. Existing containers on this
+  # host keep running; only the Node process is recycled.
+  if cds_is_running; then
+    info "重启 CDS 以进入 executor 模式..."
+    cds_stop
+  fi
+
+  check_deps
+  install_deps
+  build_ts
+
+  # Start in background (standard) — the executor has no Dashboard to serve.
+  info "启动 CDS (executor 模式)..."
+  nohup node dist/index.js "$CONFIG_FILE" > "$LOG_FILE" 2>&1 &
+  local pid=$!
+  echo "$pid" > "$PID_FILE"
+
+  # Wait up to 20s for register to complete (executor logs "Registered as ...").
+  local i=0 ok_flag=0
+  while [ "$i" -lt 20 ]; do
+    if grep -q "Registered as executor-" "$LOG_FILE" 2>/dev/null; then
+      ok_flag=1
+      break
+    fi
+    if grep -q "Registration failed" "$LOG_FILE" 2>/dev/null; then
+      break
+    fi
+    sleep 1
+    i=$((i + 1))
+  done
+
+  echo
+  if [ "$ok_flag" -eq 1 ]; then
+    ok "已加入集群: ${master_url}"
+    echo
+    echo "  本机已作为 executor 运行，心跳周期 15s"
+    echo "  总容量会自动汇总到主节点的 /api/executors/capacity"
+    echo "  查看集群状态: ./exec_cds.sh cluster"
+    echo "  断开集群:    ./exec_cds.sh disconnect"
+  else
+    err "注册失败或超时 — 请查看日志: $LOG_FILE"
+    tail -30 "$LOG_FILE" 2>/dev/null || true
+    exit 1
+  fi
+  echo
+}
+
+# Leave the cluster gracefully. Calls the master's DELETE /api/executors/:id
+# endpoint, then resets local config back to standalone and restarts CDS.
+disconnect_cmd() {
+  load_env
+
+  if [ "${CDS_MODE:-standalone}" != "executor" ]; then
+    warn "本机不是 executor (CDS_MODE=${CDS_MODE:-standalone})，无需断开"
+    exit 0
+  fi
+
+  local master_url="${CDS_MASTER_URL:-${CDS_SCHEDULER_URL:-}}"
+  local exec_token="${CDS_EXECUTOR_TOKEN:-}"
+
+  if [ -n "$master_url" ]; then
+    # Executor id is derived from hostname + port, same as in agent.ts.
+    local hostname; hostname="$(hostname)"
+    local port="${CDS_EXECUTOR_PORT:-9901}"
+    local exec_id="executor-${hostname}-${port}"
+    info "从主节点解注册: ${master_url}/api/executors/${exec_id}"
+    curl -fsSL -m 10 -X DELETE \
+      -H "X-Executor-Token: ${exec_token}" \
+      "${master_url}/api/executors/${exec_id}" >/dev/null 2>&1 \
+      || warn "解注册调用失败 (可能主节点已不可达，继续本地重置)"
+  fi
+
+  # Reset local config back to standalone.
+  env_upsert CDS_MODE "standalone"
+  env_upsert CDS_MASTER_URL ""
+  env_upsert CDS_SCHEDULER_URL ""
+  env_upsert CDS_EXECUTOR_TOKEN ""
+  env_upsert CDS_BOOTSTRAP_TOKEN ""
+  env_upsert CDS_BOOTSTRAP_TOKEN_EXPIRES_AT ""
+  ok "已重置本地配置为 standalone"
+
+  if cds_is_running; then
+    info "重启 CDS..."
+    cds_stop
+    nginx_up || true
+    cds_start_background
+  fi
+
+  ok "已退出集群"
+}
+
+# Display cluster topology and aggregated capacity.
+# Works on both master (queries local /api/executors/capacity) and executor
+# (queries the configured master).
+cluster_cmd() {
+  load_env
+
+  local target="http://127.0.0.1:${CDS_MASTER_PORT:-9900}"
+  if [ "${CDS_MODE:-standalone}" = "executor" ]; then
+    target="${CDS_MASTER_URL:-${CDS_SCHEDULER_URL:-}}"
+    if [ -z "$target" ]; then
+      err "executor 模式但未配置 CDS_MASTER_URL，无法查询集群"
+      exit 1
+    fi
+  fi
+
+  info "查询集群容量: ${target}/api/executors/capacity"
+  local body
+  body="$(curl -fsSL -m 10 "${target}/api/executors/capacity" 2>&1)"
+  if [ -z "$body" ]; then
+    err "查询失败"
+    exit 1
+  fi
+
+  echo
+  printf '  %sCDS 集群状态%s\n' "$B" "$N"
+  echo  "  ──────────────────"
+  # Pretty-print via python3 if available, otherwise raw.
+  if command -v python3 >/dev/null 2>&1; then
+    printf '%s' "$body" | python3 -c '
+import json,sys
+try:
+    d=json.loads(sys.stdin.read())
+except Exception as e:
+    print("  解析失败:",e); sys.exit(1)
+total=d.get("total",{})
+used=d.get("used",{})
+print(f"  在线节点:  {d.get(\"online\",0)}")
+print(f"  离线节点:  {d.get(\"offline\",0)}")
+print(f"  总分支槽:  {total.get(\"maxBranches\",0)} (已用 {used.get(\"branches\",0)})")
+print(f"  总内存:    {total.get(\"memoryMB\",0)} MB (已用 {used.get(\"memoryMB\",0)} MB)")
+print(f"  总 CPU:    {total.get(\"cpuCores\",0)} cores (负载 {used.get(\"cpuPercent\",0)}%)")
+print(f"  空闲比例:  {d.get(\"freePercent\",0)}%")
+print()
+print("  节点列表:")
+for n in d.get("nodes",[]):
+    role=n.get("role","remote")
+    status=n.get("status","?")
+    print(f"    - [{role:8}] {n.get(\"id\",\"?\"):40} {n.get(\"host\",\"?\"):16} {status:8} branches={n.get(\"branchCount\",0)}")
+'
+  else
+    printf '%s\n' "$body"
+  fi
+  echo
+}
+
 help_cmd() {
   cat <<'EOF'
 CDS — Cloud Development Suite
 
-用法:
+基础命令:
   ./exec_cds.sh init                交互式初始化 (写 .cds.env + 生成 nginx 配置)
   ./exec_cds.sh start [--fg]        启动 CDS + Nginx (默认后台；--fg 前台)
   ./exec_cds.sh stop                停止 CDS + Nginx
@@ -644,9 +907,24 @@ CDS — Cloud Development Suite
   ./exec_cds.sh logs                跟随 CDS 日志 (Ctrl+C 退出)
   ./exec_cds.sh cert                签发/续签 Let's Encrypt 证书
 
+集群命令 (多机负载均衡):
+  ./exec_cds.sh issue-token         在主节点生成一次性 bootstrap token (15 分钟过期)
+  ./exec_cds.sh connect <url> <tk>  把本机加入集群 (作为 executor)
+  ./exec_cds.sh disconnect          退出集群 (回到 standalone)
+  ./exec_cds.sh cluster             显示集群拓扑和总容量
+
+典型集群扩容流程:
+  # 主节点 A 上执行
+  ./exec_cds.sh issue-token
+  # → 输出 token + 扩容命令模板，复制到新机器 B
+  # 新机器 B 上执行
+  ./exec_cds.sh connect https://A.miduo.org <token>
+  # → 自动注册 + 心跳 + 容量扩充，无需改 DNS/Nginx
+
 配置:
   cds/.cds.env 是唯一用户配置入口，所有变量 CDS_ 前缀:
     CDS_USERNAME / CDS_PASSWORD / CDS_JWT_SECRET / CDS_ROOT_DOMAINS
+    集群扩展: CDS_MODE / CDS_MASTER_URL / CDS_EXECUTOR_TOKEN / CDS_BOOTSTRAP_TOKEN
 
 多域名:
   CDS_ROOT_DOMAINS 支持逗号分隔，每个根域名 D 自动生成三条路由:
@@ -714,6 +992,18 @@ case "$CMD" in
     ;;
   cert|tls)
     cert_cmd
+    ;;
+  issue-token|token)
+    issue_token_cmd
+    ;;
+  connect|join)
+    connect_cmd "$@"
+    ;;
+  disconnect|leave)
+    disconnect_cmd
+    ;;
+  cluster|cluster-status|nodes)
+    cluster_cmd
     ;;
   help|--help|-h|"")
     help_cmd

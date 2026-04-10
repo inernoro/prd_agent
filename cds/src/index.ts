@@ -15,11 +15,13 @@ import { ProxyService } from './services/proxy.js';
 import { SchedulerService } from './services/scheduler.js';
 import { JanitorService } from './services/janitor.js';
 import { BridgeService } from './services/bridge.js';
+import crypto from 'node:crypto';
 import { BranchDispatcher, HttpSnapshotFetcher } from './scheduler/dispatcher.js';
 import { ExecutorAgent } from './executor/agent.js';
 import { createExecutorRouter } from './executor/routes.js';
 import { ExecutorRegistry } from './scheduler/executor-registry.js';
 import { createSchedulerRouter } from './scheduler/routes.js';
+import { updateEnvFile, defaultEnvFilePath } from './services/env-file.js';
 
 function parseCsv(value: string | undefined): string[] | undefined {
   if (!value) return undefined;
@@ -811,25 +813,83 @@ if (mode === 'executor') {
     console.log('');
   }, { optional: true });
 
-  // ── Scheduler mode: also start executor registry + dispatcher ──
+  // ── Always-on scheduler router (standalone + scheduler modes) ──
+  //
+  // We mount `/api/executors` in both standalone and scheduler modes so that
+  // a fresh machine running in standalone can accept its first bootstrap
+  // registration and *then* upgrade itself to scheduler in place — no
+  // process restart required. See `doc/design.cds-cluster-bootstrap.md` §4.4.
+  //
+  // In standalone mode the dispatcher is still created but has no remote
+  // executors to dispatch to until the first one registers. The embedded
+  // master is self-registered immediately so `/api/executors/capacity`
+  // returns meaningful numbers on day one.
+  const registry = new ExecutorRegistry(stateService);
+  registry.startHealthChecks();
+  registry.registerEmbeddedMaster(config.masterPort);
+
+  const dispatcher = new BranchDispatcher(
+    registry,
+    new HttpSnapshotFetcher(process.env.AI_ACCESS_KEY || undefined),
+  );
+
+  // Mint a permanent token on bootstrap consume. We hold it in-memory first,
+  // then persist to `.cds.env` so a process restart keeps the same token.
+  const onBootstrapConsumed = async (): Promise<string> => {
+    const token = crypto.randomBytes(32).toString('hex');
+    config.executorToken = token;
+    try {
+      updateEnvFile(defaultEnvFilePath(), {
+        CDS_EXECUTOR_TOKEN: token,
+        CDS_BOOTSTRAP_TOKEN: null,
+        CDS_BOOTSTRAP_TOKEN_EXPIRES_AT: null,
+      });
+      // Clear in-memory bootstrap token so the next registration attempt
+      // (e.g., a replay of the same request) is rejected as expired.
+      config.bootstrapToken = undefined;
+      console.log('  [scheduler] Bootstrap token consumed, permanent token minted');
+    } catch (err) {
+      console.error(`  [scheduler] Failed to persist permanent token: ${(err as Error).message}`);
+    }
+    return token;
+  };
+
+  // Hot mode upgrade: standalone → scheduler on the first register call.
+  // Safe to run multiple times; subsequent calls are no-ops.
+  const onFirstRegister = async (executorId: string): Promise<void> => {
+    if (config.mode === 'scheduler') return; // already upgraded
+    console.log(`  [scheduler] First executor ${executorId} joined — upgrading mode: standalone → scheduler`);
+    config.mode = 'scheduler';
+    try {
+      updateEnvFile(defaultEnvFilePath(), { CDS_MODE: 'scheduler' });
+    } catch (err) {
+      console.error(`  [scheduler] Failed to persist CDS_MODE=scheduler: ${(err as Error).message}`);
+    }
+    // Broadcast an activity event so the dashboard notices immediately.
+    broadcastActivity({
+      id: nextActivitySeq(),
+      ts: new Date().toISOString(),
+      method: 'CLUSTER',
+      path: `升级为集群调度器 (first executor: ${executorId})`,
+      status: 200,
+      duration: 0,
+      type: 'cds',
+      source: 'user',
+    });
+  };
+
+  app.use('/api/executors', createSchedulerRouter({
+    registry,
+    config,
+    dispatcher,
+    onFirstRegister,
+    onBootstrapConsumed,
+  }));
+  console.log(`  Scheduler: executor management API mounted at /api/executors (mode: ${mode})`);
+
   if (mode === 'scheduler') {
-    const registry = new ExecutorRegistry(stateService);
-    registry.startHealthChecks();
-
-    // Phase 3: BranchDispatcher combines registry with Phase 1 scheduler
-    // snapshots for capacity-aware executor selection.
-    const dispatcher = new BranchDispatcher(
-      registry,
-      new HttpSnapshotFetcher(process.env.AI_ACCESS_KEY || undefined),
-    );
-
-    // Mount scheduler API routes on the dashboard server
-    app.use('/api/executors', createSchedulerRouter({ registry, config, dispatcher }));
-    console.log(`  Scheduler: executor management API mounted at /api/executors (dispatcher enabled)`);
-  }
-
-  // ── Standalone mode: register a local executor implicitly ──
-  if (mode === 'standalone') {
-    // No extra setup needed — current behavior is preserved
+    console.log(`  Scheduler: dispatcher enabled, cluster-aware routing active`);
+  } else {
+    console.log(`  Scheduler: standby, will auto-upgrade on first executor bootstrap`);
   }
 }
