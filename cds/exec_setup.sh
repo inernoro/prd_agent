@@ -88,7 +88,7 @@ show_config() {
     echo -e "  ${BOLD}CDS 当前配置${NC}"
     echo "  ─────────────────────────────"
 
-    local vars=(CDS_USERNAME CDS_PASSWORD CDS_JWT_SECRET CDS_SWITCH_DOMAIN CDS_MAIN_DOMAIN CDS_PREVIEW_DOMAIN CDS_ACCESS_MODE)
+    local vars=(CDS_USERNAME CDS_PASSWORD CDS_JWT_SECRET CDS_SWITCH_DOMAIN CDS_MAIN_DOMAIN CDS_PREVIEW_DOMAIN CDS_DASHBOARD_DOMAIN)
     local secrets=(CDS_PASSWORD CDS_JWT_SECRET)
 
     for var in "${vars[@]}"; do
@@ -103,7 +103,7 @@ show_config() {
                 CDS_SWITCH_DOMAIN) val=$(get_config_var "SWITCH_DOMAIN") ;;
                 CDS_MAIN_DOMAIN) val=$(get_config_var "MAIN_DOMAIN") ;;
                 CDS_PREVIEW_DOMAIN) val=$(get_config_var "PREVIEW_DOMAIN") ;;
-                CDS_ACCESS_MODE) val=$(get_config_var "ACCESS_MODE") ;;
+                CDS_DASHBOARD_DOMAIN) val=$(get_config_var "DASHBOARD_DOMAIN") ;;
             esac
         fi
 
@@ -123,33 +123,15 @@ generate_nginx() {
     local main_domain="$1"
     local preview_domain="$2"
     local switch_domain="${3:-switch.${main_domain}}"
-    local access_mode="${4:-prefixed}"
+    local dashboard_domain="${4:-cds.${main_domain}}"
     local worker_port="${5:-5500}"
     local master_port="${6:-9900}"
     local output_dir="${7:-$SCRIPT_DIR/nginx}"
     local domain_env="${output_dir}/domain.env"
-    local worker_domain dashboard_domain tls_domains
-
-    case "$access_mode" in
-        prefixed)
-            worker_domain="$main_domain"
-            dashboard_domain="cds.${main_domain}"
-            ;;
-        root)
-            worker_domain="cds.${main_domain}"
-            dashboard_domain="$main_domain"
-            ;;
-        *)
-            err "ACCESS_MODE 仅支持 prefixed 或 root"
-            return 1
-            ;;
-    esac
+    local tls_domains
 
     tls_domains="${main_domain},${switch_domain}"
-    if [ "$worker_domain" != "$main_domain" ] && [ "$worker_domain" != "$switch_domain" ]; then
-        tls_domains="${tls_domains},${worker_domain}"
-    fi
-    if [ "$dashboard_domain" != "$main_domain" ] && [ "$dashboard_domain" != "$switch_domain" ] && [ "$dashboard_domain" != "$worker_domain" ]; then
+    if [ "$dashboard_domain" != "$main_domain" ] && [ "$dashboard_domain" != "$switch_domain" ]; then
         tls_domains="${tls_domains},${dashboard_domain}"
     fi
 
@@ -158,8 +140,6 @@ generate_nginx() {
     cat > "$domain_env" <<EOF
 MAIN_DOMAIN="${main_domain}"
 SWITCH_DOMAIN="${switch_domain}"
-ACCESS_MODE="${access_mode}"
-WORKER_DOMAIN="${worker_domain}"
 DASHBOARD_DOMAIN="${dashboard_domain}"
 PREVIEW_DOMAIN="${preview_domain}"
 ENABLE_PREVIEW_SERVER="1"
@@ -191,7 +171,7 @@ write_local_env() {
     local switch_domain="$4"
     local main_domain="$5"
     local preview_domain="$6"
-    local access_mode="${7:-prefixed}"
+    local dashboard_domain="${7:-cds.${main_domain}}"
 
     cat > "$LOCAL_ENV_FILE" << EOF
 # ── CDS 本地环境配置 (由 exec_setup.sh 生成，$(date +%Y-%m-%d)) ──
@@ -201,7 +181,7 @@ export CDS_JWT_SECRET="${jwt_secret}"
 export CDS_SWITCH_DOMAIN="${switch_domain}"
 export CDS_MAIN_DOMAIN="${main_domain}"
 export CDS_PREVIEW_DOMAIN="${preview_domain}"
-export CDS_ACCESS_MODE="${access_mode}"
+export CDS_DASHBOARD_DOMAIN="${dashboard_domain}"
 EOF
 
     chmod 600 "$LOCAL_ENV_FILE"
@@ -239,17 +219,17 @@ main() {
             switch=$(get_config_var "CDS_SWITCH_DOMAIN")
             [ -z "$switch" ] && switch=$(get_config_var "SWITCH_DOMAIN")
             [ -z "$switch" ] && switch="switch.${domain}"
-            local access_mode
-            access_mode=$(get_config_var "CDS_ACCESS_MODE")
-            [ -z "$access_mode" ] && access_mode=$(get_config_var "ACCESS_MODE")
-            [ -z "$access_mode" ] && access_mode="prefixed"
-            generate_nginx "$domain" "$preview" "$switch" "$access_mode"
+            local dashboard
+            dashboard=$(get_config_var "CDS_DASHBOARD_DOMAIN")
+            [ -z "$dashboard" ] && dashboard=$(get_config_var "DASHBOARD_DOMAIN")
+            [ -z "$dashboard" ] && dashboard="cds.${domain}"
+            generate_nginx "$domain" "$preview" "$switch" "$dashboard"
             return 0
             ;;
     esac
 
     # ── Step 1: Collect current values as defaults ──
-    local cur_user cur_pass cur_jwt cur_switch cur_main cur_preview cur_access_mode
+    local cur_user cur_pass cur_jwt cur_switch cur_main cur_preview cur_dashboard
     cur_user=$(get_config_var "CDS_USERNAME")
     [ -z "$cur_user" ] && cur_user=$(get_config_var "BT_USERNAME")
     cur_pass=$(get_config_var "CDS_PASSWORD")
@@ -262,8 +242,8 @@ main() {
     [ -z "$cur_main" ] && cur_main=$(get_config_var "MAIN_DOMAIN")
     cur_preview=$(get_config_var "CDS_PREVIEW_DOMAIN")
     [ -z "$cur_preview" ] && cur_preview=$(get_config_var "PREVIEW_DOMAIN")
-    cur_access_mode=$(get_config_var "CDS_ACCESS_MODE")
-    [ -z "$cur_access_mode" ] && cur_access_mode=$(get_config_var "ACCESS_MODE")
+    cur_dashboard=$(get_config_var "CDS_DASHBOARD_DOMAIN")
+    [ -z "$cur_dashboard" ] && cur_dashboard=$(get_config_var "DASHBOARD_DOMAIN")
 
     # ── Step 2: Interactive prompts ──
     echo -e "  ${CYAN}步骤 1/4${NC}: Dashboard 认证"
@@ -295,17 +275,13 @@ main() {
 
     echo -e "  ${CYAN}步骤 3/4${NC}: 域名配置"
     echo "  ──────────────────────────"
-    local new_main new_switch new_preview new_access_mode
-    prompt new_main    "主域名 (如 miduo.org)" "${cur_main:-}"
+    local new_main new_switch new_preview new_dashboard
+    prompt new_main    "主分支域名 (如 miduo.org)" "${cur_main:-}"
     if [ -z "$new_main" ]; then
         err "主域名不能为空"
         return 1
     fi
-    prompt new_access_mode "访问模式 (prefixed/root)" "${cur_access_mode:-prefixed}"
-    if [ "$new_access_mode" != "prefixed" ] && [ "$new_access_mode" != "root" ]; then
-        err "访问模式只能是 prefixed 或 root"
-        return 1
-    fi
+    prompt new_dashboard "CDS 控制台域名" "${cur_dashboard:-cds.${new_main}}"
     prompt new_switch  "分支切换域名" "${cur_switch:-switch.${new_main}}"
     prompt new_preview "预览域名后缀" "${cur_preview:-${new_main}}"
     echo ""
@@ -317,7 +293,7 @@ main() {
     echo -e "  密码:         ****${new_pass: -4}"
     echo -e "  JWT Secret:   ****${new_jwt: -4}"
     echo -e "  主域名:       ${GREEN}${new_main}${NC}"
-    echo -e "  访问模式:     ${GREEN}${new_access_mode}${NC}"
+    echo -e "  CDS 域名:     ${GREEN}${new_dashboard}${NC}"
     echo -e "  切换域名:     ${GREEN}${new_switch}${NC}"
     echo -e "  预览域名:     ${GREEN}${new_preview}${NC}"
     echo ""
@@ -331,10 +307,10 @@ main() {
     # ── Step 4: Write ──
     echo ""
     info "写入 CDS 本地环境文件 ..."
-    write_local_env "$new_user" "$new_pass" "$new_jwt" "$new_switch" "$new_main" "$new_preview" "$new_access_mode"
+    write_local_env "$new_user" "$new_pass" "$new_jwt" "$new_switch" "$new_main" "$new_preview" "$new_dashboard"
 
     info "生成 Nginx 配置 ..."
-    generate_nginx "$new_main" "$new_preview" "$new_switch" "$new_access_mode"
+    generate_nginx "$new_main" "$new_preview" "$new_switch" "$new_dashboard"
 
     echo ""
     echo "  ════════════════════════════════"
@@ -345,11 +321,7 @@ main() {
     echo "    1. 启动 Nginx: cd $NGINX_DIR && ./start_nginx.sh"
     echo "    2. 如需证书: cd $NGINX_DIR && ./acme_apply.sh"
     echo "    3. cd $SCRIPT_DIR && ./exec_cds.sh"
-    if [ "$new_access_mode" = "root" ]; then
-        echo "    4. 访问 https://${new_main}"
-    else
-        echo "    4. 访问 https://cds.${new_main}"
-    fi
+    echo "    4. 访问 https://${new_dashboard}"
     echo ""
 }
 
