@@ -309,19 +309,34 @@ return ranked[0].executor;  // 最空闲的 executor
 
 这是**真正的系统性接入**：三层独立演进,每层只读上层 API,不假设下层实现。Phase 2 的 janitor 不知道集群存在,Phase 3 的 dispatcher 不关心单机内部如何驱逐。
 
+> **与单节点入口的边界**：本节的 Layer 3 说的是 **跨机 edge routing**——Master 用 `nginx-template.ts` 动态生成 upstream block + `map $http_x_branch → executor`，由运维部署到外层 nginx。
+>
+> 对于 **单机部署**，这一切都不需要：`cds/exec_cds.sh` 启动时根据 `CDS_ROOT_DOMAINS` 直接渲染一组固定的 `server_name D cds.D;` + `server_name *.D;` 到本机 nginx 容器，单节点入口由单节点自己解决。详见 `doc/design.cds.md §7.5`。
+>
+> 从单机升级到集群时：`cds/exec_cds.sh` 仍然在每个 executor 节点上运行（Layer 1 + 单节点 Layer 3），Master 只需额外部署 `nginx-template.ts` 生成的跨机 upstream 到边缘网关即可。两套 nginx 配置互不覆盖、互不替代。
+
 ---
 
 ## 九、小服务器集群部署 runbook
 
 ### 单节点（最常见场景）
 ```bash
-# 编辑 cds.config.json
+cd cds
+
+# 1. 首次初始化 (写 .cds.env + 渲染 nginx)
+./exec_cds.sh init
+#   CDS_USERNAME     [admin]: admin
+#   CDS_PASSWORD     : ****
+#   CDS_ROOT_DOMAINS : miduo.org,mycds.net
+
+# 2. 编辑 cds.config.json 打开温池 + janitor
 {
   "scheduler": { "enabled": true, "maxHotBranches": 3 },
-  "janitor": { "enabled": true, "worktreeTTLDays": 30, "diskWarnPercent": 80 }
+  "janitor":   { "enabled": true, "worktreeTTLDays": 30, "diskWarnPercent": 80 }
 }
-# 启动
-./exec_cds.sh restart
+
+# 3. 启动 (默认后台)
+./exec_cds.sh start
 # 或 systemd
 sudo systemctl enable --now cds-master
 ```
