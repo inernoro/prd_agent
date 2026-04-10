@@ -1477,6 +1477,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
     const env = stateService.getCustomEnv();
     if (env.SWITCH_DOMAIN) config.switchDomain = env.SWITCH_DOMAIN;
     if (env.MAIN_DOMAIN) config.mainDomain = env.MAIN_DOMAIN;
+    if (env.DASHBOARD_DOMAIN) config.dashboardDomain = env.DASHBOARD_DOMAIN;
     if (env.PREVIEW_DOMAIN) config.previewDomain = env.PREVIEW_DOMAIN;
     // Repo root & worktree base: allow UI override for directory isolation
     if (env.CDS_REPO_ROOT) {

@@ -55,6 +55,7 @@ stateService.load();
 const customEnv = stateService.getCustomEnv();
 if (customEnv.SWITCH_DOMAIN && !config.switchDomain) config.switchDomain = customEnv.SWITCH_DOMAIN;
 if (customEnv.MAIN_DOMAIN && !config.mainDomain) config.mainDomain = customEnv.MAIN_DOMAIN;
+if (customEnv.DASHBOARD_DOMAIN && !config.dashboardDomain) config.dashboardDomain = customEnv.DASHBOARD_DOMAIN;
 if (customEnv.PREVIEW_DOMAIN && !config.previewDomain) config.previewDomain = customEnv.PREVIEW_DOMAIN;
 // Directory isolation: allow UI to override repo root and worktree base
 if (customEnv.CDS_REPO_ROOT) config.repoRoot = customEnv.CDS_REPO_ROOT;
@@ -663,6 +664,7 @@ if (mode === 'executor') {
     console.log(`  Dashboard:  http://localhost:${config.masterPort}`);
     console.log(`  Worker:     http://localhost:${config.workerPort}`);
     console.log(`  Bridge:     http://localhost:${config.masterPort}/api/bridge/ (HTTP polling)`);
+    if (config.dashboardDomain) console.log(`  Dashboard Domain: https://${config.dashboardDomain}`);
     if (config.switchDomain) console.log(`  Switch:     ${config.switchDomain} → ${config.mainDomain || '(main domain not set)'}`);
     if (config.previewDomain) console.log(`  Preview:    *.<${config.previewDomain}>`);
     console.log(`  State file: ${stateFile}`);

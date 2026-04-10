@@ -347,6 +347,8 @@ export interface CdsConfig {
   switchDomain?: string;
   /** Main domain to redirect to after switching (e.g., "example.com") */
   mainDomain?: string;
+  /** Dashboard domain for CDS UI (e.g., "cds.example.com" or "example.com") */
+  dashboardDomain?: string;
   /** Preview domain suffix for subdomain-based preview (e.g., "preview.example.com").
    *  Each branch gets its own subdomain: <slug>.preview.example.com */
   previewDomain?: string;

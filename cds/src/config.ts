@@ -19,6 +19,7 @@ const DEFAULT_CONFIG: CdsConfig = {
   // CDS_ prefix preferred; legacy names (SWITCH_DOMAIN, etc.) kept for backward compat
   switchDomain: process.env.CDS_SWITCH_DOMAIN || process.env.SWITCH_DOMAIN || undefined,
   mainDomain: process.env.CDS_MAIN_DOMAIN || process.env.MAIN_DOMAIN || undefined,
+  dashboardDomain: process.env.CDS_DASHBOARD_DOMAIN || process.env.DASHBOARD_DOMAIN || undefined,
   previewDomain: process.env.CDS_PREVIEW_DOMAIN || process.env.PREVIEW_DOMAIN || undefined,
   jwt: {
     secret: process.env.CDS_JWT_SECRET ?? process.env.JWT_SECRET ?? 'dev-only-change-me-32bytes-minimum!!',

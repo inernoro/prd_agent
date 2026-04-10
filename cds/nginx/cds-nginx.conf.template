@@ -5,7 +5,7 @@
 # previously scattered in the host nginx.conf.
 #
 # Domains:
-#   {{WORKER_DOMAIN}}       → CDS Worker (:{{WORKER_PORT}})
+#   {{MAIN_DOMAIN}}         → CDS Worker (:{{WORKER_PORT}})  (仅在与 DASHBOARD_DOMAIN 不同的时候生成)
 #   switch.{{MAIN_DOMAIN}}  → CDS Worker (:{{WORKER_PORT}})  (branch switching)
 #   {{DASHBOARD_DOMAIN}}    → CDS Dashboard (:{{MASTER_PORT}})
 #   *.{{PREVIEW_DOMAIN}}    → CDS Worker (:{{WORKER_PORT}})  (branch preview)
@@ -38,44 +38,7 @@ upstream cds_dashboard {
 # minimal set. The upstream/SSL dedup already eliminates 80% of the
 # original redundancy.
 
-# ────────────────────────────────────────
-# 1. Main domain → CDS Worker (gateway)
-# ────────────────────────────────────────
-server {
-    listen 80;
-    listen [::]:80;
-    listen 443 ssl;
-    listen [::]:443 ssl;
-    http2 on;
-
-    server_name {{WORKER_DOMAIN}};
-
-    location ^~ /.well-known/acme-challenge/ {
-        root /var/www/html;
-        allow all;
-    }
-
-    location / {
-        proxy_pass http://cds_worker;
-        proxy_http_version 1.1;
-        proxy_set_header Host              $host;
-        proxy_set_header X-Real-IP         $remote_addr;
-        proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
-        proxy_set_header X-Forwarded-Host  $host;
-        proxy_set_header X-Forwarded-Port  $server_port;
-        proxy_set_header Upgrade           $http_upgrade;
-        proxy_set_header Connection        $connection_upgrade;
-        proxy_buffering off;
-        proxy_cache     off;
-        proxy_read_timeout 3600s;
-        proxy_send_timeout 3600s;
-        # no-store prevents browser disk cache from mixing assets across branch switches
-        add_header Cache-Control    "no-store, must-revalidate" always;
-        add_header Vary             "Cookie" always;
-        add_header X-Accel-Buffering "no"      always;
-    }
-}
+__WORKER_EXACT_SERVER__
 
 # ────────────────────────────────────────
 # 2. Switch domain → CDS Worker (branch switching)

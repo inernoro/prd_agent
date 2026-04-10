@@ -51,7 +51,7 @@ set +a
 
 MAIN_DOMAIN="${MAIN_DOMAIN:-}"
 SWITCH_DOMAIN="${SWITCH_DOMAIN:-switch.${MAIN_DOMAIN}}"
-ACCESS_MODE="${ACCESS_MODE:-prefixed}"
+DASHBOARD_DOMAIN="${DASHBOARD_DOMAIN:-cds.${MAIN_DOMAIN}}"
 PREVIEW_DOMAIN="${PREVIEW_DOMAIN:-${MAIN_DOMAIN}}"
 ENABLE_PREVIEW_SERVER="${ENABLE_PREVIEW_SERVER:-1}"
 WORKER_PORT="${WORKER_PORT:-5500}"
@@ -59,30 +59,9 @@ DASHBOARD_PORT="${DASHBOARD_PORT:-9900}"
 CERT_EMAIL="${CERT_EMAIL:-admin@${MAIN_DOMAIN}}"
 NGINX_CONTAINER="${NGINX_CONTAINER:-nginx_miduo}"
 
-case "$ACCESS_MODE" in
-  prefixed)
-    DEFAULT_WORKER_DOMAIN="${MAIN_DOMAIN}"
-    DEFAULT_DASHBOARD_DOMAIN="cds.${MAIN_DOMAIN}"
-    ;;
-  root)
-    DEFAULT_WORKER_DOMAIN="cds.${MAIN_DOMAIN}"
-    DEFAULT_DASHBOARD_DOMAIN="${MAIN_DOMAIN}"
-    ;;
-  *)
-    echo "ERROR: ACCESS_MODE 仅支持 prefixed 或 root"
-    exit 1
-    ;;
-esac
-
-WORKER_DOMAIN="${WORKER_DOMAIN:-${DEFAULT_WORKER_DOMAIN}}"
-DASHBOARD_DOMAIN="${DASHBOARD_DOMAIN:-${DEFAULT_DASHBOARD_DOMAIN}}"
-
 if [ -z "${TLS_DOMAINS:-}" ]; then
   TLS_DOMAINS="${MAIN_DOMAIN},${SWITCH_DOMAIN}"
-  if [ "$WORKER_DOMAIN" != "$MAIN_DOMAIN" ] && [ "$WORKER_DOMAIN" != "$SWITCH_DOMAIN" ]; then
-    TLS_DOMAINS="${TLS_DOMAINS},${WORKER_DOMAIN}"
-  fi
-  if [ "$DASHBOARD_DOMAIN" != "$MAIN_DOMAIN" ] && [ "$DASHBOARD_DOMAIN" != "$SWITCH_DOMAIN" ] && [ "$DASHBOARD_DOMAIN" != "$WORKER_DOMAIN" ]; then
+  if [ "$DASHBOARD_DOMAIN" != "$MAIN_DOMAIN" ] && [ "$DASHBOARD_DOMAIN" != "$SWITCH_DOMAIN" ]; then
     TLS_DOMAINS="${TLS_DOMAINS},${DASHBOARD_DOMAIN}"
   fi
 fi
@@ -96,8 +75,6 @@ if [ "$SHOW_ONLY" = "1" ]; then
   cat <<EOF
 MAIN_DOMAIN=${MAIN_DOMAIN}
 SWITCH_DOMAIN=${SWITCH_DOMAIN}
-ACCESS_MODE=${ACCESS_MODE}
-WORKER_DOMAIN=${WORKER_DOMAIN}
 DASHBOARD_DOMAIN=${DASHBOARD_DOMAIN}
 PREVIEW_DOMAIN=${PREVIEW_DOMAIN}
 ENABLE_PREVIEW_SERVER=${ENABLE_PREVIEW_SERVER}
@@ -112,23 +89,110 @@ fi
 
 mkdir -p "${SCRIPT_DIR}/certs" "${SCRIPT_DIR}/www/.well-known/acme-challenge"
 
-sed \
-  -e "s/{{MAIN_DOMAIN}}/${MAIN_DOMAIN}/g" \
-  -e "s/{{WORKER_DOMAIN}}/${WORKER_DOMAIN}/g" \
-  -e "s/{{DASHBOARD_DOMAIN}}/${DASHBOARD_DOMAIN}/g" \
-  -e "s/{{PREVIEW_DOMAIN}}/${PREVIEW_DOMAIN}/g" \
-  -e "s/{{WORKER_PORT}}/${WORKER_PORT}/g" \
-  -e "s/{{MASTER_PORT}}/${DASHBOARD_PORT}/g" \
-  "${SCRIPT_DIR}/cds-nginx.conf.template" > "${SCRIPT_DIR}/cds-nginx.conf"
+build_worker_exact_server() {
+  if [ "$MAIN_DOMAIN" = "$DASHBOARD_DOMAIN" ]; then
+    echo "# Worker exact domain omitted because MAIN_DOMAIN equals DASHBOARD_DOMAIN."
+    return
+  fi
+  cat <<EOF
+# ────────────────────────────────────────
+# 1. Main domain → CDS Worker (gateway)
+# ────────────────────────────────────────
+server {
+    listen 80;
+    listen [::]:80;
+    listen 443 ssl;
+    listen [::]:443 ssl;
+    http2 on;
+
+    server_name ${MAIN_DOMAIN};
+
+    location ^~ /.well-known/acme-challenge/ {
+        root /var/www/html;
+        allow all;
+    }
+
+    location / {
+        proxy_pass http://cds_worker;
+        proxy_http_version 1.1;
+        proxy_set_header Host              \$host;
+        proxy_set_header X-Real-IP         \$remote_addr;
+        proxy_set_header X-Forwarded-For   \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+        proxy_set_header X-Forwarded-Host  \$host;
+        proxy_set_header X-Forwarded-Port  \$server_port;
+        proxy_set_header Upgrade           \$http_upgrade;
+        proxy_set_header Connection        \$connection_upgrade;
+        proxy_buffering off;
+        proxy_cache     off;
+        proxy_read_timeout 3600s;
+        proxy_send_timeout 3600s;
+        add_header Cache-Control    "no-store, must-revalidate" always;
+        add_header Vary             "Cookie" always;
+        add_header X-Accel-Buffering "no" always;
+    }
+}
+EOF
+}
+
+build_worker_http_exact_server() {
+  if [ "$MAIN_DOMAIN" = "$DASHBOARD_DOMAIN" ]; then
+    echo "# Worker HTTP exact domain omitted because MAIN_DOMAIN equals DASHBOARD_DOMAIN."
+    return
+  fi
+  cat <<EOF
+server {
+    listen 80;
+    listen [::]:80;
+    server_name ${MAIN_DOMAIN};
+
+    location ^~ /.well-known/acme-challenge/ {
+        root /var/www/html;
+        allow all;
+    }
+
+    location / {
+        proxy_pass http://cds_worker;
+        proxy_http_version 1.1;
+        proxy_set_header Host              \$host;
+        proxy_set_header X-Real-IP         \$remote_addr;
+        proxy_set_header X-Forwarded-For   \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+        proxy_set_header X-Forwarded-Host  \$host;
+        proxy_set_header X-Forwarded-Port  \$server_port;
+        proxy_set_header Upgrade           \$http_upgrade;
+        proxy_set_header Connection        \$connection_upgrade;
+        proxy_buffering off;
+        proxy_cache     off;
+        proxy_read_timeout 3600s;
+        proxy_send_timeout 3600s;
+    }
+}
+EOF
+}
+
+WORKER_EXACT_SERVER="$(build_worker_exact_server)"
+WORKER_HTTP_EXACT_SERVER="$(build_worker_http_exact_server)"
 
 sed \
   -e "s/{{MAIN_DOMAIN}}/${MAIN_DOMAIN}/g" \
-  -e "s/{{WORKER_DOMAIN}}/${WORKER_DOMAIN}/g" \
   -e "s/{{DASHBOARD_DOMAIN}}/${DASHBOARD_DOMAIN}/g" \
   -e "s/{{PREVIEW_DOMAIN}}/${PREVIEW_DOMAIN}/g" \
   -e "s/{{WORKER_PORT}}/${WORKER_PORT}/g" \
   -e "s/{{MASTER_PORT}}/${DASHBOARD_PORT}/g" \
-  "${SCRIPT_DIR}/cds-nginx.http.conf.template" > "${SCRIPT_DIR}/cds-nginx.http.conf"
+  "${SCRIPT_DIR}/cds-nginx.conf.template" | awk -v block="$WORKER_EXACT_SERVER" '
+    { if ($0 == "__WORKER_EXACT_SERVER__") print block; else print }
+  ' > "${SCRIPT_DIR}/cds-nginx.conf"
+
+sed \
+  -e "s/{{MAIN_DOMAIN}}/${MAIN_DOMAIN}/g" \
+  -e "s/{{DASHBOARD_DOMAIN}}/${DASHBOARD_DOMAIN}/g" \
+  -e "s/{{PREVIEW_DOMAIN}}/${PREVIEW_DOMAIN}/g" \
+  -e "s/{{WORKER_PORT}}/${WORKER_PORT}/g" \
+  -e "s/{{MASTER_PORT}}/${DASHBOARD_PORT}/g" \
+  "${SCRIPT_DIR}/cds-nginx.http.conf.template" | awk -v block="$WORKER_HTTP_EXACT_SERVER" '
+    { if ($0 == "__WORKER_HTTP_EXACT_SERVER__") print block; else print }
+  ' > "${SCRIPT_DIR}/cds-nginx.http.conf"
 
 cp "${SCRIPT_DIR}/nginx.conf.template" "${SCRIPT_DIR}/nginx.conf"
 
