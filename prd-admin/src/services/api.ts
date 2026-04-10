@@ -201,6 +201,9 @@ export const api = {
     exportZip: (sessionId: string) => `/api/skill-agent/sessions/${sessionId}/export/zip`,
     testSkill: (skillKey: string) => `/api/skill-agent/test/${encodeURIComponent(skillKey)}`,
     skillMd: (skillKey: string) => `/api/skill-agent/skills/${encodeURIComponent(skillKey)}/md`,
+    publish: (skillKey: string) => `/api/skill-agent/skills/${encodeURIComponent(skillKey)}/publish`,
+    unpublish: (skillKey: string) => `/api/skill-agent/skills/${encodeURIComponent(skillKey)}/unpublish`,
+    plaza: () => '/api/skill-agent/plaza',
   },
 
   // ============ Prompts (系统提示词 + 覆盖) ============

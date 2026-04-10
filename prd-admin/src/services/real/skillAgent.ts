@@ -56,6 +56,9 @@ export interface PersonalSkillItem {
   isEnabled: boolean;
   isBuiltIn: boolean;
   usageCount: number;
+  isPublic?: boolean;
+  authorName?: string;
+  publishedAt?: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -116,4 +119,38 @@ export async function updateSkillFromMd(skillKey: string, skillMd: string) {
     method: 'PUT',
     body: { skillMd },
   });
+}
+
+// ━━━ Skill Plaza APIs ━━━━━━━━
+
+export interface PlazaSkillItem {
+  skillKey: string;
+  title: string;
+  description: string;
+  icon?: string;
+  category: string;
+  tags: string[];
+  usageCount: number;
+  authorName?: string;
+  authorAvatar?: string;
+  publishedAt?: string;
+  isPublic: boolean;
+  ownerUserId?: string;
+}
+
+export async function listPlazaSkills(params?: { category?: string; search?: string; page?: number }) {
+  const qs = new URLSearchParams();
+  if (params?.category && params.category !== 'all') qs.set('category', params.category);
+  if (params?.search) qs.set('search', params.search);
+  if (params?.page) qs.set('page', String(params.page));
+  const url = `${api.skillAgent.plaza()}${qs.toString() ? '?' + qs.toString() : ''}`;
+  return apiRequest<{ items: PlazaSkillItem[]; total: number; page: number; pageSize: number }>(url);
+}
+
+export async function publishSkill(skillKey: string) {
+  return apiRequest<{ skillKey: string; published: boolean }>(api.skillAgent.publish(skillKey), { method: 'POST' });
+}
+
+export async function unpublishSkill(skillKey: string) {
+  return apiRequest<{ skillKey: string; published: boolean }>(api.skillAgent.unpublish(skillKey), { method: 'POST' });
 }

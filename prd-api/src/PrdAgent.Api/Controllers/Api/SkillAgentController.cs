@@ -1,12 +1,15 @@
 using System.Collections.Concurrent;
+using System.Security.Claims;
 using System.Text.Json;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using MongoDB.Driver;
 using PrdAgent.Api.Extensions;
 using PrdAgent.Core.Helpers;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
 using PrdAgent.Core.Security;
+using PrdAgent.Infrastructure.Database;
 using PrdAgent.Infrastructure.Services;
 
 namespace PrdAgent.Api.Controllers.Api;
@@ -30,19 +33,23 @@ public class SkillAgentController : ControllerBase
 
     private readonly SkillAgentService _service;
     private readonly ISkillService _skillService;
+    private readonly MongoDbContext _db;
     private readonly ILogger<SkillAgentController> _logger;
 
     public SkillAgentController(
         SkillAgentService service,
         ISkillService skillService,
+        MongoDbContext db,
         ILogger<SkillAgentController> logger)
     {
         _service = service;
         _skillService = skillService;
+        _db = db;
         _logger = logger;
     }
 
     private string GetUserId() => this.GetRequiredUserId();
+    private string? GetUsername() => User.FindFirst("name")?.Value ?? User.FindFirst(ClaimTypes.Name)?.Value;
 
     /// <summary>
     /// 创建引导会话
@@ -327,6 +334,112 @@ public class SkillAgentController : ControllerBase
 
         _logger.LogInformation("[skill-agent] Skill updated from md: {SkillKey} by {UserId}", skillKey, userId);
         return Ok(ApiResponse<object>.Ok(new { skillKey, title = parsed.Title }));
+    }
+
+    // ━━━ 技能广场 ━━━━━━━━
+
+    /// <summary>
+    /// 发布技能到广场
+    /// </summary>
+    [HttpPost("skills/{skillKey}/publish")]
+    public async Task<IActionResult> PublishSkill(string skillKey, CancellationToken ct)
+    {
+        var userId = GetUserId();
+        var skill = await _skillService.GetByKeyAsync(skillKey, ct);
+        if (skill == null || skill.OwnerUserId != userId || skill.Visibility != SkillVisibility.Personal)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "技能不存在或无权操作"));
+
+        // Get author info
+        var user = await _db.Users.Find(u => u.Id == userId).FirstOrDefaultAsync(ct);
+        var authorName = GetUsername() ?? user?.DisplayName ?? "匿名用户";
+        var authorAvatar = user?.Avatar;
+
+        var update = Builders<Skill>.Update
+            .Set(s => s.IsPublic, true)
+            .Set(s => s.AuthorName, authorName)
+            .Set(s => s.AuthorAvatar, authorAvatar)
+            .Set(s => s.PublishedAt, DateTime.UtcNow)
+            .Set(s => s.UpdatedAt, DateTime.UtcNow);
+
+        await _db.Skills.UpdateOneAsync(
+            s => s.SkillKey == skillKey && s.OwnerUserId == userId,
+            update, cancellationToken: ct);
+
+        _logger.LogInformation("[skill-agent] Skill published: {SkillKey} by {UserId}", skillKey, userId);
+        return Ok(ApiResponse<object>.Ok(new { skillKey, published = true }));
+    }
+
+    /// <summary>
+    /// 从广场取消发布
+    /// </summary>
+    [HttpPost("skills/{skillKey}/unpublish")]
+    public async Task<IActionResult> UnpublishSkill(string skillKey, CancellationToken ct)
+    {
+        var userId = GetUserId();
+
+        var update = Builders<Skill>.Update
+            .Set(s => s.IsPublic, false)
+            .Set(s => s.PublishedAt, (DateTime?)null)
+            .Set(s => s.UpdatedAt, DateTime.UtcNow);
+
+        var result = await _db.Skills.UpdateOneAsync(
+            s => s.SkillKey == skillKey && s.OwnerUserId == userId,
+            update, cancellationToken: ct);
+
+        if (result.ModifiedCount == 0)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "技能不存在或无权操作"));
+
+        _logger.LogInformation("[skill-agent] Skill unpublished: {SkillKey} by {UserId}", skillKey, userId);
+        return Ok(ApiResponse<object>.Ok(new { skillKey, published = false }));
+    }
+
+    /// <summary>
+    /// 技能广场列表（所有已发布的技能）
+    /// </summary>
+    [HttpGet("plaza")]
+    public async Task<IActionResult> Plaza(
+        [FromQuery] string? category,
+        [FromQuery] string? search,
+        [FromQuery] int page = 1,
+        [FromQuery] int pageSize = 20,
+        CancellationToken ct = default)
+    {
+        pageSize = Math.Clamp(pageSize, 1, 50);
+        page = Math.Max(1, page);
+
+        var filter = Builders<Skill>.Filter.Eq(s => s.IsPublic, true)
+                   & Builders<Skill>.Filter.Eq(s => s.IsEnabled, true);
+
+        if (!string.IsNullOrWhiteSpace(category) && category != "all")
+            filter &= Builders<Skill>.Filter.Eq(s => s.Category, category);
+
+        if (!string.IsNullOrWhiteSpace(search))
+        {
+            var searchFilter = Builders<Skill>.Filter.Or(
+                Builders<Skill>.Filter.Regex(s => s.Title, new MongoDB.Bson.BsonRegularExpression(search, "i")),
+                Builders<Skill>.Filter.Regex(s => s.Description, new MongoDB.Bson.BsonRegularExpression(search, "i")),
+                Builders<Skill>.Filter.AnyIn(s => s.Tags, new[] { search })
+            );
+            filter &= searchFilter;
+        }
+
+        var total = await _db.Skills.CountDocumentsAsync(filter, cancellationToken: ct);
+        var items = await _db.Skills.Find(filter)
+            .SortByDescending(s => s.UsageCount)
+            .ThenByDescending(s => s.PublishedAt)
+            .Skip((page - 1) * pageSize)
+            .Limit(pageSize)
+            .ToListAsync(ct);
+
+        // Return without execution config (security)
+        var result = items.Select(s => new
+        {
+            s.SkillKey, s.Title, s.Description, s.Icon, s.Category, s.Tags,
+            s.UsageCount, s.AuthorName, s.AuthorAvatar, s.PublishedAt,
+            s.IsPublic, s.OwnerUserId,
+        });
+
+        return Ok(ApiResponse<object>.Ok(new { items = result, total, page, pageSize }));
     }
 
     // ━━━ Helpers ━━━━━━━━

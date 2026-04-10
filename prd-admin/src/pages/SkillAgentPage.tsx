@@ -14,14 +14,19 @@ import {
   deletePersonalSkill,
   getSkillMd,
   updateSkillFromMd,
+  listPlazaSkills,
+  publishSkill,
+  unpublishSkill,
   type SkillAgentStage,
   type PersonalSkillItem,
+  type PlazaSkillItem,
 } from '@/services/real/skillAgent';
 import { useAuthStore } from '@/stores/authStore';
 import { glassBar } from '@/lib/glassStyles';
 import {
   Send, Save, FileText, Archive, RotateCcw, Wand2, ArrowLeft, Check,
   Loader2, Bot, User, CheckCircle2, Plus, Trash2, Zap, Play, Copy, ClipboardCheck, ChevronLeft,
+  Globe, Search, Share2, EyeOff,
 } from 'lucide-react';
 
 /** Strip ```json:stage_result ... ``` blocks from display text */
@@ -31,7 +36,7 @@ function stripJsonBlocks(text: string): string {
 
 // ━━━ Types ━━━━━━━━
 
-type TabKey = 'create' | 'my-skills';
+type TabKey = 'create' | 'my-skills' | 'plaza';
 
 interface ChatMessage {
   role: 'user' | 'assistant' | 'system';
@@ -50,7 +55,9 @@ export default function SkillAgentPage() {
       <Header activeTab={activeTab} onTabChange={setActiveTab} onBack={() => navigate(-1)} />
 
       {/* ━━━ Tab Content ━━━ */}
-      {activeTab === 'create' ? <CreateTab /> : <MySkillsTab onSwitchToCreate={() => setActiveTab('create')} />}
+      {activeTab === 'create' && <CreateTab />}
+      {activeTab === 'my-skills' && <MySkillsTab onSwitchToCreate={() => setActiveTab('create')} />}
+      {activeTab === 'plaza' && <PlazaTab />}
     </div>
   );
 }
@@ -65,6 +72,7 @@ function Header({ activeTab, onTabChange, onBack }: {
   const tabs: { key: TabKey; label: string; icon: React.ReactNode }[] = [
     { key: 'create', label: '创建技能', icon: <Plus size={13} /> },
     { key: 'my-skills', label: '我的技能', icon: <Zap size={13} /> },
+    { key: 'plaza', label: '技能广场', icon: <Globe size={13} /> },
   ];
 
   return (
@@ -701,6 +709,21 @@ function SkillDetailView({ skill, onBack, onDelete }: {
   const [saving, setSaving] = useState(false);
   const [saveMsg, setSaveMsg] = useState<string | null>(null);
   const [dirty, setDirty] = useState(false);
+  const [isPublic, setIsPublic] = useState(skill.isPublic ?? false);
+  const [publishing, setPublishing] = useState(false);
+
+  const handleTogglePublish = async () => {
+    setPublishing(true);
+    try {
+      if (isPublic) {
+        const res = await unpublishSkill(skill.skillKey);
+        if (res.success) setIsPublic(false);
+      } else {
+        const res = await publishSkill(skill.skillKey);
+        if (res.success) setIsPublic(true);
+      }
+    } finally { setPublishing(false); }
+  };
 
   // Test state
   const [testInput, setTestInput] = useState('');
@@ -770,7 +793,16 @@ function SkillDetailView({ skill, onBack, onDelete }: {
         <span className="text-lg">{skill.icon || '⚡'}</span>
         <span className="text-[13px] font-semibold" style={{ color: 'var(--text-primary)' }}>{skill.title}</span>
         <span className="text-[11px] px-1.5 py-0.5 rounded-md" style={{ background: 'rgba(139,92,246,0.1)', color: '#8B5CF6' }}>{skill.category}</span>
+        {isPublic && (
+          <span className="text-[10px] px-1.5 py-0.5 rounded-md" style={{ background: 'rgba(34,197,94,0.1)', color: '#22C55E' }}>已发布到广场</span>
+        )}
         <div className="flex-1" />
+        <button onClick={handleTogglePublish} disabled={publishing}
+          className="flex items-center gap-1 text-[11px] px-2.5 py-1 rounded-lg transition-colors hover:bg-white/5"
+          style={{ color: isPublic ? '#F59E0B' : '#8B5CF6' }}>
+          {publishing ? <Loader2 size={12} className="animate-spin" /> : isPublic ? <EyeOff size={12} /> : <Share2 size={12} />}
+          {isPublic ? '取消发布' : '发布到广场'}
+        </button>
         <button onClick={onDelete}
           className="flex items-center gap-1 text-[11px] px-2 py-1 rounded-lg transition-colors hover:bg-red-500/10"
           style={{ color: 'rgba(239,68,68,0.7)' }}>
@@ -886,6 +918,288 @@ function SkillDetailView({ skill, onBack, onDelete }: {
                   <Bot size={24} style={{ color: 'rgba(255,255,255,0.08)' }} />
                   <span className="text-[12px]" style={{ color: 'var(--text-muted)' }}>
                     输入内容后点击运行，结果将实时显示
+                  </span>
+                </div>
+              )}
+            </div>
+          </GlassCard>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ━━━ Plaza Tab ━━━━━━━━
+
+function PlazaTab() {
+  const [skills, setSkills] = useState<PlazaSkillItem[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [search, setSearch] = useState('');
+  const [testingSkill, setTestingSkill] = useState<PlazaSkillItem | null>(null);
+
+  const load = useCallback(async (query?: string) => {
+    setLoading(true);
+    try {
+      const res = await listPlazaSkills({ search: query });
+      if (res.success && res.data) setSkills(res.data.items || []);
+    } finally { setLoading(false); }
+  }, []);
+
+  useEffect(() => { load(); }, [load]);
+
+  const handleSearch = (e: React.FormEvent) => {
+    e.preventDefault();
+    load(search);
+  };
+
+  const CATEGORY_COLORS: Record<string, string> = {
+    analysis: '#3B82F6', generation: '#8B5CF6', extraction: '#F59E0B',
+    translation: '#06B6D4', summary: '#10B981', check: '#F97316',
+    optimization: '#EC4899', general: '#6366F1', other: '#64748B',
+  };
+
+  if (testingSkill) {
+    return <PlazaSkillDetailView skill={testingSkill} onBack={() => setTestingSkill(null)} />;
+  }
+
+  return (
+    <div className="flex-1 min-h-0 flex flex-col px-3 pb-3 pt-2">
+      {/* Search bar */}
+      <form onSubmit={handleSearch} className="shrink-0 flex items-center gap-2 mb-3">
+        <div className="flex-1 flex items-center gap-2 px-3 py-2 rounded-xl"
+          style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)' }}>
+          <Search size={13} style={{ color: 'var(--text-muted)' }} />
+          <input
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="搜索技能名称、描述或标签…"
+            className="flex-1 bg-transparent outline-none text-[13px]"
+            style={{ color: 'var(--text-primary)' }}
+          />
+        </div>
+        <button type="submit"
+          className="px-4 py-2 rounded-xl text-[12px] font-medium"
+          style={{ background: 'linear-gradient(135deg,#8B5CF6,#6366F1)', color: 'white' }}>
+          搜索
+        </button>
+      </form>
+
+      {/* List */}
+      {loading ? (
+        <div className="flex-1 flex items-center justify-center">
+          <Loader2 size={24} className="animate-spin" style={{ color: '#8B5CF6' }} />
+        </div>
+      ) : skills.length === 0 ? (
+        <div className="flex-1 flex flex-col items-center justify-center gap-3">
+          <Globe size={28} style={{ color: 'rgba(255,255,255,0.1)' }} />
+          <div className="text-xs" style={{ color: 'var(--text-muted)' }}>
+            {search ? '没有找到匹配的技能' : '广场还没有任何技能'}
+          </div>
+        </div>
+      ) : (
+        <div className="flex-1 min-h-0 overflow-y-auto">
+          <div style={{ display: 'grid', gap: 10, gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))' }}>
+            {skills.map((skill) => {
+              const accent = CATEGORY_COLORS[skill.category] ?? '#6366F1';
+              return (
+                <GlassCard key={skill.skillKey} padding="none" interactive
+                  className="group cursor-pointer" onClick={() => setTestingSkill(skill)}>
+                  <div className="px-4 py-3.5">
+                    <div className="flex items-start gap-3">
+                      <div className="shrink-0 w-9 h-9 rounded-xl flex items-center justify-center text-lg"
+                        style={{ background: `${accent}15`, border: `1px solid ${accent}25` }}>
+                        {skill.icon || '⚡'}
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <div className="text-[13px] font-semibold truncate" style={{ color: 'var(--text-primary)' }}>
+                          {skill.title}
+                        </div>
+                        <div className="text-[11px] mt-0.5 line-clamp-2" style={{ color: 'var(--text-muted)' }}>
+                          {skill.description || '暂无描述'}
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Meta: author + tags + usage */}
+                    <div className="flex items-center gap-1.5 mt-2.5 flex-wrap">
+                      <span className="text-[10px] px-1.5 py-0.5 rounded-md font-medium"
+                        style={{ background: `${accent}15`, color: accent, border: `1px solid ${accent}20` }}>
+                        {skill.category}
+                      </span>
+                      {skill.tags.slice(0, 2).map((tag) => (
+                        <span key={tag} className="text-[10px] px-1.5 py-0.5 rounded-md"
+                          style={{ background: 'rgba(255,255,255,0.04)', color: 'var(--text-muted)', border: '1px solid rgba(255,255,255,0.06)' }}>
+                          {tag}
+                        </span>
+                      ))}
+                    </div>
+
+                    <div className="flex items-center gap-2 mt-2.5 pt-2.5" style={{ borderTop: '1px solid rgba(255,255,255,0.04)' }}>
+                      <div className="flex items-center gap-1 text-[10px]" style={{ color: 'var(--text-muted)' }}>
+                        {skill.authorAvatar ? (
+                          <img src={skill.authorAvatar} alt="" className="w-4 h-4 rounded-full" />
+                        ) : (
+                          <User size={10} />
+                        )}
+                        {skill.authorName || '匿名'}
+                      </div>
+                      <div className="flex-1" />
+                      {skill.usageCount > 0 && (
+                        <span className="text-[10px]" style={{ color: 'var(--text-muted)' }}>
+                          {skill.usageCount} 次使用
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                </GlassCard>
+              );
+            })}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ━━━ Plaza Skill Detail (read-only test view) ━━━━━━━━
+
+function PlazaSkillDetailView({ skill, onBack }: { skill: PlazaSkillItem; onBack: () => void }) {
+  const [testInput, setTestInput] = useState('');
+  const [testResult, setTestResult] = useState('');
+  const [copied, setCopied] = useState<'text' | 'md' | null>(null);
+
+  const { typing: testTyping, isStreaming: testStreaming, start: startTest, reset: resetTest } = useSseStream({
+    url: '', method: 'POST',
+  });
+
+  useEffect(() => { if (testTyping) setTestResult(testTyping); }, [testTyping]);
+
+  const handleTest = async () => {
+    if (testStreaming) return;
+    setTestResult(''); resetTest();
+    await startTest({ url: api.skillAgent.testSkill(skill.skillKey), body: { userInput: testInput } });
+  };
+
+  const handleCopyText = async () => {
+    await navigator.clipboard.writeText(testResult);
+    setCopied('text'); setTimeout(() => setCopied(null), 1500);
+  };
+
+  return (
+    <div className="flex-1 min-h-0 flex flex-col px-3 pb-3 pt-2">
+      {/* Breadcrumb */}
+      <div className="shrink-0 flex items-center gap-2 mb-2">
+        <button onClick={onBack}
+          className="flex items-center gap-1 text-[12px] font-medium px-2 py-1 rounded-lg transition-colors hover:bg-white/5"
+          style={{ color: 'var(--text-muted)' }}>
+          <ChevronLeft size={14} /> 返回广场
+        </button>
+        <span className="text-lg">{skill.icon || '⚡'}</span>
+        <span className="text-[13px] font-semibold" style={{ color: 'var(--text-primary)' }}>{skill.title}</span>
+        <span className="text-[11px] px-1.5 py-0.5 rounded-md" style={{ background: 'rgba(139,92,246,0.1)', color: '#8B5CF6' }}>{skill.category}</span>
+        <div className="flex-1" />
+        <span className="flex items-center gap-1 text-[11px]" style={{ color: 'var(--text-muted)' }}>
+          {skill.authorAvatar ? <img src={skill.authorAvatar} alt="" className="w-4 h-4 rounded-full" /> : <User size={11} />}
+          {skill.authorName || '匿名'}
+        </span>
+      </div>
+
+      {/* Main */}
+      <div className="flex-1 min-h-0 flex gap-3">
+        {/* Left: skill info */}
+        <GlassCard className="flex flex-col" padding="none" style={{ overflow: 'hidden', flex: '6 6 0%', minWidth: 0 }}>
+          <div className="px-4 py-2.5 flex items-center gap-2" style={{ borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
+            <FileText size={13} style={{ color: '#8B5CF6' }} />
+            <span className="text-[12px] font-semibold" style={{ color: 'var(--text-primary)' }}>技能详情</span>
+          </div>
+          <div className="flex-1 overflow-y-auto px-5 py-4 space-y-4">
+            <div>
+              <div className="text-[11px] font-semibold mb-1" style={{ color: 'var(--text-muted)' }}>描述</div>
+              <div className="text-[13px] leading-relaxed" style={{ color: 'var(--text-primary)' }}>
+                {skill.description || '暂无描述'}
+              </div>
+            </div>
+            {skill.tags.length > 0 && (
+              <div>
+                <div className="text-[11px] font-semibold mb-1" style={{ color: 'var(--text-muted)' }}>标签</div>
+                <div className="flex items-center gap-1.5 flex-wrap">
+                  {skill.tags.map((tag) => (
+                    <span key={tag} className="text-[11px] px-2 py-0.5 rounded-md"
+                      style={{ background: 'rgba(255,255,255,0.04)', color: 'var(--text-secondary)', border: '1px solid rgba(255,255,255,0.06)' }}>
+                      {tag}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
+            <div>
+              <div className="text-[11px] font-semibold mb-1" style={{ color: 'var(--text-muted)' }}>作者</div>
+              <div className="flex items-center gap-2">
+                {skill.authorAvatar ? <img src={skill.authorAvatar} alt="" className="w-6 h-6 rounded-full" /> : <User size={16} />}
+                <span className="text-[13px]" style={{ color: 'var(--text-primary)' }}>{skill.authorName || '匿名'}</span>
+              </div>
+            </div>
+            {skill.usageCount > 0 && (
+              <div>
+                <div className="text-[11px] font-semibold mb-1" style={{ color: 'var(--text-muted)' }}>使用次数</div>
+                <div className="text-[13px]" style={{ color: 'var(--text-primary)' }}>{skill.usageCount} 次</div>
+              </div>
+            )}
+          </div>
+        </GlassCard>
+
+        {/* Right: test panel */}
+        <div className="flex flex-col gap-3" style={{ flex: '4 4 0%', minWidth: 0 }}>
+          <GlassCard className="flex flex-col shrink-0" padding="none" style={{ overflow: 'hidden' }}>
+            <div className="px-4 py-2.5 flex items-center gap-2" style={{ borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
+              <Play size={13} style={{ color: '#8B5CF6' }} />
+              <span className="text-[12px] font-semibold" style={{ color: 'var(--text-primary)' }}>试用</span>
+            </div>
+            <div className="p-3">
+              <textarea
+                value={testInput}
+                onChange={(e) => setTestInput(e.target.value)}
+                placeholder="输入要处理的内容…"
+                rows={4}
+                className="w-full resize-none rounded-xl px-3 py-2.5 text-[13px] outline-none"
+                style={{ background: 'rgba(255,255,255,0.04)', color: 'var(--text-primary)', border: '1px solid rgba(255,255,255,0.08)' }}
+              />
+              <button onClick={handleTest} disabled={testStreaming}
+                className="mt-2 w-full flex items-center justify-center gap-1.5 px-4 py-2 rounded-xl text-[13px] font-medium transition-all"
+                style={{
+                  background: testStreaming ? 'rgba(139,92,246,0.15)' : 'linear-gradient(135deg,#8B5CF6,#6366F1)',
+                  color: testStreaming ? '#C4B5FD' : 'white',
+                }}>
+                {testStreaming ? <Loader2 size={14} className="animate-spin" /> : <Play size={14} />}
+                {testStreaming ? '正在生成…' : '运行试用'}
+              </button>
+            </div>
+          </GlassCard>
+
+          <GlassCard className="flex-1 flex flex-col" padding="none" style={{ overflow: 'hidden', minHeight: 0 }}>
+            <div className="shrink-0 px-4 py-2.5 flex items-center gap-2" style={{ borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
+              <Bot size={13} style={{ color: '#22C55E' }} />
+              <span className="text-[12px] font-semibold" style={{ color: 'var(--text-primary)' }}>输出结果</span>
+              <div className="flex-1" />
+              {testResult && !testStreaming && (
+                <button onClick={handleCopyText}
+                  className="flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-medium transition-colors hover:bg-white/5"
+                  style={{ color: copied === 'text' ? '#22C55E' : 'var(--text-muted)' }}>
+                  {copied === 'text' ? <ClipboardCheck size={11} /> : <Copy size={11} />} 复制
+                </button>
+              )}
+            </div>
+            <div className="flex-1 overflow-y-auto px-4 py-3" style={{ minHeight: 0 }}>
+              {(testResult || testStreaming) ? (
+                <div>
+                  <MarkdownContent content={testResult} className="text-[13px] leading-relaxed" />
+                  {testStreaming && <span className="inline-block w-[2px] h-[14px] ml-0.5 animate-pulse" style={{ background: '#8B5CF6', verticalAlign: 'text-bottom' }} />}
+                </div>
+              ) : (
+                <div className="flex flex-col items-center justify-center h-full gap-2">
+                  <Bot size={24} style={{ color: 'rgba(255,255,255,0.08)' }} />
+                  <span className="text-[12px]" style={{ color: 'var(--text-muted)' }}>
+                    输入内容后点击运行
                   </span>
                 </div>
               )}
