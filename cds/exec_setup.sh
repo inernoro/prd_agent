@@ -5,7 +5,7 @@
 # 功能：
 #   1. 交互式收集配置（账号密码、域名等）
 #   2. 写入 ~/.bashrc（CDS 系统层环境变量）
-#   3. 生成 CDS 自带 Nginx 配置与证书脚本
+#   3. 生成 CDS 自带 Nginx 配置、Compose 与证书脚本
 #
 # 用法：
 #   ./exec_setup.sh              # 交互式配置
@@ -152,6 +152,7 @@ EOF
     ok "Nginx 配置已生成: ${output_dir}/nginx.conf"
     ok "CDS Nginx 配置已生成: ${output_dir}/cds-nginx.conf"
     ok "证书脚本已生成: ${output_dir}/acme_apply.sh"
+    ok "Nginx 启动脚本: ${output_dir}/start_nginx.sh"
 }
 
 # ── Write local runtime env ──
@@ -299,9 +300,10 @@ main() {
     echo "  ════════════════════════════════"
     echo ""
     echo "  下一步："
-    echo "    1. 如需证书: cd $NGINX_DIR && ./acme_apply.sh"
-    echo "    2. cd $SCRIPT_DIR && ./exec_cds.sh"
-    echo "    3. 访问 https://cds.${new_main}"
+    echo "    1. 启动 Nginx: cd $NGINX_DIR && ./start_nginx.sh"
+    echo "    2. 如需证书: cd $NGINX_DIR && ./acme_apply.sh"
+    echo "    3. cd $SCRIPT_DIR && ./exec_cds.sh"
+    echo "    4. 访问 https://cds.${new_main}"
     echo ""
 }
 

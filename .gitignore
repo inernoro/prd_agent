@@ -92,6 +92,7 @@ cds/nginx/www/
 cds/nginx/nginx.conf
 cds/nginx/cds-nginx.conf
 cds/nginx/acme_apply.sh
+cds/nginx/nginx.compose.yml
 cds/.cds.env
 
 # Agent development workspace (per-developer progress tracking)
