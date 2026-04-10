@@ -29,10 +29,8 @@ import {
   type PrReviewPrismBatchRefreshFailure,
   type PrReviewPrismSetupStatus,
 } from '@/services';
-import JSZip from 'jszip';
 
 const bootstrapInitCommand = 'bash scripts/bootstrap-pr-prism.sh';
-const bootstrapGuidePath = 'doc/guide.pr-prism-bootstrap-package.md';
 const prismRepoWorkspaceStorageKey = 'prReviewPrism.workspaceRepo';
 const prismRepoWorkspaceParamsStorageKey = 'prReviewPrism.workspaceRepoParams';
 const prismRecentReposStorageKey = 'prReviewPrism.recentRepos';
@@ -118,7 +116,8 @@ export function PrReviewPrismPage() {
     return window.localStorage.getItem(prismRepoWorkspaceStorageKey) ?? '';
   });
   const [bootstrapDownloading, setBootstrapDownloading] = useState(false);
-  const [showDesignBasisPanel, setShowDesignBasisPanel] = useState(false);
+  const [showDesignBasisPanel] = useState(false);
+  const [showOnboardingWizard, setShowOnboardingWizard] = useState(false);
   const [ownerInput, setOwnerInput] = useState(defaultRepoOwner);
   const [contextInput, setContextInput] = useState(defaultRepoContext);
   const [anchorInput, setAnchorInput] = useState(defaultRepoAnchorId);
@@ -143,6 +142,7 @@ export function PrReviewPrismPage() {
     missing: 0,
     error: 0,
   });
+  const [repoSetupStatusMap, setRepoSetupStatusMap] = useState<Record<string, PrReviewPrismSetupStatus>>({});
 
   const filteredItems = useMemo(() => items, [items]);
 
@@ -266,62 +266,6 @@ slices:
 `,
     [normalizedAnchor, normalizedContext, normalizedOwner]
   );
-  const fullRepoOnboardingYaml = useMemo(() => {
-    if (!isBindingRepoValid) {
-      return `# 请先输入 owner/repo 后再生成完整配置`;
-    }
-    return `# .github/pr-architect/design-sources.yml
-version: 1
-profile: top-design-sources
-defaults:
-  active_source_id: "local-ddd-anchor"
-  active_version: "v1.0.0"
-  enforce_manifests: true
-sources:
-  - id: "local-ddd-anchor"
-    type: "repo-file"
-    location: "doc/top-design/main.md"
-    version: "v1.0.0"
-    checksum: "sha256:replace-with-real-checksum"
-    owner: "${normalizedOwner}"
-    description: "Repository local top-design baseline for PR Review Prism"
-    manifests:
-      anchors: "doc/top-design/anchors.yml"
-      slices: "doc/top-design/slices.yml"
-      contexts: "doc/top-design/contexts.yml"
-
-# .github/pr-architect/repo-bindings.yml (append to repositories)
-${repoBindingSnippet}
-
-# doc/top-design/anchors.yml
-version: 1
-anchors:
-  - id: "${normalizedAnchor}"
-    title: "Core governance anchor"
-    description: "Keep PR review metadata, boundary and evidence consistent."
-
-# doc/top-design/contexts.yml
-version: 1
-contexts:
-  - id: "${normalizedContext}"
-    name: "${normalizedContext}"
-    description: "Primary governance bounded context for this repository."
-
-# doc/top-design/slices.yml
-version: 1
-slices:
-  - id: "slice-governance-core"
-    owner: "${normalizedOwner}"
-    context: "${normalizedContext}"
-    description: "Initial slice for governance baseline."
-`;
-  }, [
-    isBindingRepoValid,
-    normalizedOwner,
-    normalizedAnchor,
-    normalizedContext,
-    repoBindingSnippet,
-  ]);
   const canSubmitPr = Boolean(setupStatus?.readyForFullRefresh);
   const onboardingSteps = useMemo(
     () => [
@@ -399,101 +343,6 @@ slices:
       setSetupActionMessage('复制失败，请手动复制下方代码块内容');
     }
   }, []);
-  const downloadOnboardingZip = useCallback(async () => {
-    if (!isBindingRepoValid) {
-      setSetupActionMessage('请先填写有效仓库（owner/repo）后再下载接入文件包');
-      return;
-    }
-    try {
-      const zip = new JSZip();
-      const mainMd = `# Top Design Baseline
-
-Repository: \`${normalizedBindingRepo}\`
-
-## Bounded Context
-- \`${normalizedContext}\`
-
-## Core Anchor
-- \`${normalizedAnchor}\`
-`;
-      const anchorsYml = `version: 1
-anchors:
-  - id: "${normalizedAnchor}"
-    title: "Core governance anchor"
-    description: "Keep PR review metadata, boundary and evidence consistent."
-`;
-      const contextsYml = `version: 1
-contexts:
-  - id: "${normalizedContext}"
-    name: "${normalizedContext}"
-    description: "Primary governance bounded context for this repository."
-`;
-      const slicesYml = `version: 1
-slices:
-  - id: "slice-governance-core"
-    owner: "${normalizedOwner}"
-    context: "${normalizedContext}"
-    description: "Initial slice for governance baseline."
-`;
-      const designSourcesYml = `version: 1
-profile: top-design-sources
-defaults:
-  active_source_id: "local-ddd-anchor"
-  active_version: "v1.0.0"
-  enforce_manifests: true
-sources:
-  - id: "local-ddd-anchor"
-    type: "repo-file"
-    location: "doc/top-design/main.md"
-    version: "v1.0.0"
-    checksum: "sha256:replace-with-real-checksum"
-    owner: "${normalizedOwner}"
-    description: "Repository local top-design baseline for PR Review Prism"
-    manifests:
-      anchors: "doc/top-design/anchors.yml"
-      slices: "doc/top-design/slices.yml"
-      contexts: "doc/top-design/contexts.yml"
-`;
-      const repoBindingsYml = `version: 1
-profile: pr-architect-repo-bindings
-defaults:
-  enabled: true
-  required_checks:
-    - "PR审查棱镜 L1 Gate"
-    - "PR审查棱镜 Advisory"
-  architects:
-    - "${normalizedOwner}"
-repositories:
-${repoBindingSnippet}
-`;
-      zip.file('doc/top-design/main.md', mainMd);
-      zip.file('doc/top-design/anchors.yml', anchorsYml);
-      zip.file('doc/top-design/contexts.yml', contextsYml);
-      zip.file('doc/top-design/slices.yml', slicesYml);
-      zip.file('.github/pr-architect/design-sources.yml', designSourcesYml);
-      zip.file('.github/pr-architect/repo-bindings.yml', repoBindingsYml);
-      const blob = await zip.generateAsync({ type: 'blob' });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `pr-prism-onboarding-${normalizedBindingRepo.replace('/', '-')}.zip`;
-      a.rel = 'noopener';
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      URL.revokeObjectURL(url);
-      setSetupActionMessage('已下载接入文件包（zip）');
-    } catch {
-      setSetupActionMessage('下载 zip 失败，请稍后重试');
-    }
-  }, [
-    isBindingRepoValid,
-    normalizedAnchor,
-    normalizedBindingRepo,
-    normalizedContext,
-    normalizedOwner,
-    repoBindingSnippet,
-  ]);
   const downloadRepoSkillPackage = useCallback(async () => {
     if (!isBindingRepoValid) {
       setSetupActionMessage('请先填写有效仓库（owner/repo）后再导出仓库专属 Skill 包');
@@ -543,10 +392,14 @@ ${repoBindingSnippet}
     const res = await getPrReviewPrismSetupStatus(isBindingRepoValid ? normalizedBindingRepo : undefined);
     if (res.success && res.data) {
       setSetupStatus(res.data);
+      const key = normalizeRepoKey(normalizedBindingRepo || normalizedSelectedRepo);
+      if (isValidRepoKey(key)) {
+        setRepoSetupStatusMap(prev => ({ ...prev, [key]: res.data! }));
+      }
     } else {
       setSetupStatus(null);
     }
-  }, [isBindingRepoValid, normalizedBindingRepo]);
+  }, [isBindingRepoValid, normalizedBindingRepo, normalizedSelectedRepo]);
 
   const loadList = useCallback(
     async (
@@ -692,6 +545,11 @@ ${repoBindingSnippet}
     }
     syncRepoWorkspaceParams(activeRepo, normalizedOwner, normalizedContext, normalizedAnchor);
   }, [isBindingRepoValid, normalizedAnchor, normalizedBindingRepo, normalizedContext, normalizedOwner, normalizedSelectedRepo, syncRepoWorkspaceParams]);
+  useEffect(() => {
+    if (isBindingRepoValid) {
+      setShowOnboardingWizard(true);
+    }
+  }, [isBindingRepoValid]);
 
   async function handleSearch() {
     await loadList(1, search.trim() || undefined, pageSize, activeGateFilter, normalizedSelectedRepo || undefined);
@@ -726,6 +584,7 @@ ${repoBindingSnippet}
       setBindingRepoInput(nextRepo);
       touchRecentRepo(nextRepo);
       syncRepoWorkspaceParams(nextRepo, normalizedOwner, normalizedContext, normalizedAnchor);
+      setShowOnboardingWizard(false);
     }
     const submitRepoFilter = (parsedRepo ?? normalizedSelectedRepo ?? '').toLowerCase() || undefined;
     await loadList(
@@ -920,6 +779,7 @@ ${repoBindingSnippet}
     }
     setSelectedRepo(normalizedRepo);
     setBindingRepoInput(normalizedRepo);
+    setShowOnboardingWizard(false);
     touchRecentRepo(normalizedRepo);
     const params = repoWorkspaceParamsMap[normalizedRepo];
     if (params) {
@@ -961,9 +821,25 @@ ${repoBindingSnippet}
         {hint}
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-[260px_1fr] gap-4 mb-5">
+      <div className="grid grid-cols-1 lg:grid-cols-[280px_1fr] gap-4 mb-5">
         <div className="rounded-xl p-4 border border-white/10 bg-white/[0.03]">
-          <p className="text-sm font-medium text-white mb-3">我的仓库（可切换）</p>
+          <div className="flex items-center justify-between gap-2 mb-3">
+            <p className="text-sm font-medium text-white">我的仓库（可切换）</p>
+            <button
+              type="button"
+              onClick={() => {
+                setShowOnboardingWizard(true);
+                setSetupActionMessage(null);
+                if (normalizedSelectedRepo) {
+                  setBindingRepoInput(normalizedSelectedRepo);
+                }
+              }}
+              className="inline-flex items-center gap-1 rounded border border-violet-300/40 bg-violet-500/20 px-2 py-1 text-[11px] text-violet-100 hover:bg-violet-500/25 whitespace-nowrap"
+            >
+              <Plus className="w-3.5 h-3.5" />
+              新增仓库接入
+            </button>
+          </div>
           {recentRepoList.length > 0 && (
             <div className="mb-3 rounded-lg border border-white/10 bg-white/5 p-2">
               <p className="text-[11px] text-white/60 mb-1">最近仓库（快速恢复参数）</p>
@@ -1024,7 +900,21 @@ ${repoBindingSnippet}
                     : 'border-white/10 bg-white/5 text-white/70 hover:bg-white/10'
                 }`}
               >
-                {repo}
+                <div className="flex items-center justify-between gap-2">
+                  <span className="truncate">{repo}</span>
+                  {(() => {
+                    const repoStatus = repoSetupStatusMap[repo];
+                    if (!repoStatus) {
+                      return <span className="text-[10px] text-white/35 shrink-0">未检测</span>;
+                    }
+                    const ok = repoStatus.githubTokenConfigured && repoStatus.topDesign.ready && repoStatus.readyForFullRefresh;
+                    return (
+                      <span className={`text-[10px] shrink-0 ${ok ? 'text-emerald-200' : 'text-amber-200'}`}>
+                        {ok ? '可审查' : '待接入'}
+                      </span>
+                    );
+                  })()}
+                </div>
               </button>
             ))}
             {visibleRepoCandidates.length === 0 && (
@@ -1033,11 +923,37 @@ ${repoBindingSnippet}
           </div>
         </div>
         <div className="rounded-xl p-4 border border-white/10 bg-white/[0.03]">
+        {!showOnboardingWizard ? (
+          <div className="rounded-lg border border-white/10 bg-white/5 p-4">
+            <p className="text-sm font-medium text-white mb-1">新仓库接入向导</p>
+            <p className="text-xs text-white/60 mb-3">
+              该向导仅在新增仓库时使用。你可以在“我的仓库”中点击“新增仓库接入”打开。
+            </p>
+            <button
+              type="button"
+              onClick={() => setShowOnboardingWizard(true)}
+              className="inline-flex items-center gap-1 rounded border border-violet-300/40 bg-violet-500/20 px-3 py-1.5 text-xs text-violet-100 hover:bg-violet-500/25 whitespace-nowrap"
+            >
+              <Plus className="w-4 h-4" />
+              打开新增仓库接入向导
+            </button>
+          </div>
+        ) : (
+          <>
         <div className="flex items-center justify-between gap-3 mb-3">
           <p className="text-sm font-medium text-white">新仓库接入向导</p>
-          <span className="text-xs text-white/55 whitespace-nowrap">
-            {onboardingDoneCount}/{onboardingSteps.length} 已完成
-          </span>
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-white/55 whitespace-nowrap">
+              {onboardingDoneCount}/{onboardingSteps.length} 已完成
+            </span>
+            <button
+              type="button"
+              onClick={() => setShowOnboardingWizard(false)}
+              className="text-[11px] text-white/60 hover:text-white/90 whitespace-nowrap"
+            >
+              收起
+            </button>
+          </div>
         </div>
         <div className="mb-3 rounded-lg border border-white/10 bg-white/5 p-2">
           <div className="flex items-center justify-between text-[11px] text-white/55 px-1 mb-1">
@@ -1158,51 +1074,6 @@ ${repoBindingSnippet}
               <div className="mt-2 flex flex-wrap gap-2">
                 <button
                   type="button"
-                  onClick={() => void copyToClipboard(repoScopedBootstrapCommand, '已复制该仓库初始化命令')}
-                  className="inline-flex items-center gap-1 rounded border border-white/20 bg-white/10 px-2.5 py-1 text-[11px] text-white hover:bg-white/15 whitespace-nowrap"
-                >
-                  复制该仓库初始化命令
-                </button>
-                <button
-                  type="button"
-                  disabled={!isBindingRepoValid}
-                  onClick={() => void copyToClipboard(repoBindingSnippet, '已复制该仓库 bindings 片段')}
-                  className="inline-flex items-center gap-1 rounded border border-white/20 bg-white/10 px-2.5 py-1 text-[11px] text-white hover:bg-white/15 whitespace-nowrap disabled:opacity-50"
-                >
-                  复制该仓库 bindings 片段
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setShowDesignBasisPanel(prev => !prev)}
-                  className="inline-flex items-center gap-1 rounded border border-white/20 bg-white/10 px-2.5 py-1 text-[11px] text-white hover:bg-white/15 whitespace-nowrap"
-                >
-                  {showDesignBasisPanel ? '收起顶层设计依据' : '展开顶层设计依据'}
-                </button>
-                <button
-                  type="button"
-                  disabled={!isBindingRepoValid}
-                  onClick={() => void copyToClipboard(fullRepoOnboardingYaml, '已复制完整仓库接入 YAML 配置')}
-                  className="inline-flex items-center gap-1 rounded border border-white/20 bg-white/10 px-2.5 py-1 text-[11px] text-white hover:bg-white/15 whitespace-nowrap disabled:opacity-50"
-                >
-                  复制完整接入 YAML
-                </button>
-                <button
-                  type="button"
-                  disabled={!isBindingRepoValid}
-                  onClick={() => void downloadOnboardingZip()}
-                  className="inline-flex items-center gap-1 rounded border border-white/20 bg-white/10 px-2.5 py-1 text-[11px] text-white hover:bg-white/15 whitespace-nowrap disabled:opacity-50"
-                >
-                  下载接入文件包（zip）
-                </button>
-                <button
-                  type="button"
-                  onClick={() => void window.open(bootstrapGuidePath, '_blank', 'noopener,noreferrer')}
-                  className="inline-flex items-center gap-1 rounded border border-white/20 bg-white/10 px-2.5 py-1 text-[11px] text-white hover:bg-white/15 whitespace-nowrap"
-                >
-                  打开接入说明
-                </button>
-                <button
-                  type="button"
                   disabled={bootstrapDownloading}
                   onClick={() => void downloadRepoSkillPackage()}
                   className="inline-flex items-center gap-1 rounded border border-violet-300/40 bg-violet-500/20 px-2.5 py-1 text-[11px] text-violet-100 hover:bg-violet-500/25 whitespace-nowrap disabled:opacity-50"
@@ -1215,6 +1086,17 @@ ${repoBindingSnippet}
                   className="inline-flex items-center gap-1 rounded border border-white/20 bg-white/10 px-2.5 py-1 text-[11px] text-white hover:bg-white/15 whitespace-nowrap"
                 >
                   重新检测接入状态
+                </button>
+                <button
+                  type="button"
+                  disabled={!canSubmitPr}
+                  onClick={() => {
+                    setShowOnboardingWizard(false);
+                    setSetupActionMessage('接入已完成，可以提交 PR 审查了');
+                  }}
+                  className="inline-flex items-center gap-1 rounded border border-emerald-300/40 bg-emerald-500/20 px-2.5 py-1 text-[11px] text-emerald-100 hover:bg-emerald-500/25 whitespace-nowrap disabled:opacity-50"
+                >
+                  开始审查
                 </button>
               </div>
               {setupActionMessage && <p className="mt-2 text-[11px] text-emerald-200">{setupActionMessage}</p>}
@@ -1249,6 +1131,8 @@ ${repoBindingSnippet}
           </div>
         ) : (
           <p className="text-xs text-white/40">配置状态加载失败，请稍后重试。</p>
+        )}
+      </>
         )}
       </div>
       </div>
