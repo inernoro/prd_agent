@@ -844,16 +844,19 @@ async function addBranch(name) {
 
 // ── Container capacity badge (header indicator) ──
 //
-// Visual pressure gauge next to the CDS title. Battery-style fill with
-// 4 color tiers:
-//   green (< 60%)   — comfortable
-//   blue  (60-80%)  — busy but fine
-//   orange (80-100%) — pressure, consider stopping old branches
-//   red  (>= 100%)  — over-subscribed, OOM risk, pulses
+// Visual "fuel gauge" next to the CDS title. Battery-style fill shows
+// REMAINING capacity (not used) — a full battery means plenty of room
+// left for new containers, matching how people read real-world batteries.
 //
-// Clicking opens a detail popover with scheduler state (if enabled).
-// Sourced from `containerCapacity` which is updated by loadBranches()
-// every poll (10s). See doc/design.cds-resilience.md §八.
+//   green  (>= 40% free) — comfortable, plenty of room
+//   blue   (20-40% free) — busy but fine
+//   orange (0-20% free)  — low, consider stopping old branches
+//   red    (0% / over)   — exhausted / over-subscribed, OOM risk, pulses
+//
+// Label shows "free / total" so the number next to the battery matches
+// the visual fill. Clicking opens a detail popover with scheduler state.
+// Sourced from `containerCapacity`, updated by loadBranches() every 10s.
+// See doc/design.cds-resilience.md §八.
 
 function renderCapacityBadge() {
   const el = document.getElementById('capacityBadge');
@@ -870,25 +873,29 @@ function renderCapacityBadge() {
   }
   el.classList.remove('hidden');
 
-  const ratio = max > 0 ? Math.min(current / max, 1.5) : 0;
-  const pct = Math.round(ratio * 100);
-  const fillPct = Math.min(pct, 100);  // cap the visual fill at 100%
+  // Remaining slots drive the gauge. Over-subscription clamps to 0.
+  const free = Math.max(0, max - current);
+  const freeRatio = max > 0 ? free / max : 0;
+  const fillPct = Math.round(freeRatio * 100);  // 0..100
 
-  // Tier
+  // Used % is kept for the tooltip / popover since it's still useful info.
+  const usedPct = max > 0 ? Math.min(Math.round((current / max) * 100), 999) : 0;
+
+  // Tier: full battery = green (good), empty battery = red (bad)
   let tier;
-  if (ratio < 0.6) tier = 'green';
-  else if (ratio < 0.8) tier = 'blue';
-  else if (ratio < 1.0) tier = 'orange';
-  else tier = 'red';
+  if (freeRatio >= 0.4) tier = 'green';
+  else if (freeRatio >= 0.2) tier = 'blue';
+  else if (freeRatio > 0)   tier = 'orange';
+  else                      tier = 'red';
 
   // Over-subscription gets a warning suffix
   const over = current > max;
-  const label = over ? `${current}/${max} ⚠` : `${current}/${max}`;
+  const label = over ? `0/${max} ⚠` : `${free}/${max}`;
 
   el.dataset.tier = tier;
   el.dataset.over = over ? '1' : '0';
   el.setAttribute('title',
-    `宿主机容量: ${current}/${max} 容器 (${mem}GB RAM, ${pct}% 使用率)${over ? '\n⚠ 已超售，OOM 风险' : ''}\n点击查看调度器详情`,
+    `宿主机剩余容量: ${free}/${max} 空闲 (运行中 ${current}, ${mem}GB RAM, 已用 ${usedPct}%)${over ? '\n⚠ 已超售，OOM 风险' : ''}\n点击查看调度器详情`,
   );
 
   // Render: battery body + fill + label
@@ -911,22 +918,23 @@ async function showCapacityDetails(event) {
   const mem = containerCapacity.totalMemGB || 0;
   const pct = max > 0 ? Math.round((current / max) * 100) : 0;
   const over = current > max;
+  const free = Math.max(0, max - current);
 
   const schedulerHtml = '<div class="cap-pop-row"><em>Scheduler: 查询中...</em></div>';
   openConfigModal('宿主机容量', `
     <div class="cap-pop">
       <div class="cap-pop-stats">
         <div class="cap-pop-stat">
-          <div class="cap-pop-stat-label">运行容器</div>
-          <div class="cap-pop-stat-value">${current} / ${max}</div>
+          <div class="cap-pop-stat-label">剩余容量</div>
+          <div class="cap-pop-stat-value">${free} / ${max}${over ? ' ⚠' : ''}</div>
+        </div>
+        <div class="cap-pop-stat">
+          <div class="cap-pop-stat-label">运行中</div>
+          <div class="cap-pop-stat-value">${current} (${pct}%)</div>
         </div>
         <div class="cap-pop-stat">
           <div class="cap-pop-stat-label">宿主机内存</div>
           <div class="cap-pop-stat-value">${mem} GB</div>
-        </div>
-        <div class="cap-pop-stat">
-          <div class="cap-pop-stat-label">使用率</div>
-          <div class="cap-pop-stat-value">${pct}%${over ? ' ⚠' : ''}</div>
         </div>
       </div>
       ${over ? `<div class="cap-pop-warn">⚠ 超售 ${current - max} 个容器，建议启用 scheduler 或手动停止老分支以避免 OOM。</div>` : ''}
