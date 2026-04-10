@@ -221,7 +221,7 @@ public class ReportGenerationService
         }
     }
 
-    private string BuildUserPrompt(
+    internal static string BuildUserPrompt(
         ReportTemplate template,
         CollectedActivity activity,
         int weekYear,
@@ -333,7 +333,7 @@ public class ReportGenerationService
                 if (activity.VideoGenCompletedCount > 0)
                     sb.AppendLine($"- 视频生成完成: {activity.VideoGenCompletedCount} 次");
                 if (activity.DocumentEditCount > 0)
-                    sb.AppendLine($"- 文档编辑/创建: {activity.DocumentEditCount} 篇");
+                    sb.AppendLine($"- 创建 PRD 项目: {activity.DocumentEditCount} 个");
                 if (activity.WorkflowExecutionCount > 0)
                     sb.AppendLine($"- 自动化工作流执行: {activity.WorkflowExecutionCount} 次");
                 if (activity.ToolboxRunCount > 0)
@@ -394,7 +394,7 @@ public class ReportGenerationService
         return trimmed;
     }
 
-    private sealed record GenerationSourcePrefs(bool DailyLogEnabled, bool MapPlatformEnabled);
+    internal sealed record GenerationSourcePrefs(bool DailyLogEnabled, bool MapPlatformEnabled);
     private sealed record GenerationPromptPrefs(
         string SystemDefaultPrompt,
         string? CustomPrompt,
@@ -1100,7 +1100,7 @@ public class ReportGenerationService
             .FirstOrDefaultAsync(ct);
     }
 
-    private string BuildUserPromptV2(
+    internal static string BuildUserPromptV2(
         ReportTemplate template,
         MemberCollectedStats? teamStats,
         List<SourceStats> personalStats,
@@ -1247,7 +1247,7 @@ public class ReportGenerationService
             if (activity.VideoGenCompletedCount > 0)
                 sb.AppendLine($"- 视频生成完成: {activity.VideoGenCompletedCount} 次");
             if (activity.DocumentEditCount > 0)
-                sb.AppendLine($"- 文档编辑/创建: {activity.DocumentEditCount} 篇");
+                sb.AppendLine($"- 创建 PRD 项目: {activity.DocumentEditCount} 个");
             if (activity.WorkflowExecutionCount > 0)
                 sb.AppendLine($"- 自动化工作流执行: {activity.WorkflowExecutionCount} 次");
             if (activity.ToolboxRunCount > 0)

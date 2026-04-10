@@ -171,13 +171,14 @@ public class MapActivityCollector
             catch { /* 集合可能不存在 */ }
         }, ct));
 
-        // 10. 文档编辑活动（本周修改过的 PRD 文档）
+        // 10. PRD 项目创建（用户创建的 Group 数量，每个 Group 对应一个 PRD 文档）
+        // 注意：ParsedPrd 模型没有 UserId 字段，文档归属必须通过 Group.OwnerId 关联
         tasks.Add(Task.Run(async () =>
         {
             try
             {
-                var count = await _db.Documents.Find(
-                    d => d.CreatedAt >= periodStart && d.CreatedAt <= periodEnd
+                var count = await _db.Groups.Find(
+                    g => g.OwnerId == userId && g.CreatedAt >= periodStart && g.CreatedAt <= periodEnd
                 ).CountDocumentsAsync(ct);
                 result.DocumentEditCount = (int)count;
             }
