@@ -72,6 +72,52 @@ function readStorageJson<T>(storageKey: string, fallback: T): T {
   }
 }
 
+function sanitizeRecentRepos(raw: unknown): string[] {
+  if (!Array.isArray(raw)) {
+    return [];
+  }
+  return raw
+    .filter((item): item is string => typeof item === 'string')
+    .map(normalizeRepoKey)
+    .filter(isValidRepoKey);
+}
+
+function sanitizeRepoWorkspaceParams(raw: unknown): Record<string, RepoWorkspaceParams> {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+    return {};
+  }
+
+  const result: Record<string, RepoWorkspaceParams> = {};
+  for (const [repo, value] of Object.entries(raw as Record<string, unknown>)) {
+    const normalizedRepo = normalizeRepoKey(repo);
+    if (!isValidRepoKey(normalizedRepo) || !value || typeof value !== 'object' || Array.isArray(value)) {
+      continue;
+    }
+
+    const owner = typeof (value as { owner?: unknown }).owner === 'string'
+      ? ((value as { owner: string }).owner.trim() || defaultRepoOwner)
+      : defaultRepoOwner;
+    const context = typeof (value as { context?: unknown }).context === 'string'
+      ? ((value as { context: string }).context.trim() || defaultRepoContext)
+      : defaultRepoContext;
+    const anchorId = typeof (value as { anchorId?: unknown }).anchorId === 'string'
+      ? ((value as { anchorId: string }).anchorId.trim() || defaultRepoAnchorId)
+      : defaultRepoAnchorId;
+    const updatedAt = typeof (value as { updatedAt?: unknown }).updatedAt === 'number'
+      ? (value as { updatedAt: number }).updatedAt
+      : Date.now();
+
+    result[normalizedRepo] = {
+      owner,
+      context,
+      anchorId,
+      updatedAt,
+    };
+  }
+
+  return result;
+}
+
 function parseRepoFromPrUrl(raw: string): string | null {
   const text = raw.trim();
   if (!text) {
@@ -128,12 +174,10 @@ export function PrReviewPrismPage() {
   const [contextInput, setContextInput] = useState(defaultRepoContext);
   const [anchorInput, setAnchorInput] = useState(defaultRepoAnchorId);
   const [repoWorkspaceParamsMap, setRepoWorkspaceParamsMap] = useState<Record<string, RepoWorkspaceParams>>(() =>
-    readStorageJson<Record<string, RepoWorkspaceParams>>(prismRepoWorkspaceParamsStorageKey, {})
+    sanitizeRepoWorkspaceParams(readStorageJson<unknown>(prismRepoWorkspaceParamsStorageKey, {}))
   );
   const [recentRepos, setRecentRepos] = useState<string[]>(() =>
-    readStorageJson<string[]>(prismRecentReposStorageKey, [])
-      .map(normalizeRepoKey)
-      .filter(isValidRepoKey)
+    sanitizeRecentRepos(readStorageJson<unknown>(prismRecentReposStorageKey, []))
   );
   const [gateStatusCounts, setGateStatusCounts] = useState<{
     all: number;
