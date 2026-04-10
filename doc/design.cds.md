@@ -1,20 +1,82 @@
 # CDS (Cloud Development Suite) 技术架构文档
 
-> **版本**：v3.0 | **日期**：2026-03-15 | **状态**：已落地
+> **版本**：v3.1 | **日期**：2026-04-09 | **状态**：已落地
 >
-> 本文档聚焦**技术架构与实现设计**。功能需求见 `doc/spec.cds.md`。
+> 本文档是 CDS 的**主入口文档**，聚焦**核心思想 + 技术架构**。功能需求见 `doc/spec.cds.md`，容量与故障隔离见 `doc/design.cds-resilience.md`。
 
 ## 一、管理摘要
 
 - **解决什么问题**：多分支并行开发时缺乏隔离的测试环境，开发者需手动管理 Docker 容器、端口、路由
 - **方案概述**：基于 Node.js + TypeScript 构建云开发套件，自动管理 Git worktree + Docker 容器编排 + 请求代理路由，每个分支独立环境
 - **业务价值**：一键创建分支级隔离环境，支持多分支并行测试，消除环境冲突和手动运维成本
-- **影响范围**：独立 cds/ 模块，对主项目仅改动 vite.config.ts 的 proxy target 支持环境变量
-- **预计风险**：低 — 已落地运行，88 个测试用例覆盖核心服务层
+- **影响范围**：独立 cds/ 模块,对主项目仅改动 vite.config.ts 的 proxy target 支持环境变量
+- **预计风险**：低 — 已落地运行，88+ 个测试用例覆盖核心服务层
 
 ---
 
-## 0. Quickstart
+## 0. 核心思想（Why CDS）
+
+### 一句话定义
+
+> **CDS 是"Git 分支即环境"的单机编排器**。它把一条 Git 分支自动映射为一组隔离的 Docker 容器（API + Web + 基础设施），通过内置反向代理让同一个域名按 Header/Cookie/域名在多个分支间瞬时切换。目标是让 4 人以下小团队在**一台小型服务器**上就能跑起 5-10 个并行特性分支的验收环境，无需 K8s、无需多机集群。
+
+### 和同类方案的区别
+
+| 维度 | docker-compose | K8s / Argo | Gitpod / Coder | **CDS** |
+|---|---|---|---|---|
+| 分支即环境 | 手动多份 compose | Helm + 命名空间 | ✅ | ✅ |
+| 单机可用 | ✅ | ❌ 至少 3 节点 | ❌ 需托管 | ✅ |
+| 切换分支 | 改配置 + 重启 | 改 Ingress | 切 workspace | **Header/Cookie 实时切** |
+| 运维成本 | 高 | 极高 | 中（有托管费） | **近零** |
+| 生产可用 | ❌ | ✅ | ⚠️ | ❌ 定位为开发/验收 |
+
+### 三大设计 DNA
+
+1. **分支隔离 ≠ 基础设施隔离**：MongoDB/Redis 全局共享（单实例），业务容器按分支隔离——用最小的资源代价获得最大的隔离收益
+2. **动态路由 > 域名分发**：一个主域名 + Header 解析，避免证书通配 + DNS 泛解析的运维负担
+3. **状态可见即可控**：JSON + Dashboard，人类可读可改，不上数据库
+
+### 适用场景
+
+- ✅ 多团队并行特性开发、QA 验收环境、CI/CD 分支预览
+- ✅ 目标用户：开发者、QA、产品经理（需要快速切换多分支）
+- ❌ 不适合：生产环境高可用、跨地域部署、大规模微服务
+
+---
+
+## 0.5 文档地图
+
+CDS 的文档按职责划分，推荐按以下顺序阅读：
+
+```
+主入口：design.cds.md  ← 你在这里
+    │
+    ├─ 功能是什么      → spec.cds.md
+    ├─ 怎么装          → guide.cds-env.md
+    ├─ 怎么不宕机      → design.cds-resilience.md   【本次新增】
+    ├─ 怎么部署        → plan.cds-deployment.md
+    ├─ 路线图          → plan.cds-roadmap.md
+    ├─ 一键导入配置    → design.cds-onboarding.md
+    ├─ 数据迁移        → design.cds-data-migration.md
+    ├─ 认证陷阱        → guide.cds-ai-auth.md
+    └─ 历史验收报告    → report.cds-api-full-test-*.md
+```
+
+| 文档 | 类型 | 什么时候读 |
+|---|---|---|
+| **design.cds.md** | design | 首次了解 CDS、理解整体架构 |
+| **spec.cds.md** | spec | 想知道 CDS 具体能做什么（功能清单 F1-F11） |
+| **design.cds-resilience.md** | design | 在小服务器部署、关心容量与宕机恢复 |
+| **plan.cds-deployment.md** | plan | 要真实上线一台服务器，需要部署步骤 |
+| **guide.cds-env.md** | guide | 配置环境变量、调试启动问题 |
+| **guide.cds-ai-auth.md** | guide | 遇到认证/JWT 问题排查 |
+| **design.cds-onboarding.md** | design | 要做"一键从项目导入 CDS 配置"的功能 |
+| **design.cds-data-migration.md** | design | 涉及跨环境数据迁移 |
+| **plan.cds-roadmap.md** | plan | 规划下一阶段做什么 |
+
+---
+
+## 1. Quickstart
 
 ### 前置条件
 
@@ -43,7 +105,7 @@ cd cds && npx vitest run    # 88 tests, 6 files
 
 ---
 
-## 1. 系统架构
+## 2. 系统架构
 
 ```
 ┌────────────────────────────────────────────────────────────────┐
@@ -73,7 +135,7 @@ cd cds && npx vitest run    # 88 tests, 6 files
 
 ---
 
-## 2. 技术栈
+## 3. 技术栈
 
 | 层面 | 选择 | 理由 |
 |------|------|------|
@@ -85,7 +147,7 @@ cd cds && npx vitest run    # 88 tests, 6 files
 
 ---
 
-## 3. 项目结构
+## 4. 项目结构
 
 ```
 cds/
@@ -114,9 +176,9 @@ cds/
 
 ---
 
-## 4. 服务层设计
+## 5. 服务层设计
 
-### 4.1 ShellExecutor
+### 5.1 ShellExecutor
 
 可 mock 的 shell 命令执行层，所有外部命令（git/docker）通过此接口调用。
 
@@ -126,18 +188,18 @@ interface IShellExecutor {
 }
 ```
 
-### 4.2 StateService
+### 5.2 StateService
 
 状态持久化 + 端口分配 + 环境变量管理。
 
-- `load()` / `save()` — JSON 文件读写
+- `load()` / `save()` — JSON 文件读写（v3.1 起为**原子写 + 滚动备份**，见 `design.cds-resilience.md §5`）
 - `addBranch()` / `removeBranch()` — 分支 CRUD
 - `allocatePort()` — 动态端口分配
 - `getCdsEnvVars()` — 自动生成 CDS_* 系统变量
 - `getMirrorEnvVars()` — 镜像加速变量
 - `getCustomEnv()` — 用户自定义变量
 
-### 4.3 WorktreeService
+### 5.3 WorktreeService
 
 Git worktree 管理。
 
@@ -146,7 +208,7 @@ Git worktree 管理。
 - `list()` — `git worktree list`
 - `branchExists(branch)` — 验证远程分支
 
-### 4.4 ContainerService
+### 5.4 ContainerService
 
 Docker 容器生命周期。
 
@@ -156,7 +218,7 @@ Docker 容器生命周期。
 - `getContainerNetwork()` — 网络连接检查
 - 环境变量合并：`CDS_*` 自动变量 → 镜像加速变量 → 自定义变量 → Profile 专属变量
 
-### 4.5 ProxyService
+### 5.5 ProxyService
 
 请求路由核心。
 
@@ -165,7 +227,7 @@ Docker 容器生命周期。
 - 路径匹配：按 `pathPrefixes` 分发到不同服务
 - 域名路由：支持 switch domain、preview subdomain
 
-### 4.6 ComposeParser
+### 5.6 ComposeParser
 
 CDS Compose YAML 解析与生成。
 
@@ -174,13 +236,26 @@ CDS Compose YAML 解析与生成。
 - `toCdsCompose()` — 生成 CDS Compose YAML
 - `discoverComposeFiles()` — 自动发现项目中的 compose 文件
 
-### 4.7 TopoSort
+### 5.7 TopoSort
 
 按 `dependsOn` 关系计算服务启动顺序，使用拓扑排序保证依赖先启动。
 
+### 5.8 SchedulerService（v3.1 新增）
+
+分支温池调度器，在小服务器上按需唤醒/休眠分支，避免资源超售。详见 `doc/design.cds-resilience.md`。
+
+- `start()` / `stop()` — 启动/停止后台 tick
+- `touch(slug)` — 代理命中分支时更新 lastAccess
+- `markHot(slug)` / `markCold(slug)` — 手动状态迁移
+- `evictLruIfOverCapacity()` — 容量超标时驱逐 LRU 分支
+- `pin(slug)` / `unpin(slug)` — 保护指定分支不被驱逐
+- `getSnapshot()` — Dashboard 展示用的当前状态
+
+默认 `enabled: false`，保持与老版本完全一致的行为。启用后按 `maxHotBranches` / `idleTTLSeconds` / `pinnedBranches` 配置工作。
+
 ---
 
-## 5. 环境变量体系
+## 6. 环境变量体系
 
 ### 两层架构
 
@@ -207,7 +282,7 @@ CDS Compose YAML 解析与生成。
 
 ---
 
-## 6. 配置文件 (cds.config.json)
+## 7. 配置文件 (cds.config.json)
 
 ```json
 {
@@ -217,13 +292,47 @@ CDS Compose YAML 解析与生成。
   "workerPort": 5500,
   "dockerNetwork": "prdagent-network",
   "portStart": 9001,
-  "jwt": { "secret": "${CDS_JWT_SECRET}", "issuer": "prdagent" }
+  "jwt": { "secret": "${CDS_JWT_SECRET}", "issuer": "prdagent" },
+  "scheduler": {
+    "enabled": true,
+    "maxHotBranches": 3,
+    "idleTTLSeconds": 900,
+    "tickIntervalSeconds": 60,
+    "pinnedBranches": ["main"]
+  }
 }
 ```
 
+`scheduler` 段为 v3.1 新增，用于启用分支温池调度器。详见 `doc/design.cds-resilience.md §四、八`。
+
 ---
 
-## 7. 对主项目的改动
+## 8. 高可用、容量与分布式（v3.1 / v3.2 / v3.3）
+
+小服务器场景下 CDS 有几个致命风险：单分支 runaway、state.json 损坏、Master 崩溃、磁盘爆满、单点宕机。这一块通过**分支温池 + cgroup 限制 + Janitor + Master 容器化 + 分布式调度**逐层解决，详见：
+
+- **设计文档**：`doc/design.cds-resilience.md`（Phase 1-3 完整方案）
+- **落地进度**：`doc/plan.cds-resilience-rollout.md`（可续传 checklist）
+
+三个层次的改造：
+
+| 层次 | 内容 | 状态 |
+|---|---|---|
+| **v3.1 Phase 1** | 调度器（温池 + LRU） + state 原子写 + API | ✅ 已发布 |
+| **v3.2 Phase 2** | 容器 cgroup + Janitor + CDS Master 容器化 + `/healthz` + systemd unit | ✅ 代码已落地 |
+| **v3.3 Phase 3** | BranchDispatcher（跨机容量派发） + Nginx upstream 模板生成器 + POST /api/executors/dispatch/:branch | ✅ 代码已落地 |
+| Phase 3 后续 | 分支迁移 + 共享状态存储 + Webhook 预热 | ⏳ 待规划 |
+
+核心理念：
+- **单机层**："CDS 不追求所有分支常驻,而追求按需唤醒、快速命中、永不超载"。`maxHotBranches=3` + LRU 驱逐
+- **集群层**："Master 不做单机决策,只做派发决策。它读每个 executor 的 `/api/scheduler/state`,按 `capacityUsage.current/max` 比率选最空闲的"
+- **三层独立演进**：Layer 1（per-node warm pool）/ Layer 2（cluster scheduler）/ Layer 3（edge nginx）各自有接口,上层不假设下层实现
+
+**Phase 1 的 SchedulerService 就是 Layer 1**——把它部署到每个 executor 节点,集群能力自动浮现。这是 Phase 1+2+3 一次性交付的战略价值：代码层面三层 ready,运维可以只用单机 Phase 1+2 起步,等团队壮大时无缝升级到 Phase 3 分布式,不需要重写。
+
+---
+
+## 9. 对主项目的改动
 
 唯一改动：`prd-admin/vite.config.ts` 中 proxy target 支持环境变量（向后兼容）。
 
@@ -233,16 +342,36 @@ target: `http://localhost:${process.env.VITE_API_PORT || 5000}`
 
 ---
 
-## 8. 测试覆盖
+## 10. 测试覆盖
 
-88 tests / 6 files，覆盖：state、worktree、container、proxy、compose-parser、topo-sort。
+88+ tests / 7 files，覆盖：state、worktree、container、proxy、compose-parser、topo-sort、scheduler（v3.1 新增）。
 
 ---
 
-## 9. 技术债
+## 11. 技术债
 
 | 类别 | 优先级 |
 |------|--------|
 | WebSocket 替代 10s 轮询 | P2 |
 | 部署日志持久化 | P3 |
 | 前端 E2E 测试 | P2 |
+| 容器 cgroup 限制 | P1（见 resilience Phase 2）|
+| Master 容器化 + 自愈 | P1（见 resilience Phase 2）|
+| worktree/磁盘 janitor | P2（见 resilience Phase 2）|
+| 双实例 + 共享状态 | P3（见 resilience Phase 3）|
+
+---
+
+## 12. 关联文档
+
+| 文档 | 内容 |
+|---|---|
+| `spec.cds.md` | 功能规格 F1-F11 |
+| `design.cds-resilience.md` | 容量预算、LRU 调度、故障矩阵 |
+| `design.cds-onboarding.md` | 一键导入配置 + AI 项目扫描 |
+| `design.cds-data-migration.md` | 跨环境数据迁移 |
+| `plan.cds-deployment.md` | 三种部署模式对比 + 端口分配 |
+| `plan.cds-roadmap.md` | Phase 0-3 里程碑 |
+| `plan.cds-resilience-rollout.md` | 高可用改造落地进度（可续传）|
+| `guide.cds-env.md` | 环境变量配置指南 |
+| `guide.cds-ai-auth.md` | 认证问题故障排查 |

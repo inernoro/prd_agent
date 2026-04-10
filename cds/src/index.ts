@@ -12,7 +12,10 @@ import { StateService } from './services/state.js';
 import { WorktreeService } from './services/worktree.js';
 import { ContainerService } from './services/container.js';
 import { ProxyService } from './services/proxy.js';
+import { SchedulerService } from './services/scheduler.js';
+import { JanitorService } from './services/janitor.js';
 import { BridgeService } from './services/bridge.js';
+import { BranchDispatcher, HttpSnapshotFetcher } from './scheduler/dispatcher.js';
 import { ExecutorAgent } from './executor/agent.js';
 import { createExecutorRouter } from './executor/routes.js';
 import { ExecutorRegistry } from './scheduler/executor-registry.js';
@@ -67,6 +70,76 @@ const containerService = new ContainerService(shell, config);
 const proxyService = new ProxyService(stateService, config);
 proxyService.setWorktreeService(worktreeService);
 const bridgeService = new BridgeService();
+
+// ── Warm-pool scheduler (v3.1) ──
+// Disabled unless cds.config.json { "scheduler": { "enabled": true, ... } }.
+// See doc/design.cds-resilience.md and doc/plan.cds-resilience-rollout.md.
+const schedulerService = new SchedulerService(
+  stateService,
+  config.scheduler || {
+    enabled: false,
+    maxHotBranches: 3,
+    idleTTLSeconds: 900,
+    tickIntervalSeconds: 60,
+    pinnedBranches: [],
+  },
+);
+// coolFn: stop all containers of a branch but keep the branch entry in state.
+// The next request to this branch will trigger the existing auto-build path,
+// which re-runs docker run and brings the services back to HOT.
+schedulerService.setCoolFn(async (slug: string) => {
+  const branch = stateService.getBranch(slug);
+  if (!branch) return;
+  branch.status = 'stopping';
+  stateService.save();
+  for (const svc of Object.values(branch.services)) {
+    if (svc.status === 'running' || svc.status === 'starting') {
+      try {
+        await containerService.stop(svc.containerName);
+      } catch (err) {
+        console.warn(`[scheduler] stop(${svc.containerName}) failed: ${(err as Error).message}`);
+      }
+      svc.status = 'stopped';
+    }
+  }
+  branch.status = 'idle';
+  stateService.save();
+});
+// wakeFn intentionally left unset at boot: the proxy's existing onAutoBuild
+// handler already covers the "branch is not running" case and runs the full
+// SSE build flow. A dedicated wakeFn would duplicate that logic. Future
+// work (Phase 2) may introduce a lighter-weight restart path.
+proxyService.setScheduler(schedulerService);
+
+// ── Janitor (Phase 2 resilience) ──
+// Disabled by default. Opt-in via cds.config.json { "janitor": { "enabled": true, ... } }.
+// Sweeps stale worktrees (> worktreeTTLDays idle) and warns on disk usage.
+// See doc/design.cds-resilience.md Phase 2.
+const janitorService = new JanitorService(
+  stateService,
+  config.janitor || {
+    enabled: false,
+    worktreeTTLDays: 30,
+    diskWarnPercent: 80,
+    sweepIntervalSeconds: 3600,
+  },
+  config.worktreeBase,
+);
+janitorService.setRemoveFn(async (slug: string) => {
+  // Reuse the existing removal path: stop containers → git worktree remove → drop state.
+  const branch = stateService.getBranch(slug);
+  if (!branch) return;
+  for (const svc of Object.values(branch.services)) {
+    try { await containerService.stop(svc.containerName); } catch { /* best effort */ }
+  }
+  try { await worktreeService.remove(branch.worktreePath); } catch { /* best effort */ }
+  stateService.removeBranch(slug);
+  stateService.save();
+});
+
+// The BranchDispatcher (Phase 3) is instantiated later, inside the scheduler-mode
+// block where ExecutorRegistry becomes available. See the `if (mode === 'scheduler')`
+// branch near the bottom of this file.
 
 // ── Discover and reconcile infrastructure containers ──
 (async () => {
@@ -142,7 +215,28 @@ const bridgeService = new BridgeService();
   } catch (err) {
     console.error('  [infra] Discovery failed:', (err as Error).message);
   }
+
+  // Start warm-pool scheduler after reconciliation so initial heat states
+  // reflect real container state. No-op when scheduler is disabled.
+  // On startup, branches with status='running' and no heatState get marked hot.
+  if (schedulerService.isEnabled()) {
+    for (const b of stateService.getAllBranches()) {
+      if (b.heatState === undefined && b.status === 'running') {
+        b.heatState = 'hot';
+      }
+    }
+    stateService.save();
+    schedulerService.start();
+  }
+
+  // Start janitor (Phase 2) — safe to call even when disabled (internal no-op).
+  janitorService.start();
 })();
+
+// Shut the scheduler/janitor down cleanly on process exit so background timers
+// don't keep running orphaned.
+process.on('SIGTERM', () => { schedulerService.stop(); janitorService.stop(); });
+process.on('SIGINT', () => { schedulerService.stop(); janitorService.stop(); });
 
 // Configure proxy: resolve branch slug → upstream URL
 proxyService.setResolveUpstream((branchId, profileId) => {
@@ -555,6 +649,7 @@ const app = createServer({
   bridgeService,
   shell,
   config,
+  schedulerService,
 });
 
 // ── Helper: kill process on port so CDS can bind ──
@@ -704,14 +799,21 @@ if (mode === 'executor') {
     console.log('');
   }, { optional: true });
 
-  // ── Scheduler mode: also start executor registry ──
+  // ── Scheduler mode: also start executor registry + dispatcher ──
   if (mode === 'scheduler') {
     const registry = new ExecutorRegistry(stateService);
     registry.startHealthChecks();
 
+    // Phase 3: BranchDispatcher combines registry with Phase 1 scheduler
+    // snapshots for capacity-aware executor selection.
+    const dispatcher = new BranchDispatcher(
+      registry,
+      new HttpSnapshotFetcher(process.env.AI_ACCESS_KEY || undefined),
+    );
+
     // Mount scheduler API routes on the dashboard server
-    app.use('/api/executors', createSchedulerRouter({ registry, config }));
-    console.log(`  Scheduler: executor management API mounted at /api/executors`);
+    app.use('/api/executors', createSchedulerRouter({ registry, config, dispatcher }));
+    console.log(`  Scheduler: executor management API mounted at /api/executors (dispatcher enabled)`);
   }
 
   // ── Standalone mode: register a local executor implicitly ──

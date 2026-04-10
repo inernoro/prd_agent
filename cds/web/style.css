@@ -369,6 +369,158 @@ h1 {
   56%, 78% { transform: translateY(-200%); opacity: 1; }
   84%, 100% { transform: translateY(0); opacity: 1; }
 }
+
+/* ── Capacity badge (battery-style memory pressure indicator) ── */
+/* See doc/design.cds-resilience.md §八 — per-host container capacity gauge */
+.capacity-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: 12px;
+  padding: 3px 8px 3px 6px;
+  border-radius: 6px;
+  font-size: 11px;
+  font-weight: 500;
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Consolas, monospace;
+  cursor: pointer;
+  user-select: none;
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+  line-height: 1;
+  background: var(--bg-card, #161b22);
+  border: 1px solid var(--border, #30363d);
+  color: var(--text-muted, #8b949e);
+}
+.capacity-badge:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25);
+}
+.capacity-badge.hidden { display: none; }
+
+/* Battery body: classic rectangle with a little nub on the right */
+.cap-battery {
+  position: relative;
+  display: inline-block;
+  width: 20px;
+  height: 10px;
+  border: 1.25px solid currentColor;
+  border-radius: 2px;
+  box-sizing: border-box;
+  flex-shrink: 0;
+}
+.cap-battery::after {
+  /* The battery "positive terminal" nub */
+  content: '';
+  position: absolute;
+  top: 50%;
+  right: -3px;
+  transform: translateY(-50%);
+  width: 2px;
+  height: 5px;
+  background: currentColor;
+  border-radius: 0 1px 1px 0;
+}
+.cap-battery-fill {
+  display: block;
+  height: 100%;
+  background: currentColor;
+  border-radius: 1px;
+  transition: width 0.4s ease, background-color 0.3s ease;
+}
+
+.cap-label {
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* ── Tier colors: green → blue → orange → red ── */
+.capacity-badge[data-tier="green"]  { color: #3fb950; border-color: rgba(63, 185, 80, 0.4); }
+.capacity-badge[data-tier="blue"]   { color: #58a6ff; border-color: rgba(88, 166, 255, 0.4); }
+.capacity-badge[data-tier="orange"] { color: #f0883e; border-color: rgba(240, 136, 62, 0.4); }
+.capacity-badge[data-tier="red"]    {
+  color: #f85149;
+  border-color: rgba(248, 81, 73, 0.5);
+  background: rgba(248, 81, 73, 0.08);
+}
+
+/* Over-subscription: pulse the whole badge */
+.capacity-badge[data-over="1"] {
+  animation: cap-badge-pulse 1.8s ease-in-out infinite;
+}
+@keyframes cap-badge-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(248, 81, 73, 0.5); }
+  50%      { box-shadow: 0 0 0 4px rgba(248, 81, 73, 0); }
+}
+
+/* ── Capacity detail popover (opens in shared configModal) ── */
+.cap-pop { padding: 4px 0; }
+.cap-pop-stats {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
+  margin-bottom: 16px;
+}
+.cap-pop-stat {
+  background: var(--bg-card-2, #0d1117);
+  border: 1px solid var(--border, #30363d);
+  border-radius: 6px;
+  padding: 10px 12px;
+  text-align: center;
+}
+.cap-pop-stat-label {
+  font-size: 11px;
+  color: var(--text-muted, #8b949e);
+  margin-bottom: 4px;
+}
+.cap-pop-stat-value {
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--text, #c9d1d9);
+  font-variant-numeric: tabular-nums;
+}
+.cap-pop-warn {
+  background: rgba(248, 81, 73, 0.08);
+  border: 1px solid rgba(248, 81, 73, 0.3);
+  border-radius: 6px;
+  padding: 10px 12px;
+  font-size: 12px;
+  color: #f85149;
+  margin-bottom: 12px;
+}
+.cap-pop-scheduler {
+  background: var(--bg-card-2, #0d1117);
+  border: 1px solid var(--border, #30363d);
+  border-radius: 6px;
+  padding: 10px 12px;
+  margin-bottom: 12px;
+}
+.cap-pop-scheduler-off {
+  background: var(--bg-card-2, #0d1117);
+  border: 1px dashed var(--border, #30363d);
+  border-radius: 6px;
+  padding: 10px 12px;
+  margin-bottom: 12px;
+}
+.cap-pop-list {
+  margin: 4px 0 8px 0;
+  padding-left: 16px;
+  font-size: 12px;
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Consolas, monospace;
+  color: var(--text, #c9d1d9);
+}
+.cap-pop-list li { line-height: 1.6; }
+.cap-pop-help {
+  font-size: 11px;
+  color: var(--text-muted, #8b949e);
+  line-height: 1.5;
+}
+.cap-pop-help code {
+  background: var(--bg-card-2, #0d1117);
+  padding: 1px 5px;
+  border-radius: 3px;
+  font-size: 11px;
+}
+.cap-pop-row { font-size: 12px; }
+
 .header-subtitle {
   font-size: 11px; color: var(--text-muted); white-space: nowrap;
   background: var(--bg-card);
@@ -2143,6 +2295,104 @@ a.branch-name:hover { color: var(--accent); }
 }
 
 /* ════════════════ API Activity Monitor ════════════════ */
+
+/* ── Host stats pulse widget (bottom-right, above Activity Monitor) ── */
+/* Real-time mem + cpu bars. Complements the header's container capacity badge */
+/* See doc/design.cds-resilience.md §八 */
+.host-stats {
+  position: fixed;
+  /* Stack above the collapsed Activity Monitor (40px) + margin */
+  bottom: 66px;
+  right: 16px;
+  z-index: 9997;
+  padding: 8px 12px;
+  border-radius: 8px;
+  background: var(--bg-card);
+  border: 1px solid var(--card-border);
+  box-shadow: var(--shadow-lg);
+  backdrop-filter: blur(16px);
+  cursor: pointer;
+  user-select: none;
+  transition: opacity 0.25s ease, transform 0.2s ease, box-shadow 0.2s ease;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 190px;
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Consolas, monospace;
+  font-size: 11px;
+  line-height: 1;
+}
+.host-stats.hidden {
+  opacity: 0;
+  pointer-events: none;
+}
+.host-stats:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35);
+}
+.host-stats-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.host-stats-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-muted, #8b949e);
+  width: 12px;
+  flex-shrink: 0;
+}
+.host-stats-label {
+  color: var(--text-muted, #8b949e);
+  font-weight: 500;
+  letter-spacing: 0.05em;
+  width: 26px;
+  flex-shrink: 0;
+}
+.host-stats-bar {
+  flex: 1;
+  height: 6px;
+  background: rgba(139, 148, 158, 0.15);
+  border-radius: 3px;
+  overflow: hidden;
+  min-width: 70px;
+}
+.host-stats-bar-fill {
+  display: block;
+  height: 100%;
+  width: 0%;
+  border-radius: 3px;
+  transition: width 0.5s ease, background-color 0.3s ease;
+  background: #3fb950;
+}
+.host-stats-bar-fill[data-tier="green"]  { background: #3fb950; }
+.host-stats-bar-fill[data-tier="blue"]   { background: #58a6ff; }
+.host-stats-bar-fill[data-tier="orange"] { background: #f0883e; }
+.host-stats-bar-fill[data-tier="red"]    { background: #f85149; }
+
+.host-stats-value {
+  font-variant-numeric: tabular-nums;
+  width: 36px;
+  text-align: right;
+  color: var(--text, #c9d1d9);
+  flex-shrink: 0;
+}
+
+/* When either metric hits critical, pulse the whole widget */
+.host-stats[data-stress="1"] {
+  border-color: rgba(248, 81, 73, 0.5);
+  animation: host-stats-pulse 1.8s ease-in-out infinite;
+}
+@keyframes host-stats-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(248, 81, 73, 0.4); }
+  50%      { box-shadow: 0 0 0 5px rgba(248, 81, 73, 0); }
+}
+
+/* On small screens, hide to avoid crowding */
+@media (max-width: 640px) {
+  .host-stats { display: none; }
+}
 
 .activity-monitor {
   position: fixed;

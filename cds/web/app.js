@@ -201,6 +201,13 @@ function updateBranchFeedRoller(event) {
   feed.innerHTML = `<div class="roller-line roller-flip">${html}</div>`;
 }
 
+// Kick off host stats polling (5s cadence). See pollHostStats / renderHostStats.
+if (typeof window !== 'undefined') {
+  // Initial fetch ASAP so widget appears quickly
+  setTimeout(() => { try { pollHostStats(); } catch { /* not yet loaded */ } }, 500);
+  setInterval(() => { try { pollHostStats(); } catch { /* ignore */ } }, 5000);
+}
+
 // Periodically expire stale AI occupations and refresh cards
 setInterval(() => {
   let changed = false;
@@ -628,6 +635,7 @@ async function loadBranches({ silent } = {}) {
       if (mainBranch) defaultBranch = mainBranch.id;
     }
     renderBranches();
+    renderCapacityBadge();
   } catch (e) { console.error('loadBranches:', e); }
   finally { if (silent) setTimeout(() => { _pollInFlight = false; }, 500); }
 }
@@ -832,6 +840,263 @@ async function addBranch(name) {
     return;
   }
   await loadBranches();
+}
+
+// ── Container capacity badge (header indicator) ──
+//
+// Visual pressure gauge next to the CDS title. Battery-style fill with
+// 4 color tiers:
+//   green (< 60%)   — comfortable
+//   blue  (60-80%)  — busy but fine
+//   orange (80-100%) — pressure, consider stopping old branches
+//   red  (>= 100%)  — over-subscribed, OOM risk, pulses
+//
+// Clicking opens a detail popover with scheduler state (if enabled).
+// Sourced from `containerCapacity` which is updated by loadBranches()
+// every poll (10s). See doc/design.cds-resilience.md §八.
+
+function renderCapacityBadge() {
+  const el = document.getElementById('capacityBadge');
+  if (!el) return;
+
+  const max = containerCapacity.maxContainers || 0;
+  const current = containerCapacity.runningContainers || 0;
+  const mem = containerCapacity.totalMemGB || 0;
+
+  // maxContainers === 999 means "not yet loaded" — keep hidden
+  if (!max || max >= 999) {
+    el.classList.add('hidden');
+    return;
+  }
+  el.classList.remove('hidden');
+
+  const ratio = max > 0 ? Math.min(current / max, 1.5) : 0;
+  const pct = Math.round(ratio * 100);
+  const fillPct = Math.min(pct, 100);  // cap the visual fill at 100%
+
+  // Tier
+  let tier;
+  if (ratio < 0.6) tier = 'green';
+  else if (ratio < 0.8) tier = 'blue';
+  else if (ratio < 1.0) tier = 'orange';
+  else tier = 'red';
+
+  // Over-subscription gets a warning suffix
+  const over = current > max;
+  const label = over ? `${current}/${max} ⚠` : `${current}/${max}`;
+
+  el.dataset.tier = tier;
+  el.dataset.over = over ? '1' : '0';
+  el.setAttribute('title',
+    `宿主机容量: ${current}/${max} 容器 (${mem}GB RAM, ${pct}% 使用率)${over ? '\n⚠ 已超售，OOM 风险' : ''}\n点击查看调度器详情`,
+  );
+
+  // Render: battery body + fill + label
+  el.innerHTML = `
+    <span class="cap-battery">
+      <span class="cap-battery-fill" style="width:${fillPct}%"></span>
+    </span>
+    <span class="cap-label">${label}</span>
+  `;
+}
+
+/**
+ * Popover with detailed capacity + scheduler state.
+ * Fetches /api/scheduler/state on click (Phase 1 API).
+ */
+async function showCapacityDetails(event) {
+  event.stopPropagation();
+  const max = containerCapacity.maxContainers || 0;
+  const current = containerCapacity.runningContainers || 0;
+  const mem = containerCapacity.totalMemGB || 0;
+  const pct = max > 0 ? Math.round((current / max) * 100) : 0;
+  const over = current > max;
+
+  const schedulerHtml = '<div class="cap-pop-row"><em>Scheduler: 查询中...</em></div>';
+  openConfigModal('宿主机容量', `
+    <div class="cap-pop">
+      <div class="cap-pop-stats">
+        <div class="cap-pop-stat">
+          <div class="cap-pop-stat-label">运行容器</div>
+          <div class="cap-pop-stat-value">${current} / ${max}</div>
+        </div>
+        <div class="cap-pop-stat">
+          <div class="cap-pop-stat-label">宿主机内存</div>
+          <div class="cap-pop-stat-value">${mem} GB</div>
+        </div>
+        <div class="cap-pop-stat">
+          <div class="cap-pop-stat-label">使用率</div>
+          <div class="cap-pop-stat-value">${pct}%${over ? ' ⚠' : ''}</div>
+        </div>
+      </div>
+      ${over ? `<div class="cap-pop-warn">⚠ 超售 ${current - max} 个容器，建议启用 scheduler 或手动停止老分支以避免 OOM。</div>` : ''}
+      <div id="capPopScheduler">${schedulerHtml}</div>
+      <div class="cap-pop-help">
+        容量公式: <code>max = (totalMemGB - 1) × 2</code><br>
+        scheduler 启用后会按 LRU 自动驱逐最久未访问的分支。
+      </div>
+    </div>
+  `);
+
+  // Fetch scheduler state asynchronously
+  try {
+    const snap = await api('GET', '/scheduler/state');
+    const target = document.getElementById('capPopScheduler');
+    if (!target) return;
+    if (snap.enabled === false) {
+      target.innerHTML = `
+        <div class="cap-pop-row cap-pop-scheduler-off">
+          <strong>Scheduler: <span style="color:#8b949e">未启用</span></strong>
+          <div class="cap-pop-help" style="margin-top:4px">
+            在 <code>cds.config.json</code> 中设置
+            <code>scheduler.enabled = true</code> 即可自动管理容量。
+          </div>
+        </div>
+      `;
+    } else {
+      const cu = snap.capacityUsage || { current: 0, max: 0 };
+      const hotList = (snap.hot || []).map(h =>
+        `<li>${escapeHtml(h.slug)}${h.pinned ? ' <span style="color:#3fb950">📌</span>' : ''}</li>`
+      ).join('');
+      const coldList = (snap.cold || []).map(c =>
+        `<li style="opacity:0.6">${escapeHtml(c.slug)}</li>`
+      ).join('');
+      target.innerHTML = `
+        <div class="cap-pop-scheduler">
+          <strong>Scheduler: <span style="color:#3fb950">已启用</span> (${cu.current}/${cu.max} hot)</strong>
+          ${hotList ? `<div class="cap-pop-help">HOT 分支:</div><ul class="cap-pop-list">${hotList}</ul>` : ''}
+          ${coldList ? `<div class="cap-pop-help">COLD 分支:</div><ul class="cap-pop-list">${coldList}</ul>` : ''}
+        </div>
+      `;
+    }
+  } catch (err) {
+    const target = document.getElementById('capPopScheduler');
+    if (target) {
+      target.innerHTML = `<div class="cap-pop-row"><em style="color:#f85149">Scheduler 查询失败: ${escapeHtml(err.message || String(err))}</em></div>`;
+    }
+  }
+}
+
+// (escapeHtml is defined later in the file and hoisted — reused by the popover above)
+
+// ── Host stats pulse (bottom-right MEM + CPU widget) ──
+//
+// Poll /api/host-stats every 5s and render compact MEM + CPU bars in the
+// bottom-right, above the Activity Monitor. Complements the header's
+// container capacity badge:
+//   - Header badge: "how many containers" (business/capacity view)
+//   - This widget: "how stressed is the host" (raw resource view)
+//
+// Hidden until the first successful fetch to avoid rendering "--".
+// Disabled entirely if CDS is unreachable (fetch silently fails, widget
+// fades out via CSS transition).
+
+let _hostStatsLastData = null;
+let _hostStatsFailCount = 0;
+
+async function pollHostStats() {
+  try {
+    const data = await api('GET', '/host-stats', null, { poll: true });
+    _hostStatsLastData = data;
+    _hostStatsFailCount = 0;
+    renderHostStats(data);
+  } catch (err) {
+    _hostStatsFailCount++;
+    // Hide widget after 3 consecutive failures (probably CDS restart in progress)
+    if (_hostStatsFailCount >= 3) {
+      const el = document.getElementById('hostStatsWidget');
+      if (el) el.classList.add('hidden');
+    }
+  }
+}
+
+function renderHostStats(data) {
+  const el = document.getElementById('hostStatsWidget');
+  if (!el) return;
+  el.classList.remove('hidden');
+
+  const memPct = data.mem?.usedPercent ?? 0;
+  const cpuPct = data.cpu?.loadPercent ?? 0;
+
+  // Memory bar
+  const memFill = document.getElementById('hsMemFill');
+  const memValue = document.getElementById('hsMemValue');
+  if (memFill) {
+    memFill.style.width = `${Math.min(memPct, 100)}%`;
+    memFill.dataset.tier = tierForPercent(memPct);
+  }
+  if (memValue) memValue.textContent = `${memPct}%`;
+
+  // CPU bar — loadPercent can exceed 100 on oversubscribed hosts, cap the fill
+  const cpuFill = document.getElementById('hsCpuFill');
+  const cpuValue = document.getElementById('hsCpuValue');
+  if (cpuFill) {
+    cpuFill.style.width = `${Math.min(cpuPct, 100)}%`;
+    cpuFill.dataset.tier = tierForPercent(cpuPct);
+  }
+  if (cpuValue) cpuValue.textContent = `${cpuPct}%`;
+
+  // Whole-widget warning if either metric is critical (>= 90%)
+  el.dataset.stress = (memPct >= 90 || cpuPct >= 90) ? '1' : '0';
+}
+
+function tierForPercent(pct) {
+  if (pct >= 90) return 'red';
+  if (pct >= 75) return 'orange';
+  if (pct >= 50) return 'blue';
+  return 'green';
+}
+
+async function showHostStatsDetails(event) {
+  event.stopPropagation();
+  const d = _hostStatsLastData;
+  if (!d) return;
+  const uptimeDays = Math.floor(d.uptimeSeconds / 86400);
+  const uptimeHours = Math.floor((d.uptimeSeconds % 86400) / 3600);
+  const uptimeMinutes = Math.floor((d.uptimeSeconds % 3600) / 60);
+  const uptimeStr = uptimeDays > 0
+    ? `${uptimeDays}d ${uptimeHours}h`
+    : uptimeHours > 0
+    ? `${uptimeHours}h ${uptimeMinutes}m`
+    : `${uptimeMinutes}m`;
+
+  openConfigModal('宿主机实时负载', `
+    <div class="cap-pop">
+      <div class="cap-pop-stats">
+        <div class="cap-pop-stat">
+          <div class="cap-pop-stat-label">内存使用</div>
+          <div class="cap-pop-stat-value">${d.mem.usedPercent}%</div>
+          <div class="cap-pop-help">${Math.round((d.mem.totalMB - d.mem.freeMB) / 1024 * 10) / 10} / ${Math.round(d.mem.totalMB / 1024 * 10) / 10} GB</div>
+        </div>
+        <div class="cap-pop-stat">
+          <div class="cap-pop-stat-label">CPU 负载</div>
+          <div class="cap-pop-stat-value">${d.cpu.loadPercent}%</div>
+          <div class="cap-pop-help">${d.cpu.loadAvg1} / ${d.cpu.cores} 核</div>
+        </div>
+        <div class="cap-pop-stat">
+          <div class="cap-pop-stat-label">系统运行</div>
+          <div class="cap-pop-stat-value">${uptimeStr}</div>
+          <div class="cap-pop-help">uptime</div>
+        </div>
+      </div>
+      <div class="cap-pop-scheduler">
+        <strong>负载历史 (loadavg)</strong>
+        <div class="cap-pop-help" style="margin-top:6px">
+          1 分钟: <strong>${d.cpu.loadAvg1}</strong> &nbsp;·&nbsp;
+          5 分钟: <strong>${d.cpu.loadAvg5}</strong> &nbsp;·&nbsp;
+          15 分钟: <strong>${d.cpu.loadAvg15}</strong>
+        </div>
+        <div class="cap-pop-help" style="margin-top:6px">
+          宿主机共 ${d.cpu.cores} 个逻辑核,loadavg > ${d.cpu.cores} 时 CPU 过载。
+        </div>
+      </div>
+      <div class="cap-pop-help">
+        这是 Node.js <code>os.totalmem()</code> + <code>os.loadavg()</code> 的实时快照,
+        每 5 秒通过 <code>/api/host-stats</code> 轮询。
+        <br>和 header 上的"容器容量"互为补充:一个看业务维度(容器数),一个看资源维度(内存/CPU)。
+      </div>
+    </div>
+  `);
 }
 
 // ── Container capacity check ──

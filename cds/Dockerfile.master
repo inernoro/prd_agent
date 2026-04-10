@@ -1,0 +1,68 @@
+# CDS Master Dockerfile (Phase 2 resilience)
+#
+# Runs the CDS Master process inside a container so that:
+#   1. Restart policies (restart=always / systemd Restart=always) auto-heal crashes
+#   2. Resource limits (--memory/--cpus) prevent Master from dragging down the host
+#   3. Filesystem isolation prevents state.json corruption from host processes
+#
+# IMPORTANT: The container needs the Docker socket mounted so CDS can manage
+# branch containers on the host. Example run command:
+#
+#   docker run -d --name cds-master \
+#     --restart always \
+#     --memory 512m --cpus 1 \
+#     -p 9900:9900 -p 5500:5500 \
+#     -v /var/run/docker.sock:/var/run/docker.sock \
+#     -v /path/to/prd_agent:/repo \
+#     -v /path/to/.cds-worktrees:/worktrees \
+#     -e CDS_REPO_ROOT=/repo \
+#     -e CDS_WORKTREE_BASE=/worktrees \
+#     -e CDS_AI_ACCESS_KEY=$AI_ACCESS_KEY \
+#     cds-master:latest
+#
+# See doc/design.cds-resilience.md Phase 2.
+
+FROM node:20-slim AS builder
+
+WORKDIR /cds
+
+# Copy manifests first for better layer caching
+COPY package.json package-lock.json* pnpm-lock.yaml* ./
+# Use npm since the existing package-lock.json is npm-flavored
+RUN npm ci --omit=dev 2>/dev/null || npm install --omit=dev
+
+# Copy source and build
+COPY tsconfig.json ./
+COPY src ./src
+RUN npm install --save-dev typescript @types/node @types/express @types/js-yaml \
+ && npx tsc
+
+# ── Runtime image ──
+FROM node:20-slim
+
+# Install docker CLI + git (CDS shells out to both)
+# docker.io package provides the client binary without the daemon
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends \
+      docker.io \
+      git \
+      ca-certificates \
+      curl \
+ && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /cds
+
+COPY --from=builder /cds/node_modules ./node_modules
+COPY --from=builder /cds/dist ./dist
+COPY --from=builder /cds/package.json ./package.json
+COPY web ./web
+
+# Ports: 9900 = Master dashboard API, 5500 = Worker proxy
+EXPOSE 9900 5500
+
+# Healthcheck hits the /healthz endpoint (added in server.ts)
+HEALTHCHECK --interval=30s --timeout=5s --retries=3 --start-period=10s \
+  CMD curl -sf http://localhost:9900/healthz || exit 1
+
+# Run the compiled index.js directly
+CMD ["node", "dist/index.js"]

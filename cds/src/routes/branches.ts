@@ -9,6 +9,7 @@ import { StateService } from '../services/state.js';
 import type { WorktreeService } from '../services/worktree.js';
 import { resolveProfileWithMode } from '../services/container.js';
 import type { ContainerService } from '../services/container.js';
+import type { SchedulerService } from '../services/scheduler.js';
 import type { BranchEntry, CdsConfig, IShellExecutor, OperationLog, OperationLogEvent, BuildProfile, RoutingRule, ServiceState, InfraService, DataMigration, MongoConnectionConfig } from '../types.js';
 import { discoverComposeFiles, parseComposeFile, parseComposeString, toComposeYaml, parseCdsCompose, toCdsCompose } from '../services/compose-parser.js';
 import type { ComposeServiceDef } from '../services/compose-parser.js';
@@ -21,6 +22,8 @@ export interface RouterDeps {
   containerService: ContainerService;
   shell: IShellExecutor;
   config: CdsConfig;
+  /** Optional warm-pool scheduler (v3.1). When absent, scheduler API returns disabled. */
+  schedulerService?: SchedulerService;
 }
 
 export function createBranchRouter(deps: RouterDeps): Router {
@@ -30,6 +33,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
     containerService,
     shell,
     config,
+    schedulerService,
   } = deps;
 
   const router = Router();
@@ -83,6 +87,30 @@ export function createBranchRouter(deps: RouterDeps): Router {
     try {
       res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
     } catch { /* client disconnected */ }
+  }
+
+  /**
+   * Compute current container capacity status.
+   * Returns `current / max` — when `current >= max` the host is considered
+   * over-subscribed and the caller should warn (or, with scheduler enabled,
+   * trigger LRU eviction before spawning new containers).
+   *
+   * Duplicates the logic in `GET /branches` so deploy-time decisions don't
+   * depend on the client having fetched capacity first.
+   * See doc/design.cds-resilience.md §四.1.
+   */
+  function computeCapacity(): { current: number; max: number; totalMemGB: number } {
+    const totalMemGB = Math.round(os.totalmem() / (1024 * 1024 * 1024));
+    const max = Math.max(2, (totalMemGB - 1) * 2);
+    let current = 0;
+    for (const b of stateService.getAllBranches()) {
+      for (const svc of Object.values(b.services)) {
+        if (svc.status === 'running' || svc.status === 'building' || svc.status === 'starting') {
+          current++;
+        }
+      }
+    }
+    return { current, max, totalMemGB };
   }
 
   /** Write deploy event to stdout (captured by cds.log when running in background) */
@@ -341,6 +369,19 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
     try {
       logDeploy(id, '开始部署');
+
+      // ── Capacity check (v3.1) ──
+      // Emit a warning if the host is already over-subscribed. When the
+      // warm-pool scheduler is enabled it will evict LRU branches automatically;
+      // when it's disabled (default) the warning is the user's only signal
+      // that they're at risk of OOM. Non-blocking so disabled setups keep
+      // their existing behavior.
+      const cap = computeCapacity();
+      if (cap.current >= cap.max) {
+        const msg = `容量超售: ${cap.current}/${cap.max} 容器 (${cap.totalMemGB}GB 宿主机). 建议启用 scheduler 或手动停止部分分支容器.`;
+        logEvent({ step: 'capacity-warn', status: 'warning', title: msg, timestamp: new Date().toISOString() });
+        logDeploy(id, `⚠ ${msg}`);
+      }
 
       // Clear previous error state on new deploy
       entry.errorMessage = undefined;
@@ -3275,22 +3316,121 @@ export function createBranchRouter(deps: RouterDeps): Router {
       // but macOS process group kill behaves differently from Linux.
       // Self-exit is more reliable: we release the port, then exec_cds.sh
       // finds it free and starts the new process cleanly.
+      //
+      // ⚠ We capture stdout/stderr to a log file instead of `stdio: 'ignore'`
+      // so that silent spawn failures (e.g., exec_cds.sh not understanding an
+      // argument) leave a forensic trail. Without this, the whole CDS cluster
+      // goes dark with no clue why.
       setTimeout(() => {
         const cdsDir = path.join(repoRoot, 'cds');
-        const child = spawn('bash', ['./exec_cds.sh', '--background'], {
-          cwd: cdsDir,
-          detached: true,
-          stdio: 'ignore',
-          env: { ...process.env },
-        });
-        child.unref();
-        // Exit ourselves after a brief delay to ensure the child is running
-        setTimeout(() => process.exit(0), 1000);
+        const errorLogPath = path.join(cdsDir, '.cds', 'self-update-error.log');
+        try {
+          // Ensure directory exists
+          fs.mkdirSync(path.dirname(errorLogPath), { recursive: true });
+          const stamp = new Date().toISOString();
+          fs.appendFileSync(errorLogPath, `\n=== self-update spawn at ${stamp} (branch=${branch || '(same)'}) ===\n`);
+
+          const out = fs.openSync(errorLogPath, 'a');
+          const errFd = fs.openSync(errorLogPath, 'a');
+          const child = spawn('bash', ['./exec_cds.sh', 'daemon'], {
+            cwd: cdsDir,
+            detached: true,
+            stdio: ['ignore', out, errFd],
+            env: { ...process.env },
+          });
+          child.on('error', (err) => {
+            fs.appendFileSync(errorLogPath, `spawn error: ${err.message}\n`);
+          });
+          child.unref();
+
+          // Exit ourselves after a brief delay so exec_cds.sh can bind the port.
+          // If the new process failed to start, the next admin to hit CDS will
+          // see an empty upstream — and will find a forensic trail in
+          // .cds/self-update-error.log.
+          setTimeout(() => process.exit(0), 1000);
+        } catch (spawnErr) {
+          // Something went wrong before spawn; write it out and still exit
+          // (caller already received 'done' SSE; they're expecting restart).
+          try {
+            fs.appendFileSync(errorLogPath, `pre-spawn error: ${(spawnErr as Error).message}\n`);
+          } catch { /* can't log either; give up silently */ }
+          setTimeout(() => process.exit(1), 500);
+        }
       }, 500);
     } catch (err) {
       send('error', 'error', `更新失败: ${(err as Error).message}`);
       sendSSE(res, 'error', { message: (err as Error).message });
       res.end();
+    }
+  });
+
+  // ─────────────────────────────────────────────────────────────────────
+  // Warm-pool scheduler API (v3.1)
+  // See doc/design.cds-resilience.md §九.
+  // When schedulerService is not wired in, these endpoints return a
+  // consistent "disabled" payload so Dashboard UIs can degrade gracefully.
+  // ─────────────────────────────────────────────────────────────────────
+
+  router.get('/scheduler/state', (_req, res) => {
+    if (!schedulerService) {
+      res.json({
+        enabled: false,
+        config: null,
+        hot: [],
+        cold: [],
+        capacityUsage: { current: 0, max: 0 },
+      });
+      return;
+    }
+    res.json(schedulerService.getSnapshot());
+  });
+
+  router.post('/scheduler/pin/:slug', (req, res) => {
+    if (!schedulerService) {
+      res.status(503).json({ error: 'Scheduler not enabled' });
+      return;
+    }
+    try {
+      schedulerService.pin(req.params.slug);
+      res.json({ ok: true, slug: req.params.slug, pinned: true });
+    } catch (err) {
+      res.status(404).json({ error: (err as Error).message });
+    }
+  });
+
+  router.post('/scheduler/unpin/:slug', (req, res) => {
+    if (!schedulerService) {
+      res.status(503).json({ error: 'Scheduler not enabled' });
+      return;
+    }
+    try {
+      schedulerService.unpin(req.params.slug);
+      res.json({ ok: true, slug: req.params.slug, pinned: false });
+    } catch (err) {
+      res.status(404).json({ error: (err as Error).message });
+    }
+  });
+
+  router.post('/scheduler/cool/:slug', async (req, res) => {
+    if (!schedulerService) {
+      res.status(503).json({ error: 'Scheduler not enabled' });
+      return;
+    }
+    const slug = req.params.slug;
+    const branch = stateService.getBranch(slug);
+    if (!branch) {
+      res.status(404).json({ error: `分支 "${slug}" 不存在` });
+      return;
+    }
+    if (schedulerService.isPinned(branch)) {
+      res.status(409).json({ error: `分支 "${slug}" 已固定,无法手动休眠` });
+      return;
+    }
+    try {
+      await schedulerService.markCold(slug);
+      res.json({ ok: true, slug, heatState: 'cold' });
+    } catch (err) {
+      res.status(500).json({ error: (err as Error).message });
     }
   });
 

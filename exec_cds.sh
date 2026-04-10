@@ -195,7 +195,7 @@ show_help() {
 CMD="${1:-daemon}"
 
 case "$CMD" in
-  start|daemon) start_daemon ;;
+  start|daemon|--background) start_daemon ;;
   dev)     start_dev ;;
   fg)      start_foreground ;;
   stop)    stop_cds ;;

@@ -4,14 +4,17 @@
 import { Router } from 'express';
 import type { CdsConfig } from '../types.js';
 import type { ExecutorRegistry } from './executor-registry.js';
+import type { BranchDispatcher, DispatchStrategy } from './dispatcher.js';
 
 export interface SchedulerRouterDeps {
   registry: ExecutorRegistry;
   config: CdsConfig;
+  /** Optional branch dispatcher (Phase 3). Absent = dispatch endpoint returns 503. */
+  dispatcher?: BranchDispatcher;
 }
 
 export function createSchedulerRouter(deps: SchedulerRouterDeps): Router {
-  const { registry, config } = deps;
+  const { registry, config, dispatcher } = deps;
   const router = Router();
 
   // ── Auth middleware: verify executor token ──
@@ -88,6 +91,39 @@ export function createSchedulerRouter(deps: SchedulerRouterDeps): Router {
     }
     node.status = 'draining';
     res.json({ node });
+  });
+
+  // ── POST /api/executors/dispatch/:branch — capacity-aware branch dispatch (Phase 3) ──
+  // Body: { strategy?: 'capacity-aware' | 'least-branches' }
+  // Returns the selected executor (does NOT trigger deploy — caller is responsible)
+  router.post('/dispatch/:branch', async (req, res) => {
+    if (!dispatcher) {
+      res.status(503).json({ error: 'Dispatcher not available (scheduler mode not enabled)' });
+      return;
+    }
+    const { branch } = req.params;
+    const strategy = ((req.body as { strategy?: DispatchStrategy })?.strategy) || 'capacity-aware';
+    try {
+      const result = await dispatcher.selectExecutorForBranch(branch, strategy);
+      if (!result.executor) {
+        res.status(503).json({ error: result.reason, snapshots: result.snapshots });
+        return;
+      }
+      res.json({
+        branch,
+        strategy,
+        selected: result.executor,
+        reason: result.reason,
+        snapshots: result.snapshots?.map(p => ({
+          executorId: p.executor.id,
+          host: p.executor.host,
+          snapshot: p.snapshot,
+          fetchError: p.fetchError,
+        })),
+      });
+    } catch (err) {
+      res.status(500).json({ error: (err as Error).message });
+    }
   });
 
   return router;

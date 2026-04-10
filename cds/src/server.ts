@@ -1,5 +1,6 @@
 import express from 'express';
 import crypto from 'node:crypto';
+import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createBranchRouter } from './routes/branches.js';
@@ -9,6 +10,7 @@ import type { WorktreeService } from './services/worktree.js';
 import type { ContainerService } from './services/container.js';
 import type { ProxyService } from './services/proxy.js';
 import type { BridgeService } from './services/bridge.js';
+import type { SchedulerService } from './services/scheduler.js';
 import type { CdsConfig, IShellExecutor } from './types.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -21,6 +23,8 @@ export interface ServerDeps {
   bridgeService: BridgeService;
   shell: IShellExecutor;
   config: CdsConfig;
+  /** Optional warm-pool scheduler (v3.1). */
+  schedulerService?: SchedulerService;
 }
 
 function makeToken(user: string, pass: string): string {
@@ -228,6 +232,99 @@ export function createServer(deps: ServerDeps): express.Express {
   app.use(express.json());
 
   const webDir = path.resolve(__dirname, '..', 'web');
+
+  // ── Liveness / readiness probe (public, no auth) ──
+  // Used by:
+  //   1. Dockerfile HEALTHCHECK
+  //   2. Nginx upstream health check
+  //   3. systemd WatchdogSec (future)
+  //   4. Load balancer active health probes
+  //
+  // Returns 200 when CDS can read its state file AND reach the Docker socket.
+  // Returns 503 on either failure so upstream knows to avoid this instance.
+  // See doc/design.cds-resilience.md Phase 2.
+  app.get('/healthz', async (_req, res) => {
+    const checks: Record<string, { ok: boolean; detail?: string }> = {};
+    let overallOk = true;
+
+    // Check 1: state readable
+    try {
+      const state = deps.stateService.getState();
+      checks.state = {
+        ok: true,
+        detail: `branches=${Object.keys(state.branches).length}`,
+      };
+    } catch (err) {
+      checks.state = { ok: false, detail: (err as Error).message };
+      overallOk = false;
+    }
+
+    // Check 2: docker reachable (use a lightweight `docker version --format` call)
+    try {
+      const result = await deps.shell.exec('docker version --format "{{.Server.Version}}"', { timeout: 3000 });
+      checks.docker = {
+        ok: result.exitCode === 0,
+        detail: result.exitCode === 0 ? result.stdout.trim() : result.stderr.trim(),
+      };
+      if (result.exitCode !== 0) overallOk = false;
+    } catch (err) {
+      checks.docker = { ok: false, detail: (err as Error).message };
+      overallOk = false;
+    }
+
+    res.status(overallOk ? 200 : 503).json({
+      ok: overallOk,
+      checks,
+      timestamp: new Date().toISOString(),
+    });
+  });
+
+  // ── Host stats (public, no auth) — real-time host memory + CPU ──
+  //
+  // Used by the Dashboard footer widget for a "pulse" display of the machine
+  // beneath CDS. Separate from /api/branches `capacity` field which only
+  // knows container count, not host memory/CPU load.
+  //
+  // Returned fields:
+  //   mem.totalMB       — os.totalmem() / 1024 / 1024
+  //   mem.freeMB        — os.freemem() / 1024 / 1024 (NOT "available" — kernel-specific)
+  //   mem.usedPercent   — (total - free) / total × 100
+  //   cpu.cores         — os.cpus().length
+  //   cpu.loadAvg1      — 1-minute load average (unix only; 0 on Windows)
+  //   cpu.loadPercent   — loadAvg1 / cores × 100 (rough "how busy is the CPU")
+  //   uptimeSeconds     — os.uptime()
+  //
+  // Polled by the frontend every 5s. Cheap enough to not need caching.
+  // See doc/design.cds-resilience.md §八.
+  app.get('/api/host-stats', (_req, res) => {
+    const totalBytes = os.totalmem();
+    const freeBytes = os.freemem();
+    const usedBytes = totalBytes - freeBytes;
+    const totalMB = Math.round(totalBytes / (1024 * 1024));
+    const freeMB = Math.round(freeBytes / (1024 * 1024));
+    const usedPercent = totalBytes > 0 ? Math.round((usedBytes / totalBytes) * 100) : 0;
+
+    const cores = os.cpus().length || 1;
+    const loadAvg = os.loadavg(); // [1m, 5m, 15m] — 0 on Windows
+    const loadPercent = Math.round((loadAvg[0] / cores) * 100);
+
+    res.json({
+      mem: {
+        totalMB,
+        freeMB,
+        usedPercent,
+      },
+      cpu: {
+        cores,
+        loadAvg1: Number(loadAvg[0].toFixed(2)),
+        loadAvg5: Number(loadAvg[1].toFixed(2)),
+        loadAvg15: Number(loadAvg[2].toFixed(2)),
+        loadPercent,
+      },
+      uptimeSeconds: Math.round(os.uptime()),
+      timestamp: new Date().toISOString(),
+    });
+  });
 
   // ── Switch domain middleware (before auth) ──
   const switchDomain = deps.config.switchDomain?.toLowerCase();
