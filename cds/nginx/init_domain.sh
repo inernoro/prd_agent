@@ -90,6 +90,13 @@ sed \
   -e "s/{{MASTER_PORT}}/${DASHBOARD_PORT}/g" \
   "${SCRIPT_DIR}/cds-nginx.conf.template" > "${SCRIPT_DIR}/cds-nginx.conf"
 
+sed \
+  -e "s/{{MAIN_DOMAIN}}/${MAIN_DOMAIN}/g" \
+  -e "s/{{PREVIEW_DOMAIN}}/${PREVIEW_DOMAIN}/g" \
+  -e "s/{{WORKER_PORT}}/${WORKER_PORT}/g" \
+  -e "s/{{MASTER_PORT}}/${DASHBOARD_PORT}/g" \
+  "${SCRIPT_DIR}/cds-nginx.http.conf.template" > "${SCRIPT_DIR}/cds-nginx.http.conf"
+
 cp "${SCRIPT_DIR}/nginx.conf.template" "${SCRIPT_DIR}/nginx.conf"
 
 sed \
@@ -101,4 +108,5 @@ chmod +x "${SCRIPT_DIR}/acme_apply.sh"
 echo "已生成:"
 echo "  ${SCRIPT_DIR}/nginx.conf"
 echo "  ${SCRIPT_DIR}/cds-nginx.conf"
+echo "  ${SCRIPT_DIR}/cds-nginx.http.conf"
 echo "  ${SCRIPT_DIR}/acme_apply.sh"

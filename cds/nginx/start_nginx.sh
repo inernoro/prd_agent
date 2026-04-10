@@ -5,6 +5,7 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 CONFIG_FILE="${SCRIPT_DIR}/domain.env"
 COMPOSE_TEMPLATE="${SCRIPT_DIR}/nginx.compose.template.yml"
 COMPOSE_FILE="${SCRIPT_DIR}/nginx.compose.yml"
+SERVER_CONF_FILE="cds-nginx.conf"
 
 usage() {
   cat <<'EOF'
@@ -44,10 +45,16 @@ set -a
 set +a
 
 NGINX_CONTAINER="${NGINX_CONTAINER:-nginx_miduo}"
+MAIN_DOMAIN="${MAIN_DOMAIN:-}"
+
+has_cert() {
+  [ -f "${SCRIPT_DIR}/certs/${MAIN_DOMAIN}.crt" ] && [ -f "${SCRIPT_DIR}/certs/${MAIN_DOMAIN}.key" ]
+}
 
 render_compose() {
   sed \
     -e "s|__NGINX_CONTAINER__|${NGINX_CONTAINER}|g" \
+    -e "s|__SERVER_CONF_FILE__|${SERVER_CONF_FILE}|g" \
     "$COMPOSE_TEMPLATE" > "$COMPOSE_FILE"
 }
 
@@ -58,6 +65,17 @@ ensure_rendered() {
     exit 1
   fi
   mkdir -p "${SCRIPT_DIR}/certs" "${SCRIPT_DIR}/www/.well-known/acme-challenge"
+  if has_cert; then
+    SERVER_CONF_FILE="cds-nginx.conf"
+  else
+    SERVER_CONF_FILE="cds-nginx.http.conf"
+    if [ ! -f "${SCRIPT_DIR}/${SERVER_CONF_FILE}" ]; then
+      echo "ERROR: 缺少 HTTP bootstrap 配置: ${SCRIPT_DIR}/${SERVER_CONF_FILE}"
+      echo "请先执行: ${SCRIPT_DIR}/init_domain.sh"
+      exit 1
+    fi
+    echo "No certificate found for ${MAIN_DOMAIN}, starting nginx in HTTP bootstrap mode."
+  fi
   render_compose
 }
 
