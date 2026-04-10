@@ -199,6 +199,17 @@ export function PrReviewPrismPage() {
     }
     return list;
   }, [normalizedSelectedRepo, observedRepos, recentRepos]);
+  const recentRepoList = useMemo(() => recentRepos.filter(isValidRepoKey).slice(0, 6), [recentRepos]);
+  const currentRepoParamsPreview = useMemo(() => {
+    if (!normalizedSelectedRepo) {
+      return null;
+    }
+    const params = repoWorkspaceParamsMap[normalizedSelectedRepo];
+    if (!params) {
+      return null;
+    }
+    return params;
+  }, [normalizedSelectedRepo, repoWorkspaceParamsMap]);
   const repoScopedBootstrapCommand = useMemo(() => {
     if (!isBindingRepoValid) {
       return bootstrapInitCommand;
@@ -902,6 +913,29 @@ ${repoBindingSnippet}
     );
   }
 
+  function applyWorkspaceRepo(repo: string) {
+    const normalizedRepo = normalizeRepoKey(repo);
+    if (!isValidRepoKey(normalizedRepo)) {
+      return;
+    }
+    setSelectedRepo(normalizedRepo);
+    setBindingRepoInput(normalizedRepo);
+    touchRecentRepo(normalizedRepo);
+    const params = repoWorkspaceParamsMap[normalizedRepo];
+    if (params) {
+      setOwnerInput(params.owner || defaultRepoOwner);
+      setContextInput(params.context || defaultRepoContext);
+      setAnchorInput(params.anchorId || defaultRepoAnchorId);
+      setSetupActionMessage(
+        `已切换到 ${normalizedRepo}，并恢复 owner/context/anchor 参数`
+      );
+    } else {
+      setSetupActionMessage(`已切换到 ${normalizedRepo}，该仓库暂无已保存参数`);
+    }
+    void loadList(1, search.trim() || undefined, pageSize, activeGateFilter, normalizedRepo);
+    void loadSetupStatus();
+  }
+
   return (
     <div className="max-w-6xl mx-auto px-4 py-8">
       <button
@@ -930,8 +964,37 @@ ${repoBindingSnippet}
       <div className="grid grid-cols-1 lg:grid-cols-[260px_1fr] gap-4 mb-5">
         <div className="rounded-xl p-4 border border-white/10 bg-white/[0.03]">
           <p className="text-sm font-medium text-white mb-3">我的仓库（可切换）</p>
+          {recentRepoList.length > 0 && (
+            <div className="mb-3 rounded-lg border border-white/10 bg-white/5 p-2">
+              <p className="text-[11px] text-white/60 mb-1">最近仓库（快速恢复参数）</p>
+              <div className="flex flex-wrap gap-1.5">
+                {recentRepoList.map(repo => (
+                  <button
+                    key={`recent-${repo}`}
+                    type="button"
+                    onClick={() => applyWorkspaceRepo(repo)}
+                    className={`rounded border px-2 py-1 text-[11px] whitespace-nowrap ${
+                      normalizedSelectedRepo === repo
+                        ? 'border-violet-400/50 bg-violet-500/15 text-violet-200'
+                        : 'border-white/15 bg-white/10 text-white/80 hover:bg-white/15'
+                    }`}
+                    title="切换并恢复该仓库参数"
+                  >
+                    {repo}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
           {normalizedSelectedRepo && (
             <p className="text-[11px] text-violet-200/80 mb-2 break-all">当前仓库：{normalizedSelectedRepo}</p>
+          )}
+          {currentRepoParamsPreview && (
+            <div className="mb-2 rounded border border-violet-400/20 bg-violet-500/10 px-2 py-1 text-[11px] text-violet-100">
+              参数：owner={currentRepoParamsPreview.owner || defaultRepoOwner} / context=
+              {currentRepoParamsPreview.context || defaultRepoContext} / anchor=
+              {currentRepoParamsPreview.anchorId || defaultRepoAnchorId}
+            </div>
           )}
           {normalizedSelectedRepo && (
             <div className="mb-2">
@@ -954,21 +1017,7 @@ ${repoBindingSnippet}
               <button
                 key={repo}
                 type="button"
-                onClick={() => {
-                  const normalizedRepo = repo.toLowerCase();
-                  setSelectedRepo(normalizedRepo);
-                  setBindingRepoInput(normalizedRepo);
-                  touchRecentRepo(normalizedRepo);
-                  const params = repoWorkspaceParamsMap[normalizedRepo];
-                  if (params) {
-                    setOwnerInput(params.owner || 'your-github-id');
-                    setContextInput(params.context || 'engineering-governance');
-                    setAnchorInput(params.anchorId || 'ANCHOR-CORE-01');
-                  }
-                  setSetupActionMessage(null);
-                  void loadList(1, search.trim() || undefined, pageSize, activeGateFilter, normalizedRepo);
-                  void loadSetupStatus();
-                }}
+                onClick={() => applyWorkspaceRepo(repo)}
                 className={`w-full text-left rounded-lg border px-2.5 py-2 text-xs whitespace-nowrap ${
                   (normalizedSelectedRepo || normalizedBindingRepo.toLowerCase()) === repo.toLowerCase()
                     ? 'border-violet-400/50 bg-violet-500/15 text-violet-200'

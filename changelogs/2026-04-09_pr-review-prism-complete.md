@@ -33,6 +33,7 @@
 | feat | prd-api | PR审查棱镜 setup-status 支持 repo 参数按仓库校验绑定状态，并返回 targetRepo/match 信息 |
 | fix | prd-api | PR审查棱镜集成测试新增 setup-status 仓库参数与 bootstrap-skill-package 鉴权/入参/zip 响应覆盖 |
 | feat | prd-admin | PR审查棱镜页面新增“我的仓库”切换、仓库级 setup-status 检查与仓库专属 Skill 包导出入口 |
+| feat | prd-admin | PR审查棱镜新增“最近仓库”可视化快捷区与“切换并恢复参数”按钮，降低多仓库切换学习成本 |
 | feat | prd-api | PR审查棱镜 submissions 列表新增 repo 参数过滤与回显，支持 owner/repo 或 PR URL 格式 |
 | fix | prd-api | PR审查棱镜集成测试新增 submissions repo 过滤场景，验证跨仓库结果隔离与回显字段 |
 | feat | prd-admin | PR审查棱镜支持仓库工作区持久化：最近仓库快捷切换、按仓库过滤列表、按仓库记忆 owner/context/anchor 参数 |
