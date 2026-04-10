@@ -4,8 +4,8 @@
 #
 # 功能：
 #   1. 交互式收集配置（账号密码、域名等）
-#   2. 写入 ~/.bashrc（CDS 系统层环境变量）
-#   3. 生成 CDS 自带 Nginx 配置、Compose 与证书脚本
+#   2. 写入 cds/.cds.env（唯一用户配置入口）
+#   3. 自动生成 CDS 自带 Nginx 配置、Compose 与证书脚本
 #
 # 用法：
 #   ./exec_setup.sh              # 交互式配置
@@ -17,7 +17,6 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 TEMPLATE_DIR="$SCRIPT_DIR/nginx"
-BASHRC="$HOME/.bashrc"
 LOCAL_ENV_FILE="$SCRIPT_DIR/.cds.env"
 NGINX_DIR="$SCRIPT_DIR/nginx"
 NGINX_DOMAIN_ENV="$NGINX_DIR/domain.env"
@@ -35,7 +34,7 @@ ok()    { echo -e "${GREEN}[OK]${NC} $*"; }
 warn()  { echo -e "${YELLOW}[WARN]${NC} $*"; }
 err()   { echo -e "${RED}[ERROR]${NC} $*"; }
 
-# ── Helper: read current value from local env / bashrc ──
+# ── Helper: read current value from local env / legacy env ──
 get_config_var() {
     local var_name="$1"
     local val=""
@@ -46,7 +45,7 @@ get_config_var() {
         printf '%s\n' "$val"
         return 0
     fi
-    grep "^export ${var_name}=" "$BASHRC" 2>/dev/null | tail -1 | sed "s/^export ${var_name}=\"\(.*\)\"/\1/" || echo ""
+    printf '%s\n' "${!var_name:-}"
 }
 
 # ── Helper: prompt with default ──
@@ -127,6 +126,7 @@ generate_nginx() {
     local worker_port="${5:-5500}"
     local master_port="${6:-9900}"
     local output_dir="${7:-$SCRIPT_DIR/nginx}"
+    local source_env="${8:-$LOCAL_ENV_FILE}"
     local domain_env="${output_dir}/domain.env"
     local tls_domains
 
@@ -138,6 +138,8 @@ generate_nginx() {
     mkdir -p "${output_dir}/certs" "${output_dir}/www/.well-known/acme-challenge"
 
     cat > "$domain_env" <<EOF
+# internal generated file; edit cds/.cds.env then rerun ./exec_setup.sh or ./exec_cds.sh nginx render
+# source: ${source_env}
 MAIN_DOMAIN="${main_domain}"
 SWITCH_DOMAIN="${switch_domain}"
 DASHBOARD_DOMAIN="${dashboard_domain}"
@@ -223,7 +225,7 @@ main() {
             dashboard=$(get_config_var "CDS_DASHBOARD_DOMAIN")
             [ -z "$dashboard" ] && dashboard=$(get_config_var "DASHBOARD_DOMAIN")
             [ -z "$dashboard" ] && dashboard="cds.${domain}"
-            generate_nginx "$domain" "$preview" "$switch" "$dashboard"
+            generate_nginx "$domain" "$preview" "$switch" "$dashboard" "5500" "9900" "$NGINX_DIR" "$LOCAL_ENV_FILE"
             return 0
             ;;
     esac
@@ -310,7 +312,7 @@ main() {
     write_local_env "$new_user" "$new_pass" "$new_jwt" "$new_switch" "$new_main" "$new_preview" "$new_dashboard"
 
     info "生成 Nginx 配置 ..."
-    generate_nginx "$new_main" "$new_preview" "$new_switch" "$new_dashboard"
+    generate_nginx "$new_main" "$new_preview" "$new_switch" "$new_dashboard" "5500" "9900" "$NGINX_DIR" "$LOCAL_ENV_FILE"
 
     echo ""
     echo "  ════════════════════════════════"
@@ -318,9 +320,9 @@ main() {
     echo "  ════════════════════════════════"
     echo ""
     echo "  下一步："
-    echo "    1. 启动 Nginx: cd $NGINX_DIR && ./start_nginx.sh"
-    echo "    2. 如需证书: cd $NGINX_DIR && ./acme_apply.sh"
-    echo "    3. cd $SCRIPT_DIR && ./exec_cds.sh"
+    echo "    1. 启动 CDS 与 Nginx: cd $SCRIPT_DIR && ./exec_cds.sh"
+    echo "    2. 如需签发证书:      cd $SCRIPT_DIR && ./exec_cds.sh cert"
+    echo "    3. 查看 Nginx 状态:   cd $SCRIPT_DIR && ./exec_cds.sh nginx status"
     echo "    4. 访问 https://${new_dashboard}"
     echo ""
 }

@@ -13,7 +13,8 @@ Usage:
   ./nginx/init_domain.sh --config /path/to/domain.env
 
 作用:
-  - 从 domain.env 生成 nginx.conf / cds-nginx.conf / acme_apply.sh
+  - 从内部 domain.env 生成 nginx.conf / cds-nginx.conf / acme_apply.sh
+  - 正常使用请在 cds 根目录执行: ./exec_cds.sh nginx render
 EOF
 }
 
@@ -40,8 +41,8 @@ while [ $# -gt 0 ]; do
 done
 
 if [ ! -f "$CONFIG_FILE" ]; then
-  echo "ERROR: 配置文件不存在: $CONFIG_FILE"
-  echo "先执行: cp ${SCRIPT_DIR}/domain.env.example ${SCRIPT_DIR}/domain.env"
+  echo "ERROR: 内部配置文件不存在: $CONFIG_FILE"
+  echo "请回到 cds 根目录执行: ./exec_setup.sh"
   exit 1
 fi
 
