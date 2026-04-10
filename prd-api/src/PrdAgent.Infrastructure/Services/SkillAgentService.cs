@@ -248,6 +248,70 @@ public class SkillAgentService
         return await _skillService.CreatePersonalSkillAsync(userId, session.SkillDraft);
     }
 
+    // ━━━ Skill Auto-Test (post-save evaluation loop) ━━━━━━━━
+
+    /// <summary>
+    /// Auto-test after save: generate a test input based on skill intent, then run the skill with it.
+    /// Returns SSE stream: test_input event → typing events → done event.
+    /// </summary>
+    public async IAsyncEnumerable<SseChunk> AutoTestAfterSaveAsync(SkillAgentSession session, string userId)
+    {
+        if (session.SkillDraft == null) yield break;
+        var skill = session.SkillDraft;
+
+        // Step 1: Generate a realistic test input
+        yield return new SseChunk("phase", new { message = "正在构思测试场景…" });
+
+        var testInput = await GenerateTestInputAsync(skill, session.Intent ?? "", userId);
+        yield return new SseChunk("test_input", new { input = testInput });
+
+        // Step 2: Run the skill with the test input
+        yield return new SseChunk("phase", new { message = "正在用测试内容试跑技能…" });
+
+        await foreach (var chunk in TestSkillAsync(skill, testInput, userId))
+        {
+            yield return chunk;
+        }
+    }
+
+    /// <summary>
+    /// Use LLM to generate a realistic test input that matches the skill's intent.
+    /// </summary>
+    private async Task<string> GenerateTestInputAsync(Skill skill, string intent, string userId)
+    {
+        var appCallerCode = AppCallerRegistry.SkillAgent.Guide.Chat;
+        var requestId = Guid.NewGuid().ToString();
+
+        using var _ = _llmRequestContext.BeginScope(new LlmRequestContext(
+            RequestId: requestId,
+            GroupId: null,
+            SessionId: null,
+            UserId: userId,
+            ViewRole: null,
+            DocumentChars: null,
+            DocumentHash: null,
+            SystemPromptRedacted: "skill-agent-gen-test-input",
+            RequestType: "skill-agent-gen-test-input",
+            AppCallerCode: appCallerCode));
+
+        var llmClient = _gateway.CreateClient(appCallerCode, "chat", maxTokens: 1024, temperature: 0.6);
+
+        var systemPrompt = "你是一个测试数据生成器。用户给你一个技能的描述和指令模板，你需要生成一段逼真的测试输入内容。" +
+                           "要求：内容要像真实用户会输入的（有细节、有上下文、不是抽象占位符），长度适中（100-300字），直接输出内容本身，不要加任何解释。";
+
+        var userContent = $"技能名称：{skill.Title}\n意图：{intent}\n指令模板：\n{skill.Execution.PromptTemplate}";
+        var messages = new List<LLMMessage> { new() { Role = "user", Content = userContent } };
+
+        var result = new StringBuilder();
+        await foreach (var chunk in llmClient.StreamGenerateAsync(systemPrompt, messages, false, CancellationToken.None))
+        {
+            if (chunk.Type == "delta" && !string.IsNullOrEmpty(chunk.Content))
+                result.Append(chunk.Content);
+        }
+
+        return result.ToString().Trim();
+    }
+
     // ━━━ Skill Test ━━━━━━━━
 
     /// <summary>

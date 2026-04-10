@@ -174,6 +174,36 @@ public class SkillAgentController : ControllerBase
     }
 
     /// <summary>
+    /// 保存后自动试跑：生成测试输入 → 运行技能 → SSE 流式返回
+    /// </summary>
+    [HttpPost("sessions/{sessionId}/auto-test")]
+    [Produces("text/event-stream")]
+    public async Task AutoTest(string sessionId)
+    {
+        var userId = GetUserId();
+
+        if (!Sessions.TryGetValue(sessionId, out var session) || session.UserId != userId)
+        {
+            Response.StatusCode = 404;
+            return;
+        }
+
+        if (session.SkillDraft == null)
+        {
+            Response.StatusCode = 400;
+            return;
+        }
+
+        Response.ContentType = "text/event-stream; charset=utf-8";
+        Response.Headers.CacheControl = "no-cache";
+
+        await foreach (var chunk in _service.AutoTestAfterSaveAsync(session, userId))
+        {
+            await WriteSseEvent(chunk.Event, chunk.Data);
+        }
+    }
+
+    /// <summary>
     /// 导出为 SKILL.md
     /// </summary>
     [HttpGet("sessions/{sessionId}/export/md")]

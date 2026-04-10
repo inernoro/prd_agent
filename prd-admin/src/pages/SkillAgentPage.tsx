@@ -128,6 +128,10 @@ function CreateTab() {
   const [saving, setSaving] = useState(false);
   const [exporting, setExporting] = useState(false);
   const [saved, setSaved] = useState(false);
+  // Auto-test state
+  const [autoTestInput, setAutoTestInput] = useState<string | null>(null);
+  const [autoTestResult, setAutoTestResult] = useState('');
+  const [autoTestPhase, setAutoTestPhase] = useState<string | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
@@ -153,6 +157,25 @@ function CreateTab() {
       },
     },
   });
+
+  // Auto-test SSE stream (separate from chat)
+  const { typing: testTyping, isStreaming: testStreaming, start: startAutoTest } = useSseStream({
+    url: '',
+    method: 'POST',
+    onEvent: {
+      phase: (raw: unknown) => {
+        const d = raw as { message?: string };
+        if (d.message) setAutoTestPhase(d.message);
+      },
+      test_input: (raw: unknown) => {
+        const d = raw as { input?: string };
+        if (d.input) setAutoTestInput(d.input);
+      },
+    },
+  });
+
+  // Accumulate auto-test typing
+  useEffect(() => { if (testTyping) setAutoTestResult(testTyping); }, [testTyping]);
 
   // Accumulate typing into the last assistant message, filtering out JSON blocks
   useEffect(() => {
@@ -211,9 +234,24 @@ function CreateTab() {
       const res = await saveSkillFromAgent(sessionId);
       if (res.success && res.data) {
         setSaved(true);
-        setMessages((prev) => [...prev, { role: 'system', content: res.data.message }]);
+        setMessages((prev) => [...prev, { role: 'system', content: res.data.message + '\n\n正在自动试跑效果…' }]);
+        // Trigger auto-test
+        setAutoTestInput(null);
+        setAutoTestResult('');
+        setAutoTestPhase('准备试跑…');
+        await startAutoTest({ url: api.skillAgent.autoTest(sessionId) });
       }
     } finally { setSaving(false); }
+  };
+
+  const handleAdjust = () => {
+    // Go back to chat mode for iteration
+    setSaved(false);
+    setAutoTestInput(null);
+    setAutoTestResult('');
+    setAutoTestPhase(null);
+    setMessages((prev) => [...prev, { role: 'system', content: '请告诉我哪里需要调整，我会重新生成。' }]);
+    setTimeout(() => inputRef.current?.focus(), 200);
   };
 
   const handleExportMd = async () => {
@@ -365,45 +403,109 @@ function CreateTab() {
         </GlassCard>
       </div>
 
-      {/* Right Panel: Preview + Actions */}
+      {/* Right Panel: Preview / Auto-test results */}
       {hasSkillDraft && (
-        <div className="hidden lg:flex flex-col gap-3 w-[320px] shrink-0">
-          <GlassCard className="flex-1 flex flex-col" padding="none" style={{ overflow: 'hidden' }}>
-            <div className="px-4 py-2.5 flex items-center gap-2" style={{ borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
-              <FileText size={13} style={{ color: '#8B5CF6' }} />
-              <span className="text-xs font-semibold" style={{ color: 'var(--text-primary)' }}>SKILL.md 预览</span>
-            </div>
-            <div className="flex-1 overflow-auto px-4 py-3" style={{ minHeight: 0 }}>
-              <pre className="text-[11px] leading-relaxed whitespace-pre-wrap font-mono" style={{ color: 'var(--text-secondary)' }}>
-                {skillPreview}
-              </pre>
-            </div>
-          </GlassCard>
+        <div className="hidden lg:flex flex-col gap-3 w-[340px] shrink-0">
+          {/* Auto-test results (shown after save) */}
+          {saved && (autoTestPhase || autoTestInput || autoTestResult || testStreaming) ? (
+            <>
+              {/* Test Input */}
+              <GlassCard className="flex flex-col shrink-0" padding="none" style={{ overflow: 'hidden' }}>
+                <div className="px-4 py-2 flex items-center gap-2" style={{ borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
+                  <Play size={12} style={{ color: '#F59E0B' }} />
+                  <span className="text-[11px] font-semibold" style={{ color: 'var(--text-primary)' }}>自动测试输入</span>
+                  {!autoTestInput && autoTestPhase && (
+                    <span className="flex items-center gap-1 text-[10px]" style={{ color: '#8B5CF6' }}>
+                      <Loader2 size={10} className="animate-spin" /> {autoTestPhase}
+                    </span>
+                  )}
+                </div>
+                {autoTestInput && (
+                  <div className="px-4 py-2.5 text-[12px] leading-relaxed" style={{ color: 'var(--text-secondary)', maxHeight: 120, overflowY: 'auto' }}>
+                    {autoTestInput}
+                  </div>
+                )}
+              </GlassCard>
 
-          <GlassCard padding="sm" className="flex flex-col gap-2">
-            <button onClick={handleSave} disabled={saving || saved}
-              className="w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl text-[13px] font-medium transition-all"
-              style={{
-                background: saved ? 'rgba(34,197,94,0.12)' : 'linear-gradient(135deg,#8B5CF6,#6366F1)',
-                color: saved ? 'rgba(34,197,94,0.9)' : 'white',
-                border: saved ? '1px solid rgba(34,197,94,0.2)' : '1px solid rgba(139,92,246,0.3)',
-              }}>
-              {saved ? <CheckCircle2 size={15} /> : <Save size={15} />}
-              {saving ? '保存中…' : saved ? '已保存到个人技能' : '保存为个人技能'}
-            </button>
-            <div className="flex gap-2">
-              <button onClick={handleExportMd} disabled={exporting}
-                className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl text-[12px] font-medium transition-colors hover:bg-white/5"
-                style={{ background: 'rgba(255,255,255,0.04)', color: 'var(--text-secondary)', border: '1px solid rgba(255,255,255,0.08)' }}>
-                <FileText size={13} /> 导出 .md
-              </button>
-              <button onClick={handleExportZip} disabled={exporting}
-                className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl text-[12px] font-medium transition-colors hover:bg-white/5"
-                style={{ background: 'rgba(255,255,255,0.04)', color: 'var(--text-secondary)', border: '1px solid rgba(255,255,255,0.08)' }}>
-                <Archive size={13} /> 导出 .zip
-              </button>
-            </div>
-          </GlassCard>
+              {/* Test Output */}
+              <GlassCard className="flex-1 flex flex-col" padding="none" style={{ overflow: 'hidden', minHeight: 0 }}>
+                <div className="px-4 py-2 flex items-center gap-2" style={{ borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
+                  <Bot size={12} style={{ color: '#22C55E' }} />
+                  <span className="text-[11px] font-semibold" style={{ color: 'var(--text-primary)' }}>效果预览</span>
+                  {testStreaming && (
+                    <span className="flex items-center gap-1 text-[10px]" style={{ color: '#8B5CF6' }}>
+                      <Loader2 size={10} className="animate-spin" /> 生成中
+                    </span>
+                  )}
+                </div>
+                <div className="flex-1 overflow-y-auto px-4 py-2.5" style={{ minHeight: 0 }}>
+                  {autoTestResult ? (
+                    <pre className="text-[12px] leading-relaxed whitespace-pre-wrap" style={{ color: 'var(--text-primary)' }}>
+                      {autoTestResult}
+                      {testStreaming && <span className="inline-block w-[2px] h-[13px] ml-0.5 animate-pulse" style={{ background: '#8B5CF6', verticalAlign: 'text-bottom' }} />}
+                    </pre>
+                  ) : autoTestInput ? (
+                    <div className="flex items-center gap-1.5 text-[11px]" style={{ color: 'var(--text-muted)' }}>
+                      <Loader2 size={12} className="animate-spin" style={{ color: '#8B5CF6' }} /> 正在试跑技能…
+                    </div>
+                  ) : null}
+                </div>
+              </GlassCard>
+
+              {/* Feedback buttons */}
+              {!testStreaming && autoTestResult && (
+                <GlassCard padding="sm" className="flex flex-col gap-2">
+                  <div className="text-[11px] mb-1" style={{ color: 'var(--text-muted)' }}>效果满意吗？</div>
+                  <button onClick={() => setMessages((prev) => [...prev, { role: 'system', content: '技能创建完成！你可以在「我的技能」中管理和使用。' }])}
+                    className="w-full flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl text-[12px] font-medium"
+                    style={{ background: 'rgba(34,197,94,0.1)', color: '#22C55E', border: '1px solid rgba(34,197,94,0.15)' }}>
+                    <CheckCircle2 size={13} /> 满意，完成
+                  </button>
+                  <button onClick={handleAdjust}
+                    className="w-full flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl text-[12px] font-medium"
+                    style={{ background: 'rgba(245,158,11,0.1)', color: '#F59E0B', border: '1px solid rgba(245,158,11,0.15)' }}>
+                    <RotateCcw size={13} /> 需要调整
+                  </button>
+                </GlassCard>
+              )}
+            </>
+          ) : (
+            /* Pre-save: SKILL.md preview + save/export buttons */
+            <>
+              <GlassCard className="flex-1 flex flex-col" padding="none" style={{ overflow: 'hidden' }}>
+                <div className="px-4 py-2.5 flex items-center gap-2" style={{ borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
+                  <FileText size={13} style={{ color: '#8B5CF6' }} />
+                  <span className="text-xs font-semibold" style={{ color: 'var(--text-primary)' }}>SKILL.md 预览</span>
+                </div>
+                <div className="flex-1 overflow-auto px-4 py-3" style={{ minHeight: 0 }}>
+                  <pre className="text-[11px] leading-relaxed whitespace-pre-wrap font-mono" style={{ color: 'var(--text-secondary)' }}>
+                    {skillPreview}
+                  </pre>
+                </div>
+              </GlassCard>
+
+              <GlassCard padding="sm" className="flex flex-col gap-2">
+                <button onClick={handleSave} disabled={saving}
+                  className="w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl text-[13px] font-medium transition-all"
+                  style={{ background: 'linear-gradient(135deg,#8B5CF6,#6366F1)', color: 'white', border: '1px solid rgba(139,92,246,0.3)' }}>
+                  {saving ? <Loader2 size={15} className="animate-spin" /> : <Save size={15} />}
+                  {saving ? '保存并试跑…' : '保存并试跑效果'}
+                </button>
+                <div className="flex gap-2">
+                  <button onClick={handleExportMd} disabled={exporting}
+                    className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl text-[12px] font-medium transition-colors hover:bg-white/5"
+                    style={{ background: 'rgba(255,255,255,0.04)', color: 'var(--text-secondary)', border: '1px solid rgba(255,255,255,0.08)' }}>
+                    <FileText size={13} /> 导出 .md
+                  </button>
+                  <button onClick={handleExportZip} disabled={exporting}
+                    className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl text-[12px] font-medium transition-colors hover:bg-white/5"
+                    style={{ background: 'rgba(255,255,255,0.04)', color: 'var(--text-secondary)', border: '1px solid rgba(255,255,255,0.08)' }}>
+                    <Archive size={13} /> 导出 .zip
+                  </button>
+                </div>
+              </GlassCard>
+            </>
+          )}
         </div>
       )}
 
