@@ -219,9 +219,9 @@ public class SkillAgentService
     {
         return session.CurrentStage switch
         {
-            "scope" => $"用户想要的技能：{session.Intent ?? "未知"}。请根据这个意图，自动判断最合适的输入配置（contextScope、acceptsUserInput、acceptsAttachments），直接给出结论并输出 JSON 结果。",
-            "draft" => $"用户意图：{session.Intent ?? "未知"}。输入配置：contextScope={session.SkillDraft?.Input.ContextScope ?? "none"}, acceptsUserInput={session.SkillDraft?.Input.AcceptsUserInput ?? true}。请直接生成高质量的 prompt template，不需要询问用户意见，直接输出完整内容和 JSON 结果。",
-            "metadata" => $"用户意图：{session.Intent ?? "未知"}。Prompt 模板已生成。请直接推荐最佳的 title/icon/category/tags/description，不需要询问用户，直接输出 JSON 结果。",
+            "scope" => $"用户想要的技能：{session.Intent ?? "未知"}。根据这个意图判断：(1) 运行时是否需要读取已有文档作为背景？(2) 用户每次使用时是否需要提供不同的内容？(3) 是否涉及文件附件？直接给出你的判断。",
+            "draft" => $"用户意图：{session.Intent ?? "未知"}。请直接编写一份专业的指令模板。写作要求：用祈使句；包含一个「输入→输出」示例帮助理解；解释为什么要按这个格式输出（让执行者理解意图而非死记规则）；需要用户提供内容的地方用 {{{{userInput}}}} 占位；去掉所有不必要的废话，保持精练有力。",
+            "metadata" => $"用户意图：{session.Intent ?? "未知"}。请推荐：(1) 2-6 字名称；(2) 最贴切的 emoji；(3) 分类；(4) 2-3 个标签；(5) 一句话描述——描述要包含功能和典型使用场景（比如「当你需要……时使用」），让技能更容易被匹配到。",
             _ => "请继续。",
         };
     }
@@ -232,11 +232,11 @@ public class SkillAgentService
     public SseChunk GenerateWelcome()
     {
         const string welcome = "你好！我是技能创建助手。\n\n" +
-                               "只需一句话告诉我**你想让 AI 帮你做什么**，我会自动帮你生成完整的技能模板。\n\n" +
-                               "比如：\n" +
-                               "- 「把会议纪要整理成待办事项」\n" +
-                               "- 「分析代码的安全隐患」\n" +
-                               "- 「把英文技术文档翻译成中文摘要」";
+                               "告诉我你经常重复做的一件事，我来帮你变成一键可用的 AI 技能。\n\n" +
+                               "描述越具体越好，比如：\n" +
+                               "- 「每次开完会，要把录音笔记整理成待办清单，按人分组」\n" +
+                               "- 「客户发来英文合同，我需要提取关键条款翻译成中文摘要」\n" +
+                               "- 「拿到竞品截图后，写一份功能对比分析报告」";
         return new SseChunk("welcome", new { message = welcome, stage = "intent", stageLabel = "意图理解" });
     }
 
@@ -343,18 +343,24 @@ public class SkillAgentService
     {
         var stage = session.CurrentStage;
 
-        var basePrompt = @"你是一个技能创建引导助手。你的任务是帮用户把重复性工作变成可复用的 AI 技能。
+        var basePrompt = @"你是一位经验丰富的技能设计师。你帮用户把重复性工作变成一键可用的 AI 技能（一段精心设计的指令模板）。
 
-技能 = 预设提示词模板 + 输入/输出配置。
+【你的设计理念】
+- 好的技能像一份清晰的工作说明书：告诉 AI 做什么、为什么这样做、输入什么、输出什么格式
+- 用祈使句写指令，解释 why 而不是堆砌 MUST —— AI 理解意图后会做得更好
+- 每个技能包含至少一个「输入→输出」示例，让使用者一看就懂
+- 保持精练，去掉所有不增加信息量的废话
 
-【输出格式 - 严格遵守】
-1. 先用通俗易懂的中文回复用户（禁止出现任何 JSON、代码块、字段名、技术术语）
-2. 回复末尾附上一个系统解析用的 JSON 块：
+【沟通风格】
+- 像和朋友聊天一样自然，不用术语
+- 禁止在回复中出现任何 JSON、代码块、字段名（如 contextScope、stageComplete）
+- 这些是系统内部概念，用户不需要知道
+
+【输出格式】
+回复末尾附一个系统解析用的 JSON 块（用户看不到）：
 ```json:stage_result
 { ... }
-```
-3. JSON 块之外的文字中禁止出现 stageComplete、nextStage、contextScope、acceptsUserInput 等字段名
-4. 用日常用语代替技术概念，如说「需要你提供额外内容」而不是「acceptsUserInput: true」";
+```";
 
         var autoSuffix = isAutoRun ? "\n\n【重要】这是自动流转阶段，不要向用户提问，直接给出你的最佳判断并输出 JSON 结果。保持简洁，不超过 3 句话说明即可。" : "";
 
@@ -363,11 +369,18 @@ public class SkillAgentService
             "intent" => @"
 当前阶段：意图理解
 
-理解用户想自动化什么任务。如果描述清晰，确认并总结。如果模糊，追问一个关键问题。
+你要搞清楚 4 件事（不用一次全问，根据用户描述的清晰程度决定）：
+1. 这个技能要帮用户做什么？（核心任务）
+2. 典型的使用场景是什么？（在什么情况下会用到）
+3. 用户每次会给什么输入？（文字、文件、还是不需要输入）
+4. 期望的输出长什么样？（格式、结构、一个简单例子）
+
+如果用户描述已经够清晰（能回答上面大部分问题），直接确认你的理解并总结。
+如果模糊，挑最关键的一个问题追问——不要一次问多个。
 
 理解后输出：
 ```json:stage_result
-{""stageComplete"": true, ""intent"": ""一句话描述意图"", ""nextStage"": ""scope""}
+{""stageComplete"": true, ""intent"": ""一句话精确描述意图"", ""nextStage"": ""scope""}
 ```",
 
             "scope" => $@"
@@ -386,33 +399,42 @@ public class SkillAgentService
 ```",
 
             "draft" => $@"
-当前阶段：生成 Prompt 模板
+当前阶段：编写指令模板
 
 用户意图：{session.Intent ?? "未知"}
-输入配置：contextScope={session.SkillDraft?.Input.ContextScope ?? "none"}, acceptsUserInput={session.SkillDraft?.Input.AcceptsUserInput ?? true}
 
-生成高质量 prompt template：
-1. 用 {{{{userInput}}}} 作为用户输入占位符
-2. 明确输出格式（表格/列表/分段）
-3. 包含约束和注意事项
-4. 专业简洁
+现在是最关键的一步——编写一份高质量的指令模板。这份模板会被反复使用，质量决定了技能的价值。
+
+编写方法论：
+1. 用祈使句开头（「分析以下内容」「提取关键信息」「按以下格式整理」）
+2. 解释 why——告诉 AI 为什么要按某种方式做（「这样分组是因为用户需要按人分配任务」），AI 理解意图后会做得更好
+3. 明确输出格式——给一个具体的示例，比如：
+   示例输入：「今天开会讨论了A和B两件事…」
+   示例输出：
+   ## 待办清单
+   - [ ] @张三：完成XX（截止：本周五）
+4. 用 {{{{userInput}}}} 作为用户输入内容的占位符
+5. 保持精练——每句话都要有信息量，删掉「请注意」「请确保」等废话
+6. 不要堆砌 ALWAYS/NEVER/MUST 等大写强调词——用解释取代命令
 
 输出：
 ```json:stage_result
-{{""stageComplete"": true, ""promptTemplate"": ""完整 prompt template"", ""nextStage"": ""metadata""}}
+{{""stageComplete"": true, ""promptTemplate"": ""完整的指令模板"", ""nextStage"": ""metadata""}}
 ```",
 
             "metadata" => $@"
-当前阶段：元数据生成
+当前阶段：命名与描述
 
 用户意图：{session.Intent ?? "未知"}
 
-直接推荐最佳元数据：
-- title: 2-8 字简洁名称
-- icon: 最匹配的 emoji
+为这个技能设计身份信息：
+- title: 2-6 字动宾短语（如「会议纪要整理」「合同条款提取」），避免「助手」「工具」等泛称
+- icon: 选一个最能代表这个任务的 emoji
 - category: general/analysis/generation/extraction/translation/summary/check/optimization/other
-- tags: 2-4 个标签
-- description: 一句话描述
+- tags: 2-3 个用户可能搜索的关键词
+- description: 一句话，要「略微激进」——不只写功能，还写使用场景，让用户一看就知道什么时候该用它。
+  好的描述：「当你收到英文合同需要快速理解关键条款时，提取核心内容并翻译成中文摘要」
+  差的描述：「翻译和摘要工具」
 
 输出：
 ```json:stage_result
