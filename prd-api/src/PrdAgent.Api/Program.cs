@@ -215,6 +215,9 @@ builder.Services.AddScoped<PrdAgent.Api.Services.WorkflowAiFillService>();
 builder.Services.AddSingleton<PrdAgent.Api.Services.SystemCapabilityScanner>();
 builder.Services.AddScoped<PrdAgent.Api.Services.EmergenceService>();
 
+// 技能引导 Agent
+builder.Services.AddScoped<PrdAgent.Infrastructure.Services.SkillAgentService>();
+
 // 文档订阅同步引擎
 builder.Services.AddHttpClient("DocumentSync");
 builder.Services.AddHostedService<PrdAgent.Api.Services.DocumentSyncWorker>();

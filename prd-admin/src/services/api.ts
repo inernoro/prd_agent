@@ -190,6 +190,22 @@ export const api = {
     byKey: (skillKey: string) => `/api/skills/${encodeURIComponent(skillKey)}`,
   },
 
+  // ============ Skill Agent 技能引导创建 ============
+  skillAgent: {
+    createSession: () => '/api/skill-agent/sessions',
+    session: (sessionId: string) => `/api/skill-agent/sessions/${sessionId}`,
+    sendMessage: (sessionId: string) => `/api/skill-agent/sessions/${sessionId}/messages`,
+    save: (sessionId: string) => `/api/skill-agent/sessions/${sessionId}/save`,
+    autoTest: (sessionId: string) => `/api/skill-agent/sessions/${sessionId}/auto-test`,
+    exportMd: (sessionId: string) => `/api/skill-agent/sessions/${sessionId}/export/md`,
+    exportZip: (sessionId: string) => `/api/skill-agent/sessions/${sessionId}/export/zip`,
+    testSkill: (skillKey: string) => `/api/skill-agent/test/${encodeURIComponent(skillKey)}`,
+    skillMd: (skillKey: string) => `/api/skill-agent/skills/${encodeURIComponent(skillKey)}/md`,
+    publish: (skillKey: string) => `/api/skill-agent/skills/${encodeURIComponent(skillKey)}/publish`,
+    unpublish: (skillKey: string) => `/api/skill-agent/skills/${encodeURIComponent(skillKey)}/unpublish`,
+    plaza: () => '/api/skill-agent/plaza',
+  },
+
   // ============ Prompts (系统提示词 + 覆盖) ============
   prompts: {
     system: {

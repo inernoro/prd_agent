@@ -21,6 +21,7 @@ import {
   Workflow,
   Zap,
   Globe,
+  Wand2,
   type LucideIcon,
 } from 'lucide-react';
 import { MapSpinner } from '@/components/ui/VideoLoader';
@@ -35,7 +36,7 @@ import { ReviewAgentCardArt } from '@/pages/ai-toolbox/components/ReviewAgentCar
 // ── Icon & Color mapping (self-contained, doesn't touch ToolCard) ──
 
 const ICON_MAP: Record<string, LucideIcon> = {
-  FileText, Palette, PenTool, Bug, Video, Swords, FileBarChart, Code2, Languages, FileSearch, BarChart3, Bot, Workflow, Zap, Globe,
+  FileText, Palette, PenTool, Bug, Video, Swords, FileBarChart, Code2, Languages, FileSearch, BarChart3, Bot, Workflow, Zap, Globe, Wand2,
 };
 
 /** Agent 封面图 CDN 路径 */
@@ -81,6 +82,7 @@ const ACCENT: Record<string, { from: string; to: string }> = {
   Workflow:  { from: '#14B8A6', to: '#5EEAD4' },
   Zap:       { from: '#F59E0B', to: '#FCD34D' },
   Globe:     { from: '#0EA5E9', to: '#38BDF8' },
+  Wand2:     { from: '#8B5CF6', to: '#C4B5FD' },
 };
 
 function getAccent(icon: string) {
@@ -380,6 +382,14 @@ export default function AgentLauncherPage() {
       icon: 'Globe',
       tags: ['托管', '网页', 'hosting'],
       routePath: '/web-pages',
+    } as ToolboxItem,
+    {
+      id: '__skill-agent__',
+      name: '技能创建助手',
+      description: 'AI 引导你逐步创建可复用的技能模板',
+      icon: 'Wand2',
+      tags: ['技能', 'skill', 'AI', '创建', '模板'],
+      routePath: '/skill-agent',
     } as ToolboxItem,
   ], []);
 
