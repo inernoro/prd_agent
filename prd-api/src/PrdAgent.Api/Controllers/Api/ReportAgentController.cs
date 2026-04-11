@@ -651,6 +651,64 @@ public class ReportAgentController : ControllerBase
     }
 
     /// <summary>
+    /// 批量添加团队成员
+    /// </summary>
+    [HttpPost("teams/{id}/members/batch")]
+    public async Task<IActionResult> BatchAddTeamMembers(string id, [FromBody] BatchAddTeamMembersRequest req)
+    {
+        var currentUserId = GetUserId();
+        if (!HasPermission(AdminPermissionCatalog.ReportAgentTeamManage) &&
+            !await IsTeamLeaderOrDeputy(id, currentUserId))
+            return StatusCode(403, ApiResponse<object>.Fail("PERMISSION_DENIED", "缺少团队管理权限"));
+
+        var team = await _db.ReportTeams.Find(t => t.Id == id).FirstOrDefaultAsync();
+        if (team == null)
+            return NotFound(ApiResponse<object>.Fail("NOT_FOUND", "团队不存在"));
+
+        if (req.UserIds == null || req.UserIds.Count == 0)
+            return BadRequest(ApiResponse<object>.Fail("INVALID", "请至少选择一个用户"));
+
+        var existingMemberIds = (await _db.ReportTeamMembers
+            .Find(m => m.TeamId == id)
+            .Project(m => m.UserId)
+            .ToListAsync())
+            .ToHashSet();
+
+        var added = new List<ReportTeamMember>();
+        var skipped = new List<string>();
+
+        foreach (var uid in req.UserIds.Distinct())
+        {
+            if (existingMemberIds.Contains(uid))
+            {
+                skipped.Add(uid);
+                continue;
+            }
+
+            var user = await _db.Users.Find(u => u.UserId == uid).FirstOrDefaultAsync();
+            if (user == null)
+            {
+                skipped.Add(uid);
+                continue;
+            }
+
+            var member = new ReportTeamMember
+            {
+                TeamId = id,
+                UserId = uid,
+                UserName = user.DisplayName ?? user.Username,
+                AvatarFileName = user.AvatarFileName,
+                Role = req.Role ?? ReportTeamRole.Member,
+                JobTitle = req.JobTitle
+            };
+            await _db.ReportTeamMembers.InsertOneAsync(member);
+            added.Add(member);
+        }
+
+        return Ok(ApiResponse<object>.Ok(new { added, skipped }));
+    }
+
+    /// <summary>
     /// 移除团队成员
     /// </summary>
     [HttpDelete("teams/{id}/members/{userId}")]
@@ -1593,6 +1651,13 @@ public class ReportAgentController : ControllerBase
     public class AddTeamMemberRequest
     {
         public string UserId { get; set; } = string.Empty;
+        public string? Role { get; set; }
+        public string? JobTitle { get; set; }
+    }
+
+    public class BatchAddTeamMembersRequest
+    {
+        public List<string> UserIds { get; set; } = new();
         public string? Role { get; set; }
         public string? JobTitle { get; set; }
     }

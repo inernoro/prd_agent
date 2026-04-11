@@ -10,6 +10,7 @@ import type {
   DeleteReportTeamContract,
   LeaveReportTeamContract,
   AddReportTeamMemberContract,
+  BatchAddReportTeamMembersContract,
   RemoveReportTeamMemberContract,
   UpdateReportTeamMemberContract,
   ListReportUsersContract,
@@ -215,6 +216,14 @@ export const addReportTeamMemberReal: AddReportTeamMemberContract = async (input
   const { teamId, ...body } = input;
   return await apiRequest<{ member: ReportTeamMember }>(
     api.reportAgent.teams.members(encodeURIComponent(teamId)),
+    { method: 'POST', body }
+  );
+};
+
+export const batchAddReportTeamMembersReal: BatchAddReportTeamMembersContract = async (input) => {
+  const { teamId, ...body } = input;
+  return await apiRequest<{ added: ReportTeamMember[]; skipped: string[] }>(
+    api.reportAgent.teams.membersBatch(encodeURIComponent(teamId)),
     { method: 'POST', body }
   );
 };

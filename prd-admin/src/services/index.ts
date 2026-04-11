@@ -548,6 +548,7 @@ import type {
   DeleteReportTeamContract,
   LeaveReportTeamContract,
   AddReportTeamMemberContract,
+  BatchAddReportTeamMembersContract,
   RemoveReportTeamMemberContract,
   UpdateReportTeamMemberContract,
   ListReportUsersContract,
@@ -631,6 +632,7 @@ import {
   deleteReportTeamReal,
   leaveReportTeamReal,
   addReportTeamMemberReal,
+  batchAddReportTeamMembersReal,
   removeReportTeamMemberReal,
   updateReportTeamMemberReal,
   listReportUsersReal,
@@ -1040,6 +1042,7 @@ export const updateReportTeam: UpdateReportTeamContract = withAuth(updateReportT
 export const deleteReportTeam: DeleteReportTeamContract = withAuth(deleteReportTeamReal);
 export const leaveReportTeam: LeaveReportTeamContract = withAuth(leaveReportTeamReal);
 export const addReportTeamMember: AddReportTeamMemberContract = withAuth(addReportTeamMemberReal);
+export const batchAddReportTeamMembers: BatchAddReportTeamMembersContract = withAuth(batchAddReportTeamMembersReal);
 export const removeReportTeamMember: RemoveReportTeamMemberContract = withAuth(removeReportTeamMemberReal);
 export const updateReportTeamMember: UpdateReportTeamMemberContract = withAuth(updateReportTeamMemberReal);
 export const listReportUsers: ListReportUsersContract = withAuth(listReportUsersReal);
