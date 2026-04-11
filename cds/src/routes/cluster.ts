@@ -61,6 +61,14 @@ export interface ClusterRouterDeps {
    */
   getExecutorAgent: () => ExecutorAgent | null;
   setExecutorAgent: (agent: ExecutorAgent | null) => void;
+  /**
+   * Current scheduling strategy — drives the dispatcher when branches are
+   * auto-placed. Mutable so the Dashboard's strategy radio can change it
+   * at runtime. Defaults to 'least-load' which maps to the real resource
+   * utilization heuristic (60% memory, 40% CPU).
+   */
+  getStrategy: () => 'least-branches' | 'least-load' | 'round-robin';
+  setStrategy: (s: 'least-branches' | 'least-load' | 'round-robin') => void;
 }
 
 /**
@@ -70,7 +78,7 @@ export interface ClusterRouterDeps {
 const BOOTSTRAP_TTL_SECONDS = 900; // 15 minutes
 
 export function createClusterRouter(deps: ClusterRouterDeps): Router {
-  const { config, stateService, registry, getExecutorAgent, setExecutorAgent } = deps;
+  const { config, stateService, registry, getExecutorAgent, setExecutorAgent, getStrategy, setStrategy } = deps;
   const router = Router();
 
   // ── POST /api/cluster/issue-token — master-side token generation ──
@@ -351,6 +359,37 @@ export function createClusterRouter(deps: ClusterRouterDeps): Router {
     });
   });
 
+  // ── GET /api/cluster/strategy — return current scheduling strategy ──
+  router.get('/strategy', (_req, res) => {
+    res.json({
+      strategy: getStrategy(),
+      available: ['least-branches', 'least-load', 'round-robin'],
+      descriptions: {
+        'least-branches': '选择当前运行分支最少的节点',
+        'least-load': '按内存 60% + CPU 40% 加权选最空闲节点（推荐）',
+        'round-robin': '按心跳时间轮询，均匀分布',
+      },
+    });
+  });
+
+  // ── PUT /api/cluster/strategy — change strategy at runtime ──
+  router.put('/strategy', (req, res) => {
+    const { strategy } = (req.body || {}) as { strategy?: string };
+    if (
+      strategy !== 'least-branches' &&
+      strategy !== 'least-load' &&
+      strategy !== 'round-robin'
+    ) {
+      res.status(400).json({
+        error: 'strategy 必须是 least-branches / least-load / round-robin 之一',
+      });
+      return;
+    }
+    setStrategy(strategy);
+    console.log(`  [cluster] Scheduling strategy changed to: ${strategy}`);
+    res.json({ strategy, ok: true });
+  });
+
   // ── GET /api/cluster/status — the Dashboard's "which tab to show" probe ──
   //
   // Returns a snapshot of the current node's cluster role. The Dashboard
@@ -382,6 +421,7 @@ export function createClusterRouter(deps: ClusterRouterDeps): Router {
       bootstrapExpiresAt: config.bootstrapToken?.expiresAt || null,
       remoteExecutorCount: remoteCount,
       capacity: registry.getTotalCapacity(),
+      strategy: getStrategy(),
     });
   });
 

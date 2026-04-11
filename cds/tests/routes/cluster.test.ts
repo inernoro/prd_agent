@@ -105,11 +105,26 @@ function startHarness(configOverrides: Partial<CdsConfig> = {}): Promise<TestHar
     const getAgent = () => agent;
     const setAgent = (a: ExecutorAgent | null) => { agent = a; };
 
+    // Strategy is stored in a closure to match production behavior (index.ts
+    // holds a module-level `clusterStrategy` variable). Tests that care
+    // about strategy override this after startup.
+    let strategy: 'least-branches' | 'least-load' | 'round-robin' = 'least-load';
+    const getStrategy = () => strategy;
+    const setStrategy = (s: typeof strategy) => { strategy = s; };
+
     const app = express();
     app.use(express.json());
     app.use(
       '/api/cluster',
-      createClusterRouter({ config, stateService, registry, getExecutorAgent: getAgent, setExecutorAgent: setAgent }),
+      createClusterRouter({
+        config,
+        stateService,
+        registry,
+        getExecutorAgent: getAgent,
+        setExecutorAgent: setAgent,
+        getStrategy,
+        setStrategy,
+      }),
     );
 
     const server = app.listen(0, '127.0.0.1', () => {
@@ -332,6 +347,43 @@ describe('Cluster router (UI bootstrap)', () => {
       // Post-leave, the in-memory config must be clean
       expect(harness.config.masterUrl).toBeUndefined();
       expect(harness.config.executorToken).toBeUndefined();
+    });
+  });
+
+  // ── /strategy ──
+
+  describe('GET /api/cluster/strategy', () => {
+    it('returns the current strategy with descriptions', async () => {
+      harness = await startHarness();
+      const res = await request(harness.server, 'GET', '/api/cluster/strategy');
+      expect(res.status).toBe(200);
+      const body = res.body as { strategy: string; available: string[]; descriptions: Record<string, string> };
+      expect(body.strategy).toBe('least-load');
+      expect(body.available).toContain('least-load');
+      expect(body.available).toContain('least-branches');
+      expect(body.available).toContain('round-robin');
+      expect(body.descriptions['least-load']).toBeTruthy();
+    });
+  });
+
+  describe('PUT /api/cluster/strategy', () => {
+    it('changes strategy to a valid value', async () => {
+      harness = await startHarness();
+      const res = await request(harness.server, 'PUT', '/api/cluster/strategy', {
+        strategy: 'round-robin',
+      });
+      expect(res.status).toBe(200);
+      // Follow-up GET should report the new value
+      const after = await request(harness.server, 'GET', '/api/cluster/strategy');
+      expect((after.body as { strategy: string }).strategy).toBe('round-robin');
+    });
+
+    it('rejects invalid strategy values with 400', async () => {
+      harness = await startHarness();
+      const res = await request(harness.server, 'PUT', '/api/cluster/strategy', {
+        strategy: 'random-garbage',
+      });
+      expect(res.status).toBe(400);
     });
   });
 

@@ -380,6 +380,70 @@ describe('ExecutorRegistry', () => {
       expect(stateService.getExecutor('master-survivor')?.role).toBe('embedded');
     });
 
+    it('auto-syncs heartbeat-reported branches into master state (regression: P2 #8)', () => {
+      // Register a remote executor, then simulate a heartbeat that reports
+      // two branches the master has never heard of. Master state should
+      // auto-create stub entries pointing at the executor.
+      registry.register({
+        id: 'exec-B',
+        host: 'b.local',
+        port: 9901,
+        capacity: { maxBranches: 4, memoryMB: 4096, cpuCores: 4 },
+      });
+
+      expect(stateService.getBranch('orphan-1')).toBeUndefined();
+      expect(stateService.getBranch('orphan-2')).toBeUndefined();
+
+      registry.heartbeat('exec-B', {
+        load: { memoryUsedMB: 100, cpuPercent: 10 },
+        branches: {
+          'orphan-1': { status: 'running', services: {} },
+          'orphan-2': { status: 'building', services: {} },
+        },
+      });
+
+      const o1 = stateService.getBranch('orphan-1');
+      const o2 = stateService.getBranch('orphan-2');
+      expect(o1).toBeDefined();
+      expect(o2).toBeDefined();
+      expect(o1?.executorId).toBe('exec-B');
+      expect(o2?.executorId).toBe('exec-B');
+      expect(o1?.status).toBe('running');
+      expect(o2?.status).toBe('building');
+    });
+
+    it('marks owned branches as errored when their executor goes offline (regression: P2 #7)', () => {
+      // Pre-populate: register exec, heartbeat with one branch so the
+      // executor's `branches` field contains it (that list is what
+      // checkHealth iterates when marking owned branches).
+      registry.register({
+        id: 'exec-X',
+        host: 'x.local',
+        port: 9901,
+        capacity: { maxBranches: 4, memoryMB: 4096, cpuCores: 4 },
+      });
+      registry.heartbeat('exec-X', {
+        load: { memoryUsedMB: 0, cpuPercent: 0 },
+        branches: {
+          'pinned-branch': { status: 'running', services: {} },
+        },
+      });
+
+      // Sanity: the auto-sync created the branch entry.
+      expect(stateService.getBranch('pinned-branch')?.executorId).toBe('exec-X');
+
+      // Make the executor's heartbeat look stale (but keep its branches list).
+      const node = stateService.getExecutor('exec-X')!;
+      node.lastHeartbeat = new Date(Date.now() - 60_000).toISOString();
+      stateService.setExecutor(node);
+
+      runHealthCheck();
+
+      const entry = stateService.getBranch('pinned-branch');
+      expect(entry?.status).toBe('error');
+      expect(entry?.errorMessage).toContain('已离线');
+    });
+
     it('NEVER flips embedded master to offline even if heartbeat is stale (regression)', () => {
       // Embedded master doesn't send heartbeats — it IS the master process.
       // Bug: the old checkHealth() blindly compared lastHeartbeat to now and

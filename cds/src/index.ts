@@ -655,6 +655,24 @@ proxyService.setOnAutoBuild(async (branchSlug, _req, res) => {
   }
 });
 
+// ── Executor registry (needed BEFORE createServer so the branch router's
+// deploy handler can dispatch to remote executors). Also used below by the
+// scheduler and cluster routers. One shared instance. ──
+//
+// We create it here (not in the scheduler-mode block like before) because
+// the branch deploy handler is part of createServer's routing and needs to
+// check registry state on every /api/branches/:id/deploy call. Standalone
+// deployments without remote executors still work — the registry just
+// reports the embedded master and resolveDeployTarget returns null.
+const registry = new ExecutorRegistry(stateService);
+registry.startHealthChecks();
+registry.registerEmbeddedMaster(config.masterPort);
+
+// Current dispatcher strategy — mutable so the Dashboard's strategy radio
+// can change it at runtime. Read fresh on every deploy by both the branch
+// router and the cluster router. Default: 'least-load' (memory+CPU weighted).
+let clusterStrategy: 'least-branches' | 'least-load' | 'round-robin' = 'least-load';
+
 // ── Master server (dashboard + API on masterPort) ──
 const app = createServer({
   stateService,
@@ -665,6 +683,8 @@ const app = createServer({
   shell,
   config,
   schedulerService,
+  registry,
+  getClusterStrategy: () => clusterStrategy,
 });
 
 // ── Helper: kill process on port so CDS can bind ──
@@ -825,10 +845,10 @@ if (mode === 'executor') {
   // executors to dispatch to until the first one registers. The embedded
   // master is self-registered immediately so `/api/executors/capacity`
   // returns meaningful numbers on day one.
-  const registry = new ExecutorRegistry(stateService);
-  registry.startHealthChecks();
-  registry.registerEmbeddedMaster(config.masterPort);
-
+  //
+  // NOTE: `registry` is now created above, BEFORE createServer(), so the
+  // branch router's deploy handler can read it. We just reuse the same
+  // instance here for the scheduler / cluster routers.
   const dispatcher = new BranchDispatcher(
     registry,
     new HttpSnapshotFetcher(process.env.AI_ACCESS_KEY || undefined),
@@ -939,6 +959,10 @@ if (mode === 'executor') {
     registry,
     getExecutorAgent: () => hotJoinAgent,
     setExecutorAgent: (agent) => { hotJoinAgent = agent; },
+    // Reuse the module-level strategy variable (declared before createServer)
+    // so both the branch router and the cluster router see the same value.
+    getStrategy: () => clusterStrategy,
+    setStrategy: (s) => { clusterStrategy = s; },
   }));
   console.log(`  Cluster: one-click bootstrap API mounted at /api/cluster`);
 

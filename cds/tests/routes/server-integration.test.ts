@@ -138,6 +138,8 @@ describe('Server route ordering (regression)', () => {
       registry,
       getExecutorAgent: () => agent,
       setExecutorAgent: () => { agent = null; },
+      getStrategy: () => 'least-load',
+      setStrategy: () => {},
     }));
 
     // CRITICAL: SPA fallback installed LAST
@@ -194,6 +196,8 @@ describe('Server route ordering (regression)', () => {
       registry,
       getExecutorAgent: () => agent,
       setExecutorAgent: () => { agent = null; },
+      getStrategy: () => 'least-load',
+      setStrategy: () => {},
     }));
 
     installSpaFallback(app, webDir);
@@ -231,6 +235,8 @@ describe('Server route ordering (regression)', () => {
       registry,
       getExecutorAgent: () => agent,
       setExecutorAgent: () => { agent = null; },
+      getStrategy: () => 'least-load',
+      setStrategy: () => {},
     }));
 
     server = await startServer(app);
@@ -406,6 +412,8 @@ describe('Server route ordering (regression)', () => {
       registry,
       getExecutorAgent: () => agent,
       setExecutorAgent: () => { agent = null; },
+      getStrategy: () => 'least-load',
+      setStrategy: () => {},
     }));
     app.use('/api/executors', createSchedulerRouter({ registry, config: makeConfig() }));
 

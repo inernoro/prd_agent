@@ -75,6 +75,11 @@ let executors = [];
 
 // ── Container capacity ──
 let containerCapacity = { maxContainers: 999, runningContainers: 0, totalMemGB: 0 };
+// Cluster-wide aggregate capacity (from /api/cluster/status + state-stream).
+// null = not yet loaded; when populated it drives the header badge's cluster
+// display so "总容量 X" reflects A+B+... instead of just the local master.
+let clusterCapacity = null;
+let clusterStrategy = 'least-load';
 
 // ── Utilities ──
 
@@ -251,7 +256,7 @@ function initStateStream() {
         for (const pushed of data.branches) {
           const existing = branchMap.get(pushed.id);
           if (existing) {
-            // Preserve git info, update status/services
+            // Preserve git info, update status/services/executorId
             Object.assign(existing, pushed, {
               subject: existing.subject,
               commitSha: existing.commitSha,
@@ -265,6 +270,30 @@ function initStateStream() {
         branches = branches.filter(b => pushedIds.has(b.id));
         if (data.defaultBranch !== undefined) defaultBranch = data.defaultBranch;
         renderBranches();
+      }
+      // ── Cluster state updates (P0 #9, P1 #10) ──
+      //
+      // The server now ships executors + mode + aggregated capacity in the
+      // same SSE payload so we can update the header badge + cluster modal
+      // without a separate /api/config round trip. When mode flips from
+      // standalone → scheduler during a hot-join, this is what makes the
+      // dashboard react live.
+      if (Array.isArray(data.executors)) {
+        executors = data.executors;
+      }
+      if (typeof data.mode === 'string') {
+        cdsMode = data.mode;
+      }
+      if (data.capacity) {
+        clusterCapacity = data.capacity;
+      }
+      // Re-render cluster-aware surfaces. `renderCapacityBadge` now reads
+      // clusterCapacity when available, `renderExecutorPanel` picks up new
+      // status/load, and the cluster modal (if open) calls its own refresh.
+      renderExecutorPanel();
+      renderCapacityBadge();
+      if (document.querySelector('.cluster-modal')) {
+        refreshClusterModalIfOpen();
       }
     } catch {}
   };
@@ -862,6 +891,61 @@ function renderCapacityBadge() {
   const el = document.getElementById('capacityBadge');
   if (!el) return;
 
+  // ── Cluster-aware display (P1 #4) ──
+  //
+  // When the cluster has more than just the embedded master, we switch the
+  // badge from "local container slots" to "cluster-wide capacity" so the
+  // header immediately reflects that this is not a solo machine anymore.
+  // The cluster count is derived from the SSE payload's `executors` list.
+  const remoteCount = (executors || []).filter(e => (e.role || 'remote') !== 'embedded').length;
+  const onlineRemote = (executors || []).filter(e => (e.role || 'remote') !== 'embedded' && e.status === 'online').length;
+  const isCluster = remoteCount > 0 && clusterCapacity != null;
+
+  if (isCluster) {
+    // Cluster display: show node count + free ratio across ALL online nodes.
+    el.classList.remove('hidden');
+    const cap = clusterCapacity;
+    const maxBranches = cap?.total?.maxBranches || 0;
+    const usedBranches = cap?.used?.branches || 0;
+    const free = Math.max(0, maxBranches - usedBranches);
+    const freeRatio = maxBranches > 0 ? free / maxBranches : 1;
+    const fillPct = Math.round(freeRatio * 100);
+    const freePercent = cap?.freePercent || 0;
+
+    let tier;
+    if (freeRatio >= 0.4) tier = 'green';
+    else if (freeRatio >= 0.2) tier = 'blue';
+    else if (freeRatio > 0)   tier = 'orange';
+    else                      tier = 'red';
+
+    const nodesTotal = 1 + remoteCount; // embedded + remotes
+    const nodesOnline = (cap?.online || 0);
+    const label = `${nodesOnline}/${nodesTotal} 节点 · ${free}/${maxBranches}`;
+
+    el.dataset.tier = tier;
+    el.dataset.over = '0';
+    el.dataset.cluster = '1';
+    el.setAttribute('title',
+      `集群模式 (${cdsMode})\n` +
+      `在线节点: ${nodesOnline}/${nodesTotal}\n` +
+      `总内存: ${cap?.total?.memoryMB || 0} MB\n` +
+      `总 CPU: ${cap?.total?.cpuCores || 0} 核\n` +
+      `分支槽: ${usedBranches}/${maxBranches} 已用\n` +
+      `空闲: ${freePercent}%\n` +
+      `点击查看调度器详情`,
+    );
+
+    el.innerHTML = `
+      <span class="cap-battery">
+        <span class="cap-battery-fill" style="width:${fillPct}%"></span>
+      </span>
+      <span class="cap-label">${label}</span>
+    `;
+    return;
+  }
+
+  // ── Single-node display (pre-existing behavior) ──
+  el.dataset.cluster = '0';
   const max = containerCapacity.maxContainers || 0;
   const current = containerCapacity.runningContainers || 0;
   const mem = containerCapacity.totalMemGB || 0;
@@ -873,22 +957,17 @@ function renderCapacityBadge() {
   }
   el.classList.remove('hidden');
 
-  // Remaining slots drive the gauge. Over-subscription clamps to 0.
   const free = Math.max(0, max - current);
   const freeRatio = max > 0 ? free / max : 0;
-  const fillPct = Math.round(freeRatio * 100);  // 0..100
-
-  // Used % is kept for the tooltip / popover since it's still useful info.
+  const fillPct = Math.round(freeRatio * 100);
   const usedPct = max > 0 ? Math.min(Math.round((current / max) * 100), 999) : 0;
 
-  // Tier: full battery = green (good), empty battery = red (bad)
   let tier;
   if (freeRatio >= 0.4) tier = 'green';
   else if (freeRatio >= 0.2) tier = 'blue';
   else if (freeRatio > 0)   tier = 'orange';
   else                      tier = 'red';
 
-  // Over-subscription gets a warning suffix
   const over = current > max;
   const label = over ? `0/${max} ⚠` : `${free}/${max}`;
 
@@ -898,7 +977,6 @@ function renderCapacityBadge() {
     `宿主机剩余容量: ${free}/${max} 空闲 (运行中 ${current}, ${mem}GB RAM, 已用 ${usedPct}%)${over ? '\n⚠ 已超售，OOM 风险' : ''}\n点击查看调度器详情`,
   );
 
-  // Render: battery body + fill + label
   el.innerHTML = `
     <span class="cap-battery">
       <span class="cap-battery-fill" style="width:${fillPct}%"></span>
@@ -1159,7 +1237,17 @@ function branchDisplayLabel(br) {
   return `${tagStr}${esc(br.branch)}`;
 }
 
-function checkCapacityAndDeploy(id, profileId) {
+function checkCapacityAndDeploy(id, profileId, targetExecutorId) {
+  // If we're dispatching to a specific remote executor OR the cluster has
+  // remote executors available, skip the local capacity warning entirely.
+  // Capacity is checked on the target executor side, not here.
+  const remoteOnline = (executors || []).filter(e => (e.role || 'remote') !== 'embedded' && e.status === 'online').length;
+  if (targetExecutorId || remoteOnline > 0) {
+    if (profileId) deploySingleServiceDirect(id, profileId);
+    else deployBranchDirect(id, targetExecutorId);
+    return;
+  }
+
   const newCount = getNewContainerCount(id, profileId);
   const afterDeploy = containerCapacity.runningContainers + newCount;
   if (newCount === 0 || afterDeploy <= containerCapacity.maxContainers) {
@@ -1262,7 +1350,28 @@ async function deployBranch(id) {
   checkCapacityAndDeploy(id, null);
 }
 
-async function deployBranchDirect(id) {
+/**
+ * Cluster-aware deploy entry point (P0 #3).
+ *
+ * `targetExecutorId` semantics:
+ *   - null / undefined → let the backend dispatcher pick by strategy
+ *   - '<executor-id>'  → force deploy to that specific node (also used to
+ *     "pin" a branch back to the embedded master when migrating away from
+ *     a remote executor)
+ *
+ * The backend's POST /api/branches/:id/deploy reads the targetExecutorId
+ * from the request body and proxies to the chosen executor's /exec/deploy.
+ */
+async function deployToTarget(id, targetExecutorId) {
+  // Remember the target for this session so the next "quick deploy" click
+  // (the main button) doesn't lose the pinning. We stash it on the branch
+  // object in memory — the backend will echo it back via state-stream.
+  const br = branches.find(b => b.id === id);
+  if (br && targetExecutorId) br.executorId = targetExecutorId;
+  checkCapacityAndDeploy(id, null, targetExecutorId);
+}
+
+async function deployBranchDirect(id, targetExecutorId) {
   if (busyBranches.has(id)) return;
   markTouched(id);
   busyBranches.add(id);
@@ -1273,7 +1382,12 @@ async function deployBranchDirect(id) {
   renderBranches();
 
   try {
-    const res = await fetch(`${API}/branches/${id}/deploy`, { method: 'POST' });
+    const body = targetExecutorId ? { targetExecutorId } : {};
+    const res = await fetch(`${API}/branches/${id}/deploy`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
     if (!res.ok) {
       const data = await res.json().catch(() => ({}));
       throw new Error(data.error || `部署失败 (HTTP ${res.status})`);
@@ -2090,9 +2204,43 @@ let openDeployMenuId = null;
 
 function positionPortalDropdown(el, anchor, align = 'left') {
   const r = anchor.getBoundingClientRect();
-  el.style.top = `${r.bottom + 4}px`;
   // Measure after appending (display must not be 'none')
   const w = el.offsetWidth || 140;
+  const h = el.offsetHeight || 0;
+
+  // ── Vertical placement (P2 #12 fix) ──
+  //
+  // Previously this always placed the dropdown BELOW the anchor, which
+  // caused the menu to run off-screen when the branch card was near the
+  // window bottom (user saw "api: 开发模式..." truncated by the viewport).
+  // Now we flip to ABOVE when the menu wouldn't fit below; if neither fits
+  // we clamp to whichever side has more room and set max-height so the
+  // menu scrolls internally.
+  const margin = 8;
+  const spaceBelow = window.innerHeight - r.bottom - margin;
+  const spaceAbove = r.top - margin;
+  if (h + 4 <= spaceBelow) {
+    el.style.top = `${r.bottom + 4}px`;
+    el.style.maxHeight = '';
+  } else if (h + 4 <= spaceAbove) {
+    // Flip up — place the bottom of the menu just above the anchor.
+    el.style.top = `${r.top - h - 4}px`;
+    el.style.maxHeight = '';
+  } else {
+    // Neither side fits the full menu. Pick whichever has more room and
+    // constrain the menu height so it scrolls internally instead of
+    // overflowing the viewport.
+    if (spaceBelow >= spaceAbove) {
+      el.style.top = `${r.bottom + 4}px`;
+      el.style.maxHeight = `${Math.max(spaceBelow, 120)}px`;
+    } else {
+      el.style.maxHeight = `${Math.max(spaceAbove, 120)}px`;
+      el.style.top = `${margin}px`;
+    }
+    el.style.overflowY = 'auto';
+  }
+
+  // ── Horizontal placement (unchanged) ──
   if (align === 'right') {
     let left = r.right - w;
     if (left < 8) left = 8;
@@ -2419,11 +2567,33 @@ function renderBranches() {
     let actionsLeftHtml = '';
     let actionsRightHtml = '';
 
+    // Cluster dispatch submenu — only shown when there's a cluster to
+    // dispatch to. Lets the user force a specific target executor for this
+    // deploy. "auto" falls through to the dispatcher's strategy.
+    const remoteExecs = (executors || []).filter(e => (e.role || 'remote') !== 'embedded' && e.status === 'online');
+    const hasCluster = remoteExecs.length > 0;
+    const currentTarget = b.executorId;
+    const targetMenuItems = hasCluster ? `
+      <div class="deploy-menu-divider"></div>
+      <div class="deploy-menu-header">派发到 (${remoteExecs.length + 1} 节点)</div>
+      <div class="deploy-menu-item" onclick="event.stopPropagation(); closeDeployMenu('${esc(b.id)}'); deployToTarget('${esc(b.id)}', null)">
+        ${!currentTarget || currentTarget.startsWith('master-') ? '✓ ' : ''}自动 (按策略 ${esc(clusterStrategy)})
+      </div>
+      ${(executors || []).map(ex => {
+        if (ex.status !== 'online') return '';
+        const checked = currentTarget === ex.id ? '✓ ' : '';
+        const shortId = ex.id.replace(/^executor-/, '').replace(/^master-/, '').slice(0, 20);
+        const roleTag = ex.role === 'embedded' ? ' (本机)' : '';
+        return `<div class="deploy-menu-item" onclick="event.stopPropagation(); closeDeployMenu('${esc(b.id)}'); deployToTarget('${esc(b.id)}', '${esc(ex.id)}')">${checked}${esc(shortId)}${roleTag}</div>`;
+      }).join('')}
+    ` : '';
+
     // Unified deploy menu template (shared across states)
     const deployMenuTpl = `
       <template id="deploy-menu-tpl-${esc(b.id)}">
         ${hasMultipleProfiles ? `<div class="deploy-menu-header">选择服务</div>${deployMenuItems}` : ''}
         ${hasDeployModes ? `${hasMultipleProfiles ? '<div class="deploy-menu-divider"></div>' : ''}<div class="deploy-menu-header">部署模式</div>${deployModeMenuItems}` : ''}
+        ${targetMenuItems}
         ${isRunning ? `<div class="deploy-menu-divider"></div>
         <div class="deploy-menu-item" onclick="event.stopPropagation(); closeDeployMenu('${esc(b.id)}'); viewBranchLogs('${esc(b.id)}')"><svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor" style="vertical-align:-1px;margin-right:4px"><path d="M1 2.75C1 1.784 1.784 1 2.75 1h10.5c.966 0 1.75.784 1.75 1.75v7.5A1.75 1.75 0 0113.25 12H9.06l-2.573 2.573A1.458 1.458 0 014 13.543V12H2.75A1.75 1.75 0 011 10.25v-7.5zm1.5 0a.25.25 0 01.25-.25h10.5a.25.25 0 01.25.25v7.5a.25.25 0 01-.25.25h-4.5a.75.75 0 00-.75.75v2.19l-2.72-2.72a.75.75 0 00-.53-.22H2.75a.25.25 0 01-.25-.25v-7.5z"/></svg>部署日志</div>
         ${stopMenuItem}` : ''}
@@ -2547,7 +2717,7 @@ function renderBranches() {
             <span class="fav-toggle ${b.isFavorite ? 'active' : ''}" onclick="event.stopPropagation(); toggleFavorite('${esc(b.id)}')" title="${b.isFavorite ? '取消收藏' : '收藏'}">
               ${b.isFavorite ? ICON.star : ICON.starOutline}
             </span>
-            <a class="branch-name" href="${githubRepoUrl ? githubRepoUrl.replace('github.com', 'github.dev') + '/tree/' + encodeURIComponent(b.branch) : '#'}" target="_blank" onclick="event.stopPropagation(); return confirmOpenGithub(event)" title="在 GitHub.dev 中浏览代码">${ICON.branch} ${esc(b.branch)}</a>
+            <a class="branch-name" href="${githubRepoUrl ? githubRepoUrl.replace('github.com', 'github.dev') + '/tree/' + encodeURIComponent(b.branch) : '#'}" target="_blank" onclick="event.stopPropagation(); return confirmOpenGithub(event)" title="在 GitHub.dev 中浏览代码">${ICON.branch} ${esc(b.branch)}</a>${renderBranchHostBadge(b)}
             <span class="branch-quick-actions">
               <button class="branch-quick-btn" onclick="event.stopPropagation(); copyBranchName('${esc(b.branch)}')" title="复制分支名">
                 <svg class="inline-icon" width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M0 6.75C0 5.784.784 5 1.75 5h1.5a.75.75 0 010 1.5h-1.5a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-1.5a.75.75 0 011.5 0v1.5A1.75 1.75 0 019.25 16h-7.5A1.75 1.75 0 010 14.25v-7.5z"/><path d="M5 1.75C5 .784 5.784 0 6.75 0h7.5C15.216 0 16 .784 16 1.75v7.5A1.75 1.75 0 0114.25 11h-7.5A1.75 1.75 0 015 9.25v-7.5zm1.75-.25a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-7.5a.25.25 0 00-.25-.25h-7.5z"/></svg>
@@ -5563,6 +5733,146 @@ function fallbackCopy(text) {
   document.body.removeChild(ta);
 }
 
+// ── Branch card "hosted on" badge (P1 #6) ──
+//
+// Shows a small chip next to the branch name indicating which executor
+// runs this branch. Three states:
+//   - no badge: single-node mode (standalone with no remote executors)
+//   - "on: 本机": master (embedded) is running the branch
+//   - "on: <shortId>": a remote executor owns it
+//   - "on: <shortId> 离线": the owning executor is currently offline
+// The short id is the last part of the executor id (after "executor-" or
+// "master-"), kept under 14 chars so it doesn't push layout around.
+function renderBranchHostBadge(branch) {
+  // Single-node mode — hide the badge entirely to avoid visual noise.
+  const remoteCount = (executors || []).filter(e => (e.role || 'remote') !== 'embedded').length;
+  if (remoteCount === 0) return '';
+
+  const execId = branch.executorId;
+  // Branches without an executorId run on the embedded master.
+  if (!execId) {
+    return '<span class="branch-host-badge local" title="运行于本机主节点">on: 本机</span>';
+  }
+
+  const node = (executors || []).find(e => e.id === execId);
+  const shortId = execId.replace(/^executor-/, '').replace(/^master-/, '').slice(0, 18);
+  if (!node) {
+    // Stale executorId — node was removed. Show as offline hint.
+    return `<span class="branch-host-badge offline" title="目标执行器已不存在 (${esc(execId)})">on: ${esc(shortId)} ⚠</span>`;
+  }
+  if (node.status === 'offline') {
+    return `<span class="branch-host-badge offline" title="执行器 ${esc(execId)} 已离线，请重新部署">on: ${esc(shortId)} 离线</span>`;
+  }
+  if (node.role === 'embedded') {
+    return '<span class="branch-host-badge local" title="运行于本机主节点">on: 本机</span>';
+  }
+  return `<span class="branch-host-badge" title="运行于执行器 ${esc(execId)} (${esc(node.host)}:${node.port})">on: ${esc(shortId)}</span>`;
+}
+
+// ── Cluster node list (inside cluster settings modal) ──
+//
+// Renders all executors as stacked cards with live load bars and action
+// buttons. Separate from the old `renderExecutorPanel` which lives in the
+// main page between the branch picker and branch list — the modal version
+// is where users go when they explicitly click "集群设置", so it carries
+// the primary management UX.
+function renderClusterNodeListHtml() {
+  if (!executors || executors.length === 0) {
+    return '<div class="cluster-node-empty">暂无节点（主节点尚未自注册 embedded master）</div>';
+  }
+  return executors.map(node => {
+    const role = node.role || 'remote';
+    const status = node.status || 'unknown';
+    const cap = node.capacity || { maxBranches: 0, memoryMB: 0, cpuCores: 0 };
+    const load = node.load || { memoryUsedMB: 0, cpuPercent: 0 };
+    const memPct = cap.memoryMB > 0 ? Math.round(load.memoryUsedMB / cap.memoryMB * 100) : 0;
+    const memGB = (load.memoryUsedMB / 1024).toFixed(1);
+    const totalGB = (cap.memoryMB / 1024).toFixed(1);
+    const branchCount = (node.branches && node.branches.length) || node.branchCount || 0;
+    const isEmbedded = role === 'embedded';
+
+    // Drain / remove only make sense for remote online nodes. Embedded
+    // master can't be drained (it IS the master), and offline nodes can
+    // still be removed (GC cleans up later anyway).
+    const actions = isEmbedded
+      ? '<span class="cluster-node-badge">本机</span>'
+      : `
+        ${status === 'online' ? `<button class="cluster-node-btn" onclick="drainExecutor('${esc(node.id)}')" title="标记为排空后，调度器不再派新分支">排空</button>` : ''}
+        <button class="cluster-node-btn danger" onclick="removeExecutor('${esc(node.id)}')" title="从集群移除此节点">踢出</button>
+      `;
+
+    return `
+      <div class="cluster-node-card cluster-node-${status} cluster-node-role-${role}">
+        <div class="cluster-node-header">
+          <span class="cluster-node-dot" data-status="${status}"></span>
+          <span class="cluster-node-id">${esc(node.id)}</span>
+          <span class="cluster-node-meta">${esc(node.host || '?')}:${node.port || '?'}</span>
+          <div class="cluster-node-actions">${actions}</div>
+        </div>
+        <div class="cluster-node-metrics">
+          <div class="cluster-node-metric">
+            <span class="metric-label">内存</span>
+            <div class="metric-bar"><div class="metric-fill ${memPct > 85 ? 'danger' : memPct > 65 ? 'warn' : ''}" style="width:${Math.min(memPct, 100)}%"></div></div>
+            <span class="metric-value">${memGB}/${totalGB} GB</span>
+          </div>
+          <div class="cluster-node-metric">
+            <span class="metric-label">CPU</span>
+            <div class="metric-bar"><div class="metric-fill ${load.cpuPercent > 85 ? 'danger' : load.cpuPercent > 65 ? 'warn' : ''}" style="width:${Math.min(load.cpuPercent, 100)}%"></div></div>
+            <span class="metric-value">${load.cpuPercent}%</span>
+          </div>
+          <div class="cluster-node-metric">
+            <span class="metric-label">分支</span>
+            <div class="metric-bar"><div class="metric-fill" style="width:${cap.maxBranches > 0 ? Math.min(branchCount / cap.maxBranches * 100, 100) : 0}%"></div></div>
+            <span class="metric-value">${branchCount}/${cap.maxBranches}</span>
+          </div>
+        </div>
+      </div>
+    `;
+  }).join('');
+}
+
+async function changeClusterStrategy(newStrategy) {
+  try {
+    const res = await fetch('/api/cluster/strategy', {
+      method: 'PUT',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ strategy: newStrategy }),
+    });
+    const body = await res.json();
+    if (!res.ok) {
+      showToast(body.error || '切换策略失败', 'error');
+      return;
+    }
+    clusterStrategy = newStrategy;
+    showToast(`调度策略已切换为 ${newStrategy}`, 'success');
+  } catch (err) {
+    showToast('网络错误: ' + err.message, 'error');
+  }
+}
+
+// ── Cluster modal live refresh (SSE-driven) ──
+//
+// When the state-stream SSE pushes an executor change while the cluster
+// settings modal is open (e.g. a node goes offline, someone else joins),
+// we re-render the node list inside the modal without closing it. The
+// function is a no-op when the modal isn't open.
+function refreshClusterModalIfOpen() {
+  const listEl = document.getElementById('clusterNodeList');
+  if (!listEl) return;
+  listEl.innerHTML = renderClusterNodeListHtml();
+  const statusBar = document.querySelector('.cluster-status-bar');
+  if (statusBar && clusterCapacity) {
+    const meta = statusBar.querySelector('.cluster-status-meta');
+    if (meta) {
+      meta.textContent =
+        `在线节点 ${clusterCapacity.online || 0} / ` +
+        `总内存 ${clusterCapacity.total?.memoryMB || 0} MB / ` +
+        `总 CPU ${clusterCapacity.total?.cpuCores || 0} 核`;
+    }
+  }
+}
+
 // ── Cluster bootstrap (one-click UI) ──
 //
 // Dashboard-facing counterpart to exec_cds.sh issue-token / connect.
@@ -5583,6 +5893,14 @@ async function openClusterModal() {
 
   const role = statusBody.effectiveRole;
   const capacity = statusBody.capacity || { online: 0, total: {} };
+  // Sync the module-level cluster state from this probe so other UI bits
+  // (header badge, branch cards, etc.) have fresh data even before the
+  // next SSE tick arrives.
+  clusterCapacity = capacity;
+  clusterStrategy = statusBody.strategy || 'least-load';
+  if (Array.isArray(capacity.nodes)) {
+    executors = capacity.nodes;
+  }
 
   // Role-aware title gives context without forcing the user to read the body
   const roleLabel = {
@@ -5669,6 +5987,43 @@ async function openClusterModal() {
           <div id="clusterJoinResult"></div>
         `}
       </div>
+
+      <!-- ── Cluster management (visible in scheduler / hybrid roles) ── -->
+      ${role === 'scheduler' || role === 'hybrid' || (capacity.nodes && capacity.nodes.length > 1) ? `
+        <div class="cluster-mgmt-section">
+          <div class="cluster-mgmt-header">
+            <h3 class="cluster-mgmt-title">节点管理</h3>
+            <span class="cluster-mgmt-hint">SSE 实时更新 · 主节点不可移除</span>
+          </div>
+          <div id="clusterNodeList" class="cluster-node-list">
+            ${renderClusterNodeListHtml()}
+          </div>
+
+          <div class="cluster-strategy">
+            <label class="cluster-strategy-label">调度策略 <span class="cluster-strategy-hint">决定新部署派发到哪台节点</span></label>
+            <div class="cluster-strategy-options">
+              <label class="cluster-strategy-radio">
+                <input type="radio" name="clusterStrategy" value="least-load"
+                       ${clusterStrategy === 'least-load' ? 'checked' : ''}
+                       onchange="changeClusterStrategy(this.value)">
+                <span><strong>least-load</strong>（推荐）— 按 60% 内存 + 40% CPU 加权选最空闲</span>
+              </label>
+              <label class="cluster-strategy-radio">
+                <input type="radio" name="clusterStrategy" value="least-branches"
+                       ${clusterStrategy === 'least-branches' ? 'checked' : ''}
+                       onchange="changeClusterStrategy(this.value)">
+                <span><strong>least-branches</strong> — 选运行分支最少的节点</span>
+              </label>
+              <label class="cluster-strategy-radio">
+                <input type="radio" name="clusterStrategy" value="round-robin"
+                       ${clusterStrategy === 'round-robin' ? 'checked' : ''}
+                       onchange="changeClusterStrategy(this.value)">
+                <span><strong>round-robin</strong> — 按心跳时间轮询</span>
+              </label>
+            </div>
+          </div>
+        </div>
+      ` : ''}
     </div>
   `;
 

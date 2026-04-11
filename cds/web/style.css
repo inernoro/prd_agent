@@ -3648,3 +3648,258 @@ a.branch-name:hover { color: var(--accent); }
   font-size: 13px;
   color: #f85149;
 }
+
+/* ── Cluster management section (inside cluster settings modal) ── */
+
+.cluster-mgmt-section {
+  margin-top: 18px;
+  padding-top: 18px;
+  border-top: 1px solid var(--border-subtle);
+}
+
+.cluster-mgmt-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  margin-bottom: 10px;
+}
+
+.cluster-mgmt-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--fg-primary);
+  margin: 0;
+}
+
+.cluster-mgmt-hint {
+  font-size: 11px;
+  color: var(--fg-muted);
+}
+
+.cluster-node-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.cluster-node-empty {
+  font-size: 12px;
+  color: var(--fg-muted);
+  padding: 12px;
+  text-align: center;
+  background: var(--bg-tertiary);
+  border-radius: 6px;
+}
+
+.cluster-node-card {
+  padding: 10px 12px;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-subtle);
+  border-radius: 6px;
+}
+.cluster-node-card.cluster-node-offline {
+  opacity: 0.65;
+  border-color: rgba(248, 81, 73, 0.4);
+}
+.cluster-node-card.cluster-node-draining {
+  border-color: rgba(240, 136, 62, 0.4);
+}
+
+.cluster-node-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.cluster-node-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  background: #8b949e;
+}
+.cluster-node-dot[data-status="online"] { background: #3fb950; box-shadow: 0 0 0 2px rgba(63,185,80,0.15); }
+.cluster-node-dot[data-status="offline"] { background: #f85149; }
+.cluster-node-dot[data-status="draining"] { background: #f0883e; }
+
+.cluster-node-id {
+  font-family: monospace;
+  font-size: 12px;
+  color: var(--fg-primary);
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.cluster-node-meta {
+  font-family: monospace;
+  font-size: 11px;
+  color: var(--fg-muted);
+}
+
+.cluster-node-actions {
+  margin-left: auto;
+  display: flex;
+  gap: 6px;
+}
+
+.cluster-node-badge {
+  font-size: 10px;
+  padding: 2px 8px;
+  background: rgba(88, 166, 255, 0.15);
+  border: 1px solid rgba(88, 166, 255, 0.4);
+  color: #58a6ff;
+  border-radius: 4px;
+  font-weight: 600;
+}
+
+.cluster-node-btn {
+  font-size: 11px;
+  padding: 4px 10px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-subtle);
+  color: var(--fg-primary);
+  border-radius: 4px;
+  cursor: pointer;
+  font-weight: 500;
+}
+.cluster-node-btn:hover:not(:disabled) {
+  background: var(--bg-primary);
+  border-color: #58a6ff;
+}
+.cluster-node-btn.danger {
+  color: #f85149;
+  border-color: rgba(248, 81, 73, 0.4);
+}
+.cluster-node-btn.danger:hover {
+  background: rgba(248, 81, 73, 0.1);
+}
+
+.cluster-node-metrics {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 10px;
+}
+
+.cluster-node-metric {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.cluster-node-metric .metric-label {
+  font-size: 10px;
+  color: var(--fg-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.cluster-node-metric .metric-bar {
+  height: 4px;
+  background: var(--bg-primary);
+  border-radius: 2px;
+  overflow: hidden;
+}
+.cluster-node-metric .metric-fill {
+  height: 100%;
+  background: #3fb950;
+  transition: width 0.3s;
+}
+.cluster-node-metric .metric-fill.warn { background: #d29922; }
+.cluster-node-metric .metric-fill.danger { background: #f85149; }
+
+.cluster-node-metric .metric-value {
+  font-size: 10px;
+  font-family: monospace;
+  color: var(--fg-secondary);
+}
+
+/* ── Strategy radio group ── */
+
+.cluster-strategy {
+  margin-top: 16px;
+  padding: 12px 14px;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-subtle);
+  border-radius: 6px;
+}
+
+.cluster-strategy-label {
+  display: block;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--fg-secondary);
+  margin-bottom: 10px;
+}
+
+.cluster-strategy-hint {
+  font-size: 10px;
+  color: var(--fg-muted);
+  font-weight: normal;
+  margin-left: 6px;
+}
+
+.cluster-strategy-options {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.cluster-strategy-radio {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--fg-secondary);
+  cursor: pointer;
+  padding: 6px 8px;
+  border-radius: 4px;
+  transition: background 0.15s;
+}
+.cluster-strategy-radio:hover {
+  background: var(--bg-primary);
+}
+.cluster-strategy-radio input[type="radio"] {
+  margin-top: 2px;
+}
+.cluster-strategy-radio strong {
+  color: var(--fg-primary);
+  font-weight: 600;
+}
+
+/* ── Header badge cluster-mode display ── */
+
+.capacity-badge[data-cluster="1"] {
+  border-color: rgba(88, 166, 255, 0.6);
+}
+.capacity-badge[data-cluster="1"] .cap-label {
+  color: #58a6ff;
+}
+
+/* ── Branch card "hosted on" badge ── */
+
+.branch-host-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 10px;
+  padding: 2px 8px;
+  background: rgba(88, 166, 255, 0.1);
+  border: 1px solid rgba(88, 166, 255, 0.3);
+  border-radius: 10px;
+  color: #58a6ff;
+  font-family: monospace;
+  margin-left: 6px;
+  white-space: nowrap;
+}
+.branch-host-badge.local {
+  background: rgba(139, 148, 158, 0.1);
+  border-color: rgba(139, 148, 158, 0.3);
+  color: var(--fg-muted);
+}
+.branch-host-badge.offline {
+  background: rgba(248, 81, 73, 0.1);
+  border-color: rgba(248, 81, 73, 0.4);
+  color: #f85149;
+}

@@ -146,7 +146,15 @@ export class ExecutorAgent {
 
   private buildRegistration(): Partial<ExecutorNode> {
     const totalMem = Math.round(os.totalmem() / (1024 * 1024));
-    const cpus = os.cpus().length;
+    // Prefer os.availableParallelism() over os.cpus().length: the former
+    // respects cgroup v2 CPU quotas (Docker --cpus, Kubernetes requests,
+    // systemd CPUQuota) and returns the actually-usable core count, while
+    // os.cpus().length always returns the host's logical core count even
+    // inside a limited container. Node 19+. We fall back to os.cpus() on
+    // older runtimes via the optional chaining + length.
+    const cpus = (typeof os.availableParallelism === 'function'
+      ? os.availableParallelism()
+      : os.cpus().length) || 1;
     return {
       id: this.executorId,
       host: this.detectHost(),

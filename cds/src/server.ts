@@ -25,6 +25,14 @@ export interface ServerDeps {
   config: CdsConfig;
   /** Optional warm-pool scheduler (v3.1). */
   schedulerService?: SchedulerService;
+  /**
+   * Cluster executor registry. Passed through to createBranchRouter so the
+   * deploy handler can dispatch to remote executors when present. Absent in
+   * pre-cluster deployments where the router falls back to local execution.
+   */
+  registry?: import('./scheduler/executor-registry.js').ExecutorRegistry;
+  /** Getter for the current dispatch strategy. See routes/cluster.ts. */
+  getClusterStrategy?: () => 'least-branches' | 'least-load' | 'round-robin';
 }
 
 function makeToken(user: string, pass: string): string {
@@ -553,19 +561,35 @@ export function createServer(deps: ServerDeps): express.Express {
     _req.on('close', () => { stateClients.delete(res); clearInterval(heartbeat); });
   });
 
-  // When state changes, broadcast to all connected clients
-  deps.stateService.onSave(() => {
+  // ── Broadcast helpers exposed to index.ts for cluster state changes ──
+  //
+  // `broadcastState()` is called automatically on every stateService.save()
+  // AND manually from the cluster hot-upgrade path when in-memory config
+  // changes (mode flip) without a state.json write. Other modules reach it
+  // via the exported `broadcastClusterChange()` below.
+  function broadcastState(): void {
     if (stateClients.size === 0) return;
     const state = deps.stateService.getState();
+    // Include executors + mode + capacity so the Dashboard can react to
+    // cluster changes without extra polls. `cdsMode` is read from the
+    // live config (which may have been hot-switched by onFirstRegister).
     const data = JSON.stringify({
       seq: ++stateSeq,
       branches: Object.values(state.branches),
       defaultBranch: state.defaultBranch,
+      // Cluster state — frontend uses these to update header + branch
+      // placement + cluster modal without needing another /api/config call.
+      mode: deps.config.mode,
+      executors: Object.values(state.executors || {}),
+      capacity: deps.registry ? deps.registry.getTotalCapacity() : null,
     });
     for (const client of stateClients) {
       try { client.write(`data: ${data}\n\n`); } catch { stateClients.delete(client); }
     }
-  });
+  }
+  (app as unknown as { broadcastState?: () => void }).broadcastState = broadcastState;
+
+  deps.stateService.onSave(broadcastState);
 
   // ── Activity stream SSE endpoint ──
   app.get('/api/activity-stream', (req, res) => {
@@ -642,7 +666,16 @@ export function createServer(deps: ServerDeps): express.Express {
 
   // API routes
   app.use('/api/bridge', createBridgeRouter({ bridgeService: deps.bridgeService }));
-  app.use('/api', createBranchRouter(deps));
+  app.use('/api', createBranchRouter({
+    stateService: deps.stateService,
+    worktreeService: deps.worktreeService,
+    containerService: deps.containerService,
+    shell: deps.shell,
+    config: deps.config,
+    schedulerService: deps.schedulerService,
+    registry: deps.registry,
+    getClusterStrategy: deps.getClusterStrategy,
+  }));
 
   // NOTE: The SPA fallback (`app.get('*', ...)`) is intentionally NOT
   // registered here. Routes mounted later in `index.ts` (scheduler, cluster,

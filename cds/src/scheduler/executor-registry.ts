@@ -96,7 +96,13 @@ export class ExecutorRegistry {
    */
   registerEmbeddedMaster(masterPort: number, hostname?: string): ExecutorNode {
     const totalMB = Math.round(os.totalmem() / (1024 * 1024));
-    const cores = os.cpus().length || 1;
+    // Use os.availableParallelism() so cgroup-limited runs report their
+    // actual CPU allocation, not the host's physical core count. Falls back
+    // to os.cpus().length on Node < 19. See ExecutorAgent.buildRegistration
+    // for the matching logic in the remote-side agent.
+    const cores = (typeof os.availableParallelism === 'function'
+      ? os.availableParallelism()
+      : os.cpus().length) || 1;
     const host = hostname || os.hostname() || '127.0.0.1';
     const id = `master-${host}`;
     return this.register({
@@ -191,7 +197,17 @@ export class ExecutorRegistry {
     return this.getOnline().length;
   }
 
-  /** Process a heartbeat from an executor */
+  /**
+   * Process a heartbeat from an executor.
+   *
+   * Also syncs the executor's reported branches into master state so the
+   * dashboard's branch list shows remote-owned branches with correct status.
+   * This is the "merge" for P2 #8 (heartbeat branch sync): if the executor
+   * reports a branch the master doesn't know about, we create a stub entry
+   * so the UI can render "hosted on X". If the status differs we update
+   * the master's copy. We never overwrite metadata the user set on master
+   * (notes, tags, favorites) — those are master-side only.
+   */
   heartbeat(executorId: string, data: {
     load: { memoryUsedMB: number; cpuPercent: number };
     branches: Record<string, { status: string; services: Record<string, unknown> }>;
@@ -205,6 +221,40 @@ export class ExecutorRegistry {
     node.lastHeartbeat = new Date().toISOString();
 
     this.stateService.setExecutor(node);
+
+    // ── Sync heartbeat-reported branches to master state ──
+    //
+    // For each branch the executor reports, ensure a corresponding entry
+    // exists in the master's stateService with executorId pointing at this
+    // node. This lets GET /api/branches show branches that live on remote
+    // executors (including ones the master never explicitly dispatched to,
+    // e.g. local branches on a node that later joined the cluster).
+    for (const [branchId, bStatus] of Object.entries(data.branches)) {
+      const existing = this.stateService.getBranch(branchId);
+      if (!existing) {
+        // Stub entry: minimal metadata so the UI can list + navigate. The
+        // executor remains the source of truth for the runtime details.
+        this.stateService.addBranch({
+          id: branchId,
+          branch: branchId,            // best-guess display name
+          worktreePath: '',             // lives on executor, not us
+          services: (bStatus.services as Record<string, import('../types.js').ServiceState>) || {},
+          status: (bStatus.status as import('../types.js').BranchEntry['status']) || 'idle',
+          createdAt: new Date().toISOString(),
+          executorId: node.id,
+        });
+      } else {
+        // Keep master-side metadata (tags, notes, isFavorite, etc.) but
+        // refresh status + services + executor ownership from the heartbeat.
+        // We mutate in place; state.save() at the end of this method flushes.
+        existing.executorId = node.id;
+        existing.status = (bStatus.status as import('../types.js').BranchEntry['status']) || existing.status;
+        if (bStatus.services && typeof bStatus.services === 'object') {
+          existing.services = bStatus.services as Record<string, import('../types.js').ServiceState>;
+        }
+      }
+    }
+
     this.stateService.save();
     return true;
   }
@@ -306,6 +356,22 @@ export class ExecutorRegistry {
         node.status = 'offline';
         this.stateService.setExecutor(node);
         changed = true;
+
+        // ── Basic failover signaling (P2 #7) ──
+        //
+        // Mark all branches owned by this executor as errored so the
+        // dashboard can surface "node offline, redeploy needed" in the
+        // branch list. We don't automatically redeploy elsewhere — that
+        // would require conflict-free migration logic we don't have yet.
+        // But the user now has a clear signal and can click "redeploy"
+        // which will go through the dispatcher and pick a healthy node.
+        for (const branchId of node.branches) {
+          const entry = this.stateService.getBranch(branchId);
+          if (entry && entry.executorId === node.id) {
+            entry.status = 'error';
+            entry.errorMessage = `执行器 ${node.id} 已离线，请重新部署以迁移到其他节点`;
+          }
+        }
       }
 
       // Phase 2: GC long-offline remote nodes.
