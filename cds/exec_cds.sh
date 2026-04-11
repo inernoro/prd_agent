@@ -117,14 +117,281 @@ read_env_value() {
   ' "$ENV_FILE"
 }
 
-# ══ dependency check & build ═════════════════════════════════════
+# ══ dependency check & auto-install ══════════════════════════════
+#
+# See .claude/rules/quickstart-zero-friction.md
+# 原则: "快启动必须大包大揽，假设使用者是小白"
+#
+# check_deps() 不再是"缺失就退出"——它会:
+#   1. 检测每个必需/可选工具，给出 ✅/❌ + 用途说明
+#   2. 对能自动装的 (pnpm/python3/curl/openssl) → 交互询问 [Y/n] → 自动装
+#   3. 对不能自动装的 (docker/node) → 给对应发行版的复制粘贴命令
+#   4. 跑两次能继续 (幂等)
+#   5. 成功的静默，失败的详细
 
-check_deps() {
-  command -v node >/dev/null 2>&1  || { err "未安装 node (需要 >= 20)"; exit 1; }
+# Ask a yes/no question on tty. Returns 0 for yes, 1 for no.
+# Default is Y (enter = yes). Non-interactive (no tty) returns yes.
+confirm() {
+  local prompt="$1"
+  if [ ! -t 0 ] || [ ! -t 1 ]; then
+    return 0  # non-interactive: assume yes so scripted runs work
+  fi
+  local answer
+  printf "  %s%s%s [Y/n]: " "$B" "$prompt" "$N" >/dev/tty
+  read -r answer </dev/tty
+  case "${answer:-Y}" in
+    [Yy]|[Yy][Ee][Ss]|'') return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+# Detect Linux distribution family for auto-install command selection.
+# Returns one of: ubuntu, debian, centos, rhel, fedora, arch, alpine, macos, unknown
+detect_os() {
+  if [ "$(uname -s)" = "Darwin" ]; then
+    printf 'macos'
+    return
+  fi
+  if [ -f /etc/os-release ]; then
+    # shellcheck disable=SC1091
+    . /etc/os-release
+    case "${ID:-}" in
+      ubuntu) printf 'ubuntu' ;;
+      debian) printf 'debian' ;;
+      centos) printf 'centos' ;;
+      rhel|redhat) printf 'rhel' ;;
+      fedora) printf 'fedora' ;;
+      arch|manjaro) printf 'arch' ;;
+      alpine) printf 'alpine' ;;
+      *)
+        # Fall back to ID_LIKE if primary ID is unknown
+        case "${ID_LIKE:-}" in
+          *debian*) printf 'debian' ;;
+          *rhel*|*fedora*) printf 'rhel' ;;
+          *) printf 'unknown' ;;
+        esac
+        ;;
+    esac
+  else
+    printf 'unknown'
+  fi
+}
+
+# Return the package-install command prefix for the detected OS.
+# Usage: $(pkg_install_cmd) <package-name>
+pkg_install_cmd() {
+  case "$(detect_os)" in
+    ubuntu|debian) printf 'sudo apt-get install -y' ;;
+    centos|rhel)   printf 'sudo yum install -y' ;;
+    fedora)        printf 'sudo dnf install -y' ;;
+    arch)          printf 'sudo pacman -S --noconfirm' ;;
+    alpine)        printf 'sudo apk add' ;;
+    macos)         printf 'brew install' ;;
+    *)             printf '' ;;
+  esac
+}
+
+# Try to install a package via the detected package manager. Returns 0 on success.
+try_pkg_install() {
+  local pkg="$1" cmd
+  cmd="$(pkg_install_cmd)"
+  if [ -z "$cmd" ]; then
+    warn "未知的发行版，无法自动安装 $pkg"
+    return 1
+  fi
+  info "执行: $cmd $pkg"
+  # shellcheck disable=SC2086
+  $cmd "$pkg" 2>&1 | tail -5
+  command -v "$pkg" >/dev/null 2>&1
+}
+
+# ── Dependency checks: each function returns 0 if OK, 1 if missing ──
+
+check_node() {
+  if ! command -v node >/dev/null 2>&1; then
+    printf "  ❌ [依赖] %sNode.js%s 未安装\n" "$B" "$N"
+    echo  "     用途: 运行 CDS 核心进程 (Express + TypeScript)"
+    echo  "     缺失后果: CDS 完全无法启动"
+    echo  "     推荐安装 (Node.js 20 LTS):"
+    case "$(detect_os)" in
+      ubuntu|debian)
+        echo  "       curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -"
+        echo  "       sudo apt-get install -y nodejs"
+        ;;
+      centos|rhel|fedora)
+        echo  "       curl -fsSL https://rpm.nodesource.com/setup_20.x | sudo bash -"
+        echo  "       sudo yum install -y nodejs"
+        ;;
+      macos)
+        echo  "       brew install node@20"
+        ;;
+      *)
+        echo  "       访问 https://nodejs.org/ 下载 v20 LTS 安装包"
+        ;;
+    esac
+    echo  "     (Node.js 需要发行版级别安装，不能由本脚本自动完成)"
+    return 1
+  fi
   local v; v="$(node -v | sed 's/^v//' | cut -d. -f1)"
-  if ! [ "$v" -ge 20 ] 2>/dev/null; then err "Node.js 需要 >= 20 (当前 v$v)"; exit 1; fi
-  command -v pnpm   >/dev/null 2>&1 || { err "未安装 pnpm (npm i -g pnpm)"; exit 1; }
-  command -v docker >/dev/null 2>&1 || { err "未安装 docker"; exit 1; }
+  if ! [ "$v" -ge 20 ] 2>/dev/null; then
+    printf "  ❌ [依赖] Node.js 版本过低 (当前 v%s，需要 >= 20)\n" "$v"
+    echo  "     请升级到 Node.js 20 LTS 或更高版本"
+    return 1
+  fi
+  printf "  ✅ Node.js %s\n" "$(node -v)"
+  return 0
+}
+
+check_pnpm() {
+  if command -v pnpm >/dev/null 2>&1; then
+    printf "  ✅ pnpm %s\n" "$(pnpm -v 2>/dev/null || echo '(version unknown)')"
+    return 0
+  fi
+  printf "  ❌ [依赖] %spnpm%s 未安装\n" "$B" "$N"
+  echo  "     用途: 前端包管理器 (代替 npm, 本项目强制使用)"
+  echo  "     缺失后果: CDS Dashboard 无法编译"
+  if command -v npm >/dev/null 2>&1; then
+    if confirm "是否用 'npm install -g pnpm' 自动安装?"; then
+      info "执行: npm install -g pnpm"
+      if npm install -g pnpm 2>&1 | tail -3; then
+        command -v pnpm >/dev/null 2>&1 && {
+          ok "pnpm 安装完成: $(pnpm -v)"
+          return 0
+        }
+      fi
+      err "pnpm 自动安装失败，请手动运行: npm install -g pnpm"
+      return 1
+    fi
+    warn "跳过 pnpm 自动安装 — 请手动运行: npm install -g pnpm"
+    return 1
+  fi
+  warn "未找到 npm，无法自动安装 pnpm。先装好 Node.js 再试"
+  return 1
+}
+
+check_docker() {
+  if command -v docker >/dev/null 2>&1; then
+    if docker ps >/dev/null 2>&1; then
+      printf "  ✅ Docker %s\n" "$(docker --version 2>/dev/null | awk '{print $3}' | tr -d ',')"
+      return 0
+    fi
+    printf "  ⚠️  Docker 已安装但无权限访问 daemon\n"
+    echo  "     快速修复:"
+    echo  "       sudo usermod -aG docker \$USER"
+    echo  "       newgrp docker   # 或重新登录 shell"
+    echo  "     临时测试: sudo docker ps"
+    return 1
+  fi
+  printf "  ❌ [依赖] %sDocker%s 未安装\n" "$B" "$N"
+  echo  "     用途: 运行分支预览容器 (CDS 核心能力)"
+  echo  "     缺失后果: 无法创建任何分支预览"
+  echo  "     推荐安装:"
+  case "$(detect_os)" in
+    ubuntu|debian)
+      echo  "       curl -fsSL https://get.docker.com | sh"
+      echo  "       sudo usermod -aG docker \$USER"
+      echo  "       newgrp docker"
+      ;;
+    centos|rhel|fedora)
+      echo  "       sudo yum install -y docker"
+      echo  "       sudo systemctl enable --now docker"
+      echo  "       sudo usermod -aG docker \$USER"
+      echo  "       newgrp docker"
+      ;;
+    macos)
+      echo  "       brew install --cask docker"
+      echo  "       然后启动 Docker Desktop 应用"
+      ;;
+    alpine)
+      echo  "       sudo apk add docker"
+      echo  "       sudo rc-update add docker boot"
+      echo  "       sudo service docker start"
+      ;;
+    *)
+      echo  "       访问 https://docs.docker.com/engine/install/ 查找对应发行版"
+      ;;
+  esac
+  echo  "     (Docker 涉及 systemd + 用户组, 不能由本脚本自动完成)"
+  return 1
+}
+
+check_openssl() {
+  if command -v openssl >/dev/null 2>&1; then
+    return 0  # silent success — openssl 几乎所有系统都预装
+  fi
+  printf "  ❌ [依赖] openssl 未安装 (用于生成 JWT 密钥和 bootstrap token)\n"
+  if confirm "是否自动安装 openssl?"; then
+    try_pkg_install openssl && { ok "openssl 安装完成"; return 0; }
+    warn "openssl 安装失败。备用方案: 脚本会使用 /dev/urandom 降级生成随机值"
+    return 1
+  fi
+  warn "跳过 openssl — 会降级使用 /dev/urandom"
+  return 0  # 不阻塞, 有降级路径
+}
+
+check_curl() {
+  if command -v curl >/dev/null 2>&1; then
+    return 0
+  fi
+  printf "  ❌ [依赖] %scurl%s 未安装\n" "$B" "$N"
+  echo  "     用途: connect / cluster / cert 命令依赖 curl 调 HTTP"
+  echo  "     缺失后果: 集群命令和证书签发完全不工作"
+  if confirm "是否自动安装 curl?"; then
+    try_pkg_install curl && { ok "curl 安装完成"; return 0; }
+    err "curl 自动安装失败，请手动安装后重试"
+    return 1
+  fi
+  err "curl 是必需依赖，跳过会导致 connect/cluster 失败"
+  return 1
+}
+
+check_python3() {
+  if command -v python3 >/dev/null 2>&1; then
+    return 0
+  fi
+  printf "  ⚠️  [可选] python3 未安装\n"
+  echo  "     用途: ./exec_cds.sh cluster 命令的 JSON 美化输出"
+  echo  "     缺失后果: cluster 命令仍能工作, 但输出是原始 JSON"
+  if confirm "是否自动安装 python3?"; then
+    try_pkg_install python3 && { ok "python3 安装完成"; return 0; }
+    warn "python3 安装失败, 不影响核心功能"
+    return 0
+  fi
+  info "跳过 python3 — 这是可选依赖, 不影响核心功能"
+  return 0
+}
+
+# Main entry: checks all deps and auto-installs what it can.
+# Returns 0 if all required deps are OK (optional deps don't block).
+# Used by: init, start, connect, cert — anywhere CDS needs to be ready to run.
+check_deps() {
+  echo
+  printf "  %s依赖检查%s\n" "$B" "$N"
+  echo  "  ═══════════════════════════════"
+
+  local required_failed=0
+
+  # Required deps — scripts cannot run without these
+  check_node    || required_failed=$((required_failed + 1))
+  check_pnpm    || required_failed=$((required_failed + 1))
+  check_docker  || required_failed=$((required_failed + 1))
+  check_curl    || required_failed=$((required_failed + 1))
+
+  # Optional deps — graceful degradation
+  check_openssl
+  check_python3
+
+  echo
+
+  if [ "$required_failed" -gt 0 ]; then
+    err "$required_failed 个必需依赖未就绪 — 按上面的"推荐安装"命令操作后再跑一次 init"
+    echo
+    echo "  本脚本是幂等的：装好依赖后重新运行 ./exec_cds.sh init 会从断点继续"
+    echo
+    exit 1
+  fi
+  ok "所有必需依赖已就绪"
+  echo
 }
 
 install_deps() {
@@ -524,6 +791,13 @@ init_cmd() {
   echo  "  ═══════════════════════════════"
   echo
 
+  # Phase 1 of init: dependency check + auto-install.
+  # Per .claude/rules/quickstart-zero-friction.md — assume the user is a
+  # beginner and bootstrap the environment ourselves instead of bailing
+  # with "command not found".
+  check_deps
+
+  # Phase 2: collect config via interactive prompts.
   local cur_user cur_pass cur_jwt cur_doms
   cur_user="$(read_env_value CDS_USERNAME)"
   cur_pass="$(read_env_value CDS_PASSWORD)"
@@ -1008,12 +1282,16 @@ help_cmd() {
   📦 基础生命周期 (单机使用就够了)
 ──────────────────────────────────────────────────────────────────
 
-  ./exec_cds.sh init                第一次使用必跑！交互式问你 4 个问题:
-                                      1) Dashboard 用户名 (默认 admin)
-                                      2) Dashboard 密码
-                                      3) 是否生成 JWT 密钥 (默认是)
-                                      4) 你的根域名 (例: miduo.org)
-                                    然后写入 .cds.env + 生成 nginx 配置
+  ./exec_cds.sh init                第一次使用必跑！它会自动帮你:
+                                      1) 检查依赖 (Node/pnpm/Docker/curl/...)
+                                         缺什么就问你是否自动安装 [Y/n]
+                                      2) 交互式问 4 个配置:
+                                         - Dashboard 用户名 (默认 admin)
+                                         - Dashboard 密码
+                                         - JWT 密钥 (自动生成)
+                                         - 根域名 (例: miduo.org)
+                                      3) 写入 .cds.env + 生成 nginx 配置
+                                    是幂等的: 跑两次、跑到一半 Ctrl+C 再跑都 OK
 
   ./exec_cds.sh start               启动 CDS + Nginx (后台运行)
                                       → 访问 http://localhost:9900 进 Dashboard
