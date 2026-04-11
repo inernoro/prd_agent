@@ -72,8 +72,6 @@ public sealed class PrAlignmentService
             AppCallerCode = AppCallerCode,
             ModelType = "chat",
             Stream = true,
-            // 推理模型（qwen-thinking 等）的 reasoning_content 必须透传，
-            // 否则 Gateway 会把思考块静默吞掉导致前端"空白等待"几十秒。
             IncludeThinking = true,
             RequestBody = new JsonObject
             {
@@ -84,6 +82,9 @@ public sealed class PrAlignmentService
                 },
                 ["temperature"] = 0.2,
                 ["max_tokens"] = 4096,
+                // OpenRouter: 详见 rule.llm-gateway 的"OpenRouter Reasoning"一节
+                ["include_reasoning"] = true,
+                ["reasoning"] = new JsonObject { ["exclude"] = false },
             },
         };
 
