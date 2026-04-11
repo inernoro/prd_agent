@@ -8,6 +8,8 @@ import { SignatureCinema } from './sections/SignatureCinema';
 import { HowItWorks } from './sections/HowItWorks';
 import { AgentGrid } from './sections/AgentGrid';
 import { CompatibilityStack } from './sections/CompatibilityStack';
+import { CommunityPulse } from './sections/CommunityPulse';
+import { DesktopDownload } from './sections/DesktopDownload';
 import { FinalCta } from './sections/FinalCta';
 import { MinimalFooter } from './sections/MinimalFooter';
 import { StaticBackdrop } from './components/StaticBackdrop';
@@ -74,8 +76,8 @@ export default function LandingPage() {
     { label: '产品', href: '#features' },
     { label: 'Agent', href: '#agents' },
     { label: '片花', href: '#cinema' },
-    { label: '流程', href: '#how' },
-    { label: '兼容', href: '#compat' },
+    { label: '社区', href: '#pulse' },
+    { label: '下载', href: '#download' },
     { label: '文档', href: 'https://github.com/inernoro/prd_agent', external: true },
   ];
 
@@ -240,6 +242,14 @@ export default function LandingPage() {
 
       <div id="compat">
         <CompatibilityStack />
+      </div>
+
+      <div id="pulse">
+        <CommunityPulse />
+      </div>
+
+      <div id="download">
+        <DesktopDownload />
       </div>
 
       <div id="cta">

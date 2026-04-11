@@ -67,10 +67,18 @@ export function AgentGrid() {
       {/* Section header */}
       <div className="max-w-6xl mx-auto mb-16 md:mb-20 text-center">
         <div
-          className="text-[11px] uppercase text-white/40 mb-5"
-          style={{ fontFamily: 'var(--font-display)', letterSpacing: '0.32em' }}
+          className="inline-flex items-center gap-2 mb-5 px-3 py-1 rounded border border-cyan-400/25"
+          style={{ fontFamily: 'var(--font-mono)', background: 'rgba(0, 240, 255, 0.05)' }}
         >
-          The Roster
+          <span
+            className="text-[12px] text-cyan-300 uppercase"
+            style={{
+              letterSpacing: '0.18em',
+              textShadow: '0 0 10px rgba(0, 240, 255, 0.55)',
+            }}
+          >
+            ► The Roster
+          </span>
         </div>
         <h2
           className="text-white font-medium"
@@ -79,6 +87,7 @@ export function AgentGrid() {
             fontSize: 'clamp(2rem, 5vw, 3.75rem)',
             lineHeight: 1.05,
             letterSpacing: '-0.03em',
+            textShadow: '0 0 28px rgba(0, 240, 255, 0.2)',
           }}
         >
           十五位 Agent，
@@ -125,7 +134,7 @@ function AgentCard({ agent }: { agent: Agent }) {
         e.currentTarget.style.boxShadow = 'none';
       }}
     >
-      {/* Header: icon + arrow */}
+      {/* Header: icon + LVL badge + arrow */}
       <div className="flex items-start justify-between mb-4">
         <div
           className="w-10 h-10 rounded-xl flex items-center justify-center transition-all duration-300"
@@ -137,9 +146,24 @@ function AgentCard({ agent }: { agent: Agent }) {
         >
           <Icon className="w-[18px] h-[18px]" style={{ color: accent }} />
         </div>
-        <ArrowUpRight
-          className="w-4 h-4 text-white/30 group-hover:text-white/70 transition-all duration-300 group-hover:-translate-y-0.5 group-hover:translate-x-0.5"
-        />
+        <div className="flex items-center gap-2">
+          <span
+            className="text-[10px] px-1.5 py-0.5 rounded"
+            style={{
+              background: `${accent}15`,
+              border: `1px solid ${accent}33`,
+              color: accent,
+              fontFamily: 'var(--font-mono)',
+              letterSpacing: '0.08em',
+              textShadow: `0 0 6px ${accent}99`,
+            }}
+          >
+            LV.{isCustom ? '99' : '42'}
+          </span>
+          <ArrowUpRight
+            className="w-4 h-4 text-white/30 group-hover:text-white/70 transition-all duration-300 group-hover:-translate-y-0.5 group-hover:translate-x-0.5"
+          />
+        </div>
       </div>
 
       {/* Name */}

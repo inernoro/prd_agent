@@ -30,10 +30,19 @@ export function CompatibilityStack() {
         {/* Header */}
         <div className="text-center mb-14 md:mb-16">
           <div
-            className="text-[11px] uppercase text-white/40 mb-5"
-            style={{ fontFamily: 'var(--font-display)', letterSpacing: '0.32em' }}
+            className="inline-flex items-center gap-2 mb-5 px-3 py-1 rounded border border-blue-400/25"
+            style={{ fontFamily: 'var(--font-mono)', background: 'rgba(59, 130, 246, 0.05)' }}
           >
-            Compatible With
+            <span
+              className="text-[12px] uppercase"
+              style={{
+                color: '#60a5fa',
+                letterSpacing: '0.18em',
+                textShadow: '0 0 10px rgba(96, 165, 250, 0.55)',
+              }}
+            >
+              ⚡ Compatible With
+            </span>
           </div>
           <h2
             className="text-white font-medium"
@@ -42,6 +51,7 @@ export function CompatibilityStack() {
               fontSize: 'clamp(1.875rem, 4.5vw, 3.25rem)',
               lineHeight: 1.05,
               letterSpacing: '-0.03em',
+              textShadow: '0 0 28px rgba(96, 165, 250, 0.2)',
             }}
           >
             一套配置，

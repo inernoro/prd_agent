@@ -6,5 +6,7 @@ export { SignatureCinema } from './sections/SignatureCinema';
 export { HowItWorks } from './sections/HowItWorks';
 export { AgentGrid } from './sections/AgentGrid';
 export { CompatibilityStack } from './sections/CompatibilityStack';
+export { CommunityPulse } from './sections/CommunityPulse';
+export { DesktopDownload } from './sections/DesktopDownload';
 export { FinalCta } from './sections/FinalCta';
 export { MinimalFooter } from './sections/MinimalFooter';

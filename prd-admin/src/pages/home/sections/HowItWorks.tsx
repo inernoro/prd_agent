@@ -55,10 +55,19 @@ export function HowItWorks() {
     >
       <div className="max-w-6xl mx-auto mb-16 md:mb-20 text-center">
         <div
-          className="text-[11px] uppercase text-white/40 mb-5"
-          style={{ fontFamily: 'var(--font-display)', letterSpacing: '0.32em' }}
+          className="inline-flex items-center gap-2 mb-5 px-3 py-1 rounded border border-pink-400/25"
+          style={{ fontFamily: 'var(--font-mono)', background: 'rgba(244, 114, 182, 0.05)' }}
         >
-          How It Works
+          <span
+            className="text-[12px] uppercase"
+            style={{
+              color: '#f472b6',
+              letterSpacing: '0.18em',
+              textShadow: '0 0 10px rgba(244, 114, 182, 0.55)',
+            }}
+          >
+            » How It Works
+          </span>
         </div>
         <h2
           className="text-white font-medium"
@@ -67,6 +76,7 @@ export function HowItWorks() {
             fontSize: 'clamp(2rem, 5vw, 3.75rem)',
             lineHeight: 1.05,
             letterSpacing: '-0.03em',
+            textShadow: '0 0 28px rgba(244, 114, 182, 0.22)',
           }}
         >
           三步，从想法到产物

@@ -37,21 +37,46 @@ export function HeroSection({ className, onGetStarted, onWatchDemo }: HeroSectio
         className="relative z-10 min-h-[75vh] flex flex-col items-center justify-center px-6 pt-32"
         style={{ animation: 'hero-fade-up 0.9s cubic-bezier(0.2, 0.9, 0.2, 1) both' }}
       >
-        {/* 品牌 chip —— 极简一行 */}
+        {/* 终端 HUD 状态条（retro 注入 #1 · VT323 mono + 发光边框）*/}
         <div
-          className="inline-flex items-center gap-2.5 px-3.5 py-1.5 mb-10 rounded-full border border-white/10 bg-white/[0.03] backdrop-blur-sm"
-          style={{ letterSpacing: '0.18em' }}
+          className="inline-flex items-center gap-3 px-4 py-2 mb-10 rounded-md"
+          style={{
+            background: 'rgba(10, 10, 25, 0.7)',
+            border: '1px solid rgba(168, 85, 247, 0.35)',
+            boxShadow:
+              '0 0 24px rgba(168, 85, 247, 0.25), inset 0 0 12px rgba(168, 85, 247, 0.08)',
+            fontFamily: 'var(--font-mono)',
+          }}
         >
-          <span className="relative flex h-1.5 w-1.5">
-            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-purple-300 opacity-70" />
-            <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-purple-300" />
+          <span className="relative flex h-2 w-2">
+            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-70" />
+            <span
+              className="relative inline-flex h-2 w-2 rounded-full bg-emerald-400"
+              style={{ boxShadow: '0 0 10px #34d399' }}
+            />
           </span>
-          <span className="text-[10.5px] font-medium text-white/65 uppercase">
-            MAP · 米多 Agent 平台
+          <span
+            className="text-[14px] text-emerald-300"
+            style={{
+              letterSpacing: '0.14em',
+              textShadow: '0 0 8px rgba(52, 211, 153, 0.6)',
+            }}
+          >
+            SYSTEM ONLINE
+          </span>
+          <span className="w-px h-3.5 bg-white/20" />
+          <span
+            className="text-[14px] text-purple-200"
+            style={{
+              letterSpacing: '0.14em',
+              textShadow: '0 0 8px rgba(168, 85, 247, 0.55)',
+            }}
+          >
+            MAP · 米多 AGENT 平台
           </span>
         </div>
 
-        {/* 主标题 —— 单字重、紧字距、单行（editorial） */}
+        {/* 主标题 —— 霓虹发光 text-shadow（retro 注入 #2 · neon glow）*/}
         <h1
           className="text-center text-white font-medium"
           style={{
@@ -60,6 +85,8 @@ export function HeroSection({ className, onGetStarted, onWatchDemo }: HeroSectio
             lineHeight: 1.02,
             letterSpacing: '-0.035em',
             maxWidth: '16ch',
+            textShadow:
+              '0 0 30px rgba(168, 85, 247, 0.4), 0 0 80px rgba(124, 58, 237, 0.28), 0 0 140px rgba(0, 240, 255, 0.18)',
           }}
         >
           让创造，自由呼吸

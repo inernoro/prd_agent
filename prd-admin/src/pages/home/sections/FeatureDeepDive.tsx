@@ -111,10 +111,18 @@ export function FeatureDeepDive() {
       {/* Section header */}
       <div className="max-w-6xl mx-auto px-6 mb-24 md:mb-32 text-center">
         <div
-          className="text-[11px] uppercase text-white/40 mb-5"
-          style={{ fontFamily: 'var(--font-display)', letterSpacing: '0.32em' }}
+          className="inline-flex items-center gap-2 mb-5 px-3 py-1 rounded border border-purple-400/25"
+          style={{ fontFamily: 'var(--font-mono)', background: 'rgba(168, 85, 247, 0.05)' }}
         >
-          Core Capabilities
+          <span
+            className="text-[12px] text-purple-300 uppercase"
+            style={{
+              letterSpacing: '0.18em',
+              textShadow: '0 0 10px rgba(168, 85, 247, 0.55)',
+            }}
+          >
+            ✦ Core Capabilities
+          </span>
         </div>
         <h2
           className="text-white font-medium"
@@ -123,6 +131,7 @@ export function FeatureDeepDive() {
             fontSize: 'clamp(2rem, 5vw, 3.75rem)',
             lineHeight: 1.05,
             letterSpacing: '-0.03em',
+            textShadow: '0 0 28px rgba(168, 85, 247, 0.22)',
           }}
         >
           六个专业 Agent，
@@ -160,14 +169,23 @@ function FeatureBlock({ feature, reverse }: { feature: FeatureCore; reverse: boo
         {/* Copy side */}
         <div>
           <div
-            className="text-[10.5px] uppercase mb-5 font-medium"
-            style={{
-              color: accent,
-              fontFamily: 'var(--font-display)',
-              letterSpacing: '0.24em',
-            }}
+            className="inline-flex items-center gap-2 mb-5"
+            style={{ fontFamily: 'var(--font-mono)' }}
           >
-            {eyebrow}
+            <span
+              className="inline-block w-1.5 h-1.5 rounded-full"
+              style={{ background: accent, boxShadow: `0 0 8px ${accent}` }}
+            />
+            <span
+              className="text-[12px] uppercase"
+              style={{
+                color: accent,
+                letterSpacing: '0.18em',
+                textShadow: `0 0 10px ${accent}88`,
+              }}
+            >
+              {eyebrow}
+            </span>
           </div>
           <h3
             className="text-white font-medium mb-6"

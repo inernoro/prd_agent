@@ -29,10 +29,23 @@ export function FinalCta({ onGetStarted, onContact }: FinalCtaProps) {
 
       <div className="relative max-w-4xl mx-auto text-center">
         <div
-          className="text-[11px] uppercase text-white/40 mb-6"
-          style={{ fontFamily: 'var(--font-display)', letterSpacing: '0.32em' }}
+          className="inline-flex items-center gap-2 mb-6 px-3 py-1 rounded border border-rose-400/30"
+          style={{ fontFamily: 'var(--font-mono)', background: 'rgba(244, 63, 94, 0.06)' }}
         >
-          Ready to Create
+          <span className="relative flex h-1.5 w-1.5">
+            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-rose-400 opacity-70" />
+            <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-rose-400" />
+          </span>
+          <span
+            className="text-[12px] uppercase"
+            style={{
+              color: '#fb7185',
+              letterSpacing: '0.18em',
+              textShadow: '0 0 10px rgba(244, 63, 94, 0.55)',
+            }}
+          >
+            ★ Ready Player One
+          </span>
         </div>
 
         <h2
@@ -42,6 +55,8 @@ export function FinalCta({ onGetStarted, onContact }: FinalCtaProps) {
             fontSize: 'clamp(2.25rem, 6.5vw, 5.5rem)',
             lineHeight: 1.02,
             letterSpacing: '-0.035em',
+            textShadow:
+              '0 0 40px rgba(244, 63, 94, 0.35), 0 0 100px rgba(168, 85, 247, 0.22)',
           }}
         >
           现在，轮到你了。
