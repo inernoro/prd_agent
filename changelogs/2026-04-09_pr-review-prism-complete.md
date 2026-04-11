@@ -50,4 +50,5 @@
 | fix | prd-admin | PR审查棱镜仓库列表“待接入/可审查”状态口径统一为快速接入规则（Step1+Step2），避免与提交按钮判定不一致 |
 | fix | prd-api | PR审查棱镜 GitHub 拉取失败信息细化为“权限不足/PR不存在/HTTP错误”，便于定位 Token 与仓库访问问题 |
 | fix | prd-admin | PR审查棱镜“导出仓库专属 Skill 包”新增 CDS 兼容下载兜底（自动下载失败时显示手动下载链接并附原因提示） |
+| fix | prd-admin | 修复接入向导 owner/context/anchor 输入在仓库参数同步时被反复覆盖导致闪动，并优化 Skill 包下载链接 revocation 时机避免按钮失效 |
 | fix | prd-admin | PR审查棱镜页面增强 localStorage 兼容清洗，遇到历史/异常缓存结构时自动降级默认值，避免 CDS 环境白屏 |

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ScanSearch,
   ArrowLeft,
@@ -123,7 +123,9 @@ function parseRepoFromPrUrl(raw: string): string | null {
   if (!text) {
     return null;
   }
-  const match = text.match(/^https?:\/\/github\.com\/([^/\s]+)\/([^/\s]+)\/pull\/\d+/i);
+  // Accept malformed copies like "https:/github.com/owner/repo/pull/1".
+  const normalized = text.replace(/^https?:\/(?!\/)/i, match => `${match}/`);
+  const match = normalized.match(/^https?:\/\/github\.com\/([^/\s]+)\/([^/\s]+)\/pull\/\d+/i);
   if (!match) {
     return null;
   }
@@ -169,6 +171,7 @@ export function PrReviewPrismPage() {
   });
   const [bootstrapDownloading, setBootstrapDownloading] = useState(false);
   const [downloadFallbackUrl, setDownloadFallbackUrl] = useState<string | null>(null);
+  const hydratedRepoRef = useRef<string>('');
   const [showDesignBasisPanel] = useState(false);
   const [showOnboardingWizard, setShowOnboardingWizard] = useState(false);
   const [ownerInput, setOwnerInput] = useState(defaultRepoOwner);
@@ -603,22 +606,29 @@ slices:
   }, [repoWorkspaceParamsMap]);
   useEffect(() => {
     if (!normalizedSelectedRepo) {
+      hydratedRepoRef.current = '';
+      return;
+    }
+    if (hydratedRepoRef.current === normalizedSelectedRepo) {
       return;
     }
     const params = repoWorkspaceParamsMap[normalizedSelectedRepo];
     if (!params) {
+      hydratedRepoRef.current = normalizedSelectedRepo;
       return;
     }
-    if (params.owner) {
-      setOwnerInput(params.owner);
-    }
-    if (params.context) {
-      setContextInput(params.context);
-    }
-    if (params.anchorId) {
-      setAnchorInput(params.anchorId);
-    }
+    hydratedRepoRef.current = normalizedSelectedRepo;
+    setOwnerInput(params.owner || defaultRepoOwner);
+    setContextInput(params.context || defaultRepoContext);
+    setAnchorInput(params.anchorId || defaultRepoAnchorId);
   }, [normalizedSelectedRepo, repoWorkspaceParamsMap]);
+  useEffect(() => {
+    return () => {
+      if (downloadFallbackUrl) {
+        URL.revokeObjectURL(downloadFallbackUrl);
+      }
+    };
+  }, [downloadFallbackUrl]);
   useEffect(() => {
     const activeRepo = normalizedSelectedRepo || (isBindingRepoValid ? normalizedBindingRepo.toLowerCase() : '');
     if (!activeRepo) {
