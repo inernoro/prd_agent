@@ -279,13 +279,50 @@ export interface PrHistoryDto {
 }
 
 /**
- * 拉取 PR 的 GitHub 完整审查历史。
- * 后端并行拉取 6 个 GitHub API，每次调用都实时拉最新（不缓存）。
+ * 拉取 PR 的 GitHub 完整审查历史（一次性全量，不推荐日常使用，2-3s）。
  */
 export async function getPrReviewItemHistory(
   id: string,
 ): Promise<ApiResponse<PrHistoryDto>> {
   return apiRequest<PrHistoryDto>(api.prReview.items.history(id));
+}
+
+// ===== 按 tab 懒加载的分页版本 =====
+
+export type PrHistorySliceType =
+  | 'timeline'
+  | 'commits'
+  | 'reviews'
+  | 'reviewComments'
+  | 'issueComments'
+  | 'checkRuns';
+
+/**
+ * 每个 tab 只请求自己的 slice，返回通用结构。items 的具体类型由 type 决定。
+ */
+export interface PrHistorySlice<T> {
+  type: PrHistorySliceType;
+  page: number;
+  perPage: number;
+  hasMore: boolean;
+  items: T[];
+}
+
+/**
+ * 懒加载单个 tab（推荐）。单次 GitHub API 调用，实测 300-600ms。
+ *
+ * 典型用法：
+ *   const first = await getPrReviewItemHistorySlice<PrHistoryCommit>(id, 'commits', 1);
+ *   if (first.success && first.data.hasMore) { 展示"加载更多" }
+ */
+export async function getPrReviewItemHistorySlice<T = unknown>(
+  id: string,
+  type: PrHistorySliceType,
+  page = 1,
+  perPage = 30,
+): Promise<ApiResponse<PrHistorySlice<T>>> {
+  const url = `${api.prReview.items.history(id)}?type=${type}&page=${page}&perPage=${perPage}`;
+  return apiRequest<PrHistorySlice<T>>(url);
 }
 
 export async function updatePrReviewItemNote(

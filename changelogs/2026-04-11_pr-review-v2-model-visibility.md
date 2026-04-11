@@ -17,3 +17,5 @@
 | feat | doc | 新建 `doc/rule.llm-gateway.md` + 扩展 `.claude/rules/llm-gateway.md`，沉淀 5 个流式 LLM 陷阱：firstByteAt 指标歧义 / OpenRouter 必须显式开 reasoning / reasoning 字段名不统一 / fake streaming 只能 UX 降级 / 诊断 3 个信息源交叉验证。附 8 项 checklist |
 | feat | prd-api | 新增 GET /api/pr-review/items/{id}/history 端点，并行拉取 6 个 GitHub REST API（commits / reviews / review-comments / issue-comments / timeline / check-runs），每个子请求失败不致命 |
 | feat | prd-admin | PrItemCard 右上角新增"历史"悬浮按钮 + PrHistoryModal 弹窗（5 个 tab：时间线 / 提交 / 评审 / 评论 / CI 检查）。时间线 tab 支持 committed / reviewed / commented / labeled / assigned / merged / force_pushed / renamed / ready_for_review 等 20+ GitHub 事件类型，每种事件独立图标 + 颜色 + 中文描述 |
+| fix | prd-admin | PrHistoryModal 修复两个问题：(1) 用 createPortal 挂到 document.body，修复被 PrItemCard 外层 overflow-hidden 裁剪导致的超出屏幕无法滑动；(2) 改为按 tab 懒加载，打开弹窗只拉 timeline（~400ms），切 tab 时才拉对应类型。第一版打开立即并行拉 6 个 endpoint 需 2-3s |
+| fix | prd-api | PrReviewController /history 端点支持 `?type=timeline&page=1&perPage=30` 懒加载模式，GitHubPrClient 拆出 FetchHistorySliceAsync 按类型分派。每个 tab 独立分页，hasMore 由 items.count>=perPage 推导 |

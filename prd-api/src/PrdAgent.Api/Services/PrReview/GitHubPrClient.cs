@@ -371,6 +371,8 @@ public sealed class GitHubPrClient
     /// <summary>
     /// 并行拉取一个 PR 的完整审查历史。失败的子请求不致命，会在对应字段放空列表，
     /// 这样至少能拿到部分数据展示。调用方应该检查 Errors 字段了解哪些段落拉不到。
+    /// 注意：一次拉取 6 个 endpoint 会比较慢（实测 2~3 秒）。前端改为按 tab 懒加载后，
+    /// 这个方法只用于需要一次性全量的极少数场景。
     /// </summary>
     public async Task<GitHubPrHistoryDto> FetchHistoryAsync(
         string accessToken,
@@ -385,40 +387,33 @@ public sealed class GitHubPrClient
             throw PrReviewException.UrlInvalid("owner/repo 含非法字符");
         }
 
-        using var client = CreateAuthedClient(accessToken);
-        // timeline api 需要 mockingbird 版本 Accept header 才能看到全部事件
-        // （否则只返回 issue 级事件，看不到 reviewed/committed 等 PR 专属事件）
-        client.DefaultRequestHeaders.Accept.Clear();
-        client.DefaultRequestHeaders.Accept.Add(new MediaTypeWithQualityHeaderValue("application/vnd.github+json"));
-        client.DefaultRequestHeaders.Accept.Add(new MediaTypeWithQualityHeaderValue("application/vnd.github.mockingbird-preview+json"));
-
+        using var client = CreateHistoryClient(accessToken);
         var errors = new List<string>();
 
-        // 所有子请求并行发起，互不阻塞
         var commitsTask = SafeFetchAsync(
-            () => FetchCommitsAsync(client, owner, repo, number, ct),
+            () => FetchCommitsAsync(client, owner, repo, number, page: 1, perPage: 100, ct),
             nameof(FetchCommitsAsync), errors);
 
         var reviewsTask = SafeFetchAsync(
-            () => FetchReviewsAsync(client, owner, repo, number, ct),
+            () => FetchReviewsAsync(client, owner, repo, number, page: 1, perPage: 100, ct),
             nameof(FetchReviewsAsync), errors);
 
         var reviewCommentsTask = SafeFetchAsync(
-            () => FetchReviewCommentsAsync(client, owner, repo, number, ct),
+            () => FetchReviewCommentsAsync(client, owner, repo, number, page: 1, perPage: 100, ct),
             nameof(FetchReviewCommentsAsync), errors);
 
         var issueCommentsTask = SafeFetchAsync(
-            () => FetchIssueCommentsAsync(client, owner, repo, number, ct),
+            () => FetchIssueCommentsAsync(client, owner, repo, number, page: 1, perPage: 100, ct),
             nameof(FetchIssueCommentsAsync), errors);
 
         var timelineTask = SafeFetchAsync(
-            () => FetchTimelineAsync(client, owner, repo, number, ct),
+            () => FetchTimelineAsync(client, owner, repo, number, page: 1, perPage: 100, ct),
             nameof(FetchTimelineAsync), errors);
 
         var checkRunsTask = string.IsNullOrWhiteSpace(headSha)
             ? Task.FromResult(new List<GitHubCheckRunDto>())
             : SafeFetchAsync(
-                () => FetchCheckRunsAsync(client, owner, repo, headSha!, ct),
+                () => FetchCheckRunsAsync(client, owner, repo, headSha!, page: 1, perPage: 100, ct),
                 nameof(FetchCheckRunsAsync), errors);
 
         await Task.WhenAll(commitsTask, reviewsTask, reviewCommentsTask, issueCommentsTask, timelineTask, checkRunsTask);
@@ -433,6 +428,83 @@ public sealed class GitHubPrClient
             CheckRuns = await checkRunsTask,
             Errors = errors,
         };
+    }
+
+    /// <summary>
+    /// 按类型懒加载单个 tab 的数据，支持分页。
+    /// 返回 items + hasMore 标记，hasMore=true 时前端显示"加载更多"按钮。
+    /// </summary>
+    public async Task<object> FetchHistorySliceAsync(
+        string accessToken,
+        string owner,
+        string repo,
+        int number,
+        string? headSha,
+        string type,
+        int page,
+        int perPage,
+        CancellationToken ct)
+    {
+        if (!PrUrlParser.IsSafeOwnerRepo(owner, repo))
+        {
+            throw PrReviewException.UrlInvalid("owner/repo 含非法字符");
+        }
+        if (page < 1) page = 1;
+        if (perPage < 1 || perPage > 100) perPage = 30;
+
+        using var client = CreateHistoryClient(accessToken);
+
+        switch (type)
+        {
+            case "timeline":
+            {
+                var items = await FetchTimelineAsync(client, owner, repo, number, page, perPage, ct);
+                return new { type, page, perPage, hasMore = items.Count >= perPage, items };
+            }
+            case "commits":
+            {
+                var items = await FetchCommitsAsync(client, owner, repo, number, page, perPage, ct);
+                return new { type, page, perPage, hasMore = items.Count >= perPage, items };
+            }
+            case "reviews":
+            {
+                var items = await FetchReviewsAsync(client, owner, repo, number, page, perPage, ct);
+                return new { type, page, perPage, hasMore = items.Count >= perPage, items };
+            }
+            case "reviewComments":
+            {
+                var items = await FetchReviewCommentsAsync(client, owner, repo, number, page, perPage, ct);
+                return new { type, page, perPage, hasMore = items.Count >= perPage, items };
+            }
+            case "issueComments":
+            {
+                var items = await FetchIssueCommentsAsync(client, owner, repo, number, page, perPage, ct);
+                return new { type, page, perPage, hasMore = items.Count >= perPage, items };
+            }
+            case "checkRuns":
+            {
+                if (string.IsNullOrWhiteSpace(headSha))
+                {
+                    return new { type, page, perPage, hasMore = false, items = new List<GitHubCheckRunDto>() };
+                }
+                // check-runs 只能针对具体 commit SHA 拉，不做分页（GitHub API 本身也不支持 page）
+                var items = await FetchCheckRunsAsync(client, owner, repo, headSha!, page, perPage, ct);
+                return new { type, page, perPage, hasMore = false, items };
+            }
+            default:
+                throw PrReviewException.UrlInvalid($"未知的历史类型: {type}");
+        }
+    }
+
+    private HttpClient CreateHistoryClient(string accessToken)
+    {
+        var client = CreateAuthedClient(accessToken);
+        // timeline api 需要 mockingbird 版本 Accept header 才能看到全部事件
+        // （否则只返回 issue 级事件，看不到 reviewed/committed 等 PR 专属事件）
+        client.DefaultRequestHeaders.Accept.Clear();
+        client.DefaultRequestHeaders.Accept.Add(new MediaTypeWithQualityHeaderValue("application/vnd.github+json"));
+        client.DefaultRequestHeaders.Accept.Add(new MediaTypeWithQualityHeaderValue("application/vnd.github.mockingbird-preview+json"));
+        return client;
     }
 
     private async Task<List<T>> SafeFetchAsync<T>(
@@ -453,10 +525,9 @@ public sealed class GitHubPrClient
     }
 
     private async Task<List<GitHubPrCommitDto>> FetchCommitsAsync(
-        HttpClient client, string owner, string repo, int number, CancellationToken ct)
+        HttpClient client, string owner, string repo, int number, int page, int perPage, CancellationToken ct)
     {
-        // per_page=100 足够覆盖大部分 PR；超过 100 commit 的 PR 极少见，忽略分页
-        var path = $"repos/{owner}/{repo}/pulls/{number}/commits?per_page=100";
+        var path = $"repos/{owner}/{repo}/pulls/{number}/commits?per_page={perPage}&page={page}";
         using var resp = await client.GetAsync(path, ct);
         if (!resp.IsSuccessStatusCode) return new();
         var raw = await resp.Content.ReadFromJsonAsync<List<GitHubCommitRawDto>>(cancellationToken: ct) ?? new();
@@ -473,16 +544,16 @@ public sealed class GitHubPrClient
     }
 
     private async Task<List<GitHubPrReviewDto>> FetchReviewsAsync(
-        HttpClient client, string owner, string repo, int number, CancellationToken ct)
+        HttpClient client, string owner, string repo, int number, int page, int perPage, CancellationToken ct)
     {
-        var path = $"repos/{owner}/{repo}/pulls/{number}/reviews?per_page=100";
+        var path = $"repos/{owner}/{repo}/pulls/{number}/reviews?per_page={perPage}&page={page}";
         using var resp = await client.GetAsync(path, ct);
         if (!resp.IsSuccessStatusCode) return new();
         var raw = await resp.Content.ReadFromJsonAsync<List<GitHubReviewRawDto>>(cancellationToken: ct) ?? new();
         return raw.Select(r => new GitHubPrReviewDto
         {
             Id = r.Id,
-            State = r.State ?? string.Empty, // APPROVED / CHANGES_REQUESTED / COMMENTED / DISMISSED / PENDING
+            State = r.State ?? string.Empty,
             AuthorLogin = r.User?.Login ?? string.Empty,
             AuthorAvatarUrl = r.User?.AvatarUrl,
             Body = Truncate(r.Body, 4000),
@@ -492,9 +563,9 @@ public sealed class GitHubPrClient
     }
 
     private async Task<List<GitHubPrReviewCommentDto>> FetchReviewCommentsAsync(
-        HttpClient client, string owner, string repo, int number, CancellationToken ct)
+        HttpClient client, string owner, string repo, int number, int page, int perPage, CancellationToken ct)
     {
-        var path = $"repos/{owner}/{repo}/pulls/{number}/comments?per_page=100";
+        var path = $"repos/{owner}/{repo}/pulls/{number}/comments?per_page={perPage}&page={page}";
         using var resp = await client.GetAsync(path, ct);
         if (!resp.IsSuccessStatusCode) return new();
         var raw = await resp.Content.ReadFromJsonAsync<List<GitHubReviewCommentRawDto>>(cancellationToken: ct) ?? new();
@@ -513,10 +584,9 @@ public sealed class GitHubPrClient
     }
 
     private async Task<List<GitHubPrIssueCommentDto>> FetchIssueCommentsAsync(
-        HttpClient client, string owner, string repo, int number, CancellationToken ct)
+        HttpClient client, string owner, string repo, int number, int page, int perPage, CancellationToken ct)
     {
-        // issue comments 在 /issues/{n}/comments 下，与 PR 对话共享
-        var path = $"repos/{owner}/{repo}/issues/{number}/comments?per_page=100";
+        var path = $"repos/{owner}/{repo}/issues/{number}/comments?per_page={perPage}&page={page}";
         using var resp = await client.GetAsync(path, ct);
         if (!resp.IsSuccessStatusCode) return new();
         var raw = await resp.Content.ReadFromJsonAsync<List<GitHubIssueCommentRawDto>>(cancellationToken: ct) ?? new();
@@ -532,13 +602,9 @@ public sealed class GitHubPrClient
     }
 
     private async Task<List<GitHubPrTimelineEventDto>> FetchTimelineAsync(
-        HttpClient client, string owner, string repo, int number, CancellationToken ct)
+        HttpClient client, string owner, string repo, int number, int page, int perPage, CancellationToken ct)
     {
-        // issues timeline 对 PR 同样适用，包含 committed / reviewed / commented /
-        // labeled / unlabeled / assigned / unassigned / head_ref_force_pushed /
-        // head_ref_deleted / merged / closed / reopened / ready_for_review /
-        // converted_to_draft / review_requested / cross-referenced 等 20+ 事件类型
-        var path = $"repos/{owner}/{repo}/issues/{number}/timeline?per_page=100";
+        var path = $"repos/{owner}/{repo}/issues/{number}/timeline?per_page={perPage}&page={page}";
         using var resp = await client.GetAsync(path, ct);
         if (!resp.IsSuccessStatusCode) return new();
         var raw = await resp.Content.ReadFromJsonAsync<List<GitHubTimelineRawDto>>(cancellationToken: ct) ?? new();
@@ -562,17 +628,17 @@ public sealed class GitHubPrClient
                 RequestedReviewerLogin = r.RequestedReviewer?.Login,
                 CommitSha = r.CommitId ?? r.Sha,
                 CommitMessage = Truncate(r.Message ?? r.Commit?.Message, 500),
-                State = r.State, // for reviewed events: APPROVED / CHANGES_REQUESTED / COMMENTED
-                Body = Truncate(r.Body, 2000), // for commented events
+                State = r.State,
+                Body = Truncate(r.Body, 2000),
                 Rename = r.Rename != null ? $"{r.Rename.From} → {r.Rename.To}" : null,
             };
         }).ToList();
     }
 
     private async Task<List<GitHubCheckRunDto>> FetchCheckRunsAsync(
-        HttpClient client, string owner, string repo, string sha, CancellationToken ct)
+        HttpClient client, string owner, string repo, string sha, int page, int perPage, CancellationToken ct)
     {
-        var path = $"repos/{owner}/{repo}/commits/{sha}/check-runs?per_page=100";
+        var path = $"repos/{owner}/{repo}/commits/{sha}/check-runs?per_page={perPage}&page={page}";
         using var resp = await client.GetAsync(path, ct);
         if (!resp.IsSuccessStatusCode) return new();
         var wrapper = await resp.Content.ReadFromJsonAsync<GitHubCheckRunsWrapperDto>(cancellationToken: ct);
@@ -580,8 +646,8 @@ public sealed class GitHubPrClient
         {
             Id = c.Id,
             Name = c.Name ?? string.Empty,
-            Status = c.Status ?? string.Empty, // queued / in_progress / completed
-            Conclusion = c.Conclusion, // success / failure / neutral / cancelled / skipped / timed_out / action_required
+            Status = c.Status ?? string.Empty,
+            Conclusion = c.Conclusion,
             StartedAt = c.StartedAt,
             CompletedAt = c.CompletedAt,
             HtmlUrl = c.HtmlUrl,
