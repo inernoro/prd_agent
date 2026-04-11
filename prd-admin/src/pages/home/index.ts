@@ -3,6 +3,7 @@ export { HeroSection } from './sections/HeroSection';
 export { StatsStrip } from './sections/StatsStrip';
 export { ThreePillars } from './sections/ThreePillars';
 export { FeatureDeepDive } from './sections/FeatureDeepDive';
+export { WorkflowCanvas } from './sections/WorkflowCanvas';
 export { SignatureCinema } from './sections/SignatureCinema';
 export { HowItWorks } from './sections/HowItWorks';
 export { AgentGrid } from './sections/AgentGrid';

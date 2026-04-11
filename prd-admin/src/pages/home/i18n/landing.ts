@@ -117,6 +117,21 @@ export interface TranslationShape {
     chapterLabel: string;
     items: FeatureItem[];
   };
+  workflow: {
+    eyebrow: string;
+    title: string;
+    description: string;
+    chapterMarker: string;
+    canvasTitle: string;
+    runLabel: string;
+    nodes: Array<{ title: string; subtitle: string }>;
+    status: {
+      running: string;
+      elapsed: string;
+      eta: string;
+      trace: string;
+    };
+  };
   cinema: {
     eyebrow: string;
     title: string;
@@ -347,6 +362,28 @@ const zh: TranslationShape = {
         ],
       },
     ],
+  },
+  workflow: {
+    eyebrow: 'Workflow · 编排',
+    title: '把 Agent 串成一条工作流',
+    description:
+      '工作流引擎把重复的多步骤操作串成可视化节点图：一个触发器、多个 Agent 协作、条件分支、错误回退与定时调度，重复的流程变成一次配置终身受益。',
+    chapterMarker: '2.0 Orchestrate →',
+    canvasTitle: 'daily-content-pipeline.workflow',
+    runLabel: 'Run',
+    nodes: [
+      { title: '触发器', subtitle: '定时 · 每日 09:00' },
+      { title: 'PRD 分析师', subtitle: '读需求' },
+      { title: '视觉设计师', subtitle: '出海报' },
+      { title: '文学创作者', subtitle: '写文案' },
+      { title: '发布', subtitle: '多平台' },
+    ],
+    status: {
+      running: '执行中 · step 3 / 5',
+      elapsed: '已用时 · 00:12',
+      eta: '预计剩余 · 00:28',
+      trace: 'trace · wf-4e9ed6f',
+    },
   },
   cinema: {
     eyebrow: 'Signature · 一镜到底',
@@ -640,6 +677,28 @@ const en: TranslationShape = {
         ],
       },
     ],
+  },
+  workflow: {
+    eyebrow: 'Workflow · Orchestration',
+    title: 'Chain Agents into a workflow',
+    description:
+      'The Workflow Engine turns repeated multi-step operations into a visual node graph: one trigger, multiple Agents collaborating, conditional branches, error fallbacks, and scheduled runs. Configure once, benefit forever.',
+    chapterMarker: '2.0 Orchestrate →',
+    canvasTitle: 'daily-content-pipeline.workflow',
+    runLabel: 'Run',
+    nodes: [
+      { title: 'Trigger', subtitle: 'Scheduled · 09:00 daily' },
+      { title: 'Spec Analyst', subtitle: 'reads spec' },
+      { title: 'Visual Designer', subtitle: 'makes poster' },
+      { title: 'Writing Studio', subtitle: 'drafts copy' },
+      { title: 'Publish', subtitle: 'multi-channel' },
+    ],
+    status: {
+      running: 'Running · step 3 / 5',
+      elapsed: 'Elapsed · 00:12',
+      eta: 'ETA · 00:28',
+      trace: 'trace · wf-4e9ed6f',
+    },
   },
   cinema: {
     eyebrow: 'Signature · One Take',

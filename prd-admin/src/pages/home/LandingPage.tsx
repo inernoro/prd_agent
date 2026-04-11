@@ -5,6 +5,7 @@ import { HeroSection, HERO_GRADIENT } from './sections/HeroSection';
 import { StatsStrip } from './sections/StatsStrip';
 import { ThreePillars } from './sections/ThreePillars';
 import { FeatureDeepDive } from './sections/FeatureDeepDive';
+import { WorkflowCanvas } from './sections/WorkflowCanvas';
 import { SignatureCinema } from './sections/SignatureCinema';
 import { HowItWorks } from './sections/HowItWorks';
 import { AgentGrid } from './sections/AgentGrid';
@@ -252,6 +253,10 @@ function LandingInner() {
 
       <div id="features">
         <FeatureDeepDive />
+      </div>
+
+      <div id="workflow">
+        <WorkflowCanvas />
       </div>
 
       <div id="cinema">
