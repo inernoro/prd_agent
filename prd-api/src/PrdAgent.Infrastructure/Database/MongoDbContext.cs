@@ -112,6 +112,10 @@ public class MongoDbContext
     // PR Review Prism 审查棱镜
     public IMongoCollection<PrReviewPrismSubmission> PrReviewPrismSubmissions => _database.GetCollection<PrReviewPrismSubmission>("pr_review_prism_submissions");
 
+    // PR Review V2（pr-review）：用户级 GitHub OAuth 连接 + 审查记录
+    public IMongoCollection<GitHubUserConnection> GitHubUserConnections => _database.GetCollection<GitHubUserConnection>("github_user_connections");
+    public IMongoCollection<PrReviewItem> PrReviewItems => _database.GetCollection<PrReviewItem>("pr_review_items");
+
     // Report Agent 周报管理
     public IMongoCollection<ReportTeam> ReportTeams => _database.GetCollection<ReportTeam>("report_teams");
     public IMongoCollection<ReportTeamMember> ReportTeamMembers => _database.GetCollection<ReportTeamMember>("report_team_members");
