@@ -2149,6 +2149,86 @@ sequenceDiagram
 
 **设计文档**：`doc/spec.report-agent.v2.md`
 
+### 4.24 PR 审查棱镜（PR Review Prism）
+
+#### 4.24.1 PRP-001 提交 PR 链接并建立审查快照
+
+| 属性 | 描述 |
+|------|------|
+| 需求编号 | PRP-001 |
+| 需求名称 | 提交 GitHub PR 链接 |
+| 优先级 | **[必须]** |
+| 实现层 | Web 管理后台 + 后端服务 |
+
+**功能详述**：
+1. 管理端用户可提交 GitHub PR 链接（`https://github.com/{owner}/{repo}/pull/{number}`）创建审查记录。
+2. 同一用户下 `(repoOwner, repoName, pullRequestNumber)` 唯一；重复提交时复用已有记录并刷新快照。
+3. 后端在创建时即时拉取 GitHub 快照：PR 基本信息、L1 Gate 检查状态、决策卡评论解析结果。
+4. 用户可填写可选备注（note），用于后续检索与回顾。
+
+**数据模型**：`PrReviewPrismSubmission`（集合：`pr_review_prism_submissions`）
+
+**API 端点**：
+- `GET /api/pr-review-prism/status` — 功能状态与提示信息
+- `GET /api/pr-review-prism/setup-status` — 初始化与配置状态（GitHub Token、顶层设计基线、可执行 guidance）；支持 `repo` 参数（`owner/repo` 或 PR URL）做仓库级校验
+- `GET /api/pr-review-prism/token-config` — 获取 Token 配置状态（脱敏、来源、可写权限、操作指引）
+- `PUT /api/pr-review-prism/token-config` — 保存/清空 Token（写入 AppSettings 加密字段，要求 `settings.write`）
+- `POST /api/pr-review-prism/bootstrap-skill-package` — 导出仓库专属接入 zip（含 scripts + skill 模板 + onboarding 指南）
+- `POST /api/pr-review-prism/submissions/precheck` — 提交前预检 PR 可达性（仅校验 GitHub 可访问与 PR 存在，不落库）
+  - 错误映射：
+    - PR 链接格式错误：`400 INVALID_FORMAT`
+    - GitHub Token 未配置：`400 INVALID_FORMAT`
+    - Token 对目标仓库无权限：`403 PERMISSION_DENIED`
+    - 目标 PR 不存在或不可见：`404 NOT_FOUND`
+    - 其他 GitHub/网络异常：`502 LLM_ERROR`
+- `POST /api/pr-review-prism/submissions` — 提交 PR 链接并创建/复用记录
+- `GET /api/pr-review-prism/submissions` — 当前用户提交列表（支持 `q` 检索与 `repo` 仓库过滤，`repo` 可为 `owner/repo` 或 PR URL）
+- `GET /api/pr-review-prism/submissions?gateStatus={status}` — 按 Gate 状态筛选（`pending/completed/missing/error`）
+- `GET /api/pr-review-prism/submissions` 响应附带 `gateStatusCounts` 与归一化后的 `repo`，用于前端展示全局筛选计数与仓库上下文
+- `GET /api/pr-review-prism/submissions/{id}` — 提交详情
+- `POST /api/pr-review-prism/submissions/{id}/refresh` — 手动刷新快照
+- `POST /api/pr-review-prism/submissions/batch-refresh` — 批量刷新提交快照（最多 100 条）
+- `DELETE /api/pr-review-prism/submissions/{id}` — 删除记录
+
+#### 4.24.2 PRP-002 GitHub 快照拉取与决策卡解析
+
+| 属性 | 描述 |
+|------|------|
+| 需求编号 | PRP-002 |
+| 需求名称 | GitHub 审查结果集成 |
+| 优先级 | **[必须]** |
+| 实现层 | 后端服务 |
+
+**功能详述**：
+1. 使用配置中的 GitHub Token 调用 GitHub API，读取 PR 元数据与 head SHA。
+2. 读取对应 commit check-runs，定位名称为 `PR审查棱镜 L1 Gate` 的检查项，映射 `gateStatus` 与 `gateConclusion`。
+3. 读取 PR 评论，识别决策卡标记块（兼容新旧 marker），解析建议、风险分、置信度、硬阻断、阻断项、建议项、关注问题。
+4. 解析失败或外部调用异常时，记录 `lastRefreshError` 并将 `gateStatus` 置为 `error`，避免静默失败。
+5. 顶层设计审查依据采用 **design-sources + repo-bindings** 双文件绑定机制：
+   - 上传/维护位置：仓库内 `doc/top-design/*`（V1 推荐）或外部设计源注册到 `.github/pr-architect/design-sources.yml`
+   - 激活方式：`design-sources.yml` 的 `defaults.active_source_id/active_version`
+   - 仓库绑定：`.github/pr-architect/repo-bindings.yml` 的 `repositories[].repo`
+6. 新仓库初始化支持通过“两文件 bootstrap 包 + 标准 Skill”执行：
+   - 两文件入口：`scripts/bootstrap-pr-prism.sh` + `scripts/init-pr-prism-basis.sh`
+   - 标准 Skill：`.claude/skills/pr-prism-bootstrap/SKILL.md`
+   - 兼容模板入口：`.github/pr-architect/skill-template.pr-prism-bootstrap.md`
+   - 执行后应生成最薄文档与绑定配置，并使 setup-status 返回 `readyForFullRefresh=true`（在 GitHub Token 已配置前提下）。
+7. 管理端支持按仓库导出“接入即用”压缩包（`bootstrap-skill-package`）：
+   - 输入：`repo / owner / context / anchorId`
+   - 输出：`fileName` + `contentBase64`
+   - 包含文件：`scripts/bootstrap-pr-prism.sh`、`scripts/init-pr-prism-basis.sh`、`.claude/skills/pr-prism-bootstrap/SKILL.md`、`doc/guide.pr-prism-bootstrap-package.md`
+8. GitHub Token 支持“页面可视化配置”：
+   - 配置入口：PR审查棱镜接入向导 Step 1（管理员）
+   - 后端存储：`AppSettings.PrReviewPrismGitHubTokenEncrypted`（AES 加密，密钥来源 `Jwt:Secret`）
+   - 优先级：页面配置 Token > 环境变量 Token（`GitHub:Token` / `PR_REVIEW_PRISM_GITHUB_TOKEN`）
+   - 权限：读取遵循 `pr-review-prism.use`；写入要求 `settings.write`
+
+**验收标准**：
+- [ ] 可从 PR 链接正确解析 owner/repo/number
+- [ ] Gate 状态至少区分 `pending/completed/missing/error`
+- [ ] 决策卡解析支持阻断项、建议项、关注问题（最多 3 条）
+- [ ] 异常可追踪（`lastRefreshError`）
+
 ---
 
 ## 第五章 外部接口需求

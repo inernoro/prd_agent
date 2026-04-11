@@ -2,7 +2,7 @@ name: PR Review Prism Prefill
 
 on:
   pull_request:
-    branches: [main, develop]
+    branches: [main, develop, master, trunk]
     types: [opened, edited, synchronize, reopened]
 
 permissions:

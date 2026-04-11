@@ -59,6 +59,11 @@ public class AppSettings
     /// </summary>
     public string? DesktopLoginBackgroundKey { get; set; }
 
+    /// <summary>
+    /// PR审查棱镜使用的 GitHub Token（加密存储）
+    /// </summary>
+    public string? PrReviewPrismGitHubTokenEncrypted { get; set; }
+
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
 }
 

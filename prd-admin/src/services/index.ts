@@ -1501,3 +1501,32 @@ export type {
   ReviewResult,
   ReviewWebhookConfig,
 } from '@/services/real/reviewAgent';
+
+// ── PR Review Prism 审查棱镜 ──
+export {
+  getPrReviewPrismStatus,
+  getPrReviewPrismSetupStatus,
+  getPrReviewPrismTokenConfigStatus,
+  updatePrReviewPrismTokenConfig,
+  downloadPrReviewPrismRepoBootstrapSkill,
+  createPrReviewPrismSubmission,
+  precheckPrReviewPrismSubmission,
+  listPrReviewPrismSubmissions,
+  getPrReviewPrismSubmission,
+  refreshPrReviewPrismSubmission,
+  batchRefreshPrReviewPrismSubmissions,
+  deletePrReviewPrismSubmission,
+} from '@/services/real/prReviewPrism';
+export type {
+  PrReviewPrismBatchRefreshFailure,
+  PrReviewPrismBatchRefreshResult,
+  PrReviewPrismGateStatus,
+  PrReviewPrismSubmissionPrecheckResult,
+  PrReviewPrismSubmission,
+  PrReviewPrismSetupStatus,
+  PrReviewPrismTokenConfigStatus,
+  PrReviewPrismTopDesignSetupStatus,
+  PrReviewPrismRepoSkillPackageRequest,
+  PrReviewPrismRepoSkillPackageResponse,
+  PrReviewPrismStatus,
+} from '@/services/real/prReviewPrism';

@@ -243,3 +243,77 @@ guardrails:
 - 通过/失败趋势
 
 为后续规则升阶（L2 提升为阻断）提供数据依据。
+
+## 9. 新仓库初始化（最小可运行方案）
+
+> 目标：在新项目/新仓库中，用最少文件快速建立“可校验”的 PR 审查依据。
+
+### 9.1 一键初始化
+
+推荐优先使用“两文件包”入口（便于跨仓库复制）：
+
+```bash
+bash scripts/bootstrap-pr-prism.sh
+```
+
+兼容入口（等价）：
+
+```bash
+bash scripts/init-pr-prism-basis.sh
+```
+
+自动探测顺序：
+
+1. `repo`：`git remote origin` -> `gh repo view` -> `git config github.repo`
+2. `owner`：`gh api user` -> `git config user.name` -> `architect`
+
+若自动探测失败，再使用显式参数（任一入口都支持）：
+
+```bash
+bash scripts/bootstrap-pr-prism.sh \
+  --repo "your-org/your-repo" \
+  --owner "your-github-id" \
+  --context "engineering-governance"
+```
+
+脚本会生成/更新：
+
+- `doc/top-design/main.md`（薄顶设主文档）
+- `doc/top-design/anchors.yml`（至少 1 个 anchor）
+- `doc/top-design/contexts.yml`（至少 1 个 bounded context）
+- `doc/top-design/slices.yml`（至少 1 个 slice）
+- `.github/pr-architect/design-sources.yml`（激活 `local-ddd-anchor`）
+- `.github/pr-architect/repo-bindings.yml`（写入目标仓库绑定）
+
+### 9.2 为什么要求 repo-file 设计源
+
+当前 V1 Gate 的 anchors 校验只支持 **repo-file** manifest，不支持 URL/artifact 作为 anchors 清单来源（会直接阻断）。
+因此新仓库初始化建议先落地为仓库内薄文档，待后续规则版本升级后再切换远程设计包。
+
+### 9.3 验收标准（初始化后）
+
+1. `design-sources.yml` 不是 bootstrap 占位源；
+2. `repo-bindings.yml` 包含当前仓库条目，且开启 `PR审查棱镜 L1 Gate`；
+3. PR 模板中 `design_source_id/version` 能被 prefill 自动补齐；
+4. 提交一个示例 PR 后，`PR审查棱镜 L1 Gate` 成功执行并可解析 `anchor_refs`。
+
+### 9.4 顶层设计上传（审查依据）最佳方案
+
+当前 V1 的最佳实践是“两阶段”：
+
+1. **先用仓库内薄文档跑通门禁**（初始化脚本自动完成）；
+2. **再上传正式顶层设计正文**，并通过 `design-sources.yml` 做版本绑定。
+
+推荐做法：
+
+- 正式顶设正文放到 `doc/top-design/main.md`（或你们团队规范路径）；
+- 将 anchors/contexts/slices 保持 repo-file manifests（V1 必须）；
+- 每次顶设升级，仅更新：
+  - `design-sources.yml` 的 `active_version` / `sources[].version`
+  - 对应 manifests 内容（必要时）
+
+新仓库“最小复制包”说明见：
+- `doc/guide.pr-prism-bootstrap-package.md`
+
+同时可将初始化动作封装为可复用 skill，标准入口见：
+- `.claude/skills/pr-prism-bootstrap/SKILL.md`

@@ -206,6 +206,20 @@ def load_anchor_ids_from_manifest(
     return set()
 
 
+def is_bootstrap_design_source(source: dict[str, Any]) -> bool:
+    source_id = str(source.get("id", "")).strip().lower()
+    location = str(source.get("location", "")).strip().lower()
+    checksum = str(source.get("checksum", "")).strip().lower()
+    description = str(source.get("description", "")).strip().lower()
+    return (
+        source_id.startswith("bootstrap")
+        or location.endswith(".github/pr-architect/top-design.bootstrap.md")
+        or "bootstrap-replace" in checksum
+        or "占位源" in description
+        or "placeholder" in description
+    )
+
+
 def is_blank(value: Any) -> bool:
     if value is None:
         return True
@@ -473,6 +487,14 @@ def check_design_source_and_anchors(
         return
 
     source = source_map[pr_source_id]
+    if is_bootstrap_design_source(source):
+        result.error(
+            "active design source is still bootstrap placeholder; "
+            "initialize real top-design baseline first (run scripts/init-pr-prism-basis.sh "
+            "or replace design-sources.yml with real manifests)."
+        )
+        return
+
     source_version = str(source.get("version", "")).strip()
     if source_version != pr_source_version:
         result.error(

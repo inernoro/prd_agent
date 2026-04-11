@@ -367,6 +367,26 @@ export const api = {
     },
   },
 
+  // ============ PR Review Prism ============
+  prReviewPrism: {
+    status: () => '/api/pr-review-prism/status',
+    setupStatus: () => '/api/pr-review-prism/setup-status',
+    tokenConfig: {
+      status: () => '/api/pr-review-prism/token-config',
+      update: () => '/api/pr-review-prism/token-config',
+    },
+    bootstrapSkillPackage: () => '/api/pr-review-prism/bootstrap-skill-package',
+    submissions: {
+      list: () => '/api/pr-review-prism/submissions',
+      precheck: () => '/api/pr-review-prism/submissions/precheck',
+      create: () => '/api/pr-review-prism/submissions',
+      byId: (id: string) => `/api/pr-review-prism/submissions/${id}`,
+      refresh: (id: string) => `/api/pr-review-prism/submissions/${id}/refresh`,
+      batchRefresh: () => '/api/pr-review-prism/submissions/batch-refresh',
+      delete: (id: string) => `/api/pr-review-prism/submissions/${id}`,
+    },
+  },
+
   // ============ Literary Agent 文学创作 ============
   literaryAgent: {
     prompts: {

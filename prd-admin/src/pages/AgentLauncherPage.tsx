@@ -33,6 +33,7 @@ import type { ToolboxItem } from '@/services';
 import { ShowcaseGallery } from '@/components/showcase/ShowcaseGallery';
 import { DesktopDownloadDialog } from '@/components/ui/DesktopDownloadDialog';
 import { ReviewAgentCardArt } from '@/pages/ai-toolbox/components/ReviewAgentCardArt';
+import { PrReviewPrismCardArt } from '@/pages/ai-toolbox/components/PrReviewPrismCardArt';
 
 // ── Icon & Color mapping (self-contained, doesn't touch ToolCard) ──
 
@@ -141,14 +142,24 @@ const QUICK_LINKS_BASE: HomeQuickLink[] = [
   { icon: Sparkles, label: '作品广场', desc: '探索 AI 驱动的创意作品与灵感', path: '/showcase', accent: '#A855F7', gradient: 'linear-gradient(135deg, #A855F7, #6366F1)' },
 ];
 
-const QUICK_LINK_REVIEW_PRISM: HomeQuickLink = {
-  icon: ScanSearch,
-  label: 'PR审查棱镜',
-  desc: 'PR/MR 变更专项审查（与产品评审员独立）',
-  path: '/pr-review-prism',
-  accent: '#A78BFA',
-  gradient: 'linear-gradient(135deg, #8B5CF6, #6366F1)',
-};
+function dedupeToolboxItems(items: ToolboxItem[]): ToolboxItem[] {
+  const seen = new Set<string>();
+  const deduped: ToolboxItem[] = [];
+  for (const item of items) {
+    const identity =
+      item.agentKey?.trim()
+        ? `agent:${item.agentKey}`
+        : item.routePath?.trim()
+          ? `route:${item.routePath}`
+          : `id:${item.id}`;
+    if (seen.has(identity)) {
+      continue;
+    }
+    seen.add(identity);
+    deduped.push(item);
+  }
+  return deduped;
+}
 
 // ── Featured Agent Card (large, with cover image) ──
 
@@ -193,6 +204,8 @@ function FeaturedCard({ item, onClick }: { item: ToolboxItem; onClick: () => voi
       {/* Cover visual: inline art / CDN image / gradient fallback */}
       {item.agentKey === 'review-agent' ? (
         <ReviewAgentCardArt />
+      ) : item.agentKey === 'pr-review-prism' ? (
+        <PrReviewPrismCardArt />
       ) : coverUrl && !coverFailed ? (
         <>
           <img
@@ -377,13 +390,7 @@ export default function AgentLauncherPage() {
   const canUseReviewAgent = permissions.includes('review-agent.use');
   const canUsePrReviewPrism = permissions.includes('pr-review-prism.use');
 
-  const quickLinks = useMemo(() => {
-    const base = [...QUICK_LINKS_BASE];
-    if (canUsePrReviewPrism) {
-      base.unshift(QUICK_LINK_REVIEW_PRISM);
-    }
-    return base;
-  }, [canUsePrReviewPrism]);
+  const quickLinks = QUICK_LINKS_BASE;
 
   useEffect(() => {
     loadItems();
@@ -410,7 +417,7 @@ export default function AgentLauncherPage() {
         return true;
       });
 
-    const allItems = filterByPerm([...items, ...staticUtilities]);
+    const allItems = dedupeToolboxItems(filterByPerm([...items, ...staticUtilities]));
     const query = searchQuery.trim().toLowerCase();
     if (query) {
       const matched = allItems.filter(
@@ -423,7 +430,8 @@ export default function AgentLauncherPage() {
     }
     const feat: ToolboxItem[] = [];
     const util: ToolboxItem[] = [];
-    for (const item of items) {
+    const dedupedItems = dedupeToolboxItems(items);
+    for (const item of dedupedItems) {
       if (item.agentKey === 'review-agent' && !canUseReviewAgent) continue;
       if (item.agentKey === 'pr-review-prism' && !canUsePrReviewPrism) continue;
       if (item.routePath) feat.push(item);
