@@ -3,6 +3,7 @@ import type { ReactNode } from 'react';
 import { Reveal } from '../components/Reveal';
 import { SectionHeader } from '../components/SectionHeader';
 import { useLanguage } from '../contexts/LanguageContext';
+import { useInView } from '../hooks/useInView';
 import type { FeatureItem } from '../i18n/landing';
 
 /**
@@ -262,6 +263,8 @@ function MockupFrame({
 
 function VisualMockup() {
   const accent = '#a855f7';
+  // 独立的 useInView，让内部 4 格走自己的 stagger 时序，叠加在外层 Reveal 之上
+  const [gridRef, inView] = useInView<HTMLDivElement>();
   const grads = [
     'radial-gradient(circle at 30% 70%, #00d4ff 0%, transparent 50%), linear-gradient(135deg, #0a0a1e 0%, #2a0a3e 100%)',
     'radial-gradient(circle at 70% 30%, #f43f5e 0%, transparent 50%), linear-gradient(135deg, #1a0515 0%, #0a1a25 100%)',
@@ -280,26 +283,69 @@ function VisualMockup() {
           <span className="w-1.5 h-1.5 rounded-full" style={{ background: accent }} />
         </div>
       </div>
-      <div className="grid grid-cols-2 gap-2">
-        {grads.map((g, i) => (
-          <div
-            key={i}
-            className="relative aspect-[4/3] rounded-lg overflow-hidden border border-white/[0.06]"
-            style={{ background: g }}
-          >
+      <div ref={gridRef} className="grid grid-cols-2 gap-2">
+        {grads.map((g, i) => {
+          const isDone = i < 2;
+          const isGenerating = i >= 2;
+          const stagger = i * 120;
+          return (
             <div
-              className="absolute inset-x-0 bottom-0 h-1/2"
-              style={{ background: 'linear-gradient(180deg, transparent, rgba(0,0,0,0.5))' }}
-            />
-            {i < 2 && (
-              <div className="absolute top-1.5 right-1.5 w-3 h-3 rounded-full bg-emerald-400/90 flex items-center justify-center">
-                <svg className="w-1.5 h-1.5 text-black" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={4}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
-                </svg>
-              </div>
-            )}
-          </div>
-        ))}
+              key={i}
+              className="relative aspect-[4/3] rounded-lg overflow-hidden border border-white/[0.06]"
+              style={{
+                background: g,
+                opacity: inView ? 1 : 0,
+                transform: inView
+                  ? 'scale(1) translateY(0)'
+                  : 'scale(0.94) translateY(14px)',
+                transition: `opacity 520ms cubic-bezier(0.2, 0.9, 0.2, 1) ${stagger}ms, transform 640ms cubic-bezier(0.2, 0.9, 0.2, 1) ${stagger}ms`,
+                willChange: 'opacity, transform',
+              }}
+            >
+              {/* 底部压暗 */}
+              <div
+                className="absolute inset-x-0 bottom-0 h-1/2 pointer-events-none"
+                style={{ background: 'linear-gradient(180deg, transparent, rgba(0,0,0,0.5))' }}
+              />
+
+              {/* 生成中两格：shimmer 横扫（延迟在自身入场结束后开始） */}
+              {isGenerating && (
+                <div
+                  className="absolute inset-0 pointer-events-none overflow-hidden"
+                >
+                  <div
+                    className="absolute inset-y-0 w-1/2"
+                    style={{
+                      background:
+                        'linear-gradient(90deg, transparent 0%, rgba(255, 255, 255, 0.09) 50%, transparent 100%)',
+                      animation: inView
+                        ? `visual-mock-shimmer 2.4s ease-in-out ${stagger + 620}ms infinite`
+                        : 'none',
+                      willChange: 'transform',
+                    }}
+                  />
+                </div>
+              )}
+
+              {/* 已完成两格：绿色对勾延迟 pop-in（弹性 overshoot） */}
+              {isDone && (
+                <div
+                  className="absolute top-1.5 right-1.5 w-3 h-3 rounded-full bg-emerald-400/90 flex items-center justify-center"
+                  style={{
+                    opacity: inView ? 1 : 0,
+                    transform: inView ? 'scale(1)' : 'scale(0)',
+                    transition: `opacity 220ms ease-out ${stagger + 400}ms, transform 380ms cubic-bezier(0.34, 1.56, 0.64, 1) ${stagger + 400}ms`,
+                    willChange: 'opacity, transform',
+                  }}
+                >
+                  <svg className="w-1.5 h-1.5 text-black" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={4}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                  </svg>
+                </div>
+              )}
+            </div>
+          );
+        })}
       </div>
       <div className="mt-4 flex items-center gap-2 text-[10px] text-white/45">
         <span
@@ -310,6 +356,14 @@ function VisualMockup() {
       </div>
       <style>{`
         @keyframes mockup-pulse { 0%,100% { opacity:1; } 50% { opacity:0.4; } }
+        @keyframes visual-mock-shimmer {
+          0%   { transform: translateX(-120%); }
+          55%  { transform: translateX(260%); }
+          100% { transform: translateX(260%); }
+        }
+        @media (prefers-reduced-motion: reduce) {
+          [style*="visual-mock-shimmer"] { animation: none !important; }
+        }
       `}</style>
     </MockupFrame>
   );

@@ -1,0 +1,1 @@
+| feat | prd-admin | FeatureDeepDive VisualMockup 内部加分步进场动画（克制版）：4 个生成图 grid 接入 useInView，每格 stagger 120ms 入场（opacity 0→1 + scale 0.94→1 + translateY 14→0），done 2 格的绿色对勾延迟 pop-in 带弹性 overshoot（cubic-bezier 0.34, 1.56, 0.64, 1），generating 2 格叠加 shimmer 横扫（延迟在自身入场后开始），prefers-reduced-motion 尊重。只作用于 Visual 一段强化"生成中"叙事，不影响其他 5 个 mockup。 |
