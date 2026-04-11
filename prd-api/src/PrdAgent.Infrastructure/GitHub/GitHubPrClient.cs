@@ -41,7 +41,7 @@ public sealed class GitHubPrClient : IGitHubClient
 
     /// <summary>
     /// 以指定 token 拉取 (owner, repo, #number) 的最新快照。
-    /// 失败时抛 <see cref="PrReviewException"/>，携带明确错误码。
+    /// 失败时抛 <see cref="GitHubException"/>，携带明确错误码。
     /// </summary>
     public async Task<PrReviewSnapshot> FetchPullRequestAsync(
         string accessToken,
