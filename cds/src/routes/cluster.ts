@@ -230,9 +230,51 @@ export function createClusterRouter(deps: ClusterRouterDeps): Router {
       return;
     }
 
-    // 2. Persist executor config to .cds.env so the next restart is a pure
-    //    executor startup. We clear any stale permanent token from a previous
-    //    cluster membership.
+    // Snapshot existing in-memory config so we can roll back atomically if
+    // register() fails partway through.
+    const snapshot = {
+      masterUrl: config.masterUrl,
+      schedulerUrl: config.schedulerUrl,
+      bootstrapToken: config.bootstrapToken,
+      executorToken: config.executorToken,
+    };
+
+    // 2. Update in-memory config so the new ExecutorAgent sees the master
+    //    URL and bootstrap token. We deliberately do NOT flip config.mode —
+    //    leaving it as `standalone` keeps the existing Dashboard + Worker
+    //    services running until the user chooses to restart.
+    //
+    // CRITICAL: we do NOT touch .cds.env yet. The env file is persisted only
+    // AFTER register() succeeds. If register fails and we've already written
+    // CDS_MODE=executor to .cds.env, the next process restart would boot
+    // into pure executor mode with no dashboard, leaving the user stranded.
+    config.masterUrl = payload.master;
+    config.schedulerUrl = payload.master;
+    config.bootstrapToken = { value: payload.token, expiresAt: payload.expiresAt };
+    config.executorToken = undefined;
+
+    // 3. Instantiate the agent, register, start heartbeat. register() has
+    //    its own error logging; we just need to convert its boolean result
+    //    into an HTTP response the UI can react to.
+    const agent = new ExecutorAgent(config, stateService);
+    const success = await agent.register();
+    if (!success) {
+      // Roll back in-memory state so the next retry starts from a clean slate.
+      // We haven't touched .cds.env yet, so nothing is persisted.
+      config.masterUrl = snapshot.masterUrl;
+      config.schedulerUrl = snapshot.schedulerUrl;
+      config.bootstrapToken = snapshot.bootstrapToken;
+      config.executorToken = snapshot.executorToken;
+      res.status(502).json({
+        error: '注册到主节点失败。请查看 ./exec_cds.sh logs 的 [executor] 行确认原因。',
+      });
+      return;
+    }
+
+    // 4. Register succeeded — persist .cds.env so a process restart will
+    //    boot directly into executor mode without needing to re-bootstrap.
+    //    Failure to persist here is LOUD but non-fatal: the live cluster
+    //    keeps working, only the restart-recovery path is broken.
     try {
       updateEnvFile(defaultEnvFilePath(), {
         CDS_MODE: 'executor',
@@ -243,36 +285,10 @@ export function createClusterRouter(deps: ClusterRouterDeps): Router {
         CDS_EXECUTOR_TOKEN: null,
       });
     } catch (err) {
-      res.status(500).json({
-        error: `无法写入 .cds.env: ${(err as Error).message}`,
-      });
-      return;
+      console.error(`  [cluster] ⚠ joined cluster but .cds.env persist failed: ${(err as Error).message}`);
+      console.error('  [cluster]   live cluster works; restart will lose the join state.');
     }
 
-    // 3. Update in-memory config so the new ExecutorAgent sees the master
-    //    URL and bootstrap token. We deliberately do NOT flip config.mode —
-    //    leaving it as `standalone` keeps the existing Dashboard + Worker
-    //    services running until the user chooses to restart.
-    config.masterUrl = payload.master;
-    config.schedulerUrl = payload.master;
-    config.bootstrapToken = { value: payload.token, expiresAt: payload.expiresAt };
-    config.executorToken = undefined;
-
-    // 4. Instantiate the agent, register, start heartbeat. register() has
-    //    its own error logging; we just need to convert its boolean result
-    //    into an HTTP response the UI can react to.
-    const agent = new ExecutorAgent(config, stateService);
-    const success = await agent.register();
-    if (!success) {
-      // Revert in-memory changes so a retry isn't blocked by a stale config.
-      // The .cds.env write stays — if the user retries successfully, the
-      // existing values are the right ones.
-      config.bootstrapToken = undefined;
-      res.status(502).json({
-        error: '注册到主节点失败。请查看 ./exec_cds.sh logs 的 [executor] 行确认原因。',
-      });
-      return;
-    }
     agent.startHeartbeat();
     setExecutorAgent(agent);
 

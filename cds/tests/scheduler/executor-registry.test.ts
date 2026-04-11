@@ -379,5 +379,42 @@ describe('ExecutorRegistry', () => {
       expect(stateService.getExecutor('master-survivor')).toBeDefined();
       expect(stateService.getExecutor('master-survivor')?.role).toBe('embedded');
     });
+
+    it('NEVER flips embedded master to offline even if heartbeat is stale (regression)', () => {
+      // Embedded master doesn't send heartbeats — it IS the master process.
+      // Bug: the old checkHealth() blindly compared lastHeartbeat to now and
+      // flipped embedded nodes to offline after 45s, cascading into a
+      // "total capacity = 0" dashboard state (seen on both cds.miduo.org
+      // and the B server with online:0 / memoryMB:0 in /api/cluster/status).
+      registry.registerEmbeddedMaster(9000, 'alive');
+      const before = stateService.getExecutor('master-alive')!;
+      expect(before.status).toBe('online');
+
+      // Force lastHeartbeat way into the past so the old bug would trigger.
+      before.lastHeartbeat = new Date(Date.now() - 10 * 60 * 1000).toISOString(); // 10 min ago
+      stateService.setExecutor(before);
+
+      runHealthCheck();
+
+      // Post-fix: embedded stays online no matter what the clock says.
+      const after = stateService.getExecutor('master-alive')!;
+      expect(after.status).toBe('online');
+    });
+
+    it('capacity totals remain non-zero after a stale health tick (regression)', () => {
+      registry.registerEmbeddedMaster(9000, 'totals-check');
+      // Simulate embedded master lastHeartbeat going stale (time passes,
+      // no-one touches it). Before the fix this would break getTotalCapacity.
+      const node = stateService.getExecutor('master-totals-check')!;
+      node.lastHeartbeat = new Date(Date.now() - 120_000).toISOString(); // 2 min ago
+      stateService.setExecutor(node);
+
+      runHealthCheck();
+
+      const cap = registry.getTotalCapacity();
+      expect(cap.online).toBeGreaterThanOrEqual(1);
+      expect(cap.total.memoryMB).toBeGreaterThan(0);
+      expect(cap.total.cpuCores).toBeGreaterThan(0);
+    });
   });
 });

@@ -280,7 +280,13 @@ export class ExecutorRegistry {
    *    entirely. This is the safety net for cases where `disconnect`'s
    *    best-effort DELETE call failed and a node would otherwise sit in the
    *    capacity dashboard forever.
-   *  - Embedded (master) nodes are NEVER GC'd — they re-register on boot.
+   *  - Embedded (master) nodes are NEVER marked offline and NEVER GC'd.
+   *    They represent the master process itself: if checkHealth is running,
+   *    the embedded master is by definition alive. An embedded node doesn't
+   *    send heartbeats (there's no one to send them to — it IS the process
+   *    that would receive them), so applying heartbeat-timeout logic to it
+   *    incorrectly flips it offline after 45s, cascading into a "total
+   *    capacity = 0" dashboard state. Regression test covers this.
    */
   private checkHealth(): void {
     const now = Date.now();
@@ -288,6 +294,9 @@ export class ExecutorRegistry {
     let changed = false;
 
     for (const node of executors) {
+      // Embedded master is always healthy — skip entirely.
+      if (node.role === 'embedded') continue;
+
       const lastBeat = new Date(node.lastHeartbeat).getTime();
       const sinceLastBeat = now - lastBeat;
 
@@ -302,7 +311,6 @@ export class ExecutorRegistry {
       // Phase 2: GC long-offline remote nodes.
       if (
         node.status === 'offline' &&
-        node.role !== 'embedded' &&
         sinceLastBeat > OFFLINE_GC_MS
       ) {
         console.log(`  [scheduler] GC executor ${node.id} (offline > 24h)`);

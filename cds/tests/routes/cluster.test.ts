@@ -260,6 +260,53 @@ describe('Cluster router (UI bootstrap)', () => {
       const body = res.body as { error: string };
       expect(body.error).toContain('已加入');
     });
+
+    it('rolls back in-memory state and does NOT persist .cds.env when register fails (regression)', async () => {
+      // Bug: the old /join wrote .cds.env BEFORE calling register(). When
+      // register() failed (e.g. because of the auth middleware bug), the
+      // env file was left with CDS_MODE=executor + stale master URL, so the
+      // next process restart booted into pure executor mode with no
+      // dashboard — stranding the user. This test locks the new behavior:
+      // on register failure, the env file stays untouched and the in-memory
+      // config reverts to its pre-join state.
+      harness = await startHarness({
+        // Pre-existing in-memory state we expect to be preserved
+        masterUrl: undefined,
+        executorToken: undefined,
+      });
+
+      // The env file path the cluster router will try to write
+      const envPath = process.env.CDS_ENV_FILE!;
+      expect(fs.existsSync(envPath)).toBe(false);
+
+      // Point the master URL at an unreachable loopback port so register()
+      // definitely fails with a network error (without tripping the HTTP
+      // cleartext guard, because loopback is exempted).
+      const future = new Date(Date.now() + 10 * 60 * 1000).toISOString();
+      const code = Buffer.from(
+        JSON.stringify({
+          master: 'http://127.0.0.1:65432',
+          token: 'never-going-to-succeed',
+          expiresAt: future,
+        }),
+        'utf-8',
+      ).toString('base64');
+
+      const res = await request(harness.server, 'POST', '/api/cluster/join', { connectionCode: code });
+
+      // Register should have failed
+      expect(res.status).toBe(502);
+
+      // In-memory config must have rolled back
+      expect(harness.config.masterUrl).toBeUndefined();
+      expect(harness.config.schedulerUrl).toBeUndefined();
+      expect(harness.config.bootstrapToken).toBeUndefined();
+      expect(harness.config.executorToken).toBeUndefined();
+
+      // Critical: .cds.env must NOT have been created. Pre-fix this file
+      // would exist with CDS_MODE=executor.
+      expect(fs.existsSync(envPath)).toBe(false);
+    });
   });
 
   // ── /leave ──
