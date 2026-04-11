@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import type { CdsState, BranchEntry, BuildProfile, RoutingRule, OperationLog, InfraService, ExecutorNode, DataMigration } from '../types.js';
+import type { CdsState, BranchEntry, BuildProfile, RoutingRule, OperationLog, InfraService, ExecutorNode, DataMigration, CdsPeer } from '../types.js';
 
 const MAX_LOGS_PER_BRANCH = 10;
 /** Max rolling backups of state.json kept on disk. See design.cds-resilience.md §5. */
@@ -92,6 +92,7 @@ export class StateService {
       if (this.state.previewMode === undefined) this.state.previewMode = 'multi';
       if (!this.state.executors) this.state.executors = {};
       if (!this.state.dataMigrations) this.state.dataMigrations = [];
+      if (!this.state.cdsPeers) this.state.cdsPeers = [];
       // Migrate: backfill cacheMounts for existing build profiles
       this.migrateCacheMounts();
       // Migrate: ensure deployModes field exists on profiles (no-op if already present)
@@ -498,6 +499,32 @@ export class StateService {
 
   removeDataMigration(id: string): void {
     this.state.dataMigrations = (this.state.dataMigrations || []).filter(m => m.id !== id);
+  }
+
+  // ── CDS peers (remote CDS instances trusted for data migration) ──
+
+  getCdsPeers(): CdsPeer[] {
+    return this.state.cdsPeers || [];
+  }
+
+  getCdsPeer(id: string): CdsPeer | undefined {
+    return (this.state.cdsPeers || []).find(p => p.id === id);
+  }
+
+  addCdsPeer(peer: CdsPeer): void {
+    if (!this.state.cdsPeers) this.state.cdsPeers = [];
+    this.state.cdsPeers.push(peer);
+  }
+
+  updateCdsPeer(id: string, updates: Partial<CdsPeer>): void {
+    const list = this.state.cdsPeers || [];
+    const idx = list.findIndex(p => p.id === id);
+    if (idx === -1) throw new Error(`CDS 密钥 "${id}" 不存在`);
+    Object.assign(list[idx], updates);
+  }
+
+  removeCdsPeer(id: string): void {
+    this.state.cdsPeers = (this.state.cdsPeers || []).filter(p => p.id !== id);
   }
 
   /**

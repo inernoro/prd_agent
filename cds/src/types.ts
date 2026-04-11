@@ -247,6 +247,33 @@ export interface CdsState {
   executors?: Record<string, ExecutorNode>;
   /** Data migration task history */
   dataMigrations?: DataMigration[];
+  /** Registered remote CDS peers (for one-click cross-CDS data migration) */
+  cdsPeers?: CdsPeer[];
+}
+
+/**
+ * A trusted remote CDS instance. Used as the source or target of a data
+ * migration without having to copy around hostnames, ports, and mongo auth —
+ * the remote CDS exposes its local infra MongoDB via authenticated
+ * streaming endpoints (see /api/data-migrations/local-dump / local-restore).
+ *
+ * Auth = the remote CDS's AI_ACCESS_KEY (same key used by the AI bridge).
+ * Transport = HTTPS (preview.miduo.org terminates TLS), so the stream is
+ * encrypted end-to-end without any manual SSH/tunnel setup.
+ */
+export interface CdsPeer {
+  id: string;
+  /** Human-readable name, e.g. "生产 CDS" */
+  name: string;
+  /** Base URL of the remote CDS API, e.g. "https://main.miduo.org" */
+  baseUrl: string;
+  /** AI_ACCESS_KEY of the remote CDS (sent as X-AI-Access-Key header) */
+  accessKey: string;
+  createdAt: string;
+  /** Last verified connection timestamp */
+  lastVerifiedAt?: string;
+  /** Remote infra MongoDB label captured during last verify (for display) */
+  remoteLabel?: string;
 }
 
 /** SSH tunnel configuration for data migration */
@@ -259,12 +286,25 @@ export interface SshTunnelConfig {
   privateKeyPath?: string;
   /** Password auth (less secure, prefer key-based) */
   password?: string;
+  /**
+   * Optional: when set, the mongodump/mongorestore command on the remote
+   * jump host is wrapped in `docker exec <container> sh -c '...'`. Use this
+   * when the remote host only has MongoDB inside a container and the tools
+   * aren't on the jump host's PATH. Matches the manual recipe:
+   *   ssh root@host "docker exec mongo-container sh -c 'mongodump --archive --gzip'"
+   */
+  dockerContainer?: string;
 }
 
 /** MongoDB connection configuration for data migration */
 export interface MongoConnectionConfig {
-  /** 'local' uses the CDS infra MongoDB, 'remote' uses custom connection */
-  type: 'local' | 'remote';
+  /**
+   * Connection mode:
+   * - 'local'  : the CDS infra MongoDB running on this host
+   * - 'remote' : a custom host:port (optional SSH tunnel)
+   * - 'cds'    : a registered remote CDS peer (auto-auth via X-AI-Access-Key)
+   */
+  type: 'local' | 'remote' | 'cds';
   host: string;
   port: number;
   /** Database name (empty = all databases) */
@@ -275,8 +315,10 @@ export interface MongoConnectionConfig {
   password?: string;
   /** Auth source database */
   authDatabase?: string;
-  /** SSH tunnel for this connection */
+  /** SSH tunnel for this connection (only used when type === 'remote') */
   sshTunnel?: SshTunnelConfig;
+  /** CDS peer id (only used when type === 'cds') */
+  cdsPeerId?: string;
 }
 
 /** A data migration task */
@@ -301,6 +343,8 @@ export interface DataMigration {
   /** Error message if failed */
   errorMessage?: string;
   createdAt: string;
+  /** Last modification timestamp (set by PUT /:id) */
+  updatedAt?: string;
   startedAt?: string;
   finishedAt?: string;
   /** Migration log output */

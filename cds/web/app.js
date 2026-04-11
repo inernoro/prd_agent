@@ -844,16 +844,19 @@ async function addBranch(name) {
 
 // ── Container capacity badge (header indicator) ──
 //
-// Visual pressure gauge next to the CDS title. Battery-style fill with
-// 4 color tiers:
-//   green (< 60%)   — comfortable
-//   blue  (60-80%)  — busy but fine
-//   orange (80-100%) — pressure, consider stopping old branches
-//   red  (>= 100%)  — over-subscribed, OOM risk, pulses
+// Visual "fuel gauge" next to the CDS title. Battery-style fill shows
+// REMAINING capacity (not used) — a full battery means plenty of room
+// left for new containers, matching how people read real-world batteries.
 //
-// Clicking opens a detail popover with scheduler state (if enabled).
-// Sourced from `containerCapacity` which is updated by loadBranches()
-// every poll (10s). See doc/design.cds-resilience.md §八.
+//   green  (>= 40% free) — comfortable, plenty of room
+//   blue   (20-40% free) — busy but fine
+//   orange (0-20% free)  — low, consider stopping old branches
+//   red    (0% / over)   — exhausted / over-subscribed, OOM risk, pulses
+//
+// Label shows "free / total" so the number next to the battery matches
+// the visual fill. Clicking opens a detail popover with scheduler state.
+// Sourced from `containerCapacity`, updated by loadBranches() every 10s.
+// See doc/design.cds-resilience.md §八.
 
 function renderCapacityBadge() {
   const el = document.getElementById('capacityBadge');
@@ -870,25 +873,29 @@ function renderCapacityBadge() {
   }
   el.classList.remove('hidden');
 
-  const ratio = max > 0 ? Math.min(current / max, 1.5) : 0;
-  const pct = Math.round(ratio * 100);
-  const fillPct = Math.min(pct, 100);  // cap the visual fill at 100%
+  // Remaining slots drive the gauge. Over-subscription clamps to 0.
+  const free = Math.max(0, max - current);
+  const freeRatio = max > 0 ? free / max : 0;
+  const fillPct = Math.round(freeRatio * 100);  // 0..100
 
-  // Tier
+  // Used % is kept for the tooltip / popover since it's still useful info.
+  const usedPct = max > 0 ? Math.min(Math.round((current / max) * 100), 999) : 0;
+
+  // Tier: full battery = green (good), empty battery = red (bad)
   let tier;
-  if (ratio < 0.6) tier = 'green';
-  else if (ratio < 0.8) tier = 'blue';
-  else if (ratio < 1.0) tier = 'orange';
-  else tier = 'red';
+  if (freeRatio >= 0.4) tier = 'green';
+  else if (freeRatio >= 0.2) tier = 'blue';
+  else if (freeRatio > 0)   tier = 'orange';
+  else                      tier = 'red';
 
   // Over-subscription gets a warning suffix
   const over = current > max;
-  const label = over ? `${current}/${max} ⚠` : `${current}/${max}`;
+  const label = over ? `0/${max} ⚠` : `${free}/${max}`;
 
   el.dataset.tier = tier;
   el.dataset.over = over ? '1' : '0';
   el.setAttribute('title',
-    `宿主机容量: ${current}/${max} 容器 (${mem}GB RAM, ${pct}% 使用率)${over ? '\n⚠ 已超售，OOM 风险' : ''}\n点击查看调度器详情`,
+    `宿主机剩余容量: ${free}/${max} 空闲 (运行中 ${current}, ${mem}GB RAM, 已用 ${usedPct}%)${over ? '\n⚠ 已超售，OOM 风险' : ''}\n点击查看调度器详情`,
   );
 
   // Render: battery body + fill + label
@@ -911,22 +918,23 @@ async function showCapacityDetails(event) {
   const mem = containerCapacity.totalMemGB || 0;
   const pct = max > 0 ? Math.round((current / max) * 100) : 0;
   const over = current > max;
+  const free = Math.max(0, max - current);
 
   const schedulerHtml = '<div class="cap-pop-row"><em>Scheduler: 查询中...</em></div>';
   openConfigModal('宿主机容量', `
     <div class="cap-pop">
       <div class="cap-pop-stats">
         <div class="cap-pop-stat">
-          <div class="cap-pop-stat-label">运行容器</div>
-          <div class="cap-pop-stat-value">${current} / ${max}</div>
+          <div class="cap-pop-stat-label">剩余容量</div>
+          <div class="cap-pop-stat-value">${free} / ${max}${over ? ' ⚠' : ''}</div>
+        </div>
+        <div class="cap-pop-stat">
+          <div class="cap-pop-stat-label">运行中</div>
+          <div class="cap-pop-stat-value">${current} (${pct}%)</div>
         </div>
         <div class="cap-pop-stat">
           <div class="cap-pop-stat-label">宿主机内存</div>
           <div class="cap-pop-stat-value">${mem} GB</div>
-        </div>
-        <div class="cap-pop-stat">
-          <div class="cap-pop-stat-label">使用率</div>
-          <div class="cap-pop-stat-value">${pct}%${over ? ' ⚠' : ''}</div>
         </div>
       </div>
       ${over ? `<div class="cap-pop-warn">⚠ 超售 ${current - max} 个容器，建议启用 scheduler 或手动停止老分支以避免 OOM。</div>` : ''}
@@ -4708,9 +4716,16 @@ function escapeHtml(s) {
 let migrationTasks = [];
 let migrationToolInstalled = null;
 let loadedCollections = [];
+let cdsPeers = [];
+/** true when the new-migration modal is in edit mode; stores the id being edited */
+let migrationEditingId = null;
 
 async function loadMigrations() {
   try { migrationTasks = await api('GET', '/data-migrations'); } catch { migrationTasks = []; }
+}
+
+async function loadCdsPeers() {
+  try { cdsPeers = await api('GET', '/data-migrations/peers'); } catch { cdsPeers = []; }
 }
 
 function migStatusColor(s) { return { pending: 'var(--fg-muted)', running: 'var(--blue)', completed: 'var(--green)', failed: 'var(--red)' }[s] || 'var(--fg-muted)'; }
@@ -4721,6 +4736,10 @@ function formatConnSummary(conn) {
   if (!conn) return '—';
   const db = conn.database ? `/${conn.database}` : '';
   if (conn.type === 'local') return `本机 MongoDB${db}`;
+  if (conn.type === 'cds') {
+    const peer = cdsPeers.find(p => p.id === conn.cdsPeerId);
+    return `🔑 ${peer?.name || conn.cdsPeerId || '未知 CDS'}${db}`;
+  }
   return `${conn.host || '?'}:${conn.port || 27017}${db}`;
 }
 
@@ -4774,6 +4793,7 @@ function renderMigrationCard(m) {
       ` : ''}
       <div class="mig-card-actions">
         ${canRun ? `<button class="sm" onclick="executeMigration('${m.id}')">▶ 执行</button>` : ''}
+        ${m.status !== 'running' ? `<button class="sm" onclick="editMigration('${m.id}')">✎ 编辑</button>` : ''}
         <button class="sm" onclick="cloneMigration('${m.id}')">⧉ 克隆</button>
         ${m.log ? `<button class="sm" onclick="showMigrationLog('${m.id}')">📋 日志</button>` : ''}
         ${m.status !== 'running' ? `<button class="sm danger-text" onclick="deleteMigration('${m.id}')">删除</button>` : ''}
@@ -4783,14 +4803,16 @@ function renderMigrationCard(m) {
 }
 
 async function openMigrationModal() {
-  await loadMigrations();
+  await Promise.all([loadMigrations(), loadCdsPeers()]);
   const listHtml = migrationTasks.length === 0
     ? '<div class="config-empty">暂无迁移任务。点击"新建迁移"开始配置。</div>'
     : migrationTasks.slice().reverse().map(renderMigrationCard).join('');
+  const peerCount = cdsPeers.length;
   openConfigModal('数据迁移', `
-    <p class="config-panel-desc">MongoDB 数据迁移。支持全库或指定集合迁移，可配置 SSH 隧道。</p>
+    <p class="config-panel-desc">MongoDB 数据迁移。支持本机 / 远程 / CDS 密钥（跨 CDS 一键直连）。管道流式传输，无临时文件。</p>
     <div class="config-panel-actions" style="margin-bottom:10px;display:flex;gap:6px;flex-wrap:wrap">
       <button class="sm primary" onclick="openNewMigrationModal()">+ 新建迁移</button>
+      <button class="sm" onclick="openPeersModal()">🔑 CDS 密钥管理${peerCount ? ` (${peerCount})` : ''}</button>
       <button class="sm" onclick="checkMigrationTools()">🔧 工具状态</button>
     </div>
     <div id="migrationToolStatus" style="font-size:12px;margin-bottom:8px;display:none"></div>
@@ -4844,52 +4866,76 @@ async function installMigrationTools() {
 function buildConnectionForm(prefix, defaultType, isSource) {
   const mongoSvc = infraServices.find(s => s.id === 'mongodb');
   const hasLocalMongo = !!mongoSvc;
+  const peerOptions = cdsPeers.map(p =>
+    `<option value="${esc(p.id)}">${esc(p.name)} · ${esc((p.baseUrl || '').replace(/^https?:\/\//, ''))}</option>`
+  ).join('');
   return `
     <div class="migration-conn-panel">
-      <div class="form-row" style="margin-bottom:6px">
-        <select id="${prefix}Type" class="form-input" onchange="onConnTypeChange('${prefix}', ${isSource})" style="font-size:12px">
+      <div class="form-row mc-row" style="margin-bottom:6px">
+        <select id="${prefix}Type" class="form-input mc-input" onchange="onConnTypeChange('${prefix}', ${isSource})">
           ${hasLocalMongo ? `<option value="local" ${defaultType === 'local' ? 'selected' : ''}>本机 MongoDB${mongoSvc?.status === 'running' ? ' ●' : ''}</option>` : ''}
+          <option value="cds" ${defaultType === 'cds' ? 'selected' : ''}>🔑 CDS 密钥 (跨 CDS 直连)</option>
           <option value="remote" ${defaultType === 'remote' || !hasLocalMongo ? 'selected' : ''}>远程 MongoDB</option>
         </select>
       </div>
-      <div id="${prefix}RemoteFields" style="${defaultType === 'local' && hasLocalMongo ? 'display:none' : ''}">
-        <div class="form-row">
-          <input id="${prefix}Host" class="form-input" placeholder="主机地址" value="127.0.0.1">
-          <input id="${prefix}Port" class="form-input sm" placeholder="端口" value="27017" type="number" style="flex:0.4">
-        </div>
-        <div class="form-row">
-          <input id="${prefix}Username" class="form-input" placeholder="用户名 (可选)">
-          <input id="${prefix}Password" class="form-input" placeholder="密码 (可选)" type="password">
-        </div>
-        <div class="form-row">
-          <input id="${prefix}AuthDb" class="form-input" placeholder="认证库 (默认 admin)">
+
+      <div id="${prefix}CdsFields" style="${defaultType === 'cds' ? '' : 'display:none'}">
+        <div class="form-row mc-row">
+          <select id="${prefix}CdsPeer" class="form-input mc-input" onchange="onCdsPeerChange('${prefix}', ${isSource})">
+            <option value="">${cdsPeers.length ? '(请选择 CDS 密钥)' : '(未添加，请点击「管理密钥」)'}</option>
+            ${peerOptions}
+          </select>
+          <button type="button" class="sm mc-btn" onclick="openPeersModal()" title="管理 CDS 密钥">🔑</button>
         </div>
       </div>
+
+      <div id="${prefix}RemoteFields" style="${(defaultType === 'local' && hasLocalMongo) || defaultType === 'cds' ? 'display:none' : ''}">
+        <div class="form-row mc-row">
+          <input id="${prefix}Host" class="form-input mc-input mc-host" placeholder="主机地址" value="127.0.0.1">
+          <input id="${prefix}Port" class="form-input mc-input mc-port" placeholder="端口" value="27017" type="number">
+        </div>
+        <div class="form-row mc-row">
+          <input id="${prefix}Username" class="form-input mc-input" placeholder="用户名 (可选)">
+          <input id="${prefix}Password" class="form-input mc-input" placeholder="密码 (可选)" type="password">
+        </div>
+        <div class="form-row mc-row">
+          <input id="${prefix}AuthDb" class="form-input mc-input" placeholder="认证库 (默认 admin)">
+        </div>
+      </div>
+
       <div id="${prefix}DbArea">
-        <div class="form-row">
-          <select id="${prefix}Database" class="form-input" style="font-size:12px" onchange="onDbChange('${prefix}', ${isSource})">
+        <div class="form-row mc-row">
+          <select id="${prefix}Database" class="form-input mc-input" onchange="onDbChange('${prefix}', ${isSource})">
             <option value="">加载中...</option>
           </select>
         </div>
       </div>
       ${isSource ? `<div id="srcCollectionPicker" style="margin-top:4px"></div>` : ''}
-      <div style="margin-top:6px">
+
+      <div id="${prefix}SshArea" style="margin-top:6px;${defaultType === 'cds' ? 'display:none' : ''}">
         <label style="font-size:11px;display:flex;align-items:center;gap:6px;cursor:pointer;color:var(--fg-muted)">
           <input type="checkbox" id="${prefix}SshEnabled" onchange="toggleSshTunnel('${prefix}')">
           SSH 隧道
         </label>
         <div id="${prefix}SshFields" style="display:none;margin-top:6px">
-          <div class="form-row">
-            <input id="${prefix}SshHost" class="form-input" placeholder="SSH 主机">
-            <input id="${prefix}SshPort" class="form-input sm" placeholder="SSH 端口" value="22" type="number" style="flex:0.3">
+          <div class="form-row mc-row">
+            <input id="${prefix}SshHost" class="form-input mc-input mc-host" placeholder="SSH 主机">
+            <input id="${prefix}SshPort" class="form-input mc-input mc-port" placeholder="端口" value="22" type="number">
           </div>
-          <div class="form-row">
-            <input id="${prefix}SshUser" class="form-input" placeholder="SSH 用户名">
-            <input id="${prefix}SshKey" class="form-input" placeholder="私钥路径">
+          <div class="form-row mc-row">
+            <input id="${prefix}SshUser" class="form-input mc-input" placeholder="SSH 用户名">
+            <input id="${prefix}SshKey" class="form-input mc-input" placeholder="私钥路径 (可选)">
+          </div>
+          <div class="form-row mc-row">
+            <input id="${prefix}SshContainer" class="form-input mc-input" placeholder="docker 容器名 (可选, 走 docker exec)">
+          </div>
+          <div class="form-row mc-row" style="gap:6px">
+            <button type="button" class="sm" onclick="testSshTunnel('${prefix}')" style="flex:0 0 auto">🔧 测试隧道</button>
+            <div id="${prefix}SshTestStatus" style="font-size:11px;flex:1;align-self:center;color:var(--fg-muted);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"></div>
           </div>
         </div>
       </div>
-      <div id="${prefix}ConnStatus" style="font-size:11px;margin-top:6px;color:var(--fg-muted)"></div>
+      <div id="${prefix}ConnStatus" style="font-size:11px;margin-top:6px;color:var(--fg-muted);word-break:break-all"></div>
     </div>
   `;
 }
@@ -4902,9 +4948,37 @@ function toggleSshTunnel(prefix) {
 function onConnTypeChange(prefix, isSource) {
   const type = document.getElementById(`${prefix}Type`)?.value;
   const remoteFields = document.getElementById(`${prefix}RemoteFields`);
-  if (remoteFields) remoteFields.style.display = type === 'local' ? 'none' : '';
+  const cdsFields = document.getElementById(`${prefix}CdsFields`);
+  const sshArea = document.getElementById(`${prefix}SshArea`);
+  if (remoteFields) remoteFields.style.display = type === 'remote' ? '' : 'none';
+  if (cdsFields) cdsFields.style.display = type === 'cds' ? '' : 'none';
+  // SSH is irrelevant for CDS-peer connections (peer handles transport via HTTPS)
+  if (sshArea) sshArea.style.display = type === 'cds' ? 'none' : '';
   // Auto-load databases for this connection
   loadDatabases(prefix, isSource);
+}
+
+function onCdsPeerChange(prefix, isSource) {
+  // When the peer changes, refresh the database list
+  loadDatabases(prefix, isSource);
+}
+
+async function testSshTunnel(prefix) {
+  const statusEl = document.getElementById(`${prefix}SshTestStatus`);
+  if (!statusEl) return;
+  statusEl.innerHTML = '<span class="btn-spinner"></span> 正在测试 SSH 隧道...';
+  const conn = readConnectionConfig(prefix);
+  if (!conn.sshTunnel || !conn.sshTunnel.host) {
+    statusEl.innerHTML = '<span style="color:var(--red)">✗ 请先填写 SSH 信息</span>';
+    return;
+  }
+  try {
+    const d = await api('POST', '/data-migrations/test-tunnel', { sshTunnel: conn.sshTunnel });
+    if (d.success) statusEl.innerHTML = `<span style="color:var(--green)" title="${esc(d.message || '')}">✓ ${esc(d.message || '连接成功')}</span>`;
+    else statusEl.innerHTML = `<span style="color:var(--red)" title="${esc(d.error || '')}">✗ ${esc(d.error || '连接失败')}</span>`;
+  } catch (e) {
+    statusEl.innerHTML = `<span style="color:var(--red)">✗ ${esc(e.message)}</span>`;
+  }
 }
 
 async function loadDatabases(prefix, isSource) {
@@ -4917,7 +4991,18 @@ async function loadDatabases(prefix, isSource) {
 
   try {
     const conn = readConnectionConfig(prefix);
-    const d = await api('POST', '/data-migrations/list-databases', { connection: conn });
+    let d;
+    if (conn.type === 'cds') {
+      if (!conn.cdsPeerId) {
+        if (statusEl) statusEl.innerHTML = '<span style="color:var(--fg-muted)">请先选择 CDS 密钥</span>';
+        dbSelect.innerHTML = '<option value="">(请先选择 CDS 密钥)</option>';
+        dbSelect.disabled = false;
+        return;
+      }
+      d = await api('POST', `/data-migrations/peers/${conn.cdsPeerId}/list-databases`);
+    } else {
+      d = await api('POST', '/data-migrations/list-databases', { connection: conn });
+    }
     const dbs = d.databases || [];
     if (d.error) throw new Error(d.error);
     if (dbs.length === 0) throw new Error('无法获取数据库列表');
@@ -4934,7 +5019,7 @@ async function loadDatabases(prefix, isSource) {
     // Fallback: allow manual input
     const dbArea = document.getElementById(`${prefix}DbArea`);
     if (dbArea) {
-      dbArea.innerHTML = `<div class="form-row"><input id="${prefix}Database" class="form-input" placeholder="手动输入数据库名" style="font-size:12px" oninput="onDbChange('${prefix}', ${isSource})"></div>`;
+      dbArea.innerHTML = `<div class="form-row mc-row"><input id="${prefix}Database" class="form-input mc-input" placeholder="手动输入数据库名" oninput="onDbChange('${prefix}', ${isSource})"></div>`;
     }
   }
 }
@@ -4968,13 +5053,19 @@ function onDbChange(prefix, isSource) {
 function autoGenerateName() {
   const nameEl = document.getElementById('migName');
   if (!nameEl || (nameEl.value && !nameEl.dataset.autoGenerated)) return;
-  const srcType = document.getElementById('srcType')?.value;
-  const tgtType = document.getElementById('tgtType')?.value;
+  const labelFor = (prefix) => {
+    const type = document.getElementById(`${prefix}Type`)?.value;
+    if (type === 'local') return '本机';
+    if (type === 'cds') {
+      const peerId = document.getElementById(`${prefix}CdsPeer`)?.value;
+      const peer = cdsPeers.find(p => p.id === peerId);
+      return peer ? `🔑 ${peer.name}` : '🔑 CDS';
+    }
+    return document.getElementById(`${prefix}Host`)?.value || '远程';
+  };
   const srcDb = document.getElementById('srcDatabase')?.value || '';
-  const srcLabel = srcType === 'local' ? '本机' : (document.getElementById('srcHost')?.value || '远程');
-  const tgtLabel = tgtType === 'local' ? '本机' : (document.getElementById('tgtHost')?.value || '远程');
   const db = srcDb ? `/${srcDb}` : '';
-  nameEl.value = `${srcLabel}${db} → ${tgtLabel}`;
+  nameEl.value = `${labelFor('src')}${db} → ${labelFor('tgt')}`;
   nameEl.dataset.autoGenerated = 'true';
 }
 
@@ -4991,14 +5082,20 @@ function readConnectionConfig(prefix) {
     password: document.getElementById(`${prefix}Password`)?.value?.trim() || undefined,
     authDatabase: document.getElementById(`${prefix}AuthDb`)?.value?.trim() || undefined,
   };
+  if (type === 'cds') {
+    conn.cdsPeerId = document.getElementById(`${prefix}CdsPeer`)?.value || undefined;
+  }
+  // SSH is only meaningful for 'remote' connections, but we still read the form values so
+  // the test-tunnel button can work before the user commits the type choice.
   const sshEnabled = document.getElementById(`${prefix}SshEnabled`)?.checked;
-  if (sshEnabled) {
+  if (sshEnabled && type !== 'cds') {
     conn.sshTunnel = {
       enabled: true,
       host: document.getElementById(`${prefix}SshHost`)?.value?.trim() || '',
       port: parseInt(document.getElementById(`${prefix}SshPort`)?.value) || 22,
       username: document.getElementById(`${prefix}SshUser`)?.value?.trim() || '',
       privateKeyPath: document.getElementById(`${prefix}SshKey`)?.value?.trim() || undefined,
+      dockerContainer: document.getElementById(`${prefix}SshContainer`)?.value?.trim() || undefined,
     };
   }
   return conn;
@@ -5015,7 +5112,12 @@ async function loadCollections() {
   if (!conn.database) { picker.innerHTML = ''; loadedCollections = []; return; }
   picker.innerHTML = '<div style="font-size:11px"><span class="btn-spinner"></span> 加载集合...</div>';
   try {
-    const d = await api('POST', '/data-migrations/list-collections', { connection: conn });
+    let d;
+    if (conn.type === 'cds' && conn.cdsPeerId) {
+      d = await api('POST', `/data-migrations/peers/${conn.cdsPeerId}/list-collections`, { database: conn.database });
+    } else {
+      d = await api('POST', '/data-migrations/list-collections', { connection: conn });
+    }
     loadedCollections = d.collections || [];
     if (loadedCollections.length === 0) {
       picker.innerHTML = '<div style="font-size:11px;color:var(--fg-muted)">该库暂无集合</div>';
@@ -5052,10 +5154,17 @@ function toggleAllCollections(sel) {
 
 // ── New Migration Modal ──
 
-function openNewMigrationModal(prefill) {
+async function openNewMigrationModal(prefill, opts) {
+  const editMode = !!(opts && opts.editMode);
+  migrationEditingId = editMode && prefill ? prefill.id : null;
+  // Ensure peers list is available for the peer picker
+  if (cdsPeers.length === 0) { await loadCdsPeers(); }
+  const title = editMode ? '编辑数据迁移' : '新建数据迁移';
+  const primaryLabel = editMode ? '💾 保存修改' : '▶ 创建并执行';
+  const primaryHandler = editMode ? 'saveMigrationEdits()' : 'createAndExecuteMigration()';
   const html = `
     <div class="form-row" style="margin-bottom:10px">
-      <input id="migName" class="form-input" placeholder="任务名称 (自动生成)" style="flex:1" oninput="this.dataset.autoGenerated=''">
+      <input id="migName" class="form-input" placeholder="任务名称 (自动生成)" style="flex:1;min-width:0" oninput="this.dataset.autoGenerated=''">
     </div>
     <div class="migration-dual-panel">
       <div class="migration-side">
@@ -5070,13 +5179,13 @@ function openNewMigrationModal(prefill) {
         ${buildConnectionForm('tgt', prefill?.target?.type || 'remote', false)}
       </div>
     </div>
-    <div class="form-row" style="margin-top:12px;gap:6px">
-      <button class="primary sm" onclick="createAndExecuteMigration()">▶ 创建并执行</button>
-      <button class="sm" onclick="saveMigrationOnly()">💾 仅保存</button>
+    <div class="form-row" style="margin-top:12px;gap:6px;flex-wrap:wrap">
+      <button class="primary sm" onclick="${primaryHandler}">${primaryLabel}</button>
+      ${editMode ? '' : '<button class="sm" onclick="saveMigrationOnly()">💾 仅保存</button>'}
       <button class="sm" onclick="openMigrationModal()">取消</button>
     </div>
   `;
-  openConfigModal('新建数据迁移', html);
+  openConfigModal(title, html);
 
   // Auto-load databases on open (or prefill)
   setTimeout(() => {
@@ -5084,7 +5193,19 @@ function openNewMigrationModal(prefill) {
       fillConnectionFields('src', prefill.source);
       fillConnectionFields('tgt', prefill.target);
       const nameEl = document.getElementById('migName');
-      if (nameEl) { nameEl.value = prefill.name + ' (副本)'; nameEl.dataset.autoGenerated = ''; }
+      if (nameEl) {
+        nameEl.value = editMode ? prefill.name : (prefill.name + ' (副本)');
+        nameEl.dataset.autoGenerated = '';
+      }
+      // Restore selected collections after loading
+      if (editMode && prefill.collections?.length) {
+        const targetCols = new Set(prefill.collections);
+        setTimeout(() => {
+          document.querySelectorAll('input[name="migCollection"]').forEach(cb => {
+            if (targetCols.has(cb.value)) cb.checked = true;
+          });
+        }, 400);
+      }
     } else {
       // Auto-load for default connection types
       loadDatabases('src', true);
@@ -5093,13 +5214,35 @@ function openNewMigrationModal(prefill) {
   }, 50);
 }
 
+async function editMigration(id) {
+  if (cdsPeers.length === 0) await loadCdsPeers();
+  const m = migrationTasks.find(t => t.id === id);
+  if (!m) { showToast('迁移任务不存在', 'error'); return; }
+  openNewMigrationModal(m, { editMode: true });
+}
+
+async function saveMigrationEdits() {
+  if (!migrationEditingId) { showToast('非编辑模式', 'error'); return; }
+  const body = collectMigrationBody();
+  try {
+    await api('PUT', `/data-migrations/${migrationEditingId}`, body);
+    showToast('已保存', 'success');
+    migrationEditingId = null;
+    openMigrationModal();
+  } catch (e) { showToast(e.message, 'error'); }
+}
+
 function fillConnectionFields(prefix, conn) {
   if (!conn) return;
   const typeEl = document.getElementById(`${prefix}Type`);
   if (typeEl) {
     typeEl.value = conn.type || 'remote';
     const remoteFields = document.getElementById(`${prefix}RemoteFields`);
-    if (remoteFields) remoteFields.style.display = conn.type === 'local' ? 'none' : '';
+    const cdsFields = document.getElementById(`${prefix}CdsFields`);
+    const sshArea = document.getElementById(`${prefix}SshArea`);
+    if (remoteFields) remoteFields.style.display = conn.type === 'remote' ? '' : 'none';
+    if (cdsFields) cdsFields.style.display = conn.type === 'cds' ? '' : 'none';
+    if (sshArea) sshArea.style.display = conn.type === 'cds' ? 'none' : '';
   }
   const set = (id, val) => { const el = document.getElementById(id); if (el && val != null) el.value = val; };
   set(`${prefix}Host`, conn.host);
@@ -5107,6 +5250,9 @@ function fillConnectionFields(prefix, conn) {
   set(`${prefix}Username`, conn.username);
   set(`${prefix}Password`, conn.password);
   set(`${prefix}AuthDb`, conn.authDatabase);
+  if (conn.type === 'cds') {
+    set(`${prefix}CdsPeer`, conn.cdsPeerId);
+  }
   if (conn.sshTunnel?.enabled) {
     const sshCb = document.getElementById(`${prefix}SshEnabled`);
     if (sshCb) { sshCb.checked = true; toggleSshTunnel(prefix); }
@@ -5114,6 +5260,7 @@ function fillConnectionFields(prefix, conn) {
     set(`${prefix}SshPort`, conn.sshTunnel.port);
     set(`${prefix}SshUser`, conn.sshTunnel.username);
     set(`${prefix}SshKey`, conn.sshTunnel.privateKeyPath);
+    set(`${prefix}SshContainer`, conn.sshTunnel.dockerContainer);
   }
   // Load databases then select the right one
   loadDatabases(prefix, prefix === 'src').then(() => {
@@ -5249,6 +5396,166 @@ async function deleteMigration(id) {
   if (!confirm('确定删除此迁移任务？')) return;
   try { await api('DELETE', `/data-migrations/${id}`); showToast('已删除', 'success'); openMigrationModal(); }
   catch (e) { showToast(e.message, 'error'); }
+}
+
+// ── CDS Peers (cross-CDS migration via access keys) ──
+
+async function openPeersModal() {
+  await loadCdsPeers();
+  // Also fetch own key so the user can copy it
+  let myKey = null;
+  try { myKey = await api('GET', '/data-migrations/my-key'); } catch { /* */ }
+
+  const myKeySection = myKey && myKey.accessKey ? `
+    <div class="peer-mykey-box">
+      <div class="peer-mykey-title">🔑 本机 CDS 密钥 <span class="peer-mykey-hint">（复制后在对方 CDS 中添加，即可实现双向数据迁移）</span></div>
+      <div class="form-row mc-row" style="margin-bottom:4px">
+        <input class="form-input mc-input" value="${esc(myKey.baseUrl || '')}" readonly onfocus="this.select()" title="本机 CDS 地址">
+        <button type="button" class="sm" onclick="copyToClipboard('${esc(myKey.baseUrl || '').replace(/'/g, "\\'")}')">复制地址</button>
+      </div>
+      <div class="form-row mc-row">
+        <input class="form-input mc-input" value="${esc(myKey.accessKey)}" readonly onfocus="this.select()" title="本机 AI 访问密钥" style="font-family:monospace">
+        <button type="button" class="sm" onclick="copyToClipboard('${esc(myKey.accessKey).replace(/'/g, "\\'")}')">复制密钥</button>
+      </div>
+    </div>
+  ` : `
+    <div class="peer-mykey-box" style="border-color:var(--yellow)">
+      <div class="peer-mykey-title">⚠ 本机 CDS 未配置 AI_ACCESS_KEY</div>
+      <div class="peer-mykey-hint" style="font-size:12px;margin-top:4px">${esc(myKey?.hint || '请在「设置 → 环境变量」中配置 AI_ACCESS_KEY 后再试。')}</div>
+    </div>
+  `;
+
+  const peersList = cdsPeers.length === 0
+    ? '<div class="config-empty" style="padding:16px">尚未添加任何 CDS 密钥。点击下方「+ 添加」即可注册第一个远程 CDS。</div>'
+    : cdsPeers.map(p => `
+      <div class="peer-card">
+        <div class="peer-card-main">
+          <div class="peer-card-name">${esc(p.name)}</div>
+          <div class="peer-card-url">${esc(p.baseUrl)}</div>
+          <div class="peer-card-meta">
+            <span title="访问密钥（已遮蔽）">${esc(p.accessKey)}</span>
+            ${p.lastVerifiedAt ? `<span title="上次验证时间" style="color:var(--green)">✓ ${relativeTime(p.lastVerifiedAt)}</span>` : '<span style="color:var(--yellow)">未验证</span>'}
+          </div>
+        </div>
+        <div class="peer-card-actions">
+          <button type="button" class="sm" onclick="testCdsPeer('${p.id}')" title="重新验证连接">🔧 测试</button>
+          <button type="button" class="sm" onclick="editCdsPeer('${p.id}')">✎ 编辑</button>
+          <button type="button" class="sm danger-text" onclick="deleteCdsPeer('${p.id}')">删除</button>
+        </div>
+      </div>
+    `).join('');
+
+  openConfigModal('CDS 密钥管理', `
+    <p class="config-panel-desc">注册远程 CDS 的访问密钥，即可在数据迁移中一键选择源/目标，跨 CDS 直连，无需 SSH 或复杂配置。</p>
+    ${myKeySection}
+    <div style="margin:12px 0 6px;font-size:12px;color:var(--fg-muted);font-weight:600">远程 CDS 密钥</div>
+    <div id="peersList">${peersList}</div>
+    <div class="form-row" style="margin-top:10px;gap:6px;flex-wrap:wrap">
+      <button class="sm primary" onclick="openAddPeerForm()">+ 添加 CDS 密钥</button>
+      <button class="sm" onclick="openMigrationModal()">← 返回迁移列表</button>
+    </div>
+    <div id="addPeerFormArea"></div>
+  `);
+}
+
+function openAddPeerForm(prefill) {
+  const area = document.getElementById('addPeerFormArea');
+  if (!area) return;
+  const editingId = prefill?.id || '';
+  area.innerHTML = `
+    <div class="peer-form">
+      <div class="peer-form-title">${editingId ? '编辑 CDS 密钥' : '添加 CDS 密钥'}</div>
+      <div class="form-row mc-row">
+        <input id="peerName" class="form-input mc-input" placeholder="名称 (如: 生产 CDS)" value="${esc(prefill?.name || '')}">
+      </div>
+      <div class="form-row mc-row">
+        <input id="peerBaseUrl" class="form-input mc-input" placeholder="https://main.miduo.org" value="${esc(prefill?.baseUrl || '')}">
+      </div>
+      <div class="form-row mc-row">
+        <input id="peerAccessKey" class="form-input mc-input" placeholder="${editingId ? '留空则保留现有密钥' : 'AI 访问密钥 (remote AI_ACCESS_KEY)'}" style="font-family:monospace">
+      </div>
+      <div class="form-row mc-row" style="gap:6px">
+        <button class="sm primary" onclick="submitPeerForm('${editingId}')">${editingId ? '保存' : '添加并验证'}</button>
+        <button class="sm" onclick="document.getElementById('addPeerFormArea').innerHTML=''">取消</button>
+        <div id="peerFormStatus" style="font-size:11px;align-self:center;min-width:0;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"></div>
+      </div>
+    </div>
+  `;
+}
+
+async function submitPeerForm(editingId) {
+  const name = document.getElementById('peerName')?.value?.trim();
+  const baseUrl = document.getElementById('peerBaseUrl')?.value?.trim();
+  const accessKey = document.getElementById('peerAccessKey')?.value?.trim();
+  const status = document.getElementById('peerFormStatus');
+  if (!name || !baseUrl) {
+    if (status) status.innerHTML = '<span style="color:var(--red)">✗ 请填写名称和地址</span>';
+    return;
+  }
+  if (!editingId && !accessKey) {
+    if (status) status.innerHTML = '<span style="color:var(--red)">✗ 请填写访问密钥</span>';
+    return;
+  }
+  if (status) status.innerHTML = '<span class="btn-spinner"></span> 验证中...';
+  try {
+    if (editingId) {
+      const body = { name, baseUrl };
+      if (accessKey) body.accessKey = accessKey;
+      await api('PUT', `/data-migrations/peers/${editingId}`, body);
+    } else {
+      await api('POST', '/data-migrations/peers', { name, baseUrl, accessKey });
+    }
+    showToast(editingId ? 'CDS 密钥已更新' : 'CDS 密钥已添加并验证', 'success');
+    openPeersModal();
+  } catch (e) {
+    if (status) status.innerHTML = `<span style="color:var(--red)" title="${esc(e.message)}">✗ ${esc(e.message)}</span>`;
+  }
+}
+
+function editCdsPeer(id) {
+  const peer = cdsPeers.find(p => p.id === id);
+  if (!peer) return;
+  openAddPeerForm(peer);
+}
+
+async function testCdsPeer(id) {
+  try {
+    const d = await api('POST', `/data-migrations/peers/${id}/test`);
+    if (d.success) { showToast(`连接成功: ${d.remoteLabel || ''}`, 'success'); openPeersModal(); }
+    else showToast(`连接失败: ${d.error || '未知错误'}`, 'error');
+  } catch (e) { showToast(e.message, 'error'); }
+}
+
+async function deleteCdsPeer(id) {
+  const peer = cdsPeers.find(p => p.id === id);
+  if (!confirm(`确定删除 CDS 密钥「${peer?.name || id}」？`)) return;
+  try {
+    await api('DELETE', `/data-migrations/peers/${id}`);
+    showToast('已删除', 'success');
+    openPeersModal();
+  } catch (e) { showToast(e.message, 'error'); }
+}
+
+function copyToClipboard(text) {
+  try {
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(() => showToast('已复制', 'success')).catch(() => fallbackCopy(text));
+    } else {
+      fallbackCopy(text);
+    }
+  } catch { fallbackCopy(text); }
+}
+
+function fallbackCopy(text) {
+  const ta = document.createElement('textarea');
+  ta.value = text;
+  ta.style.position = 'fixed';
+  ta.style.left = '-9999px';
+  document.body.appendChild(ta);
+  ta.select();
+  try { document.execCommand('copy'); showToast('已复制', 'success'); }
+  catch { showToast('复制失败', 'error'); }
+  document.body.removeChild(ta);
 }
 
 // ── Init activity monitor & AI pairing ──
