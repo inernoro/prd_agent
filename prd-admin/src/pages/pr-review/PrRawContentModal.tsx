@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { X, FileText, Loader2, AlertTriangle, Link2, ExternalLink } from 'lucide-react';
 import {
   getPrReviewItemRaw,
@@ -56,13 +57,15 @@ export function PrRawContentModal({ itemId, onClose }: Props) {
     return () => window.removeEventListener('keydown', onKey);
   }, [onClose]);
 
-  return (
+  const modal = (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm"
+      className="fixed inset-0 z-[100] flex items-center justify-center bg-black/70 backdrop-blur-sm"
+      style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, padding: '16px' }}
       onClick={onClose}
     >
       <div
-        className="relative w-full max-w-4xl max-h-[90vh] mx-4 rounded-xl border border-white/10 bg-[#0f1014] shadow-2xl flex flex-col"
+        className="relative w-full max-w-4xl mx-4 rounded-xl border border-white/10 bg-[#0f1014] shadow-2xl flex flex-col overflow-hidden"
+        style={{ height: '90vh', maxHeight: '90vh' }}
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}
@@ -99,7 +102,10 @@ export function PrRawContentModal({ itemId, onClose }: Props) {
         </div>
 
         {/* Body */}
-        <div className="flex-1 overflow-auto px-5 py-4 space-y-5">
+        <div
+          className="flex-1 px-5 py-4 space-y-5"
+          style={{ minHeight: 0, overflowY: 'auto', overscrollBehavior: 'contain' }}
+        >
           {loading && (
             <div className="flex items-center justify-center gap-2 text-sm text-white/50 py-12">
               <Loader2 size={16} className="animate-spin" />
@@ -176,6 +182,9 @@ export function PrRawContentModal({ itemId, onClose }: Props) {
       </div>
     </div>
   );
+
+  // createPortal：脱离 PrItemCard 的 overflow-hidden 祖先
+  return createPortal(modal, document.body);
 }
 
 function SectionTitle({ children }: { children: React.ReactNode }) {

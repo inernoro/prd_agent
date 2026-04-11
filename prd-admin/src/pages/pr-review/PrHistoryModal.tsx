@@ -165,11 +165,27 @@ export function PrHistoryModal({ itemId, htmlUrl, onClose }: Props) {
 
   const modal = (
     <div
-      className="fixed inset-0 z-[100] flex items-center justify-center bg-black/70 backdrop-blur-sm p-4"
+      className="fixed inset-0 z-[100] flex items-center justify-center bg-black/70 backdrop-blur-sm"
+      style={{
+        // 显式 inset 避免任何 Tailwind v4 处理 `inset-0` 的边缘情况
+        position: 'fixed',
+        top: 0,
+        left: 0,
+        right: 0,
+        bottom: 0,
+        padding: '16px',
+      }}
       onClick={onClose}
     >
       <div
-        className="relative w-full max-w-5xl h-[90vh] rounded-xl border border-white/10 bg-[#0f1014] shadow-2xl flex flex-col overflow-hidden"
+        className="relative w-full max-w-5xl rounded-xl border border-white/10 bg-[#0f1014] shadow-2xl flex flex-col overflow-hidden"
+        style={{
+          // 关键：用 inline style 强制高度 = 视口 90%，绕过 Tailwind JIT
+          // 可能遇到的任何 arbitrary value 问题（用户反馈过两次 modal 超出
+          // 屏幕 —— 说明 `h-[90vh]` 类在 v4 Oxide 上行为和预期不一致）
+          height: '90vh',
+          maxHeight: '90vh',
+        }}
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}
@@ -215,8 +231,16 @@ export function PrHistoryModal({ itemId, htmlUrl, onClose }: Props) {
           })}
         </div>
 
-        {/* Body —— flex-1 + min-h-0 is the critical combo for flex child overflow to work */}
-        <div className="flex-1 min-h-0 overflow-y-auto px-5 py-4">
+        {/* Body —— flex-1 + min-h-0 是 flex 子元素 overflow 的必要组合，
+            但同样用 inline style 兜底避免 Tailwind 变种问题 */}
+        <div
+          className="flex-1 px-5 py-4"
+          style={{
+            minHeight: 0,
+            overflowY: 'auto',
+            overscrollBehavior: 'contain', // 防止滚动链穿透到 body
+          }}
+        >
           {tab === 'timeline' && (
             <TabWrapper
               state={states.timeline}
