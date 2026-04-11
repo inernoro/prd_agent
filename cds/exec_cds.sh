@@ -1602,10 +1602,32 @@ case "$CMD" in
     nginx_down
     ;;
   restart)
+    # ── Hot-swap restart: build BEFORE stop ──
+    #
+    # Historical flow was `stop → nginx restart → sleep → build → start`,
+    # which meant the 8-12s TypeScript compile ran WHILE the old node was
+    # already dead, leaving nginx with no upstream. End-users saw a
+    # Cloudflare 502 "Bad gateway" banner for the full compile window.
+    #
+    # Fix: pre-build on the still-running process's sidelines. `build_ts`
+    # only writes to `dist/` — the live node is serving from a previously
+    # loaded dist and doesn't re-read it at runtime, so overwriting dist
+    # while it runs is safe. After the build completes we stop + start
+    # in one tight window (~1-2s, not 10+s).
+    #
+    # Also: nginx stays UP the whole time. Nuking + rebinding nginx on
+    # every restart was unnecessary (its upstream pointer is just
+    # localhost:9900, which reappears as soon as node rebinds) and
+    # widened the downtime window. If the operator genuinely needs
+    # nginx re-rendered (e.g. new root domains), they should call
+    # `nginx-render` separately.
     load_env
+    install_deps
+    build_ts
     cds_stop
-    nginx_down
-    sleep 1
+    # Make sure nginx is still present (no-op if already running) —
+    # nginx_up is idempotent and cheap, keeps the first-time restart
+    # after a cold start working.
     nginx_up || true
     if [ "$FG" = true ]; then
       cds_start_foreground

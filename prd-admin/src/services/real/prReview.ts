@@ -1,0 +1,379 @@
+/**
+ * PR Review V2（pr-review）— per-user GitHub OAuth 审查工作台服务层
+ *
+ * 设计约定：
+ * - 所有请求走 apiRequest，自动注入 JWT 与错误归一
+ * - 返回 ApiResponse<T>，调用方用 res.success 判断
+ * - 错误使用 res.error?.message，不是字符串
+ * - 禁止 localStorage：所有状态由服务端决定
+ *
+ * 授权模式：GitHub Device Flow (RFC 8628)
+ * - 原因：CDS 动态域名（<branch>.miduo.org）与 Web Flow Callback URL 不兼容
+ * - 前端调 deviceStart 拿到 userCode + verificationUri + flowToken
+ * - 前端打开 verificationUri 让用户授权，同时轮询 devicePoll
+ * - 轮询直到 status === 'done' / 'expired' / 'denied'
+ */
+import { apiRequest } from '@/services/real/apiClient';
+import api from '@/services/api';
+import type { ApiResponse } from '@/types/api';
+
+// ===== 类型定义 =====
+
+export type PrReviewState = 'open' | 'closed' | 'merged';
+
+export interface PrReviewSnapshotDto {
+  title: string;
+  body?: string | null;
+  state: PrReviewState;
+  authorLogin: string;
+  authorAvatarUrl?: string | null;
+  labels: string[];
+  additions: number;
+  deletions: number;
+  changedFiles: number;
+  reviewDecision?: string | null;
+  createdAt: string;
+  mergedAt?: string | null;
+  closedAt?: string | null;
+  headSha: string;
+  fileCount?: number;
+  linkedIssueNumber?: number | null;
+  linkedIssueTitle?: string | null;
+}
+
+export interface PrAlignmentReportDto {
+  score: number;
+  summary?: string | null;
+  markdown: string;
+  model?: string | null;
+  durationMs: number;
+  createdAt: string;
+  error?: string | null;
+}
+
+export interface PrSummaryReportDto {
+  headline?: string | null;
+  markdown: string;
+  model?: string | null;
+  durationMs: number;
+  createdAt: string;
+  error?: string | null;
+}
+
+export interface PrReviewRawFileDto {
+  filename: string;
+  status: string; // added / modified / removed / renamed
+  additions: number;
+  deletions: number;
+  patch?: string | null;
+}
+
+export interface PrReviewRawContentDto {
+  title: string;
+  body?: string | null;
+  state: PrReviewState;
+  authorLogin: string;
+  authorAvatarUrl?: string | null;
+  additions: number;
+  deletions: number;
+  changedFiles: number;
+  headSha: string;
+  htmlUrl: string;
+  linkedIssueNumber?: number | null;
+  linkedIssueTitle?: string | null;
+  linkedIssueBody?: string | null;
+  files: PrReviewRawFileDto[];
+}
+
+export interface PrReviewItemDto {
+  id: string;
+  owner: string;
+  repo: string;
+  number: number;
+  htmlUrl: string;
+  note?: string | null;
+  snapshot?: PrReviewSnapshotDto | null;
+  alignmentReport?: PrAlignmentReportDto | null;
+  summaryReport?: PrSummaryReportDto | null;
+  lastRefreshedAt?: string | null;
+  lastRefreshError?: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface PrReviewListResponse {
+  page: number;
+  pageSize: number;
+  total: number;
+  items: PrReviewItemDto[];
+}
+
+export interface PrReviewAuthStatus {
+  connected: boolean;
+  oauthConfigured: boolean;
+  appKey: string;
+  login?: string;
+  avatarUrl?: string;
+  scopes?: string;
+  connectedAt?: string;
+  lastUsedAt?: string;
+}
+
+export interface PrReviewDeviceFlowStart {
+  userCode: string;
+  verificationUri: string;
+  verificationUriComplete: string;
+  intervalSeconds: number;
+  expiresInSeconds: number;
+  flowToken: string;
+}
+
+export type PrReviewDeviceFlowPollStatus =
+  | 'pending'
+  | 'slow_down'
+  | 'expired'
+  | 'denied'
+  | 'done';
+
+export interface PrReviewDeviceFlowPoll {
+  status: PrReviewDeviceFlowPollStatus;
+}
+
+// ===== API 调用 =====
+
+export async function getPrReviewAuthStatus(): Promise<ApiResponse<PrReviewAuthStatus>> {
+  return apiRequest<PrReviewAuthStatus>(api.prReview.auth.status());
+}
+
+export async function startPrReviewDeviceFlow(): Promise<ApiResponse<PrReviewDeviceFlowStart>> {
+  return apiRequest<PrReviewDeviceFlowStart>(api.prReview.auth.deviceStart(), {
+    method: 'POST',
+  });
+}
+
+export async function pollPrReviewDeviceFlow(
+  flowToken: string,
+): Promise<ApiResponse<PrReviewDeviceFlowPoll>> {
+  return apiRequest<PrReviewDeviceFlowPoll>(api.prReview.auth.devicePoll(), {
+    method: 'POST',
+    body: { flowToken },
+  });
+}
+
+export async function disconnectPrReviewGitHub(): Promise<ApiResponse<{ deleted: boolean }>> {
+  return apiRequest(api.prReview.auth.disconnect(), {
+    method: 'DELETE',
+  });
+}
+
+export async function listPrReviewItems(
+  page = 1,
+  pageSize = 20,
+): Promise<ApiResponse<PrReviewListResponse>> {
+  return apiRequest<PrReviewListResponse>(api.prReview.items.list(page, pageSize));
+}
+
+export async function createPrReviewItem(
+  pullRequestUrl: string,
+  note?: string,
+): Promise<ApiResponse<PrReviewItemDto>> {
+  return apiRequest<PrReviewItemDto>(api.prReview.items.create(), {
+    method: 'POST',
+    body: { pullRequestUrl, note: note?.trim() || undefined },
+  });
+}
+
+export async function refreshPrReviewItem(id: string): Promise<ApiResponse<PrReviewItemDto>> {
+  return apiRequest<PrReviewItemDto>(api.prReview.items.refresh(id), {
+    method: 'POST',
+  });
+}
+
+/**
+ * 获取 PR 的完整原始内容（PR 描述 + 变更文件 diff）。
+ * 单独一个端点，避免把 100KB 级别的 files 塞进列表/详情接口。
+ */
+export async function getPrReviewItemRaw(
+  id: string,
+): Promise<ApiResponse<PrReviewRawContentDto>> {
+  return apiRequest<PrReviewRawContentDto>(api.prReview.items.raw(id));
+}
+
+// ===== PR 历史数据（commits / reviews / comments / timeline / check runs）=====
+
+export interface PrHistoryCommit {
+  sha: string;
+  message: string;
+  authorName: string;
+  authorLogin?: string | null;
+  authorAvatarUrl?: string | null;
+  authoredAt?: string | null;
+  htmlUrl?: string | null;
+}
+
+export interface PrHistoryReview {
+  id: number;
+  state: string; // APPROVED / CHANGES_REQUESTED / COMMENTED / DISMISSED / PENDING
+  authorLogin: string;
+  authorAvatarUrl?: string | null;
+  body?: string | null;
+  submittedAt?: string | null;
+  htmlUrl?: string | null;
+}
+
+export interface PrHistoryReviewComment {
+  id: number;
+  authorLogin: string;
+  authorAvatarUrl?: string | null;
+  body?: string | null;
+  createdAt?: string | null;
+  path?: string | null;
+  line?: number | null;
+  diffHunk?: string | null;
+  htmlUrl?: string | null;
+}
+
+export interface PrHistoryIssueComment {
+  id: number;
+  authorLogin: string;
+  authorAvatarUrl?: string | null;
+  body?: string | null;
+  createdAt?: string | null;
+  htmlUrl?: string | null;
+}
+
+export interface PrHistoryTimelineEvent {
+  event: string;
+  actorLogin?: string | null;
+  actorAvatarUrl?: string | null;
+  createdAt?: string | null;
+  label?: string | null;
+  assigneeLogin?: string | null;
+  requestedReviewerLogin?: string | null;
+  commitSha?: string | null;
+  commitMessage?: string | null;
+  state?: string | null;
+  body?: string | null;
+  rename?: string | null;
+}
+
+export interface PrHistoryCheckRun {
+  id: number;
+  name: string;
+  status: string; // queued / in_progress / completed
+  conclusion?: string | null; // success / failure / neutral / cancelled / skipped / timed_out / action_required
+  startedAt?: string | null;
+  completedAt?: string | null;
+  htmlUrl?: string | null;
+  appName?: string | null;
+}
+
+export interface PrHistoryDto {
+  commits: PrHistoryCommit[];
+  reviews: PrHistoryReview[];
+  reviewComments: PrHistoryReviewComment[];
+  issueComments: PrHistoryIssueComment[];
+  timeline: PrHistoryTimelineEvent[];
+  checkRuns: PrHistoryCheckRun[];
+  errors: string[];
+}
+
+/**
+ * 拉取 PR 的 GitHub 完整审查历史（一次性全量，不推荐日常使用，2-3s）。
+ */
+export async function getPrReviewItemHistory(
+  id: string,
+): Promise<ApiResponse<PrHistoryDto>> {
+  return apiRequest<PrHistoryDto>(api.prReview.items.history(id));
+}
+
+// ===== 按 tab 懒加载的分页版本 =====
+
+export type PrHistorySliceType =
+  | 'timeline'
+  | 'commits'
+  | 'reviews'
+  | 'reviewComments'
+  | 'issueComments'
+  | 'checkRuns';
+
+/**
+ * 每个 tab 只请求自己的 slice，返回通用结构。items 的具体类型由 type 决定。
+ */
+export interface PrHistorySlice<T> {
+  type: PrHistorySliceType;
+  page: number;
+  perPage: number;
+  hasMore: boolean;
+  items: T[];
+}
+
+/**
+ * 懒加载单个 tab（推荐）。单次 GitHub API 调用，实测 300-600ms。
+ *
+ * 典型用法：
+ *   const first = await getPrReviewItemHistorySlice<PrHistoryCommit>(id, 'commits', 1);
+ *   if (first.success && first.data.hasMore) { 展示"加载更多" }
+ */
+export async function getPrReviewItemHistorySlice<T = unknown>(
+  id: string,
+  type: PrHistorySliceType,
+  page = 1,
+  perPage = 30,
+): Promise<ApiResponse<PrHistorySlice<T>>> {
+  const url = `${api.prReview.items.history(id)}?type=${type}&page=${page}&perPage=${perPage}`;
+  return apiRequest<PrHistorySlice<T>>(url);
+}
+
+export async function updatePrReviewItemNote(
+  id: string,
+  note: string | null,
+): Promise<ApiResponse<{ updated: boolean }>> {
+  return apiRequest(api.prReview.items.updateNote(id), {
+    method: 'PATCH',
+    body: { note },
+  });
+}
+
+export async function deletePrReviewItem(id: string): Promise<ApiResponse<{ deleted: boolean }>> {
+  return apiRequest(api.prReview.items.delete(id), {
+    method: 'DELETE',
+  });
+}
+
+/**
+ * 档 1：获取已缓存的 AI 变更摘要（无则返回 summary: null）。
+ */
+export async function getPrReviewSummary(
+  id: string,
+): Promise<ApiResponse<{ summary: PrSummaryReportDto | null }>> {
+  return apiRequest<{ summary: PrSummaryReportDto | null }>(
+    api.prReview.items.ai.summary(id),
+  );
+}
+
+/**
+ * 档 1：SSE 端点 URL，前端通过 useSseStream 订阅。
+ */
+export function getPrReviewSummaryStreamUrl(id: string): string {
+  return api.prReview.items.ai.summaryStream(id);
+}
+
+/**
+ * 档 3：获取已缓存的 AI 对齐度报告（无则返回 alignment: null）。
+ */
+export async function getPrReviewAlignment(
+  id: string,
+): Promise<ApiResponse<{ alignment: PrAlignmentReportDto | null }>> {
+  return apiRequest<{ alignment: PrAlignmentReportDto | null }>(
+    api.prReview.items.ai.alignment(id),
+  );
+}
+
+/**
+ * 档 3：SSE 端点 URL。前端通过 useSseStream 订阅。
+ * 注意：这是 URL，不是 fetch 调用——useSseStream 会自己处理连接与鉴权。
+ */
+export function getPrReviewAlignmentStreamUrl(id: string): string {
+  return api.prReview.items.ai.alignmentStream(id);
+}

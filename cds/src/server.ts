@@ -610,6 +610,10 @@ export function createServer(deps: ServerDeps): express.Express {
     // Include executors + mode + capacity so the Dashboard can react to
     // cluster changes without extra polls. `cdsMode` is read from the
     // live config (which may have been hot-switched by onFirstRegister).
+    //
+    // `schedulerEnabled` echoes the runtime flag so the capacity popover's
+    // toggle stays in sync across browser tabs after a PUT /api/scheduler/enabled
+    // call (otherwise tab B would still show the old state until reload).
     const data = JSON.stringify({
       seq: ++stateSeq,
       branches: Object.values(state.branches),
@@ -619,6 +623,7 @@ export function createServer(deps: ServerDeps): express.Express {
       mode: deps.config.mode,
       executors: Object.values(state.executors || {}),
       capacity: deps.registry ? deps.registry.getTotalCapacity() : null,
+      schedulerEnabled: deps.schedulerService ? deps.schedulerService.isEnabled() : false,
     });
     for (const client of stateClients) {
       try { client.write(`data: ${data}\n\n`); } catch { stateClients.delete(client); }

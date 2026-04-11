@@ -81,6 +81,26 @@ export class SchedulerService {
   }
 
   /**
+   * Flip the enabled flag at runtime. Mirrors the UI toggle exposed via
+   * `PUT /api/scheduler/enabled`. Idempotent: enabling an already-enabled
+   * scheduler or disabling an already-disabled one is a no-op. When flipping
+   * from enabled→disabled we stop the tick loop; when flipping from
+   * disabled→enabled we start it. The persistent storage side of the
+   * override is the caller's responsibility (StateService.setSchedulerEnabledOverride).
+   */
+  setEnabled(enabled: boolean): void {
+    if (this.config.enabled === enabled) return;
+    this.config.enabled = enabled;
+    if (enabled) {
+      this.start();
+      console.log('[scheduler] enabled at runtime (via UI toggle)');
+    } else {
+      this.stop();
+      console.log('[scheduler] disabled at runtime (via UI toggle)');
+    }
+  }
+
+  /**
    * Start the periodic tick. Safe to call multiple times.
    * Does nothing when scheduler is disabled.
    */
