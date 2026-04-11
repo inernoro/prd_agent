@@ -961,9 +961,14 @@ builder.Services.AddHttpClient("GitHubApi", client =>
     client.DefaultRequestHeaders.Add("Accept", "application/vnd.github+json");
     client.DefaultRequestHeaders.Add("X-GitHub-Api-Version", "2022-11-28");
 });
-// PR Review V2（pr-review）— per-user GitHub OAuth 审查工作台
-builder.Services.AddScoped<PrdAgent.Api.Services.PrReview.GitHubOAuthService>();
-builder.Services.AddScoped<PrdAgent.Api.Services.PrReview.GitHubPrClient>();
+// GitHub 基础设施层（供 pr-review / 未来的日报/检测等多应用复用）
+// 独立于业务层的通用 GitHub REST 封装：per-user OAuth Device Flow + PR 操作客户端
+builder.Services.AddScoped<PrdAgent.Infrastructure.GitHub.IGitHubOAuthService,
+    PrdAgent.Infrastructure.GitHub.GitHubOAuthService>();
+builder.Services.AddScoped<PrdAgent.Infrastructure.GitHub.IGitHubClient,
+    PrdAgent.Infrastructure.GitHub.GitHubPrClient>();
+
+// PR Review V2（pr-review）业务层服务 —— 消费上面的 GitHub 基础设施
 builder.Services.AddScoped<PrdAgent.Api.Services.PrReview.PrAlignmentService>();
 builder.Services.AddScoped<PrdAgent.Api.Services.PrReview.PrSummaryService>();
 // 注册自动化引擎（需要在 WebhookNotificationService 之前注册）

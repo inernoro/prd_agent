@@ -3,12 +3,17 @@ using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Text.Json.Serialization;
 using System.Text.RegularExpressions;
+using Microsoft.Extensions.Logging;
 using PrdAgent.Core.Models;
 
-namespace PrdAgent.Api.Services.PrReview;
+namespace PrdAgent.Infrastructure.GitHub;
 
 /// <summary>
-/// 以 per-user OAuth token 调用 GitHub REST API 拉取单个 PR 的最新快照。
+/// GitHub PR 操作实现 —— <see cref="IGitHubClient"/> 的默认实现。
+///
+/// 以调用方传入的 access token 调用 GitHub REST API 拉取 PR 快照与历史。
+/// 与凭证来源（per-user OAuth / per-app PAT / GitHub App installation token）解耦：
+/// 调用方自己决定 token 从哪里来，本组件只负责 HTTP 调用 + 错误分类。
 ///
 /// 设计关键：消灭 404 歧义 —— 当 /repos/{owner}/{repo}/pulls/{number} 返回 404 时，
 /// 再探一次 /repos/{owner}/{repo} 以区分：
@@ -17,7 +22,7 @@ namespace PrdAgent.Api.Services.PrReview;
 ///
 /// Happy path 仍只消耗 1 次 API 调用；只有出错时才多一次探测。
 /// </summary>
-public sealed class GitHubPrClient
+public sealed class GitHubPrClient : IGitHubClient
 {
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly ILogger<GitHubPrClient> _logger;
@@ -63,7 +68,7 @@ public sealed class GitHubPrClient
         if (!PrUrlParser.IsSafeOwnerRepo(owner, repo))
         {
             // 二次守护：即便数据库里藏了脏数据，我们也拒绝拼进 URL
-            throw PrReviewException.UrlInvalid("owner/repo 含非法字符");
+            throw GitHubException.UrlInvalid("owner/repo 含非法字符");
         }
 
         using var client = CreateAuthedClient(accessToken);
@@ -80,7 +85,7 @@ public sealed class GitHubPrClient
         var dto = await resp.Content.ReadFromJsonAsync<GitHubPullRequestDto>(cancellationToken: ct);
         if (dto == null)
         {
-            throw PrReviewException.Upstream((int)resp.StatusCode);
+            throw GitHubException.Upstream((int)resp.StatusCode);
         }
 
         var snapshot = MapToSnapshot(dto);
@@ -249,17 +254,17 @@ public sealed class GitHubPrClient
         switch (prResp.StatusCode)
         {
             case HttpStatusCode.Unauthorized:
-                throw PrReviewException.TokenExpired();
+                throw GitHubException.TokenExpired();
 
             case HttpStatusCode.Forbidden:
                 if (IsRateLimited(prResp))
                 {
-                    throw PrReviewException.RateLimited(ExtractResetHint(prResp));
+                    throw GitHubException.RateLimited(ExtractResetHint(prResp));
                 }
-                throw PrReviewException.Forbidden();
+                throw GitHubException.Forbidden();
 
             case (HttpStatusCode)429:
-                throw PrReviewException.RateLimited(ExtractResetHint(prResp));
+                throw GitHubException.RateLimited(ExtractResetHint(prResp));
 
             case HttpStatusCode.NotFound:
                 await DisambiguateNotFoundAsync(client, owner, repo, number, ct);
@@ -268,9 +273,9 @@ public sealed class GitHubPrClient
             default:
                 if (status >= 500)
                 {
-                    throw PrReviewException.Upstream(status);
+                    throw GitHubException.Upstream(status);
                 }
-                throw PrReviewException.Upstream(status);
+                throw GitHubException.Upstream(status);
         }
     }
 
@@ -285,27 +290,27 @@ public sealed class GitHubPrClient
         using var resp = await client.GetAsync(repoPath, ct);
         if (resp.StatusCode == HttpStatusCode.NotFound)
         {
-            throw PrReviewException.RepoNotVisible(owner, repo);
+            throw GitHubException.RepoNotVisible(owner, repo);
         }
         if (resp.StatusCode == HttpStatusCode.Unauthorized)
         {
-            throw PrReviewException.TokenExpired();
+            throw GitHubException.TokenExpired();
         }
         if (resp.StatusCode == HttpStatusCode.Forbidden)
         {
             if (IsRateLimited(resp))
             {
-                throw PrReviewException.RateLimited(ExtractResetHint(resp));
+                throw GitHubException.RateLimited(ExtractResetHint(resp));
             }
             // 能看到"被禁止"说明仓库存在
-            throw PrReviewException.PrNumberInvalid(owner, repo, number);
+            throw GitHubException.PrNumberInvalid(owner, repo, number);
         }
         if (resp.IsSuccessStatusCode)
         {
-            throw PrReviewException.PrNumberInvalid(owner, repo, number);
+            throw GitHubException.PrNumberInvalid(owner, repo, number);
         }
         // 其他异常（5xx 等）
-        throw PrReviewException.Upstream((int)resp.StatusCode);
+        throw GitHubException.Upstream((int)resp.StatusCode);
     }
 
     private static bool IsRateLimited(HttpResponseMessage resp)
@@ -384,7 +389,7 @@ public sealed class GitHubPrClient
     {
         if (!PrUrlParser.IsSafeOwnerRepo(owner, repo))
         {
-            throw PrReviewException.UrlInvalid("owner/repo 含非法字符");
+            throw GitHubException.UrlInvalid("owner/repo 含非法字符");
         }
 
         using var client = CreateHistoryClient(accessToken);
@@ -447,7 +452,7 @@ public sealed class GitHubPrClient
     {
         if (!PrUrlParser.IsSafeOwnerRepo(owner, repo))
         {
-            throw PrReviewException.UrlInvalid("owner/repo 含非法字符");
+            throw GitHubException.UrlInvalid("owner/repo 含非法字符");
         }
         if (page < 1) page = 1;
         if (perPage < 1 || perPage > 100) perPage = 30;
@@ -492,7 +497,7 @@ public sealed class GitHubPrClient
                 return new { type, page, perPage, hasMore = false, items };
             }
             default:
-                throw PrReviewException.UrlInvalid($"未知的历史类型: {type}");
+                throw GitHubException.UrlInvalid($"未知的历史类型: {type}");
         }
     }
 

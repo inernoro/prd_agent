@@ -1,4 +1,4 @@
-using PrdAgent.Api.Services.PrReview;
+using PrdAgent.Infrastructure.GitHub;
 using Xunit;
 
 namespace PrdAgent.Api.Tests.Services;
