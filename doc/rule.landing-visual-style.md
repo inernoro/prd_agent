@@ -33,8 +33,16 @@ export const HERO_GRADIENT = 'linear-gradient(135deg, #00f0ff 0%, #7c3aed 50%, #
 
 全站背景**零动画、零 canvas、零 JS**。由 `prd-admin/src/pages/home/components/StaticBackdrop.tsx` 提供的 6 层 CSS 合成（深色底 + 点阵网格 + 冷白径向光晕 + CRT 扫描线 + 噪点 + 顶栏阴影）。
 
+两种挂载模式：
+
+| 场景 | 用法 | 说明 |
+|------|------|------|
+| 独立全屏页（/home、/login 等不走 AppShell 的路由） | `<StaticBackdrop />` | 默认 `mode="fixed"`，`fixed inset-0` 覆盖整个视口 |
+| AppShell 内 Outlet 页（/arena、/dashboard 等有左侧栏/顶栏的路由） | `<div className="relative"><StaticBackdrop mode="absolute" />…</div>` | `absolute inset-0` 仅填满当前容器，不会穿透 AppShell 的侧边栏/顶栏 |
+
 - ❌ 禁止：粒子 canvas、鼠标视差、Three.js 着色器、mesh gradient 连续动画
 - ❌ 禁止：任何 `fixed` 定位的亮带（地平线/太阳/地板），会穿透下方 section 产生"银光"伪影
+- ❌ 禁止：在 AppShell 内 Outlet 页使用默认 `mode="fixed"`——会遮住左侧导航
 - ✅ 允许：局部化（`absolute`）的 retro 装饰，且只限 Hero 段内部（参考 `HeroSection.tsx` 前 100 行）
 
 ### R3 · 三套字体各司其职
