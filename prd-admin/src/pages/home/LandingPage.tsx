@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 
 import { HeroSection, HERO_GRADIENT } from './sections/HeroSection';
@@ -10,7 +10,7 @@ import { AgentGrid } from './sections/AgentGrid';
 import { CompatibilityStack } from './sections/CompatibilityStack';
 import { FinalCta } from './sections/FinalCta';
 import { MinimalFooter } from './sections/MinimalFooter';
-import { StarfieldBackground } from './components/StarfieldBackground';
+import { StaticBackdrop } from './components/StaticBackdrop';
 
 /**
  * LandingPage — 米多 Agent 平台 /home
@@ -26,21 +26,8 @@ import { StarfieldBackground } from './components/StarfieldBackground';
  *   8 · FinalCta            — 最终收束 CTA
  *   9 · MinimalFooter       — 极简页脚
  *
- * 滚动场景编排：IntersectionObserver 追踪当前幕，Starfield themeColor 随之切换。
+ * 背景：StaticBackdrop 纯 CSS 静态层（零动画零粒子）。
  */
-
-type SceneColor = [number, number, number] | undefined;
-
-const SCENE_COLORS: Record<string, SceneColor> = {
-  hero: [110, 228, 255],       // 冷蓝
-  stats: [167, 139, 250],       // 紫
-  features: [110, 228, 255],    // 冷蓝回归
-  cinema: [14, 30, 50],         // 深蓝黑（电影时刻背景退场）
-  how: [167, 139, 250],         // 紫
-  agents: [110, 228, 255],      // 冷蓝
-  compat: [148, 163, 184],      // 冷白
-  cta: [244, 63, 94],           // 玫瑰（全站唯一暖色，最终收束）
-};
 
 // MAP Logo（顶栏用，保留原渐变 logo）
 function MapLogo({ className = 'w-10 h-10' }: { className?: string }) {
@@ -73,37 +60,7 @@ function MapLogo({ className = 'w-10 h-10' }: { className?: string }) {
 
 export default function LandingPage() {
   const navigate = useNavigate();
-  const [activeScene, setActiveScene] = useState<string>('hero');
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
-
-  // 滚动场景编排
-  useEffect(() => {
-    const ids = Object.keys(SCENE_COLORS);
-    const elements = ids
-      .map((id) => ({ id, el: document.getElementById(id) }))
-      .filter((item): item is { id: string; el: HTMLElement } => item.el !== null);
-
-    if (elements.length === 0) return;
-
-    const observer = new IntersectionObserver(
-      (entries) => {
-        const visible = entries.filter((e) => e.isIntersecting);
-        if (visible.length > 0) {
-          const best = visible.reduce((prev, curr) =>
-            Math.abs(curr.boundingClientRect.top) < Math.abs(prev.boundingClientRect.top) ? curr : prev,
-          );
-          const id = (best.target as HTMLElement).id;
-          if (id) setActiveScene(id);
-        }
-      },
-      { rootMargin: '-40% 0px -40% 0px', threshold: 0 },
-    );
-
-    elements.forEach(({ el }) => observer.observe(el));
-    return () => observer.disconnect();
-  }, []);
-
-  const themeColor: SceneColor = SCENE_COLORS[activeScene];
 
   const handleGetStarted = () => navigate('/login');
   const handleWatchDemo = () => {
@@ -127,22 +84,8 @@ export default function LandingPage() {
       className="min-h-screen bg-[#030306] text-white overflow-x-hidden"
       style={{ scrollBehavior: 'smooth', fontFamily: 'var(--font-body)' }}
     >
-      {/* 背景层 1：Starfield 粒子降到 18% 作材质 */}
-      <div
-        className="fixed inset-0 z-0 pointer-events-none"
-        style={{ opacity: 0.18 }}
-      >
-        <StarfieldBackground themeColor={themeColor} />
-      </div>
-
-      {/* 背景层 2：顶部暗色 gradient — 保 Hero 径向光晕可见 */}
-      <div
-        className="fixed inset-x-0 top-0 h-[700px] z-[1] pointer-events-none"
-        style={{
-          background:
-            'linear-gradient(180deg, rgba(3, 3, 6, 0.85) 0%, rgba(3, 3, 6, 0.5) 40%, rgba(3, 3, 6, 0) 100%)',
-        }}
-      />
+      {/* 静态背景（纯 CSS，零动画零粒子） */}
+      <StaticBackdrop />
 
       {/* 顶栏 */}
       <nav className="fixed top-0 left-0 right-0 z-50">

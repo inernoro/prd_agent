@@ -30,14 +30,7 @@ export function HeroSection({ className, onGetStarted, onWatchDemo }: HeroSectio
       className={cn('relative overflow-hidden', className)}
       style={{ fontFamily: 'var(--font-body)' }}
     >
-      {/* Linear 签名动作：顶部单一径向光晕（紫→透明），不是 mesh 也不是粒子 */}
-      <div
-        className="absolute inset-x-0 top-0 h-[900px] pointer-events-none"
-        style={{
-          background:
-            'radial-gradient(ellipse 90% 70% at 50% 0%, rgba(124, 58, 237, 0.35) 0%, rgba(124, 58, 237, 0.12) 25%, rgba(59, 130, 246, 0.06) 50%, transparent 75%)',
-        }}
-      />
+      {/* 注意：顶部紫色光晕已由 LandingPage 的 StaticBackdrop 统一提供，Hero 内部不再重复 */}
 
       {/* 第一屏：居中标题 + CTA，占 75vh（留 25vh 给产品壳从底部露出） */}
       <div
