@@ -167,11 +167,15 @@ export function writeEnvFileAtomic(envFilePath: string, content: string): void {
   const dir = path.dirname(envFilePath);
   if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
 
-  // Backup existing file if present
+  // Backup existing file if present. We must chmod the backup explicitly
+  // because `copyFileSync` does NOT preserve mode bits — the destination
+  // inherits from the umask (typically 0644 on Linux), which would expose
+  // the bootstrap/permanent token to other users on a multi-user system.
   if (fs.existsSync(envFilePath)) {
     const backupPath = `${envFilePath}.bak`;
     try {
       fs.copyFileSync(envFilePath, backupPath);
+      fs.chmodSync(backupPath, 0o600);
     } catch {
       // Best-effort backup; continue with the write regardless.
     }

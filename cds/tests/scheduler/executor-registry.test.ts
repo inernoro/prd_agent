@@ -101,6 +101,27 @@ describe('ExecutorRegistry', () => {
       expect(updated.port).toBe(9901);
       expect(updated.capacity.maxBranches).toBe(4);
     });
+
+    it('refuses to downgrade an embedded node to remote, even with explicit role (regression: #10)', () => {
+      // Master self-registered as embedded
+      registry.registerEmbeddedMaster(9000, 'master-host');
+      expect(stateService.getExecutor('master-master-host')?.role).toBe('embedded');
+
+      // A subsequent register call with the SAME id but role='remote' must
+      // not be able to downgrade the embedded entry. This protects the
+      // embedded deploy path from being silently disabled by a buggy or
+      // malicious remote that claims the master's id.
+      const result = registry.register({
+        id: 'master-master-host',
+        host: 'attacker.local',
+        port: 9999,
+        capacity: { maxBranches: 0, memoryMB: 0, cpuCores: 0 },
+        role: 'remote',
+      });
+
+      expect(result.role).toBe('embedded');
+      expect(stateService.getExecutor('master-master-host')?.role).toBe('embedded');
+    });
   });
 
   // ── registerEmbeddedMaster() ──
@@ -268,6 +289,95 @@ describe('ExecutorRegistry', () => {
         branches: {},
       });
       expect(ok).toBe(false);
+    });
+  });
+
+  // ── checkHealth() — offline GC (regression: #8) ──
+  //
+  // checkHealth is private; we invoke it via the (registry as any) cast
+  // rather than starting the real interval timer (which would make tests slow
+  // and flaky). This is acceptable: registry has a small surface area and
+  // we own both sides of the test.
+
+  describe('checkHealth() offline GC', () => {
+    /** Helper: poke checkHealth without exposing it on the public API. */
+    function runHealthCheck(): void {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (registry as any).checkHealth();
+    }
+
+    function setLastHeartbeat(id: string, msAgo: number): void {
+      const node = stateService.getExecutor(id)!;
+      node.lastHeartbeat = new Date(Date.now() - msAgo).toISOString();
+      stateService.setExecutor(node);
+    }
+
+    it('marks online node offline after heartbeat timeout (45s)', () => {
+      registry.register({
+        id: 'stale',
+        host: 'stale.local',
+        port: 9900,
+        capacity: { maxBranches: 4, memoryMB: 4096, cpuCores: 4 },
+      });
+      // Push lastHeartbeat 60 seconds into the past (> 45s timeout)
+      setLastHeartbeat('stale', 60_000);
+
+      runHealthCheck();
+
+      expect(stateService.getExecutor('stale')?.status).toBe('offline');
+    });
+
+    it('garbage-collects remote nodes offline > 24h', () => {
+      registry.register({
+        id: 'ghost',
+        host: 'ghost.local',
+        port: 9900,
+        capacity: { maxBranches: 4, memoryMB: 4096, cpuCores: 4 },
+      });
+      // Force offline + 25 hour-old heartbeat
+      const node = stateService.getExecutor('ghost')!;
+      node.status = 'offline';
+      node.lastHeartbeat = new Date(Date.now() - 25 * 60 * 60 * 1000).toISOString();
+      stateService.setExecutor(node);
+
+      runHealthCheck();
+
+      // GC removes the entry entirely
+      expect(stateService.getExecutor('ghost')).toBeUndefined();
+    });
+
+    it('does NOT GC remote nodes offline < 24h', () => {
+      registry.register({
+        id: 'recent',
+        host: 'recent.local',
+        port: 9900,
+        capacity: { maxBranches: 4, memoryMB: 4096, cpuCores: 4 },
+      });
+      // 23 hours ago — under the GC threshold
+      const node = stateService.getExecutor('recent')!;
+      node.status = 'offline';
+      node.lastHeartbeat = new Date(Date.now() - 23 * 60 * 60 * 1000).toISOString();
+      stateService.setExecutor(node);
+
+      runHealthCheck();
+
+      // Still present, still offline
+      expect(stateService.getExecutor('recent')?.status).toBe('offline');
+    });
+
+    it('NEVER GCs embedded master nodes regardless of age', () => {
+      registry.registerEmbeddedMaster(9000, 'survivor');
+      // Force offline + ancient heartbeat (1 year ago)
+      const node = stateService.getExecutor('master-survivor')!;
+      node.status = 'offline';
+      node.lastHeartbeat = new Date(Date.now() - 365 * 24 * 60 * 60 * 1000).toISOString();
+      stateService.setExecutor(node);
+
+      runHealthCheck();
+
+      // Embedded survives even at 1 year offline — it'll re-register on next boot
+      expect(stateService.getExecutor('master-survivor')).toBeDefined();
+      expect(stateService.getExecutor('master-survivor')?.role).toBe('embedded');
     });
   });
 });

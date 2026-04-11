@@ -215,6 +215,11 @@ export class ExecutorAgent {
    * Persist the freshly-minted permanent token back to `.cds.env` so that
    * the next process restart skips bootstrap. The write is atomic so a crash
    * mid-write can't corrupt the env file.
+   *
+   * If persistence fails the live process keeps the token in memory and
+   * heartbeats continue working — but a restart loses the token, forcing
+   * the operator to re-run `./exec_cds.sh connect`. We log loudly so the
+   * failure is impossible to miss.
    */
   private persistPermanentToken(token: string): void {
     try {
@@ -227,7 +232,17 @@ export class ExecutorAgent {
       });
       console.log(`  [executor] Persisted permanent token to ${envPath}`);
     } catch (err) {
-      console.error(`  [executor] Failed to persist token: ${(err as Error).message}`);
+      console.error('');
+      console.error('  ╔═══════════════════════════════════════════════════════════════╗');
+      console.error('  ║  ⚠️  CRITICAL: failed to persist executor token to .cds.env!  ║');
+      console.error('  ║                                                                ║');
+      console.error('  ║  Heartbeats keep working in this process, but a restart will  ║');
+      console.error('  ║  lose the token. You will need to re-run                      ║');
+      console.error('  ║    ./exec_cds.sh connect <master> <new-token>                 ║');
+      console.error('  ║  after fixing the .cds.env permission/disk issue.             ║');
+      console.error('  ╚═══════════════════════════════════════════════════════════════╝');
+      console.error(`  [executor] Underlying error: ${(err as Error).message}`);
+      console.error('');
     }
   }
 }

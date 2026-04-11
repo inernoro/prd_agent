@@ -301,6 +301,119 @@ describe('Scheduler bootstrap routes', () => {
 
       expect(res.status).toBe(400);
     });
+
+    // ── id format validation (regression: #7 — log forgery hardening) ──
+
+    it('rejects id with control characters (regression: #7)', async () => {
+      const config = makeConfig();
+      server = await startServer(config, stateService, registry);
+
+      const res = await request(server, 'POST', '/api/executors/register', {
+        id: 'evil\nid',
+        host: 'a.local',
+        port: 9900,
+        capacity: { maxBranches: 1, memoryMB: 100, cpuCores: 1 },
+      });
+
+      expect(res.status).toBe(400);
+      const body = res.body as { error: string };
+      expect(body.error).toContain('invalid id');
+      expect(registry.getAll()).toHaveLength(0);
+    });
+
+    it('rejects id longer than 64 characters (regression: #7)', async () => {
+      const config = makeConfig();
+      server = await startServer(config, stateService, registry);
+
+      const res = await request(server, 'POST', '/api/executors/register', {
+        id: 'a'.repeat(65),
+        host: 'a.local',
+        port: 9900,
+        capacity: { maxBranches: 1, memoryMB: 100, cpuCores: 1 },
+      });
+
+      expect(res.status).toBe(400);
+      expect(registry.getAll()).toHaveLength(0);
+    });
+
+    it('accepts realistic ids with dot/dash/underscore', async () => {
+      const config = makeConfig();
+      server = await startServer(config, stateService, registry);
+
+      const res = await request(server, 'POST', '/api/executors/register', {
+        id: 'executor-host01.example.com_9901',
+        host: 'a.local',
+        port: 9900,
+        capacity: { maxBranches: 1, memoryMB: 100, cpuCores: 1 },
+      });
+
+      expect(res.status).toBe(200);
+    });
+
+    // ── "previously consumed" message (regression: #2) ──
+
+    it('returns a specific error when bootstrap header is sent but no token is configured (regression: #2)', async () => {
+      // Simulate the post-consume state: no bootstrap token on master
+      const config = makeConfig(); // bootstrapToken absent
+      server = await startServer(config, stateService, registry);
+
+      const res = await request(server, 'POST', '/api/executors/register', defaultBody(), {
+        'X-Bootstrap-Token': 'leftover-from-previous-attempt',
+      });
+
+      expect(res.status).toBe(401);
+      const body = res.body as { error: string };
+      // The error must specifically mention re-issue, not generic "missing token"
+      expect(body.error).toContain('already consumed');
+      expect(body.error).toContain('issue-token');
+    });
+
+    // ── onFirstRegister derived from registry, not closure flag (regression: #1) ──
+
+    it('does NOT trigger onFirstRegister when an embedded master is already registered', async () => {
+      // Master self-register happens before any remote executor joins
+      registry.registerEmbeddedMaster(9000, 'pre-existing-master');
+      expect(registry.getAll()).toHaveLength(1);
+
+      const config = makeConfig();
+      const calls: string[] = [];
+      server = await startServer(config, stateService, registry, {
+        onFirstRegister: (id) => {
+          calls.push(id);
+        },
+      });
+
+      // First REMOTE register — should still trigger onFirstRegister because
+      // the embedded master is excluded from the "remote count" check.
+      const res = await request(server, 'POST', '/api/executors/register', defaultBody('remote-1'));
+      expect(res.status).toBe(200);
+      expect(calls).toEqual(['remote-1']);
+    });
+
+    it('does NOT trigger onFirstRegister when a remote executor already exists from a previous boot (regression: #1)', async () => {
+      // Pre-seed the state file with a previously-registered remote — simulating
+      // master process restart after the cluster was already formed.
+      registry.register({
+        id: 'pre-existing-remote',
+        host: 'pre.local',
+        port: 9900,
+        capacity: { maxBranches: 4, memoryMB: 4096, cpuCores: 4 },
+      });
+
+      const config = makeConfig();
+      const calls: string[] = [];
+      server = await startServer(config, stateService, registry, {
+        onFirstRegister: (id) => {
+          calls.push(id);
+        },
+      });
+
+      // A NEW remote registers. Since remote count > 0 already, this should
+      // NOT re-trigger the standalone-to-scheduler upgrade.
+      const res = await request(server, 'POST', '/api/executors/register', defaultBody('new-remote'));
+      expect(res.status).toBe(200);
+      expect(calls).toEqual([]);
+    });
   });
 
   // ── GET /api/executors/capacity ──

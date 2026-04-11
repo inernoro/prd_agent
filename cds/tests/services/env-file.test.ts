@@ -225,6 +225,23 @@ describe('env-file helper', () => {
       const mode = stat.mode & 0o777;
       expect(mode).toBe(0o600);
     });
+
+    it('also sets 0600 on the .bak backup file (regression: #6)', () => {
+      // Skip on platforms that don't support POSIX file modes
+      if (process.platform === 'win32') return;
+      // First write — no backup yet
+      writeEnvFileAtomic(envFile, 'export TOKEN="v1"\n');
+      // Second write — should produce a backup of the first
+      writeEnvFileAtomic(envFile, 'export TOKEN="v2"\n');
+
+      const backupPath = `${envFile}.bak`;
+      expect(fs.existsSync(backupPath)).toBe(true);
+      const backupMode = fs.statSync(backupPath).mode & 0o777;
+      // .bak must be 0600 — copyFileSync alone leaves it at umask default
+      // (typically 0644 on Linux), exposing the token to other users on a
+      // multi-user host. We chmod explicitly after copy.
+      expect(backupMode).toBe(0o600);
+    });
   });
 
   // ── serializeEnvFile ──

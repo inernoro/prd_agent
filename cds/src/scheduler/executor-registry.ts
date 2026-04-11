@@ -8,6 +8,15 @@ import type { StateService } from '../services/state.js';
 
 const HEARTBEAT_TIMEOUT_MS = 45_000; // 3 missed heartbeats (15s × 3)
 
+/**
+ * Garbage-collect remote executors that have been offline for this long.
+ * 24 hours strikes a balance: long enough that a node failing over a weekend
+ * isn't lost, short enough that capacity dashboards don't accumulate ghosts
+ * forever after `disconnect` calls fail their best-effort DELETE. Embedded
+ * (master) executors are never GC'd — they re-register on every boot.
+ */
+const OFFLINE_GC_MS = 24 * 60 * 60 * 1000;
+
 export type SchedulingStrategy = 'least-branches' | 'least-load' | 'round-robin';
 
 export class ExecutorRegistry {
@@ -28,7 +37,16 @@ export class ExecutorRegistry {
     }
   }
 
-  /** Register or update an executor */
+  /**
+   * Register or update an executor.
+   *
+   * Special protection: once a node is recorded as `role === 'embedded'` it
+   * cannot be downgraded to `'remote'` by a subsequent register call. This
+   * prevents a malicious or buggy remote executor from claiming the master's
+   * id and demoting the embedded entry, which would silently disable the
+   * embedded deploy path. The only way to remove an embedded entry is through
+   * `remove()`.
+   */
   register(data: {
     id: string;
     host: string;
@@ -39,6 +57,14 @@ export class ExecutorRegistry {
   }): ExecutorNode {
     const existing = this.stateService.getExecutor(data.id);
     const now = new Date().toISOString();
+
+    // Embedded role is sticky — never let a remote register downgrade it.
+    let effectiveRole: 'embedded' | 'remote';
+    if (existing?.role === 'embedded') {
+      effectiveRole = 'embedded';
+    } else {
+      effectiveRole = data.role ?? existing?.role ?? 'remote';
+    }
 
     const node: ExecutorNode = {
       id: data.id,
@@ -51,7 +77,7 @@ export class ExecutorRegistry {
       branches: existing?.branches || [],
       lastHeartbeat: now,
       registeredAt: existing?.registeredAt || now,
-      role: data.role ?? existing?.role ?? 'remote',
+      role: effectiveRole,
     };
 
     this.stateService.setExecutor(node);
@@ -247,19 +273,40 @@ export class ExecutorRegistry {
     return executors.find(n => n.branches.includes(branchId)) || null;
   }
 
-  /** Check health of all executors, mark offline if heartbeat timed out */
+  /**
+   * Check health of all executors:
+   *  - Online nodes that miss `HEARTBEAT_TIMEOUT_MS` are marked offline.
+   *  - Remote nodes that have been offline for `OFFLINE_GC_MS` are removed
+   *    entirely. This is the safety net for cases where `disconnect`'s
+   *    best-effort DELETE call failed and a node would otherwise sit in the
+   *    capacity dashboard forever.
+   *  - Embedded (master) nodes are NEVER GC'd — they re-register on boot.
+   */
   private checkHealth(): void {
     const now = Date.now();
     const executors = this.getAll();
     let changed = false;
 
     for (const node of executors) {
-      if (node.status === 'offline') continue;
       const lastBeat = new Date(node.lastHeartbeat).getTime();
-      if (now - lastBeat > HEARTBEAT_TIMEOUT_MS) {
+      const sinceLastBeat = now - lastBeat;
+
+      // Phase 1: mark stale online nodes offline.
+      if (node.status !== 'offline' && sinceLastBeat > HEARTBEAT_TIMEOUT_MS) {
         console.log(`  [scheduler] Executor ${node.id} heartbeat timeout, marking offline`);
         node.status = 'offline';
         this.stateService.setExecutor(node);
+        changed = true;
+      }
+
+      // Phase 2: GC long-offline remote nodes.
+      if (
+        node.status === 'offline' &&
+        node.role !== 'embedded' &&
+        sinceLastBeat > OFFLINE_GC_MS
+      ) {
+        console.log(`  [scheduler] GC executor ${node.id} (offline > 24h)`);
+        this.stateService.removeExecutor(node.id);
         changed = true;
       }
     }

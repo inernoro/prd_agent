@@ -835,6 +835,11 @@ if (mode === 'executor') {
 
   // Mint a permanent token on bootstrap consume. We hold it in-memory first,
   // then persist to `.cds.env` so a process restart keeps the same token.
+  //
+  // CRITICAL: if persistence fails the in-memory token is still returned to
+  // the executor (so the live cluster keeps working) but a master restart
+  // will lose the token, falling back to the no-auth path. We log LOUDLY so
+  // the operator can recover by manually re-issuing a token.
   const onBootstrapConsumed = async (): Promise<string> => {
     const token = crypto.randomBytes(32).toString('hex');
     config.executorToken = token;
@@ -849,13 +854,39 @@ if (mode === 'executor') {
       config.bootstrapToken = undefined;
       console.log('  [scheduler] Bootstrap token consumed, permanent token minted');
     } catch (err) {
-      console.error(`  [scheduler] Failed to persist permanent token: ${(err as Error).message}`);
+      console.error('');
+      console.error('  ╔═══════════════════════════════════════════════════════════════╗');
+      console.error('  ║  ⚠️  CRITICAL: failed to persist permanent executor token!    ║');
+      console.error('  ║                                                                ║');
+      console.error('  ║  The live cluster will keep working, but a master restart     ║');
+      console.error('  ║  will lose the token and fall back to the no-auth path.      ║');
+      console.error('  ║                                                                ║');
+      console.error('  ║  Recovery: fix the .cds.env permission/disk issue, then run  ║');
+      console.error('  ║    ./exec_cds.sh issue-token                                   ║');
+      console.error('  ║  to re-bootstrap the cluster.                                  ║');
+      console.error('  ╚═══════════════════════════════════════════════════════════════╝');
+      console.error(`  [scheduler] Underlying error: ${(err as Error).message}`);
+      console.error('');
+      // Surface to dashboard activity stream as well so the UI shows it.
+      broadcastActivity({
+        id: nextActivitySeq(),
+        ts: new Date().toISOString(),
+        method: 'CLUSTER',
+        path: `⚠️ 永久 token 持久化失败: ${(err as Error).message}`,
+        status: 500,
+        duration: 0,
+        type: 'cds',
+        source: 'user',
+      });
     }
     return token;
   };
 
-  // Hot mode upgrade: standalone → scheduler on the first register call.
-  // Safe to run multiple times; subsequent calls are no-ops.
+  // Hot mode upgrade: standalone → scheduler on the first remote register.
+  // Safe to run multiple times; subsequent calls early-return because
+  // `config.mode` is already `scheduler`. The routes layer additionally
+  // gates the call so it only fires when the registry has zero remote
+  // executors prior to this register.
   const onFirstRegister = async (executorId: string): Promise<void> => {
     if (config.mode === 'scheduler') return; // already upgraded
     console.log(`  [scheduler] First executor ${executorId} joined — upgrading mode: standalone → scheduler`);
@@ -863,7 +894,13 @@ if (mode === 'executor') {
     try {
       updateEnvFile(defaultEnvFilePath(), { CDS_MODE: 'scheduler' });
     } catch (err) {
-      console.error(`  [scheduler] Failed to persist CDS_MODE=scheduler: ${(err as Error).message}`);
+      console.error('');
+      console.error('  ⚠️  WARNING: failed to persist CDS_MODE=scheduler.');
+      console.error('     Cluster works in-memory but the master will boot back to');
+      console.error('     standalone after a restart. Fix .cds.env and re-run');
+      console.error('     ./exec_cds.sh restart to recover.');
+      console.error(`     Underlying error: ${(err as Error).message}`);
+      console.error('');
     }
     // Broadcast an activity event so the dashboard notices immediately.
     broadcastActivity({

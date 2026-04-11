@@ -712,6 +712,58 @@ issue_token_cmd() {
   echo
 }
 
+# Probe master reachability with curl. On failure, classifies the error and
+# prints a hint that points the user at the right thing to fix. Returns 0
+# on success, 1 on failure (and prints the hint).
+#
+# We use --fail-with-body so curl exits non-zero on HTTP 4xx/5xx, and we
+# inspect the standard curl exit codes to distinguish DNS / connect / TLS /
+# HTTP errors. See `man curl` "EXIT CODES" for the full list.
+probe_master() {
+  local url="$1"
+  local exit_code=0
+  curl -fsS -m 10 "${url}/healthz" >/dev/null 2>&1 || exit_code=$?
+  if [ "$exit_code" -eq 0 ]; then
+    return 0
+  fi
+
+  err "无法连接主节点 ${url} (curl exit ${exit_code})"
+  case "$exit_code" in
+    6)
+      echo "  原因: DNS 解析失败"
+      echo "  排查: 1) 在主节点上 'host \$DOMAIN' 验证 DNS"
+      echo "        2) 在本机 'nslookup \$DOMAIN' 看是否能解析到主节点 IP"
+      ;;
+    7)
+      echo "  原因: 无法建立 TCP 连接 (connection refused / unreachable)"
+      echo "  排查: 1) 主节点防火墙是否放行 80/443"
+      echo "        2) 主节点 nginx 是否在跑: ssh master 'docker ps | grep nginx'"
+      echo "        3) 云厂商安全组规则"
+      ;;
+    28)
+      echo "  原因: 连接超时 (10s)"
+      echo "  排查: 1) 网络丢包: 'ping -c 5 \$DOMAIN'"
+      echo "        2) 路由不通: 'traceroute \$DOMAIN'"
+      ;;
+    35|51|58|59|60|77|82|83)
+      echo "  原因: TLS / 证书错误 (curl exit ${exit_code})"
+      echo "  排查: 1) 主节点证书是否过期 / 自签 / 域名不匹配"
+      echo "        2) 自签证书测试可加 --insecure 跳过校验:"
+      echo "             curl -k ${url}/healthz"
+      echo "        3) 主节点跑 './exec_cds.sh cert' 重新签发 Let's Encrypt"
+      ;;
+    22)
+      echo "  原因: HTTP 错误响应 (4xx/5xx)"
+      echo "  排查: 1) 主节点 CDS 是否在跑: ssh master './exec_cds.sh status'"
+      echo "        2) 看主节点日志: ssh master './exec_cds.sh logs'"
+      ;;
+    *)
+      echo "  排查: curl -v ${url}/healthz 看完整错误信息"
+      ;;
+  esac
+  return 1
+}
+
 # Connect THIS machine to a master as an executor.
 # Usage: connect <master-url> <bootstrap-token>
 connect_cmd() {
@@ -727,10 +779,26 @@ connect_cmd() {
   # Normalize URL: strip trailing slash
   master_url="${master_url%/}"
 
+  # Refuse plain HTTP — bootstrap token is sensitive credentials and must
+  # not travel over the wire in cleartext. We accept localhost for dev/test
+  # because loopback traffic doesn't leave the machine.
+  if [[ "$master_url" =~ ^http:// ]] && ! [[ "$master_url" =~ ^http://(localhost|127\.0\.0\.1|\[?::1\]?) ]]; then
+    err "拒绝通过明文 HTTP 传输 bootstrap token!"
+    echo
+    echo "  你提供的 URL: ${master_url}"
+    echo
+    echo "  原因: bootstrap token 是密码级敏感凭证，明文 HTTP 会被中间人截获。"
+    echo "  解决: 1) 把 URL 改成 https://...      (推荐，主节点先跑 ./exec_cds.sh cert)"
+    echo "        2) 在主节点和本机之间建 VPN，然后用 https://内网域名"
+    echo "        3) 内部测试可用 http://localhost / http://127.0.0.1 (回环不出网)"
+    echo
+    echo "  如果你确实需要 HTTP 跨机通信，请先理解风险后修改本脚本绕过此检查。"
+    exit 1
+  fi
+
   # Sanity-check master reachability before touching local config.
   info "验证主节点可达: ${master_url}/healthz"
-  if ! curl -fsSL -m 10 "${master_url}/healthz" >/dev/null 2>&1; then
-    err "无法连接主节点 ${master_url}，请检查网络 / URL / 防火墙"
+  if ! probe_master "$master_url"; then
     exit 1
   fi
   ok "主节点可达"
@@ -765,18 +833,29 @@ connect_cmd() {
   local pid=$!
   echo "$pid" > "$PID_FILE"
 
-  # Wait up to 20s for register to complete (executor logs "Registered as ...").
-  local i=0 ok_flag=0
-  while [ "$i" -lt 20 ]; do
+  # Wait up to 60s for register to complete. Cold-start machines (especially
+  # containers with bind-mounted node_modules over slow disks) can take a
+  # noticeable fraction of a minute before the executor agent reaches the
+  # heartbeat loop, so a tight 20s window produced false-negative timeouts.
+  # We poll every second and emit progress every 5s so the user knows we're
+  # still alive — silence > 5s would otherwise look like a hang.
+  local CONNECT_TIMEOUT=60
+  info "等待 executor 注册到主节点 (最多 ${CONNECT_TIMEOUT}s)..."
+  local i=0 ok_flag=0 fail_flag=0
+  while [ "$i" -lt "$CONNECT_TIMEOUT" ]; do
     if grep -q "Registered as executor-" "$LOG_FILE" 2>/dev/null; then
       ok_flag=1
       break
     fi
     if grep -q "Registration failed" "$LOG_FILE" 2>/dev/null; then
+      fail_flag=1
       break
     fi
     sleep 1
     i=$((i + 1))
+    if [ $((i % 5)) -eq 0 ] && [ "$i" -lt "$CONNECT_TIMEOUT" ]; then
+      info "  ...仍在等待 (${i}/${CONNECT_TIMEOUT}s)"
+    fi
   done
 
   echo
@@ -787,8 +866,28 @@ connect_cmd() {
     echo "  总容量会自动汇总到主节点的 /api/executors/capacity"
     echo "  查看集群状态: ./exec_cds.sh cluster"
     echo "  断开集群:    ./exec_cds.sh disconnect"
+  elif [ "$fail_flag" -eq 1 ]; then
+    err "注册被主节点拒绝 — 请查看日志: $LOG_FILE"
+    echo
+    echo "  常见原因:"
+    echo "    1) Token 拼写错误 → 在主节点重新跑 issue-token，复制完整字符串"
+    echo "    2) Token 已过期 (>15 分钟) → 在主节点重新 issue-token"
+    echo "    3) Token 已被消费 → 上一次 connect 半成功 (网络断在响应回程)"
+    echo "       症状: 主节点日志说 'Bootstrap token already consumed'"
+    echo "       解决: 在主节点重新 issue-token 后再 connect"
+    echo
+    echo "  ── 最近 30 行日志 ──"
+    tail -30 "$LOG_FILE" 2>/dev/null || true
+    exit 1
   else
-    err "注册失败或超时 — 请查看日志: $LOG_FILE"
+    err "注册超时 (${CONNECT_TIMEOUT}s 内未看到成功或失败标记)"
+    echo
+    echo "  排查建议:"
+    echo "    1) 看日志找 'executor' 关键词: ./exec_cds.sh logs"
+    echo "    2) 确认 node 进程还活着: ps -p $pid"
+    echo "    3) 网络是否阻塞: curl -v ${master_url}/api/executors/capacity"
+    echo
+    echo "  ── 最近 30 行日志 ──"
     tail -30 "$LOG_FILE" 2>/dev/null || true
     exit 1
   fi
@@ -981,6 +1080,14 @@ help_cmd() {
      □ 新机器能 curl 通老机器的 https://xxx/healthz
      □ 两台机器时间差 < 1 分钟 (token 校验有 60 秒容忍)
      □ 你能 SSH 到两台机器
+     □ 主节点 URL 必须是 https:// (拒绝明文 HTTP 防 token 泄露)
+
+  🔒 安全提示:
+     • bootstrap token 通过命令行参数传递，会出现在 ps aux 输出里。
+       同机器上的其他用户可以看到。如果你的服务器是多用户共享的，
+       请在 connect 完成后立即在主节点重新 issue-token (会让旧 token 失效)。
+     • 永久 token 存在 .cds.env (mode 0600)，仅 root 和 CDS 运行用户可读。
+     • 推荐定期轮换永久 token: 主节点 issue-token → 从节点 disconnect && connect
 
   详细操作手册见 doc/guide.cds-cluster-setup.md (含 5 种常见错误排查)
 

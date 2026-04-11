@@ -206,6 +206,24 @@ ssh ubuntu@cds.miduo.org "docker logs cds_nginx --tail 50"
 
 **怎么办**：在老机器上跑 `issue-token` 拿**最新的** token，再到新机器跑 connect。
 
+### 错误 3.5：`Bootstrap token already consumed or never issued`
+
+**症状**：connect 时主节点返回 401，错误信息明确说"already consumed"。
+
+**原因**：上一次 connect 在主节点端**已经成功消费了 token**，但 HTTP 响应回程时网络断了，从节点没收到永久 token。从节点重试时，主节点的 bootstrap token 已经清掉，就拒绝了。
+
+**怎么办**：
+
+```bash
+# 在主节点上重新生成
+./exec_cds.sh issue-token
+
+# 拿新 token 到从节点重试
+./exec_cds.sh connect https://master <new-token>
+```
+
+> 这是已知边界场景，无法在客户端单边重试解决。从节点的 `connect` 错误信息已经会主动提示这种情况，按提示操作即可。
+
 ### 错误 4：`./exec_cds.sh cluster` 显示节点 offline
 
 **症状**：从节点已经成功 connect，但几分钟后 `cluster` 命令显示该节点 `offline`。
@@ -291,10 +309,13 @@ sed -i '/CDS_EXECUTOR_TOKEN/d' cds/.cds.env
 
 | 问题 | 建议 |
 |---|---|
-| 我担心 bootstrap token 在传输过程中被截获 | 走 HTTPS（已强制）+ 用 SSH 复制 token，不要走 IM/邮件 |
-| 我担心从节点被偷走 | 永久 token 存在 `cds/.cds.env`，权限 600。定期轮换：在主节点 `issue-token` 后让从节点 `disconnect && connect` |
+| 我担心 bootstrap token 在传输过程中被截获 | 走 HTTPS（已强制，明文 `http://` 会被 connect 拒绝）+ 用 SSH 复制 token，不要走 IM/邮件 |
+| **bootstrap token 出现在 `ps aux` 里** | 这是已知限制：shell 命令行参数对同机器其他用户可见。如果服务器是多用户共享的，做完 connect 后**立刻**在主节点重新跑 `issue-token`，老 token 会被覆盖失效 |
+| 我担心从节点被偷走 | 永久 token 存在 `cds/.cds.env`，权限 600（备份文件 `.cds.env.bak` 也是 600）。定期轮换：在主节点 `issue-token` 后让从节点 `disconnect && connect` |
 | 我担心有人扫到 `/api/executors/register` 端点恶意注册 | 默认不暴露这个端点（只有跑 `issue-token` 后 15 分钟内才会接受请求）。可以在 Cloudflare 上加 IP 白名单，只允许你的从节点 IP 访问 `/api/executors/*` |
+| 我担心 executor 自报的 id 被恶意构造 | 服务端 regex 校验 `^[a-zA-Z0-9._-]{1,64}$`，控制字符和换行符会被 400 拒绝，避免日志注入 |
 | 我担心主节点挂了从节点跑飞 | 从节点心跳失败时**不会**自动停止本机容器，会保留状态等主节点恢复。主节点回来后会从存量心跳中识别这些 executor |
+| 我担心 disconnect 失败导致主节点累积僵尸节点 | 主节点会自动回收离线超过 24 小时的远程节点（embedded master 不会被回收）|
 
 ---
 

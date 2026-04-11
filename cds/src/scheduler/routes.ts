@@ -45,6 +45,14 @@ export interface SchedulerRouterDeps {
  */
 const TOKEN_CLOCK_SKEW_MS = 60_000;
 
+/**
+ * Allowed shape for executor-supplied `id` strings. Restricts to
+ * alphanumerics + dot/underscore/dash, max 64 chars. This blocks log
+ * forgery (newlines, ANSI escapes) and database key injection while still
+ * accepting realistic ids like `executor-host01.example.com-9901`.
+ */
+const EXECUTOR_ID_PATTERN = /^[a-zA-Z0-9._-]{1,64}$/;
+
 export function createSchedulerRouter(deps: SchedulerRouterDeps): Router {
   const { registry, config, dispatcher, onFirstRegister, onBootstrapConsumed } = deps;
   const router = Router();
@@ -68,9 +76,13 @@ export function createSchedulerRouter(deps: SchedulerRouterDeps): Router {
   }
 
   /**
-   * Validate bootstrap token from request headers. Returns true if either:
+   * Validate bootstrap token from request headers. Returns ok=true if either:
    *   - A valid non-expired bootstrap token matches, OR
    *   - A permanent executor token already matches (re-register case)
+   *
+   * The error messages are deliberately specific so the operator can tell
+   * the difference between "wrong token" and "token already consumed by a
+   * previous (possibly-failed-mid-flight) request — please re-issue".
    */
   function verifyBootstrapOrPermanent(
     req: import('express').Request,
@@ -98,7 +110,21 @@ export function createSchedulerRouter(deps: SchedulerRouterDeps): Router {
       return { ok: true, consumedBootstrap: true };
     }
 
-    // Path 3: backward-compat — no auth required (same as pre-bootstrap behavior)
+    // Path 3: client sent a bootstrap header but server has no bootstrap token
+    // configured. This is the "previously consumed" case — most commonly the
+    // result of a successful consume on the server side whose HTTP response
+    // failed to reach the client. The client retries, but the token is gone.
+    // Return a specific error so the operator knows to re-issue, not assume
+    // a typo.
+    if (bootstrapHeader && !config.bootstrapToken) {
+      return {
+        ok: false,
+        consumedBootstrap: false,
+        error: 'Bootstrap token already consumed or never issued. Run `./exec_cds.sh issue-token` on the master and retry.',
+      };
+    }
+
+    // Path 4: backward-compat — no auth required (same as pre-bootstrap behavior)
     if (!config.executorToken && !config.bootstrapToken) {
       return { ok: true, consumedBootstrap: false };
     }
@@ -110,7 +136,12 @@ export function createSchedulerRouter(deps: SchedulerRouterDeps): Router {
   // Accepts either a bootstrap token (first-time join) or a permanent token
   // (re-register after restart). On first successful bootstrap consume,
   // triggers the onFirstRegister callback which handles mode upgrade.
-  let alreadyBootstrapped = false;
+  //
+  // The "is this the first remote executor?" decision is derived from the
+  // registry at request time, not a closure flag — that way a master process
+  // restart correctly recognizes a previously-bootstrapped cluster and
+  // doesn't re-trigger the upgrade path. Embedded (master self-)executors
+  // are excluded from the count.
   router.post('/register', async (req, res) => {
     const auth = verifyBootstrapOrPermanent(req);
     if (!auth.ok) {
@@ -123,6 +154,21 @@ export function createSchedulerRouter(deps: SchedulerRouterDeps): Router {
       res.status(400).json({ error: 'id, host, and port are required' });
       return;
     }
+    // Hardening: reject ids with control chars or excessive length so a
+    // malicious or buggy executor can't forge log lines or DOS the registry.
+    if (typeof id !== 'string' || !EXECUTOR_ID_PATTERN.test(id)) {
+      res.status(400).json({
+        error: 'invalid id: must match /^[a-zA-Z0-9._-]{1,64}$/',
+      });
+      return;
+    }
+
+    // Snapshot "is this a fresh cluster" before mutating the registry.
+    // We only count remote nodes — the master always self-registers as
+    // embedded so its presence shouldn't suppress the upgrade.
+    const remoteCountBefore = registry
+      .getAll()
+      .filter(n => n.role !== 'embedded').length;
 
     const node = registry.register({ id, host, port, capacity, labels, role });
     console.log(`  [scheduler] Executor registered: ${id} (${host}:${port})`);
@@ -150,11 +196,17 @@ export function createSchedulerRouter(deps: SchedulerRouterDeps): Router {
       permanentToken = config.executorToken;
     }
 
-    // Trigger mode upgrade on the very first registration. This is best-effort:
-    // a failure here does not rollback the registration itself, because the
-    // executor is already in the registry and the next heartbeat will succeed.
-    if (!alreadyBootstrapped && onFirstRegister) {
-      alreadyBootstrapped = true;
+    // Trigger mode upgrade on the very first remote registration. The check
+    // is "remoteCountBefore === 0", meaning *before this register call* there
+    // were no non-embedded executors. This is robust against process restart:
+    // when a master with an existing remote executor restarts, the registry
+    // is rehydrated from state.json so remoteCountBefore > 0 and onFirstRegister
+    // is not re-triggered.
+    //
+    // Best-effort: a failure here does not rollback the registration itself,
+    // because the executor is already in the registry and the next heartbeat
+    // will succeed.
+    if (remoteCountBefore === 0 && onFirstRegister) {
       try {
         await onFirstRegister(id);
       } catch (err) {
