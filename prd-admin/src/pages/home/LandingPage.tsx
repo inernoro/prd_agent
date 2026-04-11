@@ -9,6 +9,7 @@ import { DownloadSection } from './sections/DownloadSection';
 import { LibrarySection } from './sections/LibrarySection';
 import { SignatureCinema } from './sections/SignatureCinema';
 import { StarfieldBackground } from './components/StarfieldBackground';
+import { AuroraBackground } from './components/AuroraBackground';
 
 /**
  * 七幕场景色编排：每一个 section 进入视口时，Starfield 的 themeColor 会切换，
@@ -121,9 +122,14 @@ export default function LandingPage() {
         scrollBehavior: 'smooth',
       }}
     >
-      {/* Global animated background */}
+      {/* 背景层 1：WebGL 星空粒子（最底层） */}
       <div className="fixed inset-0 z-0">
         <StarfieldBackground themeColor={themeColor} />
+      </div>
+
+      {/* 背景层 2：Aurora 彩色光雾（mix-blend-mode: screen 叠在星空之上，形成星云质感） */}
+      <div className="fixed inset-0 z-[1] pointer-events-none">
+        <AuroraBackground />
       </div>
 
       {/* Fixed navigation header */}
