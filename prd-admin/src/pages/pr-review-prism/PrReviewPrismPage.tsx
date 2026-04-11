@@ -168,6 +168,7 @@ export function PrReviewPrismPage() {
     return window.localStorage.getItem(prismRepoWorkspaceStorageKey) ?? '';
   });
   const [bootstrapDownloading, setBootstrapDownloading] = useState(false);
+  const [downloadFallbackUrl, setDownloadFallbackUrl] = useState<string | null>(null);
   const [showDesignBasisPanel] = useState(false);
   const [showOnboardingWizard, setShowOnboardingWizard] = useState(false);
   const [ownerInput, setOwnerInput] = useState(defaultRepoOwner);
@@ -414,6 +415,10 @@ slices:
       setSetupActionMessage('请先填写有效仓库（owner/repo）后再导出仓库专属 Skill 包');
       return;
     }
+    if (downloadFallbackUrl) {
+      URL.revokeObjectURL(downloadFallbackUrl);
+      setDownloadFallbackUrl(null);
+    }
     setBootstrapDownloading(true);
     try {
       const res = await downloadPrReviewPrismRepoBootstrapSkill({
@@ -431,6 +436,7 @@ slices:
       const bytes = Uint8Array.from(atob(res.data.contentBase64), c => c.charCodeAt(0));
       const blob = new Blob([bytes], { type: 'application/zip' });
       const url = URL.createObjectURL(blob);
+      setDownloadFallbackUrl(url);
       const a = document.createElement('a');
       a.href = url;
       a.download = res.data.fileName || `pr-prism-bootstrap-skill-${normalizedBindingRepo.replace('/', '-')}.zip`;
@@ -438,14 +444,13 @@ slices:
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
-      URL.revokeObjectURL(url);
-      setSetupActionMessage('已导出仓库专属 Skill 包：复制到新仓库执行一次即可完成接入');
+      setSetupActionMessage('已触发 Skill 包下载；若浏览器拦截，请点击下方“手动下载 Skill 包”');
     } catch {
       setSetupActionMessage('导出 Skill 包失败，请稍后重试');
     } finally {
       setBootstrapDownloading(false);
     }
-  }, [isBindingRepoValid, normalizedAnchor, normalizedBindingRepo, normalizedContext, normalizedOwner]);
+  }, [downloadFallbackUrl, isBindingRepoValid, normalizedAnchor, normalizedBindingRepo, normalizedContext, normalizedOwner]);
 
   const loadStatus = useCallback(async () => {
     const res = await getPrReviewPrismStatus();
@@ -1233,6 +1238,9 @@ slices:
                 {repoBindingSnippet || '# 先填写 owner/repo 后生成'}
               </code>
               <p className="mt-2 font-medium">Step 4 / 4：完成接入校验并开始审查</p>
+              <p className="mt-1 text-[11px] text-amber-200/80">
+                说明：PR“拉取异常”与是否安装 Skill 包无直接关系；常见原因是 Token 无该仓库权限或 PR 链接不正确。
+              </p>
               <div className="mt-2 flex flex-wrap gap-2">
                 <button
                   type="button"
@@ -1268,6 +1276,15 @@ slices:
                 >
                   {smartOnboardingActionLabel}
                 </button>
+                {downloadFallbackUrl && (
+                  <a
+                    href={downloadFallbackUrl}
+                    download={`pr-prism-bootstrap-skill-${normalizedBindingRepo.replace('/', '-')}.zip`}
+                    className="inline-flex items-center gap-1 rounded border border-white/20 bg-white/10 px-2.5 py-1 text-[11px] text-white hover:bg-white/15 whitespace-nowrap"
+                  >
+                    手动下载 Skill 包
+                  </a>
+                )}
               </div>
               <p className="mt-1 text-[11px] text-emerald-200/85">{smartOnboardingActionHint}</p>
               {setupActionMessage && <p className="mt-2 text-[11px] text-emerald-200">{setupActionMessage}</p>}
