@@ -72,6 +72,9 @@ public sealed class PrAlignmentService
             AppCallerCode = AppCallerCode,
             ModelType = "chat",
             Stream = true,
+            // 推理模型（qwen-thinking 等）的 reasoning_content 必须透传，
+            // 否则 Gateway 会把思考块静默吞掉导致前端"空白等待"几十秒。
+            IncludeThinking = true,
             RequestBody = new JsonObject
             {
                 ["messages"] = new JsonArray
