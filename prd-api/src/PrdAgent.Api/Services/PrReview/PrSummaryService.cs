@@ -64,8 +64,12 @@ public sealed class PrSummaryService
             AppCallerCode = AppCallerCode,
             ModelType = "chat",
             Stream = true,
-            // 推理模型（qwen-thinking 等）的 reasoning_content 必须透传，
-            // 否则 Gateway 会把思考块静默吞掉导致前端"空白等待"几十秒。
+            // 推理模型（qwen-thinking / deepseek-r1 等）如果走 <think> 标签或
+            // reasoning_content 字段输出思考过程，默认会被 Gateway 吞掉。
+            // IncludeThinking=true 让 Gateway 把思考块 yield 成独立 chunk，
+            // 配合 Controller 的 thinking SSE 事件 + 前端 ThinkingBlock 实时展示。
+            // 即使当前默认模型（qwen3.6-plus）不是推理模型，切换到 deepseek-r1
+            // 等推理模型时也能自动生效，不用改代码。
             IncludeThinking = true,
             RequestBody = new JsonObject
             {
@@ -81,20 +85,8 @@ public sealed class PrSummaryService
         };
 
         // 服务器权威性：LLM 调用不能被客户端断开中止
-        var chunkIndex = 0;
-        var startAt = DateTime.UtcNow;
         await foreach (var chunk in _gateway.StreamAsync(gatewayRequest, CancellationToken.None))
         {
-            chunkIndex++;
-            // 前 5 个 chunk 详细打日志，帮助诊断 TTFB 异常
-            if (chunkIndex <= 5)
-            {
-                var elapsed = (DateTime.UtcNow - startAt).TotalMilliseconds;
-                _logger.LogInformation(
-                    "[PrSummary] chunk #{Idx} @ {Elapsed:F0}ms type={Type} contentLen={Len} contentPreview={Preview}",
-                    chunkIndex, elapsed, chunk.Type, chunk.Content?.Length ?? 0,
-                    (chunk.Content ?? "").Length > 50 ? chunk.Content!.Substring(0, 50) : chunk.Content);
-            }
             // Start chunk 带模型调度信息，捕获后立即让调用方可读
             if (chunk.Type == GatewayChunkType.Start && chunk.Resolution != null)
             {

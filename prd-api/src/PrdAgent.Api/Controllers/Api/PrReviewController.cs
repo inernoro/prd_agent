@@ -892,6 +892,12 @@ public sealed class PrReviewController : ControllerBase
         }
 
         // 心跳任务：首字到达前每 2 秒推送 phase 事件带 elapsed
+        // 文案分级：
+        //   <15s: "AI 正在思考 8s"（正常等待）
+        //  15~40s: "上游首字延迟较高，已等待 20s（部分模型首字 30~60s）"
+        //   ≥40s: "⚠️ 上游响应异常缓慢，已等待 45s，如仍无响应建议中止重试"
+        // 之所以分级：是因为 qwen/qwen3.6-plus 这类 fake-streaming 模型的首字延迟
+        // 可达 50s 以上，用户看同一条文案从 0 一直跳到 50 会以为卡死。
         Task RunHeartbeatAsync() => Task.Run(async () =>
         {
             try
@@ -902,12 +908,28 @@ public sealed class PrReviewController : ControllerBase
                     catch (OperationCanceledException) { return; }
                     if (heartbeatCts.IsCancellationRequested) return;
                     var elapsed = (int)(DateTime.UtcNow - start).TotalSeconds;
+
+                    string msg;
+                    if (elapsed < 15)
+                    {
+                        msg = $"{waitingLabel}　{elapsed}s";
+                    }
+                    else if (elapsed < 40)
+                    {
+                        var modelHint = modelInfo.Model != null ? $"（{modelInfo.Model}）" : "";
+                        msg = $"上游首字延迟较高{modelHint}，已等待 {elapsed}s，部分推理模型首字需 30~60s";
+                    }
+                    else
+                    {
+                        msg = $"⚠️ 上游响应异常缓慢，已等待 {elapsed}s，如仍无输出建议点击中止重试";
+                    }
+
                     try
                     {
                         await SafeWriteAsync("phase", new
                         {
                             phase = "waiting",
-                            message = $"{waitingLabel}　{elapsed}s",
+                            message = msg,
                             elapsedMs = elapsed * 1000,
                         });
                     }
