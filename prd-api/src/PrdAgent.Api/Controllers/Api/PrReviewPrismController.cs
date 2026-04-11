@@ -353,6 +353,23 @@ public sealed class PrReviewPrismController : ControllerBase
                 checkedAt = snapshot.CheckedAt
             }));
         }
+        catch (InvalidOperationException ex) when (ex.Message.Contains("缺少 GitHub Token", StringComparison.Ordinal))
+        {
+            _logger.LogWarning(ex, "PrReviewPrism precheck blocked by missing token");
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, ex.Message));
+        }
+        catch (InvalidOperationException ex) when (ex.Message.Contains("无访问权限", StringComparison.Ordinal))
+        {
+            _logger.LogWarning(ex, "PrReviewPrism precheck denied: {Owner}/{Repo}#{Pr}", normalizedOwner, normalizedRepo, prNumber);
+            return StatusCode(
+                StatusCodes.Status403Forbidden,
+                ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, ex.Message));
+        }
+        catch (InvalidOperationException ex) when (ex.Message.Contains("未找到该 PR", StringComparison.Ordinal))
+        {
+            _logger.LogWarning(ex, "PrReviewPrism precheck target not found: {Owner}/{Repo}#{Pr}", normalizedOwner, normalizedRepo, prNumber);
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, ex.Message));
+        }
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "PrReviewPrism precheck failed: {Owner}/{Repo}#{Pr}", normalizedOwner, normalizedRepo, prNumber);

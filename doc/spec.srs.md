@@ -2175,6 +2175,12 @@ sequenceDiagram
 - `PUT /api/pr-review-prism/token-config` — 保存/清空 Token（写入 AppSettings 加密字段，要求 `settings.write`）
 - `POST /api/pr-review-prism/bootstrap-skill-package` — 导出仓库专属接入 zip（含 scripts + skill 模板 + onboarding 指南）
 - `POST /api/pr-review-prism/submissions/precheck` — 提交前预检 PR 可达性（仅校验 GitHub 可访问与 PR 存在，不落库）
+  - 错误映射：
+    - PR 链接格式错误：`400 INVALID_FORMAT`
+    - GitHub Token 未配置：`400 INVALID_FORMAT`
+    - Token 对目标仓库无权限：`403 PERMISSION_DENIED`
+    - 目标 PR 不存在或不可见：`404 NOT_FOUND`
+    - 其他 GitHub/网络异常：`502 LLM_ERROR`
 - `POST /api/pr-review-prism/submissions` — 提交 PR 链接并创建/复用记录
 - `GET /api/pr-review-prism/submissions` — 当前用户提交列表（支持 `q` 检索与 `repo` 仓库过滤，`repo` 可为 `owner/repo` 或 PR URL）
 - `GET /api/pr-review-prism/submissions?gateStatus={status}` — 按 Gate 状态筛选（`pending/completed/missing/error`）
