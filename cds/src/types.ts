@@ -410,11 +410,24 @@ export interface ExecutorNode {
   host: string;
   port: number;
   status: 'online' | 'offline' | 'draining';
+  /**
+   * Node capacity. `maxBranches` is historically named but now represents
+   * "max container slots" — a single branch can have 1..N containers
+   * (API + admin + DB + ...) so counting branches understates capacity.
+   * Formula: `(totalMemGB - 1) * 2`, matching the existing local dashboard.
+   */
   capacity: { maxBranches: number; memoryMB: number; cpuCores: number };
   load: { memoryUsedMB: number; cpuPercent: number };
   labels: string[];
   /** Branch IDs deployed on this executor */
   branches: string[];
+  /**
+   * Total number of running containers across all branches on this executor.
+   * Computed from the heartbeat's `branches[id].services` map — each service
+   * entry with status=running contributes one container. Undefined for a
+   * freshly-registered node that hasn't sent a heartbeat yet.
+   */
+  runningContainers?: number;
   lastHeartbeat: string;
   registeredAt: string;
   /**

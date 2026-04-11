@@ -146,6 +146,7 @@ export class ExecutorAgent {
 
   private buildRegistration(): Partial<ExecutorNode> {
     const totalMem = Math.round(os.totalmem() / (1024 * 1024));
+    const totalGB = Math.round(totalMem / 1024);
     // Prefer os.availableParallelism() over os.cpus().length: the former
     // respects cgroup v2 CPU quotas (Docker --cpus, Kubernetes requests,
     // systemd CPUQuota) and returns the actually-usable core count, while
@@ -160,7 +161,12 @@ export class ExecutorAgent {
       host: this.detectHost(),
       port: this.config.executorPort,
       capacity: {
-        maxBranches: Math.max(2, Math.floor(totalMem / 2048)), // ~2GB per branch
+        // Container-count formula. See registerEmbeddedMaster() note:
+        // "单位分支是有问题的，有些分支可能有10个容器". The field is
+        // still called maxBranches for JSON compat, but the value
+        // represents container slots: (memGB - 1) * 2 ≈ 500 MB per
+        // container, minus 1 GB for OS/infra overhead.
+        maxBranches: Math.max(2, (totalGB - 1) * 2),
         memoryMB: totalMem,
         cpuCores: cpus,
       },

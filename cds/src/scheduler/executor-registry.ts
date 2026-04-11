@@ -96,6 +96,7 @@ export class ExecutorRegistry {
    */
   registerEmbeddedMaster(masterPort: number, hostname?: string): ExecutorNode {
     const totalMB = Math.round(os.totalmem() / (1024 * 1024));
+    const totalGB = Math.round(totalMB / 1024);
     // Use os.availableParallelism() so cgroup-limited runs report their
     // actual CPU allocation, not the host's physical core count. Falls back
     // to os.cpus().length on Node < 19. See ExecutorAgent.buildRegistration
@@ -110,8 +111,15 @@ export class ExecutorRegistry {
       host: '127.0.0.1', // master is always reachable via loopback from within itself
       port: masterPort,
       capacity: {
-        // Same heuristic as ExecutorAgent.buildRegistration() — ~2GB per branch.
-        maxBranches: Math.max(2, Math.floor(totalMB / 2048)),
+        // Container-count formula matching the existing local dashboard:
+        // `(totalMemGB - 1) * 2`. A branch can have 1..N containers so
+        // counting "branches" as the atomic unit understates capacity for
+        // monorepos with many services per branch. Counting containers is
+        // the right abstraction — the user explicitly called this out:
+        // "单位分支是有问题的，有些分支可能有10个容器". The JSON field
+        // name stays `maxBranches` for backward compat with older masters
+        // / executors, but the SEMANTIC is now "max container slots".
+        maxBranches: Math.max(2, (totalGB - 1) * 2),
         memoryMB: totalMB,
         cpuCores: cores,
       },
@@ -146,7 +154,10 @@ export class ExecutorRegistry {
       totalMaxBranches += node.capacity.maxBranches;
       totalMemoryMB += node.capacity.memoryMB;
       totalCpuCores += node.capacity.cpuCores;
-      usedBranches += node.branches.length;
+      // Prefer runningContainers (= per-heartbeat accurate count). Fall back
+      // to branches.length for nodes that haven't heartbeated yet (the
+      // field is optional and undefined until the first heartbeat arrives).
+      usedBranches += node.runningContainers ?? node.branches.length;
       usedMemoryMB += node.load.memoryUsedMB;
       cpuWeightedSum += (node.load.cpuPercent / 100) * node.capacity.cpuCores;
       cpuCoreTotal += node.capacity.cpuCores;
@@ -218,6 +229,23 @@ export class ExecutorRegistry {
     node.status = 'online';
     node.load = data.load;
     node.branches = Object.keys(data.branches);
+
+    // Count actual running containers across all branches. A branch may
+    // have 1-10 services (containers) so branches.length would understate
+    // the real load. We walk the reported services dictionary and count
+    // entries with status=running. Silent fallback to 0 if the services
+    // object is missing (older executor agents).
+    let runningContainers = 0;
+    for (const bStatus of Object.values(data.branches || {})) {
+      const svcs = (bStatus as { services?: Record<string, { status?: string }> }).services || {};
+      for (const svc of Object.values(svcs)) {
+        if (svc && (svc as { status?: string }).status === 'running') {
+          runningContainers++;
+        }
+      }
+    }
+    node.runningContainers = runningContainers;
+
     node.lastHeartbeat = new Date().toISOString();
 
     this.stateService.setExecutor(node);

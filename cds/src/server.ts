@@ -579,6 +579,34 @@ export function createServer(deps: ServerDeps): express.Express {
   function broadcastState(): void {
     if (stateClients.size === 0) return;
     const state = deps.stateService.getState();
+
+    // ── Populate embedded master's runningContainers from local state ──
+    //
+    // Embedded master doesn't heartbeat to itself, so node.runningContainers
+    // is always undefined for the master. But we need an accurate count
+    // for the cluster capacity math — otherwise the popover shows "master:
+    // 0/186 containers" even while 14 containers are running locally.
+    //
+    // Walk local branches, sum up services with status=running where the
+    // branch isn't explicitly dispatched to a remote executor, and stamp
+    // that count on the embedded master entry right before serialization.
+    if (deps.registry) {
+      const execs = state.executors || {};
+      for (const node of Object.values(execs)) {
+        if (node.role !== 'embedded') continue;
+        let localRunning = 0;
+        for (const b of Object.values(state.branches || {})) {
+          // Skip branches owned by a remote executor — they're counted
+          // via that executor's own heartbeat.
+          if (b.executorId && !b.executorId.startsWith('master-')) continue;
+          for (const svc of Object.values(b.services || {})) {
+            if (svc?.status === 'running') localRunning++;
+          }
+        }
+        node.runningContainers = localRunning;
+      }
+    }
+
     // Include executors + mode + capacity so the Dashboard can react to
     // cluster changes without extra polls. `cdsMode` is read from the
     // live config (which may have been hot-switched by onFirstRegister).

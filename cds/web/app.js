@@ -938,9 +938,12 @@ function renderCapacityBadge() {
 
     const nodesTotal = (cap?.nodes?.length) || 0;
     const nodesOnline = (cap?.online || 0);
-    // Label: "2/2 节点 · 47/49" — unit "分支槽" is implied by the label
-    // structure. Tooltip spells it out for new users.
-    const label = `${nodesOnline}/${nodesTotal} 节点 · ${free}/${maxBranches}`;
+    // Label: "2 节点 · 47/49" — unit is now "容器槽" (container slots)
+    // following the user's feedback "单位分支是有问题的，有些分支可能有10个容器".
+    // We count container slots = (memGB - 1) * 2, matching the existing
+    // local dashboard formula so A's 94 GB ≈ 186 slots, B's 3.6 GB ≈ 4 slots,
+    // cluster total ≈ 190 slots.
+    const label = `${nodesOnline} 节点 · ${free}/${maxBranches}`;
 
     el.dataset.tier = tier;
     el.dataset.over = '0';
@@ -949,7 +952,7 @@ function renderCapacityBadge() {
     el.setAttribute('title',
       `集群模式 (${cdsMode})\n` +
       `在线节点: ${nodesOnline}/${nodesTotal}\n` +
-      `分支槽: ${free}/${maxBranches} 空闲 (每个分支 ≈ 2GB 内存)\n` +
+      `容器槽: ${free}/${maxBranches} 空闲 (公式 (memGB-1)×2)\n` +
       `总内存: ${Math.round((cap?.total?.memoryMB || 0) / 1024)} GB\n` +
       `总 CPU: ${cap?.total?.cpuCores || 0} 核\n` +
       `空闲率: ${freePercent}%\n` +
@@ -1172,7 +1175,7 @@ function renderClusterCapacityPopover() {
           </div>
         </div>
         <div class="cluster-pop-stat">
-          <div class="cluster-pop-stat-label">分支槽</div>
+          <div class="cluster-pop-stat-label">容器槽</div>
           <div class="cluster-pop-stat-value">
             ${freeBranches}
             <span class="cluster-pop-stat-hint">/ ${totalBranches} 空闲</span>
@@ -1198,7 +1201,8 @@ function renderClusterCapacityPopover() {
       </div>
 
       <div class="cluster-pop-help">
-        单节点容量公式: <code>maxBranches = floor(memMB ÷ 2048)</code>（每分支约 2 GB 内存，含 DB + API + Admin 等服务栈）<br>
+        单节点容器槽公式: <code>(memGB - 1) × 2</code>（每容器约 500 MB RAM，减去 1 GB 系统开销）<br>
+        一个分支可能跑 1-10 个容器（API + admin + DB + ...），所以我们按容器计数而不是按分支。<br>
         调度策略: <code>${esc(clusterStrategy)}</code>（在集群设置里切换）
       </div>
     </div>
@@ -2675,8 +2679,30 @@ function renderBranches() {
     // Build stop menu item for deploy dropdown
     const stopMenuItem = isRunning ? `<div class="deploy-menu-divider"></div><div class="deploy-menu-item deploy-menu-item-danger" onclick="event.stopPropagation(); closeDeployMenu('${esc(b.id)}'); stopBranch('${esc(b.id)}')">停止所有服务</div>` : '';
 
+    // Executor tag — rendered as the first chip in the port-badges row when
+    // the branch is dispatched to a remote executor. We deliberately put it
+    // at the START of that row (same visual group as "where things run")
+    // instead of next to the branch name, because:
+    //   1. The branch name + executor-id together overflowed on long names
+    //   2. The port badges row is semantically "placement info" already —
+    //      ⚡ <node> fits right in as "placed on <node>"
+    //   3. Distinct styling (gold ⚡ icon + different bg) keeps it from
+    //      being confused with a regular port badge
+    // Hidden entirely when the branch runs on the embedded master (local)
+    // or single-node mode, to avoid clutter.
+    const remoteExecForThisBranch =
+      b.executorId && !b.executorId.startsWith('master-')
+        ? (executors || []).find(e => e.id === b.executorId)
+        : null;
+    const executorTagHtml = remoteExecForThisBranch
+      ? `<span class="executor-tag port-row-exec ${remoteExecForThisBranch.status === 'offline' ? 'offline' : ''}"
+              title="部署在执行器 ${esc(b.executorId)} (${esc(remoteExecForThisBranch.host)})${remoteExecForThisBranch.status === 'offline' ? ' — 已离线' : ''}">
+          ⚡ ${esc(b.executorId.replace(/^executor-/, '').slice(0, 24))}
+        </span>`
+      : '';
+
     // Port badges — icon + name:port, icon from profile config
-    const portBadgesHtml = services.length > 0 ? services.map(([pid, svc]) => {
+    const portBadgesInner = services.length > 0 ? services.map(([pid, svc]) => {
       const profile = buildProfiles.find(p => p.id === pid);
       const icon = getPortIcon(pid, profile);
       const badgeClass = svc.status === 'running' ? 'run-port' : svc.status === 'starting' ? 'port-starting' : svc.status === 'stopping' ? 'port-stopping' : svc.status === 'building' ? 'port-building' : svc.status === 'error' ? 'port-error' : 'port-idle';
@@ -2687,6 +2713,9 @@ function renderBranches() {
                 ${icon} ${esc(pid)}:${svc.hostPort}
               </span>`;
     }).join('') : '';
+    const portBadgesHtml = (executorTagHtml || portBadgesInner)
+      ? `${executorTagHtml}${portBadgesInner}`
+      : '';
 
     // Tags — shown below header (dimmed when not deployed)
     const branchTags = b.tags || [];
@@ -2859,7 +2888,7 @@ function renderBranches() {
             <span class="fav-toggle ${b.isFavorite ? 'active' : ''}" onclick="event.stopPropagation(); toggleFavorite('${esc(b.id)}')" title="${b.isFavorite ? '取消收藏' : '收藏'}">
               ${b.isFavorite ? ICON.star : ICON.starOutline}
             </span>
-            <a class="branch-name" href="${githubRepoUrl ? githubRepoUrl.replace('github.com', 'github.dev') + '/tree/' + encodeURIComponent(b.branch) : '#'}" target="_blank" onclick="event.stopPropagation(); return confirmOpenGithub(event)" title="在 GitHub.dev 中浏览代码">${ICON.branch} ${esc(b.branch)}</a>${renderBranchHostBadge(b)}
+            <a class="branch-name" href="${githubRepoUrl ? githubRepoUrl.replace('github.com', 'github.dev') + '/tree/' + encodeURIComponent(b.branch) : '#'}" target="_blank" onclick="event.stopPropagation(); return confirmOpenGithub(event)" title="在 GitHub.dev 中浏览代码">${ICON.branch} ${esc(b.branch)}</a>
             <span class="branch-quick-actions">
               <button class="branch-quick-btn" onclick="event.stopPropagation(); copyBranchName('${esc(b.branch)}')" title="复制分支名">
                 <svg class="inline-icon" width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M0 6.75C0 5.784.784 5 1.75 5h1.5a.75.75 0 010 1.5h-1.5a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-1.5a.75.75 0 011.5 0v1.5A1.75 1.75 0 019.25 16h-7.5A1.75 1.75 0 010 14.25v-7.5z"/><path d="M5 1.75C5 .784 5.784 0 6.75 0h7.5C15.216 0 16 .784 16 1.75v7.5A1.75 1.75 0 0114.25 11h-7.5A1.75 1.75 0 015 9.25v-7.5zm1.75-.25a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-7.5a.25.25 0 00-.25-.25h-7.5z"/></svg>
@@ -2873,7 +2902,6 @@ function renderBranches() {
             <span class="pinned-commit-badge" onclick="event.stopPropagation(); checkoutCommit('${esc(b.id)}', '', true, '')" title="已固定到历史提交 ${esc(b.pinnedCommit)}，点击恢复最新">📌 ${esc(b.pinnedCommit)}</span>
           </div>` : ''}
           ${portBadgesHtml ? `<div class="branch-card-ports">${portBadgesHtml}</div>` : ''}
-          ${b.executorId ? `<span class="executor-tag" title="部署在执行器 ${esc(b.executorId)}">⚡ ${esc(b.executorId.replace(/^executor-/, '').slice(0, 20))}</span>` : ''}
         </div>
         ${b.errorMessage && !deployLog ? `<div class="branch-error" title="${esc(b.errorMessage)}">${esc(b.errorMessage)}</div>` : ''}
         <div class="branch-card-body">
@@ -5875,42 +5903,6 @@ function fallbackCopy(text) {
   document.body.removeChild(ta);
 }
 
-// ── Branch card "hosted on" badge (P1 #6) ──
-//
-// Shows a small chip next to the branch name indicating which executor
-// runs this branch. Three states:
-//   - no badge: single-node mode (standalone with no remote executors)
-//   - "on: 本机": master (embedded) is running the branch
-//   - "on: <shortId>": a remote executor owns it
-//   - "on: <shortId> 离线": the owning executor is currently offline
-// The short id is the last part of the executor id (after "executor-" or
-// "master-"), kept under 14 chars so it doesn't push layout around.
-function renderBranchHostBadge(branch) {
-  // Single-node mode — hide the badge entirely to avoid visual noise.
-  const remoteCount = (executors || []).filter(e => (e.role || 'remote') !== 'embedded').length;
-  if (remoteCount === 0) return '';
-
-  const execId = branch.executorId;
-  // Branches without an executorId run on the embedded master.
-  if (!execId) {
-    return '<span class="branch-host-badge local" title="运行于本机主节点">on: 本机</span>';
-  }
-
-  const node = (executors || []).find(e => e.id === execId);
-  const shortId = execId.replace(/^executor-/, '').replace(/^master-/, '').slice(0, 18);
-  if (!node) {
-    // Stale executorId — node was removed. Show as offline hint.
-    return `<span class="branch-host-badge offline" title="目标执行器已不存在 (${esc(execId)})">on: ${esc(shortId)} ⚠</span>`;
-  }
-  if (node.status === 'offline') {
-    return `<span class="branch-host-badge offline" title="执行器 ${esc(execId)} 已离线，请重新部署">on: ${esc(shortId)} 离线</span>`;
-  }
-  if (node.role === 'embedded') {
-    return '<span class="branch-host-badge local" title="运行于本机主节点">on: 本机</span>';
-  }
-  return `<span class="branch-host-badge" title="运行于执行器 ${esc(execId)} (${esc(node.host)}:${node.port})">on: ${esc(shortId)}</span>`;
-}
-
 // ── Cluster node list (inside cluster settings modal) ──
 //
 // Big-company-style node cards inspired by Vercel / Grafana / K8s
@@ -5933,7 +5925,10 @@ function renderClusterNodeListHtml() {
     const memPct = cap.memoryMB > 0 ? Math.round(load.memoryUsedMB / cap.memoryMB * 100) : 0;
     const memGB = (load.memoryUsedMB / 1024).toFixed(1);
     const totalGB = (cap.memoryMB / 1024).toFixed(1);
-    const branchCount = (node.branches && node.branches.length) || node.branchCount || 0;
+    // Prefer explicit runningContainers from heartbeat; fall back to branch
+    // count (for old heartbeats) or 0. A single branch can have N services
+    // (containers), so the accurate count comes from the executor's heartbeat.
+    const branchCount = node.runningContainers ?? (node.branches?.length || node.branchCount || 0);
     const branchPct = cap.maxBranches > 0 ? Math.round(branchCount / cap.maxBranches * 100) : 0;
     const cpuPct = Math.min(load.cpuPercent, 100);
     const isEmbedded = role === 'embedded';
@@ -6035,7 +6030,7 @@ function renderClusterNodeListHtml() {
         <div class="node-card-rings">
           ${ringMeter('内存', memPct, `${memGB}/${totalGB} GB`, true)}
           ${ringMeter('CPU', cpuPct, `${cpuPct}%`, true)}
-          ${ringMeter('分支', branchPct, `${branchCount}/${cap.maxBranches}`, false)}
+          ${ringMeter('容器', branchPct, `${branchCount}/${cap.maxBranches}`, false)}
         </div>
       </div>
     `;

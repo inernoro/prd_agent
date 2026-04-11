@@ -401,9 +401,27 @@ install_deps() {
 }
 
 build_ts() {
+  # Skip tsc if the compiled output is newer than every source file. On a
+  # small VM like B (2 cores / 3.6 GB), an unconditional tsc run adds 8-12s
+  # to every start. Users hate this — "./exec_cds.sh restart" used to feel
+  # instant, now it drags because tsc has nothing to do yet still runs.
+  #
+  # Strategy: find the newest .ts under src/, find dist/index.js mtime,
+  # compare. Skip if dist is newer. Keep the old unconditional path as
+  # a fallback when dist doesn't exist yet.
+  local dist="$SCRIPT_DIR/dist/index.js"
+  if [ -f "$dist" ]; then
+    local newest_src
+    newest_src="$(find "$SCRIPT_DIR/src" -name '*.ts' -type f -newer "$dist" -print -quit 2>/dev/null || true)"
+    if [ -z "$newest_src" ]; then
+      info "编译 TypeScript ... (跳过，dist 已是最新)"
+      return 0
+    fi
+  fi
+
   info "编译 TypeScript ..."
   npx tsc || true
-  [ -f "$SCRIPT_DIR/dist/index.js" ] || { err "编译失败: dist/index.js 不存在"; exit 1; }
+  [ -f "$dist" ] || { err "编译失败: dist/index.js 不存在"; exit 1; }
 }
 
 # ══ nginx config rendering ═══════════════════════════════════════

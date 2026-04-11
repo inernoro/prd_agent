@@ -238,20 +238,44 @@ describe('ExecutorRegistry', () => {
       expect(cap.used.cpuPercent).toBe(50);
     });
 
-    it('counts branches across online executors into used.branches', () => {
+    it('counts running CONTAINERS (not branches) across online executors', () => {
+      // Regression for user feedback "单位分支是有问题的，有些分支可能有10个容器".
+      // A branch can have 1..N services (containers), so the old
+      // branches.length approach understated real load. The aggregation
+      // now walks each branch's services map and counts entries with
+      // status=running as containers.
       registry.register({
         id: 'a',
         host: 'a.local',
         port: 9900,
         capacity: { maxBranches: 4, memoryMB: 4096, cpuCores: 4 },
       });
+      // Branch 1 has 3 services (2 running, 1 stopped)
+      // Branch 2 has 1 service (running)
+      // Total containers = 3 running
       registry.heartbeat('a', {
         load: { memoryUsedMB: 0, cpuPercent: 0 },
-        branches: { 'branch-1': { status: 'running', services: {} }, 'branch-2': { status: 'running', services: {} } },
+        branches: {
+          'branch-1': {
+            status: 'running',
+            services: {
+              api: { status: 'running' },
+              admin: { status: 'running' },
+              worker: { status: 'stopped' },
+            },
+          },
+          'branch-2': {
+            status: 'running',
+            services: {
+              api: { status: 'running' },
+            },
+          },
+        },
       });
 
       const cap = registry.getTotalCapacity();
-      expect(cap.used.branches).toBe(2);
+      // 2 + 1 = 3 running containers total
+      expect(cap.used.branches).toBe(3);
     });
   });
 

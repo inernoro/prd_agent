@@ -370,9 +370,18 @@ h1 {
   84%, 100% { transform: translateY(0); opacity: 1; }
 }
 
-/* ── Capacity badge (battery-style memory pressure indicator) ── */
-/* See doc/design.cds-resilience.md §八 — per-host container capacity gauge */
+/* ── Capacity badge (battery-style memory pressure indicator) ──
+ *
+ * In cluster mode, the battery and the text label fuse into ONE pill:
+ * the battery's fill is the BACKGROUND of the entire pill, and the text
+ * floats on top. In single-node mode we keep the original split layout
+ * (small battery icon + label next to it) because the cluster version
+ * would look out-of-scale without multiple numbers to display.
+ *
+ * See doc/design.cds-resilience.md §八.
+ */
 .capacity-badge {
+  position: relative;
   display: inline-flex;
   align-items: center;
   gap: 6px;
@@ -389,6 +398,7 @@ h1 {
   background: var(--bg-card, #161b22);
   border: 1px solid var(--border, #30363d);
   color: var(--text-muted, #8b949e);
+  overflow: hidden;  /* clip the pill-fill into the rounded corners */
 }
 .capacity-badge:hover {
   transform: translateY(-1px);
@@ -396,7 +406,59 @@ h1 {
 }
 .capacity-badge.hidden { display: none; }
 
-/* Battery body: classic rectangle with a little nub on the right */
+/* ── Cluster mode: battery consumed the whole badge ── */
+.capacity-badge[data-cluster="1"] {
+  padding: 5px 12px;
+  min-width: 140px;
+  font-size: 11px;
+  font-weight: 600;
+  justify-content: center;
+  letter-spacing: 0.3px;
+}
+/* Hide the little battery icon in cluster mode — the WHOLE pill is the
+ * battery now, with the fill layer forming the "charge" under the text. */
+.capacity-badge[data-cluster="1"] .cap-battery {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  width: auto;
+  height: auto;
+  border: none;
+  border-radius: 6px;
+  pointer-events: none;
+  z-index: 0;
+}
+.capacity-badge[data-cluster="1"] .cap-battery::after {
+  display: none;  /* no positive terminal nub when battery IS the pill */
+}
+.capacity-badge[data-cluster="1"] .cap-battery-fill {
+  height: 100%;
+  opacity: 0.18;
+  background: currentColor;
+}
+.capacity-badge[data-cluster="1"] .cap-label {
+  position: relative;
+  z-index: 1;  /* text above the fill */
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+/* Tiny bolt icon prefix in cluster mode so the pill still reads as a
+ * "capacity / power" indicator even without the physical battery shape. */
+.capacity-badge[data-cluster="1"] .cap-label::before {
+  content: '';
+  display: inline-block;
+  width: 9px;
+  height: 12px;
+  background: currentColor;
+  -webkit-mask: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16"><path d="M11 0H5v7H2l7 9v-7h3L11 0z" fill="black"/></svg>') center/contain no-repeat;
+          mask: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16"><path d="M11 0H5v7H2l7 9v-7h3L11 0z" fill="black"/></svg>') center/contain no-repeat;
+  flex-shrink: 0;
+}
+
+/* ── Single-node mode (original layout) ── */
 .cap-battery {
   position: relative;
   display: inline-block;
@@ -1415,6 +1477,45 @@ a.branch-name:hover { color: var(--accent); }
   font-size: 10px; padding: 1px 6px; border-radius: 4px;
   background: var(--surface-hover); color: var(--text-muted); border: 1px solid var(--border);
   font-family: var(--font-mono);
+}
+
+/* Executor tag shown INSIDE the port-badges row. Slightly different visual
+ * weight than a regular port badge so the user can tell it's "where this
+ * whole branch lives" not "how to reach a specific service": gold bolt,
+ * subtle glow, same height as port badges for alignment. */
+.port-row-exec {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 11px;
+  font-weight: 500;
+  padding: 3px 9px;
+  border-radius: 10px;
+  background: linear-gradient(
+    135deg,
+    rgba(240, 208, 0, 0.12) 0%,
+    rgba(240, 136, 62, 0.08) 100%
+  );
+  border: 1px solid rgba(240, 208, 0, 0.35);
+  color: #f0c040;
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  letter-spacing: 0.2px;
+  margin-right: 4px;
+  vertical-align: middle;
+  white-space: nowrap;
+}
+.port-row-exec:hover {
+  border-color: rgba(240, 208, 0, 0.6);
+  background: linear-gradient(
+    135deg,
+    rgba(240, 208, 0, 0.18) 0%,
+    rgba(240, 136, 62, 0.12) 100%
+  );
+}
+.port-row-exec.offline {
+  background: rgba(248, 81, 73, 0.1);
+  border-color: rgba(248, 81, 73, 0.45);
+  color: #f85149;
 }
 
 /* ── Tag filter bar (top-level) ── */
@@ -3930,14 +4031,9 @@ a.branch-name:hover { color: var(--accent); }
   font-weight: 600;
 }
 
-/* ── Header badge cluster-mode display ── */
-
-.capacity-badge[data-cluster="1"] {
-  border-color: rgba(88, 166, 255, 0.6);
-}
-.capacity-badge[data-cluster="1"] .cap-label {
-  color: #58a6ff;
-}
+/* (cluster-mode header badge styling moved up to the main .capacity-badge
+   block near line 410 — the cluster pill now fuses the battery shape
+   and the text label so they're a single rounded pill, not two elements.) */
 
 /* ── Branch card "hosted on" badge ── */
 
