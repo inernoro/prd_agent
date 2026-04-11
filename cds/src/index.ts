@@ -735,9 +735,20 @@ function listenWithRetry(
   opts: { force?: boolean; optional?: boolean } = {},
 ) {
   const MAX_ATTEMPTS = 5;
+  // Track success so a late-arriving retry setTimeout doesn't call
+  // `server.listen()` again on an already-bound socket and crash with
+  // ERR_SERVER_ALREADY_LISTEN. Seen on B's CDS after `tsx watch` race
+  // conditions produced multiple concurrent retries while the first one
+  // eventually succeeded.
+  let listening = false;
   const doListen = (attempt: number) => {
-    const s = server.listen(port, onSuccess);
+    if (listening) return; // retry scheduled before success became visible
+    const s = server.listen(port, () => {
+      listening = true;
+      onSuccess();
+    });
     s.on('error', (err: Error & { code?: string }) => {
+      if (listening) return; // same late-retry guard after listening flipped
       if (err.code === 'EADDRINUSE' && attempt < MAX_ATTEMPTS) {
         console.log(`  [WARN] Port ${port} in use, attempting to reclaim (${label}, attempt ${attempt + 1}/${MAX_ATTEMPTS})...`);
         const killed = tryKillOnPort(port, !!opts.force);
