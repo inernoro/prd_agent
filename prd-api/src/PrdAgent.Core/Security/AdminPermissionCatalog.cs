@@ -180,6 +180,11 @@ public static class AdminPermissionCatalog
     public const string PrReviewPrismUse = "pr-review-prism.use";
 
     /// <summary>
+    /// PR Review V2 权限：基于每用户 GitHub OAuth 的 PR 审查工作台（pr-review）
+    /// </summary>
+    public const string PrReviewUse = "pr-review.use";
+
+    /// <summary>
     /// 网页托管权限（读）：查看托管站点列表
     /// </summary>
     public const string WebPagesRead = "web-pages.read";
@@ -275,6 +280,8 @@ public static class AdminPermissionCatalog
         new(ReviewAgentManage, "产品评审员-管理", "自定义评审维度配置"),
 
         new(PrReviewPrismUse, "PR审查棱镜", "PR 变更多维度审查（独立于产品评审员）"),
+
+        new(PrReviewUse, "PR 审查工作台", "基于每用户 GitHub OAuth 的 PR 审查（V2）"),
 
         new(WebPagesRead, "网页托管-读", "查看托管站点列表与详情"),
         new(WebPagesWrite, "网页托管-写", "上传/编辑/删除/分享托管站点"),
