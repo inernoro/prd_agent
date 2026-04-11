@@ -10,6 +10,7 @@ import {
   Paperclip,
   ArrowUp,
 } from 'lucide-react';
+import { useLanguage } from '../contexts/LanguageContext';
 
 /**
  * ProductMockup — Linear 风格的"真实产品壳"
@@ -24,6 +25,8 @@ import {
  * 动效克制：只有生成中的两格 shimmer + 底部 pulse dot，其他静态
  */
 export function ProductMockup() {
+  const { t } = useLanguage();
+  const mock = t.productMockup;
   return (
     <div className="relative mx-auto w-full max-w-5xl">
       {/* 下方柔和光晕（作为"产品从暗处浮起来"的基座） */}
@@ -76,21 +79,24 @@ export function ProductMockup() {
             <NavIcon Icon={Settings} />
           </aside>
 
-          {/* 中间对话列表（极简） */}
+          {/* 中间对话列表（极简，i18n）*/}
           <div className="w-56 border-r border-white/[0.06] p-3 hidden md:block">
             <button
               className="w-full flex items-center gap-2 px-3 py-2 rounded-lg text-[12px] text-white/85 border border-white/10 bg-white/[0.03] mb-3"
               style={{ fontFamily: 'var(--font-body)' }}
             >
               <Plus className="w-3.5 h-3.5" />
-              新对话
+              {mock.newConversation}
             </button>
             <div className="space-y-0.5">
-              <ConversationItem title="未来科技城市海报" subtitle="视觉 Agent · 刚刚" active />
-              <ConversationItem title="品牌 VI 设计提案" subtitle="视觉 Agent · 2h" />
-              <ConversationItem title="PRD v3 补全" subtitle="PRD Agent · 昨天" />
-              <ConversationItem title="产品发布文案润色" subtitle="文学 Agent · 2 天前" />
-              <ConversationItem title="Bug 根因分析" subtitle="缺陷 Agent · 3 天前" />
+              {mock.conversations.map((conv, i) => (
+                <ConversationItem
+                  key={i}
+                  title={conv.title}
+                  subtitle={conv.meta}
+                  active={i === 0}
+                />
+              ))}
             </div>
           </div>
 
@@ -110,14 +116,14 @@ export function ProductMockup() {
                 </div>
                 <div className="min-w-0">
                   <div className="text-[13px] text-white/90 font-medium truncate" style={{ fontFamily: 'var(--font-display)' }}>
-                    未来科技城市海报
+                    {mock.header.title}
                   </div>
-                  <div className="text-[10px] text-white/40">视觉 Agent · 生成中 · 2 / 4 已完成</div>
+                  <div className="text-[10px] text-white/40">{mock.header.meta}</div>
                 </div>
               </div>
               <div className="flex gap-2 shrink-0">
                 <button className="px-3 py-1.5 rounded-md text-[11px] text-white/55 border border-white/10 hover:bg-white/[0.04]">
-                  分享
+                  {mock.actions.share}
                 </button>
                 <button
                   className="px-3 py-1.5 rounded-md text-[11px] text-white/90"
@@ -126,7 +132,7 @@ export function ProductMockup() {
                     border: '1px solid rgba(168,85,247,0.4)',
                   }}
                 >
-                  继续生成
+                  {mock.actions.continue}
                 </button>
               </div>
             </header>
@@ -143,7 +149,7 @@ export function ProductMockup() {
                     fontFamily: 'var(--font-body)',
                   }}
                 >
-                  帮我生成一张"未来科技城市夜景"海报，16:9 宽屏，赛博朋克质感
+                  {mock.chat.userMessage}
                 </div>
               </div>
 
@@ -160,7 +166,7 @@ export function ProductMockup() {
                 </div>
                 <div className="flex-1 min-w-0">
                   <div className="text-[13px] text-white/85 mb-3 leading-relaxed" style={{ fontFamily: 'var(--font-body)' }}>
-                    好的，为你准备了 4 个方向：赛博霓虹、霓虹雨夜、金属科幻、极光穹顶。
+                    {mock.chat.agentReply}
                   </div>
 
                   {/* 4 张候选图 */}
@@ -180,7 +186,7 @@ export function ProductMockup() {
                       <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-purple-400 opacity-75" />
                       <span className="relative inline-flex h-2 w-2 rounded-full bg-purple-400" />
                     </span>
-                    生成中 · 预计 12s 完成
+                    {mock.chat.progress}
                   </div>
                 </div>
               </div>
@@ -193,7 +199,7 @@ export function ProductMockup() {
                   className="text-[12px] text-white/35 flex-1 truncate"
                   style={{ fontFamily: 'var(--font-body)' }}
                 >
-                  输入指令，或拖入文件…
+                  {mock.input}
                 </span>
                 <button className="w-7 h-7 rounded-md text-white/45 hover:bg-white/5 flex items-center justify-center">
                   <Paperclip className="w-3.5 h-3.5" />

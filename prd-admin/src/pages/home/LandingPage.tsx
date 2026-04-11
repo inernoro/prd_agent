@@ -115,27 +115,27 @@ function LandingInner() {
             WebkitBackdropFilter: 'blur(12px)',
           }}
         >
-          <div className="max-w-7xl mx-auto flex items-center justify-between">
-            {/* Logo */}
-            <div className="flex items-center gap-3">
+          <div className="max-w-[1440px] mx-auto flex items-center justify-between gap-4">
+            {/* Logo —— 品牌文字只在 xl+ 显示（英文品牌长，避免溢出）*/}
+            <div className="flex items-center gap-3 shrink-0">
               <MapLogo className="w-9 h-9 rounded-[10px]" />
               <span
-                className="text-[15px] font-medium text-white/90 hidden sm:inline"
+                className="text-[15px] font-medium text-white/90 hidden xl:inline"
                 style={{ fontFamily: 'var(--font-display)', letterSpacing: '-0.005em' }}
               >
                 {t.footer.brand}
               </span>
             </div>
 
-            {/* Desktop nav */}
-            <div className="hidden md:flex items-center gap-8">
+            {/* Desktop nav —— gap 紧一点 + 允许 flex-wrap ban */}
+            <div className="hidden md:flex items-center gap-5 lg:gap-7 shrink-0">
               {navLinks.map((item, i) => (
                 <a
                   key={i}
                   href={item.href}
                   target={item.external ? '_blank' : undefined}
                   rel={item.external ? 'noopener noreferrer' : undefined}
-                  className="text-[13px] text-white/55 hover:text-white transition-colors"
+                  className="text-[13px] text-white/55 hover:text-white transition-colors whitespace-nowrap"
                   style={{ fontFamily: 'var(--font-display)', letterSpacing: '0.01em' }}
                 >
                   {item.label}

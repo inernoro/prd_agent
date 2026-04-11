@@ -55,6 +55,25 @@ export interface PlatformItem {
   arch: string;
 }
 
+export interface ProductMockupTranslation {
+  newConversation: string;
+  conversations: Array<{ title: string; meta: string }>;
+  header: {
+    title: string;
+    meta: string;
+  };
+  actions: {
+    share: string;
+    continue: string;
+  };
+  chat: {
+    userMessage: string;
+    agentReply: string;
+    progress: string;
+  };
+  input: string;
+}
+
 export interface Pillar {
   id: string;
   figLabel: string;
@@ -83,6 +102,7 @@ export interface TranslationShape {
     techItems: string[];
   };
   stats: StatItem[];
+  productMockup: ProductMockupTranslation;
   pillars: {
     eyebrow: string;
     title: string;
@@ -193,6 +213,30 @@ const zh: TranslationShape = {
     { value: '98', label: 'MongoDB 集合' },
     { value: '99.9%', label: '服务可用性' },
   ],
+  productMockup: {
+    newConversation: '新对话',
+    conversations: [
+      { title: '未来科技城市海报', meta: '视觉 Agent · 刚刚' },
+      { title: '品牌 VI 设计提案', meta: '视觉 Agent · 2h' },
+      { title: 'PRD v3 补全', meta: 'PRD Agent · 昨天' },
+      { title: '产品发布文案润色', meta: '文学 Agent · 2 天前' },
+      { title: 'Bug 根因分析', meta: '缺陷 Agent · 3 天前' },
+    ],
+    header: {
+      title: '未来科技城市海报',
+      meta: '视觉 Agent · 生成中 · 2 / 4 已完成',
+    },
+    actions: {
+      share: '分享',
+      continue: '继续生成',
+    },
+    chat: {
+      userMessage: '帮我生成一张"未来科技城市夜景"海报，16:9 宽屏，赛博朋克质感',
+      agentReply: '好的，为你准备了 4 个方向：赛博霓虹、霓虹雨夜、金属科幻、极光穹顶。',
+      progress: '生成中 · 预计 12s 完成',
+    },
+    input: '输入指令，或拖入文件…',
+  },
   pillars: {
     eyebrow: 'What We Deliver',
     title: '为真正在用 AI 工作的团队，\n而不是为了"像 AI"而造',
@@ -460,6 +504,32 @@ const en: TranslationShape = {
     { value: '98', label: 'Mongo Collections' },
     { value: '99.9%', label: 'Uptime' },
   ],
+  productMockup: {
+    newConversation: 'New conversation',
+    conversations: [
+      { title: 'Future city night poster', meta: 'Visual · just now' },
+      { title: 'Brand VI proposal', meta: 'Visual · 2h' },
+      { title: 'PRD v3 completion', meta: 'PRD · yesterday' },
+      { title: 'Launch copy polish', meta: 'Writing · 2d ago' },
+      { title: 'Bug root cause', meta: 'Defect · 3d ago' },
+    ],
+    header: {
+      title: 'Future city night poster',
+      meta: 'Visual Agent · generating · 2 / 4 done',
+    },
+    actions: {
+      share: 'Share',
+      continue: 'Continue',
+    },
+    chat: {
+      userMessage:
+        'Generate a "future city night" poster — 16:9 widescreen, cyberpunk aesthetic',
+      agentReply:
+        'Sure — four directions prepared: Cyber Neon, Neon Rain, Metal Sci-Fi, Aurora Dome.',
+      progress: 'Generating · ETA 12s',
+    },
+    input: 'Enter a command, or drop a file…',
+  },
   pillars: {
     eyebrow: 'What We Deliver',
     title: 'Built for teams actually shipping AI,\nnot for "looking like AI"',

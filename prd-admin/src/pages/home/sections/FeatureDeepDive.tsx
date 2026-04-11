@@ -1,4 +1,3 @@
-import { cn } from '@/lib/cn';
 import { ArrowRight, Sparkles } from 'lucide-react';
 import type { ReactNode } from 'react';
 import { Reveal } from '../components/Reveal';
@@ -78,11 +77,10 @@ function splitLine(text: string): ReactNode {
   ));
 }
 
-// ── Feature block（内部 stagger reveal） ────────────────────────────────
+// ── Feature block（Linear 图 2 风格：上两列 title+desc，下几乎全宽 mockup）─
 
 function FeatureBlock({
   feature,
-  reverse,
   chapterIndex,
   chapterTotal,
   chapterLabel,
@@ -96,103 +94,91 @@ function FeatureBlock({
   learnMoreLabel: string;
 }) {
   const { id, eyebrow, title, description, bullets } = feature;
-  const accent = MOCKUPS[id as keyof typeof MOCKUPS]?.accent ?? '#a855f7';
+  const accent = MOCKUPS[id as keyof typeof MOCKUPS]?.accent ?? '#cbd5e1';
 
   return (
-    <div className="max-w-[1240px] mx-auto px-6 md:px-10">
-      <div
-        className={cn(
-          'grid md:grid-cols-2 gap-14 md:gap-28 items-center',
-          reverse && 'md:[&>*:first-child]:order-2',
-        )}
-      >
-        {/* Copy side —— 7 级分步 reveal */}
-        <div>
-          {/* Chapter marker —— 每段最先出现，提示"新的一段开始了" */}
-          <Reveal offset={18}>
-            <div
-              className="flex items-center gap-3 mb-6"
-              style={{ fontFamily: 'var(--font-mono)' }}
-            >
-              <span
-                className="text-[11px] uppercase"
-                style={{
-                  color: `${accent}cc`,
-                  letterSpacing: '0.22em',
-                  textShadow: `0 0 8px ${accent}77`,
-                }}
-              >
-                {chapterLabel}
-              </span>
-              <span
-                className="text-[11px]"
-                style={{
-                  color: `${accent}cc`,
-                  letterSpacing: '0.12em',
-                }}
-              >
-                {String(chapterIndex).padStart(2, '0')} / {String(chapterTotal).padStart(2, '0')}
-              </span>
-              <span
-                className="flex-1 h-px"
-                style={{
-                  background: `linear-gradient(90deg, ${accent}66 0%, transparent 100%)`,
-                }}
-              />
-            </div>
-          </Reveal>
-
-          {/* Eyebrow */}
-          <Reveal delay={120} offset={14}>
-            <div
-              className="inline-flex items-center gap-2 mb-6"
-              style={{ fontFamily: 'var(--font-mono)' }}
-            >
-              <span
-                className="inline-block w-1.5 h-1.5 rounded-full"
-                style={{ background: accent, boxShadow: `0 0 8px ${accent}` }}
-              />
-              <span
-                className="text-[12px] uppercase"
-                style={{
-                  color: accent,
-                  letterSpacing: '0.18em',
-                  textShadow: `0 0 10px ${accent}88`,
-                }}
-              >
-                {eyebrow}
-              </span>
-            </div>
-          </Reveal>
-
-          {/* Title */}
-          <Reveal delay={240} offset={24}>
-            <h3
-              className="text-white font-medium mb-7"
+    <div className="w-full max-w-[1440px] mx-auto px-6 md:px-12">
+      {/* ── Eyebrow row: chapter marker + eyebrow + 横线延伸 ── */}
+      <Reveal offset={14}>
+        <div
+          className="flex items-center gap-4 mb-10 md:mb-14"
+          style={{ fontFamily: 'var(--font-mono)' }}
+        >
+          <span
+            className="text-[11px] uppercase"
+            style={{
+              color: `${accent}cc`,
+              letterSpacing: '0.22em',
+              textShadow: `0 0 8px ${accent}55`,
+            }}
+          >
+            {chapterLabel}
+          </span>
+          <span
+            className="text-[11px]"
+            style={{
+              color: `${accent}cc`,
+              letterSpacing: '0.12em',
+            }}
+          >
+            {String(chapterIndex).padStart(2, '0')} / {String(chapterTotal).padStart(2, '0')}
+          </span>
+          <span className="inline-flex items-center gap-2">
+            <span
+              className="inline-block w-1.5 h-1.5 rounded-full"
+              style={{ background: accent, boxShadow: `0 0 8px ${accent}` }}
+            />
+            <span
+              className="text-[12px] uppercase"
               style={{
-                fontFamily: 'var(--font-display)',
-                fontSize: 'clamp(1.75rem, 3.6vw, 3.25rem)',
-                lineHeight: 1.08,
-                letterSpacing: '-0.025em',
-                textShadow: `0 0 32px ${accent}26`,
+                color: accent,
+                letterSpacing: '0.18em',
+                textShadow: `0 0 10px ${accent}88`,
               }}
             >
-              {title}
-            </h3>
-          </Reveal>
+              {eyebrow}
+            </span>
+          </span>
+          <span
+            className="flex-1 h-px hidden md:block"
+            style={{
+              background: `linear-gradient(90deg, ${accent}33 0%, transparent 100%)`,
+            }}
+          />
+        </div>
+      </Reveal>
 
-          {/* Description */}
-          <Reveal delay={360} offset={18}>
-            <p className="text-white/62 text-[15px] leading-[1.75] mb-8 max-w-lg">
+      {/* ── Top row: 大标题（左 60%）+ 描述/bullets/cta（右 40%） ── */}
+      <div className="grid md:grid-cols-[1.3fr_1fr] gap-12 md:gap-24 mb-16 md:mb-24">
+        {/* LEFT · 大标题 */}
+        <Reveal delay={120} offset={28}>
+          <h3
+            className="text-white font-medium"
+            style={{
+              fontFamily: 'var(--font-display)',
+              fontSize: 'clamp(2.25rem, 5vw, 4.5rem)',
+              lineHeight: 1.02,
+              letterSpacing: '-0.035em',
+              textShadow: `0 0 40px ${accent}1f`,
+              maxWidth: '14ch',
+            }}
+          >
+            {title}
+          </h3>
+        </Reveal>
+
+        {/* RIGHT · 描述 + bullets + CTA */}
+        <div className="md:pt-5">
+          <Reveal delay={240} offset={18}>
+            <p className="text-white/65 text-[15.5px] leading-[1.75] mb-8 max-w-xl">
               {description}
             </p>
           </Reveal>
 
-          {/* Bullets —— 每条再 stagger 60ms */}
           <ul className="space-y-3 mb-9">
             {bullets.map((b, bi) => (
-              <Reveal key={bi} delay={480 + bi * 60} offset={14}>
-                <li className="flex items-start gap-3 text-[14px] text-white/78">
+              <Reveal key={bi} delay={360 + bi * 80} offset={12}>
+                <li className="flex items-start gap-3 text-[14px] text-white/80">
                   <span
                     className="mt-[9px] w-1 h-1 rounded-full shrink-0"
                     style={{ background: accent, boxShadow: `0 0 8px ${accent}` }}
@@ -203,8 +189,7 @@ function FeatureBlock({
             ))}
           </ul>
 
-          {/* Learn more */}
-          <Reveal delay={480 + bullets.length * 60 + 60} offset={12}>
+          <Reveal delay={360 + bullets.length * 80 + 60} offset={12}>
             <a
               href={`/${id}-agent`}
               className="inline-flex items-center gap-2 text-[13px] font-medium text-white/85 hover:text-white transition-colors group"
@@ -215,12 +200,93 @@ function FeatureBlock({
             </a>
           </Reveal>
         </div>
-
-        {/* Mockup side —— 从对侧 translate 出来 */}
-        <Reveal delay={180} offset={32}>
-          <div className="relative">{renderMockup(id)}</div>
-        </Reveal>
       </div>
+
+      {/* ── Mockup row: 占满宽度（带边框框出"display window"感） ── */}
+      <Reveal delay={180} offset={48}>
+        <div
+          className="relative w-full rounded-2xl overflow-hidden"
+          style={{
+            background:
+              'linear-gradient(180deg, rgba(255, 255, 255, 0.015) 0%, transparent 100%)',
+            border: '1px solid rgba(255, 255, 255, 0.06)',
+            boxShadow: `0 80px 200px -40px ${accent}33, inset 0 1px 0 rgba(255, 255, 255, 0.05)`,
+          }}
+        >
+          {/* 顶边 accent scanline */}
+          <div
+            className="absolute top-0 left-0 right-0 h-px pointer-events-none"
+            style={{
+              background: `linear-gradient(90deg, transparent 0%, ${accent}88 50%, transparent 100%)`,
+            }}
+          />
+
+          {/* Grid pattern 作为 mockup 的背景空间 */}
+          <div
+            className="absolute inset-0 pointer-events-none opacity-40"
+            style={{
+              backgroundImage: `
+                linear-gradient(rgba(255, 255, 255, 0.04) 1px, transparent 1px),
+                linear-gradient(90deg, rgba(255, 255, 255, 0.04) 1px, transparent 1px)
+              `,
+              backgroundSize: '48px 48px',
+              maskImage:
+                'radial-gradient(ellipse 80% 70% at 50% 50%, black 0%, transparent 100%)',
+              WebkitMaskImage:
+                'radial-gradient(ellipse 80% 70% at 50% 50%, black 0%, transparent 100%)',
+            }}
+          />
+
+          {/* 左侧 margin 标签 */}
+          <div
+            className="hidden xl:flex absolute left-8 top-8 bottom-8 flex-col justify-between pointer-events-none z-10"
+            style={{ fontFamily: 'var(--font-mono)' }}
+          >
+            <span
+              className="text-[10px] uppercase"
+              style={{
+                color: `${accent}77`,
+                letterSpacing: '0.24em',
+              }}
+            >
+              {id.toUpperCase()} ·
+            </span>
+            <span
+              className="text-[10px] uppercase text-white/25"
+              style={{ letterSpacing: '0.18em' }}
+            >
+              fig {String(chapterIndex).padStart(2, '0')}.0
+            </span>
+          </div>
+
+          {/* 右侧 margin 标签 */}
+          <div
+            className="hidden xl:flex absolute right-8 top-8 bottom-8 flex-col items-end justify-between pointer-events-none z-10"
+            style={{ fontFamily: 'var(--font-mono)' }}
+          >
+            <span
+              className="text-[10px] uppercase text-white/25"
+              style={{ letterSpacing: '0.18em' }}
+            >
+              MAP · AGENT
+            </span>
+            <span
+              className="text-[10px] uppercase"
+              style={{
+                color: `${accent}77`,
+                letterSpacing: '0.18em',
+              }}
+            >
+              v2.6.0
+            </span>
+          </div>
+
+          {/* 实际 mockup 容器（收窄一点留出边距） */}
+          <div className="relative px-6 md:px-12 xl:px-28 py-12 md:py-16">
+            <div className="max-w-[980px] mx-auto">{renderMockup(id)}</div>
+          </div>
+        </div>
+      </Reveal>
     </div>
   );
 }
