@@ -54,8 +54,10 @@ let branchUpdates = JSON.parse(localStorage.getItem('cds_branch_updates') || '{}
 const recentlyTouched = new Map(); // { branchId: timestamp } — branches user just operated on
 let isCheckingUpdates = false;
 
-// ── Preview mode: 'simple' (set default + open main) or 'multi' (subdomain per branch) ──
-let previewMode = localStorage.getItem('cds_preview_mode') || 'simple';
+// ── Preview mode: 'simple' (set default + open main) | 'port' (dynamic port) | 'multi' (subdomain per branch) ──
+// Server-authoritative: loaded from GET /config, persisted via PUT /preview-mode.
+// Default 'multi' matches server; overridden by loadConfig() on init.
+let previewMode = 'multi';
 
 // ── Mirror acceleration (npm/docker registry mirrors) ──
 let mirrorEnabled = false;
@@ -73,6 +75,11 @@ let executors = [];
 
 // ── Container capacity ──
 let containerCapacity = { maxContainers: 999, runningContainers: 0, totalMemGB: 0 };
+// Cluster-wide aggregate capacity (from /api/cluster/status + state-stream).
+// null = not yet loaded; when populated it drives the header badge's cluster
+// display so "总容量 X" reflects A+B+... instead of just the local master.
+let clusterCapacity = null;
+let clusterStrategy = 'least-load';
 
 // ── Utilities ──
 
@@ -199,6 +206,13 @@ function updateBranchFeedRoller(event) {
   feed.innerHTML = `<div class="roller-line roller-flip">${html}</div>`;
 }
 
+// Kick off host stats polling (5s cadence). See pollHostStats / renderHostStats.
+if (typeof window !== 'undefined') {
+  // Initial fetch ASAP so widget appears quickly
+  setTimeout(() => { try { pollHostStats(); } catch { /* not yet loaded */ } }, 500);
+  setInterval(() => { try { pollHostStats(); } catch { /* ignore */ } }, 5000);
+}
+
 // Periodically expire stale AI occupations and refresh cards
 setInterval(() => {
   let changed = false;
@@ -242,7 +256,7 @@ function initStateStream() {
         for (const pushed of data.branches) {
           const existing = branchMap.get(pushed.id);
           if (existing) {
-            // Preserve git info, update status/services
+            // Preserve git info, update status/services/executorId
             Object.assign(existing, pushed, {
               subject: existing.subject,
               commitSha: existing.commitSha,
@@ -256,6 +270,30 @@ function initStateStream() {
         branches = branches.filter(b => pushedIds.has(b.id));
         if (data.defaultBranch !== undefined) defaultBranch = data.defaultBranch;
         renderBranches();
+      }
+      // ── Cluster state updates (P0 #9, P1 #10) ──
+      //
+      // The server now ships executors + mode + aggregated capacity in the
+      // same SSE payload so we can update the header badge + cluster modal
+      // without a separate /api/config round trip. When mode flips from
+      // standalone → scheduler during a hot-join, this is what makes the
+      // dashboard react live.
+      if (Array.isArray(data.executors)) {
+        executors = data.executors;
+      }
+      if (typeof data.mode === 'string') {
+        cdsMode = data.mode;
+      }
+      if (data.capacity) {
+        clusterCapacity = data.capacity;
+      }
+      // Re-render cluster-aware surfaces. `renderCapacityBadge` now reads
+      // clusterCapacity when available, `renderExecutorPanel` picks up new
+      // status/load, and the cluster modal (if open) calls its own refresh.
+      renderExecutorPanel();
+      renderCapacityBadge();
+      if (document.querySelector('.cluster-modal')) {
+        refreshClusterModalIfOpen();
       }
     } catch {}
   };
@@ -276,6 +314,10 @@ async function loadConfig() {
     workerPort = data.workerPort || '';
     cdsMode = data.mode || 'standalone';
     executors = data.executors || [];
+    // Server-authoritative preview mode (shared across all users)
+    if (data.previewMode === 'simple' || data.previewMode === 'port' || data.previewMode === 'multi') {
+      previewMode = data.previewMode;
+    }
     renderExecutorPanel();
     // Show CDS commit hash in header
     if (data.cdsCommitHash) {
@@ -436,19 +478,30 @@ function copyBranchName(name) {
   });
 }
 
-function cyclePreviewMode() {
+async function cyclePreviewMode() {
   // Cycle: simple → port → multi → simple
   const modes = ['simple', 'port', 'multi'];
   const idx = modes.indexOf(previewMode);
-  previewMode = modes[(idx + 1) % modes.length];
-  localStorage.setItem('cds_preview_mode', previewMode);
+  const nextMode = modes[(idx + 1) % modes.length];
+  // Persist to server (shared across all users). Revert UI on failure.
+  const prev = previewMode;
+  previewMode = nextMode;
   updatePreviewModeUI();
   renderBranches();
+  try {
+    await api('PUT', '/preview-mode', { mode: nextMode });
+  } catch (e) {
+    previewMode = prev;
+    updatePreviewModeUI();
+    renderBranches();
+    showToast('切换预览模式失败: ' + e.message, 'error');
+    return;
+  }
   const labels = { simple: '简洁模式（cookie 切换）', port: '端口直连模式（无缓存问题）', multi: '子域名模式（需 PREVIEW_DOMAIN）' };
-  if (previewMode === 'multi' && !previewDomain) {
+  if (nextMode === 'multi' && !previewDomain) {
     showToast('已开启子域名预览模式，但 PREVIEW_DOMAIN 未配置，预览将回退到简洁模式。请在「变量」中设置 PREVIEW_DOMAIN。', 'error');
   } else {
-    showToast(`预览：${labels[previewMode]}`, 'info');
+    showToast(`预览：${labels[nextMode]}`, 'info');
   }
 }
 
@@ -611,6 +664,7 @@ async function loadBranches({ silent } = {}) {
       if (mainBranch) defaultBranch = mainBranch.id;
     }
     renderBranches();
+    renderCapacityBadge();
   } catch (e) { console.error('loadBranches:', e); }
   finally { if (silent) setTimeout(() => { _pollInFlight = false; }, 500); }
 }
@@ -817,6 +871,466 @@ async function addBranch(name) {
   await loadBranches();
 }
 
+// ── Container capacity badge (header indicator) ──
+//
+// Visual "fuel gauge" next to the CDS title. Battery-style fill shows
+// REMAINING capacity (not used) — a full battery means plenty of room
+// left for new containers, matching how people read real-world batteries.
+//
+//   green  (>= 40% free) — comfortable, plenty of room
+//   blue   (20-40% free) — busy but fine
+//   orange (0-20% free)  — low, consider stopping old branches
+//   red    (0% / over)   — exhausted / over-subscribed, OOM risk, pulses
+//
+// Label shows "free / total" so the number next to the battery matches
+// the visual fill. Clicking opens a detail popover with scheduler state.
+// Sourced from `containerCapacity`, updated by loadBranches() every 10s.
+// See doc/design.cds-resilience.md §八.
+
+function renderCapacityBadge() {
+  const el = document.getElementById('capacityBadge');
+  if (!el) return;
+
+  // ── Cluster-aware display (P1 #4) ──
+  //
+  // Important: once the dashboard learns about a cluster (cdsMode is
+  // 'scheduler' OR there's at least one remote executor in state), we
+  // NEVER fall back to the local container count. The local view uses a
+  // different formula ((memGB-1)*2 counting containers) while the cluster
+  // view uses a per-node formula (floor(memMB/2048) counting branches).
+  // Flickering between them gives the illusion "I added a node and the
+  // capacity SHRANK", which is what the user reported. Stay sticky on
+  // the cluster view once we're in it.
+  const remoteCount = (executors || []).filter(e => (e.role || 'remote') !== 'embedded').length;
+  const isCluster = cdsMode === 'scheduler' || remoteCount > 0;
+
+  if (isCluster) {
+    // Wait for the first SSE tick to deliver real cluster data before we
+    // render anything — otherwise we'd briefly show 0/0 at page load.
+    if (!clusterCapacity) {
+      // Show a neutral placeholder so the header doesn't flicker
+      el.classList.remove('hidden');
+      el.dataset.tier = 'blue';
+      el.dataset.cluster = '1';
+      el.setAttribute('title', '集群模式加载中...');
+      el.innerHTML = `
+        <span class="cap-battery">
+          <span class="cap-battery-fill" style="width:100%"></span>
+        </span>
+        <span class="cap-label">集群 ...</span>
+      `;
+      return;
+    }
+
+    const cap = clusterCapacity;
+    const maxBranches = cap?.total?.maxBranches || 0;
+    const usedBranches = cap?.used?.branches || 0;
+    const free = Math.max(0, maxBranches - usedBranches);
+    const freeRatio = maxBranches > 0 ? free / maxBranches : 1;
+    const fillPct = Math.round(freeRatio * 100);
+    const freePercent = cap?.freePercent || 0;
+
+    let tier;
+    if (freeRatio >= 0.4) tier = 'green';
+    else if (freeRatio >= 0.2) tier = 'blue';
+    else if (freeRatio > 0)   tier = 'orange';
+    else                      tier = 'red';
+
+    const nodesTotal = (cap?.nodes?.length) || 0;
+    const nodesOnline = (cap?.online || 0);
+    // Label: "2 节点 · 47/49" — unit is now "容器槽" (container slots)
+    // following the user's feedback "单位分支是有问题的，有些分支可能有10个容器".
+    // We count container slots = (memGB - 1) * 2, matching the existing
+    // local dashboard formula so A's 94 GB ≈ 186 slots, B's 3.6 GB ≈ 4 slots,
+    // cluster total ≈ 190 slots.
+    const label = `${nodesOnline} 节点 · ${free}/${maxBranches}`;
+
+    el.dataset.tier = tier;
+    el.dataset.over = '0';
+    el.dataset.cluster = '1';
+    el.classList.remove('hidden');
+    el.setAttribute('title',
+      `集群模式 (${cdsMode})\n` +
+      `在线节点: ${nodesOnline}/${nodesTotal}\n` +
+      `容器槽: ${free}/${maxBranches} 空闲 (公式 (memGB-1)×2)\n` +
+      `总内存: ${Math.round((cap?.total?.memoryMB || 0) / 1024)} GB\n` +
+      `总 CPU: ${cap?.total?.cpuCores || 0} 核\n` +
+      `空闲率: ${freePercent}%\n` +
+      `点击查看每台节点的详情`,
+    );
+
+    el.innerHTML = `
+      <span class="cap-battery">
+        <span class="cap-battery-fill" style="width:${fillPct}%"></span>
+      </span>
+      <span class="cap-label">${label}</span>
+    `;
+    return;
+  }
+
+  // ── Single-node display (pre-existing behavior) ──
+  el.dataset.cluster = '0';
+  const max = containerCapacity.maxContainers || 0;
+  const current = containerCapacity.runningContainers || 0;
+  const mem = containerCapacity.totalMemGB || 0;
+
+  // maxContainers === 999 means "not yet loaded" — keep hidden
+  if (!max || max >= 999) {
+    el.classList.add('hidden');
+    return;
+  }
+  el.classList.remove('hidden');
+
+  const free = Math.max(0, max - current);
+  const freeRatio = max > 0 ? free / max : 0;
+  const fillPct = Math.round(freeRatio * 100);
+  const usedPct = max > 0 ? Math.min(Math.round((current / max) * 100), 999) : 0;
+
+  let tier;
+  if (freeRatio >= 0.4) tier = 'green';
+  else if (freeRatio >= 0.2) tier = 'blue';
+  else if (freeRatio > 0)   tier = 'orange';
+  else                      tier = 'red';
+
+  const over = current > max;
+  const label = over ? `0/${max} ⚠` : `${free}/${max}`;
+
+  el.dataset.tier = tier;
+  el.dataset.over = over ? '1' : '0';
+  el.setAttribute('title',
+    `宿主机剩余容量: ${free}/${max} 空闲 (运行中 ${current}, ${mem}GB RAM, 已用 ${usedPct}%)${over ? '\n⚠ 已超售，OOM 风险' : ''}\n点击查看调度器详情`,
+  );
+
+  el.innerHTML = `
+    <span class="cap-battery">
+      <span class="cap-battery-fill" style="width:${fillPct}%"></span>
+    </span>
+    <span class="cap-label">${label}</span>
+  `;
+}
+
+/**
+ * Popover with detailed capacity + scheduler state.
+ *
+ * Renders two very different layouts depending on mode:
+ *   - Cluster mode: per-node cards showing each executor's capacity and
+ *     load, plus cluster totals at the top. Uses the same data source as
+ *     the cluster settings modal (clusterCapacity from state-stream SSE).
+ *   - Single-node mode: the original local container count + scheduler
+ *     warm-pool state, fetched from /api/scheduler/state.
+ */
+async function showCapacityDetails(event) {
+  event.stopPropagation();
+
+  const remoteCount = (executors || []).filter(e => (e.role || 'remote') !== 'embedded').length;
+  const isCluster = cdsMode === 'scheduler' || remoteCount > 0;
+
+  if (isCluster && clusterCapacity) {
+    renderClusterCapacityPopover();
+    return;
+  }
+
+  // ── Single-node (pre-existing) view ──
+  const max = containerCapacity.maxContainers || 0;
+  const current = containerCapacity.runningContainers || 0;
+  const mem = containerCapacity.totalMemGB || 0;
+  const pct = max > 0 ? Math.round((current / max) * 100) : 0;
+  const over = current > max;
+  const free = Math.max(0, max - current);
+
+  const schedulerHtml = '<div class="cap-pop-row"><em>Scheduler: 查询中...</em></div>';
+  openConfigModal('宿主机容量', `
+    <div class="cap-pop">
+      <div class="cap-pop-stats">
+        <div class="cap-pop-stat">
+          <div class="cap-pop-stat-label">剩余容量</div>
+          <div class="cap-pop-stat-value">${free} / ${max}${over ? ' ⚠' : ''}</div>
+        </div>
+        <div class="cap-pop-stat">
+          <div class="cap-pop-stat-label">运行中</div>
+          <div class="cap-pop-stat-value">${current} (${pct}%)</div>
+        </div>
+        <div class="cap-pop-stat">
+          <div class="cap-pop-stat-label">宿主机内存</div>
+          <div class="cap-pop-stat-value">${mem} GB</div>
+        </div>
+      </div>
+      ${over ? `<div class="cap-pop-warn">⚠ 超售 ${current - max} 个容器，建议启用 scheduler 或手动停止老分支以避免 OOM。</div>` : ''}
+      <div id="capPopScheduler">${schedulerHtml}</div>
+      <div class="cap-pop-help">
+        容量公式: <code>max = (totalMemGB - 1) × 2</code>（容器槽，按 Docker 容器计数）<br>
+        scheduler 启用后会按 LRU 自动驱逐最久未访问的分支。
+      </div>
+    </div>
+  `);
+
+  // Fetch scheduler state asynchronously
+  try {
+    const snap = await api('GET', '/scheduler/state');
+    const target = document.getElementById('capPopScheduler');
+    if (!target) return;
+    if (snap.enabled === false) {
+      target.innerHTML = `
+        <div class="cap-pop-row cap-pop-scheduler-off">
+          <strong>Scheduler: <span style="color:#8b949e">未启用</span></strong>
+          <div class="cap-pop-help" style="margin-top:4px">
+            在 <code>cds.config.json</code> 中设置
+            <code>scheduler.enabled = true</code> 即可自动管理容量。
+          </div>
+        </div>
+      `;
+    } else {
+      const cu = snap.capacityUsage || { current: 0, max: 0 };
+      const hotList = (snap.hot || []).map(h =>
+        `<li>${escapeHtml(h.slug)}${h.pinned ? ' <span style="color:#3fb950">📌</span>' : ''}</li>`
+      ).join('');
+      const coldList = (snap.cold || []).map(c =>
+        `<li style="opacity:0.6">${escapeHtml(c.slug)}</li>`
+      ).join('');
+      target.innerHTML = `
+        <div class="cap-pop-scheduler">
+          <strong>Scheduler: <span style="color:#3fb950">已启用</span> (${cu.current}/${cu.max} hot)</strong>
+          ${hotList ? `<div class="cap-pop-help">HOT 分支:</div><ul class="cap-pop-list">${hotList}</ul>` : ''}
+          ${coldList ? `<div class="cap-pop-help">COLD 分支:</div><ul class="cap-pop-list">${coldList}</ul>` : ''}
+        </div>
+      `;
+    }
+  } catch (err) {
+    const target = document.getElementById('capPopScheduler');
+    if (target) {
+      target.innerHTML = `<div class="cap-pop-row"><em style="color:#f85149">Scheduler 查询失败: ${escapeHtml(err.message || String(err))}</em></div>`;
+    }
+  }
+}
+
+/**
+ * Cluster-wide capacity popover. Rendered when the user clicks the header
+ * badge while the dashboard is in cluster mode. Shows aggregate numbers
+ * at the top and each node as a card with its own memory/CPU/branch bars.
+ */
+function renderClusterCapacityPopover() {
+  const cap = clusterCapacity;
+  const nodes = cap?.nodes || [];
+  const totalMem = cap?.total?.memoryMB || 0;
+  const totalMemGB = Math.round(totalMem / 1024);
+  const totalCpu = cap?.total?.cpuCores || 0;
+  const totalBranches = cap?.total?.maxBranches || 0;
+  const usedBranches = cap?.used?.branches || 0;
+  const freeBranches = Math.max(0, totalBranches - usedBranches);
+  const freePercent = cap?.freePercent || 0;
+  const onlineCount = cap?.online || 0;
+  const offlineCount = cap?.offline || 0;
+
+  const nodeCards = nodes.map(n => {
+    const role = n.role || 'remote';
+    const status = n.status || 'unknown';
+    const nCap = n.capacity || { maxBranches: 0, memoryMB: 0, cpuCores: 0 };
+    const nLoad = n.load || { memoryUsedMB: 0, cpuPercent: 0 };
+    const memPct = nCap.memoryMB > 0 ? Math.round(nLoad.memoryUsedMB / nCap.memoryMB * 100) : 0;
+    const branchPct = nCap.maxBranches > 0 ? Math.round((n.branchCount || 0) / nCap.maxBranches * 100) : 0;
+    const memGB = (nLoad.memoryUsedMB / 1024).toFixed(1);
+    const totalGB = (nCap.memoryMB / 1024).toFixed(1);
+    const statusLabel = { online: '在线', offline: '离线', draining: '排空中' }[status] || status;
+    const roleIcon = role === 'embedded'
+      ? '<svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M8 .25a.75.75 0 01.673.418l1.882 3.815 4.21.612a.75.75 0 01.416 1.279l-3.046 2.97.719 4.192a.75.75 0 01-1.088.791L8 12.347l-3.766 1.98a.75.75 0 01-1.088-.79l.72-4.194L.818 6.374a.75.75 0 01.416-1.28l4.21-.611L7.327.668A.75.75 0 018 .25z"/></svg>'
+      : '<svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M2 2.75A2.75 2.75 0 014.75 0h6.5A2.75 2.75 0 0114 2.75v10.5A2.75 2.75 0 0111.25 16h-6.5A2.75 2.75 0 012 13.25V2.75zm2.75-1.25a1.25 1.25 0 00-1.25 1.25v10.5c0 .69.56 1.25 1.25 1.25h6.5c.69 0 1.25-.56 1.25-1.25V2.75c0-.69-.56-1.25-1.25-1.25h-6.5zM6 4.75A.75.75 0 016.75 4h2.5a.75.75 0 010 1.5h-2.5A.75.75 0 016 4.75zm0 3A.75.75 0 016.75 7h2.5a.75.75 0 010 1.5h-2.5A.75.75 0 016 7.75zm0 3a.75.75 0 01.75-.75h2.5a.75.75 0 010 1.5h-2.5a.75.75 0 01-.75-.75z"/></svg>';
+
+    return `
+      <div class="cluster-pop-node cluster-pop-node-${status}">
+        <div class="cluster-pop-node-head">
+          <span class="cluster-pop-node-icon">${roleIcon}</span>
+          <span class="cluster-pop-node-name">${esc(n.id)}</span>
+          <span class="cluster-pop-node-pill cluster-pop-status-${status}">${statusLabel}</span>
+        </div>
+        <div class="cluster-pop-node-sub">${esc(n.host || '?')} · ${nCap.cpuCores} CPU · ${totalGB} GB RAM · ${role === 'embedded' ? '本机' : '远程'}</div>
+        <div class="cluster-pop-node-bars">
+          <div class="cluster-pop-bar">
+            <div class="cluster-pop-bar-label">内存</div>
+            <div class="cluster-pop-bar-track"><div class="cluster-pop-bar-fill ${memPct > 85 ? 'danger' : memPct > 65 ? 'warn' : ''}" style="width:${Math.min(memPct, 100)}%"></div></div>
+            <div class="cluster-pop-bar-value">${memGB} / ${totalGB} GB</div>
+          </div>
+          <div class="cluster-pop-bar">
+            <div class="cluster-pop-bar-label">CPU</div>
+            <div class="cluster-pop-bar-track"><div class="cluster-pop-bar-fill ${nLoad.cpuPercent > 85 ? 'danger' : nLoad.cpuPercent > 65 ? 'warn' : ''}" style="width:${Math.min(nLoad.cpuPercent, 100)}%"></div></div>
+            <div class="cluster-pop-bar-value">${nLoad.cpuPercent}%</div>
+          </div>
+          <div class="cluster-pop-bar">
+            <div class="cluster-pop-bar-label">分支</div>
+            <div class="cluster-pop-bar-track"><div class="cluster-pop-bar-fill" style="width:${Math.min(branchPct, 100)}%"></div></div>
+            <div class="cluster-pop-bar-value">${n.branchCount || 0} / ${nCap.maxBranches}</div>
+          </div>
+        </div>
+      </div>
+    `;
+  }).join('');
+
+  openConfigModal('集群容量', `
+    <div class="cluster-pop">
+      <div class="cluster-pop-summary">
+        <div class="cluster-pop-stat">
+          <div class="cluster-pop-stat-label">节点</div>
+          <div class="cluster-pop-stat-value">
+            ${onlineCount}
+            <span class="cluster-pop-stat-hint">/ ${onlineCount + offlineCount} 在线</span>
+          </div>
+        </div>
+        <div class="cluster-pop-stat">
+          <div class="cluster-pop-stat-label">容器槽</div>
+          <div class="cluster-pop-stat-value">
+            ${freeBranches}
+            <span class="cluster-pop-stat-hint">/ ${totalBranches} 空闲</span>
+          </div>
+        </div>
+        <div class="cluster-pop-stat">
+          <div class="cluster-pop-stat-label">总内存</div>
+          <div class="cluster-pop-stat-value">${totalMemGB}<span class="cluster-pop-stat-hint"> GB</span></div>
+        </div>
+        <div class="cluster-pop-stat">
+          <div class="cluster-pop-stat-label">总 CPU</div>
+          <div class="cluster-pop-stat-value">${totalCpu}<span class="cluster-pop-stat-hint"> 核</span></div>
+        </div>
+        <div class="cluster-pop-stat">
+          <div class="cluster-pop-stat-label">空闲率</div>
+          <div class="cluster-pop-stat-value">${freePercent}<span class="cluster-pop-stat-hint">%</span></div>
+        </div>
+      </div>
+
+      <div class="cluster-pop-section-title">节点详情</div>
+      <div class="cluster-pop-nodes">
+        ${nodeCards}
+      </div>
+
+      <div class="cluster-pop-help">
+        单节点容器槽公式: <code>(memGB - 1) × 2</code>（每容器约 500 MB RAM，减去 1 GB 系统开销）<br>
+        一个分支可能跑 1-10 个容器（API + admin + DB + ...），所以我们按容器计数而不是按分支。<br>
+        调度策略: <code>${esc(clusterStrategy)}</code>（在集群设置里切换）
+      </div>
+    </div>
+  `);
+}
+
+// (escapeHtml is defined later in the file and hoisted — reused by the popover above)
+
+// ── Host stats pulse (bottom-right MEM + CPU widget) ──
+//
+// Poll /api/host-stats every 5s and render compact MEM + CPU bars in the
+// bottom-right, above the Activity Monitor. Complements the header's
+// container capacity badge:
+//   - Header badge: "how many containers" (business/capacity view)
+//   - This widget: "how stressed is the host" (raw resource view)
+//
+// Hidden until the first successful fetch to avoid rendering "--".
+// Disabled entirely if CDS is unreachable (fetch silently fails, widget
+// fades out via CSS transition).
+
+let _hostStatsLastData = null;
+let _hostStatsFailCount = 0;
+
+async function pollHostStats() {
+  try {
+    const data = await api('GET', '/host-stats', null, { poll: true });
+    _hostStatsLastData = data;
+    _hostStatsFailCount = 0;
+    renderHostStats(data);
+  } catch (err) {
+    _hostStatsFailCount++;
+    // Hide widget after 3 consecutive failures (probably CDS restart in progress)
+    if (_hostStatsFailCount >= 3) {
+      const el = document.getElementById('hostStatsWidget');
+      if (el) el.classList.add('hidden');
+    }
+  }
+}
+
+function renderHostStats(data) {
+  const el = document.getElementById('hostStatsWidget');
+  if (!el) return;
+  el.classList.remove('hidden');
+
+  const memPct = data.mem?.usedPercent ?? 0;
+  const cpuPct = data.cpu?.loadPercent ?? 0;
+
+  // Memory bar
+  const memFill = document.getElementById('hsMemFill');
+  const memValue = document.getElementById('hsMemValue');
+  if (memFill) {
+    memFill.style.width = `${Math.min(memPct, 100)}%`;
+    memFill.dataset.tier = tierForPercent(memPct);
+  }
+  if (memValue) memValue.textContent = `${memPct}%`;
+
+  // CPU bar — loadPercent can exceed 100 on oversubscribed hosts, cap the fill
+  const cpuFill = document.getElementById('hsCpuFill');
+  const cpuValue = document.getElementById('hsCpuValue');
+  if (cpuFill) {
+    cpuFill.style.width = `${Math.min(cpuPct, 100)}%`;
+    cpuFill.dataset.tier = tierForPercent(cpuPct);
+  }
+  if (cpuValue) cpuValue.textContent = `${cpuPct}%`;
+
+  // Whole-widget warning if either metric is critical (>= 90%)
+  el.dataset.stress = (memPct >= 90 || cpuPct >= 90) ? '1' : '0';
+}
+
+function tierForPercent(pct) {
+  if (pct >= 90) return 'red';
+  if (pct >= 75) return 'orange';
+  if (pct >= 50) return 'blue';
+  return 'green';
+}
+
+async function showHostStatsDetails(event) {
+  event.stopPropagation();
+  const d = _hostStatsLastData;
+  if (!d) return;
+  const uptimeDays = Math.floor(d.uptimeSeconds / 86400);
+  const uptimeHours = Math.floor((d.uptimeSeconds % 86400) / 3600);
+  const uptimeMinutes = Math.floor((d.uptimeSeconds % 3600) / 60);
+  const uptimeStr = uptimeDays > 0
+    ? `${uptimeDays}d ${uptimeHours}h`
+    : uptimeHours > 0
+    ? `${uptimeHours}h ${uptimeMinutes}m`
+    : `${uptimeMinutes}m`;
+
+  openConfigModal('宿主机实时负载', `
+    <div class="cap-pop">
+      <div class="cap-pop-stats">
+        <div class="cap-pop-stat">
+          <div class="cap-pop-stat-label">内存使用</div>
+          <div class="cap-pop-stat-value">${d.mem.usedPercent}%</div>
+          <div class="cap-pop-help">${Math.round((d.mem.totalMB - d.mem.freeMB) / 1024 * 10) / 10} / ${Math.round(d.mem.totalMB / 1024 * 10) / 10} GB</div>
+        </div>
+        <div class="cap-pop-stat">
+          <div class="cap-pop-stat-label">CPU 负载</div>
+          <div class="cap-pop-stat-value">${d.cpu.loadPercent}%</div>
+          <div class="cap-pop-help">${d.cpu.loadAvg1} / ${d.cpu.cores} 核</div>
+        </div>
+        <div class="cap-pop-stat">
+          <div class="cap-pop-stat-label">系统运行</div>
+          <div class="cap-pop-stat-value">${uptimeStr}</div>
+          <div class="cap-pop-help">uptime</div>
+        </div>
+      </div>
+      <div class="cap-pop-scheduler">
+        <strong>负载历史 (loadavg)</strong>
+        <div class="cap-pop-help" style="margin-top:6px">
+          1 分钟: <strong>${d.cpu.loadAvg1}</strong> &nbsp;·&nbsp;
+          5 分钟: <strong>${d.cpu.loadAvg5}</strong> &nbsp;·&nbsp;
+          15 分钟: <strong>${d.cpu.loadAvg15}</strong>
+        </div>
+        <div class="cap-pop-help" style="margin-top:6px">
+          宿主机共 ${d.cpu.cores} 个逻辑核,loadavg > ${d.cpu.cores} 时 CPU 过载。
+        </div>
+      </div>
+      <div class="cap-pop-help">
+        这是 Node.js <code>os.totalmem()</code> + <code>os.loadavg()</code> 的实时快照,
+        每 5 秒通过 <code>/api/host-stats</code> 轮询。
+        <br>和 header 上的"容器容量"互为补充:一个看业务维度(容器数),一个看资源维度(内存/CPU)。
+      </div>
+    </div>
+  `);
+}
+
 // ── Container capacity check ──
 
 function getNewContainerCount(branchId, profileId) {
@@ -869,7 +1383,17 @@ function branchDisplayLabel(br) {
   return `${tagStr}${esc(br.branch)}`;
 }
 
-function checkCapacityAndDeploy(id, profileId) {
+function checkCapacityAndDeploy(id, profileId, targetExecutorId) {
+  // If we're dispatching to a specific remote executor OR the cluster has
+  // remote executors available, skip the local capacity warning entirely.
+  // Capacity is checked on the target executor side, not here.
+  const remoteOnline = (executors || []).filter(e => (e.role || 'remote') !== 'embedded' && e.status === 'online').length;
+  if (targetExecutorId || remoteOnline > 0) {
+    if (profileId) deploySingleServiceDirect(id, profileId);
+    else deployBranchDirect(id, targetExecutorId);
+    return;
+  }
+
   const newCount = getNewContainerCount(id, profileId);
   const afterDeploy = containerCapacity.runningContainers + newCount;
   if (newCount === 0 || afterDeploy <= containerCapacity.maxContainers) {
@@ -972,7 +1496,28 @@ async function deployBranch(id) {
   checkCapacityAndDeploy(id, null);
 }
 
-async function deployBranchDirect(id) {
+/**
+ * Cluster-aware deploy entry point (P0 #3).
+ *
+ * `targetExecutorId` semantics:
+ *   - null / undefined → let the backend dispatcher pick by strategy
+ *   - '<executor-id>'  → force deploy to that specific node (also used to
+ *     "pin" a branch back to the embedded master when migrating away from
+ *     a remote executor)
+ *
+ * The backend's POST /api/branches/:id/deploy reads the targetExecutorId
+ * from the request body and proxies to the chosen executor's /exec/deploy.
+ */
+async function deployToTarget(id, targetExecutorId) {
+  // Remember the target for this session so the next "quick deploy" click
+  // (the main button) doesn't lose the pinning. We stash it on the branch
+  // object in memory — the backend will echo it back via state-stream.
+  const br = branches.find(b => b.id === id);
+  if (br && targetExecutorId) br.executorId = targetExecutorId;
+  checkCapacityAndDeploy(id, null, targetExecutorId);
+}
+
+async function deployBranchDirect(id, targetExecutorId) {
   if (busyBranches.has(id)) return;
   markTouched(id);
   busyBranches.add(id);
@@ -983,7 +1528,12 @@ async function deployBranchDirect(id) {
   renderBranches();
 
   try {
-    const res = await fetch(`${API}/branches/${id}/deploy`, { method: 'POST' });
+    const body = targetExecutorId ? { targetExecutorId } : {};
+    const res = await fetch(`${API}/branches/${id}/deploy`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
     if (!res.ok) {
       const data = await res.json().catch(() => ({}));
       throw new Error(data.error || `部署失败 (HTTP ${res.status})`);
@@ -1800,9 +2350,43 @@ let openDeployMenuId = null;
 
 function positionPortalDropdown(el, anchor, align = 'left') {
   const r = anchor.getBoundingClientRect();
-  el.style.top = `${r.bottom + 4}px`;
   // Measure after appending (display must not be 'none')
   const w = el.offsetWidth || 140;
+  const h = el.offsetHeight || 0;
+
+  // ── Vertical placement (P2 #12 fix) ──
+  //
+  // Previously this always placed the dropdown BELOW the anchor, which
+  // caused the menu to run off-screen when the branch card was near the
+  // window bottom (user saw "api: 开发模式..." truncated by the viewport).
+  // Now we flip to ABOVE when the menu wouldn't fit below; if neither fits
+  // we clamp to whichever side has more room and set max-height so the
+  // menu scrolls internally.
+  const margin = 8;
+  const spaceBelow = window.innerHeight - r.bottom - margin;
+  const spaceAbove = r.top - margin;
+  if (h + 4 <= spaceBelow) {
+    el.style.top = `${r.bottom + 4}px`;
+    el.style.maxHeight = '';
+  } else if (h + 4 <= spaceAbove) {
+    // Flip up — place the bottom of the menu just above the anchor.
+    el.style.top = `${r.top - h - 4}px`;
+    el.style.maxHeight = '';
+  } else {
+    // Neither side fits the full menu. Pick whichever has more room and
+    // constrain the menu height so it scrolls internally instead of
+    // overflowing the viewport.
+    if (spaceBelow >= spaceAbove) {
+      el.style.top = `${r.bottom + 4}px`;
+      el.style.maxHeight = `${Math.max(spaceBelow, 120)}px`;
+    } else {
+      el.style.maxHeight = `${Math.max(spaceAbove, 120)}px`;
+      el.style.top = `${margin}px`;
+    }
+    el.style.overflowY = 'auto';
+  }
+
+  // ── Horizontal placement (unchanged) ──
   if (align === 'right') {
     let left = r.right - w;
     if (left < 8) left = 8;
@@ -1895,6 +2479,11 @@ function toggleSettingsMenu(event) {
     <div class="settings-menu-item" onclick="closeSettingsMenu(); openRoutingModal()">
       <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M8 0a8 8 0 100 16A8 8 0 008 0zM1.5 8a6.5 6.5 0 0113 0h-2.1a8.3 8.3 0 00-.4-2.2 9 9 0 00-1-1.9A4.5 4.5 0 017 7.5H4.5A8.3 8.3 0 001.5 8zm5.5 5.5a6.5 6.5 0 01-5.4-3h2.3c.3 1.2.8 2.2 1.5 3H7zm1-5.5a7.8 7.8 0 014-3.8c.5.6.9 1.2 1.2 1.8H8zm0 1h5.4a8.3 8.3 0 01-.3 2H8.9 8V9zm0 3h3.8c-.6 1.3-1.5 2.4-2.8 3A6.5 6.5 0 018 9z"/></svg>
       路由规则
+    </div>
+    <div class="settings-menu-item" onclick="closeSettingsMenu(); openClusterModal()">
+      <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M3 2.5a.5.5 0 01.5-.5h9a.5.5 0 01.5.5v2a.5.5 0 01-.5.5h-9a.5.5 0 01-.5-.5v-2zM3.5 1A1.5 1.5 0 002 2.5v2A1.5 1.5 0 003.5 6h9A1.5 1.5 0 0014 4.5v-2A1.5 1.5 0 0012.5 1h-9zM3 7.5a.5.5 0 01.5-.5h9a.5.5 0 01.5.5v2a.5.5 0 01-.5.5h-9a.5.5 0 01-.5-.5v-2zM3.5 6A1.5 1.5 0 002 7.5v2A1.5 1.5 0 003.5 11h9A1.5 1.5 0 0014 9.5v-2A1.5 1.5 0 0012.5 6h-9zm0 6A1.5 1.5 0 002 13.5v1A1.5 1.5 0 003.5 16h9a1.5 1.5 0 001.5-1.5v-1a1.5 1.5 0 00-1.5-1.5h-9zm0 1h9a.5.5 0 01.5.5v1a.5.5 0 01-.5.5h-9a.5.5 0 01-.5-.5v-1a.5.5 0 01.5-.5z"/></svg>
+      集群
+      <span id="clusterStatusBadge" style="margin-left:auto;font-size:11px;color:#8b949e"></span>
     </div>
     <div class="settings-menu-item settings-menu-switch" onclick="cyclePreviewMode()">
       <span class="settings-menu-switch-label">预览模式</span>
@@ -2090,8 +2679,30 @@ function renderBranches() {
     // Build stop menu item for deploy dropdown
     const stopMenuItem = isRunning ? `<div class="deploy-menu-divider"></div><div class="deploy-menu-item deploy-menu-item-danger" onclick="event.stopPropagation(); closeDeployMenu('${esc(b.id)}'); stopBranch('${esc(b.id)}')">停止所有服务</div>` : '';
 
+    // Executor tag — rendered as the first chip in the port-badges row when
+    // the branch is dispatched to a remote executor. We deliberately put it
+    // at the START of that row (same visual group as "where things run")
+    // instead of next to the branch name, because:
+    //   1. The branch name + executor-id together overflowed on long names
+    //   2. The port badges row is semantically "placement info" already —
+    //      ⚡ <node> fits right in as "placed on <node>"
+    //   3. Distinct styling (gold ⚡ icon + different bg) keeps it from
+    //      being confused with a regular port badge
+    // Hidden entirely when the branch runs on the embedded master (local)
+    // or single-node mode, to avoid clutter.
+    const remoteExecForThisBranch =
+      b.executorId && !b.executorId.startsWith('master-')
+        ? (executors || []).find(e => e.id === b.executorId)
+        : null;
+    const executorTagHtml = remoteExecForThisBranch
+      ? `<span class="executor-tag port-row-exec ${remoteExecForThisBranch.status === 'offline' ? 'offline' : ''}"
+              title="部署在执行器 ${esc(b.executorId)} (${esc(remoteExecForThisBranch.host)})${remoteExecForThisBranch.status === 'offline' ? ' — 已离线' : ''}">
+          ⚡ ${esc(b.executorId.replace(/^executor-/, '').slice(0, 24))}
+        </span>`
+      : '';
+
     // Port badges — icon + name:port, icon from profile config
-    const portBadgesHtml = services.length > 0 ? services.map(([pid, svc]) => {
+    const portBadgesInner = services.length > 0 ? services.map(([pid, svc]) => {
       const profile = buildProfiles.find(p => p.id === pid);
       const icon = getPortIcon(pid, profile);
       const badgeClass = svc.status === 'running' ? 'run-port' : svc.status === 'starting' ? 'port-starting' : svc.status === 'stopping' ? 'port-stopping' : svc.status === 'building' ? 'port-building' : svc.status === 'error' ? 'port-error' : 'port-idle';
@@ -2102,13 +2713,17 @@ function renderBranches() {
                 ${icon} ${esc(pid)}:${svc.hostPort}
               </span>`;
     }).join('') : '';
+    const portBadgesHtml = (executorTagHtml || portBadgesInner)
+      ? `${executorTagHtml}${portBadgesInner}`
+      : '';
 
-    // Tags — shown below header
+    // Tags — shown below header (dimmed when not deployed)
     const branchTags = b.tags || [];
+    const tagDimClass = isRunning ? '' : ' branch-tag-dim';
     const tagsHtml = `
       <div class="branch-tags-line">
         ${branchTags.map(t => `
-          <span class="branch-tag" onclick="event.stopPropagation(); filterByTag('${esc(t)}')" title="筛选标签: ${esc(t)}">
+          <span class="branch-tag${tagDimClass}" onclick="event.stopPropagation(); filterByTag('${esc(t)}')" title="筛选标签: ${esc(t)}">
             ${ICON.tag} ${esc(t)}
             <span class="branch-tag-remove" onclick="event.stopPropagation(); removeTagFromBranch('${esc(b.id)}', '${esc(t)}', event)" title="删除标签">&times;</span>
           </span>
@@ -2123,11 +2738,33 @@ function renderBranches() {
     let actionsLeftHtml = '';
     let actionsRightHtml = '';
 
+    // Cluster dispatch submenu — only shown when there's a cluster to
+    // dispatch to. Lets the user force a specific target executor for this
+    // deploy. "auto" falls through to the dispatcher's strategy.
+    const remoteExecs = (executors || []).filter(e => (e.role || 'remote') !== 'embedded' && e.status === 'online');
+    const hasCluster = remoteExecs.length > 0;
+    const currentTarget = b.executorId;
+    const targetMenuItems = hasCluster ? `
+      <div class="deploy-menu-divider"></div>
+      <div class="deploy-menu-header">派发到 (${remoteExecs.length + 1} 节点)</div>
+      <div class="deploy-menu-item" onclick="event.stopPropagation(); closeDeployMenu('${esc(b.id)}'); deployToTarget('${esc(b.id)}', null)">
+        ${!currentTarget || currentTarget.startsWith('master-') ? '✓ ' : ''}自动 (按策略 ${esc(clusterStrategy)})
+      </div>
+      ${(executors || []).map(ex => {
+        if (ex.status !== 'online') return '';
+        const checked = currentTarget === ex.id ? '✓ ' : '';
+        const shortId = ex.id.replace(/^executor-/, '').replace(/^master-/, '').slice(0, 20);
+        const roleTag = ex.role === 'embedded' ? ' (本机)' : '';
+        return `<div class="deploy-menu-item" onclick="event.stopPropagation(); closeDeployMenu('${esc(b.id)}'); deployToTarget('${esc(b.id)}', '${esc(ex.id)}')">${checked}${esc(shortId)}${roleTag}</div>`;
+      }).join('')}
+    ` : '';
+
     // Unified deploy menu template (shared across states)
     const deployMenuTpl = `
       <template id="deploy-menu-tpl-${esc(b.id)}">
         ${hasMultipleProfiles ? `<div class="deploy-menu-header">选择服务</div>${deployMenuItems}` : ''}
         ${hasDeployModes ? `${hasMultipleProfiles ? '<div class="deploy-menu-divider"></div>' : ''}<div class="deploy-menu-header">部署模式</div>${deployModeMenuItems}` : ''}
+        ${targetMenuItems}
         ${isRunning ? `<div class="deploy-menu-divider"></div>
         <div class="deploy-menu-item" onclick="event.stopPropagation(); closeDeployMenu('${esc(b.id)}'); viewBranchLogs('${esc(b.id)}')"><svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor" style="vertical-align:-1px;margin-right:4px"><path d="M1 2.75C1 1.784 1.784 1 2.75 1h10.5c.966 0 1.75.784 1.75 1.75v7.5A1.75 1.75 0 0113.25 12H9.06l-2.573 2.573A1.458 1.458 0 014 13.543V12H2.75A1.75 1.75 0 011 10.25v-7.5zm1.5 0a.25.25 0 01.25-.25h10.5a.25.25 0 01.25.25v7.5a.25.25 0 01-.25.25h-4.5a.75.75 0 00-.75.75v2.19l-2.72-2.72a.75.75 0 00-.53-.22H2.75a.25.25 0 01-.25-.25v-7.5z"/></svg>部署日志</div>
         ${stopMenuItem}` : ''}
@@ -2265,7 +2902,6 @@ function renderBranches() {
             <span class="pinned-commit-badge" onclick="event.stopPropagation(); checkoutCommit('${esc(b.id)}', '', true, '')" title="已固定到历史提交 ${esc(b.pinnedCommit)}，点击恢复最新">📌 ${esc(b.pinnedCommit)}</span>
           </div>` : ''}
           ${portBadgesHtml ? `<div class="branch-card-ports">${portBadgesHtml}</div>` : ''}
-          ${b.executorId ? `<span class="executor-tag" title="部署在执行器 ${esc(b.executorId)}">⚡ ${esc(b.executorId.replace(/^executor-/, '').slice(0, 20))}</span>` : ''}
         </div>
         ${b.errorMessage && !deployLog ? `<div class="branch-error" title="${esc(b.errorMessage)}">${esc(b.errorMessage)}</div>` : ''}
         <div class="branch-card-body">
@@ -2868,7 +3504,7 @@ async function openSelfUpdate() {
       </div>
     </div>
     <div class="form-row" style="margin-top:4px;font-size:12px;color:var(--fg-muted)">
-      当前分支：<code>${esc(current)}</code>${commitHash ? ` @ <code style="color:var(--blue)">${esc(commitHash)}</code>` : ''}
+      当前分支：<code style="word-break:break-all">${esc(current)}</code>${commitHash ? `<span style="white-space:nowrap"> @ <code style="color:var(--blue)">${esc(commitHash)}</code></span>` : ''}
     </div>
     <div id="selfUpdateProgress" style="display:none;margin-top:12px">
       <div id="selfUpdateSteps" style="display:flex;flex-direction:column;gap:6px"></div>
@@ -4425,9 +5061,16 @@ function escapeHtml(s) {
 let migrationTasks = [];
 let migrationToolInstalled = null;
 let loadedCollections = [];
+let cdsPeers = [];
+/** true when the new-migration modal is in edit mode; stores the id being edited */
+let migrationEditingId = null;
 
 async function loadMigrations() {
   try { migrationTasks = await api('GET', '/data-migrations'); } catch { migrationTasks = []; }
+}
+
+async function loadCdsPeers() {
+  try { cdsPeers = await api('GET', '/data-migrations/peers'); } catch { cdsPeers = []; }
 }
 
 function migStatusColor(s) { return { pending: 'var(--fg-muted)', running: 'var(--blue)', completed: 'var(--green)', failed: 'var(--red)' }[s] || 'var(--fg-muted)'; }
@@ -4438,6 +5081,10 @@ function formatConnSummary(conn) {
   if (!conn) return '—';
   const db = conn.database ? `/${conn.database}` : '';
   if (conn.type === 'local') return `本机 MongoDB${db}`;
+  if (conn.type === 'cds') {
+    const peer = cdsPeers.find(p => p.id === conn.cdsPeerId);
+    return `🔑 ${peer?.name || conn.cdsPeerId || '未知 CDS'}${db}`;
+  }
   return `${conn.host || '?'}:${conn.port || 27017}${db}`;
 }
 
@@ -4491,6 +5138,7 @@ function renderMigrationCard(m) {
       ` : ''}
       <div class="mig-card-actions">
         ${canRun ? `<button class="sm" onclick="executeMigration('${m.id}')">▶ 执行</button>` : ''}
+        ${m.status !== 'running' ? `<button class="sm" onclick="editMigration('${m.id}')">✎ 编辑</button>` : ''}
         <button class="sm" onclick="cloneMigration('${m.id}')">⧉ 克隆</button>
         ${m.log ? `<button class="sm" onclick="showMigrationLog('${m.id}')">📋 日志</button>` : ''}
         ${m.status !== 'running' ? `<button class="sm danger-text" onclick="deleteMigration('${m.id}')">删除</button>` : ''}
@@ -4500,14 +5148,16 @@ function renderMigrationCard(m) {
 }
 
 async function openMigrationModal() {
-  await loadMigrations();
+  await Promise.all([loadMigrations(), loadCdsPeers()]);
   const listHtml = migrationTasks.length === 0
     ? '<div class="config-empty">暂无迁移任务。点击"新建迁移"开始配置。</div>'
     : migrationTasks.slice().reverse().map(renderMigrationCard).join('');
+  const peerCount = cdsPeers.length;
   openConfigModal('数据迁移', `
-    <p class="config-panel-desc">MongoDB 数据迁移。支持全库或指定集合迁移，可配置 SSH 隧道。</p>
+    <p class="config-panel-desc">MongoDB 数据迁移。支持本机 / 远程 / CDS 密钥（跨 CDS 一键直连）。管道流式传输，无临时文件。</p>
     <div class="config-panel-actions" style="margin-bottom:10px;display:flex;gap:6px;flex-wrap:wrap">
       <button class="sm primary" onclick="openNewMigrationModal()">+ 新建迁移</button>
+      <button class="sm" onclick="openPeersModal()">🔑 CDS 密钥管理${peerCount ? ` (${peerCount})` : ''}</button>
       <button class="sm" onclick="checkMigrationTools()">🔧 工具状态</button>
     </div>
     <div id="migrationToolStatus" style="font-size:12px;margin-bottom:8px;display:none"></div>
@@ -4561,52 +5211,76 @@ async function installMigrationTools() {
 function buildConnectionForm(prefix, defaultType, isSource) {
   const mongoSvc = infraServices.find(s => s.id === 'mongodb');
   const hasLocalMongo = !!mongoSvc;
+  const peerOptions = cdsPeers.map(p =>
+    `<option value="${esc(p.id)}">${esc(p.name)} · ${esc((p.baseUrl || '').replace(/^https?:\/\//, ''))}</option>`
+  ).join('');
   return `
     <div class="migration-conn-panel">
-      <div class="form-row" style="margin-bottom:6px">
-        <select id="${prefix}Type" class="form-input" onchange="onConnTypeChange('${prefix}', ${isSource})" style="font-size:12px">
+      <div class="form-row mc-row" style="margin-bottom:6px">
+        <select id="${prefix}Type" class="form-input mc-input" onchange="onConnTypeChange('${prefix}', ${isSource})">
           ${hasLocalMongo ? `<option value="local" ${defaultType === 'local' ? 'selected' : ''}>本机 MongoDB${mongoSvc?.status === 'running' ? ' ●' : ''}</option>` : ''}
+          <option value="cds" ${defaultType === 'cds' ? 'selected' : ''}>🔑 CDS 密钥 (跨 CDS 直连)</option>
           <option value="remote" ${defaultType === 'remote' || !hasLocalMongo ? 'selected' : ''}>远程 MongoDB</option>
         </select>
       </div>
-      <div id="${prefix}RemoteFields" style="${defaultType === 'local' && hasLocalMongo ? 'display:none' : ''}">
-        <div class="form-row">
-          <input id="${prefix}Host" class="form-input" placeholder="主机地址" value="127.0.0.1">
-          <input id="${prefix}Port" class="form-input sm" placeholder="端口" value="27017" type="number" style="flex:0.4">
-        </div>
-        <div class="form-row">
-          <input id="${prefix}Username" class="form-input" placeholder="用户名 (可选)">
-          <input id="${prefix}Password" class="form-input" placeholder="密码 (可选)" type="password">
-        </div>
-        <div class="form-row">
-          <input id="${prefix}AuthDb" class="form-input" placeholder="认证库 (默认 admin)">
+
+      <div id="${prefix}CdsFields" style="${defaultType === 'cds' ? '' : 'display:none'}">
+        <div class="form-row mc-row">
+          <select id="${prefix}CdsPeer" class="form-input mc-input" onchange="onCdsPeerChange('${prefix}', ${isSource})">
+            <option value="">${cdsPeers.length ? '(请选择 CDS 密钥)' : '(未添加，请点击「管理密钥」)'}</option>
+            ${peerOptions}
+          </select>
+          <button type="button" class="sm mc-btn" onclick="openPeersModal()" title="管理 CDS 密钥">🔑</button>
         </div>
       </div>
+
+      <div id="${prefix}RemoteFields" style="${(defaultType === 'local' && hasLocalMongo) || defaultType === 'cds' ? 'display:none' : ''}">
+        <div class="form-row mc-row">
+          <input id="${prefix}Host" class="form-input mc-input mc-host" placeholder="主机地址" value="127.0.0.1">
+          <input id="${prefix}Port" class="form-input mc-input mc-port" placeholder="端口" value="27017" type="number">
+        </div>
+        <div class="form-row mc-row">
+          <input id="${prefix}Username" class="form-input mc-input" placeholder="用户名 (可选)">
+          <input id="${prefix}Password" class="form-input mc-input" placeholder="密码 (可选)" type="password">
+        </div>
+        <div class="form-row mc-row">
+          <input id="${prefix}AuthDb" class="form-input mc-input" placeholder="认证库 (默认 admin)">
+        </div>
+      </div>
+
       <div id="${prefix}DbArea">
-        <div class="form-row">
-          <select id="${prefix}Database" class="form-input" style="font-size:12px" onchange="onDbChange('${prefix}', ${isSource})">
+        <div class="form-row mc-row">
+          <select id="${prefix}Database" class="form-input mc-input" onchange="onDbChange('${prefix}', ${isSource})">
             <option value="">加载中...</option>
           </select>
         </div>
       </div>
       ${isSource ? `<div id="srcCollectionPicker" style="margin-top:4px"></div>` : ''}
-      <div style="margin-top:6px">
+
+      <div id="${prefix}SshArea" style="margin-top:6px;${defaultType === 'cds' ? 'display:none' : ''}">
         <label style="font-size:11px;display:flex;align-items:center;gap:6px;cursor:pointer;color:var(--fg-muted)">
           <input type="checkbox" id="${prefix}SshEnabled" onchange="toggleSshTunnel('${prefix}')">
           SSH 隧道
         </label>
         <div id="${prefix}SshFields" style="display:none;margin-top:6px">
-          <div class="form-row">
-            <input id="${prefix}SshHost" class="form-input" placeholder="SSH 主机">
-            <input id="${prefix}SshPort" class="form-input sm" placeholder="SSH 端口" value="22" type="number" style="flex:0.3">
+          <div class="form-row mc-row">
+            <input id="${prefix}SshHost" class="form-input mc-input mc-host" placeholder="SSH 主机">
+            <input id="${prefix}SshPort" class="form-input mc-input mc-port" placeholder="端口" value="22" type="number">
           </div>
-          <div class="form-row">
-            <input id="${prefix}SshUser" class="form-input" placeholder="SSH 用户名">
-            <input id="${prefix}SshKey" class="form-input" placeholder="私钥路径">
+          <div class="form-row mc-row">
+            <input id="${prefix}SshUser" class="form-input mc-input" placeholder="SSH 用户名">
+            <input id="${prefix}SshKey" class="form-input mc-input" placeholder="私钥路径 (可选)">
+          </div>
+          <div class="form-row mc-row">
+            <input id="${prefix}SshContainer" class="form-input mc-input" placeholder="docker 容器名 (可选, 走 docker exec)">
+          </div>
+          <div class="form-row mc-row" style="gap:6px">
+            <button type="button" class="sm" onclick="testSshTunnel('${prefix}')" style="flex:0 0 auto">🔧 测试隧道</button>
+            <div id="${prefix}SshTestStatus" style="font-size:11px;flex:1;align-self:center;color:var(--fg-muted);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"></div>
           </div>
         </div>
       </div>
-      <div id="${prefix}ConnStatus" style="font-size:11px;margin-top:6px;color:var(--fg-muted)"></div>
+      <div id="${prefix}ConnStatus" style="font-size:11px;margin-top:6px;color:var(--fg-muted);word-break:break-all"></div>
     </div>
   `;
 }
@@ -4619,9 +5293,37 @@ function toggleSshTunnel(prefix) {
 function onConnTypeChange(prefix, isSource) {
   const type = document.getElementById(`${prefix}Type`)?.value;
   const remoteFields = document.getElementById(`${prefix}RemoteFields`);
-  if (remoteFields) remoteFields.style.display = type === 'local' ? 'none' : '';
+  const cdsFields = document.getElementById(`${prefix}CdsFields`);
+  const sshArea = document.getElementById(`${prefix}SshArea`);
+  if (remoteFields) remoteFields.style.display = type === 'remote' ? '' : 'none';
+  if (cdsFields) cdsFields.style.display = type === 'cds' ? '' : 'none';
+  // SSH is irrelevant for CDS-peer connections (peer handles transport via HTTPS)
+  if (sshArea) sshArea.style.display = type === 'cds' ? 'none' : '';
   // Auto-load databases for this connection
   loadDatabases(prefix, isSource);
+}
+
+function onCdsPeerChange(prefix, isSource) {
+  // When the peer changes, refresh the database list
+  loadDatabases(prefix, isSource);
+}
+
+async function testSshTunnel(prefix) {
+  const statusEl = document.getElementById(`${prefix}SshTestStatus`);
+  if (!statusEl) return;
+  statusEl.innerHTML = '<span class="btn-spinner"></span> 正在测试 SSH 隧道...';
+  const conn = readConnectionConfig(prefix);
+  if (!conn.sshTunnel || !conn.sshTunnel.host) {
+    statusEl.innerHTML = '<span style="color:var(--red)">✗ 请先填写 SSH 信息</span>';
+    return;
+  }
+  try {
+    const d = await api('POST', '/data-migrations/test-tunnel', { sshTunnel: conn.sshTunnel });
+    if (d.success) statusEl.innerHTML = `<span style="color:var(--green)" title="${esc(d.message || '')}">✓ ${esc(d.message || '连接成功')}</span>`;
+    else statusEl.innerHTML = `<span style="color:var(--red)" title="${esc(d.error || '')}">✗ ${esc(d.error || '连接失败')}</span>`;
+  } catch (e) {
+    statusEl.innerHTML = `<span style="color:var(--red)">✗ ${esc(e.message)}</span>`;
+  }
 }
 
 async function loadDatabases(prefix, isSource) {
@@ -4634,7 +5336,18 @@ async function loadDatabases(prefix, isSource) {
 
   try {
     const conn = readConnectionConfig(prefix);
-    const d = await api('POST', '/data-migrations/list-databases', { connection: conn });
+    let d;
+    if (conn.type === 'cds') {
+      if (!conn.cdsPeerId) {
+        if (statusEl) statusEl.innerHTML = '<span style="color:var(--fg-muted)">请先选择 CDS 密钥</span>';
+        dbSelect.innerHTML = '<option value="">(请先选择 CDS 密钥)</option>';
+        dbSelect.disabled = false;
+        return;
+      }
+      d = await api('POST', `/data-migrations/peers/${conn.cdsPeerId}/list-databases`);
+    } else {
+      d = await api('POST', '/data-migrations/list-databases', { connection: conn });
+    }
     const dbs = d.databases || [];
     if (d.error) throw new Error(d.error);
     if (dbs.length === 0) throw new Error('无法获取数据库列表');
@@ -4651,7 +5364,7 @@ async function loadDatabases(prefix, isSource) {
     // Fallback: allow manual input
     const dbArea = document.getElementById(`${prefix}DbArea`);
     if (dbArea) {
-      dbArea.innerHTML = `<div class="form-row"><input id="${prefix}Database" class="form-input" placeholder="手动输入数据库名" style="font-size:12px" oninput="onDbChange('${prefix}', ${isSource})"></div>`;
+      dbArea.innerHTML = `<div class="form-row mc-row"><input id="${prefix}Database" class="form-input mc-input" placeholder="手动输入数据库名" oninput="onDbChange('${prefix}', ${isSource})"></div>`;
     }
   }
 }
@@ -4685,13 +5398,19 @@ function onDbChange(prefix, isSource) {
 function autoGenerateName() {
   const nameEl = document.getElementById('migName');
   if (!nameEl || (nameEl.value && !nameEl.dataset.autoGenerated)) return;
-  const srcType = document.getElementById('srcType')?.value;
-  const tgtType = document.getElementById('tgtType')?.value;
+  const labelFor = (prefix) => {
+    const type = document.getElementById(`${prefix}Type`)?.value;
+    if (type === 'local') return '本机';
+    if (type === 'cds') {
+      const peerId = document.getElementById(`${prefix}CdsPeer`)?.value;
+      const peer = cdsPeers.find(p => p.id === peerId);
+      return peer ? `🔑 ${peer.name}` : '🔑 CDS';
+    }
+    return document.getElementById(`${prefix}Host`)?.value || '远程';
+  };
   const srcDb = document.getElementById('srcDatabase')?.value || '';
-  const srcLabel = srcType === 'local' ? '本机' : (document.getElementById('srcHost')?.value || '远程');
-  const tgtLabel = tgtType === 'local' ? '本机' : (document.getElementById('tgtHost')?.value || '远程');
   const db = srcDb ? `/${srcDb}` : '';
-  nameEl.value = `${srcLabel}${db} → ${tgtLabel}`;
+  nameEl.value = `${labelFor('src')}${db} → ${labelFor('tgt')}`;
   nameEl.dataset.autoGenerated = 'true';
 }
 
@@ -4708,14 +5427,20 @@ function readConnectionConfig(prefix) {
     password: document.getElementById(`${prefix}Password`)?.value?.trim() || undefined,
     authDatabase: document.getElementById(`${prefix}AuthDb`)?.value?.trim() || undefined,
   };
+  if (type === 'cds') {
+    conn.cdsPeerId = document.getElementById(`${prefix}CdsPeer`)?.value || undefined;
+  }
+  // SSH is only meaningful for 'remote' connections, but we still read the form values so
+  // the test-tunnel button can work before the user commits the type choice.
   const sshEnabled = document.getElementById(`${prefix}SshEnabled`)?.checked;
-  if (sshEnabled) {
+  if (sshEnabled && type !== 'cds') {
     conn.sshTunnel = {
       enabled: true,
       host: document.getElementById(`${prefix}SshHost`)?.value?.trim() || '',
       port: parseInt(document.getElementById(`${prefix}SshPort`)?.value) || 22,
       username: document.getElementById(`${prefix}SshUser`)?.value?.trim() || '',
       privateKeyPath: document.getElementById(`${prefix}SshKey`)?.value?.trim() || undefined,
+      dockerContainer: document.getElementById(`${prefix}SshContainer`)?.value?.trim() || undefined,
     };
   }
   return conn;
@@ -4732,7 +5457,12 @@ async function loadCollections() {
   if (!conn.database) { picker.innerHTML = ''; loadedCollections = []; return; }
   picker.innerHTML = '<div style="font-size:11px"><span class="btn-spinner"></span> 加载集合...</div>';
   try {
-    const d = await api('POST', '/data-migrations/list-collections', { connection: conn });
+    let d;
+    if (conn.type === 'cds' && conn.cdsPeerId) {
+      d = await api('POST', `/data-migrations/peers/${conn.cdsPeerId}/list-collections`, { database: conn.database });
+    } else {
+      d = await api('POST', '/data-migrations/list-collections', { connection: conn });
+    }
     loadedCollections = d.collections || [];
     if (loadedCollections.length === 0) {
       picker.innerHTML = '<div style="font-size:11px;color:var(--fg-muted)">该库暂无集合</div>';
@@ -4769,10 +5499,17 @@ function toggleAllCollections(sel) {
 
 // ── New Migration Modal ──
 
-function openNewMigrationModal(prefill) {
+async function openNewMigrationModal(prefill, opts) {
+  const editMode = !!(opts && opts.editMode);
+  migrationEditingId = editMode && prefill ? prefill.id : null;
+  // Ensure peers list is available for the peer picker
+  if (cdsPeers.length === 0) { await loadCdsPeers(); }
+  const title = editMode ? '编辑数据迁移' : '新建数据迁移';
+  const primaryLabel = editMode ? '💾 保存修改' : '▶ 创建并执行';
+  const primaryHandler = editMode ? 'saveMigrationEdits()' : 'createAndExecuteMigration()';
   const html = `
     <div class="form-row" style="margin-bottom:10px">
-      <input id="migName" class="form-input" placeholder="任务名称 (自动生成)" style="flex:1" oninput="this.dataset.autoGenerated=''">
+      <input id="migName" class="form-input" placeholder="任务名称 (自动生成)" style="flex:1;min-width:0" oninput="this.dataset.autoGenerated=''">
     </div>
     <div class="migration-dual-panel">
       <div class="migration-side">
@@ -4787,13 +5524,13 @@ function openNewMigrationModal(prefill) {
         ${buildConnectionForm('tgt', prefill?.target?.type || 'remote', false)}
       </div>
     </div>
-    <div class="form-row" style="margin-top:12px;gap:6px">
-      <button class="primary sm" onclick="createAndExecuteMigration()">▶ 创建并执行</button>
-      <button class="sm" onclick="saveMigrationOnly()">💾 仅保存</button>
+    <div class="form-row" style="margin-top:12px;gap:6px;flex-wrap:wrap">
+      <button class="primary sm" onclick="${primaryHandler}">${primaryLabel}</button>
+      ${editMode ? '' : '<button class="sm" onclick="saveMigrationOnly()">💾 仅保存</button>'}
       <button class="sm" onclick="openMigrationModal()">取消</button>
     </div>
   `;
-  openConfigModal('新建数据迁移', html);
+  openConfigModal(title, html);
 
   // Auto-load databases on open (or prefill)
   setTimeout(() => {
@@ -4801,7 +5538,19 @@ function openNewMigrationModal(prefill) {
       fillConnectionFields('src', prefill.source);
       fillConnectionFields('tgt', prefill.target);
       const nameEl = document.getElementById('migName');
-      if (nameEl) { nameEl.value = prefill.name + ' (副本)'; nameEl.dataset.autoGenerated = ''; }
+      if (nameEl) {
+        nameEl.value = editMode ? prefill.name : (prefill.name + ' (副本)');
+        nameEl.dataset.autoGenerated = '';
+      }
+      // Restore selected collections after loading
+      if (editMode && prefill.collections?.length) {
+        const targetCols = new Set(prefill.collections);
+        setTimeout(() => {
+          document.querySelectorAll('input[name="migCollection"]').forEach(cb => {
+            if (targetCols.has(cb.value)) cb.checked = true;
+          });
+        }, 400);
+      }
     } else {
       // Auto-load for default connection types
       loadDatabases('src', true);
@@ -4810,13 +5559,35 @@ function openNewMigrationModal(prefill) {
   }, 50);
 }
 
+async function editMigration(id) {
+  if (cdsPeers.length === 0) await loadCdsPeers();
+  const m = migrationTasks.find(t => t.id === id);
+  if (!m) { showToast('迁移任务不存在', 'error'); return; }
+  openNewMigrationModal(m, { editMode: true });
+}
+
+async function saveMigrationEdits() {
+  if (!migrationEditingId) { showToast('非编辑模式', 'error'); return; }
+  const body = collectMigrationBody();
+  try {
+    await api('PUT', `/data-migrations/${migrationEditingId}`, body);
+    showToast('已保存', 'success');
+    migrationEditingId = null;
+    openMigrationModal();
+  } catch (e) { showToast(e.message, 'error'); }
+}
+
 function fillConnectionFields(prefix, conn) {
   if (!conn) return;
   const typeEl = document.getElementById(`${prefix}Type`);
   if (typeEl) {
     typeEl.value = conn.type || 'remote';
     const remoteFields = document.getElementById(`${prefix}RemoteFields`);
-    if (remoteFields) remoteFields.style.display = conn.type === 'local' ? 'none' : '';
+    const cdsFields = document.getElementById(`${prefix}CdsFields`);
+    const sshArea = document.getElementById(`${prefix}SshArea`);
+    if (remoteFields) remoteFields.style.display = conn.type === 'remote' ? '' : 'none';
+    if (cdsFields) cdsFields.style.display = conn.type === 'cds' ? '' : 'none';
+    if (sshArea) sshArea.style.display = conn.type === 'cds' ? 'none' : '';
   }
   const set = (id, val) => { const el = document.getElementById(id); if (el && val != null) el.value = val; };
   set(`${prefix}Host`, conn.host);
@@ -4824,6 +5595,9 @@ function fillConnectionFields(prefix, conn) {
   set(`${prefix}Username`, conn.username);
   set(`${prefix}Password`, conn.password);
   set(`${prefix}AuthDb`, conn.authDatabase);
+  if (conn.type === 'cds') {
+    set(`${prefix}CdsPeer`, conn.cdsPeerId);
+  }
   if (conn.sshTunnel?.enabled) {
     const sshCb = document.getElementById(`${prefix}SshEnabled`);
     if (sshCb) { sshCb.checked = true; toggleSshTunnel(prefix); }
@@ -4831,6 +5605,7 @@ function fillConnectionFields(prefix, conn) {
     set(`${prefix}SshPort`, conn.sshTunnel.port);
     set(`${prefix}SshUser`, conn.sshTunnel.username);
     set(`${prefix}SshKey`, conn.sshTunnel.privateKeyPath);
+    set(`${prefix}SshContainer`, conn.sshTunnel.dockerContainer);
   }
   // Load databases then select the right one
   loadDatabases(prefix, prefix === 'src').then(() => {
@@ -4966,6 +5741,673 @@ async function deleteMigration(id) {
   if (!confirm('确定删除此迁移任务？')) return;
   try { await api('DELETE', `/data-migrations/${id}`); showToast('已删除', 'success'); openMigrationModal(); }
   catch (e) { showToast(e.message, 'error'); }
+}
+
+// ── CDS Peers (cross-CDS migration via access keys) ──
+
+async function openPeersModal() {
+  await loadCdsPeers();
+  // Also fetch own key so the user can copy it
+  let myKey = null;
+  try { myKey = await api('GET', '/data-migrations/my-key'); } catch { /* */ }
+
+  const myKeySection = myKey && myKey.accessKey ? `
+    <div class="peer-mykey-box">
+      <div class="peer-mykey-title">🔑 本机 CDS 密钥 <span class="peer-mykey-hint">（复制后在对方 CDS 中添加，即可实现双向数据迁移）</span></div>
+      <div class="form-row mc-row" style="margin-bottom:4px">
+        <input class="form-input mc-input" value="${esc(myKey.baseUrl || '')}" readonly onfocus="this.select()" title="本机 CDS 地址">
+        <button type="button" class="sm" onclick="copyToClipboard('${esc(myKey.baseUrl || '').replace(/'/g, "\\'")}')">复制地址</button>
+      </div>
+      <div class="form-row mc-row">
+        <input class="form-input mc-input" value="${esc(myKey.accessKey)}" readonly onfocus="this.select()" title="本机 AI 访问密钥" style="font-family:monospace">
+        <button type="button" class="sm" onclick="copyToClipboard('${esc(myKey.accessKey).replace(/'/g, "\\'")}')">复制密钥</button>
+      </div>
+    </div>
+  ` : `
+    <div class="peer-mykey-box" style="border-color:var(--yellow)">
+      <div class="peer-mykey-title">⚠ 本机 CDS 未配置 AI_ACCESS_KEY</div>
+      <div class="peer-mykey-hint" style="font-size:12px;margin-top:4px">${esc(myKey?.hint || '请在「设置 → 环境变量」中配置 AI_ACCESS_KEY 后再试。')}</div>
+    </div>
+  `;
+
+  const peersList = cdsPeers.length === 0
+    ? '<div class="config-empty" style="padding:16px">尚未添加任何 CDS 密钥。点击下方「+ 添加」即可注册第一个远程 CDS。</div>'
+    : cdsPeers.map(p => `
+      <div class="peer-card">
+        <div class="peer-card-main">
+          <div class="peer-card-name">${esc(p.name)}</div>
+          <div class="peer-card-url">${esc(p.baseUrl)}</div>
+          <div class="peer-card-meta">
+            <span title="访问密钥（已遮蔽）">${esc(p.accessKey)}</span>
+            ${p.lastVerifiedAt ? `<span title="上次验证时间" style="color:var(--green)">✓ ${relativeTime(p.lastVerifiedAt)}</span>` : '<span style="color:var(--yellow)">未验证</span>'}
+          </div>
+        </div>
+        <div class="peer-card-actions">
+          <button type="button" class="sm" onclick="testCdsPeer('${p.id}')" title="重新验证连接">🔧 测试</button>
+          <button type="button" class="sm" onclick="editCdsPeer('${p.id}')">✎ 编辑</button>
+          <button type="button" class="sm danger-text" onclick="deleteCdsPeer('${p.id}')">删除</button>
+        </div>
+      </div>
+    `).join('');
+
+  openConfigModal('CDS 密钥管理', `
+    <p class="config-panel-desc">注册远程 CDS 的访问密钥，即可在数据迁移中一键选择源/目标，跨 CDS 直连，无需 SSH 或复杂配置。</p>
+    ${myKeySection}
+    <div style="margin:12px 0 6px;font-size:12px;color:var(--fg-muted);font-weight:600">远程 CDS 密钥</div>
+    <div id="peersList">${peersList}</div>
+    <div class="form-row" style="margin-top:10px;gap:6px;flex-wrap:wrap">
+      <button class="sm primary" onclick="openAddPeerForm()">+ 添加 CDS 密钥</button>
+      <button class="sm" onclick="openMigrationModal()">← 返回迁移列表</button>
+    </div>
+    <div id="addPeerFormArea"></div>
+  `);
+}
+
+function openAddPeerForm(prefill) {
+  const area = document.getElementById('addPeerFormArea');
+  if (!area) return;
+  const editingId = prefill?.id || '';
+  area.innerHTML = `
+    <div class="peer-form">
+      <div class="peer-form-title">${editingId ? '编辑 CDS 密钥' : '添加 CDS 密钥'}</div>
+      <div class="form-row mc-row">
+        <input id="peerName" class="form-input mc-input" placeholder="名称 (如: 生产 CDS)" value="${esc(prefill?.name || '')}">
+      </div>
+      <div class="form-row mc-row">
+        <input id="peerBaseUrl" class="form-input mc-input" placeholder="https://main.miduo.org" value="${esc(prefill?.baseUrl || '')}">
+      </div>
+      <div class="form-row mc-row">
+        <input id="peerAccessKey" class="form-input mc-input" placeholder="${editingId ? '留空则保留现有密钥' : 'AI 访问密钥 (remote AI_ACCESS_KEY)'}" style="font-family:monospace">
+      </div>
+      <div class="form-row mc-row" style="gap:6px">
+        <button class="sm primary" onclick="submitPeerForm('${editingId}')">${editingId ? '保存' : '添加并验证'}</button>
+        <button class="sm" onclick="document.getElementById('addPeerFormArea').innerHTML=''">取消</button>
+        <div id="peerFormStatus" style="font-size:11px;align-self:center;min-width:0;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"></div>
+      </div>
+    </div>
+  `;
+}
+
+async function submitPeerForm(editingId) {
+  const name = document.getElementById('peerName')?.value?.trim();
+  const baseUrl = document.getElementById('peerBaseUrl')?.value?.trim();
+  const accessKey = document.getElementById('peerAccessKey')?.value?.trim();
+  const status = document.getElementById('peerFormStatus');
+  if (!name || !baseUrl) {
+    if (status) status.innerHTML = '<span style="color:var(--red)">✗ 请填写名称和地址</span>';
+    return;
+  }
+  if (!editingId && !accessKey) {
+    if (status) status.innerHTML = '<span style="color:var(--red)">✗ 请填写访问密钥</span>';
+    return;
+  }
+  if (status) status.innerHTML = '<span class="btn-spinner"></span> 验证中...';
+  try {
+    if (editingId) {
+      const body = { name, baseUrl };
+      if (accessKey) body.accessKey = accessKey;
+      await api('PUT', `/data-migrations/peers/${editingId}`, body);
+    } else {
+      await api('POST', '/data-migrations/peers', { name, baseUrl, accessKey });
+    }
+    showToast(editingId ? 'CDS 密钥已更新' : 'CDS 密钥已添加并验证', 'success');
+    openPeersModal();
+  } catch (e) {
+    if (status) status.innerHTML = `<span style="color:var(--red)" title="${esc(e.message)}">✗ ${esc(e.message)}</span>`;
+  }
+}
+
+function editCdsPeer(id) {
+  const peer = cdsPeers.find(p => p.id === id);
+  if (!peer) return;
+  openAddPeerForm(peer);
+}
+
+async function testCdsPeer(id) {
+  try {
+    const d = await api('POST', `/data-migrations/peers/${id}/test`);
+    if (d.success) { showToast(`连接成功: ${d.remoteLabel || ''}`, 'success'); openPeersModal(); }
+    else showToast(`连接失败: ${d.error || '未知错误'}`, 'error');
+  } catch (e) { showToast(e.message, 'error'); }
+}
+
+async function deleteCdsPeer(id) {
+  const peer = cdsPeers.find(p => p.id === id);
+  if (!confirm(`确定删除 CDS 密钥「${peer?.name || id}」？`)) return;
+  try {
+    await api('DELETE', `/data-migrations/peers/${id}`);
+    showToast('已删除', 'success');
+    openPeersModal();
+  } catch (e) { showToast(e.message, 'error'); }
+}
+
+function copyToClipboard(text) {
+  try {
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(() => showToast('已复制', 'success')).catch(() => fallbackCopy(text));
+    } else {
+      fallbackCopy(text);
+    }
+  } catch { fallbackCopy(text); }
+}
+
+function fallbackCopy(text) {
+  const ta = document.createElement('textarea');
+  ta.value = text;
+  ta.style.position = 'fixed';
+  ta.style.left = '-9999px';
+  document.body.appendChild(ta);
+  ta.select();
+  try { document.execCommand('copy'); showToast('已复制', 'success'); }
+  catch { showToast('复制失败', 'error'); }
+  document.body.removeChild(ta);
+}
+
+// ── Cluster node list (inside cluster settings modal) ──
+//
+// Big-company-style node cards inspired by Vercel / Grafana / K8s
+// Dashboard:
+//   - Avatar-style role icon (star for master, rack for remote)
+//   - Large primary name + muted meta row
+//   - Ring-style progress indicators for memory / CPU / branch utilization
+//   - Status pill with colored background (not just a dot)
+//   - Hover lift + action buttons appear on hover
+//   - Offline cards visually recede with reduced opacity + subtle stripes
+function renderClusterNodeListHtml() {
+  if (!executors || executors.length === 0) {
+    return '<div class="cluster-node-empty">暂无节点（主节点尚未自注册 embedded master）</div>';
+  }
+  return executors.map(node => {
+    const role = node.role || 'remote';
+    const status = node.status || 'unknown';
+    const cap = node.capacity || { maxBranches: 0, memoryMB: 0, cpuCores: 0 };
+    const load = node.load || { memoryUsedMB: 0, cpuPercent: 0 };
+    const memPct = cap.memoryMB > 0 ? Math.round(load.memoryUsedMB / cap.memoryMB * 100) : 0;
+    const memGB = (load.memoryUsedMB / 1024).toFixed(1);
+    const totalGB = (cap.memoryMB / 1024).toFixed(1);
+    // Prefer explicit runningContainers from heartbeat; fall back to branch
+    // count (for old heartbeats) or 0. A single branch can have N services
+    // (containers), so the accurate count comes from the executor's heartbeat.
+    const branchCount = node.runningContainers ?? (node.branches?.length || node.branchCount || 0);
+    const branchPct = cap.maxBranches > 0 ? Math.round(branchCount / cap.maxBranches * 100) : 0;
+    const cpuPct = Math.min(load.cpuPercent, 100);
+    const isEmbedded = role === 'embedded';
+
+    // Short display name — strip the prefix so users see "vmi3221419" and
+    // "VM-0-17-ubuntu-9901" instead of the redundant "master-"/"executor-".
+    const displayName = node.id.replace(/^master-/, '').replace(/^executor-/, '');
+
+    // Actions: hidden embedded master, visible on hover for remote nodes
+    const actions = isEmbedded
+      ? ''
+      : `
+        ${status === 'online' ? `
+          <button class="node-action-btn" onclick="drainExecutor('${esc(node.id)}')" title="排空: 调度器不再派新分支到这里">
+            <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 5h10M3 11h10"/><path d="M5 5v6M11 5v6"/></svg>
+            排空
+          </button>` : ''}
+        <button class="node-action-btn danger" onclick="removeExecutor('${esc(node.id)}')" title="踢出: 从集群移除此节点">
+          <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 5h10M6 5V3h4v2M5 5l1 8h4l1-8"/></svg>
+          踢出
+        </button>
+      `;
+
+    const statusLabel = { online: '在线', offline: '离线', draining: '排空中' }[status] || status;
+
+    // Compact role icon. Star = master, rack = remote executor.
+    const roleIcon = isEmbedded
+      ? '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2l2.5 7h7.5l-6 5 2.5 8-6.5-5-6.5 5 2.5-8-6-5h7.5z"/></svg>'
+      : '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><rect x="4" y="4" width="16" height="4" rx="1"/><rect x="4" y="11" width="16" height="4" rx="1"/><rect x="4" y="18" width="16" height="3" rx="1"/><circle cx="7" cy="6" r="0.5" fill="currentColor"/><circle cx="7" cy="13" r="0.5" fill="currentColor"/></svg>';
+
+    // Inline SVG ring meter — cleaner than a horizontal bar, works in
+    // small cards, stacked 3 across for the 3 key metrics.
+    const ringMeter = (label, pct, value, danger) => {
+      const safePct = Math.min(Math.max(pct || 0, 0), 100);
+      // Ring geometry: radius 16, circumference ~100.5
+      const circumference = 2 * Math.PI * 16;
+      const offset = circumference * (1 - safePct / 100);
+      const color = danger && safePct > 85 ? '#f85149' : safePct > 65 ? '#d29922' : '#3fb950';
+      return `
+        <div class="node-ring">
+          <svg width="48" height="48" viewBox="0 0 40 40">
+            <circle cx="20" cy="20" r="16" fill="none" stroke="rgba(139,148,158,0.15)" stroke-width="3"/>
+            <circle cx="20" cy="20" r="16" fill="none" stroke="${color}" stroke-width="3"
+                    stroke-linecap="round"
+                    stroke-dasharray="${circumference}"
+                    stroke-dashoffset="${offset}"
+                    transform="rotate(-90 20 20)"
+                    style="transition: stroke-dashoffset 0.6s ease"/>
+            <text x="20" y="22" text-anchor="middle" fill="currentColor"
+                  font-size="10" font-weight="600">${safePct}%</text>
+          </svg>
+          <div class="node-ring-label">${label}</div>
+          <div class="node-ring-value">${value}</div>
+        </div>
+      `;
+    };
+
+    // Last heartbeat age for offline hint
+    let offlineHint = '';
+    if (status === 'offline' && node.lastHeartbeat) {
+      const agoMs = Date.now() - new Date(node.lastHeartbeat).getTime();
+      const agoMin = Math.floor(agoMs / 60000);
+      const agoStr = agoMin < 1 ? '不到 1 分钟前' : agoMin < 60 ? `${agoMin} 分钟前` : `${Math.floor(agoMin / 60)} 小时前`;
+      offlineHint = `
+        <div class="node-offline-banner">
+          <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M8 1.5a.75.75 0 01.75.75v6a.75.75 0 01-1.5 0v-6A.75.75 0 018 1.5zm0 9.75a1 1 0 100 2 1 1 0 000-2z"/></svg>
+          <span>最后心跳 ${agoStr}</span>
+          <span class="node-offline-advice">可能节点关机或网络不通</span>
+        </div>
+      `;
+    }
+
+    return `
+      <div class="node-card node-card-${status} node-card-role-${role}">
+        <div class="node-card-header">
+          <div class="node-card-avatar node-card-avatar-${role}">
+            ${roleIcon}
+          </div>
+          <div class="node-card-title">
+            <div class="node-card-name">
+              ${esc(displayName)}
+              ${isEmbedded ? '<span class="node-card-self-tag">本机</span>' : ''}
+            </div>
+            <div class="node-card-meta">
+              <span class="node-card-meta-item">${esc(node.host || '?')}:${node.port || '?'}</span>
+              <span class="node-card-meta-dot">·</span>
+              <span class="node-card-meta-item">${cap.cpuCores} CPU</span>
+              <span class="node-card-meta-dot">·</span>
+              <span class="node-card-meta-item">${totalGB} GB</span>
+            </div>
+          </div>
+          <div class="node-card-status node-card-status-${status}">
+            <span class="node-card-status-dot"></span>
+            ${statusLabel}
+          </div>
+          ${actions ? `<div class="node-card-actions">${actions}</div>` : ''}
+        </div>
+        ${offlineHint}
+        <div class="node-card-rings">
+          ${ringMeter('内存', memPct, `${memGB}/${totalGB} GB`, true)}
+          ${ringMeter('CPU', cpuPct, `${cpuPct}%`, true)}
+          ${ringMeter('容器', branchPct, `${branchCount}/${cap.maxBranches}`, false)}
+        </div>
+      </div>
+    `;
+  }).join('');
+}
+
+async function changeClusterStrategy(newStrategy) {
+  try {
+    const res = await fetch('/api/cluster/strategy', {
+      method: 'PUT',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ strategy: newStrategy }),
+    });
+    const body = await res.json();
+    if (!res.ok) {
+      showToast(body.error || '切换策略失败', 'error');
+      return;
+    }
+    clusterStrategy = newStrategy;
+    showToast(`调度策略已切换为 ${newStrategy}`, 'success');
+  } catch (err) {
+    showToast('网络错误: ' + err.message, 'error');
+  }
+}
+
+// ── Cluster modal live refresh (SSE-driven) ──
+//
+// When the state-stream SSE pushes an executor change while the cluster
+// settings modal is open (e.g. a node goes offline, someone else joins),
+// we re-render the node list inside the modal without closing it. The
+// function is a no-op when the modal isn't open.
+function refreshClusterModalIfOpen() {
+  const listEl = document.getElementById('clusterNodeList');
+  if (!listEl) return;
+  listEl.innerHTML = renderClusterNodeListHtml();
+  const statusBar = document.querySelector('.cluster-status-bar');
+  if (statusBar && clusterCapacity) {
+    const meta = statusBar.querySelector('.cluster-status-meta');
+    if (meta) {
+      meta.textContent =
+        `在线节点 ${clusterCapacity.online || 0} / ` +
+        `总内存 ${clusterCapacity.total?.memoryMB || 0} MB / ` +
+        `总 CPU ${clusterCapacity.total?.cpuCores || 0} 核`;
+    }
+  }
+}
+
+// ── Cluster bootstrap (one-click UI) ──
+//
+// Dashboard-facing counterpart to exec_cds.sh issue-token / connect.
+// See cds/src/routes/cluster.ts for the backend contract.
+
+let clusterCountdownTimer = null;
+
+async function openClusterModal() {
+  // 1. Probe current cluster role so the modal lands on the right tab.
+  let statusBody = null;
+  try {
+    const res = await fetch('/api/cluster/status', { credentials: 'include' });
+    statusBody = await res.json();
+  } catch (err) {
+    showToast('无法查询集群状态', 'error');
+    return;
+  }
+
+  const role = statusBody.effectiveRole;
+  const capacity = statusBody.capacity || { online: 0, total: {} };
+  // Sync the module-level cluster state from this probe so other UI bits
+  // (header badge, branch cards, etc.) have fresh data even before the
+  // next SSE tick arrives.
+  clusterCapacity = capacity;
+  clusterStrategy = statusBody.strategy || 'least-load';
+  if (Array.isArray(capacity.nodes)) {
+    executors = capacity.nodes;
+  }
+
+  // Role-aware title gives context without forcing the user to read the body
+  const roleLabel = {
+    standalone: '独立模式',
+    scheduler: '主节点 (scheduler)',
+    executor: '执行器 (executor)',
+    hybrid: '混合模式 (standalone + 热加入)',
+  }[role] || role;
+
+  // Default to master tab when we ARE the master, slave tab when we're
+  // an executor, and master tab with both options visible for a plain
+  // standalone (most common "I am about to bring in a second machine").
+  const defaultTab = role === 'executor' || role === 'hybrid' ? 'slave' : 'master';
+
+  const html = `
+    <div class="cluster-modal">
+      <div class="cluster-status-bar">
+        <div class="cluster-status-left">
+          <span class="cluster-status-dot" data-role="${role}"></span>
+          <div>
+            <div class="cluster-status-role">当前角色：${esc(roleLabel)}</div>
+            <div class="cluster-status-meta">
+              在线节点 ${capacity.online || 0} /
+              总内存 ${capacity.total?.memoryMB || 0} MB /
+              总 CPU ${capacity.total?.cpuCores || 0} 核
+            </div>
+          </div>
+        </div>
+        ${statusBody.masterUrl ? `
+          <a class="cluster-master-link" href="${esc(statusBody.masterUrl)}" target="_blank" rel="noopener">
+            主节点 ↗
+          </a>
+        ` : ''}
+      </div>
+
+      <div class="cluster-tabs">
+        <button class="cluster-tab ${defaultTab === 'master' ? 'active' : ''}"
+                onclick="switchClusterTab('master')">我是主节点</button>
+        <button class="cluster-tab ${defaultTab === 'slave' ? 'active' : ''}"
+                onclick="switchClusterTab('slave')">我是从节点</button>
+      </div>
+
+      <div id="clusterTabMaster" class="cluster-tab-body ${defaultTab === 'master' ? '' : 'hidden'}">
+        <p class="cluster-tab-desc">
+          点击"生成连接码"，把出现的字符串复制到另一台机器的"我是从节点"里粘贴，
+          对方就会自动以 executor 身份加入集群。连接码 <strong>15 分钟过期</strong>。
+        </p>
+        <button class="btn-primary cluster-action-btn" onclick="doIssueToken()">
+          🔐 生成连接码
+        </button>
+        <div id="clusterTokenBox" class="cluster-token-box hidden">
+          <label>连接码（复制下面的字符串粘贴到另一台机器）</label>
+          <textarea id="clusterTokenArea" readonly rows="4" onclick="this.select()"></textarea>
+          <div class="cluster-token-actions">
+            <button class="btn-secondary" onclick="copyClusterToken()">📋 复制</button>
+            <span id="clusterTokenCountdown" class="cluster-countdown"></span>
+          </div>
+          <div class="cluster-token-hint">
+            主节点地址：<code id="clusterMasterDisplay"></code>
+          </div>
+        </div>
+      </div>
+
+      <div id="clusterTabSlave" class="cluster-tab-body ${defaultTab === 'slave' ? '' : 'hidden'}">
+        ${role === 'executor' || role === 'hybrid' ? `
+          <p class="cluster-tab-desc">
+            本节点已作为 executor 加入集群：
+            <code>${esc(statusBody.masterUrl || '未知')}</code><br>
+            Executor ID：<code>${esc(statusBody.executorId || '未知')}</code>
+          </p>
+          <button class="btn-danger cluster-action-btn" onclick="doLeaveCluster()">
+            🚪 退出集群
+          </button>
+        ` : `
+          <p class="cluster-tab-desc">
+            在主节点上点"生成连接码"后，把得到的字符串粘贴到下面，点"加入集群"。
+            中间会验证、写入配置、立刻注册到主节点，<strong>无需重启</strong>。
+          </p>
+          <textarea id="clusterJoinInput" class="cluster-paste-input" rows="4"
+                    placeholder="把主节点生成的连接码粘贴到这里..."></textarea>
+          <button class="btn-primary cluster-action-btn" onclick="doJoinCluster()">
+            🔌 加入集群
+          </button>
+          <div id="clusterJoinResult"></div>
+        `}
+      </div>
+
+      <!-- ── Cluster management (visible in scheduler / hybrid roles) ── -->
+      ${role === 'scheduler' || role === 'hybrid' || (capacity.nodes && capacity.nodes.length > 1) ? `
+        <div class="cluster-mgmt-section">
+          <div class="cluster-mgmt-header">
+            <h3 class="cluster-mgmt-title">节点管理</h3>
+            <span class="cluster-mgmt-hint">SSE 实时更新 · 主节点不可移除</span>
+          </div>
+          <div id="clusterNodeList" class="cluster-node-list">
+            ${renderClusterNodeListHtml()}
+          </div>
+
+          <div class="cluster-strategy">
+            <label class="cluster-strategy-label">调度策略 <span class="cluster-strategy-hint">决定新部署派发到哪台节点</span></label>
+            <div class="cluster-strategy-options">
+              <label class="cluster-strategy-radio">
+                <input type="radio" name="clusterStrategy" value="least-load"
+                       ${clusterStrategy === 'least-load' ? 'checked' : ''}
+                       onchange="changeClusterStrategy(this.value)">
+                <span><strong>least-load</strong>（推荐）— 按 60% 内存 + 40% CPU 加权选最空闲</span>
+              </label>
+              <label class="cluster-strategy-radio">
+                <input type="radio" name="clusterStrategy" value="least-branches"
+                       ${clusterStrategy === 'least-branches' ? 'checked' : ''}
+                       onchange="changeClusterStrategy(this.value)">
+                <span><strong>least-branches</strong> — 选运行分支最少的节点</span>
+              </label>
+              <label class="cluster-strategy-radio">
+                <input type="radio" name="clusterStrategy" value="round-robin"
+                       ${clusterStrategy === 'round-robin' ? 'checked' : ''}
+                       onchange="changeClusterStrategy(this.value)">
+                <span><strong>round-robin</strong> — 按心跳时间轮询</span>
+              </label>
+            </div>
+          </div>
+        </div>
+      ` : ''}
+    </div>
+  `;
+
+  openConfigModal('集群设置', html);
+
+  // Fire and forget — refresh the header badge based on the latest role.
+  updateClusterStatusBadge(role, capacity.online || 0);
+}
+
+function switchClusterTab(which) {
+  document.querySelectorAll('.cluster-tab').forEach(b => b.classList.remove('active'));
+  document.querySelectorAll('.cluster-tab-body').forEach(b => b.classList.add('hidden'));
+  const btns = document.querySelectorAll('.cluster-tab');
+  if (which === 'master') {
+    if (btns[0]) btns[0].classList.add('active');
+    const body = document.getElementById('clusterTabMaster');
+    if (body) body.classList.remove('hidden');
+  } else {
+    if (btns[1]) btns[1].classList.add('active');
+    const body = document.getElementById('clusterTabSlave');
+    if (body) body.classList.remove('hidden');
+  }
+}
+
+async function doIssueToken() {
+  const btn = event?.currentTarget;
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ 生成中...'; }
+
+  try {
+    const res = await fetch('/api/cluster/issue-token', {
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+    });
+    const body = await res.json();
+    if (!res.ok) {
+      showToast(body.error || '生成失败', 'error');
+      return;
+    }
+
+    // Display the code, the master URL, and start the countdown
+    const box = document.getElementById('clusterTokenBox');
+    const area = document.getElementById('clusterTokenArea');
+    const masterDisplay = document.getElementById('clusterMasterDisplay');
+    if (box) box.classList.remove('hidden');
+    if (area) area.value = body.connectionCode;
+    if (masterDisplay) masterDisplay.textContent = body.masterUrl;
+
+    startClusterCountdown(body.expiresAt);
+    showToast('连接码已生成', 'success');
+  } catch (err) {
+    showToast('网络错误: ' + err.message, 'error');
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = '🔐 重新生成连接码'; }
+  }
+}
+
+function startClusterCountdown(expiresAtIso) {
+  if (clusterCountdownTimer) clearInterval(clusterCountdownTimer);
+  const label = document.getElementById('clusterTokenCountdown');
+  const endMs = new Date(expiresAtIso).getTime();
+
+  function tick() {
+    if (!label) return;
+    const remainMs = endMs - Date.now();
+    if (remainMs <= 0) {
+      label.textContent = '⚠ 已过期，请重新生成';
+      label.className = 'cluster-countdown expired';
+      if (clusterCountdownTimer) { clearInterval(clusterCountdownTimer); clusterCountdownTimer = null; }
+      return;
+    }
+    const mins = Math.floor(remainMs / 60000);
+    const secs = Math.floor((remainMs % 60000) / 1000);
+    label.textContent = `⏱ ${mins}:${String(secs).padStart(2, '0')} 后过期`;
+    label.className = 'cluster-countdown' + (remainMs < 60000 ? ' urgent' : '');
+  }
+  tick();
+  clusterCountdownTimer = setInterval(tick, 1000);
+}
+
+function copyClusterToken() {
+  const area = document.getElementById('clusterTokenArea');
+  if (!area || !area.value) return;
+  copyToClipboard(area.value);
+}
+
+async function doJoinCluster() {
+  const input = document.getElementById('clusterJoinInput');
+  const result = document.getElementById('clusterJoinResult');
+  const btn = event?.currentTarget;
+  if (!input || !input.value.trim()) {
+    showToast('请先粘贴连接码', 'error');
+    return;
+  }
+
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ 正在加入...'; }
+  if (result) result.innerHTML = '<div class="cluster-progress">🔄 解析连接码 → 写入配置 → 注册到主节点 → 启动心跳...</div>';
+
+  try {
+    const res = await fetch('/api/cluster/join', {
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ connectionCode: input.value.trim() }),
+    });
+    const body = await res.json();
+
+    if (!res.ok) {
+      if (result) result.innerHTML = `<div class="cluster-error">❌ ${esc(body.error || '加入失败')}</div>`;
+      showToast(body.error || '加入失败', 'error');
+      return;
+    }
+
+    // Success — show the restart warning prominently
+    if (result) {
+      result.innerHTML = `
+        <div class="cluster-success">
+          ✅ 已加入集群
+          <div class="cluster-success-meta">
+            Executor ID: <code>${esc(body.executorId)}</code><br>
+            主节点: <a href="${esc(body.masterUrl)}" target="_blank" rel="noopener">${esc(body.masterUrl)}</a>
+          </div>
+          <div class="cluster-warning">
+            ⚠ ${esc(body.restartWarning || '下次重启后 Dashboard 将停止，请把书签换成主节点 URL')}
+          </div>
+        </div>
+      `;
+    }
+    showToast('已加入集群', 'success');
+    updateClusterStatusBadge('hybrid', 2);
+  } catch (err) {
+    if (result) result.innerHTML = `<div class="cluster-error">❌ 网络错误: ${esc(err.message)}</div>`;
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = '🔌 加入集群'; }
+  }
+}
+
+async function doLeaveCluster() {
+  if (!confirm('确认退出集群？本机上运行中的容器不会被停止，但心跳会停止，主节点下一次健康检查会把本节点标记为 offline。')) {
+    return;
+  }
+  const btn = event?.currentTarget;
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ 正在退出...'; }
+
+  try {
+    const res = await fetch('/api/cluster/leave', {
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+    });
+    const body = await res.json();
+    if (!res.ok) {
+      showToast(body.error || '退出失败', 'error');
+      return;
+    }
+    showToast('已退出集群', 'success');
+    updateClusterStatusBadge('standalone', 1);
+    closeConfigModal();
+  } catch (err) {
+    showToast('网络错误: ' + err.message, 'error');
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = '🚪 退出集群'; }
+  }
+}
+
+/** Update the small badge next to the "集群" menu item based on role. */
+function updateClusterStatusBadge(role, onlineCount) {
+  const badge = document.getElementById('clusterStatusBadge');
+  if (!badge) return;
+  if (role === 'scheduler' && onlineCount > 1) {
+    badge.textContent = `● ${onlineCount} 节点`;
+    badge.style.color = '#3fb950';
+  } else if (role === 'executor' || role === 'hybrid') {
+    badge.textContent = '● 已加入';
+    badge.style.color = '#58a6ff';
+  } else {
+    badge.textContent = '';
+  }
 }
 
 // ── Init activity monitor & AI pairing ──

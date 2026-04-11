@@ -3,6 +3,7 @@ import zlib from 'node:zlib';
 import type { RoutingRule, BranchEntry, CdsConfig, BuildProfile } from '../types.js';
 import { StateService } from './state.js';
 import type { WorktreeService } from './worktree.js';
+import type { SchedulerService } from './scheduler.js';
 import { buildWidgetScript } from '../widget-script.js';
 
 /**
@@ -19,11 +20,22 @@ export class ProxyService {
   private onAccess: ((branchId: string, method: string, path: string, status: number, duration: number, profileId?: string) => void) | null = null;
   /** Optional worktree service for remote branch lookups */
   private worktreeService: WorktreeService | null = null;
+  /** Optional scheduler for warm-pool touch tracking */
+  private scheduler: SchedulerService | null = null;
 
   constructor(
     private readonly stateService: StateService,
     private readonly config?: CdsConfig,
   ) {}
+
+  /**
+   * Attach the warm-pool scheduler. When set, every successful route to a
+   * HOT branch calls scheduler.touch() to refresh LRU ordering.
+   * See doc/design.cds-resilience.md §四.4.
+   */
+  setScheduler(s: SchedulerService): void {
+    this.scheduler = s;
+  }
 
   setResolveUpstream(fn: (branchId: string, profileId?: string) => string | null): void {
     this.resolveUpstream = fn;
@@ -175,12 +187,16 @@ export class ProxyService {
    * Returns the branch slug extracted from the subdomain, or null.
    */
   private extractPreviewBranch(host: string): string | null {
-    const previewDomain = this.config?.previewDomain;
-    if (!previewDomain) return null;
     const h = host.split(':')[0].toLowerCase();
-    const suffix = `.${previewDomain.toLowerCase()}`;
-    if (h.endsWith(suffix) && h.length > suffix.length) {
-      return h.slice(0, -suffix.length);
+    const rootDomains = this.config?.rootDomains?.length
+      ? this.config.rootDomains
+      : (this.config?.previewDomain ? [this.config.previewDomain] : []);
+
+    for (const rootDomain of rootDomains) {
+      const suffix = `.${rootDomain.toLowerCase()}`;
+      if (h.endsWith(suffix) && h.length > suffix.length) {
+        return h.slice(0, -suffix.length);
+      }
     }
     return null;
   }
@@ -318,6 +334,12 @@ export class ProxyService {
     }
 
     console.log(`[proxy] ${req.method} ${req.url} → ${upstream} (branch=${branchSlug}, profile=${profileId || 'default'})`);
+    // Update warm-pool LRU ordering. Throttling for access-event broadcasts
+    // is handled separately via setOnAccess; scheduler.touch is cheap (single
+    // save) and correctness depends on every request refreshing lastAccessedAt.
+    if (this.scheduler) {
+      try { this.scheduler.touch(branchSlug); } catch { /* ignore */ }
+    }
     this.proxyRequest(req, res, upstream, { branchId: branchSlug, branchName: branchRef, trackAccess: true, profileId });
   }
 

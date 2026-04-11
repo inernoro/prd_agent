@@ -190,6 +190,22 @@ export const api = {
     byKey: (skillKey: string) => `/api/skills/${encodeURIComponent(skillKey)}`,
   },
 
+  // ============ Skill Agent 技能引导创建 ============
+  skillAgent: {
+    createSession: () => '/api/skill-agent/sessions',
+    session: (sessionId: string) => `/api/skill-agent/sessions/${sessionId}`,
+    sendMessage: (sessionId: string) => `/api/skill-agent/sessions/${sessionId}/messages`,
+    save: (sessionId: string) => `/api/skill-agent/sessions/${sessionId}/save`,
+    autoTest: (sessionId: string) => `/api/skill-agent/sessions/${sessionId}/auto-test`,
+    exportMd: (sessionId: string) => `/api/skill-agent/sessions/${sessionId}/export/md`,
+    exportZip: (sessionId: string) => `/api/skill-agent/sessions/${sessionId}/export/zip`,
+    testSkill: (skillKey: string) => `/api/skill-agent/test/${encodeURIComponent(skillKey)}`,
+    skillMd: (skillKey: string) => `/api/skill-agent/skills/${encodeURIComponent(skillKey)}/md`,
+    publish: (skillKey: string) => `/api/skill-agent/skills/${encodeURIComponent(skillKey)}/publish`,
+    unpublish: (skillKey: string) => `/api/skill-agent/skills/${encodeURIComponent(skillKey)}/unpublish`,
+    plaza: () => '/api/skill-agent/plaza',
+  },
+
   // ============ Prompts (系统提示词 + 覆盖) ============
   prompts: {
     system: {
@@ -536,6 +552,7 @@ export const api = {
       byId: (id: string) => `/api/report-agent/teams/${id}`,
       leave: (id: string) => `/api/report-agent/teams/${id}/leave`,
       members: (id: string) => `/api/report-agent/teams/${id}/members`,
+      membersBatch: (id: string) => `/api/report-agent/teams/${id}/members/batch`,
       member: (id: string, userId: string) => `/api/report-agent/teams/${id}/members/${userId}`,
       dashboard: (id: string) => `/api/report-agent/teams/${id}/dashboard`,
       reportsView: (id: string) => `/api/report-agent/teams/${id}/reports/view`,
@@ -954,6 +971,82 @@ export const api = {
     migrate: () => '/api/submissions/migrate',
     migrateLiterary: () => '/api/submissions/migrate-literary',
     adminWithdraw: (id: string) => `/api/submissions/${id}/admin-withdraw`,
+  },
+
+  // ============ Document Store 文档空间 ============
+  documentStore: {
+    stores: {
+      list: () => '/api/document-store/stores',
+      listWithPreview: () => '/api/document-store/stores/with-preview',
+      create: () => '/api/document-store/stores',
+      detail: (storeId: string) => `/api/document-store/stores/${storeId}`,
+      primaryEntry: (storeId: string) => `/api/document-store/stores/${storeId}/primary-entry`,
+      pinnedEntries: (storeId: string) => `/api/document-store/stores/${storeId}/pinned-entries`,
+      rebuildContentIndex: (storeId: string) => `/api/document-store/stores/${storeId}/rebuild-content-index`,
+      // 公开访问端点
+      publicList: () => '/api/document-store/public/stores',
+      publicDetail: (storeId: string) => `/api/document-store/public/stores/${storeId}`,
+      publicEntries: (storeId: string) => `/api/document-store/public/stores/${storeId}/entries`,
+      publicEntryContent: (entryId: string) => `/api/document-store/public/entries/${entryId}/content`,
+      publicShare: (token: string) => `/api/document-store/public/share/${token}`,
+      // 互动
+      like: (storeId: string) => `/api/document-store/stores/${storeId}/like`,
+      favorite: (storeId: string) => `/api/document-store/stores/${storeId}/favorite`,
+      myFavorites: () => '/api/document-store/favorites/mine',
+      myLikes: () => '/api/document-store/likes/mine',
+      // 分享链接
+      shareLinks: (storeId: string) => `/api/document-store/stores/${storeId}/share-links`,
+      shareLinkDetail: (linkId: string) => `/api/document-store/share-links/${linkId}`,
+      // 知识库 Agent：再加工模板列表
+      reprocessTemplates: () => `/api/document-store/reprocess-templates`,
+      // 知识库 Agent：Run 状态查询与 SSE 流
+      agentRun: (runId: string) => `/api/document-store/agent-runs/${runId}`,
+      agentRunStream: (runId: string) => `/api/document-store/agent-runs/${runId}/stream`,
+    },
+    entries: {
+      list: (storeId: string) => `/api/document-store/stores/${storeId}/entries`,
+      add: (storeId: string) => `/api/document-store/stores/${storeId}/entries`,
+      folders: (storeId: string) => `/api/document-store/stores/${storeId}/folders`,
+      upload: (storeId: string) => `/api/document-store/stores/${storeId}/upload`,
+      subscribe: (storeId: string) => `/api/document-store/stores/${storeId}/subscribe`,
+      subscribeGithub: (storeId: string) => `/api/document-store/stores/${storeId}/subscribe-github`,
+      detail: (entryId: string) => `/api/document-store/entries/${entryId}`,
+      content: (entryId: string) => `/api/document-store/entries/${entryId}/content`,
+      move: (entryId: string) => `/api/document-store/entries/${entryId}/move`,
+      primaryChild: (folderId: string) => `/api/document-store/entries/${folderId}/primary-child`,
+      sync: (entryId: string) => `/api/document-store/entries/${entryId}/sync`,
+      syncLogs: (entryId: string) => `/api/document-store/entries/${entryId}/sync-logs`,
+      subscriptionUpdate: (entryId: string) => `/api/document-store/entries/${entryId}/subscription`,
+      generateSubtitle: (entryId: string) => `/api/document-store/entries/${entryId}/generate-subtitle`,
+      reprocess: (entryId: string) => `/api/document-store/entries/${entryId}/reprocess`,
+      latestAgentRun: (entryId: string) => `/api/document-store/entries/${entryId}/agent-runs/latest`,
+      // 批次 C：浏览事件埋点
+      logView: (entryId: string) => `/api/document-store/entries/${entryId}/view`,
+      leaveView: (viewEventId: string) => `/api/document-store/view-events/${viewEventId}/leave`,
+      storeViewEvents: (storeId: string) => `/api/document-store/stores/${storeId}/view-events`,
+      // 批次 D：划词评论
+      inlineComments: (entryId: string) => `/api/document-store/entries/${entryId}/inline-comments`,
+      inlineCommentDetail: (commentId: string) => `/api/document-store/inline-comments/${commentId}`,
+      update: (entryId: string) => `/api/document-store/entries/${entryId}`,
+      delete: (entryId: string) => `/api/document-store/entries/${entryId}`,
+    },
+  },
+
+  // ============ Emergence Explorer 涌现探索器 ============
+  emergence: {
+    trees: {
+      list: () => '/api/emergence/trees',
+      create: () => '/api/emergence/trees',
+      detail: (treeId: string) => `/api/emergence/trees/${treeId}`,
+      delete: (treeId: string) => `/api/emergence/trees/${treeId}`,
+      emerge: (treeId: string) => `/api/emergence/trees/${treeId}/emerge`,
+      export: (treeId: string) => `/api/emergence/trees/${treeId}/export`,
+    },
+    nodes: {
+      update: (nodeId: string) => `/api/emergence/nodes/${nodeId}`,
+      delete: (nodeId: string) => `/api/emergence/nodes/${nodeId}`,
+      explore: (nodeId: string) => `/api/emergence/nodes/${nodeId}/explore`,
+    },
   },
 } as const;
 

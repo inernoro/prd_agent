@@ -362,6 +362,13 @@ export type AddReportTeamMemberContract = (input: {
   jobTitle?: string;
 }) => Promise<ApiResponse<{ member: ReportTeamMember }>>;
 
+export type BatchAddReportTeamMembersContract = (input: {
+  teamId: string;
+  userIds: string[];
+  role?: string;
+  jobTitle?: string;
+}) => Promise<ApiResponse<{ added: ReportTeamMember[]; skipped: string[] }>>;
+
 export type RemoveReportTeamMemberContract = (input: {
   teamId: string;
   userId: string;

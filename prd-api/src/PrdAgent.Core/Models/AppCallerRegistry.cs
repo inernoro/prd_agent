@@ -747,6 +747,44 @@ public static class TranscriptAgent
 }
 
 /// <summary>
+/// 知识库（文档空间）
+/// </summary>
+public static class DocumentStoreAgent
+{
+    public const string AppName = "知识库";
+
+    public static class Subtitle
+    {
+        [AppCallerMetadata(
+            "知识库字幕生成-音频",
+            "将音视频文件直译成带时间戳的字幕 Markdown",
+            ModelTypes = new[] { ModelTypes.Asr },
+            Category = "DocumentStore"
+        )]
+        public const string Audio = "document-store.subtitle::asr";
+
+        [AppCallerMetadata(
+            "知识库字幕生成-图片",
+            "对图片做 OCR/Vision 识别生成纯文字字幕",
+            ModelTypes = new[] { ModelTypes.Vision },
+            Category = "DocumentStore"
+        )]
+        public const string Vision = "document-store.subtitle::vision";
+    }
+
+    public static class Reprocess
+    {
+        [AppCallerMetadata(
+            "知识库文档再加工",
+            "基于已有文档/字幕按模板或自定义提示词生成新文档",
+            ModelTypes = new[] { ModelTypes.Chat },
+            Category = "DocumentStore"
+        )]
+        public const string Generate = "document-store.reprocess::chat";
+    }
+}
+
+/// <summary>
 /// Admin 管理后台
 /// </summary>
 public static class Admin
@@ -944,6 +982,61 @@ public static class PrReview
             Category = "Review"
         )]
         public const string Chat = "pr-review.alignment::chat";
+    }
+}
+
+public static class EmergenceExplorer
+{
+    public const string AppName = "Emergence Explorer";
+
+    public static class Explore
+    {
+        [AppCallerMetadata(
+            "涌现探索",
+            "从种子文档出发，基于现实锚点向下探索子功能",
+            ModelTypes = new[] { ModelTypes.Chat },
+            Category = "Emergence"
+        )]
+        public const string Chat = "emergence-explorer.explore::chat";
+    }
+
+    public static class Emerge
+    {
+        [AppCallerMetadata(
+            "涌现组合",
+            "交叉组合多个已有节点，发现涌现价值",
+            ModelTypes = new[] { ModelTypes.Chat },
+            Category = "Emergence"
+        )]
+        public const string Chat = "emergence-explorer.emerge::chat";
+    }
+}
+
+/// <summary>
+/// Skill Agent 技能引导创建
+/// </summary>
+public static class SkillAgent
+{
+    public static class Guide
+    {
+        [AppCallerMetadata(
+            "技能引导-对话",
+            "引导用户逐步创建技能的对话模型",
+            ModelTypes = new[] { ModelTypes.Chat },
+            Category = "Skill"
+        )]
+        public const string Chat = "skill-agent.guide::chat";
+    }
+
+    public static class Export
+    {
+        [AppCallerMetadata(
+            "技能导出-生成说明",
+            "为技能导出包生成 README 和使用示例",
+            ModelTypes = new[] { ModelTypes.Chat },
+            Category = "Skill"
+        )]
+        public const string GenerateReadme = "skill-agent.export.readme::chat";
     }
 }
 }

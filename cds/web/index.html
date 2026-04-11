@@ -20,7 +20,7 @@
   <div class="container">
     <header>
       <div class="header-left">
-        <h1><span class="title-static">Cloud Dev Suite</span><span class="title-rotating" id="titleRotating"></span><code id="cdsCommitHash" style="font-size:12px;margin-left:8px;opacity:0.5;font-weight:normal"></code></h1>
+        <h1><span class="title-static">Cloud Dev Suite</span><span class="title-rotating" id="titleRotating"></span><code id="cdsCommitHash" style="font-size:12px;margin-left:8px;opacity:0.5;font-weight:normal"></code><span id="capacityBadge" class="capacity-badge hidden" title="宿主机剩余容量 — 点击查看调度器状态" onclick="showCapacityDetails(event)"></span></h1>
       </div>
       <div class="header-actions">
         <!-- AI Pairing Indicator (inline, before buttons) -->
@@ -138,6 +138,27 @@
 
   <!-- Dropdown portal: all popover menus render here, outside card stacking contexts -->
   <div id="dropdownPortal"></div>
+
+  <!-- Host stats pulse (floating bottom-right, above Activity Monitor) -->
+  <!-- Real-time mem+cpu indicator, complements the header's container capacity badge -->
+  <div id="hostStatsWidget" class="host-stats hidden" title="宿主机实时负载 — 点击查看详情" onclick="showHostStatsDetails(event)">
+    <div class="host-stats-row">
+      <span class="host-stats-icon" aria-hidden="true">
+        <svg width="11" height="11" viewBox="0 0 16 16" fill="currentColor"><path d="M2 3a1 1 0 011-1h10a1 1 0 011 1v10a1 1 0 01-1 1H3a1 1 0 01-1-1V3zm2 2v6h8V5H4z"/></svg>
+      </span>
+      <span class="host-stats-label">MEM</span>
+      <span class="host-stats-bar"><span class="host-stats-bar-fill" id="hsMemFill"></span></span>
+      <span class="host-stats-value" id="hsMemValue">--</span>
+    </div>
+    <div class="host-stats-row">
+      <span class="host-stats-icon" aria-hidden="true">
+        <svg width="11" height="11" viewBox="0 0 16 16" fill="currentColor"><path d="M5 0a.75.75 0 01.75.75V2h1.5V.75a.75.75 0 011.5 0V2h1.5V.75a.75.75 0 011.5 0V2h.25A1.75 1.75 0 0114 3.75V4h1.25a.75.75 0 010 1.5H14v1.5h1.25a.75.75 0 010 1.5H14v1.5h1.25a.75.75 0 010 1.5H14v.25A1.75 1.75 0 0112.25 14H12v1.25a.75.75 0 01-1.5 0V14H9v1.25a.75.75 0 01-1.5 0V14H6v1.25a.75.75 0 01-1.5 0V14h-.25A1.75 1.75 0 012.5 12.25V12H.75a.75.75 0 010-1.5H2.5V9H.75a.75.75 0 010-1.5H2.5V6H.75a.75.75 0 010-1.5H2.5v-.25A1.75 1.75 0 014.25 2.5H4.5V.75A.75.75 0 015 0zm-.75 4v8.25c0 .138.112.25.25.25h8.25a.25.25 0 00.25-.25V4.25a.25.25 0 00-.25-.25H4.5a.25.25 0 00-.25.25z"/></svg>
+      </span>
+      <span class="host-stats-label">CPU</span>
+      <span class="host-stats-bar"><span class="host-stats-bar-fill" id="hsCpuFill"></span></span>
+      <span class="host-stats-value" id="hsCpuValue">--</span>
+    </div>
+  </div>
 
   <!-- API Activity Monitor (floating bottom-right) -->
   <div id="activityMonitor" class="activity-monitor collapsed">

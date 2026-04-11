@@ -16,13 +16,14 @@ import {
   BarChart3,
   Bot,
   Store,
-  GraduationCap,
+  Library,
   Sparkles,
   Workflow,
   Zap,
   Globe,
   ClipboardCheck,
   ScanSearch,
+  Wand2,
   type LucideIcon,
 } from 'lucide-react';
 import { MapSpinner } from '@/components/ui/VideoLoader';
@@ -37,7 +38,7 @@ import { ReviewAgentCardArt } from '@/pages/ai-toolbox/components/ReviewAgentCar
 // ── Icon & Color mapping (self-contained, doesn't touch ToolCard) ──
 
 const ICON_MAP: Record<string, LucideIcon> = {
-  FileText, Palette, PenTool, Bug, Video, Swords, FileBarChart, Code2, Languages, FileSearch, BarChart3, Bot, Workflow, Zap, Globe, ClipboardCheck, ScanSearch,
+  FileText, Palette, PenTool, Bug, Video, Swords, FileBarChart, Code2, Languages, FileSearch, BarChart3, Bot, Workflow, Zap, Globe, ClipboardCheck, ScanSearch, Wand2,
 };
 
 /** Agent 封面图 CDN 路径 */
@@ -85,6 +86,7 @@ const ACCENT: Record<string, { from: string; to: string }> = {
   Globe:     { from: '#0EA5E9', to: '#38BDF8' },
   ClipboardCheck: { from: '#6366F1', to: '#A5B4FC' },
   ScanSearch: { from: '#8B5CF6', to: '#C4B5FD' },
+  Wand2:     { from: '#8B5CF6', to: '#C4B5FD' },
 };
 
 function getAccent(icon: string) {
@@ -137,7 +139,7 @@ type HomeQuickLink = {
 
 const QUICK_LINKS_BASE: HomeQuickLink[] = [
   { icon: Store, label: '海鲜市场', desc: '发现和 Fork 优质提示词与配置', path: '/marketplace', accent: '#F59E0B', gradient: 'linear-gradient(135deg, #F59E0B, #F97316)' },
-  { icon: GraduationCap, label: '使用教程', desc: '从入门到进阶的操作指南', path: '/tutorials', accent: '#3B82F6', gradient: 'linear-gradient(135deg, #3B82F6, #6366F1)' },
+  { icon: Library, label: '智识殿堂', desc: '探索社区共享的知识库', path: '/library', accent: '#3B82F6', gradient: 'linear-gradient(135deg, #3B82F6, #6366F1)' },
   { icon: Sparkles, label: '作品广场', desc: '探索 AI 驱动的创意作品与灵感', path: '/showcase', accent: '#A855F7', gradient: 'linear-gradient(135deg, #A855F7, #6366F1)' },
 ];
 
@@ -396,12 +398,36 @@ export default function AgentLauncherPage() {
   // 静态实用工具入口（不来自后端 toolbox）
   const staticUtilities: ToolboxItem[] = useMemo(() => [
     {
+      id: '__document-store__',
+      name: '知识库',
+      description: '文档存储与知识管理，支持文件夹、GitHub 同步',
+      icon: 'Library',
+      tags: ['文档', '知识', '知识库', 'docs'],
+      routePath: '/document-store',
+    } as ToolboxItem,
+    {
+      id: '__emergence__',
+      name: '涌现探索',
+      description: '从文档出发，AI 辅助发现功能创意与交叉价值',
+      icon: 'Sparkle',
+      tags: ['涌现', '探索', 'AI', '创意'],
+      routePath: '/emergence',
+    } as ToolboxItem,
+    {
       id: '__web-pages__',
       name: '网页托管',
       description: '上传 HTML 或 ZIP，托管并分享你的网页',
       icon: 'Globe',
       tags: ['托管', '网页', 'hosting'],
       routePath: '/web-pages',
+    } as ToolboxItem,
+    {
+      id: '__skill-agent__',
+      name: '技能创建助手',
+      description: 'AI 引导你逐步创建可复用的技能模板',
+      icon: 'Wand2',
+      tags: ['技能', 'skill', 'AI', '创建', '模板'],
+      routePath: '/skill-agent',
     } as ToolboxItem,
   ], []);
 

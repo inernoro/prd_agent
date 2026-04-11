@@ -10,6 +10,30 @@ import { BranchBadge } from '@/components/BranchBadge';
 import { useBreakpoint } from '@/hooks/useBreakpoint';
 import { SuspenseVideoLoader } from '@/components/ui/VideoLoader';
 
+/**
+ * NavigationBridge — Exposes React Router's navigate() to non-React code.
+ *
+ * CDS Widget's Page Agent Bridge needs to trigger SPA navigation from outside React.
+ * This component listens for a custom DOM event and calls navigate() internally.
+ *
+ * Usage from Widget (or any non-React JS):
+ *   window.dispatchEvent(new CustomEvent('bridge:navigate', { detail: { path: '/report-agent' } }));
+ */
+function NavigationBridge() {
+  const navigate = useNavigate();
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const path = (e as CustomEvent).detail?.path;
+      if (path && typeof path === 'string') {
+        navigate(path);
+      }
+    };
+    window.addEventListener('bridge:navigate', handler);
+    return () => window.removeEventListener('bridge:navigate', handler);
+  }, [navigate]);
+  return null;
+}
+
 // ── Route-level lazy loading ──
 // Each page is loaded on-demand, drastically reducing initial bundle in dev mode.
 // Default exports use lazy() directly; named exports use .then() to re-export as default.
@@ -34,6 +58,11 @@ const WorkflowListPage = lazy(() => import('@/pages/workflow-agent').then(m => (
 const WorkflowEditorPage = lazy(() => import('@/pages/workflow-agent').then(m => ({ default: m.WorkflowEditorPage })));
 const WorkflowCanvasPage = lazy(() => import('@/pages/workflow-agent').then(m => ({ default: m.WorkflowCanvasPage })));
 const MarketplacePage = lazy(() => import('@/pages/marketplace').then(m => ({ default: m.MarketplacePage })));
+const DocumentStorePage = lazy(() => import('@/pages/document-store').then(m => ({ default: m.DocumentStorePage })));
+const LibraryLandingPage = lazy(() => import('@/pages/library/LibraryLandingPage').then(m => ({ default: m.LibraryLandingPage })));
+const LibraryStoreDetailPage = lazy(() => import('@/pages/library/LibraryStoreDetailPage').then(m => ({ default: m.LibraryStoreDetailPage })));
+const EmergenceExplorerPage = lazy(() => import('@/pages/emergence').then(m => ({ default: m.EmergenceExplorerPage })));
+const SkillAgentPage = lazy(() => import('@/pages/SkillAgentPage'));
 const AiToolboxPage = lazy(() => import('@/pages/ai-toolbox').then(m => ({ default: m.AiToolboxPage })));
 const SharedConversation = lazy(() => import('@/pages/ai-toolbox/SharedConversation').then(m => ({ default: m.SharedConversation })));
 const ArenaPage = lazy(() => import('@/pages/arena/ArenaPage').then(m => ({ default: m.ArenaPage })));
@@ -51,8 +80,6 @@ const WebPagesPage = lazy(() => import('@/pages/WebPagesPage'));
 const ShareViewPage = lazy(() => import('@/pages/ShareViewPage'));
 const ExecutiveDashboardPage = lazy(() => import('@/pages/ExecutiveDashboardPage'));
 const PrdAgentTabsPage = lazy(() => import('@/pages/PrdAgentTabsPage').then(m => ({ default: m.PrdAgentTabsPage })));
-const TutorialsPage = lazy(() => import('@/pages/TutorialsPage'));
-const TutorialDetailPage = lazy(() => import('@/pages/tutorials/TutorialDetailPage'));
 const AgentLauncherPage = lazy(() => import('@/pages/AgentLauncherPage'));
 const MobileHomePage = lazy(() => import('@/pages/MobileHomePage'));
 const MobileAssetsPage = lazy(() => import('@/pages/MobileAssetsPage'));
@@ -206,6 +233,7 @@ export default function App() {
     <AgentSwitcherProvider>
       <ToastContainer />
       <BranchBadge />
+      <NavigationBridge />
       <Suspense fallback={<SuspenseVideoLoader />}>
       <Routes location={location}>
         {/* Landing page - public */}
@@ -221,6 +249,10 @@ export default function App() {
         {/* 开发试验场 - 无需权限 */}
         <Route path="/_dev/rich-composer-lab" element={<RichComposerLab />} />
         <Route path="/_dev/mobile-audit" element={<MobileAuditPage />} />
+
+        {/* 智识殿堂 - 独立全屏页面（实验性 claymorphism 风格），不使用 AppShell 布局 */}
+        <Route path="/library" element={<LibraryLandingPage />} />
+        <Route path="/library/:storeId" element={<LibraryStoreDetailPage />} />
 
         {/* 视觉创作 Agent - 独立全屏页面，不使用 AppShell 布局 */}
         <Route
@@ -327,9 +359,10 @@ export default function App() {
         <Route path="assets" element={<RequirePermission perm="assets.read"><AssetsManagePage /></RequirePermission>} />
         <Route path="skills" element={<RequirePermission perm="skills.read"><SkillsPage /></RequirePermission>} />
         <Route path="web-pages" element={<RequirePermission perm="web-pages.read"><WebPagesPage /></RequirePermission>} />
-        <Route path="tutorials" element={<RequirePermission perm="access"><TutorialsPage /></RequirePermission>} />
-        <Route path="tutorials/:id" element={<RequirePermission perm="access"><TutorialDetailPage /></RequirePermission>} />
         <Route path="marketplace" element={<RequirePermission perm="access"><MarketplacePage /></RequirePermission>} />
+        <Route path="document-store" element={<RequirePermission perm="access"><DocumentStorePage /></RequirePermission>} />
+        <Route path="emergence" element={<RequirePermission perm="access"><EmergenceExplorerPage /></RequirePermission>} />
+        <Route path="skill-agent" element={<RequirePermission perm="access"><SkillAgentPage /></RequirePermission>} />
         <Route path="arena" element={<RequirePermission perm="arena-agent.use"><ArenaPage /></RequirePermission>} />
         <Route path="lab" element={<RequirePermission perm="lab.read"><LabPage /></RequirePermission>} />
         <Route path="settings" element={<RequirePermission perm="access"><SettingsPage /></RequirePermission>} />

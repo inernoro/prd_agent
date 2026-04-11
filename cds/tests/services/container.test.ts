@@ -133,6 +133,84 @@ describe('ContainerService', () => {
       expect(runCmd).toContain('-v "/cache/nuget":"/root/.nuget"');
     });
 
+    // ── Phase 2 cgroup resource limits ──
+
+    it('should apply --memory and --memory-swap when memoryMB is set', async () => {
+      mock.addResponsePattern(/docker network inspect/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
+      mock.addResponsePattern(/docker rm -f/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
+      mock.addResponsePattern(/docker run/, () => ({ stdout: 'ok', stderr: '', exitCode: 0 }));
+
+      const profile = makeProfile({
+        resources: { memoryMB: 512 },
+      });
+
+      await service.runService(makeEntry(), profile, makeService());
+
+      const runCmd = mock.commands.find(c => c.includes('docker run -d'))!;
+      expect(runCmd).toContain('--memory 512m');
+      // Match memory-swap to memory to avoid swap leakage under pressure
+      expect(runCmd).toContain('--memory-swap 512m');
+    });
+
+    it('should apply --cpus when cpus is set', async () => {
+      mock.addResponsePattern(/docker network inspect/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
+      mock.addResponsePattern(/docker rm -f/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
+      mock.addResponsePattern(/docker run/, () => ({ stdout: 'ok', stderr: '', exitCode: 0 }));
+
+      const profile = makeProfile({
+        resources: { cpus: 1.5 },
+      });
+
+      await service.runService(makeEntry(), profile, makeService());
+
+      const runCmd = mock.commands.find(c => c.includes('docker run -d'))!;
+      expect(runCmd).toContain('--cpus 1.5');
+    });
+
+    it('should combine memory and cpu limits', async () => {
+      mock.addResponsePattern(/docker network inspect/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
+      mock.addResponsePattern(/docker rm -f/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
+      mock.addResponsePattern(/docker run/, () => ({ stdout: 'ok', stderr: '', exitCode: 0 }));
+
+      const profile = makeProfile({
+        resources: { memoryMB: 1024, cpus: 2 },
+      });
+
+      await service.runService(makeEntry(), profile, makeService());
+
+      const runCmd = mock.commands.find(c => c.includes('docker run -d'))!;
+      expect(runCmd).toContain('--memory 1024m');
+      expect(runCmd).toContain('--cpus 2');
+    });
+
+    it('should emit NO resource flags when resources is unset (backward compat)', async () => {
+      mock.addResponsePattern(/docker network inspect/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
+      mock.addResponsePattern(/docker rm -f/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
+      mock.addResponsePattern(/docker run/, () => ({ stdout: 'ok', stderr: '', exitCode: 0 }));
+
+      await service.runService(makeEntry(), makeProfile(), makeService());
+
+      const runCmd = mock.commands.find(c => c.includes('docker run -d'))!;
+      expect(runCmd).not.toContain('--memory');
+      expect(runCmd).not.toContain('--cpus');
+    });
+
+    it('should ignore zero/negative resource values', async () => {
+      mock.addResponsePattern(/docker network inspect/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
+      mock.addResponsePattern(/docker rm -f/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
+      mock.addResponsePattern(/docker run/, () => ({ stdout: 'ok', stderr: '', exitCode: 0 }));
+
+      const profile = makeProfile({
+        resources: { memoryMB: 0, cpus: -1 },
+      });
+
+      await service.runService(makeEntry(), profile, makeService());
+
+      const runCmd = mock.commands.find(c => c.includes('docker run -d'))!;
+      expect(runCmd).not.toContain('--memory');
+      expect(runCmd).not.toContain('--cpus');
+    });
+
     it('should throw if docker run fails', async () => {
       mock.addResponsePattern(/docker network inspect/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
       mock.addResponsePattern(/docker rm -f/, () => ({ stdout: '', stderr: '', exitCode: 0 }));

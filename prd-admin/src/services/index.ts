@@ -548,6 +548,7 @@ import type {
   DeleteReportTeamContract,
   LeaveReportTeamContract,
   AddReportTeamMemberContract,
+  BatchAddReportTeamMembersContract,
   RemoveReportTeamMemberContract,
   UpdateReportTeamMemberContract,
   ListReportUsersContract,
@@ -631,6 +632,7 @@ import {
   deleteReportTeamReal,
   leaveReportTeamReal,
   addReportTeamMemberReal,
+  batchAddReportTeamMembersReal,
   removeReportTeamMemberReal,
   updateReportTeamMemberReal,
   listReportUsersReal,
@@ -1040,6 +1042,7 @@ export const updateReportTeam: UpdateReportTeamContract = withAuth(updateReportT
 export const deleteReportTeam: DeleteReportTeamContract = withAuth(deleteReportTeamReal);
 export const leaveReportTeam: LeaveReportTeamContract = withAuth(leaveReportTeamReal);
 export const addReportTeamMember: AddReportTeamMemberContract = withAuth(addReportTeamMemberReal);
+export const batchAddReportTeamMembers: BatchAddReportTeamMembersContract = withAuth(batchAddReportTeamMembersReal);
 export const removeReportTeamMember: RemoveReportTeamMemberContract = withAuth(removeReportTeamMemberReal);
 export const updateReportTeamMember: UpdateReportTeamMemberContract = withAuth(updateReportTeamMemberReal);
 export const listReportUsers: ListReportUsersContract = withAuth(listReportUsersReal);
@@ -1530,3 +1533,93 @@ export type {
   PrAlignmentReportDto,
   PrSummaryReportDto,
 } from '@/services/real/prReview';
+
+// ── Document Store 文档空间 ──
+export {
+  createDocumentStoreReal as createDocumentStore,
+  listDocumentStoresReal as listDocumentStores,
+  getDocumentStoreReal as getDocumentStore,
+  updateDocumentStoreReal as updateDocumentStore,
+  deleteDocumentStoreReal as deleteDocumentStore,
+  addDocumentEntryReal as addDocumentEntry,
+  listDocumentEntriesReal as listDocumentEntries,
+  updateDocumentEntryReal as updateDocumentEntry,
+  deleteDocumentEntryReal as deleteDocumentEntry,
+  uploadDocumentFile,
+  getDocumentContent,
+  addSubscription,
+  addGitHubSubscription,
+  setPrimaryEntry,
+  createFolder,
+  triggerSync,
+  listSubscriptionDetail,
+  updateSubscription,
+  generateSubtitle,
+  listReprocessTemplates,
+  startReprocess,
+  getAgentRun,
+  getLatestAgentRun,
+  // 批次 C：浏览事件埋点
+  logEntryView,
+  leaveEntryView,
+  listStoreViewEvents,
+  // 批次 D：划词评论
+  createInlineComment,
+  listInlineComments,
+  deleteInlineComment,
+  togglePinnedEntry,
+  listDocumentStoresWithPreview,
+  searchDocumentEntries,
+  moveDocumentEntry,
+  updateDocumentContent,
+  setFolderPrimaryChild,
+  rebuildContentIndex,
+  listPublicDocumentStores,
+  getPublicDocumentStore,
+  listPublicStoreEntries,
+  getPublicEntryContent,
+  likeDocumentStore,
+  unlikeDocumentStore,
+  favoriteDocumentStore,
+  unfavoriteDocumentStore,
+  listMyFavoriteDocumentStores,
+  listMyLikedDocumentStores,
+  createShareLink as createDocStoreShareLink,
+  listShareLinks as listDocStoreShareLinks,
+  revokeShareLink as revokeDocStoreShareLink,
+} from '@/services/real/documentStore';
+export type {
+  DocumentStore,
+  DocumentEntry,
+  DocumentStoreWithPreview,
+  InteractionStoreCard,
+  PublicDocumentStore,
+  PublicStoreDetail,
+  DocumentStoreShareLink,
+  CreateDocumentStoreInput,
+  AddDocumentEntryInput,
+  DocumentSyncLogEntry,
+  SubscriptionDetail,
+  DocumentStoreAgentRun,
+  ReprocessTemplate,
+  DocumentStoreViewEvent,
+  DocumentStoreViewStats,
+  DocumentInlineComment,
+} from '@/services/contracts/documentStore';
+
+// ── Emergence Explorer 涌现探索器 ──
+export {
+  createEmergenceTreeReal as createEmergenceTree,
+  listEmergenceTreesReal as listEmergenceTrees,
+  getEmergenceTreeReal as getEmergenceTree,
+  deleteEmergenceTreeReal as deleteEmergenceTree,
+  updateEmergenceNodeReal as updateEmergenceNode,
+  deleteEmergenceNodeReal as deleteEmergenceNode,
+  exportEmergenceTreeReal as exportEmergenceTree,
+} from '@/services/real/emergence';
+export type {
+  EmergenceTree,
+  EmergenceNode,
+  CreateEmergenceTreeInput,
+  UpdateEmergenceNodeInput,
+} from '@/services/contracts/emergence';

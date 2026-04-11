@@ -35,6 +35,7 @@ public class DefectAgentController : ControllerBase
     private readonly IOpenPlatformService _openPlatformService;
     private readonly ILLMRequestContextAccessor _llmRequestContext;
     private readonly IConfiguration _config;
+    private readonly IHttpClientFactory _httpClientFactory;
     private static readonly TimeSpan ClientBindingTtl = TimeSpan.FromDays(3);
 
     public DefectAgentController(
@@ -46,7 +47,8 @@ public class DefectAgentController : ControllerBase
         DefectWebhookService webhookService,
         IOpenPlatformService openPlatformService,
         ILLMRequestContextAccessor llmRequestContext,
-        IConfiguration config)
+        IConfiguration config,
+        IHttpClientFactory httpClientFactory)
     {
         _db = db;
         _gateway = gateway;
@@ -57,6 +59,7 @@ public class DefectAgentController : ControllerBase
         _openPlatformService = openPlatformService;
         _llmRequestContext = llmRequestContext;
         _config = config;
+        _httpClientFactory = httpClientFactory;
     }
 
     private string GetUserId() => this.GetRequiredUserId();
@@ -1333,6 +1336,42 @@ public class DefectAgentController : ControllerBase
         return Ok(ApiResponse<object>.Ok(new { deleted = true }));
     }
 
+    /// <summary>
+    /// 通过缺陷附件 ID 代理下载图片（解决前端跨域 CORS 问题）。
+    /// 仅允许下载当前用户可访问的缺陷的附件。
+    /// </summary>
+    [HttpGet("defects/{defectId}/attachments/{attachmentId}/proxy")]
+    public async Task<IActionResult> ProxyAttachment(string defectId, string attachmentId, CancellationToken ct)
+    {
+        var userId = GetUserId();
+        var isAdmin = HasManagePermission();
+
+        var defect = await _db.DefectReports.Find(x => x.Id == defectId && !x.IsDeleted).FirstOrDefaultAsync(ct);
+        if (defect == null)
+            return NotFound();
+
+        // 权限校验：管理员或本人相关缺陷
+        if (!isAdmin && defect.ReporterId != userId && defect.AssigneeId != userId)
+            return StatusCode(403);
+
+        var attachment = defect.Attachments.FirstOrDefault(a => a.Id == attachmentId);
+        if (attachment == null || string.IsNullOrEmpty(attachment.Url))
+            return NotFound();
+
+        try
+        {
+            var client = _httpClientFactory.CreateClient();
+            client.Timeout = TimeSpan.FromSeconds(15);
+            var stream = await client.GetStreamAsync(attachment.Url, ct);
+            return File(stream, attachment.MimeType ?? "application/octet-stream", attachment.FileName);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to proxy attachment {AttachmentId} for defect {DefectId}", attachmentId, defectId);
+            return StatusCode(502);
+        }
+    }
+
     #endregion
 
     #region 日志预览
@@ -2483,37 +2522,58 @@ public class DefectAgentController : ControllerBase
         List<DefectReport> defects;
         string title;
 
-        if (!string.IsNullOrWhiteSpace(request.ProjectId))
+        // 只分享打开的缺陷（排除已关闭和已驳回）
+        var closedStatuses = new[] { DefectStatus.Closed, DefectStatus.Rejected };
+
+        if (request.DefectIds is { Count: > 0 })
+        {
+            // 前端传入了具体的缺陷 ID 列表（与列表页当前可见内容一致）
+            var isAdmin = HasManagePermission();
+            var idFilter = Builders<DefectReport>.Filter.In(x => x.Id, request.DefectIds);
+            var accessFilter = isAdmin
+                ? Builders<DefectReport>.Filter.Where(x => !x.IsDeleted)
+                : Builders<DefectReport>.Filter.Where(x => !x.IsDeleted && (x.ReporterId == userId || x.AssigneeId == userId));
+
+            defects = await _db.DefectReports
+                .Find(idFilter & accessFilter)
+                .SortByDescending(x => x.CreatedAt)
+                .ToListAsync(ct);
+
+            title = request.Title?.Trim() ?? $"全部打开的缺陷分享（AI 评分）";
+        }
+        else if (!string.IsNullOrWhiteSpace(request.ProjectId))
         {
             var project = await _db.DefectProjects.Find(x => x.Id == request.ProjectId).FirstOrDefaultAsync(ct);
             if (project == null)
                 return NotFound(ApiResponse<object>.Fail(ErrorCodes.DOCUMENT_NOT_FOUND, "项目不存在"));
 
             defects = await _db.DefectReports
-                .Find(x => x.ProjectId == request.ProjectId && !x.IsDeleted)
+                .Find(x => x.ProjectId == request.ProjectId && !x.IsDeleted && !closedStatuses.Contains(x.Status))
                 .SortByDescending(x => x.CreatedAt)
                 .Limit(200)
                 .ToListAsync(ct);
 
-            title = $"项目「{project.Name}」全部缺陷分享（AI 评分）";
+            title = $"项目「{project.Name}」打开的缺陷分享（AI 评分）";
         }
         else if (!string.IsNullOrWhiteSpace(request.FolderId))
         {
             defects = await _db.DefectReports
-                .Find(x => x.FolderId == request.FolderId && !x.IsDeleted)
+                .Find(x => x.FolderId == request.FolderId && !x.IsDeleted && !closedStatuses.Contains(x.Status))
                 .SortByDescending(x => x.CreatedAt)
                 .Limit(200)
                 .ToListAsync(ct);
 
-            title = request.Title?.Trim() ?? "缺陷批量分享（AI 评分）";
+            title = request.Title?.Trim() ?? "打开的缺陷批量分享（AI 评分）";
         }
         else
         {
             // 分享当前用户能看到的所有缺陷
             var isAdmin = HasManagePermission();
-            var filter = isAdmin
+            var statusFilter = Builders<DefectReport>.Filter.Nin(x => x.Status, closedStatuses);
+            var baseFilter = isAdmin
                 ? Builders<DefectReport>.Filter.Where(x => !x.IsDeleted)
                 : Builders<DefectReport>.Filter.Where(x => !x.IsDeleted && (x.ReporterId == userId || x.AssigneeId == userId));
+            var filter = baseFilter & statusFilter;
 
             defects = await _db.DefectReports
                 .Find(filter)
@@ -2521,7 +2581,7 @@ public class DefectAgentController : ControllerBase
                 .Limit(200)
                 .ToListAsync(ct);
 
-            title = request.Title?.Trim() ?? "全部缺陷分享（AI 评分）";
+            title = request.Title?.Trim() ?? "全部打开的缺陷分享（AI 评分）";
         }
 
         if (defects.Count == 0)
@@ -3960,6 +4020,8 @@ public class CreateBatchShareRequest
     public string? FolderId { get; set; }
     public string? Title { get; set; }
     public int ExpiresInDays { get; set; } = 7;
+    /// <summary>前端传入当前可见的缺陷 ID 列表，确保分享内容与列表一致</summary>
+    public List<string>? DefectIds { get; set; }
 }
 
 public class UpdateDefectFixStatusRequest

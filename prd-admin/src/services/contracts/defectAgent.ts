@@ -673,6 +673,7 @@ export type CreateBatchShareContract = (input: {
   folderId?: string;
   title?: string;
   expiresInDays?: number;
+  defectIds?: string[];
 }) => Promise<ApiResponse<{ shareLink: DefectShareLink; shareUrl: string }>>;
 
 export type GetShareScoresContract = (input: {

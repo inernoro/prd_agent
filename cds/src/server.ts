@@ -1,12 +1,16 @@
 import express from 'express';
 import crypto from 'node:crypto';
+import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createBranchRouter } from './routes/branches.js';
+import { createBridgeRouter } from './routes/bridge.js';
 import type { StateService } from './services/state.js';
 import type { WorktreeService } from './services/worktree.js';
 import type { ContainerService } from './services/container.js';
 import type { ProxyService } from './services/proxy.js';
+import type { BridgeService } from './services/bridge.js';
+import type { SchedulerService } from './services/scheduler.js';
 import type { CdsConfig, IShellExecutor } from './types.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -16,8 +20,19 @@ export interface ServerDeps {
   worktreeService: WorktreeService;
   containerService: ContainerService;
   proxyService: ProxyService;
+  bridgeService: BridgeService;
   shell: IShellExecutor;
   config: CdsConfig;
+  /** Optional warm-pool scheduler (v3.1). */
+  schedulerService?: SchedulerService;
+  /**
+   * Cluster executor registry. Passed through to createBranchRouter so the
+   * deploy handler can dispatch to remote executors when present. Absent in
+   * pre-cluster deployments where the router falls back to local execution.
+   */
+  registry?: import('./scheduler/executor-registry.js').ExecutorRegistry;
+  /** Getter for the current dispatch strategy. See routes/cluster.ts. */
+  getClusterStrategy?: () => 'least-branches' | 'least-load' | 'round-robin';
 }
 
 function makeToken(user: string, pass: string): string {
@@ -98,6 +113,10 @@ function resolveApiLabel(method: string, path: string): string {
     'GET /ai/pending': '查看待处理 AI 请求',
     'GET /ai/sessions': '查看 AI 会话',
     'POST /ai/request-access': 'AI 请求连接',
+    'GET /bridge/connections': '查看 Bridge 连接',
+    'POST /bridge/navigate-request': 'AI 请求用户导航',
+    'POST /bridge/start-session': 'AI 开始操作页面',
+    'POST /bridge/end-session': 'AI 操作完成',
   };
 
   const key = `${method} ${p}`;
@@ -134,6 +153,9 @@ function resolveApiLabel(method: string, path: string): string {
     [/^DELETE \/ai\/sessions\/(.+)$/, '撤销 AI 会话'],
     [/^POST \/ai\/approve\/(.+)$/, '批准 AI 连接'],
     [/^POST \/ai\/reject\/(.+)$/, '拒绝 AI 连接'],
+    [/^GET \/bridge\/state\/(.+)$/, '读取页面状态'],
+    [/^POST \/bridge\/command\/(.+)$/, 'AI 操作页面'],
+    [/^GET \/bridge\/navigate-requests\/(.+)$/, '查看导航请求'],
   ];
 
   for (const [regex, label] of patterns) {
@@ -218,6 +240,99 @@ export function createServer(deps: ServerDeps): express.Express {
   app.use(express.json());
 
   const webDir = path.resolve(__dirname, '..', 'web');
+
+  // ── Liveness / readiness probe (public, no auth) ──
+  // Used by:
+  //   1. Dockerfile HEALTHCHECK
+  //   2. Nginx upstream health check
+  //   3. systemd WatchdogSec (future)
+  //   4. Load balancer active health probes
+  //
+  // Returns 200 when CDS can read its state file AND reach the Docker socket.
+  // Returns 503 on either failure so upstream knows to avoid this instance.
+  // See doc/design.cds-resilience.md Phase 2.
+  app.get('/healthz', async (_req, res) => {
+    const checks: Record<string, { ok: boolean; detail?: string }> = {};
+    let overallOk = true;
+
+    // Check 1: state readable
+    try {
+      const state = deps.stateService.getState();
+      checks.state = {
+        ok: true,
+        detail: `branches=${Object.keys(state.branches).length}`,
+      };
+    } catch (err) {
+      checks.state = { ok: false, detail: (err as Error).message };
+      overallOk = false;
+    }
+
+    // Check 2: docker reachable (use a lightweight `docker version --format` call)
+    try {
+      const result = await deps.shell.exec('docker version --format "{{.Server.Version}}"', { timeout: 3000 });
+      checks.docker = {
+        ok: result.exitCode === 0,
+        detail: result.exitCode === 0 ? result.stdout.trim() : result.stderr.trim(),
+      };
+      if (result.exitCode !== 0) overallOk = false;
+    } catch (err) {
+      checks.docker = { ok: false, detail: (err as Error).message };
+      overallOk = false;
+    }
+
+    res.status(overallOk ? 200 : 503).json({
+      ok: overallOk,
+      checks,
+      timestamp: new Date().toISOString(),
+    });
+  });
+
+  // ── Host stats (public, no auth) — real-time host memory + CPU ──
+  //
+  // Used by the Dashboard footer widget for a "pulse" display of the machine
+  // beneath CDS. Separate from /api/branches `capacity` field which only
+  // knows container count, not host memory/CPU load.
+  //
+  // Returned fields:
+  //   mem.totalMB       — os.totalmem() / 1024 / 1024
+  //   mem.freeMB        — os.freemem() / 1024 / 1024 (NOT "available" — kernel-specific)
+  //   mem.usedPercent   — (total - free) / total × 100
+  //   cpu.cores         — os.cpus().length
+  //   cpu.loadAvg1      — 1-minute load average (unix only; 0 on Windows)
+  //   cpu.loadPercent   — loadAvg1 / cores × 100 (rough "how busy is the CPU")
+  //   uptimeSeconds     — os.uptime()
+  //
+  // Polled by the frontend every 5s. Cheap enough to not need caching.
+  // See doc/design.cds-resilience.md §八.
+  app.get('/api/host-stats', (_req, res) => {
+    const totalBytes = os.totalmem();
+    const freeBytes = os.freemem();
+    const usedBytes = totalBytes - freeBytes;
+    const totalMB = Math.round(totalBytes / (1024 * 1024));
+    const freeMB = Math.round(freeBytes / (1024 * 1024));
+    const usedPercent = totalBytes > 0 ? Math.round((usedBytes / totalBytes) * 100) : 0;
+
+    const cores = os.cpus().length || 1;
+    const loadAvg = os.loadavg(); // [1m, 5m, 15m] — 0 on Windows
+    const loadPercent = Math.round((loadAvg[0] / cores) * 100);
+
+    res.json({
+      mem: {
+        totalMB,
+        freeMB,
+        usedPercent,
+      },
+      cpu: {
+        cores,
+        loadAvg1: Number(loadAvg[0].toFixed(2)),
+        loadAvg5: Number(loadAvg[1].toFixed(2)),
+        loadAvg15: Number(loadAvg[2].toFixed(2)),
+        loadPercent,
+      },
+      uptimeSeconds: Math.round(os.uptime()),
+      timestamp: new Date().toISOString(),
+    });
+  });
 
   // ── Switch domain middleware (before auth) ──
   const switchDomain = deps.config.switchDomain?.toLowerCase();
@@ -310,6 +425,38 @@ export function createServer(deps: ServerDeps): express.Express {
       if (/\.(css|js|ico|png|svg|woff2?)$/i.test(req.path)) return next();
       // Allow internal requests from widget proxy (/_cds/ → master)
       if (req.headers['x-cds-internal'] === '1') return next();
+
+      // ── Cluster peer-to-peer endpoints ──
+      //
+      // These routes authenticate with X-Bootstrap-Token or X-Executor-Token
+      // inside the route handler (see scheduler/routes.ts). The cookie-based
+      // auth middleware doesn't know about those tokens, and would otherwise
+      // reject all cross-node calls with 401 — which is exactly the bug that
+      // broke `./exec_cds.sh connect` and the Dashboard's "加入集群" button.
+      //
+      // We bypass cookie auth for these specific method+path combinations
+      // ONLY WHEN a cluster token header is present. This way a Dashboard
+      // user (cookie-authenticated, no cluster token) still goes through
+      // normal cookie auth — which is required so the Dashboard's
+      // "踢出" button can call DELETE /api/executors/:id without hitting
+      // the verifyPermanentToken wall downstream.
+      //
+      // The bypass is tightly scoped — GET /api/executors (list) and
+      // /api/cluster/* (dashboard UI) still go through cookie auth.
+      //
+      // NOTE: local variable is `reqPath` (not `path`) because `path` is
+      // already imported as the Node module at the top of this file.
+      const reqMethod = req.method;
+      const reqPath = req.path;
+      const hasClusterToken =
+        req.headers['x-bootstrap-token'] !== undefined ||
+        req.headers['x-executor-token'] !== undefined;
+      if (hasClusterToken) {
+        if (reqMethod === 'POST' && reqPath === '/api/executors/register') return next();
+        if (reqMethod === 'POST' && /^\/api\/executors\/[^/]+\/heartbeat$/.test(reqPath)) return next();
+        if (reqMethod === 'DELETE' && /^\/api\/executors\/[^/]+$/.test(reqPath)) return next();
+        if (reqMethod === 'POST' && /^\/api\/executors\/[^/]+\/drain$/.test(reqPath)) return next();
+      }
 
       // Check human cookie auth
       const cookieToken = parseCookie(req.headers.cookie || '', 'cds_token');
@@ -423,19 +570,63 @@ export function createServer(deps: ServerDeps): express.Express {
     _req.on('close', () => { stateClients.delete(res); clearInterval(heartbeat); });
   });
 
-  // When state changes, broadcast to all connected clients
-  deps.stateService.onSave(() => {
+  // ── Broadcast helpers exposed to index.ts for cluster state changes ──
+  //
+  // `broadcastState()` is called automatically on every stateService.save()
+  // AND manually from the cluster hot-upgrade path when in-memory config
+  // changes (mode flip) without a state.json write. Other modules reach it
+  // via the exported `broadcastClusterChange()` below.
+  function broadcastState(): void {
     if (stateClients.size === 0) return;
     const state = deps.stateService.getState();
+
+    // ── Populate embedded master's runningContainers from local state ──
+    //
+    // Embedded master doesn't heartbeat to itself, so node.runningContainers
+    // is always undefined for the master. But we need an accurate count
+    // for the cluster capacity math — otherwise the popover shows "master:
+    // 0/186 containers" even while 14 containers are running locally.
+    //
+    // Walk local branches, sum up services with status=running where the
+    // branch isn't explicitly dispatched to a remote executor, and stamp
+    // that count on the embedded master entry right before serialization.
+    if (deps.registry) {
+      const execs = state.executors || {};
+      for (const node of Object.values(execs)) {
+        if (node.role !== 'embedded') continue;
+        let localRunning = 0;
+        for (const b of Object.values(state.branches || {})) {
+          // Skip branches owned by a remote executor — they're counted
+          // via that executor's own heartbeat.
+          if (b.executorId && !b.executorId.startsWith('master-')) continue;
+          for (const svc of Object.values(b.services || {})) {
+            if (svc?.status === 'running') localRunning++;
+          }
+        }
+        node.runningContainers = localRunning;
+      }
+    }
+
+    // Include executors + mode + capacity so the Dashboard can react to
+    // cluster changes without extra polls. `cdsMode` is read from the
+    // live config (which may have been hot-switched by onFirstRegister).
     const data = JSON.stringify({
       seq: ++stateSeq,
       branches: Object.values(state.branches),
       defaultBranch: state.defaultBranch,
+      // Cluster state — frontend uses these to update header + branch
+      // placement + cluster modal without needing another /api/config call.
+      mode: deps.config.mode,
+      executors: Object.values(state.executors || {}),
+      capacity: deps.registry ? deps.registry.getTotalCapacity() : null,
     });
     for (const client of stateClients) {
       try { client.write(`data: ${data}\n\n`); } catch { stateClients.delete(client); }
     }
-  });
+  }
+  (app as unknown as { broadcastState?: () => void }).broadcastState = broadcastState;
+
+  deps.stateService.onSave(broadcastState);
 
   // ── Activity stream SSE endpoint ──
   app.get('/api/activity-stream', (req, res) => {
@@ -461,6 +652,8 @@ export function createServer(deps: ServerDeps): express.Express {
     // Skip dashboard auto-poll requests (X-CDS-Poll: true) — they are noise
     const isPoll = req.headers['x-cds-poll'] === 'true';
     if (isPoll) return next();
+    // Skip Bridge internal polling and results — internal communication, not user-facing
+    if (req.path.startsWith('/bridge/heartbeat') || req.path.startsWith('/bridge/navigate-requests/') || req.path.startsWith('/bridge/handshake-requests/') || req.path === '/bridge/result' || req.path.startsWith('/bridge/check/')) return next();
 
     const start = Date.now();
     const origEnd = res.end.bind(res);
@@ -509,15 +702,23 @@ export function createServer(deps: ServerDeps): express.Express {
   });
 
   // API routes
-  app.use('/api', createBranchRouter(deps));
+  app.use('/api/bridge', createBridgeRouter({ bridgeService: deps.bridgeService }));
+  app.use('/api', createBranchRouter({
+    stateService: deps.stateService,
+    worktreeService: deps.worktreeService,
+    containerService: deps.containerService,
+    shell: deps.shell,
+    config: deps.config,
+    schedulerService: deps.schedulerService,
+    registry: deps.registry,
+    getClusterStrategy: deps.getClusterStrategy,
+  }));
 
-  // Dashboard static files
-  app.use(express.static(webDir));
-
-  // SPA fallback
-  app.get('*', (_req, res) => {
-    res.sendFile(path.join(webDir, 'index.html'));
-  });
+  // NOTE: The SPA fallback (`app.get('*', ...)`) is intentionally NOT
+  // registered here. Routes mounted later in `index.ts` (scheduler, cluster,
+  // etc.) would otherwise be shadowed by the catch-all, because Express
+  // traverses middleware in registration order. Call `installSpaFallback()`
+  // once all dynamic routes have been mounted.
 
   // Log AI access key status
   if (process.env.AI_ACCESS_KEY) {
@@ -526,6 +727,27 @@ export function createServer(deps: ServerDeps): express.Express {
   console.log('  AI Pairing: enabled (POST /api/ai/request-access)');
 
   return app;
+}
+
+/**
+ * Install the dashboard static-file serving and the SPA catch-all fallback.
+ *
+ * Must be called AFTER all `/api/*` routes have been mounted on the app
+ * (including scheduler and cluster routers added from `index.ts`), because
+ * `app.get('*', ...)` is a greedy handler that will intercept any unmatched
+ * GET request in registration order. Installing it too early was the cause
+ * of `/api/cluster/status` returning HTML instead of JSON in production —
+ * the catch-all fired before the cluster router got a chance to match.
+ *
+ * See commit that moved this out of `createServer()` for the regression
+ * details.
+ */
+export function installSpaFallback(app: express.Express, webDir?: string): void {
+  const dir = webDir || path.resolve(__dirname, '..', 'web');
+  app.use(express.static(dir));
+  app.get('*', (_req, res) => {
+    res.sendFile(path.join(dir, 'index.html'));
+  });
 }
 
 function parseCookie(cookieStr: string, name: string): string | undefined {

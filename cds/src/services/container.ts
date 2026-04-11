@@ -165,12 +165,28 @@ export class ContainerService {
         onOutput?.(`── Node.js 容器: node_modules 已隔离到 Docker volume ──\n`);
       }
 
+      // Phase 2 resilience: enforce per-container cgroup limits when configured.
+      // Unset = legacy behavior (no limits). See doc/design.cds-resilience.md Phase 2.
+      const resourceFlags: string[] = [];
+      if (profile.resources?.memoryMB && profile.resources.memoryMB > 0) {
+        resourceFlags.push(`--memory ${profile.resources.memoryMB}m`);
+        // Match memory-swap to memory so we don't leak into swap under pressure.
+        resourceFlags.push(`--memory-swap ${profile.resources.memoryMB}m`);
+      }
+      if (profile.resources?.cpus && profile.resources.cpus > 0) {
+        resourceFlags.push(`--cpus ${profile.resources.cpus}`);
+      }
+      if (resourceFlags.length > 0) {
+        onOutput?.(`── 资源限制: ${resourceFlags.join(' ')} ──\n`);
+      }
+
       const runCmd = [
         'docker run -d',
         `--name ${service.containerName}`,
         `--network ${this.config.dockerNetwork}`,
         `-p ${service.hostPort}:${profile.containerPort}`,
         ...volumeFlags,
+        ...resourceFlags,
         `-w ${containerWorkDir}`,
         envFlag,
         '--tmpfs /tmp',

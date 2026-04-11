@@ -81,6 +81,14 @@ export interface BuildProfile {
    * Currently active deploy mode. null/undefined = use profile defaults (first mode or raw command).
    */
   activeDeployMode?: string;
+  /**
+   * Per-container cgroup limits (Phase 2 of resilience plan).
+   * When set, `docker run` gets `--memory <N>m` and/or `--cpus <N>` flags.
+   * Unset = no limit (legacy behavior).
+   *
+   * Derived from compose `deploy.resources.limits` or `x-cds-resources`.
+   */
+  resources?: ResourceLimits;
 }
 
 /** Readiness probe configuration for app services */
@@ -113,6 +121,34 @@ export interface CacheMount {
   containerPath: string;
 }
 
+/**
+ * Per-container resource limits enforced via Docker cgroup flags.
+ *
+ * Phase 2 of the CDS resilience plan: prevent a single runaway container
+ * from draining the whole host. Configured via compose
+ * `deploy.resources.limits` (standard) or `x-cds-resources` (our extension).
+ *
+ * See `doc/design.cds-resilience.md` Phase 2.
+ */
+export interface ResourceLimits {
+  /** Max memory in MB. Docker flag: --memory <N>m */
+  memoryMB?: number;
+  /** Max CPU cores (fractional allowed, e.g. 1.5). Docker flag: --cpus <N> */
+  cpus?: number;
+}
+
+/**
+ * Heat state of a branch in the scheduler's warm pool.
+ * - `hot`: running, ready to serve requests
+ * - `warming`: being woken up (docker run in progress)
+ * - `cooling`: being shut down (docker stop in progress)
+ * - `cold`: containers not running, worktree preserved
+ * - `undefined`: branch not managed by the scheduler (legacy / scheduler disabled)
+ *
+ * See `doc/design.cds-resilience.md` for the full state machine.
+ */
+export type BranchHeatState = 'hot' | 'warming' | 'cooling' | 'cold';
+
 /** Branch entry — simplified for CDS */
 export interface BranchEntry {
   id: string;
@@ -140,6 +176,16 @@ export interface BranchEntry {
   executorId?: string;
   /** Dynamically allocated preview port (path-prefix routing proxy for port mode) */
   previewPort?: number;
+  /**
+   * Scheduler heat state. Set by SchedulerService; undefined when scheduler disabled.
+   * See `doc/design.cds-resilience.md` §三.
+   */
+  heatState?: BranchHeatState;
+  /**
+   * User explicitly pinned this branch — scheduler must never evict it.
+   * The default branch and color-marked branches are also treated as pinned implicitly.
+   */
+  pinnedByUser?: boolean;
 }
 
 /** State of a single service (one build profile instance) within a branch */
@@ -195,10 +241,39 @@ export interface CdsState {
   mirrorEnabled?: boolean;
   /** Tab title override enabled (updates browser tab title with tag or branch short name) */
   tabTitleEnabled?: boolean;
+  /** Preview mode: 'simple' (cookie switch + main domain), 'port' (dynamic preview port), 'multi' (subdomain per branch). Default: 'multi' */
+  previewMode?: 'simple' | 'port' | 'multi';
   /** Registered executor nodes (scheduler mode) */
   executors?: Record<string, ExecutorNode>;
   /** Data migration task history */
   dataMigrations?: DataMigration[];
+  /** Registered remote CDS peers (for one-click cross-CDS data migration) */
+  cdsPeers?: CdsPeer[];
+}
+
+/**
+ * A trusted remote CDS instance. Used as the source or target of a data
+ * migration without having to copy around hostnames, ports, and mongo auth —
+ * the remote CDS exposes its local infra MongoDB via authenticated
+ * streaming endpoints (see /api/data-migrations/local-dump / local-restore).
+ *
+ * Auth = the remote CDS's AI_ACCESS_KEY (same key used by the AI bridge).
+ * Transport = HTTPS (preview.miduo.org terminates TLS), so the stream is
+ * encrypted end-to-end without any manual SSH/tunnel setup.
+ */
+export interface CdsPeer {
+  id: string;
+  /** Human-readable name, e.g. "生产 CDS" */
+  name: string;
+  /** Base URL of the remote CDS API, e.g. "https://main.miduo.org" */
+  baseUrl: string;
+  /** AI_ACCESS_KEY of the remote CDS (sent as X-AI-Access-Key header) */
+  accessKey: string;
+  createdAt: string;
+  /** Last verified connection timestamp */
+  lastVerifiedAt?: string;
+  /** Remote infra MongoDB label captured during last verify (for display) */
+  remoteLabel?: string;
 }
 
 /** SSH tunnel configuration for data migration */
@@ -211,12 +286,25 @@ export interface SshTunnelConfig {
   privateKeyPath?: string;
   /** Password auth (less secure, prefer key-based) */
   password?: string;
+  /**
+   * Optional: when set, the mongodump/mongorestore command on the remote
+   * jump host is wrapped in `docker exec <container> sh -c '...'`. Use this
+   * when the remote host only has MongoDB inside a container and the tools
+   * aren't on the jump host's PATH. Matches the manual recipe:
+   *   ssh root@host "docker exec mongo-container sh -c 'mongodump --archive --gzip'"
+   */
+  dockerContainer?: string;
 }
 
 /** MongoDB connection configuration for data migration */
 export interface MongoConnectionConfig {
-  /** 'local' uses the CDS infra MongoDB, 'remote' uses custom connection */
-  type: 'local' | 'remote';
+  /**
+   * Connection mode:
+   * - 'local'  : the CDS infra MongoDB running on this host
+   * - 'remote' : a custom host:port (optional SSH tunnel)
+   * - 'cds'    : a registered remote CDS peer (auto-auth via X-AI-Access-Key)
+   */
+  type: 'local' | 'remote' | 'cds';
   host: string;
   port: number;
   /** Database name (empty = all databases) */
@@ -227,8 +315,10 @@ export interface MongoConnectionConfig {
   password?: string;
   /** Auth source database */
   authDatabase?: string;
-  /** SSH tunnel for this connection */
+  /** SSH tunnel for this connection (only used when type === 'remote') */
   sshTunnel?: SshTunnelConfig;
+  /** CDS peer id (only used when type === 'cds') */
+  cdsPeerId?: string;
 }
 
 /** A data migration task */
@@ -253,6 +343,8 @@ export interface DataMigration {
   /** Error message if failed */
   errorMessage?: string;
   createdAt: string;
+  /** Last modification timestamp (set by PUT /:id) */
+  updatedAt?: string;
   startedAt?: string;
   finishedAt?: string;
   /** Migration log output */
@@ -318,13 +410,97 @@ export interface ExecutorNode {
   host: string;
   port: number;
   status: 'online' | 'offline' | 'draining';
+  /**
+   * Node capacity. `maxBranches` is historically named but now represents
+   * "max container slots" — a single branch can have 1..N containers
+   * (API + admin + DB + ...) so counting branches understates capacity.
+   * Formula: `(totalMemGB - 1) * 2`, matching the existing local dashboard.
+   */
   capacity: { maxBranches: number; memoryMB: number; cpuCores: number };
   load: { memoryUsedMB: number; cpuPercent: number };
   labels: string[];
   /** Branch IDs deployed on this executor */
   branches: string[];
+  /**
+   * Total number of running containers across all branches on this executor.
+   * Computed from the heartbeat's `branches[id].services` map — each service
+   * entry with status=running contributes one container. Undefined for a
+   * freshly-registered node that hasn't sent a heartbeat yet.
+   */
+  runningContainers?: number;
   lastHeartbeat: string;
   registeredAt: string;
+  /**
+   * Role of this executor in the cluster:
+   *   - `embedded`: the master itself, deploys via local standalone path (no HTTP)
+   *   - `remote`:   a separately-hosted executor reached via /exec/deploy HTTP API
+   * Default: `remote` (backward compatible).
+   * See `doc/design.cds-cluster-bootstrap.md` §4.3.
+   */
+  role?: 'embedded' | 'remote';
+}
+
+/**
+ * Aggregated capacity of all online executors. Exposed via
+ * `GET /api/executors/capacity` so Dashboard and external monitors can see
+ * how cluster-wide resources grow as executors join.
+ *
+ * See `doc/design.cds-cluster-bootstrap.md` §4.3.
+ */
+export interface ClusterCapacity {
+  online: number;
+  offline: number;
+  total: { maxBranches: number; memoryMB: number; cpuCores: number };
+  used: { branches: number; memoryMB: number; cpuPercent: number };
+  /** Overall free capacity (0-100), weighted average of mem + cpu + branch slots. */
+  freePercent: number;
+  nodes: Array<{
+    id: string;
+    role: 'embedded' | 'remote';
+    host: string;
+    status: ExecutorNode['status'];
+    capacity: ExecutorNode['capacity'];
+    load: ExecutorNode['load'];
+    branchCount: number;
+  }>;
+}
+
+/**
+ * Janitor (Phase 2) config — worktree TTL cleanup + disk watermark warning.
+ * See `doc/design.cds-resilience.md` Phase 2.
+ */
+export interface JanitorConfig {
+  /** Enable the janitor. Default: false (backward compatible). */
+  enabled: boolean;
+  /** Remove worktrees not accessed in this many days. Default: 30. */
+  worktreeTTLDays: number;
+  /** Emit warning when disk usage exceeds this percent. Default: 80. */
+  diskWarnPercent: number;
+  /** How often to run the sweep. Default: 3600 (hourly). */
+  sweepIntervalSeconds: number;
+}
+
+/**
+ * Warm-pool scheduler configuration.
+ * When `enabled=false`, the scheduler becomes a no-op and CDS behaves exactly
+ * like pre-v3.1 (all branches stay running until manually stopped).
+ * See `doc/design.cds-resilience.md` for the design rationale.
+ */
+export interface SchedulerConfig {
+  /** Enable warm-pool scheduling. Default: false (backward compatible). */
+  enabled: boolean;
+  /**
+   * Maximum number of HOT branches allowed simultaneously.
+   * When exceeded, the LRU non-pinned branch is cooled.
+   * 0 = unlimited (scheduler only handles idle TTL).
+   */
+  maxHotBranches: number;
+  /** Idle time (seconds) after which a HOT branch is auto-cooled. Default: 900 (15 min). */
+  idleTTLSeconds: number;
+  /** Background tick interval (seconds) for idle + capacity checks. Default: 60. */
+  tickIntervalSeconds: number;
+  /** Branch slugs that are always pinned (in addition to the default branch). */
+  pinnedBranches: string[];
 }
 
 /** Application configuration */
@@ -345,6 +521,10 @@ export interface CdsConfig {
   switchDomain?: string;
   /** Main domain to redirect to after switching (e.g., "example.com") */
   mainDomain?: string;
+  /** Dashboard domain for CDS UI (e.g., "cds.example.com" or "example.com") */
+  dashboardDomain?: string;
+  /** Root domains handled by nginx. Exact root -> dashboard, any subdomain -> preview. */
+  rootDomains?: string[];
   /** Preview domain suffix for subdomain-based preview (e.g., "preview.example.com").
    *  Each branch gets its own subdomain: <slug>.preview.example.com */
   previewDomain?: string;
@@ -359,8 +539,39 @@ export interface CdsConfig {
   schedulerUrl?: string;
   /** (executor mode) Port for the executor agent API */
   executorPort: number;
-  /** Shared token for scheduler ↔ executor authentication */
+  /** Permanent shared token for scheduler ↔ executor authentication (post-bootstrap). */
   executorToken?: string;
+  /**
+   * One-shot bootstrap token used by a fresh executor to register with the master.
+   * Generated by `./exec_cds.sh issue-token` on the master, handed to the new
+   * executor via `./exec_cds.sh connect <master> <token>`, and consumed on the
+   * first successful `/api/executors/register` call. Default TTL: 15 minutes.
+   * See `doc/design.cds-cluster-bootstrap.md` §4.2.
+   */
+  bootstrapToken?: {
+    /** Random hex token value. */
+    value: string;
+    /** ISO timestamp when this token stops being accepted. */
+    expiresAt: string;
+  };
+  /**
+   * (executor mode only) URL of the master node the executor connects to.
+   * Distinct from `schedulerUrl`: `masterUrl` is the user-facing external URL
+   * written to `.cds.env` by `./exec_cds.sh connect`, while `schedulerUrl` is
+   * the internal field consumed by `ExecutorAgent`. We keep both so the
+   * env-file format stays intuitive while internal code stays stable.
+   */
+  masterUrl?: string;
+  /**
+   * Warm-pool scheduler config (v3.1). Optional; absent or enabled=false keeps
+   * legacy behavior where all branches stay running.
+   */
+  scheduler?: SchedulerConfig;
+  /**
+   * Janitor config (v3.1 Phase 2). Optional; absent or enabled=false disables
+   * TTL cleanup (disk warnings still work if enabled).
+   */
+  janitor?: JanitorConfig;
 }
 
 /** Shell execution result */

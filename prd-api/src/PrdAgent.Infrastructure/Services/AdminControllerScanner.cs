@@ -27,6 +27,8 @@ public sealed class AdminControllerScanner : IAdminControllerScanner
         "/api/authz/menu-catalog",
         "/api/dashboard/notifications",
         "/api/web-pages/shares/view/",
+        // 知识库公开端点（智识殿堂浏览/详情/分享）
+        "/api/document-store/public/",
     };
 
     public AdminControllerScanner(ILogger<AdminControllerScanner> logger, Assembly? controllerAssembly = null)

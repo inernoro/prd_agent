@@ -369,6 +369,220 @@ h1 {
   56%, 78% { transform: translateY(-200%); opacity: 1; }
   84%, 100% { transform: translateY(0); opacity: 1; }
 }
+
+/* ── Capacity badge (battery-style memory pressure indicator) ──
+ *
+ * In cluster mode, the battery and the text label fuse into ONE pill:
+ * the battery's fill is the BACKGROUND of the entire pill, and the text
+ * floats on top. In single-node mode we keep the original split layout
+ * (small battery icon + label next to it) because the cluster version
+ * would look out-of-scale without multiple numbers to display.
+ *
+ * See doc/design.cds-resilience.md §八.
+ */
+.capacity-badge {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: 12px;
+  padding: 3px 8px 3px 6px;
+  border-radius: 6px;
+  font-size: 11px;
+  font-weight: 500;
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Consolas, monospace;
+  cursor: pointer;
+  user-select: none;
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+  line-height: 1;
+  background: var(--bg-card, #161b22);
+  border: 1px solid var(--border, #30363d);
+  color: var(--text-muted, #8b949e);
+  overflow: hidden;  /* clip the pill-fill into the rounded corners */
+}
+.capacity-badge:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25);
+}
+.capacity-badge.hidden { display: none; }
+
+/* ── Cluster mode: battery consumed the whole badge ── */
+.capacity-badge[data-cluster="1"] {
+  padding: 5px 12px;
+  min-width: 140px;
+  font-size: 11px;
+  font-weight: 600;
+  justify-content: center;
+  letter-spacing: 0.3px;
+}
+/* Hide the little battery icon in cluster mode — the WHOLE pill is the
+ * battery now, with the fill layer forming the "charge" under the text. */
+.capacity-badge[data-cluster="1"] .cap-battery {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  width: auto;
+  height: auto;
+  border: none;
+  border-radius: 6px;
+  pointer-events: none;
+  z-index: 0;
+}
+.capacity-badge[data-cluster="1"] .cap-battery::after {
+  display: none;  /* no positive terminal nub when battery IS the pill */
+}
+.capacity-badge[data-cluster="1"] .cap-battery-fill {
+  height: 100%;
+  opacity: 0.18;
+  background: currentColor;
+}
+.capacity-badge[data-cluster="1"] .cap-label {
+  position: relative;
+  z-index: 1;  /* text above the fill */
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+/* Tiny bolt icon prefix in cluster mode so the pill still reads as a
+ * "capacity / power" indicator even without the physical battery shape. */
+.capacity-badge[data-cluster="1"] .cap-label::before {
+  content: '';
+  display: inline-block;
+  width: 9px;
+  height: 12px;
+  background: currentColor;
+  -webkit-mask: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16"><path d="M11 0H5v7H2l7 9v-7h3L11 0z" fill="black"/></svg>') center/contain no-repeat;
+          mask: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16"><path d="M11 0H5v7H2l7 9v-7h3L11 0z" fill="black"/></svg>') center/contain no-repeat;
+  flex-shrink: 0;
+}
+
+/* ── Single-node mode (original layout) ── */
+.cap-battery {
+  position: relative;
+  display: inline-block;
+  width: 20px;
+  height: 10px;
+  border: 1.25px solid currentColor;
+  border-radius: 2px;
+  box-sizing: border-box;
+  flex-shrink: 0;
+}
+.cap-battery::after {
+  /* The battery "positive terminal" nub */
+  content: '';
+  position: absolute;
+  top: 50%;
+  right: -3px;
+  transform: translateY(-50%);
+  width: 2px;
+  height: 5px;
+  background: currentColor;
+  border-radius: 0 1px 1px 0;
+}
+.cap-battery-fill {
+  display: block;
+  height: 100%;
+  background: currentColor;
+  border-radius: 1px;
+  transition: width 0.4s ease, background-color 0.3s ease;
+}
+
+.cap-label {
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* ── Tier colors: green → blue → orange → red ── */
+.capacity-badge[data-tier="green"]  { color: #3fb950; border-color: rgba(63, 185, 80, 0.4); }
+.capacity-badge[data-tier="blue"]   { color: #58a6ff; border-color: rgba(88, 166, 255, 0.4); }
+.capacity-badge[data-tier="orange"] { color: #f0883e; border-color: rgba(240, 136, 62, 0.4); }
+.capacity-badge[data-tier="red"]    {
+  color: #f85149;
+  border-color: rgba(248, 81, 73, 0.5);
+  background: rgba(248, 81, 73, 0.08);
+}
+
+/* Over-subscription: pulse the whole badge */
+.capacity-badge[data-over="1"] {
+  animation: cap-badge-pulse 1.8s ease-in-out infinite;
+}
+@keyframes cap-badge-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(248, 81, 73, 0.5); }
+  50%      { box-shadow: 0 0 0 4px rgba(248, 81, 73, 0); }
+}
+
+/* ── Capacity detail popover (opens in shared configModal) ── */
+.cap-pop { padding: 4px 0; }
+.cap-pop-stats {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
+  margin-bottom: 16px;
+}
+.cap-pop-stat {
+  background: var(--bg-card-2, #0d1117);
+  border: 1px solid var(--border, #30363d);
+  border-radius: 6px;
+  padding: 10px 12px;
+  text-align: center;
+}
+.cap-pop-stat-label {
+  font-size: 11px;
+  color: var(--text-muted, #8b949e);
+  margin-bottom: 4px;
+}
+.cap-pop-stat-value {
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--text, #c9d1d9);
+  font-variant-numeric: tabular-nums;
+}
+.cap-pop-warn {
+  background: rgba(248, 81, 73, 0.08);
+  border: 1px solid rgba(248, 81, 73, 0.3);
+  border-radius: 6px;
+  padding: 10px 12px;
+  font-size: 12px;
+  color: #f85149;
+  margin-bottom: 12px;
+}
+.cap-pop-scheduler {
+  background: var(--bg-card-2, #0d1117);
+  border: 1px solid var(--border, #30363d);
+  border-radius: 6px;
+  padding: 10px 12px;
+  margin-bottom: 12px;
+}
+.cap-pop-scheduler-off {
+  background: var(--bg-card-2, #0d1117);
+  border: 1px dashed var(--border, #30363d);
+  border-radius: 6px;
+  padding: 10px 12px;
+  margin-bottom: 12px;
+}
+.cap-pop-list {
+  margin: 4px 0 8px 0;
+  padding-left: 16px;
+  font-size: 12px;
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Consolas, monospace;
+  color: var(--text, #c9d1d9);
+}
+.cap-pop-list li { line-height: 1.6; }
+.cap-pop-help {
+  font-size: 11px;
+  color: var(--text-muted, #8b949e);
+  line-height: 1.5;
+}
+.cap-pop-help code {
+  background: var(--bg-card-2, #0d1117);
+  padding: 1px 5px;
+  border-radius: 3px;
+  font-size: 11px;
+}
+.cap-pop-row { font-size: 12px; }
+
 .header-subtitle {
   font-size: 11px; color: var(--text-muted); white-space: nowrap;
   background: var(--bg-card);
@@ -1054,6 +1268,11 @@ button.text-btn:hover { color: var(--accent); }
   transition: color var(--transition);
 }
 a.branch-name:hover { color: var(--accent); }
+/* Dim branch name when not deployed */
+.branch-card.status-idle .branch-name,
+.branch-card.status-error .branch-name { opacity: 0.5; }
+.branch-card.status-idle .branch-name:hover,
+.branch-card.status-error .branch-name:hover { opacity: 1; }
 /* Quick actions (copy + jump) — visible on row hover, uses visibility to avoid layout shift */
 .branch-quick-actions {
   display: inline-flex; gap: 2px; align-items: center; flex-shrink: 0;
@@ -1260,6 +1479,45 @@ a.branch-name:hover { color: var(--accent); }
   font-family: var(--font-mono);
 }
 
+/* Executor tag shown INSIDE the port-badges row. Slightly different visual
+ * weight than a regular port badge so the user can tell it's "where this
+ * whole branch lives" not "how to reach a specific service": gold bolt,
+ * subtle glow, same height as port badges for alignment. */
+.port-row-exec {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 11px;
+  font-weight: 500;
+  padding: 3px 9px;
+  border-radius: 10px;
+  background: linear-gradient(
+    135deg,
+    rgba(240, 208, 0, 0.12) 0%,
+    rgba(240, 136, 62, 0.08) 100%
+  );
+  border: 1px solid rgba(240, 208, 0, 0.35);
+  color: #f0c040;
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  letter-spacing: 0.2px;
+  margin-right: 4px;
+  vertical-align: middle;
+  white-space: nowrap;
+}
+.port-row-exec:hover {
+  border-color: rgba(240, 208, 0, 0.6);
+  background: linear-gradient(
+    135deg,
+    rgba(240, 208, 0, 0.18) 0%,
+    rgba(240, 136, 62, 0.12) 100%
+  );
+}
+.port-row-exec.offline {
+  background: rgba(248, 81, 73, 0.1);
+  border-color: rgba(248, 81, 73, 0.45);
+  color: #f85149;
+}
+
 /* ── Tag filter bar (top-level) ── */
 .tag-filter-bar {
   display: flex; gap: 6px; align-items: center;
@@ -1299,6 +1557,8 @@ a.branch-name:hover { color: var(--accent); }
   transition: all var(--transition);
 }
 .branch-tag:hover { background: rgba(179, 136, 255, 0.15); border-color: rgba(179, 136, 255, 0.3); }
+.branch-tag-dim { color: var(--text-muted); background: transparent; border-color: var(--border); opacity: 0.5; }
+.branch-tag-dim:hover { color: var(--purple); background: rgba(179, 136, 255, 0.08); border-color: rgba(179, 136, 255, 0.18); opacity: 1; }
 .branch-tag svg.inline-icon { width: 11px; height: 11px; }
 .branch-tag-remove {
   display: inline-flex; align-items: center; justify-content: center;
@@ -2136,6 +2396,104 @@ a.branch-name:hover { color: var(--accent); }
 }
 
 /* ════════════════ API Activity Monitor ════════════════ */
+
+/* ── Host stats pulse widget (bottom-right, above Activity Monitor) ── */
+/* Real-time mem + cpu bars. Complements the header's container capacity badge */
+/* See doc/design.cds-resilience.md §八 */
+.host-stats {
+  position: fixed;
+  /* Stack above the collapsed Activity Monitor (40px) + margin */
+  bottom: 66px;
+  right: 16px;
+  z-index: 9997;
+  padding: 8px 12px;
+  border-radius: 8px;
+  background: var(--bg-card);
+  border: 1px solid var(--card-border);
+  box-shadow: var(--shadow-lg);
+  backdrop-filter: blur(16px);
+  cursor: pointer;
+  user-select: none;
+  transition: opacity 0.25s ease, transform 0.2s ease, box-shadow 0.2s ease;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 190px;
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Consolas, monospace;
+  font-size: 11px;
+  line-height: 1;
+}
+.host-stats.hidden {
+  opacity: 0;
+  pointer-events: none;
+}
+.host-stats:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35);
+}
+.host-stats-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.host-stats-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-muted, #8b949e);
+  width: 12px;
+  flex-shrink: 0;
+}
+.host-stats-label {
+  color: var(--text-muted, #8b949e);
+  font-weight: 500;
+  letter-spacing: 0.05em;
+  width: 26px;
+  flex-shrink: 0;
+}
+.host-stats-bar {
+  flex: 1;
+  height: 6px;
+  background: rgba(139, 148, 158, 0.15);
+  border-radius: 3px;
+  overflow: hidden;
+  min-width: 70px;
+}
+.host-stats-bar-fill {
+  display: block;
+  height: 100%;
+  width: 0%;
+  border-radius: 3px;
+  transition: width 0.5s ease, background-color 0.3s ease;
+  background: #3fb950;
+}
+.host-stats-bar-fill[data-tier="green"]  { background: #3fb950; }
+.host-stats-bar-fill[data-tier="blue"]   { background: #58a6ff; }
+.host-stats-bar-fill[data-tier="orange"] { background: #f0883e; }
+.host-stats-bar-fill[data-tier="red"]    { background: #f85149; }
+
+.host-stats-value {
+  font-variant-numeric: tabular-nums;
+  width: 36px;
+  text-align: right;
+  color: var(--text, #c9d1d9);
+  flex-shrink: 0;
+}
+
+/* When either metric hits critical, pulse the whole widget */
+.host-stats[data-stress="1"] {
+  border-color: rgba(248, 81, 73, 0.5);
+  animation: host-stats-pulse 1.8s ease-in-out infinite;
+}
+@keyframes host-stats-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(248, 81, 73, 0.4); }
+  50%      { box-shadow: 0 0 0 5px rgba(248, 81, 73, 0); }
+}
+
+/* On small screens, hide to avoid crowding */
+@media (max-width: 640px) {
+  .host-stats { display: none; }
+}
 
 .activity-monitor {
   position: fixed;
@@ -2984,6 +3342,90 @@ a.branch-name:hover { color: var(--accent); }
 .migration-conn-panel .form-row { margin-bottom: 5px; }
 .migration-conn-panel .form-input { font-size: 12px; padding: 4px 8px; }
 
+/* mc-row / mc-input: strictly clamped rows for the connection form. */
+/* All inputs shrink freely (min-width: 0) so host + port never overflow the panel. */
+.mc-row {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 5px;
+  align-items: center;
+}
+.mc-input {
+  flex: 1 1 0;
+  min-width: 0;
+  box-sizing: border-box;
+  max-width: 100% !important;
+}
+.mc-host { flex: 2 1 0; }
+.mc-port { flex: 0 0 68px; max-width: 68px !important; }
+.mc-btn  { flex: 0 0 auto; white-space: nowrap; }
+
+/* CDS peer registry */
+.peer-mykey-box {
+  border: 1px dashed var(--border);
+  border-radius: 8px;
+  padding: 10px 12px;
+  background: var(--bg-tertiary);
+  margin-bottom: 10px;
+}
+.peer-mykey-title {
+  font-size: 12px;
+  font-weight: 600;
+  margin-bottom: 6px;
+  color: var(--fg-muted);
+}
+.peer-mykey-hint {
+  font-weight: 400;
+  font-size: 11px;
+  color: var(--fg-muted);
+}
+.peer-card {
+  display: flex;
+  gap: 10px;
+  padding: 10px 12px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  margin-bottom: 6px;
+  align-items: center;
+}
+.peer-card-main { flex: 1; min-width: 0; }
+.peer-card-name { font-size: 13px; font-weight: 600; }
+.peer-card-url {
+  font-size: 11px;
+  color: var(--fg-muted);
+  font-family: monospace;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.peer-card-meta {
+  font-size: 11px;
+  color: var(--fg-muted);
+  display: flex;
+  gap: 10px;
+  margin-top: 2px;
+}
+.peer-card-actions {
+  display: flex;
+  gap: 4px;
+  flex-shrink: 0;
+}
+.peer-card-actions .sm { font-size: 11px; padding: 2px 8px; }
+.peer-form {
+  margin-top: 10px;
+  padding: 10px 12px;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+.peer-form-title {
+  font-size: 12px;
+  font-weight: 600;
+  margin-bottom: 8px;
+  color: var(--fg-muted);
+}
+
 /* Collection picker */
 .coll-picker {
   border: 1px solid var(--border);
@@ -3022,4 +3464,1051 @@ a.branch-name:hover { color: var(--accent); }
 @media (max-width: 700px) {
   .migration-dual-panel { flex-direction: column; }
   .migration-arrow { transform: rotate(90deg); padding: 4px 0; }
+}
+
+/* ── Cluster modal (one-click bootstrap UI) ─────────────────────── */
+
+.cluster-modal {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 4px;
+}
+
+.cluster-status-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 14px;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+}
+
+.cluster-status-left {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.cluster-status-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: #8b949e;
+  flex-shrink: 0;
+  box-shadow: 0 0 0 3px rgba(139, 148, 158, 0.15);
+}
+.cluster-status-dot[data-role="standalone"] { background: #8b949e; box-shadow: 0 0 0 3px rgba(139,148,158,0.15); }
+.cluster-status-dot[data-role="scheduler"]  { background: #3fb950; box-shadow: 0 0 0 3px rgba(63,185,80,0.20); }
+.cluster-status-dot[data-role="executor"]   { background: #58a6ff; box-shadow: 0 0 0 3px rgba(88,166,255,0.20); }
+.cluster-status-dot[data-role="hybrid"]     { background: #d29922; box-shadow: 0 0 0 3px rgba(210,153,34,0.20); }
+
+.cluster-status-role {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--fg-primary);
+}
+
+.cluster-status-meta {
+  font-size: 11px;
+  color: var(--fg-muted);
+  margin-top: 2px;
+  font-family: monospace;
+}
+
+.cluster-master-link {
+  font-size: 12px;
+  color: #58a6ff;
+  text-decoration: none;
+  padding: 6px 10px;
+  border: 1px solid #58a6ff;
+  border-radius: 6px;
+  white-space: nowrap;
+}
+.cluster-master-link:hover {
+  background: rgba(88, 166, 255, 0.1);
+}
+
+.cluster-tabs {
+  display: flex;
+  gap: 4px;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.cluster-tab {
+  padding: 10px 16px;
+  background: transparent;
+  border: none;
+  border-bottom: 2px solid transparent;
+  color: var(--fg-muted);
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 500;
+  transition: all 0.15s;
+}
+
+.cluster-tab:hover {
+  color: var(--fg-primary);
+}
+
+.cluster-tab.active {
+  color: #58a6ff;
+  border-bottom-color: #58a6ff;
+}
+
+.cluster-tab-body {
+  padding: 8px 4px 0;
+}
+
+.cluster-tab-desc {
+  font-size: 13px;
+  color: var(--fg-secondary);
+  line-height: 1.6;
+  margin: 0 0 16px 0;
+}
+
+.cluster-tab-desc code {
+  background: var(--bg-tertiary);
+  padding: 2px 6px;
+  border-radius: 3px;
+  font-size: 12px;
+}
+
+.cluster-action-btn {
+  padding: 10px 20px;
+  font-size: 14px;
+  font-weight: 600;
+  border-radius: 6px;
+  cursor: pointer;
+  border: none;
+  min-width: 140px;
+}
+
+.cluster-action-btn.btn-primary {
+  background: #238636;
+  color: white;
+}
+.cluster-action-btn.btn-primary:hover:not(:disabled) {
+  background: #2ea043;
+}
+
+.cluster-action-btn.btn-danger {
+  background: #da3633;
+  color: white;
+}
+.cluster-action-btn.btn-danger:hover:not(:disabled) {
+  background: #f85149;
+}
+
+.cluster-action-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.cluster-token-box {
+  margin-top: 16px;
+  padding: 14px;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+}
+
+.cluster-token-box label {
+  display: block;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--fg-secondary);
+  margin-bottom: 8px;
+}
+
+#clusterTokenArea {
+  width: 100%;
+  padding: 10px;
+  background: var(--bg-primary);
+  border: 1px solid var(--border-subtle);
+  border-radius: 5px;
+  font-family: monospace;
+  font-size: 11px;
+  color: #58a6ff;
+  resize: vertical;
+  word-break: break-all;
+}
+
+.cluster-token-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 10px;
+}
+
+.cluster-countdown {
+  font-size: 12px;
+  color: var(--fg-muted);
+  font-family: monospace;
+}
+.cluster-countdown.urgent {
+  color: #d29922;
+  font-weight: 600;
+}
+.cluster-countdown.expired {
+  color: #f85149;
+  font-weight: 600;
+}
+
+.cluster-token-hint {
+  margin-top: 8px;
+  font-size: 11px;
+  color: var(--fg-muted);
+}
+.cluster-token-hint code {
+  font-family: monospace;
+  color: var(--fg-primary);
+}
+
+.cluster-paste-input {
+  width: 100%;
+  padding: 10px;
+  background: var(--bg-primary);
+  border: 1px solid var(--border-subtle);
+  border-radius: 5px;
+  font-family: monospace;
+  font-size: 11px;
+  color: var(--fg-primary);
+  resize: vertical;
+  margin-bottom: 12px;
+  word-break: break-all;
+}
+
+.cluster-paste-input:focus {
+  outline: none;
+  border-color: #58a6ff;
+}
+
+.cluster-progress {
+  margin-top: 14px;
+  padding: 10px 14px;
+  background: rgba(88, 166, 255, 0.08);
+  border: 1px solid rgba(88, 166, 255, 0.3);
+  border-radius: 6px;
+  font-size: 13px;
+  color: #58a6ff;
+}
+
+.cluster-success {
+  margin-top: 14px;
+  padding: 14px;
+  background: rgba(63, 185, 80, 0.08);
+  border: 1px solid rgba(63, 185, 80, 0.3);
+  border-radius: 6px;
+  font-size: 14px;
+  font-weight: 600;
+  color: #3fb950;
+}
+
+.cluster-success-meta {
+  margin-top: 8px;
+  font-size: 12px;
+  font-weight: normal;
+  color: var(--fg-secondary);
+  line-height: 1.8;
+}
+.cluster-success-meta code {
+  font-family: monospace;
+  color: var(--fg-primary);
+  background: var(--bg-tertiary);
+  padding: 2px 6px;
+  border-radius: 3px;
+}
+.cluster-success-meta a {
+  color: #58a6ff;
+  text-decoration: none;
+}
+.cluster-success-meta a:hover {
+  text-decoration: underline;
+}
+
+.cluster-warning {
+  margin-top: 12px;
+  padding: 10px 12px;
+  background: rgba(210, 153, 34, 0.1);
+  border: 1px solid rgba(210, 153, 34, 0.4);
+  border-radius: 5px;
+  font-size: 12px;
+  font-weight: normal;
+  color: #d29922;
+  line-height: 1.5;
+}
+
+.cluster-error {
+  margin-top: 14px;
+  padding: 12px 14px;
+  background: rgba(248, 81, 73, 0.08);
+  border: 1px solid rgba(248, 81, 73, 0.4);
+  border-radius: 6px;
+  font-size: 13px;
+  color: #f85149;
+}
+
+/* ── Cluster management section (inside cluster settings modal) ── */
+
+.cluster-mgmt-section {
+  margin-top: 18px;
+  padding-top: 18px;
+  border-top: 1px solid var(--border-subtle);
+}
+
+.cluster-mgmt-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  margin-bottom: 10px;
+}
+
+.cluster-mgmt-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--fg-primary);
+  margin: 0;
+}
+
+.cluster-mgmt-hint {
+  font-size: 11px;
+  color: var(--fg-muted);
+}
+
+.cluster-node-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.cluster-node-empty {
+  font-size: 12px;
+  color: var(--fg-muted);
+  padding: 12px;
+  text-align: center;
+  background: var(--bg-tertiary);
+  border-radius: 6px;
+}
+
+.cluster-node-card {
+  padding: 10px 12px;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-subtle);
+  border-radius: 6px;
+  position: relative;
+}
+.cluster-node-card.cluster-node-offline {
+  opacity: 0.7;
+  border-color: rgba(248, 81, 73, 0.6);
+  background: linear-gradient(
+    135deg,
+    rgba(248, 81, 73, 0.05) 0%,
+    var(--bg-tertiary) 40%
+  );
+}
+.cluster-node-card.cluster-node-offline::before {
+  /* Subtle diagonal-stripes overlay in the top-left corner so the offline
+   * state reads immediately even without focusing on the status chip. */
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 80px;
+  height: 100%;
+  background: repeating-linear-gradient(
+    -45deg,
+    rgba(248, 81, 73, 0.08) 0px,
+    rgba(248, 81, 73, 0.08) 4px,
+    transparent 4px,
+    transparent 8px
+  );
+  pointer-events: none;
+  border-radius: 6px 0 0 6px;
+}
+.cluster-node-card.cluster-node-draining {
+  border-color: rgba(240, 136, 62, 0.4);
+}
+
+/* Status chip inside the node card header — the "在线 / 离线 / 排空中"
+   text label the user asked for. Chip color matches the dot. */
+.cluster-node-status-chip {
+  font-size: 10px;
+  padding: 2px 8px;
+  border-radius: 10px;
+  font-weight: 600;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+.cluster-node-status-chip.cluster-node-status-online {
+  background: rgba(63, 185, 80, 0.15);
+  color: #3fb950;
+  border: 1px solid rgba(63, 185, 80, 0.4);
+}
+.cluster-node-status-chip.cluster-node-status-offline {
+  background: rgba(248, 81, 73, 0.15);
+  color: #f85149;
+  border: 1px solid rgba(248, 81, 73, 0.6);
+}
+.cluster-node-status-chip.cluster-node-status-draining {
+  background: rgba(240, 136, 62, 0.15);
+  color: #f0883e;
+  border: 1px solid rgba(240, 136, 62, 0.4);
+}
+
+.cluster-node-offline-hint {
+  margin: 8px 0;
+  padding: 6px 10px;
+  background: rgba(248, 81, 73, 0.08);
+  border: 1px solid rgba(248, 81, 73, 0.25);
+  border-radius: 4px;
+  font-size: 11px;
+  color: #f85149;
+}
+
+.cluster-node-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.cluster-node-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  background: #8b949e;
+}
+.cluster-node-dot[data-status="online"] { background: #3fb950; box-shadow: 0 0 0 2px rgba(63,185,80,0.15); }
+.cluster-node-dot[data-status="offline"] { background: #f85149; }
+.cluster-node-dot[data-status="draining"] { background: #f0883e; }
+
+.cluster-node-id {
+  font-family: monospace;
+  font-size: 12px;
+  color: var(--fg-primary);
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.cluster-node-meta {
+  font-family: monospace;
+  font-size: 11px;
+  color: var(--fg-muted);
+}
+
+.cluster-node-actions {
+  margin-left: auto;
+  display: flex;
+  gap: 6px;
+}
+
+.cluster-node-badge {
+  font-size: 10px;
+  padding: 2px 8px;
+  background: rgba(88, 166, 255, 0.15);
+  border: 1px solid rgba(88, 166, 255, 0.4);
+  color: #58a6ff;
+  border-radius: 4px;
+  font-weight: 600;
+}
+
+.cluster-node-btn {
+  font-size: 11px;
+  padding: 4px 10px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-subtle);
+  color: var(--fg-primary);
+  border-radius: 4px;
+  cursor: pointer;
+  font-weight: 500;
+}
+.cluster-node-btn:hover:not(:disabled) {
+  background: var(--bg-primary);
+  border-color: #58a6ff;
+}
+.cluster-node-btn.danger {
+  color: #f85149;
+  border-color: rgba(248, 81, 73, 0.4);
+}
+.cluster-node-btn.danger:hover {
+  background: rgba(248, 81, 73, 0.1);
+}
+
+.cluster-node-metrics {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 10px;
+}
+
+.cluster-node-metric {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.cluster-node-metric .metric-label {
+  font-size: 10px;
+  color: var(--fg-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.cluster-node-metric .metric-bar {
+  height: 4px;
+  background: var(--bg-primary);
+  border-radius: 2px;
+  overflow: hidden;
+}
+.cluster-node-metric .metric-fill {
+  height: 100%;
+  background: #3fb950;
+  transition: width 0.3s;
+}
+.cluster-node-metric .metric-fill.warn { background: #d29922; }
+.cluster-node-metric .metric-fill.danger { background: #f85149; }
+
+.cluster-node-metric .metric-value {
+  font-size: 10px;
+  font-family: monospace;
+  color: var(--fg-secondary);
+}
+
+/* ── Strategy radio group ── */
+
+.cluster-strategy {
+  margin-top: 16px;
+  padding: 12px 14px;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-subtle);
+  border-radius: 6px;
+}
+
+.cluster-strategy-label {
+  display: block;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--fg-secondary);
+  margin-bottom: 10px;
+}
+
+.cluster-strategy-hint {
+  font-size: 10px;
+  color: var(--fg-muted);
+  font-weight: normal;
+  margin-left: 6px;
+}
+
+.cluster-strategy-options {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.cluster-strategy-radio {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--fg-secondary);
+  cursor: pointer;
+  padding: 6px 8px;
+  border-radius: 4px;
+  transition: background 0.15s;
+}
+.cluster-strategy-radio:hover {
+  background: var(--bg-primary);
+}
+.cluster-strategy-radio input[type="radio"] {
+  margin-top: 2px;
+}
+.cluster-strategy-radio strong {
+  color: var(--fg-primary);
+  font-weight: 600;
+}
+
+/* (cluster-mode header badge styling moved up to the main .capacity-badge
+   block near line 410 — the cluster pill now fuses the battery shape
+   and the text label so they're a single rounded pill, not two elements.) */
+
+/* ── Branch card "hosted on" badge ── */
+
+.branch-host-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 10px;
+  padding: 2px 8px;
+  background: rgba(88, 166, 255, 0.1);
+  border: 1px solid rgba(88, 166, 255, 0.3);
+  border-radius: 10px;
+  color: #58a6ff;
+  font-family: monospace;
+  margin-left: 6px;
+  white-space: nowrap;
+}
+.branch-host-badge.local {
+  background: rgba(139, 148, 158, 0.1);
+  border-color: rgba(139, 148, 158, 0.3);
+  color: var(--fg-muted);
+}
+.branch-host-badge.offline {
+  background: rgba(248, 81, 73, 0.1);
+  border-color: rgba(248, 81, 73, 0.4);
+  color: #f85149;
+}
+
+/* ══════════════════════════════════════════════════════════════════
+   Redesigned cluster node cards (big-company style)
+   ══════════════════════════════════════════════════════════════════ */
+
+.cluster-node-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.node-card {
+  padding: 16px 18px;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-subtle);
+  border-radius: 10px;
+  position: relative;
+  transition: all 0.2s ease;
+}
+.node-card:hover {
+  border-color: rgba(88, 166, 255, 0.4);
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+}
+.node-card-online {
+  border-left: 3px solid #3fb950;
+}
+.node-card-draining {
+  border-left: 3px solid #d29922;
+}
+.node-card-offline {
+  opacity: 0.72;
+  border-left: 3px solid #f85149;
+  background: linear-gradient(
+    90deg,
+    rgba(248, 81, 73, 0.04) 0%,
+    var(--bg-tertiary) 30%
+  );
+}
+
+.node-card-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
+.node-card-avatar {
+  width: 38px;
+  height: 38px;
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  background: linear-gradient(135deg, rgba(88, 166, 255, 0.15) 0%, rgba(88, 166, 255, 0.05) 100%);
+  border: 1px solid rgba(88, 166, 255, 0.3);
+  color: #58a6ff;
+}
+.node-card-avatar-embedded {
+  background: linear-gradient(135deg, rgba(255, 215, 0, 0.2) 0%, rgba(240, 136, 62, 0.08) 100%);
+  border-color: rgba(255, 215, 0, 0.4);
+  color: #f0d000;
+}
+.node-card-avatar svg {
+  width: 20px;
+  height: 20px;
+}
+
+.node-card-title {
+  flex: 1;
+  min-width: 0;
+}
+
+.node-card-name {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--fg-primary);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.node-card-self-tag {
+  font-size: 9px;
+  font-weight: 600;
+  padding: 2px 6px;
+  background: rgba(88, 166, 255, 0.15);
+  color: #58a6ff;
+  border: 1px solid rgba(88, 166, 255, 0.35);
+  border-radius: 10px;
+  letter-spacing: 0.5px;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  flex-shrink: 0;
+}
+
+.node-card-meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 3px;
+  font-size: 11px;
+  color: var(--fg-muted);
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+}
+.node-card-meta-dot {
+  opacity: 0.5;
+}
+
+.node-card-status {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border-radius: 20px;
+  font-size: 11px;
+  font-weight: 600;
+  flex-shrink: 0;
+}
+.node-card-status-online {
+  background: rgba(63, 185, 80, 0.12);
+  color: #3fb950;
+  border: 1px solid rgba(63, 185, 80, 0.35);
+}
+.node-card-status-offline {
+  background: rgba(248, 81, 73, 0.12);
+  color: #f85149;
+  border: 1px solid rgba(248, 81, 73, 0.4);
+}
+.node-card-status-draining {
+  background: rgba(240, 136, 62, 0.12);
+  color: #f0883e;
+  border: 1px solid rgba(240, 136, 62, 0.35);
+}
+
+.node-card-status-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+  animation: pulse-dot 2s ease infinite;
+}
+.node-card-offline .node-card-status-dot {
+  animation: none;
+}
+@keyframes pulse-dot {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+
+.node-card-actions {
+  display: flex;
+  gap: 6px;
+  opacity: 0.55;
+  transition: opacity 0.15s ease;
+  margin-left: 6px;
+  flex-shrink: 0;
+}
+.node-card:hover .node-card-actions {
+  opacity: 1;
+}
+.node-offline-banner ~ .node-card-actions,
+.node-card-offline .node-card-actions {
+  opacity: 1;
+}
+
+.node-action-btn {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 5px 10px;
+  background: transparent;
+  border: 1px solid var(--border-subtle);
+  color: var(--fg-secondary);
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 11px;
+  font-weight: 500;
+  transition: all 0.15s;
+}
+.node-action-btn:hover {
+  background: var(--bg-primary);
+  border-color: #58a6ff;
+  color: var(--fg-primary);
+}
+.node-action-btn.danger:hover {
+  background: rgba(248, 81, 73, 0.1);
+  border-color: rgba(248, 81, 73, 0.6);
+  color: #f85149;
+}
+.node-action-btn svg {
+  flex-shrink: 0;
+}
+
+.node-offline-banner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  margin-bottom: 14px;
+  background: rgba(248, 81, 73, 0.08);
+  border: 1px solid rgba(248, 81, 73, 0.25);
+  border-radius: 6px;
+  font-size: 11px;
+  color: #f85149;
+}
+.node-offline-advice {
+  color: var(--fg-muted);
+  margin-left: auto;
+}
+
+/* ── Ring meters ── */
+
+.node-card-rings {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 16px;
+  padding-top: 4px;
+}
+
+.node-ring {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  color: var(--fg-secondary);
+}
+
+.node-ring svg {
+  display: block;
+}
+
+.node-ring-label {
+  font-size: 10px;
+  color: var(--fg-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.8px;
+  font-weight: 600;
+}
+
+.node-ring-value {
+  font-size: 11px;
+  color: var(--fg-primary);
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-weight: 500;
+}
+
+/* ══════════════════════════════════════════════════════════════════
+   Cluster capacity popover (header badge click)
+   ══════════════════════════════════════════════════════════════════ */
+
+.cluster-pop {
+  padding: 4px;
+}
+
+.cluster-pop-summary {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 8px;
+  padding: 16px;
+  background: linear-gradient(135deg, rgba(88, 166, 255, 0.06) 0%, rgba(63, 185, 80, 0.04) 100%);
+  border: 1px solid var(--border-subtle);
+  border-radius: 10px;
+  margin-bottom: 16px;
+}
+
+.cluster-pop-stat {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  text-align: center;
+  padding: 4px 0;
+}
+
+.cluster-pop-stat-label {
+  font-size: 10px;
+  color: var(--fg-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.8px;
+  font-weight: 600;
+}
+
+.cluster-pop-stat-value {
+  font-size: 22px;
+  font-weight: 700;
+  color: var(--fg-primary);
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  line-height: 1.1;
+}
+
+.cluster-pop-stat-hint {
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--fg-muted);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+
+.cluster-pop-section-title {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--fg-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.8px;
+  margin-bottom: 8px;
+  padding-left: 4px;
+}
+
+.cluster-pop-nodes {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-bottom: 14px;
+}
+
+.cluster-pop-node {
+  padding: 12px 14px;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+}
+.cluster-pop-node-offline {
+  opacity: 0.72;
+  border-left: 3px solid #f85149;
+}
+
+.cluster-pop-node-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 2px;
+}
+
+.cluster-pop-node-icon {
+  color: #58a6ff;
+  display: flex;
+  align-items: center;
+}
+.cluster-pop-node-icon svg { display: block; }
+
+.cluster-pop-node-name {
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--fg-primary);
+  flex: 1;
+}
+
+.cluster-pop-node-pill {
+  font-size: 10px;
+  padding: 2px 8px;
+  border-radius: 12px;
+  font-weight: 600;
+}
+.cluster-pop-status-online {
+  background: rgba(63, 185, 80, 0.12);
+  color: #3fb950;
+  border: 1px solid rgba(63, 185, 80, 0.35);
+}
+.cluster-pop-status-offline {
+  background: rgba(248, 81, 73, 0.12);
+  color: #f85149;
+  border: 1px solid rgba(248, 81, 73, 0.4);
+}
+.cluster-pop-status-draining {
+  background: rgba(240, 136, 62, 0.12);
+  color: #f0883e;
+  border: 1px solid rgba(240, 136, 62, 0.35);
+}
+
+.cluster-pop-node-sub {
+  font-size: 10px;
+  color: var(--fg-muted);
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  margin-bottom: 10px;
+  padding-left: 22px;
+}
+
+.cluster-pop-node-bars {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 10px;
+}
+
+.cluster-pop-bar {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.cluster-pop-bar-label {
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--fg-muted);
+  font-weight: 600;
+}
+
+.cluster-pop-bar-track {
+  height: 4px;
+  background: rgba(139, 148, 158, 0.15);
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.cluster-pop-bar-fill {
+  height: 100%;
+  background: #3fb950;
+  transition: width 0.3s ease;
+}
+.cluster-pop-bar-fill.warn { background: #d29922; }
+.cluster-pop-bar-fill.danger { background: #f85149; }
+
+.cluster-pop-bar-value {
+  font-size: 10px;
+  color: var(--fg-secondary);
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+}
+
+.cluster-pop-help {
+  font-size: 10px;
+  color: var(--fg-muted);
+  line-height: 1.7;
+  padding: 10px 12px;
+  background: var(--bg-tertiary);
+  border-radius: 6px;
+  border-left: 2px solid rgba(88, 166, 255, 0.4);
+}
+.cluster-pop-help code {
+  background: var(--bg-primary);
+  padding: 1px 6px;
+  border-radius: 3px;
+  font-size: 10px;
+  color: #58a6ff;
+}
+
+/* Responsive: stack summary on narrow modals */
+@media (max-width: 620px) {
+  .cluster-pop-summary {
+    grid-template-columns: repeat(2, 1fr);
+  }
+  .node-card-rings {
+    grid-template-columns: 1fr 1fr;
+  }
+  .node-card-rings .node-ring:nth-child(3) {
+    grid-column: span 2;
+  }
 }

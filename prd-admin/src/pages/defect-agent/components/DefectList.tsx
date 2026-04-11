@@ -5,24 +5,32 @@ import { useAuthStore } from '@/stores/authStore';
 import { DefectStatus } from '@/services/contracts/defectAgent';
 import { DefectCard } from './DefectCard';
 import { DefectListRow } from './DefectListRow';
-import { Bug, ChevronRight, ChevronDown, Archive } from 'lucide-react';
+import { Bug, ChevronRight, ChevronDown, Archive, Search, X } from 'lucide-react';
 
 export function DefectList() {
-  const { defects, loading, filter, viewMode, readIds } = useDefectStore();
+  const { defects, loading, filter, viewMode, readIds, searchQuery, setSearchQuery } = useDefectStore();
   const userId = useAuthStore((s) => s.user?.userId);
   const [archivedCollapsed, setArchivedCollapsed] = useState(true);
 
   // 按用户角色筛选，但不再排除已完成/拒绝的缺陷
   const filteredDefects = useMemo(() => {
-    if (!userId) return defects;
-    if (filter === 'submitted') {
-      return defects.filter((d) => d.reporterId === userId);
+    let list = defects;
+    if (userId && filter === 'submitted') {
+      list = list.filter((d) => d.reporterId === userId);
+    } else if (userId && filter === 'assigned') {
+      list = list.filter((d) => d.assigneeId === userId);
     }
-    if (filter === 'assigned') {
-      return defects.filter((d) => d.assigneeId === userId);
+    // 搜索过滤：按编号、标题、内容模糊匹配
+    if (searchQuery.trim()) {
+      const q = searchQuery.trim().toLowerCase();
+      list = list.filter((d) =>
+        d.defectNo?.toLowerCase().includes(q) ||
+        d.title?.toLowerCase().includes(q) ||
+        d.rawContent?.toLowerCase().includes(q)
+      );
     }
-    return defects;
-  }, [defects, filter, userId]);
+    return list;
+  }, [defects, filter, userId, searchQuery]);
 
   // 分成两组：进行中 和 已归档（已关闭/已驳回）
   const { activeDefects, archivedDefects } = useMemo(() => {
@@ -67,10 +75,39 @@ export function DefectList() {
     );
   }
 
+  // 搜索栏
+  const searchBar = (
+    <div className="relative px-3 py-2" style={{ borderBottom: '1px solid var(--border-subtle)' }}>
+      <Search size={14} className="absolute left-5 top-1/2 -translate-y-1/2" style={{ color: 'var(--text-muted)' }} />
+      <input
+        type="text"
+        value={searchQuery}
+        onChange={(e) => setSearchQuery(e.target.value)}
+        placeholder="搜索编号、标题或内容..."
+        className="w-full h-7 pl-7 pr-7 rounded-lg text-[12px] outline-none"
+        style={{
+          background: 'rgba(255,255,255,0.06)',
+          border: '1px solid rgba(255,255,255,0.1)',
+          color: 'var(--text-primary)',
+        }}
+      />
+      {searchQuery && (
+        <button
+          onClick={() => setSearchQuery('')}
+          className="absolute right-5 top-1/2 -translate-y-1/2 hover:opacity-80"
+          style={{ color: 'var(--text-muted)' }}
+        >
+          <X size={14} />
+        </button>
+      )}
+    </div>
+  );
+
   // 列表视图
   if (viewMode === 'list') {
     return (
       <div className="flex flex-col">
+        {searchBar}
         {/* 列表头部 */}
         <div
           className="flex items-center gap-3 px-3 py-2 text-[10px] font-medium select-none sticky top-0 z-10 surface-inset"
@@ -138,6 +175,7 @@ export function DefectList() {
   // 卡片视图（原有逻辑）
   return (
     <div className="flex flex-col gap-4">
+      {searchBar}
       {/* 进行中的缺陷 */}
       {activeDefects.length > 0 && (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">

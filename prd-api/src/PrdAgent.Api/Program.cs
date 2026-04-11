@@ -211,6 +211,17 @@ builder.Services.AddHostedService<PrdAgent.Api.Services.ChatRunWorker>();
 builder.Services.AddHostedService<PrdAgent.Api.Services.WorkflowRunWorker>();
 builder.Services.AddScoped<PrdAgent.Api.Services.WorkflowAiFillService>();
 
+// 涌现探索器
+builder.Services.AddSingleton<PrdAgent.Api.Services.SystemCapabilityScanner>();
+builder.Services.AddScoped<PrdAgent.Api.Services.EmergenceService>();
+
+// 技能引导 Agent
+builder.Services.AddScoped<PrdAgent.Infrastructure.Services.SkillAgentService>();
+
+// 文档订阅同步引擎
+builder.Services.AddHttpClient("DocumentSync");
+builder.Services.AddHostedService<PrdAgent.Api.Services.DocumentSyncWorker>();
+
 // 视频生成后台执行器（文章→脚本→Remotion渲染→字幕→打包）
 builder.Services.AddHostedService<PrdAgent.Api.Services.VideoGenRunWorker>();
 
@@ -223,6 +234,12 @@ builder.Services.AddHostedService<PrdAgent.Api.Services.ArenaRunWorker>();
 // 转录 Agent 后台执行器（ASR 转写 + 模板转文案）
 builder.Services.AddHostedService<PrdAgent.Api.Services.TranscriptRunWorker>();
 builder.Services.AddSingleton<PrdAgent.Api.Services.DoubaoStreamAsrService>();
+
+// 知识库 Agent 后台执行器（字幕生成 + 文档再加工，复用 DoubaoStreamAsrService 和 ILlmGateway）
+builder.Services.AddHttpClient("DocStoreAgent");
+builder.Services.AddScoped<PrdAgent.Api.Services.SubtitleGenerationProcessor>();
+builder.Services.AddScoped<PrdAgent.Api.Services.ContentReprocessProcessor>();
+builder.Services.AddHostedService<PrdAgent.Api.Services.DocumentStoreAgentWorker>();
 
 // 权限字符串迁移服务（启动时自动迁移旧格式 admin.xxx → 新格式 appKey.action）
 builder.Services.AddHostedService<PrdAgent.Api.Services.PermissionMigrationService>();

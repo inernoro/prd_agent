@@ -69,6 +69,20 @@ public class Skill
     /// <summary>使用次数</summary>
     public int UsageCount { get; set; }
 
+    // === 广场发布 ===
+
+    /// <summary>是否发布到技能广场（personal 技能可发布）</summary>
+    public bool IsPublic { get; set; }
+
+    /// <summary>发布者昵称（发布时快照）</summary>
+    public string? AuthorName { get; set; }
+
+    /// <summary>发布者头像 URL（发布时快照）</summary>
+    public string? AuthorAvatar { get; set; }
+
+    /// <summary>发布时间</summary>
+    public DateTime? PublishedAt { get; set; }
+
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
 }

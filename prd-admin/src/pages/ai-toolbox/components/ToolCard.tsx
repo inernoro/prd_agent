@@ -39,6 +39,7 @@ import {
   Search,
   Layers,
   Swords,
+  HardHat,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 
@@ -359,13 +360,27 @@ export function ToolCard({ item }: ToolCardProps) {
 
         {/* Footer — 内置: 徽章 + 收藏; 自定义: 作者 + 统计 */}
         <div
-          className="flex items-center justify-between pt-1.5"
+          className="flex items-center justify-between gap-1 pt-1.5"
           style={{ borderTop: '1px solid rgba(255, 255, 255, 0.08)' }}
         >
           {item.type === 'custom' ? (
             <>
-              {/* 作者头像 + 名字 */}
+              {/* 作者头像 + 名字（左下角若 wip 则显示"施工中"） */}
               <div className="flex items-center gap-1 min-w-0">
+                {item.wip && (
+                  <span
+                    className="shrink-0 text-[8px] px-1.5 py-0.5 rounded font-medium inline-flex items-center gap-1"
+                    style={{
+                      background: 'rgba(245, 158, 11, 0.18)',
+                      color: '#fcd34d',
+                      border: '1px solid rgba(245, 158, 11, 0.45)',
+                    }}
+                    title="未正式发布"
+                  >
+                    <HardHat size={8} />
+                    施工中
+                  </span>
+                )}
                 <div
                   className="w-3.5 h-3.5 rounded-full shrink-0 flex items-center justify-center text-[7px] font-bold"
                   style={{
@@ -411,22 +426,38 @@ export function ToolCard({ item }: ToolCardProps) {
             </>
           ) : (
             <>
-              {/* 内置工具: 徽章 */}
-              <span
-                className="text-[8px] px-1.5 py-0.5 rounded font-medium inline-flex items-center gap-1"
-                style={{
-                  background: isCustomized ? `${palette.from}25` : 'transparent',
-                  color: isCustomized ? palette.soft : 'rgba(255, 255, 255, 0.4)',
-                  border: isCustomized ? `1px solid ${palette.from}40` : '1px solid rgba(255, 255, 255, 0.1)',
-                }}
-              >
-                {isCustomized ? (
-                  <>
-                    <Sparkles size={8} />
-                    定制版
-                  </>
-                ) : '系统内置'}
-              </span>
+              {/* 内置工具: 左下角徽章组（施工中 + 系统内置/定制版） */}
+              <div className="flex items-center gap-1 min-w-0">
+                {item.wip && (
+                  <span
+                    className="shrink-0 text-[8px] px-1.5 py-0.5 rounded font-medium inline-flex items-center gap-1"
+                    style={{
+                      background: 'rgba(245, 158, 11, 0.18)',
+                      color: '#fcd34d',
+                      border: '1px solid rgba(245, 158, 11, 0.45)',
+                    }}
+                    title="未正式发布"
+                  >
+                    <HardHat size={8} />
+                    施工中
+                  </span>
+                )}
+                <span
+                  className="text-[8px] px-1.5 py-0.5 rounded font-medium inline-flex items-center gap-1"
+                  style={{
+                    background: isCustomized ? `${palette.from}25` : 'transparent',
+                    color: isCustomized ? palette.soft : 'rgba(255, 255, 255, 0.4)',
+                    border: isCustomized ? `1px solid ${palette.from}40` : '1px solid rgba(255, 255, 255, 0.1)',
+                  }}
+                >
+                  {isCustomized ? (
+                    <>
+                      <Sparkles size={8} />
+                      定制版
+                    </>
+                  ) : '系统内置'}
+                </span>
+              </div>
               <button
                 onClick={handleToggleFavorite}
                 className="flex items-center justify-center transition-all duration-300 hover:scale-125"
