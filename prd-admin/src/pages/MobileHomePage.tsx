@@ -39,11 +39,11 @@ const QUICK_AGENTS_BASE: QuickAgent[] = [
   { key: 'showcase', label: '广场',   icon: Sparkles,      path: '/showcase',       color: '#A78BFA', bg: 'rgba(167,139,250,0.15)' },
 ];
 
-const QUICK_AGENT_REVIEW_PRISM: QuickAgent = {
-  key: 'review-prism',
-  label: 'PR审查棱镜',
+const QUICK_AGENT_PR_REVIEW: QuickAgent = {
+  key: 'pr-review',
+  label: 'PR 审查工作台',
   icon: ClipboardCheck,
-  path: '/pr-review-prism',
+  path: '/pr-review',
   color: '#A5B4FC',
   bg: 'rgba(99,102,241,0.18)',
 };
@@ -110,8 +110,8 @@ export default function MobileHomePage() {
 
   const quickAgents = useMemo(() => {
     const list = [...QUICK_AGENTS_BASE];
-    if (permissions.includes('pr-review-prism.use')) {
-      list.unshift(QUICK_AGENT_REVIEW_PRISM);
+    if (permissions.includes('pr-review.use')) {
+      list.unshift(QUICK_AGENT_PR_REVIEW);
     }
     return list;
   }, [permissions]);

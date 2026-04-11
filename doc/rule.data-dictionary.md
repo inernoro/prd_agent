@@ -97,7 +97,8 @@
 | `review_results` | `ReviewResult` | 产品评审员评分结果（分项评分、总分、结论） | `submissionId` 唯一；`scoredAt desc` |
 | `review_dimension_configs` | `ReviewDimensionConfig` | 产品评审评分维度配置（权重/说明） | `key` 唯一；`orderIndex` |
 | `review_webhook_configs` | `ReviewWebhookConfig` | 产品评审完成通知 Webhook 配置 | `isEnabled`；`createdAt desc` |
-| `pr_review_prism_submissions` | `PrReviewPrismSubmission` | PR 审查棱镜提交与快照（PR 基本信息、L1 Gate、决策卡解析结果、刷新状态） | `(ownerUserId, updatedAt desc)`；`(ownerUserId, repoOwner, repoName, pullRequestNumber)` 唯一 |
+| `github_user_connections` | `GitHubUserConnection` | 每个 PRD Agent 用户的 GitHub OAuth 连接（加密 token、scopes、login） | `(userId)` 唯一 |
+| `pr_review_items` | `PrReviewItem` | PR 审查工作台的用户级记录（owner/repo/number + 嵌入式 Snapshot + 私人笔记） | `(userId, updatedAt desc)`；`(userId, owner, repo, number)` 唯一 |
 | `hosted_sites` | `HostedSite` | 托管站点（用户上传 HTML/ZIP 或工作流生成的可运行网页） | `(ownerUserId, createdAt desc)`；`tags` 多值索引；`(ownerUserId, sourceType)`；`(ownerUserId, folder)` |
 | `web_page_share_links` | `WebPageShareLink` | 网页分享链接（Token + 密码保护 + 过期时间） | `token` 唯一；`(createdBy, createdAt desc)` |
 

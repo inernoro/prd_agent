@@ -1502,23 +1502,7 @@ export type {
   ReviewWebhookConfig,
 } from '@/services/real/reviewAgent';
 
-// ── PR Review Prism 审查棱镜 ──
-export {
-  getPrReviewPrismStatus,
-  getPrReviewPrismSetupStatus,
-  getPrReviewPrismTokenConfigStatus,
-  updatePrReviewPrismTokenConfig,
-  downloadPrReviewPrismRepoBootstrapSkill,
-  createPrReviewPrismSubmission,
-  precheckPrReviewPrismSubmission,
-  listPrReviewPrismSubmissions,
-  getPrReviewPrismSubmission,
-  refreshPrReviewPrismSubmission,
-  batchRefreshPrReviewPrismSubmissions,
-  deletePrReviewPrismSubmission,
-} from '@/services/real/prReviewPrism';
-
-// ============ PR Review V2（pr-review）============
+// ============ PR Review（pr-review）基于每用户 GitHub OAuth 的审查工作台 ============
 export {
   getPrReviewAuthStatus,
   startPrReviewOAuth,
@@ -1537,17 +1521,3 @@ export type {
   PrReviewAuthStatus,
   PrReviewAuthStart,
 } from '@/services/real/prReview';
-
-export type {
-  PrReviewPrismBatchRefreshFailure,
-  PrReviewPrismBatchRefreshResult,
-  PrReviewPrismGateStatus,
-  PrReviewPrismSubmissionPrecheckResult,
-  PrReviewPrismSubmission,
-  PrReviewPrismSetupStatus,
-  PrReviewPrismTokenConfigStatus,
-  PrReviewPrismTopDesignSetupStatus,
-  PrReviewPrismRepoSkillPackageRequest,
-  PrReviewPrismRepoSkillPackageResponse,
-  PrReviewPrismStatus,
-} from '@/services/real/prReviewPrism';

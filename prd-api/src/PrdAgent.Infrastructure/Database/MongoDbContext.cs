@@ -109,8 +109,6 @@ public class MongoDbContext
     public IMongoCollection<ReviewResult> ReviewResults => _database.GetCollection<ReviewResult>("review_results");
     public IMongoCollection<ReviewDimensionConfig> ReviewDimensionConfigs => _database.GetCollection<ReviewDimensionConfig>("review_dimension_configs");
     public IMongoCollection<ReviewWebhookConfig> ReviewWebhookConfigs => _database.GetCollection<ReviewWebhookConfig>("review_webhook_configs");
-    // PR Review Prism 审查棱镜
-    public IMongoCollection<PrReviewPrismSubmission> PrReviewPrismSubmissions => _database.GetCollection<PrReviewPrismSubmission>("pr_review_prism_submissions");
 
     // PR Review V2（pr-review）：用户级 GitHub OAuth 连接 + 审查记录
     public IMongoCollection<GitHubUserConnection> GitHubUserConnections => _database.GetCollection<GitHubUserConnection>("github_user_connections");
@@ -920,24 +918,11 @@ public class MongoDbContext
             Builders<DefectFixReport>.IndexKeys.Ascending(x => x.ShareToken),
             new CreateIndexOptions { Name = "idx_defect_fix_reports_token" }));
 
-        // PR审查棱镜：按 owner 查询列表；同用户下同仓库同 PR 去重
-        PrReviewPrismSubmissions.Indexes.CreateOne(new CreateIndexModel<PrReviewPrismSubmission>(
-            Builders<PrReviewPrismSubmission>.IndexKeys.Ascending(x => x.OwnerUserId).Descending(x => x.UpdatedAt),
-            new CreateIndexOptions { Name = "idx_pr_review_prism_owner_updated" }));
-        try
-        {
-            PrReviewPrismSubmissions.Indexes.CreateOne(new CreateIndexModel<PrReviewPrismSubmission>(
-                Builders<PrReviewPrismSubmission>.IndexKeys
-                    .Ascending(x => x.OwnerUserId)
-                    .Ascending(x => x.RepoOwner)
-                    .Ascending(x => x.RepoName)
-                    .Ascending(x => x.PullRequestNumber),
-                new CreateIndexOptions { Name = "uniq_pr_review_prism_owner_repo_pr", Unique = true }));
-        }
-        catch (MongoCommandException ex) when (IsIndexConflict(ex))
-        {
-            // ignore
-        }
+        // PR Review V2（pr-review）：按 UserId 查询，同一用户同仓库同 PR 去重
+        // 索引由 DBA 手动创建（遵循 no-auto-index 规则），这里仅作定义参考：
+        //   github_user_connections:  (UserId) unique
+        //   pr_review_items:          (UserId, UpdatedAt desc)
+        //   pr_review_items:          (UserId, Owner, Repo, Number) unique
 
         // ========== Channel Adapter 多通道适配器索引 ==========
 

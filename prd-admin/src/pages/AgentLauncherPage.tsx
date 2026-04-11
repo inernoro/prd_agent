@@ -33,7 +33,6 @@ import type { ToolboxItem } from '@/services';
 import { ShowcaseGallery } from '@/components/showcase/ShowcaseGallery';
 import { DesktopDownloadDialog } from '@/components/ui/DesktopDownloadDialog';
 import { ReviewAgentCardArt } from '@/pages/ai-toolbox/components/ReviewAgentCardArt';
-import { PrReviewPrismCardArt } from '@/pages/ai-toolbox/components/PrReviewPrismCardArt';
 
 // ── Icon & Color mapping (self-contained, doesn't touch ToolCard) ──
 
@@ -204,8 +203,6 @@ function FeaturedCard({ item, onClick }: { item: ToolboxItem; onClick: () => voi
       {/* Cover visual: inline art / CDN image / gradient fallback */}
       {item.agentKey === 'review-agent' ? (
         <ReviewAgentCardArt />
-      ) : item.agentKey === 'pr-review-prism' ? (
-        <PrReviewPrismCardArt />
       ) : coverUrl && !coverFailed ? (
         <>
           <img
@@ -388,7 +385,7 @@ export default function AgentLauncherPage() {
   const permissions = useAuthStore((s) => s.permissions ?? []);
 
   const canUseReviewAgent = permissions.includes('review-agent.use');
-  const canUsePrReviewPrism = permissions.includes('pr-review-prism.use');
+  const canUsePrReview = permissions.includes('pr-review.use');
 
   const quickLinks = QUICK_LINKS_BASE;
 
@@ -413,7 +410,7 @@ export default function AgentLauncherPage() {
     const filterByPerm = (list: ToolboxItem[]) =>
       list.filter((i) => {
         if (i.agentKey === 'review-agent' && !canUseReviewAgent) return false;
-        if (i.agentKey === 'pr-review-prism' && !canUsePrReviewPrism) return false;
+        if (i.agentKey === 'pr-review' && !canUsePrReview) return false;
         return true;
       });
 
@@ -433,13 +430,13 @@ export default function AgentLauncherPage() {
     const dedupedItems = dedupeToolboxItems(items);
     for (const item of dedupedItems) {
       if (item.agentKey === 'review-agent' && !canUseReviewAgent) continue;
-      if (item.agentKey === 'pr-review-prism' && !canUsePrReviewPrism) continue;
+      if (item.agentKey === 'pr-review' && !canUsePrReview) continue;
       if (item.routePath) feat.push(item);
       else util.push(item);
     }
     util.push(...staticUtilities);
     return { featured: feat, utilities: util, filtered: [] };
-  }, [items, staticUtilities, searchQuery, canUseReviewAgent, canUsePrReviewPrism]);
+  }, [items, staticUtilities, searchQuery, canUseReviewAgent, canUsePrReview]);
 
   const handleClick = (item: ToolboxItem) => {
     if (item.agentKey === 'prd-agent') {
