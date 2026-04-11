@@ -251,7 +251,7 @@ public sealed class PrReviewController : ControllerBase
 
         if (!PrUrlParser.TryParse(req.PullRequestUrl, out var parsed, out var parseError))
         {
-            return BadRequest(ApiResponse<object>.Fail(PrReviewErrorCodes.PR_URL_INVALID, parseError ?? "PR URL 无效"));
+            return BadRequest(ApiResponse<object>.Fail(GitHubErrorCodes.PR_URL_INVALID, parseError ?? "PR URL 无效"));
         }
 
         // 唯一性检查
