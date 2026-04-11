@@ -141,14 +141,24 @@ const QUICK_LINKS_BASE: HomeQuickLink[] = [
   { icon: Sparkles, label: '作品广场', desc: '探索 AI 驱动的创意作品与灵感', path: '/showcase', accent: '#A855F7', gradient: 'linear-gradient(135deg, #A855F7, #6366F1)' },
 ];
 
-const QUICK_LINK_REVIEW_PRISM: HomeQuickLink = {
-  icon: ScanSearch,
-  label: 'PR审查棱镜',
-  desc: 'PR/MR 变更专项审查（与产品评审员独立）',
-  path: '/pr-review-prism',
-  accent: '#A78BFA',
-  gradient: 'linear-gradient(135deg, #8B5CF6, #6366F1)',
-};
+function dedupeToolboxItems(items: ToolboxItem[]): ToolboxItem[] {
+  const seen = new Set<string>();
+  const deduped: ToolboxItem[] = [];
+  for (const item of items) {
+    const identity =
+      item.agentKey?.trim()
+        ? `agent:${item.agentKey}`
+        : item.routePath?.trim()
+          ? `route:${item.routePath}`
+          : `id:${item.id}`;
+    if (seen.has(identity)) {
+      continue;
+    }
+    seen.add(identity);
+    deduped.push(item);
+  }
+  return deduped;
+}
 
 // ── Featured Agent Card (large, with cover image) ──
 
@@ -375,15 +385,9 @@ export default function AgentLauncherPage() {
   const permissions = useAuthStore((s) => s.permissions ?? []);
 
   const canUseReviewAgent = permissions.includes('review-agent.use');
-  const canUsePrReviewPrism = permissions.includes('pr-review-prism.use');
+  const canUsePrReview = permissions.includes('pr-review.use');
 
-  const quickLinks = useMemo(() => {
-    const base = [...QUICK_LINKS_BASE];
-    if (canUsePrReviewPrism) {
-      base.unshift(QUICK_LINK_REVIEW_PRISM);
-    }
-    return base;
-  }, [canUsePrReviewPrism]);
+  const quickLinks = QUICK_LINKS_BASE;
 
   useEffect(() => {
     loadItems();
@@ -406,11 +410,11 @@ export default function AgentLauncherPage() {
     const filterByPerm = (list: ToolboxItem[]) =>
       list.filter((i) => {
         if (i.agentKey === 'review-agent' && !canUseReviewAgent) return false;
-        if (i.agentKey === 'pr-review-prism' && !canUsePrReviewPrism) return false;
+        if (i.agentKey === 'pr-review' && !canUsePrReview) return false;
         return true;
       });
 
-    const allItems = filterByPerm([...items, ...staticUtilities]);
+    const allItems = dedupeToolboxItems(filterByPerm([...items, ...staticUtilities]));
     const query = searchQuery.trim().toLowerCase();
     if (query) {
       const matched = allItems.filter(
@@ -423,15 +427,16 @@ export default function AgentLauncherPage() {
     }
     const feat: ToolboxItem[] = [];
     const util: ToolboxItem[] = [];
-    for (const item of items) {
+    const dedupedItems = dedupeToolboxItems(items);
+    for (const item of dedupedItems) {
       if (item.agentKey === 'review-agent' && !canUseReviewAgent) continue;
-      if (item.agentKey === 'pr-review-prism' && !canUsePrReviewPrism) continue;
+      if (item.agentKey === 'pr-review' && !canUsePrReview) continue;
       if (item.routePath) feat.push(item);
       else util.push(item);
     }
     util.push(...staticUtilities);
     return { featured: feat, utilities: util, filtered: [] };
-  }, [items, staticUtilities, searchQuery, canUseReviewAgent, canUsePrReviewPrism]);
+  }, [items, staticUtilities, searchQuery, canUseReviewAgent, canUsePrReview]);
 
   const handleClick = (item: ToolboxItem) => {
     if (item.agentKey === 'prd-agent') {

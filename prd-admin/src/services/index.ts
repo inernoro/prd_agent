@@ -1501,3 +1501,32 @@ export type {
   ReviewResult,
   ReviewWebhookConfig,
 } from '@/services/real/reviewAgent';
+
+// ============ PR Review（pr-review）基于每用户 GitHub Device Flow 的审查工作台 ============
+export {
+  getPrReviewAuthStatus,
+  startPrReviewDeviceFlow,
+  pollPrReviewDeviceFlow,
+  disconnectPrReviewGitHub,
+  listPrReviewItems,
+  createPrReviewItem,
+  refreshPrReviewItem,
+  updatePrReviewItemNote,
+  deletePrReviewItem,
+  getPrReviewAlignment,
+  getPrReviewAlignmentStreamUrl,
+  getPrReviewSummary,
+  getPrReviewSummaryStreamUrl,
+} from '@/services/real/prReview';
+export type {
+  PrReviewState,
+  PrReviewSnapshotDto,
+  PrReviewItemDto,
+  PrReviewListResponse,
+  PrReviewAuthStatus,
+  PrReviewDeviceFlowStart,
+  PrReviewDeviceFlowPoll,
+  PrReviewDeviceFlowPollStatus,
+  PrAlignmentReportDto,
+  PrSummaryReportDto,
+} from '@/services/real/prReview';

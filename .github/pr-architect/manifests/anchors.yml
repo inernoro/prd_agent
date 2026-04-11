@@ -1,5 +1,0 @@
-version: 1
-anchors:
-  - id: "ANCHOR-PR-REVIEW-01"
-    title: "PR 架构裁决流程锚定项"
-    description: "用于治理规则与模板落地的默认锚定项"

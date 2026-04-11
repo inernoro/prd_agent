@@ -39,7 +39,7 @@ App (appKey)
 | `video-agent` | 视频 Agent | 文章转视频教程 |
 | `report-agent` | 周报管理 Agent | 周报创建、提交、审阅 |
 | `review-agent` | 产品评审员 | 产品方案（如 .md）多维度评审 |
-| `pr-review-prism` | PR审查棱镜 | PR/MR 变更专项审查（与产品评审员独立） |
+| `pr-review` | PR 审查工作台 | 基于每用户 GitHub OAuth 的 PR 审查（任意团队） |
 
 **代码示例**：
 ```csharp
