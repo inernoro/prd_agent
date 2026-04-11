@@ -1,5 +1,7 @@
-import { Activity, Users, Zap, Trophy, Flame } from 'lucide-react';
+import { Activity, Users, Zap, Trophy, Flame, Radio } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
+import { Reveal } from '../components/Reveal';
+import { SectionHeader } from '../components/SectionHeader';
 
 /**
  * CommunityPulse — 幕 · 活动脉搏（Community feature 注入）
@@ -49,53 +51,38 @@ export function CommunityPulse() {
     >
       <div className="max-w-6xl mx-auto">
         {/* Header */}
-        <div className="text-center mb-14">
-          <div
-            className="inline-flex items-center gap-2.5 px-3 py-1 mb-5 rounded border border-emerald-400/30 bg-emerald-400/5"
-            style={{ fontFamily: 'var(--font-mono)' }}
-          >
-            <span className="relative flex h-1.5 w-1.5">
-              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-70" />
-              <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-emerald-400" />
-            </span>
-            <span
-              className="text-[12px] text-emerald-300"
-              style={{ letterSpacing: '0.16em', textShadow: '0 0 8px rgba(52, 211, 153, 0.45)' }}
-            >
-              LIVE · PULSE
-            </span>
-          </div>
-          <h2
-            className="text-white font-medium"
-            style={{
-              fontFamily: 'var(--font-display)',
-              fontSize: 'clamp(2rem, 5vw, 3.75rem)',
-              lineHeight: 1.05,
-              letterSpacing: '-0.03em',
-              textShadow: '0 0 28px rgba(168, 85, 247, 0.25)',
-            }}
-          >
-            整个平台，
-            <br className="sm:hidden" />
-            此时此刻在做什么
-          </h2>
-          <p className="mt-6 text-white/55 max-w-2xl mx-auto text-[15px] leading-relaxed">
-            实时数据脉搏 + 本周 Agent 使用排行。参与越多，你的 Agent 越聪明。
-          </p>
+        <div className="mb-16 md:mb-20">
+          <SectionHeader
+            Icon={Radio}
+            eyebrow="Live · Pulse"
+            accent="#34d399"
+            title={
+              <>
+                整个平台，
+                <br className="sm:hidden" />
+                此时此刻在做什么
+              </>
+            }
+            subtitle="实时数据脉搏 + 本周 Agent 使用排行。参与越多，你的 Agent 越聪明。"
+          />
         </div>
 
         {/* Two-column: HUD stats + leaderboard */}
         <div className="grid lg:grid-cols-5 gap-6">
           {/* HUD stats (3 cols) */}
           <div className="lg:col-span-3 grid grid-cols-2 gap-4">
-            {STATS.map((s) => (
-              <StatCell key={s.label} stat={s} />
+            {STATS.map((s, i) => (
+              <Reveal key={s.label} delay={i * 80} offset={20}>
+                <StatCell stat={s} />
+              </Reveal>
             ))}
           </div>
 
           {/* Leaderboard (2 cols) */}
           <div className="lg:col-span-2">
-            <LeaderboardCard />
+            <Reveal delay={120} offset={20}>
+              <LeaderboardCard />
+            </Reveal>
           </div>
         </div>
       </div>

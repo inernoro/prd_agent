@@ -1,3 +1,7 @@
+import { Zap } from 'lucide-react';
+import { Reveal } from '../components/Reveal';
+import { SectionHeader } from '../components/SectionHeader';
+
 /**
  * CompatibilityStack — 幕 7 · 模型兼容性矩阵
  *
@@ -28,46 +32,28 @@ export function CompatibilityStack() {
     >
       <div className="max-w-6xl mx-auto">
         {/* Header */}
-        <div className="text-center mb-14 md:mb-16">
-          <div
-            className="inline-flex items-center gap-2 mb-5 px-3 py-1 rounded border border-blue-400/25"
-            style={{ fontFamily: 'var(--font-mono)', background: 'rgba(59, 130, 246, 0.05)' }}
-          >
-            <span
-              className="text-[12px] uppercase"
-              style={{
-                color: '#60a5fa',
-                letterSpacing: '0.18em',
-                textShadow: '0 0 10px rgba(96, 165, 250, 0.55)',
-              }}
-            >
-              ⚡ Compatible With
-            </span>
-          </div>
-          <h2
-            className="text-white font-medium"
-            style={{
-              fontFamily: 'var(--font-display)',
-              fontSize: 'clamp(1.875rem, 4.5vw, 3.25rem)',
-              lineHeight: 1.05,
-              letterSpacing: '-0.03em',
-              textShadow: '0 0 28px rgba(96, 165, 250, 0.2)',
-            }}
-          >
-            一套配置，
-            <br className="sm:hidden" />
-            连接你用过的所有大模型
-          </h2>
-          <p className="mt-6 text-white/55 max-w-2xl mx-auto text-[14.5px] leading-relaxed">
-            通过统一的 ILlmGateway 接入 12 家主流平台，按任务类型动态路由，
-            支持健康度监控、配额管理、失败回退。
-          </p>
+        <div className="mb-16 md:mb-20">
+          <SectionHeader
+            Icon={Zap}
+            eyebrow="Compatible With"
+            accent="#60a5fa"
+            title={
+              <>
+                一套配置，
+                <br className="sm:hidden" />
+                连接你用过的所有大模型
+              </>
+            }
+            subtitle="通过统一的 ILlmGateway 接入 12 家主流平台，按任务类型动态路由，支持健康度监控、配额管理、失败回退。"
+          />
         </div>
 
         {/* Provider grid */}
         <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-3">
-          {PROVIDERS.map((p) => (
-            <ProviderTile key={p.name} name={p.name} region={p.region} />
+          {PROVIDERS.map((p, i) => (
+            <Reveal key={p.name} delay={(i % 6) * 40} offset={18}>
+              <ProviderTile name={p.name} region={p.region} />
+            </Reveal>
           ))}
         </div>
 

@@ -1,5 +1,6 @@
 import { Apple, MonitorDown, Terminal, Download } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
+import { Reveal } from '../components/Reveal';
 
 /**
  * DesktopDownload — 幕 · 桌面下载 CTA
@@ -64,54 +65,63 @@ export function DesktopDownload() {
       <div className="max-w-6xl mx-auto">
         <div className="grid lg:grid-cols-2 gap-12 lg:gap-16 items-center">
           {/* Left: copy */}
-          <div>
-            <div
-              className="inline-flex items-center gap-2.5 px-3 py-1 mb-6 rounded border border-cyan-400/30 bg-cyan-400/5"
-              style={{ fontFamily: 'var(--font-mono)' }}
-            >
-              <Download className="w-3 h-3 text-cyan-300" />
-              <span
-                className="text-[12px] text-cyan-300"
+          <Reveal offset={28}>
+            <div>
+              <div
+                className="inline-flex items-center gap-2 px-3.5 py-1.5 mb-7 rounded-md"
                 style={{
-                  letterSpacing: '0.16em',
-                  textShadow: '0 0 8px rgba(0, 240, 255, 0.45)',
+                  fontFamily: 'var(--font-mono)',
+                  background: 'rgba(0, 240, 255, 0.06)',
+                  border: '1px solid rgba(0, 240, 255, 0.3)',
+                  boxShadow: '0 0 20px rgba(0, 240, 255, 0.22)',
                 }}
               >
-                DESKTOP CLIENT
-              </span>
+                <Download className="w-3.5 h-3.5 text-cyan-300" />
+                <span
+                  className="text-[12.5px] text-cyan-300 uppercase"
+                  style={{
+                    letterSpacing: '0.2em',
+                    textShadow: '0 0 10px rgba(0, 240, 255, 0.6)',
+                  }}
+                >
+                  Desktop Client
+                </span>
+              </div>
+
+              <h2
+                className="text-white font-medium mb-7"
+                style={{
+                  fontFamily: 'var(--font-display)',
+                  fontSize: 'clamp(2rem, 4.8vw, 3.5rem)',
+                  lineHeight: 1.08,
+                  letterSpacing: '-0.03em',
+                  textShadow: '0 0 32px rgba(0, 240, 255, 0.22)',
+                }}
+              >
+                把整个 Agent 平台
+                <br />
+                带到你的桌面
+              </h2>
+
+              <p className="text-white/58 text-[15px] leading-[1.7] max-w-md mb-7">
+                基于 Tauri 2.0 的原生桌面客户端，系统托盘常驻、快捷键唤醒、离线缓存、
+                全局剪贴板注入。和 Web 端共享同一套账号体系。
+              </p>
+
+              <ul className="space-y-3 text-[13.5px] text-white/72">
+                <BulletLine text="系统托盘常驻 · 快捷键 Cmd+Shift+M 唤醒" />
+                <BulletLine text="自动更新 · Tauri updater 签名校验" />
+                <BulletLine text="所有平台共 134 MB · 零 Node runtime" />
+              </ul>
             </div>
-
-            <h2
-              className="text-white font-medium mb-6"
-              style={{
-                fontFamily: 'var(--font-display)',
-                fontSize: 'clamp(2rem, 4.8vw, 3.5rem)',
-                lineHeight: 1.05,
-                letterSpacing: '-0.03em',
-                textShadow: '0 0 28px rgba(0, 240, 255, 0.2)',
-              }}
-            >
-              把整个 Agent 平台
-              <br />
-              带到你的桌面
-            </h2>
-
-            <p className="text-white/55 text-[15px] leading-relaxed max-w-md mb-6">
-              基于 Tauri 2.0 的原生桌面客户端，系统托盘常驻、快捷键唤醒、离线缓存、
-              全局剪贴板注入。和 Web 端共享同一套账号体系。
-            </p>
-
-            <ul className="space-y-2.5 text-[13px] text-white/70">
-              <BulletLine text="系统托盘常驻 · 快捷键 Cmd+Shift+M 唤醒" />
-              <BulletLine text="自动更新 · Tauri updater 签名校验" />
-              <BulletLine text="所有平台共 134 MB · 零 Node runtime" />
-            </ul>
-          </div>
+          </Reveal>
 
           {/* Right: 3 platform cards */}
           <div className="grid grid-cols-1 gap-4">
-            {PLATFORMS.map((p) => (
-              <PlatformCard key={p.id} platform={p} />
+            {PLATFORMS.map((p, i) => (
+              <Reveal key={p.id} delay={i * 100} offset={20}>
+                <PlatformCard platform={p} />
+              </Reveal>
             ))}
           </div>
         </div>

@@ -1,6 +1,8 @@
 import { cn } from '@/lib/cn';
-import { ArrowRight } from 'lucide-react';
+import { ArrowRight, Sparkles } from 'lucide-react';
 import type { ReactNode } from 'react';
+import { Reveal } from '../components/Reveal';
+import { SectionHeader } from '../components/SectionHeader';
 
 /**
  * FeatureDeepDive — Linear.app "Plan / Build / Ship" 风格
@@ -108,45 +110,29 @@ export function FeatureDeepDive() {
       className="relative py-28 md:py-36"
       style={{ fontFamily: 'var(--font-body)' }}
     >
-      {/* Section header */}
-      <div className="max-w-6xl mx-auto px-6 mb-24 md:mb-32 text-center">
-        <div
-          className="inline-flex items-center gap-2 mb-5 px-3 py-1 rounded border border-purple-400/25"
-          style={{ fontFamily: 'var(--font-mono)', background: 'rgba(168, 85, 247, 0.05)' }}
-        >
-          <span
-            className="text-[12px] text-purple-300 uppercase"
-            style={{
-              letterSpacing: '0.18em',
-              textShadow: '0 0 10px rgba(168, 85, 247, 0.55)',
-            }}
-          >
-            ✦ Core Capabilities
-          </span>
-        </div>
-        <h2
-          className="text-white font-medium"
-          style={{
-            fontFamily: 'var(--font-display)',
-            fontSize: 'clamp(2rem, 5vw, 3.75rem)',
-            lineHeight: 1.05,
-            letterSpacing: '-0.03em',
-            textShadow: '0 0 28px rgba(168, 85, 247, 0.22)',
-          }}
-        >
-          六个专业 Agent，
-          <br className="sm:hidden" />
-          一个工作台
-        </h2>
-        <p className="mt-6 text-white/55 max-w-2xl mx-auto text-[15px] leading-relaxed">
-          每一个 Agent 都是一个独立的领域专家，在 MAP 里它们共享上下文、互相调用，像一个真正的团队。
-        </p>
+      {/* Section header —— 上下留白翻倍 */}
+      <div className="max-w-6xl mx-auto px-6 pt-10 mb-32 md:mb-40">
+        <SectionHeader
+          Icon={Sparkles}
+          eyebrow="Core Capabilities"
+          accent="#a855f7"
+          title={
+            <>
+              六个专业 Agent，
+              <br className="sm:hidden" />
+              一个工作台
+            </>
+          }
+          subtitle="每一个 Agent 都是一个独立的领域专家，在 MAP 里它们共享上下文、互相调用，像一个真正的团队。"
+        />
       </div>
 
       {/* Six alternating feature blocks */}
-      <div className="space-y-28 md:space-y-40">
+      <div className="space-y-32 md:space-y-44">
         {FEATURES.map((feature, i) => (
-          <FeatureBlock key={feature.id} feature={feature} reverse={i % 2 === 1} />
+          <Reveal key={feature.id} offset={36} duration={1000}>
+            <FeatureBlock feature={feature} reverse={i % 2 === 1} />
+          </Reveal>
         ))}
       </div>
     </section>

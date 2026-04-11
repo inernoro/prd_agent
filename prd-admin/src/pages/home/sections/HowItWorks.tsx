@@ -1,5 +1,7 @@
-import { MessageSquare, Cpu, Waves } from 'lucide-react';
+import { MessageSquare, Cpu, Waves, Workflow } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
+import { Reveal } from '../components/Reveal';
+import { SectionHeader } from '../components/SectionHeader';
 
 /**
  * HowItWorks — 幕 5 · 三步流程
@@ -53,34 +55,13 @@ export function HowItWorks() {
       className="relative py-28 md:py-36 px-6"
       style={{ fontFamily: 'var(--font-body)' }}
     >
-      <div className="max-w-6xl mx-auto mb-16 md:mb-20 text-center">
-        <div
-          className="inline-flex items-center gap-2 mb-5 px-3 py-1 rounded border border-pink-400/25"
-          style={{ fontFamily: 'var(--font-mono)', background: 'rgba(244, 114, 182, 0.05)' }}
-        >
-          <span
-            className="text-[12px] uppercase"
-            style={{
-              color: '#f472b6',
-              letterSpacing: '0.18em',
-              textShadow: '0 0 10px rgba(244, 114, 182, 0.55)',
-            }}
-          >
-            » How It Works
-          </span>
-        </div>
-        <h2
-          className="text-white font-medium"
-          style={{
-            fontFamily: 'var(--font-display)',
-            fontSize: 'clamp(2rem, 5vw, 3.75rem)',
-            lineHeight: 1.05,
-            letterSpacing: '-0.03em',
-            textShadow: '0 0 28px rgba(244, 114, 182, 0.22)',
-          }}
-        >
-          三步，从想法到产物
-        </h2>
+      <div className="max-w-6xl mx-auto mb-20 md:mb-24">
+        <SectionHeader
+          Icon={Workflow}
+          eyebrow="How It Works"
+          accent="#f472b6"
+          title="三步，从想法到产物"
+        />
       </div>
 
       {/* 三步卡片 */}
@@ -96,7 +77,9 @@ export function HowItWorks() {
           />
 
           {STEPS.map((step, i) => (
-            <StepCard key={step.n} step={step} index={i} />
+            <Reveal key={step.n} delay={i * 120} offset={24}>
+              <StepCard step={step} index={i} />
+            </Reveal>
           ))}
         </div>
       </div>

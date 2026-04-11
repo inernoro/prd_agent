@@ -1,5 +1,6 @@
-import { ArrowRight } from 'lucide-react';
+import { ArrowRight, Sparkles, Star } from 'lucide-react';
 import { HERO_GRADIENT } from './HeroSection';
+import { Reveal } from '../components/Reveal';
 
 interface FinalCtaProps {
   onGetStarted?: () => void;
@@ -28,70 +29,85 @@ export function FinalCta({ onGetStarted, onContact }: FinalCtaProps) {
       />
 
       <div className="relative max-w-4xl mx-auto text-center">
-        <div
-          className="inline-flex items-center gap-2 mb-6 px-3 py-1 rounded border border-rose-400/30"
-          style={{ fontFamily: 'var(--font-mono)', background: 'rgba(244, 63, 94, 0.06)' }}
-        >
-          <span className="relative flex h-1.5 w-1.5">
-            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-rose-400 opacity-70" />
-            <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-rose-400" />
-          </span>
-          <span
-            className="text-[12px] uppercase"
+        <Reveal>
+          <div
+            className="inline-flex items-center gap-2 mb-7 px-3.5 py-1.5 rounded-md"
             style={{
-              color: '#fb7185',
-              letterSpacing: '0.18em',
-              textShadow: '0 0 10px rgba(244, 63, 94, 0.55)',
+              fontFamily: 'var(--font-mono)',
+              background: 'rgba(244, 63, 94, 0.06)',
+              border: '1px solid rgba(244, 63, 94, 0.32)',
+              boxShadow: '0 0 22px rgba(244, 63, 94, 0.25)',
             }}
           >
-            ★ Ready Player One
-          </span>
-        </div>
-
-        <h2
-          className="text-white font-medium"
-          style={{
-            fontFamily: 'var(--font-display)',
-            fontSize: 'clamp(2.25rem, 6.5vw, 5.5rem)',
-            lineHeight: 1.02,
-            letterSpacing: '-0.035em',
-            textShadow:
-              '0 0 40px rgba(244, 63, 94, 0.35), 0 0 100px rgba(168, 85, 247, 0.22)',
-          }}
-        >
-          现在，轮到你了。
-        </h2>
-
-        <p className="mt-7 text-white/60 max-w-xl mx-auto text-[15.5px] leading-relaxed">
-          十五位 Agent 已经就位。你的第一个任务是什么？
-        </p>
-
-        <div className="mt-12 flex flex-col sm:flex-row items-center justify-center gap-3">
-          <button
-            onClick={onGetStarted}
-            className="group relative px-9 py-4 rounded-full font-medium text-[15px] text-white transition-all duration-300 hover:scale-[1.03] active:scale-[0.98]"
-            style={{
-              background: HERO_GRADIENT,
-              boxShadow:
-                '0 0 56px rgba(124, 58, 237, 0.4), 0 0 120px rgba(0, 240, 255, 0.22), 0 10px 32px rgba(0,0,0,0.5)',
-              letterSpacing: '0.01em',
-              fontFamily: 'var(--font-display)',
-            }}
-          >
-            <span className="relative z-10 flex items-center gap-2">
-              进入 MAP
-              <ArrowRight className="w-4 h-4 transition-transform group-hover:translate-x-0.5" />
+            <Star className="w-3.5 h-3.5 text-rose-300" />
+            <span
+              className="text-[12.5px] uppercase"
+              style={{
+                color: '#fb7185',
+                letterSpacing: '0.2em',
+                textShadow: '0 0 10px rgba(244, 63, 94, 0.6)',
+              }}
+            >
+              Ready Player One
             </span>
-          </button>
+          </div>
+        </Reveal>
 
-          <button
-            onClick={onContact}
-            className="px-7 py-4 rounded-full text-[14px] font-medium text-white/75 hover:text-white transition-colors"
-            style={{ fontFamily: 'var(--font-display)', letterSpacing: '0.01em' }}
+        <Reveal delay={80}>
+          <h2
+            className="text-white font-medium"
+            style={{
+              fontFamily: 'var(--font-display)',
+              fontSize: 'clamp(2.25rem, 6.5vw, 5.5rem)',
+              lineHeight: 1.02,
+              letterSpacing: '-0.035em',
+              textShadow:
+                '0 0 40px rgba(244, 63, 94, 0.4), 0 0 100px rgba(168, 85, 247, 0.25)',
+            }}
           >
-            联系我们 →
-          </button>
-        </div>
+            现在，轮到你了。
+          </h2>
+        </Reveal>
+
+        <Reveal delay={160}>
+          <p className="mt-8 text-white/62 max-w-xl mx-auto text-[15.5px] leading-[1.7]">
+            十五位 Agent 已经就位。你的第一个任务是什么？
+          </p>
+        </Reveal>
+
+        <Reveal delay={240}>
+          <div className="mt-12 flex flex-col sm:flex-row items-center justify-center gap-4">
+            <button
+              onClick={onGetStarted}
+              className="group relative inline-flex items-center gap-2.5 h-14 px-10 rounded-full font-medium text-[15px] text-white transition-all duration-300 hover:scale-[1.03] active:scale-[0.98]"
+              style={{
+                background: HERO_GRADIENT,
+                boxShadow:
+                  '0 0 60px rgba(124, 58, 237, 0.42), 0 0 140px rgba(0, 240, 255, 0.22), 0 12px 36px rgba(0, 0, 0, 0.55)',
+                letterSpacing: '0.01em',
+                fontFamily: 'var(--font-display)',
+              }}
+            >
+              <Sparkles className="w-4 h-4" />
+              <span>进入 MAP</span>
+              <ArrowRight className="w-4 h-4 transition-transform group-hover:translate-x-0.5" />
+            </button>
+
+            <button
+              onClick={onContact}
+              className="inline-flex items-center gap-2 h-14 px-8 rounded-full text-[14.5px] font-medium text-white/80 hover:text-white transition-colors"
+              style={{
+                background: 'rgba(255, 255, 255, 0.03)',
+                border: '1px solid rgba(255, 255, 255, 0.14)',
+                fontFamily: 'var(--font-display)',
+                letterSpacing: '0.01em',
+              }}
+            >
+              联系我们
+              <ArrowRight className="w-4 h-4 opacity-60" />
+            </button>
+          </div>
+        </Reveal>
       </div>
     </section>
   );

@@ -15,8 +15,11 @@ import {
   FileSearch,
   BarChart3,
   ArrowUpRight,
+  Users,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
+import { Reveal } from '../components/Reveal';
+import { SectionHeader } from '../components/SectionHeader';
 
 /**
  * AgentGrid — 幕 6 · 15 个 Agent 总览（真实数据源）
@@ -65,45 +68,29 @@ export function AgentGrid() {
       style={{ fontFamily: 'var(--font-body)' }}
     >
       {/* Section header */}
-      <div className="max-w-6xl mx-auto mb-16 md:mb-20 text-center">
-        <div
-          className="inline-flex items-center gap-2 mb-5 px-3 py-1 rounded border border-cyan-400/25"
-          style={{ fontFamily: 'var(--font-mono)', background: 'rgba(0, 240, 255, 0.05)' }}
-        >
-          <span
-            className="text-[12px] text-cyan-300 uppercase"
-            style={{
-              letterSpacing: '0.18em',
-              textShadow: '0 0 10px rgba(0, 240, 255, 0.55)',
-            }}
-          >
-            ► The Roster
-          </span>
-        </div>
-        <h2
-          className="text-white font-medium"
-          style={{
-            fontFamily: 'var(--font-display)',
-            fontSize: 'clamp(2rem, 5vw, 3.75rem)',
-            lineHeight: 1.05,
-            letterSpacing: '-0.03em',
-            textShadow: '0 0 28px rgba(0, 240, 255, 0.2)',
-          }}
-        >
-          十五位 Agent，
-          <br className="sm:hidden" />
-          随时可以派工
-        </h2>
-        <p className="mt-6 text-white/55 max-w-2xl mx-auto text-[15px] leading-relaxed">
-          11 位深度定制 + 4 位通用对话助手。每一位都能独立上岗，也能被别的 Agent 调用。
-        </p>
+      <div className="max-w-6xl mx-auto mb-20 md:mb-24">
+        <SectionHeader
+          Icon={Users}
+          eyebrow="The Roster"
+          accent="#22d3ee"
+          title={
+            <>
+              十五位 Agent，
+              <br className="sm:hidden" />
+              随时可以派工
+            </>
+          }
+          subtitle="11 位深度定制 + 4 位通用对话助手。每一位都能独立上岗，也能被别的 Agent 调用。"
+        />
       </div>
 
-      {/* Grid */}
+      {/* Grid —— 整体 Reveal，卡片内部再分 stagger */}
       <div className="max-w-6xl mx-auto">
         <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4">
-          {AGENTS.map((agent) => (
-            <AgentCard key={agent.id} agent={agent} />
+          {AGENTS.map((agent, i) => (
+            <Reveal key={agent.id} delay={(i % 4) * 60} offset={20}>
+              <AgentCard agent={agent} />
+            </Reveal>
           ))}
         </div>
       </div>

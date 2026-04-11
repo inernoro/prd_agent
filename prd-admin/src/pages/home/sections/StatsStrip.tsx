@@ -1,8 +1,10 @@
+import { Reveal } from '../components/Reveal';
+
 /**
- * StatsStrip — 幕 2 · 极简数字横条
+ * StatsStrip — 幕 2 · 极简大数字
  *
- * Linear 风：巨大数字（单字重渐变到半透明白），下方极小标签大写。
- * 没有图标、没有边框、没有卡片，全靠字号和呼吸空间撑场。
+ * 修正：去掉 border-y（之前看着像廉价金属条），改为纯 section 留白。
+ * 每个数字独立 Reveal fade-up，stagger 60ms。
  */
 
 const STATS = [
@@ -15,33 +17,35 @@ const STATS = [
 export function StatsStrip() {
   return (
     <section
-      className="relative py-24 md:py-32 px-6 border-y border-white/5"
+      className="relative py-28 md:py-36 px-6"
       style={{ fontFamily: 'var(--font-body)' }}
     >
       <div className="max-w-6xl mx-auto">
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-y-14 gap-x-6">
-          {STATS.map((s) => (
-            <div key={s.label} className="text-center">
-              <div
-                className="font-medium bg-clip-text text-transparent"
-                style={{
-                  fontFamily: 'var(--font-display)',
-                  fontSize: 'clamp(3rem, 6vw, 5rem)',
-                  lineHeight: 1,
-                  letterSpacing: '-0.04em',
-                  backgroundImage:
-                    'linear-gradient(180deg, #ffffff 0%, rgba(255,255,255,0.45) 100%)',
-                }}
-              >
-                {s.value}
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-y-16 gap-x-6">
+          {STATS.map((s, i) => (
+            <Reveal key={s.label} delay={i * 80} offset={24}>
+              <div className="text-center">
+                <div
+                  className="font-medium bg-clip-text text-transparent"
+                  style={{
+                    fontFamily: 'var(--font-display)',
+                    fontSize: 'clamp(3rem, 6.5vw, 5.25rem)',
+                    lineHeight: 1,
+                    letterSpacing: '-0.04em',
+                    backgroundImage:
+                      'linear-gradient(180deg, #ffffff 0%, rgba(255, 255, 255, 0.42) 100%)',
+                  }}
+                >
+                  {s.value}
+                </div>
+                <div
+                  className="mt-5 text-[10.5px] text-white/40 uppercase"
+                  style={{ fontFamily: 'var(--font-mono)', letterSpacing: '0.28em' }}
+                >
+                  {s.label}
+                </div>
               </div>
-              <div
-                className="mt-4 text-[10.5px] text-white/40 uppercase"
-                style={{ fontFamily: 'var(--font-display)', letterSpacing: '0.24em' }}
-              >
-                {s.label}
-              </div>
-            </div>
+            </Reveal>
           ))}
         </div>
       </div>
