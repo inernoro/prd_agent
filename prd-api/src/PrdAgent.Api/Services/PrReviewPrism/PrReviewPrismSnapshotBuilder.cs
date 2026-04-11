@@ -17,6 +17,11 @@ public sealed class PrReviewPrismSnapshotBuilder
         return _gitHubService.BuildSnapshotAsync(repoOwner, repoName, prNumber);
     }
 
+    public Task<PrReviewPrismPrecheckResult> PrecheckPullRequestAsync(string repoOwner, string repoName, int prNumber)
+    {
+        return _gitHubService.PrecheckPullRequestAsync(repoOwner, repoName, prNumber);
+    }
+
     public static bool TryParsePullRequestUrl(
         string url,
         out string? owner,

@@ -2174,6 +2174,7 @@ sequenceDiagram
 - `GET /api/pr-review-prism/token-config` — 获取 Token 配置状态（脱敏、来源、可写权限、操作指引）
 - `PUT /api/pr-review-prism/token-config` — 保存/清空 Token（写入 AppSettings 加密字段，要求 `settings.write`）
 - `POST /api/pr-review-prism/bootstrap-skill-package` — 导出仓库专属接入 zip（含 scripts + skill 模板 + onboarding 指南）
+- `POST /api/pr-review-prism/submissions/precheck` — 提交前预检 PR 可达性（仅校验 GitHub 可访问与 PR 存在，不落库）
 - `POST /api/pr-review-prism/submissions` — 提交 PR 链接并创建/复用记录
 - `GET /api/pr-review-prism/submissions` — 当前用户提交列表（支持 `q` 检索与 `repo` 仓库过滤，`repo` 可为 `owner/repo` 或 PR URL）
 - `GET /api/pr-review-prism/submissions?gateStatus={status}` — 按 Gate 状态筛选（`pending/completed/missing/error`）

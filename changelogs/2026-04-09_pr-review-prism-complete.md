@@ -56,3 +56,5 @@
 | fix | prd-admin | PR审查棱镜接入向导改为 3 步必要流程（Token/仓库/完成），并新增独立“仓库级顶设管理区”集中维护 owner/context/anchor 与绑定片段 |
 | fix | prd-admin | PR审查棱镜页面增强 localStorage 兼容清洗，遇到历史/异常缓存结构时自动降级默认值，避免 CDS 环境白屏 |
 | feat | prd-admin | 仓库级顶设依据管理区新增“一键复制6文件模板”，可直接粘贴生成 top-design 与 pr-architect 配置，降低新仓库手工配置门槛 |
+| feat | prd-api | PR审查棱镜新增 submissions/precheck 提交前可达性预检接口，先校验 GitHub PR 可访问性再允许创建记录 |
+| feat | prd-admin | PR审查棱镜提交流程新增“先预检后提交”，预检失败直接提示明确原因且不再落库失败记录 |

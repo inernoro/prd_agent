@@ -318,6 +318,50 @@ public sealed class PrReviewPrismController : ControllerBase
         return Ok(ApiResponse<object>.Ok(new { submission, reused = false }));
     }
 
+    [HttpPost("submissions/precheck")]
+    public async Task<IActionResult> PrecheckSubmission([FromBody] CreatePrReviewPrismSubmissionRequest req)
+    {
+        if (string.IsNullOrWhiteSpace(req.PullRequestUrl))
+        {
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "pullRequestUrl 不能为空"));
+        }
+
+        var parse = PrReviewPrismSnapshotBuilder.TryParsePullRequestUrl(req.PullRequestUrl, out var owner, out var repo, out var prNumber);
+        if (!parse)
+        {
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "pullRequestUrl 不是有效的 GitHub PR 链接"));
+        }
+
+        var normalizedOwner = owner!.ToLowerInvariant();
+        var normalizedRepo = repo!.ToLowerInvariant();
+        var normalizedUrl = $"https://github.com/{normalizedOwner}/{normalizedRepo}/pull/{prNumber}";
+
+        try
+        {
+            var snapshot = await _snapshotBuilder.PrecheckPullRequestAsync(normalizedOwner, normalizedRepo, prNumber);
+            return Ok(ApiResponse<object>.Ok(new
+            {
+                ok = true,
+                repoOwner = snapshot.RepoOwner,
+                repoName = snapshot.RepoName,
+                pullRequestNumber = snapshot.PullRequestNumber,
+                pullRequestTitle = snapshot.PullRequestTitle,
+                pullRequestAuthor = snapshot.PullRequestAuthor,
+                pullRequestState = snapshot.PullRequestState,
+                pullRequestUrl = normalizedUrl,
+                headSha = snapshot.HeadSha,
+                checkedAt = snapshot.CheckedAt
+            }));
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "PrReviewPrism precheck failed: {Owner}/{Repo}#{Pr}", normalizedOwner, normalizedRepo, prNumber);
+            return StatusCode(
+                StatusCodes.Status502BadGateway,
+                ApiResponse<object>.Fail(ErrorCodes.LLM_ERROR, ex.Message));
+        }
+    }
+
     [HttpGet("submissions")]
     public async Task<IActionResult> ListSubmissions(
         [FromQuery] int page = 1,

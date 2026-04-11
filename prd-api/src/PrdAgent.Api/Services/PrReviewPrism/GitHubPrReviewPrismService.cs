@@ -91,14 +91,7 @@ public sealed class GitHubPrReviewPrismService
             throw new InvalidOperationException("缺少 GitHub Token 配置（GitHub:Token）");
         }
 
-        var client = _httpClientFactory.CreateClient("GitHubApi");
-        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
-        client.DefaultRequestHeaders.Accept.Clear();
-        client.DefaultRequestHeaders.Accept.Add(new MediaTypeWithQualityHeaderValue("application/vnd.github+json"));
-        client.DefaultRequestHeaders.UserAgent.Clear();
-        client.DefaultRequestHeaders.UserAgent.Add(new ProductInfoHeaderValue("PrdAgent", "1.0"));
-        client.DefaultRequestHeaders.Remove("X-GitHub-Api-Version");
-        client.DefaultRequestHeaders.Add("X-GitHub-Api-Version", "2022-11-28");
+        var client = CreateGitHubApiClient(token);
 
         var prResult = await GetPullRequestAsync(client, repoOwner, repoName, prNumber, CancellationToken.None);
         if (prResult.Data == null)
@@ -151,6 +144,36 @@ public sealed class GitHubPrReviewPrismService
         return snapshot;
     }
 
+    public async Task<PrReviewPrismPrecheckResult> PrecheckPullRequestAsync(string repoOwner, string repoName, int prNumber)
+    {
+        var token = ResolveGitHubToken();
+        if (string.IsNullOrWhiteSpace(token))
+        {
+            throw new InvalidOperationException("缺少 GitHub Token 配置（GitHub:Token）");
+        }
+
+        var client = CreateGitHubApiClient(token);
+        var prResult = await GetPullRequestAsync(client, repoOwner, repoName, prNumber, CancellationToken.None);
+        if (prResult.Data == null)
+        {
+            throw new InvalidOperationException(prResult.ErrorMessage ?? "无法获取 GitHub PR 信息，请检查仓库权限与链接");
+        }
+
+        var pr = prResult.Data;
+        return new PrReviewPrismPrecheckResult
+        {
+            RepoOwner = repoOwner,
+            RepoName = repoName,
+            PullRequestNumber = prNumber,
+            PullRequestTitle = pr.Title ?? string.Empty,
+            PullRequestAuthor = pr.User?.Login ?? string.Empty,
+            PullRequestState = pr.MergedAt != null ? "merged" : (pr.State ?? "open"),
+            PullRequestUrl = pr.HtmlUrl ?? $"https://github.com/{repoOwner}/{repoName}/pull/{prNumber}",
+            HeadSha = pr.Head?.Sha,
+            CheckedAt = DateTime.UtcNow
+        };
+    }
+
     private string? ResolveGitHubToken()
     {
         var appSettings = _db.AppSettings.Find(x => x.Id == "global").FirstOrDefault(CancellationToken.None);
@@ -172,6 +195,19 @@ public sealed class GitHubPrReviewPrismService
     private string GetJwtSecret()
     {
         return _config["Jwt:Secret"] ?? "DefaultEncryptionKey32Bytes!!!!";
+    }
+
+    private HttpClient CreateGitHubApiClient(string token)
+    {
+        var client = _httpClientFactory.CreateClient("GitHubApi");
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
+        client.DefaultRequestHeaders.Accept.Clear();
+        client.DefaultRequestHeaders.Accept.Add(new MediaTypeWithQualityHeaderValue("application/vnd.github+json"));
+        client.DefaultRequestHeaders.UserAgent.Clear();
+        client.DefaultRequestHeaders.UserAgent.Add(new ProductInfoHeaderValue("PrdAgent", "1.0"));
+        client.DefaultRequestHeaders.Remove("X-GitHub-Api-Version");
+        client.DefaultRequestHeaders.Add("X-GitHub-Api-Version", "2022-11-28");
+        return client;
     }
 
     private static async Task<(PullRequestDto? Data, string? ErrorMessage)> GetPullRequestAsync(
@@ -436,6 +472,19 @@ public sealed class PrReviewPrismSnapshot
     public string? DecisionCardCommentUrl { get; set; }
     public DateTime? DecisionCardUpdatedAt { get; set; }
     public DateTime LastFetchedAt { get; set; } = DateTime.UtcNow;
+}
+
+public sealed class PrReviewPrismPrecheckResult
+{
+    public string RepoOwner { get; set; } = string.Empty;
+    public string RepoName { get; set; } = string.Empty;
+    public int PullRequestNumber { get; set; }
+    public string PullRequestTitle { get; set; } = string.Empty;
+    public string PullRequestAuthor { get; set; } = string.Empty;
+    public string PullRequestState { get; set; } = "open";
+    public string PullRequestUrl { get; set; } = string.Empty;
+    public string? HeadSha { get; set; }
+    public DateTime CheckedAt { get; set; } = DateTime.UtcNow;
 }
 
 public sealed class DecisionCardDto

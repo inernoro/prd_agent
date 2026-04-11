@@ -449,6 +449,42 @@ public class PrReviewPrismApiIntegrationTests : IClassFixture<WebApplicationFact
     }
 
     [Fact]
+    public async Task Precheck_NoAuth_ShouldReturn401()
+    {
+        var client = _factory.CreateClient();
+        var response = await client.PostAsJsonAsync("/api/pr-review-prism/submissions/precheck", new
+        {
+            pullRequestUrl = "https://github.com/inernoro/prd_agent/pull/1"
+        });
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task Precheck_InvalidPullRequestUrl_ShouldReturn400()
+    {
+        if (!HasToken)
+        {
+            Log("[Skip] no token");
+            return;
+        }
+
+        var client = CreateAuthenticatedClient();
+        if (!await EnsurePrReviewPrismAccessibleAsync(client))
+        {
+            return;
+        }
+
+        var response = await client.PostAsJsonAsync("/api/pr-review-prism/submissions/precheck", new
+        {
+            pullRequestUrl = "https://github.com/inernoro/prd_agent/issues/1",
+        });
+        var body = await response.Content.ReadAsStringAsync();
+        Log($"[PrecheckInvalid] {response.StatusCode} - {Truncate(body, 200)}");
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        AssertErrorCode(body, "INVALID_FORMAT");
+    }
+
+    [Fact]
     public async Task BatchRefresh_EmptyIds_ShouldReturn400()
     {
         if (!HasToken)

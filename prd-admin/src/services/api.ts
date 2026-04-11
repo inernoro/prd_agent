@@ -378,6 +378,7 @@ export const api = {
     bootstrapSkillPackage: () => '/api/pr-review-prism/bootstrap-skill-package',
     submissions: {
       list: () => '/api/pr-review-prism/submissions',
+      precheck: () => '/api/pr-review-prism/submissions/precheck',
       create: () => '/api/pr-review-prism/submissions',
       byId: (id: string) => `/api/pr-review-prism/submissions/${id}`,
       refresh: (id: string) => `/api/pr-review-prism/submissions/${id}/refresh`,

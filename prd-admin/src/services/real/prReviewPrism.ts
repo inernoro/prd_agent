@@ -90,6 +90,19 @@ export interface PrReviewPrismBatchRefreshFailure {
   message: string;
 }
 
+export interface PrReviewPrismSubmissionPrecheckResult {
+  ok: boolean;
+  repoOwner: string;
+  repoName: string;
+  pullRequestNumber: number;
+  pullRequestTitle: string;
+  pullRequestAuthor: string;
+  pullRequestState: string;
+  pullRequestUrl: string;
+  headSha?: string | null;
+  checkedAt: string;
+}
+
 export interface PrReviewPrismBatchRefreshResult {
   total: number;
   successCount: number;
@@ -182,6 +195,15 @@ export async function createPrReviewPrismSubmission(
   return apiRequest(api.prReviewPrism.submissions.create(), {
     method: 'POST',
     body: { pullRequestUrl, note },
+  });
+}
+
+export async function precheckPrReviewPrismSubmission(
+  pullRequestUrl: string
+): Promise<ApiResponse<PrReviewPrismSubmissionPrecheckResult>> {
+  return apiRequest(api.prReviewPrism.submissions.precheck(), {
+    method: 'POST',
+    body: { pullRequestUrl },
   });
 }
 

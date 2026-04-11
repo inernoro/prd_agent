@@ -23,6 +23,7 @@ import {
   getPrReviewPrismSetupStatus,
   getPrReviewPrismTokenConfigStatus,
   listPrReviewPrismSubmissions,
+  precheckPrReviewPrismSubmission,
   batchRefreshPrReviewPrismSubmissions,
   refreshPrReviewPrismSubmission,
   updatePrReviewPrismTokenConfig,
@@ -708,6 +709,12 @@ repositories:
 
     setSubmitting(true);
     setFormError(null);
+    const precheckRes = await precheckPrReviewPrismSubmission(normalizedUrl);
+    if (!precheckRes.success || !precheckRes.data?.ok) {
+      setFormError(precheckRes.error?.message ?? '提交前预检失败，请检查 PR 链接与仓库权限');
+      setSubmitting(false);
+      return;
+    }
     const res = await createPrReviewPrismSubmission(normalizedUrl, note.trim() || undefined);
     if (!res.success || !res.data?.submission) {
       setFormError(res.error?.message ?? '提交失败');
