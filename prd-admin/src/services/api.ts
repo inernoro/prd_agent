@@ -367,23 +367,38 @@ export const api = {
     },
   },
 
-  // ============ PR Review Prism ============
-  prReviewPrism: {
-    status: () => '/api/pr-review-prism/status',
-    setupStatus: () => '/api/pr-review-prism/setup-status',
-    tokenConfig: {
-      status: () => '/api/pr-review-prism/token-config',
-      update: () => '/api/pr-review-prism/token-config',
+  // ============ PR Review V2（pr-review）============
+  prReview: {
+    auth: {
+      status: () => '/api/pr-review/auth/status',
+      // Device Flow（CDS 动态域名友好，无需 callback URL）
+      deviceStart: () => '/api/pr-review/auth/device/start',
+      devicePoll: () => '/api/pr-review/auth/device/poll',
+      disconnect: () => '/api/pr-review/auth/connection',
     },
-    bootstrapSkillPackage: () => '/api/pr-review-prism/bootstrap-skill-package',
-    submissions: {
-      list: () => '/api/pr-review-prism/submissions',
-      precheck: () => '/api/pr-review-prism/submissions/precheck',
-      create: () => '/api/pr-review-prism/submissions',
-      byId: (id: string) => `/api/pr-review-prism/submissions/${id}`,
-      refresh: (id: string) => `/api/pr-review-prism/submissions/${id}/refresh`,
-      batchRefresh: () => '/api/pr-review-prism/submissions/batch-refresh',
-      delete: (id: string) => `/api/pr-review-prism/submissions/${id}`,
+    items: {
+      list: (page?: number, pageSize?: number) => {
+        const q = new URLSearchParams();
+        if (page) q.set('page', String(page));
+        if (pageSize) q.set('pageSize', String(pageSize));
+        const qs = q.toString();
+        return `/api/pr-review/items${qs ? `?${qs}` : ''}`;
+      },
+      create: () => '/api/pr-review/items',
+      byId: (id: string) => `/api/pr-review/items/${id}`,
+      raw: (id: string) => `/api/pr-review/items/${id}/raw`,
+      history: (id: string) => `/api/pr-review/items/${id}/history`,
+      refresh: (id: string) => `/api/pr-review/items/${id}/refresh`,
+      updateNote: (id: string) => `/api/pr-review/items/${id}/note`,
+      delete: (id: string) => `/api/pr-review/items/${id}`,
+      ai: {
+        // 档 1 变更摘要
+        summary: (id: string) => `/api/pr-review/items/${id}/ai/summary`,
+        summaryStream: (id: string) => `/api/pr-review/items/${id}/ai/summary/stream`,
+        // 档 3 对齐度检查
+        alignment: (id: string) => `/api/pr-review/items/${id}/ai/alignment`,
+        alignmentStream: (id: string) => `/api/pr-review/items/${id}/ai/alignment/stream`,
+      },
     },
   },
 

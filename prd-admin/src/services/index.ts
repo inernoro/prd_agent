@@ -1502,31 +1502,31 @@ export type {
   ReviewWebhookConfig,
 } from '@/services/real/reviewAgent';
 
-// ── PR Review Prism 审查棱镜 ──
+// ============ PR Review（pr-review）基于每用户 GitHub Device Flow 的审查工作台 ============
 export {
-  getPrReviewPrismStatus,
-  getPrReviewPrismSetupStatus,
-  getPrReviewPrismTokenConfigStatus,
-  updatePrReviewPrismTokenConfig,
-  downloadPrReviewPrismRepoBootstrapSkill,
-  createPrReviewPrismSubmission,
-  precheckPrReviewPrismSubmission,
-  listPrReviewPrismSubmissions,
-  getPrReviewPrismSubmission,
-  refreshPrReviewPrismSubmission,
-  batchRefreshPrReviewPrismSubmissions,
-  deletePrReviewPrismSubmission,
-} from '@/services/real/prReviewPrism';
+  getPrReviewAuthStatus,
+  startPrReviewDeviceFlow,
+  pollPrReviewDeviceFlow,
+  disconnectPrReviewGitHub,
+  listPrReviewItems,
+  createPrReviewItem,
+  refreshPrReviewItem,
+  updatePrReviewItemNote,
+  deletePrReviewItem,
+  getPrReviewAlignment,
+  getPrReviewAlignmentStreamUrl,
+  getPrReviewSummary,
+  getPrReviewSummaryStreamUrl,
+} from '@/services/real/prReview';
 export type {
-  PrReviewPrismBatchRefreshFailure,
-  PrReviewPrismBatchRefreshResult,
-  PrReviewPrismGateStatus,
-  PrReviewPrismSubmissionPrecheckResult,
-  PrReviewPrismSubmission,
-  PrReviewPrismSetupStatus,
-  PrReviewPrismTokenConfigStatus,
-  PrReviewPrismTopDesignSetupStatus,
-  PrReviewPrismRepoSkillPackageRequest,
-  PrReviewPrismRepoSkillPackageResponse,
-  PrReviewPrismStatus,
-} from '@/services/real/prReviewPrism';
+  PrReviewState,
+  PrReviewSnapshotDto,
+  PrReviewItemDto,
+  PrReviewListResponse,
+  PrReviewAuthStatus,
+  PrReviewDeviceFlowStart,
+  PrReviewDeviceFlowPoll,
+  PrReviewDeviceFlowPollStatus,
+  PrAlignmentReportDto,
+  PrSummaryReportDto,
+} from '@/services/real/prReview';

@@ -1,5 +1,0 @@
-version: 1
-contexts:
-  - id: "engineering-governance"
-    name: "engineering-governance"
-    description: "工程治理上下文，负责 PR 审核策略与流程约束"
