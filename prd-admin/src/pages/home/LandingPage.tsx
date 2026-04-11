@@ -9,7 +9,6 @@ import { DownloadSection } from './sections/DownloadSection';
 import { LibrarySection } from './sections/LibrarySection';
 import { SignatureCinema } from './sections/SignatureCinema';
 import { StarfieldBackground } from './components/StarfieldBackground';
-import { AuroraBackground } from './components/AuroraBackground';
 
 /**
  * 七幕场景色编排：每一个 section 进入视口时，Starfield 的 themeColor 会切换，
@@ -122,15 +121,22 @@ export default function LandingPage() {
         scrollBehavior: 'smooth',
       }}
     >
-      {/* 背景层 1：WebGL 星空粒子（最底层） */}
-      <div className="fixed inset-0 z-0">
+      {/* 背景：Starfield 粒子（降到 22% 不透明度，作材质而非主角；Linear 风不允许粒子抢戏） */}
+      <div
+        className="fixed inset-0 z-0 pointer-events-none"
+        style={{ opacity: 0.22 }}
+      >
         <StarfieldBackground themeColor={themeColor} />
       </div>
 
-      {/* 背景层 2：Aurora 彩色光雾（mix-blend-mode: screen 叠在星空之上，形成星云质感） */}
-      <div className="fixed inset-0 z-[1] pointer-events-none">
-        <AuroraBackground />
-      </div>
+      {/* 顶部覆盖暗色 gradient —— 保证 Hero 区 Linear 径向光晕能看清 */}
+      <div
+        className="fixed inset-x-0 top-0 h-[700px] z-[1] pointer-events-none"
+        style={{
+          background:
+            'linear-gradient(180deg, rgba(3, 3, 6, 0.85) 0%, rgba(3, 3, 6, 0.5) 40%, rgba(3, 3, 6, 0) 100%)',
+        }}
+      />
 
       {/* Fixed navigation header */}
       <nav className="fixed top-0 left-0 right-0 z-50">
