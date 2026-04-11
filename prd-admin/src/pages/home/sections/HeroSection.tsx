@@ -2,6 +2,7 @@ import { ArrowRight, Play, Sparkles } from 'lucide-react';
 import { cn } from '@/lib/cn';
 import { ProductMockup } from '../components/ProductMockup';
 import { Reveal } from '../components/Reveal';
+import { useLanguage } from '../contexts/LanguageContext';
 
 /**
  * Hero — Linear.app × Retro-Futurism 融合
@@ -28,6 +29,7 @@ interface HeroSectionProps {
 }
 
 export function HeroSection({ className, onGetStarted, onWatchDemo }: HeroSectionProps) {
+  const { t } = useLanguage();
   return (
     <section
       className={cn('relative overflow-hidden', className)}
@@ -133,7 +135,7 @@ export function HeroSection({ className, onGetStarted, onWatchDemo }: HeroSectio
                 textShadow: '0 0 8px rgba(52, 211, 153, 0.6)',
               }}
             >
-              SYSTEM ONLINE
+              {t.hero.status}
             </span>
             <span className="w-px h-3.5 bg-white/20" />
             <span
@@ -143,7 +145,7 @@ export function HeroSection({ className, onGetStarted, onWatchDemo }: HeroSectio
                 textShadow: '0 0 8px rgba(168, 85, 247, 0.55)',
               }}
             >
-              MAP · 米多 AGENT 平台
+              {t.hero.brand}
             </span>
           </div>
         </Reveal>
@@ -161,7 +163,7 @@ export function HeroSection({ className, onGetStarted, onWatchDemo }: HeroSectio
               animation: 'hero-title-pulse 5s ease-in-out infinite',
             }}
           >
-            让创造，自由呼吸
+            {t.hero.title}
           </h1>
         </Reveal>
 
@@ -175,8 +177,7 @@ export function HeroSection({ className, onGetStarted, onWatchDemo }: HeroSectio
               letterSpacing: '0.005em',
             }}
           >
-            融合大模型与多模态能力的 AI 工作台 —— 视觉、文学、产品、视频、缺陷，十余个专业 Agent
-            在同一个空间协同。
+            {t.hero.subtitle}
           </p>
         </Reveal>
 
@@ -196,7 +197,7 @@ export function HeroSection({ className, onGetStarted, onWatchDemo }: HeroSectio
               }}
             >
               <Sparkles className="w-4 h-4" />
-              <span>进入 MAP</span>
+              <span>{t.hero.primaryCta}</span>
               <ArrowRight className="w-4 h-4 transition-transform group-hover:translate-x-0.5" />
             </button>
 
@@ -222,7 +223,7 @@ export function HeroSection({ className, onGetStarted, onWatchDemo }: HeroSectio
               }}
             >
               <Play className="w-3.5 h-3.5 fill-current" />
-              <span>观看片花</span>
+              <span>{t.hero.secondaryCta}</span>
               <ArrowRight className="w-4 h-4 opacity-60 transition-transform group-hover:translate-x-0.5" />
             </button>
           </div>

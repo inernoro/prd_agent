@@ -1,6 +1,7 @@
 import { Zap } from 'lucide-react';
 import { Reveal } from '../components/Reveal';
 import { SectionHeader } from '../components/SectionHeader';
+import { useLanguage } from '../contexts/LanguageContext';
 
 /**
  * CompatibilityStack — 幕 7 · 模型兼容性矩阵
@@ -25,6 +26,9 @@ const PROVIDERS = [
 ];
 
 export function CompatibilityStack() {
+  const { t } = useLanguage();
+  const titleParts = t.compat.title.split('\n');
+
   return (
     <section
       className="relative py-28 md:py-36 px-6"
@@ -35,16 +39,21 @@ export function CompatibilityStack() {
         <div className="mb-16 md:mb-20">
           <SectionHeader
             Icon={Zap}
-            eyebrow="Compatible With"
+            eyebrow={t.compat.eyebrow}
             accent="#60a5fa"
             title={
               <>
-                一套配置，
-                <br className="sm:hidden" />
-                连接你用过的所有大模型
+                {titleParts[0]}
+                {titleParts.length > 1 && (
+                  <>
+                    <br className="sm:hidden" />
+                    <span className="hidden sm:inline"> </span>
+                    {titleParts[1]}
+                  </>
+                )}
               </>
             }
-            subtitle="通过统一的 ILlmGateway 接入 12 家主流平台，按任务类型动态路由，支持健康度监控、配额管理、失败回退。"
+            subtitle={t.compat.subtitle}
           />
         </div>
 
@@ -59,7 +68,7 @@ export function CompatibilityStack() {
 
         {/* Footer note */}
         <div className="mt-12 text-center text-[11px] text-white/35">
-          以及任何兼容 OpenAI 接口规范的自建 / 第三方服务
+          {t.compat.footer}
         </div>
       </div>
     </section>

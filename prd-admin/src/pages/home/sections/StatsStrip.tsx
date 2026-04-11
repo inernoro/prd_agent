@@ -1,20 +1,14 @@
 import { Reveal } from '../components/Reveal';
+import { useLanguage } from '../contexts/LanguageContext';
 
 /**
  * StatsStrip — 幕 2 · 极简大数字
  *
- * 修正：去掉 border-y（之前看着像廉价金属条），改为纯 section 留白。
- * 每个数字独立 Reveal fade-up，stagger 60ms。
+ * 数据来自 i18n 字典；每个数字独立 Reveal fade-up stagger 80ms。
  */
-
-const STATS = [
-  { value: '15+', label: '专业 Agent' },
-  { value: '14', label: '集成大模型' },
-  { value: '98', label: 'MongoDB 集合' },
-  { value: '99.9%', label: '服务可用性' },
-];
-
 export function StatsStrip() {
+  const { t } = useLanguage();
+
   return (
     <section
       className="relative py-28 md:py-36 px-6"
@@ -22,7 +16,7 @@ export function StatsStrip() {
     >
       <div className="max-w-6xl mx-auto">
         <div className="grid grid-cols-2 md:grid-cols-4 gap-y-16 gap-x-6">
-          {STATS.map((s, i) => (
+          {t.stats.map((s, i) => (
             <Reveal key={s.label} delay={i * 80} offset={24}>
               <div className="text-center">
                 <div

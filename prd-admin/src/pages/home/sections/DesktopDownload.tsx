@@ -1,6 +1,7 @@
 import { Apple, MonitorDown, Terminal, Download } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { Reveal } from '../components/Reveal';
+import { useLanguage } from '../contexts/LanguageContext';
 
 /**
  * DesktopDownload — 幕 · 桌面下载 CTA
@@ -12,51 +13,10 @@ import { Reveal } from '../components/Reveal';
  * 纯占位（版本号/体积写死），后续可接 release API 更新。
  */
 
-interface Platform {
-  id: string;
-  name: string;
-  Icon: LucideIcon;
-  version: string;
-  size: string;
-  arch: string;
-  accent: string;
-  href?: string;
-}
-
-const PLATFORMS: Platform[] = [
-  {
-    id: 'macos',
-    name: 'macOS',
-    Icon: Apple,
-    version: 'v2.6.0',
-    size: '42 MB',
-    arch: 'Apple Silicon · Intel',
-    accent: '#a855f7',
-    href: 'https://github.com/inernoro/prd_agent/releases',
-  },
-  {
-    id: 'windows',
-    name: 'Windows',
-    Icon: MonitorDown,
-    version: 'v2.6.0',
-    size: '48 MB',
-    arch: 'x64 · ARM64',
-    accent: '#00f0ff',
-    href: 'https://github.com/inernoro/prd_agent/releases',
-  },
-  {
-    id: 'linux',
-    name: 'Linux',
-    Icon: Terminal,
-    version: 'v2.6.0',
-    size: '44 MB',
-    arch: 'AppImage · .deb',
-    accent: '#f43f5e',
-    href: 'https://github.com/inernoro/prd_agent/releases',
-  },
-];
-
 export function DesktopDownload() {
+  const { t } = useLanguage();
+  const titleParts = t.download.title.split('\n');
+
   return (
     <section
       className="relative py-28 md:py-36 px-6"
@@ -65,8 +25,8 @@ export function DesktopDownload() {
       <div className="max-w-6xl mx-auto">
         <div className="grid lg:grid-cols-2 gap-12 lg:gap-16 items-center">
           {/* Left: copy */}
-          <Reveal offset={28}>
-            <div>
+          <div>
+            <Reveal offset={18}>
               <div
                 className="inline-flex items-center gap-2 px-3.5 py-1.5 mb-7 rounded-md"
                 style={{
@@ -84,10 +44,12 @@ export function DesktopDownload() {
                     textShadow: '0 0 10px rgba(0, 240, 255, 0.6)',
                   }}
                 >
-                  Desktop Client
+                  {t.download.eyebrow}
                 </span>
               </div>
+            </Reveal>
 
+            <Reveal delay={120} offset={22}>
               <h2
                 className="text-white font-medium mb-7"
                 style={{
@@ -98,37 +60,88 @@ export function DesktopDownload() {
                   textShadow: '0 0 32px rgba(0, 240, 255, 0.22)',
                 }}
               >
-                把整个 Agent 平台
-                <br />
-                带到你的桌面
+                {titleParts[0]}
+                {titleParts.length > 1 && (
+                  <>
+                    <br />
+                    {titleParts[1]}
+                  </>
+                )}
               </h2>
+            </Reveal>
 
-              <p className="text-white/58 text-[15px] leading-[1.7] max-w-md mb-7">
-                基于 Tauri 2.0 的原生桌面客户端，系统托盘常驻、快捷键唤醒、离线缓存、
-                全局剪贴板注入。和 Web 端共享同一套账号体系。
+            <Reveal delay={240} offset={16}>
+              <p className="text-white/62 text-[15px] leading-[1.75] max-w-md mb-7">
+                {t.download.subtitle}
               </p>
+            </Reveal>
 
-              <ul className="space-y-3 text-[13.5px] text-white/72">
-                <BulletLine text="系统托盘常驻 · 快捷键 Cmd+Shift+M 唤醒" />
-                <BulletLine text="自动更新 · Tauri updater 签名校验" />
-                <BulletLine text="所有平台共 134 MB · 零 Node runtime" />
-              </ul>
-            </div>
-          </Reveal>
+            <ul className="space-y-3 text-[13.5px] text-white/75">
+              {t.download.bullets.map((b, i) => (
+                <Reveal key={i} delay={360 + i * 80} offset={12}>
+                  <BulletLine text={b} />
+                </Reveal>
+              ))}
+            </ul>
+          </div>
 
           {/* Right: 3 platform cards */}
           <div className="grid grid-cols-1 gap-4">
-            {PLATFORMS.map((p, i) => (
-              <Reveal key={p.id} delay={i * 100} offset={20}>
-                <PlatformCard platform={p} />
-              </Reveal>
-            ))}
+            {t.download.platforms.map((p, i) => {
+              const visual = PLATFORM_VISUALS[p.id];
+              if (!visual) return null;
+              return (
+                <Reveal key={p.id} delay={180 + i * 120} offset={22}>
+                  <PlatformCard
+                    name={p.name}
+                    arch={p.arch}
+                    Icon={visual.Icon}
+                    version={visual.version}
+                    size={visual.size}
+                    accent={visual.accent}
+                    href={visual.href}
+                  />
+                </Reveal>
+              );
+            })}
           </div>
         </div>
       </div>
     </section>
   );
 }
+
+interface PlatformVisual {
+  Icon: LucideIcon;
+  version: string;
+  size: string;
+  accent: string;
+  href: string;
+}
+
+const PLATFORM_VISUALS: Record<string, PlatformVisual> = {
+  macos: {
+    Icon: Apple,
+    version: 'v2.6.0',
+    size: '42 MB',
+    accent: '#a855f7',
+    href: 'https://github.com/inernoro/prd_agent/releases',
+  },
+  windows: {
+    Icon: MonitorDown,
+    version: 'v2.6.0',
+    size: '48 MB',
+    accent: '#00f0ff',
+    href: 'https://github.com/inernoro/prd_agent/releases',
+  },
+  linux: {
+    Icon: Terminal,
+    version: 'v2.6.0',
+    size: '44 MB',
+    accent: '#f43f5e',
+    href: 'https://github.com/inernoro/prd_agent/releases',
+  },
+};
 
 function BulletLine({ text }: { text: string }) {
   return (
@@ -145,8 +158,23 @@ function BulletLine({ text }: { text: string }) {
   );
 }
 
-function PlatformCard({ platform }: { platform: Platform }) {
-  const { name, Icon, version, size, arch, accent, href } = platform;
+function PlatformCard({
+  name,
+  arch,
+  Icon,
+  version,
+  size,
+  accent,
+  href,
+}: {
+  name: string;
+  arch: string;
+  Icon: LucideIcon;
+  version: string;
+  size: string;
+  accent: string;
+  href: string;
+}) {
   return (
     <a
       href={href}

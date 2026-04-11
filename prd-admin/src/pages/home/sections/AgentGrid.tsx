@@ -20,48 +20,43 @@ import {
 import type { LucideIcon } from 'lucide-react';
 import { Reveal } from '../components/Reveal';
 import { SectionHeader } from '../components/SectionHeader';
+import { useLanguage } from '../contexts/LanguageContext';
 
 /**
- * AgentGrid — 幕 6 · 15 个 Agent 总览（真实数据源）
+ * AgentGrid — 幕 6 · 15 个 Agent 总览
  *
- * 数据和品牌调性：
- * - 15 条数据对应 toolboxStore.BUILTIN_TOOLS（单一真理）
- * - 每个 Agent 有自己的 accent color，hover 时描边 + 光晕变成该色
- * - 不使用浮动卡 / 不使用克莱风 / 不使用渐变背景 —— 纯深色玻璃板
- *
- * 替代掉原来那个又土又空的 LibrarySection（"殿堂将迎第一卷藏书"那种）
+ * Visual meta（icon / accent / route / kind）硬编码在本文件，
+ * 因为这些跨语言共享；只有 name / description 走 i18n 字典。
  */
 
-interface Agent {
-  id: string;
-  name: string;
-  description: string;
+interface AgentVisual {
   Icon: LucideIcon;
   accent: string;
   route?: string;
   kind: 'custom' | 'dialog';
 }
 
-// 保持和 toolboxStore.BUILTIN_TOOLS 一致的顺序与 ID
-const AGENTS: Agent[] = [
-  { id: 'visual', name: '视觉设计师', description: '文生图 · 图生图 · 多图组合 · 局部重绘', Icon: Palette, accent: '#a855f7', route: '/visual-agent', kind: 'custom' },
-  { id: 'literary', name: '文学创作者', description: '命题写作 · 段落润色 · 自动配图', Icon: PenTool, accent: '#fb923c', route: '/literary-agent', kind: 'custom' },
-  { id: 'prd', name: 'PRD 分析师', description: '需求缺口识别 · 对话答疑 · AI 预审', Icon: FileText, accent: '#3b82f6', route: '/prd-agent', kind: 'custom' },
-  { id: 'video', name: '视频创作者', description: '文章 → 分镜 → 预览 → 时间线', Icon: Video, accent: '#f43f5e', route: '/video-agent', kind: 'custom' },
-  { id: 'defect', name: '缺陷管理员', description: '信息提取 · 严重度分类 · 修复闭环', Icon: Bug, accent: '#10b981', route: '/defect-agent', kind: 'custom' },
-  { id: 'report', name: '周报管理员', description: 'Git 合成 · 计划对比 · 团队汇总', Icon: FileBarChart, accent: '#06b6d4', route: '/report-agent', kind: 'custom' },
-  { id: 'arena', name: 'AI 竞技场', description: '多模型盲测 PK · 揭晓真实身份', Icon: Swords, accent: '#eab308', route: '/arena', kind: 'custom' },
-  { id: 'workflow', name: '工作流引擎', description: '可视化编排 · 多步骤串联', Icon: Workflow, accent: '#22c55e', route: '/workflow-agent', kind: 'custom' },
-  { id: 'shortcuts', name: '快捷指令', description: '一键执行 · 自定义 · 可分享', Icon: Zap, accent: '#f59e0b', route: '/shortcuts-agent', kind: 'custom' },
-  { id: 'review', name: '产品评审员', description: '方案多维度打分 · 问题清单', Icon: ClipboardCheck, accent: '#ec4899', route: '/review-agent', kind: 'custom' },
-  { id: 'transcript', name: '转录工作台', description: '多模型 ASR · 时间戳编辑 · 转文案', Icon: AudioLines, accent: '#8b5cf6', route: '/transcript-agent', kind: 'custom' },
-  { id: 'code-review', name: '代码审查员', description: '代码质量审查 · Bug · 性能', Icon: Code2, accent: '#64748b', kind: 'dialog' },
-  { id: 'translator', name: '多语言翻译', description: '专业级翻译 · 中英日韩', Icon: Languages, accent: '#0ea5e9', kind: 'dialog' },
-  { id: 'summarizer', name: '内容摘要师', description: '长文本要点提取 · 关键数据', Icon: FileSearch, accent: '#14b8a6', kind: 'dialog' },
-  { id: 'data-analyst', name: '数据分析师', description: '趋势分析 · 图表建议 · 洞察', Icon: BarChart3, accent: '#d946ef', kind: 'dialog' },
-];
+const VISUAL_META: Record<string, AgentVisual> = {
+  visual: { Icon: Palette, accent: '#a855f7', route: '/visual-agent', kind: 'custom' },
+  literary: { Icon: PenTool, accent: '#fb923c', route: '/literary-agent', kind: 'custom' },
+  prd: { Icon: FileText, accent: '#3b82f6', route: '/prd-agent', kind: 'custom' },
+  video: { Icon: Video, accent: '#f43f5e', route: '/video-agent', kind: 'custom' },
+  defect: { Icon: Bug, accent: '#10b981', route: '/defect-agent', kind: 'custom' },
+  report: { Icon: FileBarChart, accent: '#06b6d4', route: '/report-agent', kind: 'custom' },
+  arena: { Icon: Swords, accent: '#eab308', route: '/arena', kind: 'custom' },
+  workflow: { Icon: Workflow, accent: '#22c55e', route: '/workflow-agent', kind: 'custom' },
+  shortcuts: { Icon: Zap, accent: '#f59e0b', route: '/shortcuts-agent', kind: 'custom' },
+  review: { Icon: ClipboardCheck, accent: '#ec4899', route: '/review-agent', kind: 'custom' },
+  transcript: { Icon: AudioLines, accent: '#8b5cf6', route: '/transcript-agent', kind: 'custom' },
+  'code-review': { Icon: Code2, accent: '#64748b', kind: 'dialog' },
+  translator: { Icon: Languages, accent: '#0ea5e9', kind: 'dialog' },
+  summarizer: { Icon: FileSearch, accent: '#14b8a6', kind: 'dialog' },
+  'data-analyst': { Icon: BarChart3, accent: '#d946ef', kind: 'dialog' },
+};
 
 export function AgentGrid() {
+  const { t } = useLanguage();
+
   return (
     <section
       className="relative py-28 md:py-36 px-6"
@@ -71,35 +66,67 @@ export function AgentGrid() {
       <div className="max-w-6xl mx-auto mb-20 md:mb-24">
         <SectionHeader
           Icon={Users}
-          eyebrow="The Roster"
+          eyebrow={t.agents.eyebrow}
           accent="#22d3ee"
-          title={
-            <>
-              十五位 Agent，
-              <br className="sm:hidden" />
-              随时可以派工
-            </>
-          }
-          subtitle="11 位深度定制 + 4 位通用对话助手。每一位都能独立上岗，也能被别的 Agent 调用。"
+          title={splitLine(t.agents.title)}
+          subtitle={t.agents.subtitle}
         />
       </div>
 
-      {/* Grid —— 整体 Reveal，卡片内部再分 stagger */}
+      {/* Grid */}
       <div className="max-w-6xl mx-auto">
         <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4">
-          {AGENTS.map((agent, i) => (
-            <Reveal key={agent.id} delay={(i % 4) * 60} offset={20}>
-              <AgentCard agent={agent} />
-            </Reveal>
-          ))}
+          {t.agents.items.map((agent, i) => {
+            const visual = VISUAL_META[agent.id];
+            if (!visual) return null;
+            return (
+              <Reveal key={agent.id} delay={(i % 4) * 60} offset={20}>
+                <AgentCard
+                  name={agent.name}
+                  description={agent.description}
+                  visual={visual}
+                  dedicatedLabel={t.agents.dedicated}
+                  assistantLabel={t.agents.assistant}
+                />
+              </Reveal>
+            );
+          })}
         </div>
       </div>
     </section>
   );
 }
 
-function AgentCard({ agent }: { agent: Agent }) {
-  const { Icon, name, description, accent, route, kind } = agent;
+function splitLine(text: string) {
+  const parts = text.split('\n');
+  if (parts.length === 1) return text;
+  return (
+    <>
+      {parts.map((p, i) => (
+        <span key={i}>
+          {p}
+          {i < parts.length - 1 && <br className="sm:hidden" />}
+          {i < parts.length - 1 && <span className="hidden sm:inline">{' '}</span>}
+        </span>
+      ))}
+    </>
+  );
+}
+
+function AgentCard({
+  name,
+  description,
+  visual,
+  dedicatedLabel,
+  assistantLabel,
+}: {
+  name: string;
+  description: string;
+  visual: AgentVisual;
+  dedicatedLabel: string;
+  assistantLabel: string;
+}) {
+  const { Icon, accent, route, kind } = visual;
   const isCustom = kind === 'custom';
 
   return (
@@ -121,7 +148,7 @@ function AgentCard({ agent }: { agent: Agent }) {
         e.currentTarget.style.boxShadow = 'none';
       }}
     >
-      {/* Header: icon + LVL badge + arrow */}
+      {/* Header: icon + LV badge + arrow */}
       <div className="flex items-start justify-between mb-4">
         <div
           className="w-10 h-10 rounded-xl flex items-center justify-center transition-all duration-300"
@@ -163,7 +190,7 @@ function AgentCard({ agent }: { agent: Agent }) {
 
       {/* Description */}
       <div
-        className="text-[12px] text-white/50 leading-relaxed"
+        className="text-[12px] text-white/52 leading-[1.65]"
         style={{ fontFamily: 'var(--font-body)' }}
       >
         {description}
@@ -179,7 +206,7 @@ function AgentCard({ agent }: { agent: Agent }) {
             letterSpacing: '0.18em',
           }}
         >
-          {isCustom ? 'Dedicated' : 'Assistant'}
+          {isCustom ? dedicatedLabel : assistantLabel}
         </span>
         <span
           className="w-1.5 h-1.5 rounded-full"

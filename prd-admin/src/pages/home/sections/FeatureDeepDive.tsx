@@ -3,221 +3,248 @@ import { ArrowRight, Sparkles } from 'lucide-react';
 import type { ReactNode } from 'react';
 import { Reveal } from '../components/Reveal';
 import { SectionHeader } from '../components/SectionHeader';
+import { useLanguage } from '../contexts/LanguageContext';
+import type { FeatureItem } from '../i18n/landing';
 
 /**
- * FeatureDeepDive — Linear.app "Plan / Build / Ship" 风格
+ * FeatureDeepDive — 六大 Agent 深度展示
  *
- * 六段核心能力，每段左右交替排版：
- *   左：eyebrow + 大标题 + 描述 + bullet + "了解更多 →"
- *   右：抽象几何 mockup（每段一个专属视觉金属）
- *
- * 反套路原则：
- * - 每段只用一个 accent color（不再混搭 3 色渐变）
- * - Mockup 是 CSS/SVG 几何代表，不是假数据浮动卡
- * - 背景每段交替有无微光带，形成节奏
+ * 徐徐前进的"段落感"实现：
+ *   1. 每个 feature 块之间 space-y-44 md:space-y-56（比之前再拉大 25%）
+ *   2. 每个 block 内部分 7 级 stagger reveal：
+ *        chapter 标号 (0ms) → eyebrow (120ms) → title (240ms) →
+ *        description (360ms) → bullets (480ms) → learn-more (600ms) →
+ *        mockup (180ms, 从对侧 translate-x)
+ *      这样用户看到的是"小小的 chapter 编号先出 → 然后 eyebrow → 然后大标题
+ *      → 文字 → 列表 → 按钮"的渐次拼凑过程，而不是一次性全显示
+ *   3. chapter 编号 "01 / 06"（VT323 mono）作为每段的开篇符号
  */
 
-interface FeatureCore {
-  id: string;
-  eyebrow: string;
-  name: string;
-  title: string;
-  description: string;
-  bullets: string[];
-  route: string;
-  accent: string;
-  Mockup: () => ReactNode;
-}
-
-const FEATURES: FeatureCore[] = [
-  {
-    id: 'visual',
-    eyebrow: 'VISUAL · 视觉设计师',
-    name: '视觉',
-    title: '从一句话到一组完整视觉',
-    description:
-      '文生图、图生图、多图组合、局部重绘、风格迁移。配合参考图池与水印预设，让品牌视觉在一次对话中成型。',
-    bullets: ['文生图 / 图生图 / 多图组合', '参考图池 + 风格迁移 + 局部重绘', '可绑定水印配置，一键导出品牌成图'],
-    route: '/visual-agent',
-    accent: '#a855f7',
-    Mockup: VisualMockup,
-  },
-  {
-    id: 'literary',
-    eyebrow: 'LITERARY · 文学创作者',
-    name: '文学',
-    title: '让文字在工作台里流淌',
-    description:
-      '从命题写作、段落润色到自动配图，文学创作者把写作流程拆成可感知的阶段。每一次调整都能看到上一版的差异。',
-    bullets: ['多风格命题写作与续写', '按段润色 + 差异对比视图', '自动为段落生成配图'],
-    route: '/literary-agent',
-    accent: '#fb923c',
-    Mockup: LiteraryMockup,
-  },
-  {
-    id: 'prd',
-    eyebrow: 'PRD · 产品分析师',
-    name: 'PRD',
-    title: '读懂 PRD 的第二双眼睛',
-    description:
-      '把 PRD 文档丢进来，PRD 分析师会识别需求缺口、回答产品问题、生成评审意见，在方案落地前就找到那些被忽略的角落。',
-    bullets: ['需求缺口自动识别', '对话式产品答疑', '正式评审前的 AI 预审'],
-    route: '/prd-agent',
-    accent: '#3b82f6',
-    Mockup: PrdMockup,
-  },
-  {
-    id: 'video',
-    eyebrow: 'VIDEO · 视频创作者',
-    name: '视频',
-    title: '文章直接生成分镜与预览',
-    description:
-      '上传一篇文章，视频创作者会拆出分镜脚本、逐帧预览图，甚至帮你拼好草稿时间线。适合教程、产品讲解、短视频场景。',
-    bullets: ['文章 → 分镜脚本自动拆解', '每一镜生成预览图', '草稿时间线可以直接导入 Remotion'],
-    route: '/video-agent',
-    accent: '#f43f5e',
-    Mockup: VideoMockup,
-  },
-  {
-    id: 'defect',
-    eyebrow: 'DEFECT · 缺陷管理员',
-    name: '缺陷',
-    title: '让每一个 Bug 都能被看见',
-    description:
-      '从截图、录屏、用户反馈里自动提取关键信息，分类、指派、跟进。外部 Agent 还能接入，做复现 + 根因分析 + 修复报告。',
-    bullets: ['截图 / 录屏自动提取信息', '严重度分类 + 优先级指派', '外部 Agent 复现 + 修复报告闭环'],
-    route: '/defect-agent',
-    accent: '#10b981',
-    Mockup: DefectMockup,
-  },
-  {
-    id: 'report',
-    eyebrow: 'REPORT · 周报管理员',
-    name: '周报',
-    title: '周五不再凑字数',
-    description:
-      '从 Git 提交、任务流水、日报碎片自动汇总一份结构化周报，团队 Leader 还能用"计划 vs 实际"的比对视图审阅。',
-    bullets: ['从 Git / 任务 / 日报自动合成', '团队汇总 + 计划对比视图', '一键导出 Markdown / PDF'],
-    route: '/report-agent',
-    accent: '#06b6d4',
-    Mockup: ReportMockup,
-  },
-];
+// 六段 mockup 从原来的函数名映射（内部几何 mockup 不走 i18n，因为是"示意图"）
+const MOCKUPS = {
+  visual: { accent: '#a855f7' },
+  literary: { accent: '#fb923c' },
+  prd: { accent: '#3b82f6' },
+  video: { accent: '#f43f5e' },
+  defect: { accent: '#10b981' },
+  report: { accent: '#06b6d4' },
+} as const;
 
 export function FeatureDeepDive() {
+  const { t } = useLanguage();
+
   return (
     <section
       className="relative py-28 md:py-36"
       style={{ fontFamily: 'var(--font-body)' }}
     >
       {/* Section header —— 上下留白翻倍 */}
-      <div className="max-w-6xl mx-auto px-6 pt-10 mb-32 md:mb-40">
+      <div className="max-w-6xl mx-auto px-6 pt-10 mb-36 md:mb-48">
         <SectionHeader
           Icon={Sparkles}
-          eyebrow="Core Capabilities"
+          eyebrow={t.features.eyebrow}
           accent="#a855f7"
-          title={
-            <>
-              六个专业 Agent，
-              <br className="sm:hidden" />
-              一个工作台
-            </>
-          }
-          subtitle="每一个 Agent 都是一个独立的领域专家，在 MAP 里它们共享上下文、互相调用，像一个真正的团队。"
+          title={splitLine(t.features.title)}
+          subtitle={t.features.subtitle}
         />
       </div>
 
-      {/* Six alternating feature blocks */}
-      <div className="space-y-32 md:space-y-44">
-        {FEATURES.map((feature, i) => (
-          <Reveal key={feature.id} offset={36} duration={1000}>
-            <FeatureBlock feature={feature} reverse={i % 2 === 1} />
-          </Reveal>
+      {/* 六段左右交替，块间距拉大 */}
+      <div className="space-y-44 md:space-y-56">
+        {t.features.items.map((feature, i) => (
+          <FeatureBlock
+            key={feature.id}
+            feature={feature}
+            reverse={i % 2 === 1}
+            chapterIndex={i + 1}
+            chapterTotal={t.features.items.length}
+            chapterLabel={t.features.chapterLabel}
+            learnMoreLabel={t.features.learnMore}
+          />
         ))}
       </div>
     </section>
   );
 }
 
-// ── Feature block（左右交替） ────────────────────────────────
+function splitLine(text: string): ReactNode {
+  const parts = text.split('\n');
+  if (parts.length === 1) return text;
+  return parts.map((p, i) => (
+    <span key={i}>
+      {p}
+      {i < parts.length - 1 && <br />}
+    </span>
+  ));
+}
 
-function FeatureBlock({ feature, reverse }: { feature: FeatureCore; reverse: boolean }) {
-  const { eyebrow, title, description, bullets, route, accent, Mockup } = feature;
+// ── Feature block（内部 stagger reveal） ────────────────────────────────
+
+function FeatureBlock({
+  feature,
+  reverse,
+  chapterIndex,
+  chapterTotal,
+  chapterLabel,
+  learnMoreLabel,
+}: {
+  feature: FeatureItem;
+  reverse: boolean;
+  chapterIndex: number;
+  chapterTotal: number;
+  chapterLabel: string;
+  learnMoreLabel: string;
+}) {
+  const { id, eyebrow, title, description, bullets } = feature;
+  const accent = MOCKUPS[id as keyof typeof MOCKUPS]?.accent ?? '#a855f7';
 
   return (
     <div className="max-w-6xl mx-auto px-6">
       <div
         className={cn(
-          'grid md:grid-cols-2 gap-10 md:gap-16 items-center',
+          'grid md:grid-cols-2 gap-12 md:gap-20 items-center',
           reverse && 'md:[&>*:first-child]:order-2',
         )}
       >
-        {/* Copy side */}
+        {/* Copy side —— 7 级分步 reveal */}
         <div>
-          <div
-            className="inline-flex items-center gap-2 mb-5"
-            style={{ fontFamily: 'var(--font-mono)' }}
-          >
-            <span
-              className="inline-block w-1.5 h-1.5 rounded-full"
-              style={{ background: accent, boxShadow: `0 0 8px ${accent}` }}
-            />
-            <span
-              className="text-[12px] uppercase"
+          {/* Chapter marker —— 每段最先出现，提示"新的一段开始了" */}
+          <Reveal offset={18}>
+            <div
+              className="flex items-center gap-3 mb-6"
+              style={{ fontFamily: 'var(--font-mono)' }}
+            >
+              <span
+                className="text-[11px] uppercase"
+                style={{
+                  color: `${accent}cc`,
+                  letterSpacing: '0.22em',
+                  textShadow: `0 0 8px ${accent}77`,
+                }}
+              >
+                {chapterLabel}
+              </span>
+              <span
+                className="text-[11px]"
+                style={{
+                  color: `${accent}cc`,
+                  letterSpacing: '0.12em',
+                }}
+              >
+                {String(chapterIndex).padStart(2, '0')} / {String(chapterTotal).padStart(2, '0')}
+              </span>
+              <span
+                className="flex-1 h-px"
+                style={{
+                  background: `linear-gradient(90deg, ${accent}66 0%, transparent 100%)`,
+                }}
+              />
+            </div>
+          </Reveal>
+
+          {/* Eyebrow */}
+          <Reveal delay={120} offset={14}>
+            <div
+              className="inline-flex items-center gap-2 mb-6"
+              style={{ fontFamily: 'var(--font-mono)' }}
+            >
+              <span
+                className="inline-block w-1.5 h-1.5 rounded-full"
+                style={{ background: accent, boxShadow: `0 0 8px ${accent}` }}
+              />
+              <span
+                className="text-[12px] uppercase"
+                style={{
+                  color: accent,
+                  letterSpacing: '0.18em',
+                  textShadow: `0 0 10px ${accent}88`,
+                }}
+              >
+                {eyebrow}
+              </span>
+            </div>
+          </Reveal>
+
+          {/* Title */}
+          <Reveal delay={240} offset={24}>
+            <h3
+              className="text-white font-medium mb-7"
               style={{
-                color: accent,
-                letterSpacing: '0.18em',
-                textShadow: `0 0 10px ${accent}88`,
+                fontFamily: 'var(--font-display)',
+                fontSize: 'clamp(1.75rem, 3.6vw, 3.25rem)',
+                lineHeight: 1.08,
+                letterSpacing: '-0.025em',
+                textShadow: `0 0 32px ${accent}26`,
               }}
             >
-              {eyebrow}
-            </span>
-          </div>
-          <h3
-            className="text-white font-medium mb-6"
-            style={{
-              fontFamily: 'var(--font-display)',
-              fontSize: 'clamp(1.75rem, 3.6vw, 3.25rem)',
-              lineHeight: 1.05,
-              letterSpacing: '-0.025em',
-            }}
-          >
-            {title}
-          </h3>
-          <p className="text-white/60 text-[15px] leading-relaxed mb-7 max-w-lg">
-            {description}
-          </p>
-          <ul className="space-y-3 mb-8">
-            {bullets.map((b, i) => (
-              <li key={i} className="flex items-start gap-3 text-[14px] text-white/75">
-                <span
-                  className="mt-[9px] w-1 h-1 rounded-full shrink-0"
-                  style={{ background: accent, boxShadow: `0 0 8px ${accent}` }}
-                />
-                <span>{b}</span>
-              </li>
+              {title}
+            </h3>
+          </Reveal>
+
+          {/* Description */}
+          <Reveal delay={360} offset={18}>
+            <p className="text-white/62 text-[15px] leading-[1.75] mb-8 max-w-lg">
+              {description}
+            </p>
+          </Reveal>
+
+          {/* Bullets —— 每条再 stagger 60ms */}
+          <ul className="space-y-3 mb-9">
+            {bullets.map((b, bi) => (
+              <Reveal key={bi} delay={480 + bi * 60} offset={14}>
+                <li className="flex items-start gap-3 text-[14px] text-white/78">
+                  <span
+                    className="mt-[9px] w-1 h-1 rounded-full shrink-0"
+                    style={{ background: accent, boxShadow: `0 0 8px ${accent}` }}
+                  />
+                  <span>{b}</span>
+                </li>
+              </Reveal>
             ))}
           </ul>
-          <a
-            href={route}
-            className="inline-flex items-center gap-2 text-[13px] font-medium text-white/85 hover:text-white transition-colors group"
-            style={{ fontFamily: 'var(--font-display)', letterSpacing: '0.01em' }}
-          >
-            了解更多
-            <ArrowRight className="w-3.5 h-3.5 transition-transform group-hover:translate-x-0.5" />
-          </a>
+
+          {/* Learn more */}
+          <Reveal delay={480 + bullets.length * 60 + 60} offset={12}>
+            <a
+              href={`/${id}-agent`}
+              className="inline-flex items-center gap-2 text-[13px] font-medium text-white/85 hover:text-white transition-colors group"
+              style={{ fontFamily: 'var(--font-display)', letterSpacing: '0.01em' }}
+            >
+              {learnMoreLabel}
+              <ArrowRight className="w-3.5 h-3.5 transition-transform group-hover:translate-x-0.5" />
+            </a>
+          </Reveal>
         </div>
 
-        {/* Mockup side */}
-        <div className="relative">
-          <Mockup />
-        </div>
+        {/* Mockup side —— 从对侧 translate 出来 */}
+        <Reveal delay={180} offset={32}>
+          <div className="relative">{renderMockup(id)}</div>
+        </Reveal>
       </div>
     </div>
   );
 }
 
-// ── Mockups（六个抽象几何示意） ────────────────────────────────
+// ── Mockups（六个抽象几何示意，不走 i18n） ────────────────────────────────
+
+function renderMockup(id: string): ReactNode {
+  switch (id) {
+    case 'visual':
+      return <VisualMockup />;
+    case 'literary':
+      return <LiteraryMockup />;
+    case 'prd':
+      return <PrdMockup />;
+    case 'video':
+      return <VideoMockup />;
+    case 'defect':
+      return <DefectMockup />;
+    case 'report':
+      return <ReportMockup />;
+    default:
+      return <VisualMockup />;
+  }
+}
 
 function MockupFrame({
   children,
@@ -233,7 +260,6 @@ function MockupFrame({
         boxShadow: `0 40px 100px -30px ${accent}55, 0 20px 60px -20px rgba(0, 0, 0, 0.6), inset 0 1px 0 rgba(255, 255, 255, 0.06)`,
       }}
     >
-      {/* 顶部 HUD 扫光 */}
       <div
         className="absolute top-0 left-0 right-0 h-px"
         style={{
@@ -245,7 +271,6 @@ function MockupFrame({
   );
 }
 
-// 1. 视觉：2×2 生成图网格
 function VisualMockup() {
   const accent = '#a855f7';
   const grads = [
@@ -301,7 +326,6 @@ function VisualMockup() {
   );
 }
 
-// 2. 文学：段落 + 光标 + 差异标记
 function LiteraryMockup() {
   const accent = '#fb923c';
   return (
@@ -381,7 +405,6 @@ function TextLine({
   );
 }
 
-// 3. PRD：结构化文档 + 缺口标注
 function PrdMockup() {
   const accent = '#3b82f6';
   return (
@@ -444,7 +467,6 @@ function PrdSection({
   );
 }
 
-// 4. 视频：时间线 + 分镜帧
 function VideoMockup() {
   const accent = '#f43f5e';
   return (
@@ -461,7 +483,6 @@ function VideoMockup() {
           <span>渲染中 · 72%</span>
         </div>
       </div>
-      {/* 分镜缩略图 */}
       <div className="grid grid-cols-6 gap-1.5 mb-4">
         {[0, 1, 2, 3, 4, 5].map((i) => (
           <div
@@ -482,7 +503,6 @@ function VideoMockup() {
           </div>
         ))}
       </div>
-      {/* 时间线 */}
       <div className="relative h-1 bg-white/10 rounded-full overflow-hidden">
         <div
           className="absolute inset-y-0 left-0 rounded-full"
@@ -502,7 +522,6 @@ function VideoMockup() {
   );
 }
 
-// 5. 缺陷：卡片堆叠
 function DefectMockup() {
   const accent = '#10b981';
   const defects = [
@@ -551,7 +570,6 @@ function DefectMockup() {
   );
 }
 
-// 6. 周报：条形图 + 计划对比
 function ReportMockup() {
   const accent = '#06b6d4';
   const bars = [

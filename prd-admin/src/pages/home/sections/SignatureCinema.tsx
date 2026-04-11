@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { cn } from '@/lib/cn';
+import { useLanguage } from '../contexts/LanguageContext';
+import { Reveal } from '../components/Reveal';
 
 interface SignatureCinemaProps {
   className?: string;
@@ -20,6 +22,7 @@ interface SignatureCinemaProps {
  * - 稀缺美学：这一幕是全站唯一一块"全宽 16:9 黑箱"，不允许被复制使用
  */
 export function SignatureCinema({ className, src, poster, caption }: SignatureCinemaProps) {
+  const { t } = useLanguage();
   const videoRef = useRef<HTMLVideoElement>(null);
   const sectionRef = useRef<HTMLElement>(null);
   const [isInView, setIsInView] = useState(false);
@@ -60,27 +63,31 @@ export function SignatureCinema({ className, src, poster, caption }: SignatureCi
       style={{ fontFamily: 'var(--font-body)' }}
     >
       <div className="max-w-7xl mx-auto px-6">
-        {/* 小标题 — 只给一行，克制 */}
+        {/* 小标题 */}
         <div className="text-center mb-14">
-          <div
-            className="inline-block text-[11px] uppercase text-cyan-300/80 mb-4"
-            style={{ letterSpacing: '0.32em', fontFamily: 'var(--font-display)' }}
-          >
-            Signature · 一镜到底
-          </div>
-          <h2
-            className="text-white font-light"
-            style={{
-              fontFamily: 'var(--font-display)',
-              fontSize: 'clamp(2rem, 5vw, 3.75rem)',
-              letterSpacing: '-0.02em',
-              lineHeight: 1.05,
-            }}
-          >
-            看 AI 如何成为
-            <br className="sm:hidden" />
-            <span className="text-white/55"> 你的第二颗大脑</span>
-          </h2>
+          <Reveal>
+            <div
+              className="inline-block text-[11px] uppercase text-cyan-300/80 mb-4"
+              style={{ letterSpacing: '0.32em', fontFamily: 'var(--font-mono)' }}
+            >
+              {t.cinema.eyebrow}
+            </div>
+          </Reveal>
+          <Reveal delay={120} offset={22}>
+            <h2
+              className="text-white font-light"
+              style={{
+                fontFamily: 'var(--font-display)',
+                fontSize: 'clamp(2rem, 5vw, 3.75rem)',
+                letterSpacing: '-0.02em',
+                lineHeight: 1.05,
+              }}
+            >
+              {t.cinema.title}
+              <br className="sm:hidden" />
+              <span className="text-white/55">{t.cinema.tail}</span>
+            </h2>
+          </Reveal>
         </div>
 
         {/* 16:9 电影窗口 */}
@@ -105,7 +112,7 @@ export function SignatureCinema({ className, src, poster, caption }: SignatureCi
               preload="metadata"
             />
           ) : (
-            <PosterFallback poster={poster} />
+            <PosterFallback poster={poster} comingSoon={t.cinema.comingSoon} />
           )}
 
           {/* 边缘暗角 — 加"镜头感" */}
@@ -129,9 +136,9 @@ export function SignatureCinema({ className, src, poster, caption }: SignatureCi
           {/* 右下署名 */}
           <div
             className="absolute bottom-5 right-6 text-[10px] text-white/50 uppercase"
-            style={{ letterSpacing: '0.24em', fontFamily: 'var(--font-display)' }}
+            style={{ letterSpacing: '0.24em', fontFamily: 'var(--font-mono)' }}
           >
-            {caption ?? 'MAP · 产品片花'}
+            {caption ?? t.cinema.caption}
           </div>
         </div>
       </div>
@@ -140,7 +147,7 @@ export function SignatureCinema({ className, src, poster, caption }: SignatureCi
 }
 
 /** 无视频时的降级海报：深色渐变 + 大播放图标 + "即将上线"标签 */
-function PosterFallback({ poster }: { poster?: string }) {
+function PosterFallback({ poster, comingSoon }: { poster?: string; comingSoon: string }) {
   return (
     <div className="absolute inset-0 flex items-center justify-center">
       {/* 背景层：poster 图 or 渐变 */}
@@ -179,9 +186,9 @@ function PosterFallback({ poster }: { poster?: string }) {
         </div>
         <div
           className="text-[11px] uppercase text-white/60"
-          style={{ letterSpacing: '0.32em', fontFamily: 'var(--font-display)' }}
+          style={{ letterSpacing: '0.32em', fontFamily: 'var(--font-mono)' }}
         >
-          Coming soon · 即将上线
+          {comingSoon}
         </div>
       </div>
     </div>

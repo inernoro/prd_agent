@@ -1,12 +1,11 @@
 import { Github } from 'lucide-react';
+import { useLanguage } from '../contexts/LanguageContext';
 
 /**
- * MinimalFooter — 幕 9 · 极简页脚
- *
- * 一行：左边 logo + 品牌名，右边 GitHub 链接 + 版权。
- * 一条顶部分割线，除此之外什么都没有。
+ * MinimalFooter — 幕 · 极简页脚
  */
 export function MinimalFooter() {
+  const { t } = useLanguage();
   return (
     <footer
       className="relative border-t border-white/[0.06] py-10 px-6"
@@ -29,7 +28,7 @@ export function MinimalFooter() {
             className="text-[12.5px] text-white/65"
             style={{ fontFamily: 'var(--font-display)', letterSpacing: '0.01em' }}
           >
-            米多 Agent 平台
+            {t.footer.brand}
           </div>
         </div>
 
@@ -42,16 +41,16 @@ export function MinimalFooter() {
             className="flex items-center gap-1.5 hover:text-white/80 transition-colors"
           >
             <Github className="w-3.5 h-3.5" />
-            GitHub
+            {t.footer.github}
           </a>
           <a href="#hero" className="hover:text-white/80 transition-colors">
-            回到顶部
+            {t.footer.backToTop}
           </a>
           <span
             className="text-white/30"
             style={{ fontFamily: 'var(--font-display)', letterSpacing: '0.05em' }}
           >
-            © 2026 MAP
+            {t.footer.copyright}
           </span>
         </div>
       </div>

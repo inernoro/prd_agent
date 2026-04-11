@@ -2,48 +2,39 @@ import { Activity, Users, Zap, Trophy, Flame, Radio } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { Reveal } from '../components/Reveal';
 import { SectionHeader } from '../components/SectionHeader';
+import { useLanguage } from '../contexts/LanguageContext';
 
 /**
- * CommunityPulse — 幕 · 活动脉搏（Community feature 注入）
+ * CommunityPulse — 幕 · 活动脉搏（Community feature）
  *
- * Retro-futurism 注入：终端 HUD 风格的"实时"数据面板 + 本周排行榜
- * - 左半：4 个大号数字 HUD stat（看似实时数据）
- * - 右半：Top 3 Agent 排行榜（Steam 排行榜美学）
- * - 全部纯 CSS，数字静态（后续可接真实 API）
+ * 数据（label/trend/agent name）走 i18n；visual meta（icon/color）本地 map。
  */
 
-interface PulseStat {
+interface StatVisual {
   Icon: LucideIcon;
-  label: string;
   value: string;
   accent: string;
-  trend: string;
 }
 
-const STATS: PulseStat[] = [
-  { Icon: Activity, label: 'ACTIVE AGENTS', value: '15', accent: '#34d399', trend: 'all online' },
-  { Icon: Users, label: 'CONVERSATIONS · 24H', value: '2,341', accent: '#a855f7', trend: '+18% ↑' },
-  { Icon: Zap, label: 'TOKENS PROCESSED', value: '4.2M', accent: '#00f0ff', trend: 'p95 · 62ms' },
-  { Icon: Flame, label: 'MEDIA GENERATED', value: '387', accent: '#f43f5e', trend: 'last 7d' },
-];
+const STAT_VISUALS: Record<string, StatVisual> = {
+  active: { Icon: Activity, value: '15', accent: '#34d399' },
+  convos: { Icon: Users, value: '2,341', accent: '#a855f7' },
+  tokens: { Icon: Zap, value: '4.2M', accent: '#00f0ff' },
+  media: { Icon: Flame, value: '387', accent: '#f43f5e' },
+};
 
-interface LeaderboardRow {
-  rank: number;
-  name: string;
-  usage: string;
-  delta: string;
-  accent: string;
-}
-
-const LEADERBOARD: LeaderboardRow[] = [
-  { rank: 1, name: '视觉设计师', usage: '1,247', delta: '+32%', accent: '#a855f7' },
-  { rank: 2, name: 'PRD 分析师', usage: '892', delta: '+14%', accent: '#3b82f6' },
-  { rank: 3, name: '文学创作者', usage: '654', delta: '+8%', accent: '#fb923c' },
-  { rank: 4, name: '缺陷管理员', usage: '523', delta: '+22%', accent: '#10b981' },
-  { rank: 5, name: '周报管理员', usage: '418', delta: '+5%', accent: '#06b6d4' },
-];
+const ROW_VISUALS: Record<string, { usage: string; accent: string; rank: number }> = {
+  visual: { usage: '1,247', accent: '#a855f7', rank: 1 },
+  prd: { usage: '892', accent: '#3b82f6', rank: 2 },
+  literary: { usage: '654', accent: '#fb923c', rank: 3 },
+  defect: { usage: '523', accent: '#10b981', rank: 4 },
+  report: { usage: '418', accent: '#06b6d4', rank: 5 },
+};
 
 export function CommunityPulse() {
+  const { t } = useLanguage();
+  const titleParts = t.pulse.title.split('\n');
+
   return (
     <section
       className="relative py-28 md:py-36 px-6"
@@ -54,34 +45,42 @@ export function CommunityPulse() {
         <div className="mb-16 md:mb-20">
           <SectionHeader
             Icon={Radio}
-            eyebrow="Live · Pulse"
+            eyebrow={t.pulse.eyebrow}
             accent="#34d399"
             title={
               <>
-                整个平台，
-                <br className="sm:hidden" />
-                此时此刻在做什么
+                {titleParts[0]}
+                {titleParts.length > 1 && (
+                  <>
+                    <br className="sm:hidden" />
+                    <span className="hidden sm:inline"> </span>
+                    {titleParts[1]}
+                  </>
+                )}
               </>
             }
-            subtitle="实时数据脉搏 + 本周 Agent 使用排行。参与越多，你的 Agent 越聪明。"
+            subtitle={t.pulse.subtitle}
           />
         </div>
 
-        {/* Two-column: HUD stats + leaderboard */}
         <div className="grid lg:grid-cols-5 gap-6">
-          {/* HUD stats (3 cols) */}
+          {/* HUD stats */}
           <div className="lg:col-span-3 grid grid-cols-2 gap-4">
-            {STATS.map((s, i) => (
-              <Reveal key={s.label} delay={i * 80} offset={20}>
-                <StatCell stat={s} />
-              </Reveal>
-            ))}
+            {t.pulse.stats.map((s, i) => {
+              const visual = STAT_VISUALS[s.id];
+              if (!visual) return null;
+              return (
+                <Reveal key={s.id} delay={i * 80} offset={20}>
+                  <StatCell label={s.label} trend={s.trend} visual={visual} />
+                </Reveal>
+              );
+            })}
           </div>
 
-          {/* Leaderboard (2 cols) */}
+          {/* Leaderboard */}
           <div className="lg:col-span-2">
             <Reveal delay={120} offset={20}>
-              <LeaderboardCard />
+              <LeaderboardCard title={t.pulse.leaderboard} rows={t.pulse.rows} />
             </Reveal>
           </div>
         </div>
@@ -90,8 +89,16 @@ export function CommunityPulse() {
   );
 }
 
-function StatCell({ stat }: { stat: PulseStat }) {
-  const { Icon, label, value, accent, trend } = stat;
+function StatCell({
+  label,
+  trend,
+  visual,
+}: {
+  label: string;
+  trend: string;
+  visual: StatVisual;
+}) {
+  const { Icon, value, accent } = visual;
   return (
     <div
       className="relative p-5 rounded-lg border overflow-hidden"
@@ -101,18 +108,15 @@ function StatCell({ stat }: { stat: PulseStat }) {
         boxShadow: `inset 0 0 24px ${accent}12, 0 0 32px -12px ${accent}66`,
       }}
     >
-      {/* 顶边 scanline */}
       <div
         className="absolute top-0 left-0 right-0 h-px"
         style={{
           background: `linear-gradient(90deg, transparent 0%, ${accent}aa 50%, transparent 100%)`,
         }}
       />
-      {/* 右上 HUD 角标 */}
       <div className="absolute top-3 right-3">
         <Icon className="w-4 h-4" style={{ color: accent, opacity: 0.7 }} />
       </div>
-      {/* Label */}
       <div
         className="text-[10px] uppercase mb-3"
         style={{
@@ -123,7 +127,6 @@ function StatCell({ stat }: { stat: PulseStat }) {
       >
         {label}
       </div>
-      {/* Value */}
       <div
         className="font-medium text-white"
         style={{
@@ -136,11 +139,10 @@ function StatCell({ stat }: { stat: PulseStat }) {
       >
         {value}
       </div>
-      {/* Trend */}
       <div
         className="mt-3 text-[11px]"
         style={{
-          color: `${accent}`,
+          color: accent,
           fontFamily: 'var(--font-mono)',
           letterSpacing: '0.1em',
         }}
@@ -151,7 +153,13 @@ function StatCell({ stat }: { stat: PulseStat }) {
   );
 }
 
-function LeaderboardCard() {
+function LeaderboardCard({
+  title,
+  rows,
+}: {
+  title: string;
+  rows: Array<{ id: string; name: string; delta: string }>;
+}) {
   return (
     <div
       className="relative p-5 rounded-lg border overflow-hidden h-full"
@@ -162,7 +170,6 @@ function LeaderboardCard() {
           'inset 0 0 32px rgba(168, 85, 247, 0.06), 0 0 48px -16px rgba(168, 85, 247, 0.5)',
       }}
     >
-      {/* 顶边 scanline */}
       <div
         className="absolute top-0 left-0 right-0 h-px"
         style={{
@@ -170,32 +177,51 @@ function LeaderboardCard() {
             'linear-gradient(90deg, transparent 0%, rgba(168, 85, 247, 0.8) 50%, transparent 100%)',
         }}
       />
-      {/* Header */}
       <div className="flex items-center gap-2 mb-5">
         <Trophy className="w-4 h-4 text-purple-300" />
         <div
           className="text-[11px] text-purple-200 uppercase"
           style={{ fontFamily: 'var(--font-mono)', letterSpacing: '0.18em' }}
         >
-          Weekly Leaderboard
+          {title}
         </div>
       </div>
-      {/* Rows */}
       <div className="space-y-3">
-        {LEADERBOARD.map((row) => (
-          <LeaderboardRowItem key={row.rank} row={row} />
-        ))}
+        {rows.map((row) => {
+          const visual = ROW_VISUALS[row.id];
+          if (!visual) return null;
+          return (
+            <LeaderboardRowItem
+              key={row.id}
+              rank={visual.rank}
+              name={row.name}
+              usage={visual.usage}
+              delta={row.delta}
+              accent={visual.accent}
+            />
+          );
+        })}
       </div>
     </div>
   );
 }
 
-function LeaderboardRowItem({ row }: { row: LeaderboardRow }) {
-  const { rank, name, usage, delta, accent } = row;
+function LeaderboardRowItem({
+  rank,
+  name,
+  usage,
+  delta,
+  accent,
+}: {
+  rank: number;
+  name: string;
+  usage: string;
+  delta: string;
+  accent: string;
+}) {
   const isTop = rank <= 3;
   return (
     <div className="flex items-center gap-3">
-      {/* Rank number */}
       <div
         className="w-7 h-7 rounded flex items-center justify-center text-[12px] font-semibold shrink-0"
         style={{
@@ -208,7 +234,6 @@ function LeaderboardRowItem({ row }: { row: LeaderboardRow }) {
       >
         {String(rank).padStart(2, '0')}
       </div>
-      {/* Name + usage */}
       <div className="flex-1 min-w-0 flex items-baseline gap-2">
         <span
           className="text-[13px] text-white/90 truncate"
@@ -223,7 +248,6 @@ function LeaderboardRowItem({ row }: { row: LeaderboardRow }) {
           · {usage}
         </span>
       </div>
-      {/* Delta */}
       <div
         className="text-[11px] shrink-0"
         style={{

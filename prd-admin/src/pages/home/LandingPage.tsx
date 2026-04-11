@@ -13,25 +13,29 @@ import { DesktopDownload } from './sections/DesktopDownload';
 import { FinalCta } from './sections/FinalCta';
 import { MinimalFooter } from './sections/MinimalFooter';
 import { StaticBackdrop } from './components/StaticBackdrop';
+import { LanguageToggle } from './components/LanguageToggle';
+import { LanguageProvider, useLanguage } from './contexts/LanguageContext';
 
 /**
  * LandingPage — 米多 Agent 平台 /home
  *
- * 九幕 Linear.app 风结构：
- *   1 · Hero                — 大标题 + CTA + 产品壳 mockup
- *   2 · StatsStrip          — 15+ / 14 / 98 / 99.9% 极简大数字
- *   3 · FeatureDeepDive     — 六大核心 Agent 左右交替深度展示
- *   4 · SignatureCinema     — 16:9 产品片花位
- *   5 · HowItWorks          — 三步流程
- *   6 · AgentGrid           — 15 个 Agent 总览（真实数据源）
- *   7 · CompatibilityStack  — 模型兼容矩阵
- *   8 · FinalCta            — 最终收束 CTA
- *   9 · MinimalFooter       — 极简页脚
+ * 十一幕结构（Linear.app × Retro-Futurism 融合）：
+ *   1 · Hero
+ *   2 · StatsStrip
+ *   3 · FeatureDeepDive（六段左右交替，每段内部分步 reveal）
+ *   4 · SignatureCinema
+ *   5 · HowItWorks
+ *   6 · AgentGrid
+ *   7 · CompatibilityStack
+ *   8 · CommunityPulse
+ *   9 · DesktopDownload
+ *  10 · FinalCta
+ *  11 · MinimalFooter
  *
- * 背景：StaticBackdrop 纯 CSS 静态层（零动画零粒子）。
+ * 背景：StaticBackdrop 纯 CSS 静态层。
+ * 国际化：LanguageProvider 仅作用于本页（中 / EN 切换器在顶栏右上角）。
  */
 
-// MAP Logo（顶栏用，保留原渐变 logo）
 function MapLogo({ className = 'w-10 h-10' }: { className?: string }) {
   return (
     <svg className={className} viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg">
@@ -61,7 +65,16 @@ function MapLogo({ className = 'w-10 h-10' }: { className?: string }) {
 }
 
 export default function LandingPage() {
+  return (
+    <LanguageProvider>
+      <LandingInner />
+    </LanguageProvider>
+  );
+}
+
+function LandingInner() {
   const navigate = useNavigate();
+  const { t, lang } = useLanguage();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
   const handleGetStarted = () => navigate('/login');
@@ -73,20 +86,21 @@ export default function LandingPage() {
   };
 
   const navLinks = [
-    { label: '产品', href: '#features' },
-    { label: 'Agent', href: '#agents' },
-    { label: '片花', href: '#cinema' },
-    { label: '社区', href: '#pulse' },
-    { label: '下载', href: '#download' },
-    { label: '文档', href: 'https://github.com/inernoro/prd_agent', external: true },
+    { label: t.nav.products, href: '#features' },
+    { label: t.nav.agents, href: '#agents' },
+    { label: t.nav.cinema, href: '#cinema' },
+    { label: t.nav.community, href: '#pulse' },
+    { label: t.nav.download, href: '#download' },
+    { label: t.nav.docs, href: 'https://github.com/inernoro/prd_agent', external: true },
   ];
 
   return (
     <div
       className="min-h-screen bg-[#030306] text-white overflow-x-hidden"
       style={{ scrollBehavior: 'smooth', fontFamily: 'var(--font-body)' }}
+      data-lang={lang}
     >
-      {/* 静态背景（纯 CSS，零动画零粒子） */}
+      {/* 静态背景 */}
       <StaticBackdrop />
 
       {/* 顶栏 */}
@@ -108,15 +122,15 @@ export default function LandingPage() {
                 className="text-[15px] font-medium text-white/90 hidden sm:inline"
                 style={{ fontFamily: 'var(--font-display)', letterSpacing: '-0.005em' }}
               >
-                米多 Agent 平台
+                {t.footer.brand}
               </span>
             </div>
 
             {/* Desktop nav */}
             <div className="hidden md:flex items-center gap-8">
-              {navLinks.map((item) => (
+              {navLinks.map((item, i) => (
                 <a
-                  key={item.label}
+                  key={i}
                   href={item.href}
                   target={item.external ? '_blank' : undefined}
                   rel={item.external ? 'noopener noreferrer' : undefined}
@@ -128,8 +142,10 @@ export default function LandingPage() {
               ))}
             </div>
 
-            {/* CTA + mobile hamburger */}
+            {/* 右上角：语言切换 + 登录 + 移动 hamburger */}
             <div className="flex items-center gap-3">
+              <LanguageToggle />
+
               <button
                 onClick={handleGetStarted}
                 className="px-4 py-2 rounded-full text-[13px] font-medium text-white transition-all duration-200 hover:scale-[1.02]"
@@ -140,13 +156,13 @@ export default function LandingPage() {
                   letterSpacing: '0.01em',
                 }}
               >
-                登录 / 注册
+                {t.nav.login}
               </button>
 
               <button
                 onClick={() => setMobileMenuOpen(true)}
                 className="md:hidden flex items-center justify-center w-9 h-9 rounded-lg text-white/70 hover:text-white hover:bg-white/5 transition-colors"
-                aria-label="打开导航菜单"
+                aria-label="Open menu"
               >
                 <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                   <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 6.75h16.5M3.75 12h16.5m-16.5 5.25h16.5" />
@@ -167,13 +183,13 @@ export default function LandingPage() {
               <div className="flex items-center gap-3">
                 <MapLogo className="w-9 h-9 rounded-[10px]" />
                 <span className="text-[15px] font-medium text-white/90" style={{ fontFamily: 'var(--font-display)' }}>
-                  米多 Agent 平台
+                  {t.footer.brand}
                 </span>
               </div>
               <button
                 onClick={() => setMobileMenuOpen(false)}
                 className="flex items-center justify-center w-9 h-9 rounded-lg text-white/70 hover:text-white hover:bg-white/5 transition-colors"
-                aria-label="关闭导航菜单"
+                aria-label="Close menu"
               >
                 <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                   <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
@@ -181,9 +197,9 @@ export default function LandingPage() {
               </button>
             </div>
             <nav className="px-6 pb-6 space-y-1">
-              {navLinks.map((item) => (
+              {navLinks.map((item, i) => (
                 <a
-                  key={item.label}
+                  key={i}
                   href={item.href}
                   target={item.external ? '_blank' : undefined}
                   rel={item.external ? 'noopener noreferrer' : undefined}
@@ -194,6 +210,11 @@ export default function LandingPage() {
                   {item.label}
                 </a>
               ))}
+
+              <div className="pt-4 flex items-center justify-between gap-3">
+                <LanguageToggle />
+              </div>
+
               <div className="pt-4">
                 <button
                   onClick={() => {
@@ -207,7 +228,7 @@ export default function LandingPage() {
                     fontFamily: 'var(--font-display)',
                   }}
                 >
-                  登录 / 注册
+                  {t.nav.login}
                 </button>
               </div>
             </nav>
@@ -215,7 +236,7 @@ export default function LandingPage() {
         </div>
       )}
 
-      {/* 九幕内容 */}
+      {/* 十一幕内容 */}
       <div id="hero">
         <HeroSection onGetStarted={handleGetStarted} onWatchDemo={handleWatchDemo} />
       </div>

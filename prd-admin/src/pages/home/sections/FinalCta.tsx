@@ -1,6 +1,7 @@
 import { ArrowRight, Sparkles, Star } from 'lucide-react';
 import { HERO_GRADIENT } from './HeroSection';
 import { Reveal } from '../components/Reveal';
+import { useLanguage } from '../contexts/LanguageContext';
 
 interface FinalCtaProps {
   onGetStarted?: () => void;
@@ -14,6 +15,7 @@ interface FinalCtaProps {
  * 整块带一个柔和的底部光晕，作为整页的"尾音"。
  */
 export function FinalCta({ onGetStarted, onContact }: FinalCtaProps) {
+  const { t } = useLanguage();
   return (
     <section
       className="relative py-32 md:py-44 px-6 overflow-hidden"
@@ -48,7 +50,7 @@ export function FinalCta({ onGetStarted, onContact }: FinalCtaProps) {
                 textShadow: '0 0 10px rgba(244, 63, 94, 0.6)',
               }}
             >
-              Ready Player One
+              {t.cta.eyebrow}
             </span>
           </div>
         </Reveal>
@@ -65,13 +67,13 @@ export function FinalCta({ onGetStarted, onContact }: FinalCtaProps) {
                 '0 0 40px rgba(244, 63, 94, 0.4), 0 0 100px rgba(168, 85, 247, 0.25)',
             }}
           >
-            现在，轮到你了。
+            {t.cta.title}
           </h2>
         </Reveal>
 
         <Reveal delay={160}>
           <p className="mt-8 text-white/62 max-w-xl mx-auto text-[15.5px] leading-[1.7]">
-            十五位 Agent 已经就位。你的第一个任务是什么？
+            {t.cta.subtitle}
           </p>
         </Reveal>
 
@@ -89,7 +91,7 @@ export function FinalCta({ onGetStarted, onContact }: FinalCtaProps) {
               }}
             >
               <Sparkles className="w-4 h-4" />
-              <span>进入 MAP</span>
+              <span>{t.cta.primary}</span>
               <ArrowRight className="w-4 h-4 transition-transform group-hover:translate-x-0.5" />
             </button>
 
@@ -103,7 +105,7 @@ export function FinalCta({ onGetStarted, onContact }: FinalCtaProps) {
                 letterSpacing: '0.01em',
               }}
             >
-              联系我们
+              {t.cta.secondary}
               <ArrowRight className="w-4 h-4 opacity-60" />
             </button>
           </div>
