@@ -4,7 +4,7 @@ namespace PrdAgent.Api.Services.PrReview;
 /// 服务层 → Controller 的模型信息传递载体。
 ///
 /// 为什么用 holder 而不是返回值/out 参数：
-/// 服务层的核心方法是 IAsyncEnumerable&lt;string&gt;（yield return），
+/// 服务层的核心方法是 IAsyncEnumerable&lt;LlmStreamDelta&gt;（yield return），
 /// 不支持 out 参数，也不能返回元组。用共享 holder 让 Controller 在
 /// 每次 yield 之后都能读到最新的 modelInfo.Captured，及时推 SSE model 事件。
 ///
@@ -29,3 +29,19 @@ public sealed class PrReviewModelInfoHolder
     /// </summary>
     public bool Captured { get; set; }
 }
+
+/// <summary>
+/// 服务层 yield 出来的流式增量：可能是正文文本，也可能是推理模型的思考过程。
+///
+/// 为什么要区分：
+/// qwen-thinking / deepseek-r1 等推理模型会先输出 reasoning_content（思考），
+/// 再输出正式的 answer。如果只接收 Text chunk，会把几十秒的思考当成"空白等待"——
+/// 真正的 bug 根源就是这个遗漏。区分后：
+/// - Thinking：Controller 推 SSE thinking 事件，前端展示在折叠面板里
+/// - Text：Controller 推 SSE typing 事件，累积进 fullMd 作为最终正文
+///
+/// IsThinking = true 时，Content 是思考碎片（不计入 fullMd）。
+/// IsThinking = false 时，Content 是正式输出（计入 fullMd）。
+/// </summary>
+public readonly record struct LlmStreamDelta(bool IsThinking, string Content);
+

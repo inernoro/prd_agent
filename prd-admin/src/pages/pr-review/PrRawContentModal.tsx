@@ -5,6 +5,7 @@ import {
   type PrReviewRawContentDto,
   type PrReviewRawFileDto,
 } from '@/services/real/prReview';
+import { PrMarkdown } from './PrMarkdown';
 
 interface Props {
   itemId: string;
@@ -118,13 +119,13 @@ export function PrRawContentModal({ itemId, onClose }: Props) {
 
           {data && !loading && !error && (
             <>
-              {/* PR 描述 */}
+              {/* PR 描述（markdown 渲染） */}
               <section>
                 <SectionTitle>PR 描述</SectionTitle>
                 {data.body && data.body.trim() ? (
-                  <pre className="whitespace-pre-wrap break-words text-[13px] leading-relaxed text-white/85 font-sans bg-black/30 rounded-lg p-4 border border-white/5">
-                    {data.body}
-                  </pre>
+                  <div className="text-[13px] leading-relaxed text-white/85 bg-black/30 rounded-lg p-4 border border-white/5">
+                    <PrMarkdown>{data.body}</PrMarkdown>
+                  </div>
                 ) : (
                   <div className="text-xs text-white/40 italic p-4 rounded-lg bg-black/20 border border-white/5">
                     （作者没有填写 PR 描述）
@@ -132,7 +133,7 @@ export function PrRawContentModal({ itemId, onClose }: Props) {
                 )}
               </section>
 
-              {/* 关联 issue */}
+              {/* 关联 issue（markdown 渲染） */}
               {data.linkedIssueNumber && (
                 <section>
                   <SectionTitle>
@@ -143,9 +144,9 @@ export function PrRawContentModal({ itemId, onClose }: Props) {
                     </span>
                   </SectionTitle>
                   {data.linkedIssueBody && data.linkedIssueBody.trim() ? (
-                    <pre className="whitespace-pre-wrap break-words text-[13px] leading-relaxed text-white/85 font-sans bg-black/30 rounded-lg p-4 border border-white/5">
-                      {data.linkedIssueBody}
-                    </pre>
+                    <div className="text-[13px] leading-relaxed text-white/85 bg-black/30 rounded-lg p-4 border border-white/5">
+                      <PrMarkdown>{data.linkedIssueBody}</PrMarkdown>
+                    </div>
                   ) : (
                     <div className="text-xs text-white/40 italic p-4 rounded-lg bg-black/20 border border-white/5">
                       （关联 issue 没有描述或未拉取）

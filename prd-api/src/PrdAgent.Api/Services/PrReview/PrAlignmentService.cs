@@ -50,11 +50,13 @@ public sealed class PrAlignmentService
 
     /// <summary>
     /// 流式生成对齐度报告。调用方负责持久化最终结果。
-    /// 返回一个增量文本流（每次 yield 一小段 markdown），调用方应 StringBuilder.Append 拼接成完整输出。
+    /// 返回 LlmStreamDelta（区分 Thinking 和 Text）：
+    /// - Thinking：推理模型的思考过程，累积到折叠面板，不计入最终 markdown
+    /// - Text：正式输出，计入 fullMd 作为最终 AlignmentReport.Markdown
     /// modelInfo 是 out 参数，当 Gateway 返回 Start chunk 时立即填充。
     /// 若上游抛 PrReviewException 或 LLM 报错，会以抛异常的方式返回调用方。
     /// </summary>
-    public async IAsyncEnumerable<string> StreamAlignmentAsync(
+    public async IAsyncEnumerable<LlmStreamDelta> StreamAlignmentAsync(
         PrReviewItem item,
         PrReviewModelInfoHolder modelInfo,
         [EnumeratorCancellation] CancellationToken ct)
@@ -94,9 +96,13 @@ public sealed class PrAlignmentService
                 continue;
             }
 
-            if (chunk.Type == GatewayChunkType.Text && !string.IsNullOrEmpty(chunk.Content))
+            if (chunk.Type == GatewayChunkType.Thinking && !string.IsNullOrEmpty(chunk.Content))
             {
-                yield return chunk.Content!;
+                yield return new LlmStreamDelta(IsThinking: true, Content: chunk.Content!);
+            }
+            else if (chunk.Type == GatewayChunkType.Text && !string.IsNullOrEmpty(chunk.Content))
+            {
+                yield return new LlmStreamDelta(IsThinking: false, Content: chunk.Content!);
             }
             else if (chunk.Type == GatewayChunkType.Error)
             {

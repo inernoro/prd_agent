@@ -42,8 +42,13 @@ public sealed class PrSummaryService
     /// 流式生成变更摘要。调用方负责持久化最终结果。
     /// modelInfo 是 out 参数，当 Gateway 返回 Start chunk 时立即填充，
     /// 调用方（Controller）可监听此对象的变化以推送 SSE model 事件。
+    ///
+    /// 返回 LlmStreamDelta：区分 Thinking（思考过程） 和 Text（正式输出）。
+    /// 推理模型（qwen-thinking / deepseek-r1）会先吐很长一段 reasoning_content
+    /// 再吐正文，如果只处理 Text chunk 会把几十秒思考当空白等待——这正是
+    /// rule.ai-model-visibility 要求必须展示思考过程的根因。
     /// </summary>
-    public async IAsyncEnumerable<string> StreamSummaryAsync(
+    public async IAsyncEnumerable<LlmStreamDelta> StreamSummaryAsync(
         PrReviewItem item,
         PrReviewModelInfoHolder modelInfo,
         [EnumeratorCancellation] CancellationToken ct)
@@ -85,9 +90,13 @@ public sealed class PrSummaryService
                 continue;
             }
 
-            if (chunk.Type == GatewayChunkType.Text && !string.IsNullOrEmpty(chunk.Content))
+            if (chunk.Type == GatewayChunkType.Thinking && !string.IsNullOrEmpty(chunk.Content))
             {
-                yield return chunk.Content!;
+                yield return new LlmStreamDelta(IsThinking: true, Content: chunk.Content!);
+            }
+            else if (chunk.Type == GatewayChunkType.Text && !string.IsNullOrEmpty(chunk.Content))
+            {
+                yield return new LlmStreamDelta(IsThinking: false, Content: chunk.Content!);
             }
             else if (chunk.Type == GatewayChunkType.Error)
             {

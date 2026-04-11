@@ -10,10 +10,14 @@ import {
   XCircle,
   TriangleAlert,
   CircleDot,
+  Brain,
+  ChevronDown,
+  ChevronRight,
 } from 'lucide-react';
 import { useSseStream } from '@/lib/useSseStream';
 import { getPrReviewAlignmentStreamUrl, type PrAlignmentReportDto } from '@/services/real/prReview';
 import { usePrReviewStore } from './usePrReviewStore';
+import { PrMarkdown } from './PrMarkdown';
 
 interface Props {
   itemId: string;
@@ -47,6 +51,7 @@ export function AlignmentPanel({ itemId, cached }: Props) {
   const [localResult, setLocalResult] = useState<PrAlignmentReportDto | null>(cached ?? null);
   const [finalError, setFinalError] = useState<string | null>(null);
   const [liveModel, setLiveModel] = useState<ModelInfo | null>(null);
+  const [thinking, setThinking] = useState('');
   const fullMdRef = useRef('');
 
   // 缓存刷新时同步本地态
@@ -79,11 +84,19 @@ export function AlignmentPanel({ itemId, cached }: Props) {
     }
   }, []);
 
+  const handleThinking = useCallback((data: unknown) => {
+    const d = data as { text?: string };
+    if (typeof d.text === 'string' && d.text) {
+      setThinking((prev) => prev + d.text);
+    }
+  }, []);
+
   const sse = useSseStream({
     url: '',
     onEvent: {
       result: handleResult,
       model: handleModel,
+      thinking: handleThinking,
     },
     onTyping: (text) => {
       fullMdRef.current += text;
@@ -96,6 +109,7 @@ export function AlignmentPanel({ itemId, cached }: Props) {
   const handleStart = useCallback(() => {
     setFinalError(null);
     setLiveModel(null);
+    setThinking('');
     fullMdRef.current = '';
     sse.reset();
     void sse.start({ url: getPrReviewAlignmentStreamUrl(itemId) });
@@ -140,10 +154,10 @@ export function AlignmentPanel({ itemId, cached }: Props) {
     );
   }
 
-  // ========== 运行中：phase + 增量 markdown ==========
+  // ========== 运行中：phase + 思考 + 增量 markdown ==========
   if (isRunning) {
     const phaseText = sse.phaseMessage || '正在准备...';
-    const preview = sse.typing.slice(-600); // 只显示最近 600 字
+    const preview = sse.typing; // 全量累积
     return (
       <div className="rounded-lg border border-violet-500/30 bg-violet-500/[0.06] p-4 space-y-3">
         {liveModel?.model && <ModelBadge model={liveModel} />}
@@ -151,11 +165,12 @@ export function AlignmentPanel({ itemId, cached }: Props) {
           <Loader2 size={16} className="animate-spin" />
           <span className="font-semibold">{phaseText}</span>
         </div>
+        {thinking && <ThinkingBlock text={thinking} done={!!preview} />}
         {preview && (
-          <pre className="text-[11px] text-white/60 font-mono whitespace-pre-wrap break-words max-h-48 overflow-auto bg-black/30 rounded p-3 border border-white/5">
-            {preview}
+          <div className="rounded-lg border border-white/10 bg-black/30 p-3 max-h-72 overflow-auto text-[13px] text-white/85">
+            <PrMarkdown>{preview}</PrMarkdown>
             <span className="inline-block w-1 h-3 bg-violet-400 animate-pulse ml-0.5" />
-          </pre>
+          </div>
         )}
         <button
           type="button"
@@ -245,7 +260,9 @@ function AlignmentResult({ report, onRerun, error }: ResultProps) {
             )}
           </div>
           {report.summary && (
-            <div className="mt-1.5 text-sm text-white font-medium leading-snug">{report.summary}</div>
+            <div className="mt-1.5 text-sm text-white font-medium leading-snug">
+              <PrMarkdown variant="inline">{report.summary}</PrMarkdown>
+            </div>
           )}
         </div>
         <button
@@ -334,11 +351,13 @@ function Section({ title, color, icon, items }: SectionProps) {
         <span>{title}</span>
         <span className="text-[10px] opacity-60">· {items.length}</span>
       </div>
-      <ul className="space-y-1.5 text-xs text-white/80">
+      <ul className="space-y-1.5 text-xs text-white/85">
         {items.map((it, i) => (
-          <li key={i} className="leading-relaxed">
-            <span className="text-white/30 mr-1">•</span>
-            {it}
+          <li key={i} className="leading-relaxed flex gap-1.5">
+            <span className="text-white/30">•</span>
+            <div className="flex-1 min-w-0">
+              <PrMarkdown variant="inline">{it}</PrMarkdown>
+            </div>
           </li>
         ))}
       </ul>
@@ -350,7 +369,47 @@ function InlineBlock({ title, content }: { title: string; content: string }) {
   return (
     <div className="rounded-lg border border-white/10 bg-white/[0.02] p-3">
       <div className="text-xs font-semibold text-white/70 mb-1">{title}</div>
-      <div className="text-xs text-white/70 leading-relaxed">{content}</div>
+      <div className="text-xs text-white/85 leading-relaxed">
+        <PrMarkdown>{content}</PrMarkdown>
+      </div>
+    </div>
+  );
+}
+
+// ============================================================
+// 思考过程（推理模型 reasoning_content）
+// ============================================================
+
+interface ThinkingBlockProps {
+  text: string;
+  done: boolean;
+}
+
+function ThinkingBlock({ text, done }: ThinkingBlockProps) {
+  const [open, setOpen] = useState(!done);
+  useEffect(() => {
+    if (done) setOpen(false);
+  }, [done]);
+
+  return (
+    <div className="rounded-lg border border-amber-500/20 bg-amber-500/[0.04]">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className="w-full flex items-center gap-2 px-3 py-2 text-[11px] text-amber-200 hover:bg-amber-500/5 transition"
+      >
+        {open ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+        <Brain size={12} />
+        <span className="font-semibold">AI 思考过程</span>
+        <span className="opacity-60">· {text.length} 字符</span>
+        {!done && <Loader2 size={10} className="animate-spin ml-auto" />}
+      </button>
+      {open && (
+        <pre className="px-3 pb-3 text-[11px] text-amber-100/70 font-mono whitespace-pre-wrap break-words max-h-48 overflow-auto">
+          {text}
+          {!done && <span className="inline-block w-1 h-3 bg-amber-400 animate-pulse ml-0.5" />}
+        </pre>
+      )}
     </div>
   );
 }

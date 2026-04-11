@@ -857,18 +857,23 @@ public sealed class PrReviewController : ControllerBase
     /// text chunk，Controller 如果什么都不写，前端会卡在"正在总结..."静态文案，
     /// 违反 rule.llm-visibility「禁止空白等待」原则。
     ///
+    /// 为什么区分 Thinking 和 Text：
+    /// 推理模型（qwen-thinking / deepseek-r1）先吐 reasoning_content 再吐正文。
+    /// 只处理 Text chunk 会把几十秒思考当空白等待——这是前一版心跳规则漏解决的
+    /// 真正根源：日志 firstByteAt 只有 1.8s，但 SSE 首字事件 52s，差值就是思考时长。
+    /// 现在 Thinking 走独立的 SSE thinking 事件，前端展示在折叠面板里。
+    ///
     /// 实现要点：
-    /// - 后台任务每 2 秒发一个 phase=waiting 事件，携带 elapsed 秒数
-    /// - 收到第一个 delta 时立刻取消心跳、await drain、发 phase=streaming
+    /// - 后台任务每 2 秒发 phase=waiting 事件带 elapsed 秒数（没收到任何 chunk 时）
+    /// - 收到第一个 delta（thinking 或 text 都算）时停心跳、发 phase=thinking/streaming
     /// - 所有 SSE 写入走 SemaphoreSlim 串行化，避免心跳和主循环的写入交织
-    /// - 心跳任务自身的异常一律吞掉，不能影响主流程；主循环的异常正常向外抛，
-    ///   由调用方的 try/catch 持久化错误状态
+    /// - Thinking chunk 不进 accumulator，只有 Text 才累积到最终 markdown
     ///
     /// 该方法在 finally 中保证清理 CancellationTokenSource + SemaphoreSlim，
     /// 并 await 心跳任务结束，避免孤儿后台任务继续尝试写入已关闭的 Response。
     /// </summary>
     private async Task StreamLlmWithHeartbeatAsync(
-        IAsyncEnumerable<string> source,
+        IAsyncEnumerable<LlmStreamDelta> source,
         PrReviewModelInfoHolder modelInfo,
         StringBuilder accumulator,
         string waitingLabel)
@@ -876,6 +881,7 @@ public sealed class PrReviewController : ControllerBase
         using var heartbeatCts = new CancellationTokenSource();
         using var writeLock = new SemaphoreSlim(1, 1);
         var firstChunk = true;
+        var sawText = false;
         var start = DateTime.UtcNow;
 
         async Task SafeWriteAsync(string eventType, object data)
@@ -919,7 +925,7 @@ public sealed class PrReviewController : ControllerBase
         {
             await foreach (var delta in source)
             {
-                // 首次 chunk：停心跳、切 streaming 状态
+                // 首次 chunk（thinking 或 text 都算）：停心跳
                 if (firstChunk)
                 {
                     firstChunk = false;
@@ -929,8 +935,8 @@ public sealed class PrReviewController : ControllerBase
                     {
                         await SafeWriteAsync("phase", new
                         {
-                            phase = "streaming",
-                            message = "AI 正在输出…",
+                            phase = delta.IsThinking ? "thinking" : "streaming",
+                            message = delta.IsThinking ? "AI 正在思考…" : "AI 正在输出…",
                         });
                     }
                     catch (ObjectDisposedException) { return; }
@@ -954,13 +960,42 @@ public sealed class PrReviewController : ControllerBase
                     modelInfo.Captured = false;
                 }
 
-                accumulator.Append(delta);
-                try
+                if (delta.IsThinking)
                 {
-                    await SafeWriteAsync("typing", new { text = delta });
+                    // 思考过程：走独立 thinking 事件，不进 accumulator
+                    try
+                    {
+                        await SafeWriteAsync("thinking", new { text = delta.Content });
+                    }
+                    catch (ObjectDisposedException) { return; }
+                    catch (OperationCanceledException) { return; }
                 }
-                catch (ObjectDisposedException) { return; }
-                catch (OperationCanceledException) { return; }
+                else
+                {
+                    // 正式输出：从思考切换到正文时额外推一次 streaming 阶段事件
+                    if (!sawText)
+                    {
+                        sawText = true;
+                        try
+                        {
+                            await SafeWriteAsync("phase", new
+                            {
+                                phase = "streaming",
+                                message = "AI 正在输出…",
+                            });
+                        }
+                        catch (ObjectDisposedException) { return; }
+                        catch (OperationCanceledException) { return; }
+                    }
+
+                    accumulator.Append(delta.Content);
+                    try
+                    {
+                        await SafeWriteAsync("typing", new { text = delta.Content });
+                    }
+                    catch (ObjectDisposedException) { return; }
+                    catch (OperationCanceledException) { return; }
+                }
             }
         }
         finally

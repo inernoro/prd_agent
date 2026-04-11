@@ -10,10 +10,14 @@ import {
   ListChecks,
   Telescope,
   CircleDot,
+  Brain,
+  ChevronDown,
+  ChevronRight,
 } from 'lucide-react';
 import { useSseStream } from '@/lib/useSseStream';
 import { getPrReviewSummaryStreamUrl, type PrSummaryReportDto } from '@/services/real/prReview';
 import { usePrReviewStore } from './usePrReviewStore';
+import { PrMarkdown } from './PrMarkdown';
 
 interface Props {
   itemId: string;
@@ -42,6 +46,7 @@ export function SummaryPanel({ itemId, cached }: Props) {
   const [localResult, setLocalResult] = useState<PrSummaryReportDto | null>(cached ?? null);
   const [finalError, setFinalError] = useState<string | null>(null);
   const [liveModel, setLiveModel] = useState<ModelInfo | null>(null);
+  const [thinking, setThinking] = useState('');
   const fullMdRef = useRef('');
 
   useEffect(() => {
@@ -72,11 +77,19 @@ export function SummaryPanel({ itemId, cached }: Props) {
     }
   }, []);
 
+  const handleThinking = useCallback((data: unknown) => {
+    const d = data as { text?: string };
+    if (typeof d.text === 'string' && d.text) {
+      setThinking((prev) => prev + d.text);
+    }
+  }, []);
+
   const sse = useSseStream({
     url: '',
     onEvent: {
       result: handleResult,
       model: handleModel,
+      thinking: handleThinking,
     },
     onTyping: (text) => {
       fullMdRef.current += text;
@@ -89,6 +102,7 @@ export function SummaryPanel({ itemId, cached }: Props) {
   const handleStart = useCallback(() => {
     setFinalError(null);
     setLiveModel(null);
+    setThinking('');
     fullMdRef.current = '';
     sse.reset();
     void sse.start({ url: getPrReviewSummaryStreamUrl(itemId) });
@@ -133,7 +147,7 @@ export function SummaryPanel({ itemId, cached }: Props) {
   // ========== 运行中 ==========
   if (isRunning) {
     const phaseText = sse.phaseMessage || '正在准备...';
-    const preview = sse.typing.slice(-600);
+    const preview = sse.typing; // 正文累积
     return (
       <div className="rounded-lg border border-sky-500/30 bg-sky-500/[0.06] p-4 space-y-3">
         {liveModel?.model && <ModelBadge model={liveModel} />}
@@ -141,11 +155,12 @@ export function SummaryPanel({ itemId, cached }: Props) {
           <Loader2 size={16} className="animate-spin" />
           <span className="font-semibold">{phaseText}</span>
         </div>
+        {thinking && <ThinkingBlock text={thinking} done={!!preview} />}
         {preview && (
-          <pre className="text-[11px] text-white/60 font-mono whitespace-pre-wrap break-words max-h-48 overflow-auto bg-black/30 rounded p-3 border border-white/5">
-            {preview}
+          <div className="rounded-lg border border-white/10 bg-black/30 p-3 max-h-72 overflow-auto text-[13px] text-white/85">
+            <PrMarkdown>{preview}</PrMarkdown>
             <span className="inline-block w-1 h-3 bg-sky-400 animate-pulse ml-0.5" />
-          </pre>
+          </div>
         )}
         <button
           type="button"
@@ -226,7 +241,9 @@ function SummaryResult({ report, onRerun, error }: ResultProps) {
           </div>
           {(sections.oneLiner || report.headline) && (
             <div className="mt-1.5 text-sm text-white font-medium leading-snug">
-              {sections.oneLiner || report.headline}
+              <PrMarkdown variant="inline">
+                {sections.oneLiner || report.headline || ''}
+              </PrMarkdown>
             </div>
           )}
         </div>
@@ -256,9 +273,11 @@ function SummaryResult({ report, onRerun, error }: ResultProps) {
           </div>
           <ul className="space-y-1.5 text-xs text-white/80">
             {sections.keyChanges.map((it, i) => (
-              <li key={i} className="leading-relaxed">
-                <span className="text-white/30 mr-1">•</span>
-                {it}
+              <li key={i} className="leading-relaxed flex gap-1.5">
+                <span className="text-white/30">•</span>
+                <div className="flex-1 min-w-0">
+                  <PrMarkdown variant="inline">{it}</PrMarkdown>
+                </div>
               </li>
             ))}
           </ul>
@@ -272,7 +291,9 @@ function SummaryResult({ report, onRerun, error }: ResultProps) {
             <Layers size={14} />
             <span>主要影响</span>
           </div>
-          <div className="text-xs text-white/70 leading-relaxed">{sections.impact}</div>
+          <div className="text-xs text-white/80 leading-relaxed">
+            <PrMarkdown>{sections.impact}</PrMarkdown>
+          </div>
         </div>
       )}
 
@@ -283,7 +304,9 @@ function SummaryResult({ report, onRerun, error }: ResultProps) {
             <Telescope size={14} />
             <span>审查建议</span>
           </div>
-          <div className="text-xs text-white/80 leading-relaxed">{sections.reviewAdvice}</div>
+          <div className="text-xs text-white/85 leading-relaxed">
+            <PrMarkdown>{sections.reviewAdvice}</PrMarkdown>
+          </div>
         </div>
       )}
 
@@ -296,6 +319,46 @@ function SummaryResult({ report, onRerun, error }: ResultProps) {
           {report.markdown}
         </pre>
       </details>
+    </div>
+  );
+}
+
+// ============================================================
+// 思考过程（推理模型 reasoning_content）
+// ============================================================
+
+interface ThinkingBlockProps {
+  text: string;
+  /** true 时表示正文已经开始输出，思考结束，默认折叠 */
+  done: boolean;
+}
+
+function ThinkingBlock({ text, done }: ThinkingBlockProps) {
+  const [open, setOpen] = useState(!done);
+  useEffect(() => {
+    // 一旦正文开始输出就自动折叠思考
+    if (done) setOpen(false);
+  }, [done]);
+
+  return (
+    <div className="rounded-lg border border-violet-500/20 bg-violet-500/[0.04]">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className="w-full flex items-center gap-2 px-3 py-2 text-[11px] text-violet-200 hover:bg-violet-500/5 transition"
+      >
+        {open ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+        <Brain size={12} />
+        <span className="font-semibold">AI 思考过程</span>
+        <span className="opacity-60">· {text.length} 字符</span>
+        {!done && <Loader2 size={10} className="animate-spin ml-auto" />}
+      </button>
+      {open && (
+        <pre className="px-3 pb-3 text-[11px] text-violet-100/70 font-mono whitespace-pre-wrap break-words max-h-48 overflow-auto">
+          {text}
+          {!done && <span className="inline-block w-1 h-3 bg-violet-400 animate-pulse ml-0.5" />}
+        </pre>
+      )}
     </div>
   );
 }
