@@ -714,6 +714,13 @@ cds_start_background() {
     return 0
   fi
 
+  # Safety net: always re-source .cds.env right before spawning the Node
+  # process so the child inherits the on-disk values, not whatever stale
+  # copy the parent shell captured minutes ago. Without this, any caller
+  # that modifies .cds.env (connect/disconnect/init) would need to
+  # remember to re-export every variable by hand — too easy to miss.
+  load_env
+
   local mp; mp="$(read_port masterPort "${CDS_MASTER_PORT:-9900}")"
   local wp; wp="$(read_port workerPort "${CDS_WORKER_PORT:-5500}")"
 
@@ -1090,6 +1097,19 @@ connect_cmd() {
   env_upsert CDS_EXECUTOR_TOKEN ""
   ok "已写入 executor 配置 -> $ENV_FILE"
 
+  # CRITICAL: re-export the new values into the current shell so `nohup node`
+  # below inherits them. `env_upsert` only writes to disk; without this
+  # re-export the child process sees the OLD values that `load_env` read at
+  # the top of this function, which manifests as CDS booting in standalone
+  # mode (reading stale process.env.CDS_MODE) even though .cds.env on disk
+  # says CDS_MODE=executor. Seen on B during the cluster bootstrap dry run.
+  export CDS_MODE="executor"
+  export CDS_MASTER_URL="$master_url"
+  export CDS_SCHEDULER_URL="$master_url"
+  export CDS_BOOTSTRAP_TOKEN="$token"
+  export CDS_BOOTSTRAP_TOKEN_EXPIRES_AT="$(iso_offset_seconds "$BOOTSTRAP_TOKEN_TTL_SECONDS")"
+  unset CDS_EXECUTOR_TOKEN
+
   # Restart CDS so the new mode takes effect. Existing containers on this
   # host keep running; only the Node process is recycled.
   if cds_is_running; then
@@ -1201,6 +1221,17 @@ disconnect_cmd() {
   env_upsert CDS_BOOTSTRAP_TOKEN ""
   env_upsert CDS_BOOTSTRAP_TOKEN_EXPIRES_AT ""
   ok "已重置本地配置为 standalone"
+
+  # Re-export into the current shell so the subsequent cds_start_background
+  # call inherits the standalone mode (see matching note in connect_cmd).
+  # Without this, the child node process would read process.env.CDS_MODE
+  # still = "executor" from when this shell was first loaded.
+  export CDS_MODE="standalone"
+  unset CDS_MASTER_URL
+  unset CDS_SCHEDULER_URL
+  unset CDS_EXECUTOR_TOKEN
+  unset CDS_BOOTSTRAP_TOKEN
+  unset CDS_BOOTSTRAP_TOKEN_EXPIRES_AT
 
   if cds_is_running; then
     info "重启 CDS..."
