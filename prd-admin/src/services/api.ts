@@ -367,6 +367,29 @@ export const api = {
     },
   },
 
+  // ============ PR Review V2（pr-review）============
+  prReview: {
+    auth: {
+      status: () => '/api/pr-review/auth/status',
+      start: () => '/api/pr-review/auth/start',
+      disconnect: () => '/api/pr-review/auth/connection',
+    },
+    items: {
+      list: (page?: number, pageSize?: number) => {
+        const q = new URLSearchParams();
+        if (page) q.set('page', String(page));
+        if (pageSize) q.set('pageSize', String(pageSize));
+        const qs = q.toString();
+        return `/api/pr-review/items${qs ? `?${qs}` : ''}`;
+      },
+      create: () => '/api/pr-review/items',
+      byId: (id: string) => `/api/pr-review/items/${id}`,
+      refresh: (id: string) => `/api/pr-review/items/${id}/refresh`,
+      updateNote: (id: string) => `/api/pr-review/items/${id}/note`,
+      delete: (id: string) => `/api/pr-review/items/${id}`,
+    },
+  },
+
   // ============ PR Review Prism ============
   prReviewPrism: {
     status: () => '/api/pr-review-prism/status',

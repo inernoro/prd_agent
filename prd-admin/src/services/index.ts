@@ -1517,6 +1517,27 @@ export {
   batchRefreshPrReviewPrismSubmissions,
   deletePrReviewPrismSubmission,
 } from '@/services/real/prReviewPrism';
+
+// ============ PR Review V2（pr-review）============
+export {
+  getPrReviewAuthStatus,
+  startPrReviewOAuth,
+  disconnectPrReviewGitHub,
+  listPrReviewItems,
+  createPrReviewItem,
+  refreshPrReviewItem,
+  updatePrReviewItemNote,
+  deletePrReviewItem,
+} from '@/services/real/prReview';
+export type {
+  PrReviewState,
+  PrReviewSnapshotDto,
+  PrReviewItemDto,
+  PrReviewListResponse,
+  PrReviewAuthStatus,
+  PrReviewAuthStart,
+} from '@/services/real/prReview';
+
 export type {
   PrReviewPrismBatchRefreshFailure,
   PrReviewPrismBatchRefreshResult,
