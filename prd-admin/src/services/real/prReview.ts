@@ -199,6 +199,95 @@ export async function getPrReviewItemRaw(
   return apiRequest<PrReviewRawContentDto>(api.prReview.items.raw(id));
 }
 
+// ===== PR 历史数据（commits / reviews / comments / timeline / check runs）=====
+
+export interface PrHistoryCommit {
+  sha: string;
+  message: string;
+  authorName: string;
+  authorLogin?: string | null;
+  authorAvatarUrl?: string | null;
+  authoredAt?: string | null;
+  htmlUrl?: string | null;
+}
+
+export interface PrHistoryReview {
+  id: number;
+  state: string; // APPROVED / CHANGES_REQUESTED / COMMENTED / DISMISSED / PENDING
+  authorLogin: string;
+  authorAvatarUrl?: string | null;
+  body?: string | null;
+  submittedAt?: string | null;
+  htmlUrl?: string | null;
+}
+
+export interface PrHistoryReviewComment {
+  id: number;
+  authorLogin: string;
+  authorAvatarUrl?: string | null;
+  body?: string | null;
+  createdAt?: string | null;
+  path?: string | null;
+  line?: number | null;
+  diffHunk?: string | null;
+  htmlUrl?: string | null;
+}
+
+export interface PrHistoryIssueComment {
+  id: number;
+  authorLogin: string;
+  authorAvatarUrl?: string | null;
+  body?: string | null;
+  createdAt?: string | null;
+  htmlUrl?: string | null;
+}
+
+export interface PrHistoryTimelineEvent {
+  event: string;
+  actorLogin?: string | null;
+  actorAvatarUrl?: string | null;
+  createdAt?: string | null;
+  label?: string | null;
+  assigneeLogin?: string | null;
+  requestedReviewerLogin?: string | null;
+  commitSha?: string | null;
+  commitMessage?: string | null;
+  state?: string | null;
+  body?: string | null;
+  rename?: string | null;
+}
+
+export interface PrHistoryCheckRun {
+  id: number;
+  name: string;
+  status: string; // queued / in_progress / completed
+  conclusion?: string | null; // success / failure / neutral / cancelled / skipped / timed_out / action_required
+  startedAt?: string | null;
+  completedAt?: string | null;
+  htmlUrl?: string | null;
+  appName?: string | null;
+}
+
+export interface PrHistoryDto {
+  commits: PrHistoryCommit[];
+  reviews: PrHistoryReview[];
+  reviewComments: PrHistoryReviewComment[];
+  issueComments: PrHistoryIssueComment[];
+  timeline: PrHistoryTimelineEvent[];
+  checkRuns: PrHistoryCheckRun[];
+  errors: string[];
+}
+
+/**
+ * 拉取 PR 的 GitHub 完整审查历史。
+ * 后端并行拉取 6 个 GitHub API，每次调用都实时拉最新（不缓存）。
+ */
+export async function getPrReviewItemHistory(
+  id: string,
+): Promise<ApiResponse<PrHistoryDto>> {
+  return apiRequest<PrHistoryDto>(api.prReview.items.history(id));
+}
+
 export async function updatePrReviewItemNote(
   id: string,
   note: string | null,

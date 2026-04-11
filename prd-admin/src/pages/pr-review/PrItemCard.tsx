@@ -9,11 +9,13 @@ import {
   GitMerge,
   AlertTriangle,
   FileText,
+  History,
 } from 'lucide-react';
 import { usePrReviewStore } from './usePrReviewStore';
 import { AlignmentPanel } from './AlignmentPanel';
 import { SummaryPanel } from './SummaryPanel';
 import { PrRawContentModal } from './PrRawContentModal';
+import { PrHistoryModal } from './PrHistoryModal';
 import type { PrReviewItemDto, PrReviewState } from '@/services/real/prReview';
 
 interface Props {
@@ -52,6 +54,7 @@ export function PrItemCard({ item }: Props) {
   const [expanded, setExpanded] = useState(false);
   const [noteDraft, setNoteDraft] = useState(item.note ?? '');
   const [rawOpen, setRawOpen] = useState(false);
+  const [historyOpen, setHistoryOpen] = useState(false);
 
   const refreshItem = usePrReviewStore((s) => s.refreshItem);
   const updateNote = usePrReviewStore((s) => s.updateNote);
@@ -79,44 +82,61 @@ export function PrItemCard({ item }: Props) {
     <div
       className={`rounded-xl border ${hasError ? 'border-red-500/30 bg-red-500/5' : 'border-white/10 bg-white/[0.03]'} transition overflow-hidden`}
     >
-      {/* Header: 折叠态 */}
-      <button
-        type="button"
-        onClick={() => setExpanded((v) => !v)}
-        className="w-full px-5 py-4 text-left hover:bg-white/5 transition"
-      >
-        <div className="flex items-start gap-3">
-          <Icon size={18} className={visual.color.split(' ')[0] + ' mt-1 shrink-0'} />
-          <div className="flex-1 min-w-0">
-            <div className="flex items-center gap-2 text-xs text-white/50">
-              <span className="font-mono">
-                {item.owner}/{item.repo}#{item.number}
-              </span>
-              <span className={`px-2 py-0.5 rounded-md border text-[11px] ${visual.color}`}>
-                {visual.label}
-              </span>
-              {hasError && (
-                <span className="flex items-center gap-1 text-red-300">
-                  <AlertTriangle size={12} />
-                  刷新异常
+      {/* Header: 折叠态（点击区域 + 右上角浮动按钮）*/}
+      <div className="relative">
+        <button
+          type="button"
+          onClick={() => setExpanded((v) => !v)}
+          className="w-full px-5 py-4 pr-16 text-left hover:bg-white/5 transition"
+        >
+          <div className="flex items-start gap-3">
+            <Icon size={18} className={visual.color.split(' ')[0] + ' mt-1 shrink-0'} />
+            <div className="flex-1 min-w-0">
+              <div className="flex items-center gap-2 text-xs text-white/50">
+                <span className="font-mono">
+                  {item.owner}/{item.repo}#{item.number}
                 </span>
-              )}
-            </div>
-            <div className="mt-1 text-sm font-semibold text-white truncate">
-              {snapshot?.title ?? '（尚未拉取到标题）'}
-            </div>
-            <div className="mt-1 flex items-center gap-3 text-xs text-white/40">
-              {snapshot?.authorLogin && <span>作者 {snapshot.authorLogin}</span>}
-              {snapshot && (
-                <span>
-                  +{snapshot.additions} / -{snapshot.deletions} · {snapshot.changedFiles} files
+                <span className={`px-2 py-0.5 rounded-md border text-[11px] ${visual.color}`}>
+                  {visual.label}
                 </span>
-              )}
-              <span>更新 {formatDateTime(item.updatedAt)}</span>
+                {hasError && (
+                  <span className="flex items-center gap-1 text-red-300">
+                    <AlertTriangle size={12} />
+                    刷新异常
+                  </span>
+                )}
+              </div>
+              <div className="mt-1 text-sm font-semibold text-white truncate">
+                {snapshot?.title ?? '（尚未拉取到标题）'}
+              </div>
+              <div className="mt-1 flex items-center gap-3 text-xs text-white/40">
+                {snapshot?.authorLogin && <span>作者 {snapshot.authorLogin}</span>}
+                {snapshot && (
+                  <span>
+                    +{snapshot.additions} / -{snapshot.deletions} · {snapshot.changedFiles} files
+                  </span>
+                )}
+                <span>更新 {formatDateTime(item.updatedAt)}</span>
+              </div>
             </div>
           </div>
-        </div>
-      </button>
+        </button>
+
+        {/* 右上角悬浮按钮：GitHub 历史记录
+            stopPropagation 是必须的 —— 否则点击会穿透到外层按钮触发折叠/展开 */}
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            setHistoryOpen(true);
+          }}
+          title="查看 GitHub 审查历史（commits / reviews / comments / CI）"
+          className="absolute top-3 right-3 flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-violet-500/15 text-violet-200 text-xs hover:bg-violet-500/25 transition border border-violet-400/20"
+        >
+          <History size={13} />
+          历史
+        </button>
+      </div>
 
       {/* Expanded: 详情 + 笔记 */}
       {expanded && (
@@ -236,6 +256,13 @@ export function PrItemCard({ item }: Props) {
       )}
 
       {rawOpen && <PrRawContentModal itemId={item.id} onClose={() => setRawOpen(false)} />}
+      {historyOpen && (
+        <PrHistoryModal
+          itemId={item.id}
+          htmlUrl={item.htmlUrl}
+          onClose={() => setHistoryOpen(false)}
+        />
+      )}
     </div>
   );
 }

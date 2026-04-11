@@ -363,6 +363,414 @@ public sealed class GitHubPrClient
             HeadSha = dto.Head?.Sha ?? string.Empty,
         };
     }
+
+    // =========================================================
+    // 历史数据拉取：PR 的 commits / reviews / comments / timeline / check-runs
+    // =========================================================
+
+    /// <summary>
+    /// 并行拉取一个 PR 的完整审查历史。失败的子请求不致命，会在对应字段放空列表，
+    /// 这样至少能拿到部分数据展示。调用方应该检查 Errors 字段了解哪些段落拉不到。
+    /// </summary>
+    public async Task<GitHubPrHistoryDto> FetchHistoryAsync(
+        string accessToken,
+        string owner,
+        string repo,
+        int number,
+        string? headSha,
+        CancellationToken ct)
+    {
+        if (!PrUrlParser.IsSafeOwnerRepo(owner, repo))
+        {
+            throw PrReviewException.UrlInvalid("owner/repo 含非法字符");
+        }
+
+        using var client = CreateAuthedClient(accessToken);
+        // timeline api 需要 mockingbird 版本 Accept header 才能看到全部事件
+        // （否则只返回 issue 级事件，看不到 reviewed/committed 等 PR 专属事件）
+        client.DefaultRequestHeaders.Accept.Clear();
+        client.DefaultRequestHeaders.Accept.Add(new MediaTypeWithQualityHeaderValue("application/vnd.github+json"));
+        client.DefaultRequestHeaders.Accept.Add(new MediaTypeWithQualityHeaderValue("application/vnd.github.mockingbird-preview+json"));
+
+        var errors = new List<string>();
+
+        // 所有子请求并行发起，互不阻塞
+        var commitsTask = SafeFetchAsync(
+            () => FetchCommitsAsync(client, owner, repo, number, ct),
+            nameof(FetchCommitsAsync), errors);
+
+        var reviewsTask = SafeFetchAsync(
+            () => FetchReviewsAsync(client, owner, repo, number, ct),
+            nameof(FetchReviewsAsync), errors);
+
+        var reviewCommentsTask = SafeFetchAsync(
+            () => FetchReviewCommentsAsync(client, owner, repo, number, ct),
+            nameof(FetchReviewCommentsAsync), errors);
+
+        var issueCommentsTask = SafeFetchAsync(
+            () => FetchIssueCommentsAsync(client, owner, repo, number, ct),
+            nameof(FetchIssueCommentsAsync), errors);
+
+        var timelineTask = SafeFetchAsync(
+            () => FetchTimelineAsync(client, owner, repo, number, ct),
+            nameof(FetchTimelineAsync), errors);
+
+        var checkRunsTask = string.IsNullOrWhiteSpace(headSha)
+            ? Task.FromResult(new List<GitHubCheckRunDto>())
+            : SafeFetchAsync(
+                () => FetchCheckRunsAsync(client, owner, repo, headSha!, ct),
+                nameof(FetchCheckRunsAsync), errors);
+
+        await Task.WhenAll(commitsTask, reviewsTask, reviewCommentsTask, issueCommentsTask, timelineTask, checkRunsTask);
+
+        return new GitHubPrHistoryDto
+        {
+            Commits = await commitsTask,
+            Reviews = await reviewsTask,
+            ReviewComments = await reviewCommentsTask,
+            IssueComments = await issueCommentsTask,
+            Timeline = await timelineTask,
+            CheckRuns = await checkRunsTask,
+            Errors = errors,
+        };
+    }
+
+    private async Task<List<T>> SafeFetchAsync<T>(
+        Func<Task<List<T>>> fetcher,
+        string name,
+        List<string> errors)
+    {
+        try
+        {
+            return await fetcher();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "PrReview history fetch {Name} failed", name);
+            lock (errors) { errors.Add($"{name}: {ex.Message}"); }
+            return new List<T>();
+        }
+    }
+
+    private async Task<List<GitHubPrCommitDto>> FetchCommitsAsync(
+        HttpClient client, string owner, string repo, int number, CancellationToken ct)
+    {
+        // per_page=100 足够覆盖大部分 PR；超过 100 commit 的 PR 极少见，忽略分页
+        var path = $"repos/{owner}/{repo}/pulls/{number}/commits?per_page=100";
+        using var resp = await client.GetAsync(path, ct);
+        if (!resp.IsSuccessStatusCode) return new();
+        var raw = await resp.Content.ReadFromJsonAsync<List<GitHubCommitRawDto>>(cancellationToken: ct) ?? new();
+        return raw.Select(r => new GitHubPrCommitDto
+        {
+            Sha = r.Sha ?? string.Empty,
+            Message = r.Commit?.Message ?? string.Empty,
+            AuthorName = r.Commit?.Author?.Name ?? r.Author?.Login ?? string.Empty,
+            AuthorLogin = r.Author?.Login,
+            AuthorAvatarUrl = r.Author?.AvatarUrl,
+            AuthoredAt = r.Commit?.Author?.Date,
+            HtmlUrl = r.HtmlUrl,
+        }).ToList();
+    }
+
+    private async Task<List<GitHubPrReviewDto>> FetchReviewsAsync(
+        HttpClient client, string owner, string repo, int number, CancellationToken ct)
+    {
+        var path = $"repos/{owner}/{repo}/pulls/{number}/reviews?per_page=100";
+        using var resp = await client.GetAsync(path, ct);
+        if (!resp.IsSuccessStatusCode) return new();
+        var raw = await resp.Content.ReadFromJsonAsync<List<GitHubReviewRawDto>>(cancellationToken: ct) ?? new();
+        return raw.Select(r => new GitHubPrReviewDto
+        {
+            Id = r.Id,
+            State = r.State ?? string.Empty, // APPROVED / CHANGES_REQUESTED / COMMENTED / DISMISSED / PENDING
+            AuthorLogin = r.User?.Login ?? string.Empty,
+            AuthorAvatarUrl = r.User?.AvatarUrl,
+            Body = Truncate(r.Body, 4000),
+            SubmittedAt = r.SubmittedAt,
+            HtmlUrl = r.HtmlUrl,
+        }).ToList();
+    }
+
+    private async Task<List<GitHubPrReviewCommentDto>> FetchReviewCommentsAsync(
+        HttpClient client, string owner, string repo, int number, CancellationToken ct)
+    {
+        var path = $"repos/{owner}/{repo}/pulls/{number}/comments?per_page=100";
+        using var resp = await client.GetAsync(path, ct);
+        if (!resp.IsSuccessStatusCode) return new();
+        var raw = await resp.Content.ReadFromJsonAsync<List<GitHubReviewCommentRawDto>>(cancellationToken: ct) ?? new();
+        return raw.Select(r => new GitHubPrReviewCommentDto
+        {
+            Id = r.Id,
+            AuthorLogin = r.User?.Login ?? string.Empty,
+            AuthorAvatarUrl = r.User?.AvatarUrl,
+            Body = Truncate(r.Body, 4000),
+            CreatedAt = r.CreatedAt,
+            Path = r.Path,
+            Line = r.Line ?? r.OriginalLine,
+            DiffHunk = Truncate(r.DiffHunk, 1000),
+            HtmlUrl = r.HtmlUrl,
+        }).ToList();
+    }
+
+    private async Task<List<GitHubPrIssueCommentDto>> FetchIssueCommentsAsync(
+        HttpClient client, string owner, string repo, int number, CancellationToken ct)
+    {
+        // issue comments 在 /issues/{n}/comments 下，与 PR 对话共享
+        var path = $"repos/{owner}/{repo}/issues/{number}/comments?per_page=100";
+        using var resp = await client.GetAsync(path, ct);
+        if (!resp.IsSuccessStatusCode) return new();
+        var raw = await resp.Content.ReadFromJsonAsync<List<GitHubIssueCommentRawDto>>(cancellationToken: ct) ?? new();
+        return raw.Select(r => new GitHubPrIssueCommentDto
+        {
+            Id = r.Id,
+            AuthorLogin = r.User?.Login ?? string.Empty,
+            AuthorAvatarUrl = r.User?.AvatarUrl,
+            Body = Truncate(r.Body, 4000),
+            CreatedAt = r.CreatedAt,
+            HtmlUrl = r.HtmlUrl,
+        }).ToList();
+    }
+
+    private async Task<List<GitHubPrTimelineEventDto>> FetchTimelineAsync(
+        HttpClient client, string owner, string repo, int number, CancellationToken ct)
+    {
+        // issues timeline 对 PR 同样适用，包含 committed / reviewed / commented /
+        // labeled / unlabeled / assigned / unassigned / head_ref_force_pushed /
+        // head_ref_deleted / merged / closed / reopened / ready_for_review /
+        // converted_to_draft / review_requested / cross-referenced 等 20+ 事件类型
+        var path = $"repos/{owner}/{repo}/issues/{number}/timeline?per_page=100";
+        using var resp = await client.GetAsync(path, ct);
+        if (!resp.IsSuccessStatusCode) return new();
+        var raw = await resp.Content.ReadFromJsonAsync<List<GitHubTimelineRawDto>>(cancellationToken: ct) ?? new();
+        return raw.Select(r => new GitHubPrTimelineEventDto
+        {
+            Event = r.Event ?? string.Empty,
+            ActorLogin = r.Actor?.Login ?? r.User?.Login,
+            ActorAvatarUrl = r.Actor?.AvatarUrl ?? r.User?.AvatarUrl,
+            CreatedAt = r.CreatedAt ?? r.SubmittedAt ?? r.Author?.Date,
+            Label = r.Label?.Name,
+            AssigneeLogin = r.Assignee?.Login,
+            RequestedReviewerLogin = r.RequestedReviewer?.Login,
+            CommitSha = r.CommitId ?? r.Sha,
+            CommitMessage = Truncate(r.Message ?? r.Commit?.Message, 500),
+            State = r.State, // for reviewed events: APPROVED / CHANGES_REQUESTED / COMMENTED
+            Body = Truncate(r.Body, 2000), // for commented events
+            Rename = r.Rename != null ? $"{r.Rename.From} → {r.Rename.To}" : null,
+        }).ToList();
+    }
+
+    private async Task<List<GitHubCheckRunDto>> FetchCheckRunsAsync(
+        HttpClient client, string owner, string repo, string sha, CancellationToken ct)
+    {
+        var path = $"repos/{owner}/{repo}/commits/{sha}/check-runs?per_page=100";
+        using var resp = await client.GetAsync(path, ct);
+        if (!resp.IsSuccessStatusCode) return new();
+        var wrapper = await resp.Content.ReadFromJsonAsync<GitHubCheckRunsWrapperDto>(cancellationToken: ct);
+        return wrapper?.CheckRuns?.Select(c => new GitHubCheckRunDto
+        {
+            Id = c.Id,
+            Name = c.Name ?? string.Empty,
+            Status = c.Status ?? string.Empty, // queued / in_progress / completed
+            Conclusion = c.Conclusion, // success / failure / neutral / cancelled / skipped / timed_out / action_required
+            StartedAt = c.StartedAt,
+            CompletedAt = c.CompletedAt,
+            HtmlUrl = c.HtmlUrl,
+            AppName = c.App?.Name,
+        }).ToList() ?? new();
+    }
+}
+
+// =========================================================
+// 历史数据 DTO（服务层和 Controller 共用，对外暴露给前端）
+// =========================================================
+
+public sealed class GitHubPrHistoryDto
+{
+    public List<GitHubPrCommitDto> Commits { get; set; } = new();
+    public List<GitHubPrReviewDto> Reviews { get; set; } = new();
+    public List<GitHubPrReviewCommentDto> ReviewComments { get; set; } = new();
+    public List<GitHubPrIssueCommentDto> IssueComments { get; set; } = new();
+    public List<GitHubPrTimelineEventDto> Timeline { get; set; } = new();
+    public List<GitHubCheckRunDto> CheckRuns { get; set; } = new();
+    public List<string> Errors { get; set; } = new();
+}
+
+public sealed class GitHubPrCommitDto
+{
+    public string Sha { get; set; } = string.Empty;
+    public string Message { get; set; } = string.Empty;
+    public string AuthorName { get; set; } = string.Empty;
+    public string? AuthorLogin { get; set; }
+    public string? AuthorAvatarUrl { get; set; }
+    public DateTime? AuthoredAt { get; set; }
+    public string? HtmlUrl { get; set; }
+}
+
+public sealed class GitHubPrReviewDto
+{
+    public long Id { get; set; }
+    public string State { get; set; } = string.Empty;
+    public string AuthorLogin { get; set; } = string.Empty;
+    public string? AuthorAvatarUrl { get; set; }
+    public string? Body { get; set; }
+    public DateTime? SubmittedAt { get; set; }
+    public string? HtmlUrl { get; set; }
+}
+
+public sealed class GitHubPrReviewCommentDto
+{
+    public long Id { get; set; }
+    public string AuthorLogin { get; set; } = string.Empty;
+    public string? AuthorAvatarUrl { get; set; }
+    public string? Body { get; set; }
+    public DateTime? CreatedAt { get; set; }
+    public string? Path { get; set; }
+    public int? Line { get; set; }
+    public string? DiffHunk { get; set; }
+    public string? HtmlUrl { get; set; }
+}
+
+public sealed class GitHubPrIssueCommentDto
+{
+    public long Id { get; set; }
+    public string AuthorLogin { get; set; } = string.Empty;
+    public string? AuthorAvatarUrl { get; set; }
+    public string? Body { get; set; }
+    public DateTime? CreatedAt { get; set; }
+    public string? HtmlUrl { get; set; }
+}
+
+public sealed class GitHubPrTimelineEventDto
+{
+    public string Event { get; set; } = string.Empty;
+    public string? ActorLogin { get; set; }
+    public string? ActorAvatarUrl { get; set; }
+    public DateTime? CreatedAt { get; set; }
+    public string? Label { get; set; }
+    public string? AssigneeLogin { get; set; }
+    public string? RequestedReviewerLogin { get; set; }
+    public string? CommitSha { get; set; }
+    public string? CommitMessage { get; set; }
+    public string? State { get; set; }
+    public string? Body { get; set; }
+    public string? Rename { get; set; }
+}
+
+public sealed class GitHubCheckRunDto
+{
+    public long Id { get; set; }
+    public string Name { get; set; } = string.Empty;
+    public string Status { get; set; } = string.Empty;
+    public string? Conclusion { get; set; }
+    public DateTime? StartedAt { get; set; }
+    public DateTime? CompletedAt { get; set; }
+    public string? HtmlUrl { get; set; }
+    public string? AppName { get; set; }
+}
+
+// =========================================================
+// 内部 Raw DTO（反序列化 GitHub REST 响应，不对外暴露）
+// =========================================================
+
+internal sealed class GitHubCommitRawDto
+{
+    [JsonPropertyName("sha")] public string? Sha { get; set; }
+    [JsonPropertyName("commit")] public GitHubCommitInnerDto? Commit { get; set; }
+    [JsonPropertyName("author")] public GitHubUserRef? Author { get; set; }
+    [JsonPropertyName("html_url")] public string? HtmlUrl { get; set; }
+}
+
+internal sealed class GitHubCommitInnerDto
+{
+    [JsonPropertyName("message")] public string? Message { get; set; }
+    [JsonPropertyName("author")] public GitHubCommitAuthorDto? Author { get; set; }
+}
+
+internal sealed class GitHubCommitAuthorDto
+{
+    [JsonPropertyName("name")] public string? Name { get; set; }
+    [JsonPropertyName("date")] public DateTime? Date { get; set; }
+}
+
+internal sealed class GitHubReviewRawDto
+{
+    [JsonPropertyName("id")] public long Id { get; set; }
+    [JsonPropertyName("state")] public string? State { get; set; }
+    [JsonPropertyName("user")] public GitHubUserRef? User { get; set; }
+    [JsonPropertyName("body")] public string? Body { get; set; }
+    [JsonPropertyName("submitted_at")] public DateTime? SubmittedAt { get; set; }
+    [JsonPropertyName("html_url")] public string? HtmlUrl { get; set; }
+}
+
+internal sealed class GitHubReviewCommentRawDto
+{
+    [JsonPropertyName("id")] public long Id { get; set; }
+    [JsonPropertyName("user")] public GitHubUserRef? User { get; set; }
+    [JsonPropertyName("body")] public string? Body { get; set; }
+    [JsonPropertyName("created_at")] public DateTime? CreatedAt { get; set; }
+    [JsonPropertyName("path")] public string? Path { get; set; }
+    [JsonPropertyName("line")] public int? Line { get; set; }
+    [JsonPropertyName("original_line")] public int? OriginalLine { get; set; }
+    [JsonPropertyName("diff_hunk")] public string? DiffHunk { get; set; }
+    [JsonPropertyName("html_url")] public string? HtmlUrl { get; set; }
+}
+
+internal sealed class GitHubIssueCommentRawDto
+{
+    [JsonPropertyName("id")] public long Id { get; set; }
+    [JsonPropertyName("user")] public GitHubUserRef? User { get; set; }
+    [JsonPropertyName("body")] public string? Body { get; set; }
+    [JsonPropertyName("created_at")] public DateTime? CreatedAt { get; set; }
+    [JsonPropertyName("html_url")] public string? HtmlUrl { get; set; }
+}
+
+internal sealed class GitHubTimelineRawDto
+{
+    [JsonPropertyName("event")] public string? Event { get; set; }
+    [JsonPropertyName("actor")] public GitHubUserRef? Actor { get; set; }
+    [JsonPropertyName("user")] public GitHubUserRef? User { get; set; }
+    [JsonPropertyName("created_at")] public DateTime? CreatedAt { get; set; }
+    [JsonPropertyName("submitted_at")] public DateTime? SubmittedAt { get; set; }
+    [JsonPropertyName("label")] public GitHubLabelDto? Label { get; set; }
+    [JsonPropertyName("assignee")] public GitHubUserRef? Assignee { get; set; }
+    [JsonPropertyName("requested_reviewer")] public GitHubUserRef? RequestedReviewer { get; set; }
+    [JsonPropertyName("commit_id")] public string? CommitId { get; set; }
+    [JsonPropertyName("sha")] public string? Sha { get; set; }
+    [JsonPropertyName("message")] public string? Message { get; set; }
+    [JsonPropertyName("commit")] public GitHubCommitInnerDto? Commit { get; set; }
+    [JsonPropertyName("author")] public GitHubCommitAuthorDto? Author { get; set; }
+    [JsonPropertyName("state")] public string? State { get; set; }
+    [JsonPropertyName("body")] public string? Body { get; set; }
+    [JsonPropertyName("rename")] public GitHubRenameDto? Rename { get; set; }
+}
+
+internal sealed class GitHubRenameDto
+{
+    [JsonPropertyName("from")] public string? From { get; set; }
+    [JsonPropertyName("to")] public string? To { get; set; }
+}
+
+internal sealed class GitHubCheckRunsWrapperDto
+{
+    [JsonPropertyName("total_count")] public int TotalCount { get; set; }
+    [JsonPropertyName("check_runs")] public List<GitHubCheckRunRawDto>? CheckRuns { get; set; }
+}
+
+internal sealed class GitHubCheckRunRawDto
+{
+    [JsonPropertyName("id")] public long Id { get; set; }
+    [JsonPropertyName("name")] public string? Name { get; set; }
+    [JsonPropertyName("status")] public string? Status { get; set; }
+    [JsonPropertyName("conclusion")] public string? Conclusion { get; set; }
+    [JsonPropertyName("started_at")] public DateTime? StartedAt { get; set; }
+    [JsonPropertyName("completed_at")] public DateTime? CompletedAt { get; set; }
+    [JsonPropertyName("html_url")] public string? HtmlUrl { get; set; }
+    [JsonPropertyName("app")] public GitHubCheckAppDto? App { get; set; }
+}
+
+internal sealed class GitHubCheckAppDto
+{
+    [JsonPropertyName("name")] public string? Name { get; set; }
 }
 
 // ===== GitHub REST API DTOs =====

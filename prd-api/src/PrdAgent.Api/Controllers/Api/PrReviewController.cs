@@ -398,6 +398,54 @@ public sealed class PrReviewController : ControllerBase
     }
 
     /// <summary>
+    /// 返回 PR 的 GitHub 审查历史：commits / reviews / review comments /
+    /// issue comments / timeline events / check runs。
+    ///
+    /// 并行拉取 6 个 GitHub API，每个子请求失败不致命——对应字段会是空列表，
+    /// 前端根据 errors 字段显示"部分段落拉不到"的提示。
+    /// 不做缓存：每次点击都实时拉最新（符合 SSOT 原则）。
+    /// </summary>
+    [HttpGet("items/{id}/history")]
+    [Authorize]
+    public async Task<IActionResult> GetItemHistory(string id, CancellationToken ct)
+    {
+        var userId = this.GetRequiredUserId();
+        var item = await _db.PrReviewItems
+            .Find(x => x.Id == id && x.UserId == userId)
+            .FirstOrDefaultAsync(ct);
+        if (item == null)
+        {
+            return NotFound(ApiResponse<object>.Fail(PrReviewErrorCodes.PR_ITEM_NOT_FOUND, "PR 记录不存在或不属于你"));
+        }
+
+        string accessToken;
+        try
+        {
+            accessToken = await ResolveUserTokenAsync(userId, ct);
+        }
+        catch (PrReviewException ex)
+        {
+            return MapException(ex);
+        }
+
+        try
+        {
+            var history = await _github.FetchHistoryAsync(
+                accessToken,
+                item.Owner,
+                item.Repo,
+                item.Number,
+                item.Snapshot?.HeadSha,
+                ct);
+            return Ok(ApiResponse<object>.Ok(history));
+        }
+        catch (PrReviewException ex)
+        {
+            return MapException(ex);
+        }
+    }
+
+    /// <summary>
     /// 重新拉取：用用户 token 查 GitHub，更新快照与 lastRefreshedAt。
     /// </summary>
     [HttpPost("items/{id}/refresh")]
