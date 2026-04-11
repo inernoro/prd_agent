@@ -38,18 +38,18 @@ export function FeatureDeepDive() {
       className="relative py-28 md:py-36"
       style={{ fontFamily: 'var(--font-body)' }}
     >
-      {/* Section header —— 上下留白翻倍 */}
-      <div className="max-w-6xl mx-auto px-6 pt-10 mb-36 md:mb-48">
+      {/* Section header —— 上下留白翻倍 · section accent 去紫（改冷白 slate）*/}
+      <div className="max-w-[1240px] mx-auto px-6 pt-10 mb-36 md:mb-48">
         <SectionHeader
           Icon={Sparkles}
           eyebrow={t.features.eyebrow}
-          accent="#a855f7"
+          accent="#cbd5e1"
           title={splitLine(t.features.title)}
           subtitle={t.features.subtitle}
         />
       </div>
 
-      {/* 六段左右交替，块间距拉大 */}
+      {/* 六段左右交替，容器拉宽 + 块间距 */}
       <div className="space-y-44 md:space-y-56">
         {t.features.items.map((feature, i) => (
           <FeatureBlock
@@ -99,10 +99,10 @@ function FeatureBlock({
   const accent = MOCKUPS[id as keyof typeof MOCKUPS]?.accent ?? '#a855f7';
 
   return (
-    <div className="max-w-6xl mx-auto px-6">
+    <div className="max-w-[1240px] mx-auto px-6 md:px-10">
       <div
         className={cn(
-          'grid md:grid-cols-2 gap-12 md:gap-20 items-center',
+          'grid md:grid-cols-2 gap-14 md:gap-28 items-center',
           reverse && 'md:[&>*:first-child]:order-2',
         )}
       >

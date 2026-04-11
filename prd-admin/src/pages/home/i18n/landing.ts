@@ -55,6 +55,13 @@ export interface PlatformItem {
   arch: string;
 }
 
+export interface Pillar {
+  id: string;
+  figLabel: string;
+  title: string;
+  description: string;
+}
+
 export interface TranslationShape {
   nav: {
     products: string;
@@ -72,8 +79,16 @@ export interface TranslationShape {
     subtitle: string;
     primaryCta: string;
     secondaryCta: string;
+    techBarLabel: string;
+    techItems: string[];
   };
   stats: StatItem[];
+  pillars: {
+    eyebrow: string;
+    title: string;
+    subtitle: string;
+    items: Pillar[];
+  };
   features: {
     eyebrow: string;
     title: string;
@@ -158,6 +173,19 @@ const zh: TranslationShape = {
       '融合大模型与多模态能力的 AI 工作台 —— 视觉、文学、产品、视频、缺陷，十余个专业 Agent 在同一个空间协同。',
     primaryCta: '进入 MAP',
     secondaryCta: '观看片花',
+    techBarLabel: 'POWERED BY',
+    techItems: [
+      'GPT-5',
+      'Claude 4.6',
+      'Gemini 2.5',
+      'Grok 4',
+      'Llama',
+      'DeepSeek V3',
+      'Kimi K2',
+      'Qwen 3',
+      'GLM 4.6',
+      'Wenxin',
+    ],
   },
   stats: [
     { value: '15+', label: '专业 Agent' },
@@ -165,6 +193,35 @@ const zh: TranslationShape = {
     { value: '98', label: 'MongoDB 集合' },
     { value: '99.9%', label: '服务可用性' },
   ],
+  pillars: {
+    eyebrow: 'What We Deliver',
+    title: '为真正在用 AI 工作的团队，\n而不是为了"像 AI"而造',
+    subtitle:
+      '一个工作台装下整个团队、任何模型共用一套配置、Web 与桌面原生体验无缝衔接 —— 这是我们设计 MAP 的三块基石。',
+    items: [
+      {
+        id: 'one-workbench',
+        figLabel: 'fig 01.1',
+        title: '一个工作台，无限协同',
+        description:
+          '15+ 专业 Agent 在同一个空间里互相调用、共享上下文、互补能力，像一支真正的团队而不是一堆独立的小工具。',
+      },
+      {
+        id: 'any-model',
+        figLabel: 'fig 01.2',
+        title: '任何模型，同一套配置',
+        description:
+          '通过统一的 ILlmGateway 接入 12+ 家主流大模型，按任务类型动态路由，支持健康度监控、配额管理与失败回退。',
+      },
+      {
+        id: 'native-everywhere',
+        figLabel: 'fig 01.3',
+        title: '全平台原生体验',
+        description:
+          '同一套账号体系覆盖 Web、macOS、Windows 与 Linux 桌面客户端，系统托盘常驻、快捷键唤醒、离线缓存全都有。',
+      },
+    ],
+  },
   features: {
     eyebrow: 'Core Capabilities',
     title: '六个专业 Agent，\n一个工作台',
@@ -383,6 +440,19 @@ const en: TranslationShape = {
       'A multimodal AI workbench where 15+ specialized Agents — visual, literary, product, video, QA — collaborate in one shared space.',
     primaryCta: 'Enter MAP',
     secondaryCta: 'Watch Trailer',
+    techBarLabel: 'POWERED BY',
+    techItems: [
+      'GPT-5',
+      'Claude 4.6',
+      'Gemini 2.5',
+      'Grok 4',
+      'Llama',
+      'DeepSeek V3',
+      'Kimi K2',
+      'Qwen 3',
+      'GLM 4.6',
+      'Wenxin',
+    ],
   },
   stats: [
     { value: '15+', label: 'Dedicated Agents' },
@@ -390,6 +460,35 @@ const en: TranslationShape = {
     { value: '98', label: 'Mongo Collections' },
     { value: '99.9%', label: 'Uptime' },
   ],
+  pillars: {
+    eyebrow: 'What We Deliver',
+    title: 'Built for teams actually shipping AI,\nnot for "looking like AI"',
+    subtitle:
+      'One workbench for the whole team, any model on the same config, seamless Web × desktop — these are the three foundations MAP is built on.',
+    items: [
+      {
+        id: 'one-workbench',
+        figLabel: 'fig 01.1',
+        title: 'One workbench, infinite collaboration',
+        description:
+          '15+ specialized Agents call each other, share context, and cover each other in the same space — a real team, not a pile of isolated tools.',
+      },
+      {
+        id: 'any-model',
+        figLabel: 'fig 01.2',
+        title: 'Any model, one config',
+        description:
+          'A unified ILlmGateway connects 12+ major LLM providers, routes by task type, with health monitoring, quota management, and automatic fallback.',
+      },
+      {
+        id: 'native-everywhere',
+        figLabel: 'fig 01.3',
+        title: 'Native everywhere',
+        description:
+          'The same account covers Web, macOS, Windows, and Linux native clients — system tray, hotkey wake, offline cache, all included.',
+      },
+    ],
+  },
   features: {
     eyebrow: 'Core Capabilities',
     title: 'Six specialized Agents,\none workbench.',

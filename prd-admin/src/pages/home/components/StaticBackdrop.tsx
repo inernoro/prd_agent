@@ -37,12 +37,13 @@ export function StaticBackdrop() {
         }}
       />
 
-      {/* Layer 2 · 顶部紫色径向光晕（Linear 签名，静态） */}
+      {/* Layer 2 · 顶部冷白径向光晕（Linear 签名 · 去紫版）
+         slate-300 冷白 + 微弱 teal，完全不用紫色 —— 避免"AI 紫"的套路感 */}
       <div
         className="absolute inset-0"
         style={{
           background: `
-            radial-gradient(ellipse 95% 65% at 50% -5%, rgba(124, 58, 237, 0.42) 0%, rgba(124, 58, 237, 0.14) 22%, rgba(59, 130, 246, 0.06) 45%, transparent 70%)
+            radial-gradient(ellipse 95% 65% at 50% -5%, rgba(203, 213, 225, 0.28) 0%, rgba(148, 163, 184, 0.10) 22%, rgba(14, 116, 144, 0.05) 45%, transparent 70%)
           `,
         }}
       />

@@ -2,6 +2,7 @@ import { ArrowRight, Play, Sparkles } from 'lucide-react';
 import { cn } from '@/lib/cn';
 import { ProductMockup } from '../components/ProductMockup';
 import { Reveal } from '../components/Reveal';
+import { TechLogoBar } from '../components/TechLogoBar';
 import { useLanguage } from '../contexts/LanguageContext';
 
 /**
@@ -37,20 +38,20 @@ export function HeroSection({ className, onGetStarted, onWatchDemo }: HeroSectio
     >
       {/* ── Hero 本地 retro 装饰（只影响 Hero 自己，不会穿透后续 section） ── */}
 
-      {/* Synthwave 地平线光带（hero 底部 1/3 位置） */}
+      {/* Synthwave 地平线光带（Hero 底部 · 去紫版：玫瑰 → 冷白 → 青）*/}
       <div
         className="absolute inset-x-0 pointer-events-none"
         style={{
           top: '72vh',
           height: '2px',
           background:
-            'linear-gradient(90deg, transparent 0%, rgba(244, 63, 94, 0) 15%, rgba(244, 63, 94, 0.55) 35%, rgba(168, 85, 247, 0.85) 50%, rgba(0, 240, 255, 0.55) 65%, rgba(244, 63, 94, 0) 85%, transparent 100%)',
+            'linear-gradient(90deg, transparent 0%, rgba(244, 63, 94, 0.5) 30%, rgba(226, 232, 240, 0.9) 50%, rgba(0, 240, 255, 0.5) 70%, transparent 100%)',
           boxShadow:
-            '0 0 30px rgba(168, 85, 247, 0.65), 0 -1px 48px rgba(244, 63, 94, 0.4)',
+            '0 0 28px rgba(226, 232, 240, 0.5), 0 -1px 40px rgba(244, 63, 94, 0.3)',
         }}
       />
 
-      {/* 合成太阳半圆 */}
+      {/* 合成太阳半圆 · 去紫版 */}
       <div
         className="absolute pointer-events-none"
         style={{
@@ -60,12 +61,12 @@ export function HeroSection({ className, onGetStarted, onWatchDemo }: HeroSectio
           width: 'clamp(360px, 34vw, 560px)',
           height: 'clamp(360px, 34vw, 560px)',
           background:
-            'radial-gradient(circle at center, rgba(244, 63, 94, 0.38) 0%, rgba(168, 85, 247, 0.2) 35%, rgba(0, 240, 255, 0.05) 60%, transparent 75%)',
+            'radial-gradient(circle at center, rgba(244, 63, 94, 0.32) 0%, rgba(203, 213, 225, 0.15) 35%, rgba(0, 240, 255, 0.05) 60%, transparent 75%)',
           filter: 'blur(6px)',
         }}
       />
 
-      {/* Tron 透视地板（Hero 底部） */}
+      {/* Tron 透视地板 · 去紫版（冷白 + 青双向 grid）*/}
       <div
         className="absolute inset-x-0 pointer-events-none"
         style={{
@@ -83,15 +84,15 @@ export function HeroSection({ className, onGetStarted, onWatchDemo }: HeroSectio
                 180deg,
                 transparent 0,
                 transparent 43px,
-                rgba(168, 85, 247, 0.42) 43px,
-                rgba(168, 85, 247, 0.42) 44px
+                rgba(203, 213, 225, 0.38) 43px,
+                rgba(203, 213, 225, 0.38) 44px
               ),
               repeating-linear-gradient(
                 90deg,
                 transparent 0,
                 transparent 43px,
-                rgba(0, 240, 255, 0.42) 43px,
-                rgba(0, 240, 255, 0.42) 44px
+                rgba(0, 240, 255, 0.38) 43px,
+                rgba(0, 240, 255, 0.38) 44px
               )
             `,
             transform: 'rotateX(62deg)',
@@ -108,15 +109,15 @@ export function HeroSection({ className, onGetStarted, onWatchDemo }: HeroSectio
       <div
         className="relative z-10 min-h-[82vh] flex flex-col items-center justify-center px-6 pt-32 pb-16"
       >
-        {/* 终端 HUD 状态条 */}
+        {/* 终端 HUD 状态条 · 去紫版（冷白边框 + 绿色 live dot）*/}
         <Reveal delay={0}>
           <div
             className="inline-flex items-center gap-3 px-4 py-2 mb-12 rounded-md"
             style={{
-              background: 'rgba(10, 10, 25, 0.72)',
-              border: '1px solid rgba(168, 85, 247, 0.35)',
+              background: 'rgba(10, 14, 22, 0.72)',
+              border: '1px solid rgba(203, 213, 225, 0.22)',
               boxShadow:
-                '0 0 28px rgba(168, 85, 247, 0.28), inset 0 0 14px rgba(168, 85, 247, 0.08)',
+                '0 0 28px rgba(148, 163, 184, 0.18), inset 0 0 14px rgba(148, 163, 184, 0.05)',
               fontFamily: 'var(--font-mono)',
               animation: 'hud-pulse 4s ease-in-out infinite',
             }}
@@ -137,12 +138,12 @@ export function HeroSection({ className, onGetStarted, onWatchDemo }: HeroSectio
             >
               {t.hero.status}
             </span>
-            <span className="w-px h-3.5 bg-white/20" />
+            <span className="w-px h-3.5 bg-white/15" />
             <span
-              className="text-[14px] text-purple-200"
+              className="text-[14px] text-slate-200"
               style={{
                 letterSpacing: '0.14em',
-                textShadow: '0 0 8px rgba(168, 85, 247, 0.55)',
+                textShadow: '0 0 10px rgba(203, 213, 225, 0.5)',
               }}
             >
               {t.hero.brand}
@@ -201,7 +202,7 @@ export function HeroSection({ className, onGetStarted, onWatchDemo }: HeroSectio
               <ArrowRight className="w-4 h-4 transition-transform group-hover:translate-x-0.5" />
             </button>
 
-            {/* 次 CTA —— 对称 outline pill，相同 h-12 + rounded-full */}
+            {/* 次 CTA —— 对称 outline pill，hover 冷白高亮（去紫）*/}
             <button
               onClick={onWatchDemo}
               className="group inline-flex items-center gap-2.5 h-12 px-8 rounded-full text-[14.5px] font-medium text-white/90 transition-all duration-200 hover:text-white hover:scale-[1.02] active:scale-[0.98]"
@@ -214,8 +215,8 @@ export function HeroSection({ className, onGetStarted, onWatchDemo }: HeroSectio
                 fontFamily: 'var(--font-display)',
               }}
               onMouseEnter={(e) => {
-                e.currentTarget.style.borderColor = 'rgba(168, 85, 247, 0.55)';
-                e.currentTarget.style.background = 'rgba(168, 85, 247, 0.08)';
+                e.currentTarget.style.borderColor = 'rgba(203, 213, 225, 0.5)';
+                e.currentTarget.style.background = 'rgba(255, 255, 255, 0.08)';
               }}
               onMouseLeave={(e) => {
                 e.currentTarget.style.borderColor = 'rgba(255, 255, 255, 0.18)';
@@ -228,10 +229,17 @@ export function HeroSection({ className, onGetStarted, onWatchDemo }: HeroSectio
             </button>
           </div>
         </Reveal>
+
+        {/* Powered by 大模型 logo 条（Linear 式 social proof）*/}
+        <Reveal delay={340}>
+          <div className="mt-20 md:mt-24 w-full">
+            <TechLogoBar />
+          </div>
+        </Reveal>
       </div>
 
       {/* ── 产品壳 mockup（从 hero 底部长出来） ── */}
-      <Reveal delay={320} offset={48}>
+      <Reveal delay={400} offset={48}>
         <div className="relative z-10 pb-32 md:pb-40 px-4 md:px-8">
           <ProductMockup />
         </div>
@@ -241,27 +249,27 @@ export function HeroSection({ className, onGetStarted, onWatchDemo }: HeroSectio
         @keyframes hero-title-pulse {
           0%, 100% {
             text-shadow:
-              0 0 30px rgba(168, 85, 247, 0.4),
-              0 0 80px rgba(124, 58, 237, 0.25),
-              0 0 140px rgba(0, 240, 255, 0.15);
+              0 0 30px rgba(203, 213, 225, 0.32),
+              0 0 90px rgba(0, 240, 255, 0.22),
+              0 0 140px rgba(59, 130, 246, 0.12);
           }
           50% {
             text-shadow:
-              0 0 36px rgba(168, 85, 247, 0.55),
-              0 0 100px rgba(124, 58, 237, 0.35),
-              0 0 160px rgba(0, 240, 255, 0.22);
+              0 0 40px rgba(226, 232, 240, 0.45),
+              0 0 110px rgba(0, 240, 255, 0.30),
+              0 0 160px rgba(59, 130, 246, 0.18);
           }
         }
         @keyframes hud-pulse {
           0%, 100% {
             box-shadow:
-              0 0 28px rgba(168, 85, 247, 0.28),
-              inset 0 0 14px rgba(168, 85, 247, 0.08);
+              0 0 28px rgba(148, 163, 184, 0.18),
+              inset 0 0 14px rgba(148, 163, 184, 0.05);
           }
           50% {
             box-shadow:
-              0 0 40px rgba(168, 85, 247, 0.45),
-              inset 0 0 22px rgba(168, 85, 247, 0.14);
+              0 0 38px rgba(203, 213, 225, 0.28),
+              inset 0 0 20px rgba(203, 213, 225, 0.08);
           }
         }
         @media (prefers-reduced-motion: reduce) {

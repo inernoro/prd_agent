@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 
 import { HeroSection, HERO_GRADIENT } from './sections/HeroSection';
 import { StatsStrip } from './sections/StatsStrip';
+import { ThreePillars } from './sections/ThreePillars';
 import { FeatureDeepDive } from './sections/FeatureDeepDive';
 import { SignatureCinema } from './sections/SignatureCinema';
 import { HowItWorks } from './sections/HowItWorks';
@@ -243,6 +244,10 @@ function LandingInner() {
 
       <div id="stats">
         <StatsStrip />
+      </div>
+
+      <div id="pillars">
+        <ThreePillars />
       </div>
 
       <div id="features">

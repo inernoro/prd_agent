@@ -1,6 +1,7 @@
 export { default as LandingPage } from './LandingPage';
 export { HeroSection } from './sections/HeroSection';
 export { StatsStrip } from './sections/StatsStrip';
+export { ThreePillars } from './sections/ThreePillars';
 export { FeatureDeepDive } from './sections/FeatureDeepDive';
 export { SignatureCinema } from './sections/SignatureCinema';
 export { HowItWorks } from './sections/HowItWorks';
