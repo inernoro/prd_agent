@@ -58,3 +58,4 @@
 | feat | prd-admin | 仓库级顶设依据管理区新增“一键复制6文件模板”，可直接粘贴生成 top-design 与 pr-architect 配置，降低新仓库手工配置门槛 |
 | feat | prd-api | PR审查棱镜新增 submissions/precheck 提交前可达性预检接口，先校验 GitHub PR 可访问性再允许创建记录 |
 | feat | prd-admin | PR审查棱镜提交流程新增“先预检后提交”，预检失败直接提示明确原因且不再落库失败记录 |
+| fix | prd-api | PR审查棱镜 precheck 将“PR不存在/无权限/Token缺失”分别映射为 404/403/400，避免统一返回 502 导致前端仅见网关错误 |

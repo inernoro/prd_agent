@@ -485,6 +485,31 @@ public class PrReviewPrismApiIntegrationTests : IClassFixture<WebApplicationFact
     }
 
     [Fact]
+    public async Task Precheck_NotFoundPullRequest_ShouldReturn404()
+    {
+        if (!HasToken)
+        {
+            Log("[Skip] no token");
+            return;
+        }
+
+        var client = CreateAuthenticatedClient();
+        if (!await EnsurePrReviewPrismAccessibleAsync(client))
+        {
+            return;
+        }
+
+        var response = await client.PostAsJsonAsync("/api/pr-review-prism/submissions/precheck", new
+        {
+            pullRequestUrl = "https://github.com/octocat/hello-world/pull/999999999",
+        });
+        var body = await response.Content.ReadAsStringAsync();
+        Log($"[PrecheckNotFound] {response.StatusCode} - {Truncate(body, 200)}");
+        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+        AssertErrorCode(body, "NOT_FOUND");
+    }
+
+    [Fact]
     public async Task BatchRefresh_EmptyIds_ShouldReturn400()
     {
         if (!HasToken)
