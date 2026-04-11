@@ -23,6 +23,7 @@ export type PrReviewState = 'open' | 'closed' | 'merged';
 
 export interface PrReviewSnapshotDto {
   title: string;
+  body?: string | null;
   state: PrReviewState;
   authorLogin: string;
   authorAvatarUrl?: string | null;
@@ -35,6 +36,19 @@ export interface PrReviewSnapshotDto {
   mergedAt?: string | null;
   closedAt?: string | null;
   headSha: string;
+  fileCount?: number;
+  linkedIssueNumber?: number | null;
+  linkedIssueTitle?: string | null;
+}
+
+export interface PrAlignmentReportDto {
+  score: number;
+  summary?: string | null;
+  markdown: string;
+  model?: string | null;
+  durationMs: number;
+  createdAt: string;
+  error?: string | null;
 }
 
 export interface PrReviewItemDto {
@@ -45,6 +59,7 @@ export interface PrReviewItemDto {
   htmlUrl: string;
   note?: string | null;
   snapshot?: PrReviewSnapshotDto | null;
+  alignmentReport?: PrAlignmentReportDto | null;
   lastRefreshedAt?: string | null;
   lastRefreshError?: string | null;
   createdAt: string;
@@ -153,4 +168,23 @@ export async function deletePrReviewItem(id: string): Promise<ApiResponse<{ dele
   return apiRequest(api.prReview.items.delete(id), {
     method: 'DELETE',
   });
+}
+
+/**
+ * 档 3：获取已缓存的 AI 对齐度报告（无则返回 alignment: null）。
+ */
+export async function getPrReviewAlignment(
+  id: string,
+): Promise<ApiResponse<{ alignment: PrAlignmentReportDto | null }>> {
+  return apiRequest<{ alignment: PrAlignmentReportDto | null }>(
+    api.prReview.items.ai.alignment(id),
+  );
+}
+
+/**
+ * 档 3：SSE 端点 URL。前端通过 useSseStream 订阅。
+ * 注意：这是 URL，不是 fetch 调用——useSseStream 会自己处理连接与鉴权。
+ */
+export function getPrReviewAlignmentStreamUrl(id: string): string {
+  return api.prReview.items.ai.alignmentStream(id);
 }

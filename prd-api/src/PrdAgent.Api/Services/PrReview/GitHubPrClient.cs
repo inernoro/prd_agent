@@ -2,6 +2,7 @@ using System.Net;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Text.Json.Serialization;
+using System.Text.RegularExpressions;
 using PrdAgent.Core.Models;
 
 namespace PrdAgent.Api.Services.PrReview;
@@ -27,6 +28,12 @@ public sealed class GitHubPrClient
         _logger = logger;
     }
 
+    // ===== 体积上限（防 MongoDB 单文档膨胀 + 防 LLM 上下文爆炸）=====
+    private const int MaxBodyChars = 20_000;
+    private const int MaxFileCount = 80;
+    private const int MaxPatchCharsPerFile = 4_000;
+    private const int MaxLinkedIssueBodyChars = 8_000;
+
     /// <summary>
     /// 以指定 token 拉取 (owner, repo, #number) 的最新快照。
     /// 失败时抛 <see cref="PrReviewException"/>，携带明确错误码。
@@ -36,6 +43,21 @@ public sealed class GitHubPrClient
         string owner,
         string repo,
         int number,
+        CancellationToken ct)
+    {
+        return await FetchPullRequestAsync(accessToken, owner, repo, number, includeFilesAndIssue: true, ct);
+    }
+
+    /// <summary>
+    /// 细粒度版本：控制是否要一起拉取 files/linked issue。
+    /// 默认开启（AI 对齐度检查需要）；未来如果有只要元数据的场景可以传 false 省配额。
+    /// </summary>
+    public async Task<PrReviewSnapshot> FetchPullRequestAsync(
+        string accessToken,
+        string owner,
+        string repo,
+        int number,
+        bool includeFilesAndIssue,
         CancellationToken ct)
     {
         if (!PrUrlParser.IsSafeOwnerRepo(owner, repo))
@@ -49,18 +71,153 @@ public sealed class GitHubPrClient
         var prPath = $"repos/{owner}/{repo}/pulls/{number}";
         using var resp = await client.GetAsync(prPath, ct);
 
-        if (resp.IsSuccessStatusCode)
+        if (!resp.IsSuccessStatusCode)
         {
-            var dto = await resp.Content.ReadFromJsonAsync<GitHubPullRequestDto>(cancellationToken: ct);
-            if (dto == null)
-            {
-                throw PrReviewException.Upstream((int)resp.StatusCode);
-            }
-            return MapToSnapshot(dto);
+            await ThrowClassifiedAsync(client, resp, owner, repo, number, ct);
+            throw new InvalidOperationException("unreachable");
         }
 
-        await ThrowClassifiedAsync(client, resp, owner, repo, number, ct);
-        throw new InvalidOperationException("unreachable");
+        var dto = await resp.Content.ReadFromJsonAsync<GitHubPullRequestDto>(cancellationToken: ct);
+        if (dto == null)
+        {
+            throw PrReviewException.Upstream((int)resp.StatusCode);
+        }
+
+        var snapshot = MapToSnapshot(dto);
+
+        if (!includeFilesAndIssue)
+        {
+            return snapshot;
+        }
+
+        // 附加上下文（AI 对齐度需要）。这些调用失败不致命，记日志就行。
+        try
+        {
+            snapshot.Files = await FetchFilesAsync(client, owner, repo, number, ct);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "PrReview fetch files failed for {Owner}/{Repo}#{Number}", owner, repo, number);
+        }
+
+        var linkedIssue = TryParseLinkedIssue(dto.Body);
+        if (linkedIssue.HasValue)
+        {
+            try
+            {
+                var issue = await FetchIssueAsync(client, owner, repo, linkedIssue.Value, ct);
+                if (issue != null)
+                {
+                    snapshot.LinkedIssueNumber = linkedIssue.Value;
+                    snapshot.LinkedIssueTitle = issue.Title;
+                    snapshot.LinkedIssueBody = Truncate(issue.Body, MaxLinkedIssueBodyChars);
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "PrReview fetch linked issue #{Issue} failed", linkedIssue.Value);
+            }
+        }
+
+        return snapshot;
+    }
+
+    /// <summary>
+    /// 拉取 PR 变更的文件清单 + unified diff 片段。
+    /// GitHub /pulls/{n}/files 默认分页 30 条，最多 3000 条；我们只拿前 MaxFileCount 条。
+    /// </summary>
+    private async Task<List<PrFileSummary>> FetchFilesAsync(
+        HttpClient client,
+        string owner,
+        string repo,
+        int number,
+        CancellationToken ct)
+    {
+        var results = new List<PrFileSummary>();
+        var page = 1;
+        const int perPage = 30;
+
+        while (results.Count < MaxFileCount)
+        {
+            var path = $"repos/{owner}/{repo}/pulls/{number}/files?per_page={perPage}&page={page}";
+            using var resp = await client.GetAsync(path, ct);
+            if (!resp.IsSuccessStatusCode)
+            {
+                break;
+            }
+
+            var dtos = await resp.Content.ReadFromJsonAsync<List<GitHubPullRequestFileDto>>(cancellationToken: ct);
+            if (dtos == null || dtos.Count == 0)
+            {
+                break;
+            }
+
+            foreach (var dto in dtos)
+            {
+                if (results.Count >= MaxFileCount) break;
+                results.Add(new PrFileSummary
+                {
+                    Filename = dto.Filename ?? string.Empty,
+                    Status = dto.Status ?? string.Empty,
+                    Additions = dto.Additions,
+                    Deletions = dto.Deletions,
+                    Patch = Truncate(dto.Patch, MaxPatchCharsPerFile),
+                });
+            }
+
+            if (dtos.Count < perPage)
+            {
+                break;
+            }
+            page++;
+        }
+
+        return results;
+    }
+
+    /// <summary>
+    /// 拉取关联 issue 的 title + body。失败返回 null。
+    /// </summary>
+    private async Task<GitHubIssueDto?> FetchIssueAsync(
+        HttpClient client,
+        string owner,
+        string repo,
+        int number,
+        CancellationToken ct)
+    {
+        var path = $"repos/{owner}/{repo}/issues/{number}";
+        using var resp = await client.GetAsync(path, ct);
+        if (!resp.IsSuccessStatusCode)
+        {
+            return null;
+        }
+        return await resp.Content.ReadFromJsonAsync<GitHubIssueDto>(cancellationToken: ct);
+    }
+
+    /// <summary>
+    /// 从 PR body 里提取关联 issue 编号。支持常见的 GitHub 关闭关键词：
+    /// Closes #123 / Fixes #45 / Resolves #678（大小写不敏感）。
+    /// 没有匹配到返回 null——不强求，有则更准。
+    /// </summary>
+    internal static int? TryParseLinkedIssue(string? body)
+    {
+        if (string.IsNullOrWhiteSpace(body)) return null;
+        var match = Regex.Match(
+            body!,
+            @"\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s*[:\s]*#(\d+)\b",
+            RegexOptions.IgnoreCase);
+        if (match.Success && int.TryParse(match.Groups[1].Value, out var n))
+        {
+            return n;
+        }
+        return null;
+    }
+
+    private static string? Truncate(string? text, int maxChars)
+    {
+        if (string.IsNullOrEmpty(text)) return text;
+        if (text!.Length <= maxChars) return text;
+        return text[..maxChars] + $"\n\n[... 已截断，原始长度 {text.Length} 字符 ...]";
     }
 
     // ===== internal =====
@@ -189,6 +346,7 @@ public sealed class GitHubPrClient
         return new PrReviewSnapshot
         {
             Title = dto.Title ?? string.Empty,
+            Body = Truncate(dto.Body, MaxBodyChars),
             State = state,
             AuthorLogin = dto.User?.Login ?? string.Empty,
             AuthorAvatarUrl = dto.User?.AvatarUrl,
@@ -212,6 +370,7 @@ public sealed class GitHubPrClient
 internal sealed class GitHubPullRequestDto
 {
     [JsonPropertyName("title")] public string? Title { get; set; }
+    [JsonPropertyName("body")] public string? Body { get; set; }
     [JsonPropertyName("state")] public string? State { get; set; }
     [JsonPropertyName("user")] public GitHubUserRef? User { get; set; }
     [JsonPropertyName("labels")] public List<GitHubLabelDto>? Labels { get; set; }
@@ -222,6 +381,21 @@ internal sealed class GitHubPullRequestDto
     [JsonPropertyName("merged_at")] public DateTime? MergedAt { get; set; }
     [JsonPropertyName("closed_at")] public DateTime? ClosedAt { get; set; }
     [JsonPropertyName("head")] public GitHubRefDto? Head { get; set; }
+}
+
+internal sealed class GitHubPullRequestFileDto
+{
+    [JsonPropertyName("filename")] public string? Filename { get; set; }
+    [JsonPropertyName("status")] public string? Status { get; set; }
+    [JsonPropertyName("additions")] public int Additions { get; set; }
+    [JsonPropertyName("deletions")] public int Deletions { get; set; }
+    [JsonPropertyName("patch")] public string? Patch { get; set; }
+}
+
+internal sealed class GitHubIssueDto
+{
+    [JsonPropertyName("title")] public string? Title { get; set; }
+    [JsonPropertyName("body")] public string? Body { get; set; }
 }
 
 internal sealed class GitHubUserRef

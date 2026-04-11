@@ -947,6 +947,7 @@ builder.Services.AddHttpClient("GitHubApi", client =>
 // PR Review V2（pr-review）— per-user GitHub OAuth 审查工作台
 builder.Services.AddScoped<PrdAgent.Api.Services.PrReview.GitHubOAuthService>();
 builder.Services.AddScoped<PrdAgent.Api.Services.PrReview.GitHubPrClient>();
+builder.Services.AddScoped<PrdAgent.Api.Services.PrReview.PrAlignmentService>();
 // 注册自动化引擎（需要在 WebhookNotificationService 之前注册）
 builder.Services.AddScoped<IActionExecutor, PrdAgent.Infrastructure.Services.Automation.WebhookActionExecutor>();
 builder.Services.AddScoped<IActionExecutor, PrdAgent.Infrastructure.Services.Automation.AdminNotificationActionExecutor>();

@@ -1513,6 +1513,8 @@ export {
   refreshPrReviewItem,
   updatePrReviewItemNote,
   deletePrReviewItem,
+  getPrReviewAlignment,
+  getPrReviewAlignmentStreamUrl,
 } from '@/services/real/prReview';
 export type {
   PrReviewState,
@@ -1523,4 +1525,5 @@ export type {
   PrReviewDeviceFlowStart,
   PrReviewDeviceFlowPoll,
   PrReviewDeviceFlowPollStatus,
+  PrAlignmentReportDto,
 } from '@/services/real/prReview';

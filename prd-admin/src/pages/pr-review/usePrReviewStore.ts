@@ -25,6 +25,7 @@ import {
   deletePrReviewItem,
   type PrReviewAuthStatus,
   type PrReviewItemDto,
+  type PrAlignmentReportDto,
 } from '@/services/real/prReview';
 
 export interface DeviceFlowState {
@@ -73,6 +74,8 @@ interface PrReviewState {
   updateNote: (id: string, note: string | null) => Promise<void>;
   deleteItem: (id: string) => Promise<void>;
   clearError: () => void;
+  /** 档 3：SSE 流式对齐分析完成后，由组件回传最终结果，更新列表里的 item */
+  setAlignmentReport: (id: string, report: PrAlignmentReportDto) => void;
 }
 
 // 轮询循环的内部句柄；不放进 store 以避免触发 React 重渲
@@ -241,6 +244,12 @@ export const usePrReviewStore = create<PrReviewState>((set, get) => ({
   },
 
   clearError: () => set({ errorMessage: null }),
+
+  setAlignmentReport: (id, report) => {
+    set((state) => ({
+      items: state.items.map((it) => (it.id === id ? { ...it, alignmentReport: report } : it)),
+    }));
+  },
 }));
 
 /**

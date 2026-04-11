@@ -10,6 +10,7 @@ import {
   AlertTriangle,
 } from 'lucide-react';
 import { usePrReviewStore } from './usePrReviewStore';
+import { AlignmentPanel } from './AlignmentPanel';
 import type { PrReviewItemDto, PrReviewState } from '@/services/real/prReview';
 
 interface Props {
@@ -171,6 +172,11 @@ export function PrItemCard({ item }: Props) {
               rows={4}
               className="w-full px-3 py-2 rounded-lg bg-black/30 border border-white/10 text-white placeholder-white/30 text-sm focus:border-white/30 focus:outline-none resize-none"
             />
+          </div>
+
+          {/* AI 对齐度检查 */}
+          <div className="mt-4">
+            <AlignmentPanel itemId={item.id} cached={item.alignmentReport} />
           </div>
 
           {/* 操作 */}
