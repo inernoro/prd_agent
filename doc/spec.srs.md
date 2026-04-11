@@ -2155,27 +2155,29 @@ sequenceDiagram
 > "应用全局配置" 迁到 "每个用户的 OAuth 连接"，天然支持审查任意团队的 PR。
 > 详细设计见 `doc/design.pr-review-v2.md`。
 
-#### 4.24.1 PR-001 通过 GitHub OAuth 连接账号
+#### 4.24.1 PR-001 通过 GitHub Device Flow 连接账号
 
 | 属性 | 描述 |
 |------|------|
 | 需求编号 | PR-001 |
-| 需求名称 | 每用户 GitHub OAuth 连接 |
+| 需求名称 | 每用户 GitHub Device Flow 连接 |
 | 优先级 | **[必须]** |
 | 实现层 | Web 管理后台 + 后端服务 |
 
 **功能详述**：
-1. 每个 PRD Agent 用户通过 OAuth Web Flow 授权自己的 GitHub 账号。前端点击"连接 GitHub"按钮后整页跳转到 GitHub 授权页，授权后 GitHub 回调到 `/api/pr-review/auth/callback`，后端用 code 换 access_token 并加密存入 `github_user_connections`。
-2. OAuth state 采用 HMAC 签名（`HMAC-SHA256(Jwt:Secret, userId|expiry)`）实现无状态 CSRF 防护，无需依赖 session/cookie，多实例部署天然安全。
-3. 支持断开连接，删除存储的 token，不影响已有 PR 记录。
-4. 管理端可通过 `GitHubOAuth:ClientId` / `GitHubOAuth:ClientSecret` 环境变量配置 OAuth App。
+1. 每个 PRD Agent 用户通过 GitHub Device Flow (RFC 8628) 授权自己的 GitHub 账号。选用 Device Flow 而非 Web Flow 的原因：本项目部署在 CDS 动态域名（`<branch>.miduo.org`），Web Flow 的 Callback URL 必须预先注册且不支持通配符，与动态域名不兼容。Device Flow 完全不需要 Callback URL，本地/CDS/生产共用一套代码。
+2. 前端点击"连接 GitHub"后，后端向 GitHub 请求 `device_code` 并返回 `user_code` + `verification_uri_complete` + `flowToken`（HMAC 签名的 `(device_code, userId, expiry)` 三元组）。前端展示 `user_code` 并自动打开 GitHub 授权页，同时以 `intervalSeconds` 节奏轮询 `/auth/device/poll`。
+3. 轮询直到 GitHub 返回 `done` / `expired_token` / `access_denied`。成功后后端用 token 拉取 `GET /user` 的 login/avatar，加密存入 `github_user_connections`。
+4. `flowToken` 无状态：多实例部署无需共享 session，`device_code` 从不出后端。
+5. 支持断开连接，删除存储的 token，不影响已有 PR 记录。
+6. 管理端需在 GitHub OAuth App 设置里 **勾选 "Enable Device Flow"**，通过 `GitHubOAuth:ClientId` 环境变量注入 Client ID（Client Secret 对公有 OAuth App 可选）。
 
 **数据模型**：`GitHubUserConnection`（集合：`github_user_connections`）
 
 **API 端点**：
-- `GET /api/pr-review/auth/status` — 当前用户的连接状态（connected / login / scopes）
-- `POST /api/pr-review/auth/start` — 返回 GitHub authorize URL，前端整页跳转
-- `GET /api/pr-review/auth/callback` — OAuth 回调（无需 `[Authorize]`，靠 HMAC state 识别身份）
+- `GET /api/pr-review/auth/status` — 当前用户的连接状态（connected / login / scopes / oauthConfigured）
+- `POST /api/pr-review/auth/device/start` — 发起 Device Flow，返回 userCode + verificationUri + flowToken + intervalSeconds
+- `POST /api/pr-review/auth/device/poll` — 轮询 GitHub 获取授权结果，返回 `pending/slow_down/expired/denied/done`
 - `DELETE /api/pr-review/auth/connection` — 断开当前用户连接
 
 #### 4.24.2 PR-002 PR 记录管理与 GitHub 快照拉取

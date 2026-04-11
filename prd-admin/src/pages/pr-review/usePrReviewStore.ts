@@ -1,6 +1,12 @@
 /**
  * PR Review V2 store —— 严格 SSOT，无 localStorage 持久化。
  *
+ * 授权模式：GitHub Device Flow（RFC 8628）
+ * - 用户点"连接 GitHub" → 调 startDeviceFlow → 拿到 userCode + verificationUriComplete
+ * - 前端展示 userCode 并弹开 verificationUriComplete 让用户授权
+ * - 自动启动轮询循环：按 intervalSeconds 调 pollDeviceFlow
+ * - 直到 status === 'done'（刷新 auth 状态）/ 'expired' / 'denied'（显示错误）
+ *
  * 规则：
  * - 服务端是唯一真相源，关闭浏览器即清空状态
  * - 列表 / 详情 / 连接态都来自 API，不在前端建索引或缓存
@@ -9,7 +15,8 @@
 import { create } from 'zustand';
 import {
   getPrReviewAuthStatus,
-  startPrReviewOAuth,
+  startPrReviewDeviceFlow,
+  pollPrReviewDeviceFlow,
   disconnectPrReviewGitHub,
   listPrReviewItems,
   createPrReviewItem,
@@ -20,10 +27,26 @@ import {
   type PrReviewItemDto,
 } from '@/services/real/prReview';
 
+export interface DeviceFlowState {
+  userCode: string;
+  verificationUri: string;
+  verificationUriComplete: string;
+  flowToken: string;
+  intervalSeconds: number;
+  startedAt: number;          // Date.now() 的毫秒时间戳，用于倒计时
+  expiresInSeconds: number;
+  polling: boolean;           // true 时正在轮询
+  status: 'idle' | 'polling' | 'expired' | 'denied' | 'failed';
+  errorDetail?: string;
+}
+
 interface PrReviewState {
   // 连接态
   authStatus: PrReviewAuthStatus | null;
   authLoading: boolean;
+
+  // Device Flow 进行中状态
+  deviceFlow: DeviceFlowState | null;
 
   // 列表
   items: PrReviewItemDto[];
@@ -41,7 +64,8 @@ interface PrReviewState {
 
   // 操作
   loadAuthStatus: () => Promise<void>;
-  connectGitHub: () => Promise<void>;
+  startConnect: () => Promise<void>;
+  cancelDeviceFlow: () => void;
   disconnectGitHub: () => Promise<void>;
   loadItems: (page?: number) => Promise<void>;
   addItem: (pullRequestUrl: string, note?: string) => Promise<boolean>;
@@ -51,9 +75,20 @@ interface PrReviewState {
   clearError: () => void;
 }
 
+// 轮询循环的内部句柄；不放进 store 以避免触发 React 重渲
+let pollTimer: ReturnType<typeof setTimeout> | null = null;
+
+function clearPollTimer() {
+  if (pollTimer) {
+    clearTimeout(pollTimer);
+    pollTimer = null;
+  }
+}
+
 export const usePrReviewStore = create<PrReviewState>((set, get) => ({
   authStatus: null,
   authLoading: false,
+  deviceFlow: null,
   items: [],
   total: 0,
   page: 1,
@@ -73,14 +108,45 @@ export const usePrReviewStore = create<PrReviewState>((set, get) => ({
     }
   },
 
-  connectGitHub: async () => {
-    const res = await startPrReviewOAuth();
-    if (res.success && res.data?.authorizeUrl) {
-      // 整页跳转到 GitHub；后端回调后会再跳回到 /admin/pr-review?connected=1
-      window.location.href = res.data.authorizeUrl;
-    } else {
-      set({ errorMessage: res.error?.message ?? '无法启动 GitHub 授权' });
+  startConnect: async () => {
+    // 清理上一轮遗留状态
+    clearPollTimer();
+    set({ deviceFlow: null, errorMessage: null });
+
+    const res = await startPrReviewDeviceFlow();
+    if (!res.success || !res.data) {
+      set({ errorMessage: res.error?.message ?? '无法发起 GitHub 授权' });
+      return;
     }
+
+    const data = res.data;
+    const flow: DeviceFlowState = {
+      userCode: data.userCode,
+      verificationUri: data.verificationUri,
+      verificationUriComplete: data.verificationUriComplete,
+      flowToken: data.flowToken,
+      intervalSeconds: data.intervalSeconds,
+      startedAt: Date.now(),
+      expiresInSeconds: data.expiresInSeconds,
+      polling: true,
+      status: 'polling',
+    };
+    set({ deviceFlow: flow });
+
+    // 自动弹开 GitHub 授权页（可能被浏览器弹窗拦截——前端 UI 同时提供"再次打开"按钮兜底）
+    try {
+      window.open(data.verificationUriComplete, '_blank', 'noopener,noreferrer');
+    } catch {
+      // 忽略：UI 里有备用按钮
+    }
+
+    // 启动轮询
+    schedulePoll(set, get);
+  },
+
+  cancelDeviceFlow: () => {
+    clearPollTimer();
+    set({ deviceFlow: null });
   },
 
   disconnectGitHub: async () => {
@@ -114,7 +180,6 @@ export const usePrReviewStore = create<PrReviewState>((set, get) => ({
     set({ errorMessage: null });
     const res = await createPrReviewItem(pullRequestUrl, note);
     if (res.success && res.data) {
-      // 刷新第一页列表
       await get().loadItems(1);
       return true;
     }
@@ -147,7 +212,6 @@ export const usePrReviewStore = create<PrReviewState>((set, get) => ({
     next.add(id);
     set({ savingNoteIds: next });
 
-    // 乐观更新
     set((state) => ({
       items: state.items.map((it) => (it.id === id ? { ...it, note } : it)),
     }));
@@ -160,7 +224,6 @@ export const usePrReviewStore = create<PrReviewState>((set, get) => ({
 
     if (!res.success) {
       set({ errorMessage: res.error?.message ?? '笔记保存失败' });
-      // 回滚：重新拉取列表
       await get().loadItems();
     }
   },
@@ -179,3 +242,83 @@ export const usePrReviewStore = create<PrReviewState>((set, get) => ({
 
   clearError: () => set({ errorMessage: null }),
 }));
+
+/**
+ * 调度下一次轮询：按 deviceFlow.intervalSeconds 节奏调用后端 poll 端点，
+ * 根据返回 status 决定停止、继续、还是调大间隔。
+ */
+function schedulePoll(
+  set: (partial: Partial<PrReviewState> | ((s: PrReviewState) => Partial<PrReviewState>)) => void,
+  get: () => PrReviewState,
+) {
+  clearPollTimer();
+  const flow = get().deviceFlow;
+  if (!flow || flow.status !== 'polling') return;
+
+  pollTimer = setTimeout(async () => {
+    const current = get().deviceFlow;
+    if (!current || current.status !== 'polling') return;
+
+    // 检查本地超时：比后端返回的 expired 更快终止，避免用户看到"卡住"
+    const elapsedSec = (Date.now() - current.startedAt) / 1000;
+    if (elapsedSec > current.expiresInSeconds) {
+      set({
+        deviceFlow: { ...current, polling: false, status: 'expired' },
+        errorMessage: '授权已超时，请重新发起连接',
+      });
+      return;
+    }
+
+    const res = await pollPrReviewDeviceFlow(current.flowToken);
+    if (!res.success || !res.data) {
+      set({
+        deviceFlow: {
+          ...current,
+          polling: false,
+          status: 'failed',
+          errorDetail: res.error?.message,
+        },
+        errorMessage: res.error?.message ?? '授权轮询失败',
+      });
+      return;
+    }
+
+    switch (res.data.status) {
+      case 'pending':
+        schedulePoll(set, get);
+        return;
+      case 'slow_down':
+        // GitHub 要求调大间隔，追加 5 秒
+        set({
+          deviceFlow: {
+            ...current,
+            intervalSeconds: current.intervalSeconds + 5,
+          },
+        });
+        schedulePoll(set, get);
+        return;
+      case 'done': {
+        clearPollTimer();
+        set({ deviceFlow: null });
+        // 刷新连接状态 + 列表
+        await get().loadAuthStatus();
+        await get().loadItems(1);
+        return;
+      }
+      case 'expired':
+        clearPollTimer();
+        set({
+          deviceFlow: { ...current, polling: false, status: 'expired' },
+          errorMessage: '授权已超时，请重新发起连接',
+        });
+        return;
+      case 'denied':
+        clearPollTimer();
+        set({
+          deviceFlow: { ...current, polling: false, status: 'denied' },
+          errorMessage: '你在 GitHub 页面拒绝了授权',
+        });
+        return;
+    }
+  }, Math.max(1, get().deviceFlow?.intervalSeconds ?? 5) * 1000);
+}

@@ -1,5 +1,4 @@
 import { useEffect } from 'react';
-import { useSearchParams } from 'react-router-dom';
 import { ArrowLeft, GitPullRequest, X } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { GitHubConnectCard } from './GitHubConnectCard';
@@ -11,11 +10,11 @@ import { usePrReviewStore } from './usePrReviewStore';
  * PR Review V2 主页面 —— 单文件不超过 200 行。
  * 布局：顶部标题栏 + 左侧（OAuth 卡 + 添加表单）+ 右侧（PR 列表）
  *
- * OAuth 回调处理：URL query 里有 ?connected=1 时显示提示，然后重新加载状态。
+ * Device Flow 不需要 URL 回调处理：连接成功后 Zustand 里的 authStatus 自动更新，
+ * 页面自动切到已连接状态，无需解析 query string。
  */
 export function PrReviewPage() {
   const navigate = useNavigate();
-  const [searchParams, setSearchParams] = useSearchParams();
   const errorMessage = usePrReviewStore((s) => s.errorMessage);
   const clearError = usePrReviewStore((s) => s.clearError);
   const loadAuthStatus = usePrReviewStore((s) => s.loadAuthStatus);
@@ -33,21 +32,6 @@ export function PrReviewPage() {
       void loadItems(1);
     }
   }, [authStatus?.connected, loadItems]);
-
-  // OAuth 回调 query 清理
-  useEffect(() => {
-    const connected = searchParams.get('connected');
-    const oauthError = searchParams.get('error');
-    if (connected || oauthError) {
-      const next = new URLSearchParams(searchParams);
-      next.delete('connected');
-      next.delete('error');
-      next.delete('login');
-      setSearchParams(next, { replace: true });
-      // 连接变动后重新拉状态
-      void loadAuthStatus();
-    }
-  }, [searchParams, setSearchParams, loadAuthStatus]);
 
   return (
     <div className="min-h-full bg-[#0d0b16] text-white">
@@ -91,7 +75,7 @@ export function PrReviewPage() {
         )}
 
         {/* Body */}
-        <div className="grid grid-cols-1 lg:grid-cols-[320px_1fr] gap-5">
+        <div className="grid grid-cols-1 lg:grid-cols-[340px_1fr] gap-5">
           <div className="space-y-4">
             <GitHubConnectCard />
             <AddPrForm />

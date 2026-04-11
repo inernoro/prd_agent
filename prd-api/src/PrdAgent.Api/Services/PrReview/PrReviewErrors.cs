@@ -11,14 +11,20 @@ public static class PrReviewErrorCodes
     /// <summary>用户保存的 GitHub token 无效或已过期（401）</summary>
     public const string GITHUB_TOKEN_EXPIRED = "GITHUB_TOKEN_EXPIRED";
 
-    /// <summary>OAuth state 校验失败（403）</summary>
-    public const string GITHUB_STATE_INVALID = "GITHUB_STATE_INVALID";
-
-    /// <summary>OAuth code 换 token 失败（502）</summary>
-    public const string GITHUB_OAUTH_EXCHANGE_FAILED = "GITHUB_OAUTH_EXCHANGE_FAILED";
-
     /// <summary>OAuth 配置缺失（503：管理员未配置 ClientId/ClientSecret）</summary>
     public const string GITHUB_OAUTH_NOT_CONFIGURED = "GITHUB_OAUTH_NOT_CONFIGURED";
+
+    /// <summary>Device Flow token 已过期或签名无效（403）</summary>
+    public const string DEVICE_FLOW_TOKEN_INVALID = "DEVICE_FLOW_TOKEN_INVALID";
+
+    /// <summary>Device Flow 授权已过期（用户未在 15 分钟内完成）</summary>
+    public const string DEVICE_FLOW_EXPIRED = "DEVICE_FLOW_EXPIRED";
+
+    /// <summary>用户在 GitHub 页面拒绝了授权</summary>
+    public const string DEVICE_FLOW_ACCESS_DENIED = "DEVICE_FLOW_ACCESS_DENIED";
+
+    /// <summary>Device Flow 请求 GitHub API 失败（502）</summary>
+    public const string DEVICE_FLOW_REQUEST_FAILED = "DEVICE_FLOW_REQUEST_FAILED";
 
     /// <summary>PR URL 格式错误或含不安全字符（400）</summary>
     public const string PR_URL_INVALID = "PR_URL_INVALID";
@@ -97,11 +103,17 @@ public sealed class PrReviewException : Exception
 
     public static PrReviewException OAuthNotConfigured() =>
         new(PrReviewErrorCodes.GITHUB_OAUTH_NOT_CONFIGURED, 503,
-            "GitHub OAuth App 未配置，请联系管理员设置 GitHubOAuth:ClientId / GitHubOAuth:ClientSecret");
+            "GitHub OAuth App 未配置，请联系管理员设置 GitHubOAuth:ClientId 并在 OAuth App 设置里勾选 Enable Device Flow");
 
-    public static PrReviewException StateInvalid() =>
-        new(PrReviewErrorCodes.GITHUB_STATE_INVALID, 403, "OAuth state 校验失败，可能是伪造或已过期");
+    public static PrReviewException DeviceFlowTokenInvalid() =>
+        new(PrReviewErrorCodes.DEVICE_FLOW_TOKEN_INVALID, 403, "授权会话无效或已过期，请重新发起连接");
 
-    public static PrReviewException OAuthExchangeFailed(string reason) =>
-        new(PrReviewErrorCodes.GITHUB_OAUTH_EXCHANGE_FAILED, 502, $"GitHub 换 token 失败：{reason}");
+    public static PrReviewException DeviceFlowExpired() =>
+        new(PrReviewErrorCodes.DEVICE_FLOW_EXPIRED, 408, "授权已超时，请重新发起连接");
+
+    public static PrReviewException DeviceFlowAccessDenied() =>
+        new(PrReviewErrorCodes.DEVICE_FLOW_ACCESS_DENIED, 403, "你在 GitHub 页面拒绝了授权");
+
+    public static PrReviewException DeviceFlowRequestFailed(string reason) =>
+        new(PrReviewErrorCodes.DEVICE_FLOW_REQUEST_FAILED, 502, $"调用 GitHub Device Flow 失败：{reason}");
 }

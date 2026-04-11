@@ -371,7 +371,9 @@ export const api = {
   prReview: {
     auth: {
       status: () => '/api/pr-review/auth/status',
-      start: () => '/api/pr-review/auth/start',
+      // Device Flow（CDS 动态域名友好，无需 callback URL）
+      deviceStart: () => '/api/pr-review/auth/device/start',
+      devicePoll: () => '/api/pr-review/auth/device/poll',
       disconnect: () => '/api/pr-review/auth/connection',
     },
     items: {

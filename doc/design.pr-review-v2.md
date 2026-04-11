@@ -10,6 +10,12 @@
 
 **核心洞察**：当前实现把"审查 PR"做成了"给公司配一个全局 GitHub Token 再做审查系统"，导致权限、onboarding、workspace 三层复杂度都压到了前端。V2 把 **Token 从"应用全局配置"迁到"每个用户自己的 GitHub OAuth 连接"**，这一改动会顺带消灭 80% 的偶发复杂度。
 
+**OAuth 模式选择**：采用 **GitHub Device Flow (RFC 8628)** 而非 Web Flow。
+原因是本项目部署在 CDS 动态域名（`<branch>.miduo.org`），每条分支一个域名，
+而 Web Flow 的 Callback URL 必须预先注册且不支持通配符——CDS 上根本不可用。
+Device Flow 完全不需要 Callback URL，本地/CDS/生产共用一套代码，
+是 `gh auth login` 同款机制。
+
 **一句话 MVP**：`连接 GitHub → 粘贴 PR URL → 看数据 + 写笔记`。
 
 **不做什么**：不做 PR 模板解析、不做顶层设计源校验、不做批量评分、不做决策卡发布、不做全局 Token 管理面板、不做多 workspace 切换。这些要么与目标正交（别人家的 PR 你管不到模板），要么是错误前提催生的仪式。
@@ -40,13 +46,18 @@
 ## 3. 用户场景（Happy Path 三步）
 
 ```
-Step 1：首次使用
+Step 1：首次连接（Device Flow，RFC 8628）
   用户点击 "连接 GitHub"
-    ↓  浏览器跳转 github.com/login/oauth/authorize?...
-    ↓  用户授权
-    ↓  github 回调 callback?code=xxx
-    ↓  后端用 code 换 access_token，加密存入 github_user_connections
-    ↓  302 回到 /pr-review 页面
+    ↓  前端 POST /api/pr-review/auth/device/start
+    ↓  后端向 GitHub 请求 device_code，返回 { userCode, verificationUriComplete, flowToken, intervalSeconds }
+    ↓  前端自动 open(verificationUriComplete) 新 tab 到 github.com/login/device?user_code=XXXX
+    ↓  同时页面显示 userCode + 倒计时 + 轮询进度条
+    ↓  用户在 GitHub 页面确认 user_code → 点 Authorize
+    ↓  后端每 intervalSeconds 秒 POST /api/pr-review/auth/device/poll { flowToken }
+    ↓      pending → 继续等
+    ↓      slow_down → 调大间隔
+    ↓      done → 后端换 token 存库，前端刷新 authStatus
+    ↓  页面切到已连接卡片
 
 Step 2：添加 PR
   用户粘贴 https://github.com/OrgA/repoX/pull/42
@@ -61,7 +72,9 @@ Step 3：日常使用
 ```
 
 **错误恢复路径**：
-- Token 失效（GitHub 返回 401）→ 前端提示"连接已过期"→ 一键重连 OAuth
+- Token 失效（GitHub 返回 401）→ 前端提示"连接已过期"→ 一键重连 Device Flow
+- Device Flow 授权超时（15 分钟未点授权）→ 前端显示"授权已超时"并允许重新发起
+- 用户在 GitHub 页面拒绝 → `access_denied` → 前端显示"你拒绝了授权"
 - 权限不够（GitHub 404 屏蔽私有仓）→ 两步探测后返回"仓库不可见"而非"PR 不存在"
 - 网络故障 → 保留旧快照 + `lastRefreshError` 写入 UI 提示条
 
@@ -71,7 +84,7 @@ Step 3：日常使用
 
 | 能力 | 实现要点 |
 |---|---|
-| **连接 GitHub 账号** | OAuth Web Flow (Authorization Code)，加密存 token，支持断开连接 |
+| **连接 GitHub 账号** | OAuth Device Flow (RFC 8628)，无需 Callback URL，加密存 token，支持断开连接 |
 | **提交 PR** | 解析 URL → 白名单正则 → 立即同步拉一次 → 入库 |
 | **列表** | 按 `userId` 过滤，按 `UpdatedAt desc`，分页 |
 | **详情** | 展开卡片显示 GitHub 返回的字段（title/state/author/labels/additions/deletions/changedFiles/reviewDecision/createdAt/mergedAt/htmlUrl） |
@@ -89,10 +102,11 @@ Step 3：日常使用
 
 ```
 Controllers/Api/
-  PrReviewController.cs                  ~350 行（取代 1211 行的 PrReviewPrismController）
+  PrReviewController.cs                  ~550 行（取代 1211 行的 PrReviewPrismController）
 
 Services/PrReview/
-  GitHubOAuthService.cs                  OAuth Code Exchange + 用户信息拉取
+  GitHubOAuthService.cs                  Device Flow: Start + Poll + 用户信息拉取
+                                          + HMAC 签名 flow_token（无状态，多实例安全）
   GitHubPrClient.cs                      按 user token 查 PR，含 404 两步探测
   PrUrlParser.cs                         owner/repo/number 提取，含 SSRF 白名单
   PrReviewErrors.cs                      错误类型定义，映射到 HTTP + ErrorCode
@@ -172,10 +186,10 @@ public class PrReviewSnapshot
 
 | Method | Path | 语义 |
 |---|---|---|
-| `GET`  | `/api/pr-review/auth/github/start`    | 302 → GitHub OAuth `authorize` 端点 |
-| `GET`  | `/api/pr-review/auth/github/callback` | 处理 `?code=xxx&state=yyy` → 换 token → 302 回前端 |
-| `GET`  | `/api/pr-review/auth/status`          | 返回 `{connected, login, avatarUrl, scopes}` |
-| `DELETE` | `/api/pr-review/auth/github`        | 断开连接（删除 row） |
+| `GET`  | `/api/pr-review/auth/status`          | 返回 `{connected, login, avatarUrl, scopes, oauthConfigured}` |
+| `POST` | `/api/pr-review/auth/device/start`    | 发起 Device Flow，返回 `{userCode, verificationUri, verificationUriComplete, intervalSeconds, expiresInSeconds, flowToken}` |
+| `POST` | `/api/pr-review/auth/device/poll`     | body: `{flowToken}` → 轮询 GitHub，返回 `{status: 'pending' \| 'slow_down' \| 'expired' \| 'denied' \| 'done'}` |
+| `DELETE` | `/api/pr-review/auth/connection`    | 断开连接（删除 row） |
 | `POST` | `/api/pr-review/items`                | body: `{pullRequestUrl, note?}`，提交并同步拉一次 |
 | `GET`  | `/api/pr-review/items?page=1&pageSize=20` | 分页列表 |
 | `GET`  | `/api/pr-review/items/{id}`           | 单条详情 |
@@ -186,28 +200,40 @@ public class PrReviewSnapshot
 ### 6.1 OAuth 配置项
 
 ```
-appsettings.json:
-{
-  "GitHubOAuth": {
-    "ClientId": "<from env>",
-    "ClientSecret": "<from env, encrypted>",
-    "CallbackPath": "/api/pr-review/auth/github/callback",
-    "Scopes": "repo,read:user"
-  }
-}
+环境变量:
+  GitHubOAuth__ClientId     = <GitHub OAuth App 的 Client ID>
+  GitHubOAuth__ClientSecret = <可选；Device Flow 对公有 OAuth App 可不填>
+  GitHubOAuth__Scopes       = "repo,read:user"（默认值）
 ```
 
-> **GitHub OAuth App 注册**：在 GitHub Settings → Developer settings → OAuth Apps 创建。Callback URL 填 `https://<your-domain>/api/pr-review/auth/github/callback`。将 Client ID/Secret 以环境变量 `GitHubOAuth__ClientId` / `GitHubOAuth__ClientSecret` 注入容器。
+> **GitHub OAuth App 注册**：
+> 1. 到 GitHub Settings → Developer settings → OAuth Apps 创建新应用
+> 2. **勾选 "Enable Device Flow"** ✅（关键——否则 device_code 端点会 403）
+> 3. **Callback URL 随便填一个**（例如 `https://example.com`）——Device Flow 不使用它，但 GitHub 表单必填
+> 4. 复制 Client ID 注入到 `GitHubOAuth__ClientId`
+> 5. 完成——本地/CDS/生产共用同一个 OAuth App，无需为动态域名做任何额外配置
 
-### 6.2 State 防 CSRF
+### 6.2 Flow Token 防伪造
 
-Callback 必须验证 `state` 与会话一致。V1 实现：生成随机 32 字节 → sessionStorage (后端 session) → 回调时比对 → 一次性失效。
+Device Flow 的 Start 阶段返回的 `flowToken` 是 HMAC 签名的 (device_code, userId, expiry) 三元组，
+格式：`base64url(deviceCode|userId|expiryUnix|hmacHex)`，HMAC 用 `Jwt:Secret`（启动 fail-fast）。
+Poll 时后端会：
+1. 验证 HMAC 签名（`FixedTimeEquals` 防时序攻击）
+2. 校验 `userId` 与当前登录用户一致
+3. 校验 `expiryUnix` 未超时
+4. 解出 `device_code` 向 GitHub 轮询
+
+这种"签名令牌"模式完全无状态、无 session、多实例天然安全，`device_code` 从不出后端。
 
 ### 6.3 错误分类（消灭 404 歧义）
 
 ```
 用户 Token 失效          → 401 GITHUB_TOKEN_EXPIRED
 用户已断开 GitHub         → 412 GITHUB_NOT_CONNECTED
+Device Flow 令牌无效/过期 → 403 DEVICE_FLOW_TOKEN_INVALID
+Device Flow 超时(>15min)  → 408 DEVICE_FLOW_EXPIRED
+用户拒绝授权              → 403 DEVICE_FLOW_ACCESS_DENIED
+GitHub OAuth 未配置       → 503 GITHUB_OAUTH_NOT_CONFIGURED
 URL 格式错                → 400 PR_URL_INVALID
 owner/repo 不符合白名单   → 400 PR_URL_INVALID
 两步探测：repo 404        → 404 GITHUB_REPO_NOT_VISIBLE（"仓库不存在或你无权访问"）
@@ -256,21 +282,36 @@ src/services/real/
 - **无 localStorage**：所有状态来自服务端 GET，浏览器关闭就结束
 - **乐观 UI**：刷新/笔记保存走乐观更新，失败回滚
 
-### 7.3 OAuth 跳转交互
+### 7.3 Device Flow 交互
 
 ```
-[连接 GitHub] 按钮 → window.location.href = '/api/pr-review/auth/github/start'
-              ↓
-    GitHub 授权页
-              ↓
-    回到 /api/pr-review/auth/github/callback
-              ↓
-    后端 302 → /admin/pr-review?connected=1
-              ↓
-    前端根据 query 判断成功，toast + 自动 loadStatus
+[连接 GitHub] 按钮
+    ↓
+POST /api/pr-review/auth/device/start
+    ← { userCode: "WDJB-MJHT", verificationUriComplete, flowToken, intervalSeconds: 5 }
+    ↓
+window.open(verificationUriComplete)  // 新 tab 打开 GitHub 授权页
+    ↓
+同时前端页面显示进度卡片：
+    ┌─────────────────────────────────────┐
+    │ 等待你在 GitHub 上授权...  (spinner) │
+    │                                      │
+    │ 授权码  [ W D J B - M J H T ]  [复制]│
+    │                                      │
+    │   [ 打开 GitHub 授权页 ]              │
+    │                                      │
+    │ 剩余 14:23                每 5 秒检测│
+    │ ▓▓▓▓▓░░░░░░░░░░░░░░░░░░░░░░░░░░░░░│
+    └─────────────────────────────────────┘
+    ↓
+每 intervalSeconds 秒 POST /auth/device/poll { flowToken }
+  ← pending  → 继续等
+  ← slow_down → 间隔 +5 秒
+  ← done     → 前端刷新 authStatus，切到已连接
+  ← expired / denied → 显示错误，允许重新发起
 ```
 
-**零复制粘贴、零 token 手动输入。**
+**零复制粘贴、零 token 手动输入**——用户看到授权码，点按钮打开 GitHub，在 GitHub 页面确认授权码后点 Authorize，浏览器回到本页面时连接已自动建立。
 
 ---
 

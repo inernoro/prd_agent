@@ -6,6 +6,12 @@
  * - 返回 ApiResponse<T>，调用方用 res.success 判断
  * - 错误使用 res.error?.message，不是字符串
  * - 禁止 localStorage：所有状态由服务端决定
+ *
+ * 授权模式：GitHub Device Flow (RFC 8628)
+ * - 原因：CDS 动态域名（<branch>.miduo.org）与 Web Flow Callback URL 不兼容
+ * - 前端调 deviceStart 拿到 userCode + verificationUri + flowToken
+ * - 前端打开 verificationUri 让用户授权，同时轮询 devicePoll
+ * - 轮询直到 status === 'done' / 'expired' / 'denied'
  */
 import { apiRequest } from '@/services/real/apiClient';
 import api from '@/services/api';
@@ -63,8 +69,24 @@ export interface PrReviewAuthStatus {
   lastUsedAt?: string;
 }
 
-export interface PrReviewAuthStart {
-  authorizeUrl: string;
+export interface PrReviewDeviceFlowStart {
+  userCode: string;
+  verificationUri: string;
+  verificationUriComplete: string;
+  intervalSeconds: number;
+  expiresInSeconds: number;
+  flowToken: string;
+}
+
+export type PrReviewDeviceFlowPollStatus =
+  | 'pending'
+  | 'slow_down'
+  | 'expired'
+  | 'denied'
+  | 'done';
+
+export interface PrReviewDeviceFlowPoll {
+  status: PrReviewDeviceFlowPollStatus;
 }
 
 // ===== API 调用 =====
@@ -73,9 +95,18 @@ export async function getPrReviewAuthStatus(): Promise<ApiResponse<PrReviewAuthS
   return apiRequest<PrReviewAuthStatus>(api.prReview.auth.status());
 }
 
-export async function startPrReviewOAuth(): Promise<ApiResponse<PrReviewAuthStart>> {
-  return apiRequest<PrReviewAuthStart>(api.prReview.auth.start(), {
+export async function startPrReviewDeviceFlow(): Promise<ApiResponse<PrReviewDeviceFlowStart>> {
+  return apiRequest<PrReviewDeviceFlowStart>(api.prReview.auth.deviceStart(), {
     method: 'POST',
+  });
+}
+
+export async function pollPrReviewDeviceFlow(
+  flowToken: string,
+): Promise<ApiResponse<PrReviewDeviceFlowPoll>> {
+  return apiRequest<PrReviewDeviceFlowPoll>(api.prReview.auth.devicePoll(), {
+    method: 'POST',
+    body: { flowToken },
   });
 }
 

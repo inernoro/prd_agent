@@ -55,7 +55,13 @@ public sealed class PrReviewController : ControllerBase
     }
 
     // =========================================================
-    // Section 1 — OAuth (status / start / callback / disconnect)
+    // Section 1 — OAuth Device Flow (status / start / poll / disconnect)
+    //
+    // 设计：使用 GitHub Device Flow (RFC 8628) 而非 Web Flow。
+    //   原因：本项目部署在 CDS 动态域名（<branch>.miduo.org），每条分支一个域名，
+    //   而 GitHub OAuth Web Flow 要求 Callback URL 预先注册，不支持通配符。
+    //   Device Flow 完全不需要 Callback，本地/CDS/生产共用一套代码。
+    //   同一套 UX：用户点按钮 → 打开 GitHub 授权页 → 后端轮询拿 token。
     // =========================================================
 
     /// <summary>
@@ -94,19 +100,27 @@ public sealed class PrReviewController : ControllerBase
     }
 
     /// <summary>
-    /// 为当前用户生成 GitHub authorize URL。
-    /// 前端拿到后执行 window.location.href = authorizeUrl 做整页跳转。
+    /// 发起 Device Flow：后端向 GitHub 请求 device_code，
+    /// 返回 user_code 与 verification URL 供前端展示，flow_token 用于后续轮询。
     /// </summary>
-    [HttpPost("auth/start")]
+    [HttpPost("auth/device/start")]
     [Authorize]
-    public IActionResult StartOAuth()
+    public async Task<IActionResult> StartDeviceFlow(CancellationToken ct)
     {
         try
         {
             var userId = this.GetRequiredUserId();
-            var callback = BuildCallbackUrl();
-            var authorizeUrl = _oauth.BuildAuthorizeUrl(userId, callback);
-            return Ok(ApiResponse<object>.Ok(new { authorizeUrl }));
+            // 对外部 GitHub 请求走 CancellationToken.None：客户端断开不得中止授权启动
+            var start = await _oauth.StartDeviceFlowAsync(userId, CancellationToken.None);
+            return Ok(ApiResponse<object>.Ok(new
+            {
+                userCode = start.UserCode,
+                verificationUri = start.VerificationUri,
+                verificationUriComplete = start.VerificationUriComplete,
+                intervalSeconds = start.IntervalSeconds,
+                expiresInSeconds = start.ExpiresInSeconds,
+                flowToken = start.FlowToken,
+            }));
         }
         catch (PrReviewException ex)
         {
@@ -115,80 +129,50 @@ public sealed class PrReviewController : ControllerBase
     }
 
     /// <summary>
-    /// GitHub OAuth 回调：用 code 换 token，保存用户连接，302 回前端。
-    /// 无需 [Authorize]：用 HMAC state 验证身份，避免依赖 session/cookie。
+    /// 轮询 Device Flow：验证 flow_token 后向 GitHub 查询授权结果。
+    /// 前端按 intervalSeconds 节奏每次调一次本端点，直到返回 done / expired / denied。
     /// </summary>
-    [HttpGet("auth/callback")]
-    [AllowAnonymous]
-    public async Task<IActionResult> OAuthCallback(
-        [FromQuery] string? code,
-        [FromQuery] string? state,
-        [FromQuery(Name = "error")] string? githubError,
+    [HttpPost("auth/device/poll")]
+    [Authorize]
+    public async Task<IActionResult> PollDeviceFlow(
+        [FromBody] PollDeviceFlowRequest req,
         CancellationToken ct)
     {
-        var frontendPath = _config["GitHubOAuth:FrontendReturnPath"] ?? "/admin/pr-review";
-        var baseUrl = ResolveBaseUrl();
-
-        if (!string.IsNullOrWhiteSpace(githubError))
+        if (req == null || string.IsNullOrWhiteSpace(req.FlowToken))
         {
-            return Redirect($"{baseUrl}{frontendPath}?connected=0&error={Uri.EscapeDataString(githubError!)}");
-        }
-        if (string.IsNullOrWhiteSpace(code) || string.IsNullOrWhiteSpace(state))
-        {
-            return Redirect($"{baseUrl}{frontendPath}?connected=0&error=missing_code_or_state");
-        }
-
-        string userId;
-        try
-        {
-            userId = _oauth.ValidateStateAndGetUserId(state);
-        }
-        catch (PrReviewException ex)
-        {
-            _logger.LogWarning("PrReview OAuth state invalid: {Msg}", ex.Message);
-            return Redirect($"{baseUrl}{frontendPath}?connected=0&error=state_invalid");
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "flowToken 不能为空"));
         }
 
         try
         {
-            var callback = BuildCallbackUrl();
-            // CancellationToken.None：客户端是 GitHub 跳转，断开不得中止换 token
-            var tokenResp = await _oauth.ExchangeCodeAsync(code!, callback, CancellationToken.None);
-            var userInfo = await _oauth.FetchUserInfoAsync(tokenResp.AccessToken, CancellationToken.None);
+            var userId = this.GetRequiredUserId();
+            var result = await _oauth.PollDeviceFlowAsync(userId, req.FlowToken, CancellationToken.None);
 
-            var jwtSecret = _config["Jwt:Secret"] ?? throw new InvalidOperationException("Jwt:Secret missing");
-            var encrypted = ApiKeyCrypto.Encrypt(tokenResp.AccessToken, jwtSecret);
+            switch (result.Status)
+            {
+                case DeviceFlowPollStatus.Pending:
+                    return Ok(ApiResponse<object>.Ok(new { status = "pending" }));
 
-            var now = DateTime.UtcNow;
-            var filter = Builders<GitHubUserConnection>.Filter.Eq(x => x.UserId, userId);
-            var update = Builders<GitHubUserConnection>.Update
-                .Set(x => x.UserId, userId)
-                .Set(x => x.GitHubLogin, userInfo.Login)
-                .Set(x => x.GitHubUserId, userInfo.Id.ToString())
-                .Set(x => x.AvatarUrl, userInfo.AvatarUrl)
-                .Set(x => x.AccessTokenEncrypted, encrypted)
-                .Set(x => x.Scopes, tokenResp.Scope ?? string.Empty)
-                .Set(x => x.ConnectedAt, now)
-                .SetOnInsert(x => x.Id, Guid.NewGuid().ToString("N"));
+                case DeviceFlowPollStatus.SlowDown:
+                    return Ok(ApiResponse<object>.Ok(new { status = "slow_down" }));
 
-            await _db.GitHubUserConnections.UpdateOneAsync(
-                filter,
-                update,
-                new UpdateOptions { IsUpsert = true },
-                CancellationToken.None);
+                case DeviceFlowPollStatus.Expired:
+                    return Ok(ApiResponse<object>.Ok(new { status = "expired" }));
 
-            _logger.LogInformation("PrReview GitHub connected: user={UserId} login={Login}", userId, userInfo.Login);
-            return Redirect($"{baseUrl}{frontendPath}?connected=1&login={Uri.EscapeDataString(userInfo.Login)}");
+                case DeviceFlowPollStatus.Denied:
+                    return Ok(ApiResponse<object>.Ok(new { status = "denied" }));
+
+                case DeviceFlowPollStatus.Done:
+                    await PersistConnectionAsync(userId, result.AccessToken!, result.Scope ?? string.Empty);
+                    return Ok(ApiResponse<object>.Ok(new { status = "done" }));
+
+                default:
+                    return Ok(ApiResponse<object>.Ok(new { status = "pending" }));
+            }
         }
         catch (PrReviewException ex)
         {
-            _logger.LogWarning(ex, "PrReview OAuth exchange failed");
-            return Redirect($"{baseUrl}{frontendPath}?connected=0&error={Uri.EscapeDataString(ex.Code)}");
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "PrReview OAuth callback unexpected failure");
-            return Redirect($"{baseUrl}{frontendPath}?connected=0&error=internal_error");
+            return MapException(ex);
         }
     }
 
@@ -203,6 +187,38 @@ public sealed class PrReviewController : ControllerBase
         var result = await _db.GitHubUserConnections
             .DeleteOneAsync(x => x.UserId == userId, ct);
         return Ok(ApiResponse<object>.Ok(new { deleted = result.DeletedCount > 0 }));
+    }
+
+    /// <summary>
+    /// Device Flow 成功后，把 (login / avatar / token) upsert 到 github_user_connections。
+    /// 单独抽出来方便两条路径（Start 后由 Poll 调用 / 未来如果加 refresh token 也调用）复用。
+    /// </summary>
+    private async Task PersistConnectionAsync(string userId, string accessToken, string scope)
+    {
+        var userInfo = await _oauth.FetchUserInfoAsync(accessToken, CancellationToken.None);
+
+        var jwtSecret = _config["Jwt:Secret"] ?? throw new InvalidOperationException("Jwt:Secret missing");
+        var encrypted = ApiKeyCrypto.Encrypt(accessToken, jwtSecret);
+
+        var now = DateTime.UtcNow;
+        var filter = Builders<GitHubUserConnection>.Filter.Eq(x => x.UserId, userId);
+        var update = Builders<GitHubUserConnection>.Update
+            .Set(x => x.UserId, userId)
+            .Set(x => x.GitHubLogin, userInfo.Login)
+            .Set(x => x.GitHubUserId, userInfo.Id.ToString())
+            .Set(x => x.AvatarUrl, userInfo.AvatarUrl)
+            .Set(x => x.AccessTokenEncrypted, encrypted)
+            .Set(x => x.Scopes, scope)
+            .Set(x => x.ConnectedAt, now)
+            .SetOnInsert(x => x.Id, Guid.NewGuid().ToString("N"));
+
+        await _db.GitHubUserConnections.UpdateOneAsync(
+            filter,
+            update,
+            new UpdateOptions { IsUpsert = true },
+            CancellationToken.None);
+
+        _logger.LogInformation("PrReview GitHub connected via device flow: user={UserId} login={Login}", userId, userInfo.Login);
     }
 
     // =========================================================
@@ -506,30 +522,6 @@ public sealed class PrReviewController : ControllerBase
             && !string.IsNullOrWhiteSpace(_config["GitHubOAuth:ClientSecret"]);
     }
 
-    /// <summary>
-    /// 解析外部可访问的 base URL，支持反向代理（X-Forwarded-Host / X-Forwarded-Proto）。
-    /// </summary>
-    private string ResolveBaseUrl()
-    {
-        var forwardedHost = Request.Headers["X-Forwarded-Host"].FirstOrDefault();
-        if (!string.IsNullOrWhiteSpace(forwardedHost))
-        {
-            var scheme = Request.Headers["X-Forwarded-Proto"].FirstOrDefault() ?? "https";
-            return $"{scheme}://{forwardedHost.Split(',')[0].Trim()}";
-        }
-        return $"{Request.Scheme}://{Request.Host}";
-    }
-
-    private string BuildCallbackUrl()
-    {
-        var configured = _config["GitHubOAuth:CallbackUrl"];
-        if (!string.IsNullOrWhiteSpace(configured))
-        {
-            return configured!;
-        }
-        return $"{ResolveBaseUrl()}/api/pr-review/auth/callback";
-    }
-
     private IActionResult MapException(PrReviewException ex)
     {
         _logger.LogInformation("PrReview domain error: {Code} {Message}", ex.Code, ex.Message);
@@ -578,4 +570,9 @@ public sealed class CreatePrReviewItemRequest
 public sealed class UpdatePrReviewNoteRequest
 {
     public string? Note { get; set; }
+}
+
+public sealed class PollDeviceFlowRequest
+{
+    public string FlowToken { get; set; } = string.Empty;
 }

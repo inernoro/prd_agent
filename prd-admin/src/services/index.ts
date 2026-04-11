@@ -1502,10 +1502,11 @@ export type {
   ReviewWebhookConfig,
 } from '@/services/real/reviewAgent';
 
-// ============ PR Review（pr-review）基于每用户 GitHub OAuth 的审查工作台 ============
+// ============ PR Review（pr-review）基于每用户 GitHub Device Flow 的审查工作台 ============
 export {
   getPrReviewAuthStatus,
-  startPrReviewOAuth,
+  startPrReviewDeviceFlow,
+  pollPrReviewDeviceFlow,
   disconnectPrReviewGitHub,
   listPrReviewItems,
   createPrReviewItem,
@@ -1519,5 +1520,7 @@ export type {
   PrReviewItemDto,
   PrReviewListResponse,
   PrReviewAuthStatus,
-  PrReviewAuthStart,
+  PrReviewDeviceFlowStart,
+  PrReviewDeviceFlowPoll,
+  PrReviewDeviceFlowPollStatus,
 } from '@/services/real/prReview';
