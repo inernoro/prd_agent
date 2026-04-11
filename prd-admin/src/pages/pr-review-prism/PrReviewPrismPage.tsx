@@ -300,6 +300,86 @@ export function PrReviewPrismPage() {
   );
   const canQuickOnboard = Boolean(tokenConfig?.tokenConfigured) && isBindingRepoValid;
   const canStartReviewNow = canQuickOnboard;
+  const repositoryTopDesignBundleText = useMemo(() => {
+    const repoValue = normalizedBindingRepo || 'owner/repo';
+    return `# doc/top-design/main.md
+# Top Design Baseline
+
+Repository: \`${repoValue}\`
+
+## Bounded Context
+- ${normalizedContext}
+
+## Core Anchor
+- ${normalizedAnchor}
+
+# doc/top-design/anchors.yml
+version: 1
+anchors:
+  - id: "${normalizedAnchor}"
+    title: "Core PR review governance anchor"
+    description: "Minimal anchor for PR Review Prism gate initialization."
+
+# doc/top-design/contexts.yml
+version: 1
+contexts:
+  - id: "${normalizedContext}"
+    name: "${normalizedContext}"
+    description: "Primary governance bounded context for this repository."
+
+# doc/top-design/slices.yml
+version: 1
+slices:
+  - id: "slice-${repoValue.replace('/', '-').toLowerCase()}-core"
+    owner: "${normalizedOwner}"
+    context: "${normalizedContext}"
+    description: "Initial vertical slice for PR governance baseline."
+
+# .github/pr-architect/design-sources.yml
+version: 1
+profile: top-design-sources
+defaults:
+  active_source_id: "local-ddd-anchor"
+  active_version: "v1.0.0"
+  enforce_manifests: true
+sources:
+  - id: "local-ddd-anchor"
+    type: "repo-file"
+    location: "doc/top-design/main.md"
+    version: "v1.0.0"
+    checksum: "sha256:replace-with-real-checksum"
+    owner: "${normalizedOwner}"
+    description: "Repository local top-design baseline for PR Review Prism"
+    manifests:
+      anchors: "doc/top-design/anchors.yml"
+      slices: "doc/top-design/slices.yml"
+      contexts: "doc/top-design/contexts.yml"
+
+# .github/pr-architect/repo-bindings.yml
+version: 1
+profile: pr-architect-repo-bindings
+defaults:
+  enabled: true
+  required_checks:
+    - "PR审查棱镜 L1 Gate"
+    - "PR审查棱镜 Advisory"
+  architects:
+    - "${normalizedOwner}"
+repositories:
+  - repo: "${repoValue}"
+    enabled: true
+    design_source_id: "local-ddd-anchor"
+    design_source_version: "v1.0.0"
+    default_owner: "${normalizedOwner}"
+    default_context: "${normalizedContext}"
+    default_anchor_refs:
+      - "${normalizedAnchor}"
+    required_checks:
+      - "PR审查棱镜 L1 Gate"
+      - "PR审查棱镜 Advisory"
+    architects:
+      - "${normalizedOwner}"`;
+  }, [normalizedAnchor, normalizedBindingRepo, normalizedContext, normalizedOwner]);
   const smartOnboardingActionLabel = canSubmitPr
     ? '完成接入并开始审查（含顶设）'
     : '完成接入并开始审查';
@@ -340,6 +420,15 @@ export function PrReviewPrismPage() {
       },
     }));
   }, [setRepoWorkspaceParamsMap]);
+
+  const copyToClipboard = useCallback(async (text: string, successMessage: string) => {
+    try {
+      await navigator.clipboard.writeText(text);
+      setSetupActionMessage(successMessage);
+    } catch {
+      setSetupActionMessage('复制失败，请手动复制');
+    }
+  }, []);
 
   const downloadRepoSkillPackage = useCallback(async () => {
     if (!isBindingRepoValid) {
@@ -1244,6 +1333,15 @@ export function PrReviewPrismPage() {
                 <p className="mt-2 text-[11px] text-white/65">
                   判定原理：PR 拉取后会读取仓库绑定与设计源，校验 anchor/context/切片清单是否可解析，再结合 L1 Gate 与决策卡生成最终审查状态。
                 </p>
+                <div className="mt-2 flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    onClick={() => void copyToClipboard(repositoryTopDesignBundleText, '已复制 6 文件顶设模板')}
+                    className="inline-flex items-center gap-1 rounded border border-white/20 bg-white/10 px-2.5 py-1 text-[11px] text-white hover:bg-white/15 whitespace-nowrap"
+                  >
+                    一键复制 6 文件模板
+                  </button>
+                </div>
               </div>
             </div>
           </div>

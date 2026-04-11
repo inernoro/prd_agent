@@ -55,3 +55,4 @@
 | refactor | prd-admin | 将“Step3 顶层设计依据”从接入向导主流程解耦为独立仓库级管理区，仅保留接入必要步骤并补充原理说明 |
 | fix | prd-admin | PR审查棱镜接入向导改为 3 步必要流程（Token/仓库/完成），并新增独立“仓库级顶设管理区”集中维护 owner/context/anchor 与绑定片段 |
 | fix | prd-admin | PR审查棱镜页面增强 localStorage 兼容清洗，遇到历史/异常缓存结构时自动降级默认值，避免 CDS 环境白屏 |
+| feat | prd-admin | 仓库级顶设依据管理区新增“一键复制6文件模板”，可直接粘贴生成 top-design 与 pr-architect 配置，降低新仓库手工配置门槛 |
