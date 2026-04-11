@@ -58,19 +58,33 @@ export function createSchedulerRouter(deps: SchedulerRouterDeps): Router {
   const router = Router();
 
   // ── Auth middleware: verify permanent executor token ──
-  // Bootstrap registration is handled separately on /register so we can
-  // accept a one-shot token there.
+  //
+  // This check intentionally only fires when the client sent an
+  // `X-Executor-Token` header. A missing header means the request was
+  // already authenticated upstream by the server's cookie auth middleware
+  // (the cookie path that runs before the peer-to-peer bypass): a Dashboard
+  // user clicking 排空/踢出 has a valid cookie but no executor token, and
+  // should NOT be rejected here. Only requests that DID present a token
+  // need strict validation — that path is the cross-node register/drain
+  // flow where the caller is another CDS instance.
+  //
+  // Without this relaxation, Dashboard DELETE /api/executors/:id calls came
+  // back 401 and the api() helper redirected the user to /login.html,
+  // which the user reported as "踢出后自己会重新登录".
   function verifyPermanentToken(
     req: import('express').Request,
     res: import('express').Response,
     next: import('express').NextFunction,
   ): void {
-    if (config.executorToken) {
-      const token = req.headers['x-executor-token'] as string | undefined;
-      if (token !== config.executorToken) {
-        res.status(401).json({ error: 'Invalid executor token' });
-        return;
-      }
+    const providedToken = req.headers['x-executor-token'] as string | undefined;
+    if (providedToken === undefined) {
+      // No executor-token header → trust upstream auth (cookie or AI key).
+      return next();
+    }
+    // A token was presented — validate strictly.
+    if (!config.executorToken || providedToken !== config.executorToken) {
+      res.status(401).json({ error: 'Invalid executor token' });
+      return;
     }
     next();
   }

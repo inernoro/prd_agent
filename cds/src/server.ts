@@ -434,9 +434,13 @@ export function createServer(deps: ServerDeps): express.Express {
       // reject all cross-node calls with 401 — which is exactly the bug that
       // broke `./exec_cds.sh connect` and the Dashboard's "加入集群" button.
       //
-      // We bypass cookie auth for these specific method+path combinations and
-      // let the downstream route handler enforce bootstrap/permanent-token
-      // validation via `verifyBootstrapOrPermanent` / `verifyPermanentToken`.
+      // We bypass cookie auth for these specific method+path combinations
+      // ONLY WHEN a cluster token header is present. This way a Dashboard
+      // user (cookie-authenticated, no cluster token) still goes through
+      // normal cookie auth — which is required so the Dashboard's
+      // "踢出" button can call DELETE /api/executors/:id without hitting
+      // the verifyPermanentToken wall downstream.
+      //
       // The bypass is tightly scoped — GET /api/executors (list) and
       // /api/cluster/* (dashboard UI) still go through cookie auth.
       //
@@ -444,10 +448,15 @@ export function createServer(deps: ServerDeps): express.Express {
       // already imported as the Node module at the top of this file.
       const reqMethod = req.method;
       const reqPath = req.path;
-      if (reqMethod === 'POST' && reqPath === '/api/executors/register') return next();
-      if (reqMethod === 'POST' && /^\/api\/executors\/[^/]+\/heartbeat$/.test(reqPath)) return next();
-      if (reqMethod === 'DELETE' && /^\/api\/executors\/[^/]+$/.test(reqPath)) return next();
-      if (reqMethod === 'POST' && /^\/api\/executors\/[^/]+\/drain$/.test(reqPath)) return next();
+      const hasClusterToken =
+        req.headers['x-bootstrap-token'] !== undefined ||
+        req.headers['x-executor-token'] !== undefined;
+      if (hasClusterToken) {
+        if (reqMethod === 'POST' && reqPath === '/api/executors/register') return next();
+        if (reqMethod === 'POST' && /^\/api\/executors\/[^/]+\/heartbeat$/.test(reqPath)) return next();
+        if (reqMethod === 'DELETE' && /^\/api\/executors\/[^/]+$/.test(reqPath)) return next();
+        if (reqMethod === 'POST' && /^\/api\/executors\/[^/]+\/drain$/.test(reqPath)) return next();
+      }
 
       // Check human cookie auth
       const cookieToken = parseCookie(req.headers.cookie || '', 'cds_token');

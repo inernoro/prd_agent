@@ -1045,15 +1045,88 @@ probe_master() {
   return 1
 }
 
+# Decode a base64(JSON) connection code into {master, token} via python3.
+# Prints "master|token" on success, nothing on failure. The Dashboard's
+# "生成连接码" button outputs this base64 form, and users frequently
+# copy-paste it into the CLI. Accepting both formats avoids the "Invalid
+# bootstrap token" confusion that bit the user when they pasted the UI's
+# code into the CLI thinking it was a raw hex token.
+decode_connection_code() {
+  local code="$1"
+  if ! command -v python3 >/dev/null 2>&1; then
+    return 1
+  fi
+  python3 -c "
+import sys, base64, json
+try:
+    raw = sys.argv[1]
+    decoded = base64.b64decode(raw).decode('utf-8')
+    obj = json.loads(decoded)
+    if not isinstance(obj, dict): sys.exit(1)
+    m = obj.get('master') or ''
+    t = obj.get('token') or ''
+    if m and t:
+        print(f'{m}|{t}')
+    else:
+        sys.exit(1)
+except Exception:
+    sys.exit(1)
+" "$code" 2>/dev/null
+}
+
 # Connect THIS machine to a master as an executor.
-# Usage: connect <master-url> <bootstrap-token>
+#
+# Two calling forms for convenience:
+#   1. Two-arg form (original):
+#        ./exec_cds.sh connect <master-url> <bootstrap-token-hex>
+#   2. Single-arg form (copy-paste from Dashboard "生成连接码"):
+#        ./exec_cds.sh connect <base64-connection-code>
+#
+# We also auto-detect if the second arg is itself a base64 connection code
+# (common copy-paste mistake: paste the whole code in the token slot).
 connect_cmd() {
   local master_url="${1:-}" token="${2:-}"
+
+  # Form 2: single arg that looks like base64. Quick heuristic: starts
+  # with 'ey' (base64 of '{"') AND doesn't start with 'http'.
+  if [ -n "$master_url" ] && [ -z "$token" ] && [[ "$master_url" =~ ^ey ]]; then
+    local decoded; decoded="$(decode_connection_code "$master_url")"
+    if [ -n "$decoded" ]; then
+      master_url="${decoded%%|*}"
+      token="${decoded##*|}"
+      info "已从连接码解析出 master_url=${master_url}"
+    else
+      err "无法解析连接码。请确认是 Dashboard 生成的 base64 字符串"
+      exit 1
+    fi
+  fi
+
+  # Form-1 special case: user pasted the FULL base64 connection code as the
+  # token argument alongside an explicit URL. Extract the real token.
+  if [ -n "$token" ] && [[ "$token" =~ ^ey ]]; then
+    local decoded; decoded="$(decode_connection_code "$token")"
+    if [ -n "$decoded" ]; then
+      local code_master="${decoded%%|*}"
+      token="${decoded##*|}"
+      info "检测到 token 参数是连接码，已提取 token (长度 ${#token})"
+      # If the user gave BOTH an explicit URL and a code with a DIFFERENT
+      # embedded master, trust the explicit URL and warn.
+      if [ -n "$master_url" ] && [ "$master_url" != "$code_master" ]; then
+        warn "连接码里的 master=${code_master}，你传入的 master=${master_url}，使用后者"
+      fi
+    fi
+  fi
+
   if [ -z "$master_url" ] || [ -z "$token" ]; then
     err "用法: ./exec_cds.sh connect <master-url> <bootstrap-token>"
+    echo "  或: ./exec_cds.sh connect <base64-连接码>   (从 Dashboard 复制)"
     echo
-    echo "  示例: ./exec_cds.sh connect https://cds.miduo.org abc123..."
+    echo "  示例:"
+    echo "    ./exec_cds.sh connect https://cds.miduo.org abc123..."
+    echo "    ./exec_cds.sh connect eyJtYXN0ZXIiOiJodHRwc..."
+    echo
     echo "  获取 token: 在主节点执行 ./exec_cds.sh issue-token"
+    echo "             或 在主节点 Dashboard → 集群设置 → 生成连接码"
     exit 1
   fi
 

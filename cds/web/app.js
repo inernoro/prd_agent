@@ -5801,14 +5801,37 @@ function renderClusterNodeListHtml() {
         <button class="cluster-node-btn danger" onclick="removeExecutor('${esc(node.id)}')" title="从集群移除此节点">踢出</button>
       `;
 
+    // Explicit status label so users don't have to decode a colored dot.
+    // The user reported "节点2离线还是在线？不清晰" — a red dot alone was
+    // ambiguous, especially for users with color-vision differences. Now
+    // every node card has a text chip in the header that says 在线/离线/排空中.
+    const statusLabel = {
+      online: '在线',
+      offline: '离线',
+      draining: '排空中',
+    }[status] || status;
+    const statusClass = `cluster-node-status-${status}`;
+
+    // Show the last-heartbeat age on offline cards so the user can see how
+    // long ago the node disappeared (instead of just "red dot").
+    let offlineHint = '';
+    if (status === 'offline' && node.lastHeartbeat) {
+      const agoMs = Date.now() - new Date(node.lastHeartbeat).getTime();
+      const agoMin = Math.floor(agoMs / 60000);
+      const agoStr = agoMin < 1 ? '不到 1 分钟' : agoMin < 60 ? `${agoMin} 分钟前` : `${Math.floor(agoMin / 60)} 小时前`;
+      offlineHint = `<div class="cluster-node-offline-hint">⚠ 最后心跳 ${agoStr} · 可能节点已关机或网络不通，建议先确认再点"踢出"</div>`;
+    }
+
     return `
       <div class="cluster-node-card cluster-node-${status} cluster-node-role-${role}">
         <div class="cluster-node-header">
           <span class="cluster-node-dot" data-status="${status}"></span>
           <span class="cluster-node-id">${esc(node.id)}</span>
+          <span class="cluster-node-status-chip ${statusClass}">${statusLabel}</span>
           <span class="cluster-node-meta">${esc(node.host || '?')}:${node.port || '?'}</span>
           <div class="cluster-node-actions">${actions}</div>
         </div>
+        ${offlineHint}
         <div class="cluster-node-metrics">
           <div class="cluster-node-metric">
             <span class="metric-label">内存</span>

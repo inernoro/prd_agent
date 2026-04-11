@@ -3696,13 +3696,75 @@ a.branch-name:hover { color: var(--accent); }
   background: var(--bg-tertiary);
   border: 1px solid var(--border-subtle);
   border-radius: 6px;
+  position: relative;
 }
 .cluster-node-card.cluster-node-offline {
-  opacity: 0.65;
-  border-color: rgba(248, 81, 73, 0.4);
+  opacity: 0.7;
+  border-color: rgba(248, 81, 73, 0.6);
+  background: linear-gradient(
+    135deg,
+    rgba(248, 81, 73, 0.05) 0%,
+    var(--bg-tertiary) 40%
+  );
+}
+.cluster-node-card.cluster-node-offline::before {
+  /* Subtle diagonal-stripes overlay in the top-left corner so the offline
+   * state reads immediately even without focusing on the status chip. */
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 80px;
+  height: 100%;
+  background: repeating-linear-gradient(
+    -45deg,
+    rgba(248, 81, 73, 0.08) 0px,
+    rgba(248, 81, 73, 0.08) 4px,
+    transparent 4px,
+    transparent 8px
+  );
+  pointer-events: none;
+  border-radius: 6px 0 0 6px;
 }
 .cluster-node-card.cluster-node-draining {
   border-color: rgba(240, 136, 62, 0.4);
+}
+
+/* Status chip inside the node card header — the "在线 / 离线 / 排空中"
+   text label the user asked for. Chip color matches the dot. */
+.cluster-node-status-chip {
+  font-size: 10px;
+  padding: 2px 8px;
+  border-radius: 10px;
+  font-weight: 600;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+.cluster-node-status-chip.cluster-node-status-online {
+  background: rgba(63, 185, 80, 0.15);
+  color: #3fb950;
+  border: 1px solid rgba(63, 185, 80, 0.4);
+}
+.cluster-node-status-chip.cluster-node-status-offline {
+  background: rgba(248, 81, 73, 0.15);
+  color: #f85149;
+  border: 1px solid rgba(248, 81, 73, 0.6);
+}
+.cluster-node-status-chip.cluster-node-status-draining {
+  background: rgba(240, 136, 62, 0.15);
+  color: #f0883e;
+  border: 1px solid rgba(240, 136, 62, 0.4);
+}
+
+.cluster-node-offline-hint {
+  margin: 8px 0;
+  padding: 6px 10px;
+  background: rgba(248, 81, 73, 0.08);
+  border: 1px solid rgba(248, 81, 73, 0.25);
+  border-radius: 4px;
+  font-size: 11px;
+  color: #f85149;
 }
 
 .cluster-node-header {
