@@ -583,6 +583,71 @@ h1 {
 }
 .cap-pop-row { font-size: 12px; }
 
+/* ── Scheduler head: label + toggle side by side ── */
+.cap-pop-scheduler-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+/* ── Compact scheduler on/off switch ── */
+.scheduler-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 10px 4px 6px;
+  border-radius: 999px;
+  border: 1px solid var(--border, #30363d);
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 11px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: border-color 160ms ease, background 160ms ease, color 160ms ease;
+}
+.scheduler-toggle:disabled {
+  opacity: 0.5;
+  cursor: wait;
+}
+.scheduler-toggle-track {
+  display: inline-block;
+  position: relative;
+  width: 26px;
+  height: 14px;
+  border-radius: 999px;
+  background: rgba(139, 148, 158, 0.35);
+  transition: background 160ms ease;
+}
+.scheduler-toggle-thumb {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: #e8e8ec;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.4);
+  transition: left 160ms cubic-bezier(0.16, 1, 0.3, 1), background 160ms ease;
+}
+.scheduler-toggle.on .scheduler-toggle-track {
+  background: #3fb950;
+}
+.scheduler-toggle.on .scheduler-toggle-thumb {
+  left: 14px;
+  background: #ffffff;
+}
+.scheduler-toggle.on {
+  color: #3fb950;
+  border-color: rgba(63, 185, 80, 0.4);
+}
+.scheduler-toggle:hover:not(:disabled) {
+  border-color: var(--accent, #58a6ff);
+}
+.scheduler-toggle.on:hover:not(:disabled) {
+  border-color: rgba(63, 185, 80, 0.7);
+}
+
 .header-subtitle {
   font-size: 11px; color: var(--text-muted); white-space: nowrap;
   background: var(--bg-card);
@@ -1641,6 +1706,68 @@ a.branch-name:hover { color: var(--accent); }
 .empty-state {
   text-align: center; color: var(--text-muted); padding: 40px 0;
   font-size: 14px; font-style: italic;
+}
+
+/* ════════════════ Branches empty state (designed, non-transitional) ════════════════
+ *
+ * Replaces the old `.empty-state` italic text for the "no branches yet" case.
+ * Follows the `guided-exploration.md` rule: illustration + title + hint + CTA,
+ * so the page feels intentionally empty instead of mid-transition.
+ */
+.branches-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 56px 24px 40px;
+  text-align: center;
+  user-select: none;
+}
+.branches-empty-illustration {
+  width: 88px; height: 88px;
+  display: flex; align-items: center; justify-content: center;
+  color: var(--text-muted);
+  opacity: 0.55;
+  margin-bottom: 18px;
+  animation: cds-empty-float 4s ease-in-out infinite;
+}
+.branches-empty-title {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--text-primary, var(--text-secondary));
+  margin-bottom: 8px;
+  letter-spacing: 0.01em;
+}
+.branches-empty-hint {
+  font-size: 13px;
+  color: var(--text-muted);
+  max-width: 420px;
+  line-height: 1.6;
+  margin-bottom: 22px;
+}
+.branches-empty-cta {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 16px;
+  border-radius: 8px;
+  border: 1px solid var(--border, rgba(255,255,255,0.1));
+  background: var(--surface-hover, rgba(255,255,255,0.04));
+  color: var(--text-secondary);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: border-color 140ms ease, background 140ms ease, color 140ms ease, transform 140ms ease;
+}
+.branches-empty-cta:hover {
+  border-color: var(--accent, #58a6ff);
+  color: var(--accent, #58a6ff);
+  background: var(--surface, rgba(88,166,255,0.08));
+  transform: translateY(-1px);
+}
+@keyframes cds-empty-float {
+  0%, 100% { transform: translateY(0); opacity: 0.55; }
+  50%      { transform: translateY(-4px); opacity: 0.75; }
 }
 
 /* ════════════════ Split Button & Deploy Menu ════════════════ */
@@ -4511,4 +4638,96 @@ a.branch-name:hover { color: var(--accent); }
   .node-card-rings .node-ring:nth-child(3) {
     grid-column: span 2;
   }
+}
+
+/* ════════════════ Restart detection overlay ════════════════
+ *
+ * Covers the whole viewport with a friendly "CDS 正在重启" card while
+ * the SSE connection is down. Polls /healthz to auto-reload when the
+ * backend is alive again — see app.js `showRestartOverlay()`.
+ *
+ * z-index sits above modals (1000) and Activity Monitor (50) but below
+ * the toast (9999) so confirmation toasts after the reload stay visible.
+ */
+.cds-restart-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 9000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(13, 17, 23, 0.82);
+  backdrop-filter: blur(6px) saturate(1.2);
+  -webkit-backdrop-filter: blur(6px) saturate(1.2);
+  animation: cds-restart-fade-in 240ms ease both;
+}
+.cds-restart-overlay.fade-out {
+  animation: cds-restart-fade-out 200ms ease both;
+}
+.cds-restart-card {
+  background: var(--bg-card, #161b22);
+  border: 1px solid var(--border, #30363d);
+  border-radius: 14px;
+  padding: 32px 36px 28px;
+  max-width: 420px;
+  width: calc(100% - 48px);
+  text-align: center;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.55);
+  transform: translateY(8px);
+  animation: cds-restart-card-in 320ms cubic-bezier(0.16, 1, 0.3, 1) 80ms both;
+}
+.cds-restart-spinner {
+  color: var(--accent, #58a6ff);
+  margin-bottom: 14px;
+  display: inline-flex;
+  animation: cds-restart-spin 1.6s linear infinite;
+}
+.cds-restart-title {
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--text-primary, #f0f6fc);
+  letter-spacing: 0.01em;
+  margin-bottom: 8px;
+}
+.cds-restart-hint {
+  font-size: 13px;
+  color: var(--text-muted, #8b949e);
+  line-height: 1.6;
+  margin-bottom: 22px;
+  min-height: 2.4em;
+}
+.cds-restart-reload {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 18px;
+  border-radius: 8px;
+  border: 1px solid var(--border, #30363d);
+  background: transparent;
+  color: var(--text-secondary, #c9d1d9);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 160ms ease;
+}
+.cds-restart-reload:hover {
+  border-color: var(--accent, #58a6ff);
+  color: var(--accent, #58a6ff);
+  background: rgba(88, 166, 255, 0.08);
+}
+@keyframes cds-restart-fade-in {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+@keyframes cds-restart-fade-out {
+  from { opacity: 1; }
+  to   { opacity: 0; }
+}
+@keyframes cds-restart-card-in {
+  from { opacity: 0; transform: translateY(20px) scale(0.96); }
+  to   { opacity: 1; transform: translateY(0) scale(1); }
+}
+@keyframes cds-restart-spin {
+  from { transform: rotate(0deg); }
+  to   { transform: rotate(360deg); }
 }

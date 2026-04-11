@@ -72,6 +72,12 @@ let cdsTheme = localStorage.getItem('cds_theme') || 'dark';
 // ── Executor/Scheduler state ──
 let cdsMode = 'standalone';
 let executors = [];
+// Effective cluster role as reported by /api/cluster/status. Distinct from
+// `cdsMode` because a `standalone` node that hot-joins a master becomes
+// `hybrid` (dashboard still alive, but also posting heartbeats upstream)
+// until the next restart. Used by the settings menu to show a top-level
+// "退出集群" action only when relevant.
+let clusterEffectiveRole = 'standalone';
 
 // ── Container capacity ──
 let containerCapacity = { maxContainers: 999, runningContainers: 0, totalMemGB: 0 };
@@ -80,6 +86,21 @@ let containerCapacity = { maxContainers: 999, runningContainers: 0, totalMemGB: 
 // display so "总容量 X" reflects A+B+... instead of just the local master.
 let clusterCapacity = null;
 let clusterStrategy = 'least-load';
+// Scheduler (warm-pool) enabled flag — pushed from /api/config and the
+// state-stream SSE so the header toggle stays in sync with the backend.
+let schedulerEnabled = false;
+
+// ── First-load guard ──
+//
+// The HTML ships with a `cdsInitLoader` animation inside #branchList so the
+// very first paint already has motion. Without a flag, the first successful
+// `loadBranches()` call would wipe the loader and — if branches are empty —
+// immediately replace it with "暂无分支"，producing two transitional states
+// in a row (loader → empty text). We set this to `true` only after the FIRST
+// successful response, so the empty state is only rendered once it's the
+// genuinely-stable state. On first empty load we instead show a deliberate,
+// designed empty state (see `renderEmptyBranchesState`).
+let _branchesFirstLoadDone = false;
 
 // ── Utilities ──
 
@@ -235,10 +256,27 @@ let workerPort = '';
 
 async function init() {
   updateThemeUI();
-  await Promise.all([loadBranches(), loadProfiles(), loadRoutingRules(), loadConfig(), loadEnvVars(), loadInfraServices(), loadMirrorState(), loadTabTitleState()]);
+  await Promise.all([loadBranches(), loadProfiles(), loadRoutingRules(), loadConfig(), loadEnvVars(), loadInfraServices(), loadMirrorState(), loadTabTitleState(), loadClusterStatus()]);
   refreshRemoteCandidates();
   updatePreviewModeUI();
   initStateStream(); // Server-authority: listen for state changes via SSE (replaces polling)
+}
+
+/**
+ * Probe /api/cluster/status once at startup so the settings menu can decide
+ * whether to show the "退出集群" shortcut. The data is also refreshed whenever
+ * the cluster modal is opened or after a join/leave action. Failure is
+ * silent — non-cluster installs return `effectiveRole === 'standalone'`
+ * which is the sensible default.
+ */
+async function loadClusterStatus() {
+  try {
+    const res = await fetch('/api/cluster/status', { credentials: 'include' });
+    if (!res.ok) return;
+    const body = await res.json();
+    clusterEffectiveRole = body.effectiveRole || 'standalone';
+    if (body.strategy) clusterStrategy = body.strategy;
+  } catch { /* quiet */ }
 }
 
 // ── State stream: server pushes branch state changes (no polling needed) ──
@@ -247,6 +285,12 @@ let stateEventSource = null;
 function initStateStream() {
   stateEventSource = new EventSource(`${API}/state-stream`);
   stateEventSource.onmessage = (e) => {
+    // Any successful SSE frame means the backend is alive. If the restart
+    // overlay is showing (stale from a previous onerror), hide it — the
+    // separate `pollHealthForRestart` path would also trigger a full
+    // reload, but if the SSE reconnects cleanly without a full page
+    // restart (e.g. transient network hiccup) there's no need to reload.
+    if (_restartOverlayEl) hideRestartOverlay();
     try {
       const data = JSON.parse(e.data);
       if (data.branches) {
@@ -287,6 +331,9 @@ function initStateStream() {
       if (data.capacity) {
         clusterCapacity = data.capacity;
       }
+      if (typeof data.schedulerEnabled === 'boolean') {
+        schedulerEnabled = data.schedulerEnabled;
+      }
       // Re-render cluster-aware surfaces. `renderCapacityBadge` now reads
       // clusterCapacity when available, `renderExecutorPanel` picks up new
       // status/load, and the cluster modal (if open) calls its own refresh.
@@ -298,11 +345,100 @@ function initStateStream() {
     } catch {}
   };
   stateEventSource.onerror = () => {
+    // Server might be restarting. Flip on the restart-detect overlay so
+    // the user sees "正在重启" instead of a raw Cloudflare 502 banner,
+    // and start polling /healthz to auto-reload the moment CDS is back.
+    showRestartOverlay();
     setTimeout(() => {
       if (stateEventSource) stateEventSource.close();
       initStateStream();
     }, 3000);
   };
+}
+
+// ── Restart detection overlay ──
+//
+// When the state-stream SSE drops (backend restart, network blip,
+// Cloudflare 502 window), this overlay covers the page with a friendly
+// "正在重启" card and polls /healthz once per second. As soon as the
+// endpoint returns 200 we reload the page so stale JS doesn't keep
+// trying stale API shapes. Public /healthz is intentionally cookie-free
+// (see server.ts:254) so the poll works even if cookies are lost.
+//
+// Also protects against manual `./exec_cds.sh restart` from a SSH shell:
+// the operator no longer has to tell the user "just refresh the page",
+// the page refreshes itself the instant the backend is alive.
+let _restartOverlayEl = null;
+let _restartHealthTimer = null;
+let _restartHealthStartedAt = 0;
+let _restartRetryAttempt = 0;
+
+function showRestartOverlay() {
+  if (_restartOverlayEl) return; // already shown
+  const el = document.createElement('div');
+  el.className = 'cds-restart-overlay';
+  el.innerHTML = `
+    <div class="cds-restart-card">
+      <div class="cds-restart-spinner" aria-hidden="true">
+        <svg width="44" height="44" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M21 12a9 9 0 1 1-6.219-8.56"/>
+          <polyline points="21 3 21 9 15 9"/>
+        </svg>
+      </div>
+      <div class="cds-restart-title">CDS 正在重启</div>
+      <div class="cds-restart-hint" id="cdsRestartHint">后台服务暂时不可用，恢复后页面会自动刷新…</div>
+      <button class="cds-restart-reload" onclick="location.reload()">立即刷新</button>
+    </div>
+  `;
+  document.body.appendChild(el);
+  _restartOverlayEl = el;
+  _restartHealthStartedAt = Date.now();
+  _restartRetryAttempt = 0;
+  pollHealthForRestart();
+}
+
+function hideRestartOverlay() {
+  if (_restartHealthTimer) { clearTimeout(_restartHealthTimer); _restartHealthTimer = null; }
+  if (_restartOverlayEl) {
+    _restartOverlayEl.classList.add('fade-out');
+    setTimeout(() => {
+      if (_restartOverlayEl) _restartOverlayEl.remove();
+      _restartOverlayEl = null;
+    }, 200);
+  }
+}
+
+async function pollHealthForRestart() {
+  _restartRetryAttempt++;
+  const hint = document.getElementById('cdsRestartHint');
+  const elapsed = Math.round((Date.now() - _restartHealthStartedAt) / 1000);
+  if (hint) {
+    hint.textContent = `后台服务暂时不可用，已等待 ${elapsed}s，恢复后页面会自动刷新…`;
+  }
+  try {
+    // `cache: 'no-store'` + cache-buster query so Cloudflare/browsers don't
+    // serve a cached 502 from the initial failure window.
+    const res = await fetch(`/healthz?_=${Date.now()}`, {
+      cache: 'no-store',
+      credentials: 'omit',
+    });
+    if (res.ok) {
+      // Backend is alive again. Give nginx + proxies a brief settle window
+      // then hard-reload so we pick up any new JS/HTML shipped in the
+      // restart. `location.reload(true)` is deprecated but a plain
+      // location.reload() plus no-cache headers we set in index.html
+      // is sufficient.
+      if (hint) hint.textContent = '后台已恢复，正在刷新页面…';
+      setTimeout(() => location.reload(), 400);
+      return;
+    }
+  } catch { /* still down */ }
+
+  // Exponential-ish backoff: 1s, 1s, 1s, 2s, 2s, 3s... capped at 3s.
+  // Keeps the first few retries snappy (catch fast restarts) without
+  // spamming requests during a long outage.
+  const delay = _restartRetryAttempt < 4 ? 1000 : _restartRetryAttempt < 8 ? 2000 : 3000;
+  _restartHealthTimer = setTimeout(pollHealthForRestart, delay);
 }
 
 async function loadConfig() {
@@ -333,8 +469,12 @@ function renderExecutorPanel() {
   const panel = document.getElementById('executorPanel');
   if (!panel) return;
 
-  // Only show in scheduler mode or when executors exist
-  if (cdsMode !== 'scheduler' && executors.length === 0) {
+  // Only show when there's actually a cluster (at least one REMOTE executor).
+  // A single-node scheduler (only the embedded master) doesn't need this
+  // panel — the header capacity badge already covers it and the redundant
+  // "执行器集群 1/1 在线" banner was reported as noise.
+  const remoteCount = (executors || []).filter(e => (e.role || 'remote') !== 'embedded').length;
+  if (remoteCount === 0) {
     panel.classList.add('hidden');
     return;
   }
@@ -663,6 +803,10 @@ async function loadBranches({ silent } = {}) {
       const mainBranch = branches.find(b => b.id === 'main') || branches.find(b => b.id === 'master');
       if (mainBranch) defaultBranch = mainBranch.id;
     }
+    // Mark that we've completed at least one successful fetch. Until this
+    // flips true, renderBranches() renders the CDS loader instead of the
+    // "暂无分支" empty state, eliminating the two-step loader→empty flicker.
+    _branchesFirstLoadDone = true;
     renderBranches();
     renderCapacityBadge();
   } catch (e) { console.error('loadBranches:', e); }
@@ -891,18 +1035,18 @@ function renderCapacityBadge() {
   const el = document.getElementById('capacityBadge');
   if (!el) return;
 
-  // ── Cluster-aware display (P1 #4) ──
+  // ── Cluster-aware display ──
   //
-  // Important: once the dashboard learns about a cluster (cdsMode is
-  // 'scheduler' OR there's at least one remote executor in state), we
-  // NEVER fall back to the local container count. The local view uses a
-  // different formula ((memGB-1)*2 counting containers) while the cluster
-  // view uses a per-node formula (floor(memMB/2048) counting branches).
-  // Flickering between them gives the illusion "I added a node and the
-  // capacity SHRANK", which is what the user reported. Stay sticky on
-  // the cluster view once we're in it.
+  // We only switch to the "cluster" UI when there is ACTUALLY more than
+  // one node. A `cdsMode === 'scheduler'` with only the embedded master
+  // (remoteCount === 0) used to render as a cluster, which made the badge
+  // show the generic "集群 ..." placeholder instead of the familiar
+  // container-slot battery. That confused users in single-node scheduler
+  // mode ("我是一个人怎么就成集群了"). We now require at least one
+  // remote node to enter cluster mode — single-node always uses the
+  // well-established single-node battery.
   const remoteCount = (executors || []).filter(e => (e.role || 'remote') !== 'embedded').length;
-  const isCluster = cdsMode === 'scheduler' || remoteCount > 0;
+  const isCluster = remoteCount > 0;
 
   if (isCluster) {
     // Wait for the first SSE tick to deliver real cluster data before we
@@ -1010,6 +1154,91 @@ function renderCapacityBadge() {
 }
 
 /**
+ * Render a compact on/off switch for the warm-pool scheduler inside the
+ * capacity popover. Clicking the switch calls `toggleSchedulerEnabled`,
+ * which hits `PUT /api/scheduler/enabled` and re-renders the popover
+ * with the new state. Centralized here so the off/on branches in the
+ * popover markup both use the same styled button.
+ */
+function renderSchedulerToggleHtml(enabled) {
+  return `
+    <button class="scheduler-toggle ${enabled ? 'on' : 'off'}"
+            onclick="toggleSchedulerEnabled(event)"
+            title="${enabled ? '点击停用 warm-pool 调度器' : '点击启用 warm-pool 调度器'}">
+      <span class="scheduler-toggle-track">
+        <span class="scheduler-toggle-thumb"></span>
+      </span>
+      <span class="scheduler-toggle-label">${enabled ? '已启用' : '已停用'}</span>
+    </button>
+  `;
+}
+
+async function toggleSchedulerEnabled(event) {
+  if (event) event.stopPropagation();
+  const next = !schedulerEnabled;
+  const btn = event?.currentTarget;
+  if (btn) btn.disabled = true;
+  try {
+    const res = await fetch('/api/scheduler/enabled', {
+      method: 'PUT',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ enabled: next }),
+    });
+    const body = await res.json();
+    if (!res.ok) {
+      showToast(body.error || '切换失败', 'error');
+      return;
+    }
+    schedulerEnabled = !!body.enabled;
+    showToast(schedulerEnabled ? 'Scheduler 已启用' : 'Scheduler 已停用', 'success');
+    // Re-fetch and re-render the popover section so HOT/COLD lists update.
+    try {
+      const snap = await api('GET', '/scheduler/state');
+      const target = document.getElementById('capPopScheduler');
+      if (target) {
+        const toggleHtml = renderSchedulerToggleHtml(snap.enabled);
+        if (snap.enabled === false) {
+          target.innerHTML = `
+            <div class="cap-pop-row cap-pop-scheduler-off">
+              <div class="cap-pop-scheduler-head">
+                <strong>Scheduler: <span style="color:#8b949e">未启用</span></strong>
+                ${toggleHtml}
+              </div>
+              <div class="cap-pop-help" style="margin-top:6px">
+                启用后 CDS 会维护一个热池，按 LRU 自动休眠最久未访问的分支，避免宿主机容器超载。
+              </div>
+            </div>
+          `;
+        } else {
+          const cu = snap.capacityUsage || { current: 0, max: 0 };
+          const hotList = (snap.hot || []).map(h =>
+            `<li>${escapeHtml(h.slug)}${h.pinned ? ' <span style="color:#3fb950">📌</span>' : ''}</li>`
+          ).join('');
+          const coldList = (snap.cold || []).map(c =>
+            `<li style="opacity:0.6">${escapeHtml(c.slug)}</li>`
+          ).join('');
+          target.innerHTML = `
+            <div class="cap-pop-scheduler">
+              <div class="cap-pop-scheduler-head">
+                <strong>Scheduler: <span style="color:#3fb950">已启用</span> (${cu.current}/${cu.max} hot)</strong>
+                ${toggleHtml}
+              </div>
+              ${hotList ? `<div class="cap-pop-help">HOT 分支:</div><ul class="cap-pop-list">${hotList}</ul>` : ''}
+              ${coldList ? `<div class="cap-pop-help">COLD 分支:</div><ul class="cap-pop-list">${coldList}</ul>` : ''}
+            </div>
+          `;
+        }
+      }
+    } catch { /* keep old UI on refresh failure */ }
+  } catch (err) {
+    showToast('网络错误: ' + err.message, 'error');
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
+/**
  * Popover with detailed capacity + scheduler state.
  *
  * Renders two very different layouts depending on mode:
@@ -1023,7 +1252,7 @@ async function showCapacityDetails(event) {
   event.stopPropagation();
 
   const remoteCount = (executors || []).filter(e => (e.role || 'remote') !== 'embedded').length;
-  const isCluster = cdsMode === 'scheduler' || remoteCount > 0;
+  const isCluster = remoteCount > 0;
 
   if (isCluster && clusterCapacity) {
     renderClusterCapacityPopover();
@@ -1069,13 +1298,17 @@ async function showCapacityDetails(event) {
     const snap = await api('GET', '/scheduler/state');
     const target = document.getElementById('capPopScheduler');
     if (!target) return;
+    schedulerEnabled = !!snap.enabled;
+    const toggleHtml = renderSchedulerToggleHtml(snap.enabled);
     if (snap.enabled === false) {
       target.innerHTML = `
         <div class="cap-pop-row cap-pop-scheduler-off">
-          <strong>Scheduler: <span style="color:#8b949e">未启用</span></strong>
-          <div class="cap-pop-help" style="margin-top:4px">
-            在 <code>cds.config.json</code> 中设置
-            <code>scheduler.enabled = true</code> 即可自动管理容量。
+          <div class="cap-pop-scheduler-head">
+            <strong>Scheduler: <span style="color:#8b949e">未启用</span></strong>
+            ${toggleHtml}
+          </div>
+          <div class="cap-pop-help" style="margin-top:6px">
+            启用后 CDS 会维护一个热池，按 LRU 自动休眠最久未访问的分支，避免宿主机容器超载。
           </div>
         </div>
       `;
@@ -1089,7 +1322,10 @@ async function showCapacityDetails(event) {
       ).join('');
       target.innerHTML = `
         <div class="cap-pop-scheduler">
-          <strong>Scheduler: <span style="color:#3fb950">已启用</span> (${cu.current}/${cu.max} hot)</strong>
+          <div class="cap-pop-scheduler-head">
+            <strong>Scheduler: <span style="color:#3fb950">已启用</span> (${cu.current}/${cu.max} hot)</strong>
+            ${toggleHtml}
+          </div>
           ${hotList ? `<div class="cap-pop-help">HOT 分支:</div><ul class="cap-pop-list">${hotList}</ul>` : ''}
           ${coldList ? `<div class="cap-pop-help">COLD 分支:</div><ul class="cap-pop-list">${coldList}</ul>` : ''}
         </div>
@@ -2485,6 +2721,13 @@ function toggleSettingsMenu(event) {
       集群
       <span id="clusterStatusBadge" style="margin-left:auto;font-size:11px;color:#8b949e"></span>
     </div>
+    ${(clusterEffectiveRole === 'executor' || clusterEffectiveRole === 'hybrid') ? `
+    <div class="settings-menu-item danger" onclick="closeSettingsMenu(); doLeaveCluster()">
+      <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M2 2.75C2 1.784 2.784 1 3.75 1h2.5a.75.75 0 010 1.5h-2.5a.25.25 0 00-.25.25v10.5c0 .138.112.25.25.25h2.5a.75.75 0 010 1.5h-2.5A1.75 1.75 0 012 13.25V2.75zm10.44 4.5H6.75a.75.75 0 000 1.5h5.69l-1.97 1.97a.749.749 0 101.06 1.06l3.25-3.25a.749.749 0 000-1.06l-3.25-3.25a.749.749 0 10-1.06 1.06l1.97 1.97z"/></svg>
+      退出集群
+      <span style="margin-left:auto;font-size:11px;color:#8b949e">${clusterEffectiveRole === 'hybrid' ? '混合模式' : '执行器'}</span>
+    </div>
+    ` : ''}
     <div class="settings-menu-item settings-menu-switch" onclick="cyclePreviewMode()">
       <span class="settings-menu-switch-label">预览模式</span>
       <span class="preview-mode-label" style="margin-left:auto;font-size:11px;color:#58a6ff;font-weight:500">${{ simple: '简洁', port: '端口直连', multi: '子域名' }[previewMode]}</span>
@@ -2610,6 +2853,40 @@ function markTouched(id) {
 
 // ── Rendering ──
 
+/**
+ * Designed empty state for the branch list.
+ *
+ * Replaces the old single-line `<div class="empty-state">暂无分支...</div>`
+ * italic text. Rendered only AFTER the first successful /api/branches fetch
+ * (see `_branchesFirstLoadDone`) so it never flashes as a transitional state
+ * during the initial loader animation. Follows the `guided-exploration.md`
+ * rule: empty state must have说明 + 主操作 CTA + 可选插图.
+ */
+function renderEmptyBranchesState() {
+  const onFocusSearch = "document.getElementById('branchSearch')?.focus()";
+  return `
+    <div class="branches-empty">
+      <div class="branches-empty-illustration" aria-hidden="true">
+        <svg width="88" height="88" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="6" cy="3" r="2"/>
+          <circle cx="6" cy="21" r="2"/>
+          <circle cx="18" cy="12" r="2"/>
+          <path d="M6 5v14"/>
+          <path d="M6 12h12"/>
+        </svg>
+      </div>
+      <div class="branches-empty-title">还没有部署任何分支</div>
+      <div class="branches-empty-hint">
+        在顶部搜索框输入 Git 分支名（支持前缀/后缀匹配），选中后 CDS 会为它创建工作树并自动构建。
+      </div>
+      <button class="branches-empty-cta" onclick="${onFocusSearch}">
+        <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M11.5 7a4.499 4.499 0 11-8.998 0A4.499 4.499 0 0111.5 7zm-.82 4.74a6 6 0 111.06-1.06l3.04 3.04a.75.75 0 11-1.06 1.06l-3.04-3.04z"/></svg>
+        搜索并添加分支
+      </button>
+    </div>
+  `;
+}
+
 function renderBranches() {
   // Save scroll position before re-render
   const scrollY = window.scrollY;
@@ -2617,7 +2894,33 @@ function renderBranches() {
   // 分支数量已从 header 移除，标题区仅显示 "Cloud Dev Suite"
 
   if (branches.length === 0) {
-    el.innerHTML = '<div class="empty-state">暂无分支，请在上方搜索并添加。</div>';
+    // ── First-paint protection ──
+    //
+    // Before the first successful /api/branches fetch, we keep whatever
+    // is already in #branchList (normally the CDS loader shipped in the
+    // HTML). This prevents the jarring two-step "loader → 暂无分支 → data"
+    // flicker on page open.
+    if (!_branchesFirstLoadDone) {
+      if (!el.querySelector('.cds-loading-state')) {
+        // Stale content somehow — re-inject the loader so the first
+        // paint still has motion.
+        el.innerHTML = `
+          <div class="cds-loading-state">
+            <div class="cds-loading-glow"></div>
+            <div class="cds-loading-letters">
+              <span class="cds-letter" style="--delay:0ms;--color:var(--accent,#e8e8ec)">C</span>
+              <span class="cds-letter" style="--delay:120ms;--color:var(--text-secondary,#a0a0b0)">D</span>
+              <span class="cds-letter" style="--delay:240ms;--color:var(--text-muted,#78788a)">S</span>
+            </div>
+            <div class="cds-loading-bar"></div>
+            <div class="cds-loading-hint">加载中</div>
+          </div>
+        `;
+      }
+      window.scrollTo(0, scrollY);
+      return;
+    }
+    el.innerHTML = renderEmptyBranchesState();
     window.scrollTo(0, scrollY);
     return;
   }
@@ -6104,6 +6407,7 @@ async function openClusterModal() {
   // next SSE tick arrives.
   clusterCapacity = capacity;
   clusterStrategy = statusBody.strategy || 'least-load';
+  clusterEffectiveRole = role || 'standalone';
   if (Array.isArray(capacity.nodes)) {
     executors = capacity.nodes;
   }
@@ -6359,6 +6663,7 @@ async function doJoinCluster() {
       `;
     }
     showToast('已加入集群', 'success');
+    clusterEffectiveRole = 'hybrid';
     updateClusterStatusBadge('hybrid', 2);
   } catch (err) {
     if (result) result.innerHTML = `<div class="cluster-error">❌ 网络错误: ${esc(err.message)}</div>`;
@@ -6386,8 +6691,15 @@ async function doLeaveCluster() {
       return;
     }
     showToast('已退出集群', 'success');
+    // Local state update so the settings menu's "退出集群" item disappears
+    // without needing a page reload.
+    clusterEffectiveRole = 'standalone';
     updateClusterStatusBadge('standalone', 1);
-    closeConfigModal();
+    // Only close the config modal if it's open (settings-menu path doesn't
+    // open the modal at all).
+    if (document.querySelector('.cluster-modal')) {
+      closeConfigModal();
+    }
   } catch (err) {
     showToast('网络错误: ' + err.message, 'error');
   } finally {
