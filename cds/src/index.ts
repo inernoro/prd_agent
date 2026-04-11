@@ -5,7 +5,7 @@ import { execSync } from 'node:child_process';
 import { loadConfig } from './config.js';
 import { discoverComposeFiles, parseCdsCompose } from './services/compose-parser.js';
 import fs from 'node:fs';
-import { createServer, broadcastActivity, nextActivitySeq } from './server.js';
+import { createServer, installSpaFallback, broadcastActivity, nextActivitySeq } from './server.js';
 import type { ActivityEvent } from './server.js';
 import { ShellExecutor } from './services/shell-executor.js';
 import { StateService } from './services/state.js';
@@ -947,4 +947,16 @@ if (mode === 'executor') {
   } else {
     console.log(`  Scheduler: standby, will auto-upgrade on first executor bootstrap`);
   }
+
+  // ── SPA fallback MUST be installed last ──
+  //
+  // The static file handler + catch-all `app.get('*', ...)` are greedy and
+  // would shadow any route mounted after them (the registration order is
+  // what Express honors, not the URL specificity). Both the scheduler and
+  // cluster routers are mounted in this file AFTER createServer() returns,
+  // so we defer the SPA fallback until here — otherwise GET requests to
+  // `/api/executors/*` and `/api/cluster/*` would silently return index.html
+  // and downstream clients see HTML where they expect JSON. That bug
+  // masked the dashboard's new cluster panel from working in production.
+  installSpaFallback(app);
 }

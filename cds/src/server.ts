@@ -621,13 +621,11 @@ export function createServer(deps: ServerDeps): express.Express {
   app.use('/api/bridge', createBridgeRouter({ bridgeService: deps.bridgeService }));
   app.use('/api', createBranchRouter(deps));
 
-  // Dashboard static files
-  app.use(express.static(webDir));
-
-  // SPA fallback
-  app.get('*', (_req, res) => {
-    res.sendFile(path.join(webDir, 'index.html'));
-  });
+  // NOTE: The SPA fallback (`app.get('*', ...)`) is intentionally NOT
+  // registered here. Routes mounted later in `index.ts` (scheduler, cluster,
+  // etc.) would otherwise be shadowed by the catch-all, because Express
+  // traverses middleware in registration order. Call `installSpaFallback()`
+  // once all dynamic routes have been mounted.
 
   // Log AI access key status
   if (process.env.AI_ACCESS_KEY) {
@@ -636,6 +634,27 @@ export function createServer(deps: ServerDeps): express.Express {
   console.log('  AI Pairing: enabled (POST /api/ai/request-access)');
 
   return app;
+}
+
+/**
+ * Install the dashboard static-file serving and the SPA catch-all fallback.
+ *
+ * Must be called AFTER all `/api/*` routes have been mounted on the app
+ * (including scheduler and cluster routers added from `index.ts`), because
+ * `app.get('*', ...)` is a greedy handler that will intercept any unmatched
+ * GET request in registration order. Installing it too early was the cause
+ * of `/api/cluster/status` returning HTML instead of JSON in production —
+ * the catch-all fired before the cluster router got a chance to match.
+ *
+ * See commit that moved this out of `createServer()` for the regression
+ * details.
+ */
+export function installSpaFallback(app: express.Express, webDir?: string): void {
+  const dir = webDir || path.resolve(__dirname, '..', 'web');
+  app.use(express.static(dir));
+  app.get('*', (_req, res) => {
+    res.sendFile(path.join(dir, 'index.html'));
+  });
 }
 
 function parseCookie(cookieStr: string, name: string): string | undefined {
