@@ -896,42 +896,164 @@ for n in d.get("nodes",[]):
 
 help_cmd() {
   cat <<'EOF'
-CDS — Cloud Development Suite
 
-基础命令:
-  ./exec_cds.sh init                交互式初始化 (写 .cds.env + 生成 nginx 配置)
-  ./exec_cds.sh start [--fg]        启动 CDS + Nginx (默认后台；--fg 前台)
-  ./exec_cds.sh stop                停止 CDS + Nginx
-  ./exec_cds.sh restart [--fg]      重启
-  ./exec_cds.sh status              查看运行状态
-  ./exec_cds.sh logs                跟随 CDS 日志 (Ctrl+C 退出)
-  ./exec_cds.sh cert                签发/续签 Let's Encrypt 证书
+  ╔═══════════════════════════════════════════════════════════════╗
+  ║              CDS — Cloud Development Suite                    ║
+  ║       一台或多台服务器的开发分支预览管理工具                   ║
+  ╚═══════════════════════════════════════════════════════════════╝
 
-集群命令 (多机负载均衡):
-  ./exec_cds.sh issue-token         在主节点生成一次性 bootstrap token (15 分钟过期)
-  ./exec_cds.sh connect <url> <tk>  把本机加入集群 (作为 executor)
-  ./exec_cds.sh disconnect          退出集群 (回到 standalone)
+  这个脚本是 CDS 的唯一入口。所有操作（启动、停止、组集群、签证书）
+  都通过它完成。配置文件唯一来源是 cds/.cds.env。
+
+──────────────────────────────────────────────────────────────────
+  📦 基础生命周期 (单机使用就够了)
+──────────────────────────────────────────────────────────────────
+
+  ./exec_cds.sh init                第一次使用必跑！交互式问你 4 个问题:
+                                      1) Dashboard 用户名 (默认 admin)
+                                      2) Dashboard 密码
+                                      3) 是否生成 JWT 密钥 (默认是)
+                                      4) 你的根域名 (例: miduo.org)
+                                    然后写入 .cds.env + 生成 nginx 配置
+
+  ./exec_cds.sh start               启动 CDS + Nginx (后台运行)
+                                      → 访问 http://localhost:9900 进 Dashboard
+                                      → Ctrl+C 不会停止 (后台模式)
+
+  ./exec_cds.sh start --fg          启动 CDS + Nginx (前台调试模式)
+                                      → 日志直接输出到屏幕
+                                      → Ctrl+C 立即停止
+
+  ./exec_cds.sh stop                停止 CDS + Nginx (优雅停机)
+
+  ./exec_cds.sh restart             stop + start 的组合命令
+
+  ./exec_cds.sh status              查看 CDS 和 Nginx 是不是在跑
+                                      → 显示 PID、域名、状态颜色
+
+  ./exec_cds.sh logs                跟随 CDS 日志 (类似 tail -f)
+                                      → Ctrl+C 退出但不停止 CDS
+
+  ./exec_cds.sh cert                自动签发/续签 Let's Encrypt 证书
+                                      → 需要你的域名已经解析到这台机器
+                                      → 第一次会自动安装 acme.sh
+
+──────────────────────────────────────────────────────────────────
+  🌐 集群命令 (一台机器装不下时再用)
+──────────────────────────────────────────────────────────────────
+
+  CDS 支持把多台 Linux 机器组成集群，总容量 (CPU/内存/分支槽) 自动汇总。
+  典型场景: 老机器满了，加一台新机器扩容。
+
+  扩容流程 = 两条命令:
+
+  ┌─ 第 1 步: 在【老机器】生成 token ──────────────────────────────┐
+  │                                                                 │
+  │   ./exec_cds.sh issue-token                                     │
+  │                                                                 │
+  │   → 输出一段 random hex token (15 分钟过期)                      │
+  │   → 自动打印第 2 步的命令模板，复制下来                           │
+  └────────────────────────────────────────────────────────────────┘
+
+  ┌─ 第 2 步: 在【新机器】粘贴运行 ────────────────────────────────┐
+  │                                                                 │
+  │   ./exec_cds.sh connect <主节点 URL> <token>                    │
+  │                                                                 │
+  │   例: ./exec_cds.sh connect https://cds.miduo.org abc123...     │
+  │                                                                 │
+  │   → 自动: 验证主可达 → 写 .cds.env → 重启进 executor 模式 →     │
+  │           注册到主 → 启动心跳                                    │
+  │   → 大概 10 秒内完成                                            │
+  └────────────────────────────────────────────────────────────────┘
+
+  其他集群命令:
+
   ./exec_cds.sh cluster             显示集群拓扑和总容量
+                                      → 任意节点都能跑
+                                      → 显示在线节点数、总 CPU、总内存、空闲比例
 
-典型集群扩容流程:
-  # 主节点 A 上执行
-  ./exec_cds.sh issue-token
-  # → 输出 token + 扩容命令模板，复制到新机器 B
-  # 新机器 B 上执行
-  ./exec_cds.sh connect https://A.miduo.org <token>
-  # → 自动注册 + 心跳 + 容量扩充，无需改 DNS/Nginx
+  ./exec_cds.sh disconnect          把【本机】从集群退出 (回到 standalone)
+                                      → 只在 executor 节点上跑
+                                      → 主节点不应该 disconnect (它没"主"可断)
 
-配置:
-  cds/.cds.env 是唯一用户配置入口，所有变量 CDS_ 前缀:
-    CDS_USERNAME / CDS_PASSWORD / CDS_JWT_SECRET / CDS_ROOT_DOMAINS
-    集群扩展: CDS_MODE / CDS_MASTER_URL / CDS_EXECUTOR_TOKEN / CDS_BOOTSTRAP_TOKEN
+  ⚠️ 集群扩容前的检查清单:
+     □ 两台机器都已经 init + start 通过
+     □ 新机器能 curl 通老机器的 https://xxx/healthz
+     □ 两台机器时间差 < 1 分钟 (token 校验有 60 秒容忍)
+     □ 你能 SSH 到两台机器
 
-多域名:
-  CDS_ROOT_DOMAINS 支持逗号分隔，每个根域名 D 自动生成三条路由:
-    D          → Dashboard
-    cds.D      → Dashboard (别名)
-    *.D        → Preview (任意子域名 → 分支预览)
-  示例: CDS_ROOT_DOMAINS="miduo.org,mycds.net"
+  详细操作手册见 doc/guide.cds-cluster-setup.md (含 5 种常见错误排查)
+
+──────────────────────────────────────────────────────────────────
+  📂 配置文件 (cds/.cds.env)
+──────────────────────────────────────────────────────────────────
+
+  这是 CDS 唯一的用户配置文件。所有变量必须 CDS_ 开头。
+  推荐通过 ./exec_cds.sh init 生成，不要手工编辑。
+
+  基础变量 (init 会问你):
+    CDS_USERNAME             Dashboard 登录用户名
+    CDS_PASSWORD             Dashboard 登录密码
+    CDS_JWT_SECRET           JWT 签名密钥 (init 自动生成 32 字节)
+    CDS_ROOT_DOMAINS         根域名列表，逗号分隔
+
+  集群变量 (issue-token / connect 会自动写):
+    CDS_MODE                 standalone / scheduler / executor
+    CDS_MASTER_URL           (executor 模式) 主节点 URL
+    CDS_BOOTSTRAP_TOKEN      (主节点) 一次性 bootstrap token
+    CDS_EXECUTOR_TOKEN       永久 executor 认证 token
+
+──────────────────────────────────────────────────────────────────
+  🌍 多域名路由
+──────────────────────────────────────────────────────────────────
+
+  CDS_ROOT_DOMAINS 支持逗号分隔多个根域名。每个根域名 D 自动生成:
+
+    D                        → CDS Dashboard
+    cds.D                    → CDS Dashboard (别名)
+    *.D                      → 任意子域名 = 一个分支预览页面
+
+  例: CDS_ROOT_DOMAINS="miduo.org,mycds.net"
+  → 同时支持: miduo.org, cds.miduo.org, *.miduo.org,
+              mycds.net, cds.mycds.net, *.mycds.net
+
+──────────────────────────────────────────────────────────────────
+  📚 学习路径 (新手强烈推荐看)
+──────────────────────────────────────────────────────────────────
+
+  1. 第一次安装             → doc/guide.quickstart.md
+  2. 环境变量参考           → doc/guide.cds-env.md
+  3. 集群扩容操作手册       → doc/guide.cds-cluster-setup.md
+  4. CDS 整体架构理解       → doc/design.cds.md
+  5. 容量预算与故障隔离     → doc/design.cds-resilience.md
+  6. 集群引导握手协议设计   → doc/design.cds-cluster-bootstrap.md
+
+──────────────────────────────────────────────────────────────────
+  💡 常见问题
+──────────────────────────────────────────────────────────────────
+
+  Q: 我直接跑 start 报错，什么都没动过
+  A: 先跑 init 生成 .cds.env，再 start
+
+  Q: Dashboard 打不开
+  A: 跑 status 看 CDS 是不是 running；跑 logs 看错误信息
+
+  Q: 端口 9900 被占用
+  A: 跑 stop 清理，或者修改 cds.config.json 里的 masterPort
+
+  Q: 加入集群后想撤销
+  A: 在那台机器上跑 disconnect
+
+  Q: 我有 3 台机器，一台主两台从，两台从能不能用同一个 token?
+  A: 不能。bootstrap token 一次性消费。每台从节点单独 issue-token + connect
+
+  Q: 主节点崩了从节点会怎样
+  A: 从节点保留本地容器继续服务，心跳失败但不停机。主节点恢复后自动重连
+
+  Q: 我想让从节点直接接收外网流量，不经过主节点代理
+  A: 这是高级场景，需要改 Cloudflare DNS 和 nginx 模板。当前默认方案是
+     "主代理"，对 DNS 零改动。详见 doc/design.cds-cluster-bootstrap.md §4
+
 EOF
 }
 
