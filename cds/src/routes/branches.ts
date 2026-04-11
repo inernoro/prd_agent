@@ -631,9 +631,84 @@ export function createBranchRouter(deps: RouterDeps): Router {
       return;
     }
 
+    // ── Cluster-aware delete ──
+    //
+    // If the branch is owned by a remote executor, the master doesn't have
+    // the worktree or containers locally — deleting locally would silently
+    // succeed on master state while leaving the real worktree + containers
+    // orphaned on the executor. Proxy the delete to the owning executor's
+    // `/exec/delete` endpoint first, then drop master-side state.
+    //
+    // When proxying fails because the executor is offline, we still remove
+    // the master-side state entry (the branch can't be recovered from here)
+    // but emit an error step so the operator knows the remote worktree
+    // may need manual cleanup.
+    const remoteExecutor =
+      entry.executorId && registry
+        ? registry.getAll().find(n => n.id === entry.executorId && n.role !== 'embedded')
+        : null;
+
     initSSE(res);
     try {
-      // Stop all running services
+      if (remoteExecutor) {
+        // Proxy to the executor's /exec/delete endpoint.
+        sendSSE(res, 'step', {
+          step: 'dispatch',
+          status: 'running',
+          title: `正在请求执行器 ${remoteExecutor.id} 删除分支...`,
+        });
+
+        const upstreamUrl = `http://${remoteExecutor.host}:${remoteExecutor.port}/exec/delete`;
+        let proxied = false;
+        try {
+          const upstream = await fetch(upstreamUrl, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              ...(config.executorToken ? { 'X-Executor-Token': config.executorToken } : {}),
+            },
+            body: JSON.stringify({ branchId: id }),
+          });
+          if (upstream.ok) {
+            proxied = true;
+            sendSSE(res, 'step', {
+              step: 'dispatch',
+              status: 'done',
+              title: `执行器已删除分支 ${id}`,
+            });
+          } else {
+            const errText = await upstream.text().catch(() => '');
+            sendSSE(res, 'step', {
+              step: 'dispatch',
+              status: 'warning',
+              title: `执行器拒绝删除 (HTTP ${upstream.status})，仍继续清理主节点状态`,
+              log: errText.slice(0, 200),
+            });
+          }
+        } catch (err) {
+          sendSSE(res, 'step', {
+            step: 'dispatch',
+            status: 'warning',
+            title: `无法连接执行器 ${remoteExecutor.id}，仍继续清理主节点状态`,
+            log: (err as Error).message,
+          });
+        }
+
+        // Drop master-side state unconditionally — if the executor is
+        // unreachable, the operator can manually clean up on that node.
+        stateService.removeLogs(id);
+        stateService.removeBranch(id);
+        stateService.save();
+
+        sendSSE(res, 'complete', {
+          message: proxied
+            ? `分支 "${id}" 已在执行器 ${remoteExecutor.id} 上删除`
+            : `分支 "${id}" 已从主节点移除；执行器上的残留请手动检查`,
+        });
+        return;
+      }
+
+      // Local delete path (unchanged behavior)
       for (const svc of Object.values(entry.services)) {
         sendSSE(res, 'step', { step: 'stop', status: 'running', title: `正在停止 ${svc.containerName}...` });
         try { await containerService.stop(svc.containerName); } catch { /* ok */ }
@@ -1135,6 +1210,53 @@ export function createBranchRouter(deps: RouterDeps): Router {
       res.status(404).json({ error: `分支 "${id}" 不存在` });
       return;
     }
+
+    // ── Cluster-aware stop ──
+    //
+    // Branches owned by a remote executor have no local containers — calling
+    // containerService.stop on master is a silent no-op that leaves the real
+    // containers running on the executor. Proxy to /exec/stop instead.
+    const remoteExecutor =
+      entry.executorId && registry
+        ? registry.getAll().find(n => n.id === entry.executorId && n.role !== 'embedded')
+        : null;
+    if (remoteExecutor) {
+      entry.status = 'stopping';
+      for (const svc of Object.values(entry.services)) {
+        if (svc.status === 'running' || svc.status === 'starting') {
+          svc.status = 'stopping';
+        }
+      }
+      stateService.save();
+      try {
+        const upstreamUrl = `http://${remoteExecutor.host}:${remoteExecutor.port}/exec/stop`;
+        const upstream = await fetch(upstreamUrl, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            ...(config.executorToken ? { 'X-Executor-Token': config.executorToken } : {}),
+          },
+          body: JSON.stringify({ branchId: id }),
+        });
+        if (!upstream.ok) {
+          const errText = await upstream.text().catch(() => '');
+          res.status(502).json({
+            error: `执行器拒绝停止请求 (HTTP ${upstream.status}): ${errText.slice(0, 200)}`,
+          });
+          return;
+        }
+        // The executor's next heartbeat will reconcile status, but set
+        // plausible local state in the meantime.
+        for (const svc of Object.values(entry.services)) svc.status = 'stopped';
+        entry.status = 'idle';
+        stateService.save();
+        res.json({ message: `已请求执行器 ${remoteExecutor.id} 停止所有服务` });
+      } catch (err) {
+        res.status(502).json({ error: `无法连接执行器: ${(err as Error).message}` });
+      }
+      return;
+    }
+
     try {
       // Set stopping state immediately so frontend can show animation
       entry.status = 'stopping';
@@ -4310,6 +4432,27 @@ export function createBranchRouter(deps: RouterDeps): Router {
       return;
     }
     res.json(schedulerService.getSnapshot());
+  });
+
+  // ── PUT /api/scheduler/enabled — flip scheduler on/off from the UI ──
+  //
+  // Persists the override into state.json via stateService so the toggle
+  // survives restart, then calls schedulerService.setEnabled() which
+  // starts/stops the background tick loop.
+  router.put('/scheduler/enabled', (req, res) => {
+    if (!schedulerService) {
+      res.status(503).json({ error: 'Scheduler service not wired in' });
+      return;
+    }
+    const { enabled } = (req.body || {}) as { enabled?: unknown };
+    if (typeof enabled !== 'boolean') {
+      res.status(400).json({ error: 'enabled 必须是 boolean' });
+      return;
+    }
+    stateService.setSchedulerEnabledOverride(enabled);
+    stateService.save();
+    schedulerService.setEnabled(enabled);
+    res.json({ enabled, source: 'ui-override' });
   });
 
   router.post('/scheduler/pin/:slug', (req, res) => {

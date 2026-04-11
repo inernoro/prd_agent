@@ -90,6 +90,18 @@ const bridgeService = new BridgeService();
 // ── Warm-pool scheduler (v3.1) ──
 // Disabled unless cds.config.json { "scheduler": { "enabled": true, ... } }.
 // See doc/design.cds-resilience.md and doc/plan.cds-resilience-rollout.md.
+//
+// Runtime override: the Dashboard can toggle the scheduler via
+// PUT /api/scheduler/enabled, which writes to state.json. That value wins
+// over the config-file setting so operators can flip the scheduler without
+// shelling into the box. `undefined` means "no override, use config".
+{
+  const uiOverride = stateService.getSchedulerEnabledOverride();
+  if (uiOverride !== undefined && config.scheduler) {
+    config.scheduler.enabled = uiOverride;
+    console.log(`  [scheduler] applying UI override: enabled=${uiOverride}`);
+  }
+}
 const schedulerService = new SchedulerService(
   stateService,
   config.scheduler || {
@@ -881,9 +893,12 @@ h1{text-align:center;font-size:20px;font-weight:700;margin-bottom:6px;color:#f0f
 ${masterUrl ? `<a class="btn" href="${escHtmlSafe(masterUrl)}" target="_blank" rel="noopener">前往主节点 Dashboard →</a>` : ''}
 <a class="btn btn-secondary" href="/api/cluster/status">查看本节点 JSON 状态</a>
 <div class="cli-hint">
-💡 本节点没有 Dashboard，因为它是 executor（只跑容器，由主节点调度）。<br>
-要把它变回独立的单机模式，在此服务器上执行：<br>
-<code>./exec_cds.sh disconnect</code>
+💡 <strong>为什么我看不到 Dashboard？</strong><br>
+这是有意为之：executor 只负责跑容器，由主节点的 Dashboard 统一管理本机+所有远端节点的分支、部署、日志。双 Dashboard 会导致以下问题：<br>
+&nbsp;&nbsp;• 两边看到的分支状态可能不一致（split-brain）<br>
+&nbsp;&nbsp;• 同一分支在两边被触发部署时互相踩踏<br>
+&nbsp;&nbsp;• 每台 executor 都要单独配置账号、SSL、域名，运维成本翻倍<br>
+所以主节点是本集群唯一的控制平面。要在本机重新拉起 Dashboard，<strong>在主节点点「退出集群」</strong>（也可以在此服务器执行 <code>./exec_cds.sh disconnect</code>），然后 <code>./exec_cds.sh restart</code> 即可回到 standalone 模式。
 </div>
 <p class="auto-refresh">每 10 秒自动刷新 · <a href="#" onclick="location.reload();return false" style="color:#58a6ff;text-decoration:none">立即刷新</a></p>
 </div>

@@ -368,6 +368,23 @@ export class StateService {
     delete this.state.logs[branchId];
   }
 
+  // ── Scheduler (warm-pool) runtime override ──
+  //
+  // Mirror of the `schedulerEnabledOverride` field in CdsState. Returns
+  // undefined when the user has never toggled the UI switch (the backend
+  // then falls back to config.scheduler.enabled from cds.config.json).
+  getSchedulerEnabledOverride(): boolean | undefined {
+    return this.state.schedulerEnabledOverride;
+  }
+
+  setSchedulerEnabledOverride(value: boolean | undefined): void {
+    if (value === undefined) {
+      delete this.state.schedulerEnabledOverride;
+    } else {
+      this.state.schedulerEnabledOverride = value;
+    }
+  }
+
   // ── Custom environment variables ──
 
   getCustomEnv(): Record<string, string> {

@@ -245,6 +245,16 @@ export interface CdsState {
   previewMode?: 'simple' | 'port' | 'multi';
   /** Registered executor nodes (scheduler mode) */
   executors?: Record<string, ExecutorNode>;
+  /**
+   * UI-controlled override for the warm-pool scheduler enable flag. When
+   * defined, it supersedes `config.scheduler.enabled` at runtime so the user
+   * can toggle the scheduler from the Dashboard without editing
+   * `cds.config.json`. Persisted to state.json and re-applied on boot.
+   *
+   * `undefined` = no override (fall back to config file). `true` = forced on.
+   * `false` = forced off (even if config file has enabled:true).
+   */
+  schedulerEnabledOverride?: boolean;
   /** Data migration task history */
   dataMigrations?: DataMigration[];
   /** Registered remote CDS peers (for one-click cross-CDS data migration) */
