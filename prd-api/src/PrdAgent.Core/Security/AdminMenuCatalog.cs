@@ -48,6 +48,7 @@ public static class AdminMenuCatalog
         new("arena", "/arena", "AI 竞技场", null, "Swords", 240),
         new("shortcuts-agent", "/shortcuts-agent", "快捷指令", null, "Smartphone", 250),
         new("transcript-agent", "/transcript-agent", "转录工作台", null, "FileAudio", 260),
+        new("pr-review", "/pr-review", "PR 审查工作台", null, "GitPullRequest", 265),
     };
 
     /// <summary>

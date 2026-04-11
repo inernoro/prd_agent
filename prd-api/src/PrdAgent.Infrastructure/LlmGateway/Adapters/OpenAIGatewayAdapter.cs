@@ -94,7 +94,12 @@ public class OpenAIGatewayAdapter : IGatewayAdapter
         int? completionTokens = null;
 
         // 单遍扫描：Utf8JsonReader 自动下沉到所有嵌套层级，
-        // 只提取我们关心的 5 个字段名，不管它们在哪一层
+        // 只提取我们关心的 6 个字段名，不管它们在哪一层
+        //
+        // 关于 reasoning 字段的不同命名约定：
+        // - "reasoning_content"：DeepSeek V3/R1、Alibaba qwen-thinking 的原生字段
+        // - "reasoning"        ：OpenRouter 对 deepseek-r1 等的归一字段
+        // 两者都需要支持，否则走不同上游时会有一侧完全看不到思考内容
         while (reader.Read())
         {
             if (reader.TokenType != JsonTokenType.PropertyName) continue;
@@ -109,7 +114,10 @@ public class OpenAIGatewayAdapter : IGatewayAdapter
                         content = reader.GetString();
                     break;
                 case "reasoning_content":
-                    if (reader.TokenType == JsonTokenType.String)
+                case "reasoning":
+                    // 两个字段同义：OpenRouter 用 reasoning，上游原生 API 用 reasoning_content
+                    // 先填到的那个为准，不做合并（不会同时出现）
+                    if (reader.TokenType == JsonTokenType.String && string.IsNullOrEmpty(reasoningContent))
                         reasoningContent = reader.GetString();
                     break;
                 case "finish_reason":

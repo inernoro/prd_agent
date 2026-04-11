@@ -112,7 +112,11 @@ public class LlmRequestLogWriter : ILlmRequestLogWriter
         }
         catch (Exception ex)
         {
-            _logger.LogDebug(ex, "StartAsync failed");
+            // 以 Warning 级别记录，之前是 Debug 会在生产完全看不到——
+            // 任何 StartAsync 失败都会导致 LLM 调用不落日志，这种故障对运维
+            // 而言是幽灵级别的（用户看到功能跑通但日志空空）。提到 Warning
+            // 确保至少 container logs 里能搜到。
+            _logger.LogWarning(ex, "LlmRequestLogWriter.StartAsync failed — LLM 调用不会被记录。AppCallerCode={AppCallerCode}", start.AppCallerCode);
             return null;
         }
     }

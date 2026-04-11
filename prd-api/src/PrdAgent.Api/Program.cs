@@ -954,6 +954,18 @@ builder.Services.AddScoped<IOpenPlatformService>(sp =>
 
 // 注册 Webhook 通知服务
 builder.Services.AddHttpClient("WebhookClient");
+builder.Services.AddHttpClient("GitHubApi", client =>
+{
+    client.Timeout = TimeSpan.FromSeconds(30);
+    client.DefaultRequestHeaders.Add("User-Agent", "PrdAgent-PrReview");
+    client.DefaultRequestHeaders.Add("Accept", "application/vnd.github+json");
+    client.DefaultRequestHeaders.Add("X-GitHub-Api-Version", "2022-11-28");
+});
+// PR Review V2（pr-review）— per-user GitHub OAuth 审查工作台
+builder.Services.AddScoped<PrdAgent.Api.Services.PrReview.GitHubOAuthService>();
+builder.Services.AddScoped<PrdAgent.Api.Services.PrReview.GitHubPrClient>();
+builder.Services.AddScoped<PrdAgent.Api.Services.PrReview.PrAlignmentService>();
+builder.Services.AddScoped<PrdAgent.Api.Services.PrReview.PrSummaryService>();
 // 注册自动化引擎（需要在 WebhookNotificationService 之前注册）
 builder.Services.AddScoped<IActionExecutor, PrdAgent.Infrastructure.Services.Automation.WebhookActionExecutor>();
 builder.Services.AddScoped<IActionExecutor, PrdAgent.Infrastructure.Services.Automation.AdminNotificationActionExecutor>();

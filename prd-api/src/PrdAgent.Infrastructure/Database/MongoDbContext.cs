@@ -110,6 +110,10 @@ public class MongoDbContext
     public IMongoCollection<ReviewDimensionConfig> ReviewDimensionConfigs => _database.GetCollection<ReviewDimensionConfig>("review_dimension_configs");
     public IMongoCollection<ReviewWebhookConfig> ReviewWebhookConfigs => _database.GetCollection<ReviewWebhookConfig>("review_webhook_configs");
 
+    // PR Review V2（pr-review）：用户级 GitHub OAuth 连接 + 审查记录
+    public IMongoCollection<GitHubUserConnection> GitHubUserConnections => _database.GetCollection<GitHubUserConnection>("github_user_connections");
+    public IMongoCollection<PrReviewItem> PrReviewItems => _database.GetCollection<PrReviewItem>("pr_review_items");
+
     // Report Agent 周报管理
     public IMongoCollection<ReportTeam> ReportTeams => _database.GetCollection<ReportTeam>("report_teams");
     public IMongoCollection<ReportTeamMember> ReportTeamMembers => _database.GetCollection<ReportTeamMember>("report_team_members");
@@ -928,6 +932,12 @@ public class MongoDbContext
         DefectFixReports.Indexes.CreateOne(new CreateIndexModel<DefectFixReport>(
             Builders<DefectFixReport>.IndexKeys.Ascending(x => x.ShareToken),
             new CreateIndexOptions { Name = "idx_defect_fix_reports_token" }));
+
+        // PR Review V2（pr-review）：按 UserId 查询，同一用户同仓库同 PR 去重
+        // 索引由 DBA 手动创建（遵循 no-auto-index 规则），这里仅作定义参考：
+        //   github_user_connections:  (UserId) unique
+        //   pr_review_items:          (UserId, UpdatedAt desc)
+        //   pr_review_items:          (UserId, Owner, Repo, Number) unique
 
         // ========== Channel Adapter 多通道适配器索引 ==========
 

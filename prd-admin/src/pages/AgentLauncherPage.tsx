@@ -21,6 +21,8 @@ import {
   Workflow,
   Zap,
   Globe,
+  ClipboardCheck,
+  ScanSearch,
   Wand2,
   type LucideIcon,
 } from 'lucide-react';
@@ -36,7 +38,7 @@ import { ReviewAgentCardArt } from '@/pages/ai-toolbox/components/ReviewAgentCar
 // ── Icon & Color mapping (self-contained, doesn't touch ToolCard) ──
 
 const ICON_MAP: Record<string, LucideIcon> = {
-  FileText, Palette, PenTool, Bug, Video, Swords, FileBarChart, Code2, Languages, FileSearch, BarChart3, Bot, Workflow, Zap, Globe, Wand2,
+  FileText, Palette, PenTool, Bug, Video, Swords, FileBarChart, Code2, Languages, FileSearch, BarChart3, Bot, Workflow, Zap, Globe, ClipboardCheck, ScanSearch, Wand2,
 };
 
 /** Agent 封面图 CDN 路径 */
@@ -82,6 +84,8 @@ const ACCENT: Record<string, { from: string; to: string }> = {
   Workflow:  { from: '#14B8A6', to: '#5EEAD4' },
   Zap:       { from: '#F59E0B', to: '#FCD34D' },
   Globe:     { from: '#0EA5E9', to: '#38BDF8' },
+  ClipboardCheck: { from: '#6366F1', to: '#A5B4FC' },
+  ScanSearch: { from: '#8B5CF6', to: '#C4B5FD' },
   Wand2:     { from: '#8B5CF6', to: '#C4B5FD' },
 };
 
@@ -124,11 +128,39 @@ function getGreeting(): string {
   return '晚上好';
 }
 
-const QUICK_LINKS = [
+type HomeQuickLink = {
+  icon: LucideIcon;
+  label: string;
+  desc: string;
+  path: string;
+  accent: string;
+  gradient: string;
+};
+
+const QUICK_LINKS_BASE: HomeQuickLink[] = [
   { icon: Store, label: '海鲜市场', desc: '发现和 Fork 优质提示词与配置', path: '/marketplace', accent: '#F59E0B', gradient: 'linear-gradient(135deg, #F59E0B, #F97316)' },
   { icon: Library, label: '智识殿堂', desc: '探索社区共享的知识库', path: '/library', accent: '#3B82F6', gradient: 'linear-gradient(135deg, #3B82F6, #6366F1)' },
   { icon: Sparkles, label: '作品广场', desc: '探索 AI 驱动的创意作品与灵感', path: '/showcase', accent: '#A855F7', gradient: 'linear-gradient(135deg, #A855F7, #6366F1)' },
-] as const;
+];
+
+function dedupeToolboxItems(items: ToolboxItem[]): ToolboxItem[] {
+  const seen = new Set<string>();
+  const deduped: ToolboxItem[] = [];
+  for (const item of items) {
+    const identity =
+      item.agentKey?.trim()
+        ? `agent:${item.agentKey}`
+        : item.routePath?.trim()
+          ? `route:${item.routePath}`
+          : `id:${item.id}`;
+    if (seen.has(identity)) {
+      continue;
+    }
+    seen.add(identity);
+    deduped.push(item);
+  }
+  return deduped;
+}
 
 // ── Featured Agent Card (large, with cover image) ──
 
@@ -352,6 +384,12 @@ export default function AgentLauncherPage() {
   const { isMobile } = useBreakpoint();
   const navigate = useNavigate();
   const user = useAuthStore((s) => s.user);
+  const permissions = useAuthStore((s) => s.permissions ?? []);
+
+  const canUseReviewAgent = permissions.includes('review-agent.use');
+  const canUsePrReview = permissions.includes('pr-review.use');
+
+  const quickLinks = QUICK_LINKS_BASE;
 
   useEffect(() => {
     loadItems();
@@ -395,7 +433,14 @@ export default function AgentLauncherPage() {
 
   // Split into featured (customized agents with routePath) and compact (utility agents)
   const { featured, utilities, filtered } = useMemo(() => {
-    const allItems = [...items, ...staticUtilities];
+    const filterByPerm = (list: ToolboxItem[]) =>
+      list.filter((i) => {
+        if (i.agentKey === 'review-agent' && !canUseReviewAgent) return false;
+        if (i.agentKey === 'pr-review' && !canUsePrReview) return false;
+        return true;
+      });
+
+    const allItems = dedupeToolboxItems(filterByPerm([...items, ...staticUtilities]));
     const query = searchQuery.trim().toLowerCase();
     if (query) {
       const matched = allItems.filter(
@@ -408,13 +453,16 @@ export default function AgentLauncherPage() {
     }
     const feat: ToolboxItem[] = [];
     const util: ToolboxItem[] = [];
-    for (const item of items) {
+    const dedupedItems = dedupeToolboxItems(items);
+    for (const item of dedupedItems) {
+      if (item.agentKey === 'review-agent' && !canUseReviewAgent) continue;
+      if (item.agentKey === 'pr-review' && !canUsePrReview) continue;
       if (item.routePath) feat.push(item);
       else util.push(item);
     }
     util.push(...staticUtilities);
     return { featured: feat, utilities: util, filtered: [] };
-  }, [items, staticUtilities, searchQuery]);
+  }, [items, staticUtilities, searchQuery, canUseReviewAgent, canUsePrReview]);
 
   const handleClick = (item: ToolboxItem) => {
     if (item.agentKey === 'prd-agent') {
@@ -543,8 +591,9 @@ export default function AgentLauncherPage() {
                 className={`flex items-stretch ${isMobile ? 'flex-col' : ''}`}
                 style={{ minHeight: isMobile ? undefined : 80 }}
               >
-                {QUICK_LINKS.map((link, i) => {
+                {quickLinks.map((link, i) => {
                   const Icon = link.icon;
+                  const n = quickLinks.length;
                   return (
                     <button
                       key={link.path}
@@ -554,15 +603,15 @@ export default function AgentLauncherPage() {
                         isMobile ? 'px-5 py-4' : 'px-6 py-5'
                       }`}
                       style={{
-                        borderRight: !isMobile && i < QUICK_LINKS.length - 1
+                        borderRight: !isMobile && i < n - 1
                           ? '1px solid rgba(255,255,255,0.06)'
                           : undefined,
-                        borderBottom: isMobile && i < QUICK_LINKS.length - 1
+                        borderBottom: isMobile && i < n - 1
                           ? '1px solid rgba(255,255,255,0.06)'
                           : undefined,
                         borderRadius: isMobile
-                          ? (i === 0 ? '12px 12px 0 0' : i === QUICK_LINKS.length - 1 ? '0 0 12px 12px' : '0')
-                          : (i === 0 ? '12px 0 0 12px' : i === QUICK_LINKS.length - 1 ? '0 12px 12px 0' : '0'),
+                          ? (i === 0 ? '12px 12px 0 0' : i === n - 1 ? '0 0 12px 12px' : '0')
+                          : (i === 0 ? '12px 0 0 12px' : i === n - 1 ? '0 12px 12px 0' : '0'),
                       }}
                     >
                       <div
