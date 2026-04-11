@@ -542,20 +542,30 @@ public sealed class GitHubPrClient
         using var resp = await client.GetAsync(path, ct);
         if (!resp.IsSuccessStatusCode) return new();
         var raw = await resp.Content.ReadFromJsonAsync<List<GitHubTimelineRawDto>>(cancellationToken: ct) ?? new();
-        return raw.Select(r => new GitHubPrTimelineEventDto
+        return raw.Select(r =>
         {
-            Event = r.Event ?? string.Empty,
-            ActorLogin = r.Actor?.Login ?? r.User?.Login,
-            ActorAvatarUrl = r.Actor?.AvatarUrl ?? r.User?.AvatarUrl,
-            CreatedAt = r.CreatedAt ?? r.SubmittedAt ?? r.Author?.Date,
-            Label = r.Label?.Name,
-            AssigneeLogin = r.Assignee?.Login,
-            RequestedReviewerLogin = r.RequestedReviewer?.Login,
-            CommitSha = r.CommitId ?? r.Sha,
-            CommitMessage = Truncate(r.Message ?? r.Commit?.Message, 500),
-            State = r.State, // for reviewed events: APPROVED / CHANGES_REQUESTED / COMMENTED
-            Body = Truncate(r.Body, 2000), // for commented events
-            Rename = r.Rename != null ? $"{r.Rename.From} → {r.Rename.To}" : null,
+            // committed 事件没有 actor/user 字段，只有嵌套的 author.name（git 作者名字符串），
+            // 必须单独处理，否则前端看到一整列 "-"
+            var actorLogin = r.Actor?.Login ?? r.User?.Login;
+            if (actorLogin == null && r.Event == "committed")
+            {
+                actorLogin = r.Author?.Name;
+            }
+            return new GitHubPrTimelineEventDto
+            {
+                Event = r.Event ?? string.Empty,
+                ActorLogin = actorLogin,
+                ActorAvatarUrl = r.Actor?.AvatarUrl ?? r.User?.AvatarUrl,
+                CreatedAt = r.CreatedAt ?? r.SubmittedAt ?? r.Author?.Date,
+                Label = r.Label?.Name,
+                AssigneeLogin = r.Assignee?.Login,
+                RequestedReviewerLogin = r.RequestedReviewer?.Login,
+                CommitSha = r.CommitId ?? r.Sha,
+                CommitMessage = Truncate(r.Message ?? r.Commit?.Message, 500),
+                State = r.State, // for reviewed events: APPROVED / CHANGES_REQUESTED / COMMENTED
+                Body = Truncate(r.Body, 2000), // for commented events
+                Rename = r.Rename != null ? $"{r.Rename.From} → {r.Rename.To}" : null,
+            };
         }).ToList();
     }
 
