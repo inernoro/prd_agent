@@ -526,11 +526,29 @@ public sealed class PrReviewController : ControllerBase
 
         var fullMd = new StringBuilder();
         var startMs = DateTime.UtcNow;
+        var modelInfo = new PrReviewModelInfoHolder();
 
         try
         {
-            await foreach (var delta in _summary.StreamSummaryAsync(item, CancellationToken.None))
+            await foreach (var delta in _summary.StreamSummaryAsync(item, modelInfo, CancellationToken.None))
             {
+                // 模型信息一旦被 Start chunk 填充，立即推给前端（只推一次）
+                if (modelInfo.Captured)
+                {
+                    try
+                    {
+                        await WriteSseEventAsync("model", new
+                        {
+                            model = modelInfo.Model,
+                            platform = modelInfo.Platform,
+                            modelGroupName = modelInfo.ModelGroupName,
+                        });
+                    }
+                    catch (ObjectDisposedException) { break; }
+                    catch (OperationCanceledException) { break; }
+                    modelInfo.Captured = false;
+                }
+
                 fullMd.Append(delta);
                 try
                 {
@@ -551,6 +569,7 @@ public sealed class PrReviewController : ControllerBase
                 Builders<PrReviewItem>.Update.Set(x => x.SummaryReport, new SummaryReport
                 {
                     Markdown = fullMd.ToString(),
+                    Model = modelInfo.Model,
                     Error = ex.Message,
                     CreatedAt = DateTime.UtcNow,
                     DurationMs = (long)(DateTime.UtcNow - startMs).TotalMilliseconds,
@@ -572,6 +591,7 @@ public sealed class PrReviewController : ControllerBase
                 Builders<PrReviewItem>.Update.Set(x => x.SummaryReport, new SummaryReport
                 {
                     Markdown = string.Empty,
+                    Model = modelInfo.Model,
                     Error = emptyMsg,
                     DurationMs = duration,
                     CreatedAt = DateTime.UtcNow,
@@ -587,7 +607,7 @@ public sealed class PrReviewController : ControllerBase
         {
             Markdown = markdown,
             Headline = headline,
-            Model = null,
+            Model = modelInfo.Model,
             DurationMs = duration,
             CreatedAt = DateTime.UtcNow,
             Error = null,
@@ -632,11 +652,28 @@ public sealed class PrReviewController : ControllerBase
 
         var fullMd = new StringBuilder();
         var startMs = DateTime.UtcNow;
+        var modelInfo = new PrReviewModelInfoHolder();
 
         try
         {
-            await foreach (var delta in _alignment.StreamAlignmentAsync(item, CancellationToken.None))
+            await foreach (var delta in _alignment.StreamAlignmentAsync(item, modelInfo, CancellationToken.None))
             {
+                if (modelInfo.Captured)
+                {
+                    try
+                    {
+                        await WriteSseEventAsync("model", new
+                        {
+                            model = modelInfo.Model,
+                            platform = modelInfo.Platform,
+                            modelGroupName = modelInfo.ModelGroupName,
+                        });
+                    }
+                    catch (ObjectDisposedException) { break; }
+                    catch (OperationCanceledException) { break; }
+                    modelInfo.Captured = false;
+                }
+
                 fullMd.Append(delta);
                 try
                 {
@@ -658,6 +695,7 @@ public sealed class PrReviewController : ControllerBase
                 {
                     Score = 0,
                     Markdown = fullMd.ToString(),
+                    Model = modelInfo.Model,
                     Error = ex.Message,
                     CreatedAt = DateTime.UtcNow,
                     DurationMs = (long)(DateTime.UtcNow - startMs).TotalMilliseconds,
@@ -680,6 +718,7 @@ public sealed class PrReviewController : ControllerBase
                 {
                     Score = 0,
                     Markdown = string.Empty,
+                    Model = modelInfo.Model,
                     Error = emptyMsg,
                     DurationMs = duration,
                     CreatedAt = DateTime.UtcNow,
@@ -696,7 +735,7 @@ public sealed class PrReviewController : ControllerBase
             Score = score,
             Summary = summary,
             Markdown = markdown,
-            Model = null, // Gateway 不直接回吐最终模型名，如需可在 chunk.Resolution 里带出来
+            Model = modelInfo.Model,
             DurationMs = duration,
             CreatedAt = DateTime.UtcNow,
             Error = null,

@@ -9,6 +9,7 @@ import {
   Layers,
   ListChecks,
   Telescope,
+  CircleDot,
 } from 'lucide-react';
 import { useSseStream } from '@/lib/useSseStream';
 import { getPrReviewSummaryStreamUrl, type PrSummaryReportDto } from '@/services/real/prReview';
@@ -30,10 +31,17 @@ interface Props {
  *
  * 与 AlignmentPanel 共享相同的 SSE 生命周期（useSseStream + phase/typing/result/error）。
  */
+interface ModelInfo {
+  model?: string;
+  platform?: string;
+  modelGroupName?: string | null;
+}
+
 export function SummaryPanel({ itemId, cached }: Props) {
   const setSummaryReport = usePrReviewStore((s) => s.setSummaryReport);
   const [localResult, setLocalResult] = useState<PrSummaryReportDto | null>(cached ?? null);
   const [finalError, setFinalError] = useState<string | null>(null);
+  const [liveModel, setLiveModel] = useState<ModelInfo | null>(null);
   const fullMdRef = useRef('');
 
   useEffect(() => {
@@ -47,19 +55,28 @@ export function SummaryPanel({ itemId, cached }: Props) {
       const report: PrSummaryReportDto = {
         headline: d.headline ?? null,
         markdown: d.markdown,
+        model: liveModel?.model ?? null,
         durationMs: 0,
         createdAt: new Date().toISOString(),
       };
       setLocalResult(report);
       setSummaryReport(itemId, report);
     },
-    [itemId, setSummaryReport],
+    [itemId, setSummaryReport, liveModel],
   );
+
+  const handleModel = useCallback((data: unknown) => {
+    const d = data as { model?: string; platform?: string; modelGroupName?: string | null };
+    if (typeof d.model === 'string') {
+      setLiveModel({ model: d.model, platform: d.platform, modelGroupName: d.modelGroupName });
+    }
+  }, []);
 
   const sse = useSseStream({
     url: '',
     onEvent: {
       result: handleResult,
+      model: handleModel,
     },
     onTyping: (text) => {
       fullMdRef.current += text;
@@ -71,6 +88,7 @@ export function SummaryPanel({ itemId, cached }: Props) {
 
   const handleStart = useCallback(() => {
     setFinalError(null);
+    setLiveModel(null);
     fullMdRef.current = '';
     sse.reset();
     void sse.start({ url: getPrReviewSummaryStreamUrl(itemId) });
@@ -118,6 +136,7 @@ export function SummaryPanel({ itemId, cached }: Props) {
     const preview = sse.typing.slice(-600);
     return (
       <div className="rounded-lg border border-sky-500/30 bg-sky-500/[0.06] p-4 space-y-3">
+        {liveModel?.model && <ModelBadge model={liveModel} />}
         <div className="flex items-center gap-2 text-sm text-sky-200">
           <Loader2 size={16} className="animate-spin" />
           <span className="font-semibold">{phaseText}</span>
@@ -185,6 +204,9 @@ function SummaryResult({ report, onRerun, error }: ResultProps) {
 
   return (
     <div className="rounded-lg border border-sky-500/20 bg-sky-500/[0.04] p-4 space-y-4">
+      {/* 模型信息横幅（rule.ai-model-visibility）*/}
+      {report.model && <ModelBadge model={{ model: report.model }} />}
+
       {/* 头部：一句话摘要 + 重跑按钮 */}
       <div className="flex items-start gap-3">
         <div className="shrink-0 w-9 h-9 rounded-lg bg-sky-500/15 flex items-center justify-center">
@@ -274,6 +296,28 @@ function SummaryResult({ report, onRerun, error }: ResultProps) {
           {report.markdown}
         </pre>
       </details>
+    </div>
+  );
+}
+
+// ============================================================
+// 模型标识（rule.ai-model-visibility）
+// ============================================================
+
+interface ModelBadgeProps {
+  model: { model?: string; platform?: string | null; modelGroupName?: string | null };
+}
+
+function ModelBadge({ model }: ModelBadgeProps) {
+  if (!model.model) return null;
+  return (
+    <div className="flex items-center gap-1.5 text-[11px] text-white/40 font-mono">
+      <CircleDot size={10} className="text-sky-400" />
+      <span>{model.model}</span>
+      {model.platform && <span className="opacity-60">· {model.platform}</span>}
+      {model.modelGroupName && (
+        <span className="opacity-60">· pool: {model.modelGroupName}</span>
+      )}
     </div>
   );
 }

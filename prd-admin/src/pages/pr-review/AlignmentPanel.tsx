@@ -9,6 +9,7 @@ import {
   CheckCircle2,
   XCircle,
   TriangleAlert,
+  CircleDot,
 } from 'lucide-react';
 import { useSseStream } from '@/lib/useSseStream';
 import { getPrReviewAlignmentStreamUrl, type PrAlignmentReportDto } from '@/services/real/prReview';
@@ -35,10 +36,17 @@ interface Props {
  *   - typing 事件驱动增量渲染（打字机效果）
  *   - done 后替换为结构化渲染
  */
+interface ModelInfo {
+  model?: string;
+  platform?: string;
+  modelGroupName?: string | null;
+}
+
 export function AlignmentPanel({ itemId, cached }: Props) {
   const setAlignmentReport = usePrReviewStore((s) => s.setAlignmentReport);
   const [localResult, setLocalResult] = useState<PrAlignmentReportDto | null>(cached ?? null);
   const [finalError, setFinalError] = useState<string | null>(null);
+  const [liveModel, setLiveModel] = useState<ModelInfo | null>(null);
   const fullMdRef = useRef('');
 
   // 缓存刷新时同步本地态
@@ -54,19 +62,28 @@ export function AlignmentPanel({ itemId, cached }: Props) {
         score: typeof d.score === 'number' ? d.score : 0,
         summary: d.summary ?? null,
         markdown: d.markdown,
+        model: liveModel?.model ?? null,
         durationMs: 0,
         createdAt: new Date().toISOString(),
       };
       setLocalResult(report);
       setAlignmentReport(itemId, report);
     },
-    [itemId, setAlignmentReport],
+    [itemId, setAlignmentReport, liveModel],
   );
+
+  const handleModel = useCallback((data: unknown) => {
+    const d = data as { model?: string; platform?: string; modelGroupName?: string | null };
+    if (typeof d.model === 'string') {
+      setLiveModel({ model: d.model, platform: d.platform, modelGroupName: d.modelGroupName });
+    }
+  }, []);
 
   const sse = useSseStream({
     url: '',
     onEvent: {
       result: handleResult,
+      model: handleModel,
     },
     onTyping: (text) => {
       fullMdRef.current += text;
@@ -78,6 +95,7 @@ export function AlignmentPanel({ itemId, cached }: Props) {
 
   const handleStart = useCallback(() => {
     setFinalError(null);
+    setLiveModel(null);
     fullMdRef.current = '';
     sse.reset();
     void sse.start({ url: getPrReviewAlignmentStreamUrl(itemId) });
@@ -128,6 +146,7 @@ export function AlignmentPanel({ itemId, cached }: Props) {
     const preview = sse.typing.slice(-600); // 只显示最近 600 字
     return (
       <div className="rounded-lg border border-violet-500/30 bg-violet-500/[0.06] p-4 space-y-3">
+        {liveModel?.model && <ModelBadge model={liveModel} />}
         <div className="flex items-center gap-2 text-sm text-violet-200">
           <Loader2 size={16} className="animate-spin" />
           <span className="font-semibold">{phaseText}</span>
@@ -204,6 +223,9 @@ function AlignmentResult({ report, onRerun, error }: ResultProps) {
 
   return (
     <div className="rounded-lg border border-violet-500/20 bg-violet-500/[0.04] p-4 space-y-4">
+      {/* 模型信息横幅（rule.ai-model-visibility）*/}
+      {report.model && <ModelBadge model={{ model: report.model }} />}
+
       {/* 头部：分数 + 总结 + 重跑按钮 */}
       <div className="flex items-start gap-3">
         <div className={`shrink-0 w-14 h-14 rounded-xl border flex flex-col items-center justify-center ${scoreColor}`}>
@@ -329,6 +351,28 @@ function InlineBlock({ title, content }: { title: string; content: string }) {
     <div className="rounded-lg border border-white/10 bg-white/[0.02] p-3">
       <div className="text-xs font-semibold text-white/70 mb-1">{title}</div>
       <div className="text-xs text-white/70 leading-relaxed">{content}</div>
+    </div>
+  );
+}
+
+// ============================================================
+// 模型标识（rule.ai-model-visibility）
+// ============================================================
+
+interface ModelBadgeProps {
+  model: { model?: string; platform?: string | null; modelGroupName?: string | null };
+}
+
+function ModelBadge({ model }: ModelBadgeProps) {
+  if (!model.model) return null;
+  return (
+    <div className="flex items-center gap-1.5 text-[11px] text-white/40 font-mono">
+      <CircleDot size={10} className="text-violet-400" />
+      <span>{model.model}</span>
+      {model.platform && <span className="opacity-60">· {model.platform}</span>}
+      {model.modelGroupName && (
+        <span className="opacity-60">· pool: {model.modelGroupName}</span>
+      )}
     </div>
   );
 }

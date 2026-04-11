@@ -51,10 +51,12 @@ public sealed class PrAlignmentService
     /// <summary>
     /// 流式生成对齐度报告。调用方负责持久化最终结果。
     /// 返回一个增量文本流（每次 yield 一小段 markdown），调用方应 StringBuilder.Append 拼接成完整输出。
+    /// modelInfo 是 out 参数，当 Gateway 返回 Start chunk 时立即填充。
     /// 若上游抛 PrReviewException 或 LLM 报错，会以抛异常的方式返回调用方。
     /// </summary>
     public async IAsyncEnumerable<string> StreamAlignmentAsync(
         PrReviewItem item,
+        PrReviewModelInfoHolder modelInfo,
         [EnumeratorCancellation] CancellationToken ct)
     {
         var snapshot = item.Snapshot
@@ -83,6 +85,15 @@ public sealed class PrAlignmentService
         // 服务器权威性：LLM 调用不能被客户端断开中止
         await foreach (var chunk in _gateway.StreamAsync(gatewayRequest, CancellationToken.None))
         {
+            if (chunk.Type == GatewayChunkType.Start && chunk.Resolution != null)
+            {
+                modelInfo.Model = chunk.Resolution.ActualModel;
+                modelInfo.Platform = chunk.Resolution.ActualPlatformName ?? chunk.Resolution.ActualPlatformId;
+                modelInfo.ModelGroupName = chunk.Resolution.ModelGroupName;
+                modelInfo.Captured = true;
+                continue;
+            }
+
             if (chunk.Type == GatewayChunkType.Text && !string.IsNullOrEmpty(chunk.Content))
             {
                 yield return chunk.Content!;

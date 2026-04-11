@@ -432,6 +432,11 @@ public static class BsonClassMapRegistration
             cm.MapIdMember(s => s.Id)
                 .SetSerializer(new StringOrObjectIdSerializer())
                 .SetIdGenerator(GuidStringIdGenerator.Instance);
+            // 重要：容忍数据库里残留的旧字段（如已删除的 PrReviewPrismGitHubTokenEncrypted）
+            // 否则 AppSettings 反序列化会直接抛 BSON 异常，而这个 class 被
+            // LlmRequestLogWriter.StartAsync 第一行就读取，任何 AppSettings 反序列化
+            // 失败都会导致「所有 LLM 调用不写日志」的幽灵故障
+            cm.SetIgnoreExtraElements(true);
         });
     }
 

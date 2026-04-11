@@ -40,9 +40,12 @@ public sealed class PrSummaryService
 
     /// <summary>
     /// 流式生成变更摘要。调用方负责持久化最终结果。
+    /// modelInfo 是 out 参数，当 Gateway 返回 Start chunk 时立即填充，
+    /// 调用方（Controller）可监听此对象的变化以推送 SSE model 事件。
     /// </summary>
     public async IAsyncEnumerable<string> StreamSummaryAsync(
         PrReviewItem item,
+        PrReviewModelInfoHolder modelInfo,
         [EnumeratorCancellation] CancellationToken ct)
     {
         var snapshot = item.Snapshot
@@ -72,6 +75,16 @@ public sealed class PrSummaryService
         // 服务器权威性：LLM 调用不能被客户端断开中止
         await foreach (var chunk in _gateway.StreamAsync(gatewayRequest, CancellationToken.None))
         {
+            // Start chunk 带模型调度信息，捕获后立即让调用方可读
+            if (chunk.Type == GatewayChunkType.Start && chunk.Resolution != null)
+            {
+                modelInfo.Model = chunk.Resolution.ActualModel;
+                modelInfo.Platform = chunk.Resolution.ActualPlatformName ?? chunk.Resolution.ActualPlatformId;
+                modelInfo.ModelGroupName = chunk.Resolution.ModelGroupName;
+                modelInfo.Captured = true;
+                continue;
+            }
+
             if (chunk.Type == GatewayChunkType.Text && !string.IsNullOrEmpty(chunk.Content))
             {
                 yield return chunk.Content!;
