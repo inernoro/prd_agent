@@ -81,8 +81,20 @@ public sealed class PrSummaryService
         };
 
         // 服务器权威性：LLM 调用不能被客户端断开中止
+        var chunkIndex = 0;
+        var startAt = DateTime.UtcNow;
         await foreach (var chunk in _gateway.StreamAsync(gatewayRequest, CancellationToken.None))
         {
+            chunkIndex++;
+            // 前 5 个 chunk 详细打日志，帮助诊断 TTFB 异常
+            if (chunkIndex <= 5)
+            {
+                var elapsed = (DateTime.UtcNow - startAt).TotalMilliseconds;
+                _logger.LogInformation(
+                    "[PrSummary] chunk #{Idx} @ {Elapsed:F0}ms type={Type} contentLen={Len} contentPreview={Preview}",
+                    chunkIndex, elapsed, chunk.Type, chunk.Content?.Length ?? 0,
+                    (chunk.Content ?? "").Length > 50 ? chunk.Content!.Substring(0, 50) : chunk.Content);
+            }
             // Start chunk 带模型调度信息，捕获后立即让调用方可读
             if (chunk.Type == GatewayChunkType.Start && chunk.Resolution != null)
             {
