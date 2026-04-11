@@ -1,6 +1,14 @@
 export { default as LandingPage } from './LandingPage';
 export { HeroSection } from './sections/HeroSection';
-export { AgentShowcase } from './sections/AgentShowcase';
-export { FeatureBento } from './sections/FeatureBento';
-export { SocialProof } from './sections/SocialProof';
-export { CtaFooter } from './sections/CtaFooter';
+export { StatsStrip } from './sections/StatsStrip';
+export { ThreePillars } from './sections/ThreePillars';
+export { FeatureDeepDive } from './sections/FeatureDeepDive';
+export { WorkflowCanvas } from './sections/WorkflowCanvas';
+export { SignatureCinema } from './sections/SignatureCinema';
+export { HowItWorks } from './sections/HowItWorks';
+export { AgentGrid } from './sections/AgentGrid';
+export { CompatibilityStack } from './sections/CompatibilityStack';
+export { CommunityPulse } from './sections/CommunityPulse';
+export { DesktopDownload } from './sections/DesktopDownload';
+export { FinalCta } from './sections/FinalCta';
+export { MinimalFooter } from './sections/MinimalFooter';
