@@ -285,6 +285,12 @@ let stateEventSource = null;
 function initStateStream() {
   stateEventSource = new EventSource(`${API}/state-stream`);
   stateEventSource.onmessage = (e) => {
+    // Any successful SSE frame means the backend is alive. If the restart
+    // overlay is showing (stale from a previous onerror), hide it — the
+    // separate `pollHealthForRestart` path would also trigger a full
+    // reload, but if the SSE reconnects cleanly without a full page
+    // restart (e.g. transient network hiccup) there's no need to reload.
+    if (_restartOverlayEl) hideRestartOverlay();
     try {
       const data = JSON.parse(e.data);
       if (data.branches) {
@@ -339,11 +345,100 @@ function initStateStream() {
     } catch {}
   };
   stateEventSource.onerror = () => {
+    // Server might be restarting. Flip on the restart-detect overlay so
+    // the user sees "正在重启" instead of a raw Cloudflare 502 banner,
+    // and start polling /healthz to auto-reload the moment CDS is back.
+    showRestartOverlay();
     setTimeout(() => {
       if (stateEventSource) stateEventSource.close();
       initStateStream();
     }, 3000);
   };
+}
+
+// ── Restart detection overlay ──
+//
+// When the state-stream SSE drops (backend restart, network blip,
+// Cloudflare 502 window), this overlay covers the page with a friendly
+// "正在重启" card and polls /healthz once per second. As soon as the
+// endpoint returns 200 we reload the page so stale JS doesn't keep
+// trying stale API shapes. Public /healthz is intentionally cookie-free
+// (see server.ts:254) so the poll works even if cookies are lost.
+//
+// Also protects against manual `./exec_cds.sh restart` from a SSH shell:
+// the operator no longer has to tell the user "just refresh the page",
+// the page refreshes itself the instant the backend is alive.
+let _restartOverlayEl = null;
+let _restartHealthTimer = null;
+let _restartHealthStartedAt = 0;
+let _restartRetryAttempt = 0;
+
+function showRestartOverlay() {
+  if (_restartOverlayEl) return; // already shown
+  const el = document.createElement('div');
+  el.className = 'cds-restart-overlay';
+  el.innerHTML = `
+    <div class="cds-restart-card">
+      <div class="cds-restart-spinner" aria-hidden="true">
+        <svg width="44" height="44" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M21 12a9 9 0 1 1-6.219-8.56"/>
+          <polyline points="21 3 21 9 15 9"/>
+        </svg>
+      </div>
+      <div class="cds-restart-title">CDS 正在重启</div>
+      <div class="cds-restart-hint" id="cdsRestartHint">后台服务暂时不可用，恢复后页面会自动刷新…</div>
+      <button class="cds-restart-reload" onclick="location.reload()">立即刷新</button>
+    </div>
+  `;
+  document.body.appendChild(el);
+  _restartOverlayEl = el;
+  _restartHealthStartedAt = Date.now();
+  _restartRetryAttempt = 0;
+  pollHealthForRestart();
+}
+
+function hideRestartOverlay() {
+  if (_restartHealthTimer) { clearTimeout(_restartHealthTimer); _restartHealthTimer = null; }
+  if (_restartOverlayEl) {
+    _restartOverlayEl.classList.add('fade-out');
+    setTimeout(() => {
+      if (_restartOverlayEl) _restartOverlayEl.remove();
+      _restartOverlayEl = null;
+    }, 200);
+  }
+}
+
+async function pollHealthForRestart() {
+  _restartRetryAttempt++;
+  const hint = document.getElementById('cdsRestartHint');
+  const elapsed = Math.round((Date.now() - _restartHealthStartedAt) / 1000);
+  if (hint) {
+    hint.textContent = `后台服务暂时不可用，已等待 ${elapsed}s，恢复后页面会自动刷新…`;
+  }
+  try {
+    // `cache: 'no-store'` + cache-buster query so Cloudflare/browsers don't
+    // serve a cached 502 from the initial failure window.
+    const res = await fetch(`/healthz?_=${Date.now()}`, {
+      cache: 'no-store',
+      credentials: 'omit',
+    });
+    if (res.ok) {
+      // Backend is alive again. Give nginx + proxies a brief settle window
+      // then hard-reload so we pick up any new JS/HTML shipped in the
+      // restart. `location.reload(true)` is deprecated but a plain
+      // location.reload() plus no-cache headers we set in index.html
+      // is sufficient.
+      if (hint) hint.textContent = '后台已恢复，正在刷新页面…';
+      setTimeout(() => location.reload(), 400);
+      return;
+    }
+  } catch { /* still down */ }
+
+  // Exponential-ish backoff: 1s, 1s, 1s, 2s, 2s, 3s... capped at 3s.
+  // Keeps the first few retries snappy (catch fast restarts) without
+  // spamming requests during a long outage.
+  const delay = _restartRetryAttempt < 4 ? 1000 : _restartRetryAttempt < 8 ? 2000 : 3000;
+  _restartHealthTimer = setTimeout(pollHealthForRestart, delay);
 }
 
 async function loadConfig() {
