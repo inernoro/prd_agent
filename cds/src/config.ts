@@ -17,6 +17,24 @@ function resolveMode(): CdsMode {
 const configuredRootDomains = parseCsv(process.env.CDS_ROOT_DOMAINS || process.env.ROOT_DOMAINS);
 const primaryRootDomain = configuredRootDomains?.[0];
 
+function resolveBootstrapToken(): { value: string; expiresAt: string } | undefined {
+  const value = process.env.CDS_BOOTSTRAP_TOKEN;
+  const expiresAt = process.env.CDS_BOOTSTRAP_TOKEN_EXPIRES_AT;
+  if (!value || !expiresAt) return undefined;
+  // Expired tokens are swallowed at load time so the master doesn't accept
+  // stale credentials after a reboot. The env vars themselves are pruned by
+  // `./exec_cds.sh issue-token` on the next run or by `cleanupExpiredToken`.
+  if (new Date(expiresAt).getTime() < Date.now()) return undefined;
+  return { value, expiresAt };
+}
+
+// `schedulerUrl` is the internal field ExecutorAgent already uses; `masterUrl`
+// is the user-facing field written by `./exec_cds.sh connect`. We honor both
+// so existing CDS_SCHEDULER_URL deployments keep working while new clusters
+// use the friendlier CDS_MASTER_URL name.
+const masterUrl = process.env.CDS_MASTER_URL || undefined;
+const schedulerUrl = process.env.CDS_SCHEDULER_URL || masterUrl || undefined;
+
 const DEFAULT_CONFIG: CdsConfig = {
   repoRoot: path.resolve(process.cwd(), '..'),
   worktreeBase: path.resolve(process.cwd(), '..', '.cds-worktrees'),
@@ -36,9 +54,11 @@ const DEFAULT_CONFIG: CdsConfig = {
     issuer: 'prdagent',
   },
   mode: resolveMode(),
-  schedulerUrl: process.env.CDS_SCHEDULER_URL || undefined,
+  schedulerUrl,
+  masterUrl,
   executorPort: parseInt(process.env.CDS_EXECUTOR_PORT || '9901', 10),
   executorToken: process.env.CDS_EXECUTOR_TOKEN || undefined,
+  bootstrapToken: resolveBootstrapToken(),
   // Warm-pool scheduler — disabled by default for backward compatibility.
   // Opt-in via cds.config.json { "scheduler": { "enabled": true, ... } }.
   // See doc/design.cds-resilience.md.

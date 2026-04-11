@@ -11,7 +11,8 @@ import type { WorktreeService } from '../services/worktree.js';
 import { resolveProfileWithMode } from '../services/container.js';
 import type { ContainerService } from '../services/container.js';
 import type { SchedulerService } from '../services/scheduler.js';
-import type { BranchEntry, CdsConfig, IShellExecutor, OperationLog, OperationLogEvent, BuildProfile, RoutingRule, ServiceState, InfraService, DataMigration, MongoConnectionConfig, CdsPeer } from '../types.js';
+import type { ExecutorRegistry } from '../scheduler/executor-registry.js';
+import type { BranchEntry, CdsConfig, IShellExecutor, OperationLog, OperationLogEvent, BuildProfile, RoutingRule, ServiceState, InfraService, DataMigration, MongoConnectionConfig, CdsPeer, ExecutorNode } from '../types.js';
 import { discoverComposeFiles, parseComposeFile, parseComposeString, toComposeYaml, parseCdsCompose, toCdsCompose } from '../services/compose-parser.js';
 import type { ComposeServiceDef } from '../services/compose-parser.js';
 import { combinedOutput } from '../types.js';
@@ -25,6 +26,20 @@ export interface RouterDeps {
   config: CdsConfig;
   /** Optional warm-pool scheduler (v3.1). When absent, scheduler API returns disabled. */
   schedulerService?: SchedulerService;
+  /**
+   * Cluster executor registry (scheduler/standalone mode). When absent or
+   * containing only an embedded master, deploys run locally. When a remote
+   * executor is registered and the request either targets it explicitly or
+   * lets the dispatcher pick, the deploy is proxied to the remote executor's
+   * `/exec/deploy` HTTP SSE endpoint.
+   */
+  registry?: ExecutorRegistry;
+  /**
+   * Current scheduling strategy, read fresh on every dispatch so the
+   * Dashboard's strategy radio takes effect immediately without restart.
+   * Defaults to `least-load` if not provided.
+   */
+  getClusterStrategy?: () => 'least-branches' | 'least-load' | 'round-robin';
 }
 
 export function createBranchRouter(deps: RouterDeps): Router {
@@ -35,9 +50,200 @@ export function createBranchRouter(deps: RouterDeps): Router {
     shell,
     config,
     schedulerService,
+    registry,
+    getClusterStrategy,
   } = deps;
 
   const router = Router();
+
+  // ── Cluster dispatch helper ──
+  //
+  // Given an incoming deploy request, decide whether it should run locally on
+  // this master (returns null) or proxied to a remote executor (returns the
+  // executor node). The decision order:
+  //
+  //   1. Request body `targetExecutorId` — explicit user choice. Must exist
+  //      and be online; if missing or offline we fall back to (3).
+  //   2. Branch's sticky `entry.executorId` — if this branch was previously
+  //      deployed to a specific executor and that executor is still online,
+  //      keep it there (deploys are idempotent on target).
+  //   3. Registry's `selectExecutor(strategy)` — pick the least-loaded online
+  //      executor. If the pick is the embedded master itself, return null so
+  //      the existing local code path runs.
+  //   4. No registry at all (standalone mode, no cluster) — return null.
+  //
+  // Returning null means "run locally, unchanged from before cluster".
+  // Returning an ExecutorNode means "dispatch this deploy via HTTP proxy".
+  function resolveDeployTarget(
+    entry: BranchEntry,
+    explicitTargetId: string | undefined,
+  ): ExecutorNode | null {
+    if (!registry) return null;
+
+    // Explicit target wins if valid.
+    if (explicitTargetId) {
+      const picked = registry.getAll().find(n => n.id === explicitTargetId);
+      if (picked && picked.status === 'online') {
+        return picked.role === 'embedded' ? null : picked;
+      }
+      // Explicit but invalid → fall through to auto
+    }
+
+    // Sticky: respect previous placement if still viable.
+    if (entry.executorId) {
+      const sticky = registry.getAll().find(n => n.id === entry.executorId);
+      if (sticky && sticky.status === 'online') {
+        return sticky.role === 'embedded' ? null : sticky;
+      }
+      // Previously-owned executor is gone → let dispatcher re-pick
+    }
+
+    // Auto-pick via the configured strategy.
+    const online = registry.getOnline();
+    const remoteOnline = online.filter(n => n.role !== 'embedded');
+    if (remoteOnline.length === 0) {
+      // No remote executors available — run locally.
+      return null;
+    }
+    // Use the current Dashboard strategy, defaulting to least-load which
+    // is the most real-world useful (weighted memory + CPU).
+    const strategy = getClusterStrategy?.() || 'least-load';
+    const picked = registry.selectExecutor(strategy);
+    if (!picked || picked.role === 'embedded') return null;
+    return picked;
+  }
+
+  /**
+   * Proxy a deploy request to a remote executor's `/exec/deploy` endpoint.
+   * Streams the executor's SSE response back to the client verbatim, so the
+   * dashboard's transit page and log box render exactly the same experience
+   * as a local deploy. Updates the master's state so the branch shows up as
+   * "hosted on" the target executor.
+   *
+   * Design notes:
+   *  - We use global `fetch` (Node 18+) with a streaming body reader. The
+   *    readable stream's chunks are raw SSE bytes; we forward them untouched
+   *    so step/log/complete/error events all flow through.
+   *  - We set `entry.executorId` BEFORE making the remote call so concurrent
+   *    status reads see the correct ownership. If the remote call fails we
+   *    leave executorId set — next deploy attempt will hit the same executor
+   *    (sticky) or fall through to re-selection if it's offline.
+   *  - Auth: the master sends its `X-Executor-Token` so the remote's
+   *    `/exec` middleware accepts the call. This token is the shared cluster
+   *    secret minted during bootstrap.
+   */
+  async function proxyDeployToExecutor(
+    executor: ExecutorNode,
+    entry: BranchEntry,
+    res: import('express').Response,
+  ): Promise<void> {
+    // SSE headers on client side — same shape the local deploy uses so the
+    // frontend doesn't need to know whether it's local or remote.
+    res.writeHead(200, {
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache',
+      Connection: 'keep-alive',
+      'X-Accel-Buffering': 'no',
+    });
+
+    // Record the ownership eagerly so GET /api/branches reflects the new
+    // placement even before deploy finishes. If something goes wrong, the
+    // next retry will still target this executor (sticky).
+    entry.executorId = executor.id;
+    entry.status = 'building';
+    stateService.save();
+
+    // Tell the client we're proxying — gives the transit page a nice hint
+    // and makes the log box show meaningful context on the very first event.
+    const preamble = {
+      step: 'dispatch',
+      status: 'running',
+      title: `派发到执行器 ${executor.id} (${executor.host}:${executor.port})`,
+      timestamp: new Date().toISOString(),
+    };
+    res.write(`event: step\ndata: ${JSON.stringify(preamble)}\n\n`);
+
+    // Prepare the payload the remote's /exec/deploy expects. The remote has
+    // its own worktree + state, so we pass branch metadata + profiles + the
+    // merged env var map and let it handle the rest.
+    const profiles = stateService.getBuildProfiles();
+    const cdsEnv = stateService.getCdsEnvVars();
+    const customEnv = stateService.getCustomEnv();
+    const mirrorEnv = stateService.getMirrorEnvVars();
+    const env = { ...cdsEnv, ...mirrorEnv, ...customEnv };
+
+    const payload = {
+      branchId: entry.id,
+      branchName: entry.branch,
+      profiles,
+      env,
+    };
+
+    const upstreamUrl = `http://${executor.host}:${executor.port}/exec/deploy`;
+    try {
+      const upstream = await fetch(upstreamUrl, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(config.executorToken ? { 'X-Executor-Token': config.executorToken } : {}),
+        },
+        body: JSON.stringify(payload),
+      });
+
+      if (!upstream.ok || !upstream.body) {
+        const errText = await (upstream.text ? upstream.text() : Promise.resolve('(no body)'));
+        const errEvent = {
+          message: `执行器拒绝部署请求 (HTTP ${upstream.status}): ${errText.slice(0, 200)}`,
+        };
+        res.write(`event: error\ndata: ${JSON.stringify(errEvent)}\n\n`);
+        entry.status = 'error';
+        entry.errorMessage = errEvent.message;
+        stateService.save();
+        return;
+      }
+
+      // Pipe the executor's SSE bytes directly to the client. Chunks may
+      // contain partial events but SSE framing is newline-delimited so the
+      // browser's EventSource parser handles boundaries correctly.
+      const reader = upstream.body.getReader();
+      const decoder = new TextDecoder('utf-8');
+      let buffer = '';
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        const chunk = decoder.decode(value, { stream: true });
+        buffer += chunk;
+        // Flush every complete SSE frame (terminated by blank line) so the
+        // client sees updates promptly rather than waiting for the full
+        // upstream response to arrive.
+        try {
+          res.write(chunk);
+        } catch {
+          // Client disconnected mid-stream — stop piping; the remote will
+          // continue its build independently of this pipe going away.
+          break;
+        }
+      }
+      // If the upstream ended mid-event (rare), drain the final bytes.
+      if (buffer.length > 0) {
+        try { res.write(decoder.decode()); } catch { /* client gone */ }
+      }
+
+      // Master-side state is best-effort — the executor has the source of
+      // truth via its next heartbeat, which will reconcile status.
+      entry.lastAccessedAt = new Date().toISOString();
+      stateService.save();
+    } catch (err) {
+      const msg = (err as Error).message;
+      const errEvent = { message: `派发到执行器失败: ${msg}` };
+      try { res.write(`event: error\ndata: ${JSON.stringify(errEvent)}\n\n`); } catch { /* ignore */ }
+      entry.status = 'error';
+      entry.errorMessage = errEvent.message;
+      stateService.save();
+    } finally {
+      try { res.end(); } catch { /* ignore */ }
+    }
+  }
 
   // ── Preview port servers (port mode: per-branch proxy with path-prefix routing) ──
   const previewServers = new Map<string, http.Server>();
@@ -482,6 +688,34 @@ export function createBranchRouter(deps: RouterDeps): Router {
     if (profiles.length === 0) {
       res.status(400).json({ error: '尚未配置构建配置，请先添加至少一个构建配置。' });
       return;
+    }
+
+    // ── Cluster dispatch decision ──
+    //
+    // Before touching the local deploy path, decide whether this branch
+    // should be built on a remote executor. The request body can override
+    // the auto-selection with { targetExecutorId: "executor-xxx" }; otherwise
+    // the dispatcher picks based on current load. Returns null for the local
+    // path (embedded master or no cluster), which is the previous behavior.
+    const explicitTarget = (req.body?.targetExecutorId as string | undefined) || undefined;
+    const remoteTarget = resolveDeployTarget(entry, explicitTarget);
+    if (remoteTarget) {
+      // Clear any stale error + clear the local services map since we're
+      // handing this branch off to the remote — the master isn't running
+      // containers for it, the executor is.
+      entry.errorMessage = undefined;
+      await proxyDeployToExecutor(remoteTarget, entry, res);
+      return;
+    }
+
+    // Local path: if we were previously dispatched to a remote executor,
+    // clear the sticky ownership so GET /api/branches stops reporting the
+    // wrong placement.
+    if (entry.executorId && registry) {
+      const stillRemote = registry.getAll().find(n => n.id === entry.executorId);
+      if (stillRemote?.role === 'embedded' || !stillRemote) {
+        entry.executorId = undefined;
+      }
     }
 
     initSSE(res);

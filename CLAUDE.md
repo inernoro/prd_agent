@@ -167,13 +167,14 @@ cd prd-api && dotnet build --no-restore 2>&1 | grep -E "error CS|warning CS" | h
 | `no-rootless-tree.md` | `**/*.{cs,ts,tsx}` | 无根之木禁令 + 借用法则：不假定不存在的能力，缺什么借什么 |
 | `bridge-ops.md` | `cds/src/**/*.ts` | Bridge 操作规范：鼠标轨迹 + spa-navigate + description 必填 |
 | `navigation-registry.md` | 新 Agent / 新功能入口 | 默认注册百宝箱 + 交付必须声明"位置"与"点击路径"，禁止只给路由 |
+| `quickstart-zero-friction.md` | 入口脚本 (`*init*`, `*quick*`, `*setup*`, `Dockerfile`) | 快启动大包大揽：假设用户是小白，自动检测+安装依赖，不能自动的给复制粘贴命令 |
 
 ---
 
 ## 质量保障技能链
 
 ```
-需求 → /validate → 方案 → /plan-first → /risk → /trace → 实现 → /verify → /scope-check → /cds-deploy → /smoke → /preview → /handoff → /weekly
+需求 → /validate → 方案 → /plan-first → /risk → /trace → 实现 → /verify → /scope-check → /cds-deploy → /smoke → /preview → /uat → /handoff → /weekly
 ```
 
 ### 主流程技能（按开发生命周期排列）
@@ -189,6 +190,7 @@ cd prd-api && dotnet build --no-restore 2>&1 | grep -E "error CS|warning CS" | h
 | **cds-deploy-pipeline** | `/cds-deploy` | 输入代码提交 → 自动推送到 CDS 灰度环境、等待容器就绪、执行冒烟测试，失败自动定位原因 |
 | **smoke-test** | `/smoke` | 输入模块名 → 扫描 Controller 端点，自动生成链式 curl 脚本（前一步输出 ID 传给后续请求） |
 | **preview-url** | `/preview` | 输入当前分支 → 自动拼接 `分支名.miduo.org` 预览地址，用于人工验收 |
+| **acceptance-checklist** | `/uat` | 输入功能场景 → 生成真人逐步打勾的 UAT 清单（Phase 0-7：前置 → 冷启 → 执行 → 验证 → 回归 → 回滚 → 负面），每步含预期结果 + 失败排查手册。CLI/Web 双通道支持 |
 | **task-handoff-checklist** | `/handoff` | 输入当前变更 → 扫描导航/文档/规则/工作流/测试/风险/质量/后续 8 个维度，输出交接清单 |
 | **weekly-update-summary** | `/weekly` | 输入时间范围 → 从 git 历史收集 commit/PR/贡献者数据，输出分类周报（完成项 + 下周优先级） |
 
@@ -248,7 +250,7 @@ cd prd-api && dotnet build --no-restore 2>&1 | grep -E "error CS|warning CS" | h
 3. **方案评审时** → 先 `/risk` 评估风险，再 `/trace` 追踪关键链路
 4. **开发完成后** → 先 `/verify` 交叉验证，再 `/scope-check` 边界检查
 5. **部署测试时** → `/cds-deploy` 一键部署灰度环境，再 `/smoke` 冒烟测试
-6. **需人工验收时** → `/preview` 生成预览地址，用户直接打开验收
+6. **需人工验收时** → `/preview` 生成预览地址 → `/uat` 生成逐步打勾的验收清单，真人按表执行每一步
 7. **提 PR 前** → `/resolve` 预合并主分支，AI 代替人类解决冲突
 8. **准备上线时** → `/handoff` 生成交接清单（涉及 3+ 文件时自动触发）
 9. **周五收尾时** → `/weekly` 生成本周总结（完成后自动触发 `/doc-sync`）

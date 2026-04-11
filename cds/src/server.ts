@@ -25,6 +25,14 @@ export interface ServerDeps {
   config: CdsConfig;
   /** Optional warm-pool scheduler (v3.1). */
   schedulerService?: SchedulerService;
+  /**
+   * Cluster executor registry. Passed through to createBranchRouter so the
+   * deploy handler can dispatch to remote executors when present. Absent in
+   * pre-cluster deployments where the router falls back to local execution.
+   */
+  registry?: import('./scheduler/executor-registry.js').ExecutorRegistry;
+  /** Getter for the current dispatch strategy. See routes/cluster.ts. */
+  getClusterStrategy?: () => 'least-branches' | 'least-load' | 'round-robin';
 }
 
 function makeToken(user: string, pass: string): string {
@@ -418,6 +426,38 @@ export function createServer(deps: ServerDeps): express.Express {
       // Allow internal requests from widget proxy (/_cds/ → master)
       if (req.headers['x-cds-internal'] === '1') return next();
 
+      // ── Cluster peer-to-peer endpoints ──
+      //
+      // These routes authenticate with X-Bootstrap-Token or X-Executor-Token
+      // inside the route handler (see scheduler/routes.ts). The cookie-based
+      // auth middleware doesn't know about those tokens, and would otherwise
+      // reject all cross-node calls with 401 — which is exactly the bug that
+      // broke `./exec_cds.sh connect` and the Dashboard's "加入集群" button.
+      //
+      // We bypass cookie auth for these specific method+path combinations
+      // ONLY WHEN a cluster token header is present. This way a Dashboard
+      // user (cookie-authenticated, no cluster token) still goes through
+      // normal cookie auth — which is required so the Dashboard's
+      // "踢出" button can call DELETE /api/executors/:id without hitting
+      // the verifyPermanentToken wall downstream.
+      //
+      // The bypass is tightly scoped — GET /api/executors (list) and
+      // /api/cluster/* (dashboard UI) still go through cookie auth.
+      //
+      // NOTE: local variable is `reqPath` (not `path`) because `path` is
+      // already imported as the Node module at the top of this file.
+      const reqMethod = req.method;
+      const reqPath = req.path;
+      const hasClusterToken =
+        req.headers['x-bootstrap-token'] !== undefined ||
+        req.headers['x-executor-token'] !== undefined;
+      if (hasClusterToken) {
+        if (reqMethod === 'POST' && reqPath === '/api/executors/register') return next();
+        if (reqMethod === 'POST' && /^\/api\/executors\/[^/]+\/heartbeat$/.test(reqPath)) return next();
+        if (reqMethod === 'DELETE' && /^\/api\/executors\/[^/]+$/.test(reqPath)) return next();
+        if (reqMethod === 'POST' && /^\/api\/executors\/[^/]+\/drain$/.test(reqPath)) return next();
+      }
+
       // Check human cookie auth
       const cookieToken = parseCookie(req.headers.cookie || '', 'cds_token');
       const headerToken = req.headers['x-cds-token'] as string | undefined;
@@ -530,19 +570,63 @@ export function createServer(deps: ServerDeps): express.Express {
     _req.on('close', () => { stateClients.delete(res); clearInterval(heartbeat); });
   });
 
-  // When state changes, broadcast to all connected clients
-  deps.stateService.onSave(() => {
+  // ── Broadcast helpers exposed to index.ts for cluster state changes ──
+  //
+  // `broadcastState()` is called automatically on every stateService.save()
+  // AND manually from the cluster hot-upgrade path when in-memory config
+  // changes (mode flip) without a state.json write. Other modules reach it
+  // via the exported `broadcastClusterChange()` below.
+  function broadcastState(): void {
     if (stateClients.size === 0) return;
     const state = deps.stateService.getState();
+
+    // ── Populate embedded master's runningContainers from local state ──
+    //
+    // Embedded master doesn't heartbeat to itself, so node.runningContainers
+    // is always undefined for the master. But we need an accurate count
+    // for the cluster capacity math — otherwise the popover shows "master:
+    // 0/186 containers" even while 14 containers are running locally.
+    //
+    // Walk local branches, sum up services with status=running where the
+    // branch isn't explicitly dispatched to a remote executor, and stamp
+    // that count on the embedded master entry right before serialization.
+    if (deps.registry) {
+      const execs = state.executors || {};
+      for (const node of Object.values(execs)) {
+        if (node.role !== 'embedded') continue;
+        let localRunning = 0;
+        for (const b of Object.values(state.branches || {})) {
+          // Skip branches owned by a remote executor — they're counted
+          // via that executor's own heartbeat.
+          if (b.executorId && !b.executorId.startsWith('master-')) continue;
+          for (const svc of Object.values(b.services || {})) {
+            if (svc?.status === 'running') localRunning++;
+          }
+        }
+        node.runningContainers = localRunning;
+      }
+    }
+
+    // Include executors + mode + capacity so the Dashboard can react to
+    // cluster changes without extra polls. `cdsMode` is read from the
+    // live config (which may have been hot-switched by onFirstRegister).
     const data = JSON.stringify({
       seq: ++stateSeq,
       branches: Object.values(state.branches),
       defaultBranch: state.defaultBranch,
+      // Cluster state — frontend uses these to update header + branch
+      // placement + cluster modal without needing another /api/config call.
+      mode: deps.config.mode,
+      executors: Object.values(state.executors || {}),
+      capacity: deps.registry ? deps.registry.getTotalCapacity() : null,
     });
     for (const client of stateClients) {
       try { client.write(`data: ${data}\n\n`); } catch { stateClients.delete(client); }
     }
-  });
+  }
+  (app as unknown as { broadcastState?: () => void }).broadcastState = broadcastState;
+
+  deps.stateService.onSave(broadcastState);
 
   // ── Activity stream SSE endpoint ──
   app.get('/api/activity-stream', (req, res) => {
@@ -619,15 +703,22 @@ export function createServer(deps: ServerDeps): express.Express {
 
   // API routes
   app.use('/api/bridge', createBridgeRouter({ bridgeService: deps.bridgeService }));
-  app.use('/api', createBranchRouter(deps));
+  app.use('/api', createBranchRouter({
+    stateService: deps.stateService,
+    worktreeService: deps.worktreeService,
+    containerService: deps.containerService,
+    shell: deps.shell,
+    config: deps.config,
+    schedulerService: deps.schedulerService,
+    registry: deps.registry,
+    getClusterStrategy: deps.getClusterStrategy,
+  }));
 
-  // Dashboard static files
-  app.use(express.static(webDir));
-
-  // SPA fallback
-  app.get('*', (_req, res) => {
-    res.sendFile(path.join(webDir, 'index.html'));
-  });
+  // NOTE: The SPA fallback (`app.get('*', ...)`) is intentionally NOT
+  // registered here. Routes mounted later in `index.ts` (scheduler, cluster,
+  // etc.) would otherwise be shadowed by the catch-all, because Express
+  // traverses middleware in registration order. Call `installSpaFallback()`
+  // once all dynamic routes have been mounted.
 
   // Log AI access key status
   if (process.env.AI_ACCESS_KEY) {
@@ -636,6 +727,27 @@ export function createServer(deps: ServerDeps): express.Express {
   console.log('  AI Pairing: enabled (POST /api/ai/request-access)');
 
   return app;
+}
+
+/**
+ * Install the dashboard static-file serving and the SPA catch-all fallback.
+ *
+ * Must be called AFTER all `/api/*` routes have been mounted on the app
+ * (including scheduler and cluster routers added from `index.ts`), because
+ * `app.get('*', ...)` is a greedy handler that will intercept any unmatched
+ * GET request in registration order. Installing it too early was the cause
+ * of `/api/cluster/status` returning HTML instead of JSON in production —
+ * the catch-all fired before the cluster router got a chance to match.
+ *
+ * See commit that moved this out of `createServer()` for the regression
+ * details.
+ */
+export function installSpaFallback(app: express.Express, webDir?: string): void {
+  const dir = webDir || path.resolve(__dirname, '..', 'web');
+  app.use(express.static(dir));
+  app.get('*', (_req, res) => {
+    res.sendFile(path.join(dir, 'index.html'));
+  });
 }
 
 function parseCookie(cookieStr: string, name: string): string | undefined {

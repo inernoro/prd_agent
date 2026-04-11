@@ -185,7 +185,12 @@ export class StateService {
     }
 
     const serialized = JSON.stringify(this.state, null, 2);
-    const tmpPath = `${this.filePath}.tmp`;
+    // Unique tmp path per write — two concurrent saves (e.g. `tsx watch`
+    // reloading while a heartbeat triggers a background save) must not race
+    // on the same tmp file, otherwise one process's rename will fail with
+    // ENOENT because the other already renamed it. Seen in production on
+    // B's CDS after a hot-reload while executor heartbeats were firing.
+    const tmpPath = `${this.filePath}.tmp.${process.pid}.${Date.now()}`;
 
     // Atomic write: tmp → fsync → rename
     const fd = fs.openSync(tmpPath, 'w');
