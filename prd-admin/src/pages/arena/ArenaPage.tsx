@@ -36,6 +36,9 @@ import {
   Image as ImageIcon, X, FileText, Paperclip,
 } from 'lucide-react';
 import { MapSpinner } from '@/components/ui/VideoLoader';
+import { StaticBackdrop } from '@/pages/home/components/StaticBackdrop';
+import { Reveal } from '@/pages/home/components/Reveal';
+import { HERO_GRADIENT } from '@/pages/home/sections/HeroSection';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -1250,23 +1253,43 @@ export function ArenaPage() {
   const hasActiveProgress = hasBattle && totalCount > 0 && (isStreaming || completedCount > 0);
 
   return (
-    <div className="flex h-full" style={{ minHeight: 0 }}>
+    <div
+      className="relative flex h-full text-white"
+      style={{ minHeight: 0, fontFamily: 'var(--font-body)' }}
+    >
+      {/* Layer 0 · StaticBackdrop（absolute 模式，局限在 AppShell 主内容区） */}
+      <StaticBackdrop mode="absolute" />
+
       {/* ===================== Sidebar ===================== */}
       <div
         className={cn(
-          'flex flex-col transition-all duration-300',
+          'relative z-10 flex flex-col transition-all duration-300',
           sidebarCollapsed ? 'w-0 overflow-hidden opacity-0' : 'w-[280px] min-w-[280px]'
         )}
         style={{
-          background: 'var(--bg-base, #0d0d0f)',
+          background: 'rgba(10, 14, 22, 0.62)',
+          backdropFilter: 'blur(12px)',
+          WebkitBackdropFilter: 'blur(12px)',
+          borderRight: '1px solid rgba(255, 255, 255, 0.06)',
         }}
       >
-        {/* New Battle Button */}
+        {/* New Battle Button — HERO_GRADIENT pill */}
         <div className="p-3 flex-shrink-0">
-          <Button variant="primary" size="md" className="w-full" onClick={handleNewBattle}>
+          <button
+            type="button"
+            onClick={handleNewBattle}
+            className="group relative inline-flex w-full items-center justify-center gap-2 h-10 px-4 rounded-full text-[13px] font-medium text-white transition-all duration-200 hover:scale-[1.01] active:scale-[0.98]"
+            style={{
+              background: HERO_GRADIENT,
+              boxShadow:
+                '0 0 28px rgba(124, 58, 237, 0.32), 0 0 64px rgba(0, 240, 255, 0.18), 0 6px 20px rgba(0, 0, 0, 0.45)',
+              fontFamily: 'var(--font-display)',
+              letterSpacing: '0.01em',
+            }}
+          >
             <Plus className="w-4 h-4" />
-            新建对战
-          </Button>
+            <span>新建对战</span>
+          </button>
         </div>
 
         {/* Search */}
@@ -1300,7 +1323,14 @@ export function ArenaPage() {
           ) : (
             Array.from(groupedHistory.entries()).map(([dateLabel, items]) => (
               <div key={dateLabel} className="mb-3">
-                <div className="text-[11px] font-medium px-2 py-1.5 uppercase tracking-wider" style={{ color: 'var(--text-muted)' }}>
+                <div
+                  className="text-[11px] px-2 py-1.5 uppercase"
+                  style={{
+                    color: 'rgba(255, 255, 255, 0.45)',
+                    fontFamily: 'var(--font-mono)',
+                    letterSpacing: '0.2em',
+                  }}
+                >
                   {dateLabel}
                 </div>
                 {items.map((item) => (
@@ -1344,12 +1374,15 @@ export function ArenaPage() {
       </div>
 
       {/* ===================== Main Area ===================== */}
-      <div className="flex-1 flex flex-col min-w-0" style={{ minHeight: 0 }}>
-        {/* Top Bar */}
+      <div className="relative z-10 flex-1 flex flex-col min-w-0" style={{ minHeight: 0 }}>
+        {/* Top Bar — glass + HUD chip status */}
         <div
           className="flex items-center justify-between px-5 h-14 flex-shrink-0"
           style={{
-            background: 'var(--bg-base, #0d0d0f)',
+            background: 'rgba(10, 14, 22, 0.52)',
+            backdropFilter: 'blur(10px)',
+            WebkitBackdropFilter: 'blur(10px)',
+            borderBottom: '1px solid rgba(255, 255, 255, 0.06)',
           }}
         >
           <div className="flex items-center gap-3">
@@ -1357,11 +1390,53 @@ export function ArenaPage() {
               className="lg:hidden p-1.5 rounded-lg hover:bg-white/5"
               onClick={() => setSidebarCollapsed(!sidebarCollapsed)}
             >
-              <Swords className="w-4 h-4" style={{ color: 'var(--text-primary)' }} />
+              <Swords className="w-4 h-4 text-white/85" />
             </button>
-            <div className="flex items-center gap-2">
-              <Swords className="w-5 h-5" style={{ color: 'var(--text-primary)' }} />
-              <h1 className="text-[16px] font-semibold" style={{ color: 'var(--text-primary)' }}>AI 竞技场</h1>
+            <div className="flex items-center gap-3">
+              {/* Gradient icon badge */}
+              <div
+                className="relative flex items-center justify-center w-8 h-8 rounded-[10px]"
+                style={{
+                  background: HERO_GRADIENT,
+                  boxShadow:
+                    '0 0 24px rgba(124, 58, 237, 0.28), 0 0 48px rgba(0, 240, 255, 0.12)',
+                }}
+              >
+                <Swords className="w-4 h-4 text-white drop-shadow" />
+              </div>
+              <h1
+                className="text-[17px] font-medium text-white"
+                style={{
+                  fontFamily: 'var(--font-display)',
+                  letterSpacing: '-0.015em',
+                }}
+              >
+                AI 竞技场
+              </h1>
+              {/* HUD chip — live status */}
+              <div
+                className="hidden md:inline-flex items-center gap-2 ml-1 px-2.5 py-1 rounded-md"
+                style={{
+                  fontFamily: 'var(--font-mono)',
+                  background: 'rgba(16, 185, 129, 0.06)',
+                  border: '1px solid rgba(16, 185, 129, 0.28)',
+                  boxShadow: '0 0 16px rgba(16, 185, 129, 0.16), inset 0 0 8px rgba(16, 185, 129, 0.04)',
+                }}
+              >
+                <span className="relative flex h-1.5 w-1.5">
+                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-70" />
+                  <span
+                    className="relative inline-flex h-1.5 w-1.5 rounded-full bg-emerald-400"
+                    style={{ boxShadow: '0 0 6px #34d399' }}
+                  />
+                </span>
+                <span
+                  className="text-[10.5px] text-emerald-300 uppercase"
+                  style={{ letterSpacing: '0.2em', textShadow: '0 0 8px rgba(52, 211, 153, 0.55)' }}
+                >
+                  BLIND · LIVE
+                </span>
+              </div>
             </div>
           </div>
 
@@ -1586,18 +1661,59 @@ export function ArenaPage() {
 
         {/* ===================== Content ===================== */}
         {!hasBattle ? (
-          /* Empty State — centered input like ChatGPT welcome */
+          /* Empty State — hero-style welcome with Reveal stagger */
           <div className="flex-1 flex flex-col items-center justify-center px-4" style={{ minHeight: 0 }}>
             <div className="w-full" style={{ maxWidth: '720px' }}>
-              {/* Welcome header */}
+              {/* Welcome hero — eyebrow / title / subtitle */}
               <div className="text-center mb-8">
-                <div className="w-14 h-14 rounded-full flex items-center justify-center mx-auto mb-4" style={{ background: 'rgba(99,102,241,0.1)' }}>
-                  <Swords className="w-7 h-7" style={{ color: 'rgba(99,102,241,0.7)' }} />
-                </div>
-                <h2 className="text-[20px] font-semibold mb-2" style={{ color: 'var(--text-primary)' }}>AI 盲评竞技场</h2>
-                <p className="text-[14px]" style={{ color: 'var(--text-muted)' }}>
-                  提出问题，多个模型匿名作答。阅读回答后揭晓真实身份，公平评估模型能力。
-                </p>
+                <Reveal delay={0}>
+                  <div
+                    className="inline-flex items-center gap-2 mb-6 px-3.5 py-1.5 rounded-md"
+                    style={{
+                      fontFamily: 'var(--font-mono)',
+                      background: 'rgba(148, 163, 184, 0.06)',
+                      border: '1px solid rgba(148, 163, 184, 0.30)',
+                      boxShadow:
+                        '0 0 20px rgba(148, 163, 184, 0.18), inset 0 0 10px rgba(148, 163, 184, 0.04)',
+                    }}
+                  >
+                    <Swords className="w-3.5 h-3.5 text-slate-200" />
+                    <span
+                      className="text-[12px] text-slate-200 uppercase"
+                      style={{
+                        letterSpacing: '0.22em',
+                        textShadow: '0 0 10px rgba(203, 213, 225, 0.45)',
+                      }}
+                    >
+                      BLIND · ARENA
+                    </span>
+                  </div>
+                </Reveal>
+
+                <Reveal delay={80}>
+                  <h2
+                    data-arena-pulse
+                    className="text-white font-medium"
+                    style={{
+                      fontFamily: 'var(--font-display)',
+                      fontSize: 'clamp(1.875rem, 3.6vw, 2.75rem)',
+                      lineHeight: 1.06,
+                      letterSpacing: '-0.03em',
+                      animation: 'arena-title-pulse 5s ease-in-out infinite',
+                    }}
+                  >
+                    AI 盲评竞技场
+                  </h2>
+                </Reveal>
+
+                <Reveal delay={160}>
+                  <p
+                    className="mt-5 text-[14.5px] leading-[1.7] mx-auto"
+                    style={{ color: 'rgba(255, 255, 255, 0.58)', maxWidth: '44ch' }}
+                  >
+                    提出问题，多个模型匿名作答。阅读回答后揭晓真实身份，公平评估模型能力。
+                  </p>
+                </Reveal>
               </div>
 
               {lineupLoading ? (
@@ -1634,164 +1750,196 @@ export function ArenaPage() {
                 className="hidden"
                 onChange={handleFileInputChange}
               />
-              <div
-                className={cn(
-                  'rounded-[18px] p-[2px] transition-all duration-300',
-                  dragOver && 'ring-2 ring-indigo-500/50'
-                )}
-                style={{
-                  background: dragOver ? 'rgba(99,102,241,0.2)' : 'rgba(255,255,255,0.06)',
-                  position: 'relative',
-                  overflow: 'hidden',
-                }}
-                onDragOver={handleDragOver}
-                onDragLeave={handleDragLeave}
-                onDrop={handleDrop}
-              >
+              <Reveal delay={240}>
                 <div
-                  className="rounded-[16px] p-3"
-                  style={{ background: 'var(--bg-base, #0d0d0f)', position: 'relative', zIndex: 1 }}
-                >
-                  {/* Attachment preview strip */}
-                  {attachments.length > 0 && (
-                    <div className="flex gap-2 px-2 pb-2 flex-wrap">
-                      {attachments.map((att) => (
-                        <div
-                          key={att.attachmentId}
-                          className="relative group rounded-lg overflow-hidden flex-shrink-0"
-                          style={{
-                            width: '64px',
-                            height: '64px',
-                            background: 'rgba(255,255,255,0.04)',
-                            border: '1px solid rgba(255,255,255,0.08)',
-                          }}
-                        >
-                          {IMAGE_TYPES.has(att.mimeType) ? (
-                            <img src={att.url} alt={att.fileName} className="w-full h-full object-cover" />
-                          ) : (
-                            <div className="w-full h-full flex items-center justify-center">
-                              <FileText className="w-5 h-5" style={{ color: 'var(--text-muted)' }} />
-                            </div>
-                          )}
-                          <button
-                            onClick={() => handleRemoveAttachment(att.attachmentId)}
-                            className="absolute top-0.5 right-0.5 w-4 h-4 rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
-                            style={{ background: 'rgba(0,0,0,0.7)' }}
-                          >
-                            <X className="w-2.5 h-2.5" style={{ color: '#fff' }} />
-                          </button>
-                          <div
-                            className="absolute bottom-0 left-0 right-0 px-1 py-0.5 text-[9px] truncate"
-                            style={{ background: 'rgba(0,0,0,0.6)', color: '#fff' }}
-                          >
-                            {att.fileName}
-                          </div>
-                        </div>
-                      ))}
-                      {isUploading && (
-                        <div
-                          className="flex items-center justify-center rounded-lg flex-shrink-0"
-                          style={{
-                            width: '64px',
-                            height: '64px',
-                            background: 'rgba(255,255,255,0.04)',
-                            border: '1px dashed rgba(255,255,255,0.15)',
-                          }}
-                        >
-                          <MapSpinner size={16} color="var(--text-muted)" />
-                        </div>
-                      )}
-                    </div>
+                  className={cn(
+                    'rounded-[18px] p-[1.5px] transition-all duration-300',
+                    dragOver && 'ring-2 ring-cyan-400/50'
                   )}
-                  <textarea
-                    ref={textareaRef}
-                    value={prompt}
-                    onChange={handleTextareaInput}
-                    onKeyDown={handleKeyDown}
-                    onPaste={handlePaste}
-                    placeholder={
-                      lineupLoading
-                        ? '阵容加载中...'
-                        : groups.length === 0
-                          ? '请先在管理页配置竞技场阵容...'
-                          : slots.length === 0
-                            ? '请先选择一个有模型的阵容...'
-                            : '输入你的问题，让多个模型匿名回答...'
-                    }
-                    disabled={isStreaming || slots.length === 0}
-                    rows={3}
-                    className={cn(
-                      'w-full bg-transparent border-none outline-none ring-0 focus:ring-0 focus:outline-none resize-none text-[14px] leading-relaxed',
-                      'placeholder:text-[color:var(--text-muted)] disabled:opacity-50 disabled:cursor-not-allowed',
-                      'px-2 py-1 no-focus-ring'
-                    )}
-                    style={{ color: 'var(--text-primary)', minHeight: '72px', maxHeight: '200px', border: 'none', boxShadow: 'none' }}
-                  />
-                  {/* Toolbar row */}
-                  <div className="flex items-center justify-between mt-1 px-1">
-                    <div className="flex items-center gap-1">
-                      {/* Attachment button */}
-                      <button
-                        onClick={handleAttachmentClick}
-                        disabled={isStreaming || slots.length === 0 || attachments.length >= MAX_ATTACHMENTS}
-                        className={cn(
-                          'flex items-center justify-center w-8 h-8 rounded-lg transition-colors',
-                          'disabled:opacity-30 disabled:cursor-not-allowed',
-                          'hover:bg-white/8'
+                  style={{
+                    background: dragOver
+                      ? HERO_GRADIENT
+                      : 'linear-gradient(135deg, rgba(0, 240, 255, 0.28) 0%, rgba(124, 58, 237, 0.22) 50%, rgba(244, 63, 94, 0.28) 100%)',
+                    boxShadow: dragOver
+                      ? '0 0 48px rgba(124, 58, 237, 0.35), 0 0 100px rgba(0, 240, 255, 0.2)'
+                      : '0 0 32px rgba(124, 58, 237, 0.12), 0 8px 28px rgba(0, 0, 0, 0.5)',
+                    position: 'relative',
+                    overflow: 'hidden',
+                  }}
+                  onDragOver={handleDragOver}
+                  onDragLeave={handleDragLeave}
+                  onDrop={handleDrop}
+                >
+                  <div
+                    className="rounded-[16.5px] p-3"
+                    style={{
+                      background: 'rgba(10, 14, 22, 0.82)',
+                      backdropFilter: 'blur(14px)',
+                      WebkitBackdropFilter: 'blur(14px)',
+                      position: 'relative',
+                      zIndex: 1,
+                    }}
+                  >
+                    {/* Attachment preview strip */}
+                    {attachments.length > 0 && (
+                      <div className="flex gap-2 px-2 pb-2 flex-wrap">
+                        {attachments.map((att) => (
+                          <div
+                            key={att.attachmentId}
+                            className="relative group rounded-lg overflow-hidden flex-shrink-0"
+                            style={{
+                              width: '64px',
+                              height: '64px',
+                              background: 'rgba(255,255,255,0.04)',
+                              border: '1px solid rgba(255,255,255,0.08)',
+                            }}
+                          >
+                            {IMAGE_TYPES.has(att.mimeType) ? (
+                              <img src={att.url} alt={att.fileName} className="w-full h-full object-cover" />
+                            ) : (
+                              <div className="w-full h-full flex items-center justify-center">
+                                <FileText className="w-5 h-5 text-white/50" />
+                              </div>
+                            )}
+                            <button
+                              onClick={() => handleRemoveAttachment(att.attachmentId)}
+                              className="absolute top-0.5 right-0.5 w-4 h-4 rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
+                              style={{ background: 'rgba(0,0,0,0.7)' }}
+                            >
+                              <X className="w-2.5 h-2.5 text-white" />
+                            </button>
+                            <div
+                              className="absolute bottom-0 left-0 right-0 px-1 py-0.5 text-[9px] truncate"
+                              style={{ background: 'rgba(0,0,0,0.6)', color: '#fff' }}
+                            >
+                              {att.fileName}
+                            </div>
+                          </div>
+                        ))}
+                        {isUploading && (
+                          <div
+                            className="flex items-center justify-center rounded-lg flex-shrink-0"
+                            style={{
+                              width: '64px',
+                              height: '64px',
+                              background: 'rgba(255,255,255,0.04)',
+                              border: '1px dashed rgba(255,255,255,0.15)',
+                            }}
+                          >
+                            <MapSpinner size={16} color="rgba(255,255,255,0.45)" />
+                          </div>
                         )}
-                        style={{ color: 'var(--text-muted)' }}
-                        title={`添加附件 (${attachments.length}/${MAX_ATTACHMENTS})`}
-                      >
-                        <Paperclip className="w-4 h-4" />
-                      </button>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
-                        {slots.length > 0
-                          ? `${selectedGroup?.name} · ${slots.length} 个模型`
-                          : groups.length === 0 ? '未配置阵容' : '请选择阵容'}
-                      </span>
-                      <Button
-                        variant="primary"
-                        size="sm"
-                        onClick={handleSend}
-                        disabled={isStreaming || !prompt.trim() || slots.length === 0}
-                        className="px-4"
-                      >
-                        <Send className="w-4 h-4" />
-                        发送
-                      </Button>
+                      </div>
+                    )}
+                    <textarea
+                      ref={textareaRef}
+                      value={prompt}
+                      onChange={handleTextareaInput}
+                      onKeyDown={handleKeyDown}
+                      onPaste={handlePaste}
+                      placeholder={
+                        lineupLoading
+                          ? '阵容加载中...'
+                          : groups.length === 0
+                            ? '请先在管理页配置竞技场阵容...'
+                            : slots.length === 0
+                              ? '请先选择一个有模型的阵容...'
+                              : '输入你的问题，让多个模型匿名回答...'
+                      }
+                      disabled={isStreaming || slots.length === 0}
+                      rows={3}
+                      className={cn(
+                        'w-full bg-transparent border-none outline-none ring-0 focus:ring-0 focus:outline-none resize-none text-[14.5px] leading-relaxed',
+                        'placeholder:text-white/30 disabled:opacity-50 disabled:cursor-not-allowed',
+                        'px-2 py-1 no-focus-ring text-white'
+                      )}
+                      style={{ minHeight: '72px', maxHeight: '200px', border: 'none', boxShadow: 'none', fontFamily: 'var(--font-body)' }}
+                    />
+                    {/* Toolbar row */}
+                    <div className="flex items-center justify-between mt-1 px-1">
+                      <div className="flex items-center gap-1">
+                        {/* Attachment button */}
+                        <button
+                          onClick={handleAttachmentClick}
+                          disabled={isStreaming || slots.length === 0 || attachments.length >= MAX_ATTACHMENTS}
+                          className={cn(
+                            'flex items-center justify-center w-8 h-8 rounded-lg transition-colors text-white/55',
+                            'disabled:opacity-30 disabled:cursor-not-allowed',
+                            'hover:bg-white/8 hover:text-white/85'
+                          )}
+                          title={`添加附件 (${attachments.length}/${MAX_ATTACHMENTS})`}
+                        >
+                          <Paperclip className="w-4 h-4" />
+                        </button>
+                      </div>
+                      <div className="flex items-center gap-3">
+                        <span
+                          className="text-[11px] text-white/50"
+                          style={{ fontFamily: 'var(--font-mono)', letterSpacing: '0.08em' }}
+                        >
+                          {slots.length > 0
+                            ? `${selectedGroup?.name?.toUpperCase()} · ${slots.length} 个模型`
+                            : groups.length === 0 ? '未配置阵容' : '请选择阵容'}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={handleSend}
+                          disabled={isStreaming || !prompt.trim() || slots.length === 0}
+                          className="group inline-flex items-center gap-1.5 h-9 px-5 rounded-full text-[13px] font-medium text-white transition-all duration-200 hover:scale-[1.02] active:scale-[0.97] disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:scale-100"
+                          style={{
+                            background: HERO_GRADIENT,
+                            boxShadow:
+                              '0 0 24px rgba(124, 58, 237, 0.32), 0 0 54px rgba(0, 240, 255, 0.18), 0 4px 16px rgba(0, 0, 0, 0.45)',
+                            fontFamily: 'var(--font-display)',
+                          }}
+                        >
+                          <Send className="w-3.5 h-3.5" />
+                          <span>发送</span>
+                        </button>
+                      </div>
                     </div>
                   </div>
                 </div>
-              </div>
+              </Reveal>
 
-              {/* Hint text */}
-              <div className="text-center mt-3">
-                <span className="text-[11px]" style={{ color: 'var(--text-muted)', opacity: 0.6 }}>
-                  支持粘贴或拖拽文件（图片、文本、Markdown、PDF 等） · Enter 发送 · Shift+Enter 换行
-                </span>
-              </div>
+              {/* Hint text — VT323 mono */}
+              <Reveal delay={320}>
+                <div className="text-center mt-3">
+                  <span
+                    className="text-[11px] text-white/45"
+                    style={{ fontFamily: 'var(--font-mono)', letterSpacing: '0.1em' }}
+                  >
+                    DRAG · PASTE · FILES · ENTER 发送 · SHIFT+ENTER 换行
+                  </span>
+                </div>
+              </Reveal>
             </div>
           </div>
         ) : (
           /* Battle View — horizontal card layout */
           <div className="flex-1 flex flex-col min-h-0">
-            {/* Prompt Bar */}
+            {/* Prompt Bar — subtle gradient accent */}
             <div
               className="flex-shrink-0 px-5 py-2.5"
-              style={{ background: 'rgba(99,102,241,0.04)' }}
+              style={{
+                background: 'rgba(10, 14, 22, 0.42)',
+                backdropFilter: 'blur(8px)',
+                WebkitBackdropFilter: 'blur(8px)',
+                borderBottom: '1px solid rgba(255, 255, 255, 0.05)',
+              }}
             >
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-2.5">
                 <div
                   className="w-5 h-5 rounded flex items-center justify-center flex-shrink-0"
-                  style={{ background: 'rgba(99,102,241,0.15)' }}
+                  style={{
+                    background: HERO_GRADIENT,
+                    boxShadow: '0 0 12px rgba(124, 58, 237, 0.35)',
+                  }}
                 >
-                  <MessageSquare className="w-3 h-3" style={{ color: 'rgba(99,102,241,0.8)' }} />
+                  <MessageSquare className="w-3 h-3 text-white" />
                 </div>
                 <p
-                  className="text-[13px] truncate flex-1"
-                  style={{ color: 'var(--text-primary)' }}
+                  className="text-[13px] truncate flex-1 text-white/92"
                   title={currentPrompt}
                 >
                   {currentPrompt}
@@ -1799,12 +1947,16 @@ export function ArenaPage() {
                 {allDone && !isStreaming && (
                   <button
                     onClick={handleRetry}
-                    className="flex items-center gap-1.5 px-3 h-7 rounded-lg text-[12px] transition-colors hover:bg-white/8 flex-shrink-0"
-                    style={{ color: 'var(--text-muted)', border: '1px solid rgba(255,255,255,0.08)' }}
+                    className="flex items-center gap-1.5 px-3 h-7 rounded-full text-[11px] transition-colors hover:bg-white/8 flex-shrink-0 text-white/65"
+                    style={{
+                      border: '1px solid rgba(255, 255, 255, 0.16)',
+                      fontFamily: 'var(--font-mono)',
+                      letterSpacing: '0.14em',
+                    }}
                     title="使用相同问题重新对战"
                   >
-                    <RefreshCw className="w-3.5 h-3.5" />
-                    重试
+                    <RefreshCw className="w-3 h-3" />
+                    RETRY
                   </button>
                 )}
               </div>
@@ -1866,7 +2018,11 @@ export function ArenaPage() {
                         justCompleted && 'arena-panel-done-pulse'
                       )}
                       style={{
-                        background: 'rgba(255,255,255,0.03)',
+                        background: 'rgba(10, 14, 22, 0.68)',
+                        border: `1px solid ${labelColor}33`,
+                        backdropFilter: 'blur(12px)',
+                        WebkitBackdropFilter: 'blur(12px)',
+                        boxShadow: `0 0 24px ${labelColor}1a, 0 10px 32px rgba(0, 0, 0, 0.45), inset 0 0 14px ${labelColor}08`,
                       }}
                     >
                       {/* Header */}
@@ -1889,18 +2045,25 @@ export function ArenaPage() {
                             </div>
                           ) : (
                             <div
-                              className="w-7 h-7 rounded-full flex items-center justify-center text-[12px] font-bold flex-shrink-0"
+                              className="w-7 h-7 rounded-full flex items-center justify-center text-[12px] flex-shrink-0"
                               style={{
-                                background: `${labelColor}20`,
+                                background: `${labelColor}22`,
                                 color: labelColor,
-                                border: `1px solid ${labelColor}40`,
+                                border: `1px solid ${labelColor}55`,
+                                boxShadow: `0 0 10px ${labelColor}44, inset 0 0 6px ${labelColor}1f`,
+                                fontFamily: 'var(--font-display)',
+                                fontWeight: 700,
+                                letterSpacing: '-0.02em',
                               }}
                             >
                               {letter}
                             </div>
                           )}
                           <div className="min-w-0">
-                            <div className="text-[13px] font-semibold truncate" style={{ color: 'var(--text-primary)' }}>
+                            <div
+                              className="text-[13px] font-medium truncate text-white"
+                              style={{ fontFamily: 'var(--font-display)', letterSpacing: '-0.005em' }}
+                            >
                               {revealed && info ? info.displayName : panel.label}
                             </div>
                             {revealed && info && (
@@ -2037,7 +2200,10 @@ export function ArenaPage() {
         <div
           className="flex-shrink-0 px-6 py-3"
           style={{
-            background: 'var(--bg-base, #0d0d0f)',
+            background: 'rgba(10, 14, 22, 0.52)',
+            backdropFilter: 'blur(10px)',
+            WebkitBackdropFilter: 'blur(10px)',
+            borderTop: '1px solid rgba(255, 255, 255, 0.06)',
           }}
         >
           <div className="mx-auto" style={{ maxWidth: '900px' }}>
@@ -2053,17 +2219,19 @@ export function ArenaPage() {
             {/* Rotating progress ring wrapper */}
             <div
               className={cn(
-                'rounded-[18px] p-[2px] transition-all duration-300',
-                dragOver && 'ring-2 ring-indigo-500/50'
+                'rounded-[18px] p-[1.5px] transition-all duration-300',
+                dragOver && 'ring-2 ring-cyan-400/50'
               )}
               style={{
                 background: hasActiveProgress
                   ? completedCount === totalCount && !isStreaming
-                    ? '#10b981'
-                    : 'rgba(255,255,255,0.06)'
+                    ? 'linear-gradient(135deg, #10b981 0%, #14b8a6 50%, #06b6d4 100%)'
+                    : 'linear-gradient(135deg, rgba(0, 240, 255, 0.28) 0%, rgba(124, 58, 237, 0.22) 50%, rgba(244, 63, 94, 0.28) 100%)'
                   : dragOver
-                    ? 'rgba(99,102,241,0.2)'
-                    : 'rgba(255,255,255,0.06)',
+                    ? HERO_GRADIENT
+                    : 'linear-gradient(135deg, rgba(0, 240, 255, 0.22) 0%, rgba(124, 58, 237, 0.18) 50%, rgba(244, 63, 94, 0.22) 100%)',
+                boxShadow:
+                  '0 0 26px rgba(124, 58, 237, 0.12), 0 6px 22px rgba(0, 0, 0, 0.45)',
                 position: 'relative',
                 overflow: 'hidden',
               }}
@@ -2080,15 +2248,21 @@ export function ArenaPage() {
                     right: '-50%',
                     bottom: '-50%',
                     left: '-50%',
-                    background: `conic-gradient(from 0deg, transparent 0deg, #6366f1 60deg, #818cf8 120deg, transparent 180deg)`,
+                    background: `conic-gradient(from 0deg, transparent 0deg, #00f0ff 40deg, #7c3aed 120deg, #f43f5e 200deg, transparent 240deg)`,
                     animation: 'arena-ring-spin 2.5s linear infinite',
                     borderRadius: 'inherit',
                   }}
                 />
               )}
               <div
-                className="rounded-[16px] p-3"
-                style={{ background: 'var(--bg-base, #0d0d0f)', position: 'relative', zIndex: 1 }}
+                className="rounded-[16.5px] p-3"
+                style={{
+                  background: 'rgba(10, 14, 22, 0.86)',
+                  backdropFilter: 'blur(14px)',
+                  WebkitBackdropFilter: 'blur(14px)',
+                  position: 'relative',
+                  zIndex: 1,
+                }}
               >
                 {/* Attachment preview strip */}
                 {attachments.length > 0 && (
@@ -2145,63 +2319,79 @@ export function ArenaPage() {
                   disabled={isStreaming || slots.length === 0}
                   rows={1}
                   className={cn(
-                    'w-full bg-transparent border-none outline-none ring-0 focus:ring-0 focus:outline-none resize-none text-[14px] leading-relaxed',
-                    'placeholder:text-[color:var(--text-muted)] disabled:opacity-50 disabled:cursor-not-allowed',
+                    'w-full bg-transparent border-none outline-none ring-0 focus:ring-0 focus:outline-none resize-none text-[14.5px] leading-relaxed text-white',
+                    'placeholder:text-white/30 disabled:opacity-50 disabled:cursor-not-allowed',
                     'px-2 py-1 no-focus-ring'
                   )}
-                  style={{ color: 'var(--text-primary)', minHeight: '40px', maxHeight: '200px', border: 'none', boxShadow: 'none' }}
+                  style={{ minHeight: '40px', maxHeight: '200px', border: 'none', boxShadow: 'none', fontFamily: 'var(--font-body)' }}
                 />
                 {/* Toolbar row */}
                 <div className="flex items-center justify-between mt-1 px-1">
-                  <div className="flex items-center gap-1">
+                  <div className="flex items-center gap-2">
                     {/* Attachment button */}
                     <button
                       onClick={handleAttachmentClick}
                       disabled={isStreaming || slots.length === 0 || attachments.length >= MAX_ATTACHMENTS}
                       className={cn(
-                        'flex items-center justify-center w-8 h-8 rounded-lg transition-colors',
+                        'flex items-center justify-center w-8 h-8 rounded-lg transition-colors text-white/55',
                         'disabled:opacity-30 disabled:cursor-not-allowed',
-                        'hover:bg-white/8'
+                        'hover:bg-white/8 hover:text-white/85'
                       )}
-                      style={{ color: 'var(--text-muted)' }}
                       title={`添加附件 (${attachments.length}/${MAX_ATTACHMENTS})`}
                     >
                       <Paperclip className="w-4 h-4" />
                     </button>
-                    {/* Status info */}
-                    <span className="text-[11px] ml-1" style={{ color: 'var(--text-muted)' }}>
-                      {hasActiveProgress
-                        ? <span style={{ color: completedCount === totalCount ? '#10b981' : 'var(--text-muted)' }}>
-                            {completedCount}/{totalCount}{completedCount === totalCount && !isStreaming ? ' 完成' : ' 进行中'}
-                          </span>
-                        : null}
-                    </span>
+                    {/* Status info — VT323 mono */}
+                    {hasActiveProgress && (
+                      <span
+                        className="text-[11px] ml-1"
+                        style={{
+                          fontFamily: 'var(--font-mono)',
+                          letterSpacing: '0.12em',
+                          color: completedCount === totalCount ? '#34d399' : 'rgba(255,255,255,0.5)',
+                          textShadow: completedCount === totalCount ? '0 0 8px rgba(52, 211, 153, 0.5)' : 'none',
+                        }}
+                      >
+                        {completedCount}/{totalCount}{completedCount === totalCount && !isStreaming ? ' · 完成' : ' · 进行中'}
+                      </span>
+                    )}
                   </div>
                   <div className="flex items-center gap-2">
                     {canReveal && (
-                      <Button
-                        variant="secondary"
-                        size="sm"
+                      <button
+                        type="button"
                         onClick={handleReveal}
                         disabled={revealLoading}
+                        className="inline-flex items-center gap-1.5 h-9 px-4 rounded-full text-[12.5px] font-medium text-white/90 transition-all duration-200 hover:scale-[1.02] active:scale-[0.97] disabled:opacity-40 disabled:cursor-not-allowed"
+                        style={{
+                          background: 'rgba(10, 14, 22, 0.62)',
+                          border: '1px solid rgba(255, 255, 255, 0.24)',
+                          boxShadow: '0 0 14px rgba(255, 255, 255, 0.06), inset 0 0 8px rgba(255, 255, 255, 0.03)',
+                          fontFamily: 'var(--font-display)',
+                        }}
                       >
                         {revealLoading ? <MapSpinner size={14} /> : <Eye className="w-3.5 h-3.5" />}
-                        揭晓身份
-                      </Button>
+                        <span>揭晓身份</span>
+                      </button>
                     )}
-                    <Button
-                      variant="primary"
-                      size="sm"
+                    <button
+                      type="button"
                       onClick={handleSend}
                       disabled={isStreaming || !prompt.trim() || slots.length === 0}
-                      className="px-4"
+                      className="inline-flex items-center justify-center gap-1.5 h-9 min-w-[44px] px-4 rounded-full text-[13px] font-medium text-white transition-all duration-200 hover:scale-[1.02] active:scale-[0.97] disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:scale-100"
+                      style={{
+                        background: HERO_GRADIENT,
+                        boxShadow:
+                          '0 0 22px rgba(124, 58, 237, 0.3), 0 0 48px rgba(0, 240, 255, 0.16), 0 4px 14px rgba(0, 0, 0, 0.45)',
+                        fontFamily: 'var(--font-display)',
+                      }}
                     >
                       {isStreaming ? (
-                        <MapSpinner size={16} />
+                        <MapSpinner size={14} />
                       ) : (
-                        <Send className="w-4 h-4" />
+                        <Send className="w-3.5 h-3.5" />
                       )}
-                    </Button>
+                    </button>
                   </div>
                 </div>
               </div>
@@ -2278,6 +2468,27 @@ export function ArenaPage() {
         confirmText="确认保存"
         description="管理该分组的参战模型：添加新模型或从池中移除已有模型，确认后生效"
       />
+
+      {/* Scoped keyframes — Arena neon pulse on title */}
+      <style>{`
+        @keyframes arena-title-pulse {
+          0%, 100% {
+            text-shadow:
+              0 0 28px rgba(203, 213, 225, 0.30),
+              0 0 80px rgba(0, 240, 255, 0.20),
+              0 0 120px rgba(124, 58, 237, 0.10);
+          }
+          50% {
+            text-shadow:
+              0 0 38px rgba(226, 232, 240, 0.44),
+              0 0 100px rgba(0, 240, 255, 0.28),
+              0 0 150px rgba(124, 58, 237, 0.16);
+          }
+        }
+        @media (prefers-reduced-motion: reduce) {
+          [data-arena-pulse] { animation: none !important; }
+        }
+      `}</style>
     </div>
   );
 }

@@ -15,11 +15,20 @@
  *   6 · 顶栏下暗渐变
  *
  * 零动画，零 canvas，零 JS。
+ *
+ * Props:
+ *   mode='fixed'    — 默认，fixed inset-0，覆盖整个视口（适合独立全屏页如 /login /home）
+ *   mode='absolute' — absolute inset-0，仅填满最近的 relative 父容器（适合 AppShell 内 Outlet 页）
  */
-export function StaticBackdrop() {
+interface StaticBackdropProps {
+  mode?: 'fixed' | 'absolute';
+}
+
+export function StaticBackdrop({ mode = 'fixed' }: StaticBackdropProps = {}) {
+  const positionClass = mode === 'absolute' ? 'absolute inset-0' : 'fixed inset-0';
   return (
     <div
-      className="fixed inset-0 z-0 pointer-events-none overflow-hidden"
+      className={`${positionClass} z-0 pointer-events-none overflow-hidden`}
       aria-hidden
       style={{ background: '#050510' }}
     >
