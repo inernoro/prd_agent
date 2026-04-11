@@ -211,21 +211,9 @@ public sealed class PrReviewPrismController : ControllerBase
         var normalizedOwner = NormalizeGitHubOwner(req.Owner, fallback: normalizedRepo.Split('/')[0]);
         var normalizedAnchorId = NormalizeAnchorId(req.AnchorId, fallback: $"ANCHOR-{repoSlug.ToUpperInvariant()}-01");
 
-        var root = TryFindRepoRoot();
-        if (root == null)
-        {
-            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "未检测到仓库根目录，暂时无法导出接入包"));
-        }
-
-        var bootstrapScriptPath = Path.Combine(root, "scripts", "bootstrap-pr-prism.sh");
-        var initScriptPath = Path.Combine(root, "scripts", "init-pr-prism-basis.sh");
-        if (!System.IO.File.Exists(bootstrapScriptPath) || !System.IO.File.Exists(initScriptPath))
-        {
-            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "缺少 bootstrap 脚本，请先确保 scripts/bootstrap-pr-prism.sh 与 scripts/init-pr-prism-basis.sh 存在"));
-        }
-
-        var bootstrapScript = System.IO.File.ReadAllText(bootstrapScriptPath);
-        var initScript = System.IO.File.ReadAllText(initScriptPath);
+        var scripts = ResolveBootstrapScripts();
+        var bootstrapScript = scripts.BootstrapScript;
+        var initScript = scripts.InitScript;
         var skillMarkdown = BuildRepoBootstrapSkillMarkdown(normalizedRepo, normalizedOwner, normalizedContext, normalizedAnchorId);
         var guideMarkdown = BuildRepoBootstrapGuideMarkdown(normalizedRepo, normalizedOwner, normalizedContext, normalizedAnchorId);
 
@@ -825,6 +813,185 @@ public sealed class PrReviewPrismController : ControllerBase
         }
 
         return memory.ToArray();
+    }
+
+    private static (string BootstrapScript, string InitScript) ResolveBootstrapScripts()
+    {
+        var root = TryFindRepoRoot();
+        if (!string.IsNullOrWhiteSpace(root))
+        {
+            var bootstrapScriptPath = Path.Combine(root!, "scripts", "bootstrap-pr-prism.sh");
+            var initScriptPath = Path.Combine(root!, "scripts", "init-pr-prism-basis.sh");
+            if (System.IO.File.Exists(bootstrapScriptPath) && System.IO.File.Exists(initScriptPath))
+            {
+                return (
+                    System.IO.File.ReadAllText(bootstrapScriptPath),
+                    System.IO.File.ReadAllText(initScriptPath)
+                );
+            }
+        }
+
+        return (BuildEmbeddedBootstrapScript(), BuildEmbeddedInitScript());
+    }
+
+    private static string BuildEmbeddedBootstrapScript()
+    {
+        return """
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+bash "$SCRIPT_DIR/init-pr-prism-basis.sh" "$@"
+""";
+    }
+
+    private static string BuildEmbeddedInitScript()
+    {
+        return """
+#!/usr/bin/env bash
+set -euo pipefail
+
+REPO=""
+ARCHITECT=""
+CONTEXT="engineering-governance"
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --repo)
+      REPO="${2:-}"
+      shift 2
+      ;;
+    --architect|--owner)
+      ARCHITECT="${2:-}"
+      shift 2
+      ;;
+    --context)
+      CONTEXT="${2:-}"
+      shift 2
+      ;;
+    *)
+      echo "Unknown argument: $1" >&2
+      exit 1
+      ;;
+  esac
+done
+
+if [[ -z "$REPO" ]]; then
+  REMOTE_URL="$(git config --get remote.origin.url 2>/dev/null || true)"
+  REMOTE_URL="${REMOTE_URL%.git}"
+  if [[ "$REMOTE_URL" == *github.com* ]]; then
+    REPO="${REMOTE_URL#*github.com[:/]}"
+  fi
+fi
+
+if [[ -z "$REPO" || "$REPO" != */* ]]; then
+  echo "Error: --repo is required (owner/repo)." >&2
+  exit 1
+fi
+
+if [[ -z "$ARCHITECT" ]]; then
+  ARCHITECT="$(git config user.name 2>/dev/null || true)"
+fi
+if [[ -z "$ARCHITECT" ]]; then
+  ARCHITECT="architect"
+fi
+
+REPO_SLUG="${REPO//\//-}"
+SOURCE_ID="local-ddd-anchor"
+SOURCE_VERSION="v1.0.0"
+ANCHOR_ID="ANCHOR-${REPO_SLUG^^}-01"
+SLICE_ID="slice-${REPO_SLUG}-core"
+
+mkdir -p "doc/top-design" ".github/pr-architect"
+
+cat > "doc/top-design/main.md" <<EOF
+# Top Design Baseline
+
+Repository: \`${REPO}\`
+
+## Bounded Context
+- \`${CONTEXT}\`
+
+## Core Anchor
+- \`${ANCHOR_ID}\`
+EOF
+
+cat > "doc/top-design/anchors.yml" <<EOF
+version: 1
+anchors:
+  - id: "${ANCHOR_ID}"
+    title: "Core PR review governance anchor"
+    description: "Minimal anchor for PR Review Prism gate initialization."
+EOF
+
+cat > "doc/top-design/contexts.yml" <<EOF
+version: 1
+contexts:
+  - id: "${CONTEXT}"
+    name: "${CONTEXT}"
+    description: "Primary governance bounded context for this repository."
+EOF
+
+cat > "doc/top-design/slices.yml" <<EOF
+version: 1
+slices:
+  - id: "${SLICE_ID}"
+    owner: "${ARCHITECT}"
+    context: "${CONTEXT}"
+    description: "Initial vertical slice for PR governance baseline."
+EOF
+
+cat > ".github/pr-architect/design-sources.yml" <<EOF
+version: 1
+profile: top-design-sources
+defaults:
+  active_source_id: "${SOURCE_ID}"
+  active_version: "${SOURCE_VERSION}"
+  enforce_manifests: true
+sources:
+  - id: "${SOURCE_ID}"
+    type: "repo-file"
+    location: "doc/top-design/main.md"
+    version: "${SOURCE_VERSION}"
+    checksum: "sha256:replace-with-real-checksum"
+    owner: "${ARCHITECT}"
+    description: "Repository local top-design baseline for PR Review Prism"
+    manifests:
+      anchors: "doc/top-design/anchors.yml"
+      slices: "doc/top-design/slices.yml"
+      contexts: "doc/top-design/contexts.yml"
+EOF
+
+cat > ".github/pr-architect/repo-bindings.yml" <<EOF
+version: 1
+profile: pr-architect-repo-bindings
+defaults:
+  enabled: true
+  required_checks:
+    - "PR审查棱镜 L1 Gate"
+    - "PR审查棱镜 Advisory"
+  architects:
+    - "${ARCHITECT}"
+repositories:
+  - repo: "${REPO}"
+    enabled: true
+    design_source_id: "${SOURCE_ID}"
+    design_source_version: "${SOURCE_VERSION}"
+    default_owner: "${ARCHITECT}"
+    default_context: "${CONTEXT}"
+    default_anchor_refs:
+      - "${ANCHOR_ID}"
+    required_checks:
+      - "PR审查棱镜 L1 Gate"
+      - "PR审查棱镜 Advisory"
+    architects:
+      - "${ARCHITECT}"
+EOF
+
+echo "Initialized PR Review Prism basis for ${REPO}"
+echo "Source: ${SOURCE_ID}@${SOURCE_VERSION}"
+echo "Anchor: ${ANCHOR_ID}"
+""";
     }
 
     private static string NormalizeGitHubOwner(string? value, string fallback)

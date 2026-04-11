@@ -33,7 +33,6 @@ import {
   type PrReviewPrismTokenConfigStatus,
 } from '@/services';
 
-const bootstrapInitCommand = 'bash scripts/bootstrap-pr-prism.sh';
 const prismRepoWorkspaceStorageKey = 'prReviewPrism.workspaceRepo';
 const prismRepoWorkspaceParamsStorageKey = 'prReviewPrism.workspaceRepoParams';
 const prismRecentReposStorageKey = 'prReviewPrism.recentRepos';
@@ -172,7 +171,6 @@ export function PrReviewPrismPage() {
   const [bootstrapDownloading, setBootstrapDownloading] = useState(false);
   const [downloadFallbackUrl, setDownloadFallbackUrl] = useState<string | null>(null);
   const hydratedRepoRef = useRef<string>('');
-  const [showDesignBasisPanel] = useState(false);
   const [showOnboardingWizard, setShowOnboardingWizard] = useState(false);
   const [ownerInput, setOwnerInput] = useState(defaultRepoOwner);
   const [contextInput, setContextInput] = useState(defaultRepoContext);
@@ -264,62 +262,6 @@ export function PrReviewPrismPage() {
     }
     return params;
   }, [normalizedSelectedRepo, repoWorkspaceParamsMap]);
-  const repoScopedBootstrapCommand = useMemo(() => {
-    if (!isBindingRepoValid) {
-      return bootstrapInitCommand;
-    }
-    return `bash scripts/bootstrap-pr-prism.sh --repo "${normalizedBindingRepo}" --owner "${normalizedOwner}" --context "${normalizedContext}"`;
-  }, [isBindingRepoValid, normalizedBindingRepo, normalizedOwner, normalizedContext]);
-  const repoBindingSnippet = useMemo(() => {
-    if (!isBindingRepoValid) {
-      return '';
-    }
-    return `- repo: "${normalizedBindingRepo}"
-  enabled: true
-  design_source_id: "local-ddd-anchor"
-  design_source_version: "v1.0.0"
-  default_owner: "${normalizedOwner}"
-  default_context: "${normalizedContext}"
-  default_anchor_refs:
-    - "${normalizedAnchor}"
-  required_checks:
-    - "PR审查棱镜 L1 Gate"
-    - "PR审查棱镜 Advisory"`;
-  }, [isBindingRepoValid, normalizedBindingRepo, normalizedOwner, normalizedContext, normalizedAnchor]);
-  const topDesignBasisTemplateText = useMemo(
-    () => `# doc/top-design/main.md
-# Top Design Baseline
-
-## Bounded Context
-- ${normalizedContext}
-
-## Core Anchor
-- ${normalizedAnchor}
-
-# doc/top-design/anchors.yml
-version: 1
-anchors:
-  - id: "${normalizedAnchor}"
-    title: "Core governance anchor"
-    description: "Keep PR review metadata, boundary and evidence consistent."
-
-# doc/top-design/contexts.yml
-version: 1
-contexts:
-  - id: "${normalizedContext}"
-    name: "${normalizedContext}"
-    description: "Primary governance bounded context for this repository."
-
-# doc/top-design/slices.yml
-version: 1
-slices:
-  - id: "slice-governance-core"
-    owner: "${normalizedOwner}"
-    context: "${normalizedContext}"
-    description: "Initial slice for governance baseline."
-`,
-    [normalizedAnchor, normalizedContext, normalizedOwner]
-  );
   const canSubmitPr = Boolean(setupStatus?.readyForFullRefresh);
   const onboardingSteps = useMemo(
     () => [
@@ -336,14 +278,8 @@ slices:
         done: isBindingRepoValid,
       },
       {
-        key: 'topDesign',
-        title: '可选：落地顶层设计依据',
-        required: false,
-        done: Boolean(setupStatus?.topDesign.ready),
-      },
-      {
         key: 'verify',
-        title: '验证后开始审查',
+        title: '完成接入并开始审查',
         required: true,
         done: Boolean(setupStatus?.githubTokenConfigured) && isBindingRepoValid,
       },
@@ -405,14 +341,6 @@ slices:
     }));
   }, [setRepoWorkspaceParamsMap]);
 
-  const copyToClipboard = useCallback(async (text: string, successMessage: string) => {
-    try {
-      await navigator.clipboard.writeText(text);
-      setSetupActionMessage(successMessage);
-    } catch {
-      setSetupActionMessage('复制失败，请手动复制下方代码块内容');
-    }
-  }, []);
   const downloadRepoSkillPackage = useCallback(async () => {
     if (!isBindingRepoValid) {
       setSetupActionMessage('请先填写有效仓库（owner/repo）后再导出仓库专属 Skill 包');
@@ -1087,7 +1015,7 @@ slices:
             <div className="h-full bg-violet-400/80 transition-all" style={{ width: `${onboardingProgressPercent}%` }} />
           </div>
         </div>
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-2 mb-3">
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-2 mb-3">
           {onboardingSteps.map((step, idx) => (
             <div
               key={step.key}
@@ -1135,7 +1063,7 @@ slices:
             </div>
 
             <div className="rounded-lg border border-amber-400/20 bg-amber-500/10 p-3 text-amber-100">
-              <p className="font-medium mb-1">Step 1 / 4：配置 GitHub Token（仅首次需要）</p>
+              <p className="font-medium mb-1">Step 1 / 3：配置 GitHub Token（仅首次需要）</p>
               <input
                 type="password"
                 value={tokenInput}
@@ -1186,7 +1114,7 @@ slices:
                 </ul>
               )}
 
-              <p className="font-medium mt-3 mb-1">Step 2 / 4：绑定目标仓库（每个新仓库都要配置）</p>
+              <p className="font-medium mt-3 mb-1">Step 2 / 3：绑定目标仓库（每个新仓库都要配置）</p>
               <input
                 type="text"
                 value={bindingRepoInput}
@@ -1204,50 +1132,7 @@ slices:
                   当前仓库参数会自动保存，下次切回该仓库时自动恢复 owner/context/anchor。
                 </p>
               )}
-              <p className="mt-2 font-medium">Step 3 / 4（可选增强）：落地顶层设计依据（不阻塞接入）</p>
-              <p className="mt-1 text-[11px] text-amber-200/80">
-                这一步不是新仓库接入的必要条件。你可以先完成接入并开始审查，后续再持续调整该仓库的顶层设计依据。
-              </p>
-              <div className="mt-2 grid grid-cols-1 md:grid-cols-3 gap-2">
-                <div>
-                  <p className="text-[11px] text-amber-100/80 mb-1">仓库 owner</p>
-                  <input
-                    type="text"
-                    value={ownerInput}
-                    onChange={e => setOwnerInput(e.target.value)}
-                    placeholder="your-github-id"
-                    className="w-full bg-black/20 border border-white/15 rounded px-2 py-1.5 text-[11px] text-amber-50 placeholder-amber-100/40 focus:outline-none focus:border-amber-300/40"
-                  />
-                </div>
-                <div>
-                  <p className="text-[11px] text-amber-100/80 mb-1">bounded context</p>
-                  <input
-                    type="text"
-                    value={contextInput}
-                    onChange={e => setContextInput(e.target.value)}
-                    placeholder="engineering-governance"
-                    className="w-full bg-black/20 border border-white/15 rounded px-2 py-1.5 text-[11px] text-amber-50 placeholder-amber-100/40 focus:outline-none focus:border-amber-300/40"
-                  />
-                </div>
-                <div>
-                  <p className="text-[11px] text-amber-100/80 mb-1">anchor id</p>
-                  <input
-                    type="text"
-                    value={anchorInput}
-                    onChange={e => setAnchorInput(e.target.value)}
-                    placeholder="ANCHOR-CORE-01"
-                    className="w-full bg-black/20 border border-white/15 rounded px-2 py-1.5 text-[11px] text-amber-50 placeholder-amber-100/40 focus:outline-none focus:border-amber-300/40"
-                  />
-                </div>
-              </div>
-              <code className="block mt-1 rounded bg-black/25 px-2 py-1 whitespace-pre-wrap break-all">
-                {repoScopedBootstrapCommand}
-              </code>
-              <p className="mt-2 font-medium">可选：将仓库条目写入 repo-bindings.yml（后续可随时调整）</p>
-              <code className="block mt-1 rounded bg-black/25 px-2 py-1 whitespace-pre-wrap break-all">
-                {repoBindingSnippet || '# 先填写 owner/repo 后生成'}
-              </code>
-              <p className="mt-2 font-medium">Step 4 / 4：完成接入校验并开始审查</p>
+              <p className="mt-2 font-medium">Step 3 / 3：完成接入校验并开始审查</p>
               <p className="mt-1 text-[11px] text-amber-200/80">
                 说明：PR“拉取异常”与是否安装 Skill 包无直接关系；常见原因是 Token 无该仓库权限或 PR 链接不正确。
               </p>
@@ -1305,26 +1190,61 @@ slices:
                   ))}
                 </ul>
               )}
-              {showDesignBasisPanel && (
-                <div className="mt-3 rounded-lg border border-white/15 bg-black/20 p-3">
-                  <p className="text-xs font-medium text-white mb-1">仓库级顶层设计依据（独立可调整）</p>
-                  <p className="text-[11px] text-white/70 mb-2">
-                    该内容与“接入向导”解耦，支持审批期间持续打磨；当前展示为该仓库的初始化版本。
-                  </p>
-                  <code className="block rounded bg-black/25 px-2 py-1 whitespace-pre-wrap break-all text-[11px]">
-                    {topDesignBasisTemplateText}
-                  </code>
-                  <div className="mt-2">
-                    <button
-                      type="button"
-                      onClick={() => void copyToClipboard(topDesignBasisTemplateText, '已复制顶层设计依据模板')}
-                      className="inline-flex items-center gap-1 rounded border border-white/20 bg-white/10 px-2.5 py-1 text-[11px] text-white hover:bg-white/15 whitespace-nowrap"
-                    >
-                      复制顶层设计依据模板
-                    </button>
+              <div className="mt-3 rounded-lg border border-white/15 bg-black/20 p-3 text-white">
+                <p className="text-xs font-medium mb-1">仓库级顶层设计依据管理（独立于接入向导）</p>
+                <p className="text-[11px] text-white/70 mb-2">
+                  该区域用于每个仓库单独维护 owner/context/anchor 与初始化命令，不阻塞接入，可在审查期间持续调整。
+                </p>
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
+                  <div>
+                    <p className="text-[11px] text-white/70 mb-1">仓库 owner</p>
+                    <input
+                      type="text"
+                      value={ownerInput}
+                      onChange={e => setOwnerInput(e.target.value)}
+                      placeholder="your-github-id"
+                      className="w-full bg-black/20 border border-white/15 rounded px-2 py-1.5 text-[11px] text-white placeholder-white/35 focus:outline-none focus:border-violet-300/40"
+                    />
+                  </div>
+                  <div>
+                    <p className="text-[11px] text-white/70 mb-1">bounded context</p>
+                    <input
+                      type="text"
+                      value={contextInput}
+                      onChange={e => setContextInput(e.target.value)}
+                      placeholder="engineering-governance"
+                      className="w-full bg-black/20 border border-white/15 rounded px-2 py-1.5 text-[11px] text-white placeholder-white/35 focus:outline-none focus:border-violet-300/40"
+                    />
+                  </div>
+                  <div>
+                    <p className="text-[11px] text-white/70 mb-1">anchor id</p>
+                    <input
+                      type="text"
+                      value={anchorInput}
+                      onChange={e => setAnchorInput(e.target.value)}
+                      placeholder="ANCHOR-CORE-01"
+                      className="w-full bg-black/20 border border-white/15 rounded px-2 py-1.5 text-[11px] text-white placeholder-white/35 focus:outline-none focus:border-violet-300/40"
+                    />
                   </div>
                 </div>
-              )}
+                <p className="mt-2 text-[11px] text-white/65">1) 在目标仓库执行初始化命令（可反复执行覆盖更新）：</p>
+                <code className="block mt-1 rounded bg-black/25 px-2 py-1 whitespace-pre-wrap break-all">{`bash scripts/bootstrap-pr-prism.sh --repo "${normalizedBindingRepo || 'owner/repo'}" --owner "${normalizedOwner}" --context "${normalizedContext}"`}</code>
+                <p className="mt-2 text-[11px] text-white/65">2) 更新仓库绑定配置（.github/pr-architect/repo-bindings.yml）：</p>
+                <code className="block mt-1 rounded bg-black/25 px-2 py-1 whitespace-pre-wrap break-all">{isBindingRepoValid ? `- repo: "${normalizedBindingRepo}"
+  enabled: true
+  design_source_id: "local-ddd-anchor"
+  design_source_version: "v1.0.0"
+  default_owner: "${normalizedOwner}"
+  default_context: "${normalizedContext}"
+  default_anchor_refs:
+    - "${normalizedAnchor}"
+  required_checks:
+    - "PR审查棱镜 L1 Gate"
+    - "PR审查棱镜 Advisory"` : '# 先填写 owner/repo 后生成 repo 绑定片段'}</code>
+                <p className="mt-2 text-[11px] text-white/65">
+                  判定原理：PR 拉取后会读取仓库绑定与设计源，校验 anchor/context/切片清单是否可解析，再结合 L1 Gate 与决策卡生成最终审查状态。
+                </p>
+              </div>
             </div>
           </div>
         ) : (
