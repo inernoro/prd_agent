@@ -919,6 +919,33 @@ public static class ReviewAgent
         public const string Chat = "review-agent.review::chat";
     }
 }
+
+public static class PrReview
+{
+    public const string AppName = "PR Review";
+
+    public static class Summary
+    {
+        [AppCallerMetadata(
+            "PR 变更摘要",
+            "对 GitHub PR 的描述 + 代码变更生成 30 秒看懂的 Markdown 摘要（一句话/关键改动/主要影响/审查建议）",
+            ModelTypes = new[] { ModelTypes.Chat },
+            Category = "Review"
+        )]
+        public const string Chat = "pr-review.summary::chat";
+    }
+
+    public static class Alignment
+    {
+        [AppCallerMetadata(
+            "PR 对齐度检查",
+            "对比 PR 描述与实际代码变更，输出对齐度分数 + 四色结构化章节（已落实/没提但动/提了没见到/架构师关注点）",
+            ModelTypes = new[] { ModelTypes.Chat },
+            Category = "Review"
+        )]
+        public const string Chat = "pr-review.alignment::chat";
+    }
+}
 }
 
 /// <summary>

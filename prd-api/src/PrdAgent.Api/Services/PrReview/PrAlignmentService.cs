@@ -112,16 +112,21 @@ public sealed class PrAlignmentService
             score = Math.Clamp(s, 0, 100);
         }
 
-        // 总结：找 "## 总结" 之后的第一段非空文本
+        // 总结：找 "## 总结" 之后的整行内容。
+        // 注意：不能用 [^\n#] 否则 LLM 写 "Fix #123" 会被提前截断。
         var summaryMatch = Regex.Match(
             markdown,
-            @"##\s*总结\s*\n+([^\n#]+)",
+            @"##\s*总结\s*\r?\n+([^\n]+)",
             RegexOptions.Multiline);
         string? summary = null;
         if (summaryMatch.Success)
         {
-            summary = summaryMatch.Groups[1].Value.Trim();
-            if (summary.Length > 500) summary = summary[..500];
+            var candidate = summaryMatch.Groups[1].Value.Trim();
+            // 跳过空行并防御性地拒绝下一个 ## 标题
+            if (!candidate.StartsWith("##"))
+            {
+                summary = candidate.Length > 500 ? candidate[..500] : candidate;
+            }
         }
 
         return (score, summary);

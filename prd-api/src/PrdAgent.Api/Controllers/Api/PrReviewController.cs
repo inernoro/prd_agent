@@ -560,8 +560,28 @@ public sealed class PrReviewController : ControllerBase
         }
 
         var markdown = fullMd.ToString();
-        var headline = PrSummaryService.ParseHeadline(markdown);
         var duration = (long)(DateTime.UtcNow - startMs).TotalMilliseconds;
+
+        // 防御空输出：LLM 返回空内容不应被当成"成功但空白"
+        if (string.IsNullOrWhiteSpace(markdown))
+        {
+            var emptyMsg = "AI 返回了空的摘要内容，可能是模型调度失败或 prompt 被拒绝。请稍后重试。";
+            _logger.LogWarning("PrReview summary empty result for item {Id}", id);
+            await _db.PrReviewItems.UpdateOneAsync(
+                x => x.Id == id && x.UserId == userId,
+                Builders<PrReviewItem>.Update.Set(x => x.SummaryReport, new SummaryReport
+                {
+                    Markdown = string.Empty,
+                    Error = emptyMsg,
+                    DurationMs = duration,
+                    CreatedAt = DateTime.UtcNow,
+                }),
+                cancellationToken: CancellationToken.None);
+            try { await WriteSseEventAsync("error", new { message = emptyMsg }); } catch { }
+            return;
+        }
+
+        var headline = PrSummaryService.ParseHeadline(markdown);
 
         var report = new SummaryReport
         {
@@ -647,8 +667,29 @@ public sealed class PrReviewController : ControllerBase
         }
 
         var markdown = fullMd.ToString();
-        var (score, summary) = PrAlignmentService.ParseAlignmentOutput(markdown);
         var duration = (long)(DateTime.UtcNow - startMs).TotalMilliseconds;
+
+        // 防御空输出：LLM 返回空内容不应被当成"成功但空白"
+        if (string.IsNullOrWhiteSpace(markdown))
+        {
+            var emptyMsg = "AI 返回了空的分析内容，可能是模型调度失败或 prompt 被拒绝。请稍后重试。";
+            _logger.LogWarning("PrReview alignment empty result for item {Id}", id);
+            await _db.PrReviewItems.UpdateOneAsync(
+                x => x.Id == id && x.UserId == userId,
+                Builders<PrReviewItem>.Update.Set(x => x.AlignmentReport, new AlignmentReport
+                {
+                    Score = 0,
+                    Markdown = string.Empty,
+                    Error = emptyMsg,
+                    DurationMs = duration,
+                    CreatedAt = DateTime.UtcNow,
+                }),
+                cancellationToken: CancellationToken.None);
+            try { await WriteSseEventAsync("error", new { message = emptyMsg }); } catch { }
+            return;
+        }
+
+        var (score, summary) = PrAlignmentService.ParseAlignmentOutput(markdown);
 
         var report = new AlignmentReport
         {

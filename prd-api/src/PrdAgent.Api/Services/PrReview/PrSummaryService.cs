@@ -92,12 +92,17 @@ public sealed class PrSummaryService
     public static string? ParseHeadline(string markdown)
     {
         if (string.IsNullOrWhiteSpace(markdown)) return null;
+        // 匹配 "## 一句话" 下一行的非空内容。
+        // 注意：不能用 [^\n#] 否则会在 "Fix #123" 处提前截断。
+        // 用 [^\n]+ 抓整行，再在业务层限长。
         var match = Regex.Match(
             markdown,
-            @"##\s*一句话\s*\n+([^\n#]+)",
+            @"##\s*一句话\s*\r?\n+([^\n]+)",
             RegexOptions.Multiline);
         if (!match.Success) return null;
         var headline = match.Groups[1].Value.Trim();
+        // 去掉可能混进来的章节标题前缀（如果 LLM 把 "## 一句话" 写在同一行）
+        if (headline.StartsWith("##")) return null;
         return headline.Length > 200 ? headline[..200] : headline;
     }
 
