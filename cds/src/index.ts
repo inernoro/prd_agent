@@ -21,6 +21,7 @@ import { ExecutorAgent } from './executor/agent.js';
 import { createExecutorRouter } from './executor/routes.js';
 import { ExecutorRegistry } from './scheduler/executor-registry.js';
 import { createSchedulerRouter } from './scheduler/routes.js';
+import { createClusterRouter } from './routes/cluster.js';
 import { updateEnvFile, defaultEnvFilePath } from './services/env-file.js';
 
 function parseCsv(value: string | undefined): string[] | undefined {
@@ -923,6 +924,23 @@ if (mode === 'executor') {
     onBootstrapConsumed,
   }));
   console.log(`  Scheduler: executor management API mounted at /api/executors (mode: ${mode})`);
+
+  // ── One-click UI cluster bootstrap (issue-token / join / leave / status) ──
+  //
+  // Parallels the CLI flow in exec_cds.sh but lets a human click through
+  // the Dashboard without ever opening a terminal. The router holds a
+  // single in-process ExecutorAgent handle so /join and /leave can flip
+  // the node between standalone and "hot-joined hybrid" states without a
+  // restart. See `cds/src/routes/cluster.ts` for the flow doc.
+  let hotJoinAgent: ExecutorAgent | null = null;
+  app.use('/api/cluster', createClusterRouter({
+    config,
+    stateService,
+    registry,
+    getExecutorAgent: () => hotJoinAgent,
+    setExecutorAgent: (agent) => { hotJoinAgent = agent; },
+  }));
+  console.log(`  Cluster: one-click bootstrap API mounted at /api/cluster`);
 
   if (mode === 'scheduler') {
     console.log(`  Scheduler: dispatcher enabled, cluster-aware routing active`);

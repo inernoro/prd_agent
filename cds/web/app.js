@@ -2186,6 +2186,11 @@ function toggleSettingsMenu(event) {
       <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M8 0a8 8 0 100 16A8 8 0 008 0zM1.5 8a6.5 6.5 0 0113 0h-2.1a8.3 8.3 0 00-.4-2.2 9 9 0 00-1-1.9A4.5 4.5 0 017 7.5H4.5A8.3 8.3 0 001.5 8zm5.5 5.5a6.5 6.5 0 01-5.4-3h2.3c.3 1.2.8 2.2 1.5 3H7zm1-5.5a7.8 7.8 0 014-3.8c.5.6.9 1.2 1.2 1.8H8zm0 1h5.4a8.3 8.3 0 01-.3 2H8.9 8V9zm0 3h3.8c-.6 1.3-1.5 2.4-2.8 3A6.5 6.5 0 018 9z"/></svg>
       路由规则
     </div>
+    <div class="settings-menu-item" onclick="closeSettingsMenu(); openClusterModal()">
+      <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M3 2.5a.5.5 0 01.5-.5h9a.5.5 0 01.5.5v2a.5.5 0 01-.5.5h-9a.5.5 0 01-.5-.5v-2zM3.5 1A1.5 1.5 0 002 2.5v2A1.5 1.5 0 003.5 6h9A1.5 1.5 0 0014 4.5v-2A1.5 1.5 0 0012.5 1h-9zM3 7.5a.5.5 0 01.5-.5h9a.5.5 0 01.5.5v2a.5.5 0 01-.5.5h-9a.5.5 0 01-.5-.5v-2zM3.5 6A1.5 1.5 0 002 7.5v2A1.5 1.5 0 003.5 11h9A1.5 1.5 0 0014 9.5v-2A1.5 1.5 0 0012.5 6h-9zm0 6A1.5 1.5 0 002 13.5v1A1.5 1.5 0 003.5 16h9a1.5 1.5 0 001.5-1.5v-1a1.5 1.5 0 00-1.5-1.5h-9zm0 1h9a.5.5 0 01.5.5v1a.5.5 0 01-.5.5h-9a.5.5 0 01-.5-.5v-1a.5.5 0 01.5-.5z"/></svg>
+      集群
+      <span id="clusterStatusBadge" style="margin-left:auto;font-size:11px;color:#8b949e"></span>
+    </div>
     <div class="settings-menu-item settings-menu-switch" onclick="cyclePreviewMode()">
       <span class="settings-menu-switch-label">预览模式</span>
       <span class="preview-mode-label" style="margin-left:auto;font-size:11px;color:#58a6ff;font-weight:500">${{ simple: '简洁', port: '端口直连', multi: '子域名' }[previewMode]}</span>
@@ -5556,6 +5561,292 @@ function fallbackCopy(text) {
   try { document.execCommand('copy'); showToast('已复制', 'success'); }
   catch { showToast('复制失败', 'error'); }
   document.body.removeChild(ta);
+}
+
+// ── Cluster bootstrap (one-click UI) ──
+//
+// Dashboard-facing counterpart to exec_cds.sh issue-token / connect.
+// See cds/src/routes/cluster.ts for the backend contract.
+
+let clusterCountdownTimer = null;
+
+async function openClusterModal() {
+  // 1. Probe current cluster role so the modal lands on the right tab.
+  let statusBody = null;
+  try {
+    const res = await fetch('/api/cluster/status', { credentials: 'include' });
+    statusBody = await res.json();
+  } catch (err) {
+    showToast('无法查询集群状态', 'error');
+    return;
+  }
+
+  const role = statusBody.effectiveRole;
+  const capacity = statusBody.capacity || { online: 0, total: {} };
+
+  // Role-aware title gives context without forcing the user to read the body
+  const roleLabel = {
+    standalone: '独立模式',
+    scheduler: '主节点 (scheduler)',
+    executor: '执行器 (executor)',
+    hybrid: '混合模式 (standalone + 热加入)',
+  }[role] || role;
+
+  // Default to master tab when we ARE the master, slave tab when we're
+  // an executor, and master tab with both options visible for a plain
+  // standalone (most common "I am about to bring in a second machine").
+  const defaultTab = role === 'executor' || role === 'hybrid' ? 'slave' : 'master';
+
+  const html = `
+    <div class="cluster-modal">
+      <div class="cluster-status-bar">
+        <div class="cluster-status-left">
+          <span class="cluster-status-dot" data-role="${role}"></span>
+          <div>
+            <div class="cluster-status-role">当前角色：${esc(roleLabel)}</div>
+            <div class="cluster-status-meta">
+              在线节点 ${capacity.online || 0} /
+              总内存 ${capacity.total?.memoryMB || 0} MB /
+              总 CPU ${capacity.total?.cpuCores || 0} 核
+            </div>
+          </div>
+        </div>
+        ${statusBody.masterUrl ? `
+          <a class="cluster-master-link" href="${esc(statusBody.masterUrl)}" target="_blank" rel="noopener">
+            主节点 ↗
+          </a>
+        ` : ''}
+      </div>
+
+      <div class="cluster-tabs">
+        <button class="cluster-tab ${defaultTab === 'master' ? 'active' : ''}"
+                onclick="switchClusterTab('master')">我是主节点</button>
+        <button class="cluster-tab ${defaultTab === 'slave' ? 'active' : ''}"
+                onclick="switchClusterTab('slave')">我是从节点</button>
+      </div>
+
+      <div id="clusterTabMaster" class="cluster-tab-body ${defaultTab === 'master' ? '' : 'hidden'}">
+        <p class="cluster-tab-desc">
+          点击"生成连接码"，把出现的字符串复制到另一台机器的"我是从节点"里粘贴，
+          对方就会自动以 executor 身份加入集群。连接码 <strong>15 分钟过期</strong>。
+        </p>
+        <button class="btn-primary cluster-action-btn" onclick="doIssueToken()">
+          🔐 生成连接码
+        </button>
+        <div id="clusterTokenBox" class="cluster-token-box hidden">
+          <label>连接码（复制下面的字符串粘贴到另一台机器）</label>
+          <textarea id="clusterTokenArea" readonly rows="4" onclick="this.select()"></textarea>
+          <div class="cluster-token-actions">
+            <button class="btn-secondary" onclick="copyClusterToken()">📋 复制</button>
+            <span id="clusterTokenCountdown" class="cluster-countdown"></span>
+          </div>
+          <div class="cluster-token-hint">
+            主节点地址：<code id="clusterMasterDisplay"></code>
+          </div>
+        </div>
+      </div>
+
+      <div id="clusterTabSlave" class="cluster-tab-body ${defaultTab === 'slave' ? '' : 'hidden'}">
+        ${role === 'executor' || role === 'hybrid' ? `
+          <p class="cluster-tab-desc">
+            本节点已作为 executor 加入集群：
+            <code>${esc(statusBody.masterUrl || '未知')}</code><br>
+            Executor ID：<code>${esc(statusBody.executorId || '未知')}</code>
+          </p>
+          <button class="btn-danger cluster-action-btn" onclick="doLeaveCluster()">
+            🚪 退出集群
+          </button>
+        ` : `
+          <p class="cluster-tab-desc">
+            在主节点上点"生成连接码"后，把得到的字符串粘贴到下面，点"加入集群"。
+            中间会验证、写入配置、立刻注册到主节点，<strong>无需重启</strong>。
+          </p>
+          <textarea id="clusterJoinInput" class="cluster-paste-input" rows="4"
+                    placeholder="把主节点生成的连接码粘贴到这里..."></textarea>
+          <button class="btn-primary cluster-action-btn" onclick="doJoinCluster()">
+            🔌 加入集群
+          </button>
+          <div id="clusterJoinResult"></div>
+        `}
+      </div>
+    </div>
+  `;
+
+  openConfigModal('集群设置', html);
+
+  // Fire and forget — refresh the header badge based on the latest role.
+  updateClusterStatusBadge(role, capacity.online || 0);
+}
+
+function switchClusterTab(which) {
+  document.querySelectorAll('.cluster-tab').forEach(b => b.classList.remove('active'));
+  document.querySelectorAll('.cluster-tab-body').forEach(b => b.classList.add('hidden'));
+  const btns = document.querySelectorAll('.cluster-tab');
+  if (which === 'master') {
+    if (btns[0]) btns[0].classList.add('active');
+    const body = document.getElementById('clusterTabMaster');
+    if (body) body.classList.remove('hidden');
+  } else {
+    if (btns[1]) btns[1].classList.add('active');
+    const body = document.getElementById('clusterTabSlave');
+    if (body) body.classList.remove('hidden');
+  }
+}
+
+async function doIssueToken() {
+  const btn = event?.currentTarget;
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ 生成中...'; }
+
+  try {
+    const res = await fetch('/api/cluster/issue-token', {
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+    });
+    const body = await res.json();
+    if (!res.ok) {
+      showToast(body.error || '生成失败', 'error');
+      return;
+    }
+
+    // Display the code, the master URL, and start the countdown
+    const box = document.getElementById('clusterTokenBox');
+    const area = document.getElementById('clusterTokenArea');
+    const masterDisplay = document.getElementById('clusterMasterDisplay');
+    if (box) box.classList.remove('hidden');
+    if (area) area.value = body.connectionCode;
+    if (masterDisplay) masterDisplay.textContent = body.masterUrl;
+
+    startClusterCountdown(body.expiresAt);
+    showToast('连接码已生成', 'success');
+  } catch (err) {
+    showToast('网络错误: ' + err.message, 'error');
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = '🔐 重新生成连接码'; }
+  }
+}
+
+function startClusterCountdown(expiresAtIso) {
+  if (clusterCountdownTimer) clearInterval(clusterCountdownTimer);
+  const label = document.getElementById('clusterTokenCountdown');
+  const endMs = new Date(expiresAtIso).getTime();
+
+  function tick() {
+    if (!label) return;
+    const remainMs = endMs - Date.now();
+    if (remainMs <= 0) {
+      label.textContent = '⚠ 已过期，请重新生成';
+      label.className = 'cluster-countdown expired';
+      if (clusterCountdownTimer) { clearInterval(clusterCountdownTimer); clusterCountdownTimer = null; }
+      return;
+    }
+    const mins = Math.floor(remainMs / 60000);
+    const secs = Math.floor((remainMs % 60000) / 1000);
+    label.textContent = `⏱ ${mins}:${String(secs).padStart(2, '0')} 后过期`;
+    label.className = 'cluster-countdown' + (remainMs < 60000 ? ' urgent' : '');
+  }
+  tick();
+  clusterCountdownTimer = setInterval(tick, 1000);
+}
+
+function copyClusterToken() {
+  const area = document.getElementById('clusterTokenArea');
+  if (!area || !area.value) return;
+  copyToClipboard(area.value);
+}
+
+async function doJoinCluster() {
+  const input = document.getElementById('clusterJoinInput');
+  const result = document.getElementById('clusterJoinResult');
+  const btn = event?.currentTarget;
+  if (!input || !input.value.trim()) {
+    showToast('请先粘贴连接码', 'error');
+    return;
+  }
+
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ 正在加入...'; }
+  if (result) result.innerHTML = '<div class="cluster-progress">🔄 解析连接码 → 写入配置 → 注册到主节点 → 启动心跳...</div>';
+
+  try {
+    const res = await fetch('/api/cluster/join', {
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ connectionCode: input.value.trim() }),
+    });
+    const body = await res.json();
+
+    if (!res.ok) {
+      if (result) result.innerHTML = `<div class="cluster-error">❌ ${esc(body.error || '加入失败')}</div>`;
+      showToast(body.error || '加入失败', 'error');
+      return;
+    }
+
+    // Success — show the restart warning prominently
+    if (result) {
+      result.innerHTML = `
+        <div class="cluster-success">
+          ✅ 已加入集群
+          <div class="cluster-success-meta">
+            Executor ID: <code>${esc(body.executorId)}</code><br>
+            主节点: <a href="${esc(body.masterUrl)}" target="_blank" rel="noopener">${esc(body.masterUrl)}</a>
+          </div>
+          <div class="cluster-warning">
+            ⚠ ${esc(body.restartWarning || '下次重启后 Dashboard 将停止，请把书签换成主节点 URL')}
+          </div>
+        </div>
+      `;
+    }
+    showToast('已加入集群', 'success');
+    updateClusterStatusBadge('hybrid', 2);
+  } catch (err) {
+    if (result) result.innerHTML = `<div class="cluster-error">❌ 网络错误: ${esc(err.message)}</div>`;
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = '🔌 加入集群'; }
+  }
+}
+
+async function doLeaveCluster() {
+  if (!confirm('确认退出集群？本机上运行中的容器不会被停止，但心跳会停止，主节点下一次健康检查会把本节点标记为 offline。')) {
+    return;
+  }
+  const btn = event?.currentTarget;
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ 正在退出...'; }
+
+  try {
+    const res = await fetch('/api/cluster/leave', {
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+    });
+    const body = await res.json();
+    if (!res.ok) {
+      showToast(body.error || '退出失败', 'error');
+      return;
+    }
+    showToast('已退出集群', 'success');
+    updateClusterStatusBadge('standalone', 1);
+    closeConfigModal();
+  } catch (err) {
+    showToast('网络错误: ' + err.message, 'error');
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = '🚪 退出集群'; }
+  }
+}
+
+/** Update the small badge next to the "集群" menu item based on role. */
+function updateClusterStatusBadge(role, onlineCount) {
+  const badge = document.getElementById('clusterStatusBadge');
+  if (!badge) return;
+  if (role === 'scheduler' && onlineCount > 1) {
+    badge.textContent = `● ${onlineCount} 节点`;
+    badge.style.color = '#3fb950';
+  } else if (role === 'executor' || role === 'hybrid') {
+    badge.textContent = '● 已加入';
+    badge.style.color = '#58a6ff';
+  } else {
+    badge.textContent = '';
+  }
 }
 
 // ── Init activity monitor & AI pairing ──
