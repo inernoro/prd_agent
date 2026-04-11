@@ -8,10 +8,12 @@ import {
   GitPullRequestClosed,
   GitMerge,
   AlertTriangle,
+  FileText,
 } from 'lucide-react';
 import { usePrReviewStore } from './usePrReviewStore';
 import { AlignmentPanel } from './AlignmentPanel';
 import { SummaryPanel } from './SummaryPanel';
+import { PrRawContentModal } from './PrRawContentModal';
 import type { PrReviewItemDto, PrReviewState } from '@/services/real/prReview';
 
 interface Props {
@@ -49,6 +51,7 @@ function formatDateTime(iso?: string | null) {
 export function PrItemCard({ item }: Props) {
   const [expanded, setExpanded] = useState(false);
   const [noteDraft, setNoteDraft] = useState(item.note ?? '');
+  const [rawOpen, setRawOpen] = useState(false);
 
   const refreshItem = usePrReviewStore((s) => s.refreshItem);
   const updateNote = usePrReviewStore((s) => s.updateNote);
@@ -189,6 +192,16 @@ export function PrItemCard({ item }: Props) {
           <div className="mt-4 flex items-center gap-2">
             <button
               type="button"
+              onClick={() => setRawOpen(true)}
+              disabled={!snapshot}
+              className="flex items-center gap-2 px-3 py-2 rounded-lg bg-sky-500/15 text-sky-200 text-xs hover:bg-sky-500/25 disabled:opacity-40 disabled:cursor-not-allowed transition"
+              title={snapshot ? '查看 PR 描述和变更文件' : '尚未拉取到 PR 内容'}
+            >
+              <FileText size={14} />
+              查看原文
+            </button>
+            <button
+              type="button"
               onClick={() => void refreshItem(item.id)}
               disabled={refreshing}
               className="flex items-center gap-2 px-3 py-2 rounded-lg bg-white/10 text-white text-xs hover:bg-white/15 disabled:opacity-50 transition"
@@ -221,6 +234,8 @@ export function PrItemCard({ item }: Props) {
           </div>
         </div>
       )}
+
+      {rawOpen && <PrRawContentModal itemId={item.id} onClose={() => setRawOpen(false)} />}
     </div>
   );
 }

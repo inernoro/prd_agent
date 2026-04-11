@@ -60,6 +60,31 @@ export interface PrSummaryReportDto {
   error?: string | null;
 }
 
+export interface PrReviewRawFileDto {
+  filename: string;
+  status: string; // added / modified / removed / renamed
+  additions: number;
+  deletions: number;
+  patch?: string | null;
+}
+
+export interface PrReviewRawContentDto {
+  title: string;
+  body?: string | null;
+  state: PrReviewState;
+  authorLogin: string;
+  authorAvatarUrl?: string | null;
+  additions: number;
+  deletions: number;
+  changedFiles: number;
+  headSha: string;
+  htmlUrl: string;
+  linkedIssueNumber?: number | null;
+  linkedIssueTitle?: string | null;
+  linkedIssueBody?: string | null;
+  files: PrReviewRawFileDto[];
+}
+
 export interface PrReviewItemDto {
   id: string;
   owner: string;
@@ -162,6 +187,16 @@ export async function refreshPrReviewItem(id: string): Promise<ApiResponse<PrRev
   return apiRequest<PrReviewItemDto>(api.prReview.items.refresh(id), {
     method: 'POST',
   });
+}
+
+/**
+ * 获取 PR 的完整原始内容（PR 描述 + 变更文件 diff）。
+ * 单独一个端点，避免把 100KB 级别的 files 塞进列表/详情接口。
+ */
+export async function getPrReviewItemRaw(
+  id: string,
+): Promise<ApiResponse<PrReviewRawContentDto>> {
+  return apiRequest<PrReviewRawContentDto>(api.prReview.items.raw(id));
 }
 
 export async function updatePrReviewItemNote(

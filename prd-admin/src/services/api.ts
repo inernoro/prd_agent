@@ -386,6 +386,7 @@ export const api = {
       },
       create: () => '/api/pr-review/items',
       byId: (id: string) => `/api/pr-review/items/${id}`,
+      raw: (id: string) => `/api/pr-review/items/${id}/raw`,
       refresh: (id: string) => `/api/pr-review/items/${id}/refresh`,
       updateNote: (id: string) => `/api/pr-review/items/${id}/note`,
       delete: (id: string) => `/api/pr-review/items/${id}`,

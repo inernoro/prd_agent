@@ -350,6 +350,54 @@ public sealed class PrReviewController : ControllerBase
     }
 
     /// <summary>
+    /// 返回 PR 的完整原始内容：PR 描述 body（未截断）+ 变更文件列表（含 diff patch）。
+    /// 单独一个端点，避免把 100KB 级别的 files 塞进列表/详情接口拖慢常规路径。
+    /// </summary>
+    [HttpGet("items/{id}/raw")]
+    [Authorize]
+    public async Task<IActionResult> GetItemRaw(string id, CancellationToken ct)
+    {
+        var userId = this.GetRequiredUserId();
+        var item = await _db.PrReviewItems
+            .Find(x => x.Id == id && x.UserId == userId)
+            .FirstOrDefaultAsync(ct);
+        if (item == null)
+        {
+            return NotFound(ApiResponse<object>.Fail(PrReviewErrorCodes.PR_ITEM_NOT_FOUND, "PR 记录不存在或不属于你"));
+        }
+        if (item.Snapshot == null)
+        {
+            return BadRequest(ApiResponse<object>.Fail("SNAPSHOT_MISSING", "尚未拉取过 PR 内容，请先点击\"重新拉取\"。"));
+        }
+
+        var s = item.Snapshot;
+        return Ok(ApiResponse<object>.Ok(new
+        {
+            title = s.Title,
+            body = s.Body,
+            state = s.State,
+            authorLogin = s.AuthorLogin,
+            authorAvatarUrl = s.AuthorAvatarUrl,
+            additions = s.Additions,
+            deletions = s.Deletions,
+            changedFiles = s.ChangedFiles,
+            headSha = s.HeadSha,
+            htmlUrl = item.HtmlUrl,
+            linkedIssueNumber = s.LinkedIssueNumber,
+            linkedIssueTitle = s.LinkedIssueTitle,
+            linkedIssueBody = s.LinkedIssueBody,
+            files = s.Files.Select(f => new
+            {
+                filename = f.Filename,
+                status = f.Status,
+                additions = f.Additions,
+                deletions = f.Deletions,
+                patch = f.Patch,
+            }),
+        }));
+    }
+
+    /// <summary>
     /// 重新拉取：用用户 token 查 GitHub，更新快照与 lastRefreshedAt。
     /// </summary>
     [HttpPost("items/{id}/refresh")]
@@ -530,33 +578,11 @@ public sealed class PrReviewController : ControllerBase
 
         try
         {
-            await foreach (var delta in _summary.StreamSummaryAsync(item, modelInfo, CancellationToken.None))
-            {
-                // 模型信息一旦被 Start chunk 填充，立即推给前端（只推一次）
-                if (modelInfo.Captured)
-                {
-                    try
-                    {
-                        await WriteSseEventAsync("model", new
-                        {
-                            model = modelInfo.Model,
-                            platform = modelInfo.Platform,
-                            modelGroupName = modelInfo.ModelGroupName,
-                        });
-                    }
-                    catch (ObjectDisposedException) { break; }
-                    catch (OperationCanceledException) { break; }
-                    modelInfo.Captured = false;
-                }
-
-                fullMd.Append(delta);
-                try
-                {
-                    await WriteSseEventAsync("typing", new { text = delta });
-                }
-                catch (ObjectDisposedException) { break; }
-                catch (OperationCanceledException) { break; }
-            }
+            await StreamLlmWithHeartbeatAsync(
+                _summary.StreamSummaryAsync(item, modelInfo, CancellationToken.None),
+                modelInfo,
+                fullMd,
+                waitingLabel: "AI 正在思考（大模型首字延迟较高，请稍候）");
         }
         catch (Exception ex)
         {
@@ -656,32 +682,11 @@ public sealed class PrReviewController : ControllerBase
 
         try
         {
-            await foreach (var delta in _alignment.StreamAlignmentAsync(item, modelInfo, CancellationToken.None))
-            {
-                if (modelInfo.Captured)
-                {
-                    try
-                    {
-                        await WriteSseEventAsync("model", new
-                        {
-                            model = modelInfo.Model,
-                            platform = modelInfo.Platform,
-                            modelGroupName = modelInfo.ModelGroupName,
-                        });
-                    }
-                    catch (ObjectDisposedException) { break; }
-                    catch (OperationCanceledException) { break; }
-                    modelInfo.Captured = false;
-                }
-
-                fullMd.Append(delta);
-                try
-                {
-                    await WriteSseEventAsync("typing", new { text = delta });
-                }
-                catch (ObjectDisposedException) { break; }
-                catch (OperationCanceledException) { break; }
-            }
+            await StreamLlmWithHeartbeatAsync(
+                _alignment.StreamAlignmentAsync(item, modelInfo, CancellationToken.None),
+                modelInfo,
+                fullMd,
+                waitingLabel: "AI 正在分析对齐度（大模型首字延迟较高，请稍候）");
         }
         catch (Exception ex)
         {
@@ -841,6 +846,132 @@ public sealed class PrReviewController : ControllerBase
         });
         await Response.WriteAsync($"event: {eventType}\ndata: {json}\n\n");
         await Response.Body.FlushAsync();
+    }
+
+    /// <summary>
+    /// 流式消费 LLM 输出同时在首字到达前每 2 秒推送心跳 phase 事件。
+    ///
+    /// 为什么需要心跳：
+    /// OpenRouter/硅基流动等上游在调用 qwen / deepseek-thinking 等推理模型时，
+    /// 首字延迟（TTFT）可达 10~90 秒。这段时间 Gateway 既没有 Start chunk 也没有
+    /// text chunk，Controller 如果什么都不写，前端会卡在"正在总结..."静态文案，
+    /// 违反 rule.llm-visibility「禁止空白等待」原则。
+    ///
+    /// 实现要点：
+    /// - 后台任务每 2 秒发一个 phase=waiting 事件，携带 elapsed 秒数
+    /// - 收到第一个 delta 时立刻取消心跳、await drain、发 phase=streaming
+    /// - 所有 SSE 写入走 SemaphoreSlim 串行化，避免心跳和主循环的写入交织
+    /// - 心跳任务自身的异常一律吞掉，不能影响主流程；主循环的异常正常向外抛，
+    ///   由调用方的 try/catch 持久化错误状态
+    ///
+    /// 该方法在 finally 中保证清理 CancellationTokenSource + SemaphoreSlim，
+    /// 并 await 心跳任务结束，避免孤儿后台任务继续尝试写入已关闭的 Response。
+    /// </summary>
+    private async Task StreamLlmWithHeartbeatAsync(
+        IAsyncEnumerable<string> source,
+        PrReviewModelInfoHolder modelInfo,
+        StringBuilder accumulator,
+        string waitingLabel)
+    {
+        using var heartbeatCts = new CancellationTokenSource();
+        using var writeLock = new SemaphoreSlim(1, 1);
+        var firstChunk = true;
+        var start = DateTime.UtcNow;
+
+        async Task SafeWriteAsync(string eventType, object data)
+        {
+            await writeLock.WaitAsync();
+            try { await WriteSseEventAsync(eventType, data); }
+            finally { writeLock.Release(); }
+        }
+
+        // 心跳任务：首字到达前每 2 秒推送 phase 事件带 elapsed
+        Task RunHeartbeatAsync() => Task.Run(async () =>
+        {
+            try
+            {
+                while (!heartbeatCts.IsCancellationRequested)
+                {
+                    try { await Task.Delay(TimeSpan.FromSeconds(2), heartbeatCts.Token); }
+                    catch (OperationCanceledException) { return; }
+                    if (heartbeatCts.IsCancellationRequested) return;
+                    var elapsed = (int)(DateTime.UtcNow - start).TotalSeconds;
+                    try
+                    {
+                        await SafeWriteAsync("phase", new
+                        {
+                            phase = "waiting",
+                            message = $"{waitingLabel}　{elapsed}s",
+                            elapsedMs = elapsed * 1000,
+                        });
+                    }
+                    catch (ObjectDisposedException) { return; }
+                    catch (OperationCanceledException) { return; }
+                    catch { /* 心跳错误不能打断主流程 */ }
+                }
+            }
+            catch { /* swallow */ }
+        });
+
+        var heartbeatTask = RunHeartbeatAsync();
+
+        try
+        {
+            await foreach (var delta in source)
+            {
+                // 首次 chunk：停心跳、切 streaming 状态
+                if (firstChunk)
+                {
+                    firstChunk = false;
+                    heartbeatCts.Cancel();
+                    try { await heartbeatTask; } catch { /* ignore */ }
+                    try
+                    {
+                        await SafeWriteAsync("phase", new
+                        {
+                            phase = "streaming",
+                            message = "AI 正在输出…",
+                        });
+                    }
+                    catch (ObjectDisposedException) { return; }
+                    catch (OperationCanceledException) { return; }
+                }
+
+                // 模型信息一旦被 Start chunk 填充，立即推给前端（只推一次）
+                if (modelInfo.Captured)
+                {
+                    try
+                    {
+                        await SafeWriteAsync("model", new
+                        {
+                            model = modelInfo.Model,
+                            platform = modelInfo.Platform,
+                            modelGroupName = modelInfo.ModelGroupName,
+                        });
+                    }
+                    catch (ObjectDisposedException) { return; }
+                    catch (OperationCanceledException) { return; }
+                    modelInfo.Captured = false;
+                }
+
+                accumulator.Append(delta);
+                try
+                {
+                    await SafeWriteAsync("typing", new { text = delta });
+                }
+                catch (ObjectDisposedException) { return; }
+                catch (OperationCanceledException) { return; }
+            }
+        }
+        finally
+        {
+            // 兜底：无论 source 正常结束、被 break、还是抛异常，心跳都必须停
+            if (!heartbeatCts.IsCancellationRequested)
+            {
+                heartbeatCts.Cancel();
+            }
+            try { await heartbeatTask; } catch { /* ignore */ }
+        }
     }
 
     // =========================================================
