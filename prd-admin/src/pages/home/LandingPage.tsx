@@ -7,7 +7,25 @@ import { SocialProof } from './sections/SocialProof';
 import { CtaFooter } from './sections/CtaFooter';
 import { DownloadSection } from './sections/DownloadSection';
 import { LibrarySection } from './sections/LibrarySection';
+import { SignatureCinema } from './sections/SignatureCinema';
 import { StarfieldBackground } from './components/StarfieldBackground';
+
+/**
+ * 七幕场景色编排：每一个 section 进入视口时，Starfield 的 themeColor 会切换，
+ * 粒子宇宙的色温随叙事流动。这是"动态 ≠ 各自循环，动态 = 滚动驱动"的实现。
+ */
+type SceneColor = [number, number, number] | undefined;
+
+const SCENE_COLORS: Record<string, SceneColor> = {
+  hero: [110, 228, 255],            // 冷蓝：宇宙远景
+  showcase: undefined,               // 交给 showcase 内部的 agent hover 色决定
+  cinema: [14, 30, 50],              // 深蓝黑：电影时刻，背景退场
+  library: [167, 139, 250],          // 紫：智识殿堂
+  features: [110, 228, 255],         // 冷蓝回归
+  testimonials: [241, 245, 249],     // 冷白：证据
+  download: [167, 139, 250],         // 紫
+  cta: [244, 63, 94],                // 玫瑰：最终收束（唯一暖色出现）
+};
 
 // MAP Logo component using official favicon
 function MapLogo({ className = 'w-10 h-10' }: { className?: string }) {
@@ -42,40 +60,52 @@ export default function LandingPage() {
   const navigate = useNavigate();
   const mainRef = useRef<HTMLDivElement>(null);
   const [activeAgentIndex, setActiveAgentIndex] = useState(0);
-  const [isInShowcase, setIsInShowcase] = useState(false);
+  const [activeScene, setActiveScene] = useState<string>('hero');
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
-  // Track scroll position to determine if we're in the showcase section
+  // 滚动场景编排：用 IntersectionObserver 追踪哪一幕占据视口中心
   useEffect(() => {
-    const handleScroll = () => {
-      const showcase = document.getElementById('agent-showcase');
-      if (showcase) {
-        const rect = showcase.getBoundingClientRect();
-        const windowHeight = window.innerHeight;
-        // Consider "in showcase" when the section is more than 30% visible
-        const isVisible = rect.top < windowHeight * 0.7 && rect.bottom > windowHeight * 0.3;
-        setIsInShowcase(isVisible);
-      }
-    };
+    const ids = ['hero', 'showcase', 'cinema', 'library', 'features', 'testimonials', 'download', 'cta'];
+    const elements = ids
+      .map((id) => ({ id, el: document.getElementById(id) }))
+      .filter((item): item is { id: string; el: HTMLElement } => item.el !== null);
 
-    window.addEventListener('scroll', handleScroll, { passive: true });
-    handleScroll(); // Initial check
-    return () => window.removeEventListener('scroll', handleScroll);
+    if (elements.length === 0) return;
+
+    // rootMargin 设为上下 -40%，只有当 section 占据视口中段 20% 时才算"激活"
+    const observer = new IntersectionObserver(
+      (entries) => {
+        const visible = entries.filter((e) => e.isIntersecting);
+        if (visible.length > 0) {
+          // 选择最靠近视口中心的那个
+          const best = visible.reduce((prev, curr) =>
+            Math.abs(curr.boundingClientRect.top) < Math.abs(prev.boundingClientRect.top) ? curr : prev,
+          );
+          const id = (best.target as HTMLElement).id;
+          if (id) setActiveScene(id);
+        }
+      },
+      { rootMargin: '-40% 0px -40% 0px', threshold: 0 },
+    );
+
+    elements.forEach(({ el }) => observer.observe(el));
+    return () => observer.disconnect();
   }, []);
 
-  // Get current theme color based on scroll position
-  const themeColor = isInShowcase
-    ? parseGlowColor(agents[activeAgentIndex].glowColor)
-    : undefined; // undefined = use default indigo color
+  // 场景色：showcase 幕用 agent hover 色，其他幕用 SCENE_COLORS 里的预设
+  const themeColor: SceneColor =
+    activeScene === 'showcase'
+      ? parseGlowColor(agents[activeAgentIndex].glowColor)
+      : SCENE_COLORS[activeScene];
 
   const handleGetStarted = () => {
     navigate('/login');
   };
 
   const handleWatchDemo = () => {
-    // Scroll to agent showcase
-    const showcase = document.getElementById('agent-showcase');
-    showcase?.scrollIntoView({ behavior: 'smooth' });
+    // "观看片花" CTA 滚到 Signature Cinema（幕 4）— 与按钮标签保持语义一致
+    const cinema = document.getElementById('cinema');
+    cinema?.scrollIntoView({ behavior: 'smooth' });
   };
 
   const handleContact = () => {
@@ -113,17 +143,17 @@ export default function LandingPage() {
 
             {/* Nav links - desktop */}
             <div className="hidden md:flex items-center gap-8">
-              <a href="#agent-showcase" className="text-sm text-white/65 hover:text-white transition-colors">
+              <a href="#showcase" className="text-sm text-white/65 hover:text-white transition-colors">
                 产品
+              </a>
+              <a href="#cinema" className="text-sm text-white/65 hover:text-white transition-colors">
+                片花
               </a>
               <a href="#library" className="text-sm text-white/65 hover:text-white transition-colors">
                 智识殿堂
               </a>
               <a href="#features" className="text-sm text-white/65 hover:text-white transition-colors">
                 功能
-              </a>
-              <a href="#testimonials" className="text-sm text-white/65 hover:text-white transition-colors">
-                案例
               </a>
               <a href="#download" className="text-sm text-white/65 hover:text-white transition-colors">
                 下载
@@ -194,10 +224,10 @@ export default function LandingPage() {
             {/* Nav links */}
             <nav className="px-6 pb-6 space-y-1">
               {[
-                { label: '产品', href: '#agent-showcase' },
+                { label: '产品', href: '#showcase' },
+                { label: '片花', href: '#cinema' },
                 { label: '智识殿堂', href: '#library' },
                 { label: '功能', href: '#features' },
-                { label: '案例', href: '#testimonials' },
                 { label: '下载', href: '#download' },
                 { label: '文档', href: 'https://github.com/inernoro/prd_agent' },
               ].map((item) => (
@@ -232,18 +262,25 @@ export default function LandingPage() {
         </div>
       )}
 
-      {/* Hero section */}
-      <HeroSection onGetStarted={handleGetStarted} onWatchDemo={handleWatchDemo} />
+      {/* 幕 1 · Hero — Cosmic Overture */}
+      <div id="hero">
+        <HeroSection onGetStarted={handleGetStarted} onWatchDemo={handleWatchDemo} />
+      </div>
 
-      {/* Agent showcase */}
-      <div id="agent-showcase">
+      {/* 幕 3 · Agent Constellation（P1 将升级为非对称 Bento） */}
+      <div id="showcase">
         <AgentShowcase
           activeIndex={activeAgentIndex}
           onIndexChange={setActiveAgentIndex}
         />
       </div>
 
-      {/* Library / Public knowledge bases */}
+      {/* 幕 4 · Signature Cinema — 电影时刻（视频位预留，当前降级为海报 + 即将上线） */}
+      <div id="cinema">
+        <SignatureCinema />
+      </div>
+
+      {/* 幕 6 · Ecosystem — 智识殿堂 */}
       <div id="library">
         <LibrarySection />
       </div>
@@ -253,16 +290,20 @@ export default function LandingPage() {
         <FeatureBento />
       </div>
 
-      {/* Social proof & testimonials */}
+      {/* 幕 5 · Evidence — Social proof */}
       <div id="testimonials">
         <SocialProof />
       </div>
 
       {/* Download section */}
-      <DownloadSection />
+      <div id="download">
+        <DownloadSection />
+      </div>
 
-      {/* CTA footer */}
-      <CtaFooter onGetStarted={handleGetStarted} onContact={handleContact} />
+      {/* 幕 7 · Final Call */}
+      <div id="cta">
+        <CtaFooter onGetStarted={handleGetStarted} onContact={handleContact} />
+      </div>
     </div>
   );
 }
