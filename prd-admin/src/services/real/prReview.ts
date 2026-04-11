@@ -51,6 +51,15 @@ export interface PrAlignmentReportDto {
   error?: string | null;
 }
 
+export interface PrSummaryReportDto {
+  headline?: string | null;
+  markdown: string;
+  model?: string | null;
+  durationMs: number;
+  createdAt: string;
+  error?: string | null;
+}
+
 export interface PrReviewItemDto {
   id: string;
   owner: string;
@@ -60,6 +69,7 @@ export interface PrReviewItemDto {
   note?: string | null;
   snapshot?: PrReviewSnapshotDto | null;
   alignmentReport?: PrAlignmentReportDto | null;
+  summaryReport?: PrSummaryReportDto | null;
   lastRefreshedAt?: string | null;
   lastRefreshError?: string | null;
   createdAt: string;
@@ -168,6 +178,24 @@ export async function deletePrReviewItem(id: string): Promise<ApiResponse<{ dele
   return apiRequest(api.prReview.items.delete(id), {
     method: 'DELETE',
   });
+}
+
+/**
+ * 档 1：获取已缓存的 AI 变更摘要（无则返回 summary: null）。
+ */
+export async function getPrReviewSummary(
+  id: string,
+): Promise<ApiResponse<{ summary: PrSummaryReportDto | null }>> {
+  return apiRequest<{ summary: PrSummaryReportDto | null }>(
+    api.prReview.items.ai.summary(id),
+  );
+}
+
+/**
+ * 档 1：SSE 端点 URL，前端通过 useSseStream 订阅。
+ */
+export function getPrReviewSummaryStreamUrl(id: string): string {
+  return api.prReview.items.ai.summaryStream(id);
 }
 
 /**

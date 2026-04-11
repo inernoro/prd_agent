@@ -948,6 +948,7 @@ builder.Services.AddHttpClient("GitHubApi", client =>
 builder.Services.AddScoped<PrdAgent.Api.Services.PrReview.GitHubOAuthService>();
 builder.Services.AddScoped<PrdAgent.Api.Services.PrReview.GitHubPrClient>();
 builder.Services.AddScoped<PrdAgent.Api.Services.PrReview.PrAlignmentService>();
+builder.Services.AddScoped<PrdAgent.Api.Services.PrReview.PrSummaryService>();
 // 注册自动化引擎（需要在 WebhookNotificationService 之前注册）
 builder.Services.AddScoped<IActionExecutor, PrdAgent.Infrastructure.Services.Automation.WebhookActionExecutor>();
 builder.Services.AddScoped<IActionExecutor, PrdAgent.Infrastructure.Services.Automation.AdminNotificationActionExecutor>();

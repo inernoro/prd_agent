@@ -36,6 +36,12 @@ public class PrReviewItem
     /// </summary>
     public AlignmentReport? AlignmentReport { get; set; }
 
+    /// <summary>
+    /// 最近一次 AI 变更摘要结果（最新一次覆盖旧的，不做历史）。
+    /// 为空表示还没跑过 AI 摘要。
+    /// </summary>
+    public SummaryReport? SummaryReport { get; set; }
+
     /// <summary>最近一次刷新成功时间</summary>
     public DateTime? LastRefreshedAt { get; set; }
 
@@ -121,6 +127,32 @@ public class PrFileSummary
     public int Additions { get; set; }
     public int Deletions { get; set; }
     public string? Patch { get; set; } // unified diff 片段，可能为 null（二进制文件）
+}
+
+/// <summary>
+/// AI 变更摘要结果。档 1 —— 30 秒看懂一个 PR 在做什么。
+/// 输出是 Markdown 正文（含"一句话 / 关键改动 / 主要影响 / 审查建议"四节），
+/// 前端按章节渲染，不做任何分数抽取。
+/// </summary>
+public class SummaryReport
+{
+    /// <summary>LLM 原始 Markdown 输出</summary>
+    public string Markdown { get; set; } = string.Empty;
+
+    /// <summary>一句话摘要（从 Markdown 里抽出便于列表页展示）</summary>
+    public string? Headline { get; set; }
+
+    /// <summary>本次分析用的模型 ID（日志 & 可观测性）</summary>
+    public string? Model { get; set; }
+
+    /// <summary>分析耗时（毫秒）</summary>
+    public long DurationMs { get; set; }
+
+    /// <summary>生成时间</summary>
+    public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+
+    /// <summary>错误信息（失败时有值）</summary>
+    public string? Error { get; set; }
 }
 
 /// <summary>

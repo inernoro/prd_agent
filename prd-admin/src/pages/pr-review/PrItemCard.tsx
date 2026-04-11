@@ -11,6 +11,7 @@ import {
 } from 'lucide-react';
 import { usePrReviewStore } from './usePrReviewStore';
 import { AlignmentPanel } from './AlignmentPanel';
+import { SummaryPanel } from './SummaryPanel';
 import type { PrReviewItemDto, PrReviewState } from '@/services/real/prReview';
 
 interface Props {
@@ -174,8 +175,13 @@ export function PrItemCard({ item }: Props) {
             />
           </div>
 
-          {/* AI 对齐度检查 */}
+          {/* AI 变更摘要（档 1）*/}
           <div className="mt-4">
+            <SummaryPanel itemId={item.id} cached={item.summaryReport} />
+          </div>
+
+          {/* AI 对齐度检查（档 3）*/}
+          <div className="mt-3">
             <AlignmentPanel itemId={item.id} cached={item.alignmentReport} />
           </div>
 

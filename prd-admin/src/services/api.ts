@@ -390,6 +390,9 @@ export const api = {
       updateNote: (id: string) => `/api/pr-review/items/${id}/note`,
       delete: (id: string) => `/api/pr-review/items/${id}`,
       ai: {
+        // 档 1 变更摘要
+        summary: (id: string) => `/api/pr-review/items/${id}/ai/summary`,
+        summaryStream: (id: string) => `/api/pr-review/items/${id}/ai/summary/stream`,
         // 档 3 对齐度检查
         alignment: (id: string) => `/api/pr-review/items/${id}/ai/alignment`,
         alignmentStream: (id: string) => `/api/pr-review/items/${id}/ai/alignment/stream`,

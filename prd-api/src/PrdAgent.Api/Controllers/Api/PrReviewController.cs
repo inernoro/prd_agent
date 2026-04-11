@@ -38,6 +38,7 @@ public sealed class PrReviewController : ControllerBase
     private readonly GitHubOAuthService _oauth;
     private readonly GitHubPrClient _github;
     private readonly PrAlignmentService _alignment;
+    private readonly PrSummaryService _summary;
     private readonly IConfiguration _config;
     private readonly ILogger<PrReviewController> _logger;
 
@@ -46,6 +47,7 @@ public sealed class PrReviewController : ControllerBase
         GitHubOAuthService oauth,
         GitHubPrClient github,
         PrAlignmentService alignment,
+        PrSummaryService summary,
         IConfiguration config,
         ILogger<PrReviewController> logger)
     {
@@ -53,6 +55,7 @@ public sealed class PrReviewController : ControllerBase
         _oauth = oauth;
         _github = github;
         _alignment = alignment;
+        _summary = summary;
         _config = config;
         _logger = logger;
     }
@@ -469,6 +472,24 @@ public sealed class PrReviewController : ControllerBase
     // =========================================================
 
     /// <summary>
+    /// 读取 PR 记录最近一次的 AI 变更摘要。无则返回 null。
+    /// </summary>
+    [HttpGet("items/{id}/ai/summary")]
+    [Authorize]
+    public async Task<IActionResult> GetSummary(string id, CancellationToken ct)
+    {
+        var userId = this.GetRequiredUserId();
+        var item = await _db.PrReviewItems
+            .Find(x => x.Id == id && x.UserId == userId)
+            .FirstOrDefaultAsync(ct);
+        if (item == null)
+        {
+            return NotFound(ApiResponse<object>.Fail(PrReviewErrorCodes.PR_ITEM_NOT_FOUND, "PR 记录不存在或不属于你"));
+        }
+        return Ok(ApiResponse<object>.Ok(new { summary = item.SummaryReport }));
+    }
+
+    /// <summary>
     /// 读取 PR 记录最近一次的 AI 对齐度报告。无则返回 null。
     /// </summary>
     [HttpGet("items/{id}/ai/alignment")]
@@ -487,7 +508,87 @@ public sealed class PrReviewController : ControllerBase
     }
 
     /// <summary>
-    /// 流式生成 PR 对齐度报告（SSE）。
+    /// 流式生成 PR 变更摘要（档 1）。事件协议与 alignment 相同。
+    /// </summary>
+    [HttpGet("items/{id}/ai/summary/stream")]
+    [Authorize]
+    [Produces("text/event-stream")]
+    public async Task StreamSummary(string id, CancellationToken ct)
+    {
+        PrepareSseHeaders();
+        var userId = this.GetRequiredUserId();
+
+        var item = await EnsureSnapshotReadyAsync(id, userId, "总结");
+        if (item == null) return;
+
+        await WriteSseEventAsync("phase", new { phase = "analyzing", message = "AI 正在总结 PR 变更..." });
+
+        var fullMd = new StringBuilder();
+        var startMs = DateTime.UtcNow;
+
+        try
+        {
+            await foreach (var delta in _summary.StreamSummaryAsync(item, CancellationToken.None))
+            {
+                fullMd.Append(delta);
+                try
+                {
+                    await WriteSseEventAsync("typing", new { text = delta });
+                }
+                catch (ObjectDisposedException) { break; }
+                catch (OperationCanceledException) { break; }
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "PrReview summary stream failed");
+            try { await WriteSseEventAsync("error", new { message = "AI 摘要生成失败：" + ex.Message }); }
+            catch { /* 客户端已断 */ }
+
+            await _db.PrReviewItems.UpdateOneAsync(
+                x => x.Id == id && x.UserId == userId,
+                Builders<PrReviewItem>.Update.Set(x => x.SummaryReport, new SummaryReport
+                {
+                    Markdown = fullMd.ToString(),
+                    Error = ex.Message,
+                    CreatedAt = DateTime.UtcNow,
+                    DurationMs = (long)(DateTime.UtcNow - startMs).TotalMilliseconds,
+                }),
+                cancellationToken: CancellationToken.None);
+            return;
+        }
+
+        var markdown = fullMd.ToString();
+        var headline = PrSummaryService.ParseHeadline(markdown);
+        var duration = (long)(DateTime.UtcNow - startMs).TotalMilliseconds;
+
+        var report = new SummaryReport
+        {
+            Markdown = markdown,
+            Headline = headline,
+            Model = null,
+            DurationMs = duration,
+            CreatedAt = DateTime.UtcNow,
+            Error = null,
+        };
+
+        await _db.PrReviewItems.UpdateOneAsync(
+            x => x.Id == id && x.UserId == userId,
+            Builders<PrReviewItem>.Update
+                .Set(x => x.SummaryReport, report)
+                .Set(x => x.UpdatedAt, DateTime.UtcNow),
+            cancellationToken: CancellationToken.None);
+
+        try
+        {
+            await WriteSseEventAsync("result", new { headline, markdown });
+            await WriteSseEventAsync("phase", new { phase = "done", message = "摘要完成" });
+        }
+        catch { /* 客户端已断 */ }
+    }
+
+    /// <summary>
+    /// 流式生成 PR 对齐度报告（档 3，SSE）。
     ///
     /// 事件协议：
     ///   event: phase   data: { phase: "preparing"|"fetching"|"analyzing"|"done", message: "..." }
@@ -500,66 +601,11 @@ public sealed class PrReviewController : ControllerBase
     [Produces("text/event-stream")]
     public async Task StreamAlignment(string id, CancellationToken ct)
     {
-        Response.ContentType = "text/event-stream";
-        Response.Headers.CacheControl = "no-cache";
-        Response.Headers.Connection = "keep-alive";
-        Response.Headers["X-Accel-Buffering"] = "no"; // nginx 禁缓冲
-
+        PrepareSseHeaders();
         var userId = this.GetRequiredUserId();
 
-        var item = await _db.PrReviewItems
-            .Find(x => x.Id == id && x.UserId == userId)
-            .FirstOrDefaultAsync(CancellationToken.None);
-
-        if (item == null)
-        {
-            await WriteSseEventAsync("error", new { message = "PR 记录不存在或不属于你", code = PrReviewErrorCodes.PR_ITEM_NOT_FOUND });
-            return;
-        }
-
-        await WriteSseEventAsync("phase", new { phase = "preparing", message = "正在准备上下文..." });
-
-        // 如果当前快照没有 files 或 body（旧数据），尝试刷新一次拿全量
-        if (item.Snapshot == null || item.Snapshot.Files.Count == 0 || string.IsNullOrEmpty(item.Snapshot.Body))
-        {
-            await WriteSseEventAsync("phase", new { phase = "fetching", message = "从 GitHub 拉取 PR 描述和文件变更..." });
-            try
-            {
-                var accessToken = await ResolveUserTokenAsync(userId, CancellationToken.None);
-                var fresh = await _github.FetchPullRequestAsync(
-                    accessToken, item.Owner, item.Repo, item.Number, includeFilesAndIssue: true, CancellationToken.None);
-
-                await _db.PrReviewItems.UpdateOneAsync(
-                    x => x.Id == id && x.UserId == userId,
-                    Builders<PrReviewItem>.Update
-                        .Set(x => x.Snapshot, fresh)
-                        .Set(x => x.LastRefreshedAt, DateTime.UtcNow)
-                        .Set(x => x.LastRefreshError, (string?)null)
-                        .Set(x => x.UpdatedAt, DateTime.UtcNow),
-                    cancellationToken: CancellationToken.None);
-                item.Snapshot = fresh;
-            }
-            catch (PrReviewException ex)
-            {
-                await WriteSseEventAsync("error", new { message = ex.Message, code = ex.Code });
-                return;
-            }
-            catch (Exception ex)
-            {
-                _logger.LogWarning(ex, "PrReview alignment: failed to refresh snapshot before analysis");
-                await WriteSseEventAsync("error", new { message = "拉取 PR 数据失败：" + ex.Message });
-                return;
-            }
-        }
-
-        if (item.Snapshot == null || item.Snapshot.Files.Count == 0)
-        {
-            await WriteSseEventAsync("error", new
-            {
-                message = "无法拉取 PR 文件变更，可能是 GitHub API 限流或权限不足。请稍后再试。",
-            });
-            return;
-        }
+        var item = await EnsureSnapshotReadyAsync(id, userId, "对齐分析");
+        if (item == null) return;
 
         await WriteSseEventAsync("phase", new { phase = "analyzing", message = "AI 正在对比描述与代码..." });
 
@@ -627,6 +673,80 @@ public sealed class PrReviewController : ControllerBase
             await WriteSseEventAsync("phase", new { phase = "done", message = "分析完成" });
         }
         catch { /* 客户端已断 */ }
+    }
+
+    /// <summary>
+    /// 共享的 SSE 响应头设置。
+    /// </summary>
+    private void PrepareSseHeaders()
+    {
+        Response.ContentType = "text/event-stream";
+        Response.Headers.CacheControl = "no-cache";
+        Response.Headers.Connection = "keep-alive";
+        Response.Headers["X-Accel-Buffering"] = "no"; // nginx 禁缓冲
+    }
+
+    /// <summary>
+    /// 取当前用户的 PR 记录，必要时刷新快照到 GitHub 最新（body + files + issue）。
+    /// 返回 null 表示过程中已向 SSE 写过 error 事件，调用方直接 return 即可。
+    /// </summary>
+    private async Task<PrReviewItem?> EnsureSnapshotReadyAsync(string id, string userId, string actionLabel)
+    {
+        var item = await _db.PrReviewItems
+            .Find(x => x.Id == id && x.UserId == userId)
+            .FirstOrDefaultAsync(CancellationToken.None);
+
+        if (item == null)
+        {
+            await WriteSseEventAsync("error", new { message = "PR 记录不存在或不属于你", code = PrReviewErrorCodes.PR_ITEM_NOT_FOUND });
+            return null;
+        }
+
+        await WriteSseEventAsync("phase", new { phase = "preparing", message = "正在准备上下文..." });
+
+        // 如果当前快照没有 files 或 body（旧数据），尝试刷新一次拿全量
+        if (item.Snapshot == null || item.Snapshot.Files.Count == 0 || string.IsNullOrEmpty(item.Snapshot.Body))
+        {
+            await WriteSseEventAsync("phase", new { phase = "fetching", message = "从 GitHub 拉取 PR 描述和文件变更..." });
+            try
+            {
+                var accessToken = await ResolveUserTokenAsync(userId, CancellationToken.None);
+                var fresh = await _github.FetchPullRequestAsync(
+                    accessToken, item.Owner, item.Repo, item.Number, includeFilesAndIssue: true, CancellationToken.None);
+
+                await _db.PrReviewItems.UpdateOneAsync(
+                    x => x.Id == id && x.UserId == userId,
+                    Builders<PrReviewItem>.Update
+                        .Set(x => x.Snapshot, fresh)
+                        .Set(x => x.LastRefreshedAt, DateTime.UtcNow)
+                        .Set(x => x.LastRefreshError, (string?)null)
+                        .Set(x => x.UpdatedAt, DateTime.UtcNow),
+                    cancellationToken: CancellationToken.None);
+                item.Snapshot = fresh;
+            }
+            catch (PrReviewException ex)
+            {
+                await WriteSseEventAsync("error", new { message = ex.Message, code = ex.Code });
+                return null;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "PrReview {Action}: failed to refresh snapshot", actionLabel);
+                await WriteSseEventAsync("error", new { message = "拉取 PR 数据失败：" + ex.Message });
+                return null;
+            }
+        }
+
+        if (item.Snapshot == null || item.Snapshot.Files.Count == 0)
+        {
+            await WriteSseEventAsync("error", new
+            {
+                message = "无法拉取 PR 文件变更，可能是 GitHub API 限流或权限不足。请稍后再试。",
+            });
+            return null;
+        }
+
+        return item;
     }
 
     /// <summary>
@@ -751,6 +871,15 @@ public sealed class PrReviewController : ControllerBase
             durationMs = item.AlignmentReport.DurationMs,
             createdAt = item.AlignmentReport.CreatedAt,
             error = item.AlignmentReport.Error,
+        },
+        summaryReport = item.SummaryReport == null ? null : new
+        {
+            headline = item.SummaryReport.Headline,
+            markdown = item.SummaryReport.Markdown,
+            model = item.SummaryReport.Model,
+            durationMs = item.SummaryReport.DurationMs,
+            createdAt = item.SummaryReport.CreatedAt,
+            error = item.SummaryReport.Error,
         },
         lastRefreshedAt = item.LastRefreshedAt,
         lastRefreshError = item.LastRefreshError,
