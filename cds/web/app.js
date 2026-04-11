@@ -893,17 +893,35 @@ function renderCapacityBadge() {
 
   // ── Cluster-aware display (P1 #4) ──
   //
-  // When the cluster has more than just the embedded master, we switch the
-  // badge from "local container slots" to "cluster-wide capacity" so the
-  // header immediately reflects that this is not a solo machine anymore.
-  // The cluster count is derived from the SSE payload's `executors` list.
+  // Important: once the dashboard learns about a cluster (cdsMode is
+  // 'scheduler' OR there's at least one remote executor in state), we
+  // NEVER fall back to the local container count. The local view uses a
+  // different formula ((memGB-1)*2 counting containers) while the cluster
+  // view uses a per-node formula (floor(memMB/2048) counting branches).
+  // Flickering between them gives the illusion "I added a node and the
+  // capacity SHRANK", which is what the user reported. Stay sticky on
+  // the cluster view once we're in it.
   const remoteCount = (executors || []).filter(e => (e.role || 'remote') !== 'embedded').length;
-  const onlineRemote = (executors || []).filter(e => (e.role || 'remote') !== 'embedded' && e.status === 'online').length;
-  const isCluster = remoteCount > 0 && clusterCapacity != null;
+  const isCluster = cdsMode === 'scheduler' || remoteCount > 0;
 
   if (isCluster) {
-    // Cluster display: show node count + free ratio across ALL online nodes.
-    el.classList.remove('hidden');
+    // Wait for the first SSE tick to deliver real cluster data before we
+    // render anything — otherwise we'd briefly show 0/0 at page load.
+    if (!clusterCapacity) {
+      // Show a neutral placeholder so the header doesn't flicker
+      el.classList.remove('hidden');
+      el.dataset.tier = 'blue';
+      el.dataset.cluster = '1';
+      el.setAttribute('title', '集群模式加载中...');
+      el.innerHTML = `
+        <span class="cap-battery">
+          <span class="cap-battery-fill" style="width:100%"></span>
+        </span>
+        <span class="cap-label">集群 ...</span>
+      `;
+      return;
+    }
+
     const cap = clusterCapacity;
     const maxBranches = cap?.total?.maxBranches || 0;
     const usedBranches = cap?.used?.branches || 0;
@@ -918,21 +936,24 @@ function renderCapacityBadge() {
     else if (freeRatio > 0)   tier = 'orange';
     else                      tier = 'red';
 
-    const nodesTotal = 1 + remoteCount; // embedded + remotes
+    const nodesTotal = (cap?.nodes?.length) || 0;
     const nodesOnline = (cap?.online || 0);
+    // Label: "2/2 节点 · 47/49" — unit "分支槽" is implied by the label
+    // structure. Tooltip spells it out for new users.
     const label = `${nodesOnline}/${nodesTotal} 节点 · ${free}/${maxBranches}`;
 
     el.dataset.tier = tier;
     el.dataset.over = '0';
     el.dataset.cluster = '1';
+    el.classList.remove('hidden');
     el.setAttribute('title',
       `集群模式 (${cdsMode})\n` +
       `在线节点: ${nodesOnline}/${nodesTotal}\n` +
-      `总内存: ${cap?.total?.memoryMB || 0} MB\n` +
+      `分支槽: ${free}/${maxBranches} 空闲 (每个分支 ≈ 2GB 内存)\n` +
+      `总内存: ${Math.round((cap?.total?.memoryMB || 0) / 1024)} GB\n` +
       `总 CPU: ${cap?.total?.cpuCores || 0} 核\n` +
-      `分支槽: ${usedBranches}/${maxBranches} 已用\n` +
-      `空闲: ${freePercent}%\n` +
-      `点击查看调度器详情`,
+      `空闲率: ${freePercent}%\n` +
+      `点击查看每台节点的详情`,
     );
 
     el.innerHTML = `
@@ -987,10 +1008,26 @@ function renderCapacityBadge() {
 
 /**
  * Popover with detailed capacity + scheduler state.
- * Fetches /api/scheduler/state on click (Phase 1 API).
+ *
+ * Renders two very different layouts depending on mode:
+ *   - Cluster mode: per-node cards showing each executor's capacity and
+ *     load, plus cluster totals at the top. Uses the same data source as
+ *     the cluster settings modal (clusterCapacity from state-stream SSE).
+ *   - Single-node mode: the original local container count + scheduler
+ *     warm-pool state, fetched from /api/scheduler/state.
  */
 async function showCapacityDetails(event) {
   event.stopPropagation();
+
+  const remoteCount = (executors || []).filter(e => (e.role || 'remote') !== 'embedded').length;
+  const isCluster = cdsMode === 'scheduler' || remoteCount > 0;
+
+  if (isCluster && clusterCapacity) {
+    renderClusterCapacityPopover();
+    return;
+  }
+
+  // ── Single-node (pre-existing) view ──
   const max = containerCapacity.maxContainers || 0;
   const current = containerCapacity.runningContainers || 0;
   const mem = containerCapacity.totalMemGB || 0;
@@ -1018,7 +1055,7 @@ async function showCapacityDetails(event) {
       ${over ? `<div class="cap-pop-warn">⚠ 超售 ${current - max} 个容器，建议启用 scheduler 或手动停止老分支以避免 OOM。</div>` : ''}
       <div id="capPopScheduler">${schedulerHtml}</div>
       <div class="cap-pop-help">
-        容量公式: <code>max = (totalMemGB - 1) × 2</code><br>
+        容量公式: <code>max = (totalMemGB - 1) × 2</code>（容器槽，按 Docker 容器计数）<br>
         scheduler 启用后会按 LRU 自动驱逐最久未访问的分支。
       </div>
     </div>
@@ -1061,6 +1098,111 @@ async function showCapacityDetails(event) {
       target.innerHTML = `<div class="cap-pop-row"><em style="color:#f85149">Scheduler 查询失败: ${escapeHtml(err.message || String(err))}</em></div>`;
     }
   }
+}
+
+/**
+ * Cluster-wide capacity popover. Rendered when the user clicks the header
+ * badge while the dashboard is in cluster mode. Shows aggregate numbers
+ * at the top and each node as a card with its own memory/CPU/branch bars.
+ */
+function renderClusterCapacityPopover() {
+  const cap = clusterCapacity;
+  const nodes = cap?.nodes || [];
+  const totalMem = cap?.total?.memoryMB || 0;
+  const totalMemGB = Math.round(totalMem / 1024);
+  const totalCpu = cap?.total?.cpuCores || 0;
+  const totalBranches = cap?.total?.maxBranches || 0;
+  const usedBranches = cap?.used?.branches || 0;
+  const freeBranches = Math.max(0, totalBranches - usedBranches);
+  const freePercent = cap?.freePercent || 0;
+  const onlineCount = cap?.online || 0;
+  const offlineCount = cap?.offline || 0;
+
+  const nodeCards = nodes.map(n => {
+    const role = n.role || 'remote';
+    const status = n.status || 'unknown';
+    const nCap = n.capacity || { maxBranches: 0, memoryMB: 0, cpuCores: 0 };
+    const nLoad = n.load || { memoryUsedMB: 0, cpuPercent: 0 };
+    const memPct = nCap.memoryMB > 0 ? Math.round(nLoad.memoryUsedMB / nCap.memoryMB * 100) : 0;
+    const branchPct = nCap.maxBranches > 0 ? Math.round((n.branchCount || 0) / nCap.maxBranches * 100) : 0;
+    const memGB = (nLoad.memoryUsedMB / 1024).toFixed(1);
+    const totalGB = (nCap.memoryMB / 1024).toFixed(1);
+    const statusLabel = { online: '在线', offline: '离线', draining: '排空中' }[status] || status;
+    const roleIcon = role === 'embedded'
+      ? '<svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M8 .25a.75.75 0 01.673.418l1.882 3.815 4.21.612a.75.75 0 01.416 1.279l-3.046 2.97.719 4.192a.75.75 0 01-1.088.791L8 12.347l-3.766 1.98a.75.75 0 01-1.088-.79l.72-4.194L.818 6.374a.75.75 0 01.416-1.28l4.21-.611L7.327.668A.75.75 0 018 .25z"/></svg>'
+      : '<svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M2 2.75A2.75 2.75 0 014.75 0h6.5A2.75 2.75 0 0114 2.75v10.5A2.75 2.75 0 0111.25 16h-6.5A2.75 2.75 0 012 13.25V2.75zm2.75-1.25a1.25 1.25 0 00-1.25 1.25v10.5c0 .69.56 1.25 1.25 1.25h6.5c.69 0 1.25-.56 1.25-1.25V2.75c0-.69-.56-1.25-1.25-1.25h-6.5zM6 4.75A.75.75 0 016.75 4h2.5a.75.75 0 010 1.5h-2.5A.75.75 0 016 4.75zm0 3A.75.75 0 016.75 7h2.5a.75.75 0 010 1.5h-2.5A.75.75 0 016 7.75zm0 3a.75.75 0 01.75-.75h2.5a.75.75 0 010 1.5h-2.5a.75.75 0 01-.75-.75z"/></svg>';
+
+    return `
+      <div class="cluster-pop-node cluster-pop-node-${status}">
+        <div class="cluster-pop-node-head">
+          <span class="cluster-pop-node-icon">${roleIcon}</span>
+          <span class="cluster-pop-node-name">${esc(n.id)}</span>
+          <span class="cluster-pop-node-pill cluster-pop-status-${status}">${statusLabel}</span>
+        </div>
+        <div class="cluster-pop-node-sub">${esc(n.host || '?')} · ${nCap.cpuCores} CPU · ${totalGB} GB RAM · ${role === 'embedded' ? '本机' : '远程'}</div>
+        <div class="cluster-pop-node-bars">
+          <div class="cluster-pop-bar">
+            <div class="cluster-pop-bar-label">内存</div>
+            <div class="cluster-pop-bar-track"><div class="cluster-pop-bar-fill ${memPct > 85 ? 'danger' : memPct > 65 ? 'warn' : ''}" style="width:${Math.min(memPct, 100)}%"></div></div>
+            <div class="cluster-pop-bar-value">${memGB} / ${totalGB} GB</div>
+          </div>
+          <div class="cluster-pop-bar">
+            <div class="cluster-pop-bar-label">CPU</div>
+            <div class="cluster-pop-bar-track"><div class="cluster-pop-bar-fill ${nLoad.cpuPercent > 85 ? 'danger' : nLoad.cpuPercent > 65 ? 'warn' : ''}" style="width:${Math.min(nLoad.cpuPercent, 100)}%"></div></div>
+            <div class="cluster-pop-bar-value">${nLoad.cpuPercent}%</div>
+          </div>
+          <div class="cluster-pop-bar">
+            <div class="cluster-pop-bar-label">分支</div>
+            <div class="cluster-pop-bar-track"><div class="cluster-pop-bar-fill" style="width:${Math.min(branchPct, 100)}%"></div></div>
+            <div class="cluster-pop-bar-value">${n.branchCount || 0} / ${nCap.maxBranches}</div>
+          </div>
+        </div>
+      </div>
+    `;
+  }).join('');
+
+  openConfigModal('集群容量', `
+    <div class="cluster-pop">
+      <div class="cluster-pop-summary">
+        <div class="cluster-pop-stat">
+          <div class="cluster-pop-stat-label">节点</div>
+          <div class="cluster-pop-stat-value">
+            ${onlineCount}
+            <span class="cluster-pop-stat-hint">/ ${onlineCount + offlineCount} 在线</span>
+          </div>
+        </div>
+        <div class="cluster-pop-stat">
+          <div class="cluster-pop-stat-label">分支槽</div>
+          <div class="cluster-pop-stat-value">
+            ${freeBranches}
+            <span class="cluster-pop-stat-hint">/ ${totalBranches} 空闲</span>
+          </div>
+        </div>
+        <div class="cluster-pop-stat">
+          <div class="cluster-pop-stat-label">总内存</div>
+          <div class="cluster-pop-stat-value">${totalMemGB}<span class="cluster-pop-stat-hint"> GB</span></div>
+        </div>
+        <div class="cluster-pop-stat">
+          <div class="cluster-pop-stat-label">总 CPU</div>
+          <div class="cluster-pop-stat-value">${totalCpu}<span class="cluster-pop-stat-hint"> 核</span></div>
+        </div>
+        <div class="cluster-pop-stat">
+          <div class="cluster-pop-stat-label">空闲率</div>
+          <div class="cluster-pop-stat-value">${freePercent}<span class="cluster-pop-stat-hint">%</span></div>
+        </div>
+      </div>
+
+      <div class="cluster-pop-section-title">节点详情</div>
+      <div class="cluster-pop-nodes">
+        ${nodeCards}
+      </div>
+
+      <div class="cluster-pop-help">
+        单节点容量公式: <code>maxBranches = floor(memMB ÷ 2048)</code>（每分支约 2 GB 内存，含 DB + API + Admin 等服务栈）<br>
+        调度策略: <code>${esc(clusterStrategy)}</code>（在集群设置里切换）
+      </div>
+    </div>
+  `);
 }
 
 // (escapeHtml is defined later in the file and hoisted — reused by the popover above)
@@ -5771,11 +5913,14 @@ function renderBranchHostBadge(branch) {
 
 // ── Cluster node list (inside cluster settings modal) ──
 //
-// Renders all executors as stacked cards with live load bars and action
-// buttons. Separate from the old `renderExecutorPanel` which lives in the
-// main page between the branch picker and branch list — the modal version
-// is where users go when they explicitly click "集群设置", so it carries
-// the primary management UX.
+// Big-company-style node cards inspired by Vercel / Grafana / K8s
+// Dashboard:
+//   - Avatar-style role icon (star for master, rack for remote)
+//   - Large primary name + muted meta row
+//   - Ring-style progress indicators for memory / CPU / branch utilization
+//   - Status pill with colored background (not just a dot)
+//   - Hover lift + action buttons appear on hover
+//   - Offline cards visually recede with reduced opacity + subtle stripes
 function renderClusterNodeListHtml() {
   if (!executors || executors.length === 0) {
     return '<div class="cluster-node-empty">暂无节点（主节点尚未自注册 embedded master）</div>';
@@ -5789,65 +5934,108 @@ function renderClusterNodeListHtml() {
     const memGB = (load.memoryUsedMB / 1024).toFixed(1);
     const totalGB = (cap.memoryMB / 1024).toFixed(1);
     const branchCount = (node.branches && node.branches.length) || node.branchCount || 0;
+    const branchPct = cap.maxBranches > 0 ? Math.round(branchCount / cap.maxBranches * 100) : 0;
+    const cpuPct = Math.min(load.cpuPercent, 100);
     const isEmbedded = role === 'embedded';
 
-    // Drain / remove only make sense for remote online nodes. Embedded
-    // master can't be drained (it IS the master), and offline nodes can
-    // still be removed (GC cleans up later anyway).
+    // Short display name — strip the prefix so users see "vmi3221419" and
+    // "VM-0-17-ubuntu-9901" instead of the redundant "master-"/"executor-".
+    const displayName = node.id.replace(/^master-/, '').replace(/^executor-/, '');
+
+    // Actions: hidden embedded master, visible on hover for remote nodes
     const actions = isEmbedded
-      ? '<span class="cluster-node-badge">本机</span>'
+      ? ''
       : `
-        ${status === 'online' ? `<button class="cluster-node-btn" onclick="drainExecutor('${esc(node.id)}')" title="标记为排空后，调度器不再派新分支">排空</button>` : ''}
-        <button class="cluster-node-btn danger" onclick="removeExecutor('${esc(node.id)}')" title="从集群移除此节点">踢出</button>
+        ${status === 'online' ? `
+          <button class="node-action-btn" onclick="drainExecutor('${esc(node.id)}')" title="排空: 调度器不再派新分支到这里">
+            <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 5h10M3 11h10"/><path d="M5 5v6M11 5v6"/></svg>
+            排空
+          </button>` : ''}
+        <button class="node-action-btn danger" onclick="removeExecutor('${esc(node.id)}')" title="踢出: 从集群移除此节点">
+          <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 5h10M6 5V3h4v2M5 5l1 8h4l1-8"/></svg>
+          踢出
+        </button>
       `;
 
-    // Explicit status label so users don't have to decode a colored dot.
-    // The user reported "节点2离线还是在线？不清晰" — a red dot alone was
-    // ambiguous, especially for users with color-vision differences. Now
-    // every node card has a text chip in the header that says 在线/离线/排空中.
-    const statusLabel = {
-      online: '在线',
-      offline: '离线',
-      draining: '排空中',
-    }[status] || status;
-    const statusClass = `cluster-node-status-${status}`;
+    const statusLabel = { online: '在线', offline: '离线', draining: '排空中' }[status] || status;
 
-    // Show the last-heartbeat age on offline cards so the user can see how
-    // long ago the node disappeared (instead of just "red dot").
+    // Compact role icon. Star = master, rack = remote executor.
+    const roleIcon = isEmbedded
+      ? '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2l2.5 7h7.5l-6 5 2.5 8-6.5-5-6.5 5 2.5-8-6-5h7.5z"/></svg>'
+      : '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><rect x="4" y="4" width="16" height="4" rx="1"/><rect x="4" y="11" width="16" height="4" rx="1"/><rect x="4" y="18" width="16" height="3" rx="1"/><circle cx="7" cy="6" r="0.5" fill="currentColor"/><circle cx="7" cy="13" r="0.5" fill="currentColor"/></svg>';
+
+    // Inline SVG ring meter — cleaner than a horizontal bar, works in
+    // small cards, stacked 3 across for the 3 key metrics.
+    const ringMeter = (label, pct, value, danger) => {
+      const safePct = Math.min(Math.max(pct || 0, 0), 100);
+      // Ring geometry: radius 16, circumference ~100.5
+      const circumference = 2 * Math.PI * 16;
+      const offset = circumference * (1 - safePct / 100);
+      const color = danger && safePct > 85 ? '#f85149' : safePct > 65 ? '#d29922' : '#3fb950';
+      return `
+        <div class="node-ring">
+          <svg width="48" height="48" viewBox="0 0 40 40">
+            <circle cx="20" cy="20" r="16" fill="none" stroke="rgba(139,148,158,0.15)" stroke-width="3"/>
+            <circle cx="20" cy="20" r="16" fill="none" stroke="${color}" stroke-width="3"
+                    stroke-linecap="round"
+                    stroke-dasharray="${circumference}"
+                    stroke-dashoffset="${offset}"
+                    transform="rotate(-90 20 20)"
+                    style="transition: stroke-dashoffset 0.6s ease"/>
+            <text x="20" y="22" text-anchor="middle" fill="currentColor"
+                  font-size="10" font-weight="600">${safePct}%</text>
+          </svg>
+          <div class="node-ring-label">${label}</div>
+          <div class="node-ring-value">${value}</div>
+        </div>
+      `;
+    };
+
+    // Last heartbeat age for offline hint
     let offlineHint = '';
     if (status === 'offline' && node.lastHeartbeat) {
       const agoMs = Date.now() - new Date(node.lastHeartbeat).getTime();
       const agoMin = Math.floor(agoMs / 60000);
-      const agoStr = agoMin < 1 ? '不到 1 分钟' : agoMin < 60 ? `${agoMin} 分钟前` : `${Math.floor(agoMin / 60)} 小时前`;
-      offlineHint = `<div class="cluster-node-offline-hint">⚠ 最后心跳 ${agoStr} · 可能节点已关机或网络不通，建议先确认再点"踢出"</div>`;
+      const agoStr = agoMin < 1 ? '不到 1 分钟前' : agoMin < 60 ? `${agoMin} 分钟前` : `${Math.floor(agoMin / 60)} 小时前`;
+      offlineHint = `
+        <div class="node-offline-banner">
+          <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M8 1.5a.75.75 0 01.75.75v6a.75.75 0 01-1.5 0v-6A.75.75 0 018 1.5zm0 9.75a1 1 0 100 2 1 1 0 000-2z"/></svg>
+          <span>最后心跳 ${agoStr}</span>
+          <span class="node-offline-advice">可能节点关机或网络不通</span>
+        </div>
+      `;
     }
 
     return `
-      <div class="cluster-node-card cluster-node-${status} cluster-node-role-${role}">
-        <div class="cluster-node-header">
-          <span class="cluster-node-dot" data-status="${status}"></span>
-          <span class="cluster-node-id">${esc(node.id)}</span>
-          <span class="cluster-node-status-chip ${statusClass}">${statusLabel}</span>
-          <span class="cluster-node-meta">${esc(node.host || '?')}:${node.port || '?'}</span>
-          <div class="cluster-node-actions">${actions}</div>
+      <div class="node-card node-card-${status} node-card-role-${role}">
+        <div class="node-card-header">
+          <div class="node-card-avatar node-card-avatar-${role}">
+            ${roleIcon}
+          </div>
+          <div class="node-card-title">
+            <div class="node-card-name">
+              ${esc(displayName)}
+              ${isEmbedded ? '<span class="node-card-self-tag">本机</span>' : ''}
+            </div>
+            <div class="node-card-meta">
+              <span class="node-card-meta-item">${esc(node.host || '?')}:${node.port || '?'}</span>
+              <span class="node-card-meta-dot">·</span>
+              <span class="node-card-meta-item">${cap.cpuCores} CPU</span>
+              <span class="node-card-meta-dot">·</span>
+              <span class="node-card-meta-item">${totalGB} GB</span>
+            </div>
+          </div>
+          <div class="node-card-status node-card-status-${status}">
+            <span class="node-card-status-dot"></span>
+            ${statusLabel}
+          </div>
+          ${actions ? `<div class="node-card-actions">${actions}</div>` : ''}
         </div>
         ${offlineHint}
-        <div class="cluster-node-metrics">
-          <div class="cluster-node-metric">
-            <span class="metric-label">内存</span>
-            <div class="metric-bar"><div class="metric-fill ${memPct > 85 ? 'danger' : memPct > 65 ? 'warn' : ''}" style="width:${Math.min(memPct, 100)}%"></div></div>
-            <span class="metric-value">${memGB}/${totalGB} GB</span>
-          </div>
-          <div class="cluster-node-metric">
-            <span class="metric-label">CPU</span>
-            <div class="metric-bar"><div class="metric-fill ${load.cpuPercent > 85 ? 'danger' : load.cpuPercent > 65 ? 'warn' : ''}" style="width:${Math.min(load.cpuPercent, 100)}%"></div></div>
-            <span class="metric-value">${load.cpuPercent}%</span>
-          </div>
-          <div class="cluster-node-metric">
-            <span class="metric-label">分支</span>
-            <div class="metric-bar"><div class="metric-fill" style="width:${cap.maxBranches > 0 ? Math.min(branchCount / cap.maxBranches * 100, 100) : 0}%"></div></div>
-            <span class="metric-value">${branchCount}/${cap.maxBranches}</span>
-          </div>
+        <div class="node-card-rings">
+          ${ringMeter('内存', memPct, `${memGB}/${totalGB} GB`, true)}
+          ${ringMeter('CPU', cpuPct, `${cpuPct}%`, true)}
+          ${ringMeter('分支', branchPct, `${branchCount}/${cap.maxBranches}`, false)}
         </div>
       </div>
     `;

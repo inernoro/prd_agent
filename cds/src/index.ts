@@ -1,4 +1,5 @@
 import http from 'node:http';
+import os from 'node:os';
 import express from 'express';
 import path from 'node:path';
 import { execSync } from 'node:child_process';
@@ -799,6 +800,107 @@ if (mode === 'executor') {
     await agent.register();
     agent.startHeartbeat();
   }, { force: true });
+
+  // ── Executor status page on masterPort (9900) ──
+  //
+  // In executor mode the Dashboard is intentionally absent, but users
+  // often open http://<executor-host>:9900/ expecting SOMETHING, not
+  // "connection refused". We serve a small informative page on the
+  // master port that tells them:
+  //   - this node is an executor
+  //   - which cluster it belongs to (with link to master Dashboard)
+  //   - executor id + last heartbeat age
+  //   - how to disconnect (CLI command)
+  // The page refreshes itself every 5 seconds.
+  const statusApp = express();
+  statusApp.use(express.json());
+  statusApp.get('/healthz', (_req, res) => {
+    res.json({ ok: true, role: 'executor', master: config.masterUrl || config.schedulerUrl || null });
+  });
+  // Liveness check used by CLI connect_cmd polling — mirror master status shape
+  statusApp.get('/api/cluster/status', (_req, res) => {
+    res.json({
+      mode: 'executor',
+      effectiveRole: 'executor',
+      masterUrl: config.masterUrl || config.schedulerUrl || null,
+      executorId: agent.executorId,
+      hasBootstrapToken: !!config.bootstrapToken,
+      remoteExecutorCount: 0,
+      capacity: null,
+      strategy: null,
+    });
+  });
+  statusApp.get('*', (_req, res) => {
+    const masterUrl = config.masterUrl || config.schedulerUrl || '';
+    const masterDashboard = masterUrl || '#';
+    const hostname = os.hostname();
+    res.setHeader('Content-Type', 'text/html; charset=utf-8');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.end(`<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>CDS Executor · ${hostname}</title>
+<link rel="icon" type="image/svg+xml" href="/favicon.svg">
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:#0d1117;color:#c9d1d9;min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px}
+.card{max-width:520px;width:100%;padding:36px;background:#161b22;border:1px solid #30363d;border-radius:14px;box-shadow:0 10px 30px rgba(0,0,0,0.4)}
+.icon{width:52px;height:52px;margin:0 auto 18px;background:linear-gradient(135deg,rgba(88,166,255,0.2),rgba(88,166,255,0.05));border:1px solid rgba(88,166,255,0.4);border-radius:12px;display:flex;align-items:center;justify-content:center;color:#58a6ff}
+h1{text-align:center;font-size:20px;font-weight:700;margin-bottom:6px;color:#f0f6fc}
+.subtitle{text-align:center;font-size:13px;color:#8b949e;margin-bottom:28px}
+.info{background:#0d1117;border:1px solid #21262d;border-radius:8px;padding:14px 16px;margin-bottom:14px}
+.info-row{display:flex;justify-content:space-between;align-items:center;padding:6px 0;font-size:12px;border-bottom:1px solid #21262d}
+.info-row:last-child{border-bottom:none}
+.info-row .label{color:#8b949e}
+.info-row .value{color:#c9d1d9;font-family:ui-monospace,SFMono-Regular,monospace;font-size:11px;word-break:break-all;text-align:right;margin-left:16px}
+.status-dot{display:inline-block;width:8px;height:8px;border-radius:50%;background:#3fb950;margin-right:6px;animation:pulse 2s ease infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:0.5}}
+.btn{display:block;width:100%;padding:11px;background:#238636;color:white;text-align:center;text-decoration:none;border-radius:6px;font-size:13px;font-weight:600;margin-bottom:10px}
+.btn:hover{background:#2ea043}
+.btn-secondary{background:transparent;border:1px solid #30363d;color:#58a6ff}
+.btn-secondary:hover{background:rgba(88,166,255,0.08)}
+.cli-hint{background:#0d1117;border:1px solid #21262d;border-radius:6px;padding:10px 12px;margin-top:14px;font-size:11px;color:#8b949e}
+.cli-hint code{background:#21262d;padding:2px 6px;border-radius:3px;color:#58a6ff;font-family:ui-monospace,monospace}
+.auto-refresh{text-align:center;font-size:11px;color:#6e7681;margin-top:16px}
+</style>
+</head>
+<body>
+<div class="card">
+<div class="icon"><svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><rect x="4" y="4" width="16" height="4" rx="1"/><rect x="4" y="11" width="16" height="4" rx="1"/><rect x="4" y="18" width="16" height="3" rx="1"/><circle cx="7" cy="6" r="0.5" fill="currentColor"/><circle cx="7" cy="13" r="0.5" fill="currentColor"/></svg></div>
+<h1>本节点是集群执行器</h1>
+<p class="subtitle"><span class="status-dot"></span>CDS Executor · 无独立 Dashboard · 由主节点统一管理</p>
+<div class="info">
+<div class="info-row"><span class="label">Executor ID</span><span class="value">${escHtmlSafe(agent.executorId)}</span></div>
+<div class="info-row"><span class="label">主机名</span><span class="value">${escHtmlSafe(hostname)}</span></div>
+<div class="info-row"><span class="label">集群主节点</span><span class="value">${escHtmlSafe(masterUrl || '(未配置)')}</span></div>
+<div class="info-row"><span class="label">Executor 端口</span><span class="value">http://localhost:${config.executorPort}/exec/*</span></div>
+<div class="info-row"><span class="label">心跳周期</span><span class="value">15 秒</span></div>
+</div>
+${masterUrl ? `<a class="btn" href="${escHtmlSafe(masterUrl)}" target="_blank" rel="noopener">前往主节点 Dashboard →</a>` : ''}
+<a class="btn btn-secondary" href="/api/cluster/status">查看本节点 JSON 状态</a>
+<div class="cli-hint">
+💡 本节点没有 Dashboard，因为它是 executor（只跑容器，由主节点调度）。<br>
+要把它变回独立的单机模式，在此服务器上执行：<br>
+<code>./exec_cds.sh disconnect</code>
+</div>
+<p class="auto-refresh">每 10 秒自动刷新 · <a href="#" onclick="location.reload();return false" style="color:#58a6ff;text-decoration:none">立即刷新</a></p>
+</div>
+<script>setTimeout(()=>location.reload(),10000);</script>
+</body>
+</html>`);
+  });
+  function escHtmlSafe(s: string): string {
+    return String(s || '')
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;');
+  }
+  listenWithRetry(statusApp, config.masterPort, 'ExecutorStatus', () => {
+    console.log(`  Status page:   http://localhost:${config.masterPort}  (executor mode info page)`);
+  }, { optional: true });
 } else {
   // ── Standalone or Scheduler mode: start dashboard + proxy ──
   listenWithRetry(app, config.masterPort, 'Dashboard', () => {
