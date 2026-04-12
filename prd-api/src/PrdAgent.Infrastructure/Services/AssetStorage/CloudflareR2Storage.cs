@@ -75,7 +75,7 @@ public sealed class CloudflareR2Storage : IAssetStorage, IDisposable
         {
             ServiceURL = ep,
             ForcePathStyle = true, // R2 要求 path-style
-            RequestTimeout = TimeSpan.FromSeconds(120),
+            Timeout = TimeSpan.FromSeconds(120),
         };
 
         _s3 = new AmazonS3Client(akid, sk, config);
