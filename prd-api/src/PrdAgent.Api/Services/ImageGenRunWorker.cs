@@ -979,6 +979,7 @@ public class ImageGenRunWorker : BackgroundService
             if (bytes.LongLength > 15 * 1024 * 1024) return null;
             if (!assetMime.StartsWith("image/", StringComparison.OrdinalIgnoreCase)) assetMime = "image/png";
 
+            RegistryAssetStorage.OverrideNextScope("generated");
             var stored = await assetStorage.SaveAsync(bytes, assetMime, ct, domain: AppDomainPaths.DomainVisualAgent, type: AppDomainPaths.TypeImg);
             assetUrl = stored.Url;
             assetSha256 = stored.Sha256;

@@ -339,7 +339,8 @@ builder.Services.AddSingleton<IAssetStorage>(sp =>
             (region ?? string.Empty).Trim(),
             (prefix ?? string.Empty).Trim(),
             (publicBaseUrl ?? string.Empty).Trim());
-        return new TencentCosStorage(bucket!, region!, secretId!, secretKey!, publicBaseUrl, prefix, tempDir, enableSafeDelete, allow, logger);
+        var cosStorage = new TencentCosStorage(bucket!, region!, secretId!, secretKey!, publicBaseUrl, prefix, tempDir, enableSafeDelete, allow, logger);
+        return WrapWithRegistry(cosStorage, "tencentCos");
     }
 
     if (string.Equals(provider, "cloudflareR2", StringComparison.OrdinalIgnoreCase))
@@ -368,16 +369,26 @@ builder.Services.AddSingleton<IAssetStorage>(sp =>
             string.IsNullOrWhiteSpace(r2Endpoint) ? $"https://{accountId}.r2.cloudflarestorage.com" : r2Endpoint,
             string.IsNullOrWhiteSpace(r2Prefix) ? "(none)" : r2Prefix,
             string.IsNullOrWhiteSpace(r2PublicBaseUrl) ? "(r2.dev fallback)" : r2PublicBaseUrl);
-        return new CloudflareR2Storage(
+        var r2Storage = new CloudflareR2Storage(
             accountId, accessKeyId, secretAccessKey, r2Bucket,
             string.IsNullOrWhiteSpace(r2PublicBaseUrl) ? null : r2PublicBaseUrl,
             string.IsNullOrWhiteSpace(r2Prefix) ? null : r2Prefix,
             string.IsNullOrWhiteSpace(r2Endpoint) ? null : r2Endpoint,
             enableSafeDelete, allow, r2Logger);
+        return WrapWithRegistry(r2Storage, "cloudflareR2");
     }
 
     throw new InvalidOperationException(
         $"ASSETS_PROVIDER={providerRaw} 不支持。可选值：tencentCos / cloudflareR2");
+
+    // ─── 装饰器：用 RegistryAssetStorage 包裹真实实现，自动登记每次存储操作 ───
+    IAssetStorage WrapWithRegistry(IAssetStorage inner, string providerName)
+    {
+        var db = sp.GetRequiredService<MongoDbContext>();
+        var regLogger = sp.GetRequiredService<ILogger<RegistryAssetStorage>>();
+        log.LogInformation("AssetStorage wrapped with RegistryAssetStorage (provider={Provider})", providerName);
+        return new RegistryAssetStorage(inner, db, providerName, regLogger);
+    }
 });
 
 // 文件内容提取器（PDF/Word/Excel/PPT）

@@ -479,6 +479,7 @@ public class VideoGenRunWorker : BackgroundService
             }
 
             // 上传音频到存储
+            RegistryAssetStorage.OverrideNextScope("generated");
             var stored = await _assetStorage.SaveAsync(
                 ttsResponse.BinaryContent, "audio/mpeg", CancellationToken.None,
                 domain: "video-gen", type: "audio");
@@ -615,6 +616,7 @@ public class VideoGenRunWorker : BackgroundService
 
             // 上传渲染产物到 COS
             var mp4Bytes = await File.ReadAllBytesAsync(outputMp4, CancellationToken.None);
+            RegistryAssetStorage.OverrideNextScope("generated");
             var stored = await _assetStorage.SaveAsync(mp4Bytes, "video/mp4", CancellationToken.None,
                 domain: AppDomainPaths.DomainVideoAgent, type: AppDomainPaths.TypeVideo);
 
@@ -994,6 +996,7 @@ public class VideoGenRunWorker : BackgroundService
             await UpdatePhaseAsync(run, "rendering", 10);
             var htmlContent = GenerateHtmlPlayer(dataJson, run);
             var htmlBytes = Encoding.UTF8.GetBytes(htmlContent);
+            RegistryAssetStorage.OverrideNextScope("generated");
             var htmlStored = await _assetStorage.SaveAsync(htmlBytes, "text/html", CancellationToken.None,
                 domain: AppDomainPaths.DomainVideoAgent, type: AppDomainPaths.TypeVideo);
             assetUrl = htmlStored.Url;
@@ -1010,6 +1013,7 @@ public class VideoGenRunWorker : BackgroundService
             await RunRemotionRenderAsync(run, videoProjectPath, dataFilePath, outputMp4);
 
             var videoBytes = await File.ReadAllBytesAsync(outputMp4, CancellationToken.None);
+            RegistryAssetStorage.OverrideNextScope("generated");
             var videoStored = await _assetStorage.SaveAsync(videoBytes, "video/mp4", CancellationToken.None,
                 domain: AppDomainPaths.DomainVideoAgent, type: AppDomainPaths.TypeVideo);
             assetUrl = videoStored.Url;

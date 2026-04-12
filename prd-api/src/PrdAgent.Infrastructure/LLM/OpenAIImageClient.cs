@@ -81,6 +81,9 @@ public class OpenAIImageClient
         string? modelName = null,
         string? maskBase64 = null)
     {
+        // 所有生图操作产出的文件都是 AI 生成内容
+        using var _ = RegistryAssetStorage.ScopeAs("generated");
+
         if (images == null || images.Count == 0)
         {
             // 文生图：无参考图
