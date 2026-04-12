@@ -22,7 +22,7 @@ public static class AvatarUrlBuilder
     public static string? Build(IConfiguration cfg, User? user)
     {
         if (cfg == null) return null;
-        var baseUrl = (cfg["TENCENT_COS_PUBLIC_BASE_URL"] ?? string.Empty).Trim().TrimEnd('/');
+        var baseUrl = ResolvePublicBaseUrl(cfg);
         if (string.IsNullOrWhiteSpace(baseUrl)) return null;
 
         var file = ResolveAvatarFileName(user);
@@ -49,7 +49,7 @@ public static class AvatarUrlBuilder
     public static string? Build(IConfiguration cfg, string? avatarFileName)
     {
         if (cfg == null) return null;
-        var baseUrl = (cfg["TENCENT_COS_PUBLIC_BASE_URL"] ?? string.Empty).Trim().TrimEnd('/');
+        var baseUrl = ResolvePublicBaseUrl(cfg);
         if (string.IsNullOrWhiteSpace(baseUrl)) return null;
 
         var file = (avatarFileName ?? string.Empty).Trim();
@@ -101,6 +101,19 @@ public static class AvatarUrlBuilder
 
         // 3) 人类用户未设置头像：直接使用 nohead.png（避免拼接不存在的 {username}.png 导致图片永远加载失败）
         return DefaultNoHeadFile;
+    }
+
+    /// <summary>
+    /// 根据 ASSETS_PROVIDER 自动选择对应的公开域名。
+    /// cloudflareR2 → R2_PUBLIC_BASE_URL，tencentCos → TENCENT_COS_PUBLIC_BASE_URL。
+    /// </summary>
+    private static string ResolvePublicBaseUrl(IConfiguration cfg)
+    {
+        var provider = (cfg["ASSETS_PROVIDER"] ?? "tencentCos").Trim();
+        var raw = string.Equals(provider, "cloudflareR2", StringComparison.OrdinalIgnoreCase)
+            ? (cfg["R2_PUBLIC_BASE_URL"] ?? string.Empty).Trim().TrimEnd('/')
+            : (cfg["TENCENT_COS_PUBLIC_BASE_URL"] ?? string.Empty).Trim().TrimEnd('/');
+        return raw;
     }
 }
 
