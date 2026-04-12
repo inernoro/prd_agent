@@ -20,7 +20,7 @@ import type { FeatureItem } from '../i18n/landing';
  *   3. chapter 编号 "01 / 06"（VT323 mono）作为每段的开篇符号
  */
 
-// 六段 mockup 从原来的函数名映射（内部几何 mockup 不走 i18n，因为是"示意图"）
+// 六段 mockup accent 配色
 const MOCKUPS = {
   visual: { accent: '#a855f7' },
   literary: { accent: '#fb923c' },
@@ -263,6 +263,7 @@ function MockupFrame({
 
 function VisualMockup() {
   const accent = '#a855f7';
+  const { t } = useLanguage();
   // 独立的 useInView，让内部 4 格走自己的 stagger 时序，叠加在外层 Reveal 之上
   const [gridRef, inView] = useInView<HTMLDivElement>();
   const grads = [
@@ -275,7 +276,7 @@ function VisualMockup() {
     <MockupFrame accent={accent}>
       <div className="flex items-center justify-between mb-4">
         <div className="text-[11px] text-white/60" style={{ fontFamily: 'var(--font-display)' }}>
-          visual-agent · 4 张候选
+          {t.mockups.visual.header}
         </div>
         <div className="flex gap-1.5">
           <span className="w-1.5 h-1.5 rounded-full bg-white/25" />
@@ -352,7 +353,7 @@ function VisualMockup() {
           className="w-1.5 h-1.5 rounded-full"
           style={{ background: accent, animation: 'mockup-pulse 1.5s ease-in-out infinite' }}
         />
-        <span>生成中 · 2 / 4 已完成</span>
+        <span>{t.mockups.visual.status}</span>
       </div>
       <style>{`
         @keyframes mockup-pulse { 0%,100% { opacity:1; } 50% { opacity:0.4; } }
@@ -371,13 +372,14 @@ function VisualMockup() {
 
 function LiteraryMockup() {
   const accent = '#fb923c';
+  const { t } = useLanguage();
   return (
     <MockupFrame accent={accent}>
       <div className="flex items-center justify-between mb-4">
         <div className="text-[11px] text-white/60" style={{ fontFamily: 'var(--font-display)' }}>
-          literary-agent · 润色中
+          {t.mockups.literary.header}
         </div>
-        <div className="text-[10px] text-white/35">段 3 / 7</div>
+        <div className="text-[10px] text-white/35">{t.mockups.literary.progress}</div>
       </div>
       <div className="space-y-2">
         <TextLine width="100%" />
@@ -390,10 +392,10 @@ function LiteraryMockup() {
       </div>
       <div className="mt-5 pt-4 border-t border-white/5 flex items-center justify-between text-[10px] text-white/45">
         <div className="flex items-center gap-3">
-          <span>+ 12 字</span>
-          <span style={{ color: accent }}>删除 3 字</span>
+          <span>{t.mockups.literary.added}</span>
+          <span style={{ color: accent }}>{t.mockups.literary.deleted}</span>
         </div>
-        <span>差异视图</span>
+        <span>{t.mockups.literary.diffView}</span>
       </div>
     </MockupFrame>
   );
@@ -450,11 +452,13 @@ function TextLine({
 
 function PrdMockup() {
   const accent = '#3b82f6';
+  const { t } = useLanguage();
+  const sections = t.mockups.prd.sections;
   return (
     <MockupFrame accent={accent}>
       <div className="flex items-center justify-between mb-4">
         <div className="text-[11px] text-white/60" style={{ fontFamily: 'var(--font-display)' }}>
-          prd-agent · v3.0 需求分析
+          {t.mockups.prd.header}
         </div>
         <div
           className="px-2 py-0.5 rounded text-[9px] uppercase"
@@ -464,11 +468,11 @@ function PrdMockup() {
         </div>
       </div>
       <div className="space-y-3">
-        <PrdSection title="§ 用户故事" complete />
-        <PrdSection title="§ 核心流程" gap accent={accent} note="缺少异常分支" />
-        <PrdSection title="§ 数据模型" complete />
-        <PrdSection title="§ 权限矩阵" gap accent={accent} note="未定义角色边界" />
-        <PrdSection title="§ 测试用例" gap accent={accent} note="缺少失败场景" />
+        <PrdSection title={sections[0].title} complete />
+        <PrdSection title={sections[1].title} gap accent={accent} note={sections[1].note} />
+        <PrdSection title={sections[2].title} complete />
+        <PrdSection title={sections[3].title} gap accent={accent} note={sections[3].note} />
+        <PrdSection title={sections[4].title} gap accent={accent} note={sections[4].note} />
       </div>
     </MockupFrame>
   );
@@ -512,18 +516,19 @@ function PrdSection({
 
 function VideoMockup() {
   const accent = '#f43f5e';
+  const { t } = useLanguage();
   return (
     <MockupFrame accent={accent}>
       <div className="flex items-center justify-between mb-4">
         <div className="text-[11px] text-white/60" style={{ fontFamily: 'var(--font-display)' }}>
-          video-agent · 6 分镜
+          {t.mockups.video.header}
         </div>
         <div className="flex items-center gap-1.5 text-[10px] text-white/45">
           <span
             className="w-1.5 h-1.5 rounded-full"
             style={{ background: accent, animation: 'mockup-pulse 1.2s ease-in-out infinite' }}
           />
-          <span>渲染中 · 72%</span>
+          <span>{t.mockups.video.status}</span>
         </div>
       </div>
       <div className="grid grid-cols-6 gap-1.5 mb-4">
@@ -567,16 +572,13 @@ function VideoMockup() {
 
 function DefectMockup() {
   const accent = '#10b981';
-  const defects = [
-    { sev: 'P0', title: '对话消息在刷新后丢失', color: '#ef4444' },
-    { sev: 'P1', title: '图像生成超时未释放', color: '#f97316' },
-    { sev: 'P2', title: '深色模式下描边消失', color: '#eab308' },
-  ];
+  const { t } = useLanguage();
+  const colors = ['#ef4444', '#f97316', '#eab308'];
   return (
     <MockupFrame accent={accent}>
       <div className="flex items-center justify-between mb-4">
         <div className="text-[11px] text-white/60" style={{ fontFamily: 'var(--font-display)' }}>
-          defect-agent · 3 个待处理
+          {t.mockups.defect.header}
         </div>
         <div
           className="px-2 py-0.5 rounded text-[9px] uppercase"
@@ -586,28 +588,28 @@ function DefectMockup() {
         </div>
       </div>
       <div className="space-y-2.5">
-        {defects.map((d, i) => (
+        {t.mockups.defect.items.map((d, i) => (
           <div
             key={i}
             className="flex items-center gap-3 px-3 py-2.5 rounded-lg bg-white/[0.03] border border-white/5"
           >
             <div
               className="px-2 py-0.5 rounded text-[9px] font-semibold shrink-0"
-              style={{ background: `${d.color}22`, color: d.color, fontFamily: 'var(--font-display)' }}
+              style={{ background: `${colors[i]}22`, color: colors[i], fontFamily: 'var(--font-display)' }}
             >
               {d.sev}
             </div>
             <div className="flex-1 min-w-0">
               <div className="text-[12px] text-white/85 truncate">{d.title}</div>
             </div>
-            <div className="shrink-0 text-[10px] text-white/35">已分派</div>
+            <div className="shrink-0 text-[10px] text-white/35">{t.mockups.defect.assigned}</div>
           </div>
         ))}
       </div>
       <div className="mt-4 flex items-center justify-between text-[10px] text-white/45">
-        <div>本周新增 · 27</div>
-        <div>已修复 · 19</div>
-        <div style={{ color: accent }}>修复率 · 70%</div>
+        <div>{t.mockups.defect.newThisWeek}</div>
+        <div>{t.mockups.defect.fixed}</div>
+        <div style={{ color: accent }}>{t.mockups.defect.fixRate}</div>
       </div>
     </MockupFrame>
   );
@@ -615,33 +617,34 @@ function DefectMockup() {
 
 function ReportMockup() {
   const accent = '#06b6d4';
-  const bars = [
-    { label: '周一', plan: 100, actual: 95 },
-    { label: '周二', plan: 80, actual: 88 },
-    { label: '周三', plan: 90, actual: 72 },
-    { label: '周四', plan: 85, actual: 90 },
-    { label: '周五', plan: 70, actual: 65 },
+  const { t } = useLanguage();
+  const barValues = [
+    { plan: 100, actual: 95 },
+    { plan: 80, actual: 88 },
+    { plan: 90, actual: 72 },
+    { plan: 85, actual: 90 },
+    { plan: 70, actual: 65 },
   ];
   return (
     <MockupFrame accent={accent}>
       <div className="flex items-center justify-between mb-4">
         <div className="text-[11px] text-white/60" style={{ fontFamily: 'var(--font-display)' }}>
-          report-agent · W15
+          {t.mockups.report.header}
         </div>
         <div className="flex items-center gap-3 text-[9px] text-white/40">
           <div className="flex items-center gap-1.5">
             <span className="w-2 h-2 rounded-sm bg-white/25" />
-            <span>计划</span>
+            <span>{t.mockups.report.plan}</span>
           </div>
           <div className="flex items-center gap-1.5">
             <span className="w-2 h-2 rounded-sm" style={{ background: accent }} />
-            <span>实际</span>
+            <span>{t.mockups.report.actual}</span>
           </div>
         </div>
       </div>
       <div className="flex items-end gap-3 h-32 mb-2">
-        {bars.map((b, i) => (
-          <div key={i} className="flex-1 flex items-end gap-1">
+        {barValues.map((b, i) => (
+          <div key={i} className="flex-1 flex items-end gap-1 h-full">
             <div
               className="flex-1 rounded-t"
               style={{ height: `${b.plan}%`, background: 'rgba(255,255,255,0.1)' }}
@@ -658,8 +661,8 @@ function ReportMockup() {
         ))}
       </div>
       <div className="flex justify-between text-[9px] text-white/40">
-        {bars.map((b, i) => (
-          <span key={i}>{b.label}</span>
+        {t.mockups.report.days.map((day, i) => (
+          <span key={i}>{day}</span>
         ))}
       </div>
     </MockupFrame>

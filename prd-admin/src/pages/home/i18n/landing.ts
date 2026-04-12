@@ -2,9 +2,7 @@
  * landing.ts — 首页 /home 的双语字典（中 / 英）
  *
  * 原则：
- *  · 只翻译"用户可见的文案"（标题、副标题、bullet、eyebrow、按钮）
- *  · ProductMockup 和 FeatureDeepDive 内各个 mockup 里的"伪数据"保持中文
- *    （它们是示意产物而不是 UI chrome，翻译了反而突兀）
+ *  · 翻译所有用户可见的文案（标题、副标题、bullet、eyebrow、按钮、mockup 示意文案）
  *  · 所有 key 使用扁平结构，便于 `t.hero.title` 直接访问
  *  · 多行文案用 `\n` 分隔，由组件决定是否转换为 <br>
  */
@@ -185,6 +183,42 @@ export interface TranslationShape {
     github: string;
     backToTop: string;
     copyright: string;
+  };
+  /** FeatureDeepDive 内各 mockup 的示意文案 */
+  mockups: {
+    visual: {
+      header: string;
+      status: string;
+    };
+    literary: {
+      header: string;
+      progress: string;
+      added: string;
+      deleted: string;
+      diffView: string;
+    };
+    prd: {
+      header: string;
+      sections: Array<{ title: string; note?: string }>;
+    };
+    video: {
+      header: string;
+      status: string;
+    };
+    defect: {
+      header: string;
+      items: Array<{ sev: string; title: string }>;
+      assigned: string;
+      newThisWeek: string;
+      fixed: string;
+      fixRate: string;
+    };
+    report: {
+      header: string;
+      plan: string;
+      actual: string;
+      days: string[];
+    };
   };
 }
 
@@ -498,6 +532,51 @@ const zh: TranslationShape = {
     github: 'GitHub',
     backToTop: '回到顶部',
     copyright: '© 2026 MAP',
+  },
+  mockups: {
+    visual: {
+      header: 'visual-agent · 4 张候选',
+      status: '生成中 · 2 / 4 已完成',
+    },
+    literary: {
+      header: 'literary-agent · 润色中',
+      progress: '段 3 / 7',
+      added: '+ 12 字',
+      deleted: '删除 3 字',
+      diffView: '差异视图',
+    },
+    prd: {
+      header: 'prd-agent · v3.0 需求分析',
+      sections: [
+        { title: '§ 用户故事' },
+        { title: '§ 核心流程', note: '缺少异常分支' },
+        { title: '§ 数据模型' },
+        { title: '§ 权限矩阵', note: '未定义角色边界' },
+        { title: '§ 测试用例', note: '缺少失败场景' },
+      ],
+    },
+    video: {
+      header: 'video-agent · 6 分镜',
+      status: '渲染中 · 72%',
+    },
+    defect: {
+      header: 'defect-agent · 3 个待处理',
+      items: [
+        { sev: 'P0', title: '对话消息在刷新后丢失' },
+        { sev: 'P1', title: '图像生成超时未释放' },
+        { sev: 'P2', title: '深色模式下描边消失' },
+      ],
+      assigned: '已分派',
+      newThisWeek: '本周新增 · 27',
+      fixed: '已修复 · 19',
+      fixRate: '修复率 · 70%',
+    },
+    report: {
+      header: 'report-agent · W15',
+      plan: '计划',
+      actual: '实际',
+      days: ['周一', '周二', '周三', '周四', '周五'],
+    },
   },
 };
 
@@ -814,6 +893,51 @@ const en: TranslationShape = {
     github: 'GitHub',
     backToTop: 'Back to top',
     copyright: '© 2026 MAP',
+  },
+  mockups: {
+    visual: {
+      header: 'visual-agent · 4 candidates',
+      status: 'Generating · 2 / 4 done',
+    },
+    literary: {
+      header: 'literary-agent · polishing',
+      progress: 'Para 3 / 7',
+      added: '+12 chars',
+      deleted: '-3 chars',
+      diffView: 'Diff view',
+    },
+    prd: {
+      header: 'prd-agent · v3.0 spec analysis',
+      sections: [
+        { title: '§ User Stories' },
+        { title: '§ Core Flow', note: 'Missing edge cases' },
+        { title: '§ Data Model' },
+        { title: '§ Permission Matrix', note: 'Undefined role boundaries' },
+        { title: '§ Test Cases', note: 'Missing failure scenarios' },
+      ],
+    },
+    video: {
+      header: 'video-agent · 6 shots',
+      status: 'Rendering · 72%',
+    },
+    defect: {
+      header: 'defect-agent · 3 open',
+      items: [
+        { sev: 'P0', title: 'Messages lost on refresh' },
+        { sev: 'P1', title: 'Image gen timeout unreleased' },
+        { sev: 'P2', title: 'Strokes disappear in dark mode' },
+      ],
+      assigned: 'Assigned',
+      newThisWeek: 'New this week · 27',
+      fixed: 'Fixed · 19',
+      fixRate: 'Fix rate · 70%',
+    },
+    report: {
+      header: 'report-agent · W15',
+      plan: 'Plan',
+      actual: 'Actual',
+      days: ['Mon', 'Tue', 'Wed', 'Thu', 'Fri'],
+    },
   },
 };
 
