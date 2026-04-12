@@ -35,7 +35,7 @@ interface RevealProps {
   className?: string;
   /** 初始位移 px，默认 16 */
   offset?: number;
-  /** animation-duration ms，默认 1100 */
+  /** animation-duration ms，默认 2000（长 duration + 极端 ease-out = "快显慢散"） */
   duration?: number;
   /** 初始模糊度 px，默认 0 */
   blur?: number;
@@ -62,7 +62,7 @@ export function Reveal({
   delay = 0,
   className,
   offset = 16,
-  duration = 1100,
+  duration = 2000,
   blur = 0,
   as = 'div',
   debugLabel,
