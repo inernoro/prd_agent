@@ -31,7 +31,7 @@ export function SectionHeader({
 }: SectionHeaderProps) {
   return (
     <div className="text-center">
-      <Reveal>
+      <Reveal blur={0} offset={10}>
         <div
           className="inline-flex items-center gap-2 mb-7 px-3.5 py-1.5 rounded-md"
           style={{
@@ -55,7 +55,7 @@ export function SectionHeader({
         </div>
       </Reveal>
 
-      <Reveal delay={80} blur={12} duration={1300}>
+      <Reveal delay={150} blur={8} duration={1200}>
         <h2
           className="text-white font-medium"
           style={{
@@ -71,7 +71,7 @@ export function SectionHeader({
       </Reveal>
 
       {subtitle && (
-        <Reveal delay={160}>
+        <Reveal delay={400} blur={0} offset={10}>
           <p
             className="mt-7 text-white/58 mx-auto text-[15px] leading-[1.7]"
             style={{ maxWidth: subtitleMaxWidth }}

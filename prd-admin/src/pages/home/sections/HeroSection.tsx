@@ -109,8 +109,8 @@ export function HeroSection({ className, onGetStarted, onWatchDemo }: HeroSectio
       <div
         className="relative z-10 min-h-[82vh] flex flex-col items-center justify-center px-6 pt-32 pb-16"
       >
-        {/* 终端 HUD 状态条 — 最先破雾，作为"信号灯" */}
-        <Reveal delay={100} blur={4} duration={800}>
+        {/* 终端 HUD 状态条 — 标题后的微弱信号，不抢焦点 */}
+        <Reveal delay={300} blur={0} duration={900} offset={8} debugLabel="HUD">
           <div
             className="inline-flex items-center gap-3 px-4 py-2 mb-12 rounded-md"
             style={{
@@ -151,8 +151,8 @@ export function HeroSection({ className, onGetStarted, onWatchDemo }: HeroSectio
           </div>
         </Reveal>
 
-        {/* 主标题 — 浓雾慢点亮，Hero 的核心时刻 */}
-        <Reveal delay={600} blur={14} duration={1600}>
+        {/* ★ 主标题 — 第一个亮起，它是整个页面的焦点 */}
+        <Reveal delay={0} blur={12} duration={1500} offset={20} debugLabel="TITLE">
           <h1
             className="text-center text-white font-medium"
             style={{
@@ -168,8 +168,8 @@ export function HeroSection({ className, onGetStarted, onWatchDemo }: HeroSectio
           </h1>
         </Reveal>
 
-        {/* 副标题 — 等标题接近清晰后再出 */}
-        <Reveal delay={1400} blur={10} duration={1200}>
+        {/* 副标题 — 标题 70% 清晰后再出，轻 blur 即可 */}
+        <Reveal delay={1000} blur={4} duration={1100} offset={12} debugLabel="SUBTITLE">
           <p
             className="mt-8 text-center text-white/62 max-w-2xl mx-auto leading-relaxed"
             style={{
@@ -182,8 +182,8 @@ export function HeroSection({ className, onGetStarted, onWatchDemo }: HeroSectio
           </p>
         </Reveal>
 
-        {/* CTA 组 —— 对称双按钮，同高同 radius */}
-        <Reveal delay={2100} blur={8} duration={1000}>
+        {/* CTA 组 — 文字都清晰了才出按钮，不用 blur，干净的 fade+rise */}
+        <Reveal delay={1800} blur={0} duration={900} offset={12} debugLabel="CTA">
           <div className="mt-12 flex flex-col sm:flex-row items-center justify-center gap-4">
             {/* 主 CTA */}
             <button
@@ -230,16 +230,16 @@ export function HeroSection({ className, onGetStarted, onWatchDemo }: HeroSectio
           </div>
         </Reveal>
 
-        {/* Powered by 大模型 logo 条（Linear 式 social proof）*/}
-        <Reveal delay={2700} blur={6}>
+        {/* Powered by 大模型 logo 条 — 纯 fade，不用 blur，不抢 */}
+        <Reveal delay={2400} blur={0} duration={1200} offset={8} debugLabel="LOGOS">
           <div className="mt-20 md:mt-24 w-full">
             <TechLogoBar />
           </div>
         </Reveal>
       </div>
 
-      {/* ── 产品壳 mockup（从 hero 底部长出来） ── */}
-      <Reveal delay={3200} offset={28} blur={12} duration={1400}>
+      {/* ── 产品壳 mockup — 最终幕，从底部缓缓浮出 ── */}
+      <Reveal delay={2800} offset={40} blur={6} duration={1600} debugLabel="MOCKUP">
         <div className="relative z-10 pb-32 md:pb-40 px-4 md:px-8">
           <ProductMockup />
         </div>
