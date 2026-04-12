@@ -109,6 +109,11 @@ export function PrItemCard({ item }: Props) {
               <div className="mt-1 text-sm font-semibold text-white truncate">
                 {snapshot?.title ?? '（尚未拉取到标题）'}
               </div>
+              {hasError && (
+                <div className="mt-1 text-xs text-red-300/80 truncate">
+                  {item.lastRefreshError}
+                </div>
+              )}
               <div className="mt-1 flex items-center gap-3 text-xs text-white/40">
                 {snapshot?.authorLogin && <span>作者 {snapshot.authorLogin}</span>}
                 {snapshot && (
