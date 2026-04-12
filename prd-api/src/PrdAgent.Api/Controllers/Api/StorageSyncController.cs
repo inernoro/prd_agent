@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Mvc;
 using MongoDB.Driver;
 using PrdAgent.Core.Models;
 using PrdAgent.Core.Security;
+using PrdAgent.Api.Services;
 using PrdAgent.Infrastructure.Database;
 using PrdAgent.Infrastructure.Services.AssetStorage;
 
@@ -150,6 +151,91 @@ public class StorageSyncController : ControllerBase
             sourceBaseUrl = sourceBase,
             dryRun,
             summary = new { total = SystemAssetManifest.Count, synced, skipped, failed },
+            items = results
+        }));
+    }
+
+    /// <summary>
+    /// 同步用户头像：扫描 users 集合中所有有 AvatarFileName 的用户，
+    /// 从源域名下载头像文件并上传到当前 Provider。
+    /// </summary>
+    [HttpPost("sync-user-avatars")]
+    public async Task<IActionResult> SyncUserAvatars(
+        [FromBody] SyncSystemAssetsRequest request,
+        CancellationToken ct)
+    {
+        var sourceBase = (request.SourceBaseUrl ?? string.Empty).Trim().TrimEnd('/');
+        if (string.IsNullOrWhiteSpace(sourceBase))
+            return BadRequest(ApiResponse<object>.Fail("INVALID_FORMAT", "sourceBaseUrl 不能为空"));
+
+        var provider = (_cfg["ASSETS_PROVIDER"] ?? "tencentCos").Trim();
+        var http = _httpFactory.CreateClient();
+        http.Timeout = TimeSpan.FromSeconds(30);
+
+        // 扫描所有有头像的用户
+        var users = await _db.Users
+            .Find(u => u.AvatarFileName != null && u.AvatarFileName != "")
+            .Project(u => new { u.Username, u.AvatarFileName })
+            .ToListAsync(ct);
+
+        var results = new List<object>();
+        var synced = 0;
+        var skipped = 0;
+        var failed = 0;
+
+        foreach (var user in users)
+        {
+            var fileName = (user.AvatarFileName ?? "").Trim().ToLowerInvariant();
+            if (string.IsNullOrWhiteSpace(fileName)) continue;
+
+            var path = $"{AvatarUrlBuilder.AvatarPathPrefix}/{fileName}";
+            try
+            {
+                var exists = await _storage.ExistsAsync(path, ct);
+                if (exists && !request.Force)
+                {
+                    results.Add(new { path, user = user.Username, status = "skipped", reason = "already_exists" });
+                    skipped++;
+                    continue;
+                }
+
+                if (request.DryRun)
+                {
+                    results.Add(new { path, user = user.Username, status = "would_sync" });
+                    continue;
+                }
+
+                var sourceUrl = $"{sourceBase}/{path}";
+                using var resp = await http.GetAsync(sourceUrl, ct);
+                if (!resp.IsSuccessStatusCode)
+                {
+                    results.Add(new { path, user = user.Username, status = "failed", reason = $"source_http_{(int)resp.StatusCode}" });
+                    failed++;
+                    continue;
+                }
+
+                var bytes = await resp.Content.ReadAsByteArrayAsync(ct);
+                var mime = resp.Content.Headers.ContentType?.MediaType ?? "application/octet-stream";
+
+                RegistryAssetStorage.OverrideNextScope("user");
+                await _storage.UploadToKeyAsync(path, bytes, mime, ct);
+
+                results.Add(new { path, user = user.Username, status = "synced", sizeBytes = bytes.Length });
+                synced++;
+            }
+            catch (Exception ex)
+            {
+                results.Add(new { path, user = user.Username, status = "failed", reason = ex.Message });
+                failed++;
+            }
+        }
+
+        return Ok(ApiResponse<object>.Ok(new
+        {
+            provider,
+            sourceBaseUrl = sourceBase,
+            dryRun = request.DryRun,
+            summary = new { total = users.Count, synced, skipped, failed },
             items = results
         }));
     }

@@ -48,6 +48,13 @@ public static class SystemAssetManifest
         "icon/backups/agent/workflow-agent.mp4",
     };
 
+    /// <summary>全局 UI 元素（favicon、首页标题图等）</summary>
+    public static readonly string[] GlobalUI =
+    {
+        "favicon.png",
+        "icon/title/home.png",
+    };
+
     /// <summary>桌面端启动动画</summary>
     public static readonly string[] DesktopLoading =
     {
@@ -61,9 +68,10 @@ public static class SystemAssetManifest
         foreach (var p in Avatars) yield return p;
         foreach (var p in AgentCovers) yield return p;
         foreach (var p in AgentVideos) yield return p;
+        foreach (var p in GlobalUI) yield return p;
         foreach (var p in DesktopLoading) yield return p;
     }
 
     /// <summary>总数</summary>
-    public static int Count => Avatars.Length + AgentCovers.Length + AgentVideos.Length + DesktopLoading.Length;
+    public static int Count => Avatars.Length + AgentCovers.Length + AgentVideos.Length + GlobalUI.Length + DesktopLoading.Length;
 }
