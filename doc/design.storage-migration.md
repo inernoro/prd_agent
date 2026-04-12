@@ -206,6 +206,64 @@ foreach (var asset in systemAssets)
 - 删除操作受安全策略保护（`_it/` 测试目录 + 白名单机制）
 - 迁移前必须 DRY RUN 验证
 
+## 系统资产同步（System Asset Sync）
+
+### 问题
+
+系统图标（Agent 封面、默认头像、桌面启动动画等）是手动上传到对象存储的，不经过 `SaveAsync`，因此：
+- MongoDB 中没有任何记录
+- `asset_registry` 也不会自动登记
+- 切换 Provider 后这些文件在新 bucket 中不存在 → UI 图标全部 404
+
+### 解法
+
+`SystemAssetManifest` 维护一份声明式清单（24 个文件），`StorageSyncController` 提供一键同步 API。
+
+### 清单内容（24 个文件）
+
+| 类别 | 数量 | 路径示例 |
+|------|------|---------|
+| 默认头像 | 4 | `icon/backups/head/nohead.png`, `bot_pm.gif` |
+| Agent 封面图 | 9 | `icon/backups/agent/visual-agent.png` |
+| Agent 视频 | 9 | `icon/backups/agent/visual-agent.mp4` |
+| 桌面启动动画 | 2 | `icon/desktop/load.gif` |
+
+### 同步命令
+
+```bash
+# 1. 先预览（DRY RUN）
+curl -X POST https://preview.miduo.org/api/storage/sync-system-assets \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"sourceBaseUrl":"https://i.miduo.org","dryRun":true}'
+
+# 2. 执行同步
+curl -X POST https://preview.miduo.org/api/storage/sync-system-assets \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"sourceBaseUrl":"https://i.miduo.org","dryRun":false}'
+
+# 3. 验证
+curl https://preview.miduo.org/api/storage/system-assets \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+### 切换 Provider 完整步骤（更新版）
+
+```
+1. 配置新 Provider 环境变量（R2_* 等）
+2. 设置 ASSETS_PROVIDER=cloudflareR2
+3. 重启服务
+4. POST /api/storage/sync-system-assets（从旧域名拉取系统资产到新 Provider）
+5. 验证 GET /api/storage/system-assets（确认 24 个文件都 present）
+6. 新上传的文件自动走新 Provider
+7. 旧用户数据仍通过旧域名访问（全地址 URL 存在 DB 中）
+```
+
+### 新增系统资产时的维护规则
+
+在 `SystemAssetManifest.cs` 中追加路径。只要加了新的系统图标（Agent 封面、桌面皮肤等），必须同步更新清单。
+
 ## 关联文档
 
 - `IAssetStorage.cs` — 存储接口定义
