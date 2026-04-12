@@ -3241,6 +3241,9 @@ function renderBranches() {
 
   // Dashboard title stays constant — tag-based titles are for proxied preview pages only (widget-script.ts)
   document.title = 'Cloud Dev Suite';
+
+  // Topology view shares the same data sources — re-render it on every branch refresh.
+  if (_viewMode === 'topology') renderTopologyView();
 }
 
 // ── Build profiles (data only) ──
@@ -6762,7 +6765,7 @@ function _ensureOverrideModal() {
   document.body.appendChild(modal);
 }
 
-async function openOverrideModal(branchId) {
+async function openOverrideModal(branchId, preferredProfileId) {
   _ensureOverrideModal();
   try {
     const data = await api('GET', `/branches/${encodeURIComponent(branchId)}/profile-overrides`);
@@ -6770,10 +6773,16 @@ async function openOverrideModal(branchId) {
       showToast('该分支暂无可配置的构建服务', 'info');
       return;
     }
+    // Topology view passes `preferredProfileId` to land directly on the
+    // clicked service's tab. Fall back to the first profile if the hint
+    // is missing or references a profile the branch doesn't know about.
+    const hintedProfile = preferredProfileId
+      ? data.profiles.find(p => p.profileId === preferredProfileId)
+      : null;
     _overrideModalState = {
       branchId,
       profiles: data.profiles,
-      activeProfileId: data.profiles[0].profileId,
+      activeProfileId: (hintedProfile && hintedProfile.profileId) || data.profiles[0].profileId,
       dirty: false,
     };
     document.getElementById('overrideModalTitle').textContent = `容器配置 — ${branchId}`;
@@ -7156,6 +7165,310 @@ window._saveOverride = _saveOverride;
 window._saveAndDeployOverride = _saveAndDeployOverride;
 window._resetOverride = _resetOverride;
 window._appendEnvToOverride = _appendEnvToOverride;
+
+// ════════════════════════════════════════════════════════════════════
+// Topology view — layered DAG of services + infra, with per-branch
+// override badges. Hook: renderBranches() calls renderTopologyView()
+// when _viewMode === 'topology'. Data sources are the already-polled
+// `buildProfiles` / `infraServices` / `branches` globals.
+// ════════════════════════════════════════════════════════════════════
+
+let _viewMode = sessionStorage.getItem('cds_view_mode') === 'topology' ? 'topology' : 'list';
+let _topologySelectedBranchId = null; // currently highlighted branch for override overlay
+let _topologyOverrideCache = new Map(); // branchId → Set<profileId> with hasOverride=true
+let _topologyOverrideDetails = new Map(); // branchId → Map<profileId, string[]> list of overridden fields
+
+function setViewMode(mode) {
+  if (mode !== 'list' && mode !== 'topology') mode = 'list';
+  _viewMode = mode;
+  sessionStorage.setItem('cds_view_mode', mode);
+
+  const listEl = document.getElementById('branchList');
+  const topoEl = document.getElementById('topologyView');
+  const buttons = document.querySelectorAll('.view-mode-btn');
+  buttons.forEach(btn => {
+    const active = btn.dataset.viewMode === mode;
+    btn.classList.toggle('active', active);
+    btn.setAttribute('aria-selected', active ? 'true' : 'false');
+  });
+
+  if (mode === 'topology') {
+    if (listEl) listEl.classList.add('hidden');
+    if (topoEl) topoEl.classList.remove('hidden');
+    renderTopologyView();
+  } else {
+    if (topoEl) topoEl.classList.add('hidden');
+    if (listEl) listEl.classList.remove('hidden');
+  }
+}
+
+/**
+ * Kahn's algorithm over buildProfiles + infraServices.
+ * Returns { layers: NodeDef[][], edges: {from, to}[] }
+ * Infra services without dependencies all sit at layer 0 (bottom).
+ * App profiles are layered by depends_on depth.
+ */
+function _layoutTopologyDag(profiles, infraList) {
+  const nodes = new Map(); // id → { id, kind, raw }
+  for (const p of profiles) {
+    nodes.set(p.id, { id: p.id, kind: 'app', raw: p });
+  }
+  for (const s of infraList) {
+    if (!nodes.has(s.id)) {
+      nodes.set(s.id, { id: s.id, kind: 'infra', raw: s });
+    }
+  }
+
+  // Edges: a profile's depends_on → those targets must run first.
+  // We point edge FROM dependency TO dependent (data flow direction).
+  const edges = [];
+  const indeg = new Map();
+  for (const n of nodes.values()) indeg.set(n.id, 0);
+
+  for (const p of profiles) {
+    for (const depId of p.dependsOn || []) {
+      if (!nodes.has(depId)) continue; // skip unresolved references
+      edges.push({ from: depId, to: p.id });
+      indeg.set(p.id, (indeg.get(p.id) || 0) + 1);
+    }
+  }
+
+  // Kahn: layer by layer
+  const layers = [];
+  const remaining = new Set(nodes.keys());
+  // Safety cap to avoid infinite loops on malformed cycles
+  let guard = 0;
+  while (remaining.size > 0 && guard++ < 50) {
+    const layer = [];
+    for (const id of remaining) {
+      if ((indeg.get(id) || 0) === 0) layer.push(nodes.get(id));
+    }
+    if (layer.length === 0) {
+      // Cycle detected — put everything remaining on one final layer
+      for (const id of remaining) layer.push(nodes.get(id));
+    }
+    // Sort each layer: infra first, then app; inside each, alphabetical
+    layer.sort((a, b) => {
+      if (a.kind !== b.kind) return a.kind === 'infra' ? -1 : 1;
+      return a.id.localeCompare(b.id);
+    });
+    layers.push(layer);
+    for (const n of layer) {
+      remaining.delete(n.id);
+      // Relax: decrement indeg of all neighbors
+      for (const e of edges) {
+        if (e.from === n.id) indeg.set(e.to, (indeg.get(e.to) || 0) - 1);
+      }
+    }
+  }
+
+  return { layers, edges, nodes };
+}
+
+/**
+ * Build the topology SVG from layered nodes.
+ * Node coords: x = layerIndex * (nodeW + gapX), y = indexInLayer * (nodeH + gapY)
+ */
+function _renderTopologySvg(layout, overrideSet, overrideDetails) {
+  const NODE_W = 180;
+  const NODE_H = 58;
+  const GAP_X = 70;
+  const GAP_Y = 24;
+  const PAD_X = 30;
+  const PAD_Y = 30;
+
+  const positions = new Map(); // id → { cx, cy, node }
+  let maxLayerLen = 0;
+  layout.layers.forEach(layer => {
+    if (layer.length > maxLayerLen) maxLayerLen = layer.length;
+  });
+
+  layout.layers.forEach((layer, layerIdx) => {
+    // Center each layer vertically within maxLayerLen slots
+    const offsetY = ((maxLayerLen - layer.length) * (NODE_H + GAP_Y)) / 2;
+    layer.forEach((node, idxInLayer) => {
+      const x = PAD_X + layerIdx * (NODE_W + GAP_X);
+      const y = PAD_Y + offsetY + idxInLayer * (NODE_H + GAP_Y);
+      positions.set(node.id, { x, y, node });
+    });
+  });
+
+  const totalW = PAD_X * 2 + layout.layers.length * NODE_W + Math.max(0, layout.layers.length - 1) * GAP_X;
+  const totalH = PAD_Y * 2 + maxLayerLen * NODE_H + Math.max(0, maxLayerLen - 1) * GAP_Y;
+
+  // Edges — draw curved cubic Bézier from source right edge to target left edge
+  const edgePaths = layout.edges.map(edge => {
+    const from = positions.get(edge.from);
+    const to = positions.get(edge.to);
+    if (!from || !to) return '';
+    const x1 = from.x + NODE_W;
+    const y1 = from.y + NODE_H / 2;
+    const x2 = to.x;
+    const y2 = to.y + NODE_H / 2;
+    const midX = (x1 + x2) / 2;
+    return `<path class="topology-edge" d="M ${x1} ${y1} C ${midX} ${y1}, ${midX} ${y2}, ${x2} ${y2}" />`;
+  }).join('');
+
+  // Nodes
+  const nodeEls = Array.from(positions.values()).map(({ x, y, node }) => {
+    const isApp = node.kind === 'app';
+    const raw = node.raw;
+    const title = esc(raw.name || raw.id);
+    const subtitle = isApp
+      ? `port :${raw.containerPort ?? '—'}`
+      : `:${raw.hostPort ?? '?'} → :${raw.containerPort ?? '?'}`;
+    const rx = isApp ? 8 : 22;
+    const hasOverride = isApp && overrideSet && overrideSet.has(raw.id);
+    const overriddenFields = hasOverride && overrideDetails
+      ? (overrideDetails.get(raw.id) || [])
+      : [];
+    const tooltip = hasOverride
+      ? `${raw.name} — 本分支自定义: ${overriddenFields.join(', ') || '(字段未知)'}`
+      : `${raw.name || raw.id}（${isApp ? '应用服务' : '基础设施'}）`;
+    const badge = hasOverride
+      ? `<text class="topology-node-badge" x="${x + NODE_W - 16}" y="${y + 18}" text-anchor="middle">🌿</text>`
+      : '';
+    const clickHandler = isApp
+      ? `onclick="_topologyNodeClick('${esc(raw.id)}')"`
+      : `onclick="_topologyInfraClick('${esc(raw.id)}')"`;
+    return `
+      <g class="topology-node ${hasOverride ? 'has-override' : ''}" ${clickHandler}>
+        <title>${esc(tooltip)}</title>
+        <rect class="topology-node-box" x="${x}" y="${y}" width="${NODE_W}" height="${NODE_H}" rx="${rx}" ry="${rx}" />
+        <text class="topology-node-label" x="${x + 14}" y="${y + 24}">${title}</text>
+        <text class="topology-node-sub" x="${x + 14}" y="${y + 42}">${esc(subtitle)}</text>
+        ${badge}
+      </g>
+    `;
+  }).join('');
+
+  return `
+    <svg class="topology-canvas" width="${totalW}" height="${totalH}" viewBox="0 0 ${totalW} ${totalH}" xmlns="http://www.w3.org/2000/svg">
+      <defs>
+        <marker id="topologyArrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+          <path d="M 0 0 L 10 5 L 0 10 z" fill="var(--text-muted)" opacity="0.6" />
+        </marker>
+      </defs>
+      ${edgePaths}
+      ${nodeEls}
+    </svg>
+  `;
+}
+
+function renderTopologyView() {
+  const host = document.getElementById('topologyView');
+  if (!host) return;
+
+  // Empty-state guard
+  if (!buildProfiles.length && !infraServices.length) {
+    host.innerHTML = `
+      <div class="topology-card">
+        <div class="topology-empty">
+          <strong>还没有发现任何服务</strong>
+          <span>导入 docker-compose.yml 后这里会显示应用和基础设施的依赖图</span>
+        </div>
+      </div>
+    `;
+    return;
+  }
+
+  const layout = _layoutTopologyDag(buildProfiles, infraServices);
+
+  // Branch picker: all tracked branches as chips
+  const chipHtml = branches.length === 0
+    ? '<span class="topology-branch-picker-label">暂无分支 —— 先在列表视图创建一个</span>'
+    : `
+      <span class="topology-branch-picker-label">高亮分支:</span>
+      <button class="topology-branch-chip ${!_topologySelectedBranchId ? 'active' : ''}" onclick="_topologySelectBranch(null)">（无）</button>
+      ${branches.map(b => `
+        <button class="topology-branch-chip ${_topologySelectedBranchId === b.id ? 'active' : ''}" onclick="_topologySelectBranch('${esc(b.id)}')" title="${esc(b.branch || b.id)}">${esc(b.id)}</button>
+      `).join('')}
+    `;
+
+  const overrideSet = _topologySelectedBranchId
+    ? _topologyOverrideCache.get(_topologySelectedBranchId)
+    : null;
+  const overrideDetails = _topologySelectedBranchId
+    ? _topologyOverrideDetails.get(_topologySelectedBranchId)
+    : null;
+
+  host.innerHTML = `
+    <div class="topology-card">
+      <div class="topology-header">
+        <div class="topology-title">
+          拓扑图
+          <span class="topology-title-hint">${layout.nodes.size} 个服务 · ${layout.edges.length} 条依赖 · ${layout.layers.length} 层</span>
+        </div>
+        <div class="topology-branch-picker">${chipHtml}</div>
+      </div>
+      <div class="topology-legend">
+        <span class="topology-legend-item"><span class="topology-legend-swatch app"></span>应用服务</span>
+        <span class="topology-legend-item"><span class="topology-legend-swatch infra"></span>基础设施</span>
+        <span class="topology-legend-item"><span class="topology-legend-swatch override"></span>本分支自定义 🌿</span>
+        <span class="topology-legend-item" style="color:var(--text-secondary);margin-left:auto">点击节点打开容器配置</span>
+      </div>
+      <div class="topology-canvas-wrap">
+        ${_renderTopologySvg(layout, overrideSet, overrideDetails)}
+      </div>
+    </div>
+  `;
+}
+
+async function _topologySelectBranch(branchId) {
+  _topologySelectedBranchId = branchId;
+  if (!branchId) {
+    renderTopologyView();
+    return;
+  }
+
+  // Fetch overrides for this branch if not cached (or always — it's cheap)
+  try {
+    const data = await api('GET', `/branches/${encodeURIComponent(branchId)}/profile-overrides`);
+    const overrideSet = new Set();
+    const detailMap = new Map();
+    for (const p of data.profiles || []) {
+      if (p.hasOverride) {
+        overrideSet.add(p.profileId);
+        const fields = p.override
+          ? Object.keys(p.override).filter(k => k !== 'updatedAt' && k !== 'notes')
+          : [];
+        detailMap.set(p.profileId, fields);
+      }
+    }
+    _topologyOverrideCache.set(branchId, overrideSet);
+    _topologyOverrideDetails.set(branchId, detailMap);
+  } catch (e) {
+    console.error('topology: load overrides failed', e);
+    showToast('加载分支覆盖失败: ' + e.message, 'error');
+  }
+  renderTopologyView();
+}
+
+function _topologyNodeClick(profileId) {
+  if (!_topologySelectedBranchId) {
+    showToast('请先在顶部选择一个分支，然后点击节点编辑其覆盖配置', 'info');
+    return;
+  }
+  openOverrideModal(_topologySelectedBranchId, profileId);
+}
+
+function _topologyInfraClick(serviceId) {
+  showToast(`基础设施服务 "${serviceId}" 由所有分支共享，不支持单分支覆盖`, 'info');
+}
+
+// Expose to inline handlers
+window.setViewMode = setViewMode;
+window.renderTopologyView = renderTopologyView;
+window._topologySelectBranch = _topologySelectBranch;
+window._topologyNodeClick = _topologyNodeClick;
+window._topologyInfraClick = _topologyInfraClick;
+
+// Apply persisted view mode on load (deferred so DOM elements exist)
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', () => setViewMode(_viewMode));
+} else {
+  setTimeout(() => setViewMode(_viewMode), 0);
+}
 
 // ── Init activity monitor & AI pairing ──
 initActivityMonitor();
