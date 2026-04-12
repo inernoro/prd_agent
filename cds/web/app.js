@@ -6831,9 +6831,10 @@ function _renderOverrideForm() {
     const hint = baselineVal !== undefined && baselineVal !== null && baselineVal !== ''
       ? `<div style="font-size:11px;color:var(--text-muted);margin-top:3px">公共默认: <code style="font-family:var(--font-mono,monospace);color:var(--text-secondary)">${esc(String(baselineVal))}</code></div>`
       : `<div style="font-size:11px;color:var(--text-muted);margin-top:3px">公共默认: <em>无</em></div>`;
+    const numMinAttr = type === 'number' ? ' min="1"' : '';
     const inputEl = type === 'textarea'
       ? `<textarea data-override-key="${key}" rows="4" placeholder="${esc(placeholder || '')}" style="width:100%;padding:8px 10px;background:var(--bg-primary);border:1px solid var(--border);border-radius:6px;color:var(--text-primary);font-family:var(--font-mono,monospace);font-size:12px;resize:vertical" oninput="_overrideFieldChanged()">${esc(overrideVal || '')}</textarea>`
-      : `<input type="${type}" data-override-key="${key}" value="${esc(overrideVal !== undefined && overrideVal !== null ? String(overrideVal) : '')}" placeholder="${esc(placeholder || '继承公共默认')}" style="width:100%;padding:8px 10px;background:var(--bg-primary);border:1px solid var(--border);border-radius:6px;color:var(--text-primary);font-family:${type === 'number' ? 'inherit' : 'var(--font-mono,monospace)'};font-size:12px" oninput="_overrideFieldChanged()" />`;
+      : `<input type="${type}"${numMinAttr} data-override-key="${key}" value="${esc(overrideVal !== undefined && overrideVal !== null ? String(overrideVal) : '')}" placeholder="${esc(placeholder || '继承公共默认')}" style="width:100%;padding:8px 10px;background:var(--bg-primary);border:1px solid var(--border);border-radius:6px;color:var(--text-primary);font-family:${type === 'number' ? 'inherit' : 'var(--font-mono,monospace)'};font-size:12px" oninput="_overrideFieldChanged()" />`;
     const inheritBadge = inheriting
       ? '<span style="display:inline-block;padding:1px 6px;font-size:10px;background:var(--bg-elevated);color:var(--text-muted);border-radius:4px;margin-left:8px;border:1px solid var(--border)">继承</span>'
       : '<span style="display:inline-block;padding:1px 6px;font-size:10px;background:var(--accent-bg,rgba(74,158,255,0.15));color:var(--accent,#4a9eff);border-radius:4px;margin-left:8px;border:1px solid var(--accent,#4a9eff)">自定义</span>';
@@ -6849,8 +6850,13 @@ function _renderOverrideForm() {
   // env: baseline is Record<string,string>, override is Record<string,string>
   // For UX we render the MERGED env as KEY=VAL lines, where override keys are editable
   const envToText = (envObj) => Object.entries(envObj || {}).map(([k, v]) => `${k}=${v}`).join('\n');
-  const baselineEnvText = envToText(baseline.env);
   const overrideEnvText = envToText(override.env);
+  // Effective env (includes CDS_* infra vars from backend) — used for baseline
+  // preview so the user sees EVERYTHING that will actually be injected, not
+  // just profile.env. cdsEnvKeys lets us mark the risky infra keys in orange.
+  const effectiveEnvEntries = Object.entries(effective.env || {});
+  const cdsEnvKeys = new Set(p.cdsEnvKeys || []);
+  const baselineHasEntries = effectiveEnvEntries.length > 0;
 
   // Deploy mode selector — baseline.deployModes is Record<string, DeployModeOverride>
   const modeOptions = baseline.deployModes
@@ -6875,10 +6881,31 @@ function _renderOverrideForm() {
           ? '<span style="display:inline-block;padding:1px 6px;font-size:10px;background:var(--accent-bg,rgba(74,158,255,0.15));color:var(--accent,#4a9eff);border-radius:4px;margin-left:8px;border:1px solid var(--accent,#4a9eff)">自定义 ' + Object.keys(override.env).length + ' 项</span>'
           : '<span style="display:inline-block;padding:1px 6px;font-size:10px;background:var(--bg-elevated);color:var(--text-muted);border-radius:4px;margin-left:8px;border:1px solid var(--border)">继承</span>'}
       </label>
-      <textarea data-override-key="env" rows="6" placeholder="每行一个 KEY=VALUE，将覆盖同名的公共默认" style="width:100%;padding:8px 10px;background:var(--bg-primary);border:1px solid var(--border);border-radius:6px;color:var(--text-primary);font-family:var(--font-mono,monospace);font-size:12px;resize:vertical" oninput="_overrideFieldChanged()">${esc(overrideEnvText)}</textarea>
+      <textarea id="overrideEnvTextarea" data-override-key="env" rows="6" placeholder="每行一个 KEY=VALUE，将覆盖同名的公共默认" style="width:100%;padding:8px 10px;background:var(--bg-primary);border:1px solid var(--border);border-radius:6px;color:var(--text-primary);font-family:var(--font-mono,monospace);font-size:12px;resize:vertical" oninput="_overrideFieldChanged()">${esc(overrideEnvText)}</textarea>
       <div style="font-size:11px;color:var(--text-muted);margin-top:3px">
-        公共默认 (${Object.keys(baseline.env || {}).length} 项):
-        ${baselineEnvText ? `<details style="display:inline"><summary style="cursor:pointer;color:var(--accent,#4a9eff)">展开</summary><pre style="margin-top:4px;padding:6px 8px;background:var(--bg-primary);border-radius:4px;font-size:11px;max-height:120px;overflow:auto">${esc(baselineEnvText)}</pre></details>` : '<em>无</em>'}
+        公共默认 (${effectiveEnvEntries.length} 项，含 ${cdsEnvKeys.size} 个 CDS 基础设施变量):
+        ${baselineHasEntries ? `<details style="display:block"><summary style="cursor:pointer;color:var(--accent,#4a9eff);display:inline-block">展开（点击 → 复制到上方）</summary>
+          <div style="margin-top:4px;padding:6px 8px;background:var(--bg-primary);border-radius:4px;font-size:11px;max-height:160px;overflow:auto">
+            ${effectiveEnvEntries.map(([k, v]) => {
+              const isCds = cdsEnvKeys.has(k);
+              const keyStyle = isCds ? 'color:#ff9f43' : 'color:var(--text-secondary)';
+              const titleAttr = isCds ? 'title="来自 CDS infra services，覆盖有风险"' : '';
+              const cdsTag = isCds ? '<span style="display:inline-block;padding:0 4px;margin-right:4px;font-size:9px;background:rgba(255,159,67,0.15);color:#ff9f43;border:1px solid #ff9f43;border-radius:3px;vertical-align:1px">CDS</span>' : '';
+              // HTML-encode for the onclick attribute. Outer onclick="" is double-quoted,
+              // so we build a single-quoted JS string literal (escape backslashes and
+              // single quotes), then HTML-escape the whole thing so `&` / `<` don't
+              // break the attribute either.
+              const encArg = (raw) => {
+                const jsLiteral = "'" + String(raw).replace(/\\/g, '\\\\').replace(/'/g, "\\'") + "'";
+                return esc(jsLiteral);
+              };
+              return `<div style="display:flex;align-items:center;gap:6px;padding:2px 0;font-family:var(--font-mono,monospace)" ${titleAttr}>
+                <button class="sm" style="flex-shrink:0;padding:1px 6px;font-size:10px;background:var(--bg-elevated);color:var(--accent,#4a9eff);border:1px solid var(--border);border-radius:3px;cursor:pointer" onclick="_appendEnvToOverride(${encArg(k)}, ${encArg(v)})">→ 编辑</button>
+                <span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${cdsTag}<span style="${keyStyle};font-weight:600">${esc(k)}</span><span style="color:var(--text-muted)">=</span><span style="color:var(--text-secondary)">${esc(v)}</span></span>
+              </div>`;
+            }).join('')}
+          </div>
+        </details>` : '<em>无</em>'}
       </div>
     </div>
 
@@ -6911,10 +6938,11 @@ function _renderOverrideForm() {
     </div>
 
     <div style="display:flex;gap:8px;justify-content:space-between;padding-top:12px;border-top:1px solid var(--border)">
-      <button class="sm" onclick="_resetOverride()" style="background:var(--bg-elevated);color:var(--text-secondary);border:1px solid var(--border)">重置为公共</button>
+      <button class="sm" id="overrideResetBtn" onclick="_resetOverride()" style="background:var(--bg-elevated);color:var(--text-secondary);border:1px solid var(--border)">重置为公共</button>
       <div style="display:flex;gap:8px">
-        <button class="sm" onclick="closeOverrideModal()" style="background:var(--bg-elevated);color:var(--text-secondary);border:1px solid var(--border)">取消</button>
-        <button class="sm deploy-glow-btn" onclick="_saveOverride()">保存 (需重新部署生效)</button>
+        <button class="sm" id="overrideCancelBtn" onclick="closeOverrideModal()" style="background:var(--bg-elevated);color:var(--text-secondary);border:1px solid var(--border)">取消</button>
+        <button class="sm" id="overrideSaveBtn" onclick="_saveOverride()" style="background:var(--bg-elevated);color:var(--text-primary);border:1px solid var(--border)">保存 (稍后手动部署)</button>
+        <button class="sm deploy-glow-btn" id="overrideSaveDeployBtn" onclick="_saveAndDeployOverride()">保存并立即部署</button>
       </div>
     </div>
   `;
@@ -6927,23 +6955,45 @@ function _overrideFieldChanged() {
 function _collectOverrideFromForm() {
   const body = document.getElementById('overrideModalBody');
   const override = {};
+  // Track env-line stats so _saveOverride can surface parse issues as a toast (M4).
+  let envParsed = 0;
+  let envSkipped = 0;
   body.querySelectorAll('[data-override-key]').forEach(el => {
     const key = el.dataset.overrideKey;
     const raw = el.value;
-    if (raw === '' || raw === null || raw === undefined) return; // inherit
+    if (key !== 'env' && (raw === '' || raw === null || raw === undefined)) return; // inherit
     if (key === 'env') {
       const envObj = {};
+      // H4: distinguish "empty LINE" (whitespace-only) from "empty VALUE"
+      // (KEY=). Empty value is a valid assignment that sets the var to "".
       raw.split('\n').forEach(line => {
+        if (line.trim().length === 0) return; // pure blank line — skip silently
         const trimmed = line.trim();
-        if (!trimmed || trimmed.startsWith('#')) return;
+        if (trimmed.startsWith('#')) return; // comment — skip silently
         const eq = trimmed.indexOf('=');
-        if (eq <= 0) return;
-        envObj[trimmed.slice(0, eq).trim()] = trimmed.slice(eq + 1);
+        if (eq <= 0) {
+          // Not a KEY=VALUE line (no '=' or starts with '=') — count as error.
+          envSkipped++;
+          return;
+        }
+        const k = trimmed.slice(0, eq).trim();
+        if (!k) { envSkipped++; return; }
+        // Keep value UN-trimmed so trailing spaces in user intent are preserved;
+        // but we use the original line from after the '=' minus leading whitespace,
+        // so a line like "KEY=" parses to ''. A line like "KEY= value " keeps the
+        // leading space intact because the user explicitly typed it.
+        const v = trimmed.slice(eq + 1);
+        envObj[k] = v;
+        envParsed++;
       });
+      // Note: empty envObj now means "override.env = {}" not "inherit". The
+      // backend handler treats this as "remove all baseline env keys" — that
+      // is NOT what users want, so we fall back to "inherit" on empty.
       if (Object.keys(envObj).length > 0) override.env = envObj;
     } else if (key === 'containerPort') {
       const n = parseInt(raw, 10);
-      if (!isNaN(n)) override.containerPort = n;
+      // M6 (frontend guard): match backend — only accept positive integers.
+      if (!isNaN(n) && n > 0) override.containerPort = n;
     } else if (key === 'resources.memoryMB') {
       const n = parseInt(raw, 10);
       if (!isNaN(n) && n > 0) {
@@ -6960,24 +7010,120 @@ function _collectOverrideFromForm() {
       override[key] = raw;
     }
   });
-  return override;
+  return { override, envParsed, envSkipped };
+}
+
+// Append a baseline env KEY=VALUE pair to the override textarea, unless the
+// same KEY is already present on any line. Called from the baseline env
+// preview list's "→ 编辑" buttons (H2 / one-click copy-to-override).
+function _appendEnvToOverride(key, value) {
+  const textarea = document.getElementById('overrideEnvTextarea');
+  if (!textarea) return;
+  const current = textarea.value;
+  const lines = current.split('\n');
+  // "Already present" check: match lines whose KEY portion equals `key`,
+  // regardless of whitespace around the KEY. Comments and blank lines skipped.
+  const alreadyPresent = lines.some(line => {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith('#')) return false;
+    const eq = trimmed.indexOf('=');
+    if (eq <= 0) return false;
+    return trimmed.slice(0, eq).trim() === key;
+  });
+  if (alreadyPresent) {
+    showToast(`${key} 已在覆盖中，未重复追加`, 'info');
+    return;
+  }
+  const newLine = `${key}=${value}`;
+  const needsNewline = current.length > 0 && !current.endsWith('\n');
+  textarea.value = current + (needsNewline ? '\n' : '') + newLine + '\n';
+  if (_overrideModalState) _overrideModalState.dirty = true;
+  // Show the user we did something + scroll to the new line.
+  textarea.focus();
+  textarea.scrollTop = textarea.scrollHeight;
+}
+
+// Toggle save/cancel/reset buttons disabled state during in-flight requests (M7).
+function _setOverrideButtonsDisabled(disabled) {
+  const ids = ['overrideSaveBtn', 'overrideSaveDeployBtn', 'overrideResetBtn', 'overrideCancelBtn'];
+  ids.forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.disabled = disabled;
+  });
+}
+
+// Shared save pipeline used by both "保存" and "保存并立即部署" (H3 / H5 / M4 / M7).
+// Returns true on success, false if the user aborted or the request failed.
+async function _doSaveOverride() {
+  const s = _overrideModalState;
+  if (!s) return false;
+  const { override, envParsed, envSkipped } = _collectOverrideFromForm();
+
+  // H5: warn loudly when the user is about to override CDS_* infra vars.
+  // These come from `stateService.getCdsEnvVars()` and are the ONLY way the
+  // container reaches Mongo/Redis/etc. Silent overrides would break the
+  // branch without any error on deploy.
+  if (override.env) {
+    const cdsKeys = Object.keys(override.env).filter(k => k.startsWith('CDS_'));
+    if (cdsKeys.length > 0) {
+      const ok = confirm(
+        `你正在覆盖 CDS 基础设施变量 [${cdsKeys.join(', ')}]，这可能导致容器连不上 MongoDB/Redis 等基础服务。确定继续？`
+      );
+      if (!ok) return false;
+    }
+  }
+
+  _setOverrideButtonsDisabled(true);
+  try {
+    await api('PUT', `/branches/${encodeURIComponent(s.branchId)}/profile-overrides/${encodeURIComponent(s.activeProfileId)}`, override);
+    s.dirty = false;
+    // M4: tell the user how many env lines parsed vs. were dropped.
+    if (envSkipped > 0) {
+      showToast(`已识别 ${envParsed} 条环境变量，跳过 ${envSkipped} 条格式错误行`, 'info', 5000);
+    } else {
+      showToast('已保存，重新部署该分支后生效', 'success');
+    }
+    return true;
+  } catch (e) {
+    showToast('保存失败: ' + e.message, 'error');
+    return false;
+  } finally {
+    _setOverrideButtonsDisabled(false);
+  }
 }
 
 async function _saveOverride() {
   const s = _overrideModalState;
   if (!s) return;
-  const override = _collectOverrideFromForm();
+  const ok = await _doSaveOverride();
+  if (!ok) return;
+  // Refresh current profile data in-place so badges/preview reflect the new state.
   try {
-    const res = await api('PUT', `/branches/${encodeURIComponent(s.branchId)}/profile-overrides/${encodeURIComponent(s.activeProfileId)}`, override);
-    showToast('已保存，重新部署该分支后生效', 'success');
-    s.dirty = false;
-    // Refresh current profile data
     const refreshed = await api('GET', `/branches/${encodeURIComponent(s.branchId)}/profile-overrides`);
     s.profiles = refreshed.profiles;
     _renderOverrideTabs();
     _renderOverrideForm();
   } catch (e) {
-    showToast('保存失败: ' + e.message, 'error');
+    showToast('刷新失败: ' + e.message, 'error');
+  }
+}
+
+// H3: one-click save + redeploy. Saves via the shared pipeline, closes the
+// modal, then hands off to the existing deployBranch() helper.
+async function _saveAndDeployOverride() {
+  const s = _overrideModalState;
+  if (!s) return;
+  const branchId = s.branchId;
+  const ok = await _doSaveOverride();
+  if (!ok) return;
+  // Close without the "unsaved changes" prompt — we just saved successfully.
+  _overrideModalState = null;
+  document.getElementById('overrideModal')?.classList.add('hidden');
+  showToast('正在重新部署...', 'info');
+  try {
+    await deployBranch(branchId);
+  } catch (e) {
+    showToast('部署失败: ' + e.message, 'error');
   }
 }
 
@@ -6985,6 +7131,7 @@ async function _resetOverride() {
   const s = _overrideModalState;
   if (!s) return;
   if (!confirm('确定清空该分支的容器覆盖，完全继承公共配置？')) return;
+  _setOverrideButtonsDisabled(true);
   try {
     await api('DELETE', `/branches/${encodeURIComponent(s.branchId)}/profile-overrides/${encodeURIComponent(s.activeProfileId)}`);
     showToast('已恢复公共配置', 'success');
@@ -6995,6 +7142,8 @@ async function _resetOverride() {
     _renderOverrideForm();
   } catch (e) {
     showToast('重置失败: ' + e.message, 'error');
+  } finally {
+    _setOverrideButtonsDisabled(false);
   }
 }
 
@@ -7004,7 +7153,9 @@ window.closeOverrideModal = closeOverrideModal;
 window._switchOverrideProfile = _switchOverrideProfile;
 window._overrideFieldChanged = _overrideFieldChanged;
 window._saveOverride = _saveOverride;
+window._saveAndDeployOverride = _saveAndDeployOverride;
 window._resetOverride = _resetOverride;
+window._appendEnvToOverride = _appendEnvToOverride;
 
 // ── Init activity monitor & AI pairing ──
 initActivityMonitor();
