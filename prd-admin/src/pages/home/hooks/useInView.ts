@@ -31,12 +31,13 @@ export function useInView<T extends HTMLElement>(
     }
 
     if (nearViewport) {
-      // 关键：double-rAF 保证浏览器先绘制 opacity:0 / blur 初始帧，
-      // 再 setState 触发 CSS transition。直接 setState 会被 React 18
-      // 批处理合并到同一帧，跳过初始态 → transition 不触发 → 元素直接跳到终态。
+      // double-rAF 保证浏览器先绘制 opacity:0 初始帧，再触发 transition。
+      // cancelled 标志防止 React StrictMode 双挂载时旧实例的 rAF 泄漏。
+      let cancelled = false;
       const t0 = performance.now();
       requestAnimationFrame(() => {
         requestAnimationFrame(() => {
+          if (cancelled) return;
           if (debugLabel) {
             console.log(
               `[Reveal:${debugLabel}] → inView=true (after ${Math.round(performance.now() - t0)}ms)`,
@@ -45,7 +46,7 @@ export function useInView<T extends HTMLElement>(
           setInView(true);
         });
       });
-      return;
+      return () => { cancelled = true; };
     }
 
     const observer = new IntersectionObserver(
