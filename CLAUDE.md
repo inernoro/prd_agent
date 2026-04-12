@@ -206,7 +206,7 @@ cd prd-api && dotnet build --no-restore 2>&1 | grep -E "error CS|warning CS" | h
 | **code-hygiene** | `/hygiene` | 输入代码变更 → 检测死代码/兼容垫片/命名残留/冗余参数等 10 类技术债，输出清理建议 |
 | **deep-trace** | `/deep-trace` | 输入代码变更 → 跨层（C#→JSON→Rust→React）验证字段名、类型、序列化、空值处理的正确性 |
 | **llm-visibility** | `/visibility` | 输入代码变更 → 扫描所有 LLM 调用点，检查是否符合「禁止空白等待」原则，输出合规报告 |
-| **document-emerge** | `/emerge` | 输入文档空间 → 对标竞品功能矩阵，涌现式设计下一个最有价值的文档功能 |
+| **feature-emerge** | `/emerge` | 输入任意模块/痛点 → 扫描该模块能力 + 全局横向能力（Gateway / Bridge / Run-Worker / Attachment）→ 四层发散（基线/差异化/智力/疯狂）→ 收敛推荐波次。通用涌现，不限文档 |
 | **cn-brief-summary** | `200字总结` | 无需输入 → 在回复末尾自动追加 ≤200 字中文通俗总结 |
 | **dev-completion-report** | `/dev-report` | 开发完成后 → 输出三段式报告：200 字总结 + 总结清单（改动/风险/测试/验收）+ 行业对比分析 |
 | **create-skill-file** | `/create-skill` | 输入技能需求 → 生成符合规范的 SKILL.md 文件并评分 |
