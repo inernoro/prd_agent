@@ -55,7 +55,7 @@ export function SectionHeader({
         </div>
       </Reveal>
 
-      <Reveal delay={80}>
+      <Reveal delay={80} blur={12} duration={1300}>
         <h2
           className="text-white font-medium"
           style={{
