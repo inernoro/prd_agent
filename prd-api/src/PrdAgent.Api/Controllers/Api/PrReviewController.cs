@@ -4,6 +4,7 @@ using Microsoft.AspNetCore.Mvc;
 using MongoDB.Driver;
 using PrdAgent.Api.Extensions;
 using PrdAgent.Api.Services.PrReview;
+using PrdAgent.Infrastructure.GitHub;
 using PrdAgent.Core.Helpers;
 using PrdAgent.Core.Models;
 using PrdAgent.Core.Security;
@@ -36,8 +37,8 @@ public sealed class PrReviewController : ControllerBase
     private const string AppKey = "pr-review";
 
     private readonly MongoDbContext _db;
-    private readonly GitHubOAuthService _oauth;
-    private readonly GitHubPrClient _github;
+    private readonly IGitHubOAuthService _oauth;
+    private readonly IGitHubClient _github;
     private readonly PrAlignmentService _alignment;
     private readonly PrSummaryService _summary;
     private readonly IConfiguration _config;
@@ -45,8 +46,8 @@ public sealed class PrReviewController : ControllerBase
 
     public PrReviewController(
         MongoDbContext db,
-        GitHubOAuthService oauth,
-        GitHubPrClient github,
+        IGitHubOAuthService oauth,
+        IGitHubClient github,
         PrAlignmentService alignment,
         PrSummaryService summary,
         IConfiguration config,
@@ -129,7 +130,7 @@ public sealed class PrReviewController : ControllerBase
                 flowToken = start.FlowToken,
             }));
         }
-        catch (PrReviewException ex)
+        catch (GitHubException ex)
         {
             return MapException(ex);
         }
@@ -177,7 +178,7 @@ public sealed class PrReviewController : ControllerBase
                     return Ok(ApiResponse<object>.Ok(new { status = "pending" }));
             }
         }
-        catch (PrReviewException ex)
+        catch (GitHubException ex)
         {
             return MapException(ex);
         }
@@ -250,7 +251,7 @@ public sealed class PrReviewController : ControllerBase
 
         if (!PrUrlParser.TryParse(req.PullRequestUrl, out var parsed, out var parseError))
         {
-            return BadRequest(ApiResponse<object>.Fail(PrReviewErrorCodes.PR_URL_INVALID, parseError ?? "PR URL 无效"));
+            return BadRequest(ApiResponse<object>.Fail(GitHubErrorCodes.PR_URL_INVALID, parseError ?? "PR URL 无效"));
         }
 
         // 唯一性检查
@@ -271,7 +272,7 @@ public sealed class PrReviewController : ControllerBase
         {
             accessToken = await ResolveUserTokenAsync(userId, ct);
         }
-        catch (PrReviewException ex)
+        catch (GitHubException ex)
         {
             return MapException(ex);
         }
@@ -283,7 +284,7 @@ public sealed class PrReviewController : ControllerBase
             snapshot = await _github.FetchPullRequestAsync(
                 accessToken, parsed!.Owner, parsed.Repo, parsed.Number, CancellationToken.None);
         }
-        catch (PrReviewException ex)
+        catch (GitHubException ex)
         {
             // 拉取失败：不拦截入库，入库一条 error 记录，让用户可以修笔记/重试
             _logger.LogInformation("PrReview fetch failed on create: {Code}", ex.Code);
@@ -436,7 +437,7 @@ public sealed class PrReviewController : ControllerBase
         {
             accessToken = await ResolveUserTokenAsync(userId, ct);
         }
-        catch (PrReviewException ex)
+        catch (GitHubException ex)
         {
             return MapException(ex);
         }
@@ -469,7 +470,7 @@ public sealed class PrReviewController : ControllerBase
                 ct);
             return Ok(ApiResponse<object>.Ok(history));
         }
-        catch (PrReviewException ex)
+        catch (GitHubException ex)
         {
             return MapException(ex);
         }
@@ -496,7 +497,7 @@ public sealed class PrReviewController : ControllerBase
         {
             accessToken = await ResolveUserTokenAsync(userId, ct);
         }
-        catch (PrReviewException ex)
+        catch (GitHubException ex)
         {
             return MapException(ex);
         }
@@ -523,7 +524,7 @@ public sealed class PrReviewController : ControllerBase
             await TouchLastUsedAsync(userId, ct);
             return Ok(ApiResponse<object>.Ok(Serialize(item)));
         }
-        catch (PrReviewException ex)
+        catch (GitHubException ex)
         {
             await _db.PrReviewItems.UpdateOneAsync(
                 x => x.Id == id && x.UserId == userId,
@@ -888,7 +889,7 @@ public sealed class PrReviewController : ControllerBase
                     cancellationToken: CancellationToken.None);
                 item.Snapshot = fresh;
             }
-            catch (PrReviewException ex)
+            catch (GitHubException ex)
             {
                 await WriteSseEventAsync("error", new { message = ex.Message, code = ex.Code });
                 return null;
@@ -1147,7 +1148,7 @@ public sealed class PrReviewController : ControllerBase
             .FirstOrDefaultAsync(ct);
         if (conn == null || string.IsNullOrEmpty(conn.AccessTokenEncrypted))
         {
-            throw PrReviewException.NotConnected();
+            throw GitHubException.NotConnected();
         }
 
         var jwtSecret = _config["Jwt:Secret"] ?? throw new InvalidOperationException("Jwt:Secret missing");
@@ -1155,7 +1156,7 @@ public sealed class PrReviewController : ControllerBase
         if (string.IsNullOrEmpty(token))
         {
             // 解密失败通常意味着 Jwt:Secret 变过，用户需要重新授权
-            throw PrReviewException.TokenExpired();
+            throw GitHubException.TokenExpired();
         }
         return token;
     }
@@ -1174,7 +1175,7 @@ public sealed class PrReviewController : ControllerBase
             && !string.IsNullOrWhiteSpace(_config["GitHubOAuth:ClientSecret"]);
     }
 
-    private IActionResult MapException(PrReviewException ex)
+    private IActionResult MapException(GitHubException ex)
     {
         _logger.LogInformation("PrReview domain error: {Code} {Message}", ex.Code, ex.Message);
         return StatusCode(ex.HttpStatus, ApiResponse<object>.Fail(ex.Code, ex.Message));

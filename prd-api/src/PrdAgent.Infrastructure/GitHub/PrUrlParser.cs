@@ -1,6 +1,6 @@
 using System.Text.RegularExpressions;
 
-namespace PrdAgent.Api.Services.PrReview;
+namespace PrdAgent.Infrastructure.GitHub;
 
 /// <summary>
 /// GitHub PR URL 解析与 SSRF 白名单校验。

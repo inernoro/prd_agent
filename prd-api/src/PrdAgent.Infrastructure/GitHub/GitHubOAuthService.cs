@@ -3,11 +3,13 @@ using System.Net.Http.Json;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json.Serialization;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Logging;
 
-namespace PrdAgent.Api.Services.PrReview;
+namespace PrdAgent.Infrastructure.GitHub;
 
 /// <summary>
-/// GitHub OAuth Device Flow（RFC 8628）封装。
+/// GitHub OAuth Device Flow（RFC 8628）封装 —— <see cref="IGitHubOAuthService"/> 的默认实现。
 ///
 /// 为什么用 Device Flow 而不是 Web Flow：
 ///   本项目前后端部署在动态域名（CDS 预览环境，每条分支一个域名）。
@@ -30,7 +32,7 @@ namespace PrdAgent.Api.Services.PrReview;
 /// 安全：flow_token 用 HMAC(Jwt:Secret) 签名，绑定发起用户，多实例部署无需共享 session。
 ///       device_code 永远不出后端，前端只看到无状态的 flow_token。
 /// </summary>
-public sealed class GitHubOAuthService
+public sealed class GitHubOAuthService : IGitHubOAuthService
 {
     private const string DeviceCodeUrl = "https://github.com/login/device/code";
     private const string TokenUrl = "https://github.com/login/oauth/access_token";
@@ -63,7 +65,7 @@ public sealed class GitHubOAuthService
         var clientId = _config["GitHubOAuth:ClientId"];
         if (string.IsNullOrWhiteSpace(clientId))
         {
-            throw PrReviewException.OAuthNotConfigured();
+            throw GitHubException.OAuthNotConfigured();
         }
 
         var scopes = _config["GitHubOAuth:Scopes"] ?? DefaultScopes;
@@ -82,13 +84,13 @@ public sealed class GitHubOAuthService
         {
             var body = await SafeReadBodyAsync(resp, ct);
             _logger.LogWarning("PrReview device_code request failed: HTTP {Status} body={Body}", (int)resp.StatusCode, body);
-            throw PrReviewException.DeviceFlowRequestFailed($"HTTP {(int)resp.StatusCode}");
+            throw GitHubException.DeviceFlowRequestFailed($"HTTP {(int)resp.StatusCode}");
         }
 
         var dto = await resp.Content.ReadFromJsonAsync<GitHubDeviceCodeResponse>(cancellationToken: ct);
         if (dto == null || string.IsNullOrWhiteSpace(dto.DeviceCode) || string.IsNullOrWhiteSpace(dto.UserCode))
         {
-            throw PrReviewException.DeviceFlowRequestFailed("empty device_code response");
+            throw GitHubException.DeviceFlowRequestFailed("empty device_code response");
         }
 
         var expiryUnix = DateTimeOffset.UtcNow.AddSeconds(Math.Min(dto.ExpiresIn, FlowTokenTtlSeconds)).ToUnixTimeSeconds();
@@ -118,11 +120,11 @@ public sealed class GitHubOAuthService
     {
         if (!TryDecodeFlowToken(flowToken, out var deviceCode, out var tokenUserId, out var expiryUnix))
         {
-            throw PrReviewException.DeviceFlowTokenInvalid();
+            throw GitHubException.DeviceFlowTokenInvalid();
         }
         if (!string.Equals(tokenUserId, userId, StringComparison.Ordinal))
         {
-            throw PrReviewException.DeviceFlowTokenInvalid();
+            throw GitHubException.DeviceFlowTokenInvalid();
         }
         if (DateTimeOffset.UtcNow.ToUnixTimeSeconds() > expiryUnix)
         {
@@ -133,7 +135,7 @@ public sealed class GitHubOAuthService
         var clientSecret = _config["GitHubOAuth:ClientSecret"];
         if (string.IsNullOrWhiteSpace(clientId))
         {
-            throw PrReviewException.OAuthNotConfigured();
+            throw GitHubException.OAuthNotConfigured();
         }
 
         var client = _httpClientFactory.CreateClient("GitHubApi");
@@ -160,13 +162,13 @@ public sealed class GitHubOAuthService
         {
             var body = await SafeReadBodyAsync(resp, ct);
             _logger.LogWarning("PrReview device poll failed: HTTP {Status} body={Body}", (int)resp.StatusCode, body);
-            throw PrReviewException.DeviceFlowRequestFailed($"HTTP {(int)resp.StatusCode}");
+            throw GitHubException.DeviceFlowRequestFailed($"HTTP {(int)resp.StatusCode}");
         }
 
         var dto = await resp.Content.ReadFromJsonAsync<GitHubAccessTokenResponse>(cancellationToken: ct);
         if (dto == null)
         {
-            throw PrReviewException.DeviceFlowRequestFailed("empty poll response");
+            throw GitHubException.DeviceFlowRequestFailed("empty poll response");
         }
 
         // GitHub 在 Device Flow 轮询里用 error 字段表达"还没授权"等状态，
@@ -179,7 +181,7 @@ public sealed class GitHubOAuthService
                 "slow_down" => DeviceFlowPollResult.SlowDown(),
                 "expired_token" => DeviceFlowPollResult.Expired(),
                 "access_denied" => DeviceFlowPollResult.Denied(),
-                _ => throw PrReviewException.DeviceFlowRequestFailed(dto.Error!)
+                _ => throw GitHubException.DeviceFlowRequestFailed(dto.Error!)
             };
         }
 
@@ -203,13 +205,13 @@ public sealed class GitHubOAuthService
         using var resp = await client.SendAsync(req, ct);
         if (!resp.IsSuccessStatusCode)
         {
-            throw PrReviewException.DeviceFlowRequestFailed($"GET /user HTTP {(int)resp.StatusCode}");
+            throw GitHubException.DeviceFlowRequestFailed($"GET /user HTTP {(int)resp.StatusCode}");
         }
 
         var info = await resp.Content.ReadFromJsonAsync<GitHubUserInfo>(cancellationToken: ct);
         if (info == null || string.IsNullOrWhiteSpace(info.Login))
         {
-            throw PrReviewException.DeviceFlowRequestFailed("empty user info");
+            throw GitHubException.DeviceFlowRequestFailed("empty user info");
         }
 
         return info;

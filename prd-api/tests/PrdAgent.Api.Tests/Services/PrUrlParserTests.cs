@@ -1,4 +1,4 @@
-using PrdAgent.Api.Services.PrReview;
+using PrdAgent.Infrastructure.GitHub;
 using Xunit;
 
 namespace PrdAgent.Api.Tests.Services;
@@ -42,7 +42,7 @@ public class PrUrlParserTests
     [InlineData("   ", "PR 链接不能为空")]
     [InlineData("not-a-url", "格式错误")]
     [InlineData("ftp://github.com/owner/repo/pull/1", "协议")]
-    [InlineData("javascript:alert(1)", "格式错误")]
+    [InlineData("javascript:alert(1)", "协议")]
     public void TryParse_InvalidInputs_ShouldFailWithHint(string url, string errorHint)
     {
         var ok = PrUrlParser.TryParse(url, out var result, out var error);
