@@ -1491,16 +1491,30 @@ export function createBranchRouter(deps: RouterDeps): Router {
       res.status(404).json({ error: `分支 "${id}" 不存在` });
       return;
     }
+    // CDS infra vars (CDS_HOST / CDS_MONGODB_PORT / etc.) are injected BEFORE
+    // profile.env at runtime (see container.ts runService ~L118). We expose
+    // the same merge order here so the override modal's "effective env"
+    // preview matches what actually reaches the container, not a misleading
+    // subset that only contains user-editable keys.
+    const cdsVars = stateService.getCdsEnvVars();
+    const cdsEnvKeys = Object.keys(cdsVars);
     const profiles = stateService.getBuildProfiles();
     const payload = profiles.map(profile => {
       const override = entry.profileOverrides?.[profile.id];
-      const effective = resolveEffectiveProfile(profile, entry);
+      const resolved = resolveEffectiveProfile(profile, entry);
+      // CDS infra vars first, then profile.env so user-set values can still
+      // shadow infra defaults (keeps current runtime semantics — see container.ts).
+      const effective = {
+        ...resolved,
+        env: { ...cdsVars, ...(resolved.env || {}) },
+      };
       return {
         profileId: profile.id,
         profileName: profile.name,
         baseline: profile,
         override: override || null,
         effective,
+        cdsEnvKeys,
         hasOverride: !!override && Object.keys(override).some(k => k !== 'updatedAt' && k !== 'notes'),
       };
     });
@@ -1523,14 +1537,41 @@ export function createBranchRouter(deps: RouterDeps): Router {
       // Body is the BuildProfileOverride object. Unknown keys are silently
       // dropped by the interface shape — we only copy fields we recognize.
       const body = (req.body ?? {}) as Record<string, unknown>;
+
+      // M6: reject nonsense port values outright, otherwise the front-end
+      // can accidentally write containerPort:0 and break routing silently.
+      if (typeof body.containerPort === 'number' && body.containerPort <= 0) {
+        res.status(400).json({ error: 'containerPort 必须是正整数' });
+        return;
+      }
+
+      // M8: `typeof [] === 'object'` is true and typeof null === 'object' too,
+      // so we explicitly filter both. Otherwise `body.env = []` would cast to
+      // Record<string,string> and produce garbage at deploy time.
+      let envOverride: Record<string, string> | undefined;
+      if (
+        body.env !== null &&
+        typeof body.env === 'object' &&
+        !Array.isArray(body.env)
+      ) {
+        // M9: drop any value that isn't a string. Non-string values would
+        // explode the env-file writer (container.ts writeEnvFile) and leak
+        // `undefined` / numbers into Docker env.
+        const cleaned: Record<string, string> = {};
+        for (const [k, v] of Object.entries(body.env as Record<string, unknown>)) {
+          if (typeof v === 'string') cleaned[k] = v;
+        }
+        envOverride = cleaned;
+      }
+
       const override = {
         dockerImage: typeof body.dockerImage === 'string' ? body.dockerImage : undefined,
         command: typeof body.command === 'string' ? body.command : undefined,
         containerWorkDir: typeof body.containerWorkDir === 'string' ? body.containerWorkDir : undefined,
         containerPort: typeof body.containerPort === 'number' ? body.containerPort : undefined,
-        env: body.env && typeof body.env === 'object' ? body.env as Record<string, string> : undefined,
+        env: envOverride,
         pathPrefixes: Array.isArray(body.pathPrefixes) ? body.pathPrefixes as string[] : undefined,
-        resources: body.resources && typeof body.resources === 'object' ? body.resources as { memoryMB?: number; cpus?: number } : undefined,
+        resources: body.resources && typeof body.resources === 'object' && !Array.isArray(body.resources) ? body.resources as { memoryMB?: number; cpus?: number } : undefined,
         activeDeployMode: typeof body.activeDeployMode === 'string' ? body.activeDeployMode : undefined,
         startupSignal: typeof body.startupSignal === 'string' ? body.startupSignal : undefined,
         notes: typeof body.notes === 'string' ? body.notes : undefined,
