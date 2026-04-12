@@ -1,8 +1,8 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import fs from 'node:fs';
-import { ContainerService } from '../../src/services/container.js';
+import { ContainerService, applyProfileOverride, resolveEffectiveProfile } from '../../src/services/container.js';
 import { MockShellExecutor } from '../../src/services/shell-executor.js';
-import type { CdsConfig, BranchEntry, BuildProfile, ServiceState } from '../../src/types.js';
+import type { CdsConfig, BranchEntry, BuildProfile, BuildProfileOverride, ServiceState } from '../../src/types.js';
 
 const makeConfig = (): CdsConfig => ({
   repoRoot: '/repo',
@@ -262,5 +262,132 @@ describe('ContainerService', () => {
       const logs = await service.getLogs('c');
       expect(logs).toContain('log output');
     });
+  });
+});
+
+describe('Branch profile overrides — inheritance merge', () => {
+  const baseline: BuildProfile = {
+    id: 'api',
+    name: 'API',
+    dockerImage: 'mcr.microsoft.com/dotnet/sdk:8.0',
+    workDir: 'prd-api',
+    command: 'dotnet run',
+    containerPort: 8080,
+    env: { BASE_A: '1', BASE_B: '2' },
+    resources: { memoryMB: 1024 },
+    deployModes: {
+      dev: { label: '开发', command: 'dotnet watch run' },
+      static: { label: '静态', command: 'nginx' },
+    },
+  };
+
+  const branchWithOverride = (override: BuildProfileOverride): BranchEntry => ({
+    id: 'feature-x',
+    branch: 'feature/x',
+    worktreePath: '/wt/feature-x',
+    services: {},
+    status: 'idle',
+    createdAt: '2026-02-12T00:00:00Z',
+    profileOverrides: { api: override },
+  });
+
+  it('applyProfileOverride returns baseline unchanged when override is undefined', () => {
+    const merged = applyProfileOverride(baseline, undefined);
+    expect(merged).toEqual(baseline);
+    // Fast path: no override → same reference (no allocation)
+    expect(merged).toBe(baseline);
+  });
+
+  it('applyProfileOverride does NOT mutate the baseline', () => {
+    const snapshot = JSON.parse(JSON.stringify(baseline));
+    applyProfileOverride(baseline, {
+      dockerImage: 'node:20',
+      env: { BASE_A: '99', NEW_KEY: 'x' },
+    });
+    expect(baseline).toEqual(snapshot);
+  });
+
+  it('override replaces scalar fields when set', () => {
+    const merged = applyProfileOverride(baseline, {
+      dockerImage: 'node:20-alpine',
+      command: 'pnpm dev',
+      containerPort: 3000,
+    });
+    expect(merged.dockerImage).toBe('node:20-alpine');
+    expect(merged.command).toBe('pnpm dev');
+    expect(merged.containerPort).toBe(3000);
+    // Unset fields inherit
+    expect(merged.workDir).toBe('prd-api');
+  });
+
+  it('env merges key-wise with override winning per key', () => {
+    const merged = applyProfileOverride(baseline, {
+      env: { BASE_A: 'overridden', NEW_KEY: 'fresh' },
+    });
+    expect(merged.env).toEqual({
+      BASE_A: 'overridden', // override wins
+      BASE_B: '2',          // inherited
+      NEW_KEY: 'fresh',     // added
+    });
+  });
+
+  it('empty env in override leaves baseline env intact', () => {
+    const merged = applyProfileOverride(baseline, { dockerImage: 'node:20' });
+    expect(merged.env).toEqual(baseline.env);
+  });
+
+  it('resources replaces whole object when set', () => {
+    const merged = applyProfileOverride(baseline, {
+      resources: { memoryMB: 2048, cpus: 2 },
+    });
+    expect(merged.resources).toEqual({ memoryMB: 2048, cpus: 2 });
+  });
+
+  it('resolveEffectiveProfile: baseline → override → deployMode order', () => {
+    // Branch overrides command AND activates a deploy mode that also changes command.
+    // Deploy mode runs LAST so its command wins.
+    const branch = branchWithOverride({
+      command: 'branch-cmd',
+      activeDeployMode: 'dev', // dev.command = 'dotnet watch run'
+    });
+    const effective = resolveEffectiveProfile(baseline, branch);
+    expect(effective.command).toBe('dotnet watch run'); // deploy mode wins
+    expect(effective.activeDeployMode).toBe('dev');
+  });
+
+  it('resolveEffectiveProfile: branch override takes effect when no deploy mode is active', () => {
+    const branch = branchWithOverride({
+      dockerImage: 'custom:latest',
+      env: { BASE_A: 'customized' },
+    });
+    const effective = resolveEffectiveProfile(baseline, branch);
+    expect(effective.dockerImage).toBe('custom:latest');
+    expect(effective.env).toEqual({ BASE_A: 'customized', BASE_B: '2' });
+  });
+
+  it('resolveEffectiveProfile: undefined branch returns plain profile', () => {
+    const effective = resolveEffectiveProfile(baseline, undefined);
+    expect(effective).toEqual(baseline);
+  });
+
+  it('resolveEffectiveProfile: empty profileOverrides map = pure inheritance', () => {
+    const branch: BranchEntry = {
+      id: 'feature-y',
+      branch: 'feature/y',
+      worktreePath: '/wt/feature-y',
+      services: {},
+      status: 'idle',
+      createdAt: '2026-02-12T00:00:00Z',
+      profileOverrides: {},
+    };
+    const effective = resolveEffectiveProfile(baseline, branch);
+    expect(effective).toEqual(baseline);
+  });
+
+  it('resolveEffectiveProfile: override can switch active deploy mode', () => {
+    // Baseline has no active mode; branch activates 'static'.
+    const branch = branchWithOverride({ activeDeployMode: 'static' });
+    const effective = resolveEffectiveProfile(baseline, branch);
+    expect(effective.command).toBe('nginx');
   });
 });

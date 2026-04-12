@@ -8,7 +8,7 @@ import { createGzip } from 'node:zlib';
 import { Router } from 'express';
 import { StateService } from '../services/state.js';
 import type { WorktreeService } from '../services/worktree.js';
-import { resolveProfileWithMode } from '../services/container.js';
+import { resolveEffectiveProfile } from '../services/container.js';
 import type { ContainerService } from '../services/container.js';
 import type { SchedulerService } from '../services/scheduler.js';
 import type { ExecutorRegistry } from '../scheduler/executor-registry.js';
@@ -903,16 +903,19 @@ export function createBranchRouter(deps: RouterDeps): Router {
         const layerStartTime = Date.now();
 
         await Promise.all(layer.items.map(async (profile) => {
-          // Resolve deploy mode overrides (e.g., dev → static)
-          const effectiveProfile = resolveProfileWithMode(profile);
-          const modeLabel = profile.activeDeployMode && profile.deployModes?.[profile.activeDeployMode]
-            ? ` [${profile.deployModes[profile.activeDeployMode].label}]`
+          // Resolve baseline → branch override → deploy-mode override
+          const effectiveProfile = resolveEffectiveProfile(profile, entry);
+          const branchOverride = entry.profileOverrides?.[profile.id];
+          const activeMode = effectiveProfile.activeDeployMode;
+          const modeLabel = activeMode && effectiveProfile.deployModes?.[activeMode]
+            ? ` [${effectiveProfile.deployModes[activeMode].label}]`
             : '';
+          const overrideLabel = branchOverride ? ' (分支自定义)' : '';
           const serviceStartTime = Date.now();
           logEvent({
             step: `build-${profile.id}`,
             status: 'running',
-            title: `正在构建 ${profile.name}${modeLabel}...`,
+            title: `正在构建 ${profile.name}${modeLabel}${overrideLabel}...`,
             timestamp: new Date().toISOString(),
           });
 
@@ -934,7 +937,8 @@ export function createBranchRouter(deps: RouterDeps): Router {
               detail: {
                 cdsVars: maskSecrets(cdsVars),
                 profileEnvKeys: Object.keys(effectiveProfile.env ?? {}),
-                deployMode: profile.activeDeployMode || 'default',
+                deployMode: effectiveProfile.activeDeployMode || 'default',
+                branchOverrideKeys: branchOverride ? Object.keys(branchOverride) : [],
               },
               timestamp: new Date().toISOString(),
             });
@@ -1109,14 +1113,17 @@ export function createBranchRouter(deps: RouterDeps): Router {
         stateService.save();
       }
 
-      // Resolve deploy mode overrides
-      const effectiveProfile = resolveProfileWithMode(profile);
-      const modeLabel = profile.activeDeployMode && profile.deployModes?.[profile.activeDeployMode]
-        ? ` [${profile.deployModes[profile.activeDeployMode].label}]`
+      // Resolve baseline → branch override → deploy-mode override
+      const effectiveProfile = resolveEffectiveProfile(profile, entry);
+      const branchOverride = entry.profileOverrides?.[profile.id];
+      const activeMode = effectiveProfile.activeDeployMode;
+      const modeLabel = activeMode && effectiveProfile.deployModes?.[activeMode]
+        ? ` [${effectiveProfile.deployModes[activeMode].label}]`
         : '';
+      const overrideLabel = branchOverride ? ' (分支自定义)' : '';
 
       // Build & run the single profile
-      logEvent({ step: `build-${profile.id}`, status: 'running', title: `正在构建 ${profile.name}${modeLabel}...`, timestamp: new Date().toISOString() });
+      logEvent({ step: `build-${profile.id}`, status: 'running', title: `正在构建 ${profile.name}${modeLabel}${overrideLabel}...`, timestamp: new Date().toISOString() });
 
       if (!entry.services[profile.id]) {
         const hostPort = stateService.allocatePort(config.portStart);
@@ -1466,6 +1473,98 @@ export function createBranchRouter(deps: RouterDeps): Router {
       stateService.updateBranchMeta(id, { isFavorite, notes, tags, isColorMarked });
       stateService.save();
       res.json({ message: '已更新' });
+    } catch (err) {
+      res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  // ── Per-branch BuildProfile overrides (inheritance-with-extension) ──
+  //
+  // GET returns one entry per shared BuildProfile, showing baseline + branch
+  // override + merged effective. PUT replaces an override (full body), DELETE
+  // clears it. Applied at runtime by `resolveEffectiveProfile` in container.ts.
+
+  router.get('/branches/:id/profile-overrides', (req, res) => {
+    const { id } = req.params;
+    const entry = stateService.getBranch(id);
+    if (!entry) {
+      res.status(404).json({ error: `分支 "${id}" 不存在` });
+      return;
+    }
+    const profiles = stateService.getBuildProfiles();
+    const payload = profiles.map(profile => {
+      const override = entry.profileOverrides?.[profile.id];
+      const effective = resolveEffectiveProfile(profile, entry);
+      return {
+        profileId: profile.id,
+        profileName: profile.name,
+        baseline: profile,
+        override: override || null,
+        effective,
+        hasOverride: !!override && Object.keys(override).some(k => k !== 'updatedAt' && k !== 'notes'),
+      };
+    });
+    res.json({ branchId: id, profiles: payload });
+  });
+
+  router.put('/branches/:id/profile-overrides/:profileId', (req, res) => {
+    const { id, profileId } = req.params;
+    const entry = stateService.getBranch(id);
+    if (!entry) {
+      res.status(404).json({ error: `分支 "${id}" 不存在` });
+      return;
+    }
+    const profile = stateService.getBuildProfile(profileId);
+    if (!profile) {
+      res.status(404).json({ error: `构建配置 "${profileId}" 不存在` });
+      return;
+    }
+    try {
+      // Body is the BuildProfileOverride object. Unknown keys are silently
+      // dropped by the interface shape — we only copy fields we recognize.
+      const body = (req.body ?? {}) as Record<string, unknown>;
+      const override = {
+        dockerImage: typeof body.dockerImage === 'string' ? body.dockerImage : undefined,
+        command: typeof body.command === 'string' ? body.command : undefined,
+        containerWorkDir: typeof body.containerWorkDir === 'string' ? body.containerWorkDir : undefined,
+        containerPort: typeof body.containerPort === 'number' ? body.containerPort : undefined,
+        env: body.env && typeof body.env === 'object' ? body.env as Record<string, string> : undefined,
+        pathPrefixes: Array.isArray(body.pathPrefixes) ? body.pathPrefixes as string[] : undefined,
+        resources: body.resources && typeof body.resources === 'object' ? body.resources as { memoryMB?: number; cpus?: number } : undefined,
+        activeDeployMode: typeof body.activeDeployMode === 'string' ? body.activeDeployMode : undefined,
+        startupSignal: typeof body.startupSignal === 'string' ? body.startupSignal : undefined,
+        notes: typeof body.notes === 'string' ? body.notes : undefined,
+      };
+      stateService.setBranchProfileOverride(id, profileId, override);
+      stateService.save();
+
+      // Return the new effective profile so the UI can show the merged result
+      // without a second round-trip.
+      const refreshed = stateService.getBranch(id)!;
+      const effective = resolveEffectiveProfile(profile, refreshed);
+      res.json({
+        message: '已保存分支覆盖',
+        profileId,
+        override: stateService.getBranchProfileOverride(id, profileId),
+        effective,
+        needsRedeploy: true,
+      });
+    } catch (err) {
+      res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  router.delete('/branches/:id/profile-overrides/:profileId', (req, res) => {
+    const { id, profileId } = req.params;
+    const entry = stateService.getBranch(id);
+    if (!entry) {
+      res.status(404).json({ error: `分支 "${id}" 不存在` });
+      return;
+    }
+    try {
+      stateService.clearBranchProfileOverride(id, profileId);
+      stateService.save();
+      res.json({ message: '已恢复为公共配置', profileId, needsRedeploy: true });
     } catch (err) {
       res.status(500).json({ error: (err as Error).message });
     }

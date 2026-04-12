@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import type { CdsState, BranchEntry, BuildProfile, RoutingRule, OperationLog, InfraService, ExecutorNode, DataMigration, CdsPeer } from '../types.js';
+import type { CdsState, BranchEntry, BuildProfile, BuildProfileOverride, RoutingRule, OperationLog, InfraService, ExecutorNode, DataMigration, CdsPeer } from '../types.js';
 
 const MAX_LOGS_PER_BRANCH = 10;
 /** Max rolling backups of state.json kept on disk. See design.cds-resilience.md §5. */
@@ -268,6 +268,46 @@ export class StateService {
     if (updates.notes !== undefined) branch.notes = updates.notes;
     if (updates.tags !== undefined) branch.tags = updates.tags;
     if (updates.isColorMarked !== undefined) branch.isColorMarked = updates.isColorMarked;
+  }
+
+  // ── Per-branch BuildProfile overrides ──
+  //
+  // These let a branch extend (rather than replace) the shared public
+  // BuildProfile. Empty override = pure inheritance (legacy behavior).
+  // Applied by `resolveEffectiveProfile()` at container start time.
+
+  getBranchProfileOverrides(branchId: string): Record<string, BuildProfileOverride> {
+    return this.state.branches[branchId]?.profileOverrides || {};
+  }
+
+  getBranchProfileOverride(branchId: string, profileId: string): BuildProfileOverride | undefined {
+    return this.state.branches[branchId]?.profileOverrides?.[profileId];
+  }
+
+  /**
+   * Replace the override for one profile on one branch. Passing an empty
+   * object clears all fields but keeps the entry (equivalent to inheriting
+   * everything from the baseline). Use `clearBranchProfileOverride` to
+   * remove the entry entirely.
+   */
+  setBranchProfileOverride(branchId: string, profileId: string, override: BuildProfileOverride): void {
+    const branch = this.state.branches[branchId];
+    if (!branch) throw new Error(`分支 "${branchId}" 不存在`);
+    if (!branch.profileOverrides) branch.profileOverrides = {};
+    branch.profileOverrides[profileId] = {
+      ...override,
+      updatedAt: new Date().toISOString(),
+    };
+  }
+
+  /** Remove the override entry for one profile, restoring full inheritance. */
+  clearBranchProfileOverride(branchId: string, profileId: string): void {
+    const branch = this.state.branches[branchId];
+    if (!branch?.profileOverrides) return;
+    delete branch.profileOverrides[profileId];
+    if (Object.keys(branch.profileOverrides).length === 0) {
+      delete branch.profileOverrides;
+    }
   }
 
   removeBranch(id: string): void {

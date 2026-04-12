@@ -3072,11 +3072,17 @@ function renderBranches() {
         <div class="deploy-menu-item" onclick="event.stopPropagation(); closeDeployMenu('${esc(b.id)}'); viewBranchLogs('${esc(b.id)}')"><svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor" style="vertical-align:-1px;margin-right:4px"><path d="M1 2.75C1 1.784 1.784 1 2.75 1h10.5c.966 0 1.75.784 1.75 1.75v7.5A1.75 1.75 0 0113.25 12H9.06l-2.573 2.573A1.458 1.458 0 014 13.543V12H2.75A1.75 1.75 0 011 10.25v-7.5zm1.5 0a.25.25 0 01.25-.25h10.5a.25.25 0 01.25.25v7.5a.25.25 0 01-.25.25h-4.5a.75.75 0 00-.75.75v2.19l-2.72-2.72a.75.75 0 00-.53-.22H2.75a.25.25 0 01-.25-.25v-7.5z"/></svg>部署日志</div>
         ${stopMenuItem}` : ''}
         <div class="deploy-menu-divider"></div>
+        <div class="deploy-menu-item" onclick="event.stopPropagation(); closeDeployMenu('${esc(b.id)}'); openOverrideModal('${esc(b.id)}')"><svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor" style="vertical-align:-1px;margin-right:4px"><path d="M8 0a8 8 0 100 16A8 8 0 008 0zM1.5 8a6.5 6.5 0 1113 0 6.5 6.5 0 01-13 0zM8 4a.75.75 0 01.75.75v2.5h2.5a.75.75 0 010 1.5h-2.5v2.5a.75.75 0 01-1.5 0v-2.5h-2.5a.75.75 0 010-1.5h2.5v-2.5A.75.75 0 018 4z"/></svg>容器配置 (继承/覆盖)</div>
+        <div class="deploy-menu-divider"></div>
         <div class="deploy-menu-item deploy-menu-item-danger" onclick="event.stopPropagation(); closeDeployMenu('${esc(b.id)}'); removeBranch('${esc(b.id)}')">${ICON.trash} 删除分支</div>
       </template>
     `;
 
-    const hasDropdown = hasMultipleProfiles || hasDeployModes || isRunning;
+    // Dropdown is always shown now — the menu always contains at least
+    // "容器配置" + "删除分支", so the toggle is always useful. This replaces
+    // the previous logic that only showed the toggle for multi-profile /
+    // deploy-mode / running branches.
+    const hasDropdown = true;
     const deployBtnLabel = isRunning ? '更新' : '部署';
 
     if (isStopping) {
@@ -6721,6 +6727,284 @@ function updateClusterStatusBadge(role, onlineCount) {
     badge.textContent = '';
   }
 }
+
+// ════════════════════════════════════════════════════════════════════
+// Branch profile override modal — per-branch container customization
+//
+// Lets a user extend the shared public BuildProfile for a specific branch
+// without touching other branches. Fields left empty inherit from the
+// public baseline. "重置为公共" clears the override entirely.
+//
+// Backend: GET/PUT/DELETE /api/branches/:id/profile-overrides[/:profileId]
+// Merge happens server-side in `resolveEffectiveProfile()`.
+// ════════════════════════════════════════════════════════════════════
+
+let _overrideModalState = null; // { branchId, profiles, activeProfileId, dirty }
+
+function _ensureOverrideModal() {
+  if (document.getElementById('overrideModal')) return;
+  const modal = document.createElement('div');
+  modal.id = 'overrideModal';
+  modal.className = 'modal hidden';
+  modal.innerHTML = `
+    <div class="modal-backdrop" onclick="closeOverrideModal()"></div>
+    <div class="modal-dialog config-modal-dialog" style="max-width: 860px;">
+      <div class="modal-header">
+        <h2 id="overrideModalTitle">容器配置</h2>
+        <button class="modal-close" onclick="closeOverrideModal()" aria-label="关闭">
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M3.72 3.72a.75.75 0 011.06 0L8 6.94l3.22-3.22a.75.75 0 111.06 1.06L9.06 8l3.22 3.22a.75.75 0 11-1.06 1.06L8 9.06l-3.22 3.22a.75.75 0 01-1.06-1.06L6.94 8 3.72 4.78a.75.75 0 010-1.06z"/></svg>
+        </button>
+      </div>
+      <div id="overrideProfileTabs" style="display:flex;gap:4px;padding:8px 18px 0;flex-wrap:wrap;"></div>
+      <div class="modal-body" id="overrideModalBody"></div>
+    </div>
+  `;
+  document.body.appendChild(modal);
+}
+
+async function openOverrideModal(branchId) {
+  _ensureOverrideModal();
+  try {
+    const data = await api('GET', `/branches/${encodeURIComponent(branchId)}/profile-overrides`);
+    if (!data.profiles || data.profiles.length === 0) {
+      showToast('该分支暂无可配置的构建服务', 'info');
+      return;
+    }
+    _overrideModalState = {
+      branchId,
+      profiles: data.profiles,
+      activeProfileId: data.profiles[0].profileId,
+      dirty: false,
+    };
+    document.getElementById('overrideModalTitle').textContent = `容器配置 — ${branchId}`;
+    document.getElementById('overrideModal').classList.remove('hidden');
+    _renderOverrideTabs();
+    _renderOverrideForm();
+  } catch (e) {
+    showToast('加载配置失败: ' + e.message, 'error');
+  }
+}
+
+function closeOverrideModal() {
+  if (_overrideModalState?.dirty) {
+    if (!confirm('你有未保存的修改，确定关闭吗？')) return;
+  }
+  document.getElementById('overrideModal')?.classList.add('hidden');
+  _overrideModalState = null;
+}
+
+function _renderOverrideTabs() {
+  const s = _overrideModalState;
+  if (!s) return;
+  const tabsEl = document.getElementById('overrideProfileTabs');
+  tabsEl.innerHTML = s.profiles.map(p => {
+    const active = p.profileId === s.activeProfileId;
+    const dot = p.hasOverride ? '<span style="display:inline-block;width:6px;height:6px;border-radius:50%;background:var(--accent,#4a9eff);margin-left:6px;vertical-align:2px" title="已有分支自定义"></span>' : '';
+    return `<button class="log-tab ${active ? 'active' : ''}" style="padding:6px 12px;border-radius:8px 8px 0 0;border:1px solid var(--border);border-bottom:none;background:${active ? 'var(--bg-elevated)' : 'transparent'};color:${active ? 'var(--text-primary)' : 'var(--text-secondary)'};cursor:pointer;font-size:12px;" onclick="_switchOverrideProfile('${esc(p.profileId)}')">${esc(p.profileName || p.profileId)}${dot}</button>`;
+  }).join('');
+}
+
+function _switchOverrideProfile(profileId) {
+  if (!_overrideModalState) return;
+  if (_overrideModalState.dirty) {
+    if (!confirm('切换前放弃当前修改？')) return;
+    _overrideModalState.dirty = false;
+  }
+  _overrideModalState.activeProfileId = profileId;
+  _renderOverrideTabs();
+  _renderOverrideForm();
+}
+
+function _renderOverrideForm() {
+  const s = _overrideModalState;
+  if (!s) return;
+  const p = s.profiles.find(x => x.profileId === s.activeProfileId);
+  if (!p) return;
+
+  const baseline = p.baseline || {};
+  const override = p.override || {};
+  const effective = p.effective || baseline;
+
+  // Helper: render a single field with baseline hint + optional override input
+  const field = (label, key, type, baselineVal, overrideVal, placeholder) => {
+    const inheriting = overrideVal === undefined || overrideVal === null || overrideVal === '';
+    const hint = baselineVal !== undefined && baselineVal !== null && baselineVal !== ''
+      ? `<div style="font-size:11px;color:var(--text-muted);margin-top:3px">公共默认: <code style="font-family:var(--font-mono,monospace);color:var(--text-secondary)">${esc(String(baselineVal))}</code></div>`
+      : `<div style="font-size:11px;color:var(--text-muted);margin-top:3px">公共默认: <em>无</em></div>`;
+    const inputEl = type === 'textarea'
+      ? `<textarea data-override-key="${key}" rows="4" placeholder="${esc(placeholder || '')}" style="width:100%;padding:8px 10px;background:var(--bg-primary);border:1px solid var(--border);border-radius:6px;color:var(--text-primary);font-family:var(--font-mono,monospace);font-size:12px;resize:vertical" oninput="_overrideFieldChanged()">${esc(overrideVal || '')}</textarea>`
+      : `<input type="${type}" data-override-key="${key}" value="${esc(overrideVal !== undefined && overrideVal !== null ? String(overrideVal) : '')}" placeholder="${esc(placeholder || '继承公共默认')}" style="width:100%;padding:8px 10px;background:var(--bg-primary);border:1px solid var(--border);border-radius:6px;color:var(--text-primary);font-family:${type === 'number' ? 'inherit' : 'var(--font-mono,monospace)'};font-size:12px" oninput="_overrideFieldChanged()" />`;
+    const inheritBadge = inheriting
+      ? '<span style="display:inline-block;padding:1px 6px;font-size:10px;background:var(--bg-elevated);color:var(--text-muted);border-radius:4px;margin-left:8px;border:1px solid var(--border)">继承</span>'
+      : '<span style="display:inline-block;padding:1px 6px;font-size:10px;background:var(--accent-bg,rgba(74,158,255,0.15));color:var(--accent,#4a9eff);border-radius:4px;margin-left:8px;border:1px solid var(--accent,#4a9eff)">自定义</span>';
+    return `
+      <div style="margin-bottom:14px">
+        <label style="display:block;font-size:12px;font-weight:600;color:var(--text-primary);margin-bottom:4px">${esc(label)}${inheritBadge}</label>
+        ${inputEl}
+        ${hint}
+      </div>
+    `;
+  };
+
+  // env: baseline is Record<string,string>, override is Record<string,string>
+  // For UX we render the MERGED env as KEY=VAL lines, where override keys are editable
+  const envToText = (envObj) => Object.entries(envObj || {}).map(([k, v]) => `${k}=${v}`).join('\n');
+  const baselineEnvText = envToText(baseline.env);
+  const overrideEnvText = envToText(override.env);
+
+  // Deploy mode selector — baseline.deployModes is Record<string, DeployModeOverride>
+  const modeOptions = baseline.deployModes
+    ? Object.entries(baseline.deployModes).map(([key, m]) => `<option value="${esc(key)}" ${override.activeDeployMode === key ? 'selected' : ''}>${esc(m.label || key)}</option>`).join('')
+    : '';
+
+  const body = document.getElementById('overrideModalBody');
+  body.innerHTML = `
+    <div style="display:flex;gap:8px;align-items:center;margin-bottom:12px;padding:10px 12px;background:var(--bg-elevated);border-radius:8px;border:1px solid var(--border);font-size:12px">
+      <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor" style="flex-shrink:0;color:var(--accent,#4a9eff)"><path d="M8 0a8 8 0 100 16A8 8 0 008 0zM7.25 4a.75.75 0 011.5 0v4a.75.75 0 01-1.5 0V4zM8 10a1 1 0 100 2 1 1 0 000-2z"/></svg>
+      <span style="color:var(--text-secondary);line-height:1.5">留空的字段将<strong style="color:var(--text-primary)">继承公共默认</strong>。保存后需要<strong style="color:var(--text-primary)">重新部署</strong>该分支才能生效。</span>
+    </div>
+
+    ${field('Docker 镜像', 'dockerImage', 'text', baseline.dockerImage, override.dockerImage, '例: node:20-alpine')}
+    ${field('启动命令', 'command', 'textarea', baseline.command, override.command, '例: pnpm install && pnpm dev')}
+    ${field('容器工作目录', 'containerWorkDir', 'text', baseline.containerWorkDir || '/app', override.containerWorkDir, '例: /workspace')}
+    ${field('容器内端口', 'containerPort', 'number', baseline.containerPort, override.containerPort, '例: 5000')}
+
+    <div style="margin-bottom:14px">
+      <label style="display:block;font-size:12px;font-weight:600;color:var(--text-primary);margin-bottom:4px">环境变量覆盖
+        ${override.env && Object.keys(override.env).length > 0
+          ? '<span style="display:inline-block;padding:1px 6px;font-size:10px;background:var(--accent-bg,rgba(74,158,255,0.15));color:var(--accent,#4a9eff);border-radius:4px;margin-left:8px;border:1px solid var(--accent,#4a9eff)">自定义 ' + Object.keys(override.env).length + ' 项</span>'
+          : '<span style="display:inline-block;padding:1px 6px;font-size:10px;background:var(--bg-elevated);color:var(--text-muted);border-radius:4px;margin-left:8px;border:1px solid var(--border)">继承</span>'}
+      </label>
+      <textarea data-override-key="env" rows="6" placeholder="每行一个 KEY=VALUE，将覆盖同名的公共默认" style="width:100%;padding:8px 10px;background:var(--bg-primary);border:1px solid var(--border);border-radius:6px;color:var(--text-primary);font-family:var(--font-mono,monospace);font-size:12px;resize:vertical" oninput="_overrideFieldChanged()">${esc(overrideEnvText)}</textarea>
+      <div style="font-size:11px;color:var(--text-muted);margin-top:3px">
+        公共默认 (${Object.keys(baseline.env || {}).length} 项):
+        ${baselineEnvText ? `<details style="display:inline"><summary style="cursor:pointer;color:var(--accent,#4a9eff)">展开</summary><pre style="margin-top:4px;padding:6px 8px;background:var(--bg-primary);border-radius:4px;font-size:11px;max-height:120px;overflow:auto">${esc(baselineEnvText)}</pre></details>` : '<em>无</em>'}
+      </div>
+    </div>
+
+    ${modeOptions ? `
+      <div style="margin-bottom:14px">
+        <label style="display:block;font-size:12px;font-weight:600;color:var(--text-primary);margin-bottom:4px">部署模式</label>
+        <select data-override-key="activeDeployMode" style="width:100%;padding:8px 10px;background:var(--bg-primary);border:1px solid var(--border);border-radius:6px;color:var(--text-primary);font-size:12px" onchange="_overrideFieldChanged()">
+          <option value="">继承 (${esc(baseline.activeDeployMode || '默认')})</option>
+          ${modeOptions}
+        </select>
+      </div>
+    ` : ''}
+
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:14px">
+      <div>
+        <label style="display:block;font-size:12px;font-weight:600;color:var(--text-primary);margin-bottom:4px">内存上限 (MB)</label>
+        <input type="number" data-override-key="resources.memoryMB" value="${override.resources?.memoryMB || ''}" placeholder="${baseline.resources?.memoryMB || '无限制'}" style="width:100%;padding:8px 10px;background:var(--bg-primary);border:1px solid var(--border);border-radius:6px;color:var(--text-primary);font-size:12px" oninput="_overrideFieldChanged()" />
+        <div style="font-size:11px;color:var(--text-muted);margin-top:3px">公共默认: <code>${baseline.resources?.memoryMB || '无限制'}</code></div>
+      </div>
+      <div>
+        <label style="display:block;font-size:12px;font-weight:600;color:var(--text-primary);margin-bottom:4px">CPU 上限 (核)</label>
+        <input type="number" step="0.1" data-override-key="resources.cpus" value="${override.resources?.cpus || ''}" placeholder="${baseline.resources?.cpus || '无限制'}" style="width:100%;padding:8px 10px;background:var(--bg-primary);border:1px solid var(--border);border-radius:6px;color:var(--text-primary);font-size:12px" oninput="_overrideFieldChanged()" />
+        <div style="font-size:11px;color:var(--text-muted);margin-top:3px">公共默认: <code>${baseline.resources?.cpus || '无限制'}</code></div>
+      </div>
+    </div>
+
+    <div style="margin-bottom:14px">
+      <label style="display:block;font-size:12px;font-weight:600;color:var(--text-primary);margin-bottom:4px">备注 (为什么这个分支需要自定义)</label>
+      <input type="text" data-override-key="notes" value="${esc(override.notes || '')}" placeholder="例: 本分支压测需要更多内存" style="width:100%;padding:8px 10px;background:var(--bg-primary);border:1px solid var(--border);border-radius:6px;color:var(--text-primary);font-size:12px" oninput="_overrideFieldChanged()" />
+    </div>
+
+    <div style="display:flex;gap:8px;justify-content:space-between;padding-top:12px;border-top:1px solid var(--border)">
+      <button class="sm" onclick="_resetOverride()" style="background:var(--bg-elevated);color:var(--text-secondary);border:1px solid var(--border)">重置为公共</button>
+      <div style="display:flex;gap:8px">
+        <button class="sm" onclick="closeOverrideModal()" style="background:var(--bg-elevated);color:var(--text-secondary);border:1px solid var(--border)">取消</button>
+        <button class="sm deploy-glow-btn" onclick="_saveOverride()">保存 (需重新部署生效)</button>
+      </div>
+    </div>
+  `;
+}
+
+function _overrideFieldChanged() {
+  if (_overrideModalState) _overrideModalState.dirty = true;
+}
+
+function _collectOverrideFromForm() {
+  const body = document.getElementById('overrideModalBody');
+  const override = {};
+  body.querySelectorAll('[data-override-key]').forEach(el => {
+    const key = el.dataset.overrideKey;
+    const raw = el.value;
+    if (raw === '' || raw === null || raw === undefined) return; // inherit
+    if (key === 'env') {
+      const envObj = {};
+      raw.split('\n').forEach(line => {
+        const trimmed = line.trim();
+        if (!trimmed || trimmed.startsWith('#')) return;
+        const eq = trimmed.indexOf('=');
+        if (eq <= 0) return;
+        envObj[trimmed.slice(0, eq).trim()] = trimmed.slice(eq + 1);
+      });
+      if (Object.keys(envObj).length > 0) override.env = envObj;
+    } else if (key === 'containerPort') {
+      const n = parseInt(raw, 10);
+      if (!isNaN(n)) override.containerPort = n;
+    } else if (key === 'resources.memoryMB') {
+      const n = parseInt(raw, 10);
+      if (!isNaN(n) && n > 0) {
+        override.resources = override.resources || {};
+        override.resources.memoryMB = n;
+      }
+    } else if (key === 'resources.cpus') {
+      const n = parseFloat(raw);
+      if (!isNaN(n) && n > 0) {
+        override.resources = override.resources || {};
+        override.resources.cpus = n;
+      }
+    } else {
+      override[key] = raw;
+    }
+  });
+  return override;
+}
+
+async function _saveOverride() {
+  const s = _overrideModalState;
+  if (!s) return;
+  const override = _collectOverrideFromForm();
+  try {
+    const res = await api('PUT', `/branches/${encodeURIComponent(s.branchId)}/profile-overrides/${encodeURIComponent(s.activeProfileId)}`, override);
+    showToast('已保存，重新部署该分支后生效', 'success');
+    s.dirty = false;
+    // Refresh current profile data
+    const refreshed = await api('GET', `/branches/${encodeURIComponent(s.branchId)}/profile-overrides`);
+    s.profiles = refreshed.profiles;
+    _renderOverrideTabs();
+    _renderOverrideForm();
+  } catch (e) {
+    showToast('保存失败: ' + e.message, 'error');
+  }
+}
+
+async function _resetOverride() {
+  const s = _overrideModalState;
+  if (!s) return;
+  if (!confirm('确定清空该分支的容器覆盖，完全继承公共配置？')) return;
+  try {
+    await api('DELETE', `/branches/${encodeURIComponent(s.branchId)}/profile-overrides/${encodeURIComponent(s.activeProfileId)}`);
+    showToast('已恢复公共配置', 'success');
+    s.dirty = false;
+    const refreshed = await api('GET', `/branches/${encodeURIComponent(s.branchId)}/profile-overrides`);
+    s.profiles = refreshed.profiles;
+    _renderOverrideTabs();
+    _renderOverrideForm();
+  } catch (e) {
+    showToast('重置失败: ' + e.message, 'error');
+  }
+}
+
+// Expose handlers to inline event attributes (non-module script)
+window.openOverrideModal = openOverrideModal;
+window.closeOverrideModal = closeOverrideModal;
+window._switchOverrideProfile = _switchOverrideProfile;
+window._overrideFieldChanged = _overrideFieldChanged;
+window._saveOverride = _saveOverride;
+window._resetOverride = _resetOverride;
 
 // ── Init activity monitor & AI pairing ──
 initActivityMonitor();
