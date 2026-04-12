@@ -4731,3 +4731,239 @@ a.branch-name:hover { color: var(--accent); }
   from { transform: rotate(0deg); }
   to   { transform: rotate(360deg); }
 }
+
+/* ════════════════════════════════════════════════════════════════════
+ * View mode toggle (列表 / 拓扑)
+ *
+ * A minimal segmented control mounted just above the branch list.
+ * Mirrors existing tag-filter-bar/quickstart-banner patterns so it
+ * inherits the dashboard's tokens and dark/light-theme aware colors.
+ * ════════════════════════════════════════════════════════════════════ */
+.view-mode-toggle {
+  display: inline-flex;
+  gap: 2px;
+  padding: 3px;
+  margin: 0 0 10px;
+  background: var(--bg-card-solid);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  width: fit-content;
+}
+.view-mode-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 14px;
+  background: transparent;
+  color: var(--text-secondary);
+  border: none;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+.view-mode-btn:hover {
+  color: var(--text-primary);
+  background: var(--bg-elevated);
+}
+.view-mode-btn.active {
+  background: var(--bg-elevated);
+  color: var(--text-primary);
+  box-shadow: 0 0 0 1px var(--border-light, transparent);
+}
+.view-mode-btn svg {
+  opacity: 0.8;
+}
+.view-mode-btn.active svg {
+  opacity: 1;
+  color: var(--accent, #10b981);
+}
+
+/* ════════════════════════════════════════════════════════════════════
+ * Topology canvas view
+ *
+ * Shown when view mode = 'topology'. Hosts a single card that draws
+ * all BuildProfiles + InfraServices as a layered DAG (SVG).
+ * ════════════════════════════════════════════════════════════════════ */
+.topology-view {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-bottom: 24px;
+  padding-bottom: 60px;
+}
+.topology-view.hidden { display: none; }
+
+.topology-card {
+  background: var(--bg-card-solid);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 16px 18px 20px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+}
+
+.topology-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 10px;
+  flex-wrap: wrap;
+}
+.topology-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+.topology-title-hint {
+  font-size: 11px;
+  color: var(--text-muted);
+  font-weight: 400;
+}
+
+.topology-branch-picker {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  max-width: 100%;
+}
+.topology-branch-picker-label {
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-right: 4px;
+}
+.topology-branch-chip {
+  padding: 4px 10px;
+  background: transparent;
+  color: var(--text-secondary);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  font-size: 11px;
+  font-family: var(--font-mono, monospace);
+  cursor: pointer;
+  transition: all 0.15s ease;
+  white-space: nowrap;
+}
+.topology-branch-chip:hover {
+  background: var(--bg-elevated);
+  color: var(--text-primary);
+}
+.topology-branch-chip.active {
+  background: var(--accent-bg, rgba(16, 185, 129, 0.1));
+  color: var(--accent, #10b981);
+  border-color: var(--accent, #10b981);
+}
+
+.topology-legend {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin: 4px 0 10px;
+  flex-wrap: wrap;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+.topology-legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+.topology-legend-swatch {
+  display: inline-block;
+  width: 14px;
+  height: 10px;
+  border-radius: 3px;
+  border: 1px solid var(--border);
+}
+.topology-legend-swatch.app {
+  background: var(--bg-elevated);
+}
+.topology-legend-swatch.infra {
+  background: var(--bg-elevated);
+  border-radius: 10px;
+}
+.topology-legend-swatch.override {
+  background: var(--accent-bg, rgba(16, 185, 129, 0.1));
+  border-color: var(--accent, #10b981);
+}
+
+.topology-canvas-wrap {
+  position: relative;
+  width: 100%;
+  overflow: auto;
+  border: 1px dashed var(--border);
+  border-radius: 8px;
+  background:
+    radial-gradient(circle at 0 0, var(--border-light, transparent) 1px, transparent 1px) 0 0 / 16px 16px,
+    var(--bg-card-solid);
+  min-height: 300px;
+}
+.topology-canvas {
+  display: block;
+  min-width: 100%;
+}
+
+/* Node rectangles (app services) and rounded rects (infra services) */
+.topology-node {
+  cursor: pointer;
+  transition: filter 0.15s ease;
+}
+.topology-node:hover {
+  filter: brightness(1.15);
+}
+.topology-node-box {
+  fill: var(--bg-elevated);
+  stroke: var(--border);
+  stroke-width: 1.5;
+}
+.topology-node.has-override .topology-node-box {
+  stroke: var(--accent, #10b981);
+  stroke-width: 2;
+  fill: var(--accent-bg, rgba(16, 185, 129, 0.08));
+}
+.topology-node-label {
+  fill: var(--text-primary);
+  font-size: 12px;
+  font-weight: 600;
+  font-family: inherit;
+  pointer-events: none;
+}
+.topology-node-sub {
+  fill: var(--text-muted);
+  font-size: 10px;
+  font-family: var(--font-mono, monospace);
+  pointer-events: none;
+}
+.topology-node-badge {
+  font-size: 14px;
+  pointer-events: none;
+}
+
+/* Dependency edges */
+.topology-edge {
+  fill: none;
+  stroke: var(--text-muted);
+  stroke-width: 1.4;
+  opacity: 0.55;
+  marker-end: url(#topologyArrow);
+}
+
+.topology-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  padding: 40px 20px;
+  color: var(--text-muted);
+  font-size: 13px;
+  text-align: center;
+}
+.topology-empty strong {
+  color: var(--text-secondary);
+  font-size: 14px;
+}
