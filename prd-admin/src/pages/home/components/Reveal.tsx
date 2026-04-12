@@ -1,35 +1,61 @@
 import { useEffect, useState, type ReactNode } from 'react';
 import { useInView } from '../hooks/useInView';
 
+const KEYFRAMES_ID = 'map-reveal-keyframes';
+
+/** 注入一次全局 @keyframes（避免重复注入） */
+function injectRevealKeyframes() {
+  if (document.getElementById(KEYFRAMES_ID)) return;
+  const style = document.createElement('style');
+  style.id = KEYFRAMES_ID;
+  style.textContent = `
+@keyframes map-reveal {
+  from {
+    opacity: 0;
+    transform: translateY(var(--reveal-y, 16px));
+    filter: blur(var(--reveal-blur, 0px));
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+    filter: blur(0px);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .map-reveal-active { animation: none !important; opacity: 1 !important; }
+}
+  `;
+  document.head.appendChild(style);
+}
+
 interface RevealProps {
   children: ReactNode;
-  /** JS 延迟 ms：控制元素何时"亮起"（不再依赖 CSS transition-delay） */
+  /** animation-delay ms — 由 CSS 原生控制，可靠的时序保证 */
   delay?: number;
   className?: string;
-  /** 进入视口后的位移距离，默认 16px */
+  /** 初始位移 px，默认 16 */
   offset?: number;
-  /** 持续时间，默认 1100ms */
+  /** animation-duration ms，默认 1100 */
   duration?: number;
-  /** 初始模糊度，默认 0（只有大标题才用 blur，其他元素不需要） */
+  /** 初始模糊度 px，默认 0 */
   blur?: number;
-  /** 作为内联 span 而不是 div（避免破坏布局） */
   as?: 'div' | 'span';
-  /** 调试标签 */
   debugLabel?: string;
 }
 
 /**
- * Reveal — 滚动进入视口时从朦胧到清晰，徐徐点亮
+ * Reveal — CSS @keyframes animation 驱动的进场动效
  *
- * 核心改动：
- *   delay 不再走 CSS transition-delay，而是用 JavaScript setTimeout 控制
- *   每个元素 "何时开始动"。这样每个元素的 CSS transition 是从真正不同的
- *   时间点启动的，而不是靠浏览器同帧处理 delay 值来区分。
+ * 学习 Linear.app 的做法：
+ *  · 用 @keyframes animation + animation-delay，不用 CSS transition
+ *  · animation-fill-mode: both 保证元素在 delay 期间保持 from 态（不可见）
+ *  · animation-delay 是 CSS 动画规范的一部分，不依赖 "上一帧的样式"
+ *  · 缓动曲线 cubic-bezier(0.19, 1, 0.22, 1) — 极端 ease-out，"冲进来然后漂浮归位"
  *
- * 呼吸设计：
- *  · 大标题 delay=0, blur=12 — 第一个从雾中亮起，它是焦点
- *  · 辅助文字 delay=大, blur=0 — 干净 fade，不和标题抢
- *  · 按钮/logo delay=更大, blur=0 — 纯 opacity+rise，最后出场
+ * 按重要性编排：
+ *  · 核心信息（标题+副标题+CTA）delay=0~350ms，几乎同时
+ *  · 装饰元素（HUD、logos）delay=1200ms+，配角晚到
+ *  · 视觉证据（产品 Mockup）delay=1800ms+，最后浮出
  */
 export function Reveal({
   children,
@@ -41,40 +67,31 @@ export function Reveal({
   as = 'div',
   debugLabel,
 }: RevealProps) {
-  const [ref, inViewRaw] = useInView<HTMLDivElement>(undefined, debugLabel);
-  // JS 控制的延迟 — 真正的 stagger 入口
-  const [active, setActive] = useState(false);
+  const [ref, inView] = useInView<HTMLDivElement>(undefined, debugLabel);
+  const [injected, setInjected] = useState(false);
 
   useEffect(() => {
-    if (!inViewRaw || active) return;
-    if (delay <= 0) {
-      setActive(true);
-      if (debugLabel) console.log(`[Reveal:${debugLabel}] → active (immediate)`);
-      return;
-    }
-    const timer = setTimeout(() => {
-      setActive(true);
-      if (debugLabel) console.log(`[Reveal:${debugLabel}] → active (after ${delay}ms JS delay)`);
-    }, delay);
-    return () => clearTimeout(timer);
-  }, [inViewRaw, delay, active, debugLabel]);
+    injectRevealKeyframes();
+    setInjected(true);
+  }, []);
 
   const Tag = as;
-  const useBlur = blur > 0;
+  const ready = injected && inView;
 
   return (
     <Tag
       ref={ref as React.RefObject<HTMLDivElement>}
-      className={className}
+      className={`${ready ? 'map-reveal-active' : ''} ${className ?? ''}`}
       style={{
-        opacity: active ? 1 : 0,
-        filter: useBlur ? (active ? 'blur(0px)' : `blur(${blur}px)`) : undefined,
-        transform: active ? 'translateY(0)' : `translateY(${offset}px)`,
-        transition: [
-          `opacity ${duration}ms cubic-bezier(0.16, 1, 0.3, 1)`,
-          useBlur ? `filter ${Math.round(duration * 0.85)}ms cubic-bezier(0.16, 1, 0.3, 1)` : '',
-          `transform ${duration}ms cubic-bezier(0.16, 1, 0.3, 1)`,
-        ].filter(Boolean).join(', '),
+        // 动画未就绪时：不可见
+        opacity: ready ? undefined : 0,
+        // 就绪后：用 CSS @keyframes animation 驱动全部进场
+        animation: ready
+          ? `map-reveal ${duration}ms cubic-bezier(0.19, 1, 0.22, 1) ${delay}ms both`
+          : 'none',
+        // CSS 变量传递给 @keyframes
+        ['--reveal-y' as string]: `${offset}px`,
+        ['--reveal-blur' as string]: `${blur}px`,
         willChange: 'opacity, transform, filter',
       }}
     >
