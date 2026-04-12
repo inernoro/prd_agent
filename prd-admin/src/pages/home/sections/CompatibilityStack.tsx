@@ -19,15 +19,18 @@ const PROVIDERS = [
   { name: 'Mistral', region: 'FR' },
   { name: 'DeepSeek', region: 'CN' },
   { name: 'Moonshot Kimi', region: 'CN' },
-  { name: '阿里通义', region: 'CN' },
-  { name: '智谱 GLM', region: 'CN' },
-  { name: '百度文心', region: 'CN' },
-  { name: '字节豆包', region: 'CN' },
-];
+  { zh: '阿里通义', en: 'Alibaba Qwen', region: 'CN' },
+  { zh: '智谱 GLM', en: 'Zhipu GLM', region: 'CN' },
+  { zh: '百度文心', en: 'Baidu ERNIE', region: 'CN' },
+  { zh: '字节豆包', en: 'ByteDance Doubao', region: 'CN' },
+] as const;
 
 export function CompatibilityStack() {
-  const { t } = useLanguage();
+  const { t, lang } = useLanguage();
   const titleParts = t.compat.title.split('\n');
+
+  const getProviderName = (p: (typeof PROVIDERS)[number]) =>
+    'name' in p ? p.name : lang === 'en' ? p.en : p.zh;
 
   return (
     <section
@@ -59,11 +62,14 @@ export function CompatibilityStack() {
 
         {/* Provider grid */}
         <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-3">
-          {PROVIDERS.map((p, i) => (
-            <Reveal key={p.name} delay={(i % 6) * 40} offset={18}>
-              <ProviderTile name={p.name} region={p.region} />
-            </Reveal>
-          ))}
+          {PROVIDERS.map((p, i) => {
+            const displayName = getProviderName(p);
+            return (
+              <Reveal key={displayName} delay={(i % 6) * 40} offset={18}>
+                <ProviderTile name={displayName} region={p.region} />
+              </Reveal>
+            );
+          })}
         </div>
 
         {/* Footer note */}

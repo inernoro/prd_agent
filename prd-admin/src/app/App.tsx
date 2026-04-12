@@ -236,8 +236,12 @@ export default function App() {
       <NavigationBridge />
       <Suspense fallback={<SuspenseVideoLoader />}>
       <Routes location={location}>
-        {/* Landing page - public */}
-        <Route path="/home" element={<LandingPage />} />
+        {/* Landing page - public · 用透明 fallback，避免 MAP 闪屏打断朦胧动效节奏 */}
+        <Route path="/home" element={
+          <Suspense fallback={<div style={{ position: 'fixed', inset: 0, background: '#030306' }} />}>
+            <LandingPage />
+          </Suspense>
+        } />
 
         <Route path="/login" element={<LoginPage />} />
 
