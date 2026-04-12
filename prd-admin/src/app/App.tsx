@@ -200,20 +200,22 @@ export default function App() {
   }, []);
 
   // 刷新/回到主页时补齐权限（避免"持久化 token 但 permissions 为空"导致误判）
+  // cdnBaseUrl 每次都刷新（后端切换存储 Provider 后域名会变）
   useEffect(() => {
     if (!isAuthenticated) return;
-    if (permissionsLoaded) return;
     (async () => {
       const res = await getAdminAuthzMe();
       if (!res.success) {
         logout();
         return;
       }
-      setPermissions(res.data.effectivePermissions || []);
-      setIsRoot(res.data.isRoot ?? false);
+      if (!permissionsLoaded) {
+        setPermissions(res.data.effectivePermissions || []);
+        setIsRoot(res.data.isRoot ?? false);
+        setPermissionsLoaded(true);
+      }
       if (res.data.cdnBaseUrl) setCdnBaseUrl(res.data.cdnBaseUrl);
       if (res.data.permissionFingerprint) setPermFingerprint(res.data.permissionFingerprint);
-      setPermissionsLoaded(true);
     })();
   }, [isAuthenticated, permissionsLoaded, setPermissions, setPermissionsLoaded, setIsRoot, setCdnBaseUrl, setPermFingerprint, logout]);
 

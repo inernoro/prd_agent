@@ -540,11 +540,6 @@ public class WatermarkController : ControllerBase
             return Unauthorized(ApiResponse<object>.Fail(ErrorCodes.UNAUTHORIZED, "未授权"));
         }
 
-        if (_assetStorage is not TencentCosStorage)
-        {
-            return StatusCode(StatusCodes.Status502BadGateway, ApiResponse<object>.Fail(ErrorCodes.INTERNAL_ERROR, "资产存储未配置为 TencentCosStorage"));
-        }
-
         if (file == null || file.Length <= 0)
         {
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.CONTENT_EMPTY, "file 不能为空"));
@@ -683,9 +678,7 @@ public class WatermarkController : ControllerBase
 
         var stored = await _assetStorage.SaveAsync(bytes, mime, ct, domain: AppDomainPaths.DomainWatermark, type: AppDomainPaths.TypeFont);
         var fontKey = BuildCustomFontKey(userId, stored.Sha256);
-        var publicUrl = _assetStorage is LocalAssetStorage
-            ? $"/api/watermark/fonts/{Uri.EscapeDataString(fontKey)}/file"
-            : stored.Url;
+        var publicUrl = stored.Url;
         var display = NormalizeDisplayName(displayName, file.FileName, fontKey);
         var fileName = Path.GetFileName(file.FileName);
         _fontRegistry.AddCustomFontDefinition(new WatermarkFontDefinition(fontKey, display, fileName, familyName, stored.Sha256));
@@ -894,7 +887,6 @@ public class WatermarkController : ControllerBase
     {
         if (string.IsNullOrWhiteSpace(iconRef)) return (true, iconRef);
         if (!TryDecodeDataUrlOrBase64(iconRef, out var mime, out var bytes)) return (true, iconRef);
-        if (_assetStorage is not TencentCosStorage) return (false, null);
         var stored = await _assetStorage.SaveAsync(bytes, mime, ct, domain: AppDomainPaths.DomainWatermark, type: AppDomainPaths.TypeImg);
         return (true, stored.Url);
     }
@@ -946,23 +938,8 @@ public class WatermarkController : ControllerBase
         var domain = AppDomainPaths.DomainWatermark;
         var type = AppDomainPaths.TypeImg;
 
-        if (_assetStorage is TencentCosStorage cosStorage)
-        {
-            var key = $"{AppDomainPaths.NormDomain(domain)}/{AppDomainPaths.NormType(type)}/{fileName}";
-            await cosStorage.UploadBytesAsync(key, bytes, mime, ct);
-            return;
-        }
-
-        if (_assetStorage is LocalAssetStorage)
-        {
-            var dir = AppDomainPaths.LocalDir(domain, type);
-            Directory.CreateDirectory(dir);
-            var path = Path.Combine(dir, fileName);
-            await System.IO.File.WriteAllBytesAsync(path, bytes, ct);
-            return;
-        }
-
-        _logger.LogWarning("Watermark preview storage skipped: asset storage does not support fixed name.");
+        var key = $"{AppDomainPaths.NormDomain(domain)}/{AppDomainPaths.NormType(type)}/{fileName}";
+        await _assetStorage.UploadToKeyAsync(key, bytes, mime, ct);
     }
 
     private string? BuildPreviewUrl(string watermarkId)
@@ -973,15 +950,7 @@ public class WatermarkController : ControllerBase
         var type = AppDomainPaths.TypeImg;
         var key = $"{AppDomainPaths.NormDomain(domain)}/{AppDomainPaths.NormType(type)}/{fileName}";
 
-        if (_assetStorage is TencentCosStorage cosStorage)
-        {
-            return cosStorage.BuildPublicUrl(key);
-        }
-
-        var baseUrl = Request.ResolveServerUrl(_config);
-        var pathBase = Request.PathBase.HasValue ? Request.PathBase.Value : string.Empty;
-        var escapedId = Uri.EscapeDataString(watermarkId);
-        return $"{baseUrl}{pathBase}/api/watermark/preview/{escapedId}.png";
+        return _assetStorage.BuildUrlForKey(key);
     }
 
     private async Task<(byte[]? bytes, string? mime)> TryReadPreviewAsync(string fileName, CancellationToken ct)
@@ -989,22 +958,9 @@ public class WatermarkController : ControllerBase
         var domain = AppDomainPaths.DomainWatermark;
         var type = AppDomainPaths.TypeImg;
 
-        if (_assetStorage is TencentCosStorage cosStorage)
-        {
-            var key = $"{AppDomainPaths.NormDomain(domain)}/{AppDomainPaths.NormType(type)}/{fileName}";
-            var bytes = await cosStorage.TryDownloadBytesAsync(key, ct);
-            return (bytes, "image/png");
-        }
-
-        if (_assetStorage is LocalAssetStorage)
-        {
-            var path = Path.Combine(AppDomainPaths.LocalDir(domain, type), fileName);
-            if (!System.IO.File.Exists(path)) return (null, null);
-            var bytes = await System.IO.File.ReadAllBytesAsync(path, ct);
-            return (bytes, "image/png");
-        }
-
-        return (null, null);
+        var key = $"{AppDomainPaths.NormDomain(domain)}/{AppDomainPaths.NormType(type)}/{fileName}";
+        var bytes = await _assetStorage.TryDownloadBytesAsync(key, ct);
+        return (bytes, "image/png");
     }
 
     private static string? GetUserId(ClaimsPrincipal user)

@@ -304,12 +304,17 @@ builder.Services.AddSingleton<IAssetStorage>(sp =>
 
     var provider = string.IsNullOrWhiteSpace(providerRaw) ? "tencentCos" : providerRaw;
 
-    // 强约束：任何情况下不允许使用本地文件存储（避免容器可写层过小导致宕机/数据丢失）
-    // - 若未配置 COS，则直接启动失败并给出清晰错误
-    if (!string.Equals(provider, "tencentCos", StringComparison.OrdinalIgnoreCase))
+    // 读取通用安全删除配置（两种 Provider 共享同一套策略逻辑）
+    static (bool enableSafeDelete, string[] allow) ReadSafeDeleteConfig(IConfiguration c)
     {
-        throw new InvalidOperationException(
-            $"本实例已强制禁用本地文件存储，但 ASSETS_PROVIDER={providerRaw}（仅允许 tencentCos）。");
+        var enable = string.Equals((c["SafeDelete:Enable"] ?? c["TencentCos:EnableSafeDelete"] ?? string.Empty).Trim(), "true", StringComparison.OrdinalIgnoreCase);
+        var raw = (c["SafeDelete:AllowPrefixes"] ?? c["TencentCos:SafeDeleteAllowPrefixes"] ?? string.Empty).Trim();
+        var a = raw
+            .Split(new[] { ',', ';', '\n', '\r' }, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Select(x => x.Trim())
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .ToArray();
+        return (enable, a);
     }
 
     if (string.Equals(provider, "tencentCos", StringComparison.OrdinalIgnoreCase))
@@ -324,13 +329,7 @@ builder.Services.AddSingleton<IAssetStorage>(sp =>
                 "已强制使用 Tencent COS，但缺少必需环境变量。请设置：TENCENT_COS_BUCKET / TENCENT_COS_REGION / TENCENT_COS_SECRET_ID / TENCENT_COS_SECRET_KEY。");
         }
         var tempDir = (string?)null; // 纯内存流模式：不依赖本地 tempDir
-        var enableSafeDelete = string.Equals((cfg["TencentCos:EnableSafeDelete"] ?? string.Empty).Trim(), "true", StringComparison.OrdinalIgnoreCase);
-        var allowRaw = (cfg["TencentCos:SafeDeleteAllowPrefixes"] ?? string.Empty).Trim();
-        var allow = allowRaw
-            .Split(new[] { ',', ';', '\n', '\r' }, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-            .Select(x => x.Trim())
-            .Where(x => !string.IsNullOrWhiteSpace(x))
-            .ToArray();
+        var (enableSafeDelete, allow) = ReadSafeDeleteConfig(cfg);
         var logger = sp.GetRequiredService<ILogger<TencentCosStorage>>();
         log.LogInformation(
             "AssetStorage selected: provider={ProviderRaw}->{Provider} tencentCos.bucket={Bucket} region={Region} prefix={Prefix} publicBaseUrl={PublicBaseUrl}",
@@ -340,13 +339,56 @@ builder.Services.AddSingleton<IAssetStorage>(sp =>
             (region ?? string.Empty).Trim(),
             (prefix ?? string.Empty).Trim(),
             (publicBaseUrl ?? string.Empty).Trim());
-        // 经过上面的 IsNullOrWhiteSpace 校验，bucket/region/secretId/secretKey 在运行时必定非空；
-        // 这里用 null-forgiving 消除 nullable 分析告警（避免 build warning 噪音）。
-        return new TencentCosStorage(bucket!, region!, secretId!, secretKey!, publicBaseUrl, prefix, tempDir, enableSafeDelete, allow, logger);
+        var cosStorage = new TencentCosStorage(bucket!, region!, secretId!, secretKey!, publicBaseUrl, prefix, tempDir, enableSafeDelete, allow, logger);
+        return WrapWithRegistry(cosStorage, "tencentCos");
     }
 
-    // 理论上不会走到这里；保留以满足编译器对"所有路径均有返回"的要求
-    throw new InvalidOperationException($"AssetStorage provider 选择异常：providerRaw={providerRaw} provider={provider}");
+    if (string.Equals(provider, "cloudflareR2", StringComparison.OrdinalIgnoreCase))
+    {
+        var accountId = (cfg["R2_ACCOUNT_ID"] ?? string.Empty).Trim();
+        var accessKeyId = (cfg["R2_ACCESS_KEY_ID"] ?? string.Empty).Trim();
+        var secretAccessKey = (cfg["R2_SECRET_ACCESS_KEY"] ?? string.Empty).Trim();
+        var r2Bucket = (cfg["R2_BUCKET"] ?? string.Empty).Trim();
+        var r2PublicBaseUrl = (cfg["R2_PUBLIC_BASE_URL"] ?? string.Empty).Trim();
+        var r2Prefix = (cfg["R2_PREFIX"] ?? string.Empty).Trim();
+        var r2Endpoint = (cfg["R2_ENDPOINT"] ?? string.Empty).Trim();
+
+        if (string.IsNullOrWhiteSpace(accountId) ||
+            string.IsNullOrWhiteSpace(accessKeyId) ||
+            string.IsNullOrWhiteSpace(secretAccessKey) ||
+            string.IsNullOrWhiteSpace(r2Bucket))
+        {
+            throw new InvalidOperationException(
+                "已选择 Cloudflare R2，但缺少必需环境变量。请设置：R2_ACCOUNT_ID / R2_ACCESS_KEY_ID / R2_SECRET_ACCESS_KEY / R2_BUCKET。");
+        }
+        var (enableSafeDelete, allow) = ReadSafeDeleteConfig(cfg);
+        var r2Logger = sp.GetRequiredService<ILogger<CloudflareR2Storage>>();
+        log.LogInformation(
+            "AssetStorage selected: provider={ProviderRaw}->{Provider} r2.bucket={Bucket} endpoint={Endpoint} prefix={Prefix} publicBaseUrl={PublicBaseUrl}",
+            providerRaw, provider, r2Bucket,
+            string.IsNullOrWhiteSpace(r2Endpoint) ? $"https://{accountId}.r2.cloudflarestorage.com" : r2Endpoint,
+            string.IsNullOrWhiteSpace(r2Prefix) ? "(none)" : r2Prefix,
+            string.IsNullOrWhiteSpace(r2PublicBaseUrl) ? "(r2.dev fallback)" : r2PublicBaseUrl);
+        var r2Storage = new CloudflareR2Storage(
+            accountId, accessKeyId, secretAccessKey, r2Bucket,
+            string.IsNullOrWhiteSpace(r2PublicBaseUrl) ? null : r2PublicBaseUrl,
+            string.IsNullOrWhiteSpace(r2Prefix) ? null : r2Prefix,
+            string.IsNullOrWhiteSpace(r2Endpoint) ? null : r2Endpoint,
+            enableSafeDelete, allow, r2Logger);
+        return WrapWithRegistry(r2Storage, "cloudflareR2");
+    }
+
+    throw new InvalidOperationException(
+        $"ASSETS_PROVIDER={providerRaw} 不支持。可选值：tencentCos / cloudflareR2");
+
+    // ─── 装饰器：用 RegistryAssetStorage 包裹真实实现，自动登记每次存储操作 ───
+    IAssetStorage WrapWithRegistry(IAssetStorage inner, string providerName)
+    {
+        var db = sp.GetRequiredService<MongoDbContext>();
+        var regLogger = sp.GetRequiredService<ILogger<RegistryAssetStorage>>();
+        log.LogInformation("AssetStorage wrapped with RegistryAssetStorage (provider={Provider})", providerName);
+        return new RegistryAssetStorage(inner, db, providerName, regLogger);
+    }
 });
 
 // 文件内容提取器（PDF/Word/Excel/PPT）

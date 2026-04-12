@@ -229,6 +229,9 @@ public class MongoDbContext
     public IMongoCollection<EmergenceTree> EmergenceTrees => _database.GetCollection<EmergenceTree>("emergence_trees");
     public IMongoCollection<EmergenceNode> EmergenceNodes => _database.GetCollection<EmergenceNode>("emergence_nodes");
 
+    // Asset Registry 资产登记簿（跨存储迁移基础设施）
+    public IMongoCollection<AssetRegistryEntry> AssetRegistry => _database.GetCollection<AssetRegistryEntry>("asset_registry");
+
     private void CreateIndexes()
     {
         static bool IsIndexConflict(MongoCommandException ex)

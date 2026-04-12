@@ -58,10 +58,7 @@ public class AvatarAssetsController : ControllerBase
 
         var objectKey = $"{AvatarUrlBuilder.AvatarPathPrefix}/{AvatarUrlBuilder.DefaultNoHeadFile}".ToLowerInvariant();
 
-        if (_assetStorage is not TencentCosStorage cos)
-            return StatusCode(StatusCodes.Status502BadGateway, ApiResponse<object>.Fail(ErrorCodes.INTERNAL_ERROR, "资产存储未配置为 TencentCosStorage"));
-
-        await cos.UploadBytesAsync(objectKey, bytes, "image/png", ct);
+        await _assetStorage.UploadToKeyAsync(objectKey, bytes, "image/png", ct);
 
         // 返回相对 URL（完整 URL 由前端/服务端统一规则拼接）
         var url = $"/{objectKey}";

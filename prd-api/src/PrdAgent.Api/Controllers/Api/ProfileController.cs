@@ -146,10 +146,7 @@ public class ProfileController : ControllerBase
 
         var objectKey = $"{AvatarUrlBuilder.AvatarPathPrefix}/{avatarFileName}".ToLowerInvariant();
 
-        if (_assetStorage is not TencentCosStorage cos)
-            return StatusCode(StatusCodes.Status502BadGateway, ApiResponse<object>.Fail(ErrorCodes.INTERNAL_ERROR, "资产存储未配置为 TencentCosStorage"));
-
-        await cos.UploadBytesAsync(objectKey, bytes, mime, ct);
+        await _assetStorage.UploadToKeyAsync(objectKey, bytes, mime, ct);
 
         var now = DateTime.UtcNow;
         var update = Builders<User>.Update.Set(u => u.AvatarFileName, avatarFileName);

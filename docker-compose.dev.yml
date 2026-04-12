@@ -54,8 +54,8 @@ services:
       - Jwt__Secret=${JWT_SECRET:-YourSuperSecretKeyForJwtTokenGeneration2024!}
       - Jwt__Issuer=prdagent
       - Session__TimeoutMinutes=30
-      # 资产存储：auto / tencentCos / local
-      # - 强制“绝不落盘”时：tencentCos + DisableLocal=true
+      # 资产存储：tencentCos / cloudflareR2
+      # - 强制”绝不落盘”时：选择对象存储 provider
       - ASSETS_PROVIDER=${ASSETS_PROVIDER:-tencentCos}
       # Tencent COS（密钥禁止写死到仓库；本机调试请在环境变量中注入）
       - TENCENT_COS_BUCKET=${TENCENT_COS_BUCKET}
@@ -64,6 +64,14 @@ services:
       - TENCENT_COS_SECRET_KEY=${TENCENT_COS_SECRET_KEY}
       - TENCENT_COS_PUBLIC_BASE_URL=${TENCENT_COS_PUBLIC_BASE_URL}
       - TENCENT_COS_PREFIX=${TENCENT_COS_PREFIX:-data}
+      # Cloudflare R2（与 Tencent COS 二选一，由 ASSETS_PROVIDER 决定）
+      - R2_ACCOUNT_ID=${R2_ACCOUNT_ID:-}
+      - R2_ACCESS_KEY_ID=${R2_ACCESS_KEY_ID:-}
+      - R2_SECRET_ACCESS_KEY=${R2_SECRET_ACCESS_KEY:-}
+      - R2_BUCKET=${R2_BUCKET:-}
+      - R2_PUBLIC_BASE_URL=${R2_PUBLIC_BASE_URL:-}
+      - R2_PREFIX=${R2_PREFIX:-}
+      - R2_ENDPOINT=${R2_ENDPOINT:-}
       # Webhook 通知中「查看详情」链接的前端基地址
       - App__FrontendBaseUrl=${FRONTEND_BASE_URL:-http://localhost:5500}
     # 重要：此 API 容器建议只读，避免任何本地落盘（你这种”可写层 1MB”环境必开）
