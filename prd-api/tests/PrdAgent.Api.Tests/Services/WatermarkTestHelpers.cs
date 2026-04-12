@@ -70,6 +70,16 @@ public sealed class NullAssetStorage : IAssetStorage
         return Task.CompletedTask;
     }
 
+    public Task<byte[]?> TryDownloadBytesAsync(string key, CancellationToken ct)
+    {
+        return Task.FromResult<byte[]?>(null);
+    }
+
+    public Task<bool> ExistsAsync(string key, CancellationToken ct)
+    {
+        return Task.FromResult(false);
+    }
+
     public string BuildSiteKey(string siteId, string filePath)
     {
         return $"test/{siteId}/{filePath}";
