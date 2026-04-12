@@ -249,12 +249,6 @@ public class LiteraryAgentConfigController : ControllerBase
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "name 不能为空"));
         }
 
-        if (_assetStorage is not TencentCosStorage)
-        {
-            return StatusCode(StatusCodes.Status502BadGateway,
-                ApiResponse<object>.Fail(ErrorCodes.INTERNAL_ERROR, "资产存储未配置为 TencentCosStorage"));
-        }
-
         if (file == null || file.Length <= 0)
         {
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.CONTENT_EMPTY, "file 不能为空"));
@@ -391,12 +385,6 @@ public class LiteraryAgentConfigController : ControllerBase
         if (config == null)
         {
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.DOCUMENT_NOT_FOUND, "配置不存在"));
-        }
-
-        if (_assetStorage is not TencentCosStorage)
-        {
-            return StatusCode(StatusCodes.Status502BadGateway,
-                ApiResponse<object>.Fail(ErrorCodes.INTERNAL_ERROR, "资产存储未配置为 TencentCosStorage"));
         }
 
         if (file == null || file.Length <= 0)
@@ -611,12 +599,6 @@ public class LiteraryAgentConfigController : ControllerBase
     public async Task<IActionResult> UploadReferenceImage([FromForm] IFormFile file, CancellationToken ct)
     {
         var adminId = GetAdminId();
-
-        if (_assetStorage is not TencentCosStorage)
-        {
-            return StatusCode(StatusCodes.Status502BadGateway,
-                ApiResponse<object>.Fail(ErrorCodes.INTERNAL_ERROR, "资产存储未配置为 TencentCosStorage"));
-        }
 
         if (file == null || file.Length <= 0)
         {

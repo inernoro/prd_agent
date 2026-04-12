@@ -1,38 +1,38 @@
 namespace PrdAgent.Infrastructure.Services.AssetStorage;
 
-public static class TencentCosStorageBase64Extensions
+public static class AssetStorageBase64Extensions
 {
     /// <summary>
     /// 上传 base64 或 dataUrl（data:*;base64,xxx）到指定 key，返回可访问 URL。
     /// </summary>
     public static async Task<string> UploadBase64Async(
-        this TencentCosStorage cos,
+        this IAssetStorage storage,
         string key,
         string base64OrDataUrl,
         string? contentType,
         CancellationToken ct)
     {
-        if (cos == null) throw new ArgumentNullException(nameof(cos));
+        if (storage == null) throw new ArgumentNullException(nameof(storage));
         if (!TryDecodeDataUrlOrBase64(base64OrDataUrl, contentType, out var mime, out var bytes))
         {
             throw new ArgumentException("base64/dataUrl 格式无效", nameof(base64OrDataUrl));
         }
 
-        await cos.UploadBytesAsync(key, bytes, mime, ct).ConfigureAwait(false);
-        return cos.BuildPublicUrl(key);
+        await storage.UploadToKeyAsync(key, bytes, mime, ct).ConfigureAwait(false);
+        return storage.BuildUrlForKey(key);
     }
 
     /// <summary>
     /// 下载对象并转为 base64（可选输出为 dataUrl）。
     /// </summary>
     public static async Task<string?> DownloadAsBase64Async(
-        this TencentCosStorage cos,
+        this IAssetStorage storage,
         string key,
         bool asDataUrl,
         CancellationToken ct)
     {
-        if (cos == null) throw new ArgumentNullException(nameof(cos));
-        var bytes = await cos.TryDownloadBytesAsync(key, ct).ConfigureAwait(false);
+        if (storage == null) throw new ArgumentNullException(nameof(storage));
+        var bytes = await storage.TryDownloadBytesAsync(key, ct).ConfigureAwait(false);
         if (bytes == null || bytes.Length == 0) return null;
 
         var b64 = Convert.ToBase64String(bytes);
@@ -73,5 +73,3 @@ public static class TencentCosStorageBase64Extensions
         }
     }
 }
-
-
