@@ -109,8 +109,22 @@ export function HeroSection({ className, onGetStarted, onWatchDemo }: HeroSectio
       <div
         className="relative z-10 min-h-[82vh] flex flex-col items-center justify-center px-6 pt-32 pb-16"
       >
-        {/* 终端 HUD 状态条 — 标题独占 800ms 后才出现，纯 fade，不抢 */}
-        <Reveal delay={800} duration={900} offset={6} debugLabel="HUD">
+        {/*
+         * 呼吸设计 — 按重要性分组，不是按位置分组
+         *
+         * Phase 1 · 核心信息（一起呼吸）   t=0~400ms   — "我是谁"
+         *   标题(0) → 副标题(150) → CTA(350)
+         *   它们是一个整体，内部只有极小的微差
+         *
+         * Phase 2 · 装饰辅助              t=1200ms+   — "配角"
+         *   HUD 状态条 · Powered by logos
+         *
+         * Phase 3 · 视觉证据              t=1800ms+   — "长这样"
+         *   产品 Mockup 从下方缓缓浮出
+         */}
+
+        {/* ── Phase 2 · HUD 状态条 — 装饰性，比核心信息晚出 ── */}
+        <Reveal delay={1200} duration={1000} offset={6} debugLabel="HUD">
           <div
             className="inline-flex items-center gap-3 px-4 py-2 mb-12 rounded-md"
             style={{
@@ -151,8 +165,9 @@ export function HeroSection({ className, onGetStarted, onWatchDemo }: HeroSectio
           </div>
         </Reveal>
 
-        {/* ★ 主标题 — 第一个亮起，独占前 800ms，从浓雾中缓缓浮现 */}
-        <Reveal delay={0} blur={12} duration={1800} offset={24} debugLabel="TITLE">
+        {/* ── Phase 1 · 核心信息 ── */}
+        {/* ★ 主标题 — 从浓雾中浮现，领先副标题 150ms */}
+        <Reveal delay={0} blur={12} duration={1500} offset={20} debugLabel="TITLE">
           <h1
             className="text-center text-white font-medium"
             style={{
@@ -168,8 +183,8 @@ export function HeroSection({ className, onGetStarted, onWatchDemo }: HeroSectio
           </h1>
         </Reveal>
 
-        {/* 副标题 — 标题基本清晰后再出 */}
-        <Reveal delay={1400} duration={1100} offset={10} debugLabel="SUBTITLE">
+        {/* 副标题 — 紧跟标题，它们是一体的 */}
+        <Reveal delay={150} duration={1200} offset={14} debugLabel="SUBTITLE">
           <p
             className="mt-8 text-center text-white/62 max-w-2xl mx-auto leading-relaxed"
             style={{
@@ -182,8 +197,8 @@ export function HeroSection({ className, onGetStarted, onWatchDemo }: HeroSectio
           </p>
         </Reveal>
 
-        {/* CTA 组 — 文字都清晰了才出按钮 */}
-        <Reveal delay={2200} duration={900} offset={12} debugLabel="CTA">
+        {/* CTA — 和标题/副标题一起呼吸，微差 350ms */}
+        <Reveal delay={350} duration={1000} offset={16} debugLabel="CTA">
           <div className="mt-12 flex flex-col sm:flex-row items-center justify-center gap-4">
             {/* 主 CTA */}
             <button
@@ -230,16 +245,16 @@ export function HeroSection({ className, onGetStarted, onWatchDemo }: HeroSectio
           </div>
         </Reveal>
 
-        {/* Powered by 大模型 logo 条 */}
-        <Reveal delay={2800} duration={1200} offset={6} debugLabel="LOGOS">
+        {/* ── Phase 2 · Powered by — 装饰性 ── */}
+        <Reveal delay={1400} duration={1200} offset={6} debugLabel="LOGOS">
           <div className="mt-20 md:mt-24 w-full">
             <TechLogoBar />
           </div>
         </Reveal>
       </div>
 
-      {/* ── 产品壳 mockup — 最终幕，从底部缓缓浮出 ── */}
-      <Reveal delay={3400} offset={48} blur={6} duration={1600} debugLabel="MOCKUP">
+      {/* ── Phase 3 · 产品壳 mockup — 核心信息就位后，视觉证据最后浮出 ── */}
+      <Reveal delay={1800} offset={48} blur={6} duration={1600} debugLabel="MOCKUP">
         <div className="relative z-10 pb-32 md:pb-40 px-4 md:px-8">
           <ProductMockup />
         </div>
