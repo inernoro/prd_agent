@@ -1,5 +1,5 @@
 import path from 'node:path';
-import type { CdsState, BranchEntry, BuildProfile, BuildProfileOverride, RoutingRule, OperationLog, InfraService, ExecutorNode, DataMigration, CdsPeer } from '../types.js';
+import type { CdsState, BranchEntry, BuildProfile, BuildProfileOverride, RoutingRule, OperationLog, InfraService, ExecutorNode, DataMigration, CdsPeer, Project } from '../types.js';
 import type { StateBackingStore } from '../infra/state-store/backing-store.js';
 import { JsonStateBackingStore, MAX_STATE_BACKUPS as JSON_MAX_BACKUPS } from '../infra/state-store/json-backing-store.js';
 
@@ -69,12 +69,19 @@ export class StateService {
       if (!this.state.executors) this.state.executors = {};
       if (!this.state.dataMigrations) this.state.dataMigrations = [];
       if (!this.state.cdsPeers) this.state.cdsPeers = [];
+      if (!this.state.projects) this.state.projects = [];
       // Migrate: backfill cacheMounts for existing build profiles
       this.migrateCacheMounts();
       // Migrate: ensure deployModes field exists on profiles (no-op if already present)
       this.migrateDeployModes();
+      // Migrate: ensure at least one "legacy default" project exists to
+      // wrap all pre-P4 data. See migrateProjects() for the rules.
+      this.migrateProjects();
     } else {
       this.state = emptyState();
+      // Fresh install still needs a default project so the UI has
+      // something to render on the first boot.
+      this.migrateProjects();
     }
   }
 
@@ -128,6 +135,42 @@ export class StateService {
     // No-op: TypeScript's optional fields handle missing deployModes gracefully.
     // This method exists as a migration hook in case future versions need to
     // transform deploy mode data (e.g., rename keys, merge formats).
+  }
+
+  /**
+   * P4 Part 1 migration: ensure at least one Project exists.
+   *
+   * CDS v3.2 had no concept of projects — state.json was implicitly
+   * single-tenant. v4 introduces multi-project support, but we never
+   * want to drop pre-existing data during upgrade. So on first load
+   * after the upgrade, we create a "legacy default" project that
+   * wraps everything and mark it with legacyFlag=true.
+   *
+   * The legacy project derives its name/slug from StateService.projectSlug
+   * so multi-CDS deployments with different repoRoot directories don't
+   * accidentally share a project name. If projects already exist (either
+   * from a prior migration run or because Part 2 let the user create
+   * them), this method is a no-op.
+   *
+   * Real project CRUD arrives in P4 Part 2, which will replace the
+   * hardcoded 'default' id with proper UUIDs.
+   */
+  private migrateProjects(): void {
+    if (!this.state.projects) this.state.projects = [];
+    if (this.state.projects.length > 0) return;
+
+    const now = new Date().toISOString();
+    this.state.projects.push({
+      id: 'default',
+      slug: this.projectSlug,
+      name: this.projectSlug,
+      description: '默认项目 — 由 P4 Part 1 迁移自动创建，包含所有 v3.2 时期的分支和配置',
+      kind: 'git',
+      legacyFlag: true,
+      createdAt: now,
+      updatedAt: now,
+    });
+    this.save();
   }
 
   /** Listeners notified after every save() */
@@ -423,6 +466,85 @@ export class StateService {
     } else {
       this.state.schedulerEnabledOverride = value;
     }
+  }
+
+  // ── Projects (P4 Part 1: read-only list, Part 2 adds mutation) ──
+
+  /**
+   * Returns the full projects list. After migration runs during load(),
+   * this is guaranteed to have at least one entry (the legacy default).
+   */
+  getProjects(): Project[] {
+    return this.state.projects || [];
+  }
+
+  /** Look up a project by id. Returns undefined when not found. */
+  getProject(id: string): Project | undefined {
+    return (this.state.projects || []).find((p) => p.id === id);
+  }
+
+  /**
+   * Find the "legacy default" project — the one migrateProjects() created
+   * for pre-P4 data. There is at most one of these per CdsState.
+   *
+   * Helper for the projects router which needs a stable fallback when
+   * an API path that carries no projectId is hit. P4 Part 3 replaces the
+   * fallback with an explicit projectId filter on every caller.
+   */
+  getLegacyProject(): Project | undefined {
+    return (this.state.projects || []).find((p) => p.legacyFlag === true);
+  }
+
+  /**
+   * Add a new project. Will be used by P4 Part 2 when the real
+   * `POST /api/projects` endpoint is wired up. Part 1 only ships the
+   * method (no HTTP surface) so tests can exercise the storage layer
+   * without waiting for Part 2's route work.
+   */
+  addProject(project: Project): void {
+    if (!this.state.projects) this.state.projects = [];
+    if (this.state.projects.some((p) => p.id === project.id)) {
+      throw new Error(`Project with id '${project.id}' already exists`);
+    }
+    if (this.state.projects.some((p) => p.slug === project.slug)) {
+      throw new Error(`Project with slug '${project.slug}' already exists`);
+    }
+    this.state.projects.push(project);
+    this.save();
+  }
+
+  /**
+   * Remove a project by id. The legacy default project cannot be
+   * removed — it is the anchor for pre-P4 data and deleting it would
+   * orphan every branch/profile/infra entry. P4 Part 3 will introduce
+   * full cascading delete (stop containers, drop docker network, etc.).
+   */
+  removeProject(id: string): void {
+    if (!this.state.projects) return;
+    const project = this.state.projects.find((p) => p.id === id);
+    if (!project) return;
+    if (project.legacyFlag) {
+      throw new Error('Cannot remove the legacy default project');
+    }
+    this.state.projects = this.state.projects.filter((p) => p.id !== id);
+    this.save();
+  }
+
+  /**
+   * Patch an existing project's mutable fields. Used by future rename /
+   * description-edit UI in P4 Part 2.
+   */
+  updateProject(id: string, updates: Partial<Pick<Project, 'name' | 'description' | 'gitRepoUrl'>>): void {
+    if (!this.state.projects) return;
+    const idx = this.state.projects.findIndex((p) => p.id === id);
+    if (idx < 0) return;
+    const current = this.state.projects[idx];
+    this.state.projects[idx] = {
+      ...current,
+      ...updates,
+      updatedAt: new Date().toISOString(),
+    };
+    this.save();
   }
 
   // ── Custom environment variables ──

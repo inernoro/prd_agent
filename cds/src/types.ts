@@ -330,6 +330,58 @@ export interface CdsState {
   dataMigrations?: DataMigration[];
   /** Registered remote CDS peers (for one-click cross-CDS data migration) */
   cdsPeers?: CdsPeer[];
+  /**
+   * P4 Part 1: multi-project support. Each Project groups branches,
+   * build profiles, infra services, and routing rules under one name.
+   *
+   * Optional so that legacy state.json files (pre-P4) still parse. On
+   * load, StateService.migrateProjects() ensures at least one "legacy
+   * default" project exists and assigns all pre-existing resources to
+   * it. Real multi-project creation lands in P4 Part 2.
+   *
+   * See doc/design.cds-multi-project.md, doc/spec.cds-project-model.md.
+   */
+  projects?: Project[];
+}
+
+/**
+ * A Project is the top-level grouping container for a CDS workload.
+ * Introduced in P4 Part 1. In Part 1 only the "legacy default" project
+ * exists (auto-created on migration); Part 2 adds real CRUD; Part 3
+ * threads projectId into Branch/BuildProfile/InfraService/RoutingRule.
+ *
+ * Field discipline: Part 1 only adds the minimum set needed for the
+ * projects list UI. Fields like `dockerNetwork`, `webhookSecret`,
+ * `autoDeployStrategy`, `branchCount` etc. land with the phases that
+ * actually use them. Adding them prematurely would create dead fields
+ * in state.json that mislead future readers.
+ */
+export interface Project {
+  /** Stable identifier, used in URLs and routing filters. */
+  id: string;
+  /** URL-friendly slug (may equal id, usually kebab-case). */
+  slug: string;
+  /** Human-friendly display name shown on the projects list card. */
+  name: string;
+  /** Optional one-line description shown under the name. */
+  description?: string;
+  /**
+   * Project kind. 'git' is the only value Part 1 creates; 'manual'
+   * lands in P6 when users can upload their own compose.
+   */
+  kind: 'git' | 'manual';
+  /** Optional Git repository URL; populated for auto-created legacy projects from CdsConfig.repoRoot. */
+  gitRepoUrl?: string;
+  /**
+   * True for the migration-created "legacy default" project that wraps
+   * all pre-P4 data. Marked so the UI can label it and so P4 Part 2
+   * knows it is not deletable.
+   */
+  legacyFlag?: boolean;
+  /** ISO timestamp when the project entry was created (or migrated in). */
+  createdAt: string;
+  /** ISO timestamp of most recent mutation. */
+  updatedAt: string;
 }
 
 /**

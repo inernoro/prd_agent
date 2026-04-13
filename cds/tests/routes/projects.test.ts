@@ -1,9 +1,13 @@
 /**
- * Tests for the P1 multi-project shell router.
+ * Tests for the multi-project router.
  *
- * These tests pin the behavior documented in doc/plan.cds-multi-project-phases.md
- * P1: the shell returns exactly one "legacy default" project reflecting
- * state.json, and create/delete endpoints return 501 with pointers to P4.
+ * P1 (initial shell): hardcoded "default" project, slug/name came from
+ * legacyProjectName constructor arg.
+ *
+ * P4 Part 1 (current): the router reads real projects from StateService.
+ * StateService.migrateProjects() ensures at least one "legacy default"
+ * project exists with id='default' and slug/name derived from the repo
+ * root (projectSlug). These tests pin the P4 Part 1 shape.
  */
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
@@ -47,7 +51,7 @@ async function request(
   });
 }
 
-describe('Projects router (P1 shell)', () => {
+describe('Projects router (P4 Part 1)', () => {
   let tmpDir: string;
   let stateService: StateService;
   let server: http.Server;
@@ -60,10 +64,7 @@ describe('Projects router (P1 shell)', () => {
 
     const app = express();
     app.use(express.json());
-    app.use('/api', createProjectsRouter({
-      stateService,
-      legacyProjectName: 'test-repo',
-    }));
+    app.use('/api', createProjectsRouter({ stateService }));
 
     server = app.listen(0);
   });
@@ -74,7 +75,7 @@ describe('Projects router (P1 shell)', () => {
   });
 
   describe('GET /api/projects', () => {
-    it('returns a single legacy project entry', async () => {
+    it('returns the migration-created legacy project', async () => {
       const res = await request(server, 'GET', '/api/projects');
 
       expect(res.status).toBe(200);
@@ -83,16 +84,19 @@ describe('Projects router (P1 shell)', () => {
 
       const project = res.body.projects[0];
       expect(project.id).toBe(LEGACY_PROJECT_ID);
-      expect(project.slug).toBe(LEGACY_PROJECT_ID);
-      expect(project.name).toBe('test-repo');
+      // P4 Part 1: slug is derived from repoRoot basename (projectSlug)
+      // rather than hardcoded to 'default'. It must be a non-empty
+      // kebab-safe string — the exact value depends on the tmp dir name.
+      expect(typeof project.slug).toBe('string');
+      expect(project.slug.length).toBeGreaterThan(0);
       expect(project.legacyFlag).toBe(true);
-      expect(project.workspaceId).toBe('system');
       expect(project.kind).toBe('git');
       expect(project.branchCount).toBe(0);
+      expect(typeof project.createdAt).toBe('string');
+      expect(typeof project.updatedAt).toBe('string');
     });
 
     it('reflects the current branch count from state.json', async () => {
-      // Seed three branches into state.json via addBranch
       const now = new Date().toISOString();
       const baseBranch = {
         status: 'pending' as const,
@@ -112,6 +116,8 @@ describe('Projects router (P1 shell)', () => {
       const res = await request(server, 'GET', '/api/projects');
 
       expect(res.status).toBe(200);
+      // All 3 branches roll up to the legacy project until Part 3 adds
+      // per-branch projectId filtering.
       expect(res.body.projects[0].branchCount).toBe(3);
     });
   });
@@ -123,6 +129,7 @@ describe('Projects router (P1 shell)', () => {
       expect(res.status).toBe(200);
       expect(res.body.id).toBe(LEGACY_PROJECT_ID);
       expect(res.body.legacyFlag).toBe(true);
+      expect(res.body.branchCount).toBe(0);
     });
 
     it('returns 404 for any other project id', async () => {
@@ -134,12 +141,12 @@ describe('Projects router (P1 shell)', () => {
   });
 
   describe('POST /api/projects', () => {
-    it('returns 501 not implemented with a pointer to P4', async () => {
+    it('returns 501 not implemented with a pointer to P4 Part 2', async () => {
       const res = await request(server, 'POST', '/api/projects');
 
       expect(res.status).toBe(501);
       expect(res.body.error).toBe('not_implemented');
-      expect(res.body.availablePhase).toBe('P4');
+      expect(res.body.availablePhase).toBe('P4 Part 2');
     });
   });
 

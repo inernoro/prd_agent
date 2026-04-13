@@ -256,10 +256,64 @@ let workerPort = '';
 
 async function init() {
   updateThemeUI();
+  // Fire off the auth widget probe in parallel — in disabled/basic mode
+  // /api/me returns 401 and the widget stays hidden; in github mode it
+  // returns 200 with user info and the widget flips visible.
+  bootstrapAuthWidget().catch(() => { /* quiet: 401 is expected in non-github mode */ });
   await Promise.all([loadBranches(), loadProfiles(), loadRoutingRules(), loadConfig(), loadEnvVars(), loadInfraServices(), loadMirrorState(), loadTabTitleState(), loadClusterStatus()]);
   refreshRemoteCandidates();
   updatePreviewModeUI();
   initStateStream(); // Server-authority: listen for state changes via SSE (replaces polling)
+}
+
+// ── P2.5: GitHub auth widget ──
+//
+// When CDS runs with CDS_AUTH_MODE=github the backend exposes /api/me
+// returning { user: {...}, session: {...} }. We probe it once at boot
+// and reveal the header avatar + logout widget only on 200.
+//
+// In disabled/basic modes /api/me returns 401 and the widget stays
+// hidden, matching the visual language of the pre-P2.5 Dashboard.
+async function bootstrapAuthWidget() {
+  const widget = document.getElementById('cdsAuthWidget');
+  const avatarEl = document.getElementById('cdsAuthAvatar');
+  const loginEl = document.getElementById('cdsAuthLogin');
+  if (!widget || !avatarEl || !loginEl) return;
+
+  let res;
+  try {
+    res = await fetch('/api/me', { credentials: 'include', cache: 'no-store' });
+  } catch {
+    return; // Network failure — treat as "not logged in", leave hidden.
+  }
+  if (!res.ok) return;
+
+  let body;
+  try {
+    body = await res.json();
+  } catch {
+    return;
+  }
+  const user = body && body.user;
+  if (!user || !user.githubLogin) return;
+
+  loginEl.textContent = user.githubLogin;
+  if (user.avatarUrl) {
+    avatarEl.src = user.avatarUrl;
+    avatarEl.alt = user.githubLogin;
+    avatarEl.style.display = 'block';
+  }
+  widget.classList.remove('hidden');
+  widget.style.display = 'inline-flex';
+}
+
+// Logout button handler — posts to /api/auth/logout, then redirects to
+// the GitHub login page so the user can sign in again.
+async function cdsLogout() {
+  try {
+    await fetch('/api/auth/logout', { method: 'POST', credentials: 'include' });
+  } catch { /* ignore — we redirect regardless */ }
+  location.href = '/login-gh.html';
 }
 
 /**

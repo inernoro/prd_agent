@@ -1,116 +1,112 @@
 /**
- * Projects API router — P1 shell implementation.
+ * Projects API router.
  *
- * This is the first step of the CDS v4 multi-project refactor
- * (see doc/design.cds-multi-project.md). In P1 we expose the `/api/projects`
- * surface as a thin shell backed by a hard-coded "default" project that
- * wraps the existing single-tenant state.json. Real multi-project support
- * (create/delete, per-project Docker networks, per-project data filter)
- * lands in P4.
+ * P1 (initial shell) served a single hard-coded "default" project.
+ * P4 Part 1 (this commit) reads the real projects list from
+ * StateService.getProjects(). The migration in StateService.load()
+ * guarantees that at least one project always exists — the "legacy
+ * default" created from the current repo's slug — so the response
+ * shape is identical to the P1 shell for existing callers.
  *
  * Endpoints:
- *   GET  /api/projects           → list (always returns exactly one project)
- *   GET  /api/projects/default   → details for the legacy project
- *   POST /api/projects           → 501 Not Implemented (landing in P4)
+ *   GET    /api/projects          → list real projects from state.json
+ *   GET    /api/projects/:id      → one project's details
+ *   POST   /api/projects          → 501 (real creation in P4 Part 2)
+ *   DELETE /api/projects/:id      → 501 (real deletion in P4 Part 2)
  *
- * The router is intentionally independent of StateService so that P1 can
- * ship without touching the data layer. In later phases this router will
- * own the `projects` MongoDB collection.
+ * The POST / DELETE endpoints are kept as 501 placeholders so the
+ * frontend can toast "coming soon" at the right moment; when P4 Part 2
+ * lands they flip to real behavior (docker network create/remove +
+ * StateService.addProject/removeProject).
+ *
+ * See doc/design.cds-multi-project.md,
+ * doc/plan.cds-multi-project-phases.md P4.
  */
 
 import { Router } from 'express';
 import type { StateService } from '../services/state.js';
+import type { Project } from '../types.js';
 
 export interface ProjectsRouterDeps {
   stateService: StateService;
-  /** Display name of the legacy project (typically the git repo basename). */
+  /** Kept for backward compat with P1 callers; ignored in Part 1. */
   legacyProjectName?: string;
 }
 
 /**
- * The single "legacy project" identifier used until P4 introduces real
- * multi-project support. All existing state.json data is considered to
- * belong to this project.
+ * Stable identifier of the migration-created legacy project. Exported
+ * so tests can assert on it and the frontend can special-case it when
+ * it wants to show a "Legacy" badge.
  */
 export const LEGACY_PROJECT_ID = 'default';
 
-interface ProjectSummary {
-  id: string;
-  slug: string;
-  name: string;
-  description: string;
-  kind: 'git' | 'manual';
-  workspaceId: string;
-  legacyFlag: boolean;
+/**
+ * Shape returned by `/api/projects`. Adds derived fields (branchCount)
+ * that are not persisted on Project itself.
+ */
+interface ProjectSummary extends Project {
+  /** Number of branches currently scoped to this project. */
   branchCount: number;
-  createdAt: string;
-  updatedAt: string;
+}
+
+function toSummary(project: Project, branchCount: number): ProjectSummary {
+  return { ...project, branchCount };
 }
 
 export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
   const router = Router();
   const { stateService } = deps;
-  const legacyName = deps.legacyProjectName || 'prd_agent';
 
-  // A fixed timestamp so the legacy project has a stable createdAt value
-  // across restarts. Not persisted anywhere; this is P1 shell data only.
-  const legacyCreatedAt = '2026-04-12T00:00:00.000Z';
-
-  function buildLegacyProject(): ProjectSummary {
+  /**
+   * Count branches attributed to a project. In Part 1 there is only
+   * ever the legacy project, so every branch belongs to it. Part 3
+   * will thread real projectId onto BranchEntry and make this a proper
+   * filter.
+   */
+  function countBranchesFor(project: Project): number {
     const state = stateService.getState();
-    const branchCount = Object.keys(state.branches || {}).length;
-    return {
-      id: LEGACY_PROJECT_ID,
-      slug: LEGACY_PROJECT_ID,
-      name: legacyName,
-      description: '默认项目(由 P1 外壳自动创建,包含所有现有分支和配置)',
-      kind: 'git',
-      workspaceId: 'system',
-      legacyFlag: true,
-      branchCount,
-      createdAt: legacyCreatedAt,
-      updatedAt: new Date().toISOString(),
-    };
+    const totalBranches = Object.keys(state.branches || {}).length;
+    return project.legacyFlag ? totalBranches : 0;
   }
 
-  // GET /api/projects — list all projects visible to the current user.
-  // P1: always returns exactly one entry (the legacy project).
+  // GET /api/projects — list all projects.
   router.get('/projects', (_req, res) => {
+    const projects = stateService.getProjects();
+    const summaries = projects.map((p) => toSummary(p, countBranchesFor(p)));
     res.json({
-      projects: [buildLegacyProject()],
-      total: 1,
+      projects: summaries,
+      total: summaries.length,
     });
   });
 
   // GET /api/projects/:id — project detail.
-  // P1: only 'default' is valid; anything else returns 404.
   router.get('/projects/:id', (req, res) => {
-    if (req.params.id !== LEGACY_PROJECT_ID) {
+    const project = stateService.getProject(req.params.id);
+    if (!project) {
       res.status(404).json({
         error: 'project_not_found',
-        message: `Project '${req.params.id}' does not exist. Only the default project is available until P4.`,
+        message: `Project '${req.params.id}' does not exist.`,
       });
       return;
     }
-    res.json(buildLegacyProject());
+    res.json(toSummary(project, countBranchesFor(project)));
   });
 
-  // POST /api/projects — creation is not yet implemented.
-  // P1 returns 501 with a pointer to the phase plan so UI can explain.
+  // POST /api/projects — real creation lands in P4 Part 2.
   router.post('/projects', (_req, res) => {
     res.status(501).json({
       error: 'not_implemented',
-      message: 'Creating additional projects will land in P4. See doc/plan.cds-multi-project-phases.md.',
-      availablePhase: 'P4',
+      message: 'Creating additional projects will land in P4 Part 2. See doc/plan.cds-multi-project-phases.md.',
+      availablePhase: 'P4 Part 2',
     });
   });
 
-  // DELETE /api/projects/:id — deletion is not yet implemented either.
+  // DELETE /api/projects/:id — real deletion lands in P4 Part 2.
   router.delete('/projects/:id', (_req, res) => {
     res.status(501).json({
       error: 'not_implemented',
-      message: 'Deleting projects will land in P4. The legacy project cannot be deleted.',
-      availablePhase: 'P4',
+      message: 'Deleting projects will land in P4 Part 2. The legacy project will never be deletable.',
+      availablePhase: 'P4 Part 2',
     });
   });
 

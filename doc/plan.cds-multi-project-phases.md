@@ -301,66 +301,84 @@ P3 全量在一个 session 里落地违反规则 8（完成标准）——mongo 
 
 ---
 
-## 7. P4：多项目真落地
+## 7. P4：多项目真落地（**Part 1 已落地 ✓ 2026-04-13**, Part 2/3 待办）
 
 ### 目标
 
 让"+ New Project"按钮从 P1 的"coming soon"变成真正可用。用户可以在一个 CDS 实例里创建第二个、第三个项目，每个项目有独立的 Docker 网络、独立的 branches / profiles / infra / routing。
 
+### 为什么拆成 Part 1 / Part 2 / Part 3
+
+P4 分三个 Part 渐进落地，每个 Part 独立可交付、可回滚、可验收：
+
+- **Part 1（已落地）**：数据模型。给 `CdsState` 加 `projects: Project[]` 字段，`StateService` 补充 CRUD + 启动时 migrate 自动创建一个 legacy 默认项目。`/api/projects` 路由改为读真实 state，删除 P1 时代的硬编码。**零行为变化**（用户仍然只看到一个项目，但数据链路真实了）。附带 P2.5 Dashboard 头部的 user avatar + logout 小组件
+- **Part 2（下个 session）**：真正的创建/删除。`POST /api/projects` 调 `docker network create` + `StateService.addProject()`；`DELETE /api/projects/:id` 停容器 + `docker network rm` + `StateService.removeProject()`；前端 `+ New Project` 按钮打开创建对话框
+- **Part 3（Part 2 稳定后）**：给 `BranchEntry` / `BuildProfile` / `InfraService` / `RoutingRule` 加 `projectId` 字段 + 迁移；所有 API 加 project scope filter；`/api/projects/:pid/branches` 路由落地；前端按 projectId 隔离显示
+
 ### 前置依赖
 
-- P3 完成，所有业务数据已在 MongoDB
-- 所有 Service 层查询都带 `projectId` filter（通过中间件统一注入）
+- **Part 1**：P1 shell 已落地（零前置依赖于 mongo；P3 Part 2/3 挪到最后）
+- **Part 2**：Part 1 已落地 + 用户授权引入 Docker network 创建操作
+- **Part 3**：Part 2 已落地
 
-### 交付清单
+### Part 1 交付清单（已落地 ✓）
 
 **后端**：
 
-- [ ] `projects-controller.ts` 把 `POST /api/projects` 从 501 改为真实创建
-- [ ] 创建项目时：
-  - 生成 UUID _id
-  - 计算 `dockerNetwork = cds-proj-<id 前 8 位>`
-  - 调 `docker network create`（幂等）
-  - 写入 `projects` 集合
-  - 自动创建两个 environment（default + production）
-  - `workspaces.projectCount` +1
-- [ ] 新增 `projects-controller.ts` 的 `DELETE /api/projects/:pid`：软删除 + 停止所有关联容器 + 删除 docker network
-- [ ] `implicit-project` 中间件去掉，所有旧 API 路径强制使用 `/api/projects/:pid/...`
-- [ ] 所有 Service 层方法签名加 `projectId` 参数，所有 mongo 查询带 `{ projectId }` filter
+- [x] `cds/src/types.ts`：新增 `Project` 接口 + `CdsState.projects?: Project[]` 可选字段
+- [x] `cds/src/services/state.ts`：
+  - 新增 `getProjects() / getProject(id) / getLegacyProject() / addProject(p) / removeProject(id) / updateProject(id, patch)`
+  - 新增 `migrateProjects()` 私有方法，`load()` 流程尾部调用：如果 `projects` 为空则创建一个 `{ id: 'default', slug: projectSlug, legacyFlag: true, kind: 'git' }`
+  - `addProject` 拒绝重复 id / 重复 slug；`removeProject` 拒绝删除 legacy 项目；两者都会调 `save()` 持久化
+- [x] `cds/src/routes/projects.ts`：
+  - 删除 P1 时代的 `buildLegacyProject()` 硬编码
+  - `GET /api/projects` 改为读 `stateService.getProjects()`，每条带 `branchCount` 衍生字段
+  - `GET /api/projects/:id` 从 `stateService.getProject()` 查询
+  - `POST / DELETE` 保留 501，`availablePhase` 更新为 `'P4 Part 2'`
+
+**前端（P2.5 补丁）**：
+
+- [x] `cds/web/index.html`：header 加 `#cdsAuthWidget` 徽章（avatar + login + 登出按钮），默认 hidden
+- [x] `cds/web/app.js`：新增 `bootstrapAuthWidget()`，`init()` 里 fire-and-forget 地探测 `/api/me`；200 时显示徽章并填充 github login + avatar；401（disabled/basic 模式）时保持隐藏
+- [x] 新增 `cdsLogout()`：POST `/api/auth/logout` 后跳转 `/login-gh.html`
+
+**测试**：
+
+- [x] `cds/tests/services/state-projects.test.ts`（新）：13 条测 migration、getProject/getLegacyProject、addProject（含重复校验）、removeProject（含 legacy 保护）、updateProject
+- [x] `cds/tests/routes/projects.test.ts`（改）：6 条更新为 P4 Part 1 语义——slug 来自 projectSlug 而非硬编码、`availablePhase: 'P4 Part 2'`
+- [x] 全量 `pnpm test` 340 → **353（零回归）**
+
+### 验收标准（Part 1）
+
+- [x] 冷启动时 state.json 里自动出现一个 `projects[0]` 条目，legacyFlag=true
+- [x] 把 state.json 备份回 v3.2 时代（删掉 projects 字段），重新启动后 projects 自动迁移
+- [x] `GET /api/projects` 返回真实数据，不再是硬编码
+- [x] `CDS_AUTH_MODE=github` 时 Dashboard header 显示用户 avatar + 登出
+- [x] `CDS_AUTH_MODE=basic` 或 `disabled` 时 Dashboard 外观零变化（widget 隐藏）
+- [ ] **真实 GitHub OAuth 端到端**：需要 client_id/secret，待用户提供
+
+### Part 2/3 剩余工作
+
+**Part 2**：
+
+- [ ] `cds/src/routes/projects.ts`：`POST /api/projects` 改为调 `StateService.addProject` + `docker network create`（幂等）
+- [ ] `cds/src/routes/projects.ts`：`DELETE /api/projects/:id` 改为调 `StateService.removeProject` + `docker network rm` + 停容器
+- [ ] 前端 `projects.html`：`+ New Project` 按钮打开创建对话框（name / gitRepoUrl / description）
+- [ ] 前端 `projects.html`：读真实项目列表渲染，删除 "P4 将上线" 的 toast
+
+**Part 3**：
+
+- [ ] 给 `BranchEntry` / `BuildProfile` / `InfraService` / `RoutingRule` 加 `projectId` 字段 + 迁移（legacy 默认一律填 `'default'`）
 - [ ] 新增 `cds/src/middleware/project-scope.ts`：从 URL `:pid` 读 projectId，校验用户权限后注入 `req.project`
-
-**前端**：
-
-- [ ] `projects-list.tsx` 的 "+ New Project" 按钮打开创建对话框（名称 / Git URL / 默认分支 / 描述）
-- [ ] 创建成功后跳转到 `/projects/<new-id>`
-- [ ] 项目卡片显示分支数、infra 数、最近活跃时间
-- [ ] 项目详情页标题变为 `{workspace.name} / {project.name}`
-- [ ] 所有 API 调用改为 `/api/projects/:pid/...` 前缀
-
-### 验收标准
-
-- [ ] 可创建第二个项目，拿到独立 docker network
-- [ ] 项目 A 的分支和项目 B 的分支完全隔离（list API 不会串）
-- [ ] 删除项目 A 不影响项目 B
-- [ ] 同一个 branch name 在两个项目里可以并存（因为 slug 只在项目内唯一）
-- [ ] P1 创建的 legacy project 仍然正常运行
-- [ ] 旧前端代码（仍用旧 API 路径）彻底被替换
-
-### 回滚策略
-
-- **前端回滚**：隐藏 "+ New Project" 按钮（改回 toast "coming soon"）
-- **后端回滚**：`POST /api/projects` 改回 501
-- 已创建的多项目数据**不删除**，后续修复后可继续使用
+- [ ] 所有 Service 层方法签名加 `projectId` 参数，读写时按 projectId filter
+- [ ] `/api/projects/:pid/branches` 新路由落地
+- [ ] 前端 `index.html` 读 URL `?project=<id>` 参数并在所有 API 调用里带上
 
 ### 风险
 
 - **R1**：Docker 网络命名冲突 → 缓解：`docker network inspect` 前置检测
 - **R2**：项目删除时没清干净容器 → 缓解：删除流程幂等 + `docker ps --filter label=cds-project=<id>` 双重确认
-- **R3**：所有 Service 层签名变更引入 bug → 缓解：逐个 service 加 projectId 参数 + 全量单测回归
-
-### 预估工作量
-
-3-4 session。
+- **R3**：Service 层签名变更引入 bug → 缓解：逐个 service 改 + 全量单测回归
 
 ---
 
