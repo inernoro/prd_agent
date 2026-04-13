@@ -210,7 +210,7 @@
 
 ---
 
-## 6. P3：MongoDB 数据层迁移
+## 6. P3：MongoDB 数据层迁移（**Part 1 已落地 ✓ 2026-04-13**, Part 2/3 待办）
 
 ### 目标
 
@@ -218,26 +218,41 @@
 
 采用三阶段双写策略（详见 `doc/rule.cds-mongo-migration.md`），任何阶段都可通过 `CDS_STORAGE_MODE` 回滚。
 
+### 为什么拆成 Part 1 / Part 2 / Part 3
+
+P3 全量在一个 session 里落地违反规则 8（完成标准）——mongo 接入既需要引入新运行时依赖，又需要活的 mongo 实例做验证。拆分原则：
+
+- **Part 1（已落地）**：纯重构。抽出 `StateBackingStore` 接口，用 `JsonStateBackingStore` 包住现有的 atomic write + `.bak.*` 恢复逻辑。`StateService` 改成通过 `backingStore` 委托持久化。**零行为变化，340 个测试全绿**。这样后续 Part 2/3 都只需要新增一个 backing store 实现，不需要再动 StateService 或任何业务层消费者
+- **Part 2（下一个 session）**：引入 `mongodb` npm 依赖 + `MongoStateBackingStore` 实现。需要真实 mongo 做端到端测试
+- **Part 3（Part 2 稳定后）**：`DualWriteStateBackingStore` + 一致性校验脚本 + 迁移脚本 `migrate-state-to-mongo.ts --dry-run/--execute`。这是 P3a/P3b/P3c 三阶段切换的真正落地
+
 ### 前置依赖
 
 - P2 完成，users / sessions 集合已在 MongoDB 稳定运行 ≥ 3 天
 - `state.json` 做过完整冷备份 `state.json.premigration-YYYYMMDD.bak`
 - 准备好停机窗口（至少 30 分钟，用于 P3c 切换）
 
-### 交付清单
+### Part 1 交付清单（已落地 ✓）
 
 **配置**：
 
-- [ ] `.cds.env` 新增 `CDS_STORAGE_MODE`（`json` / `dual` / `mongo`）
-- [ ] 默认值：P3a 阶段设为 `dual`，P3b 也是 `dual`（读切换通过单独的 `CDS_STORAGE_READ_FROM` 控制），P3c 设为 `mongo`
+- [x] `CDS_STORAGE_MODE` 环境变量已接入 `index.ts`，默认 `json`；`mongo`/`dual` 值会在启动时抛出明确错误指向 Part 2/3
 
 **后端**：
 
-- [ ] 新增 `cds/src/infra/storage/storage-adapter.ts`：抽象 Storage 接口
-- [ ] 新增 `cds/src/infra/storage/json-storage.ts`：现有 JSON 实现封装
-- [ ] 新增 `cds/src/infra/storage/mongo-storage.ts`：MongoDB 实现（8 个集合：projects / environments / branches / build_profiles / infra_services / routing_rules + 已有 users / sessions）
-- [ ] 新增 `cds/src/infra/storage/dual-write-storage.ts`：双写 + 一致性校验
-- [ ] 改造所有 Service 层：从直接操作 `stateStore` 改为通过 `storageAdapter`
+- [x] `cds/src/infra/state-store/backing-store.ts`：`StateBackingStore` 接口（`load()` / `save()` / `kind`）
+- [x] `cds/src/infra/state-store/json-backing-store.ts`：`JsonStateBackingStore` 提取现有 atomic write + `.bak.*` rotation + recovery 逻辑
+- [x] `cds/src/services/state.ts`：构造器新增可选 `backingStore` 参数，默认实例化 `JsonStateBackingStore`；`load()`/`save()` 改为委托；删除了内联的 `tryLoadStateFile()` / `rollBackups()`
+- [x] `cds/src/index.ts`：启动时按 `CDS_STORAGE_MODE` 校验
+- [x] `cds/tests/infra/json-backing-store.test.ts`：9 条直接测 backing store（load/save/recovery/rotation/kind tag）
+- [x] 全量测试 331 → 340 零回归
+
+### Part 2/3 剩余工作
+
+- [ ] 新增 `cds/src/infra/state-store/mongo-backing-store.ts`：MongoDB 实现
+- [ ] `cds/package.json` 引入 `mongodb` 运行时依赖
+- [ ] 新增 `cds/src/infra/state-store/dual-write-backing-store.ts`：双写 + 一致性校验
+- [ ] 改造 `index.ts`：按 `CDS_STORAGE_MODE` 分发 backing store
 - [ ] 新增 `cds/scripts/migrate-state-to-mongo.ts`：一次性迁移脚本（支持 `--dry-run`）
 - [ ] 新增 `cds/scripts/verify-state-consistency.ts`：对比 state.json 和 mongo 一致性的工具
 - [ ] P3c 阶段：新增 `cds/scripts/seal-state-json.ts`：重命名 state.json 为 legacy

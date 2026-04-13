@@ -1,10 +1,11 @@
-import fs from 'node:fs';
 import path from 'node:path';
 import type { CdsState, BranchEntry, BuildProfile, BuildProfileOverride, RoutingRule, OperationLog, InfraService, ExecutorNode, DataMigration, CdsPeer } from '../types.js';
+import type { StateBackingStore } from '../infra/state-store/backing-store.js';
+import { JsonStateBackingStore, MAX_STATE_BACKUPS as JSON_MAX_BACKUPS } from '../infra/state-store/json-backing-store.js';
 
 const MAX_LOGS_PER_BRANCH = 10;
-/** Max rolling backups of state.json kept on disk. See design.cds-resilience.md §5. */
-const MAX_STATE_BACKUPS = 10;
+/** Max rolling backups of state.json kept on disk. Re-exported from the backing store so existing callers keep working. */
+const MAX_STATE_BACKUPS = JSON_MAX_BACKUPS;
 
 function emptyState(): CdsState {
   return {
@@ -23,14 +24,21 @@ function emptyState(): CdsState {
 export class StateService {
   private state: CdsState = emptyState();
   private readonly filePath: string;
+  /** P3: the persistence seam. Defaults to JSON for backward compat; P3 Part 2 swaps in mongo. */
+  private readonly backingStore: StateBackingStore;
   /** Project slug derived from repoRoot directory name, used for cache isolation */
   readonly projectSlug: string;
 
-  constructor(filePath: string, repoRoot?: string) {
+  constructor(filePath: string, repoRoot?: string, backingStore?: StateBackingStore) {
     this.filePath = filePath;
     // Derive project slug from repoRoot (e.g. /root/inernoro/prd_agent → prd-agent)
     const dirName = path.basename(repoRoot || path.dirname(path.dirname(filePath)));
     this.projectSlug = dirName.replace(/[^a-zA-Z0-9-]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '').toLowerCase() || 'default';
+    // Default backing store is the JSON implementation that preserves
+    // the pre-P3 on-disk format (atomic write + rolling backups). P3
+    // Part 2 will allow injecting MongoStateBackingStore here, and
+    // Part 3 will inject the DualWriteStateBackingStore.
+    this.backingStore = backingStore ?? new JsonStateBackingStore(filePath);
   }
 
   static slugify(branch: string): string {
@@ -41,43 +49,11 @@ export class StateService {
       .toLowerCase();
   }
 
-  /**
-   * Try to parse a state file. On JSON error, attempt to recover from the most
-   * recent .bak.* file. Returns the loaded state, or null if nothing is readable.
-   */
-  private tryLoadStateFile(): CdsState | null {
-    if (fs.existsSync(this.filePath)) {
-      try {
-        const raw = fs.readFileSync(this.filePath, 'utf-8');
-        return JSON.parse(raw) as CdsState;
-      } catch (err) {
-        console.error(`[state] primary state.json unreadable: ${(err as Error).message}`);
-        console.error('[state] attempting to recover from rolling backups...');
-      }
-    }
-    // Fallback: scan .bak.* files, newest first
-    const dir = path.dirname(this.filePath);
-    const base = path.basename(this.filePath);
-    if (!fs.existsSync(dir)) return null;
-    const backups = fs.readdirSync(dir)
-      .filter(f => f.startsWith(`${base}.bak.`))
-      .sort()
-      .reverse();
-    for (const bak of backups) {
-      try {
-        const raw = fs.readFileSync(path.join(dir, bak), 'utf-8');
-        const parsed = JSON.parse(raw) as CdsState;
-        console.warn(`[state] RECOVERED state from backup ${bak}`);
-        return parsed;
-      } catch {
-        // try next backup
-      }
-    }
-    return null;
-  }
-
   load(): void {
-    const loaded = this.tryLoadStateFile();
+    // P3: delegate to the backing store. JsonStateBackingStore preserves
+    // the legacy file-I/O + .bak.* recovery semantics; Mongo/DualWrite
+    // stores land in P3 Part 2/3.
+    const loaded = this.backingStore.load();
     if (loaded) {
       this.state = loaded;
       // Migrate older state files
@@ -179,64 +155,17 @@ export class StateService {
    * See doc/design.cds-resilience.md §5.
    */
   save(): void {
-    const dir = path.dirname(this.filePath);
-    if (!fs.existsSync(dir)) {
-      fs.mkdirSync(dir, { recursive: true });
-    }
+    // P3: delegate physical persistence to the backing store. The atomic
+    // write + .bak.* rotation semantics that used to live inline now live
+    // in JsonStateBackingStore.save(); swapping to MongoStateBackingStore
+    // in P3 Part 2 keeps this code path untouched.
+    this.backingStore.save(this.state);
 
-    const serialized = JSON.stringify(this.state, null, 2);
-    // Unique tmp path per write — two concurrent saves (e.g. `tsx watch`
-    // reloading while a heartbeat triggers a background save) must not race
-    // on the same tmp file, otherwise one process's rename will fail with
-    // ENOENT because the other already renamed it. Seen in production on
-    // B's CDS after a hot-reload while executor heartbeats were firing.
-    const tmpPath = `${this.filePath}.tmp.${process.pid}.${Date.now()}`;
-
-    // Atomic write: tmp → fsync → rename
-    const fd = fs.openSync(tmpPath, 'w');
-    try {
-      fs.writeSync(fd, serialized);
-      fs.fsyncSync(fd);
-    } finally {
-      fs.closeSync(fd);
-    }
-    fs.renameSync(tmpPath, this.filePath);
-
-    // Rolling backup (best-effort; failures don't fail the save)
-    try {
-      this.rollBackups(serialized);
-    } catch (err) {
-      console.warn(`[state] backup rotation failed: ${(err as Error).message}`);
-    }
-
-    // Notify listeners
+    // Notify listeners (this is *not* part of the backing store contract
+    // because listeners are a StateService concern — they run after
+    // logical state changes, not every physical write).
     for (const fn of this.onSaveListeners) {
       try { fn(); } catch { /* ignore */ }
-    }
-  }
-
-  /**
-   * Write a .bak.<timestamp> snapshot and prune old backups.
-   * We use the already-serialized string to avoid double serialization.
-   */
-  private rollBackups(serialized: string): void {
-    const dir = path.dirname(this.filePath);
-    const base = path.basename(this.filePath);
-    const stamp = new Date().toISOString().replace(/[:.]/g, '-');
-    const backupPath = path.join(dir, `${base}.bak.${stamp}`);
-    fs.writeFileSync(backupPath, serialized);
-
-    // Prune: keep MAX_STATE_BACKUPS newest, delete the rest
-    const backups = fs.readdirSync(dir)
-      .filter(f => f.startsWith(`${base}.bak.`))
-      .sort()  // ISO timestamps sort chronologically
-      .reverse();
-    for (let i = MAX_STATE_BACKUPS; i < backups.length; i++) {
-      try {
-        fs.unlinkSync(path.join(dir, backups[i]));
-      } catch {
-        // ignore individual deletion failures
-      }
     }
   }
 
