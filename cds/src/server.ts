@@ -788,10 +788,13 @@ export function createServer(deps: ServerDeps): express.Express {
 
   // API routes
   app.use('/api/bridge', createBridgeRouter({ bridgeService: deps.bridgeService }));
-  // P1 multi-project shell: projects router sits on /api and exposes a
-  // single legacy "default" project until P4. See doc/design.cds-multi-project.md.
+  // Multi-project router. P4 Part 2 wires up real create/delete, so the
+  // router now needs shell (for docker network commands) and config.
+  // See doc/design.cds-multi-project.md.
   app.use('/api', createProjectsRouter({
     stateService: deps.stateService,
+    shell: deps.shell,
+    config: deps.config,
     legacyProjectName: deps.config.repoRoot ? path.basename(deps.config.repoRoot) : 'prd_agent',
   }));
   app.use('/api', createBranchRouter({

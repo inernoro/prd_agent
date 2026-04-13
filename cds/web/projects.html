@@ -105,12 +105,31 @@
       display: flex;
       flex-direction: column;
       gap: 14px;
+      position: relative;
     }
     .project-card:hover {
       transform: translateY(-2px);
       border-color: var(--accent-border);
       background: var(--bg-elevated);
     }
+    .project-card-delete {
+      position: absolute;
+      top: 12px;
+      right: 12px;
+      width: 26px;
+      height: 26px;
+      display: none;
+      align-items: center;
+      justify-content: center;
+      border-radius: 6px;
+      background: rgba(244, 63, 94, 0.1);
+      border: 1px solid rgba(244, 63, 94, 0.25);
+      color: var(--red, #f43f5e);
+      cursor: pointer;
+      transition: background 120ms ease;
+    }
+    .project-card:hover .project-card-delete { display: flex; }
+    .project-card-delete:hover { background: rgba(244, 63, 94, 0.2); }
     .project-card-header {
       display: flex;
       align-items: flex-start;
@@ -176,6 +195,107 @@
       color: var(--accent);
       text-decoration: none;
     }
+    /* Create-project modal (P4 Part 2) */
+    .modal-backdrop {
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.6);
+      backdrop-filter: blur(4px);
+      z-index: 9000;
+      display: none;
+      align-items: center;
+      justify-content: center;
+      padding: 24px;
+    }
+    .modal-backdrop.visible { display: flex; }
+    .modal-dialog {
+      background: var(--bg-card);
+      border: 1px solid var(--card-border);
+      border-radius: 14px;
+      padding: 28px 28px 24px;
+      width: 100%;
+      max-width: 460px;
+      box-shadow: 0 24px 64px rgba(0, 0, 0, 0.5);
+    }
+    .modal-title {
+      font-size: 17px;
+      font-weight: 700;
+      color: var(--text-primary);
+      margin-bottom: 4px;
+    }
+    .modal-subtitle {
+      font-size: 12px;
+      color: var(--text-muted);
+      margin-bottom: 22px;
+    }
+    .form-row {
+      margin-bottom: 16px;
+    }
+    .form-label {
+      display: block;
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--text-secondary);
+      margin-bottom: 6px;
+    }
+    .form-label .opt {
+      font-weight: 400;
+      color: var(--text-muted);
+      margin-left: 6px;
+    }
+    .form-input {
+      width: 100%;
+      background: var(--bg-elevated);
+      border: 1px solid var(--card-border);
+      border-radius: 8px;
+      padding: 10px 12px;
+      color: var(--text-primary);
+      font-size: 13px;
+      font-family: inherit;
+      outline: none;
+      transition: border-color 120ms ease;
+    }
+    .form-input:focus {
+      border-color: var(--accent);
+    }
+    .form-error {
+      font-size: 11px;
+      color: var(--red);
+      margin-top: 6px;
+      min-height: 14px;
+    }
+    .modal-actions {
+      display: flex;
+      justify-content: flex-end;
+      gap: 10px;
+      margin-top: 18px;
+    }
+    .btn-ghost,
+    .btn-primary {
+      padding: 9px 18px;
+      border-radius: 8px;
+      border: none;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background 120ms ease;
+    }
+    .btn-ghost {
+      background: transparent;
+      color: var(--text-secondary);
+      border: 1px solid var(--card-border);
+    }
+    .btn-ghost:hover { background: var(--bg-elevated); }
+    .btn-primary {
+      background: var(--accent);
+      color: #fff;
+    }
+    .btn-primary:hover { background: var(--accent-dim); }
+    .btn-primary:disabled {
+      opacity: 0.6;
+      cursor: not-allowed;
+    }
+
     /* Toast reuse — keeps parity with the dashboard */
     .toast {
       position: fixed;
@@ -229,6 +349,38 @@
     </div>
 
     <div id="toast" class="toast hidden"></div>
+  </div>
+
+  <!-- Create Project modal (P4 Part 2) -->
+  <div id="createProjectModal" class="modal-backdrop" onclick="closeCreateProjectModal(event)">
+    <div class="modal-dialog" onclick="event.stopPropagation()">
+      <div class="modal-title">新建项目</div>
+      <div class="modal-subtitle">每个项目拥有独立的 Docker 网络，分支和配置相互隔离</div>
+
+      <form id="createProjectForm" onsubmit="handleCreateProjectSubmit(event)">
+        <div class="form-row">
+          <label class="form-label" for="cp-name">名称 <span class="opt">*</span></label>
+          <input id="cp-name" class="form-input" type="text" maxlength="60" required placeholder="例如：my-api" autocomplete="off">
+        </div>
+        <div class="form-row">
+          <label class="form-label" for="cp-slug">Slug <span class="opt">留空自动生成</span></label>
+          <input id="cp-slug" class="form-input" type="text" maxlength="50" placeholder="lowercase-kebab" autocomplete="off">
+        </div>
+        <div class="form-row">
+          <label class="form-label" for="cp-gitRepoUrl">Git 仓库 URL <span class="opt">可选</span></label>
+          <input id="cp-gitRepoUrl" class="form-input" type="url" placeholder="https://github.com/your-org/repo.git" autocomplete="off">
+        </div>
+        <div class="form-row">
+          <label class="form-label" for="cp-description">描述 <span class="opt">可选</span></label>
+          <input id="cp-description" class="form-input" type="text" maxlength="200" placeholder="一句话介绍这个项目" autocomplete="off">
+        </div>
+        <div id="createProjectError" class="form-error"></div>
+        <div class="modal-actions">
+          <button type="button" class="btn-ghost" onclick="closeCreateProjectModal()">取消</button>
+          <button type="submit" id="createProjectSubmitBtn" class="btn-primary">创建</button>
+        </div>
+      </form>
+    </div>
   </div>
 
   <script src="projects.js?t=0"></script>

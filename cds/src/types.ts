@@ -373,6 +373,14 @@ export interface Project {
   /** Optional Git repository URL; populated for auto-created legacy projects from CdsConfig.repoRoot. */
   gitRepoUrl?: string;
   /**
+   * Name of the dedicated Docker network backing this project. Populated
+   * by P4 Part 2 on project creation (`cds-proj-<id-prefix>`). The
+   * legacy default project has this field unset — it continues to use
+   * the pre-P4 shared network until P4 Part 3 threads projectId through
+   * every container operation.
+   */
+  dockerNetwork?: string;
+  /**
    * True for the migration-created "legacy default" project that wraps
    * all pre-P4 data. Marked so the UI can label it and so P4 Part 2
    * knows it is not deletable.
