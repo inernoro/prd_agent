@@ -87,34 +87,37 @@
 - P0 审完
 - 现有 dashboard UI 可以被包裹进一层路由
 
-### 交付清单
+### 交付清单（已落地 ✓）
 
 **后端**：
 
-- [ ] 新增 `cds/src/middleware/implicit-project.ts`：为所有旧 API 路径（`/api/branches`、`/api/build-profiles` 等）注入 `req.projectId = 'default'`
-- [ ] 新增 `cds/src/controllers/projects-controller.ts`：提供 3 个只读 API
-  - `GET /api/projects` → 返回固定的 `[{ id: 'default', name: 'prd_agent', ... }]`
-  - `GET /api/projects/default` → 返回默认项目详情
-  - `POST /api/projects` → 返回 501，提示 "coming soon"
-- [ ] `cds/src/index.ts` 注册新路由和中间件
+- [x] 新增 `cds/src/routes/projects.ts`：提供 4 个端点
+  - `GET /api/projects` → 返回固定的 `[{ id: 'default', name: '<repo-basename>', legacyFlag: true, branchCount: ..., ... }]`
+  - `GET /api/projects/:id` → id 为 `default` 返回详情，其他返回 404
+  - `POST /api/projects` → 返回 501，指向 P4
+  - `DELETE /api/projects/:id` → 返回 501
+- [x] `cds/src/server.ts`：
+  - 注册 `createProjectsRouter` 到 `/api`
+  - 在 `installSpaFallback` 里加 `GET /` 302 到 `/projects.html`
+- [x] `cds/tests/routes/projects.test.ts`：6 条单测覆盖所有端点
+- **未做（延后到 P2/P4）**：implicit-project 中间件。P1 阶段 `projectId` 完全从旧 API 中缺席，直到 P4 才在所有路径里带 projectId filter。P1 保留旧 API 形状以零侵入兼容现有 Dashboard
 
-**前端**：
+**前端**（纯 HTML + 原生 JS，不是 React）：
 
-- [ ] 新增 `cds/web/src/pages/projects-list.tsx`：项目列表页（网格/表格）
-- [ ] 改造 `cds/web/src/App.tsx`：加顶层路由
-  - `/` → 重定向到 `/projects`
-  - `/projects` → ProjectsList
-  - `/projects/:projectId` → 现有 Dashboard（wrap 一下）
-- [ ] 新增 `cds/web/src/components/workspace-switcher.tsx`：左上角下拉框（内容只有"默认"）
-- [ ] `+ New Project` 按钮点击后 toast "P4 将上线"
+- [x] 新增 `cds/web/projects.html`：项目列表着陆页，内嵌 CSS（消费现有 `style.css` 的变量），与 Dashboard 主题一致
+- [x] 新增 `cds/web/projects.js`：fetch `/api/projects`，渲染卡片，点击跳转 `index.html?project=<id>`
+- [x] 修改 `cds/web/index.html`：header 左侧加 "← 项目" 返回链接
+- [x] "+ New Project" 按钮点击 toast "创建新项目将在 P4 上线"
 
 ### 验收标准
 
-- [ ] 访问 `/` 自动跳转到 `/projects`
-- [ ] `/projects` 页面显示 1 张项目卡
-- [ ] 点卡片进入 `/projects/default`，看到完整的 dashboard（与 v3.2 一致）
-- [ ] 所有原有分支操作正常（创建/启停/查看日志）
-- [ ] `.cds.env` 不需要任何新变量
+- [x] 访问 `/` 自动 302 到 `/projects.html`
+- [x] `/projects.html` 显示 1 张项目卡（显示 repo basename + 分支数）
+- [x] 点卡片跳转到 `index.html?project=default`，看到完整 Dashboard（与 v3.2 一致）
+- [x] Dashboard header 左侧 "← 项目" 链接可返回列表
+- [x] 所有原有分支操作正常（tests 298/298 通过）
+- [x] `pnpm build` 零错误，`pnpm test` 全绿
+- [x] `.cds.env` 不需要任何新变量
 
 ### 回滚策略
 

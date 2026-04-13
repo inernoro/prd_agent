@@ -1,0 +1,240 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+  <meta http-equiv="Pragma" content="no-cache">
+  <meta http-equiv="Expires" content="0">
+  <title>Projects · Cloud Development Suite</title>
+  <link rel="icon" type="image/svg+xml" href="favicon.svg">
+  <link rel="preconnect" href="https://fonts.loli.net" crossorigin>
+  <link href="https://fonts.loli.net/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+  <script>
+    // Apply theme BEFORE CSS loads to prevent dark→light flash
+    (function(){var t=localStorage.getItem('cds_theme');if(t==='light')document.documentElement.dataset.theme='light';})();
+    document.write('<link rel="stylesheet" href="style.css?t='+Date.now()+'">');
+  </script>
+  <style>
+    /* Projects-page specific overrides layered on top of style.css */
+    .projects-shell {
+      min-height: 100vh;
+      background: var(--bg-primary);
+      color: var(--text-primary);
+      padding: 48px 32px;
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+    }
+    .projects-header {
+      max-width: 1200px;
+      margin: 0 auto 40px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 24px;
+    }
+    .projects-title {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+    .projects-title h1 {
+      font-size: 28px;
+      font-weight: 700;
+      color: var(--text-primary);
+      margin: 0;
+    }
+    .projects-title p {
+      font-size: 13px;
+      color: var(--text-muted);
+      margin: 0;
+    }
+    .projects-actions {
+      display: flex;
+      gap: 12px;
+      align-items: center;
+    }
+    .workspace-switcher {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 12px;
+      background: var(--bg-card);
+      border: 1px solid var(--card-border);
+      border-radius: 8px;
+      font-size: 13px;
+      color: var(--text-secondary);
+      cursor: not-allowed;
+      opacity: 0.7;
+    }
+    .workspace-switcher .chevron {
+      opacity: 0.5;
+    }
+    .new-project-btn {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 9px 16px;
+      background: var(--accent);
+      color: #fff;
+      border: none;
+      border-radius: 8px;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background 120ms ease;
+    }
+    .new-project-btn:hover {
+      background: var(--accent-dim);
+    }
+    .projects-grid {
+      max-width: 1200px;
+      margin: 0 auto;
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+      gap: 20px;
+    }
+    .project-card {
+      background: var(--bg-card);
+      border: 1px solid var(--card-border);
+      border-radius: 12px;
+      padding: 24px;
+      cursor: pointer;
+      transition: transform 160ms ease, border-color 160ms ease, background 160ms ease;
+      text-decoration: none;
+      color: inherit;
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+    }
+    .project-card:hover {
+      transform: translateY(-2px);
+      border-color: var(--accent-border);
+      background: var(--bg-elevated);
+    }
+    .project-card-header {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 12px;
+    }
+    .project-card-title {
+      font-size: 17px;
+      font-weight: 600;
+      color: var(--text-primary);
+      margin: 0;
+    }
+    .project-card-badge {
+      padding: 3px 8px;
+      border-radius: 4px;
+      font-size: 10px;
+      font-weight: 600;
+      letter-spacing: 0.4px;
+      text-transform: uppercase;
+      background: var(--accent-bg);
+      color: var(--accent);
+      border: 1px solid var(--accent-border);
+    }
+    .project-card-desc {
+      font-size: 12px;
+      color: var(--text-secondary);
+      line-height: 1.5;
+      flex: 1;
+    }
+    .project-card-stats {
+      display: flex;
+      gap: 16px;
+      padding-top: 12px;
+      border-top: 1px solid var(--border-light);
+      font-size: 11px;
+      color: var(--text-muted);
+    }
+    .project-card-stats strong {
+      color: var(--text-secondary);
+      font-weight: 600;
+    }
+    .projects-empty,
+    .projects-loading,
+    .projects-error {
+      grid-column: 1 / -1;
+      padding: 60px 24px;
+      text-align: center;
+      color: var(--text-muted);
+      font-size: 13px;
+    }
+    .projects-error {
+      color: var(--red);
+    }
+    .projects-footer {
+      max-width: 1200px;
+      margin: 40px auto 0;
+      text-align: center;
+      font-size: 11px;
+      color: var(--text-muted);
+      opacity: 0.6;
+    }
+    .projects-footer a {
+      color: var(--accent);
+      text-decoration: none;
+    }
+    /* Toast reuse — keeps parity with the dashboard */
+    .toast {
+      position: fixed;
+      bottom: 32px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: var(--bg-elevated);
+      color: var(--text-primary);
+      padding: 12px 20px;
+      border-radius: 8px;
+      border: 1px solid var(--card-border);
+      font-size: 13px;
+      z-index: 10000;
+      box-shadow: 0 12px 32px rgba(0, 0, 0, 0.4);
+    }
+    .toast.hidden { display: none; }
+  </style>
+</head>
+<body>
+  <div class="projects-shell">
+    <div class="projects-header">
+      <div class="projects-title">
+        <h1>Projects</h1>
+        <p>选择一个项目进入其预览分支仪表盘</p>
+      </div>
+      <div class="projects-actions">
+        <div class="workspace-switcher" title="团队 workspace 将在 P5 上线">
+          <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
+            <path d="M1.75 1A1.75 1.75 0 000 2.75v9.5C0 13.216.784 14 1.75 14h4.94a1.75 1.75 0 001.237-.513l8-8A1.75 1.75 0 0015.413 3L13 .587a1.75 1.75 0 00-2.475 0L1.513 9.6A1.75 1.75 0 001 10.837V1z"/>
+          </svg>
+          <span>system / 默认 workspace</span>
+          <svg class="chevron" width="12" height="12" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
+            <path d="M4.22 6.22a.75.75 0 011.06 0L8 8.94l2.72-2.72a.75.75 0 111.06 1.06l-3.25 3.25a.75.75 0 01-1.06 0L4.22 7.28a.75.75 0 010-1.06z"/>
+          </svg>
+        </div>
+        <button class="new-project-btn" onclick="handleNewProject()">
+          <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
+            <path d="M7.75 2a.75.75 0 01.75.75V7h4.25a.75.75 0 010 1.5H8.5v4.25a.75.75 0 01-1.5 0V8.5H2.75a.75.75 0 010-1.5H7V2.75A.75.75 0 017.75 2z"/>
+          </svg>
+          New Project
+        </button>
+      </div>
+    </div>
+
+    <div id="projectsGrid" class="projects-grid">
+      <div class="projects-loading">正在加载项目列表…</div>
+    </div>
+
+    <div class="projects-footer">
+      Phase 1 · Shell · <a href="https://github.com/inernoro/prd_agent/blob/main/doc/plan.cds-multi-project-phases.md" target="_blank" rel="noopener">查看 7 期计划</a>
+    </div>
+
+    <div id="toast" class="toast hidden"></div>
+  </div>
+
+  <script src="projects.js?t=0"></script>
+  <script>
+    // Cache-bust the script load so edits show up during P1 iteration
+    document.currentScript.previousElementSibling.src = 'projects.js?t=' + Date.now();
+  </script>
+</body>
+</html>

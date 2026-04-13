@@ -59,6 +59,17 @@ CDS = 1 个实例托管 N 个项目的 Git 预览环境
 | Docker 网络 | 单个共享网络 | 每个项目独立网络 |
 | 预览域名 | `<slug>.<rootDomain>` | `<slug>.<rootDomain>`（阶段 1-6 保持）；分支名全局唯一 |
 
+### 前端技术栈说明
+
+CDS 的 Dashboard 采用**纯 HTML + 原生 JavaScript + CSS**，由 Express 直接通过 `express.static` 托管，不使用 React/Vue/Vite 构建。v4 的多项目外壳因此采用"多页面 + 服务器重定向"策略，而非 SPA 路由：
+
+- 新增 `cds/web/projects.html` + `cds/web/projects.js` 作为项目列表页
+- 现有 `cds/web/index.html` 保留为分支仪表盘
+- `GET /` 重定向到 `/projects.html`
+- 分支仪表盘顶部加"← 项目"链接返回
+
+组件库概念（`projects-list.tsx`、`workspace-switcher.tsx`）在本设计稿中仅作为**概念性命名**，实际文件是 `projects.html` + `projects.js`。后续若需要更复杂的前端交互（如 P6 的手动项目管理），再评估是否引入构建工具链。
+
 ---
 
 ## 三、用户场景

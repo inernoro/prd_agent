@@ -5,6 +5,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createBranchRouter } from './routes/branches.js';
 import { createBridgeRouter } from './routes/bridge.js';
+import { createProjectsRouter } from './routes/projects.js';
 import type { StateService } from './services/state.js';
 import type { WorktreeService } from './services/worktree.js';
 import type { ContainerService } from './services/container.js';
@@ -708,6 +709,12 @@ export function createServer(deps: ServerDeps): express.Express {
 
   // API routes
   app.use('/api/bridge', createBridgeRouter({ bridgeService: deps.bridgeService }));
+  // P1 multi-project shell: projects router sits on /api and exposes a
+  // single legacy "default" project until P4. See doc/design.cds-multi-project.md.
+  app.use('/api', createProjectsRouter({
+    stateService: deps.stateService,
+    legacyProjectName: deps.config.repoRoot ? path.basename(deps.config.repoRoot) : 'prd_agent',
+  }));
   app.use('/api', createBranchRouter({
     stateService: deps.stateService,
     worktreeService: deps.worktreeService,
@@ -749,6 +756,16 @@ export function createServer(deps: ServerDeps): express.Express {
  */
 export function installSpaFallback(app: express.Express, webDir?: string): void {
   const dir = webDir || path.resolve(__dirname, '..', 'web');
+
+  // P1 multi-project shell: make `/` land on the projects list instead of
+  // the legacy dashboard index. Users click a project card to enter the
+  // dashboard. Registered before express.static so it takes precedence over
+  // the default `index.html` served by the static middleware for `/`.
+  // See doc/plan.cds-multi-project-phases.md → P1.
+  app.get('/', (_req, res) => {
+    res.redirect(302, '/projects.html');
+  });
+
   app.use(express.static(dir));
   app.get('*', (_req, res) => {
     res.sendFile(path.join(dir, 'index.html'));
