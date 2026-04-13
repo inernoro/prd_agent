@@ -4798,9 +4798,9 @@ a.branch-name:hover { color: var(--accent); }
 .topology-card {
   background: var(--bg-card-solid);
   border: 1px solid var(--border);
-  border-radius: 12px;
-  padding: 16px 18px 20px;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+  border-radius: 14px;
+  padding: 18px 20px 22px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.15);
 }
 
 .topology-header {
@@ -4808,14 +4808,14 @@ a.branch-name:hover { color: var(--accent); }
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  margin-bottom: 10px;
+  margin-bottom: 14px;
   flex-wrap: wrap;
 }
 .topology-title {
   display: flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 14px;
+  align-items: baseline;
+  gap: 10px;
+  font-size: 15px;
   font-weight: 600;
   color: var(--text-primary);
 }
@@ -4892,65 +4892,124 @@ a.branch-name:hover { color: var(--accent); }
   border-color: var(--accent, #10b981);
 }
 
+/* Canvas wrapper — grid-dot background, no dashed border, big min-height */
 .topology-canvas-wrap {
   position: relative;
   width: 100%;
-  overflow: auto;
-  border: 1px dashed var(--border);
-  border-radius: 8px;
-  background:
-    radial-gradient(circle at 0 0, var(--border-light, transparent) 1px, transparent 1px) 0 0 / 16px 16px,
-    var(--bg-card-solid);
-  min-height: 300px;
+  overflow: hidden; /* pan/zoom happens inside via CSS transform, not scroll */
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background-color: var(--bg-primary);
+  /* Grid-dot pattern — matches Railway aesthetic */
+  background-image: radial-gradient(circle, var(--text-muted) 0.9px, transparent 1px);
+  background-size: 22px 22px;
+  background-position: 0 0;
+  min-height: 560px;
+  cursor: grab;
+  user-select: none;
 }
+.topology-canvas-wrap:active {
+  cursor: grabbing;
+}
+.topology-canvas-wrap.dragging { cursor: grabbing; }
+
 .topology-canvas {
   display: block;
-  min-width: 100%;
+  position: absolute;
+  top: 0;
+  left: 0;
+  overflow: visible;
+  /* transform-origin top-left so zoom math stays simple */
+  transform-origin: 0 0;
+  transition: none; /* no transition during drag */
 }
 
-/* Node rectangles (app services) and rounded rects (infra services) */
+/* Node — rich card rendered as <g> containing rect + foreignObject or tspan */
 .topology-node {
   cursor: pointer;
-  transition: filter 0.15s ease;
+  transition: filter 0.18s ease, transform 0.12s ease;
 }
 .topology-node:hover {
-  filter: brightness(1.15);
+  filter: brightness(1.08) drop-shadow(0 4px 12px rgba(0, 0, 0, 0.25));
 }
-.topology-node-box {
-  fill: var(--bg-elevated);
+.topology-node.selected .topology-node-box,
+.topology-node.selected .topology-node-capsule {
+  stroke: var(--accent, #10b981);
+  stroke-width: 2.5;
+}
+.topology-node.dimmed {
+  opacity: 0.32;
+}
+
+.topology-node-box,
+.topology-node-capsule {
+  fill: var(--bg-card-solid);
   stroke: var(--border);
   stroke-width: 1.5;
+  filter: drop-shadow(0 2px 6px rgba(0, 0, 0, 0.12));
 }
-.topology-node.has-override .topology-node-box {
+.topology-node.has-override .topology-node-box,
+.topology-node.has-override .topology-node-capsule {
   stroke: var(--accent, #10b981);
   stroke-width: 2;
-  fill: var(--accent-bg, rgba(16, 185, 129, 0.08));
+}
+.topology-node-icon {
+  font-size: 18px;
+  pointer-events: none;
 }
 .topology-node-label {
   fill: var(--text-primary);
-  font-size: 12px;
+  font-size: 14px;
   font-weight: 600;
   font-family: inherit;
   pointer-events: none;
 }
 .topology-node-sub {
   fill: var(--text-muted);
-  font-size: 10px;
+  font-size: 11px;
   font-family: var(--font-mono, monospace);
   pointer-events: none;
 }
+.topology-node-meta {
+  fill: var(--text-secondary);
+  font-size: 10.5px;
+  font-family: var(--font-mono, monospace);
+  pointer-events: none;
+}
+.topology-node-status-dot {
+  stroke: var(--bg-card-solid);
+  stroke-width: 1.5;
+}
+.topology-node-status-dot.running { fill: #10b981; }
+.topology-node-status-dot.building { fill: #f59e0b; }
+.topology-node-status-dot.error { fill: #ef4444; }
+.topology-node-status-dot.idle { fill: #6b7280; }
+.topology-node-status-dot.stopped { fill: #6b7280; }
+.topology-node-status-dot.unknown { fill: #6b7280; opacity: 0.5; }
+
 .topology-node-badge {
   font-size: 14px;
   pointer-events: none;
 }
 
-/* Dependency edges */
+/* Dependency edges — dashed for "declared" depends_on, solid accent on hover */
 .topology-edge {
   fill: none;
   stroke: var(--text-muted);
-  stroke-width: 1.4;
+  stroke-width: 1.6;
+  stroke-dasharray: 5 4;
   opacity: 0.55;
   marker-end: url(#topologyArrow);
+  transition: opacity 0.2s ease, stroke 0.2s ease;
+}
+.topology-edge.highlighted {
+  stroke: var(--accent, #10b981);
+  opacity: 1;
+  stroke-width: 2.2;
+  stroke-dasharray: none;
+}
+.topology-edge.dimmed {
+  opacity: 0.1;
 }
 
 .topology-empty {
@@ -4958,7 +5017,7 @@ a.branch-name:hover { color: var(--accent); }
   flex-direction: column;
   align-items: center;
   gap: 10px;
-  padding: 40px 20px;
+  padding: 60px 20px;
   color: var(--text-muted);
   font-size: 13px;
   text-align: center;
@@ -4966,4 +5025,60 @@ a.branch-name:hover { color: var(--accent); }
 .topology-empty strong {
   color: var(--text-secondary);
   font-size: 14px;
+}
+
+/* Bottom-left floating toolbar (zoom, fit, reset) */
+.topology-toolbar {
+  position: absolute;
+  left: 12px;
+  bottom: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 4px;
+  background: var(--bg-card-solid);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+  z-index: 5;
+}
+.topology-toolbar button {
+  width: 28px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: none;
+  border-radius: 4px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 600;
+  transition: background 0.15s ease;
+}
+.topology-toolbar button:hover {
+  background: var(--bg-elevated);
+  color: var(--text-primary);
+}
+.topology-toolbar .separator {
+  height: 1px;
+  background: var(--border);
+  margin: 2px 4px;
+}
+
+/* Zoom indicator in top-right of canvas */
+.topology-zoom-indicator {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  padding: 4px 10px;
+  background: var(--bg-card-solid);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-size: 11px;
+  color: var(--text-muted);
+  font-family: var(--font-mono, monospace);
+  pointer-events: none;
+  z-index: 5;
 }

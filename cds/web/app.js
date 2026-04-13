@@ -7409,16 +7409,15 @@ function _layoutTopologyDag(profiles, infraList) {
 
   for (const p of profiles) {
     for (const depId of p.dependsOn || []) {
-      if (!nodes.has(depId)) continue; // skip unresolved references
+      if (!nodes.has(depId)) continue;
       edges.push({ from: depId, to: p.id });
       indeg.set(p.id, (indeg.get(p.id) || 0) + 1);
     }
   }
 
-  // Kahn: layer by layer
+  // Kahn's algorithm, layer by layer
   const layers = [];
   const remaining = new Set(nodes.keys());
-  // Safety cap to avoid infinite loops on malformed cycles
   let guard = 0;
   while (remaining.size > 0 && guard++ < 50) {
     const layer = [];
@@ -7426,10 +7425,9 @@ function _layoutTopologyDag(profiles, infraList) {
       if ((indeg.get(id) || 0) === 0) layer.push(nodes.get(id));
     }
     if (layer.length === 0) {
-      // Cycle detected — put everything remaining on one final layer
+      // Cycle detected — dump everything remaining into one final layer
       for (const id of remaining) layer.push(nodes.get(id));
     }
-    // Sort each layer: infra first, then app; inside each, alphabetical
     layer.sort((a, b) => {
       if (a.kind !== b.kind) return a.kind === 'infra' ? -1 : 1;
       return a.id.localeCompare(b.id);
@@ -7437,7 +7435,6 @@ function _layoutTopologyDag(profiles, infraList) {
     layers.push(layer);
     for (const n of layer) {
       remaining.delete(n.id);
-      // Relax: decrement indeg of all neighbors
       for (const e of edges) {
         if (e.from === n.id) indeg.set(e.to, (indeg.get(e.to) || 0) - 1);
       }
@@ -7447,79 +7444,214 @@ function _layoutTopologyDag(profiles, infraList) {
   return { layers, edges, nodes };
 }
 
-/**
- * Build the topology SVG from layered nodes.
- * Node coords: x = layerIndex * (nodeW + gapX), y = indexInLayer * (nodeH + gapY)
- */
-function _renderTopologySvg(layout, overrideSet, overrideDetails) {
-  const NODE_W = 180;
-  const NODE_H = 58;
-  const GAP_X = 70;
-  const GAP_Y = 24;
-  const PAD_X = 30;
-  const PAD_Y = 30;
+// ── Rich card renderer ────────────────────────────────────────────────
+//
+// Lessons from the first draft:
+//   - Tiny nodes look like wireframes. Bump the card to 236 × 110.
+//   - Each card needs FOUR information lines: icon+name, image, port+deps, status.
+//   - Status dot reuses docker status from `branch.services[profileId].status`
+//     when a branch is selected; otherwise shows "inactive" grey.
+//   - Override badge is a rounded pill in the top-right corner, not just a
+//     floating emoji, so it doesn't collide with the service name.
+//   - Edges are dashed (declared dependency, not live flow) and curve through
+//     a midpoint for Railway-style smoothness.
+//
+// Node geometry:
+//   width  236px
+//   height 110px
+//   horizontal gap 90px (more space than first draft's 70)
+//   vertical gap 36px
 
-  const positions = new Map(); // id → { cx, cy, node }
+const TOPO_NODE_W = 236;
+const TOPO_NODE_H = 110;
+const TOPO_GAP_X = 90;
+const TOPO_GAP_Y = 36;
+const TOPO_PAD = 40;
+
+/**
+ * Pick a 1-char emoji icon for a service based on its image / id.
+ * Falls back to 📦 for unknown app services and 💾 for unknown infra.
+ */
+function _topologyNodeIcon(node) {
+  const raw = node.raw;
+  const image = (raw.dockerImage || '').toLowerCase();
+  const id = (raw.id || '').toLowerCase();
+  if (node.kind === 'infra') {
+    if (image.includes('mongo') || id.includes('mongo')) return '🍃';
+    if (image.includes('redis') || id.includes('redis')) return '🔺';
+    if (image.includes('postgres') || image.includes('mysql')) return '🐘';
+    if (image.includes('nginx') || image.includes('caddy')) return '🌐';
+    if (image.includes('kafka') || image.includes('rabbit')) return '📨';
+    return '💾';
+  }
+  // App
+  if (image.includes('node') || image.includes('alpine')) return '🟢';
+  if (image.includes('dotnet') || image.includes('aspnet')) return '🟣';
+  if (image.includes('python')) return '🐍';
+  if (image.includes('rust')) return '🦀';
+  if (image.includes('go:') || image.includes('golang')) return '🐹';
+  return '📦';
+}
+
+/**
+ * Shorten a docker image name for display. "mcr.microsoft.com/dotnet/sdk:8.0"
+ * becomes "dotnet/sdk:8.0". "node:20-alpine" stays as-is.
+ */
+function _shortenImage(img) {
+  if (!img) return '(no image)';
+  // Strip common registry prefixes
+  const stripped = img
+    .replace(/^mcr\.microsoft\.com\//, '')
+    .replace(/^docker\.io\//, '')
+    .replace(/^registry-1\.docker\.io\//, '');
+  // If still too long, keep the last 2 segments + tag
+  if (stripped.length <= 28) return stripped;
+  const [imageName, tag] = stripped.split(':');
+  const parts = imageName.split('/');
+  const short = parts.slice(-2).join('/');
+  return tag ? `${short}:${tag}` : short;
+}
+
+/**
+ * Resolve the runtime status of a node for the currently-selected branch.
+ * Returns one of: 'running' | 'building' | 'error' | 'stopped' | 'idle' | 'unknown'.
+ */
+function _topologyNodeStatus(node, selectedBranchId) {
+  if (node.kind === 'infra') {
+    return node.raw.status || 'unknown'; // running/stopped/error
+  }
+  // App service: look up the selected branch's services map
+  if (!selectedBranchId) return 'unknown';
+  const branch = branches.find(b => b.id === selectedBranchId);
+  if (!branch) return 'unknown';
+  const svc = branch.services?.[node.raw.id];
+  if (!svc) return 'unknown';
+  return svc.status || 'idle';
+}
+
+function _renderTopologySvg(layout, ctx) {
+  const { overrideSet, overrideDetails, selectedBranchId, selectedNodeId } = ctx;
+
+  const positions = new Map();
   let maxLayerLen = 0;
   layout.layers.forEach(layer => {
     if (layer.length > maxLayerLen) maxLayerLen = layer.length;
   });
 
+  // Centered layout: taller layers get shifted up so all layers vertically align
   layout.layers.forEach((layer, layerIdx) => {
-    // Center each layer vertically within maxLayerLen slots
-    const offsetY = ((maxLayerLen - layer.length) * (NODE_H + GAP_Y)) / 2;
+    const layerHeight = layer.length * (TOPO_NODE_H + TOPO_GAP_Y) - TOPO_GAP_Y;
+    const maxHeight = maxLayerLen * (TOPO_NODE_H + TOPO_GAP_Y) - TOPO_GAP_Y;
+    const offsetY = (maxHeight - layerHeight) / 2;
     layer.forEach((node, idxInLayer) => {
-      const x = PAD_X + layerIdx * (NODE_W + GAP_X);
-      const y = PAD_Y + offsetY + idxInLayer * (NODE_H + GAP_Y);
+      const x = TOPO_PAD + layerIdx * (TOPO_NODE_W + TOPO_GAP_X);
+      const y = TOPO_PAD + offsetY + idxInLayer * (TOPO_NODE_H + TOPO_GAP_Y);
       positions.set(node.id, { x, y, node });
     });
   });
 
-  const totalW = PAD_X * 2 + layout.layers.length * NODE_W + Math.max(0, layout.layers.length - 1) * GAP_X;
-  const totalH = PAD_Y * 2 + maxLayerLen * NODE_H + Math.max(0, maxLayerLen - 1) * GAP_Y;
+  const totalW = TOPO_PAD * 2 + layout.layers.length * TOPO_NODE_W + Math.max(0, layout.layers.length - 1) * TOPO_GAP_X;
+  const totalH = TOPO_PAD * 2 + maxLayerLen * TOPO_NODE_H + Math.max(0, maxLayerLen - 1) * TOPO_GAP_Y;
 
-  // Edges — draw curved cubic Bézier from source right edge to target left edge
-  const edgePaths = layout.edges.map(edge => {
+  // Compute which edges are connected to the currently-selected node
+  // (both directions) for highlight/dim.
+  const connectedEdgeIdx = new Set();
+  const connectedNodeIds = new Set();
+  if (selectedNodeId) {
+    connectedNodeIds.add(selectedNodeId);
+    layout.edges.forEach((e, idx) => {
+      if (e.from === selectedNodeId || e.to === selectedNodeId) {
+        connectedEdgeIdx.add(idx);
+        connectedNodeIds.add(e.from);
+        connectedNodeIds.add(e.to);
+      }
+    });
+  }
+
+  const edgePaths = layout.edges.map((edge, idx) => {
     const from = positions.get(edge.from);
     const to = positions.get(edge.to);
     if (!from || !to) return '';
-    const x1 = from.x + NODE_W;
-    const y1 = from.y + NODE_H / 2;
+    const x1 = from.x + TOPO_NODE_W;
+    const y1 = from.y + TOPO_NODE_H / 2;
     const x2 = to.x;
-    const y2 = to.y + NODE_H / 2;
+    const y2 = to.y + TOPO_NODE_H / 2;
     const midX = (x1 + x2) / 2;
-    return `<path class="topology-edge" d="M ${x1} ${y1} C ${midX} ${y1}, ${midX} ${y2}, ${x2} ${y2}" />`;
+    let cls = 'topology-edge';
+    if (selectedNodeId) {
+      if (connectedEdgeIdx.has(idx)) cls += ' highlighted';
+      else cls += ' dimmed';
+    }
+    return `<path class="${cls}" d="M ${x1} ${y1} C ${midX} ${y1}, ${midX} ${y2}, ${x2} ${y2}" />`;
   }).join('');
 
-  // Nodes
+  // Rich node cards
   const nodeEls = Array.from(positions.values()).map(({ x, y, node }) => {
     const isApp = node.kind === 'app';
     const raw = node.raw;
     const title = esc(raw.name || raw.id);
-    const subtitle = isApp
-      ? `port :${raw.containerPort ?? '—'}`
+    const image = esc(_shortenImage(raw.dockerImage));
+    const icon = _topologyNodeIcon(node);
+    const status = _topologyNodeStatus(node, selectedBranchId);
+    const statusLabel = {
+      running: '运行中', building: '构建中', error: '错误',
+      stopped: '已停止', idle: '待命', starting: '启动中', unknown: '--',
+    }[status] || '--';
+    const depsCount = (raw.dependsOn || []).length;
+    const portLabel = isApp
+      ? `:${raw.containerPort ?? '—'}`
       : `:${raw.hostPort ?? '?'} → :${raw.containerPort ?? '?'}`;
-    const rx = isApp ? 8 : 22;
+
     const hasOverride = isApp && overrideSet && overrideSet.has(raw.id);
     const overriddenFields = hasOverride && overrideDetails
       ? (overrideDetails.get(raw.id) || [])
       : [];
     const tooltip = hasOverride
-      ? `${raw.name} — 本分支自定义: ${overriddenFields.join(', ') || '(字段未知)'}`
+      ? `${raw.name} — 本分支自定义: ${overriddenFields.join(', ') || '(未知字段)'}`
       : `${raw.name || raw.id}（${isApp ? '应用服务' : '基础设施'}）`;
-    const badge = hasOverride
-      ? `<text class="topology-node-badge" x="${x + NODE_W - 16}" y="${y + 18}" text-anchor="middle">🌿</text>`
+
+    // Node shape: rounded rect for apps, capsule for infra
+    const rx = isApp ? 12 : 26;
+    const shapeClass = isApp ? 'topology-node-box' : 'topology-node-capsule';
+
+    // Override pill in top-right corner
+    const overridePill = hasOverride
+      ? `<g>
+          <rect x="${x + TOPO_NODE_W - 66}" y="${y + 10}" width="56" height="18" rx="9" fill="var(--accent-bg,rgba(16,185,129,0.12))" stroke="var(--accent,#10b981)" stroke-width="1" />
+          <text x="${x + TOPO_NODE_W - 38}" y="${y + 23}" text-anchor="middle" fill="var(--accent,#10b981)" font-size="10" font-weight="600">🌿 自定义</text>
+        </g>`
       : '';
+
+    // Dim nodes not connected to the selection
+    let nodeClass = 'topology-node';
+    if (hasOverride) nodeClass += ' has-override';
+    if (selectedNodeId === raw.id) nodeClass += ' selected';
+    else if (selectedNodeId && !connectedNodeIds.has(raw.id)) nodeClass += ' dimmed';
+
     const clickHandler = isApp
-      ? `onclick="_topologyNodeClick('${esc(raw.id)}')"`
-      : `onclick="_topologyInfraClick('${esc(raw.id)}')"`;
+      ? `onclick="event.stopPropagation();_topologyNodeClick('${esc(raw.id)}')"`
+      : `onclick="event.stopPropagation();_topologyInfraClick('${esc(raw.id)}')"`;
+
     return `
-      <g class="topology-node ${hasOverride ? 'has-override' : ''}" ${clickHandler}>
+      <g class="${nodeClass}" ${clickHandler}>
         <title>${esc(tooltip)}</title>
-        <rect class="topology-node-box" x="${x}" y="${y}" width="${NODE_W}" height="${NODE_H}" rx="${rx}" ry="${rx}" />
-        <text class="topology-node-label" x="${x + 14}" y="${y + 24}">${title}</text>
-        <text class="topology-node-sub" x="${x + 14}" y="${y + 42}">${esc(subtitle)}</text>
-        ${badge}
+        <rect class="${shapeClass}" x="${x}" y="${y}" width="${TOPO_NODE_W}" height="${TOPO_NODE_H}" rx="${rx}" ry="${rx}" />
+
+        <!-- Icon + Name header -->
+        <text class="topology-node-icon" x="${x + 18}" y="${y + 34}">${icon}</text>
+        <text class="topology-node-label" x="${x + 44}" y="${y + 34}">${title}</text>
+
+        <!-- Status dot + label -->
+        <circle class="topology-node-status-dot ${status}" cx="${x + 18}" cy="${y + 62}" r="5" />
+        <text class="topology-node-meta" x="${x + 30}" y="${y + 66}">${esc(statusLabel)}</text>
+
+        <!-- Image row -->
+        <text class="topology-node-sub" x="${x + 18}" y="${y + 86}">${image}</text>
+
+        <!-- Port + deps row (bottom) -->
+        <text class="topology-node-meta" x="${x + 18}" y="${y + 102}">${esc(portLabel)}${depsCount > 0 ? `  ·  → ${depsCount} deps` : ''}</text>
+
+        ${overridePill}
       </g>
     `;
   }).join('');
@@ -7527,8 +7659,8 @@ function _renderTopologySvg(layout, overrideSet, overrideDetails) {
   return `
     <svg class="topology-canvas" width="${totalW}" height="${totalH}" viewBox="0 0 ${totalW} ${totalH}" xmlns="http://www.w3.org/2000/svg">
       <defs>
-        <marker id="topologyArrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto">
-          <path d="M 0 0 L 10 5 L 0 10 z" fill="var(--text-muted)" opacity="0.6" />
+        <marker id="topologyArrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+          <path d="M 0 0 L 10 5 L 0 10 z" fill="var(--text-muted)" opacity="0.7" />
         </marker>
       </defs>
       ${edgePaths}
@@ -7537,11 +7669,122 @@ function _renderTopologySvg(layout, overrideSet, overrideDetails) {
   `;
 }
 
+// Pan/zoom state — persists across re-renders via _topologyViewport
+let _topologyViewport = { scale: 1, tx: 0, ty: 0 };
+let _topologyDragState = null;
+
+function _applyTopologyTransform() {
+  const svg = document.querySelector('.topology-canvas');
+  const indicator = document.querySelector('.topology-zoom-indicator');
+  if (!svg) return;
+  svg.style.transform = `translate(${_topologyViewport.tx}px, ${_topologyViewport.ty}px) scale(${_topologyViewport.scale})`;
+  if (indicator) indicator.textContent = `${Math.round(_topologyViewport.scale * 100)}%`;
+}
+
+function _topologyZoom(delta, centerX, centerY) {
+  // Clamp scale to [0.3, 2.5]
+  const oldScale = _topologyViewport.scale;
+  const newScale = Math.max(0.3, Math.min(2.5, oldScale + delta));
+  if (newScale === oldScale) return;
+  // Zoom around the mouse position (if provided) so the point under the cursor stays fixed
+  if (centerX !== undefined && centerY !== undefined) {
+    const wrap = document.querySelector('.topology-canvas-wrap');
+    if (wrap) {
+      const rect = wrap.getBoundingClientRect();
+      const px = centerX - rect.left - _topologyViewport.tx;
+      const py = centerY - rect.top - _topologyViewport.ty;
+      const ratio = newScale / oldScale;
+      _topologyViewport.tx -= px * (ratio - 1);
+      _topologyViewport.ty -= py * (ratio - 1);
+    }
+  }
+  _topologyViewport.scale = newScale;
+  _applyTopologyTransform();
+}
+
+function _topologyZoomIn() { _topologyZoom(0.15); }
+function _topologyZoomOut() { _topologyZoom(-0.15); }
+
+function _topologyReset() {
+  _topologyViewport = { scale: 1, tx: 0, ty: 0 };
+  _applyTopologyTransform();
+}
+
+function _topologyFit() {
+  const svg = document.querySelector('.topology-canvas');
+  const wrap = document.querySelector('.topology-canvas-wrap');
+  if (!svg || !wrap) return;
+  const wrapRect = wrap.getBoundingClientRect();
+  const svgW = parseFloat(svg.getAttribute('width')) || 1;
+  const svgH = parseFloat(svg.getAttribute('height')) || 1;
+  // Fit with 40px margin
+  const scaleX = (wrapRect.width - 80) / svgW;
+  const scaleY = (wrapRect.height - 80) / svgH;
+  const scale = Math.min(scaleX, scaleY, 1.5);
+  _topologyViewport.scale = Math.max(0.3, scale);
+  // Center the content
+  _topologyViewport.tx = (wrapRect.width - svgW * _topologyViewport.scale) / 2;
+  _topologyViewport.ty = (wrapRect.height - svgH * _topologyViewport.scale) / 2;
+  _applyTopologyTransform();
+}
+
+function _bindTopologyPanZoom() {
+  const wrap = document.querySelector('.topology-canvas-wrap');
+  if (!wrap) return;
+
+  // Mouse wheel → zoom toward cursor
+  wrap.addEventListener('wheel', (e) => {
+    e.preventDefault();
+    const delta = e.deltaY > 0 ? -0.1 : 0.1;
+    _topologyZoom(delta, e.clientX, e.clientY);
+  }, { passive: false });
+
+  // Mousedown on empty canvas → start panning. Mousedown on a node → let the click through.
+  wrap.addEventListener('mousedown', (e) => {
+    if (e.button !== 0) return;
+    // If the click landed on a node, don't start pan (let onclick handle it)
+    if (e.target.closest('.topology-node')) return;
+    _topologyDragState = {
+      startX: e.clientX,
+      startY: e.clientY,
+      baseTx: _topologyViewport.tx,
+      baseTy: _topologyViewport.ty,
+      moved: false,
+    };
+    wrap.classList.add('dragging');
+    // Deselect node on empty-canvas click (will happen on mouseup if not moved)
+  });
+
+  window.addEventListener('mousemove', (e) => {
+    if (!_topologyDragState) return;
+    const dx = e.clientX - _topologyDragState.startX;
+    const dy = e.clientY - _topologyDragState.startY;
+    if (Math.abs(dx) + Math.abs(dy) > 3) _topologyDragState.moved = true;
+    _topologyViewport.tx = _topologyDragState.baseTx + dx;
+    _topologyViewport.ty = _topologyDragState.baseTy + dy;
+    _applyTopologyTransform();
+  });
+
+  window.addEventListener('mouseup', () => {
+    if (!_topologyDragState) return;
+    const wasClick = !_topologyDragState.moved;
+    _topologyDragState = null;
+    wrap.classList.remove('dragging');
+    // Clicking on empty canvas (not a drag) deselects the current node
+    if (wasClick && _topologyFocusedNodeId) {
+      _topologyFocusedNodeId = null;
+      renderTopologyView();
+    }
+  });
+}
+
+// Selected node for edge highlighting (distinct from _topologySelectedBranchId)
+let _topologyFocusedNodeId = null;
+
 function renderTopologyView() {
   const host = document.getElementById('topologyView');
   if (!host) return;
 
-  // Empty-state guard
   if (!buildProfiles.length && !infraServices.length) {
     host.innerHTML = `
       <div class="topology-card">
@@ -7556,12 +7799,11 @@ function renderTopologyView() {
 
   const layout = _layoutTopologyDag(buildProfiles, infraServices);
 
-  // Branch picker: all tracked branches as chips
   const chipHtml = branches.length === 0
     ? '<span class="topology-branch-picker-label">暂无分支 —— 先在列表视图创建一个</span>'
     : `
-      <span class="topology-branch-picker-label">高亮分支:</span>
-      <button class="topology-branch-chip ${!_topologySelectedBranchId ? 'active' : ''}" onclick="_topologySelectBranch(null)">（无）</button>
+      <span class="topology-branch-picker-label">查看分支:</span>
+      <button class="topology-branch-chip ${!_topologySelectedBranchId ? 'active' : ''}" onclick="_topologySelectBranch(null)">（共享视图）</button>
       ${branches.map(b => `
         <button class="topology-branch-chip ${_topologySelectedBranchId === b.id ? 'active' : ''}" onclick="_topologySelectBranch('${esc(b.id)}')" title="${esc(b.branch || b.id)}">${esc(b.id)}</button>
       `).join('')}
@@ -7578,32 +7820,48 @@ function renderTopologyView() {
     <div class="topology-card">
       <div class="topology-header">
         <div class="topology-title">
-          拓扑图
-          <span class="topology-title-hint">${layout.nodes.size} 个服务 · ${layout.edges.length} 条依赖 · ${layout.layers.length} 层</span>
+          服务拓扑
+          <span class="topology-title-hint">${layout.nodes.size} 个服务 · ${layout.edges.length} 条依赖 · ${layout.layers.length} 层 · 滚轮缩放 · 拖拽平移</span>
         </div>
         <div class="topology-branch-picker">${chipHtml}</div>
       </div>
       <div class="topology-legend">
         <span class="topology-legend-item"><span class="topology-legend-swatch app"></span>应用服务</span>
         <span class="topology-legend-item"><span class="topology-legend-swatch infra"></span>基础设施</span>
-        <span class="topology-legend-item"><span class="topology-legend-swatch override"></span>本分支自定义 🌿</span>
-        <span class="topology-legend-item" style="color:var(--text-secondary);margin-left:auto">点击节点打开容器配置</span>
+        <span class="topology-legend-item"><span class="topology-legend-swatch override"></span>本分支自定义</span>
+        <span class="topology-legend-item" style="color:var(--text-secondary);margin-left:auto">点击节点查看依赖，双击打开配置</span>
       </div>
       <div class="topology-canvas-wrap">
-        ${_renderTopologySvg(layout, overrideSet, overrideDetails)}
+        ${_renderTopologySvg(layout, {
+          overrideSet,
+          overrideDetails,
+          selectedBranchId: _topologySelectedBranchId,
+          selectedNodeId: _topologyFocusedNodeId,
+        })}
+        <div class="topology-zoom-indicator">100%</div>
+        <div class="topology-toolbar">
+          <button type="button" onclick="_topologyZoomIn()" title="放大">+</button>
+          <button type="button" onclick="_topologyZoomOut()" title="缩小">−</button>
+          <div class="separator"></div>
+          <button type="button" onclick="_topologyFit()" title="自适应">⊡</button>
+          <button type="button" onclick="_topologyReset()" title="1:1 复位">◉</button>
+        </div>
       </div>
     </div>
   `;
+
+  // Restore transform from persisted viewport + bind pan/zoom handlers
+  _applyTopologyTransform();
+  _bindTopologyPanZoom();
 }
 
 async function _topologySelectBranch(branchId) {
   _topologySelectedBranchId = branchId;
+  _topologyFocusedNodeId = null; // clear focus when branch changes
   if (!branchId) {
     renderTopologyView();
     return;
   }
-
-  // Fetch overrides for this branch if not cached (or always — it's cheap)
   try {
     const data = await api('GET', `/branches/${encodeURIComponent(branchId)}/profile-overrides`);
     const overrideSet = new Set();
@@ -7626,16 +7884,36 @@ async function _topologySelectBranch(branchId) {
   renderTopologyView();
 }
 
+// Node click logic: first click focuses the node (highlight edges); second
+// click on the same node opens the override modal. Matches Railway's "click
+// to select, click again to configure" pattern.
+let _topologyLastClickId = null;
+let _topologyLastClickAt = 0;
 function _topologyNodeClick(profileId) {
-  if (!_topologySelectedBranchId) {
-    showToast('请先在顶部选择一个分支，然后点击节点编辑其覆盖配置', 'info');
+  const now = Date.now();
+  const isDoubleClick = _topologyLastClickId === profileId && (now - _topologyLastClickAt) < 500;
+  _topologyLastClickId = profileId;
+  _topologyLastClickAt = now;
+
+  if (isDoubleClick) {
+    // Open configuration modal
+    if (!_topologySelectedBranchId) {
+      showToast('请先在顶部选择一个分支，再双击节点打开其配置', 'info');
+      return;
+    }
+    openOverrideModal(_topologySelectedBranchId, profileId);
     return;
   }
-  openOverrideModal(_topologySelectedBranchId, profileId);
+
+  // Single click: focus the node to highlight connected edges
+  _topologyFocusedNodeId = _topologyFocusedNodeId === profileId ? null : profileId;
+  renderTopologyView();
 }
 
 function _topologyInfraClick(serviceId) {
-  showToast(`基础设施服务 "${serviceId}" 由所有分支共享，不支持单分支覆盖`, 'info');
+  // Infra supports the same focus behavior (edge highlight) but not override config
+  _topologyFocusedNodeId = _topologyFocusedNodeId === serviceId ? null : serviceId;
+  renderTopologyView();
 }
 
 // Expose to inline handlers
@@ -7644,6 +7922,10 @@ window.renderTopologyView = renderTopologyView;
 window._topologySelectBranch = _topologySelectBranch;
 window._topologyNodeClick = _topologyNodeClick;
 window._topologyInfraClick = _topologyInfraClick;
+window._topologyZoomIn = _topologyZoomIn;
+window._topologyZoomOut = _topologyZoomOut;
+window._topologyFit = _topologyFit;
+window._topologyReset = _topologyReset;
 
 // Apply persisted view mode on load (deferred so DOM elements exist)
 if (document.readyState === 'loading') {
