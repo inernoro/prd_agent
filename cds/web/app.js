@@ -3778,6 +3778,65 @@ async function exportSkill() {
 
 // ── Self-update: switch branch + pull + restart ──
 
+// Poll /healthz until the CDS backend has fully come back after a restart.
+//
+// Strategy:
+//   1. Start polling /healthz every second
+//   2. Wait until we observe at least one failure (proves the old process
+//      is gone and the restart actually happened)
+//   3. Then wait until we observe a success (proves the new process is up)
+//   4. Only then resolve true so the caller can reload()
+//
+// Edge case: if the restart completes so fast we never catch the "down"
+// window, give up waiting for `down` after ~8 attempts and reload anyway.
+//
+// Returns true if the server is healthy, false if the timeout was reached.
+// Fixes the 502 that showed up when we location.reload() before CDS was
+// actually listening again (Cloudflare saw the host down mid-restart).
+async function waitForCdsHealthy(statusEl, timeoutMs) {
+  const deadline = Date.now() + (timeoutMs || 120000);
+  let attempt = 0;
+  let sawDown = false;
+
+  function setLabel(txt) {
+    if (!statusEl) return;
+    const tail = statusEl.querySelector('span:last-child');
+    if (tail) tail.textContent = txt;
+    else statusEl.innerHTML = '<span style="color:var(--fg-muted)">' + esc(txt) + '</span>';
+  }
+
+  while (Date.now() < deadline) {
+    attempt++;
+    let ok = false;
+    try {
+      const res = await fetch('/healthz', { method: 'GET', cache: 'no-store' });
+      ok = res.ok;
+    } catch (e) {
+      ok = false;
+    }
+
+    if (!ok) {
+      sawDown = true;
+      setLabel('CDS 重启中（已等待 ' + attempt + 's，仍未恢复）...');
+    } else if (sawDown) {
+      setLabel('CDS 已恢复，正在刷新页面...');
+      return true;
+    } else if (attempt >= 8) {
+      // Never caught the down window — the restart was a no-op or too fast
+      // to observe. Proceed to reload to avoid hanging forever.
+      setLabel('CDS 状态稳定，正在刷新页面...');
+      return true;
+    } else {
+      setLabel('等待重启开始（' + attempt + 's）...');
+    }
+
+    await new Promise((r) => setTimeout(r, 1000));
+  }
+
+  setLabel('等待 CDS 重启超时（' + Math.round((timeoutMs || 120000) / 1000) + 's），请手动刷新');
+  return false;
+}
+
 async function openSelfUpdate() {
   // Fetch branch list
   let data;
@@ -3950,15 +4009,15 @@ function executeSelfUpdate() {
               if (eventType === 'step') {
                 updateStep(data.step, data.status, data.title);
               } else if (eventType === 'done') {
-                statusEl.innerHTML = '<span style="color:var(--green)">' + esc(data.message) + '</span>';
-                // Auto-reload after delay
-                setTimeout(() => { location.reload(); }, 5000);
-                statusEl.innerHTML += '<br><span style="font-size:12px;color:var(--fg-muted)">5 秒后自动刷新...</span>';
-                let sec = 4;
-                const t = setInterval(() => {
-                  if (sec <= 0) { clearInterval(t); location.reload(); }
-                  else { statusEl.querySelector('span:last-child').textContent = sec + ' 秒后自动刷新...'; sec--; }
-                }, 1000);
+                statusEl.innerHTML =
+                  '<span style="color:var(--green)">' + esc(data.message) + '</span>' +
+                  '<br><span style="font-size:12px;color:var(--fg-muted)">等待 CDS 重启...</span>';
+                // Poll /healthz instead of a fixed 5s delay, which used to
+                // race the restart and land on a 502 when the new process
+                // wasn't listening yet.
+                waitForCdsHealthy(statusEl, 120000).then((ok) => {
+                  if (ok) location.reload();
+                });
               } else if (eventType === 'error') {
                 statusEl.innerHTML = '<span style="color:var(--red)">❌ ' + esc(data.message) + '</span>';
                 if (btn) btn.disabled = false;
@@ -3971,10 +4030,15 @@ function executeSelfUpdate() {
     }
     return processChunk();
   }).catch(err => {
-    // Connection lost is expected during restart
+    // Connection lost is expected during restart — the SSE stream dies as
+    // the process goes down. Swap to the health-polling helper so we only
+    // reload once the new process is actually serving traffic.
     if (statusEl && !statusEl.textContent) {
-      statusEl.innerHTML = '<span style="color:var(--fg-muted)">连接已断开（CDS 正在重启），即将刷新...</span>';
-      setTimeout(() => { location.reload(); }, 5000);
+      statusEl.innerHTML =
+        '<span style="color:var(--fg-muted)">连接已断开（CDS 正在重启）...</span>';
+      waitForCdsHealthy(statusEl, 120000).then((ok) => {
+        if (ok) location.reload();
+      });
     }
   });
 }
