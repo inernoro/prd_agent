@@ -228,6 +228,27 @@ export interface BranchEntry {
    */
   pinnedByUser?: boolean;
   /**
+   * Custom subdomain aliases for this branch. Each alias is a DNS label
+   * (e.g. "paypal-webhook", "demo", "api-staging") that, when combined with
+   * the configured `previewDomain`/`rootDomains`, routes traffic to THIS
+   * branch in addition to its default `<slug>.<rootDomain>` subdomain.
+   *
+   * Use cases:
+   *  - Stable URLs for third-party webhook receivers that can't be reconfigured
+   *  - Memorable demo links ("demo.miduo.org" vs ugly branch slugs)
+   *  - Front-end config pointing at hardcoded `api.miduo.org`
+   *
+   * Validation (enforced by routes/branches.ts PUT handler):
+   *  - Each alias matches /^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$/ (DNS-safe)
+   *  - No duplicates within the same branch
+   *  - No collision with another branch's slug or aliases
+   *  - Reserved labels (`www`, `admin`, `api-preview`, `switch`) are rejected
+   *
+   * Resolution is handled by `ProxyService.extractPreviewBranch()` — aliases
+   * are checked BEFORE the default slug lookup, so an alias always wins.
+   */
+  subdomainAliases?: string[];
+  /**
    * Per-branch overrides keyed by BuildProfile.id. Each entry extends (rather
    * than replaces) the shared public BuildProfile — unset fields inherit from
    * the baseline. Merged into the effective profile by `resolveEffectiveProfile`

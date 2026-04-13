@@ -1595,6 +1595,135 @@ export function createBranchRouter(deps: RouterDeps): Router {
     }
   });
 
+  // ── Per-branch subdomain aliases ──
+  //
+  // Stable-URL aliases that route to a branch in addition to the default
+  // `<slug>.<rootDomain>` subdomain. Used for webhook receivers, demo
+  // links, and front-end hardcoded API hosts.
+  //
+  // Validation rules (enforced here, not in state.ts):
+  //   - Each alias is a valid DNS label: /^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$/
+  //   - No duplicates within the same request
+  //   - Not a reserved label (cds-internal tooling domains)
+  //   - No collision with another branch's slug or aliases
+
+  const DNS_LABEL_RE = /^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$/;
+  const RESERVED_ALIAS_LABELS = new Set([
+    'www', 'admin', 'switch', 'preview',
+    'cds', 'master', 'dashboard',
+  ]);
+
+  router.get('/branches/:id/subdomain-aliases', (req, res) => {
+    const { id } = req.params;
+    const entry = stateService.getBranch(id);
+    if (!entry) {
+      res.status(404).json({ error: `分支 "${id}" 不存在` });
+      return;
+    }
+    const aliases = stateService.getBranchSubdomainAliases(id);
+    // Compute the full preview URLs so the UI can show them without
+    // re-reading CDS config separately.
+    const rootDomains = config.rootDomains?.length
+      ? config.rootDomains
+      : (config.previewDomain ? [config.previewDomain] : []);
+    const primaryRoot = rootDomains[0] || 'example.com';
+    const previewUrls = aliases.map(a => `http://${a}.${primaryRoot}`);
+    const defaultUrl = `http://${id}.${primaryRoot}`;
+    res.json({
+      branchId: id,
+      aliases,
+      defaultUrl,
+      previewUrls,
+      rootDomain: primaryRoot,
+    });
+  });
+
+  router.put('/branches/:id/subdomain-aliases', (req, res) => {
+    const { id } = req.params;
+    const entry = stateService.getBranch(id);
+    if (!entry) {
+      res.status(404).json({ error: `分支 "${id}" 不存在` });
+      return;
+    }
+
+    const body = (req.body ?? {}) as { aliases?: unknown };
+    if (!Array.isArray(body.aliases)) {
+      res.status(400).json({ error: '请求体需要 { aliases: string[] } 格式' });
+      return;
+    }
+
+    // Normalize: trim + lowercase, drop empties. Preserve order for UI display.
+    const normalized: string[] = [];
+    const seen = new Set<string>();
+    for (const raw of body.aliases) {
+      if (typeof raw !== 'string') continue;
+      const lower = raw.trim().toLowerCase();
+      if (!lower) continue;
+      if (seen.has(lower)) continue; // drop duplicates within the request
+      seen.add(lower);
+      normalized.push(lower);
+    }
+
+    // Validate each label against DNS rules
+    const invalidLabels = normalized.filter(a => !DNS_LABEL_RE.test(a) || a.length > 63);
+    if (invalidLabels.length > 0) {
+      res.status(400).json({
+        error: `无效的子域名标签: ${invalidLabels.join(', ')}。只允许小写字母、数字、连字符，首尾必须是字母或数字，长度 1-63。`,
+        invalidLabels,
+      });
+      return;
+    }
+
+    // Reject reserved labels
+    const reservedHits = normalized.filter(a => RESERVED_ALIAS_LABELS.has(a));
+    if (reservedHits.length > 0) {
+      res.status(400).json({
+        error: `保留字不允许作为别名: ${reservedHits.join(', ')}`,
+        reservedLabels: reservedHits,
+      });
+      return;
+    }
+
+    // Reject aliases that equal this branch's own slug (no-op + confusing)
+    const selfCollisions = normalized.filter(a => a === id.toLowerCase());
+    if (selfCollisions.length > 0) {
+      res.status(400).json({
+        error: `别名不能等于分支自身的 slug "${id}"（默认路径已经覆盖）`,
+      });
+      return;
+    }
+
+    // Check collisions with other branches' slugs/aliases
+    const collisions = stateService.findAliasCollisions(id, normalized);
+    if (collisions.length > 0) {
+      res.status(409).json({
+        error: `子域名冲突: ${collisions.map(c => `"${c.alias}" 已被分支 "${c.conflictWith}" ${c.reason === 'slug' ? '的默认 slug' : '的别名'}占用`).join('; ')}`,
+        collisions,
+      });
+      return;
+    }
+
+    try {
+      stateService.setBranchSubdomainAliases(id, normalized);
+      stateService.save();
+      // Return the new aliases + preview URLs so the UI can update instantly
+      const rootDomains = config.rootDomains?.length
+        ? config.rootDomains
+        : (config.previewDomain ? [config.previewDomain] : []);
+      const primaryRoot = rootDomains[0] || 'example.com';
+      res.json({
+        message: '已保存子域名别名',
+        branchId: id,
+        aliases: normalized,
+        previewUrls: normalized.map(a => `http://${a}.${primaryRoot}`),
+        defaultUrl: `http://${id}.${primaryRoot}`,
+        needsRedeploy: false, // aliases are proxy-level, no container restart needed
+      });
+    } catch (err) {
+      res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
   router.delete('/branches/:id/profile-overrides/:profileId', (req, res) => {
     const { id, profileId } = req.params;
     const entry = stateService.getBranch(id);

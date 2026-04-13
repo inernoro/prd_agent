@@ -250,4 +250,83 @@ describe('ProxyService', () => {
       expect(result).toBeNull();
     });
   });
+
+  describe('subdomain alias resolution (via extractPreviewBranch)', () => {
+    // ProxyService.extractPreviewBranch is private — we reach it via any-cast
+    // because the alternative (full HTTP dance through handleRequest with
+    // a mock upstream) is much heavier and obscures the unit being tested.
+    // This is a surgical whitebox test of the alias override path.
+    type ProxyWithPrivate = ProxyService & {
+      extractPreviewBranch(host: string): string | null;
+    };
+
+    const makeProxy = (): ProxyWithPrivate => {
+      const p = new ProxyService(stateService, {
+        repoRoot: '/repo',
+        worktreeBase: '/wt',
+        masterPort: 9900,
+        workerPort: 5500,
+        dockerNetwork: 'cds-net',
+        portStart: 10000,
+        sharedEnv: {},
+        jwt: { secret: 's', issuer: 'i' },
+        mode: 'standalone',
+        executorPort: 9901,
+        previewDomain: 'preview.example.com',
+        rootDomains: ['preview.example.com'],
+      });
+      return p as ProxyWithPrivate;
+    };
+
+    const addBranch = (id: string, aliases?: string[]) => {
+      stateService.addBranch({
+        id,
+        branch: id,
+        worktreePath: `/wt/${id}`,
+        services: {},
+        status: 'idle',
+        createdAt: '2026-02-12T00:00:00Z',
+        ...(aliases ? { subdomainAliases: aliases } : {}),
+      });
+    };
+
+    it('falls back to slug when no alias matches', () => {
+      const p = makeProxy();
+      addBranch('feat-a');
+      expect(p.extractPreviewBranch('feat-a.preview.example.com')).toBe('feat-a');
+    });
+
+    it('returns branch id when an alias matches', () => {
+      const p = makeProxy();
+      addBranch('feat-long-slug-id', ['demo']);
+      expect(p.extractPreviewBranch('demo.preview.example.com')).toBe('feat-long-slug-id');
+    });
+
+    it('alias match is case-insensitive', () => {
+      const p = makeProxy();
+      addBranch('feat-a', ['paypal-webhook']);
+      expect(p.extractPreviewBranch('PAYPAL-WEBHOOK.preview.example.com')).toBe('feat-a');
+    });
+
+    it('alias wins over a branch whose slug happens to be the same', () => {
+      // Edge case: branch A has slug "demo", branch B has alias "demo".
+      // Branch B's alias wins because aliases are checked before slug fallback.
+      const p = makeProxy();
+      addBranch('demo');
+      addBranch('feat-b', ['demo']);
+      expect(p.extractPreviewBranch('demo.preview.example.com')).toBe('feat-b');
+    });
+
+    it('returns null when host is not under any configured rootDomain', () => {
+      const p = makeProxy();
+      addBranch('feat-a', ['demo']);
+      expect(p.extractPreviewBranch('demo.other-domain.com')).toBeNull();
+    });
+
+    it('ignores port suffix in host header', () => {
+      const p = makeProxy();
+      addBranch('feat-a', ['demo']);
+      expect(p.extractPreviewBranch('demo.preview.example.com:8080')).toBe('feat-a');
+    });
+  });
 });

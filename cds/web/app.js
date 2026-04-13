@@ -6802,15 +6802,32 @@ function closeOverrideModal() {
   _overrideModalState = null;
 }
 
+// Sentinel tab id for the branch-level subdomain aliases editor.
+// Lives next to the real profile tabs but renders a different form.
+const OVERRIDE_TAB_SUBDOMAIN = '__subdomain__';
+
 function _renderOverrideTabs() {
   const s = _overrideModalState;
   if (!s) return;
   const tabsEl = document.getElementById('overrideProfileTabs');
-  tabsEl.innerHTML = s.profiles.map(p => {
+
+  // Build the profile tabs first
+  const profileTabs = s.profiles.map(p => {
     const active = p.profileId === s.activeProfileId;
     const dot = p.hasOverride ? '<span style="display:inline-block;width:6px;height:6px;border-radius:50%;background:var(--accent,#4a9eff);margin-left:6px;vertical-align:2px" title="已有分支自定义"></span>' : '';
     return `<button class="log-tab ${active ? 'active' : ''}" style="padding:6px 12px;border-radius:8px 8px 0 0;border:1px solid var(--border);border-bottom:none;background:${active ? 'var(--bg-elevated)' : 'transparent'};color:${active ? 'var(--text-primary)' : 'var(--text-secondary)'};cursor:pointer;font-size:12px;" onclick="_switchOverrideProfile('${esc(p.profileId)}')">${esc(p.profileName || p.profileId)}${dot}</button>`;
   }).join('');
+
+  // Prepend the branch-level "子域名" tab. It's visually distinct (different
+  // border color) so users can tell it's not a per-profile setting.
+  const subActive = s.activeProfileId === OVERRIDE_TAB_SUBDOMAIN;
+  const aliasCount = s.subdomainData?.aliases?.length || 0;
+  const aliasCountBadge = aliasCount > 0
+    ? `<span style="display:inline-block;padding:1px 6px;font-size:10px;background:var(--accent-bg,rgba(74,158,255,0.15));color:var(--accent,#4a9eff);border-radius:8px;margin-left:6px;">${aliasCount}</span>`
+    : '';
+  const subTab = `<button class="log-tab ${subActive ? 'active' : ''}" style="padding:6px 12px;border-radius:8px 8px 0 0;border:1px solid var(--border);border-bottom:none;background:${subActive ? 'var(--bg-elevated)' : 'transparent'};color:${subActive ? 'var(--text-primary)' : 'var(--text-secondary)'};cursor:pointer;font-size:12px;margin-right:8px;" onclick="_switchOverrideProfile('${OVERRIDE_TAB_SUBDOMAIN}')" title="分支级子域名别名（所有服务共享）">🌐 子域名${aliasCountBadge}</button>`;
+
+  tabsEl.innerHTML = subTab + profileTabs;
 }
 
 function _switchOverrideProfile(profileId) {
@@ -6821,7 +6838,11 @@ function _switchOverrideProfile(profileId) {
   }
   _overrideModalState.activeProfileId = profileId;
   _renderOverrideTabs();
-  _renderOverrideForm();
+  if (profileId === OVERRIDE_TAB_SUBDOMAIN) {
+    _renderSubdomainForm();
+  } else {
+    _renderOverrideForm();
+  }
 }
 
 function _renderOverrideForm() {
@@ -7156,6 +7177,163 @@ async function _resetOverride() {
   }
 }
 
+// ── Subdomain aliases editor ──
+//
+// Renders inside the same override modal under a dedicated "🌐 子域名" tab.
+// Data is loaded lazily on first open of that tab, then cached on
+// `_overrideModalState.subdomainData`. Save + reset use the dedicated
+// `/api/branches/:id/subdomain-aliases` endpoint (not profile-overrides).
+
+async function _loadSubdomainAliases() {
+  const s = _overrideModalState;
+  if (!s) return;
+  try {
+    const data = await api('GET', `/branches/${encodeURIComponent(s.branchId)}/subdomain-aliases`);
+    s.subdomainData = {
+      aliases: data.aliases || [],
+      defaultUrl: data.defaultUrl || '',
+      rootDomain: data.rootDomain || '',
+    };
+  } catch (e) {
+    showToast('加载子域名失败: ' + e.message, 'error');
+    s.subdomainData = { aliases: [], defaultUrl: '', rootDomain: '' };
+  }
+}
+
+async function _renderSubdomainForm() {
+  const s = _overrideModalState;
+  if (!s) return;
+  const body = document.getElementById('overrideModalBody');
+
+  // Lazy load
+  if (!s.subdomainData) {
+    body.innerHTML = '<div style="padding:40px;text-align:center;color:var(--text-muted);font-size:13px">正在加载子域名配置…</div>';
+    await _loadSubdomainAliases();
+    _renderOverrideTabs(); // refresh count badge after load
+  }
+
+  const data = s.subdomainData || { aliases: [], defaultUrl: '', rootDomain: '' };
+  const aliases = data.aliases;
+
+  const chips = aliases.length === 0
+    ? '<div style="padding:16px;color:var(--text-muted);font-size:12px;font-style:italic">还没有别名。默认通过分支 slug 访问。</div>'
+    : aliases.map((a, idx) => `
+      <div style="display:flex;align-items:center;gap:10px;padding:10px 12px;margin-bottom:6px;background:var(--bg-primary);border:1px solid var(--border);border-radius:6px">
+        <div style="flex:1;min-width:0">
+          <div style="font-family:var(--font-mono,monospace);font-size:12px;color:var(--text-primary);font-weight:600">${esc(a)}</div>
+          <a href="http://${esc(a)}.${esc(data.rootDomain)}" target="_blank" rel="noopener" style="font-size:11px;color:var(--accent,#4a9eff);text-decoration:none;font-family:var(--font-mono,monospace)">http://${esc(a)}.${esc(data.rootDomain)} ↗</a>
+        </div>
+        <button class="sm" onclick="_removeSubdomainAlias(${idx})" style="background:transparent;color:var(--text-muted);border:1px solid var(--border);padding:4px 10px;font-size:11px" title="删除这个别名">✕</button>
+      </div>
+    `).join('');
+
+  body.innerHTML = `
+    <div style="display:flex;gap:8px;align-items:center;margin-bottom:12px;padding:10px 12px;background:var(--bg-elevated);border-radius:8px;border:1px solid var(--border);font-size:12px">
+      <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor" style="flex-shrink:0;color:var(--accent,#4a9eff)"><path d="M8 0a8 8 0 100 16A8 8 0 008 0zM7.25 4a.75.75 0 011.5 0v4a.75.75 0 01-1.5 0V4zM8 10a1 1 0 100 2 1 1 0 000-2z"/></svg>
+      <span style="color:var(--text-secondary);line-height:1.5">
+        子域名别名让这个分支可以通过<strong style="color:var(--text-primary)">稳定 URL</strong> 访问，适合 webhook 接收、demo 分享、前端硬编码 API 域名等场景。
+        保存后<strong style="color:var(--text-primary)">立即生效，无需重新部署</strong>。
+      </span>
+    </div>
+
+    <div style="margin-bottom:10px">
+      <div style="font-size:12px;font-weight:600;color:var(--text-primary);margin-bottom:4px">默认访问地址</div>
+      <a href="${esc(data.defaultUrl)}" target="_blank" rel="noopener" style="font-size:11px;font-family:var(--font-mono,monospace);color:var(--text-muted);text-decoration:none">${esc(data.defaultUrl)} ↗</a>
+    </div>
+
+    <div style="margin-bottom:12px">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
+        <span style="font-size:12px;font-weight:600;color:var(--text-primary)">子域名别名 (${aliases.length})</span>
+        <span style="font-size:11px;color:var(--text-muted)">每行一个 DNS 标签（小写字母、数字、连字符）</span>
+      </div>
+      ${chips}
+    </div>
+
+    <div style="display:flex;gap:8px;margin-bottom:14px">
+      <input type="text" id="subdomainNewAlias" placeholder="例: paypal-webhook, demo, api-staging" pattern="[a-z0-9][a-z0-9-]*[a-z0-9]|[a-z0-9]" maxlength="63" style="flex:1;padding:8px 10px;background:var(--bg-primary);border:1px solid var(--border);border-radius:6px;color:var(--text-primary);font-family:var(--font-mono,monospace);font-size:12px" onkeydown="if(event.key==='Enter'){event.preventDefault();_addSubdomainAlias();}" />
+      <button class="sm" onclick="_addSubdomainAlias()" style="padding:8px 16px;font-size:12px">+ 添加</button>
+    </div>
+
+    <div style="display:flex;gap:8px;justify-content:space-between;padding-top:12px;border-top:1px solid var(--border)">
+      <button class="sm" id="overrideResetBtn" onclick="_resetSubdomainAliases()" style="background:var(--bg-elevated);color:var(--text-secondary);border:1px solid var(--border)" title="清空所有别名，仅保留默认 slug 路径">清空全部别名</button>
+      <div style="display:flex;gap:8px">
+        <button class="sm" id="overrideCancelBtn" onclick="closeOverrideModal()" style="background:var(--bg-elevated);color:var(--text-secondary);border:1px solid var(--border)">关闭</button>
+        <button class="sm deploy-glow-btn" id="overrideSaveBtn" onclick="_saveSubdomainAliases()">保存别名</button>
+      </div>
+    </div>
+  `;
+}
+
+function _addSubdomainAlias() {
+  const s = _overrideModalState;
+  if (!s || !s.subdomainData) return;
+  const input = document.getElementById('subdomainNewAlias');
+  const raw = (input?.value || '').trim().toLowerCase();
+  if (!raw) return;
+  // Client-side DNS label validation
+  if (!/^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$/.test(raw)) {
+    showToast('无效的 DNS 标签：只允许小写字母、数字、连字符，首尾必须是字母或数字', 'error');
+    return;
+  }
+  if (s.subdomainData.aliases.includes(raw)) {
+    showToast(`"${raw}" 已经在列表里`, 'info');
+    return;
+  }
+  s.subdomainData.aliases.push(raw);
+  s.dirty = true;
+  _renderSubdomainForm();
+  // Restore focus to the input for fast entry of multiple aliases
+  setTimeout(() => document.getElementById('subdomainNewAlias')?.focus(), 0);
+}
+
+function _removeSubdomainAlias(idx) {
+  const s = _overrideModalState;
+  if (!s || !s.subdomainData) return;
+  s.subdomainData.aliases.splice(idx, 1);
+  s.dirty = true;
+  _renderSubdomainForm();
+}
+
+async function _saveSubdomainAliases() {
+  const s = _overrideModalState;
+  if (!s || !s.subdomainData) return;
+  _setOverrideButtonsDisabled(true);
+  try {
+    const res = await api('PUT', `/branches/${encodeURIComponent(s.branchId)}/subdomain-aliases`, {
+      aliases: s.subdomainData.aliases,
+    });
+    showToast(`已保存 ${res.aliases?.length || 0} 个别名，立即生效`, 'success');
+    s.subdomainData.aliases = res.aliases || [];
+    s.dirty = false;
+    _renderOverrideTabs(); // refresh badge count
+    _renderSubdomainForm();
+  } catch (e) {
+    // Collision errors come back as structured 409 — surface the server reason
+    showToast('保存失败: ' + e.message, 'error');
+  } finally {
+    _setOverrideButtonsDisabled(false);
+  }
+}
+
+async function _resetSubdomainAliases() {
+  const s = _overrideModalState;
+  if (!s || !s.subdomainData) return;
+  if (!confirm('确定清空该分支的全部子域名别名？')) return;
+  _setOverrideButtonsDisabled(true);
+  try {
+    await api('PUT', `/branches/${encodeURIComponent(s.branchId)}/subdomain-aliases`, { aliases: [] });
+    s.subdomainData.aliases = [];
+    s.dirty = false;
+    showToast('已清空所有别名', 'success');
+    _renderOverrideTabs();
+    _renderSubdomainForm();
+  } catch (e) {
+    showToast('清空失败: ' + e.message, 'error');
+  } finally {
+    _setOverrideButtonsDisabled(false);
+  }
+}
+
 // Expose handlers to inline event attributes (non-module script)
 window.openOverrideModal = openOverrideModal;
 window.closeOverrideModal = closeOverrideModal;
@@ -7165,6 +7343,10 @@ window._saveOverride = _saveOverride;
 window._saveAndDeployOverride = _saveAndDeployOverride;
 window._resetOverride = _resetOverride;
 window._appendEnvToOverride = _appendEnvToOverride;
+window._addSubdomainAlias = _addSubdomainAlias;
+window._removeSubdomainAlias = _removeSubdomainAlias;
+window._saveSubdomainAliases = _saveSubdomainAliases;
+window._resetSubdomainAliases = _resetSubdomainAliases;
 
 // ════════════════════════════════════════════════════════════════════
 // Topology view — layered DAG of services + infra, with per-branch

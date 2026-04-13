@@ -261,4 +261,93 @@ describe('StateService', () => {
       expect(StateService.slugify('release/v1.2.3')).toBe('release-v1-2-3');
     });
   });
+
+  describe('subdomain aliases', () => {
+    const makeBranch = (id: string, aliases?: string[]) => ({
+      id,
+      branch: id,
+      worktreePath: `/tmp/wt/${id}`,
+      services: {},
+      status: 'idle' as const,
+      createdAt: '2026-02-12T00:00:00Z',
+      ...(aliases ? { subdomainAliases: aliases } : {}),
+    });
+
+    it('returns empty array when no aliases set', () => {
+      service.load();
+      service.addBranch(makeBranch('feat-a'));
+      expect(service.getBranchSubdomainAliases('feat-a')).toEqual([]);
+    });
+
+    it('setBranchSubdomainAliases stores list as-is', () => {
+      service.load();
+      service.addBranch(makeBranch('feat-a'));
+      service.setBranchSubdomainAliases('feat-a', ['demo', 'paypal-webhook']);
+      expect(service.getBranchSubdomainAliases('feat-a')).toEqual(['demo', 'paypal-webhook']);
+    });
+
+    it('setBranchSubdomainAliases with empty array clears the field', () => {
+      service.load();
+      service.addBranch(makeBranch('feat-a', ['demo']));
+      service.setBranchSubdomainAliases('feat-a', []);
+      expect(service.getBranchSubdomainAliases('feat-a')).toEqual([]);
+      // Field should be deleted, not just emptied
+      expect((service.getBranch('feat-a') as unknown as { subdomainAliases?: string[] }).subdomainAliases).toBeUndefined();
+    });
+
+    it('setBranchSubdomainAliases throws for unknown branch', () => {
+      service.load();
+      expect(() => service.setBranchSubdomainAliases('ghost', ['x'])).toThrow('不存在');
+    });
+
+    it('findBranchByAlias returns branch id for an alias (case-insensitive)', () => {
+      service.load();
+      service.addBranch(makeBranch('feat-a', ['paypal-webhook']));
+      service.addBranch(makeBranch('feat-b', ['demo', 'staging']));
+      expect(service.findBranchByAlias('paypal-webhook')).toBe('feat-a');
+      expect(service.findBranchByAlias('DEMO')).toBe('feat-b');
+      expect(service.findBranchByAlias('PAYPAL-WEBHOOK')).toBe('feat-a');
+    });
+
+    it('findBranchByAlias returns null when no match', () => {
+      service.load();
+      service.addBranch(makeBranch('feat-a', ['demo']));
+      expect(service.findBranchByAlias('unknown')).toBeNull();
+      expect(service.findBranchByAlias('')).toBeNull();
+    });
+
+    it('findAliasCollisions detects collisions with another branch slug', () => {
+      service.load();
+      service.addBranch(makeBranch('feat-a'));
+      service.addBranch(makeBranch('demo'));
+      const collisions = service.findAliasCollisions('feat-a', ['demo', 'paypal']);
+      expect(collisions).toHaveLength(1);
+      expect(collisions[0]).toMatchObject({ alias: 'demo', conflictWith: 'demo', reason: 'slug' });
+    });
+
+    it('findAliasCollisions detects collisions with another branch alias', () => {
+      service.load();
+      service.addBranch(makeBranch('feat-a'));
+      service.addBranch(makeBranch('feat-b', ['paypal-webhook', 'staging']));
+      const collisions = service.findAliasCollisions('feat-a', ['paypal-webhook', 'new-alias']);
+      expect(collisions).toHaveLength(1);
+      expect(collisions[0]).toMatchObject({ alias: 'paypal-webhook', conflictWith: 'feat-b', reason: 'alias' });
+    });
+
+    it('findAliasCollisions does not flag own aliases when checking same branch', () => {
+      service.load();
+      service.addBranch(makeBranch('feat-a', ['demo']));
+      // Same branch checking its own existing alias — should be clean
+      const collisions = service.findAliasCollisions('feat-a', ['demo', 'new-one']);
+      expect(collisions).toHaveLength(0);
+    });
+
+    it('findAliasCollisions is case-insensitive for both sides', () => {
+      service.load();
+      service.addBranch(makeBranch('feat-a'));
+      service.addBranch(makeBranch('feat-b', ['STAGING']));
+      const collisions = service.findAliasCollisions('feat-a', ['staging']);
+      expect(collisions).toHaveLength(1);
+    });
+  });
 });
