@@ -136,13 +136,13 @@
 
 ---
 
-## 5. P2：GitHub OAuth + Org 白名单
+## 5. P2：GitHub OAuth + Org 白名单（已落地 ✓ 2026-04-13）
 
 ### 目标
 
 让 CDS 从"无登录裸跑"变成"必须 GitHub 登录 + Org 校验"。
 
-同时第一次让 MongoDB 进场——只新增 `users` 和 `sessions` 两个集合，不触碰 state.json 的业务数据。为 P3 大迁移铺路。
+**实现策略调整**：MongoDB 延迟到 P3 才引入。P2 使用 **in-memory AuthStore** 作为过渡实现，对外暴露稳定的 `AuthStore` 接口。P3 时用 MongoDB-backed 实现替换，所有消费代码零改动。这样 P2 可以在没有 mongo 容器的前提下完整跑 CI + 单机开发。
 
 ### 前置依赖
 
@@ -150,39 +150,47 @@
 - GitHub OAuth App 已申请，拿到 client_id / client_secret
 - CDS 容器里的 MongoDB 可用（P1 未启用，P2 首次使用）
 
-### 交付清单
+### 交付清单（已落地 ✓）
 
 **配置**：
 
-- [ ] `.cds.env` 新增：`CDS_AUTH_MODE`、`CDS_GITHUB_CLIENT_ID`、`CDS_GITHUB_CLIENT_SECRET`、`CDS_ALLOWED_ORGS`、`CDS_SUPERADMIN_EMAIL`
-- [ ] `cds/exec_cds.sh init` 向导新增 OAuth 字段收集
+- [x] 环境变量：`CDS_AUTH_MODE` (`disabled` / `basic` / `github`)、`CDS_GITHUB_CLIENT_ID`、`CDS_GITHUB_CLIENT_SECRET`、`CDS_ALLOWED_ORGS`、`CDS_PUBLIC_BASE_URL`
+- [ ] **未做**：`cds/exec_cds.sh init` 向导字段收集（P2.5 或 P5 再做，需先有真实 OAuth App）
 
 **后端**：
 
-- [ ] 新增 `cds/src/infra/mongo/client.ts`：MongoDB 连接封装
-- [ ] 新增 `cds/src/infra/mongo/collections.ts`：集合注册表（先注册 users、sessions）
-- [ ] 新增 `cds/src/domain/user.ts`、`cds/src/domain/session.ts`：实体类型
-- [ ] 新增 `cds/src/services/auth-service.ts`：OAuth 流程
-- [ ] 新增 `cds/src/controllers/auth-controller.ts`：`/api/auth/github/login`、`/api/auth/github/callback`、`/api/auth/logout`、`/api/me`
-- [ ] 新增 `cds/src/middleware/auth.ts`：session 校验 + orgs 刷新
-- [ ] 新增 `cds/src/services/bootstrap-service.ts`：首登自举（创建 system owner 的 workspace + 转交 legacy project）
+- [x] `cds/src/domain/auth.ts`：`CdsUser` / `CdsSession` / `CdsWorkspace` / `UpsertUserInput` 类型
+- [x] `cds/src/infra/auth-store/memory-store.ts`：`AuthStore` 接口 + `MemoryAuthStore` 实现（in-memory，P3 替换为 mongo）
+- [x] `cds/src/services/github-oauth-client.ts`：GitHub OAuth HTTP 客户端（可注入 fetch，便于测试）
+- [x] `cds/src/services/auth-service.ts`：完整 OAuth 编排（startLogin → handleCallback → 首登自举 → validateSession）+ CSRF state store
+- [x] `cds/src/routes/auth.ts`：`/api/auth/github/login`、`/api/auth/github/callback`、`/api/auth/logout`、`/api/me`
+- [x] `cds/src/middleware/github-auth.ts`：session 校验 + 公开路径白名单 + HTML/JSON 差异化响应
+- [x] `cds/src/server.ts`：按 `CDS_AUTH_MODE` 分发三种模式，github 模式挂载 router + middleware
 
 **前端**：
 
-- [ ] 新增 `cds/web/src/pages/login.tsx`：登录页
-- [ ] 改造 `App.tsx`：未登录时路由到 `/login`
-- [ ] 顶部导航栏显示用户头像 + 登出按钮
+- [x] `cds/web/login-gh.html`：GitHub 登录着陆页（支持 `?redirect=` 透传，错误信息内联展示）
+- [x] Middleware 未登录 HTML 请求 302 到 `/login-gh.html?redirect=<original-url>`
+- [ ] **未做**：Dashboard header 显示用户头像 + 登出按钮（P2.5 UI 完善）
+
+### 测试覆盖（新增 33 条单测）
+
+- [x] `tests/infra/memory-store.test.ts` — 13 条（upsertUser、sessions、workspaces、TTL 过期）
+- [x] `tests/services/auth-service.test.ts` — 13 条（完整 OAuth 流程 + 首登自举 + CSRF state + 错误映射）
+- [x] `tests/routes/auth.test.ts` — 7 条（login/callback/me/logout 端到端 HTTP 测试）
+- [x] 全量 `pnpm test` 从 298 → 331，零回归
 
 ### 验收标准
 
-- [ ] 未登录访问 CDS 302 到 `/login`
-- [ ] 点击 "Login with GitHub" 跳转到 github.com 授权页
-- [ ] 授权后回调成功，进入 `/projects`
-- [ ] `users` 集合里有一条记录
-- [ ] `sessions` 集合里有一条记录，`expiresAt` 为 30 天后
-- [ ] 被移出 `CDS_ALLOWED_ORGS` 后刷新页面被踢回 `/login`
-- [ ] 首登用户自动成为 system owner，legacy project 从 System Workspace 转到其个人 workspace
-- [ ] `CDS_AUTH_MODE=disabled` 时所有认证中间件直通（本地开发兼容）
+- [x] `CDS_AUTH_MODE=disabled` (默认) 时行为与 v3.2 完全一致，零回归
+- [x] `CDS_AUTH_MODE=basic` 时沿用 v3.2 的 `CDS_USERNAME/CDS_PASSWORD` cookie 登录
+- [x] `CDS_AUTH_MODE=github` + 环境变量齐全时启动成功
+- [x] Missing GitHub client id/secret 时抛出明确错误，不静默启动
+- [x] 首登用户变为 system owner，自动创建 personal workspace
+- [x] `CDS_ALLOWED_ORGS` 不匹配的账号被拒绝
+- [x] CSRF state token 只可使用一次
+- [x] Session TTL 到期后 lazily prune
+- [ ] **未验证**：真实 GitHub OAuth App 的端到端登录（需用户提供 client_id/client_secret 后在 preview 环境验证）
 
 ### 回滚策略
 
