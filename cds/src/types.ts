@@ -3,6 +3,11 @@
 /** A routing rule that maps incoming requests to a branch */
 export interface RoutingRule {
   id: string;
+  /**
+   * Project this rule belongs to. P4 Part 3a field. Pre-P4 rules migrate
+   * to 'default' on load. Optional for back-compat.
+   */
+  projectId?: string;
   /** Human-readable name */
   name: string;
   /** Match type: header (X-Branch), domain substring, or pattern */
@@ -26,6 +31,11 @@ export interface RoutingRule {
 /** A build profile defines how to build/run a specific type of project */
 export interface BuildProfile {
   id: string;
+  /**
+   * Project this profile belongs to. P4 Part 3a field. Pre-P4 profiles
+   * are migrated to 'default' on load. Optional for back-compat.
+   */
+  projectId?: string;
   name: string;
   /** Docker image to use for building/running */
   dockerImage: string;
@@ -193,6 +203,13 @@ export type BranchHeatState = 'hot' | 'warming' | 'cooling' | 'cold';
 /** Branch entry — simplified for CDS */
 export interface BranchEntry {
   id: string;
+  /**
+   * The project this branch belongs to. P4 Part 3a introduces this field;
+   * pre-P4 data is migrated to the legacy default project ('default') on
+   * load. Optional for backward compat with pre-migration state files —
+   * consumers can treat a missing value as 'default'.
+   */
+  projectId?: string;
   /** Original git branch name */
   branch: string;
   worktreePath: string;
@@ -518,6 +535,11 @@ export interface InfraHealthCheck {
 export interface InfraService {
   /** Unique identifier (e.g., 'mongodb', 'redis') */
   id: string;
+  /**
+   * Project this infra service belongs to. P4 Part 3a field. Pre-P4
+   * services migrate to 'default' on load. Optional for back-compat.
+   */
+  projectId?: string;
   /** Display name */
   name: string;
   /** Docker image to use */

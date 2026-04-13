@@ -77,11 +77,15 @@ export class StateService {
       // Migrate: ensure at least one "legacy default" project exists to
       // wrap all pre-P4 data. See migrateProjects() for the rules.
       this.migrateProjects();
+      // Migrate: tag every pre-P4 branch/profile/infra/routing entry with
+      // the legacy default projectId. See migrateProjectScoping().
+      this.migrateProjectScoping();
     } else {
       this.state = emptyState();
       // Fresh install still needs a default project so the UI has
       // something to render on the first boot.
       this.migrateProjects();
+      // (nothing to scope on a fresh install — collections are empty)
     }
   }
 
@@ -173,6 +177,57 @@ export class StateService {
     this.save();
   }
 
+  /**
+   * P4 Part 3a migration: stamp every existing branch / build profile /
+   * infra service / routing rule with the legacy default projectId
+   * ('default') so that consumers can filter by project without
+   * special-casing pre-P4 data.
+   *
+   * Idempotent: entries already carrying a projectId are left alone.
+   * This lets the migration run safely on every boot, even after
+   * P4 Part 2 users start creating non-legacy projects (their entries
+   * will already have projectId set by the route that creates them).
+   *
+   * Invariant enforced after this runs: every branch / profile / infra /
+   * rule has a non-empty projectId. Part 3b can then rely on that
+   * invariant to add projectId filter middleware without null checks.
+   */
+  private migrateProjectScoping(): void {
+    const legacyId = 'default';
+    let changed = false;
+
+    // Branches
+    for (const branch of Object.values(this.state.branches || {})) {
+      if (!branch.projectId) {
+        branch.projectId = legacyId;
+        changed = true;
+      }
+    }
+    // Build profiles
+    for (const profile of this.state.buildProfiles || []) {
+      if (!profile.projectId) {
+        profile.projectId = legacyId;
+        changed = true;
+      }
+    }
+    // Infra services
+    for (const infra of this.state.infraServices || []) {
+      if (!infra.projectId) {
+        infra.projectId = legacyId;
+        changed = true;
+      }
+    }
+    // Routing rules
+    for (const rule of this.state.routingRules || []) {
+      if (!rule.projectId) {
+        rule.projectId = legacyId;
+        changed = true;
+      }
+    }
+
+    if (changed) this.save();
+  }
+
   /** Listeners notified after every save() */
   private onSaveListeners: Array<() => void> = [];
 
@@ -230,6 +285,9 @@ export class StateService {
     if (this.state.branches[entry.id]) {
       throw new Error(`分支 "${entry.id}" 已存在`);
     }
+    // P4 Part 3a: stamp a default projectId when the caller didn't set
+    // one so the project-scoped queries always have a value to match.
+    if (!entry.projectId) entry.projectId = 'default';
     this.state.branches[entry.id] = entry;
   }
 
@@ -389,6 +447,8 @@ export class StateService {
   }
 
   addRoutingRule(rule: RoutingRule): void {
+    // P4 Part 3a: default projectId for the legacy path.
+    if (!rule.projectId) rule.projectId = 'default';
     this.state.routingRules.push(rule);
     this.state.routingRules.sort((a, b) => a.priority - b.priority);
   }
@@ -418,6 +478,7 @@ export class StateService {
     if (this.state.buildProfiles.some(p => p.id === profile.id)) {
       throw new Error(`构建配置 "${profile.id}" 已存在`);
     }
+    if (!profile.projectId) profile.projectId = 'default';
     this.state.buildProfiles.push(profile);
   }
 
@@ -547,6 +608,44 @@ export class StateService {
     this.save();
   }
 
+  // ── Project-scoped views (P4 Part 3a) ──
+  //
+  // These helpers return slices of the existing collections filtered by
+  // projectId. They are read-only wrappers; the underlying state.json
+  // shape stays the same (flat collections), which means the existing
+  // legacy code paths (getAllBranches / getBuildProfiles etc.) continue
+  // to work unchanged. Part 3b adds project-scoped routes that call
+  // these helpers via a middleware that injects `req.project`.
+  //
+  // Contract: a missing projectId on an entry is treated as 'default'.
+  // The migration above ensures that case doesn't happen in practice,
+  // but the helpers are defensive so unit tests can exercise them
+  // against handcrafted state without running through load().
+
+  getBranchesForProject(projectId: string): BranchEntry[] {
+    return Object.values(this.state.branches || {}).filter(
+      (b) => (b.projectId || 'default') === projectId,
+    );
+  }
+
+  getBuildProfilesForProject(projectId: string): BuildProfile[] {
+    return (this.state.buildProfiles || []).filter(
+      (p) => (p.projectId || 'default') === projectId,
+    );
+  }
+
+  getInfraServicesForProject(projectId: string): InfraService[] {
+    return (this.state.infraServices || []).filter(
+      (s) => (s.projectId || 'default') === projectId,
+    );
+  }
+
+  getRoutingRulesForProject(projectId: string): RoutingRule[] {
+    return (this.state.routingRules || []).filter(
+      (r) => (r.projectId || 'default') === projectId,
+    );
+  }
+
   // ── Custom environment variables ──
 
   getCustomEnv(): Record<string, string> {
@@ -579,6 +678,7 @@ export class StateService {
     if (this.state.infraServices.some(s => s.id === service.id)) {
       throw new Error(`基础设施服务 "${service.id}" 已存在`);
     }
+    if (!service.projectId) service.projectId = 'default';
     this.state.infraServices.push(service);
   }
 
