@@ -113,6 +113,47 @@ export interface DeployModeOverride {
   env?: Record<string, string>;
 }
 
+/**
+ * Branch-level override for a BuildProfile. All fields optional — each unset
+ * field inherits from the shared public BuildProfile. Lets a branch customize
+ * its container runtime (image version, command, env, resources, deploy mode)
+ * without touching the public baseline that other branches still share.
+ *
+ * Merge order at deploy time:
+ *   baseline profile → branch override → deploy-mode override
+ *
+ * See the helper `resolveEffectiveProfile()` in services/container.ts.
+ */
+export interface BuildProfileOverride {
+  /** Override Docker image (replaces baseline.dockerImage) */
+  dockerImage?: string;
+  /** Override run command (replaces baseline.command) */
+  command?: string;
+  /** Override container working directory */
+  containerWorkDir?: string;
+  /** Override container port (rare — only needed if app listens on a different port) */
+  containerPort?: number;
+  /**
+   * Env vars merged on top of baseline.env. Override wins per-key, keys absent
+   * here inherit from the baseline.
+   */
+  env?: Record<string, string>;
+  /** Override path prefixes (replaces baseline list when set) */
+  pathPrefixes?: string[];
+  /** Override resource limits (replaces baseline.resources when set) */
+  resources?: ResourceLimits;
+  /** Override active deploy mode (lets a branch pick a different mode than the public default) */
+  activeDeployMode?: string;
+  /** Override startup signal (log pattern to wait for) */
+  startupSignal?: string;
+  /** Override readiness probe */
+  readinessProbe?: ReadinessProbe;
+  /** Free-form notes explaining why this branch needs the override */
+  notes?: string;
+  /** ISO timestamp of last update — set automatically by StateService */
+  updatedAt?: string;
+}
+
 /** A shared cache mount to avoid duplicating packages across branches */
 export interface CacheMount {
   /** Host path (absolute) for the shared cache */
@@ -186,6 +227,36 @@ export interface BranchEntry {
    * The default branch and color-marked branches are also treated as pinned implicitly.
    */
   pinnedByUser?: boolean;
+  /**
+   * Custom subdomain aliases for this branch. Each alias is a DNS label
+   * (e.g. "paypal-webhook", "demo", "api-staging") that, when combined with
+   * the configured `previewDomain`/`rootDomains`, routes traffic to THIS
+   * branch in addition to its default `<slug>.<rootDomain>` subdomain.
+   *
+   * Use cases:
+   *  - Stable URLs for third-party webhook receivers that can't be reconfigured
+   *  - Memorable demo links ("demo.miduo.org" vs ugly branch slugs)
+   *  - Front-end config pointing at hardcoded `api.miduo.org`
+   *
+   * Validation (enforced by routes/branches.ts PUT handler):
+   *  - Each alias matches /^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$/ (DNS-safe)
+   *  - No duplicates within the same branch
+   *  - No collision with another branch's slug or aliases
+   *  - Reserved labels (`www`, `admin`, `api-preview`, `switch`) are rejected
+   *
+   * Resolution is handled by `ProxyService.extractPreviewBranch()` — aliases
+   * are checked BEFORE the default slug lookup, so an alias always wins.
+   */
+  subdomainAliases?: string[];
+  /**
+   * Per-branch overrides keyed by BuildProfile.id. Each entry extends (rather
+   * than replaces) the shared public BuildProfile — unset fields inherit from
+   * the baseline. Merged into the effective profile by `resolveEffectiveProfile`
+   * at container start time.
+   *
+   * Absent / empty = pure inheritance (legacy behavior).
+   */
+  profileOverrides?: Record<string, BuildProfileOverride>;
 }
 
 /** State of a single service (one build profile instance) within a branch */

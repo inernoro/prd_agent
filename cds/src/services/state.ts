@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import type { CdsState, BranchEntry, BuildProfile, RoutingRule, OperationLog, InfraService, ExecutorNode, DataMigration, CdsPeer } from '../types.js';
+import type { CdsState, BranchEntry, BuildProfile, BuildProfileOverride, RoutingRule, OperationLog, InfraService, ExecutorNode, DataMigration, CdsPeer } from '../types.js';
 
 const MAX_LOGS_PER_BRANCH = 10;
 /** Max rolling backups of state.json kept on disk. See design.cds-resilience.md §5. */
@@ -268,6 +268,117 @@ export class StateService {
     if (updates.notes !== undefined) branch.notes = updates.notes;
     if (updates.tags !== undefined) branch.tags = updates.tags;
     if (updates.isColorMarked !== undefined) branch.isColorMarked = updates.isColorMarked;
+  }
+
+  // ── Per-branch BuildProfile overrides ──
+  //
+  // These let a branch extend (rather than replace) the shared public
+  // BuildProfile. Empty override = pure inheritance (legacy behavior).
+  // Applied by `resolveEffectiveProfile()` at container start time.
+
+  getBranchProfileOverrides(branchId: string): Record<string, BuildProfileOverride> {
+    return this.state.branches[branchId]?.profileOverrides || {};
+  }
+
+  getBranchProfileOverride(branchId: string, profileId: string): BuildProfileOverride | undefined {
+    return this.state.branches[branchId]?.profileOverrides?.[profileId];
+  }
+
+  /**
+   * Replace the override for one profile on one branch. Passing an empty
+   * object clears all fields but keeps the entry (equivalent to inheriting
+   * everything from the baseline). Use `clearBranchProfileOverride` to
+   * remove the entry entirely.
+   */
+  setBranchProfileOverride(branchId: string, profileId: string, override: BuildProfileOverride): void {
+    const branch = this.state.branches[branchId];
+    if (!branch) throw new Error(`分支 "${branchId}" 不存在`);
+    if (!branch.profileOverrides) branch.profileOverrides = {};
+    branch.profileOverrides[profileId] = {
+      ...override,
+      updatedAt: new Date().toISOString(),
+    };
+  }
+
+  /** Remove the override entry for one profile, restoring full inheritance. */
+  clearBranchProfileOverride(branchId: string, profileId: string): void {
+    const branch = this.state.branches[branchId];
+    if (!branch?.profileOverrides) return;
+    delete branch.profileOverrides[profileId];
+    if (Object.keys(branch.profileOverrides).length === 0) {
+      delete branch.profileOverrides;
+    }
+  }
+
+  // ── Per-branch subdomain aliases ──
+  //
+  // Aliases are DNS labels that route to a branch via `<alias>.<rootDomain>`
+  // in addition to the default `<slug>.<rootDomain>`. Used by ProxyService's
+  // `extractPreviewBranch()` before falling back to the slug lookup.
+
+  getBranchSubdomainAliases(branchId: string): string[] {
+    return this.state.branches[branchId]?.subdomainAliases || [];
+  }
+
+  /**
+   * Replace the alias list for a branch. Validates that the branch exists
+   * but does NOT validate DNS format or cross-branch collisions — those
+   * checks live in the API layer so the caller can return 400 with a
+   * specific reason. Pass an empty array to clear.
+   */
+  setBranchSubdomainAliases(branchId: string, aliases: string[]): void {
+    const branch = this.state.branches[branchId];
+    if (!branch) throw new Error(`分支 "${branchId}" 不存在`);
+    if (!aliases || aliases.length === 0) {
+      delete branch.subdomainAliases;
+      return;
+    }
+    branch.subdomainAliases = [...aliases];
+  }
+
+  /**
+   * Find which branch owns a given subdomain label. Checks both:
+   *   1) any branch.subdomainAliases (exact, case-insensitive match)
+   *   2) branch slug itself (fallback — default route)
+   *
+   * Used by ProxyService to route `<label>.<rootDomain>` traffic.
+   * Returns the branch id (slug key) or null.
+   */
+  findBranchByAlias(label: string): string | null {
+    if (!label) return null;
+    const normalized = label.toLowerCase();
+    for (const branch of Object.values(this.state.branches)) {
+      if (branch.subdomainAliases?.some(a => a.toLowerCase() === normalized)) {
+        return branch.id;
+      }
+    }
+    return null;
+  }
+
+  /**
+   * Find alias collisions across branches. Given a candidate list of aliases
+   * for `branchId`, return any that are already owned by a different branch
+   * (either as that branch's slug or as another branch's alias). Case-insensitive.
+   * Used by the PUT handler to return 409 with a clear reason.
+   */
+  findAliasCollisions(branchId: string, candidateAliases: string[]): Array<{ alias: string; conflictWith: string; reason: 'slug' | 'alias' }> {
+    const conflicts: Array<{ alias: string; conflictWith: string; reason: 'slug' | 'alias' }> = [];
+    for (const candidate of candidateAliases) {
+      const normalized = candidate.toLowerCase();
+      for (const other of Object.values(this.state.branches)) {
+        if (other.id === branchId) continue;
+        // Collision: candidate equals another branch's slug
+        if (other.id.toLowerCase() === normalized) {
+          conflicts.push({ alias: candidate, conflictWith: other.id, reason: 'slug' });
+          continue;
+        }
+        // Collision: candidate equals another branch's alias
+        if (other.subdomainAliases?.some(a => a.toLowerCase() === normalized)) {
+          conflicts.push({ alias: candidate, conflictWith: other.id, reason: 'alias' });
+        }
+      }
+    }
+    return conflicts;
   }
 
   removeBranch(id: string): void {

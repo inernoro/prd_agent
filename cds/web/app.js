@@ -3072,11 +3072,17 @@ function renderBranches() {
         <div class="deploy-menu-item" onclick="event.stopPropagation(); closeDeployMenu('${esc(b.id)}'); viewBranchLogs('${esc(b.id)}')"><svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor" style="vertical-align:-1px;margin-right:4px"><path d="M1 2.75C1 1.784 1.784 1 2.75 1h10.5c.966 0 1.75.784 1.75 1.75v7.5A1.75 1.75 0 0113.25 12H9.06l-2.573 2.573A1.458 1.458 0 014 13.543V12H2.75A1.75 1.75 0 011 10.25v-7.5zm1.5 0a.25.25 0 01.25-.25h10.5a.25.25 0 01.25.25v7.5a.25.25 0 01-.25.25h-4.5a.75.75 0 00-.75.75v2.19l-2.72-2.72a.75.75 0 00-.53-.22H2.75a.25.25 0 01-.25-.25v-7.5z"/></svg>部署日志</div>
         ${stopMenuItem}` : ''}
         <div class="deploy-menu-divider"></div>
+        <div class="deploy-menu-item" onclick="event.stopPropagation(); closeDeployMenu('${esc(b.id)}'); openOverrideModal('${esc(b.id)}')"><svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor" style="vertical-align:-1px;margin-right:4px"><path d="M8 0a8 8 0 100 16A8 8 0 008 0zM1.5 8a6.5 6.5 0 1113 0 6.5 6.5 0 01-13 0zM8 4a.75.75 0 01.75.75v2.5h2.5a.75.75 0 010 1.5h-2.5v2.5a.75.75 0 01-1.5 0v-2.5h-2.5a.75.75 0 010-1.5h2.5v-2.5A.75.75 0 018 4z"/></svg>容器配置 (继承/覆盖)</div>
+        <div class="deploy-menu-divider"></div>
         <div class="deploy-menu-item deploy-menu-item-danger" onclick="event.stopPropagation(); closeDeployMenu('${esc(b.id)}'); removeBranch('${esc(b.id)}')">${ICON.trash} 删除分支</div>
       </template>
     `;
 
-    const hasDropdown = hasMultipleProfiles || hasDeployModes || isRunning;
+    // Dropdown is always shown now — the menu always contains at least
+    // "容器配置" + "删除分支", so the toggle is always useful. This replaces
+    // the previous logic that only showed the toggle for multi-profile /
+    // deploy-mode / running branches.
+    const hasDropdown = true;
     const deployBtnLabel = isRunning ? '更新' : '部署';
 
     if (isStopping) {
@@ -3235,6 +3241,9 @@ function renderBranches() {
 
   // Dashboard title stays constant — tag-based titles are for proxied preview pages only (widget-script.ts)
   document.title = 'Cloud Dev Suite';
+
+  // Topology view shares the same data sources — re-render it on every branch refresh.
+  if (_viewMode === 'topology') renderTopologyView();
 }
 
 // ── Build profiles (data only) ──
@@ -6720,6 +6729,1209 @@ function updateClusterStatusBadge(role, onlineCount) {
   } else {
     badge.textContent = '';
   }
+}
+
+// ════════════════════════════════════════════════════════════════════
+// Branch profile override modal — per-branch container customization
+//
+// Lets a user extend the shared public BuildProfile for a specific branch
+// without touching other branches. Fields left empty inherit from the
+// public baseline. "重置为公共" clears the override entirely.
+//
+// Backend: GET/PUT/DELETE /api/branches/:id/profile-overrides[/:profileId]
+// Merge happens server-side in `resolveEffectiveProfile()`.
+// ════════════════════════════════════════════════════════════════════
+
+let _overrideModalState = null; // { branchId, profiles, activeProfileId, dirty }
+
+function _ensureOverrideModal() {
+  if (document.getElementById('overrideModal')) return;
+  const modal = document.createElement('div');
+  modal.id = 'overrideModal';
+  modal.className = 'modal hidden';
+  modal.innerHTML = `
+    <div class="modal-backdrop" onclick="closeOverrideModal()"></div>
+    <div class="modal-dialog config-modal-dialog" style="max-width: 860px;">
+      <div class="modal-header">
+        <h2 id="overrideModalTitle">容器配置</h2>
+        <button class="modal-close" onclick="closeOverrideModal()" aria-label="关闭">
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M3.72 3.72a.75.75 0 011.06 0L8 6.94l3.22-3.22a.75.75 0 111.06 1.06L9.06 8l3.22 3.22a.75.75 0 11-1.06 1.06L8 9.06l-3.22 3.22a.75.75 0 01-1.06-1.06L6.94 8 3.72 4.78a.75.75 0 010-1.06z"/></svg>
+        </button>
+      </div>
+      <div id="overrideProfileTabs" style="display:flex;gap:4px;padding:8px 18px 0;flex-wrap:wrap;"></div>
+      <div class="modal-body" id="overrideModalBody"></div>
+    </div>
+  `;
+  document.body.appendChild(modal);
+}
+
+async function openOverrideModal(branchId, preferredProfileId) {
+  _ensureOverrideModal();
+  try {
+    const data = await api('GET', `/branches/${encodeURIComponent(branchId)}/profile-overrides`);
+    if (!data.profiles || data.profiles.length === 0) {
+      showToast('该分支暂无可配置的构建服务', 'info');
+      return;
+    }
+    // Topology view passes `preferredProfileId` to land directly on the
+    // clicked service's tab. Fall back to the first profile if the hint
+    // is missing or references a profile the branch doesn't know about.
+    const hintedProfile = preferredProfileId
+      ? data.profiles.find(p => p.profileId === preferredProfileId)
+      : null;
+    _overrideModalState = {
+      branchId,
+      profiles: data.profiles,
+      activeProfileId: (hintedProfile && hintedProfile.profileId) || data.profiles[0].profileId,
+      dirty: false,
+    };
+    document.getElementById('overrideModalTitle').textContent = `容器配置 — ${branchId}`;
+    document.getElementById('overrideModal').classList.remove('hidden');
+    _renderOverrideTabs();
+    _renderOverrideForm();
+  } catch (e) {
+    showToast('加载配置失败: ' + e.message, 'error');
+  }
+}
+
+function closeOverrideModal() {
+  if (_overrideModalState?.dirty) {
+    if (!confirm('你有未保存的修改，确定关闭吗？')) return;
+  }
+  document.getElementById('overrideModal')?.classList.add('hidden');
+  _overrideModalState = null;
+}
+
+// Sentinel tab id for the branch-level subdomain aliases editor.
+// Lives next to the real profile tabs but renders a different form.
+const OVERRIDE_TAB_SUBDOMAIN = '__subdomain__';
+
+function _renderOverrideTabs() {
+  const s = _overrideModalState;
+  if (!s) return;
+  const tabsEl = document.getElementById('overrideProfileTabs');
+
+  // Build the profile tabs first
+  const profileTabs = s.profiles.map(p => {
+    const active = p.profileId === s.activeProfileId;
+    const dot = p.hasOverride ? '<span style="display:inline-block;width:6px;height:6px;border-radius:50%;background:var(--accent,#4a9eff);margin-left:6px;vertical-align:2px" title="已有分支自定义"></span>' : '';
+    return `<button class="log-tab ${active ? 'active' : ''}" style="padding:6px 12px;border-radius:8px 8px 0 0;border:1px solid var(--border);border-bottom:none;background:${active ? 'var(--bg-elevated)' : 'transparent'};color:${active ? 'var(--text-primary)' : 'var(--text-secondary)'};cursor:pointer;font-size:12px;" onclick="_switchOverrideProfile('${esc(p.profileId)}')">${esc(p.profileName || p.profileId)}${dot}</button>`;
+  }).join('');
+
+  // Prepend the branch-level "子域名" tab. It's visually distinct (different
+  // border color) so users can tell it's not a per-profile setting.
+  const subActive = s.activeProfileId === OVERRIDE_TAB_SUBDOMAIN;
+  const aliasCount = s.subdomainData?.aliases?.length || 0;
+  const aliasCountBadge = aliasCount > 0
+    ? `<span style="display:inline-block;padding:1px 6px;font-size:10px;background:var(--accent-bg,rgba(74,158,255,0.15));color:var(--accent,#4a9eff);border-radius:8px;margin-left:6px;">${aliasCount}</span>`
+    : '';
+  const subTab = `<button class="log-tab ${subActive ? 'active' : ''}" style="padding:6px 12px;border-radius:8px 8px 0 0;border:1px solid var(--border);border-bottom:none;background:${subActive ? 'var(--bg-elevated)' : 'transparent'};color:${subActive ? 'var(--text-primary)' : 'var(--text-secondary)'};cursor:pointer;font-size:12px;margin-right:8px;" onclick="_switchOverrideProfile('${OVERRIDE_TAB_SUBDOMAIN}')" title="分支级子域名别名（所有服务共享）">🌐 子域名${aliasCountBadge}</button>`;
+
+  tabsEl.innerHTML = subTab + profileTabs;
+}
+
+function _switchOverrideProfile(profileId) {
+  if (!_overrideModalState) return;
+  if (_overrideModalState.dirty) {
+    if (!confirm('切换前放弃当前修改？')) return;
+    _overrideModalState.dirty = false;
+  }
+  _overrideModalState.activeProfileId = profileId;
+  _renderOverrideTabs();
+  if (profileId === OVERRIDE_TAB_SUBDOMAIN) {
+    _renderSubdomainForm();
+  } else {
+    _renderOverrideForm();
+  }
+}
+
+function _renderOverrideForm() {
+  const s = _overrideModalState;
+  if (!s) return;
+  const p = s.profiles.find(x => x.profileId === s.activeProfileId);
+  if (!p) return;
+
+  const baseline = p.baseline || {};
+  const override = p.override || {};
+  const effective = p.effective || baseline;
+
+  // Helper: render a single field with baseline hint + optional override input
+  const field = (label, key, type, baselineVal, overrideVal, placeholder) => {
+    const inheriting = overrideVal === undefined || overrideVal === null || overrideVal === '';
+    const hint = baselineVal !== undefined && baselineVal !== null && baselineVal !== ''
+      ? `<div style="font-size:11px;color:var(--text-muted);margin-top:3px">公共默认: <code style="font-family:var(--font-mono,monospace);color:var(--text-secondary)">${esc(String(baselineVal))}</code></div>`
+      : `<div style="font-size:11px;color:var(--text-muted);margin-top:3px">公共默认: <em>无</em></div>`;
+    const numMinAttr = type === 'number' ? ' min="1"' : '';
+    const inputEl = type === 'textarea'
+      ? `<textarea data-override-key="${key}" rows="4" placeholder="${esc(placeholder || '')}" style="width:100%;padding:8px 10px;background:var(--bg-primary);border:1px solid var(--border);border-radius:6px;color:var(--text-primary);font-family:var(--font-mono,monospace);font-size:12px;resize:vertical" oninput="_overrideFieldChanged()">${esc(overrideVal || '')}</textarea>`
+      : `<input type="${type}"${numMinAttr} data-override-key="${key}" value="${esc(overrideVal !== undefined && overrideVal !== null ? String(overrideVal) : '')}" placeholder="${esc(placeholder || '继承公共默认')}" style="width:100%;padding:8px 10px;background:var(--bg-primary);border:1px solid var(--border);border-radius:6px;color:var(--text-primary);font-family:${type === 'number' ? 'inherit' : 'var(--font-mono,monospace)'};font-size:12px" oninput="_overrideFieldChanged()" />`;
+    const inheritBadge = inheriting
+      ? '<span style="display:inline-block;padding:1px 6px;font-size:10px;background:var(--bg-elevated);color:var(--text-muted);border-radius:4px;margin-left:8px;border:1px solid var(--border)">继承</span>'
+      : '<span style="display:inline-block;padding:1px 6px;font-size:10px;background:var(--accent-bg,rgba(74,158,255,0.15));color:var(--accent,#4a9eff);border-radius:4px;margin-left:8px;border:1px solid var(--accent,#4a9eff)">自定义</span>';
+    return `
+      <div style="margin-bottom:14px">
+        <label style="display:block;font-size:12px;font-weight:600;color:var(--text-primary);margin-bottom:4px">${esc(label)}${inheritBadge}</label>
+        ${inputEl}
+        ${hint}
+      </div>
+    `;
+  };
+
+  // env: baseline is Record<string,string>, override is Record<string,string>
+  // For UX we render the MERGED env as KEY=VAL lines, where override keys are editable
+  const envToText = (envObj) => Object.entries(envObj || {}).map(([k, v]) => `${k}=${v}`).join('\n');
+  const overrideEnvText = envToText(override.env);
+  // Effective env (includes CDS_* infra vars from backend) — used for baseline
+  // preview so the user sees EVERYTHING that will actually be injected, not
+  // just profile.env. cdsEnvKeys lets us mark the risky infra keys in orange.
+  const effectiveEnvEntries = Object.entries(effective.env || {});
+  const cdsEnvKeys = new Set(p.cdsEnvKeys || []);
+  const baselineHasEntries = effectiveEnvEntries.length > 0;
+
+  // Deploy mode selector — baseline.deployModes is Record<string, DeployModeOverride>
+  const modeOptions = baseline.deployModes
+    ? Object.entries(baseline.deployModes).map(([key, m]) => `<option value="${esc(key)}" ${override.activeDeployMode === key ? 'selected' : ''}>${esc(m.label || key)}</option>`).join('')
+    : '';
+
+  const body = document.getElementById('overrideModalBody');
+  body.innerHTML = `
+    <div style="display:flex;gap:8px;align-items:center;margin-bottom:12px;padding:10px 12px;background:var(--bg-elevated);border-radius:8px;border:1px solid var(--border);font-size:12px">
+      <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor" style="flex-shrink:0;color:var(--accent,#4a9eff)"><path d="M8 0a8 8 0 100 16A8 8 0 008 0zM7.25 4a.75.75 0 011.5 0v4a.75.75 0 01-1.5 0V4zM8 10a1 1 0 100 2 1 1 0 000-2z"/></svg>
+      <span style="color:var(--text-secondary);line-height:1.5">留空的字段将<strong style="color:var(--text-primary)">继承公共默认</strong>。保存后需要<strong style="color:var(--text-primary)">重新部署</strong>该分支才能生效。</span>
+    </div>
+
+    ${field('Docker 镜像', 'dockerImage', 'text', baseline.dockerImage, override.dockerImage, '例: node:20-alpine')}
+    ${field('启动命令', 'command', 'textarea', baseline.command, override.command, '例: pnpm install && pnpm dev')}
+    ${field('容器工作目录', 'containerWorkDir', 'text', baseline.containerWorkDir || '/app', override.containerWorkDir, '例: /workspace')}
+    ${field('容器内端口', 'containerPort', 'number', baseline.containerPort, override.containerPort, '例: 5000')}
+
+    <div style="margin-bottom:14px">
+      <label style="display:block;font-size:12px;font-weight:600;color:var(--text-primary);margin-bottom:4px">环境变量覆盖
+        ${override.env && Object.keys(override.env).length > 0
+          ? '<span style="display:inline-block;padding:1px 6px;font-size:10px;background:var(--accent-bg,rgba(74,158,255,0.15));color:var(--accent,#4a9eff);border-radius:4px;margin-left:8px;border:1px solid var(--accent,#4a9eff)">自定义 ' + Object.keys(override.env).length + ' 项</span>'
+          : '<span style="display:inline-block;padding:1px 6px;font-size:10px;background:var(--bg-elevated);color:var(--text-muted);border-radius:4px;margin-left:8px;border:1px solid var(--border)">继承</span>'}
+      </label>
+      <textarea id="overrideEnvTextarea" data-override-key="env" rows="6" placeholder="每行一个 KEY=VALUE，将覆盖同名的公共默认" style="width:100%;padding:8px 10px;background:var(--bg-primary);border:1px solid var(--border);border-radius:6px;color:var(--text-primary);font-family:var(--font-mono,monospace);font-size:12px;resize:vertical" oninput="_overrideFieldChanged()">${esc(overrideEnvText)}</textarea>
+      <div style="font-size:11px;color:var(--text-muted);margin-top:3px">
+        公共默认 (${effectiveEnvEntries.length} 项，含 ${cdsEnvKeys.size} 个 CDS 基础设施变量):
+        ${baselineHasEntries ? `<details style="display:block"><summary style="cursor:pointer;color:var(--accent,#4a9eff);display:inline-block">展开（点击 → 复制到上方）</summary>
+          <div style="margin-top:4px;padding:6px 8px;background:var(--bg-primary);border-radius:4px;font-size:11px;max-height:160px;overflow:auto">
+            ${effectiveEnvEntries.map(([k, v]) => {
+              const isCds = cdsEnvKeys.has(k);
+              const keyStyle = isCds ? 'color:#ff9f43' : 'color:var(--text-secondary)';
+              const titleAttr = isCds ? 'title="来自 CDS infra services，覆盖有风险"' : '';
+              const cdsTag = isCds ? '<span style="display:inline-block;padding:0 4px;margin-right:4px;font-size:9px;background:rgba(255,159,67,0.15);color:#ff9f43;border:1px solid #ff9f43;border-radius:3px;vertical-align:1px">CDS</span>' : '';
+              // HTML-encode for the onclick attribute. Outer onclick="" is double-quoted,
+              // so we build a single-quoted JS string literal (escape backslashes and
+              // single quotes), then HTML-escape the whole thing so `&` / `<` don't
+              // break the attribute either.
+              const encArg = (raw) => {
+                const jsLiteral = "'" + String(raw).replace(/\\/g, '\\\\').replace(/'/g, "\\'") + "'";
+                return esc(jsLiteral);
+              };
+              return `<div style="display:flex;align-items:center;gap:6px;padding:2px 0;font-family:var(--font-mono,monospace)" ${titleAttr}>
+                <button class="sm" style="flex-shrink:0;padding:1px 6px;font-size:10px;background:var(--bg-elevated);color:var(--accent,#4a9eff);border:1px solid var(--border);border-radius:3px;cursor:pointer" onclick="_appendEnvToOverride(${encArg(k)}, ${encArg(v)})">→ 编辑</button>
+                <span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${cdsTag}<span style="${keyStyle};font-weight:600">${esc(k)}</span><span style="color:var(--text-muted)">=</span><span style="color:var(--text-secondary)">${esc(v)}</span></span>
+              </div>`;
+            }).join('')}
+          </div>
+        </details>` : '<em>无</em>'}
+      </div>
+    </div>
+
+    ${modeOptions ? `
+      <div style="margin-bottom:14px">
+        <label style="display:block;font-size:12px;font-weight:600;color:var(--text-primary);margin-bottom:4px">部署模式</label>
+        <select data-override-key="activeDeployMode" style="width:100%;padding:8px 10px;background:var(--bg-primary);border:1px solid var(--border);border-radius:6px;color:var(--text-primary);font-size:12px" onchange="_overrideFieldChanged()">
+          <option value="">继承 (${esc(baseline.activeDeployMode || '默认')})</option>
+          ${modeOptions}
+        </select>
+      </div>
+    ` : ''}
+
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:14px">
+      <div>
+        <label style="display:block;font-size:12px;font-weight:600;color:var(--text-primary);margin-bottom:4px">内存上限 (MB)</label>
+        <input type="number" data-override-key="resources.memoryMB" value="${override.resources?.memoryMB || ''}" placeholder="${baseline.resources?.memoryMB || '无限制'}" style="width:100%;padding:8px 10px;background:var(--bg-primary);border:1px solid var(--border);border-radius:6px;color:var(--text-primary);font-size:12px" oninput="_overrideFieldChanged()" />
+        <div style="font-size:11px;color:var(--text-muted);margin-top:3px">公共默认: <code>${baseline.resources?.memoryMB || '无限制'}</code></div>
+      </div>
+      <div>
+        <label style="display:block;font-size:12px;font-weight:600;color:var(--text-primary);margin-bottom:4px">CPU 上限 (核)</label>
+        <input type="number" step="0.1" data-override-key="resources.cpus" value="${override.resources?.cpus || ''}" placeholder="${baseline.resources?.cpus || '无限制'}" style="width:100%;padding:8px 10px;background:var(--bg-primary);border:1px solid var(--border);border-radius:6px;color:var(--text-primary);font-size:12px" oninput="_overrideFieldChanged()" />
+        <div style="font-size:11px;color:var(--text-muted);margin-top:3px">公共默认: <code>${baseline.resources?.cpus || '无限制'}</code></div>
+      </div>
+    </div>
+
+    <div style="margin-bottom:14px">
+      <label style="display:block;font-size:12px;font-weight:600;color:var(--text-primary);margin-bottom:4px">备注 (为什么这个分支需要自定义)</label>
+      <input type="text" data-override-key="notes" value="${esc(override.notes || '')}" placeholder="例: 本分支压测需要更多内存" style="width:100%;padding:8px 10px;background:var(--bg-primary);border:1px solid var(--border);border-radius:6px;color:var(--text-primary);font-size:12px" oninput="_overrideFieldChanged()" />
+    </div>
+
+    <div style="display:flex;gap:8px;justify-content:space-between;padding-top:12px;border-top:1px solid var(--border)">
+      <button class="sm" id="overrideResetBtn" onclick="_resetOverride()" style="background:var(--bg-elevated);color:var(--text-secondary);border:1px solid var(--border)">重置为公共</button>
+      <div style="display:flex;gap:8px">
+        <button class="sm" id="overrideCancelBtn" onclick="closeOverrideModal()" style="background:var(--bg-elevated);color:var(--text-secondary);border:1px solid var(--border)">取消</button>
+        <button class="sm" id="overrideSaveBtn" onclick="_saveOverride()" style="background:var(--bg-elevated);color:var(--text-primary);border:1px solid var(--border)">保存 (稍后手动部署)</button>
+        <button class="sm deploy-glow-btn" id="overrideSaveDeployBtn" onclick="_saveAndDeployOverride()">保存并立即部署</button>
+      </div>
+    </div>
+  `;
+}
+
+function _overrideFieldChanged() {
+  if (_overrideModalState) _overrideModalState.dirty = true;
+}
+
+function _collectOverrideFromForm() {
+  const body = document.getElementById('overrideModalBody');
+  const override = {};
+  // Track env-line stats so _saveOverride can surface parse issues as a toast (M4).
+  let envParsed = 0;
+  let envSkipped = 0;
+  body.querySelectorAll('[data-override-key]').forEach(el => {
+    const key = el.dataset.overrideKey;
+    const raw = el.value;
+    if (key !== 'env' && (raw === '' || raw === null || raw === undefined)) return; // inherit
+    if (key === 'env') {
+      const envObj = {};
+      // H4: distinguish "empty LINE" (whitespace-only) from "empty VALUE"
+      // (KEY=). Empty value is a valid assignment that sets the var to "".
+      raw.split('\n').forEach(line => {
+        if (line.trim().length === 0) return; // pure blank line — skip silently
+        const trimmed = line.trim();
+        if (trimmed.startsWith('#')) return; // comment — skip silently
+        const eq = trimmed.indexOf('=');
+        if (eq <= 0) {
+          // Not a KEY=VALUE line (no '=' or starts with '=') — count as error.
+          envSkipped++;
+          return;
+        }
+        const k = trimmed.slice(0, eq).trim();
+        if (!k) { envSkipped++; return; }
+        // Keep value UN-trimmed so trailing spaces in user intent are preserved;
+        // but we use the original line from after the '=' minus leading whitespace,
+        // so a line like "KEY=" parses to ''. A line like "KEY= value " keeps the
+        // leading space intact because the user explicitly typed it.
+        const v = trimmed.slice(eq + 1);
+        envObj[k] = v;
+        envParsed++;
+      });
+      // Note: empty envObj now means "override.env = {}" not "inherit". The
+      // backend handler treats this as "remove all baseline env keys" — that
+      // is NOT what users want, so we fall back to "inherit" on empty.
+      if (Object.keys(envObj).length > 0) override.env = envObj;
+    } else if (key === 'containerPort') {
+      const n = parseInt(raw, 10);
+      // M6 (frontend guard): match backend — only accept positive integers.
+      if (!isNaN(n) && n > 0) override.containerPort = n;
+    } else if (key === 'resources.memoryMB') {
+      const n = parseInt(raw, 10);
+      if (!isNaN(n) && n > 0) {
+        override.resources = override.resources || {};
+        override.resources.memoryMB = n;
+      }
+    } else if (key === 'resources.cpus') {
+      const n = parseFloat(raw);
+      if (!isNaN(n) && n > 0) {
+        override.resources = override.resources || {};
+        override.resources.cpus = n;
+      }
+    } else {
+      override[key] = raw;
+    }
+  });
+  return { override, envParsed, envSkipped };
+}
+
+// Append a baseline env KEY=VALUE pair to the override textarea, unless the
+// same KEY is already present on any line. Called from the baseline env
+// preview list's "→ 编辑" buttons (H2 / one-click copy-to-override).
+function _appendEnvToOverride(key, value) {
+  const textarea = document.getElementById('overrideEnvTextarea');
+  if (!textarea) return;
+  const current = textarea.value;
+  const lines = current.split('\n');
+  // "Already present" check: match lines whose KEY portion equals `key`,
+  // regardless of whitespace around the KEY. Comments and blank lines skipped.
+  const alreadyPresent = lines.some(line => {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith('#')) return false;
+    const eq = trimmed.indexOf('=');
+    if (eq <= 0) return false;
+    return trimmed.slice(0, eq).trim() === key;
+  });
+  if (alreadyPresent) {
+    showToast(`${key} 已在覆盖中，未重复追加`, 'info');
+    return;
+  }
+  const newLine = `${key}=${value}`;
+  const needsNewline = current.length > 0 && !current.endsWith('\n');
+  textarea.value = current + (needsNewline ? '\n' : '') + newLine + '\n';
+  if (_overrideModalState) _overrideModalState.dirty = true;
+  // Show the user we did something + scroll to the new line.
+  textarea.focus();
+  textarea.scrollTop = textarea.scrollHeight;
+}
+
+// Toggle save/cancel/reset buttons disabled state during in-flight requests (M7).
+function _setOverrideButtonsDisabled(disabled) {
+  const ids = ['overrideSaveBtn', 'overrideSaveDeployBtn', 'overrideResetBtn', 'overrideCancelBtn'];
+  ids.forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.disabled = disabled;
+  });
+}
+
+// Shared save pipeline used by both "保存" and "保存并立即部署" (H3 / H5 / M4 / M7).
+// Returns true on success, false if the user aborted or the request failed.
+async function _doSaveOverride() {
+  const s = _overrideModalState;
+  if (!s) return false;
+  const { override, envParsed, envSkipped } = _collectOverrideFromForm();
+
+  // H5: warn loudly when the user is about to override CDS_* infra vars.
+  // These come from `stateService.getCdsEnvVars()` and are the ONLY way the
+  // container reaches Mongo/Redis/etc. Silent overrides would break the
+  // branch without any error on deploy.
+  if (override.env) {
+    const cdsKeys = Object.keys(override.env).filter(k => k.startsWith('CDS_'));
+    if (cdsKeys.length > 0) {
+      const ok = confirm(
+        `你正在覆盖 CDS 基础设施变量 [${cdsKeys.join(', ')}]，这可能导致容器连不上 MongoDB/Redis 等基础服务。确定继续？`
+      );
+      if (!ok) return false;
+    }
+  }
+
+  _setOverrideButtonsDisabled(true);
+  try {
+    await api('PUT', `/branches/${encodeURIComponent(s.branchId)}/profile-overrides/${encodeURIComponent(s.activeProfileId)}`, override);
+    s.dirty = false;
+    // M4: tell the user how many env lines parsed vs. were dropped.
+    if (envSkipped > 0) {
+      showToast(`已识别 ${envParsed} 条环境变量，跳过 ${envSkipped} 条格式错误行`, 'info', 5000);
+    } else {
+      showToast('已保存，重新部署该分支后生效', 'success');
+    }
+    return true;
+  } catch (e) {
+    showToast('保存失败: ' + e.message, 'error');
+    return false;
+  } finally {
+    _setOverrideButtonsDisabled(false);
+  }
+}
+
+async function _saveOverride() {
+  const s = _overrideModalState;
+  if (!s) return;
+  const ok = await _doSaveOverride();
+  if (!ok) return;
+  // Refresh current profile data in-place so badges/preview reflect the new state.
+  try {
+    const refreshed = await api('GET', `/branches/${encodeURIComponent(s.branchId)}/profile-overrides`);
+    s.profiles = refreshed.profiles;
+    _renderOverrideTabs();
+    _renderOverrideForm();
+  } catch (e) {
+    showToast('刷新失败: ' + e.message, 'error');
+  }
+}
+
+// H3: one-click save + redeploy. Saves via the shared pipeline, closes the
+// modal, then hands off to the existing deployBranch() helper.
+async function _saveAndDeployOverride() {
+  const s = _overrideModalState;
+  if (!s) return;
+  const branchId = s.branchId;
+  const ok = await _doSaveOverride();
+  if (!ok) return;
+  // Close without the "unsaved changes" prompt — we just saved successfully.
+  _overrideModalState = null;
+  document.getElementById('overrideModal')?.classList.add('hidden');
+  showToast('正在重新部署...', 'info');
+  try {
+    await deployBranch(branchId);
+  } catch (e) {
+    showToast('部署失败: ' + e.message, 'error');
+  }
+}
+
+async function _resetOverride() {
+  const s = _overrideModalState;
+  if (!s) return;
+  if (!confirm('确定清空该分支的容器覆盖，完全继承公共配置？')) return;
+  _setOverrideButtonsDisabled(true);
+  try {
+    await api('DELETE', `/branches/${encodeURIComponent(s.branchId)}/profile-overrides/${encodeURIComponent(s.activeProfileId)}`);
+    showToast('已恢复公共配置', 'success');
+    s.dirty = false;
+    const refreshed = await api('GET', `/branches/${encodeURIComponent(s.branchId)}/profile-overrides`);
+    s.profiles = refreshed.profiles;
+    _renderOverrideTabs();
+    _renderOverrideForm();
+  } catch (e) {
+    showToast('重置失败: ' + e.message, 'error');
+  } finally {
+    _setOverrideButtonsDisabled(false);
+  }
+}
+
+// ── Subdomain aliases editor ──
+//
+// Renders inside the same override modal under a dedicated "🌐 子域名" tab.
+// Data is loaded lazily on first open of that tab, then cached on
+// `_overrideModalState.subdomainData`. Save + reset use the dedicated
+// `/api/branches/:id/subdomain-aliases` endpoint (not profile-overrides).
+
+async function _loadSubdomainAliases() {
+  const s = _overrideModalState;
+  if (!s) return;
+  try {
+    const data = await api('GET', `/branches/${encodeURIComponent(s.branchId)}/subdomain-aliases`);
+    s.subdomainData = {
+      aliases: data.aliases || [],
+      defaultUrl: data.defaultUrl || '',
+      rootDomain: data.rootDomain || '',
+    };
+  } catch (e) {
+    showToast('加载子域名失败: ' + e.message, 'error');
+    s.subdomainData = { aliases: [], defaultUrl: '', rootDomain: '' };
+  }
+}
+
+async function _renderSubdomainForm() {
+  const s = _overrideModalState;
+  if (!s) return;
+  const body = document.getElementById('overrideModalBody');
+
+  // Lazy load
+  if (!s.subdomainData) {
+    body.innerHTML = '<div style="padding:40px;text-align:center;color:var(--text-muted);font-size:13px">正在加载子域名配置…</div>';
+    await _loadSubdomainAliases();
+    _renderOverrideTabs(); // refresh count badge after load
+  }
+
+  const data = s.subdomainData || { aliases: [], defaultUrl: '', rootDomain: '' };
+  const aliases = data.aliases;
+
+  const chips = aliases.length === 0
+    ? '<div style="padding:16px;color:var(--text-muted);font-size:12px;font-style:italic">还没有别名。默认通过分支 slug 访问。</div>'
+    : aliases.map((a, idx) => `
+      <div style="display:flex;align-items:center;gap:10px;padding:10px 12px;margin-bottom:6px;background:var(--bg-primary);border:1px solid var(--border);border-radius:6px">
+        <div style="flex:1;min-width:0">
+          <div style="font-family:var(--font-mono,monospace);font-size:12px;color:var(--text-primary);font-weight:600">${esc(a)}</div>
+          <a href="http://${esc(a)}.${esc(data.rootDomain)}" target="_blank" rel="noopener" style="font-size:11px;color:var(--accent,#4a9eff);text-decoration:none;font-family:var(--font-mono,monospace)">http://${esc(a)}.${esc(data.rootDomain)} ↗</a>
+        </div>
+        <button class="sm" onclick="_removeSubdomainAlias(${idx})" style="background:transparent;color:var(--text-muted);border:1px solid var(--border);padding:4px 10px;font-size:11px" title="删除这个别名">✕</button>
+      </div>
+    `).join('');
+
+  body.innerHTML = `
+    <div style="display:flex;gap:8px;align-items:center;margin-bottom:12px;padding:10px 12px;background:var(--bg-elevated);border-radius:8px;border:1px solid var(--border);font-size:12px">
+      <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor" style="flex-shrink:0;color:var(--accent,#4a9eff)"><path d="M8 0a8 8 0 100 16A8 8 0 008 0zM7.25 4a.75.75 0 011.5 0v4a.75.75 0 01-1.5 0V4zM8 10a1 1 0 100 2 1 1 0 000-2z"/></svg>
+      <span style="color:var(--text-secondary);line-height:1.5">
+        子域名别名让这个分支可以通过<strong style="color:var(--text-primary)">稳定 URL</strong> 访问，适合 webhook 接收、demo 分享、前端硬编码 API 域名等场景。
+        保存后<strong style="color:var(--text-primary)">立即生效，无需重新部署</strong>。
+      </span>
+    </div>
+
+    <div style="margin-bottom:10px">
+      <div style="font-size:12px;font-weight:600;color:var(--text-primary);margin-bottom:4px">默认访问地址</div>
+      <a href="${esc(data.defaultUrl)}" target="_blank" rel="noopener" style="font-size:11px;font-family:var(--font-mono,monospace);color:var(--text-muted);text-decoration:none">${esc(data.defaultUrl)} ↗</a>
+    </div>
+
+    <div style="margin-bottom:12px">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
+        <span style="font-size:12px;font-weight:600;color:var(--text-primary)">子域名别名 (${aliases.length})</span>
+        <span style="font-size:11px;color:var(--text-muted)">每行一个 DNS 标签（小写字母、数字、连字符）</span>
+      </div>
+      ${chips}
+    </div>
+
+    <div style="display:flex;gap:8px;margin-bottom:14px">
+      <input type="text" id="subdomainNewAlias" placeholder="例: paypal-webhook, demo, api-staging" pattern="[a-z0-9][a-z0-9-]*[a-z0-9]|[a-z0-9]" maxlength="63" style="flex:1;padding:8px 10px;background:var(--bg-primary);border:1px solid var(--border);border-radius:6px;color:var(--text-primary);font-family:var(--font-mono,monospace);font-size:12px" onkeydown="if(event.key==='Enter'){event.preventDefault();_addSubdomainAlias();}" />
+      <button class="sm" onclick="_addSubdomainAlias()" style="padding:8px 16px;font-size:12px">+ 添加</button>
+    </div>
+
+    <div style="display:flex;gap:8px;justify-content:space-between;padding-top:12px;border-top:1px solid var(--border)">
+      <button class="sm" id="overrideResetBtn" onclick="_resetSubdomainAliases()" style="background:var(--bg-elevated);color:var(--text-secondary);border:1px solid var(--border)" title="清空所有别名，仅保留默认 slug 路径">清空全部别名</button>
+      <div style="display:flex;gap:8px">
+        <button class="sm" id="overrideCancelBtn" onclick="closeOverrideModal()" style="background:var(--bg-elevated);color:var(--text-secondary);border:1px solid var(--border)">关闭</button>
+        <button class="sm deploy-glow-btn" id="overrideSaveBtn" onclick="_saveSubdomainAliases()">保存别名</button>
+      </div>
+    </div>
+  `;
+}
+
+function _addSubdomainAlias() {
+  const s = _overrideModalState;
+  if (!s || !s.subdomainData) return;
+  const input = document.getElementById('subdomainNewAlias');
+  const raw = (input?.value || '').trim().toLowerCase();
+  if (!raw) return;
+  // Client-side DNS label validation
+  if (!/^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$/.test(raw)) {
+    showToast('无效的 DNS 标签：只允许小写字母、数字、连字符，首尾必须是字母或数字', 'error');
+    return;
+  }
+  if (s.subdomainData.aliases.includes(raw)) {
+    showToast(`"${raw}" 已经在列表里`, 'info');
+    return;
+  }
+  s.subdomainData.aliases.push(raw);
+  s.dirty = true;
+  _renderSubdomainForm();
+  // Restore focus to the input for fast entry of multiple aliases
+  setTimeout(() => document.getElementById('subdomainNewAlias')?.focus(), 0);
+}
+
+function _removeSubdomainAlias(idx) {
+  const s = _overrideModalState;
+  if (!s || !s.subdomainData) return;
+  s.subdomainData.aliases.splice(idx, 1);
+  s.dirty = true;
+  _renderSubdomainForm();
+}
+
+async function _saveSubdomainAliases() {
+  const s = _overrideModalState;
+  if (!s || !s.subdomainData) return;
+  _setOverrideButtonsDisabled(true);
+  try {
+    const res = await api('PUT', `/branches/${encodeURIComponent(s.branchId)}/subdomain-aliases`, {
+      aliases: s.subdomainData.aliases,
+    });
+    showToast(`已保存 ${res.aliases?.length || 0} 个别名，立即生效`, 'success');
+    s.subdomainData.aliases = res.aliases || [];
+    s.dirty = false;
+    _renderOverrideTabs(); // refresh badge count
+    _renderSubdomainForm();
+  } catch (e) {
+    // Collision errors come back as structured 409 — surface the server reason
+    showToast('保存失败: ' + e.message, 'error');
+  } finally {
+    _setOverrideButtonsDisabled(false);
+  }
+}
+
+async function _resetSubdomainAliases() {
+  const s = _overrideModalState;
+  if (!s || !s.subdomainData) return;
+  if (!confirm('确定清空该分支的全部子域名别名？')) return;
+  _setOverrideButtonsDisabled(true);
+  try {
+    await api('PUT', `/branches/${encodeURIComponent(s.branchId)}/subdomain-aliases`, { aliases: [] });
+    s.subdomainData.aliases = [];
+    s.dirty = false;
+    showToast('已清空所有别名', 'success');
+    _renderOverrideTabs();
+    _renderSubdomainForm();
+  } catch (e) {
+    showToast('清空失败: ' + e.message, 'error');
+  } finally {
+    _setOverrideButtonsDisabled(false);
+  }
+}
+
+// Expose handlers to inline event attributes (non-module script)
+window.openOverrideModal = openOverrideModal;
+window.closeOverrideModal = closeOverrideModal;
+window._switchOverrideProfile = _switchOverrideProfile;
+window._overrideFieldChanged = _overrideFieldChanged;
+window._saveOverride = _saveOverride;
+window._saveAndDeployOverride = _saveAndDeployOverride;
+window._resetOverride = _resetOverride;
+window._appendEnvToOverride = _appendEnvToOverride;
+window._addSubdomainAlias = _addSubdomainAlias;
+window._removeSubdomainAlias = _removeSubdomainAlias;
+window._saveSubdomainAliases = _saveSubdomainAliases;
+window._resetSubdomainAliases = _resetSubdomainAliases;
+
+// ════════════════════════════════════════════════════════════════════
+// Topology view — layered DAG of services + infra, with per-branch
+// override badges. Hook: renderBranches() calls renderTopologyView()
+// when _viewMode === 'topology'. Data sources are the already-polled
+// `buildProfiles` / `infraServices` / `branches` globals.
+// ════════════════════════════════════════════════════════════════════
+
+let _viewMode = sessionStorage.getItem('cds_view_mode') === 'topology' ? 'topology' : 'list';
+let _topologySelectedBranchId = null; // currently highlighted branch for override overlay
+let _topologyOverrideCache = new Map(); // branchId → Set<profileId> with hasOverride=true
+let _topologyOverrideDetails = new Map(); // branchId → Map<profileId, string[]> list of overridden fields
+
+function setViewMode(mode) {
+  if (mode !== 'list' && mode !== 'topology') mode = 'list';
+  _viewMode = mode;
+  sessionStorage.setItem('cds_view_mode', mode);
+
+  const listEl = document.getElementById('branchList');
+  const topoEl = document.getElementById('topologyView');
+  const buttons = document.querySelectorAll('.view-mode-btn');
+  buttons.forEach(btn => {
+    const active = btn.dataset.viewMode === mode;
+    btn.classList.toggle('active', active);
+    btn.setAttribute('aria-selected', active ? 'true' : 'false');
+  });
+
+  if (mode === 'topology') {
+    if (listEl) listEl.classList.add('hidden');
+    if (topoEl) topoEl.classList.remove('hidden');
+    renderTopologyView();
+  } else {
+    if (topoEl) topoEl.classList.add('hidden');
+    if (listEl) listEl.classList.remove('hidden');
+  }
+}
+
+/**
+ * Kahn's algorithm over buildProfiles + infraServices.
+ * Returns { layers: NodeDef[][], edges: {from, to}[] }
+ * Infra services without dependencies all sit at layer 0 (bottom).
+ * App profiles are layered by depends_on depth.
+ */
+function _layoutTopologyDag(profiles, infraList) {
+  const nodes = new Map(); // id → { id, kind, raw }
+  for (const p of profiles) {
+    nodes.set(p.id, { id: p.id, kind: 'app', raw: p });
+  }
+  for (const s of infraList) {
+    if (!nodes.has(s.id)) {
+      nodes.set(s.id, { id: s.id, kind: 'infra', raw: s });
+    }
+  }
+
+  // Edges: a profile's depends_on → those targets must run first.
+  // We point edge FROM dependency TO dependent (data flow direction).
+  const edges = [];
+  const indeg = new Map();
+  for (const n of nodes.values()) indeg.set(n.id, 0);
+
+  for (const p of profiles) {
+    for (const depId of p.dependsOn || []) {
+      if (!nodes.has(depId)) continue;
+      edges.push({ from: depId, to: p.id });
+      indeg.set(p.id, (indeg.get(p.id) || 0) + 1);
+    }
+  }
+
+  // Kahn's algorithm, layer by layer
+  const layers = [];
+  const remaining = new Set(nodes.keys());
+  let guard = 0;
+  while (remaining.size > 0 && guard++ < 50) {
+    const layer = [];
+    for (const id of remaining) {
+      if ((indeg.get(id) || 0) === 0) layer.push(nodes.get(id));
+    }
+    if (layer.length === 0) {
+      // Cycle detected — dump everything remaining into one final layer
+      for (const id of remaining) layer.push(nodes.get(id));
+    }
+    layer.sort((a, b) => {
+      if (a.kind !== b.kind) return a.kind === 'infra' ? -1 : 1;
+      return a.id.localeCompare(b.id);
+    });
+    layers.push(layer);
+    for (const n of layer) {
+      remaining.delete(n.id);
+      for (const e of edges) {
+        if (e.from === n.id) indeg.set(e.to, (indeg.get(e.to) || 0) - 1);
+      }
+    }
+  }
+
+  return { layers, edges, nodes };
+}
+
+// ── Rich card renderer ────────────────────────────────────────────────
+//
+// Lessons from the first draft:
+//   - Tiny nodes look like wireframes. Bump the card to 236 × 110.
+//   - Each card needs FOUR information lines: icon+name, image, port+deps, status.
+//   - Status dot reuses docker status from `branch.services[profileId].status`
+//     when a branch is selected; otherwise shows "inactive" grey.
+//   - Override badge is a rounded pill in the top-right corner, not just a
+//     floating emoji, so it doesn't collide with the service name.
+//   - Edges are dashed (declared dependency, not live flow) and curve through
+//     a midpoint for Railway-style smoothness.
+//
+// Node geometry:
+//   width  236px
+//   height 110px
+//   horizontal gap 90px (more space than first draft's 70)
+//   vertical gap 36px
+
+const TOPO_NODE_W = 236;
+const TOPO_NODE_H = 110;
+const TOPO_GAP_X = 90;
+const TOPO_GAP_Y = 36;
+const TOPO_PAD = 40;
+
+/**
+ * Pick a 1-char emoji icon for a service based on its image / id.
+ * Falls back to 📦 for unknown app services and 💾 for unknown infra.
+ */
+function _topologyNodeIcon(node) {
+  const raw = node.raw;
+  const image = (raw.dockerImage || '').toLowerCase();
+  const id = (raw.id || '').toLowerCase();
+  if (node.kind === 'infra') {
+    if (image.includes('mongo') || id.includes('mongo')) return '🍃';
+    if (image.includes('redis') || id.includes('redis')) return '🔺';
+    if (image.includes('postgres') || image.includes('mysql')) return '🐘';
+    if (image.includes('nginx') || image.includes('caddy')) return '🌐';
+    if (image.includes('kafka') || image.includes('rabbit')) return '📨';
+    return '💾';
+  }
+  // App
+  if (image.includes('node') || image.includes('alpine')) return '🟢';
+  if (image.includes('dotnet') || image.includes('aspnet')) return '🟣';
+  if (image.includes('python')) return '🐍';
+  if (image.includes('rust')) return '🦀';
+  if (image.includes('go:') || image.includes('golang')) return '🐹';
+  return '📦';
+}
+
+/**
+ * Shorten a docker image name for display. "mcr.microsoft.com/dotnet/sdk:8.0"
+ * becomes "dotnet/sdk:8.0". "node:20-alpine" stays as-is.
+ */
+function _shortenImage(img) {
+  if (!img) return '(no image)';
+  // Strip common registry prefixes
+  const stripped = img
+    .replace(/^mcr\.microsoft\.com\//, '')
+    .replace(/^docker\.io\//, '')
+    .replace(/^registry-1\.docker\.io\//, '');
+  // If still too long, keep the last 2 segments + tag
+  if (stripped.length <= 28) return stripped;
+  const [imageName, tag] = stripped.split(':');
+  const parts = imageName.split('/');
+  const short = parts.slice(-2).join('/');
+  return tag ? `${short}:${tag}` : short;
+}
+
+/**
+ * Resolve the runtime status of a node for the currently-selected branch.
+ * Returns one of: 'running' | 'building' | 'error' | 'stopped' | 'idle' | 'unknown'.
+ */
+function _topologyNodeStatus(node, selectedBranchId) {
+  if (node.kind === 'infra') {
+    return node.raw.status || 'unknown'; // running/stopped/error
+  }
+  // App service: look up the selected branch's services map
+  if (!selectedBranchId) return 'unknown';
+  const branch = branches.find(b => b.id === selectedBranchId);
+  if (!branch) return 'unknown';
+  const svc = branch.services?.[node.raw.id];
+  if (!svc) return 'unknown';
+  return svc.status || 'idle';
+}
+
+function _renderTopologySvg(layout, ctx) {
+  const { overrideSet, overrideDetails, selectedBranchId, selectedNodeId } = ctx;
+
+  const positions = new Map();
+  let maxLayerLen = 0;
+  layout.layers.forEach(layer => {
+    if (layer.length > maxLayerLen) maxLayerLen = layer.length;
+  });
+
+  // Centered layout: taller layers get shifted up so all layers vertically align
+  layout.layers.forEach((layer, layerIdx) => {
+    const layerHeight = layer.length * (TOPO_NODE_H + TOPO_GAP_Y) - TOPO_GAP_Y;
+    const maxHeight = maxLayerLen * (TOPO_NODE_H + TOPO_GAP_Y) - TOPO_GAP_Y;
+    const offsetY = (maxHeight - layerHeight) / 2;
+    layer.forEach((node, idxInLayer) => {
+      const x = TOPO_PAD + layerIdx * (TOPO_NODE_W + TOPO_GAP_X);
+      const y = TOPO_PAD + offsetY + idxInLayer * (TOPO_NODE_H + TOPO_GAP_Y);
+      positions.set(node.id, { x, y, node });
+    });
+  });
+
+  const totalW = TOPO_PAD * 2 + layout.layers.length * TOPO_NODE_W + Math.max(0, layout.layers.length - 1) * TOPO_GAP_X;
+  const totalH = TOPO_PAD * 2 + maxLayerLen * TOPO_NODE_H + Math.max(0, maxLayerLen - 1) * TOPO_GAP_Y;
+
+  // Compute which edges are connected to the currently-selected node
+  // (both directions) for highlight/dim.
+  const connectedEdgeIdx = new Set();
+  const connectedNodeIds = new Set();
+  if (selectedNodeId) {
+    connectedNodeIds.add(selectedNodeId);
+    layout.edges.forEach((e, idx) => {
+      if (e.from === selectedNodeId || e.to === selectedNodeId) {
+        connectedEdgeIdx.add(idx);
+        connectedNodeIds.add(e.from);
+        connectedNodeIds.add(e.to);
+      }
+    });
+  }
+
+  const edgePaths = layout.edges.map((edge, idx) => {
+    const from = positions.get(edge.from);
+    const to = positions.get(edge.to);
+    if (!from || !to) return '';
+    const x1 = from.x + TOPO_NODE_W;
+    const y1 = from.y + TOPO_NODE_H / 2;
+    const x2 = to.x;
+    const y2 = to.y + TOPO_NODE_H / 2;
+    const midX = (x1 + x2) / 2;
+    let cls = 'topology-edge';
+    if (selectedNodeId) {
+      if (connectedEdgeIdx.has(idx)) cls += ' highlighted';
+      else cls += ' dimmed';
+    }
+    return `<path class="${cls}" d="M ${x1} ${y1} C ${midX} ${y1}, ${midX} ${y2}, ${x2} ${y2}" />`;
+  }).join('');
+
+  // Rich node cards
+  const nodeEls = Array.from(positions.values()).map(({ x, y, node }) => {
+    const isApp = node.kind === 'app';
+    const raw = node.raw;
+    const title = esc(raw.name || raw.id);
+    const image = esc(_shortenImage(raw.dockerImage));
+    const icon = _topologyNodeIcon(node);
+    const status = _topologyNodeStatus(node, selectedBranchId);
+    const statusLabel = {
+      running: '运行中', building: '构建中', error: '错误',
+      stopped: '已停止', idle: '待命', starting: '启动中', unknown: '--',
+    }[status] || '--';
+    const depsCount = (raw.dependsOn || []).length;
+    const portLabel = isApp
+      ? `:${raw.containerPort ?? '—'}`
+      : `:${raw.hostPort ?? '?'} → :${raw.containerPort ?? '?'}`;
+
+    const hasOverride = isApp && overrideSet && overrideSet.has(raw.id);
+    const overriddenFields = hasOverride && overrideDetails
+      ? (overrideDetails.get(raw.id) || [])
+      : [];
+    const tooltip = hasOverride
+      ? `${raw.name} — 本分支自定义: ${overriddenFields.join(', ') || '(未知字段)'}`
+      : `${raw.name || raw.id}（${isApp ? '应用服务' : '基础设施'}）`;
+
+    // Node shape: rounded rect for apps, capsule for infra
+    const rx = isApp ? 12 : 26;
+    const shapeClass = isApp ? 'topology-node-box' : 'topology-node-capsule';
+
+    // Override pill in top-right corner
+    const overridePill = hasOverride
+      ? `<g>
+          <rect x="${x + TOPO_NODE_W - 66}" y="${y + 10}" width="56" height="18" rx="9" fill="var(--accent-bg,rgba(16,185,129,0.12))" stroke="var(--accent,#10b981)" stroke-width="1" />
+          <text x="${x + TOPO_NODE_W - 38}" y="${y + 23}" text-anchor="middle" fill="var(--accent,#10b981)" font-size="10" font-weight="600">🌿 自定义</text>
+        </g>`
+      : '';
+
+    // Dim nodes not connected to the selection
+    let nodeClass = 'topology-node';
+    if (hasOverride) nodeClass += ' has-override';
+    if (selectedNodeId === raw.id) nodeClass += ' selected';
+    else if (selectedNodeId && !connectedNodeIds.has(raw.id)) nodeClass += ' dimmed';
+
+    const clickHandler = isApp
+      ? `onclick="event.stopPropagation();_topologyNodeClick('${esc(raw.id)}')"`
+      : `onclick="event.stopPropagation();_topologyInfraClick('${esc(raw.id)}')"`;
+
+    return `
+      <g class="${nodeClass}" ${clickHandler}>
+        <title>${esc(tooltip)}</title>
+        <rect class="${shapeClass}" x="${x}" y="${y}" width="${TOPO_NODE_W}" height="${TOPO_NODE_H}" rx="${rx}" ry="${rx}" />
+
+        <!-- Icon + Name header -->
+        <text class="topology-node-icon" x="${x + 18}" y="${y + 34}">${icon}</text>
+        <text class="topology-node-label" x="${x + 44}" y="${y + 34}">${title}</text>
+
+        <!-- Status dot + label -->
+        <circle class="topology-node-status-dot ${status}" cx="${x + 18}" cy="${y + 62}" r="5" />
+        <text class="topology-node-meta" x="${x + 30}" y="${y + 66}">${esc(statusLabel)}</text>
+
+        <!-- Image row -->
+        <text class="topology-node-sub" x="${x + 18}" y="${y + 86}">${image}</text>
+
+        <!-- Port + deps row (bottom) -->
+        <text class="topology-node-meta" x="${x + 18}" y="${y + 102}">${esc(portLabel)}${depsCount > 0 ? `  ·  → ${depsCount} deps` : ''}</text>
+
+        ${overridePill}
+      </g>
+    `;
+  }).join('');
+
+  return `
+    <svg class="topology-canvas" width="${totalW}" height="${totalH}" viewBox="0 0 ${totalW} ${totalH}" xmlns="http://www.w3.org/2000/svg">
+      <defs>
+        <marker id="topologyArrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+          <path d="M 0 0 L 10 5 L 0 10 z" fill="var(--text-muted)" opacity="0.7" />
+        </marker>
+      </defs>
+      ${edgePaths}
+      ${nodeEls}
+    </svg>
+  `;
+}
+
+// Pan/zoom state — persists across re-renders via _topologyViewport
+let _topologyViewport = { scale: 1, tx: 0, ty: 0 };
+let _topologyDragState = null;
+
+function _applyTopologyTransform() {
+  const svg = document.querySelector('.topology-canvas');
+  const indicator = document.querySelector('.topology-zoom-indicator');
+  if (!svg) return;
+  svg.style.transform = `translate(${_topologyViewport.tx}px, ${_topologyViewport.ty}px) scale(${_topologyViewport.scale})`;
+  if (indicator) indicator.textContent = `${Math.round(_topologyViewport.scale * 100)}%`;
+}
+
+function _topologyZoom(delta, centerX, centerY) {
+  // Clamp scale to [0.3, 2.5]
+  const oldScale = _topologyViewport.scale;
+  const newScale = Math.max(0.3, Math.min(2.5, oldScale + delta));
+  if (newScale === oldScale) return;
+  // Zoom around the mouse position (if provided) so the point under the cursor stays fixed
+  if (centerX !== undefined && centerY !== undefined) {
+    const wrap = document.querySelector('.topology-canvas-wrap');
+    if (wrap) {
+      const rect = wrap.getBoundingClientRect();
+      const px = centerX - rect.left - _topologyViewport.tx;
+      const py = centerY - rect.top - _topologyViewport.ty;
+      const ratio = newScale / oldScale;
+      _topologyViewport.tx -= px * (ratio - 1);
+      _topologyViewport.ty -= py * (ratio - 1);
+    }
+  }
+  _topologyViewport.scale = newScale;
+  _applyTopologyTransform();
+}
+
+function _topologyZoomIn() { _topologyZoom(0.15); }
+function _topologyZoomOut() { _topologyZoom(-0.15); }
+
+function _topologyReset() {
+  _topologyViewport = { scale: 1, tx: 0, ty: 0 };
+  _applyTopologyTransform();
+}
+
+function _topologyFit() {
+  const svg = document.querySelector('.topology-canvas');
+  const wrap = document.querySelector('.topology-canvas-wrap');
+  if (!svg || !wrap) return;
+  const wrapRect = wrap.getBoundingClientRect();
+  const svgW = parseFloat(svg.getAttribute('width')) || 1;
+  const svgH = parseFloat(svg.getAttribute('height')) || 1;
+  // Fit with 40px margin
+  const scaleX = (wrapRect.width - 80) / svgW;
+  const scaleY = (wrapRect.height - 80) / svgH;
+  const scale = Math.min(scaleX, scaleY, 1.5);
+  _topologyViewport.scale = Math.max(0.3, scale);
+  // Center the content
+  _topologyViewport.tx = (wrapRect.width - svgW * _topologyViewport.scale) / 2;
+  _topologyViewport.ty = (wrapRect.height - svgH * _topologyViewport.scale) / 2;
+  _applyTopologyTransform();
+}
+
+function _bindTopologyPanZoom() {
+  const wrap = document.querySelector('.topology-canvas-wrap');
+  if (!wrap) return;
+
+  // Mouse wheel → zoom toward cursor
+  wrap.addEventListener('wheel', (e) => {
+    e.preventDefault();
+    const delta = e.deltaY > 0 ? -0.1 : 0.1;
+    _topologyZoom(delta, e.clientX, e.clientY);
+  }, { passive: false });
+
+  // Mousedown on empty canvas → start panning. Mousedown on a node → let the click through.
+  wrap.addEventListener('mousedown', (e) => {
+    if (e.button !== 0) return;
+    // If the click landed on a node, don't start pan (let onclick handle it)
+    if (e.target.closest('.topology-node')) return;
+    _topologyDragState = {
+      startX: e.clientX,
+      startY: e.clientY,
+      baseTx: _topologyViewport.tx,
+      baseTy: _topologyViewport.ty,
+      moved: false,
+    };
+    wrap.classList.add('dragging');
+    // Deselect node on empty-canvas click (will happen on mouseup if not moved)
+  });
+
+  window.addEventListener('mousemove', (e) => {
+    if (!_topologyDragState) return;
+    const dx = e.clientX - _topologyDragState.startX;
+    const dy = e.clientY - _topologyDragState.startY;
+    if (Math.abs(dx) + Math.abs(dy) > 3) _topologyDragState.moved = true;
+    _topologyViewport.tx = _topologyDragState.baseTx + dx;
+    _topologyViewport.ty = _topologyDragState.baseTy + dy;
+    _applyTopologyTransform();
+  });
+
+  window.addEventListener('mouseup', () => {
+    if (!_topologyDragState) return;
+    const wasClick = !_topologyDragState.moved;
+    _topologyDragState = null;
+    wrap.classList.remove('dragging');
+    // Clicking on empty canvas (not a drag) deselects the current node
+    if (wasClick && _topologyFocusedNodeId) {
+      _topologyFocusedNodeId = null;
+      renderTopologyView();
+    }
+  });
+}
+
+// Selected node for edge highlighting (distinct from _topologySelectedBranchId)
+let _topologyFocusedNodeId = null;
+
+function renderTopologyView() {
+  const host = document.getElementById('topologyView');
+  if (!host) return;
+
+  if (!buildProfiles.length && !infraServices.length) {
+    host.innerHTML = `
+      <div class="topology-card">
+        <div class="topology-empty">
+          <strong>还没有发现任何服务</strong>
+          <span>导入 docker-compose.yml 后这里会显示应用和基础设施的依赖图</span>
+        </div>
+      </div>
+    `;
+    return;
+  }
+
+  const layout = _layoutTopologyDag(buildProfiles, infraServices);
+
+  const chipHtml = branches.length === 0
+    ? '<span class="topology-branch-picker-label">暂无分支 —— 先在列表视图创建一个</span>'
+    : `
+      <span class="topology-branch-picker-label">查看分支:</span>
+      <button class="topology-branch-chip ${!_topologySelectedBranchId ? 'active' : ''}" onclick="_topologySelectBranch(null)">（共享视图）</button>
+      ${branches.map(b => `
+        <button class="topology-branch-chip ${_topologySelectedBranchId === b.id ? 'active' : ''}" onclick="_topologySelectBranch('${esc(b.id)}')" title="${esc(b.branch || b.id)}">${esc(b.id)}</button>
+      `).join('')}
+    `;
+
+  const overrideSet = _topologySelectedBranchId
+    ? _topologyOverrideCache.get(_topologySelectedBranchId)
+    : null;
+  const overrideDetails = _topologySelectedBranchId
+    ? _topologyOverrideDetails.get(_topologySelectedBranchId)
+    : null;
+
+  host.innerHTML = `
+    <div class="topology-card">
+      <div class="topology-header">
+        <div class="topology-title">
+          服务拓扑
+          <span class="topology-title-hint">${layout.nodes.size} 个服务 · ${layout.edges.length} 条依赖 · ${layout.layers.length} 层 · 滚轮缩放 · 拖拽平移</span>
+        </div>
+        <div class="topology-branch-picker">${chipHtml}</div>
+      </div>
+      <div class="topology-legend">
+        <span class="topology-legend-item"><span class="topology-legend-swatch app"></span>应用服务</span>
+        <span class="topology-legend-item"><span class="topology-legend-swatch infra"></span>基础设施</span>
+        <span class="topology-legend-item"><span class="topology-legend-swatch override"></span>本分支自定义</span>
+        <span class="topology-legend-item" style="color:var(--text-secondary);margin-left:auto">点击节点查看依赖，双击打开配置</span>
+      </div>
+      <div class="topology-canvas-wrap">
+        ${_renderTopologySvg(layout, {
+          overrideSet,
+          overrideDetails,
+          selectedBranchId: _topologySelectedBranchId,
+          selectedNodeId: _topologyFocusedNodeId,
+        })}
+        <div class="topology-zoom-indicator">100%</div>
+        <div class="topology-toolbar">
+          <button type="button" onclick="_topologyZoomIn()" title="放大">+</button>
+          <button type="button" onclick="_topologyZoomOut()" title="缩小">−</button>
+          <div class="separator"></div>
+          <button type="button" onclick="_topologyFit()" title="自适应">⊡</button>
+          <button type="button" onclick="_topologyReset()" title="1:1 复位">◉</button>
+        </div>
+      </div>
+    </div>
+  `;
+
+  // Restore transform from persisted viewport + bind pan/zoom handlers
+  _applyTopologyTransform();
+  _bindTopologyPanZoom();
+}
+
+async function _topologySelectBranch(branchId) {
+  _topologySelectedBranchId = branchId;
+  _topologyFocusedNodeId = null; // clear focus when branch changes
+  if (!branchId) {
+    renderTopologyView();
+    return;
+  }
+  try {
+    const data = await api('GET', `/branches/${encodeURIComponent(branchId)}/profile-overrides`);
+    const overrideSet = new Set();
+    const detailMap = new Map();
+    for (const p of data.profiles || []) {
+      if (p.hasOverride) {
+        overrideSet.add(p.profileId);
+        const fields = p.override
+          ? Object.keys(p.override).filter(k => k !== 'updatedAt' && k !== 'notes')
+          : [];
+        detailMap.set(p.profileId, fields);
+      }
+    }
+    _topologyOverrideCache.set(branchId, overrideSet);
+    _topologyOverrideDetails.set(branchId, detailMap);
+  } catch (e) {
+    console.error('topology: load overrides failed', e);
+    showToast('加载分支覆盖失败: ' + e.message, 'error');
+  }
+  renderTopologyView();
+}
+
+// Node click logic: first click focuses the node (highlight edges); second
+// click on the same node opens the override modal. Matches Railway's "click
+// to select, click again to configure" pattern.
+let _topologyLastClickId = null;
+let _topologyLastClickAt = 0;
+function _topologyNodeClick(profileId) {
+  const now = Date.now();
+  const isDoubleClick = _topologyLastClickId === profileId && (now - _topologyLastClickAt) < 500;
+  _topologyLastClickId = profileId;
+  _topologyLastClickAt = now;
+
+  if (isDoubleClick) {
+    // Open configuration modal
+    if (!_topologySelectedBranchId) {
+      showToast('请先在顶部选择一个分支，再双击节点打开其配置', 'info');
+      return;
+    }
+    openOverrideModal(_topologySelectedBranchId, profileId);
+    return;
+  }
+
+  // Single click: focus the node to highlight connected edges
+  _topologyFocusedNodeId = _topologyFocusedNodeId === profileId ? null : profileId;
+  renderTopologyView();
+}
+
+function _topologyInfraClick(serviceId) {
+  // Infra supports the same focus behavior (edge highlight) but not override config
+  _topologyFocusedNodeId = _topologyFocusedNodeId === serviceId ? null : serviceId;
+  renderTopologyView();
+}
+
+// Expose to inline handlers
+window.setViewMode = setViewMode;
+window.renderTopologyView = renderTopologyView;
+window._topologySelectBranch = _topologySelectBranch;
+window._topologyNodeClick = _topologyNodeClick;
+window._topologyInfraClick = _topologyInfraClick;
+window._topologyZoomIn = _topologyZoomIn;
+window._topologyZoomOut = _topologyZoomOut;
+window._topologyFit = _topologyFit;
+window._topologyReset = _topologyReset;
+
+// Apply persisted view mode on load (deferred so DOM elements exist)
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', () => setViewMode(_viewMode));
+} else {
+  setTimeout(() => setViewMode(_viewMode), 0);
 }
 
 // ── Init activity monitor & AI pairing ──

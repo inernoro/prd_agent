@@ -184,7 +184,19 @@ export class ProxyService {
 
   /**
    * Check if the host is a preview subdomain (e.g., <slug>.preview.example.com).
-   * Returns the branch slug extracted from the subdomain, or null.
+   * Returns the branch slug to route to, or null if this isn't a preview host.
+   *
+   * Resolution order:
+   *   1. Extract the label (everything before the rootDomain suffix)
+   *   2. Check if any branch owns this label as a `subdomainAliases` entry —
+   *      if yes, return that branch's id (case-insensitive)
+   *   3. Otherwise, return the label itself and let the caller treat it as a
+   *      direct slug lookup (legacy behavior, preserves multi-label support
+   *      for anyone using `foo.bar.example.com` style setups)
+   *
+   * Aliases always win over slug lookups: if a branch has `demo` as an alias,
+   * `demo.example.com` routes to that branch even if another branch happens
+   * to have the slug "demo".
    */
   private extractPreviewBranch(host: string): string | null {
     const h = host.split(':')[0].toLowerCase();
@@ -195,7 +207,14 @@ export class ProxyService {
     for (const rootDomain of rootDomains) {
       const suffix = `.${rootDomain.toLowerCase()}`;
       if (h.endsWith(suffix) && h.length > suffix.length) {
-        return h.slice(0, -suffix.length);
+        const label = h.slice(0, -suffix.length);
+        // First check: does this label match any branch's custom alias?
+        // Aliases are single DNS labels (enforced at write time), so this
+        // only kicks in for leaf labels like `demo` in `demo.example.com`.
+        const aliasHit = this.stateService.findBranchByAlias(label);
+        if (aliasHit) return aliasHit;
+        // Fallback: treat the label as a branch slug directly (legacy).
+        return label;
       }
     }
     return null;

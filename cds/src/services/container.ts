@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
-import type { IShellExecutor, CdsConfig, BuildProfile, BranchEntry, ServiceState, InfraService, DeployModeOverride } from '../types.js';
+import type { IShellExecutor, CdsConfig, BuildProfile, BranchEntry, ServiceState, InfraService, DeployModeOverride, BuildProfileOverride } from '../types.js';
 import { combinedOutput } from '../types.js';
 import { resolveEnvTemplates } from './compose-parser.js';
 
@@ -23,6 +23,52 @@ export function resolveProfileWithMode(profile: BuildProfile): BuildProfile {
       ? { ...profile.env, ...override.env }
       : profile.env,
   };
+}
+
+/**
+ * Merge a branch-level BuildProfileOverride onto the shared baseline profile.
+ * Only fields set in the override take effect; env is key-wise merged on top
+ * of the baseline (override wins per key). Returns a NEW object — the baseline
+ * is never mutated.
+ */
+export function applyProfileOverride(baseline: BuildProfile, override?: BuildProfileOverride): BuildProfile {
+  if (!override) return baseline;
+  return {
+    ...baseline,
+    ...(override.dockerImage !== undefined ? { dockerImage: override.dockerImage } : {}),
+    ...(override.command !== undefined ? { command: override.command } : {}),
+    ...(override.containerWorkDir !== undefined ? { containerWorkDir: override.containerWorkDir } : {}),
+    ...(override.containerPort !== undefined ? { containerPort: override.containerPort } : {}),
+    ...(override.pathPrefixes !== undefined ? { pathPrefixes: override.pathPrefixes } : {}),
+    ...(override.resources !== undefined ? { resources: override.resources } : {}),
+    ...(override.activeDeployMode !== undefined ? { activeDeployMode: override.activeDeployMode } : {}),
+    ...(override.startupSignal !== undefined ? { startupSignal: override.startupSignal } : {}),
+    ...(override.readinessProbe !== undefined ? { readinessProbe: override.readinessProbe } : {}),
+    env: override.env
+      ? { ...(baseline.env || {}), ...override.env }
+      : baseline.env,
+  };
+}
+
+/**
+ * Resolve the final effective profile for a specific branch deployment.
+ *
+ * Merge order (later wins per field):
+ *   1. baseline BuildProfile         — the shared public definition
+ *   2. branch-level override         — BranchEntry.profileOverrides[profileId]
+ *   3. deploy-mode override          — profile.deployModes[activeDeployMode]
+ *
+ * The branch override can even change the active deploy mode, so it is applied
+ * before `resolveProfileWithMode`.
+ *
+ * All call sites that previously used `resolveProfileWithMode(profile)` directly
+ * should switch to `resolveEffectiveProfile(profile, branch)` so per-branch
+ * overrides take effect.
+ */
+export function resolveEffectiveProfile(profile: BuildProfile, branch?: BranchEntry): BuildProfile {
+  const branchOverride = branch?.profileOverrides?.[profile.id];
+  const withBranchOverride = applyProfileOverride(profile, branchOverride);
+  return resolveProfileWithMode(withBranchOverride);
 }
 
 export class ContainerService {

@@ -8,7 +8,7 @@ import { createGzip } from 'node:zlib';
 import { Router } from 'express';
 import { StateService } from '../services/state.js';
 import type { WorktreeService } from '../services/worktree.js';
-import { resolveProfileWithMode } from '../services/container.js';
+import { resolveEffectiveProfile } from '../services/container.js';
 import type { ContainerService } from '../services/container.js';
 import type { SchedulerService } from '../services/scheduler.js';
 import type { ExecutorRegistry } from '../scheduler/executor-registry.js';
@@ -903,16 +903,19 @@ export function createBranchRouter(deps: RouterDeps): Router {
         const layerStartTime = Date.now();
 
         await Promise.all(layer.items.map(async (profile) => {
-          // Resolve deploy mode overrides (e.g., dev → static)
-          const effectiveProfile = resolveProfileWithMode(profile);
-          const modeLabel = profile.activeDeployMode && profile.deployModes?.[profile.activeDeployMode]
-            ? ` [${profile.deployModes[profile.activeDeployMode].label}]`
+          // Resolve baseline → branch override → deploy-mode override
+          const effectiveProfile = resolveEffectiveProfile(profile, entry);
+          const branchOverride = entry.profileOverrides?.[profile.id];
+          const activeMode = effectiveProfile.activeDeployMode;
+          const modeLabel = activeMode && effectiveProfile.deployModes?.[activeMode]
+            ? ` [${effectiveProfile.deployModes[activeMode].label}]`
             : '';
+          const overrideLabel = branchOverride ? ' (分支自定义)' : '';
           const serviceStartTime = Date.now();
           logEvent({
             step: `build-${profile.id}`,
             status: 'running',
-            title: `正在构建 ${profile.name}${modeLabel}...`,
+            title: `正在构建 ${profile.name}${modeLabel}${overrideLabel}...`,
             timestamp: new Date().toISOString(),
           });
 
@@ -934,7 +937,8 @@ export function createBranchRouter(deps: RouterDeps): Router {
               detail: {
                 cdsVars: maskSecrets(cdsVars),
                 profileEnvKeys: Object.keys(effectiveProfile.env ?? {}),
-                deployMode: profile.activeDeployMode || 'default',
+                deployMode: effectiveProfile.activeDeployMode || 'default',
+                branchOverrideKeys: branchOverride ? Object.keys(branchOverride) : [],
               },
               timestamp: new Date().toISOString(),
             });
@@ -1109,14 +1113,17 @@ export function createBranchRouter(deps: RouterDeps): Router {
         stateService.save();
       }
 
-      // Resolve deploy mode overrides
-      const effectiveProfile = resolveProfileWithMode(profile);
-      const modeLabel = profile.activeDeployMode && profile.deployModes?.[profile.activeDeployMode]
-        ? ` [${profile.deployModes[profile.activeDeployMode].label}]`
+      // Resolve baseline → branch override → deploy-mode override
+      const effectiveProfile = resolveEffectiveProfile(profile, entry);
+      const branchOverride = entry.profileOverrides?.[profile.id];
+      const activeMode = effectiveProfile.activeDeployMode;
+      const modeLabel = activeMode && effectiveProfile.deployModes?.[activeMode]
+        ? ` [${effectiveProfile.deployModes[activeMode].label}]`
         : '';
+      const overrideLabel = branchOverride ? ' (分支自定义)' : '';
 
       // Build & run the single profile
-      logEvent({ step: `build-${profile.id}`, status: 'running', title: `正在构建 ${profile.name}${modeLabel}...`, timestamp: new Date().toISOString() });
+      logEvent({ step: `build-${profile.id}`, status: 'running', title: `正在构建 ${profile.name}${modeLabel}${overrideLabel}...`, timestamp: new Date().toISOString() });
 
       if (!entry.services[profile.id]) {
         const hostPort = stateService.allocatePort(config.portStart);
@@ -1466,6 +1473,268 @@ export function createBranchRouter(deps: RouterDeps): Router {
       stateService.updateBranchMeta(id, { isFavorite, notes, tags, isColorMarked });
       stateService.save();
       res.json({ message: '已更新' });
+    } catch (err) {
+      res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  // ── Per-branch BuildProfile overrides (inheritance-with-extension) ──
+  //
+  // GET returns one entry per shared BuildProfile, showing baseline + branch
+  // override + merged effective. PUT replaces an override (full body), DELETE
+  // clears it. Applied at runtime by `resolveEffectiveProfile` in container.ts.
+
+  router.get('/branches/:id/profile-overrides', (req, res) => {
+    const { id } = req.params;
+    const entry = stateService.getBranch(id);
+    if (!entry) {
+      res.status(404).json({ error: `分支 "${id}" 不存在` });
+      return;
+    }
+    // CDS infra vars (CDS_HOST / CDS_MONGODB_PORT / etc.) are injected BEFORE
+    // profile.env at runtime (see container.ts runService ~L118). We expose
+    // the same merge order here so the override modal's "effective env"
+    // preview matches what actually reaches the container, not a misleading
+    // subset that only contains user-editable keys.
+    const cdsVars = stateService.getCdsEnvVars();
+    const cdsEnvKeys = Object.keys(cdsVars);
+    const profiles = stateService.getBuildProfiles();
+    const payload = profiles.map(profile => {
+      const override = entry.profileOverrides?.[profile.id];
+      const resolved = resolveEffectiveProfile(profile, entry);
+      // CDS infra vars first, then profile.env so user-set values can still
+      // shadow infra defaults (keeps current runtime semantics — see container.ts).
+      const effective = {
+        ...resolved,
+        env: { ...cdsVars, ...(resolved.env || {}) },
+      };
+      return {
+        profileId: profile.id,
+        profileName: profile.name,
+        baseline: profile,
+        override: override || null,
+        effective,
+        cdsEnvKeys,
+        hasOverride: !!override && Object.keys(override).some(k => k !== 'updatedAt' && k !== 'notes'),
+      };
+    });
+    res.json({ branchId: id, profiles: payload });
+  });
+
+  router.put('/branches/:id/profile-overrides/:profileId', (req, res) => {
+    const { id, profileId } = req.params;
+    const entry = stateService.getBranch(id);
+    if (!entry) {
+      res.status(404).json({ error: `分支 "${id}" 不存在` });
+      return;
+    }
+    const profile = stateService.getBuildProfile(profileId);
+    if (!profile) {
+      res.status(404).json({ error: `构建配置 "${profileId}" 不存在` });
+      return;
+    }
+    try {
+      // Body is the BuildProfileOverride object. Unknown keys are silently
+      // dropped by the interface shape — we only copy fields we recognize.
+      const body = (req.body ?? {}) as Record<string, unknown>;
+
+      // M6: reject nonsense port values outright, otherwise the front-end
+      // can accidentally write containerPort:0 and break routing silently.
+      if (typeof body.containerPort === 'number' && body.containerPort <= 0) {
+        res.status(400).json({ error: 'containerPort 必须是正整数' });
+        return;
+      }
+
+      // M8: `typeof [] === 'object'` is true and typeof null === 'object' too,
+      // so we explicitly filter both. Otherwise `body.env = []` would cast to
+      // Record<string,string> and produce garbage at deploy time.
+      let envOverride: Record<string, string> | undefined;
+      if (
+        body.env !== null &&
+        typeof body.env === 'object' &&
+        !Array.isArray(body.env)
+      ) {
+        // M9: drop any value that isn't a string. Non-string values would
+        // explode the env-file writer (container.ts writeEnvFile) and leak
+        // `undefined` / numbers into Docker env.
+        const cleaned: Record<string, string> = {};
+        for (const [k, v] of Object.entries(body.env as Record<string, unknown>)) {
+          if (typeof v === 'string') cleaned[k] = v;
+        }
+        envOverride = cleaned;
+      }
+
+      const override = {
+        dockerImage: typeof body.dockerImage === 'string' ? body.dockerImage : undefined,
+        command: typeof body.command === 'string' ? body.command : undefined,
+        containerWorkDir: typeof body.containerWorkDir === 'string' ? body.containerWorkDir : undefined,
+        containerPort: typeof body.containerPort === 'number' ? body.containerPort : undefined,
+        env: envOverride,
+        pathPrefixes: Array.isArray(body.pathPrefixes) ? body.pathPrefixes as string[] : undefined,
+        resources: body.resources && typeof body.resources === 'object' && !Array.isArray(body.resources) ? body.resources as { memoryMB?: number; cpus?: number } : undefined,
+        activeDeployMode: typeof body.activeDeployMode === 'string' ? body.activeDeployMode : undefined,
+        startupSignal: typeof body.startupSignal === 'string' ? body.startupSignal : undefined,
+        notes: typeof body.notes === 'string' ? body.notes : undefined,
+      };
+      stateService.setBranchProfileOverride(id, profileId, override);
+      stateService.save();
+
+      // Return the new effective profile so the UI can show the merged result
+      // without a second round-trip.
+      const refreshed = stateService.getBranch(id)!;
+      const effective = resolveEffectiveProfile(profile, refreshed);
+      res.json({
+        message: '已保存分支覆盖',
+        profileId,
+        override: stateService.getBranchProfileOverride(id, profileId),
+        effective,
+        needsRedeploy: true,
+      });
+    } catch (err) {
+      res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  // ── Per-branch subdomain aliases ──
+  //
+  // Stable-URL aliases that route to a branch in addition to the default
+  // `<slug>.<rootDomain>` subdomain. Used for webhook receivers, demo
+  // links, and front-end hardcoded API hosts.
+  //
+  // Validation rules (enforced here, not in state.ts):
+  //   - Each alias is a valid DNS label: /^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$/
+  //   - No duplicates within the same request
+  //   - Not a reserved label (cds-internal tooling domains)
+  //   - No collision with another branch's slug or aliases
+
+  const DNS_LABEL_RE = /^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$/;
+  const RESERVED_ALIAS_LABELS = new Set([
+    'www', 'admin', 'switch', 'preview',
+    'cds', 'master', 'dashboard',
+  ]);
+
+  router.get('/branches/:id/subdomain-aliases', (req, res) => {
+    const { id } = req.params;
+    const entry = stateService.getBranch(id);
+    if (!entry) {
+      res.status(404).json({ error: `分支 "${id}" 不存在` });
+      return;
+    }
+    const aliases = stateService.getBranchSubdomainAliases(id);
+    // Compute the full preview URLs so the UI can show them without
+    // re-reading CDS config separately.
+    const rootDomains = config.rootDomains?.length
+      ? config.rootDomains
+      : (config.previewDomain ? [config.previewDomain] : []);
+    const primaryRoot = rootDomains[0] || 'example.com';
+    const previewUrls = aliases.map(a => `http://${a}.${primaryRoot}`);
+    const defaultUrl = `http://${id}.${primaryRoot}`;
+    res.json({
+      branchId: id,
+      aliases,
+      defaultUrl,
+      previewUrls,
+      rootDomain: primaryRoot,
+    });
+  });
+
+  router.put('/branches/:id/subdomain-aliases', (req, res) => {
+    const { id } = req.params;
+    const entry = stateService.getBranch(id);
+    if (!entry) {
+      res.status(404).json({ error: `分支 "${id}" 不存在` });
+      return;
+    }
+
+    const body = (req.body ?? {}) as { aliases?: unknown };
+    if (!Array.isArray(body.aliases)) {
+      res.status(400).json({ error: '请求体需要 { aliases: string[] } 格式' });
+      return;
+    }
+
+    // Normalize: trim + lowercase, drop empties. Preserve order for UI display.
+    const normalized: string[] = [];
+    const seen = new Set<string>();
+    for (const raw of body.aliases) {
+      if (typeof raw !== 'string') continue;
+      const lower = raw.trim().toLowerCase();
+      if (!lower) continue;
+      if (seen.has(lower)) continue; // drop duplicates within the request
+      seen.add(lower);
+      normalized.push(lower);
+    }
+
+    // Validate each label against DNS rules
+    const invalidLabels = normalized.filter(a => !DNS_LABEL_RE.test(a) || a.length > 63);
+    if (invalidLabels.length > 0) {
+      res.status(400).json({
+        error: `无效的子域名标签: ${invalidLabels.join(', ')}。只允许小写字母、数字、连字符，首尾必须是字母或数字，长度 1-63。`,
+        invalidLabels,
+      });
+      return;
+    }
+
+    // Reject reserved labels
+    const reservedHits = normalized.filter(a => RESERVED_ALIAS_LABELS.has(a));
+    if (reservedHits.length > 0) {
+      res.status(400).json({
+        error: `保留字不允许作为别名: ${reservedHits.join(', ')}`,
+        reservedLabels: reservedHits,
+      });
+      return;
+    }
+
+    // Reject aliases that equal this branch's own slug (no-op + confusing)
+    const selfCollisions = normalized.filter(a => a === id.toLowerCase());
+    if (selfCollisions.length > 0) {
+      res.status(400).json({
+        error: `别名不能等于分支自身的 slug "${id}"（默认路径已经覆盖）`,
+      });
+      return;
+    }
+
+    // Check collisions with other branches' slugs/aliases
+    const collisions = stateService.findAliasCollisions(id, normalized);
+    if (collisions.length > 0) {
+      res.status(409).json({
+        error: `子域名冲突: ${collisions.map(c => `"${c.alias}" 已被分支 "${c.conflictWith}" ${c.reason === 'slug' ? '的默认 slug' : '的别名'}占用`).join('; ')}`,
+        collisions,
+      });
+      return;
+    }
+
+    try {
+      stateService.setBranchSubdomainAliases(id, normalized);
+      stateService.save();
+      // Return the new aliases + preview URLs so the UI can update instantly
+      const rootDomains = config.rootDomains?.length
+        ? config.rootDomains
+        : (config.previewDomain ? [config.previewDomain] : []);
+      const primaryRoot = rootDomains[0] || 'example.com';
+      res.json({
+        message: '已保存子域名别名',
+        branchId: id,
+        aliases: normalized,
+        previewUrls: normalized.map(a => `http://${a}.${primaryRoot}`),
+        defaultUrl: `http://${id}.${primaryRoot}`,
+        needsRedeploy: false, // aliases are proxy-level, no container restart needed
+      });
+    } catch (err) {
+      res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  router.delete('/branches/:id/profile-overrides/:profileId', (req, res) => {
+    const { id, profileId } = req.params;
+    const entry = stateService.getBranch(id);
+    if (!entry) {
+      res.status(404).json({ error: `分支 "${id}" 不存在` });
+      return;
+    }
+    try {
+      stateService.clearBranchProfileOverride(id, profileId);
+      stateService.save();
+      res.json({ message: '已恢复为公共配置', profileId, needsRedeploy: true });
     } catch (err) {
       res.status(500).json({ error: (err as Error).message });
     }
