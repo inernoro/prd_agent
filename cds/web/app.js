@@ -1,4 +1,28 @@
 const API = '/api';
+
+/**
+ * P4 Part 3b: the current project id derived from the URL query string.
+ *
+ * `/index.html` is the legacy Dashboard. When reached via a project card
+ * on `/projects.html` the card navigates to `index.html?project=<id>`.
+ * Without that param we fall back to 'default' — the legacy project
+ * created by StateService.migrateProjects(). Every list-GET request
+ * injects this id as `?project=<id>` so the server-side filter
+ * (routes/branches.ts) scopes branches/profiles/infra/rules to just
+ * this project.
+ *
+ * Write requests (create branch, etc.) inline the same id in the body
+ * where the endpoint expects it.
+ */
+const CURRENT_PROJECT_ID = (function () {
+  try {
+    var params = new URLSearchParams(location.search);
+    var v = params.get('project');
+    return v && v.length > 0 ? v : 'default';
+  } catch (e) {
+    return 'default';
+  }
+})();
 const busyBranches = new Set();
 // Per-button loading state: Map<string, Set<string>> e.g. { "main": Set(["stop", "pull"]) }
 const loadingActions = new Map();
@@ -104,11 +128,49 @@ let _branchesFirstLoadDone = false;
 
 // ── Utilities ──
 
+/**
+ * Paths that are intentionally NOT scoped to a project. These are
+ * global CDS APIs (scheduler, cluster, bridge, self-update, etc.)
+ * that operate across all projects and therefore must NOT receive a
+ * ?project= filter. Any new endpoint added to CDS should be reviewed
+ * against this list before assuming it's project-scoped.
+ */
+const PROJECT_UNSCOPED_PREFIXES = [
+  '/cluster',
+  '/scheduler',
+  '/executors',
+  '/bridge',
+  '/self-',
+  '/ai/',
+  '/healthz',
+  '/projects', // The projects list itself is never filtered by project id
+];
+
+function isProjectScopedPath(path) {
+  // Strip any existing query string before matching
+  var base = path.split('?')[0];
+  for (var i = 0; i < PROJECT_UNSCOPED_PREFIXES.length; i++) {
+    if (base.indexOf(PROJECT_UNSCOPED_PREFIXES[i]) === 0) return false;
+  }
+  return true;
+}
+
 async function api(method, path, body, { poll } = {}) {
   const opts = { method, headers: { 'Content-Type': 'application/json' } };
   if (poll) opts.headers['X-CDS-Poll'] = 'true';
   if (body) opts.body = JSON.stringify(body);
-  const res = await fetch(`${API}${path}`, opts);
+
+  // P4 Part 3b: inject ?project=<id> on GET requests to scoped endpoints
+  // so the backend filter picks them up. POST/PUT/PATCH/DELETE carry
+  // the project context in the URL path itself (e.g. /branches/:id)
+  // so we don't append — the target entry already knows its project.
+  let finalPath = path;
+  if (method === 'GET' && isProjectScopedPath(path)) {
+    var sep = path.indexOf('?') === -1 ? '?' : '&';
+    finalPath = path + sep + 'project=' + encodeURIComponent(CURRENT_PROJECT_ID);
+  }
+
+  const res = await fetch(`${API}${finalPath}`, opts);
   if (res.status === 401) { location.href = '/login.html'; return; }
   const data = await res.json();
   if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
@@ -260,10 +322,41 @@ async function init() {
   // /api/me returns 401 and the widget stays hidden; in github mode it
   // returns 200 with user info and the widget flips visible.
   bootstrapAuthWidget().catch(() => { /* quiet: 401 is expected in non-github mode */ });
+  // P4 Part 3b: fetch the current project metadata so the header "项目"
+  // label can show the project name rather than a generic word. Failures
+  // are quiet — the fallback is the existing "项目" placeholder.
+  bootstrapCurrentProjectLabel().catch(() => { /* quiet */ });
   await Promise.all([loadBranches(), loadProfiles(), loadRoutingRules(), loadConfig(), loadEnvVars(), loadInfraServices(), loadMirrorState(), loadTabTitleState(), loadClusterStatus()]);
   refreshRemoteCandidates();
   updatePreviewModeUI();
   initStateStream(); // Server-authority: listen for state changes via SSE (replaces polling)
+}
+
+// P4 Part 3b: display the current project's name in the header link so
+// users can tell which project they're in without going back to the
+// projects list. When the URL has no ?project= we're on the legacy
+// default and the label stays as "项目" (a generic "back to projects").
+async function bootstrapCurrentProjectLabel() {
+  var label = document.getElementById('cdsCurrentProjectLabel');
+  if (!label) return;
+  if (CURRENT_PROJECT_ID === 'default') return; // legacy case, no rename
+
+  // Fetch directly (bypass api() since /projects is unscoped and api()
+  // would inject a filter for scoped paths).
+  var res;
+  try {
+    res = await fetch('/api/projects/' + encodeURIComponent(CURRENT_PROJECT_ID), {
+      credentials: 'same-origin',
+    });
+  } catch {
+    return;
+  }
+  if (!res.ok) return;
+  var body = await res.json();
+  if (body && body.name) {
+    label.textContent = body.name;
+    label.title = '项目：' + body.name + '（点击返回列表）';
+  }
 }
 
 // ── P2.5: GitHub auth widget ──
@@ -1057,7 +1150,9 @@ async function addBranch(name) {
 
   // Server request in background
   try {
-    await api('POST', '/branches', { branch: name });
+    // P4 Part 3b: stamp the new branch with the current project so it
+    // shows up in scoped list queries.
+    await api('POST', '/branches', { branch: name, projectId: CURRENT_PROJECT_ID });
     showToast(`分支 "${name}" 已添加`, 'success');
   } catch (e) {
     // Rollback optimistic add on failure

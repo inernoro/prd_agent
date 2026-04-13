@@ -154,6 +154,65 @@ describe('Branch Routes', () => {
       expect((res.body as any).branches).toHaveLength(1);
       expect((res.body as any).branches[0].id).toBe('main');
     });
+
+    it('P4 Part 3b: filters by ?project= query param', async () => {
+      // The migration creates a legacy 'default' project automatically,
+      // but we need an 'alt' project to exist before POST /branches
+      // will accept a branch stamped with projectId='alt'.
+      const now = new Date().toISOString();
+      stateService.addProject({
+        id: 'alt',
+        slug: 'alt',
+        name: 'Alt Project',
+        kind: 'git',
+        createdAt: now,
+        updatedAt: now,
+      });
+
+      // Seed: one branch on the legacy default project, one on 'alt'
+      await request(server, 'POST', '/api/branches', {
+        branch: 'legacy-branch',
+      });
+      await request(server, 'POST', '/api/branches', {
+        branch: 'alt-branch',
+        projectId: 'alt',
+      });
+
+      // Default filter → only legacy
+      const legacyRes = await request(server, 'GET', '/api/branches?project=default');
+      const legacyBranches = (legacyRes.body as any).branches;
+      expect(legacyBranches.map((b: any) => b.id)).toEqual(['legacy-branch']);
+
+      // Alt filter → only alt
+      const altRes = await request(server, 'GET', '/api/branches?project=alt');
+      const altBranches = (altRes.body as any).branches;
+      expect(altBranches.map((b: any) => b.id)).toEqual(['alt-branch']);
+
+      // No filter → both
+      const allRes = await request(server, 'GET', '/api/branches');
+      expect((allRes.body as any).branches).toHaveLength(2);
+    });
+
+    it('P4 Part 3b: POST rejects an unknown projectId with 400', async () => {
+      const res = await request(server, 'POST', '/api/branches', {
+        branch: 'x',
+        projectId: 'no-such-project',
+      });
+      expect(res.status).toBe(400);
+      expect((res.body as any).error).toContain('未知项目');
+    });
+
+    it('P4 Part 3b: POST stamps the projectId onto the created branch', async () => {
+      // 'alt' project will exist because addBranch pre-validates it.
+      // We use the default project id to exercise the happy path since
+      // that's guaranteed to exist after StateService.migrateProjects().
+      const res = await request(server, 'POST', '/api/branches', {
+        branch: 'stamped',
+        projectId: 'default',
+      });
+      expect(res.status).toBe(201);
+      expect((res.body as any).branch.projectId).toBe('default');
+    });
   });
 
   describe('POST /api/branches/:id/pull', () => {

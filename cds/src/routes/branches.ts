@@ -520,9 +520,16 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
   // ── Branches CRUD ──
 
-  router.get('/branches', async (_req, res) => {
+  router.get('/branches', async (req, res) => {
     const state = stateService.getState();
-    const branches = Object.values(state.branches);
+    // P4 Part 3b: optional ?project=<id> filter. When absent or set to
+    // 'default', pre-P4 behavior is preserved (every branch rolls up
+    // because all legacy branches were migrated to projectId='default'
+    // in migrateProjectScoping).
+    const projectFilter = typeof req.query.project === 'string' ? req.query.project : null;
+    const branches = Object.values(state.branches).filter(
+      (b) => !projectFilter || (b.projectId || 'default') === projectFilter,
+    );
 
     // Reconcile container status
     for (const b of branches) {
@@ -590,7 +597,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
   router.post('/branches', async (req, res) => {
     try {
-      const { branch } = req.body as { branch?: string };
+      const { branch, projectId } = req.body as { branch?: string; projectId?: string };
       if (!branch) {
         res.status(400).json({ error: '分支名称不能为空' });
         return;
@@ -602,12 +609,23 @@ export function createBranchRouter(deps: RouterDeps): Router {
         return;
       }
 
+      // P4 Part 3b: if the Dashboard passes projectId in the body, stamp
+      // it on the new branch so project-scoped list queries can find it.
+      // Missing value → defaults to 'default' in addBranch().
+      const effectiveProjectId = projectId && typeof projectId === 'string' ? projectId : 'default';
+      // Validate the project exists so we don't create orphans.
+      if (!stateService.getProject(effectiveProjectId)) {
+        res.status(400).json({ error: `未知项目: ${effectiveProjectId}` });
+        return;
+      }
+
       await shell.exec(`mkdir -p "${config.worktreeBase}"`);
       const worktreePath = `${config.worktreeBase}/${id}`;
       await worktreeService.create(branch, worktreePath);
 
       const entry: BranchEntry = {
         id,
+        projectId: effectiveProjectId,
         branch,
         worktreePath,
         services: {},
@@ -2007,8 +2025,13 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
   // ── Routing rules CRUD ──
 
-  router.get('/routing-rules', (_req, res) => {
-    res.json({ rules: stateService.getRoutingRules() });
+  router.get('/routing-rules', (req, res) => {
+    // P4 Part 3b: optional ?project=<id> filter.
+    const projectFilter = typeof req.query.project === 'string' ? req.query.project : null;
+    const rules = projectFilter
+      ? stateService.getRoutingRulesForProject(projectFilter)
+      : stateService.getRoutingRules();
+    res.json({ rules });
   });
 
   router.post('/routing-rules', (req, res) => {
@@ -2050,8 +2073,13 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
   // ── Build profiles CRUD ──
 
-  router.get('/build-profiles', (_req, res) => {
-    const profiles = stateService.getBuildProfiles().map(p => ({
+  router.get('/build-profiles', (req, res) => {
+    // P4 Part 3b: optional ?project=<id> filter.
+    const projectFilter = typeof req.query.project === 'string' ? req.query.project : null;
+    const source = projectFilter
+      ? stateService.getBuildProfilesForProject(projectFilter)
+      : stateService.getBuildProfiles();
+    const profiles = source.map(p => ({
       ...p,
       env: p.env ? maskSecrets(p.env) : p.env,
     }));
@@ -2687,8 +2715,12 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
   // ── Infrastructure services CRUD ──
 
-  router.get('/infra', async (_req, res) => {
-    const services = stateService.getInfraServices();
+  router.get('/infra', async (req, res) => {
+    // P4 Part 3b: optional ?project=<id> filter.
+    const projectFilter = typeof req.query.project === 'string' ? req.query.project : null;
+    const services = projectFilter
+      ? stateService.getInfraServicesForProject(projectFilter)
+      : stateService.getInfraServices();
 
     // Reconcile status with Docker
     for (const svc of services) {
