@@ -968,6 +968,55 @@ logs_cmd() {
   tail -100f "$LOG_FILE"
 }
 
+# P4 Part 18 hardening: install systemd unit with auto-filled paths.
+#
+# The shipped cds/systemd/cds-master.service has hardcoded example
+# paths (/opt/prd_agent). This helper reads the running install's
+# actual paths, rewrites the unit file into /tmp, and prints the
+# exact install commands. Users can pipe it through sudo or copy-
+# paste. No writes to /etc happen automatically because this script
+# has no sudo context.
+install_systemd_cmd() {
+  local repo_root
+  repo_root="$(cd "$SCRIPT_DIR/.." && pwd)"
+  local cds_dir="$SCRIPT_DIR"
+  local pnpm_bin tsc_bin node_bin
+  pnpm_bin="$(command -v pnpm 2>/dev/null || echo /usr/bin/pnpm)"
+  node_bin="$(command -v node 2>/dev/null || echo /usr/bin/node)"
+  tsc_bin="$(command -v npx 2>/dev/null || echo /usr/bin/npx)"
+
+  local template="$cds_dir/systemd/cds-master.service"
+  local out="/tmp/cds-master.service.$$"
+
+  [ -f "$template" ] || { err "模板不存在: $template"; exit 1; }
+
+  sed \
+    -e "s|/opt/prd_agent/cds|$cds_dir|g" \
+    -e "s|/opt/prd_agent|$repo_root|g" \
+    -e "s|/usr/bin/pnpm|$pnpm_bin|g" \
+    -e "s|/usr/bin/node|$node_bin|g" \
+    -e "s|/usr/bin/npx|$tsc_bin|g" \
+    "$template" > "$out"
+
+  echo
+  ok "已生成 $out（路径已自动填入当前 CDS 安装位置）"
+  echo
+  echo "  下一步（请复制执行）："
+  echo
+  echo "    sudo cp $out /etc/systemd/system/cds-master.service"
+  echo "    sudo systemctl daemon-reload"
+  echo "    sudo systemctl enable --now cds-master"
+  echo
+  echo "  验证："
+  echo "    systemctl status cds-master"
+  echo "    journalctl -u cds-master -f"
+  echo
+  echo "  启用后，下次 CDS 崩溃会被 systemd 自动重启（最多 5 次/分钟）。"
+  echo "  结合 POST /api/self-update 的 pre-check 预检，基本能杜绝"
+  echo "  "\'"self-update 把自己搞死"\'" 这种 bootstrap trap。"
+  echo
+}
+
 cert_cmd() {
   load_env
   local domains_csv="${CDS_ROOT_DOMAINS:-}"
@@ -1518,6 +1567,17 @@ help_cmd() {
                                       → 只在 executor 节点上跑
                                       → 主节点不应该 disconnect (它没"主"可断)
 
+──────────────────────────────────────────────────────────────────
+  🛡 防护命令 (P4 Part 18 hardening)
+──────────────────────────────────────────────────────────────────
+
+  ./exec_cds.sh install-systemd     一键把 CDS 装成 systemd 服务
+                                      → 自动把当前安装路径填进 unit 文件
+                                      → 输出你需要复制执行的 sudo 命令
+                                      → 启用后 CDS 崩溃会被 systemd 自动重启
+                                      → 配合 /api/self-update 的预检，杜绝
+                                        "自更新把自己搞死"的 bootstrap trap
+
   ⚠️ 集群扩容前的检查清单:
      □ 两台机器都已经 init + start 通过
      □ 新机器能 curl 通老机器的 https://xxx/healthz
@@ -1698,6 +1758,12 @@ case "$CMD" in
     ;;
   cluster|cluster-status|nodes)
     cluster_cmd
+    ;;
+  install-systemd)
+    # P4 Part 18 hardening: auto-install the systemd unit with the
+    # current install location interpolated into the paths. Users no
+    # longer have to hand-edit /etc/systemd/system/cds-master.service.
+    install_systemd_cmd
     ;;
   help|--help|-h|"")
     help_cmd

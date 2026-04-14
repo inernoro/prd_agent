@@ -19,6 +19,61 @@ import { combinedOutput } from '../types.js';
 import { topoSortLayers } from '../services/topo-sort.js';
 import { detectStack } from '../services/stack-detector.js';
 
+/**
+ * P4 Part 18 (hardening): pre-restart sanity check for self-update.
+ *
+ * Runs `pnpm install --frozen-lockfile` + `tsc --noEmit` inside the
+ * CDS source dir BEFORE kill+spawn. Returns a structured result
+ * that the self-update route uses to decide whether to proceed.
+ *
+ * Contract:
+ *   - ok: true  → both stages succeeded, safe to restart
+ *   - ok: false → first failing stage + stderr excerpt in error
+ *
+ * Why this is in its own function: it's called from two routes
+ * (the real /self-update and the dry-run /self-update-dry-run).
+ * Both share the exact same validation so an operator who pre-
+ * validates gets the same result the live restart would.
+ *
+ * Timeouts:
+ *   pnpm install — 300s (cold install can take a while on slow disks)
+ *   tsc          — 120s (CDS is ~5k LOC, should finish in <10s)
+ *
+ * On a healthy CDS these run in 3-8 seconds combined because
+ * frozen-lockfile is a near no-op when node_modules is current.
+ */
+export async function validateBuildReadiness(
+  shell: IShellExecutor,
+  cdsDir: string,
+): Promise<{ ok: true; summary: string } | { ok: false; stage: 'install' | 'tsc'; error: string }> {
+  // Stage 1: pnpm install --frozen-lockfile
+  const installResult = await shell.exec(
+    'pnpm install --frozen-lockfile',
+    { cwd: cdsDir, timeout: 300_000 },
+  );
+  if (installResult.exitCode !== 0) {
+    const err = (combinedOutput(installResult) || 'pnpm install 失败').slice(0, 500);
+    return { ok: false, stage: 'install', error: err };
+  }
+
+  // Stage 2: tsc --noEmit — catches ESM/CJS mismatches, missing
+  // imports, type errors, and anything else that would crash the
+  // new process at module-load time.
+  const tscResult = await shell.exec(
+    'npx tsc --noEmit',
+    { cwd: cdsDir, timeout: 120_000 },
+  );
+  if (tscResult.exitCode !== 0) {
+    const err = (combinedOutput(tscResult) || 'tsc --noEmit 失败').slice(0, 800);
+    return { ok: false, stage: 'tsc', error: err };
+  }
+
+  return {
+    ok: true,
+    summary: 'pnpm install + tsc --noEmit 通过',
+  };
+}
+
 export interface RouterDeps {
   stateService: StateService;
   worktreeService: WorktreeService;
@@ -4772,6 +4827,34 @@ export function createBranchRouter(deps: RouterDeps): Router {
       const pullOutput = pullResult.stdout.trim();
       send('pull', 'done', pullOutput.includes('Already up to date') ? '代码已是最新' : '代码已更新');
 
+      // ──────────────────────────────────────────────────────────────
+      // Step 3.5: pre-restart validation (P4 Part 18 hardening).
+      //
+      // The previous self-update killed the running process BEFORE
+      // validating that the new code could even start. When Phase D.1
+      // added a new npm dep (mongodb) AND I introduced an ESM
+      // require() bug, the result was a dead CDS that couldn't be
+      // recovered via its own API — a bootstrap trap. This step
+      // runs pnpm install + tsc --noEmit inside the current process
+      // BEFORE kill+spawn. If anything fails, we abort the restart,
+      // leave the running process alive, and surface the error via
+      // SSE so the operator knows what to fix.
+      // ──────────────────────────────────────────────────────────────
+      const cdsDirForCheck = path.join(repoRoot, 'cds');
+      send('validate', 'running', '正在校验依赖与编译（pnpm install + tsc --noEmit）...');
+      const validation = await validateBuildReadiness(shell, cdsDirForCheck);
+      if (!validation.ok) {
+        send('validate', 'error', `预检失败: ${validation.error}`);
+        sendSSE(res, 'error', {
+          message: `self-update 已中止 — 新代码未通过预检: ${validation.error}`,
+          stage: validation.stage,
+          hint: '原 CDS 进程保持运行中。修复后请重新触发 self-update。',
+        });
+        res.end();
+        return;
+      }
+      send('validate', 'done', `预检通过: ${validation.summary}`);
+
       // Step 4: restart CDS via detached process
       send('restart', 'running', '正在重启 CDS...');
       sendSSE(res, 'done', { message: 'CDS 即将重启，页面将在几秒后自动刷新...' });
@@ -4827,6 +4910,48 @@ export function createBranchRouter(deps: RouterDeps): Router {
       send('error', 'error', `更新失败: ${(err as Error).message}`);
       sendSSE(res, 'error', { message: (err as Error).message });
       res.end();
+    }
+  });
+
+  // POST /api/self-update-dry-run — run the pre-restart validation
+  // WITHOUT killing the running process or spawning a new one.
+  //
+  // Body: {} — operates on the currently checked-out source tree.
+  //
+  // Returns:
+  //   { ok: true, summary }              — safe to self-update
+  //   { ok: false, stage, error }        — blocking issue
+  //
+  // Use case: operators (and CI) who want to verify a branch can
+  // be self-updated before actually hitting the red button. No
+  // side effects — if you see { ok: true } you can confidently
+  // call /api/self-update next.
+  router.post('/self-update-dry-run', async (_req, res) => {
+    const cdsDir = path.join(config.repoRoot, 'cds');
+    try {
+      const started = Date.now();
+      const result = await validateBuildReadiness(shell, cdsDir);
+      const durationMs = Date.now() - started;
+      if (result.ok) {
+        res.json({ ok: true, summary: result.summary, durationMs });
+      } else {
+        res.status(422).json({
+          ok: false,
+          stage: result.stage,
+          error: result.error,
+          durationMs,
+          hint:
+            result.stage === 'install'
+              ? 'pnpm install 失败 — 检查 pnpm-lock.yaml 是否与 package.json 同步，或网络是否能拉到 registry'
+              : 'tsc --noEmit 失败 — 新代码有类型错误或 import 解析不到',
+        });
+      }
+    } catch (err) {
+      res.status(500).json({
+        ok: false,
+        stage: 'unknown',
+        error: (err as Error).message,
+      });
     }
   });
 

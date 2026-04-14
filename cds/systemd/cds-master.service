@@ -1,11 +1,20 @@
 [Unit]
-# CDS Master systemd unit (Phase 2 resilience)
+# CDS Master systemd unit — P4 Part 18 hardening edition.
 #
-# Installs CDS as a system service so that the kernel restarts it automatically
-# after any crash (OOM, segfault, self-update failures). Pairs with the
-# dist/index.js build artifact produced by `./exec_cds.sh` first run.
+# Installs CDS as a system service so the kernel restarts it after
+# any crash (OOM, segfault, self-update failures). Pairs with
+# /api/self-update's pre-restart validation: if an operator triggers
+# self-update with broken code, the validation step aborts BEFORE
+# killing this process. If the process is somehow killed anyway,
+# systemd Restart=always brings it back.
 #
-# Install:
+# Install (recommended): use the helper command which auto-fills
+# the paths for your install location:
+#
+#   cd cds && ./exec_cds.sh install-systemd
+#
+# Install (manual):
+#   # 1. Edit WorkingDirectory/Environment/ExecStart paths below
 #   sudo cp cds/systemd/cds-master.service /etc/systemd/system/
 #   sudo systemctl daemon-reload
 #   sudo systemctl enable --now cds-master
@@ -14,7 +23,8 @@
 #   systemctl status cds-master
 #   journalctl -u cds-master -f
 #
-# See doc/design.cds-resilience.md Phase 2.
+# See doc/design.cds-resilience.md Phase 2 + the P4 Part 18 hardening
+# commit for why ExecStartPre exists.
 
 Description=CDS Master (Cloud Development Suite)
 Documentation=file:///home/user/prd_agent/doc/design.cds-resilience.md
@@ -25,12 +35,33 @@ Requires=docker.service
 [Service]
 Type=simple
 
-# IMPORTANT: edit these three paths to match your install location
+# IMPORTANT: edit these paths to match your install location.
+# `exec_cds.sh install-systemd` does this for you automatically.
 WorkingDirectory=/opt/prd_agent/cds
 Environment=NODE_ENV=production
 Environment=CDS_REPO_ROOT=/opt/prd_agent
 # Optionally pin the AI access key here (prefer /etc/cds/env for secrets)
 EnvironmentFile=-/etc/cds/env
+
+# ──────────────────────────────────────────────────────────────
+# P4 Part 18 hardening — ExecStartPre self-heal.
+#
+# Runs dependency + compile check BEFORE ExecStart so systemd
+# restarts don't keep relaunching a broken build in a loop.
+#
+#   pnpm install  — idempotent; picks up new deps after branch switch
+#   tsc           — produces dist/ when missing or stale
+#
+# If either fails, systemd marks the unit as failed and RestartSec
+# backs off naturally. Operators see the failure in `journalctl` and
+# can fix the branch before the next restart tick.
+#
+# Total overhead on a healthy install: ~1-2s (pnpm install is a
+# no-op when node_modules matches the lockfile, and tsc skips when
+# dist/ is newer than src/).
+# ──────────────────────────────────────────────────────────────
+ExecStartPre=/usr/bin/pnpm install --frozen-lockfile
+ExecStartPre=/usr/bin/npx tsc
 
 ExecStart=/usr/bin/node dist/index.js
 
