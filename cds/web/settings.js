@@ -92,6 +92,8 @@
       renderDangerTab();
     } else if (currentTab === 'storage') {
       renderStorageTab();
+    } else if (currentTab === 'github') {
+      renderGithubTab();
     } else {
       contentEl.innerHTML =
         '<div class="settings-placeholder">' +
@@ -377,6 +379,218 @@
       .catch(function (err) {
         showToast('网络错误：' + (err && err.message ? err.message : err));
         if (btn) { btn.disabled = false; btn.textContent = '切回 JSON 模式'; }
+      });
+  };
+
+  // P4 Part 18 (Phase E.3): GitHub Integration tab.
+  //
+  // Global (system-wide) setting — one GitHub connection per CDS
+  // install. The tab fetches /api/github/oauth/status and renders
+  // one of three states:
+  //
+  //   A. Not configured → hint explaining CDS_GITHUB_CLIENT_ID
+  //      needs to be set, Sign-in disabled.
+  //   B. Configured but not connected → "Sign in with GitHub"
+  //      button that walks through the Device Flow.
+  //   C. Connected → avatar + login + "断开连接" button.
+  //
+  // The Device Flow UI here intentionally REUSES the same modals
+  // defined in projects.html (githubDeviceModal, githubRepoPicker)
+  // when those are available — but since this page doesn't
+  // include projects.js, we redirect to projects.html?new=git
+  // instead of trying to embed the device modal here.
+  function renderGithubTab() {
+    contentEl.innerHTML =
+      '<div class="settings-section">' +
+        '<div class="settings-section-title">GitHub Integration</div>' +
+        '<div class="settings-section-desc">' +
+          '这是 <strong>系统级</strong> 设置。CDS 会使用这个 GitHub 账号拉取仓库列表，用于 "从 GitHub 选择仓库" 创建项目。<br>' +
+          '采用 GitHub Device Flow — 无需跳转回调 URL，任何部署方式都支持。' +
+        '</div>' +
+        '<div id="githubStatusBlock" class="settings-placeholder">加载 GitHub 状态…</div>' +
+      '</div>' +
+      '<div class="settings-section">' +
+        '<div class="settings-section-title">管理员配置</div>' +
+        '<div class="settings-section-desc">' +
+          '要启用 GitHub 集成，需要在 CDS 进程启动前设置环境变量：' +
+        '</div>' +
+        '<div style="background:var(--bg-card);border:1px solid var(--card-border);border-radius:9px;padding:14px;font-family:var(--font-mono,monospace);font-size:12px;color:var(--text-secondary);white-space:pre-wrap">' +
+          'export CDS_GITHUB_CLIENT_ID="<your-oauth-app-client-id>"\n' +
+          '# 可选: 用于 CDS 登录的 web 流（和仓库选择器彼此独立）\n' +
+          'export CDS_GITHUB_CLIENT_SECRET="<web-flow-secret>"' +
+        '</div>' +
+        '<div class="settings-section-desc" style="margin-top:12px">' +
+          '步骤：<br>' +
+          '1. 去 <a href="https://github.com/settings/developers" target="_blank" rel="noopener" style="color:#60a5fa">GitHub → Settings → Developer settings → OAuth Apps</a> 创建一个 OAuth App<br>' +
+          '2. 在 App 的 <strong>General</strong> 设置中勾选 <strong>Enable Device Flow</strong><br>' +
+          '3. 拷贝 Client ID，设置成 <code>CDS_GITHUB_CLIENT_ID</code> 环境变量<br>' +
+          '4. 重启 CDS（<code>./exec_cds.sh restart</code>）<br>' +
+          '5. 回到这个 tab 点 "Sign in with GitHub"' +
+        '</div>' +
+      '</div>';
+
+    // Fetch status and render the appropriate state
+    fetch('/api/github/oauth/status', { credentials: 'same-origin' })
+      .then(function (r) { return r.json(); })
+      .then(function (data) {
+        var block = document.getElementById('githubStatusBlock');
+        if (!block) return;
+
+        if (!data.configured) {
+          block.style.textAlign = 'left';
+          block.style.padding = '18px';
+          block.innerHTML =
+            '<div style="display:flex;align-items:center;gap:10px">' +
+              '<span class="cds-clone-status error" style="display:inline-flex">NOT CONFIGURED</span>' +
+              '<span style="font-size:12px;color:var(--text-secondary)">管理员需设置 <code>CDS_GITHUB_CLIENT_ID</code></span>' +
+            '</div>';
+          return;
+        }
+
+        if (!data.connected) {
+          block.style.textAlign = 'left';
+          block.style.padding = '18px';
+          block.innerHTML =
+            '<div style="display:flex;align-items:center;gap:10px;margin-bottom:14px">' +
+              '<span class="cds-clone-status" style="background:var(--bg-elevated);border:1px solid var(--card-border);color:var(--text-secondary)">NOT CONNECTED</span>' +
+            '</div>' +
+            '<div style="font-size:12px;color:var(--text-muted);margin-bottom:14px">' +
+              '尚未连接 GitHub。点击下方按钮通过 Device Flow 登录（会打开一个新标签页让你在 github.com 输入代码）。' +
+            '</div>' +
+            '<button type="button" class="btn-github-signin" onclick="_settingsGithubSignIn()" style="display:inline-flex">' +
+              '<svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>' +
+              'Sign in with GitHub' +
+            '</button>' +
+            '<div id="githubDeviceStatus" style="margin-top:14px;font-size:12px;color:var(--text-muted);min-height:18px"></div>';
+          return;
+        }
+
+        // Connected state
+        var avatar = data.avatarUrl
+          ? '<img src="' + escapeHtml(data.avatarUrl) + '" width="48" height="48" style="border-radius:50%;border:1px solid var(--card-border)">'
+          : '<div style="width:48px;height:48px;border-radius:50%;background:var(--bg-elevated);display:flex;align-items:center;justify-content:center;color:var(--text-muted);font-size:18px;font-weight:700">?</div>';
+        var scopes = (data.scopes || []).map(escapeHtml).join(', ') || 'n/a';
+        block.style.textAlign = 'left';
+        block.style.padding = '18px';
+        block.innerHTML =
+          '<div style="display:flex;align-items:center;gap:14px;margin-bottom:16px">' +
+            avatar +
+            '<div style="flex:1">' +
+              '<div style="font-size:14px;font-weight:700;color:var(--text-primary);display:flex;align-items:center;gap:8px">' +
+                escapeHtml(data.name || data.login) +
+                '<span class="cds-clone-status ready">CONNECTED</span>' +
+              '</div>' +
+              '<div style="font-size:11px;color:var(--text-muted);margin-top:2px">@' + escapeHtml(data.login) + ' · 连接于 ' + escapeHtml(new Date(data.connectedAt).toLocaleString()) + '</div>' +
+              '<div style="font-size:10px;color:var(--text-muted);margin-top:2px;font-family:var(--font-mono,monospace)">scopes: ' + scopes + '</div>' +
+            '</div>' +
+          '</div>' +
+          '<div style="display:flex;gap:10px">' +
+            '<a href="projects.html?new=git" class="settings-btn-primary" style="text-decoration:none">新建项目 →</a>' +
+            '<button type="button" class="settings-btn-outline settings-btn-danger" onclick="_settingsGithubDisconnect()">断开连接</button>' +
+          '</div>';
+      })
+      .catch(function (err) {
+        var block = document.getElementById('githubStatusBlock');
+        if (block) {
+          block.innerHTML = '<span style="color:var(--red)">加载失败：' + escapeHtml(err && err.message ? err.message : String(err)) + '</span>';
+        }
+      });
+  }
+
+  // Device flow handler for the Settings page — polls /device-poll
+  // just like projects.js, but keeps state inside this IIFE.
+  var _settingsDeviceTimer = null;
+  var _settingsDeviceAbort = false;
+
+  window._settingsGithubSignIn = function () {
+    var statusEl = document.getElementById('githubDeviceStatus');
+    if (statusEl) statusEl.innerHTML = '正在请求设备代码…';
+    _settingsDeviceAbort = false;
+
+    fetch('/api/github/oauth/device-start', {
+      method: 'POST',
+      credentials: 'same-origin',
+    })
+      .then(function (r) {
+        return r.json().then(function (body) { return { status: r.status, body: body }; });
+      })
+      .then(function (result) {
+        if (result.status !== 200) {
+          if (statusEl) statusEl.innerHTML = '<span style="color:var(--red)">' + escapeHtml((result.body && result.body.message) || '启动失败') + '</span>';
+          return;
+        }
+        var b = result.body;
+        if (statusEl) {
+          statusEl.innerHTML =
+            '请在 <a href="' + escapeHtml(b.verificationUri) + '" target="_blank" rel="noopener" style="color:#60a5fa">' + escapeHtml(b.verificationUri) + '</a> 输入代码: ' +
+            '<span style="font-family:var(--font-mono,monospace);font-size:14px;font-weight:700;color:var(--text-primary);letter-spacing:2px">' + escapeHtml(b.userCode) + '</span>' +
+            '<br><span id="githubDeviceTimer" style="color:var(--text-muted)">等待授权…</span>';
+        }
+        try { window.open(b.verificationUri, '_blank', 'noopener'); } catch (e) { /* */ }
+        _scheduleSettingsPoll(b.deviceCode, (b.interval || 5) * 1000);
+      })
+      .catch(function (err) {
+        if (statusEl) statusEl.innerHTML = '<span style="color:var(--red)">网络错误: ' + escapeHtml(err && err.message ? err.message : String(err)) + '</span>';
+      });
+  };
+
+  function _scheduleSettingsPoll(deviceCode, intervalMs) {
+    if (_settingsDeviceTimer) clearTimeout(_settingsDeviceTimer);
+    _settingsDeviceTimer = setTimeout(function () {
+      if (_settingsDeviceAbort) return;
+      fetch('/api/github/oauth/device-poll', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'same-origin',
+        body: JSON.stringify({ deviceCode: deviceCode }),
+      })
+        .then(function (r) { return r.json(); })
+        .then(function (body) {
+          if (_settingsDeviceAbort) return;
+          var timerEl = document.getElementById('githubDeviceTimer');
+          if (body.status === 'ready') {
+            showToast('已连接 GitHub @' + (body.login || ''));
+            // Re-render the tab to show the connected state
+            setTimeout(renderGithubTab, 300);
+            return;
+          }
+          if (body.status === 'pending') {
+            if (timerEl) timerEl.textContent = '等待授权…（' + new Date().toLocaleTimeString() + '）';
+            _scheduleSettingsPoll(deviceCode, intervalMs);
+            return;
+          }
+          if (body.status === 'slow-down') {
+            _scheduleSettingsPoll(deviceCode, intervalMs + 5000);
+            return;
+          }
+          if (body.status === 'expired' || body.status === 'denied') {
+            if (timerEl) timerEl.innerHTML = '<span style="color:var(--red)">' + (body.status === 'expired' ? '设备代码已过期' : '用户拒绝了授权') + '</span>';
+            return;
+          }
+          // Unknown → stop polling
+          if (timerEl) timerEl.innerHTML = '<span style="color:var(--red)">未知错误: ' + escapeHtml(JSON.stringify(body)) + '</span>';
+        })
+        .catch(function () {
+          // Network blip — retry
+          _scheduleSettingsPoll(deviceCode, intervalMs);
+        });
+    }, intervalMs);
+  }
+
+  window._settingsGithubDisconnect = function () {
+    if (!window.confirm('确定断开 GitHub 连接吗？\n\n此操作仅清除本地记录，不会撤销 GitHub 侧的 token。\n要彻底撤销请去 https://github.com/settings/applications 手动删除。')) return;
+    fetch('/api/github/oauth', {
+      method: 'DELETE',
+      credentials: 'same-origin',
+    })
+      .then(function (r) { return r.json(); })
+      .then(function () {
+        showToast('已断开 GitHub 连接');
+        _settingsDeviceAbort = true;
+        renderGithubTab();
+      })
+      .catch(function (err) {
+        showToast('断开失败: ' + (err && err.message ? err.message : err));
       });
   };
 

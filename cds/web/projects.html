@@ -667,6 +667,95 @@
     .btn-primary:hover { background: var(--accent-dim); }
     .btn-primary:disabled { opacity: 0.5; cursor: not-allowed; }
 
+    /* P4 Part 18 (Phase E.2): GitHub Sign-in button */
+    .btn-github-signin {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 10px;
+      padding: 12px 16px;
+      background: #24292f;
+      color: #fff;
+      border: 1px solid #30363d;
+      border-radius: 9px;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      font-family: inherit;
+      transition: background 120ms ease, transform 80ms ease;
+    }
+    .btn-github-signin:hover {
+      background: #30363d;
+      border-color: #6e7681;
+    }
+    .btn-github-signin:active { transform: translateY(1px); }
+    html[data-theme="light"] .btn-github-signin {
+      background: #1f2328;
+      color: #fff;
+    }
+
+    /* Repo picker row */
+    .gh-repo-row {
+      display: flex;
+      align-items: flex-start;
+      gap: 12px;
+      padding: 12px 14px;
+      border-bottom: 1px solid var(--card-border);
+      cursor: pointer;
+      transition: background 100ms ease;
+    }
+    .gh-repo-row:last-child { border-bottom: none; }
+    .gh-repo-row:hover { background: var(--bg-hover, rgba(255,255,255,0.04)); }
+    .gh-repo-row.hidden { display: none; }
+    .gh-repo-name {
+      font-family: var(--font-mono, monospace);
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--text-primary);
+    }
+    .gh-repo-meta {
+      font-size: 10px;
+      color: var(--text-muted);
+      margin-top: 3px;
+      display: flex;
+      gap: 8px;
+      align-items: center;
+    }
+    .gh-repo-meta .private {
+      padding: 1px 6px;
+      background: rgba(251, 191, 36, 0.15);
+      border: 1px solid rgba(251, 191, 36, 0.4);
+      color: #fbbf24;
+      border-radius: 4px;
+      font-weight: 700;
+      text-transform: uppercase;
+      font-size: 9px;
+    }
+    .gh-repo-meta .language {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+    }
+    .gh-repo-meta .language::before {
+      content: '';
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: #60a5fa;
+    }
+    .gh-repo-desc {
+      font-size: 11px;
+      color: var(--text-secondary);
+      margin-top: 4px;
+      line-height: 1.5;
+      max-height: 32px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      display: -webkit-box;
+      -webkit-line-clamp: 2;
+      -webkit-box-orient: vertical;
+    }
+
     /* Toast */
     .toast {
       position: fixed;
@@ -800,6 +889,33 @@
       <div class="modal-subtitle">粘贴 Git 仓库 URL，或者输入项目名创建空项目</div>
 
       <form id="createProjectForm" onsubmit="handleCreateProjectSubmit(event)">
+        <!-- ─── GitHub Sign-in button (Phase E.2). Shown only
+             when CDS_GITHUB_CLIENT_ID is configured; checked via
+             /api/github/oauth/status on modal open. ─── -->
+        <button type="button" id="cp-github-signin" class="btn-github-signin"
+          style="display:none;width:100%;margin-bottom:12px"
+          onclick="_openGithubSignin()">
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
+            <path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/>
+          </svg>
+          <span id="cp-github-signin-label">使用 GitHub 登录并选择仓库</span>
+        </button>
+
+        <!-- Connected state indicator (shown when GitHub token is active) -->
+        <div id="cp-github-connected" style="display:none;padding:10px 12px;background:rgba(16,185,129,0.08);border:1px solid rgba(16,185,129,0.25);border-radius:8px;margin-bottom:12px;font-size:12px;display:none">
+          <span style="color:var(--green, #10b981)">● 已连接</span>
+          <span id="cp-github-connected-login" style="color:var(--text-secondary);margin-left:6px"></span>
+          <button type="button" onclick="_openRepoPicker()" style="float:right;background:transparent;border:none;color:#60a5fa;font-size:11px;cursor:pointer;padding:0">浏览我的仓库 →</button>
+        </div>
+
+        <div id="cp-github-hint" style="display:none;font-size:11px;color:var(--text-muted);margin-bottom:12px;padding:8px 10px;background:var(--bg-elevated);border-radius:7px">
+          💡 GitHub 集成未配置。管理员需在环境变量中设置 <code style="font-family:var(--font-mono,monospace)">CDS_GITHUB_CLIENT_ID</code>。当前只支持粘贴公开仓库 URL。
+        </div>
+
+        <div id="cp-divider" style="display:none;text-align:center;font-size:10px;color:var(--text-muted);margin:4px 0 10px;letter-spacing:2px">
+          OR
+        </div>
+
         <!-- ─── Smart input: url or name ─── -->
         <div class="form-row">
           <input id="cp-smart-input" class="form-input" type="text" required
@@ -838,6 +954,59 @@
           <button type="submit" id="createProjectSubmitBtn" class="btn-primary">创建并部署</button>
         </div>
       </form>
+    </div>
+  </div>
+
+  <!-- ─── GitHub Device Flow modal (P4 Part 18 Phase E.2) ───
+       Shown after clicking "使用 GitHub 登录并选择仓库". Renders
+       the user_code + verification_uri and polls /device-poll
+       until the user completes the flow on github.com. -->
+  <div id="githubDeviceModal" class="modal-backdrop" onclick="closeGithubDeviceModal(event)">
+    <div class="modal-dialog" onclick="event.stopPropagation()" style="max-width:480px">
+      <div class="modal-title">连接 GitHub</div>
+      <div class="modal-subtitle" id="gh-device-subtitle">正在请求设备代码…</div>
+
+      <div id="gh-device-body" style="display:none;text-align:center;padding:20px 0">
+        <div style="font-size:11px;color:var(--text-muted);margin-bottom:10px;letter-spacing:1px;text-transform:uppercase">在浏览器中输入此代码</div>
+        <div id="gh-device-code" style="font-family:var(--font-mono,monospace);font-size:28px;font-weight:700;color:var(--text-primary);letter-spacing:4px;padding:18px;background:var(--bg-elevated);border:1px solid var(--card-border);border-radius:10px;margin-bottom:14px;user-select:all">—</div>
+        <div style="font-size:12px;color:var(--text-secondary);margin-bottom:14px">
+          在此页面输入上面的代码：
+        </div>
+        <a id="gh-device-link" href="#" target="_blank" rel="noopener"
+          style="display:inline-block;padding:11px 22px;background:var(--accent);color:#fff;text-decoration:none;border-radius:8px;font-size:13px;font-weight:600">
+          打开 github.com/login/device →
+        </a>
+        <div id="gh-device-status" style="margin-top:18px;font-size:11px;color:var(--text-muted)">等待授权…</div>
+      </div>
+
+      <div id="gh-device-error" style="display:none;padding:12px;background:rgba(244,63,94,0.1);border:1px solid rgba(244,63,94,0.3);border-radius:8px;font-size:12px;color:#fca5a5;margin-bottom:14px"></div>
+
+      <div class="modal-actions">
+        <button type="button" class="btn-ghost" onclick="closeGithubDeviceModal()">取消</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ─── Repo picker modal (P4 Part 18 Phase E.2) ───
+       Shown after a successful device flow OR when clicking
+       "浏览我的仓库 →" in the connected state. Lists the user's
+       repos with a search box; picking one fills the smart input
+       in the create modal. -->
+  <div id="githubRepoPickerModal" class="modal-backdrop" onclick="closeRepoPickerModal(event)">
+    <div class="modal-dialog" onclick="event.stopPropagation()" style="max-width:640px;display:flex;flex-direction:column;max-height:80vh">
+      <div class="modal-title">选择仓库</div>
+      <div class="modal-subtitle" id="gh-picker-subtitle">正在加载…</div>
+
+      <input id="gh-picker-search" class="form-input" type="text" placeholder="搜索..." autocomplete="off"
+        oninput="_filterRepoPicker(this.value)" style="margin-bottom:12px;display:none">
+
+      <div id="gh-picker-list" style="flex:1;min-height:0;overflow-y:auto;background:var(--bg-elevated);border:1px solid var(--card-border);border-radius:10px">
+        <div style="padding:60px 20px;text-align:center;color:var(--text-muted);font-size:12px">正在加载仓库列表…</div>
+      </div>
+
+      <div class="modal-actions">
+        <button type="button" class="btn-ghost" onclick="closeRepoPickerModal()">返回</button>
+      </div>
     </div>
   </div>
 

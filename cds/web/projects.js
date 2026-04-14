@@ -418,12 +418,317 @@
     // Reset hint line
     if (typeof _updateCreateHint === 'function') _updateCreateHint();
     modal.classList.add('visible');
+    // P4 Part 18 (Phase E.2): probe GitHub OAuth status so we can
+    // show the Sign-in button vs "already connected" state vs
+    // "not configured" hint. Fire-and-forget; errors fall through
+    // to "not configured" which is the safest default.
+    _refreshGithubSignInState();
     setTimeout(function () {
       // P4 Part 18 UX rework: focus the smart input (URL or name)
       var first = document.getElementById('cp-smart-input');
       if (first) first.focus();
     }, 50);
   }
+
+  // P4 Part 18 (Phase E.2): probe /api/github/oauth/status and
+  // show one of three states inside the create modal:
+  //   1. not configured → hint: "需要 CDS_GITHUB_CLIENT_ID"
+  //   2. configured, not connected → Sign-in button
+  //   3. configured, connected → green banner + "浏览我的仓库"
+  function _refreshGithubSignInState() {
+    var signinBtn = document.getElementById('cp-github-signin');
+    var connectedBox = document.getElementById('cp-github-connected');
+    var connectedLogin = document.getElementById('cp-github-connected-login');
+    var hintEl = document.getElementById('cp-github-hint');
+    var divider = document.getElementById('cp-divider');
+
+    function hideAll() {
+      if (signinBtn) signinBtn.style.display = 'none';
+      if (connectedBox) connectedBox.style.display = 'none';
+      if (hintEl) hintEl.style.display = 'none';
+      if (divider) divider.style.display = 'none';
+    }
+    hideAll();
+
+    fetch('/api/github/oauth/status', { credentials: 'same-origin' })
+      .then(function (r) { return r.ok ? r.json() : null; })
+      .catch(function () { return null; })
+      .then(function (data) {
+        if (!data) {
+          // Probe failed — hide everything, let user use smart input
+          return;
+        }
+        if (!data.configured) {
+          if (hintEl) hintEl.style.display = 'block';
+          if (divider) divider.style.display = 'block';
+          return;
+        }
+        if (data.connected) {
+          if (connectedBox) connectedBox.style.display = 'block';
+          if (connectedLogin) connectedLogin.textContent = '@' + (data.login || '');
+        } else {
+          if (signinBtn) signinBtn.style.display = 'flex';
+        }
+        if (divider) divider.style.display = 'block';
+      });
+  }
+
+  // ── GitHub Device Flow driver (P4 Part 18 Phase E.2) ──────────────
+  //
+  // Flow:
+  //   1. User clicks "使用 GitHub 登录" → _openGithubSignin()
+  //   2. We POST /device-start → get user_code + verification_uri
+  //   3. Show the device modal with the code + link
+  //   4. Loop _pollGithubDevice() every `interval` seconds
+  //   5. On 'ready' → close device modal, open repo picker
+  //   6. On 'denied' / 'expired' → show error in modal
+  //
+  // Polling is stored in a closure-scoped timer so the user can
+  // cancel via the "取消" button (closeGithubDeviceModal).
+
+  var _ghDevicePollTimer = null;
+  var _ghDevicePollAbort = false;
+
+  function _openGithubSignin() {
+    var modal = document.getElementById('githubDeviceModal');
+    if (!modal) return;
+    var bodyEl = document.getElementById('gh-device-body');
+    var errEl = document.getElementById('gh-device-error');
+    var subtitleEl = document.getElementById('gh-device-subtitle');
+    if (bodyEl) bodyEl.style.display = 'none';
+    if (errEl) { errEl.style.display = 'none'; errEl.textContent = ''; }
+    if (subtitleEl) subtitleEl.textContent = '正在请求设备代码…';
+    _ghDevicePollAbort = false;
+    modal.classList.add('visible');
+
+    fetch('/api/github/oauth/device-start', {
+      method: 'POST',
+      credentials: 'same-origin',
+    })
+      .then(function (r) {
+        return r.json().then(function (body) { return { status: r.status, body: body }; });
+      })
+      .then(function (result) {
+        if (result.status !== 200) {
+          _showDeviceError(result.body && result.body.message || 'device-start 失败');
+          return;
+        }
+        var b = result.body;
+        var codeEl = document.getElementById('gh-device-code');
+        var linkEl = document.getElementById('gh-device-link');
+        var subtitleEl = document.getElementById('gh-device-subtitle');
+        if (codeEl) codeEl.textContent = b.userCode;
+        if (linkEl) linkEl.href = b.verificationUri;
+        if (bodyEl) bodyEl.style.display = 'block';
+        if (subtitleEl) subtitleEl.textContent = '访问 GitHub 并输入下面的代码完成授权';
+        // Auto-open the verification URI in a new tab as a
+        // convenience (users can still click the button to open
+        // again if the popup is blocked).
+        try { window.open(b.verificationUri, '_blank', 'noopener'); } catch (e) { /* */ }
+        _schedulePoll(b.deviceCode, (b.interval || 5) * 1000);
+      })
+      .catch(function (err) {
+        _showDeviceError('网络错误：' + (err && err.message ? err.message : err));
+      });
+  }
+
+  function _schedulePoll(deviceCode, intervalMs) {
+    if (_ghDevicePollTimer) clearTimeout(_ghDevicePollTimer);
+    _ghDevicePollTimer = setTimeout(function () {
+      _pollGithubDevice(deviceCode, intervalMs);
+    }, intervalMs);
+  }
+
+  function _pollGithubDevice(deviceCode, intervalMs) {
+    if (_ghDevicePollAbort) return;
+    fetch('/api/github/oauth/device-poll', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'same-origin',
+      body: JSON.stringify({ deviceCode: deviceCode }),
+    })
+      .then(function (r) { return r.json(); })
+      .then(function (body) {
+        if (_ghDevicePollAbort) return;
+        var statusEl = document.getElementById('gh-device-status');
+
+        if (body.status === 'ready') {
+          if (statusEl) statusEl.textContent = '✅ 已连接 @' + (body.login || '');
+          showToast('GitHub 已连接 @' + (body.login || ''));
+          setTimeout(function () {
+            closeGithubDeviceModal();
+            // Refresh the create-modal sign-in state (shows connected banner)
+            _refreshGithubSignInState();
+            // Open the repo picker immediately
+            _openRepoPicker();
+          }, 600);
+          return;
+        }
+        if (body.status === 'pending') {
+          if (statusEl) statusEl.textContent = '等待授权…（' + new Date().toLocaleTimeString() + '）';
+          _schedulePoll(deviceCode, intervalMs);
+          return;
+        }
+        if (body.status === 'slow-down') {
+          if (statusEl) statusEl.textContent = 'GitHub 要求降低轮询频率，已自动放慢…';
+          _schedulePoll(deviceCode, intervalMs + 5000);
+          return;
+        }
+        if (body.status === 'expired') {
+          _showDeviceError('设备代码已过期，请关闭后重新开始');
+          return;
+        }
+        if (body.status === 'denied') {
+          _showDeviceError('你在 GitHub 拒绝了授权请求');
+          return;
+        }
+        _showDeviceError((body && body.message) || '未知错误：' + JSON.stringify(body));
+      })
+      .catch(function (err) {
+        if (_ghDevicePollAbort) return;
+        // Transient network error — retry after the interval
+        _schedulePoll(deviceCode, intervalMs);
+      });
+  }
+
+  function _showDeviceError(msg) {
+    var errEl = document.getElementById('gh-device-error');
+    if (errEl) {
+      errEl.textContent = msg;
+      errEl.style.display = 'block';
+    }
+    if (_ghDevicePollTimer) {
+      clearTimeout(_ghDevicePollTimer);
+      _ghDevicePollTimer = null;
+    }
+  }
+
+  function closeGithubDeviceModal(event) {
+    if (event && event.currentTarget !== event.target) return;
+    var modal = document.getElementById('githubDeviceModal');
+    if (modal) modal.classList.remove('visible');
+    _ghDevicePollAbort = true;
+    if (_ghDevicePollTimer) {
+      clearTimeout(_ghDevicePollTimer);
+      _ghDevicePollTimer = null;
+    }
+  }
+
+  // ── Repo picker (P4 Part 18 Phase E.2) ────────────────────────────
+  //
+  // Lists the user's GitHub repos (via /api/github/repos). Click a
+  // repo → fill the smart input in the create modal with its
+  // clone_url and close the picker. Users can still paste a custom
+  // URL afterwards if they want.
+
+  var _allRepos = [];
+
+  function _openRepoPicker() {
+    var modal = document.getElementById('githubRepoPickerModal');
+    if (!modal) return;
+    var listEl = document.getElementById('gh-picker-list');
+    var subtitleEl = document.getElementById('gh-picker-subtitle');
+    var searchEl = document.getElementById('gh-picker-search');
+    if (listEl) listEl.innerHTML = '<div style="padding:60px 20px;text-align:center;color:var(--text-muted);font-size:12px">正在加载仓库列表…</div>';
+    if (searchEl) searchEl.style.display = 'none';
+    if (subtitleEl) subtitleEl.textContent = '正在加载…';
+    modal.classList.add('visible');
+
+    fetch('/api/github/repos', { credentials: 'same-origin' })
+      .then(function (r) {
+        return r.json().then(function (body) { return { status: r.status, body: body }; });
+      })
+      .then(function (result) {
+        if (result.status !== 200) {
+          var msg = (result.body && result.body.message) || ('加载失败 (HTTP ' + result.status + ')');
+          if (listEl) {
+            listEl.innerHTML = '<div style="padding:60px 20px;text-align:center;color:var(--red);font-size:12px">' + escapeHtml(msg) + '</div>';
+          }
+          if (subtitleEl) subtitleEl.textContent = '加载失败';
+          if (result.body && result.body.error === 'token_revoked') {
+            // Re-open the sign-in flow next time user clicks
+            setTimeout(_refreshGithubSignInState, 100);
+          }
+          return;
+        }
+
+        _allRepos = result.body.repos || [];
+        if (subtitleEl) subtitleEl.textContent = '共 ' + _allRepos.length + ' 个仓库';
+        if (searchEl) { searchEl.style.display = 'block'; searchEl.value = ''; }
+        _renderRepoList(_allRepos);
+        setTimeout(function () {
+          if (searchEl) searchEl.focus();
+        }, 80);
+      })
+      .catch(function (err) {
+        if (listEl) {
+          listEl.innerHTML = '<div style="padding:60px 20px;text-align:center;color:var(--red);font-size:12px">网络错误：' + escapeHtml(err && err.message ? err.message : String(err)) + '</div>';
+        }
+      });
+  }
+
+  function _renderRepoList(repos) {
+    var listEl = document.getElementById('gh-picker-list');
+    if (!listEl) return;
+    if (repos.length === 0) {
+      listEl.innerHTML = '<div style="padding:60px 20px;text-align:center;color:var(--text-muted);font-size:12px">没有匹配的仓库</div>';
+      return;
+    }
+    listEl.innerHTML = repos.map(function (r) {
+      var meta = [];
+      if (r.isPrivate) meta.push('<span class="private">PRIVATE</span>');
+      if (r.language) meta.push('<span class="language">' + escapeHtml(r.language) + '</span>');
+      if (r.stargazersCount > 0) meta.push('★ ' + r.stargazersCount);
+      if (r.defaultBranch && r.defaultBranch !== 'main') meta.push('default: ' + escapeHtml(r.defaultBranch));
+      return '<div class="gh-repo-row" data-fullname="' + escapeHtml(r.fullName) + '" onclick="_pickRepo(\'' + escapeHtml(r.cloneUrl).replace(/'/g, '\\\'') + '\', \'' + escapeHtml(r.name) + '\')">' +
+        '<div style="flex:1;min-width:0">' +
+          '<div class="gh-repo-name">' + escapeHtml(r.fullName) + '</div>' +
+          '<div class="gh-repo-meta">' + meta.join('<span style="color:var(--text-muted);opacity:0.4">·</span>') + '</div>' +
+          (r.description ? '<div class="gh-repo-desc">' + escapeHtml(r.description) + '</div>' : '') +
+        '</div>' +
+        '<svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor" style="color:var(--text-muted);flex-shrink:0;margin-top:4px"><path d="M6.22 3.22a.75.75 0 011.06 0l4.25 4.25a.75.75 0 010 1.06l-4.25 4.25a.75.75 0 01-1.06-1.06L9.94 8 6.22 4.28a.75.75 0 010-1.06z"/></svg>' +
+        '</div>';
+    }).join('');
+  }
+
+  function _filterRepoPicker(query) {
+    var q = (query || '').trim().toLowerCase();
+    if (!q) {
+      _renderRepoList(_allRepos);
+      return;
+    }
+    var filtered = _allRepos.filter(function (r) {
+      return r.fullName.toLowerCase().indexOf(q) >= 0
+        || (r.description && r.description.toLowerCase().indexOf(q) >= 0)
+        || (r.language && r.language.toLowerCase().indexOf(q) >= 0);
+    });
+    _renderRepoList(filtered);
+  }
+  window._filterRepoPicker = _filterRepoPicker;
+
+  function _pickRepo(cloneUrl, repoName) {
+    // Fill the smart input with the chosen repo's clone URL
+    var smartEl = document.getElementById('cp-smart-input');
+    if (smartEl) {
+      smartEl.value = cloneUrl;
+    }
+    // Update the live hint so the user sees what will happen
+    if (typeof _updateCreateHint === 'function') _updateCreateHint();
+    closeRepoPickerModal();
+    showToast('已选择 ' + repoName + '，点击"创建并部署"开始');
+  }
+  window._pickRepo = _pickRepo;
+
+  function closeRepoPickerModal(event) {
+    if (event && event.currentTarget !== event.target) return;
+    var modal = document.getElementById('githubRepoPickerModal');
+    if (modal) modal.classList.remove('visible');
+  }
+  window.closeRepoPickerModal = closeRepoPickerModal;
+
+  window._openGithubSignin = _openGithubSignin;
+  window._openRepoPicker = _openRepoPicker;
+  window.closeGithubDeviceModal = closeGithubDeviceModal;
 
   function closeCreateProjectModal(event) {
     var modal = getModal();
