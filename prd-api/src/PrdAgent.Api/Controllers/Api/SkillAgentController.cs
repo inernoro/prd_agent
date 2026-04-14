@@ -339,6 +339,43 @@ public class SkillAgentController : ControllerBase
     }
 
     /// <summary>
+    /// 列出当前用户"未保存"的草稿会话（SavedSkillKey 为空）。
+    /// 用于"我的技能"Tab 顶部的"未完成草稿"入口——跨机器 / 清 sessionStorage 的恢复路径。
+    /// 响应裁剪：不返回 Messages / SkillDraft 全量，只返回卡片展示需要的摘要。
+    /// 完整数据由前端点"继续"后走 GET /sessions/{id} 拉取。
+    /// </summary>
+    [HttpGet("sessions/drafts")]
+    public async Task<IActionResult> ListDrafts(
+        [FromQuery] int limit = 20,
+        CancellationToken ct = default)
+    {
+        var userId = GetUserId();
+        var drafts = await _sessionStore.ListDraftsAsync(userId, limit, ct);
+
+        var items = drafts.Select(s => new
+        {
+            sessionId = s.Id,
+            title = s.SkillDraft?.Title,
+            icon = s.SkillDraft?.Icon,
+            intentSummary = Truncate(s.Intent, 80),
+            currentStage = s.CurrentStage,
+            stageLabel = SkillAgentService.GetStageLabel(s.CurrentStage),
+            stageIndex = Array.IndexOf(SkillAgentService.Stages, s.CurrentStage),
+            messagesCount = s.Messages.Count,
+            createdAt = s.CreatedAt,
+            lastActiveAt = s.LastActiveAt,
+        });
+
+        return Ok(ApiResponse<object>.Ok(new { drafts = items }));
+    }
+
+    private static string? Truncate(string? text, int maxLength)
+    {
+        if (string.IsNullOrWhiteSpace(text)) return null;
+        return text.Length <= maxLength ? text : text[..maxLength] + "…";
+    }
+
+    /// <summary>
     /// 试用技能：输入测试内容，LLM 用技能的 prompt template 生成结果（SSE 流式）
     /// </summary>
     [HttpPost("test/{skillKey}")]

@@ -75,4 +75,33 @@ public class SkillAgentSessionStore : ISkillAgentSessionStore
             _logger.LogError(ex, "[skill-agent-session-store] Delete failed: {SessionId} by {UserId}", sessionId, userId);
         }
     }
+
+    public async Task<IReadOnlyList<SkillAgentSession>> ListDraftsAsync(
+        string userId,
+        int limit = 20,
+        CancellationToken ct = default)
+    {
+        try
+        {
+            // "草稿" = 未保存过的会话：SavedSkillKey 为 null 或空字符串
+            // 靠 `UserId + LastActiveAt` 复合索引支撑（见 doc/guide.mongodb-indexes.md）
+            var filter = Builders<SkillAgentSession>.Filter.And(
+                Builders<SkillAgentSession>.Filter.Eq(x => x.UserId, userId),
+                Builders<SkillAgentSession>.Filter.Or(
+                    Builders<SkillAgentSession>.Filter.Eq(x => x.SavedSkillKey, null),
+                    Builders<SkillAgentSession>.Filter.Eq(x => x.SavedSkillKey, string.Empty)
+                )
+            );
+            return await _db.SkillAgentSessions
+                .Find(filter)
+                .SortByDescending(x => x.LastActiveAt)
+                .Limit(Math.Clamp(limit, 1, 100))
+                .ToListAsync(ct);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "[skill-agent-session-store] ListDrafts failed: {UserId}", userId);
+            return Array.Empty<SkillAgentSession>();
+        }
+    }
 }

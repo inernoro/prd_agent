@@ -202,6 +202,7 @@ export const api = {
     testSkill: (skillKey: string) => `/api/skill-agent/test/${encodeURIComponent(skillKey)}`,
     skillMd: (skillKey: string) => `/api/skill-agent/skills/${encodeURIComponent(skillKey)}/md`,
     exportSkillZip: (skillKey: string) => `/api/skill-agent/skills/${encodeURIComponent(skillKey)}/export/zip`,
+    drafts: () => '/api/skill-agent/sessions/drafts',
     publish: (skillKey: string) => `/api/skill-agent/skills/${encodeURIComponent(skillKey)}/publish`,
     unpublish: (skillKey: string) => `/api/skill-agent/skills/${encodeURIComponent(skillKey)}/unpublish`,
     plaza: () => '/api/skill-agent/plaza',

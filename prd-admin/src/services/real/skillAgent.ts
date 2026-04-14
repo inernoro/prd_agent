@@ -128,6 +128,24 @@ export function getSkillZipUrl(skillKey: string) {
   return api.skillAgent.exportSkillZip(skillKey);
 }
 
+/** 未保存的草稿会话摘要（用于"我的技能"Tab 顶部的草稿列表） */
+export interface SkillAgentDraftSummary {
+  sessionId: string;
+  title?: string;
+  icon?: string;
+  intentSummary?: string;
+  currentStage: string;
+  stageLabel: string;
+  stageIndex: number;
+  messagesCount: number;
+  createdAt: string;
+  lastActiveAt: string;
+}
+
+export async function listSkillAgentDrafts() {
+  return apiRequest<{ drafts: SkillAgentDraftSummary[] }>(api.skillAgent.drafts());
+}
+
 export async function updateSkillFromMd(skillKey: string, skillMd: string) {
   return apiRequest<{ skillKey: string; title: string }>(api.skillAgent.skillMd(skillKey), {
     method: 'PUT',

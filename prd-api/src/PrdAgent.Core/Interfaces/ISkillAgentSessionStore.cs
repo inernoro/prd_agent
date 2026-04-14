@@ -20,4 +20,13 @@ public interface ISkillAgentSessionStore
 
     /// <summary>删除会话记录（用户点"重置"时调用）</summary>
     Task DeleteAsync(string sessionId, string userId, CancellationToken ct = default);
+
+    /// <summary>
+    /// 列出指定用户的"未保存"草稿（SavedSkillKey 为 null 或空）。
+    /// 按 LastActiveAt 倒序，用于"未完成草稿"入口——跨机器 / 清 sessionStorage 后的恢复。
+    /// </summary>
+    Task<IReadOnlyList<SkillAgentSession>> ListDraftsAsync(
+        string userId,
+        int limit = 20,
+        CancellationToken ct = default);
 }

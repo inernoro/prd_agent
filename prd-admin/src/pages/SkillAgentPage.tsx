@@ -12,6 +12,8 @@ import {
   getExportZipUrl,
   deleteSkillAgentSession,
   listPersonalSkills,
+  listSkillAgentDrafts,
+  type SkillAgentDraftSummary,
   deletePersonalSkill,
   getSkillMd,
   getSkillZipUrl,
@@ -639,6 +641,7 @@ function MySkillsTab({ onSwitchToCreate }: { onSwitchToCreate: () => void }) {
   const [loading, setLoading] = useState(true);
   const [deleting, setDeleting] = useState<string | null>(null);
   const [selectedSkill, setSelectedSkill] = useState<PersonalSkillItem | null>(null);
+  const [drafts, setDrafts] = useState<SkillAgentDraftSummary[]>([]);
 
   const loadSkills = useCallback(async () => {
     setLoading(true);
@@ -654,7 +657,15 @@ function MySkillsTab({ onSwitchToCreate }: { onSwitchToCreate: () => void }) {
     } finally { setLoading(false); }
   }, []);
 
-  useEffect(() => { loadSkills(); }, [loadSkills]);
+  /** 拉取未完成的草稿列表。并发于 loadSkills 执行，互不阻塞 */
+  const loadDrafts = useCallback(async () => {
+    const res = await listSkillAgentDrafts();
+    if (res.success && res.data) {
+      setDrafts(res.data.drafts || []);
+    }
+  }, []);
+
+  useEffect(() => { loadSkills(); loadDrafts(); }, [loadSkills, loadDrafts]);
 
   const handleDelete = async (skillKey: string) => {
     setDeleting(skillKey);
@@ -662,6 +673,23 @@ function MySkillsTab({ onSwitchToCreate }: { onSwitchToCreate: () => void }) {
       const res = await deletePersonalSkill(skillKey);
       if (res.success) {
         setSkills((prev) => prev.filter((s) => s.skillKey !== skillKey));
+      }
+    } finally { setDeleting(null); }
+  };
+
+  /** 点"继续"恢复草稿：写 sessionStorage 后切到创建 Tab，复用 CreateTab.initSession 的恢复逻辑 */
+  const handleResumeDraft = (sessionId: string) => {
+    sessionStorage.setItem('skill-agent:sessionId', sessionId);
+    onSwitchToCreate();
+  };
+
+  /** 删除草稿：调用已有的 deleteSkillAgentSession 端点（同步删内存 + DB） */
+  const handleDeleteDraft = async (sessionId: string) => {
+    setDeleting(sessionId);
+    try {
+      const res = await deleteSkillAgentSession(sessionId);
+      if (res.success) {
+        setDrafts((prev) => prev.filter((d) => d.sessionId !== sessionId));
       }
     } finally { setDeleting(null); }
   };
@@ -691,7 +719,10 @@ function MySkillsTab({ onSwitchToCreate }: { onSwitchToCreate: () => void }) {
     );
   }
 
-  if (skills.length === 0) {
+  // 草稿区：即使没有正式技能，也应显示（给用户"继续"草稿的入口）
+  const hasDrafts = drafts.length > 0;
+
+  if (skills.length === 0 && !hasDrafts) {
     return (
       <div className="flex-1 flex flex-col items-center justify-center gap-4 px-4">
         <div className="w-16 h-16 rounded-2xl flex items-center justify-center"
@@ -713,6 +744,19 @@ function MySkillsTab({ onSwitchToCreate }: { onSwitchToCreate: () => void }) {
 
   return (
     <div className="flex-1 min-h-0 overflow-y-auto px-3 pb-3 pt-2">
+      {hasDrafts && (
+        <DraftsSection
+          drafts={drafts}
+          onResume={handleResumeDraft}
+          onDelete={handleDeleteDraft}
+          deletingId={deleting}
+        />
+      )}
+      {skills.length > 0 && hasDrafts && (
+        <div className="text-[11px] font-semibold mb-2 mt-1" style={{ color: 'var(--text-muted)' }}>
+          已创建的技能
+        </div>
+      )}
       <div style={{ display: 'grid', gap: 10, gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))' }}>
         {skills.map((skill) => {
           const accent = CATEGORY_COLORS[skill.category] ?? '#6366F1';
@@ -754,6 +798,119 @@ function MySkillsTab({ onSwitchToCreate }: { onSwitchToCreate: () => void }) {
           );
         })}
       </div>
+    </div>
+  );
+}
+
+// ━━━ Drafts Section ━━━━━━━━
+// 未完成草稿列表，放在"我的技能"Tab 顶部。未保存的会话会出现在这里。
+// 点"继续"后走 sessionStorage + onSwitchToCreate 路径，复用 CreateTab 的 initSession 恢复。
+
+/** 阶段 → 颜色映射（与阶段圆点条语义一致，但这里用于 badge 背景色） */
+const STAGE_ACCENT: Record<string, string> = {
+  intent: '#6366F1',    // 意图理解 — 靛
+  scope: '#3B82F6',     // 范围界定 — 蓝
+  draft: '#8B5CF6',     // Prompt 草稿 — 紫
+  metadata: '#F59E0B',  // 元数据补全 — 橙
+  preview: '#22C55E',   // 预览与导出 — 绿（准备好保存）
+};
+
+/** 简单的相对时间（避免引入 dayjs 之类的新依赖） */
+function formatRelativeTime(iso: string): string {
+  const d = new Date(iso);
+  const diffMs = Date.now() - d.getTime();
+  const sec = Math.max(0, Math.floor(diffMs / 1000));
+  if (sec < 60) return '刚刚';
+  const min = Math.floor(sec / 60);
+  if (min < 60) return `${min} 分钟前`;
+  const hour = Math.floor(min / 60);
+  if (hour < 24) return `${hour} 小时前`;
+  const day = Math.floor(hour / 24);
+  if (day === 1) return '昨天';
+  if (day < 7) return `${day} 天前`;
+  return d.toLocaleDateString();
+}
+
+function DraftsSection({
+  drafts, onResume, onDelete, deletingId,
+}: {
+  drafts: SkillAgentDraftSummary[];
+  onResume: (sessionId: string) => void;
+  onDelete: (sessionId: string) => void;
+  deletingId: string | null;
+}) {
+  // 按方案：只展示前 3 条，超过给总数提示（完整列表留 Phase 3）
+  const MAX_SHOW = 3;
+  const visible = drafts.slice(0, MAX_SHOW);
+  const remaining = Math.max(0, drafts.length - MAX_SHOW);
+
+  return (
+    <div className="mb-4">
+      <div className="flex items-center gap-2 mb-2">
+        <span className="text-[11px] font-semibold" style={{ color: 'var(--text-muted)' }}>
+          未完成的草稿（{drafts.length}）
+        </span>
+        <span className="text-[10px]" style={{ color: 'var(--text-muted)' }}>
+          换机器 / 清缓存后也能从这里继续
+        </span>
+      </div>
+      <div style={{ display: 'grid', gap: 10, gridTemplateColumns: 'repeat(auto-fill, minmax(360px, 1fr))' }}>
+        {visible.map((d) => {
+          const accent = STAGE_ACCENT[d.currentStage] ?? '#6366F1';
+          const displayTitle = d.title || '未命名草稿';
+          const isDeleting = deletingId === d.sessionId;
+          return (
+            <GlassCard key={d.sessionId} padding="none" className="group">
+              <div className="px-4 py-3.5">
+                <div className="flex items-start gap-3">
+                  <div className="shrink-0 w-9 h-9 rounded-xl flex items-center justify-center text-lg"
+                    style={{ background: `${accent}15`, border: `1px solid ${accent}25` }}>
+                    {d.icon || '⚡'}
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="text-[13px] font-semibold truncate" style={{ color: 'var(--text-primary)' }}>
+                      {displayTitle}
+                    </div>
+                    <div className="text-[11px] mt-0.5 line-clamp-2" style={{ color: 'var(--text-muted)' }}>
+                      {d.intentSummary || '（尚未描述意图）'}
+                    </div>
+                  </div>
+                </div>
+                <div className="flex items-center gap-1.5 mt-2.5 flex-wrap">
+                  <span className="text-[10px] px-1.5 py-0.5 rounded-md font-medium"
+                    style={{ background: `${accent}15`, color: accent, border: `1px solid ${accent}20` }}>
+                    {d.stageLabel} · {d.stageIndex + 1}/5
+                  </span>
+                  <span className="text-[10px]" style={{ color: 'var(--text-muted)' }}>
+                    {d.messagesCount} 轮对话
+                  </span>
+                  <span className="text-[10px] ml-auto" style={{ color: 'var(--text-muted)' }}>
+                    {formatRelativeTime(d.lastActiveAt)}
+                  </span>
+                </div>
+                <div className="flex items-center gap-2 mt-2.5 pt-2.5" style={{ borderTop: '1px solid rgba(255,255,255,0.04)' }}>
+                  <button onClick={() => onResume(d.sessionId)}
+                    className="flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-medium transition-colors hover:bg-white/5"
+                    style={{ color: '#8B5CF6', border: '1px solid rgba(139,92,246,0.2)' }}>
+                    <Play size={11} /> 继续
+                  </button>
+                  <div className="flex-1" />
+                  <button onClick={() => onDelete(d.sessionId)} disabled={isDeleting}
+                    className="flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] transition-colors hover:bg-red-500/10"
+                    style={{ color: 'rgba(239,68,68,0.7)' }} title="删除草稿">
+                    {isDeleting ? <Loader2 size={11} className="animate-spin" /> : <Trash2 size={11} />}
+                  </button>
+                </div>
+              </div>
+            </GlassCard>
+          );
+        })}
+      </div>
+      {remaining > 0 && (
+        <div className="text-[11px] mt-2" style={{ color: 'var(--text-muted)' }}>
+          还有 {remaining} 个草稿未显示
+        </div>
+      )}
     </div>
   );
 }
