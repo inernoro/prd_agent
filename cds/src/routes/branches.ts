@@ -616,8 +616,28 @@ export function createBranchRouter(deps: RouterDeps): Router {
       // Missing value → defaults to 'default' in addBranch().
       const effectiveProjectId = projectId && typeof projectId === 'string' ? projectId : 'default';
       // Validate the project exists so we don't create orphans.
-      if (!stateService.getProject(effectiveProjectId)) {
+      const targetProject = stateService.getProject(effectiveProjectId);
+      if (!targetProject) {
         res.status(400).json({ error: `未知项目: ${effectiveProjectId}` });
+        return;
+      }
+
+      // P4 Part 18 (G1.5): refuse deploy if the project's clone isn't
+      // ready yet. Legacy projects (no cloneStatus at all) pass
+      // through because they use config.repoRoot via the fallback in
+      // getProjectRepoRoot — there's nothing to clone. Only G1
+      // projects with an explicit cloneStatus hit this guard.
+      if (targetProject.cloneStatus && targetProject.cloneStatus !== 'ready') {
+        const statusMsg: Record<string, string> = {
+          pending: '项目尚未开始克隆。请先 POST /api/projects/' + effectiveProjectId + '/clone',
+          cloning: '项目正在克隆中，请等待完成后重试。',
+          error: '项目上次克隆失败，请先重试克隆：' + (targetProject.cloneError || '未知错误'),
+        };
+        res.status(409).json({
+          error: 'project_not_ready',
+          cloneStatus: targetProject.cloneStatus,
+          message: statusMsg[targetProject.cloneStatus] || `项目克隆状态异常: ${targetProject.cloneStatus}`,
+        });
         return;
       }
 
@@ -783,6 +803,25 @@ export function createBranchRouter(deps: RouterDeps): Router {
     const entry = stateService.getBranch(id);
     if (!entry) {
       res.status(404).json({ error: `分支 "${id}" 不存在` });
+      return;
+    }
+
+    // P4 Part 18 (G1.5): same clone-ready guard as POST /branches.
+    // Deploy uses worktree pull/create which would fail with a
+    // cryptic git error if the target project's clone isn't ready.
+    // Legacy branches (no projectId or legacy 'default') pass through.
+    const deployProject = entry.projectId ? stateService.getProject(entry.projectId) : undefined;
+    if (deployProject?.cloneStatus && deployProject.cloneStatus !== 'ready') {
+      const statusMsg: Record<string, string> = {
+        pending: '项目尚未开始克隆。请先 POST /api/projects/' + deployProject.id + '/clone',
+        cloning: '项目正在克隆中，请等待完成后重试。',
+        error: '项目上次克隆失败，请先重试克隆：' + (deployProject.cloneError || '未知错误'),
+      };
+      res.status(409).json({
+        error: 'project_not_ready',
+        cloneStatus: deployProject.cloneStatus,
+        message: statusMsg[deployProject.cloneStatus] || `项目克隆状态异常: ${deployProject.cloneStatus}`,
+      });
       return;
     }
 
