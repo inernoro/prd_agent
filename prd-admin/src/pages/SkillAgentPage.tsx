@@ -737,18 +737,37 @@ function SkillDetailView({ skill, onBack, onDelete }: {
   const [dirty, setDirty] = useState(false);
   const [isPublic, setIsPublic] = useState(skill.isPublic ?? false);
   const [publishing, setPublishing] = useState(false);
+  /** 发布/取消发布操作的提示（成功 or 失败），2.5s 后自动消失 */
+  const [publishMsg, setPublishMsg] = useState<{ type: 'ok' | 'err'; text: string } | null>(null);
 
   const handleTogglePublish = async () => {
+    if (publishing) return;
     setPublishing(true);
+    setPublishMsg(null);
     try {
       if (isPublic) {
         const res = await unpublishSkill(skill.skillKey);
-        if (res.success) setIsPublic(false);
+        if (res.success) {
+          setIsPublic(false);
+          setPublishMsg({ type: 'ok', text: '已从广场取消发布' });
+        } else {
+          setPublishMsg({ type: 'err', text: `取消发布失败：${res.error?.message ?? '未知错误'}` });
+        }
       } else {
         const res = await publishSkill(skill.skillKey);
-        if (res.success) setIsPublic(true);
+        if (res.success) {
+          setIsPublic(true);
+          setPublishMsg({ type: 'ok', text: '已发布到技能广场' });
+        } else {
+          setPublishMsg({ type: 'err', text: `发布失败：${res.error?.message ?? '未知错误'}` });
+        }
       }
-    } finally { setPublishing(false); }
+    } catch (err) {
+      setPublishMsg({ type: 'err', text: `操作异常：${err instanceof Error ? err.message : String(err)}` });
+    } finally {
+      setPublishing(false);
+      setTimeout(() => setPublishMsg(null), 2500);
+    }
   };
 
   // Test state
@@ -823,6 +842,19 @@ function SkillDetailView({ skill, onBack, onDelete }: {
           <span className="text-[10px] px-1.5 py-0.5 rounded-md" style={{ background: 'rgba(34,197,94,0.1)', color: '#22C55E' }}>已发布到广场</span>
         )}
         <div className="flex-1" />
+        {publishMsg && (
+          <span
+            className="text-[11px] px-2 py-0.5 rounded-md transition-opacity"
+            style={{
+              background: publishMsg.type === 'ok' ? 'rgba(34,197,94,0.1)' : 'rgba(239,68,68,0.1)',
+              color: publishMsg.type === 'ok' ? '#22C55E' : '#EF4444',
+              border: `1px solid ${publishMsg.type === 'ok' ? 'rgba(34,197,94,0.2)' : 'rgba(239,68,68,0.2)'}`,
+            }}
+          >
+            {publishMsg.type === 'ok' ? <CheckCircle2 size={11} style={{ display: 'inline', marginRight: 4, verticalAlign: '-2px' }} /> : null}
+            {publishMsg.text}
+          </span>
+        )}
         <button onClick={handleTogglePublish} disabled={publishing}
           className="flex items-center gap-1 text-[11px] px-2.5 py-1 rounded-lg transition-colors hover:bg-white/5"
           style={{ color: isPublic ? '#F59E0B' : '#8B5CF6' }}>

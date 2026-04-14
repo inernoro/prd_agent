@@ -352,8 +352,23 @@ public class SkillAgentController : ControllerBase
     {
         var userId = GetUserId();
         var skill = await _skillService.GetByKeyAsync(skillKey, ct);
-        if (skill == null || skill.OwnerUserId != userId || skill.Visibility != SkillVisibility.Personal)
-            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "技能不存在或无权操作"));
+        if (skill == null)
+        {
+            _logger.LogWarning("[skill-agent] Publish failed (not found): {SkillKey} by {UserId}", skillKey, userId);
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "技能不存在"));
+        }
+        if (skill.OwnerUserId != userId)
+        {
+            _logger.LogWarning("[skill-agent] Publish denied (owner mismatch): {SkillKey} by {UserId}, owner={Owner}",
+                skillKey, userId, skill.OwnerUserId);
+            return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "你不是该技能的拥有者"));
+        }
+        if (skill.Visibility != SkillVisibility.Personal)
+        {
+            _logger.LogWarning("[skill-agent] Publish denied (not personal): {SkillKey} visibility={Visibility}",
+                skillKey, skill.Visibility);
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "只能发布个人技能到广场"));
+        }
 
         // Get author info
         var user = await _db.Users.Find(u => u.Id == userId).FirstOrDefaultAsync(ct);
@@ -367,9 +382,17 @@ public class SkillAgentController : ControllerBase
             .Set(s => s.PublishedAt, DateTime.UtcNow)
             .Set(s => s.UpdatedAt, DateTime.UtcNow);
 
-        await _db.Skills.UpdateOneAsync(
+        var result = await _db.Skills.UpdateOneAsync(
             s => s.SkillKey == skillKey && s.OwnerUserId == userId,
             update, cancellationToken: ct);
+
+        if (result.MatchedCount == 0)
+        {
+            // GetByKeyAsync 返回了 skill，但 Update 过滤器（skillKey + ownerUserId）没匹上
+            // 说明 GetByKeyAsync 取到的是别人的同名技能记录 — 理论上上面已拦截，兜底防御
+            _logger.LogError("[skill-agent] Publish update missed: {SkillKey} by {UserId}", skillKey, userId);
+            return StatusCode(500, ApiResponse<object>.Fail(ErrorCodes.INTERNAL_ERROR, "发布失败：记录更新未命中"));
+        }
 
         _logger.LogInformation("[skill-agent] Skill published: {SkillKey} by {UserId}", skillKey, userId);
         return Ok(ApiResponse<object>.Ok(new { skillKey, published = true }));
@@ -392,8 +415,12 @@ public class SkillAgentController : ControllerBase
             s => s.SkillKey == skillKey && s.OwnerUserId == userId,
             update, cancellationToken: ct);
 
-        if (result.ModifiedCount == 0)
+        // MatchedCount 用于判断记录存在 + 归属；ModifiedCount 为 0 可能只是"已经是 unpublished 状态"，属于幂等成功
+        if (result.MatchedCount == 0)
+        {
+            _logger.LogWarning("[skill-agent] Unpublish not matched: {SkillKey} by {UserId}", skillKey, userId);
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "技能不存在或无权操作"));
+        }
 
         _logger.LogInformation("[skill-agent] Skill unpublished: {SkillKey} by {UserId}", skillKey, userId);
         return Ok(ApiResponse<object>.Ok(new { skillKey, published = false }));

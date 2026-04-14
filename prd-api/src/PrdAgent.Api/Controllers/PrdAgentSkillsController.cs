@@ -155,6 +155,14 @@ public class PrdAgentSkillsController : ControllerBase
             s.IsEnabled,
             s.IsBuiltIn,
             s.UsageCount,
+            // 广场发布状态：personal 技能需要暴露给前端，避免详情页 button 初始化错误
+            s.IsPublic,
+            s.AuthorName,
+            s.AuthorAvatar,
+            s.PublishedAt,
+            s.OwnerUserId,
+            s.CreatedAt,
+            s.UpdatedAt,
         }).ToList();
 
         return Ok(ApiResponse<object>.Ok(new { skills = clientSkills }));
