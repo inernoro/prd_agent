@@ -9312,6 +9312,38 @@ function _topologyRenderPanelTab(tab, entity) {
     var port = entity.containerPort || '-';
     var hostPort = entity.hostPort ? ' → host :' + entity.hostPort : '';
 
+    // P4 Part 18 (G5): Deploy / Redeploy button inline in the status banner.
+    //
+    // Previously topology view forced users to switch to list mode just to
+    // hit "deploy". This is a P0 workflow regression — Railway has deploy
+    // right on the service card. We mirror that: pick the topology-selected
+    // branch (chip click) if any, else the currently displayed branch, and
+    // delegate to the existing deployBranch() call. No new backend API.
+    var deployTargetBranchId = _topologySelectedBranchId
+      || (displayBranch && displayBranch.id)
+      || null;
+    var deployBtnLabel = status === 'running' ? 'Redeploy' : 'Deploy';
+    var deployBtnHtml = '';
+    if (kind === 'app') {
+      if (deployTargetBranchId) {
+        deployBtnHtml =
+          '<button type="button" class="tfp-deploy-btn" ' +
+          'onclick="event.stopPropagation();deployBranch(\'' + esc(deployTargetBranchId) + '\')" ' +
+          'title="' + deployBtnLabel + ' branch ' + esc(deployTargetBranchId) + '">' +
+            '<svg width="11" height="11" viewBox="0 0 16 16" fill="currentColor">' +
+              '<path d="M1.5 8a.5.5 0 01.5-.5h10.793L9.146 3.854a.5.5 0 11.708-.708l4.5 4.5a.5.5 0 010 .708l-4.5 4.5a.5.5 0 01-.708-.708L12.793 8.5H2a.5.5 0 01-.5-.5z"/>' +
+            '</svg>' +
+            deployBtnLabel +
+          '</button>';
+      } else {
+        deployBtnHtml =
+          '<button type="button" class="tfp-deploy-btn disabled" disabled ' +
+          'title="尚未选择分支，先在左侧或顶部分支条里选一个">' +
+            '无分支' +
+          '</button>';
+      }
+    }
+
     body.innerHTML =
       // Status banner
       '<div class="tfp-status-banner ' + (status === 'running' ? 'ok' : status === 'error' ? 'err' : 'idle') + '">' +
@@ -9321,7 +9353,10 @@ function _topologyRenderPanelTab(tab, entity) {
             : '<circle cx="8" cy="8" r="5"/>') +
         '</svg>' +
         '<span>' + (status === 'running' ? 'Service is online' : 'Status: ' + status) + '</span>' +
-        '<span style="margin-left:auto;font-size:11px;opacity:0.7">' + esc(image) + '</span>' +
+        '<div style="margin-left:auto;display:flex;align-items:center;gap:10px;min-width:0">' +
+          deployBtnHtml +
+          '<span style="font-size:11px;opacity:0.7;white-space:nowrap">' + esc(image) + '</span>' +
+        '</div>' +
       '</div>' +
 
       // Variables count (link to Variables tab)

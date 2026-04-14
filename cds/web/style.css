@@ -6173,6 +6173,41 @@ body.cds-topology-fs .topology-fs-panel.open { transform: translateX(0); }
   color: var(--text-secondary);
 }
 
+/* P4 Part 18 (G5): inline Deploy / Redeploy button in status banner. */
+.tfp-deploy-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 11px;
+  background: rgba(16, 185, 129, 0.14);
+  border: 1px solid rgba(16, 185, 129, 0.35);
+  border-radius: 6px;
+  color: var(--green, #10b981);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.2px;
+  cursor: pointer;
+  transition: background 120ms ease, border-color 120ms ease, transform 80ms ease;
+  white-space: nowrap;
+}
+.tfp-deploy-btn:hover {
+  background: rgba(16, 185, 129, 0.22);
+  border-color: rgba(16, 185, 129, 0.55);
+}
+.tfp-deploy-btn:active { transform: translateY(1px); }
+.tfp-deploy-btn.disabled,
+.tfp-deploy-btn:disabled {
+  background: var(--bg-elevated);
+  border-color: var(--card-border);
+  color: var(--text-muted);
+  cursor: not-allowed;
+}
+.tfp-deploy-btn.disabled:hover,
+.tfp-deploy-btn:disabled:hover {
+  background: var(--bg-elevated);
+  border-color: var(--card-border);
+}
+
 .tfp-mini-stat {
   display: inline-flex;
   align-items: center;
