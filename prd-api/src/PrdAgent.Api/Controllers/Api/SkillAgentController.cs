@@ -371,7 +371,9 @@ public class SkillAgentController : ControllerBase
         }
 
         // Get author info
-        var user = await _db.Users.Find(u => u.Id == userId).FirstOrDefaultAsync(ct);
+        // 注意: MongoDB 映射 User.UserId → _id (BsonClassMapRegistration.cs:104)，
+        // User.Id 已被显式 UnmapMember，禁止用 u.Id 过滤，否则驱动抛 Serializer 异常。
+        var user = await _db.Users.Find(u => u.UserId == userId).FirstOrDefaultAsync(ct);
         var authorName = GetUsername() ?? user?.DisplayName ?? "匿名用户";
         var authorAvatar = user?.AvatarFileName;
 
