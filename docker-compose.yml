@@ -75,6 +75,13 @@ services:
       - ROOT_ACCESS_PASSWORD=${ROOT_ACCESS_PASSWORD:-}
       # Webhook 通知中「查看详情」链接的前端基地址（如 https://example.com）
       - App__FrontendBaseUrl=${FRONTEND_BASE_URL:-}
+      # GitHub OAuth Device Flow（PR Review Agent 使用）
+      # 管理员需在 GitHub 创建 OAuth App 并勾选 "Enable Device Flow"，
+      # 然后在宿主机 export 这两个变量（或写进同目录 .env 文件）。Device Flow 无需 Callback URL。
+      # 变量名沿用 ASP.NET Configuration 约定（节点分隔符 "__"），后端通过 IConfiguration["GitHubOAuth:ClientId"] 读取。
+      - GitHubOAuth__ClientId=${GitHubOAuth__ClientId:-}
+      - GitHubOAuth__ClientSecret=${GitHubOAuth__ClientSecret:-}
+      - GitHubOAuth__Scopes=${GitHubOAuth__Scopes:-}
     # 重要：此 API 容器建议只读，避免任何本地落盘（你这种“可写层 1MB”环境必开）
     read_only: true
     # 允许少量临时写入到内存（tmpfs），避免 .NET/HTTP 栈因无 /tmp 可写而异常；不会落到磁盘
