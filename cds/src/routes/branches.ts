@@ -166,7 +166,9 @@ export function createBranchRouter(deps: RouterDeps): Router {
     // Prepare the payload the remote's /exec/deploy expects. The remote has
     // its own worktree + state, so we pass branch metadata + profiles + the
     // merged env var map and let it handle the rest.
-    const profiles = stateService.getBuildProfiles();
+    // P4 Part 17 (G2 fix): scope by the branch's project so a remote
+    // executor only receives profiles owned by this project.
+    const profiles = stateService.getBuildProfilesForProject(entry.projectId || 'default');
     const cdsEnv = stateService.getCdsEnvVars();
     const customEnv = stateService.getCustomEnv();
     const mirrorEnv = stateService.getMirrorEnvVars();
@@ -520,9 +522,16 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
   // ── Branches CRUD ──
 
-  router.get('/branches', async (_req, res) => {
+  router.get('/branches', async (req, res) => {
     const state = stateService.getState();
-    const branches = Object.values(state.branches);
+    // P4 Part 3b: optional ?project=<id> filter. When absent or set to
+    // 'default', pre-P4 behavior is preserved (every branch rolls up
+    // because all legacy branches were migrated to projectId='default'
+    // in migrateProjectScoping).
+    const projectFilter = typeof req.query.project === 'string' ? req.query.project : null;
+    const branches = Object.values(state.branches).filter(
+      (b) => !projectFilter || (b.projectId || 'default') === projectFilter,
+    );
 
     // Reconcile container status
     for (const b of branches) {
@@ -590,7 +599,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
   router.post('/branches', async (req, res) => {
     try {
-      const { branch } = req.body as { branch?: string };
+      const { branch, projectId } = req.body as { branch?: string; projectId?: string };
       if (!branch) {
         res.status(400).json({ error: '分支名称不能为空' });
         return;
@@ -602,12 +611,23 @@ export function createBranchRouter(deps: RouterDeps): Router {
         return;
       }
 
+      // P4 Part 3b: if the Dashboard passes projectId in the body, stamp
+      // it on the new branch so project-scoped list queries can find it.
+      // Missing value → defaults to 'default' in addBranch().
+      const effectiveProjectId = projectId && typeof projectId === 'string' ? projectId : 'default';
+      // Validate the project exists so we don't create orphans.
+      if (!stateService.getProject(effectiveProjectId)) {
+        res.status(400).json({ error: `未知项目: ${effectiveProjectId}` });
+        return;
+      }
+
       await shell.exec(`mkdir -p "${config.worktreeBase}"`);
       const worktreePath = `${config.worktreeBase}/${id}`;
       await worktreeService.create(branch, worktreePath);
 
       const entry: BranchEntry = {
         id,
+        projectId: effectiveProjectId,
         branch,
         worktreePath,
         services: {},
@@ -759,7 +779,10 @@ export function createBranchRouter(deps: RouterDeps): Router {
       return;
     }
 
-    const profiles = stateService.getBuildProfiles();
+    // P4 Part 17 (G2 fix): scope build profiles by the branch's project
+    // so a deploy in project A doesn't pull in B's profiles. Pre-Part 3
+    // branches default to 'default' (the legacy migration target).
+    const profiles = stateService.getBuildProfilesForProject(entry.projectId || 'default');
     if (profiles.length === 0) {
       res.status(400).json({ error: '尚未配置构建配置，请先添加至少一个构建配置。' });
       return;
@@ -845,8 +868,12 @@ export function createBranchRouter(deps: RouterDeps): Router {
       stateService.save();
 
       // ── Compute startup layers (topological sort by dependsOn) ──
+      // P4 Part 17 (G2 fix): scope infra by the branch's project so the
+      // dependency resolver only sees infra services actually owned by
+      // this project. Avoids cross-project bleed where project A's
+      // dependsOn references could resolve to project B's mongo.
       const infraIds = new Set(
-        stateService.getInfraServices()
+        stateService.getInfraServicesForProject(entry.projectId || 'default')
           .filter(s => s.status === 'running')
           .map(s => s.id),
       );
@@ -1070,7 +1097,10 @@ export function createBranchRouter(deps: RouterDeps): Router {
       return;
     }
 
-    const profiles = stateService.getBuildProfiles();
+    // P4 Part 17 (G2 fix): scope by the branch's project so a
+    // single-service redeploy can't accidentally pick up a same-named
+    // profile from a different project.
+    const profiles = stateService.getBuildProfilesForProject(entry.projectId || 'default');
     const profile = profiles.find(p => p.id === profileId);
     if (!profile) {
       res.status(404).json({ error: `构建配置 "${profileId}" 不存在` });
@@ -1324,7 +1354,9 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
     // Allocate a new port
     const port = stateService.allocatePort(config.portStart);
-    const profiles = stateService.getBuildProfiles();
+    // P4 Part 17 (G2 fix): scope by branch project so the path-prefix
+    // proxy only routes to profiles owned by this project.
+    const profiles = stateService.getBuildProfilesForProject(entry.projectId || 'default');
 
     // Create a lightweight HTTP proxy that routes by path-prefix
     const server = http.createServer((proxyReq, proxyRes) => {
@@ -1498,7 +1530,10 @@ export function createBranchRouter(deps: RouterDeps): Router {
     // subset that only contains user-editable keys.
     const cdsVars = stateService.getCdsEnvVars();
     const cdsEnvKeys = Object.keys(cdsVars);
-    const profiles = stateService.getBuildProfiles();
+    // P4 Part 17 (G2 fix): scope by branch project so the override
+    // modal's "effective env" preview only enumerates profiles in
+    // this project, not every project's profile.
+    const profiles = stateService.getBuildProfilesForProject(entry.projectId || 'default');
     const payload = profiles.map(profile => {
       const override = entry.profileOverrides?.[profile.id];
       const resolved = resolveEffectiveProfile(profile, entry);
@@ -2007,8 +2042,13 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
   // ── Routing rules CRUD ──
 
-  router.get('/routing-rules', (_req, res) => {
-    res.json({ rules: stateService.getRoutingRules() });
+  router.get('/routing-rules', (req, res) => {
+    // P4 Part 3b: optional ?project=<id> filter.
+    const projectFilter = typeof req.query.project === 'string' ? req.query.project : null;
+    const rules = projectFilter
+      ? stateService.getRoutingRulesForProject(projectFilter)
+      : stateService.getRoutingRules();
+    res.json({ rules });
   });
 
   router.post('/routing-rules', (req, res) => {
@@ -2020,6 +2060,20 @@ export function createBranchRouter(deps: RouterDeps): Router {
       }
       rule.priority = rule.priority ?? 0;
       rule.enabled = rule.enabled ?? true;
+      // P4 Part 17 (G14 fix): mirror the B1 fix on POST /build-profiles
+      // and POST /infra — honour the project scope so routing rules
+      // created from a non-default project don't silently land in the
+      // legacy default project. Source of truth: request body, with
+      // ?project= query param as fallback. Validates the project exists
+      // to prevent orphan routing rules.
+      if (!rule.projectId) {
+        const queryProject = typeof req.query.project === 'string' ? req.query.project : null;
+        rule.projectId = queryProject || 'default';
+      }
+      if (!stateService.getProject(rule.projectId)) {
+        res.status(400).json({ error: `未知项目: ${rule.projectId}` });
+        return;
+      }
       stateService.addRoutingRule(rule);
       stateService.save();
       res.status(201).json({ rule });
@@ -2050,8 +2104,13 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
   // ── Build profiles CRUD ──
 
-  router.get('/build-profiles', (_req, res) => {
-    const profiles = stateService.getBuildProfiles().map(p => ({
+  router.get('/build-profiles', (req, res) => {
+    // P4 Part 3b: optional ?project=<id> filter.
+    const projectFilter = typeof req.query.project === 'string' ? req.query.project : null;
+    const source = projectFilter
+      ? stateService.getBuildProfilesForProject(projectFilter)
+      : stateService.getBuildProfiles();
+    const profiles = source.map(p => ({
       ...p,
       env: p.env ? maskSecrets(p.env) : p.env,
     }));
@@ -2067,6 +2126,20 @@ export function createBranchRouter(deps: RouterDeps): Router {
       }
       profile.workDir = profile.workDir || '.';
       profile.containerPort = profile.containerPort || 8080;
+      // P4 Part 16 (B1 fix): honor project scope — projectId can come
+      // from request body (preferred) or ?project= query param fallback.
+      // Without this fix, every new profile silently lands in the
+      // legacy 'default' project regardless of which project the user
+      // is configuring, breaking multi-project isolation entirely.
+      if (!profile.projectId) {
+        const queryProject = typeof req.query.project === 'string' ? req.query.project : null;
+        profile.projectId = queryProject || 'default';
+      }
+      // Validate the target project exists so we don't create orphans.
+      if (!stateService.getProject(profile.projectId)) {
+        res.status(400).json({ error: `未知项目: ${profile.projectId}` });
+        return;
+      }
       stateService.addBuildProfile(profile);
       stateService.save();
       res.status(201).json({ profile });
@@ -2687,8 +2760,12 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
   // ── Infrastructure services CRUD ──
 
-  router.get('/infra', async (_req, res) => {
-    const services = stateService.getInfraServices();
+  router.get('/infra', async (req, res) => {
+    // P4 Part 3b: optional ?project=<id> filter.
+    const projectFilter = typeof req.query.project === 'string' ? req.query.project : null;
+    const services = projectFilter
+      ? stateService.getInfraServicesForProject(projectFilter)
+      : stateService.getInfraServices();
 
     // Reconcile status with Docker
     for (const svc of services) {
@@ -2733,9 +2810,20 @@ export function createBranchRouter(deps: RouterDeps): Router {
         res.status(400).json({ error: 'id、Docker 镜像和容器端口为必填项' });
         return;
       }
+      // P4 Part 16 (B1 fix): honor project scope — projectId from body
+      // or ?project= query string. Without this, infra services created
+      // from any non-legacy project's topology view silently land in
+      // the legacy 'default' project.
+      const queryProject = typeof req.query.project === 'string' ? req.query.project : null;
+      const projectId = body.projectId || queryProject || 'default';
+      if (!stateService.getProject(projectId)) {
+        res.status(400).json({ error: `未知项目: ${projectId}` });
+        return;
+      }
       const hostPort = stateService.allocatePort(config.portStart);
       const service: InfraService = {
         id: body.id,
+        projectId,
         name: body.name || body.id,
         dockerImage: body.dockerImage,
         containerPort: body.containerPort,

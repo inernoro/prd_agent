@@ -1765,9 +1765,147 @@ a.branch-name:hover { color: var(--accent); }
   background: var(--surface, rgba(88,166,255,0.08));
   transform: translateY(-1px);
 }
+/* P4 Part 8 (MECE A5) — three-step empty project CTA */
+.branches-empty-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  justify-content: center;
+  margin-top: 4px;
+}
+.branches-empty-cta.primary {
+  background: var(--accent, #10b981);
+  color: #fff;
+  border-color: var(--accent, #10b981);
+}
+.branches-empty-cta.primary:hover {
+  background: var(--accent-dim, #059669);
+  color: #fff;
+  border-color: var(--accent-dim, #059669);
+}
+.branches-empty-cta.secondary {
+  background: var(--bg-card);
+  color: var(--text-secondary);
+  border-color: var(--card-border);
+}
+.branches-empty-cta.secondary:hover {
+  border-color: var(--accent-border, rgba(16,185,129,0.3));
+  color: var(--text-primary);
+}
+.branches-empty-tip {
+  margin-top: 18px;
+  padding: 10px 16px;
+  background: var(--bg-card);
+  border: 1px dashed var(--card-border);
+  border-radius: 8px;
+  font-size: 12px;
+  color: var(--text-muted);
+  max-width: 540px;
+  line-height: 1.6;
+}
+.branches-empty-tip strong { color: var(--text-secondary); font-weight: 600; }
+
 @keyframes cds-empty-float {
   0%, 100% { transform: translateY(0); opacity: 0.55; }
   50%      { transform: translateY(-4px); opacity: 0.75; }
+}
+
+/* P4 Part 9 (MECE B4) — Quick start templates for build profile add form */
+.profile-quick-templates {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 10px 12px;
+  background: var(--bg-card);
+  border: 1px solid var(--card-border);
+  border-radius: 8px;
+  margin-bottom: 12px;
+}
+.profile-quick-templates-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-muted);
+  margin-right: 4px;
+  letter-spacing: 0.2px;
+}
+.profile-template-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 5px 11px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--card-border);
+  border-radius: 6px;
+  color: var(--text-secondary);
+  font-size: 11.5px;
+  font-weight: 600;
+  cursor: pointer;
+  font-family: inherit;
+  transition: all 120ms ease;
+}
+.profile-template-btn:hover {
+  border-color: var(--accent-border, rgba(16,185,129,0.4));
+  color: var(--text-primary);
+  background: var(--bg-hover);
+}
+.profile-template-btn.active {
+  border-color: var(--accent, #10b981);
+  background: var(--accent-bg, rgba(16,185,129,0.12));
+  color: var(--accent, #10b981);
+}
+
+/* P4 Part 8 (MECE R4) — rich inline failure preview on error branches */
+.branch-error-card {
+  margin: 8px 0 12px;
+  padding: 10px 12px 12px;
+  background: rgba(244, 63, 94, 0.08);
+  border: 1px solid rgba(244, 63, 94, 0.28);
+  border-left-width: 3px;
+  border-radius: 8px;
+}
+.branch-error-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+.branch-error-icon { color: var(--red, #f43f5e); flex-shrink: 0; }
+.branch-error-title {
+  flex: 1;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--red, #f43f5e);
+  letter-spacing: 0.2px;
+}
+.branch-error-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 9px;
+  background: rgba(244, 63, 94, 0.12);
+  border: 1px solid rgba(244, 63, 94, 0.3);
+  color: var(--red, #f43f5e);
+  font-size: 11px;
+  font-weight: 600;
+  border-radius: 5px;
+  cursor: pointer;
+  transition: background 120ms ease;
+}
+.branch-error-btn:hover { background: rgba(244, 63, 94, 0.22); }
+.branch-error-body {
+  margin: 0;
+  padding: 8px 10px;
+  background: rgba(0, 0, 0, 0.35);
+  border-radius: 6px;
+  font-family: var(--font-mono, monospace);
+  font-size: 11px;
+  color: var(--text-secondary);
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 120px;
+  overflow-y: auto;
+  line-height: 1.5;
 }
 
 /* ════════════════ Split Button & Deploy Menu ════════════════ */
@@ -2119,6 +2257,43 @@ a.branch-name:hover { color: var(--accent); }
   position: absolute; top: 0; left: 0; right: 0; height: 2px;
   background: rgba(255, 255, 255, 0.05); overflow: hidden;
   border-radius: var(--radius) var(--radius) 0 0;
+}
+/* P4 Part 15 — Initializing timer that ticks while branch is building/starting */
+.branch-deploy-timer {
+  position: absolute;
+  top: 8px;
+  right: 12px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 10px;
+  background: var(--accent-bg, rgba(16,185,129,0.12));
+  border: 1px solid var(--accent-border, rgba(16,185,129,0.28));
+  border-radius: 999px;
+  font-size: 10.5px;
+  font-weight: 700;
+  color: var(--accent, #10b981);
+  font-family: var(--font-mono, monospace);
+  z-index: 2;
+  pointer-events: none;
+  letter-spacing: 0.2px;
+  animation: branch-timer-pulse 1.6s ease-in-out infinite;
+}
+.branch-deploy-timer-label {
+  font-size: 9.5px;
+  font-weight: 600;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  opacity: 0.85;
+}
+.branch-deploy-timer-value {
+  font-size: 11px;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+}
+@keyframes branch-timer-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.0); }
+  50% { box-shadow: 0 0 0 4px rgba(16, 185, 129, 0.18); }
 }
 .deploy-progress-bar-fill {
   height: 100%; width: 30%;
@@ -5082,3 +5257,1105 @@ a.branch-name:hover { color: var(--accent); }
   pointer-events: none;
   z-index: 5;
 }
+
+/* ─────────────────────────────────────────────────────────────────
+ * P4 Part 5 — Full-screen topology mode
+ * ─────────────────────────────────────────────────────────────────
+ *
+ * When the user toggles to topology view we promote the canvas to
+ * fill the entire viewport, hiding the dashboard's header / search /
+ * branch picker / tag bar / etc. The legacy list view is unchanged.
+ *
+ * Activation: app.js setViewMode('topology') adds .cds-topology-fs to
+ * <body>; setViewMode('list') removes it.
+ *
+ * The canvas keeps its existing pan/zoom + node click handlers, so
+ * the only rules below deal with positioning + chrome hiding. Nothing
+ * about node interactivity changes — that's wired in app.js.
+ */
+body.cds-topology-fs .container > *:not(#topologyView):not(#toast):not(.modal):not(#dropdownPortal):not(#hostStatsWidget):not(#activityMonitor):not(#aiPairingPanel) {
+  display: none !important;
+}
+body.cds-topology-fs .container {
+  padding: 0 !important;
+  margin: 0 !important;
+  max-width: none !important;
+  width: 100vw;
+}
+body.cds-topology-fs #topologyView {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  background: var(--bg-primary);
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+}
+body.cds-topology-fs #topologyView .topology-card {
+  flex: 1;
+  border: none;
+  border-radius: 0;
+  margin: 0;
+  padding: 14px 18px 18px;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  box-shadow: none;
+  background: transparent;
+}
+body.cds-topology-fs #topologyView .topology-canvas-wrap {
+  flex: 1;
+  min-height: 0;
+  border-radius: 12px;
+}
+
+/* Floating top bar (back to list + branch picker hint + commit hash) */
+.topology-fs-topbar {
+  display: none;
+  position: fixed;
+  top: 16px;
+  left: 16px;
+  right: 16px;
+  z-index: 60;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  pointer-events: none;
+}
+body.cds-topology-fs .topology-fs-topbar { display: flex; }
+.topology-fs-topbar > * { pointer-events: auto; }
+.topology-fs-topbar-left,
+.topology-fs-topbar-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--bg-card);
+  border: 1px solid var(--card-border);
+  border-radius: 10px;
+  padding: 6px 10px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+}
+.topology-fs-topbar-link,
+.topology-fs-topbar-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 10px;
+  background: transparent;
+  border: none;
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 600;
+  border-radius: 6px;
+  cursor: pointer;
+  text-decoration: none;
+  transition: background 120ms ease, color 120ms ease;
+}
+.topology-fs-topbar-link:hover,
+.topology-fs-topbar-btn:hover {
+  background: var(--bg-elevated);
+  color: var(--text-primary);
+}
+.topology-fs-topbar-divider {
+  width: 1px;
+  height: 16px;
+  background: var(--card-border);
+  margin: 0 2px;
+}
+.topology-fs-topbar-title {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text-primary);
+  padding: 0 4px;
+}
+.topology-fs-topbar-meta {
+  font-size: 11px;
+  color: var(--text-muted);
+  font-family: var(--font-mono, monospace);
+  padding: 0 4px;
+}
+
+/* Tighten the in-card header in fs mode so chips don't overflow */
+body.cds-topology-fs .topology-card .topology-header { margin-top: 56px; }
+body.cds-topology-fs .topology-card .topology-title-hint { display: none; }
+
+/* Hint text for click-to-edit interaction */
+.topology-edit-hint {
+  position: fixed;
+  bottom: 16px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 60;
+  background: var(--bg-card);
+  border: 1px solid var(--accent-border, rgba(16,185,129,0.3));
+  color: var(--accent);
+  padding: 6px 14px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  display: none;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+  pointer-events: none;
+}
+body.cds-topology-fs .topology-edit-hint { display: inline-block; }
+
+/* ─────────────────────────────────────────────────────────────────
+ * P4 Part 6 — Topology shell rebuild (Railway-fidelity)
+ *
+ * Adds the missing chrome that makes the fullscreen topology feel
+ * like Railway's project-detail view:
+ *
+ *   - 44px left icon sub-nav (topology / logs / metrics / settings)
+ *   - Top breadcrumb with project name + branch dropdown
+ *   - Right slide-in service panel with 4 tabs
+ *   - Floating "+ Add" button with Railway-style menu
+ *   - Hide the old in-card chip bar + legend
+ *
+ * All rules are scoped under body.cds-topology-fs so the legacy
+ * non-fullscreen topology view (and the list view) are untouched.
+ * ───────────────────────────────────────────────────────────────── */
+
+/* Hide the in-card branch chip bar and legend in fs mode — those are
+ * replaced by the new top-bar dropdown and the bottom hint pill. */
+body.cds-topology-fs .topology-card .topology-header,
+body.cds-topology-fs .topology-card .topology-legend {
+  display: none !important;
+}
+body.cds-topology-fs .topology-card { padding-top: 60px; }
+
+/* ───── Left icon sub-nav (44px) ───── */
+.topology-fs-leftnav {
+  display: none;
+  position: fixed;
+  top: 0;
+  left: 0;
+  bottom: 0;
+  width: 44px;
+  background: var(--bg-primary);
+  border-right: 1px solid var(--border, rgba(255,255,255,0.08));
+  z-index: 65;
+  flex-direction: column;
+  align-items: center;
+  padding: 14px 0;
+  gap: 6px;
+}
+body.cds-topology-fs .topology-fs-leftnav { display: flex; }
+body.cds-topology-fs .container,
+body.cds-topology-fs #topologyView { left: 44px !important; }
+body.cds-topology-fs #topologyView { left: 44px; right: 0; }
+body.cds-topology-fs .topology-fs-topbar { left: 60px; }
+
+.topology-fs-leftnav-icon {
+  width: 30px;
+  height: 30px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 7px;
+  color: var(--text-muted);
+  cursor: pointer;
+  background: transparent;
+  border: none;
+  padding: 0;
+  transition: background 120ms ease, color 120ms ease;
+}
+.topology-fs-leftnav-icon:hover { background: var(--bg-elevated); color: var(--text-primary); }
+.topology-fs-leftnav-icon.active {
+  background: var(--bg-elevated);
+  color: var(--text-primary);
+}
+.topology-fs-leftnav-icon.disabled { opacity: 0.35; cursor: not-allowed; }
+.topology-fs-leftnav-spacer { flex: 1; }
+.topology-fs-leftnav-avatar {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, #fb7185 0%, #f59e0b 100%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+}
+.topology-fs-leftnav-avatar img { width: 100%; height: 100%; border-radius: 50%; object-fit: cover; }
+
+/* ───── Top breadcrumb (rebuild of topbar) ───── */
+.topology-fs-topbar {
+  /* override the simpler topbar from Part 5 — we want a single horizontal
+   * pill that holds breadcrumb + branch dropdown */
+  top: 12px !important;
+  left: 60px !important;
+  right: 16px !important;
+  background: transparent !important;
+  padding: 0 !important;
+  border: none !important;
+  box-shadow: none !important;
+}
+.topology-fs-topbar-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--bg-card);
+  border: 1px solid var(--card-border);
+  border-radius: 10px;
+  padding: 5px 8px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+  pointer-events: auto;
+}
+.topology-fs-breadcrumb {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0 4px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+.topology-fs-breadcrumb-sep { color: var(--text-muted); opacity: 0.6; }
+.topology-fs-breadcrumb-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 8px;
+  border-radius: 6px;
+  color: var(--text-primary);
+  font-weight: 600;
+  text-decoration: none;
+  cursor: default;
+}
+.topology-fs-breadcrumb-item.link { cursor: pointer; }
+.topology-fs-breadcrumb-item.link:hover { background: var(--bg-elevated); }
+
+/* Branch dropdown (native select styled to look like a pill) */
+.topology-fs-branch-select {
+  appearance: none;
+  -webkit-appearance: none;
+  background: var(--bg-elevated);
+  color: var(--text-primary);
+  border: 1px solid var(--card-border);
+  border-radius: 7px;
+  padding: 5px 26px 5px 12px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  font-family: inherit;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 16 16' fill='%23a1a1aa'><path d='M4.22 6.22a.75.75 0 011.06 0L8 8.94l2.72-2.72a.75.75 0 111.06 1.06l-3.25 3.25a.75.75 0 01-1.06 0L4.22 7.28a.75.75 0 010-1.06z'/></svg>");
+  background-repeat: no-repeat;
+  background-position: right 8px center;
+  max-width: 220px;
+  text-overflow: ellipsis;
+}
+.topology-fs-branch-select:hover { border-color: var(--accent); }
+.topology-fs-branch-select:focus { outline: none; box-shadow: 0 0 0 2px rgba(16,185,129,0.2); }
+
+/* ───── Floating "+ Add" button + popover menu ───── */
+.topology-fs-add-btn {
+  display: none;
+  position: fixed;
+  top: 22px;
+  right: 24px;
+  z-index: 70;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 14px;
+  background: var(--bg-card);
+  border: 1px solid var(--card-border);
+  border-radius: 9px;
+  color: var(--text-primary);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+  transition: background 120ms ease, border-color 120ms ease;
+}
+body.cds-topology-fs .topology-fs-add-btn { display: inline-flex; }
+.topology-fs-add-btn:hover {
+  background: var(--bg-elevated);
+  border-color: var(--accent-border, rgba(16,185,129,0.3));
+}
+
+.topology-fs-add-menu {
+  display: none;
+  position: fixed;
+  top: 60px;
+  right: 24px;
+  z-index: 71;
+  width: 320px;
+  background: var(--bg-card);
+  border: 1px solid var(--card-border);
+  border-radius: 12px;
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.6);
+  padding: 14px;
+  flex-direction: column;
+}
+.topology-fs-add-menu.open { display: flex; }
+.topology-fs-add-menu-search {
+  width: 100%;
+  background: var(--bg-elevated);
+  border: 1px solid var(--card-border);
+  border-radius: 9px;
+  padding: 9px 12px;
+  color: var(--text-primary);
+  font-size: 12px;
+  margin-bottom: 10px;
+  outline: none;
+}
+.topology-fs-add-menu-search:focus { border-color: var(--accent); }
+.topology-fs-add-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 9px 10px;
+  border-radius: 8px;
+  color: var(--text-primary);
+  background: transparent;
+  border: none;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  text-align: left;
+  transition: background 120ms ease;
+  font-family: inherit;
+}
+.topology-fs-add-menu-item:hover { background: var(--bg-elevated); }
+.topology-fs-add-menu-item.disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.topology-fs-add-menu-item.disabled:hover { background: transparent; }
+.topology-fs-add-menu-back {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px;
+  margin: -2px -2px 8px -2px;
+  border-radius: 6px;
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.4px;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition: background 120ms ease, color 120ms ease;
+}
+.topology-fs-add-menu-back:hover { background: var(--bg-elevated); color: var(--text-secondary); }
+
+/* P4 Part 11 — Cmd+K command palette overlay */
+.cmdk-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(3, 7, 18, 0.6);
+  backdrop-filter: blur(6px);
+  z-index: 9999;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding-top: 18vh;
+}
+.cmdk-overlay.hidden { display: none; }
+.cmdk-dialog {
+  width: 100%;
+  max-width: 560px;
+  background: var(--bg-card);
+  border: 1px solid var(--card-border);
+  border-radius: 14px;
+  box-shadow: 0 32px 80px rgba(0, 0, 0, 0.7);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.cmdk-search-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 14px 18px;
+  border-bottom: 1px solid var(--card-border);
+}
+.cmdk-search-icon { color: var(--text-muted); flex-shrink: 0; }
+.cmdk-search-input {
+  flex: 1;
+  background: transparent;
+  border: none;
+  outline: none;
+  color: var(--text-primary);
+  font-size: 14px;
+  font-family: inherit;
+  font-weight: 500;
+}
+.cmdk-search-input::placeholder { color: var(--text-muted); }
+.cmdk-search-hint {
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--text-muted);
+  background: var(--bg-elevated);
+  border: 1px solid var(--card-border);
+  border-radius: 4px;
+  padding: 2px 6px;
+}
+.cmdk-results {
+  max-height: 50vh;
+  overflow-y: auto;
+  padding: 8px;
+}
+.cmdk-group-label {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.6px;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  padding: 12px 10px 6px;
+}
+.cmdk-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 9px 10px;
+  border-radius: 8px;
+  cursor: pointer;
+  color: var(--text-primary);
+  font-size: 13px;
+  transition: background 80ms ease;
+}
+.cmdk-item:hover,
+.cmdk-item.active {
+  background: var(--bg-elevated);
+}
+.cmdk-item.active {
+  border-left: 2px solid var(--accent);
+  padding-left: 8px;
+}
+.cmdk-item-icon {
+  width: 22px;
+  height: 22px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+.cmdk-item-label {
+  flex: 1;
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.cmdk-item-meta {
+  font-size: 11px;
+  color: var(--text-muted);
+  font-family: var(--font-mono, monospace);
+}
+.cmdk-empty {
+  padding: 40px 20px;
+  text-align: center;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+.cmdk-footer {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 10px 18px;
+  border-top: 1px solid var(--card-border);
+  font-size: 11px;
+  color: var(--text-muted);
+}
+.cmdk-footer kbd {
+  display: inline-block;
+  padding: 1px 6px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--card-border);
+  border-radius: 4px;
+  font-family: var(--font-mono, monospace);
+  font-size: 10px;
+  margin-right: 4px;
+}
+.topology-fs-add-menu-item .icon {
+  width: 22px;
+  height: 22px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+.topology-fs-add-menu-item .label { flex: 1; }
+.topology-fs-add-menu-item .chevron { opacity: 0.4; flex-shrink: 0; }
+
+/* ───── Right slide-in service panel ───── */
+.topology-fs-panel {
+  display: none;
+  position: fixed;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 460px;
+  max-width: 90vw;
+  z-index: 68;
+  background: var(--bg-primary);
+  border-left: 1px solid var(--border, rgba(255,255,255,0.08));
+  flex-direction: column;
+  overflow: hidden;
+  transform: translateX(100%);
+  transition: transform 240ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+body.cds-topology-fs .topology-fs-panel { display: flex; }
+body.cds-topology-fs .topology-fs-panel.open { transform: translateX(0); }
+
+.topology-fs-panel-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 18px 22px;
+  border-bottom: 1px solid var(--border-light);
+}
+.topology-fs-panel-icon {
+  width: 28px;
+  height: 28px;
+  border-radius: 7px;
+  background: var(--bg-elevated);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-secondary);
+  flex-shrink: 0;
+}
+.topology-fs-panel-title {
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--text-primary);
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.topology-fs-panel-close {
+  width: 28px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background 120ms ease, color 120ms ease;
+}
+.topology-fs-panel-close:hover { background: var(--bg-elevated); color: var(--text-primary); }
+
+.topology-fs-panel-tabs {
+  display: flex;
+  gap: 4px;
+  padding: 0 22px;
+  border-bottom: 1px solid var(--border-light);
+}
+.topology-fs-panel-tab {
+  position: relative;
+  padding: 12px 4px;
+  margin-right: 16px;
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  font-family: inherit;
+  transition: color 120ms ease;
+}
+.topology-fs-panel-tab:hover { color: var(--text-secondary); }
+.topology-fs-panel-tab.active { color: var(--text-primary); }
+.topology-fs-panel-tab.active::after {
+  content: '';
+  position: absolute;
+  bottom: -1px;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: var(--accent);
+  border-radius: 2px;
+}
+
+.topology-fs-panel-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 20px 22px;
+}
+
+/* Deployments tab */
+.tfp-deploy-url {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 12px;
+  background: var(--bg-card);
+  border: 1px solid var(--card-border);
+  border-radius: 8px;
+  font-size: 12px;
+  font-family: var(--font-mono, monospace);
+  color: var(--text-secondary);
+  margin-bottom: 14px;
+}
+.tfp-deploy-card {
+  background: var(--bg-card);
+  border: 1px solid var(--card-border);
+  border-radius: 10px;
+  padding: 14px;
+  margin-bottom: 12px;
+}
+.tfp-deploy-card-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+.tfp-active-pill {
+  padding: 3px 9px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.4px;
+  border-radius: 4px;
+  background: var(--accent-bg);
+  color: var(--accent);
+  border: 1px solid var(--accent-border);
+}
+.tfp-deploy-meta {
+  flex: 1;
+  font-size: 12px;
+  color: var(--text-secondary);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.tfp-view-logs-btn {
+  padding: 5px 12px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--card-border);
+  border-radius: 6px;
+  color: var(--text-primary);
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.tfp-view-logs-btn:hover { background: var(--bg-hover); }
+.tfp-deploy-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  background: var(--green-bg);
+  border: 1px solid var(--green-border);
+  border-radius: 7px;
+  font-size: 12px;
+  color: var(--green);
+}
+.tfp-empty {
+  color: var(--text-muted);
+  font-size: 12px;
+  padding: 30px 0;
+  text-align: center;
+}
+.tfp-section-h {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.4px;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  margin: 18px 0 10px;
+}
+.tfp-kv {
+  display: flex;
+  justify-content: space-between;
+  padding: 7px 0;
+  font-size: 12px;
+  border-bottom: 1px solid var(--border-light);
+}
+.tfp-kv:last-child { border-bottom: none; }
+.tfp-kv-key { color: var(--text-muted); }
+.tfp-kv-val { color: var(--text-primary); font-family: var(--font-mono, monospace); font-size: 11px; }
+
+/* P4 Part 7 — Variables tab table */
+.tfp-vars-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 14px;
+}
+.tfp-vars-section-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+.tfp-vars-count {
+  background: var(--bg-elevated);
+  border: 1px solid var(--card-border);
+  border-radius: 999px;
+  padding: 1px 8px;
+  font-size: 11px;
+  color: var(--text-muted);
+  font-weight: 600;
+}
+.tfp-vars-edit-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--card-border);
+  border-radius: 7px;
+  color: var(--text-primary);
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 120ms ease;
+}
+.tfp-vars-edit-btn:hover { background: var(--bg-hover); border-color: var(--accent-border, rgba(16,185,129,0.3)); }
+.tfp-vars-list {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  background: var(--card-border);
+  border: 1px solid var(--card-border);
+  border-radius: 9px;
+  overflow: hidden;
+}
+.tfp-var-row {
+  display: grid;
+  grid-template-columns: minmax(0, 0.8fr) minmax(0, 1fr) auto;
+  gap: 0;
+  align-items: center;
+  background: var(--bg-card);
+  padding: 0;
+  transition: background 120ms ease;
+}
+.tfp-var-row:hover { background: var(--bg-elevated); }
+.tfp-var-key {
+  padding: 11px 14px;
+  font-family: var(--font-mono, monospace);
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--text-primary);
+  border-right: 1px solid var(--card-border);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.tfp-var-val {
+  padding: 11px 14px;
+  font-family: var(--font-mono, monospace);
+  font-size: 11.5px;
+  color: var(--text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.tfp-var-icon-btn {
+  width: 30px;
+  height: 30px;
+  margin: 0 6px;
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  border-radius: 5px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 120ms ease, color 120ms ease;
+}
+.tfp-var-icon-btn:hover { background: var(--bg-hover); color: var(--text-primary); }
+.tfp-vars-hint {
+  margin-top: 12px;
+  padding: 8px 12px;
+  background: var(--bg-card);
+  border: 1px dashed var(--card-border);
+  border-radius: 7px;
+  color: var(--text-muted);
+  font-size: 10.5px;
+  line-height: 1.5;
+}
+.tfp-vars-empty {
+  text-align: center;
+  padding: 32px 12px;
+  background: var(--bg-card);
+  border: 1px dashed var(--card-border);
+  border-radius: 10px;
+}
+.tfp-vars-empty-icon {
+  width: 44px;
+  height: 44px;
+  margin: 0 auto 12px;
+  background: var(--bg-elevated);
+  border-radius: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-muted);
+}
+.tfp-vars-empty-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin-bottom: 4px;
+}
+.tfp-vars-empty-desc {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+/* P4 Part 12 — Inline logs preview inside service detail panel */
+.tfp-logs-preview {
+  background: rgba(0, 0, 0, 0.4);
+  border: 1px solid var(--card-border);
+  border-radius: 8px;
+  padding: 0;
+  overflow: hidden;
+}
+.tfp-logs-loading,
+.tfp-logs-empty {
+  padding: 24px 16px;
+  color: var(--text-muted);
+  font-size: 11px;
+  text-align: center;
+}
+.tfp-logs-pre {
+  margin: 0;
+  padding: 12px 14px;
+  font-family: var(--font-mono, monospace);
+  font-size: 10.5px;
+  line-height: 1.55;
+  color: var(--text-secondary);
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 220px;
+  overflow-y: auto;
+}
+
+/* P4 Part 14 — Service detail panel logs tabs */
+
+/* Allow the panel tab strip to scroll horizontally when 6 tabs overflow */
+.topology-fs-panel-tabs {
+  overflow-x: auto;
+  scrollbar-width: thin;
+}
+.topology-fs-panel-tabs::-webkit-scrollbar { height: 4px; }
+.topology-fs-panel-tab { white-space: nowrap; flex-shrink: 0; }
+
+/* Status banner (Details tab top) */
+.tfp-status-banner {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 10px 14px;
+  border-radius: 9px;
+  font-size: 12px;
+  font-weight: 600;
+  margin-bottom: 14px;
+}
+.tfp-status-banner.ok {
+  background: rgba(16, 185, 129, 0.1);
+  border: 1px solid rgba(16, 185, 129, 0.3);
+  color: var(--green, #10b981);
+}
+.tfp-status-banner.err {
+  background: rgba(244, 63, 94, 0.1);
+  border: 1px solid rgba(244, 63, 94, 0.3);
+  color: var(--red, #f43f5e);
+}
+.tfp-status-banner.idle {
+  background: var(--bg-card);
+  border: 1px solid var(--card-border);
+  color: var(--text-secondary);
+}
+
+.tfp-mini-stat {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 12px;
+  background: var(--bg-card);
+  border: 1px solid var(--card-border);
+  border-radius: 7px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  margin-bottom: 14px;
+  transition: background 120ms ease;
+}
+.tfp-mini-stat:hover {
+  background: var(--bg-elevated);
+  border-color: var(--accent-border, rgba(16,185,129,0.3));
+}
+
+/* Configuration cards (Build + Deploy) */
+.tfp-config-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+.tfp-config-card {
+  background: var(--bg-card);
+  border: 1px solid var(--card-border);
+  border-radius: 10px;
+  padding: 14px;
+}
+.tfp-config-card-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text-primary);
+  margin-bottom: 12px;
+}
+.tfp-config-field {
+  margin-bottom: 10px;
+}
+.tfp-config-field:last-child { margin-bottom: 0; }
+.tfp-config-label {
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--text-muted);
+  letter-spacing: 0.4px;
+  text-transform: uppercase;
+  margin-bottom: 3px;
+}
+.tfp-config-value {
+  font-size: 11px;
+  font-family: var(--font-mono, monospace);
+  color: var(--text-primary);
+  word-break: break-all;
+  line-height: 1.4;
+}
+
+/* Logs toolbar (search + refresh) */
+.tfp-logs-toolbar {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+.tfp-logs-search {
+  flex: 1;
+  background: var(--bg-card);
+  border: 1px solid var(--card-border);
+  border-radius: 7px;
+  padding: 7px 11px;
+  color: var(--text-primary);
+  font-size: 12px;
+  outline: none;
+  font-family: inherit;
+}
+.tfp-logs-search:focus { border-color: var(--accent); }
+
+/* Log rows (Build / Deploy) */
+.tfp-logs-table {
+  background: rgba(0, 0, 0, 0.4);
+  border: 1px solid var(--card-border);
+  border-radius: 8px;
+  max-height: calc(100vh - 280px);
+  overflow-y: auto;
+}
+.tfp-log-row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border-light);
+  border-left: 2px solid transparent;
+}
+.tfp-log-row:last-child { border-bottom: none; }
+.tfp-log-row.tfp-log-row-ok { border-left-color: var(--green, #10b981); }
+.tfp-log-row.tfp-log-row-err { border-left-color: var(--red, #f43f5e); background: rgba(244,63,94,0.05); }
+.tfp-log-row.tfp-log-row-warn { border-left-color: var(--yellow, #fbbf24); }
+.tfp-log-row-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.tfp-log-stage {
+  padding: 1px 7px;
+  border-radius: 4px;
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.3px;
+  text-transform: uppercase;
+  background: var(--bg-elevated);
+  color: var(--text-secondary);
+}
+.tfp-log-stage-ok { background: var(--green-bg, rgba(16,185,129,0.1)); color: var(--green); }
+.tfp-log-stage-err { background: rgba(244,63,94,0.1); color: var(--red); }
+.tfp-log-time {
+  font-size: 10px;
+  font-family: var(--font-mono, monospace);
+  color: var(--text-muted);
+}
+.tfp-log-text {
+  margin: 0;
+  font-family: var(--font-mono, monospace);
+  font-size: 10.5px;
+  line-height: 1.5;
+  color: var(--text-secondary);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/* HTTP Logs table */
+.tfp-http-logs {
+  background: rgba(0, 0, 0, 0.4);
+  border: 1px solid var(--card-border);
+  border-radius: 8px;
+  max-height: calc(100vh - 280px);
+  overflow-y: auto;
+}
+.tfp-http-row {
+  display: grid;
+  grid-template-columns: 80px 50px 1fr 50px 60px;
+  gap: 10px;
+  padding: 7px 12px;
+  border-bottom: 1px solid var(--border-light);
+  align-items: center;
+  font-size: 11px;
+  font-family: var(--font-mono, monospace);
+}
+.tfp-http-row:last-child { border-bottom: none; }
+.tfp-http-row.tfp-http-head {
+  background: var(--bg-card);
+  font-weight: 700;
+  color: var(--text-muted);
+  font-size: 9.5px;
+  letter-spacing: 0.4px;
+  text-transform: uppercase;
+}
+.tfp-http-time { color: var(--text-muted); }
+.tfp-http-method {
+  display: inline-block;
+  padding: 1px 5px;
+  border-radius: 3px;
+  background: var(--bg-elevated);
+  font-weight: 700;
+  font-size: 9.5px;
+  text-align: center;
+}
+.tfp-http-method-get { color: var(--green); }
+.tfp-http-method-post { color: var(--blue, #38bdf8); }
+.tfp-http-method-put,
+.tfp-http-method-patch { color: var(--yellow, #fbbf24); }
+.tfp-http-method-delete { color: var(--red); }
+.tfp-http-path {
+  color: var(--text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.tfp-http-status { font-weight: 700; text-align: right; }
+.tfp-http-status-ok { color: var(--green); }
+.tfp-http-status-warn { color: var(--yellow, #fbbf24); }
+.tfp-http-status-err { color: var(--red); }
+.tfp-http-duration { color: var(--text-muted); text-align: right; }
+

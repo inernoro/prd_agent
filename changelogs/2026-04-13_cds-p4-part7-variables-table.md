@@ -1,0 +1,1 @@
+| feat | cds | P4 Part 7 — 拓扑面板 Variables tab Railway-style 表格：网格布局（key 列 + value 列 + 复制按钮列）、敏感字段（含 secret/password/token/key）值自动遮罩为 ••••••••、点 ⧉ 复制原值、空状态卡片含图标 + 引导文案、顶部 "Service Variables N" 计数 + "编辑全部" 按钮路由到 override modal |

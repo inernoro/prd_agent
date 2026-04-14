@@ -37,7 +37,32 @@ const config = loadConfig(configPath);
 const shell = new ShellExecutor();
 
 // ── State ──
+//
+// CDS_STORAGE_MODE selects the physical storage backend that the
+// StateService writes through. See doc/plan.cds-multi-project-phases.md P3
+// and doc/rule.cds-mongo-migration.md.
+//
+//   - 'json'  (default): state.json on disk with rolling .bak.* backups
+//   - 'mongo':           MongoDB-backed store (lands in P3 Part 2)
+//   - 'dual':            dual-write json + mongo (lands in P3 Part 3)
+//
+// P3 Part 1 only supports 'json'; the other values throw on startup so
+// an accidental .cds.env typo surfaces immediately instead of silently
+// falling back to a mode the operator didn't intend.
 const stateFile = path.join(config.repoRoot, '.cds', 'state.json');
+const rawStorageMode = (process.env.CDS_STORAGE_MODE || 'json').toLowerCase();
+if (rawStorageMode !== 'json') {
+  if (rawStorageMode === 'mongo' || rawStorageMode === 'dual') {
+    throw new Error(
+      `CDS_STORAGE_MODE=${rawStorageMode} is not implemented yet. ` +
+        `P3 Part 1 only supports 'json' (default). Mongo and dual-write land in P3 Part 2/3. ` +
+        `See doc/plan.cds-multi-project-phases.md.`,
+    );
+  }
+  throw new Error(
+    `Unknown CDS_STORAGE_MODE '${rawStorageMode}'. Valid values: 'json' | 'mongo' | 'dual'.`,
+  );
+}
 const stateService = new StateService(stateFile, config.repoRoot);
 stateService.load();
 
