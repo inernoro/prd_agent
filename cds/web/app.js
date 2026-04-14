@@ -7596,11 +7596,19 @@ function setViewMode(mode) {
     // to fill the screen.
     document.body.classList.add('cds-topology-fs');
     _ensureTopologyFsChrome();
+    // P4 Part 6: refresh the breadcrumb branch dropdown so it reflects
+    // the latest branches list (which may have changed since the last
+    // entry into topology mode).
+    if (typeof _topologyRefreshBranchDropdown === 'function') {
+      _topologyRefreshBranchDropdown();
+    }
     renderTopologyView();
   } else {
     if (topoEl) topoEl.classList.add('hidden');
     if (listEl) listEl.classList.remove('hidden');
     document.body.classList.remove('cds-topology-fs');
+    // Close the right panel when leaving topology mode
+    if (typeof _topologyClosePanel === 'function') _topologyClosePanel();
   }
 }
 
@@ -7615,48 +7623,164 @@ function setViewMode(mode) {
 function _ensureTopologyFsChrome() {
   if (document.getElementById('topologyFsTopbar')) return;
 
-  // Project name / commit hash get pulled from the same /api/me-style
-  // sources the rest of the app uses. The label is updated lazily
-  // (whenever the function runs after data is ready); failures fall
-  // back to placeholders.
+  // P4 Part 6: Railway-style topology shell. Builds five DOM regions
+  // attached to <body> (so they survive the body-level container hide
+  // rule):
+  //
+  //   1. Left 44px icon sub-nav  (topology / metrics / logs / settings)
+  //   2. Top breadcrumb pill     (← Projects · project › env)
+  //   3. Branch dropdown         (right side of top pill)
+  //   4. Floating "+ Add" button + popover menu
+  //   5. Right slide-in service detail panel (4 tabs)
+  //   6. Bottom edit hint pill
+  //
+  // All elements are idempotent — the function returns early if the
+  // top bar already exists. Subsequent calls to setViewMode('topology')
+  // just re-show them via CSS.
   const projectId = (function () {
     try { return new URLSearchParams(location.search).get('project') || 'default'; }
     catch (e) { return 'default'; }
   })();
 
+  // ── 1. Left icon sub-nav ──
+  const leftnav = document.createElement('aside');
+  leftnav.id = 'topologyFsLeftnav';
+  leftnav.className = 'topology-fs-leftnav';
+  leftnav.innerHTML = `
+    <button type="button" class="topology-fs-leftnav-icon active" title="服务拓扑">
+      <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M5 2.75a2.25 2.25 0 114.5 0 2.25 2.25 0 01-4.5 0zM7.25 0a2.75 2.75 0 00-.75 5.397V7H2.75A1.75 1.75 0 001 8.75v1.603a2.75 2.75 0 101.5 0V8.75a.25.25 0 01.25-.25H6.5v1.397a2.75 2.75 0 101.5 0V8.5h3.75a.25.25 0 01.25.25v1.603a2.75 2.75 0 101.5 0V8.75A1.75 1.75 0 0011.75 7H8V5.397A2.75 2.75 0 007.25 0z"/></svg>
+    </button>
+    <button type="button" class="topology-fs-leftnav-icon disabled" title="指标 (P5)">
+      <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M1.5 1.75a.75.75 0 00-1.5 0v12.5c0 .414.336.75.75.75h14.5a.75.75 0 000-1.5H1.5V1.75zm14.28 2.53a.75.75 0 00-1.06-1.06L10 7.94 7.53 5.47a.75.75 0 00-1.06 0L2.22 9.72a.75.75 0 001.06 1.06L7 7.06l2.47 2.47a.75.75 0 001.06 0l5.25-5.25z"/></svg>
+    </button>
+    <button type="button" class="topology-fs-leftnav-icon" title="日志" onclick="setViewMode('list')">
+      <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M0 1.75C0 .784.784 0 1.75 0h12.5C15.216 0 16 .784 16 1.75v12.5A1.75 1.75 0 0114.25 16H1.75A1.75 1.75 0 010 14.25V1.75zm1.75-.25a.25.25 0 00-.25.25v12.5c0 .138.112.25.25.25h12.5a.25.25 0 00.25-.25V1.75a.25.25 0 00-.25-.25H1.75zM3.75 5h.5a.75.75 0 010 1.5h-.5a.75.75 0 010-1.5zm0 4h.5a.75.75 0 010 1.5h-.5a.75.75 0 010-1.5zm2.75-4h6a.75.75 0 010 1.5h-6a.75.75 0 010-1.5zm0 4h6a.75.75 0 010 1.5h-6a.75.75 0 010-1.5z"/></svg>
+    </button>
+    <button type="button" class="topology-fs-leftnav-icon disabled" title="设置 (P5)">
+      <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M7.429 1.525a3.5 3.5 0 011.142 0 .75.75 0 01.57.63l.185 1.29a.25.25 0 00.35.193l1.178-.592a.75.75 0 01.808.098 3.5 3.5 0 01.571.571.75.75 0 01.098.808l-.592 1.178a.25.25 0 00.193.35l1.29.185a.75.75 0 01.63.57 3.5 3.5 0 010 1.142.75.75 0 01-.63.57l-1.29.185a.25.25 0 00-.193.35l.592 1.178a.75.75 0 01-.098.808 3.5 3.5 0 01-.571.571.75.75 0 01-.808.098l-1.178-.592a.25.25 0 00-.35.193l-.185 1.29a.75.75 0 01-.57.63 3.5 3.5 0 01-1.142 0 .75.75 0 01-.57-.63l-.185-1.29a.25.25 0 00-.35-.193l-1.178.592a.75.75 0 01-.808-.098 3.5 3.5 0 01-.571-.571.75.75 0 01-.098-.808l.592-1.178a.25.25 0 00-.193-.35l-1.29-.185a.75.75 0 01-.63-.57 3.5 3.5 0 010-1.142.75.75 0 01.63-.57l1.29-.185a.25.25 0 00.193-.35l-.592-1.178a.75.75 0 01.098-.808 3.5 3.5 0 01.571-.571.75.75 0 01.808-.098l1.178.592a.25.25 0 00.35-.193l.185-1.29a.75.75 0 01.57-.63zM8 6a2 2 0 100 4 2 2 0 000-4z"/></svg>
+    </button>
+    <div class="topology-fs-leftnav-spacer"></div>
+    <a href="projects.html" class="topology-fs-leftnav-icon" title="返回项目列表">
+      <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M1.75 1h12.5c.966 0 1.75.784 1.75 1.75v10.5A1.75 1.75 0 0114.25 15H1.75A1.75 1.75 0 010 13.25V2.75C0 1.784.784 1 1.75 1zM1.5 2.75v10.5c0 .138.112.25.25.25h12.5a.25.25 0 00.25-.25V2.75a.25.25 0 00-.25-.25H1.75a.25.25 0 00-.25.25z"/></svg>
+    </a>
+  `;
+  document.body.appendChild(leftnav);
+
+  // ── 2 + 3. Top breadcrumb pill with branch dropdown ──
   const topbar = document.createElement('div');
   topbar.id = 'topologyFsTopbar';
   topbar.className = 'topology-fs-topbar';
   topbar.innerHTML = `
-    <div class="topology-fs-topbar-left">
-      <a href="projects.html" class="topology-fs-topbar-link" title="返回项目列表">
-        <svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor"><path d="M7.78 12.53a.75.75 0 01-1.06 0L2.47 8.28a.75.75 0 010-1.06l4.25-4.25a.751.751 0 011.154.114.75.75 0 01-.094.946L4.81 7h7.44a.75.75 0 010 1.5H4.81l2.97 2.97a.75.75 0 010 1.06z"/></svg>
-        Projects
+    <div class="topology-fs-topbar-pill">
+      <a href="projects.html" class="topology-fs-breadcrumb-item link" title="返回项目列表">
+        <svg width="13" height="13" viewBox="0 0 16 16" fill="currentColor"><path d="M1.75 1h12.5c.966 0 1.75.784 1.75 1.75v10.5A1.75 1.75 0 0114.25 15H1.75A1.75 1.75 0 010 13.25V2.75C0 1.784.784 1 1.75 1zM1.5 2.75v10.5c0 .138.112.25.25.25h12.5a.25.25 0 00.25-.25V2.75a.25.25 0 00-.25-.25H1.75a.25.25 0 00-.25.25z"/></svg>
+        <span id="topologyFsProjectName">${esc(projectId)}</span>
       </a>
-      <span class="topology-fs-topbar-divider"></span>
-      <span class="topology-fs-topbar-title" id="topologyFsProjectName">${esc(projectId)}</span>
-    </div>
-    <div class="topology-fs-topbar-right">
-      <button type="button" class="topology-fs-topbar-btn" onclick="setViewMode('list')" title="返回列表视图">
-        <svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor"><path d="M2 3.75a.75.75 0 01.75-.75h10.5a.75.75 0 010 1.5H2.75A.75.75 0 012 3.75zm0 4a.75.75 0 01.75-.75h10.5a.75.75 0 010 1.5H2.75A.75.75 0 012 7.75zM2.75 11a.75.75 0 000 1.5h10.5a.75.75 0 000-1.5H2.75z"/></svg>
-        列表视图
-      </button>
-      <span class="topology-fs-topbar-divider"></span>
-      <button type="button" class="topology-fs-topbar-btn" onclick="toggleTheme(event)" title="切换主题">
-        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="4.22" x2="19.78" y2="5.64"/></svg>
-      </button>
+      <span class="topology-fs-breadcrumb-sep">/</span>
+      <span class="topology-fs-breadcrumb-item">production</span>
+      <span class="topology-fs-breadcrumb-sep">/</span>
+      <select id="topologyFsBranchSelect" class="topology-fs-branch-select" onchange="_topologyOnBranchChange(this.value)">
+        <option value="">（共享视图）</option>
+      </select>
     </div>
   `;
   document.body.appendChild(topbar);
 
-  // Bottom edit hint
+  // ── 4. Floating "+ Add" button + popover menu ──
+  const addBtn = document.createElement('button');
+  addBtn.id = 'topologyFsAddBtn';
+  addBtn.type = 'button';
+  addBtn.className = 'topology-fs-add-btn';
+  addBtn.title = '新增服务 / 数据库 / 路由';
+  addBtn.onclick = function (e) { e.stopPropagation(); _topologyToggleAddMenu(); };
+  addBtn.innerHTML = `
+    <svg width="13" height="13" viewBox="0 0 16 16" fill="currentColor"><path d="M7.75 2a.75.75 0 01.75.75V7h4.25a.75.75 0 010 1.5H8.5v4.25a.75.75 0 01-1.5 0V8.5H2.75a.75.75 0 010-1.5H7V2.75A.75.75 0 017.75 2z"/></svg>
+    Add
+  `;
+  document.body.appendChild(addBtn);
+
+  const addMenu = document.createElement('div');
+  addMenu.id = 'topologyFsAddMenu';
+  addMenu.className = 'topology-fs-add-menu';
+  addMenu.innerHTML = `
+    <input class="topology-fs-add-menu-search" placeholder="What would you like to create?" id="topologyFsAddSearch">
+    <button type="button" class="topology-fs-add-menu-item" onclick="_topologyChooseAddItem('git')">
+      <span class="icon"><svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg></span>
+      <span class="label">GitHub Repository</span>
+      <span class="chevron">›</span>
+    </button>
+    <button type="button" class="topology-fs-add-menu-item" onclick="_topologyChooseAddItem('database')">
+      <span class="icon"><svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M8 1c4 0 7 1 7 2.5v9c0 1.5-3 2.5-7 2.5s-7-1-7-2.5v-9C1 2 4 1 8 1zm0 1.5C5 2.5 2.5 3.4 2.5 4S5 5.5 8 5.5s5.5-.9 5.5-1.5S11 2.5 8 2.5zM2.5 6.7v2.1C2.5 9.3 5 10.2 8 10.2s5.5-.9 5.5-1.4V6.7C12.4 7.4 10.4 8 8 8s-4.4-.6-5.5-1.3zm0 4v1.8c0 .5 2.5 1.5 5.5 1.5s5.5-1 5.5-1.5v-1.8c-1.1.7-3.1 1.3-5.5 1.3s-4.4-.6-5.5-1.3z"/></svg></span>
+      <span class="label">Database (MongoDB / Redis / Postgres)</span>
+      <span class="chevron">›</span>
+    </button>
+    <button type="button" class="topology-fs-add-menu-item" onclick="_topologyChooseAddItem('docker')">
+      <span class="icon"><svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M14 7h-2V5h2v2zm0-3h-2V2h2v2zm-3 3H9V5h2v2zm0-3H9V2h2v2zM8 7H6V5h2v2zm-3 3H3V8h2v2zm3 0H6V8h2v2zm3 0H9V8h2v2zm3 0h-2V8h2v2zm1.6 1c-.4-1-1.4-1.6-2.5-1.6h-1c-.2-2.3-2-3.4-2.1-3.4l-.4-.2-.3.4c-.4.5-.6 1.2-.6 1.9-.1.5 0 .9.2 1.3-.6.3-1.5.4-2.4.4H.4l-.1.7c-.2 1.4.1 2.7.7 3.7.6 1.1 1.7 1.9 3 2.3.9.2 1.8.4 2.7.4 1.4 0 2.7-.3 3.9-.7 1.5-.6 2.7-1.7 3.5-3.2 1.1-.1 2-.7 2.4-1.6l.2-.3-.5-.5z"/></svg></span>
+      <span class="label">Docker Image</span>
+      <span class="chevron">›</span>
+    </button>
+    <button type="button" class="topology-fs-add-menu-item" onclick="_topologyChooseAddItem('routing')">
+      <span class="icon"><svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M8 0a8 8 0 100 16A8 8 0 008 0zM1.5 8a6.5 6.5 0 1113 0 6.5 6.5 0 01-13 0zm6.75 3.25v-2.5a.75.75 0 011.5 0v2.5a.75.75 0 01-1.5 0z"/></svg></span>
+      <span class="label">Routing Rule</span>
+      <span class="chevron">›</span>
+    </button>
+    <button type="button" class="topology-fs-add-menu-item" onclick="_topologyChooseAddItem('volume')">
+      <span class="icon"><svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M2 3h12c.6 0 1 .4 1 1v8c0 .6-.4 1-1 1H2c-.6 0-1-.4-1-1V4c0-.6.4-1 1-1zm1 2v6h10V5H3z"/></svg></span>
+      <span class="label">Volume / 持久化卷</span>
+      <span class="chevron">›</span>
+    </button>
+    <button type="button" class="topology-fs-add-menu-item" onclick="_topologyChooseAddItem('empty')">
+      <span class="icon"><svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M0 2.75C0 1.784.784 1 1.75 1h12.5c.966 0 1.75.784 1.75 1.75v10.5A1.75 1.75 0 0114.25 15H1.75A1.75 1.75 0 010 13.25V2.75zm1.75-.25a.25.25 0 00-.25.25v10.5c0 .138.112.25.25.25h12.5a.25.25 0 00.25-.25V2.75a.25.25 0 00-.25-.25H1.75z"/></svg></span>
+      <span class="label">Empty Service / 空服务</span>
+      <span class="chevron">›</span>
+    </button>
+  `;
+  document.body.appendChild(addMenu);
+
+  // ── 5. Right slide-in service detail panel ──
+  const panel = document.createElement('div');
+  panel.id = 'topologyFsPanel';
+  panel.className = 'topology-fs-panel';
+  panel.innerHTML = `
+    <div class="topology-fs-panel-header">
+      <div class="topology-fs-panel-icon" id="topologyFsPanelIcon">
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M0 2.75C0 1.784.784 1 1.75 1h12.5c.966 0 1.75.784 1.75 1.75v10.5A1.75 1.75 0 0114.25 15H1.75A1.75 1.75 0 010 13.25V2.75z"/></svg>
+      </div>
+      <div class="topology-fs-panel-title" id="topologyFsPanelTitle">服务详情</div>
+      <button type="button" class="topology-fs-panel-close" onclick="_topologyClosePanel()" title="关闭">
+        <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M3.72 3.72a.75.75 0 011.06 0L8 6.94l3.22-3.22a.75.75 0 111.06 1.06L9.06 8l3.22 3.22a.75.75 0 11-1.06 1.06L8 9.06l-3.22 3.22a.75.75 0 01-1.06-1.06L6.94 8 3.72 4.78a.75.75 0 010-1.06z"/></svg>
+      </button>
+    </div>
+    <div class="topology-fs-panel-tabs">
+      <button type="button" class="topology-fs-panel-tab active" data-tab="deployments" onclick="_topologySwitchPanelTab('deployments')">Deployments</button>
+      <button type="button" class="topology-fs-panel-tab" data-tab="variables" onclick="_topologySwitchPanelTab('variables')">Variables</button>
+      <button type="button" class="topology-fs-panel-tab" data-tab="metrics" onclick="_topologySwitchPanelTab('metrics')">Metrics</button>
+      <button type="button" class="topology-fs-panel-tab" data-tab="settings" onclick="_topologySwitchPanelTab('settings')">Settings</button>
+    </div>
+    <div class="topology-fs-panel-body" id="topologyFsPanelBody">
+      <div class="tfp-empty">点击拓扑节点查看服务详情</div>
+    </div>
+  `;
+  document.body.appendChild(panel);
+
+  // ── 6. Bottom edit hint ──
   const hint = document.createElement('div');
   hint.id = 'topologyEditHint';
   hint.className = 'topology-edit-hint';
-  hint.textContent = '点击节点直接编辑配置 · 拖拽空白处平移 · 滚轮缩放';
+  hint.textContent = '点击节点查看详情 · 拖拽空白处平移 · 滚轮缩放';
   document.body.appendChild(hint);
 
-  // Pull the real project name from /api/projects/:id (best effort).
+  // Click outside add menu → close
+  document.addEventListener('click', function (e) {
+    var menu = document.getElementById('topologyFsAddMenu');
+    var btn = document.getElementById('topologyFsAddBtn');
+    if (!menu || !btn) return;
+    if (menu.classList.contains('open') && !menu.contains(e.target) && !btn.contains(e.target)) {
+      menu.classList.remove('open');
+    }
+  });
+
+  // Best-effort populate the project name + branch dropdown.
   if (projectId && projectId !== 'default') {
     fetch('/api/projects/' + encodeURIComponent(projectId), { credentials: 'same-origin' })
       .then(function (r) { return r.ok ? r.json() : null; })
@@ -7668,7 +7792,6 @@ function _ensureTopologyFsChrome() {
       })
       .catch(function () { /* quiet */ });
   } else {
-    // For default we already know the slug from /api/projects (legacy)
     fetch('/api/projects', { credentials: 'same-origin' })
       .then(function (r) { return r.ok ? r.json() : null; })
       .then(function (body) {
@@ -7681,6 +7804,12 @@ function _ensureTopologyFsChrome() {
         }
       })
       .catch(function () { /* quiet */ });
+  }
+
+  // Populate the branch dropdown from the global `branches` array if it's
+  // already loaded, otherwise leave it for the next render cycle.
+  if (typeof _topologyRefreshBranchDropdown === 'function') {
+    _topologyRefreshBranchDropdown();
   }
 }
 
@@ -8199,32 +8328,325 @@ function _topologyNodeClick(profileId) {
   //   - When NO branch is selected: single click highlights connected
   //     edges (the old "shared view" behavior).
   //
-  // Holding shift bypasses the editor and forces the highlight even
-  // in the per-branch case (escape hatch for users who just want
-  // to inspect edges).
-  if (_topologySelectedBranchId && !window.event?.shiftKey) {
-    openOverrideModal(_topologySelectedBranchId, profileId);
+  // Holding shift bypasses the right panel and forces the highlight
+  // (escape hatch for users who just want to inspect edges).
+  if (window.event?.shiftKey) {
+    _topologyFocusedNodeId = _topologyFocusedNodeId === profileId ? null : profileId;
+    renderTopologyView();
     return;
   }
-  _topologyFocusedNodeId = _topologyFocusedNodeId === profileId ? null : profileId;
-  renderTopologyView();
+  // P4 Part 6: single-click opens the slide-in service detail panel
+  // instead of the override modal directly. The panel hosts the four
+  // tabs (Deployments / Variables / Metrics / Settings) that map to
+  // the existing CDS edit flows.
+  _topologyOpenServicePanel(profileId, 'app');
 }
 
 function _topologyInfraClick(serviceId) {
-  // P4 Part 5: infra single-click currently opens the dedicated infra
-  // edit panel via the existing list-view UI. Until we have a true
-  // infra editor inside the topology canvas, fall back to a toast
-  // explaining where to go.
-  if (typeof openInfraModal === 'function') {
-    // Switch back to list view first so the modal has a parent layout
-    // it expects (the modal queries DOM nodes that only exist in list).
-    setViewMode('list');
-    setTimeout(function () { openInfraModal(); }, 50);
+  // P4 Part 6: infra nodes also open the slide-in panel. The Settings
+  // tab inside the panel routes to the legacy infra edit modal until
+  // a true in-canvas infra editor lands.
+  if (window.event?.shiftKey) {
+    _topologyFocusedNodeId = _topologyFocusedNodeId === serviceId ? null : serviceId;
+    renderTopologyView();
     return;
   }
-  _topologyFocusedNodeId = _topologyFocusedNodeId === serviceId ? null : serviceId;
-  renderTopologyView();
+  _topologyOpenServicePanel(serviceId, 'infra');
 }
+
+// ─────────────────────────────────────────────────────────────────
+// P4 Part 6 — Topology shell helpers
+//
+// All functions below are appended new code, no coupling with existing
+// branches.ts/state.ts logic. They drive:
+//
+//   - the floating "+ Add" button menu
+//   - the right slide-in service detail panel + 4 tabs
+//   - the branch dropdown in the top breadcrumb pill
+//
+// Each function is independent so future commits can replace any one
+// of them without touching its neighbors.
+// ─────────────────────────────────────────────────────────────────
+
+// T3: + Add menu open/close toggle
+function _topologyToggleAddMenu() {
+  var menu = document.getElementById('topologyFsAddMenu');
+  if (!menu) return;
+  menu.classList.toggle('open');
+  if (menu.classList.contains('open')) {
+    var search = document.getElementById('topologyFsAddSearch');
+    if (search) setTimeout(function () { search.focus(); }, 60);
+  }
+}
+
+// T4: handle a + Add menu item click. Each kind routes to the most
+// appropriate existing CDS create flow, with novice-friendly defaults.
+// Items that need work in P5/P6 toast a friendly "coming soon".
+function _topologyChooseAddItem(kind) {
+  var menu = document.getElementById('topologyFsAddMenu');
+  if (menu) menu.classList.remove('open');
+
+  switch (kind) {
+    case 'git':
+      // Cloning a git repo into a fresh CDS profile is a P6 task
+      // (manual project + git driver). For now, flow back to projects
+      // list so the user can create a new project pointing at a repo.
+      showToast('在项目列表点 + New 创建带 git 仓库的项目 (P6 完成后可在画布内直接添加)', 'info');
+      setTimeout(function () { location.href = 'projects.html'; }, 800);
+      break;
+    case 'database':
+      // Routes to the existing infra-services modal (which has
+      // "discover from compose" + "+ custom"). Switch back to list
+      // view so the modal has its expected parent layout.
+      setViewMode('list');
+      setTimeout(function () {
+        if (typeof openInfraModal === 'function') openInfraModal();
+      }, 50);
+      break;
+    case 'docker':
+      // Same destination — infra modal supports any docker image.
+      setViewMode('list');
+      setTimeout(function () {
+        if (typeof openInfraModal === 'function') openInfraModal();
+      }, 50);
+      break;
+    case 'routing':
+      // Routes to the routing-rules modal. Need to switch back to
+      // list mode so its DOM exists.
+      setViewMode('list');
+      setTimeout(function () {
+        if (typeof openConfigModal === 'function' && typeof renderRoutingRules === 'function') {
+          openConfigModal('路由规则', '<div id="routingRulesContainer"></div>');
+          renderRoutingRules();
+        } else {
+          showToast('请在列表视图打开"路由规则"配置', 'info');
+        }
+      }, 50);
+      break;
+    case 'volume':
+      showToast('卷管理在 P6 上线 — 当前可在 infra 服务的 volumes 字段配置', 'info');
+      break;
+    case 'empty':
+      // "Empty Service" = a new BuildProfile. Routes to the existing
+      // build-profiles config modal.
+      setViewMode('list');
+      setTimeout(function () {
+        if (typeof openConfigModal === 'function' && typeof renderBuildProfiles === 'function') {
+          openConfigModal('构建配置', '<div id="buildProfilesContainer"></div>');
+          renderBuildProfiles();
+        } else {
+          showToast('请在列表视图打开"构建配置"', 'info');
+        }
+      }, 50);
+      break;
+    default:
+      showToast('未知项类型: ' + kind, 'error');
+  }
+}
+
+// T5: open the right slide-in service detail panel. `kind` is 'app'
+// (BuildProfile) or 'infra' (InfraService); the function looks up the
+// underlying entity and renders the Deployments tab content.
+let _topologyPanelCurrentId = null;
+let _topologyPanelCurrentKind = null;
+function _topologyOpenServicePanel(id, kind) {
+  var panel = document.getElementById('topologyFsPanel');
+  var titleEl = document.getElementById('topologyFsPanelTitle');
+  var iconEl = document.getElementById('topologyFsPanelIcon');
+  if (!panel || !titleEl || !iconEl) return;
+
+  _topologyPanelCurrentId = id;
+  _topologyPanelCurrentKind = kind;
+
+  // Find the entity. buildProfiles + infraServices are the two globals
+  // already populated by loadProfiles() / loadInfraServices().
+  var entity = null;
+  if (kind === 'app') {
+    entity = (buildProfiles || []).find(function (p) { return p.id === id; });
+  } else if (kind === 'infra') {
+    entity = (infraServices || []).find(function (s) { return s.id === id; });
+  }
+
+  titleEl.textContent = entity ? (entity.name || entity.id) : id;
+  iconEl.innerHTML = kind === 'app'
+    ? '<svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>'
+    : '<svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M8 1c4 0 7 1 7 2.5v9c0 1.5-3 2.5-7 2.5s-7-1-7-2.5v-9C1 2 4 1 8 1z"/></svg>';
+
+  // Reset to deployments tab + render its content
+  var tabs = panel.querySelectorAll('.topology-fs-panel-tab');
+  tabs.forEach(function (t) { t.classList.toggle('active', t.dataset.tab === 'deployments'); });
+  _topologyRenderPanelTab('deployments', entity);
+
+  panel.classList.add('open');
+}
+
+// Switch active tab in the open panel
+function _topologySwitchPanelTab(tab) {
+  var panel = document.getElementById('topologyFsPanel');
+  if (!panel) return;
+  var tabs = panel.querySelectorAll('.topology-fs-panel-tab');
+  tabs.forEach(function (t) { t.classList.toggle('active', t.dataset.tab === tab); });
+
+  var entity = null;
+  var id = _topologyPanelCurrentId;
+  var kind = _topologyPanelCurrentKind;
+  if (kind === 'app') {
+    entity = (buildProfiles || []).find(function (p) { return p.id === id; });
+  } else if (kind === 'infra') {
+    entity = (infraServices || []).find(function (s) { return s.id === id; });
+  }
+  _topologyRenderPanelTab(tab, entity);
+}
+
+// Render the body of one tab. Each branch is small + isolated so
+// individual tabs can be replaced incrementally in later commits.
+function _topologyRenderPanelTab(tab, entity) {
+  var body = document.getElementById('topologyFsPanelBody');
+  if (!body || !entity) {
+    if (body) body.innerHTML = '<div class="tfp-empty">未找到服务数据</div>';
+    return;
+  }
+  var kind = _topologyPanelCurrentKind;
+
+  if (tab === 'deployments') {
+    var image = entity.dockerImage || '-';
+    var status = (entity.status || (entity.containerName ? 'running' : 'idle'));
+    var deps = (entity.dependsOn || []);
+    body.innerHTML =
+      '<div class="tfp-deploy-url">' +
+        '<svg width="13" height="13" viewBox="0 0 16 16" fill="currentColor"><path d="M0 8a8 8 0 1116 0A8 8 0 010 8z"/></svg>' +
+        esc(image) +
+      '</div>' +
+      '<div class="tfp-deploy-card">' +
+        '<div class="tfp-deploy-card-head">' +
+          '<span class="tfp-active-pill">' + (status.toUpperCase ? status.toUpperCase() : 'IDLE') + '</span>' +
+          '<div class="tfp-deploy-meta">' + esc(entity.name || entity.id) + ' · ' + esc(kind === 'app' ? 'Application' : 'Infrastructure') + '</div>' +
+          '<button type="button" class="tfp-view-logs-btn" onclick="_topologyPanelOpenLogs()">View logs</button>' +
+        '</div>' +
+        '<div class="tfp-deploy-status">' +
+          '<svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M13.78 4.22a.75.75 0 010 1.06l-7.25 7.25a.75.75 0 01-1.06 0L2.22 9.28a.75.75 0 011.06-1.06L6 10.94l6.72-6.72a.75.75 0 011.06 0z"/></svg>' +
+          (status === 'running' ? 'Service is online' : 'Status: ' + status) +
+        '</div>' +
+      '</div>' +
+      (deps.length ? '<div class="tfp-section-h">DEPENDENCIES</div>' + deps.map(function (d) { return '<div class="tfp-kv"><span class="tfp-kv-key">' + esc(d) + '</span><span class="tfp-kv-val">→</span></div>'; }).join('') : '');
+    return;
+  }
+
+  if (tab === 'variables') {
+    var env = entity.env || {};
+    var keys = Object.keys(env);
+    body.innerHTML =
+      '<div class="tfp-section-h">SERVICE VARIABLES</div>' +
+      (keys.length === 0
+        ? '<div class="tfp-empty">还没有环境变量。在 Settings tab 编辑此服务后可添加。</div>'
+        : keys.map(function (k) {
+            return '<div class="tfp-kv"><span class="tfp-kv-key">' + esc(k) + '</span><span class="tfp-kv-val">' + esc(String(env[k]).slice(0, 60)) + '</span></div>';
+          }).join('')) +
+      '<div style="margin-top:18px;padding:10px;background:var(--bg-card);border:1px dashed var(--card-border);border-radius:8px;color:var(--text-muted);font-size:11px">完整的 key/value 编辑器（含 Suggested Variables + Raw Editor）将在下一个 commit 上线</div>';
+    return;
+  }
+
+  if (tab === 'metrics') {
+    body.innerHTML =
+      '<div class="tfp-empty"><strong style="color:var(--text-secondary)">指标面板</strong><br><br>CPU / 内存 / 网络吞吐<br>将在 P5 团队 workspace 上线后接入</div>';
+    return;
+  }
+
+  if (tab === 'settings') {
+    body.innerHTML =
+      '<div class="tfp-section-h">SERVICE INFO</div>' +
+      '<div class="tfp-kv"><span class="tfp-kv-key">Name</span><span class="tfp-kv-val">' + esc(entity.name || entity.id) + '</span></div>' +
+      '<div class="tfp-kv"><span class="tfp-kv-key">Image</span><span class="tfp-kv-val">' + esc(entity.dockerImage || '-') + '</span></div>' +
+      (entity.containerPort ? '<div class="tfp-kv"><span class="tfp-kv-key">Container Port</span><span class="tfp-kv-val">' + entity.containerPort + '</span></div>' : '') +
+      (entity.hostPort ? '<div class="tfp-kv"><span class="tfp-kv-key">Host Port</span><span class="tfp-kv-val">' + entity.hostPort + '</span></div>' : '') +
+      (entity.workDir ? '<div class="tfp-kv"><span class="tfp-kv-key">Work Dir</span><span class="tfp-kv-val">' + esc(entity.workDir) + '</span></div>' : '') +
+      '<div style="margin-top:18px"><button type="button" class="tfp-view-logs-btn" style="width:100%;padding:9px" onclick="_topologyPanelOpenEditor()">在编辑器中打开</button></div>';
+    return;
+  }
+}
+
+// Open logs for the currently-displayed service (delegates to the
+// existing list-view log modal).
+function _topologyPanelOpenLogs() {
+  var id = _topologyPanelCurrentId;
+  if (!id) return;
+  setViewMode('list');
+  setTimeout(function () {
+    if (typeof openLogModal === 'function') openLogModal(id);
+    else showToast('日志面板需要在列表视图打开', 'info');
+  }, 80);
+}
+
+// Open the full editor for the currently-displayed service.
+function _topologyPanelOpenEditor() {
+  var id = _topologyPanelCurrentId;
+  var kind = _topologyPanelCurrentKind;
+  if (!id) return;
+  if (kind === 'app' && _topologySelectedBranchId) {
+    openOverrideModal(_topologySelectedBranchId, id);
+    return;
+  }
+  if (kind === 'app') {
+    setViewMode('list');
+    setTimeout(function () {
+      if (typeof openConfigModal === 'function' && typeof renderBuildProfiles === 'function') {
+        openConfigModal('构建配置', '<div id="buildProfilesContainer"></div>');
+        renderBuildProfiles();
+      }
+    }, 50);
+    return;
+  }
+  // infra
+  setViewMode('list');
+  setTimeout(function () {
+    if (typeof openInfraModal === 'function') openInfraModal();
+  }, 50);
+}
+
+// T6: close the panel
+function _topologyClosePanel() {
+  var panel = document.getElementById('topologyFsPanel');
+  if (panel) panel.classList.remove('open');
+  _topologyPanelCurrentId = null;
+  _topologyPanelCurrentKind = null;
+}
+
+// T8: branch dropdown change handler
+function _topologyOnBranchChange(branchId) {
+  // Empty value = shared view
+  _topologySelectBranch(branchId || null);
+}
+
+// Refresh the dropdown options from the global `branches` array. Called
+// when the topology view is shown OR when branches list reloads.
+function _topologyRefreshBranchDropdown() {
+  var sel = document.getElementById('topologyFsBranchSelect');
+  if (!sel) return;
+  var current = _topologySelectedBranchId || '';
+
+  // Build options: shared view first, then each branch.
+  var options = ['<option value="">（共享视图）</option>'];
+  (branches || []).forEach(function (b) {
+    var label = b.id;
+    options.push('<option value="' + esc(b.id) + '">' + esc(label) + '</option>');
+  });
+  sel.innerHTML = options.join('');
+  sel.value = current;
+
+  // Auto-select: if no branch is currently selected and we have a 'main'
+  // (or any first branch), pick it so single-click on a node opens the
+  // editor immediately. Skip if user already explicitly chose shared.
+  if (!_topologySelectedBranchId && (branches || []).length > 0 && _topologyAutoSelectPending) {
+    var preferred = branches.find(function (b) { return b.id === 'main' || b.id === 'master'; }) || branches[0];
+    if (preferred) {
+      sel.value = preferred.id;
+      _topologyAutoSelectPending = false;
+      _topologySelectBranch(preferred.id);
+    }
+  }
+}
+
+let _topologyAutoSelectPending = true;
 
 // Expose to inline handlers
 window.setViewMode = setViewMode;
@@ -8236,6 +8658,15 @@ window._topologyZoomIn = _topologyZoomIn;
 window._topologyZoomOut = _topologyZoomOut;
 window._topologyFit = _topologyFit;
 window._topologyReset = _topologyReset;
+// P4 Part 6: shell helpers (topbar / panel / + Add menu / branch dropdown)
+window._topologyToggleAddMenu = _topologyToggleAddMenu;
+window._topologyChooseAddItem = _topologyChooseAddItem;
+window._topologyOpenServicePanel = _topologyOpenServicePanel;
+window._topologySwitchPanelTab = _topologySwitchPanelTab;
+window._topologyClosePanel = _topologyClosePanel;
+window._topologyOnBranchChange = _topologyOnBranchChange;
+window._topologyPanelOpenLogs = _topologyPanelOpenLogs;
+window._topologyPanelOpenEditor = _topologyPanelOpenEditor;
 
 // Apply persisted view mode on load (deferred so DOM elements exist)
 if (document.readyState === 'loading') {
