@@ -43,28 +43,119 @@ const shell = new ShellExecutor();
 // and doc/rule.cds-mongo-migration.md.
 //
 //   - 'json'  (default): state.json on disk with rolling .bak.* backups
-//   - 'mongo':           MongoDB-backed store (lands in P3 Part 2)
-//   - 'dual':            dual-write json + mongo (lands in P3 Part 3)
+//   - 'mongo':           MongoDB-backed store (P4 Part 18 D.1-D.2).
+//                        Fails fast on connection error so operators
+//                        notice immediately instead of silently losing
+//                        writes.
+//   - 'auto':            Try mongo, fall back to json with a WARN log
+//                        when mongo isn't reachable. Default for new
+//                        installs that want "mongo if available, file
+//                        otherwise" semantics without config.
 //
-// P3 Part 1 only supports 'json'; the other values throw on startup so
-// an accidental .cds.env typo surfaces immediately instead of silently
-// falling back to a mode the operator didn't intend.
+// CDS_MONGO_URI + CDS_MONGO_DB configure the connection. Absent →
+// auto-mode falls back to json; mongo-mode throws.
 const stateFile = path.join(config.repoRoot, '.cds', 'state.json');
 const rawStorageMode = (process.env.CDS_STORAGE_MODE || 'json').toLowerCase();
-if (rawStorageMode !== 'json') {
-  if (rawStorageMode === 'mongo' || rawStorageMode === 'dual') {
-    throw new Error(
-      `CDS_STORAGE_MODE=${rawStorageMode} is not implemented yet. ` +
-        `P3 Part 1 only supports 'json' (default). Mongo and dual-write land in P3 Part 2/3. ` +
-        `See doc/plan.cds-multi-project-phases.md.`,
-    );
-  }
+if (!['json', 'mongo', 'auto'].includes(rawStorageMode)) {
   throw new Error(
-    `Unknown CDS_STORAGE_MODE '${rawStorageMode}'. Valid values: 'json' | 'mongo' | 'dual'.`,
+    `Unknown CDS_STORAGE_MODE '${rawStorageMode}'. Valid values: 'json' | 'mongo' | 'auto'.`,
   );
 }
-const stateService = new StateService(stateFile, config.repoRoot);
-stateService.load();
+/**
+ * P4 Part 18 (D.2): storage-mode resolution + auto-fallback.
+ *
+ * In 'mongo' mode we require a working mongo at startup and abort
+ * if we can't connect — operators should notice a broken config
+ * loudly rather than silently losing data. In 'auto' mode we try
+ * mongo first but fall back to JSON if anything goes wrong (no URI,
+ * connection refused, auth failure). 'json' is the legacy path and
+ * never touches mongo.
+ */
+// Definite-assignment: initStateService() is awaited at module top
+// level before any downstream code touches stateService. The `!`
+// tells TypeScript we've satisfied that contract.
+let stateService!: StateService;
+/** When mongo is active (either mode=mongo or mode=auto + connected)
+ *  we stash the handle here so the Settings panel / shutdown hook
+ *  can flush + close it without reaching back into StateService. */
+let activeMongoHandle: { close: () => Promise<void> } | null = null;
+/** Records which backend actually ended up running — surfaced via
+ *  GET /api/storage-mode for the Settings panel and startup logs. */
+let storageModeResolved: 'json' | 'mongo' | 'auto-fallback-json' = 'json';
+
+async function initStateService(): Promise<void> {
+  // JSON path — unchanged from pre-D.2 behaviour.
+  if (rawStorageMode === 'json') {
+    stateService = new StateService(stateFile, config.repoRoot);
+    stateService.load();
+    storageModeResolved = 'json';
+    return;
+  }
+
+  // Lazy-import the mongo bits so a 'json'-mode CDS never pulls the
+  // driver into memory on startup.
+  const { MongoStateBackingStore } = await import('./infra/state-store/mongo-backing-store.js');
+  const { RealMongoHandle } = await import('./infra/state-store/mongo-handle.js');
+  const { JsonStateBackingStore } = await import('./infra/state-store/json-backing-store.js');
+
+  const uri = process.env.CDS_MONGO_URI;
+  const dbName = process.env.CDS_MONGO_DB || 'cds_state_db';
+
+  if (!uri) {
+    if (rawStorageMode === 'mongo') {
+      throw new Error(
+        `CDS_STORAGE_MODE=mongo requires CDS_MONGO_URI to be set (e.g. mongodb://localhost:27017).`,
+      );
+    }
+    // auto mode without URI → straight to json, no warning (expected)
+    console.log('  [storage] CDS_STORAGE_MODE=auto + no CDS_MONGO_URI → using JSON backend');
+    stateService = new StateService(stateFile, config.repoRoot);
+    stateService.load();
+    storageModeResolved = 'auto-fallback-json';
+    return;
+  }
+
+  const handle = new RealMongoHandle({ uri, databaseName: dbName });
+  const mongoStore = new MongoStateBackingStore(handle);
+  try {
+    await mongoStore.init();
+  } catch (err) {
+    const msg = (err as Error).message;
+    if (rawStorageMode === 'mongo') {
+      console.error(`  [storage] FATAL: CDS_STORAGE_MODE=mongo but mongo init failed: ${msg}`);
+      throw err;
+    }
+    // auto mode: fall back
+    console.warn(`  [storage] WARN: mongo init failed (${msg}), falling back to JSON`);
+    try { await handle.close(); } catch { /* best effort */ }
+    stateService = new StateService(stateFile, config.repoRoot);
+    stateService.load();
+    storageModeResolved = 'auto-fallback-json';
+    return;
+  }
+
+  // Mongo init succeeded. If the collection is fresh (load() returned
+  // null from the init-time query) AND a state.json exists on disk,
+  // import the file snapshot once so existing deployments can
+  // opt-in to mongo without losing data. After the seed, mongo owns
+  // the canonical state.
+  if (mongoStore.load() === null) {
+    const jsonStore = new JsonStateBackingStore(stateFile);
+    const existing = jsonStore.load();
+    if (existing) {
+      console.log('  [storage] mongo is empty but state.json exists — seeding mongo from file');
+      await mongoStore.seedIfEmpty(existing);
+    }
+  }
+
+  stateService = new StateService(stateFile, config.repoRoot, mongoStore);
+  stateService.load();
+  storageModeResolved = 'mongo';
+  activeMongoHandle = handle;
+  console.log(`  [storage] mongo backend active (uri=${uri.replace(/\/\/[^@]*@/, '//***:***@')}, db=${dbName})`);
+}
+
+await initStateService();
 
 // ── Sync deploy modes from compose file into existing profiles ──
 {
@@ -301,8 +392,37 @@ janitorService.setRemoveFn(async (slug: string) => {
 
 // Shut the scheduler/janitor down cleanly on process exit so background timers
 // don't keep running orphaned.
-process.on('SIGTERM', () => { schedulerService.stop(); janitorService.stop(); });
-process.on('SIGINT', () => { schedulerService.stop(); janitorService.stop(); });
+// P4 Part 18 (D.2): graceful shutdown — flush the mongo write-behind
+// chain before exit so the last few state mutations don't get lost
+// sitting in the flush queue. Best-effort with a 3-second ceiling to
+// avoid hanging the process if mongo is already unreachable.
+async function shutdown(signal: string): Promise<void> {
+  console.log(`[shutdown] received ${signal}, stopping services...`);
+  schedulerService.stop();
+  janitorService.stop();
+  if (activeMongoHandle) {
+    try {
+      const timeout = new Promise((_, reject) =>
+        setTimeout(() => reject(new Error('shutdown flush timeout')), 3000),
+      );
+      await Promise.race([
+        (async () => {
+          const store = stateService.getBackingStore();
+          if (store.kind === 'mongo' && 'flush' in store && typeof (store as any).flush === 'function') {
+            await (store as any).flush();
+          }
+          await activeMongoHandle!.close();
+        })(),
+        timeout,
+      ]);
+      console.log('[shutdown] mongo flushed + closed');
+    } catch (err) {
+      console.warn(`[shutdown] mongo teardown failed: ${(err as Error).message}`);
+    }
+  }
+}
+process.on('SIGTERM', () => { void shutdown('SIGTERM'); });
+process.on('SIGINT', () => { void shutdown('SIGINT'); });
 
 // Configure proxy: resolve branch slug → upstream URL
 proxyService.setResolveUpstream((branchId, profileId) => {
