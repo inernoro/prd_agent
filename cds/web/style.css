@@ -6208,6 +6208,50 @@ body.cds-topology-fs .topology-fs-panel.open { transform: translateX(0); }
   border-color: var(--card-border);
 }
 
+/* P4 Part 18 (G6): Public URL row — prominent, clickable, mode-aware. */
+.tfp-public-url-card {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 14px;
+  background: var(--bg-card);
+  border: 1px solid var(--card-border);
+  border-radius: 9px;
+  margin-bottom: 14px;
+  cursor: pointer;
+  transition: background 120ms ease, border-color 120ms ease;
+}
+.tfp-public-url-card:hover {
+  background: var(--bg-hover, rgba(255, 255, 255, 0.04));
+  border-color: rgba(88, 166, 255, 0.35);
+}
+.tfp-public-url-card.disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+.tfp-public-url-card.disabled:hover {
+  background: var(--bg-card);
+  border-color: var(--card-border);
+}
+.tfp-public-url-text {
+  flex: 1;
+  min-width: 0;
+}
+.tfp-public-url-value {
+  font-family: var(--font-mono, monospace);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.tfp-public-url-hint {
+  font-size: 10px;
+  color: var(--text-muted);
+  margin-top: 2px;
+}
+
 .tfp-mini-stat {
   display: inline-flex;
   align-items: center;
