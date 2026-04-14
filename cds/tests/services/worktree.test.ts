@@ -2,13 +2,21 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import { WorktreeService } from '../../src/services/worktree.js';
 import { MockShellExecutor } from '../../src/services/shell-executor.js';
 
+/**
+ * P4 Part 18 (G1.2): WorktreeService is now stateless — every
+ * repo-touching method takes `repoRoot` as its first argument. The
+ * previous `repoRoot` constructor arg + getter/setter have been
+ * removed. See `doc/design.cds-multi-project.md` and the commit
+ * message for the rationale.
+ */
 describe('WorktreeService', () => {
+  const REPO = '/repo';
   let mock: MockShellExecutor;
   let service: WorktreeService;
 
   beforeEach(() => {
     mock = new MockShellExecutor();
-    service = new WorktreeService(mock, '/repo');
+    service = new WorktreeService(mock);
   });
 
   describe('create', () => {
@@ -18,7 +26,7 @@ describe('WorktreeService', () => {
       mock.addResponsePattern(/test -d/, () => ({ stdout: '', stderr: '', exitCode: 1 }));
       mock.addResponsePattern(/git worktree add/, () => ({ stdout: 'Preparing worktree', stderr: '', exitCode: 0 }));
 
-      await service.create('feature/new-ui', '/tmp/wt/feature-new-ui');
+      await service.create(REPO, 'feature/new-ui', '/tmp/wt/feature-new-ui');
       expect(mock.commands[0]).toContain('git fetch');
       expect(mock.commands.find(c => c.includes('git worktree add'))).toContain('/tmp/wt/feature-new-ui');
       expect(mock.commands.find(c => c.includes('git worktree add'))).toContain('origin/feature/new-ui');
@@ -31,7 +39,7 @@ describe('WorktreeService', () => {
       mock.addResponsePattern(/rm -rf/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
       mock.addResponsePattern(/git worktree add/, () => ({ stdout: 'Preparing worktree', stderr: '', exitCode: 0 }));
 
-      await service.create('main', '/tmp/wt/main');
+      await service.create(REPO, 'main', '/tmp/wt/main');
       expect(mock.commands).toContainEqual(expect.stringContaining('git worktree prune'));
       expect(mock.commands).toContainEqual(expect.stringContaining('rm -rf'));
       expect(mock.commands).toContainEqual(expect.stringContaining('git worktree add'));
@@ -44,7 +52,7 @@ describe('WorktreeService', () => {
         exitCode: 128,
       }));
 
-      await expect(service.create('bad-branch', '/tmp/wt/bad')).rejects.toThrow('拉取分支');
+      await expect(service.create(REPO, 'bad-branch', '/tmp/wt/bad')).rejects.toThrow('拉取分支');
     });
 
     it('should throw if worktree add fails', async () => {
@@ -57,7 +65,40 @@ describe('WorktreeService', () => {
         exitCode: 128,
       }));
 
-      await expect(service.create('dup', '/tmp/wt/dup')).rejects.toThrow('创建工作树');
+      await expect(service.create(REPO, 'dup', '/tmp/wt/dup')).rejects.toThrow('创建工作树');
+    });
+
+    // P4 Part 18 (G1.2): this is the multi-repo guarantee. Two
+    // concurrent creates against different repoRoot values must
+    // issue their git commands with the correct cwd — the service no
+    // longer holds repoRoot as instance state, so there is no way
+    // for one call to clobber another.
+    it('uses different repoRoots on concurrent calls without interference', async () => {
+      mock.addResponsePattern(/git fetch/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
+      mock.addResponsePattern(/git worktree prune/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
+      mock.addResponsePattern(/test -d/, () => ({ stdout: '', stderr: '', exitCode: 1 }));
+      mock.addResponsePattern(/git worktree add/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
+
+      await Promise.all([
+        service.create('/repo-a', 'feature-a', '/tmp/wt/a'),
+        service.create('/repo-b', 'feature-b', '/tmp/wt/b'),
+      ]);
+
+      // Both repo roots appear as cwd. `test -d` + `rm -rf` don't set
+      // cwd (they're absolute-path checks), so we only inspect
+      // git-rooted commands: fetch / prune / worktree add.
+      const gitCwds = mock.commands
+        .map((cmd, i) => ({ cmd, cwd: mock.cwds[i] }))
+        .filter(({ cmd }) => /git (fetch|worktree)/.test(cmd))
+        .map(({ cwd }) => cwd);
+
+      expect(gitCwds).toContain('/repo-a');
+      expect(gitCwds).toContain('/repo-b');
+      // Every git command that has cwd set must be one of the two
+      // roots — never a mix-up.
+      for (const cwd of gitCwds) {
+        expect(cwd === '/repo-a' || cwd === '/repo-b').toBe(true);
+      }
     });
   });
 
@@ -65,7 +106,7 @@ describe('WorktreeService', () => {
     it('should remove a worktree', async () => {
       mock.addResponsePattern(/git worktree remove/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
 
-      await service.remove('/tmp/wt/old');
+      await service.remove(REPO, '/tmp/wt/old');
       expect(mock.commands[0]).toContain('git worktree remove');
       expect(mock.commands[0]).toContain('--force');
       expect(mock.commands[0]).toContain('/tmp/wt/old');
@@ -78,11 +119,14 @@ describe('WorktreeService', () => {
         exitCode: 1,
       }));
 
-      await expect(service.remove('/tmp/wt/bad')).rejects.toThrow();
+      await expect(service.remove(REPO, '/tmp/wt/bad')).rejects.toThrow();
     });
   });
 
   describe('pull', () => {
+    // NOTE: pull() does not take repoRoot because every git command
+    // runs inside targetDir (the worktree). The 2-arg signature is
+    // preserved across the G1.2 refactor.
     it('should return updated=true when new commits are pulled', async () => {
       let callCount = 0;
       mock.addResponsePattern(/git rev-parse --short HEAD/, () => {
@@ -137,21 +181,6 @@ describe('WorktreeService', () => {
     });
   });
 
-  describe('repoRoot setter', () => {
-    it('should allow updating repoRoot at runtime', () => {
-      expect(service.repoRoot).toBe('/repo');
-      service.repoRoot = '/new-repo';
-      expect(service.repoRoot).toBe('/new-repo');
-    });
-
-    it('should accept different repoRoot in constructor', () => {
-      const svc2 = new WorktreeService(mock, '/other-repo');
-      expect(svc2.repoRoot).toBe('/other-repo');
-      svc2.repoRoot = '/changed';
-      expect(svc2.repoRoot).toBe('/changed');
-    });
-  });
-
   describe('branchExists', () => {
     it('should return true if remote branch exists', async () => {
       mock.addResponsePattern(/git ls-remote/, () => ({
@@ -160,7 +189,7 @@ describe('WorktreeService', () => {
         exitCode: 0,
       }));
 
-      const exists = await service.branchExists('feature/exists');
+      const exists = await service.branchExists(REPO, 'feature/exists');
       expect(exists).toBe(true);
     });
 
@@ -171,7 +200,7 @@ describe('WorktreeService', () => {
         exitCode: 0,
       }));
 
-      const exists = await service.branchExists('feature/nope');
+      const exists = await service.branchExists(REPO, 'feature/nope');
       expect(exists).toBe(false);
     });
   });
@@ -188,7 +217,7 @@ describe('WorktreeService', () => {
         exitCode: 0,
       }));
 
-      const result = await service.findBranchBySlug('claude-fix-software-defects-dlxzp');
+      const result = await service.findBranchBySlug(REPO, 'claude-fix-software-defects-dlxzp');
       expect(result).toBe('claude/fix-software-defects-dlxzp');
     });
 
@@ -199,7 +228,7 @@ describe('WorktreeService', () => {
         exitCode: 0,
       }));
 
-      const result = await service.findBranchBySlug('claude-nonexistent-branch');
+      const result = await service.findBranchBySlug(REPO, 'claude-nonexistent-branch');
       expect(result).toBeNull();
     });
 
@@ -210,7 +239,7 @@ describe('WorktreeService', () => {
         exitCode: 0,
       }));
 
-      const result = await service.findBranchBySlug('claude-fix-login-issue');
+      const result = await service.findBranchBySlug(REPO, 'claude-fix-login-issue');
       expect(result).toBe('Claude/Fix-Login-ISSUE');
     });
 
@@ -221,7 +250,7 @@ describe('WorktreeService', () => {
         exitCode: 128,
       }));
 
-      const result = await service.findBranchBySlug('anything');
+      const result = await service.findBranchBySlug(REPO, 'anything');
       expect(result).toBeNull();
     });
   });

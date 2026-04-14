@@ -72,13 +72,17 @@ export function createExecutorRouter(deps: ExecutorRouterDeps): Router {
     };
 
     try {
-      // Ensure worktree exists
+      // Ensure worktree exists.
+      // P4 Part 18 (G1.2): executor routes stay on the single
+      // config.repoRoot. A remote executor is a separately-hosted
+      // node pinned to a single bind-mounted repo; per-project clone
+      // lives on the master and is not replicated to executors yet.
       let entry = stateService.getBranch(branchId);
       if (!entry) {
         sendEvent('step', { step: 'worktree', status: 'running', title: `正在为 ${branchName} 创建工作树...` });
         await shell.exec(`mkdir -p "${config.worktreeBase}"`);
         const worktreePath = `${config.worktreeBase}/${branchId}`;
-        await worktreeService.create(branchName, worktreePath);
+        await worktreeService.create(config.repoRoot, branchName, worktreePath);
 
         entry = {
           id: branchId,
@@ -226,7 +230,8 @@ export function createExecutorRouter(deps: ExecutorRouterDeps): Router {
       for (const svc of Object.values(entry.services)) {
         try { await containerService.stop(svc.containerName); } catch { /* ok */ }
       }
-      try { await worktreeService.remove(entry.worktreePath); } catch { /* ok */ }
+      // P4 Part 18 (G1.2): executor stays on config.repoRoot.
+      try { await worktreeService.remove(config.repoRoot, entry.worktreePath); } catch { /* ok */ }
       stateService.removeLogs(branchId);
       stateService.removeBranch(branchId);
       stateService.save();

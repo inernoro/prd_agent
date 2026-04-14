@@ -621,9 +621,13 @@ export function createBranchRouter(deps: RouterDeps): Router {
         return;
       }
 
+      // P4 Part 18 (G1.2): resolve the git repo root for the target
+      // project. Legacy 'default' projects (and any project without a
+      // cloned repoPath) fall back to the globally-mounted repoRoot.
+      const branchRepoRoot = stateService.getProjectRepoRoot(effectiveProjectId, config.repoRoot);
       await shell.exec(`mkdir -p "${config.worktreeBase}"`);
       const worktreePath = `${config.worktreeBase}/${id}`;
-      await worktreeService.create(branch, worktreePath);
+      await worktreeService.create(branchRepoRoot, branch, worktreePath);
 
       const entry: BranchEntry = {
         id,
@@ -737,7 +741,10 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
       // Remove worktree
       sendSSE(res, 'step', { step: 'worktree', status: 'running', title: '正在删除工作树...' });
-      try { await worktreeService.remove(entry.worktreePath); } catch { /* ok */ }
+      try {
+        const repoRoot = stateService.getProjectRepoRoot(entry.projectId, config.repoRoot);
+        await worktreeService.remove(repoRoot, entry.worktreePath);
+      } catch { /* ok */ }
       sendSSE(res, 'step', { step: 'worktree', status: 'done', title: '工作树已删除' });
 
       stateService.removeLogs(id);
@@ -2356,10 +2363,12 @@ export function createBranchRouter(deps: RouterDeps): Router {
       if (!env.DASHBOARD_DOMAIN) config.dashboardDomain = config.rootDomains[0];
       if (!env.PREVIEW_DOMAIN) config.previewDomain = config.rootDomains[0];
     }
-    // Repo root & worktree base: allow UI override for directory isolation
+    // Repo root & worktree base: allow UI override for directory isolation.
+    // P4 Part 18 (G1.2): WorktreeService is now stateless, so we just
+    // mutate config.repoRoot — call-sites read it via config or via
+    // stateService.getProjectRepoRoot(projectId, config.repoRoot).
     if (env.CDS_REPO_ROOT) {
       config.repoRoot = env.CDS_REPO_ROOT;
-      worktreeService.repoRoot = env.CDS_REPO_ROOT;
     }
     if (env.CDS_WORKTREE_BASE) config.worktreeBase = env.CDS_WORKTREE_BASE;
   }
@@ -2550,7 +2559,10 @@ export function createBranchRouter(deps: RouterDeps): Router {
         for (const svc of Object.values(entry.services)) {
           try { await containerService.stop(svc.containerName); } catch { /* ok */ }
         }
-        try { await worktreeService.remove(entry.worktreePath); } catch { /* ok */ }
+        try {
+          const repoRoot = stateService.getProjectRepoRoot(entry.projectId, config.repoRoot);
+          await worktreeService.remove(repoRoot, entry.worktreePath);
+        } catch { /* ok */ }
         stateService.removeLogs(entry.id);
         stateService.removeBranch(entry.id);
         sendSSE(res, 'step', { step: 'cleanup', status: 'done', title: `已删除 ${entry.id}` });
@@ -2609,7 +2621,10 @@ export function createBranchRouter(deps: RouterDeps): Router {
           try { await containerService.stop(svc.containerName); } catch { /* ok */ }
         }
         // Remove worktree
-        try { await worktreeService.remove(entry.worktreePath); } catch { /* ok */ }
+        try {
+          const repoRoot = stateService.getProjectRepoRoot(entry.projectId, config.repoRoot);
+          await worktreeService.remove(repoRoot, entry.worktreePath);
+        } catch { /* ok */ }
         // Remove from state
         stateService.removeLogs(entry.id);
         stateService.removeBranch(entry.id);
@@ -2705,7 +2720,10 @@ export function createBranchRouter(deps: RouterDeps): Router {
         for (const svc of Object.values(entry.services)) {
           try { await containerService.stop(svc.containerName); } catch { /* ok */ }
         }
-        try { await worktreeService.remove(entry.worktreePath); } catch { /* ok */ }
+        try {
+          const repoRoot = stateService.getProjectRepoRoot(entry.projectId, config.repoRoot);
+          await worktreeService.remove(repoRoot, entry.worktreePath);
+        } catch { /* ok */ }
       }
 
       // 2. Stop and remove all infra service containers (volumes preserved)
@@ -3552,10 +3570,12 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
       if (!entry) {
         send('worktree', 'running', `正在为 ${mainBranch} 创建工作树...`);
-        // Ensure worktreeBase directory exists (first-time setup)
+        // Ensure worktreeBase directory exists (first-time setup).
+        // P4 Part 18 (G1.2): the initialize flow bootstraps the legacy
+        // default project's main branch, so it always uses config.repoRoot.
         await shell.exec(`mkdir -p "${config.worktreeBase}"`);
         const worktreePath = `${config.worktreeBase}/${mainSlug}`;
-        await worktreeService.create(mainBranch, worktreePath);
+        await worktreeService.create(config.repoRoot, mainBranch, worktreePath);
 
         entry = {
           id: mainSlug,

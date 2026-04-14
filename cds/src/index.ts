@@ -106,7 +106,12 @@ if (customEnv.CDS_REPO_ROOT) config.repoRoot = customEnv.CDS_REPO_ROOT;
 if (customEnv.CDS_WORKTREE_BASE) config.worktreeBase = customEnv.CDS_WORKTREE_BASE;
 
 // ── Services ──
-const worktreeService = new WorktreeService(shell, config.repoRoot);
+// P4 Part 18 (G1.2): WorktreeService is stateless; every call passes
+// the repoRoot explicitly. The bootstrap path and the proxy auto-build
+// path pass `config.repoRoot` (legacy single-repo behavior); the
+// multi-project deploy path resolves per-project via
+// StateService.getProjectRepoRoot().
+const worktreeService = new WorktreeService(shell);
 const containerService = new ContainerService(shell, config);
 const proxyService = new ProxyService(stateService, config);
 proxyService.setWorktreeService(worktreeService);
@@ -185,7 +190,10 @@ janitorService.setRemoveFn(async (slug: string) => {
   for (const svc of Object.values(branch.services)) {
     try { await containerService.stop(svc.containerName); } catch { /* best effort */ }
   }
-  try { await worktreeService.remove(branch.worktreePath); } catch { /* best effort */ }
+  try {
+    const repoRoot = stateService.getProjectRepoRoot(branch.projectId, config.repoRoot);
+    await worktreeService.remove(repoRoot, branch.worktreePath);
+  } catch { /* best effort */ }
   stateService.removeBranch(slug);
   stateService.save();
 });
@@ -538,8 +546,13 @@ proxyService.setOnAutoBuild(async (branchSlug, _req, res) => {
     return;
   }
 
+  // P4 Part 18 (G1.2): auto-build path stays on the legacy single
+  // repo root. Subdomain-triggered auto-build predates multi-project;
+  // new projects must be created explicitly via POST /projects + clone.
+  const autoRepoRoot = config.repoRoot;
+
   // Check if remote branch exists
-  const exists = await worktreeService.branchExists(branchSlug);
+  const exists = await worktreeService.branchExists(autoRepoRoot, branchSlug);
   // Also try suffix matching and common patterns
   const candidates = [branchSlug, `feature/${branchSlug}`, `fix/${branchSlug}`];
   let resolvedBranch: string | null = null;
@@ -548,7 +561,7 @@ proxyService.setOnAutoBuild(async (branchSlug, _req, res) => {
     resolvedBranch = branchSlug;
   } else {
     for (const candidate of candidates) {
-      if (await worktreeService.branchExists(candidate)) {
+      if (await worktreeService.branchExists(autoRepoRoot, candidate)) {
         resolvedBranch = candidate;
         break;
       }
@@ -557,12 +570,12 @@ proxyService.setOnAutoBuild(async (branchSlug, _req, res) => {
 
   // If still not found, try suffix matching against all remote branches
   if (!resolvedBranch) {
-    resolvedBranch = await worktreeService.findBranchBySuffix(branchSlug);
+    resolvedBranch = await worktreeService.findBranchBySuffix(autoRepoRoot, branchSlug);
   }
 
   // If still not found, try slug matching (e.g. slug "claude-fix-xxx" → branch "claude/fix-xxx")
   if (!resolvedBranch) {
-    resolvedBranch = await worktreeService.findBranchBySlug(branchSlug);
+    resolvedBranch = await worktreeService.findBranchBySlug(autoRepoRoot, branchSlug);
   }
 
   if (!resolvedBranch) {
@@ -619,7 +632,7 @@ proxyService.setOnAutoBuild(async (branchSlug, _req, res) => {
       sendEvent('step', { step: 'worktree', status: 'running', title: `正在为 ${resolvedBranch} 创建工作树...` });
       await shell.exec(`mkdir -p "${config.worktreeBase}"`);
       const worktreePath = `${config.worktreeBase}/${finalSlug}`;
-      await worktreeService.create(resolvedBranch, worktreePath);
+      await worktreeService.create(autoRepoRoot, resolvedBranch, worktreePath);
 
       entry = {
         id: finalSlug,
