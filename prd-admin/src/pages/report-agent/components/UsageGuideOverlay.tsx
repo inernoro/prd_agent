@@ -1,5 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
-import { createPortal } from 'react-dom';
+import { useMemo } from 'react';
 import {
   CalendarCheck,
   ClipboardList,
@@ -8,7 +7,7 @@ import {
   Sparkles,
   Users,
 } from 'lucide-react';
-import { GlassCard } from '@/components/design/GlassCard';
+import { Dialog } from '@/components/ui/Dialog';
 import { Button } from '@/components/design/Button';
 import { SegmentedTabs } from '@/components/design/SegmentedTabs';
 
@@ -41,6 +40,17 @@ const MODULE_LABELS: Record<UsageGuideModule, string> = {
   settings: '设置',
 };
 
+/**
+ * 「使用指引」弹窗（标准居中弹窗版本）
+ *
+ * 改造说明：原实现是定位在侧栏右侧的半浮层（没有遮罩、top=58 显得不伦不类），
+ * 用户反馈「太丑、不伦不类」。现改用全局 Dialog 组件：
+ *   - 深色蒙版（rgba(0,0,0,0.72)）
+ *   - createPortal 到 body（Radix Dialog 内置）
+ *   - ESC / 点击蒙版关闭（Radix Dialog 内置）
+ *   - 居中，宽度 max 720px
+ *   - 三张操作卡片仍然保留，点击后切换到对应 Tab 并关闭弹窗
+ */
 export function UsageGuideOverlay(props: UsageGuideOverlayProps) {
   const {
     open,
@@ -52,39 +62,6 @@ export function UsageGuideOverlay(props: UsageGuideOverlayProps) {
     onOpenDailyLog,
     onCreateReport,
   } = props;
-  const [leftOffset, setLeftOffset] = useState(16);
-
-  useEffect(() => {
-    if (!open) return;
-    const onKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
-        onClose();
-      }
-    };
-    window.addEventListener('keydown', onKeyDown);
-    return () => {
-      window.removeEventListener('keydown', onKeyDown);
-    };
-  }, [open, onClose]);
-
-  useEffect(() => {
-    if (!open) return;
-    const updateLeftOffset = () => {
-      const aside = document.querySelector('aside');
-      if (!(aside instanceof HTMLElement)) {
-        setLeftOffset(16);
-        return;
-      }
-      const rect = aside.getBoundingClientRect();
-      const isVisible = rect.width > 0 && rect.right > 0 && rect.left < window.innerWidth;
-      setLeftOffset(isVisible ? Math.max(16, Math.round(rect.right + 12)) : 16);
-    };
-    updateLeftOffset();
-    window.addEventListener('resize', updateLeftOffset);
-    return () => {
-      window.removeEventListener('resize', updateLeftOffset);
-    };
-  }, [open]);
 
   const items = useMemo<GuideActionItem[]>(() => {
     if (moduleKey === 'report') {
@@ -261,84 +238,62 @@ export function UsageGuideOverlay(props: UsageGuideOverlayProps) {
   const flowText = useMemo(() => {
     if (moduleKey === 'report') {
       return role === 'manager'
-        ? '推荐流程：团队配置 -> 成员填写周报 -> 团队查看与跟进'
-        : '推荐流程：日常记录 -> 写周报 -> 提交 -> 根据反馈修订';
+        ? '推荐流程：团队配置 → 成员填写周报 → 团队查看与跟进'
+        : '推荐流程：日常记录 → 写周报 → 提交 → 根据反馈修订';
     }
     if (moduleKey === 'team') {
       return role === 'manager'
-        ? '推荐流程：选择周次 -> 查看提交状态 -> AI 汇总 -> 团队跟进'
-        : '推荐流程：查看团队状态 -> 响应反馈 -> 回周报修订';
+        ? '推荐流程：选择周次 → 查看提交状态 → AI 汇总 → 团队跟进'
+        : '推荐流程：查看团队状态 → 响应反馈 → 回周报修订';
     }
     return role === 'manager'
-      ? '推荐流程：团队管理 -> 模板管理 -> 数据源与 Prompt 配置'
-      : '推荐流程：个人数据源配置 -> Prompt 调整 -> 开始写周报';
+      ? '推荐流程：团队管理 → 模板管理 → 数据源与 Prompt 配置'
+      : '推荐流程：个人数据源配置 → Prompt 调整 → 开始写周报';
   }, [moduleKey, role]);
 
-  if (!open || typeof document === 'undefined') {
-    return null;
-  }
+  return (
+    <Dialog
+      open={open}
+      onOpenChange={(v) => {
+        if (!v) onClose();
+      }}
+      title={`使用指引 · ${MODULE_LABELS[moduleKey]}`}
+      description="选择你的角色，查看推荐操作与流程。这是辅助引导层，不影响正式功能页面。"
+      maxWidth={720}
+      content={
+        <div className="flex flex-col gap-4">
+          <SegmentedTabs
+            items={[
+              { key: 'manager', label: '团队管理员' },
+              { key: 'member', label: '团队成员' },
+            ]}
+            value={role}
+            onChange={onRoleChange}
+            ariaLabel="使用指引角色切换"
+          />
 
-  return createPortal(
-    <div className="fixed right-0 bottom-0 z-[1200]" style={{ top: 58, left: leftOffset }}>
-      <button
-        type="button"
-        aria-label="关闭使用指引"
-        className="absolute inset-0"
-        style={{ background: 'rgba(8, 12, 22, 0.24)', backdropFilter: 'blur(1px)' }}
-        onClick={onClose}
-      />
-
-      <div className="absolute top-2 left-3 right-3 md:left-4 md:right-4">
-        <GlassCard
-          variant="subtle"
-          className="mx-auto max-w-[1240px] px-4 py-3 border"
-          style={{ borderColor: 'rgba(99, 102, 241, 0.26)', boxShadow: '0 10px 36px rgba(0, 0, 0, 0.24)' }}
-        >
-          <div className="flex items-center justify-between gap-3 flex-wrap">
-            <div>
-              <div className="text-[14px] font-semibold" style={{ color: 'var(--text-primary)' }}>
-                指引模式 · {MODULE_LABELS[moduleKey]}
-              </div>
-              <div className="text-[11px] mt-1" style={{ color: 'var(--text-muted)' }}>
-                这是辅助引导层，不影响正式功能页面；再次点击右上角“使用指引”可收起。
-              </div>
-            </div>
-          </div>
-
-          <div className="mt-2.5">
-            <SegmentedTabs
-              items={[
-                { key: 'manager', label: '团队管理员' },
-                { key: 'member', label: '团队成员' },
-              ]}
-              value={role}
-              onChange={onRoleChange}
-              ariaLabel="使用指引角色切换"
-            />
-          </div>
-
-          <div className="mt-3 grid grid-cols-1 md:grid-cols-3 gap-2.5">
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
             {items.map((item) => {
               const Icon = item.icon;
               return (
                 <div
                   key={item.key}
-                  className="rounded-xl p-2.5 border"
+                  className="rounded-xl p-3 border flex flex-col"
                   style={{ background: 'rgba(255, 255, 255, 0.03)', borderColor: 'var(--border-primary)' }}
                 >
-                  <div className="flex items-center gap-2 mb-1.5">
-                    <Icon size={13} style={{ color: 'var(--text-secondary)' }} />
-                    <div className="text-[12px] font-medium" style={{ color: 'var(--text-primary)' }}>
+                  <div className="flex items-center gap-2 mb-2">
+                    <Icon size={14} style={{ color: 'var(--text-secondary)' }} />
+                    <div className="text-[13px] font-medium" style={{ color: 'var(--text-primary)' }}>
                       {item.title}
                     </div>
                   </div>
-                  <div className="text-[11px] mb-2.5 min-h-[32px]" style={{ color: 'var(--text-muted)' }}>
+                  <div className="text-[12px] mb-3 flex-1" style={{ color: 'var(--text-muted)' }}>
                     {item.desc}
                   </div>
                   <Button
-                    size="xs"
+                    size="sm"
                     variant="secondary"
-                    className="whitespace-nowrap"
+                    className="whitespace-nowrap self-start"
                     onClick={() => {
                       item.action();
                       onClose();
@@ -352,14 +307,13 @@ export function UsageGuideOverlay(props: UsageGuideOverlayProps) {
           </div>
 
           <div
-            className="mt-2.5 text-[11px] rounded-lg px-3 py-1.5"
+            className="text-[12px] rounded-lg px-3 py-2"
             style={{ background: 'rgba(255, 255, 255, 0.03)', color: 'var(--text-secondary)' }}
           >
             {flowText}
           </div>
-        </GlassCard>
-      </div>
-    </div>,
-    document.body
+        </div>
+      }
+    />
   );
 }
