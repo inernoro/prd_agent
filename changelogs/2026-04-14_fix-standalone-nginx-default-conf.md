@@ -1,0 +1,2 @@
+| fix | deploy | exec_dep.sh 独立部署模式修复 nginx 502：新增 deploy/nginx/conf.d/branches/_standalone.conf (内容同 deploy/nginx/nginx.conf 的 /api → api:8080 反代)，exec_dep.sh 每次部署都幂等重建 default.conf → branches/_standalone.conf 的 symlink，修复纯净机器首次部署后所有 /api/* 都被仓库默认的 _disconnected.conf 拦成 {"error":"No active branch connected"} 的问题 |
+| docs | docker-compose.yml | gateway 服务注释补齐三种部署模式（standalone/cds/disconnected）下 default.conf symlink 的指向规则，避免下一位部署者再次踩坑 |
