@@ -20,6 +20,7 @@ import type { MarketplaceCardContext } from '@/components/config-management/Conf
 import ReactMarkdown from 'react-markdown';
 import { MapSectionLoader } from '@/components/ui/VideoLoader';
 import remarkGfm from 'remark-gfm';
+import remarkBreaks from 'remark-breaks';
 
 interface SubmissionDetailModalProps {
   submissionId: string | null;
@@ -318,7 +319,7 @@ export function SubmissionDetailModal({ submissionId, onClose, onLikeChanged }: 
                   {/* ── 正文 Tab（仅文学创作） ── */}
                   {rightTab === 'article' && isLiterary && (
                     <div className="text-sm leading-relaxed arena-markdown" style={{ color: 'var(--text-secondary, rgba(255,255,255,0.7))' }}>
-                      <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                      <ReactMarkdown remarkPlugins={[remarkGfm, remarkBreaks]}>
                         {detail.articleContent || '暂无文章内容'}
                       </ReactMarkdown>
                     </div>

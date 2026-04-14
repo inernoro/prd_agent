@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import remarkBreaks from 'remark-breaks';
 import remarkMath from 'remark-math';
 import rehypeKatex from 'rehype-katex';
 import 'katex/dist/katex.min.css';
@@ -507,7 +508,7 @@ function MarkdownViewer({ content }: { content: string }) {
   return (
     <div className="prose-invert max-w-none text-[13px] leading-relaxed">
       <ReactMarkdown
-        remarkPlugins={[remarkGfm, remarkMath]}
+        remarkPlugins={[remarkGfm, remarkBreaks, remarkMath]}
         rehypePlugins={[rehypeKatex]}
         components={{
           h1: mkHeading('h1'),
@@ -559,24 +560,50 @@ function MarkdownViewer({ content }: { content: string }) {
           td: ({ children }) => <td className="px-3 py-1.5" style={{ borderBottom: '1px solid rgba(255,255,255,0.03)', color: 'var(--text-secondary)' }}>{children}</td>,
           code: ({ className, children, ...props }) => {
             const match = /language-(\w+)/.exec(className || '');
-            const inline = !match;
-            if (inline) {
+            const text = String(children ?? '').replace(/\n$/, '');
+            // 块级判断：有 language- 类名 或 内容包含换行（兼容未指定语言的 fenced code block）
+            const isBlock = !!match || text.includes('\n');
+            if (!isBlock) {
               return <code className="px-1.5 py-0.5 rounded text-[12px]" style={{ background: 'rgba(255,255,255,0.06)', color: 'rgba(248,113,113,0.9)' }} {...props}>{children}</code>;
             }
+            // 块级且指定了语言 → Prism 高亮
+            if (match) {
+              return (
+                <SyntaxHighlighter
+                  style={oneDark}
+                  language={match[1]}
+                  PreTag="div"
+                  customStyle={{
+                    margin: '12px 0', borderRadius: '10px', fontSize: '12px',
+                    background: 'rgba(0,0,0,0.3)', border: '1px solid rgba(255,255,255,0.04)',
+                  }}
+                >
+                  {text}
+                </SyntaxHighlighter>
+              );
+            }
+            // 块级但无语言 → 纯 <pre>，避免 Prism token 背景污染 ASCII 框图
             return (
-              <SyntaxHighlighter
-                style={oneDark}
-                language={match[1]}
-                PreTag="div"
-                customStyle={{
-                  margin: '12px 0', borderRadius: '10px', fontSize: '12px',
-                  background: 'rgba(0,0,0,0.3)', border: '1px solid rgba(255,255,255,0.04)',
+              <pre
+                style={{
+                  margin: '12px 0',
+                  padding: '12px 14px',
+                  borderRadius: '10px',
+                  fontSize: '12px',
+                  lineHeight: 1.6,
+                  background: 'rgba(0,0,0,0.3)',
+                  border: '1px solid rgba(255,255,255,0.04)',
+                  color: 'rgba(255,255,255,0.85)',
+                  fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
+                  whiteSpace: 'pre',
+                  overflowX: 'auto',
                 }}
               >
-                {String(children).replace(/\n$/, '')}
-              </SyntaxHighlighter>
+                {text}
+              </pre>
             );
           },
+          pre: ({ children }) => <>{children}</>,
           hr: () => <hr className="my-4" style={{ borderColor: 'rgba(255,255,255,0.06)' }} />,
           img: ({ src, alt }) => (
             <img src={src} alt={alt || ''} className="max-w-full rounded-lg my-3" style={{ maxHeight: '400px', border: '1px solid rgba(255,255,255,0.06)' }} />

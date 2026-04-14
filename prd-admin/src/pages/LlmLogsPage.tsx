@@ -20,6 +20,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useBreakpoint } from '@/hooks/useBreakpoint';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import remarkBreaks from 'remark-breaks';
 import rehypeRaw from 'rehype-raw';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import { useSearchParams } from 'react-router-dom';
@@ -2427,7 +2428,7 @@ export function LlmLogsPanel({ embedded, defaultAppKey, customApis }: {
                         `}</style>
                         <div className="prd-md">
                           <ReactMarkdown
-                            remarkPlugins={[remarkGfm]}
+                            remarkPlugins={[remarkGfm, remarkBreaks]}
                             rehypePlugins={[rehypeRaw]}
                             components={{
                               a: ({ href, children, ...props }) => (

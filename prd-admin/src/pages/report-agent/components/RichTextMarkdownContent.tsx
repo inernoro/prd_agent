@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import remarkBreaks from 'remark-breaks';
 import { ImagePreviewDialog } from '@/components/ui/ImagePreviewDialog';
 
 interface RichTextMarkdownContentProps {
@@ -52,7 +53,7 @@ export function RichTextMarkdownContent({
         )}
         <div className="text-[12px] leading-relaxed text-left">
           <ReactMarkdown
-            remarkPlugins={[remarkGfm]}
+            remarkPlugins={[remarkGfm, remarkBreaks]}
             components={{
               p: ({ children }) => (
                 <p className="my-1 whitespace-pre-wrap break-words">{children}</p>

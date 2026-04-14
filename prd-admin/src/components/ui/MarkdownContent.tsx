@@ -1,6 +1,7 @@
 import { memo } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import remarkBreaks from 'remark-breaks';
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { oneDark } from 'react-syntax-highlighter/dist/esm/styles/prism';
 import { Copy } from 'lucide-react';
@@ -19,11 +20,21 @@ export const MarkdownContent = memo(function MarkdownContent({ content, classNam
   return (
     <div className={className ?? 'text-[13px] leading-relaxed'} style={{ color: 'var(--text-primary)' }}>
       <ReactMarkdown
-        remarkPlugins={[remarkGfm]}
+        remarkPlugins={[remarkGfm, remarkBreaks]}
         components={{
           code({ className: cn, children, ...props }) {
             const match = /language-(\w+)/.exec(cn || '');
-            const codeStr = String(children).replace(/\n$/, '');
+            const codeStr = String(children ?? '').replace(/\n$/, '');
+            // 块级判断：有 language- 类名 或 内容含换行（兼容未指定语言的 fenced block）
+            const isBlock = !!match || codeStr.includes('\n');
+            if (!isBlock) {
+              return (
+                <code className="px-1 py-0.5 rounded text-xs" style={{ background: 'rgba(255,255,255,0.1)' }} {...props}>
+                  {children}
+                </code>
+              );
+            }
+            // 块级且指定语言 → Prism 高亮
             if (match) {
               return (
                 <div className="relative group/code my-2">
@@ -53,10 +64,23 @@ export const MarkdownContent = memo(function MarkdownContent({ content, classNam
                 </div>
               );
             }
+            // 块级但无语言 → 纯 <pre>，避免 Prism token 背景污染 ASCII 框图
             return (
-              <code className="px-1 py-0.5 rounded text-xs" style={{ background: 'rgba(255,255,255,0.1)' }} {...props}>
-                {children}
-              </code>
+              <pre
+                className="my-2 rounded-lg overflow-x-auto"
+                style={{
+                  margin: '0.5rem 0',
+                  padding: '12px 14px',
+                  fontSize: '0.75rem',
+                  lineHeight: 1.6,
+                  background: 'rgba(0,0,0,0.3)',
+                  color: 'var(--text-primary)',
+                  fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
+                  whiteSpace: 'pre',
+                }}
+              >
+                {codeStr}
+              </pre>
             );
           },
           pre({ children }) { return <>{children}</>; },

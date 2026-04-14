@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import remarkBreaks from 'remark-breaks';
 import { Button } from '@/components/design/Button';
 import { PlatformLabel } from '@/components/design/PlatformLabel';
 import { toast } from '@/lib/toast';
@@ -2125,7 +2126,7 @@ export function ArenaPage() {
                             )}
                             {/* Main content */}
                             <div className="arena-markdown text-[14px] leading-[1.75] break-words" style={{ color: 'var(--text-primary)' }}>
-                              <ReactMarkdown remarkPlugins={[remarkGfm]}>{panel.text}</ReactMarkdown>
+                              <ReactMarkdown remarkPlugins={[remarkGfm, remarkBreaks]}>{panel.text}</ReactMarkdown>
                               {panel.status === 'streaming' && (
                                 <span
                                   className="inline-block w-[2px] h-[14px] ml-0.5 animate-pulse"

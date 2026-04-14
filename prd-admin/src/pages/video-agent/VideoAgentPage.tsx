@@ -40,6 +40,7 @@ import type { VideoGenRun, VideoGenRunListItem } from '@/services/contracts/vide
 
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import remarkBreaks from 'remark-breaks';
 
 // ─── Types ───
 
@@ -740,7 +741,7 @@ export const VideoAgentPage: React.FC = () => {
               ) : (
                 /* Article preview (markdown render) */
                 <div className="prd-md p-2">
-                  <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                  <ReactMarkdown remarkPlugins={[remarkGfm, remarkBreaks]}>
                     {articleContent}
                   </ReactMarkdown>
                 </div>

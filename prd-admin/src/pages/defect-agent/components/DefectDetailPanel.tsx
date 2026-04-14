@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import * as DialogPrimitive from '@radix-ui/react-dialog';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import remarkBreaks from 'remark-breaks';
 import { Button } from '@/components/design/Button';
 import { glassPanel } from '@/lib/glassStyles';
 import { useDefectStore } from '@/stores/defectStore';
@@ -672,7 +673,7 @@ export function DefectDetailPanel() {
                   contentSegments.map((seg, idx) =>
                     seg.type === 'text' ? (
                       <div key={idx} className="defect-md">
-                        <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                        <ReactMarkdown remarkPlugins={[remarkGfm, remarkBreaks]}>
                           {seg.content}
                         </ReactMarkdown>
                       </div>
@@ -1140,7 +1141,7 @@ export function DefectDetailPanel() {
                           {msgSegments.map((seg, idx) =>
                             seg.type === 'text' ? (
                               <div key={idx} className="defect-md text-[12px]">
-                                <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                                <ReactMarkdown remarkPlugins={[remarkGfm, remarkBreaks]}>
                                   {seg.content}
                                 </ReactMarkdown>
                               </div>
