@@ -399,7 +399,16 @@ describe('Projects router (P4 Part 2)', () => {
       const network = created.body.project.dockerNetwork;
 
       const del = await request(server, 'DELETE', '/api/projects/' + pid);
-      expect(del.status).toBe(204);
+      // P4 Part 17 (G8 fix): DELETE now returns 200 + cascade summary
+      // (was 204 before so the operator can see what was cleaned up).
+      // Frontend already accepted both 200 and 204.
+      expect(del.status).toBe(200);
+      expect(del.body.ok).toBe(true);
+      expect(del.body.cascade).toBeDefined();
+      expect(del.body.cascade.branches).toEqual([]);
+      expect(del.body.cascade.buildProfiles).toEqual([]);
+      expect(del.body.cascade.infraServices).toEqual([]);
+      expect(del.body.cascade.routingRules).toEqual([]);
 
       // Shell was asked to inspect + rm the network
       const rmCmds = shell.commands.filter((c) => c.startsWith('docker network rm'));
@@ -420,6 +429,101 @@ describe('Projects router (P4 Part 2)', () => {
     it('returns 404 for unknown project ids', async () => {
       const res = await request(server, 'DELETE', '/api/projects/no-such-id');
       expect(res.status).toBe(404);
+    });
+
+    // P4 Part 17 (G8 fix): cascade-removes branches / buildProfiles /
+    // infraServices / routingRules belonging to the deleted project so
+    // state.json doesn't accumulate orphans. Pre-fix, removeProject
+    // only spliced the projects[] array and left every related entry
+    // behind.
+    it('P4 Part 17 (G8): cascade-removes related state entries', async () => {
+      const created = await request(server, 'POST', '/api/projects', { name: 'cascade-target' });
+      expect(created.status).toBe(201);
+      const pid = created.body.project.id;
+
+      // Plant 2 branches, 2 build profiles, 1 infra, 1 routing rule
+      // belonging to the cascade-target project, plus 1 branch in the
+      // legacy default project to verify isolation.
+      const now = new Date().toISOString();
+      stateService.addBranch({
+        id: 'cascade-b1',
+        projectId: pid,
+        branch: 'main',
+        worktreePath: '/tmp/wt-1',
+        services: {},
+        status: 'idle',
+        createdAt: now,
+      });
+      stateService.addBranch({
+        id: 'cascade-b2',
+        projectId: pid,
+        branch: 'feat',
+        worktreePath: '/tmp/wt-2',
+        services: {},
+        status: 'idle',
+        createdAt: now,
+      });
+      stateService.addBranch({
+        id: 'legacy-keep',
+        projectId: 'default',
+        branch: 'keep',
+        worktreePath: '/tmp/wt-keep',
+        services: {},
+        status: 'idle',
+        createdAt: now,
+      });
+      stateService.addBuildProfile({
+        id: 'cascade-p1',
+        projectId: pid,
+        name: 'web',
+        dockerImage: 'nginx',
+        command: 'nginx -g "daemon off;"',
+        workDir: '.',
+        containerPort: 80,
+      });
+      stateService.addBuildProfile({
+        id: 'cascade-p2',
+        projectId: pid,
+        name: 'api',
+        dockerImage: 'node',
+        command: 'node server.js',
+        workDir: '.',
+        containerPort: 3000,
+      });
+      stateService.addInfraService({
+        id: 'cascade-i1',
+        projectId: pid,
+        name: 'redis',
+        dockerImage: 'redis:7',
+        env: {},
+        ports: [],
+        volumes: [],
+        status: 'idle',
+      });
+      stateService.addRoutingRule({
+        id: 'cascade-r1',
+        projectId: pid,
+        type: 'domain',
+        match: '*.cascade.dev',
+        branch: 'main',
+        priority: 0,
+        enabled: true,
+      });
+      stateService.save();
+
+      const del = await request(server, 'DELETE', '/api/projects/' + pid);
+      expect(del.status).toBe(200);
+      expect(del.body.cascade.branches.sort()).toEqual(['cascade-b1', 'cascade-b2']);
+      expect(del.body.cascade.buildProfiles.sort()).toEqual(['cascade-p1', 'cascade-p2']);
+      expect(del.body.cascade.infraServices).toEqual(['cascade-i1']);
+      expect(del.body.cascade.routingRules).toEqual(['cascade-r1']);
+
+      // Legacy branch must NOT be touched.
+      const state = stateService.getState();
+      expect(Object.keys(state.branches)).toEqual(['legacy-keep']);
+      expect(state.buildProfiles).toEqual([]);
+      expect(state.infraServices).toEqual([]);
+      expect(state.routingRules).toEqual([]);
     });
   });
 });

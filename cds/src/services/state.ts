@@ -577,18 +577,76 @@ export class StateService {
   /**
    * Remove a project by id. The legacy default project cannot be
    * removed — it is the anchor for pre-P4 data and deleting it would
-   * orphan every branch/profile/infra entry. P4 Part 3 will introduce
-   * full cascading delete (stop containers, drop docker network, etc.).
+   * orphan every branch/profile/infra entry.
+   *
+   * P4 Part 17 (G8 fix): cascade-removes branches, build profiles,
+   * infra services, and routing rules that belong to this project.
+   * Container teardown still happens at the route layer (it needs
+   * docker shell access); this method just keeps state.json clean.
+   *
+   * Returns a summary of what was removed so the caller (route) can
+   * report it to the operator.
    */
-  removeProject(id: string): void {
-    if (!this.state.projects) return;
+  removeProject(id: string): {
+    branches: string[];
+    buildProfiles: string[];
+    infraServices: string[];
+    routingRules: string[];
+  } {
+    if (!this.state.projects) {
+      return { branches: [], buildProfiles: [], infraServices: [], routingRules: [] };
+    }
     const project = this.state.projects.find((p) => p.id === id);
-    if (!project) return;
+    if (!project) {
+      return { branches: [], buildProfiles: [], infraServices: [], routingRules: [] };
+    }
     if (project.legacyFlag) {
       throw new Error('Cannot remove the legacy default project');
     }
+
+    // ── Cascade collection (compute before mutating) ──
+    // Use the explicit projectId match; we DO NOT want to also catch
+    // entries with a missing projectId (those belong to the legacy
+    // default project and must not be removed).
+    const branchesToRemove = Object.values(this.state.branches || {})
+      .filter((b) => b.projectId === id)
+      .map((b) => b.id);
+    const buildProfilesToRemove = (this.state.buildProfiles || [])
+      .filter((p) => p.projectId === id)
+      .map((p) => p.id);
+    const infraServicesToRemove = (this.state.infraServices || [])
+      .filter((s) => s.projectId === id)
+      .map((s) => s.id);
+    const routingRulesToRemove = (this.state.routingRules || [])
+      .filter((r) => r.projectId === id)
+      .map((r) => r.id);
+
+    // ── Cascade mutate ──
+    for (const bid of branchesToRemove) {
+      delete this.state.branches[bid];
+      // Also drop any operation logs tied to this branch — reuse the
+      // existing removeLogs() helper which knows the storage layout.
+      this.removeLogs(bid);
+    }
+    if (this.state.buildProfiles) {
+      this.state.buildProfiles = this.state.buildProfiles.filter((p) => p.projectId !== id);
+    }
+    if (this.state.infraServices) {
+      this.state.infraServices = this.state.infraServices.filter((s) => s.projectId !== id);
+    }
+    if (this.state.routingRules) {
+      this.state.routingRules = this.state.routingRules.filter((r) => r.projectId !== id);
+    }
+
     this.state.projects = this.state.projects.filter((p) => p.id !== id);
     this.save();
+
+    return {
+      branches: branchesToRemove,
+      buildProfiles: buildProfilesToRemove,
+      infraServices: infraServicesToRemove,
+      routingRules: routingRulesToRemove,
+    };
   }
 
   /**

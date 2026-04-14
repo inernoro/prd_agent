@@ -360,12 +360,22 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
           `[projects] failed to remove docker network ${project.dockerNetwork}: ${result.detail}`,
         );
         // Continue anyway — zombie network is less harmful than zombie
-        // project entry. Part 3's cascade will clean up.
+        // project entry. State cascade will clean up the rest.
       }
     }
 
+    // P4 Part 17 (G8 fix): cascade-remove branches/profiles/infra/routing
+    // belonging to this project so deleting a project no longer leaves
+    // orphans in state.json. The state service returns a summary so we
+    // can hand it back to the operator (and the next agent log replay
+    // can spot what was lost). Container teardown is intentionally NOT
+    // done here — the previous list view's per-branch DELETE already
+    // handles that, and chasing it from a project DELETE would slow the
+    // request to multi-second territory. We log the cascade summary so
+    // operators can run `docker ps` and see the leftovers.
+    let summary: ReturnType<typeof stateService.removeProject>;
     try {
-      stateService.removeProject(project.id);
+      summary = stateService.removeProject(project.id);
     } catch (err) {
       res.status(500).json({
         error: 'state_save_failed',
@@ -374,7 +384,27 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
       return;
     }
 
-    res.status(204).end();
+    const totalCascade =
+      summary.branches.length +
+      summary.buildProfiles.length +
+      summary.infraServices.length +
+      summary.routingRules.length;
+    if (totalCascade > 0) {
+      // eslint-disable-next-line no-console
+      console.log(
+        `[projects] cascade-removed for project ${project.id}: ` +
+          `${summary.branches.length} branches, ` +
+          `${summary.buildProfiles.length} buildProfiles, ` +
+          `${summary.infraServices.length} infraServices, ` +
+          `${summary.routingRules.length} routingRules`,
+      );
+    }
+
+    res.status(200).json({
+      ok: true,
+      projectId: project.id,
+      cascade: summary,
+    });
   });
 
   return router;
