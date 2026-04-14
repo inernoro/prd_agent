@@ -976,26 +976,51 @@ logs_cmd() {
 # exact install commands. Users can pipe it through sudo or copy-
 # paste. No writes to /etc happen automatically because this script
 # has no sudo context.
+#
+# P4 Part 18 hardening v2 (user-reported): the first version of this
+# command only substituted binary paths. It missed the fact that
+# systemd services run with a minimal PATH that typically does NOT
+# include nvm's node bin directory. So when pnpm/npx ran, their
+# `#!/usr/bin/env node` shebang failed with
+#   /usr/bin/env: 'node': No such file or directory
+# even though pnpm's absolute path was correct.
+#
+# Fix: inject `Environment=PATH=...` with the node bin dir prepended
+# so every child process sees node on PATH. Also inject NODE_PATH so
+# pnpm can find its own modules in nvm's global dir.
 install_systemd_cmd() {
   local repo_root
   repo_root="$(cd "$SCRIPT_DIR/.." && pwd)"
   local cds_dir="$SCRIPT_DIR"
-  local pnpm_bin tsc_bin node_bin
+  local pnpm_bin tsc_bin node_bin node_bin_dir
   pnpm_bin="$(command -v pnpm 2>/dev/null || echo /usr/bin/pnpm)"
   node_bin="$(command -v node 2>/dev/null || echo /usr/bin/node)"
   tsc_bin="$(command -v npx 2>/dev/null || echo /usr/bin/npx)"
+  # Derive the directory that holds node/pnpm/npx. For nvm installs
+  # this is e.g. /root/.nvm/versions/node/v22.22.2/bin — systemd needs
+  # this prepended to PATH so the shebang `#!/usr/bin/env node` that
+  # pnpm/npx use resolves to nvm's node and not "command not found".
+  node_bin_dir="$(dirname "$node_bin")"
 
   local template="$cds_dir/systemd/cds-master.service"
   local out="/tmp/cds-master.service.$$"
 
   [ -f "$template" ] || { err "模板不存在: $template"; exit 1; }
 
+  # Use a pipe so we can inject Environment=PATH on the fly. The
+  # template ships with the dev-friendly defaults; we patch:
+  #   - WorkingDirectory / CDS_REPO_ROOT to the actual install
+  #   - Binary absolute paths for pnpm/node/npx
+  #   - NEW: Environment=PATH=<node_bin_dir>:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+  #     inserted right before the existing NODE_ENV line so the rest
+  #     of the unit inherits it.
   sed \
     -e "s|/opt/prd_agent/cds|$cds_dir|g" \
     -e "s|/opt/prd_agent|$repo_root|g" \
     -e "s|/usr/bin/pnpm|$pnpm_bin|g" \
     -e "s|/usr/bin/node|$node_bin|g" \
     -e "s|/usr/bin/npx|$tsc_bin|g" \
+    -e "/^Environment=NODE_ENV=production/i Environment=PATH=$node_bin_dir:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" \
     "$template" > "$out"
 
   echo

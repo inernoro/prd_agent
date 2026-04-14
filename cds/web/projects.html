@@ -798,42 +798,25 @@
         </div>
       </div>
 
-      <div class="cds-workspace" title="团队 workspace 将在 P5 上线">
+      <div class="cds-workspace">
         <div class="cds-workspace-avatar" id="wsAvatar">S</div>
         <div class="cds-workspace-meta">
           <span class="cds-workspace-name" id="wsName">System</span>
           <span class="cds-workspace-sub">Personal</span>
         </div>
-        <svg class="cds-workspace-chevron" width="12" height="12" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M4.22 6.22a.75.75 0 011.06 0L8 8.94l2.72-2.72a.75.75 0 111.06 1.06l-3.25 3.25a.75.75 0 01-1.06 0L4.22 7.28a.75.75 0 010-1.06z"/></svg>
       </div>
 
+      <!-- P4 Part 18 cleanup: removed 3 disabled "coming in P5/P6" nav
+           items (Templates / Usage / People) that users complained
+           about. Kept only Projects + Dashboard which actually work. -->
       <nav class="cds-nav">
         <a class="cds-nav-item active" href="projects.html">
           <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M1.75 1h12.5c.966 0 1.75.784 1.75 1.75v10.5A1.75 1.75 0 0114.25 15H1.75A1.75 1.75 0 010 13.25V2.75C0 1.784.784 1 1.75 1zM1.5 2.75v10.5c0 .138.112.25.25.25h12.5a.25.25 0 00.25-.25V2.75a.25.25 0 00-.25-.25H1.75a.25.25 0 00-.25.25z"/></svg>
           <span>Projects</span>
         </a>
-        <a class="cds-nav-item disabled" title="P6 手动项目模板 (未上线)">
-          <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M2 2.75A.75.75 0 012.75 2H6.5v4.5H2v-3.75zM9.5 2h3.75a.75.75 0 01.75.75V6H9.5V2zM9.5 7.5H14v5.75a.75.75 0 01-.75.75H9.5v-6.5zM2 7.5h4.5V14H2.75a.75.75 0 01-.75-.75V7.5z"/></svg>
-          <span>Templates</span>
-        </a>
-        <div class="cds-nav-divider"></div>
-        <a class="cds-nav-item disabled" title="P5 使用统计 (未上线)">
-          <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M1.5 1.75a.75.75 0 00-1.5 0v12.5c0 .414.336.75.75.75h14.5a.75.75 0 000-1.5H1.5V1.75zm14.28 2.53a.75.75 0 00-1.06-1.06L10 7.94 7.53 5.47a.75.75 0 00-1.06 0L2.22 9.72a.75.75 0 001.06 1.06L7 7.06l2.47 2.47a.75.75 0 001.06 0l5.25-5.25z"/></svg>
-          <span>Usage</span>
-        </a>
-        <a class="cds-nav-item disabled" title="P5 成员管理 (未上线)">
-          <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M5.5 3.5a2.5 2.5 0 115 0 2.5 2.5 0 01-5 0zM8 0a3.5 3.5 0 00-1.04 6.84A5 5 0 003 12v.5A1.5 1.5 0 004.5 14h7a1.5 1.5 0 001.5-1.5V12a5 5 0 00-3.96-4.16A3.5 3.5 0 008 0z"/></svg>
-          <span>People</span>
-        </a>
         <a class="cds-nav-item" href="index.html">
           <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M8 0a8 8 0 100 16A8 8 0 008 0zM1.5 8a6.5 6.5 0 0110.65-5.003.75.75 0 00.959-1.153 8 8 0 102.592 8.33.75.75 0 00-1.444-.407A6.5 6.5 0 011.5 8z"/></svg>
           <span>Dashboard</span>
-        </a>
-        <div class="cds-nav-divider"></div>
-        <a class="cds-nav-item" href="https://github.com/inernoro/prd_agent/blob/main/doc/plan.cds-multi-project-phases.md" target="_blank" rel="noopener">
-          <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M0 1.75A.75.75 0 01.75 1h4.253c1.227 0 2.317.59 3 1.501A3.744 3.744 0 0111.006 1h4.245a.75.75 0 01.75.75v10.5a.75.75 0 01-.75.75h-4.507a2.25 2.25 0 00-1.591.659l-.622.621a.75.75 0 01-1.06 0l-.622-.621A2.25 2.25 0 005.258 13H.75a.75.75 0 01-.75-.75V1.75z"/></svg>
-          <span>Plan · 7 Phases</span>
-          <svg class="ext" width="10" height="10" viewBox="0 0 16 16" fill="currentColor"><path d="M3.75 2h3.5a.75.75 0 010 1.5h-3.5a.25.25 0 00-.25.25v8.5c0 .138.112.25.25.25h8.5a.25.25 0 00.25-.25v-3.5a.75.75 0 011.5 0v3.5A1.75 1.75 0 0112.25 14h-8.5A1.75 1.75 0 012 12.25v-8.5C2 2.784 2.784 2 3.75 2zm6.854-1h4.146a.25.25 0 01.25.25v4.146a.25.25 0 01-.427.177L13.03 4.03 9.28 7.78a.75.75 0 01-1.06-1.06l3.75-3.75-1.543-1.543A.25.25 0 0110.604 1z"/></svg>
         </a>
       </nav>
 
@@ -861,16 +844,10 @@
           <span style="opacity:0.4">|</span>
           <span>Sort by: Recent Activity</span>
         </div>
-        <div class="cds-toolbar-right">
-          <div class="cds-view-toggle">
-            <button class="active" title="Grid view" aria-label="Grid view">
-              <svg width="13" height="13" viewBox="0 0 16 16" fill="currentColor"><path d="M1.75 1h5.5c.414 0 .75.336.75.75v5.5A.75.75 0 017.25 8h-5.5A.75.75 0 011 7.25v-5.5C1 1.336 1.336 1 1.75 1zm7 0h5.5c.414 0 .75.336.75.75v5.5a.75.75 0 01-.75.75h-5.5A.75.75 0 018 7.25v-5.5c0-.414.336-.75.75-.75zM1.75 8.75h5.5c.414 0 .75.336.75.75v5.5a.75.75 0 01-.75.75h-5.5a.75.75 0 01-.75-.75v-5.5c0-.414.336-.75.75-.75zm7 0h5.5c.414 0 .75.336.75.75v5.5a.75.75 0 01-.75.75h-5.5a.75.75 0 01-.75-.75v-5.5c0-.414.336-.75.75-.75z"/></svg>
-            </button>
-            <button title="List view (coming soon)" aria-label="List view" disabled style="opacity:0.4">
-              <svg width="13" height="13" viewBox="0 0 16 16" fill="currentColor"><path d="M2 3.75a.75.75 0 01.75-.75h10.5a.75.75 0 010 1.5H2.75A.75.75 0 012 3.75zm0 4a.75.75 0 01.75-.75h10.5a.75.75 0 010 1.5H2.75A.75.75 0 012 7.75zM2.75 11a.75.75 0 000 1.5h10.5a.75.75 0 000-1.5H2.75z"/></svg>
-            </button>
-          </div>
-        </div>
+        <!-- P4 Part 18 cleanup: removed the "List view (coming soon)"
+             disabled toggle. Grid view is the only view that works, so
+             the toolbar no longer shows a view selector. -->
+        <div class="cds-toolbar-right"></div>
       </div>
 
       <div id="projectsGrid" class="cds-project-grid">

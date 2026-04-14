@@ -95,11 +95,13 @@
     } else if (currentTab === 'github') {
       renderGithubTab();
     } else {
-      contentEl.innerHTML =
-        '<div class="settings-placeholder">' +
-          '<div class="settings-placeholder-title">' + escapeHtml(currentTab) + '</div>' +
-          '<div class="settings-placeholder-desc">该 tab 将在 P5 / P6 上线</div>' +
-        '</div>';
+      // P4 Part 18 cleanup: unknown tab → fall back to General,
+      // not a stale "coming soon" placeholder. Dead subnav items
+      // were removed from settings.html in this same commit, so
+      // the only way to land here is via a stale URL hash.
+      currentTab = 'general';
+      location.hash = '#general';
+      renderGeneralTab();
     }
   }
 
@@ -131,15 +133,6 @@
           '<input id="settingsGitRepoUrl" class="settings-input mono" type="url" placeholder="https://github.com/your-org/repo.git" value="' + escapeHtml(p.gitRepoUrl || '') + '">' +
         '</div>' +
         '<button type="button" id="settingsSaveBtn" class="settings-btn-primary" onclick="_settingsSave()">Update</button>' +
-      '</div>' +
-
-      '<div class="settings-section">' +
-        '<div class="settings-section-title">Visibility</div>' +
-        '<div class="settings-section-desc">' +
-          '该项目当前为 <strong>PRIVATE</strong>。CDS 当前所有项目都是 private（无访客模式）。' +
-          '公开访问 + 链接分享将在 P6 上线。' +
-        '</div>' +
-        '<button type="button" class="settings-btn-outline" disabled>Change visibility</button>' +
       '</div>' +
 
       '<div class="settings-section">' +

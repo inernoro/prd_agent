@@ -8017,9 +8017,7 @@ function _ensureTopologyFsChrome() {
     <button type="button" class="topology-fs-leftnav-icon active" title="服务拓扑">
       <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M5 2.75a2.25 2.25 0 114.5 0 2.25 2.25 0 01-4.5 0zM7.25 0a2.75 2.75 0 00-.75 5.397V7H2.75A1.75 1.75 0 001 8.75v1.603a2.75 2.75 0 101.5 0V8.75a.25.25 0 01.25-.25H6.5v1.397a2.75 2.75 0 101.5 0V8.5h3.75a.25.25 0 01.25.25v1.603a2.75 2.75 0 101.5 0V8.75A1.75 1.75 0 0011.75 7H8V5.397A2.75 2.75 0 007.25 0z"/></svg>
     </button>
-    <button type="button" class="topology-fs-leftnav-icon disabled" title="指标 (P5)">
-      <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M1.5 1.75a.75.75 0 00-1.5 0v12.5c0 .414.336.75.75.75h14.5a.75.75 0 000-1.5H1.5V1.75zm14.28 2.53a.75.75 0 00-1.06-1.06L10 7.94 7.53 5.47a.75.75 0 00-1.06 0L2.22 9.72a.75.75 0 001.06 1.06L7 7.06l2.47 2.47a.75.75 0 001.06 0l5.25-5.25z"/></svg>
-    </button>
+    <!-- P4 Part 18 cleanup: removed disabled "指标 (P5)" icon. -->
     <button type="button" class="topology-fs-leftnav-icon" title="日志" onclick="setViewMode('list')">
       <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M0 1.75C0 .784.784 0 1.75 0h12.5C15.216 0 16 .784 16 1.75v12.5A1.75 1.75 0 0114.25 16H1.75A1.75 1.75 0 010 14.25V1.75zm1.75-.25a.25.25 0 00-.25.25v12.5c0 .138.112.25.25.25h12.5a.25.25 0 00.25-.25V1.75a.25.25 0 00-.25-.25H1.75zM3.75 5h.5a.75.75 0 010 1.5h-.5a.75.75 0 010-1.5zm0 4h.5a.75.75 0 010 1.5h-.5a.75.75 0 010-1.5zm2.75-4h6a.75.75 0 010 1.5h-6a.75.75 0 010-1.5zm0 4h6a.75.75 0 010 1.5h-6a.75.75 0 010-1.5z"/></svg>
     </button>
@@ -8091,11 +8089,10 @@ function _ensureTopologyFsChrome() {
       <span class="label">Routing Rule</span>
       <span class="chevron">›</span>
     </button>
-    <button type="button" class="topology-fs-add-menu-item" onclick="_topologyChooseAddItem('volume')">
-      <span class="icon"><svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M2 3h12c.6 0 1 .4 1 1v8c0 .6-.4 1-1 1H2c-.6 0-1-.4-1-1V4c0-.6.4-1 1-1zm1 2v6h10V5H3z"/></svg></span>
-      <span class="label">Volume / 持久化卷</span>
-      <span class="chevron">›</span>
-    </button>
+    <!-- P4 Part 18 cleanup: removed "Volume / 持久化卷" menu item —
+         it toast'd "P6 上线" with no real target. Volumes can still
+         be configured in the existing InfraService.volumes field
+         via the full build-profiles editor. -->
     <button type="button" class="topology-fs-add-menu-item" onclick="_topologyChooseAddItem('empty')">
       <span class="icon"><svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M0 2.75C0 1.784.784 1 1.75 1h12.5c.966 0 1.75.784 1.75 1.75v10.5A1.75 1.75 0 0114.25 15H1.75A1.75 1.75 0 010 13.25V2.75zm1.75-.25a.25.25 0 00-.25.25v10.5c0 .138.112.25.25.25h12.5a.25.25 0 00.25-.25V2.75a.25.25 0 00-.25-.25H1.75z"/></svg></span>
       <span class="label">Empty Service / 空服务</span>
@@ -8751,7 +8748,8 @@ function _topologyToggleAddMenu() {
 
 // T4: handle a + Add menu item click. Each kind routes to the most
 // appropriate existing CDS create flow, with novice-friendly defaults.
-// Items that need work in P5/P6 toast a friendly "coming soon".
+// All menu items land on working flows after the P4 Part 18 cleanup —
+// no more "coming in P5/P6" stub toasts.
 // P4 Part 10 — Infra service templates for the Database submenu.
 //
 // Maps a template key to a fully-formed InfraService payload that
@@ -9221,9 +9219,6 @@ function _topologyChooseAddItem(kind) {
         }
       }, 50);
       break;
-    case 'volume':
-      showToast('卷管理在 P6 上线 — 当前可在 infra 服务的 volumes 字段配置', 'info');
-      break;
     case 'empty':
       // "Empty Service" = a new BuildProfile. Routes to the existing
       // build-profiles config modal.
@@ -9628,11 +9623,10 @@ function _topologyRenderPanelTab(tab, entity) {
     return;
   }
 
-  if (tab === 'metrics') {
-    body.innerHTML =
-      '<div class="tfp-empty"><strong style="color:var(--text-secondary)">指标面板</strong><br><br>CPU / 内存 / 网络吞吐<br>将在 P5 团队 workspace 上线后接入</div>';
-    return;
-  }
+  // P4 Part 18 cleanup: removed the `metrics` tab branch. It was
+  // dead code — no element in topology-fs-panel-tabs had
+  // data-tab="metrics", so users could never reach it. If metrics
+  // land in a later phase, add the tab back AND a real data source.
 
   if (tab === 'settings') {
     // P4 Part 18 (G7): connection strings for infra services.
