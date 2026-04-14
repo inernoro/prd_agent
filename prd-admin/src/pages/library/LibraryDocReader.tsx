@@ -1108,7 +1108,7 @@ function ClayMarkdown({
           ),
           code: ({ className, children, ...props }) => {
             const match = /language-(\w+)/.exec(className || '');
-            const text = String(children ?? '');
+            const text = String(children ?? '').replace(/\n$/, '');
             // 块级判断：有 language- 类名 或 内容包含换行（兼容未指定语言的 fenced code block）
             const isBlock = !!match || text.includes('\n');
             if (!isBlock) {
@@ -1126,32 +1126,62 @@ function ClayMarkdown({
                 </code>
               );
             }
+            // 块级且指定了语言 → 走 Prism 高亮
+            if (match) {
+              return (
+                <div
+                  className="my-4 rounded-2xl overflow-hidden"
+                  style={{
+                    background: '#FFFFFF',
+                    border: '3px solid #1E1B4B',
+                    boxShadow: '4px 4px 0 #1E1B4B',
+                  }}
+                >
+                  <SyntaxHighlighter
+                    style={oneLight}
+                    language={match[1]}
+                    PreTag="div"
+                    customStyle={{
+                      margin: 0,
+                      padding: '16px',
+                      fontSize: '13px',
+                      background: 'transparent',
+                      border: 'none',
+                    }}
+                  >
+                    {text}
+                  </SyntaxHighlighter>
+                </div>
+              );
+            }
+            // 块级但无语言 → 纯 <pre><code>，避免 Prism 对 ASCII 框图加 token 背景
             return (
               <div
-                className="my-4 rounded-2xl overflow-hidden"
+                className="my-4 rounded-2xl overflow-x-auto"
                 style={{
                   background: '#FFFFFF',
                   border: '3px solid #1E1B4B',
                   boxShadow: '4px 4px 0 #1E1B4B',
                 }}
               >
-                <SyntaxHighlighter
-                  style={oneLight}
-                  language={match?.[1] ?? 'text'}
-                  PreTag="div"
-                  customStyle={{
+                <pre
+                  style={{
                     margin: 0,
                     padding: '16px',
                     fontSize: '13px',
+                    lineHeight: 1.6,
+                    color: '#1E1B4B',
+                    fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
                     background: 'transparent',
-                    border: 'none',
+                    whiteSpace: 'pre',
                   }}
                 >
-                  {text.replace(/\n$/, '')}
-                </SyntaxHighlighter>
+                  {text}
+                </pre>
               </div>
             );
           },
+          pre: ({ children }) => <>{children}</>,
           hr: () => (
             <hr
               className="my-6"
