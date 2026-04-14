@@ -409,9 +409,30 @@ check_deps() {
 }
 
 install_deps() {
-  [ -d "$SCRIPT_DIR/node_modules" ] && return 0
-  info "安装依赖 ..."
+  # Skip only when node_modules exists AND pnpm-lock.yaml hasn't
+  # changed since the last install. The old "skip if node_modules
+  # exists" was a P4 Part 18 footgun: after a self-update switched
+  # branches, new deps in pnpm-lock.yaml (like the `mongodb` package
+  # that Phase D.1 added) never got installed, which crashed the
+  # new CDS process with a cryptic MODULE_NOT_FOUND at boot.
+  #
+  # The sentinel file records the mtime of pnpm-lock.yaml at the
+  # time of the last successful install. If the lockfile is newer
+  # than the sentinel, we re-install. Empty state dir → always run.
+  local sentinel="$STATE_DIR/.pnpm-lock-installed"
+  local lockfile="$SCRIPT_DIR/pnpm-lock.yaml"
+  if [ -d "$SCRIPT_DIR/node_modules" ] && [ -f "$sentinel" ] && [ -f "$lockfile" ]; then
+    if [ "$sentinel" -nt "$lockfile" ] || [ "$sentinel" -ef "$lockfile" ]; then
+      return 0
+    fi
+    info "检测到 pnpm-lock.yaml 有变更，重新安装依赖 ..."
+  else
+    info "首次安装依赖 ..."
+  fi
   pnpm install --frozen-lockfile 2>/dev/null || pnpm install
+  # Record successful install — touch sentinel after the lock so
+  # subsequent runs correctly compare mtimes.
+  touch "$sentinel"
 }
 
 build_ts() {

@@ -843,22 +843,17 @@ export function createServer(deps: ServerDeps): express.Express {
   // client_id — no secret. This lets setups that don't use GitHub
   // for CDS login still offer the repo picker.
   {
+    // P4 Part 18 (Phase E): instantiate a Device-Flow-only GitHub
+    // OAuth client. Reuses the same GitHubOAuthClient class already
+    // imported at the top of this file — device flow methods only
+    // need client_id, so an empty client_secret is fine here.
     const ghClientId = process.env.CDS_GITHUB_CLIENT_ID;
-    let deviceClient: import('./services/github-oauth-client.js').GitHubOAuthClient | null = null;
-    if (ghClientId) {
-      // Dynamic import to avoid circular import pain with server.ts
-      // top-level imports — the client is imported lazily here.
-      // eslint-disable-next-line @typescript-eslint/no-var-requires
-      const { GitHubOAuthClient } = require('./services/github-oauth-client.js') as typeof import('./services/github-oauth-client.js');
-      deviceClient = new GitHubOAuthClient({
-        clientId: ghClientId,
-        // Device flow doesn't need the secret; pass an empty string
-        // so the class constructor is happy. The web-flow methods
-        // would fail with no secret, but device-flow methods don't
-        // touch it.
-        clientSecret: process.env.CDS_GITHUB_CLIENT_SECRET || '',
-      });
-    }
+    const deviceClient = ghClientId
+      ? new GitHubOAuthClient({
+          clientId: ghClientId,
+          clientSecret: process.env.CDS_GITHUB_CLIENT_SECRET || '',
+        })
+      : null;
     app.use('/api', createGithubOAuthRouter({
       stateService: deps.stateService,
       githubClient: deviceClient,
