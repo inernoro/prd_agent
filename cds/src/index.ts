@@ -849,6 +849,17 @@ registry.registerEmbeddedMaster(config.masterPort);
 // router and the cluster router. Default: 'least-load' (memory+CPU weighted).
 let clusterStrategy: 'least-branches' | 'least-load' | 'round-robin' = 'least-load';
 
+// P4 Part 18 (D.3): shared storage-mode context lets the
+// storage-mode router surface + mutate the running backing store at
+// runtime. initStateService() seeded the mutable fields above; we
+// just wrap them in a plain object the router can hold by reference.
+const storageModeContext = {
+  resolvedMode: storageModeResolved,
+  mongoHandle: activeMongoHandle as { close: () => Promise<void>; ping: () => Promise<boolean> } | null,
+  mongoUri: process.env.CDS_MONGO_URI || null,
+  mongoDb: process.env.CDS_MONGO_DB || 'cds_state_db',
+};
+
 // ── Master server (dashboard + API on masterPort) ──
 const app = createServer({
   stateService,
@@ -861,6 +872,8 @@ const app = createServer({
   schedulerService,
   registry,
   getClusterStrategy: () => clusterStrategy,
+  storageModeContext,
+  stateFile,
 });
 
 // ── Helper: kill process on port so CDS can bind ──

@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { createBranchRouter } from './routes/branches.js';
 import { createBridgeRouter } from './routes/bridge.js';
 import { createProjectsRouter } from './routes/projects.js';
+import { createStorageModeRouter, type StorageModeContext } from './routes/storage-mode.js';
 import { createAuthRouter } from './routes/auth.js';
 import { MemoryAuthStore } from './infra/auth-store/memory-store.js';
 import { GitHubOAuthClient } from './services/github-oauth-client.js';
@@ -39,6 +40,14 @@ export interface ServerDeps {
   registry?: import('./scheduler/executor-registry.js').ExecutorRegistry;
   /** Getter for the current dispatch strategy. See routes/cluster.ts. */
   getClusterStrategy?: () => 'least-branches' | 'least-load' | 'round-robin';
+  /**
+   * P4 Part 18 (D.3): shared storage-mode context — used by the new
+   * storage-mode router to surface + mutate the running backing store
+   * at runtime. Always present after initStateService runs in index.ts.
+   */
+  storageModeContext?: StorageModeContext;
+  /** P4 Part 18 (D.3): path to the json state file, used for rollback. */
+  stateFile?: string;
 }
 
 function makeToken(user: string, pass: string): string {
@@ -807,6 +816,19 @@ export function createServer(deps: ServerDeps): express.Express {
     registry: deps.registry,
     getClusterStrategy: deps.getClusterStrategy,
   }));
+
+  // P4 Part 18 (D.3): storage-mode management endpoints. Requires the
+  // shared storageModeContext which index.ts populates during
+  // initStateService(). Absent in pre-D.3 tests that spin up the
+  // server without a real storage context — the router is optional.
+  if (deps.storageModeContext && deps.stateFile) {
+    app.use('/api', createStorageModeRouter({
+      stateService: deps.stateService,
+      stateFile: deps.stateFile,
+      repoRoot: deps.config.repoRoot,
+      context: deps.storageModeContext,
+    }));
+  }
 
   // NOTE: The SPA fallback (`app.get('*', ...)`) is intentionally NOT
   // registered here. Routes mounted later in `index.ts` (scheduler, cluster,
