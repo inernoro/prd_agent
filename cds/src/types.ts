@@ -390,6 +390,30 @@ export interface Project {
   /** Optional Git repository URL; populated for auto-created legacy projects from CdsConfig.repoRoot. */
   gitRepoUrl?: string;
   /**
+   * Absolute path to the git checkout for this project. For projects
+   * created after P4 Part 18 (G1) this points to
+   * `${config.reposBase}/<projectId>` and is populated once the async
+   * git clone completes.
+   *
+   * The legacy 'default' project and any pre-G1 projects leave this
+   * undefined and fall back to the globally-mounted `config.repoRoot`
+   * at every use site — see `StateService.getProjectRepoRoot()`.
+   */
+  repoPath?: string;
+  /**
+   * Async clone lifecycle for this project. Absent (or 'ready') for
+   * legacy projects; set to 'pending' immediately after POST /projects
+   * when a gitRepoUrl is supplied; 'cloning' while the SSE clone runs;
+   * 'ready' after success; 'error' after failure.
+   *
+   * Deploy endpoints should refuse to build a branch from a project
+   * whose cloneStatus is 'pending' / 'cloning' / 'error' — the repo
+   * isn't usable until the clone has finished.
+   */
+  cloneStatus?: 'pending' | 'cloning' | 'ready' | 'error';
+  /** Human-readable error message set when cloneStatus === 'error'. */
+  cloneError?: string;
+  /**
    * Name of the dedicated Docker network backing this project. Populated
    * by P4 Part 2 on project creation (`cds-proj-<id-prefix>`). The
    * legacy default project has this field unset — it continues to use
@@ -669,6 +693,18 @@ export interface SchedulerConfig {
 /** Application configuration */
 export interface CdsConfig {
   repoRoot: string;
+  /**
+   * Base directory that houses every per-project git clone for the
+   * multi-repo flow introduced in P4 Part 18 (G1). Each project's
+   * repo lives at `${reposBase}/${projectId}`. When undefined (the
+   * pre-G1 default), every project falls back to the top-level
+   * `repoRoot`, preserving legacy single-repo behavior.
+   *
+   * Typically wired from `CDS_REPOS_BASE=/repos` in exec_cds.sh and
+   * mounted as a persistent host volume so cloned repos survive
+   * container rebuilds (self-update).
+   */
+  reposBase?: string;
   worktreeBase: string;
   /** Master dashboard port */
   masterPort: number;

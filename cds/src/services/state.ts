@@ -651,9 +651,15 @@ export class StateService {
 
   /**
    * Patch an existing project's mutable fields. Used by future rename /
-   * description-edit UI in P4 Part 2.
+   * description-edit UI in P4 Part 2, and by P4 Part 18 (G1) to record
+   * the async clone lifecycle (repoPath / cloneStatus / cloneError).
    */
-  updateProject(id: string, updates: Partial<Pick<Project, 'name' | 'description' | 'gitRepoUrl'>>): void {
+  updateProject(
+    id: string,
+    updates: Partial<
+      Pick<Project, 'name' | 'description' | 'gitRepoUrl' | 'repoPath' | 'cloneStatus' | 'cloneError'>
+    >,
+  ): void {
     if (!this.state.projects) return;
     const idx = this.state.projects.findIndex((p) => p.id === id);
     if (idx < 0) return;
@@ -664,6 +670,28 @@ export class StateService {
       updatedAt: new Date().toISOString(),
     };
     this.save();
+  }
+
+  /**
+   * Resolve the absolute git repo root to use for operations on a given
+   * project. Returns `project.repoPath` when set (post-G1 multi-repo),
+   * else `fallback` (typically `CdsConfig.repoRoot` — the single host
+   * bind-mounted repo that the legacy 'default' project has used since
+   * day one).
+   *
+   * Centralizing this resolution in one helper means every worktree /
+   * branch call-site can stay agnostic of whether a project has been
+   * cloned into its own directory or is still piggy-backing on the
+   * legacy repoRoot.
+   *
+   * When projectId is falsy (e.g. a pre-P4 branch with no projectId
+   * field) we fall back to `fallback` directly — same reasoning as
+   * getBranchesForProject treating missing projectId as 'default'.
+   */
+  getProjectRepoRoot(projectId: string | undefined, fallback: string): string {
+    if (!projectId) return fallback;
+    const project = this.getProject(projectId);
+    return project?.repoPath || fallback;
   }
 
   // ── Project-scoped views (P4 Part 3a) ──
