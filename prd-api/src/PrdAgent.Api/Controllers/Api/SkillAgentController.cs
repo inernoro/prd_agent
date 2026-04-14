@@ -304,7 +304,10 @@ public class SkillAgentController : ControllerBase
     // ━━━ Skill Detail CRUD ━━━━━━━━
 
     /// <summary>
-    /// 获取技能的 SKILL.md 内容（用于编辑器展示）
+    /// 获取技能的 SKILL.md 内容（用于编辑器展示 / 广场复制）
+    /// 访问规则：
+    /// - system / public 技能 → 所有登录用户可见
+    /// - personal 技能：owner 始终可见；非 owner 仅当 IsPublic=true（已发布到广场）时可见
     /// </summary>
     [HttpGet("skills/{skillKey}/md")]
     public async Task<IActionResult> GetSkillMd(string skillKey, CancellationToken ct)
@@ -313,11 +316,34 @@ public class SkillAgentController : ControllerBase
         var skill = await _skillService.GetByKeyAsync(skillKey, ct);
         if (skill == null)
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "技能不存在"));
-        if (skill.Visibility == SkillVisibility.Personal && skill.OwnerUserId != userId)
+        if (skill.Visibility == SkillVisibility.Personal
+            && skill.OwnerUserId != userId
+            && !skill.IsPublic)
             return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "无权访问"));
 
         var md = SkillMdFormat.Serialize(skill);
         return Ok(ApiResponse<object>.Ok(new { skillMd = md, skillKey = skill.SkillKey }));
+    }
+
+    /// <summary>
+    /// 按 skillKey 导出 zip 包（用于"我的技能 / 技能广场"下载）。
+    /// 访问规则同 GetSkillMd：system/public 任意访问；personal 仅 owner 或 IsPublic=true 可访问。
+    /// </summary>
+    [HttpGet("skills/{skillKey}/export/zip")]
+    public async Task<IActionResult> ExportSkillZip(string skillKey, CancellationToken ct)
+    {
+        var userId = GetUserId();
+        var skill = await _skillService.GetByKeyAsync(skillKey, ct);
+        if (skill == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "技能不存在"));
+        if (skill.Visibility == SkillVisibility.Personal
+            && skill.OwnerUserId != userId
+            && !skill.IsPublic)
+            return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "无权访问"));
+
+        var zipBytes = await _service.ExportSkillAsZipAsync(skill, userId);
+        var fileName = $"{skill.SkillKey}.zip";
+        return File(zipBytes, "application/zip", fileName);
     }
 
     /// <summary>

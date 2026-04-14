@@ -13,6 +13,7 @@ import {
   listPersonalSkills,
   deletePersonalSkill,
   getSkillMd,
+  getSkillZipUrl,
   updateSkillFromMd,
   listPlazaSkills,
   publishSkill,
@@ -1126,6 +1127,9 @@ function PlazaSkillDetailView({ skill, onBack }: { skill: PlazaSkillItem; onBack
   const [testInput, setTestInput] = useState('');
   const [testResult, setTestResult] = useState('');
   const [copied, setCopied] = useState<'text' | 'md' | null>(null);
+  /** 广场导出：MD 复制状态 + ZIP 下载状态，采用与 MySkillDetailView 一致的图标切换反馈 */
+  const [mdCopyState, setMdCopyState] = useState<'idle' | 'ok' | 'err'>('idle');
+  const [zipState, setZipState] = useState<'idle' | 'loading' | 'ok' | 'err'>('idle');
 
   const { typing: testTyping, isStreaming: testStreaming, start: startTest, reset: resetTest } = useSseStream({
     url: '', method: 'POST',
@@ -1142,6 +1146,49 @@ function PlazaSkillDetailView({ skill, onBack }: { skill: PlazaSkillItem; onBack
   const handleCopyText = async () => {
     await navigator.clipboard.writeText(testResult);
     setCopied('text'); setTimeout(() => setCopied(null), 1500);
+  };
+
+  /** 复制 SKILL.md 到剪贴板。后端端点 GetSkillMd 已允许 IsPublic=true 的广场访问 */
+  const handleCopyMd = async () => {
+    if (mdCopyState === 'ok') return;
+    try {
+      const res = await getSkillMd(skill.skillKey);
+      if (res.success && res.data) {
+        await navigator.clipboard.writeText(res.data.skillMd);
+        setMdCopyState('ok');
+      } else {
+        setMdCopyState('err');
+      }
+    } catch {
+      setMdCopyState('err');
+    } finally {
+      setTimeout(() => setMdCopyState('idle'), 1800);
+    }
+  };
+
+  /** 下载技能 zip。与 CreateTab.handleExportZip 同模式：手动 fetch 带 Authorization */
+  const handleDownloadZip = async () => {
+    if (zipState === 'loading') return;
+    setZipState('loading');
+    try {
+      const token = useAuthStore.getState().token;
+      const res = await fetch(getSkillZipUrl(skill.skillKey), {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
+      if (!res.ok) { setZipState('err'); return; }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${skill.skillKey}.zip`;
+      a.click();
+      URL.revokeObjectURL(url);
+      setZipState('ok');
+    } catch {
+      setZipState('err');
+    } finally {
+      setTimeout(() => setZipState('idle'), 1800);
+    }
   };
 
   return (
@@ -1161,6 +1208,21 @@ function PlazaSkillDetailView({ skill, onBack }: { skill: PlazaSkillItem; onBack
           {skill.authorAvatar ? <img src={resolveAvatarUrl({ avatarFileName: skill.authorAvatar })} alt="" className="w-4 h-4 rounded-full" /> : <User size={11} />}
           {skill.authorName || '匿名'}
         </span>
+        {/* 复制 MD / 下载 zip：与 MySkillDetailView breadcrumb 按钮风格一致（小图标 + 短文案） */}
+        <button onClick={handleCopyMd} disabled={mdCopyState === 'ok'}
+          className="flex items-center gap-1 text-[11px] px-2.5 py-1 rounded-lg transition-colors hover:bg-white/5"
+          style={{ color: mdCopyState === 'ok' ? '#22C55E' : mdCopyState === 'err' ? '#EF4444' : '#8B5CF6' }}>
+          {mdCopyState === 'ok' ? <ClipboardCheck size={12} /> : <Copy size={12} />}
+          {mdCopyState === 'ok' ? '已复制' : mdCopyState === 'err' ? '复制失败' : '复制 MD'}
+        </button>
+        <button onClick={handleDownloadZip} disabled={zipState === 'loading'}
+          className="flex items-center gap-1 text-[11px] px-2.5 py-1 rounded-lg transition-colors hover:bg-white/5"
+          style={{ color: zipState === 'ok' ? '#22C55E' : zipState === 'err' ? '#EF4444' : 'var(--text-secondary)' }}>
+          {zipState === 'loading' ? <Loader2 size={12} className="animate-spin" />
+            : zipState === 'ok' ? <CheckCircle2 size={12} />
+            : <Archive size={12} />}
+          {zipState === 'loading' ? '下载中…' : zipState === 'ok' ? '已下载' : zipState === 'err' ? '下载失败' : '下载 .zip'}
+        </button>
       </div>
 
       {/* Main */}

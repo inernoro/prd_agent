@@ -578,8 +578,15 @@ public class SkillAgentService
     public async Task<byte[]?> ExportAsZipAsync(SkillAgentSession session, string userId)
     {
         if (session.SkillDraft == null) return null;
+        return await ExportSkillAsZipAsync(session.SkillDraft, userId);
+    }
 
-        var skill = session.SkillDraft;
+    /// <summary>
+    /// 按 Skill 直接导出 zip 包（用于"我的技能 / 技能广场"场景，无需 session）。
+    /// 产出包含 SKILL.md、README.md、examples/example-usage.md。
+    /// </summary>
+    public async Task<byte[]> ExportSkillAsZipAsync(Skill skill, string userId)
+    {
         var skillMd = SkillMdFormat.Serialize(skill);
         var (readme, example) = await GenerateExportDocsAsync(skill, userId);
 

@@ -116,6 +116,14 @@ export async function getSkillMd(skillKey: string) {
   return apiRequest<{ skillMd: string; skillKey: string }>(api.skillAgent.skillMd(skillKey));
 }
 
+/**
+ * 按 skillKey 下载 zip 包的 URL（需 fetch + Authorization header）。
+ * 同端点服务于「我的技能」owner 下载 + 「技能广场」已发布技能下载，后端统一做访问规则校验。
+ */
+export function getSkillZipUrl(skillKey: string) {
+  return api.skillAgent.exportSkillZip(skillKey);
+}
+
 export async function updateSkillFromMd(skillKey: string, skillMd: string) {
   return apiRequest<{ skillKey: string; title: string }>(api.skillAgent.skillMd(skillKey), {
     method: 'PUT',
