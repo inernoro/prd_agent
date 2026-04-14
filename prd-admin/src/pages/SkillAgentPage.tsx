@@ -6,6 +6,7 @@ import { MarkdownContent } from '@/components/ui/MarkdownContent';
 import { api } from '@/services/api';
 import {
   createSkillAgentSession,
+  getSkillAgentSession,
   saveSkillFromAgent,
   exportSkillMd,
   getExportZipUrl,
@@ -215,15 +216,44 @@ function CreateTab() {
 
   useEffect(() => {
     initSession();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  /** sessionStorage key：按 `.claude/rules/no-localstorage.md`，不用 localStorage */
+  const SESSION_STORAGE_KEY = 'skill-agent:sessionId';
+
+  /**
+   * 会话初始化：先尝试从 sessionStorage 恢复上次会话（刷新 / 重启 / 2h 后回来都能续上）；
+   * 失败（会话过期或被清理）则回退到新建。
+   */
   const initSession = async () => {
+    const stored = sessionStorage.getItem(SESSION_STORAGE_KEY);
+    if (stored) {
+      try {
+        const res = await getSkillAgentSession(stored);
+        if (res.success && res.data) {
+          setSessionId(res.data.sessionId);
+          if (res.data.stages) setStages(res.data.stages);
+          setCurrentStageIndex(res.data.stageIndex);
+          setMessages(res.data.messages.map(m => ({ role: m.role as 'user' | 'assistant' | 'system', content: m.content })));
+          if (res.data.skillPreview) setSkillPreview(res.data.skillPreview);
+          if (res.data.hasSavedOnce) setHasSavedOnce(true);
+          setTimeout(() => inputRef.current?.focus(), 200);
+          return;
+        }
+      } catch {
+        // 任何异常 → 丢弃旧 sessionId 新建
+      }
+      sessionStorage.removeItem(SESSION_STORAGE_KEY);
+    }
+
     const res = await createSkillAgentSession();
     if (res.success && res.data) {
       setSessionId(res.data.sessionId);
       setStages(res.data.stages);
       setCurrentStageIndex(res.data.stageIndex);
       setMessages([{ role: 'assistant', content: res.data.welcome.message }]);
+      sessionStorage.setItem(SESSION_STORAGE_KEY, res.data.sessionId);
       setTimeout(() => inputRef.current?.focus(), 200);
     }
   };
@@ -321,6 +351,7 @@ function CreateTab() {
 
   const handleReset = async () => {
     if (sessionId) deleteSkillAgentSession(sessionId);
+    sessionStorage.removeItem(SESSION_STORAGE_KEY);
     setSessionId(null); setMessages([]); setStages([]); setCurrentStageIndex(0);
     setSkillPreview(null); setInput(''); setSaved(false); setHasSavedOnce(false);
     setAutoTestInput(null); setAutoTestResult(''); setAutoTestPhase(null); setDescOptimized(null);

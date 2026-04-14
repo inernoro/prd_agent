@@ -33,17 +33,20 @@ public class SkillAgentController : ControllerBase
 
     private readonly SkillAgentService _service;
     private readonly ISkillService _skillService;
+    private readonly ISkillAgentSessionStore _sessionStore;
     private readonly MongoDbContext _db;
     private readonly ILogger<SkillAgentController> _logger;
 
     public SkillAgentController(
         SkillAgentService service,
         ISkillService skillService,
+        ISkillAgentSessionStore sessionStore,
         MongoDbContext db,
         ILogger<SkillAgentController> logger)
     {
         _service = service;
         _skillService = skillService;
+        _sessionStore = sessionStore;
         _db = db;
         _logger = logger;
     }
@@ -52,10 +55,40 @@ public class SkillAgentController : ControllerBase
     private string? GetUsername() => User.FindFirst("name")?.Value ?? User.FindFirst(ClaimTypes.Name)?.Value;
 
     /// <summary>
-    /// 创建引导会话
+    /// 从内存拿 session；miss 则从 DB 加载并回填内存缓存。返回 null 表示会话不存在或跨用户。
+    /// 所有需要会话的端点都走这个方法。
+    /// </summary>
+    private async Task<SkillAgentSession?> ResolveSessionAsync(string sessionId, string userId, CancellationToken ct = default)
+    {
+        if (Sessions.TryGetValue(sessionId, out var cached) && cached.UserId == userId)
+            return cached;
+
+        var loaded = await _sessionStore.LoadAsync(sessionId, userId, ct);
+        if (loaded == null) return null;
+
+        // 回填内存缓存（多线程并发时取最新那一份）
+        Sessions[sessionId] = loaded;
+        return loaded;
+    }
+
+    /// <summary>
+    /// 异步持久化 session 到 DB。不阻塞 SSE 流——失败由 Store 内部吞掉并打日志。
+    /// </summary>
+    private void PersistSessionFireAndForget(SkillAgentSession session)
+    {
+        // Task.Run 避免如果 SaveAsync 同步起步阶段抛异常波及主流
+        _ = Task.Run(async () =>
+        {
+            try { await _sessionStore.SaveAsync(session); }
+            catch (Exception ex) { _logger.LogError(ex, "[skill-agent] PersistSessionFireAndForget failed: {SessionId}", session.Id); }
+        });
+    }
+
+    /// <summary>
+    /// 创建引导会话。会话即时写入 DB，确保后续刷新/重启能恢复。
     /// </summary>
     [HttpPost("sessions")]
-    public IActionResult CreateSession()
+    public async Task<IActionResult> CreateSession(CancellationToken ct)
     {
         var userId = GetUserId();
         CleanupExpiredSessions();
@@ -66,6 +99,9 @@ public class SkillAgentController : ControllerBase
         };
 
         Sessions[session.Id] = session;
+
+        // 创建即入库——用 await（而不是 fire-and-forget），保证"创建成功"语义与持久化状态一致
+        await _sessionStore.SaveAsync(session, ct);
 
         _logger.LogInformation("[skill-agent] Session created: {SessionId} by {UserId}", session.Id, userId);
 
@@ -96,7 +132,8 @@ public class SkillAgentController : ControllerBase
     {
         var userId = GetUserId();
 
-        if (!Sessions.TryGetValue(sessionId, out var session) || session.UserId != userId)
+        var session = await ResolveSessionAsync(sessionId, userId);
+        if (session == null)
         {
             Response.StatusCode = 404;
             return;
@@ -125,18 +162,27 @@ public class SkillAgentController : ControllerBase
         await foreach (var chunk in _service.ProcessMessageAsync(session, request.Message, userId))
         {
             await WriteSseEvent(chunk.Event, chunk.Data);
+            // 阶段推进 / 阶段完成时触发异步持久化；其它 chunk 太细粒度不持久化
+            if (chunk.Event == "stage_complete" || chunk.Event == "stage_advance" || chunk.Event == "done")
+            {
+                PersistSessionFireAndForget(session);
+            }
         }
+
+        // 流结束后兜底再存一次（保证 Messages / CurrentStage / SkillDraft 最新状态落库）
+        PersistSessionFireAndForget(session);
     }
 
     /// <summary>
-    /// 获取会话状态
+    /// 获取会话状态。内存 miss 时从 DB 恢复（支持刷新 / 重启 / 2h 后续上）。
     /// </summary>
     [HttpGet("sessions/{sessionId}")]
-    public IActionResult GetSession(string sessionId)
+    public async Task<IActionResult> GetSession(string sessionId, CancellationToken ct)
     {
         var userId = GetUserId();
 
-        if (!Sessions.TryGetValue(sessionId, out var session) || session.UserId != userId)
+        var session = await ResolveSessionAsync(sessionId, userId, ct);
+        if (session == null)
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "会话不存在"));
 
         return Ok(ApiResponse<object>.Ok(new
@@ -149,6 +195,14 @@ public class SkillAgentController : ControllerBase
             hasSkillDraft = session.SkillDraft != null,
             skillPreview = session.SkillDraft != null ? SkillMdFormat.Serialize(session.SkillDraft) : null,
             messages = session.Messages.Select(m => new { m.Role, m.Content }),
+            // 提供 stages 定义，前端恢复时可直接渲染阶段条
+            stages = SkillAgentService.Stages.Select((s, i) => new
+            {
+                key = s,
+                label = SkillAgentService.GetStageLabel(s),
+                index = i,
+            }),
+            hasSavedOnce = !string.IsNullOrEmpty(session.SavedSkillKey),
         }));
     }
 
@@ -156,11 +210,12 @@ public class SkillAgentController : ControllerBase
     /// 保存为个人技能
     /// </summary>
     [HttpPost("sessions/{sessionId}/save")]
-    public async Task<IActionResult> SaveSkill(string sessionId)
+    public async Task<IActionResult> SaveSkill(string sessionId, CancellationToken ct)
     {
         var userId = GetUserId();
 
-        if (!Sessions.TryGetValue(sessionId, out var session) || session.UserId != userId)
+        var session = await ResolveSessionAsync(sessionId, userId, ct);
+        if (session == null)
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "会话不存在"));
 
         if (session.SkillDraft == null)
@@ -174,6 +229,9 @@ public class SkillAgentController : ControllerBase
             "[skill-agent] Skill {Op}: {SkillKey} by {UserId}",
             alreadySaved ? "updated" : "saved",
             skill.SkillKey, userId);
+
+        // SavedSkillKey 已被 SaveAsPersonalSkillAsync 写入 session；持久化一次
+        PersistSessionFireAndForget(session);
 
         return Ok(ApiResponse<object>.Ok(new
         {
@@ -195,7 +253,8 @@ public class SkillAgentController : ControllerBase
     {
         var userId = GetUserId();
 
-        if (!Sessions.TryGetValue(sessionId, out var session) || session.UserId != userId)
+        var session = await ResolveSessionAsync(sessionId, userId);
+        if (session == null)
         {
             Response.StatusCode = 404;
             return;
@@ -214,17 +273,21 @@ public class SkillAgentController : ControllerBase
         {
             await WriteSseEvent(chunk.Event, chunk.Data);
         }
+
+        // 自动试跑可能修改 Skill.Description（优化）→ session.SkillDraft 被改动，落库
+        PersistSessionFireAndForget(session);
     }
 
     /// <summary>
     /// 导出为 SKILL.md
     /// </summary>
     [HttpGet("sessions/{sessionId}/export/md")]
-    public IActionResult ExportMarkdown(string sessionId)
+    public async Task<IActionResult> ExportMarkdown(string sessionId, CancellationToken ct)
     {
         var userId = GetUserId();
 
-        if (!Sessions.TryGetValue(sessionId, out var session) || session.UserId != userId)
+        var session = await ResolveSessionAsync(sessionId, userId, ct);
+        if (session == null)
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "会话不存在"));
 
         var md = _service.ExportAsMarkdown(session);
@@ -244,11 +307,12 @@ public class SkillAgentController : ControllerBase
     /// 导出为 ZIP 包（SKILL.md + README.md + examples/）
     /// </summary>
     [HttpGet("sessions/{sessionId}/export/zip")]
-    public async Task<IActionResult> ExportZip(string sessionId)
+    public async Task<IActionResult> ExportZip(string sessionId, CancellationToken ct)
     {
         var userId = GetUserId();
 
-        if (!Sessions.TryGetValue(sessionId, out var session) || session.UserId != userId)
+        var session = await ResolveSessionAsync(sessionId, userId, ct);
+        if (session == null)
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "会话不存在"));
 
         var zipBytes = await _service.ExportAsZipAsync(session, userId);
@@ -261,17 +325,15 @@ public class SkillAgentController : ControllerBase
     }
 
     /// <summary>
-    /// 删除会话
+    /// 删除会话（用户点"重置"时调用）。同步删内存 + DB。
     /// </summary>
     [HttpDelete("sessions/{sessionId}")]
-    public IActionResult DeleteSession(string sessionId)
+    public async Task<IActionResult> DeleteSession(string sessionId, CancellationToken ct)
     {
         var userId = GetUserId();
 
-        if (Sessions.TryGetValue(sessionId, out var session) && session.UserId == userId)
-        {
-            Sessions.TryRemove(sessionId, out _);
-        }
+        Sessions.TryRemove(sessionId, out _);
+        await _sessionStore.DeleteAsync(sessionId, userId, ct);
 
         return Ok(ApiResponse<object>.Ok(new { deleted = true }));
     }

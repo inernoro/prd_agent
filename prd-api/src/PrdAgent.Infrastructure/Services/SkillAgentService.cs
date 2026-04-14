@@ -880,24 +880,7 @@ EXAMPLE: 一个完整使用示例。中文 Markdown 格式。";
 }
 
 // ━━━ Models ━━━━━━━━
+// SkillAgentSession 和 SkillAgentMessage 已迁移到 PrdAgent.Core.Models（为了让 Core 层的
+// ISkillAgentSessionStore 能引用它们而不造成 Core → Infrastructure 反向依赖）
 
-public class SkillAgentSession
-{
-    public string Id { get; set; } = Guid.NewGuid().ToString("N");
-    public string UserId { get; set; } = string.Empty;
-    public string CurrentStage { get; set; } = "intent";
-    public string? Intent { get; set; }
-    public Skill? SkillDraft { get; set; }
-    public List<SkillAgentMessage> Messages { get; set; } = new();
-    public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
-    public DateTime LastActiveAt { get; set; } = DateTime.UtcNow;
-
-    /// <summary>
-    /// 首次保存成功后记录的 SkillKey。
-    /// 后续"保存并试跑"会认它为准走 Update，避免因 Title 变更导致 SkillKey 漂移而新建重复记录。
-    /// </summary>
-    public string? SavedSkillKey { get; set; }
-}
-
-public record SkillAgentMessage(string Role, string Content);
 public record SseChunk(string Event, object Data);

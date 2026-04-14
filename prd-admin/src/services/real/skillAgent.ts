@@ -31,6 +31,10 @@ export interface SkillAgentSessionState {
   hasSkillDraft: boolean;
   skillPreview?: string;
   messages: { role: string; content: string }[];
+  /** 恢复用：阶段定义（用于前端渲染进度条） */
+  stages?: SkillAgentStage[];
+  /** 恢复用：是否已保存过至少一次（用于按钮文案切换） */
+  hasSavedOnce?: boolean;
 }
 
 export interface SkillAgentSaveResponse {
