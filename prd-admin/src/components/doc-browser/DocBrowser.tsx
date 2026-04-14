@@ -560,21 +560,23 @@ function MarkdownViewer({ content }: { content: string }) {
           td: ({ children }) => <td className="px-3 py-1.5" style={{ borderBottom: '1px solid rgba(255,255,255,0.03)', color: 'var(--text-secondary)' }}>{children}</td>,
           code: ({ className, children, ...props }) => {
             const match = /language-(\w+)/.exec(className || '');
-            const inline = !match;
-            if (inline) {
+            const text = String(children ?? '');
+            // 块级判断：有 language- 类名 或 内容包含换行（兼容未指定语言的 fenced code block）
+            const isBlock = !!match || text.includes('\n');
+            if (!isBlock) {
               return <code className="px-1.5 py-0.5 rounded text-[12px]" style={{ background: 'rgba(255,255,255,0.06)', color: 'rgba(248,113,113,0.9)' }} {...props}>{children}</code>;
             }
             return (
               <SyntaxHighlighter
                 style={oneDark}
-                language={match[1]}
+                language={match?.[1] ?? 'text'}
                 PreTag="div"
                 customStyle={{
                   margin: '12px 0', borderRadius: '10px', fontSize: '12px',
                   background: 'rgba(0,0,0,0.3)', border: '1px solid rgba(255,255,255,0.04)',
                 }}
               >
-                {String(children).replace(/\n$/, '')}
+                {text.replace(/\n$/, '')}
               </SyntaxHighlighter>
             );
           },

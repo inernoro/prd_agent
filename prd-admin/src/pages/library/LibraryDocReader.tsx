@@ -1108,8 +1108,10 @@ function ClayMarkdown({
           ),
           code: ({ className, children, ...props }) => {
             const match = /language-(\w+)/.exec(className || '');
-            const inline = !match;
-            if (inline) {
+            const text = String(children ?? '');
+            // 块级判断：有 language- 类名 或 内容包含换行（兼容未指定语言的 fenced code block）
+            const isBlock = !!match || text.includes('\n');
+            if (!isBlock) {
               return (
                 <code
                   className="px-2 py-0.5 rounded-lg text-[13px] font-mono font-semibold"
@@ -1135,7 +1137,7 @@ function ClayMarkdown({
               >
                 <SyntaxHighlighter
                   style={oneLight}
-                  language={match[1]}
+                  language={match?.[1] ?? 'text'}
                   PreTag="div"
                   customStyle={{
                     margin: 0,
@@ -1145,7 +1147,7 @@ function ClayMarkdown({
                     border: 'none',
                   }}
                 >
-                  {String(children).replace(/\n$/, '')}
+                  {text.replace(/\n$/, '')}
                 </SyntaxHighlighter>
               </div>
             );
