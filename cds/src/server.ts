@@ -7,6 +7,7 @@ import { createBranchRouter } from './routes/branches.js';
 import { createBridgeRouter } from './routes/bridge.js';
 import { createProjectsRouter } from './routes/projects.js';
 import { createStorageModeRouter, type StorageModeContext } from './routes/storage-mode.js';
+import { createGithubOAuthRouter } from './routes/github-oauth.js';
 import { createAuthRouter } from './routes/auth.js';
 import { MemoryAuthStore } from './infra/auth-store/memory-store.js';
 import { GitHubOAuthClient } from './services/github-oauth-client.js';
@@ -827,6 +828,40 @@ export function createServer(deps: ServerDeps): express.Express {
       stateFile: deps.stateFile,
       repoRoot: deps.config.repoRoot,
       context: deps.storageModeContext,
+    }));
+  }
+
+  // P4 Part 18 (Phase E): GitHub OAuth Device Flow router.
+  //
+  // The router is always mounted so the frontend can hit /status +
+  // get { configured: false } when CDS_GITHUB_CLIENT_ID is unset
+  // and gracefully hide the Sign-in button. When configured, the
+  // full Device Flow + repo listing is available.
+  //
+  // We instantiate a SEPARATE GitHubOAuthClient here (vs the one
+  // used for CDS session auth) because Device Flow only needs the
+  // client_id — no secret. This lets setups that don't use GitHub
+  // for CDS login still offer the repo picker.
+  {
+    const ghClientId = process.env.CDS_GITHUB_CLIENT_ID;
+    let deviceClient: import('./services/github-oauth-client.js').GitHubOAuthClient | null = null;
+    if (ghClientId) {
+      // Dynamic import to avoid circular import pain with server.ts
+      // top-level imports — the client is imported lazily here.
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      const { GitHubOAuthClient } = require('./services/github-oauth-client.js') as typeof import('./services/github-oauth-client.js');
+      deviceClient = new GitHubOAuthClient({
+        clientId: ghClientId,
+        // Device flow doesn't need the secret; pass an empty string
+        // so the class constructor is happy. The web-flow methods
+        // would fail with no secret, but device-flow methods don't
+        // touch it.
+        clientSecret: process.env.CDS_GITHUB_CLIENT_SECRET || '',
+      });
+    }
+    app.use('/api', createGithubOAuthRouter({
+      stateService: deps.stateService,
+      githubClient: deviceClient,
     }));
   }
 

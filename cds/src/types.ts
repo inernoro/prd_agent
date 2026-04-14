@@ -359,6 +359,37 @@ export interface CdsState {
    * See doc/design.cds-multi-project.md, doc/spec.cds-project-model.md.
    */
   projects?: Project[];
+  /**
+   * P4 Part 18 (Phase E): single-slot GitHub Device Flow token used
+   * by the "从 GitHub 选择仓库" button in the New Project modal and
+   * the Settings → GitHub Integration tab. Orthogonal to the CDS
+   * session auth (auth-service.ts) — this is bring-your-own-token
+   * for repo fetching, not a CDS login mechanism.
+   *
+   * Single-slot because CDS is single-tenant-per-install; per-user
+   * tokens are a future phase once the user model stabilises.
+   */
+  githubDeviceAuth?: GitHubDeviceAuth;
+}
+
+/**
+ * GitHub Device Flow token snapshot persisted in state.json. The
+ * token itself is a GitHub-issued opaque string — we never decrypt
+ * or inspect it, just pass it along to api.github.com.
+ */
+export interface GitHubDeviceAuth {
+  /** Raw access_token returned by GitHub. */
+  token: string;
+  /** GitHub login (e.g. 'octocat') for the UI. */
+  login: string;
+  /** Display name (may be null). */
+  name: string | null;
+  /** Avatar URL for the Settings UI. */
+  avatarUrl: string | null;
+  /** ISO timestamp of when the device flow completed. */
+  connectedAt: string;
+  /** OAuth scopes granted by the user. */
+  scopes: string[];
 }
 
 /**

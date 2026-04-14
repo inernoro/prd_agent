@@ -705,6 +705,25 @@ export class StateService {
   }
 
   /**
+   * P4 Part 18 (Phase E): GitHub Device Flow token accessors.
+   *
+   * The token lives in state.githubDeviceAuth as a single-slot
+   * snapshot (one GitHub connection per CDS install). Orthogonal
+   * to auth-service which runs the CDS session flow.
+   */
+  getGithubDeviceAuth(): import('../types.js').GitHubDeviceAuth | undefined {
+    return this.state.githubDeviceAuth;
+  }
+  setGithubDeviceAuth(auth: import('../types.js').GitHubDeviceAuth | null): void {
+    if (auth) {
+      this.state.githubDeviceAuth = auth;
+    } else {
+      delete this.state.githubDeviceAuth;
+    }
+    this.save();
+  }
+
+  /**
    * Resolve the absolute git repo root to use for operations on a given
    * project. Returns `project.repoPath` when set (post-G1 multi-repo),
    * else `fallback` (typically `CdsConfig.repoRoot` — the single host
