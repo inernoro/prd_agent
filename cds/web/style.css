@@ -1810,6 +1810,51 @@ a.branch-name:hover { color: var(--accent); }
   50%      { transform: translateY(-4px); opacity: 0.75; }
 }
 
+/* P4 Part 9 (MECE B4) — Quick start templates for build profile add form */
+.profile-quick-templates {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 10px 12px;
+  background: var(--bg-card);
+  border: 1px solid var(--card-border);
+  border-radius: 8px;
+  margin-bottom: 12px;
+}
+.profile-quick-templates-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-muted);
+  margin-right: 4px;
+  letter-spacing: 0.2px;
+}
+.profile-template-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 5px 11px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--card-border);
+  border-radius: 6px;
+  color: var(--text-secondary);
+  font-size: 11.5px;
+  font-weight: 600;
+  cursor: pointer;
+  font-family: inherit;
+  transition: all 120ms ease;
+}
+.profile-template-btn:hover {
+  border-color: var(--accent-border, rgba(16,185,129,0.4));
+  color: var(--text-primary);
+  background: var(--bg-hover);
+}
+.profile-template-btn.active {
+  border-color: var(--accent, #10b981);
+  background: var(--accent-bg, rgba(16,185,129,0.12));
+  color: var(--accent, #10b981);
+}
+
 /* P4 Part 8 (MECE R4) — rich inline failure preview on error branches */
 .branch-error-card {
   margin: 8px 0 12px;

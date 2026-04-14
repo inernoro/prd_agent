@@ -4636,9 +4636,20 @@ function openProfileModal() {
       <button class="sm primary" onclick="showAddProfileInModal()">+ 添加</button>
     </div>
     <div id="addProfileFormModal" class="hidden">
+      <!-- P4 Part 9 (MECE B4) — Quick start templates.
+           One click pre-fills the entire form with sensible defaults
+           for a common stack. Reduces 7+ fields to 1 click + tweak. -->
+      <div class="profile-quick-templates">
+        <span class="profile-quick-templates-label">快速开始：</span>
+        <button type="button" class="profile-template-btn" onclick="_applyProfileTemplate('node')" title="Node.js + npm">⬡ Node.js</button>
+        <button type="button" class="profile-template-btn" onclick="_applyProfileTemplate('dotnet')" title=".NET 8 SDK">⬢ .NET</button>
+        <button type="button" class="profile-template-btn" onclick="_applyProfileTemplate('python')" title="Python 3.12 + pip">🐍 Python</button>
+        <button type="button" class="profile-template-btn" onclick="_applyProfileTemplate('go')" title="Go 1.22">⚡ Go</button>
+        <button type="button" class="profile-template-btn" onclick="_applyProfileTemplate('static')" title="静态站点 nginx">📄 Static</button>
+      </div>
       <div class="form-row">
         <input id="profileId" placeholder="配置 ID（如 api、web）" class="form-input sm">
-        <input id="profileName" placeholder="显示名称" class="form-input sm">
+        <input id="profileName" placeholder="显示名称（留空与 ID 相同）" class="form-input sm">
         <select id="profileIcon" class="form-input xs" title="端口图标">
           <option value="">图标</option>
           <option value="api">📊 API</option>
@@ -4695,6 +4706,127 @@ function showAddProfileInModal() {
   toggleModalForm('addProfileFormModal');
   loadDockerImages();
 }
+
+// P4 Part 9 (MECE B4) — Stack template presets.
+//
+// Pre-fills the build profile add form with sensible defaults for a
+// common runtime so a novice can hit Save with one click and a couple
+// of tweaks (vs filling 7+ fields manually). Each template is a
+// minimal correct setup that runs on the default `npm start` / `dotnet
+// run` etc convention; the user can still edit any field afterward.
+const PROFILE_TEMPLATES = {
+  node: {
+    id: 'api',
+    name: 'API (Node.js)',
+    icon: 'api',
+    dockerImage: 'node:22-slim',
+    workDir: '.',
+    containerPort: 3000,
+    installCommand: 'npm ci',
+    buildCommand: '',
+    runCommand: 'npm start',
+  },
+  dotnet: {
+    id: 'api',
+    name: 'API (.NET)',
+    icon: 'api',
+    dockerImage: 'mcr.microsoft.com/dotnet/sdk:8.0',
+    workDir: '.',
+    containerPort: 5000,
+    installCommand: 'dotnet restore',
+    buildCommand: 'dotnet build -c Release',
+    runCommand: 'dotnet run --urls http://0.0.0.0:5000',
+  },
+  python: {
+    id: 'api',
+    name: 'API (Python)',
+    icon: 'api',
+    dockerImage: 'python:3.12-slim',
+    workDir: '.',
+    containerPort: 8000,
+    installCommand: 'pip install -r requirements.txt',
+    buildCommand: '',
+    runCommand: 'python -m uvicorn main:app --host 0.0.0.0 --port 8000',
+  },
+  go: {
+    id: 'api',
+    name: 'API (Go)',
+    icon: 'api',
+    dockerImage: 'golang:1.22-alpine',
+    workDir: '.',
+    containerPort: 8080,
+    installCommand: 'go mod download',
+    buildCommand: 'go build -o /tmp/app .',
+    runCommand: '/tmp/app',
+  },
+  static: {
+    id: 'web',
+    name: 'Static Site',
+    icon: 'web',
+    dockerImage: 'nginx:alpine',
+    workDir: '.',
+    containerPort: 80,
+    installCommand: '',
+    buildCommand: '',
+    runCommand: 'nginx -g "daemon off;"',
+  },
+};
+
+function _applyProfileTemplate(key) {
+  const tpl = PROFILE_TEMPLATES[key];
+  if (!tpl) return;
+
+  function setVal(id, v) {
+    const el = document.getElementById(id);
+    if (el) el.value = v == null ? '' : v;
+  }
+
+  setVal('profileId', tpl.id);
+  setVal('profileName', tpl.name);
+  setVal('profileIcon', tpl.icon || '');
+
+  // Image: try to select an existing <option>; if not present, switch
+  // to the custom path so the value is preserved.
+  const imageSel = document.getElementById('profileImage');
+  if (imageSel) {
+    const hasMatch = Array.from(imageSel.options).some(o => o.value === tpl.dockerImage);
+    if (hasMatch) {
+      imageSel.value = tpl.dockerImage;
+      const customEl = document.getElementById('profileImageCustom');
+      if (customEl) customEl.classList.add('hidden');
+    } else {
+      imageSel.value = '__custom__';
+      const customEl = document.getElementById('profileImageCustom');
+      if (customEl) {
+        customEl.classList.remove('hidden');
+        customEl.value = tpl.dockerImage;
+      }
+    }
+  }
+
+  setVal('profileWorkDir', tpl.workDir || '.');
+  setVal('profilePort', tpl.containerPort || 8080);
+  setVal('profileRun', tpl.runCommand || '');
+  setVal('profileInstall', tpl.installCommand || '');
+  setVal('profileBuild', tpl.buildCommand || '');
+
+  // If install or build commands are present, expand the advanced section
+  // so the user can see what was filled in.
+  if ((tpl.installCommand || tpl.buildCommand) && typeof toggleAdvanced === 'function') {
+    const adv = document.getElementById('advancedFields');
+    if (adv && adv.classList.contains('hidden')) toggleAdvanced();
+  }
+
+  showToast('已应用 ' + tpl.name + ' 模板，可继续修改', 'info');
+
+  // Highlight the active template button
+  document.querySelectorAll('.profile-template-btn').forEach(btn => btn.classList.remove('active'));
+  const activeBtn = document.querySelector('.profile-template-btn[onclick*="' + key + '"]');
+  if (activeBtn) activeBtn.classList.add('active');
+}
+
+// Expose for the inline onclick handlers
+window._applyProfileTemplate = _applyProfileTemplate;
 
 async function saveProfileAndRefresh() {
   const selectVal = document.getElementById('profileImage').value;
