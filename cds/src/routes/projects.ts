@@ -90,6 +90,68 @@ function dockerNetworkFor(projectId: string): string {
   return `cds-proj-${projectId}`;
 }
 
+/**
+ * P4 Part 18 (Phase E audit fix #9): strip userinfo (user:password@)
+ * from a git URL before storing or echoing it. This prevents the
+ * common footgun where a user pastes
+ *   https://token:x-oauth-basic@github.com/foo/bar.git
+ * and we persist the token to state.json in plain text.
+ *
+ * We keep http/https/ssh/file URLs parseable via the standard URL
+ * class, and fall back to a regex for the SSH shorthand
+ * (git@github.com:foo/bar.git) which the URL class doesn't parse.
+ */
+export function _redactUrlUserInfo(raw: string): string {
+  if (!raw) return raw;
+  try {
+    const u = new URL(raw);
+    if (u.username || u.password) {
+      u.username = '';
+      u.password = '';
+    }
+    return u.toString();
+  } catch {
+    // Not a URL the standard parser understands — keep it as-is.
+    // SSH shorthand (git@host:path) has no userinfo concept, it's
+    // just the user the remote expects. No redaction needed.
+    return raw;
+  }
+}
+
+/**
+ * P4 Part 18 (Phase E audit fix #1): rewrite a public github.com
+ * HTTPS URL to include the Device Flow access token so private repos
+ * clone successfully.
+ *
+ * Rules:
+ *   - URL must be https://github.com/... (any other host is left alone)
+ *   - URL must not already carry userinfo (we don't override explicit
+ *     credentials because the user might be intentionally testing)
+ *   - token must be non-empty
+ * Returns the original URL when any rule fails.
+ *
+ * The token is only used in the ephemeral shell argument — NEVER
+ * persisted to state.json (which stores the original `gitRepoUrl`).
+ */
+export function _injectGithubTokenIfPossible(raw: string, token: string | undefined): string {
+  if (!token) return raw;
+  let u: URL;
+  try {
+    u = new URL(raw);
+  } catch {
+    return raw;
+  }
+  if (u.protocol !== 'https:') return raw;
+  if (u.hostname !== 'github.com' && !u.hostname.endsWith('.github.com')) return raw;
+  if (u.username || u.password) return raw;
+  // GitHub recommends `x-access-token` as the username for Device-Flow
+  // tokens on HTTPS clones. See
+  // https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/managing-your-personal-access-tokens
+  u.username = 'x-access-token';
+  u.password = token;
+  return u.toString();
+}
+
 interface ProjectSummary extends Project {
   branchCount: number;
 }
@@ -206,7 +268,13 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
       return;
     }
 
-    const gitRepoUrl = typeof body.gitRepoUrl === 'string' ? body.gitRepoUrl.trim() : undefined;
+    // P4 Part 18 (Phase E audit fix #9): redact embedded userinfo
+    // before persisting. Users who paste tokens in the URL by mistake
+    // still get a working project, but the token never hits state.json.
+    // Private repo auth should go through the Device Flow token
+    // (injected at clone time via _injectGithubTokenIfPossible).
+    const rawGitRepoUrl = typeof body.gitRepoUrl === 'string' ? body.gitRepoUrl.trim() : undefined;
+    const gitRepoUrl = rawGitRepoUrl ? _redactUrlUserInfo(rawGitRepoUrl) : undefined;
     const description = typeof body.description === 'string' ? body.description.trim() : undefined;
 
     // Duplicate slug check against existing projects (including legacy).
@@ -421,6 +489,23 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
     const repoPath = project.repoPath;
     const gitUrl = project.gitRepoUrl;
 
+    // P4 Part 18 (Phase E audit fix #1): if the URL points at github.com
+    // AND a GitHub Device Flow token is stored, inject the token into
+    // the clone URL so private repos work. The token is ephemerally
+    // inserted into the shell command only — never persisted back to
+    // state.json. If Device Flow isn't connected we try the bare URL,
+    // which works for public repos.
+    //
+    // Also (audit fix #9): the displayed gitUrl in events is the
+    // ORIGINAL user-supplied URL, but we DO redact any embedded
+    // userinfo before logging so pasted credentials don't leak into
+    // the SSE log or state.json.
+    const displayUrl = _redactUrlUserInfo(gitUrl);
+    const cloneUrl = _injectGithubTokenIfPossible(
+      gitUrl,
+      stateService.getGithubDeviceAuth()?.token,
+    );
+
     try {
       stateService.updateProject(project.id, {
         cloneStatus: 'cloning',
@@ -428,7 +513,7 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
       });
       sendEvent('start', {
         projectId: project.id,
-        gitRepoUrl: gitUrl,
+        gitRepoUrl: displayUrl,
         repoPath,
       });
 
@@ -456,9 +541,11 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
       // Run the clone with streaming. git clone prints to stderr by
       // default but the MockShellExecutor's onData fires for both,
       // which is fine because the SSE stream is a cat of everything.
-      sendEvent('progress', { line: `$ git clone ${gitUrl} ${repoPath}` });
+      // Always use `displayUrl` in the echoed shell line so tokens
+      // don't leak into the SSE stream.
+      sendEvent('progress', { line: `$ git clone ${displayUrl} ${repoPath}` });
       const clone = await shell.exec(
-        `git clone "${gitUrl}" "${repoPath}"`,
+        `GIT_TERMINAL_PROMPT=0 git clone "${cloneUrl}" "${repoPath}"`,
         {
           timeout: 10 * 60 * 1000, // 10 minutes max; cancel any stuck clone
           onData: (chunk: string) => {

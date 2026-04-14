@@ -498,7 +498,19 @@
     if (bodyEl) bodyEl.style.display = 'none';
     if (errEl) { errEl.style.display = 'none'; errEl.textContent = ''; }
     if (subtitleEl) subtitleEl.textContent = '正在请求设备代码…';
-    _ghDevicePollAbort = false;
+    // P4 Part 18 (Phase E audit fix #3): kill any in-flight Device
+    // Flow before starting a new one. Without this, a user who
+    // re-clicks "Sign in" while a previous /device-start fetch is
+    // still pending gets two concurrent flows, and the userCode
+    // display flickers as both fetches' .then callbacks race.
+    _ghDevicePollAbort = true;
+    if (_ghDevicePollTimer) {
+      clearTimeout(_ghDevicePollTimer);
+      _ghDevicePollTimer = null;
+    }
+    // Tick forward to the next microtask so the aborted poll's
+    // last .then() (if any) fires and sees abort=true. Then re-enable.
+    setTimeout(function () { _ghDevicePollAbort = false; }, 0);
     modal.classList.add('visible');
 
     fetch('/api/github/oauth/device-start', {
@@ -757,14 +769,35 @@
     var val = String(raw || '').trim();
     if (!val) return { kind: 'empty', name: '', gitRepoUrl: null };
 
-    // URL sniff — accept http(s) and git@ SSH shorthand
-    var isUrl = /^(https?:\/\/|git@|ssh:\/\/|file:\/\/)/i.test(val) || /\.git$/i.test(val);
+    // P4 Part 18 (Phase E audit fix #6 + #8): tighten URL detection.
+    // Only treat the input as a URL when it has an explicit protocol
+    // prefix. The previous "ends in .git" fallback accepted bare
+    // filenames like `myrepo.git` as clone URLs and confused users.
+    // We also drop `file://` from the allowed protocols — local
+    // filesystem clone paths are an escape hatch that CDS doesn't
+    // need and that can leak FS structure via git error messages.
+    var isUrl = /^(https?:\/\/|git@|ssh:\/\/)/i.test(val);
     if (!isUrl) {
       return { kind: 'name', name: val, gitRepoUrl: null };
     }
 
+    // P4 Part 18 (Phase E audit fix #5): strip common GitHub "view"
+    // URL suffixes before extracting the repo name. Users often
+    // paste the URL from their browser address bar which looks like
+    //   https://github.com/foo/bar/tree/main
+    //   https://github.com/foo/bar/pull/42
+    //   https://github.com/foo/bar/commits
+    // All of these should resolve to project name "bar", and the
+    // canonical clone URL is "https://github.com/foo/bar.git".
+    var normalized = val;
+    var githubViewMatch = /^(https?:\/\/(?:www\.)?github\.com\/[^/]+\/[^/]+)(?:\/(?:tree|blob|pull|commits|issues|actions|wiki|releases|settings)(?:\/.*)?)?\/?$/i.exec(val);
+    if (githubViewMatch) {
+      normalized = githubViewMatch[1];
+      if (!/\.git$/i.test(normalized)) normalized += '.git';
+    }
+
     // Derive project name from the URL's last segment, stripping .git
-    var segment = val;
+    var segment = normalized;
     // Handle git@github.com:foo/bar.git → take "bar"
     var colonMatch = /^git@[^:]+:(.+)$/.exec(val);
     if (colonMatch) segment = colonMatch[1];
@@ -775,7 +808,7 @@
     segment = segment.replace(/\.git$/i, '');
     if (!segment) segment = 'project';
 
-    return { kind: 'url', name: segment, gitRepoUrl: val };
+    return { kind: 'url', name: segment, gitRepoUrl: normalized };
   }
 
   // Called from the smart-input oninput handler — updates the hint
@@ -1206,12 +1239,32 @@
   window.handleCloneProject = handleCloneProject;
   window.closeCloneProgressModal = closeCloneProgressModal;
 
+  // P4 Part 18 (Phase E audit fix #7): close the TOPMOST visible
+  // modal on ESC, not a hardcoded one. Previously ESC always
+  // targeted createProjectModal, so if a user hit ESC while the
+  // device-flow modal or repo picker was stacked on top, the
+  // underlying create modal closed and they were stranded with
+  // a top-level modal that had lost its parent context.
+  //
+  // Order: picker (topmost when chaining sign-in → pick) > device
+  // flow (topmost while polling) > create modal (base layer).
+  // Toast / clone-progress aren't ESC-dismissible on purpose —
+  // they're time-critical feedback the user should see.
   document.addEventListener('keydown', function (e) {
-    if (e.key === 'Escape') {
-      var modal = getModal();
-      if (modal && modal.classList.contains('visible')) {
-        modal.classList.remove('visible');
-      }
+    if (e.key !== 'Escape') return;
+    var picker = document.getElementById('githubRepoPickerModal');
+    var device = document.getElementById('githubDeviceModal');
+    var create = getModal();
+    if (picker && picker.classList.contains('visible')) {
+      closeRepoPickerModal();
+      return;
+    }
+    if (device && device.classList.contains('visible')) {
+      closeGithubDeviceModal();
+      return;
+    }
+    if (create && create.classList.contains('visible')) {
+      create.classList.remove('visible');
     }
   });
 

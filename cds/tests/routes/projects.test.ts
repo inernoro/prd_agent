@@ -651,7 +651,7 @@ describe('Projects router — multi-repo clone (P4 Part 18 G1.3)', () => {
       // Mock git clone to succeed and emit a couple of progress lines
       shell.addResponsePattern(/^mkdir -p /, () => ({ stdout: '', stderr: '', exitCode: 0 }));
       shell.addResponsePattern(/^test -d /, () => ({ stdout: '', stderr: '', exitCode: 1 }));
-      shell.addResponsePattern(/^git clone /, () => ({
+      shell.addResponsePattern(/git clone /, () => ({
         stdout: 'Cloning into /test-repos/proj\nReceiving objects: 100% (125/125), done.\n',
         stderr: '',
         exitCode: 0,
@@ -688,17 +688,21 @@ describe('Projects router — multi-repo clone (P4 Part 18 G1.3)', () => {
       expect(after.cloneStatus).toBe('ready');
       expect(after.cloneError).toBeUndefined();
 
-      // The git clone command was actually executed
-      const cloneCmds = shell.commands.filter((c) => c.startsWith('git clone'));
+      // The git clone command was actually executed. P4 Part 18
+      // (Phase E audit fix #1): the command is now prefixed with
+      // `GIT_TERMINAL_PROMPT=0` so private repos fail fast instead
+      // of prompting for credentials — so we match a substring.
+      const cloneCmds = shell.commands.filter((c) => c.includes('git clone'));
       expect(cloneCmds).toHaveLength(1);
       expect(cloneCmds[0]).toContain('https://github.com/example/test.git');
       expect(cloneCmds[0]).toContain(`${REPOS_BASE}/${pid}`);
+      expect(cloneCmds[0]).toContain('GIT_TERMINAL_PROMPT=0');
     });
 
     it('sets cloneStatus=error and streams error event when git clone fails', async () => {
       shell.addResponsePattern(/^mkdir -p /, () => ({ stdout: '', stderr: '', exitCode: 0 }));
       shell.addResponsePattern(/^test -d /, () => ({ stdout: '', stderr: '', exitCode: 1 }));
-      shell.addResponsePattern(/^git clone /, () => ({
+      shell.addResponsePattern(/git clone /, () => ({
         stdout: '',
         stderr: 'fatal: repository https://nope.git not found',
         exitCode: 128,
@@ -743,7 +747,7 @@ describe('Projects router — multi-repo clone (P4 Part 18 G1.3)', () => {
     it('returns 409 when the project is already ready', async () => {
       shell.addResponsePattern(/^mkdir -p /, () => ({ stdout: '', stderr: '', exitCode: 0 }));
       shell.addResponsePattern(/^test -d /, () => ({ stdout: '', stderr: '', exitCode: 1 }));
-      shell.addResponsePattern(/^git clone /, () => ({ stdout: '', stderr: '', exitCode: 0 }));
+      shell.addResponsePattern(/git clone /, () => ({ stdout: '', stderr: '', exitCode: 0 }));
 
       const create = await request(server, 'POST', '/api/projects', {
         name: 'Double',
@@ -766,7 +770,7 @@ describe('Projects router — multi-repo clone (P4 Part 18 G1.3)', () => {
       shell.addResponsePattern(/^mkdir -p /, () => ({ stdout: '', stderr: '', exitCode: 0 }));
       shell.addResponsePattern(/^test -d /, () => ({ stdout: '', stderr: '', exitCode: 1 }));
       let cloneCall = 0;
-      shell.addResponsePattern(/^git clone /, () => {
+      shell.addResponsePattern(/git clone /, () => {
         cloneCall++;
         return cloneCall === 1
           ? { stdout: '', stderr: 'fatal: temporary', exitCode: 128 }
