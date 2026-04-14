@@ -266,6 +266,66 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
     res.status(201).json({ project: toSummary(newProject, 0) });
   });
 
+  // PUT /api/projects/:id — patch mutable project fields.
+  //
+  // P4 Part 13 (Project Settings page). Accepts {name, description,
+  // gitRepoUrl} and delegates to StateService.updateProject which
+  // bumps updatedAt + persists. Immutable fields (id, slug, kind,
+  // legacyFlag, dockerNetwork, createdAt) are intentionally not
+  // patchable through this endpoint — changing slug would break the
+  // URL routing and changing dockerNetwork would orphan containers.
+  router.put('/projects/:id', (req, res) => {
+    const project = stateService.getProject(req.params.id);
+    if (!project) {
+      res.status(404).json({
+        error: 'project_not_found',
+        message: `Project '${req.params.id}' does not exist.`,
+      });
+      return;
+    }
+
+    const body = (req.body || {}) as Partial<{
+      name: string;
+      description: string;
+      gitRepoUrl: string;
+    }>;
+
+    // Validate name when supplied
+    if (body.name !== undefined) {
+      const trimmed = String(body.name).trim();
+      if (!trimmed) {
+        res.status(400).json({ error: 'validation', field: 'name', message: '项目名称不能为空' });
+        return;
+      }
+      if (trimmed.length > MAX_NAME_LENGTH) {
+        res.status(400).json({
+          error: 'validation',
+          field: 'name',
+          message: `项目名称长度不能超过 ${MAX_NAME_LENGTH}`,
+        });
+        return;
+      }
+    }
+
+    const patch: Partial<Pick<Project, 'name' | 'description' | 'gitRepoUrl'>> = {};
+    if (body.name !== undefined) patch.name = String(body.name).trim();
+    if (body.description !== undefined) patch.description = String(body.description).trim();
+    if (body.gitRepoUrl !== undefined) patch.gitRepoUrl = String(body.gitRepoUrl).trim();
+
+    try {
+      stateService.updateProject(project.id, patch);
+    } catch (err) {
+      res.status(500).json({
+        error: 'state_save_failed',
+        message: (err as Error).message,
+      });
+      return;
+    }
+
+    const updated = stateService.getProject(project.id)!;
+    res.json({ project: toSummary(updated, countBranchesFor(updated)) });
+  });
+
   // DELETE /api/projects/:id — real deletion (P4 Part 2).
   //
   // Cascading branch/profile cleanup will happen in P4 Part 3 once

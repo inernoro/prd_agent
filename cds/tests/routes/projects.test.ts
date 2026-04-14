@@ -295,6 +295,56 @@ describe('Projects router (P4 Part 2)', () => {
     });
   });
 
+  describe('PUT /api/projects/:id (P4 Part 13)', () => {
+    it('updates name + description on the legacy project', async () => {
+      const res = await request(server, 'PUT', '/api/projects/default', {
+        name: 'Renamed Project',
+        description: 'A test description',
+      });
+      expect(res.status).toBe(200);
+      expect(res.body.project.name).toBe('Renamed Project');
+      expect(res.body.project.description).toBe('A test description');
+
+      // GET reflects the change
+      const get = await request(server, 'GET', '/api/projects/default');
+      expect(get.body.name).toBe('Renamed Project');
+    });
+
+    it('rejects empty name with 400', async () => {
+      const res = await request(server, 'PUT', '/api/projects/default', { name: '   ' });
+      expect(res.status).toBe(400);
+      expect(res.body.field).toBe('name');
+    });
+
+    it('rejects name > 60 chars with 400', async () => {
+      const res = await request(server, 'PUT', '/api/projects/default', {
+        name: 'x'.repeat(61),
+      });
+      expect(res.status).toBe(400);
+      expect(res.body.field).toBe('name');
+    });
+
+    it('returns 404 for unknown project id', async () => {
+      const res = await request(server, 'PUT', '/api/projects/no-such-id', { name: 'x' });
+      expect(res.status).toBe(404);
+    });
+
+    it('only patches supplied fields', async () => {
+      // First set both
+      await request(server, 'PUT', '/api/projects/default', {
+        name: 'First Name',
+        description: 'First Desc',
+      });
+      // Then patch only description
+      const res = await request(server, 'PUT', '/api/projects/default', {
+        description: 'Second Desc',
+      });
+      expect(res.status).toBe(200);
+      expect(res.body.project.name).toBe('First Name'); // unchanged
+      expect(res.body.project.description).toBe('Second Desc');
+    });
+  });
+
   describe('DELETE /api/projects/:id', () => {
     it('deletes a non-legacy project and runs docker network rm', async () => {
       // Create a project first
