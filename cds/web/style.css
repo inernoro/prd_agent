@@ -5082,3 +5082,146 @@ a.branch-name:hover { color: var(--accent); }
   pointer-events: none;
   z-index: 5;
 }
+
+/* ─────────────────────────────────────────────────────────────────
+ * P4 Part 5 — Full-screen topology mode
+ * ─────────────────────────────────────────────────────────────────
+ *
+ * When the user toggles to topology view we promote the canvas to
+ * fill the entire viewport, hiding the dashboard's header / search /
+ * branch picker / tag bar / etc. The legacy list view is unchanged.
+ *
+ * Activation: app.js setViewMode('topology') adds .cds-topology-fs to
+ * <body>; setViewMode('list') removes it.
+ *
+ * The canvas keeps its existing pan/zoom + node click handlers, so
+ * the only rules below deal with positioning + chrome hiding. Nothing
+ * about node interactivity changes — that's wired in app.js.
+ */
+body.cds-topology-fs .container > *:not(#topologyView):not(#toast):not(.modal):not(#dropdownPortal):not(#hostStatsWidget):not(#activityMonitor):not(#aiPairingPanel) {
+  display: none !important;
+}
+body.cds-topology-fs .container {
+  padding: 0 !important;
+  margin: 0 !important;
+  max-width: none !important;
+  width: 100vw;
+}
+body.cds-topology-fs #topologyView {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  background: var(--bg-primary);
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+}
+body.cds-topology-fs #topologyView .topology-card {
+  flex: 1;
+  border: none;
+  border-radius: 0;
+  margin: 0;
+  padding: 14px 18px 18px;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  box-shadow: none;
+  background: transparent;
+}
+body.cds-topology-fs #topologyView .topology-canvas-wrap {
+  flex: 1;
+  min-height: 0;
+  border-radius: 12px;
+}
+
+/* Floating top bar (back to list + branch picker hint + commit hash) */
+.topology-fs-topbar {
+  display: none;
+  position: fixed;
+  top: 16px;
+  left: 16px;
+  right: 16px;
+  z-index: 60;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  pointer-events: none;
+}
+body.cds-topology-fs .topology-fs-topbar { display: flex; }
+.topology-fs-topbar > * { pointer-events: auto; }
+.topology-fs-topbar-left,
+.topology-fs-topbar-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--bg-card);
+  border: 1px solid var(--card-border);
+  border-radius: 10px;
+  padding: 6px 10px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+}
+.topology-fs-topbar-link,
+.topology-fs-topbar-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 10px;
+  background: transparent;
+  border: none;
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 600;
+  border-radius: 6px;
+  cursor: pointer;
+  text-decoration: none;
+  transition: background 120ms ease, color 120ms ease;
+}
+.topology-fs-topbar-link:hover,
+.topology-fs-topbar-btn:hover {
+  background: var(--bg-elevated);
+  color: var(--text-primary);
+}
+.topology-fs-topbar-divider {
+  width: 1px;
+  height: 16px;
+  background: var(--card-border);
+  margin: 0 2px;
+}
+.topology-fs-topbar-title {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text-primary);
+  padding: 0 4px;
+}
+.topology-fs-topbar-meta {
+  font-size: 11px;
+  color: var(--text-muted);
+  font-family: var(--font-mono, monospace);
+  padding: 0 4px;
+}
+
+/* Tighten the in-card header in fs mode so chips don't overflow */
+body.cds-topology-fs .topology-card .topology-header { margin-top: 56px; }
+body.cds-topology-fs .topology-card .topology-title-hint { display: none; }
+
+/* Hint text for click-to-edit interaction */
+.topology-edit-hint {
+  position: fixed;
+  bottom: 16px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 60;
+  background: var(--bg-card);
+  border: 1px solid var(--accent-border, rgba(16,185,129,0.3));
+  color: var(--accent);
+  padding: 6px 14px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  display: none;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+  pointer-events: none;
+}
+body.cds-topology-fs .topology-edit-hint { display: inline-block; }
+

@@ -7590,10 +7590,97 @@ function setViewMode(mode) {
   if (mode === 'topology') {
     if (listEl) listEl.classList.add('hidden');
     if (topoEl) topoEl.classList.remove('hidden');
+    // P4 Part 5: promote topology to full-viewport. CSS rules in
+    // style.css under `body.cds-topology-fs` hide the dashboard chrome
+    // (header, search, branch picker, tag bar) and stretch the canvas
+    // to fill the screen.
+    document.body.classList.add('cds-topology-fs');
+    _ensureTopologyFsChrome();
     renderTopologyView();
   } else {
     if (topoEl) topoEl.classList.add('hidden');
     if (listEl) listEl.classList.remove('hidden');
+    document.body.classList.remove('cds-topology-fs');
+  }
+}
+
+/**
+ * P4 Part 5: inject the floating top bar + edit hint that appear in
+ * full-screen topology mode. Idempotent — safe to call many times;
+ * only creates the elements once.
+ *
+ * The bar lives outside .container so the body-level fullscreen rule
+ * doesn't accidentally hide it. We mount it on document.body.
+ */
+function _ensureTopologyFsChrome() {
+  if (document.getElementById('topologyFsTopbar')) return;
+
+  // Project name / commit hash get pulled from the same /api/me-style
+  // sources the rest of the app uses. The label is updated lazily
+  // (whenever the function runs after data is ready); failures fall
+  // back to placeholders.
+  const projectId = (function () {
+    try { return new URLSearchParams(location.search).get('project') || 'default'; }
+    catch (e) { return 'default'; }
+  })();
+
+  const topbar = document.createElement('div');
+  topbar.id = 'topologyFsTopbar';
+  topbar.className = 'topology-fs-topbar';
+  topbar.innerHTML = `
+    <div class="topology-fs-topbar-left">
+      <a href="projects.html" class="topology-fs-topbar-link" title="返回项目列表">
+        <svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor"><path d="M7.78 12.53a.75.75 0 01-1.06 0L2.47 8.28a.75.75 0 010-1.06l4.25-4.25a.751.751 0 011.154.114.75.75 0 01-.094.946L4.81 7h7.44a.75.75 0 010 1.5H4.81l2.97 2.97a.75.75 0 010 1.06z"/></svg>
+        Projects
+      </a>
+      <span class="topology-fs-topbar-divider"></span>
+      <span class="topology-fs-topbar-title" id="topologyFsProjectName">${esc(projectId)}</span>
+    </div>
+    <div class="topology-fs-topbar-right">
+      <button type="button" class="topology-fs-topbar-btn" onclick="setViewMode('list')" title="返回列表视图">
+        <svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor"><path d="M2 3.75a.75.75 0 01.75-.75h10.5a.75.75 0 010 1.5H2.75A.75.75 0 012 3.75zm0 4a.75.75 0 01.75-.75h10.5a.75.75 0 010 1.5H2.75A.75.75 0 012 7.75zM2.75 11a.75.75 0 000 1.5h10.5a.75.75 0 000-1.5H2.75z"/></svg>
+        列表视图
+      </button>
+      <span class="topology-fs-topbar-divider"></span>
+      <button type="button" class="topology-fs-topbar-btn" onclick="toggleTheme(event)" title="切换主题">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="4.22" x2="19.78" y2="5.64"/></svg>
+      </button>
+    </div>
+  `;
+  document.body.appendChild(topbar);
+
+  // Bottom edit hint
+  const hint = document.createElement('div');
+  hint.id = 'topologyEditHint';
+  hint.className = 'topology-edit-hint';
+  hint.textContent = '点击节点直接编辑配置 · 拖拽空白处平移 · 滚轮缩放';
+  document.body.appendChild(hint);
+
+  // Pull the real project name from /api/projects/:id (best effort).
+  if (projectId && projectId !== 'default') {
+    fetch('/api/projects/' + encodeURIComponent(projectId), { credentials: 'same-origin' })
+      .then(function (r) { return r.ok ? r.json() : null; })
+      .then(function (body) {
+        if (body && body.name) {
+          var el = document.getElementById('topologyFsProjectName');
+          if (el) el.textContent = body.name;
+        }
+      })
+      .catch(function () { /* quiet */ });
+  } else {
+    // For default we already know the slug from /api/projects (legacy)
+    fetch('/api/projects', { credentials: 'same-origin' })
+      .then(function (r) { return r.ok ? r.json() : null; })
+      .then(function (body) {
+        if (body && body.projects && body.projects.length) {
+          var legacy = body.projects.find(function (p) { return p.legacyFlag; });
+          if (legacy) {
+            var el = document.getElementById('topologyFsProjectName');
+            if (el) el.textContent = legacy.name;
+          }
+        }
+      })
+      .catch(function () { /* quiet */ });
   }
 }
 
@@ -8042,7 +8129,7 @@ function renderTopologyView() {
         <span class="topology-legend-item"><span class="topology-legend-swatch app"></span>应用服务</span>
         <span class="topology-legend-item"><span class="topology-legend-swatch infra"></span>基础设施</span>
         <span class="topology-legend-item"><span class="topology-legend-swatch override"></span>本分支自定义</span>
-        <span class="topology-legend-item" style="color:var(--text-secondary);margin-left:auto">点击节点查看依赖，双击打开配置</span>
+        <span class="topology-legend-item" style="color:var(--text-secondary);margin-left:auto">${_topologySelectedBranchId ? '点击节点直接编辑该分支配置' : '先选择上方分支，再点击节点编辑'}</span>
       </div>
       <div class="topology-canvas-wrap">
         ${_renderTopologySvg(layout, {
@@ -8103,28 +8190,38 @@ async function _topologySelectBranch(branchId) {
 let _topologyLastClickId = null;
 let _topologyLastClickAt = 0;
 function _topologyNodeClick(profileId) {
-  const now = Date.now();
-  const isDoubleClick = _topologyLastClickId === profileId && (now - _topologyLastClickAt) < 500;
-  _topologyLastClickId = profileId;
-  _topologyLastClickAt = now;
-
-  if (isDoubleClick) {
-    // Open configuration modal
-    if (!_topologySelectedBranchId) {
-      showToast('请先在顶部选择一个分支，再双击节点打开其配置', 'info');
-      return;
-    }
+  // P4 Part 5: single-click is the primary edit gesture now.
+  // Previously single-click highlighted edges and double-click opened
+  // the editor — too discoverable / too many gestures. New behavior:
+  //
+  //   - When a branch IS selected: single click opens the override
+  //     modal for that profile on that branch.
+  //   - When NO branch is selected: single click highlights connected
+  //     edges (the old "shared view" behavior).
+  //
+  // Holding shift bypasses the editor and forces the highlight even
+  // in the per-branch case (escape hatch for users who just want
+  // to inspect edges).
+  if (_topologySelectedBranchId && !window.event?.shiftKey) {
     openOverrideModal(_topologySelectedBranchId, profileId);
     return;
   }
-
-  // Single click: focus the node to highlight connected edges
   _topologyFocusedNodeId = _topologyFocusedNodeId === profileId ? null : profileId;
   renderTopologyView();
 }
 
 function _topologyInfraClick(serviceId) {
-  // Infra supports the same focus behavior (edge highlight) but not override config
+  // P4 Part 5: infra single-click currently opens the dedicated infra
+  // edit panel via the existing list-view UI. Until we have a true
+  // infra editor inside the topology canvas, fall back to a toast
+  // explaining where to go.
+  if (typeof openInfraModal === 'function') {
+    // Switch back to list view first so the modal has a parent layout
+    // it expects (the modal queries DOM nodes that only exist in list).
+    setViewMode('list');
+    setTimeout(function () { openInfraModal(); }, 50);
+    return;
+  }
   _topologyFocusedNodeId = _topologyFocusedNodeId === serviceId ? null : serviceId;
   renderTopologyView();
 }
