@@ -201,6 +201,54 @@
     return tiles;
   }
 
+  // P4 Part 18 (G1.7): render the clone lifecycle badge next to the
+  // card title. Legacy projects (no cloneStatus at all) show the
+  // existing "Legacy" pill instead; G1 projects show one of four:
+  //   pending  — waiting for user to kick off the clone
+  //   cloning  — SSE in progress
+  //   ready    — clone finished, usable for deploy
+  //   error    — last clone attempt failed (hover → cloneError)
+  function renderCloneBadge(project) {
+    if (project.legacyFlag) {
+      return '<span class="cds-legacy-badge">Legacy</span>';
+    }
+    if (!project.cloneStatus) {
+      return '';
+    }
+    var label = {
+      pending: 'PENDING',
+      cloning: 'CLONING',
+      ready: 'READY',
+      error: 'ERROR',
+    }[project.cloneStatus] || project.cloneStatus.toUpperCase();
+    var spinner = project.cloneStatus === 'cloning'
+      ? '<span class="spinner"></span>'
+      : '';
+    var title = project.cloneStatus === 'error' && project.cloneError
+      ? ' title="' + escapeHtml(project.cloneError) + '"'
+      : '';
+    return (
+      '<span class="cds-clone-status ' + escapeHtml(project.cloneStatus) + '"' + title + '>' +
+      spinner + escapeHtml(label) +
+      '</span>'
+    );
+  }
+
+  // Clone / retry button — only present for 'pending' and 'error'.
+  // Stops propagation so clicking it doesn't navigate into the card.
+  function renderCloneButton(project) {
+    if (project.legacyFlag) return '';
+    if (project.cloneStatus !== 'pending' && project.cloneStatus !== 'error') return '';
+    var label = project.cloneStatus === 'error' ? '重新克隆' : '开始克隆';
+    var cls = project.cloneStatus === 'error' ? 'cds-clone-btn retry' : 'cds-clone-btn';
+    return (
+      '<button class="' + cls + '" ' +
+      'onclick="handleCloneProject(event, \'' + escapeHtml(project.id) + '\', \'' + escapeHtml(project.name) + '\', \'' + escapeHtml(project.gitRepoUrl || '') + '\')">' +
+      escapeHtml(label) +
+      '</button>'
+    );
+  }
+
   function renderCard(project, services) {
     var href = 'index.html?project=' + encodeURIComponent(project.id);
     var deleteBtn = project.legacyFlag
@@ -213,21 +261,28 @@
     var totalServices =
       ((services && services.profiles && services.profiles.length) || 0) +
       ((services && services.infra && services.infra.length) || 0);
-    var onlineCount = project.legacyFlag && services && services.profiles
-      ? services.profiles.filter(function () { return true; }).length
-      : 0;
     var envLabel = project.legacyFlag ? 'production' : 'production';
+    var cloneBadge = renderCloneBadge(project);
+    var cloneBtn = renderCloneButton(project);
+    // Show the clone error inline under the service strip when the
+    // last attempt failed — users need to read the git message to
+    // know whether to change the URL or just retry.
+    var errorBlock = (project.cloneStatus === 'error' && project.cloneError)
+      ? '<div class="cds-clone-error">' + escapeHtml(project.cloneError) + '</div>'
+      : '';
 
     return [
       '<a class="cds-project-card" href="', href, '">',
       '  <div class="cds-project-card-head">',
       '    <div class="cds-project-card-title">', escapeHtml(project.name), '</div>',
-      '    ', (project.legacyFlag ? '<span class="cds-legacy-badge">Legacy</span>' : ''),
+      '    ', cloneBadge,
       '  </div>',
       '  <div class="cds-service-strip">', renderServiceStrip(project, services || {}), '</div>',
+      errorBlock,
       '  <div class="cds-project-card-foot">',
       '    <span class="cds-env-dot">', envLabel, '</span>',
       '    <span class="cds-service-count"><strong>', totalServices, '</strong> service', totalServices === 1 ? '' : 's', '</span>',
+      cloneBtn ? '<span style="flex-shrink:0">' + cloneBtn + '</span>' : '',
       '  </div>',
       '  ', deleteBtn,
       '</a>',
@@ -414,6 +469,15 @@
           closeCreateProjectModal({ currentTarget: getModal(), target: getModal() });
           showToast('项目 “' + payload.name + '” 已创建');
           loadProjects();
+          // P4 Part 18 (G1.7): if the new project carries a
+          // cloneStatus='pending' (i.e. it was created with a
+          // gitRepoUrl and the server has reposBase configured),
+          // auto-open the clone progress modal. Otherwise the user
+          // has to hunt for the "开始克隆" button on the new card.
+          var created = result.body && result.body.project;
+          if (created && created.cloneStatus === 'pending') {
+            handleCloneProject(null, created.id, created.name, created.gitRepoUrl || '');
+          }
         } else {
           var msg = (result.body && result.body.message) || ('创建失败 (HTTP ' + result.status + ')');
           errEl.textContent = msg;
@@ -423,6 +487,189 @@
         errEl.textContent = '网络错误：' + (err && err.message ? err.message : err);
       })
       .finally(function () { setSubmitBusy(false); });
+  }
+
+  // ── Clone project (P4 Part 18 G1.7) ───────────────────────────────
+  //
+  // Triggers POST /api/projects/:id/clone via fetch + manual SSE
+  // decoding (EventSource doesn't support POST). Streams each
+  // `event: … / data: …` block into the modal log as it arrives,
+  // flips the title/status pill through the lifecycle, and on
+  // complete auto-closes after 1.5s and refreshes the grid. On
+  // error, leaves the modal open so the user can read the message.
+
+  var cloneModalAbort = null;
+
+  function getCloneModal() { return document.getElementById('cloneProgressModal'); }
+
+  function setCloneModalStatus(status, textOverride) {
+    var pill = document.getElementById('cloneModalStatus');
+    var text = document.getElementById('cloneModalStatusText');
+    if (!pill || !text) return;
+    pill.className = 'cds-clone-status ' + status;
+    text.textContent = textOverride || status.toUpperCase();
+    // Only show spinner for the 'cloning' state.
+    var existingSpinner = pill.querySelector('.spinner');
+    if (status === 'cloning') {
+      if (!existingSpinner) {
+        var s = document.createElement('span');
+        s.className = 'spinner';
+        pill.insertBefore(s, text);
+      }
+    } else if (existingSpinner) {
+      existingSpinner.remove();
+    }
+  }
+
+  function appendCloneLogLine(text, cls) {
+    var logEl = document.getElementById('cloneModalLog');
+    if (!logEl) return;
+    var line = document.createElement('span');
+    line.className = 'line' + (cls ? ' ' + cls : '');
+    line.textContent = text;
+    logEl.appendChild(line);
+    // Auto-scroll to bottom on every new line
+    logEl.scrollTop = logEl.scrollHeight;
+  }
+
+  function clearCloneLog() {
+    var logEl = document.getElementById('cloneModalLog');
+    if (logEl) logEl.innerHTML = '';
+  }
+
+  function handleCloneProject(event, projectId, projectName, gitRepoUrl) {
+    if (event) {
+      event.preventDefault();
+      event.stopPropagation();
+    }
+    var modal = getCloneModal();
+    if (!modal) return;
+
+    // Reset modal state
+    var titleEl = document.getElementById('cloneModalTitle');
+    var urlEl = document.getElementById('cloneModalUrl');
+    var closeBtn = document.getElementById('cloneModalCloseBtn');
+    if (titleEl) titleEl.textContent = '克隆: ' + projectName;
+    if (urlEl) urlEl.textContent = gitRepoUrl || '(no gitRepoUrl)';
+    if (closeBtn) {
+      closeBtn.textContent = '取消';
+      closeBtn.disabled = false;
+    }
+    clearCloneLog();
+    setCloneModalStatus('cloning', 'CLONING');
+    appendCloneLogLine('→ POST /api/projects/' + projectId + '/clone', 'info');
+    modal.classList.add('visible');
+
+    // Abort any previous clone
+    if (cloneModalAbort) {
+      try { cloneModalAbort.abort(); } catch (e) { /* */ }
+    }
+    var controller = new AbortController();
+    cloneModalAbort = controller;
+
+    fetch('/api/projects/' + encodeURIComponent(projectId) + '/clone', {
+      method: 'POST',
+      headers: { Accept: 'text/event-stream' },
+      credentials: 'same-origin',
+      signal: controller.signal,
+    })
+      .then(function (res) {
+        if (!res.ok) {
+          return res.json().then(function (body) {
+            throw new Error((body && body.message) || ('HTTP ' + res.status));
+          });
+        }
+        if (!res.body) throw new Error('Streaming not supported by this browser');
+        return res.body.getReader();
+      })
+      .then(function (reader) {
+        var decoder = new TextDecoder();
+        var buffer = '';
+        var sawComplete = false;
+        var sawError = false;
+
+        function processBuffer() {
+          // Each SSE block is separated by a blank line ("\n\n").
+          var idx;
+          while ((idx = buffer.indexOf('\n\n')) >= 0) {
+            var block = buffer.slice(0, idx);
+            buffer = buffer.slice(idx + 2);
+
+            var eventMatch = block.match(/^event: (.+)$/m);
+            var dataMatch = block.match(/^data: (.+)$/m);
+            if (!eventMatch || !dataMatch) continue;
+
+            var eventName = eventMatch[1].trim();
+            var data = {};
+            try { data = JSON.parse(dataMatch[1].trim()); } catch (e) { /* keep as string */ }
+
+            if (eventName === 'start') {
+              appendCloneLogLine('[start] ' + (data.gitRepoUrl || '') + ' → ' + (data.repoPath || ''), 'info');
+              setCloneModalStatus('cloning', 'CLONING');
+            } else if (eventName === 'progress') {
+              appendCloneLogLine(data.line || '');
+            } else if (eventName === 'complete') {
+              appendCloneLogLine('[complete] 项目已就绪: ' + (data.repoPath || ''), 'complete');
+              setCloneModalStatus('ready', 'READY');
+              sawComplete = true;
+            } else if (eventName === 'error') {
+              appendCloneLogLine('[error] ' + (data.message || 'unknown'), 'error');
+              setCloneModalStatus('error', 'ERROR');
+              sawError = true;
+            }
+          }
+        }
+
+        function pump() {
+          return reader.read().then(function (result) {
+            if (result.done) {
+              // Post-stream: refresh grid & auto-close on success.
+              if (sawComplete) {
+                showToast('克隆完成: ' + projectName);
+                setTimeout(function () {
+                  // Auto-close & refresh. User already saw the
+                  // complete line + 'READY' pill; no reason to make
+                  // them hunt for the close button.
+                  try { modal.classList.remove('visible'); } catch (e) { /* */ }
+                  loadProjects();
+                }, 1200);
+              } else if (sawError) {
+                // Leave modal open, let the user read the error.
+                if (closeBtn) closeBtn.textContent = '关闭';
+                loadProjects();
+              } else {
+                appendCloneLogLine('[stream ended unexpectedly]', 'error');
+                loadProjects();
+              }
+              return;
+            }
+            buffer += decoder.decode(result.value, { stream: true });
+            processBuffer();
+            return pump();
+          });
+        }
+        return pump();
+      })
+      .catch(function (err) {
+        if (err.name === 'AbortError') {
+          appendCloneLogLine('[aborted]', 'error');
+          return;
+        }
+        appendCloneLogLine('[error] ' + (err.message || err), 'error');
+        setCloneModalStatus('error', 'ERROR');
+        if (closeBtn) closeBtn.textContent = '关闭';
+      });
+  }
+
+  function closeCloneProgressModal(event) {
+    var modal = getCloneModal();
+    if (!modal) return;
+    if (event && event.currentTarget !== event.target) return;
+    if (cloneModalAbort) {
+      try { cloneModalAbort.abort(); } catch (e) { /* */ }
+      cloneModalAbort = null;
+    }
+    modal.classList.remove('visible');
   }
 
   // ── Delete project ────────────────────────────────────────────────
@@ -460,6 +707,8 @@
   window.closeCreateProjectModal = closeCreateProjectModal;
   window.handleCreateProjectSubmit = handleCreateProjectSubmit;
   window.handleDeleteProject = handleDeleteProject;
+  window.handleCloneProject = handleCloneProject;
+  window.closeCloneProgressModal = closeCloneProgressModal;
 
   document.addEventListener('keydown', function (e) {
     if (e.key === 'Escape') {
