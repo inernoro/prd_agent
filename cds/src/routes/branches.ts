@@ -2043,6 +2043,20 @@ export function createBranchRouter(deps: RouterDeps): Router {
       }
       rule.priority = rule.priority ?? 0;
       rule.enabled = rule.enabled ?? true;
+      // P4 Part 17 (G14 fix): mirror the B1 fix on POST /build-profiles
+      // and POST /infra — honour the project scope so routing rules
+      // created from a non-default project don't silently land in the
+      // legacy default project. Source of truth: request body, with
+      // ?project= query param as fallback. Validates the project exists
+      // to prevent orphan routing rules.
+      if (!rule.projectId) {
+        const queryProject = typeof req.query.project === 'string' ? req.query.project : null;
+        rule.projectId = queryProject || 'default';
+      }
+      if (!stateService.getProject(rule.projectId)) {
+        res.status(400).json({ error: `未知项目: ${rule.projectId}` });
+        return;
+      }
       stateService.addRoutingRule(rule);
       stateService.save();
       res.status(201).json({ rule });

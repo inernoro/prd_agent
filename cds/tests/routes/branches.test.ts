@@ -287,6 +287,67 @@ describe('Branch Routes', () => {
       list = await request(server, 'GET', '/api/routing-rules');
       expect((list.body as any).rules).toHaveLength(0);
     });
+
+    // P4 Part 17 (G14): routing rules created from a non-default project
+    // page must land in that project, not silently in 'default'. This
+    // mirrors the B1 fix on POST /build-profiles and POST /infra. Three
+    // tests cover body.projectId, fallback to 'default', and rejection
+    // of unknown projectId.
+    it('P4 Part 17 (G14): POST /routing-rules honors body.projectId', async () => {
+      const now = new Date().toISOString();
+      stateService.addProject({
+        id: 'rules-alt',
+        slug: 'rules-alt',
+        name: 'Rules Alt',
+        kind: 'git',
+        dockerNetwork: 'cds-proj-rules-alt',
+        legacyFlag: false,
+        createdAt: now,
+        updatedAt: now,
+      });
+
+      const res = await request(server, 'POST', '/api/routing-rules', {
+        id: 'r-alt',
+        name: 'Alt rule',
+        type: 'domain',
+        match: '*.alt.dev',
+        branch: 'main',
+        projectId: 'rules-alt',
+      });
+      expect(res.status).toBe(201);
+
+      const altList = await request(server, 'GET', '/api/routing-rules?project=rules-alt');
+      expect((altList.body as any).rules).toHaveLength(1);
+      expect((altList.body as any).rules[0].projectId).toBe('rules-alt');
+    });
+
+    it('P4 Part 17 (G14): POST /routing-rules defaults to "default" when no projectId', async () => {
+      const res = await request(server, 'POST', '/api/routing-rules', {
+        id: 'r-def',
+        name: 'Default rule',
+        type: 'domain',
+        match: '*.dev',
+        branch: 'main',
+      });
+      expect(res.status).toBe(201);
+
+      const list = await request(server, 'GET', '/api/routing-rules?project=default');
+      expect((list.body as any).rules).toHaveLength(1);
+      expect((list.body as any).rules[0].projectId).toBe('default');
+    });
+
+    it('P4 Part 17 (G14): POST /routing-rules rejects unknown projectId with 400', async () => {
+      const res = await request(server, 'POST', '/api/routing-rules', {
+        id: 'r-bad',
+        name: 'Bad rule',
+        type: 'domain',
+        match: '*.dev',
+        branch: 'main',
+        projectId: 'no-such-project',
+      });
+      expect(res.status).toBe(400);
+      expect((res.body as any).error).toContain('未知项目');
+    });
   });
 
   // ── Build profiles ──
