@@ -4687,6 +4687,8 @@ function openProfileModal() {
         <button type="button" class="profile-template-btn" onclick="_applyProfileTemplate('python')" title="Python 3.12 + pip">🐍 Python</button>
         <button type="button" class="profile-template-btn" onclick="_applyProfileTemplate('go')" title="Go 1.22">⚡ Go</button>
         <button type="button" class="profile-template-btn" onclick="_applyProfileTemplate('static')" title="静态站点 nginx">📄 Static</button>
+        <!-- P4 Part 18 (G10): auto-detect stack from the current project / branch's files -->
+        <button type="button" class="profile-template-btn" onclick="_autoDetectStack()" title="扫描代码仓库识别技术栈并自动填入字段" style="margin-left:8px;border-color:rgba(96,165,250,0.5);color:#60a5fa">🔍 Auto-detect</button>
       </div>
       <div class="form-row">
         <input id="profileId" placeholder="配置 ID（如 api、web）" class="form-input sm">
@@ -4868,6 +4870,100 @@ function _applyProfileTemplate(key) {
 
 // Expose for the inline onclick handlers
 window._applyProfileTemplate = _applyProfileTemplate;
+
+// P4 Part 18 (G10): auto-detect the stack from the current project's
+// cloned repo and pre-fill the BuildProfile form. Delegates to the
+// new POST /api/detect-stack endpoint which scans the filesystem.
+// Uses the currently-selected topology project if set, else falls
+// back to the legacy config.repoRoot (what the server would scan
+// anyway if projectId is omitted).
+async function _autoDetectStack() {
+  const btn = document.querySelector('.profile-template-btn[onclick*="_autoDetectStack"]');
+  if (btn) {
+    btn.textContent = '🔍 扫描中…';
+    btn.disabled = true;
+  }
+
+  // Pick a project id if we can — the topology view stashes one
+  // globally during renderCard(). Otherwise omit and let the server
+  // use its default.
+  const projectId = (typeof currentProjectId === 'string' && currentProjectId)
+    || (new URLSearchParams(location.search)).get('project')
+    || undefined;
+
+  try {
+    const res = await fetch(`${API}/detect-stack`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(projectId ? { projectId } : {}),
+    });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      throw new Error(body.error || `HTTP ${res.status}`);
+    }
+    const d = await res.json();
+
+    if (d.stack === 'unknown') {
+      showToast('未识别出栈类型：' + (d.summary || '无签名文件'), 'warning');
+      return;
+    }
+    if (d.stack === 'dockerfile') {
+      showToast('检测到 Dockerfile — CDS 当前不支持自动构建，请改用预构建镜像', 'warning');
+      return;
+    }
+
+    // Same fill logic as _applyProfileTemplate, but sourced from
+    // the server response instead of a hardcoded PROFILE_TEMPLATES
+    // entry.
+    function setVal(id, v) {
+      const el = document.getElementById(id);
+      if (el) el.value = v == null ? '' : v;
+    }
+
+    const imageSel = document.getElementById('profileImage');
+    if (imageSel) {
+      const hasMatch = Array.from(imageSel.options).some(o => o.value === d.dockerImage);
+      if (hasMatch) {
+        imageSel.value = d.dockerImage;
+        const customEl = document.getElementById('profileImageCustom');
+        if (customEl) customEl.classList.add('hidden');
+      } else {
+        imageSel.value = '__custom__';
+        const customEl = document.getElementById('profileImageCustom');
+        if (customEl) {
+          customEl.classList.remove('hidden');
+          customEl.value = d.dockerImage;
+        }
+      }
+    }
+
+    setVal('profileWorkDir', d.workDir || '.');
+    if (d.containerPort) setVal('profilePort', d.containerPort);
+    setVal('profileRun', d.runCommand || '');
+    setVal('profileInstall', d.installCommand || '');
+    setVal('profileBuild', d.buildCommand || '');
+
+    // Auto-expand advanced fields when any install/build was set
+    if ((d.installCommand || d.buildCommand) && typeof toggleAdvanced === 'function') {
+      const adv = document.getElementById('advancedFields');
+      if (adv && adv.classList.contains('hidden')) toggleAdvanced();
+    }
+
+    showToast(
+      '已识别: ' + (d.summary || d.stack) +
+      '（扫描路径 ' + (d.scanPath || '-') + '）',
+      'info',
+    );
+  } catch (err) {
+    showToast('检测失败: ' + (err && err.message ? err.message : err), 'error');
+  } finally {
+    if (btn) {
+      btn.textContent = '🔍 Auto-detect';
+      btn.disabled = false;
+    }
+  }
+}
+window._autoDetectStack = _autoDetectStack;
 
 async function saveProfileAndRefresh() {
   const selectVal = document.getElementById('profileImage').value;

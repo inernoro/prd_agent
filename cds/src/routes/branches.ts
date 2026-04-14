@@ -17,6 +17,7 @@ import { discoverComposeFiles, parseComposeFile, parseComposeString, toComposeYa
 import type { ComposeServiceDef } from '../services/compose-parser.js';
 import { combinedOutput } from '../types.js';
 import { topoSortLayers } from '../services/topo-sort.js';
+import { detectStack } from '../services/stack-detector.js';
 
 export interface RouterDeps {
   stateService: StateService;
@@ -4915,6 +4916,51 @@ export function createBranchRouter(deps: RouterDeps): Router {
     try {
       await schedulerService.markCold(slug);
       res.json({ ok: true, slug, heatState: 'cold' });
+    } catch (err) {
+      res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  // P4 Part 18 (G10): POST /api/detect-stack — auto-detect stack.
+  //
+  // Body: { projectId?, branchId?, path? }
+  //
+  // The route figures out which filesystem path to scan:
+  //   - `path` is absolute → use as-is (rare, escape hatch)
+  //   - `branchId` → use that branch's worktree
+  //   - `projectId` → use the project's repoPath / cloned repo
+  //   - neither → fall back to config.repoRoot
+  //
+  // Returns the raw StackDetection from detectStack(). BuildProfile
+  // form consumers pick dockerImage / installCommand / buildCommand
+  // / runCommand from the response. Never throws on unknown stack;
+  // the client just shows the summary when confidence is 0.
+  router.post('/detect-stack', (req, res) => {
+    const { projectId, branchId, path: explicitPath } = (req.body || {}) as {
+      projectId?: string;
+      branchId?: string;
+      path?: string;
+    };
+
+    let scanPath: string;
+    if (typeof explicitPath === 'string' && explicitPath.length > 0 && path.isAbsolute(explicitPath)) {
+      scanPath = explicitPath;
+    } else if (branchId) {
+      const entry = stateService.getBranch(branchId);
+      if (!entry) {
+        res.status(404).json({ error: `分支 "${branchId}" 不存在` });
+        return;
+      }
+      scanPath = entry.worktreePath;
+    } else if (projectId) {
+      scanPath = stateService.getProjectRepoRoot(projectId, config.repoRoot);
+    } else {
+      scanPath = config.repoRoot;
+    }
+
+    try {
+      const detection = detectStack(scanPath);
+      res.json({ ...detection, scanPath });
     } catch (err) {
       res.status(500).json({ error: (err as Error).message });
     }
