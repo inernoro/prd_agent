@@ -8533,16 +8533,57 @@ function _topologyRenderPanelTab(tab, entity) {
   }
 
   if (tab === 'variables') {
+    // P4 Part 7: Railway-style env vars table.
+    //
+    // Modeled after Railway's Variables tab screenshot:
+    //   - Section header "Service Variables" + Raw Editor / + New Variable links
+    //   - Each var as a horizontal row: KEY (mono, faint bg) + VALUE input + copy + delete
+    //   - Empty state with helpful CTA
+    //   - Bottom: "Edit in full editor" button routes to existing modals
+    //
+    // Editing here is currently READ-ONLY in the table — actual mutation
+    // routes to the existing build-profile / branch override modals that
+    // already have full validation. A future commit can wire inline
+    // PATCH /api/build-profiles/:id/env to make the table truly editable.
     var env = entity.env || {};
-    var keys = Object.keys(env);
+    var keys = Object.keys(env).sort();
+
+    var rows = keys.length === 0
+      ? '<div class="tfp-vars-empty">' +
+        '  <div class="tfp-vars-empty-icon">' +
+        '    <svg width="22" height="22" viewBox="0 0 16 16" fill="currentColor"><path d="M2.5 1.75v11.5a.25.25 0 00.25.25h10.5a.25.25 0 00.25-.25V6h-2.75A1.75 1.75 0 019 4.25V1.5H2.75a.25.25 0 00-.25.25zM10.5 1.5v2.75c0 .138.112.25.25.25H13.5L10.5 1.5zM1 1.75C1 .784 1.784 0 2.75 0h7.586c.464 0 .909.184 1.237.513l3.913 3.914c.329.328.514.773.514 1.237v7.586A1.75 1.75 0 0114.25 15H2.75A1.75 1.75 0 011 13.25V1.75z"/></svg>' +
+        '  </div>' +
+        '  <div class="tfp-vars-empty-title">还没有环境变量</div>' +
+        '  <div class="tfp-vars-empty-desc">在编辑器里添加 key/value，部署时会注入到容器</div>' +
+        '</div>'
+      : keys.map(function (k) {
+          var v = String(env[k] == null ? '' : env[k]);
+          var isSecret = /(secret|password|token|key|apikey)/i.test(k);
+          var displayVal = isSecret && v.length > 0 ? '••••••••' : v.slice(0, 80);
+          return '<div class="tfp-var-row">' +
+            '<div class="tfp-var-key">' + esc(k) + '</div>' +
+            '<div class="tfp-var-val">' + esc(displayVal) + (v.length > 80 ? '…' : '') + '</div>' +
+            '<button type="button" class="tfp-var-icon-btn" title="复制" onclick="navigator.clipboard.writeText(' + JSON.stringify(v).replace(/"/g, '&quot;') + ');showToast(\'已复制\',\'info\')">' +
+              '<svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor"><path d="M0 6.75C0 5.784.784 5 1.75 5h1.5a.75.75 0 010 1.5h-1.5a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-1.5a.75.75 0 011.5 0v1.5A1.75 1.75 0 019.25 16h-7.5A1.75 1.75 0 010 14.25v-7.5z"/><path d="M5 1.75C5 .784 5.784 0 6.75 0h7.5C15.216 0 16 .784 16 1.75v7.5A1.75 1.75 0 0114.25 11h-7.5A1.75 1.75 0 015 9.25v-7.5zm1.75-.25a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-7.5a.25.25 0 00-.25-.25h-7.5z"/></svg>' +
+            '</button>' +
+          '</div>';
+        }).join('');
+
     body.innerHTML =
-      '<div class="tfp-section-h">SERVICE VARIABLES</div>' +
-      (keys.length === 0
-        ? '<div class="tfp-empty">还没有环境变量。在 Settings tab 编辑此服务后可添加。</div>'
-        : keys.map(function (k) {
-            return '<div class="tfp-kv"><span class="tfp-kv-key">' + esc(k) + '</span><span class="tfp-kv-val">' + esc(String(env[k]).slice(0, 60)) + '</span></div>';
-          }).join('')) +
-      '<div style="margin-top:18px;padding:10px;background:var(--bg-card);border:1px dashed var(--card-border);border-radius:8px;color:var(--text-muted);font-size:11px">完整的 key/value 编辑器（含 Suggested Variables + Raw Editor）将在下一个 commit 上线</div>';
+      '<div class="tfp-vars-toolbar">' +
+        '<div class="tfp-vars-section-title">' +
+          '<span>Service Variables</span>' +
+          '<span class="tfp-vars-count">' + keys.length + '</span>' +
+        '</div>' +
+        '<button type="button" class="tfp-vars-edit-btn" onclick="_topologyPanelOpenEditor()">' +
+          '<svg width="11" height="11" viewBox="0 0 16 16" fill="currentColor"><path d="M11.013 1.427a1.75 1.75 0 012.474 0l1.086 1.086a1.75 1.75 0 010 2.474l-8.61 8.61c-.21.21-.47.364-.756.445l-3.251.93a.75.75 0 01-.927-.928l.929-3.25a1.75 1.75 0 01.445-.758l8.61-8.61z"/></svg>' +
+          '编辑全部' +
+        '</button>' +
+      '</div>' +
+      '<div class="tfp-vars-list">' + rows + '</div>' +
+      (keys.length > 0
+        ? '<div class="tfp-vars-hint">敏感字段（含 secret / password / token / key）的值会自动遮罩，点 ⧉ 复制原值</div>'
+        : '');
     return;
   }
 
