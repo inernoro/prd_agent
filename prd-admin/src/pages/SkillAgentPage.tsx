@@ -22,6 +22,7 @@ import {
   type PlazaSkillItem,
 } from '@/services/real/skillAgent';
 import { useAuthStore } from '@/stores/authStore';
+import { resolveAvatarUrl } from '@/lib/avatar';
 import { glassBar } from '@/lib/glassStyles';
 import {
   Send, Save, FileText, Archive, RotateCcw, Wand2, ArrowLeft, Check,
@@ -1095,7 +1096,7 @@ function PlazaTab() {
                     <div className="flex items-center gap-2 mt-2.5 pt-2.5" style={{ borderTop: '1px solid rgba(255,255,255,0.04)' }}>
                       <div className="flex items-center gap-1 text-[10px]" style={{ color: 'var(--text-muted)' }}>
                         {skill.authorAvatar ? (
-                          <img src={skill.authorAvatar} alt="" className="w-4 h-4 rounded-full" />
+                          <img src={resolveAvatarUrl({ avatarFileName: skill.authorAvatar })} alt="" className="w-4 h-4 rounded-full" />
                         ) : (
                           <User size={10} />
                         )}
@@ -1157,7 +1158,7 @@ function PlazaSkillDetailView({ skill, onBack }: { skill: PlazaSkillItem; onBack
         <span className="text-[11px] px-1.5 py-0.5 rounded-md" style={{ background: 'rgba(139,92,246,0.1)', color: '#8B5CF6' }}>{skill.category}</span>
         <div className="flex-1" />
         <span className="flex items-center gap-1 text-[11px]" style={{ color: 'var(--text-muted)' }}>
-          {skill.authorAvatar ? <img src={skill.authorAvatar} alt="" className="w-4 h-4 rounded-full" /> : <User size={11} />}
+          {skill.authorAvatar ? <img src={resolveAvatarUrl({ avatarFileName: skill.authorAvatar })} alt="" className="w-4 h-4 rounded-full" /> : <User size={11} />}
           {skill.authorName || '匿名'}
         </span>
       </div>
@@ -1193,7 +1194,7 @@ function PlazaSkillDetailView({ skill, onBack }: { skill: PlazaSkillItem; onBack
             <div>
               <div className="text-[11px] font-semibold mb-1" style={{ color: 'var(--text-muted)' }}>作者</div>
               <div className="flex items-center gap-2">
-                {skill.authorAvatar ? <img src={skill.authorAvatar} alt="" className="w-6 h-6 rounded-full" /> : <User size={16} />}
+                {skill.authorAvatar ? <img src={resolveAvatarUrl({ avatarFileName: skill.authorAvatar })} alt="" className="w-6 h-6 rounded-full" /> : <User size={16} />}
                 <span className="text-[13px]" style={{ color: 'var(--text-primary)' }}>{skill.authorName || '匿名'}</span>
               </div>
             </div>
