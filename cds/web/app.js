@@ -8915,82 +8915,12 @@ window._topologyShowDatabaseSubmenu = _topologyShowDatabaseSubmenu;
 window._topologyShowAddMenuRoot = _topologyShowAddMenuRoot;
 window._topologyCreateInfraFromTemplate = _topologyCreateInfraFromTemplate;
 
-// P4 Part 16 (B3 fix): friendly explainer modal for the GitHub
-// Repository "+ Add" item. Replaces the previous death-loop pattern
-// (toast → redirect to projects.html → user clicks New → empty
-// dashboard → + Add → GitHub Repository → loop). Now users get a
-// clear, recoverable explanation of what's missing and a one-click
-// path forward via the existing build profile editor.
-function _showGitRepoExplainer() {
-  // Close the + Add menu first
-  var menu = document.getElementById('topologyFsAddMenu');
-  if (menu) menu.classList.remove('open');
-
-  // Idempotent overlay creation
-  var existing = document.getElementById('cdsGitRepoExplainer');
-  if (existing) {
-    existing.classList.add('open');
-    return;
-  }
-
-  var overlay = document.createElement('div');
-  overlay.id = 'cdsGitRepoExplainer';
-  overlay.className = 'cmdk-overlay open';
-  overlay.style.alignItems = 'center';
-  overlay.style.paddingTop = '0';
-  overlay.onclick = function (e) {
-    if (e.target === overlay) overlay.classList.remove('open');
-  };
-  overlay.innerHTML =
-    '<div class="cmdk-dialog" style="max-width:520px" onclick="event.stopPropagation()">' +
-      '<div style="padding:24px 26px 18px;border-bottom:1px solid var(--card-border)">' +
-        '<div style="display:flex;align-items:center;gap:12px;margin-bottom:8px">' +
-          '<div style="width:36px;height:36px;border-radius:9px;background:var(--bg-elevated);display:flex;align-items:center;justify-content:center;color:var(--text-secondary);flex-shrink:0">' +
-            '<svg width="20" height="20" viewBox="0 0 16 16" fill="currentColor"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>' +
-          '</div>' +
-          '<div>' +
-            '<div style="font-size:16px;font-weight:700;color:var(--text-primary)">添加 GitHub 仓库</div>' +
-            '<div style="font-size:11px;color:var(--text-muted);margin-top:2px">需要 GitHub OAuth 集成（P5/P6）</div>' +
-          '</div>' +
-        '</div>' +
-      '</div>' +
-      '<div style="padding:20px 26px;font-size:13px;color:var(--text-secondary);line-height:1.65">' +
-        '<p style="margin:0 0 14px">完整的"从 GitHub 列表选仓库 → 自动 clone → 自动检测 build/start 命令 → 创建服务"流程依赖：</p>' +
-        '<ul style="margin:0 0 16px;padding-left:22px;font-size:12px;line-height:1.8">' +
-          '<li>GitHub OAuth App（管理员配置 <code>CDS_GITHUB_CLIENT_ID</code>）</li>' +
-          '<li>用户授权 + 后端拉取 <code>/user/repos</code></li>' +
-          '<li>Nixpacks 风格的 build 推断（CDS 当前的快速模板是手工 5 种）</li>' +
-        '</ul>' +
-        '<p style="margin:0 0 14px;color:var(--text-muted);font-size:12px">这一整套要等 P5/P6 上线。<strong style="color:var(--text-secondary)">现在你可以这样手工接你的仓库：</strong></p>' +
-        '<ol style="margin:0;padding-left:22px;font-size:12px;line-height:1.9;color:var(--text-secondary)">' +
-          '<li>在主菜单选 <strong>Empty Service</strong> 打开构建配置编辑器</li>' +
-          '<li>用顶部的 <strong>快速开始</strong> 模板选你的语言（Node/.NET/Python/Go/Static）</li>' +
-          '<li>把 Build 命令改成你的实际命令，保存</li>' +
-          '<li>CDS 会从 <code>config.repoRoot</code> 配置的全局 Git 仓库创建 worktree</li>' +
-        '</ol>' +
-      '</div>' +
-      '<div style="padding:14px 26px 22px;border-top:1px solid var(--card-border);display:flex;gap:10px;justify-content:flex-end">' +
-        '<button type="button" class="btn-ghost" style="padding:9px 16px;border-radius:9px;background:transparent;color:var(--text-secondary);border:1px solid var(--card-border);font-size:12px;font-weight:600;cursor:pointer" onclick="_closeGitRepoExplainer()">返回 + Add 菜单</button>' +
-        '<button type="button" class="btn-primary" style="padding:9px 16px;border-radius:9px;background:var(--accent);color:#fff;border:none;font-size:12px;font-weight:600;cursor:pointer" onclick="_closeGitRepoExplainer();_topologyChooseAddItem(\'empty\')">打开 Empty Service 编辑器</button>' +
-      '</div>' +
-    '</div>';
-  document.body.appendChild(overlay);
-
-  // ESC closes
-  document.addEventListener('keydown', function escHandler(e) {
-    if (e.key === 'Escape' && overlay.classList.contains('open')) {
-      overlay.classList.remove('open');
-    }
-  });
-}
-
-function _closeGitRepoExplainer() {
-  var overlay = document.getElementById('cdsGitRepoExplainer');
-  if (overlay) overlay.classList.remove('open');
-}
-
-window._showGitRepoExplainer = _showGitRepoExplainer;
-window._closeGitRepoExplainer = _closeGitRepoExplainer;
+// P4 Part 18 (UX rework): the old _showGitRepoExplainer stub was
+// buggy (CSS class mismatch — close button silently did nothing)
+// AND obsolete (Phase B G1 now ships real multi-repo clone). It
+// used to live here. "+ Add → GitHub Repository" in the topology
+// view now redirects to projects.html?new=git which auto-opens
+// the real create modal on the project landing page.
 
 // ─────────────────────────────────────────────────────────────────
 // P4 Part 11 — Cmd+K command palette
@@ -9249,19 +9179,19 @@ function _topologyChooseAddItem(kind) {
 
   switch (kind) {
     case 'git':
-      // P4 Part 16 (B3 fix): no longer redirect to projects.html
-      // (which created a death loop — user came from there, gets
-      // redirected back, came here again, etc).
+      // P4 Part 18 (UX rework): Phase B G1 landed real multi-repo
+      // clone, so "+ Add → GitHub Repository" from the topology view
+      // now routes to the SAME create-project-with-clone flow that
+      // projects.html exposes. The prior "explainer modal" stub was
+      // buggy (close button silently no-oped because its CSS class
+      // didn't exist) and is removed entirely — we ship the real
+      // thing instead.
       //
-      // Instead, show a friendly explainer modal that:
-      //   1. Tells the user this requires GitHub OAuth integration
-      //   2. Offers ONE actionable next step: open the build profile
-      //      editor pre-filled with placeholder Node.js settings so
-      //      the user can manually wire up their repo by editing
-      //      buildCommand etc.
-      //   3. Has an explicit close + "go back to + Add menu" button
-      //      so the user can recover gracefully.
-      _showGitRepoExplainer();
+      // Redirect to projects.html with ?new=git so the landing page
+      // auto-opens the create modal focused on the git URL field.
+      // No death loop: the create modal is modal, user fills URL,
+      // hits create, watches the SSE clone modal, done.
+      location.href = 'projects.html?new=git';
       break;
     case 'database':
       // P4 Part 10: show the Database submenu (PostgreSQL / Redis /

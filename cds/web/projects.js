@@ -410,9 +410,17 @@
     if (form) form.reset();
     var err = document.getElementById('createProjectError');
     if (err) err.textContent = '';
+    // Reset collapsible advanced section
+    var advSec = document.getElementById('cp-advanced-section');
+    var advChev = document.getElementById('cp-advanced-chev');
+    if (advSec) advSec.style.display = 'none';
+    if (advChev) advChev.style.transform = 'rotate(0deg)';
+    // Reset hint line
+    if (typeof _updateCreateHint === 'function') _updateCreateHint();
     modal.classList.add('visible');
     setTimeout(function () {
-      var first = document.getElementById('cp-name');
+      // P4 Part 18 UX rework: focus the smart input (URL or name)
+      var first = document.getElementById('cp-smart-input');
       if (first) first.focus();
     }, 50);
   }
@@ -431,25 +439,99 @@
     btn.textContent = busy ? '创建中…' : '创建';
   }
 
+  // ── Smart-input helpers (P4 Part 18 UX rework) ────────────────────
+  //
+  // The create modal no longer exposes separate "name" and "git URL"
+  // fields by default. Users type into one input: if it looks like a
+  // URL we treat it as a git repo and derive the project name from
+  // the last path segment; otherwise it's an empty-project name.
+  // The advanced section (name override, slug, description) stays
+  // collapsed so the 90% case is a one-field form.
+
+  function _parseSmartInput(raw) {
+    var val = String(raw || '').trim();
+    if (!val) return { kind: 'empty', name: '', gitRepoUrl: null };
+
+    // URL sniff — accept http(s) and git@ SSH shorthand
+    var isUrl = /^(https?:\/\/|git@|ssh:\/\/|file:\/\/)/i.test(val) || /\.git$/i.test(val);
+    if (!isUrl) {
+      return { kind: 'name', name: val, gitRepoUrl: null };
+    }
+
+    // Derive project name from the URL's last segment, stripping .git
+    var segment = val;
+    // Handle git@github.com:foo/bar.git → take "bar"
+    var colonMatch = /^git@[^:]+:(.+)$/.exec(val);
+    if (colonMatch) segment = colonMatch[1];
+    // Strip trailing slash(es)
+    segment = segment.replace(/\/+$/, '');
+    var lastSlash = segment.lastIndexOf('/');
+    if (lastSlash >= 0) segment = segment.slice(lastSlash + 1);
+    segment = segment.replace(/\.git$/i, '');
+    if (!segment) segment = 'project';
+
+    return { kind: 'url', name: segment, gitRepoUrl: val };
+  }
+
+  // Called from the smart-input oninput handler — updates the hint
+  // text live as the user types so they see the auto-derived name
+  // and what the form will do when they hit Create.
+  function _updateCreateHint() {
+    var raw = (document.getElementById('cp-smart-input') || {}).value || '';
+    var parsed = _parseSmartInput(raw);
+    var hintEl = document.getElementById('cp-hint');
+    if (!hintEl) return;
+
+    if (parsed.kind === 'empty') {
+      hintEl.textContent = '粘贴一个 Git URL (会自动 clone)，或者输入一个项目名 (创建空项目)';
+      hintEl.style.color = 'var(--text-muted)';
+    } else if (parsed.kind === 'url') {
+      hintEl.innerHTML = '📦 识别为 Git 仓库。将创建项目 <strong style="color:var(--text-primary)">' + escapeHtml(parsed.name) + '</strong> 并自动克隆';
+      hintEl.style.color = 'var(--green, #10b981)';
+    } else {
+      hintEl.innerHTML = '📁 将创建空项目 <strong style="color:var(--text-primary)">' + escapeHtml(parsed.name) + '</strong>（无 Git 集成，可后续补充）';
+      hintEl.style.color = 'var(--text-secondary)';
+    }
+  }
+  window._updateCreateHint = _updateCreateHint;
+
+  // Toggle the "更多选项" collapsible section.
+  function _toggleCreateAdvanced() {
+    var sec = document.getElementById('cp-advanced-section');
+    var chev = document.getElementById('cp-advanced-chev');
+    if (!sec) return;
+    var nowOpen = sec.style.display === 'none' || sec.style.display === '';
+    sec.style.display = nowOpen ? 'block' : 'none';
+    if (chev) chev.style.transform = nowOpen ? 'rotate(90deg)' : 'rotate(0deg)';
+  }
+  window._toggleCreateAdvanced = _toggleCreateAdvanced;
+
   function handleCreateProjectSubmit(event) {
     event.preventDefault();
+    var smartEl = document.getElementById('cp-smart-input');
     var nameEl = document.getElementById('cp-name');
     var slugEl = document.getElementById('cp-slug');
-    var gitEl = document.getElementById('cp-gitRepoUrl');
     var descEl = document.getElementById('cp-description');
     var errEl = document.getElementById('createProjectError');
-
     errEl.textContent = '';
-    var payload = {
-      name: nameEl.value.trim(),
-      slug: slugEl.value.trim() || undefined,
-      gitRepoUrl: gitEl.value.trim() || undefined,
-      description: descEl.value.trim() || undefined,
-    };
-    if (!payload.name) {
-      errEl.textContent = '请填写项目名称';
+
+    var parsed = _parseSmartInput(smartEl ? smartEl.value : '');
+    if (parsed.kind === 'empty') {
+      errEl.textContent = '请粘贴 Git URL 或输入项目名';
       return;
     }
+
+    // Advanced name override wins if the user opened the section
+    // and typed something explicit.
+    var nameOverride = nameEl && nameEl.value.trim();
+    var finalName = nameOverride || parsed.name;
+
+    var payload = {
+      name: finalName,
+      slug: slugEl && slugEl.value.trim() || undefined,
+      gitRepoUrl: parsed.gitRepoUrl || undefined,
+      description: descEl && descEl.value.trim() || undefined,
+    };
 
     setSubmitBusy(true);
     fetch('/api/projects', {
@@ -469,12 +551,13 @@
           closeCreateProjectModal({ currentTarget: getModal(), target: getModal() });
           showToast('项目 “' + payload.name + '” 已创建');
           loadProjects();
-          // P4 Part 18 (G1.7): if the new project carries a
-          // cloneStatus='pending' (i.e. it was created with a
-          // gitRepoUrl and the server has reposBase configured),
-          // auto-open the clone progress modal. Otherwise the user
-          // has to hunt for the "开始克隆" button on the new card.
           var created = result.body && result.body.project;
+          // P4 Part 18 (UX rework): if the new project was created
+          // WITH a gitRepoUrl + the server stamped cloneStatus=pending,
+          // auto-open the clone progress modal. The clone modal itself
+          // then chains: clone → detect stack → offer "Create default
+          // build profile" so the user goes from "paste URL" to
+          // "ready to deploy" in a single continuous experience.
           if (created && created.cloneStatus === 'pending') {
             handleCloneProject(null, created.id, created.name, created.gitRepoUrl || '');
           }
@@ -623,16 +706,10 @@
         function pump() {
           return reader.read().then(function (result) {
             if (result.done) {
-              // Post-stream: refresh grid & auto-close on success.
+              // Post-stream: run the detect → auto-profile chain on success,
+              // leave the modal open on error so the user can read the log.
               if (sawComplete) {
-                showToast('克隆完成: ' + projectName);
-                setTimeout(function () {
-                  // Auto-close & refresh. User already saw the
-                  // complete line + 'READY' pill; no reason to make
-                  // them hunt for the close button.
-                  try { modal.classList.remove('visible'); } catch (e) { /* */ }
-                  loadProjects();
-                }, 1200);
+                _runPostCloneChain(projectId, projectName, modal, closeBtn);
               } else if (sawError) {
                 // Leave modal open, let the user read the error.
                 if (closeBtn) closeBtn.textContent = '关闭';
@@ -670,6 +747,120 @@
       cloneModalAbort = null;
     }
     modal.classList.remove('visible');
+  }
+
+  // ── End-to-end auto flow (P4 Part 18 UX rework) ───────────────────
+  //
+  // Once a clone completes successfully we keep the modal open and
+  // chain:
+  //
+  //   1. POST /api/detect-stack { projectId }
+  //      Logs the detected stack + summary. Unknown stack is OK —
+  //      just means the user has to configure the profile by hand.
+  //   2. If stack is known AND not a Dockerfile (which requires an
+  //      externally-built image), POST /api/build-profiles to
+  //      auto-create a default profile using the detected settings.
+  //   3. Log the profile creation and close the modal.
+  //
+  // The user goes from "paste URL" to "ready to deploy" without
+  // ever touching the BuildProfile form. They can still tune things
+  // afterwards — this just skips the friction for the common case.
+
+  async function _runPostCloneChain(projectId, projectName, modal, closeBtn) {
+    try {
+      appendCloneLogLine('', '');
+      appendCloneLogLine('[detect] 扫描代码仓库识别技术栈…', 'info');
+
+      var detectRes = await fetch('/api/detect-stack', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'same-origin',
+        body: JSON.stringify({ projectId: projectId }),
+      });
+      if (!detectRes.ok) {
+        var body = await detectRes.json().catch(function () { return {}; });
+        throw new Error('detect-stack ' + detectRes.status + ' ' + (body.error || ''));
+      }
+      var detection = await detectRes.json();
+      appendCloneLogLine('[detect] ' + (detection.summary || detection.stack), 'info');
+
+      if (detection.stack === 'unknown') {
+        appendCloneLogLine('未识别出已知栈 — 请在项目设置里手动添加构建配置', 'error');
+        _finalizeCloneModal(modal, closeBtn, projectName, '项目已就绪，但需要手动配置构建');
+        return;
+      }
+      if (detection.manualSetupRequired) {
+        appendCloneLogLine('⚠ ' + (detection.summary || 'manual setup required'), 'error');
+        _finalizeCloneModal(modal, closeBtn, projectName, '项目已就绪，但需要手动配置镜像');
+        return;
+      }
+
+      // Auto-create a default build profile.
+      appendCloneLogLine('[profile] 自动创建默认构建配置…', 'info');
+      var profileId = _suggestProfileId(detection.stack, projectName);
+      var profile = {
+        id: profileId,
+        name: profileId,
+        projectId: projectId,
+        dockerImage: detection.dockerImage,
+        workDir: detection.workDir || '.',
+        containerPort: detection.containerPort || 8080,
+        command: detection.runCommand || '',
+        installCommand: detection.installCommand || undefined,
+        buildCommand: detection.buildCommand || undefined,
+      };
+      var profRes = await fetch('/api/build-profiles', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'same-origin',
+        body: JSON.stringify(profile),
+      });
+      if (!profRes.ok) {
+        var pb = await profRes.json().catch(function () { return {}; });
+        // 409 is fine — profile already exists. Anything else → warn
+        // but still finalize, the clone itself succeeded.
+        appendCloneLogLine('⚠ 构建配置创建失败: ' + (pb.error || profRes.status), 'error');
+        _finalizeCloneModal(modal, closeBtn, projectName, '项目已就绪（构建配置需要手动创建）');
+        return;
+      }
+      appendCloneLogLine('[profile] ✅ 已创建: ' + profileId + ' (' + detection.dockerImage + ')', 'complete');
+      appendCloneLogLine('[profile]   run: ' + detection.runCommand, 'info');
+      if (detection.installCommand) {
+        appendCloneLogLine('[profile]   install: ' + detection.installCommand, 'info');
+      }
+      if (detection.buildCommand) {
+        appendCloneLogLine('[profile]   build: ' + detection.buildCommand, 'info');
+      }
+
+      _finalizeCloneModal(modal, closeBtn, projectName, '✅ 项目已就绪，可以部署');
+    } catch (err) {
+      appendCloneLogLine('[chain-error] ' + (err && err.message ? err.message : err), 'error');
+      if (closeBtn) closeBtn.textContent = '关闭';
+      loadProjects();
+    }
+  }
+
+  function _suggestProfileId(stack, projectName) {
+    // Map stack → short handle for the profile id
+    var handle = {
+      nodejs: 'api',
+      python: 'api',
+      go: 'api',
+      rust: 'api',
+      java: 'api',
+      ruby: 'api',
+      php: 'api',
+    }[stack] || 'app';
+    return handle;
+  }
+
+  function _finalizeCloneModal(modal, closeBtn, projectName, toastMsg) {
+    showToast(toastMsg || ('克隆完成: ' + projectName));
+    loadProjects();
+    // Give the user a moment to read the final log lines, then close.
+    setTimeout(function () {
+      try { modal.classList.remove('visible'); } catch (e) { /* */ }
+    }, 2400);
   }
 
   // ── Delete project ────────────────────────────────────────────────
@@ -721,4 +912,20 @@
 
   loadProjects();
   bootstrapMeLabel();
+
+  // P4 Part 18 (UX rework): if the user arrived via projects.html?new=git
+  // (e.g. from topology "+ Add → GitHub Repository"), auto-open the
+  // create modal so they don't have to hunt for the New button. Also
+  // strip the query string so a page refresh doesn't re-pop the modal.
+  (function handleAutoOpenQuery() {
+    try {
+      var q = new URLSearchParams(location.search);
+      if (q.get('new') === 'git') {
+        setTimeout(openCreateProjectModal, 80);
+        q.delete('new');
+        var newUrl = location.pathname + (q.toString() ? '?' + q.toString() : '') + location.hash;
+        window.history.replaceState(null, '', newUrl);
+      }
+    } catch (e) { /* no-op */ }
+  })();
 })();
