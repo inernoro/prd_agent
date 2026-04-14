@@ -2258,6 +2258,43 @@ a.branch-name:hover { color: var(--accent); }
   background: rgba(255, 255, 255, 0.05); overflow: hidden;
   border-radius: var(--radius) var(--radius) 0 0;
 }
+/* P4 Part 15 — Initializing timer that ticks while branch is building/starting */
+.branch-deploy-timer {
+  position: absolute;
+  top: 8px;
+  right: 12px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 10px;
+  background: var(--accent-bg, rgba(16,185,129,0.12));
+  border: 1px solid var(--accent-border, rgba(16,185,129,0.28));
+  border-radius: 999px;
+  font-size: 10.5px;
+  font-weight: 700;
+  color: var(--accent, #10b981);
+  font-family: var(--font-mono, monospace);
+  z-index: 2;
+  pointer-events: none;
+  letter-spacing: 0.2px;
+  animation: branch-timer-pulse 1.6s ease-in-out infinite;
+}
+.branch-deploy-timer-label {
+  font-size: 9.5px;
+  font-weight: 600;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  opacity: 0.85;
+}
+.branch-deploy-timer-value {
+  font-size: 11px;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+}
+@keyframes branch-timer-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.0); }
+  50% { box-shadow: 0 0 0 4px rgba(16, 185, 129, 0.18); }
+}
 .deploy-progress-bar-fill {
   height: 100%; width: 30%;
   background: linear-gradient(90deg, var(--accent), var(--accent-dim), var(--accent));

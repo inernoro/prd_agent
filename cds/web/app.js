@@ -34,6 +34,40 @@ let activeTagFilter = null; // null = show all, string = filter by tag
 // ── Inline deploy log state ──
 // { branchId: { lines: string[], status: 'building'|'done'|'error', expanded: bool, errorMsg?: string } }
 const inlineDeployLogs = new Map();
+
+// P4 Part 15 — Initializing timer tracker.
+//
+// Tracks per-branch timestamp when a branch first enters a 'building'
+// or 'starting' state. The render path calls _branchDeployStartedAt()
+// which lazily sets the entry if missing, returns the ISO ms. A
+// background ticker (set up below) updates the .branch-deploy-timer
+// span values once per second so users see Initializing 00:04 / 00:05
+// counting up like Railway does in image 3.
+const _deployStartedAt = new Map();
+function _branchDeployStartedAt(branchId) {
+  if (!_deployStartedAt.has(branchId)) {
+    _deployStartedAt.set(branchId, Date.now());
+  }
+  return _deployStartedAt.get(branchId);
+}
+function _clearBranchDeployStartedAt(branchId) {
+  _deployStartedAt.delete(branchId);
+}
+// Tick all visible deploy-timer spans every second. Idempotent: the
+// interval is started once at script load and never cleaned up
+// (lifetime = page lifetime).
+setInterval(function () {
+  var spans = document.querySelectorAll('.branch-deploy-timer[data-since]');
+  for (var i = 0; i < spans.length; i++) {
+    var since = parseInt(spans[i].dataset.since, 10);
+    if (!since) continue;
+    var elapsed = Math.max(0, Math.floor((Date.now() - since) / 1000));
+    var mm = String(Math.floor(elapsed / 60)).padStart(2, '0');
+    var ss = String(elapsed % 60).padStart(2, '0');
+    var valueEl = spans[i].querySelector('.branch-deploy-timer-value');
+    if (valueEl) valueEl.textContent = mm + ':' + ss;
+  }
+}, 1000);
 // Track branches that just finished deploy (for slide-in animation)
 const justDeployed = new Set();
 
@@ -3026,37 +3060,38 @@ function renderEmptyBranchesState() {
   const noServices = (buildProfiles || []).length === 0 && (infraServices || []).length === 0;
 
   if (noServices) {
-    // Three-step "get started" guide for a freshly-created empty project.
+    // P4 Part 15 (MECE A5 redo): match Railway's pattern more closely.
+    //
+    // Previously this returned a 3-step CTA. Railway actually doesn't
+    // do that — when you create a new project it auto-pops the same
+    // "What would you like to create?" dropdown that the + Add button
+    // shows. We mirror that pattern here:
+    //   1. Show a tiny welcome card with one big primary CTA
+    //   2. The CTA enters topology mode
+    //   3. _ensureTopologyFsChrome's setViewMode handler detects
+    //      the empty-project state and auto-opens the + Add menu
+    //
+    // The user lands directly on a familiar dropdown that's the
+    // SAME UI used elsewhere — no special "first run" flow.
     return `
       <div class="branches-empty">
         <div class="branches-empty-illustration" aria-hidden="true">
-          <svg width="88" height="88" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">
+          <svg width="84" height="84" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">
             <rect x="3" y="3" width="7" height="7" rx="1.5"/>
             <rect x="14" y="3" width="7" height="7" rx="1.5"/>
             <rect x="3" y="14" width="7" height="7" rx="1.5"/>
             <rect x="14" y="14" width="7" height="7" rx="1.5"/>
           </svg>
         </div>
-        <div class="branches-empty-title">欢迎！开始添加你的第一个服务</div>
+        <div class="branches-empty-title">这是一个全新项目</div>
         <div class="branches-empty-hint">
-          这是一个全新项目。先添加一个服务（应用 / 数据库 / 缓存），然后就可以为它部署分支了。
+          点击下面进入拓扑画布，CDS 会自动弹出"添加服务"菜单 — 选 GitHub 仓库 / 数据库 / 空服务任意一种就能开始
         </div>
         <div class="branches-empty-actions">
-          <button class="branches-empty-cta primary" onclick="setViewMode('topology')" title="进入拓扑画布，点 + Add 添加服务">
-            <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M5 2.75a2.25 2.25 0 114.5 0 2.25 2.25 0 01-4.5 0zM7.25 0a2.75 2.75 0 00-.75 5.397V7H2.75A1.75 1.75 0 001 8.75v1.603a2.75 2.75 0 101.5 0V8.75a.25.25 0 01.25-.25H6.5v1.397a2.75 2.75 0 101.5 0V8.5h3.75a.25.25 0 01.25.25v1.603a2.75 2.75 0 101.5 0V8.75A1.75 1.75 0 0011.75 7H8V5.397A2.75 2.75 0 007.25 0z"/></svg>
-            进入拓扑画布
-          </button>
-          <button class="branches-empty-cta secondary" onclick="if(typeof openInfraModal==='function')openInfraModal()" title="从 docker-compose.yml 自动发现并导入数据库 / 缓存">
-            <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M11.013 1.427a1.75 1.75 0 012.474 0l1.086 1.086a1.75 1.75 0 010 2.474l-8.61 8.61c-.21.21-.47.364-.756.445l-3.251.93a.75.75 0 01-.927-.928l.929-3.25a1.75 1.75 0 01.445-.758l8.61-8.61z"/></svg>
-            从 Compose 导入
-          </button>
-          <button class="branches-empty-cta secondary" onclick="if(typeof openConfigModal==='function'&&typeof renderBuildProfiles==='function'){openConfigModal('构建配置','<div id=\\'buildProfilesContainer\\'></div>');renderBuildProfiles();}" title="手动添加一个 BuildProfile">
+          <button class="branches-empty-cta primary" onclick="setViewMode('topology')" title="进入拓扑画布并自动弹出 Add 菜单">
             <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M7.75 2a.75.75 0 01.75.75V7h4.25a.75.75 0 010 1.5H8.5v4.25a.75.75 0 01-1.5 0V8.5H2.75a.75.75 0 010-1.5H7V2.75A.75.75 0 017.75 2z"/></svg>
-            添加构建配置
+            添加第一个服务
           </button>
-        </div>
-        <div class="branches-empty-tip">
-          推荐：先点 <strong>从 Compose 导入</strong>，CDS 会扫描你的 docker-compose.yml 自动建好 MongoDB / Redis 等基础设施
         </div>
       </div>
     `;
@@ -3326,6 +3361,11 @@ function renderBranches() {
     const isDeploying = localDeploying || serverDeploying;
     const deployFailed = !!deployLog && deployLog.status === 'error';
     const isJustDeployed = justDeployed.has(b.id);
+    // P4 Part 15: clear the per-branch deploy start timestamp when
+    // we leave the deploying state so the next deploy starts fresh.
+    if (!isDeploying && _deployStartedAt.has(b.id)) {
+      _clearBranchDeployStartedAt(b.id);
+    }
 
     // Commit area in actions row — shows commit info or deploy log during deployment
     let commitAreaHtml = '';
@@ -3361,7 +3401,8 @@ function renderBranches() {
 
     return `
       <div class="branch-card status-${b.status || 'idle'} ${isDefault ? 'active' : ''} ${isBusy ? 'is-busy' : ''} ${hasError ? 'has-error' : ''} expanded ${b.isFavorite ? 'is-favorite' : ''} ${hasUpdates ? 'has-updates' : ''} ${recentlyTouched.has(b.id) ? 'recently-touched' : ''} ${isDeploying ? 'is-deploying' : ''} ${b.isColorMarked ? 'is-color-marked' : ''} ${getAiOccupant(b.id) ? 'is-ai-occupied' : ''} ${b.pinnedCommit ? 'is-pinned' : ''}" data-branch-id="${esc(b.id)}">
-        ${isDeploying ? '<div class="deploy-progress-bar"><div class="deploy-progress-bar-fill"></div></div>' : ''}
+        ${isDeploying ? `<div class="deploy-progress-bar"><div class="deploy-progress-bar-fill"></div></div>
+          <div class="branch-deploy-timer" data-since="${_branchDeployStartedAt(b.id)}"><span class="branch-deploy-timer-label">${b.status === 'building' ? 'Building' : 'Initializing'}</span><span class="branch-deploy-timer-value">00:00</span></div>` : ''}
         <div class="branch-card-toolbar">
           ${!isBusy ? `<span class="update-pull-group" onclick="event.stopPropagation(); pullBranch('${esc(b.id)}')" title="${hasUpdates ? branchUpdates[b.id].behind + ' 个新提交，点击拉取' : '点击拉取最新代码'}">
             ${hasUpdates ? `<span class="update-badge">↓${branchUpdates[b.id].behind}</span>` : ''}
@@ -7815,6 +7856,21 @@ function setViewMode(mode) {
       _topologyRefreshBranchDropdown();
     }
     renderTopologyView();
+    // P4 Part 15 (MECE A5 redo): when the project is fully empty
+    // (no profiles, no infra) AND we haven't already auto-opened in
+    // this session, pop the + Add menu so the user lands directly
+    // on the "What would you like to create?" dropdown — matches
+    // Railway's first-time create flow.
+    var noServices = (buildProfiles || []).length === 0 && (infraServices || []).length === 0;
+    if (noServices && !sessionStorage.getItem('cds_topology_autoadd_done')) {
+      sessionStorage.setItem('cds_topology_autoadd_done', '1');
+      setTimeout(function () {
+        var menu = document.getElementById('topologyFsAddMenu');
+        if (menu && !menu.classList.contains('open')) {
+          if (typeof _topologyToggleAddMenu === 'function') _topologyToggleAddMenu();
+        }
+      }, 220);
+    }
   } else {
     if (topoEl) topoEl.classList.add('hidden');
     if (listEl) listEl.classList.remove('hidden');
@@ -7968,6 +8024,7 @@ function _ensureTopologyFsChrome() {
       <button type="button" class="topology-fs-panel-tab" data-tab="buildLogs" onclick="_topologySwitchPanelTab('buildLogs')">Build Logs</button>
       <button type="button" class="topology-fs-panel-tab" data-tab="deployLogs" onclick="_topologySwitchPanelTab('deployLogs')">Deploy Logs</button>
       <button type="button" class="topology-fs-panel-tab" data-tab="httpLogs" onclick="_topologySwitchPanelTab('httpLogs')">HTTP Logs</button>
+      <button type="button" class="topology-fs-panel-tab" data-tab="networkFlowLogs" onclick="_topologySwitchPanelTab('networkFlowLogs')">Network Flow</button>
       <button type="button" class="topology-fs-panel-tab" data-tab="variables" onclick="_topologySwitchPanelTab('variables')">Variables</button>
       <button type="button" class="topology-fs-panel-tab" data-tab="settings" onclick="_topologySwitchPanelTab('settings')">Settings</button>
     </div>
@@ -9269,6 +9326,43 @@ function _topologyRenderPanelTab(tab, entity) {
         '<div class="tfp-logs-loading">加载 HTTP 日志中…</div>' +
       '</div>';
     _topologyPanelLoadHttpLogs();
+    return;
+  }
+
+  if (tab === 'networkFlowLogs') {
+    // P4 Part 15: Network Flow Logs placeholder.
+    //
+    // Railway's Network Flow Logs tab shows L4 connection-level data:
+    // Source IP:port / Destination / Peer (Internet vs Service) /
+    // Traffic bytes / Latency / Status. CDS doesn't have this data
+    // source — collecting it would require eBPF tracing or tcpdump
+    // packet capture, both of which need root + kernel modules and
+    // are out of scope for a single-host development tool.
+    //
+    // We render a clear placeholder explaining the gap so the tab
+    // appears in the strip (visual parity with Railway's 5-tab
+    // layout) but doesn't pretend to have data it doesn't.
+    body.innerHTML =
+      '<div class="tfp-empty" style="padding:40px 24px;text-align:left;background:var(--bg-card);border:1px dashed var(--card-border);border-radius:10px">' +
+        '<div style="display:flex;align-items:center;gap:10px;margin-bottom:14px">' +
+          '<svg width="22" height="22" viewBox="0 0 16 16" fill="currentColor" style="color:var(--text-muted)"><path d="M8 0a8 8 0 100 16A8 8 0 008 0zm0 1.5a6.5 6.5 0 110 13 6.5 6.5 0 010-13z"/></svg>' +
+          '<div style="font-size:13px;font-weight:700;color:var(--text-primary)">Network Flow Logs</div>' +
+        '</div>' +
+        '<div style="font-size:12px;color:var(--text-secondary);line-height:1.6;margin-bottom:14px">' +
+          'L4 连接级流量日志（Source / Destination / Traffic bytes / Latency）需要 <strong>eBPF tracing</strong> 或 <strong>tcpdump 包捕获</strong>，两者都需要 root + 内核模块。' +
+        '</div>' +
+        '<div style="font-size:12px;color:var(--text-secondary);line-height:1.6;margin-bottom:14px">' +
+          'CDS 是单机轻量调试器，不收集这一级的数据。如果你需要查看容器之间的流量：' +
+        '</div>' +
+        '<ul style="font-size:11px;color:var(--text-muted);line-height:1.8;padding-left:18px;margin-bottom:14px">' +
+          '<li><code>docker exec ' + esc(entity.containerName || entity.id) + ' ss -tn4</code> — 当前 TCP 连接快照</li>' +
+          '<li><code>docker network inspect ' + esc((typeof config !== "undefined" && config && config.dockerNetwork) || "cds-network") + '</code> — 网络拓扑</li>' +
+          '<li>访问已有的 <strong>HTTP Logs</strong> tab → CDS 内置代理捕获的 L7 HTTP 请求</li>' +
+        '</ul>' +
+        '<button type="button" class="tfp-vars-edit-btn" onclick="_topologySwitchPanelTab(\'httpLogs\')" style="width:100%">' +
+          '查看 HTTP Logs（CDS 实际有的数据）→' +
+        '</button>' +
+      '</div>';
     return;
   }
 
