@@ -166,7 +166,9 @@ export function createBranchRouter(deps: RouterDeps): Router {
     // Prepare the payload the remote's /exec/deploy expects. The remote has
     // its own worktree + state, so we pass branch metadata + profiles + the
     // merged env var map and let it handle the rest.
-    const profiles = stateService.getBuildProfiles();
+    // P4 Part 17 (G2 fix): scope by the branch's project so a remote
+    // executor only receives profiles owned by this project.
+    const profiles = stateService.getBuildProfilesForProject(entry.projectId || 'default');
     const cdsEnv = stateService.getCdsEnvVars();
     const customEnv = stateService.getCustomEnv();
     const mirrorEnv = stateService.getMirrorEnvVars();
@@ -777,7 +779,10 @@ export function createBranchRouter(deps: RouterDeps): Router {
       return;
     }
 
-    const profiles = stateService.getBuildProfiles();
+    // P4 Part 17 (G2 fix): scope build profiles by the branch's project
+    // so a deploy in project A doesn't pull in B's profiles. Pre-Part 3
+    // branches default to 'default' (the legacy migration target).
+    const profiles = stateService.getBuildProfilesForProject(entry.projectId || 'default');
     if (profiles.length === 0) {
       res.status(400).json({ error: '尚未配置构建配置，请先添加至少一个构建配置。' });
       return;
@@ -863,8 +868,12 @@ export function createBranchRouter(deps: RouterDeps): Router {
       stateService.save();
 
       // ── Compute startup layers (topological sort by dependsOn) ──
+      // P4 Part 17 (G2 fix): scope infra by the branch's project so the
+      // dependency resolver only sees infra services actually owned by
+      // this project. Avoids cross-project bleed where project A's
+      // dependsOn references could resolve to project B's mongo.
       const infraIds = new Set(
-        stateService.getInfraServices()
+        stateService.getInfraServicesForProject(entry.projectId || 'default')
           .filter(s => s.status === 'running')
           .map(s => s.id),
       );
@@ -1088,7 +1097,10 @@ export function createBranchRouter(deps: RouterDeps): Router {
       return;
     }
 
-    const profiles = stateService.getBuildProfiles();
+    // P4 Part 17 (G2 fix): scope by the branch's project so a
+    // single-service redeploy can't accidentally pick up a same-named
+    // profile from a different project.
+    const profiles = stateService.getBuildProfilesForProject(entry.projectId || 'default');
     const profile = profiles.find(p => p.id === profileId);
     if (!profile) {
       res.status(404).json({ error: `构建配置 "${profileId}" 不存在` });
@@ -1342,7 +1354,9 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
     // Allocate a new port
     const port = stateService.allocatePort(config.portStart);
-    const profiles = stateService.getBuildProfiles();
+    // P4 Part 17 (G2 fix): scope by branch project so the path-prefix
+    // proxy only routes to profiles owned by this project.
+    const profiles = stateService.getBuildProfilesForProject(entry.projectId || 'default');
 
     // Create a lightweight HTTP proxy that routes by path-prefix
     const server = http.createServer((proxyReq, proxyRes) => {
@@ -1516,7 +1530,10 @@ export function createBranchRouter(deps: RouterDeps): Router {
     // subset that only contains user-editable keys.
     const cdsVars = stateService.getCdsEnvVars();
     const cdsEnvKeys = Object.keys(cdsVars);
-    const profiles = stateService.getBuildProfiles();
+    // P4 Part 17 (G2 fix): scope by branch project so the override
+    // modal's "effective env" preview only enumerates profiles in
+    // this project, not every project's profile.
+    const profiles = stateService.getBuildProfilesForProject(entry.projectId || 'default');
     const payload = profiles.map(profile => {
       const override = entry.profileOverrides?.[profile.id];
       const resolved = resolveEffectiveProfile(profile, entry);

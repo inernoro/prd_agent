@@ -425,6 +425,49 @@ describe('Branch Routes', () => {
       expect(res.status).toBe(400);
       expect((res.body as any).error).toContain('未知项目');
     });
+
+    // P4 Part 17 (G2 fix): the deploy hot path was reading the global
+    // getBuildProfiles() instead of getBuildProfilesForProject(). That
+    // meant deploying a branch in project A would silently pull in
+    // every profile from project B as well — total cross-project bleed.
+    //
+    // This test proves the fix: a branch in project 'default' with an
+    // 'alt'-scoped profile must hit the "no profiles configured" 400
+    // because the deploy reader now respects the branch's projectId.
+    it('P4 Part 17 (G2): POST /branches/:id/deploy is project-scoped', async () => {
+      const now = new Date().toISOString();
+      stateService.addProject({
+        id: 'alt-deploy',
+        slug: 'alt-deploy',
+        name: 'Alt Deploy',
+        kind: 'git',
+        dockerNetwork: 'cds-proj-alt-deploy',
+        legacyFlag: false,
+        createdAt: now,
+        updatedAt: now,
+      });
+
+      // Profile lives in 'alt-deploy', NOT in default
+      const profileRes = await request(server, 'POST', '/api/build-profiles', {
+        id: 'web',
+        name: 'Web',
+        dockerImage: 'nginx',
+        command: 'nginx -g "daemon off;"',
+        projectId: 'alt-deploy',
+      });
+      expect(profileRes.status).toBe(201);
+
+      // Branch lives in default
+      const branchRes = await request(server, 'POST', '/api/branches', { branch: 'main' });
+      expect(branchRes.status).toBe(201);
+
+      // Deploying the default branch must NOT see the alt-deploy profile.
+      // Pre-G2 fix this returned 200 + started deploying with the leaked
+      // profile. After the fix we expect 400 "尚未配置构建配置".
+      const deployRes = await request(server, 'POST', '/api/branches/main/deploy');
+      expect(deployRes.status).toBe(400);
+      expect((deployRes.body as any).error).toContain('尚未配置构建配置');
+    });
   });
 
   // ── Config ──
