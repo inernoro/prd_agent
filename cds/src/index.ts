@@ -104,6 +104,11 @@ if (config.rootDomains?.length) {
 // Directory isolation: allow UI to override repo root and worktree base
 if (customEnv.CDS_REPO_ROOT) config.repoRoot = customEnv.CDS_REPO_ROOT;
 if (customEnv.CDS_WORKTREE_BASE) config.worktreeBase = customEnv.CDS_WORKTREE_BASE;
+// P4 Part 18 (G1.4): reposBase can be set either via CDS_REPOS_BASE
+// env at process-start (config.ts) or via customEnv at runtime (UI).
+// The runtime override wins so operators can flip on multi-repo clone
+// without restarting.
+if (customEnv.CDS_REPOS_BASE) config.reposBase = customEnv.CDS_REPOS_BASE;
 
 // ── Services ──
 // P4 Part 18 (G1.2): WorktreeService is stateless; every call passes

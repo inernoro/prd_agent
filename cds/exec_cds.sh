@@ -37,6 +37,20 @@ STATE_DIR="$SCRIPT_DIR/.cds"
 PID_FILE="$STATE_DIR/cds.pid"
 LOG_FILE="$SCRIPT_DIR/cds.log"
 
+# P4 Part 18 (G1.4): multi-repo clone storage.
+# Per-project git clones live under this directory as
+# `<REPOS_BASE>/<projectId>`. The directory is created on start
+# so the CDS clone endpoint can drop into it without having to
+# mkdir first. Override with `export CDS_REPOS_BASE=/custom/path`
+# in .cds.env if you need a different location (e.g. a dedicated
+# data disk mount).
+#
+# On container restart / self-update this path survives because
+# it's a host filesystem location, not inside the CDS process's
+# working directory. The containerized deployment (Dockerfile.master)
+# must bind-mount this path — see the run example in that file.
+REPOS_BASE_DEFAULT="$SCRIPT_DIR/.cds-repos"
+
 NGINX_DIR="$SCRIPT_DIR/nginx"
 NGINX_CONF="$NGINX_DIR/nginx.conf"
 NGINX_SITE_CONF="$NGINX_DIR/cds-site.conf"
@@ -750,6 +764,10 @@ cds_start_background() {
     return 0
   fi
 
+  # P4 Part 18 (G1.4): ensure multi-repo clone dir exists + exported.
+  export CDS_REPOS_BASE="${CDS_REPOS_BASE:-$REPOS_BASE_DEFAULT}"
+  mkdir -p "$CDS_REPOS_BASE"
+
   info "启动 CDS (后台模式) ..."
   nohup node dist/index.js "$CONFIG_FILE" > "$LOG_FILE" 2>&1 &
   local pid=$!
@@ -783,6 +801,10 @@ cds_start_foreground() {
   check_deps
   install_deps
   build_ts
+  # P4 Part 18 (G1.4): same multi-repo clone dir setup as background mode.
+  load_env
+  export CDS_REPOS_BASE="${CDS_REPOS_BASE:-$REPOS_BASE_DEFAULT}"
+  mkdir -p "$CDS_REPOS_BASE"
   info "启动 CDS (前台，Ctrl+C 退出)"
   exec node dist/index.js "$CONFIG_FILE"
 }

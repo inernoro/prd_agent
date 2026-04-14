@@ -15,12 +15,27 @@
 #     -v /var/run/docker.sock:/var/run/docker.sock \
 #     -v /path/to/prd_agent:/repo \
 #     -v /path/to/.cds-worktrees:/worktrees \
+#     -v /path/to/.cds-repos:/repos \
 #     -e CDS_REPO_ROOT=/repo \
 #     -e CDS_WORKTREE_BASE=/worktrees \
+#     -e CDS_REPOS_BASE=/repos \
 #     -e CDS_AI_ACCESS_KEY=$AI_ACCESS_KEY \
 #     cds-master:latest
 #
-# See doc/design.cds-resilience.md Phase 2.
+# The three -v / -e pairs are all required for the multi-repo flow
+# introduced in P4 Part 18 (G1):
+#   /repo       — the legacy single repo (pre-G1 projects + bootstrap)
+#   /worktrees  — per-branch git worktrees (ephemeral)
+#   /repos      — per-project git clones (created on
+#                 POST /api/projects/:id/clone; each clone survives
+#                 container rebuild via the host bind-mount)
+#
+# Without the /repos mount, cloning a new project inside the container
+# writes to the container's ephemeral layer and the clone is lost on
+# the next self-update / rebuild. Always bind-mount it to a host path
+# on persistent storage.
+#
+# See doc/design.cds-resilience.md Phase 2 and the G1 commits.
 
 FROM node:20-slim AS builder
 
