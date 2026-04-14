@@ -2095,6 +2095,20 @@ export function createBranchRouter(deps: RouterDeps): Router {
       }
       profile.workDir = profile.workDir || '.';
       profile.containerPort = profile.containerPort || 8080;
+      // P4 Part 16 (B1 fix): honor project scope — projectId can come
+      // from request body (preferred) or ?project= query param fallback.
+      // Without this fix, every new profile silently lands in the
+      // legacy 'default' project regardless of which project the user
+      // is configuring, breaking multi-project isolation entirely.
+      if (!profile.projectId) {
+        const queryProject = typeof req.query.project === 'string' ? req.query.project : null;
+        profile.projectId = queryProject || 'default';
+      }
+      // Validate the target project exists so we don't create orphans.
+      if (!stateService.getProject(profile.projectId)) {
+        res.status(400).json({ error: `未知项目: ${profile.projectId}` });
+        return;
+      }
       stateService.addBuildProfile(profile);
       stateService.save();
       res.status(201).json({ profile });
@@ -2765,9 +2779,20 @@ export function createBranchRouter(deps: RouterDeps): Router {
         res.status(400).json({ error: 'id、Docker 镜像和容器端口为必填项' });
         return;
       }
+      // P4 Part 16 (B1 fix): honor project scope — projectId from body
+      // or ?project= query string. Without this, infra services created
+      // from any non-legacy project's topology view silently land in
+      // the legacy 'default' project.
+      const queryProject = typeof req.query.project === 'string' ? req.query.project : null;
+      const projectId = body.projectId || queryProject || 'default';
+      if (!stateService.getProject(projectId)) {
+        res.status(400).json({ error: `未知项目: ${projectId}` });
+        return;
+      }
       const hostPort = stateService.allocatePort(config.portStart);
       const service: InfraService = {
         id: body.id,
+        projectId,
         name: body.name || body.id,
         dockerImage: body.dockerImage,
         containerPort: body.containerPort,

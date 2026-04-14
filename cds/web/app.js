@@ -4889,6 +4889,9 @@ async function saveProfileAndRefresh() {
   if (pathPrefixesRaw) {
     profile.pathPrefixes = pathPrefixesRaw.split(',').map(s => s.trim()).filter(Boolean);
   }
+  // P4 Part 16 (B1 fix): tag the profile with the current project so it
+  // lands in the correct project, not silently in the legacy default.
+  profile.projectId = CURRENT_PROJECT_ID;
   try {
     await api('POST', '/build-profiles', profile);
     showToast('配置已添加', 'success');
@@ -8781,12 +8784,16 @@ async function _topologyCreateInfraFromTemplate(key) {
 
   showToast('正在创建 ' + tpl.name + '...', 'info');
 
+  // P4 Part 16 (B1 fix): tag the template with the current project so
+  // it lands in the right project, not the legacy default.
+  var payload = Object.assign({}, tpl, { projectId: CURRENT_PROJECT_ID });
+
   try {
     var res = await fetch('/api/infra', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       credentials: 'same-origin',
-      body: JSON.stringify(tpl),
+      body: JSON.stringify(payload),
     });
     if (!res.ok) {
       var body = await res.json().catch(function () { return null; });

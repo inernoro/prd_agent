@@ -308,6 +308,62 @@ describe('Branch Routes', () => {
       const list = await request(server, 'GET', '/api/build-profiles');
       expect((list.body as any).profiles).toHaveLength(0);
     });
+
+    it('P4 Part 16 (B1): POST /build-profiles honors body.projectId', async () => {
+      // Pre-create the target project
+      const now = new Date().toISOString();
+      stateService.addProject({
+        id: 'alt-proj',
+        slug: 'alt-proj',
+        name: 'Alt Project',
+        kind: 'git',
+        createdAt: now,
+        updatedAt: now,
+      });
+
+      const res = await request(server, 'POST', '/api/build-profiles', {
+        id: 'web',
+        name: 'Web',
+        dockerImage: 'nginx',
+        command: 'nginx -g "daemon off;"',
+        projectId: 'alt-proj',
+      });
+      expect(res.status).toBe(201);
+
+      // Profile lands in alt-proj, not default
+      const altList = await request(server, 'GET', '/api/build-profiles?project=alt-proj');
+      expect((altList.body as any).profiles).toHaveLength(1);
+      expect((altList.body as any).profiles[0].projectId).toBe('alt-proj');
+
+      const defaultList = await request(server, 'GET', '/api/build-profiles?project=default');
+      expect((defaultList.body as any).profiles).toHaveLength(0);
+    });
+
+    it('P4 Part 16 (B1): POST /build-profiles defaults to "default" when no projectId', async () => {
+      const res = await request(server, 'POST', '/api/build-profiles', {
+        id: 'api',
+        name: 'API',
+        dockerImage: 'node',
+        command: 'node server.js',
+      });
+      expect(res.status).toBe(201);
+
+      const list = await request(server, 'GET', '/api/build-profiles?project=default');
+      expect((list.body as any).profiles).toHaveLength(1);
+      expect((list.body as any).profiles[0].projectId).toBe('default');
+    });
+
+    it('P4 Part 16 (B1): POST /build-profiles rejects unknown projectId with 400', async () => {
+      const res = await request(server, 'POST', '/api/build-profiles', {
+        id: 'api',
+        name: 'API',
+        dockerImage: 'node',
+        command: 'node server.js',
+        projectId: 'nonexistent',
+      });
+      expect(res.status).toBe(400);
+      expect((res.body as any).error).toContain('未知项目');
+    });
   });
 
   // ── Config ──
@@ -367,6 +423,63 @@ describe('Branch Routes', () => {
       expect((configRes.body as any).repoRoot).toBe('/bulk/repo');
       expect((configRes.body as any).worktreeBase).toBe('/bulk/worktrees');
       expect((configRes.body as any).githubRepoUrl).toBe('https://github.com/bulk-org/bulk-repo');
+    });
+  });
+
+  // ── Infra services (P4 Part 16: B1 fix) ──
+
+  describe('POST /api/infra (project scoping)', () => {
+    it('honors body.projectId on creation', async () => {
+      // Pre-create the target project
+      const now = new Date().toISOString();
+      stateService.addProject({
+        id: 'redis-proj',
+        slug: 'redis-proj',
+        name: 'Redis Project',
+        kind: 'git',
+        createdAt: now,
+        updatedAt: now,
+      });
+
+      const res = await request(server, 'POST', '/api/infra', {
+        id: 'redis',
+        name: 'Redis',
+        dockerImage: 'redis:7-alpine',
+        containerPort: 6379,
+        projectId: 'redis-proj',
+      });
+      expect(res.status).toBe(201);
+      expect((res.body as any).service.projectId).toBe('redis-proj');
+
+      // Verify scope: appears in redis-proj filter, NOT in default
+      const altList = await request(server, 'GET', '/api/infra?project=redis-proj');
+      expect((altList.body as any).services).toHaveLength(1);
+
+      const defaultList = await request(server, 'GET', '/api/infra?project=default');
+      expect((defaultList.body as any).services).toHaveLength(0);
+    });
+
+    it('defaults to "default" projectId when none supplied', async () => {
+      const res = await request(server, 'POST', '/api/infra', {
+        id: 'mongo',
+        name: 'MongoDB',
+        dockerImage: 'mongo:8.0',
+        containerPort: 27017,
+      });
+      expect(res.status).toBe(201);
+      expect((res.body as any).service.projectId).toBe('default');
+    });
+
+    it('rejects unknown projectId with 400', async () => {
+      const res = await request(server, 'POST', '/api/infra', {
+        id: 'pg',
+        name: 'Postgres',
+        dockerImage: 'postgres:16',
+        containerPort: 5432,
+        projectId: 'nonexistent',
+      });
+      expect(res.status).toBe(400);
+      expect((res.body as any).error).toContain('未知项目');
     });
   });
 
