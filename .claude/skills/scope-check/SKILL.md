@@ -76,18 +76,45 @@ changelogs/*
 
 #### 🔶 shared — 共享注册文件（需要 append-only 检查）
 
+> 这些文件被所有 Agent 共享。新 Agent 通常**只在末尾追加**自己的注册条目，禁止删改已有内容。
+
+**后端注册文件**：
+
 ```
 prd-api/src/PrdAgent.Core/Security/AdminPermissionCatalog.cs
 prd-api/src/PrdAgent.Core/Security/AdminMenuCatalog.cs
+prd-api/src/PrdAgent.Core/Security/AdminControllerAttribute.cs
 prd-api/src/PrdAgent.Core/Models/AppCallerRegistry.cs
-prd-api/src/PrdAgent.Core/Attributes/AppOwnershipAttribute.cs
-prd-api/src/PrdAgent.Infrastructure/Data/MongoDbContext.cs
-prd-admin/src/services/api.ts
-prd-admin/src/app/App.tsx
+prd-api/src/PrdAgent.Core/Models/CapsuleTypeRegistry.cs
+prd-api/src/PrdAgent.Core/Attributes/AppOwnershipAttribute.cs   # AppNames 常量也在此文件
+prd-api/src/PrdAgent.Infrastructure/Database/MongoDbContext.cs  # 注意：是 Database/ 不是 Data/
+prd-api/src/PrdAgent.Api/Services/CapsuleExecutor.cs            # CLI Agent 执行器分发表
+```
+
+**前端注册文件**：
+
+```
+prd-admin/src/services/api.ts                  # API 端点路由表
+prd-admin/src/app/App.tsx                      # React 路由表
+prd-admin/src/stores/toolboxStore.ts           # 百宝箱 BUILTIN_TOOLS（导航铁律入口）
+prd-admin/src/lib/authzMenuMapping.ts          # 左侧导航权限映射
+prd-admin/src/lib/marketplaceTypes.tsx         # 海鲜市场 CONFIG_TYPE_REGISTRY
+prd-admin/src/lib/fileTypeRegistry.ts          # 文件类型 FILE_TYPE_REGISTRY
+prd-admin/src/pages/MobileHomePage.tsx              # QUICK_AGENTS_BASE（移动端首页快捷）
+prd-admin/src/pages/home/sections/AgentGrid.tsx     # VISUAL_META（PC 端首页 /home 的 Agent 网格）
+```
+
+**项目级配置文件**：
+
+```
 CLAUDE.md
 doc/index.yml
+doc/guide.list.directory.md
 .gitignore
+changelogs/                                    # 碎片目录，新增碎片 = owned，禁止删改他人碎片
 ```
+
+**注意**：`changelogs/` 下的文件属于"每 PR 一个碎片"模式——你只能新增自己的碎片文件，禁止删改他人 PR 留下的碎片（除非你跑了 `bash scripts/assemble-changelog.sh` 合并发版）。
 
 #### ❌ foreign — 其他所有文件
 
@@ -106,10 +133,63 @@ git diff main...HEAD -- {文件路径}
 - **有 `-` 行（删除或修改已有内容）**→ ⚠️ append 违规，需人工审核
 
 特别关注：
+
+**后端注册**：
 - `AdminPermissionCatalog.cs`：是否只新增了 const 和 All 列表条目？
-- `AdminMenuCatalog.cs`：是否只新增了菜单项？
+- `AdminMenuCatalog.cs`：是否只新增了菜单项？是否在末尾追加而非插入中间？
+- `AdminControllerAttribute.cs`：通常不应被修改（它是 attribute 定义本身）
+- `AppCallerRegistry.cs`：是否只新增了 AppCallerCode const？
+- `AppOwnershipAttribute.cs`：是否只在 `AppNames` 静态类末尾新增了 `XxxAgent` / `XxxAgentDisplay` 常量？
+- `CapsuleTypeRegistry.cs`：是否只新增了胶囊类型，没改已有类型 schema？
+- `CapsuleExecutor.cs`：是否只新增了一个 `ExecuteCliAgent_XxxAsync` 方法 + 在 switch 表中追加一个 case？删改已有 case = 越界
+- `MongoDbContext.cs`：是否只新增了 `IMongoCollection<>` 属性？
+
+**前端注册**：
 - `App.tsx`：是否只新增了 Route？是否删除或修改了已有路由？
 - `api.ts`：是否只新增了 API 路由定义？
+- `toolboxStore.ts`：是否只在 `BUILTIN_TOOLS` 数组末尾追加了新条目？**关键**：见步骤 4.5 的 `wip: true` 检查
+- `authzMenuMapping.ts`：是否只在 `menuList` / `allPermissions` 末尾追加？
+- `marketplaceTypes.tsx`：是否只在 `CONFIG_TYPE_REGISTRY` 末尾新增了 key？
+- `MobileHomePage.tsx`：是否只在 `QUICK_AGENTS_BASE` 末尾追加了 quick agent 项？
+- `pages/home/sections/AgentGrid.tsx`：是否只在 `VISUAL_META` Record 末尾追加了新 key？删改已有 key（visual / literary / prd / video / defect / report / arena / workflow / shortcuts / review / transcript / code-review / translator / summarizer / data-analyst）= 越界
+
+### 步骤 4.5：导航注册铁律检查（仅当 toolboxStore.ts 改动时触发）
+
+如果 `prd-admin/src/stores/toolboxStore.ts` 在变更列表中：
+
+```bash
+git diff main...HEAD -- prd-admin/src/stores/toolboxStore.ts
+```
+
+**检查 1：是否在 `BUILTIN_TOOLS` 数组中追加了新条目**
+
+寻找 diff 中以 `+` 开头的连续块，包含 `id: 'builtin-{agent-name}'` 模式。如果找到，说明这是一个新 Agent 注册。
+
+**检查 2：新条目是否带 `wip: true`**
+
+对每个新追加的 BUILTIN_TOOLS 条目，扫描其内部是否包含 `wip: true`：
+
+```bash
+git diff main...HEAD -- prd-admin/src/stores/toolboxStore.ts \
+  | grep -E "^\+" | grep -E "id:\s*'builtin-|wip:\s*true"
+```
+
+判定规则：
+- ✅ **合规**：每个新 `id: 'builtin-xxx'` 块内都有 `wip: true`
+- ❌ **违规**：新条目缺 `wip: true` → 违反 `.claude/rules/navigation-registry.md` 铁律 #1
+
+**检查 3：是否同时改了左侧导航 / 首页快捷**
+
+如果 `AdminMenuCatalog.cs` / `authzMenuMapping.ts` / `MobileHomePage.tsx` / `pages/home/sections/AgentGrid.tsx` 任一被改动，说明用户在做"升级到左侧/首页"的操作。此时：
+- 该 Agent 在 `toolboxStore.ts` 中**不应该**还带 `wip: true`（已经转正了）
+- 多处注册的 `routePath` 必须一致（如 toolboxStore 的 `/review-agent` 和 menu catalog 的 `/review-agent`）
+
+**输出**：在报告的"导航注册检查"小节明确写出：
+- 推断的新 Agent 名（如 `builtin-review-agent`）
+- 是否带 `wip: true`
+- 是否多处注册一致
+
+> 详细规则见 `.claude/rules/navigation-registry.md`。
 
 ### 步骤 5：输出报告
 
@@ -136,6 +216,7 @@ git diff main...HEAD -- {文件路径}
 | 文件 | append-only 检查 | 详情 |
 |------|-----------------|------|
 | AdminPermissionCatalog.cs | ✅ 仅新增 | +2 行 |
+| toolboxStore.ts | ✅ 仅新增 | +14 行（新增 BUILTIN_TOOLS 条目）|
 | App.tsx | ⚠️ 有删改 | 删除了 1 行原有路由 |
 | ... | ... | ... |
 
@@ -146,6 +227,14 @@ git diff main...HEAD -- {文件路径}
 | prd-api/src/.../LlmGateway.cs | 核心基础设施，影响所有 Agent |
 | ... | ... |
 
+## 导航注册检查（仅当 toolboxStore.ts 改动时输出）
+
+| 检查项 | 结果 | 详情 |
+|--------|------|------|
+| 新增 BUILTIN_TOOLS 条目 | ✅ 1 个 / ➖ 无 | `id: 'builtin-review-agent'` |
+| `wip: true` 标记 | ✅ 已带 / ❌ 缺失 | 见 `.claude/rules/navigation-registry.md` 铁律 #1 |
+| 多处注册 routePath 一致 | ✅ 一致 / ⚠️ 不一致 / ➖ 仅百宝箱 | toolboxStore=`/review-agent`, menuCatalog=`/review-agent` |
+
 ## 结论
 
 {根据以下规则输出}
@@ -155,8 +244,10 @@ git diff main...HEAD -- {文件路径}
 
 | 条件 | 结论 |
 |------|------|
-| foreign = 0 且 append 违规 = 0 | ✅ **边界合规**，可安全提交 |
+| foreign = 0 且 append 违规 = 0 且导航注册合规 | ✅ **边界合规**，可安全提交 |
 | foreign = 0 且 append 违规 > 0 | ⚠️ **需人工审核**：shared 文件有非追加修改 |
+| 新 BUILTIN_TOOLS 条目缺 `wip: true`（且未同时改 menu/QUICK_AGENTS）| ❌ **导航铁律违规**：新 Agent 必须默认 `wip: true`，验收通过后才转正 |
+| 多处注册 routePath 不一致 | ❌ **路由分叉**：toolboxStore / menu / QUICK_AGENTS 之间的 routePath 必须完全一致 |
 | foreign > 0 且均为文档/配置 | ⚠️ **轻度越界**：涉及非 Agent 文件，建议确认必要性 |
 | foreign > 0 且包含核心代码 | ❌ **越界警告**：修改了核心基础设施或其他 Agent 代码 |
 
