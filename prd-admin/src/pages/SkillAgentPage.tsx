@@ -741,6 +741,9 @@ function SkillDetailView({ skill, onBack, onDelete }: {
   const [publishing, setPublishing] = useState(false);
   /** 发布/取消发布操作的提示（成功 or 失败），2.5s 后自动消失 */
   const [publishMsg, setPublishMsg] = useState<{ type: 'ok' | 'err'; text: string } | null>(null);
+  /** 复制 MD / 下载 zip 状态（与 PlazaSkillDetailView 同构，1.8s 自动复位） */
+  const [mdCopyState, setMdCopyState] = useState<'idle' | 'ok' | 'err'>('idle');
+  const [zipState, setZipState] = useState<'idle' | 'loading' | 'ok' | 'err'>('idle');
 
   const handleTogglePublish = async () => {
     if (publishing) return;
@@ -795,6 +798,50 @@ function SkillDetailView({ skill, onBack, onDelete }: {
       setLoadingMd(false);
     })();
   }, [skill.skillKey]);
+
+  /** 复制当前 SKILL.md 文本到剪贴板。优先用内存里已加载的 mdContent，保证用户若在编辑器里做过修改也能拷到未保存版本 */
+  const handleCopySkillMd = async () => {
+    if (mdCopyState === 'ok') return;
+    try {
+      let text = mdContent;
+      if (!text) {
+        const res = await getSkillMd(skill.skillKey);
+        if (res.success && res.data) text = res.data.skillMd;
+      }
+      if (!text) { setMdCopyState('err'); return; }
+      await navigator.clipboard.writeText(text);
+      setMdCopyState('ok');
+    } catch {
+      setMdCopyState('err');
+    } finally {
+      setTimeout(() => setMdCopyState('idle'), 1800);
+    }
+  };
+
+  /** 下载技能 zip（SKILL.md + README.md + examples/），带 Authorization */
+  const handleDownloadZip = async () => {
+    if (zipState === 'loading') return;
+    setZipState('loading');
+    try {
+      const token = useAuthStore.getState().token;
+      const res = await fetch(getSkillZipUrl(skill.skillKey), {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
+      if (!res.ok) { setZipState('err'); return; }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${skill.skillKey}.zip`;
+      a.click();
+      URL.revokeObjectURL(url);
+      setZipState('ok');
+    } catch {
+      setZipState('err');
+    } finally {
+      setTimeout(() => setZipState('idle'), 1800);
+    }
+  };
 
   const handleSave = async () => {
     setSaving(true); setSaveMsg(null);
@@ -857,6 +904,21 @@ function SkillDetailView({ skill, onBack, onDelete }: {
             {publishMsg.text}
           </span>
         )}
+        {/* 复制 MD / 下载 zip：与 PlazaSkillDetailView breadcrumb 同构，操作破坏性由低到高 */}
+        <button onClick={handleCopySkillMd} disabled={mdCopyState === 'ok'}
+          className="flex items-center gap-1 text-[11px] px-2.5 py-1 rounded-lg transition-colors hover:bg-white/5"
+          style={{ color: mdCopyState === 'ok' ? '#22C55E' : mdCopyState === 'err' ? '#EF4444' : '#8B5CF6' }}>
+          {mdCopyState === 'ok' ? <ClipboardCheck size={12} /> : <Copy size={12} />}
+          {mdCopyState === 'ok' ? '已复制' : mdCopyState === 'err' ? '复制失败' : '复制 MD'}
+        </button>
+        <button onClick={handleDownloadZip} disabled={zipState === 'loading'}
+          className="flex items-center gap-1 text-[11px] px-2.5 py-1 rounded-lg transition-colors hover:bg-white/5"
+          style={{ color: zipState === 'ok' ? '#22C55E' : zipState === 'err' ? '#EF4444' : 'var(--text-secondary)' }}>
+          {zipState === 'loading' ? <Loader2 size={12} className="animate-spin" />
+            : zipState === 'ok' ? <CheckCircle2 size={12} />
+            : <Archive size={12} />}
+          {zipState === 'loading' ? '下载中…' : zipState === 'ok' ? '已下载' : zipState === 'err' ? '下载失败' : '下载 .zip'}
+        </button>
         <button onClick={handleTogglePublish} disabled={publishing}
           className="flex items-center gap-1 text-[11px] px-2.5 py-1 rounded-lg transition-colors hover:bg-white/5"
           style={{ color: isPublic ? '#F59E0B' : '#8B5CF6' }}>
