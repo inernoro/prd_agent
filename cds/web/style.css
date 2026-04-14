@@ -1765,9 +1765,102 @@ a.branch-name:hover { color: var(--accent); }
   background: var(--surface, rgba(88,166,255,0.08));
   transform: translateY(-1px);
 }
+/* P4 Part 8 (MECE A5) — three-step empty project CTA */
+.branches-empty-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  justify-content: center;
+  margin-top: 4px;
+}
+.branches-empty-cta.primary {
+  background: var(--accent, #10b981);
+  color: #fff;
+  border-color: var(--accent, #10b981);
+}
+.branches-empty-cta.primary:hover {
+  background: var(--accent-dim, #059669);
+  color: #fff;
+  border-color: var(--accent-dim, #059669);
+}
+.branches-empty-cta.secondary {
+  background: var(--bg-card);
+  color: var(--text-secondary);
+  border-color: var(--card-border);
+}
+.branches-empty-cta.secondary:hover {
+  border-color: var(--accent-border, rgba(16,185,129,0.3));
+  color: var(--text-primary);
+}
+.branches-empty-tip {
+  margin-top: 18px;
+  padding: 10px 16px;
+  background: var(--bg-card);
+  border: 1px dashed var(--card-border);
+  border-radius: 8px;
+  font-size: 12px;
+  color: var(--text-muted);
+  max-width: 540px;
+  line-height: 1.6;
+}
+.branches-empty-tip strong { color: var(--text-secondary); font-weight: 600; }
+
 @keyframes cds-empty-float {
   0%, 100% { transform: translateY(0); opacity: 0.55; }
   50%      { transform: translateY(-4px); opacity: 0.75; }
+}
+
+/* P4 Part 8 (MECE R4) — rich inline failure preview on error branches */
+.branch-error-card {
+  margin: 8px 0 12px;
+  padding: 10px 12px 12px;
+  background: rgba(244, 63, 94, 0.08);
+  border: 1px solid rgba(244, 63, 94, 0.28);
+  border-left-width: 3px;
+  border-radius: 8px;
+}
+.branch-error-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+.branch-error-icon { color: var(--red, #f43f5e); flex-shrink: 0; }
+.branch-error-title {
+  flex: 1;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--red, #f43f5e);
+  letter-spacing: 0.2px;
+}
+.branch-error-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 9px;
+  background: rgba(244, 63, 94, 0.12);
+  border: 1px solid rgba(244, 63, 94, 0.3);
+  color: var(--red, #f43f5e);
+  font-size: 11px;
+  font-weight: 600;
+  border-radius: 5px;
+  cursor: pointer;
+  transition: background 120ms ease;
+}
+.branch-error-btn:hover { background: rgba(244, 63, 94, 0.22); }
+.branch-error-body {
+  margin: 0;
+  padding: 8px 10px;
+  background: rgba(0, 0, 0, 0.35);
+  border-radius: 6px;
+  font-family: var(--font-mono, monospace);
+  font-size: 11px;
+  color: var(--text-secondary);
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 120px;
+  overflow-y: auto;
+  line-height: 1.5;
 }
 
 /* ════════════════ Split Button & Deploy Menu ════════════════ */

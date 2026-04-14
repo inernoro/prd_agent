@@ -3012,7 +3012,57 @@ function markTouched(id) {
  * rule: empty state must have说明 + 主操作 CTA + 可选插图.
  */
 function renderEmptyBranchesState() {
+  // P4 Part 8 (MECE A5): differentiate between two empty states:
+  //
+  //   1. Fresh project with NO services yet → user needs to add services
+  //      before branches make sense. Show 3-step setup guide.
+  //   2. Project has services but no branches → user just needs to
+  //      pick a branch from git. Show the original branch-search CTA.
+  //
+  // The first case is the painful "I created a new project and nothing
+  // explains what to do" situation that P4 Part 2 unintentionally
+  // created when + New Project lands users in an empty Dashboard.
   const onFocusSearch = "document.getElementById('branchSearch')?.focus()";
+  const noServices = (buildProfiles || []).length === 0 && (infraServices || []).length === 0;
+
+  if (noServices) {
+    // Three-step "get started" guide for a freshly-created empty project.
+    return `
+      <div class="branches-empty">
+        <div class="branches-empty-illustration" aria-hidden="true">
+          <svg width="88" height="88" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="3" y="3" width="7" height="7" rx="1.5"/>
+            <rect x="14" y="3" width="7" height="7" rx="1.5"/>
+            <rect x="3" y="14" width="7" height="7" rx="1.5"/>
+            <rect x="14" y="14" width="7" height="7" rx="1.5"/>
+          </svg>
+        </div>
+        <div class="branches-empty-title">欢迎！开始添加你的第一个服务</div>
+        <div class="branches-empty-hint">
+          这是一个全新项目。先添加一个服务（应用 / 数据库 / 缓存），然后就可以为它部署分支了。
+        </div>
+        <div class="branches-empty-actions">
+          <button class="branches-empty-cta primary" onclick="setViewMode('topology')" title="进入拓扑画布，点 + Add 添加服务">
+            <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M5 2.75a2.25 2.25 0 114.5 0 2.25 2.25 0 01-4.5 0zM7.25 0a2.75 2.75 0 00-.75 5.397V7H2.75A1.75 1.75 0 001 8.75v1.603a2.75 2.75 0 101.5 0V8.75a.25.25 0 01.25-.25H6.5v1.397a2.75 2.75 0 101.5 0V8.5h3.75a.25.25 0 01.25.25v1.603a2.75 2.75 0 101.5 0V8.75A1.75 1.75 0 0011.75 7H8V5.397A2.75 2.75 0 007.25 0z"/></svg>
+            进入拓扑画布
+          </button>
+          <button class="branches-empty-cta secondary" onclick="if(typeof openInfraModal==='function')openInfraModal()" title="从 docker-compose.yml 自动发现并导入数据库 / 缓存">
+            <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M11.013 1.427a1.75 1.75 0 012.474 0l1.086 1.086a1.75 1.75 0 010 2.474l-8.61 8.61c-.21.21-.47.364-.756.445l-3.251.93a.75.75 0 01-.927-.928l.929-3.25a1.75 1.75 0 01.445-.758l8.61-8.61z"/></svg>
+            从 Compose 导入
+          </button>
+          <button class="branches-empty-cta secondary" onclick="if(typeof openConfigModal==='function'&&typeof renderBuildProfiles==='function'){openConfigModal('构建配置','<div id=\\'buildProfilesContainer\\'></div>');renderBuildProfiles();}" title="手动添加一个 BuildProfile">
+            <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M7.75 2a.75.75 0 01.75.75V7h4.25a.75.75 0 010 1.5H8.5v4.25a.75.75 0 01-1.5 0V8.5H2.75a.75.75 0 010-1.5H7V2.75A.75.75 0 017.75 2z"/></svg>
+            添加构建配置
+          </button>
+        </div>
+        <div class="branches-empty-tip">
+          推荐：先点 <strong>从 Compose 导入</strong>，CDS 会扫描你的 docker-compose.yml 自动建好 MongoDB / Redis 等基础设施
+        </div>
+      </div>
+    `;
+  }
+
+  // Has services but no branches yet — original CTA, slightly polished.
   return `
     <div class="branches-empty">
       <div class="branches-empty-illustration" aria-hidden="true">
@@ -3028,7 +3078,7 @@ function renderEmptyBranchesState() {
       <div class="branches-empty-hint">
         在顶部搜索框输入 Git 分支名（支持前缀/后缀匹配），选中后 CDS 会为它创建工作树并自动构建。
       </div>
-      <button class="branches-empty-cta" onclick="${onFocusSearch}">
+      <button class="branches-empty-cta primary" onclick="${onFocusSearch}">
         <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M11.5 7a4.499 4.499 0 11-8.998 0A4.499 4.499 0 0111.5 7zm-.82 4.74a6 6 0 111.06-1.06l3.04 3.04a.75.75 0 11-1.06 1.06l-3.04-3.04z"/></svg>
         搜索并添加分支
       </button>
@@ -3361,7 +3411,37 @@ function renderBranches() {
           </div>` : ''}
           ${portBadgesHtml ? `<div class="branch-card-ports">${portBadgesHtml}</div>` : ''}
         </div>
-        ${b.errorMessage && !deployLog ? `<div class="branch-error" title="${esc(b.errorMessage)}">${esc(b.errorMessage)}</div>` : ''}
+        ${b.errorMessage && !deployLog ? (() => {
+          // P4 Part 8 (MECE R4): rich inline failure preview.
+          //
+          // Old behavior was a one-liner that hid the actual error
+          // behind a tooltip. Novice users had to discover the logs
+          // button to figure out what broke. New behavior:
+          //   - Red-tinted card with ⚠ icon
+          //   - Multi-line errorMessage rendered in <pre> (max 6 lines)
+          //   - "查看完整日志" button right inline → opens log modal
+          //   - "重置" button → clears the error so the user can retry
+          //
+          // The same b.errorMessage data is used; no new API needed.
+          const lines = String(b.errorMessage).split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+          const visible = lines.slice(-6);
+          const more = lines.length - visible.length;
+          return `<div class="branch-error-card">
+            <div class="branch-error-head">
+              <svg class="branch-error-icon" width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M8.982 1.566a1.13 1.13 0 00-1.96 0L.165 13.233c-.457.778.091 1.767.98 1.767h13.713c.889 0 1.438-.99.98-1.767L8.982 1.566zM8 5c.535 0 .954.462.9.995l-.35 3.507a.552.552 0 01-1.1 0L7.1 5.995A.905.905 0 018 5zm.002 6a1 1 0 110 2 1 1 0 010-2z"/></svg>
+              <span class="branch-error-title">部署失败</span>
+              <button class="branch-error-btn" onclick="event.stopPropagation(); openLogModal('${esc(b.id)}')" title="查看完整日志">
+                <svg width="11" height="11" viewBox="0 0 16 16" fill="currentColor"><path d="M1 2.75C1 1.784 1.784 1 2.75 1h10.5c.966 0 1.75.784 1.75 1.75v7.5A1.75 1.75 0 0113.25 12H9.06l-2.573 2.573A1.458 1.458 0 014 13.543V12H2.75A1.75 1.75 0 011 10.25v-7.5z"/></svg>
+                查看日志
+              </button>
+              <button class="branch-error-btn" onclick="event.stopPropagation(); resetBranch('${esc(b.id)}')" title="重置错误状态">
+                <svg width="11" height="11" viewBox="0 0 16 16" fill="currentColor"><path d="M8 2.5a5.487 5.487 0 00-4.131 1.869l1.204 1.204A.25.25 0 014.896 6H1.25A.25.25 0 011 5.75V2.104a.25.25 0 01.427-.177l1.38 1.38A7.002 7.002 0 0115 8a.75.75 0 01-1.5 0A5.5 5.5 0 008 2.5z"/></svg>
+                重置
+              </button>
+            </div>
+            <pre class="branch-error-body">${visible.map(l => esc(l)).join('\n')}${more > 0 ? `\n… 还有 ${more} 行 …` : ''}</pre>
+          </div>`;
+        })() : ''}
         <div class="branch-card-body">
           ${tagsHtml}
           ${renderAiBranchFeed(b.id)}
