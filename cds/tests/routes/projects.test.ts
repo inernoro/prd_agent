@@ -167,6 +167,51 @@ describe('Projects router (P4 Part 2)', () => {
       // per-branch projectId filtering.
       expect(res.body.projects[0].branchCount).toBe(3);
     });
+
+    // P4 Part 17 (G9 fix): non-legacy projects must show their real
+    // branch count instead of always 0. Before the fix, countBranchesFor
+    // hardcoded `legacyFlag ? total : 0` which made every new project
+    // permanently show 0 branches in the projects.html grid even after
+    // the user added branches under it. Verifies (a) the new project
+    // counts only its own branches, and (b) the legacy project does NOT
+    // get polluted by branches that explicitly belong to another project.
+    it('counts branches per project after Part 3 projectId tagging', async () => {
+      // Pre-create an 'alt' project so addBranch can stamp it.
+      stateService.addProject({
+        id: 'alt',
+        slug: 'alt-project',
+        name: 'Alt Project',
+        kind: 'git',
+        dockerNetwork: 'cds-proj-alt',
+        legacyFlag: false,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      });
+
+      const now = new Date().toISOString();
+      const baseBranch = {
+        status: 'pending' as const,
+        serviceStates: {},
+        urls: {},
+        createdAt: now,
+        updatedAt: now,
+        lastAccessed: now,
+        webPort: 0,
+        apiPort: 0,
+        envVars: {},
+      };
+      // 1 legacy branch (no projectId → defaults to 'default') + 2 alt branches
+      stateService.addBranch({ id: 'legacy-1', name: 'main', ...baseBranch });
+      stateService.addBranch({ id: 'alt-1', name: 'feat/a', projectId: 'alt', ...baseBranch });
+      stateService.addBranch({ id: 'alt-2', name: 'feat/b', projectId: 'alt', ...baseBranch });
+
+      const res = await request(server, 'GET', '/api/projects');
+      expect(res.status).toBe(200);
+
+      const byId = Object.fromEntries(res.body.projects.map((p: any) => [p.id, p]));
+      expect(byId[LEGACY_PROJECT_ID].branchCount).toBe(1);
+      expect(byId.alt.branchCount).toBe(2);
+    });
   });
 
   describe('GET /api/projects/:id', () => {

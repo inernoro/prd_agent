@@ -103,11 +103,12 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
   const { stateService, shell } = deps;
 
   function countBranchesFor(project: Project): number {
-    const state = stateService.getState();
-    const totalBranches = Object.keys(state.branches || {}).length;
-    // Until P4 Part 3 tags each branch with its projectId, every branch
-    // rolls up to the legacy project.
-    return project.legacyFlag ? totalBranches : 0;
+    // P4 Part 17 (G9 fix): use the project-scoped helper so non-legacy
+    // projects show their real branch count instead of always 0. The
+    // helper treats branches without a projectId as belonging to the
+    // legacy 'default' project, which preserves the pre-P4 rollup
+    // behaviour for the legacy project.
+    return stateService.getBranchesForProject(project.id).length;
   }
 
   /**
