@@ -8594,9 +8594,170 @@ function _topologyToggleAddMenu() {
 // T4: handle a + Add menu item click. Each kind routes to the most
 // appropriate existing CDS create flow, with novice-friendly defaults.
 // Items that need work in P5/P6 toast a friendly "coming soon".
-function _topologyChooseAddItem(kind) {
+// P4 Part 10 — Infra service templates for the Database submenu.
+//
+// Maps a template key to a fully-formed InfraService payload that
+// `POST /api/infra` accepts. Each template encodes the right docker
+// image / port / volumes / env that gets the database running on
+// the convention default. Image versions stay on stable major lines.
+const INFRA_TEMPLATES = {
+  postgres: {
+    id: 'postgres',
+    name: 'PostgreSQL',
+    dockerImage: 'postgres:16-alpine',
+    containerPort: 5432,
+    volumes: [{ name: 'postgres-data', containerPath: '/var/lib/postgresql/data' }],
+    env: {
+      POSTGRES_USER: 'postgres',
+      POSTGRES_PASSWORD: 'change-me-please',
+      POSTGRES_DB: 'app',
+    },
+  },
+  redis: {
+    id: 'redis',
+    name: 'Redis',
+    dockerImage: 'redis:7-alpine',
+    containerPort: 6379,
+    volumes: [{ name: 'redis-data', containerPath: '/data' }],
+    env: {},
+  },
+  mongodb: {
+    id: 'mongodb',
+    name: 'MongoDB',
+    dockerImage: 'mongo:8.0',
+    containerPort: 27017,
+    volumes: [{ name: 'mongodb-data', containerPath: '/data/db' }],
+    env: {
+      MONGO_INITDB_ROOT_USERNAME: 'admin',
+      MONGO_INITDB_ROOT_PASSWORD: 'change-me-please',
+    },
+  },
+  mysql: {
+    id: 'mysql',
+    name: 'MySQL',
+    dockerImage: 'mysql:8.4',
+    containerPort: 3306,
+    volumes: [{ name: 'mysql-data', containerPath: '/var/lib/mysql' }],
+    env: {
+      MYSQL_ROOT_PASSWORD: 'change-me-please',
+      MYSQL_DATABASE: 'app',
+    },
+  },
+};
+
+// Show the Database submenu. Replaces the menu's inner HTML with a
+// list of database templates + a back button. Modeled after Railway's
+// "+ Add → Database" two-level dropdown.
+function _topologyShowDatabaseSubmenu() {
+  var menu = document.getElementById('topologyFsAddMenu');
+  if (!menu) return;
+  var taken = new Set((infraServices || []).map(function (s) { return s.id; }));
+
+  var items = [
+    { key: 'postgres', label: 'PostgreSQL', icon: '🐘', tag: 'postgres:16-alpine · :5432' },
+    { key: 'redis', label: 'Redis', icon: '🔴', tag: 'redis:7-alpine · :6379' },
+    { key: 'mongodb', label: 'MongoDB', icon: '🍃', tag: 'mongo:8.0 · :27017' },
+    { key: 'mysql', label: 'MySQL', icon: '🐬', tag: 'mysql:8.4 · :3306' },
+  ];
+
+  menu.innerHTML =
+    '<div class="topology-fs-add-menu-back" onclick="_topologyShowAddMenuRoot()">' +
+      '<svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor"><path d="M7.78 12.53a.75.75 0 01-1.06 0L2.47 8.28a.75.75 0 010-1.06l4.25-4.25a.751.751 0 011.154.114.75.75 0 01-.094.946L4.81 7h7.44a.75.75 0 010 1.5H4.81l2.97 2.97a.75.75 0 010 1.06z"/></svg>' +
+      '<span>Database</span>' +
+    '</div>' +
+    '<input class="topology-fs-add-menu-search" placeholder="What would you like to create?" id="topologyFsAddSearch">' +
+    items.map(function (it) {
+      var disabled = taken.has(it.key);
+      return '<button type="button" class="topology-fs-add-menu-item' + (disabled ? ' disabled' : '') + '"' +
+        ' onclick="' + (disabled
+          ? "showToast('已存在 " + it.label + "，无需重复创建','info')"
+          : "_topologyCreateInfraFromTemplate('" + it.key + "')") + '">' +
+        '<span class="icon" style="font-size:16px">' + it.icon + '</span>' +
+        '<span class="label">' + esc(it.label) + (disabled ? ' <span style="color:var(--text-muted);font-size:10px">(已存在)</span>' : '') + '</span>' +
+        '<span style="font-size:10px;color:var(--text-muted);font-family:var(--font-mono,monospace)">' + esc(it.tag) + '</span>' +
+      '</button>';
+    }).join('');
+}
+
+// Reset the menu back to the root level (the original 6-item list).
+function _topologyShowAddMenuRoot() {
+  // Tear down the current menu by closing then re-opening — the root
+  // markup is built fresh by _ensureTopologyFsChrome's idempotent
+  // append. Easier to re-call it than maintain a separate root template.
+  var menu = document.getElementById('topologyFsAddMenu');
+  if (!menu) return;
+  // Restore root markup
+  menu.innerHTML =
+    '<input class="topology-fs-add-menu-search" placeholder="What would you like to create?" id="topologyFsAddSearch">' +
+    '<button type="button" class="topology-fs-add-menu-item" onclick="_topologyChooseAddItem(\'git\')">' +
+      '<span class="icon"><svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg></span>' +
+      '<span class="label">GitHub Repository</span><span class="chevron">›</span></button>' +
+    '<button type="button" class="topology-fs-add-menu-item" onclick="_topologyChooseAddItem(\'database\')">' +
+      '<span class="icon"><svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M8 1c4 0 7 1 7 2.5v9c0 1.5-3 2.5-7 2.5s-7-1-7-2.5v-9C1 2 4 1 8 1z"/></svg></span>' +
+      '<span class="label">Database (PostgreSQL / Redis / MongoDB / MySQL)</span><span class="chevron">›</span></button>' +
+    '<button type="button" class="topology-fs-add-menu-item" onclick="_topologyChooseAddItem(\'docker\')">' +
+      '<span class="icon"><svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M14 7h-2V5h2v2zm-3 0H9V5h2v2zM8 7H6V5h2v2zm6.6 4c-.4-1-1.4-1.6-2.5-1.6h-1c-.2-2.3-2-3.4-2.1-3.4l-.4-.2-.3.4c-.4.5-.6 1.2-.6 1.9C7.6 9.5 8 10 8 10c-.6.3-1.5.4-2.4.4H.4l-.1.7c-.2 1.4.1 2.7.7 3.7.6 1.1 1.7 1.9 3 2.3 4 1 8.5-.5 10.6-4.4 1.1-.1 2-.7 2.4-1.6l.2-.3-.5-.5z"/></svg></span>' +
+      '<span class="label">Docker Image</span><span class="chevron">›</span></button>' +
+    '<button type="button" class="topology-fs-add-menu-item" onclick="_topologyChooseAddItem(\'routing\')">' +
+      '<span class="icon"><svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M8 0a8 8 0 100 16A8 8 0 008 0z"/></svg></span>' +
+      '<span class="label">Routing Rule</span><span class="chevron">›</span></button>' +
+    '<button type="button" class="topology-fs-add-menu-item" onclick="_topologyChooseAddItem(\'volume\')">' +
+      '<span class="icon"><svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M2 3h12c.6 0 1 .4 1 1v8c0 .6-.4 1-1 1H2c-.6 0-1-.4-1-1V4c0-.6.4-1 1-1z"/></svg></span>' +
+      '<span class="label">Volume / 持久化卷</span><span class="chevron">›</span></button>' +
+    '<button type="button" class="topology-fs-add-menu-item" onclick="_topologyChooseAddItem(\'empty\')">' +
+      '<span class="icon"><svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M0 2.75C0 1.784.784 1 1.75 1h12.5c.966 0 1.75.784 1.75 1.75v10.5A1.75 1.75 0 0114.25 15H1.75A1.75 1.75 0 010 13.25V2.75z"/></svg></span>' +
+      '<span class="label">Empty Service / 空服务</span><span class="chevron">›</span></button>';
+}
+
+// Create an infra service from a template. Calls POST /api/infra with
+// the template payload. On success: refresh infra list, close menu,
+// open the right service detail panel for the new entry.
+async function _topologyCreateInfraFromTemplate(key) {
+  var tpl = INFRA_TEMPLATES[key];
+  if (!tpl) return;
+
+  // Close the menu immediately so the user feels progress
   var menu = document.getElementById('topologyFsAddMenu');
   if (menu) menu.classList.remove('open');
+
+  showToast('正在创建 ' + tpl.name + '...', 'info');
+
+  try {
+    var res = await fetch('/api/infra', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'same-origin',
+      body: JSON.stringify(tpl),
+    });
+    if (!res.ok) {
+      var body = await res.json().catch(function () { return null; });
+      throw new Error((body && body.error) || ('HTTP ' + res.status));
+    }
+    var data = await res.json();
+    showToast(tpl.name + ' 已创建（hostPort: ' + data.service.hostPort + '），点击节点启动', 'success');
+
+    // Refresh state + topology
+    await loadInfraServices();
+    if (typeof renderTopologyView === 'function') renderTopologyView();
+
+    // Open the new infra in the right panel for immediate inspection
+    if (typeof _topologyOpenServicePanel === 'function') {
+      _topologyOpenServicePanel(tpl.id, 'infra');
+    }
+  } catch (err) {
+    showToast('创建失败：' + (err && err.message ? err.message : err), 'error');
+  }
+}
+
+window._topologyShowDatabaseSubmenu = _topologyShowDatabaseSubmenu;
+window._topologyShowAddMenuRoot = _topologyShowAddMenuRoot;
+window._topologyCreateInfraFromTemplate = _topologyCreateInfraFromTemplate;
+
+function _topologyChooseAddItem(kind) {
+  var menu = document.getElementById('topologyFsAddMenu');
+  // Database stays in the menu and pivots to a submenu — every other
+  // option closes the menu and routes elsewhere.
+  if (menu && kind !== 'database') menu.classList.remove('open');
 
   switch (kind) {
     case 'git':
@@ -8607,14 +8768,13 @@ function _topologyChooseAddItem(kind) {
       setTimeout(function () { location.href = 'projects.html'; }, 800);
       break;
     case 'database':
-      // Routes to the existing infra-services modal (which has
-      // "discover from compose" + "+ custom"). Switch back to list
-      // view so the modal has its expected parent layout.
-      setViewMode('list');
-      setTimeout(function () {
-        if (typeof openInfraModal === 'function') openInfraModal();
-      }, 50);
-      break;
+      // P4 Part 10: show the Database submenu (PostgreSQL / Redis /
+      // MongoDB / MySQL) instead of routing to the legacy modal.
+      // The menu stays open — user picks one and we POST /api/infra.
+      _topologyShowDatabaseSubmenu();
+      var m = document.getElementById('topologyFsAddMenu');
+      if (m) m.classList.add('open');
+      return;
     case 'docker':
       // Same destination — infra modal supports any docker image.
       setViewMode('list');
