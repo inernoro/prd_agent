@@ -135,6 +135,23 @@ unzip -q "$zip_path" -d deploy/web/dist
 
 echo ""
 echo "Static dist extracted to: deploy/web/dist"
+
+# 激活独立部署模式的 nginx 配置：
+# - 仓库里 default.conf 默认 symlink 到 branches/_disconnected.conf（CDS 未激活时的 502 兜底）
+# - 独立部署模式下必须重指到 branches/_standalone.conf（真正的 /api/ → api:8080 反代）
+# - 幂等：每次部署都重建 symlink，抗漂移、抗 git 副作用
+NGINX_CONF_D="deploy/nginx/conf.d"
+STANDALONE_CONF="$NGINX_CONF_D/branches/_standalone.conf"
+DEFAULT_CONF="$NGINX_CONF_D/default.conf"
+if [ ! -f "$STANDALONE_CONF" ]; then
+  echo "ERROR: 缺少独立部署 nginx 配置：$STANDALONE_CONF" >&2
+  echo "  这通常意味着仓库不完整，请确认已 git pull 到最新。" >&2
+  exit 1
+fi
+echo "Activating standalone nginx config (default.conf -> branches/_standalone.conf) ..."
+rm -f "$DEFAULT_CONF"
+ln -s "branches/_standalone.conf" "$DEFAULT_CONF"
+
 echo "Pulling latest api image..."
 $COMPOSE pull api
 
