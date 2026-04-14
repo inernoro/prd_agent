@@ -137,6 +137,8 @@ function CreateTab() {
   const [saving, setSaving] = useState(false);
   const [exporting, setExporting] = useState(false);
   const [saved, setSaved] = useState(false);
+  /** 会话中是否至少保存成功过一次（用于区分首次 vs 再次保存文案）。handleAdjust 不重置 */
+  const [hasSavedOnce, setHasSavedOnce] = useState(false);
   // Auto-test state
   const [autoTestInput, setAutoTestInput] = useState<string | null>(null);
   const [autoTestResult, setAutoTestResult] = useState('');
@@ -242,20 +244,36 @@ function CreateTab() {
   };
 
   const handleSave = async () => {
-    if (!sessionId) return;
+    if (!sessionId || saving) return;
     setSaving(true);
     try {
       const res = await saveSkillFromAgent(sessionId);
       if (res.success && res.data) {
         setSaved(true);
+        setHasSavedOnce(true);
         setMessages((prev) => [...prev, { role: 'system', content: res.data.message + '\n\n正在自动试跑效果…' }]);
-        // Trigger auto-test
+        // Reset auto-test state (both first-save and re-save share this path)
         setAutoTestInput(null);
         setAutoTestResult('');
         setAutoTestPhase('准备试跑…');
+        setDescOptimized(null);
         await startAutoTest({ url: api.skillAgent.autoTest(sessionId) });
+      } else {
+        // 失败兜底：不再静默，明确告诉用户原因
+        const errMsg = res.error?.message ?? '未知错误';
+        setMessages((prev) => [...prev, {
+          role: 'system',
+          content: `保存失败：${errMsg}。请稍后重试或点击"重置"开新会话。`,
+        }]);
       }
-    } finally { setSaving(false); }
+    } catch (err) {
+      setMessages((prev) => [...prev, {
+        role: 'system',
+        content: `保存异常：${err instanceof Error ? err.message : String(err)}`,
+      }]);
+    } finally {
+      setSaving(false);
+    }
   };
 
   const handleAdjust = () => {
@@ -302,7 +320,7 @@ function CreateTab() {
   const handleReset = async () => {
     if (sessionId) deleteSkillAgentSession(sessionId);
     setSessionId(null); setMessages([]); setStages([]); setCurrentStageIndex(0);
-    setSkillPreview(null); setInput(''); setSaved(false);
+    setSkillPreview(null); setInput(''); setSaved(false); setHasSavedOnce(false);
     setAutoTestInput(null); setAutoTestResult(''); setAutoTestPhase(null); setDescOptimized(null);
     resetStream();
     initSession();
@@ -312,8 +330,11 @@ function CreateTab() {
 
   return (
     <div className="flex-1 min-h-0 flex gap-3 px-3 pb-3 pt-2">
-      {/* Chat Column */}
-      <div className="flex-1 min-w-0 flex flex-col">
+      {/* Chat Column — flex:6 (与"测试技能"页面同构) */}
+      <div
+        className="flex flex-col"
+        style={hasSkillDraft ? { flex: '6 6 0%', minWidth: 0 } : { flex: '1 1 0%', minWidth: 0 }}
+      >
         <GlassCard className="flex-1 flex flex-col" padding="none" style={{ overflow: 'hidden' }}>
           {/* Stage progress (compact) */}
           {stages.length > 0 && (
@@ -422,9 +443,12 @@ function CreateTab() {
         </GlassCard>
       </div>
 
-      {/* Right Panel: Preview / Auto-test results */}
+      {/* Right Panel: Preview / Auto-test results — flex:4 (与"测试技能"右栏同宽) */}
       {hasSkillDraft && (
-        <div className="hidden lg:flex flex-col gap-3 w-[340px] shrink-0">
+        <div
+          className="hidden lg:flex flex-col gap-3"
+          style={{ flex: '4 4 0%', minWidth: 0 }}
+        >
           {/* Auto-test results (shown after save) */}
           {saved && (autoTestPhase || autoTestInput || autoTestResult || testStreaming) ? (
             <>
@@ -527,7 +551,9 @@ function CreateTab() {
                   className="w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl text-[13px] font-medium transition-all"
                   style={{ background: 'linear-gradient(135deg,#8B5CF6,#6366F1)', color: 'white', border: '1px solid rgba(139,92,246,0.3)' }}>
                   {saving ? <Loader2 size={15} className="animate-spin" /> : <Save size={15} />}
-                  {saving ? '保存并试跑…' : '保存并试跑效果'}
+                  {saving
+                    ? (hasSavedOnce ? '更新并试跑…' : '保存并试跑…')
+                    : (hasSavedOnce ? '更新并重新试跑' : '保存并试跑效果')}
                 </button>
                 <div className="flex gap-2">
                   <button onClick={handleExportMd} disabled={exporting}
@@ -551,11 +577,11 @@ function CreateTab() {
       {hasSkillDraft && (
         <div className="lg:hidden fixed bottom-0 left-0 right-0 flex items-center gap-2 px-4 py-3"
           style={{ background: 'rgba(10,10,14,0.9)', borderTop: '1px solid rgba(255,255,255,0.06)', backdropFilter: 'blur(20px)' }}>
-          <button onClick={handleSave} disabled={saving || saved}
+          <button onClick={handleSave} disabled={saving}
             className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-[12px] font-medium"
-            style={{ background: saved ? 'rgba(34,197,94,0.12)' : 'linear-gradient(135deg,#8B5CF6,#6366F1)', color: saved ? 'rgba(34,197,94,0.9)' : 'white' }}>
-            {saved ? <CheckCircle2 size={13} /> : <Save size={13} />}
-            {saved ? '已保存' : '保存'}
+            style={{ background: 'linear-gradient(135deg,#8B5CF6,#6366F1)', color: 'white' }}>
+            {saving ? <Loader2 size={13} className="animate-spin" /> : <Save size={13} />}
+            {saving ? '保存中…' : (hasSavedOnce ? '重新保存' : '保存')}
           </button>
           <button onClick={handleExportMd} disabled={exporting}
             className="flex items-center gap-1 px-3 py-2 rounded-xl text-[12px]"

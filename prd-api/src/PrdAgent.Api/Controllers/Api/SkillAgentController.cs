@@ -166,17 +166,23 @@ public class SkillAgentController : ControllerBase
         if (session.SkillDraft == null)
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "技能草稿尚未完成"));
 
-        var skill = await _service.SaveAsPersonalSkillAsync(session, userId);
+        var (skill, alreadySaved) = await _service.SaveAsPersonalSkillAsync(session, userId);
         if (skill == null)
             return StatusCode(500, ApiResponse<object>.Fail(ErrorCodes.INTERNAL_ERROR, "保存失败"));
 
-        _logger.LogInformation("[skill-agent] Skill saved: {SkillKey} by {UserId}", skill.SkillKey, userId);
+        _logger.LogInformation(
+            "[skill-agent] Skill {Op}: {SkillKey} by {UserId}",
+            alreadySaved ? "updated" : "saved",
+            skill.SkillKey, userId);
 
         return Ok(ApiResponse<object>.Ok(new
         {
             skillKey = skill.SkillKey,
             title = skill.Title,
-            message = $"技能「{skill.Title}」已保存到你的个人技能库",
+            alreadySaved,
+            message = alreadySaved
+                ? $"技能「{skill.Title}」已更新到你的个人技能库"
+                : $"技能「{skill.Title}」已保存到你的个人技能库",
         }));
     }
 

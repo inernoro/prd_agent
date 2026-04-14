@@ -242,10 +242,36 @@ public class SkillAgentService
 
     // ━━━ Skill Save & Export ━━━━━━━━
 
-    public async Task<Skill?> SaveAsPersonalSkillAsync(SkillAgentSession session, string userId)
+    /// <summary>
+    /// 保存技能草稿为个人技能。幂等：首次走 Create，后续"需要调整"重复保存走 Update，
+    /// SkillKey 以 session.SavedSkillKey 为准（不随 Title 漂移），确保不会产生重复记录。
+    /// 返回 (skill, alreadySaved)：alreadySaved=true 表示走的是更新路径。
+    /// </summary>
+    public async Task<(Skill? skill, bool alreadySaved)> SaveAsPersonalSkillAsync(SkillAgentSession session, string userId)
     {
-        if (session.SkillDraft == null) return null;
-        return await _skillService.CreatePersonalSkillAsync(userId, session.SkillDraft);
+        if (session.SkillDraft == null) return (null, false);
+
+        // 已经保存过 → 走 Update，锁定首次保存时的 SkillKey
+        if (!string.IsNullOrWhiteSpace(session.SavedSkillKey))
+        {
+            var savedKey = session.SavedSkillKey!;
+            // 把 Draft 的 key 同步为已保存的 key，避免 Title 变更导致 ToKebabCase 产出新 key
+            session.SkillDraft.SkillKey = savedKey;
+
+            var updated = await _skillService.UpdatePersonalSkillAsync(userId, savedKey, session.SkillDraft);
+            if (updated)
+            {
+                return (session.SkillDraft, true);
+            }
+            // Update 失败（记录被删 / 跨用户 / 无权）→ 清掉 SavedSkillKey 退回 Create 路径
+            _logger.LogWarning("[skill-agent] Update fallback to create for session {SessionId}, skillKey {SkillKey}", session.Id, savedKey);
+            session.SavedSkillKey = null;
+        }
+
+        // 首次保存：SkillDraft 的 SkillKey 可能为空或有值，交给 SkillService 决定
+        var created = await _skillService.CreatePersonalSkillAsync(userId, session.SkillDraft);
+        session.SavedSkillKey = created.SkillKey;
+        return (created, false);
     }
 
     // ━━━ Skill Auto-Test (post-save evaluation loop) ━━━━━━━━
@@ -858,6 +884,12 @@ public class SkillAgentSession
     public List<SkillAgentMessage> Messages { get; set; } = new();
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime LastActiveAt { get; set; } = DateTime.UtcNow;
+
+    /// <summary>
+    /// 首次保存成功后记录的 SkillKey。
+    /// 后续"保存并试跑"会认它为准走 Update，避免因 Title 变更导致 SkillKey 漂移而新建重复记录。
+    /// </summary>
+    public string? SavedSkillKey { get; set; }
 }
 
 public record SkillAgentMessage(string Role, string Content);

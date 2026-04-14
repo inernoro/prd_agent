@@ -37,6 +37,8 @@ export interface SkillAgentSaveResponse {
   skillKey: string;
   title: string;
   message: string;
+  /** 是否为更新路径（再次保存）；首次保存为 false */
+  alreadySaved?: boolean;
 }
 
 export interface SkillAgentExportMdResponse {
