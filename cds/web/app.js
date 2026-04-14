@@ -9609,6 +9609,36 @@ function _topologyRenderPanelTab(tab, entity) {
   }
 
   if (tab === 'settings') {
+    // P4 Part 18 (G7): connection strings for infra services.
+    //
+    // Each supported infra type (mongo / redis / postgres / mysql) gets
+    // two view rows:
+    //   Host view      — from outside the CDS docker network. Uses
+    //                    window.location.hostname + hostPort. This is
+    //                    what you'd paste into a desktop DB GUI.
+    //   Container view — from another container on the same network.
+    //                    Uses containerName + containerPort. This is
+    //                    what you'd put in an app's env vars to talk
+    //                    to the DB service.
+    //
+    // Credentials are extracted from entity.env when present, else
+    // fall back to sensible defaults (admin / change-me-please / postgres).
+    // Passwords get masked with the same rule as the Variables tab
+    // but the copy button copies the un-masked full string.
+    var connBlock = '';
+    if (kind === 'infra') {
+      var conns = _topologyBuildConnStrings(entity);
+      if (conns) {
+        connBlock =
+          '<div class="tfp-section-h">CONNECTION STRINGS</div>' +
+          '<div class="tfp-conn-list">' +
+            _topologyRenderConnRow('Host view', conns.host, conns.hostMasked, conns.type + ' · 从宿主机或外部客户端连接') +
+            _topologyRenderConnRow('Container view', conns.container, conns.containerMasked, conns.type + ' · 从同一 Docker 网络内的其他容器连接') +
+          '</div>' +
+          '<div class="tfp-vars-hint" style="margin-top:10px">密码从环境变量（' + esc(conns.passwordEnvKey || '默认值') + '）读取，点 ⧉ 复制未遮罩的完整串</div>';
+      }
+    }
+
     body.innerHTML =
       '<div class="tfp-section-h">SERVICE INFO</div>' +
       '<div class="tfp-kv"><span class="tfp-kv-key">Name</span><span class="tfp-kv-val">' + esc(entity.name || entity.id) + '</span></div>' +
@@ -9616,9 +9646,99 @@ function _topologyRenderPanelTab(tab, entity) {
       (entity.containerPort ? '<div class="tfp-kv"><span class="tfp-kv-key">Container Port</span><span class="tfp-kv-val">' + entity.containerPort + '</span></div>' : '') +
       (entity.hostPort ? '<div class="tfp-kv"><span class="tfp-kv-key">Host Port</span><span class="tfp-kv-val">' + entity.hostPort + '</span></div>' : '') +
       (entity.workDir ? '<div class="tfp-kv"><span class="tfp-kv-key">Work Dir</span><span class="tfp-kv-val">' + esc(entity.workDir) + '</span></div>' : '') +
+      connBlock +
       '<div style="margin-top:18px"><button type="button" class="tfp-view-logs-btn" style="width:100%;padding:9px" onclick="_topologyPanelOpenEditor()">在编辑器中打开</button></div>';
     return;
   }
+}
+
+// P4 Part 18 (G7): build connection strings for a known infra type.
+// Returns null for unknown images (generic services just don't get the
+// conn-string block — they fall back to the SERVICE INFO kv rows).
+function _topologyBuildConnStrings(entity) {
+  var image = String(entity.dockerImage || '').toLowerCase();
+  var hostPort = entity.hostPort;
+  var containerPort = entity.containerPort;
+  var containerName = entity.containerName || entity.id;
+  var env = entity.env || {};
+  var host = (typeof location !== 'undefined' && location.hostname) || 'localhost';
+
+  // Helper: percent-encode a password segment so special chars don't
+  // break the URI (e.g. a password containing '@' or '/').
+  function enc(s) { return encodeURIComponent(String(s || '')); }
+  // Helper: mask everything between '://[user]:' and '@' so passwords
+  // don't show in plaintext until the user clicks copy.
+  function maskPassword(s) {
+    return String(s).replace(/:\/\/([^:@]*):([^@]*)@/, function (_m, u, _p) {
+      return '://' + u + ':' + '••••••••' + '@';
+    });
+  }
+
+  var type = null;
+  var host4 = host;
+  var hostP = hostPort;
+  var cHost = containerName;
+  var cP = containerPort;
+  var hostStr = '';
+  var containerStr = '';
+  var passwordEnvKey = null;
+
+  if (image.indexOf('mongo') >= 0) {
+    type = 'mongodb';
+    var mUser = env.MONGO_INITDB_ROOT_USERNAME || 'admin';
+    var mPass = env.MONGO_INITDB_ROOT_PASSWORD || 'change-me-please';
+    passwordEnvKey = env.MONGO_INITDB_ROOT_PASSWORD ? 'MONGO_INITDB_ROOT_PASSWORD' : null;
+    hostStr = 'mongodb://' + mUser + ':' + enc(mPass) + '@' + host4 + ':' + hostP;
+    containerStr = 'mongodb://' + mUser + ':' + enc(mPass) + '@' + cHost + ':' + cP;
+  } else if (image.indexOf('redis') >= 0) {
+    type = 'redis';
+    var rPass = env.REDIS_PASSWORD || '';
+    passwordEnvKey = env.REDIS_PASSWORD ? 'REDIS_PASSWORD' : null;
+    var rPrefix = rPass ? 'redis://:' + enc(rPass) + '@' : 'redis://';
+    hostStr = rPrefix + host4 + ':' + hostP;
+    containerStr = rPrefix + cHost + ':' + cP;
+  } else if (image.indexOf('postgres') >= 0) {
+    type = 'postgresql';
+    var pUser = env.POSTGRES_USER || 'postgres';
+    var pPass = env.POSTGRES_PASSWORD || 'change-me-please';
+    var pDb = env.POSTGRES_DB || 'app';
+    passwordEnvKey = env.POSTGRES_PASSWORD ? 'POSTGRES_PASSWORD' : null;
+    hostStr = 'postgresql://' + pUser + ':' + enc(pPass) + '@' + host4 + ':' + hostP + '/' + pDb;
+    containerStr = 'postgresql://' + pUser + ':' + enc(pPass) + '@' + cHost + ':' + cP + '/' + pDb;
+  } else if (image.indexOf('mysql') >= 0 || image.indexOf('mariadb') >= 0) {
+    type = 'mysql';
+    var yPass = env.MYSQL_ROOT_PASSWORD || 'change-me-please';
+    var yDb = env.MYSQL_DATABASE || 'app';
+    passwordEnvKey = env.MYSQL_ROOT_PASSWORD ? 'MYSQL_ROOT_PASSWORD' : null;
+    hostStr = 'mysql://root:' + enc(yPass) + '@' + host4 + ':' + hostP + '/' + yDb;
+    containerStr = 'mysql://root:' + enc(yPass) + '@' + cHost + ':' + cP + '/' + yDb;
+  } else {
+    return null;
+  }
+
+  return {
+    type: type,
+    host: hostStr,
+    container: containerStr,
+    hostMasked: maskPassword(hostStr),
+    containerMasked: maskPassword(containerStr),
+    passwordEnvKey: passwordEnvKey,
+  };
+}
+
+// P4 Part 18 (G7): one row of the connection-strings block.
+// Uses inline style so it survives without a new CSS class for every
+// sub-element.
+function _topologyRenderConnRow(label, fullValue, maskedValue, hint) {
+  var safeJson = JSON.stringify(fullValue).replace(/"/g, '&quot;');
+  return '<div class="tfp-conn-row">' +
+    '<div class="tfp-conn-label">' + esc(label) + '</div>' +
+    '<div class="tfp-conn-value" title="' + esc(hint) + '">' + esc(maskedValue) + '</div>' +
+    '<button type="button" class="tfp-var-icon-btn" title="复制完整连接串" ' +
+      'onclick="navigator.clipboard.writeText(' + safeJson + ');showToast(\'已复制完整连接串\',\'success\')">' +
+      '<svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor"><path d="M0 6.75C0 5.784.784 5 1.75 5h1.5a.75.75 0 010 1.5h-1.5a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-1.5a.75.75 0 011.5 0v1.5A1.75 1.75 0 019.25 16h-7.5A1.75 1.75 0 010 14.25v-7.5z"/><path d="M5 1.75C5 .784 5.784 0 6.75 0h7.5C15.216 0 16 .784 16 1.75v7.5A1.75 1.75 0 0114.25 11h-7.5A1.75 1.75 0 015 9.25v-7.5zm1.75-.25a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-7.5a.25.25 0 00-.25-.25h-7.5z"/></svg>' +
+    '</button>' +
+  '</div>';
 }
 
 // Open logs for the currently-displayed service (delegates to the
