@@ -527,3 +527,267 @@ describe('Projects router (P4 Part 2)', () => {
     });
   });
 });
+
+// ────────────────────────────────────────────────────────────────────
+// P4 Part 18 (G1.3): multi-repo clone flow tests.
+// ────────────────────────────────────────────────────────────────────
+//
+// These tests run the router with `config.reposBase` set, which
+// triggers the auto-repoPath + cloneStatus='pending' behavior on
+// POST /projects, and exercise the new POST /:id/clone SSE endpoint.
+// The default-config describe block above explicitly does NOT set
+// reposBase, so it verifies the legacy single-repo fallback (no
+// repoPath, no cloneStatus on freshly-created projects).
+
+/**
+ * Minimal SSE client that collects events from an HTTP response
+ * stream. Returns once the server ends the response.
+ *
+ * Event format is standard: each record is a blank-line-terminated
+ * block with `event: <name>` and `data: <json>` lines. We parse the
+ * JSON so tests can assert against structured objects.
+ */
+function sseRequest(
+  server: http.Server,
+  method: string,
+  urlPath: string,
+): Promise<{ status: number; events: Array<{ event: string; data: any }> }> {
+  return new Promise((resolve, reject) => {
+    const addr = server.address() as { port: number };
+    const req = http.request(
+      {
+        hostname: '127.0.0.1',
+        port: addr.port,
+        path: urlPath,
+        method,
+        headers: { Accept: 'text/event-stream' },
+      },
+      (res) => {
+        let raw = '';
+        res.on('data', (chunk: Buffer) => (raw += chunk.toString()));
+        res.on('end', () => {
+          const events: Array<{ event: string; data: any }> = [];
+          for (const block of raw.split(/\n\n+/)) {
+            const eventMatch = block.match(/^event: (.+)$/m);
+            const dataMatch = block.match(/^data: (.+)$/m);
+            if (eventMatch && dataMatch) {
+              try {
+                events.push({
+                  event: eventMatch[1].trim(),
+                  data: JSON.parse(dataMatch[1].trim()),
+                });
+              } catch {
+                events.push({ event: eventMatch[1].trim(), data: dataMatch[1].trim() });
+              }
+            }
+          }
+          resolve({ status: res.statusCode!, events });
+        });
+      },
+    );
+    req.on('error', reject);
+    req.end();
+  });
+}
+
+describe('Projects router — multi-repo clone (P4 Part 18 G1.3)', () => {
+  let tmpDir: string;
+  let stateService: StateService;
+  let shell: MockShellExecutor;
+  let server: http.Server;
+  const REPOS_BASE = '/test-repos';
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cds-projects-clone-test-'));
+    const stateFile = path.join(tmpDir, 'state.json');
+    stateService = new StateService(stateFile, tmpDir);
+    stateService.load();
+
+    shell = new MockShellExecutor();
+    mockDockerNetworkHappyPath(shell);
+
+    // Build a minimal config with just reposBase — the rest of
+    // CdsConfig is unused by the projects router.
+    const config = { reposBase: REPOS_BASE } as any;
+
+    const app = express();
+    app.use(express.json());
+    app.use('/api', createProjectsRouter({ stateService, shell, config }));
+
+    server = app.listen(0);
+  });
+
+  afterEach(async () => {
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  describe('POST /api/projects — auto repoPath when reposBase is set', () => {
+    it('stamps repoPath + cloneStatus=pending when gitRepoUrl is provided', async () => {
+      const res = await request(server, 'POST', '/api/projects', {
+        name: 'Clone Me',
+        gitRepoUrl: 'https://github.com/example/repo.git',
+      });
+
+      expect(res.status).toBe(201);
+      expect(res.body.project.repoPath).toBe(`${REPOS_BASE}/${res.body.project.id}`);
+      expect(res.body.project.cloneStatus).toBe('pending');
+      expect(res.body.project.gitRepoUrl).toBe('https://github.com/example/repo.git');
+    });
+
+    it('does NOT set repoPath when gitRepoUrl is missing (no-op project)', async () => {
+      const res = await request(server, 'POST', '/api/projects', {
+        name: 'No Git',
+      });
+
+      expect(res.status).toBe(201);
+      expect(res.body.project.repoPath).toBeUndefined();
+      expect(res.body.project.cloneStatus).toBeUndefined();
+    });
+  });
+
+  describe('POST /api/projects/:id/clone', () => {
+    it('streams start → progress → complete on a happy-path clone', async () => {
+      // Mock git clone to succeed and emit a couple of progress lines
+      shell.addResponsePattern(/^mkdir -p /, () => ({ stdout: '', stderr: '', exitCode: 0 }));
+      shell.addResponsePattern(/^test -d /, () => ({ stdout: '', stderr: '', exitCode: 1 }));
+      shell.addResponsePattern(/^git clone /, () => ({
+        stdout: 'Cloning into /test-repos/proj\nReceiving objects: 100% (125/125), done.\n',
+        stderr: '',
+        exitCode: 0,
+      }));
+
+      // Create project first
+      const create = await request(server, 'POST', '/api/projects', {
+        name: 'Clone Test',
+        gitRepoUrl: 'https://github.com/example/test.git',
+      });
+      expect(create.status).toBe(201);
+      const pid = create.body.project.id;
+
+      // Clone
+      const clone = await sseRequest(server, 'POST', `/api/projects/${pid}/clone`);
+      expect(clone.status).toBe(200);
+
+      const eventNames = clone.events.map((e) => e.event);
+      expect(eventNames[0]).toBe('start');
+      expect(eventNames).toContain('complete');
+      expect(eventNames).not.toContain('error');
+
+      const startEvent = clone.events.find((e) => e.event === 'start')!;
+      expect(startEvent.data.projectId).toBe(pid);
+      expect(startEvent.data.repoPath).toBe(`${REPOS_BASE}/${pid}`);
+      expect(startEvent.data.gitRepoUrl).toBe('https://github.com/example/test.git');
+
+      const completeEvent = clone.events.find((e) => e.event === 'complete')!;
+      expect(completeEvent.data.projectId).toBe(pid);
+      expect(completeEvent.data.repoPath).toBe(`${REPOS_BASE}/${pid}`);
+
+      // State was updated to 'ready'
+      const after = stateService.getProject(pid)!;
+      expect(after.cloneStatus).toBe('ready');
+      expect(after.cloneError).toBeUndefined();
+
+      // The git clone command was actually executed
+      const cloneCmds = shell.commands.filter((c) => c.startsWith('git clone'));
+      expect(cloneCmds).toHaveLength(1);
+      expect(cloneCmds[0]).toContain('https://github.com/example/test.git');
+      expect(cloneCmds[0]).toContain(`${REPOS_BASE}/${pid}`);
+    });
+
+    it('sets cloneStatus=error and streams error event when git clone fails', async () => {
+      shell.addResponsePattern(/^mkdir -p /, () => ({ stdout: '', stderr: '', exitCode: 0 }));
+      shell.addResponsePattern(/^test -d /, () => ({ stdout: '', stderr: '', exitCode: 1 }));
+      shell.addResponsePattern(/^git clone /, () => ({
+        stdout: '',
+        stderr: 'fatal: repository https://nope.git not found',
+        exitCode: 128,
+      }));
+
+      const create = await request(server, 'POST', '/api/projects', {
+        name: 'Bad Clone',
+        gitRepoUrl: 'https://nope.git',
+      });
+      const pid = create.body.project.id;
+
+      const clone = await sseRequest(server, 'POST', `/api/projects/${pid}/clone`);
+      expect(clone.status).toBe(200);
+
+      const errorEvent = clone.events.find((e) => e.event === 'error');
+      expect(errorEvent).toBeDefined();
+      expect(errorEvent!.data.message).toContain('fatal');
+      expect(clone.events.find((e) => e.event === 'complete')).toBeUndefined();
+
+      const after = stateService.getProject(pid)!;
+      expect(after.cloneStatus).toBe('error');
+      expect(after.cloneError).toContain('fatal');
+    });
+
+    it('returns 404 when the project does not exist', async () => {
+      const res = await request(server, 'POST', '/api/projects/ghost/clone');
+      expect(res.status).toBe(404);
+      expect(res.body.error).toBe('project_not_found');
+    });
+
+    it('returns 400 when the project has no gitRepoUrl', async () => {
+      const create = await request(server, 'POST', '/api/projects', {
+        name: 'No URL',
+      });
+      const pid = create.body.project.id;
+
+      const res = await request(server, 'POST', `/api/projects/${pid}/clone`);
+      expect(res.status).toBe(400);
+      expect(res.body.error).toBe('no_git_url');
+    });
+
+    it('returns 409 when the project is already ready', async () => {
+      shell.addResponsePattern(/^mkdir -p /, () => ({ stdout: '', stderr: '', exitCode: 0 }));
+      shell.addResponsePattern(/^test -d /, () => ({ stdout: '', stderr: '', exitCode: 1 }));
+      shell.addResponsePattern(/^git clone /, () => ({ stdout: '', stderr: '', exitCode: 0 }));
+
+      const create = await request(server, 'POST', '/api/projects', {
+        name: 'Double',
+        gitRepoUrl: 'https://ok.git',
+      });
+      const pid = create.body.project.id;
+
+      // First clone → ready
+      const first = await sseRequest(server, 'POST', `/api/projects/${pid}/clone`);
+      expect(first.events.find((e) => e.event === 'complete')).toBeDefined();
+
+      // Second clone → 409
+      const second = await request(server, 'POST', `/api/projects/${pid}/clone`);
+      expect(second.status).toBe(409);
+      expect(second.body.error).toBe('already_ready');
+    });
+
+    it('allows re-clone after an errored attempt', async () => {
+      // First clone fails
+      shell.addResponsePattern(/^mkdir -p /, () => ({ stdout: '', stderr: '', exitCode: 0 }));
+      shell.addResponsePattern(/^test -d /, () => ({ stdout: '', stderr: '', exitCode: 1 }));
+      let cloneCall = 0;
+      shell.addResponsePattern(/^git clone /, () => {
+        cloneCall++;
+        return cloneCall === 1
+          ? { stdout: '', stderr: 'fatal: temporary', exitCode: 128 }
+          : { stdout: 'ok', stderr: '', exitCode: 0 };
+      });
+
+      const create = await request(server, 'POST', '/api/projects', {
+        name: 'Retry',
+        gitRepoUrl: 'https://retry.git',
+      });
+      const pid = create.body.project.id;
+
+      // First attempt fails
+      const first = await sseRequest(server, 'POST', `/api/projects/${pid}/clone`);
+      expect(stateService.getProject(pid)!.cloneStatus).toBe('error');
+      expect(first.events.find((e) => e.event === 'error')).toBeDefined();
+
+      // Second attempt succeeds
+      const second = await sseRequest(server, 'POST', `/api/projects/${pid}/clone`);
+      expect(stateService.getProject(pid)!.cloneStatus).toBe('ready');
+      expect(second.events.find((e) => e.event === 'complete')).toBeDefined();
+    });
+  });
+});

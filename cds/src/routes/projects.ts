@@ -100,7 +100,7 @@ function toSummary(project: Project, branchCount: number): ProjectSummary {
 
 export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
   const router = Router();
-  const { stateService, shell } = deps;
+  const { stateService, shell, config } = deps;
 
   function countBranchesFor(project: Project): number {
     // P4 Part 17 (G9 fix): use the project-scoped helper so non-legacy
@@ -220,6 +220,16 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
     const now = new Date().toISOString();
     const id = generateProjectId();
     const network = dockerNetworkFor(id);
+    // P4 Part 18 (G1.3): when a gitRepoUrl is supplied AND CDS has
+    // been configured with a reposBase, stamp the new project with a
+    // per-project repoPath and mark cloneStatus='pending'. The actual
+    // `git clone` happens out-of-band via POST /api/projects/:id/clone
+    // so the create request stays fast. When reposBase isn't set we
+    // leave repoPath undefined and the project falls back to the
+    // legacy single-repo root at every worktree call-site — this is
+    // what pre-G1 CDS installs will see.
+    const reposBase = config?.reposBase;
+    const willClone = Boolean(gitRepoUrl && reposBase);
     const newProject: Project = {
       id,
       slug,
@@ -231,6 +241,12 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
       legacyFlag: false,
       createdAt: now,
       updatedAt: now,
+      ...(willClone
+        ? {
+            repoPath: `${reposBase}/${id}`,
+            cloneStatus: 'pending' as const,
+          }
+        : {}),
     };
 
     // — Side effects with rollback —
@@ -325,6 +341,165 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
 
     const updated = stateService.getProject(project.id)!;
     res.json({ project: toSummary(updated, countBranchesFor(updated)) });
+  });
+
+  // POST /api/projects/:id/clone — run the async git clone (P4 Part 18 G1.3).
+  //
+  // Contract:
+  //   Trigger: POST /api/projects/:id/clone  (SSE response)
+  //   Events:
+  //     event: start     { projectId, gitRepoUrl, repoPath }
+  //     event: progress  { line }             — one line of git clone output
+  //     event: complete  { projectId, repoPath }
+  //     event: error     { message }
+  //
+  // The clone is called only once per project — the endpoint refuses
+  // if cloneStatus is already 'cloning' or 'ready' so repeated clicks
+  // don't spawn parallel git processes. To re-clone after an error,
+  // the client PATCHes cloneStatus back to 'pending' first (or just
+  // retries if cloneStatus is currently 'error').
+  //
+  // This endpoint intentionally leaves the repoPath in place on
+  // failure so the operator can inspect it. Successful clone flips
+  // cloneStatus → 'ready' and the branch deploy path becomes usable
+  // via StateService.getProjectRepoRoot().
+  router.post('/projects/:id/clone', async (req, res) => {
+    const project = stateService.getProject(req.params.id);
+    if (!project) {
+      res.status(404).json({
+        error: 'project_not_found',
+        message: `Project '${req.params.id}' does not exist.`,
+      });
+      return;
+    }
+    if (!project.gitRepoUrl) {
+      res.status(400).json({
+        error: 'no_git_url',
+        message: '项目未配置 gitRepoUrl，无法克隆。',
+      });
+      return;
+    }
+    if (!project.repoPath) {
+      res.status(400).json({
+        error: 'no_repo_path',
+        message: 'CDS 未配置 reposBase（见 exec_cds.sh），无法确定克隆目标路径。',
+      });
+      return;
+    }
+    if (project.cloneStatus === 'cloning') {
+      res.status(409).json({
+        error: 'already_cloning',
+        message: '该项目正在克隆中，请等待当前任务结束或刷新状态。',
+      });
+      return;
+    }
+    if (project.cloneStatus === 'ready') {
+      res.status(409).json({
+        error: 'already_ready',
+        message: '该项目已克隆完成。如需重新克隆请先删除 repoPath 目录。',
+      });
+      return;
+    }
+
+    // Open SSE immediately so the client sees "cloning" as soon as
+    // the request is accepted, even before mkdir returns.
+    res.writeHead(200, {
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache',
+      Connection: 'keep-alive',
+      'X-Accel-Buffering': 'no',
+    });
+
+    const sendEvent = (event: string, data: unknown): void => {
+      try {
+        res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+      } catch {
+        /* client disconnected — update below still runs via server authority */
+      }
+    };
+
+    const repoPath = project.repoPath;
+    const gitUrl = project.gitRepoUrl;
+
+    try {
+      stateService.updateProject(project.id, {
+        cloneStatus: 'cloning',
+        cloneError: undefined,
+      });
+      sendEvent('start', {
+        projectId: project.id,
+        gitRepoUrl: gitUrl,
+        repoPath,
+      });
+
+      // Ensure parent directory exists (reposBase / …)
+      const lastSep = repoPath.lastIndexOf('/');
+      const parentDir = lastSep > 0 ? repoPath.substring(0, lastSep) : '.';
+      const mkdir = await shell.exec(`mkdir -p "${parentDir}"`);
+      if (mkdir.exitCode !== 0) {
+        throw new Error(`创建父目录失败: ${combinedOutput(mkdir)}`);
+      }
+
+      // Clean up a stale target dir if one exists (e.g. from a
+      // previous errored clone). The cloneStatus guard above already
+      // refuses 'ready', so we can only land here in 'pending' /
+      // 'error' — both safe to blow away.
+      const check = await shell.exec(`test -d "${repoPath}"`);
+      if (check.exitCode === 0) {
+        sendEvent('progress', { line: `清理残留目录: ${repoPath}` });
+        const rm = await shell.exec(`rm -rf "${repoPath}"`);
+        if (rm.exitCode !== 0) {
+          throw new Error(`清理残留目录失败: ${combinedOutput(rm)}`);
+        }
+      }
+
+      // Run the clone with streaming. git clone prints to stderr by
+      // default but the MockShellExecutor's onData fires for both,
+      // which is fine because the SSE stream is a cat of everything.
+      sendEvent('progress', { line: `$ git clone ${gitUrl} ${repoPath}` });
+      const clone = await shell.exec(
+        `git clone "${gitUrl}" "${repoPath}"`,
+        {
+          timeout: 10 * 60 * 1000, // 10 minutes max; cancel any stuck clone
+          onData: (chunk: string) => {
+            // git often emits carriage-return progress updates for
+            // "Receiving objects: 34%" etc. Split on both \n and \r
+            // so the SSE client sees incremental updates instead of
+            // a single giant line at the end.
+            for (const line of chunk.split(/[\r\n]/)) {
+              const trimmed = line.trim();
+              if (trimmed) sendEvent('progress', { line: trimmed });
+            }
+          },
+        },
+      );
+
+      if (clone.exitCode !== 0) {
+        const errMsg = (combinedOutput(clone) || 'git clone failed').trim();
+        stateService.updateProject(project.id, {
+          cloneStatus: 'error',
+          cloneError: errMsg,
+        });
+        sendEvent('error', { message: errMsg });
+        res.end();
+        return;
+      }
+
+      stateService.updateProject(project.id, {
+        cloneStatus: 'ready',
+        cloneError: undefined,
+      });
+      sendEvent('complete', { projectId: project.id, repoPath });
+    } catch (err) {
+      const errMsg = (err as Error).message || String(err);
+      stateService.updateProject(project.id, {
+        cloneStatus: 'error',
+        cloneError: errMsg,
+      });
+      sendEvent('error', { message: errMsg });
+    } finally {
+      res.end();
+    }
   });
 
   // DELETE /api/projects/:id — real deletion (P4 Part 2).
