@@ -165,6 +165,24 @@
   <!-- Dropdown portal: all popover menus render here, outside card stacking contexts -->
   <div id="dropdownPortal"></div>
 
+  <!-- P4 Part 11: Cmd+K command palette overlay (modeled after Railway's What can we help with?) -->
+  <div id="cmdkPalette" class="cmdk-overlay hidden" onclick="closeCmdkPalette(event)">
+    <div class="cmdk-dialog" onclick="event.stopPropagation()">
+      <div class="cmdk-search-row">
+        <svg class="cmdk-search-icon" width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M11.5 7a4.499 4.499 0 11-8.998 0A4.499 4.499 0 0111.5 7zm-.82 4.74a6 6 0 111.06-1.06l3.04 3.04a.75.75 0 11-1.06 1.06l-3.04-3.04z"/></svg>
+        <input id="cmdkSearch" class="cmdk-search-input" placeholder="What can we help with?" autocomplete="off" oninput="filterCmdkPalette(this.value)" onkeydown="cmdkOnKey(event)">
+        <span class="cmdk-search-hint">ESC</span>
+      </div>
+      <div id="cmdkResults" class="cmdk-results"></div>
+      <div class="cmdk-footer">
+        <span><kbd>↑↓</kbd> 选择</span>
+        <span><kbd>↵</kbd> 打开</span>
+        <span><kbd>ESC</kbd> 关闭</span>
+        <span style="margin-left:auto;opacity:0.5">⌘K / Ctrl+K 召唤</span>
+      </div>
+    </div>
+  </div>
+
   <!-- Host stats pulse (floating bottom-right, above Activity Monitor) -->
   <!-- Real-time mem+cpu indicator, complements the header's container capacity badge -->
   <div id="hostStatsWidget" class="host-stats hidden" title="宿主机实时负载 — 点击查看详情" onclick="showHostStatsDetails(event)">

@@ -8753,6 +8753,255 @@ window._topologyShowDatabaseSubmenu = _topologyShowDatabaseSubmenu;
 window._topologyShowAddMenuRoot = _topologyShowAddMenuRoot;
 window._topologyCreateInfraFromTemplate = _topologyCreateInfraFromTemplate;
 
+// ─────────────────────────────────────────────────────────────────
+// P4 Part 11 — Cmd+K command palette
+//
+// Modeled after Railway's "What can we help with?" command palette.
+// Pressing Cmd+K (Mac) or Ctrl+K (Win/Linux) anywhere in the
+// Dashboard pops a centered overlay with a search box + filtered
+// command list. Commands cover the most common navigation targets:
+//
+//   - Branches (jump to a specific branch in list view)
+//   - Build profiles (open the editor)
+//   - Infra services (open the editor)
+//   - View modes (list / topology)
+//   - Self-update
+//   - Configuration sections (env vars / routing / etc)
+//
+// Keyboard navigation: ↑↓ to move, ↵ to activate, ESC to close.
+// All commands use the existing routing functions (setViewMode /
+// openConfigModal / openLogModal / openOverrideModal etc), so this
+// is purely an alternative entry point — no new business logic.
+// ─────────────────────────────────────────────────────────────────
+
+let _cmdkCommands = [];
+let _cmdkFiltered = [];
+let _cmdkActiveIndex = 0;
+
+function buildCmdkCommands() {
+  // Rebuilds the command list from current state. Cheap enough to
+  // run on every open since the lists are bounded (< 200 entries
+  // total even on big projects).
+  var cmds = [];
+
+  // ── View modes ──
+  cmds.push({
+    group: 'navigation',
+    icon: '<svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M2 3.75a.75.75 0 01.75-.75h10.5a.75.75 0 010 1.5H2.75A.75.75 0 012 3.75zm0 4a.75.75 0 01.75-.75h10.5a.75.75 0 010 1.5H2.75A.75.75 0 012 7.75zM2.75 11a.75.75 0 000 1.5h10.5a.75.75 0 000-1.5H2.75z"/></svg>',
+    label: '切换到列表视图',
+    meta: 'list',
+    keywords: ['list', '列表', 'view'],
+    action: function () { setViewMode('list'); },
+  });
+  cmds.push({
+    group: 'navigation',
+    icon: '<svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M5 2.75a2.25 2.25 0 114.5 0 2.25 2.25 0 01-4.5 0zM7.25 0a2.75 2.75 0 00-.75 5.397V7H2.75A1.75 1.75 0 001 8.75v1.603a2.75 2.75 0 101.5 0V8.75a.25.25 0 01.25-.25H6.5v1.397a2.75 2.75 0 101.5 0V8.5h3.75a.25.25 0 01.25.25v1.603a2.75 2.75 0 101.5 0V8.75A1.75 1.75 0 0011.75 7H8V5.397A2.75 2.75 0 007.25 0z"/></svg>',
+    label: '切换到拓扑视图',
+    meta: 'topology',
+    keywords: ['topology', '拓扑', 'graph', 'view'],
+    action: function () { setViewMode('topology'); },
+  });
+  cmds.push({
+    group: 'navigation',
+    icon: '<svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M1.75 1h12.5c.966 0 1.75.784 1.75 1.75v10.5A1.75 1.75 0 0114.25 15H1.75A1.75 1.75 0 010 13.25V2.75C0 1.784.784 1 1.75 1z"/></svg>',
+    label: '返回项目列表',
+    meta: 'projects',
+    keywords: ['projects', '项目', 'home'],
+    action: function () { location.href = 'projects.html'; },
+  });
+
+  // ── Branches ──
+  (branches || []).forEach(function (b) {
+    cmds.push({
+      group: 'branches',
+      icon: '<svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M9.5 3.25a2.25 2.25 0 113 2.122V6A2.5 2.5 0 0110 8.5H6a1 1 0 00-1 1v1.128a2.251 2.251 0 11-1.5 0V5.372a2.25 2.25 0 111.5 0v1.836A2.492 2.492 0 016 7h4a1 1 0 001-1v-.628A2.25 2.25 0 019.5 3.25zM4.25 12a.75.75 0 100 1.5.75.75 0 000-1.5zM3.5 3.25a.75.75 0 111.5 0 .75.75 0 01-1.5 0zm8.25-.75a.75.75 0 100 1.5.75.75 0 000-1.5z"/></svg>',
+      label: b.id + (b.branch && b.branch !== b.id ? '  (' + b.branch + ')' : ''),
+      meta: b.status || 'idle',
+      keywords: ['branch', '分支', b.id, b.branch || '', b.subject || ''],
+      action: function () {
+        setViewMode('list');
+        setTimeout(function () {
+          var card = document.querySelector('[data-branch-id="' + b.id + '"]');
+          if (card) card.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        }, 80);
+      },
+    });
+  });
+
+  // ── Build profiles ──
+  (buildProfiles || []).forEach(function (p) {
+    cmds.push({
+      group: 'profiles',
+      icon: '<svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M0 2.75C0 1.784.784 1 1.75 1h12.5c.966 0 1.75.784 1.75 1.75v10.5A1.75 1.75 0 0114.25 15H1.75A1.75 1.75 0 010 13.25V2.75z"/></svg>',
+      label: p.name || p.id,
+      meta: p.dockerImage,
+      keywords: ['profile', 'service', '构建配置', p.id, p.name || '', p.dockerImage || ''],
+      action: function () {
+        if (typeof openProfileModal === 'function') openProfileModal();
+      },
+    });
+  });
+
+  // ── Infra services ──
+  (infraServices || []).forEach(function (s) {
+    cmds.push({
+      group: 'infra',
+      icon: '<svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M8 1c4 0 7 1 7 2.5v9c0 1.5-3 2.5-7 2.5s-7-1-7-2.5v-9C1 2 4 1 8 1z"/></svg>',
+      label: s.name || s.id,
+      meta: s.dockerImage + ' :' + s.containerPort,
+      keywords: ['infra', 'database', s.id, s.name || '', s.dockerImage || ''],
+      action: function () {
+        if (typeof openInfraModal === 'function') openInfraModal();
+      },
+    });
+  });
+
+  // ── Actions ──
+  cmds.push({
+    group: 'actions',
+    icon: '<svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M8 0a8 8 0 100 16A8 8 0 008 0zM4.78 4.97a.75.75 0 010 1.06L3.81 7H8a.75.75 0 010 1.5H3.81l.97.97a.75.75 0 11-1.06 1.06L1.47 8.28a.75.75 0 010-1.06l2.25-2.25a.75.75 0 011.06 0z"/></svg>',
+    label: '自动更新（拉取并重启）',
+    meta: 'self-update',
+    keywords: ['update', '更新', 'pull', 'restart', 'self'],
+    action: function () { if (typeof openSelfUpdate === 'function') openSelfUpdate(); },
+  });
+  cmds.push({
+    group: 'actions',
+    icon: '<svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M7.429 1.525a3.5 3.5 0 011.142 0 .75.75 0 01.57.63l.185 1.29a.25.25 0 00.35.193l1.178-.592a.75.75 0 01.808.098 3.5 3.5 0 01.571.571.75.75 0 01.098.808l-.592 1.178a.25.25 0 00.193.35l1.29.185a.75.75 0 01.63.57 3.5 3.5 0 010 1.142.75.75 0 01-.63.57l-1.29.185a.25.25 0 00-.193.35l.592 1.178a.75.75 0 01-.098.808 3.5 3.5 0 01-.571.571.75.75 0 01-.808.098l-1.178-.592a.25.25 0 00-.35.193l-.185 1.29a.75.75 0 01-.57.63 3.5 3.5 0 01-1.142 0 .75.75 0 01-.57-.63l-.185-1.29a.25.25 0 00-.35-.193l-1.178.592a.75.75 0 01-.808-.098 3.5 3.5 0 01-.571-.571.75.75 0 01-.098-.808l.592-1.178a.25.25 0 00-.193-.35l-1.29-.185a.75.75 0 01-.63-.57 3.5 3.5 0 010-1.142.75.75 0 01.63-.57l1.29-.185a.25.25 0 00.193-.35l-.592-1.178a.75.75 0 01.098-.808 3.5 3.5 0 01.571-.571.75.75 0 01.808-.098l1.178.592a.25.25 0 00.35-.193l.185-1.29a.75.75 0 01.57-.63zM8 6a2 2 0 100 4 2 2 0 000-4z"/></svg>',
+    label: '设置 / 配置面板',
+    meta: 'config',
+    keywords: ['settings', 'config', '设置', '配置'],
+    action: function () { if (typeof toggleSettingsMenu === 'function') toggleSettingsMenu({ stopPropagation: function () {} }); },
+  });
+
+  return cmds;
+}
+
+function openCmdkPalette() {
+  var overlay = document.getElementById('cmdkPalette');
+  var input = document.getElementById('cmdkSearch');
+  if (!overlay || !input) return;
+
+  _cmdkCommands = buildCmdkCommands();
+  _cmdkFiltered = _cmdkCommands.slice();
+  _cmdkActiveIndex = 0;
+  input.value = '';
+  overlay.classList.remove('hidden');
+  setTimeout(function () { input.focus(); }, 30);
+  renderCmdkResults();
+}
+
+function closeCmdkPalette(event) {
+  var overlay = document.getElementById('cmdkPalette');
+  if (!overlay) return;
+  if (event && event.currentTarget !== event.target) return;
+  overlay.classList.add('hidden');
+}
+
+function filterCmdkPalette(query) {
+  var q = (query || '').toLowerCase().trim();
+  if (!q) {
+    _cmdkFiltered = _cmdkCommands.slice();
+  } else {
+    _cmdkFiltered = _cmdkCommands.filter(function (c) {
+      var hay = (c.label + ' ' + (c.meta || '') + ' ' + (c.keywords || []).join(' ')).toLowerCase();
+      return hay.indexOf(q) >= 0;
+    });
+  }
+  _cmdkActiveIndex = 0;
+  renderCmdkResults();
+}
+
+function renderCmdkResults() {
+  var container = document.getElementById('cmdkResults');
+  if (!container) return;
+
+  if (_cmdkFiltered.length === 0) {
+    container.innerHTML = '<div class="cmdk-empty">没有匹配项</div>';
+    return;
+  }
+
+  // Group by .group
+  var groups = { navigation: [], branches: [], profiles: [], infra: [], actions: [] };
+  _cmdkFiltered.forEach(function (c) {
+    if (!groups[c.group]) groups[c.group] = [];
+    groups[c.group].push(c);
+  });
+
+  var groupLabels = {
+    navigation: '导航',
+    branches: '分支',
+    profiles: '构建配置',
+    infra: '基础设施',
+    actions: '操作',
+  };
+
+  var html = '';
+  var idx = 0;
+  Object.keys(groupLabels).forEach(function (g) {
+    if (!groups[g] || groups[g].length === 0) return;
+    html += '<div class="cmdk-group-label">' + groupLabels[g] + '</div>';
+    groups[g].forEach(function (c) {
+      var active = idx === _cmdkActiveIndex ? ' active' : '';
+      html += '<div class="cmdk-item' + active + '" data-cmdk-idx="' + idx + '" onclick="cmdkActivate(' + idx + ')">' +
+        '<span class="cmdk-item-icon">' + c.icon + '</span>' +
+        '<span class="cmdk-item-label">' + esc(c.label) + '</span>' +
+        (c.meta ? '<span class="cmdk-item-meta">' + esc(c.meta) + '</span>' : '') +
+      '</div>';
+      idx++;
+    });
+  });
+  container.innerHTML = html;
+
+  // Scroll active into view
+  var activeEl = container.querySelector('.cmdk-item.active');
+  if (activeEl) activeEl.scrollIntoView({ block: 'nearest' });
+}
+
+function cmdkActivate(idx) {
+  var c = _cmdkFiltered[idx];
+  if (!c) return;
+  closeCmdkPalette({ currentTarget: document.getElementById('cmdkPalette'), target: document.getElementById('cmdkPalette') });
+  try { c.action(); } catch (e) { console.error('cmdk action failed', e); }
+}
+
+function cmdkOnKey(e) {
+  if (e.key === 'ArrowDown') {
+    e.preventDefault();
+    _cmdkActiveIndex = Math.min(_cmdkFiltered.length - 1, _cmdkActiveIndex + 1);
+    renderCmdkResults();
+  } else if (e.key === 'ArrowUp') {
+    e.preventDefault();
+    _cmdkActiveIndex = Math.max(0, _cmdkActiveIndex - 1);
+    renderCmdkResults();
+  } else if (e.key === 'Enter') {
+    e.preventDefault();
+    cmdkActivate(_cmdkActiveIndex);
+  } else if (e.key === 'Escape') {
+    e.preventDefault();
+    closeCmdkPalette({ currentTarget: document.getElementById('cmdkPalette'), target: document.getElementById('cmdkPalette') });
+  }
+}
+
+// Global keyboard binding: Cmd+K (Mac) / Ctrl+K (Win/Linux)
+document.addEventListener('keydown', function (e) {
+  if ((e.metaKey || e.ctrlKey) && (e.key === 'k' || e.key === 'K')) {
+    e.preventDefault();
+    var overlay = document.getElementById('cmdkPalette');
+    if (overlay && overlay.classList.contains('hidden')) {
+      openCmdkPalette();
+    } else {
+      closeCmdkPalette({ currentTarget: overlay, target: overlay });
+    }
+  }
+});
+
+window.openCmdkPalette = openCmdkPalette;
+window.closeCmdkPalette = closeCmdkPalette;
+window.filterCmdkPalette = filterCmdkPalette;
+window.cmdkOnKey = cmdkOnKey;
+window.cmdkActivate = cmdkActivate;
+
 function _topologyChooseAddItem(kind) {
   var menu = document.getElementById('topologyFsAddMenu');
   // Database stays in the menu and pivots to a submenu — every other
