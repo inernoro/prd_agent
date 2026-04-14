@@ -7964,9 +7964,11 @@ function _ensureTopologyFsChrome() {
       </button>
     </div>
     <div class="topology-fs-panel-tabs">
-      <button type="button" class="topology-fs-panel-tab active" data-tab="deployments" onclick="_topologySwitchPanelTab('deployments')">Deployments</button>
+      <button type="button" class="topology-fs-panel-tab active" data-tab="details" onclick="_topologySwitchPanelTab('details')">Details</button>
+      <button type="button" class="topology-fs-panel-tab" data-tab="buildLogs" onclick="_topologySwitchPanelTab('buildLogs')">Build Logs</button>
+      <button type="button" class="topology-fs-panel-tab" data-tab="deployLogs" onclick="_topologySwitchPanelTab('deployLogs')">Deploy Logs</button>
+      <button type="button" class="topology-fs-panel-tab" data-tab="httpLogs" onclick="_topologySwitchPanelTab('httpLogs')">HTTP Logs</button>
       <button type="button" class="topology-fs-panel-tab" data-tab="variables" onclick="_topologySwitchPanelTab('variables')">Variables</button>
-      <button type="button" class="topology-fs-panel-tab" data-tab="metrics" onclick="_topologySwitchPanelTab('metrics')">Metrics</button>
       <button type="button" class="topology-fs-panel-tab" data-tab="settings" onclick="_topologySwitchPanelTab('settings')">Settings</button>
     </div>
     <div class="topology-fs-panel-body" id="topologyFsPanelBody">
@@ -9093,10 +9095,10 @@ function _topologyOpenServicePanel(id, kind) {
     ? '<svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>'
     : '<svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M8 1c4 0 7 1 7 2.5v9c0 1.5-3 2.5-7 2.5s-7-1-7-2.5v-9C1 2 4 1 8 1z"/></svg>';
 
-  // Reset to deployments tab + render its content
+  // Reset to Details tab + render its content
   var tabs = panel.querySelectorAll('.topology-fs-panel-tab');
-  tabs.forEach(function (t) { t.classList.toggle('active', t.dataset.tab === 'deployments'); });
-  _topologyRenderPanelTab('deployments', entity);
+  tabs.forEach(function (t) { t.classList.toggle('active', t.dataset.tab === 'details'); });
+  _topologyRenderPanelTab('details', entity);
 
   panel.classList.add('open');
 }
@@ -9129,43 +9131,144 @@ function _topologyRenderPanelTab(tab, entity) {
   }
   var kind = _topologyPanelCurrentKind;
 
-  if (tab === 'deployments') {
+  // P4 Part 14: Railway-style 5-tab layout (Details / Build Logs /
+  // Deploy Logs / HTTP Logs / + extra Variables / Settings).
+  //
+  // Each tab pulls from its own data source:
+  //   details     → entity metadata + commit + Build/Deploy config cards
+  //   buildLogs   → /api/branches/:id/logs (operation log)
+  //   deployLogs  → /api/branches/:id/container-logs?profileId=…
+  //   httpLogs    → /api/activity-stream SSE (type:'web' events)
+  //   variables   → entity.env (already implemented)
+  //   settings    → service info + open-in-editor button (already)
+
+  if (tab === 'details') {
     var image = entity.dockerImage || '-';
     var status = (entity.status || (entity.containerName ? 'running' : 'idle'));
     var deps = (entity.dependsOn || []);
+
+    // Find a representative branch (the first running one, or the first one)
+    var displayBranch = null;
+    if (kind === 'app' && (branches || []).length) {
+      displayBranch = branches.find(function (b) { return b.status === 'running'; }) || branches[0];
+    }
+    var commitHash = displayBranch && displayBranch.commitSha ? displayBranch.commitSha.slice(0, 8) : '-';
+    var commitSubject = displayBranch && displayBranch.subject ? displayBranch.subject : '';
+    var branchName = displayBranch ? displayBranch.id : '-';
+
+    var startCmd = entity.runCommand || entity.command || '-';
+    var installCmd = entity.installCommand || '';
+    var buildCmd = entity.buildCommand || '';
+    var workDir = entity.workDir || '.';
+    var port = entity.containerPort || '-';
+    var hostPort = entity.hostPort ? ' → host :' + entity.hostPort : '';
+
     body.innerHTML =
-      '<div class="tfp-deploy-url">' +
-        '<svg width="13" height="13" viewBox="0 0 16 16" fill="currentColor"><path d="M0 8a8 8 0 1116 0A8 8 0 010 8z"/></svg>' +
-        esc(image) +
+      // Status banner
+      '<div class="tfp-status-banner ' + (status === 'running' ? 'ok' : status === 'error' ? 'err' : 'idle') + '">' +
+        '<svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor">' +
+          (status === 'running'
+            ? '<path d="M13.78 4.22a.75.75 0 010 1.06l-7.25 7.25a.75.75 0 01-1.06 0L2.22 9.28a.75.75 0 011.06-1.06L6 10.94l6.72-6.72a.75.75 0 011.06 0z"/>'
+            : '<circle cx="8" cy="8" r="5"/>') +
+        '</svg>' +
+        '<span>' + (status === 'running' ? 'Service is online' : 'Status: ' + status) + '</span>' +
+        '<span style="margin-left:auto;font-size:11px;opacity:0.7">' + esc(image) + '</span>' +
       '</div>' +
-      '<div class="tfp-deploy-card">' +
-        '<div class="tfp-deploy-card-head">' +
-          '<span class="tfp-active-pill">' + (status.toUpperCase ? status.toUpperCase() : 'IDLE') + '</span>' +
-          '<div class="tfp-deploy-meta">' + esc(entity.name || entity.id) + ' · ' + esc(kind === 'app' ? 'Application' : 'Infrastructure') + '</div>' +
-          '<button type="button" class="tfp-view-logs-btn" onclick="_topologyPanelOpenLogs()">全屏日志</button>' +
+
+      // Variables count (link to Variables tab)
+      '<div class="tfp-mini-stat" onclick="_topologySwitchPanelTab(\'variables\')">' +
+        '<svg width="13" height="13" viewBox="0 0 16 16" fill="currentColor"><path d="M2 4h12v2H2V4zm0 6h12v2H2v-2z"/></svg>' +
+        Object.keys(entity.env || {}).length + ' Variables' +
+      '</div>' +
+
+      // Deployed via section
+      (kind === 'app' && displayBranch ? (
+        '<div class="tfp-section-h">DEPLOYED VIA GIT</div>' +
+        '<div class="tfp-deploy-card">' +
+          '<div class="tfp-deploy-card-head">' +
+            '<svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>' +
+            '<div class="tfp-deploy-meta">' + esc(commitSubject || branchName) + '</div>' +
+          '</div>' +
+          '<div style="display:flex;align-items:center;gap:10px;font-size:11px;color:var(--text-muted);font-family:var(--font-mono,monospace)">' +
+            '<span>📁 ' + esc(branchName) + '</span>' +
+            '<span>·</span>' +
+            '<span>' + esc(commitHash) + '</span>' +
+          '</div>' +
+        '</div>'
+      ) : '') +
+
+      // Configuration: Build + Deploy cards (Railway Image 1 layout)
+      '<div class="tfp-section-h">CONFIGURATION</div>' +
+      '<div class="tfp-config-grid">' +
+        '<div class="tfp-config-card">' +
+          '<div class="tfp-config-card-title">' +
+            '<svg width="13" height="13" viewBox="0 0 16 16" fill="currentColor"><path d="M2 2h12v3H2V2zm0 5h12v2H2V7zm0 4h12v3H2v-3z"/></svg>' +
+            'Build' +
+          '</div>' +
+          '<div class="tfp-config-field"><div class="tfp-config-label">Image</div><div class="tfp-config-value">' + esc(image) + '</div></div>' +
+          (installCmd ? '<div class="tfp-config-field"><div class="tfp-config-label">Install</div><div class="tfp-config-value">' + esc(installCmd) + '</div></div>' : '') +
+          (buildCmd ? '<div class="tfp-config-field"><div class="tfp-config-label">Build</div><div class="tfp-config-value">' + esc(buildCmd) + '</div></div>' : '') +
         '</div>' +
-        '<div class="tfp-deploy-status">' +
-          '<svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M13.78 4.22a.75.75 0 010 1.06l-7.25 7.25a.75.75 0 01-1.06 0L2.22 9.28a.75.75 0 011.06-1.06L6 10.94l6.72-6.72a.75.75 0 011.06 0z"/></svg>' +
-          (status === 'running' ? 'Service is online' : 'Status: ' + status) +
+        '<div class="tfp-config-card">' +
+          '<div class="tfp-config-card-title">' +
+            '<svg width="13" height="13" viewBox="0 0 16 16" fill="currentColor"><path d="M0 8a8 8 0 1116 0A8 8 0 010 8zm8-7a7 7 0 00-7 7 7 7 0 0014 0 7 7 0 00-7-7z"/></svg>' +
+            'Deploy' +
+          '</div>' +
+          '<div class="tfp-config-field"><div class="tfp-config-label">Start command</div><div class="tfp-config-value">' + esc(startCmd) + '</div></div>' +
+          '<div class="tfp-config-field"><div class="tfp-config-label">Work dir</div><div class="tfp-config-value">' + esc(workDir) + '</div></div>' +
+          '<div class="tfp-config-field"><div class="tfp-config-label">Port</div><div class="tfp-config-value">' + esc(String(port)) + esc(hostPort) + '</div></div>' +
         '</div>' +
       '</div>' +
-      // P4 Part 12: inline logs preview block. Lazy-loads the latest
-      // log lines for the currently displayed entity. The block has a
-      // "loading" placeholder until the fetch returns, then shows the
-      // last 12 lines in a mono pre with auto-scroll to bottom.
-      '<div class="tfp-section-h" style="display:flex;align-items:center;gap:8px">RECENT LOGS' +
-        '<button type="button" class="tfp-vars-edit-btn" style="margin-left:auto;padding:3px 9px;font-size:10px" onclick="_topologyPanelRefreshLogs()">' +
+
+      (deps.length ? '<div class="tfp-section-h">DEPENDENCIES</div>' + deps.map(function (d) { return '<div class="tfp-kv"><span class="tfp-kv-key">' + esc(d) + '</span><span class="tfp-kv-val">→</span></div>'; }).join('') : '');
+    return;
+  }
+
+  if (tab === 'buildLogs') {
+    body.innerHTML =
+      '<div class="tfp-logs-toolbar">' +
+        '<input class="tfp-logs-search" placeholder="Search build logs" oninput="_topologyFilterLogs(this.value, \'build\')">' +
+        '<button type="button" class="tfp-vars-edit-btn" onclick="_topologyPanelLoadBuildLogs()">' +
           '<svg width="10" height="10" viewBox="0 0 16 16" fill="currentColor"><path d="M8 2.5a5.487 5.487 0 00-4.131 1.869l1.204 1.204A.25.25 0 014.896 6H1.25A.25.25 0 011 5.75V2.104a.25.25 0 01.427-.177l1.38 1.38A7.002 7.002 0 0115 8a.75.75 0 01-1.5 0A5.5 5.5 0 008 2.5z"/></svg>' +
           '刷新' +
         '</button>' +
       '</div>' +
-      '<div id="tfpLogsPreview" class="tfp-logs-preview">' +
-        '<div class="tfp-logs-loading">加载日志中…</div>' +
-      '</div>' +
-      (deps.length ? '<div class="tfp-section-h">DEPENDENCIES</div>' + deps.map(function (d) { return '<div class="tfp-kv"><span class="tfp-kv-key">' + esc(d) + '</span><span class="tfp-kv-val">→</span></div>'; }).join('') : '');
+      '<div id="tfpBuildLogs" class="tfp-logs-table">' +
+        '<div class="tfp-logs-loading">加载构建日志中…</div>' +
+      '</div>';
+    _topologyPanelLoadBuildLogs();
+    return;
+  }
 
-    // Kick off the lazy log fetch
-    _topologyPanelRefreshLogs();
+  if (tab === 'deployLogs') {
+    body.innerHTML =
+      '<div class="tfp-logs-toolbar">' +
+        '<input class="tfp-logs-search" placeholder="Filter and search logs" oninput="_topologyFilterLogs(this.value, \'deploy\')">' +
+        '<button type="button" class="tfp-vars-edit-btn" onclick="_topologyPanelLoadDeployLogs()">' +
+          '<svg width="10" height="10" viewBox="0 0 16 16" fill="currentColor"><path d="M8 2.5a5.487 5.487 0 00-4.131 1.869l1.204 1.204A.25.25 0 014.896 6H1.25A.25.25 0 011 5.75V2.104a.25.25 0 01.427-.177l1.38 1.38A7.002 7.002 0 0115 8a.75.75 0 01-1.5 0A5.5 5.5 0 008 2.5z"/></svg>' +
+          '刷新' +
+        '</button>' +
+      '</div>' +
+      '<div id="tfpDeployLogs" class="tfp-logs-table">' +
+        '<div class="tfp-logs-loading">加载部署日志中…</div>' +
+      '</div>';
+    _topologyPanelLoadDeployLogs();
+    return;
+  }
+
+  if (tab === 'httpLogs') {
+    body.innerHTML =
+      '<div class="tfp-logs-toolbar">' +
+        '<input class="tfp-logs-search" placeholder="Search HTTP logs e.g. /api/projects 200" oninput="_topologyFilterLogs(this.value, \'http\')">' +
+        '<button type="button" class="tfp-vars-edit-btn" onclick="_topologyPanelLoadHttpLogs()">' +
+          '<svg width="10" height="10" viewBox="0 0 16 16" fill="currentColor"><path d="M8 2.5a5.487 5.487 0 00-4.131 1.869l1.204 1.204A.25.25 0 014.896 6H1.25A.25.25 0 011 5.75V2.104a.25.25 0 01.427-.177l1.38 1.38A7.002 7.002 0 0115 8a.75.75 0 01-1.5 0A5.5 5.5 0 008 2.5z"/></svg>' +
+          '刷新' +
+        '</button>' +
+      '</div>' +
+      '<div id="tfpHttpLogs" class="tfp-http-logs">' +
+        '<div class="tfp-logs-loading">加载 HTTP 日志中…</div>' +
+      '</div>';
+    _topologyPanelLoadHttpLogs();
     return;
   }
 
@@ -9323,6 +9426,255 @@ async function _topologyPanelRefreshLogs() {
 }
 
 window._topologyPanelRefreshLogs = _topologyPanelRefreshLogs;
+
+// ─────────────────────────────────────────────────────────────────
+// P4 Part 14 — Service detail panel logs tabs
+//
+// Three loaders fetch from three CDS data sources and render into
+// dedicated containers inside the panel body. Each loader is
+// independent — failures in one don't affect the others.
+//
+//   buildLogs   → /api/branches/:id/logs (operation log)
+//   deployLogs  → /api/branches/:id/container-logs?profileId=…
+//   httpLogs    → /api/activity-stream SSE filtered by type:'web'
+//
+// _topologyFilterLogs(query, kind) is the shared client-side filter
+// that dims log rows whose text doesn't match the query. Each loader
+// stores the raw rows into a small cache so re-filtering doesn't
+// re-fetch.
+// ─────────────────────────────────────────────────────────────────
+
+let _topologyLogsCache = { build: [], deploy: [], http: [] };
+
+function _topologyFilterLogs(query, kind) {
+  var q = (query || '').toLowerCase().trim();
+  var rows = document.querySelectorAll(kind === 'http' ? '#tfpHttpLogs .tfp-http-row' : (kind === 'build' ? '#tfpBuildLogs .tfp-log-row' : '#tfpDeployLogs .tfp-log-row'));
+  rows.forEach(function (r) {
+    if (!q) { r.style.display = ''; return; }
+    var hay = (r.textContent || '').toLowerCase();
+    r.style.display = hay.indexOf(q) >= 0 ? '' : 'none';
+  });
+}
+window._topologyFilterLogs = _topologyFilterLogs;
+
+// Helper: pick the branch to use for log queries. Uses topology-
+// selected branch first, then 'main', then the first branch.
+function _pickPanelBranchId() {
+  if (_topologySelectedBranchId) return _topologySelectedBranchId;
+  if (!branches || !branches.length) return null;
+  var main = branches.find(function (b) { return b.id === 'main' || b.id === 'master'; });
+  return main ? main.id : branches[0].id;
+}
+
+async function _topologyPanelLoadBuildLogs() {
+  var container = document.getElementById('tfpBuildLogs');
+  if (!container) return;
+  var id = _topologyPanelCurrentId;
+  var kind = _topologyPanelCurrentKind;
+  if (!id) return;
+
+  container.innerHTML = '<div class="tfp-logs-loading">加载构建日志中…</div>';
+
+  // Build logs for an app come from the branch operation log
+  // (deploy/redeploy events have build-stage entries). Infra services
+  // don't have build logs since they pull pre-built images.
+  if (kind !== 'app') {
+    container.innerHTML = '<div class="tfp-logs-empty">基础设施服务直接拉取镜像，没有构建日志</div>';
+    return;
+  }
+
+  var branchId = _pickPanelBranchId();
+  if (!branchId) {
+    container.innerHTML = '<div class="tfp-logs-empty">没有可用分支</div>';
+    return;
+  }
+
+  try {
+    var res = await fetch('/api/branches/' + encodeURIComponent(branchId) + '/logs', { credentials: 'same-origin' });
+    if (!res.ok) {
+      container.innerHTML = '<div class="tfp-logs-empty">日志暂不可用 (HTTP ' + res.status + ')</div>';
+      return;
+    }
+    var body = await res.json();
+    var ops = (body && body.logs) || [];
+    if (!ops.length) {
+      container.innerHTML = '<div class="tfp-logs-empty">还没有构建记录</div>';
+      return;
+    }
+    // Render ops as rows with timestamp + summary + details
+    var rows = ops.slice().reverse().map(function (op) {
+      var ts = op.startedAt ? new Date(op.startedAt).toLocaleString() : '-';
+      var ev = (op.events || []).slice(-12);
+      var lines = ev.map(function (e) { return e.text || e.message || JSON.stringify(e); }).join('\n');
+      var stage = op.action || op.type || 'op';
+      var status = op.status || 'pending';
+      var statusClass = status === 'success' ? 'ok' : status === 'error' ? 'err' : 'idle';
+      return '<div class="tfp-log-row">' +
+        '<div class="tfp-log-row-meta">' +
+          '<span class="tfp-log-stage tfp-log-stage-' + statusClass + '">' + esc(stage) + '</span>' +
+          '<span class="tfp-log-time">' + esc(ts) + '</span>' +
+        '</div>' +
+        '<pre class="tfp-log-text">' + esc(lines || '(no log lines)') + '</pre>' +
+      '</div>';
+    }).join('');
+    container.innerHTML = rows;
+    _topologyLogsCache.build = ops;
+  } catch (err) {
+    container.innerHTML = '<div class="tfp-logs-empty">日志获取失败：' + esc(String(err && err.message || err)) + '</div>';
+  }
+}
+
+async function _topologyPanelLoadDeployLogs() {
+  var container = document.getElementById('tfpDeployLogs');
+  if (!container) return;
+  var id = _topologyPanelCurrentId;
+  var kind = _topologyPanelCurrentKind;
+  if (!id) return;
+
+  container.innerHTML = '<div class="tfp-logs-loading">加载部署日志中…</div>';
+
+  var url = null;
+  if (kind === 'infra') {
+    url = '/api/infra/' + encodeURIComponent(id) + '/logs?tail=200';
+  } else if (kind === 'app') {
+    var branchId = _pickPanelBranchId();
+    if (!branchId) {
+      container.innerHTML = '<div class="tfp-logs-empty">没有可用分支</div>';
+      return;
+    }
+    url = '/api/branches/' + encodeURIComponent(branchId) + '/container-logs?profileId=' + encodeURIComponent(id) + '&tail=200';
+  } else {
+    container.innerHTML = '<div class="tfp-logs-empty">未知服务类型</div>';
+    return;
+  }
+
+  try {
+    var res = await fetch(url, { credentials: 'same-origin' });
+    if (!res.ok) {
+      container.innerHTML = '<div class="tfp-logs-empty">日志暂不可用 (HTTP ' + res.status + ')</div>';
+      return;
+    }
+    var text = '';
+    var ct = res.headers.get('content-type') || '';
+    if (ct.indexOf('application/json') >= 0) {
+      var b = await res.json();
+      text = (b && (b.logs || b.output || b.text || '')) || '';
+      if (Array.isArray(b)) text = b.join('\n');
+      if (typeof text !== 'string') text = String(text);
+    } else {
+      text = await res.text();
+    }
+    text = (text || '').trim();
+    if (!text) {
+      container.innerHTML = '<div class="tfp-logs-empty">还没有日志输出</div>';
+      return;
+    }
+
+    // Split lines and try to detect a timestamp prefix on each.
+    // Many docker logs lines start with an ISO timestamp.
+    var lines = text.split(/\r?\n/);
+    var rows = lines.map(function (line) {
+      var stripeClass = /error|fail|warn/i.test(line) ? 'err' : 'ok';
+      // Try to extract timestamp prefix (ISO or [...] formats)
+      var tsMatch = line.match(/^(\d{4}-\d{2}-\d{2}[T ][\d:.+\-Z]+|\[[^\]]+\])/);
+      var ts = tsMatch ? tsMatch[1] : '';
+      var rest = ts ? line.slice(ts.length).trim() : line;
+      return '<div class="tfp-log-row tfp-log-row-' + stripeClass + '">' +
+        (ts ? '<span class="tfp-log-time">' + esc(ts) + '</span>' : '') +
+        '<pre class="tfp-log-text">' + esc(rest) + '</pre>' +
+      '</div>';
+    }).join('');
+    container.innerHTML = rows;
+    _topologyLogsCache.deploy = lines;
+    // Auto-scroll to bottom
+    container.scrollTop = container.scrollHeight;
+  } catch (err) {
+    container.innerHTML = '<div class="tfp-logs-empty">日志获取失败：' + esc(String(err && err.message || err)) + '</div>';
+  }
+}
+
+// HTTP Logs uses the existing CDS activity stream SSE endpoint. We
+// subscribe ONCE per panel-open and unsubscribe when leaving the tab
+// or closing the panel. Filtered to type:'web' which corresponds to
+// proxied requests through a branch container (CDS' built-in proxy
+// captures every HTTP request to the user's app and broadcasts it).
+let _httpLogsEs = null;
+let _httpLogsEvents = [];
+
+function _topologyPanelLoadHttpLogs() {
+  var container = document.getElementById('tfpHttpLogs');
+  if (!container) return;
+
+  // Tear down any previous stream
+  if (_httpLogsEs) { try { _httpLogsEs.close(); } catch (e) {} _httpLogsEs = null; }
+  _httpLogsEvents = [];
+
+  container.innerHTML =
+    '<div class="tfp-http-row tfp-http-head">' +
+      '<span>Time</span><span>Method</span><span>Path</span><span>Status</span><span>Duration</span>' +
+    '</div>' +
+    '<div id="tfpHttpLogsBody"><div class="tfp-logs-loading">订阅 HTTP 流中…</div></div>';
+
+  try {
+    _httpLogsEs = new EventSource('/api/activity-stream', { withCredentials: true });
+    _httpLogsEs.addEventListener('activity', function (e) {
+      try {
+        var data = JSON.parse(e.data);
+        // Filter to web (proxied) events only
+        if (data && data.type === 'web') {
+          _httpLogsEvents.push(data);
+          if (_httpLogsEvents.length > 200) _httpLogsEvents = _httpLogsEvents.slice(-200);
+          _renderHttpLogsBody();
+        }
+      } catch (err) { /* skip malformed */ }
+    });
+    _httpLogsEs.onerror = function () {
+      var bodyEl = document.getElementById('tfpHttpLogsBody');
+      if (bodyEl && _httpLogsEvents.length === 0) {
+        bodyEl.innerHTML = '<div class="tfp-logs-empty">活动流连接断开 — 点刷新重试</div>';
+      }
+    };
+  } catch (err) {
+    container.innerHTML = '<div class="tfp-logs-empty">无法订阅活动流：' + esc(String(err && err.message || err)) + '</div>';
+    return;
+  }
+
+  // Set up auto-cleanup when the panel closes
+  if (typeof _topologyClosePanel === 'function' && !_topologyClosePanel.__patchedHttp) {
+    var origClose = _topologyClosePanel;
+    window._topologyClosePanel = function () {
+      if (_httpLogsEs) { try { _httpLogsEs.close(); } catch (e) {} _httpLogsEs = null; }
+      _httpLogsEvents = [];
+      return origClose.apply(this, arguments);
+    };
+    window._topologyClosePanel.__patchedHttp = true;
+  }
+}
+
+function _renderHttpLogsBody() {
+  var bodyEl = document.getElementById('tfpHttpLogsBody');
+  if (!bodyEl) return;
+  if (_httpLogsEvents.length === 0) {
+    bodyEl.innerHTML = '<div class="tfp-logs-empty">还没有 HTTP 请求 — 等待容器接收第一个请求</div>';
+    return;
+  }
+  var rows = _httpLogsEvents.slice().reverse().map(function (ev) {
+    var time = ev.ts ? new Date(ev.ts).toLocaleTimeString() : '';
+    var statusClass = ev.status >= 500 ? 'err' : ev.status >= 400 ? 'warn' : 'ok';
+    return '<div class="tfp-http-row">' +
+      '<span class="tfp-http-time">' + esc(time) + '</span>' +
+      '<span class="tfp-http-method tfp-http-method-' + esc((ev.method || 'GET').toLowerCase()) + '">' + esc(ev.method || 'GET') + '</span>' +
+      '<span class="tfp-http-path" title="' + esc(ev.path || '') + '">' + esc(ev.path || '') + '</span>' +
+      '<span class="tfp-http-status tfp-http-status-' + statusClass + '">' + (ev.status || '-') + '</span>' +
+      '<span class="tfp-http-duration">' + (ev.duration != null ? ev.duration + 'ms' : '-') + '</span>' +
+    '</div>';
+  }).join('');
+  bodyEl.innerHTML = rows;
+}
+
+window._topologyPanelLoadBuildLogs = _topologyPanelLoadBuildLogs;
+window._topologyPanelLoadDeployLogs = _topologyPanelLoadDeployLogs;
+window._topologyPanelLoadHttpLogs = _topologyPanelLoadHttpLogs;
 
 // Open the full editor for the currently-displayed service.
 function _topologyPanelOpenEditor() {
