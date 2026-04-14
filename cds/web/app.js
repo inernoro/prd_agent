@@ -9142,14 +9142,30 @@ function _topologyRenderPanelTab(tab, entity) {
         '<div class="tfp-deploy-card-head">' +
           '<span class="tfp-active-pill">' + (status.toUpperCase ? status.toUpperCase() : 'IDLE') + '</span>' +
           '<div class="tfp-deploy-meta">' + esc(entity.name || entity.id) + ' · ' + esc(kind === 'app' ? 'Application' : 'Infrastructure') + '</div>' +
-          '<button type="button" class="tfp-view-logs-btn" onclick="_topologyPanelOpenLogs()">View logs</button>' +
+          '<button type="button" class="tfp-view-logs-btn" onclick="_topologyPanelOpenLogs()">全屏日志</button>' +
         '</div>' +
         '<div class="tfp-deploy-status">' +
           '<svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M13.78 4.22a.75.75 0 010 1.06l-7.25 7.25a.75.75 0 01-1.06 0L2.22 9.28a.75.75 0 011.06-1.06L6 10.94l6.72-6.72a.75.75 0 011.06 0z"/></svg>' +
           (status === 'running' ? 'Service is online' : 'Status: ' + status) +
         '</div>' +
       '</div>' +
+      // P4 Part 12: inline logs preview block. Lazy-loads the latest
+      // log lines for the currently displayed entity. The block has a
+      // "loading" placeholder until the fetch returns, then shows the
+      // last 12 lines in a mono pre with auto-scroll to bottom.
+      '<div class="tfp-section-h" style="display:flex;align-items:center;gap:8px">RECENT LOGS' +
+        '<button type="button" class="tfp-vars-edit-btn" style="margin-left:auto;padding:3px 9px;font-size:10px" onclick="_topologyPanelRefreshLogs()">' +
+          '<svg width="10" height="10" viewBox="0 0 16 16" fill="currentColor"><path d="M8 2.5a5.487 5.487 0 00-4.131 1.869l1.204 1.204A.25.25 0 014.896 6H1.25A.25.25 0 011 5.75V2.104a.25.25 0 01.427-.177l1.38 1.38A7.002 7.002 0 0115 8a.75.75 0 01-1.5 0A5.5 5.5 0 008 2.5z"/></svg>' +
+          '刷新' +
+        '</button>' +
+      '</div>' +
+      '<div id="tfpLogsPreview" class="tfp-logs-preview">' +
+        '<div class="tfp-logs-loading">加载日志中…</div>' +
+      '</div>' +
       (deps.length ? '<div class="tfp-section-h">DEPENDENCIES</div>' + deps.map(function (d) { return '<div class="tfp-kv"><span class="tfp-kv-key">' + esc(d) + '</span><span class="tfp-kv-val">→</span></div>'; }).join('') : '');
+
+    // Kick off the lazy log fetch
+    _topologyPanelRefreshLogs();
     return;
   }
 
@@ -9238,6 +9254,75 @@ function _topologyPanelOpenLogs() {
     else showToast('日志面板需要在列表视图打开', 'info');
   }, 80);
 }
+
+// P4 Part 12 — inline logs preview inside the panel Deployments tab.
+//
+// Fetches the most recent log lines for the currently displayed
+// entity. For 'app' kind we have direct branch logs API; for 'infra'
+// we use the dedicated /api/infra/:id/logs endpoint. Both endpoints
+// already return formatted text — we just slice the last 12 lines.
+async function _topologyPanelRefreshLogs() {
+  var id = _topologyPanelCurrentId;
+  var kind = _topologyPanelCurrentKind;
+  var preview = document.getElementById('tfpLogsPreview');
+  if (!id || !preview) return;
+
+  preview.innerHTML = '<div class="tfp-logs-loading">加载日志中…</div>';
+
+  // Build the right URL based on entity kind. For app profiles the
+  // logs are tied to a specific branch — pick the currently selected
+  // topology branch (or the first branch if none selected).
+  var url = null;
+  if (kind === 'infra') {
+    url = '/api/infra/' + encodeURIComponent(id) + '/logs?tail=50';
+  } else if (kind === 'app') {
+    var branchId = _topologySelectedBranchId || ((branches || [])[0] && branches[0].id);
+    if (!branchId) {
+      preview.innerHTML = '<div class="tfp-logs-empty">尚未选择分支或没有任何分支</div>';
+      return;
+    }
+    url = '/api/branches/' + encodeURIComponent(branchId) + '/container-logs?profileId=' + encodeURIComponent(id) + '&tail=50';
+  } else {
+    preview.innerHTML = '<div class="tfp-logs-empty">未知服务类型</div>';
+    return;
+  }
+
+  try {
+    var res = await fetch(url, { credentials: 'same-origin' });
+    if (!res.ok) {
+      preview.innerHTML = '<div class="tfp-logs-empty">日志暂不可用 (HTTP ' + res.status + ')</div>';
+      return;
+    }
+    var text = '';
+    // Some endpoints return JSON, others plain text — try both.
+    var ct = res.headers.get('content-type') || '';
+    if (ct.indexOf('application/json') >= 0) {
+      var body = await res.json();
+      text = (body && (body.logs || body.output || body.text || '')) || '';
+      // Some endpoints return an array of lines
+      if (Array.isArray(body)) text = body.join('\n');
+      if (typeof text !== 'string') text = String(text);
+    } else {
+      text = await res.text();
+    }
+
+    text = (text || '').trim();
+    if (!text) {
+      preview.innerHTML = '<div class="tfp-logs-empty">还没有日志输出</div>';
+      return;
+    }
+
+    var lines = text.split(/\r?\n/);
+    var visible = lines.slice(-12);
+    preview.innerHTML = '<pre class="tfp-logs-pre">' + esc(visible.join('\n')) + '</pre>';
+    var pre = preview.querySelector('.tfp-logs-pre');
+    if (pre) pre.scrollTop = pre.scrollHeight;
+  } catch (err) {
+    preview.innerHTML = '<div class="tfp-logs-empty">日志获取失败：' + esc(String(err && err.message || err)) + '</div>';
+  }
+}
+
+window._topologyPanelRefreshLogs = _topologyPanelRefreshLogs;
 
 // Open the full editor for the currently-displayed service.
 function _topologyPanelOpenEditor() {

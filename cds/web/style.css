@@ -6071,3 +6071,31 @@ body.cds-topology-fs .topology-fs-panel.open { transform: translateX(0); }
   color: var(--text-muted);
 }
 
+/* P4 Part 12 — Inline logs preview inside service detail panel */
+.tfp-logs-preview {
+  background: rgba(0, 0, 0, 0.4);
+  border: 1px solid var(--card-border);
+  border-radius: 8px;
+  padding: 0;
+  overflow: hidden;
+}
+.tfp-logs-loading,
+.tfp-logs-empty {
+  padding: 24px 16px;
+  color: var(--text-muted);
+  font-size: 11px;
+  text-align: center;
+}
+.tfp-logs-pre {
+  margin: 0;
+  padding: 12px 14px;
+  font-family: var(--font-mono, monospace);
+  font-size: 10.5px;
+  line-height: 1.55;
+  color: var(--text-secondary);
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 220px;
+  overflow-y: auto;
+}
+
