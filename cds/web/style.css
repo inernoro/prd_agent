@@ -5116,12 +5116,15 @@ a.branch-name:hover { color: var(--accent); }
   opacity: 0.32;
 }
 
+/* UF-05: unified card shape — both apps and infra use .topology-node-box.
+   The legacy .topology-node-capsule selector kept for backwards compat
+   but no longer emitted by the renderer. */
 .topology-node-box,
 .topology-node-capsule {
   fill: var(--bg-card-solid);
   stroke: var(--border);
   stroke-width: 1.5;
-  filter: drop-shadow(0 2px 6px rgba(0, 0, 0, 0.12));
+  filter: drop-shadow(0 4px 14px rgba(0, 0, 0, 0.22));
 }
 .topology-node.has-override .topology-node-box,
 .topology-node.has-override .topology-node-capsule {
@@ -5129,13 +5132,23 @@ a.branch-name:hover { color: var(--accent); }
   stroke-width: 2;
 }
 .topology-node-icon {
-  font-size: 18px;
+  font-size: 22px;
   pointer-events: none;
+  dominant-baseline: middle;
 }
 .topology-node-label {
   fill: var(--text-primary);
-  font-size: 14px;
+  font-size: 17px;
   font-weight: 600;
+  font-family: inherit;
+  pointer-events: none;
+}
+/* Status row below the title. Slightly larger than the old meta to
+   match figure 1's airy feel. */
+.topology-node-status-label {
+  fill: var(--text-secondary);
+  font-size: 13px;
+  font-weight: 500;
   font-family: inherit;
   pointer-events: none;
 }
@@ -5161,6 +5174,28 @@ a.branch-name:hover { color: var(--accent); }
 .topology-node-status-dot.idle { fill: #6b7280; }
 .topology-node-status-dot.stopped { fill: #6b7280; }
 .topology-node-status-dot.unknown { fill: #6b7280; opacity: 0.5; }
+
+/* UF-05: bottom volume slot — a subtle inner divider + disk icon + name.
+   Only rendered for infra services that declare a named volume. */
+.topology-node-divider {
+  stroke: var(--border);
+  stroke-width: 1;
+  opacity: 0.55;
+  pointer-events: none;
+}
+.topology-node-slot-icon {
+  font-size: 14px;
+  pointer-events: none;
+  dominant-baseline: middle;
+  opacity: 0.75;
+}
+.topology-node-slot-label {
+  fill: var(--text-muted);
+  font-size: 12px;
+  font-family: var(--font-mono, monospace);
+  pointer-events: none;
+  dominant-baseline: middle;
+}
 
 .topology-node-badge {
   font-size: 14px;

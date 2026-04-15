@@ -8295,27 +8295,32 @@ function _layoutTopologyDag(profiles, infraList) {
 
 // ── Rich card renderer ────────────────────────────────────────────────
 //
-// Lessons from the first draft:
-//   - Tiny nodes look like wireframes. Bump the card to 236 × 110.
-//   - Each card needs FOUR information lines: icon+name, image, port+deps, status.
-//   - Status dot reuses docker status from `branch.services[profileId].status`
-//     when a branch is selected; otherwise shows "inactive" grey.
-//   - Override badge is a rounded pill in the top-right corner, not just a
-//     floating emoji, so it doesn't collide with the service name.
-//   - Edges are dashed (declared dependency, not live flow) and curve through
-//     a midpoint for Railway-style smoothness.
+// UF-05 (2026-04-15): card style redesigned to match Railway's topology
+// view (the reference image the user called "图1"). Changes vs the first
+// draft:
 //
-// Node geometry:
-//   width  236px
-//   height 110px
-//   horizontal gap 90px (more space than first draft's 70)
-//   vertical gap 36px
+//   - Card geometry bumped from 236×110 → 280×150 so the content
+//     breathes instead of colliding with the border
+//   - Dropped the 3rd/4th text rows (image + port) from the main body —
+//     they now live in the details panel that opens on click. Cards now
+//     show ONLY name + status, matching figure 1's airy look.
+//   - Infra services with named volumes get a dedicated bottom "volume
+//     slot": a subtle inner divider + disk icon + volume name, occupying
+//     the lower third of the card. App services skip the slot.
+//   - Border radius unified at 18px (was 12/26 split). Both apps and
+//     infra now use rounded rects — figure 1 uses the same shape for
+//     Redis and MongoDB.
+//   - Edges switched from bezier curves to orthogonal (manhattan)
+//     routing with dashed stroke. Matches figure 1's HVH routing.
 
-const TOPO_NODE_W = 236;
-const TOPO_NODE_H = 110;
-const TOPO_GAP_X = 90;
-const TOPO_GAP_Y = 36;
-const TOPO_PAD = 40;
+// Card geometry — tuned to match figure 1's proportions
+const TOPO_NODE_W = 280;
+const TOPO_NODE_H = 150;
+const TOPO_VOLUME_SLOT_H = 38;  // bottom volume slot for infra with volumes
+const TOPO_GAP_X = 110;
+const TOPO_GAP_Y = 48;
+const TOPO_PAD = 48;
+const TOPO_NODE_RADIUS = 18;
 
 /**
  * Pick a 1-char emoji icon for a service based on its image / id.
@@ -8417,6 +8422,16 @@ function _renderTopologySvg(layout, ctx) {
     });
   }
 
+  // UF-05: Orthogonal (manhattan) edge routing — matches figure 1's
+  // right-angle HVH path style instead of the bezier curve the first
+  // draft used. Path shape:
+  //
+  //     start ─────┐
+  //                │
+  //                └───── end
+  //
+  // We still corner-round each bend by 8px so hard angles don't look
+  // brittle next to the 18px node radius.
   const edgePaths = layout.edges.map((edge, idx) => {
     const from = positions.get(edge.from);
     const to = positions.get(edge.to);
@@ -8426,30 +8441,65 @@ function _renderTopologySvg(layout, ctx) {
     const x2 = to.x;
     const y2 = to.y + TOPO_NODE_H / 2;
     const midX = (x1 + x2) / 2;
+    const r = 8; // corner radius
+    // Orthogonal path: horizontal from source → vertical through midX
+    // → horizontal to target. Rounded corners at each bend.
+    let d;
+    if (Math.abs(y1 - y2) < 1) {
+      // Straight horizontal — no bends needed
+      d = `M ${x1} ${y1} L ${x2} ${y2}`;
+    } else {
+      const goingDown = y2 > y1;
+      const cornerY1 = goingDown ? y1 + r : y1 - r;
+      const cornerY2 = goingDown ? y2 - r : y2 + r;
+      const sweep1 = goingDown ? 1 : 0;
+      const sweep2 = goingDown ? 0 : 1;
+      d = `M ${x1} ${y1}
+           L ${midX - r} ${y1}
+           Q ${midX} ${y1}, ${midX} ${cornerY1}
+           L ${midX} ${cornerY2}
+           Q ${midX} ${y2}, ${midX + r} ${y2}
+           L ${x2} ${y2}`;
+      // sweep flags unused because we're using Q quadratic commands — ignore lint
+      void sweep1; void sweep2;
+    }
     let cls = 'topology-edge';
     if (selectedNodeId) {
       if (connectedEdgeIdx.has(idx)) cls += ' highlighted';
       else cls += ' dimmed';
     }
-    return `<path class="${cls}" d="M ${x1} ${y1} C ${midX} ${y1}, ${midX} ${y2}, ${x2} ${y2}" />`;
+    return `<path class="${cls}" d="${d}" />`;
   }).join('');
 
-  // Rich node cards
+  // UF-05: Card layout matches figure 1 — airy top region with icon +
+  // name + status, optional bottom "volume slot" for infra services
+  // that declare named volumes. Image/port/deps are intentionally
+  // dropped from the main card to reduce visual clutter; they're
+  // still available in the click-to-inspect details panel.
   const nodeEls = Array.from(positions.values()).map(({ x, y, node }) => {
     const isApp = node.kind === 'app';
     const raw = node.raw;
     const title = esc(raw.name || raw.id);
-    const image = esc(_shortenImage(raw.dockerImage));
     const icon = _topologyNodeIcon(node);
     const status = _topologyNodeStatus(node, selectedBranchId);
     const statusLabel = {
       running: '运行中', building: '构建中', error: '错误',
       stopped: '已停止', idle: '待命', starting: '启动中', unknown: '--',
     }[status] || '--';
-    const depsCount = (raw.dependsOn || []).length;
-    const portLabel = isApp
-      ? `:${raw.containerPort ?? '—'}`
-      : `:${raw.hostPort ?? '?'} → :${raw.containerPort ?? '?'}`;
+
+    // Pick the first named volume (if any) for the bottom slot.
+    // Infra services use `raw.volumes: InfraVolume[]`; apps don't
+    // carry declared volumes here, so they always skip the slot.
+    const firstVolume = (!isApp && Array.isArray(raw.volumes) && raw.volumes.length > 0)
+      ? raw.volumes[0]
+      : null;
+    // firstVolume.name holds either a Docker named-volume name
+    // (e.g. "cds-mongodb-data") for type='volume' or a host path
+    // for type='bind'. Fall back to containerPath if name is empty.
+    const volumeName = firstVolume
+      ? esc(firstVolume.name || firstVolume.containerPath || '')
+      : '';
+    const hasVolumeSlot = !!volumeName;
 
     const hasOverride = isApp && overrideSet && overrideSet.has(raw.id);
     const overriddenFields = hasOverride && overrideDetails
@@ -8459,15 +8509,15 @@ function _renderTopologySvg(layout, ctx) {
       ? `${raw.name} — 本分支自定义: ${overriddenFields.join(', ') || '(未知字段)'}`
       : `${raw.name || raw.id}（${isApp ? '应用服务' : '基础设施'}）`;
 
-    // Node shape: rounded rect for apps, capsule for infra
-    const rx = isApp ? 12 : 26;
-    const shapeClass = isApp ? 'topology-node-box' : 'topology-node-capsule';
+    // Unified shape: both apps and infra use a rounded rect with the
+    // same radius. Matches figure 1's uniform card silhouette.
+    const shapeClass = 'topology-node-box';
 
     // Override pill in top-right corner
     const overridePill = hasOverride
       ? `<g>
-          <rect x="${x + TOPO_NODE_W - 66}" y="${y + 10}" width="56" height="18" rx="9" fill="var(--accent-bg,rgba(16,185,129,0.12))" stroke="var(--accent,#10b981)" stroke-width="1" />
-          <text x="${x + TOPO_NODE_W - 38}" y="${y + 23}" text-anchor="middle" fill="var(--accent,#10b981)" font-size="10" font-weight="600">🌿 自定义</text>
+          <rect x="${x + TOPO_NODE_W - 82}" y="${y + 18}" width="66" height="22" rx="11" fill="var(--accent-bg,rgba(16,185,129,0.12))" stroke="var(--accent,#10b981)" stroke-width="1" />
+          <text x="${x + TOPO_NODE_W - 49}" y="${y + 33}" text-anchor="middle" fill="var(--accent,#10b981)" font-size="11" font-weight="600">🌿 自定义</text>
         </g>`
       : '';
 
@@ -8481,25 +8531,48 @@ function _renderTopologySvg(layout, ctx) {
       ? `onclick="event.stopPropagation();_topologyNodeClick('${esc(raw.id)}')"`
       : `onclick="event.stopPropagation();_topologyInfraClick('${esc(raw.id)}')"`;
 
+    // Layout coordinates inside the card:
+    //   top content area  = y .. y + (NODE_H - VOLUME_SLOT_H)
+    //   bottom slot area  = y + (NODE_H - VOLUME_SLOT_H) .. y + NODE_H
+    // When there's no volume slot the top area fills the whole card.
+    const topAreaH = hasVolumeSlot ? (TOPO_NODE_H - TOPO_VOLUME_SLOT_H) : TOPO_NODE_H;
+    const iconX = x + 30;
+    const iconY = y + 46;                  // vertically centered-ish for the title row
+    const titleX = x + 64;
+    const titleY = y + 50;
+    const statusDotX = x + 32;
+    const statusDotY = y + topAreaH - 34;  // ~34px above the bottom of the top area
+    const statusLabelX = x + 46;
+    const statusLabelY = y + topAreaH - 29;
+    // Volume slot divider + content
+    const slotTopY = y + topAreaH;
+    const slotLineY = slotTopY;            // y of the inner divider line
+    const slotTextY = slotTopY + 24;
+    const slotIconX = x + 30;
+    const slotTextX = x + 54;
+
+    const volumeSlotSvg = hasVolumeSlot
+      ? `
+        <line class="topology-node-divider" x1="${x + 20}" y1="${slotLineY}" x2="${x + TOPO_NODE_W - 20}" y2="${slotLineY}" />
+        <text class="topology-node-slot-icon" x="${slotIconX}" y="${slotTextY}">🗄️</text>
+        <text class="topology-node-slot-label" x="${slotTextX}" y="${slotTextY}">${volumeName}</text>
+      `
+      : '';
+
     return `
       <g class="${nodeClass}" ${clickHandler}>
         <title>${esc(tooltip)}</title>
-        <rect class="${shapeClass}" x="${x}" y="${y}" width="${TOPO_NODE_W}" height="${TOPO_NODE_H}" rx="${rx}" ry="${rx}" />
+        <rect class="${shapeClass}" x="${x}" y="${y}" width="${TOPO_NODE_W}" height="${TOPO_NODE_H}" rx="${TOPO_NODE_RADIUS}" ry="${TOPO_NODE_RADIUS}" />
 
         <!-- Icon + Name header -->
-        <text class="topology-node-icon" x="${x + 18}" y="${y + 34}">${icon}</text>
-        <text class="topology-node-label" x="${x + 44}" y="${y + 34}">${title}</text>
+        <text class="topology-node-icon" x="${iconX}" y="${iconY}">${icon}</text>
+        <text class="topology-node-label" x="${titleX}" y="${titleY}">${title}</text>
 
         <!-- Status dot + label -->
-        <circle class="topology-node-status-dot ${status}" cx="${x + 18}" cy="${y + 62}" r="5" />
-        <text class="topology-node-meta" x="${x + 30}" y="${y + 66}">${esc(statusLabel)}</text>
+        <circle class="topology-node-status-dot ${status}" cx="${statusDotX}" cy="${statusDotY}" r="6" />
+        <text class="topology-node-status-label" x="${statusLabelX}" y="${statusLabelY}">${esc(statusLabel)}</text>
 
-        <!-- Image row -->
-        <text class="topology-node-sub" x="${x + 18}" y="${y + 86}">${image}</text>
-
-        <!-- Port + deps row (bottom) -->
-        <text class="topology-node-meta" x="${x + 18}" y="${y + 102}">${esc(portLabel)}${depsCount > 0 ? `  ·  → ${depsCount} deps` : ''}</text>
-
+        ${volumeSlotSvg}
         ${overridePill}
       </g>
     `;
@@ -8592,11 +8665,48 @@ function _bindTopologyPanZoom() {
   if (!wrap) return;
 
   // Mouse wheel → zoom toward cursor
+  // UF-06: Mac trackpad gesture contract (ported from
+  // prd-admin/src/pages/ai-chat/AdvancedVisualAgentTab.tsx:3267-3281
+  // so CDS topology feels the same as VisualAgent):
+  //
+  //   wheel + ctrlKey/metaKey → zoom toward cursor (macOS converts
+  //     trackpad pinch into wheel events with ctrlKey=true, and
+  //     Windows Ctrl+wheel is the desktop convention for zoom).
+  //   wheel alone (no modifiers) → pan the canvas. On macOS this is
+  //     a two-finger trackpad swipe, which previously was mis-routed
+  //     to zoom (the "鸡肋" behaviour the user complained about).
+  //
+  // We still flip `_topologyUserAdjusted` on either gesture so
+  // subsequent renders don't auto-center under the user.
   wrap.addEventListener('wheel', (e) => {
     e.preventDefault();
-    _topologyUserAdjusted = true; // UF-03: stop auto-centering after zoom
-    const delta = e.deltaY > 0 ? -0.1 : 0.1;
-    _topologyZoom(delta, e.clientX, e.clientY);
+    _topologyUserAdjusted = true;
+    if (e.ctrlKey || e.metaKey) {
+      // Pinch (trackpad) or Ctrl+wheel (desktop) → zoom toward cursor.
+      // Use an exponential factor so the zoom rate feels consistent
+      // regardless of the trackpad's `deltaY` magnitude.
+      const factor = Math.exp(-e.deltaY * 0.01);
+      const newScale = Math.max(0.3, Math.min(2.5, _topologyViewport.scale * factor));
+      if (newScale !== _topologyViewport.scale) {
+        const rect = wrap.getBoundingClientRect();
+        const px = e.clientX - rect.left - _topologyViewport.tx;
+        const py = e.clientY - rect.top - _topologyViewport.ty;
+        const ratio = newScale / _topologyViewport.scale;
+        _topologyViewport.tx -= px * (ratio - 1);
+        _topologyViewport.ty -= py * (ratio - 1);
+        _topologyViewport.scale = newScale;
+        _applyTopologyTransform();
+      }
+      return;
+    }
+    // Two-finger pan on trackpad (or wheel on a physical mouse with
+    // a shift-wheel → horizontal convention). `deltaX`/`deltaY` are
+    // already in CSS pixels, so we just subtract them from the
+    // viewport offset. No rAF throttling needed — browsers already
+    // coalesce wheel events.
+    _topologyViewport.tx -= e.deltaX;
+    _topologyViewport.ty -= e.deltaY;
+    _applyTopologyTransform();
   }, { passive: false });
 
   // Mousedown on empty canvas → start panning. Mousedown on a node → let the click through.

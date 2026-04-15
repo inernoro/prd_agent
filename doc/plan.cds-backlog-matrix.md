@@ -24,30 +24,30 @@
 
 ## 1. 摘要与统计
 
-**总事项数**：30 条（UF×4 + GAP×9 + L10N×3 + LIM×7 + FU×5 + TEST×2）
+**总事项数**：32 条（UF×6 + GAP×10 + L10N×3 + LIM×7 + FU×5 + TEST×2 - 1 epic deferred）
 
 ### 1.1 按类型统计
 
 | 类型 | 数量 | P0 | P1 | P2 | P3 | 说明 |
 |---|---|---|---|---|---|---|
-| **UF** 用户可见故障 | 4 | 2 | 2 | 0 | 0 | 用户截图/复现路径实锤的阻塞问题 |
-| **GAP** 视图功能缺口 | 9 | 0 | 4 | 4 | 1 | Topology 视图相对 List 视图的功能空洞 |
+| **UF** 用户可见故障 | 6 | 2 | 4 | 0 | 0 | 用户截图/复现路径实锤的阻塞问题 |
+| **GAP** 视图功能缺口 | 10 | 0 | 4 | 5 | 1 | Topology vs List 功能空洞 + 画布组件统一(epic) |
 | **L10N** 汉化缺口 | 3 | 0 | 1 | 2 | 0 | 英文残留与中英混排 |
 | **LIM** 已知限制 | 7 | 0 | 0 | 4 | 3 | 设计权衡,不是 bug |
 | **FU** 后续候选 | 5 | 0 | 1 | 4 | 0 | 来自上一棒 handoff §8.3 |
 | **TEST** 测试缺口 | 2 | 0 | 2 | 0 | 0 | E2E / smoke 覆盖空白 |
-| **合计** | **30** | **2** | **10** | **14** | **4** | |
+| **合计** | **33** | **2** | **12** | **15** | **4** | |
 
 ### 1.2 按状态统计
 
 | 状态 | 数量 | 占比 |
 |---|---|---|
-| `open` | 19 | 63% |
-| `deferred` | 7 | 23% |
+| `open` | 19 | 58% |
+| `deferred` | 8 | 24% |
 | `in-progress` | 0 | 0% |
-| `done` | 4 | 13% |
+| `done` | 6 | 18% |
 
-> 2026-04-15 更新:UF-01/02/03/04 全部 done(4 条用户可见故障,对应 3 张截图 + 用户补充的分支输入需求)。所有 LIM(7)均为 `deferred`——设计权衡,不在本轮修复。剩余 19 条 `open` 中 Top-10 §7.1 给出了下一棒优先级。
+> 2026-04-15 更新:UF-01/02/03/04/05/06 全部 done(6 条用户可见故障,3 张截图 + 分支输入 + 卡片样式 + 触控板手势)。所有 LIM(7) + GAP-10 均为 `deferred`——LIM 是设计权衡,GAP-10 是跨项目画布统一 epic。剩余 19 条 `open` 中 Top-10 §7.1 给出了下一棒优先级。
 
 ### 1.3 阻塞项
 
@@ -87,6 +87,8 @@
 | UF-02 | 左下角徽章永远显示"未登录"，不显示 GitHub Device Flow 用户 | P0 | S | **done** 2026-04-15 | `web/projects.js:381` bootstrapMeLabel 降级探测 oauth/status |
 | UF-03 | Topology 节点挤在画布左上角，右侧 2/3 空白 | P1 | S | **done** 2026-04-15 | `web/app.js` 首次渲染 rAF + `_topologyFit` 自动居中 |
 | UF-04 | 无法手动输入/粘贴分支名创建分支，只能从 git refs 下拉选择 | P1 | S | **done** 2026-04-15 | `web/index.html:73` placeholder + `web/app.js` Enter 键 + 下拉"手动添加"入口 |
+| UF-05 | Topology 卡片样式过硬、内容过密,和参考图(图1)不一致 | P1 | M | **done** 2026-04-15 | `web/app.js` 卡片 280×150 + 卡片只留 name+status + 底部 volume slot + 正交连线 + `web/style.css` 圆角 18px |
+| UF-06 | Mac 触控板两指滑动被误绑定到缩放,无法平移画布 | P1 | S | **done** 2026-04-15 | `web/app.js` wheel 事件按 `ctrlKey/metaKey` 分流:有修饰键→缩放,无修饰键→平移(从 `AdvancedVisualAgentTab.tsx:3267` 移植) |
 
 ---
 
@@ -207,6 +209,65 @@
 
 ---
 
+### UF-05 · Topology 卡片样式过硬,与参考图 1 不一致
+
+**现象**(用户给的两张对照图):
+- **图 1(参考/期望)**:卡片圆角 ~18px,padding 宽松,logo 大且留白,状态是纯色填充圆点 + "Online",底部 named volume 独立成一个槽(横线分割 + 🗄️ + 卷名),连线直角正交虚线 HVH 路径
+- **图 2(CDS 现状)**:卡片圆角 12px/胶囊 26px 混用,padding 紧,logo emoji 贴边,中文状态行挤在中间,镜像/端口/deps 三行文字塞在 110px 高度,连线是斜线贝塞尔曲线——视觉上有"卡片要爆开了"的压迫感
+
+**根因**:
+- `cds/web/app.js:8314-8318` 原几何参数 `TOPO_NODE_W=236 / TOPO_NODE_H=110 / TOPO_GAP_X=90` 偏紧
+- `cds/web/app.js:8484-8505` SVG 模板把 icon、name、status-dot、status、image、port、deps 四到五行内容塞在 110px 高度内,每行只有 ~22px 行高
+- `cds/web/app.js:8434` 边连线用 `M..C..` 三次贝塞尔曲线,和 Railway 参考图的"直角 HVH"风格不符
+- `cds/web/style.css:5119-5125` 卡片 rx 有 `topology-node-box (12px) / topology-node-capsule (26px)` 两套,不统一
+
+**修复**(commit `TBD`):
+- 卡片几何 bump:W 236→280, H 110→150, gap X 90→110, gap Y 36→48, padding 40→48
+- 统一圆角:`TOPO_NODE_RADIUS = 18`,apps 和 infra 都用同一个矩形(`.topology-node-box`),废弃 `.topology-node-capsule`
+- 主体内容精简:只留"icon + 名称"顶部区域和"状态圆点 + 中文状态"状态行。**移除 image/port/deps 三行文字**,它们已在点击卡片后的 Details 面板里展示
+- 新增 volume slot:对 `InfraService.volumes[0]` 存在的节点,卡片底部 38px 高度切出独立槽位,`<line>` 分割 + 🗄️ emoji + 卷名(样式参见 `topology-node-divider / topology-node-slot-icon / topology-node-slot-label`)
+- 连线改为正交 HVH:`M x1 y1 L mid-r y1 Q mid y1 mid cornerY1 L mid cornerY2 Q mid y2 mid+r y2 L x2 y2`,弯角半径 8px 避免硬角
+- CSS 字体 bump:`topology-node-label` 14→17,新增 `topology-node-status-label` 13px
+
+**来源**:用户反馈截图 + 和我们 Railway 风格参考图对照
+
+---
+
+### UF-06 · Mac 触控板双指滑动被误绑定到缩放
+
+**现象**:
+- 在 Mac 触控板上使用拓扑视图,用户预期两指滑动 = 平移画布(Figma/Miro/Notion/所有主流画布产品都这么做)
+- 实际 CDS 的两指滑动被绑定到了"缩放",和"捏合缩放"冲突,用户反馈"很鸡肋"
+- 同样的手势在我们自己的 VisualAgent 里工作正常(文件 `prd-admin/src/pages/ai-chat/AdvancedVisualAgentTab.tsx:3267-3281`)
+
+**根因**:
+- `cds/web/app.js:8595-8600` 原 wheel 事件无条件把 `deltaY > 0 ? -0.1 : 0.1` 传给 `_topologyZoom`,不区分是否有 `ctrlKey/metaKey` 修饰
+- macOS 的触控板双指滑动 → wheel 事件 + `ctrlKey=false`
+- macOS 的触控板捏合 → wheel 事件 + `ctrlKey=true`(浏览器内核自动转换)
+- 旧代码把两种情况都当作缩放处理,导致两指滑动的 deltaX/deltaY 本应平移的部分被吃掉
+
+**修复**(commit `TBD`):
+- `cds/web/app.js` wheel 监听器按修饰键分流:
+  ```js
+  if (e.ctrlKey || e.metaKey) {
+    // 捏合/Ctrl+wheel → 向鼠标方向缩放
+    const factor = Math.exp(-e.deltaY * 0.01);
+    // ...
+  } else {
+    // 两指滑动 → 平移
+    _topologyViewport.tx -= e.deltaX;
+    _topologyViewport.ty -= e.deltaY;
+  }
+  ```
+- 代码直接照抄 VisualAgent 的 `AdvancedVisualAgentTab.tsx:3267-3281`,保证两个画布的手势契约一致
+- Zoom 公式改为 `Math.exp(-deltaY * 0.01)` 指数平滑(而非线性 `±0.1`),缩放速率不再受触控板 deltaY 绝对值影响
+
+**相关**:GAP-10(画布组件统一,见 §3),这次只同步了手势代码和视觉语言,没有提取共享组件
+
+**来源**:用户反馈 + Explore agent 跨项目调研(VisualAgent + Workflow)
+
+---
+
 ## 3. Topology 视图 vs 列表视图功能对齐（GAP-系列）
 
 > 拓扑视图用户可执行的操作集合必须 ≥ 列表视图（或明确声明不覆盖）。当前拓扑是列表的功能子集。
@@ -276,6 +337,41 @@
 **修复方向**：拓扑节点右上角也加一个 Quick Action 行（和列表对齐），把预览/部署/日志都挪到这一行。
 
 **来源**：Explore agent 2（功能映射审计）
+
+---
+
+### GAP-10 · 跨项目画布组件统一(epic · deferred)
+
+**现象**:CDS Topology / VisualAgent / Workflow 三个画布各自实现,风格与手势不一致。
+
+| 画布 | 技术栈 | 手势支持 | 节点样式 | 文件 |
+|---|---|---|---|---|
+| **CDS Topology** | 纯 vanilla JS + SVG(`<g><rect><text/>`) | UF-06 后已移植 VisualAgent 手势 | UF-05 后匹配图 1 | `cds/web/app.js:8381+` |
+| **VisualAgent** | React + CSS transform + 自定义 pointer events | ✅ wheel/ctrlKey 分流 + Space+drag | `rounded-[16px]` 图片浮层(非 DAG) | `prd-admin/src/pages/ai-chat/AdvancedVisualAgentTab.tsx:3267-3281` |
+| **Workflow** | `@xyflow/react` v12 | ✅ xyflow 默认行为 | `rounded-[14px]` + HSL 强调色 + bezier 边 | `prd-admin/src/pages/workflow-agent/WorkflowCanvas.tsx` + `CapsuleNode.tsx` |
+| **Emergence** | `@xyflow/react`(沿用 Workflow 模式) | ✅ 同上 | 自定义样式 | `EmergenceCanvas.tsx` |
+
+**根因**:
+- VisualAgent 和 Workflow 技术栈不同,**无法直接共享组件**(一个纯 CSS transform + pixel 坐标,一个 React Flow + viewport 坐标)
+- CDS 是独立 Node.js 项目,没有引入 React 的构建链,**无法直接 import** prd-admin 里的组件
+- 本次(UF-05/06)只做了"手势代码 + 视觉语言"的**表面对齐**,没有提取共享组件
+
+**修复方向**(epic 级,预估 2-3 session):
+
+1. **Phase 1 · 设计 token 抽取**:把卡片圆角、padding、颜色、边连线样式抽成 `canvas-tokens.css`,三处都引用
+   - 变量示例:`--canvas-card-radius: 18px` / `--canvas-card-bg: #161a22` / `--canvas-edge-style: stroke-dasharray: 5 4`
+   - 优先级:P2 · 规模:S
+2. **Phase 2 · 手势代码抽取为 npm 包**:`@prd/canvas-gesture`(或 `cds-canvas-gesture`),导出 `createPanZoomHandlers({ onZoom, onPan })`
+   - 三处都调用,保证手势契约一致
+   - 优先级:P2 · 规模:M
+3. **Phase 3 · CDS 采用 xyflow(或继续维持 SVG)**:评估引入 React Flow UMD 构建到 CDS,让 CDS Topology 和 Workflow 使用同一个渲染器
+   - 风险:CDS 打包构建需要改造;xyflow UMD 体积较大
+   - 决策分叉:如果 Phase 1+2 已经解决"视觉 + 手势"两个痛点,Phase 3 可能不必做
+   - 优先级:P3 · 规模:L
+
+**触发条件**:当 CDS Topology 和另一个画布(Workflow / VisualAgent)再次出现"风格/手势漂移"时启动 Phase 1。
+
+**来源**:用户反馈 + 2026-04-15 跨项目画布 Explore 审计
 
 ---
 
