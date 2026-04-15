@@ -62,6 +62,8 @@ import { getAdminNotifications, handleAdminNotification, handleAllAdminNotificat
 import type { AdminNotificationItem } from '@/services/contracts/notifications';
 import { GlobalDefectSubmitDialog, DefectSubmitButton } from '@/components/ui/GlobalDefectSubmitDialog';
 import { useGlobalDefectStore } from '@/stores/globalDefectStore';
+import { ChangelogBell } from '@/components/changelog/ChangelogBell';
+import { useChangelogStore, selectUnreadCount } from '@/stores/changelogStore';
 
 type NavItem = { key: string; appKey: string; label: string; shortLabel: string; icon: React.ReactNode; description?: string; group?: string | null };
 
@@ -218,6 +220,12 @@ export default function AppShell() {
   const [notificationDialogOpen, setNotificationDialogOpen] = useState(false);
   const [notifications, setNotifications] = useState<AdminNotificationItem[]>([]);
   const [notificationsLoading, setNotificationsLoading] = useState(false);
+  // 更新中心：未读数（用于桌面 dropdown 中的徽章）+ 拉取本周更新
+  const changelogUnread = useChangelogStore(selectUnreadCount);
+  const loadChangelogCurrentWeek = useChangelogStore((s) => s.loadCurrentWeek);
+  useEffect(() => {
+    void loadChangelogCurrentWeek();
+  }, [loadChangelogCurrentWeek]);
   const [dismissedToastIds, setDismissedToastIds] = useState<Set<string>>(new Set());
   const [toastCollapsed, setToastCollapsed] = useState(false);
   const [toastHovering, setToastHovering] = useState(false);
@@ -593,6 +601,7 @@ export default function AppShell() {
               {visibleItems.find((it) => it.key === activeKey)?.label || 'PRD Agent'}
             </span>
           </div>
+          <ChangelogBell size={18} compact />
           <button
             type="button"
             onClick={() => {
@@ -1041,6 +1050,23 @@ export default function AppShell() {
                       style={{ background: 'rgba(99, 102, 241, 0.18)', color: 'var(--accent-gold)' }}
                     >
                       {notificationCount}
+                    </span>
+                  )}
+                </DropdownMenu.Item>
+
+                <DropdownMenu.Item
+                  className="flex items-center gap-3 px-3 py-2.5 rounded-[10px] cursor-pointer outline-none transition-colors hover:bg-white/6"
+                  style={{ color: 'var(--text-secondary)' }}
+                  onSelect={() => navigate('/changelog')}
+                >
+                  <Sparkles size={16} className="shrink-0" />
+                  <span className="text-[13px]">更新中心</span>
+                  {changelogUnread > 0 && (
+                    <span
+                      className="ml-auto rounded-full px-2 py-0.5 text-[10px] font-bold"
+                      style={{ background: 'linear-gradient(135deg, rgba(251, 191, 36, 0.32), rgba(249, 115, 22, 0.32))', color: '#fbbf24' }}
+                    >
+                      {changelogUnread > 9 ? '9+' : changelogUnread}
                     </span>
                   )}
                 </DropdownMenu.Item>

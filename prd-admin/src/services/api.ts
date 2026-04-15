@@ -1032,6 +1032,12 @@ export const api = {
     },
   },
 
+  // ============ Changelog 更新中心（代码级周报） ============
+  changelog: {
+    currentWeek: () => '/api/changelog/current-week',
+    releases: (limit?: number) => `/api/changelog/releases${limit ? `?limit=${limit}` : ''}`,
+  },
+
   // ============ Emergence Explorer 涌现探索器 ============
   emergence: {
     trees: {

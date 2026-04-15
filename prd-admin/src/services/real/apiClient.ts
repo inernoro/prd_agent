@@ -39,6 +39,7 @@ const APP_NAME_ROUTES: readonly [prefix: string, appName: string][] = [
   ['/ai-toolbox', 'ai-toolbox'],
   ['/arena', 'arena-agent'],
   ['/marketplace', 'marketplace'],
+  ['/changelog', 'changelog'],
   // 平台/实验室
   ['/open-platform', 'open-platform-agent'],
   ['/laboratory', 'lab-agent'],
