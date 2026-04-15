@@ -253,7 +253,7 @@ describe('GitHub OAuth Device Flow router (P4 Part 18 Phase E)', () => {
     it('reflects a connected state after the token is stored', async () => {
       const client = buildClient([]);
       server = startServer(client);
-      stateService.setGithubDeviceAuth({
+      await stateService.setGithubDeviceAuth({
         token: 'gho_xxx',
         login: 'octocat',
         name: 'Octo',
@@ -271,7 +271,7 @@ describe('GitHub OAuth Device Flow router (P4 Part 18 Phase E)', () => {
     it('DELETE /oauth clears the stored token', async () => {
       const client = buildClient([]);
       server = startServer(client);
-      stateService.setGithubDeviceAuth({
+      await stateService.setGithubDeviceAuth({
         token: 'gho_xxx',
         login: 'octocat',
         name: null,
@@ -329,7 +329,7 @@ describe('GitHub OAuth Device Flow router (P4 Part 18 Phase E)', () => {
         ],
       }]);
       server = startServer(client);
-      stateService.setGithubDeviceAuth({
+      await stateService.setGithubDeviceAuth({
         token: 'gho_xxx',
         login: 'octocat',
         name: null,
@@ -354,7 +354,7 @@ describe('GitHub OAuth Device Flow router (P4 Part 18 Phase E)', () => {
         status: 401,
       }]);
       server = startServer(client);
-      stateService.setGithubDeviceAuth({
+      await stateService.setGithubDeviceAuth({
         token: 'gho_revoked',
         login: 'octocat',
         name: null,

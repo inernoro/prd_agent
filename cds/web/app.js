@@ -1031,6 +1031,25 @@ const dropdown = document.getElementById('branchDropdown');
 
 searchInput.addEventListener('input', filterBranches);
 searchInput.addEventListener('focus', filterBranches);
+// UF-04: Enter submits the typed name as a new branch (useful when the
+// user pastes a name that doesn't exist in git refs yet, e.g. a branch
+// they're about to create). Only triggers when there's text AND the
+// name isn't already a tracked local branch (to avoid accidental
+// double-add when the user meant to pick from the dropdown).
+searchInput.addEventListener('keydown', (e) => {
+  if (e.key !== 'Enter') return;
+  const raw = searchInput.value.trim();
+  if (!raw) return;
+  e.preventDefault();
+  const slug = StateService_slugify(raw);
+  const alreadyTracked = branches.find(b => b.id === slug || b.branch === raw);
+  if (alreadyTracked) {
+    // Name already exists — jump to the card instead of adding.
+    scrollToAndHighlight(alreadyTracked.id);
+    return;
+  }
+  addBranch(raw);
+});
 document.addEventListener('click', (e) => {
   if (!e.target.closest('.branch-picker')) dropdown.classList.add('hidden');
 });
@@ -1052,10 +1071,38 @@ function filterBranches() {
     (!q || b.name.toLowerCase().includes(q)) && !trackedIds.has(StateService_slugify(b.name))
   ).slice(0, 15);
 
+  // UF-04: "manual add" entry shown whenever the user typed something
+  // that isn't an exact match of an already-tracked local branch. Lets
+  // users paste a branch name and click/Enter to add it without relying
+  // on the git-refs dropdown (which fails for brand-new branches that
+  // haven't been pushed yet, or repos without remote listing).
+  const rawTyped = searchInput.value.trim();
+  const typedSlug = rawTyped ? StateService_slugify(rawTyped) : '';
+  const typedAlreadyTracked = !!rawTyped &&
+    branches.some(b => b.id === typedSlug || b.branch === rawTyped);
+  const manualAddHtml = (rawTyped && !typedAlreadyTracked)
+    ? `
+      <div class="branch-dropdown-section-label">手动添加</div>
+      <div class="branch-dropdown-item branch-dropdown-manual-add" onclick="addBranch(${JSON.stringify(rawTyped)})">
+        <svg class="branch-dropdown-icon" width="16" height="16" viewBox="0 0 16 16" fill="currentColor" style="color: var(--accent)"><path d="M8 2a.75.75 0 01.75.75v4.5h4.5a.75.75 0 010 1.5h-4.5v4.5a.75.75 0 01-1.5 0v-4.5h-4.5a.75.75 0 010-1.5h4.5v-4.5A.75.75 0 018 2z"/></svg>
+        <div class="branch-dropdown-item-info">
+          <div class="branch-dropdown-item-row1">
+            <span class="branch-dropdown-item-name">添加 "${esc(rawTyped)}" 为新分支</span>
+            <span class="branch-dropdown-item-time">按 Enter</span>
+          </div>
+          <div class="branch-dropdown-item-row2">粘贴或输入任意分支名直接创建,无需出现在 git refs 列表中</div>
+        </div>
+      </div>`
+    : '';
+
   if (matchedLocal.length === 0 && matchedRemote.length === 0) {
     if (q && _lastRemoteRefreshQuery !== q) {
-      // Show "searching online" then auto-refresh remote branches
-      dropdown.innerHTML = '<div class="branch-dropdown-empty"><span class="branch-search-spinner"></span>正在在线搜索…</div>';
+      // Show "searching online" then auto-refresh remote branches,
+      // but keep the manual-add escape hatch visible so the user can
+      // still create the branch if the refresh comes back empty.
+      dropdown.innerHTML =
+        '<div class="branch-dropdown-empty"><span class="branch-search-spinner"></span>正在在线搜索…</div>' +
+        manualAddHtml;
       dropdown.classList.remove('hidden');
       clearTimeout(_branchSearchTimer);
       _branchSearchTimer = setTimeout(async () => {
@@ -1071,7 +1118,9 @@ function filterBranches() {
       }, 400);
       return;
     }
-    dropdown.innerHTML = '<div class="branch-dropdown-empty">没有匹配的分支</div>';
+    dropdown.innerHTML =
+      '<div class="branch-dropdown-empty">没有匹配的分支</div>' +
+      manualAddHtml;
   } else {
     _lastRemoteRefreshQuery = ''; // Reset so future searches can trigger refresh
     let html = '';
@@ -1130,7 +1179,11 @@ function filterBranches() {
       }).join('');
     }
 
-    dropdown.innerHTML = html;
+    // UF-04: always offer manual-add as the last option when the typed
+    // text isn't already a tracked branch — even if the dropdown has
+    // matches — so pasting "feature/new-thing" can still be added
+    // directly without navigating the list.
+    dropdown.innerHTML = html + manualAddHtml;
   }
   dropdown.classList.remove('hidden');
 }
@@ -8468,6 +8521,12 @@ function _renderTopologySvg(layout, ctx) {
 // Pan/zoom state — persists across re-renders via _topologyViewport
 let _topologyViewport = { scale: 1, tx: 0, ty: 0 };
 let _topologyDragState = null;
+// UF-03: track whether the user has manually panned/zoomed. While this
+// is false, each renderTopologyView() auto-fits so the graph stays
+// centered in the canvas (fixes "nodes stuck in the top-left" bug).
+// Any user wheel/drag/manual zoom flips this flag and we stop auto-
+// centering so we don't yank the viewport under the user.
+let _topologyUserAdjusted = false;
 
 function _applyTopologyTransform() {
   const svg = document.querySelector('.topology-canvas');
@@ -8498,12 +8557,16 @@ function _topologyZoom(delta, centerX, centerY) {
   _applyTopologyTransform();
 }
 
-function _topologyZoomIn() { _topologyZoom(0.15); }
-function _topologyZoomOut() { _topologyZoom(-0.15); }
+function _topologyZoomIn() { _topologyUserAdjusted = true; _topologyZoom(0.15); }
+function _topologyZoomOut() { _topologyUserAdjusted = true; _topologyZoom(-0.15); }
 
 function _topologyReset() {
-  _topologyViewport = { scale: 1, tx: 0, ty: 0 };
-  _applyTopologyTransform();
+  // "1:1 复位" = explicit user ask to return to identity. Flip back to
+  // "not adjusted" so the next render recenters, and re-fit now to
+  // avoid leaving content in the top-left corner (which was the UF-03
+  // complaint in the first place).
+  _topologyUserAdjusted = false;
+  _topologyFit();
 }
 
 function _topologyFit() {
@@ -8531,6 +8594,7 @@ function _bindTopologyPanZoom() {
   // Mouse wheel → zoom toward cursor
   wrap.addEventListener('wheel', (e) => {
     e.preventDefault();
+    _topologyUserAdjusted = true; // UF-03: stop auto-centering after zoom
     const delta = e.deltaY > 0 ? -0.1 : 0.1;
     _topologyZoom(delta, e.clientX, e.clientY);
   }, { passive: false });
@@ -8555,7 +8619,10 @@ function _bindTopologyPanZoom() {
     if (!_topologyDragState) return;
     const dx = e.clientX - _topologyDragState.startX;
     const dy = e.clientY - _topologyDragState.startY;
-    if (Math.abs(dx) + Math.abs(dy) > 3) _topologyDragState.moved = true;
+    if (Math.abs(dx) + Math.abs(dy) > 3) {
+      _topologyDragState.moved = true;
+      _topologyUserAdjusted = true; // UF-03: stop auto-centering
+    }
     _topologyViewport.tx = _topologyDragState.baseTx + dx;
     _topologyViewport.ty = _topologyDragState.baseTy + dy;
     _applyTopologyTransform();
@@ -8649,6 +8716,20 @@ function renderTopologyView() {
   // Restore transform from persisted viewport + bind pan/zoom handlers
   _applyTopologyTransform();
   _bindTopologyPanZoom();
+
+  // UF-03: auto-center/fit on first render (before user has panned/zoomed).
+  // getBoundingClientRect() needs the SVG to be laid out, so we defer to
+  // the next animation frame. Once the user has interacted the flag
+  // `_topologyUserAdjusted` stays true and we no longer auto-adjust.
+  if (!_topologyUserAdjusted) {
+    requestAnimationFrame(() => {
+      // Render may have been replaced before rAF fires (e.g. user
+      // switched views); guard on the SVG still being in the DOM.
+      const svg = document.querySelector('.topology-canvas');
+      if (!svg) return;
+      _topologyFit();
+    });
+  }
 }
 
 async function _topologySelectBranch(branchId) {

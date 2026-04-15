@@ -42,12 +42,12 @@
 
 | 状态 | 数量 | 占比 |
 |---|---|---|
-| `open` | 23 | 77% |
+| `open` | 19 | 63% |
 | `deferred` | 7 | 23% |
 | `in-progress` | 0 | 0% |
-| `done` | 0 | 0% |
+| `done` | 4 | 13% |
 
-> 所有 LIM(7)均为 `deferred`——设计权衡,不在本轮修复。其余 23 条为 `open`。
+> 2026-04-15 更新:UF-01/02/03/04 全部 done(4 条用户可见故障,对应 3 张截图 + 用户补充的分支输入需求)。所有 LIM(7)均为 `deferred`——设计权衡,不在本轮修复。剩余 19 条 `open` 中 Top-10 §7.1 给出了下一棒优先级。
 
 ### 1.3 阻塞项
 
@@ -83,10 +83,10 @@
 
 | ID | 标题 | 优先级 | 规模 | 状态 | 根因文件 |
 |---|---|---|---|---|---|
-| UF-01 | Device Flow token 持久化静默失败，clone 私有仓库报 `could not read Username` | P0 | M | open | `routes/github-oauth.ts:108` + `services/state.ts:720` |
-| UF-02 | 左下角徽章永远显示"未登录"，不显示 GitHub Device Flow 用户 | P0 | S | open | `web/projects.js:381` |
-| UF-03 | Topology 节点挤在画布左上角，右侧 2/3 空白 | P1 | S | open | `web/app.js:8343-8344` |
-| UF-04 | 无法手动输入/粘贴分支名创建分支，只能从 git refs 下拉选择 | P1 | S | open | `web/index.html:73-84` + `web/app.js:1030-1136` |
+| UF-01 | Device Flow token 持久化静默失败，clone 私有仓库报 `could not read Username` | P0 | M | **done** 2026-04-15 | `routes/github-oauth.ts` await persist + `routes/projects.ts` preflight + `_mapGitCloneError` |
+| UF-02 | 左下角徽章永远显示"未登录"，不显示 GitHub Device Flow 用户 | P0 | S | **done** 2026-04-15 | `web/projects.js:381` bootstrapMeLabel 降级探测 oauth/status |
+| UF-03 | Topology 节点挤在画布左上角，右侧 2/3 空白 | P1 | S | **done** 2026-04-15 | `web/app.js` 首次渲染 rAF + `_topologyFit` 自动居中 |
+| UF-04 | 无法手动输入/粘贴分支名创建分支，只能从 git refs 下拉选择 | P1 | S | **done** 2026-04-15 | `web/index.html:73` placeholder + `web/app.js` Enter 键 + 下拉"手动添加"入口 |
 
 ---
 

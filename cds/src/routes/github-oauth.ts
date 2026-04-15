@@ -91,6 +91,12 @@ export function createGithubOAuthRouter(deps: GitHubOAuthRouterDeps): Router {
       const token = await client.pollDeviceFlow(deviceCode);
       // Success — fetch profile so we can store display metadata
       // and return it to the UI.
+      //
+      // UF-01: We now `await` setGithubDeviceAuth so a backing-store
+      // save failure (e.g. mongo upsert rejects) surfaces here as a
+      // thrown error instead of getting silently swallowed on the
+      // write-behind chain. The outer catch below translates it into
+      // a proper HTTP 500 so the UI no longer sees a fake "ready".
       try {
         const profile = await client.fetchProfile(token);
         const snapshot = {
@@ -105,7 +111,7 @@ export function createGithubOAuthRouter(deps: GitHubOAuthRouterDeps): Router {
           // on github.com/settings/applications.
           scopes: ['repo', 'read:user'],
         };
-        stateService.setGithubDeviceAuth(snapshot);
+        await stateService.setGithubDeviceAuth(snapshot);
         res.json({
           status: 'ready',
           login: snapshot.login,
@@ -118,6 +124,11 @@ export function createGithubOAuthRouter(deps: GitHubOAuthRouterDeps): Router {
         // Token acquired but profile fetch failed — persist a
         // minimal snapshot so the UI still sees "connected", but
         // flag the profile error in the response.
+        //
+        // UF-01: If THIS persist also fails (state save error) we let
+        // the exception bubble to the outer catch which returns 500,
+        // because at that point we can't promise the UI that the
+        // token survives a restart.
         const snapshot = {
           token,
           login: '(unknown)',
@@ -126,7 +137,7 @@ export function createGithubOAuthRouter(deps: GitHubOAuthRouterDeps): Router {
           connectedAt: new Date().toISOString(),
           scopes: ['repo', 'read:user'],
         };
-        stateService.setGithubDeviceAuth(snapshot);
+        await stateService.setGithubDeviceAuth(snapshot);
         res.json({
           status: 'ready',
           login: '(unknown)',
@@ -176,9 +187,16 @@ export function createGithubOAuthRouter(deps: GitHubOAuthRouterDeps): Router {
     });
   });
 
-  router.delete('/github/oauth', (_req, res) => {
-    stateService.setGithubDeviceAuth(null);
-    res.json({ ok: true });
+  router.delete('/github/oauth', async (_req, res) => {
+    try {
+      await stateService.setGithubDeviceAuth(null);
+      res.json({ ok: true });
+    } catch (err) {
+      res.status(500).json({
+        error: 'state_save_failed',
+        message: (err as Error).message,
+      });
+    }
   });
 
   router.get('/github/repos', async (_req, res) => {
@@ -201,7 +219,9 @@ export function createGithubOAuthRouter(deps: GitHubOAuthRouterDeps): Router {
         // the snapshot so the UI re-prompts for Sign in.
         const msg = err.message;
         if (msg.includes('401') || msg.includes('403')) {
-          stateService.setGithubDeviceAuth(null);
+          // Best-effort clear — if the state save fails we still
+          // want to tell the user the token is dead.
+          try { await stateService.setGithubDeviceAuth(null); } catch { /* ignore */ }
           res.status(401).json({
             error: 'token_revoked',
             message: 'GitHub token 已失效，已清除本地记录，请重新连接。',

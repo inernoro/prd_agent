@@ -714,13 +714,34 @@ export class StateService {
   getGithubDeviceAuth(): import('../types.js').GitHubDeviceAuth | undefined {
     return this.state.githubDeviceAuth;
   }
-  setGithubDeviceAuth(auth: import('../types.js').GitHubDeviceAuth | null): void {
+  /**
+   * UF-01 hardening: set + persist, then await the backing store flush
+   * (no-op for JsonBackingStore which is sync, real await for
+   * MongoStateBackingStore whose save() is write-behind). Callers on
+   * the Device Flow completion path use this to guarantee the token
+   * survives a CDS crash immediately after oauth — without the flush
+   * the mongo upsert could still be in-flight when the user clicks
+   * "clone" and a racing crash would lose the snapshot.
+   *
+   * Throws if the backing store save fails, so the caller (oauth
+   * device-poll) can surface a real error to the UI instead of a
+   * fake "ready" status.
+   */
+  async setGithubDeviceAuth(auth: import('../types.js').GitHubDeviceAuth | null): Promise<void> {
     if (auth) {
       this.state.githubDeviceAuth = auth;
     } else {
       delete this.state.githubDeviceAuth;
     }
     this.save();
+    // If the backing store exposes a flush() method (Mongo write-behind),
+    // await it so any upsert failure surfaces here rather than getting
+    // swallowed on the async chain. JsonBackingStore has no flush(), so
+    // this is a no-op there.
+    const maybeFlush = (this.backingStore as { flush?: () => Promise<void> }).flush;
+    if (typeof maybeFlush === 'function') {
+      await maybeFlush.call(this.backingStore);
+    }
   }
 
   /**

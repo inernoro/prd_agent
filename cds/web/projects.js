@@ -378,24 +378,51 @@
 
   // ── User / workspace bootstrap ────────────────────────────────────
 
+  // Badge resolution priority (Backlog UF-02):
+  //   1. CDS session user (/api/me) — if CDS auth is enabled and the user
+  //      is logged in, this is the authoritative identity.
+  //   2. GitHub Device Flow user (/api/github/oauth/status) — when CDS
+  //      auth is disabled (single-user install) but the operator has
+  //      linked a personal GitHub via Device Flow, we surface that
+  //      GitHub login as the badge identity so users have a clear
+  //      "who am I logged in as" signal instead of a permanent
+  //      "未登录" placeholder.
+  //   3. Fallback: leave the static "未登录" copy from the HTML.
   function bootstrapMeLabel() {
+    var nameEl = document.getElementById('userName');
+    var avatarEl = document.getElementById('userAvatar');
+
+    function renderIdentity(login, displayName, avatarUrl) {
+      if (nameEl) nameEl.textContent = displayName || login || '登录用户';
+      if (avatarEl) {
+        if (avatarUrl) {
+          avatarEl.innerHTML =
+            '<img src="' + String(avatarUrl).replace(/"/g, '') + '" alt="">';
+        } else {
+          avatarEl.textContent = ((login || displayName || '?') + '').charAt(0).toUpperCase();
+        }
+      }
+    }
+
     fetch('/api/me', { credentials: 'same-origin', cache: 'no-store' })
       .then(function (res) { return res.ok ? res.json() : null; })
       .catch(function () { return null; })
       .then(function (body) {
-        if (!body || !body.user) return;
-        var user = body.user;
-        var nameEl = document.getElementById('userName');
-        var avatarEl = document.getElementById('userAvatar');
-        if (nameEl) nameEl.textContent = user.githubLogin || user.name || '登录用户';
-        if (avatarEl) {
-          if (user.avatarUrl) {
-            avatarEl.innerHTML =
-              '<img src="' + user.avatarUrl.replace(/"/g, '') + '" alt="">';
-          } else {
-            avatarEl.textContent = (user.githubLogin || '?').charAt(0).toUpperCase();
-          }
+        if (body && body.user) {
+          var user = body.user;
+          renderIdentity(user.githubLogin, user.githubLogin || user.name, user.avatarUrl);
+          return;
         }
+        // No CDS session — fall through to GitHub Device Flow probe.
+        return fetch('/api/github/oauth/status', { credentials: 'same-origin', cache: 'no-store' })
+          .then(function (res) { return res.ok ? res.json() : null; })
+          .catch(function () { return null; })
+          .then(function (gh) {
+            if (gh && gh.connected && gh.login) {
+              renderIdentity(gh.login, gh.name || gh.login, gh.avatarUrl);
+            }
+            // else: leave HTML placeholder ("未登录") intact.
+          });
       });
   }
 

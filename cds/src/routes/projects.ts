@@ -152,6 +152,56 @@ export function _injectGithubTokenIfPossible(raw: string, token: string | undefi
   return u.toString();
 }
 
+/**
+ * Does the given URL look like an HTTPS github.com clone URL?
+ * Used by the UF-01 preflight check in the clone route.
+ */
+export function _isGithubHttpsUrl(raw: string): boolean {
+  let u: URL;
+  try {
+    u = new URL(raw);
+  } catch {
+    return false;
+  }
+  if (u.protocol !== 'https:') return false;
+  return u.hostname === 'github.com' || u.hostname.endsWith('.github.com');
+}
+
+/**
+ * Translate a raw git clone stderr blob into a Chinese actionable
+ * message when it matches known "no credentials available" patterns.
+ * Returns the original message on no-match. Used by the UF-01 fix in
+ * the clone route so users hitting a private-repo clone without a
+ * Device Flow token see a clear "please sign in first" instead of
+ * the bare english "could not read Username" error.
+ */
+export function _mapGitCloneError(rawMsg: string, isGithubUrl: boolean, hasDeviceToken: boolean): string {
+  const msg = rawMsg || '';
+  const looksLikeAuthProblem =
+    /could not read Username/i.test(msg) ||
+    /terminal prompts disabled/i.test(msg) ||
+    /Authentication failed/i.test(msg) ||
+    /remote: Repository not found/i.test(msg);
+  if (!looksLikeAuthProblem) return msg;
+  if (isGithubUrl && !hasDeviceToken) {
+    return (
+      '无法访问该 GitHub 仓库:未登录 GitHub。\n' +
+      '请点击 Settings → GitHub 完成 Device Flow 登录,或在创建对话框内点击"使用 GitHub 登录",然后重试克隆。\n\n' +
+      '原始 git 错误:\n' + msg
+    );
+  }
+  if (isGithubUrl && hasDeviceToken) {
+    return (
+      '已登录 GitHub 但仍无法访问该仓库。可能原因:\n' +
+      '- 当前 token 的 scope 不包含该仓库(请确认授权时勾选了 repo)\n' +
+      '- 该仓库属于未授权给 GitHub App 的组织\n' +
+      '- token 已过期或被撤销(请在 Settings → GitHub 重新登录)\n\n' +
+      '原始 git 错误:\n' + msg
+    );
+  }
+  return msg;
+}
+
 interface ProjectSummary extends Project {
   branchCount: number;
 }
@@ -501,10 +551,18 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
     // userinfo before logging so pasted credentials don't leak into
     // the SSE log or state.json.
     const displayUrl = _redactUrlUserInfo(gitUrl);
-    const cloneUrl = _injectGithubTokenIfPossible(
-      gitUrl,
-      stateService.getGithubDeviceAuth()?.token,
-    );
+    const deviceToken = stateService.getGithubDeviceAuth()?.token;
+    const cloneUrl = _injectGithubTokenIfPossible(gitUrl, deviceToken);
+
+    // UF-01 preflight: when the URL points at github.com but we have
+    // no Device Flow token, warn the user up-front. For public repos
+    // this is harmless (we still attempt the clone), but for private
+    // repos the bare URL will fail with
+    //   fatal: could not read Username for 'https://github.com'
+    // and the user sees an english git error with no actionable hint.
+    // We emit a 'progress' warning now and map the error below.
+    const isGithubUrl = _isGithubHttpsUrl(gitUrl);
+    const needsAuthHint = isGithubUrl && !deviceToken;
 
     try {
       stateService.updateProject(project.id, {
@@ -516,6 +574,11 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
         gitRepoUrl: displayUrl,
         repoPath,
       });
+      if (needsAuthHint) {
+        sendEvent('progress', {
+          line: '⚠ 未检测到 GitHub Device Flow 登录。若这是私有仓库,clone 会因无法获取 Username 而失败。请关闭对话框,点击"使用 GitHub 登录"后重试。',
+        });
+      }
 
       // Ensure parent directory exists (reposBase / …)
       const lastSep = repoPath.lastIndexOf('/');
@@ -562,7 +625,10 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
       );
 
       if (clone.exitCode !== 0) {
-        const errMsg = (combinedOutput(clone) || 'git clone failed').trim();
+        const rawErr = (combinedOutput(clone) || 'git clone failed').trim();
+        // UF-01: translate "could not read Username" into a clear,
+        // actionable Chinese message pointing the user at Device Flow.
+        const errMsg = _mapGitCloneError(rawErr, isGithubUrl, !!deviceToken);
         stateService.updateProject(project.id, {
           cloneStatus: 'error',
           cloneError: errMsg,
