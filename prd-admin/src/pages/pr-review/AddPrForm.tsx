@@ -1,6 +1,7 @@
 import { useState } from 'react';
-import { Plus, Loader2 } from 'lucide-react';
+import { Plus } from 'lucide-react';
 import { usePrReviewStore } from './usePrReviewStore';
+import { MapSpinner } from '@/components/ui/VideoLoader';
 
 /**
  * 添加 PR 表单：粘贴 URL → 同步拉取。
@@ -58,7 +59,7 @@ export function AddPrForm() {
           disabled={submitting || !url.trim()}
           className="w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg bg-violet-500 text-white font-semibold text-sm hover:bg-violet-400 disabled:opacity-40 disabled:cursor-not-allowed transition"
         >
-          {submitting ? <Loader2 size={16} className="animate-spin" /> : <Plus size={16} />}
+          {submitting ? <MapSpinner size={16} /> : <Plus size={16} />}
           {submitting ? '提交中...' : '添加并同步'}
         </button>
       </div>

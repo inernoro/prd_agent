@@ -1,5 +1,6 @@
 import { useEffect, useState, useCallback, useRef } from 'react';
-import { FileAudio, FileText, Plus, Trash2, Loader2, CheckCircle2, AlertCircle, ChevronDown, ChevronRight, X, Sparkles, Eye } from 'lucide-react';
+import { FileAudio, FileText, Plus, Trash2, CheckCircle2, AlertCircle, ChevronDown, ChevronRight, X, Sparkles, Eye } from 'lucide-react';
+import { MapSpinner } from '@/components/ui/VideoLoader';
 import { useTranscriptStore } from '@/stores/transcriptStore';
 import { toast } from '@/lib/toast';
 import { UploadDropzone } from './UploadDropzone';
@@ -102,7 +103,7 @@ export function TranscriptSidebar({ selectedItemId, selectedRunId, onSelectItem,
   const statusIcon = (status: string) => {
     switch (status) {
       case 'completed': return <CheckCircle2 className="w-3 h-3 text-emerald-400 shrink-0" />;
-      case 'processing': case 'pending': return <Loader2 className="w-3 h-3 text-primary animate-spin shrink-0" />;
+      case 'processing': case 'pending': return <MapSpinner size={12} className="shrink-0" />;
       case 'failed': return <AlertCircle className="w-3 h-3 text-destructive shrink-0" />;
       default: return null;
     }
@@ -297,7 +298,7 @@ export function TranscriptSidebar({ selectedItemId, selectedRunId, onSelectItem,
                               {run.status === 'completed' ? (
                                 <FileText className="w-3 h-3 text-muted-foreground/60 shrink-0" />
                               ) : (
-                                <Loader2 className="w-3 h-3 text-primary animate-spin shrink-0" />
+                                <MapSpinner size={12} className="shrink-0" />
                               )}
                               <span className="flex-1 truncate text-muted-foreground">
                                 {run.status === 'completed' ? `文案 ${formatTime(run.createdAt)}` : '生成中...'}

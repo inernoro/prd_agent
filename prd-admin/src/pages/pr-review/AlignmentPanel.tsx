@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Sparkles,
-  Loader2,
   Wand2,
   AlertTriangle,
   RefreshCw,
@@ -14,6 +13,7 @@ import {
   ChevronDown,
   ChevronRight,
 } from 'lucide-react';
+import { MapSpinner } from '@/components/ui/VideoLoader';
 import { useSseStream } from '@/lib/useSseStream';
 import { getPrReviewAlignmentStreamUrl, type PrAlignmentReportDto } from '@/services/real/prReview';
 import { usePrReviewStore } from './usePrReviewStore';
@@ -162,7 +162,7 @@ export function AlignmentPanel({ itemId, cached }: Props) {
       <div className="rounded-lg border border-violet-500/30 bg-violet-500/[0.06] p-4 space-y-3">
         {liveModel?.model && <ModelBadge model={liveModel} />}
         <div className="flex items-center gap-2 text-sm text-violet-200">
-          <Loader2 size={16} className="animate-spin" />
+          <MapSpinner size={16} />
           <span className="font-semibold">{phaseText}</span>
         </div>
         {thinking && <ThinkingBlock text={thinking} done={!!preview} />}
@@ -402,7 +402,7 @@ function ThinkingBlock({ text, done }: ThinkingBlockProps) {
         <Brain size={12} />
         <span className="font-semibold">AI 思考过程</span>
         <span className="opacity-60">· {text.length} 字符</span>
-        {!done && <Loader2 size={10} className="animate-spin ml-auto" />}
+        {!done && <MapSpinner size={10} className="ml-auto" />}
       </button>
       {open && (
         <pre className="px-3 pb-3 text-[11px] text-amber-100/70 font-mono whitespace-pre-wrap break-words max-h-48 overflow-auto">

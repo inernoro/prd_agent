@@ -25,9 +25,10 @@ import { useAuthStore } from '@/stores/authStore';
 import { glassBar } from '@/lib/glassStyles';
 import {
   Send, Save, FileText, Archive, RotateCcw, Wand2, ArrowLeft, Check,
-  Loader2, Bot, User, CheckCircle2, Plus, Trash2, Zap, Play, Copy, ClipboardCheck, ChevronLeft,
+  Bot, User, CheckCircle2, Plus, Trash2, Zap, Play, Copy, ClipboardCheck, ChevronLeft,
   Globe, Search, Share2, EyeOff,
 } from 'lucide-react';
+import { MapSpinner, MapSectionLoader } from '@/components/ui/VideoLoader';
 
 /** Strip ```json:stage_result ... ``` blocks from display text */
 function stripJsonBlocks(text: string): string {
@@ -387,7 +388,7 @@ function CreateTab() {
                 </div>
                 <div className="rounded-2xl px-3.5 py-2.5 flex items-center gap-1.5"
                   style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)' }}>
-                  <Loader2 size={13} className="animate-spin" style={{ color: '#8B5CF6' }} />
+                  <MapSpinner size={13} color="#8B5CF6" />
                   <span className="text-xs" style={{ color: 'var(--text-muted)' }}>思考中…</span>
                 </div>
               </div>
@@ -435,7 +436,7 @@ function CreateTab() {
                   <span className="text-[11px] font-semibold" style={{ color: 'var(--text-primary)' }}>自动测试输入</span>
                   {!autoTestInput && autoTestPhase && (
                     <span className="flex items-center gap-1 text-[10px]" style={{ color: '#8B5CF6' }}>
-                      <Loader2 size={10} className="animate-spin" /> {autoTestPhase}
+                      <MapSpinner size={10} /> {autoTestPhase}
                     </span>
                   )}
                 </div>
@@ -453,7 +454,7 @@ function CreateTab() {
                   <span className="text-[11px] font-semibold" style={{ color: 'var(--text-primary)' }}>效果预览</span>
                   {testStreaming && (
                     <span className="flex items-center gap-1 text-[10px]" style={{ color: '#8B5CF6' }}>
-                      <Loader2 size={10} className="animate-spin" /> 生成中
+                      <MapSpinner size={10} /> 生成中
                     </span>
                   )}
                 </div>
@@ -465,7 +466,7 @@ function CreateTab() {
                     </div>
                   ) : autoTestInput ? (
                     <div className="flex items-center gap-1.5 text-[11px]" style={{ color: 'var(--text-muted)' }}>
-                      <Loader2 size={12} className="animate-spin" style={{ color: '#8B5CF6' }} /> 正在试跑技能…
+                      <MapSpinner size={12} color="#8B5CF6" /> 正在试跑技能…
                     </div>
                   ) : null}
                 </div>
@@ -526,7 +527,7 @@ function CreateTab() {
                 <button onClick={handleSave} disabled={saving}
                   className="w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl text-[13px] font-medium transition-all"
                   style={{ background: 'linear-gradient(135deg,#8B5CF6,#6366F1)', color: 'white', border: '1px solid rgba(139,92,246,0.3)' }}>
-                  {saving ? <Loader2 size={15} className="animate-spin" /> : <Save size={15} />}
+                  {saving ? <MapSpinner size={15} /> : <Save size={15} />}
                   {saving ? '保存并试跑…' : '保存并试跑效果'}
                 </button>
                 <div className="flex gap-2">
@@ -627,7 +628,7 @@ function MySkillsTab({ onSwitchToCreate }: { onSwitchToCreate: () => void }) {
   if (loading) {
     return (
       <div className="flex-1 flex items-center justify-center">
-        <Loader2 size={24} className="animate-spin" style={{ color: '#8B5CF6' }} />
+        <MapSectionLoader />
       </div>
     );
   }
@@ -675,7 +676,7 @@ function MySkillsTab({ onSwitchToCreate }: { onSwitchToCreate: () => void }) {
                       disabled={deleting === skill.skillKey}
                       className="p-1.5 rounded-lg transition-colors hover:bg-red-500/10"
                       style={{ color: 'rgba(239,68,68,0.7)' }} title="删除">
-                      {deleting === skill.skillKey ? <Loader2 size={13} className="animate-spin" /> : <Trash2 size={13} />}
+                      {deleting === skill.skillKey ? <MapSpinner size={13} /> : <Trash2 size={13} />}
                     </button>
                   </div>
                 </div>
@@ -800,7 +801,7 @@ function SkillDetailView({ skill, onBack, onDelete }: {
         <button onClick={handleTogglePublish} disabled={publishing}
           className="flex items-center gap-1 text-[11px] px-2.5 py-1 rounded-lg transition-colors hover:bg-white/5"
           style={{ color: isPublic ? '#F59E0B' : '#8B5CF6' }}>
-          {publishing ? <Loader2 size={12} className="animate-spin" /> : isPublic ? <EyeOff size={12} /> : <Share2 size={12} />}
+          {publishing ? <MapSpinner size={12} /> : isPublic ? <EyeOff size={12} /> : <Share2 size={12} />}
           {isPublic ? '取消发布' : '发布到广场'}
         </button>
         <button onClick={onDelete}
@@ -836,7 +837,7 @@ function SkillDetailView({ skill, onBack, onDelete }: {
           <div className="flex-1 min-h-0">
             {loadingMd ? (
               <div className="flex items-center justify-center h-full">
-                <Loader2 size={20} className="animate-spin" style={{ color: '#8B5CF6' }} />
+                <MapSectionLoader />
               </div>
             ) : (
               <textarea
@@ -875,7 +876,7 @@ function SkillDetailView({ skill, onBack, onDelete }: {
                   background: testStreaming ? 'rgba(139,92,246,0.15)' : 'linear-gradient(135deg,#8B5CF6,#6366F1)',
                   color: testStreaming ? '#C4B5FD' : 'white',
                 }}>
-                {testStreaming ? <Loader2 size={14} className="animate-spin" /> : <Play size={14} />}
+                {testStreaming ? <MapSpinner size={14} /> : <Play size={14} />}
                 {testStreaming ? '正在生成…' : '运行测试'}
               </button>
             </div>
@@ -888,7 +889,7 @@ function SkillDetailView({ skill, onBack, onDelete }: {
               <span className="text-[12px] font-semibold" style={{ color: 'var(--text-primary)' }}>输出结果</span>
               {testStreaming && (
                 <span className="flex items-center gap-1 text-[10px]" style={{ color: '#8B5CF6' }}>
-                  <Loader2 size={10} className="animate-spin" /> 生成中
+                  <MapSpinner size={10} /> 生成中
                 </span>
               )}
               <div className="flex-1" />
@@ -987,7 +988,7 @@ function PlazaTab() {
       {/* List */}
       {loading ? (
         <div className="flex-1 flex items-center justify-center">
-          <Loader2 size={24} className="animate-spin" style={{ color: '#8B5CF6' }} />
+          <MapSectionLoader />
         </div>
       ) : skills.length === 0 ? (
         <div className="flex-1 flex flex-col items-center justify-center gap-3">
@@ -1170,7 +1171,7 @@ function PlazaSkillDetailView({ skill, onBack }: { skill: PlazaSkillItem; onBack
                   background: testStreaming ? 'rgba(139,92,246,0.15)' : 'linear-gradient(135deg,#8B5CF6,#6366F1)',
                   color: testStreaming ? '#C4B5FD' : 'white',
                 }}>
-                {testStreaming ? <Loader2 size={14} className="animate-spin" /> : <Play size={14} />}
+                {testStreaming ? <MapSpinner size={14} /> : <Play size={14} />}
                 {testStreaming ? '正在生成…' : '运行试用'}
               </button>
             </div>

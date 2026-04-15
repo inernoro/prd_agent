@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { ClipboardCheck, ArrowLeft, CheckCircle, XCircle, ChevronDown, ChevronUp, AlertTriangle, User, RefreshCw } from 'lucide-react';
-import { Loader2 } from 'lucide-react';
+import { MapSpinner } from '@/components/ui/VideoLoader';
 import { useSseStream } from '@/lib/useSseStream';
 import { SsePhaseBar } from '@/components/sse/SsePhaseBar';
 import { SseTypingBlock } from '@/components/sse/SseTypingBlock';
@@ -209,7 +209,7 @@ export function ReviewAgentResultPage() {
           {isRunning && (
             <div className="flex-shrink-0">
               <div className="flex items-center gap-1.5 text-xs text-amber-400/80">
-                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                <MapSpinner size={14} />
                 评审中
               </div>
             </div>

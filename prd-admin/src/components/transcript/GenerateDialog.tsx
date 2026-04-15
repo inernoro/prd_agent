@@ -1,7 +1,8 @@
 import { useState } from 'react';
 import { Dialog } from '@/components/ui/Dialog';
 import { Button } from '@/components/design/Button';
-import { Sparkles, Loader2 } from 'lucide-react';
+import { Sparkles } from 'lucide-react';
+import { MapSpinner } from '@/components/ui/VideoLoader';
 import { useTranscriptStore } from '@/stores/transcriptStore';
 import { toast } from '@/lib/toast';
 import type { TranscriptItem, TranscriptTemplate } from '@/services/contracts/transcriptAgent';
@@ -71,7 +72,7 @@ export function GenerateDialog({ open, onOpenChange, item, templates }: Generate
               取消
             </Button>
             <Button size="sm" onClick={handleGenerate} disabled={!selectedTemplateId || generating}>
-              {generating ? <Loader2 className="w-4 h-4 animate-spin mr-1" /> : <Sparkles className="w-4 h-4 mr-1" />}
+              {generating ? <MapSpinner size={16} className="mr-1" /> : <Sparkles className="w-4 h-4 mr-1" />}
               生成
             </Button>
           </div>

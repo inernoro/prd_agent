@@ -7,7 +7,7 @@ import {
   selectUnreadCount,
   selectRecentEntries,
 } from '@/stores/changelogStore';
-import { MapSpinner } from '@/components/ui/VideoLoader';
+import { MapSectionLoader } from '@/components/ui/VideoLoader';
 
 interface ChangelogBellProps {
   /** 图标尺寸（px） */
@@ -190,10 +190,7 @@ export function ChangelogBell({ size = 18, compact = false }: ChangelogBellProps
               }}
             >
               {loadingCurrent && recent.length === 0 && (
-                <div className="flex items-center justify-center gap-2 py-8 text-[11px]" style={{ color: 'var(--text-muted)' }}>
-                  <MapSpinner size={14} />
-                  正在加载…
-                </div>
+                <MapSectionLoader text="正在加载…" />
               )}
 
               {!loadingCurrent && recent.length === 0 && (

@@ -1,6 +1,7 @@
-import { Loader2, Inbox, ChevronLeft, ChevronRight } from 'lucide-react';
+import { Inbox, ChevronLeft, ChevronRight } from 'lucide-react';
 import { usePrReviewStore } from './usePrReviewStore';
 import { PrItemCard } from './PrItemCard';
+import { MapSpinner, MapSectionLoader } from '@/components/ui/VideoLoader';
 
 /**
  * PR 记录列表 + 分页。列表为空/加载中有专门状态。
@@ -25,9 +26,8 @@ export function PrItemList() {
 
   if (listLoading && items.length === 0) {
     return (
-      <div className="rounded-xl border border-white/10 bg-white/[0.03] p-10 flex flex-col items-center gap-3 text-white/60">
-        <Loader2 size={20} className="animate-spin" />
-        加载列表...
+      <div className="rounded-xl border border-white/10 bg-white/[0.03]">
+        <MapSectionLoader text="加载列表..." />
       </div>
     );
   }
@@ -49,7 +49,7 @@ export function PrItemList() {
         <div className="text-xs text-white/40">共 {total} 条</div>
         {listLoading && (
           <div className="flex items-center gap-1 text-xs text-white/40">
-            <Loader2 size={12} className="animate-spin" />
+            <MapSpinner size={12} />
             刷新中
           </div>
         )}

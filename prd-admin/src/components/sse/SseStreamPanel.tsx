@@ -1,5 +1,5 @@
 import { SsePhaseBar } from './SsePhaseBar';
-import { MapSpinner } from '@/components/ui/VideoLoader';
+import { MapSectionLoader } from '@/components/ui/VideoLoader';
 import { SseTypingBlock } from './SseTypingBlock';
 import type { SsePhase } from '@/lib/useSseStream';
 
@@ -72,12 +72,7 @@ export function SseStreamPanel({
       {hasData ? (
         children
       ) : isStreaming && !hasData ? (
-        waitingContent ?? (
-          <div className="flex flex-col items-center gap-2 py-8" style={{ color: 'var(--text-muted)' }}>
-            <MapSpinner size={24} color="rgba(120,180,255,0.5)" />
-            <span className="text-xs">AI 正在分析数据…</span>
-          </div>
-        )
+        waitingContent ?? <MapSectionLoader text="AI 正在分析数据…" />
       ) : isDone && !hasData ? (
         <p className="text-sm text-center py-4" style={{ color: 'var(--text-muted)' }}>{emptyText}</p>
       ) : null}
