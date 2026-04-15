@@ -627,10 +627,25 @@ public sealed class ChangelogReader : IChangelogReader
         ChangelogRelease? currentRelease = null;
         ChangelogDay? currentDay = null;
         var inHighlightSection = false;
+        // 跟踪 markdown 代码栅栏（``` 或 ~~~），代码块内的 ## [xxx] 是文档示例，
+        // 不应当成真版本头解析。
+        var inFencedCodeBlock = false;
 
         foreach (var rawLine in lines)
         {
             var line = rawLine.TrimEnd('\r');
+
+            // 代码栅栏切换：以 ``` 或 ~~~ 开头（允许带语言标识，如 ```markdown）
+            var trimmedStart = line.TrimStart();
+            if (trimmedStart.StartsWith("```", StringComparison.Ordinal) ||
+                trimmedStart.StartsWith("~~~", StringComparison.Ordinal))
+            {
+                inFencedCodeBlock = !inFencedCodeBlock;
+                continue;
+            }
+
+            // 在代码块内：所有特殊语法（版本头/日期头/表格行/highlight bullet）都跳过
+            if (inFencedCodeBlock) continue;
 
             // 版本头
             var releaseMatch = ReleaseHeaderRegex.Match(line);
