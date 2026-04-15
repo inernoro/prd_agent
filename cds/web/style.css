@@ -5562,7 +5562,9 @@ body.cds-topology-fs .topology-fs-topbar { left: 60px; }
 .topology-fs-breadcrumb-item.link { cursor: pointer; }
 .topology-fs-breadcrumb-item.link:hover { background: var(--bg-elevated); }
 
-/* Branch dropdown (native select styled to look like a pill) */
+/* Legacy branch dropdown (native select styled as pill) — retained for
+   backwards compat if any code still mounts it; UF-07 replaces the
+   actual topology entry point with .topology-fs-branch-combo below. */
 .topology-fs-branch-select {
   appearance: none;
   -webkit-appearance: none;
@@ -5583,6 +5585,172 @@ body.cds-topology-fs .topology-fs-topbar { left: 60px; }
 }
 .topology-fs-branch-select:hover { border-color: var(--accent); }
 .topology-fs-branch-select:focus { outline: none; box-shadow: 0 0 0 2px rgba(16,185,129,0.2); }
+
+/* UF-07: custom branch combobox — replaces the native <select>.
+   - Button looks like a small pill inside the breadcrumb.
+   - Popover floats below with search input + filtered branch list +
+     "manual add" escape hatch.
+   - Structurally mirrors list view's branch picker so both views
+     converge on the same add-branch UX. */
+.topology-fs-branch-combo {
+  position: relative;
+  display: inline-flex;
+}
+.topology-fs-branch-combo-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--bg-elevated);
+  color: var(--text-primary);
+  border: 1px solid var(--card-border);
+  border-radius: 7px;
+  padding: 5px 8px 5px 10px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  font-family: inherit;
+  max-width: 260px;
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+.topology-fs-branch-combo-btn > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 180px;
+}
+.topology-fs-branch-combo-btn > svg { opacity: 0.7; flex-shrink: 0; }
+.topology-fs-branch-combo-btn:hover { border-color: var(--accent); }
+.topology-fs-branch-combo.open .topology-fs-branch-combo-btn {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px rgba(16, 185, 129, 0.2);
+}
+.topology-fs-branch-combo-popover {
+  display: none;
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  min-width: 320px;
+  max-width: 420px;
+  background: var(--bg-card-solid);
+  border: 1px solid var(--card-border);
+  border-radius: 10px;
+  box-shadow: 0 14px 40px rgba(0, 0, 0, 0.45);
+  padding: 8px;
+  z-index: 40;
+  pointer-events: auto;
+}
+.topology-fs-branch-combo.open .topology-fs-branch-combo-popover { display: block; }
+.topology-fs-branch-combo-search {
+  width: 100%;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  border: 1px solid var(--card-border);
+  border-radius: 7px;
+  padding: 7px 10px;
+  font-size: 12px;
+  font-family: inherit;
+  margin-bottom: 6px;
+  box-sizing: border-box;
+}
+.topology-fs-branch-combo-search:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px rgba(16, 185, 129, 0.18);
+}
+.topology-fs-branch-combo-list {
+  max-height: 320px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.topology-fs-branch-combo-section {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-muted);
+  padding: 8px 8px 4px;
+}
+.topology-fs-branch-combo-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 8px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background 0.1s ease;
+  font-size: 12px;
+}
+.topology-fs-branch-combo-item:hover { background: var(--bg-elevated); }
+.topology-fs-branch-combo-item.active {
+  background: rgba(16, 185, 129, 0.1);
+  color: var(--accent);
+}
+.topology-fs-branch-combo-item-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.topology-fs-branch-combo-item-tag {
+  font-size: 10px;
+  padding: 2px 6px;
+  border-radius: 8px;
+  background: var(--bg-primary);
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+.topology-fs-branch-combo-item-tag.running {
+  background: rgba(16, 185, 129, 0.15);
+  color: #10b981;
+}
+.topology-fs-branch-combo-item.manual-add {
+  border: 1px dashed rgba(16, 185, 129, 0.4);
+  margin-top: 2px;
+}
+.topology-fs-branch-combo-item.manual-add:hover {
+  background: rgba(16, 185, 129, 0.08);
+  border-color: rgba(16, 185, 129, 0.7);
+}
+.topology-fs-branch-combo-empty {
+  padding: 18px 12px;
+  text-align: center;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+/* UF-08: view mode toggle pill (列表 | 拓扑) in the topology topbar */
+.topology-fs-view-toggle {
+  display: inline-flex;
+  gap: 2px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--card-border);
+  border-radius: 7px;
+  padding: 3px;
+  margin-left: 8px;
+}
+.topology-fs-view-toggle-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  background: transparent;
+  color: var(--text-secondary);
+  border: none;
+  border-radius: 5px;
+  padding: 4px 10px;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  font-family: inherit;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+.topology-fs-view-toggle-btn:hover { color: var(--text-primary); }
+.topology-fs-view-toggle-btn.active {
+  background: var(--bg-card-solid);
+  color: var(--accent);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.25);
+}
 
 /* ───── Floating "+ Add" button + popover menu ───── */
 .topology-fs-add-btn {
@@ -6242,6 +6410,45 @@ body.cds-topology-fs .topology-fs-panel.open { transform: translateX(0); }
   background: var(--bg-elevated);
   border-color: var(--card-border);
 }
+
+/* GAP-01/02: Stop + Delete buttons next to Deploy in the topology
+   Details status banner. Visually paired with .tfp-deploy-btn but
+   scaled down in intensity — amber for Stop (reversible), red for
+   Delete (destructive). */
+.tfp-stop-btn,
+.tfp-delete-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 11px;
+  border-radius: 6px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.2px;
+  cursor: pointer;
+  transition: background 120ms ease, border-color 120ms ease, transform 80ms ease;
+  white-space: nowrap;
+}
+.tfp-stop-btn {
+  background: rgba(245, 158, 11, 0.12);
+  border: 1px solid rgba(245, 158, 11, 0.35);
+  color: #f59e0b;
+}
+.tfp-stop-btn:hover {
+  background: rgba(245, 158, 11, 0.22);
+  border-color: rgba(245, 158, 11, 0.55);
+}
+.tfp-stop-btn:active { transform: translateY(1px); }
+.tfp-delete-btn {
+  background: rgba(239, 68, 68, 0.12);
+  border: 1px solid rgba(239, 68, 68, 0.35);
+  color: #ef4444;
+}
+.tfp-delete-btn:hover {
+  background: rgba(239, 68, 68, 0.22);
+  border-color: rgba(239, 68, 68, 0.55);
+}
+.tfp-delete-btn:active { transform: translateY(1px); }
 
 /* P4 Part 18 (G6): Public URL row — prominent, clickable, mode-aware. */
 .tfp-public-url-card {

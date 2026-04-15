@@ -7985,7 +7985,11 @@ function setViewMode(mode) {
 
   const listEl = document.getElementById('branchList');
   const topoEl = document.getElementById('topologyView');
-  const buttons = document.querySelectorAll('.view-mode-btn');
+  // Flip the active class on any view-mode toggle in the DOM — there's
+  // the list-view header toggle (.view-mode-btn) and UF-08's new
+  // topology-fs pill (.topology-fs-view-toggle-btn). Both use the same
+  // data-view-mode attribute so one querySelectorAll handles both.
+  const buttons = document.querySelectorAll('.view-mode-btn, .topology-fs-view-toggle-btn');
   buttons.forEach(btn => {
     const active = btn.dataset.viewMode === mode;
     btn.classList.toggle('active', active);
@@ -8070,10 +8074,10 @@ function _ensureTopologyFsChrome() {
     <button type="button" class="topology-fs-leftnav-icon active" title="服务拓扑">
       <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M5 2.75a2.25 2.25 0 114.5 0 2.25 2.25 0 01-4.5 0zM7.25 0a2.75 2.75 0 00-.75 5.397V7H2.75A1.75 1.75 0 001 8.75v1.603a2.75 2.75 0 101.5 0V8.75a.25.25 0 01.25-.25H6.5v1.397a2.75 2.75 0 101.5 0V8.5h3.75a.25.25 0 01.25.25v1.603a2.75 2.75 0 101.5 0V8.75A1.75 1.75 0 0011.75 7H8V5.397A2.75 2.75 0 007.25 0z"/></svg>
     </button>
-    <!-- P4 Part 18 cleanup: removed disabled "指标 (P5)" icon. -->
-    <button type="button" class="topology-fs-leftnav-icon" title="日志" onclick="setViewMode('list')">
-      <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M0 1.75C0 .784.784 0 1.75 0h12.5C15.216 0 16 .784 16 1.75v12.5A1.75 1.75 0 0114.25 16H1.75A1.75 1.75 0 010 14.25V1.75zm1.75-.25a.25.25 0 00-.25.25v12.5c0 .138.112.25.25.25h12.5a.25.25 0 00.25-.25V1.75a.25.25 0 00-.25-.25H1.75zM3.75 5h.5a.75.75 0 010 1.5h-.5a.75.75 0 010-1.5zm0 4h.5a.75.75 0 010 1.5h-.5a.75.75 0 010-1.5zm2.75-4h6a.75.75 0 010 1.5h-6a.75.75 0 010-1.5zm0 4h6a.75.75 0 010 1.5h-6a.75.75 0 010-1.5z"/></svg>
-    </button>
+    <!-- UF-08: the old "日志" icon here was actually calling setViewMode('list')
+         with a log-card icon and ambiguous tooltip — users couldn't find the
+         back-to-list exit. We removed it and replaced it with a real toggle
+         in the top pill (see topologyFsViewToggle below). -->
     <a href="settings.html?project=${esc(projectId)}" class="topology-fs-leftnav-icon" title="项目设置 (P4 Part 13)">
       <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M7.429 1.525a3.5 3.5 0 011.142 0 .75.75 0 01.57.63l.185 1.29a.25.25 0 00.35.193l1.178-.592a.75.75 0 01.808.098 3.5 3.5 0 01.571.571.75.75 0 01.098.808l-.592 1.178a.25.25 0 00.193.35l1.29.185a.75.75 0 01.63.57 3.5 3.5 0 010 1.142.75.75 0 01-.63.57l-1.29.185a.25.25 0 00-.193.35l.592 1.178a.75.75 0 01-.098.808 3.5 3.5 0 01-.571.571.75.75 0 01-.808.098l-1.178-.592a.25.25 0 00-.35.193l-.185 1.29a.75.75 0 01-.57.63 3.5 3.5 0 01-1.142 0 .75.75 0 01-.57-.63l-.185-1.29a.25.25 0 00-.35-.193l-1.178.592a.75.75 0 01-.808-.098 3.5 3.5 0 01-.571-.571.75.75 0 01-.098-.808l.592-1.178a.25.25 0 00-.193-.35l-1.29-.185a.75.75 0 01-.63-.57 3.5 3.5 0 010-1.142.75.75 0 01.63-.57l1.29-.185a.25.25 0 00.193-.35l-.592-1.178a.75.75 0 01.098-.808 3.5 3.5 0 01.571-.571.75.75 0 01.808-.098l1.178.592a.25.25 0 00.35-.193l.185-1.29a.75.75 0 01.57-.63zM8 6a2 2 0 100 4 2 2 0 000-4z"/></svg>
     </a>
@@ -8085,6 +8089,20 @@ function _ensureTopologyFsChrome() {
   document.body.appendChild(leftnav);
 
   // ── 2 + 3. Top breadcrumb pill with branch dropdown ──
+  //
+  // UF-07: the old native `<select id="topologyFsBranchSelect">` only
+  // let users switch between already-tracked branches. We replace it
+  // with a custom combobox that:
+  //   - shows existing tracked branches (same as before)
+  //   - shows a search input inside the popover
+  //   - offers a "+ 手动添加" entry when the typed text isn't yet a
+  //     tracked branch — calls the same addBranch() that list view's
+  //     branchSearch uses, so behaviour is 1:1 with UF-04
+  //
+  // UF-08: the old exit path to list view was an ambiguous "日志" icon
+  // hidden in the left sub-nav. We add a proper "列表 | 拓扑" toggle
+  // pill next to the branch dropdown so the active mode is obvious and
+  // switching back is one click.
   const topbar = document.createElement('div');
   topbar.id = 'topologyFsTopbar';
   topbar.className = 'topology-fs-topbar';
@@ -8097,9 +8115,29 @@ function _ensureTopologyFsChrome() {
       <span class="topology-fs-breadcrumb-sep">/</span>
       <span class="topology-fs-breadcrumb-item">production</span>
       <span class="topology-fs-breadcrumb-sep">/</span>
-      <select id="topologyFsBranchSelect" class="topology-fs-branch-select" onchange="_topologyOnBranchChange(this.value)">
-        <option value="">（共享视图）</option>
-      </select>
+      <!-- UF-07: custom branch combobox (replaces native <select>) -->
+      <div class="topology-fs-branch-combo" id="topologyFsBranchCombo">
+        <button type="button" class="topology-fs-branch-combo-btn" id="topologyFsBranchComboBtn" onclick="event.stopPropagation();_topologyBranchComboToggle()">
+          <svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor"><path fill-rule="evenodd" d="M11.75 2.5a.75.75 0 100 1.5.75.75 0 000-1.5zm-2.25.75a2.25 2.25 0 113 2.122V6A2.5 2.5 0 0110 8.5H6a1 1 0 00-1 1v1.128a2.251 2.251 0 11-1.5 0V5.372a2.25 2.25 0 111.5 0v1.836A2.492 2.492 0 016 7h4a1 1 0 001-1v-.628A2.25 2.25 0 019.5 3.25zM4.25 12a.75.75 0 100 1.5.75.75 0 000-1.5zM3.5 3.25a.75.75 0 111.5 0 .75.75 0 01-1.5 0z"/></svg>
+          <span id="topologyFsBranchComboLabel">（共享视图）</span>
+          <svg width="10" height="10" viewBox="0 0 16 16" fill="currentColor"><path d="M4.427 7.427l3.396 3.396a.25.25 0 00.354 0l3.396-3.396A.25.25 0 0011.396 7H4.604a.25.25 0 00-.177.427z"/></svg>
+        </button>
+        <div class="topology-fs-branch-combo-popover" id="topologyFsBranchComboPopover">
+          <input type="text" class="topology-fs-branch-combo-search" id="topologyFsBranchComboSearch" placeholder="搜索或粘贴分支名,按 Enter 添加" autocomplete="off">
+          <div class="topology-fs-branch-combo-list" id="topologyFsBranchComboList"></div>
+        </div>
+      </div>
+    </div>
+    <!-- UF-08: view mode toggle pill, always visible -->
+    <div class="topology-fs-view-toggle" id="topologyFsViewToggle">
+      <button type="button" class="topology-fs-view-toggle-btn" data-view-mode="list" onclick="setViewMode('list')" title="切换到列表视图">
+        <svg width="13" height="13" viewBox="0 0 16 16" fill="currentColor"><path d="M2 4h12v2H2V4zm0 3.5h12v1H2v-1zm0 2.5h12v1H2v-1zm0 2.5h12v1H2v-1z"/></svg>
+        列表
+      </button>
+      <button type="button" class="topology-fs-view-toggle-btn active" data-view-mode="topology" onclick="setViewMode('topology')" title="当前视图">
+        <svg width="13" height="13" viewBox="0 0 16 16" fill="currentColor"><path d="M5 2.75a2.25 2.25 0 114.5 0 2.25 2.25 0 01-4.5 0zM7.25 0a2.75 2.75 0 00-.75 5.397V7H2.75A1.75 1.75 0 001 8.75v1.603a2.75 2.75 0 101.5 0V8.75a.25.25 0 01.25-.25H6.5v1.397a2.75 2.75 0 101.5 0V8.5h3.75a.25.25 0 01.25.25v1.603a2.75 2.75 0 101.5 0V8.75A1.75 1.75 0 0011.75 7H8V5.397A2.75 2.75 0 007.25 0z"/></svg>
+        拓扑
+      </button>
     </div>
   `;
   document.body.appendChild(topbar);
@@ -8187,7 +8225,8 @@ function _ensureTopologyFsChrome() {
   const hint = document.createElement('div');
   hint.id = 'topologyEditHint';
   hint.className = 'topology-edit-hint';
-  hint.textContent = '点击节点查看详情 · 拖拽空白处平移 · 滚轮缩放';
+  // UF-06: updated hint to reflect the new Mac trackpad gesture contract.
+  hint.textContent = '点击节点查看详情 · 两指滑动平移 · 捏合 / Ctrl+滚轮缩放';
   document.body.appendChild(hint);
 
   // Click outside add menu → close
@@ -8198,6 +8237,30 @@ function _ensureTopologyFsChrome() {
     if (menu.classList.contains('open') && !menu.contains(e.target) && !btn.contains(e.target)) {
       menu.classList.remove('open');
     }
+  });
+
+  // UF-07: wire up the branch combobox search input. Using addEventListener
+  // (not inline oninput) so we can capture both 'input' and 'keydown' on
+  // the same element without attribute bloat in the HTML template.
+  var comboSearch = document.getElementById('topologyFsBranchComboSearch');
+  if (comboSearch) {
+    comboSearch.addEventListener('input', function (e) {
+      _topologyBranchComboOnInput(e.target.value);
+    });
+    comboSearch.addEventListener('keydown', function (e) {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        _topologyBranchComboOnEnter();
+      } else if (e.key === 'Escape') {
+        _topologyBranchComboClose();
+      }
+    });
+  }
+  // UF-07: click outside the combobox → close popover
+  document.addEventListener('click', function (e) {
+    var combo = document.getElementById('topologyFsBranchCombo');
+    if (!combo || !combo.classList.contains('open')) return;
+    if (!combo.contains(e.target)) _topologyBranchComboClose();
   });
 
   // Best-effort populate the project name + branch dropdown.
@@ -9536,6 +9599,14 @@ function _topologyRenderPanelTab(tab, entity) {
       || null;
     var deployBtnLabel = status === 'running' ? 'Redeploy' : 'Deploy';
     var deployBtnHtml = '';
+    // GAP-01/02: Stop + Delete branch buttons for the topology Details
+    // action bar. Previously, users had to switch to list view to hit
+    // Stop or Delete. Both actions delegate to the same stopBranch() /
+    // removeBranch() helpers that list view uses, so behaviour is 1:1.
+    // Only enabled when we know which branch we'd act on; the branch
+    // picker dropdown or auto-select must have picked one.
+    var stopBtnHtml = '';
+    var deleteBtnHtml = '';
     if (kind === 'app') {
       if (deployTargetBranchId) {
         deployBtnHtml =
@@ -9546,6 +9617,29 @@ function _topologyRenderPanelTab(tab, entity) {
               '<path d="M1.5 8a.5.5 0 01.5-.5h10.793L9.146 3.854a.5.5 0 11.708-.708l4.5 4.5a.5.5 0 010 .708l-4.5 4.5a.5.5 0 01-.708-.708L12.793 8.5H2a.5.5 0 01-.5-.5z"/>' +
             '</svg>' +
             deployBtnLabel +
+          '</button>';
+        // GAP-01: Stop button — only meaningful when the branch is
+        // actually running. We let the user click it regardless and
+        // let the backend return a no-op if there's nothing to stop.
+        stopBtnHtml =
+          '<button type="button" class="tfp-stop-btn" ' +
+          'onclick="event.stopPropagation();stopBranch(\'' + esc(deployTargetBranchId) + '\')" ' +
+          'title="停止该分支的所有容器">' +
+            '<svg width="11" height="11" viewBox="0 0 16 16" fill="currentColor">' +
+              '<path d="M4 4h8v8H4V4z"/>' +
+            '</svg>' +
+            '停止' +
+          '</button>';
+        // GAP-02: Delete branch button — delegates to removeBranch,
+        // which already has its own confirm dialog and cascade cleanup.
+        deleteBtnHtml =
+          '<button type="button" class="tfp-delete-btn" ' +
+          'onclick="event.stopPropagation();removeBranch(\'' + esc(deployTargetBranchId) + '\')" ' +
+          'title="删除该分支(会连带清理 worktree 和容器)">' +
+            '<svg width="11" height="11" viewBox="0 0 16 16" fill="currentColor">' +
+              '<path d="M11 1.75V3h2.25a.75.75 0 010 1.5H2.75a.75.75 0 010-1.5H5V1.75C5 .784 5.784 0 6.75 0h2.5C10.216 0 11 .784 11 1.75zM4.496 6.675a.75.75 0 10-1.492.15l.66 6.6A1.75 1.75 0 005.405 15h5.19c.9 0 1.652-.681 1.741-1.576l.66-6.6a.75.75 0 00-1.492-.149l-.66 6.6a.25.25 0 01-.249.225h-5.19a.25.25 0 01-.249-.225l-.66-6.6z"/>' +
+            '</svg>' +
+            '删除' +
           '</button>';
       } else {
         deployBtnHtml =
@@ -9565,8 +9659,10 @@ function _topologyRenderPanelTab(tab, entity) {
             : '<circle cx="8" cy="8" r="5"/>') +
         '</svg>' +
         '<span>' + (status === 'running' ? 'Service is online' : 'Status: ' + status) + '</span>' +
-        '<div style="margin-left:auto;display:flex;align-items:center;gap:10px;min-width:0">' +
+        '<div style="margin-left:auto;display:flex;align-items:center;gap:8px;min-width:0;flex-wrap:wrap">' +
           deployBtnHtml +
+          stopBtnHtml +
+          deleteBtnHtml +
           '<span style="font-size:11px;opacity:0.7;white-space:nowrap">' + esc(image) + '</span>' +
         '</div>' +
       '</div>' +
@@ -10318,35 +10414,173 @@ function _topologyClosePanel() {
 
 // T8: branch dropdown change handler
 function _topologyOnBranchChange(branchId) {
-  // Empty value = shared view
+  // Empty value = shared view. Kept as a public helper so anything
+  // that still binds to a native select element continues to work.
   _topologySelectBranch(branchId || null);
+  _topologyRefreshBranchDropdown();
+  _topologyBranchComboClose();
 }
 
-// Refresh the dropdown options from the global `branches` array. Called
-// when the topology view is shown OR when branches list reloads.
+// UF-07: the topology branch picker is now a custom combobox, not a
+// native <select>. Opening / closing / filtering / add-branch are all
+// driven from these helpers. Kept on window so inline onclick handlers
+// in the topbar markup above can reach them.
+
+let _topologyBranchComboOpen = false;
+let _topologyBranchComboQuery = '';
+
+function _topologyBranchComboToggle() {
+  if (_topologyBranchComboOpen) {
+    _topologyBranchComboClose();
+  } else {
+    _topologyBranchComboOpenUi();
+  }
+}
+
+function _topologyBranchComboOpenUi() {
+  var combo = document.getElementById('topologyFsBranchCombo');
+  if (!combo) return;
+  _topologyBranchComboOpen = true;
+  combo.classList.add('open');
+  _topologyRefreshBranchDropdown();
+  // Focus the search input after the popover has a chance to render,
+  // otherwise the autofocus gets swallowed by the click that opened it.
+  setTimeout(function () {
+    var search = document.getElementById('topologyFsBranchComboSearch');
+    if (search) { search.value = _topologyBranchComboQuery; search.focus(); }
+  }, 0);
+}
+
+function _topologyBranchComboClose() {
+  var combo = document.getElementById('topologyFsBranchCombo');
+  if (!combo) return;
+  _topologyBranchComboOpen = false;
+  combo.classList.remove('open');
+  _topologyBranchComboQuery = '';
+}
+
+// Called by the search input's 'input' listener (wired up in
+// _ensureTopologyFsChrome). We re-render the list on every keystroke.
+function _topologyBranchComboOnInput(value) {
+  _topologyBranchComboQuery = value || '';
+  _topologyRefreshBranchDropdown();
+}
+
+// Called by the search input's 'keydown' listener. Enter with a non-
+// empty, not-yet-tracked name calls the same addBranch() that the
+// list view uses — we share the optimistic-add + slug + toast logic
+// verbatim (UF-04 parity).
+function _topologyBranchComboOnEnter() {
+  var raw = (_topologyBranchComboQuery || '').trim();
+  if (!raw) return;
+  var slug = StateService_slugify(raw);
+  var existing = (branches || []).find(function (b) { return b.id === slug || b.branch === raw; });
+  if (existing) {
+    _topologySelectBranch(existing.id);
+    _topologyBranchComboClose();
+    return;
+  }
+  _topologyBranchComboClose();
+  // addBranch is the list-view helper from cds/web/app.js:1165 — we
+  // reuse it so list and topology share the exact same add flow,
+  // including the optimistic insert, POST /api/branches call, and
+  // toast error rollback.
+  addBranch(raw);
+}
+
+// Re-render the combobox label AND the open popover (when open). Keeps
+// the button label in sync with _topologySelectedBranchId even when the
+// popover isn't visible. Called on topology mount, on branches-list
+// refresh, and after every user interaction.
 function _topologyRefreshBranchDropdown() {
-  var sel = document.getElementById('topologyFsBranchSelect');
-  if (!sel) return;
-  var current = _topologySelectedBranchId || '';
+  var combo = document.getElementById('topologyFsBranchCombo');
+  if (!combo) return;
+  // Update the button label
+  var labelEl = document.getElementById('topologyFsBranchComboLabel');
+  if (labelEl) {
+    var selected = _topologySelectedBranchId
+      ? (branches || []).find(function (b) { return b.id === _topologySelectedBranchId; })
+      : null;
+    labelEl.textContent = selected ? selected.id : '（共享视图）';
+  }
 
-  // Build options: shared view first, then each branch.
-  var options = ['<option value="">（共享视图）</option>'];
-  (branches || []).forEach(function (b) {
-    var label = b.id;
-    options.push('<option value="' + esc(b.id) + '">' + esc(label) + '</option>');
+  // Build the list inside the popover — only if it's currently open or
+  // being opened. Closed popovers don't need DOM churn.
+  var listEl = document.getElementById('topologyFsBranchComboList');
+  if (!listEl) return;
+  var q = (_topologyBranchComboQuery || '').trim().toLowerCase();
+
+  // Section 1: already-tracked branches (matching the query)
+  var tracked = (branches || []).filter(function (b) {
+    return !q || b.id.toLowerCase().includes(q) || (b.branch || '').toLowerCase().includes(q);
   });
-  sel.innerHTML = options.join('');
-  sel.value = current;
 
-  // Auto-select: if no branch is currently selected and we have a 'main'
-  // (or any first branch), pick it so single-click on a node opens the
-  // editor immediately. Skip if user already explicitly chose shared.
+  // Section 2: "Can be added" from remote git refs (matching the query)
+  var trackedIds = new Set((branches || []).map(function (b) { return StateService_slugify(b.branch || b.id); }));
+  var remote = ((typeof remoteCandidates !== 'undefined' ? remoteCandidates : null) || []).filter(function (b) {
+    return (!q || b.name.toLowerCase().includes(q)) && !trackedIds.has(StateService_slugify(b.name));
+  }).slice(0, 15);
+
+  // Manual-add escape hatch — identical rule to list view's filterBranches()
+  var typedSlug = q ? StateService_slugify(_topologyBranchComboQuery.trim()) : '';
+  var typedAlreadyTracked = !!q && (branches || []).some(function (b) {
+    return b.id === typedSlug || b.branch === _topologyBranchComboQuery.trim();
+  });
+  var showManualAdd = !!q && !typedAlreadyTracked;
+
+  var html = '';
+  // Shared view pin at top (always present when query is empty)
+  if (!q) {
+    var sharedActive = !_topologySelectedBranchId;
+    html += '<div class="topology-fs-branch-combo-item ' + (sharedActive ? 'active' : '') + '" onclick="_topologyOnBranchChange(\'\')">' +
+            '<svg width="11" height="11" viewBox="0 0 16 16" fill="currentColor" style="opacity:0.7"><path d="M8 0a8 8 0 100 16A8 8 0 008 0zM1.5 8a6.5 6.5 0 1113 0 6.5 6.5 0 01-13 0z"/></svg>' +
+            '<span class="topology-fs-branch-combo-item-label">（共享视图）</span>' +
+            '</div>';
+  }
+  if (tracked.length > 0) {
+    html += '<div class="topology-fs-branch-combo-section">已添加</div>';
+    tracked.forEach(function (b) {
+      var active = b.id === _topologySelectedBranchId;
+      var status = b.status === 'running' ? 'running' : '';
+      html += '<div class="topology-fs-branch-combo-item ' + (active ? 'active' : '') + '" onclick="_topologyOnBranchChange(\'' + esc(b.id) + '\')">' +
+              '<svg width="11" height="11" viewBox="0 0 16 16" fill="currentColor" style="opacity:0.7"><path d="M2.5 1.75v11.5c0 .138.112.25.25.25h6.5a.75.75 0 010 1.5h-6.5A1.75 1.75 0 011 13.25V1.75C1 .784 1.784 0 2.75 0h8.5C12.216 0 13 .784 13 1.75v7.5a.75.75 0 01-1.5 0V1.75a.25.25 0 00-.25-.25h-8.5a.25.25 0 00-.25.25z"/></svg>' +
+              '<span class="topology-fs-branch-combo-item-label">' + esc(b.id) + '</span>' +
+              (status ? '<span class="topology-fs-branch-combo-item-tag running">运行中</span>' : '') +
+              '</div>';
+    });
+  }
+  if (remote.length > 0) {
+    html += '<div class="topology-fs-branch-combo-section">可添加</div>';
+    remote.forEach(function (b) {
+      html += '<div class="topology-fs-branch-combo-item" onclick="addBranch(' + JSON.stringify(b.name) + ');_topologyBranchComboClose()">' +
+              '<svg width="11" height="11" viewBox="0 0 16 16" fill="currentColor" style="opacity:0.5"><path fill-rule="evenodd" d="M11.75 2.5a.75.75 0 100 1.5.75.75 0 000-1.5zm-2.25.75a2.25 2.25 0 113 2.122V6A2.5 2.5 0 0110 8.5H6a1 1 0 00-1 1v1.128a2.251 2.251 0 11-1.5 0V5.372a2.25 2.25 0 111.5 0v1.836A2.492 2.492 0 016 7h4a1 1 0 001-1v-.628A2.25 2.25 0 019.5 3.25zM4.25 12a.75.75 0 100 1.5.75.75 0 000-1.5zM3.5 3.25a.75.75 0 111.5 0 .75.75 0 01-1.5 0z"/></svg>' +
+              '<span class="topology-fs-branch-combo-item-label">' + esc(b.name) + '</span>' +
+              '</div>';
+    });
+  }
+  if (showManualAdd) {
+    html += '<div class="topology-fs-branch-combo-section">手动添加</div>';
+    html += '<div class="topology-fs-branch-combo-item manual-add" onclick="addBranch(' + JSON.stringify(_topologyBranchComboQuery.trim()) + ');_topologyBranchComboClose()">' +
+            '<svg width="11" height="11" viewBox="0 0 16 16" fill="currentColor" style="color:var(--accent,#10b981)"><path d="M8 2a.75.75 0 01.75.75v4.5h4.5a.75.75 0 010 1.5h-4.5v4.5a.75.75 0 01-1.5 0v-4.5h-4.5a.75.75 0 010-1.5h4.5v-4.5A.75.75 0 018 2z"/></svg>' +
+            '<span class="topology-fs-branch-combo-item-label">添加 "' + esc(_topologyBranchComboQuery.trim()) + '" 为新分支</span>' +
+            '<span class="topology-fs-branch-combo-item-tag">按 Enter</span>' +
+            '</div>';
+  }
+  if (!html) {
+    html = '<div class="topology-fs-branch-combo-empty">没有匹配的分支 —— 粘贴一个名字按 Enter 添加</div>';
+  }
+  listEl.innerHTML = html;
+
+  // Auto-select: on first mount, if nothing is selected yet, pick
+  // 'main' / 'master' / first branch so node click → editor works
+  // out of the box. Only runs once per page load.
   if (!_topologySelectedBranchId && (branches || []).length > 0 && _topologyAutoSelectPending) {
     var preferred = branches.find(function (b) { return b.id === 'main' || b.id === 'master'; }) || branches[0];
     if (preferred) {
-      sel.value = preferred.id;
       _topologyAutoSelectPending = false;
       _topologySelectBranch(preferred.id);
+      // Re-render once with the new selection in place
+      _topologyRefreshBranchDropdown();
     }
   }
 }
@@ -10372,6 +10606,9 @@ window._topologyClosePanel = _topologyClosePanel;
 window._topologyOnBranchChange = _topologyOnBranchChange;
 window._topologyPanelOpenLogs = _topologyPanelOpenLogs;
 window._topologyPanelOpenEditor = _topologyPanelOpenEditor;
+// UF-07: custom branch combobox helpers
+window._topologyBranchComboToggle = _topologyBranchComboToggle;
+window._topologyBranchComboClose = _topologyBranchComboClose;
 
 // Apply persisted view mode on load (deferred so DOM elements exist)
 if (document.readyState === 'loading') {

@@ -24,30 +24,30 @@
 
 ## 1. 摘要与统计
 
-**总事项数**：32 条（UF×6 + GAP×10 + L10N×3 + LIM×7 + FU×5 + TEST×2 - 1 epic deferred）
+**总事项数**：34 条（UF×8 + GAP×10 + L10N×3 + LIM×7 + FU×5 + TEST×2 - 1 epic deferred）
 
 ### 1.1 按类型统计
 
 | 类型 | 数量 | P0 | P1 | P2 | P3 | 说明 |
 |---|---|---|---|---|---|---|
-| **UF** 用户可见故障 | 6 | 2 | 4 | 0 | 0 | 用户截图/复现路径实锤的阻塞问题 |
+| **UF** 用户可见故障 | 8 | 2 | 6 | 0 | 0 | 用户截图/复现路径实锤的阻塞问题 |
 | **GAP** 视图功能缺口 | 10 | 0 | 4 | 5 | 1 | Topology vs List 功能空洞 + 画布组件统一(epic) |
 | **L10N** 汉化缺口 | 3 | 0 | 1 | 2 | 0 | 英文残留与中英混排 |
 | **LIM** 已知限制 | 7 | 0 | 0 | 4 | 3 | 设计权衡,不是 bug |
 | **FU** 后续候选 | 5 | 0 | 1 | 4 | 0 | 来自上一棒 handoff §8.3 |
 | **TEST** 测试缺口 | 2 | 0 | 2 | 0 | 0 | E2E / smoke 覆盖空白 |
-| **合计** | **33** | **2** | **12** | **15** | **4** | |
+| **合计** | **35** | **2** | **14** | **15** | **4** | |
 
 ### 1.2 按状态统计
 
 | 状态 | 数量 | 占比 |
 |---|---|---|
-| `open` | 19 | 58% |
-| `deferred` | 8 | 24% |
+| `open` | 13 | 37% |
+| `deferred` | 8 | 23% |
 | `in-progress` | 0 | 0% |
-| `done` | 6 | 18% |
+| `done` | 14 | 40% |
 
-> 2026-04-15 更新:UF-01/02/03/04/05/06 全部 done(6 条用户可见故障,3 张截图 + 分支输入 + 卡片样式 + 触控板手势)。所有 LIM(7) + GAP-10 均为 `deferred`——LIM 是设计权衡,GAP-10 是跨项目画布统一 epic。剩余 19 条 `open` 中 Top-10 §7.1 给出了下一棒优先级。
+> 2026-04-15 更新:Top-10 + UF-05/06/07/08 全部 done(14 条一轮清完)——UF-01..08、GAP-01(停止/重启)、GAP-02(删除分支)、GAP-03(环境变量 tab 本就已存在)、L10N-01(Settings 汉化)、TEST-01/02(UF-01 回归 E2E)。所有 LIM(7) + GAP-10 均为 `deferred`——LIM 是设计权衡,GAP-10 是跨项目画布统一 epic。剩余 13 条 `open` 以 GAP-04..09 + L10N-02/03 + FU-01..05 为主,非阻塞性。
 
 ### 1.3 阻塞项
 
@@ -89,6 +89,8 @@
 | UF-04 | 无法手动输入/粘贴分支名创建分支，只能从 git refs 下拉选择 | P1 | S | **done** 2026-04-15 | `web/index.html:73` placeholder + `web/app.js` Enter 键 + 下拉"手动添加"入口 |
 | UF-05 | Topology 卡片样式过硬、内容过密,和参考图(图1)不一致 | P1 | M | **done** 2026-04-15 | `web/app.js` 卡片 280×150 + 卡片只留 name+status + 底部 volume slot + 正交连线 + `web/style.css` 圆角 18px |
 | UF-06 | Mac 触控板两指滑动被误绑定到缩放,无法平移画布 | P1 | S | **done** 2026-04-15 | `web/app.js` wheel 事件按 `ctrlKey/metaKey` 分流:有修饰键→缩放,无修饰键→平移(从 `AdvancedVisualAgentTab.tsx:3267` 移植) |
+| UF-07 | Topology 分支选择器只能切换已有分支,无法输入/粘贴新分支 | P1 | M | **done** 2026-04-15 | `web/app.js` 原生 `<select>` 替换为自定义 combobox,Enter 添加/"+ 手动添加"入口/共用列表视图的 `addBranch()`|
+| UF-08 | Topology 无法切换回列表视图(只有一个藏在 leftnav 的"日志"暗门) | P1 | S | **done** 2026-04-15 | `web/app.js` topbar 加"列表 \| 拓扑"切换 pill + `setViewMode` 同步两套 `.view-mode-btn` 和 `.topology-fs-view-toggle-btn` 的 active 状态 |
 
 ---
 
@@ -268,6 +270,50 @@
 
 ---
 
+### UF-07 · Topology 分支选择器不支持输入/粘贴新分支 · **done** 2026-04-15
+
+**现象**(用户截图:native `<select>` 下拉列出 `main` / 其他 tracked 分支):
+- 拓扑视图顶栏的分支选择器是一个原生 `<select id="topologyFsBranchSelect">`,只能在已有的 tracked 分支之间切换
+- 用户想粘贴 `feature/newstuff` 直接创建并跟踪一个新分支,但原生 select 不接受任意输入
+- 列表视图已有"输入/粘贴 + Enter 添加"(UF-04 commit `dd5290b`),拓扑视图没同步
+
+**根因**:
+- `cds/web/app.js:8100` 原 HTML 用原生 `<select>`,没有文本输入能力
+- `cds/web/app.js:10327 _topologyRefreshBranchDropdown` 只写 `<option>` 标签,没有添加分支的交互
+- 列表视图的 `addBranch(name)` (line 1165) 已经封装好了"slug + 乐观插入 + POST /api/branches + toast"的全流程,拓扑视图没调用
+
+**修复**:
+- 把原生 `<select>` 换成自定义 combobox: `<button class="topology-fs-branch-combo-btn">` + `<div class="topology-fs-branch-combo-popover">` 内含 `<input>` 搜索框 + 分区列表(已添加 / 可添加 / 手动添加) + 空状态提示
+- 搜索输入的 `keydown Enter` 调用共享的 `addBranch(raw)`——和列表视图走同一条 code path,保证两视图的"添加分支"行为 1:1
+- 空状态 / 无匹配时也常驻"+ 手动添加"入口,降低用户发现成本
+- Popover 外点击关闭、ESC 关闭、下拉图标旋转动画等细节都做了
+- CSS: `.topology-fs-branch-combo / -btn / -popover / -search / -list / -section / -item / -item.manual-add / -empty` 全套样式补齐
+
+**来源**:用户反馈截图 + 架构方向"拓扑面板未来会继承列表面板"
+
+---
+
+### UF-08 · Topology 无法切换回列表视图 · **done** 2026-04-15
+
+**现象**:
+- 进入拓扑视图后,用户找不到"返回列表"的入口
+- 实际代码里左侧 leftnav 第二个图标(原标签"日志",实际 onclick 是 `setViewMode('list')`)是个**暗门**,图标长得像日志卡片,tooltip 也写"日志",没有视觉上"切换视图"的 affordance
+
+**根因**:
+- `cds/web/app.js:8074` leftnav 的"日志"图标 tooltip 和 icon 和真实行为脱节(tooltip 说日志,点击切视图)
+- 没有显眼的"列表 | 拓扑"切换控件
+- 违背 UI 常识:Railway / Figma / 任何双视图产品都在顶栏放切换 segmented control
+
+**修复**:
+- 删除 leftnav 的"日志"暗门图标
+- 拓扑顶栏右侧新增 `<div class="topology-fs-view-toggle">` segmented control,两个按钮"📋 列表"和"🕸️ 拓扑",active 状态由 `setViewMode()` 自动同步
+- `setViewMode()` 的 `querySelectorAll` 从只看 `.view-mode-btn` 扩展为同时看 `.view-mode-btn, .topology-fs-view-toggle-btn`,两套 toggle 用同一个 `data-view-mode="list|topology"` 属性驱动
+- 这样拓扑 → 列表 → 拓扑的来回切换只需要点一下顶栏的 pill,不需要去 leftnav 猜图标含义
+
+**来源**:用户反馈"现在拓扑无法切换到列表"
+
+---
+
 ## 3. Topology 视图 vs 列表视图功能对齐（GAP-系列）
 
 > 拓扑视图用户可执行的操作集合必须 ≥ 列表视图（或明确声明不覆盖）。当前拓扑是列表的功能子集。
@@ -312,17 +358,17 @@
 
 ### GAP-01 ~ GAP-07（拓扑缺失的 7 个功能入口）
 
-这七条共享修复思路：扩展 `_topologySwitchPanelTab` (`app.js:9277-9296`) 新增 3 个 tab（环境变量/路由/标签），同时给节点增加右键菜单或 `⋯` 按钮复制列表 `deployMenuItem` 的 dropdown（停止/删除/部署模式/集群派发）。**合并成一个 epic 处理最经济**——不建议一条一条做。
+原计划七条共享修复思路：扩展 `_topologySwitchPanelTab` (`app.js:9277-9296`) 新增 3 个 tab（环境变量/路由/标签），同时给节点增加右键菜单或 `⋯` 按钮复制列表 `deployMenuItem` 的 dropdown（停止/删除/部署模式/集群派发）。**2026-04-15 更新**:GAP-01/02/03 已在本轮关闭,GAP-04..07 继续留着等下一棒或合并成 epic。
 
-| ID | 缺失 | 承载位置建议 | 优先级 |
-|---|---|---|---|
-| GAP-01 | 停止 / 重启容器 | 节点 `⋯` 菜单 | P1 |
-| GAP-02 | 删除分支 | 节点 `⋯` 菜单 | P1 |
-| GAP-03 | 环境变量 tab | Details 面板 | P1 |
-| GAP-04 | 路由规则 tab | Details 面板 | P2 |
-| GAP-05 | 部署模式切换 | 节点 `⋯` 菜单 | P2 |
-| GAP-06 | 集群派发 | 节点 `⋯` 菜单 | P2 |
-| GAP-07 | 标签 / 备注 tab | Details 面板 | P3 |
+| ID | 缺失 | 承载位置 | 优先级 | 状态 |
+|---|---|---|---|---|
+| GAP-01 | 停止 / 重启容器 | Details 面板状态栏 | P1 | **done** 2026-04-15 (`tfp-stop-btn` 接 `stopBranch`) |
+| GAP-02 | 删除分支 | Details 面板状态栏 | P1 | **done** 2026-04-15 (`tfp-delete-btn` 接 `removeBranch`) |
+| GAP-03 | 环境变量 tab | Details 面板 | P1 | **done (已存在)** — `_topologyRenderPanelTab('variables')` 在 P4 Part 7 就完成了 |
+| GAP-04 | 路由规则 tab | Details 面板 | P2 | open |
+| GAP-05 | 部署模式切换 | 节点 `⋯` 菜单 | P2 | open |
+| GAP-06 | 集群派发 | 节点 `⋯` 菜单 | P2 | open |
+| GAP-07 | 标签 / 备注 tab | Details 面板 | P3 | open |
 
 ### GAP-08 · 节点卡片端口信息缺交互
 
@@ -379,7 +425,7 @@
 
 > CDS 目标语言是简体中文，除通用技术术语和品牌名外全部汉化。以下是英文/Railway 风格残留热点。
 
-### L10N-01 · Settings 页面英文残留（epic，P1 优先级）
+### L10N-01 · Settings 页面英文残留（epic，P1 优先级） · **done** 2026-04-15
 
 **现象**：Settings 页面（`settings.html` + `settings.js`）用户可见文字有 **30+ 条英文残留**，包括 tab 名、区域标题、表单 label、按钮、状态 badge、placeholder。
 
@@ -567,13 +613,13 @@
 
 **规模**：S。节点自带 `crypto` 库。
 
-### TEST-01 · Device Flow 持久化失败 E2E 测试
+### TEST-01 · Device Flow 持久化失败 E2E 测试 · **done** 2026-04-15
 
 **背景**：UF-01 根因是 `setGithubDeviceAuth` 保存失败被静默吞掉。新增测试防回归。
 
 **方案**：`tests/routes/github-oauth.test.ts` 里 mock `StateService.setGithubDeviceAuth()` 抛异常，验证 `device-poll` 返回 `{ status: 'error' }` 而不是假 ready。
 
-### TEST-02 · Device Flow token 注入 clone 全链路 smoke 测试
+### TEST-02 · Device Flow token 注入 clone 全链路 smoke 测试 · **done** 2026-04-15
 
 **背景**：`tests/integration/multi-repo-clone.smoke.test.ts` 当前只测公开仓库 clone。补充私有仓库 + Device Flow token 的端到端路径。
 

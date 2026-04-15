@@ -110,39 +110,39 @@
     var p = currentProject;
     contentEl.innerHTML =
       '<div class="settings-section">' +
-        '<div class="settings-section-title">Project Info</div>' +
+        '<div class="settings-section-title">项目基础信息</div>' +
         '<div class="settings-field">' +
-          '<label class="settings-field-label" for="settingsName">Name</label>' +
+          '<label class="settings-field-label" for="settingsName">名称</label>' +
           '<input id="settingsName" class="settings-input" type="text" maxlength="60" value="' + escapeHtml(p.name) + '">' +
         '</div>' +
         '<div class="settings-field">' +
-          '<label class="settings-field-label" for="settingsDescription">Description</label>' +
-          '<input id="settingsDescription" class="settings-input" type="text" maxlength="200" placeholder="Optional description of this project" value="' + escapeHtml(p.description || '') + '">' +
+          '<label class="settings-field-label" for="settingsDescription">描述</label>' +
+          '<input id="settingsDescription" class="settings-input" type="text" maxlength="200" placeholder="可选,用一两句话说明这个项目是做什么的" value="' + escapeHtml(p.description || '') + '">' +
         '</div>' +
         '<div class="settings-field">' +
-          '<label class="settings-field-label">Project ID</label>' +
+          '<label class="settings-field-label">项目 ID</label>' +
           '<div class="settings-input-group">' +
             '<input class="settings-input mono" type="text" value="' + escapeHtml(p.id) + '" readonly>' +
-            '<button type="button" class="settings-copy-btn" title="复制 Project ID" onclick="_settingsCopyId()">' +
+            '<button type="button" class="settings-copy-btn" title="复制项目 ID" onclick="_settingsCopyId()">' +
               '<svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M0 6.75C0 5.784.784 5 1.75 5h1.5a.75.75 0 010 1.5h-1.5a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-1.5a.75.75 0 011.5 0v1.5A1.75 1.75 0 019.25 16h-7.5A1.75 1.75 0 010 14.25v-7.5z"/><path d="M5 1.75C5 .784 5.784 0 6.75 0h7.5C15.216 0 16 .784 16 1.75v7.5A1.75 1.75 0 0114.25 11h-7.5A1.75 1.75 0 015 9.25v-7.5z"/></svg>' +
             '</button>' +
           '</div>' +
         '</div>' +
         '<div class="settings-field">' +
-          '<label class="settings-field-label" for="settingsGitRepoUrl">Git Repository URL</label>' +
+          '<label class="settings-field-label" for="settingsGitRepoUrl">Git 仓库地址</label>' +
           '<input id="settingsGitRepoUrl" class="settings-input mono" type="url" placeholder="https://github.com/your-org/repo.git" value="' + escapeHtml(p.gitRepoUrl || '') + '">' +
         '</div>' +
-        '<button type="button" id="settingsSaveBtn" class="settings-btn-primary" onclick="_settingsSave()">Update</button>' +
+        '<button type="button" id="settingsSaveBtn" class="settings-btn-primary" onclick="_settingsSave()">保存修改</button>' +
       '</div>' +
 
       '<div class="settings-section">' +
-        '<div class="settings-section-title">Project Stats</div>' +
+        '<div class="settings-section-title">项目统计</div>' +
         '<div class="settings-section-desc">来自当前 state.json 的实时数据。</div>' +
-        '<div class="tfp-kv"><span class="tfp-kv-key">Branches</span><span class="tfp-kv-val">' + (p.branchCount || 0) + '</span></div>' +
-        '<div class="tfp-kv"><span class="tfp-kv-key">Created</span><span class="tfp-kv-val">' + escapeHtml(new Date(p.createdAt).toLocaleString()) + '</span></div>' +
-        '<div class="tfp-kv"><span class="tfp-kv-key">Updated</span><span class="tfp-kv-val">' + escapeHtml(new Date(p.updatedAt).toLocaleString()) + '</span></div>' +
-        (p.dockerNetwork ? '<div class="tfp-kv"><span class="tfp-kv-key">Docker network</span><span class="tfp-kv-val">' + escapeHtml(p.dockerNetwork) + '</span></div>' : '') +
-        (p.legacyFlag ? '<div class="tfp-kv"><span class="tfp-kv-key">Legacy flag</span><span class="tfp-kv-val">true (cannot be deleted)</span></div>' : '') +
+        '<div class="tfp-kv"><span class="tfp-kv-key">分支数</span><span class="tfp-kv-val">' + (p.branchCount || 0) + '</span></div>' +
+        '<div class="tfp-kv"><span class="tfp-kv-key">创建时间</span><span class="tfp-kv-val">' + escapeHtml(new Date(p.createdAt).toLocaleString()) + '</span></div>' +
+        '<div class="tfp-kv"><span class="tfp-kv-key">最近更新</span><span class="tfp-kv-val">' + escapeHtml(new Date(p.updatedAt).toLocaleString()) + '</span></div>' +
+        (p.dockerNetwork ? '<div class="tfp-kv"><span class="tfp-kv-key">Docker 网络</span><span class="tfp-kv-val">' + escapeHtml(p.dockerNetwork) + '</span></div>' : '') +
+        (p.legacyFlag ? '<div class="tfp-kv"><span class="tfp-kv-key">兼容标志</span><span class="tfp-kv-val">是 (默认项目,不能删除)</span></div>' : '') +
       '</div>';
   }
 
@@ -163,7 +163,7 @@
   function renderStorageTab() {
     contentEl.innerHTML =
       '<div class="settings-section">' +
-        '<div class="settings-section-title">Storage Backend</div>' +
+        '<div class="settings-section-title">存储后端</div>' +
         '<div class="settings-section-desc">' +
           '这是 <strong>系统级</strong> 设置（不是项目级）。所有项目共用同一个 CDS state 存储后端。<br>' +
           'JSON 模式 = 本地 <code>state.json</code>；Mongo 模式 = 独立 MongoDB 实例。' +
@@ -178,11 +178,11 @@
           '⚠ 切换是<strong>运行时热切换</strong>，下次进程重启需要同步设置 <code>CDS_STORAGE_MODE=mongo</code> + <code>CDS_MONGO_URI</code> 到 .cds.env，否则会回到当前 env 指定的模式。' +
         '</div>' +
         '<div class="settings-field">' +
-          '<label class="settings-field-label" for="storageMongoUri">Mongo URI</label>' +
+          '<label class="settings-field-label" for="storageMongoUri">Mongo 连接串</label>' +
           '<input id="storageMongoUri" class="settings-input mono" type="text" placeholder="mongodb://admin:password@localhost:27017" autocomplete="off">' +
         '</div>' +
         '<div class="settings-field">' +
-          '<label class="settings-field-label" for="storageMongoDb">Database Name</label>' +
+          '<label class="settings-field-label" for="storageMongoDb">数据库名</label>' +
           '<input id="storageMongoDb" class="settings-input mono" type="text" placeholder="cds_state_db" value="cds_state_db" autocomplete="off">' +
         '</div>' +
         '<div id="storageTestResult" class="settings-section-desc" style="min-height:20px"></div>' +
@@ -220,8 +220,8 @@
         var healthBadge = '';
         if (data.kind === 'mongo') {
           healthBadge = data.mongoHealthy
-            ? '<span class="cds-clone-status ready" style="margin-left:8px">HEALTHY</span>'
-            : '<span class="cds-clone-status error" style="margin-left:8px">UNREACHABLE</span>';
+            ? '<span class="cds-clone-status ready" style="margin-left:8px">健康</span>'
+            : '<span class="cds-clone-status error" style="margin-left:8px">不可达</span>';
         }
 
         statusEl.className = 'settings-placeholder';
@@ -232,8 +232,8 @@
             '<strong>当前后端:</strong> ' + escapeHtml(modeLabel) + healthBadge +
           '</div>' +
           (data.kind === 'mongo' ? (
-            '<div class="tfp-kv"><span class="tfp-kv-key">URI</span><span class="tfp-kv-val">' + escapeHtml(data.mongoUri || '-') + '</span></div>' +
-            '<div class="tfp-kv"><span class="tfp-kv-key">Database</span><span class="tfp-kv-val">' + escapeHtml(data.mongoDb || '-') + '</span></div>'
+            '<div class="tfp-kv"><span class="tfp-kv-key">连接串</span><span class="tfp-kv-val">' + escapeHtml(data.mongoUri || '-') + '</span></div>' +
+            '<div class="tfp-kv"><span class="tfp-kv-key">数据库</span><span class="tfp-kv-val">' + escapeHtml(data.mongoDb || '-') + '</span></div>'
           ) : (
             '<div style="font-size:11px;color:var(--text-muted)">' +
               '当前使用本地 state.json 作为 CDS 全局状态存储。切换到 Mongo 后，多进程 CDS 实例可以共享同一份 state。' +
@@ -395,30 +395,30 @@
   function renderGithubTab() {
     contentEl.innerHTML =
       '<div class="settings-section">' +
-        '<div class="settings-section-title">GitHub Integration</div>' +
+        '<div class="settings-section-title">GitHub 集成</div>' +
         '<div class="settings-section-desc">' +
-          '这是 <strong>系统级</strong> 设置。CDS 会使用这个 GitHub 账号拉取仓库列表，用于 "从 GitHub 选择仓库" 创建项目。<br>' +
-          '采用 GitHub Device Flow — 无需跳转回调 URL，任何部署方式都支持。' +
+          '这是 <strong>系统级</strong> 设置。CDS 会使用这个 GitHub 账号拉取仓库列表,用于"从 GitHub 选择仓库"创建项目。<br>' +
+          '采用 GitHub Device Flow —— 无需跳转回调 URL,任何部署方式都支持。' +
         '</div>' +
-        '<div id="githubStatusBlock" class="settings-placeholder">加载 GitHub 状态…</div>' +
+        '<div id="githubStatusBlock" class="settings-placeholder">正在加载 GitHub 状态…</div>' +
       '</div>' +
       '<div class="settings-section">' +
         '<div class="settings-section-title">管理员配置</div>' +
         '<div class="settings-section-desc">' +
-          '要启用 GitHub 集成，需要在 CDS 进程启动前设置环境变量：' +
+          '要启用 GitHub 集成,需要在 CDS 进程启动前设置环境变量:' +
         '</div>' +
         '<div style="background:var(--bg-card);border:1px solid var(--card-border);border-radius:9px;padding:14px;font-family:var(--font-mono,monospace);font-size:12px;color:var(--text-secondary);white-space:pre-wrap">' +
           'export CDS_GITHUB_CLIENT_ID="<your-oauth-app-client-id>"\n' +
-          '# 可选: 用于 CDS 登录的 web 流（和仓库选择器彼此独立）\n' +
+          '# 可选: 用于 CDS 登录的 web 流(和仓库选择器彼此独立)\n' +
           'export CDS_GITHUB_CLIENT_SECRET="<web-flow-secret>"' +
         '</div>' +
         '<div class="settings-section-desc" style="margin-top:12px">' +
-          '步骤：<br>' +
+          '步骤:<br>' +
           '1. 去 <a href="https://github.com/settings/developers" target="_blank" rel="noopener" style="color:#60a5fa">GitHub → Settings → Developer settings → OAuth Apps</a> 创建一个 OAuth App<br>' +
           '2. 在 App 的 <strong>General</strong> 设置中勾选 <strong>Enable Device Flow</strong><br>' +
-          '3. 拷贝 Client ID，设置成 <code>CDS_GITHUB_CLIENT_ID</code> 环境变量<br>' +
-          '4. 重启 CDS（<code>./exec_cds.sh restart</code>）<br>' +
-          '5. 回到这个 tab 点 "Sign in with GitHub"' +
+          '3. 拷贝 Client ID,设置成 <code>CDS_GITHUB_CLIENT_ID</code> 环境变量<br>' +
+          '4. 重启 CDS(<code>./exec_cds.sh restart</code>)<br>' +
+          '5. 回到这个 tab 点"使用 GitHub 登录"' +
         '</div>' +
       '</div>';
 
@@ -434,7 +434,7 @@
           block.style.padding = '18px';
           block.innerHTML =
             '<div style="display:flex;align-items:center;gap:10px">' +
-              '<span class="cds-clone-status error" style="display:inline-flex">NOT CONFIGURED</span>' +
+              '<span class="cds-clone-status error" style="display:inline-flex">未配置</span>' +
               '<span style="font-size:12px;color:var(--text-secondary)">管理员需设置 <code>CDS_GITHUB_CLIENT_ID</code></span>' +
             '</div>';
           return;
@@ -445,14 +445,14 @@
           block.style.padding = '18px';
           block.innerHTML =
             '<div style="display:flex;align-items:center;gap:10px;margin-bottom:14px">' +
-              '<span class="cds-clone-status" style="background:var(--bg-elevated);border:1px solid var(--card-border);color:var(--text-secondary)">NOT CONNECTED</span>' +
+              '<span class="cds-clone-status" style="background:var(--bg-elevated);border:1px solid var(--card-border);color:var(--text-secondary)">未连接</span>' +
             '</div>' +
             '<div style="font-size:12px;color:var(--text-muted);margin-bottom:14px">' +
-              '尚未连接 GitHub。点击下方按钮通过 Device Flow 登录（会打开一个新标签页让你在 github.com 输入代码）。' +
+              '尚未连接 GitHub。点击下方按钮通过 Device Flow 登录(会打开一个新标签页让你在 github.com 输入代码)。' +
             '</div>' +
             '<button type="button" class="btn-github-signin" onclick="_settingsGithubSignIn()" style="display:inline-flex">' +
               '<svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>' +
-              'Sign in with GitHub' +
+              '使用 GitHub 登录' +
             '</button>' +
             '<div id="githubDeviceStatus" style="margin-top:14px;font-size:12px;color:var(--text-muted);min-height:18px"></div>';
           return;
@@ -462,7 +462,7 @@
         var avatar = data.avatarUrl
           ? '<img src="' + escapeHtml(data.avatarUrl) + '" width="48" height="48" style="border-radius:50%;border:1px solid var(--card-border)">'
           : '<div style="width:48px;height:48px;border-radius:50%;background:var(--bg-elevated);display:flex;align-items:center;justify-content:center;color:var(--text-muted);font-size:18px;font-weight:700">?</div>';
-        var scopes = (data.scopes || []).map(escapeHtml).join(', ') || 'n/a';
+        var scopes = (data.scopes || []).map(escapeHtml).join(', ') || '未提供';
         block.style.textAlign = 'left';
         block.style.padding = '18px';
         block.innerHTML =
@@ -471,10 +471,10 @@
             '<div style="flex:1">' +
               '<div style="font-size:14px;font-weight:700;color:var(--text-primary);display:flex;align-items:center;gap:8px">' +
                 escapeHtml(data.name || data.login) +
-                '<span class="cds-clone-status ready">CONNECTED</span>' +
+                '<span class="cds-clone-status ready">已连接</span>' +
               '</div>' +
               '<div style="font-size:11px;color:var(--text-muted);margin-top:2px">@' + escapeHtml(data.login) + ' · 连接于 ' + escapeHtml(new Date(data.connectedAt).toLocaleString()) + '</div>' +
-              '<div style="font-size:10px;color:var(--text-muted);margin-top:2px;font-family:var(--font-mono,monospace)">scopes: ' + scopes + '</div>' +
+              '<div style="font-size:10px;color:var(--text-muted);margin-top:2px;font-family:var(--font-mono,monospace)">授权范围: ' + scopes + '</div>' +
             '</div>' +
           '</div>' +
           '<div style="display:flex;gap:10px">' +
@@ -592,16 +592,16 @@
     var canDelete = !p.legacyFlag;
     contentEl.innerHTML =
       '<div class="settings-section">' +
-        '<div class="settings-section-title" style="color:var(--red,#f43f5e)">Danger Zone</div>' +
+        '<div class="settings-section-title" style="color:var(--red,#f43f5e)">危险区</div>' +
         '<div class="settings-section-desc">这些操作不可撤销。请谨慎。</div>' +
         '<div style="background:var(--bg-card);border:1px solid rgba(244,63,94,0.3);border-radius:10px;padding:18px">' +
           '<div style="font-weight:700;color:var(--text-primary);margin-bottom:6px">删除项目</div>' +
           '<div style="font-size:12px;color:var(--text-muted);margin-bottom:14px;line-height:1.6">' +
             (canDelete
               ? '永久删除本项目。Docker 网络 <code>' + escapeHtml(p.dockerNetwork || '-') + '</code> 会被一起移除。该操作不可撤销。'
-              : '⚠ 默认项目（legacy）不可删除。它是 v3.2 时代所有数据的归属，删除会让现有分支/配置全部成为孤儿。')
+              : '⚠ 默认项目(legacy)不可删除。它是 v3.2 时代所有数据的归属,删除会让现有分支/配置全部成为孤儿。')
           + '</div>' +
-          '<button type="button" class="settings-btn-outline settings-btn-danger" ' + (canDelete ? '' : 'disabled') + ' onclick="_settingsDelete()">Delete this project</button>' +
+          '<button type="button" class="settings-btn-outline settings-btn-danger" ' + (canDelete ? '' : 'disabled') + ' onclick="_settingsDelete()">删除此项目</button>' +
         '</div>' +
       '</div>';
   }
@@ -611,7 +611,7 @@
     if (!currentProject) return;
     if (navigator.clipboard) {
       navigator.clipboard.writeText(currentProject.id).then(function () {
-        showToast('Project ID 已复制');
+        showToast('项目 ID 已复制');
       });
     } else {
       showToast(currentProject.id);
