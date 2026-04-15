@@ -36,7 +36,7 @@ import {
   Edit3, Trash2, Settings, Power, RefreshCw, Download, Copy, Check,
   Image as ImageIcon, X, FileText, Paperclip,
 } from 'lucide-react';
-import { MapSpinner } from '@/components/ui/VideoLoader';
+import { MapSpinner, MapSectionLoader } from '@/components/ui/VideoLoader';
 import { StaticBackdrop } from '@/pages/home/components/StaticBackdrop';
 import { Reveal } from '@/pages/home/components/Reveal';
 import { HERO_GRADIENT } from '@/pages/home/sections/HeroSection';
@@ -1718,9 +1718,8 @@ export function ArenaPage() {
               </div>
 
               {lineupLoading ? (
-                <div className="flex items-center justify-center gap-2 text-[13px] mb-4" style={{ color: 'var(--text-muted)' }}>
-                  <MapSpinner size={16} />
-                  <span>加载阵容中...</span>
+                <div className="mb-4">
+                  <MapSectionLoader text="加载阵容中..." />
                 </div>
               ) : lineupError ? (
                 <div className="text-center mb-4">

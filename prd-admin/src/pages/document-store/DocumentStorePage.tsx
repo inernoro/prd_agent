@@ -27,7 +27,7 @@ import { useNavigate } from 'react-router-dom';
 import { GlassCard } from '@/components/design/GlassCard';
 import { TabBar } from '@/components/design/TabBar';
 import { Button } from '@/components/design/Button';
-import { MapSpinner } from '@/components/ui/VideoLoader';
+import { MapSpinner, MapSectionLoader } from '@/components/ui/VideoLoader';
 import {
   listDocumentStoresWithPreview,
   createDocumentStore,
@@ -1236,10 +1236,7 @@ export function DocumentStorePage() {
 
       <div className="px-5 pb-6 w-full">
         {loading ? (
-          <div className="flex items-center justify-center py-16">
-            <MapSpinner size={16} />
-            <span className="ml-2 text-[12px]" style={{ color: 'var(--text-muted)' }}>加载中...</span>
-          </div>
+          <MapSectionLoader text="加载中..." />
         ) : isEmpty && tab === 'mine' ? (
           /* 我的空间 空状态引导 */
           <div className="flex flex-col items-center justify-center py-16">

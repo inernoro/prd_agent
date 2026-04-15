@@ -18,27 +18,62 @@ import {
   Store,
   Library,
   Sparkles,
+  Sparkle,
   Workflow,
   Zap,
   Globe,
   ClipboardCheck,
   ScanSearch,
   Wand2,
+  FlaskConical,
+  ScrollText,
   type LucideIcon,
 } from 'lucide-react';
 import { MapSpinner } from '@/components/ui/VideoLoader';
 import { useToolboxStore } from '@/stores/toolboxStore';
 import { useAuthStore } from '@/stores/authStore';
+import { useChangelogStore, selectUnreadCount } from '@/stores/changelogStore';
 import { useBreakpoint } from '@/hooks/useBreakpoint';
 import type { ToolboxItem } from '@/services';
 import { ShowcaseGallery } from '@/components/showcase/ShowcaseGallery';
 import { DesktopDownloadDialog } from '@/components/ui/DesktopDownloadDialog';
 import { ReviewAgentCardArt } from '@/pages/ai-toolbox/components/ReviewAgentCardArt';
+import { HomeAmbientBackdrop } from '@/components/effects/HomeAmbientBackdrop';
+import { Reveal } from '@/pages/home/components/Reveal';
+
+/**
+ * 进场动效节奏 —— 与 /home LandingPage 同款 Reveal 组件，duration 减半（1000ms）让整体速度翻倍。
+ *
+ * 时序曲线：
+ *   Hero 核心元素 (0-150ms) → Quick Links (200-350ms) → Agents (430ms + 35ms cascade)
+ *   → Utilities (800ms + 25ms cascade) → Showcase (滚动到视口时触发)
+ *
+ * 首屏所有 Reveal 都在视口内，useInView 在 mount 时立即 fire；
+ * Showcase 在 fold 下方，滚动到视口时才触发，不浪费动画预算。
+ */
+const REVEAL_DURATION = 1000; // /home 默认 2000 的一半
+const REVEAL = {
+  heroEyebrow: 0,
+  heroTitle: 50,
+  heroSubtitle: 100,
+  heroSearch: 150,
+  quickLinkBase: 200,
+  quickLinkStep: 50,
+  agentsHeader: 430,
+  agentsCardBase: 470,
+  agentsCardStep: 35,
+  utilitiesHeader: 800,
+  utilitiesCardBase: 840,
+  utilitiesCardStep: 25,
+  showcaseHeader: 970, // 仅当首屏即可见时生效；滚动触发走 IntersectionObserver
+};
 
 // ── Icon & Color mapping (self-contained, doesn't touch ToolCard) ──
 
 const ICON_MAP: Record<string, LucideIcon> = {
   FileText, Palette, PenTool, Bug, Video, Swords, FileBarChart, Code2, Languages, FileSearch, BarChart3, Bot, Workflow, Zap, Globe, ClipboardCheck, ScanSearch, Wand2,
+  // 迁移自用户菜单的管理工具
+  FlaskConical, ScrollText, Sparkle, Sparkles, Library, Store,
 };
 
 /** Agent 封面图 CDN 路径 */
@@ -87,6 +122,12 @@ const ACCENT: Record<string, { from: string; to: string }> = {
   ClipboardCheck: { from: '#6366F1', to: '#A5B4FC' },
   ScanSearch: { from: '#8B5CF6', to: '#C4B5FD' },
   Wand2:     { from: '#8B5CF6', to: '#C4B5FD' },
+  FlaskConical: { from: '#0EA5E9', to: '#7DD3FC' },
+  ScrollText: { from: '#64748B', to: '#94A3B8' },
+  Sparkle:   { from: '#A855F7', to: '#D8B4FE' },
+  Sparkles:  { from: '#FBBF24', to: '#FCD34D' },
+  Library:   { from: '#3B82F6', to: '#60A5FA' },
+  Store:     { from: '#F59E0B', to: '#FB923C' },
 };
 
 function getAccent(icon: string) {
@@ -129,6 +170,8 @@ function getGreeting(): string {
 }
 
 type HomeQuickLink = {
+  /** 可选 id，配合页面内的徽章逻辑（如 updates 显示未读数） */
+  id?: 'marketplace' | 'library' | 'showcase' | 'updates';
   icon: LucideIcon;
   label: string;
   desc: string;
@@ -137,11 +180,24 @@ type HomeQuickLink = {
   gradient: string;
 };
 
+/**
+ * 首页顶部四张快捷卡（MAP Primary Gateways）。
+ *
+ * 设计约束：
+ * - 4 张卡同宽，响应式自适应
+ * - 每张卡一个主色（accent）+ 渐变（gradient），源自 /home Hero 的
+ *   retro-futurism 色谱（青/橙/蓝/紫/琥珀），保证既显眼又和页面整体和谐
+ * - 「更新中心」带未读徽章，通过 `id==='updates'` 触发
+ */
 const QUICK_LINKS_BASE: HomeQuickLink[] = [
-  { icon: Store, label: '海鲜市场', desc: '发现和 Fork 优质提示词与配置', path: '/marketplace', accent: '#F59E0B', gradient: 'linear-gradient(135deg, #F59E0B, #F97316)' },
-  { icon: Library, label: '智识殿堂', desc: '探索社区共享的知识库', path: '/library', accent: '#3B82F6', gradient: 'linear-gradient(135deg, #3B82F6, #6366F1)' },
-  { icon: Sparkles, label: '作品广场', desc: '探索 AI 驱动的创意作品与灵感', path: '/showcase', accent: '#A855F7', gradient: 'linear-gradient(135deg, #A855F7, #6366F1)' },
+  { id: 'marketplace', icon: Store, label: '海鲜市场', desc: '发现和 Fork 优质提示词与配置', path: '/marketplace', accent: '#F59E0B', gradient: 'linear-gradient(135deg, #F59E0B, #F97316)' },
+  { id: 'library', icon: Library, label: '智识殿堂', desc: '探索社区共享的知识库', path: '/library', accent: '#3B82F6', gradient: 'linear-gradient(135deg, #3B82F6, #6366F1)' },
+  { id: 'showcase', icon: Sparkles, label: '作品广场', desc: '探索 AI 驱动的创意作品与灵感', path: '/showcase', accent: '#A855F7', gradient: 'linear-gradient(135deg, #A855F7, #6366F1)' },
+  { id: 'updates', icon: Sparkles, label: '更新中心', desc: '代码级周报 · 本周仓库变更速览', path: '/changelog', accent: '#FBBF24', gradient: 'linear-gradient(135deg, #FBBF24, #F97316)' },
 ];
+
+/** /home Hero 同款色谱（青 → 紫 → 玫红），用于首页顶部装饰与重点强调 */
+const MAP_ACCENT_GRADIENT = 'linear-gradient(135deg, #00f0ff 0%, #7c3aed 50%, #f43f5e 100%)';
 
 function dedupeToolboxItems(items: ToolboxItem[]): ToolboxItem[] {
   const seen = new Set<string>();
@@ -361,6 +417,53 @@ function CompactCard({ item, onClick }: { item: ToolboxItem; onClick: () => void
   );
 }
 
+// ── Section Header（/home 风格：eyebrow + title + subtitle + accent 渐变下划线） ──
+
+interface SectionHeaderProps {
+  eyebrow: string;
+  title: string;
+  subtitle?: string;
+  accent: string;
+}
+
+function SectionHeader({ eyebrow, title, subtitle, accent }: SectionHeaderProps) {
+  return (
+    <div className="mb-5 flex items-end justify-between gap-4">
+      <div className="min-w-0">
+        <div
+          className="inline-flex items-center gap-1.5 text-[10px] font-semibold tracking-[0.14em] uppercase mb-1.5"
+          style={{ color: accent, opacity: 0.85 }}
+        >
+          <span
+            className="inline-block w-4 h-[2px] rounded-full"
+            style={{
+              background: `linear-gradient(90deg, ${accent}, transparent)`,
+              boxShadow: `0 0 8px ${accent}80`,
+            }}
+          />
+          {eyebrow}
+        </div>
+        <div className="flex items-baseline gap-3">
+          <h2
+            className="text-[18px] font-semibold tracking-tight"
+            style={{ color: 'var(--text-primary, #fff)' }}
+          >
+            {title}
+          </h2>
+          {subtitle && (
+            <span
+              className="text-[11.5px] truncate"
+              style={{ color: 'var(--text-muted, rgba(255,255,255,0.45))' }}
+            >
+              {subtitle}
+            </span>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ── Auto-fill grid style helper ──
 
 const AUTO_GRID_FEATURED: React.CSSProperties = {
@@ -388,48 +491,106 @@ export default function AgentLauncherPage() {
 
   const canUseReviewAgent = permissions.includes('review-agent.use');
   const canUsePrReview = permissions.includes('pr-review.use');
+  // 管理工具类权限门（从用户菜单迁移到首页实用工具区后，按权限过滤）
+  const canReadPrompts = permissions.includes('prompts.read') || permissions.includes('prompts.write');
+  const canReadLab = permissions.includes('lab.read') || permissions.includes('lab.write');
+  const canManageAutomations = permissions.includes('automations.manage');
+  const canReadLogs = permissions.includes('logs.read');
+
+  // 更新中心未读数（用于首页快捷卡的红点徽章）
+  const changelogUnread = useChangelogStore(selectUnreadCount);
+  const loadChangelogCurrentWeek = useChangelogStore((s) => s.loadCurrentWeek);
 
   const quickLinks = QUICK_LINKS_BASE;
 
   useEffect(() => {
     loadItems();
-  }, [loadItems]);
+    void loadChangelogCurrentWeek();
+  }, [loadItems, loadChangelogCurrentWeek]);
 
   // 静态实用工具入口（不来自后端 toolbox）
-  const staticUtilities: ToolboxItem[] = useMemo(() => [
-    {
-      id: '__document-store__',
-      name: '知识库',
-      description: '文档存储与知识管理，支持文件夹、GitHub 同步',
-      icon: 'Library',
-      tags: ['文档', '知识', '知识库', 'docs'],
-      routePath: '/document-store',
-    } as ToolboxItem,
-    {
-      id: '__emergence__',
-      name: '涌现探索',
-      description: '从文档出发，AI 辅助发现功能创意与交叉价值',
-      icon: 'Sparkle',
-      tags: ['涌现', '探索', 'AI', '创意'],
-      routePath: '/emergence',
-    } as ToolboxItem,
-    {
-      id: '__web-pages__',
-      name: '网页托管',
-      description: '上传 HTML 或 ZIP，托管并分享你的网页',
-      icon: 'Globe',
-      tags: ['托管', '网页', 'hosting'],
-      routePath: '/web-pages',
-    } as ToolboxItem,
-    {
-      id: '__skill-agent__',
-      name: '技能创建助手',
-      description: 'AI 引导你逐步创建可复用的技能模板',
-      icon: 'Wand2',
-      tags: ['技能', 'skill', 'AI', '创建', '模板'],
-      routePath: '/skill-agent',
-    } as ToolboxItem,
-  ], []);
+  // 原用户菜单中的工具类条目（知识库/涌现/网页托管 + 提示词/实验室/自动化/请求日志）
+  // 已全部迁移至此区，用户菜单只保留账户/系统通知/更新中心/数据分享/退出。
+  const staticUtilities: ToolboxItem[] = useMemo(() => {
+    const items: ToolboxItem[] = [
+      {
+        id: '__document-store__',
+        name: '知识库',
+        description: '文档存储与知识管理，支持文件夹、GitHub 同步',
+        icon: 'Library',
+        tags: ['文档', '知识', '知识库', 'docs'],
+        routePath: '/document-store',
+      } as ToolboxItem,
+      {
+        id: '__emergence__',
+        name: '涌现探索',
+        description: '从文档出发，AI 辅助发现功能创意与交叉价值',
+        icon: 'Sparkle',
+        tags: ['涌现', '探索', 'AI', '创意'],
+        routePath: '/emergence',
+      } as ToolboxItem,
+      {
+        id: '__web-pages__',
+        name: '网页托管',
+        description: '上传 HTML 或 ZIP，托管并分享你的网页',
+        icon: 'Globe',
+        tags: ['托管', '网页', 'hosting'],
+        routePath: '/web-pages',
+      } as ToolboxItem,
+      {
+        id: '__skill-agent__',
+        name: '技能创建助手',
+        description: 'AI 引导你逐步创建可复用的技能模板',
+        icon: 'Wand2',
+        tags: ['技能', 'skill', 'AI', '创建', '模板'],
+        routePath: '/skill-agent',
+      } as ToolboxItem,
+    ];
+
+    // 管理工具类（权限门控）
+    if (canReadPrompts) {
+      items.push({
+        id: '__prompts__',
+        name: '提示词管理',
+        description: '管理系统与技能提示词',
+        icon: 'FileText',
+        tags: ['提示词', 'prompts', '管理'],
+        routePath: '/prompts',
+      } as ToolboxItem);
+    }
+    if (canReadLab) {
+      items.push({
+        id: '__lab__',
+        name: '实验室',
+        description: 'Model Lab / 桌面实验 / 工具箱',
+        icon: 'FlaskConical',
+        tags: ['实验室', 'lab', 'beta'],
+        routePath: '/lab',
+      } as ToolboxItem);
+    }
+    if (canManageAutomations) {
+      items.push({
+        id: '__automations__',
+        name: '自动化规则',
+        description: '创建和管理跨系统的自动化任务',
+        icon: 'Zap',
+        tags: ['自动化', 'automation', '规则'],
+        routePath: '/automations',
+      } as ToolboxItem);
+    }
+    if (canReadLogs) {
+      items.push({
+        id: '__logs__',
+        name: '请求日志',
+        description: 'LLM 调用与 API 请求日志审计',
+        icon: 'ScrollText',
+        tags: ['日志', 'logs', '审计'],
+        routePath: '/logs',
+      } as ToolboxItem);
+    }
+
+    return items;
+  }, [canReadPrompts, canReadLab, canManageAutomations, canReadLogs]);
 
   // Split into featured (customized agents with routePath) and compact (utility agents)
   const { featured, utilities, filtered } = useMemo(() => {
@@ -483,8 +644,11 @@ export default function AgentLauncherPage() {
   const heroBgUrl = useMemo(() => getHeroBgUrl(), []);
 
   return (
-    <div className="h-full min-h-0 flex flex-col" style={{ background: 'var(--bg-base)' }}>
-      <div className="flex-1 min-h-0 overflow-auto">
+    <div className="h-full min-h-0 flex flex-col relative" style={{ background: 'var(--bg-base)' }}>
+      {/* 环境光背景层（blobs + film grain + top spotlight） —— 单独一层，不影响布局 */}
+      <HomeAmbientBackdrop />
+
+      <div className="flex-1 min-h-0 overflow-auto relative" style={{ zIndex: 1 }}>
 
           {/* ── Hero banner with background image — full width ── */}
           <div
@@ -521,55 +685,111 @@ export default function AgentLauncherPage() {
               }}
             />
 
+            {/* Hero 本地 aurora 光晕（/home 风格节选，只影响 Hero 自身）*/}
+            <div
+              className="absolute pointer-events-none"
+              style={{
+                top: '10%',
+                left: isMobile ? '-20%' : '2%',
+                width: isMobile ? '140%' : 520,
+                height: isMobile ? 260 : 340,
+                background:
+                  'radial-gradient(ellipse at 30% 50%, rgba(124, 58, 237, 0.18) 0%, rgba(0, 240, 255, 0.08) 35%, transparent 65%)',
+                filter: 'blur(40px)',
+                opacity: 0.9,
+              }}
+            />
+
             {/* Hero content */}
             <div className={`relative z-10 ${isMobile ? 'px-5 pt-8 pb-6' : 'px-8 pt-10 pb-8'}`}>
               <div className={`flex ${isMobile ? 'flex-col gap-4' : 'items-start justify-between gap-8'}`}>
                 <div className="shrink-0">
-                  <h1
-                    className={`font-semibold tracking-tight ${isMobile ? 'text-xl' : 'text-[26px]'}`}
-                    style={{ color: 'var(--text-primary, #fff)', textShadow: '0 1px 8px rgba(0,0,0,0.3)' }}
-                  >
-                    {greeting}
-                    {displayName ? `，${displayName}` : ''}
-                  </h1>
-                  <p
-                    className="mt-1 text-sm"
-                    style={{ color: 'var(--text-muted, rgba(255,255,255,0.55))', textShadow: '0 1px 4px rgba(0,0,0,0.2)' }}
-                  >
-                    选择一个智能助手，开始你的创作
-                  </p>
+                  {/* 小型 eyebrow 标签：品牌定位 */}
+                  <Reveal delay={REVEAL.heroEyebrow} duration={REVEAL_DURATION}>
+                    <div
+                      className="inline-flex items-center gap-1.5 mb-2 px-2.5 py-0.5 rounded-full text-[10px] font-medium tracking-[0.08em] uppercase"
+                      style={{
+                        background: 'rgba(124, 58, 237, 0.12)',
+                        border: '1px solid rgba(124, 58, 237, 0.28)',
+                        color: '#c4b5fd',
+                        textShadow: 'none',
+                      }}
+                    >
+                      <Sparkles size={10} />
+                      MAP · 米多智能体生态平台
+                    </div>
+                  </Reveal>
+                  <Reveal delay={REVEAL.heroTitle} duration={REVEAL_DURATION} offset={20}>
+                    <h1
+                      className={`font-semibold tracking-tight ${isMobile ? 'text-2xl' : 'text-[34px]'}`}
+                      style={{
+                        color: 'var(--text-primary, #fff)',
+                        textShadow: '0 1px 12px rgba(0,0,0,0.35), 0 0 40px rgba(124, 58, 237, 0.15)',
+                        lineHeight: 1.15,
+                      }}
+                    >
+                      {greeting}
+                      {displayName ? '，' : ''}
+                      {displayName && (
+                        <span
+                          style={{
+                            background: MAP_ACCENT_GRADIENT,
+                            WebkitBackgroundClip: 'text',
+                            WebkitTextFillColor: 'transparent',
+                            backgroundClip: 'text',
+                          }}
+                        >
+                          {displayName}
+                        </span>
+                      )}
+                    </h1>
+                  </Reveal>
+                  <Reveal delay={REVEAL.heroSubtitle} duration={REVEAL_DURATION}>
+                    <p
+                      className={`mt-2 ${isMobile ? 'text-sm' : 'text-[15px]'}`}
+                      style={{
+                        color: 'var(--text-muted, rgba(255,255,255,0.6))',
+                        textShadow: '0 1px 4px rgba(0,0,0,0.2)',
+                        maxWidth: 520,
+                      }}
+                    >
+                      选一个智能助手开始创作，或在下方的实用工具里探索平台能力
+                    </p>
+                  </Reveal>
                 </div>
 
                 {/* Search (top-right) */}
-                <div className="relative shrink-0" style={{ width: isMobile ? '100%' : 260 }}>
-                  <Search
-                    size={15}
-                    className="absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none"
-                    style={{ color: 'var(--text-muted, rgba(255,255,255,0.3))' }}
-                  />
-                  <input
-                    type="text"
-                    placeholder="搜索 Agent..."
-                    value={searchQuery}
-                    onChange={(e) => setSearchQuery(e.target.value)}
-                    className="w-full h-9 pl-9 pr-4 rounded-lg text-[13px] outline-none transition-colors duration-150"
-                    style={{
-                      background: 'rgba(255,255,255,0.06)',
-                      border: '1px solid rgba(255,255,255,0.1)',
-                      color: 'var(--text-primary, #fff)',
-                      backdropFilter: 'blur(12px)',
-                      WebkitBackdropFilter: 'blur(12px)',
-                    }}
-                    onFocus={(e) => {
-                      e.currentTarget.style.borderColor = 'var(--accent-primary, #818CF8)';
-                      e.currentTarget.style.background = 'rgba(255,255,255,0.1)';
-                    }}
-                    onBlur={(e) => {
-                      e.currentTarget.style.borderColor = 'rgba(255,255,255,0.1)';
-                      e.currentTarget.style.background = 'rgba(255,255,255,0.06)';
-                    }}
-                  />
-                </div>
+                <Reveal delay={REVEAL.heroSearch} duration={REVEAL_DURATION}>
+                  <div className="relative shrink-0" style={{ width: isMobile ? '100%' : 260 }}>
+                    <Search
+                      size={15}
+                      className="absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none"
+                      style={{ color: 'var(--text-muted, rgba(255,255,255,0.3))' }}
+                    />
+                    <input
+                      type="text"
+                      placeholder="搜索 Agent..."
+                      value={searchQuery}
+                      onChange={(e) => setSearchQuery(e.target.value)}
+                      className="w-full h-9 pl-9 pr-4 rounded-lg text-[13px] outline-none transition-colors duration-150"
+                      style={{
+                        background: 'rgba(255,255,255,0.06)',
+                        border: '1px solid rgba(255,255,255,0.1)',
+                        color: 'var(--text-primary, #fff)',
+                        backdropFilter: 'blur(12px)',
+                        WebkitBackdropFilter: 'blur(12px)',
+                      }}
+                      onFocus={(e) => {
+                        e.currentTarget.style.borderColor = 'var(--accent-primary, #818CF8)';
+                        e.currentTarget.style.background = 'rgba(255,255,255,0.1)';
+                      }}
+                      onBlur={(e) => {
+                        e.currentTarget.style.borderColor = 'rgba(255,255,255,0.1)';
+                        e.currentTarget.style.background = 'rgba(255,255,255,0.06)';
+                      }}
+                    />
+                  </div>
+                </Reveal>
               </div>
             </div>
             {/* end hero content */}
@@ -577,75 +797,114 @@ export default function AgentLauncherPage() {
           {/* end hero banner */}
 
         <div className={isMobile ? 'px-4 pt-4 pb-8' : 'px-8 pt-5 pb-12'}>
-          {/* ── Quick Links — outside hero, same width as card grid ── */}
+          {/* ── Quick Links — 4 张独立卡片，同宽响应式（1/2/4 列） ── */}
           {!searchQuery.trim() && (
             <div
-              className="rounded-xl"
+              className="grid"
               style={{
-                marginBottom: isMobile ? 16 : 24,
-                background: 'rgba(255, 255, 255, 0.04)',
-                border: '1px solid rgba(255, 255, 255, 0.08)',
+                marginBottom: isMobile ? 20 : 32,
+                gap: isMobile ? 10 : 14,
+                gridTemplateColumns: `repeat(auto-fit, minmax(${isMobile ? 160 : 220}px, 1fr))`,
               }}
             >
-              <div
-                className={`flex items-stretch ${isMobile ? 'flex-col' : ''}`}
-                style={{ minHeight: isMobile ? undefined : 80 }}
-              >
-                {quickLinks.map((link, i) => {
-                  const Icon = link.icon;
-                  const n = quickLinks.length;
-                  return (
-                    <button
-                      key={link.path}
-                      type="button"
-                      onClick={() => navigate(link.path)}
-                      className={`group flex-1 flex items-center gap-4 transition-colors duration-200 hover:bg-white/[0.03] ${
-                        isMobile ? 'px-5 py-4' : 'px-6 py-5'
-                      }`}
+              {quickLinks.map((link, idx) => {
+                const Icon = link.icon;
+                const isUpdates = link.id === 'updates';
+                const showUnread = isUpdates && changelogUnread > 0;
+                return (
+                  <Reveal
+                    key={link.path}
+                    delay={REVEAL.quickLinkBase + idx * REVEAL.quickLinkStep}
+                    duration={REVEAL_DURATION}
+                    offset={20}
+                  >
+                  <button
+                    type="button"
+                    onClick={() => navigate(link.path)}
+                    className="group relative text-left rounded-2xl overflow-hidden transition-all duration-300 hover:-translate-y-0.5 w-full"
+                    style={{
+                      background: 'linear-gradient(180deg, rgba(255,255,255,0.045) 0%, rgba(255,255,255,0.02) 100%)',
+                      border: '1px solid rgba(255,255,255,0.08)',
+                      padding: isMobile ? '14px 14px 16px' : '18px 18px 20px',
+                      minHeight: isMobile ? 96 : 120,
+                    }}
+                  >
+                    {/* 背景光晕：从卡片右上角散出主色 */}
+                    <div
+                      className="absolute pointer-events-none transition-opacity duration-300"
                       style={{
-                        borderRight: !isMobile && i < n - 1
-                          ? '1px solid rgba(255,255,255,0.06)'
-                          : undefined,
-                        borderBottom: isMobile && i < n - 1
-                          ? '1px solid rgba(255,255,255,0.06)'
-                          : undefined,
-                        borderRadius: isMobile
-                          ? (i === 0 ? '12px 12px 0 0' : i === n - 1 ? '0 0 12px 12px' : '0')
-                          : (i === 0 ? '12px 0 0 12px' : i === n - 1 ? '0 12px 12px 0' : '0'),
+                        top: -40,
+                        right: -40,
+                        width: 200,
+                        height: 200,
+                        background: `radial-gradient(circle at center, ${link.accent}26 0%, ${link.accent}0a 40%, transparent 70%)`,
+                        opacity: 0.8,
                       }}
-                    >
+                    />
+
+                    {/* Hover 边框辉光 */}
+                    <div
+                      className="absolute inset-0 rounded-2xl opacity-0 group-hover:opacity-100 transition-opacity duration-300 pointer-events-none"
+                      style={{
+                        boxShadow: `inset 0 0 0 1px ${link.accent}60, 0 0 24px ${link.accent}18`,
+                      }}
+                    />
+
+                    {/* 内容 */}
+                    <div className="relative z-10 flex flex-col h-full">
+                      <div className="flex items-center justify-between">
+                        <div
+                          className="shrink-0 w-10 h-10 rounded-xl flex items-center justify-center transition-transform duration-200 group-hover:scale-105"
+                          style={{
+                            background: `linear-gradient(135deg, ${link.accent}26, ${link.accent}08)`,
+                            border: `1px solid ${link.accent}36`,
+                            boxShadow: `0 4px 20px -8px ${link.accent}50`,
+                          }}
+                        >
+                          <Icon size={18} style={{ color: link.accent }} />
+                        </div>
+                        {/* 未读徽章（仅更新中心） */}
+                        {showUnread && (
+                          <span
+                            className="px-1.5 h-5 min-w-5 rounded-full inline-flex items-center justify-center text-[10px] font-bold shrink-0"
+                            style={{
+                              background: 'linear-gradient(135deg, #fbbf24, #f97316)',
+                              color: '#1a1a1a',
+                              boxShadow: '0 0 0 1.5px rgba(20, 20, 24, 0.92), 0 2px 8px rgba(251, 191, 36, 0.4)',
+                            }}
+                          >
+                            {changelogUnread > 9 ? '9+' : changelogUnread}
+                          </span>
+                        )}
+                      </div>
+
                       <div
-                        className="shrink-0 w-10 h-10 rounded-xl flex items-center justify-center transition-transform duration-200 group-hover:scale-105"
-                        style={{
-                          background: `${link.accent}12`,
-                          border: `1px solid ${link.accent}20`,
-                        }}
+                        className={`mt-3 font-semibold tracking-tight ${isMobile ? 'text-[14px]' : 'text-[15px]'}`}
+                        style={{ color: 'var(--text-primary, #fff)' }}
                       >
-                        <Icon size={20} style={{ color: link.accent }} />
+                        {link.label}
                       </div>
-                      <div className="text-left min-w-0">
-                        <div
-                          className="text-[13px] font-medium"
-                          style={{ color: 'var(--text-primary, #fff)' }}
-                        >
-                          {link.label}
-                        </div>
-                        <div
-                          className="text-[11px] mt-0.5 truncate"
-                          style={{ color: 'var(--text-muted, rgba(255,255,255,0.4))' }}
-                        >
-                          {link.desc}
-                        </div>
+                      <div
+                        className="text-[11px] mt-1 leading-relaxed line-clamp-2"
+                        style={{ color: 'var(--text-muted, rgba(255,255,255,0.5))' }}
+                      >
+                        {link.desc}
                       </div>
-                      <ArrowRight
-                        size={14}
-                        className="shrink-0 ml-auto opacity-0 group-hover:opacity-50 transition-all duration-200 group-hover:translate-x-0.5"
-                        style={{ color: 'var(--text-muted)' }}
-                      />
-                    </button>
-                  );
-                })}
-              </div>
+
+                      <div className="flex-1" />
+
+                      <div
+                        className="mt-3 flex items-center gap-1 text-[10px] font-medium opacity-50 group-hover:opacity-100 transition-opacity duration-200"
+                        style={{ color: link.accent }}
+                      >
+                        <span>进入</span>
+                        <ArrowRight size={11} className="group-hover:translate-x-0.5 transition-transform duration-200" />
+                      </div>
+                    </div>
+                  </button>
+                  </Reveal>
+                );
+              })}
             </div>
           )}
 
@@ -679,16 +938,24 @@ export default function AgentLauncherPage() {
             <>
               {/* Featured Agents */}
               {featured.length > 0 && (
-                <section className={isMobile ? 'mb-6' : 'mb-8'}>
-                  <div
-                    className="text-[11px] font-medium tracking-widest uppercase mb-3"
-                    style={{ color: 'var(--text-muted, rgba(255,255,255,0.35))' }}
-                  >
-                    智能助手
-                  </div>
+                <section className={isMobile ? 'mb-8' : 'mb-10'}>
+                  <Reveal delay={REVEAL.agentsHeader} duration={REVEAL_DURATION}>
+                    <SectionHeader
+                      eyebrow="AGENTS"
+                      title="智能助手"
+                      subtitle={`${featured.length} 个专属 Agent，覆盖 PRD / 视觉 / 文学 / 视频 / 缺陷 / 周报 / 审查`}
+                      accent="#818CF8"
+                    />
+                  </Reveal>
                   <div style={AUTO_GRID_FEATURED}>
-                    {featured.map((item) => (
-                      <FeaturedCard key={item.id} item={item} onClick={() => handleClick(item)} />
+                    {featured.map((item, i) => (
+                      <Reveal
+                        key={item.id}
+                        delay={REVEAL.agentsCardBase + i * REVEAL.agentsCardStep}
+                        duration={REVEAL_DURATION}
+                      >
+                        <FeaturedCard item={item} onClick={() => handleClick(item)} />
+                      </Reveal>
                     ))}
                   </div>
                 </section>
@@ -696,23 +963,41 @@ export default function AgentLauncherPage() {
 
               {/* Utility Agents */}
               {utilities.length > 0 && (
-                <section>
-                  <div
-                    className="text-[11px] font-medium tracking-widest uppercase mb-3"
-                    style={{ color: 'var(--text-muted, rgba(255,255,255,0.35))' }}
-                  >
-                    实用工具
-                  </div>
+                <section className={isMobile ? 'mb-8' : 'mb-10'}>
+                  <Reveal delay={REVEAL.utilitiesHeader} duration={REVEAL_DURATION}>
+                    <SectionHeader
+                      eyebrow="UTILITIES"
+                      title="实用工具"
+                      subtitle="知识库 · 涌现探索 · 网页托管 · 管理工具 — 按需展开使用"
+                      accent="#22D3EE"
+                    />
+                  </Reveal>
                   <div style={AUTO_GRID_COMPACT}>
-                    {utilities.map((item) => (
-                      <CompactCard key={item.id} item={item} onClick={() => handleClick(item)} />
+                    {utilities.map((item, i) => (
+                      <Reveal
+                        key={item.id}
+                        delay={REVEAL.utilitiesCardBase + i * REVEAL.utilitiesCardStep}
+                        duration={REVEAL_DURATION}
+                      >
+                        <CompactCard item={item} onClick={() => handleClick(item)} />
+                      </Reveal>
                     ))}
                   </div>
                 </section>
               )}
 
-              {/* Showcase Gallery — 作品广场 */}
-              <ShowcaseGallery />
+              {/* Showcase Gallery — 作品广场（滚动到视口时由 IntersectionObserver 触发） */}
+              <section>
+                <Reveal delay={REVEAL.showcaseHeader} duration={REVEAL_DURATION}>
+                  <SectionHeader
+                    eyebrow="SHOWCASE"
+                    title="作品广场"
+                    subtitle="社区 AI 创意作品流"
+                    accent="#F43F5E"
+                  />
+                </Reveal>
+                <ShowcaseGallery />
+              </section>
             </>
           )}
         </div>

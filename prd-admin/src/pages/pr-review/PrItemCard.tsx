@@ -3,7 +3,6 @@ import {
   RefreshCw,
   Trash2,
   ExternalLink,
-  Loader2,
   GitPullRequest,
   GitPullRequestClosed,
   GitMerge,
@@ -11,6 +10,7 @@ import {
   FileText,
   History,
 } from 'lucide-react';
+import { MapSpinner } from '@/components/ui/VideoLoader';
 import { usePrReviewStore } from './usePrReviewStore';
 import { AlignmentPanel } from './AlignmentPanel';
 import { SummaryPanel } from './SummaryPanel';
@@ -188,7 +188,7 @@ export function PrItemCard({ item }: Props) {
               <span>我的笔记（Markdown，失焦自动保存）</span>
               {savingNote && (
                 <span className="flex items-center gap-1">
-                  <Loader2 size={10} className="animate-spin" />
+                  <MapSpinner size={10} />
                   保存中
                 </span>
               )}
@@ -231,7 +231,7 @@ export function PrItemCard({ item }: Props) {
               disabled={refreshing}
               className="flex items-center gap-2 px-3 py-2 rounded-lg bg-white/10 text-white text-xs hover:bg-white/15 disabled:opacity-50 transition"
             >
-              {refreshing ? <Loader2 size={14} className="animate-spin" /> : <RefreshCw size={14} />}
+              {refreshing ? <MapSpinner size={14} /> : <RefreshCw size={14} />}
               刷新
             </button>
             <a

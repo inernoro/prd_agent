@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { X, FileText, Loader2, AlertTriangle, Link2, ExternalLink } from 'lucide-react';
+import { X, FileText, AlertTriangle, Link2, ExternalLink } from 'lucide-react';
+import { MapSectionLoader } from '@/components/ui/VideoLoader';
 import {
   getPrReviewItemRaw,
   type PrReviewRawContentDto,
@@ -106,12 +107,7 @@ export function PrRawContentModal({ itemId, onClose }: Props) {
           className="flex-1 px-5 py-4 space-y-5"
           style={{ minHeight: 0, overflowY: 'auto', overscrollBehavior: 'contain' }}
         >
-          {loading && (
-            <div className="flex items-center justify-center gap-2 text-sm text-white/50 py-12">
-              <Loader2 size={16} className="animate-spin" />
-              加载中...
-            </div>
-          )}
+          {loading && <MapSectionLoader text="加载中..." />}
 
           {error && !loading && (
             <div className="flex items-start gap-2 p-4 rounded-lg border border-red-500/30 bg-red-500/10 text-sm text-red-200">

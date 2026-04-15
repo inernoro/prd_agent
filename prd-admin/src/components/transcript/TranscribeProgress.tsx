@@ -3,7 +3,7 @@ import { useSseStream } from '@/lib/useSseStream';
 import { SsePhaseBar } from '@/components/sse/SsePhaseBar';
 import { SseTypingBlock } from '@/components/sse/SseTypingBlock';
 import { api } from '@/services/api';
-import { Loader2 } from 'lucide-react';
+import { MapSpinner } from '@/components/ui/VideoLoader';
 
 interface TranscribeProgressProps {
   runId: string;
@@ -61,7 +61,7 @@ export function TranscribeProgress({ runId, itemName, onCompleted }: TranscribeP
         {/* 文件名 */}
         <div className="text-center">
           <div className="w-16 h-16 mx-auto mb-4 rounded-2xl bg-primary/10 border border-primary/30 flex items-center justify-center">
-            <Loader2 className="w-7 h-7 text-primary animate-spin" />
+            <MapSpinner size={28} />
           </div>
           <p className="text-sm font-medium text-foreground">{itemName}</p>
           <p className="text-xs text-muted-foreground mt-1">{stageLabel}</p>

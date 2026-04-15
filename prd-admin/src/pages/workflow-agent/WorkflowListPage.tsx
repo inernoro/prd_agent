@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { listWorkflows, createWorkflow, deleteWorkflow } from '@/services';
 import type { Workflow, WorkflowNode, WorkflowEdge } from '@/services/contracts/workflowAgent';
 import { GlassCard } from '@/components/design/GlassCard';
-import { MapSpinner } from '@/components/ui/VideoLoader';
+import { MapSectionLoader } from '@/components/ui/VideoLoader';
 import { Button } from '@/components/design/Button';
 import { TabBar } from '@/components/design/TabBar';
 import { getEmojiForCapsule, getCapsuleType } from './capsuleRegistry';
@@ -749,12 +749,7 @@ export function WorkflowListPage() {
       <div className="px-5 pb-6 w-full">
 
         {/* 加载态 */}
-        {loading && (
-          <div className="flex items-center justify-center py-16">
-            <MapSpinner size={16} />
-            <span className="ml-2 text-[12px]" style={{ color: 'var(--text-muted)' }}>加载中...</span>
-          </div>
-        )}
+        {loading && <MapSectionLoader text="加载中..." />}
 
         {/* 空状态 */}
         {!loading && workflows.length === 0 && (

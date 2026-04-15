@@ -2,13 +2,13 @@ import { useEffect, useState } from 'react';
 import {
   Github,
   LogOut,
-  Loader2,
   AlertTriangle,
   Copy,
   ExternalLink,
   CheckCircle2,
   X,
 } from 'lucide-react';
+import { MapSpinner } from '@/components/ui/VideoLoader';
 import { usePrReviewStore } from './usePrReviewStore';
 
 /**
@@ -31,7 +31,7 @@ export function GitHubConnectCard() {
   if (authLoading && !authStatus) {
     return (
       <div className="rounded-xl border border-white/10 bg-white/[0.03] p-5 flex items-center gap-3 text-white/60">
-        <Loader2 size={18} className="animate-spin" />
+        <MapSpinner size={18} />
         检查 GitHub 连接状态...
       </div>
     );
@@ -168,7 +168,7 @@ function DeviceFlowProgress({ deviceFlow, onCancel }: DeviceFlowProgressProps) {
       <div className="flex items-start justify-between gap-3">
         <div className="flex items-center gap-3">
           {isPolling ? (
-            <Loader2 size={22} className="text-violet-300 animate-spin" />
+            <MapSpinner size={22} color="#c4b5fd" />
           ) : (
             <Github size={22} className="text-violet-300" />
           )}

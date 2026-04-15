@@ -21,7 +21,7 @@ import { toast } from '@/lib/toast';
 import { GlassCard } from '@/components/design/GlassCard';
 import { TabBar } from '@/components/design/TabBar';
 import { Button } from '@/components/design/Button';
-import { MapSpinner } from '@/components/ui/VideoLoader';
+import { MapSectionLoader } from '@/components/ui/VideoLoader';
 import { api } from '@/services/api';
 import {
   getEmergenceTree,
@@ -455,10 +455,7 @@ export function EmergenceExplorerPage() {
       {/* 内容区域 */}
       <div className="px-5 pb-6 w-full">
         {loading ? (
-          <div className="flex items-center justify-center py-16">
-            <MapSpinner size={16} />
-            <span className="ml-2 text-[12px]" style={{ color: 'var(--text-muted)' }}>加载中...</span>
-          </div>
+          <MapSectionLoader text="加载中..." />
         ) : trees.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-12">
             <TreePine size={44} style={{ color: 'var(--text-muted)', opacity: 0.3, marginBottom: 20 }} />

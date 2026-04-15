@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ClipboardCheck, Plus, Search, ChevronRight, ChevronLeft, CheckCircle, XCircle, Clock, Loader2, Users, Settings2, Bell } from 'lucide-react';
+import { ClipboardCheck, Plus, Search, ChevronRight, ChevronLeft, CheckCircle, XCircle, Clock, Users, Settings2, Bell } from 'lucide-react';
+import { MapSpinner, MapSectionLoader } from '@/components/ui/VideoLoader';
 import { getMyReviewSubmissions } from '@/services';
 import { useAuthStore } from '@/stores/authStore';
 import type { ReviewSubmission } from '@/services';
@@ -13,7 +14,7 @@ function getStatusDisplay(item: ReviewSubmission): { label: string; color: strin
     return { label: '已通过', color: 'text-emerald-400/80', icon: <CheckCircle className="w-3.5 h-3.5" /> };
   }
   if (item.status === 'Error') return { label: '失败', color: 'text-red-400/80', icon: <XCircle className="w-3.5 h-3.5" /> };
-  if (item.status === 'Running') return { label: '评审中', color: 'text-blue-400/80', icon: <Loader2 className="w-3.5 h-3.5 animate-spin" /> };
+  if (item.status === 'Running') return { label: '评审中', color: 'text-blue-400/80', icon: <MapSpinner size={14} /> };
   return { label: '等待评审', color: 'text-amber-400/80', icon: <Clock className="w-3.5 h-3.5" /> };
 }
 
@@ -153,9 +154,7 @@ export function ReviewAgentPage() {
       {/* 提交列表 */}
       <div>
         {loading ? (
-          <div className="flex items-center justify-center h-32">
-            <Loader2 className="w-6 h-6 text-indigo-400 animate-spin" />
-          </div>
+          <MapSectionLoader />
         ) : filtered.length === 0 ? (
           <div className="text-center py-16 space-y-4">
             <div className="w-14 h-14 rounded-2xl bg-white/3 flex items-center justify-center mx-auto">
