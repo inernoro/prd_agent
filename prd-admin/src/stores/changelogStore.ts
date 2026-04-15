@@ -88,9 +88,11 @@ export const useChangelogStore = create<ChangelogState>()(
       loadCurrentWeek: async (force?: boolean) => {
         const { loadingCurrent, currentWeek } = get();
         if (loadingCurrent) return;
+        // 已有缓存 + 非强制：跳过（前端层面避免无谓往返）
         if (currentWeek && !force) return;
         set({ loadingCurrent: true, error: null });
-        const res = await getCurrentWeekChangelog();
+        // force 透传到后端：force=true 会绕过后端 IMemoryCache，从 local/GitHub 重新拉取
+        const res = await getCurrentWeekChangelog(force === true);
         if (res.success) {
           set({ currentWeek: res.data, loadingCurrent: false });
         } else {
@@ -103,7 +105,7 @@ export const useChangelogStore = create<ChangelogState>()(
         if (loadingReleases) return;
         if (releases && !force) return;
         set({ loadingReleases: true, error: null });
-        const res = await getChangelogReleases(limit);
+        const res = await getChangelogReleases(limit, force === true);
         if (res.success) {
           set({ releases: res.data, loadingReleases: false });
         } else {

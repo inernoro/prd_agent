@@ -1,4 +1,6 @@
 using System.Globalization;
+using System.Net.Http;
+using System.Text.Json;
 using System.Text.RegularExpressions;
 using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Configuration;
@@ -57,10 +59,12 @@ public sealed class CurrentWeekView
     public DateOnly WeekStart { get; set; }
     public DateOnly WeekEnd { get; set; }
     public List<ChangelogFragment> Fragments { get; set; } = new();
-    /// <summary>数据源是否可用（false 表示找不到 changelogs 目录）</summary>
+    /// <summary>数据源是否可用</summary>
     public bool DataSourceAvailable { get; set; }
-    /// <summary>已生效的数据源根目录（调试用，可能为 null）</summary>
-    public string? SourceRoot { get; set; }
+    /// <summary>数据来源标识："local" / "github" / "none"</summary>
+    public string Source { get; set; } = "none";
+    /// <summary>数据快照时间（拉取时刻）</summary>
+    public DateTime FetchedAt { get; set; }
 }
 
 /// <summary>
@@ -70,22 +74,35 @@ public sealed class ReleasesView
 {
     public List<ChangelogRelease> Releases { get; set; } = new();
     public bool DataSourceAvailable { get; set; }
-    public string? SourceRoot { get; set; }
+    public string Source { get; set; } = "none";
+    public DateTime FetchedAt { get; set; }
 }
 
 /// <summary>
 /// 从仓库的 changelogs/ 目录和 CHANGELOG.md 文件读取并解析更新记录。
-/// 注意：本服务读取的是仓库内的 Markdown 文件，而非数据库。
-/// 数据源根目录解析顺序：
-/// 1. 配置项 Changelog:RootPath（绝对路径）
-/// 2. 从 ContentRootPath 向上递归查找包含 changelogs/ 目录的祖先目录（最多 6 层）
-/// 3. 从 AppContext.BaseDirectory 向上递归查找
-/// 内存缓存 5 分钟。
+///
+/// 数据源策略（按优先级）：
+/// 1. 本地文件（仓库内）：dev 模式快速命中，5 分钟缓存
+/// 2. GitHub Contents API + raw.githubusercontent.com：生产 Docker 模式，24 小时缓存
+///
+/// 本地查找顺序：
+/// - 配置项 Changelog:RootPath（绝对路径）
+/// - 从 ContentRootPath 向上递归查找包含 changelogs/ 目录的祖先目录（最多 8 层）
+/// - 从 AppContext.BaseDirectory 向上递归查找
+///
+/// GitHub 配置（appsettings 或环境变量）：
+/// - Changelog:GitHubOwner   = "inernoro"  （默认）
+/// - Changelog:GitHubRepo    = "prd_agent" （默认）
+/// - Changelog:GitHubBranch  = "main"      （默认）
+/// - Changelog:GitHubApiBase = "https://api.github.com"
+/// - Changelog:GitHubRawBase = "https://raw.githubusercontent.com"
+/// - Changelog:GitHubToken   = ""          （可选，提升速率限制）
+/// - Changelog:CacheTtlHours = 24          （GitHub 路径的缓存 TTL）
 /// </summary>
 public interface IChangelogReader
 {
-    CurrentWeekView GetCurrentWeek();
-    ReleasesView GetReleases(int limit);
+    Task<CurrentWeekView> GetCurrentWeekAsync(bool force = false);
+    Task<ReleasesView> GetReleasesAsync(int limit, bool force = false);
 }
 
 public sealed class ChangelogReader : IChangelogReader
@@ -93,11 +110,12 @@ public sealed class ChangelogReader : IChangelogReader
     private readonly IMemoryCache _cache;
     private readonly IConfiguration _config;
     private readonly IHostEnvironment _env;
+    private readonly IHttpClientFactory _httpClientFactory;
     private readonly ILogger<ChangelogReader> _logger;
 
     private const string CacheKeyCurrentWeek = "changelog:current-week";
     private const string CacheKeyReleases = "changelog:releases";
-    private static readonly TimeSpan CacheTtl = TimeSpan.FromMinutes(5);
+    private static readonly TimeSpan LocalCacheTtl = TimeSpan.FromMinutes(5);
 
     // 文件名格式：YYYY-MM-DD_<short>.md
     private static readonly Regex FragmentFileNameRegex =
@@ -123,39 +141,105 @@ public sealed class ChangelogReader : IChangelogReader
         IMemoryCache cache,
         IConfiguration config,
         IHostEnvironment env,
+        IHttpClientFactory httpClientFactory,
         ILogger<ChangelogReader> logger)
     {
         _cache = cache;
         _config = config;
         _env = env;
+        _httpClientFactory = httpClientFactory;
         _logger = logger;
     }
 
-    public CurrentWeekView GetCurrentWeek()
+    // ── 公共 API ──────────────────────────────────────────────────────
+
+    public async Task<CurrentWeekView> GetCurrentWeekAsync(bool force = false)
     {
-        return _cache.GetOrCreate(CacheKeyCurrentWeek, entry =>
+        if (!force && _cache.TryGetValue(CacheKeyCurrentWeek, out CurrentWeekView? cached) && cached != null)
         {
-            entry.AbsoluteExpirationRelativeToNow = CacheTtl;
-            return BuildCurrentWeekView();
-        }) ?? new CurrentWeekView();
+            return cached;
+        }
+
+        // 1) 本地优先（dev 快路径）
+        // 注意：只要本地有 changelogs/ 目录就用本地（即使本周空），不向 GitHub 兜底
+        var localView = BuildCurrentWeekViewFromLocal();
+        if (localView.DataSourceAvailable)
+        {
+            _cache.Set(CacheKeyCurrentWeek, localView, LocalCacheTtl);
+            return localView;
+        }
+
+        // 2) GitHub 兜底（生产 Docker 等无本地源场景）
+        try
+        {
+            var githubView = await BuildCurrentWeekViewFromGitHubAsync().ConfigureAwait(false);
+            if (githubView.DataSourceAvailable)
+            {
+                _cache.Set(CacheKeyCurrentWeek, githubView, GetGitHubCacheTtl());
+                return githubView;
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "[Changelog] GitHub 拉取本周更新失败");
+        }
+
+        // 3) 都失败：返回空视图（不缓存，下次重试）
+        return new CurrentWeekView
+        {
+            WeekStart = ComputeWeekStart(),
+            WeekEnd = ComputeWeekStart().AddDays(6),
+            DataSourceAvailable = false,
+            Source = "none",
+            FetchedAt = DateTime.UtcNow,
+        };
     }
 
-    public ReleasesView GetReleases(int limit)
+    public async Task<ReleasesView> GetReleasesAsync(int limit, bool force = false)
     {
         var cacheKey = $"{CacheKeyReleases}:{limit}";
-        return _cache.GetOrCreate(cacheKey, entry =>
+        if (!force && _cache.TryGetValue(cacheKey, out ReleasesView? cached) && cached != null)
         {
-            entry.AbsoluteExpirationRelativeToNow = CacheTtl;
-            return BuildReleasesView(limit);
-        }) ?? new ReleasesView();
+            return cached;
+        }
+
+        // 1) 本地优先
+        var localView = BuildReleasesViewFromLocal(limit);
+        if (localView.DataSourceAvailable)
+        {
+            _cache.Set(cacheKey, localView, LocalCacheTtl);
+            return localView;
+        }
+
+        // 2) GitHub 兜底
+        try
+        {
+            var githubView = await BuildReleasesViewFromGitHubAsync(limit).ConfigureAwait(false);
+            if (githubView.DataSourceAvailable)
+            {
+                _cache.Set(cacheKey, githubView, GetGitHubCacheTtl());
+                return githubView;
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "[Changelog] GitHub 拉取历史发布失败");
+        }
+
+        return new ReleasesView
+        {
+            DataSourceAvailable = false,
+            Source = "none",
+            FetchedAt = DateTime.UtcNow,
+        };
     }
 
-    // ── 数据源根目录解析 ───────────────────────────────────────────────
+    // ── 本地文件源 ────────────────────────────────────────────────────
 
     /// <summary>
     /// 找到包含 changelogs/ 子目录的根目录。返回 null 表示找不到。
     /// </summary>
-    private string? ResolveSourceRoot()
+    private string? ResolveLocalRoot()
     {
         // 1. 显式配置
         var configured = _config["Changelog:RootPath"];
@@ -196,28 +280,26 @@ public sealed class ChangelogReader : IChangelogReader
         return null;
     }
 
-    // ── current-week 解析 ─────────────────────────────────────────────
-
-    private CurrentWeekView BuildCurrentWeekView()
+    private CurrentWeekView BuildCurrentWeekViewFromLocal()
     {
-        var now = DateTime.Now;
-        // 周一为周首（中国习惯）：Sunday=0, Monday=1, ..., Saturday=6
-        // 想得到「今天距离本周一的天数」：Monday=0, Tuesday=1, ..., Sunday=6
-        var dayOfWeek = (int)now.DayOfWeek; // 0..6
-        var daysSinceMonday = (dayOfWeek + 6) % 7;
-        var weekStart = DateOnly.FromDateTime(now.AddDays(-daysSinceMonday));
+        var weekStart = ComputeWeekStart();
         var weekEnd = weekStart.AddDays(6);
-        var view = new CurrentWeekView { WeekStart = weekStart, WeekEnd = weekEnd };
+        var view = new CurrentWeekView
+        {
+            WeekStart = weekStart,
+            WeekEnd = weekEnd,
+            Source = "local",
+            FetchedAt = DateTime.UtcNow,
+        };
 
-        var root = ResolveSourceRoot();
+        var root = ResolveLocalRoot();
         if (root == null)
         {
-            _logger.LogWarning("[Changelog] 未找到包含 changelogs/ 的源目录，返回空视图");
+            view.DataSourceAvailable = false;
             return view;
         }
 
         view.DataSourceAvailable = true;
-        view.SourceRoot = root;
 
         var changelogsDir = Path.Combine(root, "changelogs");
         try
@@ -226,16 +308,8 @@ public sealed class ChangelogReader : IChangelogReader
             foreach (var file in files)
             {
                 var fileName = Path.GetFileName(file);
-                var match = FragmentFileNameRegex.Match(fileName);
-                if (!match.Success) continue;
-
-                var year = int.Parse(match.Groups[1].Value, CultureInfo.InvariantCulture);
-                var month = int.Parse(match.Groups[2].Value, CultureInfo.InvariantCulture);
-                var day = int.Parse(match.Groups[3].Value, CultureInfo.InvariantCulture);
-                DateOnly date;
-                try { date = new DateOnly(year, month, day); }
-                catch { continue; }
-
+                var date = ParseFragmentDate(fileName);
+                if (date == null) continue;
                 if (date < weekStart || date > weekEnd) continue;
 
                 string content;
@@ -252,7 +326,7 @@ public sealed class ChangelogReader : IChangelogReader
                 view.Fragments.Add(new ChangelogFragment
                 {
                     FileName = fileName,
-                    Date = date,
+                    Date = date.Value,
                     Entries = entries,
                 });
             }
@@ -262,52 +336,301 @@ public sealed class ChangelogReader : IChangelogReader
             _logger.LogError(ex, "[Changelog] 扫描 changelogs/ 目录失败");
         }
 
-        // 按日期倒序、文件名倒序
-        view.Fragments = view.Fragments
-            .OrderByDescending(f => f.Date)
-            .ThenByDescending(f => f.FileName, StringComparer.Ordinal)
-            .ToList();
-
+        view.Fragments = SortFragments(view.Fragments);
         return view;
     }
 
-    // ── releases 解析 ─────────────────────────────────────────────────
-
-    private ReleasesView BuildReleasesView(int limit)
+    private ReleasesView BuildReleasesViewFromLocal(int limit)
     {
-        var view = new ReleasesView();
+        var view = new ReleasesView
+        {
+            Source = "local",
+            FetchedAt = DateTime.UtcNow,
+        };
 
-        var root = ResolveSourceRoot();
+        var root = ResolveLocalRoot();
         if (root == null)
         {
+            view.DataSourceAvailable = false;
             return view;
         }
 
         var changelogPath = Path.Combine(root, "CHANGELOG.md");
         if (!File.Exists(changelogPath))
         {
-            view.SourceRoot = root;
+            view.DataSourceAvailable = false;
             return view;
         }
 
         view.DataSourceAvailable = true;
-        view.SourceRoot = root;
 
-        string[] lines;
-        try { lines = File.ReadAllLines(changelogPath); }
+        string changelogText;
+        try { changelogText = File.ReadAllText(changelogPath); }
         catch (Exception ex)
         {
             _logger.LogError(ex, "[Changelog] 读取 CHANGELOG.md 失败");
+            view.DataSourceAvailable = false;
             return view;
         }
+
+        view.Releases = ParseChangelogMarkdown(changelogText, limit);
+        return view;
+    }
+
+    // ── GitHub 源 ─────────────────────────────────────────────────────
+
+    private string GetGitHubOwner() => _config["Changelog:GitHubOwner"] ?? "inernoro";
+    private string GetGitHubRepo() => _config["Changelog:GitHubRepo"] ?? "prd_agent";
+    private string GetGitHubBranch() => _config["Changelog:GitHubBranch"] ?? "main";
+    private string GetGitHubApiBase() => (_config["Changelog:GitHubApiBase"] ?? "https://api.github.com").TrimEnd('/');
+    private string GetGitHubRawBase() => (_config["Changelog:GitHubRawBase"] ?? "https://raw.githubusercontent.com").TrimEnd('/');
+    private string? GetGitHubToken() => _config["Changelog:GitHubToken"];
+
+    private TimeSpan GetGitHubCacheTtl()
+    {
+        var hours = _config.GetValue<int?>("Changelog:CacheTtlHours") ?? 24;
+        if (hours <= 0) hours = 24;
+        return TimeSpan.FromHours(hours);
+    }
+
+    /// <summary>
+    /// 创建 HttpClient（复用 Program.cs 注册的 "GitHubApi" 命名客户端，
+    /// 已带 User-Agent / Accept / X-GitHub-Api-Version 头）。
+    /// 注意：IHttpClientFactory 拥有 client 生命周期，调用方禁止 Dispose。
+    /// Token 在每次请求时通过请求级 header 注入（避免污染 DefaultRequestHeaders）。
+    /// </summary>
+    private HttpClient CreateGitHubClient()
+    {
+        return _httpClientFactory.CreateClient("GitHubApi");
+    }
+
+    /// <summary>
+    /// 创建带 token 的请求消息
+    /// </summary>
+    private HttpRequestMessage CreateGitHubApiRequest(HttpMethod method, string url)
+    {
+        var req = new HttpRequestMessage(method, url);
+        var token = GetGitHubToken();
+        if (!string.IsNullOrWhiteSpace(token))
+        {
+            req.Headers.TryAddWithoutValidation("Authorization", $"Bearer {token}");
+        }
+        return req;
+    }
+
+    /// <summary>
+    /// 用 raw URL 拉单个文本文件（不消耗 GitHub API 配额）
+    /// </summary>
+    private async Task<string?> FetchRawFileAsync(HttpClient client, string repoPath)
+    {
+        var owner = GetGitHubOwner();
+        var repo = GetGitHubRepo();
+        var branch = GetGitHubBranch();
+        var rawBase = GetGitHubRawBase();
+        var url = $"{rawBase}/{owner}/{repo}/{branch}/{repoPath}";
+        try
+        {
+            using var req = new HttpRequestMessage(HttpMethod.Get, url);
+            // raw.githubusercontent.com 也支持私有仓 token
+            var token = GetGitHubToken();
+            if (!string.IsNullOrWhiteSpace(token))
+            {
+                req.Headers.TryAddWithoutValidation("Authorization", $"Bearer {token}");
+            }
+            using var resp = await client.SendAsync(req).ConfigureAwait(false);
+            if (!resp.IsSuccessStatusCode)
+            {
+                _logger.LogWarning("[Changelog] GitHub raw 拉取失败 {Url} status={Status}", url, (int)resp.StatusCode);
+                return null;
+            }
+            return await resp.Content.ReadAsStringAsync().ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "[Changelog] GitHub raw 拉取异常 {Url}", url);
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// GitHub Contents API：列出 changelogs/ 目录，返回所有文件名。
+    /// 1 次 API 请求即可获得整个目录列表。
+    /// </summary>
+    private async Task<List<string>> ListChangelogFragmentsFromGitHubAsync(HttpClient client)
+    {
+        var owner = GetGitHubOwner();
+        var repo = GetGitHubRepo();
+        var branch = GetGitHubBranch();
+        var apiBase = GetGitHubApiBase();
+        var url = $"{apiBase}/repos/{owner}/{repo}/contents/changelogs?ref={branch}";
+
+        try
+        {
+            using var req = CreateGitHubApiRequest(HttpMethod.Get, url);
+            using var resp = await client.SendAsync(req).ConfigureAwait(false);
+            if (!resp.IsSuccessStatusCode)
+            {
+                _logger.LogWarning("[Changelog] GitHub Contents API 失败 {Url} status={Status}", url, (int)resp.StatusCode);
+                return new List<string>();
+            }
+
+            var json = await resp.Content.ReadAsStringAsync().ConfigureAwait(false);
+            using var doc = JsonDocument.Parse(json);
+            if (doc.RootElement.ValueKind != JsonValueKind.Array)
+            {
+                return new List<string>();
+            }
+
+            var names = new List<string>();
+            foreach (var item in doc.RootElement.EnumerateArray())
+            {
+                if (item.TryGetProperty("type", out var typeProp) &&
+                    typeProp.GetString() == "file" &&
+                    item.TryGetProperty("name", out var nameProp))
+                {
+                    var name = nameProp.GetString();
+                    if (!string.IsNullOrEmpty(name) && name.EndsWith(".md", StringComparison.OrdinalIgnoreCase))
+                    {
+                        names.Add(name);
+                    }
+                }
+            }
+            return names;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "[Changelog] GitHub Contents API 异常 {Url}", url);
+            return new List<string>();
+        }
+    }
+
+    private async Task<CurrentWeekView> BuildCurrentWeekViewFromGitHubAsync()
+    {
+        var weekStart = ComputeWeekStart();
+        var weekEnd = weekStart.AddDays(6);
+        var view = new CurrentWeekView
+        {
+            WeekStart = weekStart,
+            WeekEnd = weekEnd,
+            Source = "github",
+            FetchedAt = DateTime.UtcNow,
+        };
+
+        var client = CreateGitHubClient();
+
+        var allNames = await ListChangelogFragmentsFromGitHubAsync(client).ConfigureAwait(false);
+        if (allNames.Count == 0)
+        {
+            view.DataSourceAvailable = false;
+            return view;
+        }
+
+        view.DataSourceAvailable = true;
+
+        // 仅保留本周日期范围内的文件，避免下载 100+ 个文件
+        var filtered = new List<(string name, DateOnly date)>();
+        foreach (var name in allNames)
+        {
+            var date = ParseFragmentDate(name);
+            if (date == null) continue;
+            if (date < weekStart || date > weekEnd) continue;
+            filtered.Add((name, date.Value));
+        }
+
+        // 并行下载本周内的碎片文件（数量很少，最多 7-10 个）
+        var tasks = filtered.Select(async f =>
+        {
+            var content = await FetchRawFileAsync(client, $"changelogs/{f.name}").ConfigureAwait(false);
+            if (string.IsNullOrEmpty(content)) return null;
+            var entries = ParseTableRows(content);
+            if (entries.Count == 0) return null;
+            return new ChangelogFragment
+            {
+                FileName = f.name,
+                Date = f.date,
+                Entries = entries,
+            };
+        }).ToList();
+
+        var results = await Task.WhenAll(tasks).ConfigureAwait(false);
+        foreach (var fragment in results)
+        {
+            if (fragment != null) view.Fragments.Add(fragment);
+        }
+
+        view.Fragments = SortFragments(view.Fragments);
+        return view;
+    }
+
+    private async Task<ReleasesView> BuildReleasesViewFromGitHubAsync(int limit)
+    {
+        var view = new ReleasesView
+        {
+            Source = "github",
+            FetchedAt = DateTime.UtcNow,
+        };
+
+        var client = CreateGitHubClient();
+        var content = await FetchRawFileAsync(client, "CHANGELOG.md").ConfigureAwait(false);
+        if (content == null)
+        {
+            view.DataSourceAvailable = false;
+            return view;
+        }
+
+        view.DataSourceAvailable = true;
+        view.Releases = ParseChangelogMarkdown(content, limit);
+        return view;
+    }
+
+    // ── 解析逻辑（local 与 github 共用） ──────────────────────────────
+
+    private static DateOnly ComputeWeekStart()
+    {
+        var now = DateTime.Now;
+        // 周一为周首（中国习惯）：Sunday=0, Monday=1, ..., Saturday=6
+        var dayOfWeek = (int)now.DayOfWeek;
+        var daysSinceMonday = (dayOfWeek + 6) % 7;
+        return DateOnly.FromDateTime(now.AddDays(-daysSinceMonday));
+    }
+
+    private static DateOnly? ParseFragmentDate(string fileName)
+    {
+        var match = FragmentFileNameRegex.Match(fileName);
+        if (!match.Success) return null;
+        try
+        {
+            var year = int.Parse(match.Groups[1].Value, CultureInfo.InvariantCulture);
+            var month = int.Parse(match.Groups[2].Value, CultureInfo.InvariantCulture);
+            var day = int.Parse(match.Groups[3].Value, CultureInfo.InvariantCulture);
+            return new DateOnly(year, month, day);
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private static List<ChangelogFragment> SortFragments(List<ChangelogFragment> fragments)
+    {
+        return fragments
+            .OrderByDescending(f => f.Date)
+            .ThenByDescending(f => f.FileName, StringComparer.Ordinal)
+            .ToList();
+    }
+
+    private static List<ChangelogRelease> ParseChangelogMarkdown(string changelogText, int limit)
+    {
+        var releases = new List<ChangelogRelease>();
+        var lines = changelogText.Split('\n');
 
         ChangelogRelease? currentRelease = null;
         ChangelogDay? currentDay = null;
         var inHighlightSection = false;
 
-        for (var i = 0; i < lines.Length; i++)
+        foreach (var rawLine in lines)
         {
-            var line = lines[i];
+            var line = rawLine.TrimEnd('\r');
 
             // 版本头
             var releaseMatch = ReleaseHeaderRegex.Match(line);
@@ -315,7 +638,7 @@ public sealed class ChangelogReader : IChangelogReader
             {
                 if (currentRelease != null)
                 {
-                    view.Releases.Add(currentRelease);
+                    releases.Add(currentRelease);
                 }
                 currentRelease = new ChangelogRelease
                 {
@@ -370,25 +693,22 @@ public sealed class ChangelogReader : IChangelogReader
 
         if (currentRelease != null)
         {
-            view.Releases.Add(currentRelease);
+            releases.Add(currentRelease);
         }
 
         // 去除空 day（仅有表头/分隔行）
-        foreach (var release in view.Releases)
+        foreach (var release in releases)
         {
             release.Days.RemoveAll(d => d.Entries.Count == 0);
         }
 
-        // CHANGELOG.md 顺序天然就是新→旧，截断 limit 即可
-        if (limit > 0 && view.Releases.Count > limit)
+        if (limit > 0 && releases.Count > limit)
         {
-            view.Releases = view.Releases.Take(limit).ToList();
+            releases = releases.Take(limit).ToList();
         }
 
-        return view;
+        return releases;
     }
-
-    // ── 表格行解析 ────────────────────────────────────────────────────
 
     private static List<ChangelogEntry> ParseTableRows(string content)
     {

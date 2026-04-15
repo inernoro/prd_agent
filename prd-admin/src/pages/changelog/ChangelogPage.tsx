@@ -117,6 +117,30 @@ export default function ChangelogPage() {
     ? `${currentWeek.weekStart} ~ ${currentWeek.weekEnd}`
     : '';
 
+  // 数据源标签 + 拉取时间显示（github / local / none）
+  const sourceLabel = (() => {
+    const source = currentWeek?.source ?? releases?.source ?? 'none';
+    if (source === 'github') return { text: 'GitHub', color: '#86efac' };
+    if (source === 'local') return { text: '本地仓库', color: '#93c5fd' };
+    return null;
+  })();
+  const fetchedAt = currentWeek?.fetchedAt || releases?.fetchedAt || '';
+  const fetchedAtRelative = (() => {
+    if (!fetchedAt) return '';
+    try {
+      const diff = Date.now() - new Date(fetchedAt).getTime();
+      const minutes = Math.floor(diff / 60000);
+      if (minutes < 1) return '刚刚拉取';
+      if (minutes < 60) return `${minutes} 分钟前拉取`;
+      const hours = Math.floor(minutes / 60);
+      if (hours < 24) return `${hours} 小时前拉取`;
+      const days = Math.floor(hours / 24);
+      return `${days} 天前拉取`;
+    } catch {
+      return '';
+    }
+  })();
+
   return (
     <div className="flex flex-col gap-5">
       {/* ── Header ───────────────────────────────────────── */}
@@ -142,6 +166,25 @@ export default function ChangelogPage() {
               <p className="text-[12px] mt-0.5" style={{ color: 'var(--text-muted)' }}>
                 代码级周报 · 数据来自仓库 changelogs/ 与 CHANGELOG.md，每个 PR 都会更新
               </p>
+              {(sourceLabel || fetchedAtRelative) && (
+                <div className="flex items-center gap-2 mt-1.5 text-[10px]">
+                  {sourceLabel && (
+                    <span
+                      className="px-1.5 py-0.5 rounded font-mono"
+                      style={{
+                        background: `${sourceLabel.color}14`,
+                        color: sourceLabel.color,
+                        border: `1px solid ${sourceLabel.color}33`,
+                      }}
+                    >
+                      {sourceLabel.text}
+                    </span>
+                  )}
+                  {fetchedAtRelative && (
+                    <span style={{ color: 'var(--text-muted)' }}>{fetchedAtRelative}</span>
+                  )}
+                </div>
+              )}
             </div>
           </div>
           <button
@@ -242,7 +285,7 @@ export default function ChangelogPage() {
             color: '#fdba74',
           }}
         >
-          ⚠ 服务端找不到 changelogs/ 目录与 CHANGELOG.md。开发环境下需从仓库根目录启动 API；生产环境可设置 <code>Changelog__RootPath</code> 环境变量指向仓库根。
+          ⚠ 本地仓库与 GitHub 都没拉到数据。可能是网络受限、GitHub API 限流，或仓库未配置正确的 owner/repo/branch（详见后端 <code>Changelog:GitHub*</code> 配置项）。
         </div>
       )}
 

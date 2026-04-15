@@ -1034,8 +1034,14 @@ export const api = {
 
   // ============ Changelog 更新中心（代码级周报） ============
   changelog: {
-    currentWeek: () => '/api/changelog/current-week',
-    releases: (limit?: number) => `/api/changelog/releases${limit ? `?limit=${limit}` : ''}`,
+    currentWeek: (force?: boolean) =>
+      `/api/changelog/current-week${force ? '?force=true' : ''}`,
+    releases: (limit?: number, force?: boolean) => {
+      const params: string[] = [];
+      if (limit) params.push(`limit=${limit}`);
+      if (force) params.push('force=true');
+      return `/api/changelog/releases${params.length ? `?${params.join('&')}` : ''}`;
+    },
   },
 
   // ============ Emergence Explorer 涌现探索器 ============

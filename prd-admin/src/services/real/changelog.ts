@@ -25,6 +25,10 @@ export interface CurrentWeekView {
   /** YYYY-MM-DD（周日） */
   weekEnd: string;
   dataSourceAvailable: boolean;
+  /** 数据来源："local" / "github" / "none" */
+  source: 'local' | 'github' | 'none';
+  /** ISO 8601 拉取时间 */
+  fetchedAt: string;
   fragments: ChangelogFragment[];
 }
 
@@ -46,6 +50,8 @@ export interface ChangelogRelease {
 
 export interface ReleasesView {
   dataSourceAvailable: boolean;
+  source: 'local' | 'github' | 'none';
+  fetchedAt: string;
   releases: ChangelogRelease[];
 }
 
@@ -53,14 +59,16 @@ export interface ReleasesView {
 
 /**
  * 获取本周更新（基于 changelogs/*.md 碎片，按日期倒序）
+ * @param force 绕过服务端缓存（GitHub 路径意味着触发真实拉取）
  */
-export async function getCurrentWeekChangelog(): Promise<ApiResponse<CurrentWeekView>> {
-  return await apiRequest<CurrentWeekView>(api.changelog.currentWeek(), { method: 'GET' });
+export async function getCurrentWeekChangelog(force = false): Promise<ApiResponse<CurrentWeekView>> {
+  return await apiRequest<CurrentWeekView>(api.changelog.currentWeek(force), { method: 'GET' });
 }
 
 /**
  * 获取历史发布（基于 CHANGELOG.md，按版本倒序）
+ * @param force 绕过服务端缓存
  */
-export async function getChangelogReleases(limit = 20): Promise<ApiResponse<ReleasesView>> {
-  return await apiRequest<ReleasesView>(api.changelog.releases(limit), { method: 'GET' });
+export async function getChangelogReleases(limit = 20, force = false): Promise<ApiResponse<ReleasesView>> {
+  return await apiRequest<ReleasesView>(api.changelog.releases(limit, force), { method: 'GET' });
 }
