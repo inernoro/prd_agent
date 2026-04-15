@@ -213,6 +213,79 @@ describe('Branch Routes', () => {
       expect(res.status).toBe(201);
       expect((res.body as any).branch.projectId).toBe('default');
     });
+
+    // P4 Part 18 (G1.5): a branch cannot be created under a project
+    // whose clone hasn't finished. The guard triggers on any
+    // non-'ready' cloneStatus and preserves legacy projects (whose
+    // cloneStatus is simply absent) unchanged.
+    describe('P4 Part 18 (G1.5): project not-ready guard', () => {
+      const NOW = new Date().toISOString();
+
+      function addProject(id: string, cloneStatus?: 'pending' | 'cloning' | 'ready' | 'error', cloneError?: string) {
+        stateService.addProject({
+          id,
+          slug: id,
+          name: id,
+          kind: 'git',
+          createdAt: NOW,
+          updatedAt: NOW,
+          ...(cloneStatus ? { cloneStatus } : {}),
+          ...(cloneError ? { cloneError } : {}),
+          ...(cloneStatus ? { repoPath: `/test-repos/${id}` } : {}),
+        });
+      }
+
+      it('refuses with 409 when cloneStatus is pending', async () => {
+        addProject('p-pending', 'pending');
+        const res = await request(server, 'POST', '/api/branches', {
+          branch: 'x',
+          projectId: 'p-pending',
+        });
+        expect(res.status).toBe(409);
+        expect((res.body as any).error).toBe('project_not_ready');
+        expect((res.body as any).cloneStatus).toBe('pending');
+      });
+
+      it('refuses with 409 when cloneStatus is cloning', async () => {
+        addProject('p-cloning', 'cloning');
+        const res = await request(server, 'POST', '/api/branches', {
+          branch: 'x',
+          projectId: 'p-cloning',
+        });
+        expect(res.status).toBe(409);
+        expect((res.body as any).cloneStatus).toBe('cloning');
+      });
+
+      it('refuses with 409 when cloneStatus is error and surfaces cloneError', async () => {
+        addProject('p-error', 'error', 'fatal: repository not found');
+        const res = await request(server, 'POST', '/api/branches', {
+          branch: 'x',
+          projectId: 'p-error',
+        });
+        expect(res.status).toBe(409);
+        expect((res.body as any).cloneStatus).toBe('error');
+        expect((res.body as any).message).toContain('fatal: repository not found');
+      });
+
+      it('allows when cloneStatus is ready', async () => {
+        addProject('p-ready', 'ready');
+        const res = await request(server, 'POST', '/api/branches', {
+          branch: 'ready-branch',
+          projectId: 'p-ready',
+        });
+        expect(res.status).toBe(201);
+      });
+
+      it('legacy project (no cloneStatus) is unaffected by the guard', async () => {
+        // The migration creates 'default' without cloneStatus — legacy
+        // single-repo behaviour. POST /branches should still work.
+        const res = await request(server, 'POST', '/api/branches', {
+          branch: 'legacy-flow',
+          projectId: 'default',
+        });
+        expect(res.status).toBe(201);
+      });
+    });
   });
 
   describe('POST /api/branches/:id/pull', () => {

@@ -24,8 +24,10 @@ function emptyState(): CdsState {
 export class StateService {
   private state: CdsState = emptyState();
   private readonly filePath: string;
-  /** P3: the persistence seam. Defaults to JSON for backward compat; P3 Part 2 swaps in mongo. */
-  private readonly backingStore: StateBackingStore;
+  /** P3: the persistence seam. Mutable — setBackingStore() swaps it
+   *  at runtime for the "switch storage mode" flow in the Settings
+   *  panel (P4 Part 18 D.3). */
+  private backingStore: StateBackingStore;
   /** Project slug derived from repoRoot directory name, used for cache isolation */
   readonly projectSlug: string;
 
@@ -35,10 +37,40 @@ export class StateService {
     const dirName = path.basename(repoRoot || path.dirname(path.dirname(filePath)));
     this.projectSlug = dirName.replace(/[^a-zA-Z0-9-]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '').toLowerCase() || 'default';
     // Default backing store is the JSON implementation that preserves
-    // the pre-P3 on-disk format (atomic write + rolling backups). P3
-    // Part 2 will allow injecting MongoStateBackingStore here, and
-    // Part 3 will inject the DualWriteStateBackingStore.
+    // the pre-P3 on-disk format (atomic write + rolling backups). P4
+    // Part 18 Phase D allows injecting MongoStateBackingStore here
+    // when CDS_STORAGE_MODE=mongo, and supports runtime swaps via
+    // setBackingStore().
     this.backingStore = backingStore ?? new JsonStateBackingStore(filePath);
+  }
+
+  /**
+   * P4 Part 18 (D.3): swap the backing store at runtime. Used by the
+   * "switch storage mode" flow in the Settings panel to go from
+   * json → mongo without restarting CDS. The new backing store must
+   * already be initialized (for mongo, init() must have resolved)
+   * AND must contain the caller's current state — typically the
+   * caller will do `newStore.seedIfEmpty(stateService.getState())`
+   * before calling this, so the mongo write path has the up-to-date
+   * snapshot.
+   *
+   * After this call every subsequent save() goes to the new store.
+   * The old store is NOT closed here; callers are responsible for
+   * tearing it down if needed (usually file-based stores just let
+   * the fd go out of scope).
+   */
+  setBackingStore(next: StateBackingStore): void {
+    this.backingStore = next;
+  }
+
+  /**
+   * P4 Part 18 (D.3): expose the current backing store so the
+   * Settings panel API can surface its `kind` tag and — when the
+   * store is mongo — call flush() / isHealthy() without having to
+   * import the concrete class here.
+   */
+  getBackingStore(): StateBackingStore {
+    return this.backingStore;
   }
 
   static slugify(branch: string): string {
@@ -651,9 +683,15 @@ export class StateService {
 
   /**
    * Patch an existing project's mutable fields. Used by future rename /
-   * description-edit UI in P4 Part 2.
+   * description-edit UI in P4 Part 2, and by P4 Part 18 (G1) to record
+   * the async clone lifecycle (repoPath / cloneStatus / cloneError).
    */
-  updateProject(id: string, updates: Partial<Pick<Project, 'name' | 'description' | 'gitRepoUrl'>>): void {
+  updateProject(
+    id: string,
+    updates: Partial<
+      Pick<Project, 'name' | 'description' | 'gitRepoUrl' | 'repoPath' | 'cloneStatus' | 'cloneError'>
+    >,
+  ): void {
     if (!this.state.projects) return;
     const idx = this.state.projects.findIndex((p) => p.id === id);
     if (idx < 0) return;
@@ -664,6 +702,47 @@ export class StateService {
       updatedAt: new Date().toISOString(),
     };
     this.save();
+  }
+
+  /**
+   * P4 Part 18 (Phase E): GitHub Device Flow token accessors.
+   *
+   * The token lives in state.githubDeviceAuth as a single-slot
+   * snapshot (one GitHub connection per CDS install). Orthogonal
+   * to auth-service which runs the CDS session flow.
+   */
+  getGithubDeviceAuth(): import('../types.js').GitHubDeviceAuth | undefined {
+    return this.state.githubDeviceAuth;
+  }
+  setGithubDeviceAuth(auth: import('../types.js').GitHubDeviceAuth | null): void {
+    if (auth) {
+      this.state.githubDeviceAuth = auth;
+    } else {
+      delete this.state.githubDeviceAuth;
+    }
+    this.save();
+  }
+
+  /**
+   * Resolve the absolute git repo root to use for operations on a given
+   * project. Returns `project.repoPath` when set (post-G1 multi-repo),
+   * else `fallback` (typically `CdsConfig.repoRoot` — the single host
+   * bind-mounted repo that the legacy 'default' project has used since
+   * day one).
+   *
+   * Centralizing this resolution in one helper means every worktree /
+   * branch call-site can stay agnostic of whether a project has been
+   * cloned into its own directory or is still piggy-backing on the
+   * legacy repoRoot.
+   *
+   * When projectId is falsy (e.g. a pre-P4 branch with no projectId
+   * field) we fall back to `fallback` directly — same reasoning as
+   * getBranchesForProject treating missing projectId as 'default'.
+   */
+  getProjectRepoRoot(projectId: string | undefined, fallback: string): string {
+    if (!projectId) return fallback;
+    const project = this.getProject(projectId);
+    return project?.repoPath || fallback;
   }
 
   // ── Project-scoped views (P4 Part 3a) ──

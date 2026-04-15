@@ -238,5 +238,107 @@ describe('StateService — projects (P4 Part 1)', () => {
       expect(after.id).toBe(before.id);
       expect(after.legacyFlag).toBe(before.legacyFlag);
     });
+
+    // P4 Part 18 (G1): repoPath / cloneStatus / cloneError fields are
+    // the async clone lifecycle storage. updateProject must accept them
+    // so the POST /projects/:id/clone SSE endpoint can stamp progress.
+    it('accepts repoPath / cloneStatus / cloneError fields', () => {
+      const svc = new StateService(stateFile, tmpDir);
+      svc.load();
+      const p: Project = {
+        id: 'proj-clone-lifecycle',
+        slug: 'proj-clone-lifecycle',
+        name: 'Clone Lifecycle',
+        kind: 'git',
+        gitRepoUrl: 'https://github.com/example/repo.git',
+        legacyFlag: false,
+        createdAt: '2026-01-01T00:00:00.000Z',
+        updatedAt: '2026-01-01T00:00:00.000Z',
+        cloneStatus: 'pending',
+      };
+      svc.addProject(p);
+
+      // Simulate 'cloning' → 'ready' progression
+      svc.updateProject(p.id, { cloneStatus: 'cloning' });
+      expect(svc.getProject(p.id)!.cloneStatus).toBe('cloning');
+
+      svc.updateProject(p.id, {
+        cloneStatus: 'ready',
+        repoPath: '/repos/proj-clone-lifecycle',
+      });
+      const after = svc.getProject(p.id)!;
+      expect(after.cloneStatus).toBe('ready');
+      expect(after.repoPath).toBe('/repos/proj-clone-lifecycle');
+      expect(after.cloneError).toBeUndefined();
+
+      // Error path
+      svc.updateProject(p.id, {
+        cloneStatus: 'error',
+        cloneError: 'fatal: repository not found',
+      });
+      const errAfter = svc.getProject(p.id)!;
+      expect(errAfter.cloneStatus).toBe('error');
+      expect(errAfter.cloneError).toBe('fatal: repository not found');
+    });
+  });
+
+  // P4 Part 18 (G1): getProjectRepoRoot resolves the per-project git
+  // repo root with a fallback to the global CdsConfig.repoRoot. Every
+  // worktree / branch call-site uses this helper so legacy 'default'
+  // projects keep working while new projects point at their own clone.
+  describe('getProjectRepoRoot', () => {
+    const FALLBACK = '/mnt/cds-host-repo';
+
+    it('returns fallback when projectId is undefined', () => {
+      const svc = new StateService(stateFile, tmpDir);
+      svc.load();
+      expect(svc.getProjectRepoRoot(undefined, FALLBACK)).toBe(FALLBACK);
+    });
+
+    it('returns fallback for legacy default project (no repoPath)', () => {
+      const svc = new StateService(stateFile, tmpDir);
+      svc.load();
+      // Migration creates the 'default' project without repoPath.
+      expect(svc.getProjectRepoRoot('default', FALLBACK)).toBe(FALLBACK);
+    });
+
+    it('returns project.repoPath when set', () => {
+      const svc = new StateService(stateFile, tmpDir);
+      svc.load();
+      svc.addProject({
+        id: 'proj-a',
+        slug: 'proj-a',
+        name: 'A',
+        kind: 'git',
+        legacyFlag: false,
+        createdAt: '2026-01-01T00:00:00.000Z',
+        updatedAt: '2026-01-01T00:00:00.000Z',
+        repoPath: '/repos/proj-a',
+        cloneStatus: 'ready',
+      });
+      expect(svc.getProjectRepoRoot('proj-a', FALLBACK)).toBe('/repos/proj-a');
+    });
+
+    it('returns fallback when project exists but repoPath is empty', () => {
+      const svc = new StateService(stateFile, tmpDir);
+      svc.load();
+      svc.addProject({
+        id: 'proj-nopath',
+        slug: 'proj-nopath',
+        name: 'NoPath',
+        kind: 'git',
+        legacyFlag: false,
+        createdAt: '2026-01-01T00:00:00.000Z',
+        updatedAt: '2026-01-01T00:00:00.000Z',
+        // no repoPath — pre-clone or pre-G1 state
+      });
+      expect(svc.getProjectRepoRoot('proj-nopath', FALLBACK)).toBe(FALLBACK);
+    });
+
+    it('returns fallback when projectId references a nonexistent project', () => {
+      const svc = new StateService(stateFile, tmpDir);
+      svc.load();
+      expect(svc.getProjectRepoRoot('ghost', FALLBACK)).toBe(FALLBACK);
+    });
   });
 });

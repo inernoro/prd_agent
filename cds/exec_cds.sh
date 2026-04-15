@@ -37,6 +37,20 @@ STATE_DIR="$SCRIPT_DIR/.cds"
 PID_FILE="$STATE_DIR/cds.pid"
 LOG_FILE="$SCRIPT_DIR/cds.log"
 
+# P4 Part 18 (G1.4): multi-repo clone storage.
+# Per-project git clones live under this directory as
+# `<REPOS_BASE>/<projectId>`. The directory is created on start
+# so the CDS clone endpoint can drop into it without having to
+# mkdir first. Override with `export CDS_REPOS_BASE=/custom/path`
+# in .cds.env if you need a different location (e.g. a dedicated
+# data disk mount).
+#
+# On container restart / self-update this path survives because
+# it's a host filesystem location, not inside the CDS process's
+# working directory. The containerized deployment (Dockerfile.master)
+# must bind-mount this path — see the run example in that file.
+REPOS_BASE_DEFAULT="$SCRIPT_DIR/.cds-repos"
+
 NGINX_DIR="$SCRIPT_DIR/nginx"
 NGINX_CONF="$NGINX_DIR/nginx.conf"
 NGINX_SITE_CONF="$NGINX_DIR/cds-site.conf"
@@ -395,9 +409,30 @@ check_deps() {
 }
 
 install_deps() {
-  [ -d "$SCRIPT_DIR/node_modules" ] && return 0
-  info "安装依赖 ..."
+  # Skip only when node_modules exists AND pnpm-lock.yaml hasn't
+  # changed since the last install. The old "skip if node_modules
+  # exists" was a P4 Part 18 footgun: after a self-update switched
+  # branches, new deps in pnpm-lock.yaml (like the `mongodb` package
+  # that Phase D.1 added) never got installed, which crashed the
+  # new CDS process with a cryptic MODULE_NOT_FOUND at boot.
+  #
+  # The sentinel file records the mtime of pnpm-lock.yaml at the
+  # time of the last successful install. If the lockfile is newer
+  # than the sentinel, we re-install. Empty state dir → always run.
+  local sentinel="$STATE_DIR/.pnpm-lock-installed"
+  local lockfile="$SCRIPT_DIR/pnpm-lock.yaml"
+  if [ -d "$SCRIPT_DIR/node_modules" ] && [ -f "$sentinel" ] && [ -f "$lockfile" ]; then
+    if [ "$sentinel" -nt "$lockfile" ] || [ "$sentinel" -ef "$lockfile" ]; then
+      return 0
+    fi
+    info "检测到 pnpm-lock.yaml 有变更，重新安装依赖 ..."
+  else
+    info "首次安装依赖 ..."
+  fi
   pnpm install --frozen-lockfile 2>/dev/null || pnpm install
+  # Record successful install — touch sentinel after the lock so
+  # subsequent runs correctly compare mtimes.
+  touch "$sentinel"
 }
 
 build_ts() {
@@ -750,6 +785,10 @@ cds_start_background() {
     return 0
   fi
 
+  # P4 Part 18 (G1.4): ensure multi-repo clone dir exists + exported.
+  export CDS_REPOS_BASE="${CDS_REPOS_BASE:-$REPOS_BASE_DEFAULT}"
+  mkdir -p "$CDS_REPOS_BASE"
+
   info "启动 CDS (后台模式) ..."
   nohup node dist/index.js "$CONFIG_FILE" > "$LOG_FILE" 2>&1 &
   local pid=$!
@@ -783,6 +822,10 @@ cds_start_foreground() {
   check_deps
   install_deps
   build_ts
+  # P4 Part 18 (G1.4): same multi-repo clone dir setup as background mode.
+  load_env
+  export CDS_REPOS_BASE="${CDS_REPOS_BASE:-$REPOS_BASE_DEFAULT}"
+  mkdir -p "$CDS_REPOS_BASE"
   info "启动 CDS (前台，Ctrl+C 退出)"
   exec node dist/index.js "$CONFIG_FILE"
 }
@@ -923,6 +966,80 @@ logs_cmd() {
     return 0
   fi
   tail -100f "$LOG_FILE"
+}
+
+# P4 Part 18 hardening: install systemd unit with auto-filled paths.
+#
+# The shipped cds/systemd/cds-master.service has hardcoded example
+# paths (/opt/prd_agent). This helper reads the running install's
+# actual paths, rewrites the unit file into /tmp, and prints the
+# exact install commands. Users can pipe it through sudo or copy-
+# paste. No writes to /etc happen automatically because this script
+# has no sudo context.
+#
+# P4 Part 18 hardening v2 (user-reported): the first version of this
+# command only substituted binary paths. It missed the fact that
+# systemd services run with a minimal PATH that typically does NOT
+# include nvm's node bin directory. So when pnpm/npx ran, their
+# `#!/usr/bin/env node` shebang failed with
+#   /usr/bin/env: 'node': No such file or directory
+# even though pnpm's absolute path was correct.
+#
+# Fix: inject `Environment=PATH=...` with the node bin dir prepended
+# so every child process sees node on PATH. Also inject NODE_PATH so
+# pnpm can find its own modules in nvm's global dir.
+install_systemd_cmd() {
+  local repo_root
+  repo_root="$(cd "$SCRIPT_DIR/.." && pwd)"
+  local cds_dir="$SCRIPT_DIR"
+  local pnpm_bin tsc_bin node_bin node_bin_dir
+  pnpm_bin="$(command -v pnpm 2>/dev/null || echo /usr/bin/pnpm)"
+  node_bin="$(command -v node 2>/dev/null || echo /usr/bin/node)"
+  tsc_bin="$(command -v npx 2>/dev/null || echo /usr/bin/npx)"
+  # Derive the directory that holds node/pnpm/npx. For nvm installs
+  # this is e.g. /root/.nvm/versions/node/v22.22.2/bin — systemd needs
+  # this prepended to PATH so the shebang `#!/usr/bin/env node` that
+  # pnpm/npx use resolves to nvm's node and not "command not found".
+  node_bin_dir="$(dirname "$node_bin")"
+
+  local template="$cds_dir/systemd/cds-master.service"
+  local out="/tmp/cds-master.service.$$"
+
+  [ -f "$template" ] || { err "模板不存在: $template"; exit 1; }
+
+  # Use a pipe so we can inject Environment=PATH on the fly. The
+  # template ships with the dev-friendly defaults; we patch:
+  #   - WorkingDirectory / CDS_REPO_ROOT to the actual install
+  #   - Binary absolute paths for pnpm/node/npx
+  #   - NEW: Environment=PATH=<node_bin_dir>:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+  #     inserted right before the existing NODE_ENV line so the rest
+  #     of the unit inherits it.
+  sed \
+    -e "s|/opt/prd_agent/cds|$cds_dir|g" \
+    -e "s|/opt/prd_agent|$repo_root|g" \
+    -e "s|/usr/bin/pnpm|$pnpm_bin|g" \
+    -e "s|/usr/bin/node|$node_bin|g" \
+    -e "s|/usr/bin/npx|$tsc_bin|g" \
+    -e "/^Environment=NODE_ENV=production/i Environment=PATH=$node_bin_dir:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" \
+    "$template" > "$out"
+
+  echo
+  ok "已生成 $out（路径已自动填入当前 CDS 安装位置）"
+  echo
+  echo "  下一步（请复制执行）："
+  echo
+  echo "    sudo cp $out /etc/systemd/system/cds-master.service"
+  echo "    sudo systemctl daemon-reload"
+  echo "    sudo systemctl enable --now cds-master"
+  echo
+  echo "  验证："
+  echo "    systemctl status cds-master"
+  echo "    journalctl -u cds-master -f"
+  echo
+  echo "  启用后，下次 CDS 崩溃会被 systemd 自动重启（最多 5 次/分钟）。"
+  echo "  结合 POST /api/self-update 的 pre-check 预检，基本能杜绝"
+  echo "  "\'"self-update 把自己搞死"\'" 这种 bootstrap trap。"
+  echo
 }
 
 cert_cmd() {
@@ -1475,6 +1592,17 @@ help_cmd() {
                                       → 只在 executor 节点上跑
                                       → 主节点不应该 disconnect (它没"主"可断)
 
+──────────────────────────────────────────────────────────────────
+  🛡 防护命令 (P4 Part 18 hardening)
+──────────────────────────────────────────────────────────────────
+
+  ./exec_cds.sh install-systemd     一键把 CDS 装成 systemd 服务
+                                      → 自动把当前安装路径填进 unit 文件
+                                      → 输出你需要复制执行的 sudo 命令
+                                      → 启用后 CDS 崩溃会被 systemd 自动重启
+                                      → 配合 /api/self-update 的预检，杜绝
+                                        "自更新把自己搞死"的 bootstrap trap
+
   ⚠️ 集群扩容前的检查清单:
      □ 两台机器都已经 init + start 通过
      □ 新机器能 curl 通老机器的 https://xxx/healthz
@@ -1655,6 +1783,12 @@ case "$CMD" in
     ;;
   cluster|cluster-status|nodes)
     cluster_cmd
+    ;;
+  install-systemd)
+    # P4 Part 18 hardening: auto-install the systemd unit with the
+    # current install location interpolated into the paths. Users no
+    # longer have to hand-edit /etc/systemd/system/cds-master.service.
+    install_systemd_cmd
     ;;
   help|--help|-h|"")
     help_cmd

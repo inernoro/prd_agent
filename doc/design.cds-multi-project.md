@@ -313,15 +313,37 @@ P3c: Stop dual-write
 
 详见 `doc/plan.cds-multi-project-phases.md`。
 
-| 期 | 交付 | 用户可见变化 | 内部变化 |
-|---|---|---|---|
-| **P0** | 4 份设计文档 | 无 | 无，只画图纸 |
-| **P1** | 项目列表外壳 | 首页变成项目列表（里面只有 1 个"默认项目"卡） + 左上角 workspace/project 下拉（单项）+ "+ New Project" 按钮点击提示"即将上线" | 零 — 所有 API 仍走老 state.json，中间件用 `projectId = "default"` 兼容旧路径 |
-| **P2** | GitHub OAuth + Org 白名单 + 首登自举 | 必须登录才能访问 | 新增 `users`/`sessions` 集合（MongoDB 先进场） + 认证中间件 |
-| **P3** | MongoDB 数据层迁移（state.json → mongo） | 无感 | 后台三阶段切换：dual-write → read-from-mongo → cleanup |
-| **P4** | 多项目真落地 | "+ New Project" 真的能建第二个项目 | 每项目独立 docker network + mongo 查询全部带 projectId filter |
-| **P5** | Team workspace + GitHub Org 绑定 + 成员邀请 | 可以创建团队 workspace，成员按 Org 同步 | `workspaces` + `workspace_members` + RBAC 中间件 |
-| **P6** | 手动项目 + dirty 标记 + webhook + 自动部署策略 | "部署"真正派上用场 | webhook endpoint + branch dirty tracking + redeploy 策略 |
+> **2026-04-14 实施现状**：P1-P4 全部上线 + 部分 P3/P5 提前实现。详见 `doc/report.cds-phase-b-e-handoff-2026-04-14.md`。
+
+| 期 | 交付 | 用户可见变化 | 内部变化 | 实施状态 |
+|---|---|---|---|---|
+| **P0** | 4 份设计文档 | 无 | 无，只画图纸 | ✅ 已完成 |
+| **P1** | 项目列表外壳 | 首页变成项目列表（里面只有 1 个"默认项目"卡） + 左上角 workspace/project 下拉（单项）+ "+ New Project" 按钮点击提示"即将上线" | 零 — 所有 API 仍走老 state.json，中间件用 `projectId = "default"` 兼容旧路径 | ✅ 已完成 |
+| **P2** | GitHub OAuth + Org 白名单 + 首登自举 | 必须登录才能访问 | 新增 `users`/`sessions` 集合（MongoDB 先进场） + 认证中间件 | ⚠️ 部分（auth-service.ts + memory store；mongo store 等 P5） |
+| **P3** | MongoDB 数据层迁移（state.json → mongo） | 无感 | 后台三阶段切换：dual-write → read-from-mongo → cleanup | ✅ 已完成（**简化方案**：MongoStateBackingStore 作为 IStateBackingStore 接口的第二实现，运行时通过 `/api/storage-mode/switch-to-mongo` 一次性 seed-from-json + 切换；放弃了原计划的 dual-write 三阶段。无感+可回滚） |
+| **P4** | 多项目真落地 + **多仓库 git clone (G1, 提前到 P4)** | "+ New Project" 真的能建第二个项目 + Smart input 粘 git URL 自动 clone + Auto-detect 栈 + 自动建 build profile + 端到端 zero-friction 创建 | 每项目独立 docker network + mongo 查询全部带 projectId filter + `Project.repoPath` 字段 + 无状态 `WorktreeService` + `POST /api/projects/:id/clone` SSE + `POST /api/detect-stack` + 8 种栈检测器 | ✅ 已完成 |
+| **P5** | Team workspace + GitHub Org 绑定 + 成员邀请 | 可以创建团队 workspace，成员按 Org 同步 | `workspaces` + `workspace_members` + RBAC 中间件 | ❌ 未开始 |
+| **P6** | 手动项目 + dirty 标记 + webhook + 自动部署策略 | "部署"真正派上用场 | webhook endpoint + branch dirty tracking + redeploy 策略 | ❌ 未开始 |
+
+### Phase E (2026-04-14) 提前实现：GitHub Device Flow 仓库选择器
+
+不在原 7 期计划中。用户在 P4 验收时反馈"别人点击创建仓库一步完成，我们要填一堆字段 + 没有真正的 GitHub 集成"，于是补充了 Device Flow 路径作为第三种创建方式：
+
+- `POST /api/github/oauth/device-start` → 拿 device_code + user_code
+- `POST /api/github/oauth/device-poll` → 轮询授权状态
+- `GET  /api/github/repos` → 列出用户仓库（私有 + 公开）
+- `DELETE /api/github/oauth` → 断开连接
+- 前端：Settings → GitHub tab + 项目创建模态框的 "使用 GitHub 登录并选择仓库" 按钮 + Device 弹窗 + Repo Picker
+- 私有仓库通过 `https://x-access-token:{token}@github.com/...` URL 注入克隆
+
+### Hardening (2026-04-14) 提前实现：self-update pre-check + module-load smoke
+
+不在原 7 期计划中。Phase E 自测时发现 self-update 把 CDS 自身搞死的 bootstrap trap，补充了三层防护：
+
+- `POST /api/self-update` 在 kill+spawn 前跑 `validateBuildReadiness`（pnpm install + tsc --noEmit）
+- 新端点 `POST /api/self-update-dry-run` 让操作员预检
+- vitest 模块加载冒烟测试（39 个文件）— 任何 ESM/require/missing import bug 在 commit 前就失败
+- systemd unit + `./exec_cds.sh install-systemd` 一键安装
 
 ---
 

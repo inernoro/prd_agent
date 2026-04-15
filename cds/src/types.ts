@@ -359,6 +359,37 @@ export interface CdsState {
    * See doc/design.cds-multi-project.md, doc/spec.cds-project-model.md.
    */
   projects?: Project[];
+  /**
+   * P4 Part 18 (Phase E): single-slot GitHub Device Flow token used
+   * by the "从 GitHub 选择仓库" button in the New Project modal and
+   * the Settings → GitHub Integration tab. Orthogonal to the CDS
+   * session auth (auth-service.ts) — this is bring-your-own-token
+   * for repo fetching, not a CDS login mechanism.
+   *
+   * Single-slot because CDS is single-tenant-per-install; per-user
+   * tokens are a future phase once the user model stabilises.
+   */
+  githubDeviceAuth?: GitHubDeviceAuth;
+}
+
+/**
+ * GitHub Device Flow token snapshot persisted in state.json. The
+ * token itself is a GitHub-issued opaque string — we never decrypt
+ * or inspect it, just pass it along to api.github.com.
+ */
+export interface GitHubDeviceAuth {
+  /** Raw access_token returned by GitHub. */
+  token: string;
+  /** GitHub login (e.g. 'octocat') for the UI. */
+  login: string;
+  /** Display name (may be null). */
+  name: string | null;
+  /** Avatar URL for the Settings UI. */
+  avatarUrl: string | null;
+  /** ISO timestamp of when the device flow completed. */
+  connectedAt: string;
+  /** OAuth scopes granted by the user. */
+  scopes: string[];
 }
 
 /**
@@ -389,6 +420,30 @@ export interface Project {
   kind: 'git' | 'manual';
   /** Optional Git repository URL; populated for auto-created legacy projects from CdsConfig.repoRoot. */
   gitRepoUrl?: string;
+  /**
+   * Absolute path to the git checkout for this project. For projects
+   * created after P4 Part 18 (G1) this points to
+   * `${config.reposBase}/<projectId>` and is populated once the async
+   * git clone completes.
+   *
+   * The legacy 'default' project and any pre-G1 projects leave this
+   * undefined and fall back to the globally-mounted `config.repoRoot`
+   * at every use site — see `StateService.getProjectRepoRoot()`.
+   */
+  repoPath?: string;
+  /**
+   * Async clone lifecycle for this project. Absent (or 'ready') for
+   * legacy projects; set to 'pending' immediately after POST /projects
+   * when a gitRepoUrl is supplied; 'cloning' while the SSE clone runs;
+   * 'ready' after success; 'error' after failure.
+   *
+   * Deploy endpoints should refuse to build a branch from a project
+   * whose cloneStatus is 'pending' / 'cloning' / 'error' — the repo
+   * isn't usable until the clone has finished.
+   */
+  cloneStatus?: 'pending' | 'cloning' | 'ready' | 'error';
+  /** Human-readable error message set when cloneStatus === 'error'. */
+  cloneError?: string;
   /**
    * Name of the dedicated Docker network backing this project. Populated
    * by P4 Part 2 on project creation (`cds-proj-<id-prefix>`). The
@@ -669,6 +724,18 @@ export interface SchedulerConfig {
 /** Application configuration */
 export interface CdsConfig {
   repoRoot: string;
+  /**
+   * Base directory that houses every per-project git clone for the
+   * multi-repo flow introduced in P4 Part 18 (G1). Each project's
+   * repo lives at `${reposBase}/${projectId}`. When undefined (the
+   * pre-G1 default), every project falls back to the top-level
+   * `repoRoot`, preserving legacy single-repo behavior.
+   *
+   * Typically wired from `CDS_REPOS_BASE=/repos` in exec_cds.sh and
+   * mounted as a persistent host volume so cloned repos survive
+   * container rebuilds (self-update).
+   */
+  reposBase?: string;
   worktreeBase: string;
   /** Master dashboard port */
   masterPort: number;

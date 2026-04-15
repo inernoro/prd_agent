@@ -1,6 +1,6 @@
 # Codebase Skill（代码库快照）
 
-> **最后更新**：2026-02-07 | **总提交数**：329 | **文档版本**：SRS v3.0, PRD v3.0
+> **最后更新**：2026-04-14 | **总提交数**：~360 | **文档版本**：SRS v3.0, PRD v3.0
 >
 > AI 读取此段落即可跳过全盘扫描，仅对增量变更定点校验。
 
@@ -13,6 +13,7 @@ prd_agent/
 ├── prd-admin/        # React 18 管理后台 (Vite, Zustand, Radix UI)
 ├── prd-desktop/      # Tauri 2.0 桌面客户端 (Rust + React)
 ├── prd-video/        # Remotion 视频合成
+├── cds/              # Cloud Dev Suite — 分支预览部署工具 (独立 Node/Express)
 ├── doc/              # 编号文档 (design.*, spec.*, plan.*, rule.*, guide.*, report.*)
 └── scripts/          # 构建/部署脚本
 ```
@@ -33,6 +34,8 @@ prd_agent/
 ## 功能状态速查
 
 **已完成**：对话 Run/Worker, 提示词阶段, 权限矩阵, 水印系统, VisualAgent, 文学代理, 速率限制, 液态玻璃主题, Open Platform, 模型组/Gateway, 模型池策略引擎+UI, 桌面自动更新, PRD 评论, 内容缺失检测, 会话归档, 数据管理, 管理通知, 缺陷管理 Agent, 缺陷分享(外部Agent分析+修复报告+验收), 视频 Agent, 视觉创作视频生成, 视频工作流胶囊, 配置市场, 周报管理 Agent (Phase 1-4), PR 审查工作台 V2（每用户 OAuth Device Flow + PR 快照 + 笔记）, 附件上传, 技能系统, 网页托管, 文档空间 (文件上传存盘+内容预览+订阅源定期同步), 涌现探索器 (种子→探索→涌现三维度+SSE流式+ReactFlow画布), CLI Agent 执行器(多执行器分发: builtin-llm/docker/api/script/lobster, 多轮迭代)
+
+**CDS (P4 Part 18, 2026-04-14)**: 多项目隔离 (Project model + dockerNetwork) + **多仓库 git clone (G1 — Project.repoPath + 无状态 WorktreeService + POST /projects/:id/clone SSE)** + Topology 视图 Deploy 按钮 + Public URL 卡片 + Infra 连接串 + **MongoDB 存储后端 (D.1-D.3, JSON ↔ Mongo 运行时切换 + auto-fallback + seed-from-json)** + **GitHub Device Flow 仓库选择器 (E.1-E.3, /api/github/oauth/device-start + repos picker + Settings tab)** + **Stack auto-detect (G10, 8 种栈 nodejs/python/go/rust/java/ruby/php/dockerfile)** + **Self-update pre-check 防护 (validateBuildReadiness + /api/self-update-dry-run + module-load smoke test)** + 空模板 → 创建 → clone → detect → 自动 build profile 端到端 zero-friction 流程
 
 **部分完成**：知识库 (多文档上传+类型管理+三阶段格式检测+UTF-16 BOM 支持已实现, RAG/embedding 未实现)
 

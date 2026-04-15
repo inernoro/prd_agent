@@ -6,6 +6,8 @@ import { fileURLToPath } from 'node:url';
 import { createBranchRouter } from './routes/branches.js';
 import { createBridgeRouter } from './routes/bridge.js';
 import { createProjectsRouter } from './routes/projects.js';
+import { createStorageModeRouter, type StorageModeContext } from './routes/storage-mode.js';
+import { createGithubOAuthRouter } from './routes/github-oauth.js';
 import { createAuthRouter } from './routes/auth.js';
 import { MemoryAuthStore } from './infra/auth-store/memory-store.js';
 import { GitHubOAuthClient } from './services/github-oauth-client.js';
@@ -39,6 +41,14 @@ export interface ServerDeps {
   registry?: import('./scheduler/executor-registry.js').ExecutorRegistry;
   /** Getter for the current dispatch strategy. See routes/cluster.ts. */
   getClusterStrategy?: () => 'least-branches' | 'least-load' | 'round-robin';
+  /**
+   * P4 Part 18 (D.3): shared storage-mode context — used by the new
+   * storage-mode router to surface + mutate the running backing store
+   * at runtime. Always present after initStateService runs in index.ts.
+   */
+  storageModeContext?: StorageModeContext;
+  /** P4 Part 18 (D.3): path to the json state file, used for rollback. */
+  stateFile?: string;
 }
 
 function makeToken(user: string, pass: string): string {
@@ -807,6 +817,48 @@ export function createServer(deps: ServerDeps): express.Express {
     registry: deps.registry,
     getClusterStrategy: deps.getClusterStrategy,
   }));
+
+  // P4 Part 18 (D.3): storage-mode management endpoints. Requires the
+  // shared storageModeContext which index.ts populates during
+  // initStateService(). Absent in pre-D.3 tests that spin up the
+  // server without a real storage context — the router is optional.
+  if (deps.storageModeContext && deps.stateFile) {
+    app.use('/api', createStorageModeRouter({
+      stateService: deps.stateService,
+      stateFile: deps.stateFile,
+      repoRoot: deps.config.repoRoot,
+      context: deps.storageModeContext,
+    }));
+  }
+
+  // P4 Part 18 (Phase E): GitHub OAuth Device Flow router.
+  //
+  // The router is always mounted so the frontend can hit /status +
+  // get { configured: false } when CDS_GITHUB_CLIENT_ID is unset
+  // and gracefully hide the Sign-in button. When configured, the
+  // full Device Flow + repo listing is available.
+  //
+  // We instantiate a SEPARATE GitHubOAuthClient here (vs the one
+  // used for CDS session auth) because Device Flow only needs the
+  // client_id — no secret. This lets setups that don't use GitHub
+  // for CDS login still offer the repo picker.
+  {
+    // P4 Part 18 (Phase E): instantiate a Device-Flow-only GitHub
+    // OAuth client. Reuses the same GitHubOAuthClient class already
+    // imported at the top of this file — device flow methods only
+    // need client_id, so an empty client_secret is fine here.
+    const ghClientId = process.env.CDS_GITHUB_CLIENT_ID;
+    const deviceClient = ghClientId
+      ? new GitHubOAuthClient({
+          clientId: ghClientId,
+          clientSecret: process.env.CDS_GITHUB_CLIENT_SECRET || '',
+        })
+      : null;
+    app.use('/api', createGithubOAuthRouter({
+      stateService: deps.stateService,
+      githubClient: deviceClient,
+    }));
+  }
 
   // NOTE: The SPA fallback (`app.get('*', ...)`) is intentionally NOT
   // registered here. Routes mounted later in `index.ts` (scheduler, cluster,

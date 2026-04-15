@@ -239,6 +239,23 @@ load():
 - [ ] **分支迁移** — executor A 过载时把 LRU 分支搬到 B（cool → worktree 删除 → B 重建 → deploy）
 - [ ] **Webhook 预热接口** — `POST /api/webhook/warm` 在 git push 后主动预热目标分支
 
+### Phase 4 (v3.4, 2026-04-14, 已落地) — Self-update bootstrap-trap 防护
+
+新发现的故障类：self-update 杀掉运行中的进程后才发现新代码起不来（ESM/缺依赖/语法错），CDS 自身死亡且无 API 可恢复 — 经典 chicken-and-egg。
+
+- [x] **`validateBuildReadiness()` 预检**（`src/routes/branches.ts`）— self-update 路由在 git pull 之后、kill+spawn 之前插入新的 `validate` SSE 阶段：
+  - 跑 `pnpm install --frozen-lockfile`（300s 超时）
+  - 跑 `npx tsc --noEmit`（120s 超时）
+  - 任何一步失败 → 返回 SSE error，**不杀进程，不 spawn**，原 CDS 继续服务
+- [x] **`POST /api/self-update-dry-run`** — 零副作用调用同一个 `validateBuildReadiness`，给操作员 / CI 在按红按钮前预检
+- [x] **`tests/infra/module-load.test.ts`** — vitest 走 `src/` 下每个 `.ts`（除 `index.ts`）做 dynamic `import()`，任何 ESM/require/缺依赖/语法错在 `pnpm test` 阶段就失败。这个测试就是为了堵住 P4 Phase E 那次 ESM `require()` 崩溃的同类 bug
+- [x] **`exec_cds.sh install_deps` sentinel 修复** — 之前 `[ -d node_modules ] && return 0` 让 self-update 切分支后永远跳过 `pnpm install`，新依赖永远装不上；改成对比 `pnpm-lock.yaml` mtime 与 sentinel 文件，lockfile 变化才重装
+- [x] **systemd unit `ExecStartPre` 自愈** — `cds/systemd/cds-master.service` 加 `ExecStartPre=pnpm install --frozen-lockfile` + `ExecStartPre=npx tsc`，崩溃后 systemd 重启前自愈依赖+编译
+- [x] **`./exec_cds.sh install-systemd` 一键安装** — 自动读取当前安装路径（含 nvm node bin dir），sed 替换进 unit 模板，注入 `Environment=PATH=$node_bin_dir:...` 解决 systemd 最小 PATH 找不到 node 的问题
+- [x] 单元测试：`validateBuildReadiness`（6）、module-load smoke（39）— 共 45 个新用例
+
+详见 `doc/report.cds-phase-b-e-handoff-2026-04-14.md`。
+
 ---
 
 ## 八、Phase 3 分布式架构（接入系统的 3 层模型）

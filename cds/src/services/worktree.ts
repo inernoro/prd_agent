@@ -2,28 +2,38 @@ import type { IShellExecutor } from '../types.js';
 import { combinedOutput } from '../types.js';
 import { StateService } from './state.js';
 
+/**
+ * WorktreeService — thin wrapper around `git worktree` for building
+ * isolated checkouts of a single repository.
+ *
+ * ── P4 Part 18 (G1) ─────────────────────────────────────────────
+ * Previously this class held a single `_repoRoot` field, set in the
+ * constructor and rarely mutated. That worked fine when CDS managed
+ * exactly one Git repository bind-mounted at `config.repoRoot`, but
+ * the multi-project clone flow (`.cds/repos/<projectId>`) needs the
+ * repo root to vary per call. Keeping it as instance state would
+ * introduce race conditions between concurrent deploys from
+ * different projects.
+ *
+ * The fix is stateless: every method that touches `git` takes
+ * `repoRoot` as its first argument, and callers resolve the right
+ * root via `StateService.getProjectRepoRoot(projectId, fallback)`.
+ * `pull()` is the one exception — it already uses `targetDir` (the
+ * worktree itself) as its `cwd`, so it doesn't need a separate
+ * repoRoot at all.
+ *
+ * The proxy auto-build path, the bootstrap main-branch path, and
+ * all executor routes still operate on a single repo — they pass
+ * `config.repoRoot` directly, preserving the legacy single-repo
+ * behavior for users who haven't yet adopted multi-project.
+ */
 export class WorktreeService {
-  private _repoRoot: string;
+  constructor(private readonly shell: IShellExecutor) {}
 
-  constructor(
-    private readonly shell: IShellExecutor,
-    repoRoot: string,
-  ) {
-    this._repoRoot = repoRoot;
-  }
-
-  get repoRoot(): string {
-    return this._repoRoot;
-  }
-
-  set repoRoot(value: string) {
-    this._repoRoot = value;
-  }
-
-  async create(branch: string, targetDir: string): Promise<void> {
+  async create(repoRoot: string, branch: string, targetDir: string): Promise<void> {
     const fetchResult = await this.shell.exec(
       `git fetch origin ${branch}`,
-      { cwd: this.repoRoot },
+      { cwd: repoRoot },
     );
     if (fetchResult.exitCode !== 0) {
       throw new Error(`拉取分支 "${branch}" 失败:\n${combinedOutput(fetchResult)}`);
@@ -32,7 +42,7 @@ export class WorktreeService {
     // Always prune stale worktree references before creating a new one.
     // This handles the case where git has a registered worktree whose
     // directory no longer exists (e.g. after a crash or manual rm).
-    await this.shell.exec('git worktree prune', { cwd: this.repoRoot });
+    await this.shell.exec('git worktree prune', { cwd: repoRoot });
 
     // Remove leftover directory if it still exists
     const checkDir = await this.shell.exec(`test -d "${targetDir}" && echo exists`);
@@ -42,7 +52,7 @@ export class WorktreeService {
 
     const addResult = await this.shell.exec(
       `git worktree add "${targetDir}" "origin/${branch}"`,
-      { cwd: this.repoRoot },
+      { cwd: repoRoot },
     );
     if (addResult.exitCode !== 0) {
       throw new Error(`创建工作树 "${branch}" 失败:\n${combinedOutput(addResult)}`);
@@ -50,7 +60,11 @@ export class WorktreeService {
   }
 
   /** Pull latest code for an existing worktree.
-   *  Returns { head, before, after, updated } so caller can detect "already up to date". */
+   *  Returns { head, before, after, updated } so caller can detect "already up to date".
+   *
+   *  NOTE: `pull` does not need `repoRoot` because every git command
+   *  runs inside `targetDir` (the worktree itself) rather than the
+   *  host repo root. Kept at the 2-arg signature for that reason. */
   async pull(branch: string, targetDir: string): Promise<{ head: string; before: string; after: string; updated: boolean }> {
     // Get current SHA before pull
     const beforeResult = await this.shell.exec(
@@ -92,20 +106,20 @@ export class WorktreeService {
     return { head: logResult.stdout.trim(), before, after, updated: before !== after };
   }
 
-  async remove(targetDir: string): Promise<void> {
+  async remove(repoRoot: string, targetDir: string): Promise<void> {
     const result = await this.shell.exec(
       `git worktree remove --force "${targetDir}"`,
-      { cwd: this.repoRoot },
+      { cwd: repoRoot },
     );
     if (result.exitCode !== 0) {
       throw new Error(`删除工作树 "${targetDir}" 失败:\n${combinedOutput(result)}`);
     }
   }
 
-  async branchExists(branch: string): Promise<boolean> {
+  async branchExists(repoRoot: string, branch: string): Promise<boolean> {
     const result = await this.shell.exec(
       `git ls-remote --heads origin "${branch}"`,
-      { cwd: this.repoRoot },
+      { cwd: repoRoot },
     );
     return result.exitCode === 0 && result.stdout.trim().length > 0;
   }
@@ -114,10 +128,10 @@ export class WorktreeService {
    * Find a remote branch whose name ends with the given suffix.
    * Returns the full branch name or null.
    */
-  async findBranchBySuffix(suffix: string): Promise<string | null> {
+  async findBranchBySuffix(repoRoot: string, suffix: string): Promise<string | null> {
     const result = await this.shell.exec(
       `git ls-remote --heads origin`,
-      { cwd: this.repoRoot },
+      { cwd: repoRoot },
     );
     if (result.exitCode !== 0) return null;
 
@@ -143,10 +157,10 @@ export class WorktreeService {
    * This handles cases where the slug (e.g. "claude-fix-software-defects-dlxzp")
    * was derived from a branch with "/" (e.g. "claude/fix-software-defects-dlxzp").
    */
-  async findBranchBySlug(slug: string): Promise<string | null> {
+  async findBranchBySlug(repoRoot: string, slug: string): Promise<string | null> {
     const result = await this.shell.exec(
       `git ls-remote --heads origin`,
-      { cwd: this.repoRoot },
+      { cwd: repoRoot },
     );
     if (result.exitCode !== 0) return null;
 

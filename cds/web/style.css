@@ -6173,6 +6173,121 @@ body.cds-topology-fs .topology-fs-panel.open { transform: translateX(0); }
   color: var(--text-secondary);
 }
 
+/* P4 Part 18 (G5): inline Deploy / Redeploy button in status banner. */
+.tfp-deploy-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 11px;
+  background: rgba(16, 185, 129, 0.14);
+  border: 1px solid rgba(16, 185, 129, 0.35);
+  border-radius: 6px;
+  color: var(--green, #10b981);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.2px;
+  cursor: pointer;
+  transition: background 120ms ease, border-color 120ms ease, transform 80ms ease;
+  white-space: nowrap;
+}
+.tfp-deploy-btn:hover {
+  background: rgba(16, 185, 129, 0.22);
+  border-color: rgba(16, 185, 129, 0.55);
+}
+.tfp-deploy-btn:active { transform: translateY(1px); }
+.tfp-deploy-btn.disabled,
+.tfp-deploy-btn:disabled {
+  background: var(--bg-elevated);
+  border-color: var(--card-border);
+  color: var(--text-muted);
+  cursor: not-allowed;
+}
+.tfp-deploy-btn.disabled:hover,
+.tfp-deploy-btn:disabled:hover {
+  background: var(--bg-elevated);
+  border-color: var(--card-border);
+}
+
+/* P4 Part 18 (G6): Public URL row — prominent, clickable, mode-aware. */
+.tfp-public-url-card {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 14px;
+  background: var(--bg-card);
+  border: 1px solid var(--card-border);
+  border-radius: 9px;
+  margin-bottom: 14px;
+  cursor: pointer;
+  transition: background 120ms ease, border-color 120ms ease;
+}
+.tfp-public-url-card:hover {
+  background: var(--bg-hover, rgba(255, 255, 255, 0.04));
+  border-color: rgba(88, 166, 255, 0.35);
+}
+.tfp-public-url-card.disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+.tfp-public-url-card.disabled:hover {
+  background: var(--bg-card);
+  border-color: var(--card-border);
+}
+.tfp-public-url-text {
+  flex: 1;
+  min-width: 0;
+}
+.tfp-public-url-value {
+  font-family: var(--font-mono, monospace);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.tfp-public-url-hint {
+  font-size: 10px;
+  color: var(--text-muted);
+  margin-top: 2px;
+}
+
+/* P4 Part 18 (G7): infra connection strings — host + container view. */
+.tfp-conn-list {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  background: var(--card-border);
+  border: 1px solid var(--card-border);
+  border-radius: 9px;
+  overflow: hidden;
+  margin-bottom: 4px;
+}
+.tfp-conn-row {
+  display: grid;
+  grid-template-columns: 110px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  background: var(--bg-card);
+}
+.tfp-conn-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+}
+.tfp-conn-value {
+  font-family: var(--font-mono, monospace);
+  font-size: 11.5px;
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  user-select: all;
+}
+
 .tfp-mini-stat {
   display: inline-flex;
   align-items: center;

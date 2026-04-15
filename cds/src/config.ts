@@ -37,6 +37,12 @@ const schedulerUrl = process.env.CDS_SCHEDULER_URL || masterUrl || undefined;
 
 const DEFAULT_CONFIG: CdsConfig = {
   repoRoot: path.resolve(process.cwd(), '..'),
+  // P4 Part 18 (G1.4): reposBase is the mount point under which
+  // per-project clones live (`${reposBase}/<projectId>`). Default
+  // reads CDS_REPOS_BASE env (set by exec_cds.sh bind-mount) — when
+  // empty the multi-repo clone flow is effectively disabled and
+  // every project falls back to repoRoot.
+  reposBase: process.env.CDS_REPOS_BASE || undefined,
   worktreeBase: path.resolve(process.cwd(), '..', '.cds-worktrees'),
   masterPort: 9900,
   workerPort: 5500,

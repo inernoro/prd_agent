@@ -17,6 +17,62 @@ import { discoverComposeFiles, parseComposeFile, parseComposeString, toComposeYa
 import type { ComposeServiceDef } from '../services/compose-parser.js';
 import { combinedOutput } from '../types.js';
 import { topoSortLayers } from '../services/topo-sort.js';
+import { detectStack } from '../services/stack-detector.js';
+
+/**
+ * P4 Part 18 (hardening): pre-restart sanity check for self-update.
+ *
+ * Runs `pnpm install --frozen-lockfile` + `tsc --noEmit` inside the
+ * CDS source dir BEFORE kill+spawn. Returns a structured result
+ * that the self-update route uses to decide whether to proceed.
+ *
+ * Contract:
+ *   - ok: true  → both stages succeeded, safe to restart
+ *   - ok: false → first failing stage + stderr excerpt in error
+ *
+ * Why this is in its own function: it's called from two routes
+ * (the real /self-update and the dry-run /self-update-dry-run).
+ * Both share the exact same validation so an operator who pre-
+ * validates gets the same result the live restart would.
+ *
+ * Timeouts:
+ *   pnpm install — 300s (cold install can take a while on slow disks)
+ *   tsc          — 120s (CDS is ~5k LOC, should finish in <10s)
+ *
+ * On a healthy CDS these run in 3-8 seconds combined because
+ * frozen-lockfile is a near no-op when node_modules is current.
+ */
+export async function validateBuildReadiness(
+  shell: IShellExecutor,
+  cdsDir: string,
+): Promise<{ ok: true; summary: string } | { ok: false; stage: 'install' | 'tsc'; error: string }> {
+  // Stage 1: pnpm install --frozen-lockfile
+  const installResult = await shell.exec(
+    'pnpm install --frozen-lockfile',
+    { cwd: cdsDir, timeout: 300_000 },
+  );
+  if (installResult.exitCode !== 0) {
+    const err = (combinedOutput(installResult) || 'pnpm install 失败').slice(0, 500);
+    return { ok: false, stage: 'install', error: err };
+  }
+
+  // Stage 2: tsc --noEmit — catches ESM/CJS mismatches, missing
+  // imports, type errors, and anything else that would crash the
+  // new process at module-load time.
+  const tscResult = await shell.exec(
+    'npx tsc --noEmit',
+    { cwd: cdsDir, timeout: 120_000 },
+  );
+  if (tscResult.exitCode !== 0) {
+    const err = (combinedOutput(tscResult) || 'tsc --noEmit 失败').slice(0, 800);
+    return { ok: false, stage: 'tsc', error: err };
+  }
+
+  return {
+    ok: true,
+    summary: 'pnpm install + tsc --noEmit 通过',
+  };
+}
 
 export interface RouterDeps {
   stateService: StateService;
@@ -616,14 +672,38 @@ export function createBranchRouter(deps: RouterDeps): Router {
       // Missing value → defaults to 'default' in addBranch().
       const effectiveProjectId = projectId && typeof projectId === 'string' ? projectId : 'default';
       // Validate the project exists so we don't create orphans.
-      if (!stateService.getProject(effectiveProjectId)) {
+      const targetProject = stateService.getProject(effectiveProjectId);
+      if (!targetProject) {
         res.status(400).json({ error: `未知项目: ${effectiveProjectId}` });
         return;
       }
 
+      // P4 Part 18 (G1.5): refuse deploy if the project's clone isn't
+      // ready yet. Legacy projects (no cloneStatus at all) pass
+      // through because they use config.repoRoot via the fallback in
+      // getProjectRepoRoot — there's nothing to clone. Only G1
+      // projects with an explicit cloneStatus hit this guard.
+      if (targetProject.cloneStatus && targetProject.cloneStatus !== 'ready') {
+        const statusMsg: Record<string, string> = {
+          pending: '项目尚未开始克隆。请先 POST /api/projects/' + effectiveProjectId + '/clone',
+          cloning: '项目正在克隆中，请等待完成后重试。',
+          error: '项目上次克隆失败，请先重试克隆：' + (targetProject.cloneError || '未知错误'),
+        };
+        res.status(409).json({
+          error: 'project_not_ready',
+          cloneStatus: targetProject.cloneStatus,
+          message: statusMsg[targetProject.cloneStatus] || `项目克隆状态异常: ${targetProject.cloneStatus}`,
+        });
+        return;
+      }
+
+      // P4 Part 18 (G1.2): resolve the git repo root for the target
+      // project. Legacy 'default' projects (and any project without a
+      // cloned repoPath) fall back to the globally-mounted repoRoot.
+      const branchRepoRoot = stateService.getProjectRepoRoot(effectiveProjectId, config.repoRoot);
       await shell.exec(`mkdir -p "${config.worktreeBase}"`);
       const worktreePath = `${config.worktreeBase}/${id}`;
-      await worktreeService.create(branch, worktreePath);
+      await worktreeService.create(branchRepoRoot, branch, worktreePath);
 
       const entry: BranchEntry = {
         id,
@@ -737,7 +817,10 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
       // Remove worktree
       sendSSE(res, 'step', { step: 'worktree', status: 'running', title: '正在删除工作树...' });
-      try { await worktreeService.remove(entry.worktreePath); } catch { /* ok */ }
+      try {
+        const repoRoot = stateService.getProjectRepoRoot(entry.projectId, config.repoRoot);
+        await worktreeService.remove(repoRoot, entry.worktreePath);
+      } catch { /* ok */ }
       sendSSE(res, 'step', { step: 'worktree', status: 'done', title: '工作树已删除' });
 
       stateService.removeLogs(id);
@@ -776,6 +859,25 @@ export function createBranchRouter(deps: RouterDeps): Router {
     const entry = stateService.getBranch(id);
     if (!entry) {
       res.status(404).json({ error: `分支 "${id}" 不存在` });
+      return;
+    }
+
+    // P4 Part 18 (G1.5): same clone-ready guard as POST /branches.
+    // Deploy uses worktree pull/create which would fail with a
+    // cryptic git error if the target project's clone isn't ready.
+    // Legacy branches (no projectId or legacy 'default') pass through.
+    const deployProject = entry.projectId ? stateService.getProject(entry.projectId) : undefined;
+    if (deployProject?.cloneStatus && deployProject.cloneStatus !== 'ready') {
+      const statusMsg: Record<string, string> = {
+        pending: '项目尚未开始克隆。请先 POST /api/projects/' + deployProject.id + '/clone',
+        cloning: '项目正在克隆中，请等待完成后重试。',
+        error: '项目上次克隆失败，请先重试克隆：' + (deployProject.cloneError || '未知错误'),
+      };
+      res.status(409).json({
+        error: 'project_not_ready',
+        cloneStatus: deployProject.cloneStatus,
+        message: statusMsg[deployProject.cloneStatus] || `项目克隆状态异常: ${deployProject.cloneStatus}`,
+      });
       return;
     }
 
@@ -2356,10 +2458,12 @@ export function createBranchRouter(deps: RouterDeps): Router {
       if (!env.DASHBOARD_DOMAIN) config.dashboardDomain = config.rootDomains[0];
       if (!env.PREVIEW_DOMAIN) config.previewDomain = config.rootDomains[0];
     }
-    // Repo root & worktree base: allow UI override for directory isolation
+    // Repo root & worktree base: allow UI override for directory isolation.
+    // P4 Part 18 (G1.2): WorktreeService is now stateless, so we just
+    // mutate config.repoRoot — call-sites read it via config or via
+    // stateService.getProjectRepoRoot(projectId, config.repoRoot).
     if (env.CDS_REPO_ROOT) {
       config.repoRoot = env.CDS_REPO_ROOT;
-      worktreeService.repoRoot = env.CDS_REPO_ROOT;
     }
     if (env.CDS_WORKTREE_BASE) config.worktreeBase = env.CDS_WORKTREE_BASE;
   }
@@ -2550,7 +2654,10 @@ export function createBranchRouter(deps: RouterDeps): Router {
         for (const svc of Object.values(entry.services)) {
           try { await containerService.stop(svc.containerName); } catch { /* ok */ }
         }
-        try { await worktreeService.remove(entry.worktreePath); } catch { /* ok */ }
+        try {
+          const repoRoot = stateService.getProjectRepoRoot(entry.projectId, config.repoRoot);
+          await worktreeService.remove(repoRoot, entry.worktreePath);
+        } catch { /* ok */ }
         stateService.removeLogs(entry.id);
         stateService.removeBranch(entry.id);
         sendSSE(res, 'step', { step: 'cleanup', status: 'done', title: `已删除 ${entry.id}` });
@@ -2609,7 +2716,10 @@ export function createBranchRouter(deps: RouterDeps): Router {
           try { await containerService.stop(svc.containerName); } catch { /* ok */ }
         }
         // Remove worktree
-        try { await worktreeService.remove(entry.worktreePath); } catch { /* ok */ }
+        try {
+          const repoRoot = stateService.getProjectRepoRoot(entry.projectId, config.repoRoot);
+          await worktreeService.remove(repoRoot, entry.worktreePath);
+        } catch { /* ok */ }
         // Remove from state
         stateService.removeLogs(entry.id);
         stateService.removeBranch(entry.id);
@@ -2705,7 +2815,10 @@ export function createBranchRouter(deps: RouterDeps): Router {
         for (const svc of Object.values(entry.services)) {
           try { await containerService.stop(svc.containerName); } catch { /* ok */ }
         }
-        try { await worktreeService.remove(entry.worktreePath); } catch { /* ok */ }
+        try {
+          const repoRoot = stateService.getProjectRepoRoot(entry.projectId, config.repoRoot);
+          await worktreeService.remove(repoRoot, entry.worktreePath);
+        } catch { /* ok */ }
       }
 
       // 2. Stop and remove all infra service containers (volumes preserved)
@@ -3552,10 +3665,12 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
       if (!entry) {
         send('worktree', 'running', `正在为 ${mainBranch} 创建工作树...`);
-        // Ensure worktreeBase directory exists (first-time setup)
+        // Ensure worktreeBase directory exists (first-time setup).
+        // P4 Part 18 (G1.2): the initialize flow bootstraps the legacy
+        // default project's main branch, so it always uses config.repoRoot.
         await shell.exec(`mkdir -p "${config.worktreeBase}"`);
         const worktreePath = `${config.worktreeBase}/${mainSlug}`;
-        await worktreeService.create(mainBranch, worktreePath);
+        await worktreeService.create(config.repoRoot, mainBranch, worktreePath);
 
         entry = {
           id: mainSlug,
@@ -4712,6 +4827,34 @@ export function createBranchRouter(deps: RouterDeps): Router {
       const pullOutput = pullResult.stdout.trim();
       send('pull', 'done', pullOutput.includes('Already up to date') ? '代码已是最新' : '代码已更新');
 
+      // ──────────────────────────────────────────────────────────────
+      // Step 3.5: pre-restart validation (P4 Part 18 hardening).
+      //
+      // The previous self-update killed the running process BEFORE
+      // validating that the new code could even start. When Phase D.1
+      // added a new npm dep (mongodb) AND I introduced an ESM
+      // require() bug, the result was a dead CDS that couldn't be
+      // recovered via its own API — a bootstrap trap. This step
+      // runs pnpm install + tsc --noEmit inside the current process
+      // BEFORE kill+spawn. If anything fails, we abort the restart,
+      // leave the running process alive, and surface the error via
+      // SSE so the operator knows what to fix.
+      // ──────────────────────────────────────────────────────────────
+      const cdsDirForCheck = path.join(repoRoot, 'cds');
+      send('validate', 'running', '正在校验依赖与编译（pnpm install + tsc --noEmit）...');
+      const validation = await validateBuildReadiness(shell, cdsDirForCheck);
+      if (!validation.ok) {
+        send('validate', 'error', `预检失败: ${validation.error}`);
+        sendSSE(res, 'error', {
+          message: `self-update 已中止 — 新代码未通过预检: ${validation.error}`,
+          stage: validation.stage,
+          hint: '原 CDS 进程保持运行中。修复后请重新触发 self-update。',
+        });
+        res.end();
+        return;
+      }
+      send('validate', 'done', `预检通过: ${validation.summary}`);
+
       // Step 4: restart CDS via detached process
       send('restart', 'running', '正在重启 CDS...');
       sendSSE(res, 'done', { message: 'CDS 即将重启，页面将在几秒后自动刷新...' });
@@ -4767,6 +4910,48 @@ export function createBranchRouter(deps: RouterDeps): Router {
       send('error', 'error', `更新失败: ${(err as Error).message}`);
       sendSSE(res, 'error', { message: (err as Error).message });
       res.end();
+    }
+  });
+
+  // POST /api/self-update-dry-run — run the pre-restart validation
+  // WITHOUT killing the running process or spawning a new one.
+  //
+  // Body: {} — operates on the currently checked-out source tree.
+  //
+  // Returns:
+  //   { ok: true, summary }              — safe to self-update
+  //   { ok: false, stage, error }        — blocking issue
+  //
+  // Use case: operators (and CI) who want to verify a branch can
+  // be self-updated before actually hitting the red button. No
+  // side effects — if you see { ok: true } you can confidently
+  // call /api/self-update next.
+  router.post('/self-update-dry-run', async (_req, res) => {
+    const cdsDir = path.join(config.repoRoot, 'cds');
+    try {
+      const started = Date.now();
+      const result = await validateBuildReadiness(shell, cdsDir);
+      const durationMs = Date.now() - started;
+      if (result.ok) {
+        res.json({ ok: true, summary: result.summary, durationMs });
+      } else {
+        res.status(422).json({
+          ok: false,
+          stage: result.stage,
+          error: result.error,
+          durationMs,
+          hint:
+            result.stage === 'install'
+              ? 'pnpm install 失败 — 检查 pnpm-lock.yaml 是否与 package.json 同步，或网络是否能拉到 registry'
+              : 'tsc --noEmit 失败 — 新代码有类型错误或 import 解析不到',
+        });
+      }
+    } catch (err) {
+      res.status(500).json({
+        ok: false,
+        stage: 'unknown',
+        error: (err as Error).message,
+      });
     }
   });
 
@@ -4856,6 +5041,51 @@ export function createBranchRouter(deps: RouterDeps): Router {
     try {
       await schedulerService.markCold(slug);
       res.json({ ok: true, slug, heatState: 'cold' });
+    } catch (err) {
+      res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  // P4 Part 18 (G10): POST /api/detect-stack — auto-detect stack.
+  //
+  // Body: { projectId?, branchId?, path? }
+  //
+  // The route figures out which filesystem path to scan:
+  //   - `path` is absolute → use as-is (rare, escape hatch)
+  //   - `branchId` → use that branch's worktree
+  //   - `projectId` → use the project's repoPath / cloned repo
+  //   - neither → fall back to config.repoRoot
+  //
+  // Returns the raw StackDetection from detectStack(). BuildProfile
+  // form consumers pick dockerImage / installCommand / buildCommand
+  // / runCommand from the response. Never throws on unknown stack;
+  // the client just shows the summary when confidence is 0.
+  router.post('/detect-stack', (req, res) => {
+    const { projectId, branchId, path: explicitPath } = (req.body || {}) as {
+      projectId?: string;
+      branchId?: string;
+      path?: string;
+    };
+
+    let scanPath: string;
+    if (typeof explicitPath === 'string' && explicitPath.length > 0 && path.isAbsolute(explicitPath)) {
+      scanPath = explicitPath;
+    } else if (branchId) {
+      const entry = stateService.getBranch(branchId);
+      if (!entry) {
+        res.status(404).json({ error: `分支 "${branchId}" 不存在` });
+        return;
+      }
+      scanPath = entry.worktreePath;
+    } else if (projectId) {
+      scanPath = stateService.getProjectRepoRoot(projectId, config.repoRoot);
+    } else {
+      scanPath = config.repoRoot;
+    }
+
+    try {
+      const detection = detectStack(scanPath);
+      res.json({ ...detection, scanPath });
     } catch (err) {
       res.status(500).json({ error: (err as Error).message });
     }

@@ -341,6 +341,143 @@
       color: var(--accent);
     }
 
+    /* P4 Part 18 (G1.7): clone lifecycle status pill + clone button */
+    .cds-clone-status {
+      padding: 3px 8px;
+      font-size: 10px;
+      font-weight: 600;
+      letter-spacing: 0.4px;
+      text-transform: uppercase;
+      border-radius: 5px;
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+    }
+    .cds-clone-status.pending {
+      background: rgba(251, 191, 36, 0.15);
+      border: 1px solid rgba(251, 191, 36, 0.4);
+      color: #fbbf24;
+    }
+    .cds-clone-status.cloning {
+      background: rgba(59, 130, 246, 0.15);
+      border: 1px solid rgba(59, 130, 246, 0.4);
+      color: #60a5fa;
+    }
+    .cds-clone-status.ready {
+      background: rgba(16, 185, 129, 0.15);
+      border: 1px solid rgba(16, 185, 129, 0.4);
+      color: #10b981;
+    }
+    .cds-clone-status.error {
+      background: rgba(244, 63, 94, 0.15);
+      border: 1px solid rgba(244, 63, 94, 0.4);
+      color: #f43f5e;
+    }
+    .cds-clone-status .spinner {
+      width: 9px;
+      height: 9px;
+      border: 1.5px solid currentColor;
+      border-top-color: transparent;
+      border-radius: 50%;
+      animation: cds-spin 700ms linear infinite;
+    }
+    @keyframes cds-spin { to { transform: rotate(360deg); } }
+
+    .cds-clone-btn {
+      padding: 6px 12px;
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0.3px;
+      text-transform: uppercase;
+      background: rgba(96, 165, 250, 0.14);
+      border: 1px solid rgba(96, 165, 250, 0.38);
+      color: #60a5fa;
+      border-radius: 6px;
+      cursor: pointer;
+      transition: background 120ms ease;
+    }
+    .cds-clone-btn:hover { background: rgba(96, 165, 250, 0.24); }
+    .cds-clone-btn.retry {
+      background: rgba(244, 63, 94, 0.14);
+      border-color: rgba(244, 63, 94, 0.38);
+      color: #f43f5e;
+    }
+    .cds-clone-btn.retry:hover { background: rgba(244, 63, 94, 0.22); }
+
+    /* Clone-error tooltip under the card */
+    .cds-clone-error {
+      margin-top: 8px;
+      padding: 8px 10px;
+      background: rgba(244, 63, 94, 0.08);
+      border: 1px solid rgba(244, 63, 94, 0.25);
+      border-radius: 7px;
+      font-size: 11px;
+      color: #fca5a5;
+      font-family: var(--font-mono, monospace);
+      max-height: 60px;
+      overflow-y: auto;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+
+    /* Clone progress modal */
+    .cds-clone-modal-dialog {
+      background: var(--bg-card);
+      border: 1px solid var(--card-border);
+      border-radius: 14px;
+      padding: 24px 26px 20px;
+      width: 100%;
+      max-width: 620px;
+      box-shadow: 0 32px 80px rgba(0,0,0,0.6);
+      display: flex;
+      flex-direction: column;
+      max-height: 80vh;
+    }
+    .cds-clone-modal-head {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 6px;
+    }
+    .cds-clone-modal-head .cds-clone-status { flex-shrink: 0; }
+    .cds-clone-modal-title {
+      font-size: 16px;
+      font-weight: 700;
+      color: var(--text-primary);
+    }
+    .cds-clone-modal-url {
+      font-size: 11px;
+      color: var(--text-muted);
+      font-family: var(--font-mono, monospace);
+      margin-bottom: 14px;
+      word-break: break-all;
+    }
+    .cds-clone-log {
+      flex: 1;
+      min-height: 0;
+      overflow-y: auto;
+      background: #0a0a0f;
+      border: 1px solid var(--card-border);
+      border-radius: 8px;
+      padding: 10px 12px;
+      font-family: var(--font-mono, monospace);
+      font-size: 11px;
+      color: #9ca3af;
+      line-height: 1.55;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+    .cds-clone-log .line { display: block; }
+    .cds-clone-log .line.error { color: #fca5a5; }
+    .cds-clone-log .line.complete { color: #86efac; font-weight: 700; }
+    .cds-clone-log .line.info { color: #60a5fa; }
+    .cds-clone-modal-actions {
+      display: flex;
+      justify-content: flex-end;
+      gap: 10px;
+      margin-top: 16px;
+    }
+
     /* Service icon strip (3×dotted background like Railway) */
     .cds-service-strip {
       background: var(--bg-primary);
@@ -530,6 +667,95 @@
     .btn-primary:hover { background: var(--accent-dim); }
     .btn-primary:disabled { opacity: 0.5; cursor: not-allowed; }
 
+    /* P4 Part 18 (Phase E.2): GitHub Sign-in button */
+    .btn-github-signin {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 10px;
+      padding: 12px 16px;
+      background: #24292f;
+      color: #fff;
+      border: 1px solid #30363d;
+      border-radius: 9px;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      font-family: inherit;
+      transition: background 120ms ease, transform 80ms ease;
+    }
+    .btn-github-signin:hover {
+      background: #30363d;
+      border-color: #6e7681;
+    }
+    .btn-github-signin:active { transform: translateY(1px); }
+    html[data-theme="light"] .btn-github-signin {
+      background: #1f2328;
+      color: #fff;
+    }
+
+    /* Repo picker row */
+    .gh-repo-row {
+      display: flex;
+      align-items: flex-start;
+      gap: 12px;
+      padding: 12px 14px;
+      border-bottom: 1px solid var(--card-border);
+      cursor: pointer;
+      transition: background 100ms ease;
+    }
+    .gh-repo-row:last-child { border-bottom: none; }
+    .gh-repo-row:hover { background: var(--bg-hover, rgba(255,255,255,0.04)); }
+    .gh-repo-row.hidden { display: none; }
+    .gh-repo-name {
+      font-family: var(--font-mono, monospace);
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--text-primary);
+    }
+    .gh-repo-meta {
+      font-size: 10px;
+      color: var(--text-muted);
+      margin-top: 3px;
+      display: flex;
+      gap: 8px;
+      align-items: center;
+    }
+    .gh-repo-meta .private {
+      padding: 1px 6px;
+      background: rgba(251, 191, 36, 0.15);
+      border: 1px solid rgba(251, 191, 36, 0.4);
+      color: #fbbf24;
+      border-radius: 4px;
+      font-weight: 700;
+      text-transform: uppercase;
+      font-size: 9px;
+    }
+    .gh-repo-meta .language {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+    }
+    .gh-repo-meta .language::before {
+      content: '';
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: #60a5fa;
+    }
+    .gh-repo-desc {
+      font-size: 11px;
+      color: var(--text-secondary);
+      margin-top: 4px;
+      line-height: 1.5;
+      max-height: 32px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      display: -webkit-box;
+      -webkit-line-clamp: 2;
+      -webkit-box-orient: vertical;
+    }
+
     /* Toast */
     .toast {
       position: fixed;
@@ -572,42 +798,25 @@
         </div>
       </div>
 
-      <div class="cds-workspace" title="团队 workspace 将在 P5 上线">
+      <div class="cds-workspace">
         <div class="cds-workspace-avatar" id="wsAvatar">S</div>
         <div class="cds-workspace-meta">
           <span class="cds-workspace-name" id="wsName">System</span>
           <span class="cds-workspace-sub">Personal</span>
         </div>
-        <svg class="cds-workspace-chevron" width="12" height="12" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M4.22 6.22a.75.75 0 011.06 0L8 8.94l2.72-2.72a.75.75 0 111.06 1.06l-3.25 3.25a.75.75 0 01-1.06 0L4.22 7.28a.75.75 0 010-1.06z"/></svg>
       </div>
 
+      <!-- P4 Part 18 cleanup: removed 3 disabled "coming in P5/P6" nav
+           items (Templates / Usage / People) that users complained
+           about. Kept only Projects + Dashboard which actually work. -->
       <nav class="cds-nav">
         <a class="cds-nav-item active" href="projects.html">
           <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M1.75 1h12.5c.966 0 1.75.784 1.75 1.75v10.5A1.75 1.75 0 0114.25 15H1.75A1.75 1.75 0 010 13.25V2.75C0 1.784.784 1 1.75 1zM1.5 2.75v10.5c0 .138.112.25.25.25h12.5a.25.25 0 00.25-.25V2.75a.25.25 0 00-.25-.25H1.75a.25.25 0 00-.25.25z"/></svg>
           <span>Projects</span>
         </a>
-        <a class="cds-nav-item disabled" title="P6 手动项目模板 (未上线)">
-          <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M2 2.75A.75.75 0 012.75 2H6.5v4.5H2v-3.75zM9.5 2h3.75a.75.75 0 01.75.75V6H9.5V2zM9.5 7.5H14v5.75a.75.75 0 01-.75.75H9.5v-6.5zM2 7.5h4.5V14H2.75a.75.75 0 01-.75-.75V7.5z"/></svg>
-          <span>Templates</span>
-        </a>
-        <div class="cds-nav-divider"></div>
-        <a class="cds-nav-item disabled" title="P5 使用统计 (未上线)">
-          <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M1.5 1.75a.75.75 0 00-1.5 0v12.5c0 .414.336.75.75.75h14.5a.75.75 0 000-1.5H1.5V1.75zm14.28 2.53a.75.75 0 00-1.06-1.06L10 7.94 7.53 5.47a.75.75 0 00-1.06 0L2.22 9.72a.75.75 0 001.06 1.06L7 7.06l2.47 2.47a.75.75 0 001.06 0l5.25-5.25z"/></svg>
-          <span>Usage</span>
-        </a>
-        <a class="cds-nav-item disabled" title="P5 成员管理 (未上线)">
-          <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M5.5 3.5a2.5 2.5 0 115 0 2.5 2.5 0 01-5 0zM8 0a3.5 3.5 0 00-1.04 6.84A5 5 0 003 12v.5A1.5 1.5 0 004.5 14h7a1.5 1.5 0 001.5-1.5V12a5 5 0 00-3.96-4.16A3.5 3.5 0 008 0z"/></svg>
-          <span>People</span>
-        </a>
         <a class="cds-nav-item" href="index.html">
           <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M8 0a8 8 0 100 16A8 8 0 008 0zM1.5 8a6.5 6.5 0 0110.65-5.003.75.75 0 00.959-1.153 8 8 0 102.592 8.33.75.75 0 00-1.444-.407A6.5 6.5 0 011.5 8z"/></svg>
           <span>Dashboard</span>
-        </a>
-        <div class="cds-nav-divider"></div>
-        <a class="cds-nav-item" href="https://github.com/inernoro/prd_agent/blob/main/doc/plan.cds-multi-project-phases.md" target="_blank" rel="noopener">
-          <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M0 1.75A.75.75 0 01.75 1h4.253c1.227 0 2.317.59 3 1.501A3.744 3.744 0 0111.006 1h4.245a.75.75 0 01.75.75v10.5a.75.75 0 01-.75.75h-4.507a2.25 2.25 0 00-1.591.659l-.622.621a.75.75 0 01-1.06 0l-.622-.621A2.25 2.25 0 005.258 13H.75a.75.75 0 01-.75-.75V1.75z"/></svg>
-          <span>Plan · 7 Phases</span>
-          <svg class="ext" width="10" height="10" viewBox="0 0 16 16" fill="currentColor"><path d="M3.75 2h3.5a.75.75 0 010 1.5h-3.5a.25.25 0 00-.25.25v8.5c0 .138.112.25.25.25h8.5a.25.25 0 00.25-.25v-3.5a.75.75 0 011.5 0v3.5A1.75 1.75 0 0112.25 14h-8.5A1.75 1.75 0 012 12.25v-8.5C2 2.784 2.784 2 3.75 2zm6.854-1h4.146a.25.25 0 01.25.25v4.146a.25.25 0 01-.427.177L13.03 4.03 9.28 7.78a.75.75 0 01-1.06-1.06l3.75-3.75-1.543-1.543A.25.25 0 0110.604 1z"/></svg>
         </a>
       </nav>
 
@@ -635,16 +844,10 @@
           <span style="opacity:0.4">|</span>
           <span>Sort by: Recent Activity</span>
         </div>
-        <div class="cds-toolbar-right">
-          <div class="cds-view-toggle">
-            <button class="active" title="Grid view" aria-label="Grid view">
-              <svg width="13" height="13" viewBox="0 0 16 16" fill="currentColor"><path d="M1.75 1h5.5c.414 0 .75.336.75.75v5.5A.75.75 0 017.25 8h-5.5A.75.75 0 011 7.25v-5.5C1 1.336 1.336 1 1.75 1zm7 0h5.5c.414 0 .75.336.75.75v5.5a.75.75 0 01-.75.75h-5.5A.75.75 0 018 7.25v-5.5c0-.414.336-.75.75-.75zM1.75 8.75h5.5c.414 0 .75.336.75.75v5.5a.75.75 0 01-.75.75h-5.5a.75.75 0 01-.75-.75v-5.5c0-.414.336-.75.75-.75zm7 0h5.5c.414 0 .75.336.75.75v5.5a.75.75 0 01-.75.75h-5.5a.75.75 0 01-.75-.75v-5.5c0-.414.336-.75.75-.75z"/></svg>
-            </button>
-            <button title="List view (coming soon)" aria-label="List view" disabled style="opacity:0.4">
-              <svg width="13" height="13" viewBox="0 0 16 16" fill="currentColor"><path d="M2 3.75a.75.75 0 01.75-.75h10.5a.75.75 0 010 1.5H2.75A.75.75 0 012 3.75zm0 4a.75.75 0 01.75-.75h10.5a.75.75 0 010 1.5H2.75A.75.75 0 012 7.75zM2.75 11a.75.75 0 000 1.5h10.5a.75.75 0 000-1.5H2.75z"/></svg>
-            </button>
-          </div>
-        </div>
+        <!-- P4 Part 18 cleanup: removed the "List view (coming soon)"
+             disabled toggle. Grid view is the only view that works, so
+             the toolbar no longer shows a view selector. -->
+        <div class="cds-toolbar-right"></div>
       </div>
 
       <div id="projectsGrid" class="cds-project-grid">
@@ -653,35 +856,154 @@
     </main>
   </div>
 
-  <!-- Create Project modal (P4 Part 2) -->
+  <!-- Create Project modal — P4 Part 18 UX rework.
+       Single smart input: paste git URL OR type project name. The
+       rest (slug, description) is tucked behind a collapsible
+       "更多选项" section so the 90% case is a one-field form. -->
   <div id="createProjectModal" class="modal-backdrop" onclick="closeCreateProjectModal(event)">
-    <div class="modal-dialog" onclick="event.stopPropagation()">
+    <div class="modal-dialog" onclick="event.stopPropagation()" style="max-width:540px">
       <div class="modal-title">新建项目</div>
-      <div class="modal-subtitle">每个项目拥有独立的 Docker 网络，分支和配置相互隔离</div>
+      <div class="modal-subtitle">粘贴 Git 仓库 URL，或者输入项目名创建空项目</div>
 
       <form id="createProjectForm" onsubmit="handleCreateProjectSubmit(event)">
-        <div class="form-row">
-          <label class="form-label" for="cp-name">名称 <span class="opt">*</span></label>
-          <input id="cp-name" class="form-input" type="text" maxlength="60" required placeholder="例如：my-api" autocomplete="off">
+        <!-- ─── GitHub Sign-in button (Phase E.2). Shown only
+             when CDS_GITHUB_CLIENT_ID is configured; checked via
+             /api/github/oauth/status on modal open. ─── -->
+        <button type="button" id="cp-github-signin" class="btn-github-signin"
+          style="display:none;width:100%;margin-bottom:12px"
+          onclick="_openGithubSignin()">
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
+            <path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/>
+          </svg>
+          <span id="cp-github-signin-label">使用 GitHub 登录并选择仓库</span>
+        </button>
+
+        <!-- Connected state indicator (shown when GitHub token is active) -->
+        <div id="cp-github-connected" style="display:none;padding:10px 12px;background:rgba(16,185,129,0.08);border:1px solid rgba(16,185,129,0.25);border-radius:8px;margin-bottom:12px;font-size:12px">
+          <span style="color:var(--green, #10b981)">● 已连接</span>
+          <span id="cp-github-connected-login" style="color:var(--text-secondary);margin-left:6px"></span>
+          <button type="button" onclick="_openRepoPicker()" style="float:right;background:transparent;border:none;color:#60a5fa;font-size:11px;cursor:pointer;padding:0">浏览我的仓库 →</button>
         </div>
-        <div class="form-row">
-          <label class="form-label" for="cp-slug">Slug <span class="opt">留空自动生成</span></label>
-          <input id="cp-slug" class="form-input" type="text" maxlength="50" placeholder="lowercase-kebab" autocomplete="off">
+
+        <div id="cp-github-hint" style="display:none;font-size:11px;color:var(--text-muted);margin-bottom:12px;padding:8px 10px;background:var(--bg-elevated);border-radius:7px">
+          💡 GitHub 集成未配置。管理员需在环境变量中设置 <code style="font-family:var(--font-mono,monospace)">CDS_GITHUB_CLIENT_ID</code>。当前只支持粘贴公开仓库 URL。
         </div>
-        <div class="form-row">
-          <label class="form-label" for="cp-gitRepoUrl">Git 仓库 URL <span class="opt">可选</span></label>
-          <input id="cp-gitRepoUrl" class="form-input" type="url" placeholder="https://github.com/your-org/repo.git" autocomplete="off">
+
+        <div id="cp-divider" style="display:none;text-align:center;font-size:10px;color:var(--text-muted);margin:4px 0 10px;letter-spacing:2px">
+          OR
         </div>
+
+        <!-- ─── Smart input: url or name ─── -->
         <div class="form-row">
-          <label class="form-label" for="cp-description">描述 <span class="opt">可选</span></label>
-          <input id="cp-description" class="form-input" type="text" maxlength="200" placeholder="一句话介绍这个项目" autocomplete="off">
+          <input id="cp-smart-input" class="form-input" type="text" required
+            placeholder="https://github.com/your-org/repo.git  或  my-api"
+            style="font-size:14px;padding:14px 16px" autocomplete="off"
+            oninput="_updateCreateHint()">
         </div>
+
+        <!-- ─── Live detection hint ─── -->
+        <div id="cp-hint" style="font-size:12px;color:var(--text-muted);min-height:18px;margin-bottom:14px;transition:color 120ms ease"></div>
+
+        <!-- ─── Collapsible advanced section ─── -->
+        <button type="button" id="cp-advanced-toggle" onclick="_toggleCreateAdvanced()"
+          style="background:transparent;border:none;color:var(--text-muted);font-size:11px;cursor:pointer;padding:0;margin-bottom:10px;display:flex;align-items:center;gap:4px">
+          <svg id="cp-advanced-chev" width="10" height="10" viewBox="0 0 16 16" fill="currentColor" style="transition:transform 120ms ease"><path d="M6.22 3.22a.75.75 0 011.06 0l4.25 4.25a.75.75 0 010 1.06l-4.25 4.25a.75.75 0 01-1.06-1.06L9.94 8 6.22 4.28a.75.75 0 010-1.06z"/></svg>
+          更多选项（slug / 描述 / 显式名称）
+        </button>
+        <div id="cp-advanced-section" style="display:none">
+          <div class="form-row">
+            <label class="form-label" for="cp-name">项目名称 <span class="opt">留空则自动从 URL 推导</span></label>
+            <input id="cp-name" class="form-input" type="text" maxlength="60" placeholder="例如：my-api" autocomplete="off">
+          </div>
+          <div class="form-row">
+            <label class="form-label" for="cp-slug">Slug <span class="opt">留空自动生成</span></label>
+            <input id="cp-slug" class="form-input" type="text" maxlength="50" placeholder="lowercase-kebab" autocomplete="off">
+          </div>
+          <div class="form-row">
+            <label class="form-label" for="cp-description">描述 <span class="opt">可选</span></label>
+            <input id="cp-description" class="form-input" type="text" maxlength="200" placeholder="一句话介绍这个项目" autocomplete="off">
+          </div>
+        </div>
+
         <div id="createProjectError" class="form-error"></div>
         <div class="modal-actions">
           <button type="button" class="btn-ghost" onclick="closeCreateProjectModal()">取消</button>
-          <button type="submit" id="createProjectSubmitBtn" class="btn-primary">创建</button>
+          <button type="submit" id="createProjectSubmitBtn" class="btn-primary">创建并部署</button>
         </div>
       </form>
+    </div>
+  </div>
+
+  <!-- ─── GitHub Device Flow modal (P4 Part 18 Phase E.2) ───
+       Shown after clicking "使用 GitHub 登录并选择仓库". Renders
+       the user_code + verification_uri and polls /device-poll
+       until the user completes the flow on github.com. -->
+  <div id="githubDeviceModal" class="modal-backdrop" onclick="closeGithubDeviceModal(event)">
+    <div class="modal-dialog" onclick="event.stopPropagation()" style="max-width:480px">
+      <div class="modal-title">连接 GitHub</div>
+      <div class="modal-subtitle" id="gh-device-subtitle">正在请求设备代码…</div>
+
+      <div id="gh-device-body" style="display:none;text-align:center;padding:20px 0">
+        <div style="font-size:11px;color:var(--text-muted);margin-bottom:10px;letter-spacing:1px;text-transform:uppercase">在浏览器中输入此代码</div>
+        <div id="gh-device-code" style="font-family:var(--font-mono,monospace);font-size:28px;font-weight:700;color:var(--text-primary);letter-spacing:4px;padding:18px;background:var(--bg-elevated);border:1px solid var(--card-border);border-radius:10px;margin-bottom:14px;user-select:all">—</div>
+        <div style="font-size:12px;color:var(--text-secondary);margin-bottom:14px">
+          在此页面输入上面的代码：
+        </div>
+        <a id="gh-device-link" href="#" target="_blank" rel="noopener"
+          style="display:inline-block;padding:11px 22px;background:var(--accent);color:#fff;text-decoration:none;border-radius:8px;font-size:13px;font-weight:600">
+          打开 github.com/login/device →
+        </a>
+        <div id="gh-device-status" style="margin-top:18px;font-size:11px;color:var(--text-muted)">等待授权…</div>
+      </div>
+
+      <div id="gh-device-error" style="display:none;padding:12px;background:rgba(244,63,94,0.1);border:1px solid rgba(244,63,94,0.3);border-radius:8px;font-size:12px;color:#fca5a5;margin-bottom:14px"></div>
+
+      <div class="modal-actions">
+        <button type="button" class="btn-ghost" onclick="closeGithubDeviceModal()">取消</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ─── Repo picker modal (P4 Part 18 Phase E.2) ───
+       Shown after a successful device flow OR when clicking
+       "浏览我的仓库 →" in the connected state. Lists the user's
+       repos with a search box; picking one fills the smart input
+       in the create modal. -->
+  <div id="githubRepoPickerModal" class="modal-backdrop" onclick="closeRepoPickerModal(event)">
+    <div class="modal-dialog" onclick="event.stopPropagation()" style="max-width:640px;display:flex;flex-direction:column;max-height:80vh">
+      <div class="modal-title">选择仓库</div>
+      <div class="modal-subtitle" id="gh-picker-subtitle">正在加载…</div>
+
+      <input id="gh-picker-search" class="form-input" type="text" placeholder="搜索..." autocomplete="off"
+        oninput="_filterRepoPicker(this.value)" style="margin-bottom:12px;display:none">
+
+      <div id="gh-picker-list" style="flex:1;min-height:0;overflow-y:auto;background:var(--bg-elevated);border:1px solid var(--card-border);border-radius:10px">
+        <div style="padding:60px 20px;text-align:center;color:var(--text-muted);font-size:12px">正在加载仓库列表…</div>
+      </div>
+
+      <div class="modal-actions">
+        <button type="button" class="btn-ghost" onclick="closeRepoPickerModal()">返回</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Clone-progress modal (P4 Part 18 G1.7) -->
+  <div id="cloneProgressModal" class="modal-backdrop" onclick="closeCloneProgressModal(event)">
+    <div class="cds-clone-modal-dialog" onclick="event.stopPropagation()">
+      <div class="cds-clone-modal-head">
+        <div class="cds-clone-modal-title" id="cloneModalTitle">克隆中…</div>
+        <span class="cds-clone-status cloning" id="cloneModalStatus">
+          <span class="spinner"></span>
+          <span id="cloneModalStatusText">CLONING</span>
+        </span>
+      </div>
+      <div class="cds-clone-modal-url" id="cloneModalUrl">—</div>
+      <div class="cds-clone-log" id="cloneModalLog">
+        <span class="line info">正在连接克隆端点…</span>
+      </div>
+      <div class="cds-clone-modal-actions">
+        <button type="button" class="btn-ghost" id="cloneModalCloseBtn" onclick="closeCloneProgressModal()">关闭</button>
+      </div>
     </div>
   </div>
 

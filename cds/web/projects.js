@@ -201,6 +201,54 @@
     return tiles;
   }
 
+  // P4 Part 18 (G1.7): render the clone lifecycle badge next to the
+  // card title. Legacy projects (no cloneStatus at all) show the
+  // existing "Legacy" pill instead; G1 projects show one of four:
+  //   pending  — waiting for user to kick off the clone
+  //   cloning  — SSE in progress
+  //   ready    — clone finished, usable for deploy
+  //   error    — last clone attempt failed (hover → cloneError)
+  function renderCloneBadge(project) {
+    if (project.legacyFlag) {
+      return '<span class="cds-legacy-badge">Legacy</span>';
+    }
+    if (!project.cloneStatus) {
+      return '';
+    }
+    var label = {
+      pending: 'PENDING',
+      cloning: 'CLONING',
+      ready: 'READY',
+      error: 'ERROR',
+    }[project.cloneStatus] || project.cloneStatus.toUpperCase();
+    var spinner = project.cloneStatus === 'cloning'
+      ? '<span class="spinner"></span>'
+      : '';
+    var title = project.cloneStatus === 'error' && project.cloneError
+      ? ' title="' + escapeHtml(project.cloneError) + '"'
+      : '';
+    return (
+      '<span class="cds-clone-status ' + escapeHtml(project.cloneStatus) + '"' + title + '>' +
+      spinner + escapeHtml(label) +
+      '</span>'
+    );
+  }
+
+  // Clone / retry button — only present for 'pending' and 'error'.
+  // Stops propagation so clicking it doesn't navigate into the card.
+  function renderCloneButton(project) {
+    if (project.legacyFlag) return '';
+    if (project.cloneStatus !== 'pending' && project.cloneStatus !== 'error') return '';
+    var label = project.cloneStatus === 'error' ? '重新克隆' : '开始克隆';
+    var cls = project.cloneStatus === 'error' ? 'cds-clone-btn retry' : 'cds-clone-btn';
+    return (
+      '<button class="' + cls + '" ' +
+      'onclick="handleCloneProject(event, \'' + escapeHtml(project.id) + '\', \'' + escapeHtml(project.name) + '\', \'' + escapeHtml(project.gitRepoUrl || '') + '\')">' +
+      escapeHtml(label) +
+      '</button>'
+    );
+  }
+
   function renderCard(project, services) {
     var href = 'index.html?project=' + encodeURIComponent(project.id);
     var deleteBtn = project.legacyFlag
@@ -213,21 +261,28 @@
     var totalServices =
       ((services && services.profiles && services.profiles.length) || 0) +
       ((services && services.infra && services.infra.length) || 0);
-    var onlineCount = project.legacyFlag && services && services.profiles
-      ? services.profiles.filter(function () { return true; }).length
-      : 0;
     var envLabel = project.legacyFlag ? 'production' : 'production';
+    var cloneBadge = renderCloneBadge(project);
+    var cloneBtn = renderCloneButton(project);
+    // Show the clone error inline under the service strip when the
+    // last attempt failed — users need to read the git message to
+    // know whether to change the URL or just retry.
+    var errorBlock = (project.cloneStatus === 'error' && project.cloneError)
+      ? '<div class="cds-clone-error">' + escapeHtml(project.cloneError) + '</div>'
+      : '';
 
     return [
       '<a class="cds-project-card" href="', href, '">',
       '  <div class="cds-project-card-head">',
       '    <div class="cds-project-card-title">', escapeHtml(project.name), '</div>',
-      '    ', (project.legacyFlag ? '<span class="cds-legacy-badge">Legacy</span>' : ''),
+      '    ', cloneBadge,
       '  </div>',
       '  <div class="cds-service-strip">', renderServiceStrip(project, services || {}), '</div>',
+      errorBlock,
       '  <div class="cds-project-card-foot">',
       '    <span class="cds-env-dot">', envLabel, '</span>',
       '    <span class="cds-service-count"><strong>', totalServices, '</strong> service', totalServices === 1 ? '' : 's', '</span>',
+      cloneBtn ? '<span style="flex-shrink:0">' + cloneBtn + '</span>' : '',
       '  </div>',
       '  ', deleteBtn,
       '</a>',
@@ -355,12 +410,337 @@
     if (form) form.reset();
     var err = document.getElementById('createProjectError');
     if (err) err.textContent = '';
+    // Reset collapsible advanced section
+    var advSec = document.getElementById('cp-advanced-section');
+    var advChev = document.getElementById('cp-advanced-chev');
+    if (advSec) advSec.style.display = 'none';
+    if (advChev) advChev.style.transform = 'rotate(0deg)';
+    // Reset hint line
+    if (typeof _updateCreateHint === 'function') _updateCreateHint();
     modal.classList.add('visible');
+    // P4 Part 18 (Phase E.2): probe GitHub OAuth status so we can
+    // show the Sign-in button vs "already connected" state vs
+    // "not configured" hint. Fire-and-forget; errors fall through
+    // to "not configured" which is the safest default.
+    _refreshGithubSignInState();
     setTimeout(function () {
-      var first = document.getElementById('cp-name');
+      // P4 Part 18 UX rework: focus the smart input (URL or name)
+      var first = document.getElementById('cp-smart-input');
       if (first) first.focus();
     }, 50);
   }
+
+  // P4 Part 18 (Phase E.2): probe /api/github/oauth/status and
+  // show one of three states inside the create modal:
+  //   1. not configured → hint: "需要 CDS_GITHUB_CLIENT_ID"
+  //   2. configured, not connected → Sign-in button
+  //   3. configured, connected → green banner + "浏览我的仓库"
+  function _refreshGithubSignInState() {
+    var signinBtn = document.getElementById('cp-github-signin');
+    var connectedBox = document.getElementById('cp-github-connected');
+    var connectedLogin = document.getElementById('cp-github-connected-login');
+    var hintEl = document.getElementById('cp-github-hint');
+    var divider = document.getElementById('cp-divider');
+
+    function hideAll() {
+      if (signinBtn) signinBtn.style.display = 'none';
+      if (connectedBox) connectedBox.style.display = 'none';
+      if (hintEl) hintEl.style.display = 'none';
+      if (divider) divider.style.display = 'none';
+    }
+    hideAll();
+
+    fetch('/api/github/oauth/status', { credentials: 'same-origin' })
+      .then(function (r) { return r.ok ? r.json() : null; })
+      .catch(function () { return null; })
+      .then(function (data) {
+        if (!data) {
+          // Probe failed — hide everything, let user use smart input
+          return;
+        }
+        if (!data.configured) {
+          if (hintEl) hintEl.style.display = 'block';
+          if (divider) divider.style.display = 'block';
+          return;
+        }
+        if (data.connected) {
+          if (connectedBox) connectedBox.style.display = 'block';
+          if (connectedLogin) connectedLogin.textContent = '@' + (data.login || '');
+        } else {
+          if (signinBtn) signinBtn.style.display = 'flex';
+        }
+        if (divider) divider.style.display = 'block';
+      });
+  }
+
+  // ── GitHub Device Flow driver (P4 Part 18 Phase E.2) ──────────────
+  //
+  // Flow:
+  //   1. User clicks "使用 GitHub 登录" → _openGithubSignin()
+  //   2. We POST /device-start → get user_code + verification_uri
+  //   3. Show the device modal with the code + link
+  //   4. Loop _pollGithubDevice() every `interval` seconds
+  //   5. On 'ready' → close device modal, open repo picker
+  //   6. On 'denied' / 'expired' → show error in modal
+  //
+  // Polling is stored in a closure-scoped timer so the user can
+  // cancel via the "取消" button (closeGithubDeviceModal).
+
+  var _ghDevicePollTimer = null;
+  var _ghDevicePollAbort = false;
+
+  function _openGithubSignin() {
+    var modal = document.getElementById('githubDeviceModal');
+    if (!modal) return;
+    var bodyEl = document.getElementById('gh-device-body');
+    var errEl = document.getElementById('gh-device-error');
+    var subtitleEl = document.getElementById('gh-device-subtitle');
+    if (bodyEl) bodyEl.style.display = 'none';
+    if (errEl) { errEl.style.display = 'none'; errEl.textContent = ''; }
+    if (subtitleEl) subtitleEl.textContent = '正在请求设备代码…';
+    // P4 Part 18 (Phase E audit fix #3): kill any in-flight Device
+    // Flow before starting a new one. Without this, a user who
+    // re-clicks "Sign in" while a previous /device-start fetch is
+    // still pending gets two concurrent flows, and the userCode
+    // display flickers as both fetches' .then callbacks race.
+    _ghDevicePollAbort = true;
+    if (_ghDevicePollTimer) {
+      clearTimeout(_ghDevicePollTimer);
+      _ghDevicePollTimer = null;
+    }
+    // Tick forward to the next microtask so the aborted poll's
+    // last .then() (if any) fires and sees abort=true. Then re-enable.
+    setTimeout(function () { _ghDevicePollAbort = false; }, 0);
+    modal.classList.add('visible');
+
+    fetch('/api/github/oauth/device-start', {
+      method: 'POST',
+      credentials: 'same-origin',
+    })
+      .then(function (r) {
+        return r.json().then(function (body) { return { status: r.status, body: body }; });
+      })
+      .then(function (result) {
+        if (result.status !== 200) {
+          _showDeviceError(result.body && result.body.message || 'device-start 失败');
+          return;
+        }
+        var b = result.body;
+        var codeEl = document.getElementById('gh-device-code');
+        var linkEl = document.getElementById('gh-device-link');
+        var subtitleEl = document.getElementById('gh-device-subtitle');
+        if (codeEl) codeEl.textContent = b.userCode;
+        if (linkEl) linkEl.href = b.verificationUri;
+        if (bodyEl) bodyEl.style.display = 'block';
+        if (subtitleEl) subtitleEl.textContent = '访问 GitHub 并输入下面的代码完成授权';
+        // Auto-open the verification URI in a new tab as a
+        // convenience (users can still click the button to open
+        // again if the popup is blocked).
+        try { window.open(b.verificationUri, '_blank', 'noopener'); } catch (e) { /* */ }
+        _schedulePoll(b.deviceCode, (b.interval || 5) * 1000);
+      })
+      .catch(function (err) {
+        _showDeviceError('网络错误：' + (err && err.message ? err.message : err));
+      });
+  }
+
+  function _schedulePoll(deviceCode, intervalMs) {
+    if (_ghDevicePollTimer) clearTimeout(_ghDevicePollTimer);
+    _ghDevicePollTimer = setTimeout(function () {
+      _pollGithubDevice(deviceCode, intervalMs);
+    }, intervalMs);
+  }
+
+  function _pollGithubDevice(deviceCode, intervalMs) {
+    if (_ghDevicePollAbort) return;
+    fetch('/api/github/oauth/device-poll', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'same-origin',
+      body: JSON.stringify({ deviceCode: deviceCode }),
+    })
+      .then(function (r) { return r.json(); })
+      .then(function (body) {
+        if (_ghDevicePollAbort) return;
+        var statusEl = document.getElementById('gh-device-status');
+
+        if (body.status === 'ready') {
+          if (statusEl) statusEl.textContent = '✅ 已连接 @' + (body.login || '');
+          showToast('GitHub 已连接 @' + (body.login || ''));
+          setTimeout(function () {
+            closeGithubDeviceModal();
+            // Refresh the create-modal sign-in state (shows connected banner)
+            _refreshGithubSignInState();
+            // Open the repo picker immediately
+            _openRepoPicker();
+          }, 600);
+          return;
+        }
+        if (body.status === 'pending') {
+          if (statusEl) statusEl.textContent = '等待授权…（' + new Date().toLocaleTimeString() + '）';
+          _schedulePoll(deviceCode, intervalMs);
+          return;
+        }
+        if (body.status === 'slow-down') {
+          if (statusEl) statusEl.textContent = 'GitHub 要求降低轮询频率，已自动放慢…';
+          _schedulePoll(deviceCode, intervalMs + 5000);
+          return;
+        }
+        if (body.status === 'expired') {
+          _showDeviceError('设备代码已过期，请关闭后重新开始');
+          return;
+        }
+        if (body.status === 'denied') {
+          _showDeviceError('你在 GitHub 拒绝了授权请求');
+          return;
+        }
+        _showDeviceError((body && body.message) || '未知错误：' + JSON.stringify(body));
+      })
+      .catch(function (err) {
+        if (_ghDevicePollAbort) return;
+        // Transient network error — retry after the interval
+        _schedulePoll(deviceCode, intervalMs);
+      });
+  }
+
+  function _showDeviceError(msg) {
+    var errEl = document.getElementById('gh-device-error');
+    if (errEl) {
+      errEl.textContent = msg;
+      errEl.style.display = 'block';
+    }
+    if (_ghDevicePollTimer) {
+      clearTimeout(_ghDevicePollTimer);
+      _ghDevicePollTimer = null;
+    }
+  }
+
+  function closeGithubDeviceModal(event) {
+    if (event && event.currentTarget !== event.target) return;
+    var modal = document.getElementById('githubDeviceModal');
+    if (modal) modal.classList.remove('visible');
+    _ghDevicePollAbort = true;
+    if (_ghDevicePollTimer) {
+      clearTimeout(_ghDevicePollTimer);
+      _ghDevicePollTimer = null;
+    }
+  }
+
+  // ── Repo picker (P4 Part 18 Phase E.2) ────────────────────────────
+  //
+  // Lists the user's GitHub repos (via /api/github/repos). Click a
+  // repo → fill the smart input in the create modal with its
+  // clone_url and close the picker. Users can still paste a custom
+  // URL afterwards if they want.
+
+  var _allRepos = [];
+
+  function _openRepoPicker() {
+    var modal = document.getElementById('githubRepoPickerModal');
+    if (!modal) return;
+    var listEl = document.getElementById('gh-picker-list');
+    var subtitleEl = document.getElementById('gh-picker-subtitle');
+    var searchEl = document.getElementById('gh-picker-search');
+    if (listEl) listEl.innerHTML = '<div style="padding:60px 20px;text-align:center;color:var(--text-muted);font-size:12px">正在加载仓库列表…</div>';
+    if (searchEl) searchEl.style.display = 'none';
+    if (subtitleEl) subtitleEl.textContent = '正在加载…';
+    modal.classList.add('visible');
+
+    fetch('/api/github/repos', { credentials: 'same-origin' })
+      .then(function (r) {
+        return r.json().then(function (body) { return { status: r.status, body: body }; });
+      })
+      .then(function (result) {
+        if (result.status !== 200) {
+          var msg = (result.body && result.body.message) || ('加载失败 (HTTP ' + result.status + ')');
+          if (listEl) {
+            listEl.innerHTML = '<div style="padding:60px 20px;text-align:center;color:var(--red);font-size:12px">' + escapeHtml(msg) + '</div>';
+          }
+          if (subtitleEl) subtitleEl.textContent = '加载失败';
+          if (result.body && result.body.error === 'token_revoked') {
+            // Re-open the sign-in flow next time user clicks
+            setTimeout(_refreshGithubSignInState, 100);
+          }
+          return;
+        }
+
+        _allRepos = result.body.repos || [];
+        if (subtitleEl) subtitleEl.textContent = '共 ' + _allRepos.length + ' 个仓库';
+        if (searchEl) { searchEl.style.display = 'block'; searchEl.value = ''; }
+        _renderRepoList(_allRepos);
+        setTimeout(function () {
+          if (searchEl) searchEl.focus();
+        }, 80);
+      })
+      .catch(function (err) {
+        if (listEl) {
+          listEl.innerHTML = '<div style="padding:60px 20px;text-align:center;color:var(--red);font-size:12px">网络错误：' + escapeHtml(err && err.message ? err.message : String(err)) + '</div>';
+        }
+      });
+  }
+
+  function _renderRepoList(repos) {
+    var listEl = document.getElementById('gh-picker-list');
+    if (!listEl) return;
+    if (repos.length === 0) {
+      listEl.innerHTML = '<div style="padding:60px 20px;text-align:center;color:var(--text-muted);font-size:12px">没有匹配的仓库</div>';
+      return;
+    }
+    listEl.innerHTML = repos.map(function (r) {
+      var meta = [];
+      if (r.isPrivate) meta.push('<span class="private">PRIVATE</span>');
+      if (r.language) meta.push('<span class="language">' + escapeHtml(r.language) + '</span>');
+      if (r.stargazersCount > 0) meta.push('★ ' + r.stargazersCount);
+      if (r.defaultBranch && r.defaultBranch !== 'main') meta.push('default: ' + escapeHtml(r.defaultBranch));
+      return '<div class="gh-repo-row" data-fullname="' + escapeHtml(r.fullName) + '" onclick="_pickRepo(\'' + escapeHtml(r.cloneUrl).replace(/'/g, '\\\'') + '\', \'' + escapeHtml(r.name) + '\')">' +
+        '<div style="flex:1;min-width:0">' +
+          '<div class="gh-repo-name">' + escapeHtml(r.fullName) + '</div>' +
+          '<div class="gh-repo-meta">' + meta.join('<span style="color:var(--text-muted);opacity:0.4">·</span>') + '</div>' +
+          (r.description ? '<div class="gh-repo-desc">' + escapeHtml(r.description) + '</div>' : '') +
+        '</div>' +
+        '<svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor" style="color:var(--text-muted);flex-shrink:0;margin-top:4px"><path d="M6.22 3.22a.75.75 0 011.06 0l4.25 4.25a.75.75 0 010 1.06l-4.25 4.25a.75.75 0 01-1.06-1.06L9.94 8 6.22 4.28a.75.75 0 010-1.06z"/></svg>' +
+        '</div>';
+    }).join('');
+  }
+
+  function _filterRepoPicker(query) {
+    var q = (query || '').trim().toLowerCase();
+    if (!q) {
+      _renderRepoList(_allRepos);
+      return;
+    }
+    var filtered = _allRepos.filter(function (r) {
+      return r.fullName.toLowerCase().indexOf(q) >= 0
+        || (r.description && r.description.toLowerCase().indexOf(q) >= 0)
+        || (r.language && r.language.toLowerCase().indexOf(q) >= 0);
+    });
+    _renderRepoList(filtered);
+  }
+  window._filterRepoPicker = _filterRepoPicker;
+
+  function _pickRepo(cloneUrl, repoName) {
+    // Fill the smart input with the chosen repo's clone URL
+    var smartEl = document.getElementById('cp-smart-input');
+    if (smartEl) {
+      smartEl.value = cloneUrl;
+    }
+    // Update the live hint so the user sees what will happen
+    if (typeof _updateCreateHint === 'function') _updateCreateHint();
+    closeRepoPickerModal();
+    showToast('已选择 ' + repoName + '，点击"创建并部署"开始');
+  }
+  window._pickRepo = _pickRepo;
+
+  function closeRepoPickerModal(event) {
+    if (event && event.currentTarget !== event.target) return;
+    var modal = document.getElementById('githubRepoPickerModal');
+    if (modal) modal.classList.remove('visible');
+  }
+  window.closeRepoPickerModal = closeRepoPickerModal;
+
+  window._openGithubSignin = _openGithubSignin;
+  window._openRepoPicker = _openRepoPicker;
+  window.closeGithubDeviceModal = closeGithubDeviceModal;
 
   function closeCreateProjectModal(event) {
     var modal = getModal();
@@ -376,25 +756,120 @@
     btn.textContent = busy ? '创建中…' : '创建';
   }
 
+  // ── Smart-input helpers (P4 Part 18 UX rework) ────────────────────
+  //
+  // The create modal no longer exposes separate "name" and "git URL"
+  // fields by default. Users type into one input: if it looks like a
+  // URL we treat it as a git repo and derive the project name from
+  // the last path segment; otherwise it's an empty-project name.
+  // The advanced section (name override, slug, description) stays
+  // collapsed so the 90% case is a one-field form.
+
+  function _parseSmartInput(raw) {
+    var val = String(raw || '').trim();
+    if (!val) return { kind: 'empty', name: '', gitRepoUrl: null };
+
+    // P4 Part 18 (Phase E audit fix #6 + #8): tighten URL detection.
+    // Only treat the input as a URL when it has an explicit protocol
+    // prefix. The previous "ends in .git" fallback accepted bare
+    // filenames like `myrepo.git` as clone URLs and confused users.
+    // We also drop `file://` from the allowed protocols — local
+    // filesystem clone paths are an escape hatch that CDS doesn't
+    // need and that can leak FS structure via git error messages.
+    var isUrl = /^(https?:\/\/|git@|ssh:\/\/)/i.test(val);
+    if (!isUrl) {
+      return { kind: 'name', name: val, gitRepoUrl: null };
+    }
+
+    // P4 Part 18 (Phase E audit fix #5): strip common GitHub "view"
+    // URL suffixes before extracting the repo name. Users often
+    // paste the URL from their browser address bar which looks like
+    //   https://github.com/foo/bar/tree/main
+    //   https://github.com/foo/bar/pull/42
+    //   https://github.com/foo/bar/commits
+    // All of these should resolve to project name "bar", and the
+    // canonical clone URL is "https://github.com/foo/bar.git".
+    var normalized = val;
+    var githubViewMatch = /^(https?:\/\/(?:www\.)?github\.com\/[^/]+\/[^/]+)(?:\/(?:tree|blob|pull|commits|issues|actions|wiki|releases|settings)(?:\/.*)?)?\/?$/i.exec(val);
+    if (githubViewMatch) {
+      normalized = githubViewMatch[1];
+      if (!/\.git$/i.test(normalized)) normalized += '.git';
+    }
+
+    // Derive project name from the URL's last segment, stripping .git
+    var segment = normalized;
+    // Handle git@github.com:foo/bar.git → take "bar"
+    var colonMatch = /^git@[^:]+:(.+)$/.exec(val);
+    if (colonMatch) segment = colonMatch[1];
+    // Strip trailing slash(es)
+    segment = segment.replace(/\/+$/, '');
+    var lastSlash = segment.lastIndexOf('/');
+    if (lastSlash >= 0) segment = segment.slice(lastSlash + 1);
+    segment = segment.replace(/\.git$/i, '');
+    if (!segment) segment = 'project';
+
+    return { kind: 'url', name: segment, gitRepoUrl: normalized };
+  }
+
+  // Called from the smart-input oninput handler — updates the hint
+  // text live as the user types so they see the auto-derived name
+  // and what the form will do when they hit Create.
+  function _updateCreateHint() {
+    var raw = (document.getElementById('cp-smart-input') || {}).value || '';
+    var parsed = _parseSmartInput(raw);
+    var hintEl = document.getElementById('cp-hint');
+    if (!hintEl) return;
+
+    if (parsed.kind === 'empty') {
+      hintEl.textContent = '粘贴一个 Git URL (会自动 clone)，或者输入一个项目名 (创建空项目)';
+      hintEl.style.color = 'var(--text-muted)';
+    } else if (parsed.kind === 'url') {
+      hintEl.innerHTML = '📦 识别为 Git 仓库。将创建项目 <strong style="color:var(--text-primary)">' + escapeHtml(parsed.name) + '</strong> 并自动克隆';
+      hintEl.style.color = 'var(--green, #10b981)';
+    } else {
+      hintEl.innerHTML = '📁 将创建空项目 <strong style="color:var(--text-primary)">' + escapeHtml(parsed.name) + '</strong>（无 Git 集成，可后续补充）';
+      hintEl.style.color = 'var(--text-secondary)';
+    }
+  }
+  window._updateCreateHint = _updateCreateHint;
+
+  // Toggle the "更多选项" collapsible section.
+  function _toggleCreateAdvanced() {
+    var sec = document.getElementById('cp-advanced-section');
+    var chev = document.getElementById('cp-advanced-chev');
+    if (!sec) return;
+    var nowOpen = sec.style.display === 'none' || sec.style.display === '';
+    sec.style.display = nowOpen ? 'block' : 'none';
+    if (chev) chev.style.transform = nowOpen ? 'rotate(90deg)' : 'rotate(0deg)';
+  }
+  window._toggleCreateAdvanced = _toggleCreateAdvanced;
+
   function handleCreateProjectSubmit(event) {
     event.preventDefault();
+    var smartEl = document.getElementById('cp-smart-input');
     var nameEl = document.getElementById('cp-name');
     var slugEl = document.getElementById('cp-slug');
-    var gitEl = document.getElementById('cp-gitRepoUrl');
     var descEl = document.getElementById('cp-description');
     var errEl = document.getElementById('createProjectError');
-
     errEl.textContent = '';
-    var payload = {
-      name: nameEl.value.trim(),
-      slug: slugEl.value.trim() || undefined,
-      gitRepoUrl: gitEl.value.trim() || undefined,
-      description: descEl.value.trim() || undefined,
-    };
-    if (!payload.name) {
-      errEl.textContent = '请填写项目名称';
+
+    var parsed = _parseSmartInput(smartEl ? smartEl.value : '');
+    if (parsed.kind === 'empty') {
+      errEl.textContent = '请粘贴 Git URL 或输入项目名';
       return;
     }
+
+    // Advanced name override wins if the user opened the section
+    // and typed something explicit.
+    var nameOverride = nameEl && nameEl.value.trim();
+    var finalName = nameOverride || parsed.name;
+
+    var payload = {
+      name: finalName,
+      slug: slugEl && slugEl.value.trim() || undefined,
+      gitRepoUrl: parsed.gitRepoUrl || undefined,
+      description: descEl && descEl.value.trim() || undefined,
+    };
 
     setSubmitBusy(true);
     fetch('/api/projects', {
@@ -414,6 +889,16 @@
           closeCreateProjectModal({ currentTarget: getModal(), target: getModal() });
           showToast('项目 “' + payload.name + '” 已创建');
           loadProjects();
+          var created = result.body && result.body.project;
+          // P4 Part 18 (UX rework): if the new project was created
+          // WITH a gitRepoUrl + the server stamped cloneStatus=pending,
+          // auto-open the clone progress modal. The clone modal itself
+          // then chains: clone → detect stack → offer "Create default
+          // build profile" so the user goes from "paste URL" to
+          // "ready to deploy" in a single continuous experience.
+          if (created && created.cloneStatus === 'pending') {
+            handleCloneProject(null, created.id, created.name, created.gitRepoUrl || '');
+          }
         } else {
           var msg = (result.body && result.body.message) || ('创建失败 (HTTP ' + result.status + ')');
           errEl.textContent = msg;
@@ -423,6 +908,297 @@
         errEl.textContent = '网络错误：' + (err && err.message ? err.message : err);
       })
       .finally(function () { setSubmitBusy(false); });
+  }
+
+  // ── Clone project (P4 Part 18 G1.7) ───────────────────────────────
+  //
+  // Triggers POST /api/projects/:id/clone via fetch + manual SSE
+  // decoding (EventSource doesn't support POST). Streams each
+  // `event: … / data: …` block into the modal log as it arrives,
+  // flips the title/status pill through the lifecycle, and on
+  // complete auto-closes after 1.5s and refreshes the grid. On
+  // error, leaves the modal open so the user can read the message.
+
+  var cloneModalAbort = null;
+
+  function getCloneModal() { return document.getElementById('cloneProgressModal'); }
+
+  function setCloneModalStatus(status, textOverride) {
+    var pill = document.getElementById('cloneModalStatus');
+    var text = document.getElementById('cloneModalStatusText');
+    if (!pill || !text) return;
+    pill.className = 'cds-clone-status ' + status;
+    text.textContent = textOverride || status.toUpperCase();
+    // Only show spinner for the 'cloning' state.
+    var existingSpinner = pill.querySelector('.spinner');
+    if (status === 'cloning') {
+      if (!existingSpinner) {
+        var s = document.createElement('span');
+        s.className = 'spinner';
+        pill.insertBefore(s, text);
+      }
+    } else if (existingSpinner) {
+      existingSpinner.remove();
+    }
+  }
+
+  function appendCloneLogLine(text, cls) {
+    var logEl = document.getElementById('cloneModalLog');
+    if (!logEl) return;
+    var line = document.createElement('span');
+    line.className = 'line' + (cls ? ' ' + cls : '');
+    line.textContent = text;
+    logEl.appendChild(line);
+    // Auto-scroll to bottom on every new line
+    logEl.scrollTop = logEl.scrollHeight;
+  }
+
+  function clearCloneLog() {
+    var logEl = document.getElementById('cloneModalLog');
+    if (logEl) logEl.innerHTML = '';
+  }
+
+  function handleCloneProject(event, projectId, projectName, gitRepoUrl) {
+    if (event) {
+      event.preventDefault();
+      event.stopPropagation();
+    }
+    var modal = getCloneModal();
+    if (!modal) return;
+
+    // Reset modal state
+    var titleEl = document.getElementById('cloneModalTitle');
+    var urlEl = document.getElementById('cloneModalUrl');
+    var closeBtn = document.getElementById('cloneModalCloseBtn');
+    if (titleEl) titleEl.textContent = '克隆: ' + projectName;
+    if (urlEl) urlEl.textContent = gitRepoUrl || '(no gitRepoUrl)';
+    if (closeBtn) {
+      closeBtn.textContent = '取消';
+      closeBtn.disabled = false;
+    }
+    clearCloneLog();
+    setCloneModalStatus('cloning', 'CLONING');
+    appendCloneLogLine('→ POST /api/projects/' + projectId + '/clone', 'info');
+    modal.classList.add('visible');
+
+    // Abort any previous clone
+    if (cloneModalAbort) {
+      try { cloneModalAbort.abort(); } catch (e) { /* */ }
+    }
+    var controller = new AbortController();
+    cloneModalAbort = controller;
+
+    fetch('/api/projects/' + encodeURIComponent(projectId) + '/clone', {
+      method: 'POST',
+      headers: { Accept: 'text/event-stream' },
+      credentials: 'same-origin',
+      signal: controller.signal,
+    })
+      .then(function (res) {
+        if (!res.ok) {
+          return res.json().then(function (body) {
+            throw new Error((body && body.message) || ('HTTP ' + res.status));
+          });
+        }
+        if (!res.body) throw new Error('Streaming not supported by this browser');
+        return res.body.getReader();
+      })
+      .then(function (reader) {
+        var decoder = new TextDecoder();
+        var buffer = '';
+        var sawComplete = false;
+        var sawError = false;
+
+        function processBuffer() {
+          // Each SSE block is separated by a blank line ("\n\n").
+          var idx;
+          while ((idx = buffer.indexOf('\n\n')) >= 0) {
+            var block = buffer.slice(0, idx);
+            buffer = buffer.slice(idx + 2);
+
+            var eventMatch = block.match(/^event: (.+)$/m);
+            var dataMatch = block.match(/^data: (.+)$/m);
+            if (!eventMatch || !dataMatch) continue;
+
+            var eventName = eventMatch[1].trim();
+            var data = {};
+            try { data = JSON.parse(dataMatch[1].trim()); } catch (e) { /* keep as string */ }
+
+            if (eventName === 'start') {
+              appendCloneLogLine('[start] ' + (data.gitRepoUrl || '') + ' → ' + (data.repoPath || ''), 'info');
+              setCloneModalStatus('cloning', 'CLONING');
+            } else if (eventName === 'progress') {
+              appendCloneLogLine(data.line || '');
+            } else if (eventName === 'complete') {
+              appendCloneLogLine('[complete] 项目已就绪: ' + (data.repoPath || ''), 'complete');
+              setCloneModalStatus('ready', 'READY');
+              sawComplete = true;
+            } else if (eventName === 'error') {
+              appendCloneLogLine('[error] ' + (data.message || 'unknown'), 'error');
+              setCloneModalStatus('error', 'ERROR');
+              sawError = true;
+            }
+          }
+        }
+
+        function pump() {
+          return reader.read().then(function (result) {
+            if (result.done) {
+              // Post-stream: run the detect → auto-profile chain on success,
+              // leave the modal open on error so the user can read the log.
+              if (sawComplete) {
+                _runPostCloneChain(projectId, projectName, modal, closeBtn);
+              } else if (sawError) {
+                // Leave modal open, let the user read the error.
+                if (closeBtn) closeBtn.textContent = '关闭';
+                loadProjects();
+              } else {
+                appendCloneLogLine('[stream ended unexpectedly]', 'error');
+                loadProjects();
+              }
+              return;
+            }
+            buffer += decoder.decode(result.value, { stream: true });
+            processBuffer();
+            return pump();
+          });
+        }
+        return pump();
+      })
+      .catch(function (err) {
+        if (err.name === 'AbortError') {
+          appendCloneLogLine('[aborted]', 'error');
+          return;
+        }
+        appendCloneLogLine('[error] ' + (err.message || err), 'error');
+        setCloneModalStatus('error', 'ERROR');
+        if (closeBtn) closeBtn.textContent = '关闭';
+      });
+  }
+
+  function closeCloneProgressModal(event) {
+    var modal = getCloneModal();
+    if (!modal) return;
+    if (event && event.currentTarget !== event.target) return;
+    if (cloneModalAbort) {
+      try { cloneModalAbort.abort(); } catch (e) { /* */ }
+      cloneModalAbort = null;
+    }
+    modal.classList.remove('visible');
+  }
+
+  // ── End-to-end auto flow (P4 Part 18 UX rework) ───────────────────
+  //
+  // Once a clone completes successfully we keep the modal open and
+  // chain:
+  //
+  //   1. POST /api/detect-stack { projectId }
+  //      Logs the detected stack + summary. Unknown stack is OK —
+  //      just means the user has to configure the profile by hand.
+  //   2. If stack is known AND not a Dockerfile (which requires an
+  //      externally-built image), POST /api/build-profiles to
+  //      auto-create a default profile using the detected settings.
+  //   3. Log the profile creation and close the modal.
+  //
+  // The user goes from "paste URL" to "ready to deploy" without
+  // ever touching the BuildProfile form. They can still tune things
+  // afterwards — this just skips the friction for the common case.
+
+  async function _runPostCloneChain(projectId, projectName, modal, closeBtn) {
+    try {
+      appendCloneLogLine('', '');
+      appendCloneLogLine('[detect] 扫描代码仓库识别技术栈…', 'info');
+
+      var detectRes = await fetch('/api/detect-stack', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'same-origin',
+        body: JSON.stringify({ projectId: projectId }),
+      });
+      if (!detectRes.ok) {
+        var body = await detectRes.json().catch(function () { return {}; });
+        throw new Error('detect-stack ' + detectRes.status + ' ' + (body.error || ''));
+      }
+      var detection = await detectRes.json();
+      appendCloneLogLine('[detect] ' + (detection.summary || detection.stack), 'info');
+
+      if (detection.stack === 'unknown') {
+        appendCloneLogLine('未识别出已知栈 — 请在项目设置里手动添加构建配置', 'error');
+        _finalizeCloneModal(modal, closeBtn, projectName, '项目已就绪，但需要手动配置构建');
+        return;
+      }
+      if (detection.manualSetupRequired) {
+        appendCloneLogLine('⚠ ' + (detection.summary || 'manual setup required'), 'error');
+        _finalizeCloneModal(modal, closeBtn, projectName, '项目已就绪，但需要手动配置镜像');
+        return;
+      }
+
+      // Auto-create a default build profile.
+      appendCloneLogLine('[profile] 自动创建默认构建配置…', 'info');
+      var profileId = _suggestProfileId(detection.stack, projectName);
+      var profile = {
+        id: profileId,
+        name: profileId,
+        projectId: projectId,
+        dockerImage: detection.dockerImage,
+        workDir: detection.workDir || '.',
+        containerPort: detection.containerPort || 8080,
+        command: detection.runCommand || '',
+        installCommand: detection.installCommand || undefined,
+        buildCommand: detection.buildCommand || undefined,
+      };
+      var profRes = await fetch('/api/build-profiles', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'same-origin',
+        body: JSON.stringify(profile),
+      });
+      if (!profRes.ok) {
+        var pb = await profRes.json().catch(function () { return {}; });
+        // 409 is fine — profile already exists. Anything else → warn
+        // but still finalize, the clone itself succeeded.
+        appendCloneLogLine('⚠ 构建配置创建失败: ' + (pb.error || profRes.status), 'error');
+        _finalizeCloneModal(modal, closeBtn, projectName, '项目已就绪（构建配置需要手动创建）');
+        return;
+      }
+      appendCloneLogLine('[profile] ✅ 已创建: ' + profileId + ' (' + detection.dockerImage + ')', 'complete');
+      appendCloneLogLine('[profile]   run: ' + detection.runCommand, 'info');
+      if (detection.installCommand) {
+        appendCloneLogLine('[profile]   install: ' + detection.installCommand, 'info');
+      }
+      if (detection.buildCommand) {
+        appendCloneLogLine('[profile]   build: ' + detection.buildCommand, 'info');
+      }
+
+      _finalizeCloneModal(modal, closeBtn, projectName, '✅ 项目已就绪，可以部署');
+    } catch (err) {
+      appendCloneLogLine('[chain-error] ' + (err && err.message ? err.message : err), 'error');
+      if (closeBtn) closeBtn.textContent = '关闭';
+      loadProjects();
+    }
+  }
+
+  function _suggestProfileId(stack, projectName) {
+    // Map stack → short handle for the profile id
+    var handle = {
+      nodejs: 'api',
+      python: 'api',
+      go: 'api',
+      rust: 'api',
+      java: 'api',
+      ruby: 'api',
+      php: 'api',
+    }[stack] || 'app';
+    return handle;
+  }
+
+  function _finalizeCloneModal(modal, closeBtn, projectName, toastMsg) {
+    showToast(toastMsg || ('克隆完成: ' + projectName));
+    loadProjects();
+    // Give the user a moment to read the final log lines, then close.
+    setTimeout(function () {
+      try { modal.classList.remove('visible'); } catch (e) { /* */ }
+    }, 2400);
   }
 
   // ── Delete project ────────────────────────────────────────────────
@@ -460,16 +1236,54 @@
   window.closeCreateProjectModal = closeCreateProjectModal;
   window.handleCreateProjectSubmit = handleCreateProjectSubmit;
   window.handleDeleteProject = handleDeleteProject;
+  window.handleCloneProject = handleCloneProject;
+  window.closeCloneProgressModal = closeCloneProgressModal;
 
+  // P4 Part 18 (Phase E audit fix #7): close the TOPMOST visible
+  // modal on ESC, not a hardcoded one. Previously ESC always
+  // targeted createProjectModal, so if a user hit ESC while the
+  // device-flow modal or repo picker was stacked on top, the
+  // underlying create modal closed and they were stranded with
+  // a top-level modal that had lost its parent context.
+  //
+  // Order: picker (topmost when chaining sign-in → pick) > device
+  // flow (topmost while polling) > create modal (base layer).
+  // Toast / clone-progress aren't ESC-dismissible on purpose —
+  // they're time-critical feedback the user should see.
   document.addEventListener('keydown', function (e) {
-    if (e.key === 'Escape') {
-      var modal = getModal();
-      if (modal && modal.classList.contains('visible')) {
-        modal.classList.remove('visible');
-      }
+    if (e.key !== 'Escape') return;
+    var picker = document.getElementById('githubRepoPickerModal');
+    var device = document.getElementById('githubDeviceModal');
+    var create = getModal();
+    if (picker && picker.classList.contains('visible')) {
+      closeRepoPickerModal();
+      return;
+    }
+    if (device && device.classList.contains('visible')) {
+      closeGithubDeviceModal();
+      return;
+    }
+    if (create && create.classList.contains('visible')) {
+      create.classList.remove('visible');
     }
   });
 
   loadProjects();
   bootstrapMeLabel();
+
+  // P4 Part 18 (UX rework): if the user arrived via projects.html?new=git
+  // (e.g. from topology "+ Add → GitHub Repository"), auto-open the
+  // create modal so they don't have to hunt for the New button. Also
+  // strip the query string so a page refresh doesn't re-pop the modal.
+  (function handleAutoOpenQuery() {
+    try {
+      var q = new URLSearchParams(location.search);
+      if (q.get('new') === 'git') {
+        setTimeout(openCreateProjectModal, 80);
+        q.delete('new');
+        var newUrl = location.pathname + (q.toString() ? '?' + q.toString() : '') + location.hash;
+        window.history.replaceState(null, '', newUrl);
+      }
+    } catch (e) { /* no-op */ }
+  })();
 })();

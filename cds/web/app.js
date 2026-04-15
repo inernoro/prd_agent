@@ -4687,6 +4687,8 @@ function openProfileModal() {
         <button type="button" class="profile-template-btn" onclick="_applyProfileTemplate('python')" title="Python 3.12 + pip">🐍 Python</button>
         <button type="button" class="profile-template-btn" onclick="_applyProfileTemplate('go')" title="Go 1.22">⚡ Go</button>
         <button type="button" class="profile-template-btn" onclick="_applyProfileTemplate('static')" title="静态站点 nginx">📄 Static</button>
+        <!-- P4 Part 18 (G10): auto-detect stack from the current project / branch's files -->
+        <button type="button" class="profile-template-btn" onclick="_autoDetectStack()" title="扫描代码仓库识别技术栈并自动填入字段" style="margin-left:8px;border-color:rgba(96,165,250,0.5);color:#60a5fa">🔍 Auto-detect</button>
       </div>
       <div class="form-row">
         <input id="profileId" placeholder="配置 ID（如 api、web）" class="form-input sm">
@@ -4868,6 +4870,100 @@ function _applyProfileTemplate(key) {
 
 // Expose for the inline onclick handlers
 window._applyProfileTemplate = _applyProfileTemplate;
+
+// P4 Part 18 (G10): auto-detect the stack from the current project's
+// cloned repo and pre-fill the BuildProfile form. Delegates to the
+// new POST /api/detect-stack endpoint which scans the filesystem.
+// Uses the currently-selected topology project if set, else falls
+// back to the legacy config.repoRoot (what the server would scan
+// anyway if projectId is omitted).
+async function _autoDetectStack() {
+  const btn = document.querySelector('.profile-template-btn[onclick*="_autoDetectStack"]');
+  if (btn) {
+    btn.textContent = '🔍 扫描中…';
+    btn.disabled = true;
+  }
+
+  // Pick a project id if we can — the topology view stashes one
+  // globally during renderCard(). Otherwise omit and let the server
+  // use its default.
+  const projectId = (typeof currentProjectId === 'string' && currentProjectId)
+    || (new URLSearchParams(location.search)).get('project')
+    || undefined;
+
+  try {
+    const res = await fetch(`${API}/detect-stack`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(projectId ? { projectId } : {}),
+    });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      throw new Error(body.error || `HTTP ${res.status}`);
+    }
+    const d = await res.json();
+
+    if (d.stack === 'unknown') {
+      showToast('未识别出栈类型：' + (d.summary || '无签名文件'), 'warning');
+      return;
+    }
+    if (d.stack === 'dockerfile') {
+      showToast('检测到 Dockerfile — CDS 当前不支持自动构建，请改用预构建镜像', 'warning');
+      return;
+    }
+
+    // Same fill logic as _applyProfileTemplate, but sourced from
+    // the server response instead of a hardcoded PROFILE_TEMPLATES
+    // entry.
+    function setVal(id, v) {
+      const el = document.getElementById(id);
+      if (el) el.value = v == null ? '' : v;
+    }
+
+    const imageSel = document.getElementById('profileImage');
+    if (imageSel) {
+      const hasMatch = Array.from(imageSel.options).some(o => o.value === d.dockerImage);
+      if (hasMatch) {
+        imageSel.value = d.dockerImage;
+        const customEl = document.getElementById('profileImageCustom');
+        if (customEl) customEl.classList.add('hidden');
+      } else {
+        imageSel.value = '__custom__';
+        const customEl = document.getElementById('profileImageCustom');
+        if (customEl) {
+          customEl.classList.remove('hidden');
+          customEl.value = d.dockerImage;
+        }
+      }
+    }
+
+    setVal('profileWorkDir', d.workDir || '.');
+    if (d.containerPort) setVal('profilePort', d.containerPort);
+    setVal('profileRun', d.runCommand || '');
+    setVal('profileInstall', d.installCommand || '');
+    setVal('profileBuild', d.buildCommand || '');
+
+    // Auto-expand advanced fields when any install/build was set
+    if ((d.installCommand || d.buildCommand) && typeof toggleAdvanced === 'function') {
+      const adv = document.getElementById('advancedFields');
+      if (adv && adv.classList.contains('hidden')) toggleAdvanced();
+    }
+
+    showToast(
+      '已识别: ' + (d.summary || d.stack) +
+      '（扫描路径 ' + (d.scanPath || '-') + '）',
+      'info',
+    );
+  } catch (err) {
+    showToast('检测失败: ' + (err && err.message ? err.message : err), 'error');
+  } finally {
+    if (btn) {
+      btn.textContent = '🔍 Auto-detect';
+      btn.disabled = false;
+    }
+  }
+}
+window._autoDetectStack = _autoDetectStack;
 
 async function saveProfileAndRefresh() {
   const selectVal = document.getElementById('profileImage').value;
@@ -7921,9 +8017,7 @@ function _ensureTopologyFsChrome() {
     <button type="button" class="topology-fs-leftnav-icon active" title="服务拓扑">
       <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M5 2.75a2.25 2.25 0 114.5 0 2.25 2.25 0 01-4.5 0zM7.25 0a2.75 2.75 0 00-.75 5.397V7H2.75A1.75 1.75 0 001 8.75v1.603a2.75 2.75 0 101.5 0V8.75a.25.25 0 01.25-.25H6.5v1.397a2.75 2.75 0 101.5 0V8.5h3.75a.25.25 0 01.25.25v1.603a2.75 2.75 0 101.5 0V8.75A1.75 1.75 0 0011.75 7H8V5.397A2.75 2.75 0 007.25 0z"/></svg>
     </button>
-    <button type="button" class="topology-fs-leftnav-icon disabled" title="指标 (P5)">
-      <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M1.5 1.75a.75.75 0 00-1.5 0v12.5c0 .414.336.75.75.75h14.5a.75.75 0 000-1.5H1.5V1.75zm14.28 2.53a.75.75 0 00-1.06-1.06L10 7.94 7.53 5.47a.75.75 0 00-1.06 0L2.22 9.72a.75.75 0 001.06 1.06L7 7.06l2.47 2.47a.75.75 0 001.06 0l5.25-5.25z"/></svg>
-    </button>
+    <!-- P4 Part 18 cleanup: removed disabled "指标 (P5)" icon. -->
     <button type="button" class="topology-fs-leftnav-icon" title="日志" onclick="setViewMode('list')">
       <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M0 1.75C0 .784.784 0 1.75 0h12.5C15.216 0 16 .784 16 1.75v12.5A1.75 1.75 0 0114.25 16H1.75A1.75 1.75 0 010 14.25V1.75zm1.75-.25a.25.25 0 00-.25.25v12.5c0 .138.112.25.25.25h12.5a.25.25 0 00.25-.25V1.75a.25.25 0 00-.25-.25H1.75zM3.75 5h.5a.75.75 0 010 1.5h-.5a.75.75 0 010-1.5zm0 4h.5a.75.75 0 010 1.5h-.5a.75.75 0 010-1.5zm2.75-4h6a.75.75 0 010 1.5h-6a.75.75 0 010-1.5zm0 4h6a.75.75 0 010 1.5h-6a.75.75 0 010-1.5z"/></svg>
     </button>
@@ -7995,11 +8089,10 @@ function _ensureTopologyFsChrome() {
       <span class="label">Routing Rule</span>
       <span class="chevron">›</span>
     </button>
-    <button type="button" class="topology-fs-add-menu-item" onclick="_topologyChooseAddItem('volume')">
-      <span class="icon"><svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M2 3h12c.6 0 1 .4 1 1v8c0 .6-.4 1-1 1H2c-.6 0-1-.4-1-1V4c0-.6.4-1 1-1zm1 2v6h10V5H3z"/></svg></span>
-      <span class="label">Volume / 持久化卷</span>
-      <span class="chevron">›</span>
-    </button>
+    <!-- P4 Part 18 cleanup: removed "Volume / 持久化卷" menu item —
+         it toast'd "P6 上线" with no real target. Volumes can still
+         be configured in the existing InfraService.volumes field
+         via the full build-profiles editor. -->
     <button type="button" class="topology-fs-add-menu-item" onclick="_topologyChooseAddItem('empty')">
       <span class="icon"><svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M0 2.75C0 1.784.784 1 1.75 1h12.5c.966 0 1.75.784 1.75 1.75v10.5A1.75 1.75 0 0114.25 15H1.75A1.75 1.75 0 010 13.25V2.75zm1.75-.25a.25.25 0 00-.25.25v10.5c0 .138.112.25.25.25h12.5a.25.25 0 00.25-.25V2.75a.25.25 0 00-.25-.25H1.75z"/></svg></span>
       <span class="label">Empty Service / 空服务</span>
@@ -8655,7 +8748,8 @@ function _topologyToggleAddMenu() {
 
 // T4: handle a + Add menu item click. Each kind routes to the most
 // appropriate existing CDS create flow, with novice-friendly defaults.
-// Items that need work in P5/P6 toast a friendly "coming soon".
+// All menu items land on working flows after the P4 Part 18 cleanup —
+// no more "coming in P5/P6" stub toasts.
 // P4 Part 10 — Infra service templates for the Database submenu.
 //
 // Maps a template key to a fully-formed InfraService payload that
@@ -8819,82 +8913,12 @@ window._topologyShowDatabaseSubmenu = _topologyShowDatabaseSubmenu;
 window._topologyShowAddMenuRoot = _topologyShowAddMenuRoot;
 window._topologyCreateInfraFromTemplate = _topologyCreateInfraFromTemplate;
 
-// P4 Part 16 (B3 fix): friendly explainer modal for the GitHub
-// Repository "+ Add" item. Replaces the previous death-loop pattern
-// (toast → redirect to projects.html → user clicks New → empty
-// dashboard → + Add → GitHub Repository → loop). Now users get a
-// clear, recoverable explanation of what's missing and a one-click
-// path forward via the existing build profile editor.
-function _showGitRepoExplainer() {
-  // Close the + Add menu first
-  var menu = document.getElementById('topologyFsAddMenu');
-  if (menu) menu.classList.remove('open');
-
-  // Idempotent overlay creation
-  var existing = document.getElementById('cdsGitRepoExplainer');
-  if (existing) {
-    existing.classList.add('open');
-    return;
-  }
-
-  var overlay = document.createElement('div');
-  overlay.id = 'cdsGitRepoExplainer';
-  overlay.className = 'cmdk-overlay open';
-  overlay.style.alignItems = 'center';
-  overlay.style.paddingTop = '0';
-  overlay.onclick = function (e) {
-    if (e.target === overlay) overlay.classList.remove('open');
-  };
-  overlay.innerHTML =
-    '<div class="cmdk-dialog" style="max-width:520px" onclick="event.stopPropagation()">' +
-      '<div style="padding:24px 26px 18px;border-bottom:1px solid var(--card-border)">' +
-        '<div style="display:flex;align-items:center;gap:12px;margin-bottom:8px">' +
-          '<div style="width:36px;height:36px;border-radius:9px;background:var(--bg-elevated);display:flex;align-items:center;justify-content:center;color:var(--text-secondary);flex-shrink:0">' +
-            '<svg width="20" height="20" viewBox="0 0 16 16" fill="currentColor"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>' +
-          '</div>' +
-          '<div>' +
-            '<div style="font-size:16px;font-weight:700;color:var(--text-primary)">添加 GitHub 仓库</div>' +
-            '<div style="font-size:11px;color:var(--text-muted);margin-top:2px">需要 GitHub OAuth 集成（P5/P6）</div>' +
-          '</div>' +
-        '</div>' +
-      '</div>' +
-      '<div style="padding:20px 26px;font-size:13px;color:var(--text-secondary);line-height:1.65">' +
-        '<p style="margin:0 0 14px">完整的"从 GitHub 列表选仓库 → 自动 clone → 自动检测 build/start 命令 → 创建服务"流程依赖：</p>' +
-        '<ul style="margin:0 0 16px;padding-left:22px;font-size:12px;line-height:1.8">' +
-          '<li>GitHub OAuth App（管理员配置 <code>CDS_GITHUB_CLIENT_ID</code>）</li>' +
-          '<li>用户授权 + 后端拉取 <code>/user/repos</code></li>' +
-          '<li>Nixpacks 风格的 build 推断（CDS 当前的快速模板是手工 5 种）</li>' +
-        '</ul>' +
-        '<p style="margin:0 0 14px;color:var(--text-muted);font-size:12px">这一整套要等 P5/P6 上线。<strong style="color:var(--text-secondary)">现在你可以这样手工接你的仓库：</strong></p>' +
-        '<ol style="margin:0;padding-left:22px;font-size:12px;line-height:1.9;color:var(--text-secondary)">' +
-          '<li>在主菜单选 <strong>Empty Service</strong> 打开构建配置编辑器</li>' +
-          '<li>用顶部的 <strong>快速开始</strong> 模板选你的语言（Node/.NET/Python/Go/Static）</li>' +
-          '<li>把 Build 命令改成你的实际命令，保存</li>' +
-          '<li>CDS 会从 <code>config.repoRoot</code> 配置的全局 Git 仓库创建 worktree</li>' +
-        '</ol>' +
-      '</div>' +
-      '<div style="padding:14px 26px 22px;border-top:1px solid var(--card-border);display:flex;gap:10px;justify-content:flex-end">' +
-        '<button type="button" class="btn-ghost" style="padding:9px 16px;border-radius:9px;background:transparent;color:var(--text-secondary);border:1px solid var(--card-border);font-size:12px;font-weight:600;cursor:pointer" onclick="_closeGitRepoExplainer()">返回 + Add 菜单</button>' +
-        '<button type="button" class="btn-primary" style="padding:9px 16px;border-radius:9px;background:var(--accent);color:#fff;border:none;font-size:12px;font-weight:600;cursor:pointer" onclick="_closeGitRepoExplainer();_topologyChooseAddItem(\'empty\')">打开 Empty Service 编辑器</button>' +
-      '</div>' +
-    '</div>';
-  document.body.appendChild(overlay);
-
-  // ESC closes
-  document.addEventListener('keydown', function escHandler(e) {
-    if (e.key === 'Escape' && overlay.classList.contains('open')) {
-      overlay.classList.remove('open');
-    }
-  });
-}
-
-function _closeGitRepoExplainer() {
-  var overlay = document.getElementById('cdsGitRepoExplainer');
-  if (overlay) overlay.classList.remove('open');
-}
-
-window._showGitRepoExplainer = _showGitRepoExplainer;
-window._closeGitRepoExplainer = _closeGitRepoExplainer;
+// P4 Part 18 (UX rework): the old _showGitRepoExplainer stub was
+// buggy (CSS class mismatch — close button silently did nothing)
+// AND obsolete (Phase B G1 now ships real multi-repo clone). It
+// used to live here. "+ Add → GitHub Repository" in the topology
+// view now redirects to projects.html?new=git which auto-opens
+// the real create modal on the project landing page.
 
 // ─────────────────────────────────────────────────────────────────
 // P4 Part 11 — Cmd+K command palette
@@ -9153,19 +9177,19 @@ function _topologyChooseAddItem(kind) {
 
   switch (kind) {
     case 'git':
-      // P4 Part 16 (B3 fix): no longer redirect to projects.html
-      // (which created a death loop — user came from there, gets
-      // redirected back, came here again, etc).
+      // P4 Part 18 (UX rework): Phase B G1 landed real multi-repo
+      // clone, so "+ Add → GitHub Repository" from the topology view
+      // now routes to the SAME create-project-with-clone flow that
+      // projects.html exposes. The prior "explainer modal" stub was
+      // buggy (close button silently no-oped because its CSS class
+      // didn't exist) and is removed entirely — we ship the real
+      // thing instead.
       //
-      // Instead, show a friendly explainer modal that:
-      //   1. Tells the user this requires GitHub OAuth integration
-      //   2. Offers ONE actionable next step: open the build profile
-      //      editor pre-filled with placeholder Node.js settings so
-      //      the user can manually wire up their repo by editing
-      //      buildCommand etc.
-      //   3. Has an explicit close + "go back to + Add menu" button
-      //      so the user can recover gracefully.
-      _showGitRepoExplainer();
+      // Redirect to projects.html with ?new=git so the landing page
+      // auto-opens the create modal focused on the git URL field.
+      // No death loop: the create modal is modal, user fills URL,
+      // hits create, watches the SSE clone modal, done.
+      location.href = 'projects.html?new=git';
       break;
     case 'database':
       // P4 Part 10: show the Database submenu (PostgreSQL / Redis /
@@ -9194,9 +9218,6 @@ function _topologyChooseAddItem(kind) {
           showToast('请在列表视图打开"路由规则"配置', 'info');
         }
       }, 50);
-      break;
-    case 'volume':
-      showToast('卷管理在 P6 上线 — 当前可在 infra 服务的 volumes 字段配置', 'info');
       break;
     case 'empty':
       // "Empty Service" = a new BuildProfile. Routes to the existing
@@ -9312,6 +9333,38 @@ function _topologyRenderPanelTab(tab, entity) {
     var port = entity.containerPort || '-';
     var hostPort = entity.hostPort ? ' → host :' + entity.hostPort : '';
 
+    // P4 Part 18 (G5): Deploy / Redeploy button inline in the status banner.
+    //
+    // Previously topology view forced users to switch to list mode just to
+    // hit "deploy". This is a P0 workflow regression — Railway has deploy
+    // right on the service card. We mirror that: pick the topology-selected
+    // branch (chip click) if any, else the currently displayed branch, and
+    // delegate to the existing deployBranch() call. No new backend API.
+    var deployTargetBranchId = _topologySelectedBranchId
+      || (displayBranch && displayBranch.id)
+      || null;
+    var deployBtnLabel = status === 'running' ? 'Redeploy' : 'Deploy';
+    var deployBtnHtml = '';
+    if (kind === 'app') {
+      if (deployTargetBranchId) {
+        deployBtnHtml =
+          '<button type="button" class="tfp-deploy-btn" ' +
+          'onclick="event.stopPropagation();deployBranch(\'' + esc(deployTargetBranchId) + '\')" ' +
+          'title="' + deployBtnLabel + ' branch ' + esc(deployTargetBranchId) + '">' +
+            '<svg width="11" height="11" viewBox="0 0 16 16" fill="currentColor">' +
+              '<path d="M1.5 8a.5.5 0 01.5-.5h10.793L9.146 3.854a.5.5 0 11.708-.708l4.5 4.5a.5.5 0 010 .708l-4.5 4.5a.5.5 0 01-.708-.708L12.793 8.5H2a.5.5 0 01-.5-.5z"/>' +
+            '</svg>' +
+            deployBtnLabel +
+          '</button>';
+      } else {
+        deployBtnHtml =
+          '<button type="button" class="tfp-deploy-btn disabled" disabled ' +
+          'title="尚未选择分支，先在左侧或顶部分支条里选一个">' +
+            '无分支' +
+          '</button>';
+      }
+    }
+
     body.innerHTML =
       // Status banner
       '<div class="tfp-status-banner ' + (status === 'running' ? 'ok' : status === 'error' ? 'err' : 'idle') + '">' +
@@ -9321,7 +9374,10 @@ function _topologyRenderPanelTab(tab, entity) {
             : '<circle cx="8" cy="8" r="5"/>') +
         '</svg>' +
         '<span>' + (status === 'running' ? 'Service is online' : 'Status: ' + status) + '</span>' +
-        '<span style="margin-left:auto;font-size:11px;opacity:0.7">' + esc(image) + '</span>' +
+        '<div style="margin-left:auto;display:flex;align-items:center;gap:10px;min-width:0">' +
+          deployBtnHtml +
+          '<span style="font-size:11px;opacity:0.7;white-space:nowrap">' + esc(image) + '</span>' +
+        '</div>' +
       '</div>' +
 
       // Variables count (link to Variables tab)
@@ -9329,6 +9385,60 @@ function _topologyRenderPanelTab(tab, entity) {
         '<svg width="13" height="13" viewBox="0 0 16 16" fill="currentColor"><path d="M2 4h12v2H2V4zm0 6h12v2H2v-2z"/></svg>' +
         Object.keys(entity.env || {}).length + ' Variables' +
       '</div>' +
+
+      // P4 Part 18 (G6): Public URL row.
+      //
+      // Users previously had no visible public URL in the topology panel —
+      // they had to guess the subdomain format, or leave the panel and hit
+      // the preview icon in list view. Now the URL is front-and-center.
+      //
+      // The display value depends on previewMode (set once at page load
+      // from /api/config):
+      //   multi  → {slug}.{previewDomain}           (static, displayable)
+      //   port   → "动态端口 (点击分配)"               (requires API call)
+      //   simple → mainDomain or hostname:workerPort (cookie-switched)
+      //
+      // Click delegates to previewBranch() which already handles all three
+      // modes end-to-end.
+      (kind === 'app' && displayBranch ? (function () {
+        var urlDisplay = '';
+        var urlHint = '';
+        var slug = (typeof StateService_slugify === 'function')
+          ? StateService_slugify(displayBranch.id)
+          : displayBranch.id;
+        if (previewMode === 'multi' && previewDomain) {
+          urlDisplay = slug + '.' + previewDomain;
+          urlHint = '子域名模式 · 点击在新窗口打开';
+        } else if (previewMode === 'port') {
+          urlDisplay = location.hostname + ':<动态端口>';
+          urlHint = '端口模式 · 点击分配并打开';
+        } else if (previewMode === 'simple' && mainDomain) {
+          urlDisplay = mainDomain;
+          urlHint = '简洁模式 · 点击切换为默认分支并打开';
+        } else if (workerPort) {
+          urlDisplay = location.hostname + ':' + workerPort;
+          urlHint = '本地 Worker 端口';
+        } else {
+          urlDisplay = '未配置 MAIN_DOMAIN';
+          urlHint = '请在设置页配置 previewMode / MAIN_DOMAIN';
+        }
+        var canOpen = !(urlDisplay === '未配置 MAIN_DOMAIN');
+        return '<div class="tfp-section-h">PUBLIC URL</div>' +
+          '<div class="tfp-public-url-card' + (canOpen ? '' : ' disabled') + '"' +
+            (canOpen ? ' onclick="previewBranch(\'' + esc(displayBranch.id) + '\')"' : '') +
+            ' title="' + esc(urlHint) + '">' +
+            '<svg width="15" height="15" viewBox="0 0 16 16" fill="currentColor" style="flex-shrink:0;opacity:0.85">' +
+              '<path d="M0 8a8 8 0 1116 0A8 8 0 010 8zm7.5-6.923c-.67.204-1.335.82-1.887 1.855-.143.268-.276.56-.395.872.705.157 1.472.257 2.282.287V1.077zM4.249 3.539c.142-.384.304-.744.481-1.078a6.7 6.7 0 01.597-.933A7.01 7.01 0 003.051 3.05c.362.184.763.349 1.198.49zM3.509 7.5c.036-1.07.188-2.087.436-3.008a9.124 9.124 0 01-1.565-.667A6.964 6.964 0 001.018 7.5h2.49zm1.4-2.741a12.344 12.344 0 00-.4 2.741H7.5V5.091c-.91-.03-1.783-.145-2.591-.332zM8.5 5.09V7.5h2.99a12.342 12.342 0 00-.399-2.741c-.808.187-1.681.301-2.591.332zM4.51 8.5c.035.987.176 1.914.399 2.741A13.612 13.612 0 017.5 10.91V8.5H4.51zm3.99 0v2.409c.91.03 1.783.145 2.591.332.223-.827.364-1.754.4-2.741H8.5zm-3.282 3.696c.12.312.252.604.395.872.552 1.035 1.218 1.65 1.887 1.855V11.91c-.81.03-1.577.13-2.282.287zm.11 2.276a6.696 6.696 0 01-.598-.933 8.853 8.853 0 01-.481-1.079 8.38 8.38 0 00-1.198.49 7.01 7.01 0 002.276 1.522zm-1.383-2.964A13.36 13.36 0 013.508 8.5h-2.49a6.963 6.963 0 001.362 3.675c.47-.258.995-.482 1.565-.667zm6.728 2.964a7.009 7.009 0 002.275-1.521 8.376 8.376 0 00-1.197-.49 8.853 8.853 0 01-.481 1.078 6.696 6.696 0 01-.597.933zM8.5 11.909v3.014c.67-.204 1.335-.82 1.887-1.855.143-.268.276-.56.395-.872A12.63 12.63 0 008.5 11.91zm3.555-.401c.57.185 1.095.409 1.565.667A6.963 6.963 0 0014.982 8.5h-2.49a13.36 13.36 0 01-.437 3.008zM14.982 7.5a6.963 6.963 0 00-1.362-3.675c-.47.258-.995.482-1.565.667.248.92.4 1.938.437 3.008h2.49zM11.27 2.461c.177.334.339.694.482 1.078a8.368 8.368 0 001.196-.49 7.01 7.01 0 00-2.275-1.521c.218.283.418.597.597.933zm-.488 1.343a7.765 7.765 0 00-.395-.872C9.835 1.897 9.17 1.282 8.5 1.077V4.09c.81-.03 1.577-.13 2.282-.287z"/>' +
+            '</svg>' +
+            '<div class="tfp-public-url-text">' +
+              '<div class="tfp-public-url-value">' + esc(urlDisplay) + '</div>' +
+              '<div class="tfp-public-url-hint">' + esc(urlHint) + '</div>' +
+            '</div>' +
+            (canOpen
+              ? '<svg width="13" height="13" viewBox="0 0 16 16" fill="currentColor" style="flex-shrink:0;opacity:0.6"><path d="M8.636 3.5a.5.5 0 00-.5-.5H1.5A1.5 1.5 0 000 4.5v10A1.5 1.5 0 001.5 16h10a1.5 1.5 0 001.5-1.5V7.864a.5.5 0 00-1 0V14.5a.5.5 0 01-.5.5h-10a.5.5 0 01-.5-.5v-10a.5.5 0 01.5-.5h6.636a.5.5 0 00.5-.5z"/><path d="M16 .5a.5.5 0 00-.5-.5h-5a.5.5 0 000 1h3.793L6.146 9.146a.5.5 0 10.708.708L15 1.707V5.5a.5.5 0 001 0v-5z"/></svg>'
+              : '') +
+          '</div>';
+      })() : '') +
 
       // Deployed via section
       (kind === 'app' && displayBranch ? (
@@ -9513,13 +9623,42 @@ function _topologyRenderPanelTab(tab, entity) {
     return;
   }
 
-  if (tab === 'metrics') {
-    body.innerHTML =
-      '<div class="tfp-empty"><strong style="color:var(--text-secondary)">指标面板</strong><br><br>CPU / 内存 / 网络吞吐<br>将在 P5 团队 workspace 上线后接入</div>';
-    return;
-  }
+  // P4 Part 18 cleanup: removed the `metrics` tab branch. It was
+  // dead code — no element in topology-fs-panel-tabs had
+  // data-tab="metrics", so users could never reach it. If metrics
+  // land in a later phase, add the tab back AND a real data source.
 
   if (tab === 'settings') {
+    // P4 Part 18 (G7): connection strings for infra services.
+    //
+    // Each supported infra type (mongo / redis / postgres / mysql) gets
+    // two view rows:
+    //   Host view      — from outside the CDS docker network. Uses
+    //                    window.location.hostname + hostPort. This is
+    //                    what you'd paste into a desktop DB GUI.
+    //   Container view — from another container on the same network.
+    //                    Uses containerName + containerPort. This is
+    //                    what you'd put in an app's env vars to talk
+    //                    to the DB service.
+    //
+    // Credentials are extracted from entity.env when present, else
+    // fall back to sensible defaults (admin / change-me-please / postgres).
+    // Passwords get masked with the same rule as the Variables tab
+    // but the copy button copies the un-masked full string.
+    var connBlock = '';
+    if (kind === 'infra') {
+      var conns = _topologyBuildConnStrings(entity);
+      if (conns) {
+        connBlock =
+          '<div class="tfp-section-h">CONNECTION STRINGS</div>' +
+          '<div class="tfp-conn-list">' +
+            _topologyRenderConnRow('Host view', conns.host, conns.hostMasked, conns.type + ' · 从宿主机或外部客户端连接') +
+            _topologyRenderConnRow('Container view', conns.container, conns.containerMasked, conns.type + ' · 从同一 Docker 网络内的其他容器连接') +
+          '</div>' +
+          '<div class="tfp-vars-hint" style="margin-top:10px">密码从环境变量（' + esc(conns.passwordEnvKey || '默认值') + '）读取，点 ⧉ 复制未遮罩的完整串</div>';
+      }
+    }
+
     body.innerHTML =
       '<div class="tfp-section-h">SERVICE INFO</div>' +
       '<div class="tfp-kv"><span class="tfp-kv-key">Name</span><span class="tfp-kv-val">' + esc(entity.name || entity.id) + '</span></div>' +
@@ -9527,9 +9666,99 @@ function _topologyRenderPanelTab(tab, entity) {
       (entity.containerPort ? '<div class="tfp-kv"><span class="tfp-kv-key">Container Port</span><span class="tfp-kv-val">' + entity.containerPort + '</span></div>' : '') +
       (entity.hostPort ? '<div class="tfp-kv"><span class="tfp-kv-key">Host Port</span><span class="tfp-kv-val">' + entity.hostPort + '</span></div>' : '') +
       (entity.workDir ? '<div class="tfp-kv"><span class="tfp-kv-key">Work Dir</span><span class="tfp-kv-val">' + esc(entity.workDir) + '</span></div>' : '') +
+      connBlock +
       '<div style="margin-top:18px"><button type="button" class="tfp-view-logs-btn" style="width:100%;padding:9px" onclick="_topologyPanelOpenEditor()">在编辑器中打开</button></div>';
     return;
   }
+}
+
+// P4 Part 18 (G7): build connection strings for a known infra type.
+// Returns null for unknown images (generic services just don't get the
+// conn-string block — they fall back to the SERVICE INFO kv rows).
+function _topologyBuildConnStrings(entity) {
+  var image = String(entity.dockerImage || '').toLowerCase();
+  var hostPort = entity.hostPort;
+  var containerPort = entity.containerPort;
+  var containerName = entity.containerName || entity.id;
+  var env = entity.env || {};
+  var host = (typeof location !== 'undefined' && location.hostname) || 'localhost';
+
+  // Helper: percent-encode a password segment so special chars don't
+  // break the URI (e.g. a password containing '@' or '/').
+  function enc(s) { return encodeURIComponent(String(s || '')); }
+  // Helper: mask everything between '://[user]:' and '@' so passwords
+  // don't show in plaintext until the user clicks copy.
+  function maskPassword(s) {
+    return String(s).replace(/:\/\/([^:@]*):([^@]*)@/, function (_m, u, _p) {
+      return '://' + u + ':' + '••••••••' + '@';
+    });
+  }
+
+  var type = null;
+  var host4 = host;
+  var hostP = hostPort;
+  var cHost = containerName;
+  var cP = containerPort;
+  var hostStr = '';
+  var containerStr = '';
+  var passwordEnvKey = null;
+
+  if (image.indexOf('mongo') >= 0) {
+    type = 'mongodb';
+    var mUser = env.MONGO_INITDB_ROOT_USERNAME || 'admin';
+    var mPass = env.MONGO_INITDB_ROOT_PASSWORD || 'change-me-please';
+    passwordEnvKey = env.MONGO_INITDB_ROOT_PASSWORD ? 'MONGO_INITDB_ROOT_PASSWORD' : null;
+    hostStr = 'mongodb://' + mUser + ':' + enc(mPass) + '@' + host4 + ':' + hostP;
+    containerStr = 'mongodb://' + mUser + ':' + enc(mPass) + '@' + cHost + ':' + cP;
+  } else if (image.indexOf('redis') >= 0) {
+    type = 'redis';
+    var rPass = env.REDIS_PASSWORD || '';
+    passwordEnvKey = env.REDIS_PASSWORD ? 'REDIS_PASSWORD' : null;
+    var rPrefix = rPass ? 'redis://:' + enc(rPass) + '@' : 'redis://';
+    hostStr = rPrefix + host4 + ':' + hostP;
+    containerStr = rPrefix + cHost + ':' + cP;
+  } else if (image.indexOf('postgres') >= 0) {
+    type = 'postgresql';
+    var pUser = env.POSTGRES_USER || 'postgres';
+    var pPass = env.POSTGRES_PASSWORD || 'change-me-please';
+    var pDb = env.POSTGRES_DB || 'app';
+    passwordEnvKey = env.POSTGRES_PASSWORD ? 'POSTGRES_PASSWORD' : null;
+    hostStr = 'postgresql://' + pUser + ':' + enc(pPass) + '@' + host4 + ':' + hostP + '/' + pDb;
+    containerStr = 'postgresql://' + pUser + ':' + enc(pPass) + '@' + cHost + ':' + cP + '/' + pDb;
+  } else if (image.indexOf('mysql') >= 0 || image.indexOf('mariadb') >= 0) {
+    type = 'mysql';
+    var yPass = env.MYSQL_ROOT_PASSWORD || 'change-me-please';
+    var yDb = env.MYSQL_DATABASE || 'app';
+    passwordEnvKey = env.MYSQL_ROOT_PASSWORD ? 'MYSQL_ROOT_PASSWORD' : null;
+    hostStr = 'mysql://root:' + enc(yPass) + '@' + host4 + ':' + hostP + '/' + yDb;
+    containerStr = 'mysql://root:' + enc(yPass) + '@' + cHost + ':' + cP + '/' + yDb;
+  } else {
+    return null;
+  }
+
+  return {
+    type: type,
+    host: hostStr,
+    container: containerStr,
+    hostMasked: maskPassword(hostStr),
+    containerMasked: maskPassword(containerStr),
+    passwordEnvKey: passwordEnvKey,
+  };
+}
+
+// P4 Part 18 (G7): one row of the connection-strings block.
+// Uses inline style so it survives without a new CSS class for every
+// sub-element.
+function _topologyRenderConnRow(label, fullValue, maskedValue, hint) {
+  var safeJson = JSON.stringify(fullValue).replace(/"/g, '&quot;');
+  return '<div class="tfp-conn-row">' +
+    '<div class="tfp-conn-label">' + esc(label) + '</div>' +
+    '<div class="tfp-conn-value" title="' + esc(hint) + '">' + esc(maskedValue) + '</div>' +
+    '<button type="button" class="tfp-var-icon-btn" title="复制完整连接串" ' +
+      'onclick="navigator.clipboard.writeText(' + safeJson + ');showToast(\'已复制完整连接串\',\'success\')">' +
+      '<svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor"><path d="M0 6.75C0 5.784.784 5 1.75 5h1.5a.75.75 0 010 1.5h-1.5a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-1.5a.75.75 0 011.5 0v1.5A1.75 1.75 0 019.25 16h-7.5A1.75 1.75 0 010 14.25v-7.5z"/><path d="M5 1.75C5 .784 5.784 0 6.75 0h7.5C15.216 0 16 .784 16 1.75v7.5A1.75 1.75 0 0114.25 11h-7.5A1.75 1.75 0 015 9.25v-7.5zm1.75-.25a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-7.5a.25.25 0 00-.25-.25h-7.5z"/></svg>' +
+    '</button>' +
+  '</div>';
 }
 
 // Open logs for the currently-displayed service (delegates to the
