@@ -32,6 +32,13 @@ After=docker.service network-online.target
 Wants=network-online.target
 Requires=docker.service
 
+# Rate limit: max 5 restarts in 60 seconds. These directives MUST be
+# in [Unit], not [Service], per current systemd. Putting them in
+# [Service] silently no-ops and emits a warning in `systemd-analyze
+# verify`. Caught during P4 Part 18 self-verify pass.
+StartLimitIntervalSec=60
+StartLimitBurst=5
+
 [Service]
 Type=simple
 
@@ -65,12 +72,11 @@ ExecStartPre=/usr/bin/npx tsc
 
 ExecStart=/usr/bin/node dist/index.js
 
-# Restart policy — the whole point of this unit file
+# Restart policy — the whole point of this unit file.
+# (The matching StartLimitIntervalSec / StartLimitBurst rate-limit
+# is in [Unit] above per modern systemd convention.)
 Restart=always
 RestartSec=3s
-# Prevent rapid restart loops: max 5 restarts in 60 seconds
-StartLimitIntervalSec=60
-StartLimitBurst=5
 
 # Standard output goes to the journal
 StandardOutput=journal
