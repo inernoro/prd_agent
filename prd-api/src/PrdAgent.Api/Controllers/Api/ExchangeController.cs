@@ -29,6 +29,18 @@ public class ExchangeController : ControllerBase
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly ExchangeTransformerRegistry _transformerRegistry = new();
 
+    /// <summary>
+    /// 用于 JsonNode.ToJsonString() 的带缩进选项。必须继承自 JsonSerializerOptions.Default
+    /// 以获得内置 TypeInfoResolver —— 否则序列化 JsonArray 的原始类型（string/int 等）
+    /// 时会抛 "JsonSerializerOptions instance must specify a TypeInfoResolver setting" 异常。
+    /// 项目启用了 AOT 友好的 source-gen 上下文 (AppJsonContext)，但 JsonNode 动态树无法被 source-gen，
+    /// 必须回退到 Default 提供的内置转换器。
+    /// </summary>
+    private static readonly JsonSerializerOptions IndentedJsonOptions = new(JsonSerializerOptions.Default)
+    {
+        WriteIndented = true
+    };
+
     public ExchangeController(MongoDbContext db, ILogger<ExchangeController> logger, IConfiguration config, IHttpClientFactory httpClientFactory)
     {
         _db = db;
@@ -321,7 +333,7 @@ public class ExchangeController : ControllerBase
         {
             return Ok(ApiResponse<object>.Ok(new
             {
-                standardRequest = standardBody.ToJsonString(new JsonSerializerOptions { WriteIndented = true }),
+                standardRequest = standardBody.ToJsonString(IndentedJsonOptions),
                 transformedRequest = (string?)null,
                 rawResponse = (string?)null,
                 transformedResponse = (string?)null,
@@ -331,14 +343,14 @@ public class ExchangeController : ControllerBase
             }));
         }
 
-        var transformedJson = transformedRequest.ToJsonString(new JsonSerializerOptions { WriteIndented = true });
+        var transformedJson = transformedRequest.ToJsonString(IndentedJsonOptions);
 
         // 3. 如果只做转换预览（不实际发送），直接返回
         if (request.DryRun)
         {
             return Ok(ApiResponse<object>.Ok(new
             {
-                standardRequest = standardBody.ToJsonString(new JsonSerializerOptions { WriteIndented = true }),
+                standardRequest = standardBody.ToJsonString(IndentedJsonOptions),
                 transformedRequest = transformedJson,
                 rawResponse = (string?)null,
                 transformedResponse = (string?)null,
@@ -402,7 +414,7 @@ public class ExchangeController : ControllerBase
                     durationMs = (long)(DateTime.UtcNow - startedAt).TotalMilliseconds;
                     return Ok(ApiResponse<object>.Ok(new
                     {
-                        standardRequest = standardBody.ToJsonString(new JsonSerializerOptions { WriteIndented = true }),
+                        standardRequest = standardBody.ToJsonString(IndentedJsonOptions),
                         transformedRequest = transformedJson,
                         rawResponse = rawResponseBody,
                         transformedResponse = (string?)null,
@@ -454,7 +466,7 @@ public class ExchangeController : ControllerBase
                             durationMs = (long)(DateTime.UtcNow - startedAt).TotalMilliseconds;
                             return Ok(ApiResponse<object>.Ok(new
                             {
-                                standardRequest = standardBody.ToJsonString(new JsonSerializerOptions { WriteIndented = true }),
+                                standardRequest = standardBody.ToJsonString(IndentedJsonOptions),
                                 transformedRequest = transformedJson,
                                 rawResponse = rawResponseBody,
                                 transformedResponse = (string?)null,
@@ -474,7 +486,7 @@ public class ExchangeController : ControllerBase
         {
             return Ok(ApiResponse<object>.Ok(new
             {
-                standardRequest = standardBody.ToJsonString(new JsonSerializerOptions { WriteIndented = true }),
+                standardRequest = standardBody.ToJsonString(IndentedJsonOptions),
                 transformedRequest = transformedJson,
                 rawResponse = (string?)null,
                 transformedResponse = (string?)null,
@@ -495,7 +507,7 @@ public class ExchangeController : ControllerBase
                 if (rawJson != null)
                 {
                     var transformedResp = transformer.TransformResponse(rawJson, exchange.TransformerConfig);
-                    transformedResponseJson = transformedResp.ToJsonString(new JsonSerializerOptions { WriteIndented = true });
+                    transformedResponseJson = transformedResp.ToJsonString(IndentedJsonOptions);
                 }
             }
         }
@@ -509,7 +521,7 @@ public class ExchangeController : ControllerBase
         try
         {
             var parsed = JsonNode.Parse(rawResponseBody);
-            formattedRawResponse = parsed?.ToJsonString(new JsonSerializerOptions { WriteIndented = true }) ?? rawResponseBody;
+            formattedRawResponse = parsed?.ToJsonString(IndentedJsonOptions) ?? rawResponseBody;
         }
         catch
         {
@@ -518,7 +530,7 @@ public class ExchangeController : ControllerBase
 
         return Ok(ApiResponse<object>.Ok(new
         {
-            standardRequest = standardBody.ToJsonString(new JsonSerializerOptions { WriteIndented = true }),
+            standardRequest = standardBody.ToJsonString(IndentedJsonOptions),
             transformedRequest = transformedJson,
             rawResponse = formattedRawResponse,
             transformedResponse = transformedResponseJson,
@@ -598,7 +610,10 @@ public class ExchangeController : ControllerBase
         Response.Headers.Append("Cache-Control", "no-cache");
         Response.Headers.Append("X-Accel-Buffering", "no");
 
-        var jsonOpts = new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase };
+        var jsonOpts = new JsonSerializerOptions(JsonSerializerOptions.Default)
+        {
+            PropertyNamingPolicy = JsonNamingPolicy.CamelCase
+        };
         async Task SendEvent(string eventType, object data)
         {
             var json = JsonSerializer.Serialize(data, jsonOpts);
