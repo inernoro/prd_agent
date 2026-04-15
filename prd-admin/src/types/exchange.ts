@@ -3,6 +3,8 @@ export interface ModelExchange {
   id: string;
   name: string;
   modelAlias: string;
+  /** 附加模型别名列表（多模型共享一个中继时使用，如 Gemini Provider） */
+  modelAliases?: string[];
   targetUrl: string;
   apiKeyMasked: string;
   targetAuthScheme: string;
@@ -22,6 +24,8 @@ export interface ModelExchange {
 export interface CreateExchangeRequest {
   name: string;
   modelAlias: string;
+  /** 附加模型别名列表 */
+  modelAliases?: string[];
   targetUrl: string;
   targetApiKey?: string;
   targetAuthScheme?: string;
@@ -35,6 +39,8 @@ export interface CreateExchangeRequest {
 export interface UpdateExchangeRequest {
   name?: string;
   modelAlias?: string;
+  /** 附加模型别名列表 */
+  modelAliases?: string[];
   targetUrl?: string;
   targetApiKey?: string;
   targetAuthScheme?: string;
@@ -84,6 +90,7 @@ export const AUTH_SCHEME_OPTIONS = [
   { value: 'Bearer', label: 'Bearer (Authorization: Bearer {key})' },
   { value: 'Key', label: 'Key (Authorization: Key {key})' },
   { value: 'XApiKey', label: 'x-api-key (Header: x-api-key)' },
+  { value: 'x-goog-api-key', label: 'x-goog-api-key (Google Gemini 原生)' },
   { value: 'DoubaoAsr', label: '豆包 ASR (X-Api-App-Key + X-Api-Access-Key)' },
 ] as const;
 

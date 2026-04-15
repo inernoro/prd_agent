@@ -19,12 +19,22 @@ public class ModelExchange
     /// <summary>
     /// 模型别名（模型池中引用的 ModelId）
     /// 例如: "nano-banana-pro-edit"
+    /// 单中继单模型场景使用此字段；多模型共享一个中继时请使用 ModelAliases。
     /// </summary>
     public string ModelAlias { get; set; } = string.Empty;
 
     /// <summary>
-    /// 目标 API 完整 URL
+    /// 附加模型别名列表。允许一个中继（Provider 级别）承接多个模型。
+    /// 例如 Gemini 原生协议下，同一个 Provider 入口可以通过 URL 模版 {model} 替换
+    /// 分发到不同模型（gemini-3.1-flash / gemini-3.1-flash-image-preview 等）。
+    /// ModelResolver 会同时匹配 ModelAlias 与 ModelAliases。
+    /// </summary>
+    public List<string> ModelAliases { get; set; } = new();
+
+    /// <summary>
+    /// 目标 API 完整 URL。支持 {model} 占位符，运行时会被实际模型 ID 替换。
     /// 例如: "https://fal.run/fal-ai/nano-banana-pro/edit"
+    /// 或: "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
     /// </summary>
     public string TargetUrl { get; set; } = string.Empty;
 

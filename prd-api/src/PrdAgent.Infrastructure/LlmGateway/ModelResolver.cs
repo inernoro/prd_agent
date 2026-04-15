@@ -180,8 +180,18 @@ public class ModelResolver : IModelResolver
             // 检查模型是否为 Exchange 中继模型（PlatformId == "__exchange__"）
             if (selectedModel.PlatformId == ModelResolverConstants.ExchangePlatformId)
             {
+                // 支持两种匹配：
+                //   1) ModelAlias（单中继单模型，旧数据）
+                //   2) ModelAliases 列表（单中继多模型，新增 Gemini 等 Provider 级中继使用）
+                var exchangeFilter = Builders<ModelExchange>.Filter.And(
+                    Builders<ModelExchange>.Filter.Eq(e => e.Enabled, true),
+                    Builders<ModelExchange>.Filter.Or(
+                        Builders<ModelExchange>.Filter.Eq(e => e.ModelAlias, selectedModel.ModelId),
+                        Builders<ModelExchange>.Filter.AnyEq(e => e.ModelAliases, selectedModel.ModelId)
+                    )
+                );
                 var exchange = await _db.ModelExchanges
-                    .Find(e => e.ModelAlias == selectedModel.ModelId && e.Enabled)
+                    .Find(exchangeFilter)
                     .FirstOrDefaultAsync(ct);
 
                 if (exchange == null)

@@ -46,6 +46,8 @@ function inferModelType(transformerType: string): string {
 type ExchangeForm = {
   name: string;
   modelAlias: string;
+  /** 附加别名（UI 以换行分隔字符串形式编辑，保存时拆分成数组） */
+  modelAliasesText: string;
   targetUrl: string;
   targetApiKey: string;
   targetAuthScheme: string;
@@ -68,6 +70,7 @@ const IMAGE_TRANSFER_MODE_OPTIONS = [
 const defaultForm: ExchangeForm = {
   name: '',
   modelAlias: '',
+  modelAliasesText: '',
   targetUrl: '',
   targetApiKey: '',
   targetAuthScheme: 'Bearer',
@@ -76,6 +79,15 @@ const defaultForm: ExchangeForm = {
   enabled: true,
   description: '',
 };
+
+/** 把多行文本拆成数组（过滤空行 + trim + 去重） */
+function parseAliasesText(text: string): string[] {
+  const seen = new Set<string>();
+  return text
+    .split(/[\n,]/)
+    .map(s => s.trim())
+    .filter(s => s.length > 0 && !seen.has(s) && (seen.add(s) || true));
+}
 
 export function ExchangeManagePage() {
   const [exchanges, setExchanges] = useState<ModelExchange[]>([]);
@@ -177,6 +189,7 @@ export function ExchangeManagePage() {
     setForm({
       name: exchange.name,
       modelAlias: exchange.modelAlias,
+      modelAliasesText: (exchange.modelAliases ?? []).join('\n'),
       targetUrl: exchange.targetUrl,
       targetApiKey: '', // 不回填密钥
       targetAuthScheme: exchange.targetAuthScheme,
@@ -210,6 +223,8 @@ export function ExchangeManagePage() {
     if (!form.modelAlias.trim()) { toast.error('请填写模型别名'); return; }
     if (!form.targetUrl.trim()) { toast.error('请填写目标 URL'); return; }
 
+    const parsedAliases = parseAliasesText(form.modelAliasesText);
+
     setSaving(true);
     try {
       if (editingId) {
@@ -220,6 +235,7 @@ export function ExchangeManagePage() {
         const req: UpdateExchangeRequest = {
           name: form.name.trim(),
           modelAlias: form.modelAlias.trim(),
+          modelAliases: parsedAliases,
           targetUrl: form.targetUrl.trim(),
           targetAuthScheme: form.targetAuthScheme,
           transformerType: form.transformerType,
@@ -246,6 +262,7 @@ export function ExchangeManagePage() {
         const req: CreateExchangeRequest = {
           name: form.name.trim(),
           modelAlias: form.modelAlias.trim(),
+          modelAliases: parsedAliases,
           targetUrl: form.targetUrl.trim(),
           targetApiKey: form.targetApiKey.trim() || undefined,
           targetAuthScheme: form.targetAuthScheme,
@@ -388,6 +405,23 @@ export function ExchangeManagePage() {
                     <Copy size={12} />
                   </button>
                 </div>
+                {exchange.modelAliases && exchange.modelAliases.length > 0 && (
+                  <div className="flex items-start gap-2">
+                    <span className="text-muted-foreground w-16 shrink-0 mt-0.5">附加别名</span>
+                    <div className="flex-1 flex flex-wrap gap-1">
+                      {exchange.modelAliases.map(alias => (
+                        <code
+                          key={alias}
+                          className="px-1.5 py-0.5 rounded bg-muted/40 font-mono text-[11px] cursor-pointer hover:bg-muted/60"
+                          onClick={() => handleCopyAlias(alias)}
+                          title="点击复制"
+                        >
+                          {alias}
+                        </code>
+                      ))}
+                    </div>
+                  </div>
+                )}
                 <div className="flex items-center gap-2">
                   <span className="text-muted-foreground w-16 shrink-0">目标 URL</span>
                   <span className="flex-1 truncate text-foreground/80">{exchange.targetUrl}</span>
@@ -608,9 +642,9 @@ export function ExchangeManagePage() {
               />
             </div>
 
-            {/* 模型别名 */}
+            {/* 模型别名（主） */}
             <div>
-              <label className="block text-sm font-medium mb-1">模型别名 (ModelAlias)</label>
+              <label className="block text-sm font-medium mb-1">主模型别名 (ModelAlias)</label>
               <input
                 className="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm font-mono"
                 placeholder="例如: nano-banana-pro-edit"
@@ -622,15 +656,33 @@ export function ExchangeManagePage() {
               </div>
             </div>
 
+            {/* 附加模型别名（一中继多模型） */}
+            <div>
+              <label className="block text-sm font-medium mb-1">附加模型别名 (可选)</label>
+              <textarea
+                className="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm font-mono resize-none"
+                rows={3}
+                placeholder={'每行一个，或用逗号分隔\n例如:\ngemini-3.1-flash\ngemini-3.1-flash-image-preview\ngemini-3.0-pro'}
+                value={form.modelAliasesText}
+                onChange={e => setForm(f => ({ ...f, modelAliasesText: e.target.value }))}
+              />
+              <div className="text-[11px] text-muted-foreground mt-1">
+                同一 Provider 承接多个模型时使用（如 Gemini 原生协议）。每个别名在模型池选择器中会展开为独立条目；URL 模版中的 <code className="px-1 py-0.5 rounded bg-muted/40">{'{model}'}</code> 会被实际调用的模型 ID 替换。
+              </div>
+            </div>
+
             {/* 目标 URL */}
             <div>
               <label className="block text-sm font-medium mb-1">目标 API URL</label>
               <input
                 className="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm"
-                placeholder="例如: https://fal.run/fal-ai/nano-banana-pro/edit"
+                placeholder="例如: https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
                 value={form.targetUrl}
                 onChange={e => setForm(f => ({ ...f, targetUrl: e.target.value }))}
               />
+              <div className="text-[11px] text-muted-foreground mt-1">
+                支持 <code className="px-1 py-0.5 rounded bg-muted/40">{'{model}'}</code> 占位符，运行时自动替换为模型池调度出的实际模型 ID。留空占位符则一条中继固定调用一个模型。
+              </div>
             </div>
 
             {/* API Key */}

@@ -53,6 +53,7 @@ public class ExchangeController : ControllerBase
             e.Id,
             e.Name,
             e.ModelAlias,
+            e.ModelAliases,
             e.TargetUrl,
             apiKeyMasked = ApiKeyCrypto.Mask(ApiKeyCrypto.Decrypt(e.TargetApiKeyEncrypted, GetJwtSecret())),
             e.TargetAuthScheme,
@@ -85,6 +86,7 @@ public class ExchangeController : ControllerBase
             exchange.Id,
             exchange.Name,
             exchange.ModelAlias,
+            exchange.ModelAliases,
             exchange.TargetUrl,
             apiKeyMasked = ApiKeyCrypto.Mask(ApiKeyCrypto.Decrypt(exchange.TargetApiKeyEncrypted, GetJwtSecret())),
             exchange.TargetAuthScheme,
@@ -122,6 +124,7 @@ public class ExchangeController : ControllerBase
         {
             Name = request.Name.Trim(),
             ModelAlias = request.ModelAlias.Trim(),
+            ModelAliases = NormalizeModelAliases(request.ModelAliases),
             TargetUrl = request.TargetUrl.Trim(),
             TargetApiKeyEncrypted = ApiKeyCrypto.Encrypt(request.TargetApiKey ?? string.Empty, GetJwtSecret()),
             TargetAuthScheme = string.IsNullOrWhiteSpace(request.TargetAuthScheme) ? "Bearer" : request.TargetAuthScheme.Trim(),
@@ -133,7 +136,8 @@ public class ExchangeController : ControllerBase
 
         await _db.ModelExchanges.InsertOneAsync(exchange, cancellationToken: ct);
 
-        _logger.LogInformation("[Exchange] 创建 Exchange: {Id} / {Name} / {ModelAlias}", exchange.Id, exchange.Name, exchange.ModelAlias);
+        _logger.LogInformation("[Exchange] 创建 Exchange: {Id} / {Name} / {ModelAlias} / Aliases={AliasesCount}",
+            exchange.Id, exchange.Name, exchange.ModelAlias, exchange.ModelAliases.Count);
 
         return Ok(ApiResponse<object>.Ok(new { exchange.Id }));
     }
@@ -169,6 +173,8 @@ public class ExchangeController : ControllerBase
         var update = Builders<ModelExchange>.Update
             .Set(e => e.Name, request.Name?.Trim() ?? existing.Name)
             .Set(e => e.ModelAlias, request.ModelAlias?.Trim() ?? existing.ModelAlias)
+            .Set(e => e.ModelAliases,
+                request.ModelAliases != null ? NormalizeModelAliases(request.ModelAliases) : existing.ModelAliases)
             .Set(e => e.TargetUrl, request.TargetUrl?.Trim() ?? existing.TargetUrl)
             .Set(e => e.TargetAuthScheme, request.TargetAuthScheme?.Trim() ?? existing.TargetAuthScheme)
             .Set(e => e.TransformerType, request.TransformerType?.Trim() ?? existing.TransformerType)
@@ -220,6 +226,7 @@ public class ExchangeController : ControllerBase
 
     /// <summary>
     /// 获取 Exchange 列表（精简版，供模型池添加模型时选择）
+    /// 对于多别名 Exchange（ModelAliases），每个别名展开为一个可选项，便于用户在模型池中分别挂载。
     /// </summary>
     [HttpGet("for-pool")]
     public async Task<IActionResult> GetExchangesForPool(CancellationToken ct)
@@ -230,16 +237,51 @@ public class ExchangeController : ControllerBase
             .SortBy(e => e.Name)
             .ToListAsync(ct);
 
-        var result = list.Select(e => new
+        var result = new List<object>();
+        foreach (var e in list)
         {
-            modelId = e.ModelAlias,
-            platformId = ModelResolverConstants.ExchangePlatformId,
-            platformName = ModelResolverConstants.ExchangePlatformName,
-            displayName = $"[Exchange] {e.Name} ({e.ModelAlias})",
-            e.TransformerType
-        });
+            // 主别名（旧字段）
+            if (!string.IsNullOrWhiteSpace(e.ModelAlias))
+            {
+                result.Add(new
+                {
+                    modelId = e.ModelAlias,
+                    platformId = ModelResolverConstants.ExchangePlatformId,
+                    platformName = ModelResolverConstants.ExchangePlatformName,
+                    displayName = $"[Exchange] {e.Name} ({e.ModelAlias})",
+                    e.TransformerType
+                });
+            }
+
+            // 附加别名：为 Gemini 这类一中继承接多模型的 Provider 展开多项
+            foreach (var alias in e.ModelAliases ?? new List<string>())
+            {
+                if (string.IsNullOrWhiteSpace(alias) || alias == e.ModelAlias) continue;
+                result.Add(new
+                {
+                    modelId = alias,
+                    platformId = ModelResolverConstants.ExchangePlatformId,
+                    platformName = ModelResolverConstants.ExchangePlatformName,
+                    displayName = $"[Exchange] {e.Name} ({alias})",
+                    e.TransformerType
+                });
+            }
+        }
 
         return Ok(ApiResponse<object>.Ok(new { items = result }));
+    }
+
+    /// <summary>
+    /// 规范化 ModelAliases 输入：去空、trim、去重。
+    /// </summary>
+    private static List<string> NormalizeModelAliases(List<string>? input)
+    {
+        if (input == null || input.Count == 0) return new List<string>();
+        return input
+            .Where(s => !string.IsNullOrWhiteSpace(s))
+            .Select(s => s.Trim())
+            .Distinct(StringComparer.Ordinal)
+            .ToList();
     }
 
     /// <summary>
@@ -307,9 +349,15 @@ public class ExchangeController : ControllerBase
             }));
         }
 
-        // 4. 智能路由：根据请求内容决定实际目标 URL
-        var actualTargetUrl = transformer.ResolveTargetUrl(exchange.TargetUrl, standardBody, exchange.TransformerConfig)
-                              ?? exchange.TargetUrl;
+        // 4. 智能路由：URL 模版替换 + 根据请求内容决定实际目标 URL
+        // 对于 {model} 占位符：测试时用 standardBody.model 或 ModelAlias 替换
+        string? testModel = null;
+        if (standardBody["model"] is JsonValue modelVal && modelVal.TryGetValue<string>(out var mv))
+            testModel = mv;
+        testModel ??= exchange.ModelAlias;
+        var templatedUrl = PrdAgent.Infrastructure.LlmGateway.LlmGateway.ResolveEndpointTemplate(exchange.TargetUrl, testModel);
+        var actualTargetUrl = transformer.ResolveTargetUrl(templatedUrl, standardBody, exchange.TransformerConfig)
+                              ?? templatedUrl;
 
         var apiKey = ApiKeyCrypto.Decrypt(exchange.TargetApiKeyEncrypted, GetJwtSecret());
         var httpRequest = new HttpRequestMessage(HttpMethod.Post, actualTargetUrl)
@@ -670,6 +718,7 @@ public class ExchangeController : ControllerBase
             {
                 t.Preset.Name,
                 t.Preset.ModelAlias,
+                t.Preset.ModelAliases,
                 t.Preset.TargetUrl,
                 t.Preset.TargetAuthScheme,
                 t.Preset.TransformerType,
@@ -707,6 +756,7 @@ public class ExchangeController : ControllerBase
         {
             Name = template.Preset.Name,
             ModelAlias = template.Preset.ModelAlias,
+            ModelAliases = NormalizeModelAliases(template.Preset.ModelAliases),
             TargetUrl = template.Preset.TargetUrl,
             TargetApiKeyEncrypted = ApiKeyCrypto.Encrypt(request.ApiKey.Trim(), GetJwtSecret()),
             TargetAuthScheme = template.Preset.TargetAuthScheme ?? "Bearer",
@@ -734,6 +784,10 @@ public class ExchangeController : ControllerBase
             case "x-api-key":
             case "xapikey":
                 req.Headers.TryAddWithoutValidation("x-api-key", apiKey);
+                break;
+            case "x-goog-api-key":
+            case "xgoogapikey":
+                req.Headers.TryAddWithoutValidation("x-goog-api-key", apiKey);
                 break;
             case "key":
                 req.Headers.Authorization = new AuthenticationHeaderValue("Key", apiKey);
@@ -827,6 +881,33 @@ public static class ExchangeTemplates
                 Enabled = true,
                 Description = "fal.ai 图片生成 - Nano Banana Pro"
             }
+        },
+        new ExchangeTemplate
+        {
+            Id = "gemini-native",
+            Name = "Google Gemini 原生协议",
+            Description = "Google Gemini Native API，一条中继承接多个 Gemini 模型。URL 模版中的 {model} 会在运行时替换为实际模型 ID，所以同一条中继可以同时挂接 gemini-3.1-flash / gemini-3.1-flash-image-preview / gemini-pro 等多个模型。",
+            ApiKeyPlaceholder = "Google API Key",
+            ApiKeyHint = "在 https://aistudio.google.com/apikey 获取 API Key，请求头使用 x-goog-api-key",
+            Preset = new ExchangeTemplatePreset
+            {
+                Name = "Google Gemini (原生)",
+                // 主别名留一个常用图像模型；其它模型通过 ModelAliases 扩展，也可按需修改
+                ModelAlias = "gemini-3.1-flash-image-preview",
+                ModelAliases = new List<string>
+                {
+                    "gemini-3.1-flash",
+                    "gemini-3.1-flash-image-preview",
+                    "gemini-3.0-pro",
+                    "gemini-2.5-flash",
+                    "gemini-2.5-pro"
+                },
+                TargetUrl = "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent",
+                TargetAuthScheme = "x-goog-api-key",
+                TransformerType = "gemini-native",
+                Enabled = true,
+                Description = "Gemini 原生协议中继（支持文本 + 图像生成 + 图生图）。{model} 模版占位符会在调度时被实际模型 ID 替换。"
+            }
         }
     };
 }
@@ -845,6 +926,8 @@ public class ExchangeTemplatePreset
 {
     public string Name { get; set; } = string.Empty;
     public string ModelAlias { get; set; } = string.Empty;
+    /// <summary>附加别名列表（多模型共享一个中继）</summary>
+    public List<string>? ModelAliases { get; set; }
     public string TargetUrl { get; set; } = string.Empty;
     public string? TargetAuthScheme { get; set; }
     public string? TransformerType { get; set; }
@@ -859,6 +942,8 @@ public class CreateExchangeRequest
 {
     public string Name { get; set; } = string.Empty;
     public string ModelAlias { get; set; } = string.Empty;
+    /// <summary>附加模型别名列表（多模型共享一个中继时使用，如 Gemini Provider）</summary>
+    public List<string>? ModelAliases { get; set; }
     public string TargetUrl { get; set; } = string.Empty;
     public string? TargetApiKey { get; set; }
     public string? TargetAuthScheme { get; set; }
@@ -872,6 +957,8 @@ public class UpdateExchangeRequest
 {
     public string? Name { get; set; }
     public string? ModelAlias { get; set; }
+    /// <summary>附加模型别名列表（多模型共享一个中继时使用，如 Gemini Provider）</summary>
+    public List<string>? ModelAliases { get; set; }
     public string? TargetUrl { get; set; }
     public string? TargetApiKey { get; set; }
     public string? TargetAuthScheme { get; set; }
