@@ -15,17 +15,15 @@ function getIdleWindow(): IdleWindow {
  *
  * 为什么必须这么做：
  *   React Router v6 (非 data router 模式) 把 location 更新包在 React state 里，
- *   在 React 18 concurrent transition 语义下 —— 调用 navigate() 时，新 location
- *   会被 hold 住，直到整棵树（包含 lazy import 完成）准备好才 commit。这意味着：
- *     · useLocation() 读到的 pathname 不会立刻变
- *     · useEffect([location.pathname]) 不会立刻 fire
- *     · 进度条在 t=0 收不到任何信号
+ *   在 React 18 concurrent transition 语义下 —— 调用 navigate() 时新 location
+ *   会被 hold 住，直到整棵树（包含 lazy import 完成）准备好才 commit。
+ *   这意味着 useLocation() / useEffect([location]) 在 t=0 都拿不到信号。
  *
  *   唯一不被 React 管控的是浏览器原生 history.pushState —— 它是同步调用的
  *   DOM API，React Router 内部调用它时必然早于 React 任何 render 逻辑。
- *   所以我们在模块加载时 monkey-patch history.pushState / replaceState，
- *   在原函数调用前 dispatch 一个 window 级自定义事件 'map:navstart'。
- *   NavigationProgressBar 监听这个事件，就能在 t=0 立刻获得信号。
+ *   所以模块加载时 monkey-patch history.pushState / replaceState，在原函数
+ *   调用前 dispatch 'map:navstart' 自定义事件。进度条监听这个事件，就能在
+ *   t=0 立刻获得信号 —— 早于 React 的一切。
  */
 const NAV_START_EVENT = 'map:navstart';
 
@@ -77,18 +75,44 @@ function patchHistoryOnce() {
 /**
  * NavigationProgressBar — 顶栏路由切换进度条
  *
- * 通过 history.pushState 拦截直接获取导航开始信号，**不依赖 React state / useLocation**。
- * 设计依据见 patchHistoryOnce 的 JSDoc。
+ * ══ 两个容易踩的坑（已修复） ══
  *
- * 视觉：3px 高渐变条 (/home Hero 同款 青→紫→玫红) + 光晕。
- * 爬升曲线：0 → 15% (瞬间) → 40% (200ms) → 60% (500ms) → 80% (1.2s) → 90% (2s stall)
- * 完成信号：requestIdleCallback (浏览器空闲 ≈ 新页面 commit + paint) + 4s 兜底
+ * 坑 1: requestIdleCallback 触发太早
+ *   React 在 hold transition 期间浏览器实际上是空闲的（没在渲染），
+ *   requestIdleCallback 会在 ~50ms 内立刻 fire，导致 finish() 几乎瞬间
+ *   执行 —— 用户看到进度条"一闪而过"。
+ *   修复：增加 MIN_DURATION 硬下限（1500ms），即使 idle 信号到得再早，
+ *   也必须等到最小时长才能完成。
+ *
+ * 坑 2: 完成后 setProgress(0) 重置触发反向动画
+ *   完成后如果直接 setProgress(100) → setVisible(false) → setProgress(0)，
+ *   width 会走 400ms cubic-bezier 从 100% 反向缩到 0%，在 opacity 淡出
+ *   350ms 期间可见 —— 用户看到"退回来"的诡异动画。
+ *   修复：完成后永远不动 progress，停在 100%。下次导航开始时用
+ *   animating=false 的 "transition: none" 瞬时 snap 到 0%（在 opacity 还是
+ *   0 时发生，不可见）。
+ *
+ * ══ 工作原理 ══
+ *
+ * 1. 通过 patchHistoryOnce 在 history.pushState 层拦截导航，dispatch 事件，
+ *    完全绕过 React transition
+ * 2. 进度条监听 'map:navstart' 事件，立刻显示
+ * 3. 爬升曲线：0 → 15% (下一帧) → 40% (200ms) → 60% (500ms) → 80% (1.2s)
+ *    → 90% (1.8s, stall)
+ * 4. 完成信号：requestIdleCallback + MIN_DURATION(1500ms) 硬下限 + 5s 超时兜底
+ * 5. 完成动画：progress → 100, 300ms 后 opacity 淡出（不反向动画 width）
  */
+const MIN_DURATION_MS = 1500; // 最小显示时长，防止"一闪而过"
+const IDLE_TIMEOUT_MS = 5000; // requestIdleCallback 超时兜底
+
 export function NavigationProgressBar() {
   const [visible, setVisible] = useState(false);
   const [progress, setProgress] = useState(0);
+  // animating=false 时 width 无 transition（用于导航开始时瞬时 snap 到 0%）
+  const [animating, setAnimating] = useState(true);
+
   const timersRef = useRef<number[]>([]);
-  const idleRef = useRef<number | null>(null);
+  const idleCbRef = useRef<number | null>(null);
   const rafRef = useRef<number | null>(null);
   const lastPathRef = useRef<string>(
     typeof window !== 'undefined' ? window.location.pathname : '',
@@ -104,63 +128,103 @@ export function NavigationProgressBar() {
         cancelAnimationFrame(rafRef.current);
         rafRef.current = null;
       }
-      if (idleRef.current !== null) {
+      if (idleCbRef.current !== null) {
         const w = getIdleWindow();
         if (typeof w.cancelIdleCallback === 'function') {
-          w.cancelIdleCallback(idleRef.current);
+          w.cancelIdleCallback(idleCbRef.current);
         } else {
-          window.clearTimeout(idleRef.current);
+          window.clearTimeout(idleCbRef.current);
         }
-        idleRef.current = null;
+        idleCbRef.current = null;
       }
     };
 
     const handleNavStart = (evt: Event) => {
       const custom = evt as CustomEvent<{ path: string }>;
       const nextPath = custom.detail?.path || window.location.pathname;
-      // 相同路径不触发（比如 replaceState 到同一个 path）
       if (nextPath === lastPathRef.current) return;
       lastPathRef.current = nextPath;
 
-      // 清掉上一次导航还没完成的 timer
       clearAllTimers();
 
-      // ── 立刻显示、立刻从 0% 开始 ──
-      setVisible(true);
-      setProgress(0);
+      const navStart = performance.now();
 
-      // 下一帧跳到 15%，让用户看到"条子从左边弹出来"
+      // ── Step 1: 瞬时 snap 到 0% ──
+      // animating=false → width 无 transition，瞬时生效
+      // （上一次如果停在 100%，此时 opacity 还是 0，用户看不到 snap）
+      setAnimating(false);
+      setProgress(0);
+      setVisible(true);
+
+      // ── Step 2: 下一帧启用动画并开始爬升 ──
       rafRef.current = requestAnimationFrame(() => {
-        setProgress(15);
+        // 双 rAF 确保 CSS 已经应用了 width:0，再切到 animating=true
+        rafRef.current = requestAnimationFrame(() => {
+          setAnimating(true);
+          setProgress(15);
+        });
       });
 
-      // ── 缓慢爬升曲线（总计 2 秒爬到 90%）──
+      // ── Step 3: 缓慢爬升（总计 1.8s 爬到 90%）──
       timersRef.current.push(
         window.setTimeout(() => setProgress(40), 200),
         window.setTimeout(() => setProgress(60), 500),
         window.setTimeout(() => setProgress(80), 1200),
-        window.setTimeout(() => setProgress(90), 2000),
+        window.setTimeout(() => setProgress(90), 1800),
       );
 
-      // ── 完成信号：浏览器空闲 = 新页面已 commit + paint ──
-      const finish = () => {
+      // ── Step 4: 完成逻辑 ──
+      // 闭包变量跟踪"最小时长已过" + "idle 信号已到"
+      // 只有两个都满足才真正 finish
+      let minReached = false;
+      let idleReceived = false;
+
+      const realFinish = () => {
+        // 硬跳到 100%，300ms 后 opacity 淡出（永不反向动 width）
         setProgress(100);
-        // 200ms 后淡出
-        const fadeId = window.setTimeout(() => {
+        const fadeTimerId = window.setTimeout(() => {
           setVisible(false);
-          // 400ms 淡出动画结束后把 progress 归零
-          const resetId = window.setTimeout(() => setProgress(0), 400);
-          timersRef.current.push(resetId);
-        }, 200);
-        timersRef.current.push(fadeId);
+        }, 300);
+        timersRef.current.push(fadeTimerId);
+      };
+
+      const maybeFinish = () => {
+        if (minReached && idleReceived) realFinish();
+      };
+
+      // 最小时长 timer
+      const minTimerId = window.setTimeout(() => {
+        minReached = true;
+        maybeFinish();
+      }, MIN_DURATION_MS);
+      timersRef.current.push(minTimerId);
+
+      // Idle 信号（浏览器真正空闲 = 新页面已 commit）+ 超时兜底
+      const handleIdle = () => {
+        idleReceived = true;
+        idleCbRef.current = null;
+        maybeFinish();
       };
 
       const w = getIdleWindow();
       if (typeof w.requestIdleCallback === 'function') {
-        idleRef.current = w.requestIdleCallback(finish, { timeout: 4000 });
+        idleCbRef.current = w.requestIdleCallback(handleIdle, { timeout: IDLE_TIMEOUT_MS });
       } else {
-        idleRef.current = window.setTimeout(finish, 2500);
+        idleCbRef.current = window.setTimeout(handleIdle, 2500);
       }
+
+      // 兜底：过了 performance.now() + 4000ms 无论如何也要 finish
+      // 防止 idle 信号永远不到导致进度条永远卡在 90%
+      const fallbackId = window.setTimeout(() => {
+        const elapsed = performance.now() - navStart;
+        if (elapsed >= 4000) {
+          // 直接强制完成
+          minReached = true;
+          idleReceived = true;
+          realFinish();
+        }
+      }, 4000);
+      timersRef.current.push(fallbackId);
     };
 
     window.addEventListener(NAV_START_EVENT, handleNavStart);
@@ -178,6 +242,7 @@ export function NavigationProgressBar() {
         height: 3,
         zIndex: 9999,
         opacity: visible ? 1 : 0,
+        // 永远只动 opacity，不动 width（width 由 animating 控制）
         transition: visible ? 'opacity 120ms ease-out' : 'opacity 350ms ease-out',
       }}
     >
@@ -188,10 +253,12 @@ export function NavigationProgressBar() {
           background: 'linear-gradient(90deg, #00f0ff 0%, #7c3aed 50%, #f43f5e 100%)',
           boxShadow:
             '0 0 12px rgba(124, 58, 237, 0.7), 0 0 6px rgba(0, 240, 255, 0.5), 0 1px 4px rgba(244, 63, 94, 0.4)',
-          transition:
-            progress === 100
+          // 核心：animating=false 时完全禁用 width transition（用于瞬时 snap 到 0%）
+          transition: animating
+            ? progress === 100
               ? 'width 180ms ease-out'
-              : 'width 400ms cubic-bezier(0.19, 1, 0.22, 1)',
+              : 'width 400ms cubic-bezier(0.19, 1, 0.22, 1)'
+            : 'none',
         }}
       />
     </div>
