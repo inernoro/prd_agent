@@ -7,6 +7,7 @@ import { getAdminAuthzMe, getAdminMenuCatalog } from '@/services';
 import { ToastContainer } from '@/components/ui/Toast';
 import { AgentSwitcherProvider } from '@/components/agent-switcher';
 import { BranchBadge } from '@/components/BranchBadge';
+import { NavigationProgressBar } from '@/components/effects/NavigationProgressBar';
 import { useBreakpoint } from '@/hooks/useBreakpoint';
 import { SuspenseVideoLoader } from '@/components/ui/VideoLoader';
 
@@ -237,6 +238,8 @@ export default function App() {
       <ToastContainer />
       <BranchBadge />
       <NavigationBridge />
+      {/* 路由切换顶栏进度条：绕过 Suspense transition 语义，立刻给用户视觉反馈 */}
+      <NavigationProgressBar />
       <Suspense fallback={<SuspenseVideoLoader />}>
       <Routes location={location}>
         {/* Landing page - public · 用透明 fallback，避免 MAP 闪屏打断朦胧动效节奏 */}
