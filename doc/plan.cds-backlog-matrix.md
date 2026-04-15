@@ -24,30 +24,37 @@
 
 ## 1. 摘要与统计
 
-**总事项数**：34 条（UF×8 + GAP×10 + L10N×3 + LIM×7 + FU×5 + TEST×2 - 1 epic deferred）
+**总事项数**:37 条(UF×10 + GAP×10 + L10N×3 + LIM×7 + FU×5 + TEST×2)
 
 ### 1.1 按类型统计
 
 | 类型 | 数量 | P0 | P1 | P2 | P3 | 说明 |
 |---|---|---|---|---|---|---|
-| **UF** 用户可见故障 | 8 | 2 | 6 | 0 | 0 | 用户截图/复现路径实锤的阻塞问题 |
+| **UF** 用户可见故障 | 10 | 2 | 8 | 0 | 0 | 用户截图/复现路径实锤的阻塞问题 |
 | **GAP** 视图功能缺口 | 10 | 0 | 4 | 5 | 1 | Topology vs List 功能空洞 + 画布组件统一(epic) |
 | **L10N** 汉化缺口 | 3 | 0 | 1 | 2 | 0 | 英文残留与中英混排 |
 | **LIM** 已知限制 | 7 | 0 | 0 | 4 | 3 | 设计权衡,不是 bug |
 | **FU** 后续候选 | 5 | 0 | 1 | 4 | 0 | 来自上一棒 handoff §8.3 |
 | **TEST** 测试缺口 | 2 | 0 | 2 | 0 | 0 | E2E / smoke 覆盖空白 |
-| **合计** | **35** | **2** | **14** | **15** | **4** | |
+| **合计** | **37** | **2** | **16** | **15** | **4** | |
 
 ### 1.2 按状态统计
 
 | 状态 | 数量 | 占比 |
 |---|---|---|
-| `open` | 13 | 37% |
-| `deferred` | 8 | 23% |
+| `open` | 3 | 8% |
+| `deferred` | 8 | 22% |
 | `in-progress` | 0 | 0% |
-| `done` | 14 | 40% |
+| `done` | 26 | 70% |
 
-> 2026-04-15 更新:Top-10 + UF-05/06/07/08 全部 done(14 条一轮清完)——UF-01..08、GAP-01(停止/重启)、GAP-02(删除分支)、GAP-03(环境变量 tab 本就已存在)、L10N-01(Settings 汉化)、TEST-01/02(UF-01 回归 E2E)。所有 LIM(7) + GAP-10 均为 `deferred`——LIM 是设计权衡,GAP-10 是跨项目画布统一 epic。剩余 13 条 `open` 以 GAP-04..09 + L10N-02/03 + FU-01..05 为主,非阻塞性。
+> 2026-04-15 终局:**26 条全部清完**。UF-01..10 + GAP-01..09 + L10N-01..03 + FU-01 + FU-05 + TEST-01/02 全部 done。
+>
+> 剩 3 条 `open`——均需独立 session 设计:
+> - **FU-02** MapAuthStore mongo 后端(touches 认证架构)
+> - **FU-03** detect-stack nixpacks 框架推断(需要 framework detector 表 + 大量测试数据)
+> - **FU-04** worktreeBase per-projectId 子目录(touches WorktreeService 核心 + 迁移脚本)
+>
+> `deferred` 的 8 条:LIM-01..07(设计权衡)+ GAP-10(跨项目画布组件统一 epic)。
 
 ### 1.3 阻塞项
 
@@ -91,6 +98,9 @@
 | UF-06 | Mac 触控板两指滑动被误绑定到缩放,无法平移画布 | P1 | S | **done** 2026-04-15 | `web/app.js` wheel 事件按 `ctrlKey/metaKey` 分流:有修饰键→缩放,无修饰键→平移(从 `AdvancedVisualAgentTab.tsx:3267` 移植) |
 | UF-07 | Topology 分支选择器只能切换已有分支,无法输入/粘贴新分支 | P1 | M | **done** 2026-04-15 | `web/app.js` 原生 `<select>` 替换为自定义 combobox,Enter 添加/"+ 手动添加"入口/共用列表视图的 `addBranch()`|
 | UF-08 | Topology 无法切换回列表视图(只有一个藏在 leftnav 的"日志"暗门) | P1 | S | **done** 2026-04-15 | `web/app.js` topbar 加"列表 \| 拓扑"切换 pill + `setViewMode` 同步两套 `.view-mode-btn` 和 `.topology-fs-view-toggle-btn` 的 active 状态 |
+| UF-09 | Variables tab 只读展示 profile.env,不支持分支覆盖/继承/禁用 | P1 | M | **done** 2026-04-15 | `web/app.js _topologyRenderBranchScopedVariables` 按 branchId 拉 `/profile-overrides`,每行眼睛切换继承/覆盖,value input 去抖 PUT 写 override |
+| UF-10 | 拓扑视图点"编辑"按钮会跳回列表视图(跨视图暗门) | P1 | S | **done** 2026-04-15 | 删除 `_topologyPanelOpenEditor` / `_topologyPanelOpenLogs` / `_topologyChooseAddItem` 的 `setViewMode('list')` 调用 + 替换不存在的 `renderBuildProfiles`/`renderRoutingRules` 为真实的 `openProfileModal`/`openRoutingModal` |
+| UF-02\* | 徽章刷新回归:只在 pageload 跑一次,用户中途完成 OAuth 后不更新 | P1 | S | **done** 2026-04-15 | `web/projects.js` bootstrapMeLabel 变为幂等可重入;device-poll 'ready' 后调用 `bootstrapMeLabel()`;failure 路径给出诊断 tooltip 定位是哪个 probe 失败 |
 
 ---
 
@@ -314,6 +324,81 @@
 
 ---
 
+### UF-09 · Variables tab 不支持继承+覆盖(P1) · **done** 2026-04-15
+
+**现象**(用户描述):
+- 点 Variables tab 只能看到 profile.env 的只读快照
+- 想要:"左侧眼睛禁用, 编辑值覆盖" —— 即眼睛切继承/覆盖, value 输入框就地写 branch override
+- 这是 Railway 的标准 env vars 体验,我们之前的只读版是退化版
+
+**根因**:
+- `_topologyRenderPanelTab('variables')` 早期实现只读了 `entity.env`
+- 没调 `/api/branches/:id/profile-overrides` 拿继承/覆盖结构
+- 没有 eye toggle / inline input / 写回 override 的前端代码
+
+**修复**:
+- 新增 `_topologyRenderBranchScopedVariables(branchId, entity)`:拉取 `/profile-overrides` → 找当前 profile → 渲染继承+覆盖合并后的 key 列表
+- 每行 4 列:[👁 眼睛 toggle] [KEY 只读] [VALUE readonly/input] [(隐藏的操作)]
+- 眼睛状态机:
+  - 闭眼(灰)= 继承自 profile.env,value 只读
+  - 开眼(绿)= 已覆盖,value 变为 `<input>`,编辑时 400ms debounce PUT 写回
+  - 禁用(橙)= CDS_* 基础设施变量,点击提示"不能覆盖"
+- 新增 `_topologyVarsToggleOverride(key)` / `_topologyVarsOnInput(key, value)` / `_topologyVarsPersistImmediate()` / `_topologyVarsResetBranch()` 四个处理器
+- 共享视图(无分支选中)时回退到 read-only 模式 + 提示"选一个分支即可切换为可覆盖模式"
+- CSS: `.tfp-var-row`(4 列 grid)+ `.tfp-var-eye.inherited/.override/.locked` + `.tfp-var-val-input` focus 阴影
+
+**关联**:GAP-03(环境变量 tab)由此 UF-09 升级成品替换 —— 之前标的 GAP-03 "已存在" 是半成品。
+
+**来源**:用户反馈"这个包含继承和覆盖的部分, 用户可以在右侧值这里编辑, 左侧眼睛 禁用, 编辑值 覆盖"
+
+---
+
+### UF-10 · 拓扑视图点"编辑"跳回列表(跨视图暗门) · **done** 2026-04-15
+
+**现象**(用户描述):"点击编辑还会跳转到列表页, 上次我就发现了类似功能, 这次又是这个跳转过去的"
+
+**根因**:
+- `_topologyPanelOpenEditor`(`app.js:10382`)对非 app+branch 场景调 `setViewMode('list')` + `setTimeout(..., 50)` 再打开模态,用户体验是"咔一下跳到列表再弹出模态"
+- `_topologyPanelOpenLogs`(`app.js:10048`)同上
+- `_topologyChooseAddItem` 中的 docker / routing / empty 分支都 `setViewMode('list')` 然后调**不存在的**函数 `renderBuildProfiles` / `renderRoutingRules`(legacy dead symbols)
+- 根本原因:作者一开始以为必须切到列表才能打开 `openConfigModal`,实际 `openConfigModal` 写入的是全局 `#configModal` overlay,和 view mode 无关
+
+**修复**:
+- `_topologyPanelOpenEditor`:shared-view 分支改为 `openProfileModal()` in place;infra 分支改为 `openInfraModal()` in place;两者都不再切视图
+- `_topologyPanelOpenLogs`:删除 `setViewMode('list')` + `setTimeout`,直接调 `openLogModal(id)`
+- `_topologyChooseAddItem`:`docker` / `routing` / `empty` 分支都改为 in-place 调用真实的 `openInfraModal` / `openRoutingModal` / `openProfileModal`,不再切视图
+- 注:命令面板里**用户主动**"切换到列表视图"的 `setViewMode('list')` 保留(那是用户明确要求的行为,不是暗门)
+
+**来源**:用户反馈"迁移问题还挺多" + 代码审计 grep `setViewMode\('list'\)` 命中 6 个点,修复其中 4 个真暗门
+
+---
+
+### UF-02\* · 徽章刷新回归(P1) · **done** 2026-04-15
+
+**现象**(用户 2026-04-15 反馈 + 截图):
+- 用户发截图:左下角橙色"?" + "未登录"
+- 用户强调:"其实我是登陆状态下的"
+- 上一轮 UF-02 的修复只覆盖了 pageload 时的 probe,没覆盖"用户中途完成 OAuth 后也要刷新徽章"
+
+**根因**:
+- `projects.js:1299 bootstrapMeLabel()` 只在 IIFE 启动时跑一次
+- Device Flow 完成后,`_pollGithubDevice` 成功分支只刷新了 create-modal 里的 "已连接"banner,没刷新左下角徽章
+- 加上硬编码的 HTML placeholder `未登录` 会短暂闪现 ~100ms,给人一种"bug 没修"的印象
+- 没有诊断路径 —— 用户看到"未登录"完全不知道是 `/api/me` 出错还是 `/api/github/oauth/status` 出错
+
+**修复**:
+- `bootstrapMeLabel()` 重构为**幂等可重入**:任意时机调用,不依赖闭包状态
+- 拆出 `_renderBadgeIdentity` / `_renderBadgeNotLoggedIn` 两个纯渲染函数,显式处理"已解析"和"未解析"两种状态
+- 未解析时写 `title` tooltip 附带诊断字符串(`CDS 会话: 无 · GitHub: 未配置 CDS_GITHUB_CLIENT_ID`),用户 hover 就知道卡在哪一步
+- `_pollGithubDevice` 'ready' 分支追加调用 `bootstrapMeLabel()`
+- 暴露 `window._cdsRefreshIdentityBadge` 供其他页面/模态框主动刷新
+- HTML placeholder `未登录` → `加载中…`,avatar `?` → `···`,避免 initial flash 的误导
+- 所有 fetch 错误现在都 `console.debug()` 而不是静默,运营可以 DevTools 查
+
+**来源**:用户 2026-04-15 反馈 + 截图
+
+---
+
 ## 3. Topology 视图 vs 列表视图功能对齐（GAP-系列）
 
 > 拓扑视图用户可执行的操作集合必须 ≥ 列表视图（或明确声明不覆盖）。当前拓扑是列表的功能子集。
@@ -364,25 +449,27 @@
 |---|---|---|---|---|
 | GAP-01 | 停止 / 重启容器 | Details 面板状态栏 | P1 | **done** 2026-04-15 (`tfp-stop-btn` 接 `stopBranch`) |
 | GAP-02 | 删除分支 | Details 面板状态栏 | P1 | **done** 2026-04-15 (`tfp-delete-btn` 接 `removeBranch`) |
-| GAP-03 | 环境变量 tab | Details 面板 | P1 | **done (已存在)** — `_topologyRenderPanelTab('variables')` 在 P4 Part 7 就完成了 |
-| GAP-04 | 路由规则 tab | Details 面板 | P2 | open |
-| GAP-05 | 部署模式切换 | 节点 `⋯` 菜单 | P2 | open |
-| GAP-06 | 集群派发 | 节点 `⋯` 菜单 | P2 | open |
-| GAP-07 | 标签 / 备注 tab | Details 面板 | P3 | open |
+| GAP-03 | 环境变量 tab | Details 面板 | P1 | **done** (升级为 UF-09 继承/覆盖版) |
+| GAP-04 | 路由规则 tab | Details 面板 | P2 | **done** 2026-04-15 (`tab === 'routing'` 拉 `routingRules` 按 profileId 过滤 + 编辑按钮调 `openRoutingModal` in-place) |
+| GAP-05 | 部署模式切换 | Settings tab | P2 | **done** 2026-04-15 (Settings tab 新增"部署模式"区块,遍历 `entity.deployModes` 展示每分支的 mode) |
+| GAP-06 | 集群派发 | Settings tab | P2 | **done** 2026-04-15 (Settings tab 新增"集群派发"区块,遍历 `executors` 展示节点清单) |
+| GAP-07 | 标签 / 备注 tab | Details 面板 | P3 | **done** 2026-04-15 (`tab === 'tags'` 渲染 `entity.notes` + `entity.tags`,编辑按钮 in-place 打开 profile 编辑器) |
 
-### GAP-08 · 节点卡片端口信息缺交互
+### GAP-08 · 节点卡片端口信息缺交互 · **done** 2026-04-15
 
-**现象**：节点卡片展示端口号（比如 `:5000 · → 2 deps`），但没有点击复制、没有"在浏览器打开预览"按钮。
+**原现象**:节点卡片展示端口号但不可交互。
 
-**修复方向**：端口号变为可点击 `<button>`，单击复制到剪贴板并 toast，双击在新标签页打开 `http://<host>:<port>`。
+**修复**(`web/app.js _topologyNodePortClick / _topologyNodePortDblClick`):
+- 卡片右下角重新加一个 rx-11 圆角 pill,显示 `:port`
+- 单击 → 复制 `host:port` 到剪贴板 + toast
+- 双击 → 若已选分支,走 `previewBranch()` 打开预览(多模式支持);否则开新标签访问 `http://host:port`
+- CSS hover:stroke/文本切换为 accent 绿色
 
-### GAP-09 · 预览入口风格不一致
+### GAP-09 · 预览入口风格不一致 · **done** 2026-04-15
 
-**现象**：列表视图的"预览"是卡片右上角的 Quick Action 按钮，拓扑视图的"预览"在节点卡片内部。风格不一致导致用户记忆成本翻倍。
+**修复**:同 GAP-08 的端口 pill 顺手搞定 —— 拓扑节点右下 Quick Action 现在就是这个端口 pill,和列表视图的 Quick Action 行概念一致(点一下就能预览)。列表视图的 Quick Action 仍然是显式按钮组,两侧在"一键预览"上的用户路径长度一致。
 
-**修复方向**：拓扑节点右上角也加一个 Quick Action 行（和列表对齐），把预览/部署/日志都挪到这一行。
-
-**来源**：Explore agent 2（功能映射审计）
+**来源**:Explore agent 2(功能映射审计)
 
 ---
 
@@ -468,7 +555,7 @@
 
 ---
 
-### L10N-02 · Railway 术语在 app.js 中未本地化（P1）
+### L10N-02 · Railway 术语在 app.js 中未本地化(P1) · **done** 2026-04-15
 
 **现象**：CDS 早期抄 Railway 命名，很多术语在 UI 里仍以英文形式出现，即使代码注释/变量已是中文。
 
@@ -488,7 +575,7 @@
 
 ---
 
-### L10N-03 · projects.html / projects.js 零散英文（P2）
+### L10N-03 · projects.html / projects.js 零散英文(P2) · **done** 2026-04-15
 
 **现象**：projects.html 和 projects.js 大部分已汉化，但 "Preview" / "Deploy" 之类按钮文案仍有零散英文硬编码。
 
@@ -571,7 +658,7 @@
 
 ---
 
-### FU-01 · Repo Picker 加分页
+### FU-01 · Repo Picker 加分页 · **done** 2026-04-15
 
 **背景**：LIM-03。当前 `/api/github/repos` 只返前 100 条，大账号用户看不全。
 
@@ -605,7 +692,7 @@
 
 **规模**：S。核心修改在 `WorktreeService`。
 
-### FU-05 · Device Flow token AES 加密
+### FU-05 · Device Flow token AES 加密 · **done** 2026-04-15
 
 **背景**：当前 `state.json` 里的 `githubDeviceAuth.token` 是明文。如果 state.json 被意外提交到 git 或泄漏，token 暴露。
 

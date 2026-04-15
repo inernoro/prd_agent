@@ -8159,25 +8159,25 @@ function _ensureTopologyFsChrome() {
   addMenu.id = 'topologyFsAddMenu';
   addMenu.className = 'topology-fs-add-menu';
   addMenu.innerHTML = `
-    <input class="topology-fs-add-menu-search" placeholder="What would you like to create?" id="topologyFsAddSearch">
+    <input class="topology-fs-add-menu-search" placeholder="你想创建什么?" id="topologyFsAddSearch">
     <button type="button" class="topology-fs-add-menu-item" onclick="_topologyChooseAddItem('git')">
       <span class="icon"><svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg></span>
-      <span class="label">GitHub Repository</span>
+      <span class="label">GitHub 仓库</span>
       <span class="chevron">›</span>
     </button>
     <button type="button" class="topology-fs-add-menu-item" onclick="_topologyChooseAddItem('database')">
       <span class="icon"><svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M8 1c4 0 7 1 7 2.5v9c0 1.5-3 2.5-7 2.5s-7-1-7-2.5v-9C1 2 4 1 8 1zm0 1.5C5 2.5 2.5 3.4 2.5 4S5 5.5 8 5.5s5.5-.9 5.5-1.5S11 2.5 8 2.5zM2.5 6.7v2.1C2.5 9.3 5 10.2 8 10.2s5.5-.9 5.5-1.4V6.7C12.4 7.4 10.4 8 8 8s-4.4-.6-5.5-1.3zm0 4v1.8c0 .5 2.5 1.5 5.5 1.5s5.5-1 5.5-1.5v-1.8c-1.1.7-3.1 1.3-5.5 1.3s-4.4-.6-5.5-1.3z"/></svg></span>
-      <span class="label">Database (MongoDB / Redis / Postgres)</span>
+      <span class="label">数据库 (MongoDB / Redis / Postgres)</span>
       <span class="chevron">›</span>
     </button>
     <button type="button" class="topology-fs-add-menu-item" onclick="_topologyChooseAddItem('docker')">
       <span class="icon"><svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M14 7h-2V5h2v2zm0-3h-2V2h2v2zm-3 3H9V5h2v2zm0-3H9V2h2v2zM8 7H6V5h2v2zm-3 3H3V8h2v2zm3 0H6V8h2v2zm3 0H9V8h2v2zm3 0h-2V8h2v2zm1.6 1c-.4-1-1.4-1.6-2.5-1.6h-1c-.2-2.3-2-3.4-2.1-3.4l-.4-.2-.3.4c-.4.5-.6 1.2-.6 1.9-.1.5 0 .9.2 1.3-.6.3-1.5.4-2.4.4H.4l-.1.7c-.2 1.4.1 2.7.7 3.7.6 1.1 1.7 1.9 3 2.3.9.2 1.8.4 2.7.4 1.4 0 2.7-.3 3.9-.7 1.5-.6 2.7-1.7 3.5-3.2 1.1-.1 2-.7 2.4-1.6l.2-.3-.5-.5z"/></svg></span>
-      <span class="label">Docker Image</span>
+      <span class="label">Docker 镜像</span>
       <span class="chevron">›</span>
     </button>
     <button type="button" class="topology-fs-add-menu-item" onclick="_topologyChooseAddItem('routing')">
       <span class="icon"><svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M8 0a8 8 0 100 16A8 8 0 008 0zM1.5 8a6.5 6.5 0 1113 0 6.5 6.5 0 01-13 0zm6.75 3.25v-2.5a.75.75 0 011.5 0v2.5a.75.75 0 01-1.5 0z"/></svg></span>
-      <span class="label">Routing Rule</span>
+      <span class="label">路由规则</span>
       <span class="chevron">›</span>
     </button>
     <!-- P4 Part 18 cleanup: removed "Volume / 持久化卷" menu item —
@@ -8186,7 +8186,7 @@ function _ensureTopologyFsChrome() {
          via the full build-profiles editor. -->
     <button type="button" class="topology-fs-add-menu-item" onclick="_topologyChooseAddItem('empty')">
       <span class="icon"><svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M0 2.75C0 1.784.784 1 1.75 1h12.5c.966 0 1.75.784 1.75 1.75v10.5A1.75 1.75 0 0114.25 15H1.75A1.75 1.75 0 010 13.25V2.75zm1.75-.25a.25.25 0 00-.25.25v10.5c0 .138.112.25.25.25h12.5a.25.25 0 00.25-.25V2.75a.25.25 0 00-.25-.25H1.75z"/></svg></span>
-      <span class="label">Empty Service / 空服务</span>
+      <span class="label">空服务</span>
       <span class="chevron">›</span>
     </button>
   `;
@@ -8207,13 +8207,17 @@ function _ensureTopologyFsChrome() {
       </button>
     </div>
     <div class="topology-fs-panel-tabs">
-      <button type="button" class="topology-fs-panel-tab active" data-tab="details" onclick="_topologySwitchPanelTab('details')">Details</button>
-      <button type="button" class="topology-fs-panel-tab" data-tab="buildLogs" onclick="_topologySwitchPanelTab('buildLogs')">Build Logs</button>
-      <button type="button" class="topology-fs-panel-tab" data-tab="deployLogs" onclick="_topologySwitchPanelTab('deployLogs')">Deploy Logs</button>
-      <button type="button" class="topology-fs-panel-tab" data-tab="httpLogs" onclick="_topologySwitchPanelTab('httpLogs')">HTTP Logs</button>
-      <button type="button" class="topology-fs-panel-tab" data-tab="networkFlowLogs" onclick="_topologySwitchPanelTab('networkFlowLogs')">Network Flow</button>
-      <button type="button" class="topology-fs-panel-tab" data-tab="variables" onclick="_topologySwitchPanelTab('variables')">Variables</button>
-      <button type="button" class="topology-fs-panel-tab" data-tab="settings" onclick="_topologySwitchPanelTab('settings')">Settings</button>
+      <button type="button" class="topology-fs-panel-tab active" data-tab="details" onclick="_topologySwitchPanelTab('details')">详情</button>
+      <button type="button" class="topology-fs-panel-tab" data-tab="buildLogs" onclick="_topologySwitchPanelTab('buildLogs')">构建日志</button>
+      <button type="button" class="topology-fs-panel-tab" data-tab="deployLogs" onclick="_topologySwitchPanelTab('deployLogs')">部署日志</button>
+      <button type="button" class="topology-fs-panel-tab" data-tab="httpLogs" onclick="_topologySwitchPanelTab('httpLogs')">HTTP 日志</button>
+      <button type="button" class="topology-fs-panel-tab" data-tab="networkFlowLogs" onclick="_topologySwitchPanelTab('networkFlowLogs')">网络流</button>
+      <button type="button" class="topology-fs-panel-tab" data-tab="variables" onclick="_topologySwitchPanelTab('variables')">环境变量</button>
+      <!-- GAP-04: routing tab -->
+      <button type="button" class="topology-fs-panel-tab" data-tab="routing" onclick="_topologySwitchPanelTab('routing')">路由</button>
+      <!-- GAP-07: tags/notes tab -->
+      <button type="button" class="topology-fs-panel-tab" data-tab="tags" onclick="_topologySwitchPanelTab('tags')">备注</button>
+      <button type="button" class="topology-fs-panel-tab" data-tab="settings" onclick="_topologySwitchPanelTab('settings')">设置</button>
     </div>
     <div class="topology-fs-panel-body" id="topologyFsPanelBody">
       <div class="tfp-empty">点击拓扑节点查看服务详情</div>
@@ -8622,6 +8626,30 @@ function _renderTopologySvg(layout, ctx) {
       `
       : '';
 
+    // GAP-08: clickable port badge on the card, mirroring Railway's
+    // top-right "endpoint" pill. Click → copy `host:port` to clipboard.
+    // Double-click → open preview (delegates to previewBranch when a
+    // branch is selected, else opens the raw `host:port` URL).
+    //
+    // GAP-09: also doubles as the Quick Action "preview" affordance,
+    // matching list view's quick action row. We intentionally keep it
+    // minimal on the SVG card so the layout stays clean — richer
+    // actions (stop/delete/redeploy) live in the Details panel (GAP-01/02).
+    const hostPort = isApp ? raw.containerPort : raw.hostPort;
+    const hostPortLabel = hostPort ? ':' + hostPort : '';
+    const portBadgeSvg = hostPortLabel
+      ? `<g class="topology-node-port-badge"
+             onclick="event.stopPropagation();_topologyNodePortClick('${esc(raw.id)}')"
+             ondblclick="event.stopPropagation();_topologyNodePortDblClick('${esc(raw.id)}')">
+          <rect x="${x + TOPO_NODE_W - 92}" y="${y + TOPO_NODE_H - 42}" width="72" height="22" rx="11"
+                fill="var(--bg-elevated,#24272f)" stroke="var(--card-border,rgba(255,255,255,0.1))" stroke-width="1" />
+          <text x="${x + TOPO_NODE_W - 56}" y="${y + TOPO_NODE_H - 26}"
+                text-anchor="middle" fill="var(--text-secondary,#c0c0d0)"
+                font-size="11" font-family="var(--font-mono,monospace)"
+                style="pointer-events:none">${esc(hostPortLabel)}</text>
+        </g>`
+      : '';
+
     return `
       <g class="${nodeClass}" ${clickHandler}>
         <title>${esc(tooltip)}</title>
@@ -8636,6 +8664,7 @@ function _renderTopologySvg(layout, ctx) {
         <text class="topology-node-status-label" x="${statusLabelX}" y="${statusLabelY}">${esc(statusLabel)}</text>
 
         ${volumeSlotSvg}
+        ${portBadgeSvg}
         ${overridePill}
       </g>
     `;
@@ -9075,7 +9104,7 @@ function _topologyShowDatabaseSubmenu() {
       '<svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor"><path d="M7.78 12.53a.75.75 0 01-1.06 0L2.47 8.28a.75.75 0 010-1.06l4.25-4.25a.751.751 0 011.154.114.75.75 0 01-.094.946L4.81 7h7.44a.75.75 0 010 1.5H4.81l2.97 2.97a.75.75 0 010 1.06z"/></svg>' +
       '<span>Database</span>' +
     '</div>' +
-    '<input class="topology-fs-add-menu-search" placeholder="What would you like to create?" id="topologyFsAddSearch">' +
+    '<input class="topology-fs-add-menu-search" placeholder="你想创建什么?" id="topologyFsAddSearch">' +
     items.map(function (it) {
       var disabled = taken.has(it.key);
       return '<button type="button" class="topology-fs-add-menu-item' + (disabled ? ' disabled' : '') + '"' +
@@ -9098,7 +9127,7 @@ function _topologyShowAddMenuRoot() {
   if (!menu) return;
   // Restore root markup
   menu.innerHTML =
-    '<input class="topology-fs-add-menu-search" placeholder="What would you like to create?" id="topologyFsAddSearch">' +
+    '<input class="topology-fs-add-menu-search" placeholder="你想创建什么?" id="topologyFsAddSearch">' +
     '<button type="button" class="topology-fs-add-menu-item" onclick="_topologyChooseAddItem(\'git\')">' +
       '<span class="icon"><svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg></span>' +
       '<span class="label">GitHub Repository</span><span class="chevron">›</span></button>' +
@@ -9107,16 +9136,16 @@ function _topologyShowAddMenuRoot() {
       '<span class="label">Database (PostgreSQL / Redis / MongoDB / MySQL)</span><span class="chevron">›</span></button>' +
     '<button type="button" class="topology-fs-add-menu-item" onclick="_topologyChooseAddItem(\'docker\')">' +
       '<span class="icon"><svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M14 7h-2V5h2v2zm-3 0H9V5h2v2zM8 7H6V5h2v2zm6.6 4c-.4-1-1.4-1.6-2.5-1.6h-1c-.2-2.3-2-3.4-2.1-3.4l-.4-.2-.3.4c-.4.5-.6 1.2-.6 1.9C7.6 9.5 8 10 8 10c-.6.3-1.5.4-2.4.4H.4l-.1.7c-.2 1.4.1 2.7.7 3.7.6 1.1 1.7 1.9 3 2.3 4 1 8.5-.5 10.6-4.4 1.1-.1 2-.7 2.4-1.6l.2-.3-.5-.5z"/></svg></span>' +
-      '<span class="label">Docker Image</span><span class="chevron">›</span></button>' +
+      '<span class="label">Docker 镜像</span><span class="chevron">›</span></button>' +
     '<button type="button" class="topology-fs-add-menu-item" onclick="_topologyChooseAddItem(\'routing\')">' +
       '<span class="icon"><svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M8 0a8 8 0 100 16A8 8 0 008 0z"/></svg></span>' +
-      '<span class="label">Routing Rule</span><span class="chevron">›</span></button>' +
+      '<span class="label">路由规则</span><span class="chevron">›</span></button>' +
     '<button type="button" class="topology-fs-add-menu-item" onclick="_topologyChooseAddItem(\'volume\')">' +
       '<span class="icon"><svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M2 3h12c.6 0 1 .4 1 1v8c0 .6-.4 1-1 1H2c-.6 0-1-.4-1-1V4c0-.6.4-1 1-1z"/></svg></span>' +
       '<span class="label">Volume / 持久化卷</span><span class="chevron">›</span></button>' +
     '<button type="button" class="topology-fs-add-menu-item" onclick="_topologyChooseAddItem(\'empty\')">' +
       '<span class="icon"><svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M0 2.75C0 1.784.784 1 1.75 1h12.5c.966 0 1.75.784 1.75 1.75v10.5A1.75 1.75 0 0114.25 15H1.75A1.75 1.75 0 010 13.25V2.75z"/></svg></span>' +
-      '<span class="label">Empty Service / 空服务</span><span class="chevron">›</span></button>';
+      '<span class="label">空服务</span><span class="chevron">›</span></button>';
 }
 
 // Create an infra service from a template. Calls POST /api/infra with
@@ -9454,37 +9483,32 @@ function _topologyChooseAddItem(kind) {
       if (m) m.classList.add('open');
       return;
     case 'docker':
-      // Same destination — infra modal supports any docker image.
-      setViewMode('list');
-      setTimeout(function () {
-        if (typeof openInfraModal === 'function') openInfraModal();
-      }, 50);
+      // UF-10: openInfraModal() writes into the global #configModal
+      // overlay, which lives outside both #branchList and #topologyView
+      // DOM roots. No need to flip viewMode — calling it directly
+      // opens the modal ON TOP of whatever view is active.
+      if (typeof openInfraModal === 'function') openInfraModal();
       break;
     case 'routing':
-      // Routes to the routing-rules modal. Need to switch back to
-      // list mode so its DOM exists.
-      setViewMode('list');
-      setTimeout(function () {
-        if (typeof openConfigModal === 'function' && typeof renderRoutingRules === 'function') {
-          openConfigModal('路由规则', '<div id="routingRulesContainer"></div>');
-          renderRoutingRules();
-        } else {
-          showToast('请在列表视图打开"路由规则"配置', 'info');
-        }
-      }, 50);
+      // UF-10: same story — openRoutingModal() is a self-contained
+      // modal. The previous code was calling a non-existent
+      // renderRoutingRules() symbol AND switching views as a pointless
+      // prelude. Both were bugs.
+      if (typeof openRoutingModal === 'function') {
+        openRoutingModal();
+      } else {
+        showToast('路由规则模块未加载', 'info');
+      }
       break;
     case 'empty':
-      // "Empty Service" = a new BuildProfile. Routes to the existing
-      // build-profiles config modal.
-      setViewMode('list');
-      setTimeout(function () {
-        if (typeof openConfigModal === 'function' && typeof renderBuildProfiles === 'function') {
-          openConfigModal('构建配置', '<div id="buildProfilesContainer"></div>');
-          renderBuildProfiles();
-        } else {
-          showToast('请在列表视图打开"构建配置"', 'info');
-        }
-      }, 50);
+      // UF-10: "Empty Service" opens the build-profiles modal in place.
+      // The legacy renderBuildProfiles() symbol never existed; the
+      // real entry point is openProfileModal().
+      if (typeof openProfileModal === 'function') {
+        openProfileModal();
+      } else {
+        showToast('构建配置模块未加载', 'info');
+      }
       break;
     default:
       showToast('未知项类型: ' + kind, 'error');
@@ -9658,7 +9682,7 @@ function _topologyRenderPanelTab(tab, entity) {
             ? '<path d="M13.78 4.22a.75.75 0 010 1.06l-7.25 7.25a.75.75 0 01-1.06 0L2.22 9.28a.75.75 0 011.06-1.06L6 10.94l6.72-6.72a.75.75 0 011.06 0z"/>'
             : '<circle cx="8" cy="8" r="5"/>') +
         '</svg>' +
-        '<span>' + (status === 'running' ? 'Service is online' : 'Status: ' + status) + '</span>' +
+        '<span>' + (status === 'running' ? '服务运行中' : '状态: ' + status) + '</span>' +
         '<div style="margin-left:auto;display:flex;align-items:center;gap:8px;min-width:0;flex-wrap:wrap">' +
           deployBtnHtml +
           stopBtnHtml +
@@ -9710,7 +9734,7 @@ function _topologyRenderPanelTab(tab, entity) {
           urlHint = '请在设置页配置 previewMode / MAIN_DOMAIN';
         }
         var canOpen = !(urlDisplay === '未配置 MAIN_DOMAIN');
-        return '<div class="tfp-section-h">PUBLIC URL</div>' +
+        return '<div class="tfp-section-h">公开地址</div>' +
           '<div class="tfp-public-url-card' + (canOpen ? '' : ' disabled') + '"' +
             (canOpen ? ' onclick="previewBranch(\'' + esc(displayBranch.id) + '\')"' : '') +
             ' title="' + esc(urlHint) + '">' +
@@ -9856,57 +9880,89 @@ function _topologyRenderPanelTab(tab, entity) {
   }
 
   if (tab === 'variables') {
-    // P4 Part 7: Railway-style env vars table.
+    // UF-09: inherit + override aware Variables tab.
     //
-    // Modeled after Railway's Variables tab screenshot:
-    //   - Section header "Service Variables" + Raw Editor / + New Variable links
-    //   - Each var as a horizontal row: KEY (mono, faint bg) + VALUE input + copy + delete
-    //   - Empty state with helpful CTA
-    //   - Bottom: "Edit in full editor" button routes to existing modals
+    // Two modes depending on whether a branch is selected:
+    //   A. No branch (共享视图) → read-only snapshot of the profile
+    //      baseline env. This matches the old behaviour.
+    //   B. Branch selected + app kind → fetch
+    //      `GET /branches/:branchId/profile-overrides`, find the row
+    //      for the current profile, and render keys with:
+    //        - An "eye" toggle: closed = 继承 (key not in override),
+    //          open = 已覆盖 (key present in override)
+    //        - KEY column: read-only monospace
+    //        - VALUE column: <input> when overriding, plain text when
+    //          inheriting. Editing debounces a PUT that writes the
+    //          override back to the branch.
+    //      The UX mirrors Railway: users see one unified table with
+    //      visual indicators for inherited vs overridden, and can
+    //      flip any row without leaving the topology view.
     //
-    // Editing here is currently READ-ONLY in the table — actual mutation
-    // routes to the existing build-profile / branch override modals that
-    // already have full validation. A future commit can wire inline
-    // PATCH /api/build-profiles/:id/env to make the table truly editable.
-    var env = entity.env || {};
-    var keys = Object.keys(env).sort();
+    //   CDS infrastructure env keys (CDS_*) are always read-only and
+    //   marked with a lock badge — they come from
+    //   stateService.getCdsEnvVars() and overriding them would cut
+    //   the container off from Mongo/Redis/etc.
 
-    var rows = keys.length === 0
-      ? '<div class="tfp-vars-empty">' +
-        '  <div class="tfp-vars-empty-icon">' +
-        '    <svg width="22" height="22" viewBox="0 0 16 16" fill="currentColor"><path d="M2.5 1.75v11.5a.25.25 0 00.25.25h10.5a.25.25 0 00.25-.25V6h-2.75A1.75 1.75 0 019 4.25V1.5H2.75a.25.25 0 00-.25.25zM10.5 1.5v2.75c0 .138.112.25.25.25H13.5L10.5 1.5zM1 1.75C1 .784 1.784 0 2.75 0h7.586c.464 0 .909.184 1.237.513l3.913 3.914c.329.328.514.773.514 1.237v7.586A1.75 1.75 0 0114.25 15H2.75A1.75 1.75 0 011 13.25V1.75z"/></svg>' +
-        '  </div>' +
-        '  <div class="tfp-vars-empty-title">还没有环境变量</div>' +
-        '  <div class="tfp-vars-empty-desc">在编辑器里添加 key/value，部署时会注入到容器</div>' +
-        '</div>'
-      : keys.map(function (k) {
-          var v = String(env[k] == null ? '' : env[k]);
-          var isSecret = /(secret|password|token|key|apikey)/i.test(k);
-          var displayVal = isSecret && v.length > 0 ? '••••••••' : v.slice(0, 80);
-          return '<div class="tfp-var-row">' +
-            '<div class="tfp-var-key">' + esc(k) + '</div>' +
-            '<div class="tfp-var-val">' + esc(displayVal) + (v.length > 80 ? '…' : '') + '</div>' +
-            '<button type="button" class="tfp-var-icon-btn" title="复制" onclick="navigator.clipboard.writeText(' + JSON.stringify(v).replace(/"/g, '&quot;') + ');showToast(\'已复制\',\'info\')">' +
-              '<svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor"><path d="M0 6.75C0 5.784.784 5 1.75 5h1.5a.75.75 0 010 1.5h-1.5a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-1.5a.75.75 0 011.5 0v1.5A1.75 1.75 0 019.25 16h-7.5A1.75 1.75 0 010 14.25v-7.5z"/><path d="M5 1.75C5 .784 5.784 0 6.75 0h7.5C15.216 0 16 .784 16 1.75v7.5A1.75 1.75 0 0114.25 11h-7.5A1.75 1.75 0 015 9.25v-7.5zm1.75-.25a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-7.5a.25.25 0 00-.25-.25h-7.5z"/></svg>' +
-            '</button>' +
-          '</div>';
-        }).join('');
+    var branchId = (kind === 'app') ? _topologySelectedBranchId : null;
 
+    if (!branchId) {
+      // Mode A: no branch — plain read-only profile baseline view.
+      var envA = entity.env || {};
+      var keysA = Object.keys(envA).sort();
+      var rowsA = keysA.length === 0
+        ? '<div class="tfp-vars-empty">' +
+          '  <div class="tfp-vars-empty-icon">' +
+          '    <svg width="22" height="22" viewBox="0 0 16 16" fill="currentColor"><path d="M2.5 1.75v11.5a.25.25 0 00.25.25h10.5a.25.25 0 00.25-.25V6h-2.75A1.75 1.75 0 019 4.25V1.5H2.75a.25.25 0 00-.25.25zM10.5 1.5v2.75c0 .138.112.25.25.25H13.5L10.5 1.5zM1 1.75C1 .784 1.784 0 2.75 0h7.586c.464 0 .909.184 1.237.513l3.913 3.914c.329.328.514.773.514 1.237v7.586A1.75 1.75 0 0114.25 15H2.75A1.75 1.75 0 011 13.25V1.75z"/></svg>' +
+          '  </div>' +
+          '  <div class="tfp-vars-empty-title">还没有环境变量</div>' +
+          '  <div class="tfp-vars-empty-desc">在编辑器里添加 key/value,部署时会注入到容器。选择一个分支后还能针对分支覆盖。</div>' +
+          '</div>'
+        : keysA.map(function (k) {
+            var v = String(envA[k] == null ? '' : envA[k]);
+            var isSecret = /(secret|password|token|key|apikey)/i.test(k);
+            var displayVal = isSecret && v.length > 0 ? '••••••••' : v.slice(0, 80);
+            return '<div class="tfp-var-row">' +
+              '<span class="tfp-var-eye inherited" title="共享视图 — 选择分支可切换为可覆盖模式"><svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor"><path d="M1.679 7.932c.412-.621 1.242-1.75 2.366-2.717C5.175 4.242 6.527 3.5 8 3.5c1.473 0 2.824.742 3.955 1.715 1.124.967 1.954 2.096 2.366 2.717a.119.119 0 010 .136c-.412.621-1.242 1.75-2.366 2.717C10.825 11.758 9.473 12.5 8 12.5c-1.473 0-2.824-.742-3.955-1.715C2.92 9.818 2.09 8.69 1.679 8.068a.119.119 0 010-.136zM8 2C5.825 2 4.062 3.09 2.858 4.121c-1.207 1.035-2.083 2.232-2.514 2.884a1.62 1.62 0 000 1.79c.431.652 1.307 1.849 2.514 2.884C4.062 12.91 5.825 14 8 14c2.175 0 3.938-1.09 5.142-2.121 1.207-1.035 2.083-2.233 2.514-2.884a1.62 1.62 0 000-1.79c-.431-.652-1.307-1.849-2.514-2.884C11.938 3.09 10.175 2 8 2zm0 8a2 2 0 100-4 2 2 0 000 4z"/></svg></span>' +
+              '<div class="tfp-var-key">' + esc(k) + '</div>' +
+              '<div class="tfp-var-val">' + esc(displayVal) + (v.length > 80 ? '…' : '') + '</div>' +
+              '<button type="button" class="tfp-var-icon-btn" title="复制" onclick="navigator.clipboard.writeText(' + JSON.stringify(v).replace(/"/g, '&quot;') + ');showToast(\'已复制\',\'info\')">' +
+                '<svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor"><path d="M0 6.75C0 5.784.784 5 1.75 5h1.5a.75.75 0 010 1.5h-1.5a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-1.5a.75.75 0 011.5 0v1.5A1.75 1.75 0 019.25 16h-7.5A1.75 1.75 0 010 14.25v-7.5z"/></svg>' +
+              '</button>' +
+            '</div>';
+          }).join('');
+
+      body.innerHTML =
+        '<div class="tfp-vars-toolbar">' +
+          '<div class="tfp-vars-section-title">' +
+            '<span>环境变量</span>' +
+            '<span class="tfp-vars-count">' + keysA.length + '</span>' +
+          '</div>' +
+          '<button type="button" class="tfp-vars-edit-btn" onclick="_topologyPanelOpenEditor()">' +
+            '<svg width="11" height="11" viewBox="0 0 16 16" fill="currentColor"><path d="M11.013 1.427a1.75 1.75 0 012.474 0l1.086 1.086a1.75 1.75 0 010 2.474l-8.61 8.61c-.21.21-.47.364-.756.445l-3.251.93a.75.75 0 01-.927-.928l.929-3.25a1.75 1.75 0 01.445-.758l8.61-8.61z"/></svg>' +
+            '编辑全部' +
+          '</button>' +
+        '</div>' +
+        '<div class="tfp-vars-hint">💡 在顶部选择分支可切换为"可覆盖"模式:每一行左侧的眼睛点亮就能编辑覆盖值</div>' +
+        '<div class="tfp-vars-list">' + rowsA + '</div>' +
+        (keysA.length > 0
+          ? '<div class="tfp-vars-hint">敏感字段(含 secret / password / token / key)的值会自动遮罩,点 ⧉ 复制原值</div>'
+          : '');
+      return;
+    }
+
+    // Mode B: branch selected → async fetch overrides and render the
+    // inherit+override UI. Show a brief loading state while the fetch
+    // is in flight (typically a handful of ms).
     body.innerHTML =
       '<div class="tfp-vars-toolbar">' +
         '<div class="tfp-vars-section-title">' +
           '<span>Service Variables</span>' +
-          '<span class="tfp-vars-count">' + keys.length + '</span>' +
+          '<span class="tfp-vars-count">…</span>' +
         '</div>' +
-        '<button type="button" class="tfp-vars-edit-btn" onclick="_topologyPanelOpenEditor()">' +
-          '<svg width="11" height="11" viewBox="0 0 16 16" fill="currentColor"><path d="M11.013 1.427a1.75 1.75 0 012.474 0l1.086 1.086a1.75 1.75 0 010 2.474l-8.61 8.61c-.21.21-.47.364-.756.445l-3.251.93a.75.75 0 01-.927-.928l.929-3.25a1.75 1.75 0 01.445-.758l8.61-8.61z"/></svg>' +
-          '编辑全部' +
-        '</button>' +
       '</div>' +
-      '<div class="tfp-vars-list">' + rows + '</div>' +
-      (keys.length > 0
-        ? '<div class="tfp-vars-hint">敏感字段（含 secret / password / token / key）的值会自动遮罩，点 ⧉ 复制原值</div>'
-        : '');
+      '<div class="tfp-vars-empty"><span class="btn-spinner"></span> 正在加载继承与覆盖…</div>';
+
+    _topologyRenderBranchScopedVariables(branchId, entity);
     return;
   }
 
@@ -9914,6 +9970,80 @@ function _topologyRenderPanelTab(tab, entity) {
   // dead code — no element in topology-fs-panel-tabs had
   // data-tab="metrics", so users could never reach it. If metrics
   // land in a later phase, add the tab back AND a real data source.
+
+  // GAP-04: routing rules tab inside the topology Details panel.
+  // Pulls routing rules scoped to the currently-selected branch (or
+  // all rules when no branch) and renders them as a read-only list
+  // with a single "open full editor" button. Full CRUD lives in the
+  // existing openRoutingModal() which is a global overlay, so no
+  // view switch is required (UF-10).
+  if (tab === 'routing') {
+    var profileId = entity.id;
+    // routingRules is a module-local variable declared at the top of
+    // app.js; it's populated by loadRoutingRules() at pageload and
+    // refreshed whenever the user edits rules via the full modal.
+    var allRules = (typeof routingRules !== 'undefined' ? routingRules : []) || [];
+    var rulesForProfile = allRules.filter(function (r) {
+      return r.profileId === profileId || !r.profileId;
+    });
+    var rulesHtml = rulesForProfile.length === 0
+      ? '<div class="tfp-vars-empty">' +
+        '<div class="tfp-vars-empty-title">尚无路由规则</div>' +
+        '<div class="tfp-vars-empty-desc">默认按 <code>X-Branch</code> 请求头或默认分支分发。<br>点下方"编辑路由"可添加基于 Host / Path / 匹配头的规则。</div>' +
+        '</div>'
+      : rulesForProfile.map(function (r) {
+          var pieces = [];
+          if (r.host) pieces.push('<code>' + esc(r.host) + '</code>');
+          if (r.path) pieces.push('<code>' + esc(r.path) + '</code>');
+          if (r.headerMatch) pieces.push('header:' + esc(r.headerMatch));
+          var desc = pieces.length ? pieces.join(' · ') : '(默认)';
+          return '<div class="tfp-var-row">' +
+            '<span class="tfp-var-eye ' + (r.enabled ? 'override' : 'inherited') + '" title="' + (r.enabled ? '启用' : '已停用') + '"><svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor"><path d="M8 4a4 4 0 110 8 4 4 0 010-8zm0 2a2 2 0 100 4 2 2 0 000-4z"/></svg></span>' +
+            '<div class="tfp-var-key">→ ' + esc(r.targetBranchId || '?') + '</div>' +
+            '<div class="tfp-var-val">' + desc + '</div>' +
+          '</div>';
+        }).join('');
+    body.innerHTML =
+      '<div class="tfp-vars-toolbar">' +
+        '<div class="tfp-vars-section-title">' +
+          '<span>路由规则</span>' +
+          '<span class="tfp-vars-count">' + rulesForProfile.length + '</span>' +
+        '</div>' +
+        '<button type="button" class="tfp-vars-edit-btn" onclick="_topologyOpenRoutingInPlace()">' +
+          '<svg width="11" height="11" viewBox="0 0 16 16" fill="currentColor"><path d="M11.013 1.427a1.75 1.75 0 012.474 0l1.086 1.086a1.75 1.75 0 010 2.474l-8.61 8.61c-.21.21-.47.364-.756.445l-3.251.93a.75.75 0 01-.927-.928l.929-3.25a1.75 1.75 0 01.445-.758l8.61-8.61z"/></svg>' +
+          '编辑路由' +
+        '</button>' +
+      '</div>' +
+      '<div class="tfp-vars-list">' + rulesHtml + '</div>';
+    return;
+  }
+
+  // GAP-07: tags / notes tab. Shows arbitrary free-form notes stored
+  // on the build profile `.notes` field plus structured tags from
+  // `.tags`. Both are optional and read-only for now — the "编辑"
+  // button routes to the full profile editor modal in place.
+  if (tab === 'tags') {
+    var notes = (entity.notes || '').trim();
+    var tags = Array.isArray(entity.tags) ? entity.tags : [];
+    var notesHtml = notes
+      ? '<div class="tfp-section-h">备注</div><div class="tfp-vars-hint" style="white-space:pre-wrap;line-height:1.55;padding:12px;background:var(--bg-elevated);border:1px solid var(--card-border);border-radius:8px">' + esc(notes) + '</div>'
+      : '<div class="tfp-section-h">备注</div><div class="tfp-vars-empty"><div class="tfp-vars-empty-title">没有备注</div><div class="tfp-vars-empty-desc">打开完整编辑器可为该服务添加说明、联系人、跑批计划等自由文本</div></div>';
+    var tagsHtml = tags.length > 0
+      ? '<div class="tfp-section-h" style="margin-top:14px">标签</div><div class="tfp-tags-row">' +
+        tags.map(function (t) { return '<span class="tfp-tag-chip">' + esc(String(t)) + '</span>'; }).join('') +
+        '</div>'
+      : '';
+    body.innerHTML =
+      '<div class="tfp-vars-toolbar">' +
+        '<div class="tfp-vars-section-title"><span>备注 / 标签</span></div>' +
+        '<button type="button" class="tfp-vars-edit-btn" onclick="_topologyPanelOpenEditor()">' +
+          '<svg width="11" height="11" viewBox="0 0 16 16" fill="currentColor"><path d="M11.013 1.427a1.75 1.75 0 012.474 0l1.086 1.086a1.75 1.75 0 010 2.474l-8.61 8.61c-.21.21-.47.364-.756.445l-3.251.93a.75.75 0 01-.927-.928l.929-3.25a1.75 1.75 0 01.445-.758l8.61-8.61z"/></svg>' +
+          '编辑' +
+        '</button>' +
+      '</div>' +
+      notesHtml + tagsHtml;
+    return;
+  }
 
   if (tab === 'settings') {
     // P4 Part 18 (G7): connection strings for infra services.
@@ -9937,26 +10067,302 @@ function _topologyRenderPanelTab(tab, entity) {
       var conns = _topologyBuildConnStrings(entity);
       if (conns) {
         connBlock =
-          '<div class="tfp-section-h">CONNECTION STRINGS</div>' +
+          '<div class="tfp-section-h">连接串</div>' +
           '<div class="tfp-conn-list">' +
-            _topologyRenderConnRow('Host view', conns.host, conns.hostMasked, conns.type + ' · 从宿主机或外部客户端连接') +
-            _topologyRenderConnRow('Container view', conns.container, conns.containerMasked, conns.type + ' · 从同一 Docker 网络内的其他容器连接') +
+            _topologyRenderConnRow('宿主机视角', conns.host, conns.hostMasked, conns.type + ' · 从宿主机或外部客户端连接') +
+            _topologyRenderConnRow('容器视角', conns.container, conns.containerMasked, conns.type + ' · 从同一 Docker 网络内的其他容器连接') +
           '</div>' +
           '<div class="tfp-vars-hint" style="margin-top:10px">密码从环境变量（' + esc(conns.passwordEnvKey || '默认值') + '）读取，点 ⧉ 复制未遮罩的完整串</div>';
       }
     }
 
+    // GAP-05: deploy-mode block. Shows the current deploy-mode state
+    // (per-branch single-shot, pool, shared...) and a click-to-edit
+    // link routing to the full profile editor in place.
+    var deployModeBlock = '';
+    if (kind === 'app' && entity.deployModes && typeof entity.deployModes === 'object') {
+      var modeKeys = Object.keys(entity.deployModes);
+      if (modeKeys.length > 0) {
+        var modeRows = modeKeys.map(function (k) {
+          var mode = entity.deployModes[k];
+          var modeLabel = typeof mode === 'string' ? mode : (mode && mode.mode) || '(未设置)';
+          return '<div class="tfp-kv"><span class="tfp-kv-key">' + esc(k) + '</span><span class="tfp-kv-val">' + esc(modeLabel) + '</span></div>';
+        }).join('');
+        deployModeBlock =
+          '<div class="tfp-section-h">部署模式</div>' +
+          modeRows +
+          '<div class="tfp-vars-hint" style="margin-top:6px">部署模式决定每次 deploy 的生命周期策略(共享/单次/常驻)。点下方"打开完整编辑器"可逐分支切换。</div>';
+      } else {
+        deployModeBlock =
+          '<div class="tfp-section-h">部署模式</div>' +
+          '<div class="tfp-vars-hint">未配置 — 所有分支使用默认"shared"策略。</div>';
+      }
+    }
+
+    // GAP-06: cluster dispatch block. Shows which executor nodes have
+    // this service's image / can run it. For MVP we list the known
+    // executors and tag the one currently serving the selected branch.
+    // Full scheduler wiring is a P5 concern; this gives the user the
+    // info they need without any new backend.
+    var clusterBlock = '';
+    if (kind === 'app' && typeof executors !== 'undefined' && Array.isArray(executors) && executors.length > 0) {
+      var execRows = executors.map(function (e) {
+        var tag = e.role === 'master' ? '主节点' : '远端';
+        return '<div class="tfp-kv">' +
+          '<span class="tfp-kv-key">' + esc(e.id || e.nodeId || '?') + '</span>' +
+          '<span class="tfp-kv-val">' + esc(tag) + ' · ' + esc((e.host || '-') + ':' + (e.port || '-')) + '</span>' +
+        '</div>';
+      }).join('');
+      clusterBlock =
+        '<div class="tfp-section-h">集群派发</div>' +
+        execRows +
+        '<div class="tfp-vars-hint" style="margin-top:6px">所有 executor 节点都能运行本服务。指定派发策略需在"集群设置"中配置(设置菜单 → 集群)。</div>';
+    }
+
     body.innerHTML =
-      '<div class="tfp-section-h">SERVICE INFO</div>' +
-      '<div class="tfp-kv"><span class="tfp-kv-key">Name</span><span class="tfp-kv-val">' + esc(entity.name || entity.id) + '</span></div>' +
-      '<div class="tfp-kv"><span class="tfp-kv-key">Image</span><span class="tfp-kv-val">' + esc(entity.dockerImage || '-') + '</span></div>' +
-      (entity.containerPort ? '<div class="tfp-kv"><span class="tfp-kv-key">Container Port</span><span class="tfp-kv-val">' + entity.containerPort + '</span></div>' : '') +
-      (entity.hostPort ? '<div class="tfp-kv"><span class="tfp-kv-key">Host Port</span><span class="tfp-kv-val">' + entity.hostPort + '</span></div>' : '') +
-      (entity.workDir ? '<div class="tfp-kv"><span class="tfp-kv-key">Work Dir</span><span class="tfp-kv-val">' + esc(entity.workDir) + '</span></div>' : '') +
+      '<div class="tfp-section-h">服务信息</div>' +
+      '<div class="tfp-kv"><span class="tfp-kv-key">名称</span><span class="tfp-kv-val">' + esc(entity.name || entity.id) + '</span></div>' +
+      '<div class="tfp-kv"><span class="tfp-kv-key">镜像</span><span class="tfp-kv-val">' + esc(entity.dockerImage || '-') + '</span></div>' +
+      (entity.containerPort ? '<div class="tfp-kv"><span class="tfp-kv-key">容器端口</span><span class="tfp-kv-val">' + entity.containerPort + '</span></div>' : '') +
+      (entity.hostPort ? '<div class="tfp-kv"><span class="tfp-kv-key">宿主端口</span><span class="tfp-kv-val">' + entity.hostPort + '</span></div>' : '') +
+      (entity.workDir ? '<div class="tfp-kv"><span class="tfp-kv-key">工作目录</span><span class="tfp-kv-val">' + esc(entity.workDir) + '</span></div>' : '') +
       connBlock +
-      '<div style="margin-top:18px"><button type="button" class="tfp-view-logs-btn" style="width:100%;padding:9px" onclick="_topologyPanelOpenEditor()">在编辑器中打开</button></div>';
+      deployModeBlock +
+      clusterBlock +
+      '<div style="margin-top:18px"><button type="button" class="tfp-view-logs-btn" style="width:100%;padding:9px" onclick="_topologyPanelOpenEditor()">打开完整编辑器</button></div>';
     return;
   }
+}
+
+// UF-09: branch-scoped variables view. Fetches profile overrides for
+// a given branch and renders an inherit/override row table with inline
+// editing, an eye toggle, and a "reset branch overrides" action.
+//
+// State is kept in a module-local var so the debounce write timer can
+// reach the latest in-flight edits without re-plumbing every callback.
+var _topologyVarsState = null; // { branchId, profileId, baseline, override, dirty, writeTimer }
+
+async function _topologyRenderBranchScopedVariables(branchId, entity) {
+  var body = document.getElementById('topologyFsPanelBody');
+  if (!body) return;
+  try {
+    var data = await api('GET', '/branches/' + encodeURIComponent(branchId) + '/profile-overrides');
+    var profileRow = (data.profiles || []).find(function (p) { return p.profileId === entity.id; });
+    if (!profileRow) {
+      body.innerHTML =
+        '<div class="tfp-vars-empty">' +
+          '<div class="tfp-vars-empty-title">该分支不认识这个服务</div>' +
+          '<div class="tfp-vars-empty-desc">可能是该分支在当前项目之外,或服务是刚新增的。回到共享视图即可编辑基线值。</div>' +
+        '</div>';
+      return;
+    }
+    var baselineEnv = (profileRow.baseline && profileRow.baseline.env) || {};
+    var overrideEnv = (profileRow.override && profileRow.override.env) || {};
+    var cdsEnvKeys = profileRow.cdsEnvKeys || [];
+    var cdsKeySet = new Set(cdsEnvKeys);
+
+    _topologyVarsState = {
+      branchId: branchId,
+      profileId: entity.id,
+      baselineEnv: baselineEnv,
+      overrideEnv: overrideEnv ? Object.assign({}, overrideEnv) : {},
+      cdsKeySet: cdsKeySet,
+      writeTimer: null,
+    };
+
+    _topologyRenderVarsDom();
+  } catch (e) {
+    body.innerHTML =
+      '<div class="tfp-vars-empty" style="color:var(--red)">' +
+        '<div class="tfp-vars-empty-title">加载失败</div>' +
+        '<div class="tfp-vars-empty-desc">' + esc(e && e.message ? e.message : String(e)) + '</div>' +
+      '</div>';
+  }
+}
+
+// Pure DOM render from _topologyVarsState. Called after the initial
+// fetch and after any eye toggle / value edit so row badges and tag
+// counts stay in sync.
+function _topologyRenderVarsDom() {
+  var state = _topologyVarsState;
+  if (!state) return;
+  var body = document.getElementById('topologyFsPanelBody');
+  if (!body) return;
+
+  var mergedKeys = Object.keys(Object.assign({}, state.baselineEnv, state.overrideEnv)).sort();
+  var overriddenCount = mergedKeys.filter(function (k) { return k in state.overrideEnv; }).length;
+
+  var rows = mergedKeys.map(function (k) {
+    var isCds = state.cdsKeySet.has(k);
+    var isOverridden = k in state.overrideEnv;
+    var inheritValue = state.baselineEnv[k] == null ? '' : String(state.baselineEnv[k]);
+    var overrideValue = state.overrideEnv[k] == null ? '' : String(state.overrideEnv[k]);
+    var shownValue = isOverridden ? overrideValue : inheritValue;
+    var isSecret = /(secret|password|token|key|apikey)/i.test(k);
+    var eyeClass = isCds ? 'locked' : (isOverridden ? 'override' : 'inherited');
+    var eyeTitle = isCds
+      ? 'CDS 基础设施变量,不能覆盖'
+      : (isOverridden ? '已覆盖 — 点击恢复继承' : '继承自构建配置 — 点击开启覆盖');
+
+    // Eye icon: filled/unfilled based on state
+    var eyeIcon = isOverridden && !isCds
+      ? '<svg width="13" height="13" viewBox="0 0 16 16" fill="currentColor"><path d="M1.679 7.932c.412-.621 1.242-1.75 2.366-2.717C5.175 4.242 6.527 3.5 8 3.5c1.473 0 2.824.742 3.955 1.715 1.124.967 1.954 2.096 2.366 2.717a.119.119 0 010 .136c-.412.621-1.242 1.75-2.366 2.717C10.825 11.758 9.473 12.5 8 12.5c-1.473 0-2.824-.742-3.955-1.715C2.92 9.818 2.09 8.69 1.679 8.068a.119.119 0 010-.136zM8 2C5.825 2 4.062 3.09 2.858 4.121c-1.207 1.035-2.083 2.232-2.514 2.884a1.62 1.62 0 000 1.79c.431.652 1.307 1.849 2.514 2.884C4.062 12.91 5.825 14 8 14c2.175 0 3.938-1.09 5.142-2.121 1.207-1.035 2.083-2.233 2.514-2.884a1.62 1.62 0 000-1.79c-.431-.652-1.307-1.849-2.514-2.884C11.938 3.09 10.175 2 8 2zm0 8a2 2 0 100-4 2 2 0 000 4z"/></svg>'
+      : '<svg width="13" height="13" viewBox="0 0 16 16" fill="currentColor"><path d="M.143 2.31a.75.75 0 011.047-.167l14 10a.75.75 0 11-.872 1.22L11.7 11.45a7.27 7.27 0 01-3.7 1.05c-2.175 0-3.938-1.09-5.142-2.121-1.207-1.035-2.083-2.233-2.514-2.884a1.62 1.62 0 010-1.79 12.11 12.11 0 011.989-2.319l-1.9-1.358a.75.75 0 01-.167-1.047zm3.16 3.4c-.418.361-.79.75-1.123 1.126-.332.377-.625.759-.85 1.104a.12.12 0 000 .136c.412.621 1.242 1.75 2.366 2.717C4.825 11.758 6.527 12.5 8 12.5a5.78 5.78 0 002.28-.49L8.85 10.995A2 2 0 016.045 8.19L3.303 5.71zM8 3.5c-.66 0-1.289.16-1.867.41L4.748 2.83A7.274 7.274 0 018 2c2.175 0 3.938 1.09 5.142 2.121 1.207 1.035 2.083 2.232 2.514 2.884.363.55.363 1.244 0 1.794-.307.465-.813 1.14-1.509 1.816l-1.062-.758a11.18 11.18 0 001.467-1.783.12.12 0 000-.136c-.412-.621-1.242-1.75-2.366-2.717C10.825 4.242 9.473 3.5 8 3.5zM6.5 8a1.5 1.5 0 002.122 1.364L5.822 7.365A1.5 1.5 0 006.5 8z"/></svg>';
+
+    var valueCell;
+    if (isCds) {
+      valueCell = '<div class="tfp-var-val tfp-var-val-locked" title="CDS 基础设施变量,由 state 注入">' + esc(isSecret ? '••••••••' : inheritValue.slice(0, 80)) + '</div>';
+    } else if (isOverridden) {
+      valueCell = '<input class="tfp-var-val-input" type="text" ' +
+        'value="' + esc(overrideValue).replace(/"/g, '&quot;') + '" ' +
+        'placeholder="(空串)" ' +
+        'oninput="_topologyVarsOnInput(' + JSON.stringify(k).replace(/"/g, '&quot;') + ',this.value)">';
+    } else {
+      var displayInherit = isSecret && inheritValue ? '••••••••' : inheritValue.slice(0, 80);
+      valueCell = '<div class="tfp-var-val tfp-var-val-inherit" title="继承 — 点左侧眼睛覆盖">' + esc(displayInherit) + (inheritValue.length > 80 ? '…' : '') + '</div>';
+    }
+
+    var onClick = isCds ? '' : 'onclick="_topologyVarsToggleOverride(' + JSON.stringify(k).replace(/"/g, '&quot;') + ')"';
+    void shownValue; // unused for now — used when we wire delete
+
+    return '<div class="tfp-var-row ' + (isOverridden ? 'is-override' : '') + '">' +
+      '<button type="button" class="tfp-var-eye ' + eyeClass + '" ' + onClick + ' title="' + esc(eyeTitle) + '">' + eyeIcon + '</button>' +
+      '<div class="tfp-var-key">' + esc(k) + '</div>' +
+      valueCell +
+    '</div>';
+  }).join('');
+
+  body.innerHTML =
+    '<div class="tfp-vars-toolbar">' +
+      '<div class="tfp-vars-section-title">' +
+        '<span>Service Variables</span>' +
+        '<span class="tfp-vars-count">' + mergedKeys.length + '</span>' +
+        (overriddenCount > 0
+          ? '<span class="tfp-vars-count" style="background:rgba(16,185,129,0.18);color:var(--accent,#10b981)">已覆盖 ' + overriddenCount + '</span>'
+          : '') +
+      '</div>' +
+      (overriddenCount > 0
+        ? '<button type="button" class="tfp-vars-edit-btn" onclick="_topologyVarsResetBranch()" title="清除该分支的所有覆盖,恢复继承">重置本分支</button>'
+        : '<button type="button" class="tfp-vars-edit-btn" onclick="_topologyPanelOpenEditor()">编辑全部</button>') +
+    '</div>' +
+    '<div class="tfp-vars-hint">💡 点每一行左侧的眼睛:<span style="color:var(--text-muted)">闭眼=继承构建配置</span>,<span style="color:var(--accent)">开眼=为本分支覆盖</span>。编辑值会自动保存,下次部署生效。</div>' +
+    '<div class="tfp-vars-list">' + rows + '</div>';
+}
+
+// Eye toggle handler — flips inherited ↔ overridden for one key.
+async function _topologyVarsToggleOverride(key) {
+  var state = _topologyVarsState;
+  if (!state) return;
+  if (state.cdsKeySet.has(key)) {
+    showToast('CDS 基础设施变量不能覆盖', 'info');
+    return;
+  }
+  var isOverridden = key in state.overrideEnv;
+  if (isOverridden) {
+    // Clear the override for this key, inherit from baseline.
+    delete state.overrideEnv[key];
+  } else {
+    // Start overriding — seed with the current inherited value.
+    state.overrideEnv[key] = state.baselineEnv[key] == null ? '' : String(state.baselineEnv[key]);
+  }
+  await _topologyVarsPersistImmediate();
+  _topologyRenderVarsDom();
+}
+
+// Inline edit handler — debounces writes so rapid typing doesn't
+// pound PUT. 400ms debounce matches list-view's override modal.
+function _topologyVarsOnInput(key, value) {
+  var state = _topologyVarsState;
+  if (!state) return;
+  state.overrideEnv[key] = value;
+  if (state.writeTimer) clearTimeout(state.writeTimer);
+  state.writeTimer = setTimeout(function () {
+    _topologyVarsPersistImmediate().catch(function () { /* toast already shown */ });
+  }, 400);
+}
+
+async function _topologyVarsPersistImmediate() {
+  var state = _topologyVarsState;
+  if (!state) return;
+  try {
+    // Send the whole override block so the backend can diff properly.
+    // We don't include any CDS_* keys (they're filtered out client-side
+    // by the cdsKeySet guard in the toggle handler).
+    await api('PUT',
+      '/branches/' + encodeURIComponent(state.branchId) + '/profile-overrides/' + encodeURIComponent(state.profileId),
+      { env: state.overrideEnv });
+  } catch (e) {
+    showToast('保存失败: ' + (e && e.message ? e.message : e), 'error');
+    throw e;
+  }
+}
+
+// Reset all overrides for this branch+profile — reverts to pure inheritance.
+async function _topologyVarsResetBranch() {
+  var state = _topologyVarsState;
+  if (!state) return;
+  if (!confirm('确定清除该分支对本服务的所有覆盖,完全继承构建配置吗?')) return;
+  try {
+    await api('DELETE',
+      '/branches/' + encodeURIComponent(state.branchId) + '/profile-overrides/' + encodeURIComponent(state.profileId));
+    state.overrideEnv = {};
+    showToast('已恢复继承', 'success');
+    _topologyRenderVarsDom();
+  } catch (e) {
+    showToast('重置失败: ' + (e && e.message ? e.message : e), 'error');
+  }
+}
+
+// UF-10: open routing rules modal in-place (no view switch).
+function _topologyOpenRoutingInPlace() {
+  if (typeof openRoutingModal === 'function') {
+    openRoutingModal();
+  } else {
+    showToast('路由规则模块未加载', 'info');
+  }
+}
+
+// GAP-08: single-click a port badge → copy "host:port" to clipboard.
+// Double-click → open preview URL in a new tab.
+function _topologyNodePortClick(entityId) {
+  var entity = (buildProfiles || []).find(function (p) { return p.id === entityId; })
+    || (infraServices || []).find(function (s) { return s.id === entityId; });
+  if (!entity) return;
+  var isApp = !!(buildProfiles || []).find(function (p) { return p.id === entityId; });
+  var port = isApp ? entity.containerPort : entity.hostPort;
+  if (!port) {
+    showToast('该服务没有公开端口', 'info');
+    return;
+  }
+  var host = (typeof location !== 'undefined' && location.hostname) || 'localhost';
+  var str = host + ':' + port;
+  if (navigator.clipboard) {
+    navigator.clipboard.writeText(str).then(function () {
+      showToast('已复制 ' + str, 'success');
+    }, function () {
+      showToast(str, 'info');
+    });
+  } else {
+    showToast(str, 'info');
+  }
+}
+
+function _topologyNodePortDblClick(entityId) {
+  var entity = (buildProfiles || []).find(function (p) { return p.id === entityId; });
+  if (entity && _topologySelectedBranchId && typeof previewBranch === 'function') {
+    // Prefer the full previewBranch flow — it handles multi/port/simple
+    // modes + subdomain/cookie switching. Match figure 1 UX where
+    // clicking the endpoint jumps straight to the preview.
+    previewBranch(_topologySelectedBranchId);
+    return;
+  }
+  // Fallback: raw port URL.
+  var isApp = !!entity;
+  var infra = (infraServices || []).find(function (s) { return s.id === entityId; });
+  var port = isApp ? entity.containerPort : (infra && infra.hostPort);
+  if (!port) return;
+  var host = (typeof location !== 'undefined' && location.hostname) || 'localhost';
+  try { window.open('http://' + host + ':' + port, '_blank', 'noopener'); } catch (e) { /* no-op */ }
 }
 
 // P4 Part 18 (G7): build connection strings for a known infra type.
@@ -10048,16 +10454,17 @@ function _topologyRenderConnRow(label, fullValue, maskedValue, hint) {
   '</div>';
 }
 
-// Open logs for the currently-displayed service (delegates to the
-// existing list-view log modal).
+// UF-10: Open logs for the currently-displayed service WITHOUT
+// switching views. openLogModal renders into a global overlay so
+// there's no reason to flip viewMode.
 function _topologyPanelOpenLogs() {
   var id = _topologyPanelCurrentId;
   if (!id) return;
-  setViewMode('list');
-  setTimeout(function () {
-    if (typeof openLogModal === 'function') openLogModal(id);
-    else showToast('日志面板需要在列表视图打开', 'info');
-  }, 80);
+  if (typeof openLogModal === 'function') {
+    openLogModal(id);
+  } else {
+    showToast('日志面板未加载', 'info');
+  }
 }
 
 // P4 Part 12 — inline logs preview inside the panel Deployments tab.
@@ -10378,30 +10785,42 @@ window._topologyPanelLoadBuildLogs = _topologyPanelLoadBuildLogs;
 window._topologyPanelLoadDeployLogs = _topologyPanelLoadDeployLogs;
 window._topologyPanelLoadHttpLogs = _topologyPanelLoadHttpLogs;
 
-// Open the full editor for the currently-displayed service.
+// UF-10: Open the full editor for the currently-displayed service
+// WITHOUT switching views. Previously this function called
+// setViewMode('list') as a prelude to opening a modal, which made
+// topology users yo-yo back to list view every time they hit "Edit
+// in full editor". All three targets (openOverrideModal,
+// openProfileModal, openInfraModal) render into the global #configModal
+// overlay, so they work from either view.
 function _topologyPanelOpenEditor() {
   var id = _topologyPanelCurrentId;
   var kind = _topologyPanelCurrentKind;
   if (!id) return;
   if (kind === 'app' && _topologySelectedBranchId) {
+    // Branch is selected → per-branch override editor is the most
+    // precise target. This path already worked before UF-10.
     openOverrideModal(_topologySelectedBranchId, id);
     return;
   }
   if (kind === 'app') {
-    setViewMode('list');
-    setTimeout(function () {
-      if (typeof openConfigModal === 'function' && typeof renderBuildProfiles === 'function') {
-        openConfigModal('构建配置', '<div id="buildProfilesContainer"></div>');
-        renderBuildProfiles();
-      }
-    }, 50);
+    // Shared view (no branch selected) → edit the base BuildProfile.
+    // The legacy code here called a non-existent renderBuildProfiles()
+    // after switching views, which did nothing and just left the user
+    // stranded on list view. Fixed by calling openProfileModal() in
+    // place, which is the real entry point.
+    if (typeof openProfileModal === 'function') {
+      openProfileModal();
+    } else {
+      showToast('构建配置模块未加载', 'info');
+    }
     return;
   }
-  // infra
-  setViewMode('list');
-  setTimeout(function () {
-    if (typeof openInfraModal === 'function') openInfraModal();
-  }, 50);
+  // infra: open the infrastructure services modal in place.
+  if (typeof openInfraModal === 'function') {
+    openInfraModal();
+  } else {
+    showToast('基础设施模块未加载', 'info');
+  }
 }
 
 // T6: close the panel
@@ -10609,6 +11028,15 @@ window._topologyPanelOpenEditor = _topologyPanelOpenEditor;
 // UF-07: custom branch combobox helpers
 window._topologyBranchComboToggle = _topologyBranchComboToggle;
 window._topologyBranchComboClose = _topologyBranchComboClose;
+// UF-09: branch-scoped variables (inherit/override) inline helpers
+window._topologyVarsToggleOverride = _topologyVarsToggleOverride;
+window._topologyVarsOnInput = _topologyVarsOnInput;
+window._topologyVarsResetBranch = _topologyVarsResetBranch;
+// UF-10: open routing modal in-place from Details tab
+window._topologyOpenRoutingInPlace = _topologyOpenRoutingInPlace;
+// GAP-08: node port badge click / dblclick handlers
+window._topologyNodePortClick = _topologyNodePortClick;
+window._topologyNodePortDblClick = _topologyNodePortDblClick;
 
 // Apply persisted view mode on load (deferred so DOM elements exist)
 if (document.readyState === 'loading') {

@@ -199,7 +199,7 @@ export function createGithubOAuthRouter(deps: GitHubOAuthRouterDeps): Router {
     }
   });
 
-  router.get('/github/repos', async (_req, res) => {
+  router.get('/github/repos', async (req, res) => {
     const client = requireClient(res);
     if (!client) return;
     const auth = stateService.getGithubDeviceAuth();
@@ -210,9 +210,15 @@ export function createGithubOAuthRouter(deps: GitHubOAuthRouterDeps): Router {
       });
       return;
     }
+    // FU-01: paginated repo listing. Callers pass ?page=N (1-indexed)
+    // and receive `{repos, hasNext, page}` so the frontend Repo Picker
+    // can show a "加载更多" button when the account has >100 repos.
+    // Default is page=1, matching the legacy flat-array behaviour.
+    const pageRaw = req.query.page;
+    const page = typeof pageRaw === 'string' ? parseInt(pageRaw, 10) || 1 : 1;
     try {
-      const repos = await client.fetchUserRepos(auth.token);
-      res.json({ repos });
+      const result = await client.fetchUserReposPage(auth.token, page);
+      res.json(result);
     } catch (err) {
       if (err instanceof GitHubOAuthError && err.code === 'repos_fetch_failed') {
         // 401 from GitHub likely means the token was revoked; clear

@@ -378,53 +378,119 @@
 
   // ── User / workspace bootstrap ────────────────────────────────────
 
-  // Badge resolution priority (Backlog UF-02):
-  //   1. CDS session user (/api/me) — if CDS auth is enabled and the user
-  //      is logged in, this is the authoritative identity.
-  //   2. GitHub Device Flow user (/api/github/oauth/status) — when CDS
-  //      auth is disabled (single-user install) but the operator has
+  // Badge resolution priority (Backlog UF-02, 2nd pass):
+  //   1. CDS session user (/api/me) — when CDS_AUTH_MODE=github and
+  //      the user has an active session, this is authoritative.
+  //   2. GitHub Device Flow user (/api/github/oauth/status) — when
+  //      CDS auth is disabled / mode=basic, but the operator has
   //      linked a personal GitHub via Device Flow, we surface that
-  //      GitHub login as the badge identity so users have a clear
-  //      "who am I logged in as" signal instead of a permanent
-  //      "未登录" placeholder.
-  //   3. Fallback: leave the static "未登录" copy from the HTML.
-  function bootstrapMeLabel() {
+  //      login as the badge.
+  //   3. Fallback: show "未登录" with a tooltip explaining why.
+  //
+  // The function is IDEMPOTENT and EVENT-DRIVEN — it can be called
+  // any number of times, including after a GitHub Device Flow login
+  // completes mid-session (the main UF-02 regression: the old code
+  // only ran once at pageload, so a user who logged in AFTER the
+  // page loaded was stuck seeing "未登录" until a manual refresh).
+  //
+  // Re-entry points:
+  //   - `loadProjects()` at pageload
+  //   - `_pollGithubDevice` on 'ready' (inside the create modal)
+  //   - `_settingsGithubDisconnect` equivalent if/when we add one
+  //   - Any other flow that mutates the CDS session or GitHub link
+
+  // Track the last resolved identity so we don't repaint unchanged
+  // state (cuts a tiny visual flicker). Compared by login id.
+  var _lastResolvedBadgeLogin = null;
+
+  function _renderBadgeIdentity(login, displayName, avatarUrl) {
     var nameEl = document.getElementById('userName');
     var avatarEl = document.getElementById('userAvatar');
-
-    function renderIdentity(login, displayName, avatarUrl) {
-      if (nameEl) nameEl.textContent = displayName || login || '登录用户';
-      if (avatarEl) {
-        if (avatarUrl) {
-          avatarEl.innerHTML =
-            '<img src="' + String(avatarUrl).replace(/"/g, '') + '" alt="">';
-        } else {
-          avatarEl.textContent = ((login || displayName || '?') + '').charAt(0).toUpperCase();
-        }
-      }
+    if (!nameEl || !avatarEl) return;
+    if (nameEl) nameEl.textContent = displayName || login || '登录用户';
+    if (nameEl) nameEl.title = login ? ('@' + login) : '';
+    if (avatarUrl) {
+      avatarEl.innerHTML =
+        '<img src="' + String(avatarUrl).replace(/"/g, '') + '" alt="">';
+    } else {
+      avatarEl.textContent = ((login || displayName || '?') + '').charAt(0).toUpperCase();
     }
+    _lastResolvedBadgeLogin = login || null;
+  }
 
+  function _renderBadgeNotLoggedIn(hint) {
+    // Only regress to "not logged in" if we previously resolved
+    // SOMEONE — otherwise the initial pageload "加载中…" just stays
+    // until the fetches land, which is the desired behaviour.
+    var nameEl = document.getElementById('userName');
+    var avatarEl = document.getElementById('userAvatar');
+    if (!nameEl || !avatarEl) return;
+    if (_lastResolvedBadgeLogin !== null) {
+      // User was resolved before but now isn't — explicit log-out path.
+      _lastResolvedBadgeLogin = null;
+    }
+    nameEl.textContent = '未登录';
+    nameEl.title = hint || '点击右上角"新建项目" → "使用 GitHub 登录"完成 Device Flow';
+    avatarEl.innerHTML = '?';
+  }
+
+  function bootstrapMeLabel() {
+    // Phase 1: probe CDS session. If we get a 200 with a user back,
+    // that's authoritative — use it and stop.
     fetch('/api/me', { credentials: 'same-origin', cache: 'no-store' })
       .then(function (res) { return res.ok ? res.json() : null; })
-      .catch(function () { return null; })
+      .catch(function (err) {
+        // Network error (rare); fall through to phase 2.
+        // eslint-disable-next-line no-console
+        console.debug('[projects] /api/me network error:', err && err.message);
+        return null;
+      })
       .then(function (body) {
         if (body && body.user) {
           var user = body.user;
-          renderIdentity(user.githubLogin, user.githubLogin || user.name, user.avatarUrl);
+          _renderBadgeIdentity(
+            user.githubLogin,
+            user.githubLogin || user.name || user.email,
+            user.avatarUrl,
+          );
           return;
         }
-        // No CDS session — fall through to GitHub Device Flow probe.
+        // Phase 2: probe GitHub Device Flow status. This is the
+        // branch that activates when CDS is running in
+        // auth-mode=disabled (single-user install) but the operator
+        // has linked their personal GitHub account for repo listing.
         return fetch('/api/github/oauth/status', { credentials: 'same-origin', cache: 'no-store' })
           .then(function (res) { return res.ok ? res.json() : null; })
-          .catch(function () { return null; })
+          .catch(function (err) {
+            // eslint-disable-next-line no-console
+            console.debug('[projects] /api/github/oauth/status network error:', err && err.message);
+            return null;
+          })
           .then(function (gh) {
-            if (gh && gh.connected && gh.login) {
-              renderIdentity(gh.login, gh.name || gh.login, gh.avatarUrl);
+            if (gh && gh.connected && gh.login && gh.login !== '(unknown)') {
+              _renderBadgeIdentity(gh.login, gh.name || gh.login, gh.avatarUrl);
+              return;
             }
-            // else: leave HTML placeholder ("未登录") intact.
+            // Nothing resolved. Render the not-logged-in hint with
+            // a diagnostic tooltip explaining the probe results so
+            // operators don't have to open DevTools.
+            var diag = [];
+            if (!body) diag.push('CDS 会话: 无');
+            else if (!body.user) diag.push('CDS 会话: 空');
+            if (!gh) diag.push('GitHub 状态: 探测失败');
+            else if (!gh.configured) diag.push('GitHub: 未配置 CDS_GITHUB_CLIENT_ID');
+            else if (!gh.connected) diag.push('GitHub: 未完成 Device Flow 登录');
+            else if (gh.login === '(unknown)') diag.push('GitHub: token 无 profile 信息');
+            _renderBadgeNotLoggedIn(diag.join(' · '));
           });
       });
   }
+
+  // Expose so other code paths (device-flow success, modal handlers)
+  // can trigger an immediate badge refresh. Also aliased on window so
+  // the inline onclick handlers inside create / device modals can
+  // reach it without a closure dance.
+  window._cdsRefreshIdentityBadge = bootstrapMeLabel;
 
   // ── Create-project modal ───────────────────────────────────────────
 
@@ -596,6 +662,11 @@
           showToast('GitHub 已连接 @' + (body.login || ''));
           setTimeout(function () {
             closeGithubDeviceModal();
+            // UF-02 regression: refresh the bottom-left identity badge
+            // immediately. Previously this was only done at pageload,
+            // so users who completed Device Flow mid-session kept
+            // seeing "未登录" until a manual browser refresh.
+            bootstrapMeLabel();
             // Refresh the create-modal sign-in state (shows connected banner)
             _refreshGithubSignInState();
             // Open the repo picker immediately
@@ -661,6 +732,12 @@
   // URL afterwards if they want.
 
   var _allRepos = [];
+  // FU-01: pagination state. `_repoPickerNextPage` is the page to
+  // fetch on the next "加载更多" click; `_repoPickerLoadingMore` is a
+  // re-entrancy guard so rapid double-clicks don't double-fetch.
+  var _repoPickerNextPage = 1;
+  var _repoPickerHasMore = false;
+  var _repoPickerLoadingMore = false;
 
   function _openRepoPicker() {
     var modal = document.getElementById('githubRepoPickerModal');
@@ -673,7 +750,13 @@
     if (subtitleEl) subtitleEl.textContent = '正在加载…';
     modal.classList.add('visible');
 
-    fetch('/api/github/repos', { credentials: 'same-origin' })
+    // Reset pagination state on each open
+    _allRepos = [];
+    _repoPickerNextPage = 1;
+    _repoPickerHasMore = false;
+    _repoPickerLoadingMore = false;
+
+    fetch('/api/github/repos?page=1', { credentials: 'same-origin' })
       .then(function (r) {
         return r.json().then(function (body) { return { status: r.status, body: body }; });
       })
@@ -692,7 +775,13 @@
         }
 
         _allRepos = result.body.repos || [];
-        if (subtitleEl) subtitleEl.textContent = '共 ' + _allRepos.length + ' 个仓库';
+        _repoPickerHasMore = !!result.body.hasNext;
+        _repoPickerNextPage = 2;
+        if (subtitleEl) {
+          subtitleEl.textContent = _repoPickerHasMore
+            ? '已加载 ' + _allRepos.length + ' 个仓库(还有更多)'
+            : '共 ' + _allRepos.length + ' 个仓库';
+        }
         if (searchEl) { searchEl.style.display = 'block'; searchEl.value = ''; }
         _renderRepoList(_allRepos);
         setTimeout(function () {
@@ -701,8 +790,47 @@
       })
       .catch(function (err) {
         if (listEl) {
-          listEl.innerHTML = '<div style="padding:60px 20px;text-align:center;color:var(--red);font-size:12px">网络错误：' + escapeHtml(err && err.message ? err.message : String(err)) + '</div>';
+          listEl.innerHTML = '<div style="padding:60px 20px;text-align:center;color:var(--red);font-size:12px">网络错误:' + escapeHtml(err && err.message ? err.message : String(err)) + '</div>';
         }
+      });
+  }
+
+  // FU-01: fetch the next page of repos and append to the list.
+  // Called from the "加载更多" button at the bottom of the render output.
+  function _repoPickerLoadMore() {
+    if (_repoPickerLoadingMore || !_repoPickerHasMore) return;
+    _repoPickerLoadingMore = true;
+    var loadMoreBtn = document.getElementById('gh-picker-load-more');
+    if (loadMoreBtn) { loadMoreBtn.disabled = true; loadMoreBtn.textContent = '正在加载…'; }
+    fetch('/api/github/repos?page=' + encodeURIComponent(_repoPickerNextPage), { credentials: 'same-origin' })
+      .then(function (r) { return r.ok ? r.json() : null; })
+      .then(function (body) {
+        if (!body || !Array.isArray(body.repos)) {
+          showToast('加载更多失败', 'error');
+          return;
+        }
+        _allRepos = _allRepos.concat(body.repos);
+        _repoPickerHasMore = !!body.hasNext;
+        _repoPickerNextPage += 1;
+        var subtitleEl = document.getElementById('gh-picker-subtitle');
+        if (subtitleEl) {
+          subtitleEl.textContent = _repoPickerHasMore
+            ? '已加载 ' + _allRepos.length + ' 个仓库(还有更多)'
+            : '共 ' + _allRepos.length + ' 个仓库';
+        }
+        // Re-render with the current search query applied
+        var searchEl = document.getElementById('gh-picker-search');
+        var q = searchEl ? searchEl.value.trim().toLowerCase() : '';
+        var filtered = q
+          ? _allRepos.filter(function (r) { return r.fullName.toLowerCase().includes(q); })
+          : _allRepos;
+        _renderRepoList(filtered);
+      })
+      .catch(function (err) {
+        showToast('加载更多失败:' + (err && err.message ? err.message : err), 'error');
+      })
+      .finally(function () {
+        _repoPickerLoadingMore = false;
       });
   }
 
@@ -728,6 +856,15 @@
         '<svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor" style="color:var(--text-muted);flex-shrink:0;margin-top:4px"><path d="M6.22 3.22a.75.75 0 011.06 0l4.25 4.25a.75.75 0 010 1.06l-4.25 4.25a.75.75 0 01-1.06-1.06L9.94 8 6.22 4.28a.75.75 0 010-1.06z"/></svg>' +
         '</div>';
     }).join('');
+    // FU-01: render a "加载更多" button at the bottom of the list
+    // whenever the last page response indicated hasNext=true. Clicking
+    // it appends the next page and rerenders. Matches GitHub's own
+    // paginated UI convention.
+    if (_repoPickerHasMore) {
+      listEl.innerHTML += '<button type="button" id="gh-picker-load-more" class="gh-repo-row" style="justify-content:center;cursor:pointer;color:var(--accent,#10b981);font-weight:600;border:1px dashed rgba(16,185,129,0.4)" onclick="_repoPickerLoadMore()">' +
+        '<span>加载更多(第 ' + _repoPickerNextPage + ' 页)</span>' +
+        '</button>';
+    }
   }
 
   function _filterRepoPicker(query) {
@@ -767,6 +904,8 @@
 
   window._openGithubSignin = _openGithubSignin;
   window._openRepoPicker = _openRepoPicker;
+  // FU-01: pagination load-more handler
+  window._repoPickerLoadMore = _repoPickerLoadMore;
   window.closeGithubDeviceModal = closeGithubDeviceModal;
 
   function closeCreateProjectModal(event) {

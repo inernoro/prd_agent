@@ -41,6 +41,10 @@ export type FetchLike = (
   statusText: string;
   json(): Promise<any>;
   text(): Promise<string>;
+  // FU-01: optional response headers accessor. Not all test mocks
+  // implement this, so the pagination path degrades gracefully if
+  // `headers` is undefined.
+  headers?: { get(name: string): string | null };
 }>;
 
 export interface GitHubOAuthClientOptions {
@@ -398,10 +402,33 @@ export class GitHubOAuthClient {
    * that yet; 100 covers the 95% case for a personal account).
    */
   async fetchUserRepos(accessToken: string): Promise<GitHubRepo[]> {
+    // Back-compat shim: callers that don't care about pagination get
+    // the first 100 repos (sorted by most recent activity) just like
+    // before. Pagination-aware callers should use fetchUserReposPage.
+    const { repos } = await this.fetchUserReposPage(accessToken, 1);
+    return repos;
+  }
+
+  /**
+   * FU-01: paginated variant of fetchUserRepos. Returns one page of
+   * repositories plus a `hasNext` hint derived from the GitHub
+   * `Link` response header. Pages are 1-indexed to match GitHub's
+   * own convention.
+   *
+   * Why a separate method? The pagination response shape is a strict
+   * superset of the old flat-array return, so we'd break every
+   * existing caller (tests + clone helper) by bolting `hasNext` onto
+   * the old method. A new method keeps both contracts clean.
+   */
+  async fetchUserReposPage(
+    accessToken: string,
+    page: number = 1,
+  ): Promise<{ repos: GitHubRepo[]; hasNext: boolean; page: number }> {
+    if (!Number.isInteger(page) || page < 1) page = 1;
     let response;
     try {
       response = await this.fetchImpl(
-        `${this.apiBaseUrl}/user/repos?per_page=100&sort=updated&affiliation=owner,collaborator,organization_member`,
+        `${this.apiBaseUrl}/user/repos?per_page=100&page=${page}&sort=updated&affiliation=owner,collaborator,organization_member`,
         {
           headers: {
             Accept: 'application/vnd.github+json',
@@ -423,7 +450,7 @@ export class GitHubOAuthClient {
     if (!Array.isArray(body)) {
       throw new GitHubOAuthError('repos_fetch_failed', 'GitHub /user/repos did not return an array');
     }
-    return body.map((r: any) => ({
+    const repos: GitHubRepo[] = body.map((r: any) => ({
       id: r.id,
       name: r.name,
       fullName: r.full_name,
@@ -436,5 +463,14 @@ export class GitHubOAuthClient {
       stargazersCount: r.stargazers_count || 0,
       language: r.language ?? null,
     }));
+    // Parse Link header for pagination. GitHub returns something like:
+    //   <https://api.github.com/user/repos?page=2>; rel="next",
+    //   <https://api.github.com/user/repos?page=5>; rel="last"
+    // If `rel="next"` is present there are more pages to fetch.
+    const linkHeader = (response.headers && typeof response.headers.get === 'function')
+      ? response.headers.get('link') || response.headers.get('Link') || ''
+      : '';
+    const hasNext = /rel=["']next["']/.test(linkHeader);
+    return { repos, hasNext, page };
   }
 }

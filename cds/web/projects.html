@@ -6,7 +6,7 @@
   <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
   <meta http-equiv="Pragma" content="no-cache">
   <meta http-equiv="Expires" content="0">
-  <title>Projects · Cloud Development Suite</title>
+  <title>项目列表 · Cloud Dev Suite</title>
   <link rel="icon" type="image/svg+xml" href="favicon.svg">
   <link rel="preconnect" href="https://fonts.loli.net" crossorigin>
   <link href="https://fonts.loli.net/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
@@ -801,8 +801,8 @@
       <div class="cds-workspace">
         <div class="cds-workspace-avatar" id="wsAvatar">S</div>
         <div class="cds-workspace-meta">
-          <span class="cds-workspace-name" id="wsName">System</span>
-          <span class="cds-workspace-sub">Personal</span>
+          <span class="cds-workspace-name" id="wsName">系统</span>
+          <span class="cds-workspace-sub">个人工作区</span>
         </div>
       </div>
 
@@ -812,37 +812,37 @@
       <nav class="cds-nav">
         <a class="cds-nav-item active" href="projects.html">
           <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M1.75 1h12.5c.966 0 1.75.784 1.75 1.75v10.5A1.75 1.75 0 0114.25 15H1.75A1.75 1.75 0 010 13.25V2.75C0 1.784.784 1 1.75 1zM1.5 2.75v10.5c0 .138.112.25.25.25h12.5a.25.25 0 00.25-.25V2.75a.25.25 0 00-.25-.25H1.75a.25.25 0 00-.25.25z"/></svg>
-          <span>Projects</span>
+          <span>项目列表</span>
         </a>
         <a class="cds-nav-item" href="index.html">
           <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M8 0a8 8 0 100 16A8 8 0 008 0zM1.5 8a6.5 6.5 0 0110.65-5.003.75.75 0 00.959-1.153 8 8 0 102.592 8.33.75.75 0 00-1.444-.407A6.5 6.5 0 011.5 8z"/></svg>
-          <span>Dashboard</span>
+          <span>控制台</span>
         </a>
       </nav>
 
       <div class="cds-user-card">
-        <div class="cds-user-avatar" id="userAvatar">?</div>
-        <span class="cds-user-name" id="userName">未登录</span>
+        <div class="cds-user-avatar" id="userAvatar">···</div>
+        <span class="cds-user-name" id="userName">加载中…</span>
       </div>
     </aside>
 
     <!-- ───── Main content ───── -->
     <main class="cds-main">
       <div class="cds-main-header">
-        <h1 class="cds-main-title">Projects</h1>
+        <h1 class="cds-main-title">项目列表</h1>
         <div class="cds-main-actions">
           <button class="btn-primary-solid" onclick="handleNewProject()">
             <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M7.75 2a.75.75 0 01.75.75V7h4.25a.75.75 0 010 1.5H8.5v4.25a.75.75 0 01-1.5 0V8.5H2.75a.75.75 0 010-1.5H7V2.75A.75.75 0 017.75 2z"/></svg>
-            New
+            新建项目
           </button>
         </div>
       </div>
 
       <div class="cds-toolbar">
         <div class="cds-toolbar-left">
-          <span><strong id="projectCount" style="color:var(--text-secondary)">…</strong> Projects</span>
+          <span><strong id="projectCount" style="color:var(--text-secondary)">…</strong> 个项目</span>
           <span style="opacity:0.4">|</span>
-          <span>Sort by: Recent Activity</span>
+          <span>按最近活跃排序</span>
         </div>
         <!-- P4 Part 18 cleanup: removed the "List view (coming soon)"
              disabled toggle. Grid view is the only view that works, so
