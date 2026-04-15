@@ -210,7 +210,7 @@
 
 ---
 
-## 6. P3：MongoDB 数据层迁移（**Part 1 已落地 ✓ 2026-04-13**, Part 2/3 待办）
+## 6. P3：MongoDB 数据层迁移（**Part 1 ✓ 2026-04-13**, **Part 2 ✓ 2026-04-14 via Phase D.1-D.3**, Part 3 待办）
 
 ### 目标
 
@@ -222,9 +222,9 @@
 
 P3 全量在一个 session 里落地违反规则 8（完成标准）——mongo 接入既需要引入新运行时依赖，又需要活的 mongo 实例做验证。拆分原则：
 
-- **Part 1（已落地）**：纯重构。抽出 `StateBackingStore` 接口，用 `JsonStateBackingStore` 包住现有的 atomic write + `.bak.*` 恢复逻辑。`StateService` 改成通过 `backingStore` 委托持久化。**零行为变化，340 个测试全绿**。这样后续 Part 2/3 都只需要新增一个 backing store 实现，不需要再动 StateService 或任何业务层消费者
-- **Part 2（下一个 session）**：引入 `mongodb` npm 依赖 + `MongoStateBackingStore` 实现。需要真实 mongo 做端到端测试
-- **Part 3（Part 2 稳定后）**：`DualWriteStateBackingStore` + 一致性校验脚本 + 迁移脚本 `migrate-state-to-mongo.ts --dry-run/--execute`。这是 P3a/P3b/P3c 三阶段切换的真正落地
+- **Part 1（已落地 2026-04-13）**:纯重构。抽出 `StateBackingStore` 接口，用 `JsonStateBackingStore` 包住现有的 atomic write + `.bak.*` 恢复逻辑。`StateService` 改成通过 `backingStore` 委托持久化。**零行为变化，340 个测试全绿**。这样后续 Part 2/3 都只需要新增一个 backing store 实现，不需要再动 StateService 或任何业务层消费者
+- **Part 2（已落地 2026-04-14，作为 Phase D.1-D.3 交付）**:引入 `mongodb` npm 依赖 + `MongoStateBackingStore` 实现 + 运行时 JSON↔Mongo 切换 + auto-fallback + seed-from-json 一次性导入。详见 `report.cds-phase-b-e-handoff-2026-04-14.md` §5 Phase D 章节
+- **Part 3（Part 2 稳定后，待办）**:`DualWriteStateBackingStore` + 一致性校验脚本 + 迁移脚本 `migrate-state-to-mongo.ts --dry-run/--execute`。这是 P3a/P3b/P3c 三阶段切换的真正落地
 
 ### 前置依赖
 
@@ -247,15 +247,21 @@ P3 全量在一个 session 里落地违反规则 8（完成标准）——mongo 
 - [x] `cds/tests/infra/json-backing-store.test.ts`：9 条直接测 backing store（load/save/recovery/rotation/kind tag）
 - [x] 全量测试 331 → 340 零回归
 
-### Part 2/3 剩余工作
+### Part 2 交付清单（已落地 ✓ 作为 Phase D.1-D.3）
 
-- [ ] 新增 `cds/src/infra/state-store/mongo-backing-store.ts`：MongoDB 实现
-- [ ] `cds/package.json` 引入 `mongodb` 运行时依赖
-- [ ] 新增 `cds/src/infra/state-store/dual-write-backing-store.ts`：双写 + 一致性校验
-- [ ] 改造 `index.ts`：按 `CDS_STORAGE_MODE` 分发 backing store
-- [ ] 新增 `cds/scripts/migrate-state-to-mongo.ts`：一次性迁移脚本（支持 `--dry-run`）
-- [ ] 新增 `cds/scripts/verify-state-consistency.ts`：对比 state.json 和 mongo 一致性的工具
-- [ ] P3c 阶段：新增 `cds/scripts/seal-state-json.ts`：重命名 state.json 为 legacy
+- [x] `cds/src/infra/state-store/mongo-backing-store.ts`:MongoDB 实现
+- [x] `cds/package.json` 引入 `mongodb` 运行时依赖
+- [x] 改造 `index.ts`:按 `CDS_STORAGE_MODE` 分发 backing store (`json` / `mongo`)
+- [x] auto-fallback 机制:mongo 连接失败自动回退 json
+- [x] seed-from-json:从现有 state.json 一次性导入 mongo 的启动命令
+
+### Part 3 剩余工作（待办）
+
+- [ ] 新增 `cds/src/infra/state-store/dual-write-backing-store.ts`:双写 + 一致性校验
+- [ ] 改造 `index.ts`:新增 `CDS_STORAGE_MODE=dual` 模式
+- [ ] 新增 `cds/scripts/migrate-state-to-mongo.ts`:一次性迁移脚本(支持 `--dry-run`)
+- [ ] 新增 `cds/scripts/verify-state-consistency.ts`:对比 state.json 和 mongo 一致性的工具
+- [ ] P3c 阶段:新增 `cds/scripts/seal-state-json.ts`:重命名 state.json 为 legacy
 
 **验收脚本**：
 
