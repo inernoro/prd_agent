@@ -39,6 +39,34 @@ import { ShowcaseGallery } from '@/components/showcase/ShowcaseGallery';
 import { DesktopDownloadDialog } from '@/components/ui/DesktopDownloadDialog';
 import { ReviewAgentCardArt } from '@/pages/ai-toolbox/components/ReviewAgentCardArt';
 import { HomeAmbientBackdrop } from '@/components/effects/HomeAmbientBackdrop';
+import { Reveal } from '@/pages/home/components/Reveal';
+
+/**
+ * 进场动效节奏 —— 与 /home LandingPage 同款 Reveal 组件，duration 减半（1000ms）让整体速度翻倍。
+ *
+ * 时序曲线：
+ *   Hero 核心元素 (0-150ms) → Quick Links (200-350ms) → Agents (430ms + 35ms cascade)
+ *   → Utilities (800ms + 25ms cascade) → Showcase (滚动到视口时触发)
+ *
+ * 首屏所有 Reveal 都在视口内，useInView 在 mount 时立即 fire；
+ * Showcase 在 fold 下方，滚动到视口时才触发，不浪费动画预算。
+ */
+const REVEAL_DURATION = 1000; // /home 默认 2000 的一半
+const REVEAL = {
+  heroEyebrow: 0,
+  heroTitle: 50,
+  heroSubtitle: 100,
+  heroSearch: 150,
+  quickLinkBase: 200,
+  quickLinkStep: 50,
+  agentsHeader: 430,
+  agentsCardBase: 470,
+  agentsCardStep: 35,
+  utilitiesHeader: 800,
+  utilitiesCardBase: 840,
+  utilitiesCardStep: 25,
+  showcaseHeader: 970, // 仅当首屏即可见时生效；滚动触发走 IntersectionObserver
+};
 
 // ── Icon & Color mapping (self-contained, doesn't touch ToolCard) ──
 
@@ -677,83 +705,91 @@ export default function AgentLauncherPage() {
               <div className={`flex ${isMobile ? 'flex-col gap-4' : 'items-start justify-between gap-8'}`}>
                 <div className="shrink-0">
                   {/* 小型 eyebrow 标签：品牌定位 */}
-                  <div
-                    className="inline-flex items-center gap-1.5 mb-2 px-2.5 py-0.5 rounded-full text-[10px] font-medium tracking-[0.08em] uppercase"
-                    style={{
-                      background: 'rgba(124, 58, 237, 0.12)',
-                      border: '1px solid rgba(124, 58, 237, 0.28)',
-                      color: '#c4b5fd',
-                      textShadow: 'none',
-                    }}
-                  >
-                    <Sparkles size={10} />
-                    MAP · 米多智能体生态平台
-                  </div>
-                  <h1
-                    className={`font-semibold tracking-tight ${isMobile ? 'text-2xl' : 'text-[34px]'}`}
-                    style={{
-                      color: 'var(--text-primary, #fff)',
-                      textShadow: '0 1px 12px rgba(0,0,0,0.35), 0 0 40px rgba(124, 58, 237, 0.15)',
-                      lineHeight: 1.15,
-                    }}
-                  >
-                    {greeting}
-                    {displayName ? '，' : ''}
-                    {displayName && (
-                      <span
-                        style={{
-                          background: MAP_ACCENT_GRADIENT,
-                          WebkitBackgroundClip: 'text',
-                          WebkitTextFillColor: 'transparent',
-                          backgroundClip: 'text',
-                        }}
-                      >
-                        {displayName}
-                      </span>
-                    )}
-                  </h1>
-                  <p
-                    className={`mt-2 ${isMobile ? 'text-sm' : 'text-[15px]'}`}
-                    style={{
-                      color: 'var(--text-muted, rgba(255,255,255,0.6))',
-                      textShadow: '0 1px 4px rgba(0,0,0,0.2)',
-                      maxWidth: 520,
-                    }}
-                  >
-                    选一个智能助手开始创作，或在下方的实用工具里探索平台能力
-                  </p>
+                  <Reveal delay={REVEAL.heroEyebrow} duration={REVEAL_DURATION}>
+                    <div
+                      className="inline-flex items-center gap-1.5 mb-2 px-2.5 py-0.5 rounded-full text-[10px] font-medium tracking-[0.08em] uppercase"
+                      style={{
+                        background: 'rgba(124, 58, 237, 0.12)',
+                        border: '1px solid rgba(124, 58, 237, 0.28)',
+                        color: '#c4b5fd',
+                        textShadow: 'none',
+                      }}
+                    >
+                      <Sparkles size={10} />
+                      MAP · 米多智能体生态平台
+                    </div>
+                  </Reveal>
+                  <Reveal delay={REVEAL.heroTitle} duration={REVEAL_DURATION} offset={20}>
+                    <h1
+                      className={`font-semibold tracking-tight ${isMobile ? 'text-2xl' : 'text-[34px]'}`}
+                      style={{
+                        color: 'var(--text-primary, #fff)',
+                        textShadow: '0 1px 12px rgba(0,0,0,0.35), 0 0 40px rgba(124, 58, 237, 0.15)',
+                        lineHeight: 1.15,
+                      }}
+                    >
+                      {greeting}
+                      {displayName ? '，' : ''}
+                      {displayName && (
+                        <span
+                          style={{
+                            background: MAP_ACCENT_GRADIENT,
+                            WebkitBackgroundClip: 'text',
+                            WebkitTextFillColor: 'transparent',
+                            backgroundClip: 'text',
+                          }}
+                        >
+                          {displayName}
+                        </span>
+                      )}
+                    </h1>
+                  </Reveal>
+                  <Reveal delay={REVEAL.heroSubtitle} duration={REVEAL_DURATION}>
+                    <p
+                      className={`mt-2 ${isMobile ? 'text-sm' : 'text-[15px]'}`}
+                      style={{
+                        color: 'var(--text-muted, rgba(255,255,255,0.6))',
+                        textShadow: '0 1px 4px rgba(0,0,0,0.2)',
+                        maxWidth: 520,
+                      }}
+                    >
+                      选一个智能助手开始创作，或在下方的实用工具里探索平台能力
+                    </p>
+                  </Reveal>
                 </div>
 
                 {/* Search (top-right) */}
-                <div className="relative shrink-0" style={{ width: isMobile ? '100%' : 260 }}>
-                  <Search
-                    size={15}
-                    className="absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none"
-                    style={{ color: 'var(--text-muted, rgba(255,255,255,0.3))' }}
-                  />
-                  <input
-                    type="text"
-                    placeholder="搜索 Agent..."
-                    value={searchQuery}
-                    onChange={(e) => setSearchQuery(e.target.value)}
-                    className="w-full h-9 pl-9 pr-4 rounded-lg text-[13px] outline-none transition-colors duration-150"
-                    style={{
-                      background: 'rgba(255,255,255,0.06)',
-                      border: '1px solid rgba(255,255,255,0.1)',
-                      color: 'var(--text-primary, #fff)',
-                      backdropFilter: 'blur(12px)',
-                      WebkitBackdropFilter: 'blur(12px)',
-                    }}
-                    onFocus={(e) => {
-                      e.currentTarget.style.borderColor = 'var(--accent-primary, #818CF8)';
-                      e.currentTarget.style.background = 'rgba(255,255,255,0.1)';
-                    }}
-                    onBlur={(e) => {
-                      e.currentTarget.style.borderColor = 'rgba(255,255,255,0.1)';
-                      e.currentTarget.style.background = 'rgba(255,255,255,0.06)';
-                    }}
-                  />
-                </div>
+                <Reveal delay={REVEAL.heroSearch} duration={REVEAL_DURATION}>
+                  <div className="relative shrink-0" style={{ width: isMobile ? '100%' : 260 }}>
+                    <Search
+                      size={15}
+                      className="absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none"
+                      style={{ color: 'var(--text-muted, rgba(255,255,255,0.3))' }}
+                    />
+                    <input
+                      type="text"
+                      placeholder="搜索 Agent..."
+                      value={searchQuery}
+                      onChange={(e) => setSearchQuery(e.target.value)}
+                      className="w-full h-9 pl-9 pr-4 rounded-lg text-[13px] outline-none transition-colors duration-150"
+                      style={{
+                        background: 'rgba(255,255,255,0.06)',
+                        border: '1px solid rgba(255,255,255,0.1)',
+                        color: 'var(--text-primary, #fff)',
+                        backdropFilter: 'blur(12px)',
+                        WebkitBackdropFilter: 'blur(12px)',
+                      }}
+                      onFocus={(e) => {
+                        e.currentTarget.style.borderColor = 'var(--accent-primary, #818CF8)';
+                        e.currentTarget.style.background = 'rgba(255,255,255,0.1)';
+                      }}
+                      onBlur={(e) => {
+                        e.currentTarget.style.borderColor = 'rgba(255,255,255,0.1)';
+                        e.currentTarget.style.background = 'rgba(255,255,255,0.06)';
+                      }}
+                    />
+                  </div>
+                </Reveal>
               </div>
             </div>
             {/* end hero content */}
@@ -771,16 +807,21 @@ export default function AgentLauncherPage() {
                 gridTemplateColumns: `repeat(auto-fit, minmax(${isMobile ? 160 : 220}px, 1fr))`,
               }}
             >
-              {quickLinks.map((link) => {
+              {quickLinks.map((link, idx) => {
                 const Icon = link.icon;
                 const isUpdates = link.id === 'updates';
                 const showUnread = isUpdates && changelogUnread > 0;
                 return (
-                  <button
+                  <Reveal
                     key={link.path}
+                    delay={REVEAL.quickLinkBase + idx * REVEAL.quickLinkStep}
+                    duration={REVEAL_DURATION}
+                    offset={20}
+                  >
+                  <button
                     type="button"
                     onClick={() => navigate(link.path)}
-                    className="group relative text-left rounded-2xl overflow-hidden transition-all duration-300 hover:-translate-y-0.5"
+                    className="group relative text-left rounded-2xl overflow-hidden transition-all duration-300 hover:-translate-y-0.5 w-full"
                     style={{
                       background: 'linear-gradient(180deg, rgba(255,255,255,0.045) 0%, rgba(255,255,255,0.02) 100%)',
                       border: '1px solid rgba(255,255,255,0.08)',
@@ -861,6 +902,7 @@ export default function AgentLauncherPage() {
                       </div>
                     </div>
                   </button>
+                  </Reveal>
                 );
               })}
             </div>
@@ -897,15 +939,23 @@ export default function AgentLauncherPage() {
               {/* Featured Agents */}
               {featured.length > 0 && (
                 <section className={isMobile ? 'mb-8' : 'mb-10'}>
-                  <SectionHeader
-                    eyebrow="AGENTS"
-                    title="智能助手"
-                    subtitle={`${featured.length} 个专属 Agent，覆盖 PRD / 视觉 / 文学 / 视频 / 缺陷 / 周报 / 审查`}
-                    accent="#818CF8"
-                  />
+                  <Reveal delay={REVEAL.agentsHeader} duration={REVEAL_DURATION}>
+                    <SectionHeader
+                      eyebrow="AGENTS"
+                      title="智能助手"
+                      subtitle={`${featured.length} 个专属 Agent，覆盖 PRD / 视觉 / 文学 / 视频 / 缺陷 / 周报 / 审查`}
+                      accent="#818CF8"
+                    />
+                  </Reveal>
                   <div style={AUTO_GRID_FEATURED}>
-                    {featured.map((item) => (
-                      <FeaturedCard key={item.id} item={item} onClick={() => handleClick(item)} />
+                    {featured.map((item, i) => (
+                      <Reveal
+                        key={item.id}
+                        delay={REVEAL.agentsCardBase + i * REVEAL.agentsCardStep}
+                        duration={REVEAL_DURATION}
+                      >
+                        <FeaturedCard item={item} onClick={() => handleClick(item)} />
+                      </Reveal>
                     ))}
                   </div>
                 </section>
@@ -914,28 +964,38 @@ export default function AgentLauncherPage() {
               {/* Utility Agents */}
               {utilities.length > 0 && (
                 <section className={isMobile ? 'mb-8' : 'mb-10'}>
-                  <SectionHeader
-                    eyebrow="UTILITIES"
-                    title="实用工具"
-                    subtitle="知识库 · 涌现探索 · 网页托管 · 管理工具 — 按需展开使用"
-                    accent="#22D3EE"
-                  />
+                  <Reveal delay={REVEAL.utilitiesHeader} duration={REVEAL_DURATION}>
+                    <SectionHeader
+                      eyebrow="UTILITIES"
+                      title="实用工具"
+                      subtitle="知识库 · 涌现探索 · 网页托管 · 管理工具 — 按需展开使用"
+                      accent="#22D3EE"
+                    />
+                  </Reveal>
                   <div style={AUTO_GRID_COMPACT}>
-                    {utilities.map((item) => (
-                      <CompactCard key={item.id} item={item} onClick={() => handleClick(item)} />
+                    {utilities.map((item, i) => (
+                      <Reveal
+                        key={item.id}
+                        delay={REVEAL.utilitiesCardBase + i * REVEAL.utilitiesCardStep}
+                        duration={REVEAL_DURATION}
+                      >
+                        <CompactCard item={item} onClick={() => handleClick(item)} />
+                      </Reveal>
                     ))}
                   </div>
                 </section>
               )}
 
-              {/* Showcase Gallery — 作品广场 */}
+              {/* Showcase Gallery — 作品广场（滚动到视口时由 IntersectionObserver 触发） */}
               <section>
-                <SectionHeader
-                  eyebrow="SHOWCASE"
-                  title="作品广场"
-                  subtitle="社区 AI 创意作品流"
-                  accent="#F43F5E"
-                />
+                <Reveal delay={REVEAL.showcaseHeader} duration={REVEAL_DURATION}>
+                  <SectionHeader
+                    eyebrow="SHOWCASE"
+                    title="作品广场"
+                    subtitle="社区 AI 创意作品流"
+                    accent="#F43F5E"
+                  />
+                </Reveal>
                 <ShowcaseGallery />
               </section>
             </>
