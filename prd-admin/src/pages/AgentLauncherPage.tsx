@@ -38,6 +38,7 @@ import type { ToolboxItem } from '@/services';
 import { ShowcaseGallery } from '@/components/showcase/ShowcaseGallery';
 import { DesktopDownloadDialog } from '@/components/ui/DesktopDownloadDialog';
 import { ReviewAgentCardArt } from '@/pages/ai-toolbox/components/ReviewAgentCardArt';
+import { HomeAmbientBackdrop } from '@/components/effects/HomeAmbientBackdrop';
 
 // ── Icon & Color mapping (self-contained, doesn't touch ToolCard) ──
 
@@ -615,8 +616,11 @@ export default function AgentLauncherPage() {
   const heroBgUrl = useMemo(() => getHeroBgUrl(), []);
 
   return (
-    <div className="h-full min-h-0 flex flex-col" style={{ background: 'var(--bg-base)' }}>
-      <div className="flex-1 min-h-0 overflow-auto">
+    <div className="h-full min-h-0 flex flex-col relative" style={{ background: 'var(--bg-base)' }}>
+      {/* 环境光背景层（blobs + film grain + top spotlight） —— 单独一层，不影响布局 */}
+      <HomeAmbientBackdrop />
+
+      <div className="flex-1 min-h-0 overflow-auto relative" style={{ zIndex: 1 }}>
 
           {/* ── Hero banner with background image — full width ── */}
           <div
