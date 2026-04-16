@@ -43,6 +43,7 @@ public class PoolHealthTracker : IPoolHealthTracker
             health.ConsecutiveFailures = 0;
             health.Status = EndpointHealthStatus.Healthy;
             health.LastSuccessAt = DateTime.UtcNow;
+            health.IsHalfOpenProbing = false;
             health.AddLatency(latencyMs, LatencyWindowSize);
         }
     }
@@ -55,6 +56,7 @@ public class PoolHealthTracker : IPoolHealthTracker
             health.ConsecutiveFailures++;
             health.ConsecutiveSuccesses = 0;
             health.LastFailedAt = DateTime.UtcNow;
+            health.IsHalfOpenProbing = false;
 
             health.Status = health.ConsecutiveFailures >= UnavailableThreshold
                 ? EndpointHealthStatus.Unavailable
@@ -164,7 +166,10 @@ public class PoolHealthTracker : IPoolHealthTracker
     /// 判断端点是否可接受请求。
     /// Healthy / Degraded → 始终可用。
     /// Unavailable → 正常拒绝；但若距上次失败已超过 HalfOpenCooldownSeconds，
-    ///               放行本次请求（Half-Open 探针），由真实结果决定是否恢复。
+    ///               且当前没有其他请求正在探针中（IsHalfOpenProbing），
+    ///               则放行本次请求（Half-Open 探针），由真实结果决定是否恢复。
+    /// 防雪崩：同一时刻只放行一个探针，其他并发请求继续被拒绝，
+    ///         直到探针结果（RecordSuccess/RecordFailure）重置标记。
     /// </summary>
     public bool IsAvailable(string endpointId)
     {
@@ -174,12 +179,20 @@ public class PoolHealthTracker : IPoolHealthTracker
         if (health.Status != EndpointHealthStatus.Unavailable)
             return true;
 
-        // Half-Open：冷却时间到则放行一次真实请求作为探针
+        // Half-Open：冷却时间到且当前无探针在途，放行一次真实请求
         if (HalfOpenCooldownSeconds > 0
             && health.LastFailedAt.HasValue
             && (DateTime.UtcNow - health.LastFailedAt.Value).TotalSeconds >= HalfOpenCooldownSeconds)
         {
-            return true;
+            lock (health)
+            {
+                // 二次检查：若已有探针在途，拒绝本次（防雷群效应）
+                if (!health.IsHalfOpenProbing)
+                {
+                    health.IsHalfOpenProbing = true;
+                    return true;
+                }
+            }
         }
 
         return false;
@@ -195,6 +208,14 @@ public class PoolHealthTracker : IPoolHealthTracker
         public int ConsecutiveSuccesses;
         public DateTime? LastSuccessAt;
         public DateTime? LastFailedAt;
+
+        /// <summary>
+        /// Half-Open 探针锁：true 表示当前已有一个请求被放行作为探针，
+        /// 后续并发请求在探针结果出来前应继续被拒绝，避免雷群效应。
+        /// 由 RecordSuccess / RecordFailure 重置为 false。
+        /// </summary>
+        public bool IsHalfOpenProbing;
+
         public readonly Queue<long> LatencyWindow = new();
 
         public void AddLatency(long latencyMs, int windowSize)
