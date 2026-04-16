@@ -5540,11 +5540,22 @@ body.cds-topology-fs .topology-fs-topbar { left: 60px; }
    * pill that holds breadcrumb + branch dropdown */
   top: 12px !important;
   left: 60px !important;
-  right: 16px !important;
+  /* UF-15 (2026-04-15): reserve 132px on the right for the floating
+   * "+ Add" button (which is position:fixed at right:24px, ~88px wide
+   * + its popover width). Before this fix the topbar stretched to
+   * right:16px and the "列表 | 拓扑" toggle inside it got visually
+   * obscured by + Add. The reservation keeps the two controls from
+   * sharing any x-coordinate range. */
+  right: 132px !important;
   background: transparent !important;
   padding: 0 !important;
   border: none !important;
   box-shadow: none !important;
+  display: flex !important;
+  align-items: center;
+  gap: 8px;
+  justify-content: space-between;
+  flex-wrap: nowrap;
 }
 .topology-fs-topbar-pill {
   display: inline-flex;
@@ -6498,6 +6509,70 @@ body.cds-topology-fs .topology-fs-panel.open { transform: translateX(0); }
   border-color: var(--card-border);
 }
 
+/* UF-16: busy-state Deploy button — amber bg with animated spinner.
+   The spinner itself is injected inline via the btn-spinner class. */
+.tfp-deploy-btn.busy {
+  background: rgba(245, 158, 11, 0.14);
+  border-color: rgba(245, 158, 11, 0.55);
+  color: #f59e0b;
+  cursor: wait;
+}
+.tfp-deploy-btn.busy .btn-spinner {
+  width: 11px;
+  height: 11px;
+  border-width: 2px;
+  border-top-color: #f59e0b;
+}
+
+/* UF-16: deploy-in-progress status banner — pulses amber */
+.tfp-status-banner.deploying {
+  background: rgba(245, 158, 11, 0.08);
+  border-color: rgba(245, 158, 11, 0.3);
+}
+.tfp-status-banner.deploying .live-dot {
+  animation: tfp-live-pulse 1.2s ease-in-out infinite;
+}
+@keyframes tfp-live-pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.6; transform: scale(1.25); }
+}
+
+/* UF-16: inline deploy log preview inside the Details tab */
+.tfp-deploy-log-preview {
+  margin-top: 10px;
+  padding: 10px 12px;
+  background: rgba(0, 0, 0, 0.25);
+  border: 1px solid rgba(245, 158, 11, 0.3);
+  border-radius: 8px;
+  cursor: pointer;
+  transition: border-color 120ms ease;
+}
+.tfp-deploy-log-preview:hover {
+  border-color: rgba(245, 158, 11, 0.6);
+}
+.tfp-deploy-log-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+  font-weight: 600;
+  color: #f59e0b;
+  margin-bottom: 6px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+.tfp-deploy-log-body {
+  font-family: var(--font-mono, monospace);
+  font-size: 10.5px;
+  color: var(--text-secondary);
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-all;
+  max-height: 130px;
+  overflow: hidden;
+  line-height: 1.5;
+}
+
 /* GAP-01/02: Stop + Delete buttons next to Deploy in the topology
    Details status banner. Visually paired with .tfp-deploy-btn but
    scaled down in intensity — amber for Stop (reversible), red for
@@ -6536,6 +6611,30 @@ body.cds-topology-fs .topology-fs-panel.open { transform: translateX(0); }
   border-color: rgba(239, 68, 68, 0.55);
 }
 .tfp-delete-btn:active { transform: translateY(1px); }
+/* UF-16: busy-state variants for Stop and Delete — amber/red tint stays
+   but the button is disabled + cursor:wait + spinner replaces the icon */
+.tfp-stop-btn.busy,
+.tfp-stop-btn:disabled {
+  cursor: wait;
+  opacity: 0.7;
+}
+.tfp-stop-btn.busy .btn-spinner {
+  width: 11px;
+  height: 11px;
+  border-width: 2px;
+  border-top-color: #f59e0b;
+}
+.tfp-delete-btn.busy,
+.tfp-delete-btn:disabled {
+  cursor: wait;
+  opacity: 0.7;
+}
+.tfp-delete-btn.busy .btn-spinner {
+  width: 11px;
+  height: 11px;
+  border-width: 2px;
+  border-top-color: #ef4444;
+}
 
 /* P4 Part 18 (G6): Public URL row — prominent, clickable, mode-aware. */
 .tfp-public-url-card {

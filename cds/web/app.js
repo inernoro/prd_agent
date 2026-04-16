@@ -206,7 +206,48 @@ async function api(method, path, body, { poll } = {}) {
 
   const res = await fetch(`${API}${finalPath}`, opts);
   if (res.status === 401) { location.href = '/login.html'; return; }
-  const data = await res.json();
+
+  // UF-14: robust body parsing. Previously this was `await res.json()`
+  // which throws SyntaxError("Unexpected end of JSON input") on empty
+  // bodies (204 No Content, or — more commonly — intermittent proxy
+  // hiccups / server restart windows). That error kept surfacing in
+  // the user's console because loadBranches polls every 5s; every
+  // hiccup lit up DevTools even though the very next poll succeeded.
+  //
+  // The fix: read as text first, classify the response, and produce
+  // a useful error message the caller (or global onerror) can act on.
+  if (res.status === 204 || res.status === 205 || res.status === 304) {
+    // No-content responses — return an empty object rather than parse
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    return {};
+  }
+  const rawText = await res.text();
+  if (!rawText || rawText.trim() === '') {
+    // Empty body. Two common causes:
+    //   1. Proxy returned 502/503 with no body during a server restart
+    //   2. The server closed the connection before writing (extremely
+    //      rare but happens under load)
+    // For polling callers we want this to be a QUIET failure — the
+    // next poll will almost certainly succeed. For explicit user
+    // actions we still throw so the caller can show a toast.
+    const err = new Error(`HTTP ${res.status} 空响应 (服务器可能正在重启,下次轮询会恢复)`);
+    err.code = 'empty_body';
+    err.isTransient = true;
+    throw err;
+  }
+  let data;
+  try {
+    data = JSON.parse(rawText);
+  } catch (parseErr) {
+    // Non-JSON response — usually an HTML error page from the reverse
+    // proxy. Show the first 120 chars so operators can tell if it's
+    // an nginx 502 vs. a Cloudflare interstitial etc.
+    const snippet = rawText.slice(0, 120).replace(/\s+/g, ' ');
+    const err = new Error(`服务器返回非 JSON (HTTP ${res.status}): ${snippet}`);
+    err.code = 'non_json';
+    err.isTransient = !res.ok;
+    throw err;
+  }
   if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
   return data;
 }
@@ -990,7 +1031,17 @@ async function loadBranches({ silent } = {}) {
     _branchesFirstLoadDone = true;
     renderBranches();
     renderCapacityBadge();
-  } catch (e) { console.error('loadBranches:', e); }
+  } catch (e) {
+    // UF-14: suppress transient errors during polling (empty body,
+    // proxy 502 during restart, etc). For the first non-silent load
+    // or any non-transient error, still surface to console — those
+    // are real bugs worth investigating.
+    if (silent && e && e.isTransient) {
+      // expected during server restart / proxy hiccup — stay quiet
+    } else {
+      console.error('loadBranches:', e);
+    }
+  }
   finally { if (silent) setTimeout(() => { _pollInFlight = false; }, 500); }
 }
 
@@ -1998,6 +2049,7 @@ async function deployBranchDirect(id, targetExecutorId) {
   if (br) { br.errorMessage = undefined; br.status = 'building'; }
   inlineDeployLogs.set(id, { lines: [], status: 'building', expanded: false });
   renderBranches();
+  _topologyRefreshIfVisible(id); // UF-16: immediate spinner in topology
 
   try {
     const body = targetExecutorId ? { targetExecutorId } : {};
@@ -2054,18 +2106,46 @@ async function deployBranchDirect(id, targetExecutorId) {
   await loadBranches();
   inlineDeployLogs.delete(id);
   renderBranches();
+  _topologyRefreshIfVisible(id); // UF-16: banner flips back + log preview clears
 }
 
 function updateInlineLog(id) {
-  const el = document.getElementById(`inline-log-${CSS.escape(id)}`);
-  if (!el) return;
   const log = inlineDeployLogs.get(id);
   if (!log) return;
   const filtered = log.lines.filter(l => l.trim());
-  const maxLines = log.expanded ? filtered.length : 20;
-  const visibleLines = filtered.slice(-maxLines);
-  el.textContent = visibleLines.join('\n');
-  el.scrollTop = el.scrollHeight;
+
+  // List view inline log
+  const el = document.getElementById(`inline-log-${CSS.escape(id)}`);
+  if (el) {
+    const maxLines = log.expanded ? filtered.length : 20;
+    const visibleLines = filtered.slice(-maxLines);
+    el.textContent = visibleLines.join('\n');
+    el.scrollTop = el.scrollHeight;
+  }
+
+  // UF-16: topology Details panel inline log preview. We keep this
+  // shorter (last 8 lines) because the topology panel is narrower.
+  // When the panel is open on this branch and actively deploying,
+  // this is what the user sees scrolling in real time.
+  const topoEl = document.getElementById(`tfp-deploy-log-${id}`);
+  if (topoEl) {
+    const body = topoEl.querySelector('.tfp-deploy-log-body');
+    if (body) {
+      body.textContent = filtered.slice(-8).join('\n') || '正在启动…';
+    }
+  }
+
+  // UF-16: if the topology panel is showing THIS branch but the log
+  // preview element doesn't exist yet (first chunk after click), poke
+  // a re-render so the preview appears.
+  if (typeof _topologyPanelCurrentKind !== 'undefined'
+      && _topologyPanelCurrentKind === 'app'
+      && _topologySelectedBranchId === id
+      && !topoEl) {
+    if (typeof _topologySwitchPanelTab === 'function') {
+      _topologySwitchPanelTab('details');
+    }
+  }
 }
 
 
@@ -2113,6 +2193,7 @@ async function stopBranch(id) {
     }
   }
   renderBranches();
+  _topologyRefreshIfVisible(id); // UF-16: immediate spinner in topology
   try {
     await api('POST', `/branches/${id}/stop`);
     showToast('服务已停止', 'success');
@@ -2120,6 +2201,24 @@ async function stopBranch(id) {
   busyBranches.delete(id);
   clearLoading(id, 'stop');
   await loadBranches();
+  _topologyRefreshIfVisible(id); // UF-16: button returns to idle
+}
+
+// UF-16: helper called by deploy/stop/remove flows to refresh the
+// sliding topology Details panel when it's showing a branch that's
+// transitioning state. Without this, the button stays stuck in its
+// previous state until the next poll (up to 5s of visual lag).
+function _topologyRefreshIfVisible(branchId) {
+  if (typeof _topologySwitchPanelTab !== 'function') return;
+  if (typeof _topologyPanelCurrentKind === 'undefined') return;
+  if (_topologyPanelCurrentKind !== 'app') return;
+  // Refresh when: the currently-selected branch in topology matches
+  // the branch that just changed state. For shared view (no branch
+  // selected) we skip — nothing branch-scoped is showing anyway.
+  if (_topologySelectedBranchId !== branchId) return;
+  const activeTabEl = document.querySelector('.topology-fs-panel-tab.active');
+  const activeTab = activeTabEl ? activeTabEl.dataset.tab : 'details';
+  _topologySwitchPanelTab(activeTab);
 }
 
 async function pullBranch(id) {
@@ -2198,6 +2297,7 @@ async function removeBranch(id) {
     }
   }
   renderBranches();
+  _topologyRefreshIfVisible(id); // UF-16: "删除中…" shows in topology too
   try {
     const res = await fetch(`${API}/branches/${id}`, { method: 'DELETE' });
     // SSE stream — just consume it
@@ -2210,6 +2310,12 @@ async function removeBranch(id) {
       await new Promise(r => card.addEventListener('animationend', r, { once: true }));
     }
     showToast(`分支 "${id}" 已删除`, 'success');
+    // UF-16: close the topology panel if it was showing this branch
+    if (typeof _topologyClosePanel === 'function'
+        && typeof _topologyPanelCurrentKind !== 'undefined'
+        && _topologySelectedBranchId === id) {
+      _topologyClosePanel();
+    }
   } catch (e) { showToast(e.message, 'error'); }
   busyBranches.delete(id);
   await loadBranches();
@@ -9621,7 +9727,22 @@ function _topologyRenderPanelTab(tab, entity) {
     var deployTargetBranchId = _topologySelectedBranchId
       || (displayBranch && displayBranch.id)
       || null;
-    var deployBtnLabel = status === 'running' ? 'Redeploy' : 'Deploy';
+    // UF-16: real-time feedback for the Deploy button. Previously the
+    // button fired deployBranch(id) and showed no visual change — user
+    // didn't know if it started. Now we reflect three states from the
+    // list-view's busyBranches / inlineDeployLogs / branches[] arrays:
+    //   1. Idle → "Deploy" / "Redeploy"
+    //   2. In flight → disabled + spinner + "部署中…"
+    //   3. Post-deploy (server state = building/starting) → "重建中…"
+    var isDeploying = !!deployTargetBranchId && (
+      busyBranches.has(deployTargetBranchId)
+      || (branches || []).some(function (b) {
+        return b.id === deployTargetBranchId && (b.status === 'building' || b.status === 'starting');
+      })
+    );
+    var deployBtnLabel = isDeploying
+      ? '部署中…'
+      : (status === 'running' ? '重新部署' : '部署');
     var deployBtnHtml = '';
     // GAP-01/02: Stop + Delete branch buttons for the topology Details
     // action bar. Previously, users had to switch to list view to hit
@@ -9633,37 +9754,53 @@ function _topologyRenderPanelTab(tab, entity) {
     var deleteBtnHtml = '';
     if (kind === 'app') {
       if (deployTargetBranchId) {
-        deployBtnHtml =
-          '<button type="button" class="tfp-deploy-btn" ' +
-          'onclick="event.stopPropagation();deployBranch(\'' + esc(deployTargetBranchId) + '\')" ' +
-          'title="' + deployBtnLabel + ' branch ' + esc(deployTargetBranchId) + '">' +
-            '<svg width="11" height="11" viewBox="0 0 16 16" fill="currentColor">' +
+        // UF-16: busy-aware Deploy button with spinner
+        var deployDisabled = isDeploying ? 'disabled' : '';
+        var deployExtraClass = isDeploying ? ' busy' : '';
+        var deploySpinner = isDeploying
+          ? '<span class="btn-spinner" style="margin-right:6px"></span>'
+          : '<svg width="11" height="11" viewBox="0 0 16 16" fill="currentColor" style="margin-right:4px">' +
               '<path d="M1.5 8a.5.5 0 01.5-.5h10.793L9.146 3.854a.5.5 0 11.708-.708l4.5 4.5a.5.5 0 010 .708l-4.5 4.5a.5.5 0 01-.708-.708L12.793 8.5H2a.5.5 0 01-.5-.5z"/>' +
-            '</svg>' +
+            '</svg>';
+        deployBtnHtml =
+          '<button type="button" class="tfp-deploy-btn' + deployExtraClass + '" ' +
+          deployDisabled + ' ' +
+          (isDeploying ? '' : 'onclick="event.stopPropagation();deployBranch(\'' + esc(deployTargetBranchId) + '\')" ') +
+          'title="' + deployBtnLabel + ' ' + esc(deployTargetBranchId) + '">' +
+            deploySpinner +
             deployBtnLabel +
           '</button>';
         // GAP-01: Stop button — only meaningful when the branch is
         // actually running. We let the user click it regardless and
         // let the backend return a no-op if there's nothing to stop.
+        // UF-16: disabled + spinner when the branch is transitioning
+        // (status=stopping|deleting or busy).
+        var branchForState = (branches || []).find(function (b) { return b.id === deployTargetBranchId; });
+        var isStopping = branchForState && branchForState.status === 'stopping';
+        var isDeleting = branchForState && branchForState.status === 'deleting';
+        var stopSpinner = isStopping
+          ? '<span class="btn-spinner" style="margin-right:4px"></span>'
+          : '<svg width="11" height="11" viewBox="0 0 16 16" fill="currentColor" style="margin-right:4px"><path d="M4 4h8v8H4V4z"/></svg>';
         stopBtnHtml =
-          '<button type="button" class="tfp-stop-btn" ' +
-          'onclick="event.stopPropagation();stopBranch(\'' + esc(deployTargetBranchId) + '\')" ' +
-          'title="停止该分支的所有容器">' +
-            '<svg width="11" height="11" viewBox="0 0 16 16" fill="currentColor">' +
-              '<path d="M4 4h8v8H4V4z"/>' +
-            '</svg>' +
-            '停止' +
+          '<button type="button" class="tfp-stop-btn' + (isStopping ? ' busy' : '') + '" ' +
+          (isStopping || isDeploying ? 'disabled ' : '') +
+          (isStopping || isDeploying ? '' : 'onclick="event.stopPropagation();stopBranch(\'' + esc(deployTargetBranchId) + '\')" ') +
+          'title="' + (isStopping ? '正在停止…' : '停止该分支的所有容器') + '">' +
+            stopSpinner +
+            (isStopping ? '停止中' : '停止') +
           '</button>';
         // GAP-02: Delete branch button — delegates to removeBranch,
         // which already has its own confirm dialog and cascade cleanup.
+        var delSpinner = isDeleting
+          ? '<span class="btn-spinner" style="margin-right:4px"></span>'
+          : '<svg width="11" height="11" viewBox="0 0 16 16" fill="currentColor" style="margin-right:4px"><path d="M11 1.75V3h2.25a.75.75 0 010 1.5H2.75a.75.75 0 010-1.5H5V1.75C5 .784 5.784 0 6.75 0h2.5C10.216 0 11 .784 11 1.75zM4.496 6.675a.75.75 0 10-1.492.15l.66 6.6A1.75 1.75 0 005.405 15h5.19c.9 0 1.652-.681 1.741-1.576l.66-6.6a.75.75 0 00-1.492-.149l-.66 6.6a.25.25 0 01-.249.225h-5.19a.25.25 0 01-.249-.225l-.66-6.6z"/></svg>';
         deleteBtnHtml =
-          '<button type="button" class="tfp-delete-btn" ' +
-          'onclick="event.stopPropagation();removeBranch(\'' + esc(deployTargetBranchId) + '\')" ' +
-          'title="删除该分支(会连带清理 worktree 和容器)">' +
-            '<svg width="11" height="11" viewBox="0 0 16 16" fill="currentColor">' +
-              '<path d="M11 1.75V3h2.25a.75.75 0 010 1.5H2.75a.75.75 0 010-1.5H5V1.75C5 .784 5.784 0 6.75 0h2.5C10.216 0 11 .784 11 1.75zM4.496 6.675a.75.75 0 10-1.492.15l.66 6.6A1.75 1.75 0 005.405 15h5.19c.9 0 1.652-.681 1.741-1.576l.66-6.6a.75.75 0 00-1.492-.149l-.66 6.6a.25.25 0 01-.249.225h-5.19a.25.25 0 01-.249-.225l-.66-6.6z"/>' +
-            '</svg>' +
-            '删除' +
+          '<button type="button" class="tfp-delete-btn' + (isDeleting ? ' busy' : '') + '" ' +
+          (isDeleting || isDeploying || isStopping ? 'disabled ' : '') +
+          (isDeleting || isDeploying || isStopping ? '' : 'onclick="event.stopPropagation();removeBranch(\'' + esc(deployTargetBranchId) + '\')" ') +
+          'title="' + (isDeleting ? '正在删除…' : '删除该分支(会连带清理 worktree 和容器)') + '">' +
+            delSpinner +
+            (isDeleting ? '删除中' : '删除') +
           '</button>';
       } else {
         deployBtnHtml =
@@ -9676,13 +9813,15 @@ function _topologyRenderPanelTab(tab, entity) {
 
     body.innerHTML =
       // Status banner
-      '<div class="tfp-status-banner ' + (status === 'running' ? 'ok' : status === 'error' ? 'err' : 'idle') + '">' +
-        '<svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor">' +
-          (status === 'running'
-            ? '<path d="M13.78 4.22a.75.75 0 010 1.06l-7.25 7.25a.75.75 0 01-1.06 0L2.22 9.28a.75.75 0 011.06-1.06L6 10.94l6.72-6.72a.75.75 0 011.06 0z"/>'
-            : '<circle cx="8" cy="8" r="5"/>') +
-        '</svg>' +
-        '<span>' + (status === 'running' ? '服务运行中' : '状态: ' + status) + '</span>' +
+      '<div class="tfp-status-banner ' + (status === 'running' ? 'ok' : status === 'error' ? 'err' : 'idle') + (isDeploying ? ' deploying' : '') + '">' +
+        (isDeploying
+          ? '<span class="live-dot" style="background:#f59e0b"></span>'
+          : '<svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor">' +
+              (status === 'running'
+                ? '<path d="M13.78 4.22a.75.75 0 010 1.06l-7.25 7.25a.75.75 0 01-1.06 0L2.22 9.28a.75.75 0 011.06-1.06L6 10.94l6.72-6.72a.75.75 0 011.06 0z"/>'
+                : '<circle cx="8" cy="8" r="5"/>') +
+            '</svg>') +
+        '<span>' + (isDeploying ? '正在部署…' : (status === 'running' ? '服务运行中' : '状态: ' + status)) + '</span>' +
         '<div style="margin-left:auto;display:flex;align-items:center;gap:8px;min-width:0;flex-wrap:wrap">' +
           deployBtnHtml +
           stopBtnHtml +
@@ -9690,6 +9829,27 @@ function _topologyRenderPanelTab(tab, entity) {
           '<span style="font-size:11px;opacity:0.7;white-space:nowrap">' + esc(image) + '</span>' +
         '</div>' +
       '</div>' +
+
+      // UF-16: inline deploy log preview. Mirrors the list view's
+      // per-card log. Reads from the SAME inlineDeployLogs map that
+      // deployBranch() writes into, so any ongoing deploy (no matter
+      // which view initiated it) surfaces here. Updated live by
+      // _topologyUpdateInlineLog() called from the SSE chunk handler.
+      (isDeploying && deployTargetBranchId && inlineDeployLogs.get(deployTargetBranchId)
+        ? (function () {
+            var log = inlineDeployLogs.get(deployTargetBranchId);
+            var recent = (log.lines || []).filter(function (l) { return l && l.trim(); }).slice(-8).join('\n');
+            return '<div class="tfp-deploy-log-preview" id="tfp-deploy-log-' + esc(deployTargetBranchId) + '" ' +
+                   'onclick="event.stopPropagation();openFullDeployLog(\'' + esc(deployTargetBranchId) + '\', event)" ' +
+                   'title="点击查看完整部署日志">' +
+              '<div class="tfp-deploy-log-header">' +
+                '<span class="live-dot" style="background:#f59e0b"></span>' +
+                '<span>部署日志 · 点击展开</span>' +
+              '</div>' +
+              '<pre class="tfp-deploy-log-body">' + esc(recent || '正在启动…') + '</pre>' +
+            '</div>';
+          })()
+        : '') +
 
       // Variables count (link to Variables tab)
       '<div class="tfp-mini-stat" onclick="_topologySwitchPanelTab(\'variables\')">' +
