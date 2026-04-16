@@ -43,10 +43,26 @@ public sealed class ModelPoolHealthProbeService : BackgroundService
     }
 
     private bool Enabled => _config.GetValue("ModelPool:HealthProbe:Enabled", true);
-    private int IntervalSeconds => _config.GetValue("ModelPool:HealthProbe:IntervalSeconds", 60);
-    private int CooldownSeconds => _config.GetValue("ModelPool:HealthProbe:CooldownSeconds", 120);
+    private int IntervalSeconds => _config.GetValue("ModelPool:HealthProbe:IntervalSeconds", 180);
+    private int CooldownSeconds => _config.GetValue("ModelPool:HealthProbe:CooldownSeconds", 600);
     private int ProbeTimeoutSeconds => _config.GetValue("ModelPool:HealthProbe:ProbeTimeoutSeconds", 15);
     private int MaxConcurrentProbes => _config.GetValue("ModelPool:HealthProbe:MaxConcurrentProbes", 5);
+
+    /// <summary>
+    /// 跳过探活的模型类型列表（逗号分隔）。
+    /// 默认跳过 generation（图片生成）：图片生成 API 使用 /v1/images/generations 端点，
+    /// 无法通过 chat completions 格式探活，否则探针永远失败 → 模型永远 Unhealthy → 无限重试。
+    /// </summary>
+    private HashSet<string> SkipModelTypes
+    {
+        get
+        {
+            var raw = _config.GetValue("ModelPool:HealthProbe:SkipModelTypes", "generation");
+            return raw.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                      .Select(s => s.ToLowerInvariant())
+                      .ToHashSet();
+        }
+    }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
@@ -56,9 +72,10 @@ public sealed class ModelPoolHealthProbeService : BackgroundService
             return;
         }
 
+        var skipTypes = SkipModelTypes;
         _logger.LogInformation(
-            "[HealthProbe] 探活服务已启动: Interval={Interval}s, Cooldown={Cooldown}s, MaxConcurrent={Max}",
-            IntervalSeconds, CooldownSeconds, MaxConcurrentProbes);
+            "[HealthProbe] 探活服务已启动: Interval={Interval}s, Cooldown={Cooldown}s, MaxConcurrent={Max}, SkipTypes=[{Skip}]",
+            IntervalSeconds, CooldownSeconds, MaxConcurrentProbes, string.Join(",", skipTypes));
 
         // 启动后延迟 30s 再开始，避免启动风暴
         await Task.Delay(TimeSpan.FromSeconds(30), stoppingToken);
@@ -93,10 +110,13 @@ public sealed class ModelPoolHealthProbeService : BackgroundService
         // 查找所有包含不健康模型的模型组
         var allGroups = await db.ModelGroups.Find(_ => true).ToListAsync(ct);
 
+        var skipTypes = SkipModelTypes;
+
         var unhealthyGroups = allGroups
             .Where(g => g.Models?.Any(m =>
                 m.HealthStatus == ModelHealthStatus.Degraded ||
                 m.HealthStatus == ModelHealthStatus.Unavailable) == true)
+            .Where(g => !skipTypes.Contains(g.ModelType?.ToLowerInvariant() ?? ""))
             .ToList();
 
         if (unhealthyGroups.Count == 0)
