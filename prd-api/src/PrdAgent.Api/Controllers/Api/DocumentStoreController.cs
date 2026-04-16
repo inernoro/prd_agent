@@ -58,7 +58,7 @@ public class DocumentStoreController : ControllerBase
 
     private async Task<User?> FindUserByAnyIdAsync(string userId)
     {
-        return await _db.Users.Find(u => u.UserId == userId || u.Id == userId).FirstOrDefaultAsync();
+        return await _db.Users.Find(u => u.UserId == userId).FirstOrDefaultAsync();
     }
 
     private async Task<(string userId, string userName)> GetActorInfoAsync()
