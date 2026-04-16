@@ -476,6 +476,11 @@ export interface Project {
    * knows it is not deletable.
    */
   legacyFlag?: boolean;
+  /**
+   * P5: the CdsWorkspace this project belongs to. Null / absent = personal
+   * workspace of the creating user (backward-compatible default).
+   */
+  workspaceId?: string | null;
   /** ISO timestamp when the project entry was created (or migrated in). */
   createdAt: string;
   /** ISO timestamp of most recent mutation. */

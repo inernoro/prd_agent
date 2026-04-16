@@ -465,6 +465,32 @@
     _updateUserPopover();
   }
 
+  // P5: update the workspace pill (top-left sidebar area) based on the
+  // user's first personal workspace. If they have team workspaces too,
+  // show the count as a subtle indicator.
+  function _renderWorkspacePill(workspaces) {
+    var wsAvatar = document.getElementById('wsAvatar');
+    var wsName = document.getElementById('wsName');
+    if (!wsAvatar || !wsName) return;
+    if (!workspaces || workspaces.length === 0) return;
+
+    // Personal workspace first; fall back to first item.
+    var personal = workspaces.find(function (w) { return w.kind === 'personal'; });
+    var active = personal || workspaces[0];
+
+    wsName.textContent = active.name || '个人工作区';
+    wsAvatar.textContent = (active.name || '?').charAt(0).toUpperCase();
+
+    // Add tooltip listing team workspaces if any.
+    var teamCount = workspaces.filter(function (w) { return w.kind === 'team'; }).length;
+    var pill = wsAvatar.closest ? wsAvatar.closest('.cds-workspace') : null;
+    if (pill) {
+      pill.title = teamCount > 0
+        ? active.name + '（还有 ' + teamCount + ' 个团队工作区）'
+        : active.name;
+    }
+  }
+
   function _renderBadgeNotLoggedIn(hint, notConfigured) {
     var nameEl = document.getElementById('userName');
     var avatarEl = document.getElementById('userAvatar');
@@ -552,6 +578,11 @@
             user.githubLogin || user.name || user.email,
             user.avatarUrl,
           );
+          // P5: load workspace list and populate the workspace pill.
+          fetch('/api/workspaces', { credentials: 'same-origin', cache: 'no-store' })
+            .then(function (r) { return r.ok ? r.json() : null; })
+            .then(function (ws) { if (ws) _renderWorkspacePill(ws.workspaces || []); })
+            .catch(function () { /* quiet — workspace pill stays at default */ });
           // Even when /api/me resolves, fetch the GitHub status in
           // parallel so the popover can offer disconnect/reconnect
           // for the separate Device Flow token.

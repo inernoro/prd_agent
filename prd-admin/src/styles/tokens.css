@@ -66,6 +66,41 @@
   --mobile-header-height: 48px;
   --mobile-tab-height: 56px;
   --mobile-min-touch: 44px;
+
+  /* ── Canvas / ReactFlow 共享 Token ──
+     三个画布（工作流、VisualAgent、CDS 拓扑）统一使用以下变量，
+     禁止在各 canvas CSS 里硬编码这些颜色值。               */
+
+  /* 节点状态：base 色（不透明，用于图标/标签/徽章）*/
+  --canvas-state-running:   #3b82f6;   /* blue-500  */
+  --canvas-state-completed: #22c55e;   /* green-500 */
+  --canvas-state-failed:    #ef4444;   /* red-500   */
+  --canvas-state-paused:    #eab308;   /* yellow-500 */
+  --canvas-state-idle:      rgba(255, 255, 255, 0.35);
+
+  /* 节点边框：带透明度的状态色（border-color / box-shadow 用） */
+  --canvas-border-running-lo:   rgba(59, 130, 246, 0.35);
+  --canvas-border-running-hi:   rgba(59, 130, 246, 0.70);
+  --canvas-border-completed:    rgba(34, 197, 94,  0.45);
+  --canvas-border-failed:       rgba(239, 68,  68,  0.45);
+  --canvas-border-paused:       rgba(234, 179, 8,   0.45);
+
+  /* 连线 / Handle / 边中点按钮 */
+  --canvas-edge-color:          rgba(59, 130, 246, 0.40);
+  --canvas-edge-color-hi:       rgba(59, 130, 246, 0.60);
+  --canvas-edge-btn-bg:         rgba(59, 130, 246, 0.15);
+  --canvas-edge-btn-bg-hover:   rgba(59, 130, 246, 0.25);
+
+  /* 画布背景 & 节点面板 */
+  --canvas-bg:                  #0d0d14;
+  --canvas-node-bg:             rgba(255, 255, 255, 0.05);
+  --canvas-node-bg-hover:       rgba(255, 255, 255, 0.07);
+
+  /* 动画时长（控制全局一致的节奏感） */
+  --canvas-anim-breath:         4s;    /* 节点呼吸光晕 */
+  --canvas-anim-pulse:          2s;    /* running 脉冲 */
+  --canvas-anim-wave:           2s;    /* 进度条水波    */
+  --canvas-anim-enter:          0.2s;  /* 面板滑入      */
 }
 
 @media (max-width: 479px) {

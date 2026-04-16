@@ -494,6 +494,7 @@
 1. **Phase 1 · 设计 token 抽取**:把卡片圆角、padding、颜色、边连线样式抽成 `canvas-tokens.css`,三处都引用
    - 变量示例:`--canvas-card-radius: 18px` / `--canvas-card-bg: #161a22` / `--canvas-edge-style: stroke-dasharray: 5 4`
    - 优先级:P2 · 规模:S
+   - **✅ done 2026-04-16** — `prd-admin/src/styles/tokens.css` 追加 `/* Canvas / ReactFlow 共享 Token */` 节；`workflow-canvas.css` 消费新变量
 2. **Phase 2 · 手势代码抽取为 npm 包**:`@prd/canvas-gesture`(或 `cds-canvas-gesture`),导出 `createPanZoomHandlers({ onZoom, onPan })`
    - 三处都调用,保证手势契约一致
    - 优先级:P2 · 规模:M

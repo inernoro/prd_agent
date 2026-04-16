@@ -19,6 +19,8 @@ import type {
   CdsUser,
   CdsSession,
   CdsWorkspace,
+  CdsWorkspaceMember,
+  CdsWorkspaceInvite,
   UpsertUserInput,
 } from '../../domain/auth.js';
 
@@ -56,6 +58,34 @@ export interface AuthStore {
   findWorkspaceBySlug(slug: string): Promise<CdsWorkspace | null>;
   findWorkspacesForUser(userId: string): Promise<CdsWorkspace[]>;
   countWorkspaces(): Promise<number>;
+
+  // — Workspace Members (P5) —
+  addWorkspaceMember(input: {
+    workspaceId: string;
+    userId: string;
+    role: CdsWorkspaceMember['role'];
+    addedByUserId: string | null;
+    syncSource?: CdsWorkspaceMember['syncSource'];
+  }, now?: Date): Promise<CdsWorkspaceMember>;
+  findWorkspaceMember(workspaceId: string, userId: string): Promise<CdsWorkspaceMember | null>;
+  listWorkspaceMembers(workspaceId: string): Promise<CdsWorkspaceMember[]>;
+  updateWorkspaceMemberRole(workspaceId: string, userId: string, role: CdsWorkspaceMember['role']): Promise<CdsWorkspaceMember | null>;
+  removeWorkspaceMember(workspaceId: string, userId: string): Promise<boolean>;
+  /** All workspaces (personal + team) where userId appears as a member. */
+  findWorkspacesByMember(userId: string): Promise<CdsWorkspace[]>;
+
+  // — Workspace Invites (P5) —
+  createWorkspaceInvite(input: {
+    workspaceId: string;
+    githubLogin: string;
+    role: CdsWorkspaceInvite['role'];
+    invitedByUserId: string;
+    ttlMs: number;
+  }, now?: Date): Promise<CdsWorkspaceInvite>;
+  findWorkspaceInviteByToken(token: string, now?: Date): Promise<CdsWorkspaceInvite | null>;
+  acceptWorkspaceInvite(token: string, userId: string, now?: Date): Promise<CdsWorkspaceMember | null>;
+  listWorkspaceInvites(workspaceId: string): Promise<CdsWorkspaceInvite[]>;
+  deleteWorkspaceInvite(id: string): Promise<void>;
 }
 
 /**
@@ -77,6 +107,11 @@ export class MemoryAuthStore implements AuthStore {
   private readonly sessionsByToken = new Map<string, CdsSession>();
   private readonly workspacesById = new Map<string, CdsWorkspace>();
   private readonly workspaceIdBySlug = new Map<string, string>();
+  // P5: workspace members — keyed by `workspaceId:userId`
+  private readonly membersByKey = new Map<string, CdsWorkspaceMember>();
+  // P5: workspace invites — keyed by token
+  private readonly invitesByToken = new Map<string, CdsWorkspaceInvite>();
+  private readonly invitesById = new Map<string, CdsWorkspaceInvite>();
 
   async upsertUser(input: UpsertUserInput, now = new Date()): Promise<CdsUser> {
     const existingId = this.usersByGithubId.get(input.githubId);
@@ -239,15 +274,153 @@ export class MemoryAuthStore implements AuthStore {
   }
 
   async findWorkspacesForUser(userId: string): Promise<CdsWorkspace[]> {
-    // P2: personal workspaces are looked up by owner. Team membership
-    // filtering lands in P5.
-    return Array.from(this.workspacesById.values()).filter(
-      (w) => w.ownerId === userId && w.kind === 'personal',
-    );
+    // P5: include personal workspaces (owned) + team workspaces where
+    // the user is an explicit member.
+    const teamWorkspaceIds = new Set<string>();
+    for (const member of this.membersByKey.values()) {
+      if (member.userId === userId) {
+        teamWorkspaceIds.add(member.workspaceId);
+      }
+    }
+    return Array.from(this.workspacesById.values()).filter((w) => {
+      if (w.kind === 'personal') return w.ownerId === userId;
+      return teamWorkspaceIds.has(w.id);
+    });
   }
 
   async countWorkspaces(): Promise<number> {
     return this.workspacesById.size;
+  }
+
+  // ── P5: Workspace Member methods ────────────────────────────────────────
+
+  async addWorkspaceMember(input: {
+    workspaceId: string;
+    userId: string;
+    role: CdsWorkspaceMember['role'];
+    addedByUserId: string | null;
+    syncSource?: CdsWorkspaceMember['syncSource'];
+  }, now = new Date()): Promise<CdsWorkspaceMember> {
+    const key = `${input.workspaceId}:${input.userId}`;
+    const existing = this.membersByKey.get(key);
+    if (existing) {
+      // Idempotent: update role if it changed.
+      const updated: CdsWorkspaceMember = {
+        ...existing,
+        role: input.role,
+        syncSource: input.syncSource ?? existing.syncSource,
+        updatedAt: now.toISOString(),
+      };
+      this.membersByKey.set(key, updated);
+      return updated;
+    }
+    const member: CdsWorkspaceMember = {
+      id: genUuid(),
+      workspaceId: input.workspaceId,
+      userId: input.userId,
+      role: input.role,
+      syncSource: input.syncSource ?? 'manual',
+      addedAt: now.toISOString(),
+      addedByUserId: input.addedByUserId,
+      updatedAt: now.toISOString(),
+    };
+    this.membersByKey.set(key, member);
+    return member;
+  }
+
+  async findWorkspaceMember(workspaceId: string, userId: string): Promise<CdsWorkspaceMember | null> {
+    return this.membersByKey.get(`${workspaceId}:${userId}`) ?? null;
+  }
+
+  async listWorkspaceMembers(workspaceId: string): Promise<CdsWorkspaceMember[]> {
+    return Array.from(this.membersByKey.values()).filter((m) => m.workspaceId === workspaceId);
+  }
+
+  async updateWorkspaceMemberRole(workspaceId: string, userId: string, role: CdsWorkspaceMember['role']): Promise<CdsWorkspaceMember | null> {
+    const key = `${workspaceId}:${userId}`;
+    const member = this.membersByKey.get(key);
+    if (!member) return null;
+    const updated: CdsWorkspaceMember = { ...member, role, updatedAt: new Date().toISOString() };
+    this.membersByKey.set(key, updated);
+    return updated;
+  }
+
+  async removeWorkspaceMember(workspaceId: string, userId: string): Promise<boolean> {
+    return this.membersByKey.delete(`${workspaceId}:${userId}`);
+  }
+
+  async findWorkspacesByMember(userId: string): Promise<CdsWorkspace[]> {
+    const wsIds = new Set<string>();
+    for (const member of this.membersByKey.values()) {
+      if (member.userId === userId) wsIds.add(member.workspaceId);
+    }
+    return Array.from(this.workspacesById.values()).filter((w) => wsIds.has(w.id));
+  }
+
+  // ── P5: Workspace Invite methods ─────────────────────────────────────────
+
+  async createWorkspaceInvite(input: {
+    workspaceId: string;
+    githubLogin: string;
+    role: CdsWorkspaceInvite['role'];
+    invitedByUserId: string;
+    ttlMs: number;
+  }, now = new Date()): Promise<CdsWorkspaceInvite> {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { randomBytes } = require('node:crypto') as typeof import('node:crypto');
+    const token = randomBytes(32).toString('base64url');
+    const invite: CdsWorkspaceInvite = {
+      id: genUuid(),
+      workspaceId: input.workspaceId,
+      githubLogin: input.githubLogin.toLowerCase(),
+      token,
+      role: input.role,
+      invitedByUserId: input.invitedByUserId,
+      createdAt: now.toISOString(),
+      expiresAt: new Date(now.getTime() + input.ttlMs).toISOString(),
+      acceptedAt: null,
+    };
+    this.invitesByToken.set(token, invite);
+    this.invitesById.set(invite.id, invite);
+    return invite;
+  }
+
+  async findWorkspaceInviteByToken(token: string, now = new Date()): Promise<CdsWorkspaceInvite | null> {
+    const invite = this.invitesByToken.get(token);
+    if (!invite) return null;
+    if (new Date(invite.expiresAt).getTime() <= now.getTime()) {
+      this.invitesByToken.delete(token);
+      this.invitesById.delete(invite.id);
+      return null;
+    }
+    return invite;
+  }
+
+  async acceptWorkspaceInvite(token: string, userId: string, now = new Date()): Promise<CdsWorkspaceMember | null> {
+    const invite = await this.findWorkspaceInviteByToken(token, now);
+    if (!invite || invite.acceptedAt !== null) return null;
+    const updated: CdsWorkspaceInvite = { ...invite, acceptedAt: now.toISOString() };
+    this.invitesByToken.set(token, updated);
+    this.invitesById.set(invite.id, updated);
+    return this.addWorkspaceMember({
+      workspaceId: invite.workspaceId,
+      userId,
+      role: invite.role,
+      addedByUserId: invite.invitedByUserId,
+      syncSource: 'manual',
+    }, now);
+  }
+
+  async listWorkspaceInvites(workspaceId: string): Promise<CdsWorkspaceInvite[]> {
+    return Array.from(this.invitesById.values()).filter((i) => i.workspaceId === workspaceId);
+  }
+
+  async deleteWorkspaceInvite(id: string): Promise<void> {
+    const invite = this.invitesById.get(id);
+    if (invite) {
+      this.invitesByToken.delete(invite.token);
+      this.invitesById.delete(id);
+    }
   }
 
   /**

@@ -9,7 +9,7 @@
  */
 
 import { MongoClient, type Db, type Collection } from 'mongodb';
-import type { CdsUser, CdsSession, CdsWorkspace } from '../../domain/auth.js';
+import type { CdsUser, CdsSession, CdsWorkspace, CdsWorkspaceMember, CdsWorkspaceInvite } from '../../domain/auth.js';
 
 // ── Collection interface ──────────────────────────────────────────────────────
 
@@ -47,6 +47,10 @@ export interface IAuthMongoHandle {
   usersCollection(): IAuthCollection<CdsUser>;
   sessionsCollection(): IAuthCollection<CdsSession>;
   workspacesCollection(): IAuthCollection<CdsWorkspace>;
+  /** P5: workspace membership records. */
+  membersCollection(): IAuthCollection<CdsWorkspaceMember>;
+  /** P5: workspace invite records. */
+  invitesCollection(): IAuthCollection<CdsWorkspaceInvite>;
   /** Graceful shutdown — waits for any pending ops. */
   close(): Promise<void>;
   /** Health probe used by the Settings panel. */
@@ -182,6 +186,18 @@ export class RealAuthMongoHandle implements IAuthMongoHandle {
   workspacesCollection(): IAuthCollection<CdsWorkspace> {
     return adaptCollection<CdsWorkspace>(
       this.requireDb().collection<Record<string, unknown>>('cds_workspaces'),
+    );
+  }
+
+  membersCollection(): IAuthCollection<CdsWorkspaceMember> {
+    return adaptCollection<CdsWorkspaceMember>(
+      this.requireDb().collection<Record<string, unknown>>('cds_workspace_members'),
+    );
+  }
+
+  invitesCollection(): IAuthCollection<CdsWorkspaceInvite> {
+    return adaptCollection<CdsWorkspaceInvite>(
+      this.requireDb().collection<Record<string, unknown>>('cds_workspace_invites'),
     );
   }
 

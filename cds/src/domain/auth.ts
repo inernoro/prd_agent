@@ -111,3 +111,48 @@ export interface UpsertUserInput {
   avatarUrl: string | null;
   orgs: string[];
 }
+
+// ── P5: Team Workspace types ──────────────────────────────────────────────────
+
+/**
+ * A member record linking a CDS user to a workspace.
+ * Owners are always listed here (syncSource='manual', role='owner').
+ * GitHub-Org-sync'd members have syncSource='github-org'.
+ */
+export interface CdsWorkspaceMember {
+  /** UUID v4 string. */
+  id: string;
+  workspaceId: string;
+  userId: string;
+  role: 'owner' | 'admin' | 'member';
+  /** How this membership was established. */
+  syncSource: 'manual' | 'github-org';
+  /** ISO timestamp when the member was added. */
+  addedAt: string;
+  /** The user id who added this member (null for system-bootstrapped owner). */
+  addedByUserId: string | null;
+  /** ISO timestamp of most recent role update. */
+  updatedAt: string;
+}
+
+/**
+ * An invitation for a GitHub user to join a team workspace.
+ * Keyed by an opaque token that the invitee presents to accept.
+ */
+export interface CdsWorkspaceInvite {
+  /** UUID v4 string. */
+  id: string;
+  workspaceId: string;
+  /** Target GitHub login — verified against the accepting user's GitHub account. */
+  githubLogin: string;
+  /** Opaque invite token (URL-safe base64). */
+  token: string;
+  role: 'admin' | 'member';
+  invitedByUserId: string;
+  /** ISO timestamp. */
+  createdAt: string;
+  /** ISO timestamp when the invite expires. */
+  expiresAt: string;
+  /** ISO timestamp set when the invite is accepted; null = pending. */
+  acceptedAt: string | null;
+}

@@ -22,7 +22,7 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { MongoAuthStore } from '../../../src/infra/auth-store/mongo-store.js';
 import type { IAuthMongoHandle, IAuthCollection } from '../../../src/infra/auth-store/mongo-handle.js';
-import type { CdsUser, CdsSession, CdsWorkspace } from '../../../src/domain/auth.js';
+import type { CdsUser, CdsSession, CdsWorkspace, CdsWorkspaceMember, CdsWorkspaceInvite } from '../../../src/domain/auth.js';
 import { DEFAULT_SESSION_TTL_MS } from '../../../src/infra/auth-store/memory-store.js';
 
 // ── Fake collection ───────────────────────────────────────────────────────────
@@ -124,11 +124,15 @@ class FakeAuthMongoHandle implements IAuthMongoHandle {
   public readonly users = new FakeAuthCollection<CdsUser>();
   public readonly sessions = new FakeAuthCollection<CdsSession>();
   public readonly workspaces = new FakeAuthCollection<CdsWorkspace>();
+  public readonly members = new FakeAuthCollection<CdsWorkspaceMember>();
+  public readonly invites = new FakeAuthCollection<CdsWorkspaceInvite>();
 
   async connect() { this.connected = true; }
   usersCollection() { return this.users; }
   sessionsCollection() { return this.sessions; }
   workspacesCollection() { return this.workspaces; }
+  membersCollection() { return this.members; }
+  invitesCollection() { return this.invites; }
   async close() { this.closed = true; }
   async ping() { return this.pingResult; }
 }

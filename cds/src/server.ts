@@ -9,10 +9,12 @@ import { createProjectsRouter } from './routes/projects.js';
 import { createStorageModeRouter, type StorageModeContext } from './routes/storage-mode.js';
 import { createGithubOAuthRouter } from './routes/github-oauth.js';
 import { createAuthRouter } from './routes/auth.js';
+import { createWorkspacesRouter } from './routes/workspaces.js';
 import { MemoryAuthStore } from './infra/auth-store/memory-store.js';
 import type { AuthStore } from './infra/auth-store/memory-store.js';
 import { GitHubOAuthClient } from './services/github-oauth-client.js';
 import { AuthService } from './services/auth-service.js';
+import { WorkspaceService } from './services/workspace-service.js';
 import { createGithubAuthMiddleware } from './middleware/github-auth.js';
 import type { StateService } from './services/state.js';
 import type { WorktreeService } from './services/worktree.js';
@@ -492,6 +494,13 @@ export function createServer(deps: ServerDeps): express.Express {
         cookieSecure,
       }),
     );
+
+    // P5: workspace management API (requires github auth mode + valid session)
+    const workspaceService = new WorkspaceService({
+      store: authStore,
+      github: githubClient,
+    });
+    app.use('/api/workspaces', createWorkspacesRouter({ workspaceService }));
 
     app.use(createGithubAuthMiddleware({ authService }));
 
