@@ -131,72 +131,141 @@
 
 ## 5. 冒烟测试清单(提交前必跑)
 
-### 5.1 自动化(vitest)
+> **2026-04-16 v2**:用户反馈原清单"模糊 · 无失败判定 · 没有回报模板",本次重写,每步都带**操作 · 预期 · 失败判定 · 失败排查**四栏。预计 15-20 分钟可跑完。
+
+### 5.1 自动化(vitest · 必过)
 
 ```bash
 cd cds
-pnpm build  # tsc 零 error
-pnpm test   # 全部 560+ tests 通过
+pnpm build  # tsc 必须零 error
+pnpm test 2>&1 | tail -6  # 当前 602 tests pass · 不允许退步
 ```
 
-如 `tests/integration/view-parity.smoke.test.ts` 存在,会自动跑端到端 API 覆盖,详见 §6。
+**失败判定**:tsc 有任何 error · 或 vitest 任一 failed · 或 test 总数 < 600。
 
-### 5.2 人工端到端(真浏览器)
+**失败排查**:
 
-**准备**:
+- `pnpm build` 报 `Cannot find module` → 执行 `pnpm install`
+- `pnpm test` 卡住超过 2 min → Ctrl+C,查 `/tmp` 下 leftover state.json lock 文件
+- 某个 smoke test 挂 → 先单独跑 `pnpm test tests/integration/xxx.smoke.test.ts` 看具体断言
+
+### 5.2 人工端到端(真浏览器 · **必过**)
+
+**准备** · 3 分钟:
+
 ```bash
-export CDS_GITHUB_CLIENT_ID="Iv1.xxx"  # 可选,测 GitHub 流程
+# 1. 拉代码
+cd /path/to/cds && git fetch origin && git checkout main  # 或对应分支
+
+# 2. 配置(首次)
+echo 'export CDS_GITHUB_CLIENT_ID="Iv1.xxxxxxxxxxxx"' >> ~/.cds.env   # 必须
+echo 'export CDS_SECRET_KEY="'$(openssl rand -hex 32)'"' >> ~/.cds.env # 可选但建议
+
+# 3. 重启
 ./exec_cds.sh restart
+
+# 4. 浏览器 Cmd+Shift+R 清缓存访问 projects.html
 ```
 
-然后按**两列同时验**清单逐条打勾:
+### 5.2.1 核心 11 步(每步含失败判定)
 
-#### 5.2.1 列表视图 → 每行都要点
+| # | 操作 | 预期 ✓ | 失败判定 ✗ | 失败排查 → 回归的 UF |
+|---|---|---|---|---|
+| 1 | 访问 `projects.html` · 等 2 秒 | 左下角徽章从"加载中…"变成 GitHub 用户名 或 "未配置" | 徽章停留在"加载中…"超过 5 秒 | 检查 `/api/me` 和 `/api/github/oauth/status` HTTP 状态 → **UF-02/UF-02\*** |
+| 2 | DevTools Console 页签 | 完全**无**红色 Error | 出现 `SyntaxError: Unexpected end of JSON input` | **UF-14** api() 响应解析 |
+| 3 | 如有黄色横幅 · 点"复制环境变量模板" | 出现 toast "已复制环境变量模板" | 没 toast 或报错 | **UF-12** |
+| 4 | 点左下角徽章 | 弹出 popover:GitHub 设置 · 使用 GitHub 登录 / 断开连接 | popover 不弹 或 空内容 | **UF-11** 徽章 popover |
+| 5 | 点"新建项目"· 粘 `https://github.com/你的/公开仓库.git` · 提交 | Clone SSE modal 打开 · progress 逐行滚动 | modal 无日志 / 报 HTTP 400 | **UF-14** 或网络问题 |
+| 6 | 进入 index.html · 搜索框粘 `smoke/parity-test` · Enter | 分支卡片 optimistic 出现 · deploy 按钮可点 | 卡片不出现 / Enter 无反应 | **UF-04** 搜索框手动添加 |
+| 7 | 点"部署" · 观察 | 按钮**立即**变 spinner + "部署中…" · 卡片 inline log 滚动 | 按钮文字不变 / 没有 log | **UF-16** deploy 反馈 |
+| 8 | 顶栏点"拓扑" | 切到拓扑视图 · 无重叠 toggle ghost UI | 同时出现**两套** `列表 \| 拓扑` toggle | **UF-17** topbar ghost |
+| 9 | 点某服务节点 | Details 面板滑出 · + Add 按钮**暂隐藏** · 右上有清晰的关闭 X | + Add 盖住关闭 X | **UF-19** |
+| 10 | 按 ESC | 面板关闭 · + Add 重现 | ESC 无反应 | **UF-19** ESC 监听 |
+| 11 | 再点节点 · 点"环境变量" tab · 点某行左侧眼睛 | 眼睛变绿 · value 变可编辑 input · 改后 400ms 自动保存(或 toast) | 眼睛不响应 / value 不变 input | **UF-09** 继承覆盖 |
 
-| 步骤 | 列表视图 | 拓扑视图对应验证 |
+### 5.2.2 附加 6 项(每项 20 秒)
+
+| # | 操作 | 预期 | 失败回归 |
+|---|---|---|---|
+| 12 | Details 切"部署日志" tab | 真实容器 stdout | 显示 `<div class="modal-header">` → **UF-20** GET/POST 错配 |
+| 13 | 拓扑节点图标 | Redis 是立方体 · MongoDB 是绿叶 · app 是 GitHub 猫 | 仍是 emoji → **UF-21** |
+| 14 | Deploy 中观察节点卡片 | 琥珀色脉冲呼吸 + drop-shadow 光晕 | 卡片无动画 → **UF-22** |
+| 15 | Mac 触控板两指滑动 | 画布**平移** | 画布**缩放** → **UF-06** |
+| 16 | Mac 触控板捏合 | 画布**缩放** | 无反应 → **UF-06** |
+| 17 | 已配置 `CDS_SECRET_KEY` · 查 `state.json` | `githubDeviceAuth.token` 是 `{__sealed:true, iv:"...", tag:"...", data:"..."}` | 仍是明文字符串 → **FU-05** |
+
+### 5.3 DevTools 期望基线
+
+**允许的 Console 输出**:
+
+| 级别 | 内容 | 来源 |
 |---|---|---|
-| 1 | 打开 `projects.html` · 点项目卡片进入 `index.html` | 顶栏右侧点"拓扑" → 切换到 topology |
-| 2 | 左下角徽章显示用户名(UF-02) | 同上 |
-| 3 | 分支搜索框输入 `test/new-branch` 按 Enter | 拓扑顶栏分支 combobox 输入 `test/new-branch-2` 按 Enter |
-| 4 | Deploy 新分支 · 观察 inline log | 拓扑切到新分支 · 点节点 → Details → Deploy |
-| 5 | Deploy 成功后点 preview 图标 | 节点端口 pill 双击 |
-| 6 | 点容器配置 → 修改 env → 保存 | 节点 → Variables tab → 点眼睛 → 改值 → 自动保存 |
-| 7 | 点"停止所有服务" | 节点 → Details → Stop 按钮 |
-| 8 | 点"删除分支" | 节点 → Details → Delete 按钮 |
-| 9 | ⚙ → 构建配置 → 新增 profile | + Add → Empty 空服务 |
-| 10 | ⚙ → 路由规则 → 新增规则 | + Add → 路由规则 |
-| 11 | ⚙ → 基础设施 → 新增 MongoDB | + Add → 数据库 → MongoDB |
+| `debug` | `[projects] /api/me network error: ...`(偶发,proxy 抽风) | bootstrapMeLabel `.catch` |
+| `debug` | `[projects] /api/github/oauth/status network error: ...` | 同上 |
+| `warn` | `[state] failed to unseal github device token ...`(仅 key 轮换时) | secret-seal.ts |
+| `log` | `[scheduler] ...` 各种调度日志 | scheduler 正常输出 |
 
-**期望**:步骤 1-11 两边都能成功,状态变化在两边都能看到(因为用的是同一后端)。
+**不允许**:
 
-### 5.3 DevTools 检查
+- 任何 `Uncaught SyntaxError` · `TypeError` · `ReferenceError`
+- `loadBranches: Error: HTTP ...`(非 isTransient 的持续报错)
+- `Uncaught (in promise)` 任何形式
 
-- 打开 `index.html` 和 `projects.html` 两个页面
-- Console 页签应该**完全没有红色错误**
-- 如果有错误,UF-13 的 `window.onerror` 会自动弹 toast 提示
+**判定**:F12 → Console → 点红色 Error 过滤 · 如果为空就是通过。
 
-### 5.4 关键 API 端点(直接 curl)
+### 5.4 关键 API 端点(直接 curl · 纯后端验证)
 
 ```bash
 BASE=http://localhost:9900
 
-# Health
-curl -s $BASE/api/config | jq .
-curl -s $BASE/api/branches | jq '.branches | length'
-curl -s $BASE/api/build-profiles | jq '. | length'
-curl -s $BASE/api/infra | jq '. | length'
-curl -s $BASE/api/routing-rules | jq '.rules | length'
-curl -s $BASE/api/executors/capacity | jq .
-curl -s $BASE/api/github/oauth/status | jq .
-curl -s $BASE/api/storage-mode | jq .
+# Health(所有 GET 应 200)
+curl -sf $BASE/api/config > /dev/null && echo "config OK"
+curl -sf $BASE/api/branches > /dev/null && echo "branches OK"
+curl -sf $BASE/api/build-profiles > /dev/null && echo "profiles OK"
+curl -sf $BASE/api/infra > /dev/null && echo "infra OK"
+curl -sf $BASE/api/routing-rules > /dev/null && echo "routing OK"
+curl -sf $BASE/api/executors/capacity > /dev/null && echo "capacity OK"
+curl -sf $BASE/api/github/oauth/status > /dev/null && echo "github OK"
+curl -sf $BASE/api/storage-mode > /dev/null && echo "storage OK"
 
-# Branch CRUD
-curl -s -X POST $BASE/api/branches -H 'content-type: application/json' -d '{"branch":"smoke/test","projectId":"default"}'
-curl -s $BASE/api/branches/smoke-test/profile-overrides | jq .
-curl -s -X DELETE $BASE/api/branches/smoke-test
+# UF-20 regression guard:container-logs 必须支持 POST 不是 GET
+# GET 应落到 SPA fallback(返 HTML 200,但 Content-Type 是 text/html)
+curl -sI $BASE/api/branches/smoke/container-logs | grep -i content-type
+# 期望看到 text/html(说明 GET 落到 index.html);
+# 然后 POST 应该返 JSON:
+curl -s -X POST $BASE/api/branches/smoke/container-logs \
+  -H 'content-type: application/json' \
+  -d '{"profileId":"api"}' | head -c 200
+# 期望看到 {"error":"..."}(可能是 404 因为分支不存在,但是 JSON)
 ```
 
-全部应返回 200(或 404 for 明确不存在的分支)。
+### 5.5 出错时的回报模板(给下一棒)
+
+发现任一步失败,复制以下模板填空后给下一棒 agent:
+
+```
+## Smoke 回归报告
+
+- 日期:YYYY-MM-DD
+- 分支:claude/xxx
+- 失败步骤:§5.2.1 第 N 步 / §5.2.2 第 N 步 / §5.3 / §5.4
+- 症状:(一句话)
+- 浏览器:Chrome 版本号 · Safari 版本号 · Mac Intel/M1
+- DevTools Console 完整截图:(贴)
+- Network 页签相关请求的 status + response preview:(贴)
+- 我怀疑是:(UF-N / 其他)
+```
+
+下一棒看到这个模板就有足够信息复现 bug。
+
+### 5.6 本 session 已知未覆盖的角落(非阻塞但存在)
+
+- **iPad / 移动端触屏**:UF-06 手势代码是 Mac 触控板契约,触屏未测
+- **Windows 宿主**:FU-04 worktree per-projectId 用 symlink,Windows 权限可能失败(回退到 rename 未测)
+- **大仓库(>100 repos)**:FU-01 分页理论上能,但无 >300 repos 账号的实测
+- **AES key 轮换**:FU-05 换 `CDS_SECRET_KEY` 后能优雅失败,但批量迁移旧 token 路径未实现
+
+这些都**不是 smoke 必过项**,但下次某条报回来了知道从这里开始查。
 
 ---
 
