@@ -42,17 +42,17 @@
 
 | 状态 | 数量 | 占比 |
 |---|---|---|
-| `open` | 3 | 8% |
+| `open` | 1 | 3% |
 | `deferred` | 8 | 22% |
 | `in-progress` | 0 | 0% |
-| `done` | 26 | 70% |
+| `done` | 28 | 76% |
 
-> 2026-04-15 终局:**26 条全部清完**。UF-01..10 + GAP-01..09 + L10N-01..03 + FU-01 + FU-05 + TEST-01/02 全部 done。
+> 2026-04-15 终局:**26 条清完**。UF-01..10 + GAP-01..09 + L10N-01..03 + FU-01 + FU-05 + TEST-01/02 全部 done。
+> 2026-04-16:**FU-03** 补完(nixpacks 风格框架推断),目前 27 条 done。
+> 2026-04-16:**FU-04** 补完(worktreeBase 按 projectId 分子目录 + 符号链接迁移),目前 28 条 done。
 >
-> 剩 3 条 `open`——均需独立 session 设计:
+> 剩 1 条 `open`——需独立 session 设计:
 > - **FU-02** MapAuthStore mongo 后端(touches 认证架构)
-> - **FU-03** detect-stack nixpacks 框架推断(需要 framework detector 表 + 大量测试数据)
-> - **FU-04** worktreeBase per-projectId 子目录(touches WorktreeService 核心 + 迁移脚本)
 >
 > `deferred` 的 8 条:LIM-01..07(设计权衡)+ GAP-10(跨项目画布组件统一 epic)。
 
@@ -650,8 +650,8 @@
 |---|---|---|---|---|
 | FU-01 | Repo Picker 加分页（`Link` header 解析） | S（~30 行） | P2 | LIM-03 |
 | FU-02 | `MapAuthStore` 持久化实现替换 `MemoryAuthStore` | M | P2 | — |
-| FU-03 | detect-stack 加 nixpacks 风格依赖深度推断 | M | P3 | — |
-| FU-04 | worktreeBase 按 projectId 分子目录 | S | P2 | — |
+| FU-03 | detect-stack 加 nixpacks 风格依赖深度推断 · **done** 2026-04-16 | M | P3 | — |
+| FU-04 | worktreeBase 按 projectId 分子目录 | S | P2 | **done** 2026-04-16 |
 | FU-05 | GitHub Device Flow token AES 加密后写 state.json | S | P1 | — |
 | TEST-01 | Device Flow 持久化失败的 E2E 测试 | S | P1 | UF-01 |
 | TEST-02 | Device Flow token 注入 clone 全链路 smoke 测试 | S | P1 | UF-01 |
@@ -676,21 +676,38 @@
 
 **注意**：这和 Phase D 的 state backing store 是两套独立系统。Phase D 管 CDS state，这里管用户 session。
 
-### FU-03 · detect-stack 加 nixpacks 风格依赖推断
+### FU-03 · detect-stack 加 nixpacks 风格依赖推断 · **done** 2026-04-16
 
 **背景**：当前 G10 detect-stack 只识别 8 种栈并给出默认 docker image。Railway 用 nixpacks 做更深度的依赖推断（比如检测 `next.config.js` 自动选 Next.js runtime）。
 
-**方案**：给 detect-stack 加"深度检测层"，根据 package.json 的 dependencies 推断 framework（Next.js / NestJS / Express），选更精准的 base image。
+**方案**：给 detect-stack 加"深度检测层"，根据 package.json / requirements.txt / Gemfile 的依赖推断 framework，选更精准的 base image 并给出 `suggestedRunCommand` / `suggestedBuildCommand`。
 
-**规模**：M。需要一个 framework detector 表 + 若干测试。
+**交付**：
+- `cds/src/services/stack-detector.ts` 新增 `detectFramework()` + `applyFramework()`,在 base detection 之后叠一层;`DetectedFramework` 支持 9 种:`nextjs` / `nestjs` / `express` / `remix` / `vite-react` / `django` / `fastapi` / `flask` / `rails`
+- `StackDetection` 新增三个**可选**字段 `framework` / `suggestedRunCommand` / `suggestedBuildCommand`,老调用方零破坏
+- 识别优先级:Next.js > NestJS > Remix > Vite+React > Express(确保 Nest 打败 Express,Next 打败 Vite)
+- 信号混合:显式 dep 匹配 + `next.config.*` 文件 + `manage.py` 文件 + Gemfile `gem "rails"` 正则
+- Python 自己写 requirements 解析(正则抓 `^([a-z0-9][a-z0-9._-]*)`)+ pyproject.toml 子串匹配,**不新增运行时依赖**
+- `cds/tests/services/stack-detector.test.ts` +20 条测试(每个 framework 至少 1 条 + 优先级冲突 + 无 framework fallback),19 → 39 条;整仓 574 → 594 通过
 
-### FU-04 · worktreeBase 按 projectId 分子目录
+**规模**：M。纯 heuristic,无运行时依赖新增。
+
+### FU-04 · worktreeBase 按 projectId 分子目录 · **done** 2026-04-16
 
 **背景**：当前所有项目的 worktree 都在共享 `worktreeBase`，两个项目都用 `master` 分支时会目录冲突。
 
-**方案**：worktree 路径从 `<base>/master` 改为 `<base>/<projectId>/master`。需要迁移脚本把现有 worktree 按项目归类。
+**方案**：worktree 路径从 `<base>/<slug>` 改为 `<base>/<projectId>/<slug>`。迁移脚本把现有 flat 布局的 worktree 按项目归类到 `default`。
 
 **规模**：S。核心修改在 `WorktreeService`。
+
+**落地实现（2026-04-16）**：
+- `WorktreeService.worktreePathFor(base, projectId, slug)` 统一构造路径；`projectId` 缺省回落 `default`。
+- 四处调用点全部切换到该 helper：`routes/branches.ts`（创建 + bootstrap）、`executor/routes.ts`、`index.ts` 的 proxy auto-build。
+- 启动期一次性迁移 `WorktreeService.migrateFlatLayoutIfNeeded()`：扫描 `worktreeBase` 顶层，把非项目 id 命名的 flat 目录 **symlink** 到 `<base>/default/<slug>`；EPERM/跨设备时回落 `fs.renameSync`。选 symlink 的理由：瞬时、可逆、同 inode（迁移窗口内旧的 bind-mount 不断）。
+- 迁移幂等：`state.worktreeLayoutVersion`（新字段）初次设置为 `2`，后续 boot 直接 short-circuit。
+- 迁移过程中同步改写每条 `BranchEntry.worktreePath`，避免 `worktreeService.remove()` / `pull()` 指向失效路径。
+- 测试：`tests/services/worktree.test.ts` 新增 7 条（25 total）覆盖新路径构造、空 projectId 回落、两项目同名分支不冲突、已迁移状态跳过、base 目录不存在时的 stamp 行为、symlink 迁移 + state 改写、已知 projectId 子目录不会被误判为 legacy slug。`tests/integration/multi-repo-clone.smoke.test.ts` 保持绿色（worktreePath 变成 `<base>/<projectId>/<slug>`，但该测试只检查 `fs.existsSync`）。
+- 已知 corner：symlink fallback 到 rename 时，**运行中**的 bind-mount 会短暂指向 stale inode（容器重启后自愈）。Linux 同文件系统下默认走 symlink，所以该 corner 只在 Windows 非开发者模式或跨设备场景出现，生产部署基本不触发。
 
 ### FU-05 · Device Flow token AES 加密 · **done** 2026-04-15
 

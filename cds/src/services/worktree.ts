@@ -1,6 +1,18 @@
+import fs from 'node:fs';
+import path from 'node:path';
 import type { IShellExecutor } from '../types.js';
 import { combinedOutput } from '../types.js';
 import { StateService } from './state.js';
+
+/**
+ * Current worktree layout version. See `CdsState.worktreeLayoutVersion`
+ * and `WorktreeService.migrateFlatLayoutIfNeeded()` for the migration
+ * story.
+ */
+export const CURRENT_WORKTREE_LAYOUT_VERSION = 2;
+
+/** Project id attributed to orphan worktrees discovered during the flat→nested migration. */
+export const LEGACY_PROJECT_ID = 'default';
 
 /**
  * WorktreeService — thin wrapper around `git worktree` for building
@@ -26,9 +38,182 @@ import { StateService } from './state.js';
  * all executor routes still operate on a single repo — they pass
  * `config.repoRoot` directly, preserving the legacy single-repo
  * behavior for users who haven't yet adopted multi-project.
+ *
+ * ── FU-04 — per-project worktree subdirectory ─────────────────
+ * Worktree paths used to be `<base>/<slug>`. When two projects
+ * shared a branch name (e.g. every project has a "main" / "master")
+ * their worktrees collided in the flat layout. Since FU-04 every
+ * worktree lives at `<base>/<projectId>/<slug>`; the bootstrap and
+ * deploy paths always call `WorktreeService.worktreePathFor()`
+ * rather than interpolating the slug directly.
+ *
+ * Legacy installs have flat worktrees at `<base>/<slug>`. On first
+ * boot after the upgrade, `migrateFlatLayoutIfNeeded()` scans the
+ * base for those orphan entries and adopts them into the `default`
+ * project slot. We prefer **symlinks** over `fs.renameSync` because:
+ *
+ *   1. Symlinking is instant — no byte copy even across huge
+ *      worktrees.
+ *   2. It is reversible — deleting the symlink leaves the original
+ *      tree untouched if we ever need to roll back.
+ *   3. Git treats the symlinked worktree as identical to the
+ *      original (same inode), so running containers that bind-mount
+ *      the legacy path keep working during the upgrade window.
+ *
+ * The fallback to `fs.renameSync` is for platforms where symlinks
+ * are unavailable or forbidden (Windows without developer-mode, or
+ * cross-filesystem moves where the symlink target would be
+ * unreachable). Rename is still same-filesystem O(1) on ext4/APFS,
+ * so the degraded path is acceptable.
  */
 export class WorktreeService {
   constructor(private readonly shell: IShellExecutor) {}
+
+  /**
+   * Canonical worktree path for a given (project, branch slug) pair.
+   *
+   * FU-04 — the `<base>/<projectId>/<slug>` nesting guarantees that
+   * two projects sharing a branch name don't clobber each other.
+   * `projectId` is forced to `LEGACY_PROJECT_ID` when the caller
+   * passes undefined/empty so the helper is safe to use from the
+   * pre-P4 code paths that don't thread projectId.
+   */
+  static worktreePathFor(base: string, projectId: string | undefined | null, branchSlug: string): string {
+    const effectiveProjectId = projectId && projectId.trim() ? projectId : LEGACY_PROJECT_ID;
+    return path.posix.join(base, effectiveProjectId, branchSlug);
+  }
+
+  /**
+   * One-shot flat→nested layout migration.
+   *
+   * Called once at boot (idempotent). For every direct child of
+   * `worktreeBase` that looks like a legacy worktree (a directory or
+   * existing symlink whose name is NOT a known project id), we:
+   *
+   *   1. Create `<base>/default/` if it doesn't exist.
+   *   2. Symlink `<base>/default/<slug>` → `<base>/<slug>` (absolute
+   *      target so the link resolves correctly even when the working
+   *      directory changes).
+   *   3. Update every BranchEntry whose `worktreePath ===
+   *      <base>/<slug>` to point at the new nested path.
+   *
+   * Falls back to `fs.renameSync` if `fs.symlinkSync` throws (Windows
+   * without dev-mode, EPERM, cross-device). In that case the legacy
+   * path is no longer usable after migration, but state.json has
+   * already been rewritten so nothing stale points at it.
+   *
+   * Returns the number of legacy entries migrated. `0` means nothing
+   * to do (either a fresh install or a previous boot already ran
+   * the migration).
+   */
+  static migrateFlatLayoutIfNeeded(params: {
+    worktreeBase: string;
+    projectIds: string[];
+    branches: Array<{ id: string; projectId?: string; worktreePath: string }>;
+    currentVersion: number | undefined;
+    updateBranchWorktreePath: (branchId: string, nextPath: string) => void;
+    markMigrated: (version: number) => void;
+  }): number {
+    const { worktreeBase, projectIds, branches, currentVersion, updateBranchWorktreePath, markMigrated } = params;
+
+    if ((currentVersion ?? 1) >= CURRENT_WORKTREE_LAYOUT_VERSION) {
+      return 0; // already migrated
+    }
+
+    // Treat an unreadable / missing base as "nothing to migrate" —
+    // fresh installs hit this branch and we simply stamp the version.
+    if (!fs.existsSync(worktreeBase)) {
+      markMigrated(CURRENT_WORKTREE_LAYOUT_VERSION);
+      return 0;
+    }
+
+    const legacyDir = path.posix.join(worktreeBase, LEGACY_PROJECT_ID);
+    const knownProjectIds = new Set<string>(projectIds);
+    // The legacy bucket itself is always reserved — if it already
+    // exists (e.g. someone ran a partial migration by hand) it's a
+    // directory, not a worktree, and we must not recurse into it.
+    knownProjectIds.add(LEGACY_PROJECT_ID);
+
+    let entries: fs.Dirent[];
+    try {
+      entries = fs.readdirSync(worktreeBase, { withFileTypes: true });
+    } catch {
+      // Permission error etc. — leave the version stamp alone so we
+      // retry next boot.
+      return 0;
+    }
+
+    // Map every legacy slug → its existing absolute path so the
+    // BranchEntry sweep below can rewrite matching worktreePath
+    // values in one pass.
+    const legacyByPath = new Map<string, string>(); // absolute legacy path → slug
+    const migratedSlugs: string[] = [];
+
+    for (const entry of entries) {
+      // Skip anything that isn't a top-level dir/symlink (regular
+      // files are noise, skip them silently).
+      if (!entry.isDirectory() && !entry.isSymbolicLink()) continue;
+
+      // Skip known project buckets — those are already nested-layout.
+      if (knownProjectIds.has(entry.name)) continue;
+
+      const legacyAbs = path.posix.join(worktreeBase, entry.name);
+      legacyByPath.set(legacyAbs, entry.name);
+
+      const nestedAbs = path.posix.join(legacyDir, entry.name);
+
+      // Ensure the `<base>/default/` bucket exists before the first
+      // symlink. Creating it eagerly before the loop would spray an
+      // empty directory on clean installs that have no legacy data.
+      try {
+        fs.mkdirSync(legacyDir, { recursive: true });
+      } catch {
+        /* best effort — mkdir failure propagates via the symlink below */
+      }
+
+      // If something already exists at the nested path (unlikely but
+      // possible if a previous migration run was interrupted after
+      // creating the link but before bumping the version marker),
+      // skip — it already points where we want.
+      if (fs.existsSync(nestedAbs) || isSymlink(nestedAbs)) {
+        migratedSlugs.push(entry.name);
+        continue;
+      }
+
+      try {
+        fs.symlinkSync(legacyAbs, nestedAbs, 'dir');
+        migratedSlugs.push(entry.name);
+      } catch {
+        // Symlink unavailable (Windows, cross-device, etc.) — rename instead.
+        try {
+          fs.renameSync(legacyAbs, nestedAbs);
+          // After rename, legacyAbs is gone, so drop from the map
+          // before the branch rewrite sweep.
+          legacyByPath.delete(legacyAbs);
+          legacyByPath.set(nestedAbs, entry.name);
+          migratedSlugs.push(entry.name);
+        } catch {
+          // Couldn't migrate this one entry — leave it alone and keep
+          // going; state.json stamp below is intentionally skipped
+          // in that case so we retry next boot.
+          continue;
+        }
+      }
+    }
+
+    // Rewrite matching BranchEntry.worktreePath values so future
+    // deploys / pulls / removes hit the nested location.
+    for (const branch of branches) {
+      const existing = path.posix.normalize(branch.worktreePath);
+      const slug = legacyByPath.get(existing);
+      if (!slug) continue;
+      const nested = path.posix.join(legacyDir, slug);
+      updateBranchWorktreePath(branch.id, nested);
+    }
+
+    markMigrated(CURRENT_WORKTREE_LAYOUT_VERSION);
+    return migratedSlugs.length;
+  }
 
   async create(repoRoot: string, branch: string, targetDir: string): Promise<void> {
     const fetchResult = await this.shell.exec(
@@ -170,5 +355,16 @@ export class WorktreeService {
 
     const lowerSlug = slug.toLowerCase();
     return branches.find(b => StateService.slugify(b) === lowerSlug) || null;
+  }
+}
+
+/** Treat a broken symlink as "something exists" — avoids recreating
+ *  a link on top of itself when the target was manually deleted but
+ *  the link entry survived. */
+function isSymlink(p: string): boolean {
+  try {
+    return fs.lstatSync(p).isSymbolicLink();
+  } catch {
+    return false;
   }
 }

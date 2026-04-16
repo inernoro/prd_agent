@@ -795,6 +795,31 @@ export class StateService {
     return project?.repoPath || fallback;
   }
 
+  // ── FU-04: worktree layout migration bookkeeping ──
+
+  /** Current layout version stamped in state.json (undefined = legacy flat). */
+  getWorktreeLayoutVersion(): number | undefined {
+    return this.state.worktreeLayoutVersion;
+  }
+
+  /** Bump the stamp so subsequent boots skip the one-shot migration. */
+  setWorktreeLayoutVersion(version: number): void {
+    this.state.worktreeLayoutVersion = version;
+  }
+
+  /**
+   * FU-04 helper: rewrite a branch's worktree path. Used by the
+   * migration to point legacy entries at their new nested location
+   * without going through the full updateBranchMeta() API (which
+   * doesn't know about worktreePath, intentionally — it's a
+   * structural field, not user metadata).
+   */
+  setBranchWorktreePath(branchId: string, worktreePath: string): void {
+    const branch = this.state.branches[branchId];
+    if (!branch) return;
+    branch.worktreePath = worktreePath;
+  }
+
   // ── Project-scoped views (P4 Part 3a) ──
   //
   // These helpers return slices of the existing collections filtered by

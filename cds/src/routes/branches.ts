@@ -7,7 +7,7 @@ import { execSync, spawn } from 'node:child_process';
 import { createGzip } from 'node:zlib';
 import { Router } from 'express';
 import { StateService } from '../services/state.js';
-import type { WorktreeService } from '../services/worktree.js';
+import { WorktreeService } from '../services/worktree.js';
 import { resolveEffectiveProfile } from '../services/container.js';
 import type { ContainerService } from '../services/container.js';
 import type { SchedulerService } from '../services/scheduler.js';
@@ -701,8 +701,11 @@ export function createBranchRouter(deps: RouterDeps): Router {
       // project. Legacy 'default' projects (and any project without a
       // cloned repoPath) fall back to the globally-mounted repoRoot.
       const branchRepoRoot = stateService.getProjectRepoRoot(effectiveProjectId, config.repoRoot);
-      await shell.exec(`mkdir -p "${config.worktreeBase}"`);
-      const worktreePath = `${config.worktreeBase}/${id}`;
+      // FU-04: nested worktree layout — `<base>/<projectId>/<slug>`.
+      // Two projects sharing a branch name (e.g. "main") get their
+      // own subdirectories instead of colliding.
+      const worktreePath = WorktreeService.worktreePathFor(config.worktreeBase, effectiveProjectId, id);
+      await shell.exec(`mkdir -p "${path.posix.dirname(worktreePath)}"`);
       await worktreeService.create(branchRepoRoot, branch, worktreePath);
 
       const entry: BranchEntry = {
@@ -3668,8 +3671,9 @@ export function createBranchRouter(deps: RouterDeps): Router {
         // Ensure worktreeBase directory exists (first-time setup).
         // P4 Part 18 (G1.2): the initialize flow bootstraps the legacy
         // default project's main branch, so it always uses config.repoRoot.
-        await shell.exec(`mkdir -p "${config.worktreeBase}"`);
-        const worktreePath = `${config.worktreeBase}/${mainSlug}`;
+        // FU-04: bootstrap lives under the default project bucket.
+        const worktreePath = WorktreeService.worktreePathFor(config.worktreeBase, 'default', mainSlug);
+        await shell.exec(`mkdir -p "${path.posix.dirname(worktreePath)}"`);
         await worktreeService.create(config.repoRoot, mainBranch, worktreePath);
 
         entry = {

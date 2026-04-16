@@ -1,0 +1,1 @@
+| feat | cds | FU-03 完成:stack-detector 加 nixpacks 风格框架推断层,覆盖 Next.js / NestJS / Express / Remix / Vite+React / Django / FastAPI / Flask / Rails 9 种框架,返回 framework/suggestedRunCommand/suggestedBuildCommand 可选字段 + 20 条新测试 |

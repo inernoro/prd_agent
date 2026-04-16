@@ -8245,6 +8245,15 @@ function _ensureTopologyFsChrome() {
         </div>
       </div>
     </div>
+    <!-- GAP-16: manual refresh button — list view has this in the search
+         bar (refreshRemoteBtn); topology previously had nothing, so users
+         endured the ~5s polling lag when they wanted an immediate pulse.
+         Button sits before the view toggle, reuses .topology-fs-view-toggle-btn
+         styles for visual consistency. Spinner class added during call
+         so user sees the refresh is in flight. -->
+    <button type="button" class="topology-fs-view-toggle-btn" id="topologyFsRefreshBtn" onclick="_topologyManualRefresh(event)" title="手动刷新远端分支 / 更新检查" style="margin-right:6px">
+      <svg width="13" height="13" viewBox="0 0 16 16" fill="currentColor"><path d="M8 2.5a5.487 5.487 0 00-4.131 1.869l1.204 1.204A.25.25 0 014.896 6H1.25A.25.25 0 011 5.75V2.104a.25.25 0 01.427-.177l1.38 1.38A7.002 7.002 0 0115 8a.75.75 0 01-1.5 0A5.5 5.5 0 008 2.5zM2.5 8a.75.75 0 00-1.5 0 7.002 7.002 0 0012.023 4.87l1.38 1.38a.25.25 0 00.427-.177V10.5a.25.25 0 00-.25-.25h-3.646a.25.25 0 00-.177.427l1.204 1.204A5.5 5.5 0 012.5 8z"/></svg>
+    </button>
     <!-- UF-08: view mode toggle pill, always visible -->
     <div class="topology-fs-view-toggle" id="topologyFsViewToggle">
       <button type="button" class="topology-fs-view-toggle-btn" data-view-mode="list" onclick="setViewMode('list')" title="切换到列表视图">
@@ -9899,14 +9908,41 @@ function _topologyRenderPanelTab(tab, entity) {
           : '<svg width="11" height="11" viewBox="0 0 16 16" fill="currentColor" style="margin-right:4px">' +
               '<path d="M1.5 8a.5.5 0 01.5-.5h10.793L9.146 3.854a.5.5 0 11.708-.708l4.5 4.5a.5.5 0 010 .708l-4.5 4.5a.5.5 0 01-.708-.708L12.793 8.5H2a.5.5 0 01-.5-.5z"/>' +
             '</svg>';
-        deployBtnHtml =
-          '<button type="button" class="tfp-deploy-btn' + deployExtraClass + '" ' +
-          deployDisabled + ' ' +
-          (isDeploying ? '' : 'onclick="event.stopPropagation();deployBranch(\'' + esc(deployTargetBranchId) + '\')" ') +
-          'title="' + deployBtnLabel + ' ' + esc(deployTargetBranchId) + '">' +
-            deploySpinner +
-            deployBtnLabel +
-          '</button>';
+        // GAP-11: when the branch has multiple build profiles visible,
+        // render Deploy as a split-button — main part deploys the whole
+        // branch (same as before), while the ▾ chevron opens a dropdown
+        // listing each profile so users can redeploy just one service.
+        // Single-profile branches keep the plain Deploy button.
+        var visibleProfiles = (buildProfiles || []).filter(function (p) { return !p.hidden; });
+        var hasMultipleProfiles = visibleProfiles.length > 1;
+        if (hasMultipleProfiles && !isDeploying) {
+          deployBtnHtml =
+            '<span class="tfp-deploy-split" data-branch-id="' + esc(deployTargetBranchId) + '">' +
+              '<button type="button" class="tfp-deploy-btn tfp-deploy-btn-main' + deployExtraClass + '" ' +
+              deployDisabled + ' ' +
+              'onclick="event.stopPropagation();deployBranch(\'' + esc(deployTargetBranchId) + '\')" ' +
+              'title="' + deployBtnLabel + ' ' + esc(deployTargetBranchId) + '">' +
+                deploySpinner +
+                deployBtnLabel +
+              '</button>' +
+              '<button type="button" class="tfp-deploy-btn tfp-deploy-btn-chevron" ' +
+              'onclick="event.stopPropagation();_topologyToggleDeploySplitMenu(\'' + esc(deployTargetBranchId) + '\',event)" ' +
+              'title="选择要重新部署的单个服务">' +
+                '<svg width="9" height="9" viewBox="0 0 16 16" fill="currentColor">' +
+                  '<path d="M4.427 7.427l3.396 3.396a.25.25 0 00.354 0l3.396-3.396A.25.25 0 0011.396 7H4.604a.25.25 0 00-.177.427z"/>' +
+                '</svg>' +
+              '</button>' +
+            '</span>';
+        } else {
+          deployBtnHtml =
+            '<button type="button" class="tfp-deploy-btn' + deployExtraClass + '" ' +
+            deployDisabled + ' ' +
+            (isDeploying ? '' : 'onclick="event.stopPropagation();deployBranch(\'' + esc(deployTargetBranchId) + '\')" ') +
+            'title="' + deployBtnLabel + ' ' + esc(deployTargetBranchId) + '">' +
+              deploySpinner +
+              deployBtnLabel +
+            '</button>';
+        }
         // GAP-01: Stop button — only meaningful when the branch is
         // actually running. We let the user click it regardless and
         // let the backend return a no-op if there's nothing to stop.
@@ -9915,6 +9951,7 @@ function _topologyRenderPanelTab(tab, entity) {
         var branchForState = (branches || []).find(function (b) { return b.id === deployTargetBranchId; });
         var isStopping = branchForState && branchForState.status === 'stopping';
         var isDeleting = branchForState && branchForState.status === 'deleting';
+        var isErrored = branchForState && branchForState.status === 'error';
         var stopSpinner = isStopping
           ? '<span class="btn-spinner" style="margin-right:4px"></span>'
           : '<svg width="11" height="11" viewBox="0 0 16 16" fill="currentColor" style="margin-right:4px"><path d="M4 4h8v8H4V4z"/></svg>';
@@ -9926,6 +9963,22 @@ function _topologyRenderPanelTab(tab, entity) {
             stopSpinner +
             (isStopping ? '停止中' : '停止') +
           '</button>';
+        // GAP-12: Reset button — only visible when the branch is in
+        // `error` state. Delegates to resetBranch() (same call as list
+        // view). Amber tint to match Stop, but distinct icon (refresh
+        // arrow) so users can tell them apart at a glance.
+        var resetBtnHtml = '';
+        if (isErrored) {
+          resetBtnHtml =
+            '<button type="button" class="tfp-reset-btn" ' +
+            'onclick="event.stopPropagation();resetBranch(\'' + esc(deployTargetBranchId) + '\')" ' +
+            'title="清除 error 标记,允许重新部署">' +
+              '<svg width="11" height="11" viewBox="0 0 16 16" fill="currentColor" style="margin-right:4px">' +
+                '<path d="M8 2.5a5.487 5.487 0 00-4.131 1.869l1.204 1.204A.25.25 0 014.896 6H1.25A.25.25 0 011 5.75V2.104a.25.25 0 01.427-.177l1.38 1.38A7.002 7.002 0 0115 8a.75.75 0 01-1.5 0A5.5 5.5 0 008 2.5zM2.5 8a.75.75 0 00-1.5 0 7.002 7.002 0 0012.023 4.87l1.38 1.38a.25.25 0 00.427-.177V10.5a.25.25 0 00-.25-.25h-3.646a.25.25 0 00-.177.427l1.204 1.204A5.5 5.5 0 012.5 8z"/>' +
+              '</svg>' +
+              '重置' +
+            '</button>';
+        }
         // GAP-02: Delete branch button — delegates to removeBranch,
         // which already has its own confirm dialog and cascade cleanup.
         var delSpinner = isDeleting
@@ -9962,6 +10015,8 @@ function _topologyRenderPanelTab(tab, entity) {
         '<div style="margin-left:auto;display:flex;align-items:center;gap:8px;min-width:0;flex-wrap:wrap">' +
           deployBtnHtml +
           stopBtnHtml +
+          // GAP-12: reset button sits between Stop and Delete, only when branch.status === 'error'
+          (typeof resetBtnHtml === 'string' ? resetBtnHtml : '') +
           deleteBtnHtml +
           '<span style="font-size:11px;opacity:0.7;white-space:nowrap">' + esc(image) + '</span>' +
         '</div>' +
@@ -10055,6 +10110,19 @@ function _topologyRenderPanelTab(tab, entity) {
           '<div class="tfp-deploy-card-head">' +
             '<svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>' +
             '<div class="tfp-deploy-meta">' + esc(commitSubject || branchName) + '</div>' +
+            // GAP-14: open commit history modal. List view has
+            // toggleCommitLog() which inline-expands under the card;
+            // topology has no anchor to hang that off, so we open a
+            // self-contained modal that reuses /git-log and the same
+            // click-to-checkout flow.
+            '<button type="button" class="tfp-commit-history-btn" ' +
+              'onclick="event.stopPropagation();_topologyOpenCommitHistory(\'' + esc(branchName) + '\')" ' +
+              'title="查看本分支最近 15 条提交,点击切换 build 基点">' +
+              '<svg width="10" height="10" viewBox="0 0 16 16" fill="currentColor" style="margin-right:3px">' +
+                '<path d="M1.643 3.143L.427 1.927A.25.25 0 000 2.104V5.75c0 .138.112.25.25.25h3.646a.25.25 0 00.177-.427L2.715 4.215a6.5 6.5 0 11-1.18 4.458.75.75 0 10-1.493.154 8.001 8.001 0 101.6-5.684zM7.75 4a.75.75 0 01.75.75v2.992l2.028.812a.75.75 0 01-.557 1.392l-2.5-1A.75.75 0 017 8.25v-3.5A.75.75 0 017.75 4z"/>' +
+              '</svg>' +
+              '查看历史' +
+            '</button>' +
           '</div>' +
           '<div style="display:flex;align-items:center;gap:10px;font-size:11px;color:var(--text-muted);font-family:var(--font-mono,monospace)">' +
             '<span>📁 ' + esc(branchName) + '</span>' +
@@ -10320,22 +10388,76 @@ function _topologyRenderPanelTab(tab, entity) {
   // `.tags`. Both are optional and read-only for now — the "编辑"
   // button routes to the full profile editor modal in place.
   if (tab === 'tags') {
+    // GAP-13: wire the same add/remove/edit helpers that list view uses
+    // so users can inline-manage tags from topology instead of having to
+    // jump back to list view. `_topologySelectedBranchId` is the current
+    // target; if none is selected we fall back to read-only with a hint.
     var notes = (entity.notes || '').trim();
-    var tags = Array.isArray(entity.tags) ? entity.tags : [];
+    var targetBranchId = _topologySelectedBranchId;
+    var targetBranch = targetBranchId
+      ? (branches || []).find(function (b) { return b.id === targetBranchId; })
+      : null;
+    // Source tags: when a branch is selected, show its tags (the list
+    // view's L12-L15 semantics are branch-level). When no branch is
+    // selected, fall back to entity.tags (legacy behaviour, read-only).
+    var tags = targetBranch
+      ? (Array.isArray(targetBranch.tags) ? targetBranch.tags : [])
+      : (Array.isArray(entity.tags) ? entity.tags : []);
     var notesHtml = notes
       ? '<div class="tfp-section-h">备注</div><div class="tfp-vars-hint" style="white-space:pre-wrap;line-height:1.55;padding:12px;background:var(--bg-elevated);border:1px solid var(--card-border);border-radius:8px">' + esc(notes) + '</div>'
       : '<div class="tfp-section-h">备注</div><div class="tfp-vars-empty"><div class="tfp-vars-empty-title">没有备注</div><div class="tfp-vars-empty-desc">打开完整编辑器可为该服务添加说明、联系人、跑批计划等自由文本</div></div>';
-    var tagsHtml = tags.length > 0
-      ? '<div class="tfp-section-h" style="margin-top:14px">标签</div><div class="tfp-tags-row">' +
-        tags.map(function (t) { return '<span class="tfp-tag-chip">' + esc(String(t)) + '</span>'; }).join('') +
-        '</div>'
-      : '';
+
+    var tagsHtml = '';
+    if (targetBranchId) {
+      // Editable branch tags: each chip gets a × remove button, plus a
+      // "+ 标签" chip at the end that opens the prompt. We route the
+      // clicks through the same addTagToBranch / removeTagFromBranch /
+      // editBranchTags helpers the list view uses, so behaviour is 1:1.
+      var chips = tags.map(function (t) {
+        var safeTag = esc(String(t));
+        return '<span class="tfp-tag-chip tfp-tag-chip-editable">' +
+          safeTag +
+          '<button type="button" class="tfp-tag-chip-remove" ' +
+            'onclick="event.stopPropagation();removeTagFromBranch(\'' + esc(targetBranchId) + '\',\'' + safeTag.replace(/'/g, "\\'") + '\',event)" ' +
+            'title="移除标签 ' + safeTag + '">' +
+            '<svg width="9" height="9" viewBox="0 0 16 16" fill="currentColor"><path d="M3.72 3.72a.75.75 0 011.06 0L8 6.94l3.22-3.22a.75.75 0 111.06 1.06L9.06 8l3.22 3.22a.75.75 0 11-1.06 1.06L8 9.06l-3.22 3.22a.75.75 0 01-1.06-1.06L6.94 8 3.72 4.78a.75.75 0 010-1.06z"/></svg>' +
+          '</button>' +
+        '</span>';
+      }).join('');
+      var addChip =
+        '<button type="button" class="tfp-tag-add-chip" ' +
+          'onclick="event.stopPropagation();addTagToBranch(\'' + esc(targetBranchId) + '\',event)" ' +
+          'title="给分支 ' + esc(targetBranchId) + ' 添加一个标签">' +
+          '<svg width="10" height="10" viewBox="0 0 16 16" fill="currentColor" style="margin-right:3px"><path d="M7.75 2a.75.75 0 01.75.75V7h4.25a.75.75 0 010 1.5H8.5v4.25a.75.75 0 01-1.5 0V8.5H2.75a.75.75 0 010-1.5H7V2.75A.75.75 0 017.75 2z"/></svg>' +
+          '标签' +
+        '</button>';
+      var editAllBtn =
+        '<button type="button" class="tfp-tag-edit-all" ' +
+          'onclick="event.stopPropagation();editBranchTags(\'' + esc(targetBranchId) + '\',event)" ' +
+          'title="用逗号分隔批量编辑">' +
+          '<svg width="10" height="10" viewBox="0 0 16 16" fill="currentColor" style="margin-right:3px"><path d="M11.013 1.427a1.75 1.75 0 012.474 0l1.086 1.086a1.75 1.75 0 010 2.474l-8.61 8.61c-.21.21-.47.364-.756.445l-3.251.93a.75.75 0 01-.927-.928l.929-3.25a1.75 1.75 0 01.445-.758l8.61-8.61z"/></svg>' +
+          '批量编辑' +
+        '</button>';
+      tagsHtml =
+        '<div class="tfp-section-h" style="margin-top:14px">标签 · ' + esc(targetBranchId) + '</div>' +
+        '<div class="tfp-tags-row">' + chips + addChip + '</div>' +
+        '<div style="margin-top:8px">' + editAllBtn + '</div>';
+    } else {
+      // No branch selected — read-only fallback with hint.
+      var roChips = tags.length > 0
+        ? tags.map(function (t) { return '<span class="tfp-tag-chip">' + esc(String(t)) + '</span>'; }).join('')
+        : '<span class="tfp-vars-hint">(无标签)</span>';
+      tagsHtml =
+        '<div class="tfp-section-h" style="margin-top:14px">标签</div>' +
+        '<div class="tfp-tags-row">' + roChips + '</div>' +
+        '<div class="tfp-vars-hint" style="margin-top:8px">选一个分支才能编辑标签</div>';
+    }
     body.innerHTML =
       '<div class="tfp-vars-toolbar">' +
         '<div class="tfp-vars-section-title"><span>备注 / 标签</span></div>' +
         '<button type="button" class="tfp-vars-edit-btn" onclick="_topologyPanelOpenEditor()">' +
           '<svg width="11" height="11" viewBox="0 0 16 16" fill="currentColor"><path d="M11.013 1.427a1.75 1.75 0 012.474 0l1.086 1.086a1.75 1.75 0 010 2.474l-8.61 8.61c-.21.21-.47.364-.756.445l-3.251.93a.75.75 0 01-.927-.928l.929-3.25a1.75 1.75 0 01.445-.758l8.61-8.61z"/></svg>' +
-          '编辑' +
+          '编辑备注' +
         '</button>' +
       '</div>' +
       notesHtml + tagsHtml;
@@ -10373,22 +10495,51 @@ function _topologyRenderPanelTab(tab, entity) {
       }
     }
 
-    // GAP-05: deploy-mode block. Shows the current deploy-mode state
-    // (per-branch single-shot, pool, shared...) and a click-to-edit
-    // link routing to the full profile editor in place.
+    // GAP-05 + GAP-15: deploy-mode block.
+    //
+    // GAP-05 shipped a read-only list of modes. GAP-15 makes each row
+    // actionable: when a branch is selected (_topologySelectedBranchId),
+    // clicking a row calls the same switchModeAndDeploy() helper used
+    // by list view (L3). The currently active mode is marked with a ✓.
+    // When no branch is selected, rows stay read-only with a hint so
+    // users know to pick one first.
     var deployModeBlock = '';
     if (kind === 'app' && entity.deployModes && typeof entity.deployModes === 'object') {
       var modeKeys = Object.keys(entity.deployModes);
       if (modeKeys.length > 0) {
+        var selectedBranchId = _topologySelectedBranchId;
+        // The "current" mode identifier — prefer entity.defaultMode, fall
+        // back to the first key. Matches the intent of L3 where a tick
+        // sits next to whichever mode the profile is currently using.
+        var activeModeId = entity.defaultMode || entity.activeDeployMode || modeKeys[0];
         var modeRows = modeKeys.map(function (k) {
           var mode = entity.deployModes[k];
           var modeLabel = typeof mode === 'string' ? mode : (mode && mode.mode) || '(未设置)';
-          return '<div class="tfp-kv"><span class="tfp-kv-key">' + esc(k) + '</span><span class="tfp-kv-val">' + esc(modeLabel) + '</span></div>';
+          var isActive = k === activeModeId;
+          var check = isActive
+            ? '<svg width="10" height="10" viewBox="0 0 16 16" fill="currentColor" style="margin-right:4px;color:var(--green,#10b981)"><path d="M13.78 4.22a.75.75 0 010 1.06l-7.25 7.25a.75.75 0 01-1.06 0L2.22 9.28a.75.75 0 011.06-1.06L6 10.94l6.72-6.72a.75.75 0 011.06 0z"/></svg>'
+            : '<span style="display:inline-block;width:10px;margin-right:4px"></span>';
+          if (selectedBranchId) {
+            return '<div class="tfp-kv tfp-deploy-mode-row" ' +
+              'onclick="event.stopPropagation();switchModeAndDeploy(\'' + esc(selectedBranchId) + '\',\'' + esc(entity.id) + '\',\'' + esc(k) + '\')" ' +
+              'title="切换到「' + esc(modeLabel) + '」并重新部署 ' + esc(selectedBranchId) + '">' +
+              '<span class="tfp-kv-key">' + check + esc(k) + '</span>' +
+              '<span class="tfp-kv-val">' + esc(modeLabel) + '</span>' +
+            '</div>';
+          }
+          return '<div class="tfp-kv">' +
+            '<span class="tfp-kv-key">' + check + esc(k) + '</span>' +
+            '<span class="tfp-kv-val">' + esc(modeLabel) + '</span>' +
+          '</div>';
         }).join('');
         deployModeBlock =
           '<div class="tfp-section-h">部署模式</div>' +
           modeRows +
-          '<div class="tfp-vars-hint" style="margin-top:6px">部署模式决定每次 deploy 的生命周期策略(共享/单次/常驻)。点下方"打开完整编辑器"可逐分支切换。</div>';
+          '<div class="tfp-vars-hint" style="margin-top:6px">' +
+            (selectedBranchId
+              ? '点击任一行可切换模式并立即重新部署 <code>' + esc(selectedBranchId) + '</code>。'
+              : '选一个分支后每行即可点击切换模式;当前只读。') +
+          '</div>';
       } else {
         deployModeBlock =
           '<div class="tfp-section-h">部署模式</div>' +
@@ -11140,6 +11291,140 @@ function _topologyPanelOpenEditor() {
   }
 }
 
+// GAP-11: split-button dropdown for per-service redeploy. Clicking the
+// ▾ chevron on the Details tab's Deploy button opens a small menu
+// listing each visible build profile; selecting one calls the existing
+// deploySingleService(branchId, profileId) used by list view. We reuse
+// the `dropdownPortal` + positionPortalDropdown pattern from list view
+// so the menu survives CSS overflow / transform boundaries.
+var _topologyDeploySplitMenuOpenFor = null;
+function _topologyToggleDeploySplitMenu(branchId, event) {
+  if (event) event.stopPropagation();
+  _topologyCloseDeploySplitMenu();
+  if (_topologyDeploySplitMenuOpenFor === branchId) {
+    _topologyDeploySplitMenuOpenFor = null;
+    return;
+  }
+  _topologyDeploySplitMenuOpenFor = branchId;
+
+  var visibleProfiles = (buildProfiles || []).filter(function (p) { return !p.hidden; });
+  if (visibleProfiles.length === 0) return;
+
+  var menu = document.createElement('div');
+  menu.className = 'deploy-menu';
+  menu.id = 'topology-deploy-split-menu-portal';
+  menu.onclick = function (e) { e.stopPropagation(); };
+  var rows = '<div class="deploy-menu-header">重新部署单个服务</div>' +
+    visibleProfiles.map(function (p) {
+      var name = p.name || p.id;
+      return '<div class="deploy-menu-item" onclick="event.stopPropagation();_topologyCloseDeploySplitMenu();deploySingleService(\'' +
+        esc(branchId) + '\',\'' + esc(p.id) + '\')">' +
+        '<svg width="11" height="11" viewBox="0 0 16 16" fill="currentColor" style="vertical-align:-1px;margin-right:6px">' +
+          '<path d="M1.5 8a.5.5 0 01.5-.5h10.793L9.146 3.854a.5.5 0 11.708-.708l4.5 4.5a.5.5 0 010 .708l-4.5 4.5a.5.5 0 01-.708-.708L12.793 8.5H2a.5.5 0 01-.5-.5z"/>' +
+        '</svg>' +
+        esc(name) +
+      '</div>';
+    }).join('');
+  menu.innerHTML = rows;
+  if (portal) portal.appendChild(menu);
+
+  // Anchor to the split-button container so the menu lines up under it.
+  var anchor = (event && event.currentTarget && event.currentTarget.closest('.tfp-deploy-split'))
+    || (event && event.currentTarget)
+    || document.querySelector('.tfp-deploy-split[data-branch-id="' + branchId + '"]');
+  if (anchor) positionPortalDropdown(menu, anchor, 'right');
+}
+
+function _topologyCloseDeploySplitMenu() {
+  var el = document.getElementById('topology-deploy-split-menu-portal');
+  if (el) el.remove();
+  _topologyDeploySplitMenuOpenFor = null;
+}
+
+// Close on outside click — attach once via the existing global handler.
+document.addEventListener('click', function () { _topologyCloseDeploySplitMenu(); });
+
+// GAP-14: commit history modal for the topology Details tab. List view
+// has toggleCommitLog() that inline-expands a dropdown anchored to the
+// card; in topology we don't have an anchor, so we open a small modal
+// that reuses the same /branches/:id/git-log endpoint and row layout.
+// The modal lives in a portal-appended wrapper so it survives the
+// panel's translate transform and overflow rules.
+async function _topologyOpenCommitHistory(branchId) {
+  // Clean up any stale one
+  var existing = document.getElementById('topologyCommitHistoryModal');
+  if (existing) existing.remove();
+
+  var overlay = document.createElement('div');
+  overlay.id = 'topologyCommitHistoryModal';
+  overlay.className = 'topology-commit-history-overlay';
+  overlay.onclick = function (e) {
+    if (e.target === overlay) overlay.remove();
+  };
+  overlay.innerHTML =
+    '<div class="topology-commit-history-modal" onclick="event.stopPropagation()">' +
+      '<div class="topology-commit-history-header">' +
+        '<span>' + esc(branchId) + ' · 提交历史</span>' +
+        '<button type="button" class="topology-commit-history-close" onclick="document.getElementById(\'topologyCommitHistoryModal\').remove()" title="关闭">' +
+          '<svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor"><path d="M3.72 3.72a.75.75 0 011.06 0L8 6.94l3.22-3.22a.75.75 0 111.06 1.06L9.06 8l3.22 3.22a.75.75 0 11-1.06 1.06L8 9.06l-3.22 3.22a.75.75 0 01-1.06-1.06L6.94 8 3.72 4.78a.75.75 0 010-1.06z"/></svg>' +
+        '</button>' +
+      '</div>' +
+      '<div class="topology-commit-history-body" id="topologyCommitHistoryBody">' +
+        '<div class="commit-log-loading"><span class="btn-spinner"></span> 加载中...</div>' +
+      '</div>' +
+    '</div>';
+  document.body.appendChild(overlay);
+
+  try {
+    var data = await api('GET', '/branches/' + encodeURIComponent(branchId) + '/git-log?count=15');
+    var commits = data.commits || [];
+    var body = document.getElementById('topologyCommitHistoryBody');
+    if (!body) return;
+    if (commits.length === 0) {
+      body.innerHTML = '<div class="commit-log-empty">暂无提交记录</div>';
+      return;
+    }
+    var branch = (branches || []).find(function (br) { return br.id === branchId; });
+    var pinned = branch && branch.pinnedCommit;
+    body.innerHTML = commits.map(function (c, i) {
+      var isCurrent = pinned ? c.hash === pinned : i === 0;
+      var isLatest = i === 0;
+      var dot = isCurrent ? '<span class="commit-current-dot"></span>' : '';
+      var icon = (typeof commitIcon === 'function') ? commitIcon(c.subject) : '';
+      return '<div class="commit-log-item ' + (isLatest ? 'latest ' : '') + (isCurrent ? 'current' : '') + '" ' +
+        'onclick="event.stopPropagation();document.getElementById(\'topologyCommitHistoryModal\').remove();checkoutCommit(\'' +
+          esc(branchId) + '\',\'' + esc(c.hash) + '\',' + isLatest + ',' + JSON.stringify(esc(c.subject)) + ')" ' +
+        'title="点击切换到此提交进行构建">' +
+        dot + icon +
+        '<code class="commit-hash">' + esc(c.hash) + '</code>' +
+        '<span class="commit-subject">' + esc(c.subject) + '</span>' +
+        '<span class="commit-meta">' + esc(c.author) + ' · ' + esc(c.date) + '</span>' +
+      '</div>';
+    }).join('');
+  } catch (e) {
+    var bodyErr = document.getElementById('topologyCommitHistoryBody');
+    if (bodyErr) bodyErr.innerHTML = '<div class="commit-log-empty" style="color:var(--red)">' + esc(e && e.message ? e.message : String(e)) + '</div>';
+  }
+}
+
+// GAP-16: manual refresh entry for the topology topbar. Delegates to
+// the same refreshAll() helper used by list view's 🔄 button, plus a
+// lightweight spinner on the topology button so users get immediate
+// visual feedback (refreshAll itself spins #refreshRemoteBtn which
+// isn't visible in fullscreen topology mode).
+async function _topologyManualRefresh(event) {
+  if (event) event.stopPropagation();
+  var btn = document.getElementById('topologyFsRefreshBtn');
+  if (btn) btn.classList.add('spinning');
+  try {
+    if (typeof refreshAll === 'function') {
+      await refreshAll();
+    }
+  } finally {
+    if (btn) btn.classList.remove('spinning');
+  }
+}
+
 // T6: close the panel
 function _topologyClosePanel() {
   var panel = document.getElementById('topologyFsPanel');
@@ -11354,6 +11639,13 @@ window._topologyOpenRoutingInPlace = _topologyOpenRoutingInPlace;
 // GAP-08: node port badge click / dblclick handlers
 window._topologyNodePortClick = _topologyNodePortClick;
 window._topologyNodePortDblClick = _topologyNodePortDblClick;
+// GAP-11: per-service deploy split-button dropdown
+window._topologyToggleDeploySplitMenu = _topologyToggleDeploySplitMenu;
+window._topologyCloseDeploySplitMenu = _topologyCloseDeploySplitMenu;
+// GAP-14: commit history modal opened from topology Details tab
+window._topologyOpenCommitHistory = _topologyOpenCommitHistory;
+// GAP-16: manual refresh button in the topology topbar
+window._topologyManualRefresh = _topologyManualRefresh;
 
 // Apply persisted view mode on load (deferred so DOM elements exist)
 if (document.readyState === 'loading') {

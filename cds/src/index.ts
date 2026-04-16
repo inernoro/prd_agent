@@ -208,6 +208,31 @@ if (customEnv.CDS_REPOS_BASE) config.reposBase = customEnv.CDS_REPOS_BASE;
 // multi-project deploy path resolves per-project via
 // StateService.getProjectRepoRoot().
 const worktreeService = new WorktreeService(shell);
+
+// ── FU-04: flat → per-project worktree layout migration ──
+//
+// One-shot on-boot sweep. Symlinks any surviving `<worktreeBase>/<slug>`
+// entries into `<worktreeBase>/default/<slug>` and rewrites matching
+// BranchEntry.worktreePath values. Guarded by state.worktreeLayoutVersion
+// so subsequent boots skip the scan. See doc/plan.cds-backlog-matrix.md
+// §FU-04 for the rationale.
+try {
+  const migratedCount = WorktreeService.migrateFlatLayoutIfNeeded({
+    worktreeBase: config.worktreeBase,
+    projectIds: stateService.getProjects().map(p => p.id),
+    branches: stateService.getAllBranches().map(b => ({ id: b.id, projectId: b.projectId, worktreePath: b.worktreePath })),
+    currentVersion: stateService.getWorktreeLayoutVersion(),
+    updateBranchWorktreePath: (branchId, nextPath) => stateService.setBranchWorktreePath(branchId, nextPath),
+    markMigrated: (v) => stateService.setWorktreeLayoutVersion(v),
+  });
+  if (migratedCount > 0) {
+    console.log(`  [worktree] FU-04 migration: adopted ${migratedCount} legacy worktree(s) under '${config.worktreeBase}/default/'`);
+  }
+  stateService.save();
+} catch (err) {
+  console.warn(`  [worktree] FU-04 migration skipped due to error: ${(err as Error).message}`);
+}
+
 const containerService = new ContainerService(shell, config);
 const proxyService = new ProxyService(stateService, config);
 proxyService.setWorktreeService(worktreeService);
@@ -755,8 +780,11 @@ proxyService.setOnAutoBuild(async (branchSlug, _req, res) => {
     let entry = stateService.getBranch(finalSlug);
     if (!entry) {
       sendEvent('step', { step: 'worktree', status: 'running', title: `正在为 ${resolvedBranch} 创建工作树...` });
-      await shell.exec(`mkdir -p "${config.worktreeBase}"`);
-      const worktreePath = `${config.worktreeBase}/${finalSlug}`;
+      // FU-04: proxy auto-build predates multi-project and always
+      // runs against the legacy repoRoot, so we attribute the new
+      // worktree to the 'default' project bucket.
+      await shell.exec(`mkdir -p "${config.worktreeBase}/default"`);
+      const worktreePath = WorktreeService.worktreePathFor(config.worktreeBase, 'default', finalSlug);
       await worktreeService.create(autoRepoRoot, resolvedBranch, worktreePath);
 
       entry = {

@@ -1,0 +1,1 @@
+| refactor | cds | FU-04 完成:WorktreeService 路径从 `<base>/<slug>` 改为 `<base>/<projectId>/<slug>`(两个项目同名分支不再碰撞),新增启动期 symlink 迁移(fallback rename) + state.worktreeLayoutVersion 幂等守卫 + 7 条新测试,保持 multi-repo-clone smoke 绿色 |
