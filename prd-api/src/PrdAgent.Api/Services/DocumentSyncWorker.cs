@@ -20,9 +20,11 @@ namespace PrdAgent.Api.Services;
 /// </summary>
 public class DocumentSyncWorker : BackgroundService
 {
+    private static readonly TimeSpan SyncLeaseDuration = TimeSpan.FromMinutes(10);
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly ILogger<DocumentSyncWorker> _logger;
     private readonly IHttpClientFactory _httpClientFactory;
+    private readonly string _instanceId = $"{Environment.MachineName}:{Environment.ProcessId}:{Guid.NewGuid():N}";
 
     /// <summary>每 2 分钟扫描一次待同步条目</summary>
     private static readonly TimeSpan ScanInterval = TimeSpan.FromMinutes(2);
@@ -64,38 +66,31 @@ public class DocumentSyncWorker : BackgroundService
 
         var now = DateTime.UtcNow;
 
-        // 查找需要同步的条目：
-        // 1. 有 SourceUrl 或 SourceType == github_directory
-        // 2. 有 SyncIntervalMinutes > 0
-        // 3. 未被暂停
-        // 4. SyncStatus == Syncing (手动触发) 或 距上次同步已超过间隔
-        var filter = Builders<DocumentEntry>.Filter.And(
-            Builders<DocumentEntry>.Filter.Or(
+        var regularCandidates = await db.DocumentEntries.Find(Builders<DocumentEntry>.Filter.And(
+                Builders<DocumentEntry>.Filter.Ne(e => e.SourceType, DocumentSourceType.GithubDirectory),
                 Builders<DocumentEntry>.Filter.Ne(e => e.SourceUrl, null),
-                Builders<DocumentEntry>.Filter.Eq(e => e.SourceType, DocumentSourceType.GithubDirectory)
-            ),
-            Builders<DocumentEntry>.Filter.Gt(e => e.SyncIntervalMinutes, 0),
-            Builders<DocumentEntry>.Filter.Ne(e => e.IsPaused, true),
-            Builders<DocumentEntry>.Filter.Or(
-                // 手动触发
-                Builders<DocumentEntry>.Filter.Eq(e => e.SyncStatus, DocumentSyncStatus.Syncing),
-                // 从未同步过
-                Builders<DocumentEntry>.Filter.Eq(e => e.LastSyncAt, null),
-                // 已过同步间隔（用 Builders 无法做动态计算，取所有有 SourceUrl 的条目在代码里过滤）
-                Builders<DocumentEntry>.Filter.Lt(e => e.LastSyncAt, now.AddHours(-24))
-            )
-        );
-
-        var candidates = await db.DocumentEntries.Find(filter)
-            .Limit(20) // 每轮最多处理 20 个
+                Builders<DocumentEntry>.Filter.Gt(e => e.SyncIntervalMinutes, 0),
+                Builders<DocumentEntry>.Filter.Ne(e => e.IsPaused, true),
+                Builders<DocumentEntry>.Filter.Or(
+                    Builders<DocumentEntry>.Filter.Eq(e => e.SyncStatus, DocumentSyncStatus.Syncing),
+                    Builders<DocumentEntry>.Filter.Eq(e => e.LastSyncAt, null),
+                    Builders<DocumentEntry>.Filter.Lt(e => e.LastSyncAt, now.AddHours(-24))
+                )))
+            .Limit(50)
             .ToListAsync(ct);
 
-        // 在代码里精确过滤到期的条目
-        var dueEntries = candidates.Where(e =>
-            e.SyncStatus == DocumentSyncStatus.Syncing || // 手动触发
-            e.LastSyncAt == null || // 从未同步
-            (e.SyncIntervalMinutes > 0 && e.LastSyncAt.Value.AddMinutes(e.SyncIntervalMinutes.Value) <= now)
-        ).ToList();
+        var githubCandidates = await db.DocumentEntries.Find(Builders<DocumentEntry>.Filter.And(
+                Builders<DocumentEntry>.Filter.Eq(e => e.SourceType, DocumentSourceType.GithubDirectory),
+                Builders<DocumentEntry>.Filter.Gt(e => e.SyncIntervalMinutes, 0),
+                Builders<DocumentEntry>.Filter.Ne(e => e.IsPaused, true)))
+            .ToListAsync(ct);
+
+        var dueEntries = regularCandidates
+            .Concat(githubCandidates)
+            .Where(e => DocumentSyncSchedule.IsDue(e, now))
+            .DistinctBy(e => e.Id)
+            .Take(20)
+            .ToList();
 
         if (dueEntries.Count == 0) return;
 
@@ -120,12 +115,8 @@ public class DocumentSyncWorker : BackgroundService
         var sw = System.Diagnostics.Stopwatch.StartNew();
         try
         {
-            // 标记为同步中
-            await db.DocumentEntries.UpdateOneAsync(
-                e => e.Id == entry.Id,
-                Builders<DocumentEntry>.Update
-                    .Set(e => e.SyncStatus, DocumentSyncStatus.Syncing),
-                cancellationToken: CancellationToken.None);
+            if (!await TryAcquireSyncLeaseAsync(db, entry, ct))
+                return;
 
             var githubSyncService = new GitHubDirectorySyncService(
                 _scopeFactory.CreateScope().ServiceProvider
@@ -138,7 +129,9 @@ public class DocumentSyncWorker : BackgroundService
                 .Set(e => e.SyncStatus, DocumentSyncStatus.Idle)
                 .Set(e => e.SyncError, null)
                 .Set(e => e.LastSyncAt, DateTime.UtcNow)
-                .Set(e => e.UpdatedAt, DateTime.UtcNow);
+                .Set(e => e.UpdatedAt, DateTime.UtcNow)
+                .Unset(e => e.SyncLeaseOwner)
+                .Unset(e => e.SyncLeaseExpiresAt);
 
             // 只在真的有文件变化时才更新 LastChangedAt
             if (diff.HasChanges)
@@ -188,12 +181,8 @@ public class DocumentSyncWorker : BackgroundService
         var sw = System.Diagnostics.Stopwatch.StartNew();
         try
         {
-            // 标记为同步中
-            await db.DocumentEntries.UpdateOneAsync(
-                e => e.Id == entry.Id,
-                Builders<DocumentEntry>.Update
-                    .Set(e => e.SyncStatus, DocumentSyncStatus.Syncing),
-                cancellationToken: CancellationToken.None);
+            if (!await TryAcquireSyncLeaseAsync(db, entry, ct))
+                return;
 
             // 拉取内容（带条件请求头，避免重复拉取被封控）
             var client = _httpClientFactory.CreateClient("DocumentSync");
@@ -223,7 +212,9 @@ public class DocumentSyncWorker : BackgroundService
                         .Set(e => e.SyncStatus, DocumentSyncStatus.Idle)
                         .Set(e => e.SyncError, null)
                         .Set(e => e.LastSyncAt, DateTime.UtcNow)
-                        .Set(e => e.UpdatedAt, DateTime.UtcNow),
+                        .Set(e => e.UpdatedAt, DateTime.UtcNow)
+                        .Unset(e => e.SyncLeaseOwner)
+                        .Unset(e => e.SyncLeaseExpiresAt),
                     cancellationToken: CancellationToken.None);
                 _logger.LogDebug("[DocumentSyncWorker] {EntryId} returned 304, skipped", entry.Id);
                 return;
@@ -257,7 +248,9 @@ public class DocumentSyncWorker : BackgroundService
                         .Set(e => e.LastSyncAt, DateTime.UtcNow)
                         .Set(e => e.UpdatedAt, DateTime.UtcNow)
                         .Set(e => e.LastETag, newETag)
-                        .Set(e => e.LastModifiedHeader, newLastModified),
+                        .Set(e => e.LastModifiedHeader, newLastModified)
+                        .Unset(e => e.SyncLeaseOwner)
+                        .Unset(e => e.SyncLeaseExpiresAt),
                     cancellationToken: CancellationToken.None);
                 _logger.LogDebug("[DocumentSyncWorker] {EntryId} content hash unchanged, skipped", entry.Id);
                 return;
@@ -287,7 +280,9 @@ public class DocumentSyncWorker : BackgroundService
                     .Set(e => e.UpdatedAt, DateTime.UtcNow)
                     .Set(e => e.ContentHash, newHash)
                     .Set(e => e.LastETag, newETag)
-                    .Set(e => e.LastModifiedHeader, newLastModified),
+                    .Set(e => e.LastModifiedHeader, newLastModified)
+                    .Unset(e => e.SyncLeaseOwner)
+                    .Unset(e => e.SyncLeaseExpiresAt),
                 cancellationToken: CancellationToken.None);
 
             sw.Stop();
@@ -352,7 +347,9 @@ public class DocumentSyncWorker : BackgroundService
                 .Set(e => e.SyncStatus, DocumentSyncStatus.Error)
                 .Set(e => e.SyncError, truncated)
                 .Set(e => e.LastSyncAt, DateTime.UtcNow)
-                .Set(e => e.UpdatedAt, DateTime.UtcNow),
+                .Set(e => e.UpdatedAt, DateTime.UtcNow)
+                .Unset(e => e.SyncLeaseOwner)
+                .Unset(e => e.SyncLeaseExpiresAt),
             cancellationToken: CancellationToken.None);
 
         await db.DocumentSyncLogs.InsertOneAsync(new DocumentSyncLog
@@ -364,5 +361,37 @@ public class DocumentSyncWorker : BackgroundService
             ErrorMessage = truncated,
             DurationMs = durationMs,
         }, cancellationToken: CancellationToken.None);
+    }
+
+    private async Task<bool> TryAcquireSyncLeaseAsync(
+        MongoDbContext db,
+        DocumentEntry entry,
+        CancellationToken ct)
+    {
+        var now = DateTime.UtcNow;
+        var leaseExpiresAt = now.Add(SyncLeaseDuration);
+
+        var filter = Builders<DocumentEntry>.Filter.And(
+            Builders<DocumentEntry>.Filter.Eq(e => e.Id, entry.Id),
+            Builders<DocumentEntry>.Filter.Ne(e => e.IsPaused, true),
+            Builders<DocumentEntry>.Filter.Or(
+                Builders<DocumentEntry>.Filter.Eq(e => e.SyncLeaseOwner, null),
+                Builders<DocumentEntry>.Filter.Lt(e => e.SyncLeaseExpiresAt, now),
+                Builders<DocumentEntry>.Filter.Eq(e => e.SyncLeaseOwner, _instanceId)
+            ));
+
+        var update = Builders<DocumentEntry>.Update
+            .Set(e => e.SyncStatus, DocumentSyncStatus.Syncing)
+            .Set(e => e.SyncLeaseOwner, _instanceId)
+            .Set(e => e.SyncLeaseExpiresAt, leaseExpiresAt);
+
+        var result = await db.DocumentEntries.UpdateOneAsync(filter, update, cancellationToken: ct);
+        if (result.ModifiedCount == 0)
+        {
+            _logger.LogDebug("[DocumentSyncWorker] Lease busy for {EntryId}, skipped on {InstanceId}", entry.Id, _instanceId);
+            return false;
+        }
+
+        return true;
     }
 }

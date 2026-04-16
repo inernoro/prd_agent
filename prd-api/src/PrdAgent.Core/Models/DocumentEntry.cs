@@ -76,6 +76,12 @@ public class DocumentEntry
     /// <summary>是否已暂停订阅（true 时 Worker 跳过该条目）</summary>
     public bool IsPaused { get; set; }
 
+    /// <summary>当前同步租约持有者（用于多实例互斥）</summary>
+    public string? SyncLeaseOwner { get; set; }
+
+    /// <summary>当前同步租约过期时间（UTC）</summary>
+    public DateTime? SyncLeaseExpiresAt { get; set; }
+
     /// <summary>正文内容 SHA256（hex），用于跨次同步对比是否变化，避免无意义写库</summary>
     public string? ContentHash { get; set; }
 

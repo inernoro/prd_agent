@@ -1132,7 +1132,7 @@ public class DocumentStoreController : ControllerBase
         if (duplicate != null)
             return BadRequest(ApiResponse<object>.Fail("ALREADY_EXISTS", $"该目录已订阅 (ID: {duplicate.Id})"));
 
-        var interval = Math.Clamp(request.SyncIntervalMinutes ?? 1440, 60, 1440); // 1小时 ~ 24小时，默认每天
+        var interval = 1440; // GitHub 目录固定为每日同步一次，首次添加后立即同步
 
         var title = request.Title?.Trim();
         if (string.IsNullOrEmpty(title))
@@ -1324,10 +1324,7 @@ public class DocumentStoreController : ControllerBase
             .Limit(limit)
             .ToListAsync();
 
-        // 计算下次同步时间（基于 LastSyncAt + SyncIntervalMinutes）
-        DateTime? nextSyncAt = null;
-        if (entry.LastSyncAt.HasValue && entry.SyncIntervalMinutes is > 0 && !entry.IsPaused)
-            nextSyncAt = entry.LastSyncAt.Value.AddMinutes(entry.SyncIntervalMinutes.Value);
+        var nextSyncAt = DocumentSyncSchedule.GetNextSyncAt(entry);
 
         return Ok(ApiResponse<object>.Ok(new
         {
@@ -1389,9 +1386,9 @@ public class DocumentStoreController : ControllerBase
 
         if (request.SyncIntervalMinutes.HasValue)
         {
-            // GitHub 目录类型最低 1 小时（避免 GitHub API 限流），其他 5 分钟起
-            var min = entry.SourceType == DocumentSourceType.GithubDirectory ? 60 : 5;
-            var clamped = Math.Clamp(request.SyncIntervalMinutes.Value, min, 1440);
+            var clamped = entry.SourceType == DocumentSourceType.GithubDirectory
+                ? 1440
+                : Math.Clamp(request.SyncIntervalMinutes.Value, 5, 1440);
             update = update.Set(e => e.SyncIntervalMinutes, clamped);
             changed = true;
         }
