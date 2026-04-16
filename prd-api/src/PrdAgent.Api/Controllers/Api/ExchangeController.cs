@@ -29,6 +29,18 @@ public class ExchangeController : ControllerBase
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly ExchangeTransformerRegistry _transformerRegistry = new();
 
+    /// <summary>
+    /// 用于 JsonNode.ToJsonString() 的带缩进选项。必须继承自 JsonSerializerOptions.Default
+    /// 以获得内置 TypeInfoResolver —— 否则序列化 JsonArray 的原始类型（string/int 等）
+    /// 时会抛 "JsonSerializerOptions instance must specify a TypeInfoResolver setting" 异常。
+    /// 项目启用了 AOT 友好的 source-gen 上下文 (AppJsonContext)，但 JsonNode 动态树无法被 source-gen，
+    /// 必须回退到 Default 提供的内置转换器。
+    /// </summary>
+    private static readonly JsonSerializerOptions IndentedJsonOptions = new(JsonSerializerOptions.Default)
+    {
+        WriteIndented = true
+    };
+
     public ExchangeController(MongoDbContext db, ILogger<ExchangeController> logger, IConfiguration config, IHttpClientFactory httpClientFactory)
     {
         _db = db;
@@ -48,13 +60,39 @@ public class ExchangeController : ControllerBase
             .SortByDescending(e => e.CreatedAt)
             .ToListAsync(ct);
 
-        var result = list.Select(e => new
+        var result = list.Select(e => BuildExchangeDto(e, GetJwtSecret()));
+
+        return Ok(ApiResponse<object>.Ok(new { items = result }));
+    }
+
+    /// <summary>
+    /// 构造前端需要的 Exchange 视图对象：
+    ///   - Models: 统一通过 GetEffectiveModels() 合成（新数据直接返回，旧数据从 ModelAlias 迁移）
+    ///   - platformId: 每条 Exchange 使用自己的真实 Id 作为虚拟平台 ID（新模型池会用此 Id）
+    ///   - platformName: 用户自定义的 Exchange Name，替代硬编码的 "模型中继 (Exchange)"
+    ///   - legacyPlatformId: 继续暴露 "__exchange__"，前端需兼容旧模型池数据时用
+    /// </summary>
+    private static object BuildExchangeDto(ModelExchange e, string jwtSecret)
+    {
+        var effectiveModels = e.GetEffectiveModels();
+        return new
         {
             e.Id,
             e.Name,
+            // 旧字段继续返回，供只读展示 / 老前端兼容
             e.ModelAlias,
+            e.ModelAliases,
+            // 新统一字段：模型列表
+            models = effectiveModels.Select(m => new
+            {
+                m.ModelId,
+                m.DisplayName,
+                m.ModelType,
+                m.Description,
+                m.Enabled
+            }).ToList(),
             e.TargetUrl,
-            apiKeyMasked = ApiKeyCrypto.Mask(ApiKeyCrypto.Decrypt(e.TargetApiKeyEncrypted, GetJwtSecret())),
+            apiKeyMasked = ApiKeyCrypto.Mask(ApiKeyCrypto.Decrypt(e.TargetApiKeyEncrypted, jwtSecret)),
             e.TargetAuthScheme,
             e.TransformerType,
             e.TransformerConfig,
@@ -62,12 +100,14 @@ public class ExchangeController : ControllerBase
             e.Description,
             e.CreatedAt,
             e.UpdatedAt,
-            // 虚拟平台 ID，前端在模型池中使用
-            platformId = ModelResolverConstants.ExchangePlatformId,
-            platformName = ModelResolverConstants.ExchangePlatformName
-        });
-
-        return Ok(ApiResponse<object>.Ok(new { items = result }));
+            // 虚拟平台标识：新数据用 Exchange 自身 Id，用户自定义的 Name 作为平台名
+            platformId = e.Id,
+            platformName = e.Name,
+            platformKind = "exchange",
+            isVirtualPlatform = true,
+            // 兼容字段：旧模型池可能存了 __exchange__
+            legacyPlatformId = ModelResolverConstants.ExchangePlatformId
+        };
     }
 
     /// <summary>
@@ -80,37 +120,27 @@ public class ExchangeController : ControllerBase
         if (exchange == null)
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "Exchange 不存在"));
 
-        return Ok(ApiResponse<object>.Ok(new
-        {
-            exchange.Id,
-            exchange.Name,
-            exchange.ModelAlias,
-            exchange.TargetUrl,
-            apiKeyMasked = ApiKeyCrypto.Mask(ApiKeyCrypto.Decrypt(exchange.TargetApiKeyEncrypted, GetJwtSecret())),
-            exchange.TargetAuthScheme,
-            exchange.TransformerType,
-            exchange.TransformerConfig,
-            exchange.Enabled,
-            exchange.Description,
-            exchange.CreatedAt,
-            exchange.UpdatedAt
-        }));
+        return Ok(ApiResponse<object>.Ok(BuildExchangeDto(exchange, GetJwtSecret())));
     }
 
     /// <summary>
-    /// 创建 Exchange 配置
+    /// 创建 Exchange 配置。新接口主推 Models 列表；若只给 ModelAlias 也接受（按单模型处理）。
     /// </summary>
     [HttpPost]
     public async Task<IActionResult> CreateExchange([FromBody] CreateExchangeRequest request, CancellationToken ct)
     {
-        // 校验 ModelAlias 唯一性
-        var existing = await _db.ModelExchanges
-            .Find(e => e.ModelAlias == request.ModelAlias.Trim())
-            .FirstOrDefaultAsync(ct);
-        if (existing != null)
-            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, $"ModelAlias '{request.ModelAlias}' 已存在"));
+        if (string.IsNullOrWhiteSpace(request.Name))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "Name 不能为空"));
 
-        // 校验 TransformerType 是否已注册
+        // Models 优先；若没给 Models 也要有 ModelAlias（单模型兼容）
+        var normalizedModels = NormalizeExchangeModels(request.Models);
+        if (normalizedModels.Count == 0 && string.IsNullOrWhiteSpace(request.ModelAlias))
+        {
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT,
+                "必须至少提供一个模型（Models 列表）或 ModelAlias"));
+        }
+
+        // 校验 TransformerType
         if (!string.IsNullOrWhiteSpace(request.TransformerType) &&
             _transformerRegistry.Get(request.TransformerType) == null)
         {
@@ -118,10 +148,13 @@ public class ExchangeController : ControllerBase
                 $"未知的转换器类型: {request.TransformerType}"));
         }
 
+        // Name 建议唯一（作为虚拟平台名，避免用户困惑），但不强校验以保持兼容
         var exchange = new ModelExchange
         {
             Name = request.Name.Trim(),
-            ModelAlias = request.ModelAlias.Trim(),
+            ModelAlias = request.ModelAlias?.Trim() ?? string.Empty,
+            ModelAliases = NormalizeModelAliases(request.ModelAliases),
+            Models = normalizedModels,
             TargetUrl = request.TargetUrl.Trim(),
             TargetApiKeyEncrypted = ApiKeyCrypto.Encrypt(request.TargetApiKey ?? string.Empty, GetJwtSecret()),
             TargetAuthScheme = string.IsNullOrWhiteSpace(request.TargetAuthScheme) ? "Bearer" : request.TargetAuthScheme.Trim(),
@@ -133,7 +166,8 @@ public class ExchangeController : ControllerBase
 
         await _db.ModelExchanges.InsertOneAsync(exchange, cancellationToken: ct);
 
-        _logger.LogInformation("[Exchange] 创建 Exchange: {Id} / {Name} / {ModelAlias}", exchange.Id, exchange.Name, exchange.ModelAlias);
+        _logger.LogInformation("[Exchange] 创建 Exchange: {Id} / {Name} / Models={ModelCount} / ModelAlias={ModelAlias}",
+            exchange.Id, exchange.Name, exchange.Models.Count, exchange.ModelAlias);
 
         return Ok(ApiResponse<object>.Ok(new { exchange.Id }));
     }
@@ -148,16 +182,6 @@ public class ExchangeController : ControllerBase
         if (existing == null)
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "Exchange 不存在"));
 
-        // 检查 ModelAlias 唯一性（排除自身）
-        if (!string.IsNullOrWhiteSpace(request.ModelAlias))
-        {
-            var conflict = await _db.ModelExchanges
-                .Find(e => e.ModelAlias == request.ModelAlias.Trim() && e.Id != id)
-                .FirstOrDefaultAsync(ct);
-            if (conflict != null)
-                return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, $"ModelAlias '{request.ModelAlias}' 已被其他 Exchange 使用"));
-        }
-
         // 校验 TransformerType
         if (!string.IsNullOrWhiteSpace(request.TransformerType) &&
             _transformerRegistry.Get(request.TransformerType) == null)
@@ -169,6 +193,10 @@ public class ExchangeController : ControllerBase
         var update = Builders<ModelExchange>.Update
             .Set(e => e.Name, request.Name?.Trim() ?? existing.Name)
             .Set(e => e.ModelAlias, request.ModelAlias?.Trim() ?? existing.ModelAlias)
+            .Set(e => e.ModelAliases,
+                request.ModelAliases != null ? NormalizeModelAliases(request.ModelAliases) : existing.ModelAliases)
+            .Set(e => e.Models,
+                request.Models != null ? NormalizeExchangeModels(request.Models) : existing.Models)
             .Set(e => e.TargetUrl, request.TargetUrl?.Trim() ?? existing.TargetUrl)
             .Set(e => e.TargetAuthScheme, request.TargetAuthScheme?.Trim() ?? existing.TargetAuthScheme)
             .Set(e => e.TransformerType, request.TransformerType?.Trim() ?? existing.TransformerType)
@@ -220,6 +248,8 @@ public class ExchangeController : ControllerBase
 
     /// <summary>
     /// 获取 Exchange 列表（精简版，供模型池添加模型时选择）
+    /// 对于多模型 Exchange，Models 列表中每个启用的模型展开为一个可选项。
+    /// 返回的 platformId 是该 Exchange 的真实 Id（每个中继是独立虚拟平台）。
     /// </summary>
     [HttpGet("for-pool")]
     public async Task<IActionResult> GetExchangesForPool(CancellationToken ct)
@@ -230,16 +260,124 @@ public class ExchangeController : ControllerBase
             .SortBy(e => e.Name)
             .ToListAsync(ct);
 
-        var result = list.Select(e => new
+        var result = new List<object>();
+        foreach (var e in list)
         {
-            modelId = e.ModelAlias,
-            platformId = ModelResolverConstants.ExchangePlatformId,
-            platformName = ModelResolverConstants.ExchangePlatformName,
-            displayName = $"[Exchange] {e.Name} ({e.ModelAlias})",
-            e.TransformerType
-        });
+            foreach (var m in e.GetEffectiveModels().Where(m => m.Enabled))
+            {
+                result.Add(new
+                {
+                    modelId = m.ModelId,
+                    platformId = e.Id, // 真实 Id，不再是 "__exchange__"
+                    platformName = e.Name, // 用户自定义的平台名
+                    displayName = string.IsNullOrWhiteSpace(m.DisplayName)
+                        ? $"{e.Name} / {m.ModelId}"
+                        : $"{e.Name} / {m.DisplayName}",
+                    modelType = m.ModelType,
+                    e.TransformerType,
+                    platformKind = "exchange",
+                    // 兼容：旧前端若按 __exchange__ 识别
+                    legacyPlatformId = ModelResolverConstants.ExchangePlatformId
+                });
+            }
+        }
 
         return Ok(ApiResponse<object>.Ok(new { items = result }));
+    }
+
+    /// <summary>
+    /// 一键体验指定模型：按 modelType 自动选一个合适的测试 prompt，走 Exchange 转换管线，
+    /// 返回标准请求 / 转换请求 / 原始响应 / 转换响应的全套信息（复用 TestExchange 返回结构）。
+    /// 不落 LlmRequestLogs（只是 smoke test）。
+    /// </summary>
+    [HttpPost("{id}/models/{modelId}/try-it")]
+    public async Task<IActionResult> TryModel(string id, string modelId, [FromBody] TryModelRequest? request, CancellationToken ct)
+    {
+        var exchange = await _db.ModelExchanges.Find(e => e.Id == id).FirstOrDefaultAsync(ct);
+        if (exchange == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "Exchange 不存在"));
+
+        var effectiveModels = exchange.GetEffectiveModels();
+        var target = effectiveModels.FirstOrDefault(m => m.ModelId == modelId && m.Enabled);
+        if (target == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, $"模型 '{modelId}' 不存在或未启用"));
+
+        // 按 modelType 选默认测试 prompt（允许用户覆盖）
+        var userPrompt = request?.Prompt?.Trim();
+        JsonObject standardBody = target.ModelType.ToLowerInvariant() switch
+        {
+            "generation" => new JsonObject
+            {
+                ["model"] = modelId,
+                ["prompt"] = !string.IsNullOrEmpty(userPrompt) ? userPrompt : "A cute cat sitting on a wooden table",
+                ["size"] = "1024x1024",
+                ["n"] = 1
+            },
+            "asr" or "tts" => new JsonObject
+            {
+                ["model"] = modelId,
+                ["text"] = !string.IsNullOrEmpty(userPrompt) ? userPrompt : "这是一段测试文本"
+            },
+            // chat / vision / 其它 → 走标准 messages 格式
+            _ => new JsonObject
+            {
+                ["model"] = modelId,
+                ["messages"] = new JsonArray
+                {
+                    new JsonObject
+                    {
+                        ["role"] = "user",
+                        ["content"] = !string.IsNullOrEmpty(userPrompt) ? userPrompt : "Hello, introduce yourself in one sentence."
+                    }
+                }
+            }
+        };
+
+        // 复用 TestExchange 管线的内部逻辑：构造 ExchangeTestRequest 并调用
+        var testReq = new ExchangeTestRequest
+        {
+            StandardRequestBody = standardBody.ToJsonString(),
+            DryRun = request?.DryRun ?? false
+        };
+        return await TestExchange(id, testReq, ct);
+    }
+
+    /// <summary>
+    /// 规范化 ModelAliases 输入：去空、trim、去重。
+    /// </summary>
+    private static List<string> NormalizeModelAliases(List<string>? input)
+    {
+        if (input == null || input.Count == 0) return new List<string>();
+        return input
+            .Where(s => !string.IsNullOrWhiteSpace(s))
+            .Select(s => s.Trim())
+            .Distinct(StringComparer.Ordinal)
+            .ToList();
+    }
+
+    /// <summary>
+    /// 规范化 Models 输入：ModelId 去空/trim、ModelType 默认 chat、按 ModelId 去重。
+    /// </summary>
+    private static List<ExchangeModel> NormalizeExchangeModels(List<ExchangeModelRequest>? input)
+    {
+        if (input == null || input.Count == 0) return new List<ExchangeModel>();
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        var result = new List<ExchangeModel>();
+        foreach (var m in input)
+        {
+            if (m == null || string.IsNullOrWhiteSpace(m.ModelId)) continue;
+            var modelId = m.ModelId.Trim();
+            if (!seen.Add(modelId)) continue;
+            result.Add(new ExchangeModel
+            {
+                ModelId = modelId,
+                DisplayName = string.IsNullOrWhiteSpace(m.DisplayName) ? null : m.DisplayName!.Trim(),
+                ModelType = string.IsNullOrWhiteSpace(m.ModelType) ? "chat" : m.ModelType!.Trim().ToLowerInvariant(),
+                Description = string.IsNullOrWhiteSpace(m.Description) ? null : m.Description!.Trim(),
+                Enabled = m.Enabled ?? true
+            });
+        }
+        return result;
     }
 
     /// <summary>
@@ -279,7 +417,7 @@ public class ExchangeController : ControllerBase
         {
             return Ok(ApiResponse<object>.Ok(new
             {
-                standardRequest = standardBody.ToJsonString(new JsonSerializerOptions { WriteIndented = true }),
+                standardRequest = standardBody.ToJsonString(IndentedJsonOptions),
                 transformedRequest = (string?)null,
                 rawResponse = (string?)null,
                 transformedResponse = (string?)null,
@@ -289,14 +427,14 @@ public class ExchangeController : ControllerBase
             }));
         }
 
-        var transformedJson = transformedRequest.ToJsonString(new JsonSerializerOptions { WriteIndented = true });
+        var transformedJson = transformedRequest.ToJsonString(IndentedJsonOptions);
 
         // 3. 如果只做转换预览（不实际发送），直接返回
         if (request.DryRun)
         {
             return Ok(ApiResponse<object>.Ok(new
             {
-                standardRequest = standardBody.ToJsonString(new JsonSerializerOptions { WriteIndented = true }),
+                standardRequest = standardBody.ToJsonString(IndentedJsonOptions),
                 transformedRequest = transformedJson,
                 rawResponse = (string?)null,
                 transformedResponse = (string?)null,
@@ -307,9 +445,19 @@ public class ExchangeController : ControllerBase
             }));
         }
 
-        // 4. 智能路由：根据请求内容决定实际目标 URL
-        var actualTargetUrl = transformer.ResolveTargetUrl(exchange.TargetUrl, standardBody, exchange.TransformerConfig)
-                              ?? exchange.TargetUrl;
+        // 4. 智能路由：URL 模版替换 + 根据请求内容决定实际目标 URL
+        // 对于 {model} 占位符：优先用 standardBody.model；否则回退到 Exchange 的第一个有效模型
+        string? testModel = null;
+        if (standardBody["model"] is JsonValue modelVal && modelVal.TryGetValue<string>(out var mv))
+            testModel = mv;
+        if (string.IsNullOrEmpty(testModel))
+        {
+            var firstModel = exchange.GetEffectiveModels().FirstOrDefault(m => m.Enabled);
+            testModel = firstModel?.ModelId ?? exchange.ModelAlias;
+        }
+        var templatedUrl = PrdAgent.Infrastructure.LlmGateway.LlmGateway.ResolveEndpointTemplate(exchange.TargetUrl, testModel);
+        var actualTargetUrl = transformer.ResolveTargetUrl(templatedUrl, standardBody, exchange.TransformerConfig)
+                              ?? templatedUrl;
 
         var apiKey = ApiKeyCrypto.Decrypt(exchange.TargetApiKeyEncrypted, GetJwtSecret());
         var httpRequest = new HttpRequestMessage(HttpMethod.Post, actualTargetUrl)
@@ -354,7 +502,7 @@ public class ExchangeController : ControllerBase
                     durationMs = (long)(DateTime.UtcNow - startedAt).TotalMilliseconds;
                     return Ok(ApiResponse<object>.Ok(new
                     {
-                        standardRequest = standardBody.ToJsonString(new JsonSerializerOptions { WriteIndented = true }),
+                        standardRequest = standardBody.ToJsonString(IndentedJsonOptions),
                         transformedRequest = transformedJson,
                         rawResponse = rawResponseBody,
                         transformedResponse = (string?)null,
@@ -406,7 +554,7 @@ public class ExchangeController : ControllerBase
                             durationMs = (long)(DateTime.UtcNow - startedAt).TotalMilliseconds;
                             return Ok(ApiResponse<object>.Ok(new
                             {
-                                standardRequest = standardBody.ToJsonString(new JsonSerializerOptions { WriteIndented = true }),
+                                standardRequest = standardBody.ToJsonString(IndentedJsonOptions),
                                 transformedRequest = transformedJson,
                                 rawResponse = rawResponseBody,
                                 transformedResponse = (string?)null,
@@ -426,7 +574,7 @@ public class ExchangeController : ControllerBase
         {
             return Ok(ApiResponse<object>.Ok(new
             {
-                standardRequest = standardBody.ToJsonString(new JsonSerializerOptions { WriteIndented = true }),
+                standardRequest = standardBody.ToJsonString(IndentedJsonOptions),
                 transformedRequest = transformedJson,
                 rawResponse = (string?)null,
                 transformedResponse = (string?)null,
@@ -447,7 +595,7 @@ public class ExchangeController : ControllerBase
                 if (rawJson != null)
                 {
                     var transformedResp = transformer.TransformResponse(rawJson, exchange.TransformerConfig);
-                    transformedResponseJson = transformedResp.ToJsonString(new JsonSerializerOptions { WriteIndented = true });
+                    transformedResponseJson = transformedResp.ToJsonString(IndentedJsonOptions);
                 }
             }
         }
@@ -461,7 +609,7 @@ public class ExchangeController : ControllerBase
         try
         {
             var parsed = JsonNode.Parse(rawResponseBody);
-            formattedRawResponse = parsed?.ToJsonString(new JsonSerializerOptions { WriteIndented = true }) ?? rawResponseBody;
+            formattedRawResponse = parsed?.ToJsonString(IndentedJsonOptions) ?? rawResponseBody;
         }
         catch
         {
@@ -470,7 +618,7 @@ public class ExchangeController : ControllerBase
 
         return Ok(ApiResponse<object>.Ok(new
         {
-            standardRequest = standardBody.ToJsonString(new JsonSerializerOptions { WriteIndented = true }),
+            standardRequest = standardBody.ToJsonString(IndentedJsonOptions),
             transformedRequest = transformedJson,
             rawResponse = formattedRawResponse,
             transformedResponse = transformedResponseJson,
@@ -550,7 +698,10 @@ public class ExchangeController : ControllerBase
         Response.Headers.Append("Cache-Control", "no-cache");
         Response.Headers.Append("X-Accel-Buffering", "no");
 
-        var jsonOpts = new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase };
+        var jsonOpts = new JsonSerializerOptions(JsonSerializerOptions.Default)
+        {
+            PropertyNamingPolicy = JsonNamingPolicy.CamelCase
+        };
         async Task SendEvent(string eventType, object data)
         {
             var json = JsonSerializer.Serialize(data, jsonOpts);
@@ -670,6 +821,15 @@ public class ExchangeController : ControllerBase
             {
                 t.Preset.Name,
                 t.Preset.ModelAlias,
+                t.Preset.ModelAliases,
+                models = t.Preset.Models?.Select(m => new
+                {
+                    m.ModelId,
+                    m.DisplayName,
+                    m.ModelType,
+                    m.Description,
+                    m.Enabled
+                }),
                 t.Preset.TargetUrl,
                 t.Preset.TargetAuthScheme,
                 t.Preset.TransformerType,
@@ -695,18 +855,20 @@ public class ExchangeController : ControllerBase
         if (string.IsNullOrWhiteSpace(request.ApiKey))
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "API Key 不能为空"));
 
-        // 检查别名冲突
-        var alias = template.Preset.ModelAlias;
-        var existing = await _db.ModelExchanges
-            .Find(e => e.ModelAlias == alias)
+        // 检查名称冲突（用户自定义平台名应该唯一可区分）
+        var nameConflict = await _db.ModelExchanges
+            .Find(e => e.Name == template.Preset.Name)
             .FirstOrDefaultAsync(ct);
-        if (existing != null)
-            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, $"ModelAlias '{alias}' 已存在，该模板可能已导入"));
+        if (nameConflict != null)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT,
+                $"已存在同名中继 '{template.Preset.Name}'，该模板可能已导入。如需重复导入请先重命名或删除原有中继。"));
 
         var exchange = new ModelExchange
         {
             Name = template.Preset.Name,
             ModelAlias = template.Preset.ModelAlias,
+            ModelAliases = NormalizeModelAliases(template.Preset.ModelAliases),
+            Models = NormalizeExchangeModels(template.Preset.Models),
             TargetUrl = template.Preset.TargetUrl,
             TargetApiKeyEncrypted = ApiKeyCrypto.Encrypt(request.ApiKey.Trim(), GetJwtSecret()),
             TargetAuthScheme = template.Preset.TargetAuthScheme ?? "Bearer",
@@ -721,7 +883,7 @@ public class ExchangeController : ControllerBase
         _logger.LogInformation("[Exchange] 通过模板导入 Exchange: {Id} / {Name} / template={TemplateId}",
             exchange.Id, exchange.Name, request.TemplateId);
 
-        return Ok(ApiResponse<object>.Ok(new { exchange.Id, exchange.Name, exchange.ModelAlias }));
+        return Ok(ApiResponse<object>.Ok(new { exchange.Id, exchange.Name, modelCount = exchange.Models.Count }));
     }
 
     private string GetJwtSecret() => _config["Jwt:Secret"] ?? "DefaultEncryptionKey32Bytes!!!!";
@@ -734,6 +896,10 @@ public class ExchangeController : ControllerBase
             case "x-api-key":
             case "xapikey":
                 req.Headers.TryAddWithoutValidation("x-api-key", apiKey);
+                break;
+            case "x-goog-api-key":
+            case "xgoogapikey":
+                req.Headers.TryAddWithoutValidation("x-goog-api-key", apiKey);
                 break;
             case "key":
                 req.Headers.Authorization = new AuthenticationHeaderValue("Key", apiKey);
@@ -827,6 +993,32 @@ public static class ExchangeTemplates
                 Enabled = true,
                 Description = "fal.ai 图片生成 - Nano Banana Pro"
             }
+        },
+        new ExchangeTemplate
+        {
+            Id = "gemini-native",
+            Name = "Google Gemini 原生协议",
+            Description = "Google Gemini Native API，一条中继承接多个 Gemini 模型。URL 模版中的 {model} 会在运行时替换为实际模型 ID，所以同一条中继可以同时挂接多个模型（文本对话 + 图像生成都能跑）。",
+            ApiKeyPlaceholder = "Google API Key",
+            ApiKeyHint = "在 https://aistudio.google.com/apikey 获取 API Key，请求头使用 x-goog-api-key",
+            Preset = new ExchangeTemplatePreset
+            {
+                Name = "Google Gemini (原生)",
+                // 新字段：直接给出结构化模型列表，显示名 + modelType 精准标注
+                Models = new List<ExchangeModelRequest>
+                {
+                    new() { ModelId = "gemini-2.5-flash", DisplayName = "Gemini 2.5 Flash", ModelType = "chat", Enabled = true },
+                    new() { ModelId = "gemini-2.5-pro", DisplayName = "Gemini 2.5 Pro", ModelType = "chat", Enabled = true },
+                    new() { ModelId = "gemini-flash-latest", DisplayName = "Gemini Flash (Latest)", ModelType = "chat", Enabled = true },
+                    new() { ModelId = "gemini-3.1-flash-image-preview", DisplayName = "Gemini 3.1 Flash Image", ModelType = "generation", Enabled = true },
+                    new() { ModelId = "gemini-2.5-flash-image", DisplayName = "Gemini 2.5 Flash Image", ModelType = "generation", Enabled = true }
+                },
+                TargetUrl = "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent",
+                TargetAuthScheme = "x-goog-api-key",
+                TransformerType = "gemini-native",
+                Enabled = true,
+                Description = "Gemini 原生协议中继，一条虚拟平台承接多个模型。{model} 占位符在调度时被实际模型 ID 替换。"
+            }
         }
     };
 }
@@ -844,7 +1036,12 @@ public class ExchangeTemplate
 public class ExchangeTemplatePreset
 {
     public string Name { get; set; } = string.Empty;
+    /// <summary>【旧字段】主模型别名（单模型场景）</summary>
     public string ModelAlias { get; set; } = string.Empty;
+    /// <summary>【旧字段】附加别名列表</summary>
+    public List<string>? ModelAliases { get; set; }
+    /// <summary>【新字段】结构化模型列表（推荐）</summary>
+    public List<ExchangeModelRequest>? Models { get; set; }
     public string TargetUrl { get; set; } = string.Empty;
     public string? TargetAuthScheme { get; set; }
     public string? TransformerType { get; set; }
@@ -857,8 +1054,14 @@ public class ExchangeTemplatePreset
 
 public class CreateExchangeRequest
 {
+    /// <summary>虚拟平台名称，用户自定义（如 "我的 Gemini"）</summary>
     public string Name { get; set; } = string.Empty;
-    public string ModelAlias { get; set; } = string.Empty;
+    /// <summary>【旧字段 · 兼容】主模型别名，仅在没给 Models 时使用</summary>
+    public string? ModelAlias { get; set; }
+    /// <summary>【旧字段 · 兼容】附加模型别名列表</summary>
+    public List<string>? ModelAliases { get; set; }
+    /// <summary>模型列表（新接口主推）</summary>
+    public List<ExchangeModelRequest>? Models { get; set; }
     public string TargetUrl { get; set; } = string.Empty;
     public string? TargetApiKey { get; set; }
     public string? TargetAuthScheme { get; set; }
@@ -872,6 +1075,9 @@ public class UpdateExchangeRequest
 {
     public string? Name { get; set; }
     public string? ModelAlias { get; set; }
+    public List<string>? ModelAliases { get; set; }
+    /// <summary>模型列表（新接口主推）</summary>
+    public List<ExchangeModelRequest>? Models { get; set; }
     public string? TargetUrl { get; set; }
     public string? TargetApiKey { get; set; }
     public string? TargetAuthScheme { get; set; }
@@ -879,6 +1085,25 @@ public class UpdateExchangeRequest
     public Dictionary<string, object>? TransformerConfig { get; set; }
     public bool? Enabled { get; set; }
     public string? Description { get; set; }
+}
+
+/// <summary>提交到后端的 ExchangeModel 条目</summary>
+public class ExchangeModelRequest
+{
+    public string ModelId { get; set; } = string.Empty;
+    public string? DisplayName { get; set; }
+    public string? ModelType { get; set; }
+    public string? Description { get; set; }
+    public bool? Enabled { get; set; }
+}
+
+/// <summary>一键体验请求体</summary>
+public class TryModelRequest
+{
+    /// <summary>可选：覆盖默认测试 prompt</summary>
+    public string? Prompt { get; set; }
+    /// <summary>可选：只做请求转换预览，不真实调用上游</summary>
+    public bool? DryRun { get; set; }
 }
 
 public class ExchangeTestRequest

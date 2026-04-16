@@ -16,7 +16,6 @@ import {
   predictNextDispatch,
   resetModelHealth,
 } from '@/services';
-import { getExchanges } from '@/services/real/exchanges';
 import type { ModelGroup, ModelGroupItem, Platform, PoolPrediction } from '@/types';
 import { ModelHealthStatus, PoolStrategyType } from '@/types/modelGroup';
 import {
@@ -113,29 +112,14 @@ export function ModelPoolManagePage() {
   const loadData = async () => {
     setLoading(true);
     try {
-      const [poolsData, platformsData, exchangesData] = await Promise.all([
+      const [poolsData, platformsData] = await Promise.all([
         getModelGroups(),
+        // 后端 getPlatforms 已经把每条 Exchange 作为独立虚拟平台混合返回（kind="exchange"）
+        // 不再在前端硬编码合成 "__exchange__" 虚拟平台
         getPlatforms(),
-        getExchanges(),
       ]);
       setPools(poolsData);
-      const realPlatforms = platformsData.success ? platformsData.data : [];
-      // 注入 Exchange 虚拟平台（仅当存在已启用的 Exchange 时）
-      const hasEnabledExchanges = exchangesData.success && exchangesData.data.some(e => e.enabled);
-      const allPlatforms = hasEnabledExchanges
-        ? [
-            ...realPlatforms,
-            {
-              id: '__exchange__',
-              name: '模型中继 (Exchange)',
-              platformType: 'exchange',
-              apiUrl: '',
-              apiKeyMasked: '',
-              enabled: true,
-            } satisfies Platform,
-          ]
-        : realPlatforms;
-      setPlatforms(allPlatforms);
+      setPlatforms(platformsData.success ? platformsData.data : []);
     } catch (error) {
       toast.error('加载失败', String(error));
     } finally {

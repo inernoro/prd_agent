@@ -32,6 +32,7 @@ import {
   updatePlatform,
   getModelsAdapterInfoBatch,
 } from '@/services';
+import { getExchanges } from '@/services/real/exchanges';
 import type { ModelAdapterInfoBrief } from '@/services/contracts/models';
 import type { Model, Platform } from '@/types/admin';
 import { ModelHealthStatus } from '@/types/modelGroup';
@@ -40,6 +41,7 @@ import { Activity, Check, ChevronLeft, ChevronRight, Clock, Database, DatabaseZa
 import { MapSpinner } from '@/components/ui/VideoLoader';
 import { glassPanel } from '@/lib/glassStyles';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { useBreakpoint } from '@/hooks/useBreakpoint';
 import { apiRequest } from '@/services/real/apiClient';
 import type { LlmModelStatsItem } from '@/services/contracts/llmLogs';
@@ -245,6 +247,7 @@ function aggregateModelStats(items: LlmModelStatsItem[]): Record<string, Aggrega
 
 export default function ModelManagePage() {
   const { isMobile } = useBreakpoint();
+  const [, setSearchParams] = useSearchParams();
   const [platforms, setPlatforms] = useState<Platform[]>([]);
   const [models, setModels] = useState<Model[]>([]);
   const [loading, setLoading] = useState(true);
@@ -328,14 +331,39 @@ export default function ModelManagePage() {
   const load = async (opts?: { silent?: boolean }) => {
     if (!opts?.silent) setLoading(true);
     try {
-      const [p, m, caps] = await Promise.all([getPlatforms(), getModels(), getImageGenSizeCaps()]);
+      const [p, m, caps, ex] = await Promise.all([
+        getPlatforms(),
+        getModels(),
+        getImageGenSizeCaps(),
+        // 拉取所有 Exchange（虚拟中继平台）以便合成它们的模型列表
+        getExchanges(),
+      ]);
       if (p.success) {
         setPlatforms(p.data);
         setSelectedPlatformId((cur) => (cur ? cur : '__all__'));
       }
       if (m.success) {
-        setModels(m.data);
-        // 加载适配器信息（生图模型）
+        // 合成 Exchange 下的虚拟模型条目，使它们出现在平台模型列表中
+        const exchangeSynthModels: Model[] = ex.success
+          ? ex.data.flatMap((exch) =>
+              (exch.models ?? []).map((em) => ({
+                id: `exchange::${exch.id}::${em.modelId}`,
+                name: em.displayName || em.modelId,
+                modelName: em.modelId,
+                platformId: exch.id, // 使用 Exchange 真实 Id（等价于虚拟平台 id）
+                enabled: em.enabled,
+                isMain: false,
+                isIntent: false,
+                isVision: em.modelType === 'vision',
+                isImageGen: em.modelType === 'generation',
+                group: em.modelType,
+                enablePromptCache: false,
+              } as Model))
+            )
+          : [];
+        const combined = [...m.data, ...exchangeSynthModels];
+        setModels(combined);
+        // 加载适配器信息（生图模型，仅真实模型）
         const imageGenModelIds = m.data.filter((x) => x.isImageGen).map((x) => x.id);
         if (imageGenModelIds.length > 0) {
           const adapterRes = await getModelsAdapterInfoBatch(imageGenModelIds);
@@ -901,6 +929,12 @@ export default function ModelManagePage() {
   };
 
   const togglePlatformEnabled = async (p: Platform) => {
+    // 虚拟中继平台不能在此页面切换启用状态，需到「模型中继」页管理
+    if (p.kind === 'exchange' || p.isVirtual) {
+      toast.info('虚拟中继平台请到「模型中继」页面管理');
+      setSearchParams({ tab: 'exchange' });
+      return;
+    }
     if (platformTogglingId) return;
     setPlatformTogglingId(p.id);
     try {
@@ -914,6 +948,11 @@ export default function ModelManagePage() {
 
   const savePlatformInline = async (patch: Partial<PlatformForm> & { apiKey?: string }) => {
     if (!selectedPlatform) return;
+    // 虚拟中继平台（Exchange）不在此页面编辑，请到「模型中继」页
+    if (selectedPlatform.kind === 'exchange' || selectedPlatform.isVirtual) {
+      toast.info('虚拟中继平台请到「模型中继」页面编辑');
+      return;
+    }
     const res = await updatePlatform(selectedPlatform.id, patch);
     if (!res.success) return;
     await load();
@@ -1163,10 +1202,14 @@ export default function ModelManagePage() {
   };
 
   const isAll = selectedPlatformId === '__all__';
+  // 选中的是虚拟中继平台（Exchange）— 其模型由中继管理页维护，这里只读展示
+  const isExchangePlatform = Boolean(
+    selectedPlatform && (selectedPlatform.kind === 'exchange' || selectedPlatform.isVirtual)
+  );
 
   return (
     <div className="h-full min-h-0 flex flex-col gap-5">
-      <div className={`grid gap-5 flex-1 min-h-0 transition-all ${isMobile ? 'grid-cols-1' : platformSidebarCollapsed ? 'lg:grid-cols-[64px_1fr]' : 'lg:grid-cols-[256px_1fr]'}`}>
+      <div className={`grid gap-5 flex-1 min-h-0 transition-all ${isMobile ? 'grid-cols-1' : platformSidebarCollapsed ? 'lg:grid-cols-[64px_1fr]' : 'lg:grid-cols-[320px_1fr]'}`}>
         {/* 左侧：平台列表（导航风格），移动端隐藏 */}
         <GlassCard animated glow className={`p-0 overflow-hidden flex flex-col ${isMobile ? 'hidden' : ''}`}>
           {/* 折叠/展开按钮 */}
@@ -1291,7 +1334,7 @@ export default function ModelManagePage() {
                         e.stopPropagation();
                         onOpenPlatformCtxMenu(e, p);
                       }}
-                      className="inline-flex items-center rounded-full px-2.5 py-1 text-[11px] font-semibold tracking-wide transition-colors hover:brightness-[1.06] disabled:opacity-60 disabled:cursor-not-allowed"
+                      className="shrink-0 inline-flex items-center rounded-full px-2.5 py-1 text-[11px] font-semibold tracking-wide transition-colors hover:brightness-[1.06] disabled:opacity-60 disabled:cursor-not-allowed"
                       style={
                         p.enabled
                           ? { background: 'rgba(34,197,94,0.12)', border: '1px solid rgba(34,197,94,0.28)', color: 'rgba(34,197,94,0.95)' }
@@ -1365,34 +1408,53 @@ export default function ModelManagePage() {
                 e.stopPropagation();
               }}
             >
-              <button
-                type="button"
-                className="w-full flex items-center gap-2 rounded-[12px] px-3 py-2 text-sm hover:bg-white/5"
-                style={{ color: 'var(--text-primary)' }}
-                onClick={() => {
-                  const p = platformCtxMenu.platform;
-                  closePlatformCtxMenu();
-                  if (!p) return;
-                  openEditPlatform(p);
-                }}
-              >
-                <Pencil size={16} />
-                编辑
-              </button>
-              <button
-                type="button"
-                className="w-full flex items-center gap-2 rounded-[12px] px-3 py-2 text-sm hover:bg-white/5"
-                style={{ color: 'rgba(239,68,68,0.9)' }}
-                onClick={() => {
-                  const p = platformCtxMenu.platform;
-                  closePlatformCtxMenu();
-                  if (!p) return;
-                  onDeletePlatform(p);
-                }}
-              >
-                <Trash2 size={16} />
-                删除
-              </button>
+              {(platformCtxMenu.platform?.kind === 'exchange' || platformCtxMenu.platform?.isVirtual) ? (
+                // 虚拟中继平台：只提供跳转入口
+                <button
+                  type="button"
+                  className="w-full flex items-center gap-2 rounded-[12px] px-3 py-2 text-sm hover:bg-white/5"
+                  style={{ color: 'var(--text-primary)' }}
+                  onClick={() => {
+                    closePlatformCtxMenu();
+                    setSearchParams({ tab: 'exchange' });
+                  }}
+                >
+                  <Link2 size={16} />
+                  在「模型中继」页编辑
+                </button>
+              ) : (
+                // 真实平台：正常编辑 / 删除
+                <>
+                  <button
+                    type="button"
+                    className="w-full flex items-center gap-2 rounded-[12px] px-3 py-2 text-sm hover:bg-white/5"
+                    style={{ color: 'var(--text-primary)' }}
+                    onClick={() => {
+                      const p = platformCtxMenu.platform;
+                      closePlatformCtxMenu();
+                      if (!p) return;
+                      openEditPlatform(p);
+                    }}
+                  >
+                    <Pencil size={16} />
+                    编辑
+                  </button>
+                  <button
+                    type="button"
+                    className="w-full flex items-center gap-2 rounded-[12px] px-3 py-2 text-sm hover:bg-white/5"
+                    style={{ color: 'rgba(239,68,68,0.9)' }}
+                    onClick={() => {
+                      const p = platformCtxMenu.platform;
+                      closePlatformCtxMenu();
+                      if (!p) return;
+                      onDeletePlatform(p);
+                    }}
+                  >
+                    <Trash2 size={16} />
+                    删除
+                  </button>
+                </>
+              )}
               <div className="h-px my-1" style={{ background: 'var(--border-subtle)' }} />
               <button
                 type="button"
@@ -1506,7 +1568,7 @@ export default function ModelManagePage() {
                 </span>
               </Tooltip>
 
-              {selectedPlatform && (
+              {selectedPlatform && !isExchangePlatform && (
                 <>
                   <div className="text-xs" style={{ color: 'var(--text-muted)' }}>启用</div>
                   <button
@@ -1539,7 +1601,7 @@ export default function ModelManagePage() {
               <MapSectionLoader />
             ) : selectedPlatform || isAll ? (
               <div className="p-4 space-y-6">
-                {selectedPlatform && (
+                {selectedPlatform && !isExchangePlatform && (
                   <>
                     <div>
                       <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>API 密钥</div>
@@ -1626,6 +1688,26 @@ export default function ModelManagePage() {
                       </div>
                     </div>
                   </>
+                )}
+
+                {selectedPlatform && isExchangePlatform && (
+                  <div
+                    className="flex items-center justify-between rounded-[14px] px-4 py-3"
+                    style={{ background: 'var(--surface-2)', border: '1px solid var(--border-subtle)' }}
+                  >
+                    <div className="text-sm" style={{ color: 'var(--text-muted)' }}>
+                      此平台由「模型中继」驱动，密钥和 API 地址请在中继配置页管理
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setSearchParams({ tab: 'exchange' })}
+                      className="ml-4 shrink-0 flex items-center gap-1.5 rounded-[10px] px-3 py-1.5 text-xs font-semibold transition-colors hover:bg-white/8"
+                      style={{ color: 'var(--accent-primary)', border: '1px solid var(--border-default)' }}
+                    >
+                      <Link2 size={12} />
+                      前往编辑
+                    </button>
+                  </div>
                 )}
 
                 <div>
@@ -1852,16 +1934,23 @@ export default function ModelManagePage() {
                                     </button>
 
                                     {/* 操作按钮组（主/意图/识图/生图）- 用圆角矩形框框选 */}
+                                    {(() => {
+                                      const isExchangeSynth = m.id.startsWith('exchange::');
+                                      const exchangeTip = 'Exchange 模型通过「应用模型池」绑定调度，无需单独设为主/意图/识图/生图';
+                                      const onExchangeNudge = () => {
+                                        toast.info('Exchange 模型通过「应用模型池」绑定');
+                                      };
+                                      return (
                                     <div className="inline-flex items-center gap-1 rounded-[10px] px-1.5 py-1" style={{ border: '1px solid var(--border-default)', background: 'var(--nested-block-bg)' }}>
                                     <Button
                                       variant="ghost"
                                       size="sm"
-                                      onClick={() => onSetMain(m)}
-                                      disabled={m.isMain}
-                                      aria-label={m.isMain ? '主模型' : '设为主模型'}
-                                      title={m.isMain ? '主模型' : '设为主模型'}
+                                      onClick={() => (isExchangeSynth ? onExchangeNudge() : onSetMain(m))}
+                                      disabled={!isExchangeSynth && m.isMain}
+                                      aria-label={isExchangeSynth ? exchangeTip : (m.isMain ? '主模型' : '设为主模型')}
+                                      title={isExchangeSynth ? exchangeTip : (m.isMain ? '主模型' : '设为主模型')}
                                       className={m.isMain ? 'disabled:opacity-100' : ''}
-                                      style={m.isMain ? { color: 'rgba(250,204,21,0.95)' } : { color: 'var(--text-secondary)' }}
+                                      style={m.isMain ? { color: 'rgba(250,204,21,0.95)' } : { color: isExchangeSynth ? 'var(--text-muted)' : 'var(--text-secondary)', opacity: isExchangeSynth ? 0.4 : 1 }}
                                     >
                                       <Star
                                         size={16}
@@ -1873,11 +1962,11 @@ export default function ModelManagePage() {
                                     <Button
                                       variant="ghost"
                                       size="sm"
-                                      onClick={() => (m.isIntent ? onClearIntent(m) : onSetIntent(m))}
-                                      aria-label={m.isIntent ? '取消意图模型' : '设为意图模型'}
-                                      title={m.isIntent ? '取消意图模型（将回退到主模型执行）' : '设为意图模型'}
+                                      onClick={() => (isExchangeSynth ? onExchangeNudge() : (m.isIntent ? onClearIntent(m) : onSetIntent(m)))}
+                                      aria-label={isExchangeSynth ? exchangeTip : (m.isIntent ? '取消意图模型' : '设为意图模型')}
+                                      title={isExchangeSynth ? exchangeTip : (m.isIntent ? '取消意图模型（将回退到主模型执行）' : '设为意图模型')}
                                       className={m.isIntent ? 'disabled:opacity-100' : ''}
-                                      style={m.isIntent ? { color: 'rgba(34,197,94,0.95)' } : { color: 'var(--text-secondary)' }}
+                                      style={m.isIntent ? { color: 'rgba(34,197,94,0.95)' } : { color: isExchangeSynth ? 'var(--text-muted)' : 'var(--text-secondary)', opacity: isExchangeSynth ? 0.4 : 1 }}
                                     >
                                       <Sparkles size={16} className={intentJustSetId === m.id ? 'main-star-pop' : ''} />
                                     </Button>
@@ -1885,11 +1974,11 @@ export default function ModelManagePage() {
                                     <Button
                                       variant="ghost"
                                       size="sm"
-                                      onClick={() => (m.isVision ? onClearVision(m) : onSetVision(m))}
-                                      aria-label={m.isVision ? '图片识别模型' : '设为图片识别模型'}
-                                      title={m.isVision ? '取消图片识别模型（将回退到主模型执行）' : '设为图片识别模型'}
+                                      onClick={() => (isExchangeSynth ? onExchangeNudge() : (m.isVision ? onClearVision(m) : onSetVision(m)))}
+                                      aria-label={isExchangeSynth ? exchangeTip : (m.isVision ? '图片识别模型' : '设为图片识别模型')}
+                                      title={isExchangeSynth ? exchangeTip : (m.isVision ? '取消图片识别模型（将回退到主模型执行）' : '设为图片识别模型')}
                                       className={m.isVision ? 'disabled:opacity-100' : ''}
-                                      style={m.isVision ? { color: 'rgba(59,130,246,0.95)' } : { color: 'var(--text-secondary)' }}
+                                      style={m.isVision ? { color: 'rgba(59,130,246,0.95)' } : { color: isExchangeSynth ? 'var(--text-muted)' : 'var(--text-secondary)', opacity: isExchangeSynth ? 0.4 : 1 }}
                                     >
                                       <ScanEye size={16} className={visionJustSetId === m.id ? 'main-star-pop' : ''} />
                                     </Button>
@@ -1897,15 +1986,17 @@ export default function ModelManagePage() {
                                     <Button
                                       variant="ghost"
                                       size="sm"
-                                      onClick={() => (m.isImageGen ? onClearImageGen(m) : onSetImageGen(m))}
-                                      aria-label={m.isImageGen ? '图片生成模型' : '设为图片生成模型'}
-                                      title={m.isImageGen ? '取消图片生成模型（将回退到主模型执行）' : '设为图片生成模型'}
+                                      onClick={() => (isExchangeSynth ? onExchangeNudge() : (m.isImageGen ? onClearImageGen(m) : onSetImageGen(m)))}
+                                      aria-label={isExchangeSynth ? exchangeTip : (m.isImageGen ? '图片生成模型' : '设为图片生成模型')}
+                                      title={isExchangeSynth ? exchangeTip : (m.isImageGen ? '取消图片生成模型（将回退到主模型执行）' : '设为图片生成模型')}
                                       className={m.isImageGen ? 'disabled:opacity-100' : ''}
-                                      style={m.isImageGen ? { color: 'rgba(168,85,247,0.95)' } : { color: 'var(--text-secondary)' }}
+                                      style={m.isImageGen ? { color: 'rgba(168,85,247,0.95)' } : { color: isExchangeSynth ? 'var(--text-muted)' : 'var(--text-secondary)', opacity: isExchangeSynth ? 0.4 : 1 }}
                                     >
                                       <ImagePlus size={16} className={imageGenJustSetId === m.id ? 'main-star-pop' : ''} />
                                     </Button>
                                     </div>
+                                      );
+                                    })()}
 
                                     {(() => {
                                       const caps = imageGenSizeCapsByModelId[m.id];
@@ -2051,9 +2142,10 @@ export default function ModelManagePage() {
               size="sm"
               className="w-[100px]"
               onClick={() => {
-                if (selectedPlatform) openModelPicker();
+                if (selectedPlatform && !isExchangePlatform) openModelPicker();
               }}
-              disabled={!selectedPlatform}
+              disabled={!selectedPlatform || isExchangePlatform}
+              title={isExchangePlatform ? '虚拟中继平台请到「模型中继」页面编辑模型' : undefined}
             >
               管理
             </Button>
@@ -2062,7 +2154,8 @@ export default function ModelManagePage() {
               variant="primary"
               size="sm"
               onClick={openCreateModel}
-              disabled={!selectedPlatform && platforms.length === 0}
+              disabled={(!selectedPlatform && platforms.length === 0) || isExchangePlatform}
+              title={isExchangePlatform ? '虚拟中继平台请到「模型中继」页面编辑模型' : undefined}
             >
               <Plus size={16} />
               添加模型
@@ -2070,7 +2163,19 @@ export default function ModelManagePage() {
 
             <div className="flex-1" />
 
-            {selectedPlatform && (
+            {isExchangePlatform && (
+              <button
+                type="button"
+                onClick={() => setSearchParams({ tab: 'exchange' })}
+                className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-[10px] font-semibold transition-colors hover:bg-white/8"
+                style={{ color: 'var(--accent-primary)', background: 'var(--surface-2)', border: '1px solid var(--border-subtle)' }}
+              >
+                <Link2 size={12} />
+                在「模型中继」页编辑
+              </button>
+            )}
+
+            {selectedPlatform && !isExchangePlatform && (
               <ConfirmTip
                 title={`确认删除“${selectedPlatform.name}”平台？`}
                 description="该操作不可撤销"

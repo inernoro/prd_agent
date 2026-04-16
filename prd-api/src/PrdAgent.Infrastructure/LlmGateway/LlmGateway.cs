@@ -482,8 +482,8 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
 
             if (isExchange)
             {
-                // Exchange 模式：直接使用目标 URL
-                endpoint = resolution.ApiUrl!;
+                // Exchange 模式：直接使用目标 URL，支持 {model} 占位符替换
+                endpoint = ResolveEndpointTemplate(resolution.ApiUrl!, resolution.ActualModel);
             }
             else if (string.IsNullOrWhiteSpace(request.EndpointPath))
             {
@@ -936,6 +936,24 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
     #region Private Methods
 
     /// <summary>
+    /// 将 URL 模版中的 {model} 占位符替换为实际模型 ID。
+    /// 用于 Exchange 模式下一个中继承接多个模型（如 Gemini 原生协议）。
+    /// 不含占位符时原样返回，保证旧数据零影响。
+    /// </summary>
+    public static string ResolveEndpointTemplate(string urlTemplate, string? actualModel)
+    {
+        if (string.IsNullOrWhiteSpace(urlTemplate) || string.IsNullOrWhiteSpace(actualModel))
+            return urlTemplate;
+
+        if (!urlTemplate.Contains("{model}", StringComparison.Ordinal))
+            return urlTemplate;
+
+        // Uri.EscapeDataString 保证 model 名里的特殊字符（极少但有可能）不破坏 URL
+        var encoded = Uri.EscapeDataString(actualModel);
+        return urlTemplate.Replace("{model}", encoded, StringComparison.Ordinal);
+    }
+
+    /// <summary>
     /// 根据认证方案设置 HTTP 请求头
     /// </summary>
     private static void SetAuthHeader(HttpRequestMessage httpRequest, string authScheme, string apiKey)
@@ -945,6 +963,11 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             case "x-api-key":
             case "xapikey":
                 httpRequest.Headers.TryAddWithoutValidation("x-api-key", apiKey);
+                break;
+            case "x-goog-api-key":
+            case "xgoogapikey":
+                // Google Gemini 原生协议认证头
+                httpRequest.Headers.TryAddWithoutValidation("x-goog-api-key", apiKey);
                 break;
             case "key":
                 httpRequest.Headers.Authorization =

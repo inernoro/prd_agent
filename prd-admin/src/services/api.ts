@@ -118,6 +118,8 @@ export const api = {
       forPool: () => '/api/mds/exchanges/for-pool',
       templates: () => '/api/mds/exchanges/templates',
       importFromTemplate: () => '/api/mds/exchanges/import-from-template',
+      tryModel: (id: string, modelId: string) =>
+        `/api/mds/exchanges/${id}/models/${encodeURIComponent(modelId)}/try-it`,
     },
 
     // 调度器配置
