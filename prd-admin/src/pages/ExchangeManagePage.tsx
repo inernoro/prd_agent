@@ -11,18 +11,20 @@ import {
   getExchangeTemplates,
   importExchangeFromTemplate,
 } from '@/services/real/exchanges';
-import type { ModelExchange, CreateExchangeRequest, UpdateExchangeRequest, TransformerTypeOption, ExchangeTemplate } from '@/types/exchange';
-import { AUTH_SCHEME_OPTIONS } from '@/types/exchange';
+import type { ModelExchange, CreateExchangeRequest, UpdateExchangeRequest, TransformerTypeOption, ExchangeTemplate, ExchangeModelInput, ExchangeModel } from '@/types/exchange';
+import { AUTH_SCHEME_OPTIONS, MODEL_TYPE_OPTIONS } from '@/types/exchange';
 import { ExchangeTestPanel } from '@/components/exchange/ExchangeTestPanel';
+import { tryExchangeModel } from '@/services/real/exchanges';
 import {
   ArrowLeftRight,
   Box,
-  Copy,
   Download,
   Edit,
   FlaskConical,
+  Play,
   Plus,
   Trash2,
+  X,
   Zap,
   ZapOff,
 } from 'lucide-react';
@@ -44,10 +46,10 @@ function inferModelType(transformerType: string): string {
 }
 
 type ExchangeForm = {
+  /** 虚拟平台名称（用户自定义） */
   name: string;
-  modelAlias: string;
-  /** 附加别名（UI 以换行分隔字符串形式编辑，保存时拆分成数组） */
-  modelAliasesText: string;
+  /** 挂在此中继下的模型列表 */
+  models: ExchangeModelInput[];
   targetUrl: string;
   targetApiKey: string;
   targetAuthScheme: string;
@@ -69,8 +71,7 @@ const IMAGE_TRANSFER_MODE_OPTIONS = [
 
 const defaultForm: ExchangeForm = {
   name: '',
-  modelAlias: '',
-  modelAliasesText: '',
+  models: [],
   targetUrl: '',
   targetApiKey: '',
   targetAuthScheme: 'Bearer',
@@ -80,14 +81,12 @@ const defaultForm: ExchangeForm = {
   description: '',
 };
 
-/** 把多行文本拆成数组（过滤空行 + trim + 去重） */
-function parseAliasesText(text: string): string[] {
-  const seen = new Set<string>();
-  return text
-    .split(/[\n,]/)
-    .map(s => s.trim())
-    .filter(s => s.length > 0 && !seen.has(s) && (seen.add(s) || true));
-}
+const emptyModel = (): ExchangeModelInput => ({
+  modelId: '',
+  displayName: '',
+  modelType: 'chat',
+  enabled: true,
+});
 
 export function ExchangeManagePage() {
   const [exchanges, setExchanges] = useState<ModelExchange[]>([]);
@@ -119,11 +118,14 @@ export function ExchangeManagePage() {
   const [creatingPool, setCreatingPool] = useState(false);
 
   const handleOpenPoolDialog = (exchange: ModelExchange) => {
-    const modelType = inferModelType(exchange.transformerType);
+    // 取 Exchange 下第一个启用的模型作为默认，兜底用旧 modelAlias
+    const firstModel = (exchange.models ?? []).find(m => m.enabled);
+    const fallbackModelId = firstModel?.modelId ?? exchange.modelAlias ?? '';
+    const modelType = firstModel?.modelType ?? inferModelType(exchange.transformerType);
     setPoolExchange(exchange);
     setPoolForm({
       name: `${exchange.name} 模型池`,
-      code: `pool-${exchange.modelAlias}`,
+      code: `pool-${fallbackModelId || exchange.id.slice(0, 8)}`,
       modelType,
       isDefaultForType: false,
     });
@@ -135,6 +137,10 @@ export function ExchangeManagePage() {
     if (!poolForm.name.trim()) { toast.error('请填写模型池名称'); return; }
     if (!poolForm.code.trim()) { toast.error('请填写模型池代码'); return; }
 
+    const firstModel = (poolExchange.models ?? []).find(m => m.enabled);
+    const modelId = firstModel?.modelId ?? poolExchange.modelAlias ?? '';
+    if (!modelId) { toast.error('该中继未配置任何模型'); return; }
+
     setCreatingPool(true);
     try {
       const req: CreateModelGroupRequest = {
@@ -145,8 +151,8 @@ export function ExchangeManagePage() {
         isDefaultForType: poolForm.isDefaultForType,
         strategyType: PoolStrategyType.FailFast,
         models: [{
-          modelId: poolExchange.modelAlias,
-          platformId: poolExchange.platformId,
+          modelId,
+          platformId: poolExchange.platformId, // 真实 Exchange.Id，不再是 __exchange__
           priority: 0,
           healthStatus: 'Healthy' as any,
           consecutiveFailures: 0,
@@ -154,7 +160,7 @@ export function ExchangeManagePage() {
         }],
       };
       await modelGroupsService.createModelGroup(req);
-      toast.success(`模型池「${poolForm.name}」已创建，包含模型 ${poolExchange.modelAlias}`);
+      toast.success(`模型池「${poolForm.name}」已创建，包含模型 ${modelId}`);
       setShowPoolDialog(false);
     } catch (err: any) {
       toast.error(err.message ?? '创建模型池失败');
@@ -188,8 +194,13 @@ export function ExchangeManagePage() {
     setEditingId(exchange.id);
     setForm({
       name: exchange.name,
-      modelAlias: exchange.modelAlias,
-      modelAliasesText: (exchange.modelAliases ?? []).join('\n'),
+      models: (exchange.models ?? []).map(m => ({
+        modelId: m.modelId,
+        displayName: m.displayName ?? '',
+        modelType: m.modelType || 'chat',
+        description: m.description ?? '',
+        enabled: m.enabled,
+      })),
       targetUrl: exchange.targetUrl,
       targetApiKey: '', // 不回填密钥
       targetAuthScheme: exchange.targetAuthScheme,
@@ -219,11 +230,25 @@ export function ExchangeManagePage() {
   };
 
   const handleSave = async () => {
-    if (!form.name.trim()) { toast.error('请填写名称'); return; }
-    if (!form.modelAlias.trim()) { toast.error('请填写模型别名'); return; }
+    if (!form.name.trim()) { toast.error('请填写虚拟平台名称'); return; }
     if (!form.targetUrl.trim()) { toast.error('请填写目标 URL'); return; }
 
-    const parsedAliases = parseAliasesText(form.modelAliasesText);
+    // 规范化 Models：过滤空行 + 去重
+    const seen = new Set<string>();
+    const normalizedModels: ExchangeModelInput[] = form.models
+      .map(m => ({
+        modelId: m.modelId.trim(),
+        displayName: m.displayName?.trim() || undefined,
+        modelType: m.modelType || 'chat',
+        description: m.description?.trim() || undefined,
+        enabled: m.enabled ?? true,
+      }))
+      .filter(m => m.modelId && !seen.has(m.modelId) && (seen.add(m.modelId) || true));
+
+    if (normalizedModels.length === 0) {
+      toast.error('至少添加一个模型');
+      return;
+    }
 
     setSaving(true);
     try {
@@ -234,8 +259,9 @@ export function ExchangeManagePage() {
         }
         const req: UpdateExchangeRequest = {
           name: form.name.trim(),
-          modelAlias: form.modelAlias.trim(),
-          modelAliases: parsedAliases,
+          models: normalizedModels,
+          // 写入一个 modelAlias 兜底兼容（取第一个模型），不影响实际使用
+          modelAlias: normalizedModels[0].modelId,
           targetUrl: form.targetUrl.trim(),
           targetAuthScheme: form.targetAuthScheme,
           transformerType: form.transformerType,
@@ -261,8 +287,8 @@ export function ExchangeManagePage() {
         }
         const req: CreateExchangeRequest = {
           name: form.name.trim(),
-          modelAlias: form.modelAlias.trim(),
-          modelAliases: parsedAliases,
+          models: normalizedModels,
+          modelAlias: normalizedModels[0].modelId,
           targetUrl: form.targetUrl.trim(),
           targetApiKey: form.targetApiKey.trim() || undefined,
           targetAuthScheme: form.targetAuthScheme,
@@ -310,7 +336,7 @@ export function ExchangeManagePage() {
     try {
       const res = await importExchangeFromTemplate(selectedTemplate.id, templateApiKey.trim());
       if (res.success) {
-        toast.success(`已导入: ${res.data.name} (${res.data.modelAlias})`);
+        toast.success(`已导入虚拟平台: ${res.data.name}${res.data.modelCount ? ` (${res.data.modelCount} 个模型)` : ''}`);
         setShowTemplateDialog(false);
         loadData();
       } else {
@@ -318,6 +344,25 @@ export function ExchangeManagePage() {
       }
     } finally {
       setImporting(false);
+    }
+  };
+
+  // 一键体验：调用后端 try-it 端点，将结果塞进 ExchangeTestPanel 的初始数据
+  const [tryingKey, setTryingKey] = useState<string | null>(null);
+  const handleTryModel = async (exchange: ModelExchange, model: ExchangeModel) => {
+    const key = `${exchange.id}:${model.modelId}`;
+    setTryingKey(key);
+    try {
+      const res = await tryExchangeModel(exchange.id, model.modelId);
+      if (res.success) {
+        // 简洁反馈：成功 → toast + 打开测试面板展示详情
+        toast.success(`✓ ${model.modelId} 跑通 (${res.data.durationMs ?? '?'}ms)`);
+        setTestingExchange(exchange);
+      } else {
+        toast.error(res.error?.message ?? '一键体验失败');
+      }
+    } finally {
+      setTryingKey(null);
     }
   };
 
@@ -393,35 +438,13 @@ export function ExchangeManagePage() {
                 </div>
               </div>
 
-              {/* 详情字段 */}
+              {/* Provider 元信息 */}
               <div className="space-y-1.5 text-xs">
                 <div className="flex items-center gap-2">
-                  <span className="text-muted-foreground w-16 shrink-0">模型别名</span>
-                  <code className="flex-1 truncate px-1.5 py-0.5 rounded bg-muted/40 font-mono text-[11px]">
-                    {exchange.modelAlias}
-                  </code>
-                  <button className="p-0.5 rounded hover:bg-muted/50 text-muted-foreground hover:text-foreground"
-                    onClick={() => handleCopyAlias(exchange.modelAlias)} title="复制别名">
-                    <Copy size={12} />
-                  </button>
+                  <span className="text-muted-foreground w-16 shrink-0">虚拟平台</span>
+                  <span className="flex-1 truncate text-foreground/80">{exchange.platformName || exchange.name}</span>
+                  <span className="text-[10px] px-1 py-0.5 rounded bg-primary/10 text-primary/80 border border-primary/20">Exchange</span>
                 </div>
-                {exchange.modelAliases && exchange.modelAliases.length > 0 && (
-                  <div className="flex items-start gap-2">
-                    <span className="text-muted-foreground w-16 shrink-0 mt-0.5">附加别名</span>
-                    <div className="flex-1 flex flex-wrap gap-1">
-                      {exchange.modelAliases.map(alias => (
-                        <code
-                          key={alias}
-                          className="px-1.5 py-0.5 rounded bg-muted/40 font-mono text-[11px] cursor-pointer hover:bg-muted/60"
-                          onClick={() => handleCopyAlias(alias)}
-                          title="点击复制"
-                        >
-                          {alias}
-                        </code>
-                      ))}
-                    </div>
-                  </div>
-                )}
                 <div className="flex items-center gap-2">
                   <span className="text-muted-foreground w-16 shrink-0">目标 URL</span>
                   <span className="flex-1 truncate text-foreground/80">{exchange.targetUrl}</span>
@@ -440,9 +463,47 @@ export function ExchangeManagePage() {
                 </div>
               </div>
 
+              {/* 模型列表 */}
+              <div className="pt-2 border-t border-border/30">
+                <div className="text-[11px] text-muted-foreground mb-1.5">
+                  已挂载模型 ({(exchange.models ?? []).length})
+                </div>
+                {(exchange.models ?? []).length === 0 ? (
+                  <div className="text-[11px] text-muted-foreground/60 italic">（未配置模型，点击编辑添加）</div>
+                ) : (
+                  <div className="space-y-1">
+                    {(exchange.models ?? []).map(m => {
+                      const tryKey = `${exchange.id}:${m.modelId}`;
+                      const isTrying = tryingKey === tryKey;
+                      return (
+                        <div key={m.modelId} className="flex items-center gap-2 text-xs">
+                          <code
+                            className="flex-1 truncate px-1.5 py-0.5 rounded bg-muted/40 font-mono text-[11px] cursor-pointer hover:bg-muted/60"
+                            onClick={() => handleCopyAlias(m.modelId)}
+                            title="点击复制 ModelId"
+                          >
+                            {m.displayName ? `${m.displayName} · ${m.modelId}` : m.modelId}
+                          </code>
+                          <span className="text-[10px] text-muted-foreground/70">{m.modelType}</span>
+                          {!m.enabled && <span className="text-[10px] text-muted-foreground/50">(禁用)</span>}
+                          <button
+                            className="p-0.5 rounded hover:bg-primary/10 text-muted-foreground hover:text-primary disabled:opacity-50"
+                            onClick={() => handleTryModel(exchange, m)}
+                            disabled={!m.enabled || isTrying}
+                            title="一键体验"
+                          >
+                            <Play size={12} />
+                          </button>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+
               {/* 底部使用提示 */}
               <div className="pt-2 border-t border-border/30 text-[11px] text-muted-foreground/60">
-                在模型池中选择平台「{exchange.platformName}」+ 模型「{exchange.modelAlias}」即可使用
+                在模型池管理页选择平台「{exchange.platformName || exchange.name}」下的任意模型即可使用
               </div>
             </GlassCard>
           ))}
@@ -522,9 +583,19 @@ export function ExchangeManagePage() {
                     </div>
 
                     <div className="text-xs text-muted-foreground space-y-1 p-2 rounded bg-muted/20">
-                      <div>将创建: <strong>{selectedTemplate.preset.name}</strong></div>
-                      <div>模型别名: <code className="px-1 py-0.5 rounded bg-muted/40">{selectedTemplate.preset.modelAlias}</code></div>
-                      <div className="truncate">目标: {selectedTemplate.preset.targetUrl}</div>
+                      <div>将创建虚拟平台: <strong>{selectedTemplate.preset.name}</strong></div>
+                      {(selectedTemplate.preset.models && selectedTemplate.preset.models.length > 0) ? (
+                        <div>包含模型: <strong>{selectedTemplate.preset.models.length}</strong> 个
+                          <div className="mt-1 flex flex-wrap gap-1">
+                            {selectedTemplate.preset.models.map(m => (
+                              <code key={m.modelId} className="px-1 py-0.5 rounded bg-muted/40 text-[10px]">{m.modelId}</code>
+                            ))}
+                          </div>
+                        </div>
+                      ) : selectedTemplate.preset.modelAlias ? (
+                        <div>模型: <code className="px-1 py-0.5 rounded bg-muted/40">{selectedTemplate.preset.modelAlias}</code></div>
+                      ) : null}
+                      <div className="truncate">目标 URL: {selectedTemplate.preset.targetUrl}</div>
                     </div>
                   </div>
                 )}
@@ -642,33 +713,90 @@ export function ExchangeManagePage() {
               />
             </div>
 
-            {/* 模型别名（主） */}
+            {/* 模型列表（一中继 = 虚拟平台 + N 个模型） */}
             <div>
-              <label className="block text-sm font-medium mb-1">主模型别名 (ModelAlias)</label>
-              <input
-                className="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm font-mono"
-                placeholder="例如: nano-banana-pro-edit"
-                value={form.modelAlias}
-                onChange={e => setForm(f => ({ ...f, modelAlias: e.target.value }))}
-              />
-              <div className="text-[11px] text-muted-foreground mt-1">
-                在模型池中作为 ModelId 引用，建议使用 kebab-case
+              <div className="flex items-center justify-between mb-2">
+                <label className="block text-sm font-medium">模型列表</label>
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  onClick={() => setForm(f => ({ ...f, models: [...f.models, emptyModel()] }))}
+                >
+                  <Plus size={12} className="mr-1" /> 添加模型
+                </Button>
               </div>
-            </div>
+              <div className="text-[11px] text-muted-foreground mb-2">
+                此虚拟平台下的可用模型。ModelId 会拼进 URL 模版的 <code className="px-1 py-0.5 rounded bg-muted/40">{'{model}'}</code> 占位符。
+              </div>
 
-            {/* 附加模型别名（一中继多模型） */}
-            <div>
-              <label className="block text-sm font-medium mb-1">附加模型别名 (可选)</label>
-              <textarea
-                className="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm font-mono resize-none"
-                rows={3}
-                placeholder={'每行一个，或用逗号分隔\n例如:\ngemini-3.1-flash\ngemini-3.1-flash-image-preview\ngemini-3.0-pro'}
-                value={form.modelAliasesText}
-                onChange={e => setForm(f => ({ ...f, modelAliasesText: e.target.value }))}
-              />
-              <div className="text-[11px] text-muted-foreground mt-1">
-                同一 Provider 承接多个模型时使用（如 Gemini 原生协议）。每个别名在模型池选择器中会展开为独立条目；URL 模版中的 <code className="px-1 py-0.5 rounded bg-muted/40">{'{model}'}</code> 会被实际调用的模型 ID 替换。
-              </div>
+              {form.models.length === 0 ? (
+                <div className="p-4 text-center text-xs text-muted-foreground border border-dashed border-border rounded-lg">
+                  暂无模型，点击上方「添加模型」开始配置
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  {form.models.map((m, idx) => (
+                    <div key={idx} className="p-2 rounded-lg border border-border/60 bg-muted/20 space-y-1.5">
+                      <div className="grid grid-cols-[1fr_1fr_110px_32px] gap-1.5 items-center">
+                        <input
+                          className="px-2 py-1.5 rounded border border-border bg-background text-xs font-mono"
+                          placeholder="ModelId (如 gemini-2.5-flash)"
+                          value={m.modelId}
+                          onChange={e => setForm(f => ({
+                            ...f,
+                            models: f.models.map((x, i) => i === idx ? { ...x, modelId: e.target.value } : x)
+                          }))}
+                        />
+                        <input
+                          className="px-2 py-1.5 rounded border border-border bg-background text-xs"
+                          placeholder="显示名 (可选)"
+                          value={m.displayName ?? ''}
+                          onChange={e => setForm(f => ({
+                            ...f,
+                            models: f.models.map((x, i) => i === idx ? { ...x, displayName: e.target.value } : x)
+                          }))}
+                        />
+                        <select
+                          className="px-2 py-1.5 rounded border border-border bg-background text-xs"
+                          value={m.modelType || 'chat'}
+                          onChange={e => setForm(f => ({
+                            ...f,
+                            models: f.models.map((x, i) => i === idx ? { ...x, modelType: e.target.value } : x)
+                          }))}
+                        >
+                          {MODEL_TYPE_OPTIONS.map(opt => (
+                            <option key={opt.value} value={opt.value}>{opt.label}</option>
+                          ))}
+                        </select>
+                        <button
+                          className="p-1.5 rounded hover:bg-destructive/10 text-muted-foreground hover:text-destructive"
+                          onClick={() => setForm(f => ({
+                            ...f,
+                            models: f.models.filter((_, i) => i !== idx)
+                          }))}
+                          title="删除"
+                        >
+                          <X size={12} />
+                        </button>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <label className="flex items-center gap-1 text-[11px] text-muted-foreground">
+                          <input
+                            type="checkbox"
+                            className="rounded"
+                            checked={m.enabled ?? true}
+                            onChange={e => setForm(f => ({
+                              ...f,
+                              models: f.models.map((x, i) => i === idx ? { ...x, enabled: e.target.checked } : x)
+                            }))}
+                          />
+                          启用
+                        </label>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
 
             {/* 目标 URL */}

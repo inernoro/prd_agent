@@ -70,7 +70,9 @@ public class PlatformsController : ControllerBase
     private string GetAdminId() => this.GetRequiredUserId();
 
     /// <summary>
-    /// 获取所有平台
+    /// 获取所有平台（含中继作为虚拟平台）
+    /// 返回结果按 CreatedAt 倒序排，虚拟平台（Exchange）与真实平台混合排列。
+    /// 前端通过 <c>kind</c> 字段区分："real" = 正式平台, "exchange" = 中继虚拟平台。
     /// </summary>
     [HttpGet]
     public async Task<IActionResult> GetPlatforms()
@@ -79,22 +81,74 @@ public class PlatformsController : ControllerBase
             .SortByDescending(p => p.CreatedAt)
             .ToListAsync();
 
-        var response = platforms.Select(p => new
+        var exchanges = await _db.ModelExchanges.Find(_ => true)
+            .SortByDescending(e => e.CreatedAt)
+            .ToListAsync();
+
+        var realItems = platforms.Select(p => new PlatformListItem
         {
-            p.Id,
-            p.Name,
-            p.PlatformType,
-            providerId = string.IsNullOrWhiteSpace(p.ProviderId) ? p.PlatformType : p.ProviderId,
-            p.ApiUrl,
-            apiKeyMasked = ApiKeyCrypto.Mask(ApiKeyCrypto.Decrypt(p.ApiKeyEncrypted, GetJwtSecret())),
-            p.Enabled,
-            p.MaxConcurrency,
-            p.Remark,
-            p.CreatedAt,
-            p.UpdatedAt
+            Id = p.Id,
+            Name = p.Name,
+            PlatformType = p.PlatformType,
+            ProviderId = string.IsNullOrWhiteSpace(p.ProviderId) ? p.PlatformType : p.ProviderId,
+            ApiUrl = p.ApiUrl,
+            ApiKeyMasked = ApiKeyCrypto.Mask(ApiKeyCrypto.Decrypt(p.ApiKeyEncrypted, GetJwtSecret())),
+            Enabled = p.Enabled,
+            MaxConcurrency = p.MaxConcurrency,
+            Remark = p.Remark,
+            CreatedAt = p.CreatedAt,
+            UpdatedAt = p.UpdatedAt,
+            Kind = "real",
+            IsVirtual = false
         });
 
-        return Ok(ApiResponse<object>.Ok(response));
+        // 每条 Exchange 作为一个虚拟平台展示
+        // 其 Id 直接作为 PlatformId（新模型池写入会用此 Id，而不是 "__exchange__"）
+        var exchangeItems = exchanges.Select(e => new PlatformListItem
+        {
+            Id = e.Id,
+            Name = e.Name,
+            PlatformType = "exchange",
+            ProviderId = "exchange",
+            ApiUrl = e.TargetUrl,
+            ApiKeyMasked = ApiKeyCrypto.Mask(ApiKeyCrypto.Decrypt(e.TargetApiKeyEncrypted, GetJwtSecret())),
+            Enabled = e.Enabled,
+            MaxConcurrency = 0,
+            Remark = e.Description,
+            CreatedAt = e.CreatedAt,
+            UpdatedAt = e.UpdatedAt,
+            Kind = "exchange",
+            IsVirtual = true,
+            TransformerType = e.TransformerType
+        });
+
+        var merged = realItems
+            .Concat(exchangeItems)
+            .OrderByDescending(x => x.CreatedAt)
+            .ToList();
+
+        return Ok(ApiResponse<object>.Ok(merged));
+    }
+
+    /// <summary>平台列表返回项（真实平台 + 虚拟中继平台共用）</summary>
+    private class PlatformListItem
+    {
+        public string Id { get; set; } = string.Empty;
+        public string Name { get; set; } = string.Empty;
+        public string PlatformType { get; set; } = string.Empty;
+        public string ProviderId { get; set; } = string.Empty;
+        public string ApiUrl { get; set; } = string.Empty;
+        public string ApiKeyMasked { get; set; } = string.Empty;
+        public bool Enabled { get; set; }
+        public int MaxConcurrency { get; set; }
+        public string? Remark { get; set; }
+        public DateTime CreatedAt { get; set; }
+        public DateTime UpdatedAt { get; set; }
+        /// <summary>"real" 或 "exchange"</summary>
+        public string Kind { get; set; } = "real";
+        public bool IsVirtual { get; set; }
+        /// <summary>仅 Kind=="exchange" 时有值，供 UI 显示转换器类型</summary>
+        public string? TransformerType { get; set; }
     }
 
     /// <summary>
@@ -283,10 +337,29 @@ public class PlatformsController : ControllerBase
 
     /// <summary>
     /// 获取平台可用模型列表（优先从缓存获取，否则从API获取或使用预设列表）
+    /// 如果 id 对应一条 ModelExchange（虚拟平台），返回其 Models 列表。
     /// </summary>
     [HttpGet("{id}/available-models")]
     public async Task<IActionResult> GetAvailableModels(string id)
     {
+        // 先尝试虚拟中继平台：Exchange.Id 作为 PlatformId
+        var exchange = await _db.ModelExchanges.Find(e => e.Id == id).FirstOrDefaultAsync();
+        if (exchange != null)
+        {
+            var effectiveModels = exchange.GetEffectiveModels();
+            var models = effectiveModels
+                .Where(m => m.Enabled)
+                .Select(m => new AvailableModelDto
+                {
+                    ModelName = m.ModelId,
+                    DisplayName = !string.IsNullOrWhiteSpace(m.DisplayName) ? m.DisplayName! : m.ModelId,
+                    Group = m.ModelType,
+                    Tags = new List<string> { m.ModelType }
+                })
+                .ToList();
+            return Ok(ApiResponse<object>.Ok(models));
+        }
+
         var platform = await _db.LLMPlatforms.Find(p => p.Id == id).FirstOrDefaultAsync();
         if (platform == null)
         {
@@ -302,15 +375,15 @@ public class PlatformsController : ControllerBase
         }
 
         // 从API或预设获取模型列表
-        var models = await GetModelsForPlatform(platform, "admin.platforms.available-models");
-        
+        var platformModels = await GetModelsForPlatform(platform, "admin.platforms.available-models");
+
         // 缓存结果
-        if (models.Count > 0)
+        if (platformModels.Count > 0)
         {
-            await _cache.SetAsync(cacheKey, models, ModelsCacheExpiry);
+            await _cache.SetAsync(cacheKey, platformModels, ModelsCacheExpiry);
         }
 
-        return Ok(ApiResponse<object>.Ok(models));
+        return Ok(ApiResponse<object>.Ok(platformModels));
     }
 
     /// <summary>

@@ -177,31 +177,16 @@ public class ModelResolver : IModelResolver
             }
 
             // ========== Exchange 中继检测 ==========
-            // 检查模型是否为 Exchange 中继模型（PlatformId == "__exchange__"）
-            if (selectedModel.PlatformId == ModelResolverConstants.ExchangePlatformId)
+            // 模型池中的 Exchange 条目有两种可能的 PlatformId：
+            //   A) "__exchange__"（旧数据，legacy virtual platform id）
+            //      → 按 ModelId 去 ModelExchanges 里找匹配 ModelAlias / ModelAliases / Models[].ModelId 的
+            //   B) 真实 Exchange.Id（新数据，虚拟平台作为一等公民）
+            //      → 按 Id 直接查 ModelExchange
+            // 找到 Exchange 则走中继路径；找不到则降级到下面的普通平台分支。
+            ModelExchange? exchange = await FindExchangeForPoolItemAsync(selectedModel, ct);
+
+            if (exchange != null)
             {
-                // 支持两种匹配：
-                //   1) ModelAlias（单中继单模型，旧数据）
-                //   2) ModelAliases 列表（单中继多模型，新增 Gemini 等 Provider 级中继使用）
-                var exchangeFilter = Builders<ModelExchange>.Filter.And(
-                    Builders<ModelExchange>.Filter.Eq(e => e.Enabled, true),
-                    Builders<ModelExchange>.Filter.Or(
-                        Builders<ModelExchange>.Filter.Eq(e => e.ModelAlias, selectedModel.ModelId),
-                        Builders<ModelExchange>.Filter.AnyEq(e => e.ModelAliases, selectedModel.ModelId)
-                    )
-                );
-                var exchange = await _db.ModelExchanges
-                    .Find(exchangeFilter)
-                    .FirstOrDefaultAsync(ct);
-
-                if (exchange == null)
-                {
-                    _logger.LogWarning(
-                        "[ModelResolver] Exchange 配置未找到或已禁用: ModelAlias={Alias}",
-                        selectedModel.ModelId);
-                    continue;
-                }
-
                 var exchangeApiKey = string.IsNullOrEmpty(exchange.TargetApiKeyEncrypted)
                     ? null
                     : ApiKeyCrypto.Decrypt(exchange.TargetApiKeyEncrypted, jwtSecret);
@@ -212,7 +197,7 @@ public class ModelResolver : IModelResolver
                     "  ResolutionType: {ResolutionType}\n" +
                     "  ModelGroup: {GroupName} ({GroupId})\n" +
                     "  Exchange: {ExchangeName} ({ExchangeId})\n" +
-                    "  ModelAlias: {Alias}\n" +
+                    "  ModelId: {ModelId}\n" +
                     "  TargetUrl: {TargetUrl}\n" +
                     "  Transformer: {Transformer}",
                     appCallerCode, resolutionType, group.Name, group.Id,
@@ -221,6 +206,15 @@ public class ModelResolver : IModelResolver
 
                 return ModelResolutionResult.FromExchangePool(
                     resolutionType, expectedModel, selectedModel, group, exchange, exchangeApiKey);
+            }
+
+            // 若 PlatformId 是 "__exchange__" 但找不到匹配 Exchange，记录后跳过
+            if (selectedModel.PlatformId == ModelResolverConstants.ExchangePlatformId)
+            {
+                _logger.LogWarning(
+                    "[ModelResolver] Exchange 配置未找到或已禁用: ModelId={ModelId}",
+                    selectedModel.ModelId);
+                continue;
             }
 
             // ========== 普通平台模型 ==========
@@ -482,6 +476,53 @@ public class ModelResolver : IModelResolver
     }
 
     #region Private Methods
+
+    /// <summary>
+    /// 按模型池条目查找对应的 Exchange。支持两种 PlatformId:
+    ///   A) "__exchange__"（旧虚拟平台 id）— 用 ModelId 反查 Exchange.ModelAlias / ModelAliases / Models
+    ///   B) Exchange.Id（新虚拟平台 id）— 直接按 Id 查
+    /// 未匹配时返回 null，由调用方决定降级到普通平台还是跳过。
+    /// </summary>
+    private async Task<ModelExchange?> FindExchangeForPoolItemAsync(
+        ModelGroupItem selectedModel, CancellationToken ct)
+    {
+        if (selectedModel.PlatformId == ModelResolverConstants.ExchangePlatformId)
+        {
+            // A) 旧数据：按 ModelId 反查
+            var legacyFilter = Builders<ModelExchange>.Filter.And(
+                Builders<ModelExchange>.Filter.Eq(e => e.Enabled, true),
+                Builders<ModelExchange>.Filter.Or(
+                    Builders<ModelExchange>.Filter.Eq(e => e.ModelAlias, selectedModel.ModelId),
+                    Builders<ModelExchange>.Filter.AnyEq(e => e.ModelAliases, selectedModel.ModelId),
+                    Builders<ModelExchange>.Filter.ElemMatch(
+                        e => e.Models,
+                        Builders<ExchangeModel>.Filter.Eq(m => m.ModelId, selectedModel.ModelId))
+                )
+            );
+            return await _db.ModelExchanges.Find(legacyFilter).FirstOrDefaultAsync(ct);
+        }
+
+        // B) 新数据：PlatformId 就是 Exchange.Id，直接按 Id 查
+        var byIdFilter = Builders<ModelExchange>.Filter.And(
+            Builders<ModelExchange>.Filter.Eq(e => e.Id, selectedModel.PlatformId),
+            Builders<ModelExchange>.Filter.Eq(e => e.Enabled, true)
+        );
+        var exchange = await _db.ModelExchanges.Find(byIdFilter).FirstOrDefaultAsync(ct);
+        if (exchange == null) return null;
+
+        // 校验 ModelId 在 Exchange 的有效模型列表里
+        var effectiveModels = exchange.GetEffectiveModels();
+        var hit = effectiveModels.Any(m =>
+            m.Enabled && string.Equals(m.ModelId, selectedModel.ModelId, StringComparison.Ordinal));
+        if (!hit)
+        {
+            _logger.LogWarning(
+                "[ModelResolver] Exchange {ExchangeId} ({ExchangeName}) 下未找到启用的模型 {ModelId}",
+                exchange.Id, exchange.Name, selectedModel.ModelId);
+            return null;
+        }
+        return exchange;
+    }
 
     private ModelGroupItem? SelectBestModel(ModelGroup group)
     {
