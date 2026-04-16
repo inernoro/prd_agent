@@ -97,6 +97,8 @@ export function ExchangeManagePage() {
   const [form, setForm] = useState<ExchangeForm>(defaultForm);
   const [saving, setSaving] = useState(false);
   const [testingExchange, setTestingExchange] = useState<ModelExchange | null>(null);
+  // 编辑时检测到旧格式数据（modelAlias 存在但模型无 displayName），提示用户保存以迁移
+  const [isLegacyFormat, setIsLegacyFormat] = useState(false);
 
   // 导入模板状态
   const [showTemplateDialog, setShowTemplateDialog] = useState(false);
@@ -187,6 +189,7 @@ export function ExchangeManagePage() {
   const handleCreate = () => {
     setEditingId(null);
     setForm(defaultForm);
+    setIsLegacyFormat(false);
     setShowDialog(true);
   };
 
@@ -209,6 +212,10 @@ export function ExchangeManagePage() {
       enabled: exchange.enabled,
       description: exchange.description ?? '',
     });
+    // 检测旧格式：有 modelAlias 且所有模型均无 displayName（说明模型来自旧别名字段）
+    const hasLegacyAlias = Boolean(exchange.modelAlias);
+    const allModelsUnnamed = (exchange.models ?? []).every(m => !m.displayName);
+    setIsLegacyFormat(hasLegacyAlias && allModelsUnnamed);
     setShowDialog(true);
   };
 
@@ -702,6 +709,15 @@ export function ExchangeManagePage() {
         maxWidth={540}
         content={
           <div className="space-y-4 pt-2">
+            {/* 旧格式迁移提示 */}
+            {isLegacyFormat && (
+              <div className="flex items-start gap-2 rounded-lg px-3 py-2.5 text-xs"
+                style={{ background: 'rgba(234,179,8,0.08)', border: '1px solid rgba(234,179,8,0.25)', color: 'rgba(234,179,8,0.9)' }}>
+                <span className="mt-0.5 shrink-0">⚠</span>
+                <span>检测到旧格式配置（使用别名字段）。建议为每个模型填写「显示名」后保存，系统将自动迁移到新格式。</span>
+              </div>
+            )}
+
             {/* 名称 */}
             <div>
               <label className="block text-sm font-medium mb-1">名称</label>

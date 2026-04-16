@@ -70,6 +70,7 @@
 | `llm_app_callers` | `LLMAppCaller` | LLM 应用调用者配置 | `appCode` 唯一；`lastCalledAt` |
 | `model_scheduler_config` | `ModelSchedulerConfig` | 模型调度策略配置 | - |
 | `model_test_stubs` | `ModelTestStub` | 模型测试桩（Stub OpenAI 兼容） | - |
+| `model_exchanges` | `ModelExchange` | 模型中继（虚拟平台）。每条记录承载一个非标准上游 API（fal.ai / 豆包 ASR / Gemini 原生），对外伪装成 OpenAI 兼容接口。关键字段：`Name`（虚拟平台名，用户自定义显示）、`TargetUrl`（支持 `{model}` 占位符）、`TransformerType`（决定请求/响应转换逻辑）、`TargetAuthScheme`（Bearer / Key / x-api-key / x-goog-api-key / doubao-asr）、`Models: List<ExchangeModel>`（嵌套：挂在该中继下的模型列表，含 ModelId / DisplayName / ModelType / Description / Enabled）；兼容旧字段 `ModelAlias` + `ModelAliases: List<string>`，读取时 `GetEffectiveModels()` 自动 lazy migration（详见 `design.exchange-virtual-platform.md`） | `ModelAlias` 唯一（源码注册，运行时未自动创建；未来建议换为 `Name` 唯一） |
 | `system_roles` | `SystemRole` | 系统角色定义（RBAC 权限矩阵） | `roleName` 唯一 |
 | `user_preferences` | `UserPreference` | 用户偏好设置 | `userId` 唯一 |
 | `watermark_font_assets` | `WatermarkFontAsset` | 水印字体资产 | `(userId, fontKey)` 唯一 |

@@ -42,6 +42,8 @@ public class PlatformsController : ControllerBase
     private const string ModelsCacheKeyPrefix = "platform:models:v2:";
     private static readonly TimeSpan ModelsCacheExpiry = TimeSpan.FromHours(24);
     private static readonly TimeSpan ReclassifyIdempotencyExpiry = TimeSpan.FromMinutes(15);
+    /// <summary>继承 Default 以包含内置 TypeInfoResolver，避免序列化 JsonDocument/JsonNode 时抛异常</summary>
+    private static readonly JsonSerializerOptions IndentedJsonOptions = new(JsonSerializerOptions.Default) { WriteIndented = true };
 
     public PlatformsController(
         MongoDbContext db,
@@ -930,7 +932,7 @@ public class PlatformsController : ControllerBase
         try
         {
             using var doc = JsonDocument.Parse(s);
-            return JsonSerializer.Serialize(doc, new JsonSerializerOptions { WriteIndented = true });
+            return JsonSerializer.Serialize(doc, IndentedJsonOptions);
         }
         catch
         {

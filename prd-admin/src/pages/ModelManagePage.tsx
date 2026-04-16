@@ -41,6 +41,7 @@ import { Activity, Check, ChevronLeft, ChevronRight, Clock, Database, DatabaseZa
 import { MapSpinner } from '@/components/ui/VideoLoader';
 import { glassPanel } from '@/lib/glassStyles';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { useBreakpoint } from '@/hooks/useBreakpoint';
 import { apiRequest } from '@/services/real/apiClient';
 import type { LlmModelStatsItem } from '@/services/contracts/llmLogs';
@@ -246,6 +247,7 @@ function aggregateModelStats(items: LlmModelStatsItem[]): Record<string, Aggrega
 
 export default function ModelManagePage() {
   const { isMobile } = useBreakpoint();
+  const [, setSearchParams] = useSearchParams();
   const [platforms, setPlatforms] = useState<Platform[]>([]);
   const [models, setModels] = useState<Model[]>([]);
   const [loading, setLoading] = useState(true);
@@ -927,6 +929,12 @@ export default function ModelManagePage() {
   };
 
   const togglePlatformEnabled = async (p: Platform) => {
+    // 虚拟中继平台不能在此页面切换启用状态，需到「模型中继」页管理
+    if (p.kind === 'exchange' || p.isVirtual) {
+      toast.info('虚拟中继平台请到「模型中继」页面管理');
+      setSearchParams({ tab: 'exchange' });
+      return;
+    }
     if (platformTogglingId) return;
     setPlatformTogglingId(p.id);
     try {
@@ -1400,34 +1408,53 @@ export default function ModelManagePage() {
                 e.stopPropagation();
               }}
             >
-              <button
-                type="button"
-                className="w-full flex items-center gap-2 rounded-[12px] px-3 py-2 text-sm hover:bg-white/5"
-                style={{ color: 'var(--text-primary)' }}
-                onClick={() => {
-                  const p = platformCtxMenu.platform;
-                  closePlatformCtxMenu();
-                  if (!p) return;
-                  openEditPlatform(p);
-                }}
-              >
-                <Pencil size={16} />
-                编辑
-              </button>
-              <button
-                type="button"
-                className="w-full flex items-center gap-2 rounded-[12px] px-3 py-2 text-sm hover:bg-white/5"
-                style={{ color: 'rgba(239,68,68,0.9)' }}
-                onClick={() => {
-                  const p = platformCtxMenu.platform;
-                  closePlatformCtxMenu();
-                  if (!p) return;
-                  onDeletePlatform(p);
-                }}
-              >
-                <Trash2 size={16} />
-                删除
-              </button>
+              {(platformCtxMenu.platform?.kind === 'exchange' || platformCtxMenu.platform?.isVirtual) ? (
+                // 虚拟中继平台：只提供跳转入口
+                <button
+                  type="button"
+                  className="w-full flex items-center gap-2 rounded-[12px] px-3 py-2 text-sm hover:bg-white/5"
+                  style={{ color: 'var(--text-primary)' }}
+                  onClick={() => {
+                    closePlatformCtxMenu();
+                    setSearchParams({ tab: 'exchange' });
+                  }}
+                >
+                  <Link2 size={16} />
+                  在「模型中继」页编辑
+                </button>
+              ) : (
+                // 真实平台：正常编辑 / 删除
+                <>
+                  <button
+                    type="button"
+                    className="w-full flex items-center gap-2 rounded-[12px] px-3 py-2 text-sm hover:bg-white/5"
+                    style={{ color: 'var(--text-primary)' }}
+                    onClick={() => {
+                      const p = platformCtxMenu.platform;
+                      closePlatformCtxMenu();
+                      if (!p) return;
+                      openEditPlatform(p);
+                    }}
+                  >
+                    <Pencil size={16} />
+                    编辑
+                  </button>
+                  <button
+                    type="button"
+                    className="w-full flex items-center gap-2 rounded-[12px] px-3 py-2 text-sm hover:bg-white/5"
+                    style={{ color: 'rgba(239,68,68,0.9)' }}
+                    onClick={() => {
+                      const p = platformCtxMenu.platform;
+                      closePlatformCtxMenu();
+                      if (!p) return;
+                      onDeletePlatform(p);
+                    }}
+                  >
+                    <Trash2 size={16} />
+                    删除
+                  </button>
+                </>
+              )}
               <div className="h-px my-1" style={{ background: 'var(--border-subtle)' }} />
               <button
                 type="button"
@@ -1541,7 +1568,7 @@ export default function ModelManagePage() {
                 </span>
               </Tooltip>
 
-              {selectedPlatform && (
+              {selectedPlatform && !isExchangePlatform && (
                 <>
                   <div className="text-xs" style={{ color: 'var(--text-muted)' }}>启用</div>
                   <button
@@ -1574,7 +1601,7 @@ export default function ModelManagePage() {
               <MapSectionLoader />
             ) : selectedPlatform || isAll ? (
               <div className="p-4 space-y-6">
-                {selectedPlatform && (
+                {selectedPlatform && !isExchangePlatform && (
                   <>
                     <div>
                       <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>API 密钥</div>
@@ -1661,6 +1688,26 @@ export default function ModelManagePage() {
                       </div>
                     </div>
                   </>
+                )}
+
+                {selectedPlatform && isExchangePlatform && (
+                  <div
+                    className="flex items-center justify-between rounded-[14px] px-4 py-3"
+                    style={{ background: 'var(--surface-2)', border: '1px solid var(--border-subtle)' }}
+                  >
+                    <div className="text-sm" style={{ color: 'var(--text-muted)' }}>
+                      此平台由「模型中继」驱动，密钥和 API 地址请在中继配置页管理
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setSearchParams({ tab: 'exchange' })}
+                      className="ml-4 shrink-0 flex items-center gap-1.5 rounded-[10px] px-3 py-1.5 text-xs font-semibold transition-colors hover:bg-white/8"
+                      style={{ color: 'var(--accent-primary)', border: '1px solid var(--border-default)' }}
+                    >
+                      <Link2 size={12} />
+                      前往编辑
+                    </button>
+                  </div>
                 )}
 
                 <div>
@@ -2108,12 +2155,15 @@ export default function ModelManagePage() {
             <div className="flex-1" />
 
             {isExchangePlatform && (
-              <div
-                className="text-xs px-2 py-1 rounded"
-                style={{ color: 'var(--text-muted)', background: 'var(--surface-2)' }}
+              <button
+                type="button"
+                onClick={() => setSearchParams({ tab: 'exchange' })}
+                className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-[10px] font-semibold transition-colors hover:bg-white/8"
+                style={{ color: 'var(--accent-primary)', background: 'var(--surface-2)', border: '1px solid var(--border-subtle)' }}
               >
-                此虚拟中继的模型请到「模型中继」页面编辑
-              </div>
+                <Link2 size={12} />
+                在「模型中继」页编辑
+              </button>
             )}
 
             {selectedPlatform && !isExchangePlatform && (
