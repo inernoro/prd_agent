@@ -522,7 +522,7 @@ public class ExecutiveController : ControllerBase
             .GroupBy(d => d.ResolvedById!)
             .ToDictionary(g => g.Key, g => g.Count());
 
-        // --- 图片生成 ---
+        // --- 图片生成（合计，所有来源）---
         var imgItems = await _db.ImageAssets
             .Find(r => r.CreatedAt >= periodStart)
             .Project(r => new { r.OwnerUserId })
@@ -530,6 +530,40 @@ public class ExecutiveController : ControllerBase
         var imageByUser = imgItems
             .Where(r => !string.IsNullOrEmpty(r.OwnerUserId) && userIds.Contains(r.OwnerUserId))
             .GroupBy(r => r.OwnerUserId)
+            .ToDictionary(g => g.Key, g => g.Count());
+
+        // --- 视觉创作 AI 生图（image_gen_runs AppKey=visual-agent, Completed）---
+        var visualGenItems = await _db.ImageGenRuns
+            .Find(r => r.CreatedAt >= periodStart
+                    && r.AppKey == "visual-agent"
+                    && r.Status == ImageGenRunStatus.Completed)
+            .Project(r => new { r.OwnerAdminId })
+            .ToListAsync();
+        var visualGenByUser = visualGenItems
+            .Where(r => !string.IsNullOrEmpty(r.OwnerAdminId) && userIds.Contains(r.OwnerAdminId))
+            .GroupBy(r => r.OwnerAdminId)
+            .ToDictionary(g => g.Key, g => g.Count());
+
+        // --- 文学创作配图（image_gen_runs AppKey=literary-agent, Completed）---
+        var literaryGenItems = await _db.ImageGenRuns
+            .Find(r => r.CreatedAt >= periodStart
+                    && r.AppKey == "literary-agent"
+                    && r.Status == ImageGenRunStatus.Completed)
+            .Project(r => new { r.OwnerAdminId })
+            .ToListAsync();
+        var literaryGenByUser = literaryGenItems
+            .Where(r => !string.IsNullOrEmpty(r.OwnerAdminId) && userIds.Contains(r.OwnerAdminId))
+            .GroupBy(r => r.OwnerAdminId)
+            .ToDictionary(g => g.Key, g => g.Count());
+
+        // --- 上传参考图（upload_artifacts Kind=input_image）---
+        var uploadItems = await _db.UploadArtifacts
+            .Find(r => r.CreatedAt >= periodStart && r.Kind == "input_image")
+            .Project(r => new { r.CreatedByAdminId })
+            .ToListAsync();
+        var uploadByUser = uploadItems
+            .Where(r => !string.IsNullOrEmpty(r.CreatedByAdminId) && userIds.Contains(r.CreatedByAdminId))
+            .GroupBy(r => r.CreatedByAdminId)
             .ToDictionary(g => g.Key, g => g.Count());
 
         // --- 工作流执行 ---
@@ -579,7 +613,10 @@ public class ExecutiveController : ControllerBase
 
         dimensions.Add(new { key = "defects-created", name = "缺陷提交", category = "activity", values = defectsCreatedByUser });
         dimensions.Add(new { key = "defects-resolved", name = "缺陷解决", category = "activity", values = defectsResolvedByUser });
-        dimensions.Add(new { key = "images", name = "图片生成", category = "activity", values = imageByUser });
+        dimensions.Add(new { key = "images", name = "图片合计", category = "activity", values = imageByUser });
+        dimensions.Add(new { key = "image-gen-visual", name = "视觉生图", category = "image", values = visualGenByUser });
+        dimensions.Add(new { key = "image-gen-literary", name = "文学配图", category = "image", values = literaryGenByUser });
+        dimensions.Add(new { key = "image-upload", name = "上传参考图", category = "image", values = uploadByUser });
         dimensions.Add(new { key = "workflows", name = "工作流执行", category = "activity", values = workflowByUser });
         dimensions.Add(new { key = "arena", name = "竞技场对战", category = "activity", values = arenaByUser });
 

@@ -383,11 +383,14 @@ const DIMENSION_META: Record<string, { icon: typeof Bot; color: string; barColor
   'ai-toolbox':       { icon: Zap,           color: D.primary,  barColor: hexAlpha(D.primary, 0.4),   short: '工具箱' },
   'report-agent':     { icon: FileText,      color: D.primary,  barColor: hexAlpha(D.primary, 0.4),   short: '周报' },
   'video-agent':      { icon: Activity,      color: D.primary,  barColor: hexAlpha(D.primary, 0.4),   short: '视频' },
-  'defects-created':  { icon: Bug,           color: D.danger,   barColor: hexAlpha(D.danger, 0.35),   short: '提缺陷' },
-  'defects-resolved': { icon: Bug,           color: D.success,  barColor: hexAlpha(D.success, 0.35),  short: '解缺陷' },
-  'images':           { icon: Image,         color: D.primary,  barColor: hexAlpha(D.primary, 0.4),   short: '图片' },
-  'workflows':        { icon: Zap,           color: D.primary,  barColor: hexAlpha(D.primary, 0.35),  short: '工作流' },
-  'arena':            { icon: Users,         color: D.primary,  barColor: hexAlpha(D.primary, 0.35),  short: '竞技场' },
+  'defects-created':    { icon: Bug,           color: D.danger,   barColor: hexAlpha(D.danger, 0.35),   short: '提缺陷' },
+  'defects-resolved':   { icon: Bug,           color: D.success,  barColor: hexAlpha(D.success, 0.35),  short: '解缺陷' },
+  'images':             { icon: Image,         color: D.primary,  barColor: hexAlpha(D.primary, 0.4),   short: '图片合计' },
+  'image-gen-visual':   { icon: Image,         color: D.primary,  barColor: hexAlpha(D.primary, 0.45),  short: '视觉生图' },
+  'image-gen-literary': { icon: Image,         color: D.primary,  barColor: hexAlpha(D.primary, 0.4),   short: '文学配图' },
+  'image-upload':       { icon: Image,         color: D.primary,  barColor: hexAlpha(D.primary, 0.35),  short: '上传参考图' },
+  'workflows':          { icon: Zap,           color: D.primary,  barColor: hexAlpha(D.primary, 0.35),  short: '工作流' },
+  'arena':              { icon: Users,         color: D.primary,  barColor: hexAlpha(D.primary, 0.35),  short: '竞技场' },
 };
 
 
