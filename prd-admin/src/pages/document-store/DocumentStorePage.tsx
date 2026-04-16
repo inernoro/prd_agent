@@ -541,9 +541,10 @@ function ShareDialog({ storeId, storeName, isPublic, onClose }: {
 }
 
 // ── 空间详情视图（文档列表 + 上传）──
-function StoreDetailView({ storeId, onBack }: {
+function StoreDetailView({ storeId, onBack, onOpenLibrary }: {
   storeId: string;
   onBack: () => void;
+  onOpenLibrary: (storeId: string) => void;
 }) {
   const [store, setStore] = useState<DocumentStore | null>(null);
   const [entries, setEntries] = useState<DocumentEntry[]>([]);
@@ -819,7 +820,7 @@ function StoreDetailView({ storeId, onBack }: {
             {store.isPublic ? (
               <div className="flex items-center gap-1">
                 <button
-                  onClick={() => navigate(`/library/${store.id}`)}
+                  onClick={() => onOpenLibrary(store.id)}
                   className="h-7 px-3 rounded-[8px] text-[11px] font-semibold flex items-center gap-1.5 cursor-pointer transition-all"
                   style={{
                     background: 'rgba(168,85,247,0.15)',
@@ -1236,7 +1237,7 @@ export function DocumentStorePage() {
 
   // 空间详情视图（仅 mine 标签下可进入编辑视图）
   if (selectedStoreId) {
-    return <StoreDetailView storeId={selectedStoreId} onBack={() => { setSelectedStoreId(null); loadStores(); }} />;
+    return <StoreDetailView storeId={selectedStoreId} onBack={() => { setSelectedStoreId(null); loadStores(); }} onOpenLibrary={(id) => navigate(`/library/${id}`)} />;
   }
 
   const tabs: { key: StoreTab; label: string; icon: typeof Library }[] = [
