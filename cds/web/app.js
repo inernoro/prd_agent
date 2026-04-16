@@ -223,16 +223,20 @@ async function api(method, path, body, { poll } = {}) {
   }
   const rawText = await res.text();
   if (!rawText || rawText.trim() === '') {
-    // Empty body. Two common causes:
+    // Empty body. Common causes:
     //   1. Proxy returned 502/503 with no body during a server restart
     //   2. The server closed the connection before writing (extremely
     //      rare but happens under load)
-    // For polling callers we want this to be a QUIET failure — the
-    // next poll will almost certainly succeed. For explicit user
-    // actions we still throw so the caller can show a toast.
+    //   3. HTTP 400 with no body — can happen when the server is
+    //      still booting and middleware rejects the query params.
+    //   4. Response truncated by nginx before flush finished.
+    // UF-18: classify 4xx/5xx empty bodies as transient so that
+    // post-deploy loadBranches() refreshes don't spam the console
+    // when the server is briefly unavailable between SSE-end and
+    // steady-state. Only 2xx empty (unusual) is NOT marked transient.
     const err = new Error(`HTTP ${res.status} 空响应 (服务器可能正在重启,下次轮询会恢复)`);
     err.code = 'empty_body';
-    err.isTransient = true;
+    err.isTransient = res.status >= 400 || res.status === 0;
     throw err;
   }
   let data;
@@ -1032,12 +1036,19 @@ async function loadBranches({ silent } = {}) {
     renderBranches();
     renderCapacityBadge();
   } catch (e) {
-    // UF-14: suppress transient errors during polling (empty body,
-    // proxy 502 during restart, etc). For the first non-silent load
-    // or any non-transient error, still surface to console — those
-    // are real bugs worth investigating.
-    if (silent && e && e.isTransient) {
-      // expected during server restart / proxy hiccup — stay quiet
+    // UF-14/18: suppress transient errors during polling AND during
+    // post-action refreshes. The post-deploy loadBranches() call
+    // commonly lands DURING the server restart window (SSE finishes
+    // → server re-reads state → brief 400/502/503 window → back up).
+    // Logging these as "errors" in the console is misleading — they
+    // are expected and self-healing on the next poll.
+    if (e && e.isTransient) {
+      // expected during server restart / proxy hiccup — stay quiet,
+      // even for non-silent callers. Schedule one retry so the UI
+      // doesn't sit on stale data.
+      if (!silent) {
+        setTimeout(() => { loadBranches({ silent: true }).catch(() => {}); }, 1500);
+      }
     } else {
       console.error('loadBranches:', e);
     }
@@ -8373,6 +8384,38 @@ function _ensureTopologyFsChrome() {
     if (!combo.contains(e.target)) _topologyBranchComboClose();
   });
 
+  // UF-19: ESC key closes the Details panel. Before this fix the panel
+  // could only be dismissed by hitting the (partially hidden) close X
+  // button in the panel header. ESC is the universal "get me out of
+  // this modal-ish thing" key and users tried it unsuccessfully.
+  document.addEventListener('keydown', function (e) {
+    if (e.key !== 'Escape') return;
+    var panel = document.getElementById('topologyFsPanel');
+    if (panel && panel.classList.contains('open')) {
+      e.preventDefault();
+      _topologyClosePanel();
+    }
+  });
+
+  // UF-19: clicking on empty canvas space (not on a node, not on the
+  // panel) closes the Details panel too. Mirrors the Figma / Miro
+  // pattern where clicking background deselects. We hook into the
+  // existing `mousedown` on the canvas wrap and close the panel if
+  // the click isn't on a node or on the panel itself.
+  var canvasWrap = document.querySelector('.topology-canvas-wrap');
+  if (canvasWrap) {
+    canvasWrap.addEventListener('click', function (e) {
+      // Only close if: click is on the wrap itself (empty space), not
+      // a node, and the panel is open.
+      if (e.target.closest('.topology-node')) return;
+      var panel = document.getElementById('topologyFsPanel');
+      if (panel && panel.classList.contains('open')
+          && !panel.contains(e.target)) {
+        _topologyClosePanel();
+      }
+    });
+  }
+
   // Best-effort populate the project name + branch dropdown.
   if (projectId && projectId !== 'default') {
     fetch('/api/projects/' + encodeURIComponent(projectId), { credentials: 'same-origin' })
@@ -8499,25 +8542,90 @@ const TOPO_NODE_RADIUS = 18;
  * Pick a 1-char emoji icon for a service based on its image / id.
  * Falls back to 📦 for unknown app services and 💾 for unknown infra.
  */
+// UF-21: SVG icon library for topology node cards. Previously this
+// returned raw emoji glyphs (🍃 🔺 🐘 🟢 …) which looked "廉价" per
+// the user's feedback — emojis render inconsistently across fonts and
+// don't match Railway's clean brand-neutral vector style.
+//
+// Each entry returns an <svg> string that:
+//   - Uses 22×22 viewBox (fits the 22px-sized `.topology-node-icon` CSS)
+//   - Uses currentColor for fill so CSS can tint it per-state
+//   - Uses a per-service brand hue as default fill
+//
+// For APP services (node.kind === 'app'): we show the GitHub mark
+// unconditionally. Every app in CDS comes from a git repo — the
+// stack (Node / .NET / Python / Rust) is already visible from the
+// image tag row and doesn't need its own icon on the header. This
+// matches the Railway reference screenshot the user pasted.
+//
+// For INFRA services: we fall back to service-specific logos.
+const _TOPO_ICON_GITHUB =
+  '<svg width="22" height="22" viewBox="0 0 22 22" aria-hidden="true">' +
+    '<path fill="#c9d1d9" d="M11 0C4.924 0 0 4.924 0 11c0 4.862 3.152 8.986 7.525 10.444.55.1.75-.238.75-.53 0-.262-.01-1.128-.015-2.045-3.063.666-3.708-1.296-3.708-1.296-.5-1.271-1.22-1.61-1.22-1.61-1-.682.076-.668.076-.668 1.104.078 1.686 1.134 1.686 1.134.982 1.683 2.576 1.197 3.203.915.1-.712.385-1.198.7-1.473-2.444-.278-5.014-1.222-5.014-5.44 0-1.202.43-2.184 1.134-2.954-.114-.278-.492-1.398.108-2.914 0 0 .924-.296 3.026 1.128A10.49 10.49 0 0111 5.317c.934.004 1.876.126 2.754.37 2.1-1.424 3.023-1.128 3.023-1.128.602 1.516.223 2.636.109 2.914.706.77 1.133 1.752 1.133 2.954 0 4.228-2.574 5.16-5.026 5.432.395.341.747 1.01.747 2.037 0 1.471-.013 2.656-.013 3.018 0 .294.198.636.755.529C18.85 19.98 22 15.858 22 11 22 4.924 17.076 0 11 0z"/>' +
+  '</svg>';
+const _TOPO_ICON_MONGO =
+  '<svg width="22" height="22" viewBox="0 0 22 22" aria-hidden="true">' +
+    '<path fill="#13aa52" d="M11 1c-.8 2.5-2.3 4.3-3.7 5.6C5.7 8 4.5 9.9 4.5 13c0 2.8 1.3 5.3 3.3 6.9.6.5 1.3.9 2 1.3l.5-.5c0-.1-.1-.2-.1-.3-.7-.9-1.2-2.1-1.2-3.4V9.3c0-1 .1-1.8.3-2.4.2-.7.5-1.3.9-2C10.6 3.9 11 2.9 11 2v-1z"/>' +
+    '<path fill="#1e6f3d" d="M11 1v1c0 .9.4 1.9.8 2.9.4.7.7 1.3.9 2 .2.6.3 1.4.3 2.4v7.7c0 1.3-.4 2.5-1.2 3.4-.1.1-.2.2-.1.3l.5.5c.7-.4 1.4-.8 2-1.3 2-1.6 3.3-4.1 3.3-6.9 0-3.1-1.2-5-2.8-6.4C13.3 5.3 11.8 3.5 11 1z"/>' +
+    '<rect x="10.5" y="19" width="1" height="2" fill="#13aa52"/>' +
+  '</svg>';
+const _TOPO_ICON_REDIS =
+  '<svg width="22" height="22" viewBox="0 0 22 22" aria-hidden="true">' +
+    '<path fill="#d82c20" d="M11 2.5L2 7l9 4.5L20 7l-9-4.5z"/>' +
+    '<path fill="#a41e1e" d="M2 10l9 4.5L20 10v1.5L11 16l-9-4.5V10z"/>' +
+    '<path fill="#d82c20" d="M2 13.5l9 4.5 9-4.5V15l-9 4.5-9-4.5v-1.5z"/>' +
+  '</svg>';
+const _TOPO_ICON_POSTGRES =
+  '<svg width="22" height="22" viewBox="0 0 22 22" aria-hidden="true">' +
+    '<ellipse cx="11" cy="4" rx="8" ry="2.5" fill="#336791"/>' +
+    '<path fill="#336791" d="M3 4v14c0 1.4 3.6 2.5 8 2.5s8-1.1 8-2.5V4c0 1.4-3.6 2.5-8 2.5S3 5.4 3 4z"/>' +
+    '<path fill="#1d4770" fill-opacity="0.4" d="M3 10v1c0 1.4 3.6 2.5 8 2.5s8-1.1 8-2.5v-1c0 1.4-3.6 2.5-8 2.5S3 11.4 3 10z"/>' +
+  '</svg>';
+const _TOPO_ICON_MYSQL =
+  '<svg width="22" height="22" viewBox="0 0 22 22" aria-hidden="true">' +
+    '<ellipse cx="11" cy="4" rx="8" ry="2.5" fill="#4479a1"/>' +
+    '<path fill="#4479a1" d="M3 4v14c0 1.4 3.6 2.5 8 2.5s8-1.1 8-2.5V4c0 1.4-3.6 2.5-8 2.5S3 5.4 3 4z"/>' +
+    '<path fill="#f29111" fill-opacity="0.8" d="M15 14l-2-2 2-2 2 2-2 2z"/>' +
+  '</svg>';
+const _TOPO_ICON_NGINX =
+  '<svg width="22" height="22" viewBox="0 0 22 22" aria-hidden="true">' +
+    '<path fill="#009639" d="M11 2L3 6.5v9L11 20l8-4.5v-9L11 2zm4.5 12L11 16.5 6.5 14V8L11 5.5 15.5 8v6z"/>' +
+    '<path fill="#fff" d="M9 8v6h1.3V10l2.4 4H14V8h-1.3v4l-2.4-4H9z"/>' +
+  '</svg>';
+const _TOPO_ICON_KAFKA =
+  '<svg width="22" height="22" viewBox="0 0 22 22" aria-hidden="true">' +
+    '<circle cx="5" cy="11" r="2" fill="#231f20"/>' +
+    '<circle cx="11" cy="5" r="2" fill="#231f20"/>' +
+    '<circle cx="11" cy="17" r="2" fill="#231f20"/>' +
+    '<circle cx="17" cy="11" r="2" fill="#231f20"/>' +
+    '<line x1="5" y1="11" x2="11" y2="5" stroke="#666" stroke-width="1"/>' +
+    '<line x1="5" y1="11" x2="11" y2="17" stroke="#666" stroke-width="1"/>' +
+    '<line x1="17" y1="11" x2="11" y2="5" stroke="#666" stroke-width="1"/>' +
+    '<line x1="17" y1="11" x2="11" y2="17" stroke="#666" stroke-width="1"/>' +
+  '</svg>';
+const _TOPO_ICON_GENERIC_DB =
+  '<svg width="22" height="22" viewBox="0 0 22 22" aria-hidden="true">' +
+    '<ellipse cx="11" cy="5" rx="7" ry="2.2" fill="#6366f1"/>' +
+    '<path fill="#6366f1" d="M4 5v12c0 1.2 3.1 2.2 7 2.2s7-1 7-2.2V5c0 1.2-3.1 2.2-7 2.2S4 6.2 4 5z"/>' +
+  '</svg>';
+
 function _topologyNodeIcon(node) {
   const raw = node.raw;
   const image = (raw.dockerImage || '').toLowerCase();
   const id = (raw.id || '').toLowerCase();
   if (node.kind === 'infra') {
-    if (image.includes('mongo') || id.includes('mongo')) return '🍃';
-    if (image.includes('redis') || id.includes('redis')) return '🔺';
-    if (image.includes('postgres') || image.includes('mysql')) return '🐘';
-    if (image.includes('nginx') || image.includes('caddy')) return '🌐';
-    if (image.includes('kafka') || image.includes('rabbit')) return '📨';
-    return '💾';
+    if (image.includes('mongo') || id.includes('mongo')) return _TOPO_ICON_MONGO;
+    if (image.includes('redis') || id.includes('redis')) return _TOPO_ICON_REDIS;
+    if (image.includes('postgres')) return _TOPO_ICON_POSTGRES;
+    if (image.includes('mysql') || image.includes('mariadb')) return _TOPO_ICON_MYSQL;
+    if (image.includes('nginx') || image.includes('caddy')) return _TOPO_ICON_NGINX;
+    if (image.includes('kafka') || image.includes('rabbit')) return _TOPO_ICON_KAFKA;
+    return _TOPO_ICON_GENERIC_DB;
   }
-  // App
-  if (image.includes('node') || image.includes('alpine')) return '🟢';
-  if (image.includes('dotnet') || image.includes('aspnet')) return '🟣';
-  if (image.includes('python')) return '🐍';
-  if (image.includes('rust')) return '🦀';
-  if (image.includes('go:') || image.includes('golang')) return '🐹';
-  return '📦';
+  // App services: always GitHub — matches Railway's reference screenshot.
+  // Stack detection (Node/.NET/Python/etc) lives in the image tag row
+  // below the title, so a per-stack icon on the header is redundant.
+  return _TOPO_ICON_GITHUB;
 }
 
 /**
@@ -8551,6 +8659,15 @@ function _topologyNodeStatus(node, selectedBranchId) {
   if (!selectedBranchId) return 'unknown';
   const branch = branches.find(b => b.id === selectedBranchId);
   if (!branch) return 'unknown';
+  // UF-22: surface "building" state even before the per-service map
+  // has entries. During a fresh deploy the branch-level status flips
+  // to 'building' first, then services populate. Without this check
+  // the node card shows "unknown/--" for the first chunk of the
+  // deploy, which is exactly the "没有明显的部署效果" complaint.
+  if (busyBranches.has(selectedBranchId) || branch.status === 'building' || branch.status === 'starting') {
+    return 'building';
+  }
+  if (branch.status === 'stopping') return 'stopped';
   const svc = branch.services?.[node.raw.id];
   if (!svc) return 'unknown';
   return svc.status || 'idle';
@@ -8699,6 +8816,11 @@ function _renderTopologySvg(layout, ctx) {
     if (hasOverride) nodeClass += ' has-override';
     if (selectedNodeId === raw.id) nodeClass += ' selected';
     else if (selectedNodeId && !connectedNodeIds.has(raw.id)) nodeClass += ' dimmed';
+    // UF-22: card-level deploy animation. Highlights the border +
+    // adds a scanning beam when the node's branch is currently
+    // deploying or starting. Mirrors the list-view's per-card glow.
+    if (status === 'building' || status === 'starting') nodeClass += ' is-building';
+    if (status === 'error') nodeClass += ' is-error';
 
     const clickHandler = isApp
       ? `onclick="event.stopPropagation();_topologyNodeClick('${esc(raw.id)}')"`
@@ -8709,9 +8831,13 @@ function _renderTopologySvg(layout, ctx) {
     //   bottom slot area  = y + (NODE_H - VOLUME_SLOT_H) .. y + NODE_H
     // When there's no volume slot the top area fills the whole card.
     const topAreaH = hasVolumeSlot ? (TOPO_NODE_H - TOPO_VOLUME_SLOT_H) : TOPO_NODE_H;
-    const iconX = x + 30;
-    const iconY = y + 46;                  // vertically centered-ish for the title row
-    const titleX = x + 64;
+    // UF-21: icon is now a 22×22 SVG (not a text glyph), so we wrap it
+    // in an <svg> sub-element positioned via x/y attributes and a
+    // transform. The icon itself already uses currentColor for fills
+    // where possible so CSS can tint it.
+    const iconX = x + 20;                   // left inset for 22px icon
+    const iconY = y + 32;                   // vertical placement in header row
+    const titleX = x + 56;                  // shifted right to clear the icon
     const titleY = y + 50;
     const statusDotX = x + 32;
     const statusDotY = y + topAreaH - 34;  // ~34px above the bottom of the top area
@@ -8724,11 +8850,21 @@ function _renderTopologySvg(layout, ctx) {
     const slotIconX = x + 30;
     const slotTextX = x + 54;
 
+    // UF-21: proper disk glyph for the bottom volume slot — matches the
+    // clean disk-drawer icon Railway uses. SVG sits left-of the volume
+    // name. The y-offset centers it against the text baseline.
     const volumeSlotSvg = hasVolumeSlot
       ? `
         <line class="topology-node-divider" x1="${x + 20}" y1="${slotLineY}" x2="${x + TOPO_NODE_W - 20}" y2="${slotLineY}" />
-        <text class="topology-node-slot-icon" x="${slotIconX}" y="${slotTextY}">🗄️</text>
-        <text class="topology-node-slot-label" x="${slotTextX}" y="${slotTextY}">${volumeName}</text>
+        <g class="topology-node-slot-icon-wrap" transform="translate(${x + 20} ${slotTextY - 10})">
+          <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor">
+            <rect x="2" y="4" width="12" height="8" rx="1.2" ry="1.2" stroke="currentColor" stroke-width="1.2" fill="none" opacity="0.9"/>
+            <line x1="2" y1="8" x2="14" y2="8" stroke="currentColor" stroke-width="1" opacity="0.5"/>
+            <circle cx="4.2" cy="10" r="0.7" fill="currentColor"/>
+            <circle cx="6.2" cy="10" r="0.7" fill="currentColor"/>
+          </svg>
+        </g>
+        <text class="topology-node-slot-label" x="${x + 40}" y="${slotTextY}">${volumeName}</text>
       `
       : '';
 
@@ -8761,8 +8897,9 @@ function _renderTopologySvg(layout, ctx) {
         <title>${esc(tooltip)}</title>
         <rect class="${shapeClass}" x="${x}" y="${y}" width="${TOPO_NODE_W}" height="${TOPO_NODE_H}" rx="${TOPO_NODE_RADIUS}" ry="${TOPO_NODE_RADIUS}" />
 
-        <!-- Icon + Name header -->
-        <text class="topology-node-icon" x="${iconX}" y="${iconY}">${icon}</text>
+        <!-- UF-21: Icon + Name header. Icon is now a 22×22 SVG embedded
+             via a <g> with transform instead of a <text> glyph. -->
+        <g class="topology-node-icon-wrap" transform="translate(${iconX} ${iconY})">${icon}</g>
         <text class="topology-node-label" x="${titleX}" y="${titleY}">${title}</text>
 
         <!-- Status dot + label -->
@@ -10802,6 +10939,14 @@ async function _topologyPanelLoadDeployLogs() {
 
   container.innerHTML = '<div class="tfp-logs-loading">加载部署日志中…</div>';
 
+  // UF-20: previously this function issued `GET /container-logs?profileId=...`
+  // but the server only exposes `POST /container-logs` (body: {profileId}).
+  // GET hit Express's static-file fallback and served index.html —
+  // which is why the Deploy Logs tab was showing raw HTML
+  // (`<div class="modal-header">...`) as log lines. We now use the
+  // correct POST method with profileId in the JSON body for app
+  // services, and keep the existing GET /api/infra/:id/logs for infra.
+  var fetchOptions = { credentials: 'same-origin' };
   var url = null;
   if (kind === 'infra') {
     url = '/api/infra/' + encodeURIComponent(id) + '/logs?tail=200';
@@ -10811,14 +10956,20 @@ async function _topologyPanelLoadDeployLogs() {
       container.innerHTML = '<div class="tfp-logs-empty">没有可用分支</div>';
       return;
     }
-    url = '/api/branches/' + encodeURIComponent(branchId) + '/container-logs?profileId=' + encodeURIComponent(id) + '&tail=200';
+    url = '/api/branches/' + encodeURIComponent(branchId) + '/container-logs';
+    fetchOptions = {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ profileId: id }),
+    };
   } else {
     container.innerHTML = '<div class="tfp-logs-empty">未知服务类型</div>';
     return;
   }
 
   try {
-    var res = await fetch(url, { credentials: 'same-origin' });
+    var res = await fetch(url, fetchOptions);
     if (!res.ok) {
       container.innerHTML = '<div class="tfp-logs-empty">日志暂不可用 (HTTP ' + res.status + ')</div>';
       return;
@@ -10830,6 +10981,12 @@ async function _topologyPanelLoadDeployLogs() {
       text = (b && (b.logs || b.output || b.text || '')) || '';
       if (Array.isArray(b)) text = b.join('\n');
       if (typeof text !== 'string') text = String(text);
+    } else if (ct.indexOf('html') >= 0) {
+      // UF-20 defensive guard: if despite the POST fix the server ever
+      // returns HTML (e.g. reverse-proxy misconfig), don't render the
+      // HTML source as "log lines" — surface a clear error instead.
+      container.innerHTML = '<div class="tfp-logs-empty" style="color:var(--red)">服务器返回了 HTML 而非日志 — 检查反向代理配置是否正确转发 /api/*</div>';
+      return;
     } else {
       text = await res.text();
     }

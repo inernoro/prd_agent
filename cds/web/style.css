@@ -5116,6 +5116,35 @@ a.branch-name:hover { color: var(--accent); }
   opacity: 0.32;
 }
 
+/* UF-22: deploy-in-progress animation for the node card. Amber pulsing
+   border + a faint left-to-right scan line so the user can tell at a
+   glance which service is currently building, matching the list-view's
+   per-card live dot. */
+.topology-node.is-building .topology-node-box {
+  stroke: #f59e0b;
+  stroke-width: 2;
+  animation: topo-node-building-pulse 1.6s ease-in-out infinite;
+}
+@keyframes topo-node-building-pulse {
+  0%, 100% { stroke-opacity: 0.55; filter: drop-shadow(0 0 0 rgba(245,158,11,0)); }
+  50%      { stroke-opacity: 1;    filter: drop-shadow(0 0 6px rgba(245,158,11,0.55)); }
+}
+.topology-node.is-building .topology-node-status-dot {
+  fill: #f59e0b;
+  animation: topo-node-status-pulse 1.2s ease-in-out infinite;
+}
+@keyframes topo-node-status-pulse {
+  0%, 100% { opacity: 1;   transform: scale(1); }
+  50%      { opacity: 0.5; transform: scale(1.25); transform-origin: center; }
+}
+
+/* UF-22: error state — red border, non-animating so it's clearly
+   distinct from the "busy" amber pulse. */
+.topology-node.is-error .topology-node-box {
+  stroke: #ef4444;
+  stroke-width: 2;
+}
+
 /* UF-05: unified card shape — both apps and infra use .topology-node-box.
    The legacy .topology-node-capsule selector kept for backwards compat
    but no longer emitted by the renderer. */
@@ -5131,10 +5160,20 @@ a.branch-name:hover { color: var(--accent); }
   stroke: var(--accent, #10b981);
   stroke-width: 2;
 }
+/* UF-21: old .topology-node-icon was a <text> font-glyph.
+   New .topology-node-icon-wrap is a <g> containing a 22x22 SVG logo. */
 .topology-node-icon {
   font-size: 22px;
   pointer-events: none;
   dominant-baseline: middle;
+}
+.topology-node-icon-wrap {
+  pointer-events: none;
+}
+.topology-node-slot-icon-wrap {
+  color: var(--text-muted);
+  pointer-events: none;
+  opacity: 0.85;
 }
 .topology-node-label {
   fill: var(--text-primary);
@@ -5551,12 +5590,21 @@ body.cds-topology-fs .topology-fs-topbar { left: 60px; }
   padding: 0 !important;
   border: none !important;
   box-shadow: none !important;
-  display: flex !important;
+  /* UF-17 (2026-04-15): do NOT set display:flex here unconditionally
+   * — that made the topbar leak into the list view as a "ghost
+   * toggle" because the base rule at line 5367 uses display:none
+   * and only the `body.cds-topology-fs` scoped rule promotes it to
+   * flex. Override the flex PROPERTIES (align/gap/justify) at the
+   * base level but leave display to the scoped rule below. */
   align-items: center;
   gap: 8px;
   justify-content: space-between;
   flex-wrap: nowrap;
 }
+/* UF-17: re-apply the scoped display rule AFTER our override so it
+ * wins the specificity fight against the earlier `display: none`
+ * base. Both body classes in list view keep topbar hidden. */
+body.cds-topology-fs .topology-fs-topbar { display: flex !important; }
 .topology-fs-topbar-pill {
   display: inline-flex;
   align-items: center;
@@ -5749,9 +5797,13 @@ body.cds-topology-fs .topology-fs-topbar { left: 60px; }
   color: var(--text-muted);
 }
 
-/* UF-08: view mode toggle pill (列表 | 拓扑) in the topology topbar */
+/* UF-08: view mode toggle pill (列表 | 拓扑) in the topology topbar.
+   UF-17: scoped to body.cds-topology-fs so it never leaks into the
+   list view. The toggle is visually INSIDE the topbar, but having
+   the display toggle here too means a future topbar CSS change
+   can't accidentally reveal it outside topology mode. */
 .topology-fs-view-toggle {
-  display: inline-flex;
+  display: none;
   gap: 2px;
   background: var(--bg-elevated);
   border: 1px solid var(--card-border);
@@ -5759,6 +5811,7 @@ body.cds-topology-fs .topology-fs-topbar { left: 60px; }
   padding: 3px;
   margin-left: 8px;
 }
+body.cds-topology-fs .topology-fs-view-toggle { display: inline-flex; }
 .topology-fs-view-toggle-btn {
   display: inline-flex;
   align-items: center;
@@ -6063,20 +6116,44 @@ body.cds-topology-fs .topology-fs-panel.open { transform: translateX(0); }
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* UF-19: make the close button a clear, styled action instead of a
+   near-invisible icon. Previously users couldn't tell it was a close
+   button because it sat behind the floating + Add button at z-index
+   conflict, and had no visible background. Now it has a distinct
+   circular background with a red-tinted hover state. */
 .topology-fs-panel-close {
-  width: 28px;
-  height: 28px;
+  width: 32px;
+  height: 32px;
   display: flex;
   align-items: center;
   justify-content: center;
-  border: none;
-  background: transparent;
-  color: var(--text-muted);
-  border-radius: 6px;
+  border: 1px solid var(--card-border);
+  background: var(--bg-elevated);
+  color: var(--text-secondary);
+  border-radius: 8px;
   cursor: pointer;
-  transition: background 120ms ease, color 120ms ease;
+  transition: background 120ms ease, color 120ms ease, border-color 120ms ease;
+  flex-shrink: 0;
+  /* Make sure the close button always wins z-order against anything
+   * that could overlap it (floating + Add button included). */
+  position: relative;
+  z-index: 1;
 }
-.topology-fs-panel-close:hover { background: var(--bg-elevated); color: var(--text-primary); }
+.topology-fs-panel-close:hover {
+  background: rgba(239, 68, 68, 0.12);
+  color: #ef4444;
+  border-color: rgba(239, 68, 68, 0.4);
+}
+
+/* UF-19: when the Details panel is open, hide the floating + Add button
+   and its menu. They overlap with the close button AND it doesn't make
+   sense to "add a service" while inspecting one — the user's attention
+   is on the inspected service. The button re-appears when the panel
+   closes. */
+body.cds-topology-fs .topology-fs-panel.open ~ .topology-fs-add-btn,
+body.cds-topology-fs .topology-fs-panel.open ~ .topology-fs-add-menu {
+  display: none !important;
+}
 
 .topology-fs-panel-tabs {
   display: flex;
