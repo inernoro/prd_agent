@@ -22,6 +22,7 @@ import {
   Heart,
   Bookmark,
   Users,
+  ArrowUpRight,
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { GlassCard } from '@/components/design/GlassCard';
@@ -48,6 +49,7 @@ import {
   setFolderPrimaryChild,
   rebuildContentIndex,
   addDocumentEntry,
+  updateDocumentEntry,
   updateDocumentStore,
   createDocStoreShareLink,
   listDocStoreShareLinks,
@@ -539,9 +541,10 @@ function ShareDialog({ storeId, storeName, isPublic, onClose }: {
 }
 
 // ── 空间详情视图（文档列表 + 上传）──
-function StoreDetailView({ storeId, onBack }: {
+function StoreDetailView({ storeId, onBack, onOpenLibrary }: {
   storeId: string;
   onBack: () => void;
+  onOpenLibrary: (storeId: string) => void;
 }) {
   const [store, setStore] = useState<DocumentStore | null>(null);
   const [entries, setEntries] = useState<DocumentEntry[]>([]);
@@ -676,6 +679,17 @@ function StoreDetailView({ storeId, onBack }: {
     }
   }, [selectedEntryId]);
 
+  const handleUpdateEntryTags = useCallback(async (entryId: string, tags: string[]) => {
+    const res = await updateDocumentEntry(entryId, { tags });
+    if (res.success) {
+      setEntries(prev => prev.map(entry => entry.id === entryId ? { ...entry, ...res.data, tags: res.data.tags ?? tags } : entry));
+      toast.success(tags.length > 0 ? '标签已更新' : '标签已清空');
+      return;
+    }
+    toast.error('标签更新失败', res.error?.message);
+    throw new Error(res.error?.message ?? '标签更新失败');
+  }, []);
+
   const handleMoveEntry = useCallback(async (entryId: string, targetFolderId: string | null) => {
     const res = await moveDocumentEntry(entryId, targetFolderId);
     if (res.success) {
@@ -693,7 +707,13 @@ function StoreDetailView({ storeId, onBack }: {
       // 更新本地 entries 中的 summary（前 200 字）
       const summary = newContent.length > 200 ? newContent.slice(0, 200) : newContent;
       setEntries(prev => prev.map(e =>
-        e.id === entryId ? { ...e, summary: summary.trim() } : e));
+        e.id === entryId ? {
+          ...e,
+          summary: summary.trim(),
+          updatedAt: res.data.updatedAt ?? e.updatedAt,
+          updatedBy: res.data.updatedBy ?? e.updatedBy,
+          updatedByName: res.data.updatedByName ?? e.updatedByName,
+        } : e));
       toast.success('已保存');
     } else {
       toast.error('保存失败', res.error?.message);
@@ -797,20 +817,52 @@ function StoreDetailView({ storeId, onBack }: {
         actions={
           <div className="flex items-center gap-2">
             {/* 发布到智识殿堂开关 */}
-            <button
-              onClick={handleTogglePublish}
-              disabled={publishing}
-              className="h-7 px-3 rounded-[8px] text-[11px] font-semibold flex items-center gap-1.5 cursor-pointer transition-all"
-              style={{
-                background: store.isPublic ? 'rgba(168,85,247,0.15)' : 'rgba(255,255,255,0.04)',
-                border: store.isPublic ? '1px solid rgba(168,85,247,0.35)' : '1px solid rgba(255,255,255,0.08)',
-                color: store.isPublic ? 'rgba(216,180,254,0.95)' : 'var(--text-muted)',
-              }}
-              title={store.isPublic ? '已发布到智识殿堂，点击取消发布' : '发布到智识殿堂，让更多人看到'}
-            >
-              {publishing ? <MapSpinner size={11} /> : (store.isPublic ? <Globe size={11} /> : <GlobeLock size={11} />)}
-              {store.isPublic ? '已发布' : '发布到智识殿堂'}
-            </button>
+            {store.isPublic ? (
+              <div className="flex items-center gap-1">
+                <button
+                  onClick={() => onOpenLibrary(store.id)}
+                  className="h-7 px-3 rounded-[8px] text-[11px] font-semibold flex items-center gap-1.5 cursor-pointer transition-all"
+                  style={{
+                    background: 'rgba(168,85,247,0.15)',
+                    border: '1px solid rgba(168,85,247,0.35)',
+                    color: 'rgba(216,180,254,0.95)',
+                  }}
+                  title="已发布到智识殿堂，点击前往公开页"
+                >
+                  <Globe size={11} />
+                  已发布
+                  <ArrowUpRight size={11} />
+                </button>
+                <button
+                  onClick={handleTogglePublish}
+                  disabled={publishing}
+                  className="h-7 px-2 rounded-[8px] text-[11px] font-semibold flex items-center gap-1 cursor-pointer transition-all"
+                  style={{
+                    background: 'rgba(255,255,255,0.04)',
+                    border: '1px solid rgba(255,255,255,0.08)',
+                    color: 'var(--text-muted)',
+                  }}
+                  title="取消发布"
+                >
+                  {publishing ? <MapSpinner size={11} /> : <GlobeLock size={11} />}
+                </button>
+              </div>
+            ) : (
+              <button
+                onClick={handleTogglePublish}
+                disabled={publishing}
+                className="h-7 px-3 rounded-[8px] text-[11px] font-semibold flex items-center gap-1.5 cursor-pointer transition-all"
+                style={{
+                  background: 'rgba(255,255,255,0.04)',
+                  border: '1px solid rgba(255,255,255,0.08)',
+                  color: 'var(--text-muted)',
+                }}
+                title="发布到智识殿堂，让更多人看到"
+              >
+                {publishing ? <MapSpinner size={11} /> : <GlobeLock size={11} />}
+                发布到智识殿堂
+              </button>
+            )}
             <Button variant="secondary" size="xs" onClick={() => setShowViewers(true)}>
               <Users size={13} /> 访客
             </Button>
@@ -850,6 +902,7 @@ function StoreDetailView({ storeId, onBack }: {
           onSetPrimary={handleSetPrimary}
           onTogglePin={handleTogglePin}
           onDeleteEntry={handleDeleteEntry}
+          onUpdateEntryTags={handleUpdateEntryTags}
           onMoveEntry={handleMoveEntry}
           onSaveContent={handleSaveContent}
           loadContent={loadContent}
@@ -1184,7 +1237,7 @@ export function DocumentStorePage() {
 
   // 空间详情视图（仅 mine 标签下可进入编辑视图）
   if (selectedStoreId) {
-    return <StoreDetailView storeId={selectedStoreId} onBack={() => { setSelectedStoreId(null); loadStores(); }} />;
+    return <StoreDetailView storeId={selectedStoreId} onBack={() => { setSelectedStoreId(null); loadStores(); }} onOpenLibrary={(id) => navigate(`/library/${id}`)} />;
   }
 
   const tabs: { key: StoreTab; label: string; icon: typeof Library }[] = [

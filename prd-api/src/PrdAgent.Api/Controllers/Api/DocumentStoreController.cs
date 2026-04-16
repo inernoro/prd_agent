@@ -56,6 +56,21 @@ public class DocumentStoreController : ControllerBase
 
     private string GetUserId() => this.GetRequiredUserId();
 
+    private async Task<User?> FindUserByAnyIdAsync(string userId)
+    {
+        return await _db.Users.Find(u => u.UserId == userId).FirstOrDefaultAsync();
+    }
+
+    private async Task<(string userId, string userName)> GetActorInfoAsync()
+    {
+        var userId = GetUserId();
+        var user = await FindUserByAnyIdAsync(userId);
+        var userName = user != null && !string.IsNullOrWhiteSpace(user.DisplayName)
+            ? user.DisplayName
+            : (user?.Username ?? "未知用户");
+        return (userId, userName);
+    }
+
     // ─────────────────────────────────────────────
     // 文档空间 CRUD
     // ─────────────────────────────────────────────
@@ -254,7 +269,7 @@ public class DocumentStoreController : ControllerBase
     [HttpPost("stores/{storeId}/entries")]
     public async Task<IActionResult> AddEntry(string storeId, [FromBody] AddDocumentEntryRequest request)
     {
-        var userId = GetUserId();
+        var (userId, userName) = await GetActorInfoAsync();
         var store = await _db.DocumentStores.Find(s => s.Id == storeId && s.OwnerId == userId).FirstOrDefaultAsync();
         if (store == null)
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "文档空间不存在"));
@@ -277,7 +292,9 @@ public class DocumentStoreController : ControllerBase
             FileSize = request.FileSize,
             Tags = request.Tags ?? new List<string>(),
             Metadata = request.Metadata ?? new Dictionary<string, string>(),
-            CreatedBy = userId
+            CreatedBy = userId,
+            UpdatedBy = userId,
+            UpdatedByName = userName,
         };
 
         await _db.DocumentEntries.InsertOneAsync(entry);
@@ -299,7 +316,7 @@ public class DocumentStoreController : ControllerBase
     [HttpPost("stores/{storeId}/folders")]
     public async Task<IActionResult> CreateFolder(string storeId, [FromBody] CreateDocStoreFolderRequest request)
     {
-        var userId = GetUserId();
+        var (userId, userName) = await GetActorInfoAsync();
         var store = await _db.DocumentStores.Find(s => s.Id == storeId && s.OwnerId == userId).FirstOrDefaultAsync();
         if (store == null)
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "文档空间不存在"));
@@ -325,6 +342,8 @@ public class DocumentStoreController : ControllerBase
             SourceType = DocumentSourceType.Upload,
             ContentType = "application/x-folder",
             CreatedBy = userId,
+            UpdatedBy = userId,
+            UpdatedByName = userName,
         };
 
         await _db.DocumentEntries.InsertOneAsync(folder);
@@ -435,7 +454,7 @@ public class DocumentStoreController : ControllerBase
     [HttpPut("entries/{entryId}")]
     public async Task<IActionResult> UpdateEntry(string entryId, [FromBody] UpdateDocumentEntryRequest request)
     {
-        var userId = GetUserId();
+        var (userId, userName) = await GetActorInfoAsync();
         var entry = await _db.DocumentEntries.Find(e => e.Id == entryId).FirstOrDefaultAsync();
         if (entry == null)
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "文档条目不存在"));
@@ -456,6 +475,8 @@ public class DocumentStoreController : ControllerBase
             updates.Add(Builders<DocumentEntry>.Update.Set(e => e.Metadata, request.Metadata));
 
         updates.Add(Builders<DocumentEntry>.Update.Set(e => e.UpdatedAt, DateTime.UtcNow));
+        updates.Add(Builders<DocumentEntry>.Update.Set(e => e.UpdatedBy, userId));
+        updates.Add(Builders<DocumentEntry>.Update.Set(e => e.UpdatedByName, userName));
 
         await _db.DocumentEntries.UpdateOneAsync(
             e => e.Id == entryId,
@@ -568,7 +589,7 @@ public class DocumentStoreController : ControllerBase
     [HttpPut("entries/{entryId}/move")]
     public async Task<IActionResult> MoveEntry(string entryId, [FromBody] MoveEntryRequest request)
     {
-        var userId = GetUserId();
+        var (userId, userName) = await GetActorInfoAsync();
         var entry = await _db.DocumentEntries.Find(e => e.Id == entryId).FirstOrDefaultAsync();
         if (entry == null)
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "文档条目不存在"));
@@ -590,6 +611,8 @@ public class DocumentStoreController : ControllerBase
             e => e.Id == entryId,
             Builders<DocumentEntry>.Update
                 .Set(e => e.ParentId, string.IsNullOrEmpty(request.ParentId) ? null : request.ParentId)
+                .Set(e => e.UpdatedBy, userId)
+                .Set(e => e.UpdatedByName, userName)
                 .Set(e => e.UpdatedAt, DateTime.UtcNow));
 
         return Ok(ApiResponse<object>.Ok(new { moved = true }));
@@ -599,7 +622,7 @@ public class DocumentStoreController : ControllerBase
     [HttpPut("entries/{entryId}/content")]
     public async Task<IActionResult> UpdateEntryContent(string entryId, [FromBody] UpdateEntryContentRequest request)
     {
-        var userId = GetUserId();
+        var (userId, userName) = await GetActorInfoAsync();
         var entry = await _db.DocumentEntries.Find(e => e.Id == entryId).FirstOrDefaultAsync();
         if (entry == null)
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "文档条目不存在"));
@@ -645,6 +668,8 @@ public class DocumentStoreController : ControllerBase
                 .Set(e => e.DocumentId, entry.DocumentId)
                 .Set(e => e.Summary, summary.Trim())
                 .Set(e => e.ContentIndex, contentIndex.Trim())
+                .Set(e => e.UpdatedBy, userId)
+                .Set(e => e.UpdatedByName, userName)
                 .Set(e => e.UpdatedAt, DateTime.UtcNow));
 
         // 重锚定划词评论：正文更新后，遍历所有 active 评论，用 SelectedText + context 重新定位
@@ -653,6 +678,9 @@ public class DocumentStoreController : ControllerBase
         return Ok(ApiResponse<object>.Ok(new
         {
             updated = true,
+            updatedAt = DateTime.UtcNow,
+            updatedBy = userId,
+            updatedByName = userName,
             inlineCommentsRebound = rebindStats.rebound,
             inlineCommentsOrphaned = rebindStats.orphaned,
         }));
@@ -724,7 +752,7 @@ public class DocumentStoreController : ControllerBase
     [HttpPut("entries/{folderId}/primary-child")]
     public async Task<IActionResult> SetFolderPrimaryChild(string folderId, [FromBody] SetPrimaryEntryRequest request)
     {
-        var userId = GetUserId();
+        var (userId, userName) = await GetActorInfoAsync();
         var folder = await _db.DocumentEntries.Find(e => e.Id == folderId && e.IsFolder).FirstOrDefaultAsync();
         if (folder == null)
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "文件夹不存在"));
@@ -751,6 +779,8 @@ public class DocumentStoreController : ControllerBase
             e => e.Id == folderId,
             Builders<DocumentEntry>.Update
                 .Set(e => e.Metadata, metadata)
+                .Set(e => e.UpdatedBy, userId)
+                .Set(e => e.UpdatedByName, userName)
                 .Set(e => e.UpdatedAt, DateTime.UtcNow));
 
         return Ok(ApiResponse<object>.Ok(new { primaryChildId = request.EntryId }));
@@ -822,7 +852,7 @@ public class DocumentStoreController : ControllerBase
     [RequestSizeLimit(MaxUploadBytes)]
     public async Task<IActionResult> UploadFile(string storeId, [FromForm] IFormFile file, [FromForm] string? parentId = null, CancellationToken ct = default)
     {
-        var userId = GetUserId();
+        var (userId, userName) = await GetActorInfoAsync();
         var store = await _db.DocumentStores.Find(s => s.Id == storeId && s.OwnerId == userId).FirstOrDefaultAsync(ct);
         if (store == null)
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "文档空间不存在"));
@@ -925,6 +955,8 @@ public class DocumentStoreController : ControllerBase
             ContentType = mime,
             FileSize = file.Length,
             CreatedBy = userId,
+            UpdatedBy = userId,
+            UpdatedByName = userName,
             ContentIndex = contentIndex?.Trim(),
         };
         await _db.DocumentEntries.InsertOneAsync(entry, cancellationToken: ct);
@@ -1021,7 +1053,7 @@ public class DocumentStoreController : ControllerBase
     [HttpPost("stores/{storeId}/subscribe")]
     public async Task<IActionResult> AddSubscription(string storeId, [FromBody] AddSubscriptionRequest request)
     {
-        var userId = GetUserId();
+        var (userId, userName) = await GetActorInfoAsync();
         var store = await _db.DocumentStores.Find(s => s.Id == storeId && s.OwnerId == userId).FirstOrDefaultAsync();
         if (store == null)
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "文档空间不存在"));
@@ -1046,6 +1078,8 @@ public class DocumentStoreController : ControllerBase
             ContentType = "text/html",
             Tags = request.Tags ?? new List<string>(),
             CreatedBy = userId,
+            UpdatedBy = userId,
+            UpdatedByName = userName,
         };
 
         await _db.DocumentEntries.InsertOneAsync(entry);
@@ -1066,7 +1100,7 @@ public class DocumentStoreController : ControllerBase
     [HttpPost("stores/{storeId}/subscribe-github")]
     public async Task<IActionResult> AddGitHubSubscription(string storeId, [FromBody] AddGitHubSubscriptionRequest request)
     {
-        var userId = GetUserId();
+        var (userId, userName) = await GetActorInfoAsync();
         var store = await _db.DocumentStores.Find(s => s.Id == storeId && s.OwnerId == userId).FirstOrDefaultAsync();
         if (store == null)
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "文档空间不存在"));
@@ -1098,7 +1132,7 @@ public class DocumentStoreController : ControllerBase
         if (duplicate != null)
             return BadRequest(ApiResponse<object>.Fail("ALREADY_EXISTS", $"该目录已订阅 (ID: {duplicate.Id})"));
 
-        var interval = Math.Clamp(request.SyncIntervalMinutes ?? 1440, 60, 1440); // 1小时 ~ 24小时，默认每天
+        var interval = 1440; // GitHub 目录固定为每日同步一次，首次添加后立即同步
 
         var title = request.Title?.Trim();
         if (string.IsNullOrEmpty(title))
@@ -1115,6 +1149,8 @@ public class DocumentStoreController : ControllerBase
             SyncStatus = DocumentSyncStatus.Syncing, // 立即触发首次同步
             ContentType = "application/x-github-directory",
             CreatedBy = userId,
+            UpdatedBy = userId,
+            UpdatedByName = userName,
             Metadata = new Dictionary<string, string>
             {
                 ["github_owner"] = owner,
@@ -1288,10 +1324,7 @@ public class DocumentStoreController : ControllerBase
             .Limit(limit)
             .ToListAsync();
 
-        // 计算下次同步时间（基于 LastSyncAt + SyncIntervalMinutes）
-        DateTime? nextSyncAt = null;
-        if (entry.LastSyncAt.HasValue && entry.SyncIntervalMinutes is > 0 && !entry.IsPaused)
-            nextSyncAt = entry.LastSyncAt.Value.AddMinutes(entry.SyncIntervalMinutes.Value);
+        var nextSyncAt = DocumentSyncSchedule.GetNextSyncAt(entry);
 
         return Ok(ApiResponse<object>.Ok(new
         {
@@ -1353,9 +1386,9 @@ public class DocumentStoreController : ControllerBase
 
         if (request.SyncIntervalMinutes.HasValue)
         {
-            // GitHub 目录类型最低 1 小时（避免 GitHub API 限流），其他 5 分钟起
-            var min = entry.SourceType == DocumentSourceType.GithubDirectory ? 60 : 5;
-            var clamped = Math.Clamp(request.SyncIntervalMinutes.Value, min, 1440);
+            var clamped = entry.SourceType == DocumentSourceType.GithubDirectory
+                ? 1440
+                : Math.Clamp(request.SyncIntervalMinutes.Value, 5, 1440);
             update = update.Set(e => e.SyncIntervalMinutes, clamped);
             changed = true;
         }
