@@ -5279,6 +5279,16 @@ a.branch-name:hover { color: var(--accent); }
   opacity: 0.1;
 }
 
+/* Dashed bounding box grouping api+admin service nodes */
+.topology-app-group {
+  fill: none;
+  stroke: var(--accent, #10b981);
+  stroke-width: 1.5;
+  stroke-dasharray: 6 4;
+  opacity: 0.35;
+  rx: 20;
+}
+
 .topology-empty {
   display: flex;
   flex-direction: column;
@@ -5523,34 +5533,37 @@ body.cds-topology-fs .topology-card { padding-top: 60px; }
   top: 0;
   left: 0;
   bottom: 0;
-  width: 44px;
+  width: 58px;
   background: var(--bg-primary);
   border-right: 1px solid var(--border, rgba(255,255,255,0.08));
   z-index: 65;
   flex-direction: column;
   align-items: center;
   padding: 14px 0;
-  gap: 6px;
+  gap: 2px;
 }
 body.cds-topology-fs .topology-fs-leftnav { display: flex; }
 body.cds-topology-fs .container,
-body.cds-topology-fs #topologyView { left: 44px !important; }
-body.cds-topology-fs #topologyView { left: 44px; right: 0; }
-body.cds-topology-fs .topology-fs-topbar { left: 60px; }
+body.cds-topology-fs #topologyView { left: 58px !important; }
+body.cds-topology-fs #topologyView { left: 58px; right: 0; }
+body.cds-topology-fs .topology-fs-topbar { left: 74px; }
 
 .topology-fs-leftnav-icon {
-  width: 30px;
-  height: 30px;
+  width: 46px;
+  min-height: 40px;
   display: flex;
+  flex-direction: column;
   align-items: center;
   justify-content: center;
-  border-radius: 7px;
+  gap: 3px;
+  border-radius: 8px;
   color: var(--text-muted);
   cursor: pointer;
   background: transparent;
   border: none;
-  padding: 0;
+  padding: 5px 4px;
   transition: background 120ms ease, color 120ms ease;
+  text-decoration: none;
 }
 .topology-fs-leftnav-icon:hover { background: var(--bg-elevated); color: var(--text-primary); }
 .topology-fs-leftnav-icon.active {
@@ -5559,6 +5572,14 @@ body.cds-topology-fs .topology-fs-topbar { left: 60px; }
 }
 .topology-fs-leftnav-icon.disabled { opacity: 0.35; cursor: not-allowed; }
 .topology-fs-leftnav-spacer { flex: 1; }
+.topology-fs-leftnav-label {
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  color: inherit;
+  white-space: nowrap;
+  line-height: 1;
+}
 .topology-fs-leftnav-avatar {
   width: 28px;
   height: 28px;
@@ -5797,21 +5818,12 @@ body.cds-topology-fs .topology-fs-topbar { display: flex !important; }
   color: var(--text-muted);
 }
 
-/* UF-08: view mode toggle pill (列表 | 拓扑) in the topology topbar.
-   UF-17: scoped to body.cds-topology-fs so it never leaks into the
-   list view. The toggle is visually INSIDE the topbar, but having
-   the display toggle here too means a future topbar CSS change
-   can't accidentally reveal it outside topology mode. */
+/* UF-08: view mode toggle pill moved to left sidebar (topoNavList / topoNavTopology).
+   The topbar toggle div is no longer rendered; this block is kept for backwards
+   compat but is always hidden. */
 .topology-fs-view-toggle {
-  display: none;
-  gap: 2px;
-  background: var(--bg-elevated);
-  border: 1px solid var(--card-border);
-  border-radius: 7px;
-  padding: 3px;
-  margin-left: 8px;
+  display: none !important;
 }
-body.cds-topology-fs .topology-fs-view-toggle { display: inline-flex; }
 .topology-fs-view-toggle-btn {
   display: inline-flex;
   align-items: center;

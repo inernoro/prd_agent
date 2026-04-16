@@ -385,9 +385,8 @@
     }
     .cds-project-card-head {
       display: flex;
-      align-items: flex-start;
-      justify-content: space-between;
-      gap: 10px;
+      align-items: center;
+      gap: 8px;
     }
     .cds-project-card-title {
       font-size: 16px;
@@ -619,15 +618,14 @@
     }
     .cds-service-count strong { color: var(--green); font-weight: 700; }
     .cds-project-card-delete {
-      position: absolute;
-      top: 14px;
-      right: 14px;
-      width: 28px;
-      height: 28px;
+      flex-shrink: 0;
+      margin-left: auto;
+      width: 26px;
+      height: 26px;
       display: none;
       align-items: center;
       justify-content: center;
-      border-radius: 7px;
+      border-radius: 6px;
       background: rgba(244, 63, 94, 0.1);
       border: 1px solid rgba(244, 63, 94, 0.25);
       color: var(--red, #f43f5e);
@@ -1011,7 +1009,7 @@ export CDS_SECRET_KEY="$(openssl rand -hex 32)"          # 可选,加密 token
         </div>
 
         <div id="cp-github-hint" style="display:none;font-size:11px;color:var(--text-muted);margin-bottom:12px;padding:8px 10px;background:var(--bg-elevated);border-radius:7px">
-          💡 GitHub 集成未配置。管理员需在环境变量中设置 <code style="font-family:var(--font-mono,monospace)">CDS_GITHUB_CLIENT_ID</code>。当前只支持粘贴公开仓库 URL。
+          GitHub 集成未配置。管理员需在环境变量中设置 <code style="font-family:var(--font-mono,monospace)">CDS_GITHUB_CLIENT_ID</code>。当前只支持粘贴公开仓库 URL。
         </div>
 
         <div id="cp-divider" style="display:none;text-align:center;font-size:10px;color:var(--text-muted);margin:4px 0 10px;letter-spacing:2px">

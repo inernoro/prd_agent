@@ -276,6 +276,7 @@
       '  <div class="cds-project-card-head">',
       '    <div class="cds-project-card-title">', escapeHtml(project.name), '</div>',
       '    ', cloneBadge,
+      '    ', deleteBtn,
       '  </div>',
       '  <div class="cds-service-strip">', renderServiceStrip(project, services || {}), '</div>',
       errorBlock,
@@ -284,7 +285,6 @@
       '    <span class="cds-service-count"><strong>', totalServices, '</strong> service', totalServices === 1 ? '' : 's', '</span>',
       cloneBtn ? '<span style="flex-shrink:0">' + cloneBtn + '</span>' : '',
       '  </div>',
-      '  ', deleteBtn,
       '</a>',
     ].join('');
   }
@@ -437,7 +437,7 @@
     }
     if (setupBanner) setupBanner.style.display = 'none';
     if (s.connected && s.login && s.login !== '(unknown)') {
-      statusEl.innerHTML = '✅ 已连接 <code style="background:var(--bg-elevated);padding:1px 4px;border-radius:3px">@' + escapeHtml(s.login) + '</code>';
+      statusEl.innerHTML = '<span style="color:var(--green)">✓</span> 已连接 <code style="background:var(--bg-elevated);padding:1px 4px;border-radius:3px">@' + escapeHtml(s.login) + '</code>';
       if (signinBtn) signinBtn.style.display = 'none';
       if (logoutBtn) logoutBtn.style.display = 'flex';
     } else {
@@ -816,7 +816,7 @@
         var statusEl = document.getElementById('gh-device-status');
 
         if (body.status === 'ready') {
-          if (statusEl) statusEl.textContent = '✅ 已连接 @' + (body.login || '');
+          if (statusEl) statusEl.textContent = '✓ 已连接 @' + (body.login || '');
           showToast('GitHub 已连接 @' + (body.login || ''));
           setTimeout(function () {
             closeGithubDeviceModal();
@@ -1148,10 +1148,10 @@
       hintEl.textContent = '粘贴一个 Git URL (会自动 clone)，或者输入一个项目名 (创建空项目)';
       hintEl.style.color = 'var(--text-muted)';
     } else if (parsed.kind === 'url') {
-      hintEl.innerHTML = '📦 识别为 Git 仓库。将创建项目 <strong style="color:var(--text-primary)">' + escapeHtml(parsed.name) + '</strong> 并自动克隆';
+      hintEl.innerHTML = '<svg width="11" height="11" viewBox="0 0 16 16" fill="currentColor" style="vertical-align:-1px"><path d="M8 0L1.5 4v8L8 16l6.5-4V4L8 0zm0 1.5l5 3.1v6.8L8 14.5l-5-3.1V4.6L8 1.5z"/></svg> 识别为 Git 仓库。将创建项目 <strong style="color:var(--text-primary)">' + escapeHtml(parsed.name) + '</strong> 并自动克隆';
       hintEl.style.color = 'var(--green, #10b981)';
     } else {
-      hintEl.innerHTML = '📁 将创建空项目 <strong style="color:var(--text-primary)">' + escapeHtml(parsed.name) + '</strong>（无 Git 集成，可后续补充）';
+      hintEl.innerHTML = '<svg width="11" height="11" viewBox="0 0 16 16" fill="currentColor" style="vertical-align:-1px"><path d="M2 1.75C2 .784 2.784 0 3.75 0h6.586c.464 0 .909.184 1.237.513l2.914 2.914c.329.328.513.773.513 1.237v9.586A1.75 1.75 0 0112.25 16h-8.5A1.75 1.75 0 012 14.25V1.75zm1.75-.25a.25.25 0 00-.25.25v12.5c0 .138.112.25.25.25h8.5a.25.25 0 00.25-.25V6h-2.75A1.75 1.75 0 018 4.25V1.5H3.75zm6.75.062V4.25c0 .138.112.25.25.25h2.688a.252.252 0 00-.011-.013l-2.914-2.914a.272.272 0 00-.013-.011z"/></svg> 将创建空项目 <strong style="color:var(--text-primary)">' + escapeHtml(parsed.name) + '</strong>（无 Git 集成，可后续补充）';
       hintEl.style.color = 'var(--text-secondary)';
     }
   }
@@ -1485,7 +1485,7 @@
         _finalizeCloneModal(modal, closeBtn, projectName, '项目已就绪（构建配置需要手动创建）');
         return;
       }
-      appendCloneLogLine('[profile] ✅ 已创建: ' + profileId + ' (' + detection.dockerImage + ')', 'complete');
+      appendCloneLogLine('[profile] 已创建: ' + profileId + ' (' + detection.dockerImage + ')', 'complete');
       appendCloneLogLine('[profile]   run: ' + detection.runCommand, 'info');
       if (detection.installCommand) {
         appendCloneLogLine('[profile]   install: ' + detection.installCommand, 'info');
@@ -1494,7 +1494,7 @@
         appendCloneLogLine('[profile]   build: ' + detection.buildCommand, 'info');
       }
 
-      _finalizeCloneModal(modal, closeBtn, projectName, '✅ 项目已就绪，可以部署');
+      _finalizeCloneModal(modal, closeBtn, projectName, '项目已就绪，可以部署');
     } catch (err) {
       appendCloneLogLine('[chain-error] ' + (err && err.message ? err.message : err), 'error');
       if (closeBtn) closeBtn.textContent = '关闭';
