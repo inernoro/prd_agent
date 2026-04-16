@@ -157,6 +157,45 @@ async function initStateService(): Promise<void> {
 
 await initStateService();
 
+// ── Auth store (FU-02) ───────────────────────────────────────────────────────
+//
+// CDS_AUTH_BACKEND selects the auth persistence backend:
+//   'memory'  (default) — in-process Map, lost on restart (P2 behaviour)
+//   'mongo'             — MongoDB-backed; requires CDS_MONGO_URI
+//
+// Auth backend is independent of the state storage backend
+// (CDS_STORAGE_MODE). You can mix them freely: e.g. state=json + auth=mongo.
+// See doc/guide.cds-env.md §3 and doc/design.cds-fu-02-auth-store-mongo.md.
+let activeAuthStore: import('./infra/auth-store/memory-store.js').AuthStore | undefined;
+
+async function initAuthStore(): Promise<void> {
+  const authBackend = (process.env.CDS_AUTH_BACKEND || 'memory').toLowerCase();
+
+  if (authBackend === 'mongo') {
+    const mongoUri = process.env.CDS_MONGO_URI;
+    if (!mongoUri) {
+      throw new Error('CDS_AUTH_BACKEND=mongo requires CDS_MONGO_URI to be set');
+    }
+    const mongoDb = process.env.CDS_AUTH_MONGO_DB || process.env.CDS_MONGO_DB || 'cds_auth_db';
+
+    const { RealAuthMongoHandle } = await import('./infra/auth-store/mongo-handle.js');
+    const { MongoAuthStore } = await import('./infra/auth-store/mongo-store.js');
+
+    const handle = new RealAuthMongoHandle({ uri: mongoUri, databaseName: mongoDb, connectTimeoutMs: 5000 });
+    await handle.connect();
+    activeAuthStore = new MongoAuthStore(handle);
+    console.log(`  [auth] backend=mongo (db=${mongoDb})`);
+  } else {
+    if (authBackend !== 'memory') {
+      console.warn(`  [auth] unknown CDS_AUTH_BACKEND '${authBackend}', falling back to memory`);
+    }
+    // activeAuthStore left undefined — server.ts will create MemoryAuthStore
+    console.log('  [auth] backend=memory (default)');
+  }
+}
+
+await initAuthStore();
+
 // ── Sync deploy modes from compose file into existing profiles ──
 {
   const composeFiles = discoverComposeFiles(config.repoRoot);
@@ -902,6 +941,7 @@ const app = createServer({
   getClusterStrategy: () => clusterStrategy,
   storageModeContext,
   stateFile,
+  authStore: activeAuthStore,
 });
 
 // ── Helper: kill process on port so CDS can bind ──

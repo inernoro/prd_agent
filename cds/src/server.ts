@@ -10,6 +10,7 @@ import { createStorageModeRouter, type StorageModeContext } from './routes/stora
 import { createGithubOAuthRouter } from './routes/github-oauth.js';
 import { createAuthRouter } from './routes/auth.js';
 import { MemoryAuthStore } from './infra/auth-store/memory-store.js';
+import type { AuthStore } from './infra/auth-store/memory-store.js';
 import { GitHubOAuthClient } from './services/github-oauth-client.js';
 import { AuthService } from './services/auth-service.js';
 import { createGithubAuthMiddleware } from './middleware/github-auth.js';
@@ -49,6 +50,12 @@ export interface ServerDeps {
   storageModeContext?: StorageModeContext;
   /** P4 Part 18 (D.3): path to the json state file, used for rollback. */
   stateFile?: string;
+  /**
+   * FU-02: Optional pre-initialised AuthStore backend. When provided (by
+   * index.ts after calling initAuthStore()), it is used instead of the
+   * default MemoryAuthStore. Supports 'memory' (default) and 'mongo'.
+   */
+  authStore?: AuthStore;
 }
 
 function makeToken(user: string, pass: string): string {
@@ -464,7 +471,9 @@ export function createServer(deps: ServerDeps): express.Express {
       process.env.CDS_PUBLIC_BASE_URL || `http://localhost:${deps.config.masterPort}`;
     const cookieSecure = publicBaseUrl.startsWith('https://');
 
-    const authStore = new MemoryAuthStore();
+    // FU-02: use the pre-initialised mongo backend when provided by index.ts,
+    // otherwise fall back to the in-process memory store (default / test).
+    const authStore: AuthStore = deps.authStore ?? new MemoryAuthStore();
     const githubClient = new GitHubOAuthClient({
       clientId: ghClientId,
       clientSecret: ghClientSecret,

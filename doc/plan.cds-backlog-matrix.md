@@ -649,7 +649,7 @@
 | ID | 标题 | 规模 | 优先级 | 对应限制 |
 |---|---|---|---|---|
 | FU-01 | Repo Picker 加分页（`Link` header 解析） | S（~30 行） | P2 | LIM-03 |
-| FU-02 | `MapAuthStore` 持久化实现替换 `MemoryAuthStore` | M | P2 | — |
+| FU-02 | `MapAuthStore` 持久化实现替换 `MemoryAuthStore` · **done** 2026-04-16 | M | P2 | — |
 | FU-03 | detect-stack 加 nixpacks 风格依赖深度推断 · **done** 2026-04-16 | M | P3 | — |
 | FU-04 | worktreeBase 按 projectId 分子目录 | S | P2 | **done** 2026-04-16 |
 | FU-05 | GitHub Device Flow token AES 加密后写 state.json | S | P1 | — |
@@ -668,13 +668,21 @@
 
 **规模**：~30 行后端 + ~50 行前端。
 
-### FU-02 · MapAuthStore 持久化替换 MemoryAuthStore
+### FU-02 · MapAuthStore 持久化替换 MemoryAuthStore · **done** 2026-04-16
 
 **背景**：P2 引入的 `AuthStore` 接口当前只有 `MemoryAuthStore` 实现（进程内存），CDS 重启后所有 session 丢失。handoff 已经设计好了替换路径——只需新增 mongo 后端实现。
 
-**方案**：新增 `cds/src/infra/auth-store/mongo-store.ts`，实现 `AuthStore` 接口，用 `users` + `sessions` 两个 collection。启动时按 `CDS_AUTH_BACKEND=memory|mongo` 环境变量分发。
+**方案**：新增 `cds/src/infra/auth-store/mongo-store.ts`，实现 `AuthStore` 接口，用 `cds_users` + `cds_sessions` + `cds_workspaces` 三个 collection。启动时按 `CDS_AUTH_BACKEND=memory|mongo` 环境变量分发。
 
 **注意**：这和 Phase D 的 state backing store 是两套独立系统。Phase D 管 CDS state，这里管用户 session。
+
+**交付**（commit 见 branch `claude/review-handoff-doc-mKuZk`）：
+- `cds/src/infra/auth-store/mongo-handle.ts` — `IAuthMongoHandle` + `RealAuthMongoHandle`
+- `cds/src/infra/auth-store/mongo-store.ts` — `MongoAuthStore`（实现 `AuthStore` + `markUserAsSystemOwner`）
+- `cds/src/server.ts` — `ServerDeps.authStore?` + 使用 `deps.authStore ?? new MemoryAuthStore()`
+- `cds/src/index.ts` — `initAuthStore()` + 按 `CDS_AUTH_BACKEND` 分发
+- `cds/tests/infra/auth-store/mongo-store.test.ts` — 20 条单元测试，全绿
+- `doc/guide.cds-env.md §2.1` — `CDS_AUTH_BACKEND` 操作说明
 
 ### FU-03 · detect-stack 加 nixpacks 风格依赖推断 · **done** 2026-04-16
 
