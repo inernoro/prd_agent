@@ -8306,10 +8306,11 @@ function _ensureTopologyFsChrome() {
       <span class="label">路由规则</span>
       <span class="chevron">›</span>
     </button>
-    <!-- P4 Part 18 cleanup: removed "Volume / 持久化卷" menu item —
-         it toast'd "P6 上线" with no real target. Volumes can still
-         be configured in the existing InfraService.volumes field
-         via the full build-profiles editor. -->
+    <button type="button" class="topology-fs-add-menu-item" onclick="_topologyChooseAddItem('volume')">
+      <span class="icon"><svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M2 3.75C2 2.784 4.686 2 8 2s6 .784 6 1.75v8.5C14 13.216 11.314 14 8 14s-6-.784-6-1.75v-8.5zm1.5.25c0 .414 2.015.75 4.5.75s4.5-.336 4.5-.75-2.015-.75-4.5-.75-4.5.336-4.5.75zm0 3c0 .414 2.015.75 4.5.75s4.5-.336 4.5-.75V5.5c-.9.4-2.65.625-4.5.625S4.4 5.9 3.5 5.5V7zm0 3c0 .414 2.015.75 4.5.75s4.5-.336 4.5-.75V8.5c-.9.4-2.65.625-4.5.625S4.4 8.9 3.5 8.5V10z"/></svg></span>
+      <span class="label">Volume / 持久化卷</span>
+      <span class="chevron">›</span>
+    </button>
     <button type="button" class="topology-fs-add-menu-item" onclick="_topologyChooseAddItem('empty')">
       <span class="icon"><svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M0 2.75C0 1.784.784 1 1.75 1h12.5c.966 0 1.75.784 1.75 1.75v10.5A1.75 1.75 0 0114.25 15H1.75A1.75 1.75 0 010 13.25V2.75zm1.75-.25a.25.25 0 00-.25.25v10.5c0 .138.112.25.25.25h12.5a.25.25 0 00.25-.25V2.75a.25.25 0 00-.25-.25H1.75z"/></svg></span>
       <span class="label">空服务</span>
@@ -9760,6 +9761,17 @@ function _topologyChooseAddItem(kind) {
         openProfileModal();
       } else {
         showToast('构建配置模块未加载', 'info');
+      }
+      break;
+    case 'volume':
+      // LIM-07: restore Volume UI entry. Opens the infra add modal which
+      // already exposes the "卷名 / 挂载路径" fields (infraVolName /
+      // infraVolPath). The user fills in a Docker image that mounts the
+      // volume (e.g. postgres:16 / redis:7) and the volume is wired in.
+      if (typeof openInfraAddModal === 'function') {
+        openInfraAddModal();
+      } else {
+        showToast('基础设施模块未加载', 'info');
       }
       break;
     default:

@@ -616,7 +616,7 @@
 | LIM-04 | Executor 节点不复用 multi-repo clone，仍用 single `repoRoot` | 不能跨 executor 部署不同仓库 | 需要 P3 改造把 `reposBase` 同步到 executor | deferred（P3 未启动） |
 | LIM-05 | Proxy 自动发现仅查 legacy `repoRoot` | `feature.cds.miduo.org` 子域名只能命中默认仓库的分支，新 clone 项目要显式部署 | 设计权衡，显式部署路径不受影响 | wontfix（设计选择） |
 | LIM-06 | 多 tab 并发 Device Flow last-write-wins | 两个 tab 同时跑 Device Flow 会 race state.json | 实际场景罕见 | wontfix（已知低概率） |
-| LIM-07 | "持久化卷 / Volume" UI 入口被砍 | `+ Add` 菜单不再有该选项 | 卷仍可在 `InfraService.volumes` 字段配置 | deferred（有后门） |
+| LIM-07 | "持久化卷 / Volume" UI 入口被砍 · **done** 2026-04-16 | `+ Add` 菜单不再有该选项 | 卷仍可在 `InfraService.volumes` 字段配置 | done |
 
 ---
 
