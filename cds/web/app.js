@@ -5773,6 +5773,9 @@ function renderActivityItem(event) {
 
   // Update roller (collapsed header ticker)
   updateActivityRoller(event);
+
+  // If topology activity panel is open, prepend this item there too
+  _topologyActivityPanelPush('cds', el.outerHTML, activityEvents.length);
 }
 
 function renderWebActivityItem(event) {
@@ -5812,6 +5815,24 @@ function renderWebActivityItem(event) {
   body.appendChild(el);
 
   requestAnimationFrame(() => { body.scrollTop = body.scrollHeight; });
+
+  // Update topology panel activity tab if open
+  _topologyActivityPanelPush('web', el.outerHTML, webActivityEvents.length);
+}
+
+// Push a new activity item into the topology panel's activity tab if visible.
+function _topologyActivityPanelPush(subtab, itemHtml, count) {
+  if (typeof _topologyPanelCurrentKind === 'undefined' || _topologyPanelCurrentKind !== 'activity') return;
+  var activeTabEl = document.querySelector('.topology-fs-panel-tab.active');
+  if (!activeTabEl || activeTabEl.dataset.tab !== 'activity') return;
+  var bodyEl = document.getElementById(subtab === 'cds' ? 'tfpActivityCds' : 'tfpActivityWeb');
+  if (!bodyEl) return;
+  var emptyEl = bodyEl.querySelector('.tfp-activity-empty');
+  if (emptyEl) emptyEl.remove();
+  // Prepend (newest first)
+  bodyEl.insertAdjacentHTML('afterbegin', itemHtml);
+  var countEl = document.getElementById(subtab === 'cds' ? 'tfpActCdsCount' : 'tfpActWebCount');
+  if (countEl) countEl.textContent = count;
 }
 
 // ── Activity Roller (flip-clock style single-line ticker) ──
@@ -8202,6 +8223,10 @@ function _ensureTopologyFsChrome() {
       <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M7.429 1.525a3.5 3.5 0 011.142 0 .75.75 0 01.57.63l.185 1.29a.25.25 0 00.35.193l1.178-.592a.75.75 0 01.808.098 3.5 3.5 0 01.571.571.75.75 0 01.098.808l-.592 1.178a.25.25 0 00.193.35l1.29.185a.75.75 0 01.63.57 3.5 3.5 0 010 1.142.75.75 0 01-.63.57l-1.29.185a.25.25 0 00-.193.35l.592 1.178a.75.75 0 01-.098.808 3.5 3.5 0 01-.571.571.75.75 0 01-.808.098l-1.178-.592a.25.25 0 00-.35.193l-.185 1.29a.75.75 0 01-.57.63 3.5 3.5 0 01-1.142 0 .75.75 0 01-.57-.63l-.185-1.29a.25.25 0 00-.35-.193l-1.178.592a.75.75 0 01-.808-.098 3.5 3.5 0 01-.571-.571.75.75 0 01-.098-.808l.592-1.178a.25.25 0 00-.193-.35l-1.29-.185a.75.75 0 01-.63-.57 3.5 3.5 0 010-1.142.75.75 0 01.63-.57l1.29-.185a.25.25 0 00.193-.35l-.592-1.178a.75.75 0 01.098-.808 3.5 3.5 0 01.571-.571.75.75 0 01.808-.098l1.178.592a.25.25 0 00.35-.193l.185-1.29a.75.75 0 01.57-.63zM8 6a2 2 0 100 4 2 2 0 000-4z"/></svg>
       <span class="topology-fs-leftnav-label">设置</span>
     </button>
+    <button type="button" class="topology-fs-leftnav-icon" id="topoNavActivity" title="系统活动日志（API 请求 / Web 访问）" onclick="_topologyOpenActivityPanel()">
+      <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M1.5 1.75a.75.75 0 00-1.5 0v12.5c0 .414.336.75.75.75h14.5a.75.75 0 000-1.5H1.5V1.75zm14.28 2.53a.75.75 0 00-1.06-1.06L10 7.94 7.53 5.47a.75.75 0 00-1.06 0L2.22 9.72a.75.75 0 001.06 1.06L7 7.06l2.47 2.47a.75.75 0 001.06 0l5.25-5.25z"/></svg>
+      <span class="topology-fs-leftnav-label">活动</span>
+    </button>
     <div class="topology-fs-leftnav-spacer"></div>
     <a href="projects.html" class="topology-fs-leftnav-icon" title="返回项目列表">
       <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M1.75 1h12.5c.966 0 1.75.784 1.75 1.75v10.5A1.75 1.75 0 0114.25 15H1.75A1.75 1.75 0 010 13.25V2.75C0 1.784.784 1 1.75 1zM1.5 2.75v10.5c0 .138.112.25.25.25h12.5a.25.25 0 00.25-.25V2.75a.25.25 0 00-.25-.25H1.75a.25.25 0 00-.25.25z"/></svg>
@@ -8284,6 +8309,7 @@ function _ensureTopologyFsChrome() {
       <button type="button" class="topology-fs-panel-tab" data-tab="routing" onclick="_topologySwitchPanelTab('routing')">路由</button>
       <button type="button" class="topology-fs-panel-tab" data-tab="tags" onclick="_topologySwitchPanelTab('tags')">备注</button>
       <button type="button" class="topology-fs-panel-tab" data-tab="settings" onclick="_topologySwitchPanelTab('settings')">设置</button>
+      <button type="button" class="topology-fs-panel-tab" data-tab="activity" onclick="_topologySwitchPanelTab('activity')">活动</button>
     </div>
     <div class="topology-fs-panel-body" id="topologyFsPanelBody">
       <div class="tfp-empty">点击拓扑节点查看服务详情</div>
@@ -9882,10 +9908,105 @@ function _topologySwitchPanelTab(tab) {
   _topologyRenderPanelTab(tab, entity);
 }
 
+// Open the right panel on the Activity tab (no service node required).
+function _topologyOpenActivityPanel() {
+  var panel = document.getElementById('topologyFsPanel');
+  var titleEl = document.getElementById('topologyFsPanelTitle');
+  var iconEl = document.getElementById('topologyFsPanelIcon');
+  if (!panel || !titleEl || !iconEl) return;
+
+  _topologyPanelCurrentId = null;
+  _topologyPanelCurrentKind = 'activity';
+  titleEl.textContent = '系统活动';
+  iconEl.innerHTML = '<svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M1.5 1.75a.75.75 0 00-1.5 0v12.5c0 .414.336.75.75.75h14.5a.75.75 0 000-1.5H1.5V1.75zm14.28 2.53a.75.75 0 00-1.06-1.06L10 7.94 7.53 5.47a.75.75 0 00-1.06 0L2.22 9.72a.75.75 0 001.06 1.06L7 7.06l2.47 2.47a.75.75 0 001.06 0l5.25-5.25z"/></svg>';
+
+  var tabs = panel.querySelectorAll('.topology-fs-panel-tab');
+  tabs.forEach(function (t) { t.classList.toggle('active', t.dataset.tab === 'activity'); });
+
+  var body = document.getElementById('topologyFsPanelBody');
+  if (body) _topologyRenderActivityContent(body);
+  panel.classList.add('open');
+}
+
+// Render the activity log content into the panel body.
+function _topologyRenderActivityContent(body) {
+  var cdsEvents = (typeof activityEvents !== 'undefined' ? activityEvents : []).slice(-100).reverse();
+  var webEvents = (typeof webActivityEvents !== 'undefined' ? webActivityEvents : []).slice(-100).reverse();
+
+  function _makeItems(events, isWeb) {
+    if (!events.length) return '<div class="tfp-activity-empty">暂无记录</div>';
+    return events.map(function (ev) {
+      var isAi = ev.source === 'ai';
+      var statusCls = (ev.status || 0) < 400 ? 'ok' : 'err';
+      var dur = ev.duration < 1000 ? ev.duration + 'ms' : (ev.duration / 1000).toFixed(1) + 's';
+      var ts = typeof toUTC8Time === 'function' ? toUTC8Time(ev.ts) : '';
+      var label = ev.label || '';
+      var shortPath = (ev.path || '').replace(/^\/api\//, '').replace(/branches\/([^/]{13,})/, function (_, id) { return id.slice(0, 10) + '…'; });
+      var html = '';
+      if (isAi) {
+        var agentShort = (ev.agent || 'AI').replace(/\s*\(static key\)/, '');
+        html += '<span class="activity-source ai">' + escapeHtml(agentShort) + '</span>';
+      }
+      if (!isWeb && ev.branchId) {
+        var bl = typeof getBranchDisplayLabel === 'function' ? getBranchDisplayLabel(ev.branchId, ev.branchTags) : ev.branchId;
+        html += '<span class="activity-source" style="background:var(--accent-bg);color:var(--accent);font-size:9px;font-weight:600;padding:1px 4px;border-radius:3px">' + escapeHtml(bl) + '</span>';
+      }
+      if (isWeb) {
+        var profileId = ev.profileId || '';
+        var isApi = profileId.includes('api') || profileId.includes('backend') || (ev.path || '').startsWith('/api/');
+        var containerLabel = isApi ? 'api' : 'admin';
+        var containerColor = isApi ? 'var(--blue)' : 'var(--green)';
+        var containerBg = isApi ? 'rgba(56,139,253,0.12)' : 'rgba(63,185,80,0.12)';
+        html += '<span class="web-container-badge" style="background:' + containerBg + ';color:' + containerColor + '">' + containerLabel + '</span>';
+      } else {
+        html += '<span class="activity-method ' + (ev.method || '') + '">' + (ev.method || '') + '</span>';
+      }
+      html += label
+        ? '<span class="activity-label" title="' + escapeHtml(ev.path || '') + '">' + escapeHtml(label) + '</span>'
+        : '<span class="activity-path">' + escapeHtml(shortPath) + '</span>';
+      html += '<span class="activity-status ' + statusCls + '">' + (ev.status || '-') + '</span>';
+      html += '<span class="activity-dur">' + dur + '</span>';
+      html += '<span class="activity-ts">' + ts + '</span>';
+      return '<div class="activity-item' + (isAi ? ' activity-item-ai' : '') + '" style="cursor:pointer">' + html + '</div>';
+    }).join('');
+  }
+
+  body.innerHTML =
+    '<div class="tfp-activity">' +
+      '<div class="tfp-activity-subtabs">' +
+        '<button type="button" class="tfp-activity-subtab active" data-subtab="cds" onclick="_topologyActivitySubTab(\'cds\')">' +
+          'CDS <span class="tfp-activity-subtab-count" id="tfpActCdsCount">' + cdsEvents.length + '</span>' +
+        '</button>' +
+        '<button type="button" class="tfp-activity-subtab" data-subtab="web" onclick="_topologyActivitySubTab(\'web\')">' +
+          'Web <span class="tfp-activity-subtab-count" id="tfpActWebCount">' + webEvents.length + '</span>' +
+        '</button>' +
+      '</div>' +
+      '<div class="tfp-activity-body" id="tfpActivityCds">' + _makeItems(cdsEvents, false) + '</div>' +
+      '<div class="tfp-activity-body" id="tfpActivityWeb" style="display:none">' + _makeItems(webEvents, true) + '</div>' +
+    '</div>';
+}
+
+function _topologyActivitySubTab(subtab) {
+  var el = document.querySelector('.tfp-activity');
+  if (!el) return;
+  el.querySelectorAll('.tfp-activity-subtab').forEach(function (t) {
+    t.classList.toggle('active', t.dataset.subtab === subtab);
+  });
+  var cdsBody = document.getElementById('tfpActivityCds');
+  var webBody = document.getElementById('tfpActivityWeb');
+  if (cdsBody) cdsBody.style.display = subtab === 'cds' ? '' : 'none';
+  if (webBody) webBody.style.display = subtab === 'web' ? '' : 'none';
+}
+
 // Render the body of one tab. Each branch is small + isolated so
 // individual tabs can be replaced incrementally in later commits.
 function _topologyRenderPanelTab(tab, entity) {
   var body = document.getElementById('topologyFsPanelBody');
+  // Activity tab doesn't require an entity — it shows global system logs.
+  if (tab === 'activity') {
+    if (body) _topologyRenderActivityContent(body);
+    return;
+  }
   if (!body || !entity) {
     if (body) body.innerHTML = '<div class="tfp-empty">未找到服务数据</div>';
     return;

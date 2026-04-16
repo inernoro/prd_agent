@@ -5378,6 +5378,8 @@ a.branch-name:hover { color: var(--accent); }
 body.cds-topology-fs .container > *:not(#topologyView):not(#toast):not(.modal):not(#dropdownPortal):not(#hostStatsWidget):not(#activityMonitor):not(#aiPairingPanel) {
   display: none !important;
 }
+/* Hide floating Activity Monitor in topology FS mode — content is now in the right panel */
+body.cds-topology-fs #activityMonitor { display: none !important; }
 body.cds-topology-fs .container {
   padding: 0 !important;
   margin: 0 !important;
@@ -6528,12 +6530,12 @@ body.cds-topology-fs .topology-fs-panel.open ~ .topology-fs-add-menu {
 
 /* P4 Part 14 — Service detail panel logs tabs */
 
-/* Allow the panel tab strip to scroll horizontally when 6 tabs overflow */
+/* Allow the panel tab strip to scroll horizontally when tabs overflow — no native scrollbar */
 .topology-fs-panel-tabs {
   overflow-x: auto;
-  scrollbar-width: thin;
+  scrollbar-width: none;
 }
-.topology-fs-panel-tabs::-webkit-scrollbar { height: 4px; }
+.topology-fs-panel-tabs::-webkit-scrollbar { display: none; }
 .topology-fs-panel-tab { white-space: nowrap; flex-shrink: 0; }
 
 /* Status banner (Details tab top) */
@@ -7197,4 +7199,53 @@ body.cds-topology-fs .topology-fs-panel.open ~ .topology-fs-add-menu {
 .tfp-http-status-warn { color: var(--yellow, #fbbf24); }
 .tfp-http-status-err { color: var(--red); }
 .tfp-http-duration { color: var(--text-muted); text-align: right; }
+
+/* ── Activity tab inside right panel ── */
+.tfp-activity { display: flex; flex-direction: column; height: 100%; }
+.tfp-activity-subtabs {
+  display: flex;
+  gap: 0;
+  border-bottom: 1px solid var(--border-light);
+  padding: 0 14px;
+  flex-shrink: 0;
+}
+.tfp-activity-subtab {
+  padding: 9px 12px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-muted);
+  background: transparent;
+  border: none;
+  border-bottom: 2px solid transparent;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  transition: color 100ms ease;
+  margin-bottom: -1px;
+}
+.tfp-activity-subtab:hover { color: var(--text-secondary); }
+.tfp-activity-subtab.active { color: var(--text-primary); border-bottom-color: var(--accent); }
+.tfp-activity-subtab-count {
+  font-size: 10px;
+  background: var(--bg-elevated);
+  border-radius: 8px;
+  padding: 0 5px;
+  min-width: 16px;
+  text-align: center;
+}
+.tfp-activity-body {
+  flex: 1;
+  overflow-y: auto;
+  scrollbar-width: none;
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+.tfp-activity-body::-webkit-scrollbar { display: none; }
+.tfp-activity-empty {
+  padding: 32px 16px;
+  text-align: center;
+  color: var(--text-muted);
+  font-size: 12px;
+}
 
