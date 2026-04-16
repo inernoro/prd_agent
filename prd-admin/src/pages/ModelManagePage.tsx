@@ -32,6 +32,7 @@ import {
   updatePlatform,
   getModelsAdapterInfoBatch,
 } from '@/services';
+import { getExchanges } from '@/services/real/exchanges';
 import type { ModelAdapterInfoBrief } from '@/services/contracts/models';
 import type { Model, Platform } from '@/types/admin';
 import { ModelHealthStatus } from '@/types/modelGroup';
@@ -328,14 +329,39 @@ export default function ModelManagePage() {
   const load = async (opts?: { silent?: boolean }) => {
     if (!opts?.silent) setLoading(true);
     try {
-      const [p, m, caps] = await Promise.all([getPlatforms(), getModels(), getImageGenSizeCaps()]);
+      const [p, m, caps, ex] = await Promise.all([
+        getPlatforms(),
+        getModels(),
+        getImageGenSizeCaps(),
+        // 拉取所有 Exchange（虚拟中继平台）以便合成它们的模型列表
+        getExchanges(),
+      ]);
       if (p.success) {
         setPlatforms(p.data);
         setSelectedPlatformId((cur) => (cur ? cur : '__all__'));
       }
       if (m.success) {
-        setModels(m.data);
-        // 加载适配器信息（生图模型）
+        // 合成 Exchange 下的虚拟模型条目，使它们出现在平台模型列表中
+        const exchangeSynthModels: Model[] = ex.success
+          ? ex.data.flatMap((exch) =>
+              (exch.models ?? []).map((em) => ({
+                id: `exchange::${exch.id}::${em.modelId}`,
+                name: em.displayName || em.modelId,
+                modelName: em.modelId,
+                platformId: exch.id, // 使用 Exchange 真实 Id（等价于虚拟平台 id）
+                enabled: em.enabled,
+                isMain: false,
+                isIntent: false,
+                isVision: em.modelType === 'vision',
+                isImageGen: em.modelType === 'generation',
+                group: em.modelType,
+                enablePromptCache: false,
+              } as Model))
+            )
+          : [];
+        const combined = [...m.data, ...exchangeSynthModels];
+        setModels(combined);
+        // 加载适配器信息（生图模型，仅真实模型）
         const imageGenModelIds = m.data.filter((x) => x.isImageGen).map((x) => x.id);
         if (imageGenModelIds.length > 0) {
           const adapterRes = await getModelsAdapterInfoBatch(imageGenModelIds);
@@ -914,6 +940,11 @@ export default function ModelManagePage() {
 
   const savePlatformInline = async (patch: Partial<PlatformForm> & { apiKey?: string }) => {
     if (!selectedPlatform) return;
+    // 虚拟中继平台（Exchange）不在此页面编辑，请到「模型中继」页
+    if (selectedPlatform.kind === 'exchange' || selectedPlatform.isVirtual) {
+      toast.info('虚拟中继平台请到「模型中继」页面编辑');
+      return;
+    }
     const res = await updatePlatform(selectedPlatform.id, patch);
     if (!res.success) return;
     await load();
@@ -1163,6 +1194,10 @@ export default function ModelManagePage() {
   };
 
   const isAll = selectedPlatformId === '__all__';
+  // 选中的是虚拟中继平台（Exchange）— 其模型由中继管理页维护，这里只读展示
+  const isExchangePlatform = Boolean(
+    selectedPlatform && (selectedPlatform.kind === 'exchange' || selectedPlatform.isVirtual)
+  );
 
   return (
     <div className="h-full min-h-0 flex flex-col gap-5">
@@ -2051,9 +2086,10 @@ export default function ModelManagePage() {
               size="sm"
               className="w-[100px]"
               onClick={() => {
-                if (selectedPlatform) openModelPicker();
+                if (selectedPlatform && !isExchangePlatform) openModelPicker();
               }}
-              disabled={!selectedPlatform}
+              disabled={!selectedPlatform || isExchangePlatform}
+              title={isExchangePlatform ? '虚拟中继平台请到「模型中继」页面编辑模型' : undefined}
             >
               管理
             </Button>
@@ -2062,7 +2098,8 @@ export default function ModelManagePage() {
               variant="primary"
               size="sm"
               onClick={openCreateModel}
-              disabled={!selectedPlatform && platforms.length === 0}
+              disabled={(!selectedPlatform && platforms.length === 0) || isExchangePlatform}
+              title={isExchangePlatform ? '虚拟中继平台请到「模型中继」页面编辑模型' : undefined}
             >
               <Plus size={16} />
               添加模型
@@ -2070,7 +2107,16 @@ export default function ModelManagePage() {
 
             <div className="flex-1" />
 
-            {selectedPlatform && (
+            {isExchangePlatform && (
+              <div
+                className="text-xs px-2 py-1 rounded"
+                style={{ color: 'var(--text-muted)', background: 'var(--surface-2)' }}
+              >
+                此虚拟中继的模型请到「模型中继」页面编辑
+              </div>
+            )}
+
+            {selectedPlatform && !isExchangePlatform && (
               <ConfirmTip
                 title={`确认删除“${selectedPlatform.name}”平台？`}
                 description="该操作不可撤销"
