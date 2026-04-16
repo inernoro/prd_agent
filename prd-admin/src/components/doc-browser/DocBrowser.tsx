@@ -59,6 +59,8 @@ export type DocBrowserEntry = {
   contentType: string;
   fileSize: number;
   tags?: string[];
+  updatedAt?: string;
+  updatedByName?: string;
   summary?: string;
   syncStatus?: string;
   /** 是否暂停（订阅类型） */
@@ -148,6 +150,19 @@ function canReprocess(entry: DocBrowserEntry): boolean {
   const ct = (entry.contentType ?? '').toLowerCase();
   // 文字类（markdown / 字幕 / 纯文本 / JSON / YAML 等）才能再加工
   return ct.startsWith('text/') || ct.includes('markdown') || ct === '';
+}
+
+function formatMetaTime(iso?: string): string {
+  if (!iso) return '未知时间';
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return '未知时间';
+  return date.toLocaleString('zh-CN', {
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
 }
 
 // ── 右键/⋯ 菜单 ──
@@ -1482,6 +1497,28 @@ export function DocBrowser({
                   </>
                 );
               })()}
+              {(() => {
+                const sel = entries.find(e => e.id === selectedEntryId);
+                if (!sel || sel.isFolder) return null;
+                return (
+                  <div className="ml-auto flex items-center gap-3 min-w-0">
+                    <span
+                      className="text-[10px] whitespace-nowrap"
+                      style={{ color: 'var(--text-muted)' }}
+                      title={`最后更新时间：${formatMetaTime(sel.updatedAt)}`}
+                    >
+                      更新于 {formatMetaTime(sel.updatedAt)}
+                    </span>
+                    <span
+                      className="text-[10px] truncate max-w-[160px]"
+                      style={{ color: 'var(--text-muted)' }}
+                      title={`更新者：${sel.updatedByName || '未知用户'}`}
+                    >
+                      更新者 {sel.updatedByName || '未知用户'}
+                    </span>
+                  </div>
+                );
+              })()}
               {/* 当前文件最近更新徽标 + 订阅来源版本信息（git 类订阅独有） */}
               {(() => {
                 const sel = entries.find(e => e.id === selectedEntryId);
@@ -1585,7 +1622,7 @@ export function DocBrowser({
                 const cfg = getFileTypeConfig(sel.title, sel.contentType);
                 if (!cfg.editable) return null;
                 return (
-                  <div className="ml-auto flex items-center gap-1.5">
+                  <div className="flex items-center gap-1.5">
                     {editMode ? (
                       <>
                         <button

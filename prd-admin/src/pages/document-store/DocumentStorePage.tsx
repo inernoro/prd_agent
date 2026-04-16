@@ -681,7 +681,7 @@ function StoreDetailView({ storeId, onBack }: {
   const handleUpdateEntryTags = useCallback(async (entryId: string, tags: string[]) => {
     const res = await updateDocumentEntry(entryId, { tags });
     if (res.success) {
-      setEntries(prev => prev.map(entry => entry.id === entryId ? { ...entry, tags: res.data.tags ?? tags } : entry));
+      setEntries(prev => prev.map(entry => entry.id === entryId ? { ...entry, ...res.data, tags: res.data.tags ?? tags } : entry));
       toast.success(tags.length > 0 ? '标签已更新' : '标签已清空');
       return;
     }
@@ -706,7 +706,13 @@ function StoreDetailView({ storeId, onBack }: {
       // 更新本地 entries 中的 summary（前 200 字）
       const summary = newContent.length > 200 ? newContent.slice(0, 200) : newContent;
       setEntries(prev => prev.map(e =>
-        e.id === entryId ? { ...e, summary: summary.trim() } : e));
+        e.id === entryId ? {
+          ...e,
+          summary: summary.trim(),
+          updatedAt: res.data.updatedAt ?? e.updatedAt,
+          updatedBy: res.data.updatedBy ?? e.updatedBy,
+          updatedByName: res.data.updatedByName ?? e.updatedByName,
+        } : e));
       toast.success('已保存');
     } else {
       toast.error('保存失败', res.error?.message);

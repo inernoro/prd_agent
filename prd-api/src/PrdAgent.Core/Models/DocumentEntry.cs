@@ -47,6 +47,12 @@ public class DocumentEntry
     /// <summary>上传/创建者 UserId</summary>
     public string CreatedBy { get; set; } = string.Empty;
 
+    /// <summary>最近一次更新者 UserId（为空时表示尚未有单独更新记录）</summary>
+    public string? UpdatedBy { get; set; }
+
+    /// <summary>最近一次更新者显示名（冗余，便于前端直接展示）</summary>
+    public string? UpdatedByName { get; set; }
+
     /// <summary>文档正文的文本索引（用于内容搜索，截取前 2000 字符存入 MongoDB）</summary>
     public string? ContentIndex { get; set; }
 
