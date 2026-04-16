@@ -5082,6 +5082,9 @@ a.branch-name:hover { color: var(--accent); }
   min-height: 560px;
   cursor: grab;
   user-select: none;
+  /* Prevent OS/browser touch inertia from interfering with custom pan/zoom */
+  touch-action: none;
+  -webkit-user-select: none;
 }
 .topology-canvas-wrap:active {
   cursor: grabbing;
@@ -5574,6 +5577,13 @@ body.cds-topology-fs .topology-fs-topbar { left: 74px; }
 }
 .topology-fs-leftnav-icon.disabled { opacity: 0.35; cursor: not-allowed; }
 .topology-fs-leftnav-spacer { flex: 1; }
+.topology-fs-leftnav-divider {
+  width: 28px;
+  height: 1px;
+  margin: 4px auto;
+  background: var(--border-light, rgba(255,255,255,0.07));
+  flex-shrink: 0;
+}
 .topology-fs-leftnav-label {
   font-size: 9px;
   font-weight: 600;
@@ -6136,27 +6146,26 @@ body.cds-topology-fs .topology-fs-panel.open { transform: translateX(0); }
    conflict, and had no visible background. Now it has a distinct
    circular background with a red-tinted hover state. */
 .topology-fs-panel-close {
-  width: 32px;
-  height: 32px;
+  width: 34px;
+  height: 34px;
   display: flex;
   align-items: center;
   justify-content: center;
-  border: 1px solid var(--card-border);
+  /* Visible border + contrasting background so the X is always findable */
+  border: 1.5px solid var(--text-muted);
   background: var(--bg-elevated);
-  color: var(--text-secondary);
+  color: var(--text-primary);
   border-radius: 8px;
   cursor: pointer;
   transition: background 120ms ease, color 120ms ease, border-color 120ms ease;
   flex-shrink: 0;
-  /* Make sure the close button always wins z-order against anything
-   * that could overlap it (floating + Add button included). */
   position: relative;
   z-index: 1;
 }
 .topology-fs-panel-close:hover {
-  background: rgba(239, 68, 68, 0.12);
+  background: rgba(239, 68, 68, 0.18);
   color: #ef4444;
-  border-color: rgba(239, 68, 68, 0.4);
+  border-color: rgba(239, 68, 68, 0.6);
 }
 
 /* UF-19: when the Details panel is open, hide the floating + Add button
