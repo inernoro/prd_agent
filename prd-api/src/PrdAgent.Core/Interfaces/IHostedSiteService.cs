@@ -63,6 +63,14 @@ public interface IHostedSiteService
 
     Task<long> BatchDeleteAsync(List<string> siteIds, string userId, CancellationToken ct = default);
 
+    // ── 可见性 ──
+
+    /// <summary>切换站点可见性（private / public），首次 public 时写入 PublishedAt</summary>
+    Task<HostedSite?> SetVisibilityAsync(string siteId, string userId, string visibility, CancellationToken ct = default);
+
+    /// <summary>按用户名获取该用户所有公开的站点（公开页聚合，无需登录）</summary>
+    Task<List<HostedSite>> ListPublicByUserIdAsync(string ownerUserId, int limit = 60, CancellationToken ct = default);
+
     // ── 分享 ──
 
     Task<WebPageShareLink> CreateShareAsync(

@@ -196,6 +196,26 @@ public class WebPagesController : ControllerBase
         return Ok(ApiResponse<object>.Ok(new { deletedCount }));
     }
 
+    /// <summary>切换站点可见性（public = 出现在 /u/:username 公开页 | private = 仅自己可见）</summary>
+    [HttpPatch("{id}/visibility")]
+    public async Task<IActionResult> SetVisibility(string id, [FromBody] SetVisibilityRequest req)
+    {
+        if (string.IsNullOrWhiteSpace(req.Visibility))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "visibility 不能为空"));
+
+        try
+        {
+            var updated = await _siteService.SetVisibilityAsync(id, GetUserId(), req.Visibility);
+            if (updated == null)
+                return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "站点不存在"));
+            return Ok(ApiResponse<object>.Ok(updated));
+        }
+        catch (ArgumentException ex)
+        {
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, ex.Message));
+        }
+    }
+
     /// <summary>获取用户所有文件夹列表</summary>
     [HttpGet("folders")]
     public async Task<IActionResult> ListFolders()
@@ -361,6 +381,12 @@ public class UpdateHostedSiteRequest
 public class BatchDeleteRequest
 {
     public List<string> Ids { get; set; } = new();
+}
+
+public class SetVisibilityRequest
+{
+    /// <summary>public | private</summary>
+    public string Visibility { get; set; } = "private";
 }
 
 public class CreateWebPageShareRequest

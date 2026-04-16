@@ -37,6 +37,12 @@ export interface GlassCardProps {
   animated?: boolean;
   /** 入场动画延迟（毫秒），用于同一区域多卡片错开 */
   animationDelay?: number;
+  /** 是否可被拖拽（HTML5 DnD） */
+  draggable?: boolean;
+  /** 拖拽开始回调 */
+  onDragStart?: React.DragEventHandler<HTMLDivElement>;
+  /** 拖拽结束回调 */
+  onDragEnd?: React.DragEventHandler<HTMLDivElement>;
 }
 
 /**
@@ -59,6 +65,9 @@ export function GlassCard({
   overflow = 'visible',
   animated = false,
   animationDelay = 0,
+  draggable,
+  onDragStart,
+  onDragEnd,
 }: GlassCardProps) {
   const perfMode = useThemeStore((s) => s.config.performanceMode);
   const isPerf = shouldReduceEffects({ performanceMode: perfMode } as Parameters<typeof shouldReduceEffects>[0]);
@@ -121,6 +130,9 @@ export function GlassCard({
       style={animatedStyle}
       onClick={onClick}
       tabIndex={interactive ? 0 : undefined}
+      draggable={draggable}
+      onDragStart={onDragStart}
+      onDragEnd={onDragEnd}
     >
       {children}
     </div>

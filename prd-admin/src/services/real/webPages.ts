@@ -28,6 +28,10 @@ export interface HostedSite {
   coverImageUrl?: string;
   ownerUserId: string;
   viewCount: number;
+  /** 可见性：private = 仅自己可见 | public = 出现在 /u/:username 公开页 */
+  visibility?: 'private' | 'public';
+  /** 首次设为 public 的时间 */
+  publishedAt?: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -173,6 +177,16 @@ export async function deleteSite(id: string): Promise<ApiResponse<{ deleted: boo
 
 export async function batchDeleteSites(ids: string[]): Promise<ApiResponse<{ deletedCount: number }>> {
   return apiRequest(api.webPages.batchDelete(), { method: 'POST', body: { ids } });
+}
+
+export async function setSiteVisibility(
+  id: string,
+  visibility: 'public' | 'private',
+): Promise<ApiResponse<HostedSite>> {
+  return apiRequest(api.webPages.setVisibility(encodeURIComponent(id)), {
+    method: 'PATCH',
+    body: { visibility },
+  });
 }
 
 export async function listFolders(): Promise<ApiResponse<{ folders: string[] }>> {

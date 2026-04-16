@@ -938,6 +938,7 @@ export const api = {
     byId: (id: string) => `/api/web-pages/${id}`,
     reupload: (id: string) => `/api/web-pages/${id}/reupload`,
     batchDelete: () => '/api/web-pages/batch-delete',
+    setVisibility: (id: string) => `/api/web-pages/${id}/visibility`,
     folders: () => '/api/web-pages/folders',
     tags: () => '/api/web-pages/tags',
     share: () => '/api/web-pages/share',
@@ -946,6 +947,11 @@ export const api = {
     viewShare: (token: string) => `/api/web-pages/shares/view/${token}`,
     saveShare: (token: string) => `/api/web-pages/shares/${token}/save`,
     viewLogs: '/api/web-pages/shares/view-logs',
+  },
+  // ============ 公开主页（/u/:username 无需登录） ============
+  publicProfile: {
+    byUsername: (username: string, limit = 60) =>
+      `/api/public/u/${encodeURIComponent(username)}?limit=${limit}`,
   },
   // ============ 快捷指令 ============
   shortcuts: {
