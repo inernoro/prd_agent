@@ -8198,10 +8198,10 @@ function _ensureTopologyFsChrome() {
       <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M2 4h12v2H2V4zm0 3.5h12v1H2v-1zm0 2.5h12v1H2v-1zm0 2.5h12v1H2v-1z"/></svg>
       <span class="topology-fs-leftnav-label">列表</span>
     </button>
-    <a href="settings.html?project=${esc(projectId)}" class="topology-fs-leftnav-icon" title="项目设置">
+    <button type="button" class="topology-fs-leftnav-icon" title="系统设置（导出/自动更新/清理/项目设置）" onclick="toggleSettingsMenu(event)">
       <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M7.429 1.525a3.5 3.5 0 011.142 0 .75.75 0 01.57.63l.185 1.29a.25.25 0 00.35.193l1.178-.592a.75.75 0 01.808.098 3.5 3.5 0 01.571.571.75.75 0 01.098.808l-.592 1.178a.25.25 0 00.193.35l1.29.185a.75.75 0 01.63.57 3.5 3.5 0 010 1.142.75.75 0 01-.63.57l-1.29.185a.25.25 0 00-.193.35l.592 1.178a.75.75 0 01-.098.808 3.5 3.5 0 01-.571.571.75.75 0 01-.808.098l-1.178-.592a.25.25 0 00-.35.193l-.185 1.29a.75.75 0 01-.57.63 3.5 3.5 0 01-1.142 0 .75.75 0 01-.57-.63l-.185-1.29a.25.25 0 00-.35-.193l-1.178.592a.75.75 0 01-.808-.098 3.5 3.5 0 01-.571-.571.75.75 0 01-.098-.808l.592-1.178a.25.25 0 00-.193-.35l-1.29-.185a.75.75 0 01-.63-.57 3.5 3.5 0 010-1.142.75.75 0 01.63-.57l1.29-.185a.25.25 0 00.193-.35l-.592-1.178a.75.75 0 01.098-.808 3.5 3.5 0 01.571-.571.75.75 0 01.808-.098l1.178.592a.25.25 0 00.35-.193l.185-1.29a.75.75 0 01.57-.63zM8 6a2 2 0 100 4 2 2 0 000-4z"/></svg>
       <span class="topology-fs-leftnav-label">设置</span>
-    </a>
+    </button>
     <div class="topology-fs-leftnav-spacer"></div>
     <a href="projects.html" class="topology-fs-leftnav-icon" title="返回项目列表">
       <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M1.75 1h12.5c.966 0 1.75.784 1.75 1.75v10.5A1.75 1.75 0 0114.25 15H1.75A1.75 1.75 0 010 13.25V2.75C0 1.784.784 1 1.75 1zM1.5 2.75v10.5c0 .138.112.25.25.25h12.5a.25.25 0 00.25-.25V2.75a.25.25 0 00-.25-.25H1.75a.25.25 0 00-.25.25z"/></svg>
@@ -8456,55 +8456,44 @@ function _ensureTopologyFsChrome() {
  * App profiles are layered by depends_on depth.
  */
 function _layoutTopologyDag(profiles, infraList) {
-  const nodes = new Map(); // id → { id, kind, raw }
+  const nodes = new Map();
+  const appNodes = [];
+  const infraNodes = [];
+
   for (const p of profiles) {
-    nodes.set(p.id, { id: p.id, kind: 'app', raw: p });
+    const node = { id: p.id, kind: 'app', raw: p };
+    nodes.set(p.id, node);
+    appNodes.push(node);
   }
   for (const s of infraList) {
     if (!nodes.has(s.id)) {
-      nodes.set(s.id, { id: s.id, kind: 'infra', raw: s });
+      const node = { id: s.id, kind: 'infra', raw: s };
+      nodes.set(s.id, node);
+      infraNodes.push(node);
     }
   }
 
-  // Edges: a profile's depends_on → those targets must run first.
-  // We point edge FROM dependency TO dependent (data flow direction).
-  const edges = [];
-  const indeg = new Map();
-  for (const n of nodes.values()) indeg.set(n.id, 0);
+  // Stable alphabetical sort within each tier
+  appNodes.sort((a, b) => a.id.localeCompare(b.id));
+  infraNodes.sort((a, b) => a.id.localeCompare(b.id));
 
+  // Edges from dependsOn declarations
+  const edges = [];
   for (const p of profiles) {
     for (const depId of p.dependsOn || []) {
-      if (!nodes.has(depId)) continue;
-      edges.push({ from: depId, to: p.id });
-      indeg.set(p.id, (indeg.get(p.id) || 0) + 1);
+      if (nodes.has(depId)) edges.push({ from: depId, to: p.id });
     }
   }
 
-  // Kahn's algorithm, layer by layer
+  // Forced 2-tier layout: infra always bottom (layers[0]),
+  // apps always top (layers[1]).  _renderTopologySvg reverses
+  // layer index so layers[0] → displayRow=bottom, layers[1] → top.
+  // This guarantees admin (app with no deps) stays in the top row
+  // alongside api, not mixed into the infra row.
   const layers = [];
-  const remaining = new Set(nodes.keys());
-  let guard = 0;
-  while (remaining.size > 0 && guard++ < 50) {
-    const layer = [];
-    for (const id of remaining) {
-      if ((indeg.get(id) || 0) === 0) layer.push(nodes.get(id));
-    }
-    if (layer.length === 0) {
-      // Cycle detected — dump everything remaining into one final layer
-      for (const id of remaining) layer.push(nodes.get(id));
-    }
-    layer.sort((a, b) => {
-      if (a.kind !== b.kind) return a.kind === 'infra' ? -1 : 1;
-      return a.id.localeCompare(b.id);
-    });
-    layers.push(layer);
-    for (const n of layer) {
-      remaining.delete(n.id);
-      for (const e of edges) {
-        if (e.from === n.id) indeg.set(e.to, (indeg.get(e.to) || 0) - 1);
-      }
-    }
-  }
+  if (infraNodes.length > 0) layers.push(infraNodes);
+  if (appNodes.length > 0) layers.push(appNodes);
+  if (layers.length === 0) layers.push([]);
 
   return { layers, edges, nodes };
 }
@@ -8698,8 +8687,11 @@ function _renderTopologySvg(layout, ctx) {
     const offsetX = (maxWidth - layerWidth) / 2;
 
     layer.forEach((node, idxInLayer) => {
-      const x = TOPO_PAD + offsetX + idxInLayer * (TOPO_NODE_W + TOPO_GAP_X);
-      const y = TOPO_PAD + displayRow * (TOPO_NODE_H + TOPO_GAP_Y);
+      const baseX = TOPO_PAD + offsetX + idxInLayer * (TOPO_NODE_W + TOPO_GAP_X);
+      const baseY = TOPO_PAD + displayRow * (TOPO_NODE_H + TOPO_GAP_Y);
+      const drag = _topologyNodeDragOffsets[node.id] || { dx: 0, dy: 0 };
+      const x = baseX + drag.dx;
+      const y = baseY + drag.dy;
       positions.set(node.id, { x, y, node });
     });
   });
@@ -8900,7 +8892,7 @@ function _renderTopologySvg(layout, ctx) {
 
     const effectiveNodeH = hasVolumeSlot ? (TOPO_NODE_H + TOPO_VOLUME_SLOT_H) : TOPO_NODE_H;
     return `
-      <g class="${nodeClass}" ${clickHandler}>
+      <g class="${nodeClass}" data-node-id="${esc(raw.id)}" ${clickHandler}>
         <title>${esc(tooltip)}</title>
         <rect class="${shapeClass}" x="${x}" y="${y}" width="${TOPO_NODE_W}" height="${effectiveNodeH}" rx="${TOPO_NODE_RADIUS}" ry="${TOPO_NODE_RADIUS}" />
 
@@ -8925,12 +8917,22 @@ function _renderTopologySvg(layout, ctx) {
   let appGroupRect = '';
   const appPositions = Array.from(positions.values()).filter(p => p.node.kind === 'app');
   if (appPositions.length > 0) {
-    const GP = 28; // group padding
+    const GP = 24; // group padding
     const gMinX = Math.min(...appPositions.map(p => p.x)) - GP;
     const gMinY = Math.min(...appPositions.map(p => p.y)) - GP;
     const gMaxX = Math.max(...appPositions.map(p => p.x + TOPO_NODE_W)) + GP;
     const gMaxY = Math.max(...appPositions.map(p => p.y + TOPO_NODE_H)) + GP;
-    appGroupRect = `<rect class="topology-app-group" x="${gMinX}" y="${gMinY}" width="${gMaxX - gMinX}" height="${gMaxY - gMinY}" rx="20" />`;
+    // GitHub icon path (scaled to ~12px)
+    const ghPath = 'M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z';
+    const tagX = gMinX + 14;
+    const tagY = gMinY - 10;
+    appGroupRect = `
+      <rect class="topology-app-group" x="${gMinX}" y="${gMinY}" width="${gMaxX - gMinX}" height="${gMaxY - gMinY}" rx="20" />
+      <g transform="translate(${tagX},${tagY})" style="pointer-events:none">
+        <rect x="-2" y="-1" width="64" height="20" rx="10" fill="var(--bg-card,#181c24)" stroke="var(--accent,#10b981)" stroke-width="0.8" opacity="0.95"/>
+        <path d="${ghPath}" fill="var(--accent,#10b981)" transform="translate(4,4) scale(0.72)"/>
+        <text x="20" y="14" fill="var(--accent,#10b981)" font-size="10" font-weight="600" font-family="var(--font-sans,system-ui,sans-serif)">Apps</text>
+      </g>`;
   }
 
   return `
@@ -8950,6 +8952,8 @@ function _renderTopologySvg(layout, ctx) {
 // Pan/zoom state — persists across re-renders via _topologyViewport
 let _topologyViewport = { scale: 1, tx: 0, ty: 0 };
 let _topologyDragState = null;
+// Per-node user-dragged position offsets: { nodeId: {dx, dy} }
+const _topologyNodeDragOffsets = {};
 // UF-03: track whether the user has manually panned/zoomed. While this
 // is false, each renderTopologyView() auto-fits so the graph stays
 // centered in the canvas (fixes "nodes stuck in the top-left" bug).
@@ -8993,8 +8997,10 @@ function _topologyReset() {
   // "1:1 复位" = explicit user ask to return to identity. Flip back to
   // "not adjusted" so the next render recenters, and re-fit now to
   // avoid leaving content in the top-left corner (which was the UF-03
-  // complaint in the first place).
+  // complaint in the first place). Also clear any per-node drag offsets.
   _topologyUserAdjusted = false;
+  Object.keys(_topologyNodeDragOffsets).forEach(k => delete _topologyNodeDragOffsets[k]);
+  renderTopologyView();
   _topologyFit();
 }
 
@@ -9005,15 +9011,44 @@ function _topologyFit() {
   const wrapRect = wrap.getBoundingClientRect();
   const svgW = parseFloat(svg.getAttribute('width')) || 1;
   const svgH = parseFloat(svg.getAttribute('height')) || 1;
-  // Fit with 40px margin
-  const scaleX = (wrapRect.width - 80) / svgW;
-  const scaleY = (wrapRect.height - 80) / svgH;
-  const scale = Math.min(scaleX, scaleY, 1.5);
+  // Fit with 100px margin, cap at 0.75 so initial view is comfortably zoomed-out
+  const scaleX = (wrapRect.width - 100) / svgW;
+  const scaleY = (wrapRect.height - 100) / svgH;
+  const scale = Math.min(scaleX, scaleY, 0.75);
   _topologyViewport.scale = Math.max(0.3, scale);
   // Center the content
   _topologyViewport.tx = (wrapRect.width - svgW * _topologyViewport.scale) / 2;
   _topologyViewport.ty = (wrapRect.height - svgH * _topologyViewport.scale) / 2;
   _applyTopologyTransform();
+}
+
+function _topologyNodeDragStart(e, nodeId, groupEl) {
+  e.stopPropagation();
+  const startX = e.clientX;
+  const startY = e.clientY;
+  const baseOffset = _topologyNodeDragOffsets[nodeId] || { dx: 0, dy: 0 };
+  let hasDragged = false;
+
+  const onMove = (me) => {
+    const ddx = (me.clientX - startX) / _topologyViewport.scale;
+    const ddy = (me.clientY - startY) / _topologyViewport.scale;
+    if (!hasDragged && Math.abs(ddx) + Math.abs(ddy) < 4) return;
+    hasDragged = true;
+    groupEl.setAttribute('transform', `translate(${baseOffset.dx + ddx},${baseOffset.dy + ddy})`);
+  };
+
+  const onUp = (me) => {
+    window.removeEventListener('mousemove', onMove);
+    window.removeEventListener('mouseup', onUp);
+    if (!hasDragged) return; // was a click — let onclick fire
+    const ddx = (me.clientX - startX) / _topologyViewport.scale;
+    const ddy = (me.clientY - startY) / _topologyViewport.scale;
+    _topologyNodeDragOffsets[nodeId] = { dx: baseOffset.dx + ddx, dy: baseOffset.dy + ddy };
+    renderTopologyView(); // re-render so edges follow the node
+  };
+
+  window.addEventListener('mousemove', onMove);
+  window.addEventListener('mouseup', onUp);
 }
 
 function _bindTopologyPanZoom() {
@@ -9065,11 +9100,15 @@ function _bindTopologyPanZoom() {
     _applyTopologyTransform();
   }, { passive: false });
 
-  // Mousedown on empty canvas → start panning. Mousedown on a node → let the click through.
+  // Mousedown: either start node drag or canvas pan.
   wrap.addEventListener('mousedown', (e) => {
     if (e.button !== 0) return;
-    // If the click landed on a node, don't start pan (let onclick handle it)
-    if (e.target.closest('.topology-node')) return;
+    const nodeEl = e.target.closest('g.topology-node');
+    if (nodeEl) {
+      const nodeId = nodeEl.getAttribute('data-node-id');
+      if (nodeId) _topologyNodeDragStart(e, nodeId, nodeEl);
+      return;
+    }
     _topologyDragState = {
       startX: e.clientX,
       startY: e.clientY,
@@ -9078,7 +9117,6 @@ function _bindTopologyPanZoom() {
       moved: false,
     };
     wrap.classList.add('dragging');
-    // Deselect node on empty-canvas click (will happen on mouseup if not moved)
   });
 
   window.addEventListener('mousemove', (e) => {
