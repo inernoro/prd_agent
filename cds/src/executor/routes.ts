@@ -4,8 +4,8 @@
  */
 import { Router } from 'express';
 import type { StateService } from '../services/state.js';
-import type { WorktreeService } from '../services/worktree.js';
 import type { ContainerService } from '../services/container.js';
+import { WorktreeService } from '../services/worktree.js';
 import type { CdsConfig, IShellExecutor, BranchEntry, OperationLog, OperationLogEvent } from '../types.js';
 import { topoSortLayers } from '../services/topo-sort.js';
 
@@ -80,8 +80,11 @@ export function createExecutorRouter(deps: ExecutorRouterDeps): Router {
       let entry = stateService.getBranch(branchId);
       if (!entry) {
         sendEvent('step', { step: 'worktree', status: 'running', title: `正在为 ${branchName} 创建工作树...` });
-        await shell.exec(`mkdir -p "${config.worktreeBase}"`);
-        const worktreePath = `${config.worktreeBase}/${branchId}`;
+        // FU-04: executor routes are pinned to the single
+        // config.repoRoot, so every worktree belongs to the 'default'
+        // project bucket in the nested layout.
+        await shell.exec(`mkdir -p "${config.worktreeBase}/default"`);
+        const worktreePath = WorktreeService.worktreePathFor(config.worktreeBase, 'default', branchId);
         await worktreeService.create(config.repoRoot, branchName, worktreePath);
 
         entry = {

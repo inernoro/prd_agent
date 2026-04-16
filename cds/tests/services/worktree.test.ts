@@ -1,5 +1,8 @@
-import { describe, it, expect, beforeEach } from 'vitest';
-import { WorktreeService } from '../../src/services/worktree.js';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { WorktreeService, CURRENT_WORKTREE_LAYOUT_VERSION, LEGACY_PROJECT_ID } from '../../src/services/worktree.js';
 import { MockShellExecutor } from '../../src/services/shell-executor.js';
 
 /**
@@ -252,6 +255,154 @@ describe('WorktreeService', () => {
 
       const result = await service.findBranchBySlug(REPO, 'anything');
       expect(result).toBeNull();
+    });
+  });
+
+  // ── FU-04 — per-project worktree subdirectory ──
+  //
+  // These tests live in the WorktreeService suite (not in
+  // state.test.ts) because the layout + migration logic is owned by
+  // WorktreeService. StateService just exposes the getters/setters
+  // the migration helper uses as callbacks.
+  describe('worktreePathFor (FU-04)', () => {
+    it('builds <base>/<projectId>/<slug> for a fresh install', () => {
+      const out = WorktreeService.worktreePathFor('/var/cds/wt', 'proj1', 'main');
+      expect(out).toBe('/var/cds/wt/proj1/main');
+    });
+
+    it('falls back to "default" when projectId is undefined', () => {
+      const out = WorktreeService.worktreePathFor('/wt', undefined, 'main');
+      expect(out).toBe(`/wt/${LEGACY_PROJECT_ID}/main`);
+    });
+
+    it('falls back to "default" when projectId is empty string', () => {
+      const out = WorktreeService.worktreePathFor('/wt', '   ', 'master');
+      expect(out).toBe(`/wt/${LEGACY_PROJECT_ID}/master`);
+    });
+
+    it('isolates two projects sharing a branch name (no collision)', () => {
+      const a = WorktreeService.worktreePathFor('/wt', 'projA', 'main');
+      const b = WorktreeService.worktreePathFor('/wt', 'projB', 'main');
+      expect(a).not.toBe(b);
+      expect(a).toBe('/wt/projA/main');
+      expect(b).toBe('/wt/projB/main');
+    });
+  });
+
+  describe('migrateFlatLayoutIfNeeded (FU-04)', () => {
+    let tmpBase: string;
+
+    beforeEach(() => {
+      tmpBase = fs.mkdtempSync(path.join(os.tmpdir(), 'cds-fu04-'));
+    });
+
+    afterEach(() => {
+      try { fs.rmSync(tmpBase, { recursive: true, force: true }); } catch { /* best effort */ }
+    });
+
+    it('is a no-op when state.worktreeLayoutVersion is already current', () => {
+      // Seed a legacy-looking flat entry so we can prove it wasn't touched.
+      fs.mkdirSync(path.join(tmpBase, 'main'));
+      let stamped: number | undefined;
+
+      const migrated = WorktreeService.migrateFlatLayoutIfNeeded({
+        worktreeBase: tmpBase,
+        projectIds: ['default'],
+        branches: [],
+        currentVersion: CURRENT_WORKTREE_LAYOUT_VERSION,
+        updateBranchWorktreePath: () => { throw new Error('should not be called'); },
+        markMigrated: (v) => { stamped = v; },
+      });
+
+      expect(migrated).toBe(0);
+      expect(stamped).toBeUndefined();
+      // Flat entry still there, not symlinked into a default bucket.
+      expect(fs.existsSync(path.join(tmpBase, 'default'))).toBe(false);
+    });
+
+    it('is a no-op (but stamps the version) when worktreeBase does not exist', () => {
+      const missing = path.join(tmpBase, 'does-not-exist');
+      let stamped = 0;
+
+      const migrated = WorktreeService.migrateFlatLayoutIfNeeded({
+        worktreeBase: missing,
+        projectIds: [],
+        branches: [],
+        currentVersion: undefined,
+        updateBranchWorktreePath: () => { throw new Error('should not be called'); },
+        markMigrated: (v) => { stamped = v; },
+      });
+
+      expect(migrated).toBe(0);
+      expect(stamped).toBe(CURRENT_WORKTREE_LAYOUT_VERSION);
+    });
+
+    it('symlinks legacy flat worktrees into <base>/default/<slug> and rewrites BranchEntry.worktreePath', () => {
+      // Pre-seed three flat worktrees mimicking a legacy install.
+      const legacyMain = path.join(tmpBase, 'main');
+      const legacyFeat = path.join(tmpBase, 'feature-x');
+      fs.mkdirSync(legacyMain);
+      fs.writeFileSync(path.join(legacyMain, 'marker.txt'), 'legacy-main', 'utf-8');
+      fs.mkdirSync(legacyFeat);
+
+      const branches = [
+        { id: 'main', projectId: 'default', worktreePath: legacyMain },
+        { id: 'feature-x', projectId: 'default', worktreePath: legacyFeat },
+      ];
+      const pathUpdates: Record<string, string> = {};
+      let stamped = 0;
+
+      const migrated = WorktreeService.migrateFlatLayoutIfNeeded({
+        worktreeBase: tmpBase,
+        projectIds: ['default'],
+        branches,
+        currentVersion: undefined, // legacy install
+        updateBranchWorktreePath: (id, p) => { pathUpdates[id] = p; },
+        markMigrated: (v) => { stamped = v; },
+      });
+
+      expect(migrated).toBeGreaterThanOrEqual(2);
+      expect(stamped).toBe(CURRENT_WORKTREE_LAYOUT_VERSION);
+
+      // Nested links exist and resolve to the legacy dirs.
+      const nestedMain = path.join(tmpBase, LEGACY_PROJECT_ID, 'main');
+      const nestedFeat = path.join(tmpBase, LEGACY_PROJECT_ID, 'feature-x');
+      expect(fs.existsSync(nestedMain)).toBe(true);
+      expect(fs.existsSync(nestedFeat)).toBe(true);
+      // Symlink's target is the original flat path, so the marker
+      // file is visible through the new nested path.
+      expect(fs.readFileSync(path.join(nestedMain, 'marker.txt'), 'utf-8')).toBe('legacy-main');
+
+      // BranchEntry.worktreePath gets rewritten to the nested layout.
+      expect(pathUpdates['main']).toBe(nestedMain);
+      expect(pathUpdates['feature-x']).toBe(nestedFeat);
+    });
+
+    it('skips directories whose name matches an existing project id', () => {
+      // 'proj1' is a known project — should NOT be treated as a legacy slug.
+      fs.mkdirSync(path.join(tmpBase, 'proj1'));
+      fs.mkdirSync(path.join(tmpBase, 'proj1', 'main')); // already nested
+      fs.mkdirSync(path.join(tmpBase, 'orphan-slug'));   // should migrate
+
+      const pathUpdates: Record<string, string> = {};
+      const migrated = WorktreeService.migrateFlatLayoutIfNeeded({
+        worktreeBase: tmpBase,
+        projectIds: ['proj1'],
+        branches: [
+          { id: 'orphan-slug', projectId: 'default', worktreePath: path.join(tmpBase, 'orphan-slug') },
+        ],
+        currentVersion: undefined,
+        updateBranchWorktreePath: (id, p) => { pathUpdates[id] = p; },
+        markMigrated: () => {},
+      });
+
+      // Only 'orphan-slug' migrated; 'proj1' left alone.
+      expect(migrated).toBe(1);
+      expect(pathUpdates['orphan-slug']).toBe(path.join(tmpBase, LEGACY_PROJECT_ID, 'orphan-slug'));
+      // proj1 nested dir untouched.
+      expect(fs.existsSync(path.join(tmpBase, 'proj1', 'main'))).toBe(true);
+      // No default/proj1 weirdness:
+      expect(fs.existsSync(path.join(tmpBase, LEGACY_PROJECT_ID, 'proj1'))).toBe(false);
     });
   });
 });

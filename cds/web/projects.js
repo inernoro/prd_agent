@@ -378,26 +378,246 @@
 
   // ── User / workspace bootstrap ────────────────────────────────────
 
+  // Badge resolution priority (Backlog UF-02, 2nd pass):
+  //   1. CDS session user (/api/me) — when CDS_AUTH_MODE=github and
+  //      the user has an active session, this is authoritative.
+  //   2. GitHub Device Flow user (/api/github/oauth/status) — when
+  //      CDS auth is disabled / mode=basic, but the operator has
+  //      linked a personal GitHub via Device Flow, we surface that
+  //      login as the badge.
+  //   3. Fallback: show "未登录" with a tooltip explaining why.
+  //
+  // The function is IDEMPOTENT and EVENT-DRIVEN — it can be called
+  // any number of times, including after a GitHub Device Flow login
+  // completes mid-session (the main UF-02 regression: the old code
+  // only ran once at pageload, so a user who logged in AFTER the
+  // page loaded was stuck seeing "未登录" until a manual refresh).
+  //
+  // Re-entry points:
+  //   - `loadProjects()` at pageload
+  //   - `_pollGithubDevice` on 'ready' (inside the create modal)
+  //   - `_settingsGithubDisconnect` equivalent if/when we add one
+  //   - Any other flow that mutates the CDS session or GitHub link
+
+  // Track the last resolved identity so we don't repaint unchanged
+  // state (cuts a tiny visual flicker). Compared by login id.
+  var _lastResolvedBadgeLogin = null;
+  // UF-11: cache the last GitHub status response so the popover can
+  // show "未配置 / 未登录 / 已连接 @xxx" without re-fetching.
+  var _lastGithubStatus = null;
+
+  function _setUserCardClass(cls) {
+    var card = document.getElementById('userCard');
+    if (!card) return;
+    card.classList.remove('signed-in', 'not-configured');
+    if (cls) card.classList.add(cls);
+  }
+
+  function _updateUserPopover() {
+    var statusEl = document.getElementById('userPopoverStatus');
+    var signinBtn = document.getElementById('userPopoverSignin');
+    var logoutBtn = document.getElementById('userPopoverLogout');
+    // UF-12: top-level setup banner, only visible when configured=false
+    var setupBanner = document.getElementById('githubSetupBanner');
+    if (!statusEl) return;
+    var s = _lastGithubStatus;
+    if (!s) {
+      statusEl.textContent = '正在检查登录状态…';
+      if (signinBtn) signinBtn.style.display = 'none';
+      if (logoutBtn) logoutBtn.style.display = 'none';
+      if (setupBanner) setupBanner.style.display = 'none';
+      return;
+    }
+    if (!s.configured) {
+      statusEl.innerHTML = '⚠ 未配置 · 运维需设置 <code style="background:var(--bg-elevated);padding:1px 4px;border-radius:3px">CDS_GITHUB_CLIENT_ID</code>';
+      if (signinBtn) signinBtn.style.display = 'none';
+      if (logoutBtn) logoutBtn.style.display = 'none';
+      if (setupBanner) setupBanner.style.display = 'block';
+      return;
+    }
+    if (setupBanner) setupBanner.style.display = 'none';
+    if (s.connected && s.login && s.login !== '(unknown)') {
+      statusEl.innerHTML = '✅ 已连接 <code style="background:var(--bg-elevated);padding:1px 4px;border-radius:3px">@' + escapeHtml(s.login) + '</code>';
+      if (signinBtn) signinBtn.style.display = 'none';
+      if (logoutBtn) logoutBtn.style.display = 'flex';
+    } else {
+      statusEl.textContent = '已配置 GitHub 但尚未登录 — 点下方完成 Device Flow';
+      if (signinBtn) signinBtn.style.display = 'flex';
+      if (logoutBtn) logoutBtn.style.display = 'none';
+    }
+  }
+
+
+  function _renderBadgeIdentity(login, displayName, avatarUrl) {
+    var nameEl = document.getElementById('userName');
+    var avatarEl = document.getElementById('userAvatar');
+    if (!nameEl || !avatarEl) return;
+    if (nameEl) nameEl.textContent = displayName || login || '登录用户';
+    if (nameEl) nameEl.title = login ? ('@' + login + ' · 点击管理') : '';
+    if (avatarUrl) {
+      avatarEl.innerHTML =
+        '<img src="' + String(avatarUrl).replace(/"/g, '') + '" alt="">';
+    } else {
+      avatarEl.textContent = ((login || displayName || '?') + '').charAt(0).toUpperCase();
+    }
+    _lastResolvedBadgeLogin = login || null;
+    _setUserCardClass('signed-in');
+    _updateUserPopover();
+  }
+
+  function _renderBadgeNotLoggedIn(hint, notConfigured) {
+    var nameEl = document.getElementById('userName');
+    var avatarEl = document.getElementById('userAvatar');
+    if (!nameEl || !avatarEl) return;
+    if (_lastResolvedBadgeLogin !== null) _lastResolvedBadgeLogin = null;
+    nameEl.textContent = notConfigured ? '未配置' : '未登录';
+    nameEl.title = hint || '点击打开登录菜单';
+    avatarEl.innerHTML = notConfigured ? '⚙' : '?';
+    _setUserCardClass(notConfigured ? 'not-configured' : null);
+    _updateUserPopover();
+  }
+
+  // UF-11: helpers used by the inline onclick handlers in projects.html.
+  window._toggleUserMenu = function (ev) {
+    if (ev) ev.stopPropagation();
+    var card = document.getElementById('userCard');
+    if (!card) return;
+    card.classList.toggle('menu-open');
+  };
+  window._closeUserMenu = function () {
+    var card = document.getElementById('userCard');
+    if (card) card.classList.remove('menu-open');
+  };
+  window._openGithubSignin = function () {
+    // Close the popover then route to the existing Device Flow modal.
+    // If the create modal isn't open we still need the device modal
+    // harness, which is already wired inside openCreateProjectModal.
+    window._closeUserMenu();
+    // _openGithubSignin() in projects.js's create-modal scope expects
+    // the device modal DOM to exist. The create modal markup in
+    // projects.html contains that DOM, so opening the create modal
+    // first guarantees it. Users can hit cancel on the create form
+    // without losing the github connection.
+    if (typeof openCreateProjectModal === 'function') {
+      openCreateProjectModal();
+    }
+    // Defer so the create-modal's _refreshGithubSignInState runs first.
+    setTimeout(function () {
+      // Now call the internal _openGithubSignin handler (the one
+      // defined inside the IIFE scope) via the Sign-in button that
+      // _refreshGithubSignInState puts into the DOM. The button's
+      // onclick fires the same handler.
+      var btn = document.getElementById('cp-github-signin');
+      if (btn) btn.click();
+    }, 80);
+  };
+  window._disconnectGithub = async function () {
+    window._closeUserMenu();
+    if (!window.confirm('确定断开 GitHub 连接吗?\n\n此操作清除 CDS 本地保存的 token。GitHub 侧的授权需要去 https://github.com/settings/applications 手动撤销。')) return;
+    try {
+      var res = await fetch('/api/github/oauth', { method: 'DELETE', credentials: 'same-origin' });
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      showToast('已断开 GitHub 连接', 'success');
+      // Immediately refresh the badge so the user sees the change
+      _lastGithubStatus = null;
+      _lastResolvedBadgeLogin = null;
+      bootstrapMeLabel();
+    } catch (err) {
+      showToast('断开失败: ' + (err && err.message ? err.message : err), 'error');
+    }
+  };
+  // Close popover on outside click
+  document.addEventListener('click', function (e) {
+    var card = document.getElementById('userCard');
+    if (!card || !card.classList.contains('menu-open')) return;
+    if (!card.contains(e.target)) card.classList.remove('menu-open');
+  });
+
   function bootstrapMeLabel() {
+    // Phase 1: probe CDS session. If we get a 200 with a user back,
+    // that's authoritative — use it and stop.
     fetch('/api/me', { credentials: 'same-origin', cache: 'no-store' })
       .then(function (res) { return res.ok ? res.json() : null; })
-      .catch(function () { return null; })
+      .catch(function (err) {
+        // Network error (rare); fall through to phase 2.
+        // eslint-disable-next-line no-console
+        console.debug('[projects] /api/me network error:', err && err.message);
+        return null;
+      })
       .then(function (body) {
-        if (!body || !body.user) return;
-        var user = body.user;
-        var nameEl = document.getElementById('userName');
-        var avatarEl = document.getElementById('userAvatar');
-        if (nameEl) nameEl.textContent = user.githubLogin || user.name || '登录用户';
-        if (avatarEl) {
-          if (user.avatarUrl) {
-            avatarEl.innerHTML =
-              '<img src="' + user.avatarUrl.replace(/"/g, '') + '" alt="">';
-          } else {
-            avatarEl.textContent = (user.githubLogin || '?').charAt(0).toUpperCase();
-          }
+        if (body && body.user) {
+          var user = body.user;
+          _renderBadgeIdentity(
+            user.githubLogin,
+            user.githubLogin || user.name || user.email,
+            user.avatarUrl,
+          );
+          // Even when /api/me resolves, fetch the GitHub status in
+          // parallel so the popover can offer disconnect/reconnect
+          // for the separate Device Flow token.
+          fetch('/api/github/oauth/status', { credentials: 'same-origin', cache: 'no-store' })
+            .then(function (res) { return res.ok ? res.json() : null; })
+            .then(function (gh) { _lastGithubStatus = gh; _updateUserPopover(); })
+            .catch(function () { /* quiet */ });
+          return;
         }
+        // Phase 2: probe GitHub Device Flow status. This is the
+        // branch that activates when CDS is running in
+        // auth-mode=disabled (single-user install) but the operator
+        // has linked their personal GitHub account for repo listing.
+        return fetch('/api/github/oauth/status', { credentials: 'same-origin', cache: 'no-store' })
+          .then(function (res) { return res.ok ? res.json() : null; })
+          .catch(function (err) {
+            // eslint-disable-next-line no-console
+            console.debug('[projects] /api/github/oauth/status network error:', err && err.message);
+            return null;
+          })
+          .then(function (gh) {
+            _lastGithubStatus = gh || { configured: false, connected: false };
+            if (gh && gh.connected && gh.login && gh.login !== '(unknown)') {
+              _renderBadgeIdentity(gh.login, gh.name || gh.login, gh.avatarUrl);
+              return;
+            }
+            // Nothing resolved. Render the not-logged-in hint with
+            // a diagnostic tooltip explaining the probe results so
+            // operators don't have to open DevTools.
+            var diag = [];
+            if (!body) diag.push('CDS 会话: 无');
+            else if (!body.user) diag.push('CDS 会话: 空');
+            if (!gh) diag.push('GitHub 状态: 探测失败');
+            else if (!gh.configured) diag.push('GitHub: 未配置 CDS_GITHUB_CLIENT_ID');
+            else if (!gh.connected) diag.push('GitHub: 未完成 Device Flow 登录');
+            else if (gh.login === '(unknown)') diag.push('GitHub: token 无 profile 信息');
+            _renderBadgeNotLoggedIn(diag.join(' · '), gh && !gh.configured);
+          });
       });
   }
+
+  // UF-13: global error guard. If any uncaught JS error fires (typically
+  // a syntax error in app.js after redeploy, or a network failure inside
+  // a fetch callback), surface it as a toast + console so users can
+  // self-diagnose instead of staring at a silent broken page. This is
+  // the escape hatch the user requested ("我不知道什么情况下它不是未登录").
+  window.addEventListener('error', function (e) {
+    try {
+      var msg = (e && e.message) || '未知脚本错误';
+      var src = (e && e.filename) || '';
+      // eslint-disable-next-line no-console
+      console.error('[projects] uncaught error:', msg, 'at', src, e);
+      // Only show a toast for errors that aren't from the browser
+      // complaining about images/3rd-party (those fire 'error' events
+      // on elements and bubble up here with src set to the image URL).
+      if (typeof showToast === 'function' && !/\.(png|jpg|jpeg|svg|webp)$/i.test(src)) {
+        showToast('脚本错误: ' + msg + ' — 请 Cmd+R 刷新,仍有问题请运维检查 CDS 版本', 'error', 8000);
+      }
+    } catch (_e) { /* last-resort guard */ }
+  }, true);
+
+  // Expose so other code paths (device-flow success, modal handlers)
+  // can trigger an immediate badge refresh. Also aliased on window so
+  // the inline onclick handlers inside create / device modals can
+  // reach it without a closure dance.
+  window._cdsRefreshIdentityBadge = bootstrapMeLabel;
 
   // ── Create-project modal ───────────────────────────────────────────
 
@@ -569,6 +789,11 @@
           showToast('GitHub 已连接 @' + (body.login || ''));
           setTimeout(function () {
             closeGithubDeviceModal();
+            // UF-02 regression: refresh the bottom-left identity badge
+            // immediately. Previously this was only done at pageload,
+            // so users who completed Device Flow mid-session kept
+            // seeing "未登录" until a manual browser refresh.
+            bootstrapMeLabel();
             // Refresh the create-modal sign-in state (shows connected banner)
             _refreshGithubSignInState();
             // Open the repo picker immediately
@@ -634,6 +859,12 @@
   // URL afterwards if they want.
 
   var _allRepos = [];
+  // FU-01: pagination state. `_repoPickerNextPage` is the page to
+  // fetch on the next "加载更多" click; `_repoPickerLoadingMore` is a
+  // re-entrancy guard so rapid double-clicks don't double-fetch.
+  var _repoPickerNextPage = 1;
+  var _repoPickerHasMore = false;
+  var _repoPickerLoadingMore = false;
 
   function _openRepoPicker() {
     var modal = document.getElementById('githubRepoPickerModal');
@@ -646,7 +877,13 @@
     if (subtitleEl) subtitleEl.textContent = '正在加载…';
     modal.classList.add('visible');
 
-    fetch('/api/github/repos', { credentials: 'same-origin' })
+    // Reset pagination state on each open
+    _allRepos = [];
+    _repoPickerNextPage = 1;
+    _repoPickerHasMore = false;
+    _repoPickerLoadingMore = false;
+
+    fetch('/api/github/repos?page=1', { credentials: 'same-origin' })
       .then(function (r) {
         return r.json().then(function (body) { return { status: r.status, body: body }; });
       })
@@ -665,7 +902,13 @@
         }
 
         _allRepos = result.body.repos || [];
-        if (subtitleEl) subtitleEl.textContent = '共 ' + _allRepos.length + ' 个仓库';
+        _repoPickerHasMore = !!result.body.hasNext;
+        _repoPickerNextPage = 2;
+        if (subtitleEl) {
+          subtitleEl.textContent = _repoPickerHasMore
+            ? '已加载 ' + _allRepos.length + ' 个仓库(还有更多)'
+            : '共 ' + _allRepos.length + ' 个仓库';
+        }
         if (searchEl) { searchEl.style.display = 'block'; searchEl.value = ''; }
         _renderRepoList(_allRepos);
         setTimeout(function () {
@@ -674,8 +917,47 @@
       })
       .catch(function (err) {
         if (listEl) {
-          listEl.innerHTML = '<div style="padding:60px 20px;text-align:center;color:var(--red);font-size:12px">网络错误：' + escapeHtml(err && err.message ? err.message : String(err)) + '</div>';
+          listEl.innerHTML = '<div style="padding:60px 20px;text-align:center;color:var(--red);font-size:12px">网络错误:' + escapeHtml(err && err.message ? err.message : String(err)) + '</div>';
         }
+      });
+  }
+
+  // FU-01: fetch the next page of repos and append to the list.
+  // Called from the "加载更多" button at the bottom of the render output.
+  function _repoPickerLoadMore() {
+    if (_repoPickerLoadingMore || !_repoPickerHasMore) return;
+    _repoPickerLoadingMore = true;
+    var loadMoreBtn = document.getElementById('gh-picker-load-more');
+    if (loadMoreBtn) { loadMoreBtn.disabled = true; loadMoreBtn.textContent = '正在加载…'; }
+    fetch('/api/github/repos?page=' + encodeURIComponent(_repoPickerNextPage), { credentials: 'same-origin' })
+      .then(function (r) { return r.ok ? r.json() : null; })
+      .then(function (body) {
+        if (!body || !Array.isArray(body.repos)) {
+          showToast('加载更多失败', 'error');
+          return;
+        }
+        _allRepos = _allRepos.concat(body.repos);
+        _repoPickerHasMore = !!body.hasNext;
+        _repoPickerNextPage += 1;
+        var subtitleEl = document.getElementById('gh-picker-subtitle');
+        if (subtitleEl) {
+          subtitleEl.textContent = _repoPickerHasMore
+            ? '已加载 ' + _allRepos.length + ' 个仓库(还有更多)'
+            : '共 ' + _allRepos.length + ' 个仓库';
+        }
+        // Re-render with the current search query applied
+        var searchEl = document.getElementById('gh-picker-search');
+        var q = searchEl ? searchEl.value.trim().toLowerCase() : '';
+        var filtered = q
+          ? _allRepos.filter(function (r) { return r.fullName.toLowerCase().includes(q); })
+          : _allRepos;
+        _renderRepoList(filtered);
+      })
+      .catch(function (err) {
+        showToast('加载更多失败:' + (err && err.message ? err.message : err), 'error');
+      })
+      .finally(function () {
+        _repoPickerLoadingMore = false;
       });
   }
 
@@ -701,6 +983,15 @@
         '<svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor" style="color:var(--text-muted);flex-shrink:0;margin-top:4px"><path d="M6.22 3.22a.75.75 0 011.06 0l4.25 4.25a.75.75 0 010 1.06l-4.25 4.25a.75.75 0 01-1.06-1.06L9.94 8 6.22 4.28a.75.75 0 010-1.06z"/></svg>' +
         '</div>';
     }).join('');
+    // FU-01: render a "加载更多" button at the bottom of the list
+    // whenever the last page response indicated hasNext=true. Clicking
+    // it appends the next page and rerenders. Matches GitHub's own
+    // paginated UI convention.
+    if (_repoPickerHasMore) {
+      listEl.innerHTML += '<button type="button" id="gh-picker-load-more" class="gh-repo-row" style="justify-content:center;cursor:pointer;color:var(--accent,#10b981);font-weight:600;border:1px dashed rgba(16,185,129,0.4)" onclick="_repoPickerLoadMore()">' +
+        '<span>加载更多(第 ' + _repoPickerNextPage + ' 页)</span>' +
+        '</button>';
+    }
   }
 
   function _filterRepoPicker(query) {
@@ -740,6 +1031,8 @@
 
   window._openGithubSignin = _openGithubSignin;
   window._openRepoPicker = _openRepoPicker;
+  // FU-01: pagination load-more handler
+  window._repoPickerLoadMore = _repoPickerLoadMore;
   window.closeGithubDeviceModal = closeGithubDeviceModal;
 
   function closeCreateProjectModal(event) {

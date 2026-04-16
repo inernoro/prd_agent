@@ -2,6 +2,7 @@ import path from 'node:path';
 import type { CdsState, BranchEntry, BuildProfile, BuildProfileOverride, RoutingRule, OperationLog, InfraService, ExecutorNode, DataMigration, CdsPeer, Project } from '../types.js';
 import type { StateBackingStore } from '../infra/state-store/backing-store.js';
 import { JsonStateBackingStore, MAX_STATE_BACKUPS as JSON_MAX_BACKUPS } from '../infra/state-store/json-backing-store.js';
+import { sealToken, unsealToken, isSealedSecret } from '../infra/secret-seal.js';
 
 const MAX_LOGS_PER_BRANCH = 10;
 /** Max rolling backups of state.json kept on disk. Re-exported from the backing store so existing callers keep working. */
@@ -712,15 +713,64 @@ export class StateService {
    * to auth-service which runs the CDS session flow.
    */
   getGithubDeviceAuth(): import('../types.js').GitHubDeviceAuth | undefined {
-    return this.state.githubDeviceAuth;
+    const stored = this.state.githubDeviceAuth;
+    if (!stored) return undefined;
+    // FU-05: if the token field was sealed (AES-256-GCM) on the way
+    // in, unseal it here so consumers always see plaintext. Legacy
+    // plaintext tokens short-circuit in unsealToken(). Decryption
+    // failures (key rotated, key removed, tampered state.json) are
+    // logged and returned as "no auth" so the UI can re-prompt.
+    const rawToken = (stored as { token: unknown }).token;
+    if (isSealedSecret(rawToken)) {
+      try {
+        const plain = unsealToken(rawToken);
+        return { ...stored, token: plain } as import('../types.js').GitHubDeviceAuth;
+      } catch (err) {
+        // eslint-disable-next-line no-console
+        console.warn(
+          '[state] failed to unseal github device token (CDS_SECRET_KEY rotated?):',
+          (err as Error).message,
+        );
+        return undefined;
+      }
+    }
+    return stored;
   }
-  setGithubDeviceAuth(auth: import('../types.js').GitHubDeviceAuth | null): void {
+  /**
+   * UF-01 hardening: set + persist, then await the backing store flush
+   * (no-op for JsonBackingStore which is sync, real await for
+   * MongoStateBackingStore whose save() is write-behind). Callers on
+   * the Device Flow completion path use this to guarantee the token
+   * survives a CDS crash immediately after oauth — without the flush
+   * the mongo upsert could still be in-flight when the user clicks
+   * "clone" and a racing crash would lose the snapshot.
+   *
+   * Throws if the backing store save fails, so the caller (oauth
+   * device-poll) can surface a real error to the UI instead of a
+   * fake "ready" status.
+   */
+  async setGithubDeviceAuth(auth: import('../types.js').GitHubDeviceAuth | null): Promise<void> {
     if (auth) {
-      this.state.githubDeviceAuth = auth;
+      // FU-05: seal the token field with AES-256-GCM before writing
+      // to state.json. When CDS_SECRET_KEY is unset, sealToken() is
+      // a no-op pass-through and we keep the legacy plaintext shape.
+      // The rest of the envelope (login/name/avatarUrl/scopes) stays
+      // unsealed so a leaked state.json still lets operators see
+      // WHICH github account was connected, just not the token.
+      const sealed = sealToken(auth.token);
+      this.state.githubDeviceAuth = { ...auth, token: sealed as unknown as string };
     } else {
       delete this.state.githubDeviceAuth;
     }
     this.save();
+    // If the backing store exposes a flush() method (Mongo write-behind),
+    // await it so any upsert failure surfaces here rather than getting
+    // swallowed on the async chain. JsonBackingStore has no flush(), so
+    // this is a no-op there.
+    const maybeFlush = (this.backingStore as { flush?: () => Promise<void> }).flush;
+    if (typeof maybeFlush === 'function') {
+      await maybeFlush.call(this.backingStore);
+    }
   }
 
   /**
@@ -743,6 +793,31 @@ export class StateService {
     if (!projectId) return fallback;
     const project = this.getProject(projectId);
     return project?.repoPath || fallback;
+  }
+
+  // ── FU-04: worktree layout migration bookkeeping ──
+
+  /** Current layout version stamped in state.json (undefined = legacy flat). */
+  getWorktreeLayoutVersion(): number | undefined {
+    return this.state.worktreeLayoutVersion;
+  }
+
+  /** Bump the stamp so subsequent boots skip the one-shot migration. */
+  setWorktreeLayoutVersion(version: number): void {
+    this.state.worktreeLayoutVersion = version;
+  }
+
+  /**
+   * FU-04 helper: rewrite a branch's worktree path. Used by the
+   * migration to point legacy entries at their new nested location
+   * without going through the full updateBranchMeta() API (which
+   * doesn't know about worktreePath, intentionally — it's a
+   * structural field, not user metadata).
+   */
+  setBranchWorktreePath(branchId: string, worktreePath: string): void {
+    const branch = this.state.branches[branchId];
+    if (!branch) return;
+    branch.worktreePath = worktreePath;
   }
 
   // ── Project-scoped views (P4 Part 3a) ──

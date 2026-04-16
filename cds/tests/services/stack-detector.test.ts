@@ -117,7 +117,9 @@ describe('stack-detector', () => {
 
   describe('Python', () => {
     it('detects pip project with requirements.txt + main.py', () => {
-      fs.writeFileSync(path.join(tmp, 'requirements.txt'), 'flask\n');
+      // Use a non-framework dep so the base-stack runCommand is kept.
+      // (Flask / Django / FastAPI would now flip into FU-03 overrides.)
+      fs.writeFileSync(path.join(tmp, 'requirements.txt'), 'requests\n');
       fs.writeFileSync(path.join(tmp, 'main.py'), 'print("hi")\n');
       const r = detectStack(tmp);
       expect(r.stack).toBe('python');
@@ -187,6 +189,211 @@ describe('stack-detector', () => {
       fs.writeFileSync(path.join(tmp, 'package.json'), JSON.stringify({ name: 'x' }));
       const r = detectStack(tmp);
       expect(r.stack).toBe('dockerfile');
+    });
+  });
+
+  // ───────────────────────────────────────────────────────────
+  // FU-03 framework detection — nixpacks-style sub-discriminator
+  // ───────────────────────────────────────────────────────────
+  describe('FU-03 framework detection — Node.js', () => {
+    it('detects Next.js from dependencies', () => {
+      fs.writeFileSync(path.join(tmp, 'package.json'), JSON.stringify({
+        name: 'next-site',
+        dependencies: { next: '^14.0.0', react: '^18.0.0' },
+        scripts: { build: 'next build', start: 'next start' },
+      }));
+      const r = detectStack(tmp);
+      expect(r.stack).toBe('nodejs');
+      expect(r.framework).toBe('nextjs');
+      expect(r.dockerImage).toBe('node:20-alpine');
+      expect(r.suggestedRunCommand).toContain('npm run build');
+      expect(r.suggestedRunCommand).toContain('npm start');
+      expect(r.suggestedBuildCommand).toBe('npm run build');
+      expect(r.containerPort).toBe(3000);
+      expect(r.signals).toContain('deps:next');
+    });
+
+    it('detects Next.js from next.config.js even without dep', () => {
+      fs.writeFileSync(path.join(tmp, 'package.json'), JSON.stringify({ name: 'x' }));
+      fs.writeFileSync(path.join(tmp, 'next.config.js'), 'module.exports = {};\n');
+      const r = detectStack(tmp);
+      expect(r.framework).toBe('nextjs');
+      expect(r.signals).toContain('next.config');
+    });
+
+    it('detects NestJS from @nestjs/core dependency', () => {
+      fs.writeFileSync(path.join(tmp, 'package.json'), JSON.stringify({
+        name: 'nest-api',
+        dependencies: { '@nestjs/core': '^10.0.0', '@nestjs/common': '^10.0.0', express: '^4.0.0' },
+        scripts: { 'start:prod': 'node dist/main' },
+      }));
+      const r = detectStack(tmp);
+      expect(r.framework).toBe('nestjs');
+      expect(r.dockerImage).toBe('node:20-alpine');
+      expect(r.suggestedRunCommand).toBe('npm run start:prod');
+      expect(r.signals).toContain('deps:@nestjs/core');
+    });
+
+    it('detects Express as fallback (after ruling out Nest/Next)', () => {
+      fs.writeFileSync(path.join(tmp, 'package.json'), JSON.stringify({
+        name: 'express-app',
+        dependencies: { express: '^4.18.0' },
+      }));
+      fs.writeFileSync(path.join(tmp, 'server.js'), '// entry\n');
+      const r = detectStack(tmp);
+      expect(r.framework).toBe('express');
+      expect(r.dockerImage).toBe('node:20-alpine');
+      expect(r.suggestedRunCommand).toBe('node server.js');
+    });
+
+    it('detects Express with index.js entry fallback', () => {
+      fs.writeFileSync(path.join(tmp, 'package.json'), JSON.stringify({
+        name: 'express-bare',
+        dependencies: { express: '^4.18.0' },
+      }));
+      fs.writeFileSync(path.join(tmp, 'index.js'), '// entry\n');
+      const r = detectStack(tmp);
+      expect(r.framework).toBe('express');
+      expect(r.suggestedRunCommand).toBe('node index.js');
+    });
+
+    it('detects Remix from @remix-run scoped dependency', () => {
+      fs.writeFileSync(path.join(tmp, 'package.json'), JSON.stringify({
+        name: 'remix-app',
+        dependencies: { '@remix-run/node': '^2.0.0', '@remix-run/react': '^2.0.0' },
+      }));
+      const r = detectStack(tmp);
+      expect(r.framework).toBe('remix');
+      expect(r.dockerImage).toBe('node:20-alpine');
+      expect(r.suggestedRunCommand).toBe('npm start');
+      expect(r.suggestedBuildCommand).toBe('npm run build');
+    });
+
+    it('detects Remix from classic `remix` package', () => {
+      fs.writeFileSync(path.join(tmp, 'package.json'), JSON.stringify({
+        name: 'remix-classic',
+        dependencies: { remix: '^1.0.0' },
+      }));
+      const r = detectStack(tmp);
+      expect(r.framework).toBe('remix');
+    });
+
+    it('detects Vite+React as static site with nginx image', () => {
+      fs.writeFileSync(path.join(tmp, 'package.json'), JSON.stringify({
+        name: 'vite-react-app',
+        devDependencies: { vite: '^5.0.0' },
+        dependencies: { react: '^18.0.0', 'react-dom': '^18.0.0' },
+      }));
+      const r = detectStack(tmp);
+      expect(r.framework).toBe('vite-react');
+      expect(r.dockerImage).toBe('nginx:alpine');
+      expect(r.suggestedBuildCommand).toBe('npm run build');
+      expect(r.containerPort).toBe(80);
+    });
+
+    it('NestJS beats Express when both deps present', () => {
+      fs.writeFileSync(path.join(tmp, 'package.json'), JSON.stringify({
+        name: 'nest-on-express',
+        dependencies: { '@nestjs/core': '^10.0.0', express: '^4.0.0' },
+      }));
+      const r = detectStack(tmp);
+      expect(r.framework).toBe('nestjs');
+    });
+
+    it('Next.js beats Vite+React when both signals present', () => {
+      fs.writeFileSync(path.join(tmp, 'package.json'), JSON.stringify({
+        name: 'mixed',
+        dependencies: { next: '^14.0.0', react: '^18.0.0', vite: '^5.0.0' },
+      }));
+      const r = detectStack(tmp);
+      expect(r.framework).toBe('nextjs');
+    });
+
+    it('leaves framework undefined for a plain Node.js app', () => {
+      fs.writeFileSync(path.join(tmp, 'package.json'), JSON.stringify({
+        name: 'plain',
+        dependencies: { lodash: '^4.0.0' },
+      }));
+      const r = detectStack(tmp);
+      expect(r.stack).toBe('nodejs');
+      expect(r.framework).toBeUndefined();
+    });
+  });
+
+  describe('FU-03 framework detection — Python', () => {
+    it('detects Django from requirements.txt', () => {
+      fs.writeFileSync(path.join(tmp, 'requirements.txt'), 'django==4.2\npsycopg2\n');
+      const r = detectStack(tmp);
+      expect(r.stack).toBe('python');
+      expect(r.framework).toBe('django');
+      expect(r.dockerImage).toBe('python:3.12-slim');
+      expect(r.suggestedRunCommand).toContain('manage.py runserver');
+      expect(r.containerPort).toBe(8000);
+    });
+
+    it('detects Django from manage.py even without the dep line', () => {
+      fs.writeFileSync(path.join(tmp, 'requirements.txt'), '# empty\n');
+      fs.writeFileSync(path.join(tmp, 'manage.py'), '#!/usr/bin/env python\n');
+      const r = detectStack(tmp);
+      expect(r.framework).toBe('django');
+      expect(r.signals).toContain('manage.py');
+    });
+
+    it('detects FastAPI with uvicorn main:app command', () => {
+      fs.writeFileSync(path.join(tmp, 'requirements.txt'), 'fastapi[all]==0.110.0\nuvicorn\n');
+      const r = detectStack(tmp);
+      expect(r.framework).toBe('fastapi');
+      expect(r.suggestedRunCommand).toContain('uvicorn main:app');
+      expect(r.suggestedRunCommand).toContain('--host 0.0.0.0');
+    });
+
+    it('detects Flask with flask run command', () => {
+      fs.writeFileSync(path.join(tmp, 'requirements.txt'), 'Flask==3.0.0\n');
+      const r = detectStack(tmp);
+      expect(r.framework).toBe('flask');
+      expect(r.suggestedRunCommand).toContain('flask run');
+      expect(r.containerPort).toBe(5000);
+    });
+
+    it('Django beats FastAPI when both in requirements', () => {
+      fs.writeFileSync(path.join(tmp, 'requirements.txt'), 'django\nfastapi\n');
+      const r = detectStack(tmp);
+      expect(r.framework).toBe('django');
+    });
+
+    it('detects FastAPI from pyproject.toml dependency string', () => {
+      fs.writeFileSync(path.join(tmp, 'pyproject.toml'),
+        '[tool.poetry]\nname = "x"\n[tool.poetry.dependencies]\npython = "^3.12"\nfastapi = "^0.110"\n');
+      const r = detectStack(tmp);
+      expect(r.framework).toBe('fastapi');
+    });
+
+    it('leaves framework undefined for a plain Python project', () => {
+      fs.writeFileSync(path.join(tmp, 'requirements.txt'), 'requests\nnumpy\n');
+      const r = detectStack(tmp);
+      expect(r.stack).toBe('python');
+      expect(r.framework).toBeUndefined();
+    });
+  });
+
+  describe('FU-03 framework detection — Ruby', () => {
+    it('detects Rails from `gem "rails"` in Gemfile', () => {
+      fs.writeFileSync(path.join(tmp, 'Gemfile'),
+        "source 'https://rubygems.org'\ngem 'rails', '~> 7.1'\n");
+      const r = detectStack(tmp);
+      expect(r.stack).toBe('ruby');
+      expect(r.framework).toBe('rails');
+      expect(r.dockerImage).toBe('ruby:3.3-slim');
+      expect(r.suggestedRunCommand).toContain('rails server');
+      expect(r.containerPort).toBe(3000);
+    });
+
+    it('leaves framework undefined for a non-Rails Ruby project', () => {
+      fs.writeFileSync(path.join(tmp, 'Gemfile'),
+        "source 'https://rubygems.org'\ngem 'sinatra'\n");
+      const r = detectStack(tmp);
+      expect(r.stack).toBe('ruby');
+      expect(r.framework).toBeUndefined();
     });
   });
 });

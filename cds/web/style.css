@@ -5116,26 +5116,78 @@ a.branch-name:hover { color: var(--accent); }
   opacity: 0.32;
 }
 
+/* UF-22: deploy-in-progress animation for the node card. Amber pulsing
+   border + a faint left-to-right scan line so the user can tell at a
+   glance which service is currently building, matching the list-view's
+   per-card live dot. */
+.topology-node.is-building .topology-node-box {
+  stroke: #f59e0b;
+  stroke-width: 2;
+  animation: topo-node-building-pulse 1.6s ease-in-out infinite;
+}
+@keyframes topo-node-building-pulse {
+  0%, 100% { stroke-opacity: 0.55; filter: drop-shadow(0 0 0 rgba(245,158,11,0)); }
+  50%      { stroke-opacity: 1;    filter: drop-shadow(0 0 6px rgba(245,158,11,0.55)); }
+}
+.topology-node.is-building .topology-node-status-dot {
+  fill: #f59e0b;
+  animation: topo-node-status-pulse 1.2s ease-in-out infinite;
+}
+@keyframes topo-node-status-pulse {
+  0%, 100% { opacity: 1;   transform: scale(1); }
+  50%      { opacity: 0.5; transform: scale(1.25); transform-origin: center; }
+}
+
+/* UF-22: error state — red border, non-animating so it's clearly
+   distinct from the "busy" amber pulse. */
+.topology-node.is-error .topology-node-box {
+  stroke: #ef4444;
+  stroke-width: 2;
+}
+
+/* UF-05: unified card shape — both apps and infra use .topology-node-box.
+   The legacy .topology-node-capsule selector kept for backwards compat
+   but no longer emitted by the renderer. */
 .topology-node-box,
 .topology-node-capsule {
   fill: var(--bg-card-solid);
   stroke: var(--border);
   stroke-width: 1.5;
-  filter: drop-shadow(0 2px 6px rgba(0, 0, 0, 0.12));
+  filter: drop-shadow(0 4px 14px rgba(0, 0, 0, 0.22));
 }
 .topology-node.has-override .topology-node-box,
 .topology-node.has-override .topology-node-capsule {
   stroke: var(--accent, #10b981);
   stroke-width: 2;
 }
+/* UF-21: old .topology-node-icon was a <text> font-glyph.
+   New .topology-node-icon-wrap is a <g> containing a 22x22 SVG logo. */
 .topology-node-icon {
-  font-size: 18px;
+  font-size: 22px;
   pointer-events: none;
+  dominant-baseline: middle;
+}
+.topology-node-icon-wrap {
+  pointer-events: none;
+}
+.topology-node-slot-icon-wrap {
+  color: var(--text-muted);
+  pointer-events: none;
+  opacity: 0.85;
 }
 .topology-node-label {
   fill: var(--text-primary);
-  font-size: 14px;
+  font-size: 17px;
   font-weight: 600;
+  font-family: inherit;
+  pointer-events: none;
+}
+/* Status row below the title. Slightly larger than the old meta to
+   match figure 1's airy feel. */
+.topology-node-status-label {
+  fill: var(--text-secondary);
+  font-size: 13px;
+  font-weight: 500;
   font-family: inherit;
   pointer-events: none;
 }
@@ -5161,6 +5213,46 @@ a.branch-name:hover { color: var(--accent); }
 .topology-node-status-dot.idle { fill: #6b7280; }
 .topology-node-status-dot.stopped { fill: #6b7280; }
 .topology-node-status-dot.unknown { fill: #6b7280; opacity: 0.5; }
+
+/* UF-05: bottom volume slot — a subtle inner divider + disk icon + name.
+   Only rendered for infra services that declare a named volume. */
+.topology-node-divider {
+  stroke: var(--border);
+  stroke-width: 1;
+  opacity: 0.55;
+  pointer-events: none;
+}
+.topology-node-slot-icon {
+  font-size: 14px;
+  pointer-events: none;
+  dominant-baseline: middle;
+  opacity: 0.75;
+}
+.topology-node-slot-label {
+  fill: var(--text-muted);
+  font-size: 12px;
+  font-family: var(--font-mono, monospace);
+  pointer-events: none;
+  dominant-baseline: middle;
+}
+
+/* GAP-08/09: clickable port badge inside the SVG node card. Single
+   click copies "host:port" to clipboard, double click opens preview.
+   Hover state lights up the accent color to signal interactivity. */
+.topology-node-port-badge {
+  cursor: pointer;
+  transition: opacity 120ms ease;
+}
+.topology-node-port-badge rect {
+  transition: stroke 120ms ease, fill 120ms ease;
+}
+.topology-node-port-badge:hover rect {
+  stroke: var(--accent, #10b981);
+  fill: rgba(16, 185, 129, 0.08);
+}
+.topology-node-port-badge:hover text {
+  fill: var(--accent, #10b981);
+}
 
 .topology-node-badge {
   font-size: 14px;
@@ -5487,12 +5579,32 @@ body.cds-topology-fs .topology-fs-topbar { left: 60px; }
    * pill that holds breadcrumb + branch dropdown */
   top: 12px !important;
   left: 60px !important;
-  right: 16px !important;
+  /* UF-15 (2026-04-15): reserve 132px on the right for the floating
+   * "+ Add" button (which is position:fixed at right:24px, ~88px wide
+   * + its popover width). Before this fix the topbar stretched to
+   * right:16px and the "列表 | 拓扑" toggle inside it got visually
+   * obscured by + Add. The reservation keeps the two controls from
+   * sharing any x-coordinate range. */
+  right: 132px !important;
   background: transparent !important;
   padding: 0 !important;
   border: none !important;
   box-shadow: none !important;
+  /* UF-17 (2026-04-15): do NOT set display:flex here unconditionally
+   * — that made the topbar leak into the list view as a "ghost
+   * toggle" because the base rule at line 5367 uses display:none
+   * and only the `body.cds-topology-fs` scoped rule promotes it to
+   * flex. Override the flex PROPERTIES (align/gap/justify) at the
+   * base level but leave display to the scoped rule below. */
+  align-items: center;
+  gap: 8px;
+  justify-content: space-between;
+  flex-wrap: nowrap;
 }
+/* UF-17: re-apply the scoped display rule AFTER our override so it
+ * wins the specificity fight against the earlier `display: none`
+ * base. Both body classes in list view keep topbar hidden. */
+body.cds-topology-fs .topology-fs-topbar { display: flex !important; }
 .topology-fs-topbar-pill {
   display: inline-flex;
   align-items: center;
@@ -5527,7 +5639,9 @@ body.cds-topology-fs .topology-fs-topbar { left: 60px; }
 .topology-fs-breadcrumb-item.link { cursor: pointer; }
 .topology-fs-breadcrumb-item.link:hover { background: var(--bg-elevated); }
 
-/* Branch dropdown (native select styled to look like a pill) */
+/* Legacy branch dropdown (native select styled as pill) — retained for
+   backwards compat if any code still mounts it; UF-07 replaces the
+   actual topology entry point with .topology-fs-branch-combo below. */
 .topology-fs-branch-select {
   appearance: none;
   -webkit-appearance: none;
@@ -5548,6 +5662,177 @@ body.cds-topology-fs .topology-fs-topbar { left: 60px; }
 }
 .topology-fs-branch-select:hover { border-color: var(--accent); }
 .topology-fs-branch-select:focus { outline: none; box-shadow: 0 0 0 2px rgba(16,185,129,0.2); }
+
+/* UF-07: custom branch combobox — replaces the native <select>.
+   - Button looks like a small pill inside the breadcrumb.
+   - Popover floats below with search input + filtered branch list +
+     "manual add" escape hatch.
+   - Structurally mirrors list view's branch picker so both views
+     converge on the same add-branch UX. */
+.topology-fs-branch-combo {
+  position: relative;
+  display: inline-flex;
+}
+.topology-fs-branch-combo-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--bg-elevated);
+  color: var(--text-primary);
+  border: 1px solid var(--card-border);
+  border-radius: 7px;
+  padding: 5px 8px 5px 10px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  font-family: inherit;
+  max-width: 260px;
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+.topology-fs-branch-combo-btn > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 180px;
+}
+.topology-fs-branch-combo-btn > svg { opacity: 0.7; flex-shrink: 0; }
+.topology-fs-branch-combo-btn:hover { border-color: var(--accent); }
+.topology-fs-branch-combo.open .topology-fs-branch-combo-btn {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px rgba(16, 185, 129, 0.2);
+}
+.topology-fs-branch-combo-popover {
+  display: none;
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  min-width: 320px;
+  max-width: 420px;
+  background: var(--bg-card-solid);
+  border: 1px solid var(--card-border);
+  border-radius: 10px;
+  box-shadow: 0 14px 40px rgba(0, 0, 0, 0.45);
+  padding: 8px;
+  z-index: 40;
+  pointer-events: auto;
+}
+.topology-fs-branch-combo.open .topology-fs-branch-combo-popover { display: block; }
+.topology-fs-branch-combo-search {
+  width: 100%;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  border: 1px solid var(--card-border);
+  border-radius: 7px;
+  padding: 7px 10px;
+  font-size: 12px;
+  font-family: inherit;
+  margin-bottom: 6px;
+  box-sizing: border-box;
+}
+.topology-fs-branch-combo-search:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px rgba(16, 185, 129, 0.18);
+}
+.topology-fs-branch-combo-list {
+  max-height: 320px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.topology-fs-branch-combo-section {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-muted);
+  padding: 8px 8px 4px;
+}
+.topology-fs-branch-combo-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 8px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background 0.1s ease;
+  font-size: 12px;
+}
+.topology-fs-branch-combo-item:hover { background: var(--bg-elevated); }
+.topology-fs-branch-combo-item.active {
+  background: rgba(16, 185, 129, 0.1);
+  color: var(--accent);
+}
+.topology-fs-branch-combo-item-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.topology-fs-branch-combo-item-tag {
+  font-size: 10px;
+  padding: 2px 6px;
+  border-radius: 8px;
+  background: var(--bg-primary);
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+.topology-fs-branch-combo-item-tag.running {
+  background: rgba(16, 185, 129, 0.15);
+  color: #10b981;
+}
+.topology-fs-branch-combo-item.manual-add {
+  border: 1px dashed rgba(16, 185, 129, 0.4);
+  margin-top: 2px;
+}
+.topology-fs-branch-combo-item.manual-add:hover {
+  background: rgba(16, 185, 129, 0.08);
+  border-color: rgba(16, 185, 129, 0.7);
+}
+.topology-fs-branch-combo-empty {
+  padding: 18px 12px;
+  text-align: center;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+/* UF-08: view mode toggle pill (列表 | 拓扑) in the topology topbar.
+   UF-17: scoped to body.cds-topology-fs so it never leaks into the
+   list view. The toggle is visually INSIDE the topbar, but having
+   the display toggle here too means a future topbar CSS change
+   can't accidentally reveal it outside topology mode. */
+.topology-fs-view-toggle {
+  display: none;
+  gap: 2px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--card-border);
+  border-radius: 7px;
+  padding: 3px;
+  margin-left: 8px;
+}
+body.cds-topology-fs .topology-fs-view-toggle { display: inline-flex; }
+.topology-fs-view-toggle-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  background: transparent;
+  color: var(--text-secondary);
+  border: none;
+  border-radius: 5px;
+  padding: 4px 10px;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  font-family: inherit;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+.topology-fs-view-toggle-btn:hover { color: var(--text-primary); }
+.topology-fs-view-toggle-btn.active {
+  background: var(--bg-card-solid);
+  color: var(--accent);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.25);
+}
 
 /* ───── Floating "+ Add" button + popover menu ───── */
 .topology-fs-add-btn {
@@ -5831,20 +6116,44 @@ body.cds-topology-fs .topology-fs-panel.open { transform: translateX(0); }
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* UF-19: make the close button a clear, styled action instead of a
+   near-invisible icon. Previously users couldn't tell it was a close
+   button because it sat behind the floating + Add button at z-index
+   conflict, and had no visible background. Now it has a distinct
+   circular background with a red-tinted hover state. */
 .topology-fs-panel-close {
-  width: 28px;
-  height: 28px;
+  width: 32px;
+  height: 32px;
   display: flex;
   align-items: center;
   justify-content: center;
-  border: none;
-  background: transparent;
-  color: var(--text-muted);
-  border-radius: 6px;
+  border: 1px solid var(--card-border);
+  background: var(--bg-elevated);
+  color: var(--text-secondary);
+  border-radius: 8px;
   cursor: pointer;
-  transition: background 120ms ease, color 120ms ease;
+  transition: background 120ms ease, color 120ms ease, border-color 120ms ease;
+  flex-shrink: 0;
+  /* Make sure the close button always wins z-order against anything
+   * that could overlap it (floating + Add button included). */
+  position: relative;
+  z-index: 1;
 }
-.topology-fs-panel-close:hover { background: var(--bg-elevated); color: var(--text-primary); }
+.topology-fs-panel-close:hover {
+  background: rgba(239, 68, 68, 0.12);
+  color: #ef4444;
+  border-color: rgba(239, 68, 68, 0.4);
+}
+
+/* UF-19: when the Details panel is open, hide the floating + Add button
+   and its menu. They overlap with the close button AND it doesn't make
+   sense to "add a service" while inspecting one — the user's attention
+   is on the inspected service. The button re-appears when the panel
+   closes. */
+body.cds-topology-fs .topology-fs-panel.open ~ .topology-fs-add-btn,
+body.cds-topology-fs .topology-fs-panel.open ~ .topology-fs-add-menu {
+  display: none !important;
+}
 
 .topology-fs-panel-tabs {
   display: flex;
@@ -6026,7 +6335,8 @@ body.cds-topology-fs .topology-fs-panel.open { transform: translateX(0); }
 }
 .tfp-var-row {
   display: grid;
-  grid-template-columns: minmax(0, 0.8fr) minmax(0, 1fr) auto;
+  /* UF-09: 4-column layout — eye toggle + key + value + action button */
+  grid-template-columns: 36px minmax(0, 0.8fr) minmax(0, 1.2fr) auto;
   gap: 0;
   align-items: center;
   background: var(--bg-card);
@@ -6034,6 +6344,58 @@ body.cds-topology-fs .topology-fs-panel.open { transform: translateX(0); }
   transition: background 120ms ease;
 }
 .tfp-var-row:hover { background: var(--bg-elevated); }
+.tfp-var-row.is-override {
+  background: rgba(16, 185, 129, 0.06);
+}
+.tfp-var-row.is-override:hover {
+  background: rgba(16, 185, 129, 0.10);
+}
+
+/* UF-09: eye toggle cell — grey when inherited, green when overridden,
+   locked (amber) when this key is a CDS infra var that mustn't be touched. */
+.tfp-var-eye {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  color: var(--text-muted);
+  transition: background 120ms ease, color 120ms ease;
+  border-right: 1px solid var(--card-border);
+}
+.tfp-var-eye:hover { background: var(--bg-elevated); }
+.tfp-var-eye.inherited { color: var(--text-muted); }
+.tfp-var-eye.override { color: var(--accent, #10b981); }
+.tfp-var-eye.locked {
+  color: #f59e0b;
+  cursor: not-allowed;
+}
+.tfp-var-eye.locked:hover { background: transparent; }
+
+/* UF-09: editable value input when a row is actively overriding. */
+.tfp-var-val-input {
+  padding: 10px 14px;
+  background: transparent;
+  border: none;
+  font-family: var(--font-mono, monospace);
+  font-size: 11.5px;
+  color: var(--text-primary);
+  width: 100%;
+  box-sizing: border-box;
+  outline: none;
+}
+.tfp-var-val-input:focus {
+  background: var(--bg-primary);
+  box-shadow: inset 0 0 0 1px rgba(16, 185, 129, 0.45);
+}
+.tfp-var-val-inherit { color: var(--text-muted); }
+.tfp-var-val-locked {
+  color: #f59e0b;
+  opacity: 0.85;
+}
 .tfp-var-key {
   padding: 11px 14px;
   font-family: var(--font-mono, monospace);
@@ -6044,6 +6406,22 @@ body.cds-topology-fs .topology-fs-panel.open { transform: translateX(0); }
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+/* GAP-07: tag chip row for the Notes / Tags panel tab */
+.tfp-tags-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 6px 0;
+}
+.tfp-tag-chip {
+  display: inline-block;
+  padding: 3px 10px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--card-border);
+  border-radius: 12px;
+  font-size: 11px;
+  color: var(--text-secondary);
 }
 .tfp-var-val {
   padding: 11px 14px;
@@ -6206,6 +6584,340 @@ body.cds-topology-fs .topology-fs-panel.open { transform: translateX(0); }
 .tfp-deploy-btn:disabled:hover {
   background: var(--bg-elevated);
   border-color: var(--card-border);
+}
+
+/* UF-16: busy-state Deploy button — amber bg with animated spinner.
+   The spinner itself is injected inline via the btn-spinner class. */
+.tfp-deploy-btn.busy {
+  background: rgba(245, 158, 11, 0.14);
+  border-color: rgba(245, 158, 11, 0.55);
+  color: #f59e0b;
+  cursor: wait;
+}
+.tfp-deploy-btn.busy .btn-spinner {
+  width: 11px;
+  height: 11px;
+  border-width: 2px;
+  border-top-color: #f59e0b;
+}
+
+/* UF-16: deploy-in-progress status banner — pulses amber */
+.tfp-status-banner.deploying {
+  background: rgba(245, 158, 11, 0.08);
+  border-color: rgba(245, 158, 11, 0.3);
+}
+.tfp-status-banner.deploying .live-dot {
+  animation: tfp-live-pulse 1.2s ease-in-out infinite;
+}
+@keyframes tfp-live-pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.6; transform: scale(1.25); }
+}
+
+/* UF-16: inline deploy log preview inside the Details tab */
+.tfp-deploy-log-preview {
+  margin-top: 10px;
+  padding: 10px 12px;
+  background: rgba(0, 0, 0, 0.25);
+  border: 1px solid rgba(245, 158, 11, 0.3);
+  border-radius: 8px;
+  cursor: pointer;
+  transition: border-color 120ms ease;
+}
+.tfp-deploy-log-preview:hover {
+  border-color: rgba(245, 158, 11, 0.6);
+}
+.tfp-deploy-log-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+  font-weight: 600;
+  color: #f59e0b;
+  margin-bottom: 6px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+.tfp-deploy-log-body {
+  font-family: var(--font-mono, monospace);
+  font-size: 10.5px;
+  color: var(--text-secondary);
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-all;
+  max-height: 130px;
+  overflow: hidden;
+  line-height: 1.5;
+}
+
+/* GAP-01/02: Stop + Delete buttons next to Deploy in the topology
+   Details status banner. Visually paired with .tfp-deploy-btn but
+   scaled down in intensity — amber for Stop (reversible), red for
+   Delete (destructive). */
+.tfp-stop-btn,
+.tfp-delete-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 11px;
+  border-radius: 6px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.2px;
+  cursor: pointer;
+  transition: background 120ms ease, border-color 120ms ease, transform 80ms ease;
+  white-space: nowrap;
+}
+.tfp-stop-btn {
+  background: rgba(245, 158, 11, 0.12);
+  border: 1px solid rgba(245, 158, 11, 0.35);
+  color: #f59e0b;
+}
+.tfp-stop-btn:hover {
+  background: rgba(245, 158, 11, 0.22);
+  border-color: rgba(245, 158, 11, 0.55);
+}
+.tfp-stop-btn:active { transform: translateY(1px); }
+.tfp-delete-btn {
+  background: rgba(239, 68, 68, 0.12);
+  border: 1px solid rgba(239, 68, 68, 0.35);
+  color: #ef4444;
+}
+.tfp-delete-btn:hover {
+  background: rgba(239, 68, 68, 0.22);
+  border-color: rgba(239, 68, 68, 0.55);
+}
+.tfp-delete-btn:active { transform: translateY(1px); }
+/* UF-16: busy-state variants for Stop and Delete — amber/red tint stays
+   but the button is disabled + cursor:wait + spinner replaces the icon */
+.tfp-stop-btn.busy,
+.tfp-stop-btn:disabled {
+  cursor: wait;
+  opacity: 0.7;
+}
+.tfp-stop-btn.busy .btn-spinner {
+  width: 11px;
+  height: 11px;
+  border-width: 2px;
+  border-top-color: #f59e0b;
+}
+.tfp-delete-btn.busy,
+.tfp-delete-btn:disabled {
+  cursor: wait;
+  opacity: 0.7;
+}
+.tfp-delete-btn.busy .btn-spinner {
+  width: 11px;
+  height: 11px;
+  border-width: 2px;
+  border-top-color: #ef4444;
+}
+
+/* GAP-11: split-button variant of the Deploy button. Main + chevron sit
+   flush with a hairline divider so they read as one control. */
+.tfp-deploy-split {
+  display: inline-flex;
+  align-items: stretch;
+  border-radius: 6px;
+  overflow: hidden;
+}
+.tfp-deploy-split .tfp-deploy-btn-main {
+  border-top-right-radius: 0;
+  border-bottom-right-radius: 0;
+  border-right: none;
+}
+.tfp-deploy-split .tfp-deploy-btn-chevron {
+  padding: 5px 7px;
+  border-top-left-radius: 0;
+  border-bottom-left-radius: 0;
+  border-left: 1px solid rgba(16, 185, 129, 0.28);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.tfp-deploy-split .tfp-deploy-btn-chevron svg { opacity: 0.85; }
+
+/* GAP-12: Reset button — amber tint (reversible action), sits between
+   Stop and Delete only when branch.status === 'error'. */
+.tfp-reset-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 11px;
+  background: rgba(245, 158, 11, 0.12);
+  border: 1px solid rgba(245, 158, 11, 0.35);
+  color: #f59e0b;
+  border-radius: 6px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.2px;
+  cursor: pointer;
+  transition: background 120ms ease, border-color 120ms ease, transform 80ms ease;
+  white-space: nowrap;
+}
+.tfp-reset-btn:hover {
+  background: rgba(245, 158, 11, 0.22);
+  border-color: rgba(245, 158, 11, 0.55);
+}
+.tfp-reset-btn:active { transform: translateY(1px); }
+
+/* GAP-13: inline-editable tag chips — × button on each chip, plus a
+   dashed "+ 标签" add chip at the end. */
+.tfp-tag-chip-editable {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding-right: 4px;
+}
+.tfp-tag-chip-remove {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  background: transparent;
+  border: none;
+  border-radius: 50%;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: background 120ms ease, color 120ms ease;
+}
+.tfp-tag-chip-remove:hover {
+  background: rgba(239, 68, 68, 0.18);
+  color: #ef4444;
+}
+.tfp-tag-add-chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 3px 10px;
+  background: transparent;
+  border: 1px dashed var(--card-border);
+  border-radius: 12px;
+  font-size: 11px;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-family: inherit;
+  transition: background 120ms ease, color 120ms ease, border-color 120ms ease;
+}
+.tfp-tag-add-chip:hover {
+  background: var(--bg-elevated);
+  color: var(--text-primary);
+  border-color: var(--accent-border, rgba(16, 185, 129, 0.35));
+}
+.tfp-tag-edit-all {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 10px;
+  background: transparent;
+  border: 1px solid var(--card-border);
+  border-radius: 6px;
+  font-size: 11px;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-family: inherit;
+  transition: background 120ms ease, color 120ms ease;
+}
+.tfp-tag-edit-all:hover {
+  background: var(--bg-elevated);
+  color: var(--text-primary);
+}
+
+/* GAP-14: small "查看历史" button at the right edge of the commit card
+   header, and the modal it opens. */
+.tfp-commit-history-btn {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  padding: 3px 9px;
+  background: transparent;
+  border: 1px solid var(--card-border);
+  border-radius: 5px;
+  font-size: 10.5px;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-family: inherit;
+  transition: background 120ms ease, color 120ms ease, border-color 120ms ease;
+  white-space: nowrap;
+}
+.tfp-commit-history-btn:hover {
+  background: var(--bg-elevated);
+  color: var(--text-primary);
+  border-color: var(--accent-border, rgba(16, 185, 129, 0.35));
+}
+.topology-commit-history-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 140;
+  background: rgba(0, 0, 0, 0.55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+}
+.topology-commit-history-modal {
+  width: 640px;
+  max-width: 92vw;
+  max-height: 72vh;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-primary);
+  border: 1px solid var(--card-border);
+  border-radius: 10px;
+  box-shadow: 0 18px 42px rgba(0, 0, 0, 0.55);
+  overflow: hidden;
+}
+.topology-commit-history-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border-light);
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+.topology-commit-history-close {
+  width: 26px;
+  height: 26px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: 1px solid var(--card-border);
+  border-radius: 6px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: background 120ms ease, color 120ms ease;
+}
+.topology-commit-history-close:hover {
+  background: rgba(239, 68, 68, 0.12);
+  color: #ef4444;
+  border-color: rgba(239, 68, 68, 0.4);
+}
+.topology-commit-history-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 8px 0;
+}
+
+/* GAP-15: deploy-mode rows become clickable when a branch is selected. */
+.tfp-deploy-mode-row {
+  cursor: pointer;
+  transition: background 120ms ease;
+}
+.tfp-deploy-mode-row:hover {
+  background: var(--bg-hover, rgba(255, 255, 255, 0.04));
+}
+
+/* GAP-16: refresh button spinner state — reuse the list-view rotation. */
+#topologyFsRefreshBtn.spinning svg {
+  animation: tfp-refresh-spin 0.8s linear infinite;
+}
+@keyframes tfp-refresh-spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
 }
 
 /* P4 Part 18 (G6): Public URL row — prominent, clickable, mode-aware. */

@@ -1,5 +1,5 @@
 /**
- * Stack detector — P4 Part 18 (G10).
+ * Stack detector — P4 Part 18 (G10) + FU-03 framework layer.
  *
  * Scans a directory (typically a worktree) for known tech-stack
  * signals and returns a set of reasonable defaults for the
@@ -7,6 +7,20 @@
  * container port, etc. This is a "90% case" heuristic, not a
  * perfect replacement for nixpacks — the goal is to save users
  * from typing four fields every time they add a service.
+ *
+ * Two layers of detection:
+ *   1. Base stack — which manifest file exists (package.json /
+ *      go.mod / Cargo.toml / requirements.txt / …). Resolves the
+ *      broad ecosystem (nodejs / python / ruby / go / rust / java /
+ *      php / dockerfile).
+ *   2. Framework (FU-03) — for nodejs / python / ruby, peek into
+ *      the manifest's declared dependencies and pick a more
+ *      precise default (Next.js / NestJS / Express / Remix /
+ *      Vite+React / Django / FastAPI / Flask / Rails). When a
+ *      framework is identified we adjust `dockerImage` and
+ *      surface `suggestedRunCommand` / `suggestedBuildCommand` so
+ *      the BuildProfile form lands on a near-correct answer
+ *      without the user having to retype anything.
  *
  * Detection priority (highest wins):
  *   1. Dockerfile      — special case, marked as "manual" stack
@@ -39,6 +53,26 @@ export type DetectedStack =
   | 'php'
   | 'unknown';
 
+/**
+ * Framework sub-discriminator for detected stacks (FU-03).
+ *
+ * This is a best-effort refinement: a base stack like `nodejs`
+ * covers the ecosystem, `framework` narrows it to the specific
+ * runtime we should spin up. When no framework is identified we
+ * leave this field unset so callers can fall back to the base
+ * stack defaults.
+ */
+export type DetectedFramework =
+  | 'nextjs'
+  | 'nestjs'
+  | 'express'
+  | 'remix'
+  | 'vite-react'
+  | 'django'
+  | 'fastapi'
+  | 'flask'
+  | 'rails';
+
 export interface StackDetection {
   stack: DetectedStack;
   confidence: number; // 0..1 (1 = high confidence match)
@@ -57,6 +91,27 @@ export interface StackDetection {
    * we found a Dockerfile but CDS doesn't build custom images).
    */
   manualSetupRequired?: boolean;
+  /**
+   * Framework sub-discriminator (FU-03) — present only when we
+   * positively identified a known framework from manifest deps.
+   * Existing callers that only read `stack` + `dockerImage` keep
+   * working; newer callers can render a more precise label.
+   */
+  framework?: DetectedFramework;
+  /**
+   * Framework-specific start command suggestion (FU-03). When
+   * present this overrides the default `runCommand` that was
+   * inferred from scripts.start / scripts.dev. The base
+   * `runCommand` field is always filled in too so legacy callers
+   * don't break.
+   */
+  suggestedRunCommand?: string;
+  /**
+   * Framework-specific build command suggestion (FU-03). Used by
+   * static-site frameworks (e.g. Vite+React) and SSR frameworks
+   * (e.g. Next.js) that need a build step distinct from install.
+   */
+  suggestedBuildCommand?: string;
 }
 
 /** Return an "unknown" detection that callers can treat as fallback. */
@@ -338,6 +393,279 @@ function detectPhp(searchPath: string): StackDetection | null {
   };
 }
 
+// ────────────────────────────────────────────────────────────────
+// Framework detection layer (FU-03)
+// ────────────────────────────────────────────────────────────────
+
+/**
+ * Result of framework sniffing. All fields except `framework`
+ * are overrides that get merged into the base-stack detection.
+ */
+interface FrameworkDetection {
+  framework: DetectedFramework;
+  dockerImage?: string;
+  suggestedRunCommand?: string;
+  suggestedBuildCommand?: string;
+  /** Appended to base signals so the UI shows how we decided. */
+  signals?: string[];
+  /** Replaces the base summary when present. */
+  summary?: string;
+  /** Framework-specific container port hint. */
+  containerPort?: number;
+}
+
+/**
+ * Collect every declared dep from a package.json into a single
+ * lowercase Set. We look at `dependencies`, `devDependencies`, and
+ * `peerDependencies` — Next.js projects sometimes pin `next` as a
+ * devDep (monorepo templates) and a library project may only have
+ * the signal dep as a peer, so a union is safest.
+ */
+function collectNodeDeps(pkg: Record<string, unknown>): Set<string> {
+  const bag = new Set<string>();
+  for (const field of ['dependencies', 'devDependencies', 'peerDependencies', 'optionalDependencies']) {
+    const map = pkg[field] as Record<string, unknown> | undefined;
+    if (map && typeof map === 'object') {
+      for (const name of Object.keys(map)) {
+        bag.add(name.toLowerCase());
+      }
+    }
+  }
+  return bag;
+}
+
+/**
+ * Node.js framework detector. Reads package.json deps and picks
+ * the first matching framework. Ordering matters: NestJS apps
+ * often also have `express` in deps (Nest is built on it), so we
+ * check Nest before Express.
+ */
+function detectNodejsFramework(
+  searchPath: string,
+  pkg: Record<string, unknown>,
+): FrameworkDetection | null {
+  const deps = collectNodeDeps(pkg);
+  const nodeImage = 'node:20-alpine';
+
+  // 1. Next.js — either declared dep or an explicit next.config.*
+  const hasNextDep = deps.has('next');
+  const hasNextConfig = ['next.config.js', 'next.config.mjs', 'next.config.ts']
+    .some((f) => fs.existsSync(path.join(searchPath, f)));
+  if (hasNextDep || hasNextConfig) {
+    return {
+      framework: 'nextjs',
+      dockerImage: nodeImage,
+      suggestedBuildCommand: 'npm run build',
+      suggestedRunCommand: 'npm run build && npm start',
+      signals: hasNextConfig ? ['next.config'] : ['deps:next'],
+      summary: 'Next.js (Node.js)',
+      containerPort: 3000,
+    };
+  }
+
+  // 2. NestJS — @nestjs/core is the canonical marker
+  if (deps.has('@nestjs/core')) {
+    return {
+      framework: 'nestjs',
+      dockerImage: nodeImage,
+      suggestedBuildCommand: 'npm run build',
+      suggestedRunCommand: 'npm run start:prod',
+      signals: ['deps:@nestjs/core'],
+      summary: 'NestJS (Node.js)',
+      containerPort: 3000,
+    };
+  }
+
+  // 3. Remix — either `remix` classic or any `@remix-run/*` pkg
+  const hasRemix = deps.has('remix')
+    || Array.from(deps).some((d) => d.startsWith('@remix-run/'));
+  if (hasRemix) {
+    return {
+      framework: 'remix',
+      dockerImage: nodeImage,
+      suggestedBuildCommand: 'npm run build',
+      suggestedRunCommand: 'npm start',
+      signals: ['deps:remix'],
+      summary: 'Remix (Node.js)',
+      containerPort: 3000,
+    };
+  }
+
+  // 4. Vite + React — treated as a static site: build then serve
+  // via nginx. We surface a build command and leave the run
+  // command as a hint; the user is expected to wire up an
+  // nginx layer themselves (CDS doesn't auto-build custom images).
+  if (deps.has('vite') && (deps.has('react') || deps.has('react-dom'))) {
+    return {
+      framework: 'vite-react',
+      dockerImage: 'nginx:alpine',
+      suggestedBuildCommand: 'npm run build',
+      suggestedRunCommand: 'npx serve -s dist -l $PORT',
+      signals: ['deps:vite+react'],
+      summary: 'Vite + React (static — 建议构建后用 nginx 托管 dist/)',
+      containerPort: 80,
+    };
+  }
+
+  // 5. Express — only if nothing more specific matched above.
+  // Many Express apps don't have a start script, so we fall back
+  // to a best-effort `node server.js` / `node index.js`.
+  if (deps.has('express')) {
+    const entry = ['server.js', 'server.ts', 'index.js', 'app.js']
+      .find((f) => fs.existsSync(path.join(searchPath, f)));
+    return {
+      framework: 'express',
+      dockerImage: nodeImage,
+      suggestedRunCommand: entry ? `node ${entry}` : 'node server.js',
+      signals: ['deps:express'],
+      summary: 'Express (Node.js)',
+      containerPort: 3000,
+    };
+  }
+
+  return null;
+}
+
+/**
+ * Python framework detector. Reads requirements.txt +
+ * pyproject.toml and picks the first matching framework. Case-
+ * insensitive match on the bare package name (ignore version
+ * specifiers and extras like `fastapi[all]`).
+ */
+function detectPythonFramework(searchPath: string): FrameworkDetection | null {
+  const parts: string[] = [];
+  const reqPath = path.join(searchPath, 'requirements.txt');
+  if (fs.existsSync(reqPath)) parts.push(readText(reqPath) || '');
+  const pyprojectPath = path.join(searchPath, 'pyproject.toml');
+  if (fs.existsSync(pyprojectPath)) parts.push(readText(pyprojectPath) || '');
+  const haystack = parts.join('\n').toLowerCase();
+
+  // Pull out every left-hand package identifier from requirements
+  // lines: `fastapi[all]==0.110.0` → `fastapi`. For pyproject we
+  // settle for substring match since TOML parsing would pull in a
+  // dependency, which this rule file explicitly forbids.
+  const deps = new Set<string>();
+  for (const raw of haystack.split(/\r?\n/)) {
+    const line = raw.trim();
+    if (!line || line.startsWith('#')) continue;
+    const m = /^([a-z0-9][a-z0-9._-]*)/.exec(line);
+    if (m) deps.add(m[1]);
+  }
+  const hasDep = (name: string) => deps.has(name) || haystack.includes(`"${name}"`) || haystack.includes(`'${name}'`);
+  const pyImage = 'python:3.12-slim';
+
+  // 1. Django — signal also includes manage.py which is unique
+  if (hasDep('django') || fs.existsSync(path.join(searchPath, 'manage.py'))) {
+    return {
+      framework: 'django',
+      dockerImage: pyImage,
+      suggestedRunCommand: 'python manage.py runserver 0.0.0.0:$PORT',
+      signals: hasDep('django') ? ['deps:django'] : ['manage.py'],
+      summary: 'Django (Python)',
+      containerPort: 8000,
+    };
+  }
+
+  // 2. FastAPI — assume `main:app` as the ASGI entrypoint; most
+  // FastAPI tutorials use exactly this shape.
+  if (hasDep('fastapi')) {
+    return {
+      framework: 'fastapi',
+      dockerImage: pyImage,
+      suggestedRunCommand: 'uvicorn main:app --host 0.0.0.0 --port $PORT',
+      signals: ['deps:fastapi'],
+      summary: 'FastAPI (Python)',
+      containerPort: 8000,
+    };
+  }
+
+  // 3. Flask — classic WSGI; `flask run` assumes FLASK_APP env
+  if (hasDep('flask')) {
+    return {
+      framework: 'flask',
+      dockerImage: pyImage,
+      suggestedRunCommand: 'flask run --host 0.0.0.0 --port $PORT',
+      signals: ['deps:flask'],
+      summary: 'Flask (Python)',
+      containerPort: 5000,
+    };
+  }
+
+  return null;
+}
+
+/**
+ * Ruby framework detector. Parses Gemfile for `gem "rails"` or
+ * `gem 'rails'`. We don't care about the version pin.
+ */
+function detectRubyFramework(searchPath: string): FrameworkDetection | null {
+  const gemfile = readText(path.join(searchPath, 'Gemfile')) || '';
+  if (/^\s*gem\s+['"]rails['"]/m.test(gemfile)) {
+    return {
+      framework: 'rails',
+      dockerImage: 'ruby:3.3-slim',
+      suggestedRunCommand: 'bundle exec rails server -b 0.0.0.0',
+      signals: ['gem:rails'],
+      summary: 'Ruby on Rails',
+      containerPort: 3000,
+    };
+  }
+  return null;
+}
+
+/**
+ * Framework dispatcher — picks the right sub-detector based on
+ * the already-resolved base stack. Returns null when no framework
+ * can be identified or when the base stack doesn't have a
+ * framework layer yet (go / rust / java / php / dockerfile).
+ */
+export function detectFramework(
+  kind: DetectedStack,
+  repoRoot: string,
+): FrameworkDetection | null {
+  if (!fs.existsSync(repoRoot)) return null;
+  switch (kind) {
+    case 'nodejs': {
+      const pkg = readJson(path.join(repoRoot, 'package.json'));
+      if (!pkg) return null;
+      return detectNodejsFramework(repoRoot, pkg);
+    }
+    case 'python':
+      return detectPythonFramework(repoRoot);
+    case 'ruby':
+      return detectRubyFramework(repoRoot);
+    default:
+      return null;
+  }
+}
+
+/**
+ * Merge a framework detection onto the base-stack detection. The
+ * base-stack fields remain the source of truth for anything the
+ * framework didn't explicitly override — this keeps legacy
+ * callers that only read `dockerImage` / `runCommand` happy.
+ */
+function applyFramework(
+  base: StackDetection,
+  fw: FrameworkDetection,
+): StackDetection {
+  return {
+    ...base,
+    framework: fw.framework,
+    dockerImage: fw.dockerImage ?? base.dockerImage,
+    suggestedRunCommand: fw.suggestedRunCommand,
+    suggestedBuildCommand: fw.suggestedBuildCommand,
+    // If the framework proposed a concrete start command we also
+    // reflect it in the primary `runCommand` so the form UI (which
+    // already reads that field) lands on the better default.
+    runCommand: fw.suggestedRunCommand ?? base.runCommand,
+    buildCommand: fw.suggestedBuildCommand ?? base.buildCommand,
+    containerPort: fw.containerPort ?? base.containerPort,
+    signals: fw.signals ? [...base.signals, ...fw.signals] : base.signals,
+    summary: fw.summary ? `${base.summary} · ${fw.summary}` : base.summary,
+  };
+}
+
 /**
  * Run every detector in priority order and return the first match.
  * Falls back to an "unknown" marker if nothing matches so the
@@ -367,7 +695,13 @@ export function detectStack(searchPath: string): StackDetection {
   ];
   for (const d of detectors) {
     const result = d(searchPath);
-    if (result) return result;
+    if (result) {
+      // FU-03: after base-stack detection, attempt framework sniffing.
+      // The framework layer is a best-effort refinement — if nothing
+      // matches we return the base detection unchanged.
+      const fw = detectFramework(result.stack, searchPath);
+      return fw ? applyFramework(result, fw) : result;
+    }
   }
   return unknownDetection(searchPath);
 }

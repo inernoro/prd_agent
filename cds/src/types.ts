@@ -370,6 +370,24 @@ export interface CdsState {
    * tokens are a future phase once the user model stabilises.
    */
   githubDeviceAuth?: GitHubDeviceAuth;
+  /**
+   * FU-04 — worktree directory layout version.
+   *
+   *   - undefined / 1: legacy flat layout `<worktreeBase>/<slug>`
+   *     (pre-FU-04). Every branch in every project shares one
+   *     directory, so two projects with the same branch name (e.g.
+   *     "main") collide.
+   *   - 2: per-project layout `<worktreeBase>/<projectId>/<slug>`.
+   *     New branches always land here. On first boot after the
+   *     upgrade, `WorktreeService.migrateFlatLayoutIfNeeded()`
+   *     symlinks every surviving legacy entry into
+   *     `<worktreeBase>/default/<slug>` and rewrites each
+   *     `BranchEntry.worktreePath` accordingly.
+   *
+   * The migration is guarded by this counter so boots after the
+   * one-shot move don't repeatedly re-scan the legacy layout.
+   */
+  worktreeLayoutVersion?: number;
 }
 
 /**
