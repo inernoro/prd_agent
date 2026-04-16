@@ -42,7 +42,14 @@ public sealed class ModelPoolHealthProbeService : BackgroundService
         _config = config;
     }
 
-    private bool Enabled => _config.GetValue("ModelPool:HealthProbe:Enabled", true);
+    /// <summary>
+    /// 后台探针默认关闭。
+    /// 恢复机制已由 PoolHealthTracker 的 Half-Open 逻辑内建：
+    /// Unavailable 端点在冷却时间（HalfOpenCooldownSeconds，默认5分钟）到达后，
+    /// 下一个真实用户请求会自动充当探针，无需后台线程。
+    /// 仅当需要主动感知恢复（用户量极低、恢复时效要求高）时才开启此服务。
+    /// </summary>
+    private bool Enabled => _config.GetValue("ModelPool:HealthProbe:Enabled", false);
     private int IntervalSeconds => _config.GetValue("ModelPool:HealthProbe:IntervalSeconds", 180);
     private int CooldownSeconds => _config.GetValue("ModelPool:HealthProbe:CooldownSeconds", 600);
     private int ProbeTimeoutSeconds => _config.GetValue("ModelPool:HealthProbe:ProbeTimeoutSeconds", 15);

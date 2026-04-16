@@ -6,6 +6,13 @@ namespace PrdAgent.Infrastructure.ModelPool;
 /// <summary>
 /// 内存健康追踪器实现
 /// 线程安全，支持并发读写
+///
+/// Half-Open 熔断器设计（无后台探针）：
+/// 当端点进入 Unavailable 状态后，不依赖后台探活任务恢复。
+/// 而是在 IsAvailable() 中：若距上次失败已超过 HalfOpenCooldownSeconds，
+/// 则放行下一个真实用户请求作为探针。请求成功 → RecordSuccess → 恢复 Healthy；
+/// 请求失败 → RecordFailure → 重置冷却计时，再等一轮。
+/// 优点：多实例安全（各实例独立尝试）、零后台线程、不消耗额外配额。
 /// </summary>
 public class PoolHealthTracker : IPoolHealthTracker
 {
@@ -19,6 +26,13 @@ public class PoolHealthTracker : IPoolHealthTracker
 
     /// <summary>延迟滑动窗口大小</summary>
     public int LatencyWindowSize { get; init; } = 20;
+
+    /// <summary>
+    /// Half-Open 冷却时间（秒）。
+    /// Unavailable 端点在距上次失败超过此时间后，允许下一个真实请求通过以探测恢复。
+    /// 默认 300 秒（5 分钟）。设为 0 则禁用 Half-Open（端点一旦 Unavailable 需手动重置）。
+    /// </summary>
+    public int HalfOpenCooldownSeconds { get; init; } = 300;
 
     public void RecordSuccess(string endpointId, long latencyMs)
     {
@@ -146,9 +160,29 @@ public class PoolHealthTracker : IPoolHealthTracker
         }
     }
 
+    /// <summary>
+    /// 判断端点是否可接受请求。
+    /// Healthy / Degraded → 始终可用。
+    /// Unavailable → 正常拒绝；但若距上次失败已超过 HalfOpenCooldownSeconds，
+    ///               放行本次请求（Half-Open 探针），由真实结果决定是否恢复。
+    /// </summary>
     public bool IsAvailable(string endpointId)
     {
-        return GetStatus(endpointId) != EndpointHealthStatus.Unavailable;
+        if (!_health.TryGetValue(endpointId, out var health))
+            return true; // 未知端点默认健康
+
+        if (health.Status != EndpointHealthStatus.Unavailable)
+            return true;
+
+        // Half-Open：冷却时间到则放行一次真实请求作为探针
+        if (HalfOpenCooldownSeconds > 0
+            && health.LastFailedAt.HasValue
+            && (DateTime.UtcNow - health.LastFailedAt.Value).TotalSeconds >= HalfOpenCooldownSeconds)
+        {
+            return true;
+        }
+
+        return false;
     }
 
     /// <summary>
