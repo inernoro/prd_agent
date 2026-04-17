@@ -31,12 +31,18 @@ export interface SkillAgentSessionState {
   hasSkillDraft: boolean;
   skillPreview?: string;
   messages: { role: string; content: string }[];
+  /** 恢复用：阶段定义（用于前端渲染进度条） */
+  stages?: SkillAgentStage[];
+  /** 恢复用：是否已保存过至少一次（用于按钮文案切换） */
+  hasSavedOnce?: boolean;
 }
 
 export interface SkillAgentSaveResponse {
   skillKey: string;
   title: string;
   message: string;
+  /** 是否为更新路径（再次保存）；首次保存为 false */
+  alreadySaved?: boolean;
 }
 
 export interface SkillAgentExportMdResponse {
@@ -112,6 +118,32 @@ export async function deletePersonalSkill(skillKey: string) {
 
 export async function getSkillMd(skillKey: string) {
   return apiRequest<{ skillMd: string; skillKey: string }>(api.skillAgent.skillMd(skillKey));
+}
+
+/**
+ * 按 skillKey 下载 zip 包的 URL（需 fetch + Authorization header）。
+ * 同端点服务于「我的技能」owner 下载 + 「技能广场」已发布技能下载，后端统一做访问规则校验。
+ */
+export function getSkillZipUrl(skillKey: string) {
+  return api.skillAgent.exportSkillZip(skillKey);
+}
+
+/** 未保存的草稿会话摘要（用于"我的技能"Tab 顶部的草稿列表） */
+export interface SkillAgentDraftSummary {
+  sessionId: string;
+  title?: string;
+  icon?: string;
+  intentSummary?: string;
+  currentStage: string;
+  stageLabel: string;
+  stageIndex: number;
+  messagesCount: number;
+  createdAt: string;
+  lastActiveAt: string;
+}
+
+export async function listSkillAgentDrafts() {
+  return apiRequest<{ drafts: SkillAgentDraftSummary[] }>(api.skillAgent.drafts());
 }
 
 export async function updateSkillFromMd(skillKey: string, skillMd: string) {

@@ -33,17 +33,20 @@ public class SkillAgentController : ControllerBase
 
     private readonly SkillAgentService _service;
     private readonly ISkillService _skillService;
+    private readonly ISkillAgentSessionStore _sessionStore;
     private readonly MongoDbContext _db;
     private readonly ILogger<SkillAgentController> _logger;
 
     public SkillAgentController(
         SkillAgentService service,
         ISkillService skillService,
+        ISkillAgentSessionStore sessionStore,
         MongoDbContext db,
         ILogger<SkillAgentController> logger)
     {
         _service = service;
         _skillService = skillService;
+        _sessionStore = sessionStore;
         _db = db;
         _logger = logger;
     }
@@ -52,10 +55,40 @@ public class SkillAgentController : ControllerBase
     private string? GetUsername() => User.FindFirst("name")?.Value ?? User.FindFirst(ClaimTypes.Name)?.Value;
 
     /// <summary>
-    /// 创建引导会话
+    /// 从内存拿 session；miss 则从 DB 加载并回填内存缓存。返回 null 表示会话不存在或跨用户。
+    /// 所有需要会话的端点都走这个方法。
+    /// </summary>
+    private async Task<SkillAgentSession?> ResolveSessionAsync(string sessionId, string userId, CancellationToken ct = default)
+    {
+        if (Sessions.TryGetValue(sessionId, out var cached) && cached.UserId == userId)
+            return cached;
+
+        var loaded = await _sessionStore.LoadAsync(sessionId, userId, ct);
+        if (loaded == null) return null;
+
+        // 回填内存缓存（多线程并发时取最新那一份）
+        Sessions[sessionId] = loaded;
+        return loaded;
+    }
+
+    /// <summary>
+    /// 异步持久化 session 到 DB。不阻塞 SSE 流——失败由 Store 内部吞掉并打日志。
+    /// </summary>
+    private void PersistSessionFireAndForget(SkillAgentSession session)
+    {
+        // Task.Run 避免如果 SaveAsync 同步起步阶段抛异常波及主流
+        _ = Task.Run(async () =>
+        {
+            try { await _sessionStore.SaveAsync(session); }
+            catch (Exception ex) { _logger.LogError(ex, "[skill-agent] PersistSessionFireAndForget failed: {SessionId}", session.Id); }
+        });
+    }
+
+    /// <summary>
+    /// 创建引导会话。会话即时写入 DB，确保后续刷新/重启能恢复。
     /// </summary>
     [HttpPost("sessions")]
-    public IActionResult CreateSession()
+    public async Task<IActionResult> CreateSession(CancellationToken ct)
     {
         var userId = GetUserId();
         CleanupExpiredSessions();
@@ -66,6 +99,9 @@ public class SkillAgentController : ControllerBase
         };
 
         Sessions[session.Id] = session;
+
+        // 创建即入库——用 await（而不是 fire-and-forget），保证"创建成功"语义与持久化状态一致
+        await _sessionStore.SaveAsync(session, ct);
 
         _logger.LogInformation("[skill-agent] Session created: {SessionId} by {UserId}", session.Id, userId);
 
@@ -96,7 +132,8 @@ public class SkillAgentController : ControllerBase
     {
         var userId = GetUserId();
 
-        if (!Sessions.TryGetValue(sessionId, out var session) || session.UserId != userId)
+        var session = await ResolveSessionAsync(sessionId, userId);
+        if (session == null)
         {
             Response.StatusCode = 404;
             return;
@@ -125,18 +162,27 @@ public class SkillAgentController : ControllerBase
         await foreach (var chunk in _service.ProcessMessageAsync(session, request.Message, userId))
         {
             await WriteSseEvent(chunk.Event, chunk.Data);
+            // 阶段推进 / 阶段完成时触发异步持久化；其它 chunk 太细粒度不持久化
+            if (chunk.Event == "stage_complete" || chunk.Event == "stage_advance" || chunk.Event == "done")
+            {
+                PersistSessionFireAndForget(session);
+            }
         }
+
+        // 流结束后兜底再存一次（保证 Messages / CurrentStage / SkillDraft 最新状态落库）
+        PersistSessionFireAndForget(session);
     }
 
     /// <summary>
-    /// 获取会话状态
+    /// 获取会话状态。内存 miss 时从 DB 恢复（支持刷新 / 重启 / 2h 后续上）。
     /// </summary>
     [HttpGet("sessions/{sessionId}")]
-    public IActionResult GetSession(string sessionId)
+    public async Task<IActionResult> GetSession(string sessionId, CancellationToken ct)
     {
         var userId = GetUserId();
 
-        if (!Sessions.TryGetValue(sessionId, out var session) || session.UserId != userId)
+        var session = await ResolveSessionAsync(sessionId, userId, ct);
+        if (session == null)
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "会话不存在"));
 
         return Ok(ApiResponse<object>.Ok(new
@@ -149,6 +195,14 @@ public class SkillAgentController : ControllerBase
             hasSkillDraft = session.SkillDraft != null,
             skillPreview = session.SkillDraft != null ? SkillMdFormat.Serialize(session.SkillDraft) : null,
             messages = session.Messages.Select(m => new { m.Role, m.Content }),
+            // 提供 stages 定义，前端恢复时可直接渲染阶段条
+            stages = SkillAgentService.Stages.Select((s, i) => new
+            {
+                key = s,
+                label = SkillAgentService.GetStageLabel(s),
+                index = i,
+            }),
+            hasSavedOnce = !string.IsNullOrEmpty(session.SavedSkillKey),
         }));
     }
 
@@ -156,27 +210,37 @@ public class SkillAgentController : ControllerBase
     /// 保存为个人技能
     /// </summary>
     [HttpPost("sessions/{sessionId}/save")]
-    public async Task<IActionResult> SaveSkill(string sessionId)
+    public async Task<IActionResult> SaveSkill(string sessionId, CancellationToken ct)
     {
         var userId = GetUserId();
 
-        if (!Sessions.TryGetValue(sessionId, out var session) || session.UserId != userId)
+        var session = await ResolveSessionAsync(sessionId, userId, ct);
+        if (session == null)
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "会话不存在"));
 
         if (session.SkillDraft == null)
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "技能草稿尚未完成"));
 
-        var skill = await _service.SaveAsPersonalSkillAsync(session, userId);
+        var (skill, alreadySaved) = await _service.SaveAsPersonalSkillAsync(session, userId);
         if (skill == null)
             return StatusCode(500, ApiResponse<object>.Fail(ErrorCodes.INTERNAL_ERROR, "保存失败"));
 
-        _logger.LogInformation("[skill-agent] Skill saved: {SkillKey} by {UserId}", skill.SkillKey, userId);
+        _logger.LogInformation(
+            "[skill-agent] Skill {Op}: {SkillKey} by {UserId}",
+            alreadySaved ? "updated" : "saved",
+            skill.SkillKey, userId);
+
+        // SavedSkillKey 已被 SaveAsPersonalSkillAsync 写入 session；持久化一次
+        PersistSessionFireAndForget(session);
 
         return Ok(ApiResponse<object>.Ok(new
         {
             skillKey = skill.SkillKey,
             title = skill.Title,
-            message = $"技能「{skill.Title}」已保存到你的个人技能库",
+            alreadySaved,
+            message = alreadySaved
+                ? $"技能「{skill.Title}」已更新到你的个人技能库"
+                : $"技能「{skill.Title}」已保存到你的个人技能库",
         }));
     }
 
@@ -189,7 +253,8 @@ public class SkillAgentController : ControllerBase
     {
         var userId = GetUserId();
 
-        if (!Sessions.TryGetValue(sessionId, out var session) || session.UserId != userId)
+        var session = await ResolveSessionAsync(sessionId, userId);
+        if (session == null)
         {
             Response.StatusCode = 404;
             return;
@@ -208,17 +273,21 @@ public class SkillAgentController : ControllerBase
         {
             await WriteSseEvent(chunk.Event, chunk.Data);
         }
+
+        // 自动试跑可能修改 Skill.Description（优化）→ session.SkillDraft 被改动，落库
+        PersistSessionFireAndForget(session);
     }
 
     /// <summary>
     /// 导出为 SKILL.md
     /// </summary>
     [HttpGet("sessions/{sessionId}/export/md")]
-    public IActionResult ExportMarkdown(string sessionId)
+    public async Task<IActionResult> ExportMarkdown(string sessionId, CancellationToken ct)
     {
         var userId = GetUserId();
 
-        if (!Sessions.TryGetValue(sessionId, out var session) || session.UserId != userId)
+        var session = await ResolveSessionAsync(sessionId, userId, ct);
+        if (session == null)
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "会话不存在"));
 
         var md = _service.ExportAsMarkdown(session);
@@ -238,11 +307,12 @@ public class SkillAgentController : ControllerBase
     /// 导出为 ZIP 包（SKILL.md + README.md + examples/）
     /// </summary>
     [HttpGet("sessions/{sessionId}/export/zip")]
-    public async Task<IActionResult> ExportZip(string sessionId)
+    public async Task<IActionResult> ExportZip(string sessionId, CancellationToken ct)
     {
         var userId = GetUserId();
 
-        if (!Sessions.TryGetValue(sessionId, out var session) || session.UserId != userId)
+        var session = await ResolveSessionAsync(sessionId, userId, ct);
+        if (session == null)
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "会话不存在"));
 
         var zipBytes = await _service.ExportAsZipAsync(session, userId);
@@ -255,19 +325,54 @@ public class SkillAgentController : ControllerBase
     }
 
     /// <summary>
-    /// 删除会话
+    /// 删除会话（用户点"重置"时调用）。同步删内存 + DB。
     /// </summary>
     [HttpDelete("sessions/{sessionId}")]
-    public IActionResult DeleteSession(string sessionId)
+    public async Task<IActionResult> DeleteSession(string sessionId, CancellationToken ct)
     {
         var userId = GetUserId();
 
-        if (Sessions.TryGetValue(sessionId, out var session) && session.UserId == userId)
-        {
-            Sessions.TryRemove(sessionId, out _);
-        }
+        Sessions.TryRemove(sessionId, out _);
+        await _sessionStore.DeleteAsync(sessionId, userId, ct);
 
         return Ok(ApiResponse<object>.Ok(new { deleted = true }));
+    }
+
+    /// <summary>
+    /// 列出当前用户"未保存"的草稿会话（SavedSkillKey 为空）。
+    /// 用于"我的技能"Tab 顶部的"未完成草稿"入口——跨机器 / 清 sessionStorage 的恢复路径。
+    /// 响应裁剪：不返回 Messages / SkillDraft 全量，只返回卡片展示需要的摘要。
+    /// 完整数据由前端点"继续"后走 GET /sessions/{id} 拉取。
+    /// </summary>
+    [HttpGet("sessions/drafts")]
+    public async Task<IActionResult> ListDrafts(
+        [FromQuery] int limit = 20,
+        CancellationToken ct = default)
+    {
+        var userId = GetUserId();
+        var drafts = await _sessionStore.ListDraftsAsync(userId, limit, ct);
+
+        var items = drafts.Select(s => new
+        {
+            sessionId = s.Id,
+            title = s.SkillDraft?.Title,
+            icon = s.SkillDraft?.Icon,
+            intentSummary = Truncate(s.Intent, 80),
+            currentStage = s.CurrentStage,
+            stageLabel = SkillAgentService.GetStageLabel(s.CurrentStage),
+            stageIndex = Array.IndexOf(SkillAgentService.Stages, s.CurrentStage),
+            messagesCount = s.Messages.Count,
+            createdAt = s.CreatedAt,
+            lastActiveAt = s.LastActiveAt,
+        });
+
+        return Ok(ApiResponse<object>.Ok(new { drafts = items }));
+    }
+
+    private static string? Truncate(string? text, int maxLength)
+    {
+        if (string.IsNullOrWhiteSpace(text)) return null;
+        return text.Length <= maxLength ? text : text[..maxLength] + "…";
     }
 
     /// <summary>
@@ -298,7 +403,10 @@ public class SkillAgentController : ControllerBase
     // ━━━ Skill Detail CRUD ━━━━━━━━
 
     /// <summary>
-    /// 获取技能的 SKILL.md 内容（用于编辑器展示）
+    /// 获取技能的 SKILL.md 内容（用于编辑器展示 / 广场复制）
+    /// 访问规则：
+    /// - system / public 技能 → 所有登录用户可见
+    /// - personal 技能：owner 始终可见；非 owner 仅当 IsPublic=true（已发布到广场）时可见
     /// </summary>
     [HttpGet("skills/{skillKey}/md")]
     public async Task<IActionResult> GetSkillMd(string skillKey, CancellationToken ct)
@@ -307,11 +415,34 @@ public class SkillAgentController : ControllerBase
         var skill = await _skillService.GetByKeyAsync(skillKey, ct);
         if (skill == null)
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "技能不存在"));
-        if (skill.Visibility == SkillVisibility.Personal && skill.OwnerUserId != userId)
+        if (skill.Visibility == SkillVisibility.Personal
+            && skill.OwnerUserId != userId
+            && !skill.IsPublic)
             return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "无权访问"));
 
         var md = SkillMdFormat.Serialize(skill);
         return Ok(ApiResponse<object>.Ok(new { skillMd = md, skillKey = skill.SkillKey }));
+    }
+
+    /// <summary>
+    /// 按 skillKey 导出 zip 包（用于"我的技能 / 技能广场"下载）。
+    /// 访问规则同 GetSkillMd：system/public 任意访问；personal 仅 owner 或 IsPublic=true 可访问。
+    /// </summary>
+    [HttpGet("skills/{skillKey}/export/zip")]
+    public async Task<IActionResult> ExportSkillZip(string skillKey, CancellationToken ct)
+    {
+        var userId = GetUserId();
+        var skill = await _skillService.GetByKeyAsync(skillKey, ct);
+        if (skill == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "技能不存在"));
+        if (skill.Visibility == SkillVisibility.Personal
+            && skill.OwnerUserId != userId
+            && !skill.IsPublic)
+            return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "无权访问"));
+
+        var zipBytes = await _service.ExportSkillAsZipAsync(skill, userId);
+        var fileName = $"{skill.SkillKey}.zip";
+        return File(zipBytes, "application/zip", fileName);
     }
 
     /// <summary>
@@ -346,11 +477,28 @@ public class SkillAgentController : ControllerBase
     {
         var userId = GetUserId();
         var skill = await _skillService.GetByKeyAsync(skillKey, ct);
-        if (skill == null || skill.OwnerUserId != userId || skill.Visibility != SkillVisibility.Personal)
-            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "技能不存在或无权操作"));
+        if (skill == null)
+        {
+            _logger.LogWarning("[skill-agent] Publish failed (not found): {SkillKey} by {UserId}", skillKey, userId);
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "技能不存在"));
+        }
+        if (skill.OwnerUserId != userId)
+        {
+            _logger.LogWarning("[skill-agent] Publish denied (owner mismatch): {SkillKey} by {UserId}, owner={Owner}",
+                skillKey, userId, skill.OwnerUserId);
+            return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "你不是该技能的拥有者"));
+        }
+        if (skill.Visibility != SkillVisibility.Personal)
+        {
+            _logger.LogWarning("[skill-agent] Publish denied (not personal): {SkillKey} visibility={Visibility}",
+                skillKey, skill.Visibility);
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "只能发布个人技能到广场"));
+        }
 
         // Get author info
-        var user = await _db.Users.Find(u => u.Id == userId).FirstOrDefaultAsync(ct);
+        // 注意: MongoDB 映射 User.UserId → _id (BsonClassMapRegistration.cs:104)，
+        // User.Id 已被显式 UnmapMember，禁止用 u.Id 过滤，否则驱动抛 Serializer 异常。
+        var user = await _db.Users.Find(u => u.UserId == userId).FirstOrDefaultAsync(ct);
         var authorName = GetUsername() ?? user?.DisplayName ?? "匿名用户";
         var authorAvatar = user?.AvatarFileName;
 
@@ -361,9 +509,17 @@ public class SkillAgentController : ControllerBase
             .Set(s => s.PublishedAt, DateTime.UtcNow)
             .Set(s => s.UpdatedAt, DateTime.UtcNow);
 
-        await _db.Skills.UpdateOneAsync(
+        var result = await _db.Skills.UpdateOneAsync(
             s => s.SkillKey == skillKey && s.OwnerUserId == userId,
             update, cancellationToken: ct);
+
+        if (result.MatchedCount == 0)
+        {
+            // GetByKeyAsync 返回了 skill，但 Update 过滤器（skillKey + ownerUserId）没匹上
+            // 说明 GetByKeyAsync 取到的是别人的同名技能记录 — 理论上上面已拦截，兜底防御
+            _logger.LogError("[skill-agent] Publish update missed: {SkillKey} by {UserId}", skillKey, userId);
+            return StatusCode(500, ApiResponse<object>.Fail(ErrorCodes.INTERNAL_ERROR, "发布失败：记录更新未命中"));
+        }
 
         _logger.LogInformation("[skill-agent] Skill published: {SkillKey} by {UserId}", skillKey, userId);
         return Ok(ApiResponse<object>.Ok(new { skillKey, published = true }));
@@ -386,8 +542,12 @@ public class SkillAgentController : ControllerBase
             s => s.SkillKey == skillKey && s.OwnerUserId == userId,
             update, cancellationToken: ct);
 
-        if (result.ModifiedCount == 0)
+        // MatchedCount 用于判断记录存在 + 归属；ModifiedCount 为 0 可能只是"已经是 unpublished 状态"，属于幂等成功
+        if (result.MatchedCount == 0)
+        {
+            _logger.LogWarning("[skill-agent] Unpublish not matched: {SkillKey} by {UserId}", skillKey, userId);
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "技能不存在或无权操作"));
+        }
 
         _logger.LogInformation("[skill-agent] Skill unpublished: {SkillKey} by {UserId}", skillKey, userId);
         return Ok(ApiResponse<object>.Ok(new { skillKey, published = false }));

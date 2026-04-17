@@ -159,6 +159,10 @@ public class MongoDbContext
     // 统一技能集合
     public IMongoCollection<Skill> Skills => _database.GetCollection<Skill>("skills");
 
+    // 技能生成 Agent 会话持久化：保证刷新 / 重启 / 2h 后不丢失中间态
+    // 建议由 DBA 手动添加 LastActiveAt TTL 索引（7 天），见 doc/guide.mongodb-indexes.md
+    public IMongoCollection<SkillAgentSession> SkillAgentSessions => _database.GetCollection<SkillAgentSession>("skill_agent_sessions");
+
     // Workflow Agent 工作流引擎
     public IMongoCollection<Workflow> Workflows => _database.GetCollection<Workflow>("workflows");
     public IMongoCollection<WorkflowExecution> WorkflowExecutions => _database.GetCollection<WorkflowExecution>("workflow_executions");
