@@ -57,6 +57,22 @@ public class VideoGenRunWorker : BackgroundService
         {
             try
             {
+                // 路径 0 (新增): videogen 模式 Queued → 直接走 OpenRouter，不经分镜流程
+                var directRun = await ClaimQueuedDirectVideoGenRunAsync(stoppingToken);
+                if (directRun != null)
+                {
+                    try
+                    {
+                        await ProcessDirectVideoGenAsync(directRun);
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogError(ex, "VideoGenRunWorker 直出视频失败: runId={RunId}", directRun.Id);
+                        await FailRunAsync(directRun, "VIDEOGEN_ERROR", ex.Message);
+                    }
+                    continue;
+                }
+
                 // 路径 1: Queued → Scripting → Editing
                 var queued = await ClaimQueuedRunAsync(stoppingToken);
                 if (queued != null)
@@ -274,7 +290,16 @@ public class VideoGenRunWorker : BackgroundService
 
     private async Task<VideoGenRun?> ClaimQueuedRunAsync(CancellationToken ct)
     {
-        var filter = Builders<VideoGenRun>.Filter.Eq(x => x.Status, VideoGenRunStatus.Queued);
+        // 只拾取 remotion 模式（默认/空值）的 Queued 任务，videogen 模式由专门路径处理
+        var fb = Builders<VideoGenRun>.Filter;
+        var filter = fb.And(
+            fb.Eq(x => x.Status, VideoGenRunStatus.Queued),
+            fb.Or(
+                fb.Exists(x => x.RenderMode, false),
+                fb.Eq(x => x.RenderMode, VideoRenderMode.Remotion),
+                fb.Eq(x => x.RenderMode, string.Empty)
+            )
+        );
         var update = Builders<VideoGenRun>.Update
             .Set(x => x.Status, VideoGenRunStatus.Scripting)
             .Set(x => x.StartedAt, DateTime.UtcNow)
@@ -284,12 +309,39 @@ public class VideoGenRunWorker : BackgroundService
             new FindOneAndUpdateOptions<VideoGenRun> { ReturnDocument = ReturnDocument.After }, ct);
     }
 
+    /// <summary>
+    /// 拾取 videogen 模式的 Queued 任务，直接交给 OpenRouter 处理
+    /// </summary>
+    private async Task<VideoGenRun?> ClaimQueuedDirectVideoGenRunAsync(CancellationToken ct)
+    {
+        var fb = Builders<VideoGenRun>.Filter;
+        var filter = fb.And(
+            fb.Eq(x => x.Status, VideoGenRunStatus.Queued),
+            fb.Eq(x => x.RenderMode, VideoRenderMode.VideoGen)
+        );
+        var update = Builders<VideoGenRun>.Update
+            .Set(x => x.Status, VideoGenRunStatus.Rendering)
+            .Set(x => x.StartedAt, DateTime.UtcNow)
+            .Set(x => x.CurrentPhase, "videogen-submitting")
+            .Set(x => x.PhaseProgress, 1);
+
+        return await _db.VideoGenRuns.FindOneAndUpdateAsync(filter, update,
+            new FindOneAndUpdateOptions<VideoGenRun> { ReturnDocument = ReturnDocument.After }, ct);
+    }
+
     private async Task<VideoGenRun?> ClaimRenderingRunAsync(CancellationToken ct)
     {
-        // 只拾取 Rendering 状态 + PhaseProgress == 0（未开始的）
-        var filter = Builders<VideoGenRun>.Filter.And(
-            Builders<VideoGenRun>.Filter.Eq(x => x.Status, VideoGenRunStatus.Rendering),
-            Builders<VideoGenRun>.Filter.Eq(x => x.PhaseProgress, 0));
+        // 只拾取 Rendering 状态 + PhaseProgress == 0（未开始的）+ 非 videogen 模式
+        var fb = Builders<VideoGenRun>.Filter;
+        var filter = fb.And(
+            fb.Eq(x => x.Status, VideoGenRunStatus.Rendering),
+            fb.Eq(x => x.PhaseProgress, 0),
+            fb.Or(
+                fb.Exists(x => x.RenderMode, false),
+                fb.Eq(x => x.RenderMode, VideoRenderMode.Remotion),
+                fb.Eq(x => x.RenderMode, string.Empty)
+            )
+        );
         var update = Builders<VideoGenRun>.Update
             .Set(x => x.PhaseProgress, 1); // 标记为已领取
 
@@ -2071,6 +2123,121 @@ document.addEventListener('keydown',e=>{if(e.key==='ArrowRight'||e.key==='ArrowD
         {
             _logger.LogWarning(ex, "VideoGen 事件发布失败: runId={RunId}, event={Event}", runId, eventName);
         }
+    }
+
+    // ─── 直出视频生成（OpenRouter） ───
+
+    /// <summary>
+    /// videogen 模式：提交 → 轮询 → 写回 VideoAssetUrl → Completed
+    /// 使用 CancellationToken.None（服务器权威原则）
+    /// </summary>
+    private async Task ProcessDirectVideoGenAsync(VideoGenRun run)
+    {
+        _logger.LogInformation("VideoGen 直出开始: runId={RunId}, model={Model}, duration={Duration}s",
+            run.Id, run.DirectVideoModel, run.DirectDuration);
+
+        await PublishEventAsync(run.Id, "phase.changed", new { phase = "videogen-submitting", progress = 5 });
+
+        using var scope = _scopeFactory.CreateScope();
+        var client = scope.ServiceProvider.GetRequiredService<PrdAgent.Core.Interfaces.IOpenRouterVideoClient>();
+
+        if (!client.IsConfigured)
+        {
+            await FailRunAsync(run, "OPENROUTER_NOT_CONFIGURED",
+                "后端尚未注入 OPENROUTER_API_KEY。请在 docker-compose 环境中设置 OPENROUTER_API_KEY 并重启容器。");
+            return;
+        }
+
+        // ─── 提交任务 ───
+        var submitReq = new PrdAgent.Core.Interfaces.OpenRouterVideoSubmitRequest
+        {
+            Model = run.DirectVideoModel ?? "alibaba/wan-2.6",
+            Prompt = run.DirectPrompt ?? string.Empty,
+            AspectRatio = run.DirectAspectRatio,
+            Resolution = run.DirectResolution,
+            DurationSeconds = run.DirectDuration,
+            GenerateAudio = true
+        };
+
+        var submitResult = await client.SubmitAsync(submitReq, CancellationToken.None);
+        if (!submitResult.Success || string.IsNullOrWhiteSpace(submitResult.JobId))
+        {
+            await FailRunAsync(run, "OPENROUTER_SUBMIT_FAILED",
+                submitResult.ErrorMessage ?? "OpenRouter 提交失败");
+            return;
+        }
+
+        await _db.VideoGenRuns.UpdateOneAsync(
+            x => x.Id == run.Id,
+            Builders<VideoGenRun>.Update
+                .Set(x => x.DirectVideoJobId, submitResult.JobId)
+                .Set(x => x.CurrentPhase, "videogen-polling")
+                .Set(x => x.PhaseProgress, 10),
+            cancellationToken: CancellationToken.None);
+
+        await PublishEventAsync(run.Id, "phase.changed", new { phase = "videogen-polling", progress = 10, jobId = submitResult.JobId });
+
+        // ─── 轮询 ───
+        const int pollIntervalSec = 6;
+        const int maxWaitMinutes = 10;
+        var deadline = DateTime.UtcNow.AddMinutes(maxWaitMinutes);
+        var progress = 10;
+
+        while (DateTime.UtcNow < deadline)
+        {
+            // 用户取消
+            var fresh = await _db.VideoGenRuns.Find(x => x.Id == run.Id).FirstOrDefaultAsync(CancellationToken.None);
+            if (fresh?.CancelRequested == true)
+            {
+                await CancelRunAsync(run);
+                return;
+            }
+
+            await Task.Delay(TimeSpan.FromSeconds(pollIntervalSec), CancellationToken.None);
+
+            var status = await client.GetStatusAsync(submitResult.JobId!, CancellationToken.None);
+
+            if (status.IsCompleted && !string.IsNullOrWhiteSpace(status.VideoUrl))
+            {
+                await _db.VideoGenRuns.UpdateOneAsync(
+                    x => x.Id == run.Id,
+                    Builders<VideoGenRun>.Update
+                        .Set(x => x.Status, VideoGenRunStatus.Completed)
+                        .Set(x => x.VideoAssetUrl, status.VideoUrl)
+                        .Set(x => x.DirectVideoCost, status.Cost)
+                        .Set(x => x.CurrentPhase, "completed")
+                        .Set(x => x.PhaseProgress, 100)
+                        .Set(x => x.EndedAt, DateTime.UtcNow),
+                    cancellationToken: CancellationToken.None);
+
+                await PublishEventAsync(run.Id, "run.completed", new
+                {
+                    videoUrl = status.VideoUrl,
+                    cost = status.Cost
+                });
+
+                _logger.LogInformation("VideoGen 直出完成: runId={RunId}, url={Url}, cost=${Cost}",
+                    run.Id, status.VideoUrl, status.Cost);
+                return;
+            }
+
+            if (status.IsFailed)
+            {
+                await FailRunAsync(run, "OPENROUTER_GEN_FAILED",
+                    status.ErrorMessage ?? $"OpenRouter 状态 = {status.Status}");
+                return;
+            }
+
+            // 递增进度（保持用户感知到"在动"）
+            progress = Math.Min(90, progress + 3);
+            await _db.VideoGenRuns.UpdateOneAsync(
+                x => x.Id == run.Id,
+                Builders<VideoGenRun>.Update.Set(x => x.PhaseProgress, progress),
+                cancellationToken: CancellationToken.None);
+            await PublishEventAsync(run.Id, "phase.progress", new { phase = "videogen-polling", progress, status = status.Status });
+        }
+
+        await FailRunAsync(run, "OPENROUTER_TIMEOUT", $"视频生成超过 {maxWaitMinutes} 分钟未完成");
     }
 
     private async Task FailRunAsync(VideoGenRun run, string errorCode, string errorMessage)

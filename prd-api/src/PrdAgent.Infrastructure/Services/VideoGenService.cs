@@ -26,6 +26,60 @@ public class VideoGenService : IVideoGenService
 
     public async Task<string> CreateRunAsync(string appKey, string ownerAdminId, CreateVideoGenRunRequest request, CancellationToken ct = default)
     {
+        var renderMode = (request?.RenderMode ?? VideoRenderMode.Remotion).Trim().ToLowerInvariant();
+        if (renderMode is not (VideoRenderMode.Remotion or VideoRenderMode.VideoGen))
+            renderMode = VideoRenderMode.Remotion;
+
+        var outputFormat = (request?.OutputFormat ?? "mp4").Trim().ToLowerInvariant();
+        if (outputFormat is not ("mp4" or "html")) outputFormat = "mp4";
+
+        // ─── 分支：videogen 直出模式（跳过分镜，直接调外部视频模型） ───
+        if (renderMode == VideoRenderMode.VideoGen)
+        {
+            var prompt = (request?.DirectPrompt ?? string.Empty).Trim();
+            if (string.IsNullOrWhiteSpace(prompt))
+                throw new ArgumentException("直出模式下 directPrompt 不能为空");
+            if (prompt.Length > 4000)
+                throw new ArgumentException("prompt 超过 4000 字限制");
+
+            var duration = request?.DirectDuration ?? 5;
+            if (duration < 1 || duration > 60) duration = 5;
+
+            var aspect = (request?.DirectAspectRatio ?? "16:9").Trim();
+            if (aspect is not ("16:9" or "9:16" or "1:1" or "4:3" or "3:4" or "21:9" or "9:21")) aspect = "16:9";
+
+            var resolution = (request?.DirectResolution ?? "720p").Trim();
+            if (resolution is not ("480p" or "720p" or "1080p" or "1K" or "2K" or "4K")) resolution = "720p";
+
+            var model = (request?.DirectVideoModel ?? "alibaba/wan-2.6").Trim();
+
+            var directRun = new VideoGenRun
+            {
+                AppKey = appKey,
+                OwnerAdminId = ownerAdminId,
+                Status = VideoGenRunStatus.Queued,
+                ArticleMarkdown = prompt, // 兼容：将 prompt 存进 ArticleMarkdown 便于列表展示
+                ArticleTitle = !string.IsNullOrWhiteSpace(request?.ArticleTitle)
+                    ? request!.ArticleTitle!.Trim()
+                    : (prompt.Length > 60 ? prompt[..60] + "…" : prompt),
+                OutputFormat = outputFormat,
+                RenderMode = VideoRenderMode.VideoGen,
+                DirectPrompt = prompt,
+                DirectVideoModel = model,
+                DirectAspectRatio = aspect,
+                DirectResolution = resolution,
+                DirectDuration = duration,
+                CurrentPhase = "submitting",
+                CreatedAt = DateTime.UtcNow
+            };
+
+            await _db.VideoGenRuns.InsertOneAsync(directRun, cancellationToken: ct);
+            _logger.LogInformation("VideoGen Run 已创建（videogen 模式）: runId={RunId}, model={Model}, duration={Duration}s, aspect={Aspect}",
+                directRun.Id, model, duration, aspect);
+            return directRun.Id;
+        }
+
+        // ─── 默认分支：remotion（原流程） ───
         var markdown = (request?.ArticleMarkdown ?? string.Empty).Trim();
         if (string.IsNullOrWhiteSpace(markdown))
             throw new ArgumentException("文章内容不能为空");
@@ -35,9 +89,6 @@ public class VideoGenService : IVideoGenService
 
         var title = (request?.ArticleTitle ?? string.Empty).Trim();
         if (string.IsNullOrWhiteSpace(title)) title = null;
-
-        var outputFormat = (request?.OutputFormat ?? "mp4").Trim().ToLowerInvariant();
-        if (outputFormat is not ("mp4" or "html")) outputFormat = "mp4";
 
         var run = new VideoGenRun
         {
@@ -52,6 +103,7 @@ public class VideoGenService : IVideoGenService
             OutputFormat = outputFormat,
             EnableTts = request?.EnableTts ?? false,
             VoiceId = request?.VoiceId?.Trim(),
+            RenderMode = VideoRenderMode.Remotion,
             CreatedAt = DateTime.UtcNow
         };
 

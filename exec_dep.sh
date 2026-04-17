@@ -152,25 +152,56 @@ echo "Activating standalone nginx config (default.conf -> branches/_standalone.c
 rm -f "$DEFAULT_CONF"
 ln -s "branches/_standalone.conf" "$DEFAULT_CONF"
 
-# 自动安装 ffmpeg 静态版到 /opt/ffmpeg-static/
-# docker-compose.yml 通过 bind mount 把 /opt/ffmpeg-static/{ffmpeg,ffprobe} 映射进 API 容器，
-# 宿主机缺失会导致容器启动失败或视频/ASR 功能报错。这里确保宿主机有默认位置的二进制。
-# 可通过 FFMPEG_PATH / FFPROBE_PATH 覆盖路径；若这两个变量指向的文件已存在则不会动它。
+# 自动探测 / 安装 ffmpeg，并把宿主机真实路径导出为 FFMPEG_PATH / FFPROBE_PATH
+# docker-compose.yml 通过 bind mount 把 ${FFMPEG_PATH} → 容器内的 /usr/local/bin/ffmpeg
+# 探测顺序：
+#   1) 用户显式指定的 FFMPEG_PATH/FFPROBE_PATH（存在即用）
+#   2) 宿主机 PATH 中已有的 ffmpeg/ffprobe（标准 apt/brew/手动安装都走这条）
+#   3) /opt/ffmpeg-static/ffmpeg（历史默认位置）
+#   4) 都没有 → 自动下载 johnvansickle 静态版到 /opt/ffmpeg-static/
 ensure_ffmpeg() {
-  ffmpeg_target="${FFMPEG_PATH:-/opt/ffmpeg-static/ffmpeg}"
-  ffprobe_target="${FFPROBE_PATH:-/opt/ffmpeg-static/ffprobe}"
+  # —— 1) 用户显式指定 —— 尊重，不改写
+  if [ -n "${FFMPEG_PATH:-}" ] && [ -n "${FFPROBE_PATH:-}" ]; then
+    if [ -x "$FFMPEG_PATH" ] && [ -x "$FFPROBE_PATH" ]; then
+      echo "使用用户指定 ffmpeg：$FFMPEG_PATH"
+      return 0
+    fi
+    echo "WARN: FFMPEG_PATH=$FFMPEG_PATH 或 FFPROBE_PATH=$FFPROBE_PATH 不可执行，继续自动探测..." >&2
+    unset FFMPEG_PATH FFPROBE_PATH
+  fi
 
-  if [ -x "$ffmpeg_target" ] && [ -x "$ffprobe_target" ]; then
-    echo "ffmpeg 已存在：$ffmpeg_target"
+  # —— 2) 宿主机 PATH 已有（典型：/usr/local/bin/ffmpeg 或 /usr/bin/ffmpeg）
+  host_ffmpeg="$(command -v ffmpeg 2>/dev/null || true)"
+  host_ffprobe="$(command -v ffprobe 2>/dev/null || true)"
+  if [ -n "$host_ffmpeg" ] && [ -n "$host_ffprobe" ]; then
+    # 解析符号链接到真实路径（docker bind mount 对符号链接行为不稳）
+    if command -v readlink >/dev/null 2>&1; then
+      real_ffmpeg="$(readlink -f "$host_ffmpeg" 2>/dev/null || echo "$host_ffmpeg")"
+      real_ffprobe="$(readlink -f "$host_ffprobe" 2>/dev/null || echo "$host_ffprobe")"
+    else
+      real_ffmpeg="$host_ffmpeg"
+      real_ffprobe="$host_ffprobe"
+    fi
+    export FFMPEG_PATH="$real_ffmpeg"
+    export FFPROBE_PATH="$real_ffprobe"
+    ver="$("$real_ffmpeg" -version 2>/dev/null | head -n 1 || true)"
+    echo "检测到宿主机 ffmpeg：$real_ffmpeg"
+    echo "检测到宿主机 ffprobe：$real_ffprobe"
+    [ -n "$ver" ] && echo "  版本：$ver"
     return 0
   fi
 
-  # 仅当使用默认路径时自动安装，自定义路径由用户自己维护
-  if [ -n "${FFMPEG_PATH:-}" ] || [ -n "${FFPROBE_PATH:-}" ]; then
-    echo "WARN: FFMPEG_PATH/FFPROBE_PATH 已自定义但对应文件不存在，自动安装已跳过。" >&2
-    echo "      期望路径：ffmpeg=$ffmpeg_target ffprobe=$ffprobe_target" >&2
+  # —— 3) 历史默认位置 /opt/ffmpeg-static
+  if [ -x "/opt/ffmpeg-static/ffmpeg" ] && [ -x "/opt/ffmpeg-static/ffprobe" ]; then
+    export FFMPEG_PATH="/opt/ffmpeg-static/ffmpeg"
+    export FFPROBE_PATH="/opt/ffmpeg-static/ffprobe"
+    echo "使用 /opt/ffmpeg-static/ffmpeg"
     return 0
   fi
+
+  # —— 4) 都没有，走下载流程（目标 /opt/ffmpeg-static）
+  ffmpeg_target="/opt/ffmpeg-static/ffmpeg"
+  ffprobe_target="/opt/ffmpeg-static/ffprobe"
 
   arch="$(uname -m)"
   case "$arch" in
@@ -219,6 +250,8 @@ ensure_ffmpeg() {
   fi
 
   if [ -x "$ffmpeg_target" ] && [ -x "$ffprobe_target" ]; then
+    export FFMPEG_PATH="$ffmpeg_target"
+    export FFPROBE_PATH="$ffprobe_target"
     ver="$("$ffmpeg_target" -version 2>/dev/null | head -n 1 || true)"
     echo "ffmpeg 安装完成：${ver:-$ffmpeg_target}"
   else

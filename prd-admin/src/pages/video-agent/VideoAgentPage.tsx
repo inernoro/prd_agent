@@ -37,6 +37,12 @@ import {
   getVideoGenDownloadUrl,
 } from '@/services/real/videoAgent';
 import type { VideoGenRun, VideoGenRunListItem } from '@/services/contracts/videoAgent';
+import { VideoGenDirectPanel } from './VideoGenDirectPanel';
+
+// 顶部模式切换：remotion（原分镜流程） | videogen（OpenRouter 直出）
+// 保留 Remotion 路径不变，新增直出能力
+type VideoPageMode = 'remotion' | 'videogen';
+const MODE_STORAGE_KEY = 'video-agent.mode';
 
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -110,6 +116,17 @@ const configPillTextClass = 'truncate flex-1';
 export const VideoAgentPage: React.FC = () => {
   const token = useAuthStore((s) => s.token);
   const { isMobile } = useBreakpoint();
+
+  // ─── Mode toggle (remotion | videogen) ───
+  const [mode, setMode] = useState<VideoPageMode>(() => {
+    try {
+      const raw = sessionStorage.getItem(MODE_STORAGE_KEY);
+      return raw === 'videogen' ? 'videogen' : 'remotion';
+    } catch { return 'remotion'; }
+  });
+  useEffect(() => {
+    try { sessionStorage.setItem(MODE_STORAGE_KEY, mode); } catch { /* ignore */ }
+  }, [mode]);
 
   // ─── Workflow state ───
   const [phase, setPhase] = useState<WorkflowPhase>(0);
@@ -559,6 +576,43 @@ export const VideoAgentPage: React.FC = () => {
     >
       <style>{PRD_MD_STYLE}</style>
 
+      {/* ═══ 模式切换栏（顶部全宽） ═══ */}
+      <div
+        className="flex-shrink-0 flex items-center justify-center gap-2 px-4 py-2"
+        style={{ borderBottom: '1px solid var(--border-default)', background: 'var(--panel)' }}
+      >
+        <div className="inline-flex rounded-full overflow-hidden" style={{ border: '1px solid var(--border-default)' }}>
+          <button
+            onClick={() => setMode('remotion')}
+            className={cn('px-4 py-1.5 text-xs font-medium transition-colors')}
+            style={{
+              background: mode === 'remotion' ? 'rgba(236,72,153,0.18)' : 'transparent',
+              color: mode === 'remotion' ? '#f472b6' : 'var(--text-muted)',
+            }}
+            title="把文章转成多分镜视频，走 Remotion 本地合成"
+          >
+            📝 分镜模式（Remotion）
+          </button>
+          <button
+            onClick={() => setMode('videogen')}
+            className={cn('px-4 py-1.5 text-xs font-medium transition-colors')}
+            style={{
+              background: mode === 'videogen' ? 'rgba(168,85,247,0.22)' : 'transparent',
+              color: mode === 'videogen' ? '#c084fc' : 'var(--text-muted)',
+            }}
+            title="直接把 prompt 交给 Sora / Veo / Seedance / Wan 等视频大模型"
+          >
+            🎬 直出模式（AI 视频大模型）
+          </button>
+        </div>
+      </div>
+
+      {/* 直出模式：独立面板 */}
+      {mode === 'videogen' && <VideoGenDirectPanel />}
+
+      {/* 分镜模式：保留原有全部 UI */}
+      {mode === 'remotion' && (
+      <>
       {/* Mobile tabs */}
       {isMobile && (
         <div className="flex-shrink-0 flex rounded-lg overflow-hidden mx-3 mt-3" style={{ border: '1px solid var(--border-default)' }}>
@@ -1394,6 +1448,8 @@ export const VideoAgentPage: React.FC = () => {
             </div>
           </div>
         </div>
+      )}
+      </>
       )}
     </div>
   );

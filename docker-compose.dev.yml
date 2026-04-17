@@ -79,6 +79,9 @@ services:
       - GitHubOAuth__ClientId=${GitHubOAuth__ClientId:-}
       - GitHubOAuth__ClientSecret=${GitHubOAuth__ClientSecret:-}
       - GitHubOAuth__Scopes=${GitHubOAuth__Scopes:-}
+      # OpenRouter 视频生成 API（Seedance / Wan / Veo / Sora 统一入口）
+      - OpenRouter__ApiKey=${OPENROUTER_API_KEY:-}
+      - OpenRouter__BaseUrl=${OPENROUTER_BASE_URL:-https://openrouter.ai/api/v1}
     # 重要：此 API 容器建议只读，避免任何本地落盘（你这种”可写层 1MB”环境必开）
     read_only: true
     # 允许少量临时写入到内存（tmpfs），避免 .NET/HTTP 栈因无 /tmp 可写而异常；不会落到磁盘
