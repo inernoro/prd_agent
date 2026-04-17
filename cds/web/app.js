@@ -8120,6 +8120,7 @@ window._resetSubdomainAliases = _resetSubdomainAliases;
 
 let _viewMode = sessionStorage.getItem('cds_view_mode') === 'topology' ? 'topology' : 'list';
 let _topologySelectedBranchId = null; // currently highlighted branch for override overlay
+let _topologyKeepSharedView = false;   // true = stay in aggregated canvas even with a branchId set (panel context only)
 let _topologyOverrideCache = new Map(); // branchId → Set<profileId> with hasOverride=true
 let _topologyOverrideDetails = new Map(); // branchId → Map<profileId, string[]> list of overridden fields
 
@@ -9503,7 +9504,7 @@ function renderTopologyView() {
 
   // Shared view (no branch selected) with tracked branches → show all
   // branch instances aggregated into one canvas (shared view B).
-  const layout = (!_topologySelectedBranchId && branches.length > 0)
+  const layout = ((!_topologySelectedBranchId || _topologyKeepSharedView) && branches.length > 0)
     ? _layoutTopologyAggregated(buildProfiles, infraServices, branches)
     : _layoutTopologyDag(buildProfiles, infraServices);
 
@@ -9511,9 +9512,9 @@ function renderTopologyView() {
     ? '<span class="topology-branch-picker-label">暂无分支 —— 先在列表视图创建一个</span>'
     : `
       <span class="topology-branch-picker-label">查看分支:</span>
-      <button class="topology-branch-chip ${!_topologySelectedBranchId ? 'active' : ''}" onclick="_topologySelectBranch(null)">（共享视图）</button>
+      <button class="topology-branch-chip ${(!_topologySelectedBranchId || _topologyKeepSharedView) ? 'active' : ''}" onclick="_topologySelectBranch(null)">（共享视图）</button>
       ${branches.map(b => `
-        <button class="topology-branch-chip ${_topologySelectedBranchId === b.id ? 'active' : ''}" onclick="_topologySelectBranch('${esc(b.id)}')" title="${esc(b.branch || b.id)}">${esc(b.id)}</button>
+        <button class="topology-branch-chip ${_topologySelectedBranchId === b.id && !_topologyKeepSharedView ? 'active' : ''}" onclick="_topologySelectBranch('${esc(b.id)}')" title="${esc(b.branch || b.id)}">${esc(b.id)}</button>
       `).join('')}
     `;
 
@@ -9579,6 +9580,7 @@ function renderTopologyView() {
 
 async function _topologySelectBranch(branchId) {
   _topologySelectedBranchId = branchId;
+  _topologyKeepSharedView = false; // explicit branch select always exits shared-view mode
   _topologyFocusedNodeId = null; // clear focus when branch changes
   if (!branchId) {
     renderTopologyView();
@@ -9613,15 +9615,34 @@ let _topologyLastClickId = null;
 let _topologyLastClickAt = 0;
 function _topologyNodeClick(nodeId) {
   // Handle aggregated shared-view nodes (format: "profileId@branchId"):
-  // clicking switches to that branch and opens the service panel for
-  // the profile so the user can drill into a specific branch instance.
+  // Open the service panel with the branch as context but keep the
+  // canvas in shared/aggregated view — user must explicitly pick a
+  // branch from the dropdown to switch to single-branch mode.
   if (nodeId.includes('@')) {
     var atIdx = nodeId.indexOf('@');
     var realProfileId = nodeId.slice(0, atIdx);
     var realBranchId = nodeId.slice(atIdx + 1);
-    _topologySelectBranch(realBranchId).then(function () {
-      _topologyOpenServicePanel(realProfileId, 'app');
-    });
+    _topologySelectedBranchId = realBranchId;
+    _topologyKeepSharedView = true;
+    // Preload override data for the panel without re-rendering canvas
+    if (!_topologyOverrideCache.has(realBranchId)) {
+      api('GET', '/branches/' + encodeURIComponent(realBranchId) + '/profile-overrides')
+        .then(function (data) {
+          var overrideSet = new Set();
+          var detailMap = new Map();
+          for (var p of (data.profiles || [])) {
+            if (p.hasOverride) {
+              overrideSet.add(p.profileId);
+              var fields = p.override ? Object.keys(p.override).filter(function (k) { return k !== 'updatedAt' && k !== 'notes'; }) : [];
+              detailMap.set(p.profileId, fields);
+            }
+          }
+          _topologyOverrideCache.set(realBranchId, overrideSet);
+          _topologyOverrideDetails.set(realBranchId, detailMap);
+        })
+        .catch(function () {});
+    }
+    _topologyOpenServicePanel(realProfileId, 'app');
     return;
   }
 
