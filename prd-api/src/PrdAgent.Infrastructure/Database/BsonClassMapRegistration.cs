@@ -73,6 +73,7 @@ public static class BsonClassMapRegistration
             RegisterReportAgent();
             RegisterDocumentStore();
             RegisterEmergence();
+            RegisterSkillAgentSession();
 
             _registered = true;
         }
@@ -980,5 +981,18 @@ public static class BsonClassMapRegistration
                 cm.SetIgnoreExtraElements(true);
             });
         }
+    }
+
+    private static void RegisterSkillAgentSession()
+    {
+        if (BsonClassMap.IsClassMapRegistered(typeof(SkillAgentSession))) return;
+        BsonClassMap.RegisterClassMap<SkillAgentSession>(cm =>
+        {
+            cm.AutoMap();
+            cm.MapIdMember(x => x.Id)
+                .SetSerializer(new StringOrObjectIdSerializer())
+                .SetIdGenerator(GuidStringIdGenerator.Instance);
+            cm.SetIgnoreExtraElements(true);
+        });
     }
 }

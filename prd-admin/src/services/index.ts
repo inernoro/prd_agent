@@ -709,6 +709,17 @@ import {
   updateWebhookReal,
   deleteWebhookReal,
   testWebhookReal,
+  createTeamWeekShareReal,
+  listTeamWeekSharesReal,
+  revokeTeamWeekShareReal,
+  viewTeamWeekShareReal,
+} from '@/services/real/reportAgent';
+export type {
+  CreateTeamWeekShareInput,
+  TeamWeekShareCreateResult,
+  TeamWeekShareItem,
+  TeamWeekShareViewItem,
+  TeamWeekShareViewData,
 } from '@/services/real/reportAgent';
 
 function withAuth<TArgs extends unknown[], TResult>(
@@ -1123,6 +1134,11 @@ export const createWebhook: CreateWebhookContract = withAuth(createWebhookReal);
 export const updateWebhook: UpdateWebhookContract = withAuth(updateWebhookReal);
 export const deleteWebhook: DeleteWebhookContract = withAuth(deleteWebhookReal);
 export const testWebhook: TestWebhookContract = withAuth(testWebhookReal);
+// Team-week share links
+export const createTeamWeekShare = createTeamWeekShareReal;
+export const listTeamWeekShares = listTeamWeekSharesReal;
+export const revokeTeamWeekShare = revokeTeamWeekShareReal;
+export const viewTeamWeekShare = viewTeamWeekShareReal;
 
 // Arena 竞技场
 import {

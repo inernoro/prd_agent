@@ -3900,6 +3900,220 @@ public class ReportAgentController : ControllerBase
     }
 
     #endregion
+
+    #region Team-Week Share Links
+
+    /// <summary>创建团队周报分享链接（团队负责人/副负责人可创建）</summary>
+    [HttpPost("teams/{id}/shares")]
+    public async Task<IActionResult> CreateTeamWeekShare(string id, [FromBody] CreateTeamWeekShareRequest req)
+    {
+        var userId = GetUserId();
+        var username = GetUsername() ?? "用户";
+
+        var team = await _db.ReportTeams.Find(t => t.Id == id).FirstOrDefaultAsync();
+        if (team == null)
+            return NotFound(ApiResponse<object>.Fail("NOT_FOUND", "团队不存在"));
+
+        var isLeaderOrDeputy = await IsTeamLeaderOrDeputy(id, userId) || team.LeaderUserId == userId;
+        if (!isLeaderOrDeputy && !HasPermission(AdminPermissionCatalog.ReportAgentViewAll))
+            return StatusCode(403, ApiResponse<object>.Fail("PERMISSION_DENIED", "只有团队负责人或副负责人可以创建分享链接"));
+
+        var now = DateTime.UtcNow;
+        var wy = req.WeekYear > 0 ? req.WeekYear : ISOWeek.GetYear(now);
+        var wn = req.WeekNumber > 0 ? req.WeekNumber : ISOWeek.GetWeekOfYear(now);
+
+        var trimmedPwd = string.IsNullOrWhiteSpace(req.Password) ? null : req.Password.Trim();
+        var share = new ReportShareLink
+        {
+            TeamId = id,
+            TeamName = team.Name,
+            WeekYear = wy,
+            WeekNumber = wn,
+            AccessLevel = string.IsNullOrEmpty(trimmedPwd) ? ReportShareAccessLevel.Public : ReportShareAccessLevel.Password,
+            Password = trimmedPwd,
+            ExpiresAt = req.ExpiresInDays > 0 ? now.AddDays(req.ExpiresInDays) : null,
+            CreatedBy = userId,
+            CreatedByName = username,
+        };
+
+        await _db.ReportShareLinks.InsertOneAsync(share);
+
+        return Ok(ApiResponse<object>.Ok(new
+        {
+            share.Id,
+            share.Token,
+            share.AccessLevel,
+            share.ExpiresAt,
+            shareUrl = $"/s/report-team/{share.Token}",
+        }));
+    }
+
+    /// <summary>列出当前用户对某团队创建的有效分享链接</summary>
+    [HttpGet("teams/{id}/shares")]
+    public async Task<IActionResult> ListTeamWeekShares(string id,
+        [FromQuery] int? weekYear, [FromQuery] int? weekNumber)
+    {
+        var userId = GetUserId();
+        var filter = Builders<ReportShareLink>.Filter.And(
+            Builders<ReportShareLink>.Filter.Eq(s => s.TeamId, id),
+            Builders<ReportShareLink>.Filter.Eq(s => s.CreatedBy, userId),
+            Builders<ReportShareLink>.Filter.Eq(s => s.IsRevoked, false)
+        );
+        if (weekYear.HasValue)
+            filter &= Builders<ReportShareLink>.Filter.Eq(s => s.WeekYear, weekYear.Value);
+        if (weekNumber.HasValue)
+            filter &= Builders<ReportShareLink>.Filter.Eq(s => s.WeekNumber, weekNumber.Value);
+
+        var items = await _db.ReportShareLinks
+            .Find(filter)
+            .SortByDescending(s => s.CreatedAt)
+            .Limit(100)
+            .ToListAsync();
+
+        return Ok(ApiResponse<object>.Ok(new { items }));
+    }
+
+    /// <summary>撤销分享链接（仅创建者可撤销）</summary>
+    [HttpDelete("shares/{shareId}")]
+    public async Task<IActionResult> RevokeTeamWeekShare(string shareId)
+    {
+        var userId = GetUserId();
+        var share = await _db.ReportShareLinks.Find(s => s.Id == shareId).FirstOrDefaultAsync();
+        if (share == null)
+            return NotFound(ApiResponse<object>.Fail("NOT_FOUND", "分享链接不存在"));
+        if (share.CreatedBy != userId && !HasPermission(AdminPermissionCatalog.ReportAgentViewAll))
+            return StatusCode(403, ApiResponse<object>.Fail("PERMISSION_DENIED", "只有创建者可以撤销此分享"));
+
+        var update = Builders<ReportShareLink>.Update.Set(s => s.IsRevoked, true);
+        await _db.ReportShareLinks.UpdateOneAsync(s => s.Id == shareId, update);
+        return Ok(ApiResponse<object>.Ok(new { revoked = true }));
+    }
+
+    /// <summary>
+    /// 访问分享链接 —— 必须登录；团队成员免密码直接访问；非成员需要密码校验
+    /// </summary>
+    [HttpGet("shares/view/{token}")]
+    public async Task<IActionResult> ViewTeamWeekShare(string token, [FromQuery] string? password)
+    {
+        var share = await _db.ReportShareLinks.Find(s => s.Token == token).FirstOrDefaultAsync();
+        if (share == null || share.IsRevoked)
+            return NotFound(ApiResponse<object>.Fail("NOT_FOUND", "分享链接不存在或已撤销"));
+
+        if (share.ExpiresAt.HasValue && share.ExpiresAt.Value < DateTime.UtcNow)
+            return BadRequest(ApiResponse<object>.Fail("EXPIRED", "此分享链接已过期"));
+
+        var userId = GetUserId();
+
+        // 成员免密；非成员需要密码
+        var isTeamMember = await IsTeamMember(share.TeamId, userId);
+        var team = await _db.ReportTeams.Find(t => t.Id == share.TeamId).FirstOrDefaultAsync();
+        if (team != null && team.LeaderUserId == userId)
+            isTeamMember = true;
+
+        if (!isTeamMember && share.AccessLevel == ReportShareAccessLevel.Password)
+        {
+            var providedPwd = string.IsNullOrWhiteSpace(password) ? null : password.Trim();
+            if (string.IsNullOrEmpty(providedPwd) || providedPwd != share.Password)
+                return Unauthorized(ApiResponse<object>.Fail("UNAUTHORIZED", "需要访问密码"));
+        }
+
+        // 记录访问
+        var update = Builders<ReportShareLink>.Update
+            .Inc(s => s.ViewCount, 1)
+            .Set(s => s.LastViewedAt, DateTime.UtcNow);
+        await _db.ReportShareLinks.UpdateOneAsync(s => s.Id == share.Id, update);
+
+        // 拉取团队/周/成员/报告数据（遵循 ReportVisibility，但分享链接视角按团队 leader 视角展示）
+        if (team == null)
+            return NotFound(ApiResponse<object>.Fail("NOT_FOUND", "团队不存在"));
+
+        var wy = share.WeekYear;
+        var wn = share.WeekNumber;
+        var monday = ISOWeek.ToDateTime(wy, wn, DayOfWeek.Monday);
+        var sunday = monday.AddDays(6);
+
+        var allMembers = await _db.ReportTeamMembers.Find(m => m.TeamId == share.TeamId).ToListAsync();
+        var weekReports = await _db.WeeklyReports.Find(
+            r => r.TeamId == share.TeamId && r.WeekYear == wy && r.WeekNumber == wn
+        ).ToListAsync();
+
+        var submittedStatuses = new[] {
+            WeeklyReportStatus.Submitted,
+            WeeklyReportStatus.Reviewed,
+            WeeklyReportStatus.Viewed,
+            WeeklyReportStatus.Returned
+        };
+        var submittedCount = weekReports.Count(r => submittedStatuses.Contains(r.Status));
+        var pendingCount = Math.Max(0, allMembers.Count - submittedCount);
+
+        var reportMap = weekReports.ToDictionary(r => r.UserId);
+        var items = weekReports
+            .Where(r => submittedStatuses.Contains(r.Status))
+            .OrderByDescending(r => r.SubmittedAt ?? r.UpdatedAt)
+            .Select(r => new
+            {
+                reportId = r.Id,
+                userId = r.UserId,
+                userName = r.UserName,
+                avatarFileName = r.AvatarFileName,
+                status = r.Status,
+                submittedAt = r.SubmittedAt,
+                updatedAt = r.UpdatedAt,
+                sections = r.Sections.Select(s => new
+                {
+                    title = s.TemplateSection?.Title,
+                    items = s.Items.Select(i => new { content = i.Content, source = i.Source, sourceRef = i.SourceRef }).ToList()
+                }).ToList(),
+                weekYear = r.WeekYear,
+                weekNumber = r.WeekNumber,
+            })
+            .ToList();
+
+        var summary = await _db.ReportTeamSummaries.Find(
+            s => s.TeamId == share.TeamId && s.WeekYear == wy && s.WeekNumber == wn
+        ).FirstOrDefaultAsync();
+
+        return Ok(ApiResponse<object>.Ok(new
+        {
+            team = new
+            {
+                id = team.Id,
+                name = team.Name,
+                leaderName = team.LeaderName,
+                description = team.Description,
+            },
+            weekYear = wy,
+            weekNumber = wn,
+            periodStart = monday,
+            periodEnd = sunday,
+            stats = new
+            {
+                totalMembers = allMembers.Count,
+                submittedCount,
+                pendingCount,
+            },
+            items,
+            summary,
+            shareInfo = new
+            {
+                createdBy = share.CreatedBy,
+                createdByName = share.CreatedByName,
+                createdAt = share.CreatedAt,
+                expiresAt = share.ExpiresAt,
+                isTeamMember,
+            }
+        }));
+    }
+
+    #endregion
+}
+
+public class CreateTeamWeekShareRequest
+{
+    public int WeekYear { get; set; }
+    public int WeekNumber { get; set; }
+    public string? Password { get; set; }
+    public int ExpiresInDays { get; set; }
 }
 
 public class CreateReportWebhookRequest

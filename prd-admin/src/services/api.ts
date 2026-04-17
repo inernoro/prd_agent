@@ -203,6 +203,8 @@ export const api = {
     exportZip: (sessionId: string) => `/api/skill-agent/sessions/${sessionId}/export/zip`,
     testSkill: (skillKey: string) => `/api/skill-agent/test/${encodeURIComponent(skillKey)}`,
     skillMd: (skillKey: string) => `/api/skill-agent/skills/${encodeURIComponent(skillKey)}/md`,
+    exportSkillZip: (skillKey: string) => `/api/skill-agent/skills/${encodeURIComponent(skillKey)}/export/zip`,
+    drafts: () => '/api/skill-agent/sessions/drafts',
     publish: (skillKey: string) => `/api/skill-agent/skills/${encodeURIComponent(skillKey)}/publish`,
     unpublish: (skillKey: string) => `/api/skill-agent/skills/${encodeURIComponent(skillKey)}/unpublish`,
     plaza: () => '/api/skill-agent/plaza',
@@ -632,6 +634,11 @@ export const api = {
       list: (teamId: string) => `/api/report-agent/teams/${teamId}/webhooks`,
       byId: (teamId: string, webhookId: string) => `/api/report-agent/teams/${teamId}/webhooks/${webhookId}`,
       test: (teamId: string) => `/api/report-agent/teams/${teamId}/webhooks/test`,
+    },
+    shares: {
+      byTeam: (teamId: string) => `/api/report-agent/teams/${teamId}/shares`,
+      byId: (shareId: string) => `/api/report-agent/shares/${shareId}`,
+      view: (token: string) => `/api/report-agent/shares/view/${token}`,
     },
   },
 

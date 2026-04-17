@@ -219,6 +219,7 @@ builder.Services.AddScoped<PrdAgent.Api.Services.EmergenceService>();
 
 // 技能引导 Agent
 builder.Services.AddScoped<PrdAgent.Infrastructure.Services.SkillAgentService>();
+builder.Services.AddSingleton<PrdAgent.Core.Interfaces.ISkillAgentSessionStore, PrdAgent.Infrastructure.Services.SkillAgentSessionStore>();
 
 // 文档订阅同步引擎
 builder.Services.AddHttpClient("DocumentSync");

@@ -9,6 +9,7 @@ import {
   ExternalLink,
   FileText,
   LogOut,
+  Share2,
   Sparkles,
   UserMinus,
   UserPlus,
@@ -33,6 +34,7 @@ import {
 import { ReportTeamRole, WeeklyReportStatus } from '@/services/contracts/reportAgent';
 import type { TeamReportsViewData, TeamSummaryViewData } from '@/services/contracts/reportAgent';
 import { UserMultiSearchSelect } from '@/components/UserMultiSearchSelect';
+import { ShareTeamWeekDialog } from './ShareTeamWeekDialog';
 
 function getISOWeek(date: Date): { weekYear: number; weekNumber: number } {
   const d = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()));
@@ -103,6 +105,7 @@ export function TeamDashboard() {
   const [memberSaving, setMemberSaving] = useState(false);
   const [pendingRemoveUserId, setPendingRemoveUserId] = useState<string | null>(null);
   const [removingUserId, setRemovingUserId] = useState<string | null>(null);
+  const [shareDialogOpen, setShareDialogOpen] = useState(false);
 
   const closeMemberDrawer = useCallback((immediate = false) => {
     if (drawerCloseTimerRef.current) {
@@ -536,9 +539,26 @@ export function TeamDashboard() {
                 团队成员
               </Button>
             )}
+            {selectedTeamId && canAccessTeamAiSummary && (
+              <Button variant="secondary" size="sm" onClick={() => setShareDialogOpen(true)}>
+                <Share2 size={13} />
+                分享
+              </Button>
+            )}
           </div>
         </div>
       </GlassCard>
+
+      {selectedTeamId && selectedTeam && (
+        <ShareTeamWeekDialog
+          open={shareDialogOpen}
+          teamId={selectedTeamId}
+          teamName={selectedTeam.name}
+          weekYear={weekYear}
+          weekNumber={weekNumber}
+          onClose={() => setShareDialogOpen(false)}
+        />
+      )}
 
       {!hasScopedTeams && (
         <GlassCard variant="subtle" className="py-10 text-center">

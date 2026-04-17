@@ -6,13 +6,17 @@ import { MarkdownContent } from '@/components/ui/MarkdownContent';
 import { api } from '@/services/api';
 import {
   createSkillAgentSession,
+  getSkillAgentSession,
   saveSkillFromAgent,
   exportSkillMd,
   getExportZipUrl,
   deleteSkillAgentSession,
   listPersonalSkills,
+  listSkillAgentDrafts,
+  type SkillAgentDraftSummary,
   deletePersonalSkill,
   getSkillMd,
+  getSkillZipUrl,
   updateSkillFromMd,
   listPlazaSkills,
   publishSkill,
@@ -22,6 +26,7 @@ import {
   type PlazaSkillItem,
 } from '@/services/real/skillAgent';
 import { useAuthStore } from '@/stores/authStore';
+import { resolveAvatarUrl } from '@/lib/avatar';
 import { glassBar } from '@/lib/glassStyles';
 import {
   Send, Save, FileText, Archive, RotateCcw, Wand2, ArrowLeft, Check,
@@ -138,6 +143,8 @@ function CreateTab() {
   const [saving, setSaving] = useState(false);
   const [exporting, setExporting] = useState(false);
   const [saved, setSaved] = useState(false);
+  /** 会话中是否至少保存成功过一次（用于区分首次 vs 再次保存文案）。handleAdjust 不重置 */
+  const [hasSavedOnce, setHasSavedOnce] = useState(false);
   // Auto-test state
   const [autoTestInput, setAutoTestInput] = useState<string | null>(null);
   const [autoTestResult, setAutoTestResult] = useState('');
@@ -212,15 +219,44 @@ function CreateTab() {
 
   useEffect(() => {
     initSession();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  /** sessionStorage key：按 `.claude/rules/no-localstorage.md`，不用 localStorage */
+  const SESSION_STORAGE_KEY = 'skill-agent:sessionId';
+
+  /**
+   * 会话初始化：先尝试从 sessionStorage 恢复上次会话（刷新 / 重启 / 2h 后回来都能续上）；
+   * 失败（会话过期或被清理）则回退到新建。
+   */
   const initSession = async () => {
+    const stored = sessionStorage.getItem(SESSION_STORAGE_KEY);
+    if (stored) {
+      try {
+        const res = await getSkillAgentSession(stored);
+        if (res.success && res.data) {
+          setSessionId(res.data.sessionId);
+          if (res.data.stages) setStages(res.data.stages);
+          setCurrentStageIndex(res.data.stageIndex);
+          setMessages(res.data.messages.map(m => ({ role: m.role as 'user' | 'assistant' | 'system', content: m.content })));
+          if (res.data.skillPreview) setSkillPreview(res.data.skillPreview);
+          if (res.data.hasSavedOnce) setHasSavedOnce(true);
+          setTimeout(() => inputRef.current?.focus(), 200);
+          return;
+        }
+      } catch {
+        // 任何异常 → 丢弃旧 sessionId 新建
+      }
+      sessionStorage.removeItem(SESSION_STORAGE_KEY);
+    }
+
     const res = await createSkillAgentSession();
     if (res.success && res.data) {
       setSessionId(res.data.sessionId);
       setStages(res.data.stages);
       setCurrentStageIndex(res.data.stageIndex);
       setMessages([{ role: 'assistant', content: res.data.welcome.message }]);
+      sessionStorage.setItem(SESSION_STORAGE_KEY, res.data.sessionId);
       setTimeout(() => inputRef.current?.focus(), 200);
     }
   };
@@ -243,20 +279,36 @@ function CreateTab() {
   };
 
   const handleSave = async () => {
-    if (!sessionId) return;
+    if (!sessionId || saving) return;
     setSaving(true);
     try {
       const res = await saveSkillFromAgent(sessionId);
       if (res.success && res.data) {
         setSaved(true);
+        setHasSavedOnce(true);
         setMessages((prev) => [...prev, { role: 'system', content: res.data.message + '\n\n正在自动试跑效果…' }]);
-        // Trigger auto-test
+        // Reset auto-test state (both first-save and re-save share this path)
         setAutoTestInput(null);
         setAutoTestResult('');
         setAutoTestPhase('准备试跑…');
+        setDescOptimized(null);
         await startAutoTest({ url: api.skillAgent.autoTest(sessionId) });
+      } else {
+        // 失败兜底：不再静默，明确告诉用户原因
+        const errMsg = res.error?.message ?? '未知错误';
+        setMessages((prev) => [...prev, {
+          role: 'system',
+          content: `保存失败：${errMsg}。请稍后重试或点击"重置"开新会话。`,
+        }]);
       }
-    } finally { setSaving(false); }
+    } catch (err) {
+      setMessages((prev) => [...prev, {
+        role: 'system',
+        content: `保存异常：${err instanceof Error ? err.message : String(err)}`,
+      }]);
+    } finally {
+      setSaving(false);
+    }
   };
 
   const handleAdjust = () => {
@@ -302,8 +354,9 @@ function CreateTab() {
 
   const handleReset = async () => {
     if (sessionId) deleteSkillAgentSession(sessionId);
+    sessionStorage.removeItem(SESSION_STORAGE_KEY);
     setSessionId(null); setMessages([]); setStages([]); setCurrentStageIndex(0);
-    setSkillPreview(null); setInput(''); setSaved(false);
+    setSkillPreview(null); setInput(''); setSaved(false); setHasSavedOnce(false);
     setAutoTestInput(null); setAutoTestResult(''); setAutoTestPhase(null); setDescOptimized(null);
     resetStream();
     initSession();
@@ -313,8 +366,11 @@ function CreateTab() {
 
   return (
     <div className="flex-1 min-h-0 flex gap-3 px-3 pb-3 pt-2">
-      {/* Chat Column */}
-      <div className="flex-1 min-w-0 flex flex-col">
+      {/* Chat Column — flex:6 (与"测试技能"页面同构) */}
+      <div
+        className="flex flex-col"
+        style={hasSkillDraft ? { flex: '6 6 0%', minWidth: 0 } : { flex: '1 1 0%', minWidth: 0 }}
+      >
         <GlassCard className="flex-1 flex flex-col" padding="none" style={{ overflow: 'hidden' }}>
           {/* Stage progress (compact) */}
           {stages.length > 0 && (
@@ -423,9 +479,12 @@ function CreateTab() {
         </GlassCard>
       </div>
 
-      {/* Right Panel: Preview / Auto-test results */}
+      {/* Right Panel: Preview / Auto-test results — flex:4 (与"测试技能"右栏同宽) */}
       {hasSkillDraft && (
-        <div className="hidden lg:flex flex-col gap-3 w-[340px] shrink-0">
+        <div
+          className="hidden lg:flex flex-col gap-3"
+          style={{ flex: '4 4 0%', minWidth: 0 }}
+        >
           {/* Auto-test results (shown after save) */}
           {saved && (autoTestPhase || autoTestInput || autoTestResult || testStreaming) ? (
             <>
@@ -528,7 +587,9 @@ function CreateTab() {
                   className="w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl text-[13px] font-medium transition-all"
                   style={{ background: 'linear-gradient(135deg,#8B5CF6,#6366F1)', color: 'white', border: '1px solid rgba(139,92,246,0.3)' }}>
                   {saving ? <MapSpinner size={15} /> : <Save size={15} />}
-                  {saving ? '保存并试跑…' : '保存并试跑效果'}
+                  {saving
+                    ? (hasSavedOnce ? '更新并试跑…' : '保存并试跑…')
+                    : (hasSavedOnce ? '更新并重新试跑' : '保存并试跑效果')}
                 </button>
                 <div className="flex gap-2">
                   <button onClick={handleExportMd} disabled={exporting}
@@ -552,11 +613,11 @@ function CreateTab() {
       {hasSkillDraft && (
         <div className="lg:hidden fixed bottom-0 left-0 right-0 flex items-center gap-2 px-4 py-3"
           style={{ background: 'rgba(10,10,14,0.9)', borderTop: '1px solid rgba(255,255,255,0.06)', backdropFilter: 'blur(20px)' }}>
-          <button onClick={handleSave} disabled={saving || saved}
+          <button onClick={handleSave} disabled={saving}
             className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-[12px] font-medium"
-            style={{ background: saved ? 'rgba(34,197,94,0.12)' : 'linear-gradient(135deg,#8B5CF6,#6366F1)', color: saved ? 'rgba(34,197,94,0.9)' : 'white' }}>
-            {saved ? <CheckCircle2 size={13} /> : <Save size={13} />}
-            {saved ? '已保存' : '保存'}
+            style={{ background: 'linear-gradient(135deg,#8B5CF6,#6366F1)', color: 'white' }}>
+            {saving ? <MapSpinner size={13} /> : <Save size={13} />}
+            {saving ? '保存中…' : (hasSavedOnce ? '重新保存' : '保存')}
           </button>
           <button onClick={handleExportMd} disabled={exporting}
             className="flex items-center gap-1 px-3 py-2 rounded-xl text-[12px]"
@@ -581,6 +642,7 @@ function MySkillsTab({ onSwitchToCreate }: { onSwitchToCreate: () => void }) {
   const [loading, setLoading] = useState(true);
   const [deleting, setDeleting] = useState<string | null>(null);
   const [selectedSkill, setSelectedSkill] = useState<PersonalSkillItem | null>(null);
+  const [drafts, setDrafts] = useState<SkillAgentDraftSummary[]>([]);
 
   const loadSkills = useCallback(async () => {
     setLoading(true);
@@ -596,7 +658,15 @@ function MySkillsTab({ onSwitchToCreate }: { onSwitchToCreate: () => void }) {
     } finally { setLoading(false); }
   }, []);
 
-  useEffect(() => { loadSkills(); }, [loadSkills]);
+  /** 拉取未完成的草稿列表。并发于 loadSkills 执行，互不阻塞 */
+  const loadDrafts = useCallback(async () => {
+    const res = await listSkillAgentDrafts();
+    if (res.success && res.data) {
+      setDrafts(res.data.drafts || []);
+    }
+  }, []);
+
+  useEffect(() => { loadSkills(); loadDrafts(); }, [loadSkills, loadDrafts]);
 
   const handleDelete = async (skillKey: string) => {
     setDeleting(skillKey);
@@ -604,6 +674,23 @@ function MySkillsTab({ onSwitchToCreate }: { onSwitchToCreate: () => void }) {
       const res = await deletePersonalSkill(skillKey);
       if (res.success) {
         setSkills((prev) => prev.filter((s) => s.skillKey !== skillKey));
+      }
+    } finally { setDeleting(null); }
+  };
+
+  /** 点"继续"恢复草稿：写 sessionStorage 后切到创建 Tab，复用 CreateTab.initSession 的恢复逻辑 */
+  const handleResumeDraft = (sessionId: string) => {
+    sessionStorage.setItem('skill-agent:sessionId', sessionId);
+    onSwitchToCreate();
+  };
+
+  /** 删除草稿：调用已有的 deleteSkillAgentSession 端点（同步删内存 + DB） */
+  const handleDeleteDraft = async (sessionId: string) => {
+    setDeleting(sessionId);
+    try {
+      const res = await deleteSkillAgentSession(sessionId);
+      if (res.success) {
+        setDrafts((prev) => prev.filter((d) => d.sessionId !== sessionId));
       }
     } finally { setDeleting(null); }
   };
@@ -633,7 +720,10 @@ function MySkillsTab({ onSwitchToCreate }: { onSwitchToCreate: () => void }) {
     );
   }
 
-  if (skills.length === 0) {
+  // 草稿区：即使没有正式技能，也应显示（给用户"继续"草稿的入口）
+  const hasDrafts = drafts.length > 0;
+
+  if (skills.length === 0 && !hasDrafts) {
     return (
       <div className="flex-1 flex flex-col items-center justify-center gap-4 px-4">
         <div className="w-16 h-16 rounded-2xl flex items-center justify-center"
@@ -655,6 +745,19 @@ function MySkillsTab({ onSwitchToCreate }: { onSwitchToCreate: () => void }) {
 
   return (
     <div className="flex-1 min-h-0 overflow-y-auto px-3 pb-3 pt-2">
+      {hasDrafts && (
+        <DraftsSection
+          drafts={drafts}
+          onResume={handleResumeDraft}
+          onDelete={handleDeleteDraft}
+          deletingId={deleting}
+        />
+      )}
+      {skills.length > 0 && hasDrafts && (
+        <div className="text-[11px] font-semibold mb-2 mt-1" style={{ color: 'var(--text-muted)' }}>
+          已创建的技能
+        </div>
+      )}
       <div style={{ display: 'grid', gap: 10, gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))' }}>
         {skills.map((skill) => {
           const accent = CATEGORY_COLORS[skill.category] ?? '#6366F1';
@@ -700,6 +803,119 @@ function MySkillsTab({ onSwitchToCreate }: { onSwitchToCreate: () => void }) {
   );
 }
 
+// ━━━ Drafts Section ━━━━━━━━
+// 未完成草稿列表，放在"我的技能"Tab 顶部。未保存的会话会出现在这里。
+// 点"继续"后走 sessionStorage + onSwitchToCreate 路径，复用 CreateTab 的 initSession 恢复。
+
+/** 阶段 → 颜色映射（与阶段圆点条语义一致，但这里用于 badge 背景色） */
+const STAGE_ACCENT: Record<string, string> = {
+  intent: '#6366F1',    // 意图理解 — 靛
+  scope: '#3B82F6',     // 范围界定 — 蓝
+  draft: '#8B5CF6',     // Prompt 草稿 — 紫
+  metadata: '#F59E0B',  // 元数据补全 — 橙
+  preview: '#22C55E',   // 预览与导出 — 绿（准备好保存）
+};
+
+/** 简单的相对时间（避免引入 dayjs 之类的新依赖） */
+function formatRelativeTime(iso: string): string {
+  const d = new Date(iso);
+  const diffMs = Date.now() - d.getTime();
+  const sec = Math.max(0, Math.floor(diffMs / 1000));
+  if (sec < 60) return '刚刚';
+  const min = Math.floor(sec / 60);
+  if (min < 60) return `${min} 分钟前`;
+  const hour = Math.floor(min / 60);
+  if (hour < 24) return `${hour} 小时前`;
+  const day = Math.floor(hour / 24);
+  if (day === 1) return '昨天';
+  if (day < 7) return `${day} 天前`;
+  return d.toLocaleDateString();
+}
+
+function DraftsSection({
+  drafts, onResume, onDelete, deletingId,
+}: {
+  drafts: SkillAgentDraftSummary[];
+  onResume: (sessionId: string) => void;
+  onDelete: (sessionId: string) => void;
+  deletingId: string | null;
+}) {
+  // 按方案：只展示前 3 条，超过给总数提示（完整列表留 Phase 3）
+  const MAX_SHOW = 3;
+  const visible = drafts.slice(0, MAX_SHOW);
+  const remaining = Math.max(0, drafts.length - MAX_SHOW);
+
+  return (
+    <div className="mb-4">
+      <div className="flex items-center gap-2 mb-2">
+        <span className="text-[11px] font-semibold" style={{ color: 'var(--text-muted)' }}>
+          未完成的草稿（{drafts.length}）
+        </span>
+        <span className="text-[10px]" style={{ color: 'var(--text-muted)' }}>
+          换机器 / 清缓存后也能从这里继续
+        </span>
+      </div>
+      <div style={{ display: 'grid', gap: 10, gridTemplateColumns: 'repeat(auto-fill, minmax(360px, 1fr))' }}>
+        {visible.map((d) => {
+          const accent = STAGE_ACCENT[d.currentStage] ?? '#6366F1';
+          const displayTitle = d.title || '未命名草稿';
+          const isDeleting = deletingId === d.sessionId;
+          return (
+            <GlassCard key={d.sessionId} padding="none" className="group">
+              <div className="px-4 py-3.5">
+                <div className="flex items-start gap-3">
+                  <div className="shrink-0 w-9 h-9 rounded-xl flex items-center justify-center text-lg"
+                    style={{ background: `${accent}15`, border: `1px solid ${accent}25` }}>
+                    {d.icon || '⚡'}
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="text-[13px] font-semibold truncate" style={{ color: 'var(--text-primary)' }}>
+                      {displayTitle}
+                    </div>
+                    <div className="text-[11px] mt-0.5 line-clamp-2" style={{ color: 'var(--text-muted)' }}>
+                      {d.intentSummary || '（尚未描述意图）'}
+                    </div>
+                  </div>
+                </div>
+                <div className="flex items-center gap-1.5 mt-2.5 flex-wrap">
+                  <span className="text-[10px] px-1.5 py-0.5 rounded-md font-medium"
+                    style={{ background: `${accent}15`, color: accent, border: `1px solid ${accent}20` }}>
+                    {d.stageLabel} · {d.stageIndex + 1}/5
+                  </span>
+                  <span className="text-[10px]" style={{ color: 'var(--text-muted)' }}>
+                    {d.messagesCount} 轮对话
+                  </span>
+                  <span className="text-[10px] ml-auto" style={{ color: 'var(--text-muted)' }}>
+                    {formatRelativeTime(d.lastActiveAt)}
+                  </span>
+                </div>
+                <div className="flex items-center gap-2 mt-2.5 pt-2.5" style={{ borderTop: '1px solid rgba(255,255,255,0.04)' }}>
+                  <button onClick={() => onResume(d.sessionId)}
+                    className="flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-medium transition-colors hover:bg-white/5"
+                    style={{ color: '#8B5CF6', border: '1px solid rgba(139,92,246,0.2)' }}>
+                    <Play size={11} /> 继续
+                  </button>
+                  <div className="flex-1" />
+                  <button onClick={() => onDelete(d.sessionId)} disabled={isDeleting}
+                    className="flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] transition-colors hover:bg-red-500/10"
+                    style={{ color: 'rgba(239,68,68,0.7)' }} title="删除草稿">
+                    {isDeleting ? <MapSpinner size={11} /> : <Trash2 size={11} />}
+                  </button>
+                </div>
+              </div>
+            </GlassCard>
+          );
+        })}
+      </div>
+      {remaining > 0 && (
+        <div className="text-[11px] mt-2" style={{ color: 'var(--text-muted)' }}>
+          还有 {remaining} 个草稿未显示
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ━━━ Skill Detail View (left: md editor 6, right: test 4) ━━━━━━━━
 
 function SkillDetailView({ skill, onBack, onDelete }: {
@@ -712,18 +928,40 @@ function SkillDetailView({ skill, onBack, onDelete }: {
   const [dirty, setDirty] = useState(false);
   const [isPublic, setIsPublic] = useState(skill.isPublic ?? false);
   const [publishing, setPublishing] = useState(false);
+  /** 发布/取消发布操作的提示（成功 or 失败），2.5s 后自动消失 */
+  const [publishMsg, setPublishMsg] = useState<{ type: 'ok' | 'err'; text: string } | null>(null);
+  /** 复制 MD / 下载 zip 状态（与 PlazaSkillDetailView 同构，1.8s 自动复位） */
+  const [mdCopyState, setMdCopyState] = useState<'idle' | 'ok' | 'err'>('idle');
+  const [zipState, setZipState] = useState<'idle' | 'loading' | 'ok' | 'err'>('idle');
 
   const handleTogglePublish = async () => {
+    if (publishing) return;
     setPublishing(true);
+    setPublishMsg(null);
     try {
       if (isPublic) {
         const res = await unpublishSkill(skill.skillKey);
-        if (res.success) setIsPublic(false);
+        if (res.success) {
+          setIsPublic(false);
+          setPublishMsg({ type: 'ok', text: '已从广场取消发布' });
+        } else {
+          setPublishMsg({ type: 'err', text: `取消发布失败：${res.error?.message ?? '未知错误'}` });
+        }
       } else {
         const res = await publishSkill(skill.skillKey);
-        if (res.success) setIsPublic(true);
+        if (res.success) {
+          setIsPublic(true);
+          setPublishMsg({ type: 'ok', text: '已发布到技能广场' });
+        } else {
+          setPublishMsg({ type: 'err', text: `发布失败：${res.error?.message ?? '未知错误'}` });
+        }
       }
-    } finally { setPublishing(false); }
+    } catch (err) {
+      setPublishMsg({ type: 'err', text: `操作异常：${err instanceof Error ? err.message : String(err)}` });
+    } finally {
+      setPublishing(false);
+      setTimeout(() => setPublishMsg(null), 2500);
+    }
   };
 
   // Test state
@@ -749,6 +987,50 @@ function SkillDetailView({ skill, onBack, onDelete }: {
       setLoadingMd(false);
     })();
   }, [skill.skillKey]);
+
+  /** 复制当前 SKILL.md 文本到剪贴板。优先用内存里已加载的 mdContent，保证用户若在编辑器里做过修改也能拷到未保存版本 */
+  const handleCopySkillMd = async () => {
+    if (mdCopyState === 'ok') return;
+    try {
+      let text = mdContent;
+      if (!text) {
+        const res = await getSkillMd(skill.skillKey);
+        if (res.success && res.data) text = res.data.skillMd;
+      }
+      if (!text) { setMdCopyState('err'); return; }
+      await navigator.clipboard.writeText(text);
+      setMdCopyState('ok');
+    } catch {
+      setMdCopyState('err');
+    } finally {
+      setTimeout(() => setMdCopyState('idle'), 1800);
+    }
+  };
+
+  /** 下载技能 zip（SKILL.md + README.md + examples/），带 Authorization */
+  const handleDownloadZip = async () => {
+    if (zipState === 'loading') return;
+    setZipState('loading');
+    try {
+      const token = useAuthStore.getState().token;
+      const res = await fetch(getSkillZipUrl(skill.skillKey), {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
+      if (!res.ok) { setZipState('err'); return; }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${skill.skillKey}.zip`;
+      a.click();
+      URL.revokeObjectURL(url);
+      setZipState('ok');
+    } catch {
+      setZipState('err');
+    } finally {
+      setTimeout(() => setZipState('idle'), 1800);
+    }
+  };
 
   const handleSave = async () => {
     setSaving(true); setSaveMsg(null);
@@ -798,6 +1080,34 @@ function SkillDetailView({ skill, onBack, onDelete }: {
           <span className="text-[10px] px-1.5 py-0.5 rounded-md" style={{ background: 'rgba(34,197,94,0.1)', color: '#22C55E' }}>已发布到广场</span>
         )}
         <div className="flex-1" />
+        {publishMsg && (
+          <span
+            className="text-[11px] px-2 py-0.5 rounded-md transition-opacity"
+            style={{
+              background: publishMsg.type === 'ok' ? 'rgba(34,197,94,0.1)' : 'rgba(239,68,68,0.1)',
+              color: publishMsg.type === 'ok' ? '#22C55E' : '#EF4444',
+              border: `1px solid ${publishMsg.type === 'ok' ? 'rgba(34,197,94,0.2)' : 'rgba(239,68,68,0.2)'}`,
+            }}
+          >
+            {publishMsg.type === 'ok' ? <CheckCircle2 size={11} style={{ display: 'inline', marginRight: 4, verticalAlign: '-2px' }} /> : null}
+            {publishMsg.text}
+          </span>
+        )}
+        {/* 复制 MD / 下载 zip：与 PlazaSkillDetailView breadcrumb 同构，操作破坏性由低到高 */}
+        <button onClick={handleCopySkillMd} disabled={mdCopyState === 'ok'}
+          className="flex items-center gap-1 text-[11px] px-2.5 py-1 rounded-lg transition-colors hover:bg-white/5"
+          style={{ color: mdCopyState === 'ok' ? '#22C55E' : mdCopyState === 'err' ? '#EF4444' : '#8B5CF6' }}>
+          {mdCopyState === 'ok' ? <ClipboardCheck size={12} /> : <Copy size={12} />}
+          {mdCopyState === 'ok' ? '已复制' : mdCopyState === 'err' ? '复制失败' : '复制 MD'}
+        </button>
+        <button onClick={handleDownloadZip} disabled={zipState === 'loading'}
+          className="flex items-center gap-1 text-[11px] px-2.5 py-1 rounded-lg transition-colors hover:bg-white/5"
+          style={{ color: zipState === 'ok' ? '#22C55E' : zipState === 'err' ? '#EF4444' : 'var(--text-secondary)' }}>
+          {zipState === 'loading' ? <MapSpinner size={12} />
+            : zipState === 'ok' ? <CheckCircle2 size={12} />
+            : <Archive size={12} />}
+          {zipState === 'loading' ? '下载中…' : zipState === 'ok' ? '已下载' : zipState === 'err' ? '下载失败' : '下载 .zip'}
+        </button>
         <button onClick={handleTogglePublish} disabled={publishing}
           className="flex items-center gap-1 text-[11px] px-2.5 py-1 rounded-lg transition-colors hover:bg-white/5"
           style={{ color: isPublic ? '#F59E0B' : '#8B5CF6' }}>
@@ -1038,7 +1348,7 @@ function PlazaTab() {
                     <div className="flex items-center gap-2 mt-2.5 pt-2.5" style={{ borderTop: '1px solid rgba(255,255,255,0.04)' }}>
                       <div className="flex items-center gap-1 text-[10px]" style={{ color: 'var(--text-muted)' }}>
                         {skill.authorAvatar ? (
-                          <img src={skill.authorAvatar} alt="" className="w-4 h-4 rounded-full" />
+                          <img src={resolveAvatarUrl({ avatarFileName: skill.authorAvatar })} alt="" className="w-4 h-4 rounded-full" />
                         ) : (
                           <User size={10} />
                         )}
@@ -1068,6 +1378,9 @@ function PlazaSkillDetailView({ skill, onBack }: { skill: PlazaSkillItem; onBack
   const [testInput, setTestInput] = useState('');
   const [testResult, setTestResult] = useState('');
   const [copied, setCopied] = useState<'text' | 'md' | null>(null);
+  /** 广场导出：MD 复制状态 + ZIP 下载状态，采用与 MySkillDetailView 一致的图标切换反馈 */
+  const [mdCopyState, setMdCopyState] = useState<'idle' | 'ok' | 'err'>('idle');
+  const [zipState, setZipState] = useState<'idle' | 'loading' | 'ok' | 'err'>('idle');
 
   const { typing: testTyping, isStreaming: testStreaming, start: startTest, reset: resetTest } = useSseStream({
     url: '', method: 'POST',
@@ -1086,6 +1399,49 @@ function PlazaSkillDetailView({ skill, onBack }: { skill: PlazaSkillItem; onBack
     setCopied('text'); setTimeout(() => setCopied(null), 1500);
   };
 
+  /** 复制 SKILL.md 到剪贴板。后端端点 GetSkillMd 已允许 IsPublic=true 的广场访问 */
+  const handleCopyMd = async () => {
+    if (mdCopyState === 'ok') return;
+    try {
+      const res = await getSkillMd(skill.skillKey);
+      if (res.success && res.data) {
+        await navigator.clipboard.writeText(res.data.skillMd);
+        setMdCopyState('ok');
+      } else {
+        setMdCopyState('err');
+      }
+    } catch {
+      setMdCopyState('err');
+    } finally {
+      setTimeout(() => setMdCopyState('idle'), 1800);
+    }
+  };
+
+  /** 下载技能 zip。与 CreateTab.handleExportZip 同模式：手动 fetch 带 Authorization */
+  const handleDownloadZip = async () => {
+    if (zipState === 'loading') return;
+    setZipState('loading');
+    try {
+      const token = useAuthStore.getState().token;
+      const res = await fetch(getSkillZipUrl(skill.skillKey), {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
+      if (!res.ok) { setZipState('err'); return; }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${skill.skillKey}.zip`;
+      a.click();
+      URL.revokeObjectURL(url);
+      setZipState('ok');
+    } catch {
+      setZipState('err');
+    } finally {
+      setTimeout(() => setZipState('idle'), 1800);
+    }
+  };
+
   return (
     <div className="flex-1 min-h-0 flex flex-col px-3 pb-3 pt-2">
       {/* Breadcrumb */}
@@ -1100,9 +1456,24 @@ function PlazaSkillDetailView({ skill, onBack }: { skill: PlazaSkillItem; onBack
         <span className="text-[11px] px-1.5 py-0.5 rounded-md" style={{ background: 'rgba(139,92,246,0.1)', color: '#8B5CF6' }}>{skill.category}</span>
         <div className="flex-1" />
         <span className="flex items-center gap-1 text-[11px]" style={{ color: 'var(--text-muted)' }}>
-          {skill.authorAvatar ? <img src={skill.authorAvatar} alt="" className="w-4 h-4 rounded-full" /> : <User size={11} />}
+          {skill.authorAvatar ? <img src={resolveAvatarUrl({ avatarFileName: skill.authorAvatar })} alt="" className="w-4 h-4 rounded-full" /> : <User size={11} />}
           {skill.authorName || '匿名'}
         </span>
+        {/* 复制 MD / 下载 zip：与 MySkillDetailView breadcrumb 按钮风格一致（小图标 + 短文案） */}
+        <button onClick={handleCopyMd} disabled={mdCopyState === 'ok'}
+          className="flex items-center gap-1 text-[11px] px-2.5 py-1 rounded-lg transition-colors hover:bg-white/5"
+          style={{ color: mdCopyState === 'ok' ? '#22C55E' : mdCopyState === 'err' ? '#EF4444' : '#8B5CF6' }}>
+          {mdCopyState === 'ok' ? <ClipboardCheck size={12} /> : <Copy size={12} />}
+          {mdCopyState === 'ok' ? '已复制' : mdCopyState === 'err' ? '复制失败' : '复制 MD'}
+        </button>
+        <button onClick={handleDownloadZip} disabled={zipState === 'loading'}
+          className="flex items-center gap-1 text-[11px] px-2.5 py-1 rounded-lg transition-colors hover:bg-white/5"
+          style={{ color: zipState === 'ok' ? '#22C55E' : zipState === 'err' ? '#EF4444' : 'var(--text-secondary)' }}>
+          {zipState === 'loading' ? <MapSpinner size={12} />
+            : zipState === 'ok' ? <CheckCircle2 size={12} />
+            : <Archive size={12} />}
+          {zipState === 'loading' ? '下载中…' : zipState === 'ok' ? '已下载' : zipState === 'err' ? '下载失败' : '下载 .zip'}
+        </button>
       </div>
 
       {/* Main */}
@@ -1136,7 +1507,7 @@ function PlazaSkillDetailView({ skill, onBack }: { skill: PlazaSkillItem; onBack
             <div>
               <div className="text-[11px] font-semibold mb-1" style={{ color: 'var(--text-muted)' }}>作者</div>
               <div className="flex items-center gap-2">
-                {skill.authorAvatar ? <img src={skill.authorAvatar} alt="" className="w-6 h-6 rounded-full" /> : <User size={16} />}
+                {skill.authorAvatar ? <img src={resolveAvatarUrl({ avatarFileName: skill.authorAvatar })} alt="" className="w-6 h-6 rounded-full" /> : <User size={16} />}
                 <span className="text-[13px]" style={{ color: 'var(--text-primary)' }}>{skill.authorName || '匿名'}</span>
               </div>
             </div>
