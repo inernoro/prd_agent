@@ -5111,7 +5111,7 @@ a.branch-name:hover { color: var(--accent); }
 /* Node — rich card rendered as <g> containing rect + foreignObject or tspan */
 .topology-node {
   cursor: pointer;
-  transition: filter 0.18s ease, transform 0.12s ease;
+  transition: filter 0.18s ease;
 }
 .topology-node:hover {
   filter: brightness(1.08) drop-shadow(0 4px 12px rgba(0, 0, 0, 0.25));
@@ -6538,12 +6538,15 @@ body.cds-topology-fs .topology-fs-panel.open ~ .topology-fs-add-menu {
   border: none;
   background: transparent;
   cursor: pointer;
-  color: var(--text-muted);
+  color: rgba(255,255,255,0.35);
   transition: background 120ms ease, color 120ms ease;
   border-right: 1px solid var(--card-border);
+  flex-shrink: 0;
 }
-.tfp-var-eye:hover { background: var(--bg-elevated); }
-.tfp-var-eye.inherited { color: var(--text-muted); }
+.tfp-var-eye svg { width: 14px; height: 14px; flex-shrink: 0; }
+.tfp-var-eye:hover { background: var(--bg-elevated); color: rgba(255,255,255,0.65); }
+.tfp-var-eye.inherited { color: rgba(255,255,255,0.28); }
+.tfp-var-eye.inherited:hover { color: rgba(255,255,255,0.6); }
 .tfp-var-eye.override { color: var(--accent, #10b981); }
 .tfp-var-eye.locked {
   color: #f59e0b;

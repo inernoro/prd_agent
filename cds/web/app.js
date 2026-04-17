@@ -9343,7 +9343,9 @@ function _topologyNodeDragStart(e, nodeId, groupEl) {
     const ddy = (me.clientY - startY) / _topologyViewport.scale;
     if (!hasDragged && Math.abs(ddx) + Math.abs(ddy) < 4) return;
     hasDragged = true;
-    pendingTransform = `translate(${baseOffset.dx + ddx},${baseOffset.dy + ddy})`;
+    // The node's children are already positioned at (baseX + baseOffset),
+    // so the group transform only needs the CURRENT delta — not baseOffset again.
+    pendingTransform = `translate(${ddx},${ddy})`;
     if (!rafId) rafId = requestAnimationFrame(flush);
   };
 

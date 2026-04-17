@@ -31,3 +31,5 @@
 | fix | cds | modal z-index 从 100 提升至 500，彻底解决 topo-sys-popover（z-index:200）遮盖弹窗的重叠问题 |
 | fix | cds | CDS 系统更新弹窗简化：默认直接更新当前分支，移除分支切换下拉（改为 <details> 折叠的高级选项），清理误导性"更新所有"按钮 |
 | fix | cds | 移除"网络流"tab（eBPF/tcpdump 未实现的占位符），避免用户看到无内容页面以为功能异常 |
+| fix | cds | topology 节点拖拽双重叠加 bug：_topologyNodeDragStart 的 group transform 改为仅含当前帧增量（ddx,ddy），不再重叠已嵌入坐标的 baseOffset，拖拽实时跟手 |
+| fix | cds | 去除 .topology-node 的 transform transition（0.12s ease），消除 SVG 节点拖拽时的动画延迟；环境变量面板眼睛图标颜色由 text-muted 改为 rgba(255,255,255,0.35)，hover 态增强至 0.65，svg 固定 14×14 确保清晰可见 |
