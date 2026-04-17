@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import {
   ReactFlow,
@@ -14,7 +14,7 @@ import {
   Panel,
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
-import { Sparkle, TreePine, Download, Plus, Star, MousePointerClick, Zap, X } from 'lucide-react';
+import { Sparkle, TreePine, Download, Plus, Star, MousePointerClick, Zap, X, Info } from 'lucide-react';
 import { useSseStream } from '@/lib/useSseStream';
 import { SsePhaseBar } from '@/components/sse/SsePhaseBar';
 import { toast } from '@/lib/toast';
@@ -31,6 +31,9 @@ import {
 import type { EmergenceNode as EmergenceNodeType } from '@/services/contracts/emergence';
 import { EmergenceFlowNode, type EmergenceNodeData } from './EmergenceNode';
 import { EmergenceCreateDialog } from './EmergenceCreateDialog';
+import { EmergenceIntroPage } from './EmergenceIntroPage';
+
+const INTRO_SEEN_KEY = 'emergence.intro.seen';
 
 // ── 自定义节点注册 ──
 const nodeTypes = { emergence: EmergenceFlowNode };
@@ -43,59 +46,99 @@ const dimColor: Record<number, string> = {
 };
 
 // ── 数据转换：后端节点 → React Flow 节点 ──
+// 布局：基于子树宽度的递归树布局，父节点居中于子节点群之上
+const LEAF_WIDTH = 320;
+const DEPTH_STEP = 220;
+
 function toFlowNodes(
   nodes: EmergenceNodeType[],
   onExplore: (nodeId: string) => void,
   onStatusChange?: (nodeId: string, newStatus: string) => void,
 ): Node<EmergenceNodeData>[] {
-  // BFS 计算深度
-  const depthMap = new Map<string, number>();
-  const roots = nodes.filter(n => !n.parentId);
-  roots.forEach(r => depthMap.set(r.id, 0));
-  const queue = [...roots];
-  while (queue.length > 0) {
-    const current = queue.shift()!;
-    const depth = depthMap.get(current.id) ?? 0;
-    const children = nodes.filter(n => n.parentId === current.id);
-    children.forEach(c => {
-      if (!depthMap.has(c.id)) {
-        depthMap.set(c.id, depth + 1);
-        queue.push(c);
-      }
-    });
-  }
-  // 涌现节点可能不在 parentId 链上
+  const byId = new Map(nodes.map(n => [n.id, n]));
+
+  // 以 parentId 为主,没有则取 parentIds[0] 作为锚点(涌现节点)
+  const anchorParent = (n: EmergenceNodeType): string | undefined => {
+    if (n.parentId && byId.has(n.parentId)) return n.parentId;
+    const firstMulti = n.parentIds.find(pid => byId.has(pid));
+    return firstMulti;
+  };
+
+  const childrenMap = new Map<string, string[]>();
+  const roots: string[] = [];
   nodes.forEach(n => {
-    if (!depthMap.has(n.id)) {
-      const maxParentDepth = n.parentIds
-        .map(pid => depthMap.get(pid) ?? 0)
-        .reduce((a, b) => Math.max(a, b), 0);
-      depthMap.set(n.id, maxParentDepth + 1);
+    const p = anchorParent(n);
+    if (p) {
+      if (!childrenMap.has(p)) childrenMap.set(p, []);
+      childrenMap.get(p)!.push(n.id);
+    } else {
+      roots.push(n.id);
     }
   });
 
-  // 按深度分组计算 X
-  const depthGroups = new Map<number, string[]>();
-  nodes.forEach(n => {
-    const d = depthMap.get(n.id) ?? 0;
-    if (!depthGroups.has(d)) depthGroups.set(d, []);
-    depthGroups.get(d)!.push(n.id);
+  // 递归计算子树宽度(叶子节点 = LEAF_WIDTH)
+  const subtreeWidth = new Map<string, number>();
+  const measure = (id: string, seen: Set<string>): number => {
+    if (subtreeWidth.has(id)) return subtreeWidth.get(id)!;
+    if (seen.has(id)) return LEAF_WIDTH; // 防环
+    seen.add(id);
+    const kids = childrenMap.get(id) ?? [];
+    if (kids.length === 0) {
+      subtreeWidth.set(id, LEAF_WIDTH);
+      return LEAF_WIDTH;
+    }
+    const total = kids.reduce((acc, k) => acc + measure(k, seen), 0);
+    subtreeWidth.set(id, total);
+    return total;
+  };
+  roots.forEach(r => measure(r, new Set()));
+  // 孤立节点兜底
+  nodes.forEach(n => measure(n.id, new Set()));
+
+  // 递归布置
+  const positions = new Map<string, { x: number; y: number }>();
+  const place = (id: string, centerX: number, depth: number, seen: Set<string>) => {
+    if (seen.has(id)) return;
+    seen.add(id);
+    positions.set(id, { x: centerX, y: depth * DEPTH_STEP });
+    const kids = childrenMap.get(id) ?? [];
+    const total = kids.reduce((acc, k) => acc + (subtreeWidth.get(k) ?? LEAF_WIDTH), 0);
+    let cursor = centerX - total / 2;
+    kids.forEach(k => {
+      const w = subtreeWidth.get(k) ?? LEAF_WIDTH;
+      place(k, cursor + w / 2, depth + 1, seen);
+      cursor += w;
+    });
+  };
+  const rootsTotal = roots.reduce((acc, r) => acc + (subtreeWidth.get(r) ?? LEAF_WIDTH), 0);
+  let rCursor = -rootsTotal / 2;
+  const placed = new Set<string>();
+  roots.forEach(r => {
+    const w = subtreeWidth.get(r) ?? LEAF_WIDTH;
+    place(r, rCursor + w / 2, 0, placed);
+    rCursor += w;
   });
-  const idxMap = new Map<string, number>();
-  depthGroups.forEach(ids => ids.forEach((id, i) => idxMap.set(id, i)));
+  // 兜底:任何未定位的节点(如锚点不在当前子集中的涌现节点)
+  nodes.forEach(n => {
+    if (!positions.has(n.id)) {
+      const anchor = anchorParent(n);
+      const anchorPos = anchor ? positions.get(anchor) : undefined;
+      if (anchorPos) {
+        positions.set(n.id, { x: anchorPos.x, y: anchorPos.y + DEPTH_STEP });
+      } else {
+        positions.set(n.id, { x: 0, y: 0 });
+      }
+    }
+  });
 
   return nodes.map(n => {
-    const depth = depthMap.get(n.id) ?? 0;
-    const idx = idxMap.get(n.id) ?? 0;
-    const siblingCount = depthGroups.get(depth)?.length ?? 1;
-    const xOffset = (idx - (siblingCount - 1) / 2) * 320;
-
+    const pos = positions.get(n.id) ?? { x: 0, y: 0 };
     return {
       id: n.id,
       type: 'emergence',
       position: n.positionX || n.positionY
         ? { x: n.positionX, y: n.positionY }
-        : { x: xOffset, y: depth * 220 },
+        : pos,
       data: {
         label: n.title,
         description: n.description,
@@ -149,6 +192,21 @@ function EmergenceCanvasInner({ treeId, onBack }: CanvasProps) {
   const [edges, setEdges, onEdgesChange] = useEdgesState([] as Edge[]);
   const [treeTitle, setTreeTitle] = useState('');
   const [nodeCount, setNodeCount] = useState(0);
+  // 保存原始后端节点用于增量到达时整体重新布局(修复堆积在同一位置的 bug)
+  const backendNodesRef = useRef<EmergenceNodeType[]>([]);
+  // 提前声明 callback 引用,供 relayout 使用(真实 handler 稍后再 wire 进来,避免 TDZ / use-before-define)
+  const handleExploreRef = useRef<(nodeId: string) => void>(() => {});
+  const handleStatusChangeRef = useRef<(nodeId: string, status: string) => void>(() => {});
+
+  const relayout = useCallback(() => {
+    const all = backendNodesRef.current;
+    setNodes(toFlowNodes(
+      all,
+      (id) => handleExploreRef.current(id),
+      (id, s) => handleStatusChangeRef.current(id, s),
+    ));
+    setEdges(toFlowEdges(all));
+  }, [setNodes, setEdges]);
 
   // ── 探索 SSE ──
   const { phase: explorePhase, phaseMessage: exploreMsg, isStreaming: isExploring, start: startExplore } =
@@ -158,12 +216,9 @@ function EmergenceCanvasInner({ treeId, onBack }: CanvasProps) {
       phaseEvent: 'stage',
       itemEvent: 'node',
       onItem: (newNode) => {
-        const [flowNode] = toFlowNodes([newNode], handleExplore, handleStatusChange);
-        if (flowNode) {
-          setNodes(prev => [...prev, flowNode]);
-          setEdges(prev => [...prev, ...toFlowEdges([newNode])]);
-          setNodeCount(c => c + 1);
-        }
+        backendNodesRef.current = [...backendNodesRef.current, newNode];
+        relayout();
+        setNodeCount(c => c + 1);
       },
       onDone: (data) => {
         const d = data as { totalNew?: number; error?: string };
@@ -188,12 +243,9 @@ function EmergenceCanvasInner({ treeId, onBack }: CanvasProps) {
       phaseEvent: 'stage',
       itemEvent: 'node',
       onItem: (newNode) => {
-        const [flowNode] = toFlowNodes([newNode], handleExplore, handleStatusChange);
-        if (flowNode) {
-          setNodes(prev => [...prev, flowNode]);
-          setEdges(prev => [...prev, ...toFlowEdges([newNode])]);
-          setNodeCount(c => c + 1);
-        }
+        backendNodesRef.current = [...backendNodesRef.current, newNode];
+        relayout();
+        setNodeCount(c => c + 1);
       },
       onDone: (data) => {
         const d = data as { totalNew?: number; error?: string };
@@ -217,9 +269,9 @@ function EmergenceCanvasInner({ treeId, onBack }: CanvasProps) {
     const { tree, nodes: backendNodes } = res.data;
     setTreeTitle(tree.title);
     setNodeCount(tree.nodeCount);
-    setNodes(toFlowNodes(backendNodes, handleExplore, handleStatusChange));
-    setEdges(toFlowEdges(backendNodes));
-  }, [treeId]);
+    backendNodesRef.current = backendNodes;
+    relayout();
+  }, [treeId, relayout]);
 
   useEffect(() => { loadTree(); }, [loadTree]);
 
@@ -232,11 +284,18 @@ function EmergenceCanvasInner({ treeId, onBack }: CanvasProps) {
   const handleStatusChange = useCallback(async (nodeId: string, newStatus: string) => {
     const { updateEmergenceNode } = await import('@/services');
     await updateEmergenceNode(nodeId, { status: newStatus });
-    // 更新本地节点状态
+    // 同步本地后端节点 + UI
+    backendNodesRef.current = backendNodesRef.current.map(n =>
+      n.id === nodeId ? { ...n, status: newStatus as EmergenceNodeType['status'] } : n,
+    );
     setNodes(prev => prev.map(n =>
       n.id === nodeId ? { ...n, data: { ...n.data, status: newStatus as EmergenceNodeData['status'] } } : n
     ));
   }, [setNodes]);
+
+  // Wire up 真实 handler 到前面声明的 ref
+  useEffect(() => { handleExploreRef.current = handleExplore; }, [handleExplore]);
+  useEffect(() => { handleStatusChangeRef.current = handleStatusChange; }, [handleStatusChange]);
 
   const handleEmerge = useCallback((fantasy: boolean) => {
     if (isExploring || isEmerging) return;
@@ -327,6 +386,18 @@ function EmergenceCanvasInner({ treeId, onBack }: CanvasProps) {
           minZoom={0.15}
           maxZoom={2}
           proOptions={{ hideAttribution: true }}
+          /* ── 画布手势统一(苹果触控板风格),对齐视觉创作画布 ──
+             详见 .claude/rules/gesture-unification.md
+             两指拖动 = 平移; 双指捏合或 ⌘/Ctrl+滚轮 = 缩放; 单指点击空白拖动 = 平移 */
+          panOnScroll
+          panOnScrollSpeed={0.8}
+          panOnDrag
+          zoomOnScroll={false}
+          zoomOnPinch
+          zoomOnDoubleClick={false}
+          zoomActivationKeyCode={['Meta', 'Control']}
+          panActivationKeyCode="Space"
+          selectionOnDrag={false}
         >
           <Background variant={BackgroundVariant.Dots} gap={20} size={1} color="rgba(255,255,255,0.03)" />
           <MiniMap
@@ -402,13 +473,22 @@ function EmergenceCanvasInner({ treeId, onBack }: CanvasProps) {
   );
 }
 
-// ── 页面入口：树列表 + 画布切换 ──
+// ── 页面入口：介绍 → 树列表 → 画布 ──
 export function EmergenceExplorerPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const [selectedTreeId, setSelectedTreeId] = useState<string | null>(null);
   const [showCreate, setShowCreate] = useState(false);
   const [trees, setTrees] = useState<Array<{ id: string; title: string; description?: string; nodeCount: number; updatedAt: string }>>([]);
   const [loading, setLoading] = useState(true);
+  const [showIntro, setShowIntro] = useState<boolean>(() => {
+    if (typeof window === 'undefined') return false;
+    return sessionStorage.getItem(INTRO_SEEN_KEY) !== '1';
+  });
+
+  const dismissIntro = useCallback(() => {
+    sessionStorage.setItem(INTRO_SEEN_KEY, '1');
+    setShowIntro(false);
+  }, []);
 
   // 从文档空间跳转来的参数
   const seedTitle = searchParams.get('seedTitle');
@@ -417,8 +497,11 @@ export function EmergenceExplorerPage() {
 
   // 自动打开创建对话框（如果有 URL 参数）
   useEffect(() => {
-    if (seedSourceId) setShowCreate(true);
-  }, [seedSourceId]);
+    if (seedSourceId) {
+      dismissIntro();
+      setShowCreate(true);
+    }
+  }, [seedSourceId, dismissIntro]);
 
   const loadTrees = useCallback(async () => {
     setLoading(true);
@@ -438,6 +521,38 @@ export function EmergenceExplorerPage() {
     );
   }
 
+  // 介绍页(首次进入或用户主动再次查看)
+  if (showIntro) {
+    return (
+      <>
+        <EmergenceIntroPage
+          hasTrees={trees.length > 0}
+          onStart={dismissIntro}
+          onCreateFirst={() => {
+            dismissIntro();
+            setShowCreate(true);
+          }}
+        />
+        {showCreate && (
+          <EmergenceCreateDialog
+            onClose={() => {
+              setShowCreate(false);
+              if (seedSourceId) setSearchParams({}, { replace: true });
+            }}
+            onCreated={(treeId) => {
+              setShowCreate(false);
+              setSelectedTreeId(treeId);
+              if (seedSourceId) setSearchParams({}, { replace: true });
+            }}
+            initialSeedTitle={seedTitle ? decodeURIComponent(seedTitle) : undefined}
+            initialSeedSourceType={seedSourceType ?? undefined}
+            initialSeedSourceId={seedSourceId ?? undefined}
+          />
+        )}
+      </>
+    );
+  }
+
   // 树列表模式
   return (
     <div className="h-full min-h-0 flex flex-col overflow-x-hidden overflow-y-auto gap-5">
@@ -446,9 +561,14 @@ export function EmergenceExplorerPage() {
         title="涌现探索器"
         icon={<TreePine size={14} />}
         actions={
-          <Button variant="primary" size="xs" onClick={() => setShowCreate(true)}>
-            <Plus size={13} /> 新建涌现树
-          </Button>
+          <div className="flex items-center gap-2">
+            <Button variant="ghost" size="xs" onClick={() => setShowIntro(true)}>
+              <Info size={13} /> 关于涌现
+            </Button>
+            <Button variant="primary" size="xs" onClick={() => setShowCreate(true)}>
+              <Plus size={13} /> 新建涌现树
+            </Button>
+          </div>
         }
       />
 
