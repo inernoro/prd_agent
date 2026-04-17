@@ -5143,8 +5143,13 @@ a.branch-name:hover { color: var(--accent); }
   animation: topo-node-status-pulse 1.2s ease-in-out infinite;
 }
 @keyframes topo-node-status-pulse {
-  0%, 100% { opacity: 1;   transform: scale(1); }
-  50%      { opacity: 0.5; transform: scale(1.25); transform-origin: center; }
+  /* SVG <circle> elements don't honour CSS transform-origin reliably.
+     The original scale(1.25) caused the dot to drift outside the card
+     boundary (the user saw an orange blob escaping the card corner).
+     Pure opacity pulse achieves the same "breathing alive" feel without
+     any transform. */
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0.35; }
 }
 
 /* UF-22: error state — red border, non-animating so it's clearly
@@ -5389,6 +5394,62 @@ body.cds-topology-fs .container > *:not(#topologyView):not(#toast):not(.modal):n
 }
 /* Hide floating Activity Monitor in topology FS mode — content is now in the right panel */
 body.cds-topology-fs #activityMonitor { display: none !important; }
+/* Hide floating host-stats bubble in topology FS mode — shown inline in topbar instead */
+body.cds-topology-fs #hostStatsWidget { display: none !important; }
+
+/* Inline host-stats pill inside the topology topbar */
+.topology-fs-hoststats {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: var(--bg-card);
+  border: 1px solid var(--card-border);
+  border-radius: 10px;
+  padding: 5px 12px;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.45);
+  cursor: pointer;
+}
+.topology-fs-hoststats-row {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+.topology-fs-hoststats-label {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+  min-width: 22px;
+}
+.topology-fs-hoststats-bar {
+  width: 48px;
+  height: 4px;
+  background: var(--bg-elevated);
+  border-radius: 2px;
+  overflow: hidden;
+}
+.topology-fs-hoststats-fill {
+  height: 100%;
+  border-radius: 2px;
+  transition: width 0.5s ease;
+  background: #3fb950;
+}
+.topology-fs-hoststats-fill[data-tier="blue"]   { background: #58a6ff; }
+.topology-fs-hoststats-fill[data-tier="orange"] { background: #f0883e; }
+.topology-fs-hoststats-fill[data-tier="red"]    { background: #f85149; }
+.topology-fs-hoststats-value {
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  min-width: 26px;
+  text-align: right;
+}
+.topology-fs-hoststats-sep {
+  width: 1px;
+  height: 16px;
+  background: var(--card-border);
+}
 body.cds-topology-fs .container {
   padding: 0 !important;
   margin: 0 !important;

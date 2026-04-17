@@ -1777,33 +1777,39 @@ async function pollHostStats() {
 }
 
 function renderHostStats(data) {
-  const el = document.getElementById('hostStatsWidget');
-  if (!el) return;
-  el.classList.remove('hidden');
-
   const memPct = data.mem?.usedPercent ?? 0;
   const cpuPct = data.cpu?.loadPercent ?? 0;
+  const memTier = tierForPercent(memPct);
+  const cpuTier = tierForPercent(cpuPct);
 
-  // Memory bar
-  const memFill = document.getElementById('hsMemFill');
-  const memValue = document.getElementById('hsMemValue');
-  if (memFill) {
-    memFill.style.width = `${Math.min(memPct, 100)}%`;
-    memFill.dataset.tier = tierForPercent(memPct);
+  // Floating bottom-right widget (non-FS mode)
+  const el = document.getElementById('hostStatsWidget');
+  if (el) {
+    el.classList.remove('hidden');
+    const memFill = document.getElementById('hsMemFill');
+    const memValue = document.getElementById('hsMemValue');
+    if (memFill) { memFill.style.width = `${Math.min(memPct, 100)}%`; memFill.dataset.tier = memTier; }
+    if (memValue) memValue.textContent = `${memPct}%`;
+    const cpuFill = document.getElementById('hsCpuFill');
+    const cpuValue = document.getElementById('hsCpuValue');
+    if (cpuFill) { cpuFill.style.width = `${Math.min(cpuPct, 100)}%`; cpuFill.dataset.tier = cpuTier; }
+    if (cpuValue) cpuValue.textContent = `${cpuPct}%`;
+    el.dataset.stress = (memPct >= 90 || cpuPct >= 90) ? '1' : '0';
   }
-  if (memValue) memValue.textContent = `${memPct}%`;
 
-  // CPU bar — loadPercent can exceed 100 on oversubscribed hosts, cap the fill
-  const cpuFill = document.getElementById('hsCpuFill');
-  const cpuValue = document.getElementById('hsCpuValue');
-  if (cpuFill) {
-    cpuFill.style.width = `${Math.min(cpuPct, 100)}%`;
-    cpuFill.dataset.tier = tierForPercent(cpuPct);
+  // Inline topbar pill (FS mode) — same data, different elements
+  const fsEl = document.getElementById('topologyFsHostStats');
+  if (fsEl) {
+    fsEl.style.display = '';
+    const tfhsMemFill = document.getElementById('tfhsMemFill');
+    const tfhsMemValue = document.getElementById('tfhsMemValue');
+    if (tfhsMemFill) { tfhsMemFill.style.width = `${Math.min(memPct, 100)}%`; tfhsMemFill.dataset.tier = memTier; }
+    if (tfhsMemValue) tfhsMemValue.textContent = `${memPct}%`;
+    const tfhsCpuFill = document.getElementById('tfhsCpuFill');
+    const tfhsCpuValue = document.getElementById('tfhsCpuValue');
+    if (tfhsCpuFill) { tfhsCpuFill.style.width = `${Math.min(cpuPct, 100)}%`; tfhsCpuFill.dataset.tier = cpuTier; }
+    if (tfhsCpuValue) tfhsCpuValue.textContent = `${cpuPct}%`;
   }
-  if (cpuValue) cpuValue.textContent = `${cpuPct}%`;
-
-  // Whole-widget warning if either metric is critical (>= 90%)
-  el.dataset.stress = (memPct >= 90 || cpuPct >= 90) ? '1' : '0';
 }
 
 function tierForPercent(pct) {
@@ -8308,6 +8314,20 @@ function _ensureTopologyFsChrome() {
         </div>
       </div>
     </div>
+    <!-- Inline host-stats pill (replaces the bottom-right floating widget in FS mode) -->
+    <div class="topology-fs-hoststats" id="topologyFsHostStats" onclick="showHostStatsDetails(event)" title="宿主机实时负载 — 点击查看详情" style="display:none">
+      <div class="topology-fs-hoststats-row">
+        <span class="topology-fs-hoststats-label">MEM</span>
+        <span class="topology-fs-hoststats-bar"><span class="topology-fs-hoststats-fill" id="tfhsMemFill"></span></span>
+        <span class="topology-fs-hoststats-value" id="tfhsMemValue">--</span>
+      </div>
+      <span class="topology-fs-hoststats-sep"></span>
+      <div class="topology-fs-hoststats-row">
+        <span class="topology-fs-hoststats-label">CPU</span>
+        <span class="topology-fs-hoststats-bar"><span class="topology-fs-hoststats-fill" id="tfhsCpuFill"></span></span>
+        <span class="topology-fs-hoststats-value" id="tfhsCpuValue">--</span>
+      </div>
+    </div>
     <!-- GAP-16: manual refresh button -->
     <button type="button" class="topology-fs-view-toggle-btn" id="topologyFsRefreshBtn" onclick="_topologyManualRefresh(event)" title="手动刷新远端分支 / 更新检查">
       <svg width="13" height="13" viewBox="0 0 16 16" fill="currentColor"><path d="M8 2.5a5.487 5.487 0 00-4.131 1.869l1.204 1.204A.25.25 0 014.896 6H1.25A.25.25 0 011 5.75V2.104a.25.25 0 01.427-.177l1.38 1.38A7.002 7.002 0 0115 8a.75.75 0 01-1.5 0A5.5 5.5 0 008 2.5zM2.5 8a.75.75 0 00-1.5 0 7.002 7.002 0 0012.023 4.87l1.38 1.38a.25.25 0 00.427-.177V10.5a.25.25 0 00-.25-.25h-3.646a.25.25 0 00-.177.427l1.204 1.204A5.5 5.5 0 012.5 8z"/></svg>
@@ -8557,6 +8577,94 @@ function _layoutTopologyDag(profiles, infraList) {
   return { layers, edges, nodes };
 }
 
+// ── Aggregated layout (shared view B) ─────────────────────────────────
+//
+// When no branch is selected (共享视图) and the project has tracked
+// branches, we expand each BuildProfile into N cards — one per branch.
+// All branch-instance cards remain connected to the same shared infra
+// services below, giving the user a cross-branch operational overview.
+//
+// Layout:
+//   - Rows (app tiers) = one per BuildProfile, sorted alphabetically
+//   - Within each row, one card per branch (columns, sorted by branchId)
+//   - Bottom row = shared infra services
+//
+// Returned shape is identical to _layoutTopologyDag so _renderTopologySvg
+// can render it without modification (node.aggregated flag carries extra
+// meta for the branch sub-label).
+function _layoutTopologyAggregated(profiles, infraList, allBranches) {
+  if (!allBranches || allBranches.length === 0) {
+    return _layoutTopologyDag(profiles, infraList);
+  }
+
+  const nodes = new Map();
+  const infraNodes = [];
+  const sortedProfiles = [...profiles].sort((a, b) => (a.id || '').localeCompare(b.id || ''));
+  const sortedBranches = [...allBranches].sort((a, b) => (a.id || '').localeCompare(b.id || ''));
+
+  // Infra nodes (shared — same id, no branch suffix)
+  for (const s of infraList) {
+    if (!nodes.has(s.id)) {
+      const node = { id: s.id, kind: 'infra', raw: s };
+      nodes.set(s.id, node);
+      infraNodes.push(node);
+    }
+  }
+  infraNodes.sort((a, b) => a.id.localeCompare(b.id));
+
+  // App nodes: each (profile × branch) pair
+  // Node id format: "profileId@branchId" so it's unique across the canvas.
+  // raw.status = branch.status, raw._profileName = profile display name.
+  const profileLayers = [];
+  for (const p of sortedProfiles) {
+    const row = [];
+    for (const b of sortedBranches) {
+      const syntheticId = p.id + '@' + b.id;
+      const node = {
+        id: syntheticId,
+        kind: 'app',
+        aggregated: true,
+        profileId: p.id,
+        branchId: b.id,
+        raw: Object.assign({}, p, {
+          id: syntheticId,
+          status: b.status || 'unknown',
+          _branchLabel: b.branch || b.id,
+          _profileId: p.id,
+        }),
+      };
+      nodes.set(syntheticId, node);
+      row.push(node);
+    }
+    profileLayers.push(row);
+  }
+
+  // Edges: each (profile×branch) node → infra its profile depends on
+  const edges = [];
+  for (const p of sortedProfiles) {
+    for (const depId of p.dependsOn || []) {
+      if (nodes.has(depId)) {
+        // all branch instances of this profile point to the same infra
+        for (const b of sortedBranches) {
+          const fromId = depId;
+          const toId = p.id + '@' + b.id;
+          edges.push({ from: fromId, to: toId });
+        }
+      }
+    }
+  }
+
+  // Layers: bottom = infra, then one layer per profile (bottom-to-top)
+  const layers = [];
+  if (infraNodes.length > 0) layers.push(infraNodes);
+  for (const row of profileLayers) {
+    if (row.length > 0) layers.push(row);
+  }
+  if (layers.length === 0) layers.push([]);
+
+  return { layers, edges, nodes, aggregated: true };
+}
+
 // ── Rich card renderer ────────────────────────────────────────────────
 //
 // UF-05 (2026-04-15): card style redesigned to match Railway's topology
@@ -8703,6 +8811,11 @@ function _topologyNodeStatus(node, selectedBranchId) {
   if (node.kind === 'infra') {
     return node.raw.status || 'unknown'; // running/stopped/error
   }
+  // Aggregated shared-view nodes carry status from the branch object
+  // directly (set during layout: raw.status = branch.status).
+  if (node.aggregated) {
+    return node.raw.status || 'unknown';
+  }
   // App service: look up the selected branch's services map
   if (!selectedBranchId) return 'unknown';
   const branch = branches.find(b => b.id === selectedBranchId);
@@ -8826,7 +8939,10 @@ function _renderTopologySvg(layout, ctx) {
   const nodeEls = Array.from(positions.values()).map(({ x, y, node }) => {
     const isApp = node.kind === 'app';
     const raw = node.raw;
-    const title = esc(raw.name || raw.id);
+    // In aggregated shared-view nodes, show the profile name (not the synthetic
+    // "profileId@branchId" id) as the card title.
+    const displayName = node.aggregated ? (raw.name || node.profileId || raw._profileId || raw.id) : (raw.name || raw.id);
+    const title = esc(displayName);
     const icon = _topologyNodeIcon(node);
     const status = _topologyNodeStatus(node, selectedBranchId);
     const statusLabel = {
@@ -8882,6 +8998,18 @@ function _renderTopologySvg(layout, ctx) {
     const clickHandler = isApp
       ? `onclick="event.stopPropagation();_topologyNodeClick('${esc(raw.id)}')"`
       : `onclick="event.stopPropagation();_topologyInfraClick('${esc(raw.id)}')"`;
+
+    // Aggregated (shared view B) branch pill — shows "@branchId" in the
+    // top-right corner so the user can identify each instance across columns.
+    const branchPill = node.aggregated && raw._branchLabel
+      ? `<g>
+          <rect x="${x + TOPO_NODE_W - 18 - Math.min(raw._branchLabel.length * 6 + 16, 100)}" y="${y + 14}" width="${Math.min(raw._branchLabel.length * 6 + 16, 100)}" height="20" rx="10"
+                fill="var(--bg-elevated,#24272f)" stroke="var(--card-border,rgba(255,255,255,0.1))" stroke-width="1" />
+          <text x="${x + TOPO_NODE_W - 18 - Math.min(raw._branchLabel.length * 6 + 16, 100) / 2}" y="${y + 28}"
+                text-anchor="middle" fill="var(--text-muted,#888)" font-size="10" font-family="var(--font-mono,monospace)"
+                style="pointer-events:none">${esc('@' + raw._branchLabel.slice(0, 14))}</text>
+        </g>`
+      : '';
 
     // Layout coordinates inside the card:
     //   top content area  = y .. y + (NODE_H - VOLUME_SLOT_H)
@@ -8967,6 +9095,7 @@ function _renderTopologySvg(layout, ctx) {
         ${volumeSlotSvg}
         ${portBadgeSvg}
         ${overridePill}
+        ${branchPill}
       </g>
     `;
   }).join('');
@@ -9274,7 +9403,11 @@ function renderTopologyView() {
     return;
   }
 
-  const layout = _layoutTopologyDag(buildProfiles, infraServices);
+  // Shared view (no branch selected) with tracked branches → show all
+  // branch instances aggregated into one canvas (shared view B).
+  const layout = (!_topologySelectedBranchId && branches.length > 0)
+    ? _layoutTopologyAggregated(buildProfiles, infraServices, branches)
+    : _layoutTopologyDag(buildProfiles, infraServices);
 
   const chipHtml = branches.length === 0
     ? '<span class="topology-branch-picker-label">暂无分支 —— 先在列表视图创建一个</span>'
@@ -9298,7 +9431,7 @@ function renderTopologyView() {
       <div class="topology-header">
         <div class="topology-title">
           服务拓扑
-          <span class="topology-title-hint">${layout.nodes.size} 个服务 · ${layout.edges.length} 条依赖 · ${layout.layers.length} 层 · 滚轮缩放 · 拖拽平移</span>
+          <span class="topology-title-hint">${layout.aggregated ? `${branches.length} 个分支 × ${buildProfiles.length} 个服务 · 共享基础设施` : `${layout.nodes.size} 个服务 · ${layout.edges.length} 条依赖 · ${layout.layers.length} 层`} · 滚轮缩放 · 拖拽平移</span>
         </div>
         <div class="topology-branch-picker">${chipHtml}</div>
       </div>
@@ -9306,7 +9439,7 @@ function renderTopologyView() {
         <span class="topology-legend-item"><span class="topology-legend-swatch app"></span>应用服务</span>
         <span class="topology-legend-item"><span class="topology-legend-swatch infra"></span>基础设施</span>
         <span class="topology-legend-item"><span class="topology-legend-swatch override"></span>本分支自定义</span>
-        <span class="topology-legend-item" style="color:var(--text-secondary);margin-left:auto">${_topologySelectedBranchId ? '点击节点直接编辑该分支配置' : '先选择上方分支，再点击节点编辑'}</span>
+        <span class="topology-legend-item" style="color:var(--text-secondary);margin-left:auto">${_topologySelectedBranchId ? '点击节点直接编辑该分支配置' : (layout.aggregated ? '点击节点切换至该分支' : '先选择上方分支，再点击节点编辑')}</span>
       </div>
       <div class="topology-canvas-wrap">
         ${_renderTopologySvg(layout, {
@@ -9380,28 +9513,27 @@ async function _topologySelectBranch(branchId) {
 // to select, click again to configure" pattern.
 let _topologyLastClickId = null;
 let _topologyLastClickAt = 0;
-function _topologyNodeClick(profileId) {
-  // P4 Part 5: single-click is the primary edit gesture now.
-  // Previously single-click highlighted edges and double-click opened
-  // the editor — too discoverable / too many gestures. New behavior:
-  //
-  //   - When a branch IS selected: single click opens the override
-  //     modal for that profile on that branch.
-  //   - When NO branch is selected: single click highlights connected
-  //     edges (the old "shared view" behavior).
-  //
-  // Holding shift bypasses the right panel and forces the highlight
-  // (escape hatch for users who just want to inspect edges).
+function _topologyNodeClick(nodeId) {
+  // Handle aggregated shared-view nodes (format: "profileId@branchId"):
+  // clicking switches to that branch and opens the service panel for
+  // the profile so the user can drill into a specific branch instance.
+  if (nodeId.includes('@')) {
+    var atIdx = nodeId.indexOf('@');
+    var realProfileId = nodeId.slice(0, atIdx);
+    var realBranchId = nodeId.slice(atIdx + 1);
+    _topologySelectBranch(realBranchId).then(function () {
+      _topologyOpenServicePanel(realProfileId, 'app');
+    });
+    return;
+  }
+
+  // Holding shift bypasses the right panel and forces edge highlight.
   if (window.event?.shiftKey) {
-    _topologyFocusedNodeId = _topologyFocusedNodeId === profileId ? null : profileId;
+    _topologyFocusedNodeId = _topologyFocusedNodeId === nodeId ? null : nodeId;
     renderTopologyView();
     return;
   }
-  // P4 Part 6: single-click opens the slide-in service detail panel
-  // instead of the override modal directly. The panel hosts the four
-  // tabs (Deployments / Variables / Metrics / Settings) that map to
-  // the existing CDS edit flows.
-  _topologyOpenServicePanel(profileId, 'app');
+  _topologyOpenServicePanel(nodeId, 'app');
 }
 
 function _topologyInfraClick(serviceId) {
