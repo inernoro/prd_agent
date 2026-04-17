@@ -39,3 +39,4 @@
 | feat | cds | exec_cds.sh init 新增 Phase 3 MongoDB 初始化：交互式询问是否启动 Docker MongoDB 8 容器，自动追加 CDS_MONGO_URI/CDS_STORAGE_MODE=mongo/CDS_AUTH_BACKEND=mongo 到 .cds.env，一键完成持久化数据库配置 |
 | fix | cds | topology 添加分支后不跳转：_topoAddAndSelect 改为同步设置 _topologySelectedBranchId + await _topologySelectBranch + 调用 _topologyFit()，确保添加后立即切换到新分支单视图；_topologySelectBranch 对 profile-overrides 404（新分支无覆盖属正常）不再弹错误 toast |
 | fix | cds | 项目卡片删除按钮彻底修复：button-in-anchor 是无效 HTML（部分浏览器点击导航而非删除）；改为 cds-project-card-wrapper div 包裹，删除按钮移至 <a> 外侧，position:absolute top:12 right:12，hover 触发器改为 .wrapper:hover，card-head 增加 padding-right:36px 避免标题与按钮重叠 |
+| fix | cds | 删除按钮第三轮修复：projects.js 注入 CSS patch（兜底两种选择器应对浏览器 JS/HTML 版本缓存错位）；SVG fill 改为硬编码 #f43f5e 消除 currentColor 继承透明；server.ts HTML 文件返回 Cache-Control: no-store；projects.html script 标签改用 document.write 方式彻底 cache-bust |
