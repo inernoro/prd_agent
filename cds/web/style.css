@@ -5644,6 +5644,45 @@ body.cds-topology-fs .topology-fs-topbar { left: 74px; }
 }
 .topology-fs-leftnav-icon.disabled { opacity: 0.35; cursor: not-allowed; }
 .topology-fs-leftnav-spacer { flex: 1; }
+/* Left nav system settings popover */
+.topo-sys-popover {
+  position: absolute;
+  left: 58px;
+  bottom: 8px;
+  background: var(--bg-card, #1a1d24);
+  border: 1px solid rgba(255,255,255,0.12);
+  border-radius: 10px;
+  box-shadow: 0 12px 32px rgba(0,0,0,0.55);
+  padding: 6px 0;
+  min-width: 160px;
+  z-index: 200;
+  display: none;
+}
+.topo-sys-popover.open { display: block; }
+.topo-sys-popover-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 14px;
+  font-size: 12px;
+  font-weight: 500;
+  color: rgba(255,255,255,0.65);
+  cursor: pointer;
+  text-decoration: none;
+  background: none;
+  border: none;
+  width: 100%;
+  text-align: left;
+  border-radius: 0;
+  transition: background 100ms, color 100ms;
+  white-space: nowrap;
+}
+.topo-sys-popover-item:hover { background: rgba(255,255,255,0.07); color: rgba(255,255,255,0.9); }
+.topo-sys-popover-item svg { width: 14px; height: 14px; flex-shrink: 0; opacity: 0.7; }
+.topo-sys-popover-item.danger { color: rgba(248,81,73,0.85); }
+.topo-sys-popover-item.danger:hover { background: rgba(248,81,73,0.12); color: #f85149; }
+.topo-sys-popover-divider { height: 1px; margin: 4px 10px; background: rgba(255,255,255,0.07); }
+
 .topology-fs-leftnav-divider {
   width: 28px;
   height: 1px;
@@ -6212,27 +6251,54 @@ body.cds-topology-fs .topology-fs-panel.open { transform: translateX(0); }
    button because it sat behind the floating + Add button at z-index
    conflict, and had no visible background. Now it has a distinct
    circular background with a red-tinted hover state. */
+/* Permanent close-button fix:
+   SVG + currentColor is brittle — if the parent doesn't define --text-primary
+   the fill falls back to transparent and the icon vanishes. Using a plain ✕
+   text character with hardcoded rgba solves this unconditionally. */
 .topology-fs-panel-close {
-  width: 34px;
-  height: 34px;
+  width: 36px;
+  height: 36px;
   display: flex;
   align-items: center;
   justify-content: center;
-  /* Visible border + contrasting background so the X is always findable */
-  border: 1.5px solid var(--text-muted);
-  background: var(--bg-elevated);
-  color: var(--text-primary);
+  font-size: 20px;
+  font-weight: 300;
+  line-height: 1;
+  /* Hardcoded high-contrast color — NOT a CSS variable.
+     This is intentional: we've had the X disappear 7+ times because
+     var(--text-primary) resolved to a near-invisible value in this
+     specific context. rgba() is always visible against any dark bg. */
+  color: rgba(255, 255, 255, 0.75);
+  background: rgba(255, 255, 255, 0.07);
+  border: 1.5px solid rgba(255, 255, 255, 0.18);
   border-radius: 8px;
   cursor: pointer;
   transition: background 120ms ease, color 120ms ease, border-color 120ms ease;
   flex-shrink: 0;
   position: relative;
   z-index: 1;
+  user-select: none;
 }
 .topology-fs-panel-close:hover {
-  background: rgba(239, 68, 68, 0.18);
-  color: #ef4444;
-  border-color: rgba(239, 68, 68, 0.6);
+  background: rgba(239, 68, 68, 0.2);
+  color: rgba(239, 68, 68, 0.95);
+  border-color: rgba(239, 68, 68, 0.5);
+}
+
+/* Force all SVGs inside leftnav icons to 20×20 regardless of HTML width/height
+   attributes — the root cause of every "icon too small" regression.
+   Any new icon added with width="16" will still render at 20px here. */
+.topology-fs-leftnav-icon svg {
+  width: 20px;
+  height: 20px;
+  flex-shrink: 0;
+  pointer-events: none;
+}
+/* Same for topbar icon buttons */
+.topology-fs-view-toggle-btn svg,
+.topology-fs-topbar-pill svg {
+  width: 14px;
+  height: 14px;
 }
 
 /* UF-19: when the Details panel is open, hide the floating + Add button
