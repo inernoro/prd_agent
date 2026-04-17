@@ -37,12 +37,14 @@ export interface GlassCardProps {
   animated?: boolean;
   /** 入场动画延迟（毫秒），用于同一区域多卡片错开 */
   animationDelay?: number;
-  /** 是否可被拖拽（HTML5 DnD） */
+  /** 是否可被拖拽（HTML5 DnD，已不推荐，新代码用 onPointerDown + useDockDrag） */
   draggable?: boolean;
   /** 拖拽开始回调 */
   onDragStart?: React.DragEventHandler<HTMLDivElement>;
   /** 拖拽结束回调 */
   onDragEnd?: React.DragEventHandler<HTMLDivElement>;
+  /** Pointer down 回调（Pointer Events 自定义拖拽，见 useDockDrag） */
+  onPointerDown?: React.PointerEventHandler<HTMLDivElement>;
 }
 
 /**
@@ -68,6 +70,7 @@ export function GlassCard({
   draggable,
   onDragStart,
   onDragEnd,
+  onPointerDown,
 }: GlassCardProps) {
   const perfMode = useThemeStore((s) => s.config.performanceMode);
   const isPerf = shouldReduceEffects({ performanceMode: perfMode } as Parameters<typeof shouldReduceEffects>[0]);
@@ -133,6 +136,7 @@ export function GlassCard({
       draggable={draggable}
       onDragStart={onDragStart}
       onDragEnd={onDragEnd}
+      onPointerDown={onPointerDown}
     >
       {children}
     </div>

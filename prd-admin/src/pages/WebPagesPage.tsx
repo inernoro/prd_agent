@@ -21,7 +21,10 @@ import {
   listShareViewLogs,
 } from '@/services';
 import type { HostedSite, ShareLinkItem, TagCount, ShareViewLogItem } from '@/services/real/webPages';
-import { ShareDock, SHARE_DOCK_MIME } from '@/components/web-hosting/ShareDock';
+import { ShareDock, useDockDrag } from '@/components/share-dock';
+
+/** 网页托管页面专用的 ShareDock MIME 类型 */
+const WEB_PAGE_MIME = 'application/x-map-site-id';
 import { useAuthStore } from '@/stores/authStore';
 import {
   Upload,
@@ -217,14 +220,53 @@ export default function WebPagesPage() {
 
   return (
     <div className="h-full flex flex-col gap-4 p-4 overflow-auto" style={{ background: 'var(--bg-base)' }}>
-      {/* 右上角投放面板：拖站点即可设为公开/分享/删除 */}
+      {/* 右侧投放面板：可拖动 + 可收起，拖站点卡片到槽位即可公开/分享/删除 */}
       <ShareDock
-        publicSites={sites.filter(s => s.visibility === 'public')}
-        username={username}
-        onMakePublic={handleMakePublic}
-        onShare={handleDropShare}
-        onDelete={handleDropDelete}
-        getSiteById={(id) => sites.find(s => s.id === id)}
+        mime={WEB_PAGE_MIME}
+        title="投放面板"
+        badgeCount={sites.filter(s => s.visibility === 'public').length}
+        footerHref={username ? `/u/${encodeURIComponent(username)}` : undefined}
+        footerText={
+          sites.filter(s => s.visibility === 'public').length > 0 && username
+            ? `已公开 ${sites.filter(s => s.visibility === 'public').length} 个 · 查看公开页`
+            : '拖卡片到上方槽位'
+        }
+        persistKey="web-pages"
+        slots={[
+          {
+            key: 'public',
+            icon: <Globe size={18} />,
+            label: '公开',
+            hint: '任何人可在 /u/主页查看',
+            tone: 'sky',
+            onDrop: (id) => {
+              const site = sites.find(s => s.id === id);
+              if (site) handleMakePublic(site);
+            },
+          },
+          {
+            key: 'share',
+            icon: <Share2 size={18} />,
+            label: '分享',
+            hint: '生成点对点链接',
+            tone: 'violet',
+            onDrop: (id) => {
+              const site = sites.find(s => s.id === id);
+              if (site) handleDropShare(site);
+            },
+          },
+          {
+            key: 'delete',
+            icon: <Trash2 size={18} />,
+            label: '回收站',
+            hint: '永久删除',
+            tone: 'rose',
+            onDrop: (id) => {
+              const site = sites.find(s => s.id === id);
+              if (site) handleDropDelete(site);
+            },
+          },
+        ]}
       />
       <PageHeader
         title="网页托管"
@@ -548,15 +590,17 @@ function SiteCard({ site, selected, onSelect, onEdit, onDelete, onShare, onQrCod
   onQrCode: () => void;
 }) {
   const isPublic = site.visibility === 'public';
+  const { onPointerDown } = useDockDrag({
+    mime: WEB_PAGE_MIME,
+    id: site.id,
+    label: site.title,
+    icon: '🌐',
+  });
   return (
     <GlassCard
-      className="group relative flex flex-col overflow-hidden transition-all duration-200 cursor-grab active:cursor-grabbing"
+      className="group relative flex flex-col overflow-hidden transition-all duration-200 cursor-grab active:cursor-grabbing touch-none"
       style={{ border: selected ? '2px solid var(--accent-primary)' : undefined }}
-      draggable
-      onDragStart={(e) => {
-        e.dataTransfer.setData(SHARE_DOCK_MIME, site.id);
-        e.dataTransfer.effectAllowed = 'move';
-      }}
+      onPointerDown={onPointerDown}
     >
       {/* Thumbnail preview */}
       <div
@@ -666,15 +710,17 @@ function SiteListItem({ site, selected, onSelect, onEdit, onDelete, onShare, onQ
   onQrCode: () => void;
 }) {
   const isPublic = site.visibility === 'public';
+  const { onPointerDown } = useDockDrag({
+    mime: WEB_PAGE_MIME,
+    id: site.id,
+    label: site.title,
+    icon: '🌐',
+  });
   return (
     <GlassCard
-      className="group flex items-center gap-4 p-3 cursor-grab active:cursor-grabbing"
+      className="group flex items-center gap-4 p-3 cursor-grab active:cursor-grabbing touch-none"
       style={{ border: selected ? '2px solid var(--accent-primary)' : undefined }}
-      draggable
-      onDragStart={(e) => {
-        e.dataTransfer.setData(SHARE_DOCK_MIME, site.id);
-        e.dataTransfer.effectAllowed = 'move';
-      }}
+      onPointerDown={onPointerDown}
     >
       <input
         type="checkbox"
