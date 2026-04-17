@@ -1,6 +1,7 @@
 import { useState, useCallback, useRef, useEffect } from 'react';
 import { createEmergenceTree, getDocumentContent } from '@/services';
-import { TreePine, X, Upload, FileText, Loader2, Keyboard } from 'lucide-react';
+import { TreePine, X, Upload, FileText, Keyboard } from 'lucide-react';
+import { MapSpinner, MapSectionLoader } from '@/components/ui/VideoLoader';
 import { Button } from '@/components/design/Button';
 import { glassPanel } from '@/lib/glassStyles';
 
@@ -271,7 +272,7 @@ export function EmergenceCreateDialog({ onClose, onCreated, initialSeedTitle, in
                   }}
                 >
                   {uploading ? (
-                    <Loader2 size={20} className="animate-spin" style={{ color: 'var(--text-muted)' }} />
+                    <MapSpinner size={20} />
                   ) : (
                     <>
                       <Upload size={20} style={{ color: dragging ? 'rgba(147,51,234,0.8)' : 'var(--text-muted)' }} />
@@ -323,10 +324,9 @@ export function EmergenceCreateDialog({ onClose, onCreated, initialSeedTitle, in
           {/* 手动输入模式 */}
           {activeMode === 'text' && (
             fetchingDoc ? (
-              <div className="flex items-center justify-center py-8 rounded-[10px]"
+              <div className="rounded-[10px]"
                 style={{ background: 'var(--input-bg, rgba(255,255,255,0.05))', border: '1px solid var(--border-subtle, rgba(255,255,255,0.1))' }}>
-                <Loader2 size={16} className="animate-spin mr-2" style={{ color: 'var(--text-muted)' }} />
-                <span className="text-[12px]" style={{ color: 'var(--text-muted)' }}>正在加载文档内容…</span>
+                <MapSectionLoader text="正在加载文档内容…" />
               </div>
             ) : (
               <textarea

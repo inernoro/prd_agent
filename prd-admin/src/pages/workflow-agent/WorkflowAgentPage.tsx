@@ -5,7 +5,7 @@ import {
   ExternalLink, Settings2, XCircle, RefreshCw, HelpCircle, Zap,
   FlaskConical, Box, PenLine, Eye, Terminal, Trash2,
 } from 'lucide-react';
-import { MapSpinner } from '@/components/ui/VideoLoader';
+import { MapSpinner, MapSectionLoader } from '@/components/ui/VideoLoader';
 import { useWorkflowStore } from '@/stores/workflowStore';
 import {
   createWorkflow, executeWorkflow, getExecution, getNodeLogs,
@@ -760,12 +760,7 @@ function CapsuleCatalogPanel({ onBack }: { onBack: () => void }) {
           舱是流水线的基本单元。每个舱负责一个独立的处理步骤，可以单独测试调试，然后组装成完整流水线。
         </p>
 
-        {catalogLoading && (
-          <div className="flex items-center justify-center py-12">
-            <MapSpinner size={20} color="var(--text-muted)" />
-            <span className="ml-2 text-[12px]" style={{ color: 'var(--text-muted)' }}>加载舱类型...</span>
-          </div>
-        )}
+        {catalogLoading && <MapSectionLoader text="加载舱类型..." />}
 
         {!catalogLoading && categories.map((cat) => {
           const types = grouped[cat.key] || [];
@@ -1317,12 +1312,7 @@ export function WorkflowAgentPage() {
         </p>
 
         {/* ──── 加载中 ──── */}
-        {pageLoading && (
-          <div className="flex items-center justify-center py-16">
-            <MapSpinner size={20} color="var(--text-muted)" />
-            <span className="ml-2 text-[12px]" style={{ color: 'var(--text-muted)' }}>加载中...</span>
-          </div>
-        )}
+        {pageLoading && <MapSectionLoader text="加载中..." />}
 
         {!pageLoading && (
           <>

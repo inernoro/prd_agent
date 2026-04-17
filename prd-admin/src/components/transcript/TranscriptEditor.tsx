@@ -1,5 +1,6 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
-import { Mic, Trash2, Download, AlertCircle, Loader2, CheckCircle2, ArrowLeft, Copy, Save } from 'lucide-react';
+import { Mic, Trash2, Download, AlertCircle, CheckCircle2, ArrowLeft, Copy, Save } from 'lucide-react';
+import { MapSpinner } from '@/components/ui/VideoLoader';
 import ReactMarkdown from 'react-markdown';
 import { Button } from '@/components/design/Button';
 import { useTranscriptStore } from '@/stores/transcriptStore';
@@ -127,7 +128,7 @@ export function TranscriptEditor({ item, selectedRunId, onItemDeleted, onCloseRu
   const statusIcon = (status: string) => {
     switch (status) {
       case 'completed': return <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />;
-      case 'processing': case 'pending': return <Loader2 className="w-3.5 h-3.5 text-primary animate-spin" />;
+      case 'processing': case 'pending': return <MapSpinner size={14} />;
       case 'failed': return <AlertCircle className="w-3.5 h-3.5 text-destructive" />;
       default: return null;
     }
@@ -175,7 +176,7 @@ export function TranscriptEditor({ item, selectedRunId, onItemDeleted, onCloseRu
             <div className="flex-1 flex items-center justify-center">
               <div className="text-center max-w-xs">
                 <div className="w-16 h-16 mx-auto mb-4 rounded-full bg-primary/10 flex items-center justify-center">
-                  <Loader2 className="w-7 h-7 text-primary animate-spin" />
+                  <MapSpinner size={28} />
                 </div>
                 <p className="text-sm text-foreground/80">正在转写中</p>
                 <p className="text-xs text-muted-foreground mt-1">AI 正在识别语音内容，请稍候...</p>

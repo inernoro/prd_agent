@@ -5,6 +5,14 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createBranchRouter } from './routes/branches.js';
 import { createBridgeRouter } from './routes/bridge.js';
+import { createProjectsRouter } from './routes/projects.js';
+import { createStorageModeRouter, type StorageModeContext } from './routes/storage-mode.js';
+import { createGithubOAuthRouter } from './routes/github-oauth.js';
+import { createAuthRouter } from './routes/auth.js';
+import { MemoryAuthStore } from './infra/auth-store/memory-store.js';
+import { GitHubOAuthClient } from './services/github-oauth-client.js';
+import { AuthService } from './services/auth-service.js';
+import { createGithubAuthMiddleware } from './middleware/github-auth.js';
 import type { StateService } from './services/state.js';
 import type { WorktreeService } from './services/worktree.js';
 import type { ContainerService } from './services/container.js';
@@ -33,6 +41,14 @@ export interface ServerDeps {
   registry?: import('./scheduler/executor-registry.js').ExecutorRegistry;
   /** Getter for the current dispatch strategy. See routes/cluster.ts. */
   getClusterStrategy?: () => 'least-branches' | 'least-load' | 'round-robin';
+  /**
+   * P4 Part 18 (D.3): shared storage-mode context — used by the new
+   * storage-mode router to surface + mutate the running backing store
+   * at runtime. Always present after initStateService runs in index.ts.
+   */
+  storageModeContext?: StorageModeContext;
+  /** P4 Part 18 (D.3): path to the json state file, used for rollback. */
+  stateFile?: string;
 }
 
 function makeToken(user: string, pass: string): string {
@@ -348,9 +364,25 @@ export function createServer(deps: ServerDeps): express.Express {
   }
 
   // ── Auth middleware ──
+  //
+  // CDS_AUTH_MODE selects the authentication strategy:
+  //   - 'disabled' (default): no auth, dashboard open to anyone
+  //   - 'basic':    legacy CDS_USERNAME/CDS_PASSWORD cookie auth
+  //   - 'github':   GitHub OAuth via /api/auth/github/* routes (P2)
+  //
+  // Backward compatibility: if CDS_AUTH_MODE is unset and the legacy
+  // CDS_USERNAME + CDS_PASSWORD env vars are present, default to 'basic'
+  // so existing deployments keep working without an explicit toggle.
+  // See doc/design.cds-multi-project.md section 七.
   const cdsUser = process.env.CDS_USERNAME;
   const cdsPass = process.env.CDS_PASSWORD;
-  const authEnabled = !!(cdsUser && cdsPass);
+  const rawAuthMode = (process.env.CDS_AUTH_MODE || '').toLowerCase();
+  const authMode: 'disabled' | 'basic' | 'github' =
+    rawAuthMode === 'github' ? 'github' :
+    rawAuthMode === 'basic' ? 'basic' :
+    rawAuthMode === 'disabled' ? 'disabled' :
+    (cdsUser && cdsPass) ? 'basic' : 'disabled';
+  const authEnabled = authMode === 'basic';
   const validToken = authEnabled ? makeToken(cdsUser!, cdsPass!) : '';
 
   // ── AI pairing endpoints (before auth, some are public) ──
@@ -402,6 +434,62 @@ export function createServer(deps: ServerDeps): express.Express {
     }
     res.json({ status: 'expired_or_rejected' });
   });
+
+  // ── GitHub OAuth mode (P2) ──
+  //
+  // When CDS is started with CDS_AUTH_MODE=github, this block wires up
+  // the OAuth routes and mounts a session-gate middleware. The middleware
+  // redirects unauthenticated HTML requests to /login-gh.html and rejects
+  // unauthenticated API requests with 401. See:
+  //   - cds/src/services/auth-service.ts
+  //   - cds/src/middleware/github-auth.ts
+  //   - doc/design.cds-multi-project.md section 七
+  //   - doc/plan.cds-multi-project-phases.md P2
+  //
+  // P2 uses an in-memory AuthStore; P3 will swap it out for a MongoDB
+  // implementation behind the same interface, no consumer changes required.
+  if (authMode === 'github') {
+    const ghClientId = process.env.CDS_GITHUB_CLIENT_ID;
+    const ghClientSecret = process.env.CDS_GITHUB_CLIENT_SECRET;
+    if (!ghClientId || !ghClientSecret) {
+      throw new Error(
+        'CDS_AUTH_MODE=github requires CDS_GITHUB_CLIENT_ID and CDS_GITHUB_CLIENT_SECRET to be set',
+      );
+    }
+    const allowedOrgs = (process.env.CDS_ALLOWED_ORGS || '')
+      .split(',')
+      .map((s) => s.trim())
+      .filter(Boolean);
+    const publicBaseUrl =
+      process.env.CDS_PUBLIC_BASE_URL || `http://localhost:${deps.config.masterPort}`;
+    const cookieSecure = publicBaseUrl.startsWith('https://');
+
+    const authStore = new MemoryAuthStore();
+    const githubClient = new GitHubOAuthClient({
+      clientId: ghClientId,
+      clientSecret: ghClientSecret,
+    });
+    const authService = new AuthService({
+      store: authStore,
+      github: githubClient,
+      config: { allowedOrgs },
+    });
+
+    app.use(
+      '/api',
+      createAuthRouter({
+        authService,
+        publicBaseUrl,
+        cookieSecure,
+      }),
+    );
+
+    app.use(createGithubAuthMiddleware({ authService }));
+
+    console.log(
+      `  Auth: github mode (allowedOrgs: ${allowedOrgs.join(',') || '(any GitHub login allowed)'})`,
+    );
+  }
 
   if (authEnabled) {
     app.post('/api/login', (req, res) => {
@@ -479,8 +567,10 @@ export function createServer(deps: ServerDeps): express.Express {
     });
 
     console.log(`  Auth: enabled (user: ${cdsUser})`);
-  } else {
-    console.warn('  ⚠ Auth: disabled — CDS_USERNAME / CDS_PASSWORD not set, dashboard is open to anyone!');
+  } else if (authMode === 'disabled') {
+    console.warn(
+      '  ⚠ Auth: disabled — set CDS_AUTH_MODE=github (+ CDS_GITHUB_CLIENT_ID/SECRET/ALLOWED_ORGS) or CDS_USERNAME/CDS_PASSWORD to enable login',
+    );
   }
 
   // ── AI pairing management (requires auth) ──
@@ -708,6 +798,15 @@ export function createServer(deps: ServerDeps): express.Express {
 
   // API routes
   app.use('/api/bridge', createBridgeRouter({ bridgeService: deps.bridgeService }));
+  // Multi-project router. P4 Part 2 wires up real create/delete, so the
+  // router now needs shell (for docker network commands) and config.
+  // See doc/design.cds-multi-project.md.
+  app.use('/api', createProjectsRouter({
+    stateService: deps.stateService,
+    shell: deps.shell,
+    config: deps.config,
+    legacyProjectName: deps.config.repoRoot ? path.basename(deps.config.repoRoot) : 'prd_agent',
+  }));
   app.use('/api', createBranchRouter({
     stateService: deps.stateService,
     worktreeService: deps.worktreeService,
@@ -718,6 +817,48 @@ export function createServer(deps: ServerDeps): express.Express {
     registry: deps.registry,
     getClusterStrategy: deps.getClusterStrategy,
   }));
+
+  // P4 Part 18 (D.3): storage-mode management endpoints. Requires the
+  // shared storageModeContext which index.ts populates during
+  // initStateService(). Absent in pre-D.3 tests that spin up the
+  // server without a real storage context — the router is optional.
+  if (deps.storageModeContext && deps.stateFile) {
+    app.use('/api', createStorageModeRouter({
+      stateService: deps.stateService,
+      stateFile: deps.stateFile,
+      repoRoot: deps.config.repoRoot,
+      context: deps.storageModeContext,
+    }));
+  }
+
+  // P4 Part 18 (Phase E): GitHub OAuth Device Flow router.
+  //
+  // The router is always mounted so the frontend can hit /status +
+  // get { configured: false } when CDS_GITHUB_CLIENT_ID is unset
+  // and gracefully hide the Sign-in button. When configured, the
+  // full Device Flow + repo listing is available.
+  //
+  // We instantiate a SEPARATE GitHubOAuthClient here (vs the one
+  // used for CDS session auth) because Device Flow only needs the
+  // client_id — no secret. This lets setups that don't use GitHub
+  // for CDS login still offer the repo picker.
+  {
+    // P4 Part 18 (Phase E): instantiate a Device-Flow-only GitHub
+    // OAuth client. Reuses the same GitHubOAuthClient class already
+    // imported at the top of this file — device flow methods only
+    // need client_id, so an empty client_secret is fine here.
+    const ghClientId = process.env.CDS_GITHUB_CLIENT_ID;
+    const deviceClient = ghClientId
+      ? new GitHubOAuthClient({
+          clientId: ghClientId,
+          clientSecret: process.env.CDS_GITHUB_CLIENT_SECRET || '',
+        })
+      : null;
+    app.use('/api', createGithubOAuthRouter({
+      stateService: deps.stateService,
+      githubClient: deviceClient,
+    }));
+  }
 
   // NOTE: The SPA fallback (`app.get('*', ...)`) is intentionally NOT
   // registered here. Routes mounted later in `index.ts` (scheduler, cluster,
@@ -749,6 +890,16 @@ export function createServer(deps: ServerDeps): express.Express {
  */
 export function installSpaFallback(app: express.Express, webDir?: string): void {
   const dir = webDir || path.resolve(__dirname, '..', 'web');
+
+  // P1 multi-project shell: make `/` land on the projects list instead of
+  // the legacy dashboard index. Users click a project card to enter the
+  // dashboard. Registered before express.static so it takes precedence over
+  // the default `index.html` served by the static middleware for `/`.
+  // See doc/plan.cds-multi-project-phases.md → P1.
+  app.get('/', (_req, res) => {
+    res.redirect(302, '/projects.html');
+  });
+
   app.use(express.static(dir));
   app.get('*', (_req, res) => {
     res.sendFile(path.join(dir, 'index.html'));

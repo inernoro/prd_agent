@@ -1,6 +1,7 @@
 import { useState, useCallback, useRef } from 'react';
-import { Upload, Loader2 } from 'lucide-react';
+import { Upload } from 'lucide-react';
 import { cn } from '@/lib/cn';
+import { MapSpinner } from '@/components/ui/VideoLoader';
 
 interface UploadDropzoneProps {
   onUpload: (file: File) => void;
@@ -80,7 +81,7 @@ export function UploadDropzone({ onUpload, uploading, className }: UploadDropzon
       >
         {uploading ? (
           <>
-            <Loader2 className="w-3.5 h-3.5 animate-spin" />
+            <MapSpinner size={14} />
             <span>上传中...</span>
           </>
         ) : dragging ? (

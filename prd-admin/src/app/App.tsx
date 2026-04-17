@@ -7,6 +7,7 @@ import { getAdminAuthzMe, getAdminMenuCatalog } from '@/services';
 import { ToastContainer } from '@/components/ui/Toast';
 import { AgentSwitcherProvider } from '@/components/agent-switcher';
 import { BranchBadge } from '@/components/BranchBadge';
+import { NavigationProgressBar } from '@/components/effects/NavigationProgressBar';
 import { useBreakpoint } from '@/hooks/useBreakpoint';
 import { SuspenseVideoLoader } from '@/components/ui/VideoLoader';
 
@@ -62,6 +63,7 @@ const DocumentStorePage = lazy(() => import('@/pages/document-store').then(m => 
 const LibraryLandingPage = lazy(() => import('@/pages/library/LibraryLandingPage').then(m => ({ default: m.LibraryLandingPage })));
 const LibraryStoreDetailPage = lazy(() => import('@/pages/library/LibraryStoreDetailPage').then(m => ({ default: m.LibraryStoreDetailPage })));
 const EmergenceExplorerPage = lazy(() => import('@/pages/emergence').then(m => ({ default: m.EmergenceExplorerPage })));
+const ChangelogPage = lazy(() => import('@/pages/changelog/ChangelogPage'));
 const SkillAgentPage = lazy(() => import('@/pages/SkillAgentPage'));
 const AiToolboxPage = lazy(() => import('@/pages/ai-toolbox').then(m => ({ default: m.AiToolboxPage })));
 const SharedConversation = lazy(() => import('@/pages/ai-toolbox/SharedConversation').then(m => ({ default: m.SharedConversation })));
@@ -236,6 +238,8 @@ export default function App() {
       <ToastContainer />
       <BranchBadge />
       <NavigationBridge />
+      {/* 路由切换顶栏进度条：绕过 Suspense transition 语义，立刻给用户视觉反馈 */}
+      <NavigationProgressBar />
       <Suspense fallback={<SuspenseVideoLoader />}>
       <Routes location={location}>
         {/* Landing page - public · 用透明 fallback，避免 MAP 闪屏打断朦胧动效节奏 */}
@@ -368,6 +372,7 @@ export default function App() {
         <Route path="marketplace" element={<RequirePermission perm="access"><MarketplacePage /></RequirePermission>} />
         <Route path="document-store" element={<RequirePermission perm="access"><DocumentStorePage /></RequirePermission>} />
         <Route path="emergence" element={<RequirePermission perm="access"><EmergenceExplorerPage /></RequirePermission>} />
+        <Route path="changelog" element={<RequirePermission perm="access"><ChangelogPage /></RequirePermission>} />
         <Route path="skill-agent" element={<RequirePermission perm="access"><SkillAgentPage /></RequirePermission>} />
         <Route path="arena" element={<RequirePermission perm="arena-agent.use"><ArenaPage /></RequirePermission>} />
         <Route path="lab" element={<RequirePermission perm="lab.read"><LabPage /></RequirePermission>} />

@@ -5,6 +5,7 @@ import type { LlmRequestLog } from '@/types/admin';
 import { Copy, ExternalLink } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import remarkBreaks from 'remark-breaks';
 import rehypeRaw from 'rehype-raw';
 import { useEffect, useMemo, useRef, useState } from 'react';
 
@@ -275,7 +276,7 @@ export function LlmRequestDetailDialog({
                 >
                   <div className="prd-md">
                     <ReactMarkdown
-                      remarkPlugins={[remarkGfm]}
+                      remarkPlugins={[remarkGfm, remarkBreaks]}
                       rehypePlugins={[rehypeRaw]}
                       components={{
                         a: ({ href, children, ...props }) => (

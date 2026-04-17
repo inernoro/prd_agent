@@ -27,6 +27,7 @@
 import React from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import remarkBreaks from 'remark-breaks';
 import { FileText, Image as ImageIcon, Sparkles, type LucideIcon } from 'lucide-react';
 import { WatermarkDescriptionGrid } from '@/components/watermark/WatermarkDescriptionGrid';
 import {
@@ -171,7 +172,7 @@ const PromptPreviewRenderer: React.FC<{ item: MarketplacePrompt }> = ({ item }) 
     `}</style>
     <div className="marketplace-prompt-md">
       {item.content ? (
-        <ReactMarkdown remarkPlugins={[remarkGfm]}>
+        <ReactMarkdown remarkPlugins={[remarkGfm, remarkBreaks]}>
           {item.content}
         </ReactMarkdown>
       ) : (

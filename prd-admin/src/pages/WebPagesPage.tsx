@@ -45,7 +45,7 @@ import {
   QrCode,
 } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
-import { MapSpinner } from '@/components/ui/VideoLoader';
+import { MapSpinner, MapSectionLoader } from '@/components/ui/VideoLoader';
 
 // ─── Utility ───
 
@@ -470,10 +470,7 @@ function QrCodeDialog({ site, onClose }: { site: HostedSite; onClose: () => void
       content={
         <div className="flex flex-col items-center gap-4 py-4">
           {loading ? (
-            <div className="flex items-center gap-2 py-8" style={{ color: 'var(--text-muted)' }}>
-              <MapSpinner size={16} />
-              <span className="text-sm">正在生成分享链接…</span>
-            </div>
+            <MapSectionLoader text="正在生成分享链接…" />
           ) : error ? (
             <p className="text-sm py-8" style={{ color: '#ef4444' }}>{error}</p>
           ) : shareUrl ? (

@@ -14,6 +14,7 @@ import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { flushSync } from 'react-dom';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import remarkBreaks from 'remark-breaks';
 import rehypeRaw from 'rehype-raw';
 import type { AiChatStreamEvent } from '@/services/contracts/aiChat';
 import { SuggestedQuestions } from './ai-chat/components/SuggestedQuestions';
@@ -106,7 +107,7 @@ function unwrapMarkdownFences(text: string): string {
 
 const AssistantMarkdown = memo(function AssistantMarkdown({ content }: { content: string }) {
   return (
-    <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeRaw]}>
+    <ReactMarkdown remarkPlugins={[remarkGfm, remarkBreaks]} rehypePlugins={[rehypeRaw]}>
       {content}
     </ReactMarkdown>
   );

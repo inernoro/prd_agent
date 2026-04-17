@@ -1277,6 +1277,21 @@ export const getCustomConfigs: GetCustomConfigsContract = withAuth(getCustomConf
 import type { IChannelService } from '@/services/contracts/channels';
 import { ChannelService } from '@/services/real/channels';
 export const channelService: IChannelService = new ChannelService();
+// Changelog 更新中心（代码级周报）
+export {
+  getCurrentWeekChangelog,
+  getChangelogReleases,
+} from '@/services/real/changelog';
+export type {
+  ChangelogChangeType,
+  ChangelogEntry,
+  ChangelogFragment,
+  CurrentWeekView,
+  ChangelogDay,
+  ChangelogRelease,
+  ReleasesView,
+} from '@/services/real/changelog';
+
 // AI Toolbox 百宝箱
 export {
   // 新版工具集合 API

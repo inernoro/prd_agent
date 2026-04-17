@@ -1,0 +1,1142 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+  <meta http-equiv="Pragma" content="no-cache">
+  <meta http-equiv="Expires" content="0">
+  <title>项目列表 · Cloud Dev Suite</title>
+  <link rel="icon" type="image/svg+xml" href="favicon.svg">
+  <link rel="preconnect" href="https://fonts.loli.net" crossorigin>
+  <link href="https://fonts.loli.net/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+  <script>
+    // Apply theme BEFORE CSS loads to prevent dark→light flash
+    (function(){var t=localStorage.getItem('cds_theme');if(t==='light')document.documentElement.dataset.theme='light';})();
+    document.write('<link rel="stylesheet" href="style.css?t='+Date.now()+'">');
+  </script>
+  <style>
+    /*
+     * Projects page — Railway-inspired shell.
+     *
+     * Layout: fixed-width left sidebar (260px) + main content (flex 1).
+     * Dark palette reuses the Dashboard's existing CSS variables
+     * (--bg-primary / --bg-card / --accent etc.) so the two pages feel
+     * like the same product. New tokens below are additive and only
+     * used on this page.
+     */
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body {
+      height: 100%;
+      background: var(--bg-primary);
+      color: var(--text-primary);
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    /* ───── Global shell ───── */
+    .cds-shell {
+      display: grid;
+      grid-template-columns: 260px 1fr;
+      min-height: 100vh;
+    }
+
+    /* ───── Sidebar ───── */
+    .cds-sidebar {
+      background: var(--bg-primary);
+      border-right: 1px solid var(--border, rgba(255,255,255,0.08));
+      display: flex;
+      flex-direction: column;
+      padding: 18px 14px 14px;
+      position: sticky;
+      top: 0;
+      height: 100vh;
+    }
+    .cds-logo-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 6px 8px 16px;
+      border-bottom: 1px solid var(--border-light, rgba(255,255,255,0.04));
+      margin-bottom: 10px;
+    }
+    .cds-logo {
+      display: flex;
+      align-items: center;
+      gap: 9px;
+      font-size: 13px;
+      font-weight: 700;
+      letter-spacing: -0.01em;
+    }
+    .cds-logo-mark {
+      width: 22px;
+      height: 22px;
+      border-radius: 6px;
+      background: linear-gradient(135deg, var(--accent) 0%, var(--blue, #38bdf8) 100%);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: #fff;
+      font-size: 11px;
+      font-weight: 800;
+    }
+
+    /* Workspace switcher pill */
+    .cds-workspace {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 9px 10px;
+      background: var(--bg-card);
+      border: 1px solid var(--card-border, rgba(255,255,255,0.12));
+      border-radius: 10px;
+      cursor: default;
+      transition: background 120ms ease, border-color 120ms ease;
+    }
+    .cds-workspace:hover { background: var(--bg-elevated); }
+    .cds-workspace-avatar {
+      width: 26px;
+      height: 26px;
+      border-radius: 7px;
+      background: linear-gradient(135deg, #8b5cf6 0%, #3b82f6 100%);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 12px;
+      font-weight: 700;
+      color: #fff;
+      flex-shrink: 0;
+    }
+    .cds-workspace-meta {
+      flex: 1;
+      min-width: 0;
+      display: flex;
+      flex-direction: column;
+      gap: 1px;
+    }
+    .cds-workspace-name {
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--text-primary);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .cds-workspace-sub {
+      font-size: 10px;
+      color: var(--text-muted);
+      letter-spacing: 0.4px;
+      text-transform: uppercase;
+    }
+    .cds-workspace-chevron { opacity: 0.4; flex-shrink: 0; }
+
+    /* Nav groups */
+    .cds-nav { display: flex; flex-direction: column; gap: 2px; margin-top: 14px; }
+    .cds-nav-divider {
+      height: 1px;
+      background: var(--border-light);
+      margin: 10px 8px;
+    }
+    .cds-nav-item {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 8px 10px;
+      border-radius: 8px;
+      font-size: 13px;
+      font-weight: 500;
+      color: var(--text-secondary);
+      text-decoration: none;
+      transition: background 120ms ease, color 120ms ease;
+      cursor: pointer;
+    }
+    .cds-nav-item:hover {
+      background: var(--bg-hover, rgba(255,255,255,0.04));
+      color: var(--text-primary);
+    }
+    .cds-nav-item.active {
+      background: var(--bg-elevated);
+      color: var(--text-primary);
+      font-weight: 600;
+    }
+    .cds-nav-item.disabled {
+      cursor: not-allowed;
+      opacity: 0.45;
+    }
+    .cds-nav-item .ext {
+      margin-left: auto;
+      opacity: 0.4;
+    }
+
+    /* User card (sticky bottom) */
+    .cds-user-card {
+      margin-top: auto;
+      position: relative;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 10px;
+      border-top: 1px solid var(--border-light);
+      padding-top: 14px;
+      cursor: pointer;
+      transition: background 120ms ease;
+      border-radius: 8px;
+    }
+    .cds-user-card:hover { background: var(--bg-elevated); }
+    .cds-user-card .cds-user-menu-indicator {
+      width: 12px;
+      height: 12px;
+      color: var(--text-muted);
+      flex-shrink: 0;
+      transition: transform 120ms ease;
+    }
+    .cds-user-card.menu-open .cds-user-menu-indicator { transform: rotate(180deg); }
+    .cds-user-avatar {
+      width: 30px;
+      height: 30px;
+      border-radius: 50%;
+      background: linear-gradient(135deg, #fb7185 0%, #f59e0b 100%);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 12px;
+      font-weight: 700;
+      color: #fff;
+      flex-shrink: 0;
+    }
+    .cds-user-avatar img {
+      width: 100%;
+      height: 100%;
+      border-radius: 50%;
+      object-fit: cover;
+    }
+    /* Login-state tint on the avatar ring */
+    .cds-user-card.signed-in .cds-user-avatar {
+      background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+      box-shadow: 0 0 0 2px rgba(16, 185, 129, 0.25);
+    }
+    .cds-user-card.not-configured .cds-user-avatar {
+      background: linear-gradient(135deg, #6b7280 0%, #4b5563 100%);
+    }
+    .cds-user-name {
+      flex: 1;
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--text-secondary);
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .cds-user-card.signed-in .cds-user-name { color: var(--text-primary); }
+
+    /* Popover that appears above the user card on click */
+    .cds-user-popover {
+      display: none;
+      position: absolute;
+      left: 10px;
+      right: 10px;
+      bottom: calc(100% + 4px);
+      background: var(--bg-card);
+      border: 1px solid var(--card-border);
+      border-radius: 10px;
+      box-shadow: 0 14px 40px rgba(0, 0, 0, 0.45);
+      padding: 6px;
+      z-index: 50;
+    }
+    .cds-user-card.menu-open .cds-user-popover { display: block; }
+    .cds-user-popover-item {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 10px;
+      font-size: 12px;
+      color: var(--text-primary);
+      border-radius: 6px;
+      cursor: pointer;
+      transition: background 120ms ease;
+      text-decoration: none;
+    }
+    .cds-user-popover-item:hover { background: var(--bg-elevated); }
+    .cds-user-popover-item.danger { color: var(--red, #ef4444); }
+    .cds-user-popover-item.danger:hover { background: rgba(239, 68, 68, 0.08); }
+    .cds-user-popover-divider {
+      height: 1px;
+      background: var(--card-border);
+      margin: 4px 0;
+    }
+    .cds-user-popover-status {
+      padding: 8px 10px 6px;
+      font-size: 10px;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+
+    /* ───── Main content ───── */
+    .cds-main {
+      padding: 36px 40px 60px;
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
+    }
+
+    .cds-main-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 24px;
+      margin-bottom: 12px;
+    }
+    .cds-main-title {
+      font-size: 26px;
+      font-weight: 700;
+      letter-spacing: -0.015em;
+    }
+    .cds-main-actions { display: flex; gap: 10px; align-items: center; }
+
+    .btn-primary-solid {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 9px 18px;
+      background: var(--accent);
+      border: none;
+      border-radius: 8px;
+      color: #fff;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background 120ms ease, transform 120ms ease;
+      box-shadow: 0 1px 0 rgba(0,0,0,0.2), 0 4px 10px rgba(16, 185, 129, 0.15);
+    }
+    .btn-primary-solid:hover {
+      background: var(--accent-dim);
+      transform: translateY(-1px);
+    }
+
+    /* Toolbar */
+    .cds-toolbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      padding: 14px 0;
+      border-bottom: 1px solid var(--border-light);
+      margin-bottom: 24px;
+      font-size: 12px;
+      color: var(--text-muted);
+    }
+    .cds-toolbar-left { display: flex; align-items: center; gap: 14px; }
+    .cds-toolbar-right { display: flex; gap: 4px; }
+    .cds-view-toggle {
+      display: flex;
+      background: var(--bg-card);
+      border: 1px solid var(--card-border);
+      border-radius: 7px;
+      padding: 2px;
+    }
+    .cds-view-toggle button {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      width: 28px;
+      height: 24px;
+      border: none;
+      background: transparent;
+      color: var(--text-muted);
+      border-radius: 5px;
+      cursor: pointer;
+      transition: background 120ms ease, color 120ms ease;
+    }
+    .cds-view-toggle button.active {
+      background: var(--bg-elevated);
+      color: var(--text-primary);
+    }
+
+    /* Project grid */
+    .cds-project-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+      gap: 20px;
+    }
+    .cds-project-card {
+      background: var(--bg-card);
+      border: 1px solid var(--card-border);
+      border-radius: 14px;
+      padding: 22px 22px 18px;
+      cursor: pointer;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+      text-decoration: none;
+      color: inherit;
+      position: relative;
+      transition: transform 200ms cubic-bezier(0.4, 0, 0.2, 1),
+                  border-color 200ms ease,
+                  background 200ms ease,
+                  box-shadow 200ms ease;
+    }
+    .cds-project-card:hover {
+      transform: translateY(-3px);
+      border-color: var(--accent-border, rgba(16,185,129,0.3));
+      background: var(--bg-elevated);
+      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
+    }
+    .cds-project-card-head {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 10px;
+    }
+    .cds-project-card-title {
+      font-size: 16px;
+      font-weight: 700;
+      color: var(--text-primary);
+    }
+    .cds-legacy-badge {
+      padding: 3px 8px;
+      font-size: 10px;
+      font-weight: 600;
+      letter-spacing: 0.4px;
+      text-transform: uppercase;
+      background: var(--accent-bg);
+      border: 1px solid var(--accent-border);
+      border-radius: 5px;
+      color: var(--accent);
+    }
+
+    /* P4 Part 18 (G1.7): clone lifecycle status pill + clone button */
+    .cds-clone-status {
+      padding: 3px 8px;
+      font-size: 10px;
+      font-weight: 600;
+      letter-spacing: 0.4px;
+      text-transform: uppercase;
+      border-radius: 5px;
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+    }
+    .cds-clone-status.pending {
+      background: rgba(251, 191, 36, 0.15);
+      border: 1px solid rgba(251, 191, 36, 0.4);
+      color: #fbbf24;
+    }
+    .cds-clone-status.cloning {
+      background: rgba(59, 130, 246, 0.15);
+      border: 1px solid rgba(59, 130, 246, 0.4);
+      color: #60a5fa;
+    }
+    .cds-clone-status.ready {
+      background: rgba(16, 185, 129, 0.15);
+      border: 1px solid rgba(16, 185, 129, 0.4);
+      color: #10b981;
+    }
+    .cds-clone-status.error {
+      background: rgba(244, 63, 94, 0.15);
+      border: 1px solid rgba(244, 63, 94, 0.4);
+      color: #f43f5e;
+    }
+    .cds-clone-status .spinner {
+      width: 9px;
+      height: 9px;
+      border: 1.5px solid currentColor;
+      border-top-color: transparent;
+      border-radius: 50%;
+      animation: cds-spin 700ms linear infinite;
+    }
+    @keyframes cds-spin { to { transform: rotate(360deg); } }
+
+    .cds-clone-btn {
+      padding: 6px 12px;
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0.3px;
+      text-transform: uppercase;
+      background: rgba(96, 165, 250, 0.14);
+      border: 1px solid rgba(96, 165, 250, 0.38);
+      color: #60a5fa;
+      border-radius: 6px;
+      cursor: pointer;
+      transition: background 120ms ease;
+    }
+    .cds-clone-btn:hover { background: rgba(96, 165, 250, 0.24); }
+    .cds-clone-btn.retry {
+      background: rgba(244, 63, 94, 0.14);
+      border-color: rgba(244, 63, 94, 0.38);
+      color: #f43f5e;
+    }
+    .cds-clone-btn.retry:hover { background: rgba(244, 63, 94, 0.22); }
+
+    /* Clone-error tooltip under the card */
+    .cds-clone-error {
+      margin-top: 8px;
+      padding: 8px 10px;
+      background: rgba(244, 63, 94, 0.08);
+      border: 1px solid rgba(244, 63, 94, 0.25);
+      border-radius: 7px;
+      font-size: 11px;
+      color: #fca5a5;
+      font-family: var(--font-mono, monospace);
+      max-height: 60px;
+      overflow-y: auto;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+
+    /* Clone progress modal */
+    .cds-clone-modal-dialog {
+      background: var(--bg-card);
+      border: 1px solid var(--card-border);
+      border-radius: 14px;
+      padding: 24px 26px 20px;
+      width: 100%;
+      max-width: 620px;
+      box-shadow: 0 32px 80px rgba(0,0,0,0.6);
+      display: flex;
+      flex-direction: column;
+      max-height: 80vh;
+    }
+    .cds-clone-modal-head {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 6px;
+    }
+    .cds-clone-modal-head .cds-clone-status { flex-shrink: 0; }
+    .cds-clone-modal-title {
+      font-size: 16px;
+      font-weight: 700;
+      color: var(--text-primary);
+    }
+    .cds-clone-modal-url {
+      font-size: 11px;
+      color: var(--text-muted);
+      font-family: var(--font-mono, monospace);
+      margin-bottom: 14px;
+      word-break: break-all;
+    }
+    .cds-clone-log {
+      flex: 1;
+      min-height: 0;
+      overflow-y: auto;
+      background: #0a0a0f;
+      border: 1px solid var(--card-border);
+      border-radius: 8px;
+      padding: 10px 12px;
+      font-family: var(--font-mono, monospace);
+      font-size: 11px;
+      color: #9ca3af;
+      line-height: 1.55;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+    .cds-clone-log .line { display: block; }
+    .cds-clone-log .line.error { color: #fca5a5; }
+    .cds-clone-log .line.complete { color: #86efac; font-weight: 700; }
+    .cds-clone-log .line.info { color: #60a5fa; }
+    .cds-clone-modal-actions {
+      display: flex;
+      justify-content: flex-end;
+      gap: 10px;
+      margin-top: 16px;
+    }
+
+    /* Service icon strip (3×dotted background like Railway) */
+    .cds-service-strip {
+      background: var(--bg-primary);
+      border: 1px dashed var(--border-light);
+      border-radius: 10px;
+      height: 120px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 14px;
+      position: relative;
+      overflow: hidden;
+    }
+    .cds-service-strip::before {
+      content: '';
+      position: absolute;
+      inset: 0;
+      background-image: radial-gradient(circle, rgba(255,255,255,0.06) 1px, transparent 1px);
+      background-size: 14px 14px;
+      pointer-events: none;
+    }
+    .cds-service-tile {
+      width: 46px;
+      height: 46px;
+      border-radius: 10px;
+      background: var(--bg-card);
+      border: 1px solid var(--card-border);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      position: relative;
+      z-index: 1;
+      box-shadow: 0 2px 6px rgba(0,0,0,0.3);
+    }
+    .cds-service-tile svg { width: 22px; height: 22px; }
+    .cds-service-tile.more {
+      background: transparent;
+      border-style: dashed;
+      color: var(--text-muted);
+      font-size: 11px;
+      font-weight: 600;
+    }
+    .cds-service-empty {
+      font-size: 11px;
+      color: var(--text-muted);
+      position: relative;
+      z-index: 1;
+    }
+
+    /* Card footer (env + count + delete) */
+    .cds-project-card-foot {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      font-size: 12px;
+      color: var(--text-muted);
+    }
+    .cds-env-dot {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .cds-env-dot::before {
+      content: '';
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: var(--green, #10b981);
+      box-shadow: 0 0 8px rgba(16,185,129,0.6);
+    }
+    .cds-service-count {
+      color: var(--text-secondary);
+    }
+    .cds-service-count strong { color: var(--green); font-weight: 700; }
+    .cds-project-card-delete {
+      position: absolute;
+      top: 14px;
+      right: 14px;
+      width: 28px;
+      height: 28px;
+      display: none;
+      align-items: center;
+      justify-content: center;
+      border-radius: 7px;
+      background: rgba(244, 63, 94, 0.1);
+      border: 1px solid rgba(244, 63, 94, 0.25);
+      color: var(--red, #f43f5e);
+      cursor: pointer;
+      transition: background 120ms ease;
+    }
+    .cds-project-card:hover .cds-project-card-delete { display: flex; }
+    .cds-project-card-delete:hover { background: rgba(244, 63, 94, 0.22); }
+
+    /* Empty / loading states */
+    .cds-grid-state {
+      grid-column: 1 / -1;
+      padding: 80px 24px;
+      text-align: center;
+      color: var(--text-muted);
+      font-size: 13px;
+    }
+    .cds-grid-state strong { color: var(--text-primary); }
+    .cds-grid-state.error { color: var(--red); }
+
+    /* Modal (shared with create flow) */
+    .modal-backdrop {
+      position: fixed;
+      inset: 0;
+      background: rgba(3, 7, 18, 0.68);
+      backdrop-filter: blur(6px);
+      z-index: 9000;
+      display: none;
+      align-items: center;
+      justify-content: center;
+      padding: 24px;
+    }
+    .modal-backdrop.visible { display: flex; }
+    .modal-dialog {
+      background: var(--bg-card);
+      border: 1px solid var(--card-border);
+      border-radius: 16px;
+      padding: 32px 32px 26px;
+      width: 100%;
+      max-width: 480px;
+      box-shadow: 0 32px 80px rgba(0,0,0,0.6);
+    }
+    .modal-title {
+      font-size: 18px;
+      font-weight: 700;
+      margin-bottom: 4px;
+    }
+    .modal-subtitle {
+      font-size: 12px;
+      color: var(--text-muted);
+      margin-bottom: 24px;
+    }
+    .form-row { margin-bottom: 16px; }
+    .form-label {
+      display: block;
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--text-secondary);
+      margin-bottom: 6px;
+    }
+    .form-label .opt { font-weight: 400; color: var(--text-muted); margin-left: 6px; }
+    .form-input {
+      width: 100%;
+      background: var(--bg-elevated);
+      border: 1px solid var(--card-border);
+      border-radius: 9px;
+      padding: 10px 12px;
+      color: var(--text-primary);
+      font-size: 13px;
+      font-family: inherit;
+      outline: none;
+      transition: border-color 120ms ease, box-shadow 120ms ease;
+    }
+    .form-input:focus {
+      border-color: var(--accent);
+      box-shadow: 0 0 0 3px rgba(16,185,129,0.15);
+    }
+    .form-error {
+      font-size: 11px;
+      color: var(--red);
+      margin-top: 6px;
+      min-height: 14px;
+    }
+    .modal-actions {
+      display: flex;
+      justify-content: flex-end;
+      gap: 10px;
+      margin-top: 20px;
+    }
+    .btn-ghost, .btn-primary {
+      padding: 9px 18px;
+      border-radius: 9px;
+      border: none;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background 120ms ease, transform 120ms ease;
+    }
+    .btn-ghost { background: transparent; color: var(--text-secondary); border: 1px solid var(--card-border); }
+    .btn-ghost:hover { background: var(--bg-elevated); }
+    .btn-primary { background: var(--accent); color: #fff; }
+    .btn-primary:hover { background: var(--accent-dim); }
+    .btn-primary:disabled { opacity: 0.5; cursor: not-allowed; }
+
+    /* P4 Part 18 (Phase E.2): GitHub Sign-in button */
+    .btn-github-signin {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 10px;
+      padding: 12px 16px;
+      background: #24292f;
+      color: #fff;
+      border: 1px solid #30363d;
+      border-radius: 9px;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      font-family: inherit;
+      transition: background 120ms ease, transform 80ms ease;
+    }
+    .btn-github-signin:hover {
+      background: #30363d;
+      border-color: #6e7681;
+    }
+    .btn-github-signin:active { transform: translateY(1px); }
+    html[data-theme="light"] .btn-github-signin {
+      background: #1f2328;
+      color: #fff;
+    }
+
+    /* Repo picker row */
+    .gh-repo-row {
+      display: flex;
+      align-items: flex-start;
+      gap: 12px;
+      padding: 12px 14px;
+      border-bottom: 1px solid var(--card-border);
+      cursor: pointer;
+      transition: background 100ms ease;
+    }
+    .gh-repo-row:last-child { border-bottom: none; }
+    .gh-repo-row:hover { background: var(--bg-hover, rgba(255,255,255,0.04)); }
+    .gh-repo-row.hidden { display: none; }
+    .gh-repo-name {
+      font-family: var(--font-mono, monospace);
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--text-primary);
+    }
+    .gh-repo-meta {
+      font-size: 10px;
+      color: var(--text-muted);
+      margin-top: 3px;
+      display: flex;
+      gap: 8px;
+      align-items: center;
+    }
+    .gh-repo-meta .private {
+      padding: 1px 6px;
+      background: rgba(251, 191, 36, 0.15);
+      border: 1px solid rgba(251, 191, 36, 0.4);
+      color: #fbbf24;
+      border-radius: 4px;
+      font-weight: 700;
+      text-transform: uppercase;
+      font-size: 9px;
+    }
+    .gh-repo-meta .language {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+    }
+    .gh-repo-meta .language::before {
+      content: '';
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: #60a5fa;
+    }
+    .gh-repo-desc {
+      font-size: 11px;
+      color: var(--text-secondary);
+      margin-top: 4px;
+      line-height: 1.5;
+      max-height: 32px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      display: -webkit-box;
+      -webkit-line-clamp: 2;
+      -webkit-box-orient: vertical;
+    }
+
+    /* Toast */
+    .toast {
+      position: fixed;
+      bottom: 28px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: var(--bg-elevated);
+      color: var(--text-primary);
+      padding: 12px 20px;
+      border-radius: 10px;
+      border: 1px solid var(--card-border);
+      font-size: 13px;
+      z-index: 10000;
+      box-shadow: 0 16px 44px rgba(0,0,0,0.5);
+    }
+    .toast.hidden { display: none; }
+
+    /* Responsive: collapse sidebar on narrow screens */
+    @media (max-width: 900px) {
+      .cds-shell { grid-template-columns: 1fr; }
+      .cds-sidebar {
+        position: relative;
+        height: auto;
+        padding: 14px;
+        border-right: none;
+        border-bottom: 1px solid var(--border);
+      }
+      .cds-main { padding: 24px 20px 40px; }
+    }
+  </style>
+</head>
+<body>
+  <div class="cds-shell">
+    <!-- ───── Sidebar ───── -->
+    <aside class="cds-sidebar">
+      <div class="cds-logo-row">
+        <div class="cds-logo">
+          <div class="cds-logo-mark">C</div>
+          <span>Cloud Dev Suite</span>
+        </div>
+      </div>
+
+      <div class="cds-workspace">
+        <div class="cds-workspace-avatar" id="wsAvatar">S</div>
+        <div class="cds-workspace-meta">
+          <span class="cds-workspace-name" id="wsName">系统</span>
+          <span class="cds-workspace-sub">个人工作区</span>
+        </div>
+      </div>
+
+      <!-- P4 Part 18 cleanup: removed 3 disabled "coming in P5/P6" nav
+           items (Templates / Usage / People) that users complained
+           about. Kept only Projects + Dashboard which actually work. -->
+      <nav class="cds-nav">
+        <a class="cds-nav-item active" href="projects.html">
+          <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M1.75 1h12.5c.966 0 1.75.784 1.75 1.75v10.5A1.75 1.75 0 0114.25 15H1.75A1.75 1.75 0 010 13.25V2.75C0 1.784.784 1 1.75 1zM1.5 2.75v10.5c0 .138.112.25.25.25h12.5a.25.25 0 00.25-.25V2.75a.25.25 0 00-.25-.25H1.75a.25.25 0 00-.25.25z"/></svg>
+          <span>项目列表</span>
+        </a>
+        <a class="cds-nav-item" href="index.html">
+          <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M8 0a8 8 0 100 16A8 8 0 008 0zM1.5 8a6.5 6.5 0 0110.65-5.003.75.75 0 00.959-1.153 8 8 0 102.592 8.33.75.75 0 00-1.444-.407A6.5 6.5 0 011.5 8z"/></svg>
+          <span>控制台</span>
+        </a>
+      </nav>
+
+      <!-- UF-11: clickable identity card with popover. State is
+           driven by bootstrapMeLabel() in projects.js which sets one
+           of three classes on this element: .signed-in, .not-configured,
+           or (default) not-logged-in. Click toggles the popover above
+           which gives the user Settings + Disconnect actions. -->
+      <div class="cds-user-card" id="userCard" onclick="_toggleUserMenu(event)">
+        <div class="cds-user-avatar" id="userAvatar">···</div>
+        <span class="cds-user-name" id="userName">加载中…</span>
+        <svg class="cds-user-menu-indicator" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M4.427 7.427l3.396 3.396a.25.25 0 00.354 0l3.396-3.396A.25.25 0 0011.396 7H4.604a.25.25 0 00-.177.427z"/></svg>
+        <div class="cds-user-popover" id="userPopover">
+          <div class="cds-user-popover-status" id="userPopoverStatus">正在检查登录状态…</div>
+          <div class="cds-user-popover-divider"></div>
+          <a class="cds-user-popover-item" href="settings.html" onclick="event.stopPropagation()">
+            <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M7.429 1.525a3.5 3.5 0 011.142 0 .75.75 0 01.57.63l.185 1.29a.25.25 0 00.35.193l1.178-.592a.75.75 0 01.808.098 3.5 3.5 0 01.571.571.75.75 0 01.098.808l-.592 1.178a.25.25 0 00.193.35l1.29.185a.75.75 0 01.63.57 3.5 3.5 0 010 1.142.75.75 0 01-.63.57l-1.29.185a.25.25 0 00-.193.35l.592 1.178a.75.75 0 01-.098.808 3.5 3.5 0 01-.571.571.75.75 0 01-.808.098l-1.178-.592a.25.25 0 00-.35.193l-.185 1.29a.75.75 0 01-.57.63 3.5 3.5 0 01-1.142 0 .75.75 0 01-.57-.63l-.185-1.29a.25.25 0 00-.35-.193l-1.178.592a.75.75 0 01-.808-.098 3.5 3.5 0 01-.571-.571.75.75 0 01-.098-.808l.592-1.178a.25.25 0 00-.193-.35l-1.29-.185a.75.75 0 01-.63-.57 3.5 3.5 0 010-1.142.75.75 0 01.63-.57l1.29-.185a.25.25 0 00.193-.35l-.592-1.178a.75.75 0 01.098-.808 3.5 3.5 0 01.571-.571.75.75 0 01.808-.098l1.178.592a.25.25 0 00.35-.193l.185-1.29a.75.75 0 01.57-.63zM8 6a2 2 0 100 4 2 2 0 000-4z"/></svg>
+            GitHub 设置
+          </a>
+          <!-- "Sign in" button — hidden unless status.configured && !status.connected -->
+          <button type="button" class="cds-user-popover-item" id="userPopoverSignin" onclick="_openGithubSignin()" style="display:none;border:none;background:none;width:100%;text-align:left;font:inherit">
+            <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
+            使用 GitHub 登录
+          </button>
+          <!-- "Disconnect" button — hidden unless status.connected -->
+          <button type="button" class="cds-user-popover-item danger" id="userPopoverLogout" onclick="_disconnectGithub()" style="display:none;border:none;background:none;width:100%;text-align:left;font:inherit">
+            <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M2 2.75C2 1.784 2.784 1 3.75 1h2.5a.75.75 0 010 1.5h-2.5a.25.25 0 00-.25.25v10.5c0 .138.112.25.25.25h2.5a.75.75 0 010 1.5h-2.5A1.75 1.75 0 012 13.25V2.75zm10.44 4.5H6.75a.75.75 0 000 1.5h5.69l-1.97 1.97a.75.75 0 101.06 1.06l3.25-3.25a.75.75 0 000-1.06l-3.25-3.25a.75.75 0 10-1.06 1.06l1.97 1.97z"/></svg>
+            断开 GitHub 连接
+          </button>
+        </div>
+      </div>
+    </aside>
+
+    <!-- ───── Main content ───── -->
+    <main class="cds-main">
+      <div class="cds-main-header">
+        <h1 class="cds-main-title">项目列表</h1>
+        <div class="cds-main-actions">
+          <button class="btn-primary-solid" onclick="handleNewProject()">
+            <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M7.75 2a.75.75 0 01.75.75V7h4.25a.75.75 0 010 1.5H8.5v4.25a.75.75 0 01-1.5 0V8.5H2.75a.75.75 0 010-1.5H7V2.75A.75.75 0 017.75 2z"/></svg>
+            新建项目
+          </button>
+        </div>
+      </div>
+
+      <div class="cds-toolbar">
+        <div class="cds-toolbar-left">
+          <span><strong id="projectCount" style="color:var(--text-secondary)">…</strong> 个项目</span>
+          <span style="opacity:0.4">|</span>
+          <span>按最近活跃排序</span>
+        </div>
+        <!-- P4 Part 18 cleanup: removed the "List view (coming soon)"
+             disabled toggle. Grid view is the only view that works, so
+             the toolbar no longer shows a view selector. -->
+        <div class="cds-toolbar-right"></div>
+      </div>
+
+      <!-- UF-12: GitHub setup helper. Only shown when /api/github/oauth/status
+           reports configured=false. Populated by projects.js after the
+           status probe lands. -->
+      <div id="githubSetupBanner" style="display:none;margin:10px 0 18px 0;padding:18px 20px;background:var(--bg-card);border:1px solid rgba(245,158,11,0.4);border-radius:12px;box-shadow:0 4px 14px rgba(0,0,0,0.2)">
+        <div style="display:flex;align-items:flex-start;gap:14px">
+          <div style="width:32px;height:32px;flex-shrink:0;border-radius:8px;background:rgba(245,158,11,0.15);display:flex;align-items:center;justify-content:center">
+            <svg width="18" height="18" viewBox="0 0 16 16" fill="#f59e0b"><path d="M8.982 1.566a1.13 1.13 0 00-1.96 0L.165 13.233c-.457.778.091 1.767.98 1.767h13.713c.889 0 1.438-.99.98-1.767L8.982 1.566zM8 5c.535 0 .954.462.9.995l-.35 3.507a.552.552 0 01-1.1 0L7.1 5.995A.905.905 0 018 5zm.002 6a1 1 0 110 2 1 1 0 010-2z"/></svg>
+          </div>
+          <div style="flex:1;min-width:0">
+            <div style="font-weight:600;color:var(--text-primary);font-size:14px;margin-bottom:4px">GitHub 集成尚未配置</div>
+            <div style="color:var(--text-secondary);font-size:12px;line-height:1.6;margin-bottom:12px">
+              要让"从 GitHub 选择仓库"和"克隆私有仓库"工作,CDS 需要一个 <strong>GitHub OAuth App Client ID</strong>。这是 <strong>系统级</strong> 设置,需要运维在 CDS 进程启动前通过环境变量注入。
+            </div>
+            <div style="background:var(--bg-elevated);border:1px solid var(--card-border);border-radius:8px;padding:12px;font-family:var(--font-mono,monospace);font-size:11px;color:var(--text-secondary);white-space:pre-wrap;margin-bottom:10px"># 1) 去 https://github.com/settings/developers 创建一个 OAuth App
+#    在 General 设置里务必勾选 "Enable Device Flow"
+# 2) 拷贝 Client ID 填入下面的命令
+# 3) 运维在 CDS 启动前设置环境变量,然后重启
+
+export CDS_GITHUB_CLIENT_ID="你的-oauth-app-client-id"    # 必填
+export CDS_GITHUB_CLIENT_SECRET="web-flow-用-可选"        # 可选
+export CDS_SECRET_KEY="$(openssl rand -hex 32)"          # 可选,加密 token
+
+# 然后重启 CDS(或者在宿主机上 systemctl restart cds)
+./exec_cds.sh restart</div>
+            <div style="display:flex;gap:8px;flex-wrap:wrap">
+              <button type="button" onclick="navigator.clipboard.writeText('export CDS_GITHUB_CLIENT_ID=\x22\x22\nexport CDS_GITHUB_CLIENT_SECRET=\x22\x22\nexport CDS_SECRET_KEY=&quot;&#36;(openssl rand -hex 32)&quot;').then(function(){showToast('已复制环境变量模板','success')})" style="padding:7px 14px;background:var(--bg-elevated);color:var(--text-primary);border:1px solid var(--card-border);border-radius:6px;font-size:12px;cursor:pointer">复制环境变量模板</button>
+              <a href="https://github.com/settings/developers" target="_blank" rel="noopener" style="padding:7px 14px;background:var(--accent,#10b981);color:#fff;border:none;border-radius:6px;font-size:12px;text-decoration:none;font-weight:600">打开 GitHub OAuth Apps ↗</a>
+              <a href="settings.html" style="padding:7px 14px;background:transparent;color:var(--text-secondary);border:1px solid var(--card-border);border-radius:6px;font-size:12px;text-decoration:none">查看设置页</a>
+            </div>
+          </div>
+          <button type="button" onclick="document.getElementById('githubSetupBanner').style.display='none'" style="background:none;border:none;color:var(--text-muted);cursor:pointer;padding:4px" title="关闭">
+            <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M3.72 3.72a.75.75 0 011.06 0L8 6.94l3.22-3.22a.75.75 0 111.06 1.06L9.06 8l3.22 3.22a.75.75 0 11-1.06 1.06L8 9.06l-3.22 3.22a.75.75 0 01-1.06-1.06L6.94 8 3.72 4.78a.75.75 0 010-1.06z"/></svg>
+          </button>
+        </div>
+      </div>
+
+      <div id="projectsGrid" class="cds-project-grid">
+        <div class="cds-grid-state">正在加载项目列表…</div>
+      </div>
+    </main>
+  </div>
+
+  <!-- Create Project modal — P4 Part 18 UX rework.
+       Single smart input: paste git URL OR type project name. The
+       rest (slug, description) is tucked behind a collapsible
+       "更多选项" section so the 90% case is a one-field form. -->
+  <div id="createProjectModal" class="modal-backdrop" onclick="closeCreateProjectModal(event)">
+    <div class="modal-dialog" onclick="event.stopPropagation()" style="max-width:540px">
+      <div class="modal-title">新建项目</div>
+      <div class="modal-subtitle">粘贴 Git 仓库 URL，或者输入项目名创建空项目</div>
+
+      <form id="createProjectForm" onsubmit="handleCreateProjectSubmit(event)">
+        <!-- ─── GitHub Sign-in button (Phase E.2). Shown only
+             when CDS_GITHUB_CLIENT_ID is configured; checked via
+             /api/github/oauth/status on modal open. ─── -->
+        <button type="button" id="cp-github-signin" class="btn-github-signin"
+          style="display:none;width:100%;margin-bottom:12px"
+          onclick="_openGithubSignin()">
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
+            <path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/>
+          </svg>
+          <span id="cp-github-signin-label">使用 GitHub 登录并选择仓库</span>
+        </button>
+
+        <!-- Connected state indicator (shown when GitHub token is active) -->
+        <div id="cp-github-connected" style="display:none;padding:10px 12px;background:rgba(16,185,129,0.08);border:1px solid rgba(16,185,129,0.25);border-radius:8px;margin-bottom:12px;font-size:12px">
+          <span style="color:var(--green, #10b981)">● 已连接</span>
+          <span id="cp-github-connected-login" style="color:var(--text-secondary);margin-left:6px"></span>
+          <button type="button" onclick="_openRepoPicker()" style="float:right;background:transparent;border:none;color:#60a5fa;font-size:11px;cursor:pointer;padding:0">浏览我的仓库 →</button>
+        </div>
+
+        <div id="cp-github-hint" style="display:none;font-size:11px;color:var(--text-muted);margin-bottom:12px;padding:8px 10px;background:var(--bg-elevated);border-radius:7px">
+          💡 GitHub 集成未配置。管理员需在环境变量中设置 <code style="font-family:var(--font-mono,monospace)">CDS_GITHUB_CLIENT_ID</code>。当前只支持粘贴公开仓库 URL。
+        </div>
+
+        <div id="cp-divider" style="display:none;text-align:center;font-size:10px;color:var(--text-muted);margin:4px 0 10px;letter-spacing:2px">
+          OR
+        </div>
+
+        <!-- ─── Smart input: url or name ─── -->
+        <div class="form-row">
+          <input id="cp-smart-input" class="form-input" type="text" required
+            placeholder="https://github.com/your-org/repo.git  或  my-api"
+            style="font-size:14px;padding:14px 16px" autocomplete="off"
+            oninput="_updateCreateHint()">
+        </div>
+
+        <!-- ─── Live detection hint ─── -->
+        <div id="cp-hint" style="font-size:12px;color:var(--text-muted);min-height:18px;margin-bottom:14px;transition:color 120ms ease"></div>
+
+        <!-- ─── Collapsible advanced section ─── -->
+        <button type="button" id="cp-advanced-toggle" onclick="_toggleCreateAdvanced()"
+          style="background:transparent;border:none;color:var(--text-muted);font-size:11px;cursor:pointer;padding:0;margin-bottom:10px;display:flex;align-items:center;gap:4px">
+          <svg id="cp-advanced-chev" width="10" height="10" viewBox="0 0 16 16" fill="currentColor" style="transition:transform 120ms ease"><path d="M6.22 3.22a.75.75 0 011.06 0l4.25 4.25a.75.75 0 010 1.06l-4.25 4.25a.75.75 0 01-1.06-1.06L9.94 8 6.22 4.28a.75.75 0 010-1.06z"/></svg>
+          更多选项（slug / 描述 / 显式名称）
+        </button>
+        <div id="cp-advanced-section" style="display:none">
+          <div class="form-row">
+            <label class="form-label" for="cp-name">项目名称 <span class="opt">留空则自动从 URL 推导</span></label>
+            <input id="cp-name" class="form-input" type="text" maxlength="60" placeholder="例如：my-api" autocomplete="off">
+          </div>
+          <div class="form-row">
+            <label class="form-label" for="cp-slug">Slug <span class="opt">留空自动生成</span></label>
+            <input id="cp-slug" class="form-input" type="text" maxlength="50" placeholder="lowercase-kebab" autocomplete="off">
+          </div>
+          <div class="form-row">
+            <label class="form-label" for="cp-description">描述 <span class="opt">可选</span></label>
+            <input id="cp-description" class="form-input" type="text" maxlength="200" placeholder="一句话介绍这个项目" autocomplete="off">
+          </div>
+        </div>
+
+        <div id="createProjectError" class="form-error"></div>
+        <div class="modal-actions">
+          <button type="button" class="btn-ghost" onclick="closeCreateProjectModal()">取消</button>
+          <button type="submit" id="createProjectSubmitBtn" class="btn-primary">创建并部署</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- ─── GitHub Device Flow modal (P4 Part 18 Phase E.2) ───
+       Shown after clicking "使用 GitHub 登录并选择仓库". Renders
+       the user_code + verification_uri and polls /device-poll
+       until the user completes the flow on github.com. -->
+  <div id="githubDeviceModal" class="modal-backdrop" onclick="closeGithubDeviceModal(event)">
+    <div class="modal-dialog" onclick="event.stopPropagation()" style="max-width:480px">
+      <div class="modal-title">连接 GitHub</div>
+      <div class="modal-subtitle" id="gh-device-subtitle">正在请求设备代码…</div>
+
+      <div id="gh-device-body" style="display:none;text-align:center;padding:20px 0">
+        <div style="font-size:11px;color:var(--text-muted);margin-bottom:10px;letter-spacing:1px;text-transform:uppercase">在浏览器中输入此代码</div>
+        <div id="gh-device-code" style="font-family:var(--font-mono,monospace);font-size:28px;font-weight:700;color:var(--text-primary);letter-spacing:4px;padding:18px;background:var(--bg-elevated);border:1px solid var(--card-border);border-radius:10px;margin-bottom:14px;user-select:all">—</div>
+        <div style="font-size:12px;color:var(--text-secondary);margin-bottom:14px">
+          在此页面输入上面的代码：
+        </div>
+        <a id="gh-device-link" href="#" target="_blank" rel="noopener"
+          style="display:inline-block;padding:11px 22px;background:var(--accent);color:#fff;text-decoration:none;border-radius:8px;font-size:13px;font-weight:600">
+          打开 github.com/login/device →
+        </a>
+        <div id="gh-device-status" style="margin-top:18px;font-size:11px;color:var(--text-muted)">等待授权…</div>
+      </div>
+
+      <div id="gh-device-error" style="display:none;padding:12px;background:rgba(244,63,94,0.1);border:1px solid rgba(244,63,94,0.3);border-radius:8px;font-size:12px;color:#fca5a5;margin-bottom:14px"></div>
+
+      <div class="modal-actions">
+        <button type="button" class="btn-ghost" onclick="closeGithubDeviceModal()">取消</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ─── Repo picker modal (P4 Part 18 Phase E.2) ───
+       Shown after a successful device flow OR when clicking
+       "浏览我的仓库 →" in the connected state. Lists the user's
+       repos with a search box; picking one fills the smart input
+       in the create modal. -->
+  <div id="githubRepoPickerModal" class="modal-backdrop" onclick="closeRepoPickerModal(event)">
+    <div class="modal-dialog" onclick="event.stopPropagation()" style="max-width:640px;display:flex;flex-direction:column;max-height:80vh">
+      <div class="modal-title">选择仓库</div>
+      <div class="modal-subtitle" id="gh-picker-subtitle">正在加载…</div>
+
+      <input id="gh-picker-search" class="form-input" type="text" placeholder="搜索..." autocomplete="off"
+        oninput="_filterRepoPicker(this.value)" style="margin-bottom:12px;display:none">
+
+      <div id="gh-picker-list" style="flex:1;min-height:0;overflow-y:auto;background:var(--bg-elevated);border:1px solid var(--card-border);border-radius:10px">
+        <div style="padding:60px 20px;text-align:center;color:var(--text-muted);font-size:12px">正在加载仓库列表…</div>
+      </div>
+
+      <div class="modal-actions">
+        <button type="button" class="btn-ghost" onclick="closeRepoPickerModal()">返回</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Clone-progress modal (P4 Part 18 G1.7) -->
+  <div id="cloneProgressModal" class="modal-backdrop" onclick="closeCloneProgressModal(event)">
+    <div class="cds-clone-modal-dialog" onclick="event.stopPropagation()">
+      <div class="cds-clone-modal-head">
+        <div class="cds-clone-modal-title" id="cloneModalTitle">克隆中…</div>
+        <span class="cds-clone-status cloning" id="cloneModalStatus">
+          <span class="spinner"></span>
+          <span id="cloneModalStatusText">CLONING</span>
+        </span>
+      </div>
+      <div class="cds-clone-modal-url" id="cloneModalUrl">—</div>
+      <div class="cds-clone-log" id="cloneModalLog">
+        <span class="line info">正在连接克隆端点…</span>
+      </div>
+      <div class="cds-clone-modal-actions">
+        <button type="button" class="btn-ghost" id="cloneModalCloseBtn" onclick="closeCloneProgressModal()">关闭</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="toast" class="toast hidden"></div>
+
+  <script src="projects.js?t=0"></script>
+  <script>
+    document.currentScript.previousElementSibling.src = 'projects.js?t=' + Date.now();
+  </script>
+</body>
+</html>

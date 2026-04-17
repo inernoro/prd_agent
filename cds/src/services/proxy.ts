@@ -451,12 +451,18 @@ h2{font-size:16px;font-weight:600;color:#f0f6fc;margin-bottom:8px}
     // Resolve original branch name from state (preserve "/" and casing)
     let originalBranch = matchedSlug ? state.branches[matchedSlug]?.branch : null;
 
-    // If not found locally, try remote (full path first, then last segment, then slug matching)
+    // If not found locally, try remote (full path first, then last segment, then slug matching).
+    // P4 Part 18 (G1.2): proxy auto-resolution stays on the legacy
+    // single config.repoRoot. Multi-project subdomain routing would
+    // require the proxy to iterate every project's repo, which is a
+    // separate design exercise. For now new projects must be deployed
+    // explicitly via POST /branches rather than auto-discovered here.
     if (!matchedSlug && this.worktreeService) {
-      const remoteBranch = await this.worktreeService.findBranchBySuffix(fullPath)
-        || (fullPath !== lastSegment ? await this.worktreeService.findBranchBySuffix(lastSegment) : null)
-        || await this.worktreeService.findBranchBySlug(fullPath)
-        || (fullPath !== lastSegment ? await this.worktreeService.findBranchBySlug(lastSegment) : null);
+      const proxyRepoRoot = this.config?.repoRoot || '';
+      const remoteBranch = await this.worktreeService.findBranchBySuffix(proxyRepoRoot, fullPath)
+        || (fullPath !== lastSegment ? await this.worktreeService.findBranchBySuffix(proxyRepoRoot, lastSegment) : null)
+        || await this.worktreeService.findBranchBySlug(proxyRepoRoot, fullPath)
+        || (fullPath !== lastSegment ? await this.worktreeService.findBranchBySlug(proxyRepoRoot, lastSegment) : null);
       if (remoteBranch) {
         matchedSlug = StateService.slugify(remoteBranch);
         originalBranch = remoteBranch;  // keep original name like "claude/fix-login-password-issue-CQBMO"

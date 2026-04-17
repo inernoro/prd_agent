@@ -183,12 +183,13 @@ export function HeroSection({ className, onGetStarted, onWatchDemo }: HeroSectio
         </Reveal>
 
         {/* 副标题 — 标题已可读时加入（标题还在散雾），2s duration */}
+        {/* 容器放宽到 max-w-3xl、字号收到 clamp(13.6,0.95vw,16px)，承载 100 字中文定义 */}
         <Reveal delay={500} duration={2000} offset={20}>
           <p
-            className="mt-8 text-center text-white/62 max-w-2xl mx-auto leading-relaxed"
+            className="mt-8 text-center text-white/62 max-w-3xl mx-auto leading-relaxed"
             style={{
               fontFamily: 'var(--font-body)',
-              fontSize: 'clamp(0.95rem, 1.2vw, 1.125rem)',
+              fontSize: 'clamp(0.85rem, 0.95vw, 1rem)',
               letterSpacing: '0.005em',
             }}
           >

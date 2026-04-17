@@ -64,6 +64,7 @@ import { useNavigate } from 'react-router-dom';
 
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import remarkBreaks from 'remark-breaks';
 import rehypeRaw from 'rehype-raw';
 import { extractMarkers, type ArticleMarker } from '@/lib/articleMarkerExtractor';
 import { useDebounce } from '@/hooks/useDebounce';
@@ -2529,7 +2530,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
               <div className="p-4 relative">
                 <div className="prd-md">
                   <ReactMarkdown
-                    remarkPlugins={[remarkGfm]}
+                    remarkPlugins={[remarkGfm, remarkBreaks]}
                     rehypePlugins={[rehypeRaw]}
                     components={{
                       p: ({ node: _node, children, ...props }) => <p {...props}>{highlightChildren(children)}</p>,
@@ -2578,7 +2579,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                         color: 'rgba(255, 255, 255, 0.7)',
                       }}
                     >
-                      <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                      <ReactMarkdown remarkPlugins={[remarkGfm, remarkBreaks]}>
                         {thinkingContent}
                       </ReactMarkdown>
                     </div>
@@ -2686,7 +2687,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                         borderTop: '1px solid rgba(168, 85, 247, 0.1)',
                       }}
                     >
-                      <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                      <ReactMarkdown remarkPlugins={[remarkGfm, remarkBreaks]}>
                         {thinkingContent}
                       </ReactMarkdown>
                     </div>
@@ -2696,7 +2697,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                 <div className="prd-md">
                   <ReactMarkdown
                     key="article-preview-main"
-                    remarkPlugins={[remarkGfm]}
+                    remarkPlugins={[remarkGfm, remarkBreaks]}
                     rehypePlugins={[rehypeRaw]}
                     components={{
                       p: ({ node: _node, children, ...props }) => <p {...props}>{highlightChildren(children)}</p>,
@@ -3427,7 +3428,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                       `}</style>
                       <div className="create-prompt-md">
                         {creatingPrompt.content ? (
-                          <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                          <ReactMarkdown remarkPlugins={[remarkGfm, remarkBreaks]}>
                             {creatingPrompt.content}
                           </ReactMarkdown>
                         ) : (
@@ -3544,7 +3545,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                       `}</style>
                       <div className="edit-prompt-md">
                         {editingPrompt.content ? (
-                          <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                          <ReactMarkdown remarkPlugins={[remarkGfm, remarkBreaks]}>
                             {editingPrompt.content}
                           </ReactMarkdown>
                         ) : (
@@ -3708,7 +3709,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                               `}</style>
                               <div className="modal-prompt-md">
                                 {prompt.content ? (
-                                  <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                                  <ReactMarkdown remarkPlugins={[remarkGfm, remarkBreaks]}>
                                     {prompt.content}
                                   </ReactMarkdown>
                                 ) : (

@@ -3,6 +3,11 @@
 /** A routing rule that maps incoming requests to a branch */
 export interface RoutingRule {
   id: string;
+  /**
+   * Project this rule belongs to. P4 Part 3a field. Pre-P4 rules migrate
+   * to 'default' on load. Optional for back-compat.
+   */
+  projectId?: string;
   /** Human-readable name */
   name: string;
   /** Match type: header (X-Branch), domain substring, or pattern */
@@ -26,6 +31,11 @@ export interface RoutingRule {
 /** A build profile defines how to build/run a specific type of project */
 export interface BuildProfile {
   id: string;
+  /**
+   * Project this profile belongs to. P4 Part 3a field. Pre-P4 profiles
+   * are migrated to 'default' on load. Optional for back-compat.
+   */
+  projectId?: string;
   name: string;
   /** Docker image to use for building/running */
   dockerImage: string;
@@ -193,6 +203,13 @@ export type BranchHeatState = 'hot' | 'warming' | 'cooling' | 'cold';
 /** Branch entry — simplified for CDS */
 export interface BranchEntry {
   id: string;
+  /**
+   * The project this branch belongs to. P4 Part 3a introduces this field;
+   * pre-P4 data is migrated to the legacy default project ('default') on
+   * load. Optional for backward compat with pre-migration state files —
+   * consumers can treat a missing value as 'default'.
+   */
+  projectId?: string;
   /** Original git branch name */
   branch: string;
   worktreePath: string;
@@ -330,6 +347,139 @@ export interface CdsState {
   dataMigrations?: DataMigration[];
   /** Registered remote CDS peers (for one-click cross-CDS data migration) */
   cdsPeers?: CdsPeer[];
+  /**
+   * P4 Part 1: multi-project support. Each Project groups branches,
+   * build profiles, infra services, and routing rules under one name.
+   *
+   * Optional so that legacy state.json files (pre-P4) still parse. On
+   * load, StateService.migrateProjects() ensures at least one "legacy
+   * default" project exists and assigns all pre-existing resources to
+   * it. Real multi-project creation lands in P4 Part 2.
+   *
+   * See doc/design.cds-multi-project.md, doc/spec.cds-project-model.md.
+   */
+  projects?: Project[];
+  /**
+   * P4 Part 18 (Phase E): single-slot GitHub Device Flow token used
+   * by the "从 GitHub 选择仓库" button in the New Project modal and
+   * the Settings → GitHub Integration tab. Orthogonal to the CDS
+   * session auth (auth-service.ts) — this is bring-your-own-token
+   * for repo fetching, not a CDS login mechanism.
+   *
+   * Single-slot because CDS is single-tenant-per-install; per-user
+   * tokens are a future phase once the user model stabilises.
+   */
+  githubDeviceAuth?: GitHubDeviceAuth;
+  /**
+   * FU-04 — worktree directory layout version.
+   *
+   *   - undefined / 1: legacy flat layout `<worktreeBase>/<slug>`
+   *     (pre-FU-04). Every branch in every project shares one
+   *     directory, so two projects with the same branch name (e.g.
+   *     "main") collide.
+   *   - 2: per-project layout `<worktreeBase>/<projectId>/<slug>`.
+   *     New branches always land here. On first boot after the
+   *     upgrade, `WorktreeService.migrateFlatLayoutIfNeeded()`
+   *     symlinks every surviving legacy entry into
+   *     `<worktreeBase>/default/<slug>` and rewrites each
+   *     `BranchEntry.worktreePath` accordingly.
+   *
+   * The migration is guarded by this counter so boots after the
+   * one-shot move don't repeatedly re-scan the legacy layout.
+   */
+  worktreeLayoutVersion?: number;
+}
+
+/**
+ * GitHub Device Flow token snapshot persisted in state.json. The
+ * token itself is a GitHub-issued opaque string — we never decrypt
+ * or inspect it, just pass it along to api.github.com.
+ */
+export interface GitHubDeviceAuth {
+  /** Raw access_token returned by GitHub. */
+  token: string;
+  /** GitHub login (e.g. 'octocat') for the UI. */
+  login: string;
+  /** Display name (may be null). */
+  name: string | null;
+  /** Avatar URL for the Settings UI. */
+  avatarUrl: string | null;
+  /** ISO timestamp of when the device flow completed. */
+  connectedAt: string;
+  /** OAuth scopes granted by the user. */
+  scopes: string[];
+}
+
+/**
+ * A Project is the top-level grouping container for a CDS workload.
+ * Introduced in P4 Part 1. In Part 1 only the "legacy default" project
+ * exists (auto-created on migration); Part 2 adds real CRUD; Part 3
+ * threads projectId into Branch/BuildProfile/InfraService/RoutingRule.
+ *
+ * Field discipline: Part 1 only adds the minimum set needed for the
+ * projects list UI. Fields like `dockerNetwork`, `webhookSecret`,
+ * `autoDeployStrategy`, `branchCount` etc. land with the phases that
+ * actually use them. Adding them prematurely would create dead fields
+ * in state.json that mislead future readers.
+ */
+export interface Project {
+  /** Stable identifier, used in URLs and routing filters. */
+  id: string;
+  /** URL-friendly slug (may equal id, usually kebab-case). */
+  slug: string;
+  /** Human-friendly display name shown on the projects list card. */
+  name: string;
+  /** Optional one-line description shown under the name. */
+  description?: string;
+  /**
+   * Project kind. 'git' is the only value Part 1 creates; 'manual'
+   * lands in P6 when users can upload their own compose.
+   */
+  kind: 'git' | 'manual';
+  /** Optional Git repository URL; populated for auto-created legacy projects from CdsConfig.repoRoot. */
+  gitRepoUrl?: string;
+  /**
+   * Absolute path to the git checkout for this project. For projects
+   * created after P4 Part 18 (G1) this points to
+   * `${config.reposBase}/<projectId>` and is populated once the async
+   * git clone completes.
+   *
+   * The legacy 'default' project and any pre-G1 projects leave this
+   * undefined and fall back to the globally-mounted `config.repoRoot`
+   * at every use site — see `StateService.getProjectRepoRoot()`.
+   */
+  repoPath?: string;
+  /**
+   * Async clone lifecycle for this project. Absent (or 'ready') for
+   * legacy projects; set to 'pending' immediately after POST /projects
+   * when a gitRepoUrl is supplied; 'cloning' while the SSE clone runs;
+   * 'ready' after success; 'error' after failure.
+   *
+   * Deploy endpoints should refuse to build a branch from a project
+   * whose cloneStatus is 'pending' / 'cloning' / 'error' — the repo
+   * isn't usable until the clone has finished.
+   */
+  cloneStatus?: 'pending' | 'cloning' | 'ready' | 'error';
+  /** Human-readable error message set when cloneStatus === 'error'. */
+  cloneError?: string;
+  /**
+   * Name of the dedicated Docker network backing this project. Populated
+   * by P4 Part 2 on project creation (`cds-proj-<id-prefix>`). The
+   * legacy default project has this field unset — it continues to use
+   * the pre-P4 shared network until P4 Part 3 threads projectId through
+   * every container operation.
+   */
+  dockerNetwork?: string;
+  /**
+   * True for the migration-created "legacy default" project that wraps
+   * all pre-P4 data. Marked so the UI can label it and so P4 Part 2
+   * knows it is not deletable.
+   */
+  legacyFlag?: boolean;
+  /** ISO timestamp when the project entry was created (or migrated in). */
+  createdAt: string;
+  /** ISO timestamp of most recent mutation. */
+  updatedAt: string;
 }
 
 /**
@@ -458,6 +608,11 @@ export interface InfraHealthCheck {
 export interface InfraService {
   /** Unique identifier (e.g., 'mongodb', 'redis') */
   id: string;
+  /**
+   * Project this infra service belongs to. P4 Part 3a field. Pre-P4
+   * services migrate to 'default' on load. Optional for back-compat.
+   */
+  projectId?: string;
   /** Display name */
   name: string;
   /** Docker image to use */
@@ -587,6 +742,18 @@ export interface SchedulerConfig {
 /** Application configuration */
 export interface CdsConfig {
   repoRoot: string;
+  /**
+   * Base directory that houses every per-project git clone for the
+   * multi-repo flow introduced in P4 Part 18 (G1). Each project's
+   * repo lives at `${reposBase}/${projectId}`. When undefined (the
+   * pre-G1 default), every project falls back to the top-level
+   * `repoRoot`, preserving legacy single-repo behavior.
+   *
+   * Typically wired from `CDS_REPOS_BASE=/repos` in exec_cds.sh and
+   * mounted as a persistent host volume so cloned repos survive
+   * container rebuilds (self-update).
+   */
+  reposBase?: string;
   worktreeBase: string;
   /** Master dashboard port */
   masterPort: number;

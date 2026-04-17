@@ -248,6 +248,20 @@ const BUILTIN_TOOLS: ToolboxItem[] = [
     usageCount: 0,
     createdAt: new Date().toISOString(),
   },
+  {
+    id: 'builtin-changelog',
+    name: '更新中心',
+    description: '代码级周报：每周自动汇总仓库内的所有变更（feat/fix/refactor/perf）',
+    icon: 'Sparkles',
+    category: 'builtin',
+    type: 'builtin',
+    agentKey: 'changelog',
+    routePath: '/changelog',
+    tags: ['更新', '周报', 'changelog', 'release'],
+    usageCount: 0,
+    createdAt: new Date().toISOString(),
+    wip: true,
+  },
   // ========== 普通版 Agent（统一对话界面）==========
   {
     id: 'builtin-code-reviewer',

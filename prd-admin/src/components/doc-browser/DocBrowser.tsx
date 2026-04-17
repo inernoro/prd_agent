@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import remarkBreaks from 'remark-breaks';
 import remarkMath from 'remark-math';
 import rehypeKatex from 'rehype-katex';
 import 'katex/dist/katex.min.css';
@@ -27,7 +28,7 @@ import {
   Search, ChevronRight, ChevronDown, Plus, Pin, PinOff,
   FileSearch, ToggleLeft, ToggleRight, Trash2, FilePlus, FolderPlus,
   Upload, Link, LayoutTemplate, Bot, Pencil, Save, X,
-  Sparkles, Wand2,
+  Sparkles, Wand2, Tags,
 } from 'lucide-react';
 import { getFileTypeConfig } from '@/lib/fileTypeRegistry';
 import type { FilePreviewKind } from '@/lib/fileTypeRegistry';
@@ -57,6 +58,9 @@ export type DocBrowserEntry = {
   sourceType: string;
   contentType: string;
   fileSize: number;
+  tags?: string[];
+  updatedAt?: string;
+  updatedByName?: string;
   summary?: string;
   syncStatus?: string;
   /** 是否暂停（订阅类型） */
@@ -75,6 +79,7 @@ export type DocBrowserProps = {
   onSetPrimary?: (entryId: string) => void;
   onTogglePin?: (entryId: string, pin: boolean) => void;
   onDeleteEntry?: (entryId: string) => void;
+  onUpdateEntryTags?: (entryId: string, tags: string[]) => Promise<void>;
   onMoveEntry?: (entryId: string, targetFolderId: string | null) => void;
   onSaveContent?: (entryId: string, content: string) => Promise<void>;
   onCreateFolder?: (name: string, parentId?: string) => Promise<void>;
@@ -147,10 +152,23 @@ function canReprocess(entry: DocBrowserEntry): boolean {
   return ct.startsWith('text/') || ct.includes('markdown') || ct === '';
 }
 
+function formatMetaTime(iso?: string): string {
+  if (!iso) return '未知时间';
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return '未知时间';
+  return date.toLocaleString('zh-CN', {
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+}
+
 // ── 右键/⋯ 菜单 ──
 function ContextMenu({
   x, y, entry, isPrimary, isPinned,
-  onSetPrimary, onTogglePin, onDelete,
+  onSetPrimary, onTogglePin, onDelete, onEditTags,
   onGenerateSubtitle, onReprocess,
   onClose,
 }: {
@@ -162,6 +180,7 @@ function ContextMenu({
   onSetPrimary?: (entryId: string) => void;
   onTogglePin?: (entryId: string, pin: boolean) => void;
   onDelete?: (entryId: string) => void;
+  onEditTags?: (entry: DocBrowserEntry) => void;
   onGenerateSubtitle?: (entryId: string) => void;
   onReprocess?: (entryId: string) => void;
   onClose: () => void;
@@ -218,6 +237,15 @@ function ContextMenu({
           {isPinned ? '取消置顶' : '置顶文档'}
         </button>
       )}
+      {!entry.isFolder && onEditTags && (
+        <button
+          className="w-full px-3 py-1.5 text-left text-[12px] flex items-center gap-2 cursor-pointer transition-colors hover:bg-white/6"
+          style={{ color: 'var(--text-secondary)' }}
+          onClick={() => { onEditTags(entry); onClose(); }}>
+          <Tags size={12} />
+          打标签
+        </button>
+      )}
       {!entry.isFolder && onSetPrimary && !isPrimary && (
         <button
           className="w-full px-3 py-1.5 text-left text-[12px] flex items-center gap-2 cursor-pointer transition-colors hover:bg-white/6"
@@ -239,6 +267,157 @@ function ContextMenu({
           </button>
         </>
       )}
+    </div>
+  );
+}
+
+function EntryTagEditor({
+  entry,
+  onClose,
+  onSave,
+}: {
+  entry: DocBrowserEntry;
+  onClose: () => void;
+  onSave: (tags: string[]) => Promise<void>;
+}) {
+  const [tags, setTags] = useState<string[]>(entry.tags ?? []);
+  const [tagInput, setTagInput] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+
+  const addTag = useCallback((raw: string) => {
+    const trimmed = raw.trim().replace(/^#/, '');
+    if (!trimmed) return;
+    if (trimmed.length > 20) { setError('单个标签最多 20 个字'); return; }
+    if (tags.includes(trimmed)) { setTagInput(''); return; }
+    if (tags.length >= 10) { setError('最多 10 个标签'); return; }
+    setError('');
+    setTags(prev => [...prev, trimmed]);
+    setTagInput('');
+  }, [tags]);
+
+  const removeTag = useCallback((target: string) => {
+    setTags(prev => prev.filter(tag => tag !== target));
+    setError('');
+  }, []);
+
+  const handleTagKeyDown = useCallback((e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Enter' || e.key === ',' || e.key === '，') {
+      e.preventDefault();
+      addTag(tagInput);
+    } else if (e.key === 'Backspace' && !tagInput && tags.length > 0) {
+      removeTag(tags[tags.length - 1]);
+    }
+  }, [addTag, removeTag, tagInput, tags]);
+
+  const handleSave = useCallback(async () => {
+    const pending = tagInput.trim().replace(/^#/, '');
+    if (pending.length > 20) { setError('单个标签最多 20 个字'); return; }
+    const finalTags = pending && !tags.includes(pending) ? [...tags, pending] : tags;
+    if (finalTags.length > 10) { setError('最多 10 个标签'); return; }
+    setSaving(true);
+    setError('');
+    try {
+      await onSave(finalTags);
+      onClose();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '保存失败');
+    } finally {
+      setSaving(false);
+    }
+  }, [onClose, onSave, tagInput, tags]);
+
+  return (
+    <div className="fixed inset-0 z-[60] flex items-center justify-center"
+      style={{ background: 'rgba(0,0,0,0.5)', backdropFilter: 'blur(8px)' }}
+      onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+      <div className="w-[440px] max-w-[92vw] rounded-[16px] p-6"
+        style={{
+          background: 'linear-gradient(180deg, var(--glass-bg-start) 0%, var(--glass-bg-end) 100%)',
+          border: '1px solid rgba(255,255,255,0.08)',
+          backdropFilter: 'blur(40px) saturate(180%)',
+          boxShadow: '0 24px 48px -12px rgba(0,0,0,0.5)',
+        }}>
+        <div className="flex items-center justify-between mb-5">
+          <div className="flex items-center gap-2.5 min-w-0">
+            <div className="w-8 h-8 rounded-[10px] flex items-center justify-center"
+              style={{ background: 'rgba(59,130,246,0.08)', border: '1px solid rgba(59,130,246,0.12)' }}>
+              <Tags size={14} style={{ color: 'rgba(59,130,246,0.85)' }} />
+            </div>
+            <div className="min-w-0">
+              <div className="text-[15px] font-semibold truncate" style={{ color: 'var(--text-primary)' }}>
+                文档标签
+              </div>
+              <div className="text-[11px] truncate" style={{ color: 'var(--text-muted)' }}>
+                {entry.title}
+              </div>
+            </div>
+          </div>
+          <button onClick={onClose}
+            className="w-7 h-7 rounded-[8px] flex items-center justify-center cursor-pointer hover:bg-white/6 transition-colors duration-200"
+            style={{ color: 'var(--text-muted)' }}>
+            <X size={15} />
+          </button>
+        </div>
+
+        <div className="mb-4">
+          <label className="block text-[12px] mb-1.5" style={{ color: 'var(--text-muted)' }}>
+            标签 <span className="text-[10px]" style={{ color: 'var(--text-muted)' }}>（回车或逗号分隔，最多 10 个）</span>
+          </label>
+          <div
+            className="min-h-9 px-2 py-1.5 rounded-[10px] flex flex-wrap items-center gap-1.5"
+            style={{
+              background: 'var(--input-bg, rgba(255,255,255,0.05))',
+              border: '1px solid var(--border-subtle, rgba(255,255,255,0.1))',
+            }}>
+            {tags.map(tag => (
+              <span key={tag}
+                className="inline-flex items-center gap-1 h-6 px-2 rounded-[6px] text-[11px] font-medium"
+                style={{
+                  background: 'rgba(59,130,246,0.1)',
+                  border: '1px solid rgba(59,130,246,0.2)',
+                  color: 'rgba(59,130,246,0.9)',
+                }}>
+                # {tag}
+                <button
+                  onClick={() => removeTag(tag)}
+                  className="ml-0.5 cursor-pointer flex items-center justify-center"
+                  style={{ color: 'rgba(59,130,246,0.7)' }}
+                  title="移除">
+                  <X size={10} />
+                </button>
+              </span>
+            ))}
+            <input
+              autoFocus
+              value={tagInput}
+              onChange={e => setTagInput(e.target.value)}
+              onKeyDown={handleTagKeyDown}
+              placeholder={tags.length === 0 ? '如：架构、需求、API' : ''}
+              className="flex-1 min-w-[80px] h-6 bg-transparent outline-none text-[12px]"
+              style={{ color: 'var(--text-primary)' }}
+            />
+          </div>
+        </div>
+
+        {error && <p className="text-[12px] mb-3" style={{ color: 'rgba(239,68,68,0.9)' }}>{error}</p>}
+
+        <div className="flex justify-end gap-2">
+          <button
+            onClick={onClose}
+            className="h-8 px-3 rounded-[8px] text-[12px] font-semibold cursor-pointer"
+            style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)', color: 'var(--text-muted)' }}>
+            取消
+          </button>
+          <button
+            onClick={handleSave}
+            disabled={saving}
+            className="h-8 px-3 rounded-[8px] text-[12px] font-semibold cursor-pointer"
+            style={{ background: 'rgba(59,130,246,0.12)', border: '1px solid rgba(59,130,246,0.18)', color: 'rgba(59,130,246,0.95)' }}>
+            {saving ? '保存中…' : '保存'}
+          </button>
+        </div>
+      </div>
     </div>
   );
 }
@@ -347,6 +526,21 @@ function TreeNode({
           }}>
           {displayTitle}
         </span>
+
+        {!isFolder && (entry.tags?.length ?? 0) > 0 && (
+          <span
+            className="text-[9px] px-1.5 py-0.5 rounded-full flex-shrink-0"
+            style={{
+              background: 'rgba(168,85,247,0.08)',
+              color: 'rgba(216,180,254,0.9)',
+              border: '1px solid rgba(168,85,247,0.16)',
+            }}
+            title={(entry.tags ?? []).map(tag => `#${tag}`).join(' ')}
+          >
+            #{entry.tags![0]}
+            {(entry.tags?.length ?? 0) > 1 ? ` +${entry.tags!.length - 1}` : ''}
+          </span>
+        )}
 
         {/* (new) 徽标：lastChangedAt 在 24 小时以内 */}
         {!isFolder && isRecentlyChanged(entry.lastChangedAt) && (
@@ -507,7 +701,7 @@ function MarkdownViewer({ content }: { content: string }) {
   return (
     <div className="prose-invert max-w-none text-[13px] leading-relaxed">
       <ReactMarkdown
-        remarkPlugins={[remarkGfm, remarkMath]}
+        remarkPlugins={[remarkGfm, remarkBreaks, remarkMath]}
         rehypePlugins={[rehypeKatex]}
         components={{
           h1: mkHeading('h1'),
@@ -559,24 +753,50 @@ function MarkdownViewer({ content }: { content: string }) {
           td: ({ children }) => <td className="px-3 py-1.5" style={{ borderBottom: '1px solid rgba(255,255,255,0.03)', color: 'var(--text-secondary)' }}>{children}</td>,
           code: ({ className, children, ...props }) => {
             const match = /language-(\w+)/.exec(className || '');
-            const inline = !match;
-            if (inline) {
+            const text = String(children ?? '').replace(/\n$/, '');
+            // 块级判断：有 language- 类名 或 内容包含换行（兼容未指定语言的 fenced code block）
+            const isBlock = !!match || text.includes('\n');
+            if (!isBlock) {
               return <code className="px-1.5 py-0.5 rounded text-[12px]" style={{ background: 'rgba(255,255,255,0.06)', color: 'rgba(248,113,113,0.9)' }} {...props}>{children}</code>;
             }
+            // 块级且指定了语言 → Prism 高亮
+            if (match) {
+              return (
+                <SyntaxHighlighter
+                  style={oneDark}
+                  language={match[1]}
+                  PreTag="div"
+                  customStyle={{
+                    margin: '12px 0', borderRadius: '10px', fontSize: '12px',
+                    background: 'rgba(0,0,0,0.3)', border: '1px solid rgba(255,255,255,0.04)',
+                  }}
+                >
+                  {text}
+                </SyntaxHighlighter>
+              );
+            }
+            // 块级但无语言 → 纯 <pre>，避免 Prism token 背景污染 ASCII 框图
             return (
-              <SyntaxHighlighter
-                style={oneDark}
-                language={match[1]}
-                PreTag="div"
-                customStyle={{
-                  margin: '12px 0', borderRadius: '10px', fontSize: '12px',
-                  background: 'rgba(0,0,0,0.3)', border: '1px solid rgba(255,255,255,0.04)',
+              <pre
+                style={{
+                  margin: '12px 0',
+                  padding: '12px 14px',
+                  borderRadius: '10px',
+                  fontSize: '12px',
+                  lineHeight: 1.6,
+                  background: 'rgba(0,0,0,0.3)',
+                  border: '1px solid rgba(255,255,255,0.04)',
+                  color: 'rgba(255,255,255,0.85)',
+                  fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
+                  whiteSpace: 'pre',
+                  overflowX: 'auto',
                 }}
               >
-                {String(children).replace(/\n$/, '')}
-              </SyntaxHighlighter>
+                {text}
+              </pre>
             );
           },
+          pre: ({ children }) => <>{children}</>,
           hr: () => <hr className="my-4" style={{ borderColor: 'rgba(255,255,255,0.06)' }} />,
           img: ({ src, alt }) => (
             <img src={src} alt={alt || ''} className="max-w-full rounded-lg my-3" style={{ maxHeight: '400px', border: '1px solid rgba(255,255,255,0.06)' }} />
@@ -708,6 +928,7 @@ export function DocBrowser({
   onSetPrimary,
   onTogglePin,
   onDeleteEntry,
+  onUpdateEntryTags,
   onMoveEntry,
   onSaveContent,
   loadContent,
@@ -738,6 +959,7 @@ export function DocBrowser({
   const [editMode, setEditMode] = useState(false);
   const [editContent, setEditContent] = useState('');
   const [saving, setSaving] = useState(false);
+  const [tagEditEntry, setTagEditEntry] = useState<DocBrowserEntry | null>(null);
   // 左侧面板宽度（可拖拽调整，sessionStorage 持久化）
   const [sidebarWidth, setSidebarWidth] = useState<number>(() => {
     const saved = sessionStorage.getItem('doc-browser-sidebar-width');
@@ -1252,6 +1474,51 @@ export function DocBrowser({
                   置顶
                 </span>
               )}
+              {(() => {
+                const sel = entries.find(e => e.id === selectedEntryId);
+                if (!sel || sel.isFolder || (sel.tags?.length ?? 0) === 0) return null;
+                return (
+                  <>
+                    {sel.tags!.slice(0, 4).map(tag => (
+                      <span key={tag} className="text-[10px] px-2 py-0.5 rounded-full flex-shrink-0"
+                        style={{
+                          background: 'rgba(168,85,247,0.08)',
+                          color: 'rgba(216,180,254,0.92)',
+                          border: '1px solid rgba(168,85,247,0.16)',
+                        }}>
+                        #{tag}
+                      </span>
+                    ))}
+                    {sel.tags!.length > 4 && (
+                      <span className="text-[10px] flex-shrink-0" style={{ color: 'var(--text-muted)' }}>
+                        +{sel.tags!.length - 4}
+                      </span>
+                    )}
+                  </>
+                );
+              })()}
+              {(() => {
+                const sel = entries.find(e => e.id === selectedEntryId);
+                if (!sel || sel.isFolder) return null;
+                return (
+                  <div className="ml-auto flex items-center gap-3 min-w-0">
+                    <span
+                      className="text-[10px] whitespace-nowrap"
+                      style={{ color: 'var(--text-muted)' }}
+                      title={`最后更新时间：${formatMetaTime(sel.updatedAt)}`}
+                    >
+                      更新于 {formatMetaTime(sel.updatedAt)}
+                    </span>
+                    <span
+                      className="text-[10px] truncate max-w-[160px]"
+                      style={{ color: 'var(--text-muted)' }}
+                      title={`更新者：${sel.updatedByName || '未知用户'}`}
+                    >
+                      更新者 {sel.updatedByName || '未知用户'}
+                    </span>
+                  </div>
+                );
+              })()}
               {/* 当前文件最近更新徽标 + 订阅来源版本信息（git 类订阅独有） */}
               {(() => {
                 const sel = entries.find(e => e.id === selectedEntryId);
@@ -1355,7 +1622,7 @@ export function DocBrowser({
                 const cfg = getFileTypeConfig(sel.title, sel.contentType);
                 if (!cfg.editable) return null;
                 return (
-                  <div className="ml-auto flex items-center gap-1.5">
+                  <div className="flex items-center gap-1.5">
                     {editMode ? (
                       <>
                         <button
@@ -1486,9 +1753,20 @@ export function DocBrowser({
             });
             if (confirmed) onDeleteEntry(entryId);
           } : undefined}
+          onEditTags={onUpdateEntryTags ? (entry) => setTagEditEntry(entry) : undefined}
           onGenerateSubtitle={onGenerateSubtitle}
           onReprocess={onReprocess}
           onClose={() => setContextMenu(null)}
+        />
+      )}
+
+      {tagEditEntry && onUpdateEntryTags && (
+        <EntryTagEditor
+          entry={tagEditEntry}
+          onClose={() => setTagEditEntry(null)}
+          onSave={async (tags) => {
+            await onUpdateEntryTags(tagEditEntry.id, tags);
+          }}
         />
       )}
 

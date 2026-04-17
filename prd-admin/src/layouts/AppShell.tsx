@@ -62,6 +62,8 @@ import { getAdminNotifications, handleAdminNotification, handleAllAdminNotificat
 import type { AdminNotificationItem } from '@/services/contracts/notifications';
 import { GlobalDefectSubmitDialog, DefectSubmitButton } from '@/components/ui/GlobalDefectSubmitDialog';
 import { useGlobalDefectStore } from '@/stores/globalDefectStore';
+import { ChangelogBell } from '@/components/changelog/ChangelogBell';
+import { useChangelogStore, selectUnreadCount } from '@/stores/changelogStore';
 
 type NavItem = { key: string; appKey: string; label: string; shortLabel: string; icon: React.ReactNode; description?: string; group?: string | null };
 
@@ -218,6 +220,12 @@ export default function AppShell() {
   const [notificationDialogOpen, setNotificationDialogOpen] = useState(false);
   const [notifications, setNotifications] = useState<AdminNotificationItem[]>([]);
   const [notificationsLoading, setNotificationsLoading] = useState(false);
+  // 更新中心：未读数（用于桌面 dropdown 中的徽章）+ 拉取本周更新
+  const changelogUnread = useChangelogStore(selectUnreadCount);
+  const loadChangelogCurrentWeek = useChangelogStore((s) => s.loadCurrentWeek);
+  useEffect(() => {
+    void loadChangelogCurrentWeek();
+  }, [loadChangelogCurrentWeek]);
   const [dismissedToastIds, setDismissedToastIds] = useState<Set<string>>(new Set());
   const [toastCollapsed, setToastCollapsed] = useState(false);
   const [toastHovering, setToastHovering] = useState(false);
@@ -299,25 +307,6 @@ export default function AppShell() {
 
     return items;
   }, [menuCatalog, menuCatalogLoaded, navOrder]);
-
-  // 头像面板菜单项（无 group 的项）
-  const avatarPanelItems: NavItem[] = useMemo(() => {
-    if (!menuCatalogLoaded || !Array.isArray(menuCatalog)) return [];
-    return menuCatalog
-      .filter((m) => !m.group)
-      .map((m) => {
-        const IconComp = iconMap[m.icon] ?? LayoutDashboard;
-        return {
-          key: m.path,
-          appKey: m.appKey,
-          label: m.label,
-          shortLabel: getShortLabel(m.appKey, m.label),
-          icon: <IconComp size={16} />,
-          description: m.description ?? undefined,
-          group: null,
-        };
-      });
-  }, [menuCatalog, menuCatalogLoaded]);
 
   // 首页独立项（不归属任何分组）
   const homeItem = useMemo(() => visibleItems.find((it) => it.group === 'home'), [visibleItems]);
@@ -593,6 +582,7 @@ export default function AppShell() {
               {visibleItems.find((it) => it.key === activeKey)?.label || 'PRD Agent'}
             </span>
           </div>
+          <ChangelogBell size={18} compact />
           <button
             type="button"
             onClick={() => {
@@ -1019,15 +1009,6 @@ export default function AppShell() {
                 <DropdownMenu.Item
                   className="flex items-center gap-3 px-3 py-2.5 rounded-[10px] cursor-pointer outline-none transition-colors hover:bg-white/6"
                   style={{ color: 'var(--text-secondary)' }}
-                  onSelect={() => setAvatarOpen(true)}
-                >
-                  <Settings size={16} className="shrink-0" />
-                  <span className="text-[13px]">修改头像</span>
-                </DropdownMenu.Item>
-
-                <DropdownMenu.Item
-                  className="flex items-center gap-3 px-3 py-2.5 rounded-[10px] cursor-pointer outline-none transition-colors hover:bg-white/6"
-                  style={{ color: 'var(--text-secondary)' }}
                   onSelect={() => {
                     setNotificationDialogOpen(true);
                     void loadNotifications({ silent: true });
@@ -1048,24 +1029,34 @@ export default function AppShell() {
                 <DropdownMenu.Item
                   className="flex items-center gap-3 px-3 py-2.5 rounded-[10px] cursor-pointer outline-none transition-colors hover:bg-white/6"
                   style={{ color: 'var(--text-secondary)' }}
+                  onSelect={() => navigate('/changelog')}
+                >
+                  <Sparkles size={16} className="shrink-0" />
+                  <span className="text-[13px]">更新中心</span>
+                  {changelogUnread > 0 && (
+                    <span
+                      className="ml-auto rounded-full px-2 py-0.5 text-[10px] font-bold"
+                      style={{ background: 'linear-gradient(135deg, rgba(251, 191, 36, 0.32), rgba(249, 115, 22, 0.32))', color: '#fbbf24' }}
+                    >
+                      {changelogUnread > 9 ? '9+' : changelogUnread}
+                    </span>
+                  )}
+                </DropdownMenu.Item>
+
+                <DropdownMenu.Item
+                  className="flex items-center gap-3 px-3 py-2.5 rounded-[10px] cursor-pointer outline-none transition-colors hover:bg-white/6"
+                  style={{ color: 'var(--text-secondary)' }}
                   onSelect={() => navigate('/data-transfers')}
                 >
                   <Database size={16} className="shrink-0" />
                   <span className="text-[13px]">数据分享</span>
                 </DropdownMenu.Item>
 
-                {/* 动态：从后端菜单目录中加载头像面板项 */}
-                {avatarPanelItems.map((it) => (
-                  <DropdownMenu.Item
-                    key={it.key}
-                    className="flex items-center gap-3 px-3 py-2.5 rounded-[10px] cursor-pointer outline-none transition-colors hover:bg-white/6"
-                    style={{ color: 'var(--text-secondary)' }}
-                    onSelect={() => navigate(it.key)}
-                  >
-                    <span className="shrink-0">{it.icon}</span>
-                    <span className="text-[13px]">{it.label}</span>
-                  </DropdownMenu.Item>
-                ))}
+                {/* 注意：工具类菜单项（网页托管/知识库/涌现/提示词/实验室/自动化/快捷指令/PR 审查/请求日志 等）
+                    已从用户菜单移除。它们的入口现在是：
+                    - 首页「实用工具」区（AgentLauncherPage staticUtilities）
+                    - 百宝箱 BUILTIN_TOOLS
+                    原则：用户菜单只保留「账户 + 系统 + 退出」三类，不承载工具导航。 */}
 
                 <DropdownMenu.Item
                   className="flex items-center gap-3 px-3 py-2.5 rounded-[10px] cursor-pointer outline-none transition-colors hover:bg-white/6"

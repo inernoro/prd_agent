@@ -1,10 +1,12 @@
-import fs from 'node:fs';
 import path from 'node:path';
-import type { CdsState, BranchEntry, BuildProfile, BuildProfileOverride, RoutingRule, OperationLog, InfraService, ExecutorNode, DataMigration, CdsPeer } from '../types.js';
+import type { CdsState, BranchEntry, BuildProfile, BuildProfileOverride, RoutingRule, OperationLog, InfraService, ExecutorNode, DataMigration, CdsPeer, Project } from '../types.js';
+import type { StateBackingStore } from '../infra/state-store/backing-store.js';
+import { JsonStateBackingStore, MAX_STATE_BACKUPS as JSON_MAX_BACKUPS } from '../infra/state-store/json-backing-store.js';
+import { sealToken, unsealToken, isSealedSecret } from '../infra/secret-seal.js';
 
 const MAX_LOGS_PER_BRANCH = 10;
-/** Max rolling backups of state.json kept on disk. See design.cds-resilience.md §5. */
-const MAX_STATE_BACKUPS = 10;
+/** Max rolling backups of state.json kept on disk. Re-exported from the backing store so existing callers keep working. */
+const MAX_STATE_BACKUPS = JSON_MAX_BACKUPS;
 
 function emptyState(): CdsState {
   return {
@@ -23,14 +25,53 @@ function emptyState(): CdsState {
 export class StateService {
   private state: CdsState = emptyState();
   private readonly filePath: string;
+  /** P3: the persistence seam. Mutable — setBackingStore() swaps it
+   *  at runtime for the "switch storage mode" flow in the Settings
+   *  panel (P4 Part 18 D.3). */
+  private backingStore: StateBackingStore;
   /** Project slug derived from repoRoot directory name, used for cache isolation */
   readonly projectSlug: string;
 
-  constructor(filePath: string, repoRoot?: string) {
+  constructor(filePath: string, repoRoot?: string, backingStore?: StateBackingStore) {
     this.filePath = filePath;
     // Derive project slug from repoRoot (e.g. /root/inernoro/prd_agent → prd-agent)
     const dirName = path.basename(repoRoot || path.dirname(path.dirname(filePath)));
     this.projectSlug = dirName.replace(/[^a-zA-Z0-9-]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '').toLowerCase() || 'default';
+    // Default backing store is the JSON implementation that preserves
+    // the pre-P3 on-disk format (atomic write + rolling backups). P4
+    // Part 18 Phase D allows injecting MongoStateBackingStore here
+    // when CDS_STORAGE_MODE=mongo, and supports runtime swaps via
+    // setBackingStore().
+    this.backingStore = backingStore ?? new JsonStateBackingStore(filePath);
+  }
+
+  /**
+   * P4 Part 18 (D.3): swap the backing store at runtime. Used by the
+   * "switch storage mode" flow in the Settings panel to go from
+   * json → mongo without restarting CDS. The new backing store must
+   * already be initialized (for mongo, init() must have resolved)
+   * AND must contain the caller's current state — typically the
+   * caller will do `newStore.seedIfEmpty(stateService.getState())`
+   * before calling this, so the mongo write path has the up-to-date
+   * snapshot.
+   *
+   * After this call every subsequent save() goes to the new store.
+   * The old store is NOT closed here; callers are responsible for
+   * tearing it down if needed (usually file-based stores just let
+   * the fd go out of scope).
+   */
+  setBackingStore(next: StateBackingStore): void {
+    this.backingStore = next;
+  }
+
+  /**
+   * P4 Part 18 (D.3): expose the current backing store so the
+   * Settings panel API can surface its `kind` tag and — when the
+   * store is mongo — call flush() / isHealthy() without having to
+   * import the concrete class here.
+   */
+  getBackingStore(): StateBackingStore {
+    return this.backingStore;
   }
 
   static slugify(branch: string): string {
@@ -41,43 +82,11 @@ export class StateService {
       .toLowerCase();
   }
 
-  /**
-   * Try to parse a state file. On JSON error, attempt to recover from the most
-   * recent .bak.* file. Returns the loaded state, or null if nothing is readable.
-   */
-  private tryLoadStateFile(): CdsState | null {
-    if (fs.existsSync(this.filePath)) {
-      try {
-        const raw = fs.readFileSync(this.filePath, 'utf-8');
-        return JSON.parse(raw) as CdsState;
-      } catch (err) {
-        console.error(`[state] primary state.json unreadable: ${(err as Error).message}`);
-        console.error('[state] attempting to recover from rolling backups...');
-      }
-    }
-    // Fallback: scan .bak.* files, newest first
-    const dir = path.dirname(this.filePath);
-    const base = path.basename(this.filePath);
-    if (!fs.existsSync(dir)) return null;
-    const backups = fs.readdirSync(dir)
-      .filter(f => f.startsWith(`${base}.bak.`))
-      .sort()
-      .reverse();
-    for (const bak of backups) {
-      try {
-        const raw = fs.readFileSync(path.join(dir, bak), 'utf-8');
-        const parsed = JSON.parse(raw) as CdsState;
-        console.warn(`[state] RECOVERED state from backup ${bak}`);
-        return parsed;
-      } catch {
-        // try next backup
-      }
-    }
-    return null;
-  }
-
   load(): void {
-    const loaded = this.tryLoadStateFile();
+    // P3: delegate to the backing store. JsonStateBackingStore preserves
+    // the legacy file-I/O + .bak.* recovery semantics; Mongo/DualWrite
+    // stores land in P3 Part 2/3.
+    const loaded = this.backingStore.load();
     if (loaded) {
       this.state = loaded;
       // Migrate older state files
@@ -93,12 +102,23 @@ export class StateService {
       if (!this.state.executors) this.state.executors = {};
       if (!this.state.dataMigrations) this.state.dataMigrations = [];
       if (!this.state.cdsPeers) this.state.cdsPeers = [];
+      if (!this.state.projects) this.state.projects = [];
       // Migrate: backfill cacheMounts for existing build profiles
       this.migrateCacheMounts();
       // Migrate: ensure deployModes field exists on profiles (no-op if already present)
       this.migrateDeployModes();
+      // Migrate: ensure at least one "legacy default" project exists to
+      // wrap all pre-P4 data. See migrateProjects() for the rules.
+      this.migrateProjects();
+      // Migrate: tag every pre-P4 branch/profile/infra/routing entry with
+      // the legacy default projectId. See migrateProjectScoping().
+      this.migrateProjectScoping();
     } else {
       this.state = emptyState();
+      // Fresh install still needs a default project so the UI has
+      // something to render on the first boot.
+      this.migrateProjects();
+      // (nothing to scope on a fresh install — collections are empty)
     }
   }
 
@@ -154,6 +174,93 @@ export class StateService {
     // transform deploy mode data (e.g., rename keys, merge formats).
   }
 
+  /**
+   * P4 Part 1 migration: ensure at least one Project exists.
+   *
+   * CDS v3.2 had no concept of projects — state.json was implicitly
+   * single-tenant. v4 introduces multi-project support, but we never
+   * want to drop pre-existing data during upgrade. So on first load
+   * after the upgrade, we create a "legacy default" project that
+   * wraps everything and mark it with legacyFlag=true.
+   *
+   * The legacy project derives its name/slug from StateService.projectSlug
+   * so multi-CDS deployments with different repoRoot directories don't
+   * accidentally share a project name. If projects already exist (either
+   * from a prior migration run or because Part 2 let the user create
+   * them), this method is a no-op.
+   *
+   * Real project CRUD arrives in P4 Part 2, which will replace the
+   * hardcoded 'default' id with proper UUIDs.
+   */
+  private migrateProjects(): void {
+    if (!this.state.projects) this.state.projects = [];
+    if (this.state.projects.length > 0) return;
+
+    const now = new Date().toISOString();
+    this.state.projects.push({
+      id: 'default',
+      slug: this.projectSlug,
+      name: this.projectSlug,
+      description: '默认项目 — 由 P4 Part 1 迁移自动创建，包含所有 v3.2 时期的分支和配置',
+      kind: 'git',
+      legacyFlag: true,
+      createdAt: now,
+      updatedAt: now,
+    });
+    this.save();
+  }
+
+  /**
+   * P4 Part 3a migration: stamp every existing branch / build profile /
+   * infra service / routing rule with the legacy default projectId
+   * ('default') so that consumers can filter by project without
+   * special-casing pre-P4 data.
+   *
+   * Idempotent: entries already carrying a projectId are left alone.
+   * This lets the migration run safely on every boot, even after
+   * P4 Part 2 users start creating non-legacy projects (their entries
+   * will already have projectId set by the route that creates them).
+   *
+   * Invariant enforced after this runs: every branch / profile / infra /
+   * rule has a non-empty projectId. Part 3b can then rely on that
+   * invariant to add projectId filter middleware without null checks.
+   */
+  private migrateProjectScoping(): void {
+    const legacyId = 'default';
+    let changed = false;
+
+    // Branches
+    for (const branch of Object.values(this.state.branches || {})) {
+      if (!branch.projectId) {
+        branch.projectId = legacyId;
+        changed = true;
+      }
+    }
+    // Build profiles
+    for (const profile of this.state.buildProfiles || []) {
+      if (!profile.projectId) {
+        profile.projectId = legacyId;
+        changed = true;
+      }
+    }
+    // Infra services
+    for (const infra of this.state.infraServices || []) {
+      if (!infra.projectId) {
+        infra.projectId = legacyId;
+        changed = true;
+      }
+    }
+    // Routing rules
+    for (const rule of this.state.routingRules || []) {
+      if (!rule.projectId) {
+        rule.projectId = legacyId;
+        changed = true;
+      }
+    }
+
+    if (changed) this.save();
+  }
+
   /** Listeners notified after every save() */
   private onSaveListeners: Array<() => void> = [];
 
@@ -179,64 +286,17 @@ export class StateService {
    * See doc/design.cds-resilience.md §5.
    */
   save(): void {
-    const dir = path.dirname(this.filePath);
-    if (!fs.existsSync(dir)) {
-      fs.mkdirSync(dir, { recursive: true });
-    }
+    // P3: delegate physical persistence to the backing store. The atomic
+    // write + .bak.* rotation semantics that used to live inline now live
+    // in JsonStateBackingStore.save(); swapping to MongoStateBackingStore
+    // in P3 Part 2 keeps this code path untouched.
+    this.backingStore.save(this.state);
 
-    const serialized = JSON.stringify(this.state, null, 2);
-    // Unique tmp path per write — two concurrent saves (e.g. `tsx watch`
-    // reloading while a heartbeat triggers a background save) must not race
-    // on the same tmp file, otherwise one process's rename will fail with
-    // ENOENT because the other already renamed it. Seen in production on
-    // B's CDS after a hot-reload while executor heartbeats were firing.
-    const tmpPath = `${this.filePath}.tmp.${process.pid}.${Date.now()}`;
-
-    // Atomic write: tmp → fsync → rename
-    const fd = fs.openSync(tmpPath, 'w');
-    try {
-      fs.writeSync(fd, serialized);
-      fs.fsyncSync(fd);
-    } finally {
-      fs.closeSync(fd);
-    }
-    fs.renameSync(tmpPath, this.filePath);
-
-    // Rolling backup (best-effort; failures don't fail the save)
-    try {
-      this.rollBackups(serialized);
-    } catch (err) {
-      console.warn(`[state] backup rotation failed: ${(err as Error).message}`);
-    }
-
-    // Notify listeners
+    // Notify listeners (this is *not* part of the backing store contract
+    // because listeners are a StateService concern — they run after
+    // logical state changes, not every physical write).
     for (const fn of this.onSaveListeners) {
       try { fn(); } catch { /* ignore */ }
-    }
-  }
-
-  /**
-   * Write a .bak.<timestamp> snapshot and prune old backups.
-   * We use the already-serialized string to avoid double serialization.
-   */
-  private rollBackups(serialized: string): void {
-    const dir = path.dirname(this.filePath);
-    const base = path.basename(this.filePath);
-    const stamp = new Date().toISOString().replace(/[:.]/g, '-');
-    const backupPath = path.join(dir, `${base}.bak.${stamp}`);
-    fs.writeFileSync(backupPath, serialized);
-
-    // Prune: keep MAX_STATE_BACKUPS newest, delete the rest
-    const backups = fs.readdirSync(dir)
-      .filter(f => f.startsWith(`${base}.bak.`))
-      .sort()  // ISO timestamps sort chronologically
-      .reverse();
-    for (let i = MAX_STATE_BACKUPS; i < backups.length; i++) {
-      try {
-        fs.unlinkSync(path.join(dir, backups[i]));
-      } catch {
-        // ignore individual deletion failures
-      }
     }
   }
 
@@ -258,6 +318,9 @@ export class StateService {
     if (this.state.branches[entry.id]) {
       throw new Error(`分支 "${entry.id}" 已存在`);
     }
+    // P4 Part 3a: stamp a default projectId when the caller didn't set
+    // one so the project-scoped queries always have a value to match.
+    if (!entry.projectId) entry.projectId = 'default';
     this.state.branches[entry.id] = entry;
   }
 
@@ -417,6 +480,8 @@ export class StateService {
   }
 
   addRoutingRule(rule: RoutingRule): void {
+    // P4 Part 3a: default projectId for the legacy path.
+    if (!rule.projectId) rule.projectId = 'default';
     this.state.routingRules.push(rule);
     this.state.routingRules.sort((a, b) => a.priority - b.priority);
   }
@@ -446,6 +511,7 @@ export class StateService {
     if (this.state.buildProfiles.some(p => p.id === profile.id)) {
       throw new Error(`构建配置 "${profile.id}" 已存在`);
     }
+    if (!profile.projectId) profile.projectId = 'default';
     this.state.buildProfiles.push(profile);
   }
 
@@ -496,6 +562,302 @@ export class StateService {
     }
   }
 
+  // ── Projects (P4 Part 1: read-only list, Part 2 adds mutation) ──
+
+  /**
+   * Returns the full projects list. After migration runs during load(),
+   * this is guaranteed to have at least one entry (the legacy default).
+   */
+  getProjects(): Project[] {
+    return this.state.projects || [];
+  }
+
+  /** Look up a project by id. Returns undefined when not found. */
+  getProject(id: string): Project | undefined {
+    return (this.state.projects || []).find((p) => p.id === id);
+  }
+
+  /**
+   * Find the "legacy default" project — the one migrateProjects() created
+   * for pre-P4 data. There is at most one of these per CdsState.
+   *
+   * Helper for the projects router which needs a stable fallback when
+   * an API path that carries no projectId is hit. P4 Part 3 replaces the
+   * fallback with an explicit projectId filter on every caller.
+   */
+  getLegacyProject(): Project | undefined {
+    return (this.state.projects || []).find((p) => p.legacyFlag === true);
+  }
+
+  /**
+   * Add a new project. Will be used by P4 Part 2 when the real
+   * `POST /api/projects` endpoint is wired up. Part 1 only ships the
+   * method (no HTTP surface) so tests can exercise the storage layer
+   * without waiting for Part 2's route work.
+   */
+  addProject(project: Project): void {
+    if (!this.state.projects) this.state.projects = [];
+    if (this.state.projects.some((p) => p.id === project.id)) {
+      throw new Error(`Project with id '${project.id}' already exists`);
+    }
+    if (this.state.projects.some((p) => p.slug === project.slug)) {
+      throw new Error(`Project with slug '${project.slug}' already exists`);
+    }
+    this.state.projects.push(project);
+    this.save();
+  }
+
+  /**
+   * Remove a project by id. The legacy default project cannot be
+   * removed — it is the anchor for pre-P4 data and deleting it would
+   * orphan every branch/profile/infra entry.
+   *
+   * P4 Part 17 (G8 fix): cascade-removes branches, build profiles,
+   * infra services, and routing rules that belong to this project.
+   * Container teardown still happens at the route layer (it needs
+   * docker shell access); this method just keeps state.json clean.
+   *
+   * Returns a summary of what was removed so the caller (route) can
+   * report it to the operator.
+   */
+  removeProject(id: string): {
+    branches: string[];
+    buildProfiles: string[];
+    infraServices: string[];
+    routingRules: string[];
+  } {
+    if (!this.state.projects) {
+      return { branches: [], buildProfiles: [], infraServices: [], routingRules: [] };
+    }
+    const project = this.state.projects.find((p) => p.id === id);
+    if (!project) {
+      return { branches: [], buildProfiles: [], infraServices: [], routingRules: [] };
+    }
+    if (project.legacyFlag) {
+      throw new Error('Cannot remove the legacy default project');
+    }
+
+    // ── Cascade collection (compute before mutating) ──
+    // Use the explicit projectId match; we DO NOT want to also catch
+    // entries with a missing projectId (those belong to the legacy
+    // default project and must not be removed).
+    const branchesToRemove = Object.values(this.state.branches || {})
+      .filter((b) => b.projectId === id)
+      .map((b) => b.id);
+    const buildProfilesToRemove = (this.state.buildProfiles || [])
+      .filter((p) => p.projectId === id)
+      .map((p) => p.id);
+    const infraServicesToRemove = (this.state.infraServices || [])
+      .filter((s) => s.projectId === id)
+      .map((s) => s.id);
+    const routingRulesToRemove = (this.state.routingRules || [])
+      .filter((r) => r.projectId === id)
+      .map((r) => r.id);
+
+    // ── Cascade mutate ──
+    for (const bid of branchesToRemove) {
+      delete this.state.branches[bid];
+      // Also drop any operation logs tied to this branch — reuse the
+      // existing removeLogs() helper which knows the storage layout.
+      this.removeLogs(bid);
+    }
+    if (this.state.buildProfiles) {
+      this.state.buildProfiles = this.state.buildProfiles.filter((p) => p.projectId !== id);
+    }
+    if (this.state.infraServices) {
+      this.state.infraServices = this.state.infraServices.filter((s) => s.projectId !== id);
+    }
+    if (this.state.routingRules) {
+      this.state.routingRules = this.state.routingRules.filter((r) => r.projectId !== id);
+    }
+
+    this.state.projects = this.state.projects.filter((p) => p.id !== id);
+    this.save();
+
+    return {
+      branches: branchesToRemove,
+      buildProfiles: buildProfilesToRemove,
+      infraServices: infraServicesToRemove,
+      routingRules: routingRulesToRemove,
+    };
+  }
+
+  /**
+   * Patch an existing project's mutable fields. Used by future rename /
+   * description-edit UI in P4 Part 2, and by P4 Part 18 (G1) to record
+   * the async clone lifecycle (repoPath / cloneStatus / cloneError).
+   */
+  updateProject(
+    id: string,
+    updates: Partial<
+      Pick<Project, 'name' | 'description' | 'gitRepoUrl' | 'repoPath' | 'cloneStatus' | 'cloneError'>
+    >,
+  ): void {
+    if (!this.state.projects) return;
+    const idx = this.state.projects.findIndex((p) => p.id === id);
+    if (idx < 0) return;
+    const current = this.state.projects[idx];
+    this.state.projects[idx] = {
+      ...current,
+      ...updates,
+      updatedAt: new Date().toISOString(),
+    };
+    this.save();
+  }
+
+  /**
+   * P4 Part 18 (Phase E): GitHub Device Flow token accessors.
+   *
+   * The token lives in state.githubDeviceAuth as a single-slot
+   * snapshot (one GitHub connection per CDS install). Orthogonal
+   * to auth-service which runs the CDS session flow.
+   */
+  getGithubDeviceAuth(): import('../types.js').GitHubDeviceAuth | undefined {
+    const stored = this.state.githubDeviceAuth;
+    if (!stored) return undefined;
+    // FU-05: if the token field was sealed (AES-256-GCM) on the way
+    // in, unseal it here so consumers always see plaintext. Legacy
+    // plaintext tokens short-circuit in unsealToken(). Decryption
+    // failures (key rotated, key removed, tampered state.json) are
+    // logged and returned as "no auth" so the UI can re-prompt.
+    const rawToken = (stored as { token: unknown }).token;
+    if (isSealedSecret(rawToken)) {
+      try {
+        const plain = unsealToken(rawToken);
+        return { ...stored, token: plain } as import('../types.js').GitHubDeviceAuth;
+      } catch (err) {
+        // eslint-disable-next-line no-console
+        console.warn(
+          '[state] failed to unseal github device token (CDS_SECRET_KEY rotated?):',
+          (err as Error).message,
+        );
+        return undefined;
+      }
+    }
+    return stored;
+  }
+  /**
+   * UF-01 hardening: set + persist, then await the backing store flush
+   * (no-op for JsonBackingStore which is sync, real await for
+   * MongoStateBackingStore whose save() is write-behind). Callers on
+   * the Device Flow completion path use this to guarantee the token
+   * survives a CDS crash immediately after oauth — without the flush
+   * the mongo upsert could still be in-flight when the user clicks
+   * "clone" and a racing crash would lose the snapshot.
+   *
+   * Throws if the backing store save fails, so the caller (oauth
+   * device-poll) can surface a real error to the UI instead of a
+   * fake "ready" status.
+   */
+  async setGithubDeviceAuth(auth: import('../types.js').GitHubDeviceAuth | null): Promise<void> {
+    if (auth) {
+      // FU-05: seal the token field with AES-256-GCM before writing
+      // to state.json. When CDS_SECRET_KEY is unset, sealToken() is
+      // a no-op pass-through and we keep the legacy plaintext shape.
+      // The rest of the envelope (login/name/avatarUrl/scopes) stays
+      // unsealed so a leaked state.json still lets operators see
+      // WHICH github account was connected, just not the token.
+      const sealed = sealToken(auth.token);
+      this.state.githubDeviceAuth = { ...auth, token: sealed as unknown as string };
+    } else {
+      delete this.state.githubDeviceAuth;
+    }
+    this.save();
+    // If the backing store exposes a flush() method (Mongo write-behind),
+    // await it so any upsert failure surfaces here rather than getting
+    // swallowed on the async chain. JsonBackingStore has no flush(), so
+    // this is a no-op there.
+    const maybeFlush = (this.backingStore as { flush?: () => Promise<void> }).flush;
+    if (typeof maybeFlush === 'function') {
+      await maybeFlush.call(this.backingStore);
+    }
+  }
+
+  /**
+   * Resolve the absolute git repo root to use for operations on a given
+   * project. Returns `project.repoPath` when set (post-G1 multi-repo),
+   * else `fallback` (typically `CdsConfig.repoRoot` — the single host
+   * bind-mounted repo that the legacy 'default' project has used since
+   * day one).
+   *
+   * Centralizing this resolution in one helper means every worktree /
+   * branch call-site can stay agnostic of whether a project has been
+   * cloned into its own directory or is still piggy-backing on the
+   * legacy repoRoot.
+   *
+   * When projectId is falsy (e.g. a pre-P4 branch with no projectId
+   * field) we fall back to `fallback` directly — same reasoning as
+   * getBranchesForProject treating missing projectId as 'default'.
+   */
+  getProjectRepoRoot(projectId: string | undefined, fallback: string): string {
+    if (!projectId) return fallback;
+    const project = this.getProject(projectId);
+    return project?.repoPath || fallback;
+  }
+
+  // ── FU-04: worktree layout migration bookkeeping ──
+
+  /** Current layout version stamped in state.json (undefined = legacy flat). */
+  getWorktreeLayoutVersion(): number | undefined {
+    return this.state.worktreeLayoutVersion;
+  }
+
+  /** Bump the stamp so subsequent boots skip the one-shot migration. */
+  setWorktreeLayoutVersion(version: number): void {
+    this.state.worktreeLayoutVersion = version;
+  }
+
+  /**
+   * FU-04 helper: rewrite a branch's worktree path. Used by the
+   * migration to point legacy entries at their new nested location
+   * without going through the full updateBranchMeta() API (which
+   * doesn't know about worktreePath, intentionally — it's a
+   * structural field, not user metadata).
+   */
+  setBranchWorktreePath(branchId: string, worktreePath: string): void {
+    const branch = this.state.branches[branchId];
+    if (!branch) return;
+    branch.worktreePath = worktreePath;
+  }
+
+  // ── Project-scoped views (P4 Part 3a) ──
+  //
+  // These helpers return slices of the existing collections filtered by
+  // projectId. They are read-only wrappers; the underlying state.json
+  // shape stays the same (flat collections), which means the existing
+  // legacy code paths (getAllBranches / getBuildProfiles etc.) continue
+  // to work unchanged. Part 3b adds project-scoped routes that call
+  // these helpers via a middleware that injects `req.project`.
+  //
+  // Contract: a missing projectId on an entry is treated as 'default'.
+  // The migration above ensures that case doesn't happen in practice,
+  // but the helpers are defensive so unit tests can exercise them
+  // against handcrafted state without running through load().
+
+  getBranchesForProject(projectId: string): BranchEntry[] {
+    return Object.values(this.state.branches || {}).filter(
+      (b) => (b.projectId || 'default') === projectId,
+    );
+  }
+
+  getBuildProfilesForProject(projectId: string): BuildProfile[] {
+    return (this.state.buildProfiles || []).filter(
+      (p) => (p.projectId || 'default') === projectId,
+    );
+  }
+
+  getInfraServicesForProject(projectId: string): InfraService[] {
+    return (this.state.infraServices || []).filter(
+      (s) => (s.projectId || 'default') === projectId,
+    );
+  }
+
+  getRoutingRulesForProject(projectId: string): RoutingRule[] {
+    return (this.state.routingRules || []).filter(
+      (r) => (r.projectId || 'default') === projectId,
+    );
+  }
+
   // ── Custom environment variables ──
 
   getCustomEnv(): Record<string, string> {
@@ -528,6 +890,7 @@ export class StateService {
     if (this.state.infraServices.some(s => s.id === service.id)) {
       throw new Error(`基础设施服务 "${service.id}" 已存在`);
     }
+    if (!service.projectId) service.projectId = 'default';
     this.state.infraServices.push(service);
   }
 

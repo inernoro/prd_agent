@@ -1,0 +1,1 @@
+| fix | prd-api | ExchangeController 修复 JsonSerializerOptions 未指定 TypeInfoResolver 导致 JsonArray 原始类型序列化抛异常（原因：project 启用了 AOT source-gen，裸 `new JsonSerializerOptions { WriteIndented = true }` 缺失 resolver） |

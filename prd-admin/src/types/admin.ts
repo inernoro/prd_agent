@@ -40,6 +40,17 @@ export type Platform = {
   apiUrl: string;
   apiKeyMasked: string;
   enabled: boolean;
+  /**
+   * 平台种类：
+   *   "real" (默认) — 真实的 LLMPlatform 记录
+   *   "exchange"   — 由 ModelExchange 虚拟化的中继平台
+   * 后端 GetPlatforms 会把两种混合返回。
+   */
+  kind?: 'real' | 'exchange';
+  /** 是否为虚拟平台（便捷布尔） */
+  isVirtual?: boolean;
+  /** 仅 kind=="exchange" 有值 */
+  transformerType?: string;
 };
 
 export type Model = {

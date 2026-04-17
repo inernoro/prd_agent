@@ -25,6 +25,7 @@ import { systemDialog } from '@/lib/systemDialog';
 import { toast } from '@/lib/toast';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import remarkBreaks from 'remark-breaks';
 import rehypeRaw from 'rehype-raw';
 import { LlmRequestDetailDialog } from '@/components/llm/LlmRequestDetailDialog';
 
@@ -111,7 +112,7 @@ function MessageMarkdown({ content }: { content: string }) {
   return (
     <div className="prd-md">
       <ReactMarkdown
-        remarkPlugins={[remarkGfm]}
+        remarkPlugins={[remarkGfm, remarkBreaks]}
         rehypePlugins={[rehypeRaw]}
         components={{
           a: ({ href, children, ...props }) => (

@@ -5,7 +5,10 @@ services:
     ports:
       - "5500:80"
     volumes:
-      # Per-branch nginx configs in conf.d/branches/, activated via symlink default.conf
+      # conf.d/default.conf 是 symlink，由部署模式决定指向哪个 branches/*.conf：
+      #   - 独立部署 (exec_dep.sh) → branches/_standalone.conf (真正的 /api → api:8080 反代)
+      #   - CDS 多分支模式 (exec_cds.sh) → branches/<branch>.conf (动态重指)
+      #   - 仓库默认状态 → branches/_disconnected.conf (CDS 未激活时的 502 兜底)
       - ./deploy/nginx/conf.d:/etc/nginx/conf.d:ro
       # 由 deploy.sh 从 GitHub Release 下载并解压到此目录
       - ./deploy/web/dist:/usr/share/nginx/html:ro
@@ -75,6 +78,13 @@ services:
       - ROOT_ACCESS_PASSWORD=${ROOT_ACCESS_PASSWORD:-}
       # Webhook 通知中「查看详情」链接的前端基地址（如 https://example.com）
       - App__FrontendBaseUrl=${FRONTEND_BASE_URL:-}
+      # GitHub OAuth Device Flow（PR Review Agent 使用）
+      # 管理员需在 GitHub 创建 OAuth App 并勾选 "Enable Device Flow"，
+      # 然后在宿主机 export 这两个变量（或写进同目录 .env 文件）。Device Flow 无需 Callback URL。
+      # 变量名沿用 ASP.NET Configuration 约定（节点分隔符 "__"），后端通过 IConfiguration["GitHubOAuth:ClientId"] 读取。
+      - GitHubOAuth__ClientId=${GitHubOAuth__ClientId:-}
+      - GitHubOAuth__ClientSecret=${GitHubOAuth__ClientSecret:-}
+      - GitHubOAuth__Scopes=${GitHubOAuth__Scopes:-}
     # 重要：此 API 容器建议只读，避免任何本地落盘（你这种“可写层 1MB”环境必开）
     read_only: true
     # 允许少量临时写入到内存（tmpfs），避免 .NET/HTTP 栈因无 /tmp 可写而异常；不会落到磁盘

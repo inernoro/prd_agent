@@ -78,6 +78,8 @@ export type DocumentEntry = {
   tags: string[];
   metadata: Record<string, string>;
   createdBy: string;
+  updatedBy?: string;
+  updatedByName?: string;
   // 同步字段
   sourceUrl?: string;
   syncIntervalMinutes?: number;

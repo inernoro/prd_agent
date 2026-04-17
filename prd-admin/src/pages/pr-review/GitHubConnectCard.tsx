@@ -2,13 +2,13 @@ import { useEffect, useState } from 'react';
 import {
   Github,
   LogOut,
-  Loader2,
   AlertTriangle,
   Copy,
   ExternalLink,
   CheckCircle2,
   X,
 } from 'lucide-react';
+import { MapSpinner } from '@/components/ui/VideoLoader';
 import { usePrReviewStore } from './usePrReviewStore';
 
 /**
@@ -31,7 +31,7 @@ export function GitHubConnectCard() {
   if (authLoading && !authStatus) {
     return (
       <div className="rounded-xl border border-white/10 bg-white/[0.03] p-5 flex items-center gap-3 text-white/60">
-        <Loader2 size={18} className="animate-spin" />
+        <MapSpinner size={18} />
         检查 GitHub 连接状态...
       </div>
     );
@@ -47,10 +47,14 @@ export function GitHubConnectCard() {
           <div className="font-semibold mb-1">尚未配置 GitHub OAuth App</div>
           <div className="text-amber-200/80 leading-relaxed">
             管理员需要先在 GitHub 创建 OAuth App，勾选{' '}
-            <code className="px-1 rounded bg-black/40">Enable Device Flow</code>，并设置环境变量{' '}
+            <code className="px-1 rounded bg-black/40">Enable Device Flow</code>，然后在宿主机（运行
+            docker compose 的机器）设置环境变量{' '}
             <code className="px-1 rounded bg-black/40">GitHubOAuth__ClientId</code>
-            （和可选 <code className="px-1 rounded bg-black/40">GitHubOAuth__ClientSecret</code>）。
-            Device Flow 不需要 Callback URL，本地/CDS/生产共用一套配置。
+            （和可选 <code className="px-1 rounded bg-black/40">GitHubOAuth__ClientSecret</code>），
+            推荐写入项目根目录的 <code className="px-1 rounded bg-black/40">.env</code> 文件，
+            docker compose 会自动加载；或写入 <code className="px-1 rounded bg-black/40">.bashrc</code>
+            后重开终端，再执行 <code className="px-1 rounded bg-black/40">./exec_dep.sh</code>
+            重启 api 容器使之生效。Device Flow 不需要 Callback URL，本地/CDS/生产共用一套配置。
           </div>
         </div>
       </div>
@@ -164,7 +168,7 @@ function DeviceFlowProgress({ deviceFlow, onCancel }: DeviceFlowProgressProps) {
       <div className="flex items-start justify-between gap-3">
         <div className="flex items-center gap-3">
           {isPolling ? (
-            <Loader2 size={22} className="text-violet-300 animate-spin" />
+            <MapSpinner size={22} color="#c4b5fd" />
           ) : (
             <Github size={22} className="text-violet-300" />
           )}

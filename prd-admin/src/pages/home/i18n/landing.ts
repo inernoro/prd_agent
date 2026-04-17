@@ -236,10 +236,10 @@ const zh: TranslationShape = {
   },
   hero: {
     status: 'SYSTEM ONLINE',
-    brand: 'MAP · 米多 AGENT 平台',
+    brand: 'MAP · 米多智能体生态平台',
     title: '让创造，自由呼吸',
     subtitle:
-      '融合大模型与多模态能力的 AI 工作台 —— 视觉、文学、产品、视频、缺陷，十余个专业 Agent 在同一个空间协同。',
+      'MAP（Midoo Agentic Platform）· 米多智能体生态平台是企业级数字劳动力平台，致力于将 AI 从辅助工具升级为具备端到端作业能力的数字劳动力，强调碳硅共生的深度融合、人机共治、价值共创、共同进化，赋能企业进化为碳硅共生的智能型组织。',
     primaryCta: '进入 MAP',
     secondaryCta: '观看片花',
     techBarLabel: 'POWERED BY',
@@ -528,7 +528,7 @@ const zh: TranslationShape = {
     secondary: '联系我们',
   },
   footer: {
-    brand: '米多 Agent 平台',
+    brand: '米多智能体生态平台',
     github: 'GitHub',
     backToTop: '回到顶部',
     copyright: '© 2026 MAP',
@@ -594,10 +594,10 @@ const en: TranslationShape = {
   },
   hero: {
     status: 'SYSTEM ONLINE',
-    brand: 'MAP · MIDOR AGENT PLATFORM',
+    brand: 'MAP · MIDOO AGENTIC PLATFORM',
     title: 'Create, freely.',
     subtitle:
-      'A multimodal AI workbench where 15+ specialized Agents — visual, literary, product, video, QA — collaborate in one shared space.',
+      'MAP (Midoo Agentic Platform) is an enterprise-grade digital workforce platform — upgrading AI from an assistant into a workforce with end-to-end execution, built on deep carbon-silicon symbiosis, human-AI co-governance, shared value creation, and continuous co-evolution.',
     primaryCta: 'Enter MAP',
     secondaryCta: 'Watch Trailer',
     techBarLabel: 'POWERED BY',
@@ -889,7 +889,7 @@ const en: TranslationShape = {
     secondary: 'Contact us',
   },
   footer: {
-    brand: 'Midor Agent Platform',
+    brand: 'Midoo Agentic Platform',
     github: 'GitHub',
     backToTop: 'Back to top',
     copyright: '© 2026 MAP',

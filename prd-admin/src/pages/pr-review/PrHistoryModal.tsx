@@ -2,7 +2,6 @@ import { useCallback, useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
 import {
   X,
-  Loader2,
   AlertTriangle,
   History,
   GitCommit,
@@ -26,6 +25,7 @@ import {
   Zap,
   Plus,
 } from 'lucide-react';
+import { MapSpinner, MapSectionLoader } from '@/components/ui/VideoLoader';
 import {
   getPrReviewItemHistorySlice,
   type PrHistoryCommit,
@@ -322,12 +322,7 @@ function TabWrapper<T>({
 }) {
   // 首次加载占位
   if (!state.loaded && state.loading) {
-    return (
-      <div className="flex items-center justify-center gap-2 text-sm text-white/50 py-16">
-        <Loader2 size={16} className="animate-spin" />
-        从 GitHub 加载...
-      </div>
-    );
+    return <MapSectionLoader text="从 GitHub 加载..." />;
   }
 
   if (state.error) {
@@ -358,7 +353,7 @@ function TabWrapper<T>({
             className="flex items-center gap-2 px-4 py-2 rounded-lg bg-white/5 hover:bg-white/10 disabled:opacity-50 text-xs text-white/80 transition border border-white/10"
           >
             {state.loading ? (
-              <Loader2 size={14} className="animate-spin" />
+              <MapSpinner size={14} />
             ) : (
               <Plus size={14} />
             )}
@@ -405,7 +400,7 @@ function TabButton({
       {icon}
       <span>{label}</span>
       {loading ? (
-        <Loader2 size={10} className="animate-spin opacity-60" />
+        <MapSpinner size={10} style={{ opacity: 0.6 }} />
       ) : count != null ? (
         <span
           className={`text-[10px] px-1.5 rounded-full ${
@@ -824,7 +819,7 @@ function checkRunMeta(r: PrHistoryCheckRun) {
     }
   }
   if (r.status === 'in_progress') {
-    return { icon: <Loader2 size={14} className="text-sky-300 animate-spin" />, label: '运行中', color: 'border-sky-500/20 bg-sky-500/[0.04]' };
+    return { icon: <MapSpinner size={14} color="#7dd3fc" />, label: '运行中', color: 'border-sky-500/20 bg-sky-500/[0.04]' };
   }
   return { icon: <Clock size={14} className="text-white/50" />, label: r.status, color: 'border-white/10 bg-white/[0.02]' };
 }

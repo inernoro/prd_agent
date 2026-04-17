@@ -118,6 +118,8 @@ export const api = {
       forPool: () => '/api/mds/exchanges/for-pool',
       templates: () => '/api/mds/exchanges/templates',
       importFromTemplate: () => '/api/mds/exchanges/import-from-template',
+      tryModel: (id: string, modelId: string) =>
+        `/api/mds/exchanges/${id}/models/${encodeURIComponent(modelId)}/try-it`,
     },
 
     // 调度器配置
@@ -1031,6 +1033,18 @@ export const api = {
       inlineCommentDetail: (commentId: string) => `/api/document-store/inline-comments/${commentId}`,
       update: (entryId: string) => `/api/document-store/entries/${entryId}`,
       delete: (entryId: string) => `/api/document-store/entries/${entryId}`,
+    },
+  },
+
+  // ============ Changelog 更新中心（代码级周报） ============
+  changelog: {
+    currentWeek: (force?: boolean) =>
+      `/api/changelog/current-week${force ? '?force=true' : ''}`,
+    releases: (limit?: number, force?: boolean) => {
+      const params: string[] = [];
+      if (limit) params.push(`limit=${limit}`);
+      if (force) params.push('force=true');
+      return `/api/changelog/releases${params.length ? `?${params.join('&')}` : ''}`;
     },
   },
 
