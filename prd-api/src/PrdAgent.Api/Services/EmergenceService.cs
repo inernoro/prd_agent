@@ -46,6 +46,7 @@ public class EmergenceService
         string parentNodeId,
         string userId,
         Action<string>? onError = null,
+        string? userPrompt = null,
         [EnumeratorCancellation] CancellationToken ct = default)
     {
         var parentNode = await _db.EmergenceNodes
@@ -79,6 +80,11 @@ public class EmergenceService
                          $"节点描述：{parentNode.Description}\n" +
                          $"现实锚点：{parentNode.GroundingContent}\n" +
                          $"锚点来源：{parentNode.GroundingRef ?? "无"}";
+
+        if (!string.IsNullOrWhiteSpace(userPrompt))
+        {
+            userMessage += $"\n\n用户补充灵感方向：{userPrompt.Trim()}\n请优先围绕该方向发散，但仍要保证基于现实锚点、不编造能力。";
+        }
 
         var request = new GatewayRequest
         {

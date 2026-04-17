@@ -1,6 +1,6 @@
 import { memo, useMemo } from 'react';
 import { Handle, Position, type NodeProps } from '@xyflow/react';
-import { Sparkle, Zap, Star, Search, CheckCircle2, Pencil, Clock, Lightbulb, AlertTriangle } from 'lucide-react';
+import { Sparkle, Zap, Star, CheckCircle2, Pencil, Clock, Lightbulb, AlertTriangle } from 'lucide-react';
 
 // ── 节点数据类型 ──
 export interface EmergenceNodeData {
@@ -17,7 +17,14 @@ export interface EmergenceNodeData {
   missingCapabilities: string[];
   tags: string[];
   onExplore?: () => void;
+  onInspire?: () => void;
   onStatusChange?: (newStatus: string) => void;
+  /** 占位骨架节点：展示 shimmer 动效，不响应交互 */
+  isPlaceholder?: boolean;
+  /** 占位序号：用于错开 shimmer 动画起始点 */
+  placeholderIndex?: number;
+  /** 新节点刚到达的标记：触发入场动画（0.5s 后由画布清除） */
+  isJustArrived?: boolean;
 }
 
 type EmergenceNodeType = NodeProps & { data: EmergenceNodeData };
@@ -58,11 +65,78 @@ function StarRating({ score, max = 5 }: { score: number; max?: number }) {
   );
 }
 
-function EmergenceNodeInner({ data, selected }: EmergenceNodeType) {
+// ── 骨架占位节点（正在生成中的 shimmer 卡片）──
+function PlaceholderNode({ data }: EmergenceNodeType) {
+  const dim = dimensionConfig[data.dimension] ?? dimensionConfig[1];
+  const idx = data.placeholderIndex ?? 0;
+  // 错开每个占位卡片的动画，制造"波纹"感
+  const delay = `${idx * 0.18}s`;
+
+  return (
+    <div
+      className="emergence-placeholder emergence-node-enter p-3"
+      style={{
+        background: `linear-gradient(180deg, var(--glass-bg-start) 0%, var(--glass-bg-end) 100%)`,
+        border: `1px dashed ${dim.accentBorder}`,
+        borderRadius: 16,
+        boxShadow: '0 8px 16px -4px rgba(0, 0, 0, 0.3), inset 0 1px 1px rgba(255, 255, 255, 0.06)',
+        backdropFilter: 'blur(40px) saturate(180%)',
+        WebkitBackdropFilter: 'blur(40px) saturate(180%)',
+        minWidth: 220,
+        maxWidth: 300,
+        width: 240,
+        animationDelay: delay,
+      }}
+    >
+      <Handle type="target" position={Position.Top}
+        style={{ background: dim.accent, width: 8, height: 8, border: 'none', opacity: 0.4 }} />
+
+      {/* 标题行骨架 */}
+      <div className="flex items-center gap-2 mb-2">
+        <div className="w-7 h-7 rounded-[8px] flex items-center justify-center flex-shrink-0"
+          style={{ background: dim.accentBg, border: `1px solid ${dim.accentBorder}` }}>
+          <dim.Icon size={13} style={{ color: dim.accent, opacity: 0.5 }} />
+        </div>
+        <div className="flex-1 min-w-0">
+          <div className="shimmer-line" style={{ height: 10, width: '70%', borderRadius: 4, animationDelay: delay }} />
+        </div>
+      </div>
+
+      {/* 描述骨架 */}
+      <div className="space-y-1.5 mb-2">
+        <div className="shimmer-line" style={{ height: 8, width: '95%', borderRadius: 4, animationDelay: delay }} />
+        <div className="shimmer-line" style={{ height: 8, width: '60%', borderRadius: 4, animationDelay: `calc(${delay} + 0.08s)` }} />
+      </div>
+
+      {/* 评分骨架 */}
+      <div className="flex items-center gap-2 mb-2">
+        <div className="shimmer-line" style={{ height: 8, width: 60, borderRadius: 4, animationDelay: delay }} />
+        <div className="shimmer-line" style={{ height: 8, width: 60, borderRadius: 4, animationDelay: `calc(${delay} + 0.1s)` }} />
+      </div>
+
+      {/* 底部"闪烁的期待感"文案 */}
+      <div className="pt-2 flex items-center justify-center gap-1.5"
+        style={{ borderTop: '1px solid rgba(255,255,255,0.05)' }}>
+        <Sparkle size={11} className="emergence-twinkle" style={{ color: dim.accent, animationDelay: delay }} />
+        <span className="text-[10px] emergence-pulse" style={{ color: 'var(--text-muted)', animationDelay: delay }}>
+          即将涌现…
+        </span>
+      </div>
+
+      <Handle type="source" position={Position.Bottom}
+        style={{ background: dim.accent, width: 8, height: 8, border: 'none', opacity: 0.4 }} />
+    </div>
+  );
+}
+
+function EmergenceNodeInner(props: EmergenceNodeType) {
+  const { data, selected } = props;
+
   const dim = dimensionConfig[data.dimension] ?? dimensionConfig[1];
   const sc = statusConfig[data.status] ?? statusConfig.idea;
   const isSeed = data.nodeType === 'seed';
 
+  // 样式 memo 必须在任何条件 return 之前,以遵守 rules-of-hooks
   const cardStyle = useMemo((): React.CSSProperties => ({
     background: `linear-gradient(180deg, var(--glass-bg-start) 0%, var(--glass-bg-end) 100%)`,
     border: `1px ${data.dimension === 2 ? 'dashed' : 'solid'} ${dim.accentBorder.replace('0.15', selected ? '0.4' : '0.18')}`,
@@ -79,8 +153,14 @@ function EmergenceNodeInner({ data, selected }: EmergenceNodeType) {
     maxWidth: 300,
   }), [dim, selected, data.dimension]);
 
+  // 占位骨架节点走独立渲染路径(hooks 已全部执行完毕)
+  if (data.isPlaceholder) return <PlaceholderNode {...props} />;
+
   return (
-    <div style={cardStyle} className="p-3">
+    <div
+      style={cardStyle}
+      className={`p-3 ${data.isJustArrived ? 'emergence-node-enter' : ''}`}
+    >
       {/* 入口 Handle */}
       {!isSeed && (
         <Handle type="target" position={Position.Top}
@@ -156,16 +236,33 @@ function EmergenceNodeInner({ data, selected }: EmergenceNodeType) {
         </div>
       )}
 
-      {/* 操作按钮 */}
-      {data.onExplore && (
-        <div className="pt-2" style={{ borderTop: '1px solid rgba(255,255,255,0.05)' }}>
-          <button
-            onClick={(e) => { e.stopPropagation(); data.onExplore?.(); }}
-            className="h-7 w-full rounded-[8px] text-[11px] font-semibold flex items-center justify-center gap-1.5 cursor-pointer transition-colors duration-200"
-            style={{ background: dim.accentBg, border: `1px solid ${dim.accentBorder}`, color: dim.accent }}
-          >
-            <Search size={11} /> 探索
-          </button>
+      {/* 操作按钮：左=增加灵感（带提示词） 右=探索（不带提示词） */}
+      {(data.onExplore || data.onInspire) && (
+        <div className="pt-2 flex items-stretch gap-1.5" style={{ borderTop: '1px solid rgba(255,255,255,0.05)' }}>
+          {data.onInspire && (
+            <button
+              onClick={(e) => { e.stopPropagation(); data.onInspire?.(); }}
+              className="flex-1 h-7 rounded-[8px] text-[11px] font-semibold flex items-center justify-center gap-1.5 cursor-pointer transition-all duration-150 hover:brightness-125 active:scale-[0.97]"
+              style={{
+                background: 'rgba(234,179,8,0.08)',
+                border: '1px solid rgba(234,179,8,0.2)',
+                color: 'rgba(234,179,8,0.9)',
+              }}
+              title="写一句想法，让 AI 按你的方向探索"
+            >
+              <Lightbulb size={11} /> 增加灵感
+            </button>
+          )}
+          {data.onExplore && (
+            <button
+              onClick={(e) => { e.stopPropagation(); data.onExplore?.(); }}
+              className="flex-1 h-7 rounded-[8px] text-[11px] font-semibold flex items-center justify-center gap-1.5 cursor-pointer transition-all duration-150 hover:brightness-125 active:scale-[0.97]"
+              style={{ background: dim.accentBg, border: `1px solid ${dim.accentBorder}`, color: dim.accent }}
+              title="直接探索，AI 自由发散子能力"
+            >
+              <Star size={11} /> 探索
+            </button>
+          )}
         </div>
       )}
 

@@ -1,0 +1,94 @@
+/* 涌现探索器专属动效：shimmer 骨架 + 节点入场 + 期待感脉冲
+   详见：.claude/rules/gesture-unification.md（本模块视觉语言）
+   与 guided-exploration.md "3 秒内知道做什么" 呼应：
+   用户点击"探索"瞬间就看到占位卡片 shimmer，明确知道 AI 在工作 */
+
+/* ── 1. Shimmer 扫光（骨架卡片的文本行）── */
+@keyframes emergence-shimmer {
+  0%   { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+.shimmer-line {
+  background: linear-gradient(
+    90deg,
+    rgba(255, 255, 255, 0.04) 0%,
+    rgba(255, 255, 255, 0.12) 50%,
+    rgba(255, 255, 255, 0.04) 100%
+  );
+  background-size: 200% 100%;
+  animation: emergence-shimmer 1.6s ease-in-out infinite;
+}
+
+/* ── 2. 占位卡片整体"呼吸"（一闪一闪的期待感）── */
+@keyframes emergence-placeholder-breath {
+  0%, 100% {
+    opacity: 0.55;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.85;
+    transform: scale(1.015);
+  }
+}
+.emergence-placeholder {
+  animation: emergence-placeholder-breath 1.8s ease-in-out infinite;
+}
+
+/* ── 3. 新节点入场（从下方淡入 + 轻微放大）── */
+@keyframes emergence-node-enter {
+  0% {
+    opacity: 0;
+    transform: translateY(12px) scale(0.94);
+    filter: blur(4px);
+  }
+  60% {
+    opacity: 1;
+    transform: translateY(-2px) scale(1.03);
+    filter: blur(0);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+    filter: blur(0);
+  }
+}
+.emergence-node-enter {
+  animation: emergence-node-enter 0.55s cubic-bezier(0.2, 0.9, 0.3, 1) both;
+}
+
+/* ── 4. 小火花 twinkle（占位卡片底部"即将涌现"图标）── */
+@keyframes emergence-twinkle {
+  0%, 100% { opacity: 0.3; transform: scale(0.85) rotate(-10deg); }
+  50%      { opacity: 1; transform: scale(1.15) rotate(10deg); }
+}
+.emergence-twinkle {
+  animation: emergence-twinkle 1.2s ease-in-out infinite;
+}
+
+/* ── 5. 文字脉冲（"即将涌现…"文案节拍）── */
+@keyframes emergence-pulse {
+  0%, 100% { opacity: 0.4; }
+  50%      { opacity: 0.85; }
+}
+.emergence-pulse {
+  animation: emergence-pulse 1.4s ease-in-out infinite;
+}
+
+/* ── 6. 按钮点击波纹（点击后立即反馈）── */
+@keyframes emergence-ping {
+  0% {
+    transform: scale(1);
+    opacity: 0.6;
+  }
+  100% {
+    transform: scale(1.6);
+    opacity: 0;
+  }
+}
+.emergence-ping-overlay {
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  animation: emergence-ping 0.45s ease-out forwards;
+}

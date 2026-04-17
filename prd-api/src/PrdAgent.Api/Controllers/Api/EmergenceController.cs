@@ -250,7 +250,7 @@ public class EmergenceController : ControllerBase
     /// <summary>探索节点（一维，SSE 流式返回新生长的子节点）</summary>
     [HttpPost("nodes/{nodeId}/explore")]
     [Produces("text/event-stream")]
-    public async Task ExploreNode(string nodeId)
+    public async Task ExploreNode(string nodeId, [FromBody] ExploreRequest? request = null)
     {
         var userId = GetUserId();
 
@@ -273,14 +273,16 @@ public class EmergenceController : ControllerBase
         Response.ContentType = "text/event-stream; charset=utf-8";
         Response.Headers.CacheControl = "no-cache";
 
-        // 阶段提示：开始探索
-        await WriteSseEvent("stage", new { stage = "exploring", message = "正在基于现实锚点探索子能力…" });
+        var userPrompt = request?.UserPrompt?.Trim();
+        var stageMsg = string.IsNullOrEmpty(userPrompt) ? "正在基于现实锚点探索子能力…" : "正在结合你的灵感探索子能力…";
+        await WriteSseEvent("stage", new { stage = "exploring", message = stageMsg });
 
         string? llmError = null;
         var count = 0;
         await foreach (var newNode in _emergenceService.ExploreAsync(
             node.TreeId, nodeId, userId,
-            onError: err => llmError = err))
+            onError: err => llmError = err,
+            userPrompt: userPrompt))
         {
             count++;
             await WriteSseEvent("node", newNode);
@@ -438,4 +440,10 @@ public class UpdateEmergenceNodeRequest
     public double? PositionX { get; set; }
     public double? PositionY { get; set; }
     public List<string>? Tags { get; set; }
+}
+
+public class ExploreRequest
+{
+    /// <summary>可选的用户补充提示词（"增加灵感"场景），为空则走默认探索</summary>
+    public string? UserPrompt { get; set; }
 }

@@ -32,8 +32,11 @@ import type { EmergenceNode as EmergenceNodeType } from '@/services/contracts/em
 import { EmergenceFlowNode, type EmergenceNodeData } from './EmergenceNode';
 import { EmergenceCreateDialog } from './EmergenceCreateDialog';
 import { EmergenceIntroPage } from './EmergenceIntroPage';
+import { EmergenceInspireDialog } from './EmergenceInspireDialog';
+import './emergence.css';
 
 const INTRO_SEEN_KEY = 'emergence.intro.seen';
+const PLACEHOLDER_COUNT = 4;
 
 // ── 自定义节点注册 ──
 const nodeTypes = { emergence: EmergenceFlowNode };
@@ -50,10 +53,24 @@ const dimColor: Record<number, string> = {
 const LEAF_WIDTH = 320;
 const DEPTH_STEP = 220;
 
+interface PlaceholderNodeSpec {
+  /** 占位节点在画布上的虚拟父节点 id */
+  parentId: string;
+  /** 占位节点本身的 id（保证唯一，便于替换） */
+  id: string;
+  /** 在父节点下第几个占位（用于错开动画 & 定位） */
+  index: number;
+  /** 推理维度：1=探索, 2=涌现, 3=幻想 */
+  dimension: 1 | 2 | 3;
+}
+
 function toFlowNodes(
   nodes: EmergenceNodeType[],
   onExplore: (nodeId: string) => void,
-  onStatusChange?: (nodeId: string, newStatus: string) => void,
+  onInspire: (nodeId: string) => void,
+  onStatusChange: (nodeId: string, newStatus: string) => void,
+  placeholders: PlaceholderNodeSpec[],
+  arrivedIds: Set<string>,
 ): Node<EmergenceNodeData>[] {
   const byId = new Map(nodes.map(n => [n.id, n]));
 
@@ -73,6 +90,15 @@ function toFlowNodes(
       childrenMap.get(p)!.push(n.id);
     } else {
       roots.push(n.id);
+    }
+  });
+
+  // 占位节点参与布局：按其 parentId 附加为该父的虚拟子节点
+  const placeholderById = new Map(placeholders.map(p => [p.id, p]));
+  placeholders.forEach(p => {
+    if (byId.has(p.parentId) || placeholderById.has(p.parentId)) {
+      if (!childrenMap.has(p.parentId)) childrenMap.set(p.parentId, []);
+      childrenMap.get(p.parentId)!.push(p.id);
     }
   });
 
@@ -131,7 +157,7 @@ function toFlowNodes(
     }
   });
 
-  return nodes.map(n => {
+  const realFlowNodes: Node<EmergenceNodeData>[] = nodes.map(n => {
     const pos = positions.get(n.id) ?? { x: 0, y: 0 };
     return {
       id: n.id,
@@ -152,13 +178,43 @@ function toFlowNodes(
         missingCapabilities: n.missingCapabilities ?? [],
         tags: n.tags ?? [],
         onExplore: () => onExplore(n.id),
-        onStatusChange: onStatusChange ? (s: string) => onStatusChange(n.id, s) : undefined,
+        onInspire: () => onInspire(n.id),
+        onStatusChange: (s: string) => onStatusChange(n.id, s),
+        isJustArrived: arrivedIds.has(n.id),
       } satisfies EmergenceNodeData,
     };
   });
+
+  const placeholderFlowNodes: Node<EmergenceNodeData>[] = placeholders.map(p => {
+    const pos = positions.get(p.id) ?? { x: 0, y: 0 };
+    return {
+      id: p.id,
+      type: 'emergence',
+      position: pos,
+      draggable: false,
+      selectable: false,
+      data: {
+        label: '',
+        description: '',
+        dimension: p.dimension,
+        nodeType: 'capability',
+        valueScore: 0,
+        difficultyScore: 0,
+        status: 'idea',
+        groundingContent: '',
+        bridgeAssumptions: [],
+        missingCapabilities: [],
+        tags: [],
+        isPlaceholder: true,
+        placeholderIndex: p.index,
+      } satisfies EmergenceNodeData,
+    };
+  });
+
+  return [...realFlowNodes, ...placeholderFlowNodes];
 }
 
-function toFlowEdges(nodes: EmergenceNodeType[]): Edge[] {
+function toFlowEdges(nodes: EmergenceNodeType[], placeholders: PlaceholderNodeSpec[]): Edge[] {
   const edges: Edge[] = [];
   for (const n of nodes) {
     if (n.parentId) {
@@ -181,6 +237,21 @@ function toFlowEdges(nodes: EmergenceNodeType[]): Edge[] {
       });
     }
   }
+  // 占位边：虚线 + animated,暗示"正在涌现"
+  for (const p of placeholders) {
+    edges.push({
+      id: `ph:${p.parentId}->${p.id}`,
+      source: p.parentId,
+      target: p.id,
+      animated: true,
+      style: {
+        stroke: dimColor[p.dimension] ?? dimColor[1],
+        strokeWidth: 1,
+        strokeDasharray: '4 4',
+        opacity: 0.5,
+      },
+    });
+  }
   return edges;
 }
 
@@ -194,8 +265,15 @@ function EmergenceCanvasInner({ treeId, onBack }: CanvasProps) {
   const [nodeCount, setNodeCount] = useState(0);
   // 保存原始后端节点用于增量到达时整体重新布局(修复堆积在同一位置的 bug)
   const backendNodesRef = useRef<EmergenceNodeType[]>([]);
+  // 占位骨架节点(点击探索/涌现瞬间先显示,SSE 到达后逐个替换)
+  const placeholdersRef = useRef<PlaceholderNodeSpec[]>([]);
+  // 刚到达节点的入场动画标记,0.6s 后清除
+  const arrivedIdsRef = useRef<Set<string>>(new Set());
+  // 灵感对话框状态
+  const [inspireTargetId, setInspireTargetId] = useState<string | null>(null);
   // 提前声明 callback 引用,供 relayout 使用(真实 handler 稍后再 wire 进来,避免 TDZ / use-before-define)
   const handleExploreRef = useRef<(nodeId: string) => void>(() => {});
+  const handleInspireRef = useRef<(nodeId: string) => void>(() => {});
   const handleStatusChangeRef = useRef<(nodeId: string, status: string) => void>(() => {});
 
   const relayout = useCallback(() => {
@@ -203,10 +281,42 @@ function EmergenceCanvasInner({ treeId, onBack }: CanvasProps) {
     setNodes(toFlowNodes(
       all,
       (id) => handleExploreRef.current(id),
+      (id) => handleInspireRef.current(id),
       (id, s) => handleStatusChangeRef.current(id, s),
+      placeholdersRef.current,
+      arrivedIdsRef.current,
     ));
-    setEdges(toFlowEdges(all));
+    setEdges(toFlowEdges(all, placeholdersRef.current));
   }, [setNodes, setEdges]);
+
+  // 工具:消费一个占位槽位(每当一个真实节点到达)
+  const consumePlaceholder = useCallback((parentId: string | null) => {
+    if (!parentId) {
+      // 涌现场景无固定父节点,从任意占位弹一个
+      if (placeholdersRef.current.length > 0) {
+        placeholdersRef.current = placeholdersRef.current.slice(1);
+      }
+      return;
+    }
+    const idx = placeholdersRef.current.findIndex(p => p.parentId === parentId);
+    if (idx >= 0) {
+      placeholdersRef.current = [
+        ...placeholdersRef.current.slice(0, idx),
+        ...placeholdersRef.current.slice(idx + 1),
+      ];
+    }
+  }, []);
+
+  // 工具:标记新到达节点,0.6s 后清除入场动画
+  const markArrived = useCallback((nodeId: string) => {
+    arrivedIdsRef.current = new Set([...arrivedIdsRef.current, nodeId]);
+    setTimeout(() => {
+      const next = new Set(arrivedIdsRef.current);
+      next.delete(nodeId);
+      arrivedIdsRef.current = next;
+      relayout();
+    }, 650);
+  }, [relayout]);
 
   // ── 探索 SSE ──
   const { phase: explorePhase, phaseMessage: exploreMsg, isStreaming: isExploring, start: startExplore } =
@@ -217,10 +327,15 @@ function EmergenceCanvasInner({ treeId, onBack }: CanvasProps) {
       itemEvent: 'node',
       onItem: (newNode) => {
         backendNodesRef.current = [...backendNodesRef.current, newNode];
+        consumePlaceholder(newNode.parentId ?? null);
         relayout();
+        markArrived(newNode.id);
         setNodeCount(c => c + 1);
       },
       onDone: (data) => {
+        // 清理剩余占位
+        placeholdersRef.current = [];
+        relayout();
         const d = data as { totalNew?: number; error?: string };
         if (d.error) {
           toast.error('探索失败', d.error);
@@ -231,6 +346,8 @@ function EmergenceCanvasInner({ treeId, onBack }: CanvasProps) {
         }
       },
       onError: (msg) => {
+        placeholdersRef.current = [];
+        relayout();
         toast.error('探索失败', msg);
       },
     });
@@ -244,10 +361,14 @@ function EmergenceCanvasInner({ treeId, onBack }: CanvasProps) {
       itemEvent: 'node',
       onItem: (newNode) => {
         backendNodesRef.current = [...backendNodesRef.current, newNode];
+        consumePlaceholder(newNode.parentId ?? null);
         relayout();
+        markArrived(newNode.id);
         setNodeCount(c => c + 1);
       },
       onDone: (data) => {
+        placeholdersRef.current = [];
+        relayout();
         const d = data as { totalNew?: number; error?: string };
         if (d.error) {
           toast.error('涌现失败', d.error);
@@ -258,6 +379,8 @@ function EmergenceCanvasInner({ treeId, onBack }: CanvasProps) {
         }
       },
       onError: (msg) => {
+        placeholdersRef.current = [];
+        relayout();
         toast.error('涌现失败', msg);
       },
     });
@@ -276,10 +399,40 @@ function EmergenceCanvasInner({ treeId, onBack }: CanvasProps) {
   useEffect(() => { loadTree(); }, [loadTree]);
 
   // ── 操作 ──
-  const handleExplore = useCallback((nodeId: string) => {
+  const injectPlaceholders = useCallback((parentId: string, count: number, dimension: 1 | 2 | 3) => {
+    const now = Date.now();
+    const specs: PlaceholderNodeSpec[] = Array.from({ length: count }, (_, i) => ({
+      parentId,
+      id: `__ph_${parentId}_${now}_${i}`,
+      index: i,
+      dimension,
+    }));
+    placeholdersRef.current = [...placeholdersRef.current, ...specs];
+    relayout();
+  }, [relayout]);
+
+  const fireExplore = useCallback((nodeId: string, userPrompt?: string) => {
     if (isExploring || isEmerging) return;
-    startExplore({ url: api.emergence.nodes.explore(nodeId) });
-  }, [isExploring, isEmerging, startExplore]);
+    injectPlaceholders(nodeId, PLACEHOLDER_COUNT, 1);
+    const body = userPrompt?.trim() ? { userPrompt: userPrompt.trim() } : undefined;
+    startExplore({ url: api.emergence.nodes.explore(nodeId), body });
+  }, [isExploring, isEmerging, startExplore, injectPlaceholders]);
+
+  const handleExplore = useCallback((nodeId: string) => {
+    fireExplore(nodeId);
+  }, [fireExplore]);
+
+  const handleInspire = useCallback((nodeId: string) => {
+    if (isExploring || isEmerging) return;
+    setInspireTargetId(nodeId);
+  }, [isExploring, isEmerging]);
+
+  const handleInspireSubmit = useCallback((prompt: string) => {
+    if (!inspireTargetId) return;
+    const targetId = inspireTargetId;
+    setInspireTargetId(null);
+    fireExplore(targetId, prompt);
+  }, [inspireTargetId, fireExplore]);
 
   const handleStatusChange = useCallback(async (nodeId: string, newStatus: string) => {
     const { updateEmergenceNode } = await import('@/services');
@@ -295,12 +448,16 @@ function EmergenceCanvasInner({ treeId, onBack }: CanvasProps) {
 
   // Wire up 真实 handler 到前面声明的 ref
   useEffect(() => { handleExploreRef.current = handleExplore; }, [handleExplore]);
+  useEffect(() => { handleInspireRef.current = handleInspire; }, [handleInspire]);
   useEffect(() => { handleStatusChangeRef.current = handleStatusChange; }, [handleStatusChange]);
 
   const handleEmerge = useCallback((fantasy: boolean) => {
     if (isExploring || isEmerging) return;
+    // 涌现没有单一父节点:选树上已有的一个可见节点作为占位锚点,用户视觉上知道"正在涌现"
+    const anchorId = backendNodesRef.current[0]?.id;
+    if (anchorId) injectPlaceholders(anchorId, PLACEHOLDER_COUNT, fantasy ? 3 : 2);
     startEmerge({ url: `${api.emergence.trees.emerge(treeId)}${fantasy ? '?fantasy=true' : ''}` });
-  }, [treeId, isExploring, isEmerging, startEmerge]);
+  }, [treeId, isExploring, isEmerging, startEmerge, injectPlaceholders]);
 
   const handleExport = useCallback(async () => {
     const res = await exportEmergenceTree(treeId);
@@ -469,6 +626,15 @@ function EmergenceCanvasInner({ treeId, onBack }: CanvasProps) {
           )}
         </ReactFlow>
       </div>
+
+      {/* 灵感对话框 */}
+      {inspireTargetId && (
+        <EmergenceInspireDialog
+          parentTitle={backendNodesRef.current.find(n => n.id === inspireTargetId)?.title}
+          onClose={() => setInspireTargetId(null)}
+          onSubmit={handleInspireSubmit}
+        />
+      )}
     </div>
   );
 }
