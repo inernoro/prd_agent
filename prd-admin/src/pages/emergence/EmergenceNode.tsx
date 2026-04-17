@@ -25,6 +25,11 @@ export interface EmergenceNodeData {
   placeholderIndex?: number;
   /** 新节点刚到达的标记：触发入场动画（0.5s 后由画布清除） */
   isJustArrived?: boolean;
+  /**
+   * 流式实时文字（仅对第一个占位卡片有效）：
+   * 有值时用 LLM 正在生成的原文替换 shimmer，让用户能看到 AI 正在打字。
+   */
+  liveText?: string;
 }
 
 type EmergenceNodeType = NodeProps & { data: EmergenceNodeData };
@@ -71,6 +76,13 @@ function PlaceholderNode({ data }: EmergenceNodeType) {
   const idx = data.placeholderIndex ?? 0;
   // 错开每个占位卡片的动画，制造"波纹"感
   const delay = `${idx * 0.18}s`;
+  const liveText = data.liveText?.trim();
+  // 只在首个占位卡片（index = 0）上显示 liveText，其余继续 shimmer
+  const showLive = Boolean(liveText) && idx === 0;
+  // 展示最后 140 字符，避免卡片被撑变形
+  const tail = liveText
+    ? (liveText.length > 140 ? '…' + liveText.slice(-140) : liveText)
+    : '';
 
   return (
     <div
@@ -91,35 +103,71 @@ function PlaceholderNode({ data }: EmergenceNodeType) {
       <Handle type="target" position={Position.Top}
         style={{ background: dim.accent, width: 8, height: 8, border: 'none', opacity: 0.4 }} />
 
-      {/* 标题行骨架 */}
+      {/* 标题行骨架（图标 + shimmer 标题条） */}
       <div className="flex items-center gap-2 mb-2">
         <div className="w-7 h-7 rounded-[8px] flex items-center justify-center flex-shrink-0"
           style={{ background: dim.accentBg, border: `1px solid ${dim.accentBorder}` }}>
-          <dim.Icon size={13} style={{ color: dim.accent, opacity: 0.5 }} />
+          <dim.Icon size={13} style={{ color: dim.accent, opacity: showLive ? 0.9 : 0.5 }} />
         </div>
         <div className="flex-1 min-w-0">
-          <div className="shimmer-line" style={{ height: 10, width: '70%', borderRadius: 4, animationDelay: delay }} />
+          {showLive ? (
+            <div
+              className="text-[10px] tracking-wider uppercase"
+              style={{ color: dim.accent, opacity: 0.85 }}
+            >
+              AI 正在生成
+            </div>
+          ) : (
+            <div className="shimmer-line" style={{ height: 10, width: '70%', borderRadius: 4, animationDelay: delay }} />
+          )}
         </div>
       </div>
 
-      {/* 描述骨架 */}
-      <div className="space-y-1.5 mb-2">
-        <div className="shimmer-line" style={{ height: 8, width: '95%', borderRadius: 4, animationDelay: delay }} />
-        <div className="shimmer-line" style={{ height: 8, width: '60%', borderRadius: 4, animationDelay: `calc(${delay} + 0.08s)` }} />
-      </div>
-
-      {/* 评分骨架 */}
-      <div className="flex items-center gap-2 mb-2">
-        <div className="shimmer-line" style={{ height: 8, width: 60, borderRadius: 4, animationDelay: delay }} />
-        <div className="shimmer-line" style={{ height: 8, width: 60, borderRadius: 4, animationDelay: `calc(${delay} + 0.1s)` }} />
-      </div>
+      {/* 描述区：有 liveText → 显示流式文字；否则 shimmer */}
+      {showLive ? (
+        <div
+          className="emergence-live-text mb-2"
+          style={{
+            fontSize: 10.5,
+            lineHeight: 1.55,
+            color: 'rgba(255,255,255,0.82)',
+            maxHeight: 80,
+            overflow: 'hidden',
+            wordBreak: 'break-word',
+            whiteSpace: 'pre-wrap',
+          }}
+        >
+          {tail}
+          <span
+            className="inline-block ml-0.5 align-middle emergence-typing-cursor"
+            style={{
+              width: 4,
+              height: 9,
+              background: dim.accent,
+              borderRadius: 1,
+              boxShadow: `0 0 6px ${dim.accent}`,
+            }}
+          />
+        </div>
+      ) : (
+        <>
+          <div className="space-y-1.5 mb-2">
+            <div className="shimmer-line" style={{ height: 8, width: '95%', borderRadius: 4, animationDelay: delay }} />
+            <div className="shimmer-line" style={{ height: 8, width: '60%', borderRadius: 4, animationDelay: `calc(${delay} + 0.08s)` }} />
+          </div>
+          <div className="flex items-center gap-2 mb-2">
+            <div className="shimmer-line" style={{ height: 8, width: 60, borderRadius: 4, animationDelay: delay }} />
+            <div className="shimmer-line" style={{ height: 8, width: 60, borderRadius: 4, animationDelay: `calc(${delay} + 0.1s)` }} />
+          </div>
+        </>
+      )}
 
       {/* 底部"闪烁的期待感"文案 */}
       <div className="pt-2 flex items-center justify-center gap-1.5"
         style={{ borderTop: '1px solid rgba(255,255,255,0.05)' }}>
         <Sparkle size={11} className="emergence-twinkle" style={{ color: dim.accent, animationDelay: delay }} />
         <span className="text-[10px] emergence-pulse" style={{ color: 'var(--text-muted)', animationDelay: delay }}>
-          即将涌现…
+          {showLive ? '即将落位…' : '即将涌现…'}
         </span>
       </div>
 

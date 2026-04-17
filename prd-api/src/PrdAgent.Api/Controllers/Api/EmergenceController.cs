@@ -282,7 +282,8 @@ public class EmergenceController : ControllerBase
         await foreach (var newNode in _emergenceService.ExploreAsync(
             node.TreeId, nodeId, userId,
             onError: err => llmError = err,
-            userPrompt: userPrompt))
+            userPrompt: userPrompt,
+            onContent: async text => await WriteSseEvent("typing", new { text })))
         {
             count++;
             await WriteSseEvent("node", newNode);
@@ -322,7 +323,8 @@ public class EmergenceController : ControllerBase
         var count = 0;
         await foreach (var newNode in _emergenceService.EmergeAsync(
             treeId, fantasy, userId,
-            onError: err => llmError = err))
+            onError: err => llmError = err,
+            onContent: async text => await WriteSseEvent("typing", new { text })))
         {
             count++;
             await WriteSseEvent("node", newNode);

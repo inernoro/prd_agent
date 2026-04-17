@@ -17,7 +17,7 @@ import {
 import '@xyflow/react/dist/style.css';
 import { Sparkle, TreePine, Download, Plus, Star, MousePointerClick, Zap, X, Info, Wand2, StopCircle } from 'lucide-react';
 import { useSseStream } from '@/lib/useSseStream';
-import { SsePhaseBar } from '@/components/sse/SsePhaseBar';
+import { EmergenceStreamingBar } from './EmergenceStreamingBar';
 import { toast } from '@/lib/toast';
 import { TabBar } from '@/components/design/TabBar';
 import { Button } from '@/components/design/Button';
@@ -73,6 +73,7 @@ function toFlowNodes(
   onStatusChange: (nodeId: string, newStatus: string) => void,
   placeholders: PlaceholderNodeSpec[],
   arrivedIds: Set<string>,
+  liveText?: string,
 ): Node<EmergenceNodeData>[] {
   const byId = new Map(nodes.map(n => [n.id, n]));
 
@@ -187,8 +188,10 @@ function toFlowNodes(
     };
   });
 
-  const placeholderFlowNodes: Node<EmergenceNodeData>[] = placeholders.map(p => {
+  const placeholderFlowNodes: Node<EmergenceNodeData>[] = placeholders.map((p, i) => {
     const pos = positions.get(p.id) ?? { x: 0, y: 0 };
+    // 只把 liveText 喂给占位数组中的第一个元素(视觉上的"正在打字"卡片)
+    const showLive = i === 0 && !!liveText;
     return {
       id: p.id,
       type: 'emergence',
@@ -209,6 +212,7 @@ function toFlowNodes(
         tags: [],
         isPlaceholder: true,
         placeholderIndex: p.index,
+        liveText: showLive ? liveText : undefined,
       } satisfies EmergenceNodeData,
     };
   });
@@ -277,6 +281,8 @@ function EmergenceCanvasInner({ treeId, onBack }: CanvasProps) {
   const handleExploreRef = useRef<(nodeId: string) => void>(() => {});
   const handleInspireRef = useRef<(nodeId: string) => void>(() => {});
   const handleStatusChangeRef = useRef<(nodeId: string, status: string) => void>(() => {});
+  // LLM 流式累积的原始文本,由 useSseStream.typing 持续更新(通过 effect 同步到 ref)
+  const liveTypingRef = useRef<string>('');
 
   const relayout = useCallback(() => {
     const all = backendNodesRef.current;
@@ -287,6 +293,7 @@ function EmergenceCanvasInner({ treeId, onBack }: CanvasProps) {
       (id, s) => handleStatusChangeRef.current(id, s),
       placeholdersRef.current,
       arrivedIdsRef.current,
+      liveTypingRef.current,
     ));
     setEdges(toFlowEdges(all, placeholdersRef.current));
   }, [setNodes, setEdges]);
@@ -338,7 +345,10 @@ function EmergenceCanvasInner({ treeId, onBack }: CanvasProps) {
   }, [reactFlow]);
 
   // ── 探索 SSE ──
-  const { phase: explorePhase, phaseMessage: exploreMsg, isStreaming: isExploring, start: startExplore, abort: abortExplore } =
+  const {
+    phase: explorePhase, phaseMessage: exploreMsg, isStreaming: isExploring,
+    typing: exploreTyping, start: startExplore, abort: abortExplore,
+  } =
     useSseStream<EmergenceNodeType>({
       url: '',
       method: 'POST',
@@ -373,7 +383,10 @@ function EmergenceCanvasInner({ treeId, onBack }: CanvasProps) {
     });
 
   // ── 涌现 SSE ──
-  const { phase: emergePhase, phaseMessage: emergeMsg, isStreaming: isEmerging, start: startEmerge, abort: abortEmerge } =
+  const {
+    phase: emergePhase, phaseMessage: emergeMsg, isStreaming: isEmerging,
+    typing: emergeTyping, start: startEmerge, abort: abortEmerge,
+  } =
     useSseStream<EmergenceNodeType>({
       url: '',
       method: 'POST',
@@ -507,6 +520,15 @@ function EmergenceCanvasInner({ treeId, onBack }: CanvasProps) {
   const isStreaming = isExploring || isEmerging;
   const currentPhase = isExploring ? explorePhase : emergePhase;
   const currentMsg = isExploring ? exploreMsg : emergeMsg;
+  const currentTyping = isExploring ? exploreTyping : emergeTyping;
+
+  // 流式文字变化时,把最新值同步进 ref 并重布局,让首个占位卡片实时看到 LLM 原文
+  useEffect(() => {
+    liveTypingRef.current = currentTyping ?? '';
+    if (isStreaming && placeholdersRef.current.length > 0) {
+      relayout();
+    }
+  }, [currentTyping, isStreaming, relayout]);
 
   // 引导文案
   const guideContent: Record<string, { title: string; desc: string; icon: typeof Zap }> = {
@@ -561,8 +583,20 @@ function EmergenceCanvasInner({ treeId, onBack }: CanvasProps) {
         }
       />
 
-      {/* SSE 状态栏 */}
-      {isStreaming && <SsePhaseBar phase={currentPhase} message={currentMsg} />}
+      {/* SSE 状态栏(流式显示 LLM 原文,消除空白等待) */}
+      {isStreaming && (
+        <div className="px-3 pt-2">
+          <EmergenceStreamingBar
+            phase={currentPhase}
+            message={currentMsg}
+            typing={currentTyping}
+            dimension={isExploring ? 1 : 2}
+            extra={`已到达 ${placeholdersRef.current.length > 0
+              ? Math.max(0, PLACEHOLDER_COUNT - placeholdersRef.current.length)
+              : 0} / ${PLACEHOLDER_COUNT}`}
+          />
+        </div>
+      )}
 
       {/* React Flow 画布 */}
       <div className="flex-1 min-h-0">

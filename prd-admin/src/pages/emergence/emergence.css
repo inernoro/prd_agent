@@ -92,3 +92,54 @@
   pointer-events: none;
   animation: emergence-ping 0.45s ease-out forwards;
 }
+
+/* ── 7. 流式输出光标闪烁 ── */
+@keyframes emergence-typing-cursor-blink {
+  0%, 40%   { opacity: 1; }
+  60%, 100% { opacity: 0.15; }
+}
+.emergence-typing-cursor {
+  animation: emergence-typing-cursor-blink 0.9s steps(2, end) infinite;
+}
+
+/* ── 8. 流式预览条滚动条（低调） ── */
+.emergence-typing-scroll::-webkit-scrollbar {
+  height: 2px;
+}
+.emergence-typing-scroll::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.15);
+  border-radius: 2px;
+}
+.emergence-typing-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+/* ── 9. 骨架卡片内的流式文字（替代 shimmer 时显示） ── */
+@keyframes emergence-live-text-fade {
+  0%   { opacity: 0.15; }
+  100% { opacity: 0.92; }
+}
+.emergence-live-text {
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Consolas, monospace;
+  animation: emergence-live-text-fade 0.4s ease-out both;
+}
+
+/* ── 10. Intro page 专属：中央种子视觉呼吸 / 光轨旋转 ── */
+@keyframes emergence-seed-breath {
+  0%, 100% { transform: scale(1); filter: brightness(1); }
+  50%      { transform: scale(1.03); filter: brightness(1.12); }
+}
+.emergence-seed-breath { animation: emergence-seed-breath 3.2s ease-in-out infinite; }
+
+@keyframes emergence-orbit-rotate {
+  0%   { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}
+.emergence-orbit-cw  { animation: emergence-orbit-rotate 28s linear infinite; transform-origin: center; }
+.emergence-orbit-ccw { animation: emergence-orbit-rotate 36s linear infinite reverse; transform-origin: center; }
+
+@keyframes emergence-particle-float {
+  0%, 100% { transform: translateY(0px); opacity: 0.55; }
+  50%      { transform: translateY(-8px); opacity: 1; }
+}
+.emergence-particle-float { animation: emergence-particle-float 4s ease-in-out infinite; }

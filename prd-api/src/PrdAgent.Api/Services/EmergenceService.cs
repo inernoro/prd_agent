@@ -41,12 +41,14 @@ public class EmergenceService
     /// <summary>
     /// 探索：从一个节点出发，基于其锚点内容向下生长子节点（一维）
     /// </summary>
+    /// <param name="onContent">LLM 流式返回每个增量文本块时的回调（用于向前端透传 typing 事件，消除空白等待）</param>
     public async IAsyncEnumerable<EmergenceNode> ExploreAsync(
         string treeId,
         string parentNodeId,
         string userId,
         Action<string>? onError = null,
         string? userPrompt = null,
+        Func<string, Task>? onContent = null,
         [EnumeratorCancellation] CancellationToken ct = default)
     {
         var parentNode = await _db.EmergenceNodes
@@ -103,40 +105,23 @@ public class EmergenceService
             Context = new GatewayRequestContext { UserId = userId }
         };
 
-        GatewayResponse response;
-        try
+        _logger.LogInformation("[emergence] Explore: streaming LLM request for node {NodeId}, AppCaller={AppCaller}",
+            parentNodeId, request.AppCallerCode);
+        var (fullContent, streamError) = await StreamAndAccumulateAsync(request, onContent);
+        if (streamError != null)
         {
-            _logger.LogInformation("[emergence] Explore: sending LLM request for node {NodeId}, AppCaller={AppCaller}",
-                parentNodeId, request.AppCallerCode);
-            response = await _gateway.SendAsync(request, CancellationToken.None);
-            _logger.LogInformation("[emergence] Explore: LLM response received, success={Success}, content length={Len}, error={Error}",
-                response.Success, response.Content?.Length ?? 0, response.ErrorMessage);
-        }
-        catch (Exception ex)
-        {
-            var errMsg = $"LLM 调用异常: {ex.Message}";
-            _logger.LogError(ex, "[emergence] Explore LLM call failed for node {NodeId}: {Error}", parentNodeId, ex.Message);
-            onError?.Invoke(errMsg);
+            onError?.Invoke(streamError);
             yield break;
         }
-
-        if (!response.Success)
+        if (string.IsNullOrWhiteSpace(fullContent))
         {
-            var errMsg = $"LLM 调用失败: {response.ErrorMessage ?? response.ErrorCode ?? "未知错误"}";
-            _logger.LogWarning("[emergence] Explore: LLM returned error for node {NodeId}: {Error}", parentNodeId, errMsg);
-            onError?.Invoke(errMsg);
-            yield break;
-        }
-
-        if (string.IsNullOrWhiteSpace(response.Content))
-        {
-            var errMsg = "LLM 返回空内容（模型响应为空）";
             _logger.LogWarning("[emergence] Explore: empty content for node {NodeId}", parentNodeId);
-            onError?.Invoke(errMsg);
+            onError?.Invoke("LLM 返回空内容（模型响应为空）");
             yield break;
         }
+        _logger.LogInformation("[emergence] Explore: stream completed, content length={Len}", fullContent.Length);
 
-        var nodes = ParseNodesFromResponse(response.Content, treeId, parentNodeId, dimension: 1);
+        var nodes = ParseNodesFromResponse(fullContent, treeId, parentNodeId, dimension: 1);
 
         foreach (var node in nodes)
         {
@@ -157,11 +142,13 @@ public class EmergenceService
     /// <summary>
     /// 涌现：扫描树上所有叶子节点，两两/多节点组合生成新节点（二维+三维）
     /// </summary>
+    /// <param name="onContent">LLM 流式返回每个增量文本块时的回调（用于向前端透传 typing 事件）</param>
     public async IAsyncEnumerable<EmergenceNode> EmergeAsync(
         string treeId,
         bool includeFantasy,
         string userId,
         Action<string>? onError = null,
+        Func<string, Task>? onContent = null,
         [EnumeratorCancellation] CancellationToken ct = default)
     {
         var allNodes = await _db.EmergenceNodes
@@ -207,34 +194,23 @@ public class EmergenceService
             Context = new GatewayRequestContext { UserId = userId }
         };
 
-        GatewayResponse response;
-        try
+        _logger.LogInformation("[emergence] Emerge: streaming LLM request for tree {TreeId}, fantasy={Fantasy}",
+            treeId, includeFantasy);
+        var (fullContent, streamError) = await StreamAndAccumulateAsync(request, onContent);
+        if (streamError != null)
         {
-            response = await _gateway.SendAsync(request, CancellationToken.None);
-        }
-        catch (Exception ex)
-        {
-            var errMsg = $"LLM 调用异常: {ex.Message}";
-            _logger.LogError(ex, "[emergence] Emerge LLM call failed for tree {TreeId}: {Error}", treeId, ex.Message);
-            onError?.Invoke(errMsg);
+            onError?.Invoke(streamError);
             yield break;
         }
-
-        if (!response.Success)
-        {
-            var errMsg = $"LLM 调用失败: {response.ErrorMessage ?? response.ErrorCode ?? "未知错误"}";
-            onError?.Invoke(errMsg);
-            yield break;
-        }
-
-        if (string.IsNullOrWhiteSpace(response.Content))
+        if (string.IsNullOrWhiteSpace(fullContent))
         {
             onError?.Invoke("LLM 返回空内容（模型响应为空）");
             yield break;
         }
+        _logger.LogInformation("[emergence] Emerge: stream completed, content length={Len}", fullContent.Length);
 
         var dimension = includeFantasy ? 3 : 2;
-        var nodes = ParseEmergeNodesFromResponse(response.Content, treeId, leafNodes, dimension);
+        var nodes = ParseEmergeNodesFromResponse(fullContent, treeId, leafNodes, dimension);
 
         foreach (var node in nodes)
         {
@@ -474,6 +450,47 @@ public class EmergenceService
     }
 
     // ── 工具方法 ──
+
+    /// <summary>
+    /// 流式调用 Gateway 并累积完整内容，同时把每一块增量通过 onContent 回调推给调用方（用于 SSE typing 事件）。
+    /// 返回 (完整累积内容, 错误信息)，错误信息非空表示调用失败。
+    /// </summary>
+    private async Task<(string content, string? error)> StreamAndAccumulateAsync(
+        GatewayRequest request,
+        Func<string, Task>? onContent)
+    {
+        var buffer = new StringBuilder();
+        try
+        {
+            await foreach (var chunk in _gateway.StreamAsync(request, CancellationToken.None))
+            {
+                if (chunk.Type == GatewayChunkType.Error)
+                {
+                    return (buffer.ToString(), $"LLM 流式失败: {chunk.Error ?? "未知错误"}");
+                }
+                if (chunk.Type == GatewayChunkType.Text && !string.IsNullOrEmpty(chunk.Content))
+                {
+                    buffer.Append(chunk.Content);
+                    if (onContent != null)
+                    {
+                        // 流式回调失败不应中断主流程（例如客户端断开）
+                        try { await onContent(chunk.Content); }
+                        catch (Exception cbEx)
+                        {
+                            _logger.LogDebug(cbEx, "[emergence] onContent callback ignored");
+                        }
+                    }
+                }
+                // Thinking / Start / Done 不透传到 typing（UI 只关心最终 JSON 可见部分）
+            }
+            return (buffer.ToString(), null);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "[emergence] LLM stream failed: {Error}", ex.Message);
+            return (buffer.ToString(), $"LLM 调用异常: {ex.Message}");
+        }
+    }
 
     private static JsonArray? ExtractJsonArray(string content)
     {
