@@ -285,6 +285,7 @@ export const api = {
   profile: {
     avatarUpload: () => '/api/profile/avatar/upload',
     avatar: () => '/api/profile/avatar',
+    publicPage: () => '/api/profile/public-page',
   },
 
   // ============ Dashboard 仪表盘 ============
@@ -323,6 +324,7 @@ export const api = {
         list: () => '/api/visual-agent/image-master/workspaces',
         byId: (id: string) => `/api/visual-agent/image-master/workspaces/${id}`,
         detail: (id: string) => `/api/visual-agent/image-master/workspaces/${id}/detail`,
+        unpublish: (id: string) => `/api/visual-agent/image-master/workspaces/${id}/unpublish`,
         viewport: (id: string) => `/api/visual-agent/image-master/workspaces/${id}/viewport`,
         messages: (id: string) => `/api/visual-agent/image-master/workspaces/${id}/messages`,
         canvas: (id: string) => `/api/visual-agent/image-master/workspaces/${id}/canvas`,
@@ -833,6 +835,7 @@ export const api = {
       list: () => '/api/workflow-agent/workflows',
       byId: (id: string) => `/api/workflow-agent/workflows/${id}`,
       execute: (id: string) => `/api/workflow-agent/workflows/${id}/execute`,
+      unpublish: (id: string) => `/api/workflow-agent/workflows/${id}/unpublish`,
     },
     executions: {
       list: () => '/api/workflow-agent/executions',
@@ -1060,6 +1063,7 @@ export const api = {
       delete: (treeId: string) => `/api/emergence/trees/${treeId}`,
       emerge: (treeId: string) => `/api/emergence/trees/${treeId}/emerge`,
       export: (treeId: string) => `/api/emergence/trees/${treeId}/export`,
+      unpublish: (treeId: string) => `/api/emergence/trees/${treeId}/unpublish`,
     },
     nodes: {
       update: (nodeId: string) => `/api/emergence/nodes/${nodeId}`,

@@ -463,6 +463,27 @@ public class ImageMasterController : ControllerBase
         }
     }
 
+    /// <summary>取消公开（将 workspace 从广场撤回为私有）</summary>
+    [HttpPost("workspaces/{id}/unpublish")]
+    public async Task<IActionResult> UnpublishWorkspace(string id, CancellationToken ct)
+    {
+        var adminId = GetAdminId();
+        var wid = (id ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(wid)) return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "id 不能为空"));
+
+        var ws = await _db.ImageMasterWorkspaces.Find(x => x.Id == wid).FirstOrDefaultAsync(ct);
+        if (ws == null) return NotFound(ApiResponse<object>.Fail("WORKSPACE_NOT_FOUND", "Workspace 不存在"));
+        if (ws.OwnerUserId != adminId) return StatusCode(StatusCodes.Status403Forbidden, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "无权限"));
+
+        var update = Builders<ImageMasterWorkspace>.Update
+            .Set(x => x.IsPublic, false)
+            .Set(x => x.UpdatedAt, DateTime.UtcNow);
+        await _db.ImageMasterWorkspaces.UpdateOneAsync(x => x.Id == wid, update, cancellationToken: ct);
+
+        _logger.LogInformation("[imageMaster] Workspace unpublished: {WorkspaceId} by {AdminId}", wid, adminId);
+        return Ok(ApiResponse<object>.Ok(new { id = wid, isPublic = false }));
+    }
+
     [HttpDelete("workspaces/{id}")]
     public async Task<IActionResult> DeleteWorkspace(string id, CancellationToken ct)
     {

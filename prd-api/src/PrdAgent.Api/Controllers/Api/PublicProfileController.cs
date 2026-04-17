@@ -68,6 +68,29 @@ public class PublicProfileController : ControllerBase
         await Task.WhenAll(sitesTask, skillsTask, documentsTask, promptsTask,
                            workspacesTask, emergencesTask, workflowsTask);
 
+        // 二次并行：补齐跨集合引用（workspace 封面图、文档空间主条目摘要）
+        var workspaceAssetIds = workspacesTask.Result
+            .Where(w => !string.IsNullOrWhiteSpace(w.CoverAssetId))
+            .Select(w => w.CoverAssetId!)
+            .Distinct()
+            .ToList();
+        var primaryEntryIds = documentsTask.Result
+            .Where(d => !string.IsNullOrWhiteSpace(d.PrimaryEntryId))
+            .Select(d => d.PrimaryEntryId!)
+            .Distinct()
+            .ToList();
+
+        var assetsTask = workspaceAssetIds.Count > 0
+            ? _db.ImageAssets.Find(Builders<ImageAsset>.Filter.In(x => x.Id, workspaceAssetIds)).ToListAsync(ct)
+            : Task.FromResult(new List<ImageAsset>());
+        var primaryEntriesTask = primaryEntryIds.Count > 0
+            ? _db.DocumentEntries.Find(Builders<DocumentEntry>.Filter.In(x => x.Id, primaryEntryIds)).ToListAsync(ct)
+            : Task.FromResult(new List<DocumentEntry>());
+
+        await Task.WhenAll(assetsTask, primaryEntriesTask);
+        var assetMap = assetsTask.Result.ToDictionary(a => a.Id, a => a);
+        var primaryMap = primaryEntriesTask.Result.ToDictionary(e => e.Id, e => e);
+
         var profile = new
         {
             user = new
@@ -75,6 +98,8 @@ public class PublicProfileController : ControllerBase
                 username = user.Username,
                 displayName = string.IsNullOrWhiteSpace(user.DisplayName) ? user.Username : user.DisplayName,
                 avatarFileName = user.AvatarFileName,
+                bio = user.Bio,
+                profileBackground = user.ProfileBackground,
             },
             sites = new
             {
@@ -111,16 +136,28 @@ public class PublicProfileController : ControllerBase
             },
             documents = new
             {
-                items = documentsTask.Result.Select(d => new
+                items = documentsTask.Result.Select(d =>
                 {
-                    id = d.Id,
-                    name = d.Name,
-                    description = d.Description,
-                    coverImageUrl = d.CoverImageUrl,
-                    tags = d.Tags,
-                    documentCount = d.DocumentCount,
-                    viewCount = d.ViewCount,
-                    updatedAt = d.UpdatedAt,
+                    DocumentEntry? primary = null;
+                    if (!string.IsNullOrWhiteSpace(d.PrimaryEntryId))
+                        primaryMap.TryGetValue(d.PrimaryEntryId!, out primary);
+                    return new
+                    {
+                        id = d.Id,
+                        name = d.Name,
+                        description = d.Description,
+                        coverImageUrl = d.CoverImageUrl,
+                        tags = d.Tags,
+                        documentCount = d.DocumentCount,
+                        viewCount = d.ViewCount,
+                        updatedAt = d.UpdatedAt,
+                        // 主条目预览：标题 + 摘要 / ContentIndex 截断
+                        primaryEntry = primary == null ? null : new
+                        {
+                            title = primary.Title,
+                            summary = TruncateForPreview(primary.Summary ?? primary.ContentIndex, 200),
+                        },
+                    };
                 }).ToList(),
                 total = documentsTask.Result.Count,
             },
@@ -133,18 +170,27 @@ public class PublicProfileController : ControllerBase
                     scenarioType = p.ScenarioType,
                     forkCount = p.ForkCount,
                     updatedAt = p.UpdatedAt,
+                    // 提示词预览：正文前 240 字
+                    preview = TruncateForPreview(p.Content),
                 }).ToList(),
                 total = promptsTask.Result.Count,
             },
             workspaces = new
             {
-                items = workspacesTask.Result.Select(w => new
+                items = workspacesTask.Result.Select(w =>
                 {
-                    id = w.Id,
-                    title = w.Title,
-                    coverAssetId = w.CoverAssetId,
-                    publishedAt = w.PublishedAt,
-                    updatedAt = w.UpdatedAt,
+                    string? coverUrl = null;
+                    if (!string.IsNullOrWhiteSpace(w.CoverAssetId) && assetMap.TryGetValue(w.CoverAssetId!, out var asset))
+                        coverUrl = asset.Url ?? asset.OriginalUrl;
+                    return new
+                    {
+                        id = w.Id,
+                        title = w.Title,
+                        coverAssetId = w.CoverAssetId,
+                        coverUrl,
+                        publishedAt = w.PublishedAt,
+                        updatedAt = w.UpdatedAt,
+                    };
                 }).ToList(),
                 total = workspacesTask.Result.Count,
             },
@@ -157,6 +203,8 @@ public class PublicProfileController : ControllerBase
                     description = e.Description,
                     nodeCount = e.NodeCount,
                     updatedAt = e.UpdatedAt,
+                    // 涌现种子预览：优先 SeedContent，截断 240 字
+                    seedPreview = TruncateForPreview(e.SeedContent),
                 }).ToList(),
                 total = emergencesTask.Result.Count,
             },
@@ -171,12 +219,24 @@ public class PublicProfileController : ControllerBase
                     tags = w.Tags,
                     executionCount = w.ExecutionCount,
                     updatedAt = w.UpdatedAt,
+                    // 工作流结构预览：节点数 + 前 5 个节点类型
+                    nodeCount = w.Nodes?.Count ?? 0,
+                    nodeTypes = w.Nodes?.Take(5).Select(n => n.NodeType).ToList() ?? new List<string>(),
                 }).ToList(),
                 total = workflowsTask.Result.Count,
             },
         };
 
         return Ok(ApiResponse<object>.Ok(profile));
+    }
+
+    /// <summary>截取字符串的前 N 个 Unicode code point，超出时追加省略号。</summary>
+    private static string? TruncateForPreview(string? raw, int maxChars = 240)
+    {
+        if (string.IsNullOrWhiteSpace(raw)) return null;
+        var s = raw.Trim();
+        if (s.Length <= maxChars) return s;
+        return s[..maxChars] + "…";
     }
 
     // ─── 私有查询方法：统一按 UpdatedAt 倒序 + limit ───

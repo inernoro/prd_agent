@@ -201,9 +201,50 @@ public class ProfileController : ControllerBase
             UpdatedAt = DateTime.UtcNow
         }));
     }
+
+    /// <summary>
+    /// 更新当前用户在个人公开页上展示的自我介绍 / 背景主题。
+    /// 传 null 即清空。Bio 最多 500 字；Background 是前端主题 key（不校验枚举，允许未来无迁移扩展）。
+    /// </summary>
+    [HttpPatch("public-page")]
+    public async Task<IActionResult> UpdatePublicPage([FromBody] UpdatePublicPageRequest request, CancellationToken ct)
+    {
+        var currentUserId = GetCurrentUserId();
+        if (string.IsNullOrWhiteSpace(currentUserId))
+            return Unauthorized(ApiResponse<object>.Fail(ErrorCodes.UNAUTHORIZED, "未登录"));
+
+        var user = await _db.Users.Find(u => u.UserId == currentUserId).FirstOrDefaultAsync(ct);
+        if (user == null)
+            return NotFound(ApiResponse<object>.Fail("USER_NOT_FOUND", "用户不存在"));
+
+        var bio = request?.Bio?.Trim();
+        if (bio != null && bio.Length > 500)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "自我介绍不能超过 500 字"));
+        var bg = request?.ProfileBackground?.Trim();
+        if (bg != null && bg.Length > 64)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "背景主题 key 过长"));
+
+        var update = Builders<User>.Update
+            .Set(u => u.Bio, string.IsNullOrEmpty(bio) ? null : bio)
+            .Set(u => u.ProfileBackground, string.IsNullOrEmpty(bg) ? null : bg);
+        await _db.Users.UpdateOneAsync(u => u.UserId == currentUserId, update, cancellationToken: ct);
+
+        return Ok(ApiResponse<object>.Ok(new
+        {
+            userId = currentUserId,
+            bio = string.IsNullOrEmpty(bio) ? null : bio,
+            profileBackground = string.IsNullOrEmpty(bg) ? null : bg,
+        }));
+    }
 }
 
 public class UpdateMyAvatarRequest
 {
     public string? AvatarFileName { get; set; }
+}
+
+public class UpdatePublicPageRequest
+{
+    public string? Bio { get; set; }
+    public string? ProfileBackground { get; set; }
 }

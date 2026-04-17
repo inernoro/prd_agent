@@ -92,4 +92,15 @@ public class User
 
     /// <summary>是否订阅教程邮件（默认订阅）</summary>
     public bool TutorialEmailOptIn { get; set; } = true;
+
+    /// <summary>
+    /// 个人公开页自我介绍（Markdown-lite；前端按纯文本渲染，最多 500 字）。
+    /// </summary>
+    public string? Bio { get; set; }
+
+    /// <summary>
+    /// 个人公开页背景主题 Key（如 "aurora"、"sunset"、"forest"、"ocean"、"minimal"、"violet"）。
+    /// 前端负责渐变/图样的具体实现，后端只保存选择。
+    /// </summary>
+    public string? ProfileBackground { get; set; }
 }

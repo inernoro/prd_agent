@@ -28,6 +28,11 @@ import {
   type LucideIcon,
 } from 'lucide-react';
 import { SitePreview } from '@/components/SitePreview';
+import { useAuthStore } from '@/stores/authStore';
+import { resolveBackgroundTheme } from './public-profile/profileBackgrounds';
+import { OwnerDecorator } from './public-profile/OwnerDecorator';
+import { RetractButton } from './public-profile/RetractButton';
+import type { RetractDomain } from '@/services';
 
 function fmtDate(s: string | null | undefined) {
   if (!s) return '';
@@ -60,6 +65,12 @@ export default function PublicProfilePage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<TabKey>('sites');
+  const authUser = useAuthStore((s) => s.user);
+  const isSelf = !!(
+    authUser?.username &&
+    username &&
+    authUser.username.toLowerCase() === username.toLowerCase()
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -126,18 +137,25 @@ export default function PublicProfilePage() {
 
   const { user } = data;
   const totalPublic = TAB_DEFS.reduce((sum, t) => sum + (data[t.key]?.total ?? 0), 0);
+  const theme = resolveBackgroundTheme(user.profileBackground);
+
+  const removeItem = (domain: RetractDomain, id: string) => {
+    setData((prev) => {
+      if (!prev) return prev;
+      const section = prev[domain];
+      const nextItems = section.items.filter((it: { id: string }) => it.id !== id);
+      return {
+        ...prev,
+        [domain]: { items: nextItems, total: Math.max(0, section.total - 1) },
+      } as PublicProfile;
+    });
+  };
 
   return (
-    <div className="min-h-screen bg-[#0a0b0f] text-white">
+    <div className="min-h-screen text-white" style={{ background: theme.base }}>
       <div className="relative overflow-hidden border-b border-white/10">
-        <div
-          className="absolute inset-0 opacity-40"
-          style={{
-            background:
-              'radial-gradient(ellipse 80% 60% at 30% 0%, rgba(56,189,248,0.25) 0%, transparent 55%), radial-gradient(ellipse 60% 50% at 90% 20%, rgba(139,92,246,0.2) 0%, transparent 60%)',
-          }}
-        />
-        <div className="relative mx-auto flex max-w-5xl items-center gap-5 px-6 py-10">
+        <div className="absolute inset-0 opacity-40" style={{ background: theme.banner }} />
+        <div className="relative mx-auto flex max-w-5xl items-start gap-5 px-6 py-10">
           <div className="flex h-20 w-20 shrink-0 items-center justify-center rounded-2xl bg-gradient-to-br from-sky-500/30 to-violet-500/20 text-2xl font-bold text-white/90 ring-1 ring-white/15">
             {user.displayName?.[0]?.toUpperCase() || user.username[0]?.toUpperCase() || '?'}
           </div>
@@ -145,11 +163,21 @@ export default function PublicProfilePage() {
             <div className="flex items-center gap-2 text-sm text-white/60">
               <Globe size={14} />
               <span>公开主页</span>
+              {isSelf && (
+                <span className="rounded-full bg-sky-500/20 px-2 py-0.5 text-[10px] text-sky-200 ring-1 ring-sky-400/40">
+                  这是你
+                </span>
+              )}
             </div>
             <h1 className="mt-1 truncate text-2xl font-semibold tracking-tight">
               {user.displayName}
             </h1>
             <div className="mt-1 text-sm text-white/50">@{user.username}</div>
+            {user.bio && (
+              <p className="mt-3 max-w-2xl whitespace-pre-line text-[13px] leading-relaxed text-white/75">
+                {user.bio}
+              </p>
+            )}
             <div className="mt-3 flex flex-wrap items-center gap-3 text-xs text-white/50">
               <span className="inline-flex items-center gap-1">
                 <Inbox size={12} />
@@ -162,11 +190,36 @@ export default function PublicProfilePage() {
               )}
             </div>
           </div>
+          {isSelf && (
+            <div className="shrink-0">
+              <OwnerDecorator
+                initialBio={user.bio}
+                initialBackground={user.profileBackground}
+                onSaved={(patch) => {
+                  setData((prev) =>
+                    prev
+                      ? {
+                          ...prev,
+                          user: {
+                            ...prev.user,
+                            bio: patch.bio,
+                            profileBackground: patch.profileBackground,
+                          },
+                        }
+                      : prev,
+                  );
+                }}
+              />
+            </div>
+          )}
         </div>
       </div>
 
       {visibleTabs.length > 0 && (
-        <div className="sticky top-0 z-10 border-b border-white/10 bg-[#0a0b0f]/85 backdrop-blur-xl">
+        <div
+          className="sticky top-0 z-10 border-b border-white/10 backdrop-blur-xl"
+          style={{ background: `${theme.base}d9` }}
+        >
           <div className="mx-auto flex max-w-5xl items-center gap-1 overflow-x-auto px-4 py-2 text-[13px]">
             {visibleTabs.map((t) => {
               const Icon = t.icon;
@@ -204,19 +257,48 @@ export default function PublicProfilePage() {
         {totalPublic === 0 ? (
           <EmptyState />
         ) : activeTab === 'sites' ? (
-          <SitesGrid items={data.sites.items} />
+          <SitesGrid
+            items={data.sites.items}
+            isSelf={isSelf}
+            onRetracted={(id) => removeItem('sites', id)}
+          />
         ) : activeTab === 'skills' ? (
-          <SkillsGrid username={user.username} items={data.skills.items} />
+          <SkillsGrid
+            username={user.username}
+            items={data.skills.items}
+            isSelf={isSelf}
+            onRetracted={(id) => removeItem('skills', id)}
+          />
         ) : activeTab === 'documents' ? (
-          <DocumentsGrid items={data.documents.items} />
+          <DocumentsGrid
+            items={data.documents.items}
+            isSelf={isSelf}
+            onRetracted={(id) => removeItem('documents', id)}
+          />
         ) : activeTab === 'prompts' ? (
-          <PromptsGrid items={data.prompts.items} />
+          <PromptsGrid
+            items={data.prompts.items}
+            isSelf={isSelf}
+            onRetracted={(id) => removeItem('prompts', id)}
+          />
         ) : activeTab === 'workspaces' ? (
-          <WorkspacesGrid items={data.workspaces.items} />
+          <WorkspacesGrid
+            items={data.workspaces.items}
+            isSelf={isSelf}
+            onRetracted={(id) => removeItem('workspaces', id)}
+          />
         ) : activeTab === 'emergences' ? (
-          <EmergencesGrid items={data.emergences.items} />
+          <EmergencesGrid
+            items={data.emergences.items}
+            isSelf={isSelf}
+            onRetracted={(id) => removeItem('emergences', id)}
+          />
         ) : (
-          <WorkflowsGrid items={data.workflows.items} />
+          <WorkflowsGrid
+            items={data.workflows.items}
+            isSelf={isSelf}
+            onRetracted={(id) => removeItem('workflows', id)}
+          />
         )}
       </div>
 
@@ -259,7 +341,15 @@ function Meta({ children }: { children: React.ReactNode }) {
 
 const GRID_CLS = 'grid gap-4 grid-cols-[repeat(auto-fill,minmax(260px,1fr))]';
 
-function SitesGrid({ items }: { items: PublicSite[] }) {
+function SitesGrid({
+  items,
+  isSelf,
+  onRetracted,
+}: {
+  items: PublicSite[];
+  isSelf: boolean;
+  onRetracted: (id: string) => void;
+}) {
   return (
     <div className={GRID_CLS}>
       {items.map((s) => (
@@ -283,6 +373,11 @@ function SitesGrid({ items }: { items: PublicSite[] }) {
             <div className="absolute bottom-2 right-2 inline-flex items-center gap-1 rounded-full bg-black/60 px-2 py-1 text-[10px] text-white/90 opacity-0 backdrop-blur-sm transition-opacity group-hover:opacity-100">
               <ExternalLink size={10} /> 访问
             </div>
+            {isSelf && (
+              <div className="absolute left-2 top-2">
+                <RetractButton domain="sites" itemKey={s.id} label={s.title} onRetracted={() => onRetracted(s.id)} />
+              </div>
+            )}
           </div>
           <div className="flex flex-1 flex-col gap-1 p-3">
             <h3 className="truncate text-sm font-medium text-white/90">{s.title}</h3>
@@ -304,7 +399,17 @@ function SitesGrid({ items }: { items: PublicSite[] }) {
   );
 }
 
-function SkillsGrid({ username, items }: { username: string; items: PublicSkill[] }) {
+function SkillsGrid({
+  username,
+  items,
+  isSelf,
+  onRetracted,
+}: {
+  username: string;
+  items: PublicSkill[];
+  isSelf: boolean;
+  onRetracted: (id: string) => void;
+}) {
   const download = (s: PublicSkill) => {
     const payload = {
       skillKey: s.skillKey,
@@ -330,8 +435,18 @@ function SkillsGrid({ username, items }: { username: string; items: PublicSkill[
       {items.map((s) => (
         <div
           key={s.id}
-          className="group flex flex-col overflow-hidden rounded-2xl border border-white/10 bg-white/[0.03] p-4 transition-all hover:border-white/25 hover:bg-white/[0.06]"
+          className="group relative flex flex-col overflow-hidden rounded-2xl border border-white/10 bg-white/[0.03] p-4 transition-all hover:border-white/25 hover:bg-white/[0.06]"
         >
+          {isSelf && (
+            <div className="absolute right-2 top-2">
+              <RetractButton
+                domain="skills"
+                itemKey={s.skillKey}
+                label={s.title}
+                onRetracted={() => onRetracted(s.id)}
+              />
+            </div>
+          )}
           <div className="mb-2 flex items-start gap-3">
             <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-violet-500/30 to-fuchsia-500/20 text-xl ring-1 ring-white/10">
               {s.icon || '✨'}
@@ -365,14 +480,32 @@ function SkillsGrid({ username, items }: { username: string; items: PublicSkill[
   );
 }
 
-function DocumentsGrid({ items }: { items: PublicProfileDocumentStore[] }) {
+function DocumentsGrid({
+  items,
+  isSelf,
+  onRetracted,
+}: {
+  items: PublicProfileDocumentStore[];
+  isSelf: boolean;
+  onRetracted: (id: string) => void;
+}) {
   return (
     <div className={GRID_CLS}>
       {items.map((d) => (
         <div
           key={d.id}
-          className="group flex flex-col overflow-hidden rounded-2xl border border-white/10 bg-white/[0.03] transition-all hover:border-white/25 hover:bg-white/[0.06]"
+          className="group relative flex flex-col overflow-hidden rounded-2xl border border-white/10 bg-white/[0.03] transition-all hover:border-white/25 hover:bg-white/[0.06]"
         >
+          {isSelf && (
+            <div className="absolute left-2 top-2 z-10">
+              <RetractButton
+                domain="documents"
+                itemKey={d.id}
+                label={d.name}
+                onRetracted={() => onRetracted(d.id)}
+              />
+            </div>
+          )}
           {d.coverImageUrl ? (
             <div
               className="relative overflow-hidden"
@@ -394,6 +527,19 @@ function DocumentsGrid({ items }: { items: PublicProfileDocumentStore[] }) {
             {d.description && (
               <p className="line-clamp-2 text-[11px] text-white/55">{d.description}</p>
             )}
+            {d.primaryEntry && (
+              <div className="mt-1 rounded-md border border-emerald-400/10 bg-emerald-500/[0.04] p-2">
+                <div className="flex items-center gap-1 text-[10px] text-emerald-200/80">
+                  <FileText size={10} />
+                  <span className="truncate">{d.primaryEntry.title}</span>
+                </div>
+                {d.primaryEntry.summary && (
+                  <p className="mt-1 line-clamp-2 text-[11px] leading-relaxed text-white/55">
+                    {d.primaryEntry.summary}
+                  </p>
+                )}
+              </div>
+            )}
             <TagsList tags={d.tags} />
             <Meta>
               <span className="inline-flex items-center gap-0.5">
@@ -412,18 +558,41 @@ function DocumentsGrid({ items }: { items: PublicProfileDocumentStore[] }) {
   );
 }
 
-function PromptsGrid({ items }: { items: PublicLiteraryPrompt[] }) {
+function PromptsGrid({
+  items,
+  isSelf,
+  onRetracted,
+}: {
+  items: PublicLiteraryPrompt[];
+  isSelf: boolean;
+  onRetracted: (id: string) => void;
+}) {
   return (
     <div className={GRID_CLS}>
       {items.map((p) => (
         <div
           key={p.id}
-          className="flex flex-col gap-2 rounded-2xl border border-white/10 bg-white/[0.03] p-4 transition-all hover:border-white/25 hover:bg-white/[0.06]"
+          className="relative flex flex-col gap-2 rounded-2xl border border-white/10 bg-white/[0.03] p-4 transition-all hover:border-white/25 hover:bg-white/[0.06]"
         >
-          <div className="flex items-start gap-2">
+          {isSelf && (
+            <div className="absolute right-2 top-2">
+              <RetractButton
+                domain="prompts"
+                itemKey={p.id}
+                label={p.title}
+                onRetracted={() => onRetracted(p.id)}
+              />
+            </div>
+          )}
+          <div className="flex items-start gap-2 pr-20">
             <Feather size={16} className="mt-0.5 shrink-0 text-amber-300/80" />
             <h3 className="line-clamp-2 text-sm font-medium text-white/90">{p.title}</h3>
           </div>
+          {p.preview && (
+            <p className="line-clamp-4 whitespace-pre-wrap rounded-md bg-black/20 px-2 py-1.5 font-mono text-[10.5px] leading-relaxed text-white/55">
+              {p.preview}
+            </p>
+          )}
           <div className="mt-auto flex items-center gap-3 text-[10px] text-white/40">
             {p.scenarioType && (
               <span className="rounded-full bg-amber-500/10 px-2 py-0.5 text-amber-200/80">
@@ -438,16 +607,48 @@ function PromptsGrid({ items }: { items: PublicLiteraryPrompt[] }) {
   );
 }
 
-function WorkspacesGrid({ items }: { items: PublicWorkspace[] }) {
+function WorkspacesGrid({
+  items,
+  isSelf,
+  onRetracted,
+}: {
+  items: PublicWorkspace[];
+  isSelf: boolean;
+  onRetracted: (id: string) => void;
+}) {
   return (
     <div className={GRID_CLS}>
       {items.map((w) => (
         <div
           key={w.id}
-          className="flex flex-col overflow-hidden rounded-2xl border border-white/10 bg-white/[0.03] transition-all hover:border-white/25 hover:bg-white/[0.06]"
+          className="group flex flex-col overflow-hidden rounded-2xl border border-white/10 bg-white/[0.03] transition-all hover:border-white/25 hover:bg-white/[0.06]"
         >
-          <div className="flex aspect-[16/9] items-center justify-center bg-gradient-to-br from-rose-500/15 to-pink-500/5">
-            <ImageIcon size={36} className="text-rose-200/60" />
+          <div
+            className="relative overflow-hidden"
+            style={{ aspectRatio: '16 / 9', background: '#0f1014' }}
+          >
+            {w.coverUrl ? (
+              <img
+                src={w.coverUrl}
+                alt={w.title}
+                loading="lazy"
+                className="absolute inset-0 h-full w-full object-cover transition-transform duration-300 group-hover:scale-105"
+              />
+            ) : (
+              <div className="flex h-full w-full items-center justify-center bg-gradient-to-br from-rose-500/15 to-pink-500/5">
+                <ImageIcon size={36} className="text-rose-200/60" />
+              </div>
+            )}
+            {isSelf && (
+              <div className="absolute left-2 top-2">
+                <RetractButton
+                  domain="workspaces"
+                  itemKey={w.id}
+                  label={w.title}
+                  onRetracted={() => onRetracted(w.id)}
+                />
+              </div>
+            )}
           </div>
           <div className="flex flex-col gap-1 p-3">
             <h3 className="truncate text-sm font-medium text-white/90">{w.title}</h3>
@@ -461,20 +662,49 @@ function WorkspacesGrid({ items }: { items: PublicWorkspace[] }) {
   );
 }
 
-function EmergencesGrid({ items }: { items: PublicEmergenceTree[] }) {
+function EmergencesGrid({
+  items,
+  isSelf,
+  onRetracted,
+}: {
+  items: PublicEmergenceTree[];
+  isSelf: boolean;
+  onRetracted: (id: string) => void;
+}) {
   return (
     <div className={GRID_CLS}>
       {items.map((e) => (
         <div
           key={e.id}
-          className="flex flex-col gap-2 rounded-2xl border border-white/10 bg-white/[0.03] p-4 transition-all hover:border-white/25 hover:bg-white/[0.06]"
+          className="relative flex flex-col gap-2 rounded-2xl border border-white/10 bg-white/[0.03] p-4 transition-all hover:border-white/25 hover:bg-white/[0.06]"
         >
-          <div className="flex items-start gap-2">
+          {isSelf && (
+            <div className="absolute right-2 top-2">
+              <RetractButton
+                domain="emergences"
+                itemKey={e.id}
+                label={e.title}
+                onRetracted={() => onRetracted(e.id)}
+              />
+            </div>
+          )}
+          <div className="flex items-start gap-2 pr-20">
             <Zap size={16} className="mt-0.5 shrink-0 text-indigo-300/80" />
             <h3 className="line-clamp-2 text-sm font-medium text-white/90">{e.title}</h3>
           </div>
           {e.description && (
-            <p className="line-clamp-3 text-[11px] text-white/55">{e.description}</p>
+            <p className="line-clamp-2 text-[11px] text-white/55">{e.description}</p>
+          )}
+          {e.seedPreview && (
+            <div className="rounded-md border border-indigo-400/10 bg-indigo-500/[0.04] p-2">
+              <div className="mb-1 flex items-center gap-1 text-[10px] text-indigo-200/70">
+                <Zap size={10} />
+                <span>种子</span>
+              </div>
+              <p className="line-clamp-3 whitespace-pre-wrap text-[11px] leading-relaxed text-white/55">
+                {e.seedPreview}
+              </p>
+            </div>
           )}
           <div className="mt-auto flex items-center gap-3 text-[10px] text-white/40">
             <span>{e.nodeCount} 个节点</span>
@@ -485,15 +715,33 @@ function EmergencesGrid({ items }: { items: PublicEmergenceTree[] }) {
   );
 }
 
-function WorkflowsGrid({ items }: { items: PublicWorkflow[] }) {
+function WorkflowsGrid({
+  items,
+  isSelf,
+  onRetracted,
+}: {
+  items: PublicWorkflow[];
+  isSelf: boolean;
+  onRetracted: (id: string) => void;
+}) {
   return (
     <div className={GRID_CLS}>
       {items.map((w) => (
         <div
           key={w.id}
-          className="flex flex-col gap-2 rounded-2xl border border-white/10 bg-white/[0.03] p-4 transition-all hover:border-white/25 hover:bg-white/[0.06]"
+          className="relative flex flex-col gap-2 rounded-2xl border border-white/10 bg-white/[0.03] p-4 transition-all hover:border-white/25 hover:bg-white/[0.06]"
         >
-          <div className="flex items-start gap-2">
+          {isSelf && (
+            <div className="absolute right-2 top-2">
+              <RetractButton
+                domain="workflows"
+                itemKey={w.id}
+                label={w.name}
+                onRetracted={() => onRetracted(w.id)}
+              />
+            </div>
+          )}
+          <div className="flex items-start gap-2 pr-20">
             {w.avatarUrl ? (
               <img
                 src={w.avatarUrl}
@@ -508,8 +756,30 @@ function WorkflowsGrid({ items }: { items: PublicWorkflow[] }) {
           {w.description && (
             <p className="line-clamp-2 text-[11px] text-white/55">{w.description}</p>
           )}
+          {w.nodeTypes && w.nodeTypes.length > 0 && (
+            <div className="flex flex-wrap items-center gap-1 rounded-md border border-cyan-400/10 bg-cyan-500/[0.04] px-2 py-1.5">
+              {w.nodeTypes.map((t, i) => (
+                <span key={`${t}-${i}`} className="inline-flex items-center gap-1">
+                  <span className="rounded bg-cyan-500/15 px-1.5 py-0.5 font-mono text-[9.5px] text-cyan-100/85">
+                    {t}
+                  </span>
+                  {i < w.nodeTypes!.length - 1 && (
+                    <span className="text-[9px] text-cyan-200/40">→</span>
+                  )}
+                </span>
+              ))}
+              {typeof w.nodeCount === 'number' && w.nodeCount > w.nodeTypes.length && (
+                <span className="text-[9px] text-white/35">
+                  +{w.nodeCount - w.nodeTypes.length} 节点
+                </span>
+              )}
+            </div>
+          )}
           <TagsList tags={w.tags} />
           <Meta>
+            {typeof w.nodeCount === 'number' && w.nodeCount > 0 && (
+              <span>{w.nodeCount} 个节点</span>
+            )}
             <span>运行 {w.executionCount} 次</span>
           </Meta>
         </div>

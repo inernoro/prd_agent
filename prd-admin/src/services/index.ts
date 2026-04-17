@@ -1485,7 +1485,12 @@ export {
 export type { HostedSite, HostedSiteFile, ShareLinkItem, TagCount, SharedSiteInfo, ShareViewData, ShareViewLogItem } from '@/services/real/webPages';
 
 // ── Public Profile 个人公开主页 ──
-export { fetchPublicProfile } from '@/services/real/publicProfile';
+export {
+  fetchPublicProfile,
+  updateMyPublicPage,
+  retractPublicItem,
+} from '@/services/real/publicProfile';
+export type { RetractDomain } from '@/services/real/publicProfile';
 export type {
   PublicProfile,
   PublicProfileUser,

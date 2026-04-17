@@ -149,6 +149,26 @@ public class EmergenceController : ControllerBase
         return Ok(ApiResponse<object>.Ok(new { deleted = true }));
     }
 
+    /// <summary>取消公开（将涌现树从公开状态撤回为私有）</summary>
+    [HttpPost("trees/{treeId}/unpublish")]
+    public async Task<IActionResult> UnpublishTree(string treeId, CancellationToken ct)
+    {
+        var userId = GetUserId();
+        var tree = await _db.EmergenceTrees.Find(t => t.Id == treeId).FirstOrDefaultAsync(ct);
+        if (tree == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "涌现树不存在"));
+        if (tree.OwnerId != userId)
+            return StatusCode(StatusCodes.Status403Forbidden, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "无权限"));
+
+        var update = Builders<EmergenceTree>.Update
+            .Set(t => t.IsPublic, false)
+            .Set(t => t.UpdatedAt, DateTime.UtcNow);
+        await _db.EmergenceTrees.UpdateOneAsync(t => t.Id == treeId, update, cancellationToken: ct);
+
+        _logger.LogInformation("[emergence] Tree unpublished: {TreeId} by {UserId}", treeId, userId);
+        return Ok(ApiResponse<object>.Ok(new { id = treeId, isPublic = false }));
+    }
+
     // ─────────────────────────────────────────────
     // 节点操作
     // ─────────────────────────────────────────────
