@@ -387,6 +387,7 @@
       display: flex;
       align-items: center;
       gap: 8px;
+      padding-right: 36px; /* reserve space for the absolute-positioned delete btn */
     }
     .cds-project-card-title {
       font-size: 16px;
@@ -617,23 +618,33 @@
       color: var(--text-secondary);
     }
     .cds-service-count strong { color: var(--green); font-weight: 700; }
+    /* Wrapper enables the delete button to live OUTSIDE the <a> tag
+       (button-in-anchor is invalid HTML and breaks click events). */
+    .cds-project-card-wrapper {
+      position: relative;
+    }
     .cds-project-card-delete {
-      flex-shrink: 0;
-      margin-left: auto;
-      width: 26px;
-      height: 26px;
+      position: absolute;
+      top: 12px;
+      right: 12px;
+      z-index: 2;
+      width: 28px;
+      height: 28px;
       display: none;
       align-items: center;
       justify-content: center;
-      border-radius: 6px;
-      background: rgba(244, 63, 94, 0.1);
-      border: 1px solid rgba(244, 63, 94, 0.25);
+      border-radius: 7px;
+      background: rgba(244, 63, 94, 0.12);
+      border: 1px solid rgba(244, 63, 94, 0.3);
       color: var(--red, #f43f5e);
       cursor: pointer;
-      transition: background 120ms ease;
+      transition: background 120ms ease, border-color 120ms ease;
     }
-    .cds-project-card:hover .cds-project-card-delete { display: flex; }
-    .cds-project-card-delete:hover { background: rgba(244, 63, 94, 0.22); }
+    .cds-project-card-wrapper:hover .cds-project-card-delete { display: flex; }
+    .cds-project-card-delete:hover {
+      background: rgba(244, 63, 94, 0.25);
+      border-color: rgba(244, 63, 94, 0.5);
+    }
 
     /* Empty / loading states */
     .cds-grid-state {

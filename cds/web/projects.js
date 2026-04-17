@@ -271,21 +271,26 @@
       ? '<div class="cds-clone-error">' + escapeHtml(project.cloneError) + '</div>'
       : '';
 
+    // Wrap in a div so the delete button can sit OUTSIDE the <a> tag.
+    // <button> inside <a> is invalid HTML — click events on the button
+    // bubble to the <a> in some browsers and navigate instead of deleting.
     return [
-      '<a class="cds-project-card" href="', href, '">',
-      '  <div class="cds-project-card-head">',
-      '    <div class="cds-project-card-title">', escapeHtml(project.name), '</div>',
-      '    ', cloneBadge,
-      '    ', deleteBtn,
-      '  </div>',
-      '  <div class="cds-service-strip">', renderServiceStrip(project, services || {}), '</div>',
+      '<div class="cds-project-card-wrapper">',
+      '  <a class="cds-project-card" href="', href, '">',
+      '    <div class="cds-project-card-head">',
+      '      <div class="cds-project-card-title">', escapeHtml(project.name), '</div>',
+      '      ', cloneBadge,
+      '    </div>',
+      '    <div class="cds-service-strip">', renderServiceStrip(project, services || {}), '</div>',
       errorBlock,
-      '  <div class="cds-project-card-foot">',
-      '    <span class="cds-env-dot">', envLabel, '</span>',
-      '    <span class="cds-service-count"><strong>', totalServices, '</strong> service', totalServices === 1 ? '' : 's', '</span>',
+      '    <div class="cds-project-card-foot">',
+      '      <span class="cds-env-dot">', envLabel, '</span>',
+      '      <span class="cds-service-count"><strong>', totalServices, '</strong> service', totalServices === 1 ? '' : 's', '</span>',
       cloneBtn ? '<span style="flex-shrink:0">' + cloneBtn + '</span>' : '',
-      '  </div>',
-      '</a>',
+      '    </div>',
+      '  </a>',
+      '  ', deleteBtn,
+      '</div>',
     ].join('');
   }
 
@@ -359,12 +364,14 @@
         projects.forEach(function (p, idx) {
           fetchServicesFor(p.id).then(function (services) {
             // Replace just this card's outer HTML in-place.
-            var cards = gridEl.querySelectorAll('.cds-project-card');
+            // Query the wrapper div (parent of <a>) so the full card
+            // (including the delete button outside the <a>) gets replaced.
+            var cards = gridEl.querySelectorAll('.cds-project-card-wrapper');
             if (cards[idx]) {
-              var wrapper = document.createElement('div');
-              wrapper.innerHTML = renderCard(p, services);
-              if (wrapper.firstElementChild) {
-                cards[idx].outerHTML = wrapper.firstElementChild.outerHTML;
+              var tmp = document.createElement('div');
+              tmp.innerHTML = renderCard(p, services);
+              if (tmp.firstElementChild) {
+                cards[idx].outerHTML = tmp.firstElementChild.outerHTML;
               }
             }
           });
