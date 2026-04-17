@@ -271,7 +271,15 @@ export const api = {
     avatars: {
       nohead: () => '/api/assets/avatars/nohead',
     },
+    homepage: {
+      list: () => '/api/assets/homepage/list',
+      upload: () => '/api/assets/homepage/upload',
+      bySlot: (slot: string) => `/api/assets/homepage/${encodeURIComponent(slot)}`,
+    },
   },
+
+  // 首页资源（任意登录用户可读，用于 LandingPage 覆盖默认素材）
+  homepageAssets: () => '/api/homepage/assets',
 
   // ============ Executive 总裁面板 ============
   executive: {

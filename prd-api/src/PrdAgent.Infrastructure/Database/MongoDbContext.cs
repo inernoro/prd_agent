@@ -75,6 +75,7 @@ public class MongoDbContext
     public IMongoCollection<DesktopAssetSkin> DesktopAssetSkins => _database.GetCollection<DesktopAssetSkin>("desktop_asset_skins");
     public IMongoCollection<DesktopAssetKey> DesktopAssetKeys => _database.GetCollection<DesktopAssetKey>("desktop_asset_keys");
     public IMongoCollection<DesktopAsset> DesktopAssets => _database.GetCollection<DesktopAsset>("desktop_assets");
+    public IMongoCollection<HomepageAsset> HomepageAssets => _database.GetCollection<HomepageAsset>("homepage_assets");
     public IMongoCollection<LiteraryPrompt> LiteraryPrompts => _database.GetCollection<LiteraryPrompt>("literary_prompts");
     public IMongoCollection<OpenPlatformApp> OpenPlatformApps => _database.GetCollection<OpenPlatformApp>("openplatformapps");
     public IMongoCollection<OpenPlatformRequestLog> OpenPlatformRequestLogs => _database.GetCollection<OpenPlatformRequestLog>("openplatformrequestlogs");

@@ -33,6 +33,7 @@ import { MapSpinner } from '@/components/ui/VideoLoader';
 import { useToolboxStore } from '@/stores/toolboxStore';
 import { useAuthStore } from '@/stores/authStore';
 import { useChangelogStore, selectUnreadCount } from '@/stores/changelogStore';
+import { useHomepageAssetsStore } from '@/stores/homepageAssetsStore';
 import { useBreakpoint } from '@/hooks/useBreakpoint';
 import type { ToolboxItem } from '@/services';
 import { ShowcaseGallery } from '@/components/showcase/ShowcaseGallery';
@@ -136,6 +137,9 @@ function getAccent(icon: string) {
 
 function getCoverUrl(agentKey?: string): string | null {
   if (!agentKey) return null;
+  // 优先使用管理员上传的封面图；未上传时回退 CDN 默认素材
+  const uploaded = useHomepageAssetsStore.getState().agentImageUrl(agentKey);
+  if (uploaded) return uploaded;
   const path = AGENT_COVERS[agentKey];
   if (!path) return null;
   const base = (useAuthStore.getState().cdnBaseUrl ?? '').replace(/\/+$/, '');
@@ -144,6 +148,8 @@ function getCoverUrl(agentKey?: string): string | null {
 
 function getVideoUrl(agentKey?: string): string | null {
   if (!agentKey) return null;
+  const uploaded = useHomepageAssetsStore.getState().agentVideoUrl(agentKey);
+  if (uploaded) return uploaded;
   const path = AGENT_VIDEOS[agentKey];
   if (!path) return null;
   const base = (useAuthStore.getState().cdnBaseUrl ?? '').replace(/\/+$/, '');
@@ -178,6 +184,8 @@ type HomeQuickLink = {
   path: string;
   accent: string;
   gradient: string;
+  /** 管理员上传的背景图 URL（优先级高于 gradient，渲染时作为背景图铺满卡片） */
+  backgroundUrl?: string;
 };
 
 /**
@@ -501,12 +509,22 @@ export default function AgentLauncherPage() {
   const changelogUnread = useChangelogStore(selectUnreadCount);
   const loadChangelogCurrentWeek = useChangelogStore((s) => s.loadCurrentWeek);
 
-  const quickLinks = QUICK_LINKS_BASE;
+  // 首页资源（卡片背景 + Agent 封面）—— 上传后覆盖默认素材
+  const homepageAssets = useHomepageAssetsStore((s) => s.assets);
+  const loadHomepageAssets = useHomepageAssetsStore((s) => s.load);
+
+  const quickLinks = useMemo<HomeQuickLink[]>(() => {
+    return QUICK_LINKS_BASE.map((link) => {
+      const uploaded = link.id ? homepageAssets[`card.${link.id}`]?.url : undefined;
+      return uploaded ? { ...link, backgroundUrl: uploaded } : link;
+    });
+  }, [homepageAssets]);
 
   useEffect(() => {
     loadItems();
     void loadChangelogCurrentWeek();
-  }, [loadItems, loadChangelogCurrentWeek]);
+    void loadHomepageAssets();
+  }, [loadItems, loadChangelogCurrentWeek, loadHomepageAssets]);
 
   // 静态实用工具入口（不来自后端 toolbox）
   // 原用户菜单中的工具类条目（知识库/涌现/网页托管 + 提示词/实验室/自动化/请求日志）
@@ -829,7 +847,28 @@ export default function AgentLauncherPage() {
                       minHeight: isMobile ? 96 : 120,
                     }}
                   >
-                    {/* 背景光晕：从卡片右上角散出主色 */}
+                    {/* 管理员上传的背景图（如有）：铺满卡片，底部渐变压暗保证文字可读 */}
+                    {link.backgroundUrl && (
+                      <>
+                        <div
+                          className="absolute inset-0 transition-transform duration-500 group-hover:scale-105 pointer-events-none"
+                          style={{
+                            backgroundImage: `url(${link.backgroundUrl})`,
+                            backgroundSize: 'cover',
+                            backgroundPosition: 'center',
+                          }}
+                        />
+                        <div
+                          className="absolute inset-0 pointer-events-none"
+                          style={{
+                            background: 'linear-gradient(180deg, rgba(0,0,0,0.15) 0%, rgba(0,0,0,0.55) 70%, rgba(0,0,0,0.8) 100%)',
+                          }}
+                        />
+                      </>
+                    )}
+
+                    {/* 背景光晕：从卡片右上角散出主色（仅无背景图时展示） */}
+                    {!link.backgroundUrl && (
                     <div
                       className="absolute pointer-events-none transition-opacity duration-300"
                       style={{
@@ -841,6 +880,7 @@ export default function AgentLauncherPage() {
                         opacity: 0.8,
                       }}
                     />
+                    )}
 
                     {/* Hover 边框辉光 */}
                     <div
