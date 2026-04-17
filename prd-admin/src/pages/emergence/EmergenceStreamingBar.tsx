@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef } from 'react';
-import { CheckCircle2, AlertCircle, Sparkle } from 'lucide-react';
+import { CheckCircle2, AlertCircle, Sparkle, Brain } from 'lucide-react';
 import { MapSpinner } from '@/components/ui/VideoLoader';
 import type { SsePhase } from '@/lib/useSseStream';
 
@@ -8,6 +8,8 @@ interface Props {
   message: string;
   /** LLM 流式累积的原始文本（useSseStream.typing） */
   typing?: string;
+  /** LLM 推理过程文本（reasoning_content / thinking） */
+  thinking?: string;
   /** 当前维度：决定颜色（1=蓝/探索 2=紫/涌现 3=黄/幻想） */
   dimension?: 1 | 2 | 3;
   /** 右侧附加信息（如"已涌现 3 个"） */
@@ -55,7 +57,7 @@ function extractReadableText(raw: string): string {
   return parts.join(' · ');
 }
 
-export function EmergenceStreamingBar({ phase, message, typing = '', dimension = 1, extra }: Props) {
+export function EmergenceStreamingBar({ phase, message, typing = '', thinking = '', dimension = 1, extra }: Props) {
   const pc = phaseColor[phase];
   const dc = dimColor[dimension];
 
@@ -63,11 +65,16 @@ export function EmergenceStreamingBar({ phase, message, typing = '', dimension =
   // 只显示最新 260 字符，避免长文本挤碎布局
   const tail = readable.length > 260 ? '…' + readable.slice(-260) : readable;
 
+  // 思考模式：还没收到正式 typing，但已经有 reasoning_content 流入
+  const showThinking = !tail && thinking && thinking.trim().length > 0;
+  const thinkingText = thinking.replace(/\s+/g, ' ').trim();
+  const thinkingTail = thinkingText.length > 260 ? '…' + thinkingText.slice(-260) : thinkingText;
+
   const scrollRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     const el = scrollRef.current;
     if (el) el.scrollLeft = el.scrollWidth;
-  }, [tail]);
+  }, [tail, thinkingTail]);
 
   const isBusy = phase === 'connecting' || phase === 'streaming';
 
@@ -87,7 +94,11 @@ export function EmergenceStreamingBar({ phase, message, typing = '', dimension =
         style={{ borderRight: `1px solid ${dc.border}` }}
       >
         {isBusy ? (
-          <MapSpinner size={14} color={dc.main} className="flex-shrink-0" />
+          showThinking ? (
+            <Brain size={14} className="flex-shrink-0 emergence-think-pulse" style={{ color: dc.main }} />
+          ) : (
+            <MapSpinner size={14} color={dc.main} className="flex-shrink-0" />
+          )
         ) : phase === 'done' ? (
           <CheckCircle2 size={14} className="flex-shrink-0" style={{ color: pc.color }} />
         ) : phase === 'error' ? (
@@ -96,7 +107,7 @@ export function EmergenceStreamingBar({ phase, message, typing = '', dimension =
           <Sparkle size={14} className="flex-shrink-0" style={{ color: dc.main }} />
         )}
         <span className="text-[12px] font-medium whitespace-nowrap" style={{ color: dc.main }}>
-          {message || (phase === 'idle' ? '就绪' : 'AI 生长中')}
+          {showThinking ? 'AI 思考中' : (message || (phase === 'idle' ? '就绪' : 'AI 生长中'))}
         </span>
       </div>
 
@@ -132,6 +143,31 @@ export function EmergenceStreamingBar({ phase, message, typing = '', dimension =
                   background: dc.main,
                   borderRadius: 1,
                   boxShadow: `0 0 8px ${dc.main}`,
+                }}
+              />
+            )}
+          </>
+        ) : showThinking ? (
+          <>
+            <span
+              className="text-[11.5px] leading-none italic"
+              style={{
+                color: 'rgba(255,255,255,0.55)',
+                textShadow: `0 0 12px ${dc.main.replace('0.95', '0.25')}`,
+              }}
+            >
+              {thinkingTail}
+            </span>
+            {isBusy && (
+              <span
+                className="inline-block ml-1 emergence-typing-cursor"
+                style={{
+                  width: 6,
+                  height: 12,
+                  background: dc.main,
+                  opacity: 0.55,
+                  borderRadius: 1,
+                  boxShadow: `0 0 6px ${dc.main}`,
                 }}
               />
             )}

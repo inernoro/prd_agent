@@ -52,8 +52,10 @@ const dimColor: Record<number, string> = {
 
 // ── 数据转换：后端节点 → React Flow 节点 ──
 // 布局：基于子树宽度的递归树布局，父节点居中于子节点群之上
-const LEAF_WIDTH = 320;
-const DEPTH_STEP = 220;
+// LEAF_WIDTH: 节点中心间距,大于卡片最大宽度(300)+ 充分 gap,避免横向贴边
+// DEPTH_STEP: 父子节点的垂直间距,真实卡片含描述/标签/按钮可达 260-280px,需留呼吸空间
+const LEAF_WIDTH = 360;
+const DEPTH_STEP = 340;
 
 interface PlaceholderNodeSpec {
   /** 占位节点在画布上的虚拟父节点 id */
@@ -283,6 +285,9 @@ function EmergenceCanvasInner({ treeId, onBack }: CanvasProps) {
   const handleStatusChangeRef = useRef<(nodeId: string, status: string) => void>(() => {});
   // LLM 流式累积的原始文本,由 useSseStream.typing 持续更新(通过 effect 同步到 ref)
   const liveTypingRef = useRef<string>('');
+  // LLM 思考流(reasoning_content):在首字到达前展示给用户,消除空白等待
+  const [exploreThinking, setExploreThinking] = useState('');
+  const [emergeThinking, setEmergeThinking] = useState('');
 
   const relayout = useCallback(() => {
     const all = backendNodesRef.current;
@@ -354,6 +359,12 @@ function EmergenceCanvasInner({ treeId, onBack }: CanvasProps) {
       method: 'POST',
       phaseEvent: 'stage',
       itemEvent: 'node',
+      onEvent: {
+        thinking: (data) => {
+          const t = (data as { text?: string })?.text;
+          if (t) setExploreThinking(prev => prev + t);
+        },
+      },
       onItem: (newNode) => {
         backendNodesRef.current = [...backendNodesRef.current, newNode];
         consumePlaceholder(newNode.parentId ?? null);
@@ -392,6 +403,12 @@ function EmergenceCanvasInner({ treeId, onBack }: CanvasProps) {
       method: 'POST',
       phaseEvent: 'stage',
       itemEvent: 'node',
+      onEvent: {
+        thinking: (data) => {
+          const t = (data as { text?: string })?.text;
+          if (t) setEmergeThinking(prev => prev + t);
+        },
+      },
       onItem: (newNode) => {
         backendNodesRef.current = [...backendNodesRef.current, newNode];
         consumePlaceholder(newNode.parentId ?? null);
@@ -447,6 +464,7 @@ function EmergenceCanvasInner({ treeId, onBack }: CanvasProps) {
 
   const fireExplore = useCallback((nodeId: string, userPrompt?: string) => {
     if (isExploring || isEmerging) return;
+    setExploreThinking('');
     injectPlaceholders(nodeId, PLACEHOLDER_COUNT, 1);
     const body = userPrompt?.trim() ? { userPrompt: userPrompt.trim() } : undefined;
     startExplore({ url: api.emergence.nodes.explore(nodeId), body });
@@ -487,6 +505,7 @@ function EmergenceCanvasInner({ treeId, onBack }: CanvasProps) {
 
   const handleEmerge = useCallback((fantasy: boolean) => {
     if (isExploring || isEmerging) return;
+    setEmergeThinking('');
     // 涌现没有单一父节点:选树上已有的一个可见节点作为占位锚点,用户视觉上知道"正在涌现"
     const anchorId = backendNodesRef.current[0]?.id;
     if (anchorId) injectPlaceholders(anchorId, PLACEHOLDER_COUNT, fantasy ? 3 : 2);
@@ -521,6 +540,7 @@ function EmergenceCanvasInner({ treeId, onBack }: CanvasProps) {
   const currentPhase = isExploring ? explorePhase : emergePhase;
   const currentMsg = isExploring ? exploreMsg : emergeMsg;
   const currentTyping = isExploring ? exploreTyping : emergeTyping;
+  const currentThinking = isExploring ? exploreThinking : emergeThinking;
 
   // 流式文字变化时,把最新值同步进 ref 并重布局,让首个占位卡片实时看到 LLM 原文
   useEffect(() => {
@@ -590,6 +610,7 @@ function EmergenceCanvasInner({ treeId, onBack }: CanvasProps) {
             phase={currentPhase}
             message={currentMsg}
             typing={currentTyping}
+            thinking={currentThinking}
             dimension={isExploring ? 1 : 2}
             extra={`已到达 ${placeholdersRef.current.length > 0
               ? Math.max(0, PLACEHOLDER_COUNT - placeholdersRef.current.length)
@@ -633,18 +654,40 @@ function EmergenceCanvasInner({ treeId, onBack }: CanvasProps) {
           />
           <Controls style={{ borderRadius: 10 }} />
 
-          {/* 图例：整条文字+图标同色，避免白色文字看不出在说什么 */}
+          {/* 图例：与画布主题一致的深色玻璃面板,文字 + 圆点同色,确保对比度 ≥ 4.5:1 */}
           <Panel position="bottom-left">
-            <div className="flex gap-3 text-[11px] px-3 py-1.5 rounded-[10px]"
-              style={{ background: 'rgba(0,0,0,0.35)', border: '1px solid rgba(255,255,255,0.08)', backdropFilter: 'blur(12px)' }}>
+            <div
+              className="flex items-center gap-3.5 px-3.5 py-2 rounded-[10px]"
+              style={{
+                background: 'rgba(15,16,20,0.85)',
+                border: '1px solid rgba(255,255,255,0.1)',
+                backdropFilter: 'blur(16px) saturate(140%)',
+                WebkitBackdropFilter: 'blur(16px) saturate(140%)',
+                boxShadow: '0 4px 12px -2px rgba(0,0,0,0.5)',
+              }}
+            >
               {[
-                { d: 1 as const, glyph: '●', label: '一维·系统内' },
-                { d: 2 as const, glyph: '◆', label: '二维·跨系统' },
-                { d: 3 as const, glyph: '★', label: '三维·幻想' },
+                { d: 1 as const, label: '一维·系统内', solid: 'rgb(120,180,255)' },
+                { d: 2 as const, label: '二维·跨系统', solid: 'rgb(200,150,255)' },
+                { d: 3 as const, label: '三维·幻想', solid: 'rgb(252,211,77)' },
               ].map(item => (
-                <span key={item.d} className="inline-flex items-center gap-1" style={{ color: dimColor[item.d] }}>
-                  <span style={{ fontSize: 10 }}>{item.glyph}</span>
-                  <span style={{ color: dimColor[item.d].replace('0.7', '0.95') }}>{item.label}</span>
+                <span key={item.d} className="inline-flex items-center gap-1.5">
+                  <span
+                    style={{
+                      width: 8,
+                      height: 8,
+                      borderRadius: '50%',
+                      background: item.solid,
+                      boxShadow: `0 0 6px ${item.solid}`,
+                      flexShrink: 0,
+                    }}
+                  />
+                  <span
+                    className="text-[11px] font-medium whitespace-nowrap"
+                    style={{ color: item.solid }}
+                  >
+                    {item.label}
+                  </span>
                 </span>
               ))}
             </div>

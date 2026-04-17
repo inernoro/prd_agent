@@ -49,6 +49,7 @@ public class EmergenceService
         Action<string>? onError = null,
         string? userPrompt = null,
         Func<string, Task>? onContent = null,
+        Func<string, Task>? onThinking = null,
         [EnumeratorCancellation] CancellationToken ct = default)
     {
         var parentNode = await _db.EmergenceNodes
@@ -100,14 +101,19 @@ public class EmergenceService
                     new JsonObject { ["role"] = "user", ["content"] = userMessage }
                 },
                 ["temperature"] = 0.7,
+                // 让推理模型(qwen-thinking / deepseek-r1 等)实时回传思考内容,避免首字 50s 空白
+                // 详见 .claude/rules/llm-gateway.md OpenRouter Reasoning 章节
+                ["include_reasoning"] = true,
+                ["reasoning"] = new JsonObject { ["exclude"] = false },
             },
             TimeoutSeconds = 120,
+            IncludeThinking = true,
             Context = new GatewayRequestContext { UserId = userId }
         };
 
         _logger.LogInformation("[emergence] Explore: streaming LLM request for node {NodeId}, AppCaller={AppCaller}",
             parentNodeId, request.AppCallerCode);
-        var (fullContent, streamError) = await StreamAndAccumulateAsync(request, onContent);
+        var (fullContent, streamError) = await StreamAndAccumulateAsync(request, onContent, onThinking);
         if (streamError != null)
         {
             onError?.Invoke(streamError);
@@ -149,6 +155,7 @@ public class EmergenceService
         string userId,
         Action<string>? onError = null,
         Func<string, Task>? onContent = null,
+        Func<string, Task>? onThinking = null,
         [EnumeratorCancellation] CancellationToken ct = default)
     {
         var allNodes = await _db.EmergenceNodes
@@ -189,14 +196,17 @@ public class EmergenceService
                     new JsonObject { ["role"] = "user", ["content"] = userMessage }
                 },
                 ["temperature"] = includeFantasy ? 0.9 : 0.7,
+                ["include_reasoning"] = true,
+                ["reasoning"] = new JsonObject { ["exclude"] = false },
             },
             TimeoutSeconds = 120,
+            IncludeThinking = true,
             Context = new GatewayRequestContext { UserId = userId }
         };
 
         _logger.LogInformation("[emergence] Emerge: streaming LLM request for tree {TreeId}, fantasy={Fantasy}",
             treeId, includeFantasy);
-        var (fullContent, streamError) = await StreamAndAccumulateAsync(request, onContent);
+        var (fullContent, streamError) = await StreamAndAccumulateAsync(request, onContent, onThinking);
         if (streamError != null)
         {
             onError?.Invoke(streamError);
@@ -457,7 +467,8 @@ public class EmergenceService
     /// </summary>
     private async Task<(string content, string? error)> StreamAndAccumulateAsync(
         GatewayRequest request,
-        Func<string, Task>? onContent)
+        Func<string, Task>? onContent,
+        Func<string, Task>? onThinking = null)
     {
         var buffer = new StringBuilder();
         try
@@ -467,6 +478,19 @@ public class EmergenceService
                 if (chunk.Type == GatewayChunkType.Error)
                 {
                     return (buffer.ToString(), $"LLM 流式失败: {chunk.Error ?? "未知错误"}");
+                }
+                if (chunk.Type == GatewayChunkType.Thinking && !string.IsNullOrEmpty(chunk.Content))
+                {
+                    // 思考流单独透传给前端,在首字到达前消除空白等待
+                    if (onThinking != null)
+                    {
+                        try { await onThinking(chunk.Content); }
+                        catch (Exception cbEx)
+                        {
+                            _logger.LogDebug(cbEx, "[emergence] onThinking callback ignored");
+                        }
+                    }
+                    continue;
                 }
                 if (chunk.Type == GatewayChunkType.Text && !string.IsNullOrEmpty(chunk.Content))
                 {
@@ -481,7 +505,7 @@ public class EmergenceService
                         }
                     }
                 }
-                // Thinking / Start / Done 不透传到 typing（UI 只关心最终 JSON 可见部分）
+                // Start / Done 不透传(只关心模型选择信息和结束标志)
             }
             return (buffer.ToString(), null);
         }

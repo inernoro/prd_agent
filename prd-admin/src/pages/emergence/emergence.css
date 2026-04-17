@@ -102,6 +102,15 @@
   animation: emergence-typing-cursor-blink 0.9s steps(2, end) infinite;
 }
 
+/* 思考中的脑图标脉冲（区别于 spinner，强调"正在动脑"） */
+@keyframes emergence-think-pulse {
+  0%, 100% { opacity: 0.6; transform: scale(1); }
+  50%      { opacity: 1;   transform: scale(1.15); }
+}
+.emergence-think-pulse {
+  animation: emergence-think-pulse 1.4s ease-in-out infinite;
+}
+
 /* ── 8. 流式预览条滚动条（低调） ── */
 .emergence-typing-scroll::-webkit-scrollbar {
   height: 2px;
