@@ -89,7 +89,8 @@ interface ToolboxState {
 
 // 内置工具定义 - icon 使用 Lucide 图标名称
 // routePath 存在则为"定制版"（跳转专门页面），否则为"普通版"（走统一对话）
-const BUILTIN_TOOLS: ToolboxItem[] = [
+// 导出供设置页等外部模块直接引用（无需等待 loadItems）
+export const BUILTIN_TOOLS: ToolboxItem[] = [
   // ========== 定制版 Agent（有专门页面）==========
   {
     id: 'builtin-prd-agent',

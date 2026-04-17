@@ -37,6 +37,7 @@ import {
   Video as VideoIcon,
 } from 'lucide-react';
 import { HOMEPAGE_CARD_SLOTS, HOMEPAGE_AGENT_SLOTS, type HomepageCardSlot, type HomepageAgentSlot } from '@/lib/homepageAssetSlots';
+import { useToolboxStore, BUILTIN_TOOLS } from '@/stores/toolboxStore';
 
 function cn(...xs: Array<string | false | null | undefined>) {
   return xs.filter(Boolean).join(' ');
@@ -229,6 +230,42 @@ export default function AssetsManagePage() {
   const [homepageAssets, setHomepageAssets] = useState<HomepageAssetsMap>({});
   const [homepageLoading, setHomepageLoading] = useState(false);
   const [homepageCacheBust, setHomepageCacheBust] = useState<number>(() => Date.now());
+
+  // 动态 Agent 列表：BUILTIN_TOOLS + 用户自建工具箱条目（toolboxStore.items）。
+  // 新增 Agent 自动进入上传界面，无需手动在 HOMEPAGE_AGENT_SLOTS 里登记。
+  const toolboxItems = useToolboxStore((s) => s.items);
+  const loadToolboxItems = useToolboxStore((s) => s.loadItems);
+  useEffect(() => {
+    if (activeTab === 'homepage' && toolboxItems.length === 0) {
+      void loadToolboxItems();
+    }
+  }, [activeTab, toolboxItems.length, loadToolboxItems]);
+
+  const agentSlotList: HomepageAgentSlot[] = useMemo(() => {
+    const meta = new Map<string, HomepageAgentSlot>();
+    // 1) 预设清单（保证顺序和展示名）
+    HOMEPAGE_AGENT_SLOTS.forEach((s) => meta.set(s.agentKey, { ...s }));
+    // 2) BUILTIN_TOOLS：新增内置 Agent（未登记在 HOMEPAGE_AGENT_SLOTS 时补齐）
+    BUILTIN_TOOLS.forEach((t) => {
+      const key = String(t.agentKey || '').trim();
+      if (!key || meta.has(key)) return;
+      meta.set(key, { agentKey: key, label: t.name, description: t.description });
+    });
+    // 3) 工具箱自建条目（含 agentKey）：用户自定义的 Agent
+    toolboxItems.forEach((t) => {
+      const key = String(t.agentKey || '').trim();
+      if (!key || meta.has(key)) return;
+      meta.set(key, { agentKey: key, label: t.name, description: t.description });
+    });
+    // 4) 已上传但本地清单里找不到的 orphan slot（被删除的 Agent 或老残留）→ 也显示，让用户能清理
+    Object.keys(homepageAssets).forEach((slot) => {
+      const m = /^agent\.(.+)\.(image|video)$/.exec(slot);
+      if (!m) return;
+      const key = m[1];
+      if (!meta.has(key)) meta.set(key, { agentKey: key, label: `(未知 Agent) ${key}`, description: 'slot 记录已存在但未在当前 Agent 清单中' });
+    });
+    return Array.from(meta.values());
+  }, [toolboxItems, homepageAssets]);
 
   const [brandingName, setBrandingName] = useState('PRD Agent');
   const [brandingSubtitle, setBrandingSubtitle] = useState('智能PRD解读助手');
@@ -649,6 +686,7 @@ export default function AssetsManagePage() {
       {activeTab === 'homepage' && (
         <HomepageAssetsSection
           assets={homepageAssets}
+          agentSlots={agentSlotList}
           loading={homepageLoading}
           uploadingId={uploadingId}
           cacheBust={homepageCacheBust}
@@ -1128,6 +1166,7 @@ function humanSize(bytes?: number | null) {
 
 function HomepageAssetsSection({
   assets,
+  agentSlots,
   loading,
   uploadingId,
   cacheBust,
@@ -1137,6 +1176,7 @@ function HomepageAssetsSection({
   isMobile,
 }: {
   assets: Record<string, HomepageAssetDto>;
+  agentSlots: HomepageAgentSlot[];
   loading: boolean;
   uploadingId: string;
   cacheBust: number;
@@ -1187,7 +1227,7 @@ function HomepageAssetsSection({
       {/* 智能体封面图 + 视频 */}
       <GlassCard animated glow className="overflow-hidden">
         <div className="flex items-center justify-between gap-3 mb-4">
-          <SectionTitle icon={<Sparkles size={16} />} title="智能体封面（图片 + 动态视频）" badge={`${HOMEPAGE_AGENT_SLOTS.length} 个`} />
+          <SectionTitle icon={<Sparkles size={16} />} title="智能体封面（图片 + 动态视频）" badge={`${agentSlots.length} 个`} />
         </div>
         <p className="text-[12px] mb-4" style={{ color: 'var(--text-muted)' }}>
           每个 Agent 支持上传一张封面图（静态）+ 一段短视频（hover 时播放）。未上传时回退到 CDN 内置素材。
@@ -1200,7 +1240,7 @@ function HomepageAssetsSection({
             gridTemplateColumns: isMobile ? '1fr' : 'repeat(auto-fill, minmax(260px, 1fr))',
           }}
         >
-          {HOMEPAGE_AGENT_SLOTS.map((agent: HomepageAgentSlot) => {
+          {agentSlots.map((agent: HomepageAgentSlot) => {
             const imageSlot = `agent.${agent.agentKey}.image`;
             const videoSlot = `agent.${agent.agentKey}.video`;
             return (
