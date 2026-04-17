@@ -8604,6 +8604,10 @@ function _layoutTopologyDag(profiles, infraList) {
 // Returned shape is identical to _layoutTopologyDag so _renderTopologySvg
 // can render it without modification (node.aggregated flag carries extra
 // meta for the branch sub-label).
+// Max branches shown per visual column-group. Beyond this, rows wrap
+// into a second group below — keeps canvas width at ≤4×(280+110)px.
+const MAX_AGG_COLS = 4;
+
 function _layoutTopologyAggregated(profiles, infraList, allBranches) {
   if (!allBranches || allBranches.length === 0) {
     return _layoutTopologyDag(profiles, infraList);
@@ -8614,7 +8618,7 @@ function _layoutTopologyAggregated(profiles, infraList, allBranches) {
   const sortedProfiles = [...profiles].sort((a, b) => (a.id || '').localeCompare(b.id || ''));
   const sortedBranches = [...allBranches].sort((a, b) => (a.id || '').localeCompare(b.id || ''));
 
-  // Infra nodes (shared — same id, no branch suffix)
+  // Infra nodes (shared — single set at the bottom)
   for (const s of infraList) {
     if (!nodes.has(s.id)) {
       const node = { id: s.id, kind: 'infra', raw: s };
@@ -8625,14 +8629,10 @@ function _layoutTopologyAggregated(profiles, infraList, allBranches) {
   infraNodes.sort((a, b) => a.id.localeCompare(b.id));
 
   // App nodes: each (profile × branch) pair
-  // Node id format: "profileId@branchId" so it's unique across the canvas.
-  // raw.status = branch.status, raw._profileName = profile display name.
-  const profileLayers = [];
   for (const p of sortedProfiles) {
-    const row = [];
     for (const b of sortedBranches) {
       const syntheticId = p.id + '@' + b.id;
-      const node = {
+      nodes.set(syntheticId, {
         id: syntheticId,
         kind: 'app',
         aggregated: true,
@@ -8644,37 +8644,78 @@ function _layoutTopologyAggregated(profiles, infraList, allBranches) {
           _branchLabel: b.branch || b.id,
           _profileId: p.id,
         }),
-      };
-      nodes.set(syntheticId, node);
-      row.push(node);
+      });
     }
-    profileLayers.push(row);
   }
 
-  // Edges: each (profile×branch) node → infra its profile depends on
+  // Edges: infra → each branch instance of a profile that depends on it
   const edges = [];
   for (const p of sortedProfiles) {
     for (const depId of p.dependsOn || []) {
       if (nodes.has(depId)) {
-        // all branch instances of this profile point to the same infra
         for (const b of sortedBranches) {
-          const fromId = depId;
-          const toId = p.id + '@' + b.id;
-          edges.push({ from: fromId, to: toId });
+          edges.push({ from: depId, to: p.id + '@' + b.id });
         }
       }
     }
   }
 
-  // Layers: bottom = infra, then one layer per profile (bottom-to-top)
-  const layers = [];
-  if (infraNodes.length > 0) layers.push(infraNodes);
-  for (const row of profileLayers) {
-    if (row.length > 0) layers.push(row);
-  }
-  if (layers.length === 0) layers.push([]);
+  // ── Grid layout: wrap branches into groups of MAX_AGG_COLS ──────────
+  // Groups are stacked vertically; within each group, profiles form rows.
+  // This keeps canvas width at ≤4 cards wide regardless of branch count.
+  const numBranches = sortedBranches.length;
+  const numProfiles = sortedProfiles.length;
+  const numCols = Math.min(numBranches, MAX_AGG_COLS);
+  const numGroups = Math.ceil(numBranches / MAX_AGG_COLS);
 
-  return { layers, edges, nodes, aggregated: true };
+  // Width of the widest column-group (may be narrower for the last group)
+  const sectionW = numCols * TOPO_NODE_W + Math.max(0, numCols - 1) * TOPO_GAP_X;
+  // Height of one profile-group block (all profiles stacked)
+  const groupBlockH = numProfiles * TOPO_NODE_H + Math.max(0, numProfiles - 1) * TOPO_GAP_Y;
+
+  const positions = new Map();
+
+  for (let g = 0; g < numGroups; g++) {
+    const groupTopY = TOPO_PAD + g * (groupBlockH + TOPO_SECTION_GAP_Y);
+    const colsInGroup = Math.min(MAX_AGG_COLS, numBranches - g * MAX_AGG_COLS);
+    const groupW = colsInGroup * TOPO_NODE_W + Math.max(0, colsInGroup - 1) * TOPO_GAP_X;
+    const groupOffsetX = (sectionW - groupW) / 2; // center partial last group
+
+    for (let pi = 0; pi < numProfiles; pi++) {
+      const p = sortedProfiles[pi];
+      const rowY = groupTopY + pi * (TOPO_NODE_H + TOPO_GAP_Y);
+      for (let ci = 0; ci < colsInGroup; ci++) {
+        const branchIdx = g * MAX_AGG_COLS + ci;
+        const b = sortedBranches[branchIdx];
+        const syntheticId = p.id + '@' + b.id;
+        positions.set(syntheticId, {
+          x: TOPO_PAD + groupOffsetX + ci * (TOPO_NODE_W + TOPO_GAP_X),
+          y: rowY,
+          node: nodes.get(syntheticId),
+        });
+      }
+    }
+  }
+
+  // Infra row at bottom, centered under the section width
+  const infraY = TOPO_PAD + numGroups * (groupBlockH + TOPO_SECTION_GAP_Y);
+  const infraRowW = infraNodes.length > 0
+    ? infraNodes.length * TOPO_NODE_W + Math.max(0, infraNodes.length - 1) * TOPO_GAP_X
+    : 0;
+  const infraOffX = (sectionW - infraRowW) / 2;
+  for (let ii = 0; ii < infraNodes.length; ii++) {
+    const node = infraNodes[ii];
+    positions.set(node.id, {
+      x: TOPO_PAD + infraOffX + ii * (TOPO_NODE_W + TOPO_GAP_X),
+      y: infraY,
+      node,
+    });
+  }
+
+  const svgW = TOPO_PAD * 2 + sectionW;
+  const svgH = infraY + (infraNodes.length > 0 ? TOPO_NODE_H : 0) + TOPO_PAD;
+
+  return { nodes, edges, positions, aggregated: true, svgW, svgH };
 }
 
 // ── Rich card renderer ────────────────────────────────────────────────
@@ -8702,6 +8743,7 @@ const TOPO_NODE_W = 280;
 const TOPO_NODE_H = 150;
 const TOPO_VOLUME_SLOT_H = 38;  // bottom volume slot for infra with volumes
 const TOPO_GAP_X = 110;
+const TOPO_SECTION_GAP_Y = 64; // extra vertical gap between branch column-groups
 const TOPO_GAP_Y = 48;
 const TOPO_PAD = 48;
 const TOPO_NODE_RADIUS = 18;
@@ -8849,39 +8891,41 @@ function _topologyNodeStatus(node, selectedBranchId) {
 function _renderTopologySvg(layout, ctx) {
   const { overrideSet, overrideDetails, selectedBranchId, selectedNodeId } = ctx;
 
-  const positions = new Map();
-  let maxLayerLen = 0;
-  layout.layers.forEach(layer => {
-    if (layer.length > maxLayerLen) maxLayerLen = layer.length;
-  });
+  let positions, totalW, totalH;
 
-  // Top-to-bottom layout:
-  //   Layer 0 (infra — databases, no deps) → displayed at BOTTOM
-  //   Layer 1+ (apps — depend on infra)    → displayed at TOP
-  // This matches Railway-style: "api / admin" on top, "MongoDB / Redis" below.
-  // We reverse the layer index so layer 0 lands at the highest y value (bottom).
-  const numLayers = layout.layers.length;
-  layout.layers.forEach((layer, layerIdx) => {
-    // displayRow 0 = top of canvas, displayRow numLayers-1 = bottom
-    const displayRow = numLayers - 1 - layerIdx;
-
-    // Center nodes horizontally within the widest layer
-    const layerWidth = layer.length * (TOPO_NODE_W + TOPO_GAP_X) - TOPO_GAP_X;
-    const maxWidth = maxLayerLen * (TOPO_NODE_W + TOPO_GAP_X) - TOPO_GAP_X;
-    const offsetX = (maxWidth - layerWidth) / 2;
-
-    layer.forEach((node, idxInLayer) => {
-      const baseX = TOPO_PAD + offsetX + idxInLayer * (TOPO_NODE_W + TOPO_GAP_X);
-      const baseY = TOPO_PAD + displayRow * (TOPO_NODE_H + TOPO_GAP_Y);
-      const drag = _topologyNodeDragOffsets[node.id] || { dx: 0, dy: 0 };
-      const x = baseX + drag.dx;
-      const y = baseY + drag.dy;
-      positions.set(node.id, { x, y, node });
+  if (layout.positions) {
+    // Pre-computed grid positions (aggregated multi-row layout).
+    // Apply per-node drag offsets on top of the static base positions.
+    positions = new Map();
+    layout.positions.forEach((pos, id) => {
+      const drag = _topologyNodeDragOffsets[id] || { dx: 0, dy: 0 };
+      positions.set(id, { x: pos.x + drag.dx, y: pos.y + drag.dy, node: pos.node });
     });
-  });
-
-  const totalW = TOPO_PAD * 2 + maxLayerLen * TOPO_NODE_W + Math.max(0, maxLayerLen - 1) * TOPO_GAP_X;
-  const totalH = TOPO_PAD * 2 + numLayers * TOPO_NODE_H + Math.max(0, numLayers - 1) * TOPO_GAP_Y;
+    totalW = layout.svgW;
+    totalH = layout.svgH;
+  } else {
+    // Layer-based layout (regular per-branch DAG view).
+    positions = new Map();
+    let maxLayerLen = 0;
+    layout.layers.forEach(layer => {
+      if (layer.length > maxLayerLen) maxLayerLen = layer.length;
+    });
+    const numLayers = layout.layers.length;
+    layout.layers.forEach((layer, layerIdx) => {
+      const displayRow = numLayers - 1 - layerIdx;
+      const layerWidth = layer.length * (TOPO_NODE_W + TOPO_GAP_X) - TOPO_GAP_X;
+      const maxWidth = maxLayerLen * (TOPO_NODE_W + TOPO_GAP_X) - TOPO_GAP_X;
+      const offsetX = (maxWidth - layerWidth) / 2;
+      layer.forEach((node, idxInLayer) => {
+        const baseX = TOPO_PAD + offsetX + idxInLayer * (TOPO_NODE_W + TOPO_GAP_X);
+        const baseY = TOPO_PAD + displayRow * (TOPO_NODE_H + TOPO_GAP_Y);
+        const drag = _topologyNodeDragOffsets[node.id] || { dx: 0, dy: 0 };
+        positions.set(node.id, { x: baseX + drag.dx, y: baseY + drag.dy, node });
+      });
+    });
+    totalW = TOPO_PAD * 2 + maxLayerLen * TOPO_NODE_W + Math.max(0, maxLayerLen - 1) * TOPO_GAP_X;
+    totalH = TOPO_PAD * 2 + numLayers * TOPO_NODE_H + Math.max(0, numLayers - 1) * TOPO_GAP_Y;
+  }
 
   // Compute which edges are connected to the currently-selected node
   // (both directions) for highlight/dim.
