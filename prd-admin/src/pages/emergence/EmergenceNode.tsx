@@ -1,6 +1,7 @@
 import { memo, useMemo } from 'react';
 import { Handle, Position, type NodeProps } from '@xyflow/react';
 import { Sparkle, Zap, Star, CheckCircle2, Pencil, Clock, Lightbulb, AlertTriangle } from 'lucide-react';
+import { MapSpinner } from '@/components/ui/VideoLoader';
 
 // ── 节点数据类型 ──
 export interface EmergenceNodeData {
@@ -25,6 +26,8 @@ export interface EmergenceNodeData {
   placeholderIndex?: number;
   /** 新节点刚到达的标记：触发入场动画（0.5s 后由画布清除） */
   isJustArrived?: boolean;
+  /** 该节点当前正在流式探索中：按钮进入 loading 禁用态,避免重复点击 */
+  isExploring?: boolean;
   /**
    * 流式实时文字（仅对第一个占位卡片有效）：
    * 有值时用 LLM 正在生成的原文替换 shimmer，让用户能看到 AI 正在打字。
@@ -289,26 +292,43 @@ function EmergenceNodeInner(props: EmergenceNodeType) {
         <div className="pt-2 flex items-stretch gap-1.5" style={{ borderTop: '1px solid rgba(255,255,255,0.05)' }}>
           {data.onInspire && (
             <button
-              onClick={(e) => { e.stopPropagation(); data.onInspire?.(); }}
-              className="flex-1 h-7 rounded-[8px] text-[11px] font-semibold flex items-center justify-center gap-1.5 cursor-pointer transition-all duration-150 hover:brightness-125 active:scale-[0.97]"
+              onClick={(e) => { e.stopPropagation(); if (!data.isExploring) data.onInspire?.(); }}
+              disabled={data.isExploring}
+              className="flex-1 h-7 rounded-[8px] text-[11px] font-semibold flex items-center justify-center gap-1.5 transition-all duration-150 hover:brightness-125 active:scale-[0.97] disabled:active:scale-100"
               style={{
                 background: 'rgba(234,179,8,0.08)',
                 border: '1px solid rgba(234,179,8,0.2)',
                 color: 'rgba(234,179,8,0.9)',
+                opacity: data.isExploring ? 0.4 : 1,
+                cursor: data.isExploring ? 'not-allowed' : 'pointer',
               }}
-              title="写一句想法，让 AI 按你的方向探索"
+              title={data.isExploring ? '该节点正在探索中…' : '写一句想法，让 AI 按你的方向探索'}
             >
               <Lightbulb size={11} /> 增加灵感
             </button>
           )}
           {data.onExplore && (
             <button
-              onClick={(e) => { e.stopPropagation(); data.onExplore?.(); }}
-              className="flex-1 h-7 rounded-[8px] text-[11px] font-semibold flex items-center justify-center gap-1.5 cursor-pointer transition-all duration-150 hover:brightness-125 active:scale-[0.97]"
-              style={{ background: dim.accentBg, border: `1px solid ${dim.accentBorder}`, color: dim.accent }}
-              title="直接探索，AI 自由发散子能力"
+              onClick={(e) => { e.stopPropagation(); if (!data.isExploring) data.onExplore?.(); }}
+              disabled={data.isExploring}
+              className="flex-1 h-7 rounded-[8px] text-[11px] font-semibold flex items-center justify-center gap-1.5 transition-all duration-150 hover:brightness-125 active:scale-[0.97] disabled:active:scale-100"
+              style={{
+                background: dim.accentBg,
+                border: `1px solid ${dim.accentBorder}`,
+                color: dim.accent,
+                cursor: data.isExploring ? 'progress' : 'pointer',
+              }}
+              title={data.isExploring ? '该节点正在流式探索中…' : '直接探索，AI 自由发散子能力'}
             >
-              <Star size={11} /> 探索
+              {data.isExploring ? (
+                <>
+                  <MapSpinner size={11} color={dim.accent} /> 探索中…
+                </>
+              ) : (
+                <>
+                  <Star size={11} /> 探索
+                </>
+              )}
             </button>
           )}
         </div>

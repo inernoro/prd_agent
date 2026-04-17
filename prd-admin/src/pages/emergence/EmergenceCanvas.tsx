@@ -16,7 +16,7 @@ import {
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import { Sparkle, TreePine, Download, Plus, Star, MousePointerClick, Zap, X, Info, Wand2, StopCircle } from 'lucide-react';
-import { useSseStream } from '@/lib/useSseStream';
+import { useSseStream, connectSse, type SsePhase } from '@/lib/useSseStream';
 import { EmergenceStreamingBar } from './EmergenceStreamingBar';
 import { toast } from '@/lib/toast';
 import { TabBar } from '@/components/design/TabBar';
@@ -75,6 +75,7 @@ function toFlowNodes(
   onStatusChange: (nodeId: string, newStatus: string) => void,
   placeholders: PlaceholderNodeSpec[],
   arrivedIds: Set<string>,
+  activeExploreIds: Set<string>,
   liveText?: string,
 ): Node<EmergenceNodeData>[] {
   const byId = new Map(nodes.map(n => [n.id, n]));
@@ -186,6 +187,7 @@ function toFlowNodes(
         onInspire: () => onInspire(n.id),
         onStatusChange: (s: string) => onStatusChange(n.id, s),
         isJustArrived: arrivedIds.has(n.id),
+        isExploring: activeExploreIds.has(n.id),
       } satisfies EmergenceNodeData,
     };
   });
@@ -285,12 +287,27 @@ function EmergenceCanvasInner({ treeId, onBack }: CanvasProps) {
   const handleStatusChangeRef = useRef<(nodeId: string, status: string) => void>(() => {});
   // LLM 流式累积的原始文本,由 useSseStream.typing 持续更新(通过 effect 同步到 ref)
   const liveTypingRef = useRef<string>('');
-  // LLM 思考流(reasoning_content):在首字到达前展示给用户,消除空白等待
-  const [exploreThinking, setExploreThinking] = useState('');
+  // 涌现(tree 级别)思考流
   const [emergeThinking, setEmergeThinking] = useState('');
+
+  // ── 并行探索流管理 ─────────────────────────────────────
+  // 每个被点击「探索」的节点都有一条独立 SSE 流,互不阻塞。
+  // ref 存连接状态,useState tick 强制重渲染(避免每条消息都 setState 大对象)
+  interface ActiveExplore {
+    controller: AbortController;
+    thinking: string;
+    typing: string;
+    phase: SsePhase;
+    message: string;
+    startedAt: number;
+  }
+  const activeExploresRef = useRef<Map<string, ActiveExplore>>(new Map());
+  const [exploreTick, setExploreTick] = useState(0);
+  const bumpExplore = useCallback(() => setExploreTick(t => t + 1), []);
 
   const relayout = useCallback(() => {
     const all = backendNodesRef.current;
+    const activeSet = new Set(activeExploresRef.current.keys());
     setNodes(toFlowNodes(
       all,
       (id) => handleExploreRef.current(id),
@@ -298,6 +315,7 @@ function EmergenceCanvasInner({ treeId, onBack }: CanvasProps) {
       (id, s) => handleStatusChangeRef.current(id, s),
       placeholdersRef.current,
       arrivedIdsRef.current,
+      activeSet,
       liveTypingRef.current,
     ));
     setEdges(toFlowEdges(all, placeholdersRef.current));
@@ -348,50 +366,6 @@ function EmergenceCanvasInner({ treeId, onBack }: CanvasProps) {
       }
     });
   }, [reactFlow]);
-
-  // ── 探索 SSE ──
-  const {
-    phase: explorePhase, phaseMessage: exploreMsg, isStreaming: isExploring,
-    typing: exploreTyping, start: startExplore, abort: abortExplore,
-  } =
-    useSseStream<EmergenceNodeType>({
-      url: '',
-      method: 'POST',
-      phaseEvent: 'stage',
-      itemEvent: 'node',
-      onEvent: {
-        thinking: (data) => {
-          const t = (data as { text?: string })?.text;
-          if (t) setExploreThinking(prev => prev + t);
-        },
-      },
-      onItem: (newNode) => {
-        backendNodesRef.current = [...backendNodesRef.current, newNode];
-        consumePlaceholder(newNode.parentId ?? null);
-        relayout();
-        markArrived(newNode.id);
-        centerOnNode(newNode.id);
-        setNodeCount(c => c + 1);
-      },
-      onDone: (data) => {
-        // 清理剩余占位
-        placeholdersRef.current = [];
-        relayout();
-        const d = data as { totalNew?: number; error?: string };
-        if (d.error) {
-          toast.error('探索失败', d.error);
-        } else if (!d.totalNew || d.totalNew === 0) {
-          toast.warning('探索未生成节点', '可能是种子内容过短，请尝试提供更详细的描述。');
-        } else {
-          toast.success('探索完成', `新增 ${d.totalNew} 个节点`);
-        }
-      },
-      onError: (msg) => {
-        placeholdersRef.current = [];
-        relayout();
-        toast.error('探索失败', msg);
-      },
-    });
 
   // ── 涌现 SSE ──
   const {
@@ -462,22 +436,99 @@ function EmergenceCanvasInner({ treeId, onBack }: CanvasProps) {
     relayout();
   }, [relayout]);
 
-  const fireExplore = useCallback((nodeId: string, userPrompt?: string) => {
-    if (isExploring || isEmerging) return;
-    setExploreThinking('');
+  const fireExplore = useCallback(async (nodeId: string, userPrompt?: string) => {
+    if (isEmerging) return; // 涌现期间暂停新探索(tree 级别操作需要独占)
+    if (activeExploresRef.current.has(nodeId)) return; // 同一节点不可重复探索
+
+    const controller = new AbortController();
+    const state: ActiveExplore = {
+      controller,
+      thinking: '',
+      typing: '',
+      phase: 'connecting',
+      message: '连接中…',
+      startedAt: Date.now(),
+    };
+    activeExploresRef.current.set(nodeId, state);
+    bumpExplore();
+
     injectPlaceholders(nodeId, PLACEHOLDER_COUNT, 1);
+
     const body = userPrompt?.trim() ? { userPrompt: userPrompt.trim() } : undefined;
-    startExplore({ url: api.emergence.nodes.explore(nodeId), body });
-  }, [isExploring, isEmerging, startExplore, injectPlaceholders]);
+
+    try {
+      await connectSse({
+        url: api.emergence.nodes.explore(nodeId),
+        method: 'POST',
+        body,
+        signal: controller.signal,
+        onEvent: (evt) => {
+          if (!evt.data) return;
+          try {
+            const data = JSON.parse(evt.data);
+            if (evt.event === 'stage') {
+              state.phase = 'streaming';
+              state.message = (data as { message?: string }).message || '';
+              bumpExplore();
+            } else if (evt.event === 'typing') {
+              const t = (data as { text?: string; content?: string }).text || (data as { content?: string }).content || '';
+              state.typing += t;
+              bumpExplore();
+            } else if (evt.event === 'thinking') {
+              const t = (data as { text?: string }).text || '';
+              if (t) { state.thinking += t; bumpExplore(); }
+            } else if (evt.event === 'node') {
+              const newNode = data as EmergenceNodeType;
+              backendNodesRef.current = [...backendNodesRef.current, newNode];
+              consumePlaceholder(newNode.parentId ?? null);
+              relayout();
+              markArrived(newNode.id);
+              centerOnNode(newNode.id);
+              setNodeCount(c => c + 1);
+            } else if (evt.event === 'done') {
+              state.phase = 'done';
+              const d = data as { totalNew?: number; error?: string };
+              if (d.error) {
+                toast.error('探索失败', d.error);
+              } else if (!d.totalNew || d.totalNew === 0) {
+                toast.warning('探索未生成节点', '可能是种子内容过短，请尝试提供更详细的描述。');
+              } else {
+                toast.success('探索完成', `新增 ${d.totalNew} 个节点`);
+              }
+            } else if (evt.event === 'error') {
+              state.phase = 'error';
+              toast.error('探索失败', (data as { message?: string }).message || '出错');
+            }
+          } catch { /* ignore JSON parse */ }
+        },
+      });
+    } finally {
+      // 清理该节点名下的占位卡片 + 从活跃表中移除
+      placeholdersRef.current = placeholdersRef.current.filter(p => p.parentId !== nodeId);
+      activeExploresRef.current.delete(nodeId);
+      bumpExplore();
+      relayout();
+    }
+  }, [isEmerging, bumpExplore, injectPlaceholders, consumePlaceholder, relayout, markArrived, centerOnNode]);
+
+  // 中止所有活跃探索(顶部停止按钮)
+  const abortAllExplores = useCallback(() => {
+    for (const s of activeExploresRef.current.values()) s.controller.abort();
+    activeExploresRef.current.clear();
+    placeholdersRef.current = placeholdersRef.current.filter(p => !p.parentId); // 保留无父占位(涌现用)
+    bumpExplore();
+    relayout();
+  }, [bumpExplore, relayout]);
 
   const handleExplore = useCallback((nodeId: string) => {
     fireExplore(nodeId);
   }, [fireExplore]);
 
   const handleInspire = useCallback((nodeId: string) => {
-    if (isExploring || isEmerging) return;
+    if (isEmerging) return;
+    if (activeExploresRef.current.has(nodeId)) return;
     setInspireTargetId(nodeId);
-  }, [isExploring, isEmerging]);
+  }, [isEmerging]);
 
   const handleInspireSubmit = useCallback((prompt: string) => {
     if (!inspireTargetId) return;
@@ -504,13 +555,13 @@ function EmergenceCanvasInner({ treeId, onBack }: CanvasProps) {
   useEffect(() => { handleStatusChangeRef.current = handleStatusChange; }, [handleStatusChange]);
 
   const handleEmerge = useCallback((fantasy: boolean) => {
-    if (isExploring || isEmerging) return;
+    if (activeExploresRef.current.size > 0 || isEmerging) return;
     setEmergeThinking('');
     // 涌现没有单一父节点:选树上已有的一个可见节点作为占位锚点,用户视觉上知道"正在涌现"
     const anchorId = backendNodesRef.current[0]?.id;
     if (anchorId) injectPlaceholders(anchorId, PLACEHOLDER_COUNT, fantasy ? 3 : 2);
     startEmerge({ url: `${api.emergence.trees.emerge(treeId)}${fantasy ? '?fantasy=true' : ''}` });
-  }, [treeId, isExploring, isEmerging, startEmerge, injectPlaceholders]);
+  }, [treeId, isEmerging, startEmerge, injectPlaceholders]);
 
   const handleExport = useCallback(async () => {
     const res = await exportEmergenceTree(treeId);
@@ -536,11 +587,29 @@ function EmergenceCanvasInner({ treeId, onBack }: CanvasProps) {
     else setGuideStep('emerged');
   }, [nodeCount, guideDismissed]);
 
+  // 最新启动的探索流(给 StreamingBar 提供代表性的 typing/thinking)
+  // 依赖 exploreTick 确保每次 bumpExplore 都会重新取最新值
+  const latestExplore = (() => {
+    void exploreTick;
+    const entries = Array.from(activeExploresRef.current.entries());
+    if (entries.length === 0) return null;
+    entries.sort((a, b) => b[1].startedAt - a[1].startedAt);
+    return entries[0][1];
+  })();
+  const exploreCount = (() => {
+    void exploreTick;
+    return activeExploresRef.current.size;
+  })();
+  const isExploring = exploreCount > 0;
   const isStreaming = isExploring || isEmerging;
-  const currentPhase = isExploring ? explorePhase : emergePhase;
-  const currentMsg = isExploring ? exploreMsg : emergeMsg;
-  const currentTyping = isExploring ? exploreTyping : emergeTyping;
-  const currentThinking = isExploring ? exploreThinking : emergeThinking;
+  const currentPhase: SsePhase = isExploring
+    ? (latestExplore?.phase ?? 'streaming')
+    : emergePhase;
+  const currentMsg = isExploring
+    ? (exploreCount > 1 ? `${exploreCount} 个节点并行探索中` : (latestExplore?.message || 'AI 生长中'))
+    : emergeMsg;
+  const currentTyping = isExploring ? (latestExplore?.typing ?? '') : emergeTyping;
+  const currentThinking = isExploring ? (latestExplore?.thinking ?? '') : emergeThinking;
 
   // 流式文字变化时,把最新值同步进 ref 并重布局,让首个占位卡片实时看到 LLM 原文
   useEffect(() => {
@@ -578,10 +647,17 @@ function EmergenceCanvasInner({ treeId, onBack }: CanvasProps) {
               <Button
                 variant="ghost"
                 size="xs"
-                onClick={() => { abortExplore(); abortEmerge(); placeholdersRef.current = []; relayout(); toast.info('已停止', '可以继续探索或涌现'); }}
-                title="停止当前 AI 流式生成"
+                onClick={() => {
+                  abortAllExplores();
+                  abortEmerge();
+                  placeholdersRef.current = [];
+                  relayout();
+                  toast.info('已停止', '可以继续探索或涌现');
+                }}
+                title={isExploring && exploreCount > 1 ? `停止全部 ${exploreCount} 条探索` : '停止当前 AI 流式生成'}
               >
-                <StopCircle size={13} style={{ color: 'rgba(239,68,68,0.85)' }} /> 停止
+                <StopCircle size={13} style={{ color: 'rgba(239,68,68,0.85)' }} />
+                {isExploring && exploreCount > 1 ? `停止 ${exploreCount} 条` : '停止'}
               </Button>
             )}
             <Button
@@ -612,9 +688,9 @@ function EmergenceCanvasInner({ treeId, onBack }: CanvasProps) {
             typing={currentTyping}
             thinking={currentThinking}
             dimension={isExploring ? 1 : 2}
-            extra={`已到达 ${placeholdersRef.current.length > 0
-              ? Math.max(0, PLACEHOLDER_COUNT - placeholdersRef.current.length)
-              : 0} / ${PLACEHOLDER_COUNT}`}
+            extra={isExploring && exploreCount > 1
+              ? `${exploreCount} 条并行`
+              : `占位 ${placeholdersRef.current.length} / ${PLACEHOLDER_COUNT}`}
           />
         </div>
       )}

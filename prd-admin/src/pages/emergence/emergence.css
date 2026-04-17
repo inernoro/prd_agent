@@ -111,6 +111,42 @@
   animation: emergence-think-pulse 1.4s ease-in-out infinite;
 }
 
+/* ── ReactFlow Controls 暗色主题覆盖 ──
+   ReactFlow 默认控件(左下 + / - / fit-view)是白底深字,在暗色画布上刺眼且看不清。
+   这里把它做成与图例一致的玻璃面板,确保和整体主题一致 */
+.react-flow__controls {
+  background: rgba(15, 16, 20, 0.85);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  backdrop-filter: blur(16px) saturate(140%);
+  -webkit-backdrop-filter: blur(16px) saturate(140%);
+  box-shadow: 0 4px 12px -2px rgba(0, 0, 0, 0.5);
+  border-radius: 10px;
+  overflow: hidden;
+}
+.react-flow__controls-button {
+  background: transparent;
+  border: none;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  color: rgba(255, 255, 255, 0.75);
+  fill: rgba(255, 255, 255, 0.75);
+  width: 28px;
+  height: 28px;
+  transition: background-color 150ms ease, color 150ms ease;
+}
+.react-flow__controls-button:last-child {
+  border-bottom: none;
+}
+.react-flow__controls-button:hover {
+  background: rgba(120, 180, 255, 0.12);
+  color: rgb(180, 210, 255);
+  fill: rgb(180, 210, 255);
+}
+.react-flow__controls-button svg {
+  fill: currentColor;
+  max-width: 14px;
+  max-height: 14px;
+}
+
 /* ── 8. 流式预览条滚动条（低调） ── */
 .emergence-typing-scroll::-webkit-scrollbar {
   height: 2px;
