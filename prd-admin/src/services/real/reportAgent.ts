@@ -908,3 +908,149 @@ export const testWebhookReal: TestWebhookContract = async (input) => {
     { method: 'POST', body }
   );
 };
+
+// ─────────────────────────────────────────────
+// 团队周报分享链接
+// ─────────────────────────────────────────────
+
+export interface CreateTeamWeekShareInput {
+  teamId: string;
+  weekYear: number;
+  weekNumber: number;
+  password?: string;
+  expiresInDays: number;
+}
+
+export interface TeamWeekShareCreateResult {
+  id: string;
+  token: string;
+  accessLevel: string;
+  expiresAt?: string;
+  shareUrl: string;
+}
+
+export interface TeamWeekShareItem {
+  id: string;
+  token: string;
+  teamId: string;
+  teamName?: string;
+  weekYear: number;
+  weekNumber: number;
+  accessLevel: string;
+  password?: string;
+  expiresAt?: string;
+  isRevoked: boolean;
+  viewCount: number;
+  lastViewedAt?: string;
+  createdBy: string;
+  createdByName?: string;
+  createdAt: string;
+}
+
+export async function createTeamWeekShareReal(
+  input: CreateTeamWeekShareInput
+): Promise<ApiResponse<TeamWeekShareCreateResult>> {
+  const { teamId, ...body } = input;
+  return await apiRequest<TeamWeekShareCreateResult>(
+    api.reportAgent.shares.byTeam(encodeURIComponent(teamId)),
+    { method: 'POST', body }
+  );
+}
+
+export async function listTeamWeekSharesReal(input: {
+  teamId: string;
+  weekYear?: number;
+  weekNumber?: number;
+}): Promise<ApiResponse<{ items: TeamWeekShareItem[] }>> {
+  const sp = new URLSearchParams();
+  if (input.weekYear != null) sp.set('weekYear', String(input.weekYear));
+  if (input.weekNumber != null) sp.set('weekNumber', String(input.weekNumber));
+  const q = sp.toString();
+  return await apiRequest<{ items: TeamWeekShareItem[] }>(
+    `${api.reportAgent.shares.byTeam(encodeURIComponent(input.teamId))}${q ? `?${q}` : ''}`,
+    { method: 'GET' }
+  );
+}
+
+export async function revokeTeamWeekShareReal(shareId: string): Promise<ApiResponse<{ revoked: boolean }>> {
+  return await apiRequest<{ revoked: boolean }>(
+    api.reportAgent.shares.byId(encodeURIComponent(shareId)),
+    { method: 'DELETE' }
+  );
+}
+
+export interface TeamWeekShareViewItem {
+  reportId: string;
+  userId: string;
+  userName?: string;
+  avatarFileName?: string;
+  status: string;
+  submittedAt?: string;
+  updatedAt?: string;
+  sections: {
+    title?: string;
+    items: { content: string; source?: string; sourceRef?: string }[];
+  }[];
+  weekYear: number;
+  weekNumber: number;
+}
+
+export interface TeamWeekShareViewData {
+  team: {
+    id: string;
+    name: string;
+    leaderName?: string;
+    description?: string;
+  };
+  weekYear: number;
+  weekNumber: number;
+  periodStart: string;
+  periodEnd: string;
+  stats: {
+    totalMembers: number;
+    submittedCount: number;
+    pendingCount: number;
+  };
+  items: TeamWeekShareViewItem[];
+  summary?: {
+    sections: { title: string; items: string[] }[];
+    updatedAt: string;
+  } | null;
+  shareInfo: {
+    createdBy: string;
+    createdByName?: string;
+    createdAt: string;
+    expiresAt?: string;
+    isTeamMember: boolean;
+  };
+}
+
+/**
+ * 访问分享链接 — 必须登录；团队成员免密码，非成员需要密码校验
+ * 使用 raw fetch 以便在 401 时不走全局 refresh/redirect 逻辑（此端点由密码保护，而非 session 失效）
+ */
+export async function viewTeamWeekShareReal(
+  token: string,
+  password?: string
+): Promise<ApiResponse<TeamWeekShareViewData>> {
+  const raw = (import.meta.env.VITE_API_BASE_URL as string | undefined) ?? '';
+  const base = raw.trim().replace(/\/+$/, '');
+  const q = password ? `?password=${encodeURIComponent(password)}` : '';
+  const path = `${api.reportAgent.shares.view(encodeURIComponent(token))}${q}`;
+  const url = base ? `${base}${path}` : path;
+
+  const headers: Record<string, string> = { Accept: 'application/json' };
+  const authToken = useAuthStore.getState().token;
+  if (authToken) headers.Authorization = `Bearer ${authToken}`;
+  try {
+    const res = await fetch(url, { headers });
+    const json = (await res.json()) as ApiResponse<TeamWeekShareViewData>;
+    return json;
+  } catch {
+    return {
+      success: false,
+      data: null as never,
+      error: { code: 'NETWORK_ERROR', message: '网络请求失败' },
+    };
+  }
+}

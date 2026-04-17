@@ -633,6 +633,11 @@ export const api = {
       byId: (teamId: string, webhookId: string) => `/api/report-agent/teams/${teamId}/webhooks/${webhookId}`,
       test: (teamId: string) => `/api/report-agent/teams/${teamId}/webhooks/test`,
     },
+    shares: {
+      byTeam: (teamId: string) => `/api/report-agent/teams/${teamId}/shares`,
+      byId: (shareId: string) => `/api/report-agent/shares/${shareId}`,
+      view: (token: string) => `/api/report-agent/shares/view/${token}`,
+    },
   },
 
   // ============ Open Platform 开放平台 ============

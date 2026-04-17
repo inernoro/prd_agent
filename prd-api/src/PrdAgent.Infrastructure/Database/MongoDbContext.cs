@@ -128,6 +128,7 @@ public class MongoDbContext
     public IMongoCollection<TeamSummary> ReportTeamSummaries => _database.GetCollection<TeamSummary>("report_team_summaries");
     public IMongoCollection<ReportWebhookConfig> ReportWebhookConfigs => _database.GetCollection<ReportWebhookConfig>("report_webhook_configs");
     public IMongoCollection<PersonalSource> PersonalSources => _database.GetCollection<PersonalSource>("report_personal_sources");
+    public IMongoCollection<ReportShareLink> ReportShareLinks => _database.GetCollection<ReportShareLink>("report_share_links");
 
     // Channel Adapter 多通道适配器
     public IMongoCollection<ChannelWhitelist> ChannelWhitelists => _database.GetCollection<ChannelWhitelist>("channel_whitelist");
