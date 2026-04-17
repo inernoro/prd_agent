@@ -12,13 +12,13 @@ import {
   type Edge,
   ReactFlowProvider,
   Panel,
+  useReactFlow,
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
-import { Sparkle, TreePine, Download, Plus, Star, MousePointerClick, Zap, X, Info } from 'lucide-react';
+import { Sparkle, TreePine, Download, Plus, Star, MousePointerClick, Zap, X, Info, Wand2, StopCircle } from 'lucide-react';
 import { useSseStream } from '@/lib/useSseStream';
 import { SsePhaseBar } from '@/components/sse/SsePhaseBar';
 import { toast } from '@/lib/toast';
-import { GlassCard } from '@/components/design/GlassCard';
 import { TabBar } from '@/components/design/TabBar';
 import { Button } from '@/components/design/Button';
 import { MapSectionLoader } from '@/components/ui/VideoLoader';
@@ -33,6 +33,8 @@ import { EmergenceFlowNode, type EmergenceNodeData } from './EmergenceNode';
 import { EmergenceCreateDialog } from './EmergenceCreateDialog';
 import { EmergenceIntroPage } from './EmergenceIntroPage';
 import { EmergenceInspireDialog } from './EmergenceInspireDialog';
+import { EmergenceTreeCard } from './EmergenceTreeCard';
+import { EmergenceEmergePopover } from './EmergenceEmergePopover';
 import './emergence.css';
 
 const INTRO_SEEN_KEY = 'emergence.intro.seen';
@@ -318,8 +320,25 @@ function EmergenceCanvasInner({ treeId, onBack }: CanvasProps) {
     }, 650);
   }, [relayout]);
 
+  // ── 画布实例（用于整理 fitView / 自动聚焦新节点） ──
+  const reactFlow = useReactFlow();
+
+  // 工具：平滑把镜头对准某节点，避免新节点超出视口
+  const centerOnNode = useCallback((nodeId: string) => {
+    // 延迟一帧，确保节点已渲染进 React Flow 内部状态
+    requestAnimationFrame(() => {
+      try {
+        const n = reactFlow.getNode(nodeId);
+        if (!n) return;
+        reactFlow.setCenter(n.position.x + 130, n.position.y + 80, { zoom: 0.85, duration: 600 });
+      } catch {
+        // setCenter 在非常早期可能抛错，忽略
+      }
+    });
+  }, [reactFlow]);
+
   // ── 探索 SSE ──
-  const { phase: explorePhase, phaseMessage: exploreMsg, isStreaming: isExploring, start: startExplore } =
+  const { phase: explorePhase, phaseMessage: exploreMsg, isStreaming: isExploring, start: startExplore, abort: abortExplore } =
     useSseStream<EmergenceNodeType>({
       url: '',
       method: 'POST',
@@ -330,6 +349,7 @@ function EmergenceCanvasInner({ treeId, onBack }: CanvasProps) {
         consumePlaceholder(newNode.parentId ?? null);
         relayout();
         markArrived(newNode.id);
+        centerOnNode(newNode.id);
         setNodeCount(c => c + 1);
       },
       onDone: (data) => {
@@ -353,7 +373,7 @@ function EmergenceCanvasInner({ treeId, onBack }: CanvasProps) {
     });
 
   // ── 涌现 SSE ──
-  const { phase: emergePhase, phaseMessage: emergeMsg, isStreaming: isEmerging, start: startEmerge } =
+  const { phase: emergePhase, phaseMessage: emergeMsg, isStreaming: isEmerging, start: startEmerge, abort: abortEmerge } =
     useSseStream<EmergenceNodeType>({
       url: '',
       method: 'POST',
@@ -364,6 +384,7 @@ function EmergenceCanvasInner({ treeId, onBack }: CanvasProps) {
         consumePlaceholder(newNode.parentId ?? null);
         relayout();
         markArrived(newNode.id);
+        centerOnNode(newNode.id);
         setNodeCount(c => c + 1);
       },
       onDone: (data) => {
@@ -511,15 +532,27 @@ function EmergenceCanvasInner({ treeId, onBack }: CanvasProps) {
         }
         actions={
           <div className="flex items-center gap-2">
+            {isStreaming && (
+              <Button
+                variant="ghost"
+                size="xs"
+                onClick={() => { abortExplore(); abortEmerge(); placeholdersRef.current = []; relayout(); toast.info('已停止', '可以继续探索或涌现'); }}
+                title="停止当前 AI 流式生成"
+              >
+                <StopCircle size={13} style={{ color: 'rgba(239,68,68,0.85)' }} /> 停止
+              </Button>
+            )}
+            <Button
+              variant="ghost"
+              size="xs"
+              onClick={() => { relayout(); setTimeout(() => reactFlow.fitView({ padding: 0.25, duration: 500 }), 30); }}
+              disabled={isStreaming || nodeCount === 0}
+              title="自动整理节点位置并重新居中画布"
+            >
+              <Wand2 size={13} /> 整理
+            </Button>
             {nodeCount >= 3 && (
-              <>
-                <Button variant="ghost" size="xs" onClick={() => handleEmerge(false)} disabled={isStreaming}>
-                  <Sparkle size={13} /> 二维涌现
-                </Button>
-                <Button variant="ghost" size="xs" onClick={() => handleEmerge(true)} disabled={isStreaming}>
-                  <Star size={13} /> 三维幻想
-                </Button>
-              </>
+              <EmergenceEmergePopover disabled={isStreaming} onEmerge={handleEmerge} />
             )}
             <Button variant="secondary" size="xs" onClick={handleExport}>
               <Download size={13} /> 导出
@@ -566,13 +599,20 @@ function EmergenceCanvasInner({ treeId, onBack }: CanvasProps) {
           />
           <Controls style={{ borderRadius: 10 }} />
 
-          {/* 图例 */}
+          {/* 图例：整条文字+图标同色，避免白色文字看不出在说什么 */}
           <Panel position="bottom-left">
-            <div className="flex gap-4 text-[11px] px-3 py-1.5 rounded-[10px]"
-              style={{ color: 'var(--text-muted)', background: 'rgba(0,0,0,0.2)', border: '1px solid rgba(255,255,255,0.06)' }}>
-              <span style={{ color: dimColor[1] }}>● 一维·系统内</span>
-              <span style={{ color: dimColor[2] }}>◆ 二维·跨系统</span>
-              <span style={{ color: dimColor[3] }}>★ 三维·幻想</span>
+            <div className="flex gap-3 text-[11px] px-3 py-1.5 rounded-[10px]"
+              style={{ background: 'rgba(0,0,0,0.35)', border: '1px solid rgba(255,255,255,0.08)', backdropFilter: 'blur(12px)' }}>
+              {[
+                { d: 1 as const, glyph: '●', label: '一维·系统内' },
+                { d: 2 as const, glyph: '◆', label: '二维·跨系统' },
+                { d: 3 as const, glyph: '★', label: '三维·幻想' },
+              ].map(item => (
+                <span key={item.d} className="inline-flex items-center gap-1" style={{ color: dimColor[item.d] }}>
+                  <span style={{ fontSize: 10 }}>{item.glyph}</span>
+                  <span style={{ color: dimColor[item.d].replace('0.7', '0.95') }}>{item.label}</span>
+                </span>
+              ))}
             </div>
           </Panel>
 
@@ -781,57 +821,7 @@ export function EmergenceExplorerPage() {
         ) : (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 items-stretch">
             {trees.map(t => (
-              <GlassCard
-                key={t.id}
-                animated
-                interactive
-                padding="none"
-                className="group flex flex-col h-full"
-                onClick={() => setSelectedTreeId(t.id)}
-              >
-                <div className="p-4 pb-3 flex-1 flex flex-col">
-                  {/* 头部 */}
-                  <div className="flex items-start justify-between gap-2 mb-3">
-                    <div className="flex items-center gap-2.5 min-w-0">
-                      <div className="w-9 h-9 rounded-[10px] flex items-center justify-center flex-shrink-0"
-                        style={{ background: 'rgba(147,51,234,0.08)', border: '1px solid rgba(147,51,234,0.12)' }}>
-                        <TreePine size={16} style={{ color: 'rgba(147,51,234,0.85)' }} />
-                      </div>
-                      <div className="min-w-0 flex-1">
-                        <h3 className="text-[13px] font-semibold truncate" style={{ color: 'var(--text-primary)' }}>
-                          {t.title}
-                        </h3>
-                        {t.description && (
-                          <p className="text-[11px] truncate mt-0.5" style={{ color: 'var(--text-muted)' }}>
-                            {t.description}
-                          </p>
-                        )}
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* 底部统计 */}
-                  <div className="flex-1" />
-                  <div className="flex items-center justify-between mt-3 pt-2.5"
-                    style={{ borderTop: '1px solid rgba(255,255,255,0.05)' }}>
-                    <div className="flex items-center gap-3 text-[11px]" style={{ color: 'var(--text-muted)' }}>
-                      <span><span style={{ color: 'var(--text-secondary)' }}>{t.nodeCount}</span> 个节点</span>
-                    </div>
-                    <span className="text-[10px]" style={{ color: 'var(--text-muted)' }}>
-                      {new Date(t.updatedAt).toLocaleDateString()}
-                    </span>
-                  </div>
-                </div>
-
-                {/* 底部操作栏 */}
-                <div className="flex items-center gap-1.5 px-4 py-2.5 mt-auto"
-                  style={{ background: 'rgba(255,255,255,0.03)', borderTop: '1px solid rgba(255,255,255,0.05)' }}>
-                  <button className="surface-row flex-1 h-7 rounded-[8px] text-[11px] font-semibold flex items-center justify-center gap-1 cursor-pointer"
-                    style={{ background: 'rgba(147,51,234,0.08)', border: '1px solid rgba(147,51,234,0.15)', color: 'rgba(147,51,234,0.85)' }}>
-                    <Sparkle size={11} /> 进入探索
-                  </button>
-                </div>
-              </GlassCard>
+              <EmergenceTreeCard key={t.id} tree={t} onOpen={setSelectedTreeId} />
             ))}
           </div>
         )}
