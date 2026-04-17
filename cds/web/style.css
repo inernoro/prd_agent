@@ -5293,14 +5293,34 @@ a.branch-name:hover { color: var(--accent); }
   opacity: 0.1;
 }
 
-/* Dashed bounding box grouping api+admin service nodes */
+/* Dashed bounding box grouping api+admin service nodes (single-branch DAG view) */
 .topology-app-group {
   fill: none;
   stroke: var(--accent, #10b981);
   stroke-width: 1.5;
   stroke-dasharray: 6 4;
   opacity: 0.35;
-  rx: 20;
+}
+
+/* Per-branch column group box (aggregated shared view) */
+.topology-branch-group {
+  fill: rgba(255, 255, 255, 0.02);
+  stroke: rgba(255, 255, 255, 0.12);
+  stroke-width: 1;
+  stroke-dasharray: 5 3;
+}
+.topology-branch-group-pill {
+  fill: var(--bg-card, #181c24);
+  stroke: rgba(255, 255, 255, 0.15);
+  stroke-width: 0.8;
+}
+.topology-branch-group-label {
+  fill: rgba(255, 255, 255, 0.5);
+  font-size: 10px;
+  font-weight: 500;
+  font-family: var(--font-mono, 'JetBrains Mono', monospace);
+  pointer-events: none;
+  user-select: none;
 }
 
 .topology-empty {

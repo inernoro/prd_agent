@@ -8743,7 +8743,7 @@ const TOPO_NODE_W = 280;
 const TOPO_NODE_H = 150;
 const TOPO_VOLUME_SLOT_H = 38;  // bottom volume slot for infra with volumes
 const TOPO_GAP_X = 110;
-const TOPO_SECTION_GAP_Y = 64; // extra vertical gap between branch column-groups
+const TOPO_SECTION_GAP_Y = 84; // extra vertical gap between branch column-groups (leaves room for labels)
 const TOPO_GAP_Y = 48;
 const TOPO_PAD = 48;
 const TOPO_NODE_RADIUS = 18;
@@ -9055,17 +9055,10 @@ function _renderTopologySvg(layout, ctx) {
       ? `onclick="event.stopPropagation();_topologyNodeClick('${esc(raw.id)}')"`
       : `onclick="event.stopPropagation();_topologyInfraClick('${esc(raw.id)}')"`;
 
-    // Aggregated (shared view B) branch pill — shows "@branchId" in the
-    // top-right corner so the user can identify each instance across columns.
-    const branchPill = node.aggregated && raw._branchLabel
-      ? `<g>
-          <rect x="${x + TOPO_NODE_W - 18 - Math.min(raw._branchLabel.length * 6 + 16, 100)}" y="${y + 14}" width="${Math.min(raw._branchLabel.length * 6 + 16, 100)}" height="20" rx="10"
-                fill="var(--bg-elevated,#24272f)" stroke="var(--card-border,rgba(255,255,255,0.1))" stroke-width="1" />
-          <text x="${x + TOPO_NODE_W - 18 - Math.min(raw._branchLabel.length * 6 + 16, 100) / 2}" y="${y + 28}"
-                text-anchor="middle" fill="var(--text-muted,#888)" font-size="10" font-family="var(--font-mono,monospace)"
-                style="pointer-events:none">${esc('@' + raw._branchLabel.slice(0, 14))}</text>
-        </g>`
-      : '';
+    // Branch pill removed in aggregated view — the group-box label now shows
+    // the branch name prominently above each column, eliminating the need for
+    // a per-card tag that clutters every card in the grid.
+    const branchPill = '';
 
     // Layout coordinates inside the card:
     //   top content area  = y .. y + (NODE_H - VOLUME_SLOT_H)
@@ -9156,17 +9149,61 @@ function _renderTopologySvg(layout, ctx) {
     `;
   }).join('');
 
-  // Dashed group box around all app-kind nodes to visually signal
-  // "these are your application services" vs the infra layer below.
+  // Group box(es) behind all nodes.
+  // • Aggregated view: one dashed box per branch-column, labelled with the branch name.
+  // • Single-branch view: one "Apps" box around all app nodes.
   let appGroupRect = '';
   const appPositions = Array.from(positions.values()).filter(p => p.node.kind === 'app');
-  if (appPositions.length > 0) {
-    const GP = 24; // group padding
+
+  if (layout.aggregated && appPositions.length > 0) {
+    // Build per-branch column boxes.
+    const branchMap = new Map(); // branchId → {xs[], ys[], label}
+    appPositions.forEach(({x, y, node}) => {
+      const bid = node.branchId;
+      if (!branchMap.has(bid)) {
+        const rawLabel = (node.raw && node.raw._branchLabel) ? node.raw._branchLabel : bid;
+        branchMap.set(bid, { xs: [], ys: [], label: rawLabel });
+      }
+      const e = branchMap.get(bid);
+      e.xs.push(x, x + TOPO_NODE_W);
+      e.ys.push(y, y + TOPO_NODE_H);
+    });
+
+    const BGP = 14;        // box padding around node bounding box
+    const LH  = 20;        // label pill height
+    const LR  = 10;        // label pill border-radius
+    const LPX = 10;        // label pill horizontal inner padding
+
+    branchMap.forEach(({xs, ys, label}) => {
+      const bx  = Math.min(...xs) - BGP;
+      const by  = Math.min(...ys) - BGP;
+      const bx2 = Math.max(...xs) + BGP;
+      const by2 = Math.max(...ys) + BGP;
+      const bw  = bx2 - bx;
+      const bh  = by2 - by;
+
+      // Truncate long names: keep prefix up to 18 chars, then ellipsis + last 6
+      const MAX_L = 22;
+      const dispLabel = '@' + (label.length > MAX_L ? label.slice(0, 10) + '…' + label.slice(-10) : label);
+      // Approximate label pill width (JetBrains Mono ~6.5px/char at 10px)
+      const labelW = Math.min(bw - 4, dispLabel.length * 6.5 + LPX * 2);
+      const labelX = bx + 4;
+      const labelY = by - LH + 2; // pill sits just above the box top edge
+
+      appGroupRect += `
+        <rect class="topology-branch-group" x="${bx}" y="${by}" width="${bw}" height="${bh}" rx="16"/>
+        <rect class="topology-branch-group-pill" x="${labelX}" y="${labelY}" width="${labelW}" height="${LH}" rx="${LR}"/>
+        <text class="topology-branch-group-label" x="${labelX + LPX}" y="${labelY + LH - 5}">${esc(dispLabel)}</text>
+      `;
+    });
+
+  } else if (!layout.aggregated && appPositions.length > 0) {
+    // Single-branch / DAG view: one overall "Apps" group box.
+    const GP = 24;
     const gMinX = Math.min(...appPositions.map(p => p.x)) - GP;
     const gMinY = Math.min(...appPositions.map(p => p.y)) - GP;
     const gMaxX = Math.max(...appPositions.map(p => p.x + TOPO_NODE_W)) + GP;
     const gMaxY = Math.max(...appPositions.map(p => p.y + TOPO_NODE_H)) + GP;
-    // GitHub icon path (scaled to ~12px)
     const ghPath = 'M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z';
     const tagX = gMinX + 14;
     const tagY = gMinY - 10;
