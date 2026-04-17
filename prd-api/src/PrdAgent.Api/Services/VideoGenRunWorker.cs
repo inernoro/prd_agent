@@ -290,23 +290,26 @@ public class VideoGenRunWorker : BackgroundService
 
     private async Task<VideoGenRun?> ClaimQueuedRunAsync(CancellationToken ct)
     {
-        // 只拾取 remotion 模式（默认/空值）的 Queued 任务，videogen 模式由专门路径处理
+        // 只拾取非 videogen 模式的 Queued 任务（remotion/空值/缺失字段）
+        // 用 Ne(videogen) 比 Or(Exists false, Eq remotion, Eq "") 更简单、更稳
         var fb = Builders<VideoGenRun>.Filter;
         var filter = fb.And(
             fb.Eq(x => x.Status, VideoGenRunStatus.Queued),
-            fb.Or(
-                fb.Exists(x => x.RenderMode, false),
-                fb.Eq(x => x.RenderMode, VideoRenderMode.Remotion),
-                fb.Eq(x => x.RenderMode, string.Empty)
-            )
+            fb.Ne(x => x.RenderMode, VideoRenderMode.VideoGen)
         );
         var update = Builders<VideoGenRun>.Update
             .Set(x => x.Status, VideoGenRunStatus.Scripting)
             .Set(x => x.StartedAt, DateTime.UtcNow)
             .Set(x => x.CurrentPhase, "scripting");
 
-        return await _db.VideoGenRuns.FindOneAndUpdateAsync(filter, update,
+        var claimed = await _db.VideoGenRuns.FindOneAndUpdateAsync(filter, update,
             new FindOneAndUpdateOptions<VideoGenRun> { ReturnDocument = ReturnDocument.After }, ct);
+        if (claimed != null)
+        {
+            _logger.LogInformation("[VideoGenWorker] Claimed Remotion run: runId={RunId}, renderMode={Mode}",
+                claimed.Id, claimed.RenderMode ?? "(null)");
+        }
+        return claimed;
     }
 
     /// <summary>
@@ -325,8 +328,14 @@ public class VideoGenRunWorker : BackgroundService
             .Set(x => x.CurrentPhase, "videogen-submitting")
             .Set(x => x.PhaseProgress, 1);
 
-        return await _db.VideoGenRuns.FindOneAndUpdateAsync(filter, update,
+        var claimed = await _db.VideoGenRuns.FindOneAndUpdateAsync(filter, update,
             new FindOneAndUpdateOptions<VideoGenRun> { ReturnDocument = ReturnDocument.After }, ct);
+        if (claimed != null)
+        {
+            _logger.LogInformation("[VideoGenWorker] Claimed VideoGen run: runId={RunId}, model={Model}",
+                claimed.Id, claimed.DirectVideoModel);
+        }
+        return claimed;
     }
 
     private async Task<VideoGenRun?> ClaimRenderingRunAsync(CancellationToken ct)
