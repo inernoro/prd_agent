@@ -197,6 +197,9 @@ public class MongoDbContext
     public IMongoCollection<WebPageShareLink> WebPageShareLinks => _database.GetCollection<WebPageShareLink>("web_page_share_links");
     public IMongoCollection<ShareViewLog> ShareViewLogs => _database.GetCollection<ShareViewLog>("share_view_logs");
 
+    // MAP Inbox — 跨系统数据导入通道（骨架，Controller 留待下次迭代开发）
+    public IMongoCollection<InboxItem> InboxItems => _database.GetCollection<InboxItem>("inbox_items");
+
     // Workspace 工作空间
     public IMongoCollection<Workspace> Workspaces => _database.GetCollection<Workspace>("workspaces");
 

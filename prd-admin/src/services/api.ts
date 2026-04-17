@@ -287,6 +287,7 @@ export const api = {
   profile: {
     avatarUpload: () => '/api/profile/avatar/upload',
     avatar: () => '/api/profile/avatar',
+    publicPage: () => '/api/profile/public-page',
   },
 
   // ============ Dashboard 仪表盘 ============
@@ -325,6 +326,7 @@ export const api = {
         list: () => '/api/visual-agent/image-master/workspaces',
         byId: (id: string) => `/api/visual-agent/image-master/workspaces/${id}`,
         detail: (id: string) => `/api/visual-agent/image-master/workspaces/${id}/detail`,
+        unpublish: (id: string) => `/api/visual-agent/image-master/workspaces/${id}/unpublish`,
         viewport: (id: string) => `/api/visual-agent/image-master/workspaces/${id}/viewport`,
         messages: (id: string) => `/api/visual-agent/image-master/workspaces/${id}/messages`,
         canvas: (id: string) => `/api/visual-agent/image-master/workspaces/${id}/canvas`,
@@ -840,6 +842,7 @@ export const api = {
       list: () => '/api/workflow-agent/workflows',
       byId: (id: string) => `/api/workflow-agent/workflows/${id}`,
       execute: (id: string) => `/api/workflow-agent/workflows/${id}/execute`,
+      unpublish: (id: string) => `/api/workflow-agent/workflows/${id}/unpublish`,
     },
     executions: {
       list: () => '/api/workflow-agent/executions',
@@ -945,6 +948,7 @@ export const api = {
     byId: (id: string) => `/api/web-pages/${id}`,
     reupload: (id: string) => `/api/web-pages/${id}/reupload`,
     batchDelete: () => '/api/web-pages/batch-delete',
+    setVisibility: (id: string) => `/api/web-pages/${id}/visibility`,
     folders: () => '/api/web-pages/folders',
     tags: () => '/api/web-pages/tags',
     share: () => '/api/web-pages/share',
@@ -953,6 +957,10 @@ export const api = {
     viewShare: (token: string) => `/api/web-pages/shares/view/${token}`,
     saveShare: (token: string) => `/api/web-pages/shares/${token}/save`,
     viewLogs: '/api/web-pages/shares/view-logs',
+  },
+  // ============ 公开主页（/u/:username 无需登录） ============
+  publicProfile: {
+    byUsername: (username: string) => `/api/public/u/${encodeURIComponent(username)}`,
   },
   // ============ 快捷指令 ============
   shortcuts: {
@@ -1062,6 +1070,7 @@ export const api = {
       delete: (treeId: string) => `/api/emergence/trees/${treeId}`,
       emerge: (treeId: string) => `/api/emergence/trees/${treeId}/emerge`,
       export: (treeId: string) => `/api/emergence/trees/${treeId}/export`,
+      unpublish: (treeId: string) => `/api/emergence/trees/${treeId}/unpublish`,
     },
     nodes: {
       update: (nodeId: string) => `/api/emergence/nodes/${nodeId}`,

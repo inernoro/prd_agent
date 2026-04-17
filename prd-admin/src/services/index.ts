@@ -1488,6 +1488,7 @@ export {
   updateSite,
   deleteSite,
   batchDeleteSites,
+  setSiteVisibility,
   listFolders as listSiteFolders,
   listTags as listSiteTags,
   createShareLink as createSiteShareLink,
@@ -1498,6 +1499,26 @@ export {
   listShareViewLogs,
 } from '@/services/real/webPages';
 export type { HostedSite, HostedSiteFile, ShareLinkItem, TagCount, SharedSiteInfo, ShareViewData, ShareViewLogItem } from '@/services/real/webPages';
+
+// ── Public Profile 个人公开主页 ──
+export {
+  fetchPublicProfile,
+  updateMyPublicPage,
+  retractPublicItem,
+} from '@/services/real/publicProfile';
+export type { RetractDomain } from '@/services/real/publicProfile';
+export type {
+  PublicProfile,
+  PublicProfileUser,
+  PublicSection,
+  PublicSite,
+  PublicSkill,
+  PublicProfileDocumentStore,
+  PublicLiteraryPrompt,
+  PublicWorkspace,
+  PublicEmergenceTree,
+  PublicWorkflow,
+} from '@/services/real/publicProfile';
 
 // ── Account Data Transfer 数据分享 ──
 export {

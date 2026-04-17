@@ -390,6 +390,41 @@ public class HostedSiteService : IHostedSiteService
     }
 
     // ─────────────────────────────────────────────
+    // 可见性
+    // ─────────────────────────────────────────────
+
+    public async Task<HostedSite?> SetVisibilityAsync(string siteId, string userId, string visibility, CancellationToken ct)
+    {
+        var normalized = visibility?.Trim().ToLowerInvariant();
+        if (normalized != "public" && normalized != "private")
+            throw new ArgumentException("visibility 必须是 public 或 private");
+
+        var site = await _db.HostedSites.Find(x => x.Id == siteId && x.OwnerUserId == userId).FirstOrDefaultAsync(ct);
+        if (site == null) return null;
+
+        var now = DateTime.UtcNow;
+        var update = Builders<HostedSite>.Update
+            .Set(x => x.Visibility, normalized)
+            .Set(x => x.UpdatedAt, now);
+
+        if (normalized == "public" && site.PublishedAt == null)
+            update = update.Set(x => x.PublishedAt, now);
+
+        await _db.HostedSites.UpdateOneAsync(x => x.Id == siteId, update, cancellationToken: ct);
+        return await _db.HostedSites.Find(x => x.Id == siteId).FirstOrDefaultAsync(ct);
+    }
+
+    public async Task<List<HostedSite>> ListPublicByUserIdAsync(string ownerUserId, int limit, CancellationToken ct)
+    {
+        if (limit <= 0 || limit > 200) limit = 60;
+        return await _db.HostedSites
+            .Find(x => x.OwnerUserId == ownerUserId && x.Visibility == "public")
+            .Sort(Builders<HostedSite>.Sort.Descending(x => x.PublishedAt).Descending(x => x.UpdatedAt))
+            .Limit(limit)
+            .ToListAsync(ct);
+    }
+
+    // ─────────────────────────────────────────────
     // 分享
     // ─────────────────────────────────────────────
 

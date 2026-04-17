@@ -80,6 +80,7 @@ const SettingsPage = lazy(() => import('@/pages/SettingsPage'));
 const DataTransferPage = lazy(() => import('@/pages/DataTransferPage'));
 const WebPagesPage = lazy(() => import('@/pages/WebPagesPage'));
 const ShareViewPage = lazy(() => import('@/pages/ShareViewPage'));
+const PublicProfilePage = lazy(() => import('@/pages/PublicProfilePage'));
 const ReportTeamShareViewPage = lazy(() => import('@/pages/ReportTeamShareViewPage'));
 const ExecutiveDashboardPage = lazy(() => import('@/pages/ExecutiveDashboardPage'));
 const PrdAgentTabsPage = lazy(() => import('@/pages/PrdAgentTabsPage').then(m => ({ default: m.PrdAgentTabsPage })));
@@ -256,6 +257,8 @@ export default function App() {
         <Route path="/s/wp/:token" element={<ShareViewPage />} />
         <Route path="/s/shortcut/:id" element={<ShortcutInstallPage />} />
         <Route path="/shared/toolbox/:shareId" element={<SharedConversation />} />
+        {/* 个人公开主页 - 聚合展示用户公开的托管网页 */}
+        <Route path="/u/:username" element={<PublicProfilePage />} />
 
         {/* 团队周报分享页面 - 需登录，团队成员免密码，非成员需密码 */}
         <Route path="/s/report-team/:token" element={<ReportTeamShareViewPage />} />

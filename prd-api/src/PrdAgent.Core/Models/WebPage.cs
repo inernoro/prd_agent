@@ -59,6 +59,14 @@ public class HostedSite
     /// <summary>浏览次数</summary>
     public long ViewCount { get; set; }
 
+    // ── 公开可见性 ──
+
+    /// <summary>可见性：private = 仅自己可见 | public = 出现在个人公开页 /u/:username</summary>
+    public string Visibility { get; set; } = "private";
+
+    /// <summary>首次设为 public 的时间（用于公开页排序）</summary>
+    public DateTime? PublishedAt { get; set; }
+
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
 }
