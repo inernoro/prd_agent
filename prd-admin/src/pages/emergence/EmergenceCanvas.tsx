@@ -4,7 +4,6 @@ import {
   ReactFlow,
   Background,
   MiniMap,
-  Controls,
   useNodesState,
   useEdgesState,
   BackgroundVariant,
@@ -728,7 +727,9 @@ function EmergenceCanvasInner({ treeId, onBack }: CanvasProps) {
             pannable
             zoomable={false}
           />
-          <Controls style={{ borderRadius: 10 }} />
+          {/* ReactFlow 自带 Controls(+/-/fitView)在暗色主题下样式覆盖反复失败,
+             且画布手势已支持双指捏合 + ⌘/Ctrl+滚轮缩放 + Space+拖动平移,
+             顶栏也有「整理」按钮 = fitView,Controls 完全是冗余 → 直接删除 */}
 
           {/* 图例：与画布主题一致的深色玻璃面板,文字 + 圆点同色,确保对比度 ≥ 4.5:1 */}
           <Panel position="bottom-left">

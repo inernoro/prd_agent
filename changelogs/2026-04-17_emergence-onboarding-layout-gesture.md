@@ -23,3 +23,4 @@
 | fix | prd-admin | 涌现画布左下角 ReactFlow Controls(+/-/fitView 按钮)彻底暗色化:玻璃面板底 + 半透明白字 + hover 变蓝,不再是刺眼的白底黑字与暗色主题冲突 |
 | feat | prd-admin | 涌现探索支持并行:原「单流独占」改为每个节点独立 SSE 流,可同时探索 N 个节点,顶栏显示"N 条并行"+代表性 typing/thinking,停止按钮一键停全部;只有同一节点二次点击才禁用 |
 | feat | prd-admin | 涌现节点「探索」按钮增加 per-node loading 态:流式期间显示 MapSpinner + "探索中…" + cursor progress + 禁用 disabled,解决「点一次就全树禁用」的误导 |
+| fix | prd-admin | 涌现画布删除 ReactFlow 自带 Controls(+/-/fitView):暗色样式覆盖反复无效,且画布手势已支持双指捏合/⌘+滚轮缩放、Space+拖动平移,顶栏「整理」按钮 = fitView,Controls 完全冗余 |
