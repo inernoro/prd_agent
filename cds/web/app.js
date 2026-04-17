@@ -4496,7 +4496,18 @@ async function loadInfraServices() {
   try {
     const data = await api('GET', '/infra');
     infraServices = data.services || [];
+    _updateInfraShortcutBadge();
   } catch (e) { console.error('loadInfraServices:', e); }
+}
+
+function _updateInfraShortcutBadge() {
+  const badge = document.getElementById('infraShortcutBadge');
+  if (!badge) return;
+  const running = infraServices.filter(s => s.status === 'running').length;
+  badge.style.display = running > 0 ? '' : 'none';
+  document.getElementById('infraShortcutBtn').title = running > 0
+    ? `基础设施（${running} 运行中）`
+    : '基础设施';
 }
 
 function infraStatusDot(status) {
