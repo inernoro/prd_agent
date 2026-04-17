@@ -349,8 +349,9 @@ function Meta({ children }: { children: React.ReactNode }) {
 }
 
 const GRID_CLS = 'grid gap-4 grid-cols-[repeat(auto-fill,minmax(260px,1fr))]';
-/** 瀑布流：CSS multi-column 实现的自然比例流式布局（借鉴首页作品广场） */
-const WATERFALL_CLS = 'columns-1 sm:columns-2 md:columns-3 gap-4';
+/** 广场风格卡片网格：移动 1 列 / 平板 2 列 / 桌面 3 列。
+ *  使用 Grid 而非 CSS multi-column，避免单行极宽场景下无法分列。 */
+const PLAZA_GRID_CLS = 'grid gap-4 grid-cols-1 sm:grid-cols-2 lg:grid-cols-3';
 
 function SitesGrid({
   items,
@@ -501,7 +502,7 @@ function DocumentsGrid({
   onRetracted: (id: string) => void;
 }) {
   return (
-    <div className={WATERFALL_CLS}>
+    <div className={PLAZA_GRID_CLS}>
       {items.map((d) => (
         <div key={d.id} className="mb-4 break-inside-avoid">
           <PlazaCard
@@ -564,7 +565,7 @@ function PromptsGrid({
   onRetracted: (id: string) => void;
 }) {
   return (
-    <div className={WATERFALL_CLS}>
+    <div className={PLAZA_GRID_CLS}>
       {items.map((p) => (
         <div key={p.id} className="mb-4 break-inside-avoid">
           <PlazaCard
@@ -633,7 +634,7 @@ function WorkspacesGrid({
   onRetracted: (id: string) => void;
 }) {
   return (
-    <div className={WATERFALL_CLS}>
+    <div className={PLAZA_GRID_CLS}>
       {items.map((w) => (
         <div key={w.id} className="mb-4 break-inside-avoid">
           <PlazaCard

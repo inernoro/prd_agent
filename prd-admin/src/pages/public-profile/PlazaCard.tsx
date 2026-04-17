@@ -65,7 +65,7 @@ export function PlazaCard({
 
   return (
     <div
-      className="group cursor-pointer"
+      className="group w-full max-w-sm cursor-pointer"
       onClick={onClick}
       role={onClick ? 'button' : undefined}
       tabIndex={onClick ? 0 : undefined}
