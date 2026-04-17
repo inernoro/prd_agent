@@ -2093,7 +2093,7 @@ a.branch-name:hover { color: var(--accent); }
 /* ════════════════ Modal ════════════════ */
 
 .modal {
-  position: fixed; inset: 0; z-index: 100;
+  position: fixed; inset: 0; z-index: 500;
   display: flex; align-items: center; justify-content: center;
 }
 .modal.hidden { display: none; }

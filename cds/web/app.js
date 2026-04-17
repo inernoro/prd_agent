@@ -2154,13 +2154,17 @@ function updateInlineLog(id) {
 
   // UF-16: if the topology panel is showing THIS branch but the log
   // preview element doesn't exist yet (first chunk after click), poke
-  // a re-render so the preview appears.
+  // a re-render — but ONLY if the user is already on the details tab.
+  // Do NOT force-switch when the user is on deployLogs/buildLogs etc.
   if (typeof _topologyPanelCurrentKind !== 'undefined'
       && _topologyPanelCurrentKind === 'app'
       && _topologySelectedBranchId === id
       && !topoEl) {
-    if (typeof _topologySwitchPanelTab === 'function') {
-      _topologySwitchPanelTab('details');
+    var activeTabNow = document.querySelector('.topology-fs-panel-tab.active');
+    if (activeTabNow && activeTabNow.dataset.tab === 'details') {
+      if (typeof _topologySwitchPanelTab === 'function') {
+        _topologySwitchPanelTab('details');
+      }
     }
   }
 }
@@ -4300,44 +4304,41 @@ async function openSelfUpdate() {
     </div>`
   ).join('');
 
-  openConfigModal('自动更新', `
+  openConfigModal('CDS 系统更新', `
     <p class="config-panel-desc">
-      切换 CDS 代码分支并重启。操作流程：<code>git fetch → git checkout → git pull → restart</code>
+      拉取当前分支最新代码并重启 CDS。操作流程：<code>git fetch → git pull → restart</code>
     </p>
-    <div class="form-row" style="flex-direction:column;align-items:stretch">
-      <label class="form-label">目标分支</label>
-      <div class="combobox" id="selfUpdateCombobox">
-        <div class="combobox-input-wrap">
-          <input id="selfUpdateBranch" class="form-input" style="width:100%;padding-right:36px"
-            value="${esc(current)}" placeholder="输入或选择分支名" autocomplete="off"
-            onfocus="openComboDropdown()" oninput="filterComboItems(this.value)">
-          <button type="button" class="combobox-toggle" onclick="toggleComboDropdown()" tabindex="-1">
-            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 6 8 10 12 6"/></svg>
-          </button>
-        </div>
-        <div class="combobox-dropdown" id="selfUpdateDropdown">
-          ${branchItems}
+    <div class="form-row" style="margin-top:4px;font-size:13px;color:var(--text-secondary)">
+      当前分支：<code style="color:var(--accent)">${esc(current)}</code>${commitHash ? `<span style="white-space:nowrap;color:var(--text-muted)"> @ <code style="color:var(--blue)">${esc(commitHash.slice(0, 8))}</code></span>` : ''}
+    </div>
+    <details style="margin-top:10px">
+      <summary style="font-size:12px;color:var(--text-muted);cursor:pointer;user-select:none">切换到其他分支（高级）</summary>
+      <div class="form-row" style="flex-direction:column;align-items:stretch;margin-top:8px">
+        <label class="form-label">目标分支</label>
+        <div class="combobox" id="selfUpdateCombobox">
+          <div class="combobox-input-wrap">
+            <input id="selfUpdateBranch" class="form-input" style="width:100%;padding-right:36px"
+              value="${esc(current)}" placeholder="输入或选择分支名" autocomplete="off"
+              onfocus="openComboDropdown()" oninput="filterComboItems(this.value)">
+            <button type="button" class="combobox-toggle" onclick="toggleComboDropdown()" tabindex="-1">
+              <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 6 8 10 12 6"/></svg>
+            </button>
+          </div>
+          <div class="combobox-dropdown" id="selfUpdateDropdown">
+            ${branchItems}
+          </div>
         </div>
       </div>
-    </div>
-    <div class="form-row" style="margin-top:4px;font-size:12px;color:var(--fg-muted)">
-      当前分支：<code style="word-break:break-all">${esc(current)}</code>${commitHash ? `<span style="white-space:nowrap"> @ <code style="color:var(--blue)">${esc(commitHash)}</code></span>` : ''}
-    </div>
+    </details>
     <div id="selfUpdateProgress" style="display:none;margin-top:12px">
       <div id="selfUpdateSteps" style="display:flex;flex-direction:column;gap:6px"></div>
       <div id="selfUpdateStatus" style="margin-top:8px;font-size:13px"></div>
     </div>
-    <div class="form-row" style="margin-top:12px;display:flex;gap:8px;align-items:center">
-      <button class="sm" id="selfUpdateBtn" onclick="executeSelfUpdate()">更新并重启</button>
+    <div class="form-row" style="margin-top:16px;display:flex;gap:8px;align-items:center">
+      <button class="sm" id="selfUpdateBtn" onclick="executeSelfUpdate()">更新当前分支并重启</button>
       <button class="sm ghost" onclick="closeConfigModal()">取消</button>
-      <span style="flex:1"></span>
-      <button class="sm ghost" style="color:var(--red);font-size:12px;display:inline-flex;align-items:center;gap:4px" onclick="closeConfigModal();pruneStaleBranches()"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6"/></svg> 清理未托管分支</button>
     </div>
   `);
-
-  // Allow combobox dropdown to overflow the modal body
-  const modalBody = document.querySelector('.config-modal-dialog .modal-body');
-  if (modalBody) modalBody.style.overflow = 'visible';
 
   // Close dropdown when clicking outside
   document.addEventListener('click', _comboOutsideClick);
@@ -8369,7 +8370,6 @@ function _ensureTopologyFsChrome() {
       <button type="button" class="topology-fs-panel-tab" data-tab="buildLogs" onclick="_topologySwitchPanelTab('buildLogs')">构建日志</button>
       <button type="button" class="topology-fs-panel-tab" data-tab="deployLogs" onclick="_topologySwitchPanelTab('deployLogs')">部署日志</button>
       <button type="button" class="topology-fs-panel-tab" data-tab="httpLogs" onclick="_topologySwitchPanelTab('httpLogs')">HTTP 日志</button>
-      <button type="button" class="topology-fs-panel-tab" data-tab="networkFlowLogs" onclick="_topologySwitchPanelTab('networkFlowLogs')">网络流</button>
       <button type="button" class="topology-fs-panel-tab" data-tab="variables" onclick="_topologySwitchPanelTab('variables')">环境变量</button>
       <button type="button" class="topology-fs-panel-tab" data-tab="routing" onclick="_topologySwitchPanelTab('routing')">路由</button>
       <button type="button" class="topology-fs-panel-tab" data-tab="tags" onclick="_topologySwitchPanelTab('tags')">备注</button>
@@ -9198,22 +9198,25 @@ function _renderTopologySvg(layout, ctx) {
     });
 
   } else if (!layout.aggregated && appPositions.length > 0) {
-    // Single-branch / DAG view: one overall "Apps" group box.
+    // Single-branch DAG view: group box showing the selected branch name.
     const GP = 24;
     const gMinX = Math.min(...appPositions.map(p => p.x)) - GP;
     const gMinY = Math.min(...appPositions.map(p => p.y)) - GP;
     const gMaxX = Math.max(...appPositions.map(p => p.x + TOPO_NODE_W)) + GP;
     const gMaxY = Math.max(...appPositions.map(p => p.y + TOPO_NODE_H)) + GP;
-    const ghPath = 'M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z';
-    const tagX = gMinX + 14;
-    const tagY = gMinY - 10;
+    const dagBranchLabel = selectedBranchId ? ('@' + selectedBranchId) : 'Apps';
+    const MAX_DL = 22;
+    const dispDagLabel = dagBranchLabel.length > MAX_DL + 1
+      ? '@' + selectedBranchId.slice(0, 10) + '…' + selectedBranchId.slice(-9) : dagBranchLabel;
+    const LH2 = 20; const LPX2 = 10; const LR2 = 10;
+    const labelW2 = Math.min(gMaxX - gMinX - 4, dispDagLabel.length * 6.5 + LPX2 * 2);
+    const labelX2 = gMinX + 4;
+    const labelY2 = gMinY - LH2 + 2;
     appGroupRect = `
-      <rect class="topology-app-group" x="${gMinX}" y="${gMinY}" width="${gMaxX - gMinX}" height="${gMaxY - gMinY}" rx="20" />
-      <g transform="translate(${tagX},${tagY})" style="pointer-events:none">
-        <rect x="-2" y="-1" width="64" height="20" rx="10" fill="var(--bg-card,#181c24)" stroke="var(--accent,#10b981)" stroke-width="0.8" opacity="0.95"/>
-        <path d="${ghPath}" fill="var(--accent,#10b981)" transform="translate(4,4) scale(0.72)"/>
-        <text x="20" y="14" fill="var(--accent,#10b981)" font-size="10" font-weight="600" font-family="var(--font-sans,system-ui,sans-serif)">Apps</text>
-      </g>`;
+      <rect class="topology-branch-group" x="${gMinX}" y="${gMinY}" width="${gMaxX - gMinX}" height="${gMaxY - gMinY}" rx="20"/>
+      <rect class="topology-branch-group-pill" x="${labelX2}" y="${labelY2}" width="${labelW2}" height="${LH2}" rx="${LR2}"/>
+      <text class="topology-branch-group-label" x="${labelX2 + LPX2}" y="${labelY2 + LH2 - 5}">${esc(dispDagLabel)}</text>
+    `;
   }
 
   return `
@@ -12114,22 +12117,8 @@ function _topologyRefreshBranchDropdown() {
     html = '<div class="topology-fs-branch-combo-empty">没有匹配的分支 —— 粘贴一个名字按 Enter 添加</div>';
   }
   listEl.innerHTML = html;
-
-  // Auto-select: on first mount, if nothing is selected yet, pick
-  // 'main' / 'master' / first branch so node click → editor works
-  // out of the box. Only runs once per page load.
-  if (!_topologySelectedBranchId && (branches || []).length > 0 && _topologyAutoSelectPending) {
-    var preferred = branches.find(function (b) { return b.id === 'main' || b.id === 'master'; }) || branches[0];
-    if (preferred) {
-      _topologyAutoSelectPending = false;
-      _topologySelectBranch(preferred.id);
-      // Re-render once with the new selection in place
-      _topologyRefreshBranchDropdown();
-    }
-  }
 }
 
-let _topologyAutoSelectPending = true;
 
 // Expose to inline handlers
 window.setViewMode = setViewMode;
