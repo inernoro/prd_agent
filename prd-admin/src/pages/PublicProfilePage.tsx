@@ -32,6 +32,7 @@ import { useAuthStore } from '@/stores/authStore';
 import { resolveBackgroundTheme } from './public-profile/profileBackgrounds';
 import { OwnerDecorator } from './public-profile/OwnerDecorator';
 import { RetractButton } from './public-profile/RetractButton';
+import { PlazaCard } from './public-profile/PlazaCard';
 import type { RetractDomain } from '@/services';
 
 function fmtDate(s: string | null | undefined) {
@@ -152,9 +153,16 @@ export default function PublicProfilePage() {
   };
 
   return (
-    <div className="min-h-screen text-white" style={{ background: theme.base }}>
+    <div className="relative min-h-screen text-white" style={{ background: theme.base }}>
+      {/* 全页环境光：让主题色延伸到整个页面而不只是头部 */}
+      <div
+        className="pointer-events-none fixed inset-0 -z-0"
+        style={{ background: theme.banner, opacity: 0.55 }}
+        aria-hidden
+      />
+      <div className="relative z-[1]">
       <div className="relative overflow-hidden border-b border-white/10">
-        <div className="absolute inset-0 opacity-40" style={{ background: theme.banner }} />
+        <div className="absolute inset-0" style={{ background: theme.banner, opacity: 0.9 }} />
         <div className="relative mx-auto flex max-w-5xl items-start gap-5 px-6 py-10">
           <div className="flex h-20 w-20 shrink-0 items-center justify-center rounded-2xl bg-gradient-to-br from-sky-500/30 to-violet-500/20 text-2xl font-bold text-white/90 ring-1 ring-white/15">
             {user.displayName?.[0]?.toUpperCase() || user.username[0]?.toUpperCase() || '?'}
@@ -218,7 +226,7 @@ export default function PublicProfilePage() {
       {visibleTabs.length > 0 && (
         <div
           className="sticky top-0 z-10 border-b border-white/10 backdrop-blur-xl"
-          style={{ background: `${theme.base}d9` }}
+          style={{ background: `${theme.base}bf` }}
         >
           <div className="mx-auto flex max-w-5xl items-center gap-1 overflow-x-auto px-4 py-2 text-[13px]">
             {visibleTabs.map((t) => {
@@ -305,6 +313,7 @@ export default function PublicProfilePage() {
       <div className="mx-auto max-w-5xl px-6 py-6 text-center text-[10px] text-white/30">
         由 PRD Agent · 拖资源到投放面板「公开」槽位即可发布到此页
       </div>
+      </div>
     </div>
   );
 }
@@ -340,6 +349,8 @@ function Meta({ children }: { children: React.ReactNode }) {
 }
 
 const GRID_CLS = 'grid gap-4 grid-cols-[repeat(auto-fill,minmax(260px,1fr))]';
+/** 瀑布流：CSS multi-column 实现的自然比例流式布局（借鉴首页作品广场） */
+const WATERFALL_CLS = 'columns-1 sm:columns-2 md:columns-3 gap-4';
 
 function SitesGrid({
   items,
@@ -490,68 +501,53 @@ function DocumentsGrid({
   onRetracted: (id: string) => void;
 }) {
   return (
-    <div className={GRID_CLS}>
+    <div className={WATERFALL_CLS}>
       {items.map((d) => (
-        <div
-          key={d.id}
-          className="group relative flex flex-col overflow-hidden rounded-2xl border border-white/10 bg-white/[0.03] transition-all hover:border-white/25 hover:bg-white/[0.06]"
-        >
-          {isSelf && (
-            <div className="absolute left-2 top-2 z-10">
-              <RetractButton
-                domain="documents"
-                itemKey={d.id}
-                label={d.name}
-                onRetracted={() => onRetracted(d.id)}
-              />
-            </div>
-          )}
-          {d.coverImageUrl ? (
-            <div
-              className="relative overflow-hidden"
-              style={{ aspectRatio: '16 / 9', background: '#0f1014' }}
-            >
-              <img
-                src={d.coverImageUrl}
-                alt={d.name}
-                className="absolute inset-0 h-full w-full object-cover"
-              />
-            </div>
-          ) : (
-            <div className="flex h-28 items-center justify-center bg-gradient-to-br from-emerald-500/10 to-cyan-500/5">
-              <FileText size={32} className="text-emerald-200/60" />
-            </div>
-          )}
-          <div className="flex flex-1 flex-col gap-1 p-3">
-            <h3 className="truncate text-sm font-medium text-white/90">{d.name}</h3>
-            {d.description && (
-              <p className="line-clamp-2 text-[11px] text-white/55">{d.description}</p>
-            )}
-            {d.primaryEntry && (
-              <div className="mt-1 rounded-md border border-emerald-400/10 bg-emerald-500/[0.04] p-2">
-                <div className="flex items-center gap-1 text-[10px] text-emerald-200/80">
-                  <FileText size={10} />
-                  <span className="truncate">{d.primaryEntry.title}</span>
+        <div key={d.id} className="mb-4 break-inside-avoid">
+          <PlazaCard
+            id={d.id}
+            title={d.name}
+            coverUrl={d.coverImageUrl}
+            aspect="16/10"
+            noCoverDecoration={<FileText size={48} className="text-white/15" />}
+            topOverlay={
+              isSelf ? (
+                <RetractButton
+                  domain="documents"
+                  itemKey={d.id}
+                  label={d.name}
+                  onRetracted={() => onRetracted(d.id)}
+                />
+              ) : undefined
+            }
+            bottomOverlay={
+              <>
+                <div className="flex items-center gap-2 text-[10px] text-white/60 drop-shadow">
+                  <FileText size={11} className="text-emerald-300/80" />
+                  <span>文档空间</span>
+                  <span className="text-white/45">· {d.documentCount} 篇</span>
                 </div>
-                {d.primaryEntry.summary && (
-                  <p className="mt-1 line-clamp-2 text-[11px] leading-relaxed text-white/55">
-                    {d.primaryEntry.summary}
+                <h3
+                  className="line-clamp-2 text-[15px] font-bold leading-snug drop-shadow-lg"
+                  style={{ color: '#fff', textShadow: '0 1px 6px rgba(0,0,0,0.5)' }}
+                >
+                  {d.name || '未命名'}
+                </h3>
+                {d.primaryEntry && (
+                  <p className="line-clamp-2 text-[11px] leading-relaxed text-white/70 drop-shadow">
+                    <span className="text-emerald-200/90">{d.primaryEntry.title}</span>
+                    {d.primaryEntry.summary ? ` · ${d.primaryEntry.summary}` : ''}
                   </p>
                 )}
-              </div>
-            )}
-            <TagsList tags={d.tags} />
-            <Meta>
-              <span className="inline-flex items-center gap-0.5">
-                <FileText size={10} />
-                {d.documentCount} 篇
-              </span>
-              <span className="inline-flex items-center gap-0.5">
-                <Eye size={10} />
-                {d.viewCount}
-              </span>
-            </Meta>
-          </div>
+                <div className="flex items-center gap-3 text-[10px] text-white/55 drop-shadow">
+                  <span className="inline-flex items-center gap-0.5">
+                    <Eye size={10} />
+                    {d.viewCount}
+                  </span>
+                </div>
+              </>
+            }
+          />
         </div>
       ))}
     </div>
@@ -568,39 +564,59 @@ function PromptsGrid({
   onRetracted: (id: string) => void;
 }) {
   return (
-    <div className={GRID_CLS}>
+    <div className={WATERFALL_CLS}>
       {items.map((p) => (
-        <div
-          key={p.id}
-          className="relative flex flex-col gap-2 rounded-2xl border border-white/10 bg-white/[0.03] p-4 transition-all hover:border-white/25 hover:bg-white/[0.06]"
-        >
-          {isSelf && (
-            <div className="absolute right-2 top-2">
-              <RetractButton
-                domain="prompts"
-                itemKey={p.id}
-                label={p.title}
-                onRetracted={() => onRetracted(p.id)}
-              />
-            </div>
-          )}
-          <div className="flex items-start gap-2 pr-20">
-            <Feather size={16} className="mt-0.5 shrink-0 text-amber-300/80" />
-            <h3 className="line-clamp-2 text-sm font-medium text-white/90">{p.title}</h3>
-          </div>
-          {p.preview && (
-            <p className="line-clamp-4 whitespace-pre-wrap rounded-md bg-black/20 px-2 py-1.5 font-mono text-[10.5px] leading-relaxed text-white/55">
-              {p.preview}
-            </p>
-          )}
-          <div className="mt-auto flex items-center gap-3 text-[10px] text-white/40">
-            {p.scenarioType && (
-              <span className="rounded-full bg-amber-500/10 px-2 py-0.5 text-amber-200/80">
-                {p.scenarioType}
+        <div key={p.id} className="mb-4 break-inside-avoid">
+          <PlazaCard
+            id={p.id}
+            title={p.title}
+            aspect="4/5"
+            noCoverDecoration={
+              <span
+                className="select-none font-serif leading-none"
+                style={{ fontSize: 120, color: 'rgba(255,255,255,0.06)' }}
+              >
+                &ldquo;
               </span>
-            )}
-            <span>被 fork {p.forkCount} 次</span>
-          </div>
+            }
+            topOverlay={
+              isSelf ? (
+                <RetractButton
+                  domain="prompts"
+                  itemKey={p.id}
+                  label={p.title}
+                  onRetracted={() => onRetracted(p.id)}
+                />
+              ) : undefined
+            }
+            bottomOverlay={
+              <>
+                <div className="flex items-center gap-2 text-[10px] text-white/60 drop-shadow">
+                  <Feather size={11} className="text-amber-300/80" />
+                  <span>文学提示词</span>
+                  {p.scenarioType && (
+                    <span className="rounded-full bg-amber-500/20 px-1.5 py-0.5 text-amber-100">
+                      {p.scenarioType}
+                    </span>
+                  )}
+                </div>
+                <h3
+                  className="line-clamp-2 text-[15px] font-bold leading-snug drop-shadow-lg"
+                  style={{ color: '#fff', textShadow: '0 1px 6px rgba(0,0,0,0.5)' }}
+                >
+                  {p.title || '未命名'}
+                </h3>
+                {p.preview && (
+                  <p className="line-clamp-3 whitespace-pre-wrap text-[11px] leading-relaxed text-white/70 drop-shadow">
+                    {p.preview}
+                  </p>
+                )}
+                <div className="flex items-center gap-2 text-[10px] text-white/55 drop-shadow">
+                  <span>被 fork {p.forkCount} 次</span>
+                </div>
+              </>
+            }
+          />
         </div>
       ))}
     </div>
@@ -617,45 +633,28 @@ function WorkspacesGrid({
   onRetracted: (id: string) => void;
 }) {
   return (
-    <div className={GRID_CLS}>
+    <div className={WATERFALL_CLS}>
       {items.map((w) => (
-        <div
-          key={w.id}
-          className="group flex flex-col overflow-hidden rounded-2xl border border-white/10 bg-white/[0.03] transition-all hover:border-white/25 hover:bg-white/[0.06]"
-        >
-          <div
-            className="relative overflow-hidden"
-            style={{ aspectRatio: '16 / 9', background: '#0f1014' }}
-          >
-            {w.coverUrl ? (
-              <img
-                src={w.coverUrl}
-                alt={w.title}
-                loading="lazy"
-                className="absolute inset-0 h-full w-full object-cover transition-transform duration-300 group-hover:scale-105"
-              />
-            ) : (
-              <div className="flex h-full w-full items-center justify-center bg-gradient-to-br from-rose-500/15 to-pink-500/5">
-                <ImageIcon size={36} className="text-rose-200/60" />
-              </div>
-            )}
-            {isSelf && (
-              <div className="absolute left-2 top-2">
+        <div key={w.id} className="mb-4 break-inside-avoid">
+          <PlazaCard
+            id={w.id}
+            title={w.title}
+            coverUrl={w.coverUrl}
+            coverWidth={w.coverWidth}
+            coverHeight={w.coverHeight}
+            noCoverDecoration={<ImageIcon size={48} className="text-white/15" />}
+            topOverlay={
+              isSelf ? (
                 <RetractButton
                   domain="workspaces"
                   itemKey={w.id}
                   label={w.title}
                   onRetracted={() => onRetracted(w.id)}
                 />
-              </div>
-            )}
-          </div>
-          <div className="flex flex-col gap-1 p-3">
-            <h3 className="truncate text-sm font-medium text-white/90">{w.title}</h3>
-            <div className="mt-auto pt-2 text-[10px] text-white/40">
-              {w.publishedAt && <span>公开于 {fmtDate(w.publishedAt)}</span>}
-            </div>
-          </div>
+              ) : undefined
+            }
+            meta={w.publishedAt && <span>公开于 {fmtDate(w.publishedAt)}</span>}
+          />
         </div>
       ))}
     </div>

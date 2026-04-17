@@ -74,6 +74,12 @@ public class PublicProfileController : ControllerBase
             .Select(w => w.CoverAssetId!)
             .Distinct()
             .ToList();
+        // 没有 CoverAssetId 的 workspace，需要兜底查最近一张资产
+        var workspaceIdsNeedingFallback = workspacesTask.Result
+            .Where(w => string.IsNullOrWhiteSpace(w.CoverAssetId))
+            .Select(w => w.Id)
+            .Distinct()
+            .ToList();
         var primaryEntryIds = documentsTask.Result
             .Where(d => !string.IsNullOrWhiteSpace(d.PrimaryEntryId))
             .Select(d => d.PrimaryEntryId!)
@@ -83,12 +89,27 @@ public class PublicProfileController : ControllerBase
         var assetsTask = workspaceAssetIds.Count > 0
             ? _db.ImageAssets.Find(Builders<ImageAsset>.Filter.In(x => x.Id, workspaceAssetIds)).ToListAsync(ct)
             : Task.FromResult(new List<ImageAsset>());
+        // 兜底封面：按 workspaceId 取最新 1 张资产，用于 CoverAssetId 未设置的场景
+        var fallbackAssetsTask = workspaceIdsNeedingFallback.Count > 0
+            ? _db.ImageAssets
+                .Find(Builders<ImageAsset>.Filter.In(x => x.WorkspaceId, workspaceIdsNeedingFallback!))
+                .SortByDescending(x => x.CreatedAt)
+                .ToListAsync(ct)
+            : Task.FromResult(new List<ImageAsset>());
         var primaryEntriesTask = primaryEntryIds.Count > 0
             ? _db.DocumentEntries.Find(Builders<DocumentEntry>.Filter.In(x => x.Id, primaryEntryIds)).ToListAsync(ct)
             : Task.FromResult(new List<DocumentEntry>());
 
-        await Task.WhenAll(assetsTask, primaryEntriesTask);
+        await Task.WhenAll(assetsTask, fallbackAssetsTask, primaryEntriesTask);
         var assetMap = assetsTask.Result.ToDictionary(a => a.Id, a => a);
+        // 每个 workspace 取最新 1 张作为兜底封面（按 CreatedAt desc 排序后，首次命中即最新）
+        var workspaceFallbackCover = new Dictionary<string, ImageAsset>();
+        foreach (var a in fallbackAssetsTask.Result)
+        {
+            if (string.IsNullOrWhiteSpace(a.WorkspaceId)) continue;
+            if (!workspaceFallbackCover.ContainsKey(a.WorkspaceId!))
+                workspaceFallbackCover[a.WorkspaceId!] = a;
+        }
         var primaryMap = primaryEntriesTask.Result.ToDictionary(e => e.Id, e => e);
 
         var profile = new
@@ -180,14 +201,29 @@ public class PublicProfileController : ControllerBase
                 items = workspacesTask.Result.Select(w =>
                 {
                     string? coverUrl = null;
+                    int coverWidth = 0;
+                    int coverHeight = 0;
                     if (!string.IsNullOrWhiteSpace(w.CoverAssetId) && assetMap.TryGetValue(w.CoverAssetId!, out var asset))
+                    {
                         coverUrl = asset.Url ?? asset.OriginalUrl;
+                        coverWidth = asset.Width;
+                        coverHeight = asset.Height;
+                    }
+                    // 兜底：若 CoverAssetId 未设置，取该 workspace 最近一张资产作为封面
+                    if (string.IsNullOrWhiteSpace(coverUrl) && workspaceFallbackCover.TryGetValue(w.Id, out var fallback))
+                    {
+                        coverUrl = fallback.Url ?? fallback.OriginalUrl;
+                        coverWidth = fallback.Width;
+                        coverHeight = fallback.Height;
+                    }
                     return new
                     {
                         id = w.Id,
                         title = w.Title,
                         coverAssetId = w.CoverAssetId,
                         coverUrl,
+                        coverWidth,
+                        coverHeight,
                         publishedAt = w.PublishedAt,
                         updatedAt = w.UpdatedAt,
                     };

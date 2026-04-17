@@ -88,6 +88,9 @@ export interface PublicWorkspace {
   coverAssetId?: string | null;
   /** 后端已从 image_assets 解析出的封面图 URL（可能为 null） */
   coverUrl?: string | null;
+  /** 封面图像素宽高（用于瀑布流自然比例）；0 表示未知 */
+  coverWidth?: number;
+  coverHeight?: number;
   publishedAt?: string | null;
   updatedAt: string;
 }
