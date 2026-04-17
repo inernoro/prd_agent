@@ -9602,8 +9602,11 @@ async function _topologySelectBranch(branchId) {
     _topologyOverrideCache.set(branchId, overrideSet);
     _topologyOverrideDetails.set(branchId, detailMap);
   } catch (e) {
-    console.error('topology: load overrides failed', e);
-    showToast('加载分支覆盖失败: ' + e.message, 'error');
+    // 404 = new branch with no overrides yet — expected, not an error
+    if (!e.message || !e.message.includes('404')) {
+      console.warn('topology: load overrides failed', e);
+      showToast('加载分支覆盖失败: ' + e.message, 'error');
+    }
   }
   renderTopologyView();
 }
@@ -11952,7 +11955,16 @@ async function _topoAddAndSelect(branchName) {
   // `branches[]`. Switch the topology view to it so the user immediately
   // sees their new branch's services instead of staying in shared view.
   var slug = typeof StateService_slugify === 'function' ? StateService_slugify(branchName) : branchName;
-  _topologyOnBranchChange(slug);
+  // Set the flag synchronously before any async work so renderTopologyView()
+  // triggered by loadBranches() (inside addBranch) correctly renders in
+  // single-branch mode on the next tick.
+  _topologySelectedBranchId = slug;
+  _topologyKeepSharedView = false;
+  // Await the full select (loads overrides, re-renders) so we can fit after.
+  await _topologySelectBranch(slug);
+  // Fit the canvas to the newly-selected branch so the user sees a visible
+  // transition even if the branch has no running containers yet.
+  if (typeof _topologyFit === 'function') _topologyFit();
 }
 
 // System-settings popover (left nav)

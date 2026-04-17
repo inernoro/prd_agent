@@ -37,3 +37,4 @@
 | fix | cds | 项目卡片服务图标替换为 Simple Icons 准确品牌 SVG（Nginx N 字路径、Node.js 官方 hexagon、MongoDB 叶子、Redis 几何图形），颜色对齐官方品牌色 |
 | fix | cds | detect-stack 失败（400/500）由抛错改为非阻断警告，链条继续进入「手动配置」路径，不再显示恐慌性红色 [chain-error] |
 | feat | cds | exec_cds.sh init 新增 Phase 3 MongoDB 初始化：交互式询问是否启动 Docker MongoDB 8 容器，自动追加 CDS_MONGO_URI/CDS_STORAGE_MODE=mongo/CDS_AUTH_BACKEND=mongo 到 .cds.env，一键完成持久化数据库配置 |
+| fix | cds | topology 添加分支后不跳转：_topoAddAndSelect 改为同步设置 _topologySelectedBranchId + await _topologySelectBranch + 调用 _topologyFit()，确保添加后立即切换到新分支单视图；_topologySelectBranch 对 profile-overrides 404（新分支无覆盖属正常）不再弹错误 toast |
