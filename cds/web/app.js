@@ -1145,7 +1145,7 @@ function filterBranches() {
   const manualAddHtml = (rawTyped && !typedAlreadyTracked)
     ? `
       <div class="branch-dropdown-section-label">手动添加</div>
-      <div class="branch-dropdown-item branch-dropdown-manual-add" onclick="addBranch(${JSON.stringify(rawTyped)})">
+      <div class="branch-dropdown-item branch-dropdown-manual-add" onclick="addBranch(${JSON.stringify(rawTyped).replace(/"/g, '&quot;')})">
         <svg class="branch-dropdown-icon" width="16" height="16" viewBox="0 0 16 16" fill="currentColor" style="color: var(--accent)"><path d="M8 2a.75.75 0 01.75.75v4.5h4.5a.75.75 0 010 1.5h-4.5v4.5a.75.75 0 01-1.5 0v-4.5h-4.5a.75.75 0 010-1.5h4.5v-4.5A.75.75 0 018 2z"/></svg>
         <div class="branch-dropdown-item-info">
           <div class="branch-dropdown-item-row1">
@@ -5518,7 +5518,7 @@ async function toggleCommitLog(id, triggerEl) {
       const isCurrent = isPinned ? c.hash === isPinned : i === 0;
       const isLatest = i === 0;
       return `
-      <div class="commit-log-item ${isLatest ? 'latest' : ''} ${isCurrent ? 'current' : ''}" onclick="event.stopPropagation(); checkoutCommit('${esc(id)}', '${esc(c.hash)}', ${isLatest}, ${JSON.stringify(esc(c.subject))})" title="点击切换到此提交进行构建">
+      <div class="commit-log-item ${isLatest ? 'latest' : ''} ${isCurrent ? 'current' : ''}" onclick="event.stopPropagation(); checkoutCommit('${esc(id)}', '${esc(c.hash)}', ${isLatest}, ${JSON.stringify(esc(c.subject)).replace(/"/g, '&quot;')})" title="点击切换到此提交进行构建">
         ${isCurrent ? '<span class="commit-current-dot"></span>' : ''}${commitIcon(c.subject)}<code class="commit-hash">${esc(c.hash)}</code>
         <span class="commit-subject">${esc(c.subject)}</span>
         <span class="commit-meta">${esc(c.author)} · ${esc(c.date)}</span>
@@ -11879,6 +11879,19 @@ async function _topologyManualRefresh(event) {
   }
 }
 
+// Add a remote branch and immediately switch the topology view to it.
+// This fixes the "click → nothing happens" regression where JSON.stringify
+// produced unescaped double-quotes that broke the onclick HTML attribute.
+async function _topoAddAndSelect(branchName) {
+  _topologyBranchComboClose();
+  await addBranch(branchName);
+  // After loadBranches() inside addBranch completes, the slug is now in
+  // `branches[]`. Switch the topology view to it so the user immediately
+  // sees their new branch's services instead of staying in shared view.
+  var slug = typeof StateService_slugify === 'function' ? StateService_slugify(branchName) : branchName;
+  _topologyOnBranchChange(slug);
+}
+
 // System-settings popover (left nav)
 function _topoSysPopoverToggle() {
   var pop = document.getElementById('topoSysPopover');
@@ -11978,8 +11991,8 @@ function _topologyBranchComboOnEnter() {
   // addBranch is the list-view helper from cds/web/app.js:1165 — we
   // reuse it so list and topology share the exact same add flow,
   // including the optimistic insert, POST /api/branches call, and
-  // toast error rollback.
-  addBranch(raw);
+  // toast error rollback. Auto-switch to the new branch on success.
+  _topoAddAndSelect(raw);
 }
 
 // Re-render the combobox label AND the open popover (when open). Keeps
@@ -12046,7 +12059,7 @@ function _topologyRefreshBranchDropdown() {
   if (remote.length > 0) {
     html += '<div class="topology-fs-branch-combo-section">可添加</div>';
     remote.forEach(function (b) {
-      html += '<div class="topology-fs-branch-combo-item" onclick="addBranch(' + JSON.stringify(b.name) + ');_topologyBranchComboClose()">' +
+      html += '<div class="topology-fs-branch-combo-item" onclick="_topoAddAndSelect(' + JSON.stringify(b.name).replace(/"/g, '&quot;') + ')">' +
               '<svg width="11" height="11" viewBox="0 0 16 16" fill="currentColor" style="opacity:0.5"><path fill-rule="evenodd" d="M11.75 2.5a.75.75 0 100 1.5.75.75 0 000-1.5zm-2.25.75a2.25 2.25 0 113 2.122V6A2.5 2.5 0 0110 8.5H6a1 1 0 00-1 1v1.128a2.251 2.251 0 11-1.5 0V5.372a2.25 2.25 0 111.5 0v1.836A2.492 2.492 0 016 7h4a1 1 0 001-1v-.628A2.25 2.25 0 019.5 3.25zM4.25 12a.75.75 0 100 1.5.75.75 0 000-1.5zM3.5 3.25a.75.75 0 111.5 0 .75.75 0 01-1.5 0z"/></svg>' +
               '<span class="topology-fs-branch-combo-item-label">' + esc(b.name) + '</span>' +
               '</div>';
@@ -12054,7 +12067,7 @@ function _topologyRefreshBranchDropdown() {
   }
   if (showManualAdd) {
     html += '<div class="topology-fs-branch-combo-section">手动添加</div>';
-    html += '<div class="topology-fs-branch-combo-item manual-add" onclick="addBranch(' + JSON.stringify(_topologyBranchComboQuery.trim()) + ');_topologyBranchComboClose()">' +
+    html += '<div class="topology-fs-branch-combo-item manual-add" onclick="_topoAddAndSelect(' + JSON.stringify(_topologyBranchComboQuery.trim()).replace(/"/g, '&quot;') + ')">' +
             '<svg width="11" height="11" viewBox="0 0 16 16" fill="currentColor" style="color:var(--accent,#10b981)"><path d="M8 2a.75.75 0 01.75.75v4.5h4.5a.75.75 0 010 1.5h-4.5v4.5a.75.75 0 01-1.5 0v-4.5h-4.5a.75.75 0 010-1.5h4.5v-4.5A.75.75 0 018 2z"/></svg>' +
             '<span class="topology-fs-branch-combo-item-label">添加 "' + esc(_topologyBranchComboQuery.trim()) + '" 为新分支</span>' +
             '<span class="topology-fs-branch-combo-item-tag">按 Enter</span>' +
@@ -12121,6 +12134,7 @@ window._topologyOpenCommitHistory = _topologyOpenCommitHistory;
 window._topologyManualRefresh = _topologyManualRefresh;
 window._topoSysPopoverToggle = _topoSysPopoverToggle;
 window._topoSysPopoverClose = _topoSysPopoverClose;
+window._topoAddAndSelect = _topoAddAndSelect;
 
 // Apply persisted view mode on load (deferred so DOM elements exist)
 if (document.readyState === 'loading') {
