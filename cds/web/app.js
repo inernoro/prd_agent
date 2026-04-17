@@ -9028,6 +9028,21 @@ function _applyTopologyTransform() {
   if (indicator) indicator.textContent = `${Math.round(_topologyViewport.scale * 100)}%`;
 }
 
+// RAF-throttled transform scheduler — mousemove can fire at 500Hz on
+// high-DPI trackpads, writing `transform` synchronously on every event
+// stalls the compositor and produces the "sticky / jumps 5cm" feel the
+// user complained about. Coalescing into one transform per frame keeps
+// the canvas at 60fps, matching AdvancedVisualAgentTab's pattern
+// (prd-admin/src/pages/ai-chat/AdvancedVisualAgentTab.tsx:1592).
+let _topologyRafId = null;
+function _scheduleTopologyTransform() {
+  if (_topologyRafId) return;
+  _topologyRafId = requestAnimationFrame(() => {
+    _topologyRafId = null;
+    _applyTopologyTransform();
+  });
+}
+
 function _topologyZoom(delta, centerX, centerY) {
   // Clamp scale to [0.3, 2.5]
   const oldScale = _topologyViewport.scale;
@@ -9087,18 +9102,31 @@ function _topologyNodeDragStart(e, nodeId, groupEl) {
   const startY = e.clientY;
   const baseOffset = _topologyNodeDragOffsets[nodeId] || { dx: 0, dy: 0 };
   let hasDragged = false;
+  let pendingTransform = null;
+  let rafId = null;
+
+  const flush = () => {
+    rafId = null;
+    if (pendingTransform) {
+      groupEl.setAttribute('transform', pendingTransform);
+      pendingTransform = null;
+    }
+  };
 
   const onMove = (me) => {
     const ddx = (me.clientX - startX) / _topologyViewport.scale;
     const ddy = (me.clientY - startY) / _topologyViewport.scale;
     if (!hasDragged && Math.abs(ddx) + Math.abs(ddy) < 4) return;
     hasDragged = true;
-    groupEl.setAttribute('transform', `translate(${baseOffset.dx + ddx},${baseOffset.dy + ddy})`);
+    pendingTransform = `translate(${baseOffset.dx + ddx},${baseOffset.dy + ddy})`;
+    if (!rafId) rafId = requestAnimationFrame(flush);
   };
 
   const onUp = (me) => {
-    window.removeEventListener('mousemove', onMove);
-    window.removeEventListener('mouseup', onUp);
+    if (rafId) { cancelAnimationFrame(rafId); rafId = null; }
+    window.removeEventListener('pointermove', onMove);
+    window.removeEventListener('pointerup', onUp);
+    window.removeEventListener('pointercancel', onUp);
     if (!hasDragged) return; // was a click — let onclick fire
     const ddx = (me.clientX - startX) / _topologyViewport.scale;
     const ddy = (me.clientY - startY) / _topologyViewport.scale;
@@ -9106,10 +9134,16 @@ function _topologyNodeDragStart(e, nodeId, groupEl) {
     renderTopologyView(); // re-render so edges follow the node
   };
 
-  window.addEventListener('mousemove', onMove);
-  window.addEventListener('mouseup', onUp);
+  window.addEventListener('pointermove', onMove, { passive: true });
+  window.addEventListener('pointerup', onUp, { passive: true });
+  window.addEventListener('pointercancel', onUp, { passive: true });
 }
 
+// Global window-level pointer listeners are bound exactly once. The
+// wrap element itself is replaced on every render, but `_topologyDragState`
+// lives at module scope so these listeners keep working across renders
+// and we don't leak N copies after N renders.
+let _topologyWindowListenersBound = false;
 function _bindTopologyPanZoom() {
   const wrap = document.querySelector('.topology-canvas-wrap');
   if (!wrap) return;
@@ -9145,22 +9179,26 @@ function _bindTopologyPanZoom() {
         _topologyViewport.tx -= px * (ratio - 1);
         _topologyViewport.ty -= py * (ratio - 1);
         _topologyViewport.scale = newScale;
-        _applyTopologyTransform();
+        _scheduleTopologyTransform();
       }
       return;
     }
     // Two-finger pan on trackpad (or wheel on a physical mouse with
     // a shift-wheel → horizontal convention). `deltaX`/`deltaY` are
     // already in CSS pixels, so we just subtract them from the
-    // viewport offset. No rAF throttling needed — browsers already
-    // coalesce wheel events.
+    // viewport offset. RAF-throttle like the drag path so bursts of
+    // high-frequency wheel events don't stall the compositor.
     _topologyViewport.tx -= e.deltaX;
     _topologyViewport.ty -= e.deltaY;
-    _applyTopologyTransform();
+    _scheduleTopologyTransform();
   }, { passive: false });
 
-  // Mousedown: either start node drag or canvas pan.
-  wrap.addEventListener('mousedown', (e) => {
+  // Pointerdown: either start node drag or canvas pan.
+  // Using PointerEvents instead of MouseEvents so we get
+  // setPointerCapture (bulletproof against the "pointer leaves
+  // window" drift the user reported), plus unified handling of
+  // trackpad / pen / touch without extra listeners.
+  wrap.addEventListener('pointerdown', (e) => {
     if (e.button !== 0) return;
     const nodeEl = e.target.closest('g.topology-node');
     if (nodeEl) {
@@ -9168,7 +9206,9 @@ function _bindTopologyPanZoom() {
       if (nodeId) _topologyNodeDragStart(e, nodeId, nodeEl);
       return;
     }
+    try { wrap.setPointerCapture(e.pointerId); } catch (_) {}
     _topologyDragState = {
+      pointerId: e.pointerId,
       startX: e.clientX,
       startY: e.clientY,
       baseTx: _topologyViewport.tx,
@@ -9178,30 +9218,41 @@ function _bindTopologyPanZoom() {
     wrap.classList.add('dragging');
   });
 
-  window.addEventListener('mousemove', (e) => {
-    if (!_topologyDragState) return;
-    const dx = e.clientX - _topologyDragState.startX;
-    const dy = e.clientY - _topologyDragState.startY;
-    if (Math.abs(dx) + Math.abs(dy) > 3) {
-      _topologyDragState.moved = true;
-      _topologyUserAdjusted = true; // UF-03: stop auto-centering
-    }
-    _topologyViewport.tx = _topologyDragState.baseTx + dx;
-    _topologyViewport.ty = _topologyDragState.baseTy + dy;
-    _applyTopologyTransform();
-  });
-
-  window.addEventListener('mouseup', () => {
-    if (!_topologyDragState) return;
-    const wasClick = !_topologyDragState.moved;
-    _topologyDragState = null;
-    wrap.classList.remove('dragging');
-    // Clicking on empty canvas (not a drag) deselects the current node
-    if (wasClick && _topologyFocusedNodeId) {
-      _topologyFocusedNodeId = null;
-      renderTopologyView();
-    }
-  });
+  // Passive pointermove — we never preventDefault, so marking passive
+  // lets the browser ship the event without blocking the compositor.
+  // Bound once per page-life; handlers re-query .topology-canvas-wrap
+  // because the DOM element is replaced on every render.
+  if (!_topologyWindowListenersBound) {
+    window.addEventListener('pointermove', (e) => {
+      if (!_topologyDragState) return;
+      if (e.pointerId !== undefined && e.pointerId !== _topologyDragState.pointerId) return;
+      const dx = e.clientX - _topologyDragState.startX;
+      const dy = e.clientY - _topologyDragState.startY;
+      if (Math.abs(dx) + Math.abs(dy) > 3) {
+        _topologyDragState.moved = true;
+        _topologyUserAdjusted = true; // UF-03: stop auto-centering
+      }
+      _topologyViewport.tx = _topologyDragState.baseTx + dx;
+      _topologyViewport.ty = _topologyDragState.baseTy + dy;
+      _scheduleTopologyTransform();
+    }, { passive: true });
+    const endDrag = (e) => {
+      if (!_topologyDragState) return;
+      if (e && e.pointerId !== undefined && e.pointerId !== _topologyDragState.pointerId) return;
+      const wasClick = !_topologyDragState.moved;
+      const currentWrap = document.querySelector('.topology-canvas-wrap');
+      try { currentWrap && currentWrap.releasePointerCapture(_topologyDragState.pointerId); } catch (_) {}
+      _topologyDragState = null;
+      if (currentWrap) currentWrap.classList.remove('dragging');
+      if (wasClick && _topologyFocusedNodeId) {
+        _topologyFocusedNodeId = null;
+        renderTopologyView();
+      }
+    };
+    window.addEventListener('pointerup', endDrag, { passive: true });
+    window.addEventListener('pointercancel', endDrag, { passive: true });
+    _topologyWindowListenersBound = true;
+  }
 }
 
 // Selected node for edge highlighting (distinct from _topologySelectedBranchId)

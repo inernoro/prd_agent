@@ -5100,6 +5100,12 @@ a.branch-name:hover { color: var(--accent); }
   /* transform-origin top-left so zoom math stays simple */
   transform-origin: 0 0;
   transition: none; /* no transition during drag */
+  /* Promote to a compositor layer so transform updates skip re-paint
+     every frame. Single biggest perf win for high-node-count graphs.
+     Matches the world-layer hint used in AdvancedVisualAgentTab. */
+  will-change: transform;
+  contain: layout style;
+  backface-visibility: hidden;
 }
 
 /* Node — rich card rendered as <g> containing rect + foreignObject or tspan */
