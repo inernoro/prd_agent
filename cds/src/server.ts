@@ -918,7 +918,18 @@ export function installSpaFallback(app: express.Express, webDir?: string): void 
     res.redirect(302, '/projects.html');
   });
 
-  app.use(express.static(dir));
+  // HTML pages must never be served from cache — JS/CSS are cache-busted via
+  // ?t=Date.now() in the HTML itself, but if the HTML is stale the wrong JS
+  // version gets loaded. HTTP headers take precedence over meta http-equiv.
+  app.use(express.static(dir, {
+    setHeaders: (res, filePath) => {
+      if (filePath.endsWith('.html')) {
+        res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
+        res.setHeader('Pragma', 'no-cache');
+        res.setHeader('Expires', '0');
+      }
+    },
+  }));
   app.get('*', (_req, res) => {
     res.sendFile(path.join(dir, 'index.html'));
   });

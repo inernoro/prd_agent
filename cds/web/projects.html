@@ -1143,9 +1143,6 @@ export CDS_SECRET_KEY="$(openssl rand -hex 32)"          # 可选,加密 token
 
   <div id="toast" class="toast hidden"></div>
 
-  <script src="projects.js?t=0"></script>
-  <script>
-    document.currentScript.previousElementSibling.src = 'projects.js?t=' + Date.now();
-  </script>
+  <script>document.write('<scr'+'ipt src="projects.js?t='+Date.now()+'"><\/scr'+'ipt>');</script>
 </body>
 </html>

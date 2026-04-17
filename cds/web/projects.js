@@ -19,6 +19,20 @@
 (function () {
   'use strict';
 
+  // Inject delete-button hover styles into <head> so they work regardless of
+  // which version of projects.html the browser has cached. The CSS in the HTML
+  // file can lag behind when the JS is served fresh after a CDS self-update.
+  (function () {
+    if (document.getElementById('cds-delbtn-patch')) return;
+    var s = document.createElement('style');
+    s.id = 'cds-delbtn-patch';
+    s.textContent =
+      '.cds-project-card-wrapper{position:relative}' +
+      '.cds-project-card-wrapper:hover .cds-project-card-delete,' +
+      '.cds-project-card:hover~.cds-project-card-delete{display:flex!important}';
+    document.head.appendChild(s);
+  }());
+
   var gridEl = document.getElementById('projectsGrid');
   var toastEl = document.getElementById('toast');
   var projectCountEl = document.getElementById('projectCount');
@@ -255,7 +269,7 @@
       ? ''
       : '<button class="cds-project-card-delete" title="删除项目" onclick="handleDeleteProject(event, ' +
         "'" + escapeHtml(project.id) + "', '" + escapeHtml(project.name) + "')\">" +
-        '<svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M11 1.75V3h2.25a.75.75 0 010 1.5H2.75a.75.75 0 010-1.5H5V1.75C5 .784 5.784 0 6.75 0h2.5C10.216 0 11 .784 11 1.75zM4.496 6.675l.66 6.6a.25.25 0 00.249.225h5.19a.25.25 0 00.249-.225l.66-6.6a.75.75 0 111.492.149l-.66 6.6A1.748 1.748 0 0110.595 15h-5.19a1.75 1.75 0 01-1.741-1.575l-.66-6.6a.75.75 0 111.492-.15z"/></svg>' +
+        '<svg width="14" height="14" viewBox="0 0 16 16" fill="#f43f5e" aria-hidden="true"><path d="M11 1.75V3h2.25a.75.75 0 010 1.5H2.75a.75.75 0 010-1.5H5V1.75C5 .784 5.784 0 6.75 0h2.5C10.216 0 11 .784 11 1.75zM4.496 6.675l.66 6.6a.25.25 0 00.249.225h5.19a.25.25 0 00.249-.225l.66-6.6a.75.75 0 111.492.149l-.66 6.6A1.748 1.748 0 0110.595 15h-5.19a1.75 1.75 0 01-1.741-1.575l-.66-6.6a.75.75 0 111.492-.15z"/></svg>' +
         '</button>';
 
     var totalServices =
