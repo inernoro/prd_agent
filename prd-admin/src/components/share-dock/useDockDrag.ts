@@ -81,24 +81,28 @@ export function useDockDrag(options: DockDragOptions) {
         'position: fixed',
         'left: 0',
         'top: 0',
+        // 关键：必须 pointer-events:none，否则 ghost 挡住 elementFromPoint
         'pointer-events: none',
         'z-index: 9999',
-        'padding: 8px 12px',
-        'border-radius: 10px',
-        'background: rgba(14, 15, 20, 0.92)',
-        'border: 1px solid rgba(255, 255, 255, 0.18)',
-        'box-shadow: 0 12px 32px -8px rgba(0,0,0,0.6), 0 0 24px rgba(56,189,248,0.25)',
-        'color: rgba(255,255,255,0.92)',
-        'font-size: 12px',
+        // 尺寸：小一点，避免挡住目标 slot 的视觉反馈
+        'padding: 5px 9px',
+        'border-radius: 8px',
+        'background: rgba(14, 15, 20, 0.78)',
+        'border: 1px solid rgba(255, 255, 255, 0.22)',
+        // 发光：跟手时能看到一抹冷光尾巴
+        'box-shadow: 0 8px 20px -6px rgba(0,0,0,0.5), 0 0 12px rgba(56,189,248,0.3)',
+        'color: rgba(255,255,255,0.95)',
+        'font-size: 11px',
         'font-weight: 500',
-        'max-width: 220px',
+        'max-width: 180px',
         'white-space: nowrap',
         'overflow: hidden',
         'text-overflow: ellipsis',
         'transform: translate(-9999px, -9999px)',
         'will-change: transform',
         'user-select: none',
-        'transition: transform 40ms linear',
+        // 半透明让 slot 的 hover 发光可以透过来
+        'opacity: 0.88',
       ].join(';');
       el.textContent = `${icon ?? '📦'}  ${label ?? id.slice(0, 8)}`;
       return el;
@@ -134,7 +138,8 @@ export function useDockDrag(options: DockDragOptions) {
         );
       }
       if (ghost) {
-        ghost.style.transform = `translate(${ev.clientX + 14}px, ${ev.clientY + 14}px)`;
+        // 偏移更远（+18 +22），避免 ghost 挡住鼠标正下方的 slot hover 发光
+        ghost.style.transform = `translate(${ev.clientX + 18}px, ${ev.clientY + 22}px)`;
       }
       hoverOn(findSlot(ev.clientX, ev.clientY));
       ev.preventDefault();

@@ -1486,7 +1486,18 @@ export type { HostedSite, HostedSiteFile, ShareLinkItem, TagCount, SharedSiteInf
 
 // ── Public Profile 个人公开主页 ──
 export { fetchPublicProfile } from '@/services/real/publicProfile';
-export type { PublicProfile, PublicProfileUser, PublicProfileSite } from '@/services/real/publicProfile';
+export type {
+  PublicProfile,
+  PublicProfileUser,
+  PublicSection,
+  PublicSite,
+  PublicSkill,
+  PublicProfileDocumentStore,
+  PublicLiteraryPrompt,
+  PublicWorkspace,
+  PublicEmergenceTree,
+  PublicWorkflow,
+} from '@/services/real/publicProfile';
 
 // ── Account Data Transfer 数据分享 ──
 export {

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { ChevronsRight, ChevronsLeft, GripVertical } from 'lucide-react';
 import { DOCK_EVENTS, type DockStartDetail, type DockDropDetail } from './useDockDrag';
+import './ShareDock.css';
 
 export interface ShareDockSlot {
   key: string;
@@ -32,42 +33,9 @@ export interface ShareDockProps {
   defaultAnchor?: 'right' | 'right-middle';
 }
 
-/**
- * 每个 tone 包含基础色 + data-dock-hover=true 时的 ring/scale/色阶加强。
- * 使用 Tailwind 的 data-[attr=val]: 变体，必须写完整字面量，不能动态拼接（JIT 扫描不到）。
- */
-const TONE_STYLES: Record<ShareDockSlot['tone'], string> = {
-  sky:
-    'from-sky-500/15 to-cyan-400/5 border-sky-400/25 text-sky-100 ' +
-    'data-[dock-hover=true]:ring-2 data-[dock-hover=true]:ring-sky-300/70 ' +
-    'data-[dock-hover=true]:from-sky-500/35 data-[dock-hover=true]:to-cyan-400/20 ' +
-    'data-[dock-hover=true]:scale-[1.04]',
-  violet:
-    'from-violet-500/15 to-purple-400/5 border-violet-400/25 text-violet-100 ' +
-    'data-[dock-hover=true]:ring-2 data-[dock-hover=true]:ring-violet-300/70 ' +
-    'data-[dock-hover=true]:from-violet-500/35 data-[dock-hover=true]:to-purple-400/20 ' +
-    'data-[dock-hover=true]:scale-[1.04]',
-  rose:
-    'from-rose-500/15 to-red-400/5 border-rose-400/25 text-rose-100 ' +
-    'data-[dock-hover=true]:ring-2 data-[dock-hover=true]:ring-rose-300/70 ' +
-    'data-[dock-hover=true]:from-rose-500/35 data-[dock-hover=true]:to-red-400/20 ' +
-    'data-[dock-hover=true]:scale-[1.04]',
-  emerald:
-    'from-emerald-500/15 to-green-400/5 border-emerald-400/25 text-emerald-100 ' +
-    'data-[dock-hover=true]:ring-2 data-[dock-hover=true]:ring-emerald-300/70 ' +
-    'data-[dock-hover=true]:from-emerald-500/35 data-[dock-hover=true]:to-green-400/20 ' +
-    'data-[dock-hover=true]:scale-[1.04]',
-  amber:
-    'from-amber-500/15 to-orange-400/5 border-amber-400/25 text-amber-100 ' +
-    'data-[dock-hover=true]:ring-2 data-[dock-hover=true]:ring-amber-300/70 ' +
-    'data-[dock-hover=true]:from-amber-500/35 data-[dock-hover=true]:to-orange-400/20 ' +
-    'data-[dock-hover=true]:scale-[1.04]',
-  indigo:
-    'from-indigo-500/15 to-blue-400/5 border-indigo-400/25 text-indigo-100 ' +
-    'data-[dock-hover=true]:ring-2 data-[dock-hover=true]:ring-indigo-300/70 ' +
-    'data-[dock-hover=true]:from-indigo-500/35 data-[dock-hover=true]:to-blue-400/20 ' +
-    'data-[dock-hover=true]:scale-[1.04]',
-};
+/* 槽位 tone → CSS class（具体样式见 ShareDock.css），这里只做字面量映射
+ * 使用普通 CSS class 而不是 Tailwind 字面量，避免 JIT 扫描不到的坑，
+ * 也让 hover 效果能组合多层 box-shadow + 发光。 */
 
 const DOCK_W = 192;
 const DOCK_MARGIN = 16;
@@ -286,29 +254,25 @@ export function ShareDock({
         </div>
 
         {/* 槽位区 */}
-        <div className="flex flex-col gap-2 p-2">
-          {slots.map((s) => {
-            return (
-              <div
-                key={s.key}
-                data-dock-slot={s.key}
-                data-dock-mime={mime}
-                className={[
-                  'rounded-xl border bg-gradient-to-br px-3 py-2 transition-all',
-                  TONE_STYLES[s.tone],
-                  dragging ? 'opacity-95' : 'opacity-90',
-                ].join(' ')}
-                role="button"
-                aria-label={`拖到此处以${s.label}`}
-              >
-                <div className="flex items-center gap-2">
-                  {s.icon}
-                  <span className="text-sm font-medium">{s.label}</span>
-                </div>
-                <div className="mt-0.5 text-[10.5px] leading-snug text-white/55">{s.hint}</div>
+        <div className={['flex flex-col gap-2 p-2', dragging ? 'dock-active' : ''].join(' ')}>
+          {slots.map((s) => (
+            <div
+              key={s.key}
+              data-dock-slot={s.key}
+              data-dock-mime={mime}
+              className={`dock-slot dock-slot--${s.tone}`}
+              role="button"
+              aria-label={`拖到此处以${s.label}`}
+            >
+              <div className="flex items-center gap-2">
+                {s.icon}
+                <span className="text-sm font-medium">{s.label}</span>
               </div>
-            );
-          })}
+              <div className="dock-slot__hint mt-0.5 text-[10.5px] leading-snug text-white/55">
+                {s.hint}
+              </div>
+            </div>
+          ))}
         </div>
 
         {/* 底部链接 */}

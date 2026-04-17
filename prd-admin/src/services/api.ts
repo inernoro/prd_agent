@@ -950,8 +950,7 @@ export const api = {
   },
   // ============ 公开主页（/u/:username 无需登录） ============
   publicProfile: {
-    byUsername: (username: string, limit = 60) =>
-      `/api/public/u/${encodeURIComponent(username)}?limit=${limit}`,
+    byUsername: (username: string) => `/api/public/u/${encodeURIComponent(username)}`,
   },
   // ============ 快捷指令 ============
   shortcuts: {

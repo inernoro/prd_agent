@@ -1,0 +1,152 @@
+/* ShareDock 槽位的 hover 反馈。
+ * 为什么用 CSS 文件而不是 Tailwind class：
+ * - Tailwind v4 对 `data-[attr=value]:xxx` 变体在某些字面量组合下 JIT 扫不到
+ * - Hover 反馈需要组合 ring + outer-glow + inner-glow + 背景加深 + scale，
+ *   Tailwind 一行写到底失控，单独 CSS 文件更可维护
+ */
+
+.dock-slot {
+  position: relative;
+  border-radius: 12px;
+  border: 1px solid;
+  padding: 8px 12px;
+  transition:
+    transform 180ms cubic-bezier(0.25, 1, 0.4, 1),
+    box-shadow 180ms ease-out,
+    background 180ms ease-out,
+    border-color 180ms ease-out,
+    filter 180ms ease-out;
+  background: linear-gradient(135deg, var(--slot-bg-from), var(--slot-bg-to));
+  border-color: var(--slot-border);
+  color: var(--slot-text);
+  cursor: grab;
+  will-change: transform, box-shadow;
+}
+
+/* Hover 悬停（拖拽对象落到槽位上时） */
+.dock-slot[data-dock-hover='true'] {
+  transform: scale(1.06);
+  background: linear-gradient(
+    135deg,
+    var(--slot-bg-hover-from),
+    var(--slot-bg-hover-to)
+  );
+  border-color: var(--slot-border-hover);
+  color: var(--slot-text-hover);
+  box-shadow:
+    /* 外发光：让用户一眼看到"要落这里" */
+    0 0 0 2px var(--slot-ring),
+    0 0 28px var(--slot-glow),
+    /* 内顶部高光：立体感 */
+    inset 0 1px 0 rgba(255, 255, 255, 0.28),
+    /* 内发光：光从里面漏出来 */
+    inset 0 0 20px var(--slot-inner-glow);
+  filter: brightness(1.08) saturate(1.1);
+  z-index: 1;
+}
+
+.dock-slot[data-dock-hover='true'] .dock-slot__hint {
+  color: rgba(255, 255, 255, 0.85);
+}
+
+/* 拖拽进行中但 pointer 未在此槽位：加轻微呼吸光晕提示"可以落这里" */
+.dock-active .dock-slot:not([data-dock-hover='true']) {
+  animation: dock-breathe 1.4s ease-in-out infinite;
+}
+
+@keyframes dock-breathe {
+  0%, 100% { box-shadow: 0 0 0 0 transparent; }
+  50%       { box-shadow: 0 0 0 1px var(--slot-ring-soft); }
+}
+
+/* ── 6 个 tone 调色盘 ── */
+
+.dock-slot--sky {
+  --slot-bg-from: rgba(14, 165, 233, 0.15);
+  --slot-bg-to: rgba(34, 211, 238, 0.05);
+  --slot-bg-hover-from: rgba(14, 165, 233, 0.45);
+  --slot-bg-hover-to: rgba(34, 211, 238, 0.25);
+  --slot-border: rgba(56, 189, 248, 0.28);
+  --slot-border-hover: rgba(125, 211, 252, 0.9);
+  --slot-text: rgba(224, 242, 254, 0.95);
+  --slot-text-hover: #f0f9ff;
+  --slot-ring: rgba(125, 211, 252, 0.75);
+  --slot-ring-soft: rgba(125, 211, 252, 0.35);
+  --slot-glow: rgba(56, 189, 248, 0.55);
+  --slot-inner-glow: rgba(56, 189, 248, 0.25);
+}
+
+.dock-slot--violet {
+  --slot-bg-from: rgba(139, 92, 246, 0.15);
+  --slot-bg-to: rgba(168, 85, 247, 0.05);
+  --slot-bg-hover-from: rgba(139, 92, 246, 0.45);
+  --slot-bg-hover-to: rgba(168, 85, 247, 0.25);
+  --slot-border: rgba(167, 139, 250, 0.28);
+  --slot-border-hover: rgba(196, 181, 253, 0.9);
+  --slot-text: rgba(237, 233, 254, 0.95);
+  --slot-text-hover: #faf5ff;
+  --slot-ring: rgba(196, 181, 253, 0.75);
+  --slot-ring-soft: rgba(196, 181, 253, 0.35);
+  --slot-glow: rgba(139, 92, 246, 0.55);
+  --slot-inner-glow: rgba(139, 92, 246, 0.25);
+}
+
+.dock-slot--rose {
+  --slot-bg-from: rgba(244, 63, 94, 0.15);
+  --slot-bg-to: rgba(239, 68, 68, 0.05);
+  --slot-bg-hover-from: rgba(244, 63, 94, 0.45);
+  --slot-bg-hover-to: rgba(239, 68, 68, 0.25);
+  --slot-border: rgba(251, 113, 133, 0.28);
+  --slot-border-hover: rgba(253, 164, 175, 0.9);
+  --slot-text: rgba(255, 228, 230, 0.95);
+  --slot-text-hover: #fff1f2;
+  --slot-ring: rgba(253, 164, 175, 0.75);
+  --slot-ring-soft: rgba(253, 164, 175, 0.35);
+  --slot-glow: rgba(244, 63, 94, 0.55);
+  --slot-inner-glow: rgba(244, 63, 94, 0.25);
+}
+
+.dock-slot--emerald {
+  --slot-bg-from: rgba(16, 185, 129, 0.15);
+  --slot-bg-to: rgba(34, 197, 94, 0.05);
+  --slot-bg-hover-from: rgba(16, 185, 129, 0.45);
+  --slot-bg-hover-to: rgba(34, 197, 94, 0.25);
+  --slot-border: rgba(52, 211, 153, 0.28);
+  --slot-border-hover: rgba(110, 231, 183, 0.9);
+  --slot-text: rgba(209, 250, 229, 0.95);
+  --slot-text-hover: #ecfdf5;
+  --slot-ring: rgba(110, 231, 183, 0.75);
+  --slot-ring-soft: rgba(110, 231, 183, 0.35);
+  --slot-glow: rgba(16, 185, 129, 0.55);
+  --slot-inner-glow: rgba(16, 185, 129, 0.25);
+}
+
+.dock-slot--amber {
+  --slot-bg-from: rgba(245, 158, 11, 0.15);
+  --slot-bg-to: rgba(249, 115, 22, 0.05);
+  --slot-bg-hover-from: rgba(245, 158, 11, 0.45);
+  --slot-bg-hover-to: rgba(249, 115, 22, 0.25);
+  --slot-border: rgba(251, 191, 36, 0.28);
+  --slot-border-hover: rgba(253, 224, 71, 0.9);
+  --slot-text: rgba(254, 243, 199, 0.95);
+  --slot-text-hover: #fffbeb;
+  --slot-ring: rgba(253, 224, 71, 0.75);
+  --slot-ring-soft: rgba(253, 224, 71, 0.35);
+  --slot-glow: rgba(245, 158, 11, 0.55);
+  --slot-inner-glow: rgba(245, 158, 11, 0.25);
+}
+
+.dock-slot--indigo {
+  --slot-bg-from: rgba(99, 102, 241, 0.15);
+  --slot-bg-to: rgba(59, 130, 246, 0.05);
+  --slot-bg-hover-from: rgba(99, 102, 241, 0.45);
+  --slot-bg-hover-to: rgba(59, 130, 246, 0.25);
+  --slot-border: rgba(129, 140, 248, 0.28);
+  --slot-border-hover: rgba(165, 180, 252, 0.9);
+  --slot-text: rgba(224, 231, 255, 0.95);
+  --slot-text-hover: #eef2ff;
+  --slot-ring: rgba(165, 180, 252, 0.75);
+  --slot-ring-soft: rgba(165, 180, 252, 0.35);
+  --slot-glow: rgba(99, 102, 241, 0.55);
+  --slot-inner-glow: rgba(99, 102, 241, 0.25);
+}
