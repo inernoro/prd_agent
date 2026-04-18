@@ -1,11 +1,12 @@
-import { useState, useEffect, useCallback, type ClipboardEvent } from 'react';
-import { ArrowLeft, Save, Send, Plus, Trash2, Sparkles, FileText } from 'lucide-react';
+import { useState, useEffect, useCallback, useRef, type ClipboardEvent } from 'react';
+import { ArrowLeft, Save, Send, Plus, Trash2, Sparkles, FileText, Check, AlertCircle } from 'lucide-react';
 import { MapSpinner } from '@/components/ui/VideoLoader';
 import { GlassCard } from '@/components/design/GlassCard';
 import { Button } from '@/components/design/Button';
 import { toast } from '@/lib/toast';
 import { systemDialog } from '@/lib/systemDialog';
 import { useReportAgentStore } from '@/stores/reportAgentStore';
+import { useAutosave } from '@/hooks/useAutosave';
 import {
   createWeeklyReport,
   updateWeeklyReport,
@@ -167,6 +168,35 @@ export function ReportEditor({ reportId, weekYear, weekNumber, onClose }: Props)
   const [isNew, setIsNew] = useState(!reportId);
   const [sourceLabelMap, setSourceLabelMap] = useState<Record<string, string>>(DEFAULT_SOURCE_LABELS);
 
+  const isEditableStatus = !report
+    || report.status === WeeklyReportStatus.Draft
+    || report.status === WeeklyReportStatus.Submitted
+    || report.status === WeeklyReportStatus.Returned
+    || report.status === WeeklyReportStatus.Overdue;
+
+  const reportIdForSave = report?.id ?? null;
+  const updateReportInListRef = useRef(updateReportInList);
+  useEffect(() => { updateReportInListRef.current = updateReportInList; }, [updateReportInList]);
+
+  const autosaveOnSave = useCallback(async (secs: typeof sections) => {
+    if (!reportIdForSave) return { success: false, message: '周报尚未创建' };
+    const res = await updateWeeklyReport({ id: reportIdForSave, sections: secs });
+    if (res.success && res.data) {
+      setReport(res.data.report);
+      updateReportInListRef.current(res.data.report);
+      return { success: true };
+    }
+    return { success: false, message: res.error?.message };
+  }, [reportIdForSave]);
+
+  const autosave = useAutosave({
+    value: sections,
+    enabled: !!reportIdForSave && isEditableStatus && !generating && !deleting,
+    onSave: autosaveOnSave,
+    delayMs: 1500,
+    warnBeforeUnload: true,
+  });
+
   useEffect(() => {
     let disposed = false;
     (async () => {
@@ -293,24 +323,22 @@ export function ReportEditor({ reportId, weekYear, weekNumber, onClose }: Props)
   const handleSave = useCallback(async () => {
     if (!report) return;
     setSaving(true);
-    const res = await updateWeeklyReport({ id: report.id, sections });
+    const result = await autosave.flush();
     setSaving(false);
-    if (res.success && res.data) {
-      setReport(res.data.report);
-      updateReportInList(res.data.report);
+    if (result.success) {
       toast.success('已保存');
     } else {
-      toast.error(res.error?.message || '保存失败');
+      toast.error(result.message || '保存失败');
     }
-  }, [report, sections, updateReportInList]);
+  }, [report, autosave]);
 
   const handleSubmit = useCallback(async () => {
     if (!report) return;
     setSaving(true);
-    const saveRes = await updateWeeklyReport({ id: report.id, sections });
-    if (!saveRes.success) {
+    const flushResult = await autosave.flush();
+    if (!flushResult.success) {
       setSaving(false);
-      toast.error(saveRes.error?.message || '保存失败');
+      toast.error(flushResult.message || '保存失败');
       return;
     }
     const res = await submitWeeklyReport({ id: report.id });
@@ -322,7 +350,7 @@ export function ReportEditor({ reportId, weekYear, weekNumber, onClose }: Props)
     } else {
       toast.error(res.error?.message || '提交失败');
     }
-  }, [report, sections, updateReportInList, onClose]);
+  }, [report, autosave, updateReportInList, onClose]);
 
   const handleGenerate = useCallback(async () => {
     if (!report) return;
@@ -353,6 +381,7 @@ export function ReportEditor({ reportId, weekYear, weekNumber, onClose }: Props)
           }))
         );
         updateReportInList(updated);
+        autosave.markSaved();
         toast.success(`AI 已重新生成周报草稿（${resolveGenerationModelLabel(updated)}）`);
       } else {
         toast.error(res.error?.message || 'AI 生成失败');
@@ -362,7 +391,7 @@ export function ReportEditor({ reportId, weekYear, weekNumber, onClose }: Props)
     } finally {
       setGenerating(false);
     }
-  }, [report, updateReportInList]);
+  }, [report, updateReportInList, autosave]);
 
   const handleDelete = useCallback(async () => {
     if (!report) return;
@@ -422,11 +451,7 @@ export function ReportEditor({ reportId, weekYear, weekNumber, onClose }: Props)
     });
   };
 
-  const canEdit = !report
-    || report.status === WeeklyReportStatus.Draft
-    || report.status === WeeklyReportStatus.Submitted
-    || report.status === WeeklyReportStatus.Returned
-    || report.status === WeeklyReportStatus.Overdue;
+  const canEdit = isEditableStatus;
   const canSubmit = !!report
     && (report.status === WeeklyReportStatus.Draft
       || report.status === WeeklyReportStatus.Returned
@@ -645,6 +670,14 @@ export function ReportEditor({ reportId, weekYear, weekNumber, onClose }: Props)
           </div>
           {(canEdit || canSubmit || canGenerate || canDelete) && (
             <div className="flex items-center gap-2">
+              {canEdit && (
+                <AutosaveIndicator
+                  status={autosave.status}
+                  lastSavedAt={autosave.lastSavedAt}
+                  lastError={autosave.lastError}
+                  onRetry={() => { void autosave.flush(); }}
+                />
+              )}
               {canGenerate && (
                 <Button variant="secondary" size="sm" onClick={handleGenerate} disabled={generating || saving || deleting}>
                   {generating ? (
@@ -845,4 +878,52 @@ export function ReportEditor({ reportId, weekYear, weekNumber, onClose }: Props)
       </div>
     </div>
   );
+}
+
+interface AutosaveIndicatorProps {
+  status: 'idle' | 'saving' | 'saved' | 'error';
+  lastSavedAt: Date | null;
+  lastError: string | null;
+  onRetry: () => void;
+}
+
+function AutosaveIndicator({ status, lastSavedAt, lastError, onRetry }: AutosaveIndicatorProps) {
+  if (status === 'saving') {
+    return (
+      <span
+        className="flex items-center gap-1.5 text-[11px] px-2 py-1 rounded-full"
+        style={{ color: 'rgba(125, 211, 252, 0.95)', background: 'rgba(56, 189, 248, 0.1)' }}
+      >
+        <MapSpinner size={12} />
+        保存中…
+      </span>
+    );
+  }
+  if (status === 'error') {
+    return (
+      <button
+        onClick={onRetry}
+        className="flex items-center gap-1.5 text-[11px] px-2 py-1 rounded-full transition-colors"
+        style={{ color: 'rgba(248, 113, 113, 0.95)', background: 'rgba(239, 68, 68, 0.1)' }}
+        title={lastError || ''}
+      >
+        <AlertCircle size={12} />
+        保存失败，点击重试
+      </button>
+    );
+  }
+  if (status === 'saved' && lastSavedAt) {
+    const hh = String(lastSavedAt.getHours()).padStart(2, '0');
+    const mm = String(lastSavedAt.getMinutes()).padStart(2, '0');
+    return (
+      <span
+        className="flex items-center gap-1.5 text-[11px] px-2 py-1 rounded-full"
+        style={{ color: 'rgba(134, 239, 172, 0.9)', background: 'rgba(34, 197, 94, 0.08)' }}
+      >
+        <Check size={12} />
+        已保存 · {hh}:{mm}
+      </span>
+    );
+  }
+  return null;
 }
