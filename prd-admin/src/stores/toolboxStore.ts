@@ -285,6 +285,7 @@ const BUILTIN_TOOLS: ToolboxItem[] = [
     tags: ['代码', '审查', '质量'],
     usageCount: 0,
     createdAt: new Date().toISOString(),
+    createdByName: '官方',
   },
   {
     id: 'builtin-translator',
@@ -298,6 +299,7 @@ const BUILTIN_TOOLS: ToolboxItem[] = [
     tags: ['翻译', '多语言', '国际化'],
     usageCount: 0,
     createdAt: new Date().toISOString(),
+    createdByName: '官方',
   },
   {
     id: 'builtin-summarizer',
@@ -311,6 +313,7 @@ const BUILTIN_TOOLS: ToolboxItem[] = [
     tags: ['摘要', '总结', '阅读'],
     usageCount: 0,
     createdAt: new Date().toISOString(),
+    createdByName: '官方',
   },
   {
     id: 'builtin-data-analyst',
@@ -324,6 +327,7 @@ const BUILTIN_TOOLS: ToolboxItem[] = [
     tags: ['数据', '分析', '图表'],
     usageCount: 0,
     createdAt: new Date().toISOString(),
+    createdByName: '官方',
   },
 ];
 

@@ -193,6 +193,20 @@ export function ToolCard({ item, source = 'mine' }: ToolCardProps) {
     !item.routePath &&
     item.agentKey !== 'prd-agent';
 
+  // 作者名 fallback 策略：
+  // 1) 后端返回的 createdByName 优先
+  // 2) 用户自建 + 未返回 name（GetUserName() 依赖 JWT "name" claim，可能为空）→ 用当前登录用户的 displayName
+  // 3) marketplace 卡片：后端必然返回 createdByName，兜底"匿名用户"
+  // 4) 其它（内置等）：兜底"官方"
+  const currentUser = useAuthStore((s) => s.user);
+  const authorName =
+    item.createdByName ||
+    (isOwnCustomCard
+      ? currentUser?.displayName || currentUser?.username || '我'
+      : isMarketplaceCard
+      ? '匿名用户'
+      : '官方');
+
   const handleFork = async () => {
     if (forking) return;
     setForking(true);
@@ -521,16 +535,22 @@ export function ToolCard({ item, source = 'mine' }: ToolCardProps) {
           </div>
         )}
 
-        {/* Footer — 内置: 徽章 + 收藏; 自定义: 作者 + 统计 */}
+        {/* Footer —
+         * 定制版（有独立路由页）：显示「定制版」徽章，不显示作者
+         * 其它所有：显示作者头像/名字 + 状态徽章
+         *   - 用户自建 && !isPublic → 橙色「施工中」
+         *   - isPublic              → 绿色「已公开」
+         *   - 对话型内置             → 无状态徽章（官方默认公开）
+         */}
         <div
           className="flex items-center justify-between gap-1 pt-1.5"
           style={{ borderTop: '1px solid rgba(255, 255, 255, 0.08)' }}
         >
-          {item.type === 'custom' || !!item.createdBy || !!item.createdByName ? (
+          {!isCustomized ? (
             <>
-              {/* 作者头像 + 名字 + 徽章（已公开 / 施工中） */}
+              {/* 作者头像 + 名字 + 状态徽章 */}
               <div className="flex items-center gap-1 min-w-0">
-                {item.wip && (
+                {isOwnCustomCard && !item.isPublic && (
                   <span
                     className="shrink-0 text-[10px] px-1.5 py-0.5 rounded font-medium inline-flex items-center gap-1"
                     style={{
@@ -538,7 +558,7 @@ export function ToolCard({ item, source = 'mine' }: ToolCardProps) {
                       color: '#fcd34d',
                       border: '1px solid rgba(245, 158, 11, 0.45)',
                     }}
-                    title="未正式发布"
+                    title="未公开 — 仅自己可见；点卡片右上角 🌍 即可公开发布"
                   >
                     <HardHat size={10} />
                     施工中
@@ -564,15 +584,15 @@ export function ToolCard({ item, source = 'mine' }: ToolCardProps) {
                     background: `linear-gradient(135deg, ${palette.from}, ${palette.soft})`,
                     color: 'rgba(0, 0, 0, 0.7)',
                   }}
-                  title={item.createdByName || ''}
+                  title={authorName}
                 >
-                  {(item.createdByName || '?')[0]}
+                  {authorName[0]}
                 </div>
                 <span
                   className="text-[10px] truncate"
                   style={{ color: 'rgba(255, 255, 255, 0.5)' }}
                 >
-                  {item.createdByName || '未知'}
+                  {authorName}
                 </span>
               </div>
               {/* 右侧：marketplace 模式显示 Fork 数 + Fork 按钮；自有卡片显示使用次数 + 快捷编辑 + 收藏 */}
@@ -638,7 +658,7 @@ export function ToolCard({ item, source = 'mine' }: ToolCardProps) {
             </>
           ) : (
             <>
-              {/* 内置工具: 左下角徽章组（施工中 + 系统内置/定制版） */}
+              {/* 定制版：徽章 + 收藏（定制版是官方独立页面，不需要作者信息） */}
               <div className="flex items-center gap-1 min-w-0">
                 {item.wip && (
                   <span
@@ -657,17 +677,13 @@ export function ToolCard({ item, source = 'mine' }: ToolCardProps) {
                 <span
                   className="text-[10px] px-1.5 py-0.5 rounded font-medium inline-flex items-center gap-1"
                   style={{
-                    background: isCustomized ? `${palette.from}25` : 'transparent',
-                    color: isCustomized ? palette.soft : 'rgba(255, 255, 255, 0.4)',
-                    border: isCustomized ? `1px solid ${palette.from}40` : '1px solid rgba(255, 255, 255, 0.1)',
+                    background: `${palette.from}25`,
+                    color: palette.soft,
+                    border: `1px solid ${palette.from}40`,
                   }}
                 >
-                  {isCustomized ? (
-                    <>
-                      <Sparkles size={10} />
-                      定制版
-                    </>
-                  ) : '系统内置'}
+                  <Sparkles size={10} />
+                  定制版
                 </span>
               </div>
               <button
@@ -676,7 +692,7 @@ export function ToolCard({ item, source = 'mine' }: ToolCardProps) {
                 title={favorited ? '取消收藏' : '收藏'}
               >
                 <Star
-                  size={10}
+                  size={12}
                   fill={favorited ? '#FBBF24' : 'none'}
                   style={{
                     color: favorited ? '#FBBF24' : 'rgba(255, 255, 255, 0.25)',
