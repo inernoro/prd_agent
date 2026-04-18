@@ -17,12 +17,15 @@ import type {
   ToolboxRunEvent,
   AgentInfo,
 } from '@/services';
+import { toast } from '@/lib/toast';
 
 export type ToolboxView = 'grid' | 'detail' | 'create' | 'edit' | 'running' | 'quick-create';
 export type ToolboxCategory = 'all' | 'builtin' | 'custom' | 'favorite' | 'marketplace';
 export type ToolboxPageTab = 'toolbox' | 'capabilities';
 
 const FAVORITES_STORAGE_KEY = 'toolbox-favorites';
+/** 新创建但未公开的智能体 ID 集合 — 用来给「🌍 公开发布」按钮加脉动高亮，解决用户"发布入口找不到"的问题 */
+const NEW_UNPUBLISHED_STORAGE_KEY = 'toolbox-new-unpublished';
 
 function loadFavoritesFromStorage(): Set<string> {
   try {
@@ -35,6 +38,20 @@ function loadFavoritesFromStorage(): Set<string> {
 function saveFavoritesToStorage(ids: Set<string>) {
   try {
     sessionStorage.setItem(FAVORITES_STORAGE_KEY, JSON.stringify([...ids]));
+  } catch { /* ignore */ }
+}
+
+function loadNewUnpublishedFromStorage(): Set<string> {
+  try {
+    const raw = sessionStorage.getItem(NEW_UNPUBLISHED_STORAGE_KEY);
+    if (raw) return new Set(JSON.parse(raw) as string[]);
+  } catch { /* ignore */ }
+  return new Set();
+}
+
+function saveNewUnpublishedToStorage(ids: Set<string>) {
+  try {
+    sessionStorage.setItem(NEW_UNPUBLISHED_STORAGE_KEY, JSON.stringify([...ids]));
   } catch { /* ignore */ }
 }
 
@@ -56,6 +73,9 @@ interface ToolboxState {
 
   // Favorites
   favoriteIds: Set<string>;
+
+  /** 新创建但未公开的 id — UI 用它给「公开发布」按钮加脉动提示 */
+  newUnpublishedIds: Set<string>;
 
   // Built-in agents
   builtinAgents: AgentInfo[];
@@ -83,6 +103,9 @@ interface ToolboxState {
   setSearchQuery: (query: string) => void;
   toggleFavorite: (itemId: string) => void;
   isFavorite: (itemId: string) => boolean;
+  /** 手动清除某个工具的"新创建"高亮（用户点开详情页或点击公开按钮后调用） */
+  dismissNewUnpublished: (itemId: string) => void;
+  isNewUnpublished: (itemId: string) => boolean;
   startCreate: () => void;
   startEdit: (item: ToolboxItem) => void;
   setEditingItem: (item: Partial<ToolboxItem>) => void;
@@ -346,6 +369,7 @@ export const useToolboxStore = create<ToolboxState>((set, get) => ({
   marketplaceLoading: false,
 
   favoriteIds: loadFavoritesFromStorage(),
+  newUnpublishedIds: loadNewUnpublishedFromStorage(),
 
   builtinAgents: [],
 
@@ -420,18 +444,31 @@ export const useToolboxStore = create<ToolboxState>((set, get) => ({
       const res = await toggleToolboxItemPublish(id, isPublic);
       if (!res.success) return false;
       // Patch in-place so UI reflects without full reload
+      const nextNew = new Set(get().newUnpublishedIds);
+      if (nextNew.delete(id)) saveNewUnpublishedToStorage(nextNew);
       set((state) => ({
         items: state.items.map((it) => (it.id === id ? { ...it, isPublic } : it)),
         selectedItem:
           state.selectedItem && state.selectedItem.id === id
             ? { ...state.selectedItem, isPublic }
             : state.selectedItem,
+        newUnpublishedIds: nextNew,
       }));
       return true;
     } catch {
       return false;
     }
   },
+
+  dismissNewUnpublished: (itemId: string) => {
+    const next = new Set(get().newUnpublishedIds);
+    if (next.delete(itemId)) {
+      saveNewUnpublishedToStorage(next);
+      set({ newUnpublishedIds: next });
+    }
+  },
+
+  isNewUnpublished: (itemId: string) => get().newUnpublishedIds.has(itemId),
 
   // Load builtin agents info
   loadBuiltinAgents: async () => {
@@ -528,9 +565,21 @@ export const useToolboxStore = create<ToolboxState>((set, get) => ({
       if (item.id) {
         const res = await updateToolboxItem(item.id, item);
         if (!res.success) return false;
+        toast.success('已保存修改');
       } else {
         const res = await createToolboxItem(item);
-        if (!res.success) return false;
+        if (!res.success || !res.data) return false;
+        // 创建成功后明确告知用户"别人还看不到"，并在卡片上打脉动标记引导发布
+        const newId = res.data.id;
+        const nextSet = new Set(get().newUnpublishedIds);
+        nextSet.add(newId);
+        saveNewUnpublishedToStorage(nextSet);
+        set({ newUnpublishedIds: nextSet });
+        toast.success(
+          '创建成功！默认仅你自己可见',
+          '要让同事也能使用，请在卡片右上角点 🌍「公开发布」（按钮正在闪烁）',
+          8000,
+        );
       }
       await get().loadItems();
       set({ view: 'grid', editingItem: null });
@@ -545,6 +594,12 @@ export const useToolboxStore = create<ToolboxState>((set, get) => ({
     try {
       const res = await deleteToolboxItem(id);
       if (!res.success) return false;
+      // 如果刚创建又删了，也要清理脉动标记
+      const nextNew = new Set(get().newUnpublishedIds);
+      if (nextNew.delete(id)) {
+        saveNewUnpublishedToStorage(nextNew);
+        set({ newUnpublishedIds: nextNew });
+      }
       await get().loadItems();
       set({ view: 'grid', selectedItem: null });
       return true;

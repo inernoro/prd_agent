@@ -165,6 +165,8 @@ export function ToolCard({ item, source = 'mine' }: ToolCardProps) {
     setCategory,
     togglePublish,
     deleteItem,
+    newUnpublishedIds,
+    dismissNewUnpublished,
   } = useToolboxStore();
   const navigate = useNavigate();
   const palette = getPalette(item.icon);
@@ -185,6 +187,8 @@ export function ToolCard({ item, source = 'mine' }: ToolCardProps) {
   // 双重判定：有 createdByUserId 也视为用户自建（兼容后端旧数据未返回 type 字段）
   const isOwnCustomCard =
     source === 'mine' && (item.type === 'custom' || !!item.createdBy || !!item.createdByName);
+  /** 新创建但还没公开发布的工具 — 脉动高亮「公开发布」按钮，引导用户完成发布动作 */
+  const needsPublishHint = isOwnCustomCard && !item.isPublic && newUnpublishedIds.has(item.id);
   /** 内置但非"定制版"（无独立路由页），可以被克隆为我的副本 */
   const isForkableBuiltin =
     source === 'mine' &&
@@ -419,14 +423,21 @@ export function ToolCard({ item, source = 'mine' }: ToolCardProps) {
       {/* 右上角操作浮条 — 卡片 hover 时显示核心操作：编辑/公开/删除 或 复制 */}
       {(isOwnCustomCard || isForkableBuiltin) && (
         <div
-          className="absolute top-1.5 right-1.5 z-30 flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity duration-200"
+          className={`absolute top-1.5 right-1.5 z-30 flex items-center gap-0.5 transition-opacity duration-200 ${
+            needsPublishHint ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'
+          }`}
           style={{
             background: 'rgba(0, 0, 0, 0.55)',
             backdropFilter: 'blur(8px)',
             WebkitBackdropFilter: 'blur(8px)',
             borderRadius: 8,
             padding: '3px 4px',
-            border: '1px solid rgba(255, 255, 255, 0.1)',
+            border: needsPublishHint
+              ? '1px solid rgba(16, 185, 129, 0.6)'
+              : '1px solid rgba(255, 255, 255, 0.1)',
+            boxShadow: needsPublishHint
+              ? '0 0 12px rgba(16, 185, 129, 0.5), 0 0 0 1px rgba(16, 185, 129, 0.3)'
+              : undefined,
           }}
         >
           {isOwnCustomCard && (
@@ -439,19 +450,35 @@ export function ToolCard({ item, source = 'mine' }: ToolCardProps) {
                 <Edit size={12} style={{ color: 'rgba(255, 255, 255, 0.85)' }} />
               </button>
               <button
-                onClick={handleTogglePublish}
+                onClick={(e) => {
+                  // 用户已经注意到按钮，清除脉动标记（无论点后是否确认）
+                  dismissNewUnpublished(item.id);
+                  void handleTogglePublish(e);
+                }}
                 disabled={togglingPublish}
                 title={
                   item.isPublic
                     ? '已公开 — 他人可在「公开市场」Tab 看到并 Fork；点击取消公开'
+                    : needsPublishHint
+                    ? '👈 点我公开发布！让同事也能看到这个智能体（否则只有你自己可见）'
                     : '公开发布到「公开市场」，让所有用户都能看到并 Fork'
                 }
-                className="w-6 h-6 rounded-md flex items-center justify-center transition-all duration-150 hover:bg-white/15 hover:scale-110 disabled:opacity-50"
+                className="relative w-6 h-6 rounded-md flex items-center justify-center transition-all duration-150 hover:bg-white/15 hover:scale-110 disabled:opacity-50"
                 style={item.isPublic ? { background: 'rgba(16, 185, 129, 0.25)' } : undefined}
               >
+                {needsPublishHint && (
+                  <span
+                    className="absolute inset-[-4px] rounded-lg animate-ping pointer-events-none"
+                    style={{
+                      background: 'rgba(16, 185, 129, 0.35)',
+                      border: '1px solid rgba(16, 185, 129, 0.8)',
+                    }}
+                  />
+                )}
                 <Globe2
                   size={12}
-                  style={{ color: item.isPublic ? '#6ee7b7' : 'rgba(255, 255, 255, 0.85)' }}
+                  className="relative"
+                  style={{ color: item.isPublic ? '#6ee7b7' : needsPublishHint ? '#6ee7b7' : 'rgba(255, 255, 255, 0.85)' }}
                 />
               </button>
               <button
