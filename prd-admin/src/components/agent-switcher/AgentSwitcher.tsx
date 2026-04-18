@@ -39,7 +39,7 @@ function getIcon(name: string, size = 18) {
   return <Icon size={size} />;
 }
 
-/** 单张卡片 */
+/** 单张卡片（紧凑方形，可放 5 列） */
 function LauncherCard({
   item,
   isSelected,
@@ -64,84 +64,91 @@ function LauncherCard({
       onClick={onClick}
       onMouseEnter={onMouseEnter}
       className="group relative text-left outline-none focus:outline-none"
-      style={{
-        width: '100%',
-      }}
+      style={{ width: '100%' }}
+      title={item.description}
     >
       <div
-        className="relative h-[92px] p-3 rounded-[14px] flex items-start gap-3 transition-all duration-200 cursor-pointer overflow-hidden"
+        className="relative rounded-[12px] p-2.5 flex flex-col items-start gap-1.5 transition-all duration-200 cursor-pointer overflow-hidden"
         style={{
+          height: 96,
           background: isSelected
             ? `linear-gradient(135deg, ${accent}22 0%, rgba(255,255,255,0.03) 100%)`
             : 'rgba(255, 255, 255, 0.025)',
           border: `1px solid ${isSelected ? `${accent}55` : 'rgba(255,255,255,0.06)'}`,
           boxShadow: isSelected
-            ? `0 0 0 1px ${accent}40 inset, 0 8px 24px -8px ${accent}55`
-            : '0 2px 8px rgba(0,0,0,0.25)',
+            ? `0 0 0 1px ${accent}40 inset, 0 6px 20px -8px ${accent}55`
+            : '0 1px 4px rgba(0,0,0,0.2)',
           transform: isSelected ? 'translateY(-1px)' : 'translateY(0)',
         }}
       >
-        {/* 图标 */}
-        <div
-          className="shrink-0 w-10 h-10 rounded-[10px] flex items-center justify-center"
-          style={{
-            background: isSelected ? `${accent}20` : 'rgba(255,255,255,0.04)',
-            color: isSelected ? accent : 'rgba(255,255,255,0.72)',
-            border: `1px solid ${isSelected ? `${accent}40` : 'rgba(255,255,255,0.06)'}`,
-          }}
-        >
-          {getIcon(item.icon, 18)}
-        </div>
-
-        {/* 文字 */}
-        <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-2">
-            <span
-              className="text-[13px] font-semibold truncate"
-              style={{ color: isSelected ? '#fff' : 'rgba(255,255,255,0.92)' }}
-            >
-              {item.name}
-            </span>
+        {/* 顶部：图标 + 徽标 */}
+        <div className="flex items-center justify-between w-full">
+          <div
+            className="shrink-0 w-8 h-8 rounded-[8px] flex items-center justify-center"
+            style={{
+              background: isSelected ? `${accent}20` : 'rgba(255,255,255,0.04)',
+              color: isSelected ? accent : 'rgba(255,255,255,0.75)',
+              border: `1px solid ${isSelected ? `${accent}40` : 'rgba(255,255,255,0.06)'}`,
+            }}
+          >
+            {getIcon(item.icon, 15)}
+          </div>
+          <div className="flex items-center gap-1">
             {item.wip && (
               <span
-                className="shrink-0 text-[9px] font-bold px-1.5 py-0.5 rounded"
+                className="shrink-0 text-[9px] font-bold px-1 py-0.5 rounded leading-none"
                 style={{ background: 'rgba(251, 146, 60, 0.2)', color: '#fb923c' }}
               >
-                施工中
+                WIP
               </span>
             )}
             {badge && (
               <span
-                className="shrink-0 text-[9px] font-bold px-1.5 py-0.5 rounded"
+                className="shrink-0 text-[9px] font-bold px-1 py-0.5 rounded leading-none"
                 style={{ background: 'rgba(99,102,241,0.2)', color: '#a5b4fc' }}
               >
                 {badge}
               </span>
             )}
           </div>
-          <div
-            className="mt-1 text-[11px] leading-relaxed line-clamp-2"
-            style={{ color: isSelected ? 'rgba(255,255,255,0.72)' : 'rgba(255,255,255,0.48)' }}
-          >
-            {item.description}
-          </div>
+        </div>
+
+        {/* 名称 */}
+        <div
+          className="text-[12.5px] font-semibold leading-tight w-full truncate"
+          style={{ color: isSelected ? '#fff' : 'rgba(255,255,255,0.92)' }}
+        >
+          {item.name}
+        </div>
+
+        {/* 描述（两行省略） */}
+        <div
+          className="text-[10.5px] leading-snug w-full overflow-hidden"
+          style={{
+            color: isSelected ? 'rgba(255,255,255,0.72)' : 'rgba(255,255,255,0.44)',
+            display: '-webkit-box',
+            WebkitLineClamp: 2,
+            WebkitBoxOrient: 'vertical',
+          }}
+        >
+          {item.description}
         </div>
 
         {/* 置顶按钮（hover 或已置顶时显示） */}
         <button
           type="button"
           onClick={onTogglePin}
-          className="absolute top-2 right-2 w-6 h-6 rounded-md flex items-center justify-center transition-opacity"
+          className="absolute top-1.5 right-1.5 w-5 h-5 rounded-[5px] flex items-center justify-center transition-opacity"
           style={{
-            opacity: isPinned || isSelected ? 1 : 0,
+            opacity: isPinned ? 1 : isSelected ? 0.85 : 0,
             background: isPinned ? `${accent}30` : 'rgba(255,255,255,0.05)',
-            color: isPinned ? accent : 'rgba(255,255,255,0.55)',
+            color: isPinned ? accent : 'rgba(255,255,255,0.6)',
             border: `1px solid ${isPinned ? `${accent}60` : 'rgba(255,255,255,0.08)'}`,
           }}
           title={isPinned ? '取消置顶' : '置顶到前台'}
           aria-label={isPinned ? '取消置顶' : '置顶'}
         >
-          {isPinned ? <Pin size={11} /> : <PinOff size={11} />}
+          {isPinned ? <Pin size={10} /> : <PinOff size={10} />}
         </button>
       </div>
     </button>
@@ -328,10 +335,10 @@ export function AgentSwitcher() {
 
       switch (e.key) {
         case 'ArrowDown':
-          move(2);
+          move(5);
           break;
         case 'ArrowUp':
-          move(-2);
+          move(-5);
           break;
         case 'ArrowRight':
           move(1);
@@ -381,7 +388,7 @@ export function AgentSwitcher() {
 
       {/* 面板 */}
       <div
-        className="relative w-[92vw] max-w-[960px]"
+        className="relative w-[92vw] max-w-[1080px]"
         style={{
           height: '80vh',
           maxHeight: '80vh',
@@ -477,7 +484,7 @@ export function AgentSwitcher() {
                         {section.items.length}
                       </span>
                     </div>
-                    <div className="grid grid-cols-2 gap-2.5">
+                    <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 gap-2">
                       {section.items.map((item) => (
                         <LauncherCard
                           key={`${section.key}:${item.id}`}
