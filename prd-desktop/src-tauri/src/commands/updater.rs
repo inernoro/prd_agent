@@ -246,10 +246,7 @@ pub async fn fetch_accelerated_manifest() -> AcceleratedUpdateResult {
 pub async fn fetch_update_manifests() -> Result<FetchManifestsResult, String> {
     let target = get_updater_target_triple().to_string();
 
-    let candidates = vec![
-        build_accelerated_url(&target),
-        build_github_url(&target),
-    ];
+    let candidates = vec![build_accelerated_url(&target), build_github_url(&target)];
 
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(30))

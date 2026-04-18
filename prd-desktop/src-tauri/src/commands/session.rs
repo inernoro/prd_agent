@@ -5,9 +5,7 @@ use std::sync::Mutex;
 use tauri::{command, AppHandle, Emitter, State};
 use tokio_util::sync::CancellationToken;
 
-use crate::models::{
-    ApiResponse, MessageHistoryItem, SessionInfo, SwitchRoleResponse,
-};
+use crate::models::{ApiResponse, MessageHistoryItem, SessionInfo, SwitchRoleResponse};
 use crate::services::{api_client, ApiClient};
 
 #[derive(Default)]
