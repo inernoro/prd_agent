@@ -872,9 +872,11 @@ proxyService.setOnAutoBuild(async (branchSlug, _req, res) => {
       const svc = entry.services[profile.id];
       svc.status = 'building';
 
-      // Merge CDS_* auto-generated vars (CDS_HOST, CDS_*_PORT) with user custom env
+      // Merge CDS_* auto-generated vars (CDS_HOST, CDS_*_PORT) with user
+      // custom env. Scoped by the deploying branch's project so a
+      // JWT_SECRET in project A never leaks into project B.
       const cdsEnv = stateService.getCdsEnvVars();
-      const customEnv = stateService.getCustomEnv();
+      const customEnv = stateService.getCustomEnv(entry.projectId || 'default');
       const mergedEnv = { ...cdsEnv, ...customEnv };
       await containerService.runService(entry, profile, svc, (chunk) => {
         sendEvent('log', { profileId: profile.id, chunk });

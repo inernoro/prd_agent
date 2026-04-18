@@ -102,8 +102,12 @@ describe('Global Agent Keys (bootstrap-equivalent)', () => {
     const signRes = await request(server, 'POST', '/api/global-agent-keys', { label: 'bootstrap claude' });
     expect(signRes.status).toBe(201);
     expect(signRes.body.plaintext).toMatch(/^cdsg_/);
-    // Global keys have no slug segment — prefix is just `cdsg_<suffix>`.
-    expect(signRes.body.plaintext.split('_')).toHaveLength(2);
+    // Suffix is 32 random bytes encoded as base64url, which may itself
+    // contain `_`. So plaintext === 'cdsg_' + <suffix with possibly more
+    // underscores>. Shape check: exactly one `cdsg_` header segment, no
+    // project slug in between.
+    expect(signRes.body.plaintext.indexOf('cdsg_')).toBe(0);
+    expect(signRes.body.plaintext.length).toBeGreaterThan(10);
     const keyId = signRes.body.keyId as string;
     expect(typeof keyId).toBe('string');
 

@@ -308,6 +308,22 @@ export interface OperationLog {
 }
 
 /** Persisted state */
+/**
+ * Scoped custom environment variable store.
+ *
+ * The reserved key `_global` holds variables shared across every project;
+ * any other key is a projectId whose bucket overrides the global one at
+ * container-launch time (project wins; global is the baseline).
+ *
+ * Shape purposely mirrors `{ _global: {...}, <projectId>: {...} }` from
+ * the product spec so the dashboard UI can render a simple two-column
+ * picker (scope → key/value pairs).
+ */
+export type CustomEnvStore = Record<string, Record<string, string>>;
+
+/** Reserved scope key for project-independent (global) variables. */
+export const GLOBAL_ENV_SCOPE = '_global';
+
 export interface CdsState {
   /** Routing rules */
   routingRules: RoutingRule[];
@@ -321,8 +337,22 @@ export interface CdsState {
   logs: Record<string, OperationLog[]>;
   /** Default branch (used when no routing rule matches) */
   defaultBranch: string | null;
-  /** User-defined environment variables (sent to containers on deploy) */
-  customEnv: Record<string, string>;
+  /**
+   * User-defined environment variables, scoped by project.
+   *
+   * Reserved scope `_global` holds variables shared by every project
+   * (pre-feature behaviour). Project-specific scopes (`<projectId>`)
+   * override `_global` at deploy time, so a `JWT_SECRET` in project A
+   * never leaks into project B.
+   *
+   * Legacy state.json files stored this as a flat `Record<string, string>`.
+   * migrateCustomEnvByProject() in state.ts wraps the flat object into
+   * `{ _global: <flat> }` on first load so existing callers keep working.
+   *
+   * In-memory shape is always the nested form after load; the migration
+   * is idempotent (already-nested stays put).
+   */
+  customEnv: CustomEnvStore;
   /** CDS-managed infrastructure services (databases, caches, etc.) */
   infraServices: InfraService[];
   /** Mirror acceleration enabled (npm/docker registry mirrors for faster builds in China) */

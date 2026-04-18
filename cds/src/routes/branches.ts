@@ -227,7 +227,8 @@ export function createBranchRouter(deps: RouterDeps): Router {
     // executor only receives profiles owned by this project.
     const profiles = stateService.getBuildProfilesForProject(entry.projectId || 'default');
     const cdsEnv = stateService.getCdsEnvVars();
-    const customEnv = stateService.getCustomEnv();
+    // Per-project scope: _global baseline + project override wins.
+    const customEnv = stateService.getCustomEnv(entry.projectId || 'default');
     const mirrorEnv = stateService.getMirrorEnvVars();
     const env = { ...cdsEnv, ...mirrorEnv, ...customEnv };
 
@@ -338,7 +339,8 @@ export function createBranchRouter(deps: RouterDeps): Router {
   function getMergedEnv(projectId?: string): Record<string, string> {
     const cdsEnv = stateService.getCdsEnvVars();   // CDS_HOST, CDS_MONGODB_PORT, etc.
     const mirrorEnv = stateService.getMirrorEnvVars(); // npm/corepack mirror (if enabled)
-    const customEnv = stateService.getCustomEnv();
+    // Scoped custom env: _global when no projectId, else { _global..., <projectId>... }
+    const customEnv = stateService.getCustomEnv(projectId);
     const projectEnv: Record<string, string> = {};
     if (projectId) {
       const project = stateService.getProject(projectId);
@@ -2528,13 +2530,15 @@ export function createBranchRouter(deps: RouterDeps): Router {
           seeded.push(profile);
         }
 
-        // Merge envVars — never clobber existing legacy customEnv keys.
-        // The import page / manual env edits are treated as authoritative
-        // over the baked-in defaults in cds-compose.yaml.
-        const existingEnv = stateService.getCustomEnv();
+        // Merge envVars — never clobber user-authored vars. Since the
+        // compose belongs to this project, seed values into the project
+        // scope (so e.g. a JWT_SECRET from cds-compose.yaml doesn't leak
+        // into sibling projects). Skip when either global OR project
+        // already has the key — both are user-authored sources of truth.
+        const mergedExisting = stateService.getCustomEnv(projectId);
         for (const [key, value] of Object.entries(parsed.envVars)) {
-          if (existingEnv[key] === undefined) {
-            stateService.setCustomEnvVar(key, value);
+          if (mergedExisting[key] === undefined) {
+            stateService.setCustomEnvVar(key, value, projectId);
           }
         }
 
@@ -2607,15 +2611,37 @@ export function createBranchRouter(deps: RouterDeps): Router {
     });
   });
 
-  // ── Custom environment variables ──
+  // ── Custom environment variables (scoped: _global + per-project) ──
+  //
+  // Every endpoint accepts an optional `?scope=_global|<projectId>`
+  // query. When omitted it defaults to `_global` so pre-feature
+  // clients (that had no scope concept) keep working untouched.
+  //
+  // Only `_global` vars participate in syncCdsConfig() (rootDomains /
+  // repoRoot etc. must be process-wide). Project-scoped vars go
+  // straight into container env at deploy time.
 
-  router.get('/env', (_req, res) => {
-    res.json({ env: stateService.getCustomEnv() });
+  function resolveScope(req: import('express').Request): string {
+    const raw = req.query.scope;
+    const scope = typeof raw === 'string' ? raw.trim() : '';
+    return scope || '_global';
+  }
+
+  router.get('/env', (req, res) => {
+    const scope = resolveScope(req);
+    // /env?scope=_all — give the Settings UI the full scoped map in one
+    // round trip so it can render both global and per-project vars.
+    if (scope === '_all') {
+      res.json({ env: stateService.getCustomEnvRaw(), scope: '_all' });
+      return;
+    }
+    res.json({ env: stateService.getCustomEnvScope(scope), scope });
   });
 
-  // Helper: sync CDS-relevant env vars into runtime config
+  // Helper: sync CDS-relevant env vars into runtime config.
+  // Only reads _global — cross-project config can't be project-scoped.
   function syncCdsConfig() {
-    const env = stateService.getCustomEnv();
+    const env = stateService.getCustomEnvScope('_global');
     if (env.ROOT_DOMAINS) config.rootDomains = env.ROOT_DOMAINS.split(',').map(v => v.trim()).filter(Boolean);
     if (env.SWITCH_DOMAIN) config.switchDomain = env.SWITCH_DOMAIN;
     if (env.MAIN_DOMAIN) config.mainDomain = env.MAIN_DOMAIN;
@@ -2637,15 +2663,20 @@ export function createBranchRouter(deps: RouterDeps): Router {
   }
 
   router.put('/env', (req, res) => {
+    const scope = resolveScope(req);
+    if (scope === '_all') {
+      res.status(400).json({ error: '_all 仅用于读取，写入请指定具体 scope' });
+      return;
+    }
     const env = req.body as Record<string, string>;
     if (!env || typeof env !== 'object') {
       res.status(400).json({ error: '请求体必须是键值对对象' });
       return;
     }
-    stateService.setCustomEnv(env);
+    stateService.setCustomEnv(env, scope);
     stateService.save();
     syncCdsConfig();
-    res.json({ message: '环境变量已更新', env });
+    res.json({ message: '环境变量已更新', env, scope });
   });
 
   router.put('/env/:key', (req, res) => {
@@ -2655,17 +2686,27 @@ export function createBranchRouter(deps: RouterDeps): Router {
       res.status(400).json({ error: '值不能为空' });
       return;
     }
-    stateService.setCustomEnvVar(key, value);
+    const scope = resolveScope(req);
+    if (scope === '_all') {
+      res.status(400).json({ error: '_all 仅用于读取' });
+      return;
+    }
+    stateService.setCustomEnvVar(key, value, scope);
     stateService.save();
     syncCdsConfig();
-    res.json({ message: `Set ${key}` });
+    res.json({ message: `Set ${key}`, scope });
   });
 
   router.delete('/env/:key', (req, res) => {
     const { key } = req.params;
-    stateService.removeCustomEnvVar(key);
+    const scope = resolveScope(req);
+    if (scope === '_all') {
+      res.status(400).json({ error: '_all 仅用于读取' });
+      return;
+    }
+    stateService.removeCustomEnvVar(key, scope);
     stateService.save();
-    res.json({ message: `Deleted ${key}` });
+    res.json({ message: `Deleted ${key}`, scope });
   });
 
   // ── Mirror acceleration ──
