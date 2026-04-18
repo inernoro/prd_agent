@@ -138,6 +138,11 @@ function toggleProjectListSettingsMenu(event) {
   menu.onclick = function (e) { e.stopPropagation(); };
   menu.innerHTML = [
     '<div class="settings-menu-item" style="display:flex;align-items:center;gap:8px;padding:8px 10px;font-size:12px;color:var(--text-primary);border-radius:6px;cursor:pointer" onclick="closeProjectListSettingsMenu(); cdsOpenSelfUpdate()">🔄 自动更新</div>',
+    // Bootstrap-equivalent Agent Key (cdsg_*): unlike the per-card
+    // project key, this one can create new projects. Put it next to
+    // self-update so it's discoverable but not front-and-center — we
+    // want users to think twice before handing out a global token.
+    '<div class="settings-menu-item" style="display:flex;align-items:center;gap:8px;padding:8px 10px;font-size:12px;color:var(--text-primary);border-radius:6px;cursor:pointer" onclick="closeProjectListSettingsMenu(); cdsOpenGlobalAgentKeyManager()">🔑 Agent 全局通行证</div>',
     '<div class="settings-menu-item" style="display:flex;align-items:center;gap:8px;padding:8px 10px;font-size:12px;color:var(--text-primary);border-radius:6px;cursor:pointer" onclick="closeProjectListSettingsMenu(); cdsOpenClusterModal()">🧩 集群</div>',
     '<div class="settings-menu-item settings-menu-switch" style="display:flex;align-items:center;gap:8px;padding:8px 10px;font-size:12px;color:var(--text-primary);border-radius:6px;cursor:pointer" onclick="cdsCyclePreviewMode()">预览模式<span id="pl-preview-mode-label" style="margin-left:auto;font-size:11px;color:#58a6ff"></span></div>',
     '<div class="settings-menu-item settings-menu-switch" style="display:flex;align-items:center;gap:8px;padding:8px 10px;font-size:12px;color:var(--text-primary);border-radius:6px;cursor:pointer" onclick="cdsToggleMirror()">镜像加速<span id="pl-mirror-label" style="margin-left:auto;font-size:11px"></span></div>',

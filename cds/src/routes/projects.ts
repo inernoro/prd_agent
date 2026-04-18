@@ -1051,5 +1051,110 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
     res.json({ ok: true, keyId: req.params.keyId });
   });
 
+  // ── Global (bootstrap-equivalent) Agent Keys ──
+  //
+  // POST /api/global-agent-keys — sign a new bootstrap key
+  //   body: { label?: string }
+  //   201 { keyId, plaintext, preview }
+  //   403 when the caller is using a project-scoped key (those can't
+  //       escalate their own scope; only cookie auth or the bootstrap
+  //       AI_ACCESS_KEY may mint globals).
+  //
+  // GET /api/global-agent-keys — list metadata (no plaintext)
+  // DELETE /api/global-agent-keys/:keyId — revoke
+  //
+  // Global keys use the `cdsg_` prefix (parallel to `cdsp_` for project
+  // keys) so the auth middleware can route them without a projectId
+  // lookup. See server.ts findGlobalAgentKeyForAuth path.
+
+  router.post('/global-agent-keys', (req, res) => {
+    // Project-scoped keys may not mint bootstrap-level keys — that would
+    // be a privilege escalation (project key → global key → new project).
+    if ((req as unknown as { cdsProjectKey?: unknown }).cdsProjectKey) {
+      res.status(403).json({
+        error: 'project_key_cannot_mint_global',
+        message:
+          '项目级 Agent Key 无权签发全局通行证。请在浏览器登录 CDS，或使用 bootstrap AI_ACCESS_KEY 操作。',
+      });
+      return;
+    }
+
+    const body = (req.body || {}) as { label?: string };
+    const now = new Date();
+    const defaultLabel = 'Global bootstrap 签发于 ' + now.toISOString().replace('T', ' ').slice(0, 16);
+    const label = typeof body.label === 'string' && body.label.trim()
+      ? body.label.trim().slice(0, 100)
+      : defaultLabel;
+
+    // Plaintext layout: cdsg_<base64url 32 bytes>. No slug head — global
+    // keys have no project scope, so the auth path walks the full list
+    // (small, bounded) looking for a hash match.
+    const suffix = randomBytes(32).toString('base64url');
+    const plaintext = `cdsg_${suffix}`;
+    const hash = createHash('sha256').update(plaintext).digest('hex');
+    const keyId = randomBytes(4).toString('hex');
+
+    const ghUser = (req as unknown as { cdsUser?: { login?: string } }).cdsUser;
+
+    const entry = {
+      id: keyId,
+      label,
+      hash,
+      scope: 'rw' as const,
+      createdAt: now.toISOString(),
+      createdBy: ghUser?.login || undefined,
+    };
+    try {
+      stateService.addGlobalAgentKey(entry);
+    } catch (err) {
+      res.status(500).json({
+        error: 'state_save_failed',
+        message: (err as Error).message,
+      });
+      return;
+    }
+
+    res.status(201).json({
+      keyId,
+      plaintext,
+      preview: formatKeyPreview(plaintext),
+    });
+  });
+
+  router.get('/global-agent-keys', (_req, res) => {
+    const entries = stateService.getGlobalAgentKeys();
+    res.json({
+      keys: entries.map((e) => ({
+        id: e.id,
+        label: e.label,
+        scope: e.scope,
+        createdAt: e.createdAt,
+        createdBy: e.createdBy,
+        lastUsedAt: e.lastUsedAt,
+        revokedAt: e.revokedAt,
+        status: e.revokedAt ? 'revoked' : 'active',
+      })),
+    });
+  });
+
+  router.delete('/global-agent-keys/:keyId', (req, res) => {
+    if ((req as unknown as { cdsProjectKey?: unknown }).cdsProjectKey) {
+      res.status(403).json({
+        error: 'project_key_cannot_revoke_global',
+        message: '项目级 Agent Key 无权吊销全局通行证。',
+      });
+      return;
+    }
+    const ok = stateService.revokeGlobalAgentKey(req.params.keyId);
+    if (!ok) {
+      res.status(404).json({
+        error: 'key_not_found',
+        message: `Global agent key '${req.params.keyId}' not found.`,
+      });
+      return;
+    }
+    res.json({ ok: true, keyId: req.params.keyId });
+  });
+
   return router;
 }

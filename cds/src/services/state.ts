@@ -1,6 +1,6 @@
 import path from 'node:path';
 import crypto from 'node:crypto';
-import type { CdsState, BranchEntry, BuildProfile, BuildProfileOverride, RoutingRule, OperationLog, InfraService, ExecutorNode, DataMigration, CdsPeer, Project, AgentKey } from '../types.js';
+import type { CdsState, BranchEntry, BuildProfile, BuildProfileOverride, RoutingRule, OperationLog, InfraService, ExecutorNode, DataMigration, CdsPeer, Project, AgentKey, GlobalAgentKey } from '../types.js';
 import type { StateBackingStore } from '../infra/state-store/backing-store.js';
 import { JsonStateBackingStore, MAX_STATE_BACKUPS as JSON_MAX_BACKUPS } from '../infra/state-store/json-backing-store.js';
 import { sealToken, unsealToken, isSealedSecret } from '../infra/secret-seal.js';
@@ -793,6 +793,75 @@ export class StateService {
     if (!entry) return;
     entry.lastUsedAt = new Date().toISOString();
     // Save is best-effort — a failed save here shouldn't block the request.
+    try { this.save(); } catch { /* ignore */ }
+  }
+
+  // ── Global (bootstrap-equivalent) Agent Keys ──
+  //
+  // Parallels the project-scoped key storage above but lives at the top
+  // level so findAgentKeyForAuth and assertProjectAccess don't treat
+  // these as project-scoped. Intended for onboarding a new Agent that
+  // needs to create a brand-new project (project-scoped keys cannot).
+  // The UI must show a loud warning before issuing one.
+
+  /** Append a GlobalAgentKey. Creates the top-level array on demand. */
+  addGlobalAgentKey(entry: GlobalAgentKey): void {
+    if (!this.state.globalAgentKeys) this.state.globalAgentKeys = [];
+    this.state.globalAgentKeys.push(entry);
+    this.save();
+  }
+
+  /** List all GlobalAgentKey entries (revoked entries included for audit). */
+  getGlobalAgentKeys(): GlobalAgentKey[] {
+    return this.state.globalAgentKeys || [];
+  }
+
+  /**
+   * Mark a global key revoked. Keeps the entry so the audit trail
+   * (who signed, when, last used) survives. Returns true on match,
+   * false otherwise.
+   */
+  revokeGlobalAgentKey(keyId: string): boolean {
+    if (!this.state.globalAgentKeys) return false;
+    const entry = this.state.globalAgentKeys.find((k) => k.id === keyId);
+    if (!entry) return false;
+    if (!entry.revokedAt) {
+      entry.revokedAt = new Date().toISOString();
+      this.save();
+    }
+    return true;
+  }
+
+  /**
+   * Parse an incoming plaintext `cdsg_<suffix>` and find the matching
+   * non-revoked GlobalAgentKey. Parallels findAgentKeyForAuth but
+   * without the project lookup step — all global keys live in one
+   * array. Returns null on any failure.
+   */
+  findGlobalAgentKeyForAuth(plaintextKey: string): { keyId: string } | null {
+    if (!plaintextKey || !plaintextKey.startsWith('cdsg_')) return null;
+    const hash = crypto.createHash('sha256').update(plaintextKey).digest('hex');
+    const hashBuf = Buffer.from(hash, 'hex');
+    for (const entry of this.state.globalAgentKeys || []) {
+      if (entry.revokedAt) continue;
+      try {
+        const entryBuf = Buffer.from(entry.hash, 'hex');
+        if (entryBuf.length !== hashBuf.length) continue;
+        if (crypto.timingSafeEqual(entryBuf, hashBuf)) {
+          return { keyId: entry.id };
+        }
+      } catch {
+        /* malformed hash in state, skip */
+      }
+    }
+    return null;
+  }
+
+  /** Best-effort lastUsedAt stamp on a global key. Silent on unknown id. */
+  touchGlobalAgentKeyLastUsed(keyId: string): void {
+    const entry = (this.state.globalAgentKeys || []).find((k) => k.id === keyId);
+    if (!entry) return;
+    entry.lastUsedAt = new Date().toISOString();
     try { this.save(); } catch { /* ignore */ }
   }
 

@@ -266,6 +266,24 @@ function resolveAiSession(req: express.Request, stateService?: StateService): Ap
         };
       }
     }
+    // Global (bootstrap-equivalent) Agent Key (cdsg_<suffix>). Behaves
+    // like the static AI_ACCESS_KEY: no project scoping, free to hit
+    // POST /api/projects and cross-project routes. The UI must warn
+    // the user before issuing one (see agent-key-modal.js bootstrap
+    // confirmation). NOT stamping cdsProjectKey on purpose.
+    if (stateService && headerKey.startsWith('cdsg_')) {
+      const match = stateService.findGlobalAgentKeyForAuth(headerKey);
+      if (match) {
+        stateService.touchGlobalAgentKeyLastUsed(match.keyId);
+        return {
+          id: `globalkey:${match.keyId}`,
+          agentName: `AI (global key ${match.keyId})`,
+          token: headerKey,
+          approvedAt: '',
+          expiresAt: '',
+        };
+      }
+    }
   }
 
   // Dynamic mode: approved pairing token
