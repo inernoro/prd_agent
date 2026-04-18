@@ -441,15 +441,26 @@ build_ts() {
   # to every start. Users hate this — "./exec_cds.sh restart" used to feel
   # instant, now it drags because tsc has nothing to do yet still runs.
   #
-  # Strategy: find the newest .ts under src/, find dist/index.js mtime,
-  # compare. Skip if dist is newer. Keep the old unconditional path as
-  # a fallback when dist doesn't exist yet.
+  # Strategy: use git HEAD SHA as the cache key (not file mtimes).
+  #
+  # WHY SHA NOT MTIME: `git checkout` / `git pull` preserves the ORIGINAL
+  # commit mtime on checked-out files (so rebasing doesn't "touch"
+  # unchanged files). That breaks mtime-based sentinels — after a pull
+  # to a newer commit, `find src -newer dist/` returns NOTHING even
+  # though src actually changed. We saw this in the wild on 2026-04-18:
+  # self-update switched branches successfully, dist/ stayed stale,
+  # CDS ran old code for 30+ minutes before anyone noticed.
+  #
+  # New sentinel: write the compiled commit SHA to dist/.build-sha.
+  # Skip only when current HEAD SHA matches what's in that file.
   local dist="$SCRIPT_DIR/dist/index.js"
-  if [ -f "$dist" ]; then
-    local newest_src
-    newest_src="$(find "$SCRIPT_DIR/src" -name '*.ts' -type f -newer "$dist" -print -quit 2>/dev/null || true)"
-    if [ -z "$newest_src" ]; then
-      info "编译 TypeScript ... (跳过，dist 已是最新)"
+  local shafile="$SCRIPT_DIR/dist/.build-sha"
+  if [ -f "$dist" ] && [ -f "$shafile" ]; then
+    local current_sha last_sha
+    current_sha="$(git -C "$SCRIPT_DIR" rev-parse HEAD 2>/dev/null || echo unknown)"
+    last_sha="$(cat "$shafile" 2>/dev/null)"
+    if [ -n "$current_sha" ] && [ "$current_sha" = "$last_sha" ] && [ "$current_sha" != "unknown" ]; then
+      info "编译 TypeScript ... (跳过，dist 已对准 HEAD=$current_sha)"
       return 0
     fi
   fi
@@ -457,6 +468,8 @@ build_ts() {
   info "编译 TypeScript ..."
   npx tsc || true
   [ -f "$dist" ] || { err "编译失败: dist/index.js 不存在"; exit 1; }
+  # Stamp the sentinel so the next start can skip correctly
+  git -C "$SCRIPT_DIR" rev-parse HEAD > "$shafile" 2>/dev/null || true
 }
 
 # ══ nginx config rendering ═══════════════════════════════════════

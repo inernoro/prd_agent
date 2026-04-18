@@ -16,6 +16,56 @@ AI 作为 DevOps 操作员，通过 HTTP API 远程驱动 CDS 完成代码部署
 - "重启服务" / "更新灰度" / "清理环境"
 - "更新 CDS" / "CDS 自更新" / "self-update"
 
+## 🚀 首选工具：cdscli（Python CLI）
+
+**所有 CDS 操作优先走 `cdscli`**，不要手写 curl。curl 只在 CLI 未覆盖的边缘场景兜底。
+
+```bash
+CLI="python3 $(git rev-parse --show-toplevel)/.claude/skills/cds-deploy-pipeline/cli/cdscli.py"
+
+# 环境自检
+$CLI auth check                  # 验证 CDS_HOST + AI_ACCESS_KEY
+$CLI self branches               # 当前分支 + commitHash
+
+# 项目/分支状态
+$CLI project list                # 所有项目（含 runningServiceCount / lastDeployedAt）
+$CLI branch list --project <id>  # 某项目的分支
+$CLI branch status <branchId>    # 单分支详情
+
+# 部署
+$CLI self update --branch <b>    # CDS 自更新（仅改 cds/ 代码时）
+$CLI branch deploy <branchId> --timeout 300   # 触发 + 等待
+
+# 诊断（取代手写 7 条 curl 的场景 2）
+$CLI diagnose <branchId>         # 状态+容器日志+env+history 一次性
+$CLI branch logs <id> --profile api --tail 100
+$CLI branch exec <id> --profile api 'curl -s http://localhost:5000/api/xxx'
+                                 # ← 不再需要 JSON 嵌套转义
+
+# 环境变量（scope 感知）
+$CLI env get --scope _global
+$CLI env set DB_PASS=s3cret --scope <projectId>
+
+# 全局 Agent 通行证
+$CLI global-key list
+$CLI global-key create --label "for claude onboarding"
+```
+
+**为什么用 CLI**：
+- 统一 UA（绕过 Cloudflare 对 `Python-urllib` 的 UA ban）
+- 统一 JSON 输入（告别 bash 里 `jq -n --arg cmd '...'` 嵌套转义地狱）
+- SSE 自动解析（self-update / deploy 的事件列表直接拿到）
+- 跨 Bash 调用变量不丢失（CLI 自包含）
+- 诊断/部署/冒烟场景一命令解决，技能正文不再贴长 curl 清单
+
+**输出规范**：默认 JSON `{ok, data|error, trace}` 方便 AI 消费；加 `--human` 切人读表格。
+
+完整 help：`$CLI --help` 或 `$CLI <cmd> --help`。
+
+> ⚠ 如果 CLI 输出是你没见过的字段 → CLI 版本过旧，切回 curl 方式或用 `$CLI --version` 对照 API 契约。
+
+---
+
 ## 核心理念
 
 1. **纯 API 驱动**：AI 通过 curl 调用远程 CDS REST API，不依赖本地脚本或 docker 命令
