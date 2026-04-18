@@ -63,14 +63,14 @@ function LauncherCard({
       type="button"
       onClick={onClick}
       onMouseEnter={onMouseEnter}
-      className="group relative text-left outline-none focus:outline-none"
+      className="group relative text-left outline-none focus:outline-none flex"
       style={{ width: '100%' }}
       title={item.description}
     >
       <div
-        className="relative rounded-[12px] p-2.5 flex flex-col items-start gap-1.5 transition-all duration-200 cursor-pointer overflow-hidden"
+        className="relative w-full rounded-[12px] p-2.5 flex flex-col items-start gap-1.5 transition-all duration-200 cursor-pointer"
         style={{
-          height: 96,
+          minHeight: 96,
           background: isSelected
             ? `linear-gradient(135deg, ${accent}22 0%, rgba(255,255,255,0.03) 100%)`
             : 'rgba(255, 255, 255, 0.025)',
@@ -113,22 +113,19 @@ function LauncherCard({
           </div>
         </div>
 
-        {/* 名称 */}
+        {/* 名称（长名也换行显示，不截断） */}
         <div
-          className="text-[12.5px] font-semibold leading-tight w-full truncate"
+          className="text-[12.5px] font-semibold leading-tight w-full break-words"
           style={{ color: isSelected ? '#fff' : 'rgba(255,255,255,0.92)' }}
         >
           {item.name}
         </div>
 
-        {/* 描述（两行省略） */}
+        {/* 描述（自然换行、不截断；卡片高度随内容增长） */}
         <div
-          className="text-[10.5px] leading-snug w-full overflow-hidden"
+          className="text-[10.5px] leading-snug w-full break-words"
           style={{
             color: isSelected ? 'rgba(255,255,255,0.72)' : 'rgba(255,255,255,0.44)',
-            display: '-webkit-box',
-            WebkitLineClamp: 2,
-            WebkitBoxOrient: 'vertical',
           }}
         >
           {item.description}
@@ -484,7 +481,7 @@ export function AgentSwitcher() {
                         {section.items.length}
                       </span>
                     </div>
-                    <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 gap-2">
+                    <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 gap-2 items-stretch">
                       {section.items.map((item) => (
                         <LauncherCard
                           key={`${section.key}:${item.id}`}
