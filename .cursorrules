@@ -22,8 +22,11 @@
 
 ## New-Developer Shortcut
 
+**Building a new Agent from scratch?** Run `/help` in Claude Code or read [`doc/guide.agent-onboarding.md`](doc/guide.agent-onboarding.md) — the 6-stage onboarding (破冰 → 需求打磨 → 方案设计 → 建造 → 验收 → 完工总结) covers the full skill chain and the 7 ironclad rules you'll work within.
+
 | You want to… | Start here |
 |--------------|-----------|
+| Onboard as a new Agent author | `doc/guide.agent-onboarding.md` or `/help` skill |
 | Run the stack | `README.md` → "Quick Start" (Docker Compose, 1 command) |
 | Understand why it exists | `doc/spec.project-vision.md` (the "four-dose prescription" story) |
 | Know what features exist | `.claude/rules/codebase-snapshot.md` → "功能状态速查" |

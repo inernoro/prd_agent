@@ -12,6 +12,8 @@
 | 4 | [`.claude/rules/codebase-snapshot.md`](.claude/rules/codebase-snapshot.md) | Live feature registry, 115 MongoDB collections, architecture patterns in one page |
 | 5 | Pick an agent below → its own `design.*.md` in `doc/` | Deep-dive into the one you'll work on |
 
+**Building your own Agent?** Jump to [`doc/guide.agent-onboarding.md`](doc/guide.agent-onboarding.md) — a 30-minute end-to-end onboarding (破冰 → 需求 → 设计 → 建造 → 验收 → 完工) with the full skill catalog and 7 ironclad rules. Or just type `/help` in Claude Code and it'll walk you through it.
+
 Skim [`.cursorrules`](.cursorrules) for the top-level AI rules and deprecated concepts you should avoid.
 
 ---
