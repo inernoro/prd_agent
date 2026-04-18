@@ -714,6 +714,17 @@ public static class ReportAgent
         )]
         public const string Summary = "report-agent.aggregate::chat";
     }
+
+    public static class Polish
+    {
+        [AppCallerMetadata(
+            "日常记录条目润色",
+            "对单条日常记录原文做表达润色（更简洁、专业、具体）",
+            ModelTypes = new[] { ModelTypes.Chat },
+            Category = "Report"
+        )]
+        public const string ItemRefine = "report-agent.daily-log.polish::chat";
+    }
 }
 
 /// <summary>

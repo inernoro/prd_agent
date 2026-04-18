@@ -1,5 +1,5 @@
 import { MapSectionLoader } from '@/components/ui/VideoLoader';
-import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
+import { useState, useEffect, useCallback, useRef, useMemo, type ClipboardEvent } from 'react';
 import {
   Send, Trash2, ChevronLeft, ChevronRight, Clock, Calendar,
   Pencil, Check, X, Flame, Code2, Users, MessageCircle, FileText, TestTube, MoreHorizontal,
@@ -17,11 +17,15 @@ import {
   updateMyDailyLogTags,
   listPersonalSources,
   listDataSourceCommits,
+  uploadDailyLogImage,
 } from '@/services';
 import {
   DailyLogCategory,
 } from '@/services/contracts/reportAgent';
 import type { DailyLog, DailyLogItem, ReportCommit, PersonalSource } from '@/services/contracts/reportAgent';
+import { compressImageToLimit, hasMarkdownImage, MAX_RICH_TEXT_IMAGE_BYTES } from '@/lib/imageCompress';
+import { RichTextMarkdownContent } from './RichTextMarkdownContent';
+import { DailyLogPolishPopover } from './DailyLogPolishPopover';
 
 // ── Helpers ────────────────────────────────────────────
 
@@ -165,7 +169,10 @@ export function DailyLogPanel() {
   const [savingTags, setSavingTags] = useState(false);
   const [editingTagIdx, setEditingTagIdx] = useState<number | null>(null);
   const [editingTagDraft, setEditingTagDraft] = useState('');
-  const inputRef = useRef<HTMLInputElement>(null);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
+  const editInputRef = useRef<HTMLTextAreaElement>(null);
+  const [pastingTarget, setPastingTarget] = useState<'quick' | 'edit' | null>(null);
+  const [polishTarget, setPolishTarget] = useState<{ scope: 'quick' | 'edit'; text: string } | null>(null);
 
   // Editing state
   const [editingIdx, setEditingIdx] = useState<number | null>(null);
@@ -387,12 +394,58 @@ export function DailyLogPanel() {
     await doSave(newItems);
   };
 
-  const handleQuickKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
+  const handleQuickKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
       e.preventDefault();
       void handleQuickAdd();
     }
   };
+
+  const autoResize = useCallback((el: HTMLTextAreaElement | null) => {
+    if (!el) return;
+    el.style.height = 'auto';
+    el.style.height = `${Math.min(el.scrollHeight, 320)}px`;
+  }, []);
+
+  const handlePasteImage = useCallback(async (
+    e: ClipboardEvent<HTMLTextAreaElement>,
+    scope: 'quick' | 'edit',
+    onUpdate: (next: string) => void,
+  ) => {
+    const imageItem = Array.from(e.clipboardData?.items ?? []).find((it) => it.type.startsWith('image/'));
+    if (!imageItem) return;
+    const file = imageItem.getAsFile();
+    if (!file) return;
+
+    e.preventDefault();
+    const textarea = e.currentTarget;
+    setPastingTarget(scope);
+    try {
+      const { file: uploadFile, compressed } = await compressImageToLimit(file, MAX_RICH_TEXT_IMAGE_BYTES);
+      const res = await uploadDailyLogImage({ file: uploadFile });
+      if (!res.success || !res.data?.url) {
+        toast.error(res.error?.message || '图片上传失败');
+        return;
+      }
+      const start = textarea.selectionStart ?? textarea.value.length;
+      const end = textarea.selectionEnd ?? start;
+      const current = textarea.value;
+      const markdown = `\n![粘贴图片](${res.data.url})\n`;
+      const next = `${current.slice(0, start)}${markdown}${current.slice(end)}`;
+      onUpdate(next);
+      const cursor = start + markdown.length;
+      requestAnimationFrame(() => {
+        textarea.focus();
+        textarea.setSelectionRange(cursor, cursor);
+        autoResize(textarea);
+      });
+      toast.success(compressed ? '图片已压缩并插入' : '图片已插入');
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : '图片处理失败');
+    } finally {
+      setPastingTarget((prev) => (prev === scope ? null : prev));
+    }
+  }, [autoResize]);
 
   const handleSystemTagToggle = (tag: string) => {
     setSelectedSystemTags((prev) => {
@@ -810,31 +863,56 @@ export function DailyLogPanel() {
           {/* Quick input area */}
           <GlassCard variant="subtle" className="px-4 py-3">
             <div className="flex flex-col gap-2.5">
-              <div className="flex items-center gap-2">
-                <input
-                  ref={inputRef}
-                  type="text"
-                  className="flex-1 px-3 py-2 rounded-xl text-[13px] outline-none"
-                  style={{
-                    background: 'var(--bg-secondary)',
-                    color: 'var(--text-primary)',
-                    border: '1px solid var(--border-primary)',
-                  }}
-                  placeholder={quickInputPlaceholder}
-                  value={quickInput}
-                  onChange={(e) => setQuickInput(e.target.value)}
-                  onKeyDown={handleQuickKeyDown}
-                  disabled={saving}
-                />
-                <Button
-                  variant="primary"
-                  size="sm"
-                  onClick={handleQuickAdd}
-                  disabled={!quickInput.trim() || saving || totalSelectedTagCount === 0}
-                  style={{ borderRadius: 12 }}
-                >
-                  <Send size={13} />
-                </Button>
+              <div className="flex items-start gap-2">
+                <div className="flex-1 flex flex-col gap-1.5 min-w-0">
+                  <textarea
+                    ref={inputRef}
+                    rows={1}
+                    className="w-full px-3 py-2 rounded-xl text-[13px] outline-none resize-none"
+                    style={{
+                      background: 'var(--bg-secondary)',
+                      color: 'var(--text-primary)',
+                      border: '1px solid var(--border-primary)',
+                      minHeight: 38,
+                      maxHeight: 320,
+                      overflow: 'auto',
+                    }}
+                    placeholder={pastingTarget === 'quick' ? '图片上传中…' : `${quickInputPlaceholder}（支持粘贴图片 · Shift+回车换行）`}
+                    value={quickInput}
+                    onChange={(e) => { setQuickInput(e.target.value); autoResize(e.currentTarget); }}
+                    onKeyDown={handleQuickKeyDown}
+                    onPaste={(e) => { void handlePasteImage(e, 'quick', setQuickInput); }}
+                    disabled={saving}
+                  />
+                  {hasMarkdownImage(quickInput) && (
+                    <RichTextMarkdownContent
+                      content={quickInput}
+                      imageMaxHeight={140}
+                      className="px-1"
+                    />
+                  )}
+                </div>
+                <div className="flex flex-col gap-1.5">
+                  <Button
+                    variant="primary"
+                    size="sm"
+                    onClick={handleQuickAdd}
+                    disabled={!quickInput.trim() || saving || totalSelectedTagCount === 0}
+                    style={{ borderRadius: 12 }}
+                  >
+                    <Send size={13} />
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    title="AI 润色当前输入"
+                    onClick={() => setPolishTarget({ scope: 'quick', text: quickInput.trim() })}
+                    disabled={!quickInput.trim() || saving}
+                    style={{ borderRadius: 12 }}
+                  >
+                    <Sparkles size={13} style={{ color: 'rgba(168, 85, 247, 0.9)' }} />
+                  </Button>
+                </div>
               </div>
               {/* Category quick-pick tags */}
               <div className="flex items-center gap-2.5 flex-wrap">
@@ -1181,22 +1259,39 @@ export function DailyLogPanel() {
                         <div className="flex-1 min-w-0">
                           {isEditing ? (
                             <div className="flex flex-col gap-2">
-                              <input
-                                type="text"
-                                className="w-full px-3 py-1.5 rounded-lg text-[13px] outline-none"
+                              <textarea
+                                ref={editInputRef}
+                                rows={1}
+                                className="w-full px-3 py-1.5 rounded-lg text-[13px] outline-none resize-none"
                                 style={{
                                   background: 'var(--bg-secondary)',
                                   color: 'var(--text-primary)',
                                   border: '1px solid var(--border-primary)',
+                                  minHeight: 32,
+                                  maxHeight: 320,
+                                  overflow: 'auto',
                                 }}
                                 value={editContent}
-                                onChange={(e) => setEditContent(e.target.value)}
+                                onChange={(e) => { setEditContent(e.target.value); autoResize(e.currentTarget); }}
                                 onKeyDown={(e) => {
-                                  if (e.key === 'Enter') void confirmEdit();
-                                  if (e.key === 'Escape') cancelEdit();
+                                  if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
+                                    e.preventDefault();
+                                    void confirmEdit();
+                                  } else if (e.key === 'Escape') {
+                                    cancelEdit();
+                                  }
                                 }}
+                                onPaste={(e) => { void handlePasteImage(e, 'edit', setEditContent); }}
+                                placeholder={pastingTarget === 'edit' ? '图片上传中…' : '编辑内容（支持粘贴图片 · Enter 保存 · Shift+回车换行）'}
                                 autoFocus
                               />
+                              {hasMarkdownImage(editContent) && (
+                                <RichTextMarkdownContent
+                                  content={editContent}
+                                  imageMaxHeight={140}
+                                  className="px-1"
+                                />
+                              )}
                               <div className="flex items-center gap-2 flex-wrap">
                                 <div className="flex items-center gap-1.5 flex-wrap">
                                   {systemCategoryKeys.map((key) => {
@@ -1299,6 +1394,15 @@ export function DailyLogPanel() {
                                   <span className="text-[10px]" style={{ color: 'var(--text-muted)' }}>min</span>
                                 </div>
                                 <div className="flex-1" />
+                                <Button
+                                  variant="ghost"
+                                  size="xs"
+                                  title="AI 润色"
+                                  onClick={() => setPolishTarget({ scope: 'edit', text: editContent.trim() })}
+                                  disabled={!editContent.trim()}
+                                >
+                                  <Sparkles size={12} style={{ color: 'rgba(168, 85, 247, 0.9)' }} />
+                                </Button>
                                 <Button variant="ghost" size="xs" onClick={cancelEdit}>
                                   <X size={12} />
                                 </Button>
@@ -1309,9 +1413,17 @@ export function DailyLogPanel() {
                             </div>
                           ) : (
                             <>
-                              <div className="text-[13px] leading-relaxed" style={{ color: 'var(--text-primary)' }}>
-                                {item.content}
-                              </div>
+                              {hasMarkdownImage(item.content) ? (
+                                <RichTextMarkdownContent
+                                  content={item.content}
+                                  imageMaxHeight={140}
+                                  className="text-[13px] leading-relaxed"
+                                />
+                              ) : (
+                                <div className="text-[13px] leading-relaxed whitespace-pre-wrap" style={{ color: 'var(--text-primary)' }}>
+                                  {item.content}
+                                </div>
+                              )}
                               <div className="flex items-center gap-2 mt-1 flex-wrap">
                                 {item.tags && item.tags.length > 0 ? item.tags.map((tag, ti) => {
                                   const sysCfg = CATEGORY_CONFIG[tag];
@@ -1605,6 +1717,21 @@ export function DailyLogPanel() {
           )}
         </div>
       </div>
+      <DailyLogPolishPopover
+        open={polishTarget !== null}
+        text={polishTarget?.text ?? ''}
+        onClose={() => setPolishTarget(null)}
+        onApply={(polished) => {
+          if (polishTarget?.scope === 'quick') {
+            setQuickInput(polished);
+            requestAnimationFrame(() => autoResize(inputRef.current));
+          } else if (polishTarget?.scope === 'edit') {
+            setEditContent(polished);
+            requestAnimationFrame(() => autoResize(editInputRef.current));
+          }
+          setPolishTarget(null);
+        }}
+      />
     </div>
   );
 }

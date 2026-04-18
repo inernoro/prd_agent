@@ -590,6 +590,8 @@ export const api = {
     dailyLogs: {
       list: () => '/api/report-agent/daily-logs',
       byDate: (date: string) => `/api/report-agent/daily-logs/${date}`,
+      uploadImage: () => '/api/report-agent/daily-logs/upload-image',
+      polish: () => '/api/report-agent/daily-logs/polish',
     },
     dataSources: {
       list: () => '/api/report-agent/data-sources',
