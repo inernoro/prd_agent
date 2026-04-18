@@ -36,6 +36,35 @@ AI 作为 DevOps 操作员，通过 HTTP API 远程驱动 CDS 完成代码部署
 > **`AI_ACCESS_KEY` 是通用密钥**：同一个 key 可同时用于 CDS 管理 API 和 MAP 平台后端 API，无需区分。
 > **强烈建议配置 `MAP_AI_USER`**：省去复杂的 root JWT 登录 → 查 users 用户名发现流程。
 
+## 首选：项目专属授权（零心智）
+
+如果用户粘贴了包含 `CDS_PROJECT_KEY=cdsp_...` 的代码块，直接提取：
+
+- `CDS_HOST`
+- `CDS_PROJECT_ID`
+- `CDS_PROJECT_KEY`
+
+作为本次会话的 CDS 凭证。所有 CDS API 请求带 Header
+`X-AI-Access-Key: $CDS_PROJECT_KEY`。不需要再问用户任何问题。
+
+```bash
+# 用户粘了三行,AI 直接用
+export CDS_HOST=https://xxx.miduo.org
+export CDS_PROJECT_ID=prd-agent-2
+export CDS_PROJECT_KEY=cdsp_prd-agent-2_a1B2c3D4e5F6...
+curl -sf -H "X-AI-Access-Key: $CDS_PROJECT_KEY" "$CDS_HOST/api/projects/$CDS_PROJECT_ID"
+```
+
+如果后续调用返回 `403 project_mismatch`,告诉用户：
+
+> "这把 key 只能操作 `<expected>` 项目。请去 `<got>` 项目页点「🔑 授权 Agent」按钮重新生成一把,再贴给我。"
+
+用户再点一下即可，无需 AI 做任何事。
+
+项目 Key 自描述归属项目（前缀带 `<slugHead12>`），明文只在签发时展示一次,CDS 数据库只存 sha256。吊销在项目页的「Agent Key 管理」。
+
+---
+
 ## AI 认证方式（三种，按优先级）
 
 > **交互要求**：认证失败时，AI **必须**向用户展示选项让用户选择，而不是静默失败。

@@ -532,6 +532,15 @@ window.cdsDoLogout = cdsDoLogout;
         "'" + escapeHtml(project.id) + "', '" + escapeHtml(project.name) + "')\">" +
         '<svg width="14" height="14" viewBox="0 0 16 16" fill="#f43f5e" aria-hidden="true"><path d="M11 1.75V3h2.25a.75.75 0 010 1.5H2.75a.75.75 0 010-1.5H5V1.75C5 .784 5.784 0 6.75 0h2.5C10.216 0 11 .784 11 1.75zM4.496 6.675l.66 6.6a.25.25 0 00.249.225h5.19a.25.25 0 00.249-.225l.66-6.6a.75.75 0 111.492.149l-.66 6.6A1.748 1.748 0 0110.595 15h-5.19a1.75 1.75 0 01-1.741-1.575l-.66-6.6a.75.75 0 111.492-.15z"/></svg>' +
         '</button>';
+    // 🔑 授权 Agent — floats top-right next to the delete button, sits
+    // outside the <a> so its click doesn't navigate.
+    var agentKeyBtn =
+      '<button class="cds-project-card-agentkey" title="授权 Agent / 管理 Key" ' +
+      "onclick=\"handleProjectAgentKey(event, '" + escapeHtml(project.id) + "')\" " +
+      'style="position:absolute;top:10px;right:' + (project.legacyFlag ? '10' : '42') + 'px;' +
+      'width:26px;height:26px;border-radius:6px;border:1px solid var(--card-border);' +
+      'background:var(--bg-card);cursor:pointer;display:inline-flex;align-items:center;' +
+      'justify-content:center;font-size:13px;color:var(--text-secondary);padding:0">🔑</button>';
 
     var totalServices =
       ((services && services.profiles && services.profiles.length) || 0) +
@@ -558,7 +567,7 @@ window.cdsDoLogout = cdsDoLogout;
     // <button> inside <a> is invalid HTML — click events on the button
     // bubble to the <a> in some browsers and navigate instead of deleting.
     return [
-      '<div class="cds-project-card-wrapper">',
+      '<div class="cds-project-card-wrapper" style="position:relative">',
       '  <a class="cds-project-card" href="', href, '">',
       '    <div class="cds-project-card-head">',
       '      <div class="cds-project-card-title">', escapeHtml(project.name), '</div>',
@@ -572,10 +581,21 @@ window.cdsDoLogout = cdsDoLogout;
       cloneBtn ? '<span style="flex-shrink:0">' + cloneBtn + '</span>' : '',
       '    </div>',
       '  </a>',
+      '  ', agentKeyBtn,
       '  ', deleteBtn,
       '</div>',
     ].join('');
   }
+
+  // Expose a global click handler so the inline onclick can reach the
+  // IIFE-internal render logic without leaking the renderCard closure.
+  window.handleProjectAgentKey = function (ev, projectId) {
+    if (ev && ev.preventDefault) ev.preventDefault();
+    if (ev && ev.stopPropagation) ev.stopPropagation();
+    if (window.cdsOpenAgentKeyManager) {
+      window.cdsOpenAgentKeyManager(projectId);
+    }
+  };
 
   function renderError(message) {
     gridEl.innerHTML = '<div class="cds-grid-state error">' + escapeHtml(message) + '</div>';
@@ -1873,7 +1893,15 @@ window.cdsDoLogout = cdsDoLogout;
     var pending = imports.filter(function (it) { return it.status === 'pending'; });
     var decided = imports.filter(function (it) { return it.status !== 'pending'; });
     if (subtitle) {
-      subtitle.textContent = pending.length + ' 个待处理 · ' + decided.length + ' 个最近处理';
+      var firstImport = pending[0] || imports[0];
+      var focusPid = firstImport && firstImport.projectId;
+      subtitle.innerHTML =
+        pending.length + ' 个待处理 · ' + decided.length + ' 个最近处理' +
+        (focusPid
+          ? ' · <a href="#" style="color:var(--accent);text-decoration:underline" ' +
+            'onclick="event.preventDefault();event.stopPropagation();window.cdsOpenAgentKeyModal(\'' +
+            focusPid + '\')">签发新 Agent Key</a>'
+          : '');
     }
 
     if (imports.length === 0) {
