@@ -3393,21 +3393,54 @@ public class DefectAgentController : ControllerBase
 
     /// <summary>
     /// 获取用户列表（用于选择提交对象）
+    /// 返回富用户信息（头像/角色/活跃时间/已解决缺陷数），按「已解决缺陷数」降序排序，
+    /// 使「最积极解决缺陷的人」排在最前面，便于提交者优先选择。
     /// </summary>
     [HttpGet("users")]
     public async Task<IActionResult> GetUsers(CancellationToken ct)
     {
-        var users = await _db.Users
+        // 1. 拉取所有活跃人类用户
+        var rawUsers = await _db.Users
             .Find(x => x.Status == UserStatus.Active && x.UserType == UserType.Human)
-            .Project(x => new
-            {
-                id = x.UserId,
-                username = x.Username,
-                displayName = x.DisplayName
-            })
             .ToListAsync(ct);
 
-        return Ok(ApiResponse<object>.Ok(new { items = users }));
+        // 2. 聚合每个用户「已解决 + 已验收 + 已关闭」的缺陷数（ResolvedById 作为解决归属）
+        var resolvedStatuses = new[] { DefectStatus.Resolved, DefectStatus.Verifying, DefectStatus.Closed };
+        var resolvedFilter = Builders<DefectReport>.Filter.And(
+            Builders<DefectReport>.Filter.Eq(d => d.IsDeleted, false),
+            Builders<DefectReport>.Filter.Ne(d => d.ResolvedById, null),
+            Builders<DefectReport>.Filter.In(d => d.Status, resolvedStatuses));
+        var resolvedAgg = await _db.DefectReports
+            .Aggregate()
+            .Match(resolvedFilter)
+            .Group(x => x.ResolvedById, g => new { UserId = g.Key!, Count = g.Count() })
+            .ToListAsync(ct);
+        var resolvedMap = resolvedAgg
+            .Where(x => !string.IsNullOrEmpty(x.UserId))
+            .ToDictionary(x => x.UserId!, x => x.Count);
+
+        // 3. 映射为 AdminUser 兼容形状 + resolvedDefectCount，并按该字段降序
+        var items = rawUsers
+            .Select(u => new
+            {
+                userId = u.UserId,
+                username = u.Username,
+                displayName = string.IsNullOrWhiteSpace(u.DisplayName) ? u.Username : u.DisplayName,
+                role = u.Role.ToString(),
+                status = u.Status.ToString(),
+                userType = u.UserType.ToString(),
+                botKind = u.BotKind?.ToString(),
+                avatarFileName = u.AvatarFileName,
+                createdAt = u.CreatedAt,
+                lastLoginAt = u.LastLoginAt,
+                lastActiveAt = u.LastActiveAt,
+                resolvedDefectCount = resolvedMap.TryGetValue(u.UserId, out var c) ? c : 0,
+            })
+            .OrderByDescending(u => u.resolvedDefectCount)
+            .ThenByDescending(u => u.lastActiveAt ?? u.lastLoginAt ?? u.createdAt)
+            .ToList();
+
+        return Ok(ApiResponse<object>.Ok(new { items }));
     }
 
     #endregion

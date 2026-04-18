@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react';
 import { Dialog } from '@/components/ui/Dialog';
 import { Button } from '@/components/design/Button';
-import { Select } from '@/components/design/Select';
 import { getUsers } from '@/services';
+import { UserSearchSelect } from '@/components/UserSearchSelect';
+import type { AdminUser } from '@/types/admin';
 import { toast } from '@/lib/toast';
 import type {
   ChannelWhitelist,
@@ -230,19 +231,14 @@ export function WhitelistEditDialog({
             </div>
             <div>
               <label className="block text-xs text-muted-foreground mb-1">绑定用户</label>
-              <Select
+              <UserSearchSelect
                 value={boundUserId}
-                onChange={(e) => setBoundUserId(e.target.value)}
-                disabled={loadingUsers}
-                uiSize="md"
-              >
-                <option value="">{loadingUsers ? '加载中...' : '不绑定'}</option>
-                {users.map((u) => (
-                  <option key={u.userId} value={u.userId}>
-                    {u.displayName} (@{u.username})
-                  </option>
-                ))}
-              </Select>
+                onChange={setBoundUserId}
+                users={users as unknown as AdminUser[]}
+                showAllOption
+                allOptionLabel="不绑定"
+                placeholder={loadingUsers ? '加载中...' : '搜索用户名或昵称...'}
+              />
             </div>
           </div>
 

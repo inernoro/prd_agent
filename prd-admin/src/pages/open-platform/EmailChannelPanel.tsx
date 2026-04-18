@@ -11,6 +11,8 @@ import {
   Play, Plus, Trash2, MoreVertical, Pencil, UserCheck,
 } from 'lucide-react';
 import { channelService, appCallersService, getUsers } from '@/services';
+import { UserSearchSelect } from '@/components/UserSearchSelect';
+import type { AdminUser } from '@/types/admin';
 import { MapSpinner, MapSectionLoader } from '@/components/ui/VideoLoader';
 import { systemDialog } from '@/lib/systemDialog';
 import { toast } from '@/lib/toast';
@@ -678,10 +680,12 @@ function MappingDialog({ open, onClose, onSubmit, mode, mapping }: {
           )}
           <div>
             <label className="block text-sm font-medium mb-1">映射用户 *</label>
-            <Select value={userId} onChange={(e) => setUserId(e.target.value)} disabled={loadingUsers} uiSize="md">
-              <option value="">{loadingUsers ? '加载中...' : '请选择'}</option>
-              {users.map((u) => <option key={u.userId} value={u.userId}>{u.displayName} (@{u.username})</option>)}
-            </Select>
+            <UserSearchSelect
+              value={userId}
+              onChange={setUserId}
+              users={users as unknown as AdminUser[]}
+              placeholder={loadingUsers ? '加载中...' : '搜索用户名或昵称...'}
+            />
           </div>
           <label className="flex items-center gap-2 text-sm cursor-pointer">
             <input type="checkbox" checked={isVerified} onChange={(e) => setIsVerified(e.target.checked)} className="rounded" />

@@ -8,6 +8,8 @@ import { Select } from '@/components/design/Select';
 import { Dialog } from '@/components/ui/Dialog';
 import { Switch } from '@/components/design/Switch';
 import { channelService, getUsers } from '@/services';
+import { UserSearchSelect } from '@/components/UserSearchSelect';
+import type { AdminUser } from '@/types/admin';
 import {
   Plus,
   Trash2,
@@ -472,19 +474,12 @@ function IdentityMappingDialog({
           {/* 映射用户 */}
           <div>
             <label className="block text-sm font-medium mb-1">映射用户 *</label>
-            <Select
+            <UserSearchSelect
               value={userId}
-              onChange={(e) => setUserId(e.target.value)}
-              disabled={loadingUsers}
-              uiSize="md"
-            >
-              <option value="">{loadingUsers ? '加载中...' : '请选择用户'}</option>
-              {users.map((u) => (
-                <option key={u.userId} value={u.userId}>
-                  {u.displayName} (@{u.username})
-                </option>
-              ))}
-            </Select>
+              onChange={setUserId}
+              users={users as unknown as AdminUser[]}
+              placeholder={loadingUsers ? '加载中...' : '搜索用户名或昵称...'}
+            />
           </div>
 
           {/* 验证状态 */}

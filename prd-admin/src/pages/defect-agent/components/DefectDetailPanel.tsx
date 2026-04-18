@@ -482,6 +482,14 @@ export function DefectDetailPanel() {
           }}
         >
         <DialogPrimitive.Title className="sr-only">缺陷详情</DialogPrimitive.Title>
+        {/* 关闭按钮：固定在整个对话框的右上角，不随左右分栏布局漂移 */}
+        <button
+          onClick={handleClose}
+          aria-label="关闭"
+          className="absolute top-3 right-3 z-10 p-1.5 rounded-lg hover:bg-white/5 transition-colors"
+        >
+          <X size={16} style={{ color: 'var(--text-muted)' }} />
+        </button>
         {/* 左侧：缺陷信息 */}
         <div className={`flex flex-col ${showChat ? (isMobile ? 'w-full' : 'w-[55%]') : 'w-full'}`}>
           {/* Header - 固定高度 52px */}
@@ -504,21 +512,13 @@ export function DefectDetailPanel() {
                 {defect.defectNo}
               </span>
             </div>
-            {/* 右侧：时间 + 关闭按钮 */}
-            <div className="flex items-center gap-3">
-              <div
-                className="flex items-center gap-1.5 text-[11px]"
-                style={{ color: 'var(--text-muted)' }}
-              >
-                <Clock size={12} />
-                <span>{formatDateTime(defect.createdAt)}</span>
-              </div>
-              <button
-                onClick={handleClose}
-                className="p-1.5 rounded-lg hover:bg-white/5 transition-colors flex-shrink-0"
-              >
-                <X size={16} style={{ color: 'var(--text-muted)' }} />
-              </button>
+            {/* 右侧：时间（关闭按钮移至整个对话框右上角，避免 showChat 时出现在中间） */}
+            <div
+              className={`flex items-center gap-1.5 text-[11px] ${showChat ? '' : 'mr-10'}`}
+              style={{ color: 'var(--text-muted)' }}
+            >
+              <Clock size={12} />
+              <span>{formatDateTime(defect.createdAt)}</span>
             </div>
           </div>
 

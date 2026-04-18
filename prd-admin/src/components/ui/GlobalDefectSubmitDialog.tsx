@@ -7,6 +7,8 @@ import { useState, useRef, useCallback, useEffect } from 'react';
 import { MapSpinner } from '@/components/ui/VideoLoader';
 import { GlassCard } from '@/components/design/GlassCard';
 import { Button } from '@/components/design/Button';
+import { UserSearchSelect } from '@/components/UserSearchSelect';
+import type { AdminUser } from '@/types/admin';
 import { useGlobalDefectStore } from '@/stores/globalDefectStore';
 import {
   createDefect,
@@ -486,7 +488,7 @@ export function GlobalDefectSubmitDialog() {
         {/* Selectors */}
         <div className="px-5 py-4 space-y-3">
           <div className="flex items-center gap-4">
-            {/* Assignee */}
+            {/* Assignee —— 统一 UserSearchSelect；后端按已解决缺陷数倒序返回 */}
             <div className="flex items-center gap-2 flex-1">
               <label
                 className="text-[12px] flex-shrink-0"
@@ -494,23 +496,15 @@ export function GlobalDefectSubmitDialog() {
               >
                 提交给
               </label>
-              <select
-                value={assigneeUserId}
-                onChange={(e) => setAssigneeUserId(e.target.value)}
-                className="flex-1 px-3 py-2 rounded-lg text-[13px] outline-none transition-colors"
-                style={{
-                  background: 'rgba(255,255,255,0.06)',
-                  border: '1px solid rgba(255,255,255,0.1)',
-                  color: 'var(--text-primary)',
-                }}
-              >
-                <option value="">选择用户</option>
-                {users.map((u) => (
-                  <option key={u.id} value={u.id}>
-                    {u.displayName || u.username}
-                  </option>
-                ))}
-              </select>
+              <div className="flex-1">
+                <UserSearchSelect
+                  value={assigneeUserId}
+                  onChange={setAssigneeUserId}
+                  users={users as unknown as AdminUser[]}
+                  placeholder="选择提交给谁（按解决缺陷数排序）"
+                  uiSize="sm"
+                />
+              </div>
             </div>
 
             {/* Template */}
@@ -962,7 +956,7 @@ export function GlobalDefectSubmitDialog() {
                 loadingText="提交中"
                 successText="已提交"
                 showLoadingText
-                disabled={!content.trim() || !assigneeUserId}
+                disabled={!content.trim()}
                 onAction={handleSubmit}
                 successHoldMs={1200}
               />

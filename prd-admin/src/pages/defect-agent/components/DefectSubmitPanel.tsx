@@ -1,6 +1,8 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
 import { GlassCard } from '@/components/design/GlassCard';
 import { Button } from '@/components/design/Button';
+import { UserSearchSelect } from '@/components/UserSearchSelect';
+import type { AdminUser } from '@/types/admin';
 import { useDefectStore } from '@/stores/defectStore';
 import {
   createDefect,
@@ -363,7 +365,8 @@ export function DefectSubmitPanel() {
         {/* Selectors - 一排显示 */}
         <div className="px-5 py-4 space-y-3">
           <div className="flex items-center gap-4">
-            {/* Assignee */}
+            {/* Assignee —— 统一使用 UserSearchSelect（与「发起数据分享」一致），
+                用户列表后端已按「已解决缺陷数」倒序返回。 */}
             <div className="flex items-center gap-2 flex-1">
               <label
                 className="text-[12px] flex-shrink-0"
@@ -371,23 +374,15 @@ export function DefectSubmitPanel() {
               >
                 提交给
               </label>
-              <select
-                value={assigneeUserId}
-                onChange={(e) => setAssigneeUserId(e.target.value)}
-                className="flex-1 px-3 py-2 rounded-lg text-[13px] outline-none transition-colors"
-                style={{
-                  background: 'var(--bg-input-hover)',
-                  border: '1px solid var(--border-default)',
-                  color: 'var(--text-primary)',
-                }}
-              >
-                <option value="">选择用户</option>
-                {users.map((u) => (
-                  <option key={u.id} value={u.id}>
-                    {u.displayName || u.username}
-                  </option>
-                ))}
-              </select>
+              <div className="flex-1">
+                <UserSearchSelect
+                  value={assigneeUserId}
+                  onChange={setAssigneeUserId}
+                  users={users as unknown as AdminUser[]}
+                  placeholder="选择提交给谁（按解决缺陷数排序）"
+                  uiSize="sm"
+                />
+              </div>
             </div>
 
             {/* Template */}
@@ -745,7 +740,7 @@ export function DefectSubmitPanel() {
                 variant="primary"
                 size="sm"
                 onClick={handleSubmit}
-                disabled={submitting || !content.trim() || !assigneeUserId}
+                disabled={submitting || !content.trim()}
               >
                 {submitting ? (
                   <MapSpinner size={14} />

@@ -15,6 +15,8 @@ import {
 import { ReportTeamRole, ReportVisibilityMode } from '@/services/contracts/reportAgent';
 import type { ReportTeamMember } from '@/services/contracts/reportAgent';
 import { UserMultiSearchSelect } from '@/components/UserMultiSearchSelect';
+import { UserSearchSelect } from '@/components/UserSearchSelect';
+import type { AdminUser } from '@/types/admin';
 import { IdentityMappingEditor } from './IdentityMappingEditor';
 
 const roleLabels: Record<string, string> = {
@@ -289,17 +291,17 @@ export function TeamManager() {
                 value={teamDesc}
                 onChange={(e) => setTeamDesc(e.target.value)}
               />
-              <select
-                className="w-full px-3 py-2 rounded-lg text-[13px]"
-                style={{ background: 'var(--bg-secondary)', color: 'var(--text-primary)', border: '1px solid var(--border-primary)' }}
+              <UserSearchSelect
                 value={leaderUserId}
-                onChange={(e) => setLeaderUserId(e.target.value)}
-              >
-                <option value="">选择负责人</option>
-                {users.map((u) => (
-                  <option key={u.id} value={u.id}>{u.displayName || u.username}</option>
-                ))}
-              </select>
+                onChange={setLeaderUserId}
+                users={users.map((u) => ({
+                  userId: u.id,
+                  username: u.username,
+                  displayName: u.displayName || u.username,
+                  avatarFileName: u.avatarFileName,
+                })) as unknown as AdminUser[]}
+                placeholder="选择负责人"
+              />
 
               {/* Report visibility */}
               <div>

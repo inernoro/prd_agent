@@ -29,6 +29,8 @@ import {
   BarChart3,
   Smartphone,
   Layers,
+  Search,
+  X,
 } from 'lucide-react';
 import { listPublicDocumentStores } from '@/services';
 import type { PublicDocumentStore } from '@/services/contracts/documentStore';
@@ -72,6 +74,7 @@ export function LibraryLandingPage() {
   const [stores, setStores] = useState<PublicDocumentStore[]>([]);
   const [loading, setLoading] = useState(true);
   const [sort, setSort] = useState<SortKey>('hot');
+  const [searchQuery, setSearchQuery] = useState('');
   useFredokaFonts();
 
   useEffect(() => {
@@ -87,6 +90,22 @@ export function LibraryLandingPage() {
 
   const totalLikes = stores.reduce((s, x) => s + x.likeCount, 0);
   const totalDocs = stores.reduce((s, x) => s + x.documentCount, 0);
+
+  // 客户端按关键词过滤：匹配名称 / 描述 / 作者 / 标签（大小写不敏感）
+  const q = searchQuery.trim().toLowerCase();
+  const filteredStores = q
+    ? stores.filter((s) => {
+        const hay = [
+          s.name,
+          s.description ?? '',
+          s.ownerName,
+          ...(s.tags ?? []),
+        ]
+          .join(' ')
+          .toLowerCase();
+        return hay.includes(q);
+      })
+    : stores;
 
   return (
     <div
@@ -231,6 +250,42 @@ export function LibraryLandingPage() {
             向行业专家学习，获取真实世界的经验与洞见
           </p>
 
+          {/* 搜索框（claymorphism 风格，与页面视觉一致） */}
+          <div className="max-w-xl mx-auto mb-6">
+            <div
+              className="flex items-center gap-2 px-4 py-3 rounded-2xl bg-white"
+              style={{
+                border: '3px solid #1E1B4B',
+                boxShadow: '0 4px 0 #1E1B4B',
+              }}
+            >
+              <Search size={18} strokeWidth={3} style={{ color: '#6366F1', flexShrink: 0 }} />
+              <input
+                type="text"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                placeholder="搜索知识库名称 / 作者 / 标签..."
+                className="flex-1 bg-transparent outline-none text-[15px] font-semibold placeholder:font-medium"
+                style={{ color: '#1E1B4B' }}
+              />
+              {searchQuery && (
+                <button
+                  type="button"
+                  onClick={() => setSearchQuery('')}
+                  className="p-1 rounded-full hover:bg-[#FEF3C7] transition-colors"
+                  aria-label="清除搜索"
+                >
+                  <X size={16} strokeWidth={3} style={{ color: '#64748B' }} />
+                </button>
+              )}
+            </div>
+            {q && (
+              <div className="mt-2 text-center text-[13px] font-semibold" style={{ color: '#475569' }}>
+                找到 <span style={{ color: '#1E1B4B', fontWeight: 800 }}>{filteredStores.length}</span> 个匹配结果
+              </div>
+            )}
+          </div>
+
           {/* 排序切换 */}
           <div className="flex items-center justify-center gap-3 mb-12 flex-wrap">
             {SORT_OPTIONS.map((opt) => (
@@ -250,9 +305,22 @@ export function LibraryLandingPage() {
             <MapSectionLoader text="加载中..." />
           ) : stores.length === 0 ? (
             <EmptyState onPublish={() => navigate('/document-store')} />
+          ) : filteredStores.length === 0 ? (
+            <div
+              className="text-center py-16 px-6 rounded-3xl bg-white max-w-xl mx-auto"
+              style={{ border: '3px solid #1E1B4B', boxShadow: '0 6px 0 #1E1B4B' }}
+            >
+              <div className="text-[48px] mb-2">🔍</div>
+              <div className="text-[20px] font-black mb-1" style={{ color: '#1E1B4B' }}>
+                未找到匹配「{searchQuery}」的知识库
+              </div>
+              <div className="text-[14px] font-semibold" style={{ color: '#64748B' }}>
+                换个关键词试试，或清空搜索浏览全部
+              </div>
+            </div>
           ) : (
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              {stores.map((s, idx) => (
+              {filteredStores.map((s, idx) => (
                 <CourseCard
                   key={s.id}
                   store={s}
