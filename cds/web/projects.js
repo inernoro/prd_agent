@@ -248,22 +248,159 @@ async function cdsToggleTabTitle() {
 }
 
 async function cdsOpenSelfUpdate() {
-  // Redirect to branch-list with a hash that app.js can detect, OR just
-  // confirm-and-fire. v1: confirm + run /api/self-update on current branch.
+  // 完整 modal 版本 —— 2026-04-18 恢复。
+  // 之前此函数是 v1 占位符（confirm + /api/self-update on current branch），
+  // 丢失了分支选择器。分支列表页的 openSelfUpdate 用 openConfigModal +
+  // combobox helpers（只在 app.js 里），不能共享。这里用 vanilla DOM
+  // 重实现一个小 modal：原生 <select> 列分支 + SSE 流式反馈。
+  let info;
   try {
-    var info = await fetch('/api/self-branches', { credentials: 'same-origin' }).then(function (r) { return r.json(); });
-    var cur = info.current || '';
-    if (!confirm('CDS 系统更新\n\n当前分支: ' + cur + '\n\n将执行 git fetch → git pull → restart。继续？')) return;
-    _plSettingsToast('正在更新，请稍候…');
-    var res = await fetch('/api/self-update', {
-      method: 'POST', credentials: 'same-origin',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ branch: cur }),
-    });
-    if (!res.ok) throw new Error('HTTP ' + res.status);
-    // server streams NDJSON; don't block the UI on it
-    _plSettingsToast('更新已启动，稍后 CDS 会自动重启');
-  } catch (e) { _plSettingsToast('更新失败: ' + e.message); }
+    const r = await fetch('/api/self-branches', { credentials: 'same-origin' });
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    info = await r.json();
+  } catch (e) {
+    _plSettingsToast('获取分支列表失败: ' + e.message);
+    return;
+  }
+  const current = info.current || '';
+  const commitHash = (info.commitHash || '').slice(0, 8);
+  const branches = Array.isArray(info.branches) ? info.branches : [];
+
+  const backdrop = document.createElement('div');
+  backdrop.style.cssText = 'position:fixed;inset:0;background:rgba(3,7,18,0.55);backdrop-filter:blur(4px);z-index:10000;display:flex;align-items:center;justify-content:center;padding:24px';
+  backdrop.onclick = () => { if (document.body.contains(backdrop)) document.body.removeChild(backdrop); };
+
+  const dlg = document.createElement('div');
+  dlg.style.cssText = 'background:var(--bg-card);border:1px solid var(--card-border);border-radius:10px;width:min(520px,calc(100vw - 32px));max-height:82vh;display:flex;flex-direction:column;overflow:hidden;box-shadow:0 24px 60px rgba(0,0,0,.55)';
+  dlg.onclick = (e) => e.stopPropagation();
+
+  // Sort branches: current first, then alphabetical
+  const sorted = [current, ...branches.filter(b => b && b !== current).sort()];
+  const options = sorted.map(b =>
+    '<option value="' + escapeHtml(b) + '"' + (b === current ? ' selected' : '') + '>' +
+    escapeHtml(b) + (b === current ? ' （当前）' : '') +
+    '</option>'
+  ).join('');
+
+  dlg.innerHTML = [
+    '<div style="flex-shrink:0;padding:14px 18px;border-bottom:1px solid var(--card-border);display:flex;align-items:center;justify-content:space-between">',
+    '  <div style="font-size:14px;font-weight:700">🔄 CDS 系统更新</div>',
+    '  <button id="_plSuClose" style="width:26px;height:26px;border-radius:6px;border:1px solid var(--card-border);background:transparent;color:var(--text-muted);cursor:pointer">×</button>',
+    '</div>',
+    '<div style="flex:1;min-height:0;overflow-y:auto;padding:16px 18px">',
+    '  <div style="font-size:12px;color:var(--text-secondary);margin-bottom:12px;line-height:1.6">',
+    '    拉取目标分支最新代码并重启 CDS。流程 <code>git fetch → checkout → pull → tsc 预检 → restart</code>',
+    '  </div>',
+    '  <div style="font-size:12px;color:var(--text-secondary);margin-bottom:4px">当前分支</div>',
+    '  <div style="font-family:monospace;font-size:13px;color:var(--accent);margin-bottom:14px">',
+    escapeHtml(current) + (commitHash ? ' <span style="color:var(--text-muted);font-size:11px">@ ' + escapeHtml(commitHash) + '</span>' : ''),
+    '  </div>',
+    '  <label style="display:block;font-size:12px;color:var(--text-secondary);margin-bottom:4px">目标分支（' + branches.length + ' 个可选）</label>',
+    '  <select id="_plSuBranch" style="width:100%;padding:8px 10px;border-radius:6px;border:1px solid var(--card-border);background:var(--bg-base);color:var(--text-primary);font-family:monospace;font-size:12px;margin-bottom:14px">',
+    options,
+    '  </select>',
+    '  <div id="_plSuProgress" style="display:none;margin-top:12px;border:1px solid var(--card-border);border-radius:6px;padding:10px;background:var(--bg-base);font-family:monospace;font-size:11px;max-height:240px;overflow-y:auto;line-height:1.55"></div>',
+    '  <div id="_plSuStatus" style="margin-top:8px;font-size:12px;color:var(--text-muted);min-height:14px"></div>',
+    '</div>',
+    '<div style="flex-shrink:0;padding:12px 18px;border-top:1px solid var(--card-border);display:flex;gap:8px;justify-content:flex-end">',
+    '  <button id="_plSuCancel" style="padding:7px 14px;border-radius:6px;border:1px solid var(--card-border);background:transparent;color:var(--text-primary);cursor:pointer;font-size:12px">取消</button>',
+    '  <button id="_plSuGo" style="padding:7px 14px;border-radius:6px;border:none;background:var(--accent,#10b981);color:#fff;cursor:pointer;font-size:12px;font-weight:600">拉取并重启</button>',
+    '</div>',
+  ].join('');
+
+  backdrop.appendChild(dlg);
+  document.body.appendChild(backdrop);
+
+  const close = () => { if (document.body.contains(backdrop)) document.body.removeChild(backdrop); };
+  dlg.querySelector('#_plSuClose').onclick = close;
+  dlg.querySelector('#_plSuCancel').onclick = close;
+  const esc = (ev) => { if (ev.key === 'Escape') { close(); document.removeEventListener('keydown', esc); } };
+  document.addEventListener('keydown', esc);
+
+  dlg.querySelector('#_plSuGo').onclick = async () => {
+    const target = dlg.querySelector('#_plSuBranch').value;
+    const progress = dlg.querySelector('#_plSuProgress');
+    const status = dlg.querySelector('#_plSuStatus');
+    const goBtn = dlg.querySelector('#_plSuGo');
+    goBtn.disabled = true;
+    goBtn.textContent = '更新中…';
+    progress.style.display = 'block';
+    progress.innerHTML = '';
+    status.textContent = '连接 /api/self-update …';
+
+    let resp;
+    try {
+      resp = await fetch('/api/self-update', {
+        method: 'POST', credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ branch: target }),
+      });
+    } catch (e) {
+      status.innerHTML = '<span style="color:var(--red)">✗ ' + escapeHtml(e.message) + '</span>';
+      goBtn.disabled = false;
+      goBtn.textContent = '重试';
+      return;
+    }
+    if (!resp.ok) {
+      status.innerHTML = '<span style="color:var(--red)">✗ HTTP ' + resp.status + '</span>';
+      goBtn.disabled = false;
+      goBtn.textContent = '重试';
+      return;
+    }
+
+    // 解析 SSE 流：event: step / done / error，data: JSON
+    const reader = resp.body && resp.body.getReader ? resp.body.getReader() : null;
+    if (!reader) {
+      status.textContent = '浏览器不支持流式读取，已触发更新，稍后 CDS 会自动重启';
+      return;
+    }
+    const decoder = new TextDecoder();
+    let buf = '';
+    let curEvent = '';
+    let done = false;
+    while (!done) {
+      try {
+        const { value, done: streamDone } = await reader.read();
+        if (streamDone) break;
+        buf += decoder.decode(value, { stream: true });
+        let idx;
+        while ((idx = buf.indexOf('\n')) >= 0) {
+          const line = buf.slice(0, idx).trimEnd();
+          buf = buf.slice(idx + 1);
+          if (!line) continue;
+          if (line.startsWith('event: ')) curEvent = line.slice(7);
+          else if (line.startsWith('data: ')) {
+            try {
+              const d = JSON.parse(line.slice(6));
+              const label = d.step || curEvent;
+              const title = d.title || d.message || '';
+              const color = d.status === 'done' ? 'var(--green)'
+                : d.status === 'error' ? 'var(--red)'
+                : curEvent === 'done' ? 'var(--green)'
+                : curEvent === 'error' ? 'var(--red)'
+                : 'var(--text-secondary)';
+              progress.innerHTML += '<div style="color:' + color + '">[' + escapeHtml(label) + '] ' + escapeHtml(title) + '</div>';
+              progress.scrollTop = progress.scrollHeight;
+              if (curEvent === 'done') {
+                status.innerHTML = '<span style="color:var(--green)">✓ 更新已触发，CDS 正在重启… 5s 后自动刷新页面</span>';
+                done = true;
+                setTimeout(() => location.reload(), 5000);
+              }
+              if (curEvent === 'error') {
+                status.innerHTML = '<span style="color:var(--red)">✗ ' + escapeHtml(title) + '</span>';
+                goBtn.disabled = false;
+                goBtn.textContent = '重试';
+                done = true;
+              }
+            } catch { /* JSON 解析失败跳过 */ }
+          }
+        }
+      } catch {
+        // 流被 CDS 重启中断，正常情况
+        break;
+      }
+    }
+  };
 }
 
 function cdsOpenClusterModal() {
