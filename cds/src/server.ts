@@ -319,12 +319,14 @@ export function createServer(deps: ServerDeps): express.Express {
     const checks: Record<string, { ok: boolean; detail?: string }> = {};
     let overallOk = true;
 
-    // Check 1: state readable
+    // Check 1: state readable — plus 暴露 backing store kind 到 detail
+    // 供"Mongo 模式是否真正生效"这类无认证诊断。不泄漏 URI/credentials。
     try {
       const state = deps.stateService.getState();
+      const backing = deps.stateService.getBackingStore();
       checks.state = {
         ok: true,
-        detail: `branches=${Object.keys(state.branches).length}`,
+        detail: `branches=${Object.keys(state.branches).length}, backend=${backing.kind}`,
       };
     } catch (err) {
       checks.state = { ok: false, detail: (err as Error).message };
