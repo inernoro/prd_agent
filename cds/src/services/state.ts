@@ -1,5 +1,6 @@
 import path from 'node:path';
-import type { CdsState, BranchEntry, BuildProfile, BuildProfileOverride, RoutingRule, OperationLog, InfraService, ExecutorNode, DataMigration, CdsPeer, Project } from '../types.js';
+import crypto from 'node:crypto';
+import type { CdsState, BranchEntry, BuildProfile, BuildProfileOverride, RoutingRule, OperationLog, InfraService, ExecutorNode, DataMigration, CdsPeer, Project, AgentKey } from '../types.js';
 import type { StateBackingStore } from '../infra/state-store/backing-store.js';
 import { JsonStateBackingStore, MAX_STATE_BACKUPS as JSON_MAX_BACKUPS } from '../infra/state-store/json-backing-store.js';
 import { sealToken, unsealToken, isSealedSecret } from '../infra/secret-seal.js';
@@ -705,6 +706,145 @@ export class StateService {
     this.save();
   }
 
+  // ── Project-scoped Agent Keys ──
+  //
+  // Each AgentKey stores only the sha256 of the plaintext key; the key
+  // prefix (`cdsp_<slugHead12>_...`) encodes the owning project so the
+  // auth middleware can look up the project from the header alone.
+  // Plaintext is shown once at signing time and never persisted.
+
+  /** Append an AgentKey entry under a project. Creates the array on demand. */
+  addAgentKey(projectId: string, entry: AgentKey): void {
+    if (!this.state.projects) return;
+    const idx = this.state.projects.findIndex((p) => p.id === projectId);
+    if (idx < 0) throw new Error(`Project '${projectId}' not found`);
+    const project = this.state.projects[idx];
+    if (!project.agentKeys) project.agentKeys = [];
+    project.agentKeys.push(entry);
+    project.updatedAt = new Date().toISOString();
+    this.save();
+  }
+
+  /** List all AgentKey entries for a project (revoked entries included for audit). */
+  getAgentKeys(projectId: string): AgentKey[] {
+    const project = (this.state.projects || []).find((p) => p.id === projectId);
+    return project?.agentKeys || [];
+  }
+
+  /**
+   * Mark a key revoked. Keeps the entry so the audit trail (who signed,
+   * when, last used) survives. Returns true on match, false otherwise.
+   */
+  revokeAgentKey(projectId: string, keyId: string): boolean {
+    if (!this.state.projects) return false;
+    const project = this.state.projects.find((p) => p.id === projectId);
+    if (!project?.agentKeys) return false;
+    const entry = project.agentKeys.find((k) => k.id === keyId);
+    if (!entry) return false;
+    if (!entry.revokedAt) {
+      entry.revokedAt = new Date().toISOString();
+      project.updatedAt = new Date().toISOString();
+      this.save();
+    }
+    return true;
+  }
+
+  /**
+   * Parse an incoming plaintext key `cdsp_<slugHead12>_<suffix>` and find
+   * the matching non-revoked AgentKey across all projects. Uses
+   * timingSafeEqual for hash comparison so the endpoint doesn't leak
+   * hash bytes via timing.
+   *
+   * Returns null on any failure (malformed prefix, unknown slug, no
+   * matching hash, key revoked).
+   */
+  findAgentKeyForAuth(plaintextKey: string): { projectId: string; keyId: string } | null {
+    if (!plaintextKey || !plaintextKey.startsWith('cdsp_')) return null;
+    // Strict shape: cdsp_<slugHead>_<suffix>
+    const parts = plaintextKey.split('_');
+    if (parts.length < 3) return null;
+    const slugHead = parts[1].toLowerCase();
+    if (!slugHead) return null;
+    const hash = crypto.createHash('sha256').update(plaintextKey).digest('hex');
+    const hashBuf = Buffer.from(hash, 'hex');
+    for (const project of this.state.projects || []) {
+      const projectSlugHead = project.slug.slice(0, 12).toLowerCase();
+      if (projectSlugHead !== slugHead) continue;
+      for (const entry of project.agentKeys || []) {
+        if (entry.revokedAt) continue;
+        try {
+          const entryBuf = Buffer.from(entry.hash, 'hex');
+          if (entryBuf.length !== hashBuf.length) continue;
+          if (crypto.timingSafeEqual(entryBuf, hashBuf)) {
+            return { projectId: project.id, keyId: entry.id };
+          }
+        } catch {
+          /* malformed hash in state, skip */
+        }
+      }
+    }
+    return null;
+  }
+
+  /** Best-effort lastUsedAt stamp. Silent on unknown ids — not worth throwing. */
+  touchAgentKeyLastUsed(projectId: string, keyId: string): void {
+    const project = (this.state.projects || []).find((p) => p.id === projectId);
+    const entry = project?.agentKeys?.find((k) => k.id === keyId);
+    if (!entry) return;
+    entry.lastUsedAt = new Date().toISOString();
+    // Save is best-effort — a failed save here shouldn't block the request.
+    try { this.save(); } catch { /* ignore */ }
+  }
+
+  // ── Pending imports (agent-submitted CDS compose awaiting approval) ──
+
+  getPendingImports(): import('../types.js').PendingImport[] {
+    return this.state.pendingImports || [];
+  }
+
+  getPendingImport(id: string): import('../types.js').PendingImport | undefined {
+    return (this.state.pendingImports || []).find((p) => p.id === id);
+  }
+
+  addPendingImport(item: import('../types.js').PendingImport): void {
+    if (!this.state.pendingImports) this.state.pendingImports = [];
+    this.state.pendingImports.push(item);
+    this.save();
+  }
+
+  updatePendingImport(
+    id: string,
+    updates: Partial<import('../types.js').PendingImport>,
+  ): void {
+    const list = this.state.pendingImports || [];
+    const idx = list.findIndex((p) => p.id === id);
+    if (idx === -1) throw new Error(`Pending import '${id}' not found`);
+    list[idx] = { ...list[idx], ...updates };
+    this.save();
+  }
+
+  /**
+   * Prune decided imports older than `olderThanMs` so the state file
+   * doesn't grow forever. Called lazily from the list endpoint when
+   * the decided count exceeds a small threshold.
+   */
+  prunePendingImports(olderThanMs: number): number {
+    const list = this.state.pendingImports;
+    if (!list || list.length === 0) return 0;
+    const now = Date.now();
+    const kept = list.filter((p) => {
+      if (p.status === 'pending') return true;
+      if (!p.decidedAt) return true;
+      return now - new Date(p.decidedAt).getTime() < olderThanMs;
+    });
+    const dropped = list.length - kept.length;
+    if (dropped > 0) {
+      this.state.pendingImports = kept;
+      this.save();
+    }
+    return dropped;
+  }
+
   /**
    * P4 Part 18 (Phase E): GitHub Device Flow token accessors.
    *
@@ -882,26 +1022,59 @@ export class StateService {
     return this.state.infraServices;
   }
 
+  /**
+   * Global-scope infra lookup — returns the FIRST match across all
+   * projects. Kept for back-compat with legacy callers that don't
+   * know the projectId (e.g. older Dashboard polls). New code should
+   * prefer `getInfraServiceForProject(projectId, id)` so two projects
+   * can each have their own `mongodb` without collision.
+   */
   getInfraService(id: string): InfraService | undefined {
     return this.state.infraServices.find(s => s.id === id);
   }
 
+  /**
+   * Project-scoped infra lookup. Uses the composite key (projectId, id)
+   * so the legacy project's `mongodb` and a fork project's `mongodb`
+   * are distinct entries. A service with no projectId is treated as
+   * belonging to the 'default' (legacy) project for back-compat.
+   */
+  getInfraServiceForProjectAndId(projectId: string, id: string): InfraService | undefined {
+    return this.state.infraServices.find(
+      s => s.id === id && (s.projectId || 'default') === projectId,
+    );
+  }
+
   addInfraService(service: InfraService): void {
-    if (this.state.infraServices.some(s => s.id === service.id)) {
-      throw new Error(`基础设施服务 "${service.id}" 已存在`);
+    const projectId = service.projectId || 'default';
+    // Uniqueness is (projectId, id), NOT just id — otherwise two
+    // projects can't each register `mongodb`. This matches the
+    // buildProfile uniqueness fix from commit 6a86b01.
+    if (this.state.infraServices.some(s => s.id === service.id && (s.projectId || 'default') === projectId)) {
+      throw new Error(`基础设施服务 "${service.id}" 在项目 "${projectId}" 中已存在`);
     }
-    if (!service.projectId) service.projectId = 'default';
+    service.projectId = projectId;
     this.state.infraServices.push(service);
   }
 
-  updateInfraService(id: string, updates: Partial<InfraService>): void {
-    const idx = this.state.infraServices.findIndex(s => s.id === id);
+  updateInfraService(id: string, updates: Partial<InfraService>, projectId?: string): void {
+    // When projectId is supplied, scope the update to (projectId, id);
+    // otherwise fall back to the legacy global find-first behaviour.
+    const idx = projectId
+      ? this.state.infraServices.findIndex(s => s.id === id && (s.projectId || 'default') === projectId)
+      : this.state.infraServices.findIndex(s => s.id === id);
     if (idx === -1) throw new Error(`基础设施服务 "${id}" 不存在`);
     Object.assign(this.state.infraServices[idx], updates);
   }
 
-  removeInfraService(id: string): void {
-    this.state.infraServices = this.state.infraServices.filter(s => s.id !== id);
+  removeInfraService(id: string, projectId?: string): void {
+    if (projectId) {
+      this.state.infraServices = this.state.infraServices.filter(
+        s => !(s.id === id && (s.projectId || 'default') === projectId),
+      );
+    } else {
+      this.state.infraServices = this.state.infraServices.filter(s => s.id !== id);
+    }
   }
 
   // ── Mirror acceleration ──

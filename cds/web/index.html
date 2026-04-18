@@ -53,26 +53,15 @@
             <svg width="13" height="13" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M2 2.75C2 1.784 2.784 1 3.75 1h2.5a.75.75 0 010 1.5h-2.5a.25.25 0 00-.25.25v10.5c0 .138.112.25.25.25h2.5a.75.75 0 010 1.5h-2.5A1.75 1.75 0 012 13.25V2.75zm10.44 4.5L10.97 5.78a.75.75 0 111.06-1.06l2.75 2.75a.75.75 0 010 1.06l-2.75 2.75a.75.75 0 11-1.06-1.06l1.47-1.47H6.75a.75.75 0 010-1.5h5.69z"/></svg>
           </button>
         </div>
-        <!-- Quick-access config shortcuts (promoted from gear menu) -->
-        <div class="header-config-shortcuts" style="display:flex;align-items:center;gap:1px;margin-right:6px;padding-right:8px;border-right:1px solid var(--card-border)">
-          <button class="icon-btn sm" onclick="openProfileModal()" title="构建配置">
-            <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M7.22 1.547a2.403 2.403 0 011.56 0l4.03 1.384a.48.48 0 01.33.457v1.224a.48.48 0 01-.33.457L8.78 6.453a2.403 2.403 0 01-1.56 0L3.19 5.069a.48.48 0 01-.33-.457V3.388a.48.48 0 01.33-.457l4.03-1.384zM3.19 6.903l4.03 1.384a2.403 2.403 0 001.56 0l4.03-1.384a.48.48 0 01.33.457v1.224a.48.48 0 01-.33.457L8.78 10.425a2.403 2.403 0 01-1.56 0L3.19 9.041a.48.48 0 01-.33-.457V7.36a.48.48 0 01.33-.457zm0 3.972l4.03 1.384a2.403 2.403 0 001.56 0l4.03-1.384a.48.48 0 01.33.457v1.224a.48.48 0 01-.33.457l-4.03 1.384a2.403 2.403 0 01-1.56 0l-4.03-1.384a.48.48 0 01-.33-.457v-1.224a.48.48 0 01.33-.457z"/></svg>
-          </button>
-          <button class="icon-btn sm" onclick="openEnvModal()" title="环境变量">
-            <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M2.5 2a.5.5 0 00-.5.5v11a.5.5 0 00.5.5h11a.5.5 0 00.5-.5v-11a.5.5 0 00-.5-.5h-11zM1 2.5A1.5 1.5 0 012.5 1h11A1.5 1.5 0 0115 2.5v11a1.5 1.5 0 01-1.5 1.5h-11A1.5 1.5 0 011 13.5v-11zM4 5h2v1H4V5zm3 0h5v1H7V5zM4 8h2v1H4V8zm3 0h5v1H7V8zM4 11h2v1H4v-1zm3 0h5v1H7v-1z"/></svg>
-          </button>
-          <button class="icon-btn sm" style="position:relative" onclick="openInfraModal()" title="基础设施" id="infraShortcutBtn">
-            <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M2 2a2 2 0 012-2h8a2 2 0 012 2v2a2 2 0 01-2 2H4a2 2 0 01-2-2V2zm2-.5a.5.5 0 00-.5.5v2a.5.5 0 00.5.5h8a.5.5 0 00.5-.5V2a.5.5 0 00-.5-.5H4zM2 9.5A1.5 1.5 0 013.5 8h9A1.5 1.5 0 0114 9.5v3a1.5 1.5 0 01-1.5 1.5h-9A1.5 1.5 0 012 12.5v-3zm1.5 0v3h9v-3h-9zM4 10.5a.5.5 0 01.5-.5h1a.5.5 0 010 1h-1a.5.5 0 01-.5-.5z"/></svg>
-            <span id="infraShortcutBadge" style="display:none;position:absolute;top:3px;right:3px;width:7px;height:7px;border-radius:50%;background:#3fb950;border:1px solid var(--bg-base)"></span>
-          </button>
-          <button class="icon-btn sm" onclick="openRoutingModal()" title="路由规则">
-            <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M8 0a8 8 0 100 16A8 8 0 008 0zM1.5 8a6.5 6.5 0 0113 0h-2.1a8.3 8.3 0 00-.4-2.2 9 9 0 00-1-1.9A4.5 4.5 0 017 7.5H4.5A8.3 8.3 0 001.5 8zm5.5 5.5a6.5 6.5 0 01-5.4-3h2.3c.3 1.2.8 2.2 1.5 3H7zm1-5.5a7.8 7.8 0 014-3.8c.5.6.9 1.2 1.2 1.8H8zm0 1h5.4a8.3 8.3 0 01-.3 2H8.9 8V9zm0 3h3.8c-.6 1.3-1.5 2.4-2.8 3A6.5 6.5 0 018 9z"/></svg>
-          </button>
-        </div>
+        <!-- Quick-access config shortcuts removed: settings menu (⚙) has them all.
+             User feedback 2026-04-18: 4 icons 冗余；留一把齿轮够用。 -->
+        <button class="icon-btn" id="agentKeyBtn" onclick="window.cdsOpenAgentKeyModal(typeof CURRENT_PROJECT_ID !== 'undefined' ? CURRENT_PROJECT_ID : 'default')" title="授权 Agent 操作本项目">
+          <span style="font-size:16px">🔑</span>
+        </button>
         <button id="themeToggleBtn" class="icon-btn" onclick="toggleTheme(event)" title="切换主题">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="4.22" x2="19.78" y2="5.64"/></svg>
         </button>
-        <button class="icon-btn" id="settingsBtn" onclick="toggleSettingsMenu(event)" title="设置">
+        <button class="icon-btn" id="settingsBtn" onclick="toggleSettingsMenu(event)" title="项目设置">
           <svg width="20" height="20" viewBox="0 0 16 16" fill="currentColor"><path d="M7.429 1.525a3.5 3.5 0 011.142 0 .75.75 0 01.57.63l.185 1.29a.25.25 0 00.35.193l1.178-.592a.75.75 0 01.808.098 3.5 3.5 0 01.571.571.75.75 0 01.098.808l-.592 1.178a.25.25 0 00.193.35l1.29.185a.75.75 0 01.63.57 3.5 3.5 0 010 1.142.75.75 0 01-.63.57l-1.29.185a.25.25 0 00-.193.35l.592 1.178a.75.75 0 01-.098.808 3.5 3.5 0 01-.571.571.75.75 0 01-.808.098l-1.178-.592a.25.25 0 00-.35.193l-.185 1.29a.75.75 0 01-.57.63 3.5 3.5 0 01-1.142 0 .75.75 0 01-.57-.63l-.185-1.29a.25.25 0 00-.35-.193l-1.178.592a.75.75 0 01-.808-.098 3.5 3.5 0 01-.571-.571.75.75 0 01-.098-.808l.592-1.178a.25.25 0 00-.193-.35l-1.29-.185a.75.75 0 01-.63-.57 3.5 3.5 0 010-1.142.75.75 0 01.63-.57l1.29-.185a.25.25 0 00.193-.35l-.592-1.178a.75.75 0 01.098-.808 3.5 3.5 0 01.571-.571.75.75 0 01.808-.098l1.178.592a.25.25 0 00.35-.193l.185-1.29a.75.75 0 01.57-.63zM8 6a2 2 0 100 4 2 2 0 000-4z"/></svg>
         </button>
       </div>
@@ -81,10 +70,10 @@
     <!-- Quickstart banner (shown when no profiles) -->
     <div id="quickstartBanner" class="quickstart-banner hidden">
       <div class="quickstart-content">
-        <strong>尚未配置构建配置。</strong>
-        <span>是否加载此项目的默认配置？</span>
+        <strong>尚未初始化构建配置</strong>
+        <span>优先读取项目中的 <code>cds-compose.yaml</code>；未找到则回落到内置 api/admin 模板</span>
       </div>
-      <button class="primary sm" onclick="runQuickstart()">快速开始</button>
+      <button class="primary sm" onclick="runQuickstart()">初始化构建配置</button>
     </div>
 
     <!-- Branch picker -->
@@ -271,6 +260,7 @@
     </div>
   </div>
 
+  <script>document.write('<scr'+'ipt src="agent-key-modal.js?t='+Date.now()+'"></scr'+'ipt>');</script>
   <script>document.write('<scr'+'ipt src="app.js?t='+Date.now()+'"></scr'+'ipt>');</script>
 </body>
 </html>

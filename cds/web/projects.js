@@ -16,28 +16,73 @@
  *     a Legacy badge so users know it's not deletable.
  */
 
-// Theme toggle for projects page (shared localStorage key with index.html)
+// Theme toggle for projects page (shared localStorage key with index.html).
+//
+// Uses the same View Transition API + clip-path ripple animation that
+// app.js::toggleTheme uses on the branch page, so the two pages feel
+// identical when the user switches pages mid-session. The CSS rules
+// (::view-transition-new(root), --ripple-x/y/radius vars, vt-snapshotting
+// class) already live in style.css (around line 2670+); we just need
+// to wire the same origin calc + view-transition call here.
 function _projectsToggleTheme(btn) {
   var isLight = document.documentElement.dataset.theme === 'light';
   var next = isLight ? 'dark' : 'light';
-  localStorage.setItem('cds_theme', next);
-  if (next === 'light') {
-    document.documentElement.dataset.theme = 'light';
+
+  // Origin point: prefer the clicked button's center so the ripple
+  // radiates from the sun/moon icon. Fall back to top-center.
+  var x, y;
+  if (btn && btn.getBoundingClientRect) {
+    var rect = btn.getBoundingClientRect();
+    x = rect.left + rect.width / 2;
+    y = rect.top + rect.height / 2;
   } else {
-    delete document.documentElement.dataset.theme;
+    x = window.innerWidth / 2;
+    y = 0;
   }
-  // swap icon: sun ↔ moon
-  var icon = document.getElementById('projectsThemeIcon');
-  if (icon) {
+  var maxRadius = Math.ceil(Math.sqrt(
+    Math.max(x, window.innerWidth - x) * Math.max(x, window.innerWidth - x) +
+    Math.max(y, window.innerHeight - y) * Math.max(y, window.innerHeight - y)
+  ));
+  document.documentElement.style.setProperty('--ripple-x', x + 'px');
+  document.documentElement.style.setProperty('--ripple-y', y + 'px');
+  document.documentElement.style.setProperty('--ripple-radius', maxRadius + 'px');
+
+  function applyTheme() {
+    localStorage.setItem('cds_theme', next);
     if (next === 'light') {
-      icon.innerHTML = '<path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>';
-      icon.setAttribute('fill', 'currentColor');
-      icon.removeAttribute('stroke');
+      document.documentElement.dataset.theme = 'light';
     } else {
-      icon.innerHTML = '<circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="4.22" x2="19.78" y2="5.64"/>';
-      icon.setAttribute('fill', 'none');
-      icon.setAttribute('stroke', 'currentColor');
+      delete document.documentElement.dataset.theme;
     }
+    // swap icon for the sidebar button (sun ↔ moon). The header theme
+    // button uses a static SVG that doesn't need updating because it's
+    // already animated via CSS on theme change.
+    var icon = document.getElementById('projectsThemeIcon');
+    if (icon) {
+      if (next === 'light') {
+        icon.innerHTML = '<path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>';
+        icon.setAttribute('fill', 'currentColor');
+        icon.removeAttribute('stroke');
+      } else {
+        icon.innerHTML = '<circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="4.22" x2="19.78" y2="5.64"/>';
+        icon.setAttribute('fill', 'none');
+        icon.setAttribute('stroke', 'currentColor');
+      }
+    }
+  }
+
+  if (document.startViewTransition) {
+    var transition = document.startViewTransition(function () {
+      document.documentElement.classList.add('vt-snapshotting');
+      applyTheme();
+    });
+    transition.ready.then(function () {
+      document.documentElement.classList.remove('vt-snapshotting');
+    }).catch(function () {
+      document.documentElement.classList.remove('vt-snapshotting');
+    });
+  } else {
+    applyTheme();
   }
 }
 // Initialize icon to reflect current state on page load
@@ -51,6 +96,201 @@ function _projectsToggleTheme(btn) {
     icon.removeAttribute('stroke');
   }
 }());
+
+// ── CDS-wide settings (moved here from branch-list app.js) ─────────
+// Theme toggle — reuses the ripple-aware _projectsToggleTheme. Passes
+// the actual click target so the clip-path ripple radiates from the
+// specific button the user pressed (header vs sidebar).
+window.toggleTheme = function (event) {
+  var btn = (event && (event.currentTarget || event.target))
+    || document.getElementById('themeToggleBtn')
+    || document.getElementById('projectsThemeBtn');
+  _projectsToggleTheme(btn);
+};
+
+// Lightweight toast helper mirroring the one inside the IIFE. Used only by
+// the global-settings handlers since showToast inside the IIFE isn't in
+// scope here.
+function _plSettingsToast(message) {
+  var el = document.getElementById('toast');
+  if (!el) return;
+  el.textContent = message;
+  el.classList.remove('hidden');
+  clearTimeout(_plSettingsToast._t);
+  _plSettingsToast._t = setTimeout(function () { el.classList.add('hidden'); }, 3200);
+}
+
+var _plSettingsOpen = false;
+function toggleProjectListSettingsMenu(event) {
+  event.stopPropagation();
+  if (_plSettingsOpen) { closeProjectListSettingsMenu(); return; }
+  _plSettingsOpen = true;
+  var menu = document.createElement('div');
+  menu.className = 'settings-menu';
+  menu.id = 'pl-settings-menu';
+  menu.style.position = 'fixed';
+  menu.style.background = 'var(--bg-card)';
+  menu.style.border = '1px solid var(--card-border)';
+  menu.style.borderRadius = '10px';
+  menu.style.boxShadow = '0 14px 40px rgba(0,0,0,0.45)';
+  menu.style.padding = '6px';
+  menu.style.zIndex = '9999';
+  menu.onclick = function (e) { e.stopPropagation(); };
+  menu.innerHTML = [
+    '<div class="settings-menu-item" style="display:flex;align-items:center;gap:8px;padding:8px 10px;font-size:12px;color:var(--text-primary);border-radius:6px;cursor:pointer" onclick="closeProjectListSettingsMenu(); cdsOpenSelfUpdate()">🔄 自动更新</div>',
+    '<div class="settings-menu-item" style="display:flex;align-items:center;gap:8px;padding:8px 10px;font-size:12px;color:var(--text-primary);border-radius:6px;cursor:pointer" onclick="closeProjectListSettingsMenu(); cdsOpenClusterModal()">🧩 集群</div>',
+    '<div class="settings-menu-item settings-menu-switch" style="display:flex;align-items:center;gap:8px;padding:8px 10px;font-size:12px;color:var(--text-primary);border-radius:6px;cursor:pointer" onclick="cdsCyclePreviewMode()">预览模式<span id="pl-preview-mode-label" style="margin-left:auto;font-size:11px;color:#58a6ff"></span></div>',
+    '<div class="settings-menu-item settings-menu-switch" style="display:flex;align-items:center;gap:8px;padding:8px 10px;font-size:12px;color:var(--text-primary);border-radius:6px;cursor:pointer" onclick="cdsToggleMirror()">镜像加速<span id="pl-mirror-label" style="margin-left:auto;font-size:11px"></span></div>',
+    '<div class="settings-menu-item settings-menu-switch" style="display:flex;align-items:center;gap:8px;padding:8px 10px;font-size:12px;color:var(--text-primary);border-radius:6px;cursor:pointer" onclick="cdsToggleTabTitle()">标签页标题<span id="pl-tabtitle-label" style="margin-left:auto;font-size:11px"></span></div>',
+    '<div class="settings-menu-divider" style="height:1px;background:var(--card-border);margin:4px 0"></div>',
+    '<div class="settings-menu-item danger" style="display:flex;align-items:center;gap:8px;padding:8px 10px;font-size:12px;color:#f43f5e;border-radius:6px;cursor:pointer" onclick="closeProjectListSettingsMenu(); cdsFactoryReset()">⚠ 恢复出厂设置</div>',
+    '<div class="settings-menu-item" style="display:flex;align-items:center;gap:8px;padding:8px 10px;font-size:12px;color:var(--text-primary);border-radius:6px;cursor:pointer" onclick="closeProjectListSettingsMenu(); cdsDoLogout()">退出登录</div>',
+  ].join('');
+  document.body.appendChild(menu);
+  var rect = event.currentTarget.getBoundingClientRect();
+  menu.style.top = (rect.bottom + 6) + 'px';
+  menu.style.right = (window.innerWidth - rect.right) + 'px';
+  menu.style.minWidth = '200px';
+  setTimeout(function () {
+    document.addEventListener('click', closeProjectListSettingsMenu, { once: true });
+  }, 0);
+  _refreshPlSettingsLabels();
+}
+function closeProjectListSettingsMenu() {
+  _plSettingsOpen = false;
+  var el = document.getElementById('pl-settings-menu');
+  if (el) el.remove();
+}
+window.toggleProjectListSettingsMenu = toggleProjectListSettingsMenu;
+window.closeProjectListSettingsMenu = closeProjectListSettingsMenu;
+
+function _refreshPlSettingsLabels() {
+  // Preview mode lives under /api/preview-mode; mirror under /api/mirror;
+  // tab-title under /api/tab-title. Keep it cheap: 3 independent GETs so
+  // a failure on one doesn't starve the others.
+  fetch('/api/preview-mode', { credentials: 'same-origin' })
+    .then(function (r) { return r.ok ? r.json() : null; })
+    .then(function (d) {
+      if (!d) return;
+      var pm = d.mode || 'simple';
+      var el = document.getElementById('pl-preview-mode-label');
+      if (el) el.textContent = ({ simple: '简洁', port: '端口直连', multi: '子域名' })[pm] || pm;
+    })
+    .catch(function () {});
+  fetch('/api/mirror', { credentials: 'same-origin' })
+    .then(function (r) { return r.ok ? r.json() : null; })
+    .then(function (d) {
+      if (!d) return;
+      var el = document.getElementById('pl-mirror-label');
+      if (el) { el.textContent = d.enabled ? '✓ 开启' : '关闭'; el.style.color = d.enabled ? '#10b981' : '#71717a'; }
+    })
+    .catch(function () {});
+  fetch('/api/tab-title', { credentials: 'same-origin' })
+    .then(function (r) { return r.ok ? r.json() : null; })
+    .then(function (d) {
+      if (!d) return;
+      var el = document.getElementById('pl-tabtitle-label');
+      if (el) { el.textContent = d.enabled ? '✓ 开启' : '关闭'; el.style.color = d.enabled ? '#10b981' : '#71717a'; }
+    })
+    .catch(function () {});
+}
+
+// ── Action implementations (copied from app.js fetch calls) ──
+async function cdsCyclePreviewMode() {
+  try {
+    var cur = await fetch('/api/preview-mode', { credentials: 'same-origin' }).then(function (r) { return r.json(); });
+    var modes = ['simple', 'port', 'multi'];
+    var idx = modes.indexOf(cur.mode || 'simple');
+    var next = modes[(idx + 1) % modes.length];
+    var res = await fetch('/api/preview-mode', {
+      method: 'PUT', credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ mode: next }),
+    });
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    var labels = { simple: '简洁', port: '端口直连', multi: '子域名' };
+    _plSettingsToast('预览模式：' + labels[next]);
+    _refreshPlSettingsLabels();
+  } catch (e) { _plSettingsToast('切换失败: ' + e.message); }
+}
+
+async function cdsToggleMirror() {
+  try {
+    var cur = await fetch('/api/mirror', { credentials: 'same-origin' }).then(function (r) { return r.json(); });
+    var res = await fetch('/api/mirror', {
+      method: 'PUT', credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ enabled: !cur.enabled }),
+    });
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    _plSettingsToast(!cur.enabled ? '镜像加速已开启' : '镜像加速已关闭');
+    _refreshPlSettingsLabels();
+  } catch (e) { _plSettingsToast('切换失败: ' + e.message); }
+}
+
+async function cdsToggleTabTitle() {
+  try {
+    var cur = await fetch('/api/tab-title', { credentials: 'same-origin' }).then(function (r) { return r.json(); });
+    var res = await fetch('/api/tab-title', {
+      method: 'PUT', credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ enabled: !cur.enabled }),
+    });
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    _plSettingsToast(!cur.enabled ? '标签页标题已开启' : '标签页标题已关闭');
+    _refreshPlSettingsLabels();
+  } catch (e) { _plSettingsToast('切换失败: ' + e.message); }
+}
+
+async function cdsOpenSelfUpdate() {
+  // Redirect to branch-list with a hash that app.js can detect, OR just
+  // confirm-and-fire. v1: confirm + run /api/self-update on current branch.
+  try {
+    var info = await fetch('/api/self-branches', { credentials: 'same-origin' }).then(function (r) { return r.json(); });
+    var cur = info.current || '';
+    if (!confirm('CDS 系统更新\n\n当前分支: ' + cur + '\n\n将执行 git fetch → git pull → restart。继续？')) return;
+    _plSettingsToast('正在更新，请稍候…');
+    var res = await fetch('/api/self-update', {
+      method: 'POST', credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ branch: cur }),
+    });
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    // server streams NDJSON; don't block the UI on it
+    _plSettingsToast('更新已启动，稍后 CDS 会自动重启');
+  } catch (e) { _plSettingsToast('更新失败: ' + e.message); }
+}
+
+function cdsOpenClusterModal() {
+  // v1 placeholder: direct users to the full cluster UI on branch-list.
+  alert('集群管理在分支页的齿轮菜单里：访问控制台（/branch-list）查看与配置集群。');
+}
+
+async function cdsFactoryReset() {
+  if (!confirm('[警告] 恢复出厂设置\n\n将清除所有：分支、构建配置、环境变量、基础设施服务、路由规则。\nDocker 数据卷（数据库文件等）会保留。\n\n确定继续？')) return;
+  if (!confirm('二次确认：所有配置将被清空，此操作不可撤销。')) return;
+  try {
+    var res = await fetch('/api/factory-reset', { method: 'POST', credentials: 'same-origin' });
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    // drain the NDJSON stream
+    var reader = res.body && res.body.getReader ? res.body.getReader() : null;
+    if (reader) { while (!(await reader.read()).done) {} }
+    _plSettingsToast('已恢复出厂设置');
+  } catch (e) { _plSettingsToast('重置失败: ' + e.message); }
+}
+
+async function cdsDoLogout() {
+  try { await fetch('/api/logout', { method: 'POST', credentials: 'same-origin' }); } catch (e) { /* ignore */ }
+  location.href = '/login.html';
+}
+
+window.cdsCyclePreviewMode = cdsCyclePreviewMode;
+window.cdsToggleMirror = cdsToggleMirror;
+window.cdsToggleTabTitle = cdsToggleTabTitle;
+window.cdsOpenSelfUpdate = cdsOpenSelfUpdate;
+window.cdsOpenClusterModal = cdsOpenClusterModal;
+window.cdsFactoryReset = cdsFactoryReset;
+window.cdsDoLogout = cdsDoLogout;
 
 (function () {
   'use strict';
@@ -299,6 +539,39 @@ function _projectsToggleTheme(btn) {
     );
   }
 
+  // In-flight clone indicator: a skinny yellow bar that replaces the
+  // service strip while cloneStatus is pending or cloning, and a red
+  // bar for 'error' state. For ready / undefined we render the normal
+  // service icons via renderServiceStrip(). See pollProjectsForClone()
+  // below for the 5s polling loop that drives the UX auto-transition.
+  function renderCloneProgressBar(project) {
+    var st = project.cloneStatus;
+    if (st === 'pending' || st === 'cloning') {
+      var label = st === 'cloning' ? '正在克隆…' : '待克隆';
+      return (
+        '<div style="height:120px;display:flex;align-items:center;justify-content:center;gap:10px;' +
+          'background:rgba(251,191,36,0.08);border:1px dashed rgba(251,191,36,0.45);border-radius:10px;' +
+          'color:#fbbf24;font-size:12px;font-weight:600">' +
+          '<span class="spinner" style="width:10px;height:10px;border:1.5px solid currentColor;' +
+            'border-top-color:transparent;border-radius:50%;animation:cds-spin 700ms linear infinite"></span>' +
+          escapeHtml(label) +
+        '</div>'
+      );
+    }
+    if (st === 'error') {
+      var msg = project.cloneError ? String(project.cloneError) : '克隆失败';
+      if (msg.length > 80) msg = msg.slice(0, 80) + '…';
+      return (
+        '<div style="height:120px;display:flex;align-items:center;justify-content:center;padding:10px 14px;' +
+          'background:rgba(244,63,94,0.08);border:1px dashed rgba(244,63,94,0.45);border-radius:10px;' +
+          'color:#fca5a5;font-size:11px;font-family:var(--font-mono,monospace);text-align:center;line-height:1.5">' +
+          '克隆失败：' + escapeHtml(msg) +
+        '</div>'
+      );
+    }
+    return null;
+  }
+
   function renderCard(project, services) {
     var href = '/branch-list?project=' + encodeURIComponent(project.id);
     var deleteBtn = project.legacyFlag
@@ -307,6 +580,15 @@ function _projectsToggleTheme(btn) {
         "'" + escapeHtml(project.id) + "', '" + escapeHtml(project.name) + "')\">" +
         '<svg width="14" height="14" viewBox="0 0 16 16" fill="#f43f5e" aria-hidden="true"><path d="M11 1.75V3h2.25a.75.75 0 010 1.5H2.75a.75.75 0 010-1.5H5V1.75C5 .784 5.784 0 6.75 0h2.5C10.216 0 11 .784 11 1.75zM4.496 6.675l.66 6.6a.25.25 0 00.249.225h5.19a.25.25 0 00.249-.225l.66-6.6a.75.75 0 111.492.149l-.66 6.6A1.748 1.748 0 0110.595 15h-5.19a1.75 1.75 0 01-1.741-1.575l-.66-6.6a.75.75 0 111.492-.15z"/></svg>' +
         '</button>';
+    // 🔑 授权 Agent — floats top-right next to the delete button, sits
+    // outside the <a> so its click doesn't navigate.
+    var agentKeyBtn =
+      '<button class="cds-project-card-agentkey" title="授权 Agent / 管理 Key" ' +
+      "onclick=\"handleProjectAgentKey(event, '" + escapeHtml(project.id) + "')\" " +
+      'style="position:absolute;top:10px;right:' + (project.legacyFlag ? '10' : '42') + 'px;' +
+      'width:26px;height:26px;border-radius:6px;border:1px solid var(--card-border);' +
+      'background:var(--bg-card);cursor:pointer;display:inline-flex;align-items:center;' +
+      'justify-content:center;font-size:13px;color:var(--text-secondary);padding:0">🔑</button>';
 
     var totalServices =
       ((services && services.profiles && services.profiles.length) || 0) +
@@ -315,23 +597,31 @@ function _projectsToggleTheme(btn) {
     var cloneBadge = renderCloneBadge(project);
     var cloneBtn = renderCloneButton(project);
     // Show the clone error inline under the service strip when the
-    // last attempt failed — users need to read the git message to
-    // know whether to change the URL or just retry.
-    var errorBlock = (project.cloneStatus === 'error' && project.cloneError)
+    // last attempt failed AND we're not already using the full-size
+    // progress bar in place of the service strip (otherwise the msg
+    // appears twice on 'error' state).
+    var progressBar = renderCloneProgressBar(project);
+    var errorBlock = (!progressBar && project.cloneStatus === 'error' && project.cloneError)
       ? '<div class="cds-clone-error">' + escapeHtml(project.cloneError) + '</div>'
       : '';
+
+    // Body element: either the progress bar (when cloning/pending/error)
+    // or the normal service icon strip.
+    var bodyHtml = progressBar
+      ? progressBar
+      : '<div class="cds-service-strip">' + renderServiceStrip(project, services || {}) + '</div>';
 
     // Wrap in a div so the delete button can sit OUTSIDE the <a> tag.
     // <button> inside <a> is invalid HTML — click events on the button
     // bubble to the <a> in some browsers and navigate instead of deleting.
     return [
-      '<div class="cds-project-card-wrapper">',
+      '<div class="cds-project-card-wrapper" style="position:relative">',
       '  <a class="cds-project-card" href="', href, '">',
       '    <div class="cds-project-card-head">',
       '      <div class="cds-project-card-title">', escapeHtml(project.name), '</div>',
       '      ', cloneBadge,
       '    </div>',
-      '    <div class="cds-service-strip">', renderServiceStrip(project, services || {}), '</div>',
+      '    ', bodyHtml,
       errorBlock,
       '    <div class="cds-project-card-foot">',
       '      <span class="cds-env-dot">', envLabel, '</span>',
@@ -339,10 +629,21 @@ function _projectsToggleTheme(btn) {
       cloneBtn ? '<span style="flex-shrink:0">' + cloneBtn + '</span>' : '',
       '    </div>',
       '  </a>',
+      '  ', agentKeyBtn,
       '  ', deleteBtn,
       '</div>',
     ].join('');
   }
+
+  // Expose a global click handler so the inline onclick can reach the
+  // IIFE-internal render logic without leaking the renderCard closure.
+  window.handleProjectAgentKey = function (ev, projectId) {
+    if (ev && ev.preventDefault) ev.preventDefault();
+    if (ev && ev.stopPropagation) ev.stopPropagation();
+    if (window.cdsOpenAgentKeyManager) {
+      window.cdsOpenAgentKeyManager(projectId);
+    }
+  };
 
   function renderError(message) {
     gridEl.innerHTML = '<div class="cds-grid-state error">' + escapeHtml(message) + '</div>';
@@ -384,12 +685,39 @@ function _projectsToggleTheme(btn) {
       credentials: 'same-origin',
     })
       .then(function (res) {
-        if (!res.ok) throw new Error('HTTP ' + res.status + ' ' + res.statusText);
+        if (!res.ok) {
+          // Surface the server-side error body so the user (and future
+          // bug reports) see the real reason for 4xx/5xx, not just
+          // "HTTP 400". Many CDS errors include a JSON {error,message}
+          // shape — fall back to raw text otherwise.
+          return res.text().then(function (raw) {
+            var detail = '';
+            try {
+              var parsed = JSON.parse(raw);
+              detail = parsed.message || parsed.error || raw;
+            } catch (_e) {
+              detail = raw;
+            }
+            throw new Error('HTTP ' + res.status + (detail ? ' — ' + String(detail).slice(0, 200) : ''));
+          });
+        }
         return res.json();
       })
       .then(function (data) {
         var projects = (data && data.projects) || [];
         if (projectCountEl) projectCountEl.textContent = projects.length;
+
+        // Cache by id so the pending-import drawer can look up the
+        // human-readable project name without its own /api/projects
+        // round trip. Refreshed on every loadProjects() call.
+        _projectsById = {};
+        for (var _pi = 0; _pi < projects.length; _pi++) {
+          _projectsById[projects[_pi].id] = projects[_pi];
+        }
+
+        // Drive the 5s poll only while some project is in a non-terminal
+        // clone state. Once everything is ready/error/undefined we stop.
+        _syncClonePoll(projects);
 
         if (!projects.length) {
           renderEmpty();
@@ -1268,7 +1596,12 @@ function _projectsToggleTheme(btn) {
       .then(function (result) {
         if (result.status === 201) {
           closeCreateProjectModal({ currentTarget: getModal(), target: getModal() });
-          showToast('项目 “' + payload.name + '” 已创建');
+          var adj = result.body && result.body.slugAutoAdjusted;
+          if (adj && adj.to && adj.from && adj.to !== adj.from) {
+            showToast('项目 “' + payload.name + '” 已创建（slug 自动调整为 ' + adj.to + '，原 ' + adj.from + ' 已被占用）');
+          } else {
+            showToast('项目 “' + payload.name + '” 已创建');
+          }
           loadProjects();
           var created = result.body && result.body.project;
           // P4 Part 18 (UX rework): if the new project was created
@@ -1468,6 +1801,432 @@ function _projectsToggleTheme(btn) {
     modal.classList.remove('visible');
   }
 
+  // ── Pending-import approval UI ────────────────────────────────────
+  //
+  // External agents (Claude Code running cds-project-scan etc.) submit
+  // compose YAML via POST /api/projects/:id/pending-import. A human
+  // operator sees a yellow 🔔 badge in the header and opens the right-
+  // side drawer to approve/reject each request.
+  //
+  // Polling cadence: 10s while the page is open. We cache both the
+  // project list (for name lookup) and the last imports response so
+  // the drawer renders instantly on open.
+
+  // Project id → { id, name, ... }. Populated by loadProjects() so the
+  // drawer can show "目标项目: foo" without another network call.
+  var _projectsById = {};
+
+  // Cached last pollPendingImports() response.
+  var _lastPendingImportsResp = null;
+  // Map of importId → YAML text fetched lazily from /pending-imports/:id
+  // the first time the user expands "预览 YAML" on a card.
+  var _importYamlCache = {};
+  // Map of importId → bool, tracks whether the card's "预览 YAML"
+  // collapsible section is currently expanded.
+  var _importYamlExpanded = {};
+  // Import ids currently busy with approve/reject so buttons can be
+  // disabled and double-clicks don't fire two network calls.
+  var _importBusy = {};
+
+  var PENDING_IMPORT_POLL_MS = 10000;
+  var _pendingImportPollTimer = null;
+
+  function pollPendingImports() {
+    fetch('/api/pending-imports', { credentials: 'same-origin', cache: 'no-store' })
+      .then(function (r) { return r.ok ? r.json() : null; })
+      .catch(function () { return null; })
+      .then(function (data) {
+        if (!data) return;
+        _lastPendingImportsResp = data;
+        _updatePendingImportBadge(data.pendingCount || 0);
+        // Re-render drawer body if it's currently open so the user
+        // sees approvals submitted from other tabs without a manual
+        // refresh.
+        var drawer = document.getElementById('pendingImportDrawer');
+        if (drawer && drawer.style.display === 'flex') {
+          renderPendingImportDrawer();
+        }
+      });
+  }
+
+  // Tracks the last pendingCount we rendered so we can detect a RISE
+  // (new agent submission) and trigger a short flash animation. Starts
+  // at -1 so the first load doesn't auto-flash on page reload.
+  var _lastPendingCount = -1;
+
+  function _updatePendingImportBadge(count) {
+    var btn = document.getElementById('pendingImportBadge');
+    var label = document.getElementById('pendingImportBadgeLabel');
+    var icon = document.getElementById('pendingImportBadgeIcon');
+    if (!btn || !label) return;
+    // Badge is ALWAYS visible. State toggles purely via color/label so
+    // the operator can click into history at any time even when
+    // pendingCount=0 (they want to see past申请/批准/拒绝 records).
+    btn.style.display = 'inline-flex';
+    if (count > 0) {
+      btn.setAttribute('data-state', 'active');
+      label.textContent = count + ' 个 Agent 申请配置';
+      if (icon) icon.textContent = '🔔';
+      // Flash only on a RISE from the previously observed count. Don't
+      // flash on steady state or on decrease (approvals/rejects shouldn't
+      // make it blink — only brand-new incoming requests do).
+      if (_lastPendingCount >= 0 && count > _lastPendingCount) {
+        btn.classList.remove('pi-flash');
+        // Reflow to restart the CSS animation from frame 0.
+        void btn.offsetWidth;
+        btn.classList.add('pi-flash');
+        setTimeout(function () { btn.classList.remove('pi-flash'); }, 3000);
+      }
+    } else {
+      btn.setAttribute('data-state', 'idle');
+      label.textContent = 'Agent 记录';
+      if (icon) icon.textContent = '📜';
+    }
+    _lastPendingCount = count;
+  }
+
+  function openPendingImportDrawer(targetImportId) {
+    var drawer = document.getElementById('pendingImportDrawer');
+    var backdrop = document.getElementById('pendingImportDrawerBackdrop');
+    if (!drawer || !backdrop) return;
+    backdrop.style.display = 'block';
+    drawer.style.display = 'flex';
+    // Kick the transform transition on next frame so it animates in
+    // rather than appearing instantly.
+    requestAnimationFrame(function () {
+      drawer.style.transform = 'translateX(0)';
+    });
+    drawer.setAttribute('aria-hidden', 'false');
+    // Force-refresh the list on open — the cached response may be
+    // up to 10s stale and the user specifically opened the drawer to
+    // see the current state.
+    fetch('/api/pending-imports', { credentials: 'same-origin', cache: 'no-store' })
+      .then(function (r) { return r.ok ? r.json() : null; })
+      .then(function (data) {
+        if (data) {
+          _lastPendingImportsResp = data;
+          _updatePendingImportBadge(data.pendingCount || 0);
+        }
+        renderPendingImportDrawer(targetImportId);
+      })
+      .catch(function () {
+        renderPendingImportDrawer(targetImportId);
+      });
+  }
+
+  function closePendingImportDrawer(event) {
+    if (event && event.currentTarget !== event.target) return;
+    var drawer = document.getElementById('pendingImportDrawer');
+    var backdrop = document.getElementById('pendingImportDrawerBackdrop');
+    if (!drawer || !backdrop) return;
+    drawer.style.transform = 'translateX(100%)';
+    drawer.setAttribute('aria-hidden', 'true');
+    // Hide after the transform animation completes.
+    setTimeout(function () {
+      drawer.style.display = 'none';
+      backdrop.style.display = 'none';
+    }, 200);
+  }
+
+  function renderPendingImportDrawer(scrollToImportId) {
+    var body = document.getElementById('pendingImportDrawerBody');
+    var subtitle = document.getElementById('pendingImportDrawerSubtitle');
+    if (!body) return;
+    var resp = _lastPendingImportsResp;
+    if (!resp) {
+      body.innerHTML = '<div style="padding:60px 20px;text-align:center;color:var(--text-muted);font-size:12px">加载失败，稍后重试</div>';
+      return;
+    }
+    var imports = resp.imports || [];
+    var pending = imports.filter(function (it) { return it.status === 'pending'; });
+    var decided = imports.filter(function (it) { return it.status !== 'pending'; });
+    if (subtitle) {
+      var firstImport = pending[0] || imports[0];
+      var focusPid = firstImport && firstImport.projectId;
+      subtitle.innerHTML =
+        pending.length + ' 个待处理 · ' + decided.length + ' 个最近处理' +
+        (focusPid
+          ? ' · <a href="#" style="color:var(--accent);text-decoration:underline" ' +
+            'onclick="event.preventDefault();event.stopPropagation();window.cdsOpenAgentKeyModal(\'' +
+            focusPid + '\')">签发新 Agent Key</a>'
+          : '');
+    }
+
+    if (imports.length === 0) {
+      body.innerHTML = [
+        '<div style="padding:60px 20px;text-align:center;color:var(--text-muted);font-size:12px;line-height:1.6">',
+        '  <div style="font-size:32px;margin-bottom:10px">📭</div>',
+        '  <div style="margin-bottom:6px">暂无 Agent 配置申请</div>',
+        '  <div style="font-size:11px;color:var(--text-muted);opacity:0.7">Agent 通过 <code>POST /api/projects/:id/pending-import</code> 提交的请求会出现在这里；已处理记录保留 7 天</div>',
+        '</div>',
+      ].join('');
+      return;
+    }
+
+    var html = '';
+    if (pending.length > 0) {
+      html += pending.map(renderPendingImportCard).join('');
+    }
+    if (decided.length > 0) {
+      html += [
+        '<div style="margin-top:22px;padding-top:14px;border-top:1px solid var(--card-border)">',
+        '  <div style="display:flex;align-items:baseline;justify-content:space-between;margin-bottom:10px">',
+        '    <div style="font-size:10px;font-weight:700;letter-spacing:0.1em;text-transform:uppercase;color:var(--text-muted)">最近处理（近 7 天）</div>',
+        '    <div style="font-size:10px;color:var(--text-muted);opacity:0.6">共 ' + decided.length + ' 条</div>',
+        '  </div>',
+        '  ', decided.map(renderPendingImportCard).join(''),
+        '</div>',
+      ].join('');
+    }
+    body.innerHTML = html;
+
+    // Scroll target card into view if ?pendingImport=... was passed.
+    if (scrollToImportId) {
+      var target = body.querySelector('[data-import-id="' + scrollToImportId.replace(/"/g, '') + '"]');
+      if (target && target.scrollIntoView) {
+        target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      }
+    }
+  }
+
+  function renderPendingImportCard(item) {
+    var isDecided = item.status !== 'pending';
+    var projName = (_projectsById[item.projectId] && _projectsById[item.projectId].name)
+      || ('(已删除的项目 ' + item.projectId + ')');
+    var pills = [];
+    if (item.summary) {
+      if (item.summary.addedProfiles && item.summary.addedProfiles.length > 0) {
+        pills.push('<span style="padding:2px 7px;background:rgba(59,130,246,0.15);border:1px solid rgba(59,130,246,0.35);border-radius:4px;color:#60a5fa;font-size:10px;font-weight:600">+' + item.summary.addedProfiles.length + ' profiles</span>');
+      }
+      if (item.summary.addedInfra && item.summary.addedInfra.length > 0) {
+        pills.push('<span style="padding:2px 7px;background:rgba(139,92,246,0.15);border:1px solid rgba(139,92,246,0.35);border-radius:4px;color:#a78bfa;font-size:10px;font-weight:600">+' + item.summary.addedInfra.length + ' infra</span>');
+      }
+      if (item.summary.addedEnvKeys && item.summary.addedEnvKeys.length > 0) {
+        pills.push('<span style="padding:2px 7px;background:rgba(16,185,129,0.15);border:1px solid rgba(16,185,129,0.35);border-radius:4px;color:#34d399;font-size:10px;font-weight:600">+' + item.summary.addedEnvKeys.length + ' env</span>');
+      }
+    }
+
+    var statusBadge = '';
+    if (item.status === 'approved') {
+      statusBadge = '<span style="padding:2px 8px;background:rgba(16,185,129,0.15);border:1px solid rgba(16,185,129,0.4);border-radius:4px;color:#34d399;font-size:10px;font-weight:700;letter-spacing:0.3px">已批准</span>';
+    } else if (item.status === 'rejected') {
+      statusBadge = '<span style="padding:2px 8px;background:rgba(244,63,94,0.15);border:1px solid rgba(244,63,94,0.4);border-radius:4px;color:#fca5a5;font-size:10px;font-weight:700;letter-spacing:0.3px">已拒绝</span>';
+    }
+
+    var busy = _importBusy[item.id];
+    var expanded = _importYamlExpanded[item.id];
+    var yamlText = _importYamlCache[item.id];
+    var idAttr = escapeHtml(item.id);
+
+    // Build the card body. Uses inline styles (no new CSS class needed)
+    // so the drawer is self-contained; mild opacity on decided cards.
+    var cardStyle = 'padding:14px 14px 12px;margin-bottom:12px;background:var(--bg-elevated);border:1px solid var(--card-border);border-radius:10px;' +
+      (isDecided ? 'opacity:0.7' : '');
+
+    var actions = '';
+    if (!isDecided) {
+      actions = [
+        '<div style="display:flex;gap:8px;margin-top:12px">',
+        '  <button type="button" ' + (busy ? 'disabled' : '') + ' onclick="_pendingImportApprove(\'' + idAttr + '\')" ',
+        '    style="flex:1;padding:8px 12px;background:rgba(16,185,129,0.18);border:1px solid rgba(16,185,129,0.45);border-radius:7px;color:#34d399;font-size:12px;font-weight:700;cursor:' + (busy ? 'wait' : 'pointer') + ';font-family:inherit">',
+        '    ', busy === 'approve' ? '正在应用…' : '批准并应用',
+        '  </button>',
+        '  <button type="button" ' + (busy ? 'disabled' : '') + ' onclick="_pendingImportReject(\'' + idAttr + '\')" ',
+        '    style="padding:8px 14px;background:transparent;border:1px solid rgba(244,63,94,0.45);border-radius:7px;color:#fca5a5;font-size:12px;font-weight:600;cursor:' + (busy ? 'wait' : 'pointer') + ';font-family:inherit">',
+        '    ', busy === 'reject' ? '…' : '拒绝',
+        '  </button>',
+        '</div>',
+      ].join('');
+    } else if (item.status === 'rejected' && item.rejectReason) {
+      actions = '<div style="margin-top:10px;font-size:11px;color:var(--text-muted)">拒绝理由：' + escapeHtml(item.rejectReason) + '</div>';
+    }
+
+    var yamlSection = '';
+    if (expanded) {
+      var content;
+      if (yamlText === undefined) {
+        content = '<div style="padding:12px;color:var(--text-muted);font-size:11px">正在加载 YAML…</div>';
+      } else if (yamlText === null) {
+        content = '<div style="padding:12px;color:#fca5a5;font-size:11px">YAML 加载失败</div>';
+      } else {
+        content = '<pre style="margin:0;padding:10px 12px;font-family:var(--font-mono,monospace);font-size:10.5px;line-height:1.55;color:#cbd5e1;background:#0a0a0f;border-radius:6px;max-height:280px;overflow:auto;white-space:pre;">' + escapeHtml(yamlText) + '</pre>';
+      }
+      yamlSection = (
+        '<div style="margin-top:10px">' +
+          '<button type="button" onclick="_toggleImportYaml(\'' + idAttr + '\')" ' +
+            'style="background:transparent;border:none;color:var(--text-muted);font-size:11px;cursor:pointer;padding:0;margin-bottom:6px;font-family:inherit">' +
+            '▾ 预览 YAML（点击收起）' +
+          '</button>' +
+          content +
+        '</div>'
+      );
+    } else {
+      yamlSection = (
+        '<button type="button" onclick="_toggleImportYaml(\'' + idAttr + '\')" ' +
+          'style="background:transparent;border:none;color:var(--text-muted);font-size:11px;cursor:pointer;padding:0;margin-top:8px;font-family:inherit">' +
+          '▸ 预览 YAML' +
+        '</button>'
+      );
+    }
+
+    return [
+      '<div data-import-id="', idAttr, '" style="', cardStyle, '">',
+      '  <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:4px">',
+      '    <div style="font-size:13px;font-weight:700;color:var(--text-primary);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">',
+      '      ', escapeHtml(item.agentName || '(未知 Agent)'),
+      '    </div>',
+      '    <div style="display:flex;align-items:center;gap:6px;flex-shrink:0">',
+      '      ', statusBadge,
+      '      <span style="font-size:10px;color:var(--text-muted)">', escapeHtml(formatRelative(item.submittedAt)), '</span>',
+      '    </div>',
+      '  </div>',
+      '  <div style="font-size:11px;color:var(--text-secondary);margin-bottom:6px">',
+      '    目标项目：<strong style="color:var(--text-primary)">', escapeHtml(projName), '</strong>',
+      '  </div>',
+      item.purpose
+        ? '  <div style="font-size:12px;color:var(--text-secondary);line-height:1.5;margin-bottom:8px">' + escapeHtml(item.purpose) + '</div>'
+        : '',
+      pills.length > 0
+        ? '  <div style="display:flex;flex-wrap:wrap;gap:5px;margin-bottom:4px">' + pills.join('') + '</div>'
+        : '',
+      '  ', yamlSection,
+      '  ', actions,
+      '</div>',
+    ].join('');
+  }
+
+  function _toggleImportYaml(importId) {
+    var willExpand = !_importYamlExpanded[importId];
+    _importYamlExpanded[importId] = willExpand;
+    // Lazy-load the YAML the first time the user expands the section.
+    // Cache it forever (drawer session) — YAML is immutable once
+    // submitted.
+    if (willExpand && _importYamlCache[importId] === undefined) {
+      // Re-render immediately so the "正在加载 YAML…" placeholder shows
+      renderPendingImportDrawer();
+      fetch('/api/pending-imports/' + encodeURIComponent(importId), {
+        credentials: 'same-origin',
+      })
+        .then(function (r) { return r.ok ? r.json() : null; })
+        .then(function (body) {
+          _importYamlCache[importId] = (body && body.import && body.import.composeYaml) || null;
+          if (_importYamlExpanded[importId]) renderPendingImportDrawer();
+        })
+        .catch(function () {
+          _importYamlCache[importId] = null;
+          if (_importYamlExpanded[importId]) renderPendingImportDrawer();
+        });
+    } else {
+      renderPendingImportDrawer();
+    }
+  }
+
+  function _pendingImportApprove(importId) {
+    if (_importBusy[importId]) return;
+    _importBusy[importId] = 'approve';
+    renderPendingImportDrawer();
+    fetch('/api/pending-imports/' + encodeURIComponent(importId) + '/approve', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'same-origin',
+    })
+      .then(function (res) {
+        return res.json().then(function (body) { return { status: res.status, body: body }; });
+      })
+      .then(function (result) {
+        _importBusy[importId] = null;
+        if (result.status === 200 && result.body && result.body.applied) {
+          // Look up the target project name for the toast.
+          var item = (_lastPendingImportsResp && _lastPendingImportsResp.imports || [])
+            .filter(function (it) { return it.id === importId; })[0];
+          var projName = item && _projectsById[item.projectId]
+            ? _projectsById[item.projectId].name
+            : (item ? item.projectId : '项目');
+          var profCount = (result.body.appliedProfiles || []).length;
+          showToast('已应用到 ' + projName + '（+' + profCount + ' profiles）');
+          pollPendingImports();
+          loadProjects();
+        } else {
+          var msg = (result.body && result.body.message) || ('批准失败 (HTTP ' + result.status + ')');
+          showToast('批准失败：' + msg);
+          pollPendingImports();
+        }
+      })
+      .catch(function (err) {
+        _importBusy[importId] = null;
+        showToast('网络错误：' + (err && err.message ? err.message : err));
+        renderPendingImportDrawer();
+      });
+  }
+
+  function _pendingImportReject(importId) {
+    if (_importBusy[importId]) return;
+    // Keep it dead simple per spec: window.prompt for an optional reason.
+    var reason = window.prompt('拒绝理由（可选，回车确认）：', '');
+    if (reason === null) return; // user cancelled
+    _importBusy[importId] = 'reject';
+    renderPendingImportDrawer();
+    fetch('/api/pending-imports/' + encodeURIComponent(importId) + '/reject', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'same-origin',
+      body: JSON.stringify({ reason: reason }),
+    })
+      .then(function (res) {
+        return res.json().then(function (body) { return { status: res.status, body: body }; });
+      })
+      .then(function (result) {
+        _importBusy[importId] = null;
+        if (result.status === 200) {
+          showToast('已拒绝该申请');
+        } else {
+          var msg = (result.body && result.body.message) || ('拒绝失败 (HTTP ' + result.status + ')');
+          showToast('拒绝失败：' + msg);
+        }
+        pollPendingImports();
+      })
+      .catch(function (err) {
+        _importBusy[importId] = null;
+        showToast('网络错误：' + (err && err.message ? err.message : err));
+        renderPendingImportDrawer();
+      });
+  }
+
+  function startPendingImportPoll() {
+    pollPendingImports();
+    if (_pendingImportPollTimer) clearInterval(_pendingImportPollTimer);
+    _pendingImportPollTimer = setInterval(pollPendingImports, PENDING_IMPORT_POLL_MS);
+  }
+
+  // ── Projects clone-state polling ──────────────────────────────────
+  //
+  // While any project is in a non-terminal clone state (pending/cloning)
+  // we poll /api/projects every 5s so the yellow "正在克隆…" bar flips
+  // to the normal service strip without a manual refresh. Polling
+  // self-disables when nothing non-terminal remains.
+
+  var CLONE_POLL_MS = 5000;
+  var _clonePollTimer = null;
+
+  function _hasNonTerminalClone(projects) {
+    for (var i = 0; i < (projects || []).length; i++) {
+      var st = projects[i].cloneStatus;
+      if (st === 'pending' || st === 'cloning') return true;
+    }
+    return false;
+  }
+
+  function _syncClonePoll(projects) {
+    if (_hasNonTerminalClone(projects)) {
+      if (!_clonePollTimer) {
+        _clonePollTimer = setInterval(loadProjects, CLONE_POLL_MS);
+      }
+    } else if (_clonePollTimer) {
+      clearInterval(_clonePollTimer);
+      _clonePollTimer = null;
+    }
+  }
+
   // ── End-to-end auto flow (P4 Part 18 UX rework) ───────────────────
   //
   // Once a clone completes successfully we keep the modal open and
@@ -1623,6 +2382,14 @@ function _projectsToggleTheme(btn) {
   window.handleCloneProject = handleCloneProject;
   window.closeCloneProgressModal = closeCloneProgressModal;
 
+  // Pending-import drawer handlers (called from inline onclick attributes
+  // in project-list.html and from card actions rendered as HTML strings).
+  window.openPendingImportDrawer = openPendingImportDrawer;
+  window.closePendingImportDrawer = closePendingImportDrawer;
+  window._toggleImportYaml = _toggleImportYaml;
+  window._pendingImportApprove = _pendingImportApprove;
+  window._pendingImportReject = _pendingImportReject;
+
   // P4 Part 18 (Phase E audit fix #7): close the TOPMOST visible
   // modal on ESC, not a hardcoded one. Previously ESC always
   // targeted createProjectModal, so if a user hit ESC while the
@@ -1639,6 +2406,7 @@ function _projectsToggleTheme(btn) {
     var picker = document.getElementById('githubRepoPickerModal');
     var device = document.getElementById('githubDeviceModal');
     var create = getModal();
+    var drawer = document.getElementById('pendingImportDrawer');
     if (picker && picker.classList.contains('visible')) {
       closeRepoPickerModal();
       return;
@@ -1649,23 +2417,44 @@ function _projectsToggleTheme(btn) {
     }
     if (create && create.classList.contains('visible')) {
       create.classList.remove('visible');
+      return;
+    }
+    if (drawer && drawer.style.display === 'flex') {
+      closePendingImportDrawer();
     }
   });
 
   loadProjects();
   bootstrapMeLabel();
+  startPendingImportPoll();
 
   // P4 Part 18 (UX rework): if the user arrived via projects.html?new=git
   // (e.g. from topology "+ Add → GitHub Repository"), auto-open the
   // create modal so they don't have to hunt for the New button. Also
   // strip the query string so a page refresh doesn't re-pop the modal.
+  //
+  // The cds-project-scan skill's success message includes a
+  // ?pendingImport=<id> deep link. When that query param is present,
+  // auto-open the drawer and scroll to the target card. Strip the
+  // param so a refresh doesn't re-pop the drawer.
   (function handleAutoOpenQuery() {
     try {
       var q = new URLSearchParams(location.search);
       if (q.get('new') === 'git') {
         setTimeout(openCreateProjectModal, 80);
         q.delete('new');
-        var newUrl = location.pathname + (q.toString() ? '?' + q.toString() : '') + location.hash;
+      }
+      var targetImportId = q.get('pendingImport');
+      if (targetImportId) {
+        // Give pollPendingImports() a moment to land the first response
+        // so the drawer has data to render against.
+        setTimeout(function () {
+          openPendingImportDrawer(targetImportId);
+        }, 240);
+        q.delete('pendingImport');
+      }
+      var newUrl = location.pathname + (q.toString() ? '?' + q.toString() : '') + location.hash;
+      if (newUrl !== location.pathname + location.search + location.hash) {
         window.history.replaceState(null, '', newUrl);
       }
     } catch (e) { /* no-op */ }

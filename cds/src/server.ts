@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { createBranchRouter } from './routes/branches.js';
 import { createBridgeRouter } from './routes/bridge.js';
 import { createProjectsRouter } from './routes/projects.js';
+import { createPendingImportRouter } from './routes/pending-import.js';
 import { createStorageModeRouter, type StorageModeContext } from './routes/storage-mode.js';
 import { createGithubOAuthRouter } from './routes/github-oauth.js';
 import { createAuthRouter } from './routes/auth.js';
@@ -244,6 +245,26 @@ function resolveAiSession(req: express.Request, stateService?: StateService): Ap
     const customKey = stateService?.getCustomEnv()?.['AI_ACCESS_KEY'];
     if ((processKey && headerKey === processKey) || (customKey && headerKey === customKey)) {
       return { id: 'static', agentName: 'AI (static key)', token: headerKey, approvedAt: '', expiresAt: '' };
+    }
+    // Project-scoped Agent Key (cdsp_<slugHead>_<suffix>). Matches the
+    // per-project store seeded via POST /api/projects/:id/agent-keys;
+    // returns a synthetic session AND stamps req.cdsProjectKey so the
+    // project-scoped routes can enforce "this key can only touch its
+    // own project" (see assertProjectAccess in routes/projects.ts).
+    if (stateService && headerKey.startsWith('cdsp_')) {
+      const match = stateService.findAgentKeyForAuth(headerKey);
+      if (match) {
+        stateService.touchAgentKeyLastUsed(match.projectId, match.keyId);
+        (req as unknown as { cdsProjectKey?: { projectId: string; keyId: string } })
+          .cdsProjectKey = match;
+        return {
+          id: `projkey:${match.keyId}`,
+          agentName: `AI (project key ${match.projectId})`,
+          token: headerKey,
+          approvedAt: '',
+          expiresAt: '',
+        };
+      }
     }
   }
 
@@ -591,6 +612,26 @@ export function createServer(deps: ServerDeps): express.Express {
     );
   }
 
+  // Always stamp req.cdsProjectKey for any request that carries a
+  // project-scoped Agent Key, regardless of auth mode. The auth
+  // middleware above already does this when enabled; this fallback
+  // ensures the enforcement hook (assertProjectAccess in
+  // routes/projects.ts) sees the scope even when cookie auth is
+  // disabled. Cheap no-op when the header is absent or the key is
+  // malformed.
+  app.use((req, _res, next) => {
+    const h = req.headers['x-ai-access-key'] as string | undefined;
+    if (h && h.startsWith('cdsp_') && !(req as unknown as { cdsProjectKey?: unknown }).cdsProjectKey) {
+      const match = deps.stateService.findAgentKeyForAuth(h);
+      if (match) {
+        deps.stateService.touchAgentKeyLastUsed(match.projectId, match.keyId);
+        (req as unknown as { cdsProjectKey?: { projectId: string; keyId: string } })
+          .cdsProjectKey = match;
+      }
+    }
+    next();
+  });
+
   // ── AI pairing management (requires auth) ──
   // GET /api/ai/pending — list pending pairing requests
   app.get('/api/ai/pending', (_req, res) => {
@@ -825,6 +866,10 @@ export function createServer(deps: ServerDeps): express.Express {
     config: deps.config,
     legacyProjectName: deps.config.repoRoot ? path.basename(deps.config.repoRoot) : 'prd_agent',
   }));
+  // Pending imports — agent-authored CDS compose awaiting operator approval.
+  // Mounted at /api so the nested /projects/:id/pending-import path works
+  // alongside the rest of the projects router.
+  app.use('/api', createPendingImportRouter({ stateService: deps.stateService }));
   app.use('/api', createBranchRouter({
     stateService: deps.stateService,
     worktreeService: deps.worktreeService,

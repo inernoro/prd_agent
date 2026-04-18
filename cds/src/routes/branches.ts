@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { execSync, spawn } from 'node:child_process';
 import { createGzip } from 'node:zlib';
-import { Router } from 'express';
+import { Router, type Request } from 'express';
 import { StateService } from '../services/state.js';
 import { WorktreeService } from '../services/worktree.js';
 import { resolveEffectiveProfile } from '../services/container.js';
@@ -18,6 +18,7 @@ import type { ComposeServiceDef } from '../services/compose-parser.js';
 import { combinedOutput } from '../types.js';
 import { topoSortLayers } from '../services/topo-sort.js';
 import { detectStack } from '../services/stack-detector.js';
+import { assertProjectAccess } from './projects.js';
 
 /**
  * P4 Part 18 (hardening): pre-restart sanity check for self-update.
@@ -321,11 +322,32 @@ export function createBranchRouter(deps: RouterDeps): Router {
   }
 
   // ── Helper: merged env (CDS_* auto vars + customEnv, later wins) ──
-  function getMergedEnv(): Record<string, string> {
+  //
+  // When `projectId` is supplied, two extra project-scoped vars get
+  // injected BEFORE customEnv so compose YAMLs can template against
+  // them (e.g. `MongoDB__DatabaseName: "prdagent-${CDS_PROJECT_SLUG}"`
+  // gives each project its own database without shared-mongo risks):
+  //
+  //   CDS_PROJECT_ID   — opaque project id (e.g. "50bf3eac3d02")
+  //   CDS_PROJECT_SLUG — URL-friendly slug ("prd-agent-2"); for legacy
+  //                      default project this is the repoRoot basename,
+  //                      preserving existing behaviour.
+  //
+  // customEnv always wins so an operator can override the slug-based
+  // default from the Dashboard if needed.
+  function getMergedEnv(projectId?: string): Record<string, string> {
     const cdsEnv = stateService.getCdsEnvVars();   // CDS_HOST, CDS_MONGODB_PORT, etc.
     const mirrorEnv = stateService.getMirrorEnvVars(); // npm/corepack mirror (if enabled)
     const customEnv = stateService.getCustomEnv();
-    return { ...cdsEnv, ...mirrorEnv, ...customEnv };
+    const projectEnv: Record<string, string> = {};
+    if (projectId) {
+      const project = stateService.getProject(projectId);
+      if (project) {
+        projectEnv.CDS_PROJECT_ID = project.id;
+        projectEnv.CDS_PROJECT_SLUG = project.slug;
+      }
+    }
+    return { ...cdsEnv, ...mirrorEnv, ...projectEnv, ...customEnv };
   }
 
   /** Mask sensitive env var values for trace logging */
@@ -661,20 +683,35 @@ export function createBranchRouter(deps: RouterDeps): Router {
         return;
       }
 
-      const id = StateService.slugify(branch);
-      if (stateService.getBranch(id)) {
-        res.status(409).json({ error: `分支 "${id}" 已存在` });
-        return;
-      }
-
       // P4 Part 3b: if the Dashboard passes projectId in the body, stamp
       // it on the new branch so project-scoped list queries can find it.
       // Missing value → defaults to 'default' in addBranch().
       const effectiveProjectId = projectId && typeof projectId === 'string' ? projectId : 'default';
+      // Enforce: a project-scoped Agent Key may only touch its own project.
+      const akMismatch = assertProjectAccess(req as any, effectiveProjectId);
+      if (akMismatch) {
+        res.status(akMismatch.status).json(akMismatch.body);
+        return;
+      }
       // Validate the project exists so we don't create orphans.
       const targetProject = stateService.getProject(effectiveProjectId);
       if (!targetProject) {
         res.status(400).json({ error: `未知项目: ${effectiveProjectId}` });
+        return;
+      }
+
+      // Branch ID scoping: legacy default keeps the bare slugified name
+      // for back-compat (existing URLs, saved links). Non-legacy
+      // projects auto-prefix with the project slug so two projects can
+      // each register "main" without colliding — this matches the
+      // already-scoped worktree layout below. The preview domain still
+      // resolves via `<branchId>.miduo.org`, no extra subdomain config.
+      const slugified = StateService.slugify(branch);
+      const id = targetProject.legacyFlag
+        ? slugified
+        : `${targetProject.slug}-${slugified}`;
+      if (stateService.getBranch(id)) {
+        res.status(409).json({ error: `分支 "${id}" 已存在` });
         return;
       }
 
@@ -732,6 +769,12 @@ export function createBranchRouter(deps: RouterDeps): Router {
     if (!entry) {
       res.status(404).json({ error: `分支 "${id}" 不存在` });
       return;
+    }
+    // Project-key scope check: refuse if this branch belongs to a
+    // different project than the one the key was minted for.
+    {
+      const m = assertProjectAccess(req as any, entry.projectId || 'default');
+      if (m) { res.status(m.status).json(m.body); return; }
     }
 
     // ── Cluster-aware delete ──
@@ -863,6 +906,10 @@ export function createBranchRouter(deps: RouterDeps): Router {
     if (!entry) {
       res.status(404).json({ error: `分支 "${id}" 不存在` });
       return;
+    }
+    {
+      const m = assertProjectAccess(req as any, entry.projectId || 'default');
+      if (m) { res.status(m.status).json(m.body); return; }
     }
 
     // P4 Part 18 (G1.5): same clone-ready guard as POST /branches.
@@ -1055,7 +1102,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
           svc.status = 'building';
 
           try {
-            const mergedEnv = getMergedEnv();
+            const mergedEnv = getMergedEnv(entry.projectId);
 
             // ── Trace: resolved CDS_* env vars for this service ──
             const cdsVars: Record<string, string> = {};
@@ -1275,7 +1322,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       svc.status = 'building';
 
       try {
-        const mergedEnv = getMergedEnv();
+        const mergedEnv = getMergedEnv(entry.projectId);
         await containerService.runService(entry, effectiveProfile, svc, (chunk) => {
           sendSSE(res, 'log', { profileId: profile.id, chunk });
           for (const line of chunk.split('\n')) {
@@ -1351,6 +1398,10 @@ export function createBranchRouter(deps: RouterDeps): Router {
     if (!entry) {
       res.status(404).json({ error: `分支 "${id}" 不存在` });
       return;
+    }
+    {
+      const m = assertProjectAccess(req as any, entry.projectId || 'default');
+      if (m) { res.status(m.status).json(m.body); return; }
     }
 
     // ── Cluster-aware stop ──
@@ -2179,6 +2230,10 @@ export function createBranchRouter(deps: RouterDeps): Router {
         res.status(400).json({ error: `未知项目: ${rule.projectId}` });
         return;
       }
+      {
+        const m = assertProjectAccess(req as any, rule.projectId);
+        if (m) { res.status(m.status).json(m.body); return; }
+      }
       stateService.addRoutingRule(rule);
       stateService.save();
       res.status(201).json({ rule });
@@ -2248,6 +2303,10 @@ export function createBranchRouter(deps: RouterDeps): Router {
       if (!stateService.getProject(profile.projectId)) {
         res.status(400).json({ error: `未知项目: ${profile.projectId}` });
         return;
+      }
+      {
+        const m = assertProjectAccess(req as any, profile.projectId);
+        if (m) { res.status(m.status).json(m.body); return; }
       }
       stateService.addBuildProfile(profile);
       stateService.save();
@@ -2395,21 +2454,120 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
   // ── Quickstart: seed default build profiles for this project ──
 
-  router.post('/quickstart', (_req, res) => {
-    const existing = stateService.getBuildProfiles();
+  router.post('/quickstart', (req, res) => {
+    // Resolve project scope: ?project=<id> query, body.projectId, or
+    // legacy 'default'. Without scoping, every project shared the
+    // global build-profile list and "快速开始" on a fresh project
+    // failed with 409 because the legacy project's profiles already
+    // existed.
+    const queryProject = typeof req.query.project === 'string' ? req.query.project : null;
+    const bodyProject = (req.body && typeof req.body.projectId === 'string') ? req.body.projectId : null;
+    const projectId = bodyProject || queryProject || 'default';
+    if (!stateService.getProject(projectId)) {
+      res.status(400).json({ error: `未知项目: ${projectId}` });
+      return;
+    }
+
+    const existing = stateService.getBuildProfilesForProject(projectId);
     if (existing.length > 0) {
       res.status(409).json({ error: '构建配置已存在。请先删除现有配置或手动添加。' });
       return;
     }
 
-    // Auto-detect package manager for admin panel
-    const adminDir = path.join(config.repoRoot, 'prd-admin');
+    // Use the project's actual repo root so stack detection looks at
+    // the right tree. Legacy projects (no per-project repoPath) fall
+    // back to config.repoRoot via getProjectRepoRoot.
+    const projectRepoRoot = stateService.getProjectRepoRoot(projectId, config.repoRoot);
+    const adminDir = path.join(projectRepoRoot, 'prd-admin');
     const pm = fs.existsSync(adminDir) ? detectPackageManager(adminDir) : 'npm';
     const nodeCmd = nodeProfileCommands(pm);
 
+    // Look up the project up-front — we need the slug both for the
+    // suffix convention (Task 2) and for all downstream ID collisions.
+    // getProject can't be undefined here because we already validated
+    // projectId above, but TS still needs the narrow.
+    const project = stateService.getProject(projectId);
+    const projectSlug = project?.slug || projectId;
+
+    // addBuildProfile guards on global id uniqueness — the legacy
+    // project already owns "api" / "admin" so non-legacy projects
+    // must suffix their ids. Suffix uses the project slug (human
+    // readable, e.g. "api-prd-agent-2") instead of the first 8 hex
+    // chars of the id, because slugs survive state.json migrations
+    // while hex UUIDs look like random noise in the topology view.
+    const idSuffix = projectId === 'default' ? '' : `-${projectSlug}`;
+
+    // Task 1: prefer the project's own cds-compose.yaml over the
+    // hardcoded template. This fixes the Redis-connect crash on forked
+    // projects — the template was missing MongoDB/Redis/JWT env vars,
+    // while cds-compose.yaml carries the full runtime contract.
+    let composeYaml: string | null = null;
+    for (const filename of ['cds-compose.yaml', 'cds-compose.yml']) {
+      const composePath = path.join(projectRepoRoot, filename);
+      if (fs.existsSync(composePath)) {
+        try {
+          composeYaml = fs.readFileSync(composePath, 'utf8');
+          break;
+        } catch {
+          // Fall through to the next candidate / hardcoded template.
+        }
+      }
+    }
+
+    if (composeYaml) {
+      const parsed = parseCdsCompose(composeYaml);
+      if (parsed && parsed.buildProfiles.length > 0) {
+        const seeded: BuildProfile[] = [];
+        for (const bp of parsed.buildProfiles) {
+          const profile: BuildProfile = {
+            ...bp,
+            id: `${bp.id}${idSuffix}`,
+            projectId,
+          };
+          stateService.addBuildProfile(profile);
+          seeded.push(profile);
+        }
+
+        // Merge envVars — never clobber existing legacy customEnv keys.
+        // The import page / manual env edits are treated as authoritative
+        // over the baked-in defaults in cds-compose.yaml.
+        const existingEnv = stateService.getCustomEnv();
+        for (const [key, value] of Object.entries(parsed.envVars)) {
+          if (existingEnv[key] === undefined) {
+            stateService.setCustomEnvVar(key, value);
+          }
+        }
+
+        // Add infra services only when this project doesn't already
+        // have one with the same id. Scope to projectId so two projects
+        // can both declare their own `mongo` without colliding in the
+        // global infraServices list.
+        const existingInfra = stateService.getInfraServicesForProject(projectId);
+        const existingInfraIds = new Set(existingInfra.map(s => s.id));
+        for (const def of parsed.infraServices) {
+          if (existingInfraIds.has(def.id)) continue;
+          const service = composeDefToInfraService(def);
+          service.projectId = projectId;
+          stateService.addInfraService(service);
+        }
+
+        stateService.save();
+
+        res.status(201).json({
+          message: `快速启动: 已从 cds-compose.yaml 创建 ${seeded.length} 个构建配置`,
+          profiles: seeded,
+          detectedPackageManager: pm,
+          source: 'cds-compose',
+        });
+        return;
+      }
+    }
+
+    // Fallback: hardcoded template (pre-cds-compose.yaml projects).
     const defaults: BuildProfile[] = [
       {
         id: 'api',
+        projectId,
         name: 'Backend API (.NET 8)',
         dockerImage: 'mcr.microsoft.com/dotnet/sdk:8.0',
         workDir: 'prd-api',
@@ -2421,6 +2579,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       },
       {
         id: 'admin',
+        projectId,
         name: 'Admin Panel (Vite)',
         dockerImage: 'node:20-slim',
         workDir: 'prd-admin',
@@ -2435,6 +2594,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
     ];
 
     for (const profile of defaults) {
+      profile.id = `${profile.id}${idSuffix}`;
       stateService.addBuildProfile(profile);
     }
     stateService.save();
@@ -2443,6 +2603,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       message: `快速启动: 已创建 ${defaults.length} 个构建配置 (检测到包管理器: ${pm})`,
       profiles: defaults,
       detectedPackageManager: pm,
+      source: 'template',
     });
   });
 
@@ -2651,6 +2812,59 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
   // ── Cleanup all non-default branches ──
 
+  // ── Cleanup cross-project service pollution ──
+  //
+  // During the pre-project-scoped era a branch's entry.services could
+  // accidentally collect service records for profiles that belong to
+  // OTHER projects (most often when a deploy iterated the global
+  // buildProfiles list rather than project-scoped). After fixing the
+  // root cause, these stale entries still sit in state.json and show
+  // up in the dashboard as ghost chips.
+  //
+  // This endpoint walks every branch, cross-references its entry.services
+  // against the set of profiles that actually belong to its projectId,
+  // and drops any entry whose profile belongs to someone else. It also
+  // best-effort stops the orphan container if any is running.
+  //
+  // Idempotent, safe to run multiple times. Returns a summary so the
+  // operator can see what was trimmed.
+  router.post('/cleanup-cross-project-services', async (_req, res) => {
+    try {
+      const allBranches = Object.values(stateService.getState().branches || {});
+      const trimmed: Array<{ branchId: string; dropped: string[] }> = [];
+
+      for (const entry of allBranches) {
+        const ownProjectId = entry.projectId || 'default';
+        const ownProfileIds = new Set(
+          stateService.getBuildProfilesForProject(ownProjectId).map((p) => p.id),
+        );
+        const dropped: string[] = [];
+        for (const profileId of Object.keys(entry.services || {})) {
+          if (!ownProfileIds.has(profileId)) {
+            // Best-effort stop the orphan container.
+            const svc = entry.services[profileId];
+            if (svc?.containerName) {
+              try { await containerService.stop(svc.containerName); } catch { /* already gone */ }
+            }
+            delete entry.services[profileId];
+            dropped.push(profileId);
+          }
+        }
+        if (dropped.length > 0) {
+          trimmed.push({ branchId: entry.id, dropped });
+        }
+      }
+      if (trimmed.length > 0) stateService.save();
+
+      res.json({
+        trimmedCount: trimmed.reduce((a, t) => a + t.dropped.length, 0),
+        branches: trimmed,
+      });
+    } catch (err) {
+      res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
   router.post('/cleanup', async (_req, res) => {
     initSSE(res);
     try {
@@ -2680,30 +2894,61 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
   // ── Cleanup orphan branches: remove local branches that no longer exist on remote ──
 
-  router.post('/cleanup-orphans', async (_req, res) => {
+  router.post('/cleanup-orphans', async (req, res) => {
     initSSE(res);
     try {
-      // Step 1: fetch remote to get latest branch list
-      sendSSE(res, 'step', { step: 'fetch', status: 'running', title: '正在拉取远程分支列表...' });
-      await shell.exec(
-        'GIT_TERMINAL_PROMPT=0 git fetch origin --prune',
-        { cwd: config.repoRoot, timeout: 30_000 },
-      );
+      // Optional ?project=<id> filter — when the Dashboard is on a
+      // specific project page, we only scan/clean that project's
+      // branches. Without the filter we fan out to every project so
+      // a global "cleanup orphans" from the top-level still works.
+      const projectFilter = typeof req.query.project === 'string' ? req.query.project : null;
 
-      // Get all remote branch names
-      const result = await shell.exec(
-        'git for-each-ref --format="%(refname:lstrip=3)" refs/remotes/origin',
-        { cwd: config.repoRoot },
-      );
-      const remoteBranches = new Set(
-        result.stdout.trim().split('\n').filter(Boolean).filter(b => b !== 'HEAD'),
-      );
-      sendSSE(res, 'step', { step: 'fetch', status: 'done', title: `远程共 ${remoteBranches.size} 个分支` });
+      const projects = projectFilter
+        ? [stateService.getProject(projectFilter)].filter(Boolean) as ReturnType<typeof stateService.getProjects>
+        : stateService.getProjects();
 
-      // Step 2: identify orphans (local CDS branches whose git branch no longer exists on remote)
-      const state = stateService.getState();
-      const allLocal = Object.values(state.branches);
-      const orphans = allLocal.filter(b => !remoteBranches.has(b.branch));
+      if (projects.length === 0) {
+        sendSSE(res, 'complete', { message: projectFilter ? `未知项目: ${projectFilter}` : '没有项目', orphanCount: 0 });
+        res.end();
+        return;
+      }
+
+      // Per-project: resolve repoRoot, fetch remote, intersect with that
+      // project's branch entries. Legacy projects without a custom
+      // repoPath fall back to config.repoRoot via getProjectRepoRoot.
+      // A project whose clone isn't ready (cloneStatus !== 'ready')
+      // is skipped — it has no remote to check against.
+      const allOrphans: BranchEntry[] = [];
+      for (const project of projects) {
+        if (project.cloneStatus && project.cloneStatus !== 'ready') {
+          sendSSE(res, 'step', { step: `skip-${project.id}`, status: 'info', title: `跳过项目 ${project.name}（clone 未就绪）` });
+          continue;
+        }
+        const projectRepoRoot = stateService.getProjectRepoRoot(project.id, config.repoRoot);
+        sendSSE(res, 'step', { step: `fetch-${project.id}`, status: 'running', title: `拉取 ${project.name} 的远程分支...` });
+        try {
+          await shell.exec(
+            'GIT_TERMINAL_PROMPT=0 git fetch origin --prune',
+            { cwd: projectRepoRoot, timeout: 30_000 },
+          );
+        } catch (err) {
+          sendSSE(res, 'step', { step: `fetch-${project.id}`, status: 'error', title: `${project.name} fetch 失败: ${(err as Error).message}` });
+          continue;
+        }
+        const result = await shell.exec(
+          'git for-each-ref --format="%(refname:lstrip=3)" refs/remotes/origin',
+          { cwd: projectRepoRoot },
+        );
+        const remoteBranches = new Set(
+          result.stdout.trim().split('\n').filter(Boolean).filter(b => b !== 'HEAD'),
+        );
+        const projectBranches = stateService.getBranchesForProject(project.id);
+        const projectOrphans = projectBranches.filter(b => !remoteBranches.has(b.branch));
+        sendSSE(res, 'step', { step: `fetch-${project.id}`, status: 'done', title: `${project.name}: 远程 ${remoteBranches.size} 个分支, 本地 ${projectBranches.length} 个, 孤儿 ${projectOrphans.length} 个` });
+        allOrphans.push(...projectOrphans);
+      }
+
+      const orphans = allOrphans;
 
       if (orphans.length === 0) {
         sendSSE(res, 'complete', { message: '没有发现孤儿分支，一切正常', orphanCount: 0 });
@@ -2750,61 +2995,75 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
   // ── Prune stale local git branches not in CDS deployment list ──
 
-  router.post('/prune-stale-branches', async (_req, res) => {
+  router.post('/prune-stale-branches', async (req, res) => {
     initSSE(res);
     try {
-      // Step 1: get current branch + CDS deployment branches
-      const currentResult = await shell.exec('git rev-parse --abbrev-ref HEAD', { cwd: config.repoRoot });
-      const currentBranch = currentResult.stdout.trim();
+      // Optional ?project=<id> filter — same semantics as cleanup-orphans.
+      // Without a filter we walk every project so state-level "prune
+      // everything" still works. Each project has its own git repo and
+      // its own list of deployed branches, so the protected set is
+      // computed per-project.
+      const projectFilter = typeof req.query.project === 'string' ? req.query.project : null;
+      const projects = projectFilter
+        ? [stateService.getProject(projectFilter)].filter(Boolean) as ReturnType<typeof stateService.getProjects>
+        : stateService.getProjects();
 
-      const state = stateService.getState();
-      const deployedBranches = new Set(
-        Object.values(state.branches).map(b => b.branch),
-      );
-      // Always keep current branch and common defaults
-      const protectedBranches = new Set([currentBranch, 'main', 'master', 'develop', 'dev']);
-
-      sendSSE(res, 'step', { step: 'scan', status: 'running', title: '正在扫描本地分支...' });
-
-      // Step 2: list all local branches
-      const localResult = await shell.exec('git branch --format="%(refname:short)"', { cwd: config.repoRoot });
-      const localBranches = localResult.stdout.trim().split('\n').filter(Boolean);
-
-      // Step 3: identify stale branches (not deployed, not protected)
-      const staleBranches = localBranches.filter(b =>
-        !deployedBranches.has(b) && !protectedBranches.has(b),
-      );
-
-      sendSSE(res, 'step', {
-        step: 'scan', status: 'done',
-        title: `本地 ${localBranches.length} 个分支，已部署 ${deployedBranches.size} 个，保护 ${protectedBranches.size} 个`,
-      });
-
-      if (staleBranches.length === 0) {
-        sendSSE(res, 'complete', { message: '没有需要清理的分支', pruneCount: 0 });
+      if (projects.length === 0) {
+        sendSSE(res, 'complete', { message: projectFilter ? `未知项目: ${projectFilter}` : '没有项目', pruneCount: 0 });
         res.end();
         return;
       }
 
-      sendSSE(res, 'step', {
-        step: 'list', status: 'info',
-        title: `发现 ${staleBranches.length} 个非列表分支待清理`,
-      });
+      let totalPruned = 0;
+      for (const project of projects) {
+        if (project.cloneStatus && project.cloneStatus !== 'ready') {
+          sendSSE(res, 'step', { step: `skip-${project.id}`, status: 'info', title: `跳过项目 ${project.name}（clone 未就绪）` });
+          continue;
+        }
+        const projectRepoRoot = stateService.getProjectRepoRoot(project.id, config.repoRoot);
 
-      // Step 4: delete each stale branch
-      let pruned = 0;
-      for (const branch of staleBranches) {
-        sendSSE(res, 'step', { step: `del-${branch}`, status: 'running', title: `正在删除 ${branch}...` });
+        // What's "deployed" for this project = the branches we've
+        // registered in CDS under this projectId. Cross-project
+        // branches (e.g. default's 'main' when scanning prd-agent-2)
+        // must NOT be considered deployed here, or we'd keep fork
+        // branches named 'main' as stale just because default has one.
+        const projectDeployed = new Set(
+          stateService.getBranchesForProject(project.id).map(b => b.branch),
+        );
+
+        let currentBranch = '';
         try {
-          await shell.exec(`git branch -D "${branch}"`, { cwd: config.repoRoot });
-          pruned++;
-          sendSSE(res, 'step', { step: `del-${branch}`, status: 'done', title: `已删除 ${branch}` });
-        } catch (err) {
-          sendSSE(res, 'step', { step: `del-${branch}`, status: 'error', title: `删除失败 ${branch}: ${(err as Error).message}` });
+          const currentResult = await shell.exec('git rev-parse --abbrev-ref HEAD', { cwd: projectRepoRoot });
+          currentBranch = currentResult.stdout.trim();
+        } catch {
+          sendSSE(res, 'step', { step: `scan-${project.id}`, status: 'error', title: `${project.name}: 读 HEAD 失败` });
+          continue;
+        }
+        const protectedBranches = new Set([currentBranch, 'main', 'master', 'develop', 'dev']);
+
+        sendSSE(res, 'step', { step: `scan-${project.id}`, status: 'running', title: `扫描 ${project.name} 的本地分支...` });
+        const localResult = await shell.exec('git branch --format="%(refname:short)"', { cwd: projectRepoRoot });
+        const localBranches = localResult.stdout.trim().split('\n').filter(Boolean);
+        const staleBranches = localBranches.filter(b =>
+          !projectDeployed.has(b) && !protectedBranches.has(b),
+        );
+        sendSSE(res, 'step', {
+          step: `scan-${project.id}`, status: 'done',
+          title: `${project.name}: 本地 ${localBranches.length}, 已部署 ${projectDeployed.size}, 待清 ${staleBranches.length}`,
+        });
+        for (const branch of staleBranches) {
+          sendSSE(res, 'step', { step: `del-${project.id}-${branch}`, status: 'running', title: `删除 ${project.name} / ${branch}...` });
+          try {
+            await shell.exec(`git branch -D "${branch}"`, { cwd: projectRepoRoot });
+            totalPruned++;
+            sendSSE(res, 'step', { step: `del-${project.id}-${branch}`, status: 'done', title: `已删除 ${project.name} / ${branch}` });
+          } catch (err) {
+            sendSSE(res, 'step', { step: `del-${project.id}-${branch}`, status: 'error', title: `删除失败 ${project.name} / ${branch}: ${(err as Error).message}` });
+          }
         }
       }
 
-      sendSSE(res, 'complete', { message: `已清理 ${pruned} 个非列表分支`, pruneCount: pruned });
+      sendSSE(res, 'complete', { message: `已清理 ${totalPruned} 个非列表分支`, pruneCount: totalPruned });
     } catch (err) {
       sendSSE(res, 'error', { message: (err as Error).message });
     } finally {
@@ -2926,6 +3185,25 @@ export function createBranchRouter(deps: RouterDeps): Router {
     }
   });
 
+  /**
+   * Resolve the project context for /infra/:id routes.
+   *
+   * Reads ?project=<id> from the query string first. If absent, and the
+   * global lookup of `id` yields exactly one match, uses that match's
+   * projectId (back-compat for clients that don't know about projects).
+   * If the global lookup yields multiple matches across projects,
+   * returns null so the caller can 400 with a clear "which project?"
+   * message instead of silently operating on the wrong one.
+   */
+  function resolveInfraProject(req: Request, id: string): { projectId: string } | { ambiguous: string[] } | null {
+    const q = typeof req.query.project === 'string' ? req.query.project : null;
+    if (q) return { projectId: q };
+    const all = stateService.getInfraServices().filter(s => s.id === id);
+    if (all.length === 0) return null;
+    if (all.length === 1) return { projectId: all[0].projectId || 'default' };
+    return { ambiguous: all.map(s => s.projectId || 'default') };
+  }
+
   router.post('/infra', async (req, res) => {
     try {
       const body = req.body as Partial<InfraService>;
@@ -2934,17 +3212,25 @@ export function createBranchRouter(deps: RouterDeps): Router {
         res.status(400).json({ error: 'id、Docker 镜像和容器端口为必填项' });
         return;
       }
-      // P4 Part 16 (B1 fix): honor project scope — projectId from body
-      // or ?project= query string. Without this, infra services created
-      // from any non-legacy project's topology view silently land in
-      // the legacy 'default' project.
       const queryProject = typeof req.query.project === 'string' ? req.query.project : null;
       const projectId = body.projectId || queryProject || 'default';
-      if (!stateService.getProject(projectId)) {
+      const targetProject = stateService.getProject(projectId);
+      if (!targetProject) {
         res.status(400).json({ error: `未知项目: ${projectId}` });
         return;
       }
+      {
+        const m = assertProjectAccess(req as any, projectId);
+        if (m) { res.status(m.status).json(m.body); return; }
+      }
       const hostPort = stateService.allocatePort(config.portStart);
+      // Container name must be globally unique in Docker. Legacy project
+      // keeps the bare `cds-infra-<id>` format for back-compat (existing
+      // running containers match). Non-legacy projects get the project
+      // slug head prefixed so two projects can each own `mongodb`.
+      const containerName = targetProject.legacyFlag
+        ? `cds-infra-${body.id}`
+        : `cds-infra-${targetProject.slug.slice(0, 12)}-${body.id}`;
       const service: InfraService = {
         id: body.id,
         projectId,
@@ -2952,7 +3238,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
         dockerImage: body.dockerImage,
         containerPort: body.containerPort,
         hostPort,
-        containerName: `cds-infra-${body.id}`,
+        containerName,
         status: 'stopped',
         volumes: body.volumes || [],
         env: body.env || {},
@@ -2972,7 +3258,17 @@ export function createBranchRouter(deps: RouterDeps): Router {
   router.put('/infra/:id', (req, res) => {
     try {
       const updates = req.body as Partial<InfraService>;
-      stateService.updateInfraService(req.params.id, updates);
+      const resolved = resolveInfraProject(req, req.params.id);
+      if (!resolved) { res.status(404).json({ error: `基础设施服务 "${req.params.id}" 不存在` }); return; }
+      if ('ambiguous' in resolved) {
+        res.status(400).json({ error: `基础设施服务 "${req.params.id}" 在多个项目存在 (${resolved.ambiguous.join(', ')})，请带 ?project=<id>` });
+        return;
+      }
+      {
+        const m = assertProjectAccess(req as any, resolved.projectId);
+        if (m) { res.status(m.status).json(m.body); return; }
+      }
+      stateService.updateInfraService(req.params.id, updates, resolved.projectId);
       stateService.save();
       res.json({ message: '已更新' });
     } catch (err) {
@@ -2982,15 +3278,19 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
   router.delete('/infra/:id', async (req, res) => {
     const { id } = req.params;
-    const service = stateService.getInfraService(id);
-    if (!service) {
-      res.status(404).json({ error: `基础设施服务 "${id}" 不存在` });
+    const resolved = resolveInfraProject(req, id);
+    if (!resolved) { res.status(404).json({ error: `基础设施服务 "${id}" 不存在` }); return; }
+    if ('ambiguous' in resolved) {
+      res.status(400).json({ error: `基础设施服务 "${id}" 在多个项目存在 (${resolved.ambiguous.join(', ')})，请带 ?project=<id>` });
       return;
     }
+    const m = assertProjectAccess(req as any, resolved.projectId);
+    if (m) { res.status(m.status).json(m.body); return; }
+    const service = stateService.getInfraServiceForProjectAndId(resolved.projectId, id);
+    if (!service) { res.status(404).json({ error: `基础设施服务 "${id}" 不存在` }); return; }
     try {
-      // Stop container if running
       try { await containerService.stopInfraService(service.containerName); } catch { /* ok */ }
-      stateService.removeInfraService(id);
+      stateService.removeInfraService(id, resolved.projectId);
       stateService.save();
       res.json({ message: `已删除基础设施服务 "${id}"` });
     } catch (err) {
@@ -3000,18 +3300,23 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
   router.post('/infra/:id/start', async (req, res) => {
     const { id } = req.params;
-    const service = stateService.getInfraService(id);
-    if (!service) {
-      res.status(404).json({ error: `基础设施服务 "${id}" 不存在` });
+    const resolved = resolveInfraProject(req, id);
+    if (!resolved) { res.status(404).json({ error: `基础设施服务 "${id}" 不存在` }); return; }
+    if ('ambiguous' in resolved) {
+      res.status(400).json({ error: `基础设施服务 "${id}" 在多个项目存在 (${resolved.ambiguous.join(', ')})，请带 ?project=<id>` });
       return;
     }
+    const m = assertProjectAccess(req as any, resolved.projectId);
+    if (m) { res.status(m.status).json(m.body); return; }
+    const service = stateService.getInfraServiceForProjectAndId(resolved.projectId, id);
+    if (!service) { res.status(404).json({ error: `基础设施服务 "${id}" 不存在` }); return; }
     try {
       await containerService.startInfraService(service);
-      stateService.updateInfraService(id, { status: 'running', errorMessage: undefined });
+      stateService.updateInfraService(id, { status: 'running', errorMessage: undefined }, resolved.projectId);
       stateService.save();
-      res.json({ message: `基础设施服务 "${id}" 已启动`, service: stateService.getInfraService(id) });
+      res.json({ message: `基础设施服务 "${id}" 已启动`, service: stateService.getInfraServiceForProjectAndId(resolved.projectId, id) });
     } catch (err) {
-      stateService.updateInfraService(id, { status: 'error', errorMessage: (err as Error).message });
+      stateService.updateInfraService(id, { status: 'error', errorMessage: (err as Error).message }, resolved.projectId);
       stateService.save();
       res.status(500).json({ error: (err as Error).message });
     }
@@ -3019,14 +3324,19 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
   router.post('/infra/:id/stop', async (req, res) => {
     const { id } = req.params;
-    const service = stateService.getInfraService(id);
-    if (!service) {
-      res.status(404).json({ error: `基础设施服务 "${id}" 不存在` });
+    const resolved = resolveInfraProject(req, id);
+    if (!resolved) { res.status(404).json({ error: `基础设施服务 "${id}" 不存在` }); return; }
+    if ('ambiguous' in resolved) {
+      res.status(400).json({ error: `基础设施服务 "${id}" 在多个项目存在 (${resolved.ambiguous.join(', ')})，请带 ?project=<id>` });
       return;
     }
+    const m = assertProjectAccess(req as any, resolved.projectId);
+    if (m) { res.status(m.status).json(m.body); return; }
+    const service = stateService.getInfraServiceForProjectAndId(resolved.projectId, id);
+    if (!service) { res.status(404).json({ error: `基础设施服务 "${id}" 不存在` }); return; }
     try {
       await containerService.stopInfraService(service.containerName);
-      stateService.updateInfraService(id, { status: 'stopped' });
+      stateService.updateInfraService(id, { status: 'stopped' }, resolved.projectId);
       stateService.save();
       res.json({ message: `基础设施服务 "${id}" 已停止` });
     } catch (err) {
@@ -3036,19 +3346,24 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
   router.post('/infra/:id/restart', async (req, res) => {
     const { id } = req.params;
-    const service = stateService.getInfraService(id);
-    if (!service) {
-      res.status(404).json({ error: `基础设施服务 "${id}" 不存在` });
+    const resolved = resolveInfraProject(req, id);
+    if (!resolved) { res.status(404).json({ error: `基础设施服务 "${id}" 不存在` }); return; }
+    if ('ambiguous' in resolved) {
+      res.status(400).json({ error: `基础设施服务 "${id}" 在多个项目存在 (${resolved.ambiguous.join(', ')})，请带 ?project=<id>` });
       return;
     }
+    const m = assertProjectAccess(req as any, resolved.projectId);
+    if (m) { res.status(m.status).json(m.body); return; }
+    const service = stateService.getInfraServiceForProjectAndId(resolved.projectId, id);
+    if (!service) { res.status(404).json({ error: `基础设施服务 "${id}" 不存在` }); return; }
     try {
       try { await containerService.stopInfraService(service.containerName); } catch { /* ok */ }
       await containerService.startInfraService(service);
-      stateService.updateInfraService(id, { status: 'running', errorMessage: undefined });
+      stateService.updateInfraService(id, { status: 'running', errorMessage: undefined }, resolved.projectId);
       stateService.save();
-      res.json({ message: `基础设施服务 "${id}" 已重启`, service: stateService.getInfraService(id) });
+      res.json({ message: `基础设施服务 "${id}" 已重启`, service: stateService.getInfraServiceForProjectAndId(resolved.projectId, id) });
     } catch (err) {
-      stateService.updateInfraService(id, { status: 'error', errorMessage: (err as Error).message });
+      stateService.updateInfraService(id, { status: 'error', errorMessage: (err as Error).message }, resolved.projectId);
       stateService.save();
       res.status(500).json({ error: (err as Error).message });
     }
@@ -3056,11 +3371,14 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
   router.get('/infra/:id/logs', async (req, res) => {
     const { id } = req.params;
-    const service = stateService.getInfraService(id);
-    if (!service) {
-      res.status(404).json({ error: `基础设施服务 "${id}" 不存在` });
+    const resolved = resolveInfraProject(req, id);
+    if (!resolved) { res.status(404).json({ error: `基础设施服务 "${id}" 不存在` }); return; }
+    if ('ambiguous' in resolved) {
+      res.status(400).json({ error: `基础设施服务 "${id}" 在多个项目存在 (${resolved.ambiguous.join(', ')})，请带 ?project=<id>` });
       return;
     }
+    const service = stateService.getInfraServiceForProjectAndId(resolved.projectId, id);
+    if (!service) { res.status(404).json({ error: `基础设施服务 "${id}" 不存在` }); return; }
     try {
       const logs = await containerService.getLogs(service.containerName);
       res.json({ logs });
@@ -3724,7 +4042,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
         }
         stateService.save();
 
-        const mergedEnv = getMergedEnv();
+        const mergedEnv = getMergedEnv(entry.projectId);
 
         for (const profile of profiles) {
           const svc = entry.services[profile.id];

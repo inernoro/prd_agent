@@ -1193,7 +1193,10 @@ function filterBranches() {
       html += matchedLocal.map(b => {
         const isRunning = b.status === 'running';
         const statusText = statusLabel(b.status);
-        const services = Object.entries(b.services || {});
+        // Same defensive filter as the main branch list render — drop
+        // services whose profile isn't in the current project's list.
+        const knownIds = new Set(buildProfiles.map(p => p.id));
+        const services = Object.entries(b.services || {}).filter(([pid]) => knownIds.has(pid));
         const portText = services.length > 0 ? services.map(([pid, svc]) => `:${svc.hostPort}`).join(' ') : '';
         return `
         <div class="branch-dropdown-item branch-dropdown-local" onclick="scrollToAndHighlight('${esc(b.id)}')">
@@ -3079,55 +3082,16 @@ function toggleSettingsMenu(event) {
       <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M8 0a8 8 0 100 16A8 8 0 008 0zM1.5 8a6.5 6.5 0 0113 0h-2.1a8.3 8.3 0 00-.4-2.2 9 9 0 00-1-1.9A4.5 4.5 0 017 7.5H4.5A8.3 8.3 0 001.5 8zm5.5 5.5a6.5 6.5 0 01-5.4-3h2.3c.3 1.2.8 2.2 1.5 3H7zm1-5.5a7.8 7.8 0 014-3.8c.5.6.9 1.2 1.2 1.8H8zm0 1h5.4a8.3 8.3 0 01-.3 2H8.9 8V9zm0 3h3.8c-.6 1.3-1.5 2.4-2.8 3A6.5 6.5 0 018 9z"/></svg>
       路由规则
     </div>
-    <div class="settings-menu-item" onclick="closeSettingsMenu(); openClusterModal()">
-      <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M3 2.5a.5.5 0 01.5-.5h9a.5.5 0 01.5.5v2a.5.5 0 01-.5.5h-9a.5.5 0 01-.5-.5v-2zM3.5 1A1.5 1.5 0 002 2.5v2A1.5 1.5 0 003.5 6h9A1.5 1.5 0 0014 4.5v-2A1.5 1.5 0 0012.5 1h-9zM3 7.5a.5.5 0 01.5-.5h9a.5.5 0 01.5.5v2a.5.5 0 01-.5.5h-9a.5.5 0 01-.5-.5v-2zM3.5 6A1.5 1.5 0 002 7.5v2A1.5 1.5 0 003.5 11h9A1.5 1.5 0 0014 9.5v-2A1.5 1.5 0 0012.5 6h-9zm0 6A1.5 1.5 0 002 13.5v1A1.5 1.5 0 003.5 16h9a1.5 1.5 0 001.5-1.5v-1a1.5 1.5 0 00-1.5-1.5h-9zm0 1h9a.5.5 0 01.5.5v1a.5.5 0 01-.5.5h-9a.5.5 0 01-.5-.5v-1a.5.5 0 01.5-.5z"/></svg>
-      集群
-      <span id="clusterStatusBadge" style="margin-left:auto;font-size:11px;color:#8b949e"></span>
-    </div>
-    ${(clusterEffectiveRole === 'executor' || clusterEffectiveRole === 'hybrid') ? `
-    <div class="settings-menu-item danger" onclick="closeSettingsMenu(); doLeaveCluster()">
-      <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M2 2.75C2 1.784 2.784 1 3.75 1h2.5a.75.75 0 010 1.5h-2.5a.25.25 0 00-.25.25v10.5c0 .138.112.25.25.25h2.5a.75.75 0 010 1.5h-2.5A1.75 1.75 0 012 13.25V2.75zm10.44 4.5H6.75a.75.75 0 000 1.5h5.69l-1.97 1.97a.749.749 0 101.06 1.06l3.25-3.25a.749.749 0 000-1.06l-3.25-3.25a.749.749 0 10-1.06 1.06l1.97 1.97z"/></svg>
-      退出集群
-      <span style="margin-left:auto;font-size:11px;color:#8b949e">${clusterEffectiveRole === 'hybrid' ? '混合模式' : '执行器'}</span>
-    </div>
-    ` : ''}
-    <div class="settings-menu-item settings-menu-switch" onclick="cyclePreviewMode()">
-      <span class="settings-menu-switch-label">预览模式</span>
-      <span class="preview-mode-label" style="margin-left:auto;font-size:11px;color:#58a6ff;font-weight:500">${{ simple: '简洁', port: '端口直连', multi: '子域名' }[previewMode]}</span>
-    </div>
-    <div class="settings-menu-item settings-menu-switch" onclick="toggleMirror()">
-      <span class="settings-menu-switch-label">镜像加速</span>
-      <span class="settings-switch settings-switch-mirror ${mirrorEnabled ? 'on' : ''}">
-        <span class="settings-switch-track">
-          <span class="settings-switch-thumb"></span>
-        </span>
-      </span>
-    </div>
-    <div class="settings-menu-item settings-menu-switch" onclick="toggleTabTitle()">
-      <span class="settings-menu-switch-label">标签页标题</span>
-      <span class="settings-switch settings-switch-tabtitle ${tabTitleEnabled ? 'on' : ''}">
-        <span class="settings-switch-track">
-          <span class="settings-switch-thumb"></span>
-        </span>
-      </span>
-    </div>
-    <div class="settings-menu-item" onclick="closeSettingsMenu(); openSelfUpdate()">
-      <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M8 2.5a5.487 5.487 0 00-4.131 1.869l1.204 1.204A.25.25 0 014.896 6H1.25A.25.25 0 011 5.75V2.104a.25.25 0 01.427-.177l1.38 1.38A7.002 7.002 0 0114.95 7.16a.75.75 0 01-1.49.178A5.5 5.5 0 008 2.5zm6.294 5.505a.75.75 0 01.834.656 5.5 5.5 0 01-9.592 2.97l1.204-1.204a.25.25 0 00-.177-.427H3.354a.25.25 0 01-.354-.354l1.38-1.38A7.002 7.002 0 0014.95 7.16z"/><circle cx="8" cy="8" r="2"/></svg>
-      自动更新
-    </div>
     <div class="settings-menu-divider"></div>
     <div class="settings-menu-item danger" onclick="closeSettingsMenu(); openCleanupModal()">
       <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M6.5 1.75a.25.25 0 01.25-.25h2.5a.25.25 0 01.25.25V3h-3V1.75zM11 3V1.75A1.75 1.75 0 009.25 0h-2.5A1.75 1.75 0 005 1.75V3H2.75a.75.75 0 000 1.5h.3l.8 8.2A1.75 1.75 0 005.6 14.5h4.8a1.75 1.75 0 001.75-1.8l.8-8.2h.3a.75.75 0 000-1.5H11z"/></svg>
       清理分支
     </div>
-    <div class="settings-menu-item danger" onclick="closeSettingsMenu(); factoryReset()">
-      <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M1.705 8.005a.75.75 0 0 1 .834.656 5.5 5.5 0 0 0 9.592 2.97l-1.204-1.204a.25.25 0 0 1 .177-.427h3.646a.25.25 0 0 1 .25.25v3.646a.25.25 0 0 1-.427.177l-1.38-1.38A7.002 7.002 0 0 1 1.05 8.84a.75.75 0 0 1 .656-.834ZM8 2.5a5.487 5.487 0 0 0-4.131 1.869l1.204 1.204A.25.25 0 0 1 4.896 6H1.25A.25.25 0 0 1 1 5.75V2.104a.25.25 0 0 1 .427-.177l1.38 1.38A7.002 7.002 0 0 1 14.95 7.16a.75.75 0 0 1-1.49.178A5.5 5.5 0 0 0 8 2.5Z"/></svg>
-      恢复出厂设置
-    </div>
     <div class="settings-menu-divider"></div>
-    <div class="settings-menu-item" onclick="closeSettingsMenu(); doLogout()">
-      <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M2 2.75C2 1.784 2.784 1 3.75 1h2.5a.75.75 0 010 1.5h-2.5a.25.25 0 00-.25.25v10.5c0 .138.112.25.25.25h2.5a.75.75 0 010 1.5h-2.5A1.75 1.75 0 012 13.25V2.75zm10.44 4.5H6.75a.75.75 0 000 1.5h5.69l-1.97 1.97a.749.749 0 101.06 1.06l3.25-3.25a.749.749 0 000-1.06l-3.25-3.25a.749.749 0 10-1.06 1.06l1.97 1.97z"/></svg>
-      退出登录
+    <div class="settings-menu-item" onclick="closeSettingsMenu(); location.href='/project-list'">
+      <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M7.429 1.525a3.5 3.5 0 011.142 0 .75.75 0 01.57.63l.185 1.29a.25.25 0 00.35.193l1.178-.592a.75.75 0 01.808.098 3.5 3.5 0 01.571.571.75.75 0 01.098.808l-.592 1.178a.25.25 0 00.193.35l1.29.185a.75.75 0 01.63.57 3.5 3.5 0 010 1.142.75.75 0 01-.63.57l-1.29.185a.25.25 0 00-.193.35l.592 1.178a.75.75 0 01-.098.808 3.5 3.5 0 01-.571.571.75.75 0 01-.808.098l-1.178-.592a.25.25 0 00-.35.193l-.185 1.29a.75.75 0 01-.57.63 3.5 3.5 0 01-1.142 0 .75.75 0 01-.57-.63l-.185-1.29a.25.25 0 00-.35-.193l-1.178.592a.75.75 0 01-.808-.098 3.5 3.5 0 01-.571-.571.75.75 0 01-.098-.808l.592-1.178a.25.25 0 00-.193-.35l-1.29-.185a.75.75 0 01-.63-.57 3.5 3.5 0 010-1.142.75.75 0 01.63-.57l1.29-.185a.25.25 0 00.193-.35l-.592-1.178a.75.75 0 01.098-.808 3.5 3.5 0 01.571-.571.75.75 0 01.808-.098l1.178.592a.25.25 0 00.35-.193l.185-1.29a.75.75 0 01.57-.63zM8 6a2 2 0 100 4 2 2 0 000-4z"/></svg>
+      全局设置 → 项目列表
+      <span style="margin-left:auto;font-size:11px;color:#8b949e">↗</span>
     </div>
   `;
   portal.appendChild(menu);
@@ -3356,7 +3320,17 @@ function renderBranches() {
   el.innerHTML = filteredBranches.map(b => {
     const isBusy = busyBranches.has(b.id) || globalBusy;
     const isDefault = b.id === defaultBranch;
-    const services = Object.entries(b.services || {});
+    // Defensive filter against orphan/cross-project service entries.
+    // `buildProfiles` is fetched with ?project=<current>, so any service
+    // whose profile isn't in that list is either deleted or belongs to
+    // another project (historical pollution). Skipping such entries
+    // here prevents ghost chips with wrong ports/icons even if the
+    // state.json still carries leftovers. The server-side
+    // `/cleanup-cross-project-services` endpoint handles the state
+    // cleanup; this is the UI safety net.
+    const knownProfileIds = new Set(buildProfiles.map(p => p.id));
+    const services = Object.entries(b.services || {})
+      .filter(([pid]) => knownProfileIds.has(pid));
     const hasError = b.status === 'error';
     const isRunning = b.status === 'running';
     const isStopping = b.status === 'stopping';
@@ -3739,7 +3713,10 @@ async function loadDockerImages() {
 
 async function runQuickstart() {
   try {
-    const data = await api('POST', '/quickstart');
+    // Carry the project context explicitly. The api() helper only
+    // injects ?project= on GETs, so POST /quickstart needs the body
+    // to scope the seeded build profiles to the current project.
+    const data = await api('POST', '/quickstart', { projectId: CURRENT_PROJECT_ID });
     showToast(data.message, 'success');
     await loadProfiles();
   } catch (e) { showToast(e.message, 'error'); }
@@ -4501,13 +4478,11 @@ async function loadInfraServices() {
 }
 
 function _updateInfraShortcutBadge() {
-  const badge = document.getElementById('infraShortcutBadge');
-  if (!badge) return;
-  const running = infraServices.filter(s => s.status === 'running').length;
-  badge.style.display = running > 0 ? '' : 'none';
-  document.getElementById('infraShortcutBtn').title = running > 0
-    ? `基础设施（${running} 运行中）`
-    : '基础设施';
+  // Kept as a no-op after 2026-04-18 UI cleanup removed the 4 header
+  // shortcut buttons (they duplicated the settings menu items). The
+  // loadInfraServices flow still calls this; leaving the function
+  // defined avoids a TypeError on every refresh.
+  return;
 }
 
 function infraStatusDot(status) {

@@ -293,15 +293,37 @@ describe('Projects router (P4 Part 2)', () => {
       expect(res.body.field).toBe('slug');
     });
 
-    it('rejects a duplicate slug with 409', async () => {
+    it('rejects a duplicate slug with 409 when slug is explicit', async () => {
       // First create succeeds
-      const first = await request(server, 'POST', '/api/projects', { name: 'dup' });
+      const first = await request(server, 'POST', '/api/projects', { name: 'dup', slug: 'dup' });
       expect(first.status).toBe(201);
 
-      // Second create with the same slug fails
-      const second = await request(server, 'POST', '/api/projects', { name: 'dup' });
+      // Second create with the SAME explicit slug fails — explicit
+      // slugs collide loudly so the user knows their pick conflicts.
+      const second = await request(server, 'POST', '/api/projects', { name: 'dup-2', slug: 'dup' });
       expect(second.status).toBe(409);
       expect(second.body.field).toBe('slug');
+    });
+
+    it('auto-suffixes a derived slug when it would collide', async () => {
+      // First create succeeds and takes slug "auto"
+      const first = await request(server, 'POST', '/api/projects', { name: 'auto' });
+      expect(first.status).toBe(201);
+      expect(first.body.project.slug).toBe('auto');
+
+      // Second create derives the same slug from name and should
+      // silently get "auto-2" instead of a 409. This is the common
+      // case where a pasted Git URL's repo name matches the legacy
+      // project's slug.
+      const second = await request(server, 'POST', '/api/projects', { name: 'auto' });
+      expect(second.status).toBe(201);
+      expect(second.body.project.slug).toBe('auto-2');
+      expect(second.body.slugAutoAdjusted).toEqual({ from: 'auto', to: 'auto-2' });
+
+      // A third should land on auto-3.
+      const third = await request(server, 'POST', '/api/projects', { name: 'auto' });
+      expect(third.status).toBe(201);
+      expect(third.body.project.slug).toBe('auto-3');
     });
 
     it('returns 500 with a docker error when network create fails', async () => {

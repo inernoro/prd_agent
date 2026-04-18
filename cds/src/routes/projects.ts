@@ -25,9 +25,9 @@
  */
 
 import { Router } from 'express';
-import { randomBytes } from 'node:crypto';
+import { randomBytes, createHash } from 'node:crypto';
 import type { StateService } from '../services/state.js';
-import type { IShellExecutor, Project, CdsConfig } from '../types.js';
+import type { IShellExecutor, Project, CdsConfig, AgentKey } from '../types.js';
 import { combinedOutput } from '../types.js';
 
 export interface ProjectsRouterDeps {
@@ -202,6 +202,50 @@ export function _mapGitCloneError(rawMsg: string, isGithubUrl: boolean, hasDevic
   return msg;
 }
 
+/**
+ * Format a plaintext Agent Key preview for display.
+ * Returns `cdsp_<slug>_<first12>…<last4>` so the UI can show "this is the
+ * one" without exposing the full secret. Only called at sign time when we
+ * still have the plaintext in hand.
+ */
+function formatKeyPreview(plaintext: string): string {
+  const lastUnderscore = plaintext.lastIndexOf('_');
+  if (lastUnderscore < 0) return plaintext;
+  const prefix = plaintext.slice(0, lastUnderscore + 1);
+  const suffix = plaintext.slice(lastUnderscore + 1);
+  if (suffix.length <= 16) return plaintext;
+  return prefix + suffix.slice(0, 12) + '…' + suffix.slice(-4);
+}
+
+/**
+ * Minimal helper that enforces a project-key request can only touch its
+ * own project. Returns null when access is allowed (or when the request
+ * isn't using a project key at all), or a `{ status, body }` object for
+ * the caller to `res.status(x).json(y)` on mismatch.
+ *
+ * This is NOT a middleware — we inline-call it at the top of the 5-6
+ * write-heavy routes we care about. Read-only GETs don't need it.
+ */
+export function assertProjectAccess(
+  req: { cdsProjectKey?: { projectId: string; keyId: string } },
+  targetProjectId: string | undefined,
+): null | { status: number; body: Record<string, unknown> } {
+  const projectKey = req.cdsProjectKey;
+  if (!projectKey) return null; // bootstrap key or cookie auth — no scope check
+  if (!targetProjectId) return null; // no target to check against
+  if (projectKey.projectId === targetProjectId) return null;
+  return {
+    status: 403,
+    body: {
+      error: 'project_mismatch',
+      expected: projectKey.projectId,
+      got: targetProjectId,
+      message:
+        '这把 key 只能操作 ' + projectKey.projectId + ' 项目，请让用户在目标项目页重新「授权 Agent」',
+    },
+  };
+}
+
 interface ProjectSummary extends Project {
   branchCount: number;
 }
@@ -258,10 +302,27 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
   }
 
   // GET /api/projects — list all projects.
+  //
+  // Wrapped in try/catch so an unexpected exception inside
+  // countBranchesFor (e.g. a malformed branch entry in state.json)
+  // surfaces a clear 500 with diagnostics instead of bubbling out as
+  // an opaque Express default response. Without this, the dashboard
+  // showed the unhelpful "加载项目列表失败：HTTP 400" with no clue
+  // what triggered the failure.
   router.get('/projects', (_req, res) => {
-    const projects = stateService.getProjects();
-    const summaries = projects.map((p) => toSummary(p, countBranchesFor(p)));
-    res.json({ projects: summaries, total: summaries.length });
+    try {
+      const projects = stateService.getProjects();
+      const summaries = projects.map((p) => toSummary(p, countBranchesFor(p)));
+      res.json({ projects: summaries, total: summaries.length });
+    } catch (err) {
+      const msg = (err as Error)?.message || String(err);
+      // eslint-disable-next-line no-console
+      console.error('[projects] GET /api/projects failed:', err);
+      res.status(500).json({
+        error: 'projects_list_failed',
+        message: `项目列表读取失败: ${msg}`,
+      });
+    }
   });
 
   // GET /api/projects/:id — project detail.
@@ -286,6 +347,16 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
   //   409 { error: 'duplicate', field }
   //   500 { error: 'docker', message } — docker create failed
   router.post('/projects', async (req, res) => {
+    // Project keys are bound to a single project — they may not mint
+    // new projects. Only the bootstrap key / cookie-auth may.
+    if ((req as unknown as { cdsProjectKey?: unknown }).cdsProjectKey) {
+      res.status(403).json({
+        error: 'project_key_cannot_create',
+        message: 'Project-scoped Agent Key 无权创建新项目；请在 CDS 管理页手动新建。',
+      });
+      return;
+    }
+
     const body = (req.body || {}) as Partial<{
       name: string;
       slug: string;
@@ -308,8 +379,18 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
       return;
     }
 
-    const slug = (body.slug || '').trim().toLowerCase() || slugifyName(name);
-    if (!SLUG_REGEX.test(slug)) {
+    // Track whether the slug was explicitly supplied by the caller.
+    // When the caller leaves slug blank, we derive it from the project
+    // name and silently auto-suffix on collision (-2, -3, ...) so
+    // pasting a Git URL whose repo name happens to match an existing
+    // project just works. When the caller supplies an explicit slug,
+    // we keep the strict 409 behaviour so the user knows their pick
+    // collided.
+    const slugProvidedExplicitly = Boolean((body.slug || '').trim());
+    const baseSlug = slugProvidedExplicitly
+      ? (body.slug as string).trim().toLowerCase()
+      : slugifyName(name);
+    if (!SLUG_REGEX.test(baseSlug)) {
       res.status(400).json({
         error: 'validation',
         field: 'slug',
@@ -327,12 +408,30 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
     const gitRepoUrl = rawGitRepoUrl ? _redactUrlUserInfo(rawGitRepoUrl) : undefined;
     const description = typeof body.description === 'string' ? body.description.trim() : undefined;
 
-    // Duplicate slug check against existing projects (including legacy).
+    // Resolve the final slug. Auto-derived slugs walk -2, -3, ... on
+    // collision so the user never has to manually disambiguate when
+    // pasting a URL whose repo name matches an existing project (the
+    // common case: legacy "prd-agent" project + a fresh Git repo also
+    // named prd_agent). Capped at 99 attempts so a corrupted state
+    // can't hang the request.
     const existingProjects = stateService.getProjects();
-    if (existingProjects.some((p) => p.slug === slug)) {
-      res.status(409).json({ error: 'duplicate', field: 'slug', message: `slug '${slug}' 已被占用` });
-      return;
+    const takenSlugs = new Set(existingProjects.map((p) => p.slug));
+    let slug = baseSlug;
+    if (takenSlugs.has(slug)) {
+      if (slugProvidedExplicitly) {
+        res.status(409).json({ error: 'duplicate', field: 'slug', message: `slug '${slug}' 已被占用` });
+        return;
+      }
+      let suffix = 2;
+      while (takenSlugs.has(`${baseSlug}-${suffix}`) && suffix < 100) suffix++;
+      const candidate = `${baseSlug}-${suffix}`;
+      if (takenSlugs.has(candidate)) {
+        res.status(409).json({ error: 'duplicate', field: 'slug', message: `slug '${baseSlug}' 已被占用，且自动追加序号也未能找到空闲位` });
+        return;
+      }
+      slug = candidate;
     }
+    const slugAutoAdjusted = slug !== baseSlug;
 
     // — Build the new project —
     const now = new Date().toISOString();
@@ -398,7 +497,12 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
       return;
     }
 
-    res.status(201).json({ project: toSummary(newProject, 0) });
+    res.status(201).json({
+      project: toSummary(newProject, 0),
+      // Surface the auto-suffix so the frontend can show a friendly
+      // toast like "已自动调整 slug 为 prd-agent-2 (原 slug 已被占用)".
+      slugAutoAdjusted: slugAutoAdjusted ? { from: baseSlug, to: slug } : undefined,
+    });
   });
 
   // PUT /api/projects/:id — patch mutable project fields.
@@ -416,6 +520,14 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
         error: 'project_not_found',
         message: `Project '${req.params.id}' does not exist.`,
       });
+      return;
+    }
+    const mismatch = assertProjectAccess(
+      req as unknown as { cdsProjectKey?: { projectId: string; keyId: string } },
+      project.id,
+    );
+    if (mismatch) {
+      res.status(mismatch.status).json(mismatch.body);
       return;
     }
 
@@ -488,6 +600,14 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
         error: 'project_not_found',
         message: `Project '${req.params.id}' does not exist.`,
       });
+      return;
+    }
+    const cloneMismatch = assertProjectAccess(
+      req as unknown as { cdsProjectKey?: { projectId: string; keyId: string } },
+      project.id,
+    );
+    if (cloneMismatch) {
+      res.status(cloneMismatch.status).json(cloneMismatch.body);
       return;
     }
     if (!project.gitRepoUrl) {
@@ -670,6 +790,14 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
       });
       return;
     }
+    const delMismatch = assertProjectAccess(
+      req as unknown as { cdsProjectKey?: { projectId: string; keyId: string } },
+      project.id,
+    );
+    if (delMismatch) {
+      res.status(delMismatch.status).json(delMismatch.body);
+      return;
+    }
     if (project.legacyFlag) {
       res.status(403).json({
         error: 'legacy_protected',
@@ -733,6 +861,138 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
       projectId: project.id,
       cascade: summary,
     });
+  });
+
+  // ── Project-scoped Agent Keys ──
+  //
+  // POST /api/projects/:id/agent-keys — sign a new project-bound agent key
+  //   body: { label?: string }
+  //   201 { keyId, plaintext, preview }  (plaintext shown ONCE, never stored)
+  //
+  // GET /api/projects/:id/agent-keys — list metadata (no plaintext, no hash)
+  //
+  // DELETE /api/projects/:id/agent-keys/:keyId — revoke (200 / 404)
+  //
+  // See doc rule no-rootless-tree + CLAUDE.md §6 — plaintext is the root
+  // users bootstrap their Agent with; CDS never caches or echoes it again.
+
+  router.post('/projects/:id/agent-keys', (req, res) => {
+    const project = stateService.getProject(req.params.id);
+    if (!project) {
+      res.status(404).json({
+        error: 'project_not_found',
+        message: `Project '${req.params.id}' does not exist.`,
+      });
+      return;
+    }
+    // Project-key holders may only sign keys for their own project.
+    const mismatch = assertProjectAccess(
+      req as unknown as { cdsProjectKey?: { projectId: string; keyId: string } },
+      project.id,
+    );
+    if (mismatch) {
+      res.status(mismatch.status).json(mismatch.body);
+      return;
+    }
+
+    const body = (req.body || {}) as { label?: string };
+    const now = new Date();
+    // Label: auto-generate from timestamp when the user didn't supply one.
+    const defaultLabel =
+      '签发于 ' +
+      now.toISOString().replace('T', ' ').slice(0, 16);
+    const label = typeof body.label === 'string' && body.label.trim()
+      ? body.label.trim().slice(0, 100)
+      : defaultLabel;
+
+    // Plaintext layout: cdsp_<slugHead12>_<base64url 32 bytes>
+    // - slugHead: first 12 chars of project.slug (lowercased). slug regex
+    //   already forbids `_` and `/`, so the prefix splits cleanly on `_`.
+    // - suffix: 32 random bytes, base64url — ~43 chars, entropy sufficient.
+    const slugHead = project.slug.slice(0, 12).toLowerCase();
+    const suffix = randomBytes(32).toString('base64url');
+    const plaintext = `cdsp_${slugHead}_${suffix}`;
+    const hash = createHash('sha256').update(plaintext).digest('hex');
+    const keyId = randomBytes(4).toString('hex');
+
+    // Capture signer identity from the github-auth middleware when present.
+    const ghUser = (req as unknown as { cdsUser?: { login?: string } }).cdsUser;
+
+    const entry: AgentKey = {
+      id: keyId,
+      label,
+      hash,
+      scope: 'rw',
+      createdAt: now.toISOString(),
+      createdBy: ghUser?.login || undefined,
+    };
+    try {
+      stateService.addAgentKey(project.id, entry);
+    } catch (err) {
+      res.status(500).json({
+        error: 'state_save_failed',
+        message: (err as Error).message,
+      });
+      return;
+    }
+
+    res.status(201).json({
+      keyId,
+      plaintext,
+      preview: formatKeyPreview(plaintext),
+    });
+  });
+
+  router.get('/projects/:id/agent-keys', (req, res) => {
+    const project = stateService.getProject(req.params.id);
+    if (!project) {
+      res.status(404).json({
+        error: 'project_not_found',
+        message: `Project '${req.params.id}' does not exist.`,
+      });
+      return;
+    }
+    const entries = stateService.getAgentKeys(project.id);
+    res.json({
+      keys: entries.map((e) => ({
+        id: e.id,
+        label: e.label,
+        scope: e.scope,
+        createdAt: e.createdAt,
+        createdBy: e.createdBy,
+        lastUsedAt: e.lastUsedAt,
+        revokedAt: e.revokedAt,
+        status: e.revokedAt ? 'revoked' : 'active',
+      })),
+    });
+  });
+
+  router.delete('/projects/:id/agent-keys/:keyId', (req, res) => {
+    const project = stateService.getProject(req.params.id);
+    if (!project) {
+      res.status(404).json({
+        error: 'project_not_found',
+        message: `Project '${req.params.id}' does not exist.`,
+      });
+      return;
+    }
+    const mismatch = assertProjectAccess(
+      req as unknown as { cdsProjectKey?: { projectId: string; keyId: string } },
+      project.id,
+    );
+    if (mismatch) {
+      res.status(mismatch.status).json(mismatch.body);
+      return;
+    }
+    const ok = stateService.revokeAgentKey(project.id, req.params.keyId);
+    if (!ok) {
+      res.status(404).json({
+        error: 'key_not_found',
+        message: `Agent key '${req.params.keyId}' not found in project.`,
+      });
+      return;
+    }
+    res.json({ ok: true, keyId: req.params.keyId });
   });
 
   return router;

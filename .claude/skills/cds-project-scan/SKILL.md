@@ -1,6 +1,6 @@
 ---
 name: cds-project-scan
-description: Scans project structure and generates CDS (Cloud Dev Space) compose YAML for one-click import. Detects tech stacks, infrastructure services, environment variables, and routing prefixes. Outputs standard docker-compose format with CDS conventions. Trigger words: "扫描项目", "生成 CDS 配置", "cds scan", "/cds-scan".
+description: Scans project structure and generates CDS (Cloud Dev Space) compose YAML for one-click import. Detects tech stacks, infrastructure services, environment variables, and routing prefixes. Outputs standard docker-compose format with CDS conventions. Optionally submits the generated YAML directly to CDS for human approval via the pending-import endpoint (removes copy-paste step). Trigger words: "扫描项目", "生成 CDS 配置", "cds scan", "/cds-scan", "提交到 CDS", "apply to cds", "帮我配置 cds", "让 Claude 装到 CDS 上", "--apply-to-cds".
 ---
 
 # CDS Project Scan — 项目结构扫描 & 配置生成
@@ -41,6 +41,7 @@ CDS 扫描进度：
 - [ ] Phase 5: 展示摘要 → 用户确认
 - [ ] Phase 6: 生成 CDS Compose YAML
 - [ ] Phase 7: 使用说明（CDS 自动管理基础设施）
+- [ ] Phase 8 (可选): 提交到 CDS 等待批准 —— 仅在用户明确要求或传 --apply-to-cds 时执行
 ```
 
 ### Phase 1: 识别项目根目录
@@ -152,6 +153,68 @@ CDS 运行时会自动将 `x-cds-env` 注入所有容器（优先级低于 `serv
 配置输出后附带 CDS 导入说明。CDS Dashboard 导入 YAML 后**自动创建基础设施容器**，无需手动 `docker run`。
 
 仅当用户明确表示不通过 CDS 管理时，才提供手动初始化选项 → 见 [reference/infra-init.md](reference/infra-init.md)
+
+### Phase 8 (可选): 提交到 CDS 等待批准
+
+> **默认关闭**。只有满足触发条件时才执行，默认流程（用户手动复制 YAML 到 Dashboard）始终优先。
+
+#### 触发条件（任一即可）
+
+- 用户明确说「提交到 CDS」/「apply to cds」/「帮我配置 cds」/「让 Claude 装到 CDS 上」
+- 传递参数 `/cds-scan --apply-to-cds <projectId>`
+
+满足任一则进入本阶段；否则执行完 Phase 7 即收尾。
+
+#### ⚠ 重要前提
+
+**CDS 一方需要安装我新增的 `pending-import` 功能后才可用（见 CLAUDE.md 更新记录）**。老版本 CDS 没有这个接口，调用会返回 404。进入 Phase 8 时 AI 必须先向用户复述这句话，让用户自行确认 CDS 已升级，再继续。
+
+#### 前置检查（4 条，任一缺失立即终止）
+
+1. 环境变量 `CDS_HOST` 已设置（认证规范复用 [cds-deploy-pipeline](../cds-deploy-pipeline/SKILL.md)）
+2. 环境变量 `AI_ACCESS_KEY` 已设置（与 cds-deploy-pipeline 同一把静态密钥）
+3. 目标 `projectId` 已知——**由用户提供**：通常流程是用户先在 CDS Dashboard `project-list` 页面创建一个**空项目**，然后从项目卡片或 URL 复制 ID，再告诉 AI。**禁止 AI 自己猜 projectId。**
+4. Phase 6 已生成完整 YAML（含 `x-cds-project` 头）
+
+#### 动作：POST pending-import
+
+```bash
+# 详细脚本（含状态码解析、失败分支处理）见 reference/cds-pending-import.md
+CDS="https://$CDS_HOST"
+
+IMPORT_ID=$(curl -sf -H "X-AI-Access-Key: $AI_ACCESS_KEY" \
+  "$CDS/api/projects/$PROJECT_ID/pending-import" \
+  -X POST -H "Content-Type: application/json" \
+  -d "$(jq -n --arg yaml "$GENERATED_YAML" \
+        '{agentName:"cds-project-scan",purpose:"自动扫描并提交 CDS 配置",composeYaml:$yaml}')" \
+  | python3 -c "import json,sys;print(json.load(sys.stdin)['importId'])")
+
+echo "✓ 已提交，importId=$IMPORT_ID"
+echo "➡️  请到 https://$CDS_HOST/project-list?pendingImport=$IMPORT_ID 批准"
+```
+
+成功 → 打印可点击的人类可读 URL：
+
+```
+https://$CDS_HOST/project-list?pendingImport=$IMPORT_ID
+```
+
+告诉用户：「已提交待批，请到上面链接的 CDS Dashboard `project-list` 页面点击批准」。
+
+#### 失败模式与修复建议
+
+| HTTP | 含义 | AI 给用户的修复动作 |
+|------|------|---------------------|
+| 401  | `X-AI-Access-Key` 无效 / 未配置 | 复用 cds-deploy-pipeline 的认证排查：确认 `$AI_ACCESS_KEY` 与 CDS master 进程 env 或 customEnv 一致 |
+| 404  | projectId 不存在 **或** CDS 版本过旧未安装 pending-import 接口 | 让用户重新从 Dashboard 复制 projectId；如果 projectId 确实正确，则 CDS 需升级 |
+| 409  | 项目未 clone ready（仓库未挂载 / repoPath 为空） | 引导用户到 Dashboard → 项目 Settings → Repository，完成 git clone 后重试 |
+| 5xx  | CDS 内部错误 | 让用户查看宿主机 `cds/cds.log`（AI 无法直接访问） |
+
+> 完整脚本（含 HTTP 状态码分支、jq 兜底、端到端示例）见 [reference/cds-pending-import.md](reference/cds-pending-import.md)。
+
+#### 与默认流程的关系
+
+Phase 8 是**可选升级**，不替代 Phase 7。没有 `AI_ACCESS_KEY` 或 CDS 老版本的用户仍然走「复制 YAML → 粘贴到 Dashboard」的默认路径。
 
 ## 输出格式
 
@@ -310,3 +373,5 @@ volumes:
 - CDS 设计文档：`doc/design.cds-onboarding.md`
 - CDS 环境变量指南：`doc/guide.cds-env.md`
 - CDS 路线图：`doc/plan.cds-roadmap.md`
+- Phase 8 提交脚本参考：[reference/cds-pending-import.md](reference/cds-pending-import.md)
+- CDS 认证规范（与 Phase 8 共享 `AI_ACCESS_KEY`）：[cds-deploy-pipeline](../cds-deploy-pipeline/SKILL.md)
