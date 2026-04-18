@@ -4478,13 +4478,11 @@ async function loadInfraServices() {
 }
 
 function _updateInfraShortcutBadge() {
-  const badge = document.getElementById('infraShortcutBadge');
-  if (!badge) return;
-  const running = infraServices.filter(s => s.status === 'running').length;
-  badge.style.display = running > 0 ? '' : 'none';
-  document.getElementById('infraShortcutBtn').title = running > 0
-    ? `基础设施（${running} 运行中）`
-    : '基础设施';
+  // Kept as a no-op after 2026-04-18 UI cleanup removed the 4 header
+  // shortcut buttons (they duplicated the settings menu items). The
+  // loadInfraServices flow still calls this; leaving the function
+  // defined avoids a TypeError on every refresh.
+  return;
 }
 
 function infraStatusDot(status) {

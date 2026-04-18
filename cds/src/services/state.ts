@@ -1022,26 +1022,59 @@ export class StateService {
     return this.state.infraServices;
   }
 
+  /**
+   * Global-scope infra lookup — returns the FIRST match across all
+   * projects. Kept for back-compat with legacy callers that don't
+   * know the projectId (e.g. older Dashboard polls). New code should
+   * prefer `getInfraServiceForProject(projectId, id)` so two projects
+   * can each have their own `mongodb` without collision.
+   */
   getInfraService(id: string): InfraService | undefined {
     return this.state.infraServices.find(s => s.id === id);
   }
 
+  /**
+   * Project-scoped infra lookup. Uses the composite key (projectId, id)
+   * so the legacy project's `mongodb` and a fork project's `mongodb`
+   * are distinct entries. A service with no projectId is treated as
+   * belonging to the 'default' (legacy) project for back-compat.
+   */
+  getInfraServiceForProjectAndId(projectId: string, id: string): InfraService | undefined {
+    return this.state.infraServices.find(
+      s => s.id === id && (s.projectId || 'default') === projectId,
+    );
+  }
+
   addInfraService(service: InfraService): void {
-    if (this.state.infraServices.some(s => s.id === service.id)) {
-      throw new Error(`基础设施服务 "${service.id}" 已存在`);
+    const projectId = service.projectId || 'default';
+    // Uniqueness is (projectId, id), NOT just id — otherwise two
+    // projects can't each register `mongodb`. This matches the
+    // buildProfile uniqueness fix from commit 6a86b01.
+    if (this.state.infraServices.some(s => s.id === service.id && (s.projectId || 'default') === projectId)) {
+      throw new Error(`基础设施服务 "${service.id}" 在项目 "${projectId}" 中已存在`);
     }
-    if (!service.projectId) service.projectId = 'default';
+    service.projectId = projectId;
     this.state.infraServices.push(service);
   }
 
-  updateInfraService(id: string, updates: Partial<InfraService>): void {
-    const idx = this.state.infraServices.findIndex(s => s.id === id);
+  updateInfraService(id: string, updates: Partial<InfraService>, projectId?: string): void {
+    // When projectId is supplied, scope the update to (projectId, id);
+    // otherwise fall back to the legacy global find-first behaviour.
+    const idx = projectId
+      ? this.state.infraServices.findIndex(s => s.id === id && (s.projectId || 'default') === projectId)
+      : this.state.infraServices.findIndex(s => s.id === id);
     if (idx === -1) throw new Error(`基础设施服务 "${id}" 不存在`);
     Object.assign(this.state.infraServices[idx], updates);
   }
 
-  removeInfraService(id: string): void {
-    this.state.infraServices = this.state.infraServices.filter(s => s.id !== id);
+  removeInfraService(id: string, projectId?: string): void {
+    if (projectId) {
+      this.state.infraServices = this.state.infraServices.filter(
+        s => !(s.id === id && (s.projectId || 'default') === projectId),
+      );
+    } else {
+      this.state.infraServices = this.state.infraServices.filter(s => s.id !== id);
+    }
   }
 
   // ── Mirror acceleration ──

@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { execSync, spawn } from 'node:child_process';
 import { createGzip } from 'node:zlib';
-import { Router } from 'express';
+import { Router, type Request } from 'express';
 import { StateService } from '../services/state.js';
 import { WorktreeService } from '../services/worktree.js';
 import { resolveEffectiveProfile } from '../services/container.js';
@@ -3185,6 +3185,25 @@ export function createBranchRouter(deps: RouterDeps): Router {
     }
   });
 
+  /**
+   * Resolve the project context for /infra/:id routes.
+   *
+   * Reads ?project=<id> from the query string first. If absent, and the
+   * global lookup of `id` yields exactly one match, uses that match's
+   * projectId (back-compat for clients that don't know about projects).
+   * If the global lookup yields multiple matches across projects,
+   * returns null so the caller can 400 with a clear "which project?"
+   * message instead of silently operating on the wrong one.
+   */
+  function resolveInfraProject(req: Request, id: string): { projectId: string } | { ambiguous: string[] } | null {
+    const q = typeof req.query.project === 'string' ? req.query.project : null;
+    if (q) return { projectId: q };
+    const all = stateService.getInfraServices().filter(s => s.id === id);
+    if (all.length === 0) return null;
+    if (all.length === 1) return { projectId: all[0].projectId || 'default' };
+    return { ambiguous: all.map(s => s.projectId || 'default') };
+  }
+
   router.post('/infra', async (req, res) => {
     try {
       const body = req.body as Partial<InfraService>;
@@ -3193,13 +3212,10 @@ export function createBranchRouter(deps: RouterDeps): Router {
         res.status(400).json({ error: 'id、Docker 镜像和容器端口为必填项' });
         return;
       }
-      // P4 Part 16 (B1 fix): honor project scope — projectId from body
-      // or ?project= query string. Without this, infra services created
-      // from any non-legacy project's topology view silently land in
-      // the legacy 'default' project.
       const queryProject = typeof req.query.project === 'string' ? req.query.project : null;
       const projectId = body.projectId || queryProject || 'default';
-      if (!stateService.getProject(projectId)) {
+      const targetProject = stateService.getProject(projectId);
+      if (!targetProject) {
         res.status(400).json({ error: `未知项目: ${projectId}` });
         return;
       }
@@ -3208,6 +3224,13 @@ export function createBranchRouter(deps: RouterDeps): Router {
         if (m) { res.status(m.status).json(m.body); return; }
       }
       const hostPort = stateService.allocatePort(config.portStart);
+      // Container name must be globally unique in Docker. Legacy project
+      // keeps the bare `cds-infra-<id>` format for back-compat (existing
+      // running containers match). Non-legacy projects get the project
+      // slug head prefixed so two projects can each own `mongodb`.
+      const containerName = targetProject.legacyFlag
+        ? `cds-infra-${body.id}`
+        : `cds-infra-${targetProject.slug.slice(0, 12)}-${body.id}`;
       const service: InfraService = {
         id: body.id,
         projectId,
@@ -3215,7 +3238,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
         dockerImage: body.dockerImage,
         containerPort: body.containerPort,
         hostPort,
-        containerName: `cds-infra-${body.id}`,
+        containerName,
         status: 'stopped',
         volumes: body.volumes || [],
         env: body.env || {},
@@ -3235,7 +3258,17 @@ export function createBranchRouter(deps: RouterDeps): Router {
   router.put('/infra/:id', (req, res) => {
     try {
       const updates = req.body as Partial<InfraService>;
-      stateService.updateInfraService(req.params.id, updates);
+      const resolved = resolveInfraProject(req, req.params.id);
+      if (!resolved) { res.status(404).json({ error: `基础设施服务 "${req.params.id}" 不存在` }); return; }
+      if ('ambiguous' in resolved) {
+        res.status(400).json({ error: `基础设施服务 "${req.params.id}" 在多个项目存在 (${resolved.ambiguous.join(', ')})，请带 ?project=<id>` });
+        return;
+      }
+      {
+        const m = assertProjectAccess(req as any, resolved.projectId);
+        if (m) { res.status(m.status).json(m.body); return; }
+      }
+      stateService.updateInfraService(req.params.id, updates, resolved.projectId);
       stateService.save();
       res.json({ message: '已更新' });
     } catch (err) {
@@ -3245,15 +3278,19 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
   router.delete('/infra/:id', async (req, res) => {
     const { id } = req.params;
-    const service = stateService.getInfraService(id);
-    if (!service) {
-      res.status(404).json({ error: `基础设施服务 "${id}" 不存在` });
+    const resolved = resolveInfraProject(req, id);
+    if (!resolved) { res.status(404).json({ error: `基础设施服务 "${id}" 不存在` }); return; }
+    if ('ambiguous' in resolved) {
+      res.status(400).json({ error: `基础设施服务 "${id}" 在多个项目存在 (${resolved.ambiguous.join(', ')})，请带 ?project=<id>` });
       return;
     }
+    const m = assertProjectAccess(req as any, resolved.projectId);
+    if (m) { res.status(m.status).json(m.body); return; }
+    const service = stateService.getInfraServiceForProjectAndId(resolved.projectId, id);
+    if (!service) { res.status(404).json({ error: `基础设施服务 "${id}" 不存在` }); return; }
     try {
-      // Stop container if running
       try { await containerService.stopInfraService(service.containerName); } catch { /* ok */ }
-      stateService.removeInfraService(id);
+      stateService.removeInfraService(id, resolved.projectId);
       stateService.save();
       res.json({ message: `已删除基础设施服务 "${id}"` });
     } catch (err) {
@@ -3263,18 +3300,23 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
   router.post('/infra/:id/start', async (req, res) => {
     const { id } = req.params;
-    const service = stateService.getInfraService(id);
-    if (!service) {
-      res.status(404).json({ error: `基础设施服务 "${id}" 不存在` });
+    const resolved = resolveInfraProject(req, id);
+    if (!resolved) { res.status(404).json({ error: `基础设施服务 "${id}" 不存在` }); return; }
+    if ('ambiguous' in resolved) {
+      res.status(400).json({ error: `基础设施服务 "${id}" 在多个项目存在 (${resolved.ambiguous.join(', ')})，请带 ?project=<id>` });
       return;
     }
+    const m = assertProjectAccess(req as any, resolved.projectId);
+    if (m) { res.status(m.status).json(m.body); return; }
+    const service = stateService.getInfraServiceForProjectAndId(resolved.projectId, id);
+    if (!service) { res.status(404).json({ error: `基础设施服务 "${id}" 不存在` }); return; }
     try {
       await containerService.startInfraService(service);
-      stateService.updateInfraService(id, { status: 'running', errorMessage: undefined });
+      stateService.updateInfraService(id, { status: 'running', errorMessage: undefined }, resolved.projectId);
       stateService.save();
-      res.json({ message: `基础设施服务 "${id}" 已启动`, service: stateService.getInfraService(id) });
+      res.json({ message: `基础设施服务 "${id}" 已启动`, service: stateService.getInfraServiceForProjectAndId(resolved.projectId, id) });
     } catch (err) {
-      stateService.updateInfraService(id, { status: 'error', errorMessage: (err as Error).message });
+      stateService.updateInfraService(id, { status: 'error', errorMessage: (err as Error).message }, resolved.projectId);
       stateService.save();
       res.status(500).json({ error: (err as Error).message });
     }
@@ -3282,14 +3324,19 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
   router.post('/infra/:id/stop', async (req, res) => {
     const { id } = req.params;
-    const service = stateService.getInfraService(id);
-    if (!service) {
-      res.status(404).json({ error: `基础设施服务 "${id}" 不存在` });
+    const resolved = resolveInfraProject(req, id);
+    if (!resolved) { res.status(404).json({ error: `基础设施服务 "${id}" 不存在` }); return; }
+    if ('ambiguous' in resolved) {
+      res.status(400).json({ error: `基础设施服务 "${id}" 在多个项目存在 (${resolved.ambiguous.join(', ')})，请带 ?project=<id>` });
       return;
     }
+    const m = assertProjectAccess(req as any, resolved.projectId);
+    if (m) { res.status(m.status).json(m.body); return; }
+    const service = stateService.getInfraServiceForProjectAndId(resolved.projectId, id);
+    if (!service) { res.status(404).json({ error: `基础设施服务 "${id}" 不存在` }); return; }
     try {
       await containerService.stopInfraService(service.containerName);
-      stateService.updateInfraService(id, { status: 'stopped' });
+      stateService.updateInfraService(id, { status: 'stopped' }, resolved.projectId);
       stateService.save();
       res.json({ message: `基础设施服务 "${id}" 已停止` });
     } catch (err) {
@@ -3299,19 +3346,24 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
   router.post('/infra/:id/restart', async (req, res) => {
     const { id } = req.params;
-    const service = stateService.getInfraService(id);
-    if (!service) {
-      res.status(404).json({ error: `基础设施服务 "${id}" 不存在` });
+    const resolved = resolveInfraProject(req, id);
+    if (!resolved) { res.status(404).json({ error: `基础设施服务 "${id}" 不存在` }); return; }
+    if ('ambiguous' in resolved) {
+      res.status(400).json({ error: `基础设施服务 "${id}" 在多个项目存在 (${resolved.ambiguous.join(', ')})，请带 ?project=<id>` });
       return;
     }
+    const m = assertProjectAccess(req as any, resolved.projectId);
+    if (m) { res.status(m.status).json(m.body); return; }
+    const service = stateService.getInfraServiceForProjectAndId(resolved.projectId, id);
+    if (!service) { res.status(404).json({ error: `基础设施服务 "${id}" 不存在` }); return; }
     try {
       try { await containerService.stopInfraService(service.containerName); } catch { /* ok */ }
       await containerService.startInfraService(service);
-      stateService.updateInfraService(id, { status: 'running', errorMessage: undefined });
+      stateService.updateInfraService(id, { status: 'running', errorMessage: undefined }, resolved.projectId);
       stateService.save();
-      res.json({ message: `基础设施服务 "${id}" 已重启`, service: stateService.getInfraService(id) });
+      res.json({ message: `基础设施服务 "${id}" 已重启`, service: stateService.getInfraServiceForProjectAndId(resolved.projectId, id) });
     } catch (err) {
-      stateService.updateInfraService(id, { status: 'error', errorMessage: (err as Error).message });
+      stateService.updateInfraService(id, { status: 'error', errorMessage: (err as Error).message }, resolved.projectId);
       stateService.save();
       res.status(500).json({ error: (err as Error).message });
     }
@@ -3319,11 +3371,14 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
   router.get('/infra/:id/logs', async (req, res) => {
     const { id } = req.params;
-    const service = stateService.getInfraService(id);
-    if (!service) {
-      res.status(404).json({ error: `基础设施服务 "${id}" 不存在` });
+    const resolved = resolveInfraProject(req, id);
+    if (!resolved) { res.status(404).json({ error: `基础设施服务 "${id}" 不存在` }); return; }
+    if ('ambiguous' in resolved) {
+      res.status(400).json({ error: `基础设施服务 "${id}" 在多个项目存在 (${resolved.ambiguous.join(', ')})，请带 ?project=<id>` });
       return;
     }
+    const service = stateService.getInfraServiceForProjectAndId(resolved.projectId, id);
+    if (!service) { res.status(404).json({ error: `基础设施服务 "${id}" 不存在` }); return; }
     try {
       const logs = await containerService.getLogs(service.containerName);
       res.json({ logs });
