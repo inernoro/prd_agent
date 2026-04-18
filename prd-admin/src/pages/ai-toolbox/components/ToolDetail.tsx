@@ -14,7 +14,6 @@ import {
   renameToolboxSession,
   listToolboxMessages,
   appendToolboxMessage,
-  toggleToolboxItemPublish,
   toggleSessionArchive,
   toggleSessionPin,
   submitMessageFeedback,
@@ -121,7 +120,7 @@ function validateFile(file: File): string | null {
 }
 
 export function ToolDetail() {
-  const { selectedItem, backToGrid, startEdit, deleteItem } = useToolboxStore();
+  const { selectedItem, backToGrid, startEdit, deleteItem, togglePublish } = useToolboxStore();
   const [input, setInput] = useState('');
   const [isDeleting, setIsDeleting] = useState(false);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -350,8 +349,8 @@ export function ToolDetail() {
   const handleTogglePublish = async () => {
     if (!selectedItem) return;
     const newValue = !isPublic;
-    const res = await toggleToolboxItemPublish(selectedItem.id, newValue);
-    if (res.success) setIsPublic(newValue);
+    const ok = await togglePublish(selectedItem.id, newValue);
+    if (ok) setIsPublic(newValue);
   };
 
   // Share conversation (Agent C)

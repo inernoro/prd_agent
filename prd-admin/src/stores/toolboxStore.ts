@@ -7,6 +7,9 @@ import {
   deleteToolboxItem,
   runToolboxItem,
   subscribeToolboxRunEvents,
+  listMarketplaceItems,
+  forkToolboxItem,
+  toggleToolboxItemPublish,
 } from '@/services';
 import type {
   ToolboxItem,
@@ -16,7 +19,7 @@ import type {
 } from '@/services';
 
 export type ToolboxView = 'grid' | 'detail' | 'create' | 'edit' | 'running' | 'quick-create';
-export type ToolboxCategory = 'all' | 'builtin' | 'custom' | 'favorite';
+export type ToolboxCategory = 'all' | 'builtin' | 'custom' | 'favorite' | 'marketplace';
 export type ToolboxPageTab = 'toolbox' | 'capabilities';
 
 const FAVORITES_STORAGE_KEY = 'toolbox-favorites';
@@ -47,6 +50,10 @@ interface ToolboxState {
   itemsLoading: boolean;
   selectedItem: ToolboxItem | null;
 
+  // Marketplace（公开工具市场）
+  marketplaceItems: ToolboxItem[];
+  marketplaceLoading: boolean;
+
   // Favorites
   favoriteIds: Set<string>;
 
@@ -66,6 +73,9 @@ interface ToolboxState {
   // Actions
   loadItems: () => Promise<void>;
   loadBuiltinAgents: () => Promise<void>;
+  loadMarketplaceItems: (keyword?: string) => Promise<void>;
+  forkItem: (id: string) => Promise<ToolboxItem | null>;
+  togglePublish: (id: string, isPublic: boolean) => Promise<boolean>;
   selectItem: (item: ToolboxItem) => void;
   setView: (view: ToolboxView) => void;
   setPageTab: (tab: ToolboxPageTab) => void;
@@ -328,6 +338,9 @@ export const useToolboxStore = create<ToolboxState>((set, get) => ({
   itemsLoading: false,
   selectedItem: null,
 
+  marketplaceItems: [],
+  marketplaceLoading: false,
+
   favoriteIds: loadFavoritesFromStorage(),
 
   builtinAgents: [],
@@ -354,6 +367,59 @@ export const useToolboxStore = create<ToolboxState>((set, get) => ({
       set({ items: BUILTIN_TOOLS });
     } finally {
       set({ itemsLoading: false });
+    }
+  },
+
+  // Load marketplace (publicly shared) items
+  loadMarketplaceItems: async (keyword?: string) => {
+    if (get().marketplaceLoading) return;
+    set({ marketplaceLoading: true });
+    try {
+      const res = await listMarketplaceItems({ keyword, page: 1, pageSize: 50 });
+      const items = res.success && res.data ? res.data.items : [];
+      // 后端返回的字段是裸 ToolboxItem，需要补全 type/category 让 ToolCard 渲染
+      const normalized = items.map((it) => ({
+        ...it,
+        type: 'custom' as const,
+        category: 'custom' as const,
+      }));
+      set({ marketplaceItems: normalized });
+    } catch {
+      set({ marketplaceItems: [] });
+    } finally {
+      set({ marketplaceLoading: false });
+    }
+  },
+
+  // Fork a public item into my own list
+  forkItem: async (id: string) => {
+    try {
+      const res = await forkToolboxItem(id);
+      if (!res.success || !res.data) return null;
+      // Refresh my own list so the new copy appears under "我创建的"
+      await get().loadItems();
+      return res.data;
+    } catch {
+      return null;
+    }
+  },
+
+  // Toggle publish state of one of my items
+  togglePublish: async (id: string, isPublic: boolean) => {
+    try {
+      const res = await toggleToolboxItemPublish(id, isPublic);
+      if (!res.success) return false;
+      // Patch in-place so UI reflects without full reload
+      set((state) => ({
+        items: state.items.map((it) => (it.id === id ? { ...it, isPublic } : it)),
+        selectedItem:
+          state.selectedItem && state.selectedItem.id === id
+            ? { ...state.selectedItem, isPublic }
+            : state.selectedItem,
+      }));
+      return true;
+    } catch {
+      return false;
     }
   },
 

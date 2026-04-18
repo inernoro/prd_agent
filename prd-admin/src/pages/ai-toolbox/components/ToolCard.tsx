@@ -26,6 +26,9 @@ import {
   Cpu,
   Database,
   Globe,
+  Globe2,
+  GitFork,
+  Edit,
   Image,
   Music,
   Video,
@@ -45,6 +48,12 @@ import type { LucideIcon } from 'lucide-react';
 
 interface ToolCardProps {
   item: ToolboxItem;
+  /**
+   * 卡片来源：
+   * - 'mine'（默认）：用户自己的工具列表，点击进入详情；自定义工具支持快捷"编辑"
+   * - 'marketplace'：他人公开的工具，点击 = Fork 到自己列表
+   */
+  source?: 'mine' | 'marketplace';
 }
 
 // 图标组件映射
@@ -143,8 +152,9 @@ function getPalette(iconName: string) {
 import { SpotlightEffect } from './SpotlightEffect';
 import { ReviewAgentCardArt } from './ReviewAgentCardArt';
 
-export function ToolCard({ item }: ToolCardProps) {
-  const { selectItem, toggleFavorite, isFavorite } = useToolboxStore();
+export function ToolCard({ item, source = 'mine' }: ToolCardProps) {
+  const { selectItem, toggleFavorite, isFavorite, startEdit, forkItem, setCategory } =
+    useToolboxStore();
   const navigate = useNavigate();
   const palette = getPalette(item.icon);
   const IconComponent = getIconComponent(item.icon);
@@ -156,9 +166,32 @@ export function ToolCard({ item }: ToolCardProps) {
   const [videoReady, setVideoReady] = useState(false);
   const [hovering, setHovering] = useState(false);
   const [downloadDialogOpen, setDownloadDialogOpen] = useState(false);
+  const [forking, setForking] = useState(false);
   const videoRef = useRef<HTMLVideoElement>(null);
 
+  const isMarketplaceCard = source === 'marketplace';
+  const isOwnCustomCard = source === 'mine' && item.type === 'custom';
+
+  const handleFork = async () => {
+    if (forking) return;
+    setForking(true);
+    try {
+      const forked = await forkItem(item.id);
+      if (forked) {
+        // 跳到「我创建的」让用户立刻看到 Fork 出来的副本
+        setCategory('custom');
+      }
+    } finally {
+      setForking(false);
+    }
+  };
+
   const handleClick = () => {
+    if (isMarketplaceCard) {
+      // 市场卡片：直接 Fork，避免再多一步进详情
+      void handleFork();
+      return;
+    }
     if (item.agentKey === 'prd-agent') {
       setDownloadDialogOpen(true);
       return;
@@ -173,6 +206,11 @@ export function ToolCard({ item }: ToolCardProps) {
   const handleToggleFavorite = (e: React.MouseEvent) => {
     e.stopPropagation();
     toggleFavorite(item.id);
+  };
+
+  const handleQuickEdit = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    startEdit(item);
   };
 
   const handleMouseEnter = () => {
@@ -365,7 +403,7 @@ export function ToolCard({ item }: ToolCardProps) {
         >
           {item.type === 'custom' ? (
             <>
-              {/* 作者头像 + 名字（左下角若 wip 则显示"施工中"） */}
+              {/* 作者头像 + 名字 + 徽章（已公开 / 施工中） */}
               <div className="flex items-center gap-1 min-w-0">
                 {item.wip && (
                   <span
@@ -379,6 +417,20 @@ export function ToolCard({ item }: ToolCardProps) {
                   >
                     <HardHat size={8} />
                     施工中
+                  </span>
+                )}
+                {item.isPublic && !isMarketplaceCard && (
+                  <span
+                    className="shrink-0 text-[8px] px-1.5 py-0.5 rounded font-medium inline-flex items-center gap-1"
+                    style={{
+                      background: 'rgba(16, 185, 129, 0.18)',
+                      color: '#6ee7b7',
+                      border: '1px solid rgba(16, 185, 129, 0.45)',
+                    }}
+                    title="已公开到市场，他人可 Fork"
+                  >
+                    <Globe2 size={8} />
+                    已公开
                   </span>
                 )}
                 <div
@@ -397,31 +449,77 @@ export function ToolCard({ item }: ToolCardProps) {
                   {item.createdByName || '未知'}
                 </span>
               </div>
-              {/* 使用次数 */}
+              {/* 右侧：marketplace 模式显示 Fork 数 + Fork 按钮；自有卡片显示使用次数 + 快捷编辑 + 收藏 */}
               <div className="flex items-center gap-1.5 shrink-0">
-                {item.usageCount > 0 && (
-                  <span
-                    className="flex items-center gap-0.5 text-[8px]"
-                    style={{ color: 'rgba(255, 255, 255, 0.45)' }}
-                  >
-                    <Zap size={8} style={{ color: palette.soft }} />
-                    {item.usageCount >= 1000 ? `${(item.usageCount / 1000).toFixed(1)}k` : item.usageCount}
-                  </span>
+                {isMarketplaceCard ? (
+                  <>
+                    {(item.forkCount ?? 0) > 0 && (
+                      <span
+                        className="flex items-center gap-0.5 text-[8px]"
+                        style={{ color: 'rgba(255, 255, 255, 0.5)' }}
+                        title="被 Fork 次数"
+                      >
+                        <GitFork size={8} style={{ color: palette.soft }} />
+                        {item.forkCount}
+                      </span>
+                    )}
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        void handleFork();
+                      }}
+                      disabled={forking}
+                      className="flex items-center gap-0.5 text-[8px] px-1.5 py-0.5 rounded font-medium transition-all duration-300 hover:scale-105 disabled:opacity-50"
+                      style={{
+                        background: `${palette.from}25`,
+                        color: palette.soft,
+                        border: `1px solid ${palette.from}40`,
+                      }}
+                      title="复制到我的百宝箱"
+                    >
+                      <GitFork size={9} />
+                      {forking ? 'Fork 中…' : 'Fork'}
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    {item.usageCount > 0 && (
+                      <span
+                        className="flex items-center gap-0.5 text-[8px]"
+                        style={{ color: 'rgba(255, 255, 255, 0.45)' }}
+                      >
+                        <Zap size={8} style={{ color: palette.soft }} />
+                        {item.usageCount >= 1000 ? `${(item.usageCount / 1000).toFixed(1)}k` : item.usageCount}
+                      </span>
+                    )}
+                    {isOwnCustomCard && (
+                      <button
+                        onClick={handleQuickEdit}
+                        className="flex items-center justify-center transition-all duration-300 opacity-0 group-hover:opacity-100 hover:scale-125"
+                        title="编辑"
+                      >
+                        <Edit
+                          size={10}
+                          style={{ color: 'rgba(255, 255, 255, 0.5)' }}
+                        />
+                      </button>
+                    )}
+                    <button
+                      onClick={handleToggleFavorite}
+                      className="flex items-center justify-center transition-all duration-300 hover:scale-125"
+                      title={favorited ? '取消收藏' : '收藏'}
+                    >
+                      <Star
+                        size={10}
+                        fill={favorited ? '#FBBF24' : 'none'}
+                        style={{
+                          color: favorited ? '#FBBF24' : 'rgba(255, 255, 255, 0.25)',
+                          filter: favorited ? 'drop-shadow(0 0 4px rgba(251, 191, 36, 0.5))' : 'none',
+                        }}
+                      />
+                    </button>
+                  </>
                 )}
-                <button
-                  onClick={handleToggleFavorite}
-                  className="flex items-center justify-center transition-all duration-300 hover:scale-125"
-                  title={favorited ? '取消收藏' : '收藏'}
-                >
-                  <Star
-                    size={10}
-                    fill={favorited ? '#FBBF24' : 'none'}
-                    style={{
-                      color: favorited ? '#FBBF24' : 'rgba(255, 255, 255, 0.25)',
-                      filter: favorited ? 'drop-shadow(0 0 4px rgba(251, 191, 36, 0.5))' : 'none',
-                    }}
-                  />
-                </button>
               </div>
             </>
           ) : (
