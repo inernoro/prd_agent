@@ -13,26 +13,24 @@ function generateLocalSessionId(): string {
 
 export function PaAgentPage() {
   const [tab, setTab] = useState<Tab>('chat');
-  const [sessionId, setSessionId] = useState<string | null>(null);
+  // Initialise immediately with a local id so the UI never blocks on the API
+  const [sessionId, setSessionId] = useState<string>(() => generateLocalSessionId());
   const [sessionError, setSessionError] = useState<string | null>(null);
   const [boardRefreshKey, setBoardRefreshKey] = useState(0);
 
   const initSession = useCallback(async () => {
     setSessionError(null);
-
-    // Race the API call against a 5-second timeout so the UI never hangs
+    // Race API against 5 s timeout
     const timeout = new Promise<null>(resolve => setTimeout(() => resolve(null), 5000));
     const result = await Promise.race([getPaSession(), timeout]);
 
     if (result && result.success && result.data?.sessionId) {
+      // Upgrade to the persistent server-side session id
       setSessionId(result.data.sessionId);
     } else {
-      // API failed or timed out — fall back to a local ID so chat renders now
-      const fallback = generateLocalSessionId();
-      setSessionId(fallback);
       const errMsg = result
-        ? (result.error?.message ?? '会话初始化失败，已使用临时会话')
-        : '会话接口超时，已使用临时会话（消息不会持久化）';
+        ? (result.error?.message ?? '会话初始化失败，消息不会持久化')
+        : '会话接口超时，消息不会持久化';
       setSessionError(errMsg);
     }
   }, []);
@@ -125,18 +123,7 @@ export function PaAgentPage() {
       {/* Content */}
       <div className="flex-1 overflow-hidden">
         {tab === 'chat' ? (
-          sessionId ? (
-            <PaAssistantChat sessionId={sessionId} onTaskSaved={handleTaskSaved} />
-          ) : (
-            <div className="flex flex-col items-center justify-center h-full gap-3">
-              <div className="w-5 h-5 border-2 border-t-transparent rounded-full animate-spin"
-                style={{ borderColor: 'var(--text-muted)', borderTopColor: 'transparent' }}
-              />
-              <span className="text-sm" style={{ color: 'var(--text-muted)' }}>
-                初始化中...
-              </span>
-            </div>
-          )
+          <PaAssistantChat sessionId={sessionId} onTaskSaved={handleTaskSaved} />
         ) : (
           <PaTaskBoard key={boardRefreshKey} />
         )}
