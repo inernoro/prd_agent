@@ -1,11 +1,10 @@
 ---
-alwaysApply: true
-description: 代码库快照：架构模式、功能注册表、115 个 MongoDB 集合、已废弃概念
+description: 查询项目功能状态/MongoDB 集合/已废弃概念/架构模式时阅读
 ---
 
 <!-- 本文件由 scripts/sync-cursor-rules.sh 自动生成，请勿直接编辑。
      事实源: .claude/rules/codebase-snapshot.md
-     生成时间: 2026-04-18T16:59:04Z -->
+     生成时间: 2026-04-18T18:10:31Z -->
 
 # Codebase Skill（代码库快照）
 

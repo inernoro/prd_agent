@@ -5,7 +5,7 @@ description: Page Agent Bridge 操作规范：鼠标轨迹 + spa-navigate + desc
 
 <!-- 本文件由 scripts/sync-cursor-rules.sh 自动生成，请勿直接编辑。
      事实源: .claude/rules/bridge-ops.md
-     生成时间: 2026-04-18T16:59:04Z -->
+     生成时间: 2026-04-18T18:10:31Z -->
 
 # Page Agent Bridge 操作规范
 

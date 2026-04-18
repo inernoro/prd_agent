@@ -1,11 +1,10 @@
 ---
-description: 2D 画布手势统一：两指平移 + 双指捏合/⌘+滚轮缩放，禁止双击缩放
-description: 画布手势统一原则
+description: 实现 2D 画布平移/缩放时阅读（ReactFlow / 自定义 canvas / Konva）
 ---
 
 <!-- 本文件由 scripts/sync-cursor-rules.sh 自动生成，请勿直接编辑。
      事实源: .claude/rules/gesture-unification.md
-     生成时间: 2026-04-18T16:59:04Z -->
+     生成时间: 2026-04-18T18:10:31Z -->
 
 # 画布手势统一原则（Gesture Unification）
 

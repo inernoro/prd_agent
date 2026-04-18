@@ -5,7 +5,7 @@ description: 禁止使用 localStorage，统一 sessionStorage
 
 <!-- 本文件由 scripts/sync-cursor-rules.sh 自动生成，请勿直接编辑。
      事实源: .claude/rules/no-localstorage.md
-     生成时间: 2026-04-18T16:59:04Z -->
+     生成时间: 2026-04-18T18:10:31Z -->
 
 # 禁止使用 localStorage
 

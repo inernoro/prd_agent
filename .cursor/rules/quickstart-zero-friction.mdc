@@ -1,11 +1,10 @@
 ---
-description: 编写 init/quickstart/setup 脚本或 Dockerfile 时遵守
-description: 快速启动零摩擦原则：依赖自动检查 + 交互式安装
+description: 编写 init/quickstart/setup 脚本或 Dockerfile 时阅读
 ---
 
 <!-- 本文件由 scripts/sync-cursor-rules.sh 自动生成，请勿直接编辑。
      事实源: .claude/rules/quickstart-zero-friction.md
-     生成时间: 2026-04-18T16:59:04Z -->
+     生成时间: 2026-04-18T18:10:31Z -->
 
 # 快速启动零摩擦原则（Quickstart Zero-Friction）
 
