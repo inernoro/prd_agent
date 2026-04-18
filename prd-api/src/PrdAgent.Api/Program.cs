@@ -128,6 +128,14 @@ builder.Services.AddSingleton<IAdminControllerScanner, PrdAgent.Infrastructure.S
 builder.Services.AddSingleton<ILLMRequestContextAccessor, LLMRequestContextAccessor>();
 builder.Services.AddSingleton<LlmRequestLogBackground>();
 builder.Services.AddSingleton<ILlmRequestLogWriter, LlmRequestLogWriter>();
+// BackgroundService 未捕获异常时不要拖垮整个 Host。单个 Worker 崩溃已有
+// ILogger 记录，继续运行其它服务；默认 StopHost 会让 HttpClient 超时这类
+// 瞬时故障变成全站宕机（已在 DocumentSyncWorker 上踩过一次）。
+builder.Services.Configure<HostOptions>(options =>
+{
+    options.BackgroundServiceExceptionBehavior = BackgroundServiceExceptionBehavior.Ignore;
+});
+
 builder.Services.AddHostedService<LlmRequestLogWatchdog>();
 builder.Services.AddHostedService<PrdAgent.Api.Middleware.ApiRequestLogWatchdog>();
 builder.Services.AddHostedService<PrdAgent.Api.Middleware.AiScoreWatchdog>();

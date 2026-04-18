@@ -51,7 +51,11 @@ public class DocumentSyncWorker : BackgroundService
             {
                 await SyncDueEntriesAsync(stoppingToken);
             }
-            catch (Exception ex) when (ex is not OperationCanceledException)
+            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (Exception ex)
             {
                 _logger.LogError(ex, "[DocumentSyncWorker] Scan cycle failed");
             }
@@ -163,7 +167,11 @@ public class DocumentSyncWorker : BackgroundService
                 "[DocumentSyncWorker] GitHub directory sync completed for {EntryId} (changes={Changes})",
                 entry.Id, diff.HasChanges);
         }
-        catch (Exception ex) when (ex is not OperationCanceledException)
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex)
         {
             sw.Stop();
             _logger.LogWarning(ex, "[DocumentSyncWorker] GitHub directory sync failed for {EntryId}", entry.Id);
@@ -304,7 +312,11 @@ public class DocumentSyncWorker : BackgroundService
             _logger.LogInformation("[DocumentSyncWorker] Synced entry {EntryId} from {Url}, {Size} chars",
                 entry.Id, entry.SourceUrl, content.Length);
         }
-        catch (Exception ex) when (ex is not OperationCanceledException)
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex)
         {
             sw.Stop();
             _logger.LogWarning(ex, "[DocumentSyncWorker] Failed to sync entry {EntryId} from {Url}",
