@@ -1145,7 +1145,7 @@ function filterBranches() {
   const manualAddHtml = (rawTyped && !typedAlreadyTracked)
     ? `
       <div class="branch-dropdown-section-label">手动添加</div>
-      <div class="branch-dropdown-item branch-dropdown-manual-add" onclick="addBranch(${JSON.stringify(rawTyped)})">
+      <div class="branch-dropdown-item branch-dropdown-manual-add" onclick="addBranch(${JSON.stringify(rawTyped).replace(/"/g, '&quot;')})">
         <svg class="branch-dropdown-icon" width="16" height="16" viewBox="0 0 16 16" fill="currentColor" style="color: var(--accent)"><path d="M8 2a.75.75 0 01.75.75v4.5h4.5a.75.75 0 010 1.5h-4.5v4.5a.75.75 0 01-1.5 0v-4.5h-4.5a.75.75 0 010-1.5h4.5v-4.5A.75.75 0 018 2z"/></svg>
         <div class="branch-dropdown-item-info">
           <div class="branch-dropdown-item-row1">
@@ -1511,7 +1511,7 @@ async function toggleSchedulerEnabled(event) {
         } else {
           const cu = snap.capacityUsage || { current: 0, max: 0 };
           const hotList = (snap.hot || []).map(h =>
-            `<li>${escapeHtml(h.slug)}${h.pinned ? ' <span style="color:#3fb950">📌</span>' : ''}</li>`
+            `<li>${escapeHtml(h.slug)}${h.pinned ? ' <svg width="10" height="10" viewBox="0 0 16 16" fill="#3fb950" style="vertical-align:-1px"><path d="M4.456.734a1.75 1.75 0 012.826.504l.613 1.327a3.081 3.081 0 002.084 1.707l2.454.584c1.332.317 1.8 1.972.832 2.94L11.06 9.695a.75.75 0 01-.19.436l-4.552 4.552a.75.75 0 01-1.06-1.06l4.305-4.305L7.307 7.13A4.581 4.581 0 005.03 4.929L4.416 3.6A.25.25 0 004.01 3.49L2.606 4.893a.25.25 0 00.104.407l1.328.613a4.581 4.581 0 012.204 2.277l.248.538a.75.75 0 01-1.36.628l-.248-.538a3.081 3.081 0 00-1.483-1.532L2.07 6.773C.783 6.19.381 4.602 1.3 3.682L2.703 2.28A1.75 1.75 0 014.456.734z"/></svg>' : ''}</li>`
           ).join('');
           const coldList = (snap.cold || []).map(c =>
             `<li style="opacity:0.6">${escapeHtml(c.slug)}</li>`
@@ -1613,7 +1613,7 @@ async function showCapacityDetails(event) {
     } else {
       const cu = snap.capacityUsage || { current: 0, max: 0 };
       const hotList = (snap.hot || []).map(h =>
-        `<li>${escapeHtml(h.slug)}${h.pinned ? ' <span style="color:#3fb950">📌</span>' : ''}</li>`
+        `<li>${escapeHtml(h.slug)}${h.pinned ? ' <svg width="10" height="10" viewBox="0 0 16 16" fill="#3fb950" style="vertical-align:-1px"><path d="M4.456.734a1.75 1.75 0 012.826.504l.613 1.327a3.081 3.081 0 002.084 1.707l2.454.584c1.332.317 1.8 1.972.832 2.94L11.06 9.695a.75.75 0 01-.19.436l-4.552 4.552a.75.75 0 01-1.06-1.06l4.305-4.305L7.307 7.13A4.581 4.581 0 005.03 4.929L4.416 3.6A.25.25 0 004.01 3.49L2.606 4.893a.25.25 0 00.104.407l1.328.613a4.581 4.581 0 012.204 2.277l.248.538a.75.75 0 01-1.36.628l-.248-.538a3.081 3.081 0 00-1.483-1.532L2.07 6.773C.783 6.19.381 4.602 1.3 3.682L2.703 2.28A1.75 1.75 0 014.456.734z"/></svg>' : ''}</li>`
       ).join('');
       const coldList = (snap.cold || []).map(c =>
         `<li style="opacity:0.6">${escapeHtml(c.slug)}</li>`
@@ -1777,33 +1777,39 @@ async function pollHostStats() {
 }
 
 function renderHostStats(data) {
-  const el = document.getElementById('hostStatsWidget');
-  if (!el) return;
-  el.classList.remove('hidden');
-
   const memPct = data.mem?.usedPercent ?? 0;
   const cpuPct = data.cpu?.loadPercent ?? 0;
+  const memTier = tierForPercent(memPct);
+  const cpuTier = tierForPercent(cpuPct);
 
-  // Memory bar
-  const memFill = document.getElementById('hsMemFill');
-  const memValue = document.getElementById('hsMemValue');
-  if (memFill) {
-    memFill.style.width = `${Math.min(memPct, 100)}%`;
-    memFill.dataset.tier = tierForPercent(memPct);
+  // Floating bottom-right widget (non-FS mode)
+  const el = document.getElementById('hostStatsWidget');
+  if (el) {
+    el.classList.remove('hidden');
+    const memFill = document.getElementById('hsMemFill');
+    const memValue = document.getElementById('hsMemValue');
+    if (memFill) { memFill.style.width = `${Math.min(memPct, 100)}%`; memFill.dataset.tier = memTier; }
+    if (memValue) memValue.textContent = `${memPct}%`;
+    const cpuFill = document.getElementById('hsCpuFill');
+    const cpuValue = document.getElementById('hsCpuValue');
+    if (cpuFill) { cpuFill.style.width = `${Math.min(cpuPct, 100)}%`; cpuFill.dataset.tier = cpuTier; }
+    if (cpuValue) cpuValue.textContent = `${cpuPct}%`;
+    el.dataset.stress = (memPct >= 90 || cpuPct >= 90) ? '1' : '0';
   }
-  if (memValue) memValue.textContent = `${memPct}%`;
 
-  // CPU bar — loadPercent can exceed 100 on oversubscribed hosts, cap the fill
-  const cpuFill = document.getElementById('hsCpuFill');
-  const cpuValue = document.getElementById('hsCpuValue');
-  if (cpuFill) {
-    cpuFill.style.width = `${Math.min(cpuPct, 100)}%`;
-    cpuFill.dataset.tier = tierForPercent(cpuPct);
+  // Inline topbar pill (FS mode) — same data, different elements
+  const fsEl = document.getElementById('topologyFsHostStats');
+  if (fsEl) {
+    fsEl.style.display = '';
+    const tfhsMemFill = document.getElementById('tfhsMemFill');
+    const tfhsMemValue = document.getElementById('tfhsMemValue');
+    if (tfhsMemFill) { tfhsMemFill.style.width = `${Math.min(memPct, 100)}%`; tfhsMemFill.dataset.tier = memTier; }
+    if (tfhsMemValue) tfhsMemValue.textContent = `${memPct}%`;
+    const tfhsCpuFill = document.getElementById('tfhsCpuFill');
+    const tfhsCpuValue = document.getElementById('tfhsCpuValue');
+    if (tfhsCpuFill) { tfhsCpuFill.style.width = `${Math.min(cpuPct, 100)}%`; tfhsCpuFill.dataset.tier = cpuTier; }
+    if (tfhsCpuValue) tfhsCpuValue.textContent = `${cpuPct}%`;
   }
-  if (cpuValue) cpuValue.textContent = `${cpuPct}%`;
-
-  // Whole-widget warning if either metric is critical (>= 90%)
-  el.dataset.stress = (memPct >= 90 || cpuPct >= 90) ? '1' : '0';
 }
 
 function tierForPercent(pct) {
@@ -1959,7 +1965,7 @@ function checkCapacityAndDeploy(id, profileId, targetExecutorId) {
   // Show capacity warning modal
   const html = `
     <div class="capacity-warning">
-      <div class="capacity-warning-icon">⚠️</div>
+      <div class="capacity-warning-icon"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg></div>
       <div class="capacity-warning-text">
         <p>当前服务器内存 <strong>${containerCapacity.totalMemGB}GB</strong>，最多支持 <strong>${containerCapacity.maxContainers}</strong> 个容器。</p>
         <p>目前已有 <strong>${containerCapacity.runningContainers}</strong> 个容器运行中，本次部署需新增 <strong>${newCount}</strong> 个。</p>
@@ -2148,13 +2154,17 @@ function updateInlineLog(id) {
 
   // UF-16: if the topology panel is showing THIS branch but the log
   // preview element doesn't exist yet (first chunk after click), poke
-  // a re-render so the preview appears.
+  // a re-render — but ONLY if the user is already on the details tab.
+  // Do NOT force-switch when the user is on deployLogs/buildLogs etc.
   if (typeof _topologyPanelCurrentKind !== 'undefined'
       && _topologyPanelCurrentKind === 'app'
       && _topologySelectedBranchId === id
       && !topoEl) {
-    if (typeof _topologySwitchPanelTab === 'function') {
-      _topologySwitchPanelTab('details');
+    var activeTabNow = document.querySelector('.topology-fs-panel-tab.active');
+    if (activeTabNow && activeTabNow.dataset.tab === 'details') {
+      if (typeof _topologySwitchPanelTab === 'function') {
+        _topologySwitchPanelTab('details');
+      }
     }
   }
 }
@@ -2574,7 +2584,7 @@ function getPortIcon(profileId, profile) {
 }
 
 async function factoryReset() {
-  if (!confirm('⚠️ 恢复出厂设置\n\n将清除所有：分支、构建配置、环境变量、基础设施服务、路由规则。\nDocker 数据卷（数据库文件等）会保留。\n\n确定继续？')) return;
+  if (!confirm('[警告] 恢复出厂设置\n\n将清除所有：分支、构建配置、环境变量、基础设施服务、路由规则。\nDocker 数据卷（数据库文件等）会保留。\n\n确定继续？')) return;
   if (!confirm('二次确认：所有配置将被清空，此操作不可撤销。')) return;
   globalBusy = true;
   renderBranches();
@@ -2605,7 +2615,7 @@ async function cleanupAll() {
 async function pruneStaleBranches() {
   const html = `
     <div class="capacity-warning">
-      <div class="capacity-warning-icon">🧹</div>
+      <div class="capacity-warning-icon"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6"/><path d="M10 11v6M14 11v6"/></svg></div>
       <div class="capacity-warning-text">
         <p>删除本地 git 分支中不在 CDS 部署列表上的分支</p>
         <p style="color:var(--text-muted);font-size:12px">保护分支（main/master/develop/当前分支）不会被删除</p>
@@ -2665,7 +2675,7 @@ async function cleanupOrphans() {
   // Show progress in a modal with SSE streaming
   const html = `
     <div class="capacity-warning">
-      <div class="capacity-warning-icon">🔍</div>
+      <div class="capacity-warning-icon"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg></div>
       <div class="capacity-warning-text">
         <p>正在拉取远程分支列表并检测孤儿分支...</p>
         <p style="color:var(--text-muted);font-size:12px">孤儿分支 = 本地存在但远程已删除的分支</p>
@@ -3160,21 +3170,21 @@ function openCleanupModal() {
   const html = `
     <div style="display:flex;flex-direction:column;gap:10px">
       <button class="btn-export-option btn-danger-option" onclick="closeConfigModal(); pruneStaleBranches()">
-        <span style="font-size:20px">🧹</span>
+        <span style="display:flex;align-items:center;justify-content:center;width:28px;height:28px;color:var(--text-muted)"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6"/></svg></span>
         <div>
           <div style="font-weight:600;font-size:14px">清理非列表分支</div>
           <div style="font-size:12px;color:var(--text-muted);margin-top:2px">删除本地 git 中不在 CDS 部署列表上的分支</div>
         </div>
       </button>
       <button class="btn-export-option btn-danger-option" onclick="closeConfigModal(); cleanupOrphans()">
-        <span style="font-size:20px">🔍</span>
+        <span style="display:flex;align-items:center;justify-content:center;width:28px;height:28px;color:var(--text-muted)"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg></span>
         <div>
           <div style="font-weight:600;font-size:14px">清理孤儿分支</div>
           <div style="font-size:12px;color:var(--text-muted);margin-top:2px">清理本地存在但远程已删除的分支</div>
         </div>
       </button>
       <button class="btn-export-option btn-danger-option" onclick="closeConfigModal(); cleanupAll()">
-        <span style="font-size:20px">🗑️</span>
+        <span style="display:flex;align-items:center;justify-content:center;width:28px;height:28px;color:var(--text-muted)"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4h6v2"/></svg></span>
         <div>
           <div style="font-weight:600;font-size:14px">清理全部分支</div>
           <div style="font-size:12px;color:var(--text-muted);margin-top:2px">停止并删除所有非默认分支的容器和 worktree</div>
@@ -3404,7 +3414,7 @@ function renderBranches() {
     const executorTagHtml = remoteExecForThisBranch
       ? `<span class="executor-tag port-row-exec ${remoteExecForThisBranch.status === 'offline' ? 'offline' : ''}"
               title="部署在执行器 ${esc(b.executorId)} (${esc(remoteExecForThisBranch.host)})${remoteExecForThisBranch.status === 'offline' ? ' — 已离线' : ''}">
-          ⚡ ${esc(b.executorId.replace(/^executor-/, '').slice(0, 24))}
+          <svg width="10" height="10" viewBox="0 0 16 16" fill="currentColor" style="vertical-align:-1px;margin-right:3px"><path d="M9.504.43a1.516 1.516 0 012.437 1.713L10.415 5.5h2.123a1.5 1.5 0 011.116 2.511l-6.5 7.5a1.5 1.5 0 01-2.37-1.836L6.311 10.5H4.187a1.5 1.5 0 01-1.116-2.511l6.5-7.5-.067.441z"/></svg>${esc(b.executorId.replace(/^executor-/, '').slice(0, 24))}
         </span>`
       : '';
 
@@ -3618,7 +3628,7 @@ function renderBranches() {
             </span>
           </div>
           ${b.pinnedCommit ? `<div class="branch-card-row2">
-            <span class="pinned-commit-badge" onclick="event.stopPropagation(); checkoutCommit('${esc(b.id)}', '', true, '')" title="已固定到历史提交 ${esc(b.pinnedCommit)}，点击恢复最新">📌 ${esc(b.pinnedCommit)}</span>
+            <span class="pinned-commit-badge" onclick="event.stopPropagation(); checkoutCommit('${esc(b.id)}', '', true, '')" title="已固定到历史提交 ${esc(b.pinnedCommit)}，点击恢复最新"><svg width="10" height="10" viewBox="0 0 16 16" fill="currentColor" style="vertical-align:-1px"><path d="M4.456.734a1.75 1.75 0 012.826.504l.613 1.327a3.081 3.081 0 002.084 1.707l2.454.584c1.332.317 1.8 1.972.832 2.94L11.06 9.695a.75.75 0 01-.19.436l-4.552 4.552a.75.75 0 01-1.06-1.06l4.305-4.305L7.307 7.13A4.581 4.581 0 005.03 4.929L4.416 3.6A.25.25 0 004.01 3.49L2.606 4.893a.25.25 0 00.104.407l1.328.613a4.581 4.581 0 012.204 2.277l.248.538a.75.75 0 01-1.36.628l-.248-.538a3.081 3.081 0 00-1.483-1.532L2.07 6.773C.783 6.19.381 4.602 1.3 3.682L2.703 2.28A1.75 1.75 0 014.456.734z"/></svg> ${esc(b.pinnedCommit)}</span>
           </div>` : ''}
           ${portBadgesHtml ? `<div class="branch-card-ports">${portBadgesHtml}</div>` : ''}
         </div>
@@ -4294,44 +4304,41 @@ async function openSelfUpdate() {
     </div>`
   ).join('');
 
-  openConfigModal('自动更新', `
+  openConfigModal('CDS 系统更新', `
     <p class="config-panel-desc">
-      切换 CDS 代码分支并重启。操作流程：<code>git fetch → git checkout → git pull → restart</code>
+      拉取当前分支最新代码并重启 CDS。操作流程：<code>git fetch → git pull → restart</code>
     </p>
-    <div class="form-row" style="flex-direction:column;align-items:stretch">
-      <label class="form-label">目标分支</label>
-      <div class="combobox" id="selfUpdateCombobox">
-        <div class="combobox-input-wrap">
-          <input id="selfUpdateBranch" class="form-input" style="width:100%;padding-right:36px"
-            value="${esc(current)}" placeholder="输入或选择分支名" autocomplete="off"
-            onfocus="openComboDropdown()" oninput="filterComboItems(this.value)">
-          <button type="button" class="combobox-toggle" onclick="toggleComboDropdown()" tabindex="-1">
-            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 6 8 10 12 6"/></svg>
-          </button>
-        </div>
-        <div class="combobox-dropdown" id="selfUpdateDropdown">
-          ${branchItems}
+    <div class="form-row" style="margin-top:4px;font-size:13px;color:var(--text-secondary)">
+      当前分支：<code style="color:var(--accent)">${esc(current)}</code>${commitHash ? `<span style="white-space:nowrap;color:var(--text-muted)"> @ <code style="color:var(--blue)">${esc(commitHash.slice(0, 8))}</code></span>` : ''}
+    </div>
+    <details style="margin-top:10px">
+      <summary style="font-size:12px;color:var(--text-muted);cursor:pointer;user-select:none">切换到其他分支（高级）</summary>
+      <div class="form-row" style="flex-direction:column;align-items:stretch;margin-top:8px">
+        <label class="form-label">目标分支</label>
+        <div class="combobox" id="selfUpdateCombobox">
+          <div class="combobox-input-wrap">
+            <input id="selfUpdateBranch" class="form-input" style="width:100%;padding-right:36px"
+              value="${esc(current)}" placeholder="输入或选择分支名" autocomplete="off"
+              onfocus="openComboDropdown()" oninput="filterComboItems(this.value)">
+            <button type="button" class="combobox-toggle" onclick="toggleComboDropdown()" tabindex="-1">
+              <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 6 8 10 12 6"/></svg>
+            </button>
+          </div>
+          <div class="combobox-dropdown" id="selfUpdateDropdown">
+            ${branchItems}
+          </div>
         </div>
       </div>
-    </div>
-    <div class="form-row" style="margin-top:4px;font-size:12px;color:var(--fg-muted)">
-      当前分支：<code style="word-break:break-all">${esc(current)}</code>${commitHash ? `<span style="white-space:nowrap"> @ <code style="color:var(--blue)">${esc(commitHash)}</code></span>` : ''}
-    </div>
+    </details>
     <div id="selfUpdateProgress" style="display:none;margin-top:12px">
       <div id="selfUpdateSteps" style="display:flex;flex-direction:column;gap:6px"></div>
       <div id="selfUpdateStatus" style="margin-top:8px;font-size:13px"></div>
     </div>
-    <div class="form-row" style="margin-top:12px;display:flex;gap:8px;align-items:center">
-      <button class="sm" id="selfUpdateBtn" onclick="executeSelfUpdate()">更新并重启</button>
+    <div class="form-row" style="margin-top:16px;display:flex;gap:8px;align-items:center">
+      <button class="sm" id="selfUpdateBtn" onclick="executeSelfUpdate()">更新当前分支并重启</button>
       <button class="sm ghost" onclick="closeConfigModal()">取消</button>
-      <span style="flex:1"></span>
-      <button class="sm ghost" style="color:var(--red);font-size:12px" onclick="closeConfigModal();pruneStaleBranches()">🧹 清理未托管分支</button>
     </div>
   `);
-
-  // Allow combobox dropdown to overflow the modal body
-  const modalBody = document.querySelector('.config-modal-dialog .modal-body');
-  if (modalBody) modalBody.style.overflow = 'visible';
 
   // Close dropdown when clicking outside
   document.addEventListener('click', _comboOutsideClick);
@@ -4459,7 +4466,7 @@ function executeSelfUpdate() {
                   if (ok) location.reload();
                 });
               } else if (eventType === 'error') {
-                statusEl.innerHTML = '<span style="color:var(--red)">❌ ' + esc(data.message) + '</span>';
+                statusEl.innerHTML = '<span style="color:var(--red);display:inline-flex;align-items:center;gap:4px"><svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor"><path d="M3.72 3.72a.75.75 0 011.06 0L8 6.94l3.22-3.22a.75.75 0 111.06 1.06L9.06 8l3.22 3.22a.75.75 0 11-1.06 1.06L8 9.06l-3.22 3.22a.75.75 0 01-1.06-1.06L6.94 8 3.72 4.78a.75.75 0 010-1.06z"/></svg>' + esc(data.message) + '</span>';
                 if (btn) btn.disabled = false;
               }
             } catch {}
@@ -4489,7 +4496,18 @@ async function loadInfraServices() {
   try {
     const data = await api('GET', '/infra');
     infraServices = data.services || [];
+    _updateInfraShortcutBadge();
   } catch (e) { console.error('loadInfraServices:', e); }
+}
+
+function _updateInfraShortcutBadge() {
+  const badge = document.getElementById('infraShortcutBadge');
+  if (!badge) return;
+  const running = infraServices.filter(s => s.status === 'running').length;
+  badge.style.display = running > 0 ? '' : 'none';
+  document.getElementById('infraShortcutBtn').title = running > 0
+    ? `基础设施（${running} 运行中）`
+    : '基础设施';
 }
 
 function infraStatusDot(status) {
@@ -4523,7 +4541,7 @@ function openInfraModal() {
                 ? `<button class="icon-btn xs" onclick="infraAction('${esc(svc.id)}','stop')" title="停止">⏹</button>
                    <button class="icon-btn xs" onclick="infraAction('${esc(svc.id)}','restart')" title="重启">⟳</button>`
                 : `<button class="icon-btn xs" onclick="infraAction('${esc(svc.id)}','start')" title="启动">▶</button>`}
-              <button class="icon-btn xs" onclick="infraShowLogs('${esc(svc.id)}')" title="日志">📋</button>
+              <button class="icon-btn xs" onclick="infraShowLogs('${esc(svc.id)}')" title="日志"><svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor"><path d="M2 1.75C2 .784 2.784 0 3.75 0h6.586c.464 0 .909.184 1.237.513l2.914 2.914c.329.328.513.773.513 1.237v9.586A1.75 1.75 0 0112.25 16h-8.5A1.75 1.75 0 012 14.25V1.75zm1.75-.25a.25.25 0 00-.25.25v12.5c0 .138.112.25.25.25h8.5a.25.25 0 00.25-.25V6h-2.75A1.75 1.75 0 018 4.25V1.5H3.75zm6.75.062V4.25c0 .138.112.25.25.25h2.688a.252.252 0 00-.011-.013l-2.914-2.914a.272.272 0 00-.013-.011z"/></svg></button>
               <button class="icon-btn xs danger-icon" onclick="infraDelete('${esc(svc.id)}')" title="删除">&times;</button>
             </span>
           </div>
@@ -4543,7 +4561,7 @@ function openInfraModal() {
       v2 格式：App 服务通过 <code>\${CDS_&lt;SERVICE&gt;_PORT}</code> 引用端口。v1 兼容：使用 <code>{{host}}:{{port}}</code> 自动注入。
     </p>
     <div class="config-panel-actions" style="margin-bottom:10px;display:flex;gap:6px">
-      <button class="sm primary" onclick="infraDiscover()">📦 从 Compose 导入</button>
+      <button class="sm primary" onclick="infraDiscover()" style="display:inline-flex;align-items:center;gap:4px"><svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor"><path d="M8 0L1.5 4v8L8 16l6.5-4V4L8 0zm0 1.5l5 3.1v6.8L8 14.5l-5-3.1V4.6L8 1.5z"/></svg> 从 Compose 导入</button>
       <button class="sm" onclick="openInfraAddModal()">+ 自定义</button>
     </div>
     <div id="infraListInModal">${listHtml}</div>
@@ -4854,19 +4872,19 @@ function openProfileModal() {
         <span class="profile-quick-templates-label">快速开始：</span>
         <button type="button" class="profile-template-btn" onclick="_applyProfileTemplate('node')" title="Node.js + npm">⬡ Node.js</button>
         <button type="button" class="profile-template-btn" onclick="_applyProfileTemplate('dotnet')" title=".NET 8 SDK">⬢ .NET</button>
-        <button type="button" class="profile-template-btn" onclick="_applyProfileTemplate('python')" title="Python 3.12 + pip">🐍 Python</button>
-        <button type="button" class="profile-template-btn" onclick="_applyProfileTemplate('go')" title="Go 1.22">⚡ Go</button>
-        <button type="button" class="profile-template-btn" onclick="_applyProfileTemplate('static')" title="静态站点 nginx">📄 Static</button>
+        <button type="button" class="profile-template-btn" onclick="_applyProfileTemplate('python')" title="Python 3.12 + pip">Python</button>
+        <button type="button" class="profile-template-btn" onclick="_applyProfileTemplate('go')" title="Go 1.22">Go</button>
+        <button type="button" class="profile-template-btn" onclick="_applyProfileTemplate('static')" title="静态站点 nginx">Static</button>
         <!-- P4 Part 18 (G10): auto-detect stack from the current project / branch's files -->
-        <button type="button" class="profile-template-btn" onclick="_autoDetectStack()" title="扫描代码仓库识别技术栈并自动填入字段" style="margin-left:8px;border-color:rgba(96,165,250,0.5);color:#60a5fa">🔍 Auto-detect</button>
+        <button type="button" class="profile-template-btn" onclick="_autoDetectStack()" title="扫描代码仓库识别技术栈并自动填入字段" style="margin-left:8px;border-color:rgba(96,165,250,0.5);color:#60a5fa;display:inline-flex;align-items:center;gap:4px"><svg width="11" height="11" viewBox="0 0 16 16" fill="currentColor"><path d="M11.5 7a4.499 4.499 0 11-8.998 0A4.499 4.499 0 0111.5 7zm-.82 4.74a6 6 0 111.06-1.06l3.04 3.04a.75.75 0 11-1.06 1.06L10.68 11.74z"/></svg> Auto-detect</button>
       </div>
       <div class="form-row">
         <input id="profileId" placeholder="配置 ID（如 api、web）" class="form-input sm">
         <input id="profileName" placeholder="显示名称（留空与 ID 相同）" class="form-input sm">
         <select id="profileIcon" class="form-input xs" title="端口图标">
           <option value="">图标</option>
-          <option value="api">📊 API</option>
-          <option value="web">🌐 Web</option>
+          <option value="api">API</option>
+          <option value="web">Web</option>
           <option value="default">⊖ 默认</option>
         </select>
       </div>
@@ -5050,7 +5068,7 @@ window._applyProfileTemplate = _applyProfileTemplate;
 async function _autoDetectStack() {
   const btn = document.querySelector('.profile-template-btn[onclick*="_autoDetectStack"]');
   if (btn) {
-    btn.textContent = '🔍 扫描中…';
+    btn.innerHTML = '<svg width="11" height="11" viewBox="0 0 16 16" fill="currentColor"><path d="M11.5 7a4.499 4.499 0 11-8.998 0A4.499 4.499 0 0111.5 7zm-.82 4.74a6 6 0 111.06-1.06l3.04 3.04a.75.75 0 11-1.06 1.06L10.68 11.74z"/></svg> 扫描中…';
     btn.disabled = true;
   }
 
@@ -5128,7 +5146,7 @@ async function _autoDetectStack() {
     showToast('检测失败: ' + (err && err.message ? err.message : err), 'error');
   } finally {
     if (btn) {
-      btn.textContent = '🔍 Auto-detect';
+      btn.innerHTML = '<svg width="11" height="11" viewBox="0 0 16 16" fill="currentColor"><path d="M11.5 7a4.499 4.499 0 11-8.998 0A4.499 4.499 0 0111.5 7zm-.82 4.74a6 6 0 111.06-1.06l3.04 3.04a.75.75 0 11-1.06 1.06L10.68 11.74z"/></svg> Auto-detect';
       btn.disabled = false;
     }
   }
@@ -5512,7 +5530,7 @@ async function toggleCommitLog(id, triggerEl) {
       const isCurrent = isPinned ? c.hash === isPinned : i === 0;
       const isLatest = i === 0;
       return `
-      <div class="commit-log-item ${isLatest ? 'latest' : ''} ${isCurrent ? 'current' : ''}" onclick="event.stopPropagation(); checkoutCommit('${esc(id)}', '${esc(c.hash)}', ${isLatest}, ${JSON.stringify(esc(c.subject))})" title="点击切换到此提交进行构建">
+      <div class="commit-log-item ${isLatest ? 'latest' : ''} ${isCurrent ? 'current' : ''}" onclick="event.stopPropagation(); checkoutCommit('${esc(id)}', '${esc(c.hash)}', ${isLatest}, ${JSON.stringify(esc(c.subject)).replace(/"/g, '&quot;')})" title="点击切换到此提交进行构建">
         ${isCurrent ? '<span class="commit-current-dot"></span>' : ''}${commitIcon(c.subject)}<code class="commit-hash">${esc(c.hash)}</code>
         <span class="commit-subject">${esc(c.subject)}</span>
         <span class="commit-meta">${esc(c.author)} · ${esc(c.date)}</span>
@@ -5547,7 +5565,7 @@ async function checkoutCommit(branchId, hash, isLatest, subject) {
   if (isLatest && !branch.pinnedCommit) return;
 
   // Confirm checkout to historical commit
-  const msg = `切换到历史提交进行构建？\n\n${hash}  ${subject}\n\n⚠️ 切换后卡片将显示警示状态\n点击「部署」会自动恢复到分支最新`;
+  const msg = `切换到历史提交进行构建？\n\n${hash}  ${subject}\n\n[警告] 切换后卡片将显示警示状态\n点击「部署」会自动恢复到分支最新`;
   if (!confirm(msg)) return;
 
   try {
@@ -5773,6 +5791,9 @@ function renderActivityItem(event) {
 
   // Update roller (collapsed header ticker)
   updateActivityRoller(event);
+
+  // If topology activity panel is open, prepend this item there too
+  _topologyActivityPanelPush('cds', el.outerHTML, activityEvents.length);
 }
 
 function renderWebActivityItem(event) {
@@ -5812,6 +5833,24 @@ function renderWebActivityItem(event) {
   body.appendChild(el);
 
   requestAnimationFrame(() => { body.scrollTop = body.scrollHeight; });
+
+  // Update topology panel activity tab if open
+  _topologyActivityPanelPush('web', el.outerHTML, webActivityEvents.length);
+}
+
+// Push a new activity item into the topology panel's activity tab if visible.
+function _topologyActivityPanelPush(subtab, itemHtml, count) {
+  if (typeof _topologyPanelCurrentKind === 'undefined' || _topologyPanelCurrentKind !== 'activity') return;
+  var activeTabEl = document.querySelector('.topology-fs-panel-tab.active');
+  if (!activeTabEl || activeTabEl.dataset.tab !== 'activity') return;
+  var bodyEl = document.getElementById(subtab === 'cds' ? 'tfpActivityCds' : 'tfpActivityWeb');
+  if (!bodyEl) return;
+  var emptyEl = bodyEl.querySelector('.tfp-activity-empty');
+  if (emptyEl) emptyEl.remove();
+  // Prepend (newest first)
+  bodyEl.insertAdjacentHTML('afterbegin', itemHtml);
+  var countEl = document.getElementById(subtab === 'cds' ? 'tfpActCdsCount' : 'tfpActWebCount');
+  if (countEl) countEl.textContent = count;
 }
 
 // ── Activity Roller (flip-clock style single-line ticker) ──
@@ -5861,7 +5900,7 @@ function showActivityDetail(event) {
   }
   html += `<div class="activity-detail-row"><span class="activity-detail-key">状态码</span><span style="${statusClass};font-weight:600">${event.status}</span></div>`;
   html += `<div class="activity-detail-row"><span class="activity-detail-key">耗时</span><span>${event.duration < 1000 ? event.duration + 'ms' : (event.duration / 1000).toFixed(1) + 's'}</span></div>`;
-  html += `<div class="activity-detail-row"><span class="activity-detail-key">来源</span><span>${isAi ? '🤖 AI (' + escapeHtml(event.agent || '未知') + ')' : '👤 用户'}</span></div>`;
+  html += `<div class="activity-detail-row"><span class="activity-detail-key">来源</span><span style="display:inline-flex;align-items:center;gap:4px">${isAi ? '<svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor"><path d="M8 0C3.58 0 0 3.58 0 8c0 4.42 3.58 8 8 8s8-3.58 8-8c0-4.42-3.58-8-8-8zm1 11H7v-2h2v2zm0-4H7V5h2v2z"/></svg> AI (' + escapeHtml(event.agent || '未知') + ')' : '<svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor"><path d="M10.561 8.073a6.005 6.005 0 011.06 3.678c0 .673-.111 1.32-.315 1.922a.75.75 0 101.42.477A7.5 7.5 0 0013 11.75a7.5 7.5 0 00-1.316-4.282.75.75 0 00-1.123.605zM8 8a3.5 3.5 0 100-7 3.5 3.5 0 000 7zm-1.5 0a2 2 0 110-4 2 2 0 010 4zm-6 8a6 6 0 0112 0 .75.75 0 01-1.5 0 4.5 4.5 0 00-9 0 .75.75 0 01-1.5 0z"/></svg> 用户'}</span></div>`;
   if (event.remoteAddr) {
     html += `<div class="activity-detail-row"><span class="activity-detail-key">IP</span><span style="font-family:var(--font-mono);font-size:12px">${escapeHtml(event.remoteAddr)}</span></div>`;
   }
@@ -6130,7 +6169,7 @@ function formatConnSummary(conn) {
   if (conn.type === 'local') return `本机 MongoDB${db}`;
   if (conn.type === 'cds') {
     const peer = cdsPeers.find(p => p.id === conn.cdsPeerId);
-    return `🔑 ${peer?.name || conn.cdsPeerId || '未知 CDS'}${db}`;
+    return `<svg width="11" height="11" viewBox="0 0 16 16" fill="currentColor" style="vertical-align:-1px"><path d="M10.5 0a5.499 5.499 0 100 11 5.499 5.499 0 000-11zM7 5.5a3.5 3.5 0 117 0 3.5 3.5 0 01-7 0zm-.405 8.34l-2.96-2.96a.25.25 0 01.177-.426l2.783.077L8.217 8.1a3.5 3.5 0 10-.99-.99L5.75 8.737l-2.783-.077a1.75 1.75 0 00-1.238 2.98l2.96 2.96a1.75 1.75 0 002.48 0l.342-.342a.75.75 0 00-1.061-1.061l-.342.342a.25.25 0 01-.354 0z"/></svg> ${peer?.name || conn.cdsPeerId || '未知 CDS'}${db}`;
   }
   return `${conn.host || '?'}:${conn.port || 27017}${db}`;
 }
@@ -6174,9 +6213,9 @@ function renderMigrationCard(m) {
         <span class="mig-conn-label">${esc(tgtLabel)}</span>
       </div>
       <div class="mig-card-meta">
-        <span title="${esc(colsDetail)}">📦 ${colsLabel}</span>
+        <span title="${esc(colsDetail)}"><svg width="10" height="10" viewBox="0 0 16 16" fill="currentColor" style="vertical-align:-1px"><path d="M8 0L1.5 4v8L8 16l6.5-4V4L8 0zm0 1.5l5 3.1v6.8L8 14.5l-5-3.1V4.6L8 1.5z"/></svg> ${colsLabel}</span>
         ${m.startedAt ? `<span>⏱ ${duration}</span>` : ''}
-        ${m.source.sshTunnel?.enabled || m.target.sshTunnel?.enabled ? '<span>🔒 SSH</span>' : ''}
+        ${m.source.sshTunnel?.enabled || m.target.sshTunnel?.enabled ? '<span><svg width="10" height="10" viewBox="0 0 16 16" fill="currentColor" style="vertical-align:-1px"><path d="M4 5a4 4 0 017.87 1.37A3 3 0 0115 9a3 3 0 01-3 3H5a4 4 0 01-1-7.87V5zm5 5.5a1.5 1.5 0 100-3 1.5 1.5 0 000 3zm0-5A1.5 1.5 0 109 7a1.5 1.5 0 000 3z"/></svg> SSH</span>' : ''}
       </div>
       ${m.errorMessage ? `<div class="mig-card-error">⚠ ${esc(m.errorMessage)}</div>` : ''}
       ${m.status === 'running' ? `
@@ -6185,9 +6224,9 @@ function renderMigrationCard(m) {
       ` : ''}
       <div class="mig-card-actions">
         ${canRun ? `<button class="sm" onclick="executeMigration('${m.id}')">▶ 执行</button>` : ''}
-        ${m.status !== 'running' ? `<button class="sm" onclick="editMigration('${m.id}')">✎ 编辑</button>` : ''}
-        <button class="sm" onclick="cloneMigration('${m.id}')">⧉ 克隆</button>
-        ${m.log ? `<button class="sm" onclick="showMigrationLog('${m.id}')">📋 日志</button>` : ''}
+        ${m.status !== 'running' ? `<button class="sm" onclick="editMigration('${m.id}')"><svg width="11" height="11" viewBox="0 0 16 16" fill="currentColor"><path d="M11.013 1.427a1.75 1.75 0 012.474 0l1.086 1.086a1.75 1.75 0 010 2.474l-8.61 8.61c-.21.21-.47.364-.756.445l-3.251.93a.75.75 0 01-.927-.928l.929-3.25c.081-.286.235-.547.445-.758l8.61-8.61zm.176 4.823L9.75 4.81l-6.286 6.287a.25.25 0 00-.064.108l-.558 1.953 1.953-.558a.249.249 0 00.108-.064l6.286-6.286z"/></svg> 编辑</button>` : ''}
+        <button class="sm" onclick="cloneMigration('${m.id}')"><svg width="11" height="11" viewBox="0 0 16 16" fill="currentColor"><path d="M5.75 1a.75.75 0 00-.75.75v3c0 .414.336.75.75.75h4.5a.75.75 0 00.75-.75v-3a.75.75 0 00-.75-.75h-4.5zm.75 3V2.5h3V4h-3zm-2.874-.467a.75.75 0 00-.752-1.298A1.75 1.75 0 002 4.75v7.5c0 .966.784 1.75 1.75 1.75h8.5A1.75 1.75 0 0014 12.25v-7.5a1.75 1.75 0 00-.874-1.515.75.75 0 10-.752 1.298.25.25 0 01.126.217v7.5a.25.25 0 01-.25.25h-8.5a.25.25 0 01-.25-.25v-7.5a.25.25 0 01.126-.217z"/></svg> 克隆</button>
+        ${m.log ? `<button class="sm" onclick="showMigrationLog('${m.id}')"><svg width="11" height="11" viewBox="0 0 16 16" fill="currentColor"><path d="M2 1.75C2 .784 2.784 0 3.75 0h6.586c.464 0 .909.184 1.237.513l2.914 2.914c.329.328.513.773.513 1.237v9.586A1.75 1.75 0 0112.25 16h-8.5A1.75 1.75 0 012 14.25V1.75zm1.75-.25a.25.25 0 00-.25.25v12.5c0 .138.112.25.25.25h8.5a.25.25 0 00.25-.25V6h-2.75A1.75 1.75 0 018 4.25V1.5H3.75zm6.75.062V4.25c0 .138.112.25.25.25h2.688a.252.252 0 00-.011-.013l-2.914-2.914a.272.272 0 00-.013-.011z"/></svg> 日志</button>` : ''}
         ${m.status !== 'running' ? `<button class="sm danger-text" onclick="deleteMigration('${m.id}')">删除</button>` : ''}
       </div>
     </div>
@@ -6204,8 +6243,8 @@ async function openMigrationModal() {
     <p class="config-panel-desc">MongoDB 数据迁移。支持本机 / 远程 / CDS 密钥（跨 CDS 一键直连）。管道流式传输，无临时文件。</p>
     <div class="config-panel-actions" style="margin-bottom:10px;display:flex;gap:6px;flex-wrap:wrap">
       <button class="sm primary" onclick="openNewMigrationModal()">+ 新建迁移</button>
-      <button class="sm" onclick="openPeersModal()">🔑 CDS 密钥管理${peerCount ? ` (${peerCount})` : ''}</button>
-      <button class="sm" onclick="checkMigrationTools()">🔧 工具状态</button>
+      <button class="sm" onclick="openPeersModal()" style="display:inline-flex;align-items:center;gap:4px"><svg width="11" height="11" viewBox="0 0 16 16" fill="currentColor"><path d="M10.5 0a5.499 5.499 0 100 11 5.499 5.499 0 000-11zM7 5.5a3.5 3.5 0 117 0 3.5 3.5 0 01-7 0zm-.405 8.34l-2.96-2.96a.25.25 0 01.177-.426l2.783.077L8.217 8.1a3.5 3.5 0 10-.99-.99L5.75 8.737l-2.783-.077a1.75 1.75 0 00-1.238 2.98l2.96 2.96a1.75 1.75 0 002.48 0l.342-.342a.75.75 0 00-1.061-1.061l-.342.342a.25.25 0 01-.354 0z"/></svg> CDS 密钥管理${peerCount ? ` (${peerCount})` : ''}</button>
+      <button class="sm" onclick="checkMigrationTools()" style="display:inline-flex;align-items:center;gap:4px"><svg width="11" height="11" viewBox="0 0 16 16" fill="currentColor"><path d="M5.433.753a.75.75 0 01.673-.752A7.5 7.5 0 0115 7.5a.75.75 0 01-1.5 0 6 6 0 00-5.49-5.983.75.75 0 01-.577-.764zM1.5 7.5a.75.75 0 01.75-.75h2.752a.75.75 0 01.53 1.28L2.78 10.28a.25.25 0 00.35.357l5.5-4.498a.75.75 0 01.87 1.229l-5.5 4.497a1.75 1.75 0 01-2.45-2.5L3.296 7.5H2.25A.75.75 0 011.5 7.5z"/></svg> 工具状态</button>
     </div>
     <div id="migrationToolStatus" style="font-size:12px;margin-bottom:8px;display:none"></div>
     <div id="migrationListInModal">${listHtml}</div>
@@ -6266,7 +6305,7 @@ function buildConnectionForm(prefix, defaultType, isSource) {
       <div class="form-row mc-row" style="margin-bottom:6px">
         <select id="${prefix}Type" class="form-input mc-input" onchange="onConnTypeChange('${prefix}', ${isSource})">
           ${hasLocalMongo ? `<option value="local" ${defaultType === 'local' ? 'selected' : ''}>本机 MongoDB${mongoSvc?.status === 'running' ? ' ●' : ''}</option>` : ''}
-          <option value="cds" ${defaultType === 'cds' ? 'selected' : ''}>🔑 CDS 密钥 (跨 CDS 直连)</option>
+          <option value="cds" ${defaultType === 'cds' ? 'selected' : ''}>CDS 密钥 (跨 CDS 直连)</option>
           <option value="remote" ${defaultType === 'remote' || !hasLocalMongo ? 'selected' : ''}>远程 MongoDB</option>
         </select>
       </div>
@@ -6277,7 +6316,7 @@ function buildConnectionForm(prefix, defaultType, isSource) {
             <option value="">${cdsPeers.length ? '(请选择 CDS 密钥)' : '(未添加，请点击「管理密钥」)'}</option>
             ${peerOptions}
           </select>
-          <button type="button" class="sm mc-btn" onclick="openPeersModal()" title="管理 CDS 密钥">🔑</button>
+          <button type="button" class="sm mc-btn" onclick="openPeersModal()" title="管理 CDS 密钥"><svg width="11" height="11" viewBox="0 0 16 16" fill="currentColor"><path d="M10.5 0a5.499 5.499 0 100 11 5.499 5.499 0 000-11zM7 5.5a3.5 3.5 0 117 0 3.5 3.5 0 01-7 0zm-.405 8.34l-2.96-2.96a.25.25 0 01.177-.426l2.783.077L8.217 8.1a3.5 3.5 0 10-.99-.99L5.75 8.737l-2.783-.077a1.75 1.75 0 00-1.238 2.98l2.96 2.96a1.75 1.75 0 002.48 0l.342-.342a.75.75 0 00-1.061-1.061l-.342.342a.25.25 0 01-.354 0z"/></svg></button>
         </div>
       </div>
 
@@ -6322,7 +6361,7 @@ function buildConnectionForm(prefix, defaultType, isSource) {
             <input id="${prefix}SshContainer" class="form-input mc-input" placeholder="docker 容器名 (可选, 走 docker exec)">
           </div>
           <div class="form-row mc-row" style="gap:6px">
-            <button type="button" class="sm" onclick="testSshTunnel('${prefix}')" style="flex:0 0 auto">🔧 测试隧道</button>
+            <button type="button" class="sm" onclick="testSshTunnel('${prefix}')" style="flex:0 0 auto;display:inline-flex;align-items:center;gap:4px"><svg width="11" height="11" viewBox="0 0 16 16" fill="currentColor"><path d="M5.433.753a.75.75 0 01.673-.752A7.5 7.5 0 0115 7.5a.75.75 0 01-1.5 0 6 6 0 00-5.49-5.983.75.75 0 01-.577-.764zM1.5 7.5a.75.75 0 01.75-.75h2.752a.75.75 0 01.53 1.28L2.78 10.28a.25.25 0 00.35.357l5.5-4.498a.75.75 0 01.87 1.229l-5.5 4.497a1.75 1.75 0 01-2.45-2.5L3.296 7.5H2.25A.75.75 0 011.5 7.5z"/></svg> 测试隧道</button>
             <div id="${prefix}SshTestStatus" style="font-size:11px;flex:1;align-self:center;color:var(--fg-muted);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"></div>
           </div>
         </div>
@@ -6451,7 +6490,7 @@ function autoGenerateName() {
     if (type === 'cds') {
       const peerId = document.getElementById(`${prefix}CdsPeer`)?.value;
       const peer = cdsPeers.find(p => p.id === peerId);
-      return peer ? `🔑 ${peer.name}` : '🔑 CDS';
+      return peer ? `<svg width="10" height="10" viewBox="0 0 16 16" fill="currentColor"><path d="M10.5 0a5.499 5.499 0 100 11 5.499 5.499 0 000-11zM7 5.5a3.5 3.5 0 117 0 3.5 3.5 0 01-7 0zm-.405 8.34l-2.96-2.96a.25.25 0 01.177-.426l2.783.077L8.217 8.1a3.5 3.5 0 10-.99-.99L5.75 8.737l-2.783-.077a1.75 1.75 0 00-1.238 2.98l2.96 2.96a1.75 1.75 0 002.48 0l.342-.342a.75.75 0 00-1.061-1.061l-.342.342a.25.25 0 01-.354 0z"/></svg> ${peer.name}` : 'CDS';
     }
     return document.getElementById(`${prefix}Host`)?.value || '远程';
   };
@@ -6552,7 +6591,7 @@ async function openNewMigrationModal(prefill, opts) {
   // Ensure peers list is available for the peer picker
   if (cdsPeers.length === 0) { await loadCdsPeers(); }
   const title = editMode ? '编辑数据迁移' : '新建数据迁移';
-  const primaryLabel = editMode ? '💾 保存修改' : '▶ 创建并执行';
+  const primaryLabel = editMode ? '保存修改' : '创建并执行';
   const primaryHandler = editMode ? 'saveMigrationEdits()' : 'createAndExecuteMigration()';
   const html = `
     <div class="form-row" style="margin-bottom:10px">
@@ -6560,20 +6599,20 @@ async function openNewMigrationModal(prefill, opts) {
     </div>
     <div class="migration-dual-panel">
       <div class="migration-side">
-        <div class="migration-side-title">📤 源数据库</div>
+        <div class="migration-side-title"><svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor" style="vertical-align:-1px"><path d="M8.75 0a.75.75 0 01.75.75v13.5a.75.75 0 01-1.5 0V.75A.75.75 0 018.75 0zM.22 7.47a.75.75 0 001.06 1.06L3.5 6.31v5.44a.75.75 0 001.5 0V6.31l2.22 2.22a.75.75 0 001.06-1.06L4.75 3.94 1.22 7.47z"/></svg> 源数据库</div>
         ${buildConnectionForm('src', prefill?.source?.type || 'local', true)}
       </div>
       <div class="migration-arrow">
         <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
       </div>
       <div class="migration-side">
-        <div class="migration-side-title">📥 目标数据库</div>
+        <div class="migration-side-title"><svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor" style="vertical-align:-1px"><path d="M8.75 0a.75.75 0 01.75.75v5.44l2.22-2.22a.75.75 0 011.06 1.06L9.28 8.53a.747.747 0 01-1.06 0L4.78 5.03a.75.75 0 011.06-1.06L8.06 6.19V.75A.75.75 0 018.75 0zm-5 8.75A.75.75 0 013 9.5v4.75c0 .138.112.25.25.25h11.5a.25.25 0 00.25-.25V9.5a.75.75 0 011.5 0v4.75A1.75 1.75 0 0115 16H3.25A1.75 1.75 0 011.5 14.25V9.5a.75.75 0 011-1z"/></svg> 目标数据库</div>
         ${buildConnectionForm('tgt', prefill?.target?.type || 'remote', false)}
       </div>
     </div>
     <div class="form-row" style="margin-top:12px;gap:6px;flex-wrap:wrap">
       <button class="primary sm" onclick="${primaryHandler}">${primaryLabel}</button>
-      ${editMode ? '' : '<button class="sm" onclick="saveMigrationOnly()">💾 仅保存</button>'}
+      ${editMode ? '' : '<button class="sm" onclick="saveMigrationOnly()">仅保存</button>'}
       <button class="sm" onclick="openMigrationModal()">取消</button>
     </div>
   `;
@@ -6716,7 +6755,7 @@ async function executeMigration(id) {
           <span class="mig-flow-arrow">→</span>
           <span class="mig-conn-label">${esc(formatConnSummary(mig.target))}</span>
         </div>
-        ${mig.collections?.length ? `<div style="text-align:center;font-size:11px;color:var(--fg-muted);margin-bottom:8px">📦 ${mig.collections.join(', ')}</div>` : ''}
+        ${mig.collections?.length ? `<div style="text-align:center;font-size:11px;color:var(--fg-muted);margin-bottom:8px"><svg width="10" height="10" viewBox="0 0 16 16" fill="currentColor" style="vertical-align:-1px"><path d="M8 0L1.5 4v8L8 16l6.5-4V4L8 0zm0 1.5l5 3.1v6.8L8 14.5l-5-3.1V4.6L8 1.5z"/></svg> ${mig.collections.join(', ')}</div>` : ''}
       ` : ''}
       <div class="mig-progress-bar" style="height:8px;margin-bottom:10px"><div id="migProgressFill" class="mig-progress-fill" style="width:0%"></div></div>
       <div id="migProgressText" style="font-size:13px;text-align:center;margin-bottom:4px">准备中...</div>
@@ -6800,7 +6839,7 @@ async function openPeersModal() {
 
   const myKeySection = myKey && myKey.accessKey ? `
     <div class="peer-mykey-box">
-      <div class="peer-mykey-title">🔑 本机 CDS 密钥 <span class="peer-mykey-hint">（复制后在对方 CDS 中添加，即可实现双向数据迁移）</span></div>
+      <div class="peer-mykey-title"><svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor" style="vertical-align:-1px"><path d="M10.5 0a5.499 5.499 0 100 11 5.499 5.499 0 000-11zM7 5.5a3.5 3.5 0 117 0 3.5 3.5 0 01-7 0zm-.405 8.34l-2.96-2.96a.25.25 0 01.177-.426l2.783.077L8.217 8.1a3.5 3.5 0 10-.99-.99L5.75 8.737l-2.783-.077a1.75 1.75 0 00-1.238 2.98l2.96 2.96a1.75 1.75 0 002.48 0l.342-.342a.75.75 0 00-1.061-1.061l-.342.342a.25.25 0 01-.354 0z"/></svg> 本机 CDS 密钥 <span class="peer-mykey-hint">（复制后在对方 CDS 中添加，即可实现双向数据迁移）</span></div>
       <div class="form-row mc-row" style="margin-bottom:4px">
         <input class="form-input mc-input" value="${esc(myKey.baseUrl || '')}" readonly onfocus="this.select()" title="本机 CDS 地址">
         <button type="button" class="sm" onclick="copyToClipboard('${esc(myKey.baseUrl || '').replace(/'/g, "\\'")}')">复制地址</button>
@@ -6830,8 +6869,8 @@ async function openPeersModal() {
           </div>
         </div>
         <div class="peer-card-actions">
-          <button type="button" class="sm" onclick="testCdsPeer('${p.id}')" title="重新验证连接">🔧 测试</button>
-          <button type="button" class="sm" onclick="editCdsPeer('${p.id}')">✎ 编辑</button>
+          <button type="button" class="sm" onclick="testCdsPeer('${p.id}')" title="重新验证连接" style="display:inline-flex;align-items:center;gap:3px"><svg width="11" height="11" viewBox="0 0 16 16" fill="currentColor"><path d="M5.433.753a.75.75 0 01.673-.752A7.5 7.5 0 0115 7.5a.75.75 0 01-1.5 0 6 6 0 00-5.49-5.983.75.75 0 01-.577-.764zM1.5 7.5a.75.75 0 01.75-.75h2.752a.75.75 0 01.53 1.28L2.78 10.28a.25.25 0 00.35.357l5.5-4.498a.75.75 0 01.87 1.229l-5.5 4.497a1.75 1.75 0 01-2.45-2.5L3.296 7.5H2.25A.75.75 0 011.5 7.5z"/></svg> 测试</button>
+          <button type="button" class="sm" onclick="editCdsPeer('${p.id}')" style="display:inline-flex;align-items:center;gap:3px"><svg width="11" height="11" viewBox="0 0 16 16" fill="currentColor"><path d="M11.013 1.427a1.75 1.75 0 012.474 0l1.086 1.086a1.75 1.75 0 010 2.474l-8.61 8.61c-.21.21-.47.364-.756.445l-3.251.93a.75.75 0 01-.927-.928l.929-3.25c.081-.286.235-.547.445-.758l8.61-8.61zm.176 4.823L9.75 4.81l-6.286 6.287a.25.25 0 00-.064.108l-.558 1.953 1.953-.558a.249.249 0 00.108-.064l6.286-6.286z"/></svg> 编辑</button>
           <button type="button" class="sm danger-text" onclick="deleteCdsPeer('${p.id}')">删除</button>
         </div>
       </div>
@@ -7202,14 +7241,14 @@ async function openClusterModal() {
           点击"生成连接码"，把出现的字符串复制到另一台机器的"我是从节点"里粘贴，
           对方就会自动以 executor 身份加入集群。连接码 <strong>15 分钟过期</strong>。
         </p>
-        <button class="btn-primary cluster-action-btn" onclick="doIssueToken()">
-          🔐 生成连接码
+        <button class="btn-primary cluster-action-btn" onclick="doIssueToken()" style="display:inline-flex;align-items:center;gap:6px;justify-content:center">
+          <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M10.5 0a5.499 5.499 0 100 11 5.499 5.499 0 000-11zM7 5.5a3.5 3.5 0 117 0 3.5 3.5 0 01-7 0zm-.405 8.34l-2.96-2.96a.25.25 0 01.177-.426l2.783.077L8.217 8.1a3.5 3.5 0 10-.99-.99L5.75 8.737l-2.783-.077a1.75 1.75 0 00-1.238 2.98l2.96 2.96a1.75 1.75 0 002.48 0l.342-.342a.75.75 0 00-1.061-1.061l-.342.342a.25.25 0 01-.354 0z"/></svg> 生成连接码
         </button>
         <div id="clusterTokenBox" class="cluster-token-box hidden">
           <label>连接码（复制下面的字符串粘贴到另一台机器）</label>
           <textarea id="clusterTokenArea" readonly rows="4" onclick="this.select()"></textarea>
           <div class="cluster-token-actions">
-            <button class="btn-secondary" onclick="copyClusterToken()">📋 复制</button>
+            <button class="btn-secondary" onclick="copyClusterToken()" style="display:inline-flex;align-items:center;gap:4px"><svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor"><path d="M0 6.75C0 5.784.784 5 1.75 5h1.5a.75.75 0 010 1.5h-1.5a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-1.5a.75.75 0 011.5 0v1.5A1.75 1.75 0 019.25 16h-7.5A1.75 1.75 0 010 14.25v-7.5z"/><path d="M5 1.75C5 .784 5.784 0 6.75 0h7.5C15.216 0 16 .784 16 1.75v7.5A1.75 1.75 0 0114.25 11h-7.5A1.75 1.75 0 015 9.25v-7.5zm1.75-.25a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-7.5a.25.25 0 00-.25-.25h-7.5z"/></svg> 复制</button>
             <span id="clusterTokenCountdown" class="cluster-countdown"></span>
           </div>
           <div class="cluster-token-hint">
@@ -7225,8 +7264,8 @@ async function openClusterModal() {
             <code>${esc(statusBody.masterUrl || '未知')}</code><br>
             Executor ID：<code>${esc(statusBody.executorId || '未知')}</code>
           </p>
-          <button class="btn-danger cluster-action-btn" onclick="doLeaveCluster()">
-            🚪 退出集群
+          <button class="btn-danger cluster-action-btn" onclick="doLeaveCluster()" style="display:inline-flex;align-items:center;gap:6px;justify-content:center">
+            <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M2 2.75C2 1.784 2.784 1 3.75 1h2.5a.75.75 0 010 1.5h-2.5a.25.25 0 00-.25.25v10.5c0 .138.112.25.25.25h2.5a.75.75 0 010 1.5h-2.5A1.75 1.75 0 012 13.25V2.75zm10.44 4.5l-1.97-1.97a.75.75 0 111.06-1.06l3.25 3.25a.75.75 0 010 1.06l-3.25 3.25a.75.75 0 11-1.06-1.06l1.97-1.97H6.75a.75.75 0 010-1.5h5.69z"/></svg> 退出集群
           </button>
         ` : `
           <p class="cluster-tab-desc">
@@ -7235,8 +7274,8 @@ async function openClusterModal() {
           </p>
           <textarea id="clusterJoinInput" class="cluster-paste-input" rows="4"
                     placeholder="把主节点生成的连接码粘贴到这里..."></textarea>
-          <button class="btn-primary cluster-action-btn" onclick="doJoinCluster()">
-            🔌 加入集群
+          <button class="btn-primary cluster-action-btn" onclick="doJoinCluster()" style="display:inline-flex;align-items:center;gap:6px;justify-content:center">
+            <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M14.25 1h-3.5a.75.75 0 000 1.5h1.94l-3.72 3.72a.75.75 0 001.06 1.06L13.75 3.56v1.94a.75.75 0 001.5 0V1.75a.75.75 0 00-.75-.75zM1.75 15h3.5a.75.75 0 000-1.5H3.31l3.72-3.72a.75.75 0 10-1.06-1.06L2.25 12.44v-1.94a.75.75 0 00-1.5 0v3.75c0 .414.336.75.75.75z"/></svg> 加入集群
           </button>
           <div id="clusterJoinResult"></div>
         `}
@@ -7331,7 +7370,7 @@ async function doIssueToken() {
   } catch (err) {
     showToast('网络错误: ' + err.message, 'error');
   } finally {
-    if (btn) { btn.disabled = false; btn.textContent = '🔐 重新生成连接码'; }
+    if (btn) { btn.disabled = false; btn.innerHTML = '<svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M10.5 0a5.499 5.499 0 100 11 5.499 5.499 0 000-11zM7 5.5a3.5 3.5 0 117 0 3.5 3.5 0 01-7 0zm-.405 8.34l-2.96-2.96a.25.25 0 01.177-.426l2.783.077L8.217 8.1a3.5 3.5 0 10-.99-.99L5.75 8.737l-2.783-.077a1.75 1.75 0 00-1.238 2.98l2.96 2.96a1.75 1.75 0 002.48 0l.342-.342a.75.75 0 00-1.061-1.061l-.342.342a.25.25 0 01-.354 0z"/></svg> 重新生成连接码'; }
   }
 }
 
@@ -7373,8 +7412,8 @@ async function doJoinCluster() {
     return;
   }
 
-  if (btn) { btn.disabled = true; btn.textContent = '⏳ 正在加入...'; }
-  if (result) result.innerHTML = '<div class="cluster-progress">🔄 解析连接码 → 写入配置 → 注册到主节点 → 启动心跳...</div>';
+  if (btn) { btn.disabled = true; btn.textContent = '正在加入...'; }
+  if (result) result.innerHTML = '<div class="cluster-progress">解析连接码 → 写入配置 → 注册到主节点 → 启动心跳...</div>';
 
   try {
     const res = await fetch('/api/cluster/join', {
@@ -7386,7 +7425,7 @@ async function doJoinCluster() {
     const body = await res.json();
 
     if (!res.ok) {
-      if (result) result.innerHTML = `<div class="cluster-error">❌ ${esc(body.error || '加入失败')}</div>`;
+      if (result) result.innerHTML = `<div class="cluster-error"><svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor"><path d="M3.72 3.72a.75.75 0 011.06 0L8 6.94l3.22-3.22a.75.75 0 111.06 1.06L9.06 8l3.22 3.22a.75.75 0 11-1.06 1.06L8 9.06l-3.22 3.22a.75.75 0 01-1.06-1.06L6.94 8 3.72 4.78a.75.75 0 010-1.06z"/></svg> ${esc(body.error || '加入失败')}</div>`;
       showToast(body.error || '加入失败', 'error');
       return;
     }
@@ -7395,7 +7434,7 @@ async function doJoinCluster() {
     if (result) {
       result.innerHTML = `
         <div class="cluster-success">
-          ✅ 已加入集群
+          ✓ 已加入集群
           <div class="cluster-success-meta">
             Executor ID: <code>${esc(body.executorId)}</code><br>
             主节点: <a href="${esc(body.masterUrl)}" target="_blank" rel="noopener">${esc(body.masterUrl)}</a>
@@ -7410,9 +7449,9 @@ async function doJoinCluster() {
     clusterEffectiveRole = 'hybrid';
     updateClusterStatusBadge('hybrid', 2);
   } catch (err) {
-    if (result) result.innerHTML = `<div class="cluster-error">❌ 网络错误: ${esc(err.message)}</div>`;
+    if (result) result.innerHTML = `<div class="cluster-error"><svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor"><path d="M3.72 3.72a.75.75 0 011.06 0L8 6.94l3.22-3.22a.75.75 0 111.06 1.06L9.06 8l3.22 3.22a.75.75 0 11-1.06 1.06L8 9.06l-3.22 3.22a.75.75 0 01-1.06-1.06L6.94 8 3.72 4.78a.75.75 0 010-1.06z"/></svg> 网络错误: ${esc(err.message)}</div>`;
   } finally {
-    if (btn) { btn.disabled = false; btn.textContent = '🔌 加入集群'; }
+    if (btn) { btn.disabled = false; btn.innerHTML = '<svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M14.25 1h-3.5a.75.75 0 000 1.5h1.94l-3.72 3.72a.75.75 0 001.06 1.06L13.75 3.56v1.94a.75.75 0 001.5 0V1.75a.75.75 0 00-.75-.75zM1.75 15h3.5a.75.75 0 000-1.5H3.31l3.72-3.72a.75.75 0 10-1.06-1.06L2.25 12.44v-1.94a.75.75 0 00-1.5 0v3.75c0 .414.336.75.75.75z"/></svg> 加入集群'; }
   }
 }
 
@@ -7447,7 +7486,7 @@ async function doLeaveCluster() {
   } catch (err) {
     showToast('网络错误: ' + err.message, 'error');
   } finally {
-    if (btn) { btn.disabled = false; btn.textContent = '🚪 退出集群'; }
+    if (btn) { btn.disabled = false; btn.innerHTML = '<svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M2 2.75C2 1.784 2.784 1 3.75 1h2.5a.75.75 0 010 1.5h-2.5a.25.25 0 00-.25.25v10.5c0 .138.112.25.25.25h2.5a.75.75 0 010 1.5h-2.5A1.75 1.75 0 012 13.25V2.75zm10.44 4.5l-1.97-1.97a.75.75 0 111.06-1.06l3.25 3.25a.75.75 0 010 1.06l-3.25 3.25a.75.75 0 11-1.06-1.06l1.97-1.97H6.75a.75.75 0 010-1.5h5.69z"/></svg> 退出集群'; }
   }
 }
 
@@ -7560,7 +7599,7 @@ function _renderOverrideTabs() {
   const aliasCountBadge = aliasCount > 0
     ? `<span style="display:inline-block;padding:1px 6px;font-size:10px;background:var(--accent-bg,rgba(74,158,255,0.15));color:var(--accent,#4a9eff);border-radius:8px;margin-left:6px;">${aliasCount}</span>`
     : '';
-  const subTab = `<button class="log-tab ${subActive ? 'active' : ''}" style="padding:6px 12px;border-radius:8px 8px 0 0;border:1px solid var(--border);border-bottom:none;background:${subActive ? 'var(--bg-elevated)' : 'transparent'};color:${subActive ? 'var(--text-primary)' : 'var(--text-secondary)'};cursor:pointer;font-size:12px;margin-right:8px;" onclick="_switchOverrideProfile('${OVERRIDE_TAB_SUBDOMAIN}')" title="分支级子域名别名（所有服务共享）">🌐 子域名${aliasCountBadge}</button>`;
+  const subTab = `<button class="log-tab ${subActive ? 'active' : ''}" style="padding:6px 12px;border-radius:8px 8px 0 0;border:1px solid var(--border);border-bottom:none;background:${subActive ? 'var(--bg-elevated)' : 'transparent'};color:${subActive ? 'var(--text-primary)' : 'var(--text-secondary)'};cursor:pointer;font-size:12px;margin-right:8px;" onclick="_switchOverrideProfile('${OVERRIDE_TAB_SUBDOMAIN}')" title="分支级子域名别名（所有服务共享）"><svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor" style="vertical-align:-1px;margin-right:4px"><path d="M8 0a8 8 0 100 16A8 8 0 008 0zM1.01 8.75h2.49c.07.94.21 1.85.43 2.68A6.02 6.02 0 011.01 8.75zm0-1.5A6.02 6.02 0 013.93 4.57c-.22.83-.36 1.74-.43 2.68H1.01zm7.24 7.7c-.63-.64-1.14-1.63-1.46-2.97H9.2c-.32 1.34-.83 2.33-1.46 2.97A6.47 6.47 0 017.49.8a6.47 6.47 0 01-.72 0zm-.97-4.47H9.2c.08-.78.12-1.6.12-2.43s-.04-1.65-.12-2.43H7.24c-.08.78-.12 1.6-.12 2.43s.04 1.65.12 2.43zm3.33 2.97c.22-.83.36-1.74.43-2.68h2.49a6.02 6.02 0 01-2.92 2.68zm.43-4.18c-.07-.94-.21-1.85-.43-2.68A6.02 6.02 0 0114.99 7H12.5c-.07.83-.12 1.64-.12 2.47z"/></svg>子域名${aliasCountBadge}</button>`;
 
   tabsEl.innerHTML = subTab + profileTabs;
 }
@@ -8090,8 +8129,13 @@ window._resetSubdomainAliases = _resetSubdomainAliases;
 // `buildProfiles` / `infraServices` / `branches` globals.
 // ════════════════════════════════════════════════════════════════════
 
-let _viewMode = sessionStorage.getItem('cds_view_mode') === 'topology' ? 'topology' : 'list';
+let _viewMode = (function () {
+  // /branch-panel path → start in topology; otherwise honour session storage
+  if (location.pathname === '/branch-panel') return 'topology';
+  return sessionStorage.getItem('cds_view_mode') === 'topology' ? 'topology' : 'list';
+})();
 let _topologySelectedBranchId = null; // currently highlighted branch for override overlay
+let _topologyKeepSharedView = false;   // true = stay in aggregated canvas even with a branchId set (panel context only)
 let _topologyOverrideCache = new Map(); // branchId → Set<profileId> with hasOverride=true
 let _topologyOverrideDetails = new Map(); // branchId → Map<profileId, string[]> list of overridden fields
 
@@ -8099,6 +8143,10 @@ function setViewMode(mode) {
   if (mode !== 'list' && mode !== 'topology') mode = 'list';
   _viewMode = mode;
   sessionStorage.setItem('cds_view_mode', mode);
+  // Sync URL path so each view has a distinct, bookmarkable address
+  var _urlPath = mode === 'topology' ? '/branch-panel' : '/branch-list';
+  history.replaceState(null, '', _urlPath + location.search);
+  document.title = (mode === 'topology' ? '分支面板' : '分支列表') + ' · CDS';
 
   const listEl = document.getElementById('branchList');
   const topoEl = document.getElementById('topologyView');
@@ -8183,25 +8231,85 @@ function _ensureTopologyFsChrome() {
     catch (e) { return 'default'; }
   })();
 
-  // ── 1. Left icon sub-nav ──
+  // ── 1. Left icon sub-nav — two sections: project-level + system-level ──
   const leftnav = document.createElement('aside');
   leftnav.id = 'topologyFsLeftnav';
   leftnav.className = 'topology-fs-leftnav';
   leftnav.innerHTML = `
-    <button type="button" class="topology-fs-leftnav-icon active" title="服务拓扑">
-      <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M5 2.75a2.25 2.25 0 114.5 0 2.25 2.25 0 01-4.5 0zM7.25 0a2.75 2.75 0 00-.75 5.397V7H2.75A1.75 1.75 0 001 8.75v1.603a2.75 2.75 0 101.5 0V8.75a.25.25 0 01.25-.25H6.5v1.397a2.75 2.75 0 101.5 0V8.5h3.75a.25.25 0 01.25.25v1.603a2.75 2.75 0 101.5 0V8.75A1.75 1.75 0 0011.75 7H8V5.397A2.75 2.75 0 007.25 0z"/></svg>
+    <!-- ① Navigation views -->
+    <button type="button" class="topology-fs-leftnav-icon active" id="topoNavTopology" title="服务拓扑" onclick="setViewMode('topology')">
+      <svg viewBox="0 0 16 16" fill="currentColor"><path d="M5 2.75a2.25 2.25 0 114.5 0 2.25 2.25 0 01-4.5 0zM7.25 0a2.75 2.75 0 00-.75 5.397V7H2.75A1.75 1.75 0 001 8.75v1.603a2.75 2.75 0 101.5 0V8.75a.25.25 0 01.25-.25H6.5v1.397a2.75 2.75 0 101.5 0V8.5h3.75a.25.25 0 01.25.25v1.603a2.75 2.75 0 101.5 0V8.75A1.75 1.75 0 0011.75 7H8V5.397A2.75 2.75 0 007.25 0z"/></svg>
+      <span class="topology-fs-leftnav-label">拓扑</span>
     </button>
-    <!-- UF-08: the old "日志" icon here was actually calling setViewMode('list')
-         with a log-card icon and ambiguous tooltip — users couldn't find the
-         back-to-list exit. We removed it and replaced it with a real toggle
-         in the top pill (see topologyFsViewToggle below). -->
-    <a href="settings.html?project=${esc(projectId)}" class="topology-fs-leftnav-icon" title="项目设置 (P4 Part 13)">
-      <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M7.429 1.525a3.5 3.5 0 011.142 0 .75.75 0 01.57.63l.185 1.29a.25.25 0 00.35.193l1.178-.592a.75.75 0 01.808.098 3.5 3.5 0 01.571.571.75.75 0 01.098.808l-.592 1.178a.25.25 0 00.193.35l1.29.185a.75.75 0 01.63.57 3.5 3.5 0 010 1.142.75.75 0 01-.63.57l-1.29.185a.25.25 0 00-.193.35l.592 1.178a.75.75 0 01-.098.808 3.5 3.5 0 01-.571.571.75.75 0 01-.808.098l-1.178-.592a.25.25 0 00-.35.193l-.185 1.29a.75.75 0 01-.57.63 3.5 3.5 0 01-1.142 0 .75.75 0 01-.57-.63l-.185-1.29a.25.25 0 00-.35-.193l-1.178.592a.75.75 0 01-.808-.098 3.5 3.5 0 01-.571-.571.75.75 0 01-.098-.808l.592-1.178a.25.25 0 00-.193-.35l-1.29-.185a.75.75 0 01-.63-.57 3.5 3.5 0 010-1.142.75.75 0 01.63-.57l1.29-.185a.25.25 0 00.193-.35l-.592-1.178a.75.75 0 01.098-.808 3.5 3.5 0 01.571-.571.75.75 0 01.808-.098l1.178.592a.25.25 0 00.35-.193l.185-1.29a.75.75 0 01.57-.63zM8 6a2 2 0 100 4 2 2 0 000-4z"/></svg>
-    </a>
+    <button type="button" class="topology-fs-leftnav-icon" id="topoNavList" title="切换到列表视图" onclick="setViewMode('list')">
+      <svg viewBox="0 0 16 16" fill="currentColor"><path d="M2 4h12v2H2V4zm0 3.5h12v1H2v-1zm0 2.5h12v1H2v-1zm0 2.5h12v1H2v-1z"/></svg>
+      <span class="topology-fs-leftnav-label">列表</span>
+    </button>
+
+    <!-- ② Project-level tools -->
+    <div class="topology-fs-leftnav-divider"></div>
+
+    <button type="button" class="topology-fs-leftnav-icon" title="构建配置" onclick="openProfileModal()">
+      <svg viewBox="0 0 16 16" fill="currentColor"><path d="M7.22 1.547a2.403 2.403 0 011.56 0l4.03 1.384a.48.48 0 01.33.457v1.224a.48.48 0 01-.33.457L8.78 6.453a2.403 2.403 0 01-1.56 0L3.19 5.069a.48.48 0 01-.33-.457V3.388a.48.48 0 01.33-.457l4.03-1.384zM3.19 6.903l4.03 1.384a2.403 2.403 0 001.56 0l4.03-1.384a.48.48 0 01.33.457v1.224a.48.48 0 01-.33.457L8.78 10.425a2.403 2.403 0 01-1.56 0L3.19 9.041a.48.48 0 01-.33-.457V7.36a.48.48 0 01.33-.457zm0 3.972l4.03 1.384a2.403 2.403 0 001.56 0l4.03-1.384a.48.48 0 01.33.457v1.224a.48.48 0 01-.33.457l-4.03 1.384a2.403 2.403 0 01-1.56 0l-4.03-1.384a.48.48 0 01-.33-.457v-1.224a.48.48 0 01.33-.457z"/></svg>
+      <span class="topology-fs-leftnav-label">构建</span>
+    </button>
+    <button type="button" class="topology-fs-leftnav-icon" title="环境变量" onclick="openEnvModal()">
+      <svg viewBox="0 0 16 16" fill="currentColor"><path d="M2.5 2a.5.5 0 00-.5.5v11a.5.5 0 00.5.5h11a.5.5 0 00.5-.5v-11a.5.5 0 00-.5-.5h-11zM1 2.5A1.5 1.5 0 012.5 1h11A1.5 1.5 0 0115 2.5v11a1.5 1.5 0 01-1.5 1.5h-11A1.5 1.5 0 011 13.5v-11zM4 5h2v1H4V5zm3 0h5v1H7V5zM4 8h2v1H4V8zm3 0h5v1H7V8zM4 11h2v1H4v-1zm3 0h5v1H7v-1z"/></svg>
+      <span class="topology-fs-leftnav-label">环境</span>
+    </button>
+    <button type="button" class="topology-fs-leftnav-icon" title="基础设施" onclick="openInfraModal()">
+      <svg viewBox="0 0 16 16" fill="currentColor"><path d="M2 2a2 2 0 012-2h8a2 2 0 012 2v2a2 2 0 01-2 2H4a2 2 0 01-2-2V2zm2-.5a.5.5 0 00-.5.5v2a.5.5 0 00.5.5h8a.5.5 0 00.5-.5V2a.5.5 0 00-.5-.5H4zM2 9.5A1.5 1.5 0 013.5 8h9A1.5 1.5 0 0114 9.5v3a1.5 1.5 0 01-1.5 1.5h-9A1.5 1.5 0 012 12.5v-3zm1.5 0v3h9v-3h-9zM4 10.5a.5.5 0 01.5-.5h1a.5.5 0 010 1h-1a.5.5 0 01-.5-.5z"/></svg>
+      <span class="topology-fs-leftnav-label">基础设施</span>
+    </button>
+    <button type="button" class="topology-fs-leftnav-icon" title="路由规则" onclick="openRoutingModal()">
+      <svg viewBox="0 0 16 16" fill="currentColor"><path d="M8 0a8 8 0 100 16A8 8 0 008 0zM1.5 8a6.5 6.5 0 0113 0h-2.1a8.3 8.3 0 00-.4-2.2 9 9 0 00-1-1.9A4.5 4.5 0 017 7.5H4.5A8.3 8.3 0 001.5 8zm5.5 5.5a6.5 6.5 0 01-5.4-3h2.3c.3 1.2.8 2.2 1.5 3H7zm1-5.5a7.8 7.8 0 014-3.8c.5.6.9 1.2 1.2 1.8H8zm0 1h5.4a8.3 8.3 0 01-.3 2H8.9 8V9zm0 3h3.8c-.6 1.3-1.5 2.4-2.8 3A6.5 6.5 0 018 9z"/></svg>
+      <span class="topology-fs-leftnav-label">路由</span>
+    </button>
+    <button type="button" class="topology-fs-leftnav-icon" id="topoNavActivity" title="系统活动日志" onclick="_topologyOpenActivityPanel()">
+      <svg viewBox="0 0 16 16" fill="currentColor"><path d="M1.5 1.75a.75.75 0 00-1.5 0v12.5c0 .414.336.75.75.75h14.5a.75.75 0 000-1.5H1.5V1.75zm14.28 2.53a.75.75 0 00-1.06-1.06L10 7.94 7.53 5.47a.75.75 0 00-1.06 0L2.22 9.72a.75.75 0 001.06 1.06L7 7.06l2.47 2.47a.75.75 0 001.06 0l5.25-5.25z"/></svg>
+      <span class="topology-fs-leftnav-label">活动</span>
+    </button>
+    <!-- 刷新: project-level, used most frequently — moved from topbar to here -->
+    <button type="button" class="topology-fs-leftnav-icon" id="topoNavRefresh" title="手动刷新远端分支 / 更新检查" onclick="_topologyManualRefresh(event)">
+      <svg viewBox="0 0 16 16" fill="currentColor"><path d="M8 2.5a5.487 5.487 0 00-4.131 1.869l1.204 1.204A.25.25 0 014.896 6H1.25A.25.25 0 011 5.75V2.104a.25.25 0 01.427-.177l1.38 1.38A7.002 7.002 0 0115 8a.75.75 0 01-1.5 0A5.5 5.5 0 008 2.5zM2.5 8a.75.75 0 00-1.5 0 7.002 7.002 0 0012.023 4.87l1.38 1.38a.25.25 0 00.427-.177V10.5a.25.25 0 00-.25-.25h-3.646a.25.25 0 00-.177.427l1.204 1.204A5.5 5.5 0 012.5 8z"/></svg>
+      <span class="topology-fs-leftnav-label">刷新</span>
+    </button>
+
+    <!-- ③ System section (collapsed into ⚙ popover) -->
     <div class="topology-fs-leftnav-spacer"></div>
-    <a href="projects.html" class="topology-fs-leftnav-icon" title="返回项目列表">
-      <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M1.75 1h12.5c.966 0 1.75.784 1.75 1.75v10.5A1.75 1.75 0 0114.25 15H1.75A1.75 1.75 0 010 13.25V2.75C0 1.784.784 1 1.75 1zM1.5 2.75v10.5c0 .138.112.25.25.25h12.5a.25.25 0 00.25-.25V2.75a.25.25 0 00-.25-.25H1.75a.25.25 0 00-.25.25z"/></svg>
-    </a>
+    <div class="topology-fs-leftnav-divider"></div>
+
+    <!-- System settings trigger — all system ops fold in here -->
+    <div style="position:relative">
+      <button type="button" class="topology-fs-leftnav-icon" id="topoSysBtn"
+              title="系统设置（导入 / 更新 / 清理 / 项目列表）"
+              onclick="_topoSysPopoverToggle()">
+        <svg viewBox="0 0 16 16" fill="currentColor"><path d="M8 0a.75.75 0 01.75.75 5.75 5.75 0 000 14.5A.75.75 0 018 16C3.582 16 0 12.418 0 8S3.582 0 8 0zm5.5 8a5.5 5.5 0 11-11 0 5.5 5.5 0 0111 0zM6.75 7.25h2.5a.75.75 0 010 1.5h-2.5a.75.75 0 010-1.5z"/></svg>
+        <svg viewBox="0 0 16 16" fill="currentColor" style="display:none"><path d="M9.585.52a2.678 2.678 0 00-3.17 0l-.928.68a1.178 1.178 0 01-.518.215L3.83 1.59a2.678 2.678 0 00-2.24 2.24l-.175 1.14a1.178 1.178 0 01-.215.518l-.68.928a2.678 2.678 0 000 3.17l.68.928c.113.153.183.33.215.518l.175 1.14a2.678 2.678 0 002.24 2.24l1.14.175c.187.032.365.102.518.215l.928.68a2.678 2.678 0 003.17 0l.928-.68a1.178 1.178 0 01.518-.215l1.14-.175a2.678 2.678 0 002.24-2.24l.175-1.14c.032-.187.102-.365.215-.518l.68-.928a2.678 2.678 0 000-3.17l-.68-.928a1.178 1.178 0 01-.215-.518L14.41 3.83a2.678 2.678 0 00-2.24-2.24l-1.14-.175a1.178 1.178 0 01-.518-.215L9.585.52zM8 10.5a2.5 2.5 0 110-5 2.5 2.5 0 010 5z"/></svg>
+        <span class="topology-fs-leftnav-label">设置</span>
+      </button>
+      <!-- System popover -->
+      <div class="topo-sys-popover" id="topoSysPopover">
+        <button type="button" class="topo-sys-popover-item" onclick="_topoSysPopoverClose();openImportModal()">
+          <svg viewBox="0 0 16 16" fill="currentColor"><path d="M8 2.004a.75.75 0 01.75.75v5.689l1.97-1.97a.749.749 0 111.06 1.06l-3.25 3.25a.749.749 0 01-1.06 0L4.22 7.533a.749.749 0 111.06-1.06l1.97 1.97V2.754a.75.75 0 01.75-.75zM2.75 12.5h10.5a.75.75 0 010 1.5H2.75a.75.75 0 010-1.5z"/></svg>
+          导入配置
+        </button>
+        <button type="button" class="topo-sys-popover-item" onclick="_topoSysPopoverClose();openSelfUpdate()">
+          <svg viewBox="0 0 16 16" fill="currentColor"><path d="M8 2.5a5.487 5.487 0 00-4.131 1.869l1.204 1.204A.25.25 0 014.896 6H1.25A.25.25 0 011 5.75V2.104a.25.25 0 01.427-.177l1.38 1.38A7.002 7.002 0 0115 8a.75.75 0 01-1.5 0A5.5 5.5 0 008 2.5zM2.5 8a.75.75 0 00-1.5 0 7.002 7.002 0 0012.023 4.87l1.38 1.38a.25.25 0 00.427-.177V10.5a.25.25 0 00-.25-.25h-3.646a.25.25 0 00-.177.427l1.204 1.204A5.5 5.5 0 012.5 8z"/></svg>
+          CDS 系统更新
+        </button>
+        <div class="topo-sys-popover-divider"></div>
+        <button type="button" class="topo-sys-popover-item danger" onclick="_topoSysPopoverClose();openCleanupModal()">
+          <svg viewBox="0 0 16 16" fill="currentColor"><path d="M6.5 1.75a.25.25 0 01.25-.25h2.5a.25.25 0 01.25.25V3h-3V1.75zM11 3V1.75A1.75 1.75 0 009.25 0h-2.5A1.75 1.75 0 005 1.75V3H2.75a.75.75 0 000 1.5h.3l.8 8.2A1.75 1.75 0 005.6 14.5h4.8a1.75 1.75 0 001.75-1.8l.8-8.2h.3a.75.75 0 000-1.5H11z"/></svg>
+          清理分支
+        </button>
+        <div class="topo-sys-popover-divider"></div>
+        <a href="/project-list" class="topo-sys-popover-item">
+          <svg viewBox="0 0 16 16" fill="currentColor"><path d="M1.75 1h12.5c.966 0 1.75.784 1.75 1.75v10.5A1.75 1.75 0 0114.25 15H1.75A1.75 1.75 0 010 13.25V2.75C0 1.784.784 1 1.75 1zM1.5 2.75v10.5c0 .138.112.25.25.25h12.5a.25.25 0 00.25-.25V2.75a.25.25 0 00-.25-.25H1.75a.25.25 0 00-.25.25z"/></svg>
+          项目列表
+        </a>
+      </div>
+    </div>
   `;
   document.body.appendChild(leftnav);
 
@@ -8225,7 +8333,7 @@ function _ensureTopologyFsChrome() {
   topbar.className = 'topology-fs-topbar';
   topbar.innerHTML = `
     <div class="topology-fs-topbar-pill">
-      <a href="projects.html" class="topology-fs-breadcrumb-item link" title="返回项目列表">
+      <a href="/project-list" class="topology-fs-breadcrumb-item link" title="返回项目列表">
         <svg width="13" height="13" viewBox="0 0 16 16" fill="currentColor"><path d="M1.75 1h12.5c.966 0 1.75.784 1.75 1.75v10.5A1.75 1.75 0 0114.25 15H1.75A1.75 1.75 0 010 13.25V2.75C0 1.784.784 1 1.75 1zM1.5 2.75v10.5c0 .138.112.25.25.25h12.5a.25.25 0 00.25-.25V2.75a.25.25 0 00-.25-.25H1.75a.25.25 0 00-.25.25z"/></svg>
         <span id="topologyFsProjectName">${esc(projectId)}</span>
       </a>
@@ -8245,28 +8353,54 @@ function _ensureTopologyFsChrome() {
         </div>
       </div>
     </div>
-    <!-- GAP-16: manual refresh button — list view has this in the search
-         bar (refreshRemoteBtn); topology previously had nothing, so users
-         endured the ~5s polling lag when they wanted an immediate pulse.
-         Button sits before the view toggle, reuses .topology-fs-view-toggle-btn
-         styles for visual consistency. Spinner class added during call
-         so user sees the refresh is in flight. -->
-    <button type="button" class="topology-fs-view-toggle-btn" id="topologyFsRefreshBtn" onclick="_topologyManualRefresh(event)" title="手动刷新远端分支 / 更新检查" style="margin-right:6px">
-      <svg width="13" height="13" viewBox="0 0 16 16" fill="currentColor"><path d="M8 2.5a5.487 5.487 0 00-4.131 1.869l1.204 1.204A.25.25 0 014.896 6H1.25A.25.25 0 011 5.75V2.104a.25.25 0 01.427-.177l1.38 1.38A7.002 7.002 0 0115 8a.75.75 0 01-1.5 0A5.5 5.5 0 008 2.5zM2.5 8a.75.75 0 00-1.5 0 7.002 7.002 0 0012.023 4.87l1.38 1.38a.25.25 0 00.427-.177V10.5a.25.25 0 00-.25-.25h-3.646a.25.25 0 00-.177.427l1.204 1.204A5.5 5.5 0 012.5 8z"/></svg>
-    </button>
-    <!-- UF-08: view mode toggle pill, always visible -->
-    <div class="topology-fs-view-toggle" id="topologyFsViewToggle">
-      <button type="button" class="topology-fs-view-toggle-btn" data-view-mode="list" onclick="setViewMode('list')" title="切换到列表视图">
-        <svg width="13" height="13" viewBox="0 0 16 16" fill="currentColor"><path d="M2 4h12v2H2V4zm0 3.5h12v1H2v-1zm0 2.5h12v1H2v-1zm0 2.5h12v1H2v-1z"/></svg>
-        列表
-      </button>
-      <button type="button" class="topology-fs-view-toggle-btn active" data-view-mode="topology" onclick="setViewMode('topology')" title="当前视图">
-        <svg width="13" height="13" viewBox="0 0 16 16" fill="currentColor"><path d="M5 2.75a2.25 2.25 0 114.5 0 2.25 2.25 0 01-4.5 0zM7.25 0a2.75 2.75 0 00-.75 5.397V7H2.75A1.75 1.75 0 001 8.75v1.603a2.75 2.75 0 101.5 0V8.75a.25.25 0 01.25-.25H6.5v1.397a2.75 2.75 0 101.5 0V8.5h3.75a.25.25 0 01.25.25v1.603a2.75 2.75 0 101.5 0V8.75A1.75 1.75 0 0011.75 7H8V5.397A2.75 2.75 0 007.25 0z"/></svg>
-        拓扑
-      </button>
+    <!-- Inline host-stats pill (replaces the bottom-right floating widget in FS mode) -->
+    <div class="topology-fs-hoststats" id="topologyFsHostStats" onclick="showHostStatsDetails(event)" title="宿主机实时负载 — 点击查看详情" style="display:none">
+      <div class="topology-fs-hoststats-row">
+        <span class="topology-fs-hoststats-label">MEM</span>
+        <span class="topology-fs-hoststats-bar"><span class="topology-fs-hoststats-fill" id="tfhsMemFill"></span></span>
+        <span class="topology-fs-hoststats-value" id="tfhsMemValue">--</span>
+      </div>
+      <span class="topology-fs-hoststats-sep"></span>
+      <div class="topology-fs-hoststats-row">
+        <span class="topology-fs-hoststats-label">CPU</span>
+        <span class="topology-fs-hoststats-bar"><span class="topology-fs-hoststats-fill" id="tfhsCpuFill"></span></span>
+        <span class="topology-fs-hoststats-value" id="tfhsCpuValue">--</span>
+      </div>
     </div>
+    <!-- UF-08: view toggle moved to left sidebar (topoNavList / topoNavTopology). -->
   `;
   document.body.appendChild(topbar);
+
+  // ── 5. Right slide-in service detail panel (must come BEFORE addBtn in DOM
+  //    so the CSS sibling selector `.topology-fs-panel.open ~ .topology-fs-add-btn`
+  //    can hide the Add button when the panel is open). ──
+  const panel = document.createElement('div');
+  panel.id = 'topologyFsPanel';
+  panel.className = 'topology-fs-panel';
+  panel.innerHTML = `
+    <div class="topology-fs-panel-header">
+      <div class="topology-fs-panel-icon" id="topologyFsPanelIcon">
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M0 2.75C0 1.784.784 1 1.75 1h12.5c.966 0 1.75.784 1.75 1.75v10.5A1.75 1.75 0 0114.25 15H1.75A1.75 1.75 0 010 13.25V2.75z"/></svg>
+      </div>
+      <div class="topology-fs-panel-title" id="topologyFsPanelTitle">服务详情</div>
+      <button type="button" class="topology-fs-panel-close" onclick="_topologyClosePanel()" title="关闭">✕</button>
+    </div>
+    <div class="topology-fs-panel-tabs">
+      <button type="button" class="topology-fs-panel-tab active" data-tab="details" onclick="_topologySwitchPanelTab('details')">详情</button>
+      <button type="button" class="topology-fs-panel-tab" data-tab="buildLogs" onclick="_topologySwitchPanelTab('buildLogs')">构建日志</button>
+      <button type="button" class="topology-fs-panel-tab" data-tab="deployLogs" onclick="_topologySwitchPanelTab('deployLogs')">部署日志</button>
+      <button type="button" class="topology-fs-panel-tab" data-tab="httpLogs" onclick="_topologySwitchPanelTab('httpLogs')">HTTP 日志</button>
+      <button type="button" class="topology-fs-panel-tab" data-tab="variables" onclick="_topologySwitchPanelTab('variables')">环境变量</button>
+      <button type="button" class="topology-fs-panel-tab" data-tab="routing" onclick="_topologySwitchPanelTab('routing')">路由</button>
+      <button type="button" class="topology-fs-panel-tab" data-tab="tags" onclick="_topologySwitchPanelTab('tags')">备注</button>
+      <button type="button" class="topology-fs-panel-tab" data-tab="settings" onclick="_topologySwitchPanelTab('settings')">设置</button>
+      <button type="button" class="topology-fs-panel-tab" data-tab="activity" onclick="_topologySwitchPanelTab('activity')">活动</button>
+    </div>
+    <div class="topology-fs-panel-body" id="topologyFsPanelBody">
+      <div class="tfp-empty">点击拓扑节点查看服务详情</div>
+    </div>
+  `;
+  document.body.appendChild(panel);
 
   // ── 4. Floating "+ Add" button + popover menu ──
   const addBtn = document.createElement('button');
@@ -8306,10 +8440,11 @@ function _ensureTopologyFsChrome() {
       <span class="label">路由规则</span>
       <span class="chevron">›</span>
     </button>
-    <!-- P4 Part 18 cleanup: removed "Volume / 持久化卷" menu item —
-         it toast'd "P6 上线" with no real target. Volumes can still
-         be configured in the existing InfraService.volumes field
-         via the full build-profiles editor. -->
+    <button type="button" class="topology-fs-add-menu-item" onclick="_topologyChooseAddItem('volume')">
+      <span class="icon"><svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M2 3.75C2 2.784 4.686 2 8 2s6 .784 6 1.75v8.5C14 13.216 11.314 14 8 14s-6-.784-6-1.75v-8.5zm1.5.25c0 .414 2.015.75 4.5.75s4.5-.336 4.5-.75-2.015-.75-4.5-.75-4.5.336-4.5.75zm0 3c0 .414 2.015.75 4.5.75s4.5-.336 4.5-.75V5.5c-.9.4-2.65.625-4.5.625S4.4 5.9 3.5 5.5V7zm0 3c0 .414 2.015.75 4.5.75s4.5-.336 4.5-.75V8.5c-.9.4-2.65.625-4.5.625S4.4 8.9 3.5 8.5V10z"/></svg></span>
+      <span class="label">Volume / 持久化卷</span>
+      <span class="chevron">›</span>
+    </button>
     <button type="button" class="topology-fs-add-menu-item" onclick="_topologyChooseAddItem('empty')">
       <span class="icon"><svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M0 2.75C0 1.784.784 1 1.75 1h12.5c.966 0 1.75.784 1.75 1.75v10.5A1.75 1.75 0 0114.25 15H1.75A1.75 1.75 0 010 13.25V2.75zm1.75-.25a.25.25 0 00-.25.25v10.5c0 .138.112.25.25.25h12.5a.25.25 0 00.25-.25V2.75a.25.25 0 00-.25-.25H1.75z"/></svg></span>
       <span class="label">空服务</span>
@@ -8317,39 +8452,6 @@ function _ensureTopologyFsChrome() {
     </button>
   `;
   document.body.appendChild(addMenu);
-
-  // ── 5. Right slide-in service detail panel ──
-  const panel = document.createElement('div');
-  panel.id = 'topologyFsPanel';
-  panel.className = 'topology-fs-panel';
-  panel.innerHTML = `
-    <div class="topology-fs-panel-header">
-      <div class="topology-fs-panel-icon" id="topologyFsPanelIcon">
-        <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M0 2.75C0 1.784.784 1 1.75 1h12.5c.966 0 1.75.784 1.75 1.75v10.5A1.75 1.75 0 0114.25 15H1.75A1.75 1.75 0 010 13.25V2.75z"/></svg>
-      </div>
-      <div class="topology-fs-panel-title" id="topologyFsPanelTitle">服务详情</div>
-      <button type="button" class="topology-fs-panel-close" onclick="_topologyClosePanel()" title="关闭">
-        <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M3.72 3.72a.75.75 0 011.06 0L8 6.94l3.22-3.22a.75.75 0 111.06 1.06L9.06 8l3.22 3.22a.75.75 0 11-1.06 1.06L8 9.06l-3.22 3.22a.75.75 0 01-1.06-1.06L6.94 8 3.72 4.78a.75.75 0 010-1.06z"/></svg>
-      </button>
-    </div>
-    <div class="topology-fs-panel-tabs">
-      <button type="button" class="topology-fs-panel-tab active" data-tab="details" onclick="_topologySwitchPanelTab('details')">详情</button>
-      <button type="button" class="topology-fs-panel-tab" data-tab="buildLogs" onclick="_topologySwitchPanelTab('buildLogs')">构建日志</button>
-      <button type="button" class="topology-fs-panel-tab" data-tab="deployLogs" onclick="_topologySwitchPanelTab('deployLogs')">部署日志</button>
-      <button type="button" class="topology-fs-panel-tab" data-tab="httpLogs" onclick="_topologySwitchPanelTab('httpLogs')">HTTP 日志</button>
-      <button type="button" class="topology-fs-panel-tab" data-tab="networkFlowLogs" onclick="_topologySwitchPanelTab('networkFlowLogs')">网络流</button>
-      <button type="button" class="topology-fs-panel-tab" data-tab="variables" onclick="_topologySwitchPanelTab('variables')">环境变量</button>
-      <!-- GAP-04: routing tab -->
-      <button type="button" class="topology-fs-panel-tab" data-tab="routing" onclick="_topologySwitchPanelTab('routing')">路由</button>
-      <!-- GAP-07: tags/notes tab -->
-      <button type="button" class="topology-fs-panel-tab" data-tab="tags" onclick="_topologySwitchPanelTab('tags')">备注</button>
-      <button type="button" class="topology-fs-panel-tab" data-tab="settings" onclick="_topologySwitchPanelTab('settings')">设置</button>
-    </div>
-    <div class="topology-fs-panel-body" id="topologyFsPanelBody">
-      <div class="tfp-empty">点击拓扑节点查看服务详情</div>
-    </div>
-  `;
-  document.body.appendChild(panel);
 
   // ── 6. Bottom edit hint ──
   const hint = document.createElement('div');
@@ -8465,57 +8567,175 @@ function _ensureTopologyFsChrome() {
  * App profiles are layered by depends_on depth.
  */
 function _layoutTopologyDag(profiles, infraList) {
-  const nodes = new Map(); // id → { id, kind, raw }
+  const nodes = new Map();
+  const appNodes = [];
+  const infraNodes = [];
+
   for (const p of profiles) {
-    nodes.set(p.id, { id: p.id, kind: 'app', raw: p });
+    const node = { id: p.id, kind: 'app', raw: p };
+    nodes.set(p.id, node);
+    appNodes.push(node);
   }
   for (const s of infraList) {
     if (!nodes.has(s.id)) {
-      nodes.set(s.id, { id: s.id, kind: 'infra', raw: s });
+      const node = { id: s.id, kind: 'infra', raw: s };
+      nodes.set(s.id, node);
+      infraNodes.push(node);
     }
   }
 
-  // Edges: a profile's depends_on → those targets must run first.
-  // We point edge FROM dependency TO dependent (data flow direction).
-  const edges = [];
-  const indeg = new Map();
-  for (const n of nodes.values()) indeg.set(n.id, 0);
+  // Stable alphabetical sort within each tier
+  appNodes.sort((a, b) => a.id.localeCompare(b.id));
+  infraNodes.sort((a, b) => a.id.localeCompare(b.id));
 
+  // Edges from dependsOn declarations
+  const edges = [];
   for (const p of profiles) {
     for (const depId of p.dependsOn || []) {
-      if (!nodes.has(depId)) continue;
-      edges.push({ from: depId, to: p.id });
-      indeg.set(p.id, (indeg.get(p.id) || 0) + 1);
+      if (nodes.has(depId)) edges.push({ from: depId, to: p.id });
     }
   }
 
-  // Kahn's algorithm, layer by layer
+  // Forced 2-tier layout: infra always bottom (layers[0]),
+  // apps always top (layers[1]).  _renderTopologySvg reverses
+  // layer index so layers[0] → displayRow=bottom, layers[1] → top.
+  // This guarantees admin (app with no deps) stays in the top row
+  // alongside api, not mixed into the infra row.
   const layers = [];
-  const remaining = new Set(nodes.keys());
-  let guard = 0;
-  while (remaining.size > 0 && guard++ < 50) {
-    const layer = [];
-    for (const id of remaining) {
-      if ((indeg.get(id) || 0) === 0) layer.push(nodes.get(id));
+  if (infraNodes.length > 0) layers.push(infraNodes);
+  if (appNodes.length > 0) layers.push(appNodes);
+  if (layers.length === 0) layers.push([]);
+
+  return { layers, edges, nodes };
+}
+
+// ── Aggregated layout (shared view B) ─────────────────────────────────
+//
+// When no branch is selected (共享视图) and the project has tracked
+// branches, we expand each BuildProfile into N cards — one per branch.
+// All branch-instance cards remain connected to the same shared infra
+// services below, giving the user a cross-branch operational overview.
+//
+// Layout:
+//   - Rows (app tiers) = one per BuildProfile, sorted alphabetically
+//   - Within each row, one card per branch (columns, sorted by branchId)
+//   - Bottom row = shared infra services
+//
+// Returned shape is identical to _layoutTopologyDag so _renderTopologySvg
+// can render it without modification (node.aggregated flag carries extra
+// meta for the branch sub-label).
+// Max branches shown per visual column-group. Beyond this, rows wrap
+// into a second group below — keeps canvas width at ≤4×(280+110)px.
+const MAX_AGG_COLS = 4;
+
+function _layoutTopologyAggregated(profiles, infraList, allBranches) {
+  if (!allBranches || allBranches.length === 0) {
+    return _layoutTopologyDag(profiles, infraList);
+  }
+
+  const nodes = new Map();
+  const infraNodes = [];
+  const sortedProfiles = [...profiles].sort((a, b) => (a.id || '').localeCompare(b.id || ''));
+  const sortedBranches = [...allBranches].sort((a, b) => (a.id || '').localeCompare(b.id || ''));
+
+  // Infra nodes (shared — single set at the bottom)
+  for (const s of infraList) {
+    if (!nodes.has(s.id)) {
+      const node = { id: s.id, kind: 'infra', raw: s };
+      nodes.set(s.id, node);
+      infraNodes.push(node);
     }
-    if (layer.length === 0) {
-      // Cycle detected — dump everything remaining into one final layer
-      for (const id of remaining) layer.push(nodes.get(id));
+  }
+  infraNodes.sort((a, b) => a.id.localeCompare(b.id));
+
+  // App nodes: each (profile × branch) pair
+  for (const p of sortedProfiles) {
+    for (const b of sortedBranches) {
+      const syntheticId = p.id + '@' + b.id;
+      nodes.set(syntheticId, {
+        id: syntheticId,
+        kind: 'app',
+        aggregated: true,
+        profileId: p.id,
+        branchId: b.id,
+        raw: Object.assign({}, p, {
+          id: syntheticId,
+          status: b.status || 'unknown',
+          _branchLabel: b.branch || b.id,
+          _profileId: p.id,
+        }),
+      });
     }
-    layer.sort((a, b) => {
-      if (a.kind !== b.kind) return a.kind === 'infra' ? -1 : 1;
-      return a.id.localeCompare(b.id);
-    });
-    layers.push(layer);
-    for (const n of layer) {
-      remaining.delete(n.id);
-      for (const e of edges) {
-        if (e.from === n.id) indeg.set(e.to, (indeg.get(e.to) || 0) - 1);
+  }
+
+  // Edges: infra → each branch instance of a profile that depends on it
+  const edges = [];
+  for (const p of sortedProfiles) {
+    for (const depId of p.dependsOn || []) {
+      if (nodes.has(depId)) {
+        for (const b of sortedBranches) {
+          edges.push({ from: depId, to: p.id + '@' + b.id });
+        }
       }
     }
   }
 
-  return { layers, edges, nodes };
+  // ── Grid layout: wrap branches into groups of MAX_AGG_COLS ──────────
+  // Groups are stacked vertically; within each group, profiles form rows.
+  // This keeps canvas width at ≤4 cards wide regardless of branch count.
+  const numBranches = sortedBranches.length;
+  const numProfiles = sortedProfiles.length;
+  const numCols = Math.min(numBranches, MAX_AGG_COLS);
+  const numGroups = Math.ceil(numBranches / MAX_AGG_COLS);
+
+  // Width of the widest column-group (may be narrower for the last group)
+  const sectionW = numCols * TOPO_NODE_W + Math.max(0, numCols - 1) * TOPO_GAP_X;
+  // Height of one profile-group block (all profiles stacked)
+  const groupBlockH = numProfiles * TOPO_NODE_H + Math.max(0, numProfiles - 1) * TOPO_GAP_Y;
+
+  const positions = new Map();
+
+  for (let g = 0; g < numGroups; g++) {
+    const groupTopY = TOPO_PAD + g * (groupBlockH + TOPO_SECTION_GAP_Y);
+    const colsInGroup = Math.min(MAX_AGG_COLS, numBranches - g * MAX_AGG_COLS);
+    const groupW = colsInGroup * TOPO_NODE_W + Math.max(0, colsInGroup - 1) * TOPO_GAP_X;
+    const groupOffsetX = (sectionW - groupW) / 2; // center partial last group
+
+    for (let pi = 0; pi < numProfiles; pi++) {
+      const p = sortedProfiles[pi];
+      const rowY = groupTopY + pi * (TOPO_NODE_H + TOPO_GAP_Y);
+      for (let ci = 0; ci < colsInGroup; ci++) {
+        const branchIdx = g * MAX_AGG_COLS + ci;
+        const b = sortedBranches[branchIdx];
+        const syntheticId = p.id + '@' + b.id;
+        positions.set(syntheticId, {
+          x: TOPO_PAD + groupOffsetX + ci * (TOPO_NODE_W + TOPO_GAP_X),
+          y: rowY,
+          node: nodes.get(syntheticId),
+        });
+      }
+    }
+  }
+
+  // Infra row at bottom, centered under the section width
+  const infraY = TOPO_PAD + numGroups * (groupBlockH + TOPO_SECTION_GAP_Y);
+  const infraRowW = infraNodes.length > 0
+    ? infraNodes.length * TOPO_NODE_W + Math.max(0, infraNodes.length - 1) * TOPO_GAP_X
+    : 0;
+  const infraOffX = (sectionW - infraRowW) / 2;
+  for (let ii = 0; ii < infraNodes.length; ii++) {
+    const node = infraNodes[ii];
+    positions.set(node.id, {
+      x: TOPO_PAD + infraOffX + ii * (TOPO_NODE_W + TOPO_GAP_X),
+      y: infraY,
+      node,
+    });
+  }
+
+  const svgW = TOPO_PAD * 2 + sectionW;
+  const svgH = infraY + (infraNodes.length > 0 ? TOPO_NODE_H : 0) + TOPO_PAD;
+
+  return { nodes, edges, positions, aggregated: true, svgW, svgH };
 }
 
 // ── Rich card renderer ────────────────────────────────────────────────
@@ -8543,6 +8763,7 @@ const TOPO_NODE_W = 280;
 const TOPO_NODE_H = 150;
 const TOPO_VOLUME_SLOT_H = 38;  // bottom volume slot for infra with volumes
 const TOPO_GAP_X = 110;
+const TOPO_SECTION_GAP_Y = 84; // extra vertical gap between branch column-groups (leaves room for labels)
 const TOPO_GAP_Y = 48;
 const TOPO_PAD = 48;
 const TOPO_NODE_RADIUS = 18;
@@ -8664,6 +8885,11 @@ function _topologyNodeStatus(node, selectedBranchId) {
   if (node.kind === 'infra') {
     return node.raw.status || 'unknown'; // running/stopped/error
   }
+  // Aggregated shared-view nodes carry status from the branch object
+  // directly (set during layout: raw.status = branch.status).
+  if (node.aggregated) {
+    return node.raw.status || 'unknown';
+  }
   // App service: look up the selected branch's services map
   if (!selectedBranchId) return 'unknown';
   const branch = branches.find(b => b.id === selectedBranchId);
@@ -8685,26 +8911,41 @@ function _topologyNodeStatus(node, selectedBranchId) {
 function _renderTopologySvg(layout, ctx) {
   const { overrideSet, overrideDetails, selectedBranchId, selectedNodeId } = ctx;
 
-  const positions = new Map();
-  let maxLayerLen = 0;
-  layout.layers.forEach(layer => {
-    if (layer.length > maxLayerLen) maxLayerLen = layer.length;
-  });
+  let positions, totalW, totalH;
 
-  // Centered layout: taller layers get shifted up so all layers vertically align
-  layout.layers.forEach((layer, layerIdx) => {
-    const layerHeight = layer.length * (TOPO_NODE_H + TOPO_GAP_Y) - TOPO_GAP_Y;
-    const maxHeight = maxLayerLen * (TOPO_NODE_H + TOPO_GAP_Y) - TOPO_GAP_Y;
-    const offsetY = (maxHeight - layerHeight) / 2;
-    layer.forEach((node, idxInLayer) => {
-      const x = TOPO_PAD + layerIdx * (TOPO_NODE_W + TOPO_GAP_X);
-      const y = TOPO_PAD + offsetY + idxInLayer * (TOPO_NODE_H + TOPO_GAP_Y);
-      positions.set(node.id, { x, y, node });
+  if (layout.positions) {
+    // Pre-computed grid positions (aggregated multi-row layout).
+    // Apply per-node drag offsets on top of the static base positions.
+    positions = new Map();
+    layout.positions.forEach((pos, id) => {
+      const drag = _topologyNodeDragOffsets[id] || { dx: 0, dy: 0 };
+      positions.set(id, { x: pos.x + drag.dx, y: pos.y + drag.dy, node: pos.node });
     });
-  });
-
-  const totalW = TOPO_PAD * 2 + layout.layers.length * TOPO_NODE_W + Math.max(0, layout.layers.length - 1) * TOPO_GAP_X;
-  const totalH = TOPO_PAD * 2 + maxLayerLen * TOPO_NODE_H + Math.max(0, maxLayerLen - 1) * TOPO_GAP_Y;
+    totalW = layout.svgW;
+    totalH = layout.svgH;
+  } else {
+    // Layer-based layout (regular per-branch DAG view).
+    positions = new Map();
+    let maxLayerLen = 0;
+    layout.layers.forEach(layer => {
+      if (layer.length > maxLayerLen) maxLayerLen = layer.length;
+    });
+    const numLayers = layout.layers.length;
+    layout.layers.forEach((layer, layerIdx) => {
+      const displayRow = numLayers - 1 - layerIdx;
+      const layerWidth = layer.length * (TOPO_NODE_W + TOPO_GAP_X) - TOPO_GAP_X;
+      const maxWidth = maxLayerLen * (TOPO_NODE_W + TOPO_GAP_X) - TOPO_GAP_X;
+      const offsetX = (maxWidth - layerWidth) / 2;
+      layer.forEach((node, idxInLayer) => {
+        const baseX = TOPO_PAD + offsetX + idxInLayer * (TOPO_NODE_W + TOPO_GAP_X);
+        const baseY = TOPO_PAD + displayRow * (TOPO_NODE_H + TOPO_GAP_Y);
+        const drag = _topologyNodeDragOffsets[node.id] || { dx: 0, dy: 0 };
+        positions.set(node.id, { x: baseX + drag.dx, y: baseY + drag.dy, node });
+      });
+    });
+    totalW = TOPO_PAD * 2 + maxLayerLen * TOPO_NODE_W + Math.max(0, maxLayerLen - 1) * TOPO_GAP_X;
+    totalH = TOPO_PAD * 2 + numLayers * TOPO_NODE_H + Math.max(0, numLayers - 1) * TOPO_GAP_Y;
+  }
 
   // Compute which edges are connected to the currently-selected node
   // (both directions) for highlight/dim.
@@ -8721,46 +8962,42 @@ function _renderTopologySvg(layout, ctx) {
     });
   }
 
-  // UF-05: Orthogonal (manhattan) edge routing — matches figure 1's
-  // right-angle HVH path style instead of the bezier curve the first
-  // draft used. Path shape:
+  // Top-to-bottom orthogonal edge routing (VHV):
   //
-  //     start ─────┐
-  //                │
-  //                └───── end
+  //        app (top)
+  //          ↑
+  //     ─────┘
+  //     │
+  //   infra (bottom)
   //
-  // We still corner-round each bend by 8px so hard angles don't look
-  // brittle next to the 18px node radius.
+  // Edges exit from the TOP of the source (infra) card and enter at the
+  // BOTTOM of the destination (app) card. Rounded corners at each bend.
   const edgePaths = layout.edges.map((edge, idx) => {
     const from = positions.get(edge.from);
     const to = positions.get(edge.to);
     if (!from || !to) return '';
-    const x1 = from.x + TOPO_NODE_W;
-    const y1 = from.y + TOPO_NODE_H / 2;
-    const x2 = to.x;
-    const y2 = to.y + TOPO_NODE_H / 2;
-    const midX = (x1 + x2) / 2;
+    // Vertical exit: center-top of source; vertical entry: center-bottom of dest
+    const cx1 = from.x + TOPO_NODE_W / 2;
+    const y1 = from.y;                    // top edge of source (infra)
+    const cx2 = to.x + TOPO_NODE_W / 2;
+    const y2 = to.y + TOPO_NODE_H;       // bottom edge of dest (app)
+    const midY = (y1 + y2) / 2;
     const r = 8; // corner radius
-    // Orthogonal path: horizontal from source → vertical through midX
-    // → horizontal to target. Rounded corners at each bend.
+    // VHV orthogonal path: vertical up → horizontal → vertical up
     let d;
-    if (Math.abs(y1 - y2) < 1) {
-      // Straight horizontal — no bends needed
-      d = `M ${x1} ${y1} L ${x2} ${y2}`;
+    if (Math.abs(cx1 - cx2) < 1) {
+      // Straight vertical — no bends needed
+      d = `M ${cx1} ${y1} L ${cx2} ${y2}`;
     } else {
-      const goingDown = y2 > y1;
-      const cornerY1 = goingDown ? y1 + r : y1 - r;
-      const cornerY2 = goingDown ? y2 - r : y2 + r;
-      const sweep1 = goingDown ? 1 : 0;
-      const sweep2 = goingDown ? 0 : 1;
-      d = `M ${x1} ${y1}
-           L ${midX - r} ${y1}
-           Q ${midX} ${y1}, ${midX} ${cornerY1}
-           L ${midX} ${cornerY2}
-           Q ${midX} ${y2}, ${midX + r} ${y2}
-           L ${x2} ${y2}`;
-      // sweep flags unused because we're using Q quadratic commands — ignore lint
-      void sweep1; void sweep2;
+      const goingLeft = cx2 < cx1;
+      const bendX1 = goingLeft ? cx1 - r : cx1 + r;
+      const bendX2 = goingLeft ? cx2 + r : cx2 - r;
+      d = `M ${cx1} ${y1}
+           L ${cx1} ${midY + r}
+           Q ${cx1} ${midY}, ${bendX1} ${midY}
+           L ${bendX2} ${midY}
+           Q ${cx2} ${midY}, ${cx2} ${midY - r}
+           L ${cx2} ${y2}`;
     }
     let cls = 'topology-edge';
     if (selectedNodeId) {
@@ -8778,7 +9015,10 @@ function _renderTopologySvg(layout, ctx) {
   const nodeEls = Array.from(positions.values()).map(({ x, y, node }) => {
     const isApp = node.kind === 'app';
     const raw = node.raw;
-    const title = esc(raw.name || raw.id);
+    // In aggregated shared-view nodes, show the profile name (not the synthetic
+    // "profileId@branchId" id) as the card title.
+    const displayName = node.aggregated ? (raw.name || node.profileId || raw._profileId || raw.id) : (raw.name || raw.id);
+    const title = esc(displayName);
     const icon = _topologyNodeIcon(node);
     const status = _topologyNodeStatus(node, selectedBranchId);
     const statusLabel = {
@@ -8816,7 +9056,7 @@ function _renderTopologySvg(layout, ctx) {
     const overridePill = hasOverride
       ? `<g>
           <rect x="${x + TOPO_NODE_W - 82}" y="${y + 18}" width="66" height="22" rx="11" fill="var(--accent-bg,rgba(16,185,129,0.12))" stroke="var(--accent,#10b981)" stroke-width="1" />
-          <text x="${x + TOPO_NODE_W - 49}" y="${y + 33}" text-anchor="middle" fill="var(--accent,#10b981)" font-size="11" font-weight="600">🌿 自定义</text>
+          <text x="${x + TOPO_NODE_W - 49}" y="${y + 33}" text-anchor="middle" fill="var(--accent,#10b981)" font-size="11" font-weight="600">自定义</text>
         </g>`
       : '';
 
@@ -8834,6 +9074,11 @@ function _renderTopologySvg(layout, ctx) {
     const clickHandler = isApp
       ? `onclick="event.stopPropagation();_topologyNodeClick('${esc(raw.id)}')"`
       : `onclick="event.stopPropagation();_topologyInfraClick('${esc(raw.id)}')"`;
+
+    // Branch pill removed in aggregated view — the group-box label now shows
+    // the branch name prominently above each column, eliminating the need for
+    // a per-card tag that clutters every card in the grid.
+    const branchPill = '';
 
     // Layout coordinates inside the card:
     //   top content area  = y .. y + (NODE_H - VOLUME_SLOT_H)
@@ -8901,10 +9146,11 @@ function _renderTopologySvg(layout, ctx) {
         </g>`
       : '';
 
+    const effectiveNodeH = hasVolumeSlot ? (TOPO_NODE_H + TOPO_VOLUME_SLOT_H) : TOPO_NODE_H;
     return `
-      <g class="${nodeClass}" ${clickHandler}>
+      <g class="${nodeClass}" data-node-id="${esc(raw.id)}" ${clickHandler}>
         <title>${esc(tooltip)}</title>
-        <rect class="${shapeClass}" x="${x}" y="${y}" width="${TOPO_NODE_W}" height="${TOPO_NODE_H}" rx="${TOPO_NODE_RADIUS}" ry="${TOPO_NODE_RADIUS}" />
+        <rect class="${shapeClass}" x="${x}" y="${y}" width="${TOPO_NODE_W}" height="${effectiveNodeH}" rx="${TOPO_NODE_RADIUS}" ry="${TOPO_NODE_RADIUS}" />
 
         <!-- UF-21: Icon + Name header. Icon is now a 22×22 SVG embedded
              via a <g> with transform instead of a <text> glyph. -->
@@ -8918,9 +9164,80 @@ function _renderTopologySvg(layout, ctx) {
         ${volumeSlotSvg}
         ${portBadgeSvg}
         ${overridePill}
+        ${branchPill}
       </g>
     `;
   }).join('');
+
+  // Group box(es) behind all nodes.
+  // • Aggregated view: one dashed box per branch-column, labelled with the branch name.
+  // • Single-branch view: one "Apps" box around all app nodes.
+  let appGroupRect = '';
+  const appPositions = Array.from(positions.values()).filter(p => p.node.kind === 'app');
+
+  if (layout.aggregated && appPositions.length > 0) {
+    // Build per-branch column boxes.
+    const branchMap = new Map(); // branchId → {xs[], ys[], label}
+    appPositions.forEach(({x, y, node}) => {
+      const bid = node.branchId;
+      if (!branchMap.has(bid)) {
+        const rawLabel = (node.raw && node.raw._branchLabel) ? node.raw._branchLabel : bid;
+        branchMap.set(bid, { xs: [], ys: [], label: rawLabel });
+      }
+      const e = branchMap.get(bid);
+      e.xs.push(x, x + TOPO_NODE_W);
+      e.ys.push(y, y + TOPO_NODE_H);
+    });
+
+    const BGP = 14;        // box padding around node bounding box
+    const LH  = 20;        // label pill height
+    const LR  = 10;        // label pill border-radius
+    const LPX = 10;        // label pill horizontal inner padding
+
+    branchMap.forEach(({xs, ys, label}) => {
+      const bx  = Math.min(...xs) - BGP;
+      const by  = Math.min(...ys) - BGP;
+      const bx2 = Math.max(...xs) + BGP;
+      const by2 = Math.max(...ys) + BGP;
+      const bw  = bx2 - bx;
+      const bh  = by2 - by;
+
+      // Truncate long names: keep prefix up to 18 chars, then ellipsis + last 6
+      const MAX_L = 22;
+      const dispLabel = '@' + (label.length > MAX_L ? label.slice(0, 10) + '…' + label.slice(-10) : label);
+      // Approximate label pill width (JetBrains Mono ~6.5px/char at 10px)
+      const labelW = Math.min(bw - 4, dispLabel.length * 6.5 + LPX * 2);
+      const labelX = bx + 4;
+      const labelY = by - LH + 2; // pill sits just above the box top edge
+
+      appGroupRect += `
+        <rect class="topology-branch-group" x="${bx}" y="${by}" width="${bw}" height="${bh}" rx="16"/>
+        <rect class="topology-branch-group-pill" x="${labelX}" y="${labelY}" width="${labelW}" height="${LH}" rx="${LR}"/>
+        <text class="topology-branch-group-label" x="${labelX + LPX}" y="${labelY + LH - 5}">${esc(dispLabel)}</text>
+      `;
+    });
+
+  } else if (!layout.aggregated && appPositions.length > 0) {
+    // Single-branch DAG view: group box showing the selected branch name.
+    const GP = 24;
+    const gMinX = Math.min(...appPositions.map(p => p.x)) - GP;
+    const gMinY = Math.min(...appPositions.map(p => p.y)) - GP;
+    const gMaxX = Math.max(...appPositions.map(p => p.x + TOPO_NODE_W)) + GP;
+    const gMaxY = Math.max(...appPositions.map(p => p.y + TOPO_NODE_H)) + GP;
+    const dagBranchLabel = selectedBranchId ? ('@' + selectedBranchId) : 'Apps';
+    const MAX_DL = 22;
+    const dispDagLabel = dagBranchLabel.length > MAX_DL + 1
+      ? '@' + selectedBranchId.slice(0, 10) + '…' + selectedBranchId.slice(-9) : dagBranchLabel;
+    const LH2 = 20; const LPX2 = 10; const LR2 = 10;
+    const labelW2 = Math.min(gMaxX - gMinX - 4, dispDagLabel.length * 6.5 + LPX2 * 2);
+    const labelX2 = gMinX + 4;
+    const labelY2 = gMinY - LH2 + 2;
+    appGroupRect = `
+      <rect class="topology-branch-group" x="${gMinX}" y="${gMinY}" width="${gMaxX - gMinX}" height="${gMaxY - gMinY}" rx="20"/>
+      <rect class="topology-branch-group-pill" x="${labelX2}" y="${labelY2}" width="${labelW2}" height="${LH2}" rx="${LR2}"/>
+      <text class="topology-branch-group-label" x="${labelX2 + LPX2}" y="${labelY2 + LH2 - 5}">${esc(dispDagLabel)}</text>
+    `;
+  }
 
   return `
     <svg class="topology-canvas" width="${totalW}" height="${totalH}" viewBox="0 0 ${totalW} ${totalH}" xmlns="http://www.w3.org/2000/svg">
@@ -8929,6 +9246,7 @@ function _renderTopologySvg(layout, ctx) {
           <path d="M 0 0 L 10 5 L 0 10 z" fill="var(--text-muted)" opacity="0.7" />
         </marker>
       </defs>
+      ${appGroupRect}
       ${edgePaths}
       ${nodeEls}
     </svg>
@@ -8938,6 +9256,8 @@ function _renderTopologySvg(layout, ctx) {
 // Pan/zoom state — persists across re-renders via _topologyViewport
 let _topologyViewport = { scale: 1, tx: 0, ty: 0 };
 let _topologyDragState = null;
+// Per-node user-dragged position offsets: { nodeId: {dx, dy} }
+const _topologyNodeDragOffsets = {};
 // UF-03: track whether the user has manually panned/zoomed. While this
 // is false, each renderTopologyView() auto-fits so the graph stays
 // centered in the canvas (fixes "nodes stuck in the top-left" bug).
@@ -8951,6 +9271,21 @@ function _applyTopologyTransform() {
   if (!svg) return;
   svg.style.transform = `translate(${_topologyViewport.tx}px, ${_topologyViewport.ty}px) scale(${_topologyViewport.scale})`;
   if (indicator) indicator.textContent = `${Math.round(_topologyViewport.scale * 100)}%`;
+}
+
+// RAF-throttled transform scheduler — mousemove can fire at 500Hz on
+// high-DPI trackpads, writing `transform` synchronously on every event
+// stalls the compositor and produces the "sticky / jumps 5cm" feel the
+// user complained about. Coalescing into one transform per frame keeps
+// the canvas at 60fps, matching AdvancedVisualAgentTab's pattern
+// (prd-admin/src/pages/ai-chat/AdvancedVisualAgentTab.tsx:1592).
+let _topologyRafId = null;
+function _scheduleTopologyTransform() {
+  if (_topologyRafId) return;
+  _topologyRafId = requestAnimationFrame(() => {
+    _topologyRafId = null;
+    _applyTopologyTransform();
+  });
 }
 
 function _topologyZoom(delta, centerX, centerY) {
@@ -8981,8 +9316,10 @@ function _topologyReset() {
   // "1:1 复位" = explicit user ask to return to identity. Flip back to
   // "not adjusted" so the next render recenters, and re-fit now to
   // avoid leaving content in the top-left corner (which was the UF-03
-  // complaint in the first place).
+  // complaint in the first place). Also clear any per-node drag offsets.
   _topologyUserAdjusted = false;
+  Object.keys(_topologyNodeDragOffsets).forEach(k => delete _topologyNodeDragOffsets[k]);
+  renderTopologyView();
   _topologyFit();
 }
 
@@ -8993,10 +9330,10 @@ function _topologyFit() {
   const wrapRect = wrap.getBoundingClientRect();
   const svgW = parseFloat(svg.getAttribute('width')) || 1;
   const svgH = parseFloat(svg.getAttribute('height')) || 1;
-  // Fit with 40px margin
-  const scaleX = (wrapRect.width - 80) / svgW;
-  const scaleY = (wrapRect.height - 80) / svgH;
-  const scale = Math.min(scaleX, scaleY, 1.5);
+  // Fit with 100px margin, cap at 0.75 so initial view is comfortably zoomed-out
+  const scaleX = (wrapRect.width - 100) / svgW;
+  const scaleY = (wrapRect.height - 100) / svgH;
+  const scale = Math.min(scaleX, scaleY, 0.75);
   _topologyViewport.scale = Math.max(0.3, scale);
   // Center the content
   _topologyViewport.tx = (wrapRect.width - svgW * _topologyViewport.scale) / 2;
@@ -9004,6 +9341,56 @@ function _topologyFit() {
   _applyTopologyTransform();
 }
 
+function _topologyNodeDragStart(e, nodeId, groupEl) {
+  e.stopPropagation();
+  const startX = e.clientX;
+  const startY = e.clientY;
+  const baseOffset = _topologyNodeDragOffsets[nodeId] || { dx: 0, dy: 0 };
+  let hasDragged = false;
+  let pendingTransform = null;
+  let rafId = null;
+
+  const flush = () => {
+    rafId = null;
+    if (pendingTransform) {
+      groupEl.setAttribute('transform', pendingTransform);
+      pendingTransform = null;
+    }
+  };
+
+  const onMove = (me) => {
+    const ddx = (me.clientX - startX) / _topologyViewport.scale;
+    const ddy = (me.clientY - startY) / _topologyViewport.scale;
+    if (!hasDragged && Math.abs(ddx) + Math.abs(ddy) < 4) return;
+    hasDragged = true;
+    // The node's children are already positioned at (baseX + baseOffset),
+    // so the group transform only needs the CURRENT delta — not baseOffset again.
+    pendingTransform = `translate(${ddx},${ddy})`;
+    if (!rafId) rafId = requestAnimationFrame(flush);
+  };
+
+  const onUp = (me) => {
+    if (rafId) { cancelAnimationFrame(rafId); rafId = null; }
+    window.removeEventListener('pointermove', onMove);
+    window.removeEventListener('pointerup', onUp);
+    window.removeEventListener('pointercancel', onUp);
+    if (!hasDragged) return; // was a click — let onclick fire
+    const ddx = (me.clientX - startX) / _topologyViewport.scale;
+    const ddy = (me.clientY - startY) / _topologyViewport.scale;
+    _topologyNodeDragOffsets[nodeId] = { dx: baseOffset.dx + ddx, dy: baseOffset.dy + ddy };
+    renderTopologyView(); // re-render so edges follow the node
+  };
+
+  window.addEventListener('pointermove', onMove, { passive: true });
+  window.addEventListener('pointerup', onUp, { passive: true });
+  window.addEventListener('pointercancel', onUp, { passive: true });
+}
+
+// Global window-level pointer listeners are bound exactly once. The
+// wrap element itself is replaced on every render, but `_topologyDragState`
+// lives at module scope so these listeners keep working across renders
+// and we don't leak N copies after N renders.
+let _topologyWindowListenersBound = false;
 function _bindTopologyPanZoom() {
   const wrap = document.querySelector('.topology-canvas-wrap');
   if (!wrap) return;
@@ -9039,26 +9426,36 @@ function _bindTopologyPanZoom() {
         _topologyViewport.tx -= px * (ratio - 1);
         _topologyViewport.ty -= py * (ratio - 1);
         _topologyViewport.scale = newScale;
-        _applyTopologyTransform();
+        _scheduleTopologyTransform();
       }
       return;
     }
     // Two-finger pan on trackpad (or wheel on a physical mouse with
     // a shift-wheel → horizontal convention). `deltaX`/`deltaY` are
     // already in CSS pixels, so we just subtract them from the
-    // viewport offset. No rAF throttling needed — browsers already
-    // coalesce wheel events.
+    // viewport offset. RAF-throttle like the drag path so bursts of
+    // high-frequency wheel events don't stall the compositor.
     _topologyViewport.tx -= e.deltaX;
     _topologyViewport.ty -= e.deltaY;
-    _applyTopologyTransform();
+    _scheduleTopologyTransform();
   }, { passive: false });
 
-  // Mousedown on empty canvas → start panning. Mousedown on a node → let the click through.
-  wrap.addEventListener('mousedown', (e) => {
+  // Pointerdown: either start node drag or canvas pan.
+  // Using PointerEvents instead of MouseEvents so we get
+  // setPointerCapture (bulletproof against the "pointer leaves
+  // window" drift the user reported), plus unified handling of
+  // trackpad / pen / touch without extra listeners.
+  wrap.addEventListener('pointerdown', (e) => {
     if (e.button !== 0) return;
-    // If the click landed on a node, don't start pan (let onclick handle it)
-    if (e.target.closest('.topology-node')) return;
+    const nodeEl = e.target.closest('g.topology-node');
+    if (nodeEl) {
+      const nodeId = nodeEl.getAttribute('data-node-id');
+      if (nodeId) _topologyNodeDragStart(e, nodeId, nodeEl);
+      return;
+    }
+    try { wrap.setPointerCapture(e.pointerId); } catch (_) {}
     _topologyDragState = {
+      pointerId: e.pointerId,
       startX: e.clientX,
       startY: e.clientY,
       baseTx: _topologyViewport.tx,
@@ -9066,33 +9463,43 @@ function _bindTopologyPanZoom() {
       moved: false,
     };
     wrap.classList.add('dragging');
-    // Deselect node on empty-canvas click (will happen on mouseup if not moved)
   });
 
-  window.addEventListener('mousemove', (e) => {
-    if (!_topologyDragState) return;
-    const dx = e.clientX - _topologyDragState.startX;
-    const dy = e.clientY - _topologyDragState.startY;
-    if (Math.abs(dx) + Math.abs(dy) > 3) {
-      _topologyDragState.moved = true;
-      _topologyUserAdjusted = true; // UF-03: stop auto-centering
-    }
-    _topologyViewport.tx = _topologyDragState.baseTx + dx;
-    _topologyViewport.ty = _topologyDragState.baseTy + dy;
-    _applyTopologyTransform();
-  });
-
-  window.addEventListener('mouseup', () => {
-    if (!_topologyDragState) return;
-    const wasClick = !_topologyDragState.moved;
-    _topologyDragState = null;
-    wrap.classList.remove('dragging');
-    // Clicking on empty canvas (not a drag) deselects the current node
-    if (wasClick && _topologyFocusedNodeId) {
-      _topologyFocusedNodeId = null;
-      renderTopologyView();
-    }
-  });
+  // Passive pointermove — we never preventDefault, so marking passive
+  // lets the browser ship the event without blocking the compositor.
+  // Bound once per page-life; handlers re-query .topology-canvas-wrap
+  // because the DOM element is replaced on every render.
+  if (!_topologyWindowListenersBound) {
+    window.addEventListener('pointermove', (e) => {
+      if (!_topologyDragState) return;
+      if (e.pointerId !== undefined && e.pointerId !== _topologyDragState.pointerId) return;
+      const dx = e.clientX - _topologyDragState.startX;
+      const dy = e.clientY - _topologyDragState.startY;
+      if (Math.abs(dx) + Math.abs(dy) > 3) {
+        _topologyDragState.moved = true;
+        _topologyUserAdjusted = true; // UF-03: stop auto-centering
+      }
+      _topologyViewport.tx = _topologyDragState.baseTx + dx;
+      _topologyViewport.ty = _topologyDragState.baseTy + dy;
+      _scheduleTopologyTransform();
+    }, { passive: true });
+    const endDrag = (e) => {
+      if (!_topologyDragState) return;
+      if (e && e.pointerId !== undefined && e.pointerId !== _topologyDragState.pointerId) return;
+      const wasClick = !_topologyDragState.moved;
+      const currentWrap = document.querySelector('.topology-canvas-wrap');
+      try { currentWrap && currentWrap.releasePointerCapture(_topologyDragState.pointerId); } catch (_) {}
+      _topologyDragState = null;
+      if (currentWrap) currentWrap.classList.remove('dragging');
+      if (wasClick && _topologyFocusedNodeId) {
+        _topologyFocusedNodeId = null;
+        renderTopologyView();
+      }
+    };
+    window.addEventListener('pointerup', endDrag, { passive: true });
+    window.addEventListener('pointercancel', endDrag, { passive: true });
+    _topologyWindowListenersBound = true;
+  }
 }
 
 // Selected node for edge highlighting (distinct from _topologySelectedBranchId)
@@ -9114,15 +9521,19 @@ function renderTopologyView() {
     return;
   }
 
-  const layout = _layoutTopologyDag(buildProfiles, infraServices);
+  // Shared view (no branch selected) with tracked branches → show all
+  // branch instances aggregated into one canvas (shared view B).
+  const layout = ((!_topologySelectedBranchId || _topologyKeepSharedView) && branches.length > 0)
+    ? _layoutTopologyAggregated(buildProfiles, infraServices, branches)
+    : _layoutTopologyDag(buildProfiles, infraServices);
 
   const chipHtml = branches.length === 0
     ? '<span class="topology-branch-picker-label">暂无分支 —— 先在列表视图创建一个</span>'
     : `
       <span class="topology-branch-picker-label">查看分支:</span>
-      <button class="topology-branch-chip ${!_topologySelectedBranchId ? 'active' : ''}" onclick="_topologySelectBranch(null)">（共享视图）</button>
+      <button class="topology-branch-chip ${(!_topologySelectedBranchId || _topologyKeepSharedView) ? 'active' : ''}" onclick="_topologySelectBranch(null)">（共享视图）</button>
       ${branches.map(b => `
-        <button class="topology-branch-chip ${_topologySelectedBranchId === b.id ? 'active' : ''}" onclick="_topologySelectBranch('${esc(b.id)}')" title="${esc(b.branch || b.id)}">${esc(b.id)}</button>
+        <button class="topology-branch-chip ${_topologySelectedBranchId === b.id && !_topologyKeepSharedView ? 'active' : ''}" onclick="_topologySelectBranch('${esc(b.id)}')" title="${esc(b.branch || b.id)}">${esc(b.id)}</button>
       `).join('')}
     `;
 
@@ -9138,7 +9549,7 @@ function renderTopologyView() {
       <div class="topology-header">
         <div class="topology-title">
           服务拓扑
-          <span class="topology-title-hint">${layout.nodes.size} 个服务 · ${layout.edges.length} 条依赖 · ${layout.layers.length} 层 · 滚轮缩放 · 拖拽平移</span>
+          <span class="topology-title-hint">${layout.aggregated ? `${branches.length} 个分支 × ${buildProfiles.length} 个服务 · 共享基础设施` : `${layout.nodes.size} 个服务 · ${layout.edges.length} 条依赖 · ${layout.layers.length} 层`} · 滚轮缩放 · 拖拽平移</span>
         </div>
         <div class="topology-branch-picker">${chipHtml}</div>
       </div>
@@ -9146,7 +9557,7 @@ function renderTopologyView() {
         <span class="topology-legend-item"><span class="topology-legend-swatch app"></span>应用服务</span>
         <span class="topology-legend-item"><span class="topology-legend-swatch infra"></span>基础设施</span>
         <span class="topology-legend-item"><span class="topology-legend-swatch override"></span>本分支自定义</span>
-        <span class="topology-legend-item" style="color:var(--text-secondary);margin-left:auto">${_topologySelectedBranchId ? '点击节点直接编辑该分支配置' : '先选择上方分支，再点击节点编辑'}</span>
+        <span class="topology-legend-item" style="color:var(--text-secondary);margin-left:auto">${_topologySelectedBranchId ? '点击节点直接编辑该分支配置' : (layout.aggregated ? '点击节点切换至该分支' : '先选择上方分支，再点击节点编辑')}</span>
       </div>
       <div class="topology-canvas-wrap">
         ${_renderTopologySvg(layout, {
@@ -9188,6 +9599,7 @@ function renderTopologyView() {
 
 async function _topologySelectBranch(branchId) {
   _topologySelectedBranchId = branchId;
+  _topologyKeepSharedView = false; // explicit branch select always exits shared-view mode
   _topologyFocusedNodeId = null; // clear focus when branch changes
   if (!branchId) {
     renderTopologyView();
@@ -9209,10 +9621,24 @@ async function _topologySelectBranch(branchId) {
     _topologyOverrideCache.set(branchId, overrideSet);
     _topologyOverrideDetails.set(branchId, detailMap);
   } catch (e) {
-    console.error('topology: load overrides failed', e);
-    showToast('加载分支覆盖失败: ' + e.message, 'error');
+    // 404 = new branch with no overrides yet — expected, not an error
+    if (!e.message || !e.message.includes('404')) {
+      console.warn('topology: load overrides failed', e);
+      showToast('加载分支覆盖失败: ' + e.message, 'error');
+    }
   }
   renderTopologyView();
+  // If the right panel is open for an app/infra node, re-render it so its
+  // branch-specific data (public URL, commit, status) reflects the new branch.
+  var _fsPanel = document.getElementById('topologyFsPanel');
+  if (_fsPanel && _fsPanel.classList.contains('open') && _topologyPanelCurrentId) {
+    var _activeTab = (_fsPanel.querySelector('.topology-fs-panel-tab.active') || {}).dataset;
+    var _panelTab = (_activeTab && _activeTab.tab) || 'details';
+    var _panelEntity = (_topologyPanelCurrentKind === 'app')
+      ? (buildProfiles || []).find(function (p) { return p.id === _topologyPanelCurrentId; })
+      : (infraServices || []).find(function (s) { return s.id === _topologyPanelCurrentId; });
+    if (_panelEntity) _topologyRenderPanelTab(_panelTab, _panelEntity);
+  }
 }
 
 // Node click logic: first click focuses the node (highlight edges); second
@@ -9220,28 +9646,46 @@ async function _topologySelectBranch(branchId) {
 // to select, click again to configure" pattern.
 let _topologyLastClickId = null;
 let _topologyLastClickAt = 0;
-function _topologyNodeClick(profileId) {
-  // P4 Part 5: single-click is the primary edit gesture now.
-  // Previously single-click highlighted edges and double-click opened
-  // the editor — too discoverable / too many gestures. New behavior:
-  //
-  //   - When a branch IS selected: single click opens the override
-  //     modal for that profile on that branch.
-  //   - When NO branch is selected: single click highlights connected
-  //     edges (the old "shared view" behavior).
-  //
-  // Holding shift bypasses the right panel and forces the highlight
-  // (escape hatch for users who just want to inspect edges).
+function _topologyNodeClick(nodeId) {
+  // Handle aggregated shared-view nodes (format: "profileId@branchId"):
+  // Open the service panel with the branch as context but keep the
+  // canvas in shared/aggregated view — user must explicitly pick a
+  // branch from the dropdown to switch to single-branch mode.
+  if (nodeId.includes('@')) {
+    var atIdx = nodeId.indexOf('@');
+    var realProfileId = nodeId.slice(0, atIdx);
+    var realBranchId = nodeId.slice(atIdx + 1);
+    _topologySelectedBranchId = realBranchId;
+    _topologyKeepSharedView = true;
+    // Preload override data for the panel without re-rendering canvas
+    if (!_topologyOverrideCache.has(realBranchId)) {
+      api('GET', '/branches/' + encodeURIComponent(realBranchId) + '/profile-overrides')
+        .then(function (data) {
+          var overrideSet = new Set();
+          var detailMap = new Map();
+          for (var p of (data.profiles || [])) {
+            if (p.hasOverride) {
+              overrideSet.add(p.profileId);
+              var fields = p.override ? Object.keys(p.override).filter(function (k) { return k !== 'updatedAt' && k !== 'notes'; }) : [];
+              detailMap.set(p.profileId, fields);
+            }
+          }
+          _topologyOverrideCache.set(realBranchId, overrideSet);
+          _topologyOverrideDetails.set(realBranchId, detailMap);
+        })
+        .catch(function () {});
+    }
+    _topologyOpenServicePanel(realProfileId, 'app');
+    return;
+  }
+
+  // Holding shift bypasses the right panel and forces edge highlight.
   if (window.event?.shiftKey) {
-    _topologyFocusedNodeId = _topologyFocusedNodeId === profileId ? null : profileId;
+    _topologyFocusedNodeId = _topologyFocusedNodeId === nodeId ? null : nodeId;
     renderTopologyView();
     return;
   }
-  // P4 Part 6: single-click opens the slide-in service detail panel
-  // instead of the override modal directly. The panel hosts the four
-  // tabs (Deployments / Variables / Metrics / Settings) that map to
-  // the existing CDS edit flows.
-  _topologyOpenServicePanel(profileId, 'app');
+  _topologyOpenServicePanel(nodeId, 'app');
 }
 
 function _topologyInfraClick(serviceId) {
@@ -9345,10 +9789,10 @@ function _topologyShowDatabaseSubmenu() {
   var taken = new Set((infraServices || []).map(function (s) { return s.id; }));
 
   var items = [
-    { key: 'postgres', label: 'PostgreSQL', icon: '🐘', tag: 'postgres:16-alpine · :5432' },
-    { key: 'redis', label: 'Redis', icon: '🔴', tag: 'redis:7-alpine · :6379' },
-    { key: 'mongodb', label: 'MongoDB', icon: '🍃', tag: 'mongo:8.0 · :27017' },
-    { key: 'mysql', label: 'MySQL', icon: '🐬', tag: 'mysql:8.4 · :3306' },
+    { key: 'postgres', label: 'PostgreSQL', icon: '<svg width="16" height="16" viewBox="0 0 16 16"><ellipse cx="8" cy="4" rx="5.5" ry="2" fill="#6366f1"/><path d="M2.5 4v8c0 1.1 2.46 2 5.5 2s5.5-.9 5.5-2V4" fill="#6366f1" opacity="0.7"/><ellipse cx="8" cy="12" rx="5.5" ry="2" fill="#6366f1"/></svg>', tag: 'postgres:16-alpine · :5432' },
+    { key: 'redis', label: 'Redis', icon: '<svg width="16" height="16" viewBox="0 0 16 16"><ellipse cx="8" cy="4" rx="5.5" ry="2" fill="#ef4444"/><path d="M2.5 4v8c0 1.1 2.46 2 5.5 2s5.5-.9 5.5-2V4" fill="#ef4444" opacity="0.7"/><ellipse cx="8" cy="12" rx="5.5" ry="2" fill="#ef4444"/></svg>', tag: 'redis:7-alpine · :6379' },
+    { key: 'mongodb', label: 'MongoDB', icon: '<svg width="16" height="16" viewBox="0 0 16 16"><ellipse cx="8" cy="4" rx="5.5" ry="2" fill="#22c55e"/><path d="M2.5 4v8c0 1.1 2.46 2 5.5 2s5.5-.9 5.5-2V4" fill="#22c55e" opacity="0.7"/><ellipse cx="8" cy="12" rx="5.5" ry="2" fill="#22c55e"/></svg>', tag: 'mongo:8.0 · :27017' },
+    { key: 'mysql', label: 'MySQL', icon: '<svg width="16" height="16" viewBox="0 0 16 16"><ellipse cx="8" cy="4" rx="5.5" ry="2" fill="#0ea5e9"/><path d="M2.5 4v8c0 1.1 2.46 2 5.5 2s5.5-.9 5.5-2V4" fill="#0ea5e9" opacity="0.7"/><ellipse cx="8" cy="12" rx="5.5" ry="2" fill="#0ea5e9"/></svg>', tag: 'mysql:8.4 · :3306' },
   ];
 
   menu.innerHTML =
@@ -9509,7 +9953,7 @@ function buildCmdkCommands() {
     label: '返回项目列表',
     meta: 'projects',
     keywords: ['projects', '项目', 'home'],
-    action: function () { location.href = 'projects.html'; },
+    action: function () { location.href = '/project-list'; },
   });
 
   // ── Branches ──
@@ -9724,7 +10168,7 @@ function _topologyChooseAddItem(kind) {
       // auto-opens the create modal focused on the git URL field.
       // No death loop: the create modal is modal, user fills URL,
       // hits create, watches the SSE clone modal, done.
-      location.href = 'projects.html?new=git';
+      location.href = '/project-list?new=git';
       break;
     case 'database':
       // P4 Part 10: show the Database submenu (PostgreSQL / Redis /
@@ -9760,6 +10204,17 @@ function _topologyChooseAddItem(kind) {
         openProfileModal();
       } else {
         showToast('构建配置模块未加载', 'info');
+      }
+      break;
+    case 'volume':
+      // LIM-07: restore Volume UI entry. Opens the infra add modal which
+      // already exposes the "卷名 / 挂载路径" fields (infraVolName /
+      // infraVolPath). The user fills in a Docker image that mounts the
+      // volume (e.g. postgres:16 / redis:7) and the volume is wired in.
+      if (typeof openInfraAddModal === 'function') {
+        openInfraAddModal();
+      } else {
+        showToast('基础设施模块未加载', 'info');
       }
       break;
     default:
@@ -9821,10 +10276,105 @@ function _topologySwitchPanelTab(tab) {
   _topologyRenderPanelTab(tab, entity);
 }
 
+// Open the right panel on the Activity tab (no service node required).
+function _topologyOpenActivityPanel() {
+  var panel = document.getElementById('topologyFsPanel');
+  var titleEl = document.getElementById('topologyFsPanelTitle');
+  var iconEl = document.getElementById('topologyFsPanelIcon');
+  if (!panel || !titleEl || !iconEl) return;
+
+  _topologyPanelCurrentId = null;
+  _topologyPanelCurrentKind = 'activity';
+  titleEl.textContent = '系统活动';
+  iconEl.innerHTML = '<svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M1.5 1.75a.75.75 0 00-1.5 0v12.5c0 .414.336.75.75.75h14.5a.75.75 0 000-1.5H1.5V1.75zm14.28 2.53a.75.75 0 00-1.06-1.06L10 7.94 7.53 5.47a.75.75 0 00-1.06 0L2.22 9.72a.75.75 0 001.06 1.06L7 7.06l2.47 2.47a.75.75 0 001.06 0l5.25-5.25z"/></svg>';
+
+  var tabs = panel.querySelectorAll('.topology-fs-panel-tab');
+  tabs.forEach(function (t) { t.classList.toggle('active', t.dataset.tab === 'activity'); });
+
+  var body = document.getElementById('topologyFsPanelBody');
+  if (body) _topologyRenderActivityContent(body);
+  panel.classList.add('open');
+}
+
+// Render the activity log content into the panel body.
+function _topologyRenderActivityContent(body) {
+  var cdsEvents = (typeof activityEvents !== 'undefined' ? activityEvents : []).slice(-100).reverse();
+  var webEvents = (typeof webActivityEvents !== 'undefined' ? webActivityEvents : []).slice(-100).reverse();
+
+  function _makeItems(events, isWeb) {
+    if (!events.length) return '<div class="tfp-activity-empty">暂无记录</div>';
+    return events.map(function (ev) {
+      var isAi = ev.source === 'ai';
+      var statusCls = (ev.status || 0) < 400 ? 'ok' : 'err';
+      var dur = ev.duration < 1000 ? ev.duration + 'ms' : (ev.duration / 1000).toFixed(1) + 's';
+      var ts = typeof toUTC8Time === 'function' ? toUTC8Time(ev.ts) : '';
+      var label = ev.label || '';
+      var shortPath = (ev.path || '').replace(/^\/api\//, '').replace(/branches\/([^/]{13,})/, function (_, id) { return id.slice(0, 10) + '…'; });
+      var html = '';
+      if (isAi) {
+        var agentShort = (ev.agent || 'AI').replace(/\s*\(static key\)/, '');
+        html += '<span class="activity-source ai">' + escapeHtml(agentShort) + '</span>';
+      }
+      if (!isWeb && ev.branchId) {
+        var bl = typeof getBranchDisplayLabel === 'function' ? getBranchDisplayLabel(ev.branchId, ev.branchTags) : ev.branchId;
+        html += '<span class="activity-source" style="background:var(--accent-bg);color:var(--accent);font-size:9px;font-weight:600;padding:1px 4px;border-radius:3px">' + escapeHtml(bl) + '</span>';
+      }
+      if (isWeb) {
+        var profileId = ev.profileId || '';
+        var isApi = profileId.includes('api') || profileId.includes('backend') || (ev.path || '').startsWith('/api/');
+        var containerLabel = isApi ? 'api' : 'admin';
+        var containerColor = isApi ? 'var(--blue)' : 'var(--green)';
+        var containerBg = isApi ? 'rgba(56,139,253,0.12)' : 'rgba(63,185,80,0.12)';
+        html += '<span class="web-container-badge" style="background:' + containerBg + ';color:' + containerColor + '">' + containerLabel + '</span>';
+      } else {
+        html += '<span class="activity-method ' + (ev.method || '') + '">' + (ev.method || '') + '</span>';
+      }
+      html += label
+        ? '<span class="activity-label" title="' + escapeHtml(ev.path || '') + '">' + escapeHtml(label) + '</span>'
+        : '<span class="activity-path">' + escapeHtml(shortPath) + '</span>';
+      html += '<span class="activity-status ' + statusCls + '">' + (ev.status || '-') + '</span>';
+      html += '<span class="activity-dur">' + dur + '</span>';
+      html += '<span class="activity-ts">' + ts + '</span>';
+      return '<div class="activity-item' + (isAi ? ' activity-item-ai' : '') + '" style="cursor:pointer">' + html + '</div>';
+    }).join('');
+  }
+
+  body.innerHTML =
+    '<div class="tfp-activity">' +
+      '<div class="tfp-activity-subtabs">' +
+        '<button type="button" class="tfp-activity-subtab active" data-subtab="cds" onclick="_topologyActivitySubTab(\'cds\')">' +
+          'CDS <span class="tfp-activity-subtab-count" id="tfpActCdsCount">' + cdsEvents.length + '</span>' +
+        '</button>' +
+        '<button type="button" class="tfp-activity-subtab" data-subtab="web" onclick="_topologyActivitySubTab(\'web\')">' +
+          'Web <span class="tfp-activity-subtab-count" id="tfpActWebCount">' + webEvents.length + '</span>' +
+        '</button>' +
+      '</div>' +
+      '<div class="tfp-activity-body" id="tfpActivityCds">' + _makeItems(cdsEvents, false) + '</div>' +
+      '<div class="tfp-activity-body" id="tfpActivityWeb" style="display:none">' + _makeItems(webEvents, true) + '</div>' +
+    '</div>';
+}
+
+function _topologyActivitySubTab(subtab) {
+  var el = document.querySelector('.tfp-activity');
+  if (!el) return;
+  el.querySelectorAll('.tfp-activity-subtab').forEach(function (t) {
+    t.classList.toggle('active', t.dataset.subtab === subtab);
+  });
+  var cdsBody = document.getElementById('tfpActivityCds');
+  var webBody = document.getElementById('tfpActivityWeb');
+  if (cdsBody) cdsBody.style.display = subtab === 'cds' ? '' : 'none';
+  if (webBody) webBody.style.display = subtab === 'web' ? '' : 'none';
+}
+
 // Render the body of one tab. Each branch is small + isolated so
 // individual tabs can be replaced incrementally in later commits.
 function _topologyRenderPanelTab(tab, entity) {
   var body = document.getElementById('topologyFsPanelBody');
+  // Activity tab doesn't require an entity — it shows global system logs.
+  if (tab === 'activity') {
+    if (body) _topologyRenderActivityContent(body);
+    return;
+  }
   if (!body || !entity) {
     if (body) body.innerHTML = '<div class="tfp-empty">未找到服务数据</div>';
     return;
@@ -9847,10 +10397,14 @@ function _topologyRenderPanelTab(tab, entity) {
     var status = (entity.status || (entity.containerName ? 'running' : 'idle'));
     var deps = (entity.dependsOn || []);
 
-    // Find a representative branch (the first running one, or the first one)
+    // Find a representative branch — prefer the topology-selected branch so
+    // the panel reflects the branch the user explicitly picked or just added,
+    // even when it is idle and a different branch is running.
     var displayBranch = null;
     if (kind === 'app' && (branches || []).length) {
-      displayBranch = branches.find(function (b) { return b.status === 'running'; }) || branches[0];
+      displayBranch = (_topologySelectedBranchId && branches.find(function (b) { return b.id === _topologySelectedBranchId; }))
+        || branches.find(function (b) { return b.status === 'running'; })
+        || branches[0];
     }
     var commitHash = displayBranch && displayBranch.commitSha ? displayBranch.commitSha.slice(0, 8) : '-';
     var commitSubject = displayBranch && displayBranch.subject ? displayBranch.subject : '';
@@ -10125,7 +10679,7 @@ function _topologyRenderPanelTab(tab, entity) {
             '</button>' +
           '</div>' +
           '<div style="display:flex;align-items:center;gap:10px;font-size:11px;color:var(--text-muted);font-family:var(--font-mono,monospace)">' +
-            '<span>📁 ' + esc(branchName) + '</span>' +
+            '<span style="display:inline-flex;align-items:center;gap:3px"><svg width="10" height="10" viewBox="0 0 16 16" fill="currentColor"><path d="M1.75 1A1.75 1.75 0 000 2.75v10.5C0 14.216.784 15 1.75 15h12.5A1.75 1.75 0 0016 13.25v-8.5A1.75 1.75 0 0014.25 3H7.5a.25.25 0 01-.2-.1l-.9-1.2C6.07 1.26 5.55 1 5 1H1.75z"/></svg>' + esc(branchName) + '</span>' +
             '<span>·</span>' +
             '<span>' + esc(commitHash) + '</span>' +
           '</div>' +
@@ -10307,7 +10861,7 @@ function _topologyRenderPanelTab(tab, entity) {
             '编辑全部' +
           '</button>' +
         '</div>' +
-        '<div class="tfp-vars-hint">💡 在顶部选择分支可切换为"可覆盖"模式:每一行左侧的眼睛点亮就能编辑覆盖值</div>' +
+        '<div class="tfp-vars-hint">在顶部选择分支可切换为"可覆盖"模式:每一行左侧的眼睛点亮就能编辑覆盖值</div>' +
         '<div class="tfp-vars-list">' + rowsA + '</div>' +
         (keysA.length > 0
           ? '<div class="tfp-vars-hint">敏感字段(含 secret / password / token / key)的值会自动遮罩,点 ⧉ 复制原值</div>'
@@ -10693,7 +11247,7 @@ function _topologyRenderVarsDom() {
         ? '<button type="button" class="tfp-vars-edit-btn" onclick="_topologyVarsResetBranch()" title="清除该分支的所有覆盖,恢复继承">重置本分支</button>'
         : '<button type="button" class="tfp-vars-edit-btn" onclick="_topologyPanelOpenEditor()">编辑全部</button>') +
     '</div>' +
-    '<div class="tfp-vars-hint">💡 点每一行左侧的眼睛:<span style="color:var(--text-muted)">闭眼=继承构建配置</span>,<span style="color:var(--accent)">开眼=为本分支覆盖</span>。编辑值会自动保存,下次部署生效。</div>' +
+    '<div class="tfp-vars-hint">点每一行左侧的眼睛:<span style="color:var(--text-muted)">闭眼=继承构建配置</span>,<span style="color:var(--accent)">开眼=为本分支覆盖</span>。编辑值会自动保存,下次部署生效。</div>' +
     '<div class="tfp-vars-list">' + rows + '</div>';
 }
 
@@ -11414,7 +11968,7 @@ async function _topologyOpenCommitHistory(branchId) {
 // isn't visible in fullscreen topology mode).
 async function _topologyManualRefresh(event) {
   if (event) event.stopPropagation();
-  var btn = document.getElementById('topologyFsRefreshBtn');
+  var btn = document.getElementById('topoNavRefresh');
   if (btn) btn.classList.add('spinning');
   try {
     if (typeof refreshAll === 'function') {
@@ -11424,6 +11978,47 @@ async function _topologyManualRefresh(event) {
     if (btn) btn.classList.remove('spinning');
   }
 }
+
+// Add a remote branch and immediately switch the topology view to it.
+// This fixes the "click → nothing happens" regression where JSON.stringify
+// produced unescaped double-quotes that broke the onclick HTML attribute.
+async function _topoAddAndSelect(branchName) {
+  _topologyBranchComboClose();
+  await addBranch(branchName);
+  // After loadBranches() inside addBranch completes, the slug is now in
+  // `branches[]`. Switch the topology view to it so the user immediately
+  // sees their new branch's services instead of staying in shared view.
+  var slug = typeof StateService_slugify === 'function' ? StateService_slugify(branchName) : branchName;
+  // Set the flag synchronously before any async work so renderTopologyView()
+  // triggered by loadBranches() (inside addBranch) correctly renders in
+  // single-branch mode on the next tick.
+  _topologySelectedBranchId = slug;
+  _topologyKeepSharedView = false;
+  // Await the full select (loads overrides, re-renders) so we can fit after.
+  await _topologySelectBranch(slug);
+  // Fit the canvas to the newly-selected branch so the user sees a visible
+  // transition even if the branch has no running containers yet.
+  if (typeof _topologyFit === 'function') _topologyFit();
+}
+
+// System-settings popover (left nav)
+function _topoSysPopoverToggle() {
+  var pop = document.getElementById('topoSysPopover');
+  if (!pop) return;
+  pop.classList.toggle('open');
+}
+function _topoSysPopoverClose() {
+  var pop = document.getElementById('topoSysPopover');
+  if (pop) pop.classList.remove('open');
+}
+// Close when clicking outside
+(function() {
+  document.addEventListener('click', function(e) {
+    if (!e.target.closest('#topoSysBtn') && !e.target.closest('#topoSysPopover')) {
+      _topoSysPopoverClose();
+    }
+  }, { capture: false });
+})();
 
 // T6: close the panel
 function _topologyClosePanel() {
@@ -11505,8 +12100,8 @@ function _topologyBranchComboOnEnter() {
   // addBranch is the list-view helper from cds/web/app.js:1165 — we
   // reuse it so list and topology share the exact same add flow,
   // including the optimistic insert, POST /api/branches call, and
-  // toast error rollback.
-  addBranch(raw);
+  // toast error rollback. Auto-switch to the new branch on success.
+  _topoAddAndSelect(raw);
 }
 
 // Re-render the combobox label AND the open popover (when open). Keeps
@@ -11573,7 +12168,7 @@ function _topologyRefreshBranchDropdown() {
   if (remote.length > 0) {
     html += '<div class="topology-fs-branch-combo-section">可添加</div>';
     remote.forEach(function (b) {
-      html += '<div class="topology-fs-branch-combo-item" onclick="addBranch(' + JSON.stringify(b.name) + ');_topologyBranchComboClose()">' +
+      html += '<div class="topology-fs-branch-combo-item" onclick="_topoAddAndSelect(' + JSON.stringify(b.name).replace(/"/g, '&quot;') + ')">' +
               '<svg width="11" height="11" viewBox="0 0 16 16" fill="currentColor" style="opacity:0.5"><path fill-rule="evenodd" d="M11.75 2.5a.75.75 0 100 1.5.75.75 0 000-1.5zm-2.25.75a2.25 2.25 0 113 2.122V6A2.5 2.5 0 0110 8.5H6a1 1 0 00-1 1v1.128a2.251 2.251 0 11-1.5 0V5.372a2.25 2.25 0 111.5 0v1.836A2.492 2.492 0 016 7h4a1 1 0 001-1v-.628A2.25 2.25 0 019.5 3.25zM4.25 12a.75.75 0 100 1.5.75.75 0 000-1.5zM3.5 3.25a.75.75 0 111.5 0 .75.75 0 01-1.5 0z"/></svg>' +
               '<span class="topology-fs-branch-combo-item-label">' + esc(b.name) + '</span>' +
               '</div>';
@@ -11581,7 +12176,7 @@ function _topologyRefreshBranchDropdown() {
   }
   if (showManualAdd) {
     html += '<div class="topology-fs-branch-combo-section">手动添加</div>';
-    html += '<div class="topology-fs-branch-combo-item manual-add" onclick="addBranch(' + JSON.stringify(_topologyBranchComboQuery.trim()) + ');_topologyBranchComboClose()">' +
+    html += '<div class="topology-fs-branch-combo-item manual-add" onclick="_topoAddAndSelect(' + JSON.stringify(_topologyBranchComboQuery.trim()).replace(/"/g, '&quot;') + ')">' +
             '<svg width="11" height="11" viewBox="0 0 16 16" fill="currentColor" style="color:var(--accent,#10b981)"><path d="M8 2a.75.75 0 01.75.75v4.5h4.5a.75.75 0 010 1.5h-4.5v4.5a.75.75 0 01-1.5 0v-4.5h-4.5a.75.75 0 010-1.5h4.5v-4.5A.75.75 0 018 2z"/></svg>' +
             '<span class="topology-fs-branch-combo-item-label">添加 "' + esc(_topologyBranchComboQuery.trim()) + '" 为新分支</span>' +
             '<span class="topology-fs-branch-combo-item-tag">按 Enter</span>' +
@@ -11591,22 +12186,8 @@ function _topologyRefreshBranchDropdown() {
     html = '<div class="topology-fs-branch-combo-empty">没有匹配的分支 —— 粘贴一个名字按 Enter 添加</div>';
   }
   listEl.innerHTML = html;
-
-  // Auto-select: on first mount, if nothing is selected yet, pick
-  // 'main' / 'master' / first branch so node click → editor works
-  // out of the box. Only runs once per page load.
-  if (!_topologySelectedBranchId && (branches || []).length > 0 && _topologyAutoSelectPending) {
-    var preferred = branches.find(function (b) { return b.id === 'main' || b.id === 'master'; }) || branches[0];
-    if (preferred) {
-      _topologyAutoSelectPending = false;
-      _topologySelectBranch(preferred.id);
-      // Re-render once with the new selection in place
-      _topologyRefreshBranchDropdown();
-    }
-  }
 }
 
-let _topologyAutoSelectPending = true;
 
 // Expose to inline handlers
 window.setViewMode = setViewMode;
@@ -11644,8 +12225,11 @@ window._topologyToggleDeploySplitMenu = _topologyToggleDeploySplitMenu;
 window._topologyCloseDeploySplitMenu = _topologyCloseDeploySplitMenu;
 // GAP-14: commit history modal opened from topology Details tab
 window._topologyOpenCommitHistory = _topologyOpenCommitHistory;
-// GAP-16: manual refresh button in the topology topbar
+// GAP-16: manual refresh button in the topology left nav
 window._topologyManualRefresh = _topologyManualRefresh;
+window._topoSysPopoverToggle = _topoSysPopoverToggle;
+window._topoSysPopoverClose = _topoSysPopoverClose;
+window._topoAddAndSelect = _topoAddAndSelect;
 
 // Apply persisted view mode on load (deferred so DOM elements exist)
 if (document.readyState === 'loading') {

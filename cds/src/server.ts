@@ -9,9 +9,12 @@ import { createProjectsRouter } from './routes/projects.js';
 import { createStorageModeRouter, type StorageModeContext } from './routes/storage-mode.js';
 import { createGithubOAuthRouter } from './routes/github-oauth.js';
 import { createAuthRouter } from './routes/auth.js';
+import { createWorkspacesRouter } from './routes/workspaces.js';
 import { MemoryAuthStore } from './infra/auth-store/memory-store.js';
+import type { AuthStore } from './infra/auth-store/memory-store.js';
 import { GitHubOAuthClient } from './services/github-oauth-client.js';
 import { AuthService } from './services/auth-service.js';
+import { WorkspaceService } from './services/workspace-service.js';
 import { createGithubAuthMiddleware } from './middleware/github-auth.js';
 import type { StateService } from './services/state.js';
 import type { WorktreeService } from './services/worktree.js';
@@ -49,6 +52,12 @@ export interface ServerDeps {
   storageModeContext?: StorageModeContext;
   /** P4 Part 18 (D.3): path to the json state file, used for rollback. */
   stateFile?: string;
+  /**
+   * FU-02: Optional pre-initialised AuthStore backend. When provided (by
+   * index.ts after calling initAuthStore()), it is used instead of the
+   * default MemoryAuthStore. Supports 'memory' (default) and 'mongo'.
+   */
+  authStore?: AuthStore;
 }
 
 function makeToken(user: string, pass: string): string {
@@ -464,7 +473,9 @@ export function createServer(deps: ServerDeps): express.Express {
       process.env.CDS_PUBLIC_BASE_URL || `http://localhost:${deps.config.masterPort}`;
     const cookieSecure = publicBaseUrl.startsWith('https://');
 
-    const authStore = new MemoryAuthStore();
+    // FU-02: use the pre-initialised mongo backend when provided by index.ts,
+    // otherwise fall back to the in-process memory store (default / test).
+    const authStore: AuthStore = deps.authStore ?? new MemoryAuthStore();
     const githubClient = new GitHubOAuthClient({
       clientId: ghClientId,
       clientSecret: ghClientSecret,
@@ -483,6 +494,13 @@ export function createServer(deps: ServerDeps): express.Express {
         cookieSecure,
       }),
     );
+
+    // P5: workspace management API (requires github auth mode + valid session)
+    const workspaceService = new WorkspaceService({
+      store: authStore,
+      github: githubClient,
+    });
+    app.use('/api/workspaces', createWorkspacesRouter({ workspaceService }));
 
     app.use(createGithubAuthMiddleware({ authService }));
 
@@ -891,16 +909,44 @@ export function createServer(deps: ServerDeps): express.Express {
 export function installSpaFallback(app: express.Express, webDir?: string): void {
   const dir = webDir || path.resolve(__dirname, '..', 'web');
 
-  // P1 multi-project shell: make `/` land on the projects list instead of
-  // the legacy dashboard index. Users click a project card to enter the
-  // dashboard. Registered before express.static so it takes precedence over
-  // the default `index.html` served by the static middleware for `/`.
-  // See doc/plan.cds-multi-project-phases.md → P1.
-  app.get('/', (_req, res) => {
-    res.redirect(302, '/projects.html');
+  // Semantic URL routes (preferred, human-readable paths)
+  app.get('/project-list', (_req, res) => {
+    res.sendFile(path.join(dir, 'project-list.html'));
+  });
+  app.get('/branch-list', (_req, res) => {
+    res.sendFile(path.join(dir, 'index.html'));
+  });
+  app.get('/branch-panel', (_req, res) => {
+    res.sendFile(path.join(dir, 'index.html'));
   });
 
-  app.use(express.static(dir));
+  // Backward-compat redirects: old .html paths → semantic paths (301 permanent)
+  app.get('/projects.html', (req, res) => {
+    const qs = req.url.includes('?') ? req.url.slice(req.url.indexOf('?')) : '';
+    res.redirect(301, '/project-list' + qs);
+  });
+  app.get('/index.html', (req, res) => {
+    const qs = req.url.includes('?') ? req.url.slice(req.url.indexOf('?')) : '';
+    res.redirect(301, '/branch-list' + qs);
+  });
+
+  // Root redirect → project list
+  app.get('/', (_req, res) => {
+    res.redirect(302, '/project-list');
+  });
+
+  // HTML pages must never be served from cache — JS/CSS are cache-busted via
+  // ?t=Date.now() in the HTML itself, but if the HTML is stale the wrong JS
+  // version gets loaded. HTTP headers take precedence over meta http-equiv.
+  app.use(express.static(dir, {
+    setHeaders: (res, filePath) => {
+      if (filePath.endsWith('.html')) {
+        res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
+        res.setHeader('Pragma', 'no-cache');
+        res.setHeader('Expires', '0');
+      }
+    },
+  }));
   app.get('*', (_req, res) => {
     res.sendFile(path.join(dir, 'index.html'));
   });

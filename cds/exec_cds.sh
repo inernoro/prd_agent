@@ -923,6 +923,53 @@ EOF
   chmod 600 "$ENV_FILE"
   ok "已写入 $ENV_FILE"
 
+  # ── Phase 3: MongoDB (可选，持久化项目/分支/Auth 数据) ─────────────
+  echo
+  echo "  ─── 数据持久化（推荐）───"
+  echo "  CDS 默认将状态保存在本地 JSON 文件。启用 MongoDB 后，所有项目、分支、"
+  echo "  用户认证信息将持久化到数据库，重启后不丢失，同时支持多实例部署。"
+  echo
+  printf "  是否启动 MongoDB 容器并启用持久化存储? [Y/n]: "
+  local use_mongo; read -r use_mongo
+  if [[ ! "$use_mongo" =~ ^[Nn] ]]; then
+    local MONGO_CONTAINER="cds_mongodb"
+    local MONGO_PORT="${CDS_MONGO_PORT:-27017}"
+    local MONGO_URI="mongodb://localhost:${MONGO_PORT}/cds"
+
+    if docker ps -a --format '{{.Names}}' 2>/dev/null | grep -qx "$MONGO_CONTAINER"; then
+      if docker ps --format '{{.Names}}' 2>/dev/null | grep -qx "$MONGO_CONTAINER"; then
+        ok "MongoDB 容器已在运行 ($MONGO_CONTAINER:$MONGO_PORT)"
+      else
+        info "启动已有 MongoDB 容器…"
+        docker start "$MONGO_CONTAINER" >/dev/null && ok "MongoDB 容器已启动" || err "启动 MongoDB 容器失败，请检查 docker 状态"
+      fi
+    else
+      info "正在拉起 MongoDB 8 容器（首次可能需要拉取镜像，请稍候）…"
+      docker run -d \
+        --name "$MONGO_CONTAINER" \
+        --restart unless-stopped \
+        -p "${MONGO_PORT}:27017" \
+        -v cds-mongodb-data:/data/db \
+        mongo:8 >/dev/null 2>&1 \
+      && ok "MongoDB 容器已启动 ($MONGO_CONTAINER:$MONGO_PORT，数据卷: cds-mongodb-data)" \
+      || { err "启动 MongoDB 容器失败，请检查 Docker 是否正常运行"; use_mongo="n"; }
+    fi
+
+    if [[ ! "$use_mongo" =~ ^[Nn] ]]; then
+      # Append MongoDB config to .cds.env
+      cat >> "$ENV_FILE" <<MONGOEOF
+# MongoDB 持久化 (由 init 在 $(date +%F) 自动追加)
+export CDS_MONGO_URI="${MONGO_URI}"
+export CDS_STORAGE_MODE="mongo"
+export CDS_AUTH_BACKEND="mongo"
+MONGOEOF
+      ok "已启用 MongoDB 持久化存储 (CDS_STORAGE_MODE=mongo)"
+      info "数据库: ${MONGO_URI}"
+    fi
+  else
+    info "跳过 MongoDB，使用本地 JSON 文件存储（重启后数据保留，但不支持多实例）"
+  fi
+
   load_env
   render_nginx || true
 

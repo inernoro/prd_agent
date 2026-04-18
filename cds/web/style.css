@@ -2093,7 +2093,7 @@ a.branch-name:hover { color: var(--accent); }
 /* ════════════════ Modal ════════════════ */
 
 .modal {
-  position: fixed; inset: 0; z-index: 100;
+  position: fixed; inset: 0; z-index: 500;
   display: flex; align-items: center; justify-content: center;
 }
 .modal.hidden { display: none; }
@@ -5082,6 +5082,9 @@ a.branch-name:hover { color: var(--accent); }
   min-height: 560px;
   cursor: grab;
   user-select: none;
+  /* Prevent OS/browser touch inertia from interfering with custom pan/zoom */
+  touch-action: none;
+  -webkit-user-select: none;
 }
 .topology-canvas-wrap:active {
   cursor: grabbing;
@@ -5097,12 +5100,18 @@ a.branch-name:hover { color: var(--accent); }
   /* transform-origin top-left so zoom math stays simple */
   transform-origin: 0 0;
   transition: none; /* no transition during drag */
+  /* Promote to a compositor layer so transform updates skip re-paint
+     every frame. Single biggest perf win for high-node-count graphs.
+     Matches the world-layer hint used in AdvancedVisualAgentTab. */
+  will-change: transform;
+  contain: layout style;
+  backface-visibility: hidden;
 }
 
 /* Node — rich card rendered as <g> containing rect + foreignObject or tspan */
 .topology-node {
   cursor: pointer;
-  transition: filter 0.18s ease, transform 0.12s ease;
+  transition: filter 0.18s ease;
 }
 .topology-node:hover {
   filter: brightness(1.08) drop-shadow(0 4px 12px rgba(0, 0, 0, 0.25));
@@ -5134,8 +5143,13 @@ a.branch-name:hover { color: var(--accent); }
   animation: topo-node-status-pulse 1.2s ease-in-out infinite;
 }
 @keyframes topo-node-status-pulse {
-  0%, 100% { opacity: 1;   transform: scale(1); }
-  50%      { opacity: 0.5; transform: scale(1.25); transform-origin: center; }
+  /* SVG <circle> elements don't honour CSS transform-origin reliably.
+     The original scale(1.25) caused the dot to drift outside the card
+     boundary (the user saw an orange blob escaping the card corner).
+     Pure opacity pulse achieves the same "breathing alive" feel without
+     any transform. */
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0.35; }
 }
 
 /* UF-22: error state — red border, non-animating so it's clearly
@@ -5279,6 +5293,36 @@ a.branch-name:hover { color: var(--accent); }
   opacity: 0.1;
 }
 
+/* Dashed bounding box grouping api+admin service nodes (single-branch DAG view) */
+.topology-app-group {
+  fill: none;
+  stroke: var(--accent, #10b981);
+  stroke-width: 1.5;
+  stroke-dasharray: 6 4;
+  opacity: 0.35;
+}
+
+/* Per-branch column group box (aggregated shared view) */
+.topology-branch-group {
+  fill: rgba(255, 255, 255, 0.02);
+  stroke: rgba(255, 255, 255, 0.12);
+  stroke-width: 1;
+  stroke-dasharray: 5 3;
+}
+.topology-branch-group-pill {
+  fill: var(--bg-card, #181c24);
+  stroke: rgba(255, 255, 255, 0.15);
+  stroke-width: 0.8;
+}
+.topology-branch-group-label {
+  fill: rgba(255, 255, 255, 0.5);
+  font-size: 10px;
+  font-weight: 500;
+  font-family: var(--font-mono, 'JetBrains Mono', monospace);
+  pointer-events: none;
+  user-select: none;
+}
+
 .topology-empty {
   display: flex;
   flex-direction: column;
@@ -5367,6 +5411,64 @@ a.branch-name:hover { color: var(--accent); }
  */
 body.cds-topology-fs .container > *:not(#topologyView):not(#toast):not(.modal):not(#dropdownPortal):not(#hostStatsWidget):not(#activityMonitor):not(#aiPairingPanel) {
   display: none !important;
+}
+/* Hide floating Activity Monitor in topology FS mode — content is now in the right panel */
+body.cds-topology-fs #activityMonitor { display: none !important; }
+/* Hide floating host-stats bubble in topology FS mode — shown inline in topbar instead */
+body.cds-topology-fs #hostStatsWidget { display: none !important; }
+
+/* Inline host-stats pill inside the topology topbar */
+.topology-fs-hoststats {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: var(--bg-card);
+  border: 1px solid var(--card-border);
+  border-radius: 10px;
+  padding: 5px 12px;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.45);
+  cursor: pointer;
+}
+.topology-fs-hoststats-row {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+.topology-fs-hoststats-label {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+  min-width: 22px;
+}
+.topology-fs-hoststats-bar {
+  width: 48px;
+  height: 4px;
+  background: var(--bg-elevated);
+  border-radius: 2px;
+  overflow: hidden;
+}
+.topology-fs-hoststats-fill {
+  height: 100%;
+  border-radius: 2px;
+  transition: width 0.5s ease;
+  background: #3fb950;
+}
+.topology-fs-hoststats-fill[data-tier="blue"]   { background: #58a6ff; }
+.topology-fs-hoststats-fill[data-tier="orange"] { background: #f0883e; }
+.topology-fs-hoststats-fill[data-tier="red"]    { background: #f85149; }
+.topology-fs-hoststats-value {
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  min-width: 26px;
+  text-align: right;
+}
+.topology-fs-hoststats-sep {
+  width: 1px;
+  height: 16px;
+  background: var(--card-border);
 }
 body.cds-topology-fs .container {
   padding: 0 !important;
@@ -5523,34 +5625,37 @@ body.cds-topology-fs .topology-card { padding-top: 60px; }
   top: 0;
   left: 0;
   bottom: 0;
-  width: 44px;
+  width: 58px;
   background: var(--bg-primary);
   border-right: 1px solid var(--border, rgba(255,255,255,0.08));
   z-index: 65;
   flex-direction: column;
   align-items: center;
   padding: 14px 0;
-  gap: 6px;
+  gap: 2px;
 }
 body.cds-topology-fs .topology-fs-leftnav { display: flex; }
 body.cds-topology-fs .container,
-body.cds-topology-fs #topologyView { left: 44px !important; }
-body.cds-topology-fs #topologyView { left: 44px; right: 0; }
-body.cds-topology-fs .topology-fs-topbar { left: 60px; }
+body.cds-topology-fs #topologyView { left: 58px !important; }
+body.cds-topology-fs #topologyView { left: 58px; right: 0; }
+body.cds-topology-fs .topology-fs-topbar { left: 74px; }
 
 .topology-fs-leftnav-icon {
-  width: 30px;
-  height: 30px;
+  width: 46px;
+  min-height: 40px;
   display: flex;
+  flex-direction: column;
   align-items: center;
   justify-content: center;
-  border-radius: 7px;
+  gap: 3px;
+  border-radius: 8px;
   color: var(--text-muted);
   cursor: pointer;
   background: transparent;
   border: none;
-  padding: 0;
+  padding: 5px 4px;
   transition: background 120ms ease, color 120ms ease;
+  text-decoration: none;
 }
 .topology-fs-leftnav-icon:hover { background: var(--bg-elevated); color: var(--text-primary); }
 .topology-fs-leftnav-icon.active {
@@ -5559,6 +5664,60 @@ body.cds-topology-fs .topology-fs-topbar { left: 60px; }
 }
 .topology-fs-leftnav-icon.disabled { opacity: 0.35; cursor: not-allowed; }
 .topology-fs-leftnav-spacer { flex: 1; }
+/* Left nav system settings popover */
+.topo-sys-popover {
+  position: absolute;
+  left: 58px;
+  bottom: 8px;
+  background: var(--bg-card, #1a1d24);
+  border: 1px solid rgba(255,255,255,0.12);
+  border-radius: 10px;
+  box-shadow: 0 12px 32px rgba(0,0,0,0.55);
+  padding: 6px 0;
+  min-width: 160px;
+  z-index: 200;
+  display: none;
+}
+.topo-sys-popover.open { display: block; }
+.topo-sys-popover-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 14px;
+  font-size: 12px;
+  font-weight: 500;
+  color: rgba(255,255,255,0.65);
+  cursor: pointer;
+  text-decoration: none;
+  background: none;
+  border: none;
+  width: 100%;
+  text-align: left;
+  border-radius: 0;
+  transition: background 100ms, color 100ms;
+  white-space: nowrap;
+}
+.topo-sys-popover-item:hover { background: rgba(255,255,255,0.07); color: rgba(255,255,255,0.9); }
+.topo-sys-popover-item svg { width: 14px; height: 14px; flex-shrink: 0; opacity: 0.7; }
+.topo-sys-popover-item.danger { color: rgba(248,81,73,0.85); }
+.topo-sys-popover-item.danger:hover { background: rgba(248,81,73,0.12); color: #f85149; }
+.topo-sys-popover-divider { height: 1px; margin: 4px 10px; background: rgba(255,255,255,0.07); }
+
+.topology-fs-leftnav-divider {
+  width: 28px;
+  height: 1px;
+  margin: 4px auto;
+  background: var(--border-light, rgba(255,255,255,0.07));
+  flex-shrink: 0;
+}
+.topology-fs-leftnav-label {
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  color: inherit;
+  white-space: nowrap;
+  line-height: 1;
+}
 .topology-fs-leftnav-avatar {
   width: 28px;
   height: 28px;
@@ -5797,21 +5956,12 @@ body.cds-topology-fs .topology-fs-topbar { display: flex !important; }
   color: var(--text-muted);
 }
 
-/* UF-08: view mode toggle pill (列表 | 拓扑) in the topology topbar.
-   UF-17: scoped to body.cds-topology-fs so it never leaks into the
-   list view. The toggle is visually INSIDE the topbar, but having
-   the display toggle here too means a future topbar CSS change
-   can't accidentally reveal it outside topology mode. */
+/* UF-08: view mode toggle pill moved to left sidebar (topoNavList / topoNavTopology).
+   The topbar toggle div is no longer rendered; this block is kept for backwards
+   compat but is always hidden. */
 .topology-fs-view-toggle {
-  display: none;
-  gap: 2px;
-  background: var(--bg-elevated);
-  border: 1px solid var(--card-border);
-  border-radius: 7px;
-  padding: 3px;
-  margin-left: 8px;
+  display: none !important;
 }
-body.cds-topology-fs .topology-fs-view-toggle { display: inline-flex; }
 .topology-fs-view-toggle-btn {
   display: inline-flex;
   align-items: center;
@@ -6121,28 +6271,54 @@ body.cds-topology-fs .topology-fs-panel.open { transform: translateX(0); }
    button because it sat behind the floating + Add button at z-index
    conflict, and had no visible background. Now it has a distinct
    circular background with a red-tinted hover state. */
+/* Permanent close-button fix:
+   SVG + currentColor is brittle — if the parent doesn't define --text-primary
+   the fill falls back to transparent and the icon vanishes. Using a plain ✕
+   text character with hardcoded rgba solves this unconditionally. */
 .topology-fs-panel-close {
-  width: 32px;
-  height: 32px;
+  width: 36px;
+  height: 36px;
   display: flex;
   align-items: center;
   justify-content: center;
-  border: 1px solid var(--card-border);
-  background: var(--bg-elevated);
-  color: var(--text-secondary);
+  font-size: 20px;
+  font-weight: 300;
+  line-height: 1;
+  /* Hardcoded high-contrast color — NOT a CSS variable.
+     This is intentional: we've had the X disappear 7+ times because
+     var(--text-primary) resolved to a near-invisible value in this
+     specific context. rgba() is always visible against any dark bg. */
+  color: rgba(255, 255, 255, 0.75);
+  background: rgba(255, 255, 255, 0.07);
+  border: 1.5px solid rgba(255, 255, 255, 0.18);
   border-radius: 8px;
   cursor: pointer;
   transition: background 120ms ease, color 120ms ease, border-color 120ms ease;
   flex-shrink: 0;
-  /* Make sure the close button always wins z-order against anything
-   * that could overlap it (floating + Add button included). */
   position: relative;
   z-index: 1;
+  user-select: none;
 }
 .topology-fs-panel-close:hover {
-  background: rgba(239, 68, 68, 0.12);
-  color: #ef4444;
-  border-color: rgba(239, 68, 68, 0.4);
+  background: rgba(239, 68, 68, 0.2);
+  color: rgba(239, 68, 68, 0.95);
+  border-color: rgba(239, 68, 68, 0.5);
+}
+
+/* Force all SVGs inside leftnav icons to 20×20 regardless of HTML width/height
+   attributes — the root cause of every "icon too small" regression.
+   Any new icon added with width="16" will still render at 20px here. */
+.topology-fs-leftnav-icon svg {
+  width: 20px;
+  height: 20px;
+  flex-shrink: 0;
+  pointer-events: none;
+}
+/* Same for topbar icon buttons */
+.topology-fs-view-toggle-btn svg,
+.topology-fs-topbar-pill svg {
+  width: 14px;
+  height: 14px;
 }
 
 /* UF-19: when the Details panel is open, hide the floating + Add button
@@ -6362,12 +6538,15 @@ body.cds-topology-fs .topology-fs-panel.open ~ .topology-fs-add-menu {
   border: none;
   background: transparent;
   cursor: pointer;
-  color: var(--text-muted);
+  color: rgba(255,255,255,0.35);
   transition: background 120ms ease, color 120ms ease;
   border-right: 1px solid var(--card-border);
+  flex-shrink: 0;
 }
-.tfp-var-eye:hover { background: var(--bg-elevated); }
-.tfp-var-eye.inherited { color: var(--text-muted); }
+.tfp-var-eye svg { width: 14px; height: 14px; flex-shrink: 0; }
+.tfp-var-eye:hover { background: var(--bg-elevated); color: rgba(255,255,255,0.65); }
+.tfp-var-eye.inherited { color: rgba(255,255,255,0.28); }
+.tfp-var-eye.inherited:hover { color: rgba(255,255,255,0.6); }
 .tfp-var-eye.override { color: var(--accent, #10b981); }
 .tfp-var-eye.locked {
   color: #f59e0b;
@@ -6516,12 +6695,12 @@ body.cds-topology-fs .topology-fs-panel.open ~ .topology-fs-add-menu {
 
 /* P4 Part 14 — Service detail panel logs tabs */
 
-/* Allow the panel tab strip to scroll horizontally when 6 tabs overflow */
+/* Allow the panel tab strip to scroll horizontally when tabs overflow — no native scrollbar */
 .topology-fs-panel-tabs {
   overflow-x: auto;
-  scrollbar-width: thin;
+  scrollbar-width: none;
 }
-.topology-fs-panel-tabs::-webkit-scrollbar { height: 4px; }
+.topology-fs-panel-tabs::-webkit-scrollbar { display: none; }
 .topology-fs-panel-tab { white-space: nowrap; flex-shrink: 0; }
 
 /* Status banner (Details tab top) */
@@ -7185,4 +7364,53 @@ body.cds-topology-fs .topology-fs-panel.open ~ .topology-fs-add-menu {
 .tfp-http-status-warn { color: var(--yellow, #fbbf24); }
 .tfp-http-status-err { color: var(--red); }
 .tfp-http-duration { color: var(--text-muted); text-align: right; }
+
+/* ── Activity tab inside right panel ── */
+.tfp-activity { display: flex; flex-direction: column; height: 100%; }
+.tfp-activity-subtabs {
+  display: flex;
+  gap: 0;
+  border-bottom: 1px solid var(--border-light);
+  padding: 0 14px;
+  flex-shrink: 0;
+}
+.tfp-activity-subtab {
+  padding: 9px 12px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-muted);
+  background: transparent;
+  border: none;
+  border-bottom: 2px solid transparent;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  transition: color 100ms ease;
+  margin-bottom: -1px;
+}
+.tfp-activity-subtab:hover { color: var(--text-secondary); }
+.tfp-activity-subtab.active { color: var(--text-primary); border-bottom-color: var(--accent); }
+.tfp-activity-subtab-count {
+  font-size: 10px;
+  background: var(--bg-elevated);
+  border-radius: 8px;
+  padding: 0 5px;
+  min-width: 16px;
+  text-align: center;
+}
+.tfp-activity-body {
+  flex: 1;
+  overflow-y: auto;
+  scrollbar-width: none;
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+.tfp-activity-body::-webkit-scrollbar { display: none; }
+.tfp-activity-empty {
+  padding: 32px 16px;
+  text-align: center;
+  color: var(--text-muted);
+  font-size: 12px;
+}
 

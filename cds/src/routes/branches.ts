@@ -2225,9 +2225,13 @@ export function createBranchRouter(deps: RouterDeps): Router {
   router.post('/build-profiles', (req, res) => {
     try {
       const profile = req.body as BuildProfile;
-      if (!profile.id || !profile.name || !profile.dockerImage || !profile.command) {
-        res.status(400).json({ error: 'id、名称、Docker 镜像和 command 为必填项' });
+      // `command` is optional — Dockerfile-based services may rely on CMD/ENTRYPOINT
+      if (!profile.id || !profile.name || !profile.dockerImage) {
+        res.status(400).json({ error: 'id、名称、Docker 镜像为必填项' });
         return;
+      }
+      if (profile.command === undefined || profile.command === null) {
+        profile.command = '';
       }
       profile.workDir = profile.workDir || '.';
       profile.containerPort = profile.containerPort || 8080;
@@ -2709,27 +2713,31 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
       sendSSE(res, 'step', { step: 'scan', status: 'info', title: `发现 ${orphans.length} 个孤儿分支`, detail: { orphans: orphans.map(b => ({ id: b.id, branch: b.branch })) } });
 
-      // Step 3: stop containers, remove worktrees, delete from state
-      let cleaned = 0;
-      for (const entry of orphans) {
+      // Step 3: stop containers + remove worktrees in parallel, then update state
+      await Promise.all(orphans.map(async (entry) => {
         sendSSE(res, 'step', { step: `cleanup-${entry.id}`, status: 'running', title: `正在清理 ${entry.branch}...` });
 
-        // Stop all containers
-        for (const svc of Object.values(entry.services)) {
-          try { await containerService.stop(svc.containerName); } catch { /* ok */ }
-        }
+        // Stop all containers for this orphan in parallel
+        await Promise.all(
+          Object.values(entry.services).map(svc =>
+            containerService.stop(svc.containerName).catch(() => { /* ok */ }),
+          ),
+        );
         // Remove worktree
         try {
           const repoRoot = stateService.getProjectRepoRoot(entry.projectId, config.repoRoot);
           await worktreeService.remove(repoRoot, entry.worktreePath);
         } catch { /* ok */ }
-        // Remove from state
-        stateService.removeLogs(entry.id);
-        stateService.removeBranch(entry.id);
-        cleaned++;
 
         sendSSE(res, 'step', { step: `cleanup-${entry.id}`, status: 'done', title: `已清理 ${entry.branch}` });
+      }));
+
+      // State mutations are serial (state is in-memory, no async needed)
+      for (const entry of orphans) {
+        stateService.removeLogs(entry.id);
+        stateService.removeBranch(entry.id);
       }
+      const cleaned = orphans.length;
 
       stateService.save();
       sendSSE(res, 'complete', { message: `已清理 ${cleaned} 个孤儿分支`, orphanCount: cleaned });

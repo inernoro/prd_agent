@@ -494,6 +494,7 @@
 1. **Phase 1 · 设计 token 抽取**:把卡片圆角、padding、颜色、边连线样式抽成 `canvas-tokens.css`,三处都引用
    - 变量示例:`--canvas-card-radius: 18px` / `--canvas-card-bg: #161a22` / `--canvas-edge-style: stroke-dasharray: 5 4`
    - 优先级:P2 · 规模:S
+   - **✅ done 2026-04-16** — `prd-admin/src/styles/tokens.css` 追加 `/* Canvas / ReactFlow 共享 Token */` 节；`workflow-canvas.css` 消费新变量
 2. **Phase 2 · 手势代码抽取为 npm 包**:`@prd/canvas-gesture`(或 `cds-canvas-gesture`),导出 `createPanZoomHandlers({ onZoom, onPan })`
    - 三处都调用,保证手势契约一致
    - 优先级:P2 · 规模:M
@@ -616,7 +617,7 @@
 | LIM-04 | Executor 节点不复用 multi-repo clone，仍用 single `repoRoot` | 不能跨 executor 部署不同仓库 | 需要 P3 改造把 `reposBase` 同步到 executor | deferred（P3 未启动） |
 | LIM-05 | Proxy 自动发现仅查 legacy `repoRoot` | `feature.cds.miduo.org` 子域名只能命中默认仓库的分支，新 clone 项目要显式部署 | 设计权衡，显式部署路径不受影响 | wontfix（设计选择） |
 | LIM-06 | 多 tab 并发 Device Flow last-write-wins | 两个 tab 同时跑 Device Flow 会 race state.json | 实际场景罕见 | wontfix（已知低概率） |
-| LIM-07 | "持久化卷 / Volume" UI 入口被砍 | `+ Add` 菜单不再有该选项 | 卷仍可在 `InfraService.volumes` 字段配置 | deferred（有后门） |
+| LIM-07 | "持久化卷 / Volume" UI 入口被砍 · **done** 2026-04-16 | `+ Add` 菜单不再有该选项 | 卷仍可在 `InfraService.volumes` 字段配置 | done |
 
 ---
 
@@ -649,7 +650,7 @@
 | ID | 标题 | 规模 | 优先级 | 对应限制 |
 |---|---|---|---|---|
 | FU-01 | Repo Picker 加分页（`Link` header 解析） | S（~30 行） | P2 | LIM-03 |
-| FU-02 | `MapAuthStore` 持久化实现替换 `MemoryAuthStore` | M | P2 | — |
+| FU-02 | `MapAuthStore` 持久化实现替换 `MemoryAuthStore` · **done** 2026-04-16 | M | P2 | — |
 | FU-03 | detect-stack 加 nixpacks 风格依赖深度推断 · **done** 2026-04-16 | M | P3 | — |
 | FU-04 | worktreeBase 按 projectId 分子目录 | S | P2 | **done** 2026-04-16 |
 | FU-05 | GitHub Device Flow token AES 加密后写 state.json | S | P1 | — |
@@ -668,13 +669,21 @@
 
 **规模**：~30 行后端 + ~50 行前端。
 
-### FU-02 · MapAuthStore 持久化替换 MemoryAuthStore
+### FU-02 · MapAuthStore 持久化替换 MemoryAuthStore · **done** 2026-04-16
 
 **背景**：P2 引入的 `AuthStore` 接口当前只有 `MemoryAuthStore` 实现（进程内存），CDS 重启后所有 session 丢失。handoff 已经设计好了替换路径——只需新增 mongo 后端实现。
 
-**方案**：新增 `cds/src/infra/auth-store/mongo-store.ts`，实现 `AuthStore` 接口，用 `users` + `sessions` 两个 collection。启动时按 `CDS_AUTH_BACKEND=memory|mongo` 环境变量分发。
+**方案**：新增 `cds/src/infra/auth-store/mongo-store.ts`，实现 `AuthStore` 接口，用 `cds_users` + `cds_sessions` + `cds_workspaces` 三个 collection。启动时按 `CDS_AUTH_BACKEND=memory|mongo` 环境变量分发。
 
 **注意**：这和 Phase D 的 state backing store 是两套独立系统。Phase D 管 CDS state，这里管用户 session。
+
+**交付**（commit 见 branch `claude/review-handoff-doc-mKuZk`）：
+- `cds/src/infra/auth-store/mongo-handle.ts` — `IAuthMongoHandle` + `RealAuthMongoHandle`
+- `cds/src/infra/auth-store/mongo-store.ts` — `MongoAuthStore`（实现 `AuthStore` + `markUserAsSystemOwner`）
+- `cds/src/server.ts` — `ServerDeps.authStore?` + 使用 `deps.authStore ?? new MemoryAuthStore()`
+- `cds/src/index.ts` — `initAuthStore()` + 按 `CDS_AUTH_BACKEND` 分发
+- `cds/tests/infra/auth-store/mongo-store.test.ts` — 20 条单元测试，全绿
+- `doc/guide.cds-env.md §2.1` — `CDS_AUTH_BACKEND` 操作说明
 
 ### FU-03 · detect-stack 加 nixpacks 风格依赖推断 · **done** 2026-04-16
 

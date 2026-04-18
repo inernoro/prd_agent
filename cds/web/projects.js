@@ -16,8 +16,58 @@
  *     a Legacy badge so users know it's not deletable.
  */
 
+// Theme toggle for projects page (shared localStorage key with index.html)
+function _projectsToggleTheme(btn) {
+  var isLight = document.documentElement.dataset.theme === 'light';
+  var next = isLight ? 'dark' : 'light';
+  localStorage.setItem('cds_theme', next);
+  if (next === 'light') {
+    document.documentElement.dataset.theme = 'light';
+  } else {
+    delete document.documentElement.dataset.theme;
+  }
+  // swap icon: sun ↔ moon
+  var icon = document.getElementById('projectsThemeIcon');
+  if (icon) {
+    if (next === 'light') {
+      icon.innerHTML = '<path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>';
+      icon.setAttribute('fill', 'currentColor');
+      icon.removeAttribute('stroke');
+    } else {
+      icon.innerHTML = '<circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="4.22" x2="19.78" y2="5.64"/>';
+      icon.setAttribute('fill', 'none');
+      icon.setAttribute('stroke', 'currentColor');
+    }
+  }
+}
+// Initialize icon to reflect current state on page load
+(function () {
+  var btn = document.getElementById('projectsThemeBtn');
+  var icon = document.getElementById('projectsThemeIcon');
+  if (!icon) return;
+  if (document.documentElement.dataset.theme === 'light') {
+    icon.innerHTML = '<path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>';
+    icon.setAttribute('fill', 'currentColor');
+    icon.removeAttribute('stroke');
+  }
+}());
+
 (function () {
   'use strict';
+
+  // Inject delete-button hover styles into <head> so they work regardless of
+  // which version of projects.html the browser has cached. The CSS in the HTML
+  // file can lag behind when the JS is served fresh after a CDS self-update.
+  (function () {
+    if (document.getElementById('cds-delbtn-patch')) return;
+    var s = document.createElement('style');
+    s.id = 'cds-delbtn-patch';
+    s.textContent =
+      '.cds-project-card-wrapper{position:relative}' +
+      '.cds-project-card-wrapper:hover .cds-project-card-delete,' +
+      '.cds-project-card:hover~.cds-project-card-delete{display:flex!important}';
+    document.head.appendChild(s);
+  }());
 
   var gridEl = document.getElementById('projectsGrid');
   var toastEl = document.getElementById('toast');
@@ -55,12 +105,12 @@
   // offline and without auth probes.
   var ICONS = {
     mongodb: {
-      color: '#10aa50',
-      svg: '<path d="M12 2.25C9.32 4.79 7.9 8.17 8.14 11.73c.22 3.19 1.53 5.83 3.45 7.76.26.26.66.28.94.05 1.96-1.59 3.22-4.05 3.34-6.85.16-3.62-1.24-7.17-3.87-10.44z"/>',
+      color: '#47A248',
+      svg: '<path d="M17.193 9.555c-1.264-5.58-4.252-7.414-4.573-8.115-.28-.394-.53-.954-.735-1.44-.036.495-.055.685-.523 1.184-.723.566-4.438 3.682-4.74 10.02-.282 5.912 4.27 9.435 4.888 9.884l.07.05A73.49 73.49 0 0111.91 24h.481c.114-1.032.284-2.056.51-3.07.417-.296.604-.463.85-.693a11.342 11.342 0 003.639-8.464c.01-.814-.103-1.662-.197-2.218zm-5.336 8.195s0-8.291.275-8.29c.213 0 .49 10.695.49 10.695-.381-.045-.765-1.76-.765-2.405z"/>',
     },
     redis: {
-      color: '#dc382d',
-      svg: '<path d="M12 2.2c4.6 0 8.3 1.5 8.3 3.4s-3.7 3.4-8.3 3.4S3.7 7.5 3.7 5.6 7.4 2.2 12 2.2zm0 7.5c4.6 0 8.3 1.5 8.3 3.4s-3.7 3.4-8.3 3.4-8.3-1.5-8.3-3.4 3.7-3.4 8.3-3.4zm0 7.5c4.6 0 8.3 1.5 8.3 3.4S16.6 24 12 24s-8.3-1.5-8.3-3.4 3.7-3.4 8.3-3.4z"/>',
+      color: '#FF4438',
+      svg: '<path d="M22.71 13.145c-1.66 2.092-3.452 4.483-7.038 4.483-3.203 0-4.397-2.825-4.48-5.12.701 1.484 2.073 2.685 4.214 2.63 4.117-.133 6.94-3.852 6.94-7.239 0-4.05-3.022-6.972-8.268-6.972-3.752 0-8.4 1.428-11.455 3.685C2.59 6.937 3.885 9.958 4.35 9.626c2.648-1.904 4.748-3.13 6.784-3.744C8.12 9.244.886 17.05 0 18.425c.1 1.261 1.66 4.648 2.424 4.648.232 0 .431-.133.664-.365a100.49 100.49 0 0 0 5.54-6.765c.222 3.104 1.748 6.898 6.014 6.898 3.819 0 7.604-2.756 9.33-8.965.2-.764-.73-1.361-1.261-.73zm-4.349-5.013c0 1.959-1.926 2.922-3.685 2.922-.941 0-1.664-.247-2.235-.568 1.051-1.592 2.092-3.225 3.21-4.973 1.972.334 2.71 1.43 2.71 2.619z"/>',
     },
     postgres: {
       color: '#336791',
@@ -71,8 +121,8 @@
       svg: '<path d="M4 6v12l4-2V8l4 2v8l4-2V6l-4 2V4z"/>',
     },
     node: {
-      color: '#539e43',
-      svg: '<path d="M12 2 3 7v10l9 5 9-5V7zm0 2.3 6.9 3.85L12 12 5.1 8.15zM5 10l6 3.35V20l-6-3.35zm14 0v6.65L13 20v-6.65z"/>',
+      color: '#5FA04E',
+      svg: '<path d="M11.998 24c-.321 0-.641-.084-.922-.247l-2.936-1.737c-.438-.245-.224-.332-.08-.383.585-.203.703-.25 1.328-.604.065-.037.151-.023.218.017l2.256 1.339c.082.045.197.045.272 0l8.795-5.076c.082-.047.134-.141.134-.238V6.921c0-.099-.053-.192-.137-.242l-8.791-5.072c-.081-.047-.189-.047-.271 0L3.075 6.68C2.99 6.729 2.936 6.825 2.936 6.921v10.15c0 .097.054.189.139.235l2.409 1.392c1.307.654 2.108-.116 2.108-.89V7.787c0-.142.114-.253.256-.253h1.115c.139 0 .255.112.255.253v10.021c0 1.745-.95 2.745-2.604 2.745-.508 0-.909 0-2.026-.551L2.28 18.675c-.57-.329-.922-.945-.922-1.604V6.921c0-.659.353-1.275.922-1.603l8.795-5.082c.557-.315 1.296-.315 1.848 0l8.794 5.082c.57.329.924.944.924 1.603v10.15c0 .659-.354 1.273-.924 1.604l-8.794 5.078C12.643 23.916 12.324 24 11.998 24zm2.692-6.993c-3.703 0-4.469-1.097-4.469-2.014 0-.141.113-.253.254-.253h1.137c.126 0 .233.091.253.215.172 1.158.684 1.742 3.011 1.742 1.853 0 2.642-.419 2.642-1.402 0-.566-.223-.987-3.103-1.269-2.407-.238-3.895-.77-3.895-2.695 0-1.775 1.496-2.833 4.004-2.833 2.817 0 4.211.978 4.388 3.076.007.073-.019.142-.067.196a.26.26 0 0 1-.186.081h-1.141a.253.253 0 0 1-.247-.199c-.274-1.218-.94-1.607-2.747-1.607-2.023 0-2.258.705-2.258 1.233 0 .639.278.826 3.009 1.187 2.703.357 3.987.863 3.987 2.763-.016 1.917-1.614 3.014-4.573 3.014z"/>',
     },
     dotnet: {
       color: '#512bd4',
@@ -84,7 +134,7 @@
     },
     nginx: {
       color: '#009639',
-      svg: '<path d="M12 2 3 7v10l9 5 9-5V7zM8 9l6 8H8z"/>',
+      svg: '<path d="M12 0L1.605 6v12L12 24l10.395-6V6L12 0zm6 16.59c0 .705-.646 1.29-1.529 1.29-.631 0-1.351-.255-1.801-.81l-6-7.141v6.66c0 .721-.57 1.29-1.274 1.29H7.32c-.721 0-1.29-.6-1.29-1.29V7.41c0-.705.63-1.29 1.5-1.29.646 0 1.38.255 1.83.81l5.97 7.141V7.41c0-.721.6-1.29 1.29-1.29h.075c.72 0 1.29.6 1.29 1.29v9.18H18z"/>',
     },
     git: {
       color: '#f05032',
@@ -250,12 +300,12 @@
   }
 
   function renderCard(project, services) {
-    var href = 'index.html?project=' + encodeURIComponent(project.id);
+    var href = '/branch-list?project=' + encodeURIComponent(project.id);
     var deleteBtn = project.legacyFlag
       ? ''
       : '<button class="cds-project-card-delete" title="删除项目" onclick="handleDeleteProject(event, ' +
         "'" + escapeHtml(project.id) + "', '" + escapeHtml(project.name) + "')\">" +
-        '<svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M11 1.75V3h2.25a.75.75 0 010 1.5H2.75a.75.75 0 010-1.5H5V1.75C5 .784 5.784 0 6.75 0h2.5C10.216 0 11 .784 11 1.75zM4.496 6.675l.66 6.6a.25.25 0 00.249.225h5.19a.25.25 0 00.249-.225l.66-6.6a.75.75 0 111.492.149l-.66 6.6A1.748 1.748 0 0110.595 15h-5.19a1.75 1.75 0 01-1.741-1.575l-.66-6.6a.75.75 0 111.492-.15z"/></svg>' +
+        '<svg width="14" height="14" viewBox="0 0 16 16" fill="#f43f5e" aria-hidden="true"><path d="M11 1.75V3h2.25a.75.75 0 010 1.5H2.75a.75.75 0 010-1.5H5V1.75C5 .784 5.784 0 6.75 0h2.5C10.216 0 11 .784 11 1.75zM4.496 6.675l.66 6.6a.25.25 0 00.249.225h5.19a.25.25 0 00.249-.225l.66-6.6a.75.75 0 111.492.149l-.66 6.6A1.748 1.748 0 0110.595 15h-5.19a1.75 1.75 0 01-1.741-1.575l-.66-6.6a.75.75 0 111.492-.15z"/></svg>' +
         '</button>';
 
     var totalServices =
@@ -271,21 +321,26 @@
       ? '<div class="cds-clone-error">' + escapeHtml(project.cloneError) + '</div>'
       : '';
 
+    // Wrap in a div so the delete button can sit OUTSIDE the <a> tag.
+    // <button> inside <a> is invalid HTML — click events on the button
+    // bubble to the <a> in some browsers and navigate instead of deleting.
     return [
-      '<a class="cds-project-card" href="', href, '">',
-      '  <div class="cds-project-card-head">',
-      '    <div class="cds-project-card-title">', escapeHtml(project.name), '</div>',
-      '    ', cloneBadge,
-      '  </div>',
-      '  <div class="cds-service-strip">', renderServiceStrip(project, services || {}), '</div>',
+      '<div class="cds-project-card-wrapper">',
+      '  <a class="cds-project-card" href="', href, '">',
+      '    <div class="cds-project-card-head">',
+      '      <div class="cds-project-card-title">', escapeHtml(project.name), '</div>',
+      '      ', cloneBadge,
+      '    </div>',
+      '    <div class="cds-service-strip">', renderServiceStrip(project, services || {}), '</div>',
       errorBlock,
-      '  <div class="cds-project-card-foot">',
-      '    <span class="cds-env-dot">', envLabel, '</span>',
-      '    <span class="cds-service-count"><strong>', totalServices, '</strong> service', totalServices === 1 ? '' : 's', '</span>',
+      '    <div class="cds-project-card-foot">',
+      '      <span class="cds-env-dot">', envLabel, '</span>',
+      '      <span class="cds-service-count"><strong>', totalServices, '</strong> service', totalServices === 1 ? '' : 's', '</span>',
       cloneBtn ? '<span style="flex-shrink:0">' + cloneBtn + '</span>' : '',
-      '  </div>',
+      '    </div>',
+      '  </a>',
       '  ', deleteBtn,
-      '</a>',
+      '</div>',
     ].join('');
   }
 
@@ -359,12 +414,14 @@
         projects.forEach(function (p, idx) {
           fetchServicesFor(p.id).then(function (services) {
             // Replace just this card's outer HTML in-place.
-            var cards = gridEl.querySelectorAll('.cds-project-card');
+            // Query the wrapper div (parent of <a>) so the full card
+            // (including the delete button outside the <a>) gets replaced.
+            var cards = gridEl.querySelectorAll('.cds-project-card-wrapper');
             if (cards[idx]) {
-              var wrapper = document.createElement('div');
-              wrapper.innerHTML = renderCard(p, services);
-              if (wrapper.firstElementChild) {
-                cards[idx].outerHTML = wrapper.firstElementChild.outerHTML;
+              var tmp = document.createElement('div');
+              tmp.innerHTML = renderCard(p, services);
+              if (tmp.firstElementChild) {
+                cards[idx].outerHTML = tmp.firstElementChild.outerHTML;
               }
             }
           });
@@ -437,7 +494,7 @@
     }
     if (setupBanner) setupBanner.style.display = 'none';
     if (s.connected && s.login && s.login !== '(unknown)') {
-      statusEl.innerHTML = '✅ 已连接 <code style="background:var(--bg-elevated);padding:1px 4px;border-radius:3px">@' + escapeHtml(s.login) + '</code>';
+      statusEl.innerHTML = '<span style="color:var(--green)">✓</span> 已连接 <code style="background:var(--bg-elevated);padding:1px 4px;border-radius:3px">@' + escapeHtml(s.login) + '</code>';
       if (signinBtn) signinBtn.style.display = 'none';
       if (logoutBtn) logoutBtn.style.display = 'flex';
     } else {
@@ -463,6 +520,32 @@
     _lastResolvedBadgeLogin = login || null;
     _setUserCardClass('signed-in');
     _updateUserPopover();
+  }
+
+  // P5: update the workspace pill (top-left sidebar area) based on the
+  // user's first personal workspace. If they have team workspaces too,
+  // show the count as a subtle indicator.
+  function _renderWorkspacePill(workspaces) {
+    var wsAvatar = document.getElementById('wsAvatar');
+    var wsName = document.getElementById('wsName');
+    if (!wsAvatar || !wsName) return;
+    if (!workspaces || workspaces.length === 0) return;
+
+    // Personal workspace first; fall back to first item.
+    var personal = workspaces.find(function (w) { return w.kind === 'personal'; });
+    var active = personal || workspaces[0];
+
+    wsName.textContent = active.name || '个人工作区';
+    wsAvatar.textContent = (active.name || '?').charAt(0).toUpperCase();
+
+    // Add tooltip listing team workspaces if any.
+    var teamCount = workspaces.filter(function (w) { return w.kind === 'team'; }).length;
+    var pill = wsAvatar.closest ? wsAvatar.closest('.cds-workspace') : null;
+    if (pill) {
+      pill.title = teamCount > 0
+        ? active.name + '（还有 ' + teamCount + ' 个团队工作区）'
+        : active.name;
+    }
   }
 
   function _renderBadgeNotLoggedIn(hint, notConfigured) {
@@ -552,6 +635,11 @@
             user.githubLogin || user.name || user.email,
             user.avatarUrl,
           );
+          // P5: load workspace list and populate the workspace pill.
+          fetch('/api/workspaces', { credentials: 'same-origin', cache: 'no-store' })
+            .then(function (r) { return r.ok ? r.json() : null; })
+            .then(function (ws) { if (ws) _renderWorkspacePill(ws.workspaces || []); })
+            .catch(function () { /* quiet — workspace pill stays at default */ });
           // Even when /api/me resolves, fetch the GitHub status in
           // parallel so the popover can offer disconnect/reconnect
           // for the separate Device Flow token.
@@ -785,7 +873,7 @@
         var statusEl = document.getElementById('gh-device-status');
 
         if (body.status === 'ready') {
-          if (statusEl) statusEl.textContent = '✅ 已连接 @' + (body.login || '');
+          if (statusEl) statusEl.textContent = '✓ 已连接 @' + (body.login || '');
           showToast('GitHub 已连接 @' + (body.login || ''));
           setTimeout(function () {
             closeGithubDeviceModal();
@@ -1117,10 +1205,10 @@
       hintEl.textContent = '粘贴一个 Git URL (会自动 clone)，或者输入一个项目名 (创建空项目)';
       hintEl.style.color = 'var(--text-muted)';
     } else if (parsed.kind === 'url') {
-      hintEl.innerHTML = '📦 识别为 Git 仓库。将创建项目 <strong style="color:var(--text-primary)">' + escapeHtml(parsed.name) + '</strong> 并自动克隆';
+      hintEl.innerHTML = '<svg width="11" height="11" viewBox="0 0 16 16" fill="currentColor" style="vertical-align:-1px"><path d="M8 0L1.5 4v8L8 16l6.5-4V4L8 0zm0 1.5l5 3.1v6.8L8 14.5l-5-3.1V4.6L8 1.5z"/></svg> 识别为 Git 仓库。将创建项目 <strong style="color:var(--text-primary)">' + escapeHtml(parsed.name) + '</strong> 并自动克隆';
       hintEl.style.color = 'var(--green, #10b981)';
     } else {
-      hintEl.innerHTML = '📁 将创建空项目 <strong style="color:var(--text-primary)">' + escapeHtml(parsed.name) + '</strong>（无 Git 集成，可后续补充）';
+      hintEl.innerHTML = '<svg width="11" height="11" viewBox="0 0 16 16" fill="currentColor" style="vertical-align:-1px"><path d="M2 1.75C2 .784 2.784 0 3.75 0h6.586c.464 0 .909.184 1.237.513l2.914 2.914c.329.328.513.773.513 1.237v9.586A1.75 1.75 0 0112.25 16h-8.5A1.75 1.75 0 012 14.25V1.75zm1.75-.25a.25.25 0 00-.25.25v12.5c0 .138.112.25.25.25h8.5a.25.25 0 00.25-.25V6h-2.75A1.75 1.75 0 018 4.25V1.5H3.75zm6.75.062V4.25c0 .138.112.25.25.25h2.688a.252.252 0 00-.011-.013l-2.914-2.914a.272.272 0 00-.013-.011z"/></svg> 将创建空项目 <strong style="color:var(--text-primary)">' + escapeHtml(parsed.name) + '</strong>（无 Git 集成，可后续补充）';
       hintEl.style.color = 'var(--text-secondary)';
     }
   }
@@ -1409,8 +1497,11 @@
         body: JSON.stringify({ projectId: projectId }),
       });
       if (!detectRes.ok) {
-        var body = await detectRes.json().catch(function () { return {}; });
-        throw new Error('detect-stack ' + detectRes.status + ' ' + (body.error || ''));
+        // Non-fatal: detection failed (server error or new deployment).
+        // Fall through to manual-setup path instead of aborting the chain.
+        appendCloneLogLine('[detect] 未能自动识别技术栈（HTTP ' + detectRes.status + '），请手动配置', 'warning');
+        _finalizeCloneModal(modal, closeBtn, projectName, '项目已就绪，请手动添加构建配置');
+        return;
       }
       var detection = await detectRes.json();
       appendCloneLogLine('[detect] ' + (detection.summary || detection.stack), 'info');
@@ -1454,7 +1545,7 @@
         _finalizeCloneModal(modal, closeBtn, projectName, '项目已就绪（构建配置需要手动创建）');
         return;
       }
-      appendCloneLogLine('[profile] ✅ 已创建: ' + profileId + ' (' + detection.dockerImage + ')', 'complete');
+      appendCloneLogLine('[profile] 已创建: ' + profileId + ' (' + detection.dockerImage + ')', 'complete');
       appendCloneLogLine('[profile]   run: ' + detection.runCommand, 'info');
       if (detection.installCommand) {
         appendCloneLogLine('[profile]   install: ' + detection.installCommand, 'info');
@@ -1463,7 +1554,7 @@
         appendCloneLogLine('[profile]   build: ' + detection.buildCommand, 'info');
       }
 
-      _finalizeCloneModal(modal, closeBtn, projectName, '✅ 项目已就绪，可以部署');
+      _finalizeCloneModal(modal, closeBtn, projectName, '项目已就绪，可以部署');
     } catch (err) {
       appendCloneLogLine('[chain-error] ' + (err && err.message ? err.message : err), 'error');
       if (closeBtn) closeBtn.textContent = '关闭';

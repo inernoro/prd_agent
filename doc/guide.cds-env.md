@@ -31,6 +31,12 @@ CDS（Cloud Development Suite）的环境变量分为两层：
 | `CDS_PASSWORD` | 推荐 | — | Dashboard 登录密码 |
 | `CDS_JWT_SECRET` | 推荐 | 自动生成 | JWT 签名密钥（init 首次运行自动生成 32 字节） |
 | `CDS_ROOT_DOMAINS` | 推荐 | — | 根域名列表，逗号分隔（`miduo.org,mycds.net`） |
+| `CDS_STORAGE_MODE` | 否 | `json` | State 持久化后端：`json`（文件）/`mongo`/`auto` |
+| `CDS_AUTH_BACKEND` | 否 | `memory` | Auth 持久化后端：`memory`（重启丢失）/`mongo`（见 §2.1） |
+| `CDS_MONGO_URI` | 条件 | — | MongoDB 连接串，`CDS_STORAGE_MODE=mongo` 或 `CDS_AUTH_BACKEND=mongo` 时必填 |
+| `CDS_MONGO_DB` | 否 | `cds_state_db` | State 存储数据库名 |
+| `CDS_AUTH_MONGO_DB` | 否 | `cds_auth_db` | Auth 存储数据库名（默认与 State DB 独立） |
+| `CDS_SECRET_KEY` | 否 | — | 32 字节十六进制，启用后加密 state.json 中的 Device Flow token |
 
 > **多域名**：`CDS_ROOT_DOMAINS` 可以同时配置多个，每个根域名 `D` 自动生成三条路由：
 >
@@ -49,6 +55,36 @@ export CDS_PASSWORD="your-secure-password"
 export CDS_JWT_SECRET="自动生成的 32 字节随机串"
 export CDS_ROOT_DOMAINS="miduo.org,mycds.net"
 ```
+
+### 2.1 CDS_AUTH_BACKEND — Auth 持久化后端（FU-02）
+
+> **问题**：默认的 `memory` 后端把用户和 session 存在进程内存，CDS 重启后所有用户需要重新登录。
+
+| 值 | 说明 |
+|----|------|
+| `memory`（默认） | 进程内 Map，重启即清空。适合单节点开发/测试 |
+| `mongo` | 持久化到 MongoDB，重启不掉 session，支持多实例共享登录态 |
+
+**启用 MongoDB Auth 后端**：
+
+```bash
+# cds/.cds.env
+export CDS_AUTH_BACKEND="mongo"
+export CDS_MONGO_URI="mongodb://localhost:27017"
+# 可选：Auth 和 State 使用不同的 DB
+export CDS_AUTH_MONGO_DB="cds_auth_db"
+```
+
+**注意事项**：
+
+- `CDS_AUTH_BACKEND` 和 `CDS_STORAGE_MODE` 是**两个独立开关**，可以自由组合（例如 state=json + auth=mongo）
+- 从 `memory` 切换到 `mongo` 时，所有用户需要重新登录一次（历史 session 不迁移，这是预期行为）
+- 首次登录的用户自动成为 system owner
+- MongoDB 索引需要 DBA 手动维护（见 `.claude/rules/no-auto-index.md`）：
+  - `cds_users.githubId`（unique）、`cds_users.id`（unique）
+  - `cds_sessions.token`（unique）、`cds_sessions.userId`（non-unique）、`cds_sessions.expiresAt`（TTL，可选）
+  - `cds_workspaces.slug`（unique）、`cds_workspaces.ownerId`（non-unique）
+- **回滚**：删除 `CDS_AUTH_BACKEND=mongo`（或设为 `memory`）后重启即可，MongoDB 中的数据保留
 
 ---
 

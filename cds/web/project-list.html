@@ -6,7 +6,7 @@
   <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
   <meta http-equiv="Pragma" content="no-cache">
   <meta http-equiv="Expires" content="0">
-  <title>项目列表 · Cloud Dev Suite</title>
+  <title>项目列表 · CDS</title>
   <link rel="icon" type="image/svg+xml" href="favicon.svg">
   <link rel="preconnect" href="https://fonts.loli.net" crossorigin>
   <link href="https://fonts.loli.net/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
@@ -385,9 +385,9 @@
     }
     .cds-project-card-head {
       display: flex;
-      align-items: flex-start;
-      justify-content: space-between;
-      gap: 10px;
+      align-items: center;
+      gap: 8px;
+      padding-right: 36px; /* reserve space for the absolute-positioned delete btn */
     }
     .cds-project-card-title {
       font-size: 16px;
@@ -618,24 +618,33 @@
       color: var(--text-secondary);
     }
     .cds-service-count strong { color: var(--green); font-weight: 700; }
+    /* Wrapper enables the delete button to live OUTSIDE the <a> tag
+       (button-in-anchor is invalid HTML and breaks click events). */
+    .cds-project-card-wrapper {
+      position: relative;
+    }
     .cds-project-card-delete {
       position: absolute;
-      top: 14px;
-      right: 14px;
+      top: 12px;
+      right: 12px;
+      z-index: 2;
       width: 28px;
       height: 28px;
       display: none;
       align-items: center;
       justify-content: center;
       border-radius: 7px;
-      background: rgba(244, 63, 94, 0.1);
-      border: 1px solid rgba(244, 63, 94, 0.25);
+      background: rgba(244, 63, 94, 0.12);
+      border: 1px solid rgba(244, 63, 94, 0.3);
       color: var(--red, #f43f5e);
       cursor: pointer;
-      transition: background 120ms ease;
+      transition: background 120ms ease, border-color 120ms ease;
     }
-    .cds-project-card:hover .cds-project-card-delete { display: flex; }
-    .cds-project-card-delete:hover { background: rgba(244, 63, 94, 0.22); }
+    .cds-project-card-wrapper:hover .cds-project-card-delete { display: flex; }
+    .cds-project-card-delete:hover {
+      background: rgba(244, 63, 94, 0.25);
+      border-color: rgba(244, 63, 94, 0.5);
+    }
 
     /* Empty / loading states */
     .cds-grid-state {
@@ -861,6 +870,12 @@
           <div class="cds-logo-mark">C</div>
           <span>Cloud Dev Suite</span>
         </div>
+        <button id="projectsThemeBtn" onclick="_projectsToggleTheme(this)" title="切换主题"
+          style="width:30px;height:30px;border-radius:6px;border:1px solid transparent;background:none;cursor:pointer;display:inline-flex;align-items:center;justify-content:center;color:var(--text-secondary);flex-shrink:0;transition:background 120ms,color 120ms"
+          onmouseover="this.style.background='var(--bg-hover)';this.style.color='var(--text-primary)'"
+          onmouseout="this.style.background='none';this.style.color='var(--text-secondary)'">
+          <svg id="projectsThemeIcon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="4.22" x2="19.78" y2="5.64"/></svg>
+        </button>
       </div>
 
       <div class="cds-workspace">
@@ -875,11 +890,11 @@
            items (Templates / Usage / People) that users complained
            about. Kept only Projects + Dashboard which actually work. -->
       <nav class="cds-nav">
-        <a class="cds-nav-item active" href="projects.html">
+        <a class="cds-nav-item active" href="/project-list">
           <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M1.75 1h12.5c.966 0 1.75.784 1.75 1.75v10.5A1.75 1.75 0 0114.25 15H1.75A1.75 1.75 0 010 13.25V2.75C0 1.784.784 1 1.75 1zM1.5 2.75v10.5c0 .138.112.25.25.25h12.5a.25.25 0 00.25-.25V2.75a.25.25 0 00-.25-.25H1.75a.25.25 0 00-.25.25z"/></svg>
           <span>项目列表</span>
         </a>
-        <a class="cds-nav-item" href="index.html">
+        <a class="cds-nav-item" href="/branch-list">
           <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M8 0a8 8 0 100 16A8 8 0 008 0zM1.5 8a6.5 6.5 0 0110.65-5.003.75.75 0 00.959-1.153 8 8 0 102.592 8.33.75.75 0 00-1.444-.407A6.5 6.5 0 011.5 8z"/></svg>
           <span>控制台</span>
         </a>
@@ -1011,7 +1026,7 @@ export CDS_SECRET_KEY="$(openssl rand -hex 32)"          # 可选,加密 token
         </div>
 
         <div id="cp-github-hint" style="display:none;font-size:11px;color:var(--text-muted);margin-bottom:12px;padding:8px 10px;background:var(--bg-elevated);border-radius:7px">
-          💡 GitHub 集成未配置。管理员需在环境变量中设置 <code style="font-family:var(--font-mono,monospace)">CDS_GITHUB_CLIENT_ID</code>。当前只支持粘贴公开仓库 URL。
+          GitHub 集成未配置。管理员需在环境变量中设置 <code style="font-family:var(--font-mono,monospace)">CDS_GITHUB_CLIENT_ID</code>。当前只支持粘贴公开仓库 URL。
         </div>
 
         <div id="cp-divider" style="display:none;text-align:center;font-size:10px;color:var(--text-muted);margin:4px 0 10px;letter-spacing:2px">
@@ -1134,9 +1149,6 @@ export CDS_SECRET_KEY="$(openssl rand -hex 32)"          # 可选,加密 token
 
   <div id="toast" class="toast hidden"></div>
 
-  <script src="projects.js?t=0"></script>
-  <script>
-    document.currentScript.previousElementSibling.src = 'projects.js?t=' + Date.now();
-  </script>
+  <script>document.write('<scr'+'ipt src="projects.js?t='+Date.now()+'"><\/scr'+'ipt>');</script>
 </body>
 </html>
