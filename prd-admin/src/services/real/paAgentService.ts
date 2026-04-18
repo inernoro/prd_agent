@@ -152,11 +152,19 @@ export async function streamPaChat(opts: StreamPaChatOptions): Promise<() => voi
           const raw = line.slice(6).trim();
           if (!raw) continue;
           try {
-            const chunk = JSON.parse(raw) as PaChatChunk;
+            const chunk = JSON.parse(raw) as PaChatChunk & { attempt?: number };
             if (chunk.type === 'done') {
               opts.onDone();
             } else if (chunk.type === 'error') {
-              opts.onError(chunk.message ?? '未知错误');
+              // Translate known upstream errors to Chinese
+              const raw_msg = chunk.message ?? '';
+              const friendly = raw_msg.includes('User not found')
+                ? 'AI 服务暂时不可用，请稍后重试'
+                : raw_msg || '未知错误';
+              opts.onError(friendly);
+            } else if ((chunk as { type: string }).type === 'retry') {
+              // Backend is retrying — reset streaming buffer on frontend too
+              opts.onChunk({ type: 'delta', content: '\u200B' }); // zero-width space to keep render active
             } else {
               opts.onChunk(chunk);
             }

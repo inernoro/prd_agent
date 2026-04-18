@@ -178,39 +178,64 @@ public class PaAgentController : ControllerBase
 
         var assistantContent = new StringBuilder();
 
-        try
-        {
-            var client = _gateway.CreateClient(AppCallerCode, "chat", maxTokens: 4096, temperature: 0.3);
+        // 最多重试 1 次（应对 LLM 网关偶发性 "User not found" 等瞬态错误）
+        const int maxAttempts = 2;
+        bool streamSucceeded = false;
 
-            await foreach (var chunk in client.StreamGenerateAsync(SystemPrompt, llmMessages, CancellationToken.None))
+        for (int attempt = 1; attempt <= maxAttempts && !streamSucceeded; attempt++)
+        {
+            assistantContent.Clear();
+            string? streamError = null;
+
+            try
             {
-                if (chunk.Type == "delta" && !string.IsNullOrEmpty(chunk.Content))
+                var client = _gateway.CreateClient(AppCallerCode, "chat", maxTokens: 4096, temperature: 0.3);
+
+                await foreach (var chunk in client.StreamGenerateAsync(SystemPrompt, llmMessages, CancellationToken.None))
                 {
-                    assistantContent.Append(chunk.Content);
-                    var sseData = JsonSerializer.Serialize(new { type = "delta", content = chunk.Content });
-                    await Response.WriteAsync($"data: {sseData}\n\n", CancellationToken.None);
-                    await Response.Body.FlushAsync(CancellationToken.None);
-                }
-                else if (chunk.Type == "done")
-                {
-                    var sseData = JsonSerializer.Serialize(new { type = "done" });
-                    await Response.WriteAsync($"data: {sseData}\n\n", CancellationToken.None);
-                    await Response.Body.FlushAsync(CancellationToken.None);
-                }
-                else if (chunk.Type == "error")
-                {
-                    var sseData = JsonSerializer.Serialize(new { type = "error", message = chunk.ErrorMessage });
-                    await Response.WriteAsync($"data: {sseData}\n\n", CancellationToken.None);
-                    await Response.Body.FlushAsync(CancellationToken.None);
+                    if (chunk.Type == "delta" && !string.IsNullOrEmpty(chunk.Content))
+                    {
+                        assistantContent.Append(chunk.Content);
+                        var sseData = JsonSerializer.Serialize(new { type = "delta", content = chunk.Content });
+                        await Response.WriteAsync($"data: {sseData}\n\n", CancellationToken.None);
+                        await Response.Body.FlushAsync(CancellationToken.None);
+                    }
+                    else if (chunk.Type == "done")
+                    {
+                        streamSucceeded = true;
+                        var sseData = JsonSerializer.Serialize(new { type = "done" });
+                        await Response.WriteAsync($"data: {sseData}\n\n", CancellationToken.None);
+                        await Response.Body.FlushAsync(CancellationToken.None);
+                    }
+                    else if (chunk.Type == "error")
+                    {
+                        streamError = chunk.ErrorMessage;
+                        _logger.LogWarning("[pa-agent] LLM stream error (attempt {Attempt}): {Error}", attempt, streamError);
+                        break;
+                    }
                 }
             }
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "[pa-agent] chat stream error for user {UserId}", userId);
-            var errData = JsonSerializer.Serialize(new { type = "error", message = "服务异常，请稍后重试" });
-            await Response.WriteAsync($"data: {errData}\n\n", CancellationToken.None);
-            await Response.Body.FlushAsync(CancellationToken.None);
+            catch (Exception ex)
+            {
+                streamError = ex.Message;
+                _logger.LogError(ex, "[pa-agent] chat stream exception (attempt {Attempt}) for user {UserId}", attempt, userId);
+            }
+
+            if (!streamSucceeded && attempt == maxAttempts)
+            {
+                var errData = JsonSerializer.Serialize(new { type = "error", message = "AI 服务暂时不可用，请稍后重试" });
+                await Response.WriteAsync($"data: {errData}\n\n", CancellationToken.None);
+                await Response.Body.FlushAsync(CancellationToken.None);
+            }
+            else if (!streamSucceeded && attempt < maxAttempts)
+            {
+                // 短暂等待后重试，清空已写入的 delta（前端 streaming buffer 会被下一次输出替换）
+                await Task.Delay(500, CancellationToken.None);
+                var retryData = JsonSerializer.Serialize(new { type = "retry", attempt });
+                await Response.WriteAsync($"data: {retryData}\n\n", CancellationToken.None);
+                await Response.Body.FlushAsync(CancellationToken.None);
+                assistantContent.Clear();
+            }
         }
 
         // Persist assistant message
