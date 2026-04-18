@@ -116,6 +116,8 @@ export function GlobalDefectSubmitDialog() {
   // 当前悬浮预览的附件索引
   const [previewIndex, setPreviewIndex] = useState<number | null>(null);
   const [showExample, setShowExample] = useState(false);
+  // 「提交给」字段闪烁提示的触发计数：每次自增都会重挂载覆盖层，重启 CSS 动画。
+  const [assigneeFlashTick, setAssigneeFlashTick] = useState(0);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -369,7 +371,8 @@ export function GlobalDefectSubmitDialog() {
       return false;
     }
     if (!assigneeUserId) {
-      toast.warning('请选择提交给谁');
+      // 用字段级闪烁代替右上角 toast：视觉聚焦到真正需要填写的那个控件
+      setAssigneeFlashTick((t) => t + 1);
       return false;
     }
 
@@ -496,7 +499,7 @@ export function GlobalDefectSubmitDialog() {
               >
                 提交给
               </label>
-              <div className="flex-1">
+              <div className="flex-1 relative">
                 <UserSearchSelect
                   value={assigneeUserId}
                   onChange={setAssigneeUserId}
@@ -504,6 +507,13 @@ export function GlobalDefectSubmitDialog() {
                   placeholder="选择提交给谁（按解决缺陷数排序）"
                   uiSize="sm"
                 />
+                {assigneeFlashTick > 0 && (
+                  <div
+                    key={assigneeFlashTick}
+                    aria-hidden
+                    className="defect-field-flash absolute inset-0"
+                  />
+                )}
               </div>
             </div>
 

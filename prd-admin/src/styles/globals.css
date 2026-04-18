@@ -874,6 +874,28 @@ select optgroup {
   }
 }
 
+/* 表单字段「请填写」红色闪烁提示：一次性三拍，代替右上角 toast */
+@keyframes defectFieldFlash {
+  0%   { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0); }
+  15%  { box-shadow: 0 0 0 4px rgba(239, 68, 68, 0.65); }
+  30%  { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0); }
+  45%  { box-shadow: 0 0 0 4px rgba(239, 68, 68, 0.65); }
+  60%  { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0); }
+  75%  { box-shadow: 0 0 0 4px rgba(239, 68, 68, 0.65); }
+  100% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0); }
+}
+.defect-field-flash {
+  border-radius: 12px;
+  animation: defectFieldFlash 0.9s ease-in-out 1;
+  pointer-events: none;
+}
+@media (prefers-reduced-motion: reduce) {
+  .defect-field-flash {
+    animation: none !important;
+    box-shadow: 0 0 0 2px rgba(239, 68, 68, 0.8) !important;
+  }
+}
+
 /* success.html 参考：三态按钮 + confetti（局部复用组件） */
 @keyframes saLoading {
   0% { cy: 10; }
