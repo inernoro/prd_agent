@@ -300,7 +300,7 @@ function _projectsToggleTheme(btn) {
   }
 
   function renderCard(project, services) {
-    var href = 'index.html?project=' + encodeURIComponent(project.id);
+    var href = '/branch-list?project=' + encodeURIComponent(project.id);
     var deleteBtn = project.legacyFlag
       ? ''
       : '<button class="cds-project-card-delete" title="删除项目" onclick="handleDeleteProject(event, ' +

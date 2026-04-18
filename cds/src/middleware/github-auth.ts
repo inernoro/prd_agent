@@ -68,7 +68,7 @@ export function createGithubAuthMiddleware(deps: {
 
     if (!result) {
       if (wantsHtml(req)) {
-        const redirect = encodeURIComponent(req.originalUrl || req.url || '/projects.html');
+        const redirect = encodeURIComponent(req.originalUrl || req.url || '/project-list');
         res.redirect(302, `/login-gh.html?redirect=${redirect}`);
         return;
       }

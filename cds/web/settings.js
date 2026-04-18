@@ -478,7 +478,7 @@
             '</div>' +
           '</div>' +
           '<div style="display:flex;gap:10px">' +
-            '<a href="projects.html?new=git" class="settings-btn-primary" style="text-decoration:none">新建项目 →</a>' +
+            '<a href="/project-list?new=git" class="settings-btn-primary" style="text-decoration:none">新建项目 →</a>' +
             '<button type="button" class="settings-btn-outline settings-btn-danger" onclick="_settingsGithubDisconnect()">断开连接</button>' +
           '</div>';
       })
@@ -664,7 +664,7 @@
       .then(function (res) {
         if (res.status === 204 || res.status === 200) {
           showToast('项目已删除，正在跳回项目列表…');
-          setTimeout(function () { location.href = 'projects.html'; }, 800);
+          setTimeout(function () { location.href = '/project-list'; }, 800);
         } else {
           return res.json().then(function (body) {
             showToast((body && body.message) || ('删除失败 (HTTP ' + res.status + ')'));
@@ -678,9 +678,9 @@
 
   // ── Wire leftnav links to current project's topology / list / logs ──
   var topologyLink = document.getElementById('leftnavTopology');
-  if (topologyLink) topologyLink.href = 'index.html?project=' + encodeURIComponent(CURRENT_PROJECT_ID);
+  if (topologyLink) topologyLink.href = '/branch-panel?project=' + encodeURIComponent(CURRENT_PROJECT_ID);
   var logsLink = document.getElementById('leftnavLogs');
-  if (logsLink) logsLink.href = 'index.html?project=' + encodeURIComponent(CURRENT_PROJECT_ID);
+  if (logsLink) logsLink.href = '/branch-list?project=' + encodeURIComponent(CURRENT_PROJECT_ID);
 
   // ── Init ──
   loadProject()

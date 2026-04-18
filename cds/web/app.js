@@ -8129,7 +8129,11 @@ window._resetSubdomainAliases = _resetSubdomainAliases;
 // `buildProfiles` / `infraServices` / `branches` globals.
 // ════════════════════════════════════════════════════════════════════
 
-let _viewMode = sessionStorage.getItem('cds_view_mode') === 'topology' ? 'topology' : 'list';
+let _viewMode = (function () {
+  // /branch-panel path → start in topology; otherwise honour session storage
+  if (location.pathname === '/branch-panel') return 'topology';
+  return sessionStorage.getItem('cds_view_mode') === 'topology' ? 'topology' : 'list';
+})();
 let _topologySelectedBranchId = null; // currently highlighted branch for override overlay
 let _topologyKeepSharedView = false;   // true = stay in aggregated canvas even with a branchId set (panel context only)
 let _topologyOverrideCache = new Map(); // branchId → Set<profileId> with hasOverride=true
@@ -8139,6 +8143,10 @@ function setViewMode(mode) {
   if (mode !== 'list' && mode !== 'topology') mode = 'list';
   _viewMode = mode;
   sessionStorage.setItem('cds_view_mode', mode);
+  // Sync URL path so each view has a distinct, bookmarkable address
+  var _urlPath = mode === 'topology' ? '/branch-panel' : '/branch-list';
+  history.replaceState(null, '', _urlPath + location.search);
+  document.title = (mode === 'topology' ? '分支面板' : '分支列表') + ' · CDS';
 
   const listEl = document.getElementById('branchList');
   const topoEl = document.getElementById('topologyView');
@@ -8296,7 +8304,7 @@ function _ensureTopologyFsChrome() {
           清理分支
         </button>
         <div class="topo-sys-popover-divider"></div>
-        <a href="projects.html" class="topo-sys-popover-item">
+        <a href="/project-list" class="topo-sys-popover-item">
           <svg viewBox="0 0 16 16" fill="currentColor"><path d="M1.75 1h12.5c.966 0 1.75.784 1.75 1.75v10.5A1.75 1.75 0 0114.25 15H1.75A1.75 1.75 0 010 13.25V2.75C0 1.784.784 1 1.75 1zM1.5 2.75v10.5c0 .138.112.25.25.25h12.5a.25.25 0 00.25-.25V2.75a.25.25 0 00-.25-.25H1.75a.25.25 0 00-.25.25z"/></svg>
           项目列表
         </a>
@@ -8325,7 +8333,7 @@ function _ensureTopologyFsChrome() {
   topbar.className = 'topology-fs-topbar';
   topbar.innerHTML = `
     <div class="topology-fs-topbar-pill">
-      <a href="projects.html" class="topology-fs-breadcrumb-item link" title="返回项目列表">
+      <a href="/project-list" class="topology-fs-breadcrumb-item link" title="返回项目列表">
         <svg width="13" height="13" viewBox="0 0 16 16" fill="currentColor"><path d="M1.75 1h12.5c.966 0 1.75.784 1.75 1.75v10.5A1.75 1.75 0 0114.25 15H1.75A1.75 1.75 0 010 13.25V2.75C0 1.784.784 1 1.75 1zM1.5 2.75v10.5c0 .138.112.25.25.25h12.5a.25.25 0 00.25-.25V2.75a.25.25 0 00-.25-.25H1.75a.25.25 0 00-.25.25z"/></svg>
         <span id="topologyFsProjectName">${esc(projectId)}</span>
       </a>
@@ -9945,7 +9953,7 @@ function buildCmdkCommands() {
     label: '返回项目列表',
     meta: 'projects',
     keywords: ['projects', '项目', 'home'],
-    action: function () { location.href = 'projects.html'; },
+    action: function () { location.href = '/project-list'; },
   });
 
   // ── Branches ──
@@ -10160,7 +10168,7 @@ function _topologyChooseAddItem(kind) {
       // auto-opens the create modal focused on the git URL field.
       // No death loop: the create modal is modal, user fills URL,
       // hits create, watches the SSE clone modal, done.
-      location.href = 'projects.html?new=git';
+      location.href = '/project-list?new=git';
       break;
     case 'database':
       // P4 Part 10: show the Database submenu (PostgreSQL / Redis /

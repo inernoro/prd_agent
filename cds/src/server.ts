@@ -909,13 +909,30 @@ export function createServer(deps: ServerDeps): express.Express {
 export function installSpaFallback(app: express.Express, webDir?: string): void {
   const dir = webDir || path.resolve(__dirname, '..', 'web');
 
-  // P1 multi-project shell: make `/` land on the projects list instead of
-  // the legacy dashboard index. Users click a project card to enter the
-  // dashboard. Registered before express.static so it takes precedence over
-  // the default `index.html` served by the static middleware for `/`.
-  // See doc/plan.cds-multi-project-phases.md → P1.
+  // Semantic URL routes (preferred, human-readable paths)
+  app.get('/project-list', (_req, res) => {
+    res.sendFile(path.join(dir, 'project-list.html'));
+  });
+  app.get('/branch-list', (_req, res) => {
+    res.sendFile(path.join(dir, 'index.html'));
+  });
+  app.get('/branch-panel', (_req, res) => {
+    res.sendFile(path.join(dir, 'index.html'));
+  });
+
+  // Backward-compat redirects: old .html paths → semantic paths (301 permanent)
+  app.get('/projects.html', (req, res) => {
+    const qs = req.url.includes('?') ? req.url.slice(req.url.indexOf('?')) : '';
+    res.redirect(301, '/project-list' + qs);
+  });
+  app.get('/index.html', (req, res) => {
+    const qs = req.url.includes('?') ? req.url.slice(req.url.indexOf('?')) : '';
+    res.redirect(301, '/branch-list' + qs);
+  });
+
+  // Root redirect → project list
   app.get('/', (_req, res) => {
-    res.redirect(302, '/projects.html');
+    res.redirect(302, '/project-list');
   });
 
   // HTML pages must never be served from cache — JS/CSS are cache-busted via

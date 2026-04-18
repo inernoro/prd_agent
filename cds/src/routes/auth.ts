@@ -74,7 +74,7 @@ export function createAuthRouter(deps: AuthRouterDeps): Router {
   const redirectUri = `${publicBaseUrl.replace(/\/$/, '')}/api/auth/github/callback`;
 
   router.get('/auth/github/login', (req: Request, res: Response) => {
-    const postLogin = typeof req.query.redirect === 'string' ? req.query.redirect : '/projects.html';
+    const postLogin = typeof req.query.redirect === 'string' ? req.query.redirect : '/project-list';
     const { authorizeUrl } = authService.startLogin(redirectUri, postLogin);
     res.redirect(302, authorizeUrl);
   });
@@ -101,7 +101,7 @@ export function createAuthRouter(deps: AuthRouterDeps): Router {
       });
 
       res.setHeader('Set-Cookie', buildSessionCookie(result.session.token, result.session.expiresAt, cookieSecure));
-      res.redirect(302, result.redirect || '/projects.html');
+      res.redirect(302, result.redirect || '/project-list');
     } catch (err) {
       if (err instanceof AuthServiceError) {
         const status = err.code === 'org_not_allowed' ? 403 : err.code === 'state_mismatch' ? 400 : 500;
