@@ -23,6 +23,55 @@ CDS 服务端的 `/api/export-skill` 端点每次被调用时，都是**实时**
    其他人下载 📦 / `cdscli update` → 拿到新版
 ```
 
+## 🤖 AI 辅助同步（推荐工作流）
+
+**你一句话，Agent 全包**：
+
+> 你改完 CDS 的端点，只要对 Claude Code / 任何支持此技能的 Agent 说一句话，
+> 比如 "帮我同步技能" / "我改了 cds 帮我更新 cli" / "/cds-sync"，
+> Agent 就会按 SKILL.md 里的 6 步工作流执行。
+
+整个流程：
+
+```
+你: "我刚加了 POST /api/projects/:id/archive，帮我同步技能"
+ ↓
+Agent 读 SKILL.md 里「维护者：我改了 CDS」段 → 知道要走 6 步
+ ↓
+Agent: $ cdscli sync-from-cds
+ → 拿到 JSON: { newInCds: ["POST /api/projects/:X/archive"], ... }
+ ↓
+Agent 用 plan-first 展示方案：
+  "检测到 1 个新端点。建议：
+   1. cli/cdscli.py 加 cmd_project_archive:
+      def cmd_project_archive(args):
+          body = _call('POST', f'/api/projects/{args.id}/archive')
+          ok(body, note=f'项目 {args.id} 已归档')
+   2. argparse:
+      pa = proj.add_parser('archive'); pa.add_argument('id')
+      pa.set_defaults(func=cmd_project_archive)
+   3. reference/api.md 项目段加一行:
+      | POST | /api/projects/:id/archive | cdscli project archive <id> |
+   4. VERSION: 0.2.0 → 0.3.0 (minor bump, 加新命令)
+   确认 OK 吗？"
+ ↓
+你: "OK" / "archive 改成 close，更符合 CDS 里其它命名"
+ ↓
+Agent 按最终版改三个文件 → 本地自检 → 汇报
+ ↓
+你: "commit push"
+ ↓
+Agent 提交 + push
+ ↓
+CDS 下次 self-update 拉到新代码 → 其他消费方 `cdscli update` 自动拿新版
+```
+
+**关键属性**：
+- Agent **不会擅自改代码**：步骤 2 必须等你确认
+- Agent **不会跳过自检**：改完必须跑 `--help` 和 `sync-from-cds` 复测
+- Agent **不会自动 commit**：commit 明确由你发指令（CLAUDE.md §5 硬规定）
+- Agent **全程透明**：每步告诉你在读什么写什么，不是黑箱
+
 ## 改技能的三种常见场景
 
 ### 场景 A：CDS 加了新 REST 端点，要给 CLI 加对应命令
