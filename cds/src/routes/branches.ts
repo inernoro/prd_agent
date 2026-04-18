@@ -2783,6 +2783,59 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
   // ── Cleanup all non-default branches ──
 
+  // ── Cleanup cross-project service pollution ──
+  //
+  // During the pre-project-scoped era a branch's entry.services could
+  // accidentally collect service records for profiles that belong to
+  // OTHER projects (most often when a deploy iterated the global
+  // buildProfiles list rather than project-scoped). After fixing the
+  // root cause, these stale entries still sit in state.json and show
+  // up in the dashboard as ghost chips.
+  //
+  // This endpoint walks every branch, cross-references its entry.services
+  // against the set of profiles that actually belong to its projectId,
+  // and drops any entry whose profile belongs to someone else. It also
+  // best-effort stops the orphan container if any is running.
+  //
+  // Idempotent, safe to run multiple times. Returns a summary so the
+  // operator can see what was trimmed.
+  router.post('/cleanup-cross-project-services', async (_req, res) => {
+    try {
+      const allBranches = Object.values(stateService.getState().branches || {});
+      const trimmed: Array<{ branchId: string; dropped: string[] }> = [];
+
+      for (const entry of allBranches) {
+        const ownProjectId = entry.projectId || 'default';
+        const ownProfileIds = new Set(
+          stateService.getBuildProfilesForProject(ownProjectId).map((p) => p.id),
+        );
+        const dropped: string[] = [];
+        for (const profileId of Object.keys(entry.services || {})) {
+          if (!ownProfileIds.has(profileId)) {
+            // Best-effort stop the orphan container.
+            const svc = entry.services[profileId];
+            if (svc?.containerName) {
+              try { await containerService.stop(svc.containerName); } catch { /* already gone */ }
+            }
+            delete entry.services[profileId];
+            dropped.push(profileId);
+          }
+        }
+        if (dropped.length > 0) {
+          trimmed.push({ branchId: entry.id, dropped });
+        }
+      }
+      if (trimmed.length > 0) stateService.save();
+
+      res.json({
+        trimmedCount: trimmed.reduce((a, t) => a + t.dropped.length, 0),
+        branches: trimmed,
+      });
+    } catch (err) {
+      res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
   router.post('/cleanup', async (_req, res) => {
     initSSE(res);
     try {
