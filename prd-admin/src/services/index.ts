@@ -126,6 +126,12 @@ import type {
 } from '@/services/contracts/desktopAssets';
 import type { GetDesktopBrandingSettingsContract, UpdateDesktopBrandingSettingsContract } from '@/services/contracts/desktopBranding';
 import type {
+  DeleteHomepageAssetContract,
+  GetHomepageAssetsPublicContract,
+  ListHomepageAssetsContract,
+  UploadHomepageAssetContract,
+} from '@/services/contracts/homepageAssets';
+import type {
   DeleteAdminGroupContract,
   DeleteAdminGroupMessagesContract,
   GenerateAdminGapSummaryContract,
@@ -423,6 +429,12 @@ import { uploadNoHeadAvatar as uploadNoHeadAvatarReal } from '@/services/real/av
 import { uploadUserAvatar as uploadUserAvatarReal } from '@/services/real/userAvatarUpload';
 import { uploadMyAvatar as uploadMyAvatarReal, updateMyAvatar as updateMyAvatarReal } from '@/services/real/profile';
 import { getDesktopBrandingSettings as getDesktopBrandingSettingsReal, updateDesktopBrandingSettings as updateDesktopBrandingSettingsReal } from '@/services/real/desktopBranding';
+import {
+  listHomepageAssets as listHomepageAssetsReal,
+  uploadHomepageAsset as uploadHomepageAssetReal,
+  deleteHomepageAsset as deleteHomepageAssetReal,
+  getHomepageAssetsPublic as getHomepageAssetsPublicReal,
+} from '@/services/real/homepageAssets';
 import {
   listLiteraryPromptsReal,
   createLiteraryPromptReal,
@@ -895,6 +907,11 @@ export const updateMyAvatar = withAuth(updateMyAvatarReal);
 
 export const getDesktopBrandingSettings: GetDesktopBrandingSettingsContract = withAuth(getDesktopBrandingSettingsReal);
 export const updateDesktopBrandingSettings: UpdateDesktopBrandingSettingsContract = withAuth(updateDesktopBrandingSettingsReal);
+
+export const listHomepageAssets: ListHomepageAssetsContract = withAuth(listHomepageAssetsReal);
+export const uploadHomepageAsset: UploadHomepageAssetContract = withAuth(uploadHomepageAssetReal);
+export const deleteHomepageAsset: DeleteHomepageAssetContract = withAuth(deleteHomepageAssetReal);
+export const getHomepageAssetsPublic: GetHomepageAssetsPublicContract = withAuth(getHomepageAssetsPublicReal);
 
 export const createVisualAgentSession: CreateVisualAgentSessionContract = withAuth(createVisualAgentSessionReal);
 export const listVisualAgentSessions: ListVisualAgentSessionsContract = withAuth(listVisualAgentSessionsReal);
