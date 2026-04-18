@@ -183,10 +183,13 @@ describe('Branch Routes', () => {
       const legacyBranches = (legacyRes.body as any).branches;
       expect(legacyBranches.map((b: any) => b.id)).toEqual(['legacy-branch']);
 
-      // Alt filter → only alt
+      // Alt filter → only alt. Non-legacy projects auto-prefix branch
+      // IDs with the project slug so two projects can share a branch
+      // name (e.g. both having "main"); the legacy project keeps the
+      // bare slug for back-compat.
       const altRes = await request(server, 'GET', '/api/branches?project=alt');
       const altBranches = (altRes.body as any).branches;
-      expect(altBranches.map((b: any) => b.id)).toEqual(['alt-branch']);
+      expect(altBranches.map((b: any) => b.id)).toEqual(['alt-alt-branch']);
 
       // No filter → both
       const allRes = await request(server, 'GET', '/api/branches');

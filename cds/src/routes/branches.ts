@@ -661,12 +661,6 @@ export function createBranchRouter(deps: RouterDeps): Router {
         return;
       }
 
-      const id = StateService.slugify(branch);
-      if (stateService.getBranch(id)) {
-        res.status(409).json({ error: `分支 "${id}" 已存在` });
-        return;
-      }
-
       // P4 Part 3b: if the Dashboard passes projectId in the body, stamp
       // it on the new branch so project-scoped list queries can find it.
       // Missing value → defaults to 'default' in addBranch().
@@ -675,6 +669,21 @@ export function createBranchRouter(deps: RouterDeps): Router {
       const targetProject = stateService.getProject(effectiveProjectId);
       if (!targetProject) {
         res.status(400).json({ error: `未知项目: ${effectiveProjectId}` });
+        return;
+      }
+
+      // Branch ID scoping: legacy default keeps the bare slugified name
+      // for back-compat (existing URLs, saved links). Non-legacy
+      // projects auto-prefix with the project slug so two projects can
+      // each register "main" without colliding — this matches the
+      // already-scoped worktree layout below. The preview domain still
+      // resolves via `<branchId>.miduo.org`, no extra subdomain config.
+      const slugified = StateService.slugify(branch);
+      const id = targetProject.legacyFlag
+        ? slugified
+        : `${targetProject.slug}-${slugified}`;
+      if (stateService.getBranch(id)) {
+        res.status(409).json({ error: `分支 "${id}" 已存在` });
         return;
       }
 
