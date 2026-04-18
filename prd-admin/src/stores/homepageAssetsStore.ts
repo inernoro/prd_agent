@@ -8,15 +8,26 @@ interface HomepageAssetsState {
   loading: boolean;
   assets: HomepageAssetsMap;
   error: string | null;
+  /** 拉取资源；默认跳过已 loaded；上传/删除后调用 `refresh()` 强制重拉 */
   load: (opts?: { force?: boolean }) => Promise<void>;
-  /** 卡片背景 URL（未上传返回 null） */
-  cardBgUrl: (id: HomepageCardSlot['id']) => string | null;
-  /** Agent 封面图 URL（未上传返回 null） */
-  agentImageUrl: (agentKey: string) => string | null;
-  /** Agent 封面视频 URL（未上传返回 null） */
-  agentVideoUrl: (agentKey: string) => string | null;
-  /** 原始记录访问（用于高级场景） */
+  /** 强制重新拉取，等价 load({force:true}) */
+  refresh: () => Promise<void>;
+  /** 原始记录访问 */
   get: (slot: string) => HomepageAssetDto | undefined;
+}
+
+/**
+ * 用 updatedAt 做缓存爆破：上传新图后同一 URL 会附带新的 `?v=...`，
+ * 浏览器与 CDN 都会重新获取。
+ */
+function appendCacheBust(url: string, updatedAt?: string | null): string {
+  const u = String(url || '').trim();
+  if (!u) return '';
+  if (!updatedAt) return u;
+  const t = Date.parse(updatedAt);
+  if (!Number.isFinite(t)) return u;
+  const v = Math.floor(t / 1000);
+  return u.includes('?') ? `${u}&v=${v}` : `${u}?v=${v}`;
 }
 
 export const useHomepageAssetsStore = create<HomepageAssetsState>((set, get) => ({
@@ -42,16 +53,32 @@ export const useHomepageAssetsStore = create<HomepageAssetsState>((set, get) => 
     }
   },
 
-  cardBgUrl(id) {
-    return get().assets[cardSlot(id)]?.url ?? null;
+  async refresh() {
+    return await get().load({ force: true });
   },
-  agentImageUrl(agentKey) {
-    return get().assets[agentImageSlot(agentKey)]?.url ?? null;
-  },
-  agentVideoUrl(agentKey) {
-    return get().assets[agentVideoSlot(agentKey)]?.url ?? null;
-  },
+
   get(slot) {
     return get().assets[slot];
   },
 }));
+
+/**
+ * 组件里订阅用的 hook —— 代替 `getState()` 快照取值，
+ * 保证 store 刷新时消费方自动重渲染，且返回的 URL 已附缓存爆破。
+ */
+export function useCardBgUrl(id: HomepageCardSlot['id']): string | null {
+  const asset = useHomepageAssetsStore((s) => s.assets[cardSlot(id)]);
+  return asset ? appendCacheBust(asset.url, asset.updatedAt) : null;
+}
+
+export function useAgentImageUrl(agentKey: string | undefined): string | null {
+  const slot = agentKey ? agentImageSlot(agentKey) : '';
+  const asset = useHomepageAssetsStore((s) => (slot ? s.assets[slot] : undefined));
+  return asset ? appendCacheBust(asset.url, asset.updatedAt) : null;
+}
+
+export function useAgentVideoUrl(agentKey: string | undefined): string | null {
+  const slot = agentKey ? agentVideoSlot(agentKey) : '';
+  const asset = useHomepageAssetsStore((s) => (slot ? s.assets[slot] : undefined));
+  return asset ? appendCacheBust(asset.url, asset.updatedAt) : null;
+}

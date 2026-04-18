@@ -33,7 +33,8 @@ import { MapSpinner } from '@/components/ui/VideoLoader';
 import { useToolboxStore } from '@/stores/toolboxStore';
 import { useAuthStore } from '@/stores/authStore';
 import { useChangelogStore, selectUnreadCount } from '@/stores/changelogStore';
-import { useHomepageAssetsStore } from '@/stores/homepageAssetsStore';
+import { useHomepageAssetsStore, useAgentImageUrl, useAgentVideoUrl } from '@/stores/homepageAssetsStore';
+import { buildDefaultCoverUrl, buildDefaultVideoUrl } from '@/lib/homepageAssetSlots';
 import { useBreakpoint } from '@/hooks/useBreakpoint';
 import type { ToolboxItem } from '@/services';
 import { ShowcaseGallery } from '@/components/showcase/ShowcaseGallery';
@@ -77,31 +78,8 @@ const ICON_MAP: Record<string, LucideIcon> = {
   FlaskConical, ScrollText, Sparkle, Sparkles, Library, Store,
 };
 
-/** Agent 封面图 CDN 路径 */
-const AGENT_COVERS: Record<string, string> = {
-  'prd-agent': 'icon/backups/agent/prd-agent.png',
-  'visual-agent': 'icon/backups/agent/visual-agent.png',
-  'literary-agent': 'icon/backups/agent/literary-agent.png',
-  'defect-agent': 'icon/backups/agent/defect-agent.png',
-  'video-agent': 'icon/backups/agent/video-agent.png',
-  'report-agent': 'icon/backups/agent/report-agent.png',
-  'arena': 'icon/backups/agent/arena.png',
-  'shortcuts-agent': 'icon/backups/agent/shortcuts-agent.png',
-  'workflow-agent': 'icon/backups/agent/workflow-agent.png',
-};
-
-/** Agent 封面视频 CDN 路径 */
-const AGENT_VIDEOS: Record<string, string> = {
-  'prd-agent': 'icon/backups/agent/prd-agent.mp4',
-  'visual-agent': 'icon/backups/agent/visual-agent.mp4',
-  'literary-agent': 'icon/backups/agent/literary-agent.mp4',
-  'defect-agent': 'icon/backups/agent/defect-agent.mp4',
-  'video-agent': 'icon/backups/agent/video-agent.mp4',
-  'report-agent': 'icon/backups/agent/report-agent.mp4',
-  'arena': 'icon/backups/agent/arena.mp4',
-  'shortcuts-agent': 'icon/backups/agent/shortcuts-agent.mp4',
-  'workflow-agent': 'icon/backups/agent/workflow-agent.mp4',
-};
+// Agent 封面图/视频默认 CDN 路径由 `lib/homepageAssetSlots.ts` 统一维护
+// （AGENT_COVER_DEFAULTS / AGENT_VIDEO_DEFAULTS），本文件通过 buildDefault*Url 间接消费。
 
 /** 每个图标对应的主题色 */
 const ACCENT: Record<string, { from: string; to: string }> = {
@@ -135,25 +113,13 @@ function getAccent(icon: string) {
   return ACCENT[icon] ?? { from: '#6366F1', to: '#A5B4FC' };
 }
 
-function getCoverUrl(agentKey?: string): string | null {
-  if (!agentKey) return null;
-  // 优先使用管理员上传的封面图；未上传时回退 CDN 默认素材
-  const uploaded = useHomepageAssetsStore.getState().agentImageUrl(agentKey);
-  if (uploaded) return uploaded;
-  const path = AGENT_COVERS[agentKey];
-  if (!path) return null;
-  const base = (useAuthStore.getState().cdnBaseUrl ?? '').replace(/\/+$/, '');
-  return base ? `${base}/${path}` : `/${path}`;
+/** 默认 CDN 封面（非 hook 版本，FeaturedCard 内部用；cdnBase 从 authStore 快照取） */
+function getDefaultCoverUrl(agentKey?: string): string | null {
+  return buildDefaultCoverUrl(useAuthStore.getState().cdnBaseUrl ?? '', agentKey);
 }
 
-function getVideoUrl(agentKey?: string): string | null {
-  if (!agentKey) return null;
-  const uploaded = useHomepageAssetsStore.getState().agentVideoUrl(agentKey);
-  if (uploaded) return uploaded;
-  const path = AGENT_VIDEOS[agentKey];
-  if (!path) return null;
-  const base = (useAuthStore.getState().cdnBaseUrl ?? '').replace(/\/+$/, '');
-  return base ? `${base}/${path}` : `/${path}`;
+function getDefaultVideoUrl(agentKey?: string): string | null {
+  return buildDefaultVideoUrl(useAuthStore.getState().cdnBaseUrl ?? '', agentKey);
 }
 
 function getHeroBgUrl(): string {
@@ -230,8 +196,11 @@ function dedupeToolboxItems(items: ToolboxItem[]): ToolboxItem[] {
 
 function FeaturedCard({ item, onClick }: { item: ToolboxItem; onClick: () => void }) {
   const accent = getAccent(item.icon);
-  const coverUrl = getCoverUrl(item.agentKey);
-  const videoUrl = getVideoUrl(item.agentKey);
+  // 订阅 store：上传后 store 刷新即触发重渲染；未上传时 fallback 到 CDN 默认路径
+  const uploadedCover = useAgentImageUrl(item.agentKey);
+  const uploadedVideo = useAgentVideoUrl(item.agentKey);
+  const coverUrl = uploadedCover ?? getDefaultCoverUrl(item.agentKey);
+  const videoUrl = uploadedVideo ?? getDefaultVideoUrl(item.agentKey);
   const [coverFailed, setCoverFailed] = useState(false);
   const [videoReady, setVideoReady] = useState(false);
   const [hovering, setHovering] = useState(false);

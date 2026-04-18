@@ -28,6 +28,9 @@ public class HomepageAssetsController : ControllerBase
 
     // 允许 a-z0-9._- ，首字符必须字母/数字；点号用于分段（card.marketplace / agent.prd-agent.image）
     private static readonly Regex SlotRegex = new(@"^[a-z0-9][a-z0-9._\-]{0,127}$", RegexOptions.Compiled);
+    // Agent 封面/视频 slot 解析（与老 CDN 目录 icon/backups/agent/{key}.{ext} 对齐）
+    private static readonly Regex AgentImageSlotRegex = new(@"^agent\.(.+)\.image$", RegexOptions.Compiled);
+    private static readonly Regex AgentVideoSlotRegex = new(@"^agent\.(.+)\.video$", RegexOptions.Compiled);
     private const long MaxUploadBytes = 20 * 1024 * 1024; // 20MB：图片 + 短视频
 
     public HomepageAssetsController(MongoDbContext db, ILogger<HomepageAssetsController> logger, IAssetStorage assetStorage)
@@ -89,7 +92,13 @@ public class HomepageAssetsController : ControllerBase
 
     private static string BuildObjectKey(string slot, string ext)
     {
-        // slot 的点号替换为斜线，作为 COS 目录结构
+        // Agent 封面/视频：写回老 CDN 目录 `icon/backups/agent/{key}.{ext}`，
+        // 保证设置页上传的就是老代码硬编码读取的同一份文件（图片 `.png/.jpg/.webp`，视频 `.mp4/.webm`）。
+        var imgM = AgentImageSlotRegex.Match(slot);
+        if (imgM.Success) return $"icon/backups/agent/{imgM.Groups[1].Value}.{ext}";
+        var vidM = AgentVideoSlotRegex.Match(slot);
+        if (vidM.Success) return $"icon/backups/agent/{vidM.Groups[1].Value}.{ext}";
+        // 其他 slot（如 card.*）：沿用 icon/homepage/{slot 点号转斜线}.{ext}
         var path = slot.Replace('.', '/');
         return $"icon/homepage/{path}.{ext}";
     }

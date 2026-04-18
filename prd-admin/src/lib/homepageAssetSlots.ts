@@ -68,3 +68,50 @@ export function agentVideoSlot(agentKey: string): string {
 export function cardSlot(id: HomepageCardSlot['id']): string {
   return `card.${id}`;
 }
+
+/**
+ * 老系统 Agent 封面/视频的默认 CDN 路径表（与 `AgentLauncherPage` 内同名常量对齐）。
+ * 存放在共享文件里，让设置页和首页共用同一份「默认素材地图」。
+ *
+ * 后端上传 `agent.{key}.image/video` 时会直接覆盖这张表指向的 COS 对象
+ * （`icon/backups/agent/{key}.{ext}`），因此上传即替换，不产生二份拷贝。
+ */
+export const AGENT_COVER_DEFAULTS: Record<string, string> = {
+  'prd-agent': 'icon/backups/agent/prd-agent.png',
+  'visual-agent': 'icon/backups/agent/visual-agent.png',
+  'literary-agent': 'icon/backups/agent/literary-agent.png',
+  'defect-agent': 'icon/backups/agent/defect-agent.png',
+  'video-agent': 'icon/backups/agent/video-agent.png',
+  'report-agent': 'icon/backups/agent/report-agent.png',
+  'arena': 'icon/backups/agent/arena.png',
+  'shortcuts-agent': 'icon/backups/agent/shortcuts-agent.png',
+  'workflow-agent': 'icon/backups/agent/workflow-agent.png',
+};
+
+export const AGENT_VIDEO_DEFAULTS: Record<string, string> = {
+  'prd-agent': 'icon/backups/agent/prd-agent.mp4',
+  'visual-agent': 'icon/backups/agent/visual-agent.mp4',
+  'literary-agent': 'icon/backups/agent/literary-agent.mp4',
+  'defect-agent': 'icon/backups/agent/defect-agent.mp4',
+  'video-agent': 'icon/backups/agent/video-agent.mp4',
+  'report-agent': 'icon/backups/agent/report-agent.mp4',
+  'arena': 'icon/backups/agent/arena.mp4',
+  'shortcuts-agent': 'icon/backups/agent/shortcuts-agent.mp4',
+  'workflow-agent': 'icon/backups/agent/workflow-agent.mp4',
+};
+
+export function buildDefaultCoverUrl(cdnBase: string, agentKey?: string): string | null {
+  if (!agentKey) return null;
+  const path = AGENT_COVER_DEFAULTS[agentKey];
+  if (!path) return null;
+  const base = (cdnBase ?? '').replace(/\/+$/, '');
+  return base ? `${base}/${path}` : `/${path}`;
+}
+
+export function buildDefaultVideoUrl(cdnBase: string, agentKey?: string): string | null {
+  if (!agentKey) return null;
+  const path = AGENT_VIDEO_DEFAULTS[agentKey];
+  if (!path) return null;
+  const base = (cdnBase ?? '').replace(/\/+$/, '');
+  return base ? `${base}/${path}` : `/${path}`;
+}

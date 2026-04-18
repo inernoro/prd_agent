@@ -36,8 +36,17 @@ import {
   User,
   Video as VideoIcon,
 } from 'lucide-react';
-import { HOMEPAGE_CARD_SLOTS, HOMEPAGE_AGENT_SLOTS, type HomepageCardSlot, type HomepageAgentSlot } from '@/lib/homepageAssetSlots';
+import {
+  HOMEPAGE_CARD_SLOTS,
+  HOMEPAGE_AGENT_SLOTS,
+  buildDefaultCoverUrl,
+  buildDefaultVideoUrl,
+  type HomepageCardSlot,
+  type HomepageAgentSlot,
+} from '@/lib/homepageAssetSlots';
 import { useToolboxStore, BUILTIN_TOOLS } from '@/stores/toolboxStore';
+import { useHomepageAssetsStore } from '@/stores/homepageAssetsStore';
+import { useAuthStore } from '@/stores/authStore';
 
 function cn(...xs: Array<string | false | null | undefined>) {
   return xs.filter(Boolean).join(' ');
@@ -377,6 +386,8 @@ export default function AssetsManagePage() {
       if (!res.success || !res.data) throw new Error(res.error?.message || '上传失败');
       setHomepageAssets((prev) => ({ ...prev, [slot]: res.data as HomepageAssetDto }));
       setHomepageCacheBust(Date.now());
+      // 同步全局 store —— 用户回到首页时无需等 refresh，直接看到最新图
+      void useHomepageAssetsStore.getState().refresh();
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e || '上传失败'));
     } finally {
@@ -398,6 +409,8 @@ export default function AssetsManagePage() {
         return next;
       });
       setHomepageCacheBust(Date.now());
+      // 同步全局 store
+      void useHomepageAssetsStore.getState().refresh();
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e || '删除失败'));
     } finally {
@@ -1185,6 +1198,8 @@ function HomepageAssetsSection({
   onReload: () => void;
   isMobile: boolean;
 }) {
+  // CDN 基址：用于给未上传的 Agent slot 合成「当前默认」预览
+  const cdnBase = useAuthStore((s) => s.cdnBaseUrl ?? '');
   return (
     <div className="flex flex-col gap-4">
       {/* 四张快捷卡背景 */}
@@ -1243,6 +1258,8 @@ function HomepageAssetsSection({
           {agentSlots.map((agent: HomepageAgentSlot) => {
             const imageSlot = `agent.${agent.agentKey}.image`;
             const videoSlot = `agent.${agent.agentKey}.video`;
+            const defaultImage = buildDefaultCoverUrl(cdnBase, agent.agentKey);
+            const defaultVideo = buildDefaultVideoUrl(cdnBase, agent.agentKey);
             return (
               <div
                 key={agent.agentKey}
@@ -1268,6 +1285,7 @@ function HomepageAssetsSection({
                     label="封面图"
                     hint="静态 · 默认展示"
                     asset={assets[imageSlot]}
+                    defaultUrl={defaultImage}
                     cacheBust={cacheBust}
                     uploading={uploadingId === `homepage::${imageSlot}`}
                     accept="image/*"
@@ -1281,6 +1299,7 @@ function HomepageAssetsSection({
                     label="动态视频"
                     hint="hover 播放"
                     asset={assets[videoSlot]}
+                    defaultUrl={defaultVideo}
                     cacheBust={cacheBust}
                     uploading={uploadingId === `homepage::${videoSlot}`}
                     accept="video/mp4,video/webm,video/quicktime"
@@ -1304,6 +1323,7 @@ function HomepageSlotTile({
   label,
   hint,
   asset,
+  defaultUrl,
   cacheBust,
   uploading,
   previewAspect,
@@ -1315,6 +1335,8 @@ function HomepageSlotTile({
   label: string;
   hint?: string;
   asset?: HomepageAssetDto;
+  /** 未上传时的默认 CDN 预览地址（存量素材）。图片能加载 = 老系统已有；加载失败 = 老系统也没有 */
+  defaultUrl?: string | null;
   cacheBust: number;
   uploading: boolean;
   /** 预留：由父组件在 onUpload 中传给 <input accept=""/> */
@@ -1324,9 +1346,16 @@ function HomepageSlotTile({
   onUpload: () => void;
   onDelete: () => void;
 }) {
-  const url = asset?.url || '';
-  const busted = url ? appendHomepageCache(url, cacheBust) : '';
-  const isVideo = Boolean(asset?.mime && asset.mime.startsWith('video/'));
+  const hasUpload = Boolean(asset);
+  const uploadedUrl = asset?.url ? appendHomepageCache(asset.url, cacheBust) : '';
+  const uploadedIsVideo = Boolean(asset?.mime && asset.mime.startsWith('video/'));
+  // 默认态：尝试加载老系统已有素材；若 onError 则回退到空白上传态
+  const [defaultFailed, setDefaultFailed] = useState(false);
+  const defaultIsVideo = Boolean(defaultUrl && /\.(mp4|webm|mov)(\?|$)/i.test(defaultUrl));
+  const showDefault = !hasUpload && !!defaultUrl && !defaultFailed;
+  const url = hasUpload ? uploadedUrl : showDefault ? defaultUrl! : '';
+  const isVideo = hasUpload ? uploadedIsVideo : defaultIsVideo;
+  const statusBadge = hasUpload ? '已替换' : showDefault ? '默认' : '';
 
   return (
     <div className="flex flex-col gap-1.5">
@@ -1362,18 +1391,24 @@ function HomepageSlotTile({
         }}
         title={uploading ? '上传中...' : url ? `点击替换\n${url}` : '点击上传'}
       >
-        {busted ? (
+        {url ? (
           isVideo ? (
             <video
-              src={busted}
+              src={url}
               className="w-full h-full object-cover"
               muted
               loop
               autoPlay
               playsInline
+              onError={() => !hasUpload && setDefaultFailed(true)}
             />
           ) : (
-            <img src={busted} alt={label} className="w-full h-full object-cover" />
+            <img
+              src={url}
+              alt={label}
+              className="w-full h-full object-cover"
+              onError={() => !hasUpload && setDefaultFailed(true)}
+            />
           )
         ) : (
           <div className="absolute inset-0 flex flex-col items-center justify-center gap-1 pointer-events-none">
@@ -1382,6 +1417,18 @@ function HomepageSlotTile({
               {uploading ? '上传中…' : '点击上传'}
             </span>
           </div>
+        )}
+        {statusBadge && (
+          <span
+            className="absolute top-1 left-1 px-1.5 py-0.5 rounded text-[9px] font-semibold pointer-events-none"
+            style={{
+              background: hasUpload ? 'rgba(34,197,94,0.25)' : 'rgba(148,163,184,0.25)',
+              color: hasUpload ? 'rgba(134,239,172,0.95)' : 'rgba(226,232,240,0.9)',
+              border: `1px solid ${hasUpload ? 'rgba(34,197,94,0.4)' : 'rgba(148,163,184,0.35)'}`,
+            }}
+          >
+            {statusBadge}
+          </span>
         )}
       </button>
 
