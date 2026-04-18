@@ -267,14 +267,10 @@ pub async fn export_skill(skill_key: String) -> Result<ApiResponse<ExportSkillRe
 
 /// 导入 SKILL.md 文本创建个人技能
 #[command]
-pub async fn import_skill(
-    skill_md: String,
-) -> Result<ApiResponse<CreateSkillResponse>, String> {
+pub async fn import_skill(skill_md: String) -> Result<ApiResponse<CreateSkillResponse>, String> {
     let client = ApiClient::new();
     let body = serde_json::json!({ "skillMd": skill_md });
-    client
-        .post("/api/prd-agent/skills/import", &body)
-        .await
+    client.post("/api/prd-agent/skills/import", &body).await
 }
 
 /// 将 SKILL.md 内容保存为本地文件（使用系统保存对话框）
@@ -330,9 +326,6 @@ pub async fn generate_skill_from_conversation(
         key_assistant_message,
     };
     client
-        .post(
-            "/api/prd-agent/skills/generate-from-conversation",
-            &request,
-        )
+        .post("/api/prd-agent/skills/generate-from-conversation", &request)
         .await
 }
