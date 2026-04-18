@@ -39,9 +39,10 @@ import urllib.parse
 import urllib.request
 from typing import Any, Optional
 
-VERSION = "0.1.0"
+VERSION = "0.2.0"  # ← bumped on each SKILL.md change; 服务端自动读这一行
 _TRACE_ID: str = ""
 _HUMAN: bool = False
+_DRIFT_WARNED: bool = False  # 全进程只提示一次，避免每个请求都刷
 
 
 # ── HTTP helpers ───────────────────────────────────────────────────
@@ -75,9 +76,18 @@ def _auth_headers() -> dict[str, str]:
 
 def _request(method: str, path: str, body: Any = None, timeout: int = 15,
              extra_headers: dict[str, str] | None = None) -> tuple[int, Any, dict[str, str]]:
-    """Low-level HTTP: returns (status, parsed_json_or_text, headers)."""
+    """Low-level HTTP: returns (status, parsed_json_or_text, headers).
+
+    每个请求都带 X-CdsCli-Version 头，服务端如响应 X-Cds-Cli-Latest 就
+    做一次 stderr 提示（整进程最多一次，避免刷屏）。用户可 export
+    CDSCLI_NO_DRIFT_CHECK=1 关闭提示。
+    """
     url = _cds_base() + path
-    headers = {"Accept": "application/json", **_auth_headers()}
+    headers = {
+        "Accept": "application/json",
+        "X-CdsCli-Version": VERSION,
+        **_auth_headers(),
+    }
     if extra_headers:
         headers.update(extra_headers)
     data: bytes | None = None
@@ -93,6 +103,7 @@ def _request(method: str, path: str, body: Any = None, timeout: int = 15,
                 parsed = json.loads(raw)
             except (json.JSONDecodeError, ValueError):
                 pass
+            _maybe_warn_version_drift(dict(resp.headers))
             return resp.status, parsed, dict(resp.headers)
     except urllib.error.HTTPError as e:
         raw = e.read().decode("utf-8", errors="replace")
@@ -101,11 +112,37 @@ def _request(method: str, path: str, body: Any = None, timeout: int = 15,
             parsed = json.loads(raw)
         except (json.JSONDecodeError, ValueError):
             pass
+        _maybe_warn_version_drift(dict(e.headers or {}))
         return e.code, parsed, dict(e.headers or {})
     except urllib.error.URLError as e:
         die(f"网络错误: {e.reason} (host={url})", code=1)
     except TimeoutError:
         die(f"请求超时: {method} {url} (timeout={timeout}s)", code=1)
+
+
+def _maybe_warn_version_drift(headers: dict[str, str]) -> None:
+    """当服务端响应头带 X-Cds-Cli-Latest 且 > 本地 VERSION，stderr 提示一次。
+
+    Python http.client 会把 header 名规范化为 Title-Case，因此既要查
+    `X-Cds-Cli-Latest` 也要兜 `x-cds-cli-latest`。
+    """
+    global _DRIFT_WARNED
+    if _DRIFT_WARNED or os.environ.get("CDSCLI_NO_DRIFT_CHECK"):
+        return
+    latest = (headers.get("X-Cds-Cli-Latest")
+              or headers.get("x-cds-cli-latest")
+              or headers.get("X-CdsCli-Latest")
+              or "").strip()
+    if not latest:
+        return
+    if _version_compare(VERSION, latest) < 0:
+        _DRIFT_WARNED = True
+        print(
+            f"[cdscli] 提示：本地版本 {VERSION} 落后于 CDS 提供的 {latest}。"
+            f"运行 `cdscli update` 升级（或 📦 Dashboard 重新下载）。"
+            f"关闭提示: export CDSCLI_NO_DRIFT_CHECK=1",
+            file=sys.stderr,
+        )
 
 
 def _call(method: str, path: str, body: Any = None, timeout: int = 15,
@@ -753,6 +790,142 @@ def cmd_help_me_check(args: argparse.Namespace) -> None:
     ok(data, note=f"诊断+分析完成 (匹配 {len(findings)} 个已知模式)")
 
 
+def cmd_version(args: argparse.Namespace) -> None:
+    """显示本地 VERSION + 服务端最新 VERSION 的对比。"""
+    local = VERSION
+    # 尝试读远端
+    status, body, _ = _request("GET", "/api/cli-version", timeout=5)
+    remote = None
+    if status == 200 and isinstance(body, dict):
+        remote = body.get("version")
+    status_label = "unknown"
+    if remote:
+        if _version_compare(local, remote) < 0:
+            status_label = "stale"
+        elif _version_compare(local, remote) == 0:
+            status_label = "latest"
+        else:
+            status_label = "ahead"  # 本地是 dev 版，比线上还新
+    payload = {"local": local, "remote": remote, "status": status_label}
+    note = f"local={local} remote={remote or '?'} ({status_label})"
+    if status_label == "stale":
+        note += "  → 运行 `cdscli update` 升级"
+    ok(payload, note=note)
+
+
+def _version_compare(a: str, b: str) -> int:
+    """语义版本比较。a<b 返 -1, 等 0, a>b 返 1。"""
+    def parse(v: str) -> tuple[int, ...]:
+        return tuple(int(x) for x in (v or "0").split(".") if x.isdigit())
+    pa, pb = parse(a), parse(b)
+    # 补齐长度
+    m = max(len(pa), len(pb))
+    pa = pa + (0,) * (m - len(pa))
+    pb = pb + (0,) * (m - len(pb))
+    return (pa > pb) - (pa < pb)
+
+
+def cmd_update(args: argparse.Namespace) -> None:
+    """自升级：从 /api/export-skill 拉最新 tar.gz，原地替换本技能目录。
+
+    步骤：
+      1. 定位当前技能根（cli/cdscli.py 的父父目录）
+      2. 下载 tar.gz 到临时目录
+      3. 整颗技能目录备份到 <root>.bak.<timestamp>（失败回滚用）
+      4. 解压 tar.gz，从里面的 .claude/skills/cds/ 同步到当前根
+      5. 用户自定义的非 tracked 文件（如用户本地脚本）保留不动
+
+    不动：~/.cdsrc / 项目 .cds.env / 任何外部配置
+    """
+    import tempfile
+    import shutil
+    import tarfile
+    import io as _io
+
+    cli_path = os.path.abspath(__file__)
+    cli_dir = os.path.dirname(cli_path)            # .../cds/cli
+    skill_root = os.path.dirname(cli_dir)          # .../cds
+    if os.path.basename(skill_root) != "cds":
+        die(f"cdscli.py 不在期望的 .claude/skills/cds/cli/ 位置（实际: {cli_path}）。"
+            f"请用 Dashboard 的 📦 按钮重新下载完整包。", code=1)
+
+    # 1. 下载
+    url = _cds_base() + "/api/export-skill"
+    req = urllib.request.Request(url, headers=_auth_headers())
+    try:
+        with urllib.request.urlopen(req, timeout=60) as resp:
+            tar_bytes = resp.read()
+    except urllib.error.HTTPError as e:
+        die(f"下载失败 HTTP {e.code}: {e.read().decode('utf-8','replace')[:200]}", code=2)
+    except (urllib.error.URLError, TimeoutError) as e:
+        die(f"下载失败（网络）: {e}", code=1)
+    if len(tar_bytes) < 100:
+        die(f"下载内容过短（{len(tar_bytes)} bytes），疑似失败", code=3)
+
+    # 2. 备份当前技能目录
+    ts = time.strftime("%Y%m%d-%H%M%S")
+    bak_root = f"{skill_root}.bak.{ts}"
+    try:
+        shutil.copytree(skill_root, bak_root)
+    except Exception as e:
+        die(f"备份失败: {e}", code=3)
+
+    # 3. 解压到临时目录
+    tmp_dir = tempfile.mkdtemp(prefix="cdscli-update-")
+    try:
+        with tarfile.open(fileobj=_io.BytesIO(tar_bytes), mode="r:gz") as tar:
+            # 安全解压：拒绝 .. / 绝对路径
+            safe_members: list[tarfile.TarInfo] = []
+            for m in tar.getmembers():
+                if m.name.startswith("/") or ".." in m.name.split("/"):
+                    continue
+                safe_members.append(m)
+            tar.extractall(tmp_dir, members=safe_members)
+
+        # 4. 找到解压内的 .claude/skills/cds/
+        src_cds_dir = None
+        for root, dirs, _files in os.walk(tmp_dir):
+            if root.endswith(os.path.join(".claude", "skills", "cds")):
+                src_cds_dir = root
+                break
+        if not src_cds_dir:
+            die("tar.gz 内找不到 .claude/skills/cds/ 结构。升级失败（已保留备份）。",
+                code=3, extra={"backupAt": bak_root})
+
+        # 5. 用内容同步：遍历 src 下所有路径，强制覆盖 dst
+        replaced_files: list[str] = []
+        for root, dirs, files in os.walk(src_cds_dir):
+            rel = os.path.relpath(root, src_cds_dir)
+            target_root = os.path.join(skill_root, rel) if rel != "." else skill_root
+            os.makedirs(target_root, exist_ok=True)
+            for d in dirs:
+                os.makedirs(os.path.join(target_root, d), exist_ok=True)
+            for f in files:
+                src_f = os.path.join(root, f)
+                dst_f = os.path.join(target_root, f)
+                shutil.copy2(src_f, dst_f)
+                replaced_files.append(os.path.relpath(dst_f, skill_root))
+    except Exception as e:
+        # 出错了，回滚
+        try:
+            shutil.rmtree(skill_root, ignore_errors=True)
+            shutil.move(bak_root, skill_root)
+        except Exception as rollback_err:
+            die(f"升级失败且回滚也失败！请手动 `mv {bak_root} {skill_root}` "
+                f"（原错: {e}; 回滚错: {rollback_err}）", code=3)
+        die(f"升级失败，已自动回滚: {e}", code=3)
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+    ok({
+        "skillRoot": skill_root,
+        "backupAt": bak_root,
+        "filesReplaced": len(replaced_files),
+        "sample": replaced_files[:8],
+    }, note=f"升级完成。备份在 {bak_root}。确认一切正常后可 rm -rf 该备份。"
+            f" 异常时回滚: rm -rf {skill_root} && mv {bak_root} {skill_root}")
+
+
 def cmd_deploy(args: argparse.Namespace) -> None:
     """完整流水线：git push + CDS pull + deploy + ready wait + smoke。"""
     import subprocess
@@ -894,6 +1067,13 @@ def _build_parser() -> argparse.ArgumentParser:
     dp.add_argument("--timeout", type=int, default=300)
     dp.add_argument("--no-smoke", action="store_true")
     dp.set_defaults(func=cmd_deploy)
+
+    # ── 技能自身生命周期 ──
+    ver = sub.add_parser("version", help="显示本地 VERSION + 对比服务端最新版")
+    ver.set_defaults(func=cmd_version)
+
+    up = sub.add_parser("update", help="从 CDS 下载最新技能包原地替换自己")
+    up.set_defaults(func=cmd_update)
 
     return p
 

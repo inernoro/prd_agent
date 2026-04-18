@@ -3906,6 +3906,43 @@ export function createBranchRouter(deps: RouterDeps): Router {
     res.type('text/yaml').send(yamlContent);
   });
 
+  // GET /api/cli-version — return the currently-bundled cdscli VERSION
+  //
+  // 读 .claude/skills/cds/cli/cdscli.py 里的 `VERSION = "x.y.z"` 常量，
+  // 每次被 cdscli update / cdscli version 调用时返回。解析结果缓存 60s
+  // 避免每次都 read+regex（CLI 进程短命，主要让 Dashboard 轮询便宜）。
+  let _cliVersionCache: { version: string | null; at: number } = { version: null, at: 0 };
+  function readBundledCliVersion(): string | null {
+    const now = Date.now();
+    if (_cliVersionCache.version !== null && now - _cliVersionCache.at < 60_000) {
+      return _cliVersionCache.version;
+    }
+    try {
+      const cliPath = path.join(config.repoRoot, '.claude', 'skills', 'cds', 'cli', 'cdscli.py');
+      if (!fs.existsSync(cliPath)) {
+        _cliVersionCache = { version: null, at: now };
+        return null;
+      }
+      const content = fs.readFileSync(cliPath, 'utf-8');
+      // Anchor on VERSION = "..." at start of line to avoid catching
+      // comments, test fixtures, or nested module vars. Only first match.
+      const match = content.match(/^VERSION\s*=\s*"([^"]+)"/m);
+      const version = match ? match[1] : null;
+      _cliVersionCache = { version, at: now };
+      return version;
+    } catch {
+      return null;
+    }
+  }
+  router.get('/cli-version', (_req, res) => {
+    const version = readBundledCliVersion();
+    if (!version) {
+      res.status(404).json({ error: '未找到 cdscli VERSION 常量' });
+      return;
+    }
+    res.json({ version });
+  });
+
   // GET /api/export-skill — export unified cds skill as tar.gz
   //
   // 2026-04-18 重构：合并 cds-project-scan + cds-deploy-pipeline + smoke-test

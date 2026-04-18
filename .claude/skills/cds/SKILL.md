@@ -9,6 +9,19 @@ description: CDS (Cloud Dev Space) 全生命周期管理技能。一个技能覆
 >
 > **跨项目便携**：从 CDS Dashboard 一键下载，解压到 `你的项目/.claude/skills/cds/` 即可用
 
+## 🪪 你是哪种身份
+
+这个技能有两条不同的工作流，先确认你是哪一种：
+
+| 身份 | 典型动作 | 看哪篇 |
+|------|---------|--------|
+| **消费方**（下载了这个技能到自己项目） | `cdscli init` / `cdscli deploy` / `cdscli update` 升级 | 继续往下读，或 [reference/drop-in.md](reference/drop-in.md) |
+| **维护者**（`inernoro/prd_agent` 仓库所有者） | 改 `cli/cdscli.py` / 改 `reference/*.md` / bump VERSION / push | 直奔 [reference/maintainer.md](reference/maintainer.md)，本文可略读 |
+
+> 维护者会被误导到"自己重新下载自己的技能"这种荒谬路径，这里提醒一下：
+> 你就是技能源头，直接编辑 `.claude/skills/cds/` 下的文件就行，
+> commit+push 后别人通过 `cdscli update` 或 📦 拿到新版。**没有发布流程**。
+
 ## 目录
 
 - [快速开始（三种场景）](#快速开始三种场景)
