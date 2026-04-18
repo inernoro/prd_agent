@@ -646,15 +646,26 @@ window.cdsDoLogout = cdsDoLogout;
         "'" + escapeHtml(project.id) + "', '" + escapeHtml(project.name) + "')\">" +
         '<svg width="14" height="14" viewBox="0 0 16 16" fill="#f43f5e" aria-hidden="true"><path d="M11 1.75V3h2.25a.75.75 0 010 1.5H2.75a.75.75 0 010-1.5H5V1.75C5 .784 5.784 0 6.75 0h2.5C10.216 0 11 .784 11 1.75zM4.496 6.675l.66 6.6a.25.25 0 00.249.225h5.19a.25.25 0 00.249-.225l.66-6.6a.75.75 0 111.492.149l-.66 6.6A1.748 1.748 0 0110.595 15h-5.19a1.75 1.75 0 01-1.741-1.575l-.66-6.6a.75.75 0 111.492-.15z"/></svg>' +
         '</button>';
-    // 🔑 授权 Agent — floats top-right next to the delete button, sits
-    // outside the <a> so its click doesn't navigate.
+    // 🔑 授权 Agent / 📦 下载 cds 技能 —— 两个 icon button 并排靠右上，
+    // 错位排布避免和 delete 按钮重叠。Legacy 项目没 delete 按钮，靠右
+    // 10px；其它项目偏移到 42px/74px 给 delete 让位。
+    var keyRight = project.legacyFlag ? '10' : '42';
+    var dlRight  = project.legacyFlag ? '42' : '74';
     var agentKeyBtn =
       '<button class="cds-project-card-agentkey" title="授权 Agent / 管理 Key" ' +
       "onclick=\"handleProjectAgentKey(event, '" + escapeHtml(project.id) + "')\" " +
-      'style="position:absolute;top:10px;right:' + (project.legacyFlag ? '10' : '42') + 'px;' +
+      'style="position:absolute;top:10px;right:' + keyRight + 'px;' +
       'width:26px;height:26px;border-radius:6px;border:1px solid var(--card-border);' +
       'background:var(--bg-card);cursor:pointer;display:inline-flex;align-items:center;' +
       'justify-content:center;font-size:13px;color:var(--text-secondary);padding:0">🔑</button>';
+    var downloadSkillBtn =
+      '<button class="cds-project-card-download-skill" ' +
+      'title="下载 cds 技能包 (tar.gz) — 解压到项目 .claude/skills/ 即可在 Claude Code 里调用 cdscli" ' +
+      "onclick=\"handleDownloadCdsSkill(event)\" " +
+      'style="position:absolute;top:10px;right:' + dlRight + 'px;' +
+      'width:26px;height:26px;border-radius:6px;border:1px solid var(--card-border);' +
+      'background:var(--bg-card);cursor:pointer;display:inline-flex;align-items:center;' +
+      'justify-content:center;font-size:13px;color:var(--text-secondary);padding:0">📦</button>';
 
     var totalServices =
       ((services && services.profiles && services.profiles.length) || 0) +
@@ -705,6 +716,7 @@ window.cdsDoLogout = cdsDoLogout;
       '      ', enterCta,
       '    </div>',
       '  </a>',
+      '  ', downloadSkillBtn,
       '  ', agentKeyBtn,
       '  ', deleteBtn,
       '</div>',
@@ -713,6 +725,25 @@ window.cdsDoLogout = cdsDoLogout;
 
   // Expose a global click handler so the inline onclick can reach the
   // IIFE-internal render logic without leaking the renderCard closure.
+  // 📦 下载 cds 技能包：命中 /api/export-skill，浏览器原生下载。
+  // 不依赖当前 project（所有项目用同一个 cds 技能），所以不需要
+  // projectId 参数。ev.preventDefault/stopPropagation 防止冒泡到外
+  // 层 <a> 导致误导航。
+  window.handleDownloadCdsSkill = function (ev) {
+    if (ev && ev.preventDefault) ev.preventDefault();
+    if (ev && ev.stopPropagation) ev.stopPropagation();
+    // Trigger native download — 让浏览器处理文件名（后端 Content-Disposition 已给好）
+    var a = document.createElement('a');
+    a.href = '/api/export-skill';
+    a.download = '';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    if (typeof showToast === 'function') {
+      showToast('正在下载 cds 技能包…解压到你项目的 .claude/skills/ 即可', 'info', 4000);
+    }
+  };
+
   window.handleProjectAgentKey = function (ev, projectId) {
     if (ev && ev.preventDefault) ev.preventDefault();
     if (ev && ev.stopPropagation) ev.stopPropagation();

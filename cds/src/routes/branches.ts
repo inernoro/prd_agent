@@ -3906,54 +3906,103 @@ export function createBranchRouter(deps: RouterDeps): Router {
     res.type('text/yaml').send(yamlContent);
   });
 
-  // GET /api/export-skill — export cds-project-scan skill as tar.gz
-  // Contains only skill files and README — no config/cds-compose.yml
-  router.get('/export-skill', (_req, res) => {
+  // GET /api/export-skill — export unified cds skill as tar.gz
+  //
+  // 2026-04-18 重构：合并 cds-project-scan + cds-deploy-pipeline + smoke-test
+  // 为单一 cds 技能，带 cli/ Python CLI + reference/ 按需文档 + SKILL.md 入口。
+  // 旧入参 `?legacy=1` 仍能导出 cds-project-scan 单独的文档（向后兼容）。
+  router.get('/export-skill', (req, res) => {
     try {
-      const skillDir = path.join(config.repoRoot, '.claude', 'skills', 'cds-project-scan');
+      const useLegacy = req.query.legacy === '1';
+      const skillName = useLegacy ? 'cds-project-scan' : 'cds';
+      const skillDir = path.join(config.repoRoot, '.claude', 'skills', skillName);
       if (!fs.existsSync(skillDir)) {
-        res.status(404).json({ error: '未找到 cds-project-scan 技能目录' });
+        res.status(404).json({ error: `未找到 ${skillName} 技能目录` });
         return;
       }
 
       // Build pack in a temp directory
       const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
-      const packName = `cds-deployment-skill-${timestamp}`;
+      const packName = `${skillName}-skill-${timestamp}`;
       const tmpDir = path.join(config.repoRoot, '.cds', 'tmp');
       const packDir = path.join(tmpDir, packName);
 
-      // Clean & create temp dirs
-      fs.mkdirSync(path.join(packDir, 'skills', 'reference'), { recursive: true });
-
-      // Copy skill files
-      const skillMain = path.join(skillDir, 'SKILL.md');
-      if (fs.existsSync(skillMain)) {
-        fs.copyFileSync(skillMain, path.join(packDir, 'skills', 'SKILL.md'));
-      }
-      const refDir = path.join(skillDir, 'reference');
-      if (fs.existsSync(refDir)) {
-        for (const f of fs.readdirSync(refDir)) {
-          fs.copyFileSync(path.join(refDir, f), path.join(packDir, 'skills', 'reference', f));
+      // Recursively copy the whole skill directory (captures cli/ and
+      // reference/ subdirs without per-file enumeration). This mirrors
+      // whatever layout the skill author uses so the drop-in on the
+      // consumer side stays identical to the source.
+      const targetSkillDir = path.join(packDir, '.claude', 'skills', skillName);
+      fs.mkdirSync(targetSkillDir, { recursive: true });
+      const copyRecursive = (src: string, dst: string) => {
+        const stat = fs.statSync(src);
+        if (stat.isDirectory()) {
+          fs.mkdirSync(dst, { recursive: true });
+          for (const entry of fs.readdirSync(src)) {
+            copyRecursive(path.join(src, entry), path.join(dst, entry));
+          }
+        } else {
+          fs.copyFileSync(src, dst);
         }
-      }
+      };
+      copyRecursive(skillDir, targetSkillDir);
 
-      // Write README
-      fs.writeFileSync(path.join(packDir, 'README.md'), `# CDS 部署技能包
+      // README tailored to the new unified skill
+      const readme = useLegacy
+        ? `# CDS 部署技能包 (legacy: cds-project-scan)\n\n将 \`.claude/skills/cds-project-scan/\` 复制到目标项目的对应路径。\n`
+        : `# CDS 技能包 (统一版)
 
-本压缩包包含 CDS (Cloud Dev Space) 项目扫描技能文档。
+覆盖 CDS 全生命周期：扫描项目 → Agent 鉴权 → 部署 → 就绪检测 → 分层冒烟 → 故障诊断。
 
-## 包含内容
+## 三分钟安装
 
-| 目录 | 内容 | 用途 |
-|------|------|------|
-| \`skills/\` | CDS 扫描技能文档 | 了解扫描规则和配置生成逻辑 |
+\`\`\`bash
+# 1. 解压到你项目的根目录（保留 .claude/skills/cds/ 结构）
+tar -xzf ${packName}.tar.gz --strip-components=1
 
-## 使用方式
+# 2. 加 alias（推荐）
+echo 'alias cdscli="python3 \\$(git rev-parse --show-toplevel)/.claude/skills/cds/cli/cdscli.py"' >> ~/.bashrc
+source ~/.bashrc
 
-1. 将 \`skills/\` 目录复制到目标项目的 \`.claude/skills/cds-project-scan/\`
-2. 在 Claude Code 中使用 \`/cds-scan\` 触发扫描
-3. 扫描生成的 CDS Compose YAML 可在 CDS Dashboard 中一键导入
-`, 'utf-8');
+# 3. 初始化（交互式）
+cdscli init
+
+# 4. 验证
+cdscli auth check
+cdscli project list --human
+\`\`\`
+
+## 主要命令
+
+| 命令 | 用途 |
+|------|------|
+| \`cdscli init\` | 首次配置 CDS_HOST / AI_ACCESS_KEY / 默认 projectId |
+| \`cdscli scan --apply-to-cds <projectId>\` | 扫描本地 → 生成 compose YAML → 提交 CDS 审批 |
+| \`cdscli deploy\` | 推代码 + 部署 + 等待 + 冒烟（一条命令）|
+| \`cdscli help-me-check <branchId>\` | 出 bug 了？这条命令抓状态+日志+env+history+根因分析 |
+| \`cdscli smoke <branchId>\` | 分层冒烟（L1 根路径 / L2 API / L3 认证 API）|
+| \`cdscli --help\` | 完整命令树 |
+
+## 详细文档
+
+| 文件 | 何时看 |
+|------|--------|
+| \`.claude/skills/cds/SKILL.md\` | Claude Code 自动加载，主入口 |
+| \`.claude/skills/cds/reference/api.md\` | 需要 curl 直调 API |
+| \`.claude/skills/cds/reference/auth.md\` | 401 / 403 排查 |
+| \`.claude/skills/cds/reference/scan.md\` | 扫描规则 & compose YAML 契约 |
+| \`.claude/skills/cds/reference/smoke.md\` | 分层冒烟策略 |
+| \`.claude/skills/cds/reference/diagnose.md\` | 容器日志 → 根因决策树 |
+| \`.claude/skills/cds/reference/drop-in.md\` | 新项目接入完整步骤 |
+
+## 升级
+
+直接重新下载本包覆盖即可，\`~/.cdsrc\` 不受影响。
+
+## 反馈
+
+缺功能 / 新根因模式 / 扫描误判 → 把 \`cdscli diagnose <branchId>\` 输出贴给维护方。
+`;
+      fs.writeFileSync(path.join(packDir, 'README.md'), readme, 'utf-8');
 
       // Create tar.gz using tar command (available on all Linux)
       const tarName = `${packName}.tar.gz`;

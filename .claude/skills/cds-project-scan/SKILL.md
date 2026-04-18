@@ -5,6 +5,20 @@ description: Scans project structure and generates CDS (Cloud Dev Space) compose
 
 # CDS Project Scan — 项目结构扫描 & 配置生成
 
+> ⚠️ **已合并入 `cds` 技能 (2026-04-18)**。本技能进入维护模式，不再新增功能。
+>
+> **新用法**：
+> ```bash
+> cdscli scan                              # 扫描本地，stdout 输出 YAML
+> cdscli scan --apply-to-cds <projectId>   # 扫描 + 提交 CDS 审批
+> cdscli scan --output compose.yaml        # 写文件
+> ```
+> 完整文档：`.claude/skills/cds/SKILL.md` + `.claude/skills/cds/reference/scan.md`
+>
+> AI 优先走新 cds 技能；本文件保留仅为向后兼容既有触发词。
+
+---
+
 扫描项目技术栈、目录结构、Docker Compose、环境变量，生成可直接粘贴到 CDS Dashboard 的 compose YAML。
 
 ## 目录
