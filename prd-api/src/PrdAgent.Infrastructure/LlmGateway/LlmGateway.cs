@@ -105,6 +105,7 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
 
             var endpoint = adapter.BuildEndpoint(resolution.ApiUrl!, request.ModelType);
             var httpRequest = adapter.BuildHttpRequest(endpoint, resolution.ApiKey, requestBody, request.EnablePromptCache);
+            ApplyOpenRouterAttribution(httpRequest, resolution.ApiUrl, request.AppCallerCode);
 
             // 4. 写入日志（开始）
             var gatewayResolution = resolution.ToGatewayResolution();
@@ -179,12 +180,13 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "[LlmGateway] 请求失败");
+            var (msg, code) = ClassifyTransportException(ex, ct.IsCancellationRequested);
+            _logger.LogError(ex, "[LlmGateway] 请求失败 status={Code}", code);
             if (logId != null)
             {
-                _logWriter?.MarkError(logId, ex.Message);
+                _logWriter?.MarkError(logId, msg, code);
             }
-            return GatewayResponse.Fail("GATEWAY_ERROR", ex.Message);
+            return GatewayResponse.Fail("GATEWAY_ERROR", msg, code);
         }
     }
 
@@ -241,6 +243,7 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
 
             var endpoint = adapter.BuildEndpoint(resolution.ApiUrl!, request.ModelType);
             var httpRequest = adapter.BuildHttpRequest(endpoint, resolution.ApiKey, requestBody, request.EnablePromptCache);
+            ApplyOpenRouterAttribution(httpRequest, resolution.ApiUrl, request.AppCallerCode);
 
             // 4. 写入日志（开始）
             logId = await StartLogAsync(request, gatewayResolution, endpoint, requestBody, startedAt, ct);
@@ -260,15 +263,49 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                 resolution.ActualModel,
                 resolution.ActualPlatformName ?? resolution.ActualPlatformId);
 
-            using var response = await httpClient.SendAsync(httpRequest, HttpCompletionOption.ResponseHeadersRead, ct);
+            // 5.1 SendAsync 异常捕获：HttpClient 超时 / 连接失败等传输层异常必须落日志，
+            //     否则日志会滞留 status=running，直到 LlmRequestLogWatchdog 5 分钟后强写
+            //     error="TIMEOUT"、dur=300000，真实错误信息和状态码被彻底吞掉。
+            HttpResponseMessage? rawResponse = null;
+            Exception? sendException = null;
+            try
+            {
+                rawResponse = await httpClient.SendAsync(httpRequest, HttpCompletionOption.ResponseHeadersRead, ct);
+            }
+            catch (Exception ex)
+            {
+                sendException = ex;
+            }
+
+            if (sendException != null)
+            {
+                var (sendMsg, sendCode) = ClassifyTransportException(sendException, ct.IsCancellationRequested);
+                _logger.LogWarning(sendException,
+                    "[LlmGateway] HttpClient.SendAsync 失败 status={Code} model={Model}",
+                    sendCode, resolution.ActualModel);
+                if (logId != null)
+                {
+                    _logWriter?.MarkError(logId, sendMsg, sendCode);
+                }
+                if (!string.IsNullOrWhiteSpace(resolution.ModelGroupId))
+                {
+                    await _modelResolver.RecordFailureAsync(resolution, ct);
+                }
+                yield return GatewayStreamChunk.Fail(sendMsg);
+                yield break;
+            }
+
+            using var response = rawResponse!;
 
             if (!response.IsSuccessStatusCode)
             {
                 var errorBody = await response.Content.ReadAsStringAsync(ct);
                 var errorMsg = TryExtractErrorMessage(errorBody) ?? $"HTTP {(int)response.StatusCode}";
-                yield return GatewayStreamChunk.Fail(errorMsg);
 
-                // 更新日志状态为失败
+                // 先落日志再 yield：caller 收到 Error chunk 后可能立刻 return 释放迭代器，
+                // 导致 yield 之后的代码永不执行。这样 MarkError 就会被跳过，日志滞留 running
+                // 直到 Watchdog 5 分钟后盖成 "TIMEOUT"——这正是"禁用 key 秒级返回但日志仍
+                // 显示 TIMEOUT"的罪魁祸首。
                 if (logId != null)
                 {
                     _logWriter?.MarkError(logId, errorMsg, (int)response.StatusCode);
@@ -278,6 +315,8 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                 {
                     await _modelResolver.RecordFailureAsync(resolution, ct);
                 }
+
+                yield return GatewayStreamChunk.Fail(errorMsg);
                 yield break;
             }
 
@@ -298,8 +337,47 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             // Intent 模型类型强制禁止思考输出，其他类型尊重请求方设置
             var effectiveIncludeThinking = IsThinkingEffective(request.IncludeThinking, request.ModelType);
 
-            await foreach (var data in sseReader.ReadEventsAsync(ct))
+            // 6.1 手工迭代 SSE 读取器，把 MoveNextAsync 的传输层异常（上游中途断连、读超时等）
+            //     转成日志 MarkError + Fail chunk；否则异常冒泡出 StreamAsync，日志保持 running，
+            //     Watchdog 5 分钟后兜底成 "TIMEOUT"，真实原因丢失。
+            await using var eventEnum = sseReader.ReadEventsAsync(ct).GetAsyncEnumerator(ct);
+            bool streamAborted = false;
+            string? streamAbortMsg = null;
+            int? streamAbortCode = null;
+
+            while (true)
             {
+                bool hasNext;
+                string data = string.Empty;
+                Exception? readException = null;
+                try
+                {
+                    hasNext = await eventEnum.MoveNextAsync();
+                    if (hasNext)
+                    {
+                        data = eventEnum.Current;
+                    }
+                }
+                catch (Exception ex)
+                {
+                    readException = ex;
+                    hasNext = false;
+                }
+
+                if (readException != null)
+                {
+                    var (readMsg, readCode) = ClassifyTransportException(readException, ct.IsCancellationRequested);
+                    _logger.LogWarning(readException,
+                        "[LlmGateway] 流式读取中断 status={Code} model={Model} firstByteAt={FirstByteAt}",
+                        readCode, resolution.ActualModel, firstByteAt);
+                    streamAborted = true;
+                    streamAbortMsg = readMsg;
+                    streamAbortCode = readCode;
+                    break;
+                }
+
+                if (!hasNext) break;
+
                 // 标记首字节
                 if (firstByteAt == null)
                 {
@@ -392,6 +470,22 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                 {
                     tokenUsage = chunk.TokenUsage;
                 }
+            }
+
+            // 6.2 流被迫中断时，把真实错误落进日志并推 Fail chunk 出去。
+            //     这条路径必须在 Watchdog 扫到之前写，否则 error 会被覆盖成 "TIMEOUT"。
+            if (streamAborted)
+            {
+                if (logId != null)
+                {
+                    _logWriter?.MarkError(logId, streamAbortMsg!, streamAbortCode);
+                }
+                if (!string.IsNullOrWhiteSpace(resolution.ModelGroupId))
+                {
+                    await _modelResolver.RecordFailureAsync(resolution, ct);
+                }
+                yield return GatewayStreamChunk.Fail(streamAbortMsg!);
+                yield break;
             }
 
             // 刷新 ThinkTagStripper 缓冲区
@@ -655,6 +749,8 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                 }
             }
 
+            ApplyOpenRouterAttribution(httpRequest, resolution.ApiUrl, request.AppCallerCode);
+
             // 5. 写入日志（开始）
             logId = await StartRawLogAsync(request, gatewayResolution, endpoint, requestBodyForLog, startedAt, ct);
 
@@ -888,12 +984,13 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "[LlmGateway.SendRaw] 请求失败");
+            var (msg, code) = ClassifyTransportException(ex, ct.IsCancellationRequested);
+            _logger.LogError(ex, "[LlmGateway.SendRaw] 请求失败 status={Code}", code);
             if (logId != null)
             {
-                _logWriter?.MarkError(logId, ex.Message);
+                _logWriter?.MarkError(logId, msg, code);
             }
-            return GatewayRawResponse.Fail("GATEWAY_ERROR", ex.Message);
+            return GatewayRawResponse.Fail("GATEWAY_ERROR", msg, code);
         }
     }
 
@@ -951,6 +1048,50 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
         // Uri.EscapeDataString 保证 model 名里的特殊字符（极少但有可能）不破坏 URL
         var encoded = Uri.EscapeDataString(actualModel);
         return urlTemplate.Replace("{model}", encoded, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// OpenRouter 应用归属：通过 HTTP-Referer + X-Title header 告诉 OpenRouter 本次调用来自哪个 AppCaller。
+    /// 仅在 ApiUrl 指向 openrouter.ai 时注入，避免污染其他严格校验 header/body 的上游（DeepSeek、通义、
+    /// Claude 原生、各类中转站等）。body 不动，彻底规避未知字段导致 400 的风险。
+    /// </summary>
+    private static void ApplyOpenRouterAttribution(
+        HttpRequestMessage httpRequest,
+        string? apiUrl,
+        string appCallerCode)
+    {
+        if (string.IsNullOrWhiteSpace(apiUrl)) return;
+        if (apiUrl.IndexOf("openrouter.ai", StringComparison.OrdinalIgnoreCase) < 0) return;
+
+        httpRequest.Headers.TryAddWithoutValidation("HTTP-Referer", "https://prd-agent.miduo.org");
+        if (!string.IsNullOrWhiteSpace(appCallerCode))
+        {
+            httpRequest.Headers.TryAddWithoutValidation("X-Title", appCallerCode);
+        }
+    }
+
+    /// <summary>
+    /// 把 HttpClient / 流式读取阶段抛出的异常分类为 (人类可读错误, HTTP 风格状态码)。
+    /// 目的：让 llmrequestlogs 里的 StatusCode + Error 能体现真实故障类型，
+    /// 避免被 Watchdog 5 分钟兜底成 "TIMEOUT"/status=null 的观测黑洞。
+    /// - TaskCanceled / OperationCanceled（非 caller 取消）→ 504（上游超时）
+    /// - HttpRequestException → 502（网络层失败）
+    /// - 其他 → 500
+    /// </summary>
+    private static (string Message, int StatusCode) ClassifyTransportException(Exception ex, bool callerCancelled)
+    {
+        if (callerCancelled)
+        {
+            return ("caller 已取消", 499);
+        }
+
+        return ex switch
+        {
+            TaskCanceledException => ("上游超时未响应（HttpClient timeout）", 504),
+            OperationCanceledException => ("上游超时未响应", 504),
+            HttpRequestException http => ($"网络请求失败：{http.Message}", 502),
+            _ => ($"传输层异常：{ex.Message}", 500)
+        };
     }
 
     /// <summary>
