@@ -130,7 +130,7 @@ describe('Auth routes (P2)', () => {
         `/api/auth/github/callback?code=test-code&state=${state}`,
       );
       expect(cb.status).toBe(302);
-      expect(cb.headers.location).toBe('/projects.html');
+      expect(cb.headers.location).toBe('/project-list');
       const setCookie = cb.headers['set-cookie'];
       expect(setCookie).toBeTruthy();
       expect(Array.isArray(setCookie) ? setCookie[0] : setCookie).toContain(GH_SESSION_COOKIE);
