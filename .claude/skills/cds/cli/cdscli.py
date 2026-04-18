@@ -793,54 +793,82 @@ def cmd_help_me_check(args: argparse.Namespace) -> None:
 def cmd_sync_from_cds(args: argparse.Namespace) -> None:
     """维护者专用：诊断 cds/src/routes/*.ts 和 CLI+reference 之间的端点漂移。
 
-    用法（典型）：
-      1. 维护者改了 cds/src/routes/xxx.ts 加/改/删端点
-      2. 跑 `cdscli sync-from-cds` 得 drift 报告
-      3. AI 读报告生成 cli/cdscli.py 和 reference/api.md 的 patch
-      4. 维护者审 + apply + bump VERSION + push
+    路径解析优先级（覆盖 CDS 未来独立仓库的场景）：
+      1. --routes-dir <path>            命令行显式
+      2. $CDS_ROUTES_DIR                  环境变量
+      3. git rev-parse + cds/src/routes   假设 CDS 还在 monorepo 里
+      4. 相对 cli 文件的历史推断           兜底
+      任一存在且是目录即采用，否则给出清晰指引，拒绝扫描。
 
-    本命令自己不改文件，只出结构化报告。让 AI / 人类去手动收敛。
-
-    扫描策略：
-      CDS 端：正则抓 router.METHOD('/path', ...) → 端点集合 C
-      CLI 端：正则抓 _call/_request("METHOD", "/api/path", ...) → 集合 K
-      文档端：正则抓 reference/api.md 表格行 `| METHOD | /api/path |` → 集合 D
-      漂移   = 四象限差集 + 路径 :id/:keyId 归一化后比对
+    不会跨到其它项目（prd-api / prd-admin 等）——只看给定目录下 .ts 文件。
     """
     import re
+    import subprocess as _sp
+
+    # 1. 路径解析
+    routes_dir = (getattr(args, "routes_dir", None) or "").strip() \
+        or os.environ.get("CDS_ROUTES_DIR", "").strip()
+
+    if not routes_dir:
+        # 2. 尝试 git rev-parse --show-toplevel + cds/src/routes
+        try:
+            git_root = _sp.check_output(
+                ["git", "rev-parse", "--show-toplevel"],
+                stderr=_sp.DEVNULL, text=True, timeout=5,
+            ).strip()
+            candidate = os.path.join(git_root, "cds", "src", "routes")
+            if os.path.isdir(candidate):
+                routes_dir = candidate
+        except (_sp.SubprocessError, FileNotFoundError, OSError):
+            pass
+
+    if not routes_dir:
+        # 3. 兜底：从 cli 文件反推（假设还在 .claude/skills/cds/cli/ 结构下）
+        cli_path = os.path.abspath(__file__)
+        skill_root = os.path.dirname(os.path.dirname(cli_path))
+        claude_root = os.path.dirname(os.path.dirname(skill_root))
+        repo_root = os.path.dirname(claude_root)
+        candidate = os.path.join(repo_root, "cds", "src", "routes")
+        if os.path.isdir(candidate):
+            routes_dir = candidate
+
+    if not routes_dir or not os.path.isdir(routes_dir):
+        die(
+            "未找到 CDS routes 目录。sync-from-cds 仅维护者使用。\n"
+            "解决办法（任选一种）：\n"
+            "  1. 在 prd_agent（或 CDS 独立仓库）根目录跑此命令\n"
+            "  2. cdscli sync-from-cds --routes-dir /path/to/cds/src/routes\n"
+            "  3. export CDS_ROUTES_DIR=/path/to/cds/src/routes",
+            code=1)
+
+    # stderr 打印实际扫描路径，避免"它到底扫了哪"的疑问
+    if not getattr(args, "quiet", False):
+        print(f"[sync-from-cds] 扫描路径: {routes_dir}", file=sys.stderr)
+
     cli_path = os.path.abspath(__file__)
-    skill_root = os.path.dirname(os.path.dirname(cli_path))          # .../cds
-    claude_root = os.path.dirname(os.path.dirname(skill_root))        # .../.claude
-    repo_root = os.path.dirname(claude_root)
-    routes_dir = os.path.join(repo_root, "cds", "src", "routes")
+    skill_root = os.path.dirname(os.path.dirname(cli_path))
     api_doc = os.path.join(skill_root, "reference", "api.md")
 
-    if not os.path.isdir(routes_dir):
-        die(f"未找到 cds routes 目录: {routes_dir}。"
-            f"sync-from-cds 只能在 prd_agent 仓库根目录内跑（维护者用途）。", code=1)
-
     def norm(p: str) -> str:
-        """归一化路径：:id / :keyId / :profileId 等统一为 :X，方便跨来源比对。"""
         return re.sub(r":\w+", ":X", p.split("?")[0])
 
-    # 1. CDS 端：扫 router.METHOD('path', ...)
     ep_re = re.compile(r"""router\s*\.\s*(get|post|put|delete|patch)\s*\(\s*['"]([^'"]+)['"]""")
     cds_endpoints: set[tuple[str, str]] = set()
+    scanned_files: list[str] = []
     for fn in sorted(os.listdir(routes_dir)):
         if not fn.endswith(".ts"):
             continue
+        scanned_files.append(fn)
         with open(os.path.join(routes_dir, fn), encoding="utf-8") as f:
             src = f.read()
         for m in ep_re.finditer(src):
             method = m.group(1).upper()
             path = m.group(2)
-            # router 挂在 /api 下，但注册路径本身不带 /api 前缀
             if not path.startswith("/"):
                 continue
             full = path if path.startswith("/api") else "/api" + path
             cds_endpoints.add((method, full))
 
-    # 2. CLI 端：扫自己 source 里的 _call/_request("METHOD", "/api/...")
     with open(cli_path, encoding="utf-8") as f:
         cli_src = f.read()
     call_re = re.compile(
@@ -850,19 +878,15 @@ def cmd_sync_from_cds(args: argparse.Namespace) -> None:
     cli_endpoints: set[tuple[str, str]] = set()
     for m in call_re.finditer(cli_src):
         cli_endpoints.add((m.group(1).upper(), m.group(2)))
-    # CLI 里还有 f-string 动态路径，简单抓 f"/api/..{var}.." 里静态前缀
     fstr_re = re.compile(
         r"""_(?:call|request)\(\s*["'](GET|POST|PUT|DELETE|PATCH)["']\s*,\s*f["'](/api/[^"']+?)["']""",
         re.IGNORECASE,
     )
     for m in fstr_re.finditer(cli_src):
         method = m.group(1).upper()
-        path = m.group(2)
-        # 替换 {x} -> :X，与 CDS 端路径归一化保持一致
-        path = re.sub(r"\{[^}]+\}", ":X", path)
+        path = re.sub(r"\{[^}]+\}", ":X", m.group(2))
         cli_endpoints.add((method, path))
 
-    # 3. 文档端：扫 reference/api.md 表格
     doc_endpoints: set[tuple[str, str]] = set()
     if os.path.exists(api_doc):
         with open(api_doc, encoding="utf-8") as f:
@@ -874,38 +898,38 @@ def cmd_sync_from_cds(args: argparse.Namespace) -> None:
                 if m:
                     doc_endpoints.add((m.group(1).upper(), m.group(2)))
 
-    # 4. 归一化比对
     cds_n = {(m, norm(p)) for m, p in cds_endpoints}
     cli_n = {(m, norm(p)) for m, p in cli_endpoints}
     doc_n = {(m, norm(p)) for m, p in doc_endpoints}
 
-    new_in_cds = sorted(cds_n - cli_n - doc_n)   # CDS 加了新端点，CLI/docs 都没跟
-    missing_in_cli = sorted(cds_n - cli_n)        # CDS 有的但 CLI 没封
-    missing_in_docs = sorted(cds_n - doc_n)       # CDS 有的但文档没写
-    removed_from_cds = sorted((cli_n | doc_n) - cds_n)  # CDS 删了但 CLI/docs 还引用
+    new_in_cds = sorted(cds_n - cli_n - doc_n)
+    missing_in_cli = sorted(cds_n - cli_n)
+    missing_in_docs = sorted(cds_n - doc_n)
+    removed_from_cds = sorted((cli_n | doc_n) - cds_n)
 
-    # 5. 生成建议
     def fmt(pairs: list[tuple[str, str]]) -> list[str]:
         return [f"{m} {p}" for m, p in pairs]
 
     suggestions: list[str] = []
     if missing_in_cli:
         suggestions.append(
-            f"在 cli/cdscli.py 增加 {len(missing_in_cli)} 个命令封装："
-            f"给每个端点加 cmd_xxx(args) 函数 + _build_parser() 里挂 subparser")
+            f"在 cli/cdscli.py 增加 {len(missing_in_cli)} 个命令封装：每个端点加 "
+            f"cmd_xxx(args) + _build_parser() 挂 subparser")
     if missing_in_docs:
         suggestions.append(
             f"在 reference/api.md 相应分组表格补 {len(missing_in_docs)} 行")
     if removed_from_cds:
         suggestions.append(
             f"⚠ CLI/docs 里 {len(removed_from_cds)} 个端点在 CDS 已删除，"
-            f"删 CLI 命令 or 标 DEPRECATED，避免误导消费方")
+            f"删 CLI 命令 or 标 DEPRECATED")
     if missing_in_cli or missing_in_docs or removed_from_cds:
-        suggestions.append("改完 bump cdscli.py 的 VERSION（通常 minor）+ 加 changelog 碎片")
+        suggestions.append("改完 bump cdscli.py 的 VERSION + 加 changelog 碎片")
     if not suggestions:
         suggestions.append("✓ CDS / CLI / docs 三边同步，无需更新")
 
     ok({
+        "routesDir": routes_dir,
+        "scannedFiles": scanned_files,
         "scanned": {
             "cdsEndpoints": len(cds_endpoints),
             "cliEndpoints": len(cli_endpoints),
@@ -918,7 +942,8 @@ def cmd_sync_from_cds(args: argparse.Namespace) -> None:
         "suggestions": suggestions,
         "driftCount": len(missing_in_cli) + len(missing_in_docs) + len(removed_from_cds),
     }, note=f"drift={len(missing_in_cli) + len(missing_in_docs) + len(removed_from_cds)} "
-           f"(CDS={len(cds_endpoints)} CLI={len(cli_endpoints)} docs={len(doc_endpoints)})")
+           f"(scanned {len(scanned_files)} files → CDS={len(cds_endpoints)} "
+           f"CLI={len(cli_endpoints)} docs={len(doc_endpoints)})")
 
 
 def cmd_version(args: argparse.Namespace) -> None:
@@ -1207,7 +1232,9 @@ def _build_parser() -> argparse.ArgumentParser:
     up.set_defaults(func=cmd_update)
 
     sy = sub.add_parser("sync-from-cds",
-                        help="维护者：扫 cds/ routes 对比 CLI+docs 找漂移")
+                        help="维护者：扫 CDS routes 对比 CLI+docs 找漂移（不改文件）")
+    sy.add_argument("--routes-dir", help="CDS routes 目录路径（默认从 git root 推断）")
+    sy.add_argument("--quiet", action="store_true", help="静默扫描，不打 stderr 提示")
     sy.set_defaults(func=cmd_sync_from_cds)
 
     return p

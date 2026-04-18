@@ -27,9 +27,32 @@ CDS 服务端的 `/api/export-skill` 端点每次被调用时，都是**实时**
 
 **你一句话，Agent 全包**：
 
-> 你改完 CDS 的端点，只要对 Claude Code / 任何支持此技能的 Agent 说一句话，
-> 比如 "帮我同步技能" / "我改了 cds 帮我更新 cli" / "/cds-sync"，
-> Agent 就会按 SKILL.md 里的 6 步工作流执行。
+> 改完 CDS 端点后，**必须用明确包含 "cds" 的指令**（避免误触发）。
+> 认可的触发词（SKILL.md 保持同步）：
+>
+> - `/cds-sync`
+> - `/cds-sync-skill`
+> - `帮我同步 cds 技能`
+> - `cdscli sync-from-cds`
+>
+> 禁止 Agent 把 `"同步技能"` / `"更新技能"` 这种泛指令当成触发 —— 日常对话里
+> 这两个词可能指代任何技能（写文档、写 skill-validation 等）。
+
+### CDS 未来独立仓库后的路径处理
+
+CDS 目前**临时住在** `prd_agent/cds/` 下，未来会搬出成独立仓库。
+工具已经抽象了路径解析，不假设 monorepo：
+
+| 解析优先级 | 来源 |
+|-----------|------|
+| 1 | `cdscli sync-from-cds --routes-dir /path/to/cds/src/routes` |
+| 2 | `$CDS_ROUTES_DIR` 环境变量 |
+| 3 | `git rev-parse --show-toplevel` + `cds/src/routes`（当前 monorepo 兜底）|
+| 4 | 相对 cli 文件反推（最脆弱，只作最后兜底）|
+
+CDS 独立仓库后，你在 cds 仓库内跑 `cdscli sync-from-cds`，git root 推断
+自动就是 cds 仓库根 → 找 `./src/routes` 即可（改一下 3 号兜底逻辑）。
+或者维护者在 `~/.cdsrc` 或 `.cds.env` 里写死 `CDS_ROUTES_DIR`。
 
 整个流程：
 

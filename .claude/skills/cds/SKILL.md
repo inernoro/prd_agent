@@ -58,9 +58,23 @@ alias cdscli='python3 $(git rev-parse --show-toplevel)/.claude/skills/cds/cli/cd
 
 ## 🔧 维护者：我改了 CDS，Agent 帮我同步技能
 
-> 只有 `inernoro/prd_agent` 仓库的维护者会用到这段。消费方跳过。
+> 只有 **CDS 仓库维护者** 会用到这段。消费方跳过。
+> 未来 CDS 从 prd_agent 搬出成独立仓库后，路径通过 `--routes-dir` 或 `$CDS_ROUTES_DIR` 显式指定。
 
-**触发词**（任一即进入此工作流）：`同步技能` / `更新技能` / `sync cds to skill` / `/cds-sync` / `我改了 cds 帮我更新 cli`
+**触发词（严格）** —— 只有**明确带 "cds" 关键词的维护指令**才进入本工作流：
+
+- `/cds-sync` ✅
+- `/cds-sync-skill` ✅
+- `帮我同步 cds 技能` ✅（必须含"cds"关键字）
+- `cdscli sync-from-cds` ✅（用户直接给 CLI 命令）
+
+**不触发**（避免误伤普通对话）：
+
+- ~~"同步技能"~~（太泛，可能指任何技能）
+- ~~"更新技能"~~（同上，用户可能只是在说"更新 SKILL.md 描述"）
+- ~~"同步下"~~（含糊）
+
+模糊场景（用户只说"帮我改下技能" / "更新一下"）：**先问用户是不是指 CDS 技能同步**，得到确认再进入本工作流。
 
 **Agent 收到触发词后的标准动作**（按此顺序执行，不要跳步）：
 
