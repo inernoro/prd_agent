@@ -1,6 +1,12 @@
 ---
-globs: ["prd-api/src/**/*.cs"]
+globs: prd-api/src/**/*.cs
+description: LLM Gateway 统一调用规则 + LlmRequestContext.UserId 必填 + 流式场景陷阱
 ---
+
+<!-- 本文件由 scripts/sync-cursor-rules.sh 自动生成，请勿直接编辑。
+     事实源: .claude/rules/llm-gateway.md
+     生成时间: 2026-04-18T18:10:31Z -->
+
 
 # LLM Gateway 统一调用规则
 

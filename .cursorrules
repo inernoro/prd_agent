@@ -1,58 +1,72 @@
 # Cursor / AI Rules for PRD Agent
 
-> New to this repo? Read these in order: this file → `CLAUDE.md` → `README.md` → `doc/spec.project-vision.md`.
-> Then consult on-demand rules under `.claude/rules/` matching the files you edit.
+> 事实源永远是 `.claude/rules/*.md` 和项目根 `CLAUDE.md`。
+> Cursor 看到的 `.cursor/rules/*.mdc` 是从 `.claude/rules/` 自动生成的镜像。
+> 禁止直接编辑 `.cursor/rules/` 下的 `.mdc` 文件——改动会在下次同步时被覆盖。
+>
+> **修改规则**：编辑 `.claude/rules/<name>.md` 后跑 `bash scripts/sync-cursor-rules.sh`。
+
+## 新人入门读序
+
+1. 本文件（30 秒了解仓库形状）
+2. `CLAUDE.md`（项目根）—— 9 条强制规则 + 全量技能链
+3. `.claude/rules/codebase-snapshot.md` —— 功能状态速查 + 架构模式 + 115 个 MongoDB 集合
+4. `doc/spec.project-vision.md` —— 「文档即共识」产品定位
 
 ## Project Context
 
-- **Vision**: "文档即共识" — ship AI agents that explain PRDs so teams stop re-narrating docs.
+- **Vision**: 「文档即共识」—— ship AI agents that explain PRDs so teams stop re-narrating docs.
 - **Shape**: full-stack monorepo — .NET 8 API (`prd-api/`) + React/Vite admin (`prd-admin/`) + Tauri desktop (`prd-desktop/`) + Remotion video engine (`prd-video/`) + CDS branch-preview platform (`cds/`).
-- **Ground truth**: `CLAUDE.md` (rules + skill chain), `.claude/rules/codebase-snapshot.md` (feature registry, 115 MongoDB collections), `doc/spec.srs.md` (current SRS v3.0).
+- **Skill chain**: `需求 → /validate → /plan-first → /risk → /trace → 实现 → /verify → /scope-check → /cds-deploy → /smoke → /preview → /uat → /handoff → /weekly`（详见 `CLAUDE.md`）。
 
-## Key Architecture Rules
+## 9 条强制规则（CLAUDE.md 同步镜像）
 
-1. **App Identity Isolation**: each app has its own Controller with a hardcoded `appKey` (never passed from the frontend).
-2. **Current appKey values (8)**: `prd-agent`, `visual-agent`, `literary-agent`, `defect-agent`, `video-agent`, `report-agent`, `review-agent`, `pr-review`. Adding an app ⇒ add an entry in `.claude/rules/app-identity.md` and a dedicated Controller.
-3. **Run/Worker pattern**: chat uses `POST /sessions/{id}/messages/run` → SSE stream with `afterSeq` reconnection. Client disconnect never cancels server work — pass `CancellationToken.None` to LLM + DB calls.
-4. **Platform + Model**: `(platformId, modelId)` is the business identifier (NOT Provider). All LLM calls go through `ILlmGateway` with an `AppCallerCode` (e.g. `visual-agent.image.vision::generation`).
-5. **RBAC**: `SystemRole` + `AdminPermissionCatalog` (60+ perms) + `AdminPermissionMiddleware`. New perms ⇒ use the `add-agent-permission` skill.
-6. **Frontend storage**: `sessionStorage` only. `localStorage` is banned (see `.claude/rules/no-localstorage.md`).
-7. **Frontend registry pattern**: no hardcoded `switch` on type keys — use `*_REGISTRY` / `*_MAP` (see `.claude/rules/frontend-architecture.md`).
-8. **Changelog fragments**: any code change under `prd-api/ prd-admin/ prd-desktop/ prd-video/` must add a file to `changelogs/YYYY-MM-DD_*.md` before commit. Never edit `CHANGELOG.md` directly — it's the release-merge target.
+1. **前端包管理器 pnpm Only** — 禁止 npm / yarn。lockfile 仅保留 `pnpm-lock.yaml`
+2. **C# 静态分析** — 任何 `.cs` 改动后跑 `dotnet build --no-restore 2>&1 | grep -E "error CS|warning CS" | head -30`
+3. **任务完成交接** — 涉及 3+ 文件/API/UI 变更时必须调 `task-handoff-checklist` 技能
+4. **更新记录碎片** — 提交前必须在 `changelogs/YYYY-MM-DD_<描述>.md` 添加记录，禁止直接改 `CHANGELOG.md`
+5. **禁止自动提交 PR** — 用户未明确要求时只做 commit + push
+6. **LLM 交互过程可视化** — 所有 LLM 调用必须流式/进度反馈/阶段提示，禁止空白等待
+7. **新 Model 必须对照现有 Model 写** — Id 声明用 `string Id { get; set; } = Guid.NewGuid().ToString("N");` 不加 `[BsonId]`
+8. **Agent 开发完成标准** — 后端编译 + 前端渲染 + 端到端跑通 + 预览域名直连验收
+9. **新功能必须注册百宝箱 + 声明位置** — 新条目带 `wip: true`，交付消息必须包含【位置】+【路径】两行
 
-## New-Developer Shortcut
+## 关键架构约束（速查）
 
-**Building a new Agent from scratch?** Run `/help` in Claude Code or read [`doc/guide.agent-onboarding.md`](doc/guide.agent-onboarding.md) — the 6-stage onboarding (破冰 → 需求打磨 → 方案设计 → 建造 → 验收 → 完工总结) covers the full skill chain and the 7 ironclad rules you'll work within.
+| 主题 | 约束 | 细则 |
+|------|------|------|
+| App Identity | 每个 app 有独立 Controller，`appKey` 硬编码不由前端传 | `.cursor/rules/app-identity.mdc` |
+| LLM 调用 | 全部走 `ILlmGateway` + `BeginScope(LlmRequestContext)`，**UserId 必填**（否则 `User not found` 报错） | `.cursor/rules/llm-gateway.mdc` |
+| Run / Worker | 长任务用 Worker + SSE `afterSeq` 重连，LLM / DB 调用传 `CancellationToken.None` | `.cursor/rules/server-authority.mdc` |
+| RBAC | `SystemRole` + `AdminPermissionCatalog`（60+ 权限） + `AdminPermissionMiddleware` | `add-agent-permission` 技能 |
+| 前端存储 | 只能用 `sessionStorage`，禁止 `localStorage` | `.cursor/rules/no-localstorage.mdc` |
+| 前端注册表 | 禁止硬编码 `switch(type)`，用 `*_REGISTRY / *_MAP` | `.cursor/rules/frontend-architecture.mdc` |
+| 前端模态框 | 3 硬约束：inline style 高度 + `createPortal` + `min-h:0` | `.cursor/rules/frontend-modal.mdc` |
+| CDS 验证 | 本地无 SDK ≠ 无法验证，用 `/cds-deploy` 兜底 | `.cursor/rules/cds-first-verification.mdc` |
 
-| You want to… | Start here |
-|--------------|-----------|
-| Onboard as a new Agent author | `doc/guide.agent-onboarding.md` or `/help` skill |
-| Run the stack | `README.md` → "Quick Start" (Docker Compose, 1 command) |
-| Understand why it exists | `doc/spec.project-vision.md` (the "four-dose prescription" story) |
-| Know what features exist | `.claude/rules/codebase-snapshot.md` → "功能状态速查" |
-| Add a new agent/feature | `.claude/rules/navigation-registry.md` (must register in toolbox, mark `wip: true`) |
-| Call an LLM | `.claude/rules/llm-gateway.md` + `doc/design.llm-gateway.md` |
-| Build a modal | `.claude/rules/frontend-modal.md` (3 hard constraints) |
-| Verify a change without local SDK | `.claude/rules/cds-first-verification.md` → `/cds-deploy` skill |
+## Appkey 全量清单（8 个 + 持续扩展）
+
+`prd-agent` / `visual-agent` / `literary-agent` / `defect-agent` / `video-agent` / `report-agent` / `review-agent` / `pr-review`
+
+新增 Agent 时：更新 `.claude/rules/app-identity.md` → 跑 `bash scripts/sync-cursor-rules.sh`。
 
 ## Documentation Maintenance
 
-When making structural code changes (new modules, renames, deprecations), update:
+结构化代码变更（新模块、重命名、废弃）必须同步更新：
 
-1. `.claude/rules/codebase-snapshot.md` → feature registry, DB collections, deprecated concepts
-2. `doc/spec.srs.md` → relevant functional requirements section
-3. `doc/rule.data-dictionary.md` → if new MongoDB collections or sessionStorage entries added
+1. `.claude/rules/codebase-snapshot.md` → 功能注册表、DB 集合、废弃概念
+2. `doc/spec.srs.md` → 功能需求章节
+3. `doc/rule.data-dictionary.md` → 新增 MongoDB 集合或 sessionStorage 条目
 
 ### Cross-validation Checklist
 
-Before committing doc updates, verify:
-- [ ] Code → Doc: every Controller/Service has a corresponding SRS section
-- [ ] Doc → Code: every SRS feature has code (or a ⚠️ NOT_IMPL marker)
-- [ ] Git log → Doc: recent commits reflected in docs
-- [ ] DB → Dict: MongoDbContext collections match data dictionary
-- [ ] No deprecated references (Guide mode, Provider, ImageMaster in code context, IEEE 830-1998, direct SSE without Run/Worker)
+- [ ] Code → Doc: 每个 Controller / Service 在 SRS 有描述
+- [ ] Doc → Code: 每个 SRS 功能在代码有实现（或标 `⚠️ NOT_IMPL`）
+- [ ] Git log → Doc: 近期 commit 已反映
+- [ ] DB → Dict: MongoDbContext 集合与数据字典一致
+- [ ] 无废弃引用（Guide mode / Provider / ImageMaster / 直接 SSE / IEEE 830-1998 / SmartModelScheduler / localStorage / npm）
 
-## Deprecated Concepts (DO NOT reference)
+## Deprecated Concepts（禁止再引用）
 
 | Deprecated | Replacement |
 |-----------|-------------|
@@ -64,4 +78,3 @@ Before committing doc updates, verify:
 | SmartModelScheduler | `ILlmGateway` + `ModelResolver` |
 | `localStorage` | `sessionStorage` |
 | `npm` / `yarn` | `pnpm` (only) |
-| Hardcoded 3-agent claims | 8 appKeys (see rule #2 above) |
