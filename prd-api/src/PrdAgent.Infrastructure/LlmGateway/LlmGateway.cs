@@ -105,6 +105,7 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
 
             var endpoint = adapter.BuildEndpoint(resolution.ApiUrl!, request.ModelType);
             var httpRequest = adapter.BuildHttpRequest(endpoint, resolution.ApiKey, requestBody, request.EnablePromptCache);
+            ApplyOpenRouterAttribution(httpRequest, resolution.ApiUrl, request.AppCallerCode);
 
             // 4. 写入日志（开始）
             var gatewayResolution = resolution.ToGatewayResolution();
@@ -241,6 +242,7 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
 
             var endpoint = adapter.BuildEndpoint(resolution.ApiUrl!, request.ModelType);
             var httpRequest = adapter.BuildHttpRequest(endpoint, resolution.ApiKey, requestBody, request.EnablePromptCache);
+            ApplyOpenRouterAttribution(httpRequest, resolution.ApiUrl, request.AppCallerCode);
 
             // 4. 写入日志（开始）
             logId = await StartLogAsync(request, gatewayResolution, endpoint, requestBody, startedAt, ct);
@@ -655,6 +657,8 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                 }
             }
 
+            ApplyOpenRouterAttribution(httpRequest, resolution.ApiUrl, request.AppCallerCode);
+
             // 5. 写入日志（开始）
             logId = await StartRawLogAsync(request, gatewayResolution, endpoint, requestBodyForLog, startedAt, ct);
 
@@ -951,6 +955,26 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
         // Uri.EscapeDataString 保证 model 名里的特殊字符（极少但有可能）不破坏 URL
         var encoded = Uri.EscapeDataString(actualModel);
         return urlTemplate.Replace("{model}", encoded, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// OpenRouter 应用归属：通过 HTTP-Referer + X-Title header 告诉 OpenRouter 本次调用来自哪个 AppCaller。
+    /// 仅在 ApiUrl 指向 openrouter.ai 时注入，避免污染其他严格校验 header/body 的上游（DeepSeek、通义、
+    /// Claude 原生、各类中转站等）。body 不动，彻底规避未知字段导致 400 的风险。
+    /// </summary>
+    private static void ApplyOpenRouterAttribution(
+        HttpRequestMessage httpRequest,
+        string? apiUrl,
+        string appCallerCode)
+    {
+        if (string.IsNullOrWhiteSpace(apiUrl)) return;
+        if (apiUrl.IndexOf("openrouter.ai", StringComparison.OrdinalIgnoreCase) < 0) return;
+
+        httpRequest.Headers.TryAddWithoutValidation("HTTP-Referer", "https://prd-agent.miduo.org");
+        if (!string.IsNullOrWhiteSpace(appCallerCode))
+        {
+            httpRequest.Headers.TryAddWithoutValidation("X-Title", appCallerCode);
+        }
     }
 
     /// <summary>
