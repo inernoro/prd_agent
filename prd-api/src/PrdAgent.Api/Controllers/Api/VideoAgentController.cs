@@ -34,15 +34,52 @@ public class VideoAgentController : ControllerBase
         IVideoGenService videoGenService,
         IRunEventStore runStore,
         MongoDbContext db,
+        IOpenRouterVideoClient videoClient,
         ILogger<VideoAgentController> logger)
     {
         _videoGenService = videoGenService;
         _runStore = runStore;
         _db = db;
+        _videoClient = videoClient;
         _logger = logger;
     }
 
+    private readonly IOpenRouterVideoClient _videoClient;
+
     private string GetAdminId() => this.GetRequiredUserId();
+
+    /// <summary>
+    /// 直出视频（绕过 Worker，直接同步走 Gateway + OpenRouter）
+    /// 用于诊断 Worker 热重载问题时的快速验证通道。
+    /// 返回 jobId，客户端自行轮询 /videogen-direct/status/:jobId
+    /// </summary>
+    [HttpPost("videogen-direct")]
+    public async Task<IActionResult> VideoGenDirect([FromBody] VideoGenDirectRequest req, CancellationToken ct)
+    {
+        if (req == null || string.IsNullOrWhiteSpace(req.Prompt))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "prompt 不能为空"));
+
+        var result = await _videoClient.SubmitAsync(new OpenRouterVideoSubmitRequest
+        {
+            AppCallerCode = AppCallerRegistry.VideoAgent.VideoGen.Generate,
+            Model = req.Model,
+            Prompt = req.Prompt,
+            AspectRatio = req.AspectRatio ?? "16:9",
+            Resolution = req.Resolution ?? "720p",
+            DurationSeconds = req.DurationSeconds ?? 5,
+            GenerateAudio = true,
+            UserId = GetAdminId()
+        }, ct);
+
+        return Ok(ApiResponse<object>.Ok(new { result.Success, result.JobId, result.ActualModel, result.Cost, result.ErrorMessage }));
+    }
+
+    [HttpGet("videogen-direct/status/{jobId}")]
+    public async Task<IActionResult> VideoGenDirectStatus(string jobId, CancellationToken ct)
+    {
+        var status = await _videoClient.GetStatusAsync(AppCallerRegistry.VideoAgent.VideoGen.Generate, jobId, ct);
+        return Ok(ApiResponse<object>.Ok(new { status.Status, status.VideoUrl, status.Cost, status.ErrorMessage, status.IsCompleted, status.IsFailed }));
+    }
 
     /// <summary>
     /// 创建视频生成任务（仅保存输入，Worker 自动开始分镜生成）
@@ -625,4 +662,13 @@ public class VideoAgentController : ControllerBase
         await Response.WriteAsync($"data: {dataJson}\n\n", ct);
         await Response.Body.FlushAsync(ct);
     }
+}
+
+public class VideoGenDirectRequest
+{
+    public string Prompt { get; set; } = string.Empty;
+    public string? Model { get; set; }
+    public string? AspectRatio { get; set; }
+    public string? Resolution { get; set; }
+    public int? DurationSeconds { get; set; }
 }
