@@ -4,6 +4,7 @@ import { useToolboxStore } from '@/stores/toolboxStore';
 import { useNavigate } from 'react-router-dom';
 import { DesktopDownloadDialog } from '@/components/ui/DesktopDownloadDialog';
 import { useAuthStore } from '@/stores/authStore';
+import { toast } from '@/lib/toast';
 import {
   ArrowUpRight,
   FileText,
@@ -29,6 +30,8 @@ import {
   Globe2,
   GitFork,
   Edit,
+  Copy,
+  Trash2,
   Image,
   Music,
   Video,
@@ -153,8 +156,16 @@ import { SpotlightEffect } from './SpotlightEffect';
 import { ReviewAgentCardArt } from './ReviewAgentCardArt';
 
 export function ToolCard({ item, source = 'mine' }: ToolCardProps) {
-  const { selectItem, toggleFavorite, isFavorite, startEdit, forkItem, setCategory } =
-    useToolboxStore();
+  const {
+    selectItem,
+    toggleFavorite,
+    isFavorite,
+    startEdit,
+    forkItem,
+    setCategory,
+    togglePublish,
+    deleteItem,
+  } = useToolboxStore();
   const navigate = useNavigate();
   const palette = getPalette(item.icon);
   const IconComponent = getIconComponent(item.icon);
@@ -167,10 +178,14 @@ export function ToolCard({ item, source = 'mine' }: ToolCardProps) {
   const [hovering, setHovering] = useState(false);
   const [downloadDialogOpen, setDownloadDialogOpen] = useState(false);
   const [forking, setForking] = useState(false);
+  const [togglingPublish, setTogglingPublish] = useState(false);
   const videoRef = useRef<HTMLVideoElement>(null);
 
   const isMarketplaceCard = source === 'marketplace';
   const isOwnCustomCard = source === 'mine' && item.type === 'custom';
+  /** 内置但非"定制版"（无独立路由页），可以被克隆为我的副本 */
+  const isForkableBuiltin =
+    source === 'mine' && item.type === 'builtin' && !item.routePath && item.agentKey !== 'prd-agent';
 
   const handleFork = async () => {
     if (forking) return;
@@ -211,6 +226,49 @@ export function ToolCard({ item, source = 'mine' }: ToolCardProps) {
   const handleQuickEdit = (e: React.MouseEvent) => {
     e.stopPropagation();
     startEdit(item);
+  };
+
+  const handleCopyBuiltin = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    // 与 ToolDetail 的「复制并编辑」逻辑一致
+    startEdit({
+      ...item,
+      id: '', // 空 id = 新建
+      name: `${item.name}（我的副本）`,
+      category: 'custom',
+      type: 'custom',
+      prompt: item.systemPrompt,
+    } as ToolboxItem);
+  };
+
+  const handleTogglePublish = async (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (togglingPublish) return;
+    const newValue = !item.isPublic;
+    if (newValue) {
+      const ok = window.confirm(
+        '公开发布后，所有用户都能在百宝箱「公开市场」Tab 看到并 Fork 这个智能体' +
+          '（包含名称、描述、提示词、标签）。\n\n确定要公开发布吗？'
+      );
+      if (!ok) return;
+    }
+    setTogglingPublish(true);
+    try {
+      const ok = await togglePublish(item.id, newValue);
+      if (ok) toast.success(newValue ? '已公开发布到市场' : '已取消公开');
+      else toast.error('操作失败，请稍后重试');
+    } finally {
+      setTogglingPublish(false);
+    }
+  };
+
+  const handleDelete = async (e: React.MouseEvent) => {
+    e.stopPropagation();
+    const ok = window.confirm(`确定删除「${item.name}」吗？此操作不可恢复。`);
+    if (!ok) return;
+    const success = await deleteItem(item.id);
+    if (success) toast.success('已删除');
+    else toast.error('删除失败');
   };
 
   const handleMouseEnter = () => {
@@ -337,6 +395,67 @@ export function ToolCard({ item, source = 'mine' }: ToolCardProps) {
           background: `linear-gradient(90deg, transparent 10%, ${palette.from}90 50%, transparent 90%)`,
         }}
       />
+
+      {/* 右上角操作浮条 — 卡片 hover 时显示核心操作：编辑/公开/删除 或 复制 */}
+      {(isOwnCustomCard || isForkableBuiltin) && (
+        <div
+          className="absolute top-1.5 right-1.5 z-30 flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity duration-200"
+          style={{
+            background: 'rgba(0, 0, 0, 0.55)',
+            backdropFilter: 'blur(8px)',
+            WebkitBackdropFilter: 'blur(8px)',
+            borderRadius: 8,
+            padding: '3px 4px',
+            border: '1px solid rgba(255, 255, 255, 0.1)',
+          }}
+        >
+          {isOwnCustomCard && (
+            <>
+              <button
+                onClick={handleQuickEdit}
+                title="编辑此智能体"
+                className="w-6 h-6 rounded-md flex items-center justify-center transition-all duration-150 hover:bg-white/15 hover:scale-110"
+              >
+                <Edit size={12} style={{ color: 'rgba(255, 255, 255, 0.85)' }} />
+              </button>
+              <button
+                onClick={handleTogglePublish}
+                disabled={togglingPublish}
+                title={
+                  item.isPublic
+                    ? '已公开 — 他人可在「公开市场」Tab 看到并 Fork；点击取消公开'
+                    : '公开发布到「公开市场」，让所有用户都能看到并 Fork'
+                }
+                className="w-6 h-6 rounded-md flex items-center justify-center transition-all duration-150 hover:bg-white/15 hover:scale-110 disabled:opacity-50"
+                style={item.isPublic ? { background: 'rgba(16, 185, 129, 0.25)' } : undefined}
+              >
+                <Globe2
+                  size={12}
+                  style={{ color: item.isPublic ? '#6ee7b7' : 'rgba(255, 255, 255, 0.85)' }}
+                />
+              </button>
+              <button
+                onClick={handleDelete}
+                title="删除此智能体"
+                className="w-6 h-6 rounded-md flex items-center justify-center transition-all duration-150 hover:bg-red-500/30 hover:scale-110"
+              >
+                <Trash2 size={12} style={{ color: 'rgba(252, 165, 165, 0.95)' }} />
+              </button>
+            </>
+          )}
+          {isForkableBuiltin && (
+            <button
+              onClick={handleCopyBuiltin}
+              title="复制一份到我的百宝箱（可自由修改提示词、模型等参数）"
+              className="flex items-center gap-1 h-6 px-2 rounded-md transition-all duration-150 hover:bg-white/15 text-[10px] font-medium"
+              style={{ color: 'rgba(255, 255, 255, 0.9)' }}
+            >
+              <Copy size={11} />
+              复制并编辑
+            </button>
+          )}
+        </div>
+      )}
 
       {/* 底部信息区 */}
       <div
@@ -491,18 +610,6 @@ export function ToolCard({ item, source = 'mine' }: ToolCardProps) {
                         <Zap size={8} style={{ color: palette.soft }} />
                         {item.usageCount >= 1000 ? `${(item.usageCount / 1000).toFixed(1)}k` : item.usageCount}
                       </span>
-                    )}
-                    {isOwnCustomCard && (
-                      <button
-                        onClick={handleQuickEdit}
-                        className="flex items-center justify-center transition-all duration-300 opacity-0 group-hover:opacity-100 hover:scale-125"
-                        title="编辑"
-                      >
-                        <Edit
-                          size={10}
-                          style={{ color: 'rgba(255, 255, 255, 0.5)' }}
-                        />
-                      </button>
                     )}
                     <button
                       onClick={handleToggleFavorite}
