@@ -81,10 +81,10 @@
     <!-- Quickstart banner (shown when no profiles) -->
     <div id="quickstartBanner" class="quickstart-banner hidden">
       <div class="quickstart-content">
-        <strong>尚未配置构建配置。</strong>
-        <span>是否加载此项目的默认配置？</span>
+        <strong>尚未初始化构建配置</strong>
+        <span>优先读取项目中的 <code>cds-compose.yaml</code>；未找到则回落到内置 api/admin 模板</span>
       </div>
-      <button class="primary sm" onclick="runQuickstart()">快速开始</button>
+      <button class="primary sm" onclick="runQuickstart()">初始化构建配置</button>
     </div>
 
     <!-- Branch picker -->

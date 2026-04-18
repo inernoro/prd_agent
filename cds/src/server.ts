@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { createBranchRouter } from './routes/branches.js';
 import { createBridgeRouter } from './routes/bridge.js';
 import { createProjectsRouter } from './routes/projects.js';
+import { createPendingImportRouter } from './routes/pending-import.js';
 import { createStorageModeRouter, type StorageModeContext } from './routes/storage-mode.js';
 import { createGithubOAuthRouter } from './routes/github-oauth.js';
 import { createAuthRouter } from './routes/auth.js';
@@ -825,6 +826,10 @@ export function createServer(deps: ServerDeps): express.Express {
     config: deps.config,
     legacyProjectName: deps.config.repoRoot ? path.basename(deps.config.repoRoot) : 'prd_agent',
   }));
+  // Pending imports — agent-authored CDS compose awaiting operator approval.
+  // Mounted at /api so the nested /projects/:id/pending-import path works
+  // alongside the rest of the projects router.
+  app.use('/api', createPendingImportRouter({ stateService: deps.stateService }));
   app.use('/api', createBranchRouter({
     stateService: deps.stateService,
     worktreeService: deps.worktreeService,

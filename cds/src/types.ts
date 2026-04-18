@@ -371,6 +371,18 @@ export interface CdsState {
    */
   githubDeviceAuth?: GitHubDeviceAuth;
   /**
+   * Agent-authored configuration imports awaiting human approval.
+   *
+   * Workflow: an external agent (e.g. Claude Code running
+   * cds-project-scan) generates a cds-compose YAML tailored to a
+   * specific project and POSTs it to /api/projects/:id/pending-import.
+   * The dashboard shows a badge with count; an operator reviews the
+   * diff and either approves (parse + apply scoped to the project) or
+   * rejects. Approved/rejected imports stay around with that status
+   * for a short audit trail, then the frontend hides them.
+   */
+  pendingImports?: PendingImport[];
+  /**
    * FU-04 — worktree directory layout version.
    *
    *   - undefined / 1: legacy flat layout `<worktreeBase>/<slug>`
@@ -388,6 +400,40 @@ export interface CdsState {
    * one-shot move don't repeatedly re-scan the legacy layout.
    */
   worktreeLayoutVersion?: number;
+}
+
+/**
+ * An Agent-submitted CDS compose YAML awaiting operator approval.
+ *
+ * Small summary fields (addedProfiles/addedInfra/addedEnvKeys) are
+ * precomputed at submit time so the dashboard can render a one-line
+ * "+3 profiles, +2 infra" preview without re-parsing the YAML.
+ */
+export interface PendingImport {
+  /** Opaque hex id for approve/reject routing. */
+  id: string;
+  /** Target project id this YAML should apply to when approved. */
+  projectId: string;
+  /** Free-form agent identifier (e.g. "Claude Code", "cds-project-scan"). */
+  agentName: string;
+  /** One-line rationale the agent provides so the operator knows why. */
+  purpose: string;
+  /** Raw cds-compose YAML. Stored verbatim; parsed lazily on approve. */
+  composeYaml: string;
+  /** Precomputed summary so the dashboard can render without re-parsing. */
+  summary: {
+    addedProfiles: string[];
+    addedInfra: string[];
+    addedEnvKeys: string[];
+  };
+  /** ISO timestamp when the agent POSTed this import. */
+  submittedAt: string;
+  /** Lifecycle: starts 'pending', moves to 'approved' or 'rejected'. */
+  status: 'pending' | 'approved' | 'rejected';
+  /** Set when status === 'rejected'. */
+  rejectReason?: string;
+  /** Set when status flips away from 'pending'. */
+  decidedAt?: string;
 }
 
 /**

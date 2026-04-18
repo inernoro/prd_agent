@@ -705,6 +705,55 @@ export class StateService {
     this.save();
   }
 
+  // ── Pending imports (agent-submitted CDS compose awaiting approval) ──
+
+  getPendingImports(): import('../types.js').PendingImport[] {
+    return this.state.pendingImports || [];
+  }
+
+  getPendingImport(id: string): import('../types.js').PendingImport | undefined {
+    return (this.state.pendingImports || []).find((p) => p.id === id);
+  }
+
+  addPendingImport(item: import('../types.js').PendingImport): void {
+    if (!this.state.pendingImports) this.state.pendingImports = [];
+    this.state.pendingImports.push(item);
+    this.save();
+  }
+
+  updatePendingImport(
+    id: string,
+    updates: Partial<import('../types.js').PendingImport>,
+  ): void {
+    const list = this.state.pendingImports || [];
+    const idx = list.findIndex((p) => p.id === id);
+    if (idx === -1) throw new Error(`Pending import '${id}' not found`);
+    list[idx] = { ...list[idx], ...updates };
+    this.save();
+  }
+
+  /**
+   * Prune decided imports older than `olderThanMs` so the state file
+   * doesn't grow forever. Called lazily from the list endpoint when
+   * the decided count exceeds a small threshold.
+   */
+  prunePendingImports(olderThanMs: number): number {
+    const list = this.state.pendingImports;
+    if (!list || list.length === 0) return 0;
+    const now = Date.now();
+    const kept = list.filter((p) => {
+      if (p.status === 'pending') return true;
+      if (!p.decidedAt) return true;
+      return now - new Date(p.decidedAt).getTime() < olderThanMs;
+    });
+    const dropped = list.length - kept.length;
+    if (dropped > 0) {
+      this.state.pendingImports = kept;
+      this.save();
+    }
+    return dropped;
+  }
+
   /**
    * P4 Part 18 (Phase E): GitHub Device Flow token accessors.
    *

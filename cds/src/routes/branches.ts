@@ -321,11 +321,32 @@ export function createBranchRouter(deps: RouterDeps): Router {
   }
 
   // ── Helper: merged env (CDS_* auto vars + customEnv, later wins) ──
-  function getMergedEnv(): Record<string, string> {
+  //
+  // When `projectId` is supplied, two extra project-scoped vars get
+  // injected BEFORE customEnv so compose YAMLs can template against
+  // them (e.g. `MongoDB__DatabaseName: "prdagent-${CDS_PROJECT_SLUG}"`
+  // gives each project its own database without shared-mongo risks):
+  //
+  //   CDS_PROJECT_ID   — opaque project id (e.g. "50bf3eac3d02")
+  //   CDS_PROJECT_SLUG — URL-friendly slug ("prd-agent-2"); for legacy
+  //                      default project this is the repoRoot basename,
+  //                      preserving existing behaviour.
+  //
+  // customEnv always wins so an operator can override the slug-based
+  // default from the Dashboard if needed.
+  function getMergedEnv(projectId?: string): Record<string, string> {
     const cdsEnv = stateService.getCdsEnvVars();   // CDS_HOST, CDS_MONGODB_PORT, etc.
     const mirrorEnv = stateService.getMirrorEnvVars(); // npm/corepack mirror (if enabled)
     const customEnv = stateService.getCustomEnv();
-    return { ...cdsEnv, ...mirrorEnv, ...customEnv };
+    const projectEnv: Record<string, string> = {};
+    if (projectId) {
+      const project = stateService.getProject(projectId);
+      if (project) {
+        projectEnv.CDS_PROJECT_ID = project.id;
+        projectEnv.CDS_PROJECT_SLUG = project.slug;
+      }
+    }
+    return { ...cdsEnv, ...mirrorEnv, ...projectEnv, ...customEnv };
   }
 
   /** Mask sensitive env var values for trace logging */
@@ -1064,7 +1085,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
           svc.status = 'building';
 
           try {
-            const mergedEnv = getMergedEnv();
+            const mergedEnv = getMergedEnv(entry.projectId);
 
             // ── Trace: resolved CDS_* env vars for this service ──
             const cdsVars: Record<string, string> = {};
@@ -1284,7 +1305,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       svc.status = 'building';
 
       try {
-        const mergedEnv = getMergedEnv();
+        const mergedEnv = getMergedEnv(entry.projectId);
         await containerService.runService(entry, effectiveProfile, svc, (chunk) => {
           sendSSE(res, 'log', { profileId: profile.id, chunk });
           for (const line of chunk.split('\n')) {
@@ -2432,6 +2453,88 @@ export function createBranchRouter(deps: RouterDeps): Router {
     const pm = fs.existsSync(adminDir) ? detectPackageManager(adminDir) : 'npm';
     const nodeCmd = nodeProfileCommands(pm);
 
+    // Look up the project up-front — we need the slug both for the
+    // suffix convention (Task 2) and for all downstream ID collisions.
+    // getProject can't be undefined here because we already validated
+    // projectId above, but TS still needs the narrow.
+    const project = stateService.getProject(projectId);
+    const projectSlug = project?.slug || projectId;
+
+    // addBuildProfile guards on global id uniqueness — the legacy
+    // project already owns "api" / "admin" so non-legacy projects
+    // must suffix their ids. Suffix uses the project slug (human
+    // readable, e.g. "api-prd-agent-2") instead of the first 8 hex
+    // chars of the id, because slugs survive state.json migrations
+    // while hex UUIDs look like random noise in the topology view.
+    const idSuffix = projectId === 'default' ? '' : `-${projectSlug}`;
+
+    // Task 1: prefer the project's own cds-compose.yaml over the
+    // hardcoded template. This fixes the Redis-connect crash on forked
+    // projects — the template was missing MongoDB/Redis/JWT env vars,
+    // while cds-compose.yaml carries the full runtime contract.
+    let composeYaml: string | null = null;
+    for (const filename of ['cds-compose.yaml', 'cds-compose.yml']) {
+      const composePath = path.join(projectRepoRoot, filename);
+      if (fs.existsSync(composePath)) {
+        try {
+          composeYaml = fs.readFileSync(composePath, 'utf8');
+          break;
+        } catch {
+          // Fall through to the next candidate / hardcoded template.
+        }
+      }
+    }
+
+    if (composeYaml) {
+      const parsed = parseCdsCompose(composeYaml);
+      if (parsed && parsed.buildProfiles.length > 0) {
+        const seeded: BuildProfile[] = [];
+        for (const bp of parsed.buildProfiles) {
+          const profile: BuildProfile = {
+            ...bp,
+            id: `${bp.id}${idSuffix}`,
+            projectId,
+          };
+          stateService.addBuildProfile(profile);
+          seeded.push(profile);
+        }
+
+        // Merge envVars — never clobber existing legacy customEnv keys.
+        // The import page / manual env edits are treated as authoritative
+        // over the baked-in defaults in cds-compose.yaml.
+        const existingEnv = stateService.getCustomEnv();
+        for (const [key, value] of Object.entries(parsed.envVars)) {
+          if (existingEnv[key] === undefined) {
+            stateService.setCustomEnvVar(key, value);
+          }
+        }
+
+        // Add infra services only when this project doesn't already
+        // have one with the same id. Scope to projectId so two projects
+        // can both declare their own `mongo` without colliding in the
+        // global infraServices list.
+        const existingInfra = stateService.getInfraServicesForProject(projectId);
+        const existingInfraIds = new Set(existingInfra.map(s => s.id));
+        for (const def of parsed.infraServices) {
+          if (existingInfraIds.has(def.id)) continue;
+          const service = composeDefToInfraService(def);
+          service.projectId = projectId;
+          stateService.addInfraService(service);
+        }
+
+        stateService.save();
+
+        res.status(201).json({
+          message: `快速启动: 已从 cds-compose.yaml 创建 ${seeded.length} 个构建配置`,
+          profiles: seeded,
+          detectedPackageManager: pm,
+          source: 'cds-compose',
+        });
+        return;
+      }
+    }
+
+    // Fallback: hardcoded template (pre-cds-compose.yaml projects).
     const defaults: BuildProfile[] = [
       {
         id: 'api',
@@ -2461,11 +2564,6 @@ export function createBranchRouter(deps: RouterDeps): Router {
       },
     ];
 
-    // addBuildProfile guards on global id uniqueness — the legacy
-    // project already owns "api" and "admin" so we suffix per-project
-    // ids with the projectId tail to keep them globally unique while
-    // still readable in the topology view.
-    const idSuffix = projectId === 'default' ? '' : `-${projectId.slice(0, 8)}`;
     for (const profile of defaults) {
       profile.id = `${profile.id}${idSuffix}`;
       stateService.addBuildProfile(profile);
@@ -2476,6 +2574,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       message: `快速启动: 已创建 ${defaults.length} 个构建配置 (检测到包管理器: ${pm})`,
       profiles: defaults,
       detectedPackageManager: pm,
+      source: 'template',
     });
   });
 
@@ -3757,7 +3856,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
         }
         stateService.save();
 
-        const mergedEnv = getMergedEnv();
+        const mergedEnv = getMergedEnv(entry.projectId);
 
         for (const profile of profiles) {
           const svc = entry.services[profile.id];
