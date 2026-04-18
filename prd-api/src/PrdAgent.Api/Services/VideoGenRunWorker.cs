@@ -291,11 +291,15 @@ public class VideoGenRunWorker : BackgroundService
     private async Task<VideoGenRun?> ClaimQueuedRunAsync(CancellationToken ct)
     {
         // 只拾取非 videogen 模式的 Queued 任务（remotion/空值/缺失字段）
-        // 用 Ne(videogen) 比 Or(Exists false, Eq remotion, Eq "") 更简单、更稳
+        // 改为正向匹配：RenderMode 在 {null, "", "remotion"} 中，避免 $ne 的微妙陷阱
         var fb = Builders<VideoGenRun>.Filter;
         var filter = fb.And(
             fb.Eq(x => x.Status, VideoGenRunStatus.Queued),
-            fb.Ne(x => x.RenderMode, VideoRenderMode.VideoGen)
+            fb.Or(
+                fb.Eq(x => x.RenderMode, VideoRenderMode.Remotion),
+                fb.Eq(x => x.RenderMode, string.Empty),
+                fb.Eq(x => x.RenderMode, (string)null!)  // 兼容 old docs 没有此字段
+            )
         );
         var update = Builders<VideoGenRun>.Update
             .Set(x => x.Status, VideoGenRunStatus.Scripting)
