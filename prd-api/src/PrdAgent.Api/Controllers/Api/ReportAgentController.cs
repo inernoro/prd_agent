@@ -53,6 +53,7 @@ public class ReportAgentController : ControllerBase
     private readonly ReportNotificationService _notificationService;
     private readonly TeamSummaryService _teamSummaryService;
     private readonly ReportWebhookService _webhookService;
+    private readonly DailyLogPolishService _polishService;
 
     public ReportAgentController(
         MongoDbContext db,
@@ -63,7 +64,8 @@ public class ReportAgentController : ControllerBase
         ReportGenerationService generationService,
         ReportNotificationService notificationService,
         TeamSummaryService teamSummaryService,
-        ReportWebhookService webhookService)
+        ReportWebhookService webhookService,
+        DailyLogPolishService polishService)
     {
         _db = db;
         _assetStorage = assetStorage;
@@ -74,6 +76,7 @@ public class ReportAgentController : ControllerBase
         _notificationService = notificationService;
         _teamSummaryService = teamSummaryService;
         _webhookService = webhookService;
+        _polishService = polishService;
     }
 
     #region Helpers
@@ -1755,6 +1758,14 @@ public class ReportAgentController : ControllerBase
         public List<DailyLogItemInput>? Items { get; set; }
     }
 
+    public class PolishDailyLogRequest
+    {
+        /// <summary>原文（必填，最大 4000 字符）</summary>
+        public string? Text { get; set; }
+        /// <summary>风格偏好提示（选填，例如"更口语化"/"更书面"/"更精简"）</summary>
+        public string? StyleHint { get; set; }
+    }
+
     public class DailyLogItemInput
     {
         public string? Content { get; set; }
@@ -1888,6 +1899,195 @@ public class ReportAgentController : ControllerBase
             await _db.ReportDailyLogs.InsertOneAsync(log);
             return Ok(ApiResponse<object>.Ok(log));
         }
+    }
+
+    /// <summary>
+    /// 上传日常记录富文本图片（粘贴/选择即用，不绑定具体某条 daily-log）
+    /// </summary>
+    [HttpPost("daily-logs/upload-image")]
+    [RequestSizeLimit(MaxRichTextImageBytes)]
+    public async Task<IActionResult> UploadDailyLogImage([FromForm] IFormFile file, CancellationToken ct)
+    {
+        var userId = GetUserId();
+
+        if (file == null || file.Length == 0)
+            return BadRequest(ApiResponse<object>.Fail("INVALID_FILE", "请选择图片文件"));
+
+        if (file.Length > MaxRichTextImageBytes)
+            return BadRequest(ApiResponse<object>.Fail("FILE_TOO_LARGE", "图片大小不能超过 5MB"));
+
+        var mimeType = file.ContentType?.Trim().ToLowerInvariant() ?? "application/octet-stream";
+        if (!AllowedRichTextImageMimeTypes.Contains(mimeType))
+            return BadRequest(ApiResponse<object>.Fail("UNSUPPORTED_TYPE", $"不支持的图片类型: {mimeType}"));
+
+        byte[] bytes;
+        await using (var ms = new MemoryStream())
+        {
+            await file.CopyToAsync(ms, ct);
+            bytes = ms.ToArray();
+        }
+
+        var stored = await _assetStorage.SaveAsync(
+            bytes,
+            mimeType,
+            ct,
+            domain: AppDomainPaths.DomainPrdAgent,
+            type: AppDomainPaths.TypeImg);
+        var attachment = new Attachment
+        {
+            UploaderId = userId,
+            FileName = file.FileName,
+            MimeType = mimeType,
+            Size = file.Length,
+            Url = stored.Url,
+            Type = AttachmentType.Image,
+            UploadedAt = DateTime.UtcNow
+        };
+        await _db.Attachments.InsertOneAsync(attachment, cancellationToken: ct);
+
+        return Ok(ApiResponse<object>.Ok(new
+        {
+            attachmentId = attachment.AttachmentId,
+            url = attachment.Url,
+            fileName = attachment.FileName,
+            mimeType = attachment.MimeType,
+            size = attachment.Size
+        }));
+    }
+
+    /// <summary>
+    /// 流式润色日常记录单条原文（SSE，事件协议：phase / model / thinking / typing / done / error）。
+    /// 服务器权威：客户端断开不取消上游 LLM。
+    /// </summary>
+    [HttpPost("daily-logs/polish")]
+    [Produces("text/event-stream")]
+    public async Task PolishDailyLogItem([FromBody] PolishDailyLogRequest request)
+    {
+        Response.ContentType = "text/event-stream";
+        Response.Headers.CacheControl = "no-cache";
+        Response.Headers.Connection = "keep-alive";
+        Response.Headers["X-Accel-Buffering"] = "no";
+
+        var text = (request?.Text ?? string.Empty).Trim();
+        if (string.IsNullOrEmpty(text))
+        {
+            await WriteSseEventAsync("error", new { message = "原文不能为空" });
+            return;
+        }
+
+        await WriteSseEventAsync("phase", new { phase = "preparing", message = "AI 正在准备润色…" });
+
+        var modelInfo = new PrdAgent.Api.Services.PrReview.PrReviewModelInfoHolder();
+        var output = new System.Text.StringBuilder();
+        using var heartbeatCts = new CancellationTokenSource();
+        using var writeLock = new SemaphoreSlim(1, 1);
+        var firstChunk = true;
+        var sawText = false;
+        var startAt = DateTime.UtcNow;
+
+        async Task SafeWriteAsync(string evt, object data)
+        {
+            await writeLock.WaitAsync();
+            try { await WriteSseEventAsync(evt, data); }
+            finally { writeLock.Release(); }
+        }
+
+        async Task RunHeartbeatAsync()
+        {
+            try
+            {
+                while (!heartbeatCts.IsCancellationRequested)
+                {
+                    try { await Task.Delay(TimeSpan.FromSeconds(2), heartbeatCts.Token); }
+                    catch (OperationCanceledException) { return; }
+                    if (heartbeatCts.IsCancellationRequested) return;
+                    var elapsed = (int)(DateTime.UtcNow - startAt).TotalSeconds;
+                    var msg = elapsed < 15
+                        ? $"AI 正在润色　{elapsed}s"
+                        : elapsed < 40
+                            ? $"上游首字延迟较高，已等待 {elapsed}s"
+                            : $"⚠️ 上游响应缓慢，已等待 {elapsed}s，可点击放弃后重试";
+                    try { await SafeWriteAsync("phase", new { phase = "waiting", message = msg, elapsedMs = elapsed * 1000 }); }
+                    catch { /* ignore */ }
+                }
+            }
+            catch { /* swallow */ }
+        }
+
+        var heartbeatTask = Task.Run(RunHeartbeatAsync);
+
+        try
+        {
+            await foreach (var delta in _polishService.StreamPolishAsync(text, request?.StyleHint, modelInfo, CancellationToken.None))
+            {
+                if (firstChunk)
+                {
+                    firstChunk = false;
+                    heartbeatCts.Cancel();
+                    try { await heartbeatTask; } catch { /* ignore */ }
+                    await SafeWriteAsync("phase", new
+                    {
+                        phase = delta.IsThinking ? "thinking" : "streaming",
+                        message = delta.IsThinking ? "AI 正在思考…" : "AI 正在输出…",
+                    });
+                }
+
+                if (modelInfo.Captured)
+                {
+                    await SafeWriteAsync("model", new
+                    {
+                        model = modelInfo.Model,
+                        platform = modelInfo.Platform,
+                        modelGroupName = modelInfo.ModelGroupName,
+                    });
+                    modelInfo.Captured = false;
+                }
+
+                if (delta.IsThinking)
+                {
+                    await SafeWriteAsync("thinking", new { text = delta.Content });
+                }
+                else
+                {
+                    if (!sawText)
+                    {
+                        sawText = true;
+                        await SafeWriteAsync("phase", new { phase = "streaming", message = "AI 正在输出…" });
+                    }
+                    output.Append(delta.Content);
+                    await SafeWriteAsync("typing", new { text = delta.Content });
+                }
+            }
+
+            await SafeWriteAsync("done", new
+            {
+                text = output.ToString(),
+                durationMs = (long)(DateTime.UtcNow - startAt).TotalMilliseconds,
+                model = modelInfo.Model,
+                platform = modelInfo.Platform,
+            });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "DailyLog polish stream failed");
+            try { await SafeWriteAsync("error", new { message = "AI 润色失败：" + ex.Message }); }
+            catch { /* 客户端已断 */ }
+        }
+        finally
+        {
+            if (!heartbeatCts.IsCancellationRequested) heartbeatCts.Cancel();
+            try { await heartbeatTask; } catch { /* ignore */ }
+        }
+    }
+
+    private async Task WriteSseEventAsync(string eventType, object data)
+    {
+        var json = System.Text.Json.JsonSerializer.Serialize(data, new System.Text.Json.JsonSerializerOptions
+        {
+            PropertyNamingPolicy = System.Text.Json.JsonNamingPolicy.CamelCase,
+        });
+        await Response.WriteAsync($"event: {eventType}\ndata: {json}\n\n");
+        await Response.Body.FlushAsync();
     }
 
     private static List<string> NormalizeDailyLogTags(IEnumerable<string>? tags)

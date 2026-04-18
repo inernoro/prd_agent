@@ -24,6 +24,7 @@ import type {
   CreateWeeklyReportContract,
   UpdateWeeklyReportContract,
   UploadReportRichTextImageContract,
+  UploadDailyLogImageContract,
   DeleteWeeklyReportContract,
   SubmitWeeklyReportContract,
   ReviewWeeklyReportContract,
@@ -344,6 +345,61 @@ export const uploadReportRichTextImageReal: UploadReportRichTextImageContract = 
 
   const rawBase = getApiBaseUrl();
   const path = api.reportAgent.reports.richTextImages(encodeURIComponent(input.id));
+  const url = rawBase ? `${rawBase}${path}` : path;
+
+  try {
+    const firstRes = await fetch(url, {
+      method: 'POST',
+      headers: buildHeaders(useAuthStore.getState().token),
+      body: createFormData(),
+    });
+    const firstParsed = await parseResponse(firstRes);
+    const firstUnauthorized = firstRes.status === 401 || firstParsed.error?.code === 'UNAUTHORIZED';
+    if (!firstUnauthorized) return firstParsed;
+
+    const refreshed = await tryRefreshAdminTokenForUpload();
+    if (!refreshed) return firstParsed;
+
+    const retryRes = await fetch(url, {
+      method: 'POST',
+      headers: buildHeaders(useAuthStore.getState().token),
+      body: createFormData(),
+    });
+    return await parseResponse(retryRes);
+  } catch (error) {
+    return {
+      success: false,
+      error: {
+        code: 'NETWORK_ERROR',
+        message: error instanceof Error ? error.message : '网络错误，上传失败',
+      },
+    } as ApiResponse<ReportRichTextImageUploadData>;
+  }
+};
+
+export const uploadDailyLogImageReal: UploadDailyLogImageContract = async (input) => {
+  const buildHeaders = (token: string | null | undefined) => {
+    const headers: Record<string, string> = { Accept: 'application/json' };
+    if (token) headers.Authorization = `Bearer ${token}`;
+    return headers;
+  };
+  const createFormData = () => {
+    const fd = new FormData();
+    fd.append('file', input.file);
+    return fd;
+  };
+
+  const parseResponse = async (res: Response): Promise<ApiResponse<ReportRichTextImageUploadData>> => {
+    const text = await res.text();
+    try {
+      return JSON.parse(text) as ApiResponse<ReportRichTextImageUploadData>;
+    } catch {
+      return { success: false, error: { code: 'PARSE_ERROR', message: text || '上传失败' } } as ApiResponse<ReportRichTextImageUploadData>;
+    }
+  };
+
+  const rawBase = getApiBaseUrl();
+  const path = api.reportAgent.dailyLogs.uploadImage();
   const url = rawBase ? `${rawBase}${path}` : path;
 
   try {

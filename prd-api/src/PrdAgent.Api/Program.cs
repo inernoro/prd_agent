@@ -278,6 +278,7 @@ builder.Services.AddScoped<PrdAgent.Core.Interfaces.IAppRegistryService, PrdAgen
 // Report Agent Phase 2: 自动采集服务
 builder.Services.AddScoped<PrdAgent.Api.Services.ReportAgent.MapActivityCollector>();
 builder.Services.AddScoped<PrdAgent.Api.Services.ReportAgent.ReportGenerationService>();
+builder.Services.AddScoped<PrdAgent.Api.Services.ReportAgent.DailyLogPolishService>();
 builder.Services.AddHostedService<PrdAgent.Api.Services.ReportAgent.GitSyncWorker>();
 builder.Services.AddHostedService<PrdAgent.Api.Services.ReportAgent.ReportAutoGenerateWorker>();
 // Report Agent Phase 3: 管理增强服务

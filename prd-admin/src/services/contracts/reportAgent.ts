@@ -450,6 +450,10 @@ export type UploadReportRichTextImageContract = (input: {
   file: File;
 }) => Promise<ApiResponse<ReportRichTextImageUploadData>>;
 
+export type UploadDailyLogImageContract = (input: {
+  file: File;
+}) => Promise<ApiResponse<ReportRichTextImageUploadData>>;
+
 export type DeleteWeeklyReportContract = (input: { id: string }) => Promise<ApiResponse<object>>;
 
 export type SubmitWeeklyReportContract = (input: { id: string }) => Promise<
