@@ -4,6 +4,19 @@ import type { ApiResponse, DocCitation, Message, MessageBlock, MessageBlockKind 
 
 export type StreamingPhase = 'requesting' | 'connected' | 'receiving' | 'typing' | null;
 
+// 每个群组的轻量快照（用于"立刻渲染已访问过的群"，消除切换空白闪烁）。
+// 仅保留最近 N 个群的最后一页消息，不持久化（会话内生效即可）。
+type GroupSnapshot = {
+  messages: Message[];
+  localMinSeq: number | null;
+  localMaxSeq: number | null;
+  hasMoreOlder: boolean;
+  updatedAt: number;
+};
+
+const GROUP_SNAPSHOT_MAX = 12;        // 最多保留 12 个群的快照
+const GROUP_SNAPSHOT_MAX_MSGS = 80;   // 每群最多缓存 80 条，避免内存膨胀
+
 interface MessageState {
   boundSessionId: string | null;
   boundGroupId: string | null; // 当前绑定的群组 ID（用于 seq 增量同步）
@@ -23,6 +36,9 @@ interface MessageState {
   localMinSeq: number | null;  // 本地缓存的最小 groupSeq（历史分页游标）
   localMaxSeq: number | null;  // 本地缓存的最大 groupSeq（增量同步游标）
   isSyncing: boolean;          // 是否正在执行增量同步
+
+  // 每群快照：切回已访问过的群时用于"即刻渲染"，避免空白等待
+  groupSnapshots: Record<string, GroupSnapshot>;
   
   bindSession: (sessionId: string | null, groupId?: string | null) => void;
   /** 切换群组：重置消息/分页/流式状态，但不要求已拿到 sessionId（sessionId 之后再 bindSession 即可） */
@@ -144,6 +160,31 @@ type MessageHistoryItem = {
   timestamp: string;
 };
 
+// 快照写入：裁剪消息上限 + LRU 淘汰，避免内存膨胀。
+function writeGroupSnapshot(
+  snapshots: Record<string, GroupSnapshot>,
+  groupId: string,
+  snap: Omit<GroupSnapshot, 'updatedAt'>
+): Record<string, GroupSnapshot> {
+  if (!groupId) return snapshots;
+  const msgs = Array.isArray(snap.messages) ? snap.messages : [];
+  const trimmed = msgs.length > GROUP_SNAPSHOT_MAX_MSGS
+    ? msgs.slice(msgs.length - GROUP_SNAPSHOT_MAX_MSGS)
+    : msgs;
+  const next: Record<string, GroupSnapshot> = {
+    ...snapshots,
+    [groupId]: { ...snap, messages: trimmed, updatedAt: Date.now() },
+  };
+  // LRU 淘汰：超过 MAX 个群时，踢掉最久未更新的
+  const keys = Object.keys(next);
+  if (keys.length > GROUP_SNAPSHOT_MAX) {
+    keys.sort((a, b) => (next[a].updatedAt || 0) - (next[b].updatedAt || 0));
+    const drop = keys.slice(0, keys.length - GROUP_SNAPSHOT_MAX);
+    for (const k of drop) delete next[k];
+  }
+  return next;
+}
+
 export const useMessageStore = create<MessageState>()((set, get) => ({
       boundSessionId: null,
       boundGroupId: null,
@@ -162,12 +203,24 @@ export const useMessageStore = create<MessageState>()((set, get) => ({
       localMinSeq: null,
       localMaxSeq: null,
       isSyncing: false,
+      groupSnapshots: {},
 
   // 绑定"当前消息所属的 sessionId 和 groupId"
   // 切换群组时会清空消息，但同一群组内切换会话不清空
   bindSession: (sessionId, groupId) => set((state) => {
     const nextSessionId = sessionId ? String(sessionId).trim() : null;
     const nextGroupId = groupId ? String(groupId).trim() : null;
+
+    // 切换群组时，先把旧群的最后一页消息写入快照（用于下次切回秒开）
+    const prevGroupId = state.boundGroupId;
+    const snapshots = (prevGroupId && prevGroupId !== nextGroupId && state.messages.length > 0)
+      ? writeGroupSnapshot(state.groupSnapshots, prevGroupId, {
+          messages: state.messages,
+          localMinSeq: state.localMinSeq,
+          localMaxSeq: state.localMaxSeq,
+          hasMoreOlder: state.hasMoreOlder,
+        })
+      : state.groupSnapshots;
 
     // 完全解绑
     if (!nextSessionId) {
@@ -187,6 +240,7 @@ export const useMessageStore = create<MessageState>()((set, get) => ({
         localMinSeq: null,
         localMaxSeq: null,
         isSyncing: false,
+        groupSnapshots: snapshots,
       };
     }
 
@@ -196,7 +250,30 @@ export const useMessageStore = create<MessageState>()((set, get) => ({
       return { boundSessionId: nextSessionId };
     }
 
-    // 切换群组：清空消息
+    // 切换群组：优先从快照恢复，消除空白闪烁；syncFromServer 之后会增量刷新
+    const snap = nextGroupId ? snapshots[nextGroupId] : null;
+    if (snap && snap.messages.length > 0) {
+      return {
+        boundSessionId: nextSessionId,
+        boundGroupId: nextGroupId,
+        isPinnedToBottom: true,
+        scrollToBottomSeq: 0,
+        messages: snap.messages,
+        isStreaming: false,
+        streamingMessageId: null,
+        streamingPhase: null,
+        pendingAssistantId: null,
+        pendingUserMessageId: null,
+        isLoadingOlder: false,
+        hasMoreOlder: snap.hasMoreOlder,
+        localMinSeq: snap.localMinSeq,
+        localMaxSeq: snap.localMaxSeq,
+        isSyncing: false,
+        groupSnapshots: snapshots,
+      };
+    }
+
+    // 冷启动（无快照）：维持原行为，清空等服务器同步
     return {
       boundSessionId: nextSessionId,
       boundGroupId: nextGroupId,
@@ -214,14 +291,26 @@ export const useMessageStore = create<MessageState>()((set, get) => ({
       localMinSeq: null,
       localMaxSeq: null,
       isSyncing: false,
+      groupSnapshots: snapshots,
     };
   }),
 
   // 仅切换群组上下文（无 sessionId）：
-  // - 立刻清空旧群消息，避免串话/旧 range 残留导致“显示最旧消息”
-  // - 分页状态重置：等待后续 syncFromServer 冷启动后再计算 hasMoreOlder
-  bindGroupContext: (groupId) => set(() => {
+  // - 切换群组时先把旧群写入快照，下次回到该群时秒开
+  // - 切换目标群有快照时直接恢复，避免空白；否则清空等服务端同步
+  bindGroupContext: (groupId) => set((state) => {
     const gid = groupId ? String(groupId).trim() : null;
+
+    const prevGroupId = state.boundGroupId;
+    const snapshots = (prevGroupId && prevGroupId !== gid && state.messages.length > 0)
+      ? writeGroupSnapshot(state.groupSnapshots, prevGroupId, {
+          messages: state.messages,
+          localMinSeq: state.localMinSeq,
+          localMaxSeq: state.localMaxSeq,
+          hasMoreOlder: state.hasMoreOlder,
+        })
+      : state.groupSnapshots;
+
     if (!gid) {
       return {
         boundSessionId: null,
@@ -239,8 +328,32 @@ export const useMessageStore = create<MessageState>()((set, get) => ({
         localMinSeq: null,
         localMaxSeq: null,
         isSyncing: false,
+        groupSnapshots: snapshots,
       };
     }
+
+    const snap = snapshots[gid];
+    if (snap && snap.messages.length > 0) {
+      return {
+        boundSessionId: null,
+        boundGroupId: gid,
+        isPinnedToBottom: true,
+        scrollToBottomSeq: 0,
+        messages: snap.messages,
+        isStreaming: false,
+        streamingMessageId: null,
+        streamingPhase: null,
+        pendingAssistantId: null,
+        pendingUserMessageId: null,
+        isLoadingOlder: false,
+        hasMoreOlder: snap.hasMoreOlder,
+        localMinSeq: snap.localMinSeq,
+        localMaxSeq: snap.localMaxSeq,
+        isSyncing: false,
+        groupSnapshots: snapshots,
+      };
+    }
+
     return {
       boundSessionId: null,
       boundGroupId: gid,
@@ -257,6 +370,7 @@ export const useMessageStore = create<MessageState>()((set, get) => ({
       localMinSeq: null,
       localMaxSeq: null,
       isSyncing: false,
+      groupSnapshots: snapshots,
     };
   }),
 
@@ -497,12 +611,35 @@ export const useMessageStore = create<MessageState>()((set, get) => ({
         get().setMessages(mapped);
         // 冷启动：以“是否命中一页”判断是否还有更早历史
         set({ isSyncing: false, hasMoreOlder: resp.data.length >= take });
+        // 同步完成后刷新快照（下次切回该群秒开）
+        const st = get();
+        if (st.boundGroupId === gid) {
+          set({
+            groupSnapshots: writeGroupSnapshot(st.groupSnapshots, gid, {
+              messages: st.messages,
+              localMinSeq: st.localMinSeq,
+              localMaxSeq: st.localMaxSeq,
+              hasMoreOlder: st.hasMoreOlder,
+            }),
+          });
+        }
         return { added: mapped.length, replaced: true };
       }
 
       // 热启动：增量合并
       const added = get().mergeMessages(mapped);
       set({ isSyncing: false });
+      const st2 = get();
+      if (st2.boundGroupId === gid) {
+        set({
+          groupSnapshots: writeGroupSnapshot(st2.groupSnapshots, gid, {
+            messages: st2.messages,
+            localMinSeq: st2.localMinSeq,
+            localMaxSeq: st2.localMaxSeq,
+            hasMoreOlder: st2.hasMoreOlder,
+          }),
+        });
+      }
       return { added, replaced: false };
     } catch {
       set({ isSyncing: false });
@@ -894,6 +1031,7 @@ export const useMessageStore = create<MessageState>()((set, get) => ({
         localMinSeq: null,
         localMaxSeq: null,
         isSyncing: false,
+        groupSnapshots: {},
         });
       },
     }));

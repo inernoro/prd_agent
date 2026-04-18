@@ -1,7 +1,6 @@
 import { invoke as tauriInvoke } from '@tauri-apps/api/core';
 import { listen as tauriListen } from '@tauri-apps/api/event';
 import { useSystemErrorStore } from '../stores/systemErrorStore';
-import { useSystemNoticeStore } from '../stores/systemNoticeStore';
 import { useConnectionStore } from '../stores/connectionStore';
 import { isSystemErrorCode, systemErrorTitle } from './systemError';
 
@@ -66,18 +65,12 @@ export async function invoke<T>(cmd: string, args?: InvokeArgs): Promise<T> {
       const message = typeof result.error?.message === 'string' ? result.error.message : '请求失败';
 
       // 兜底：部分网络/代理/网关场景会返回 403 + 空 body，被我们映射成 PERMISSION_DENIED。
-      // 对这些“疑似断连”的情况，先做一次轻量探活，若不可达则切到断连态并避免弹“无权限”误导用户。
+      // 对这些"疑似断连"的情况，先做一次轻量探活，若不可达则切到断连态并避免弹"无权限"误导用户。
+      // 注意：不再 push 居中浮层提示——Header 会在 ≥4s 真实断线时亮一个克制的顶部 pill。
       if (code === 'PERMISSION_DENIED') {
         try {
           const ok = await useConnectionStore.getState().probeOnce();
-          if (!ok) {
-            useSystemNoticeStore.getState().push('已断开连接，正在重连…', {
-              level: 'warning',
-              ttlMs: 4000,
-              signature: 'conn:disconnected',
-            });
-            return result;
-          }
+          if (!ok) return result;
         } catch {
           // ignore probe errors; fall through
         }
@@ -106,12 +99,9 @@ export async function invoke<T>(cmd: string, args?: InvokeArgs): Promise<T> {
   } catch (err) {
     const details = errorDetails(err);
     if (looksLikeDisconnected(details)) {
+      // 走 2s 防抖：瞬时抖动/单次超时不会立刻切到"断连"态，避免全局闪红。
+      // 真正持续断线时，Header 会在 ≥4s 后亮出克制的顶部 pill。
       useConnectionStore.getState().markDisconnected(details);
-      useSystemNoticeStore.getState().push('已断开连接，正在重连…', {
-        level: 'warning',
-        ttlMs: 4500,
-        signature: 'conn:disconnected',
-      });
       // 断连场景不弹系统错误弹窗（避免刷屏/误导成权限不足）
       throw err;
     }
