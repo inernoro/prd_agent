@@ -68,6 +68,7 @@ public class PaAgentController : ControllerBase
     private readonly ILlmGateway _gateway;
     private readonly ILogger<PaAgentController> _logger;
     private readonly IFileContentExtractor _extractor;
+    private readonly ILLMRequestContextAccessor _llmCtx;
 
     /// <summary>单文件最大 10MB</summary>
     private const long MaxFileBytes = 10 * 1024 * 1024;
@@ -76,12 +77,14 @@ public class PaAgentController : ControllerBase
         MongoDbContext db,
         ILlmGateway gateway,
         ILogger<PaAgentController> logger,
-        IFileContentExtractor extractor)
+        IFileContentExtractor extractor,
+        ILLMRequestContextAccessor llmCtx)
     {
         _db = db;
         _gateway = gateway;
         _logger = logger;
         _extractor = extractor;
+        _llmCtx = llmCtx;
     }
 
     private string GetUserId() => this.GetRequiredUserId();
@@ -278,6 +281,20 @@ public class PaAgentController : ControllerBase
 
             try
             {
+                var requestId = Guid.NewGuid().ToString("N");
+                using var ctxScope = _llmCtx.BeginScope(new LlmRequestContext(
+                    RequestId: requestId,
+                    GroupId: null,
+                    SessionId: sessionId,
+                    UserId: userId,
+                    ViewRole: null,
+                    DocumentChars: llmMessages.Sum(m => m.Content?.Length ?? 0),
+                    DocumentHash: null,
+                    SystemPromptRedacted: "[pa-agent]",
+                    RequestType: "chat",
+                    AppCallerCode: AppCallerCode,
+                    ModelResolutionType: ModelResolutionType.DedicatedPool));
+
                 var client = _gateway.CreateClient(AppCallerCode, "chat", maxTokens: 4096, temperature: 0.3);
 
                 await foreach (var chunk in client.StreamGenerateAsync(SystemPrompt, llmMessages, CancellationToken.None))
