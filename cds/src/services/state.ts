@@ -48,6 +48,12 @@ function migrateCustomEnv(raw: unknown): CustomEnvStore {
     for (const [k, v] of entries) {
       if (typeof v === 'string') flat[k] = v;
     }
+    // Log once per boot so operators grepping cds.log can confirm the
+    // migration fired exactly once on first startup after upgrade.
+    // eslint-disable-next-line no-console
+    console.log(
+      `[state] migrated legacy customEnv into _global scope (${Object.keys(flat).length} vars)`,
+    );
     return { [GLOBAL_ENV_SCOPE]: flat };
   }
   // Already nested. Ensure _global exists so callers can rely on it.
