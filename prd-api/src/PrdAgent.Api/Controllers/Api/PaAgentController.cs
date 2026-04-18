@@ -7,6 +7,7 @@ using PrdAgent.Core.Models;
 using PrdAgent.Core.Security;
 using PrdAgent.Infrastructure.Database;
 using PrdAgent.Infrastructure.LlmGateway;
+using PrdAgent.Infrastructure.Services;
 using System.Security.Claims;
 using System.Text;
 using System.Text.Json;
@@ -66,15 +67,21 @@ public class PaAgentController : ControllerBase
     private readonly MongoDbContext _db;
     private readonly ILlmGateway _gateway;
     private readonly ILogger<PaAgentController> _logger;
+    private readonly IFileContentExtractor _extractor;
+
+    /// <summary>单文件最大 10MB</summary>
+    private const long MaxFileBytes = 10 * 1024 * 1024;
 
     public PaAgentController(
         MongoDbContext db,
         ILlmGateway gateway,
-        ILogger<PaAgentController> logger)
+        ILogger<PaAgentController> logger,
+        IFileContentExtractor extractor)
     {
         _db = db;
         _gateway = gateway;
         _logger = logger;
+        _extractor = extractor;
     }
 
     private string GetUserId() => this.GetRequiredUserId();
@@ -109,6 +116,71 @@ public class PaAgentController : ControllerBase
     }
 
     // ──────────────────────────────────────────────────────────────────
+    // File Upload — 提取文本后由前端携带进 Chat
+    // ──────────────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// 上传文件并提取纯文本内容（供后续 chat 携带上下文）
+    /// 支持：PDF / Word / Excel / PPT / TXT / Markdown / CSV / JSON
+    /// </summary>
+    [HttpPost("upload")]
+    [RequestSizeLimit(10 * 1024 * 1024)]
+    public async Task<IActionResult> UploadFile(IFormFile file)
+    {
+        if (file == null || file.Length == 0)
+            return BadRequest(ApiResponse<object>.Fail("CONTENT_EMPTY", "请选择要上传的文件"));
+
+        if (file.Length > MaxFileBytes)
+            return BadRequest(ApiResponse<object>.Fail("DOCUMENT_TOO_LARGE", "文件不能超过 10MB"));
+
+        var mimeType = file.ContentType ?? "application/octet-stream";
+        var fileName = file.FileName ?? "unknown";
+
+        if (!_extractor.IsSupported(mimeType))
+        {
+            // 尝试从扩展名推断
+            var ext = Path.GetExtension(fileName).ToLowerInvariant();
+            mimeType = ext switch
+            {
+                ".pdf" => "application/pdf",
+                ".docx" => "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                ".doc" => "application/msword",
+                ".xlsx" => "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                ".xls" => "application/vnd.ms-excel",
+                ".pptx" => "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+                ".ppt" => "application/vnd.ms-powerpoint",
+                ".txt" => "text/plain",
+                ".md" => "text/markdown",
+                ".csv" => "text/csv",
+                ".json" => "application/json",
+                ".xml" => "application/xml",
+                _ => mimeType
+            };
+
+            if (!_extractor.IsSupported(mimeType))
+                return BadRequest(ApiResponse<object>.Fail("INVALID_FORMAT",
+                    "不支持该文件格式，请上传 PDF、Word、Excel、PPT、TXT、Markdown、CSV 或 JSON 文件"));
+        }
+
+        using var ms = new MemoryStream();
+        await file.CopyToAsync(ms);
+        var bytes = ms.ToArray();
+
+        var text = _extractor.Extract(bytes, mimeType, fileName);
+        if (string.IsNullOrWhiteSpace(text))
+            return BadRequest(ApiResponse<object>.Fail("CONTENT_EMPTY", "无法从该文件中提取文本内容"));
+
+        return Ok(ApiResponse<object>.Ok(new
+        {
+            fileName,
+            mimeType,
+            fileSize = file.Length,
+            charCount = text.Length,
+            extractedText = text,
+        }));
+    }
+
+    // ──────────────────────────────────────────────────────────────────
     // Chat (SSE streaming)
     // ──────────────────────────────────────────────────────────────────
 
@@ -116,6 +188,10 @@ public class PaAgentController : ControllerBase
     {
         public string SessionId { get; set; } = string.Empty;
         public string Message { get; set; } = string.Empty;
+        /// <summary>附件提取文本（前端上传后携带进来，拼入 user 消息）</summary>
+        public string? AttachedText { get; set; }
+        /// <summary>附件文件名（用于显示）</summary>
+        public string? AttachedFileName { get; set; }
     }
 
     /// <summary>
@@ -148,13 +224,20 @@ public class PaAgentController : ControllerBase
             sessionId = session.Id;
         }
 
-        // Persist user message
+        // 构建发送给 LLM 的完整内容（含附件）
+        var llmUserContent = string.IsNullOrWhiteSpace(req.AttachedText)
+            ? req.Message
+            : $"{req.Message}\n\n---\n**附件内容**（{req.AttachedFileName ?? "文件"}）：\n{req.AttachedText}";
+
+        // Persist user message（存原始消息 + 附件名，不存完整提取文本以节省空间）
         var userMsg = new PaMessage
         {
             UserId = userId,
             SessionId = sessionId,
             Role = "user",
-            Content = req.Message,
+            Content = string.IsNullOrWhiteSpace(req.AttachedFileName)
+                ? req.Message
+                : $"{req.Message}\n\n[附件: {req.AttachedFileName}]",
         };
         await _db.PaMessages.InsertOneAsync(userMsg);
 
@@ -170,6 +253,12 @@ public class PaAgentController : ControllerBase
             .Where(m => m.Role is "user" or "assistant")
             .Select(m => new LLMMessage { Role = m.Role, Content = m.Content })
             .ToList();
+
+        // 将最后一条 user 消息替换为含附件的完整内容
+        if (llmMessages.Count > 0 && llmMessages[^1].Role == "user" && !string.IsNullOrWhiteSpace(req.AttachedText))
+        {
+            llmMessages[^1] = new LLMMessage { Role = "user", Content = llmUserContent };
+        }
 
         // SSE headers
         Response.Headers["Content-Type"] = "text/event-stream";

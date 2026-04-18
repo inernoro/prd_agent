@@ -95,6 +95,35 @@ export async function updatePaSubTask(taskId: string, index: number, done: boole
   });
 }
 
+// ── File Upload ────────────────────────────────────────────────────────────
+
+export interface PaUploadResult {
+  fileName: string;
+  mimeType: string;
+  fileSize: number;
+  charCount: number;
+  extractedText: string;
+}
+
+export async function uploadPaFile(file: File): Promise<ApiResponse<PaUploadResult>> {
+  const token = useAuthStore.getState().token;
+  const baseUrl = ((import.meta.env.VITE_API_BASE_URL as string | undefined) ?? '').replace(/\/+$/, '');
+  const form = new FormData();
+  form.append('file', file);
+
+  try {
+    const resp = await fetch(`${baseUrl}/api/pa-agent/upload`, {
+      method: 'POST',
+      headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+      body: form,
+    });
+    const json = await resp.json() as ApiResponse<PaUploadResult>;
+    return json;
+  } catch (e) {
+    return { success: false, data: null as unknown as PaUploadResult, error: { code: 'NETWORK_ERROR', message: (e as Error)?.message ?? '上传失败' } } as unknown as ApiResponse<PaUploadResult>;
+  }
+}
+
 // ── SSE Chat Stream ────────────────────────────────────────────────────────
 
 export interface PaChatChunk {
@@ -106,6 +135,8 @@ export interface PaChatChunk {
 export interface StreamPaChatOptions {
   sessionId: string;
   message: string;
+  attachedText?: string;
+  attachedFileName?: string;
   onChunk: (chunk: PaChatChunk) => void;
   onDone: () => void;
   onError: (err: string) => void;
@@ -127,7 +158,12 @@ export async function streamPaChat(opts: StreamPaChatOptions): Promise<() => voi
           'Content-Type': 'application/json',
           ...(token ? { Authorization: `Bearer ${token}` } : {}),
         },
-        body: JSON.stringify({ sessionId: opts.sessionId, message: opts.message }),
+        body: JSON.stringify({
+          sessionId: opts.sessionId,
+          message: opts.message,
+          attachedText: opts.attachedText,
+          attachedFileName: opts.attachedFileName,
+        }),
         signal: controller.signal,
       });
 
@@ -156,15 +192,13 @@ export async function streamPaChat(opts: StreamPaChatOptions): Promise<() => voi
             if (chunk.type === 'done') {
               opts.onDone();
             } else if (chunk.type === 'error') {
-              // Translate known upstream errors to Chinese
               const raw_msg = chunk.message ?? '';
               const friendly = raw_msg.includes('User not found')
                 ? 'AI 服务暂时不可用，请稍后重试'
                 : raw_msg || '未知错误';
               opts.onError(friendly);
             } else if ((chunk as { type: string }).type === 'retry') {
-              // Backend is retrying — reset streaming buffer on frontend too
-              opts.onChunk({ type: 'delta', content: '\u200B' }); // zero-width space to keep render active
+              opts.onChunk({ type: 'delta', content: '\u200B' });
             } else {
               opts.onChunk(chunk);
             }
