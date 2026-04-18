@@ -13,6 +13,15 @@ public class SystemPromptService : ISystemPromptService
     private readonly MongoDbContext _db;
     private readonly IPromptManager _promptManager;
 
+    /// <summary>
+    /// 当前默认提示词的种子版本号。每次改动 PromptManager 里的默认角色提示词就必须 bump 这个值，
+    /// 让老部署环境里"首次种下的默认值"失效并自动用新代码覆盖，避免 PromptManager 更新后生产环境
+    /// 还返回旧文本（snapshot-fallback 陷阱）。
+    ///
+    /// 2026-04-18: 首个版本号。同时引入"未详细说明 + @产品"澄清规则。
+    /// </summary>
+    public const string CurrentSeedVersion = "2026-04-18-undetail-clarify";
+
     public SystemPromptService(MongoDbContext db, IPromptManager promptManager)
     {
         _db = db;
@@ -67,7 +76,8 @@ public class SystemPromptService : ISystemPromptService
         {
             Id = "global",
             UpdatedAt = DateTime.UtcNow,
-            Entries = entries
+            Entries = entries,
+            SeededVersion = CurrentSeedVersion,
         };
     }
 
@@ -77,6 +87,19 @@ public class SystemPromptService : ISystemPromptService
 
         var doc = await _db.SystemPrompts.Find(x => x.Id == "global").FirstOrDefaultAsync(ct);
         if (doc == null)
+        {
+            await _db.SystemPrompts.ReplaceOneAsync(
+                s => s.Id == "global",
+                defaults,
+                new ReplaceOptions { IsUpsert = true },
+                ct);
+            return defaults;
+        }
+
+        // 自动刷新旧种子：当 DB 里的种子版本不是当前版本时，说明 PromptManager 默认值已升级，
+        // 老环境里"首次种下的默认值"已过时。SeededVersion != null 表示该 doc 是由本服务自动 seed
+        // 而不是管理员主动保存（管理员 PUT 时会将 SeededVersion 清空），因此可安全覆盖。
+        if (!string.IsNullOrEmpty(doc.SeededVersion) && doc.SeededVersion != CurrentSeedVersion)
         {
             await _db.SystemPrompts.ReplaceOneAsync(
                 s => s.Id == "global",
@@ -123,7 +146,9 @@ public class SystemPromptService : ISystemPromptService
         {
             Id = "global",
             UpdatedAt = doc.UpdatedAt == default ? DateTime.UtcNow : doc.UpdatedAt,
-            Entries = entries.OrderBy(x => x.Role).ToList()
+            Entries = entries.OrderBy(x => x.Role).ToList(),
+            // 保留原始 SeededVersion（可能为 null = 管理员编辑过；或 = CurrentSeedVersion = 当前种子）
+            SeededVersion = doc.SeededVersion,
         };
 
         // 统一写回：补齐角色/清理非法 role 后写回（保持 updatedAt 不变）

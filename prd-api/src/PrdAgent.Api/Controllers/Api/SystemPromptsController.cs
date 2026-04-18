@@ -148,7 +148,9 @@ public class SystemPromptsController : ControllerBase
                 })
                 .Where(x => x.Role is UserRole.PM or UserRole.DEV or UserRole.QA)
                 .OrderBy(x => x.Role)
-                .ToList()
+                .ToList(),
+            // 管理员主动保存：清空种子版本号，避免后续代码默认值升级时覆盖管理员的编辑
+            SeededVersion = null,
         };
 
         await _db.SystemPrompts.ReplaceOneAsync(
