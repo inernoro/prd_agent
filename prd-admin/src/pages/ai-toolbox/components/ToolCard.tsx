@@ -4,6 +4,8 @@ import { useToolboxStore } from '@/stores/toolboxStore';
 import { useNavigate } from 'react-router-dom';
 import { DesktopDownloadDialog } from '@/components/ui/DesktopDownloadDialog';
 import { useAuthStore } from '@/stores/authStore';
+import { toast } from '@/lib/toast';
+import { resolveAvatarUrl } from '@/lib/avatar';
 import {
   ArrowUpRight,
   FileText,
@@ -26,6 +28,11 @@ import {
   Cpu,
   Database,
   Globe,
+  Globe2,
+  GitFork,
+  Edit,
+  Copy,
+  Trash2,
   Image,
   Music,
   Video,
@@ -45,6 +52,12 @@ import type { LucideIcon } from 'lucide-react';
 
 interface ToolCardProps {
   item: ToolboxItem;
+  /**
+   * 卡片来源：
+   * - 'mine'（默认）：用户自己的工具列表，点击进入详情；自定义工具支持快捷"编辑"
+   * - 'marketplace'：他人公开的工具，点击 = Fork 到自己列表
+   */
+  source?: 'mine' | 'marketplace';
 }
 
 // 图标组件映射
@@ -143,8 +156,19 @@ function getPalette(iconName: string) {
 import { SpotlightEffect } from './SpotlightEffect';
 import { ReviewAgentCardArt } from './ReviewAgentCardArt';
 
-export function ToolCard({ item }: ToolCardProps) {
-  const { selectItem, toggleFavorite, isFavorite } = useToolboxStore();
+export function ToolCard({ item, source = 'mine' }: ToolCardProps) {
+  const {
+    selectItem,
+    toggleFavorite,
+    isFavorite,
+    startEdit,
+    forkItem,
+    setCategory,
+    togglePublish,
+    deleteItem,
+    newUnpublishedIds,
+    dismissNewUnpublished,
+  } = useToolboxStore();
   const navigate = useNavigate();
   const palette = getPalette(item.icon);
   const IconComponent = getIconComponent(item.icon);
@@ -156,9 +180,72 @@ export function ToolCard({ item }: ToolCardProps) {
   const [videoReady, setVideoReady] = useState(false);
   const [hovering, setHovering] = useState(false);
   const [downloadDialogOpen, setDownloadDialogOpen] = useState(false);
+  const [forking, setForking] = useState(false);
+  const [togglingPublish, setTogglingPublish] = useState(false);
   const videoRef = useRef<HTMLVideoElement>(null);
 
+  const isMarketplaceCard = source === 'marketplace';
+  // 双重判定：有 createdByUserId 也视为用户自建（兼容后端旧数据未返回 type 字段）
+  const isOwnCustomCard =
+    source === 'mine' && (item.type === 'custom' || !!item.createdBy || !!item.createdByName);
+  /** 新创建但还没公开发布的工具 — 脉动高亮「公开发布」按钮，引导用户完成发布动作 */
+  const needsPublishHint = isOwnCustomCard && !item.isPublic && newUnpublishedIds.has(item.id);
+  /** 内置但非"定制版"（无独立路由页），可以被克隆为我的副本 */
+  const isForkableBuiltin =
+    source === 'mine' &&
+    item.type === 'builtin' &&
+    !isOwnCustomCard &&
+    !item.routePath &&
+    item.agentKey !== 'prd-agent';
+
+  // 作者名 fallback 策略：
+  // 1) 后端返回的 createdByName 优先
+  // 2) 用户自建 + 未返回 name（GetUserName() 依赖 JWT "name" claim，可能为空）→ 用当前登录用户的 displayName
+  // 3) marketplace 卡片：后端必然返回 createdByName，兜底"匿名用户"
+  // 4) 其它（内置等）：兜底"官方"
+  const currentUser = useAuthStore((s) => s.user);
+  const authorName =
+    item.createdByName ||
+    (isOwnCustomCard
+      ? currentUser?.displayName || currentUser?.username || '我'
+      : isMarketplaceCard
+      ? '匿名用户'
+      : '官方');
+
+  // 头像 URL — 优先级：
+  // 1) 后端返回的 createdByAvatarFileName → resolveAvatarUrl 拼 CDN（公开市场里别人也能显示真头像）
+  // 2) 当作者就是当前登录用户时 → authStore.avatarUrl（后端还没回写头像字段的老数据兜底）
+  // 3) 首字母圆形块（内置"官方"/旧数据等）
+  const isMe =
+    !!currentUser?.userId &&
+    (item.createdBy === currentUser.userId ||
+      (isOwnCustomCard && !item.createdBy));
+  const authorAvatarUrl = item.createdByAvatarFileName
+    ? resolveAvatarUrl({ avatarFileName: item.createdByAvatarFileName })
+    : isMe
+    ? currentUser?.avatarUrl || null
+    : null;
+
+  const handleFork = async () => {
+    if (forking) return;
+    setForking(true);
+    try {
+      const forked = await forkItem(item.id);
+      if (forked) {
+        // 跳到「我创建的」让用户立刻看到 Fork 出来的副本
+        setCategory('custom');
+      }
+    } finally {
+      setForking(false);
+    }
+  };
+
   const handleClick = () => {
+    if (isMarketplaceCard) {
+      // 市场卡片：直接 Fork，避免再多一步进详情
+      void handleFork();
+      return;
+    }
     if (item.agentKey === 'prd-agent') {
       setDownloadDialogOpen(true);
       return;
@@ -173,6 +260,54 @@ export function ToolCard({ item }: ToolCardProps) {
   const handleToggleFavorite = (e: React.MouseEvent) => {
     e.stopPropagation();
     toggleFavorite(item.id);
+  };
+
+  const handleQuickEdit = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    startEdit(item);
+  };
+
+  const handleCopyBuiltin = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    // 与 ToolDetail 的「复制并编辑」逻辑一致
+    startEdit({
+      ...item,
+      id: '', // 空 id = 新建
+      name: `${item.name}（我的副本）`,
+      category: 'custom',
+      type: 'custom',
+      prompt: item.systemPrompt,
+    } as ToolboxItem);
+  };
+
+  const handleTogglePublish = async (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (togglingPublish) return;
+    const newValue = !item.isPublic;
+    if (newValue) {
+      const ok = window.confirm(
+        '公开发布后，所有用户都能在百宝箱「公开市场」Tab 看到并 Fork 这个智能体' +
+          '（包含名称、描述、提示词、标签）。\n\n确定要公开发布吗？'
+      );
+      if (!ok) return;
+    }
+    setTogglingPublish(true);
+    try {
+      const ok = await togglePublish(item.id, newValue);
+      if (ok) toast.success(newValue ? '已公开发布到市场' : '已取消公开');
+      else toast.error('操作失败，请稍后重试');
+    } finally {
+      setTogglingPublish(false);
+    }
+  };
+
+  const handleDelete = async (e: React.MouseEvent) => {
+    e.stopPropagation();
+    const ok = window.confirm(`确定删除「${item.name}」吗？此操作不可恢复。`);
+    if (!ok) return;
+    const success = await deleteItem(item.id);
+    if (success) toast.success('已删除');
+    else toast.error('删除失败');
   };
 
   const handleMouseEnter = () => {
@@ -300,14 +435,98 @@ export function ToolCard({ item }: ToolCardProps) {
         }}
       />
 
+      {/* 右上角操作浮条 — 卡片 hover 时显示核心操作：编辑/公开/删除 或 复制 */}
+      {(isOwnCustomCard || isForkableBuiltin) && (
+        <div
+          className={`absolute top-1.5 right-1.5 z-30 flex items-center gap-0.5 transition-opacity duration-200 ${
+            needsPublishHint ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'
+          }`}
+          style={{
+            background: 'rgba(0, 0, 0, 0.55)',
+            backdropFilter: 'blur(8px)',
+            WebkitBackdropFilter: 'blur(8px)',
+            borderRadius: 8,
+            padding: '3px 4px',
+            border: needsPublishHint
+              ? '1px solid rgba(16, 185, 129, 0.6)'
+              : '1px solid rgba(255, 255, 255, 0.1)',
+            boxShadow: needsPublishHint
+              ? '0 0 12px rgba(16, 185, 129, 0.5), 0 0 0 1px rgba(16, 185, 129, 0.3)'
+              : undefined,
+          }}
+        >
+          {isOwnCustomCard && (
+            <>
+              <button
+                onClick={handleQuickEdit}
+                title="编辑此智能体"
+                className="w-6 h-6 rounded-md flex items-center justify-center transition-all duration-150 hover:bg-white/15 hover:scale-110"
+              >
+                <Edit size={12} style={{ color: 'rgba(255, 255, 255, 0.85)' }} />
+              </button>
+              <button
+                onClick={(e) => {
+                  // 用户已经注意到按钮，清除脉动标记（无论点后是否确认）
+                  dismissNewUnpublished(item.id);
+                  void handleTogglePublish(e);
+                }}
+                disabled={togglingPublish}
+                title={
+                  item.isPublic
+                    ? '已公开 — 他人可在「公开市场」Tab 看到并 Fork；点击取消公开'
+                    : needsPublishHint
+                    ? '👈 点我公开发布！让同事也能看到这个智能体（否则只有你自己可见）'
+                    : '公开发布到「公开市场」，让所有用户都能看到并 Fork'
+                }
+                className="relative w-6 h-6 rounded-md flex items-center justify-center transition-all duration-150 hover:bg-white/15 hover:scale-110 disabled:opacity-50"
+                style={item.isPublic ? { background: 'rgba(16, 185, 129, 0.25)' } : undefined}
+              >
+                {needsPublishHint && (
+                  <span
+                    className="absolute inset-[-4px] rounded-lg animate-ping pointer-events-none"
+                    style={{
+                      background: 'rgba(16, 185, 129, 0.35)',
+                      border: '1px solid rgba(16, 185, 129, 0.8)',
+                    }}
+                  />
+                )}
+                <Globe2
+                  size={12}
+                  className="relative"
+                  style={{ color: item.isPublic ? '#6ee7b7' : needsPublishHint ? '#6ee7b7' : 'rgba(255, 255, 255, 0.85)' }}
+                />
+              </button>
+              <button
+                onClick={handleDelete}
+                title="删除此智能体"
+                className="w-6 h-6 rounded-md flex items-center justify-center transition-all duration-150 hover:bg-red-500/30 hover:scale-110"
+              >
+                <Trash2 size={12} style={{ color: 'rgba(252, 165, 165, 0.95)' }} />
+              </button>
+            </>
+          )}
+          {isForkableBuiltin && (
+            <button
+              onClick={handleCopyBuiltin}
+              title="复制一份到我的百宝箱（可自由修改提示词、模型等参数）"
+              className="flex items-center gap-1 h-6 px-2 rounded-md transition-all duration-150 hover:bg-white/15 text-[10px] font-medium"
+              style={{ color: 'rgba(255, 255, 255, 0.9)' }}
+            >
+              <Copy size={11} />
+              复制并编辑
+            </button>
+          )}
+        </div>
+      )}
+
       {/* 底部信息区 */}
       <div
-        className="absolute bottom-0 left-0 right-0 px-2.5 pb-2 pt-1 z-20"
+        className="absolute bottom-0 left-0 right-0 px-3 pb-2.5 pt-1.5 z-20"
       >
         {/* 标题行 */}
-        <div className="flex items-center gap-1 mb-0.5">
+        <div className="flex items-center gap-1 mb-1">
           <div
-            className="font-semibold text-[11px] truncate flex-1"
+            className="font-semibold text-[13px] truncate flex-1"
             style={{
               color: '#ffffff',
               textShadow: '0 1px 4px rgba(0,0,0,0.8)',
@@ -316,7 +535,7 @@ export function ToolCard({ item }: ToolCardProps) {
             {item.name}
           </div>
           <ArrowUpRight
-            size={11}
+            size={13}
             className="shrink-0 opacity-0 group-hover:opacity-100 transition-all duration-300 group-hover:translate-x-0.5 group-hover:-translate-y-0.5"
             style={{ color: palette.soft }}
           />
@@ -324,9 +543,9 @@ export function ToolCard({ item }: ToolCardProps) {
 
         {/* 描述 */}
         <div
-          className="text-[9px] line-clamp-2 leading-snug mb-1.5 transition-colors duration-300 group-hover:text-white/85"
+          className="text-[11px] line-clamp-2 leading-snug mb-2 transition-colors duration-300 group-hover:text-white/85"
           style={{
-            color: 'rgba(255, 255, 255, 0.55)',
+            color: 'rgba(255, 255, 255, 0.6)',
             textShadow: '0 1px 4px rgba(0,0,0,0.8)',
             minHeight: '2em',
           }}
@@ -336,11 +555,11 @@ export function ToolCard({ item }: ToolCardProps) {
 
         {/* Tags */}
         {item.tags.length > 0 && (
-          <div className="flex flex-wrap gap-1 mb-1.5">
+          <div className="flex flex-wrap gap-1 mb-2">
             {item.tags.slice(0, 2).map((tag) => (
               <span
                 key={tag}
-                className="text-[8px] px-1.5 py-px rounded backdrop-blur-md transition-colors duration-300"
+                className="text-[10px] px-1.5 py-0.5 rounded backdrop-blur-md transition-colors duration-300"
                 style={{
                   background: 'rgba(255, 255, 255, 0.05)',
                   color: 'rgba(255, 255, 255, 0.7)',
@@ -351,86 +570,152 @@ export function ToolCard({ item }: ToolCardProps) {
               </span>
             ))}
             {item.tags.length > 2 && (
-              <span className="text-[8px] px-0.5 font-medium" style={{ color: 'rgba(255, 255, 255, 0.4)' }}>
+              <span className="text-[10px] px-0.5 font-medium" style={{ color: 'rgba(255, 255, 255, 0.4)' }}>
                 +{item.tags.length - 2}
               </span>
             )}
           </div>
         )}
 
-        {/* Footer — 内置: 徽章 + 收藏; 自定义: 作者 + 统计 */}
+        {/* Footer —
+         * 定制版（有独立路由页）：显示「定制版」徽章，不显示作者
+         * 其它所有：显示作者头像/名字 + 状态徽章
+         *   - 用户自建 && !isPublic → 橙色「施工中」
+         *   - isPublic              → 绿色「已公开」
+         *   - 对话型内置             → 无状态徽章（官方默认公开）
+         */}
         <div
           className="flex items-center justify-between gap-1 pt-1.5"
           style={{ borderTop: '1px solid rgba(255, 255, 255, 0.08)' }}
         >
-          {item.type === 'custom' ? (
+          {!isCustomized ? (
             <>
-              {/* 作者头像 + 名字（左下角若 wip 则显示"施工中"） */}
+              {/* 作者头像 + 名字 + 状态徽章 */}
               <div className="flex items-center gap-1 min-w-0">
-                {item.wip && (
+                {isOwnCustomCard && !item.isPublic && (
                   <span
-                    className="shrink-0 text-[8px] px-1.5 py-0.5 rounded font-medium inline-flex items-center gap-1"
+                    className="shrink-0 text-[10px] px-1.5 py-0.5 rounded font-medium inline-flex items-center gap-1"
                     style={{
                       background: 'rgba(245, 158, 11, 0.18)',
                       color: '#fcd34d',
                       border: '1px solid rgba(245, 158, 11, 0.45)',
                     }}
-                    title="未正式发布"
+                    title="未公开 — 仅自己可见；点卡片右上角 🌍 即可公开发布"
                   >
-                    <HardHat size={8} />
+                    <HardHat size={10} />
                     施工中
                   </span>
                 )}
-                <div
-                  className="w-3.5 h-3.5 rounded-full shrink-0 flex items-center justify-center text-[7px] font-bold"
-                  style={{
-                    background: `linear-gradient(135deg, ${palette.from}, ${palette.soft})`,
-                    color: 'rgba(0, 0, 0, 0.7)',
-                  }}
-                >
-                  {(item.createdByName || '?')[0]}
-                </div>
-                <span
-                  className="text-[8px] truncate"
-                  style={{ color: 'rgba(255, 255, 255, 0.5)' }}
-                >
-                  {item.createdByName || '未知'}
-                </span>
-              </div>
-              {/* 使用次数 */}
-              <div className="flex items-center gap-1.5 shrink-0">
-                {item.usageCount > 0 && (
+                {item.isPublic && !isMarketplaceCard && (
                   <span
-                    className="flex items-center gap-0.5 text-[8px]"
-                    style={{ color: 'rgba(255, 255, 255, 0.45)' }}
+                    className="shrink-0 text-[10px] px-1.5 py-0.5 rounded font-medium inline-flex items-center gap-1"
+                    style={{
+                      background: 'rgba(16, 185, 129, 0.18)',
+                      color: '#6ee7b7',
+                      border: '1px solid rgba(16, 185, 129, 0.45)',
+                    }}
+                    title="已公开到市场，他人可 Fork"
                   >
-                    <Zap size={8} style={{ color: palette.soft }} />
-                    {item.usageCount >= 1000 ? `${(item.usageCount / 1000).toFixed(1)}k` : item.usageCount}
+                    <Globe2 size={10} />
+                    已公开
                   </span>
                 )}
-                <button
-                  onClick={handleToggleFavorite}
-                  className="flex items-center justify-center transition-all duration-300 hover:scale-125"
-                  title={favorited ? '取消收藏' : '收藏'}
-                >
-                  <Star
-                    size={10}
-                    fill={favorited ? '#FBBF24' : 'none'}
-                    style={{
-                      color: favorited ? '#FBBF24' : 'rgba(255, 255, 255, 0.25)',
-                      filter: favorited ? 'drop-shadow(0 0 4px rgba(251, 191, 36, 0.5))' : 'none',
-                    }}
+                {authorAvatarUrl ? (
+                  <img
+                    src={authorAvatarUrl}
+                    alt={authorName}
+                    className="w-4 h-4 rounded-full shrink-0 object-cover"
+                    style={{ border: '1px solid rgba(255, 255, 255, 0.15)' }}
+                    title={authorName}
+                    draggable={false}
                   />
-                </button>
+                ) : (
+                  <div
+                    className="w-4 h-4 rounded-full shrink-0 flex items-center justify-center text-[9px] font-bold"
+                    style={{
+                      background: `linear-gradient(135deg, ${palette.from}, ${palette.soft})`,
+                      color: 'rgba(0, 0, 0, 0.7)',
+                    }}
+                    title={authorName}
+                  >
+                    {authorName[0]}
+                  </div>
+                )}
+                <span
+                  className="text-[10px] truncate"
+                  style={{ color: 'rgba(255, 255, 255, 0.5)' }}
+                >
+                  {authorName}
+                </span>
+              </div>
+              {/* 右侧：marketplace 模式显示 Fork 数 + Fork 按钮；自有卡片显示使用次数 + 快捷编辑 + 收藏 */}
+              <div className="flex items-center gap-1.5 shrink-0">
+                {isMarketplaceCard ? (
+                  <>
+                    {(item.forkCount ?? 0) > 0 && (
+                      <span
+                        className="flex items-center gap-0.5 text-[10px]"
+                        style={{ color: 'rgba(255, 255, 255, 0.5)' }}
+                        title="被 Fork 次数"
+                      >
+                        <GitFork size={10} style={{ color: palette.soft }} />
+                        {item.forkCount}
+                      </span>
+                    )}
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        void handleFork();
+                      }}
+                      disabled={forking}
+                      className="flex items-center gap-0.5 text-[10px] px-1.5 py-0.5 rounded font-medium transition-all duration-300 hover:scale-105 disabled:opacity-50"
+                      style={{
+                        background: `${palette.from}25`,
+                        color: palette.soft,
+                        border: `1px solid ${palette.from}40`,
+                      }}
+                      title="复制到我的百宝箱"
+                    >
+                      <GitFork size={11} />
+                      {forking ? 'Fork 中…' : 'Fork'}
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    {item.usageCount > 0 && (
+                      <span
+                        className="flex items-center gap-0.5 text-[10px]"
+                        style={{ color: 'rgba(255, 255, 255, 0.45)' }}
+                      >
+                        <Zap size={10} style={{ color: palette.soft }} />
+                        {item.usageCount >= 1000 ? `${(item.usageCount / 1000).toFixed(1)}k` : item.usageCount}
+                      </span>
+                    )}
+                    <button
+                      onClick={handleToggleFavorite}
+                      className="flex items-center justify-center transition-all duration-300 hover:scale-125"
+                      title={favorited ? '取消收藏' : '收藏'}
+                    >
+                      <Star
+                        size={12}
+                        fill={favorited ? '#FBBF24' : 'none'}
+                        style={{
+                          color: favorited ? '#FBBF24' : 'rgba(255, 255, 255, 0.25)',
+                          filter: favorited ? 'drop-shadow(0 0 4px rgba(251, 191, 36, 0.5))' : 'none',
+                        }}
+                      />
+                    </button>
+                  </>
+                )}
               </div>
             </>
           ) : (
             <>
-              {/* 内置工具: 左下角徽章组（施工中 + 系统内置/定制版） */}
+              {/* 定制版：徽章 + 收藏（定制版是官方独立页面，不需要作者信息） */}
               <div className="flex items-center gap-1 min-w-0">
                 {item.wip && (
                   <span
-                    className="shrink-0 text-[8px] px-1.5 py-0.5 rounded font-medium inline-flex items-center gap-1"
+                    className="shrink-0 text-[10px] px-1.5 py-0.5 rounded font-medium inline-flex items-center gap-1"
                     style={{
                       background: 'rgba(245, 158, 11, 0.18)',
                       color: '#fcd34d',
@@ -438,24 +723,20 @@ export function ToolCard({ item }: ToolCardProps) {
                     }}
                     title="未正式发布"
                   >
-                    <HardHat size={8} />
+                    <HardHat size={10} />
                     施工中
                   </span>
                 )}
                 <span
-                  className="text-[8px] px-1.5 py-0.5 rounded font-medium inline-flex items-center gap-1"
+                  className="text-[10px] px-1.5 py-0.5 rounded font-medium inline-flex items-center gap-1"
                   style={{
-                    background: isCustomized ? `${palette.from}25` : 'transparent',
-                    color: isCustomized ? palette.soft : 'rgba(255, 255, 255, 0.4)',
-                    border: isCustomized ? `1px solid ${palette.from}40` : '1px solid rgba(255, 255, 255, 0.1)',
+                    background: `${palette.from}25`,
+                    color: palette.soft,
+                    border: `1px solid ${palette.from}40`,
                   }}
                 >
-                  {isCustomized ? (
-                    <>
-                      <Sparkles size={8} />
-                      定制版
-                    </>
-                  ) : '系统内置'}
+                  <Sparkles size={10} />
+                  定制版
                 </span>
               </div>
               <button
@@ -464,7 +745,7 @@ export function ToolCard({ item }: ToolCardProps) {
                 title={favorited ? '取消收藏' : '收藏'}
               >
                 <Star
-                  size={10}
+                  size={12}
                   fill={favorited ? '#FBBF24' : 'none'}
                   style={{
                     color: favorited ? '#FBBF24' : 'rgba(255, 255, 255, 0.25)',

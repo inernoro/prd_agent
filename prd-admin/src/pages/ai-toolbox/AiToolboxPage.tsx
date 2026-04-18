@@ -2,7 +2,7 @@ import { useEffect, useMemo } from 'react';
 import { GlassCard } from '@/components/design/GlassCard';
 import { TabBar, type TabBarItem } from '@/components/design/TabBar';
 import { useToolboxStore, type ToolboxCategory, type ToolboxPageTab } from '@/stores/toolboxStore';
-import { Package, Search, Plus, Sparkles, Boxes, User, Wrench, Star } from 'lucide-react';
+import { Package, Search, Plus, Sparkles, Boxes, User, Wrench, Star, Globe2 } from 'lucide-react';
 import { MapSectionLoader } from '@/components/ui/VideoLoader';
 import { Button } from '@/components/design/Button';
 import { useBreakpoint } from '@/hooks/useBreakpoint';
@@ -23,6 +23,7 @@ const CATEGORY_TABS: TabBarItem[] = [
   { key: 'favorite', label: '收藏', icon: <Star size={14} /> },
   { key: 'builtin', label: '内置工具', icon: <Sparkles size={14} /> },
   { key: 'custom', label: '我创建的', icon: <User size={14} /> },
+  { key: 'marketplace', label: '公开市场', icon: <Globe2 size={14} /> },
 ];
 
 // 页面容器样式 — 页面级不使用 surface 类，保持透明让卡片自身表达玻璃质感
@@ -40,10 +41,13 @@ export default function AiToolboxPage() {
     itemsLoading,
     selectedItem,
     favoriteIds,
+    marketplaceItems,
+    marketplaceLoading,
     setPageTab,
     setCategory,
     setSearchQuery,
     loadItems,
+    loadMarketplaceItems,
     startCreate,
   } = useToolboxStore();
 
@@ -51,15 +55,34 @@ export default function AiToolboxPage() {
     loadItems();
   }, [loadItems]);
 
+  // Lazy-load marketplace when user switches to it; refetch on keyword change.
+  useEffect(() => {
+    if (category !== 'marketplace') return;
+    const handle = window.setTimeout(() => {
+      loadMarketplaceItems(searchQuery.trim() || undefined);
+    }, 250);
+    return () => window.clearTimeout(handle);
+  }, [category, searchQuery, loadMarketplaceItems]);
+
+  const isMarketplace = category === 'marketplace';
+
   // Filter items based on category and search
   const filteredItems = useMemo(() => {
+    if (isMarketplace) {
+      // Server-side keyword filtering already applied; show as-is.
+      return marketplaceItems;
+    }
+
     let result = items;
 
     // Filter by category
+    // 注：后端 ToolboxItem 可能没有 type 字段，用 createdBy/createdByName 作为兜底判定
+    const isUserCreated = (it: (typeof items)[number]) =>
+      it.type === 'custom' || !!it.createdBy || !!it.createdByName;
     if (category === 'builtin') {
-      result = result.filter((item) => item.type === 'builtin');
+      result = result.filter((item) => item.type === 'builtin' && !isUserCreated(item));
     } else if (category === 'custom') {
-      result = result.filter((item) => item.type === 'custom');
+      result = result.filter(isUserCreated);
     } else if (category === 'favorite') {
       result = result.filter((item) => favoriteIds.has(item.id));
     }
@@ -76,7 +99,9 @@ export default function AiToolboxPage() {
     }
 
     return result;
-  }, [items, category, searchQuery, favoriteIds]);
+  }, [isMarketplace, marketplaceItems, items, category, searchQuery, favoriteIds]);
+
+  const gridLoading = isMarketplace ? marketplaceLoading : itemsLoading;
 
   // Render based on current view
   if (view === 'detail' && selectedItem) {
@@ -165,7 +190,7 @@ export default function AiToolboxPage() {
 
       {/* Tool Grid */}
       <div className="flex-1 min-h-0 overflow-auto px-4 pb-3">
-        {itemsLoading ? (
+        {gridLoading ? (
           <div className="flex items-center justify-center h-48">
             <MapSectionLoader text="加载中..." />
           </div>
@@ -182,10 +207,18 @@ export default function AiToolboxPage() {
             </div>
             <div className="text-center">
               <div className="text-sm font-medium mb-0.5" style={{ color: 'rgba(255, 255, 255, 0.8)' }}>
-                {searchQuery ? '没有找到匹配的工具' : '暂无工具'}
+                {searchQuery
+                  ? '没有找到匹配的工具'
+                  : isMarketplace
+                  ? '市场还没有公开的智能体'
+                  : '暂无工具'}
               </div>
               <div className="text-xs" style={{ color: 'rgba(255, 255, 255, 0.45)' }}>
-                {searchQuery ? '尝试其他关键词' : '点击右上角创建你的第一个智能体'}
+                {searchQuery
+                  ? '尝试其他关键词'
+                  : isMarketplace
+                  ? '在「我创建的」里把工具发布到市场，让大家都能 Fork'
+                  : '点击右上角创建你的第一个智能体'}
               </div>
             </div>
             {category === 'custom' && !searchQuery && (
@@ -196,9 +229,9 @@ export default function AiToolboxPage() {
             )}
           </GlassCard>
         ) : (
-          <div className="grid gap-2" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))' }}>
+          <div className="grid gap-3" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))' }}>
             {filteredItems.map((item) => (
-              <ToolCard key={item.id} item={item} />
+              <ToolCard key={item.id} item={item} source={isMarketplace ? 'marketplace' : 'mine'} />
             ))}
           </div>
         )}
