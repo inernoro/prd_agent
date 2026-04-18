@@ -1,0 +1,37 @@
+---
+globs: prd-api/src/**/*.cs
+description: 应用身份隔离 —— Controller 硬编码 appKey，8 个应用标识
+---
+
+<!-- 本文件由 scripts/sync-cursor-rules.sh 自动生成，请勿直接编辑。
+     事实源: .claude/rules/app-identity.md
+     生成时间: 2026-04-18T16:59:04Z -->
+
+
+# 应用身份隔离原则
+
+每个应用必须有独立的 Controller 层，Controller 中硬编码 `appKey`，不由前端传递。
+
+## 规则
+
+1. 每个应用必须有自己的 Controller，硬编码 `appKey`
+2. `appKey` 使用 `kebab-case` 格式
+3. 后台管理接口使用 `/api/{module}` 格式，禁止 `/v1/` 版本号
+4. 即使多个应用调用相同底层服务，也要通过不同 Controller 入口
+
+## 已定义应用标识
+
+| appKey | 应用 |
+|--------|------|
+| `literary-agent` | 文学创作 |
+| `visual-agent` | 视觉创作 |
+| `prd-agent` | PRD 解读 |
+| `defect-agent` | 缺陷管理 |
+| `video-agent` | 视频生成 |
+| `report-agent` | 周报管理 |
+| `review-agent` | 产品评审员 |
+| `pr-review` | PR 审查工作台 |
+
+## 水印配置
+
+水印配置基于 `appKey` 绑定，只有绑定了特定 appKey 的应用才会应用对应的水印配置。

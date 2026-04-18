@@ -1,0 +1,46 @@
+---
+alwaysApply: true
+description: 新 Agent 默认注册百宝箱 + 带 wip:true + 交付必须声明位置和点击路径
+---
+
+<!-- 本文件由 scripts/sync-cursor-rules.sh 自动生成，请勿直接编辑。
+     事实源: .claude/rules/navigation-registry.md
+     生成时间: 2026-04-18T16:59:04Z -->
+
+# 导航注册规则（新 Agent 必须声明去哪里）
+
+用户反馈过：新建智能体后只给路由甚至只给名字，不知道从哪进——首页？侧边栏？百宝箱？本规则根除这类"找不到"缺陷。
+
+## 三条硬规则
+
+### 1. 新 Agent 默认注册到百宝箱，且默认 `wip: true`
+
+唯一入口文件：`prd-admin/src/stores/toolboxStore.ts` 的 `BUILTIN_TOOLS`。参考现有条目（如 `builtin-prd-agent`）格式追加即可，禁止只加路由不加条目。
+
+**新增条目必须带 `wip: true`**，卡片左下角自动显示橙色"施工中"徽章。只有通过 CLAUDE.md 强制规则 #8「Agent 开发完成标准」的全部验收（预览地址端到端跑通、依赖外部服务可用等），才能删除 `wip` 字段转为正式发布。
+
+**现有条目保持不变**：本规则只约束今后新增的 Agent，历史条目不追溯改造。
+
+### 2. 左侧导航 / 首页快捷是可选升级
+
+仅当用户明确说"加到左侧"或"放首页"时才追加，默认不做：
+
+- 左侧导航：`AdminMenuCatalog.cs` + `authzMenuMapping.ts`
+- 首页快捷：`LandingPage.tsx` / `MobileHomePage.tsx` 的 `QUICK_AGENTS`
+
+多处注册时 `routePath` 必须一致。
+
+### 3. 交付时必须声明位置（两行格式，不可省略）
+
+```
+【位置】百宝箱 / 左侧导航"XX"菜单 / 首页快捷入口
+【路径】登录后首页 → 1) 点击 → 2) 点击 → 3) 到达
+```
+
+禁止：只给路由（"访问 `/new-agent` 即可"）、只给功能名、模糊位置（"在管理后台可以看到"）、未注册百宝箱就声称完成。
+
+## 审计清单
+
+- [ ] `toolboxStore.ts` BUILTIN_TOOLS 已追加条目
+- [ ] 用户要求加左侧/首页时：对应文件已同步，`routePath` 无分叉
+- [ ] 交付消息包含【位置】+【路径】两行

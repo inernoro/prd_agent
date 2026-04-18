@@ -1,0 +1,36 @@
+---
+alwaysApply: true
+description: Cursor 规则索引 + 与 Claude 规则的事实源关系
+---
+
+<!-- 本文件由 scripts/sync-cursor-rules.sh 自动生成，请勿直接编辑。 -->
+
+# PRD Agent — Cursor 规则索引
+
+## 事实源（重要）
+
+**所有 `.cursor/rules/*.mdc` 都是从 `.claude/rules/*.md` 自动生成的镜像**。
+禁止直接编辑 `.cursor/rules/` 下的 `.mdc` 文件——改动会在下次同步时被覆盖。
+
+- 修改规则 → 编辑 `.claude/rules/<name>.md`
+- 重新生成 → 跑 `bash scripts/sync-cursor-rules.sh`
+- 规则索引 + 触发范围 → 见项目根 `CLAUDE.md` 的"架构规则索引"表格
+
+## 必读
+
+1. `CLAUDE.md`（项目根）—— 9 条强制规则 + 技能链全图
+2. `.claude/rules/codebase-snapshot.md`—— 功能状态速查 + 115 个 MongoDB 集合
+3. `.claude/rules/llm-gateway.md`—— LLM 调用硬约束（含 LlmRequestContext.UserId 必填）
+
+## 已废弃概念（禁止再引用）
+
+| 废弃 | 替代 |
+|------|------|
+| Guide / GuideController | Prompt Stages |
+| Provider | Platform |
+| ImageMaster（代码层） | VisualAgent |
+| 直接 SSE 流 | Run/Worker + afterSeq |
+| IEEE 830-1998 | ISO/IEC/IEEE 29148:2018 |
+| SmartModelScheduler | ILlmGateway + ModelResolver |
+| localStorage | sessionStorage |
+| npm / yarn | pnpm only |
