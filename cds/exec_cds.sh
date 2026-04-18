@@ -117,6 +117,52 @@ load_env() {
   set +a
 }
 
+# ensure_cds_mongo_running: 启动 CDS 前确保 cds-state-mongo 容器 running。
+#
+# 修复循环依赖：CDS 启动要连 Mongo，但 Mongo 容器记在 CDS state 里——
+# 如果 Mongo 挂了，CDS 读 state 失败就起不来。解法是在 CDS 启动前由
+# exec_cds.sh 直接 docker start 容器（不需要 CDS API）。
+#
+# 依赖 .cds.env 里的：
+#   - CDS_MONGO_CONTAINER  容器名（init 会写；老部署可能没有这个变量）
+#   - CDS_STORAGE_MODE=mongo
+#
+# 缺变量 → 安静跳过（假定运维用 CDS API 管 Mongo，或根本没用 Mongo）
+# 容器不存在 → 打印警告但不 fail（让 CDS 自己 throw 带明确错误）
+ensure_cds_mongo_running() {
+  [ "${CDS_STORAGE_MODE:-}" = "mongo" ] || return 0
+  [ -n "${CDS_MONGO_CONTAINER:-}" ] || return 0
+
+  local c="$CDS_MONGO_CONTAINER"
+  # 已 running：什么都不做
+  if docker ps --format '{{.Names}}' 2>/dev/null | grep -qx "$c"; then
+    return 0
+  fi
+  # 存在但 stopped：start
+  if docker ps -a --format '{{.Names}}' 2>/dev/null | grep -qx "$c"; then
+    info "MongoDB 容器 $c 未运行，正在启动…"
+    if docker start "$c" >/dev/null 2>&1; then
+      ok "MongoDB 容器已启动"
+      # 等 healthy（最多 15s）
+      local i=0
+      while [ "$i" -lt 15 ]; do
+        if docker exec "$c" mongosh --quiet --eval 'db.runCommand({ping:1}).ok' 2>/dev/null | grep -q '^1$'; then
+          return 0
+        fi
+        sleep 1
+        i=$((i + 1))
+      done
+      warn "MongoDB 15s 内未就绪；CDS 启动可能会失败，它会打印清晰错误"
+    else
+      err "MongoDB 容器 $c 启动失败"
+      return 1
+    fi
+  else
+    warn "MongoDB 容器 $c 不存在；CDS 启动时会 throw。请先 ./exec_cds.sh init 重建，或手动创建容器"
+    return 1
+  fi
+}
+
 # Read an individual value from .cds.env without sourcing it.
 read_env_value() {
   local key="$1"
@@ -441,15 +487,26 @@ build_ts() {
   # to every start. Users hate this — "./exec_cds.sh restart" used to feel
   # instant, now it drags because tsc has nothing to do yet still runs.
   #
-  # Strategy: find the newest .ts under src/, find dist/index.js mtime,
-  # compare. Skip if dist is newer. Keep the old unconditional path as
-  # a fallback when dist doesn't exist yet.
+  # Strategy: use git HEAD SHA as the cache key (not file mtimes).
+  #
+  # WHY SHA NOT MTIME: `git checkout` / `git pull` preserves the ORIGINAL
+  # commit mtime on checked-out files (so rebasing doesn't "touch"
+  # unchanged files). That breaks mtime-based sentinels — after a pull
+  # to a newer commit, `find src -newer dist/` returns NOTHING even
+  # though src actually changed. We saw this in the wild on 2026-04-18:
+  # self-update switched branches successfully, dist/ stayed stale,
+  # CDS ran old code for 30+ minutes before anyone noticed.
+  #
+  # New sentinel: write the compiled commit SHA to dist/.build-sha.
+  # Skip only when current HEAD SHA matches what's in that file.
   local dist="$SCRIPT_DIR/dist/index.js"
-  if [ -f "$dist" ]; then
-    local newest_src
-    newest_src="$(find "$SCRIPT_DIR/src" -name '*.ts' -type f -newer "$dist" -print -quit 2>/dev/null || true)"
-    if [ -z "$newest_src" ]; then
-      info "编译 TypeScript ... (跳过，dist 已是最新)"
+  local shafile="$SCRIPT_DIR/dist/.build-sha"
+  if [ -f "$dist" ] && [ -f "$shafile" ]; then
+    local current_sha last_sha
+    current_sha="$(git -C "$SCRIPT_DIR" rev-parse HEAD 2>/dev/null || echo unknown)"
+    last_sha="$(cat "$shafile" 2>/dev/null)"
+    if [ -n "$current_sha" ] && [ "$current_sha" = "$last_sha" ] && [ "$current_sha" != "unknown" ]; then
+      info "编译 TypeScript ... (跳过，dist 已对准 HEAD=$current_sha)"
       return 0
     fi
   fi
@@ -457,6 +514,8 @@ build_ts() {
   info "编译 TypeScript ..."
   npx tsc || true
   [ -f "$dist" ] || { err "编译失败: dist/index.js 不存在"; exit 1; }
+  # Stamp the sentinel so the next start can skip correctly
+  git -C "$SCRIPT_DIR" rev-parse HEAD > "$shafile" 2>/dev/null || true
 }
 
 # ══ nginx config rendering ═══════════════════════════════════════
@@ -774,6 +833,11 @@ cds_start_background() {
   # remember to re-export every variable by hand — too easy to miss.
   load_env
 
+  # CDS 连 Mongo 前先确保容器 running。避免 CDS 启动 → 连 Mongo 失败 →
+  # throw exit → systemd 循环重启的场景。失败不 fatal（让 CDS 给更明确
+  # 的错误）。
+  ensure_cds_mongo_running || true
+
   local mp; mp="$(read_port masterPort "${CDS_MASTER_PORT:-9900}")"
   local wp; wp="$(read_port workerPort "${CDS_WORKER_PORT:-5500}")"
 
@@ -824,6 +888,7 @@ cds_start_foreground() {
   build_ts
   # P4 Part 18 (G1.4): same multi-repo clone dir setup as background mode.
   load_env
+  ensure_cds_mongo_running || true
   export CDS_REPOS_BASE="${CDS_REPOS_BASE:-$REPOS_BASE_DEFAULT}"
   mkdir -p "$CDS_REPOS_BASE"
   info "启动 CDS (前台，Ctrl+C 退出)"
@@ -923,48 +988,89 @@ EOF
   chmod 600 "$ENV_FILE"
   ok "已写入 $ENV_FILE"
 
-  # ── Phase 3: MongoDB (可选，持久化项目/分支/Auth 数据) ─────────────
+  # ── Phase 3: MongoDB (可选，持久化所有 CDS state) ──────────────────
+  #
+  # 启用后：
+  #   - 所有项目/分支/Agent key/环境变量等状态住在 Mongo，不再用 state.json
+  #   - 容器名 cds-state-mongo（独立于业务 mongo，避免污染）
+  #   - 宿主机端口 27018（避开业务 mongo 的 27017）
+  #   - 数据卷 cds-state-mongo-data（docker volume，不随容器删除）
+  #   - 写入 .cds.env 四个变量，node 启动自己 parse 直接进 Mongo 模式
+  #   - CDS_MONGO_CONTAINER 让 start 命令启动前能 docker start（自愈）
   echo
   echo "  ─── 数据持久化（推荐）───"
-  echo "  CDS 默认将状态保存在本地 JSON 文件。启用 MongoDB 后，所有项目、分支、"
-  echo "  用户认证信息将持久化到数据库，重启后不丢失，同时支持多实例部署。"
+  echo "  默认 CDS 把状态写在 state.json 文件里。启用 MongoDB 后所有数据持久"
+  echo "  化到数据库，重启不丢，支持多实例；端口 27018（独立于业务 mongo）。"
   echo
   printf "  是否启动 MongoDB 容器并启用持久化存储? [Y/n]: "
   local use_mongo; read -r use_mongo
   if [[ ! "$use_mongo" =~ ^[Nn] ]]; then
-    local MONGO_CONTAINER="cds_mongodb"
-    local MONGO_PORT="${CDS_MONGO_PORT:-27017}"
-    local MONGO_URI="mongodb://localhost:${MONGO_PORT}/cds"
+    local MONGO_CONTAINER="cds-state-mongo"
+    local MONGO_PORT="${CDS_MONGO_PORT:-27018}"
+    local MONGO_DB="${CDS_MONGO_DB:-cds_state_db}"
+    local MONGO_URI="mongodb://127.0.0.1:${MONGO_PORT}/${MONGO_DB}"
 
+    # 端口冲突检测
+    if ss -tln "( sport = :${MONGO_PORT} )" 2>/dev/null | grep -q ":${MONGO_PORT}"; then
+      warn "端口 ${MONGO_PORT} 已被占用"
+      printf "  改用哪个端口? (回车默认 27019): "
+      local alt_port; read -r alt_port
+      MONGO_PORT="${alt_port:-27019}"
+      MONGO_URI="mongodb://127.0.0.1:${MONGO_PORT}/${MONGO_DB}"
+    fi
+
+    # 容器存在检查 + 启动
     if docker ps -a --format '{{.Names}}' 2>/dev/null | grep -qx "$MONGO_CONTAINER"; then
       if docker ps --format '{{.Names}}' 2>/dev/null | grep -qx "$MONGO_CONTAINER"; then
         ok "MongoDB 容器已在运行 ($MONGO_CONTAINER:$MONGO_PORT)"
       else
         info "启动已有 MongoDB 容器…"
-        docker start "$MONGO_CONTAINER" >/dev/null && ok "MongoDB 容器已启动" || err "启动 MongoDB 容器失败，请检查 docker 状态"
+        docker start "$MONGO_CONTAINER" >/dev/null \
+          && ok "MongoDB 容器已启动" \
+          || { err "启动 MongoDB 容器失败，请检查 docker 状态"; use_mongo="n"; }
       fi
     else
-      info "正在拉起 MongoDB 8 容器（首次可能需要拉取镜像，请稍候）…"
+      info "正在拉起 MongoDB 7 容器（首次可能需要拉取镜像，请稍候）…"
       docker run -d \
         --name "$MONGO_CONTAINER" \
         --restart unless-stopped \
-        -p "${MONGO_PORT}:27017" \
-        -v cds-mongodb-data:/data/db \
-        mongo:8 >/dev/null 2>&1 \
-      && ok "MongoDB 容器已启动 ($MONGO_CONTAINER:$MONGO_PORT，数据卷: cds-mongodb-data)" \
+        -p "127.0.0.1:${MONGO_PORT}:27017" \
+        -v cds-state-mongo-data:/data/db \
+        mongo:7 >/dev/null 2>&1 \
+      && ok "MongoDB 容器已启动 ($MONGO_CONTAINER:$MONGO_PORT，数据卷: cds-state-mongo-data)" \
       || { err "启动 MongoDB 容器失败，请检查 Docker 是否正常运行"; use_mongo="n"; }
     fi
 
+    # 等 Mongo 健康（最多 30s）
     if [[ ! "$use_mongo" =~ ^[Nn] ]]; then
-      # Append MongoDB config to .cds.env
-      cat >> "$ENV_FILE" <<MONGOEOF
-# MongoDB 持久化 (由 init 在 $(date +%F) 自动追加)
-export CDS_MONGO_URI="${MONGO_URI}"
-export CDS_STORAGE_MODE="mongo"
-export CDS_AUTH_BACKEND="mongo"
-MONGOEOF
+      info "等待 MongoDB 就绪（mongosh ping）…"
+      local mongo_ready=0
+      local i=0
+      while [ "$i" -lt 30 ]; do
+        if docker exec "$MONGO_CONTAINER" mongosh --quiet --eval 'db.runCommand({ping:1}).ok' 2>/dev/null | grep -q '^1$'; then
+          mongo_ready=1
+          break
+        fi
+        sleep 1
+        i=$((i + 1))
+      done
+      if [ "$mongo_ready" -eq 1 ]; then
+        ok "MongoDB 就绪 (${i}s)"
+      else
+        warn "MongoDB 30s 内未就绪，CDS 启动时会再次重试"
+      fi
+    fi
+
+    if [[ ! "$use_mongo" =~ ^[Nn] ]]; then
+      env_upsert CDS_MONGO_URI "${MONGO_URI}"
+      env_upsert CDS_MONGO_DB "${MONGO_DB}"
+      env_upsert CDS_STORAGE_MODE "mongo"
+      env_upsert CDS_AUTH_BACKEND "mongo"
+      env_upsert CDS_MONGO_CONTAINER "$MONGO_CONTAINER"
       ok "已启用 MongoDB 持久化存储 (CDS_STORAGE_MODE=mongo)"
-      info "数据库: ${MONGO_URI}"
+      info "  URI:       ${MONGO_URI}"
+      info "  Database:  ${MONGO_DB}"
+      info "  Container: ${MONGO_CONTAINER}"
     fi
   else
     info "跳过 MongoDB，使用本地 JSON 文件存储（重启后数据保留，但不支持多实例）"

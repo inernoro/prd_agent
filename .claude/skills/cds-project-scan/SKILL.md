@@ -5,6 +5,20 @@ description: Scans project structure and generates CDS (Cloud Dev Space) compose
 
 # CDS Project Scan — 项目结构扫描 & 配置生成
 
+> ⚠️ **已合并入 `cds` 技能 (2026-04-18)**。本技能进入维护模式，不再新增功能。
+>
+> **新用法**：
+> ```bash
+> cdscli scan                              # 扫描本地，stdout 输出 YAML
+> cdscli scan --apply-to-cds <projectId>   # 扫描 + 提交 CDS 审批
+> cdscli scan --output compose.yaml        # 写文件
+> ```
+> 完整文档：`.claude/skills/cds/SKILL.md` + `.claude/skills/cds/reference/scan.md`
+>
+> AI 优先走新 cds 技能；本文件保留仅为向后兼容既有触发词。
+
+---
+
 扫描项目技术栈、目录结构、Docker Compose、环境变量，生成可直接粘贴到 CDS Dashboard 的 compose YAML。
 
 ## 目录
@@ -161,11 +175,31 @@ CDS 运行时会自动将 `x-cds-env` 注入所有容器（优先级低于 `serv
 #### 触发条件（任一即可）
 
 - 用户明确说「提交到 CDS」/「apply to cds」/「帮我配置 cds」/「让 Claude 装到 CDS 上」
-- 传递参数 `/cds-scan --apply-to-cds <projectId>`
+- 传递参数 `/cds-scan --apply-to-cds <projectId>`（或不带 projectId，见下方"缺失 projectId 兜底"）
 
 满足任一则进入本阶段；否则执行完 Phase 7 即收尾。
 
-#### ⚠ 重要前提
+#### ⚠ 进度可见性硬要求（必读）
+
+Phase 8 是"脚本黑盒 + 网络请求"的组合，用户如果看不到每一步在做什么，就是"屏幕静止超过 2 秒"的体验缺陷（违反 CLAUDE.md 规则 #6）。AI **必须**逐步播报进度，推荐格式：
+
+```
+CDS 提交进度（正在进行）：
+- [x] 步骤 1/5：检查环境变量（CDS_HOST / AI_ACCESS_KEY）
+- [x] 步骤 2/5：确认目标 projectId = proj_abc123
+- [>] 步骤 3/5：POST /api/projects/proj_abc123/pending-import …
+- [ ] 步骤 4/5：解析响应 importId
+- [ ] 步骤 5/5：打印审批链接
+```
+
+每进入下一步，AI 必须在回复中重新渲染一次进度清单（把 `[>]` 移到下一行、`[x]` 勾掉前一行），而不是静默执行然后甩一个最终结果。失败时同样要渲染 `[✗]` 并立即说明下一步。
+
+**禁止**：
+- 一上来就跑 curl 不说话等着看结果
+- 失败后只打印 HTTP 状态码没有解释
+- 成功后不把 importId 和审批链接同时显示给用户
+
+#### ⚠ CDS 版本前提
 
 **CDS 一方需要安装我新增的 `pending-import` 功能后才可用（见 CLAUDE.md 更新记录）**。老版本 CDS 没有这个接口，调用会返回 404。进入 Phase 8 时 AI 必须先向用户复述这句话，让用户自行确认 CDS 已升级，再继续。
 
@@ -173,13 +207,34 @@ CDS 运行时会自动将 `x-cds-env` 注入所有容器（优先级低于 `serv
 
 1. 环境变量 `CDS_HOST` 已设置（认证规范复用 [cds-deploy-pipeline](../cds-deploy-pipeline/SKILL.md)）
 2. 环境变量 `AI_ACCESS_KEY` 已设置（与 cds-deploy-pipeline 同一把静态密钥）
-3. 目标 `projectId` 已知——**由用户提供**：通常流程是用户先在 CDS Dashboard `project-list` 页面创建一个**空项目**，然后从项目卡片或 URL 复制 ID，再告诉 AI。**禁止 AI 自己猜 projectId。**
+3. 目标 `projectId` 已知 —— 默认由用户提供；缺失时走下方"缺失 projectId 兜底"
 4. Phase 6 已生成完整 YAML（含 `x-cds-project` 头）
 
-#### 动作：POST pending-import
+#### 缺失 projectId 兜底流程
+
+如果用户没传 `--apply-to-cds <projectId>` 或环境里没有 `PROJECT_ID`，**禁止 AI 自己猜**。AI 必须：
+
+1. 立即停下来，告知用户："需要一个 projectId 才能提交。请先到 CDS Dashboard 创建空项目（或选已有项目），然后把项目 ID 贴给我。"
+2. 给用户可直接点击的 URL：`https://$CDS_HOST/project-list` （让他一键打开）
+3. 使用 `AskUserQuestion` 工具让用户粘贴 projectId，**不要**用一般对话等着猜
+4. 拿到后回到 Phase 8 正常流程
+
+未来（等 Global Agent Key 上线）可能支持 `--apply-to-cds --auto-create-project`：用 Global Key 自动 `POST /api/projects` 创建空项目，再提交 pending-import。**在此之前禁止启用**。
+
+#### 动作：POST pending-import（播报 + 执行）
+
+按下面这个节奏向用户播报，每一行输出对应一次真实执行或一个关键决策：
+
+```
+CDS 提交进度：
+- [x] 1/5 环境变量已就绪（CDS_HOST=cds.miduo.org, AI_ACCESS_KEY 长度 N）
+- [x] 2/5 目标项目 proj_abc123 已确认
+- [>] 3/5 正在 POST /api/projects/proj_abc123/pending-import（约 2s）…
+```
+
+实际 curl 命令（详细状态码分支见 reference/cds-pending-import.md）：
 
 ```bash
-# 详细脚本（含状态码解析、失败分支处理）见 reference/cds-pending-import.md
 CDS="https://$CDS_HOST"
 
 IMPORT_ID=$(curl -sf -H "X-AI-Access-Key: $AI_ACCESS_KEY" \
@@ -193,15 +248,29 @@ echo "✓ 已提交，importId=$IMPORT_ID"
 echo "➡️  请到 https://$CDS_HOST/project-list?pendingImport=$IMPORT_ID 批准"
 ```
 
-成功 → 打印可点击的人类可读 URL：
+执行后继续播报：
 
 ```
-https://$CDS_HOST/project-list?pendingImport=$IMPORT_ID
-```
+- [x] 3/5 HTTP 201 收到，耗时 1.8s
+- [x] 4/5 importId = imp_xyz789
+- [x] 5/5 审批链接：https://cds.miduo.org/project-list?pendingImport=imp_xyz789
 
-告诉用户：「已提交待批，请到上面链接的 CDS Dashboard `project-list` 页面点击批准」。
+✅ 已全部完成。请点击上面链接到 CDS Dashboard 审批。
+```
 
 #### 失败模式与修复建议
+
+失败时必须把进度清单改成失败状态 + 附上具体修复动作，例如：
+
+```
+CDS 提交进度：
+- [x] 1/5 环境变量已就绪
+- [x] 2/5 目标项目已确认
+- [✗] 3/5 HTTP 401 认证失败
+
+排查建议：$AI_ACCESS_KEY 与 CDS 服务端 process.env.AI_ACCESS_KEY 或 customEnv 不一致。
+详情见 cds-deploy-pipeline SKILL 的双层认证架构章节。
+```
 
 | HTTP | 含义 | AI 给用户的修复动作 |
 |------|------|---------------------|

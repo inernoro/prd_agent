@@ -138,6 +138,11 @@ function toggleProjectListSettingsMenu(event) {
   menu.onclick = function (e) { e.stopPropagation(); };
   menu.innerHTML = [
     '<div class="settings-menu-item" style="display:flex;align-items:center;gap:8px;padding:8px 10px;font-size:12px;color:var(--text-primary);border-radius:6px;cursor:pointer" onclick="closeProjectListSettingsMenu(); cdsOpenSelfUpdate()">🔄 自动更新</div>',
+    // Bootstrap-equivalent Agent Key (cdsg_*): unlike the per-card
+    // project key, this one can create new projects. Put it next to
+    // self-update so it's discoverable but not front-and-center — we
+    // want users to think twice before handing out a global token.
+    '<div class="settings-menu-item" style="display:flex;align-items:center;gap:8px;padding:8px 10px;font-size:12px;color:var(--text-primary);border-radius:6px;cursor:pointer" onclick="closeProjectListSettingsMenu(); cdsOpenGlobalAgentKeyManager()">🔑 Agent 全局通行证</div>',
     '<div class="settings-menu-item" style="display:flex;align-items:center;gap:8px;padding:8px 10px;font-size:12px;color:var(--text-primary);border-radius:6px;cursor:pointer" onclick="closeProjectListSettingsMenu(); cdsOpenClusterModal()">🧩 集群</div>',
     '<div class="settings-menu-item settings-menu-switch" style="display:flex;align-items:center;gap:8px;padding:8px 10px;font-size:12px;color:var(--text-primary);border-radius:6px;cursor:pointer" onclick="cdsCyclePreviewMode()">预览模式<span id="pl-preview-mode-label" style="margin-left:auto;font-size:11px;color:#58a6ff"></span></div>',
     '<div class="settings-menu-item settings-menu-switch" style="display:flex;align-items:center;gap:8px;padding:8px 10px;font-size:12px;color:var(--text-primary);border-radius:6px;cursor:pointer" onclick="cdsToggleMirror()">镜像加速<span id="pl-mirror-label" style="margin-left:auto;font-size:11px"></span></div>',
@@ -243,22 +248,159 @@ async function cdsToggleTabTitle() {
 }
 
 async function cdsOpenSelfUpdate() {
-  // Redirect to branch-list with a hash that app.js can detect, OR just
-  // confirm-and-fire. v1: confirm + run /api/self-update on current branch.
+  // 完整 modal 版本 —— 2026-04-18 恢复。
+  // 之前此函数是 v1 占位符（confirm + /api/self-update on current branch），
+  // 丢失了分支选择器。分支列表页的 openSelfUpdate 用 openConfigModal +
+  // combobox helpers（只在 app.js 里），不能共享。这里用 vanilla DOM
+  // 重实现一个小 modal：原生 <select> 列分支 + SSE 流式反馈。
+  let info;
   try {
-    var info = await fetch('/api/self-branches', { credentials: 'same-origin' }).then(function (r) { return r.json(); });
-    var cur = info.current || '';
-    if (!confirm('CDS 系统更新\n\n当前分支: ' + cur + '\n\n将执行 git fetch → git pull → restart。继续？')) return;
-    _plSettingsToast('正在更新，请稍候…');
-    var res = await fetch('/api/self-update', {
-      method: 'POST', credentials: 'same-origin',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ branch: cur }),
-    });
-    if (!res.ok) throw new Error('HTTP ' + res.status);
-    // server streams NDJSON; don't block the UI on it
-    _plSettingsToast('更新已启动，稍后 CDS 会自动重启');
-  } catch (e) { _plSettingsToast('更新失败: ' + e.message); }
+    const r = await fetch('/api/self-branches', { credentials: 'same-origin' });
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    info = await r.json();
+  } catch (e) {
+    _plSettingsToast('获取分支列表失败: ' + e.message);
+    return;
+  }
+  const current = info.current || '';
+  const commitHash = (info.commitHash || '').slice(0, 8);
+  const branches = Array.isArray(info.branches) ? info.branches : [];
+
+  const backdrop = document.createElement('div');
+  backdrop.style.cssText = 'position:fixed;inset:0;background:rgba(3,7,18,0.55);backdrop-filter:blur(4px);z-index:10000;display:flex;align-items:center;justify-content:center;padding:24px';
+  backdrop.onclick = () => { if (document.body.contains(backdrop)) document.body.removeChild(backdrop); };
+
+  const dlg = document.createElement('div');
+  dlg.style.cssText = 'background:var(--bg-card);border:1px solid var(--card-border);border-radius:10px;width:min(520px,calc(100vw - 32px));max-height:82vh;display:flex;flex-direction:column;overflow:hidden;box-shadow:0 24px 60px rgba(0,0,0,.55)';
+  dlg.onclick = (e) => e.stopPropagation();
+
+  // Sort branches: current first, then alphabetical
+  const sorted = [current, ...branches.filter(b => b && b !== current).sort()];
+  const options = sorted.map(b =>
+    '<option value="' + escapeHtml(b) + '"' + (b === current ? ' selected' : '') + '>' +
+    escapeHtml(b) + (b === current ? ' （当前）' : '') +
+    '</option>'
+  ).join('');
+
+  dlg.innerHTML = [
+    '<div style="flex-shrink:0;padding:14px 18px;border-bottom:1px solid var(--card-border);display:flex;align-items:center;justify-content:space-between">',
+    '  <div style="font-size:14px;font-weight:700">🔄 CDS 系统更新</div>',
+    '  <button id="_plSuClose" style="width:26px;height:26px;border-radius:6px;border:1px solid var(--card-border);background:transparent;color:var(--text-muted);cursor:pointer">×</button>',
+    '</div>',
+    '<div style="flex:1;min-height:0;overflow-y:auto;padding:16px 18px">',
+    '  <div style="font-size:12px;color:var(--text-secondary);margin-bottom:12px;line-height:1.6">',
+    '    拉取目标分支最新代码并重启 CDS。流程 <code>git fetch → checkout → pull → tsc 预检 → restart</code>',
+    '  </div>',
+    '  <div style="font-size:12px;color:var(--text-secondary);margin-bottom:4px">当前分支</div>',
+    '  <div style="font-family:monospace;font-size:13px;color:var(--accent);margin-bottom:14px">',
+    escapeHtml(current) + (commitHash ? ' <span style="color:var(--text-muted);font-size:11px">@ ' + escapeHtml(commitHash) + '</span>' : ''),
+    '  </div>',
+    '  <label style="display:block;font-size:12px;color:var(--text-secondary);margin-bottom:4px">目标分支（' + branches.length + ' 个可选）</label>',
+    '  <select id="_plSuBranch" style="width:100%;padding:8px 10px;border-radius:6px;border:1px solid var(--card-border);background:var(--bg-base);color:var(--text-primary);font-family:monospace;font-size:12px;margin-bottom:14px">',
+    options,
+    '  </select>',
+    '  <div id="_plSuProgress" style="display:none;margin-top:12px;border:1px solid var(--card-border);border-radius:6px;padding:10px;background:var(--bg-base);font-family:monospace;font-size:11px;max-height:240px;overflow-y:auto;line-height:1.55"></div>',
+    '  <div id="_plSuStatus" style="margin-top:8px;font-size:12px;color:var(--text-muted);min-height:14px"></div>',
+    '</div>',
+    '<div style="flex-shrink:0;padding:12px 18px;border-top:1px solid var(--card-border);display:flex;gap:8px;justify-content:flex-end">',
+    '  <button id="_plSuCancel" style="padding:7px 14px;border-radius:6px;border:1px solid var(--card-border);background:transparent;color:var(--text-primary);cursor:pointer;font-size:12px">取消</button>',
+    '  <button id="_plSuGo" style="padding:7px 14px;border-radius:6px;border:none;background:var(--accent,#10b981);color:#fff;cursor:pointer;font-size:12px;font-weight:600">拉取并重启</button>',
+    '</div>',
+  ].join('');
+
+  backdrop.appendChild(dlg);
+  document.body.appendChild(backdrop);
+
+  const close = () => { if (document.body.contains(backdrop)) document.body.removeChild(backdrop); };
+  dlg.querySelector('#_plSuClose').onclick = close;
+  dlg.querySelector('#_plSuCancel').onclick = close;
+  const esc = (ev) => { if (ev.key === 'Escape') { close(); document.removeEventListener('keydown', esc); } };
+  document.addEventListener('keydown', esc);
+
+  dlg.querySelector('#_plSuGo').onclick = async () => {
+    const target = dlg.querySelector('#_plSuBranch').value;
+    const progress = dlg.querySelector('#_plSuProgress');
+    const status = dlg.querySelector('#_plSuStatus');
+    const goBtn = dlg.querySelector('#_plSuGo');
+    goBtn.disabled = true;
+    goBtn.textContent = '更新中…';
+    progress.style.display = 'block';
+    progress.innerHTML = '';
+    status.textContent = '连接 /api/self-update …';
+
+    let resp;
+    try {
+      resp = await fetch('/api/self-update', {
+        method: 'POST', credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ branch: target }),
+      });
+    } catch (e) {
+      status.innerHTML = '<span style="color:var(--red)">✗ ' + escapeHtml(e.message) + '</span>';
+      goBtn.disabled = false;
+      goBtn.textContent = '重试';
+      return;
+    }
+    if (!resp.ok) {
+      status.innerHTML = '<span style="color:var(--red)">✗ HTTP ' + resp.status + '</span>';
+      goBtn.disabled = false;
+      goBtn.textContent = '重试';
+      return;
+    }
+
+    // 解析 SSE 流：event: step / done / error，data: JSON
+    const reader = resp.body && resp.body.getReader ? resp.body.getReader() : null;
+    if (!reader) {
+      status.textContent = '浏览器不支持流式读取，已触发更新，稍后 CDS 会自动重启';
+      return;
+    }
+    const decoder = new TextDecoder();
+    let buf = '';
+    let curEvent = '';
+    let done = false;
+    while (!done) {
+      try {
+        const { value, done: streamDone } = await reader.read();
+        if (streamDone) break;
+        buf += decoder.decode(value, { stream: true });
+        let idx;
+        while ((idx = buf.indexOf('\n')) >= 0) {
+          const line = buf.slice(0, idx).trimEnd();
+          buf = buf.slice(idx + 1);
+          if (!line) continue;
+          if (line.startsWith('event: ')) curEvent = line.slice(7);
+          else if (line.startsWith('data: ')) {
+            try {
+              const d = JSON.parse(line.slice(6));
+              const label = d.step || curEvent;
+              const title = d.title || d.message || '';
+              const color = d.status === 'done' ? 'var(--green)'
+                : d.status === 'error' ? 'var(--red)'
+                : curEvent === 'done' ? 'var(--green)'
+                : curEvent === 'error' ? 'var(--red)'
+                : 'var(--text-secondary)';
+              progress.innerHTML += '<div style="color:' + color + '">[' + escapeHtml(label) + '] ' + escapeHtml(title) + '</div>';
+              progress.scrollTop = progress.scrollHeight;
+              if (curEvent === 'done') {
+                status.innerHTML = '<span style="color:var(--green)">✓ 更新已触发，CDS 正在重启… 5s 后自动刷新页面</span>';
+                done = true;
+                setTimeout(() => location.reload(), 5000);
+              }
+              if (curEvent === 'error') {
+                status.innerHTML = '<span style="color:var(--red)">✗ ' + escapeHtml(title) + '</span>';
+                goBtn.disabled = false;
+                goBtn.textContent = '重试';
+                done = true;
+              }
+            } catch { /* JSON 解析失败跳过 */ }
+          }
+        }
+      } catch {
+        // 流被 CDS 重启中断，正常情况
+        break;
+      }
+    }
+  };
 }
 
 function cdsOpenClusterModal() {
@@ -447,6 +589,67 @@ window.cdsDoLogout = cdsDoLogout;
     return new Date(iso).toLocaleDateString();
   }
 
+  // ── Roll-up stats strip ─────────────────────────────────────────
+  //
+  // Reads {branchCount, runningBranchCount, runningServiceCount,
+  // lastDeployedAt} from the /api/projects summary (see routes/projects.ts
+  // ProjectStats). Renders three pill-shaped chips:
+  //   • N 分支   — total branches in this project
+  //   • M 运行中 — live if any service is running (green pulse dot)
+  //   • 最近部署 X — lastAccessedAt of most-recently-deployed branch
+  // Returns empty string when the project has no stats (e.g. freshly
+  // created from the legacy fallback path) so the layout collapses.
+  function renderStatsStrip(project) {
+    var bc = typeof project.branchCount === 'number' ? project.branchCount : null;
+    if (bc === null) return '';
+    var rsc = project.runningServiceCount || 0;
+    var runningClass = rsc > 0 ? 'cds-stat cds-stat-running' : 'cds-stat cds-stat-idle';
+    var dotClass = rsc > 0 ? 'live-dot pulsing' : 'live-dot';
+    var lastLabel = project.lastDeployedAt
+      ? '最近部署 ' + formatRelative(project.lastDeployedAt)
+      : '尚未部署';
+    return [
+      '<div class="cds-card-stats">',
+      '  <span class="cds-stat" title="分支总数">',
+      '    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">',
+      '      <line x1="6" y1="3" x2="6" y2="15"/>',
+      '      <circle cx="18" cy="6" r="3"/>',
+      '      <circle cx="6" cy="18" r="3"/>',
+      '      <path d="M18 9a9 9 0 0 1-9 9"/>',
+      '    </svg>',
+      '    <strong>' + bc + '</strong> 分支',
+      '  </span>',
+      '  <span class="' + runningClass + '" title="运行中的服务数量">',
+      '    <span class="' + dotClass + '"></span>',
+      '    <strong>' + rsc + '</strong> 运行中',
+      '  </span>',
+      '  <span class="cds-stat" title="最近一次部署时间">',
+      '    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">',
+      '      <circle cx="12" cy="12" r="9"/>',
+      '      <polyline points="12 7 12 12 15 14"/>',
+      '    </svg>',
+      '    ' + escapeHtml(lastLabel),
+      '  </span>',
+      '</div>',
+    ].join('');
+  }
+
+  // Clear "→ 进入分支" affordance. The whole card is already a link
+  // so this is purely visual reinforcement — many users miss that the
+  // card is clickable when the only thing in the foot is a service
+  // count. Slides right on hover (see .cds-project-card:hover rule).
+  function renderEnterCta() {
+    return [
+      '<span class="cds-enter-cta">',
+      '  进入分支',
+      '  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">',
+      '    <line x1="5" y1="12" x2="19" y2="12"/>',
+      '    <polyline points="12 5 19 12 12 19"/>',
+      '  </svg>',
+      '</span>',
+    ].join('');
+  }
+
   function renderServiceStrip(project, services) {
     // services: { profiles: [...], infra: [...] }
     // We union them, dedupe by icon key, show up to 4 tiles and a "+N"
@@ -580,15 +783,26 @@ window.cdsDoLogout = cdsDoLogout;
         "'" + escapeHtml(project.id) + "', '" + escapeHtml(project.name) + "')\">" +
         '<svg width="14" height="14" viewBox="0 0 16 16" fill="#f43f5e" aria-hidden="true"><path d="M11 1.75V3h2.25a.75.75 0 010 1.5H2.75a.75.75 0 010-1.5H5V1.75C5 .784 5.784 0 6.75 0h2.5C10.216 0 11 .784 11 1.75zM4.496 6.675l.66 6.6a.25.25 0 00.249.225h5.19a.25.25 0 00.249-.225l.66-6.6a.75.75 0 111.492.149l-.66 6.6A1.748 1.748 0 0110.595 15h-5.19a1.75 1.75 0 01-1.741-1.575l-.66-6.6a.75.75 0 111.492-.15z"/></svg>' +
         '</button>';
-    // 🔑 授权 Agent — floats top-right next to the delete button, sits
-    // outside the <a> so its click doesn't navigate.
+    // 🔑 授权 Agent / 📦 下载 cds 技能 —— 两个 icon button 并排靠右上，
+    // 错位排布避免和 delete 按钮重叠。Legacy 项目没 delete 按钮，靠右
+    // 10px；其它项目偏移到 42px/74px 给 delete 让位。
+    var keyRight = project.legacyFlag ? '10' : '42';
+    var dlRight  = project.legacyFlag ? '42' : '74';
     var agentKeyBtn =
       '<button class="cds-project-card-agentkey" title="授权 Agent / 管理 Key" ' +
       "onclick=\"handleProjectAgentKey(event, '" + escapeHtml(project.id) + "')\" " +
-      'style="position:absolute;top:10px;right:' + (project.legacyFlag ? '10' : '42') + 'px;' +
+      'style="position:absolute;top:10px;right:' + keyRight + 'px;' +
       'width:26px;height:26px;border-radius:6px;border:1px solid var(--card-border);' +
       'background:var(--bg-card);cursor:pointer;display:inline-flex;align-items:center;' +
       'justify-content:center;font-size:13px;color:var(--text-secondary);padding:0">🔑</button>';
+    var downloadSkillBtn =
+      '<button class="cds-project-card-download-skill" ' +
+      'title="下载 cds 技能包 (tar.gz) — 解压到项目 .claude/skills/ 即可在 Claude Code 里调用 cdscli" ' +
+      "onclick=\"handleDownloadCdsSkill(event)\" " +
+      'style="position:absolute;top:10px;right:' + dlRight + 'px;' +
+      'width:26px;height:26px;border-radius:6px;border:1px solid var(--card-border);' +
+      'background:var(--bg-card);cursor:pointer;display:inline-flex;align-items:center;' +
+      'justify-content:center;font-size:13px;color:var(--text-secondary);padding:0">📦</button>';
 
     var totalServices =
       ((services && services.profiles && services.profiles.length) || 0) +
@@ -611,6 +825,12 @@ window.cdsDoLogout = cdsDoLogout;
       ? progressBar
       : '<div class="cds-service-strip">' + renderServiceStrip(project, services || {}) + '</div>';
 
+    // Per-project rollup stats (branches / running / last deploy).
+    // Hidden while the project is mid-clone because the numbers are all
+    // zero until the first deploy lands, which just looks noisy.
+    var statsStrip = progressBar ? '' : renderStatsStrip(project);
+    var enterCta = progressBar ? '' : renderEnterCta();
+
     // Wrap in a div so the delete button can sit OUTSIDE the <a> tag.
     // <button> inside <a> is invalid HTML — click events on the button
     // bubble to the <a> in some browsers and navigate instead of deleting.
@@ -623,12 +843,17 @@ window.cdsDoLogout = cdsDoLogout;
       '    </div>',
       '    ', bodyHtml,
       errorBlock,
+      '    ', statsStrip,
       '    <div class="cds-project-card-foot">',
-      '      <span class="cds-env-dot">', envLabel, '</span>',
-      '      <span class="cds-service-count"><strong>', totalServices, '</strong> service', totalServices === 1 ? '' : 's', '</span>',
+      '      <span style="display:inline-flex;align-items:center;gap:10px">',
+      '        <span class="cds-env-dot">', envLabel, '</span>',
+      '        <span class="cds-service-count"><strong>', totalServices, '</strong> service', totalServices === 1 ? '' : 's', '</span>',
       cloneBtn ? '<span style="flex-shrink:0">' + cloneBtn + '</span>' : '',
+      '      </span>',
+      '      ', enterCta,
       '    </div>',
       '  </a>',
+      '  ', downloadSkillBtn,
       '  ', agentKeyBtn,
       '  ', deleteBtn,
       '</div>',
@@ -637,6 +862,25 @@ window.cdsDoLogout = cdsDoLogout;
 
   // Expose a global click handler so the inline onclick can reach the
   // IIFE-internal render logic without leaking the renderCard closure.
+  // 📦 下载 cds 技能包：命中 /api/export-skill，浏览器原生下载。
+  // 不依赖当前 project（所有项目用同一个 cds 技能），所以不需要
+  // projectId 参数。ev.preventDefault/stopPropagation 防止冒泡到外
+  // 层 <a> 导致误导航。
+  window.handleDownloadCdsSkill = function (ev) {
+    if (ev && ev.preventDefault) ev.preventDefault();
+    if (ev && ev.stopPropagation) ev.stopPropagation();
+    // Trigger native download — 让浏览器处理文件名（后端 Content-Disposition 已给好）
+    var a = document.createElement('a');
+    a.href = '/api/export-skill';
+    a.download = '';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    if (typeof showToast === 'function') {
+      showToast('正在下载 cds 技能包…解压到你项目的 .claude/skills/ 即可', 'info', 4000);
+    }
+  };
+
   window.handleProjectAgentKey = function (ev, projectId) {
     if (ev && ev.preventDefault) ev.preventDefault();
     if (ev && ev.stopPropagation) ev.stopPropagation();

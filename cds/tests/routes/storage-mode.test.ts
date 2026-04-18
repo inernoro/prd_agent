@@ -231,7 +231,9 @@ describe('Storage-mode router (P4 Part 18 D.3)', () => {
       // state.json now exists with the in-memory state
       expect(fs.existsSync(stateFile)).toBe(true);
       const persisted = JSON.parse(fs.readFileSync(stateFile, 'utf-8'));
-      expect(persisted.customEnv.KEY).toBe('from-mongo');
+      // 2026-04-18: customEnv is a scoped store now — { _global, <projectId> }.
+      // setCustomEnv with no scope defaults to _global.
+      expect(persisted.customEnv._global.KEY).toBe('from-mongo');
 
       // Context flipped
       expect(context.resolvedMode).toBe('json');

@@ -227,7 +227,8 @@ export function createBranchRouter(deps: RouterDeps): Router {
     // executor only receives profiles owned by this project.
     const profiles = stateService.getBuildProfilesForProject(entry.projectId || 'default');
     const cdsEnv = stateService.getCdsEnvVars();
-    const customEnv = stateService.getCustomEnv();
+    // Per-project scope: _global baseline + project override wins.
+    const customEnv = stateService.getCustomEnv(entry.projectId || 'default');
     const mirrorEnv = stateService.getMirrorEnvVars();
     const env = { ...cdsEnv, ...mirrorEnv, ...customEnv };
 
@@ -338,7 +339,8 @@ export function createBranchRouter(deps: RouterDeps): Router {
   function getMergedEnv(projectId?: string): Record<string, string> {
     const cdsEnv = stateService.getCdsEnvVars();   // CDS_HOST, CDS_MONGODB_PORT, etc.
     const mirrorEnv = stateService.getMirrorEnvVars(); // npm/corepack mirror (if enabled)
-    const customEnv = stateService.getCustomEnv();
+    // Scoped custom env: _global when no projectId, else { _global..., <projectId>... }
+    const customEnv = stateService.getCustomEnv(projectId);
     const projectEnv: Record<string, string> = {};
     if (projectId) {
       const project = stateService.getProject(projectId);
@@ -2528,13 +2530,15 @@ export function createBranchRouter(deps: RouterDeps): Router {
           seeded.push(profile);
         }
 
-        // Merge envVars — never clobber existing legacy customEnv keys.
-        // The import page / manual env edits are treated as authoritative
-        // over the baked-in defaults in cds-compose.yaml.
-        const existingEnv = stateService.getCustomEnv();
+        // Merge envVars — never clobber user-authored vars. Since the
+        // compose belongs to this project, seed values into the project
+        // scope (so e.g. a JWT_SECRET from cds-compose.yaml doesn't leak
+        // into sibling projects). Skip when either global OR project
+        // already has the key — both are user-authored sources of truth.
+        const mergedExisting = stateService.getCustomEnv(projectId);
         for (const [key, value] of Object.entries(parsed.envVars)) {
-          if (existingEnv[key] === undefined) {
-            stateService.setCustomEnvVar(key, value);
+          if (mergedExisting[key] === undefined) {
+            stateService.setCustomEnvVar(key, value, projectId);
           }
         }
 
@@ -2607,15 +2611,37 @@ export function createBranchRouter(deps: RouterDeps): Router {
     });
   });
 
-  // ── Custom environment variables ──
+  // ── Custom environment variables (scoped: _global + per-project) ──
+  //
+  // Every endpoint accepts an optional `?scope=_global|<projectId>`
+  // query. When omitted it defaults to `_global` so pre-feature
+  // clients (that had no scope concept) keep working untouched.
+  //
+  // Only `_global` vars participate in syncCdsConfig() (rootDomains /
+  // repoRoot etc. must be process-wide). Project-scoped vars go
+  // straight into container env at deploy time.
 
-  router.get('/env', (_req, res) => {
-    res.json({ env: stateService.getCustomEnv() });
+  function resolveScope(req: import('express').Request): string {
+    const raw = req.query.scope;
+    const scope = typeof raw === 'string' ? raw.trim() : '';
+    return scope || '_global';
+  }
+
+  router.get('/env', (req, res) => {
+    const scope = resolveScope(req);
+    // /env?scope=_all — give the Settings UI the full scoped map in one
+    // round trip so it can render both global and per-project vars.
+    if (scope === '_all') {
+      res.json({ env: stateService.getCustomEnvRaw(), scope: '_all' });
+      return;
+    }
+    res.json({ env: stateService.getCustomEnvScope(scope), scope });
   });
 
-  // Helper: sync CDS-relevant env vars into runtime config
+  // Helper: sync CDS-relevant env vars into runtime config.
+  // Only reads _global — cross-project config can't be project-scoped.
   function syncCdsConfig() {
-    const env = stateService.getCustomEnv();
+    const env = stateService.getCustomEnvScope('_global');
     if (env.ROOT_DOMAINS) config.rootDomains = env.ROOT_DOMAINS.split(',').map(v => v.trim()).filter(Boolean);
     if (env.SWITCH_DOMAIN) config.switchDomain = env.SWITCH_DOMAIN;
     if (env.MAIN_DOMAIN) config.mainDomain = env.MAIN_DOMAIN;
@@ -2637,15 +2663,20 @@ export function createBranchRouter(deps: RouterDeps): Router {
   }
 
   router.put('/env', (req, res) => {
+    const scope = resolveScope(req);
+    if (scope === '_all') {
+      res.status(400).json({ error: '_all 仅用于读取，写入请指定具体 scope' });
+      return;
+    }
     const env = req.body as Record<string, string>;
     if (!env || typeof env !== 'object') {
       res.status(400).json({ error: '请求体必须是键值对对象' });
       return;
     }
-    stateService.setCustomEnv(env);
+    stateService.setCustomEnv(env, scope);
     stateService.save();
     syncCdsConfig();
-    res.json({ message: '环境变量已更新', env });
+    res.json({ message: '环境变量已更新', env, scope });
   });
 
   router.put('/env/:key', (req, res) => {
@@ -2655,17 +2686,27 @@ export function createBranchRouter(deps: RouterDeps): Router {
       res.status(400).json({ error: '值不能为空' });
       return;
     }
-    stateService.setCustomEnvVar(key, value);
+    const scope = resolveScope(req);
+    if (scope === '_all') {
+      res.status(400).json({ error: '_all 仅用于读取' });
+      return;
+    }
+    stateService.setCustomEnvVar(key, value, scope);
     stateService.save();
     syncCdsConfig();
-    res.json({ message: `Set ${key}` });
+    res.json({ message: `Set ${key}`, scope });
   });
 
   router.delete('/env/:key', (req, res) => {
     const { key } = req.params;
-    stateService.removeCustomEnvVar(key);
+    const scope = resolveScope(req);
+    if (scope === '_all') {
+      res.status(400).json({ error: '_all 仅用于读取' });
+      return;
+    }
+    stateService.removeCustomEnvVar(key, scope);
     stateService.save();
-    res.json({ message: `Deleted ${key}` });
+    res.json({ message: `Deleted ${key}`, scope });
   });
 
   // ── Mirror acceleration ──
@@ -2865,11 +2906,20 @@ export function createBranchRouter(deps: RouterDeps): Router {
     }
   });
 
-  router.post('/cleanup', async (_req, res) => {
+  router.post('/cleanup', async (req, res) => {
     initSSE(res);
     try {
+      // Optional ?project=<id> scopes the cleanup to one project's
+      // branches. Without the filter, all non-default branches across
+      // every project are removed (pre-feature global behaviour).
+      const projectFilter = typeof req.query.project === 'string' ? req.query.project : null;
+
       const state = stateService.getState();
-      const toRemove = Object.values(state.branches).filter(b => b.id !== state.defaultBranch);
+      const toRemove = Object.values(state.branches).filter((b) => {
+        if (b.id === state.defaultBranch) return false;
+        if (projectFilter && (b.projectId || 'default') !== projectFilter) return false;
+        return true;
+      });
       for (const entry of toRemove) {
         sendSSE(res, 'step', { step: 'cleanup', status: 'running', title: `正在删除 ${entry.id}...` });
         for (const svc of Object.values(entry.services)) {
@@ -2884,7 +2934,10 @@ export function createBranchRouter(deps: RouterDeps): Router {
         sendSSE(res, 'step', { step: 'cleanup', status: 'done', title: `已删除 ${entry.id}` });
       }
       stateService.save();
-      sendSSE(res, 'complete', { message: `已清理 ${toRemove.length} 个分支` });
+      const msg = projectFilter
+        ? `已清理项目 ${projectFilter} 的 ${toRemove.length} 个分支`
+        : `已清理 ${toRemove.length} 个分支`;
+      sendSSE(res, 'complete', { message: msg, removedCount: toRemove.length, scope: projectFilter || '_all' });
     } catch (err) {
       sendSSE(res, 'error', { message: (err as Error).message });
     } finally {
@@ -3073,10 +3126,88 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
   // ── Factory reset: stop all containers, clear all config, keep Docker volumes ──
 
-  router.post('/factory-reset', async (_req, res) => {
+  router.post('/factory-reset', async (req, res) => {
     initSSE(res);
     try {
+      // Optional ?project=<id> scopes the reset to that project only:
+      //   - stop/remove only that project's containers + worktrees
+      //   - clear only that project's buildProfiles / infra / routing
+      //   - clear only that project's customEnv bucket (_global untouched)
+      //   - the Project entity itself stays (so the user doesn't have
+      //     to recreate it + re-clone the repo)
+      //
+      // Without the filter, pre-feature behaviour applies: nuke EVERY
+      // project's state and reset CDS to an empty-slate install.
+      const projectFilter = typeof req.query.project === 'string' ? req.query.project : null;
       const state = stateService.getState();
+
+      if (projectFilter) {
+        const project = stateService.getProject(projectFilter);
+        if (!project) {
+          sendSSE(res, 'error', { message: `项目 ${projectFilter} 不存在` });
+          res.end();
+          return;
+        }
+
+        // 1. Stop + remove that project's branches
+        const branches = Object.values(state.branches)
+          .filter((b) => (b.projectId || 'default') === projectFilter);
+        for (const entry of branches) {
+          sendSSE(res, 'step', { step: 'reset', status: 'running', title: `停止分支 ${entry.id}...` });
+          for (const svc of Object.values(entry.services)) {
+            try { await containerService.stop(svc.containerName); } catch { /* ok */ }
+          }
+          try {
+            const repoRoot = stateService.getProjectRepoRoot(entry.projectId, config.repoRoot);
+            await worktreeService.remove(repoRoot, entry.worktreePath);
+          } catch { /* ok */ }
+          stateService.removeLogs(entry.id);
+          stateService.removeBranch(entry.id);
+        }
+
+        // 2. Stop + remove that project's infra containers (volumes preserved).
+        //    We intentionally call getInfraServicesForProject before mutation
+        //    and container operations so a partial failure still reports
+        //    the right count.
+        const infra = stateService.getInfraServicesForProject(projectFilter);
+        for (const svc of infra) {
+          sendSSE(res, 'step', { step: 'reset', status: 'running', title: `停止基础设施 ${svc.name}...` });
+          try { await containerService.stop(svc.containerName); } catch { /* ok */ }
+        }
+
+        // 3. Remove this project's profiles / infra / routing / env bucket
+        //    from state. Keep the Project entity + its dockerNetwork so
+        //    the user doesn't have to recreate the project shell.
+        //    getState() returns Readonly<CdsState>; cast away so we can
+        //    replace the arrays in place (the same pattern as the
+        //    global-reset branch below).
+        const removedProfiles = stateService
+          .getBuildProfilesForProject(projectFilter).length;
+        const mutableState = state as unknown as {
+          buildProfiles: BuildProfile[];
+          infraServices: InfraService[];
+          routingRules: RoutingRule[];
+        };
+        mutableState.buildProfiles = (state.buildProfiles || [])
+          .filter((p) => (p.projectId || 'default') !== projectFilter);
+        mutableState.infraServices = (state.infraServices || [])
+          .filter((s) => (s.projectId || 'default') !== projectFilter);
+        mutableState.routingRules = (state.routingRules || [])
+          .filter((r) => (r.projectId || 'default') !== projectFilter);
+        stateService.dropCustomEnvScope(projectFilter);
+        stateService.save();
+
+        sendSSE(res, 'complete', {
+          message: `项目 ${project.name} 已重置：清除 ${branches.length} 个分支、${infra.length} 个基础设施、${removedProfiles} 个构建配置、环境变量作用域。项目实体 + Docker 数据卷保留。`,
+          scope: projectFilter,
+          removedBranches: branches.length,
+          removedInfra: infra.length,
+          removedProfiles,
+        });
+        return;
+      }
+
+      // ── Global factory-reset (all projects) — pre-feature path ──
 
       // 1. Stop and remove all branch containers + worktrees
       const branches = Object.values(state.branches);
@@ -3105,7 +3236,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
         nextPortIndex: 0,
         logs: {},
         defaultBranch: null,
-        customEnv: {},
+        customEnv: { _global: {} },
         infraServices: [],
       };
       Object.assign(state, freshState);
@@ -3775,54 +3906,140 @@ export function createBranchRouter(deps: RouterDeps): Router {
     res.type('text/yaml').send(yamlContent);
   });
 
-  // GET /api/export-skill — export cds-project-scan skill as tar.gz
-  // Contains only skill files and README — no config/cds-compose.yml
-  router.get('/export-skill', (_req, res) => {
+  // GET /api/cli-version — return the currently-bundled cdscli VERSION
+  //
+  // 读 .claude/skills/cds/cli/cdscli.py 里的 `VERSION = "x.y.z"` 常量，
+  // 每次被 cdscli update / cdscli version 调用时返回。解析结果缓存 60s
+  // 避免每次都 read+regex（CLI 进程短命，主要让 Dashboard 轮询便宜）。
+  let _cliVersionCache: { version: string | null; at: number } = { version: null, at: 0 };
+  function readBundledCliVersion(): string | null {
+    const now = Date.now();
+    if (_cliVersionCache.version !== null && now - _cliVersionCache.at < 60_000) {
+      return _cliVersionCache.version;
+    }
     try {
-      const skillDir = path.join(config.repoRoot, '.claude', 'skills', 'cds-project-scan');
+      const cliPath = path.join(config.repoRoot, '.claude', 'skills', 'cds', 'cli', 'cdscli.py');
+      if (!fs.existsSync(cliPath)) {
+        _cliVersionCache = { version: null, at: now };
+        return null;
+      }
+      const content = fs.readFileSync(cliPath, 'utf-8');
+      // Anchor on VERSION = "..." at start of line to avoid catching
+      // comments, test fixtures, or nested module vars. Only first match.
+      const match = content.match(/^VERSION\s*=\s*"([^"]+)"/m);
+      const version = match ? match[1] : null;
+      _cliVersionCache = { version, at: now };
+      return version;
+    } catch {
+      return null;
+    }
+  }
+  router.get('/cli-version', (_req, res) => {
+    const version = readBundledCliVersion();
+    if (!version) {
+      res.status(404).json({ error: '未找到 cdscli VERSION 常量' });
+      return;
+    }
+    res.json({ version });
+  });
+
+  // GET /api/export-skill — export unified cds skill as tar.gz
+  //
+  // 2026-04-18 重构：合并 cds-project-scan + cds-deploy-pipeline + smoke-test
+  // 为单一 cds 技能，带 cli/ Python CLI + reference/ 按需文档 + SKILL.md 入口。
+  // 旧入参 `?legacy=1` 仍能导出 cds-project-scan 单独的文档（向后兼容）。
+  router.get('/export-skill', (req, res) => {
+    try {
+      const useLegacy = req.query.legacy === '1';
+      const skillName = useLegacy ? 'cds-project-scan' : 'cds';
+      const skillDir = path.join(config.repoRoot, '.claude', 'skills', skillName);
       if (!fs.existsSync(skillDir)) {
-        res.status(404).json({ error: '未找到 cds-project-scan 技能目录' });
+        res.status(404).json({ error: `未找到 ${skillName} 技能目录` });
         return;
       }
 
       // Build pack in a temp directory
       const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
-      const packName = `cds-deployment-skill-${timestamp}`;
+      const packName = `${skillName}-skill-${timestamp}`;
       const tmpDir = path.join(config.repoRoot, '.cds', 'tmp');
       const packDir = path.join(tmpDir, packName);
 
-      // Clean & create temp dirs
-      fs.mkdirSync(path.join(packDir, 'skills', 'reference'), { recursive: true });
-
-      // Copy skill files
-      const skillMain = path.join(skillDir, 'SKILL.md');
-      if (fs.existsSync(skillMain)) {
-        fs.copyFileSync(skillMain, path.join(packDir, 'skills', 'SKILL.md'));
-      }
-      const refDir = path.join(skillDir, 'reference');
-      if (fs.existsSync(refDir)) {
-        for (const f of fs.readdirSync(refDir)) {
-          fs.copyFileSync(path.join(refDir, f), path.join(packDir, 'skills', 'reference', f));
+      // Recursively copy the whole skill directory (captures cli/ and
+      // reference/ subdirs without per-file enumeration). This mirrors
+      // whatever layout the skill author uses so the drop-in on the
+      // consumer side stays identical to the source.
+      const targetSkillDir = path.join(packDir, '.claude', 'skills', skillName);
+      fs.mkdirSync(targetSkillDir, { recursive: true });
+      const copyRecursive = (src: string, dst: string) => {
+        const stat = fs.statSync(src);
+        if (stat.isDirectory()) {
+          fs.mkdirSync(dst, { recursive: true });
+          for (const entry of fs.readdirSync(src)) {
+            copyRecursive(path.join(src, entry), path.join(dst, entry));
+          }
+        } else {
+          fs.copyFileSync(src, dst);
         }
-      }
+      };
+      copyRecursive(skillDir, targetSkillDir);
 
-      // Write README
-      fs.writeFileSync(path.join(packDir, 'README.md'), `# CDS 部署技能包
+      // README tailored to the new unified skill
+      const readme = useLegacy
+        ? `# CDS 部署技能包 (legacy: cds-project-scan)\n\n将 \`.claude/skills/cds-project-scan/\` 复制到目标项目的对应路径。\n`
+        : `# CDS 技能包 (统一版)
 
-本压缩包包含 CDS (Cloud Dev Space) 项目扫描技能文档。
+覆盖 CDS 全生命周期：扫描项目 → Agent 鉴权 → 部署 → 就绪检测 → 分层冒烟 → 故障诊断。
 
-## 包含内容
+## 三分钟安装
 
-| 目录 | 内容 | 用途 |
-|------|------|------|
-| \`skills/\` | CDS 扫描技能文档 | 了解扫描规则和配置生成逻辑 |
+\`\`\`bash
+# 1. 解压到你项目的根目录（保留 .claude/skills/cds/ 结构）
+tar -xzf ${packName}.tar.gz --strip-components=1
 
-## 使用方式
+# 2. 加 alias（推荐）
+echo 'alias cdscli="python3 \\$(git rev-parse --show-toplevel)/.claude/skills/cds/cli/cdscli.py"' >> ~/.bashrc
+source ~/.bashrc
 
-1. 将 \`skills/\` 目录复制到目标项目的 \`.claude/skills/cds-project-scan/\`
-2. 在 Claude Code 中使用 \`/cds-scan\` 触发扫描
-3. 扫描生成的 CDS Compose YAML 可在 CDS Dashboard 中一键导入
-`, 'utf-8');
+# 3. 初始化（交互式）
+cdscli init
+
+# 4. 验证
+cdscli auth check
+cdscli project list --human
+\`\`\`
+
+## 主要命令
+
+| 命令 | 用途 |
+|------|------|
+| \`cdscli init\` | 首次配置 CDS_HOST / AI_ACCESS_KEY / 默认 projectId |
+| \`cdscli scan --apply-to-cds <projectId>\` | 扫描本地 → 生成 compose YAML → 提交 CDS 审批 |
+| \`cdscli deploy\` | 推代码 + 部署 + 等待 + 冒烟（一条命令）|
+| \`cdscli help-me-check <branchId>\` | 出 bug 了？这条命令抓状态+日志+env+history+根因分析 |
+| \`cdscli smoke <branchId>\` | 分层冒烟（L1 根路径 / L2 API / L3 认证 API）|
+| \`cdscli --help\` | 完整命令树 |
+
+## 详细文档
+
+| 文件 | 何时看 |
+|------|--------|
+| \`.claude/skills/cds/SKILL.md\` | Claude Code 自动加载，主入口 |
+| \`.claude/skills/cds/reference/api.md\` | 需要 curl 直调 API |
+| \`.claude/skills/cds/reference/auth.md\` | 401 / 403 排查 |
+| \`.claude/skills/cds/reference/scan.md\` | 扫描规则 & compose YAML 契约 |
+| \`.claude/skills/cds/reference/smoke.md\` | 分层冒烟策略 |
+| \`.claude/skills/cds/reference/diagnose.md\` | 容器日志 → 根因决策树 |
+| \`.claude/skills/cds/reference/drop-in.md\` | 新项目接入完整步骤 |
+
+## 升级
+
+直接重新下载本包覆盖即可，\`~/.cdsrc\` 不受影响。
+
+## 反馈
+
+缺功能 / 新根因模式 / 扫描误判 → 把 \`cdscli diagnose <branchId>\` 输出贴给维护方。
+`;
+      fs.writeFileSync(path.join(packDir, 'README.md'), readme, 'utf-8');
 
       // Create tar.gz using tar command (available on all Linux)
       const tarName = `${packName}.tar.gz`;

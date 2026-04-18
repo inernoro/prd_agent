@@ -1,6 +1,7 @@
 import path from 'node:path';
 import crypto from 'node:crypto';
-import type { CdsState, BranchEntry, BuildProfile, BuildProfileOverride, RoutingRule, OperationLog, InfraService, ExecutorNode, DataMigration, CdsPeer, Project, AgentKey } from '../types.js';
+import type { CdsState, BranchEntry, BuildProfile, BuildProfileOverride, RoutingRule, OperationLog, InfraService, ExecutorNode, DataMigration, CdsPeer, Project, AgentKey, GlobalAgentKey, CustomEnvStore } from '../types.js';
+import { GLOBAL_ENV_SCOPE } from '../types.js';
 import type { StateBackingStore } from '../infra/state-store/backing-store.js';
 import { JsonStateBackingStore, MAX_STATE_BACKUPS as JSON_MAX_BACKUPS } from '../infra/state-store/json-backing-store.js';
 import { sealToken, unsealToken, isSealedSecret } from '../infra/secret-seal.js';
@@ -17,10 +18,55 @@ function emptyState(): CdsState {
     nextPortIndex: 0,
     logs: {},
     defaultBranch: null,
-    customEnv: {},
+    customEnv: { [GLOBAL_ENV_SCOPE]: {} } as CustomEnvStore,
     infraServices: [],
     previewMode: 'multi',
   };
+}
+
+/**
+ * In-place migration: pre-2026-04-18 state.json stored customEnv as a
+ * flat `Record<string, string>`. The new shape is
+ * `Record<string, Record<string, string>>` keyed by scope (reserved
+ * `_global` + any projectId). This wraps the legacy flat object into
+ * `{ _global: <old> }` on load so existing data keeps working without
+ * touching the on-disk file until the next save.
+ *
+ * Detection rule: if ANY top-level value is a string (or anything
+ * non-object), treat the whole thing as the legacy flat form. This
+ * tolerates the odd `customEnv: null / undefined / ""` shapes seen
+ * during development.
+ */
+function migrateCustomEnv(raw: unknown): CustomEnvStore {
+  if (!raw || typeof raw !== 'object') {
+    return { [GLOBAL_ENV_SCOPE]: {} };
+  }
+  const entries = Object.entries(raw as Record<string, unknown>);
+  const isLegacyFlat = entries.some(([, v]) => typeof v !== 'object' || v === null);
+  if (isLegacyFlat) {
+    const flat: Record<string, string> = {};
+    for (const [k, v] of entries) {
+      if (typeof v === 'string') flat[k] = v;
+    }
+    // Log once per boot so operators grepping cds.log can confirm the
+    // migration fired exactly once on first startup after upgrade.
+    // eslint-disable-next-line no-console
+    console.log(
+      `[state] migrated legacy customEnv into _global scope (${Object.keys(flat).length} vars)`,
+    );
+    return { [GLOBAL_ENV_SCOPE]: flat };
+  }
+  // Already nested. Ensure _global exists so callers can rely on it.
+  const out: CustomEnvStore = {};
+  for (const [scope, vars] of entries) {
+    const bucket: Record<string, string> = {};
+    for (const [k, v] of Object.entries(vars as Record<string, unknown>)) {
+      if (typeof v === 'string') bucket[k] = v;
+    }
+    out[scope] = bucket;
+  }
+  if (!out[GLOBAL_ENV_SCOPE]) out[GLOBAL_ENV_SCOPE] = {};
+  return out;
 }
 
 export class StateService {
@@ -95,7 +141,10 @@ export class StateService {
       if (!this.state.routingRules) this.state.routingRules = [];
       if (!this.state.buildProfiles) this.state.buildProfiles = [];
       if (this.state.defaultBranch === undefined) this.state.defaultBranch = null;
-      if (!this.state.customEnv) this.state.customEnv = {};
+      // Shape migration: legacy flat Record<string,string> → scoped
+      // { _global, <projectId> } store. Runs every load — idempotent when
+      // the state is already nested. See migrateCustomEnv() in this file.
+      this.state.customEnv = migrateCustomEnv(this.state.customEnv);
       if (!this.state.infraServices) this.state.infraServices = [];
       if (this.state.mirrorEnabled === undefined) this.state.mirrorEnabled = false;
       if (this.state.tabTitleEnabled === undefined) this.state.tabTitleEnabled = true;
@@ -671,6 +720,10 @@ export class StateService {
     if (this.state.routingRules) {
       this.state.routingRules = this.state.routingRules.filter((r) => r.projectId !== id);
     }
+    // Drop this project's customEnv scope too so a deleted project doesn't
+    // leave behind a dangling bucket that would revive on re-create with
+    // the same id. _global is never removed.
+    this.dropCustomEnvScope(id);
 
     this.state.projects = this.state.projects.filter((p) => p.id !== id);
     this.save();
@@ -793,6 +846,75 @@ export class StateService {
     if (!entry) return;
     entry.lastUsedAt = new Date().toISOString();
     // Save is best-effort — a failed save here shouldn't block the request.
+    try { this.save(); } catch { /* ignore */ }
+  }
+
+  // ── Global (bootstrap-equivalent) Agent Keys ──
+  //
+  // Parallels the project-scoped key storage above but lives at the top
+  // level so findAgentKeyForAuth and assertProjectAccess don't treat
+  // these as project-scoped. Intended for onboarding a new Agent that
+  // needs to create a brand-new project (project-scoped keys cannot).
+  // The UI must show a loud warning before issuing one.
+
+  /** Append a GlobalAgentKey. Creates the top-level array on demand. */
+  addGlobalAgentKey(entry: GlobalAgentKey): void {
+    if (!this.state.globalAgentKeys) this.state.globalAgentKeys = [];
+    this.state.globalAgentKeys.push(entry);
+    this.save();
+  }
+
+  /** List all GlobalAgentKey entries (revoked entries included for audit). */
+  getGlobalAgentKeys(): GlobalAgentKey[] {
+    return this.state.globalAgentKeys || [];
+  }
+
+  /**
+   * Mark a global key revoked. Keeps the entry so the audit trail
+   * (who signed, when, last used) survives. Returns true on match,
+   * false otherwise.
+   */
+  revokeGlobalAgentKey(keyId: string): boolean {
+    if (!this.state.globalAgentKeys) return false;
+    const entry = this.state.globalAgentKeys.find((k) => k.id === keyId);
+    if (!entry) return false;
+    if (!entry.revokedAt) {
+      entry.revokedAt = new Date().toISOString();
+      this.save();
+    }
+    return true;
+  }
+
+  /**
+   * Parse an incoming plaintext `cdsg_<suffix>` and find the matching
+   * non-revoked GlobalAgentKey. Parallels findAgentKeyForAuth but
+   * without the project lookup step — all global keys live in one
+   * array. Returns null on any failure.
+   */
+  findGlobalAgentKeyForAuth(plaintextKey: string): { keyId: string } | null {
+    if (!plaintextKey || !plaintextKey.startsWith('cdsg_')) return null;
+    const hash = crypto.createHash('sha256').update(plaintextKey).digest('hex');
+    const hashBuf = Buffer.from(hash, 'hex');
+    for (const entry of this.state.globalAgentKeys || []) {
+      if (entry.revokedAt) continue;
+      try {
+        const entryBuf = Buffer.from(entry.hash, 'hex');
+        if (entryBuf.length !== hashBuf.length) continue;
+        if (crypto.timingSafeEqual(entryBuf, hashBuf)) {
+          return { keyId: entry.id };
+        }
+      } catch {
+        /* malformed hash in state, skip */
+      }
+    }
+    return null;
+  }
+
+  /** Best-effort lastUsedAt stamp on a global key. Silent on unknown id. */
+  touchGlobalAgentKeyLastUsed(keyId: string): void {
+    const entry = (this.state.globalAgentKeys || []).find((k) => k.id === keyId);
+    if (!entry) return;
+    entry.lastUsedAt = new Date().toISOString();
     try { this.save(); } catch { /* ignore */ }
   }
 
@@ -998,22 +1120,75 @@ export class StateService {
     );
   }
 
-  // ── Custom environment variables ──
+  // ── Custom environment variables (scoped: _global + per-project) ──
+  //
+  // Storage lives in this.state.customEnv as a nested map:
+  //   { _global: {...}, <projectId>: {...} }
+  // Project scopes override _global at container launch time; a key set
+  // in a project wins over the same key in _global.
+  //
+  // Callers usually fall into one of three cases:
+  //   1. Startup / server-wide config  → pass nothing → global-only view
+  //   2. Deploy path                   → pass projectId → merged view
+  //                                      ({ ..._global, ...project })
+  //   3. Settings UI                   → use the Raw accessor to read the
+  //                                      full scoped map, or pass an
+  //                                      explicit projectId to overwrite
+  //                                      one bucket.
 
-  getCustomEnv(): Record<string, string> {
+  /**
+   * Merged custom env for a given scope.
+   * - projectId omitted → just `_global` (pre-P4 behaviour)
+   * - projectId supplied → `{ ..._global, ...project }` so project
+   *   overrides win at deploy time.
+   */
+  getCustomEnv(projectId?: string): Record<string, string> {
+    const store = this.state.customEnv || {};
+    const global = store[GLOBAL_ENV_SCOPE] || {};
+    if (!projectId || projectId === GLOBAL_ENV_SCOPE) {
+      return { ...global };
+    }
+    const project = store[projectId] || {};
+    return { ...global, ...project };
+  }
+
+  /** Full scoped map (for Settings UI). Never mutate the return value directly. */
+  getCustomEnvRaw(): CustomEnvStore {
+    if (!this.state.customEnv) this.state.customEnv = { [GLOBAL_ENV_SCOPE]: {} };
+    if (!this.state.customEnv[GLOBAL_ENV_SCOPE]) this.state.customEnv[GLOBAL_ENV_SCOPE] = {};
     return this.state.customEnv;
   }
 
-  setCustomEnv(env: Record<string, string>): void {
-    this.state.customEnv = env;
+  /** Just one scope's vars (no merging). Returns empty object on unknown scope. */
+  getCustomEnvScope(scope: string = GLOBAL_ENV_SCOPE): Record<string, string> {
+    const bucket = (this.state.customEnv || {})[scope];
+    return bucket ? { ...bucket } : {};
   }
 
-  setCustomEnvVar(key: string, value: string): void {
-    this.state.customEnv[key] = value;
+  /** Replace the entire bucket for a scope. scope='_global' by default. */
+  setCustomEnv(env: Record<string, string>, scope: string = GLOBAL_ENV_SCOPE): void {
+    if (!this.state.customEnv) this.state.customEnv = { [GLOBAL_ENV_SCOPE]: {} };
+    this.state.customEnv[scope] = { ...env };
   }
 
-  removeCustomEnvVar(key: string): void {
-    delete this.state.customEnv[key];
+  /** Upsert a single var in the given scope. */
+  setCustomEnvVar(key: string, value: string, scope: string = GLOBAL_ENV_SCOPE): void {
+    if (!this.state.customEnv) this.state.customEnv = { [GLOBAL_ENV_SCOPE]: {} };
+    if (!this.state.customEnv[scope]) this.state.customEnv[scope] = {};
+    this.state.customEnv[scope][key] = value;
+  }
+
+  /** Remove a single var from the given scope. No-op when missing. */
+  removeCustomEnvVar(key: string, scope: string = GLOBAL_ENV_SCOPE): void {
+    const bucket = (this.state.customEnv || {})[scope];
+    if (!bucket) return;
+    delete bucket[key];
+  }
+
+  /** Drop an entire project bucket (used when a project is deleted). */
+  dropCustomEnvScope(scope: string): void {
+    if (!this.state.customEnv || scope === GLOBAL_ENV_SCOPE) return;
+    delete this.state.customEnv[scope];
   }
 
   // ── Infrastructure services ──
@@ -1201,7 +1376,8 @@ export class StateService {
    * Priority: customEnv.CDS_DOCKER_HOST > process.env.CDS_DOCKER_HOST > default 172.17.0.1
    */
   private resolveDockerHost(): string {
-    return this.state.customEnv['CDS_DOCKER_HOST']
+    // Docker host is a cross-project concern, read from the global scope.
+    return (this.state.customEnv?.[GLOBAL_ENV_SCOPE] || {})['CDS_DOCKER_HOST']
       || process.env.CDS_DOCKER_HOST
       || '172.17.0.1';
   }

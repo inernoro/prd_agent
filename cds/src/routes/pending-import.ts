@@ -82,7 +82,9 @@ function summariseCompose(
   const existingInfraIds = new Set(
     stateService.getInfraServicesForProject(projectId).map((s) => s.id),
   );
-  const existingEnvKeys = new Set(Object.keys(stateService.getCustomEnv()));
+  // Project-scoped diff: "will this import add new env keys" considers
+  // both the _global baseline and this project's existing overrides.
+  const existingEnvKeys = new Set(Object.keys(stateService.getCustomEnv(projectId)));
 
   return {
     summary: {
@@ -287,13 +289,14 @@ export function createPendingImportRouter(deps: PendingImportRouterDeps): Router
       appliedProfiles.push(scoped.id);
     }
 
-    // Apply env vars (merge; existing keys win so operator-set values
+    // Apply env vars into the target project's scope (merge; existing
+    // keys in either _global or the project win so operator-set values
     // aren't silently clobbered by a machine-authored import).
-    const existingEnv = stateService.getCustomEnv();
+    const existingEnv = stateService.getCustomEnv(project.id);
     const appliedEnvKeys: string[] = [];
     for (const [key, value] of Object.entries(parsed.envVars || {})) {
       if (!(key in existingEnv)) {
-        stateService.setCustomEnvVar(key, value);
+        stateService.setCustomEnvVar(key, value, project.id);
         appliedEnvKeys.push(key);
       }
     }

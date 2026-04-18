@@ -25,6 +25,67 @@ import { createSchedulerRouter } from './scheduler/routes.js';
 import { createClusterRouter } from './routes/cluster.js';
 import { updateEnvFile, defaultEnvFilePath } from './services/env-file.js';
 
+/**
+ * 2026-04-18 bug fix — .cds.env self-loader.
+ *
+ * 历史行为：依赖 exec_cds.sh 的 load_env() 在 bash 层 source .cds.env，
+ * 再 exec node。但 systemd-managed 部署（cds-master.service 的
+ * `ExecStart=/usr/bin/node dist/index.js`）会直接 exec node，绕过
+ * exec_cds.sh，于是 `.cds.env` 里的 `export CDS_MONGO_URI=...` 永远
+ * 不会进入 process.env。生产侧诊断发现：
+ *   切 Mongo → persisted=true → systemd 重启 → mode=json（URI 没读到）
+ *
+ * 修复策略：node 启动一开始自己解析 .cds.env，与 shell 无关。
+ * 已经在 process.env 里的变量（systemd Environment= 或 shell export）
+ * **不覆盖**，保证运维显式设置仍然有最高优先级。
+ *
+ * 支持语法：`export KEY="value"` 和 `KEY="value"`，值里 bash 双引号
+ * 转义（\\ \" \$）反向 unescape。忽略 `#` 注释行和空行。
+ *
+ * 位置：必须在 loadConfig() 之前调用，否则 config 里引用的
+ * repoRoot / rootDomains 等还是从未配置的 env 读。
+ */
+function loadCdsEnvFile(): void {
+  const candidates = [
+    path.resolve(process.cwd(), '.cds.env'),
+    path.resolve(path.dirname(new URL(import.meta.url).pathname), '..', '.cds.env'),
+  ];
+  for (const envPath of candidates) {
+    try {
+      if (!fs.existsSync(envPath)) continue;
+      const content = fs.readFileSync(envPath, 'utf-8');
+      const lineRe = /^\s*(?:export\s+)?([A-Z_][A-Z0-9_]*)=(?:"((?:[^"\\]|\\.)*)"|'([^']*)'|(\S*))\s*$/;
+      let loaded = 0;
+      for (const line of content.split('\n')) {
+        if (!line || /^\s*#/.test(line)) continue;
+        const m = line.match(lineRe);
+        if (!m) continue;
+        const key = m[1];
+        const raw = m[2] ?? m[3] ?? m[4] ?? '';
+        // Unescape bash double-quoted: \" \\ \$ → " \ $
+        const value = (m[2] !== undefined)
+          ? raw.replace(/\\(.)/g, '$1')
+          : raw;
+        // process.env 已有值（systemd/shell 显式设置）优先
+        if (process.env[key] === undefined) {
+          process.env[key] = value;
+          loaded++;
+        }
+      }
+      if (loaded > 0) {
+        // 用 console.log 而不是 logger，这一步比 logger 早
+        console.log(`[cds-env-loader] 从 ${envPath} 加载 ${loaded} 个变量到 process.env`);
+      }
+      return; // 只读第一个找到的
+    } catch (err) {
+      console.warn(`[cds-env-loader] 跳过 ${envPath}: ${(err as Error).message}`);
+    }
+  }
+}
+
+// 必须在 loadConfig 之前调用
+loadCdsEnvFile();
+
 function parseCsv(value: string | undefined): string[] | undefined {
   if (!value) return undefined;
   const items = value.split(',').map(v => v.trim()).filter(Boolean);
@@ -62,14 +123,26 @@ if (!['json', 'mongo', 'auto'].includes(rawStorageMode)) {
   );
 }
 /**
- * P4 Part 18 (D.2): storage-mode resolution + auto-fallback.
+ * P4 Part 18 (D.2): storage-mode resolution.
  *
- * In 'mongo' mode we require a working mongo at startup and abort
- * if we can't connect — operators should notice a broken config
- * loudly rather than silently losing data. In 'auto' mode we try
- * mongo first but fall back to JSON if anything goes wrong (no URI,
- * connection refused, auth failure). 'json' is the legacy path and
- * never touches mongo.
+ * Behaviour matrix (updated 2026-04-18):
+ *   - 'json' mode                     → JSON backing (legacy)
+ *   - 'mongo' mode + URI connect OK   → Mongo backing
+ *   - 'mongo' mode + URI missing/fail → throw (FATAL) — operator must fix
+ *   - 'auto' mode + URI missing       → JSON backing (silent; expected)
+ *   - 'auto' mode + URI present + OK  → Mongo backing
+ *   - 'auto' mode + URI present + fail→ throw (FATAL) — was fallback before
+ *
+ * The only fallback remaining is the "auto + no URI" case, which maps
+ * to JSON because the operator didn't ask for Mongo at all. Once a URI
+ * is present, we treat Mongo as the contract — silently dropping to
+ * JSON with the URI still configured led to "I swore I was on Mongo but
+ * state.json kept growing" confusion in production.
+ *
+ * Rollback path: operators can still call POST /api/storage-mode/switch-to-json
+ * from the Dashboard to return to JSON mode — that path clears the
+ * .cds.env Mongo vars atomically. So "Mongo is down and I need CDS up"
+ * is "unset CDS_MONGO_URI in .cds.env or set CDS_STORAGE_MODE=json, restart".
  */
 // Definite-assignment: initStateService() is awaited at module top
 // level before any downstream code touches stateService. The `!`
@@ -121,17 +194,17 @@ async function initStateService(): Promise<void> {
     await mongoStore.init();
   } catch (err) {
     const msg = (err as Error).message;
-    if (rawStorageMode === 'mongo') {
-      console.error(`  [storage] FATAL: CDS_STORAGE_MODE=mongo but mongo init failed: ${msg}`);
-      throw err;
-    }
-    // auto mode: fall back
-    console.warn(`  [storage] WARN: mongo init failed (${msg}), falling back to JSON`);
+    console.error(
+      `  [storage] FATAL: CDS_STORAGE_MODE=${rawStorageMode} + CDS_MONGO_URI 已配置，`
+      + `但 mongo init 失败: ${msg}`,
+    );
+    console.error(
+      `  [storage] 不再自动退回 JSON（用户需求：Mongo 是主存储）。`
+      + `紧急回退：编辑 cds/.cds.env 注释掉 CDS_MONGO_URI 或改 CDS_STORAGE_MODE=json，重启。`
+      + `或在 Dashboard Settings 里点 "切回 JSON"（需要 Mongo 先恢复）`,
+    );
     try { await handle.close(); } catch { /* best effort */ }
-    stateService = new StateService(stateFile, config.repoRoot);
-    stateService.load();
-    storageModeResolved = 'auto-fallback-json';
-    return;
+    throw err;
   }
 
   // Mongo init succeeded. If the collection is fresh (load() returned
@@ -872,9 +945,11 @@ proxyService.setOnAutoBuild(async (branchSlug, _req, res) => {
       const svc = entry.services[profile.id];
       svc.status = 'building';
 
-      // Merge CDS_* auto-generated vars (CDS_HOST, CDS_*_PORT) with user custom env
+      // Merge CDS_* auto-generated vars (CDS_HOST, CDS_*_PORT) with user
+      // custom env. Scoped by the deploying branch's project so a
+      // JWT_SECRET in project A never leaks into project B.
       const cdsEnv = stateService.getCdsEnvVars();
-      const customEnv = stateService.getCustomEnv();
+      const customEnv = stateService.getCustomEnv(entry.projectId || 'default');
       const mergedEnv = { ...cdsEnv, ...customEnv };
       await containerService.runService(entry, profile, svc, (chunk) => {
         sendEvent('log', { profileId: profile.id, chunk });

@@ -2586,27 +2586,51 @@ function getPortIcon(profileId, profile) {
   return key ? ICON[key] : ICON.portDefault;
 }
 
+// Scope-aware factory reset. On a per-project page (CURRENT_PROJECT_ID
+// !== 'default'), default to resetting THIS project only. The user can
+// still opt into the global reset by cancelling and running it from
+// the project list page where no project context is active.
 async function factoryReset() {
-  if (!confirm('[警告] 恢复出厂设置\n\n将清除所有：分支、构建配置、环境变量、基础设施服务、路由规则。\nDocker 数据卷（数据库文件等）会保留。\n\n确定继续？')) return;
+  var scoped = typeof CURRENT_PROJECT_ID !== 'undefined'
+    && CURRENT_PROJECT_ID
+    && CURRENT_PROJECT_ID !== 'default';
+  var url = scoped
+    ? `${API}/factory-reset?project=${encodeURIComponent(CURRENT_PROJECT_ID)}`
+    : `${API}/factory-reset`;
+  var msg = scoped
+    ? `[警告] 重置当前项目\n\n将清除本项目的所有：分支、构建配置、基础设施服务、路由规则、项目级环境变量。\n全局环境变量和其他项目不受影响。\nDocker 数据卷（数据库文件等）会保留。\n\n确定继续？`
+    : '[警告] 恢复出厂设置\n\n将清除所有项目的所有：分支、构建配置、环境变量、基础设施服务、路由规则。\nDocker 数据卷（数据库文件等）会保留。\n\n确定继续？';
+  if (!confirm(msg)) return;
   if (!confirm('二次确认：所有配置将被清空，此操作不可撤销。')) return;
   globalBusy = true;
   renderBranches();
   try {
-    const res = await fetch(`${API}/factory-reset`, { method: 'POST' });
+    const res = await fetch(url, { method: 'POST' });
     const reader = res.body.getReader();
     while (!(await reader.read()).done) {}
-    showToast('已恢复出厂设置', 'success');
+    showToast(scoped ? '已重置本项目' : '已恢复出厂设置', 'success');
   } catch (e) { showToast(e.message, 'error'); }
   globalBusy = false;
   await loadBranches();
 }
 
 async function cleanupAll() {
-  if (!confirm('确定清理所有非默认分支？')) return;
+  // Same scope rule as factoryReset: on a project page, clean only
+  // that project's non-default branches.
+  var scoped = typeof CURRENT_PROJECT_ID !== 'undefined'
+    && CURRENT_PROJECT_ID
+    && CURRENT_PROJECT_ID !== 'default';
+  var url = scoped
+    ? `${API}/cleanup?project=${encodeURIComponent(CURRENT_PROJECT_ID)}`
+    : `${API}/cleanup`;
+  var prompt = scoped
+    ? '确定清理本项目的所有非默认分支？'
+    : '确定清理所有项目的所有非默认分支？';
+  if (!confirm(prompt)) return;
   globalBusy = true;
   renderBranches();
   try {
-    const res = await fetch(`${API}/cleanup`, { method: 'POST' });
+    const res = await fetch(url, { method: 'POST' });
     const reader = res.body.getReader();
     while (!(await reader.read()).done) {}
     showToast('清理完成', 'success');
@@ -3724,10 +3748,23 @@ async function runQuickstart() {
 
 // ── Environment variables (data only) ──
 
-async function loadEnvVars() {
+// Which bucket the env modal is currently editing.
+// '_global' — baseline shared by every project (pre-feature behaviour)
+// '<projectId>' — project-scoped overrides injected at deploy time
+// Defaults to global so the menu-bar shortcut opens in back-compat mode.
+let envScope = '_global';
+
+async function loadEnvVars(scope) {
+  const s = scope || envScope || '_global';
   try {
-    const data = await api('GET', '/env');
+    // Skip isProjectScopedPath() by passing explicit scope query; the
+    // /env endpoint has its own scope parameter so we don't want the
+    // auto-injected ?project= that applies to branch/profile/infra.
+    const res = await fetch(API + '/env?scope=' + encodeURIComponent(s));
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const data = await res.json();
     customEnvVars = data.env || {};
+    envScope = s;
   } catch (e) { console.error('loadEnvVars:', e); }
 }
 
@@ -3785,13 +3822,28 @@ function openEnvModal() {
   }
 
   const listHtml = entries.length === 0
-    ? '<div class="config-empty">暂无自定义环境变量。默认使用自动检测的主机变量 (MONGODB_HOST 等)。</div>'
+    ? (envScope === '_global'
+        ? '<div class="config-empty">暂无自定义环境变量。默认使用自动检测的主机变量 (MONGODB_HOST 等)。</div>'
+        : '<div class="config-empty">本项目还没有独立的环境变量。父级全局变量仍然生效；在此添加的变量会覆盖全局值，且不会泄漏到其他项目。</div>')
     : entries.map(([k, v]) => envItemHtml(k, v)).join('');
 
+  // Scope selector: 全局 vs. 当前项目. Switches the modal between
+  // _global and CURRENT_PROJECT_ID without leaving the dialog. Legacy
+  // "default" project keeps the single-bucket experience (global only).
+  const scopeSelector = (typeof CURRENT_PROJECT_ID !== 'undefined' && CURRENT_PROJECT_ID && CURRENT_PROJECT_ID !== 'default')
+    ? `
+    <div class="env-scope-toggle" style="display:inline-flex;gap:0;padding:3px;background:var(--bg-elevated,rgba(255,255,255,0.04));border:1px solid var(--card-border);border-radius:7px;margin-bottom:10px;font-size:12px">
+      <button type="button" onclick="switchEnvScope('_global')" class="${envScope === '_global' ? 'active' : ''}" style="padding:5px 12px;border:none;background:${envScope === '_global' ? 'var(--accent,#10b981)' : 'transparent'};color:${envScope === '_global' ? '#fff' : 'var(--text-secondary)'};border-radius:5px;cursor:pointer;font-weight:${envScope === '_global' ? '600' : '500'}">🌐 全局</button>
+      <button type="button" onclick="switchEnvScope('${esc(CURRENT_PROJECT_ID)}')" class="${envScope === CURRENT_PROJECT_ID ? 'active' : ''}" style="padding:5px 12px;border:none;background:${envScope === CURRENT_PROJECT_ID ? 'var(--accent,#10b981)' : 'transparent'};color:${envScope === CURRENT_PROJECT_ID ? '#fff' : 'var(--text-secondary)'};border-radius:5px;cursor:pointer;font-weight:${envScope === CURRENT_PROJECT_ID ? '600' : '500'}">📦 此项目</button>
+    </div>
+    ` : '';
+  const scopeDesc = envScope === '_global'
+    ? '自定义全局环境变量（所有项目共享）。项目级变量可以在此基础上覆盖特定键。'
+    : '本项目专属环境变量。部署时会覆盖同名的全局变量，禁止跨项目访问。';
+
   const html = `
-    <p class="config-panel-desc">
-      自定义环境变量将注入到所有容器中，可覆盖自动检测的主机变量。
-    </p>
+    ${scopeSelector}
+    <p class="config-panel-desc">${scopeDesc}</p>
     <div class="config-panel-actions" style="margin-bottom:10px">
       <button class="sm" onclick="openBulkEnvModal()">批量编辑</button>
       <button class="sm primary" onclick="toggleModalForm('envAddForm')">+ 添加</button>
@@ -3827,12 +3879,25 @@ function cancelInlineEnvEdit(key) {
   if (editEl) editEl.classList.add('hidden');
 }
 
+// ── Env modal helpers (scope-aware) ─────────────────────────────
+
+// Every /env mutation carries ?scope=<bucket>. The scope is tracked in
+// the module-level `envScope` variable and flipped via switchEnvScope().
+function _envScopeQs() {
+  return '?scope=' + encodeURIComponent(envScope || '_global');
+}
+
+async function switchEnvScope(scope) {
+  await loadEnvVars(scope);
+  openEnvModal();
+}
+
 async function saveInlineEnvVar(key) {
   const input = document.getElementById(`env-edit-val-${encodeURIComponent(key)}`);
   if (!input) return;
   const value = input.value;
   try {
-    await api('PUT', `/env/${encodeURIComponent(key)}`, { value });
+    await api('PUT', `/env/${encodeURIComponent(key)}${_envScopeQs()}`, { value });
     showToast(`已保存 ${key}`, 'success');
     await loadEnvVars();
     openEnvModal();
@@ -3844,7 +3909,7 @@ async function saveNewEnvVar() {
   const value = document.getElementById('envValue').value;
   if (!key) { showToast('键名不能为空', 'error'); return; }
   try {
-    await api('PUT', `/env/${encodeURIComponent(key)}`, { value });
+    await api('PUT', `/env/${encodeURIComponent(key)}${_envScopeQs()}`, { value });
     showToast(`已设置 ${key}`, 'success');
     await loadEnvVars();
     openEnvModal();
@@ -3853,7 +3918,7 @@ async function saveNewEnvVar() {
 
 async function deleteEnvVarAndRefresh(key) {
   try {
-    await api('DELETE', `/env/${encodeURIComponent(key)}`);
+    await api('DELETE', `/env/${encodeURIComponent(key)}${_envScopeQs()}`);
     showToast(`已删除 ${key}`, 'success');
     await loadEnvVars();
     openEnvModal();
@@ -3891,7 +3956,7 @@ async function saveBulkEnvAndRefresh() {
     if (key) newVars[key] = value;
   }
   try {
-    await api('PUT', '/env', newVars);
+    await api('PUT', '/env' + _envScopeQs(), newVars);
     showToast(`已保存 ${Object.keys(newVars).length} 个环境变量`, 'success');
     await loadEnvVars();
     openEnvModal();

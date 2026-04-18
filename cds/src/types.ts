@@ -308,6 +308,22 @@ export interface OperationLog {
 }
 
 /** Persisted state */
+/**
+ * Scoped custom environment variable store.
+ *
+ * The reserved key `_global` holds variables shared across every project;
+ * any other key is a projectId whose bucket overrides the global one at
+ * container-launch time (project wins; global is the baseline).
+ *
+ * Shape purposely mirrors `{ _global: {...}, <projectId>: {...} }` from
+ * the product spec so the dashboard UI can render a simple two-column
+ * picker (scope → key/value pairs).
+ */
+export type CustomEnvStore = Record<string, Record<string, string>>;
+
+/** Reserved scope key for project-independent (global) variables. */
+export const GLOBAL_ENV_SCOPE = '_global';
+
 export interface CdsState {
   /** Routing rules */
   routingRules: RoutingRule[];
@@ -321,8 +337,22 @@ export interface CdsState {
   logs: Record<string, OperationLog[]>;
   /** Default branch (used when no routing rule matches) */
   defaultBranch: string | null;
-  /** User-defined environment variables (sent to containers on deploy) */
-  customEnv: Record<string, string>;
+  /**
+   * User-defined environment variables, scoped by project.
+   *
+   * Reserved scope `_global` holds variables shared by every project
+   * (pre-feature behaviour). Project-specific scopes (`<projectId>`)
+   * override `_global` at deploy time, so a `JWT_SECRET` in project A
+   * never leaks into project B.
+   *
+   * Legacy state.json files stored this as a flat `Record<string, string>`.
+   * migrateCustomEnvByProject() in state.ts wraps the flat object into
+   * `{ _global: <flat> }` on first load so existing callers keep working.
+   *
+   * In-memory shape is always the nested form after load; the migration
+   * is idempotent (already-nested stays put).
+   */
+  customEnv: CustomEnvStore;
   /** CDS-managed infrastructure services (databases, caches, etc.) */
   infraServices: InfraService[];
   /** Mirror acceleration enabled (npm/docker registry mirrors for faster builds in China) */
@@ -359,6 +389,17 @@ export interface CdsState {
    * See doc/design.cds-multi-project.md, doc/spec.cds-project-model.md.
    */
   projects?: Project[];
+  /**
+   * Global (bootstrap-equivalent) Agent Keys. Each entry holds only the
+   * sha256 of a `cdsg_<suffix>` plaintext. Unlike project-scoped keys,
+   * these are not enforced by assertProjectAccess and CAN create new
+   * projects — intended for onboarding a fresh Agent that needs to
+   * provision a new project end-to-end. Revoke after the Agent is done.
+   *
+   * Absent for pre-feature state.json — migrateGlobalAgentKeys() is a
+   * no-op that just ensures the array exists when needed.
+   */
+  globalAgentKeys?: GlobalAgentKey[];
   /**
    * P4 Part 18 (Phase E): single-slot GitHub Device Flow token used
    * by the "从 GitHub 选择仓库" button in the New Project modal and
@@ -558,6 +599,46 @@ export interface AgentKey {
   /** Human-readable label, e.g. "签发于 2026-04-18 10:32" or user-supplied. */
   label: string;
   /** sha256 hex of the plaintext key (`cdsp_<slug>_<base64url suffix>`). */
+  hash: string;
+  /** Permission scope. Always 'rw' — a placeholder for future tiers. */
+  scope: 'rw';
+  /** ISO timestamp of sign time. */
+  createdAt: string;
+  /** GitHub login of the signer if github auth mode, else undefined. */
+  createdBy?: string;
+  /** ISO timestamp updated (best-effort) each time the key authenticates. */
+  lastUsedAt?: string;
+  /** ISO timestamp set by DELETE — revoked keys stay in state for audit. */
+  revokedAt?: string;
+}
+
+/**
+ * Global (bootstrap-equivalent) Agent Key — NOT scoped to any project.
+ *
+ * Project-scoped AgentKey (`cdsp_<slug12>_<suffix>`) can't create projects
+ * (see routes/projects.ts POST handler → 403 project_key_cannot_create),
+ * which creates a chicken-and-egg problem: an AI assistant needs a key to
+ * call POST /api/projects, but the only keys it can obtain from the UI
+ * are project-scoped.
+ *
+ * GlobalAgentKey solves that by issuing a prefix-distinct `cdsg_<suffix>`
+ * key that behaves like the bootstrap AI_ACCESS_KEY: no project scope
+ * enforcement, can create/delete projects and work across project boundaries.
+ *
+ * Security note: because this is bootstrap-equivalent, the UI that issues
+ * it MUST show a loud warning ("don't hand this out casually"). The user
+ * is expected to mint one, hand it to a specific Agent, and revoke it
+ * after that Agent finishes provisioning.
+ *
+ * Storage parallels AgentKey: only sha256 of the plaintext is persisted;
+ * plaintext is shown once at signing time.
+ */
+export interface GlobalAgentKey {
+  /** Random 8-hex id, used for revocation by keyId. */
+  id: string;
+  /** Human-readable label, e.g. "bootstrap for prd-agent Claude 2026-04-18". */
+  label: string;
+  /** sha256 hex of the plaintext key (`cdsg_<base64url suffix>`). */
   hash: string;
   /** Permission scope. Always 'rw' — a placeholder for future tiers. */
   scope: 'rw';

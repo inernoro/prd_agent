@@ -253,7 +253,10 @@ describe('Pending-import router', () => {
       const infra = stateService.getInfraServicesForProject(projectId);
       expect(infra.find((s) => s.id === 'mongodb')).toBeDefined();
 
-      const env = stateService.getCustomEnv();
+      // 2026-04-18: pending-import writes into the target project's
+      // scope so env keys don't leak cross-project. Passing projectId
+      // merges _global + project overrides.
+      const env = stateService.getCustomEnv(projectId);
       expect(env['JWT_SECRET']).toBe('s3cret');
 
       // Item itself marked approved
