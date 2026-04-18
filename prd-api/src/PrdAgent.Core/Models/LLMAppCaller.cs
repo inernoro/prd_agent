@@ -138,7 +138,7 @@ public static class ModelTypes
     public const string Moderation = "moderation";
 
     /// <summary>获取所有基础类型</summary>
-    public static readonly string[] BaseTypes = { Chat, Intent, Vision, ImageGen };
+    public static readonly string[] BaseTypes = { Chat, Intent, Vision, ImageGen, VideoGen };
 
     /// <summary>获取所有类型（包括扩展）</summary>
     public static readonly string[] AllTypes = {

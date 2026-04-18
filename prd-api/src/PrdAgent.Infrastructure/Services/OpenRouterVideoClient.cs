@@ -1,48 +1,49 @@
-using System.Net.Http.Headers;
-using System.Text;
-using System.Text.Json;
 using System.Text.Json.Nodes;
-using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using PrdAgent.Core.Interfaces;
+using PrdAgent.Core.Models;
+using PrdAgent.Infrastructure.LlmGateway;
 
 namespace PrdAgent.Infrastructure.Services;
 
 /// <summary>
-/// OpenRouter 视频生成 API 客户端实现
-/// 异步模型：Submit → JobId → Poll → VideoUrl
+/// OpenRouter 视频生成 API 客户端
+/// 走 ILlmGateway.SendRawAsync，利用平台管理中配好的 ApiKey + BaseUrl，
+/// 不依赖 IConfiguration / 环境变量。
 /// </summary>
 public class OpenRouterVideoClient : IOpenRouterVideoClient
 {
-    private readonly HttpClient _http;
+    private readonly ILlmGateway _gateway;
     private readonly ILogger<OpenRouterVideoClient> _logger;
-    private readonly string? _apiKey;
-    private readonly string _baseUrl;
 
-    public OpenRouterVideoClient(HttpClient http, IConfiguration config, ILogger<OpenRouterVideoClient> logger)
+    public OpenRouterVideoClient(ILlmGateway gateway, ILogger<OpenRouterVideoClient> logger)
     {
-        _http = http;
+        _gateway = gateway;
         _logger = logger;
-        _apiKey = config["OpenRouter:ApiKey"];
-        _baseUrl = (config["OpenRouter:BaseUrl"] ?? "https://openrouter.ai/api/v1").TrimEnd('/');
     }
-
-    public bool IsConfigured => !string.IsNullOrWhiteSpace(_apiKey);
 
     public async Task<OpenRouterVideoSubmitResult> SubmitAsync(OpenRouterVideoSubmitRequest request, CancellationToken ct = default)
     {
-        if (!IsConfigured)
+        // 预解析模型池，拿到实际模型 id（用户未指定时由池决定）
+        var resolution = await _gateway.ResolveModelAsync(
+            appCallerCode: request.AppCallerCode,
+            modelType: ModelTypes.VideoGen,
+            expectedModel: request.Model,
+            ct: ct);
+
+        if (!resolution.Success || string.IsNullOrWhiteSpace(resolution.ActualModel))
         {
             return new OpenRouterVideoSubmitResult
             {
                 Success = false,
-                ErrorMessage = "OpenRouter API Key 未配置，请在后端环境变量 OPENROUTER_API_KEY 注入。"
+                ErrorMessage = (resolution.ErrorMessage ?? "未配置可用的视频生成模型池。")
+                    + "\n请在「模型池管理」中创建一个类型为「视频生成」的模型池，添加 OpenRouter 视频模型（如 alibaba/wan-2.6）。"
             };
         }
 
         var body = new JsonObject
         {
-            ["model"] = request.Model,
+            ["model"] = resolution.ActualModel,
             ["prompt"] = request.Prompt
         };
         if (!string.IsNullOrWhiteSpace(request.AspectRatio)) body["aspect_ratio"] = request.AspectRatio;
@@ -51,129 +52,116 @@ public class OpenRouterVideoClient : IOpenRouterVideoClient
         if (request.GenerateAudio.HasValue) body["generate_audio"] = request.GenerateAudio.Value;
         if (request.Seed.HasValue) body["seed"] = request.Seed.Value;
 
-        using var httpRequest = new HttpRequestMessage(HttpMethod.Post, $"{_baseUrl}/videos");
-        httpRequest.Headers.Authorization = new AuthenticationHeaderValue("Bearer", _apiKey);
-        httpRequest.Content = new StringContent(body.ToJsonString(), Encoding.UTF8, "application/json");
-
-        try
+        var rawResp = await _gateway.SendRawAsync(new GatewayRawRequest
         {
-            using var resp = await _http.SendAsync(httpRequest, ct);
-            var text = await resp.Content.ReadAsStringAsync(ct);
-
-            if (!resp.IsSuccessStatusCode)
+            AppCallerCode = request.AppCallerCode,
+            ModelType = ModelTypes.VideoGen,
+            ExpectedModel = resolution.ActualModel,
+            EndpointPath = "/videos",
+            RequestBody = body,
+            HttpMethod = "POST",
+            TimeoutSeconds = 60,
+            Context = new GatewayRequestContext
             {
-                _logger.LogWarning("OpenRouter 视频提交失败 status={Status} body={Body}",
-                    (int)resp.StatusCode, Truncate(text, 500));
-                return new OpenRouterVideoSubmitResult
-                {
-                    Success = false,
-                    ErrorMessage = ExtractErrorMessage(text) ?? $"HTTP {(int)resp.StatusCode}"
-                };
+                RequestId = request.RequestId,
+                UserId = request.UserId,
+                QuestionText = request.Prompt
             }
+        }, ct);
 
-            var doc = JsonNode.Parse(text)?.AsObject();
-            var jobId = doc?["id"]?.GetValue<string>() ?? doc?["generation_id"]?.GetValue<string>();
-            if (string.IsNullOrWhiteSpace(jobId))
-            {
-                return new OpenRouterVideoSubmitResult
-                {
-                    Success = false,
-                    ErrorMessage = "OpenRouter 响应缺少 id 字段"
-                };
-            }
-
-            double? cost = null;
-            if (doc?["usage"] is JsonObject usage && usage["cost"] is JsonNode costNode)
-            {
-                try { cost = costNode.GetValue<double>(); } catch { /* ignore */ }
-            }
-
-            return new OpenRouterVideoSubmitResult
-            {
-                Success = true,
-                JobId = jobId,
-                Cost = cost
-            };
-        }
-        catch (Exception ex)
+        if (!rawResp.Success || string.IsNullOrWhiteSpace(rawResp.Content))
         {
-            _logger.LogError(ex, "OpenRouter 视频提交异常");
+            _logger.LogWarning("OpenRouter 视频提交失败 status={Status} errCode={Code} body={Body}",
+                rawResp.StatusCode, rawResp.ErrorCode, Truncate(rawResp.Content ?? string.Empty, 500));
             return new OpenRouterVideoSubmitResult
             {
                 Success = false,
-                ErrorMessage = ex.Message
+                ErrorMessage = ExtractErrorMessage(rawResp.Content ?? string.Empty)
+                    ?? rawResp.ErrorCode ?? $"HTTP {rawResp.StatusCode}"
             };
         }
+
+        var doc = JsonNode.Parse(rawResp.Content)?.AsObject();
+        var jobId = doc?["id"]?.GetValue<string>() ?? doc?["generation_id"]?.GetValue<string>();
+        if (string.IsNullOrWhiteSpace(jobId))
+        {
+            return new OpenRouterVideoSubmitResult
+            {
+                Success = false,
+                ErrorMessage = "OpenRouter 响应缺少 id 字段"
+            };
+        }
+
+        double? cost = ReadCost(doc);
+
+        return new OpenRouterVideoSubmitResult
+        {
+            Success = true,
+            JobId = jobId,
+            Cost = cost,
+            ActualModel = resolution.ActualModel
+        };
     }
 
-    public async Task<OpenRouterVideoStatus> GetStatusAsync(string jobId, CancellationToken ct = default)
+    public async Task<OpenRouterVideoStatus> GetStatusAsync(string appCallerCode, string jobId, CancellationToken ct = default)
     {
-        if (!IsConfigured)
+        if (string.IsNullOrWhiteSpace(jobId))
+        {
+            return new OpenRouterVideoStatus { Status = "failed", ErrorMessage = "jobId 不能为空" };
+        }
+
+        var rawResp = await _gateway.SendRawAsync(new GatewayRawRequest
+        {
+            AppCallerCode = appCallerCode,
+            ModelType = ModelTypes.VideoGen,
+            EndpointPath = $"/videos/{Uri.EscapeDataString(jobId)}",
+            HttpMethod = "GET",
+            TimeoutSeconds = 30
+        }, ct);
+
+        if (!rawResp.Success || string.IsNullOrWhiteSpace(rawResp.Content))
         {
             return new OpenRouterVideoStatus
             {
                 Status = "failed",
-                ErrorMessage = "OpenRouter API Key 未配置"
+                ErrorMessage = ExtractErrorMessage(rawResp.Content ?? string.Empty)
+                    ?? rawResp.ErrorCode ?? $"HTTP {rawResp.StatusCode}"
             };
         }
 
-        using var httpRequest = new HttpRequestMessage(HttpMethod.Get, $"{_baseUrl}/videos/{Uri.EscapeDataString(jobId)}");
-        httpRequest.Headers.Authorization = new AuthenticationHeaderValue("Bearer", _apiKey);
+        var doc = JsonNode.Parse(rawResp.Content)?.AsObject();
+        var status = doc?["status"]?.GetValue<string>()?.ToLowerInvariant() ?? "pending";
 
-        try
+        string? videoUrl = null;
+        if (doc?["unsigned_urls"] is JsonArray urls && urls.Count > 0)
         {
-            using var resp = await _http.SendAsync(httpRequest, ct);
-            var text = await resp.Content.ReadAsStringAsync(ct);
-
-            if (!resp.IsSuccessStatusCode)
-            {
-                return new OpenRouterVideoStatus
-                {
-                    Status = "failed",
-                    ErrorMessage = ExtractErrorMessage(text) ?? $"HTTP {(int)resp.StatusCode}"
-                };
-            }
-
-            var doc = JsonNode.Parse(text)?.AsObject();
-            var status = doc?["status"]?.GetValue<string>()?.ToLowerInvariant() ?? "pending";
-
-            string? videoUrl = null;
-            if (doc?["unsigned_urls"] is JsonArray urls && urls.Count > 0)
-            {
-                videoUrl = urls[0]?.GetValue<string>();
-            }
-
-            string? errMsg = null;
-            if (doc?["error"] is JsonNode errNode)
-            {
-                errMsg = errNode is JsonObject errObj
-                    ? errObj["message"]?.GetValue<string>() ?? errObj.ToJsonString()
-                    : errNode.ToString();
-            }
-
-            double? cost = null;
-            if (doc?["usage"] is JsonObject usage && usage["cost"] is JsonNode costNode)
-            {
-                try { cost = costNode.GetValue<double>(); } catch { /* ignore */ }
-            }
-
-            return new OpenRouterVideoStatus
-            {
-                Status = status,
-                VideoUrl = videoUrl,
-                ErrorMessage = errMsg,
-                Cost = cost
-            };
+            videoUrl = urls[0]?.GetValue<string>();
         }
-        catch (Exception ex)
+
+        string? errMsg = null;
+        if (doc?["error"] is JsonNode errNode)
         {
-            _logger.LogError(ex, "OpenRouter 视频状态查询异常 jobId={JobId}", jobId);
-            return new OpenRouterVideoStatus
-            {
-                Status = "failed",
-                ErrorMessage = ex.Message
-            };
+            errMsg = errNode is JsonObject errObj
+                ? errObj["message"]?.GetValue<string>() ?? errObj.ToJsonString()
+                : errNode.ToString();
         }
+
+        return new OpenRouterVideoStatus
+        {
+            Status = status,
+            VideoUrl = videoUrl,
+            ErrorMessage = errMsg,
+            Cost = ReadCost(doc)
+        };
+    }
+
+    private static double? ReadCost(JsonObject? doc)
+    {
+        if (doc?["usage"] is JsonObject usage && usage["cost"] is JsonNode costNode)
+        {
+            try { return costNode.GetValue<double>(); } catch { /* ignore */ }
+        }
+        return null;
     }
 
     private static string? ExtractErrorMessage(string body)

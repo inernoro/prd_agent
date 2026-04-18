@@ -170,12 +170,8 @@ builder.Services.AddSingleton<WatermarkRenderer>();
 builder.Services.AddScoped<PrdAgent.Core.Interfaces.IVideoGenService, PrdAgent.Infrastructure.Services.VideoGenService>();
 
 // OpenRouter 视频生成客户端（Seedance / Wan / Veo / Sora 统一入口，异步 submit + poll）
-// API Key 通过 OpenRouter:ApiKey 配置读取（OPENROUTER_API_KEY 环境变量）
-builder.Services.AddHttpClient<PrdAgent.Core.Interfaces.IOpenRouterVideoClient, PrdAgent.Infrastructure.Services.OpenRouterVideoClient>(client =>
-{
-    // 视频生成任务通常要数分钟，设大一点的 timeout
-    client.Timeout = TimeSpan.FromMinutes(2);
-});
+// 走 ILlmGateway.SendRawAsync，API Key 由平台管理提供，不依赖环境变量
+builder.Services.AddScoped<PrdAgent.Core.Interfaces.IOpenRouterVideoClient, PrdAgent.Infrastructure.Services.OpenRouterVideoClient>();
 
 // Account Data Transfer 数据分享
 builder.Services.AddScoped<PrdAgent.Infrastructure.Services.WorkspaceCloneService>();

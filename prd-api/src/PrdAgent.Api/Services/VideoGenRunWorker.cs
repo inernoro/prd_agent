@@ -2139,10 +2139,16 @@ document.addEventListener('keydown',e=>{if(e.key==='ArrowRight'||e.key==='ArrowD
     /// <summary>
     /// videogen 模式：提交 → 轮询 → 写回 VideoAssetUrl → Completed
     /// 使用 CancellationToken.None（服务器权威原则）
+    ///
+    /// 走 ILlmGateway.SendRawAsync（由 Client 内部使用），
+    /// AppCallerCode = "video-agent.videogen::video-gen" 决定模型池，
+    /// 平台 ApiKey 从平台管理中配置的凭据自动取用，不依赖环境变量。
     /// </summary>
     private async Task ProcessDirectVideoGenAsync(VideoGenRun run)
     {
-        _logger.LogInformation("VideoGen 直出开始: runId={RunId}, model={Model}, duration={Duration}s",
+        const string appCallerCode = PrdAgent.Core.Models.AppCallerRegistry.VideoAgent.VideoGen.Generate;
+
+        _logger.LogInformation("VideoGen 直出开始: runId={RunId}, userModel={Model}, duration={Duration}s",
             run.Id, run.DirectVideoModel, run.DirectDuration);
 
         await PublishEventAsync(run.Id, "phase.changed", new { phase = "videogen-submitting", progress = 5 });
@@ -2150,22 +2156,18 @@ document.addEventListener('keydown',e=>{if(e.key==='ArrowRight'||e.key==='ArrowD
         using var scope = _scopeFactory.CreateScope();
         var client = scope.ServiceProvider.GetRequiredService<PrdAgent.Core.Interfaces.IOpenRouterVideoClient>();
 
-        if (!client.IsConfigured)
-        {
-            await FailRunAsync(run, "OPENROUTER_NOT_CONFIGURED",
-                "后端尚未注入 OPENROUTER_API_KEY。请在 docker-compose 环境中设置 OPENROUTER_API_KEY 并重启容器。");
-            return;
-        }
-
-        // ─── 提交任务 ───
+        // ─── 提交任务（Client 内部调 Gateway 解析模型池 + 发起请求） ───
         var submitReq = new PrdAgent.Core.Interfaces.OpenRouterVideoSubmitRequest
         {
-            Model = run.DirectVideoModel ?? "alibaba/wan-2.6",
+            AppCallerCode = appCallerCode,
+            Model = run.DirectVideoModel, // 用户偏好（可空）；由模型池决定最终选择
             Prompt = run.DirectPrompt ?? string.Empty,
             AspectRatio = run.DirectAspectRatio,
             Resolution = run.DirectResolution,
             DurationSeconds = run.DirectDuration,
-            GenerateAudio = true
+            GenerateAudio = true,
+            UserId = run.OwnerAdminId,
+            RequestId = run.Id
         };
 
         var submitResult = await client.SubmitAsync(submitReq, CancellationToken.None);
@@ -2174,6 +2176,15 @@ document.addEventListener('keydown',e=>{if(e.key==='ArrowRight'||e.key==='ArrowD
             await FailRunAsync(run, "OPENROUTER_SUBMIT_FAILED",
                 submitResult.ErrorMessage ?? "OpenRouter 提交失败");
             return;
+        }
+
+        // 把 Gateway 解析出来的实际模型 id 回写到 Run 上（便于前端展示"本次用的是哪个模型"）
+        if (!string.IsNullOrWhiteSpace(submitResult.ActualModel))
+        {
+            await _db.VideoGenRuns.UpdateOneAsync(
+                x => x.Id == run.Id,
+                Builders<VideoGenRun>.Update.Set(x => x.DirectVideoModel, submitResult.ActualModel),
+                cancellationToken: CancellationToken.None);
         }
 
         await _db.VideoGenRuns.UpdateOneAsync(
@@ -2204,7 +2215,7 @@ document.addEventListener('keydown',e=>{if(e.key==='ArrowRight'||e.key==='ArrowD
 
             await Task.Delay(TimeSpan.FromSeconds(pollIntervalSec), CancellationToken.None);
 
-            var status = await client.GetStatusAsync(submitResult.JobId!, CancellationToken.None);
+            var status = await client.GetStatusAsync(appCallerCode, submitResult.JobId!, CancellationToken.None);
 
             if (status.IsCompleted && !string.IsNullOrWhiteSpace(status.VideoUrl))
             {

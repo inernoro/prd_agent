@@ -34,9 +34,11 @@ const ASPECT_OPTIONS: { value: AspectRatio; label: string; emoji: string }[] = [
 ];
 const RESOLUTION_OPTIONS: Resolution[] = ['480p', '720p', '1080p'];
 
+const AUTO_MODEL = ''; // 空字符串 = 交由后端模型池自动选择
+
 export const VideoGenDirectPanel: React.FC = () => {
   const [prompt, setPrompt] = useState('');
-  const [model, setModel] = useState<string>(OPENROUTER_VIDEO_MODELS[0].id);
+  const [model, setModel] = useState<string>(AUTO_MODEL);
   const [duration, setDuration] = useState<number>(5);
   const [aspect, setAspect] = useState<AspectRatio>('16:9');
   const [resolution, setResolution] = useState<Resolution>('720p');
@@ -88,7 +90,7 @@ export const VideoGenDirectPanel: React.FC = () => {
       const res = await createVideoGenRunReal({
         renderMode: 'videogen',
         directPrompt: trimmed,
-        directVideoModel: model,
+        directVideoModel: model || undefined, // 空 → 交由后端模型池决定
         directAspectRatio: aspect,
         directResolution: resolution,
         directDuration: duration,
@@ -226,14 +228,16 @@ export const VideoGenDirectPanel: React.FC = () => {
 
           {/* 参数栏 */}
           <div className="flex flex-wrap items-center gap-2">
-            {/* 模型 */}
+            {/* 模型（可选：空 = 由模型池自动选择最优） */}
             <select
               value={model}
               onChange={(e) => setModel(e.target.value)}
               disabled={isActive || isSubmitting}
               className="text-xs rounded-lg px-2 py-1.5 max-w-[280px] truncate"
               style={{ background: 'var(--bg-base)', border: '1px solid var(--border-default)', color: 'var(--text-primary)' }}
+              title="留空让模型池自动选择，或指定偏好模型"
             >
+              <option value={AUTO_MODEL}>自动（由模型池决定）</option>
               {OPENROUTER_VIDEO_MODELS.map((m) => (
                 <option key={m.id} value={m.id}>{m.label}</option>
               ))}
