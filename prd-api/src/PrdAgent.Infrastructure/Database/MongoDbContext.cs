@@ -176,6 +176,11 @@ public class MongoDbContext
     // Webhook 通知
     public IMongoCollection<WebhookDeliveryLog> WebhookDeliveryLogs => _database.GetCollection<WebhookDeliveryLog>("webhook_delivery_logs");
 
+    // PA Agent 私人助理
+    public IMongoCollection<PaTask> PaTasks => _database.GetCollection<PaTask>("pa_tasks");
+    public IMongoCollection<PaMessage> PaMessages => _database.GetCollection<PaMessage>("pa_messages");
+    public IMongoCollection<PaSession> PaSessions => _database.GetCollection<PaSession>("pa_sessions");
+
     // Arena 竞技场（盲评对战）
     public IMongoCollection<ArenaGroup> ArenaGroups => _database.GetCollection<ArenaGroup>("arena_groups");
     public IMongoCollection<ArenaSlot> ArenaSlots => _database.GetCollection<ArenaSlot>("arena_slots");

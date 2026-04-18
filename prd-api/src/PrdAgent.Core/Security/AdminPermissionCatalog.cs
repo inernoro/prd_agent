@@ -225,6 +225,11 @@ public static class AdminPermissionCatalog
     public const string SkillAgentUse = "skill-agent.use";
 
     /// <summary>
+    /// 私人助理 Agent 权限：任务拆解、四象限排序、任务清单管理
+    /// </summary>
+    public const string PaAgentUse = "pa-agent.use";
+
+    /// <summary>
     /// 超级权限（当路由未配置映射时，用于兜底放行；同时也可用于 root 破窗全权限）。
     /// </summary>
     public const string Super = "super";
@@ -314,6 +319,8 @@ public static class AdminPermissionCatalog
         new(WorkspacesWrite, "工作空间-写", "创建/编辑/删除工作空间、发送指令"),
 
         new(SkillAgentUse, "技能引导 Agent", "AI 引导创建技能、导出技能包"),
+
+        new(PaAgentUse, "私人助理 Agent", "任务拆解、四象限排序、任务清单管理"),
 
         new(Super, "超级权限", "兜底放行：建议仅给 root/超级管理员"),
     };

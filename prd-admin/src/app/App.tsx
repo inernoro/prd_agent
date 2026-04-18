@@ -73,6 +73,7 @@ const ReviewAgentSubmitPage = lazy(() => import('@/pages/review-agent').then(m =
 const ReviewAgentResultPage = lazy(() => import('@/pages/review-agent').then(m => ({ default: m.ReviewAgentResultPage })));
 const ReviewAgentAllPage = lazy(() => import('@/pages/review-agent').then(m => ({ default: m.ReviewAgentAllPage })));
 const PrReviewPage = lazy(() => import('@/pages/pr-review').then(m => ({ default: m.PrReviewPage })));
+const PaAgentPage = lazy(() => import('@/pages/pa-agent').then(m => ({ default: m.PaAgentPage })));
 const LandingPage = lazy(() => import('@/pages/home').then(m => ({ default: m.LandingPage })));
 const OpenPlatformTabsPage = lazy(() => import('@/pages/OpenPlatformTabsPage'));
 const AutomationRulesPage = lazy(() => import('@/pages/AutomationRulesPage'));
@@ -362,6 +363,7 @@ export default function App() {
         <Route path="review-agent/all" element={<RequirePermission perm="review-agent.view-all"><ReviewAgentAllPage /></RequirePermission>} />
         <Route path="pr-review" element={<RequirePermission perm="pr-review.use"><PrReviewPage /></RequirePermission>} />
         <Route path="defect-agent" element={<RequirePermission perm="defect-agent.use"><DefectAgentPage /></RequirePermission>} />
+        <Route path="pa-agent" element={<RequirePermission perm="pa-agent.use"><PaAgentPage /></RequirePermission>} />
         <Route path="video-agent" element={<RequirePermission perm="video-agent.use"><VideoAgentPage /></RequirePermission>} />
         <Route path="report-agent" element={<RequirePermission perm="report-agent.use"><ReportAgentPage /></RequirePermission>} />
         <Route path="report-agent/report/:reportId" element={<RequirePermission perm="report-agent.use"><ReportDetailPage /></RequirePermission>} />
