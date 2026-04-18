@@ -16,28 +16,73 @@
  *     a Legacy badge so users know it's not deletable.
  */
 
-// Theme toggle for projects page (shared localStorage key with index.html)
+// Theme toggle for projects page (shared localStorage key with index.html).
+//
+// Uses the same View Transition API + clip-path ripple animation that
+// app.js::toggleTheme uses on the branch page, so the two pages feel
+// identical when the user switches pages mid-session. The CSS rules
+// (::view-transition-new(root), --ripple-x/y/radius vars, vt-snapshotting
+// class) already live in style.css (around line 2670+); we just need
+// to wire the same origin calc + view-transition call here.
 function _projectsToggleTheme(btn) {
   var isLight = document.documentElement.dataset.theme === 'light';
   var next = isLight ? 'dark' : 'light';
-  localStorage.setItem('cds_theme', next);
-  if (next === 'light') {
-    document.documentElement.dataset.theme = 'light';
+
+  // Origin point: prefer the clicked button's center so the ripple
+  // radiates from the sun/moon icon. Fall back to top-center.
+  var x, y;
+  if (btn && btn.getBoundingClientRect) {
+    var rect = btn.getBoundingClientRect();
+    x = rect.left + rect.width / 2;
+    y = rect.top + rect.height / 2;
   } else {
-    delete document.documentElement.dataset.theme;
+    x = window.innerWidth / 2;
+    y = 0;
   }
-  // swap icon: sun ↔ moon
-  var icon = document.getElementById('projectsThemeIcon');
-  if (icon) {
+  var maxRadius = Math.ceil(Math.sqrt(
+    Math.max(x, window.innerWidth - x) * Math.max(x, window.innerWidth - x) +
+    Math.max(y, window.innerHeight - y) * Math.max(y, window.innerHeight - y)
+  ));
+  document.documentElement.style.setProperty('--ripple-x', x + 'px');
+  document.documentElement.style.setProperty('--ripple-y', y + 'px');
+  document.documentElement.style.setProperty('--ripple-radius', maxRadius + 'px');
+
+  function applyTheme() {
+    localStorage.setItem('cds_theme', next);
     if (next === 'light') {
-      icon.innerHTML = '<path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>';
-      icon.setAttribute('fill', 'currentColor');
-      icon.removeAttribute('stroke');
+      document.documentElement.dataset.theme = 'light';
     } else {
-      icon.innerHTML = '<circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="4.22" x2="19.78" y2="5.64"/>';
-      icon.setAttribute('fill', 'none');
-      icon.setAttribute('stroke', 'currentColor');
+      delete document.documentElement.dataset.theme;
     }
+    // swap icon for the sidebar button (sun ↔ moon). The header theme
+    // button uses a static SVG that doesn't need updating because it's
+    // already animated via CSS on theme change.
+    var icon = document.getElementById('projectsThemeIcon');
+    if (icon) {
+      if (next === 'light') {
+        icon.innerHTML = '<path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>';
+        icon.setAttribute('fill', 'currentColor');
+        icon.removeAttribute('stroke');
+      } else {
+        icon.innerHTML = '<circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="4.22" x2="19.78" y2="5.64"/>';
+        icon.setAttribute('fill', 'none');
+        icon.setAttribute('stroke', 'currentColor');
+      }
+    }
+  }
+
+  if (document.startViewTransition) {
+    var transition = document.startViewTransition(function () {
+      document.documentElement.classList.add('vt-snapshotting');
+      applyTheme();
+    });
+    transition.ready.then(function () {
+      document.documentElement.classList.remove('vt-snapshotting');
+    }).catch(function () {
+      document.documentElement.classList.remove('vt-snapshotting');
+    });
+  } else {
+    applyTheme();
   }
 }
 // Initialize icon to reflect current state on page load
@@ -53,10 +98,13 @@ function _projectsToggleTheme(btn) {
 }());
 
 // ── CDS-wide settings (moved here from branch-list app.js) ─────────
-// Theme toggle — the existing _projectsToggleTheme already works. This just
-// wires the new #themeToggleBtn in the header to it.
+// Theme toggle — reuses the ripple-aware _projectsToggleTheme. Passes
+// the actual click target so the clip-path ripple radiates from the
+// specific button the user pressed (header vs sidebar).
 window.toggleTheme = function (event) {
-  var btn = document.getElementById('themeToggleBtn') || document.getElementById('projectsThemeBtn');
+  var btn = (event && (event.currentTarget || event.target))
+    || document.getElementById('themeToggleBtn')
+    || document.getElementById('projectsThemeBtn');
   _projectsToggleTheme(btn);
 };
 
