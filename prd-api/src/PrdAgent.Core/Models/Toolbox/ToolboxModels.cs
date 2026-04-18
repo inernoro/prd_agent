@@ -561,6 +561,9 @@ public class ToolboxItem
     /// <summary>创建者名称</summary>
     public string? CreatedByName { get; set; }
 
+    /// <summary>创建者头像文件名（前端拼 CDN URL 展示）— 让"公开市场"的卡片能显示作者真头像，不用只看首字母块</summary>
+    public string? CreatedByAvatarFileName { get; set; }
+
     /// <summary>创建时间</summary>
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 

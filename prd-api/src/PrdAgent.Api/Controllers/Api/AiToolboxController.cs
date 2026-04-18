@@ -475,6 +475,8 @@ public class AiToolboxController : ControllerBase
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "系统提示词不能为空"));
 
         var userId = GetUserId();
+        // 查作者头像和显示名（JWT "name" claim 可能为空，Users 集合是权威来源）
+        var creator = await _db.Users.Find(x => x.UserId == userId).FirstOrDefaultAsync(ct);
         var item = new ToolboxItem
         {
             Id = ObjectId.GenerateNewId().ToString(),
@@ -492,7 +494,8 @@ public class AiToolboxController : ControllerBase
             KnowledgeBaseIds = request.KnowledgeBaseIds ?? new List<string>(),
             IsPublic = request.IsPublic ?? false,
             CreatedByUserId = userId,
-            CreatedByName = GetUserName(),
+            CreatedByName = creator?.DisplayName ?? creator?.Username ?? GetUserName(),
+            CreatedByAvatarFileName = creator?.AvatarFileName,
         };
 
         await _db.ToolboxItems.InsertOneAsync(item, cancellationToken: ct);
@@ -591,6 +594,8 @@ public class AiToolboxController : ControllerBase
         if (source == null)
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "智能体不存在或未公开"));
 
+        // 查 fork 发起者的头像和显示名（同 Create）
+        var forker = await _db.Users.Find(x => x.UserId == userId).FirstOrDefaultAsync(ct);
         var fork = new ToolboxItem
         {
             Id = ObjectId.GenerateNewId().ToString(),
@@ -608,7 +613,8 @@ public class AiToolboxController : ControllerBase
             KnowledgeBaseIds = new List<string>(), // 不复制知识库
             ForkedFromId = source.Id,
             CreatedByUserId = userId,
-            CreatedByName = GetUserName(),
+            CreatedByName = forker?.DisplayName ?? forker?.Username ?? GetUserName(),
+            CreatedByAvatarFileName = forker?.AvatarFileName,
         };
 
         await _db.ToolboxItems.InsertOneAsync(fork, cancellationToken: ct);

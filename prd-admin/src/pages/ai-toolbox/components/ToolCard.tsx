@@ -5,6 +5,7 @@ import { useNavigate } from 'react-router-dom';
 import { DesktopDownloadDialog } from '@/components/ui/DesktopDownloadDialog';
 import { useAuthStore } from '@/stores/authStore';
 import { toast } from '@/lib/toast';
+import { resolveAvatarUrl } from '@/lib/avatar';
 import {
   ArrowUpRight,
   FileText,
@@ -210,6 +211,20 @@ export function ToolCard({ item, source = 'mine' }: ToolCardProps) {
       : isMarketplaceCard
       ? '匿名用户'
       : '官方');
+
+  // 头像 URL — 优先级：
+  // 1) 后端返回的 createdByAvatarFileName → resolveAvatarUrl 拼 CDN（公开市场里别人也能显示真头像）
+  // 2) 当作者就是当前登录用户时 → authStore.avatarUrl（后端还没回写头像字段的老数据兜底）
+  // 3) 首字母圆形块（内置"官方"/旧数据等）
+  const isMe =
+    !!currentUser?.userId &&
+    (item.createdBy === currentUser.userId ||
+      (isOwnCustomCard && !item.createdBy));
+  const authorAvatarUrl = item.createdByAvatarFileName
+    ? resolveAvatarUrl({ avatarFileName: item.createdByAvatarFileName })
+    : isMe
+    ? currentUser?.avatarUrl || null
+    : null;
 
   const handleFork = async () => {
     if (forking) return;
@@ -605,16 +620,27 @@ export function ToolCard({ item, source = 'mine' }: ToolCardProps) {
                     已公开
                   </span>
                 )}
-                <div
-                  className="w-4 h-4 rounded-full shrink-0 flex items-center justify-center text-[9px] font-bold"
-                  style={{
-                    background: `linear-gradient(135deg, ${palette.from}, ${palette.soft})`,
-                    color: 'rgba(0, 0, 0, 0.7)',
-                  }}
-                  title={authorName}
-                >
-                  {authorName[0]}
-                </div>
+                {authorAvatarUrl ? (
+                  <img
+                    src={authorAvatarUrl}
+                    alt={authorName}
+                    className="w-4 h-4 rounded-full shrink-0 object-cover"
+                    style={{ border: '1px solid rgba(255, 255, 255, 0.15)' }}
+                    title={authorName}
+                    draggable={false}
+                  />
+                ) : (
+                  <div
+                    className="w-4 h-4 rounded-full shrink-0 flex items-center justify-center text-[9px] font-bold"
+                    style={{
+                      background: `linear-gradient(135deg, ${palette.from}, ${palette.soft})`,
+                      color: 'rgba(0, 0, 0, 0.7)',
+                    }}
+                    title={authorName}
+                  >
+                    {authorName[0]}
+                  </div>
+                )}
                 <span
                   className="text-[10px] truncate"
                   style={{ color: 'rgba(255, 255, 255, 0.5)' }}

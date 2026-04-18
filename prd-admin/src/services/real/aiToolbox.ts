@@ -35,6 +35,8 @@ export interface ToolboxItem {
   enableMemory?: boolean;
   createdBy?: string;
   createdByName?: string;
+  /** 创建者头像文件名（后端返回）— 配合 resolveAvatarUrl 拼完整 URL 展示 */
+  createdByAvatarFileName?: string | null;
   usageCount: number;
   tags: string[];
   createdAt: string;
