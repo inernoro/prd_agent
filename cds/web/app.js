@@ -3739,7 +3739,10 @@ async function loadDockerImages() {
 
 async function runQuickstart() {
   try {
-    const data = await api('POST', '/quickstart');
+    // Carry the project context explicitly. The api() helper only
+    // injects ?project= on GETs, so POST /quickstart needs the body
+    // to scope the seeded build profiles to the current project.
+    const data = await api('POST', '/quickstart', { projectId: CURRENT_PROJECT_ID });
     showToast(data.message, 'success');
     await loadProfiles();
   } catch (e) { showToast(e.message, 'error'); }

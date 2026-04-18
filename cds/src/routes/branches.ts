@@ -2395,21 +2395,38 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
   // ── Quickstart: seed default build profiles for this project ──
 
-  router.post('/quickstart', (_req, res) => {
-    const existing = stateService.getBuildProfiles();
+  router.post('/quickstart', (req, res) => {
+    // Resolve project scope: ?project=<id> query, body.projectId, or
+    // legacy 'default'. Without scoping, every project shared the
+    // global build-profile list and "快速开始" on a fresh project
+    // failed with 409 because the legacy project's profiles already
+    // existed.
+    const queryProject = typeof req.query.project === 'string' ? req.query.project : null;
+    const bodyProject = (req.body && typeof req.body.projectId === 'string') ? req.body.projectId : null;
+    const projectId = bodyProject || queryProject || 'default';
+    if (!stateService.getProject(projectId)) {
+      res.status(400).json({ error: `未知项目: ${projectId}` });
+      return;
+    }
+
+    const existing = stateService.getBuildProfilesForProject(projectId);
     if (existing.length > 0) {
       res.status(409).json({ error: '构建配置已存在。请先删除现有配置或手动添加。' });
       return;
     }
 
-    // Auto-detect package manager for admin panel
-    const adminDir = path.join(config.repoRoot, 'prd-admin');
+    // Use the project's actual repo root so stack detection looks at
+    // the right tree. Legacy projects (no per-project repoPath) fall
+    // back to config.repoRoot via getProjectRepoRoot.
+    const projectRepoRoot = stateService.getProjectRepoRoot(projectId, config.repoRoot);
+    const adminDir = path.join(projectRepoRoot, 'prd-admin');
     const pm = fs.existsSync(adminDir) ? detectPackageManager(adminDir) : 'npm';
     const nodeCmd = nodeProfileCommands(pm);
 
     const defaults: BuildProfile[] = [
       {
         id: 'api',
+        projectId,
         name: 'Backend API (.NET 8)',
         dockerImage: 'mcr.microsoft.com/dotnet/sdk:8.0',
         workDir: 'prd-api',
@@ -2421,6 +2438,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       },
       {
         id: 'admin',
+        projectId,
         name: 'Admin Panel (Vite)',
         dockerImage: 'node:20-slim',
         workDir: 'prd-admin',
@@ -2434,7 +2452,13 @@ export function createBranchRouter(deps: RouterDeps): Router {
       },
     ];
 
+    // addBuildProfile guards on global id uniqueness — the legacy
+    // project already owns "api" and "admin" so we suffix per-project
+    // ids with the projectId tail to keep them globally unique while
+    // still readable in the topology view.
+    const idSuffix = projectId === 'default' ? '' : `-${projectId.slice(0, 8)}`;
     for (const profile of defaults) {
+      profile.id = `${profile.id}${idSuffix}`;
       stateService.addBuildProfile(profile);
     }
     stateService.save();

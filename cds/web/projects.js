@@ -384,7 +384,22 @@ function _projectsToggleTheme(btn) {
       credentials: 'same-origin',
     })
       .then(function (res) {
-        if (!res.ok) throw new Error('HTTP ' + res.status + ' ' + res.statusText);
+        if (!res.ok) {
+          // Surface the server-side error body so the user (and future
+          // bug reports) see the real reason for 4xx/5xx, not just
+          // "HTTP 400". Many CDS errors include a JSON {error,message}
+          // shape — fall back to raw text otherwise.
+          return res.text().then(function (raw) {
+            var detail = '';
+            try {
+              var parsed = JSON.parse(raw);
+              detail = parsed.message || parsed.error || raw;
+            } catch (_e) {
+              detail = raw;
+            }
+            throw new Error('HTTP ' + res.status + (detail ? ' — ' + String(detail).slice(0, 200) : ''));
+          });
+        }
         return res.json();
       })
       .then(function (data) {
@@ -1268,7 +1283,12 @@ function _projectsToggleTheme(btn) {
       .then(function (result) {
         if (result.status === 201) {
           closeCreateProjectModal({ currentTarget: getModal(), target: getModal() });
-          showToast('项目 “' + payload.name + '” 已创建');
+          var adj = result.body && result.body.slugAutoAdjusted;
+          if (adj && adj.to && adj.from && adj.to !== adj.from) {
+            showToast('项目 “' + payload.name + '” 已创建（slug 自动调整为 ' + adj.to + '，原 ' + adj.from + ' 已被占用）');
+          } else {
+            showToast('项目 “' + payload.name + '” 已创建');
+          }
           loadProjects();
           var created = result.body && result.body.project;
           // P4 Part 18 (UX rework): if the new project was created
