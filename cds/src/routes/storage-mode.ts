@@ -110,7 +110,12 @@ export function createStorageModeRouter(deps: StorageModeRouterDeps): Router {
     }
   }
 
-  // GET /api/storage-mode — current state + health
+  // GET /api/storage-mode — current state + health + startup env diagnostics
+  //
+  // 2026-04-18: 加入启动 env 诊断字段，以便判定 .cds.env 持久化
+  // 是否真的在下次重启时被 exec_cds.sh 读到。生产实测发现切 mongo +
+  // self-update 后退回 json——为这种 bug 定位加可观测性。所有字段都
+  // 是 bool 或 redacted path，不暴露 URI 明文。
   router.get('/storage-mode', async (_req, res) => {
     const backing = stateService.getBackingStore();
     let mongoHealthy: boolean | undefined;
@@ -121,12 +126,41 @@ export function createStorageModeRouter(deps: StorageModeRouterDeps): Router {
         mongoHealthy = false;
       }
     }
+    // 启动 env 诊断
+    const fs = await import('node:fs');
+    const envFilePath = envFile.getPath();
+    const envFileExists = fs.existsSync(envFilePath);
+    let envHasMongoUri = false;
+    let envHasStorageMode = false;
+    let envMongoStorageMode: string | null = null;
+    if (envFileExists) {
+      try {
+        const content = fs.readFileSync(envFilePath, 'utf-8');
+        envHasMongoUri = /^export\s+CDS_MONGO_URI=/m.test(content);
+        envHasStorageMode = /^export\s+CDS_STORAGE_MODE=/m.test(content);
+        const smMatch = content.match(/^export\s+CDS_STORAGE_MODE="?([^"\n]+)"?/m);
+        envMongoStorageMode = smMatch ? smMatch[1] : null;
+      } catch { /* best effort */ }
+    }
     res.json({
       mode: context.resolvedMode,
       kind: backing.kind,
       mongoHealthy,
       mongoUri: maskMongoUri(context.mongoUri),
       mongoDb: context.mongoDb,
+      // Diagnostics — useful for "我切了 mongo，重启怎么又回 json" 排查
+      startupEnv: {
+        processEnvStorageMode: process.env.CDS_STORAGE_MODE || null,
+        processEnvMongoUriSet: !!process.env.CDS_MONGO_URI,
+        processEnvMongoDb: process.env.CDS_MONGO_DB || null,
+      },
+      envFile: {
+        path: envFilePath,
+        exists: envFileExists,
+        hasStorageMode: envHasStorageMode,
+        storageModeValue: envMongoStorageMode,
+        hasMongoUri: envHasMongoUri,
+      },
     });
   });
 
