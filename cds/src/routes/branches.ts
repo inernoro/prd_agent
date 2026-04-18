@@ -18,6 +18,7 @@ import type { ComposeServiceDef } from '../services/compose-parser.js';
 import { combinedOutput } from '../types.js';
 import { topoSortLayers } from '../services/topo-sort.js';
 import { detectStack } from '../services/stack-detector.js';
+import { assertProjectAccess } from './projects.js';
 
 /**
  * P4 Part 18 (hardening): pre-restart sanity check for self-update.
@@ -686,6 +687,12 @@ export function createBranchRouter(deps: RouterDeps): Router {
       // it on the new branch so project-scoped list queries can find it.
       // Missing value → defaults to 'default' in addBranch().
       const effectiveProjectId = projectId && typeof projectId === 'string' ? projectId : 'default';
+      // Enforce: a project-scoped Agent Key may only touch its own project.
+      const akMismatch = assertProjectAccess(req as any, effectiveProjectId);
+      if (akMismatch) {
+        res.status(akMismatch.status).json(akMismatch.body);
+        return;
+      }
       // Validate the project exists so we don't create orphans.
       const targetProject = stateService.getProject(effectiveProjectId);
       if (!targetProject) {
@@ -762,6 +769,12 @@ export function createBranchRouter(deps: RouterDeps): Router {
     if (!entry) {
       res.status(404).json({ error: `分支 "${id}" 不存在` });
       return;
+    }
+    // Project-key scope check: refuse if this branch belongs to a
+    // different project than the one the key was minted for.
+    {
+      const m = assertProjectAccess(req as any, entry.projectId || 'default');
+      if (m) { res.status(m.status).json(m.body); return; }
     }
 
     // ── Cluster-aware delete ──
@@ -893,6 +906,10 @@ export function createBranchRouter(deps: RouterDeps): Router {
     if (!entry) {
       res.status(404).json({ error: `分支 "${id}" 不存在` });
       return;
+    }
+    {
+      const m = assertProjectAccess(req as any, entry.projectId || 'default');
+      if (m) { res.status(m.status).json(m.body); return; }
     }
 
     // P4 Part 18 (G1.5): same clone-ready guard as POST /branches.
@@ -1381,6 +1398,10 @@ export function createBranchRouter(deps: RouterDeps): Router {
     if (!entry) {
       res.status(404).json({ error: `分支 "${id}" 不存在` });
       return;
+    }
+    {
+      const m = assertProjectAccess(req as any, entry.projectId || 'default');
+      if (m) { res.status(m.status).json(m.body); return; }
     }
 
     // ── Cluster-aware stop ──
@@ -2209,6 +2230,10 @@ export function createBranchRouter(deps: RouterDeps): Router {
         res.status(400).json({ error: `未知项目: ${rule.projectId}` });
         return;
       }
+      {
+        const m = assertProjectAccess(req as any, rule.projectId);
+        if (m) { res.status(m.status).json(m.body); return; }
+      }
       stateService.addRoutingRule(rule);
       stateService.save();
       res.status(201).json({ rule });
@@ -2278,6 +2303,10 @@ export function createBranchRouter(deps: RouterDeps): Router {
       if (!stateService.getProject(profile.projectId)) {
         res.status(400).json({ error: `未知项目: ${profile.projectId}` });
         return;
+      }
+      {
+        const m = assertProjectAccess(req as any, profile.projectId);
+        if (m) { res.status(m.status).json(m.body); return; }
       }
       stateService.addBuildProfile(profile);
       stateService.save();
@@ -3173,6 +3202,10 @@ export function createBranchRouter(deps: RouterDeps): Router {
       if (!stateService.getProject(projectId)) {
         res.status(400).json({ error: `未知项目: ${projectId}` });
         return;
+      }
+      {
+        const m = assertProjectAccess(req as any, projectId);
+        if (m) { res.status(m.status).json(m.body); return; }
       }
       const hostPort = stateService.allocatePort(config.portStart);
       const service: InfraService = {

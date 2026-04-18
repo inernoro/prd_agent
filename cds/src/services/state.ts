@@ -706,6 +706,96 @@ export class StateService {
     this.save();
   }
 
+  // ── Project-scoped Agent Keys ──
+  //
+  // Each AgentKey stores only the sha256 of the plaintext key; the key
+  // prefix (`cdsp_<slugHead12>_...`) encodes the owning project so the
+  // auth middleware can look up the project from the header alone.
+  // Plaintext is shown once at signing time and never persisted.
+
+  /** Append an AgentKey entry under a project. Creates the array on demand. */
+  addAgentKey(projectId: string, entry: AgentKey): void {
+    if (!this.state.projects) return;
+    const idx = this.state.projects.findIndex((p) => p.id === projectId);
+    if (idx < 0) throw new Error(`Project '${projectId}' not found`);
+    const project = this.state.projects[idx];
+    if (!project.agentKeys) project.agentKeys = [];
+    project.agentKeys.push(entry);
+    project.updatedAt = new Date().toISOString();
+    this.save();
+  }
+
+  /** List all AgentKey entries for a project (revoked entries included for audit). */
+  getAgentKeys(projectId: string): AgentKey[] {
+    const project = (this.state.projects || []).find((p) => p.id === projectId);
+    return project?.agentKeys || [];
+  }
+
+  /**
+   * Mark a key revoked. Keeps the entry so the audit trail (who signed,
+   * when, last used) survives. Returns true on match, false otherwise.
+   */
+  revokeAgentKey(projectId: string, keyId: string): boolean {
+    if (!this.state.projects) return false;
+    const project = this.state.projects.find((p) => p.id === projectId);
+    if (!project?.agentKeys) return false;
+    const entry = project.agentKeys.find((k) => k.id === keyId);
+    if (!entry) return false;
+    if (!entry.revokedAt) {
+      entry.revokedAt = new Date().toISOString();
+      project.updatedAt = new Date().toISOString();
+      this.save();
+    }
+    return true;
+  }
+
+  /**
+   * Parse an incoming plaintext key `cdsp_<slugHead12>_<suffix>` and find
+   * the matching non-revoked AgentKey across all projects. Uses
+   * timingSafeEqual for hash comparison so the endpoint doesn't leak
+   * hash bytes via timing.
+   *
+   * Returns null on any failure (malformed prefix, unknown slug, no
+   * matching hash, key revoked).
+   */
+  findAgentKeyForAuth(plaintextKey: string): { projectId: string; keyId: string } | null {
+    if (!plaintextKey || !plaintextKey.startsWith('cdsp_')) return null;
+    // Strict shape: cdsp_<slugHead>_<suffix>
+    const parts = plaintextKey.split('_');
+    if (parts.length < 3) return null;
+    const slugHead = parts[1].toLowerCase();
+    if (!slugHead) return null;
+    const hash = crypto.createHash('sha256').update(plaintextKey).digest('hex');
+    const hashBuf = Buffer.from(hash, 'hex');
+    for (const project of this.state.projects || []) {
+      const projectSlugHead = project.slug.slice(0, 12).toLowerCase();
+      if (projectSlugHead !== slugHead) continue;
+      for (const entry of project.agentKeys || []) {
+        if (entry.revokedAt) continue;
+        try {
+          const entryBuf = Buffer.from(entry.hash, 'hex');
+          if (entryBuf.length !== hashBuf.length) continue;
+          if (crypto.timingSafeEqual(entryBuf, hashBuf)) {
+            return { projectId: project.id, keyId: entry.id };
+          }
+        } catch {
+          /* malformed hash in state, skip */
+        }
+      }
+    }
+    return null;
+  }
+
+  /** Best-effort lastUsedAt stamp. Silent on unknown ids — not worth throwing. */
+  touchAgentKeyLastUsed(projectId: string, keyId: string): void {
+    const project = (this.state.projects || []).find((p) => p.id === projectId);
+    const entry = project?.agentKeys?.find((k) => k.id === keyId);
+    if (!entry) return;
+    entry.lastUsedAt = new Date().toISOString();
+    // Save is best-effort — a failed save here shouldn't block the request.
+    try { this.save(); } catch { /* ignore */ }
+  }
+
   // ── Pending imports (agent-submitted CDS compose awaiting approval) ──
 
   getPendingImports(): import('../types.js').PendingImport[] {
