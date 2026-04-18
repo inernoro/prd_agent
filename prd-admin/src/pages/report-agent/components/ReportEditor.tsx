@@ -451,6 +451,41 @@ export function ReportEditor({ reportId, weekYear, weekNumber, onClose }: Props)
     });
   };
 
+  const bulletInputRefsRef = useRef<Record<string, HTMLInputElement | null>>({});
+
+  const focusBulletAt = useCallback((sectionIdx: number, itemIdx: number, caret: 'start' | 'end' = 'end') => {
+    requestAnimationFrame(() => {
+      const el = bulletInputRefsRef.current[`${sectionIdx}:${itemIdx}`];
+      if (!el) return;
+      el.focus();
+      const pos = caret === 'end' ? el.value.length : 0;
+      try { el.setSelectionRange(pos, pos); } catch { /* ignore */ }
+    });
+  }, []);
+
+  const handleBulletKeyDown = useCallback((
+    sectionIdx: number,
+    itemIdx: number,
+    e: React.KeyboardEvent<HTMLInputElement>,
+  ) => {
+    const target = e.currentTarget;
+    if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
+      e.preventDefault();
+      if (target.value.trim() === '') return;
+      addItem(sectionIdx);
+      focusBulletAt(sectionIdx, itemIdx + 1, 'start');
+      return;
+    }
+    if (e.key === 'Backspace' && target.value === '' && target.selectionStart === 0 && target.selectionEnd === 0) {
+      const currentItems = sections[sectionIdx]?.items || [];
+      if (currentItems.length <= 1) return;
+      e.preventDefault();
+      removeItem(sectionIdx, itemIdx);
+      const prevIdx = Math.max(0, itemIdx - 1);
+      focusBulletAt(sectionIdx, prevIdx, 'end');
+    }
+  }, [sections, focusBulletAt]);
+
   const canEdit = isEditableStatus;
   const canSubmit = !!report
     && (report.status === WeeklyReportStatus.Draft
@@ -831,6 +866,7 @@ export function ReportEditor({ reportId, weekYear, weekNumber, onClose }: Props)
                         </div>
                       ) : (
                         <input
+                          ref={(el) => { bulletInputRefsRef.current[`${sIdx}:${iIdx}`] = el; }}
                           className="flex-1 px-4 py-3 rounded-xl text-[13px] transition-all duration-200"
                           style={{
                             background: 'var(--bg-secondary)',
@@ -842,7 +878,8 @@ export function ReportEditor({ reportId, weekYear, weekNumber, onClose }: Props)
                           onBlur={(e) => { e.currentTarget.style.borderColor = 'var(--border-primary)'; e.currentTarget.style.boxShadow = 'none'; }}
                           value={item.content}
                           onChange={(e) => updateItem(sIdx, iIdx, e.target.value)}
-                          placeholder="请输入内容..."
+                          onKeyDown={(e) => handleBulletKeyDown(sIdx, iIdx, e)}
+                          placeholder="请输入内容，回车新增一条..."
                           disabled={!canEdit}
                         />
                       )}
