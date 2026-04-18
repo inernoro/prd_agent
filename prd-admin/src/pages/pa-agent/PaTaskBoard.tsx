@@ -140,11 +140,16 @@ export function PaTaskBoard() {
 
   const load = useCallback(async () => {
     setLoading(true);
-    const res = await getPaTasks();
-    if (res.success && res.data) {
-      setTasks(res.data);
+    try {
+      const res = await getPaTasks();
+      if (res.success && Array.isArray(res.data)) {
+        setTasks(res.data);
+      }
+    } catch {
+      // silently ignore — tasks stay empty
+    } finally {
+      setLoading(false);
     }
-    setLoading(false);
   }, []);
 
   useEffect(() => {

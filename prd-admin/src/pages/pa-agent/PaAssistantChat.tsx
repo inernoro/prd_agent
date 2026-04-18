@@ -160,11 +160,17 @@ export function PaAssistantChat({ sessionId, onTaskSaved }: PaAssistantChatProps
     if (!sessionId) return;
     (async () => {
       setLoadingHistory(true);
-      const res = await getPaMessages(sessionId);
-      if (res.success && res.data) {
-        setMessages(res.data);
+      try {
+        const res = await getPaMessages(sessionId);
+        if (res.success && Array.isArray(res.data)) {
+          setMessages(res.data);
+        }
+        // else: API not ready yet (old backend / 404 / 403) — keep messages as []
+      } catch {
+        // silently ignore — messages stay empty, user can still chat
+      } finally {
+        setLoadingHistory(false);
       }
-      setLoadingHistory(false);
     })();
   }, [sessionId]);
 
