@@ -62,14 +62,26 @@ if (!['json', 'mongo', 'auto'].includes(rawStorageMode)) {
   );
 }
 /**
- * P4 Part 18 (D.2): storage-mode resolution + auto-fallback.
+ * P4 Part 18 (D.2): storage-mode resolution.
  *
- * In 'mongo' mode we require a working mongo at startup and abort
- * if we can't connect — operators should notice a broken config
- * loudly rather than silently losing data. In 'auto' mode we try
- * mongo first but fall back to JSON if anything goes wrong (no URI,
- * connection refused, auth failure). 'json' is the legacy path and
- * never touches mongo.
+ * Behaviour matrix (updated 2026-04-18):
+ *   - 'json' mode                     → JSON backing (legacy)
+ *   - 'mongo' mode + URI connect OK   → Mongo backing
+ *   - 'mongo' mode + URI missing/fail → throw (FATAL) — operator must fix
+ *   - 'auto' mode + URI missing       → JSON backing (silent; expected)
+ *   - 'auto' mode + URI present + OK  → Mongo backing
+ *   - 'auto' mode + URI present + fail→ throw (FATAL) — was fallback before
+ *
+ * The only fallback remaining is the "auto + no URI" case, which maps
+ * to JSON because the operator didn't ask for Mongo at all. Once a URI
+ * is present, we treat Mongo as the contract — silently dropping to
+ * JSON with the URI still configured led to "I swore I was on Mongo but
+ * state.json kept growing" confusion in production.
+ *
+ * Rollback path: operators can still call POST /api/storage-mode/switch-to-json
+ * from the Dashboard to return to JSON mode — that path clears the
+ * .cds.env Mongo vars atomically. So "Mongo is down and I need CDS up"
+ * is "unset CDS_MONGO_URI in .cds.env or set CDS_STORAGE_MODE=json, restart".
  */
 // Definite-assignment: initStateService() is awaited at module top
 // level before any downstream code touches stateService. The `!`
@@ -121,17 +133,17 @@ async function initStateService(): Promise<void> {
     await mongoStore.init();
   } catch (err) {
     const msg = (err as Error).message;
-    if (rawStorageMode === 'mongo') {
-      console.error(`  [storage] FATAL: CDS_STORAGE_MODE=mongo but mongo init failed: ${msg}`);
-      throw err;
-    }
-    // auto mode: fall back
-    console.warn(`  [storage] WARN: mongo init failed (${msg}), falling back to JSON`);
+    console.error(
+      `  [storage] FATAL: CDS_STORAGE_MODE=${rawStorageMode} + CDS_MONGO_URI 已配置，`
+      + `但 mongo init 失败: ${msg}`,
+    );
+    console.error(
+      `  [storage] 不再自动退回 JSON（用户需求：Mongo 是主存储）。`
+      + `紧急回退：编辑 cds/.cds.env 注释掉 CDS_MONGO_URI 或改 CDS_STORAGE_MODE=json，重启。`
+      + `或在 Dashboard Settings 里点 "切回 JSON"（需要 Mongo 先恢复）`,
+    );
     try { await handle.close(); } catch { /* best effort */ }
-    stateService = new StateService(stateFile, config.repoRoot);
-    stateService.load();
-    storageModeResolved = 'auto-fallback-json';
-    return;
+    throw err;
   }
 
   // Mongo init succeeded. If the collection is fresh (load() returned
