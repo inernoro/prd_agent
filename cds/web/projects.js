@@ -1781,19 +1781,40 @@ window.cdsDoLogout = cdsDoLogout;
       });
   }
 
+  // Tracks the last pendingCount we rendered so we can detect a RISE
+  // (new agent submission) and trigger a short flash animation. Starts
+  // at -1 so the first load doesn't auto-flash on page reload.
+  var _lastPendingCount = -1;
+
   function _updatePendingImportBadge(count) {
     var btn = document.getElementById('pendingImportBadge');
     var label = document.getElementById('pendingImportBadgeLabel');
+    var icon = document.getElementById('pendingImportBadgeIcon');
     if (!btn || !label) return;
+    // Badge is ALWAYS visible. State toggles purely via color/label so
+    // the operator can click into history at any time even when
+    // pendingCount=0 (they want to see past申请/批准/拒绝 records).
+    btn.style.display = 'inline-flex';
     if (count > 0) {
+      btn.setAttribute('data-state', 'active');
       label.textContent = count + ' 个 Agent 申请配置';
-      btn.style.display = 'inline-flex';
+      if (icon) icon.textContent = '🔔';
+      // Flash only on a RISE from the previously observed count. Don't
+      // flash on steady state or on decrease (approvals/rejects shouldn't
+      // make it blink — only brand-new incoming requests do).
+      if (_lastPendingCount >= 0 && count > _lastPendingCount) {
+        btn.classList.remove('pi-flash');
+        // Reflow to restart the CSS animation from frame 0.
+        void btn.offsetWidth;
+        btn.classList.add('pi-flash');
+        setTimeout(function () { btn.classList.remove('pi-flash'); }, 3000);
+      }
     } else {
-      btn.style.display = 'none';
-      // If the drawer is open but the list is now empty (e.g. operator
-      // finished everything), keep it open so they can see the "最近
-      //处理" decided-items section. They can dismiss it manually.
+      btn.setAttribute('data-state', 'idle');
+      label.textContent = 'Agent 记录';
+      if (icon) icon.textContent = '📜';
     }
+    _lastPendingCount = count;
   }
 
   function openPendingImportDrawer(targetImportId) {
@@ -1857,9 +1878,10 @@ window.cdsDoLogout = cdsDoLogout;
 
     if (imports.length === 0) {
       body.innerHTML = [
-        '<div style="padding:60px 20px;text-align:center;color:var(--text-muted);font-size:12px">',
+        '<div style="padding:60px 20px;text-align:center;color:var(--text-muted);font-size:12px;line-height:1.6">',
         '  <div style="font-size:32px;margin-bottom:10px">📭</div>',
-        '  暂无 Agent 配置申请',
+        '  <div style="margin-bottom:6px">暂无 Agent 配置申请</div>',
+        '  <div style="font-size:11px;color:var(--text-muted);opacity:0.7">Agent 通过 <code>POST /api/projects/:id/pending-import</code> 提交的请求会出现在这里；已处理记录保留 7 天</div>',
         '</div>',
       ].join('');
       return;
@@ -1872,7 +1894,10 @@ window.cdsDoLogout = cdsDoLogout;
     if (decided.length > 0) {
       html += [
         '<div style="margin-top:22px;padding-top:14px;border-top:1px solid var(--card-border)">',
-        '  <div style="font-size:10px;font-weight:700;letter-spacing:0.1em;text-transform:uppercase;color:var(--text-muted);margin-bottom:10px">最近处理</div>',
+        '  <div style="display:flex;align-items:baseline;justify-content:space-between;margin-bottom:10px">',
+        '    <div style="font-size:10px;font-weight:700;letter-spacing:0.1em;text-transform:uppercase;color:var(--text-muted)">最近处理（近 7 天）</div>',
+        '    <div style="font-size:10px;color:var(--text-muted);opacity:0.6">共 ' + decided.length + ' 条</div>',
+        '  </div>',
         '  ', decided.map(renderPendingImportCard).join(''),
         '</div>',
       ].join('');

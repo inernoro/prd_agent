@@ -39,7 +39,11 @@ export interface PendingImportRouterDeps {
 }
 
 /** Audit-trail retention: decided imports disappear from list after 24h. */
-const AUDIT_RETENTION_MS = 24 * 60 * 60 * 1000;
+// Keep approved/rejected imports around for a week so the operator
+// can look back at recent Agent activity when diagnosing something
+// that changed mid-week. Pending entries never get pruned here —
+// they sit until explicitly approved or rejected.
+const AUDIT_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
 
 /** Max size of a single composeYaml submission (prevents state bloat). */
 const MAX_YAML_BYTES = 256 * 1024;

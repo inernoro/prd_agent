@@ -935,17 +935,24 @@
       <div class="cds-main-header">
         <h1 class="cds-main-title">项目列表</h1>
         <div class="cds-main-actions">
-          <!-- Pending-import badge. Hidden when pendingCount===0. Polled by
-               pollPendingImports() every 10s. Clicking opens the approval
-               drawer below. -->
+          <!-- Agent 徽章：常驻显示。pendingCount>0 时走黄色高亮 + 闪烁脉冲，
+               =0 时转为中性色"Agent 记录"入口（点击看历史）。样式状态由
+               projects.js 的 _updatePendingImportBadge 切换 data-state。 -->
           <button id="pendingImportBadge" type="button" onclick="openPendingImportDrawer()"
-            style="display:none;align-items:center;gap:8px;padding:9px 14px;background:rgba(251,191,36,0.14);border:1px solid rgba(251,191,36,0.45);border-radius:8px;color:#fbbf24;font-size:12px;font-weight:600;font-family:inherit;cursor:pointer;transition:background 120ms ease,transform 120ms ease"
-            onmouseover="this.style.background='rgba(251,191,36,0.22)';this.style.transform='translateY(-1px)'"
-            onmouseout="this.style.background='rgba(251,191,36,0.14)';this.style.transform='translateY(0)'"
-            title="有外部 Agent 提交了配置请求，点击查看">
-            <span aria-hidden="true">🔔</span>
-            <span id="pendingImportBadgeLabel">0 个 Agent 申请配置</span>
+            data-state="idle"
+            style="display:inline-flex;align-items:center;gap:8px;padding:9px 14px;border-radius:8px;font-size:12px;font-weight:600;font-family:inherit;cursor:pointer;transition:background 120ms ease,transform 120ms ease,border-color 120ms ease,color 120ms ease"
+            title="Agent 配置记录：待处理申请 + 最近历史">
+            <span aria-hidden="true" id="pendingImportBadgeIcon">🔔</span>
+            <span id="pendingImportBadgeLabel">Agent 记录</span>
           </button>
+          <style id="pendingImportBadgeCss">
+            #pendingImportBadge[data-state="idle"]{background:var(--bg-card);border:1px solid var(--card-border);color:var(--text-secondary)}
+            #pendingImportBadge[data-state="idle"]:hover{background:var(--bg-elevated);color:var(--text-primary)}
+            #pendingImportBadge[data-state="active"]{background:rgba(251,191,36,0.14);border:1px solid rgba(251,191,36,0.45);color:#fbbf24}
+            #pendingImportBadge[data-state="active"]:hover{background:rgba(251,191,36,0.22);transform:translateY(-1px)}
+            #pendingImportBadge.pi-flash{animation:pi-flash 0.9s ease-out 3}
+            @keyframes pi-flash{0%{box-shadow:0 0 0 0 rgba(251,191,36,0.55)}70%{box-shadow:0 0 0 10px rgba(251,191,36,0)}100%{box-shadow:0 0 0 0 rgba(251,191,36,0)}}
+          </style>
           <button id="themeToggleBtn" class="icon-btn" onclick="toggleTheme(event)" title="切换主题"
             style="width:32px;height:32px;border-radius:8px;border:1px solid var(--card-border);background:var(--bg-card);cursor:pointer;display:inline-flex;align-items:center;justify-content:center;color:var(--text-secondary)">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="4.22" x2="19.78" y2="5.64"/></svg>
