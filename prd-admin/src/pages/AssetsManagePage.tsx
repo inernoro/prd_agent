@@ -1286,6 +1286,7 @@ function HomepageAssetsSection({
                     hint="静态 · 默认展示"
                     asset={assets[imageSlot]}
                     defaultUrl={defaultImage}
+                    allowDelete={false}
                     cacheBust={cacheBust}
                     uploading={uploadingId === `homepage::${imageSlot}`}
                     accept="image/*"
@@ -1300,6 +1301,7 @@ function HomepageAssetsSection({
                     hint="hover 播放"
                     asset={assets[videoSlot]}
                     defaultUrl={defaultVideo}
+                    allowDelete={false}
                     cacheBust={cacheBust}
                     uploading={uploadingId === `homepage::${videoSlot}`}
                     accept="video/mp4,video/webm,video/quicktime"
@@ -1324,6 +1326,7 @@ function HomepageSlotTile({
   hint,
   asset,
   defaultUrl,
+  allowDelete = true,
   cacheBust,
   uploading,
   previewAspect,
@@ -1337,6 +1340,13 @@ function HomepageSlotTile({
   asset?: HomepageAssetDto;
   /** 未上传时的默认 CDN 预览地址（存量素材）。图片能加载 = 老系统已有；加载失败 = 老系统也没有 */
   defaultUrl?: string | null;
+  /**
+   * 是否允许「清除」：
+   * - card.* 走独立 COS 路径（icon/homepage/...），清除即回到首页渐变，安全，允许
+   * - agent.* 直接覆盖了老 CDN 对象（icon/backups/agent/...），清除只能删 DB 记录，
+   *   CDN 文件仍是上次上传的版本，不等于「回到原图」→ 禁用清除避免误导
+   */
+  allowDelete?: boolean;
   cacheBust: number;
   uploading: boolean;
   /** 预留：由父组件在 onUpload 中传给 <input accept=""/> */
@@ -1442,7 +1452,7 @@ function HomepageSlotTile({
               {humanSize(asset.sizeBytes)}
             </span>
           )}
-          {asset && (
+          {asset && allowDelete && (
             <button
               type="button"
               onClick={(e) => {
@@ -1456,6 +1466,15 @@ function HomepageSlotTile({
               <Trash2 size={9} />
               清除
             </button>
+          )}
+          {asset && !allowDelete && (
+            <span
+              className="text-[9px]"
+              style={{ color: 'var(--text-muted)' }}
+              title="Agent 封面直接覆盖了老 CDN 文件，无法一键回到原图。如需更换请直接上传新文件"
+            >
+              替换即可
+            </span>
           )}
         </div>
       </div>
