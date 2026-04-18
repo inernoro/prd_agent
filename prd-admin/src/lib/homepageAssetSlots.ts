@@ -70,6 +70,38 @@ export function cardSlot(id: HomepageCardSlot['id']): string {
 }
 
 /**
+ * 首页顶部 Hero banner（登录后首页最上方那条大图）。
+ *
+ * 和 Agent 封面一样，上传直接覆盖老 CDN 文件 `icon/title/{id}.{ext}`，
+ * 不产生两份拷贝，老逻辑 `getHeroBgUrl()` 自然读取新图。
+ */
+export type HomepageHeroSlot = {
+  id: 'home';
+  slot: string;
+  label: string;
+  hint: string;
+};
+
+export const HOMEPAGE_HERO_SLOTS: HomepageHeroSlot[] = [
+  { id: 'home', slot: 'hero.home', label: '顶部 Banner', hint: '登录后首页最上方的大图，建议宽屏 1920×640 左右' },
+];
+
+export const HERO_DEFAULTS: Record<string, string> = {
+  home: 'icon/title/home.png',
+};
+
+export function buildDefaultHeroUrl(cdnBase: string, id: HomepageHeroSlot['id']): string | null {
+  const path = HERO_DEFAULTS[id];
+  if (!path) return null;
+  const base = (cdnBase ?? '').replace(/\/+$/, '');
+  return base ? `${base}/${path}` : `/${path}`;
+}
+
+export function heroSlot(id: HomepageHeroSlot['id']): string {
+  return `hero.${id}`;
+}
+
+/**
  * 老系统 Agent 封面/视频的默认 CDN 路径表（与 `AgentLauncherPage` 内同名常量对齐）。
  * 存放在共享文件里，让设置页和首页共用同一份「默认素材地图」。
  *

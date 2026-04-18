@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 import { getHomepageAssetsPublic } from '@/services';
 import type { HomepageAssetDto, HomepageAssetsMap } from '@/services/contracts/homepageAssets';
-import { agentImageSlot, agentVideoSlot, cardSlot, type HomepageCardSlot } from '@/lib/homepageAssetSlots';
+import { agentImageSlot, agentVideoSlot, cardSlot, heroSlot, type HomepageCardSlot, type HomepageHeroSlot } from '@/lib/homepageAssetSlots';
 
 interface HomepageAssetsState {
   loaded: boolean;
@@ -80,5 +80,10 @@ export function useAgentImageUrl(agentKey: string | undefined): string | null {
 export function useAgentVideoUrl(agentKey: string | undefined): string | null {
   const slot = agentKey ? agentVideoSlot(agentKey) : '';
   const asset = useHomepageAssetsStore((s) => (slot ? s.assets[slot] : undefined));
+  return asset ? appendCacheBust(asset.url, asset.updatedAt) : null;
+}
+
+export function useHeroBgUrl(id: HomepageHeroSlot['id']): string | null {
+  const asset = useHomepageAssetsStore((s) => s.assets[heroSlot(id)]);
   return asset ? appendCacheBust(asset.url, asset.updatedAt) : null;
 }

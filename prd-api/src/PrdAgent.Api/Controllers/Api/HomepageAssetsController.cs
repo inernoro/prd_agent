@@ -31,6 +31,8 @@ public class HomepageAssetsController : ControllerBase
     // Agent 封面/视频 slot 解析（与老 CDN 目录 icon/backups/agent/{key}.{ext} 对齐）
     private static readonly Regex AgentImageSlotRegex = new(@"^agent\.(.+)\.image$", RegexOptions.Compiled);
     private static readonly Regex AgentVideoSlotRegex = new(@"^agent\.(.+)\.video$", RegexOptions.Compiled);
+    // Hero 顶部 banner slot：`hero.{id}` → 写入老路径 `icon/title/{id}.{ext}`
+    private static readonly Regex HeroSlotRegex = new(@"^hero\.(.+)$", RegexOptions.Compiled);
     private const long MaxUploadBytes = 20 * 1024 * 1024; // 20MB：图片 + 短视频
 
     public HomepageAssetsController(MongoDbContext db, ILogger<HomepageAssetsController> logger, IAssetStorage assetStorage)
@@ -98,6 +100,9 @@ public class HomepageAssetsController : ControllerBase
         if (imgM.Success) return $"icon/backups/agent/{imgM.Groups[1].Value}.{ext}";
         var vidM = AgentVideoSlotRegex.Match(slot);
         if (vidM.Success) return $"icon/backups/agent/{vidM.Groups[1].Value}.{ext}";
+        // 首页顶部 Hero banner：写回老路径 `icon/title/{id}.{ext}`
+        var heroM = HeroSlotRegex.Match(slot);
+        if (heroM.Success) return $"icon/title/{heroM.Groups[1].Value}.{ext}";
         // 其他 slot（如 card.*）：沿用 icon/homepage/{slot 点号转斜线}.{ext}
         var path = slot.Replace('.', '/');
         return $"icon/homepage/{path}.{ext}";

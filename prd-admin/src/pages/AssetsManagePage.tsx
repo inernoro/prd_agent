@@ -28,6 +28,7 @@ import {
   Layers,
   Monitor,
   Palette,
+  PanelTop,
   Plus,
   Save,
   Sparkles,
@@ -39,10 +40,13 @@ import {
 import {
   HOMEPAGE_CARD_SLOTS,
   HOMEPAGE_AGENT_SLOTS,
+  HOMEPAGE_HERO_SLOTS,
   buildDefaultCoverUrl,
   buildDefaultVideoUrl,
+  buildDefaultHeroUrl,
   type HomepageCardSlot,
   type HomepageAgentSlot,
+  type HomepageHeroSlot,
 } from '@/lib/homepageAssetSlots';
 import { useToolboxStore, BUILTIN_TOOLS } from '@/stores/toolboxStore';
 import { useHomepageAssetsStore } from '@/stores/homepageAssetsStore';
@@ -1202,13 +1206,43 @@ function HomepageAssetsSection({
   const cdnBase = useAuthStore((s) => s.cdnBaseUrl ?? '');
   return (
     <div className="flex flex-col gap-4">
+      {/* 首页顶部 Hero Banner */}
+      <GlassCard animated glow className="overflow-hidden">
+        <div className="flex items-center justify-between gap-3 mb-4">
+          <SectionTitle icon={<PanelTop size={16} />} title="首页顶部 Banner" badge={`${HOMEPAGE_HERO_SLOTS.length} 张`} />
+          <Button variant="ghost" size="xs" onClick={onReload} disabled={loading}>
+            {loading ? '加载中…' : '刷新'}
+          </Button>
+        </div>
+        <p className="text-[12px] mb-4" style={{ color: 'var(--text-muted)' }}>
+          登录后首页最上方的大图。建议宽屏 1920×640 左右，文字主要在左侧，右侧留白区域会作为主体显示。
+          上传直接覆盖老路径 <code className="font-mono text-[10px] px-1 py-0.5 rounded" style={{ background: 'var(--bg-input)' }}>icon/title/home.png</code>。
+        </p>
+        <div className="grid grid-cols-1 gap-3">
+          {HOMEPAGE_HERO_SLOTS.map((hero: HomepageHeroSlot) => (
+            <HomepageSlotTile
+              key={hero.slot}
+              slot={hero.slot}
+              label={hero.label}
+              hint={hero.hint}
+              asset={assets[hero.slot]}
+              defaultUrl={buildDefaultHeroUrl(cdnBase, hero.id)}
+              allowDelete={false}
+              cacheBust={cacheBust}
+              uploading={uploadingId === `homepage::${hero.slot}`}
+              accept="image/*"
+              previewAspect="3 / 1"
+              onUpload={() => onUpload(hero.slot, 'image/*')}
+              onDelete={() => onDelete(hero.slot)}
+            />
+          ))}
+        </div>
+      </GlassCard>
+
       {/* 四张快捷卡背景 */}
       <GlassCard animated glow className="overflow-hidden">
         <div className="flex items-center justify-between gap-3 mb-4">
           <SectionTitle icon={<Home size={16} />} title="首页快捷卡背景" badge="4 张" />
-          <Button variant="ghost" size="xs" onClick={onReload} disabled={loading}>
-            {loading ? '加载中…' : '刷新'}
-          </Button>
         </div>
         <p className="text-[12px] mb-4" style={{ color: 'var(--text-muted)' }}>
           登录后首页「海鲜市场 / 智识殿堂 / 作品广场 / 更新中心」四张卡片的背景图。

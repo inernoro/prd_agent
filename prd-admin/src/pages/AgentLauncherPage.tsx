@@ -33,8 +33,8 @@ import { MapSpinner } from '@/components/ui/VideoLoader';
 import { useToolboxStore } from '@/stores/toolboxStore';
 import { useAuthStore } from '@/stores/authStore';
 import { useChangelogStore, selectUnreadCount } from '@/stores/changelogStore';
-import { useHomepageAssetsStore, useAgentImageUrl, useAgentVideoUrl } from '@/stores/homepageAssetsStore';
-import { buildDefaultCoverUrl, buildDefaultVideoUrl } from '@/lib/homepageAssetSlots';
+import { useHomepageAssetsStore, useAgentImageUrl, useAgentVideoUrl, useHeroBgUrl } from '@/stores/homepageAssetsStore';
+import { buildDefaultCoverUrl, buildDefaultVideoUrl, buildDefaultHeroUrl } from '@/lib/homepageAssetSlots';
 import { useBreakpoint } from '@/hooks/useBreakpoint';
 import type { ToolboxItem } from '@/services';
 import { ShowcaseGallery } from '@/components/showcase/ShowcaseGallery';
@@ -122,11 +122,8 @@ function getDefaultVideoUrl(agentKey?: string): string | null {
   return buildDefaultVideoUrl(useAuthStore.getState().cdnBaseUrl ?? '', agentKey);
 }
 
-function getHeroBgUrl(): string {
-  const base = (useAuthStore.getState().cdnBaseUrl ?? '').replace(/\/+$/, '');
-  const path = 'icon/title/home.png';
-  return base ? `${base}/${path}` : `/${path}`;
-}
+// Hero banner 背景（上传后优先用上传的；否则回退 icon/title/home.png）
+// 由 `useHeroBgUrl('home')` + `buildDefaultHeroUrl` 组合消费，不再需要此函数。
 
 function getIcon(name: string): LucideIcon {
   return ICON_MAP[name] || Bot;
@@ -628,7 +625,13 @@ export default function AgentLauncherPage() {
   const greeting = getGreeting();
   const displayName = user?.displayName || '';
 
-  const heroBgUrl = useMemo(() => getHeroBgUrl(), []);
+  // Hero banner：订阅 store；上传后自动重渲染并附缓存爆破参数
+  const uploadedHero = useHeroBgUrl('home');
+  const cdnBase = useAuthStore((s) => s.cdnBaseUrl ?? '');
+  const heroBgUrl = useMemo(
+    () => uploadedHero ?? buildDefaultHeroUrl(cdnBase, 'home') ?? '',
+    [uploadedHero, cdnBase]
+  );
 
   return (
     <div className="h-full min-h-0 flex flex-col relative" style={{ background: 'var(--bg-base)' }}>
