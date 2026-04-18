@@ -41,3 +41,6 @@
 | fix | cds | 项目卡片删除按钮彻底修复：button-in-anchor 是无效 HTML（部分浏览器点击导航而非删除）；改为 cds-project-card-wrapper div 包裹，删除按钮移至 <a> 外侧，position:absolute top:12 right:12，hover 触发器改为 .wrapper:hover，card-head 增加 padding-right:36px 避免标题与按钮重叠 |
 | fix | cds | 删除按钮第三轮修复：projects.js 注入 CSS patch（兜底两种选择器应对浏览器 JS/HTML 版本缓存错位）；SVG fill 改为硬编码 #f43f5e 消除 currentColor 继承透明；server.ts HTML 文件返回 Cache-Control: no-store；projects.html script 标签改用 document.write 方式彻底 cache-bust |
 | feat | cds | 顶部导航栏新增快捷配置按钮：构建配置 / 环境变量 / 基础设施（运行时绿点状态）/ 路由规则，无需打开齿轮菜单直接点击访问 |
+| feat | cds | projects.html 侧边栏 logo 行新增主题切换按钮（亮/暗模式），解决浅色主题下按钮不可见问题 |
+| fix | cds | topology 右侧面板"公开地址"和"DEPLOYED VIA GIT"修复：displayBranch 优先使用已选分支而非第一个运行中分支，解决添加新分支后面板仍显示 main.miduo.org 的问题 |
+| fix | cds | topology 切换分支时若右侧面板已打开则自动重渲染面板内容，解决分支切换后面板信息不同步的问题 |

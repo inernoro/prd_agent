@@ -9620,6 +9620,17 @@ async function _topologySelectBranch(branchId) {
     }
   }
   renderTopologyView();
+  // If the right panel is open for an app/infra node, re-render it so its
+  // branch-specific data (public URL, commit, status) reflects the new branch.
+  var _fsPanel = document.getElementById('topologyFsPanel');
+  if (_fsPanel && _fsPanel.classList.contains('open') && _topologyPanelCurrentId) {
+    var _activeTab = (_fsPanel.querySelector('.topology-fs-panel-tab.active') || {}).dataset;
+    var _panelTab = (_activeTab && _activeTab.tab) || 'details';
+    var _panelEntity = (_topologyPanelCurrentKind === 'app')
+      ? (buildProfiles || []).find(function (p) { return p.id === _topologyPanelCurrentId; })
+      : (infraServices || []).find(function (s) { return s.id === _topologyPanelCurrentId; });
+    if (_panelEntity) _topologyRenderPanelTab(_panelTab, _panelEntity);
+  }
 }
 
 // Node click logic: first click focuses the node (highlight edges); second
@@ -10378,10 +10389,14 @@ function _topologyRenderPanelTab(tab, entity) {
     var status = (entity.status || (entity.containerName ? 'running' : 'idle'));
     var deps = (entity.dependsOn || []);
 
-    // Find a representative branch (the first running one, or the first one)
+    // Find a representative branch — prefer the topology-selected branch so
+    // the panel reflects the branch the user explicitly picked or just added,
+    // even when it is idle and a different branch is running.
     var displayBranch = null;
     if (kind === 'app' && (branches || []).length) {
-      displayBranch = branches.find(function (b) { return b.status === 'running'; }) || branches[0];
+      displayBranch = (_topologySelectedBranchId && branches.find(function (b) { return b.id === _topologySelectedBranchId; }))
+        || branches.find(function (b) { return b.status === 'running'; })
+        || branches[0];
     }
     var commitHash = displayBranch && displayBranch.commitSha ? displayBranch.commitSha.slice(0, 8) : '-';
     var commitSubject = displayBranch && displayBranch.subject ? displayBranch.subject : '';
