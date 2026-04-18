@@ -169,6 +169,7 @@ export function DailyLogPanel() {
   const [savingTags, setSavingTags] = useState(false);
   const [editingTagIdx, setEditingTagIdx] = useState<number | null>(null);
   const [editingTagDraft, setEditingTagDraft] = useState('');
+  const [editingTagSource, setEditingTagSource] = useState<'manage' | 'quick' | 'editMode' | null>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const editInputRef = useRef<HTMLTextAreaElement>(null);
   const [pastingTarget, setPastingTarget] = useState<'quick' | 'edit' | null>(null);
@@ -548,8 +549,7 @@ export function DailyLogPanel() {
     setCustomTags(updatedTags);
     setSelectedCustomTags((prev) => prev.filter((x) => x.toLowerCase() !== removedTag.toLowerCase()));
     if (editingTagIdx === idx) {
-      setEditingTagIdx(null);
-      setEditingTagDraft('');
+      handleCancelInlineEditTag();
     }
 
     const ok = await saveCustomTags(updatedTags, '标签已删除');
@@ -559,24 +559,25 @@ export function DailyLogPanel() {
     }
   };
 
-  const handleStartInlineEditTag = (idx: number) => {
+  const handleStartInlineEditTag = (idx: number, source: 'manage' | 'quick' | 'editMode') => {
     const target = customTags[idx];
     if (!target) return;
     setEditingTagIdx(idx);
     setEditingTagDraft(target);
+    setEditingTagSource(source);
   };
 
   const handleCancelInlineEditTag = () => {
     setEditingTagIdx(null);
     setEditingTagDraft('');
+    setEditingTagSource(null);
   };
 
   const handleConfirmEditCustomTag = async () => {
     if (editingTagIdx === null) return;
     const target = customTags[editingTagIdx];
     if (!target) {
-      setEditingTagIdx(null);
-      setEditingTagDraft('');
+      handleCancelInlineEditTag();
       return;
     }
 
@@ -603,8 +604,7 @@ export function DailyLogPanel() {
     const updatedTags = customTags.map((tag, idx) => (idx === editingTagIdx ? nextTag : tag));
     setCustomTags(updatedTags);
     setSelectedCustomTags((prev) => prev.map((x) => (x.toLowerCase() === target.toLowerCase() ? nextTag : x)));
-    setEditingTagIdx(null);
-    setEditingTagDraft('');
+    handleCancelInlineEditTag();
 
     const ok = await saveCustomTags(updatedTags, '标签已更新');
     if (!ok) {
@@ -951,7 +951,7 @@ export function DailyLogPanel() {
                 })}
                 {customTags.map((tag, idx) => {
                   const isActive = selectedCustomTags.includes(tag);
-                  const isEditing = editingTagIdx === idx;
+                  const isEditing = editingTagIdx === idx && editingTagSource === 'quick';
                   if (isEditing) {
                     return (
                       <input
@@ -989,7 +989,7 @@ export function DailyLogPanel() {
                       }}
                       title="双击重命名"
                       onClick={() => handleCustomTagToggle(tag)}
-                      onDoubleClick={(e) => { e.preventDefault(); handleStartInlineEditTag(idx); }}
+                      onDoubleClick={(e) => { e.preventDefault(); handleStartInlineEditTag(idx, 'quick'); }}
                     >
                       <Tag size={10} />
                       {tag}
@@ -1119,7 +1119,7 @@ export function DailyLogPanel() {
                       </span>
                     ) : (
                       customTags.map((tag, idx) => {
-                        const isEditing = editingTagIdx === idx;
+                        const isEditing = editingTagIdx === idx && editingTagSource === 'manage';
                         return (
                           <span
                             key={`custom-tag-${tag}-${idx}`}
@@ -1142,8 +1142,7 @@ export function DailyLogPanel() {
                                       void handleConfirmEditCustomTag();
                                     }
                                     if (e.key === 'Escape') {
-                                      setEditingTagIdx(null);
-                                      setEditingTagDraft('');
+                                      handleCancelInlineEditTag();
                                     }
                                   }}
                                   autoFocus
@@ -1158,10 +1157,7 @@ export function DailyLogPanel() {
                                 </button>
                                 <button
                                   className="inline-flex items-center justify-center w-4 h-4 rounded transition-colors duration-150 hover:bg-[rgba(148,163,184,0.14)]"
-                                  onClick={() => {
-                                    setEditingTagIdx(null);
-                                    setEditingTagDraft('');
-                                  }}
+                                  onClick={handleCancelInlineEditTag}
                                   title="取消"
                                   aria-label="取消修改标签"
                                 >
@@ -1174,10 +1170,7 @@ export function DailyLogPanel() {
                                 {tag}
                                 <button
                                   className="inline-flex items-center justify-center w-4 h-4 rounded opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 transition-all duration-150 hover:bg-[rgba(148,163,184,0.14)]"
-                                  onClick={() => {
-                                    setEditingTagIdx(idx);
-                                    setEditingTagDraft(tag);
-                                  }}
+                                  onClick={() => handleStartInlineEditTag(idx, 'manage')}
                                   title="修改"
                                   aria-label="修改标签"
                                 >
@@ -1357,7 +1350,7 @@ export function DailyLogPanel() {
                                   })}
                                   {customTags.map((tag, tIdx) => {
                                     const isActive = editCustomTags.includes(tag);
-                                    const isEditing = editingTagIdx === tIdx;
+                                    const isEditing = editingTagIdx === tIdx && editingTagSource === 'editMode';
                                     if (isEditing) {
                                       return (
                                         <input
@@ -1395,7 +1388,7 @@ export function DailyLogPanel() {
                                         }}
                                         title="双击重命名"
                                         onClick={() => handleEditCustomTagToggle(tag)}
-                                        onDoubleClick={(e) => { e.preventDefault(); handleStartInlineEditTag(tIdx); }}
+                                        onDoubleClick={(e) => { e.preventDefault(); handleStartInlineEditTag(tIdx, 'editMode'); }}
                                       >
                                         <Tag size={8} className="inline mr-0.5" />
                                         {tag}
