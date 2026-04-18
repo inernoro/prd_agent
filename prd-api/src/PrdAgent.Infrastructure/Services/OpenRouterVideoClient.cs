@@ -56,7 +56,6 @@ public class OpenRouterVideoClient : IOpenRouterVideoClient
         {
             AppCallerCode = request.AppCallerCode,
             ModelType = ModelTypes.VideoGen,
-            ExpectedModel = resolution.ActualModel,
             EndpointPath = "/videos",
             RequestBody = body,
             HttpMethod = "POST",
