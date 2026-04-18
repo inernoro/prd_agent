@@ -307,6 +307,10 @@ public class DefectAgentController : ControllerBase
 
     /// <summary>
     /// 获取缺陷列表
+    ///
+    /// 历史契约漂移修复（2026-04-18）：前端/桌面端契约使用 filter+limit+offset，旧后端却只认 mine+page+pageSize。
+    /// 参数错位导致前端 `filter=assigned|submitted` 与 `limit=100` 全部被静默丢弃，用户无论如何最多只能看到默认 pageSize=20 条。
+    /// 本次新增对 filter / limit / offset 的直接支持，保留 mine / page / pageSize 兼容旧调用方。
     /// </summary>
     [HttpGet("defects")]
     public async Task<IActionResult> ListDefects(
@@ -317,8 +321,11 @@ public class DefectAgentController : ControllerBase
         [FromQuery] string? projectId,
         [FromQuery] string? teamId,
         [FromQuery] bool? mine,
+        [FromQuery] string? filter,
         [FromQuery] int page = 1,
         [FromQuery] int pageSize = 20,
+        [FromQuery] int? limit = null,
+        [FromQuery] int? offset = null,
         CancellationToken ct = default)
     {
         var userId = GetUserId();
@@ -330,28 +337,58 @@ public class DefectAgentController : ControllerBase
         // 默认排除已删除的缺陷
         filters.Add(filterBuilder.Eq(x => x.IsDeleted, false));
 
-        // 非管理员只能看到自己提交的或分配给自己的
-        // 已驳回的缺陷只对提交人可见（驳回人=指派人不再需要看到）
-        if (!isAdmin)
+        // filter 字符串语义（与前端契约一致）：
+        // - submitted：仅我提交的
+        // - assigned：仅派给我的（排除已驳回）
+        // - all：我提交的 ∪ 派给我的（排除已驳回）
+        // - completed / rejected：保留字段，仅在 status 未显式指定时兜底
+        var normalizedFilter = (filter ?? string.Empty).Trim().ToLowerInvariant();
+        var scopeByFilter = normalizedFilter switch
         {
-            filters.Add(filterBuilder.Or(
-                filterBuilder.Eq(x => x.ReporterId, userId),
-                filterBuilder.And(
-                    filterBuilder.Eq(x => x.AssigneeId, userId),
-                    filterBuilder.Ne(x => x.Status, DefectStatus.Rejected)
-                )
-            ));
+            "submitted" => "submitted",
+            "assigned" => "assigned",
+            "all" => "all",
+            _ => string.Empty
+        };
+
+        // 非管理员强制"我相关"范围；管理员则按 mine / filter 控制
+        var forceMineScope = !isAdmin || mine == true || scopeByFilter is "submitted" or "assigned" or "all";
+        if (forceMineScope)
+        {
+            var scope = scopeByFilter;
+            // 兼容 mine=true 与非管理员默认行为：未显式指定则回退到 "all"
+            if (string.IsNullOrEmpty(scope)) scope = "all";
+
+            switch (scope)
+            {
+                case "submitted":
+                    filters.Add(filterBuilder.Eq(x => x.ReporterId, userId));
+                    break;
+                case "assigned":
+                    filters.Add(filterBuilder.And(
+                        filterBuilder.Eq(x => x.AssigneeId, userId),
+                        filterBuilder.Ne(x => x.Status, DefectStatus.Rejected)
+                    ));
+                    break;
+                default:
+                    filters.Add(filterBuilder.Or(
+                        filterBuilder.Eq(x => x.ReporterId, userId),
+                        filterBuilder.And(
+                            filterBuilder.Eq(x => x.AssigneeId, userId),
+                            filterBuilder.Ne(x => x.Status, DefectStatus.Rejected)
+                        )
+                    ));
+                    break;
+            }
         }
-        else if (mine == true)
+
+        // completed / rejected 作为 status 的语义简写（仅在 status 未显式指定时生效）
+        if (string.IsNullOrWhiteSpace(status))
         {
-            // 管理员筛选"我的"时同样排除我驳回的
-            filters.Add(filterBuilder.Or(
-                filterBuilder.Eq(x => x.ReporterId, userId),
-                filterBuilder.And(
-                    filterBuilder.Eq(x => x.AssigneeId, userId),
-                    filterBuilder.Ne(x => x.Status, DefectStatus.Rejected)
-                )
-            ));
+            if (normalizedFilter == "completed")
+                filters.Add(filterBuilder.Eq(x => x.Status, DefectStatus.Closed));
+            else if (normalizedFilter == "rejected")
+                filters.Add(filterBuilder.Eq(x => x.Status, DefectStatus.Rejected));
         }
 
         if (!string.IsNullOrWhiteSpace(status))
@@ -378,19 +415,38 @@ public class DefectAgentController : ControllerBase
         if (!string.IsNullOrWhiteSpace(teamId))
             filters.Add(filterBuilder.Eq(x => x.TeamId, teamId));
 
-        var filter = filters.Count > 0
+        var filterExpr = filters.Count > 0
             ? filterBuilder.And(filters)
             : FilterDefinition<DefectReport>.Empty;
 
-        var total = await _db.DefectReports.CountDocumentsAsync(filter, cancellationToken: ct);
+        // 分页参数归一：limit/offset 优先于 page/pageSize。上限 500 防止单次拉取过大。
+        const int MaxPageSize = 500;
+        var effectivePageSize = Math.Clamp(limit ?? pageSize, 1, MaxPageSize);
+        var effectiveSkip = offset.HasValue
+            ? Math.Max(0, offset.Value)
+            : Math.Max(0, (page - 1) * effectivePageSize);
+        var effectivePage = offset.HasValue
+            ? (effectivePageSize > 0 ? (effectiveSkip / effectivePageSize) + 1 : 1)
+            : Math.Max(1, page);
+
+        var total = await _db.DefectReports.CountDocumentsAsync(filterExpr, cancellationToken: ct);
         var items = await _db.DefectReports
-            .Find(filter)
+            .Find(filterExpr)
             .SortByDescending(x => x.CreatedAt)
-            .Skip((page - 1) * pageSize)
-            .Limit(pageSize)
+            .Skip(effectiveSkip)
+            .Limit(effectivePageSize)
             .ToListAsync(ct);
 
-        return Ok(ApiResponse<object>.Ok(new { items, total, page, pageSize }));
+        return Ok(ApiResponse<object>.Ok(new
+        {
+            items,
+            total,
+            page = effectivePage,
+            pageSize = effectivePageSize,
+            // 兼容前端契约字段
+            limit = effectivePageSize,
+            offset = effectiveSkip,
+        }));
     }
 
     /// <summary>

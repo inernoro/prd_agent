@@ -23,6 +23,7 @@ const NOTIFICATION_STORAGE_KEY = 'defect-agent-notified-ids';
 export default function DefectAgentPage() {
   const {
     defects,
+    defectsTotal,
     loading,
     error,
     filter,
@@ -251,6 +252,24 @@ export default function DefectAgentPage() {
           >
             <MapSpinner size={12} />
             加载中...
+          </div>
+        </GlassCard>
+      )}
+
+      {/* 数据截断提示：服务端总数 > 已加载条数时显式告知用户"还有未显示的数据"，避免"我的缺陷凭空消失"的困惑 */}
+      {!loading && !error && defectsTotal > defects.length && (
+        <GlassCard animated className="py-2 px-3">
+          <div
+            className="text-[12px] flex items-center justify-between gap-2"
+            style={{ color: 'var(--text-muted)' }}
+          >
+            <span>
+              已加载最新 {defects.length} 条，共 {defectsTotal} 条。请使用项目/团队/状态筛选缩小范围以查看更多。
+            </span>
+            <Button variant="secondary" size="sm" onClick={() => loadAll()}>
+              <RefreshCw size={12} />
+              重新加载
+            </Button>
           </div>
         </GlassCard>
       )}
