@@ -25,6 +25,67 @@ import { createSchedulerRouter } from './scheduler/routes.js';
 import { createClusterRouter } from './routes/cluster.js';
 import { updateEnvFile, defaultEnvFilePath } from './services/env-file.js';
 
+/**
+ * 2026-04-18 bug fix — .cds.env self-loader.
+ *
+ * 历史行为：依赖 exec_cds.sh 的 load_env() 在 bash 层 source .cds.env，
+ * 再 exec node。但 systemd-managed 部署（cds-master.service 的
+ * `ExecStart=/usr/bin/node dist/index.js`）会直接 exec node，绕过
+ * exec_cds.sh，于是 `.cds.env` 里的 `export CDS_MONGO_URI=...` 永远
+ * 不会进入 process.env。生产侧诊断发现：
+ *   切 Mongo → persisted=true → systemd 重启 → mode=json（URI 没读到）
+ *
+ * 修复策略：node 启动一开始自己解析 .cds.env，与 shell 无关。
+ * 已经在 process.env 里的变量（systemd Environment= 或 shell export）
+ * **不覆盖**，保证运维显式设置仍然有最高优先级。
+ *
+ * 支持语法：`export KEY="value"` 和 `KEY="value"`，值里 bash 双引号
+ * 转义（\\ \" \$）反向 unescape。忽略 `#` 注释行和空行。
+ *
+ * 位置：必须在 loadConfig() 之前调用，否则 config 里引用的
+ * repoRoot / rootDomains 等还是从未配置的 env 读。
+ */
+function loadCdsEnvFile(): void {
+  const candidates = [
+    path.resolve(process.cwd(), '.cds.env'),
+    path.resolve(path.dirname(new URL(import.meta.url).pathname), '..', '.cds.env'),
+  ];
+  for (const envPath of candidates) {
+    try {
+      if (!fs.existsSync(envPath)) continue;
+      const content = fs.readFileSync(envPath, 'utf-8');
+      const lineRe = /^\s*(?:export\s+)?([A-Z_][A-Z0-9_]*)=(?:"((?:[^"\\]|\\.)*)"|'([^']*)'|(\S*))\s*$/;
+      let loaded = 0;
+      for (const line of content.split('\n')) {
+        if (!line || /^\s*#/.test(line)) continue;
+        const m = line.match(lineRe);
+        if (!m) continue;
+        const key = m[1];
+        const raw = m[2] ?? m[3] ?? m[4] ?? '';
+        // Unescape bash double-quoted: \" \\ \$ → " \ $
+        const value = (m[2] !== undefined)
+          ? raw.replace(/\\(.)/g, '$1')
+          : raw;
+        // process.env 已有值（systemd/shell 显式设置）优先
+        if (process.env[key] === undefined) {
+          process.env[key] = value;
+          loaded++;
+        }
+      }
+      if (loaded > 0) {
+        // 用 console.log 而不是 logger，这一步比 logger 早
+        console.log(`[cds-env-loader] 从 ${envPath} 加载 ${loaded} 个变量到 process.env`);
+      }
+      return; // 只读第一个找到的
+    } catch (err) {
+      console.warn(`[cds-env-loader] 跳过 ${envPath}: ${(err as Error).message}`);
+    }
+  }
+}
+
+// 必须在 loadConfig 之前调用
+loadCdsEnvFile();
+
 function parseCsv(value: string | undefined): string[] | undefined {
   if (!value) return undefined;
   const items = value.split(',').map(v => v.trim()).filter(Boolean);
