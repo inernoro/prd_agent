@@ -329,7 +329,10 @@ public class PaAgentController : ControllerBase
 
             if (!streamSucceeded && attempt == maxAttempts)
             {
-                var errData = JsonSerializer.Serialize(new { type = "error", message = "AI 服务暂时不可用，请稍后重试" });
+                var userMsg2 = streamError?.Contains("User not found") == true
+                    ? "AI 模型服务暂时不可用（OpenRouter 账户异常），请联系管理员检查 API Key 配置"
+                    : "AI 服务暂时不可用，请稍后重试";
+                var errData = JsonSerializer.Serialize(new { type = "error", message = userMsg2 });
                 await Response.WriteAsync($"data: {errData}\n\n", CancellationToken.None);
                 await Response.Body.FlushAsync(CancellationToken.None);
             }

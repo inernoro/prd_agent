@@ -193,8 +193,8 @@ export async function streamPaChat(opts: StreamPaChatOptions): Promise<() => voi
               opts.onDone();
             } else if (chunk.type === 'error') {
               const raw_msg = chunk.message ?? '';
-              const friendly = raw_msg.includes('User not found')
-                ? 'AI 服务暂时不可用，请稍后重试'
+              const friendly = raw_msg.includes('OpenRouter') || raw_msg.includes('API Key')
+                ? 'AI 模型服务暂时不可用，请联系管理员'
                 : raw_msg || '未知错误';
               opts.onError(friendly);
             } else if ((chunk as { type: string }).type === 'retry') {
