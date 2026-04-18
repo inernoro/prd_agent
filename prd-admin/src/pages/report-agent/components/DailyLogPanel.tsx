@@ -559,6 +559,18 @@ export function DailyLogPanel() {
     }
   };
 
+  const handleStartInlineEditTag = (idx: number) => {
+    const target = customTags[idx];
+    if (!target) return;
+    setEditingTagIdx(idx);
+    setEditingTagDraft(target);
+  };
+
+  const handleCancelInlineEditTag = () => {
+    setEditingTagIdx(null);
+    setEditingTagDraft('');
+  };
+
   const handleConfirmEditCustomTag = async () => {
     if (editingTagIdx === null) return;
     const target = customTags[editingTagIdx];
@@ -937,8 +949,35 @@ export function DailyLogPanel() {
                     </button>
                   );
                 })}
-                {customTags.map((tag) => {
+                {customTags.map((tag, idx) => {
                   const isActive = selectedCustomTags.includes(tag);
+                  const isEditing = editingTagIdx === idx;
+                  if (isEditing) {
+                    return (
+                      <input
+                        key={`tag-edit-${idx}`}
+                        className="w-24 px-2 py-1 rounded-lg text-[11px] font-medium outline-none"
+                        style={{
+                          background: 'rgba(59, 130, 246, 0.08)',
+                          color: 'rgba(59, 130, 246, 0.95)',
+                          border: '1px solid rgba(59, 130, 246, 0.35)',
+                        }}
+                        value={editingTagDraft}
+                        autoFocus
+                        onChange={(e) => setEditingTagDraft(e.target.value)}
+                        onBlur={handleCancelInlineEditTag}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter' && !e.nativeEvent.isComposing) {
+                            e.preventDefault();
+                            void handleConfirmEditCustomTag();
+                          } else if (e.key === 'Escape') {
+                            e.preventDefault();
+                            handleCancelInlineEditTag();
+                          }
+                        }}
+                      />
+                    );
+                  }
                   return (
                     <button
                       key={`tag-${tag}`}
@@ -948,7 +987,9 @@ export function DailyLogPanel() {
                         color: isActive ? 'rgba(20, 184, 166, 0.95)' : 'var(--text-muted)',
                         border: `1px solid ${isActive ? 'rgba(20, 184, 166, 0.3)' : 'transparent'}`,
                       }}
+                      title="双击重命名"
                       onClick={() => handleCustomTagToggle(tag)}
+                      onDoubleClick={(e) => { e.preventDefault(); handleStartInlineEditTag(idx); }}
                     >
                       <Tag size={10} />
                       {tag}
@@ -1314,8 +1355,35 @@ export function DailyLogPanel() {
                                       </button>
                                     );
                                   })}
-                                  {customTags.map((tag) => {
+                                  {customTags.map((tag, tIdx) => {
                                     const isActive = editCustomTags.includes(tag);
+                                    const isEditing = editingTagIdx === tIdx;
+                                    if (isEditing) {
+                                      return (
+                                        <input
+                                          key={`edit-custom-edit-${tIdx}`}
+                                          className="w-20 px-1.5 py-0.5 rounded text-[10px] outline-none"
+                                          style={{
+                                            background: 'rgba(59, 130, 246, 0.08)',
+                                            color: 'rgba(59, 130, 246, 0.95)',
+                                            border: '1px solid rgba(59, 130, 246, 0.35)',
+                                          }}
+                                          value={editingTagDraft}
+                                          autoFocus
+                                          onChange={(e) => setEditingTagDraft(e.target.value)}
+                                          onBlur={handleCancelInlineEditTag}
+                                          onKeyDown={(e) => {
+                                            if (e.key === 'Enter' && !e.nativeEvent.isComposing) {
+                                              e.preventDefault();
+                                              void handleConfirmEditCustomTag();
+                                            } else if (e.key === 'Escape') {
+                                              e.preventDefault();
+                                              handleCancelInlineEditTag();
+                                            }
+                                          }}
+                                        />
+                                      );
+                                    }
                                     return (
                                       <button
                                         key={`edit-custom-${tag}`}
@@ -1325,7 +1393,9 @@ export function DailyLogPanel() {
                                           color: isActive ? 'rgba(20, 184, 166, 0.95)' : 'var(--text-muted)',
                                           border: `1px solid ${isActive ? 'rgba(20, 184, 166, 0.3)' : 'transparent'}`,
                                         }}
+                                        title="双击重命名"
                                         onClick={() => handleEditCustomTagToggle(tag)}
+                                        onDoubleClick={(e) => { e.preventDefault(); handleStartInlineEditTag(tIdx); }}
                                       >
                                         <Tag size={8} className="inline mr-0.5" />
                                         {tag}
