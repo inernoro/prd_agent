@@ -828,6 +828,11 @@ proxyService.setOnAutoBuild(async (branchSlug, _req, res) => {
 
       entry = {
         id: finalSlug,
+        // Auto-build is the legacy single-project proxy path (see the
+        // FU-04 comment above) — always stamp 'default' so this branch
+        // is classified under the legacy project and downstream
+        // cleanup/isolation logic treats it consistently.
+        projectId: 'default',
         branch: resolvedBranch,
         worktreePath,
         services: {},
@@ -842,8 +847,14 @@ proxyService.setOnAutoBuild(async (branchSlug, _req, res) => {
     entry.status = 'building';
     stateService.save();
 
-    // Build all profiles
-    const profiles = stateService.getBuildProfiles();
+    // Build only this branch's project's profiles. Earlier this used
+    // the global `getBuildProfiles()`, which meant a subdomain-preview
+    // request for a default-project branch would iterate EVERY project's
+    // profiles (creating cross-project service entries + running the
+    // wrong containers). Confirmed root cause of the "构建配置 X 缺少
+    // command 字段" error when a fork project had a half-specified
+    // profile. See `isolation-bug` note in changelogs/.
+    const profiles = stateService.getBuildProfilesForProject(entry.projectId || 'default');
     for (const profile of profiles) {
       sendEvent('step', { step: `build-${profile.id}`, status: 'running', title: `正在构建 ${profile.name}...` });
 

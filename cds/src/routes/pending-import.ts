@@ -159,6 +159,32 @@ export function createPendingImportRouter(deps: PendingImportRouterDeps): Router
       return;
     }
 
+    // Reject profiles missing a command. Without a command the deploy
+    // path crashes with "缺少 command 字段" as it did during the first
+    // self-test — we'd rather fail at submit time with a clear pointer
+    // than let the operator approve a broken config.
+    //
+    // Dockerfile-based services (where the image's CMD/ENTRYPOINT is
+    // enough) are a real use case but parseCdsCompose today always
+    // populates `command` when present; an unset command means the
+    // YAML actually lacked it.
+    try {
+      const check = parseCdsCompose(composeYaml);
+      if (check) {
+        const bad = check.buildProfiles
+          .filter((p) => !p.command || !String(p.command).trim())
+          .map((p) => p.id);
+        if (bad.length > 0) {
+          res.status(400).json({
+            error: 'invalid_profile',
+            field: 'composeYaml',
+            message: `以下构建配置缺少 command 字段: ${bad.join(', ')}。请在 YAML 的每个 app service 下补上 command: 行。`,
+          });
+          return;
+        }
+      }
+    } catch { /* parser already succeeded once above */ }
+
     const item: PendingImport = {
       id: newId(),
       projectId: project.id,
