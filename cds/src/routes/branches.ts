@@ -2865,30 +2865,61 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
   // ── Cleanup orphan branches: remove local branches that no longer exist on remote ──
 
-  router.post('/cleanup-orphans', async (_req, res) => {
+  router.post('/cleanup-orphans', async (req, res) => {
     initSSE(res);
     try {
-      // Step 1: fetch remote to get latest branch list
-      sendSSE(res, 'step', { step: 'fetch', status: 'running', title: '正在拉取远程分支列表...' });
-      await shell.exec(
-        'GIT_TERMINAL_PROMPT=0 git fetch origin --prune',
-        { cwd: config.repoRoot, timeout: 30_000 },
-      );
+      // Optional ?project=<id> filter — when the Dashboard is on a
+      // specific project page, we only scan/clean that project's
+      // branches. Without the filter we fan out to every project so
+      // a global "cleanup orphans" from the top-level still works.
+      const projectFilter = typeof req.query.project === 'string' ? req.query.project : null;
 
-      // Get all remote branch names
-      const result = await shell.exec(
-        'git for-each-ref --format="%(refname:lstrip=3)" refs/remotes/origin',
-        { cwd: config.repoRoot },
-      );
-      const remoteBranches = new Set(
-        result.stdout.trim().split('\n').filter(Boolean).filter(b => b !== 'HEAD'),
-      );
-      sendSSE(res, 'step', { step: 'fetch', status: 'done', title: `远程共 ${remoteBranches.size} 个分支` });
+      const projects = projectFilter
+        ? [stateService.getProject(projectFilter)].filter(Boolean) as ReturnType<typeof stateService.getProjects>
+        : stateService.getProjects();
 
-      // Step 2: identify orphans (local CDS branches whose git branch no longer exists on remote)
-      const state = stateService.getState();
-      const allLocal = Object.values(state.branches);
-      const orphans = allLocal.filter(b => !remoteBranches.has(b.branch));
+      if (projects.length === 0) {
+        sendSSE(res, 'complete', { message: projectFilter ? `未知项目: ${projectFilter}` : '没有项目', orphanCount: 0 });
+        res.end();
+        return;
+      }
+
+      // Per-project: resolve repoRoot, fetch remote, intersect with that
+      // project's branch entries. Legacy projects without a custom
+      // repoPath fall back to config.repoRoot via getProjectRepoRoot.
+      // A project whose clone isn't ready (cloneStatus !== 'ready')
+      // is skipped — it has no remote to check against.
+      const allOrphans: BranchEntry[] = [];
+      for (const project of projects) {
+        if (project.cloneStatus && project.cloneStatus !== 'ready') {
+          sendSSE(res, 'step', { step: `skip-${project.id}`, status: 'info', title: `跳过项目 ${project.name}（clone 未就绪）` });
+          continue;
+        }
+        const projectRepoRoot = stateService.getProjectRepoRoot(project.id, config.repoRoot);
+        sendSSE(res, 'step', { step: `fetch-${project.id}`, status: 'running', title: `拉取 ${project.name} 的远程分支...` });
+        try {
+          await shell.exec(
+            'GIT_TERMINAL_PROMPT=0 git fetch origin --prune',
+            { cwd: projectRepoRoot, timeout: 30_000 },
+          );
+        } catch (err) {
+          sendSSE(res, 'step', { step: `fetch-${project.id}`, status: 'error', title: `${project.name} fetch 失败: ${(err as Error).message}` });
+          continue;
+        }
+        const result = await shell.exec(
+          'git for-each-ref --format="%(refname:lstrip=3)" refs/remotes/origin',
+          { cwd: projectRepoRoot },
+        );
+        const remoteBranches = new Set(
+          result.stdout.trim().split('\n').filter(Boolean).filter(b => b !== 'HEAD'),
+        );
+        const projectBranches = stateService.getBranchesForProject(project.id);
+        const projectOrphans = projectBranches.filter(b => !remoteBranches.has(b.branch));
+        sendSSE(res, 'step', { step: `fetch-${project.id}`, status: 'done', title: `${project.name}: 远程 ${remoteBranches.size} 个分支, 本地 ${projectBranches.length} 个, 孤儿 ${projectOrphans.length} 个` });
+        allOrphans.push(...projectOrphans);
+      }
+
+      const orphans = allOrphans;
 
       if (orphans.length === 0) {
         sendSSE(res, 'complete', { message: '没有发现孤儿分支，一切正常', orphanCount: 0 });
@@ -2935,61 +2966,75 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
   // ── Prune stale local git branches not in CDS deployment list ──
 
-  router.post('/prune-stale-branches', async (_req, res) => {
+  router.post('/prune-stale-branches', async (req, res) => {
     initSSE(res);
     try {
-      // Step 1: get current branch + CDS deployment branches
-      const currentResult = await shell.exec('git rev-parse --abbrev-ref HEAD', { cwd: config.repoRoot });
-      const currentBranch = currentResult.stdout.trim();
+      // Optional ?project=<id> filter — same semantics as cleanup-orphans.
+      // Without a filter we walk every project so state-level "prune
+      // everything" still works. Each project has its own git repo and
+      // its own list of deployed branches, so the protected set is
+      // computed per-project.
+      const projectFilter = typeof req.query.project === 'string' ? req.query.project : null;
+      const projects = projectFilter
+        ? [stateService.getProject(projectFilter)].filter(Boolean) as ReturnType<typeof stateService.getProjects>
+        : stateService.getProjects();
 
-      const state = stateService.getState();
-      const deployedBranches = new Set(
-        Object.values(state.branches).map(b => b.branch),
-      );
-      // Always keep current branch and common defaults
-      const protectedBranches = new Set([currentBranch, 'main', 'master', 'develop', 'dev']);
-
-      sendSSE(res, 'step', { step: 'scan', status: 'running', title: '正在扫描本地分支...' });
-
-      // Step 2: list all local branches
-      const localResult = await shell.exec('git branch --format="%(refname:short)"', { cwd: config.repoRoot });
-      const localBranches = localResult.stdout.trim().split('\n').filter(Boolean);
-
-      // Step 3: identify stale branches (not deployed, not protected)
-      const staleBranches = localBranches.filter(b =>
-        !deployedBranches.has(b) && !protectedBranches.has(b),
-      );
-
-      sendSSE(res, 'step', {
-        step: 'scan', status: 'done',
-        title: `本地 ${localBranches.length} 个分支，已部署 ${deployedBranches.size} 个，保护 ${protectedBranches.size} 个`,
-      });
-
-      if (staleBranches.length === 0) {
-        sendSSE(res, 'complete', { message: '没有需要清理的分支', pruneCount: 0 });
+      if (projects.length === 0) {
+        sendSSE(res, 'complete', { message: projectFilter ? `未知项目: ${projectFilter}` : '没有项目', pruneCount: 0 });
         res.end();
         return;
       }
 
-      sendSSE(res, 'step', {
-        step: 'list', status: 'info',
-        title: `发现 ${staleBranches.length} 个非列表分支待清理`,
-      });
+      let totalPruned = 0;
+      for (const project of projects) {
+        if (project.cloneStatus && project.cloneStatus !== 'ready') {
+          sendSSE(res, 'step', { step: `skip-${project.id}`, status: 'info', title: `跳过项目 ${project.name}（clone 未就绪）` });
+          continue;
+        }
+        const projectRepoRoot = stateService.getProjectRepoRoot(project.id, config.repoRoot);
 
-      // Step 4: delete each stale branch
-      let pruned = 0;
-      for (const branch of staleBranches) {
-        sendSSE(res, 'step', { step: `del-${branch}`, status: 'running', title: `正在删除 ${branch}...` });
+        // What's "deployed" for this project = the branches we've
+        // registered in CDS under this projectId. Cross-project
+        // branches (e.g. default's 'main' when scanning prd-agent-2)
+        // must NOT be considered deployed here, or we'd keep fork
+        // branches named 'main' as stale just because default has one.
+        const projectDeployed = new Set(
+          stateService.getBranchesForProject(project.id).map(b => b.branch),
+        );
+
+        let currentBranch = '';
         try {
-          await shell.exec(`git branch -D "${branch}"`, { cwd: config.repoRoot });
-          pruned++;
-          sendSSE(res, 'step', { step: `del-${branch}`, status: 'done', title: `已删除 ${branch}` });
-        } catch (err) {
-          sendSSE(res, 'step', { step: `del-${branch}`, status: 'error', title: `删除失败 ${branch}: ${(err as Error).message}` });
+          const currentResult = await shell.exec('git rev-parse --abbrev-ref HEAD', { cwd: projectRepoRoot });
+          currentBranch = currentResult.stdout.trim();
+        } catch {
+          sendSSE(res, 'step', { step: `scan-${project.id}`, status: 'error', title: `${project.name}: 读 HEAD 失败` });
+          continue;
+        }
+        const protectedBranches = new Set([currentBranch, 'main', 'master', 'develop', 'dev']);
+
+        sendSSE(res, 'step', { step: `scan-${project.id}`, status: 'running', title: `扫描 ${project.name} 的本地分支...` });
+        const localResult = await shell.exec('git branch --format="%(refname:short)"', { cwd: projectRepoRoot });
+        const localBranches = localResult.stdout.trim().split('\n').filter(Boolean);
+        const staleBranches = localBranches.filter(b =>
+          !projectDeployed.has(b) && !protectedBranches.has(b),
+        );
+        sendSSE(res, 'step', {
+          step: `scan-${project.id}`, status: 'done',
+          title: `${project.name}: 本地 ${localBranches.length}, 已部署 ${projectDeployed.size}, 待清 ${staleBranches.length}`,
+        });
+        for (const branch of staleBranches) {
+          sendSSE(res, 'step', { step: `del-${project.id}-${branch}`, status: 'running', title: `删除 ${project.name} / ${branch}...` });
+          try {
+            await shell.exec(`git branch -D "${branch}"`, { cwd: projectRepoRoot });
+            totalPruned++;
+            sendSSE(res, 'step', { step: `del-${project.id}-${branch}`, status: 'done', title: `已删除 ${project.name} / ${branch}` });
+          } catch (err) {
+            sendSSE(res, 'step', { step: `del-${project.id}-${branch}`, status: 'error', title: `删除失败 ${project.name} / ${branch}: ${(err as Error).message}` });
+          }
         }
       }
 
-      sendSSE(res, 'complete', { message: `已清理 ${pruned} 个非列表分支`, pruneCount: pruned });
+      sendSSE(res, 'complete', { message: `已清理 ${totalPruned} 个非列表分支`, pruneCount: totalPruned });
     } catch (err) {
       sendSSE(res, 'error', { message: (err as Error).message });
     } finally {

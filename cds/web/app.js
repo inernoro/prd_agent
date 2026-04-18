@@ -1193,7 +1193,10 @@ function filterBranches() {
       html += matchedLocal.map(b => {
         const isRunning = b.status === 'running';
         const statusText = statusLabel(b.status);
-        const services = Object.entries(b.services || {});
+        // Same defensive filter as the main branch list render — drop
+        // services whose profile isn't in the current project's list.
+        const knownIds = new Set(buildProfiles.map(p => p.id));
+        const services = Object.entries(b.services || {}).filter(([pid]) => knownIds.has(pid));
         const portText = services.length > 0 ? services.map(([pid, svc]) => `:${svc.hostPort}`).join(' ') : '';
         return `
         <div class="branch-dropdown-item branch-dropdown-local" onclick="scrollToAndHighlight('${esc(b.id)}')">
@@ -3356,7 +3359,17 @@ function renderBranches() {
   el.innerHTML = filteredBranches.map(b => {
     const isBusy = busyBranches.has(b.id) || globalBusy;
     const isDefault = b.id === defaultBranch;
-    const services = Object.entries(b.services || {});
+    // Defensive filter against orphan/cross-project service entries.
+    // `buildProfiles` is fetched with ?project=<current>, so any service
+    // whose profile isn't in that list is either deleted or belongs to
+    // another project (historical pollution). Skipping such entries
+    // here prevents ghost chips with wrong ports/icons even if the
+    // state.json still carries leftovers. The server-side
+    // `/cleanup-cross-project-services` endpoint handles the state
+    // cleanup; this is the UI safety net.
+    const knownProfileIds = new Set(buildProfiles.map(p => p.id));
+    const services = Object.entries(b.services || {})
+      .filter(([pid]) => knownProfileIds.has(pid));
     const hasError = b.status === 'error';
     const isRunning = b.status === 'running';
     const isStopping = b.status === 'stopping';

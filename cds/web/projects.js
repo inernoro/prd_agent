@@ -52,6 +52,198 @@ function _projectsToggleTheme(btn) {
   }
 }());
 
+// ── CDS-wide settings (moved here from branch-list app.js) ─────────
+// Theme toggle — the existing _projectsToggleTheme already works. This just
+// wires the new #themeToggleBtn in the header to it.
+window.toggleTheme = function (event) {
+  var btn = document.getElementById('themeToggleBtn') || document.getElementById('projectsThemeBtn');
+  _projectsToggleTheme(btn);
+};
+
+// Lightweight toast helper mirroring the one inside the IIFE. Used only by
+// the global-settings handlers since showToast inside the IIFE isn't in
+// scope here.
+function _plSettingsToast(message) {
+  var el = document.getElementById('toast');
+  if (!el) return;
+  el.textContent = message;
+  el.classList.remove('hidden');
+  clearTimeout(_plSettingsToast._t);
+  _plSettingsToast._t = setTimeout(function () { el.classList.add('hidden'); }, 3200);
+}
+
+var _plSettingsOpen = false;
+function toggleProjectListSettingsMenu(event) {
+  event.stopPropagation();
+  if (_plSettingsOpen) { closeProjectListSettingsMenu(); return; }
+  _plSettingsOpen = true;
+  var menu = document.createElement('div');
+  menu.className = 'settings-menu';
+  menu.id = 'pl-settings-menu';
+  menu.style.position = 'fixed';
+  menu.style.background = 'var(--bg-card)';
+  menu.style.border = '1px solid var(--card-border)';
+  menu.style.borderRadius = '10px';
+  menu.style.boxShadow = '0 14px 40px rgba(0,0,0,0.45)';
+  menu.style.padding = '6px';
+  menu.style.zIndex = '9999';
+  menu.onclick = function (e) { e.stopPropagation(); };
+  menu.innerHTML = [
+    '<div class="settings-menu-item" style="display:flex;align-items:center;gap:8px;padding:8px 10px;font-size:12px;color:var(--text-primary);border-radius:6px;cursor:pointer" onclick="closeProjectListSettingsMenu(); cdsOpenSelfUpdate()">🔄 自动更新</div>',
+    '<div class="settings-menu-item" style="display:flex;align-items:center;gap:8px;padding:8px 10px;font-size:12px;color:var(--text-primary);border-radius:6px;cursor:pointer" onclick="closeProjectListSettingsMenu(); cdsOpenClusterModal()">🧩 集群</div>',
+    '<div class="settings-menu-item settings-menu-switch" style="display:flex;align-items:center;gap:8px;padding:8px 10px;font-size:12px;color:var(--text-primary);border-radius:6px;cursor:pointer" onclick="cdsCyclePreviewMode()">预览模式<span id="pl-preview-mode-label" style="margin-left:auto;font-size:11px;color:#58a6ff"></span></div>',
+    '<div class="settings-menu-item settings-menu-switch" style="display:flex;align-items:center;gap:8px;padding:8px 10px;font-size:12px;color:var(--text-primary);border-radius:6px;cursor:pointer" onclick="cdsToggleMirror()">镜像加速<span id="pl-mirror-label" style="margin-left:auto;font-size:11px"></span></div>',
+    '<div class="settings-menu-item settings-menu-switch" style="display:flex;align-items:center;gap:8px;padding:8px 10px;font-size:12px;color:var(--text-primary);border-radius:6px;cursor:pointer" onclick="cdsToggleTabTitle()">标签页标题<span id="pl-tabtitle-label" style="margin-left:auto;font-size:11px"></span></div>',
+    '<div class="settings-menu-divider" style="height:1px;background:var(--card-border);margin:4px 0"></div>',
+    '<div class="settings-menu-item danger" style="display:flex;align-items:center;gap:8px;padding:8px 10px;font-size:12px;color:#f43f5e;border-radius:6px;cursor:pointer" onclick="closeProjectListSettingsMenu(); cdsFactoryReset()">⚠ 恢复出厂设置</div>',
+    '<div class="settings-menu-item" style="display:flex;align-items:center;gap:8px;padding:8px 10px;font-size:12px;color:var(--text-primary);border-radius:6px;cursor:pointer" onclick="closeProjectListSettingsMenu(); cdsDoLogout()">退出登录</div>',
+  ].join('');
+  document.body.appendChild(menu);
+  var rect = event.currentTarget.getBoundingClientRect();
+  menu.style.top = (rect.bottom + 6) + 'px';
+  menu.style.right = (window.innerWidth - rect.right) + 'px';
+  menu.style.minWidth = '200px';
+  setTimeout(function () {
+    document.addEventListener('click', closeProjectListSettingsMenu, { once: true });
+  }, 0);
+  _refreshPlSettingsLabels();
+}
+function closeProjectListSettingsMenu() {
+  _plSettingsOpen = false;
+  var el = document.getElementById('pl-settings-menu');
+  if (el) el.remove();
+}
+window.toggleProjectListSettingsMenu = toggleProjectListSettingsMenu;
+window.closeProjectListSettingsMenu = closeProjectListSettingsMenu;
+
+function _refreshPlSettingsLabels() {
+  // Preview mode lives under /api/preview-mode; mirror under /api/mirror;
+  // tab-title under /api/tab-title. Keep it cheap: 3 independent GETs so
+  // a failure on one doesn't starve the others.
+  fetch('/api/preview-mode', { credentials: 'same-origin' })
+    .then(function (r) { return r.ok ? r.json() : null; })
+    .then(function (d) {
+      if (!d) return;
+      var pm = d.mode || 'simple';
+      var el = document.getElementById('pl-preview-mode-label');
+      if (el) el.textContent = ({ simple: '简洁', port: '端口直连', multi: '子域名' })[pm] || pm;
+    })
+    .catch(function () {});
+  fetch('/api/mirror', { credentials: 'same-origin' })
+    .then(function (r) { return r.ok ? r.json() : null; })
+    .then(function (d) {
+      if (!d) return;
+      var el = document.getElementById('pl-mirror-label');
+      if (el) { el.textContent = d.enabled ? '✓ 开启' : '关闭'; el.style.color = d.enabled ? '#10b981' : '#71717a'; }
+    })
+    .catch(function () {});
+  fetch('/api/tab-title', { credentials: 'same-origin' })
+    .then(function (r) { return r.ok ? r.json() : null; })
+    .then(function (d) {
+      if (!d) return;
+      var el = document.getElementById('pl-tabtitle-label');
+      if (el) { el.textContent = d.enabled ? '✓ 开启' : '关闭'; el.style.color = d.enabled ? '#10b981' : '#71717a'; }
+    })
+    .catch(function () {});
+}
+
+// ── Action implementations (copied from app.js fetch calls) ──
+async function cdsCyclePreviewMode() {
+  try {
+    var cur = await fetch('/api/preview-mode', { credentials: 'same-origin' }).then(function (r) { return r.json(); });
+    var modes = ['simple', 'port', 'multi'];
+    var idx = modes.indexOf(cur.mode || 'simple');
+    var next = modes[(idx + 1) % modes.length];
+    var res = await fetch('/api/preview-mode', {
+      method: 'PUT', credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ mode: next }),
+    });
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    var labels = { simple: '简洁', port: '端口直连', multi: '子域名' };
+    _plSettingsToast('预览模式：' + labels[next]);
+    _refreshPlSettingsLabels();
+  } catch (e) { _plSettingsToast('切换失败: ' + e.message); }
+}
+
+async function cdsToggleMirror() {
+  try {
+    var cur = await fetch('/api/mirror', { credentials: 'same-origin' }).then(function (r) { return r.json(); });
+    var res = await fetch('/api/mirror', {
+      method: 'PUT', credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ enabled: !cur.enabled }),
+    });
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    _plSettingsToast(!cur.enabled ? '镜像加速已开启' : '镜像加速已关闭');
+    _refreshPlSettingsLabels();
+  } catch (e) { _plSettingsToast('切换失败: ' + e.message); }
+}
+
+async function cdsToggleTabTitle() {
+  try {
+    var cur = await fetch('/api/tab-title', { credentials: 'same-origin' }).then(function (r) { return r.json(); });
+    var res = await fetch('/api/tab-title', {
+      method: 'PUT', credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ enabled: !cur.enabled }),
+    });
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    _plSettingsToast(!cur.enabled ? '标签页标题已开启' : '标签页标题已关闭');
+    _refreshPlSettingsLabels();
+  } catch (e) { _plSettingsToast('切换失败: ' + e.message); }
+}
+
+async function cdsOpenSelfUpdate() {
+  // Redirect to branch-list with a hash that app.js can detect, OR just
+  // confirm-and-fire. v1: confirm + run /api/self-update on current branch.
+  try {
+    var info = await fetch('/api/self-branches', { credentials: 'same-origin' }).then(function (r) { return r.json(); });
+    var cur = info.current || '';
+    if (!confirm('CDS 系统更新\n\n当前分支: ' + cur + '\n\n将执行 git fetch → git pull → restart。继续？')) return;
+    _plSettingsToast('正在更新，请稍候…');
+    var res = await fetch('/api/self-update', {
+      method: 'POST', credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ branch: cur }),
+    });
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    // server streams NDJSON; don't block the UI on it
+    _plSettingsToast('更新已启动，稍后 CDS 会自动重启');
+  } catch (e) { _plSettingsToast('更新失败: ' + e.message); }
+}
+
+function cdsOpenClusterModal() {
+  // v1 placeholder: direct users to the full cluster UI on branch-list.
+  alert('集群管理在分支页的齿轮菜单里：访问控制台（/branch-list）查看与配置集群。');
+}
+
+async function cdsFactoryReset() {
+  if (!confirm('[警告] 恢复出厂设置\n\n将清除所有：分支、构建配置、环境变量、基础设施服务、路由规则。\nDocker 数据卷（数据库文件等）会保留。\n\n确定继续？')) return;
+  if (!confirm('二次确认：所有配置将被清空，此操作不可撤销。')) return;
+  try {
+    var res = await fetch('/api/factory-reset', { method: 'POST', credentials: 'same-origin' });
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    // drain the NDJSON stream
+    var reader = res.body && res.body.getReader ? res.body.getReader() : null;
+    if (reader) { while (!(await reader.read()).done) {} }
+    _plSettingsToast('已恢复出厂设置');
+  } catch (e) { _plSettingsToast('重置失败: ' + e.message); }
+}
+
+async function cdsDoLogout() {
+  try { await fetch('/api/logout', { method: 'POST', credentials: 'same-origin' }); } catch (e) { /* ignore */ }
+  location.href = '/login.html';
+}
+
+window.cdsCyclePreviewMode = cdsCyclePreviewMode;
+window.cdsToggleMirror = cdsToggleMirror;
+window.cdsToggleTabTitle = cdsToggleTabTitle;
+window.cdsOpenSelfUpdate = cdsOpenSelfUpdate;
+window.cdsOpenClusterModal = cdsOpenClusterModal;
+window.cdsFactoryReset = cdsFactoryReset;
+window.cdsDoLogout = cdsDoLogout;
+
 (function () {
   'use strict';
 
