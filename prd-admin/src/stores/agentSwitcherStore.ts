@@ -1,9 +1,10 @@
 /**
  * Agent Switcher Store
  *
- * 管理 Agent 快捷切换浮层的状态和最近访问记录
+ * 管理 Agent 快捷切换浮层（命令面板）的状态：
  * - 全局快捷键 Cmd/Ctrl + K 触发
- * - 最近访问记录本地持久化
+ * - 最近访问 / 使用次数 / 置顶 全部本地持久化（sessionStorage）
+ * - 支持 Agent / 工具 / 实用工具 统一收录
  */
 
 import { create } from 'zustand';
@@ -27,10 +28,19 @@ export interface AgentDefinition {
 
 /** 最近访问记录 */
 export interface RecentVisit {
+  /** Launcher 条目的稳定 id（Agent key / toolbox id / utility id） */
+  id: string;
+  /** 兼容旧字段：Agent key，非 Agent 条目为空字符串 */
   agentKey: string;
+  /** 条目名 */
   agentName: string;
+  /** 副标题，历史上记录页面名，现在默认为条目类型 */
   title: string;
+  /** 跳转路径 */
   path: string;
+  /** Lucide 图标名（可选，Agent 条目为空时走 appKey 图标） */
+  icon?: string;
+  /** 访问时间戳 */
   timestamp: number;
 }
 
@@ -112,36 +122,47 @@ export const AGENT_DEFINITIONS: AgentDefinition[] = [
 interface AgentSwitcherState {
   // 浮层状态
   isOpen: boolean;
-  selectedIndex: number;
+  /** 当前选中项的 id（命令面板语义，替代原 selectedIndex） */
+  selectedId: string | null;
   searchQuery: string;
 
-  // 最近访问
+  // 最近访问 / 使用统计 / 置顶（均持久化）
   recentVisits: RecentVisit[];
+  usageCounts: Record<string, number>;
+  pinnedIds: string[];
 
   // Actions
   open: () => void;
   close: () => void;
   toggle: () => void;
-  setSelectedIndex: (index: number) => void;
+  setSelectedId: (id: string | null) => void;
   setSearchQuery: (query: string) => void;
-  moveSelection: (direction: 'up' | 'down' | 'left' | 'right') => void;
-  addRecentVisit: (visit: Omit<RecentVisit, 'timestamp'>) => void;
+
+  addRecentVisit: (visit: Omit<RecentVisit, 'timestamp'> & Partial<Pick<RecentVisit, 'id'>>) => void;
   clearRecentVisits: () => void;
+
+  togglePin: (id: string) => void;
+  isPinned: (id: string) => boolean;
+  clearPins: () => void;
+
+  resetUsage: () => void;
 }
 
-const MAX_RECENT_VISITS = 10;
+const MAX_RECENT_VISITS = 20;
 
 export const useAgentSwitcherStore = create<AgentSwitcherState>()(
   persist(
     (set, get) => ({
       // Initial state
       isOpen: false,
-      selectedIndex: 0,
+      selectedId: null,
       searchQuery: '',
       recentVisits: [],
+      usageCounts: {},
+      pinnedIds: [],
 
       // Actions
-      open: () => set({ isOpen: true, selectedIndex: 0, searchQuery: '' }),
+      open: () => set({ isOpen: true, selectedId: null, searchQuery: '' }),
 
       close: () => set({ isOpen: false, searchQuery: '' }),
 
@@ -150,66 +171,80 @@ export const useAgentSwitcherStore = create<AgentSwitcherState>()(
         if (isOpen) {
           set({ isOpen: false, searchQuery: '' });
         } else {
-          set({ isOpen: true, selectedIndex: 0, searchQuery: '' });
+          set({ isOpen: true, selectedId: null, searchQuery: '' });
         }
       },
 
-      setSelectedIndex: (index) => set({ selectedIndex: index }),
+      setSelectedId: (id) => set({ selectedId: id }),
 
       setSearchQuery: (query) => set({ searchQuery: query }),
 
-      moveSelection: (direction) => {
-        const { selectedIndex } = get();
-        const totalItems = AGENT_DEFINITIONS.length;
-        const cols = 4; // 网格列数
-
-        let newIndex = selectedIndex;
-
-        switch (direction) {
-          case 'up':
-            newIndex = selectedIndex - cols;
-            if (newIndex < 0) newIndex = selectedIndex;
-            break;
-          case 'down':
-            newIndex = selectedIndex + cols;
-            if (newIndex >= totalItems) newIndex = selectedIndex;
-            break;
-          case 'left':
-            newIndex = selectedIndex - 1;
-            if (newIndex < 0) newIndex = totalItems - 1;
-            break;
-          case 'right':
-            newIndex = selectedIndex + 1;
-            if (newIndex >= totalItems) newIndex = 0;
-            break;
-        }
-
-        set({ selectedIndex: newIndex });
-      },
-
       addRecentVisit: (visit) => {
-        const { recentVisits } = get();
+        const id = visit.id ?? visit.agentKey ?? visit.path;
+        const { recentVisits, usageCounts } = get();
         const newVisit: RecentVisit = {
-          ...visit,
+          id,
+          agentKey: visit.agentKey,
+          agentName: visit.agentName,
+          title: visit.title,
+          path: visit.path,
+          icon: visit.icon,
           timestamp: Date.now(),
         };
 
-        // 移除相同路径的旧记录
-        const filtered = recentVisits.filter((v) => v.path !== visit.path);
-
-        // 添加到开头，限制最大数量
+        // 移除相同 id 的旧记录
+        const filtered = recentVisits.filter((v) => v.id !== id);
         const updated = [newVisit, ...filtered].slice(0, MAX_RECENT_VISITS);
 
-        set({ recentVisits: updated });
+        set({
+          recentVisits: updated,
+          usageCounts: { ...usageCounts, [id]: (usageCounts[id] ?? 0) + 1 },
+        });
       },
 
       clearRecentVisits: () => set({ recentVisits: [] }),
+
+      togglePin: (id: string) => {
+        const { pinnedIds } = get();
+        if (pinnedIds.includes(id)) {
+          set({ pinnedIds: pinnedIds.filter((p) => p !== id) });
+        } else {
+          set({ pinnedIds: [id, ...pinnedIds].slice(0, 20) });
+        }
+      },
+
+      isPinned: (id: string) => get().pinnedIds.includes(id),
+
+      clearPins: () => set({ pinnedIds: [] }),
+
+      resetUsage: () => set({ usageCounts: {} }),
     }),
     {
       name: 'prd-admin-agent-switcher',
+      version: 2,
       storage: createJSONStorage(() => sessionStorage),
-      // 只持久化最近访问记录
-      partialize: (state) => ({ recentVisits: state.recentVisits }),
+      partialize: (state) => ({
+        recentVisits: state.recentVisits,
+        usageCounts: state.usageCounts,
+        pinnedIds: state.pinnedIds,
+      }),
+      // v1 → v2 迁移：补齐 id 字段，兼容老数据结构
+      migrate: (persisted: unknown, version: number) => {
+        const state = (persisted ?? {}) as Partial<AgentSwitcherState>;
+        if (version < 2) {
+          const visits = (state.recentVisits ?? []).map((v: RecentVisit) => ({
+            ...v,
+            id: v.id ?? v.agentKey ?? v.path,
+          }));
+          return {
+            ...state,
+            recentVisits: visits,
+            usageCounts: state.usageCounts ?? {},
+            pinnedIds: state.pinnedIds ?? [],
+          } as AgentSwitcherState;
+        }
+        return state as AgentSwitcherState;
+      },
     }
   )
 );

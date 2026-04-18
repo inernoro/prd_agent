@@ -1,816 +1,570 @@
 /**
- * Agent Switcher 浮层组件 v12.0
+ * Agent Switcher 浮层（命令面板）v13.0
  *
- * 改进：
- * - 真正的边缘发光（不是背光）
- * - 传送门穿越过渡效果（灵感来自可灵 AI 传送门）
- *   - Canvas 绘制的椭圆发光环从卡片中心展开
- *   - 环内显示 Agent 主题色渐变 + 光线效果
- *   - 白色核心光环 + 主题色外发光
- *   - 最终白光闪烁完成过渡
+ * 触发：全局快捷键 Cmd/Ctrl + K
+ * 内容：Agent / 百宝箱 / 实用工具 的统一命令面板，支持：
+ *   - 搜索（按名称 / 标签 / 描述）
+ *   - 键盘导航（↑↓ 行内、←→ 横向、Enter 进入、Esc 关闭）
+ *   - 置顶（Pin）、最近使用、使用次数自动排序
+ *   - 分组展示：置顶 → 最近 → Agent → 百宝箱 → 实用工具
+ *
+ * 存储：复用 agentSwitcherStore 的 pinnedIds / usageCounts / recentVisits（sessionStorage 持久化）
  */
 
-import { useCallback, useEffect, useLayoutEffect, useState, useRef } from 'react';
+import { useCallback, useEffect, useMemo, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { createPortal } from 'react-dom';
-import {
-  useAgentSwitcherStore,
-  AGENT_DEFINITIONS,
-  type AgentDefinition,
-} from '@/stores/agentSwitcherStore';
+import * as LucideIcons from 'lucide-react';
+import { Search, Pin, PinOff, Clock, Star, Hammer, Sparkles, X } from 'lucide-react';
+import { useAgentSwitcherStore } from '@/stores/agentSwitcherStore';
 import { useAuthStore } from '@/stores/authStore';
+import {
+  getLauncherCatalog,
+  findLauncherItem,
+  type LauncherItem,
+  type LauncherGroup,
+} from '@/lib/launcherCatalog';
 
-/** 图标相对路径映射（CDN 前缀从 authStore.cdnBaseUrl 获取） */
-const ICON_PATHS: Record<string, string> = {
-  'prd-agent': 'icon/backups/agent/prd-agent.png',
-  'visual-agent': 'icon/backups/agent/visual-agent.png',
-  'literary-agent': 'icon/backups/agent/literary-agent.png',
-  'defect-agent': 'icon/backups/agent/defect-agent.png',
-  'video-agent': 'icon/backups/agent/video-agent.png',
-  'report-agent': 'icon/backups/agent/report-agent.png',
-  'arena': 'icon/backups/agent/arena.png',
-  'shortcuts-agent': 'icon/backups/agent/shortcuts-agent.png',
-  'workflow-agent': 'icon/backups/agent/workflow-agent.png',
-};
-
-function getAgentIconUrl(appKey: string): string {
-  const path = ICON_PATHS[appKey];
-  if (!path) return '';
-  const base = (useAuthStore.getState().cdnBaseUrl ?? '').replace(/\/+$/, '');
-  return base ? `${base}/${path}` : `/${path}`;
+interface Section {
+  key: 'pinned' | 'recent' | 'agent' | 'toolbox' | 'utility';
+  title: string;
+  subtitle?: string;
+  icon: React.ReactNode;
+  items: LauncherItem[];
 }
 
-/** Agent 功能描述 */
-const AGENT_DESCRIPTIONS: Record<string, string> = {
-  'prd-agent': '智能解读PRD文档，快速提取需求要点',
-  'visual-agent': 'AI驱动的视觉创作，一键生成精美图像',
-  'literary-agent': '文学创作助手，为文章配图赋予灵魂',
-  'defect-agent': '缺陷管理专家，高效追踪问题闭环',
-  'video-agent': '文章转视频教程，AI驱动分镜创作',
-};
+function getIcon(name: string, size = 18) {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const Icon = (LucideIcons as any)[name] ?? LucideIcons.Circle;
+  return <Icon size={size} />;
+}
 
-/** 入场方向配置 */
-const ENTRY_DIRECTIONS = [
-  { x: -80, y: -40, rotate: -5 },
-  { x: -40, y: -40, rotate: -3 },
-  { x: 0, y: -40, rotate: 0 },
-  { x: 40, y: -40, rotate: 3 },
-  { x: 80, y: -40, rotate: 5 },
-];
-
-/** Agent 卡片组件 */
-function AgentCard({
-  agent,
-  index,
+/** 单张卡片 */
+function LauncherCard({
+  item,
   isSelected,
-  isTransitioning,
+  isPinned,
   onClick,
   onMouseEnter,
-  isClosing,
-  cardRef,
-  convergeOffset,
+  onTogglePin,
+  badge,
 }: {
-  agent: AgentDefinition;
-  index: number;
+  item: LauncherItem;
   isSelected: boolean;
-  isTransitioning: boolean;
+  isPinned: boolean;
   onClick: () => void;
   onMouseEnter: () => void;
-  isClosing: boolean;
-  cardRef?: React.Ref<HTMLButtonElement>;
-  convergeOffset?: { x: number; y: number };
+  onTogglePin: (e: React.MouseEvent) => void;
+  badge?: string;
 }) {
-  const iconUrl = getAgentIconUrl(agent.key);
-  const [iconFailed, setIconFailed] = useState(false);
-  const description = AGENT_DESCRIPTIONS[agent.key];
-  const direction = ENTRY_DIRECTIONS[index];
-
+  const accent = item.accentColor ?? '#818CF8';
   return (
     <button
-      ref={cardRef}
       type="button"
       onClick={onClick}
       onMouseEnter={onMouseEnter}
-      className="group relative outline-none focus:outline-none"
+      className="group relative text-left outline-none focus:outline-none"
       style={{
-        animation: isClosing && !isTransitioning
-          ? `cardExit 0.25s cubic-bezier(0.55, 0, 1, 0.45) ${index * 30}ms both`
-          : isTransitioning
-          ? 'none'
-          : `cardEnter 0.45s cubic-bezier(0.22, 1, 0.36, 1) ${80 + index * 60}ms both`,
-        ['--entry-x' as string]: `${direction.x}px`,
-        ['--entry-y' as string]: `${direction.y}px`,
-        ['--entry-rotate' as string]: `${direction.rotate}deg`,
-        // 穿越动画时: 4张卡片向选中卡片中心汇聚
-        transform: isTransitioning && convergeOffset
-          ? `translate(${convergeOffset.x}px, ${convergeOffset.y}px) scale(0.15)`
-          : undefined,
-        opacity: isTransitioning ? 0 : undefined,
-        transition: isTransitioning
-          ? 'transform 0.28s cubic-bezier(0.4, 0, 1, 1), opacity 0.22s ease-out 0.06s'
-          : undefined,
+        width: '100%',
       }}
     >
-      {/* 主卡片 — 图片铺满 + 底部文字叠加 */}
       <div
-        className="relative w-[200px] h-[260px] rounded-[28px] overflow-hidden transition-all duration-400 ease-out cursor-pointer"
+        className="relative h-[92px] p-3 rounded-[14px] flex items-start gap-3 transition-all duration-200 cursor-pointer overflow-hidden"
         style={{
-          // 真正的边缘发光：多层 box-shadow
+          background: isSelected
+            ? `linear-gradient(135deg, ${accent}22 0%, rgba(255,255,255,0.03) 100%)`
+            : 'rgba(255, 255, 255, 0.025)',
+          border: `1px solid ${isSelected ? `${accent}55` : 'rgba(255,255,255,0.06)'}`,
           boxShadow: isSelected
-            ? `
-              inset 0 0 0 1.5px ${agent.color.text}60,
-              0 0 0 1px ${agent.color.text}30,
-              0 0 15px 0 ${agent.color.text}40,
-              0 0 30px -5px ${agent.color.text}30,
-              0 25px 50px -12px rgba(0, 0, 0, 0.7)
-            `
-            : '0 20px 40px -12px rgba(0, 0, 0, 0.5)',
-          transform: isSelected
-            ? 'translateY(-8px) scale(1.02)'
-            : 'translateY(0) scale(1)',
+            ? `0 0 0 1px ${accent}40 inset, 0 8px 24px -8px ${accent}55`
+            : '0 2px 8px rgba(0,0,0,0.25)',
+          transform: isSelected ? 'translateY(-1px)' : 'translateY(0)',
         }}
       >
-        {/* 图片铺满整个卡片，加载失败时降级为渐变背景 */}
-        {iconUrl && !iconFailed ? (
-          <img
-            src={iconUrl}
-            alt={agent.name}
-            className="absolute inset-0 w-full h-full object-cover transition-transform duration-500 ease-out"
-            style={{
-              transform: isSelected ? 'scale(1.06)' : 'scale(1)',
-            }}
-            draggable={false}
-            onError={() => setIconFailed(true)}
-          />
-        ) : (
-          <div
-            className="absolute inset-0 transition-transform duration-500 ease-out"
-            style={{
-              transform: isSelected ? 'scale(1.06)' : 'scale(1)',
-              background: `
-                radial-gradient(ellipse at 30% 20%, ${agent.color.text}35 0%, transparent 60%),
-                radial-gradient(ellipse at 70% 80%, ${agent.color.text}20 0%, transparent 50%),
-                linear-gradient(145deg, rgba(20, 22, 35, 0.98) 0%, rgba(12, 14, 22, 0.99) 100%)
-              `,
-            }}
-          >
-            <div className="absolute inset-0 flex items-center justify-center" style={{ paddingBottom: '30%' }}>
-              <div
-                className="absolute rounded-full blur-3xl"
-                style={{
-                  width: 80,
-                  height: 80,
-                  background: `radial-gradient(circle, ${agent.color.text}50 0%, ${agent.color.text}15 60%, transparent 100%)`,
-                }}
-              />
-              <div
-                className="relative text-[42px] font-bold"
-                style={{
-                  color: agent.color.text,
-                  opacity: 0.85,
-                  textShadow: `0 0 30px ${agent.color.text}60`,
-                }}
-              >
-                {agent.name[0]}
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* 底部渐变遮罩 — 保证文字可读 */}
+        {/* 图标 */}
         <div
-          className="absolute inset-0 pointer-events-none"
+          className="shrink-0 w-10 h-10 rounded-[10px] flex items-center justify-center"
           style={{
-            background: isSelected
-              ? `linear-gradient(0deg, rgba(0,0,0,0.85) 0%, rgba(0,0,0,0.4) 45%, transparent 70%), linear-gradient(0deg, ${agent.color.text}18 0%, transparent 40%)`
-              : 'linear-gradient(0deg, rgba(0,0,0,0.8) 0%, rgba(0,0,0,0.3) 45%, transparent 70%)',
-          }}
-        />
-
-        {/* 边缘光晕层 - 内边框发光 */}
-        <div
-          className="absolute inset-0 rounded-[28px] pointer-events-none transition-opacity duration-300"
-          style={{
-            opacity: isSelected ? 1 : 0,
-            background: `
-              linear-gradient(135deg, ${agent.color.text}15 0%, transparent 50%),
-              linear-gradient(315deg, ${agent.color.text}10 0%, transparent 50%)
-            `,
-          }}
-        />
-
-        {/* 顶部高光边缘 */}
-        <div
-          className="absolute top-0 left-4 right-4 h-[1px] pointer-events-none transition-opacity duration-300"
-          style={{
-            opacity: isSelected ? 1 : 0.3,
-            background: isSelected
-              ? `linear-gradient(90deg, transparent, ${agent.color.text}80, transparent)`
-              : 'linear-gradient(90deg, transparent, rgba(255,255,255,0.2), transparent)',
-          }}
-        />
-
-        {/* 文字区域 — 定位在底部 */}
-        <div className="absolute bottom-0 left-0 right-0 px-5 pb-5">
-          <h3
-            className="text-[18px] font-semibold text-center mb-1.5 transition-all duration-300"
-            style={{
-              color: isSelected ? '#fff' : 'rgba(255,255,255,0.92)',
-              textShadow: '0 1px 4px rgba(0,0,0,0.5)',
-            }}
-          >
-            {agent.name}
-          </h3>
-          <p
-            className="text-[12px] text-center leading-relaxed transition-all duration-300"
-            style={{
-              color: isSelected ? 'rgba(255,255,255,0.8)' : 'rgba(255,255,255,0.55)',
-              textShadow: '0 1px 3px rgba(0,0,0,0.5)',
-            }}
-          >
-            {description}
-          </p>
-        </div>
-
-        {/* 快捷键 */}
-        <div
-          className="absolute top-4 right-4 w-8 h-8 rounded-xl flex items-center justify-center text-[13px] font-bold transition-all duration-300 backdrop-blur-sm"
-          style={{
-            background: isSelected ? `${agent.color.text}45` : 'rgba(0, 0, 0, 0.35)',
-            color: isSelected ? '#fff' : 'rgba(255,255,255,0.7)',
-            boxShadow: isSelected ? `0 0 12px ${agent.color.text}30` : 'none',
+            background: isSelected ? `${accent}20` : 'rgba(255,255,255,0.04)',
+            color: isSelected ? accent : 'rgba(255,255,255,0.72)',
+            border: `1px solid ${isSelected ? `${accent}40` : 'rgba(255,255,255,0.06)'}`,
           }}
         >
-          {index + 1}
+          {getIcon(item.icon, 18)}
         </div>
+
+        {/* 文字 */}
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2">
+            <span
+              className="text-[13px] font-semibold truncate"
+              style={{ color: isSelected ? '#fff' : 'rgba(255,255,255,0.92)' }}
+            >
+              {item.name}
+            </span>
+            {item.wip && (
+              <span
+                className="shrink-0 text-[9px] font-bold px-1.5 py-0.5 rounded"
+                style={{ background: 'rgba(251, 146, 60, 0.2)', color: '#fb923c' }}
+              >
+                施工中
+              </span>
+            )}
+            {badge && (
+              <span
+                className="shrink-0 text-[9px] font-bold px-1.5 py-0.5 rounded"
+                style={{ background: 'rgba(99,102,241,0.2)', color: '#a5b4fc' }}
+              >
+                {badge}
+              </span>
+            )}
+          </div>
+          <div
+            className="mt-1 text-[11px] leading-relaxed line-clamp-2"
+            style={{ color: isSelected ? 'rgba(255,255,255,0.72)' : 'rgba(255,255,255,0.48)' }}
+          >
+            {item.description}
+          </div>
+        </div>
+
+        {/* 置顶按钮（hover 或已置顶时显示） */}
+        <button
+          type="button"
+          onClick={onTogglePin}
+          className="absolute top-2 right-2 w-6 h-6 rounded-md flex items-center justify-center transition-opacity"
+          style={{
+            opacity: isPinned || isSelected ? 1 : 0,
+            background: isPinned ? `${accent}30` : 'rgba(255,255,255,0.05)',
+            color: isPinned ? accent : 'rgba(255,255,255,0.55)',
+            border: `1px solid ${isPinned ? `${accent}60` : 'rgba(255,255,255,0.08)'}`,
+          }}
+          title={isPinned ? '取消置顶' : '置顶到前台'}
+          aria-label={isPinned ? '取消置顶' : '置顶'}
+        >
+          {isPinned ? <Pin size={11} /> : <PinOff size={11} />}
+        </button>
       </div>
     </button>
   );
 }
 
-/**
- * 传送门穿越过渡层 — 山洞/缝隙穿越效果
- *
- * 核心原理：
- * - canvas 作为透明遮罩层，用 evenodd 镂空一个不规则洞口
- * - 洞口区域完全透明，露出下方已导航的目标页面
- * - 洞口从极小的裂缝缓缓扩张至全屏
- * - 洞口边缘有主题色发光，营造传送门感
- * - onNavigate 在动画早期触发，页面在洞口扩张前已加载
- * - onComplete 在动画结束时触发，关闭 modal
- */
-function PortalTransition({
-  agent,
-  startRect,
-  onNavigate,
-  onComplete,
-}: {
-  agent: AgentDefinition;
-  startRect: DOMRect;
-  onNavigate: () => void;
-  onComplete: () => void;
-}) {
-  const canvasRef = useRef<HTMLCanvasElement>(null);
-  const cbRef = useRef({ onNavigate, onComplete });
-  cbRef.current = { onNavigate, onComplete };
-  const navigatedRef = useRef(false);
-
-  const cx = startRect.left + startRect.width / 2;
-  const cy = startRect.top + startRect.height / 2;
-
-  useLayoutEffect(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-
-    const dpr = window.devicePixelRatio || 1;
-    const vw = window.innerWidth;
-    const vh = window.innerHeight;
-    canvas.width = vw * dpr;
-    canvas.height = vh * dpr;
-    const ctx = canvas.getContext('2d')!;
-    ctx.scale(dpr, dpr);
-
-    // 洞口需要扩到足以覆盖全屏
-    const maxR = Math.hypot(
-      Math.max(cx, vw - cx),
-      Math.max(cy, vh - cy)
-    ) * 1.5;
-
-    const color = agent.color.text;
-    const cr = parseInt(color.slice(1, 3), 16);
-    const cg = parseInt(color.slice(3, 5), 16);
-    const cb = parseInt(color.slice(5, 7), 16);
-
-    // 不规则洞口噪声 — 模拟山洞/缝隙的粗糙边缘
-    const N = 64;
-    let noiseArr = Array.from({ length: N }, () => (Math.random() - 0.5) * 0.4);
-    // 平滑3次，让边缘看起来自然
-    for (let s = 0; s < 3; s++) {
-      noiseArr = noiseArr.map((_, i) => {
-        const p = noiseArr[(i - 1 + N) % N];
-        const c = noiseArr[i];
-        const n = noiseArr[(i + 1) % N];
-        return p * 0.25 + c * 0.5 + n * 0.25;
-      });
-    }
-
-    const duration = 700;
-    const startTime = performance.now();
-    let frame: number;
-
-    // 首帧：全黑遮罩
-    ctx.fillStyle = '#080810';
-    ctx.fillRect(0, 0, vw, vh);
-
-    /** 在当前路径上追加不规则椭圆洞口 */
-    function traceHole(radius: number, nScale: number) {
-      const pts: [number, number][] = [];
-      for (let i = 0; i < N; i++) {
-        const angle = (i / N) * Math.PI * 2;
-        const r = radius * (1 + noiseArr[i] * nScale);
-        pts.push([
-          cx + r * Math.cos(angle) * 1.15,
-          cy + r * Math.sin(angle) * 0.85,
-        ]);
-      }
-      const last = pts[pts.length - 1];
-      ctx.moveTo((last[0] + pts[0][0]) / 2, (last[1] + pts[0][1]) / 2);
-      for (let i = 0; i < pts.length; i++) {
-        const next = pts[(i + 1) % pts.length];
-        ctx.quadraticCurveTo(
-          pts[i][0], pts[i][1],
-          (pts[i][0] + next[0]) / 2, (pts[i][1] + next[1]) / 2
-        );
-      }
-      ctx.closePath();
-    }
-
-    function draw(now: number) {
-      const elapsed = now - startTime;
-      const t = Math.min(elapsed / duration, 1);
-
-      // 缓缓打开：前期稍慢营造裂缝感，后期加速展开
-      const ease = t < 0.2
-        ? Math.pow(t / 0.2, 1.5) * 0.15
-        : 0.15 + 0.85 * (1 - Math.pow(1 - (t - 0.2) / 0.8, 2));
-
-      // 提前导航
-      if (t >= 0.12 && !navigatedRef.current) {
-        navigatedRef.current = true;
-        cbRef.current.onNavigate();
-      }
-
-      const radius = 30 + (maxR - 30) * ease;
-      // 洞口越大越规则（小 = 山洞粗糙感，大 = 平滑圆形收尾）
-      const nScale = Math.max(0, 1 - ease * 1.5);
-
-      // 清除为全透明
-      ctx.clearRect(0, 0, vw, vh);
-
-      // ═══ 暗色遮罩 + evenodd 镂空 ═══
-      const overlayAlpha = t > 0.88 ? Math.max(0, 1 - (t - 0.88) / 0.12) : 1;
-      ctx.beginPath();
-      ctx.rect(0, 0, vw, vh);
-      traceHole(radius, nScale);
-      ctx.fillStyle = `rgba(8, 8, 15, ${overlayAlpha})`;
-      ctx.fill('evenodd');
-
-      // ═══ 洞口边缘发光 ═══
-      const glowAlpha = t < 0.08 ? t / 0.08 : t > 0.7 ? Math.max(0, 1 - (t - 0.7) / 0.3) : 1;
-      if (glowAlpha > 0.01) {
-        // 主题色外发光
-        ctx.save();
-        ctx.beginPath();
-        traceHole(radius, nScale);
-        ctx.strokeStyle = `rgba(${cr},${cg},${cb},${glowAlpha * 0.7})`;
-        ctx.lineWidth = 4;
-        ctx.shadowColor = color;
-        ctx.shadowBlur = 40;
-        ctx.stroke();
-        ctx.restore();
-
-        // 白色内发光
-        ctx.save();
-        ctx.beginPath();
-        traceHole(radius, nScale);
-        ctx.strokeStyle = `rgba(255,255,255,${glowAlpha * 0.5})`;
-        ctx.lineWidth = 1.5;
-        ctx.shadowColor = `rgba(${cr},${cg},${cb},0.8)`;
-        ctx.shadowBlur = 15;
-        ctx.stroke();
-        ctx.restore();
-      }
-
-      if (t < 1) {
-        frame = requestAnimationFrame(draw);
-      } else {
-        ctx.clearRect(0, 0, vw, vh);
-        cbRef.current.onComplete();
-      }
-    }
-
-    frame = requestAnimationFrame(draw);
-    return () => cancelAnimationFrame(frame);
-  }, [cx, cy, agent]);
-
-  return (
-    <div className="fixed inset-0 z-[300] pointer-events-none">
-      <canvas
-        ref={canvasRef}
-        style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%' }}
-      />
-    </div>
-  );
-}
-
-/** 主浮层组件 */
 export function AgentSwitcher() {
   const navigate = useNavigate();
-  const [isClosing, setIsClosing] = useState(false);
-  const [transitionAgent, setTransitionAgent] = useState<AgentDefinition | null>(null);
-  const [transitionRect, setTransitionRect] = useState<DOMRect | null>(null);
-  const [convergeOffsets, setConvergeOffsets] = useState<Record<number, { x: number; y: number }>>({});
-  const cardRefs = useRef<(HTMLButtonElement | null)[]>([]);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  const permissions = useAuthStore((s) => s.permissions ?? []);
+  const isRoot = useAuthStore((s) => s.isRoot ?? false);
 
   const {
     isOpen,
-    selectedIndex,
+    selectedId,
+    searchQuery,
+    recentVisits,
+    usageCounts,
+    pinnedIds,
     close,
-    setSelectedIndex,
-    moveSelection,
+    setSelectedId,
+    setSearchQuery,
     addRecentVisit,
+    togglePin,
   } = useAgentSwitcherStore();
 
-  const navigateToAgent = useCallback(
-    (agent: AgentDefinition, index: number) => {
-      addRecentVisit({
-        agentKey: agent.key,
-        agentName: agent.name,
-        title: '首页',
-        path: agent.route,
-      });
-
-      // 获取点击卡片位置
-      const clickedEl = cardRefs.current[index];
-      if (!clickedEl) return;
-
-      const clickedRect = clickedEl.getBoundingClientRect();
-      const targetCx = clickedRect.left + clickedRect.width / 2;
-      const targetCy = clickedRect.top + clickedRect.height / 2;
-
-      // 计算所有卡片向选中卡片中心汇聚的偏移量
-      const offsets: Record<number, { x: number; y: number }> = {};
-      cardRefs.current.forEach((el, i) => {
-        if (el) {
-          const r = el.getBoundingClientRect();
-          const cardCx = r.left + r.width / 2;
-          const cardCy = r.top + r.height / 2;
-          offsets[i] = { x: targetCx - cardCx, y: targetCy - cardCy };
-        }
-      });
-
-      setConvergeOffsets(offsets);
-      setTransitionRect(clickedRect);
-      setTransitionAgent(agent);
-    },
-    [addRecentVisit]
+  // 目录（按权限过滤）
+  const catalog = useMemo(
+    () => getLauncherCatalog({ permissions, isRoot }),
+    [permissions, isRoot]
   );
 
-  // 动画早期触发：提前导航，页面开始加载
-  const handleNavigate = useCallback(() => {
-    if (transitionAgent) {
-      navigate(transitionAgent.route);
+  // 过滤 + 分组
+  const sections = useMemo<Section[]>(() => {
+    const query = searchQuery.trim().toLowerCase();
+    const match = (it: LauncherItem) => {
+      if (!query) return true;
+      const haystack = [it.name, it.description, ...(it.tags ?? [])].join(' ').toLowerCase();
+      return haystack.includes(query);
+    };
+
+    const filtered = catalog.filter(match);
+
+    // 置顶
+    const pinnedSet = new Set(pinnedIds);
+    const pinned = pinnedIds
+      .map((id) => findLauncherItem(filtered, id))
+      .filter((x): x is LauncherItem => !!x);
+
+    // 最近（去掉已置顶的）
+    const recentIds = recentVisits.map((v) => v.id).filter((id) => !pinnedSet.has(id));
+    const recent = recentIds
+      .map((id) => findLauncherItem(filtered, id))
+      .filter((x): x is LauncherItem => !!x)
+      .slice(0, 6);
+
+    // 按 group 拆分（去掉已置顶的）
+    const rest = filtered.filter((it) => !pinnedSet.has(it.id));
+    const byGroup = (g: LauncherGroup) => {
+      const arr = rest.filter((it) => it.group === g);
+      // 有搜索时：按"匹配名称优先 + 使用次数"简易排序
+      arr.sort((a, b) => {
+        if (query) {
+          const aName = a.name.toLowerCase().includes(query) ? 0 : 1;
+          const bName = b.name.toLowerCase().includes(query) ? 0 : 1;
+          if (aName !== bName) return aName - bName;
+        }
+        return (usageCounts[b.id] ?? 0) - (usageCounts[a.id] ?? 0);
+      });
+      return arr;
+    };
+
+    const agents = byGroup('agent');
+    const toolbox = byGroup('toolbox');
+    const utility = byGroup('utility');
+
+    const out: Section[] = [];
+    if (pinned.length)
+      out.push({
+        key: 'pinned',
+        title: '置顶',
+        subtitle: '你固定在前台的入口',
+        icon: <Pin size={12} />,
+        items: pinned,
+      });
+    if (!query && recent.length)
+      out.push({
+        key: 'recent',
+        title: '最近使用',
+        subtitle: '近期从这里打开的工具',
+        icon: <Clock size={12} />,
+        items: recent,
+      });
+    if (agents.length)
+      out.push({
+        key: 'agent',
+        title: 'Agent',
+        subtitle: '专属场景助手',
+        icon: <Star size={12} />,
+        items: agents,
+      });
+    if (toolbox.length)
+      out.push({
+        key: 'toolbox',
+        title: '百宝箱',
+        subtitle: '内置工具与定制 Agent',
+        icon: <Hammer size={12} />,
+        items: toolbox,
+      });
+    if (utility.length)
+      out.push({
+        key: 'utility',
+        title: '实用工具',
+        subtitle: '日常高频入口',
+        icon: <Sparkles size={12} />,
+        items: utility,
+      });
+
+    return out;
+  }, [catalog, pinnedIds, recentVisits, usageCounts, searchQuery]);
+
+  // 扁平化列表用于键盘导航
+  const flatList = useMemo(() => sections.flatMap((s) => s.items), [sections]);
+
+  // 打开时自动选中第一项
+  useEffect(() => {
+    if (!isOpen) return;
+    if (flatList.length === 0) {
+      if (selectedId !== null) setSelectedId(null);
+      return;
     }
-  }, [transitionAgent, navigate]);
+    if (!selectedId || !flatList.some((it) => it.id === selectedId)) {
+      setSelectedId(flatList[0].id);
+    }
+  }, [isOpen, flatList, selectedId, setSelectedId]);
 
-  // 动画结束触发：关闭 modal、清理状态
-  const handleTransitionComplete = useCallback(() => {
-    close();
-    setTransitionAgent(null);
-    setTransitionRect(null);
-    setConvergeOffsets({});
-  }, [close]);
+  // 输入框聚焦
+  useEffect(() => {
+    if (isOpen) {
+      const t = setTimeout(() => inputRef.current?.focus(), 60);
+      return () => clearTimeout(t);
+    }
+  }, [isOpen]);
 
-  const handleClose = useCallback(() => {
-    setIsClosing(true);
-    setTimeout(() => {
+  const launchItem = useCallback(
+    (item: LauncherItem) => {
+      addRecentVisit({
+        id: item.id,
+        agentKey: item.agentKey ?? '',
+        agentName: item.name,
+        title: item.name,
+        path: item.route,
+        icon: item.icon,
+      });
       close();
-      setIsClosing(false);
-    }, 280);
-  }, [close]);
+      navigate(item.route);
+    },
+    [addRecentVisit, close, navigate]
+  );
 
+  // 键盘导航
   useEffect(() => {
     if (!isOpen) return;
 
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (['ArrowLeft', 'ArrowRight', 'Enter', 'Escape'].includes(e.key)) {
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
         e.preventDefault();
+        close();
+        return;
       }
 
+      if (flatList.length === 0) return;
+      const curIdx = Math.max(
+        0,
+        flatList.findIndex((it) => it.id === selectedId)
+      );
+
+      const move = (delta: number) => {
+        e.preventDefault();
+        const next = (curIdx + delta + flatList.length) % flatList.length;
+        setSelectedId(flatList[next].id);
+      };
+
       switch (e.key) {
-        case 'Escape':
-          if (!transitionAgent) handleClose();
+        case 'ArrowDown':
+          move(2);
           break;
-        case 'ArrowLeft':
-          if (!transitionAgent) moveSelection('left');
+        case 'ArrowUp':
+          move(-2);
           break;
         case 'ArrowRight':
-          if (!transitionAgent) moveSelection('right');
+          move(1);
+          break;
+        case 'ArrowLeft':
+          move(-1);
           break;
         case 'Enter': {
-          if (!transitionAgent) {
-            const agent = AGENT_DEFINITIONS[selectedIndex];
-            if (agent) navigateToAgent(agent, selectedIndex);
-          }
-          break;
-        }
-        case '1':
-        case '2':
-        case '3':
-        case '4':
-        case '5': {
-          if (!transitionAgent) {
-            const idx = parseInt(e.key, 10) - 1;
-            const agent = AGENT_DEFINITIONS[idx];
-            if (agent) navigateToAgent(agent, idx);
-          }
+          e.preventDefault();
+          const item = flatList[curIdx];
+          if (item) launchItem(item);
           break;
         }
       }
     };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, [isOpen, flatList, selectedId, setSelectedId, launchItem, close]);
 
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [isOpen, selectedIndex, handleClose, moveSelection, navigateToAgent, transitionAgent]);
-
-  const handleBackdropClick = useCallback(
+  const handleBackdrop = useCallback(
     (e: React.MouseEvent) => {
-      if (e.target === e.currentTarget && !transitionAgent) handleClose();
+      if (e.target === e.currentTarget) close();
     },
-    [handleClose, transitionAgent]
+    [close]
   );
 
   if (!isOpen) return null;
 
-  const isTransitioning = !!transitionAgent;
-
   return createPortal(
-    <>
+    <div
+      className="fixed inset-0 z-[200] flex items-start justify-center"
+      onClick={handleBackdrop}
+      style={{
+        animation: 'switcherBgIn 0.18s ease-out both',
+        paddingTop: '8vh',
+      }}
+    >
+      {/* 背景 */}
       <div
-        className="fixed inset-0 z-[200] flex items-center justify-center"
-        onClick={handleBackdropClick}
+        className="absolute inset-0"
         style={{
-          // 穿越动画时：立即隐藏背景，让目标页面透过洞口可见
-          // 必须用 animation:none 清除 bgFadeIn 的 fill:both，否则其 opacity:1 会覆盖 inline style
-          animation: isTransitioning
-            ? 'none'
-            : isClosing
-            ? 'bgFadeOut 0.25s cubic-bezier(0.55, 0, 1, 0.45) both'
-            : 'bgFadeIn 0.35s cubic-bezier(0.22, 1, 0.36, 1) both',
-          visibility: isTransitioning ? 'hidden' : undefined,
+          background: 'rgba(8, 9, 15, 0.72)',
+          backdropFilter: 'blur(14px)',
+          WebkitBackdropFilter: 'blur(14px)',
         }}
+      />
+
+      {/* 面板 */}
+      <div
+        className="relative w-[92vw] max-w-[960px]"
+        style={{
+          height: '80vh',
+          maxHeight: '80vh',
+          animation: 'switcherPanelIn 0.22s cubic-bezier(0.22, 1, 0.36, 1) both',
+        }}
+        role="dialog"
+        aria-modal="true"
+        aria-label="命令面板"
       >
-        {/* 深黑背景 */}
         <div
-          className="absolute inset-0"
+          className="h-full flex flex-col rounded-[20px] overflow-hidden"
           style={{
-            background: 'linear-gradient(180deg, #0a0a0f 0%, #0f0f18 50%, #0a0a12 100%)',
+            background: 'linear-gradient(180deg, rgba(22, 23, 32, 0.96) 0%, rgba(16, 17, 25, 0.96) 100%)',
+            border: '1px solid rgba(255,255,255,0.08)',
+            boxShadow:
+              '0 30px 80px -20px rgba(0,0,0,0.6), 0 0 0 1px rgba(255,255,255,0.02) inset',
           }}
-        />
-
-        {/* 网格背景 */}
-        <div
-          className="absolute inset-0 opacity-[0.015]"
-          style={{
-            backgroundImage: `
-              linear-gradient(rgba(255,255,255,0.1) 1px, transparent 1px),
-              linear-gradient(90deg, rgba(255,255,255,0.1) 1px, transparent 1px)
-            `,
-            backgroundSize: '60px 60px',
-          }}
-        />
-
-        {/* 中央光晕 */}
-        <div
-          className="absolute pointer-events-none"
-          style={{
-            width: '900px',
-            height: '700px',
-            top: '50%',
-            left: '50%',
-            transform: 'translate(-50%, -50%)',
-            background: 'radial-gradient(ellipse at center, rgba(100, 120, 255, 0.05) 0%, transparent 55%)',
-          }}
-        />
-
-        {/* 内容区域 */}
-        <div
-          className="relative"
-          style={{
-            animation: isClosing
-              ? 'contentFadeOut 0.2s cubic-bezier(0.55, 0, 1, 0.45) both'
-              : 'contentFadeIn 0.4s cubic-bezier(0.22, 1, 0.36, 1) both',
-          }}
-          role="dialog"
-          aria-modal="true"
         >
-          {/* 标题 */}
+          {/* 搜索栏 */}
           <div
-            className="text-center mb-12"
-            style={{
-              animation: isClosing ? 'none' : 'titleSlideIn 0.5s cubic-bezier(0.22, 1, 0.36, 1) 0.05s both',
-              opacity: isTransitioning ? 0 : undefined,
-              transition: isTransitioning ? 'opacity 0.2s ease-out' : undefined,
-            }}
+            className="shrink-0 flex items-center gap-3 px-5 h-[60px]"
+            style={{ borderBottom: '1px solid rgba(255,255,255,0.06)' }}
           >
-            <h2
-              className="text-[36px] font-bold tracking-tight"
+            <Search size={18} style={{ color: 'rgba(255,255,255,0.4)' }} />
+            <input
+              ref={inputRef}
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder="搜索 Agent、工具或页面..."
+              className="flex-1 bg-transparent outline-none text-[15px]"
+              style={{ color: '#fff' }}
+            />
+            {searchQuery && (
+              <button
+                type="button"
+                onClick={() => setSearchQuery('')}
+                className="w-6 h-6 rounded-md flex items-center justify-center"
+                style={{ background: 'rgba(255,255,255,0.06)', color: 'rgba(255,255,255,0.6)' }}
+                aria-label="清空搜索"
+              >
+                <X size={12} />
+              </button>
+            )}
+            <div
+              className="text-[11px] px-2 py-1 rounded"
               style={{
-                color: '#fff',
-                background: 'linear-gradient(180deg, #fff 0%, rgba(255,255,255,0.7) 100%)',
-                WebkitBackgroundClip: 'text',
-                WebkitTextFillColor: 'transparent',
+                background: 'rgba(255,255,255,0.04)',
+                color: 'rgba(255,255,255,0.4)',
+                border: '1px solid rgba(255,255,255,0.06)',
               }}
             >
-              选择你的 Agent
-            </h2>
-            <p
-              className="mt-4 text-[15px]"
-              style={{ color: 'rgba(255, 255, 255, 0.4)' }}
-            >
-              每个 Agent 都是为特定场景打造的智能助手
-            </p>
+              Esc 关闭
+            </div>
           </div>
 
-          {/* Agent 卡片网格 */}
-          <div className="flex gap-6 justify-center">
-            {AGENT_DEFINITIONS.map((agent, index) => (
-              <AgentCard
-                key={agent.key}
-                agent={agent}
-                index={index}
-                isSelected={selectedIndex === index}
-                isTransitioning={isTransitioning}
-                onClick={() => navigateToAgent(agent, index)}
-                onMouseEnter={() => !isTransitioning && setSelectedIndex(index)}
-                isClosing={isClosing}
-                cardRef={el => { cardRefs.current[index] = el; }}
-                convergeOffset={convergeOffsets[index]}
-              />
-            ))}
+          {/* 内容区 */}
+          <div
+            className="flex-1"
+            style={{ minHeight: 0, overflowY: 'auto', overscrollBehavior: 'contain' }}
+          >
+            {sections.length === 0 ? (
+              <div
+                className="h-full flex flex-col items-center justify-center gap-2"
+                style={{ color: 'rgba(255,255,255,0.4)' }}
+              >
+                <Search size={24} style={{ opacity: 0.4 }} />
+                <div className="text-[13px]">没有匹配的条目</div>
+                <div className="text-[11px]" style={{ color: 'rgba(255,255,255,0.3)' }}>
+                  试试其他关键词，或按 Esc 关闭
+                </div>
+              </div>
+            ) : (
+              <div className="px-5 py-4 space-y-5">
+                {sections.map((section) => (
+                  <div key={section.key}>
+                    <div className="flex items-center gap-2 mb-2.5">
+                      <span style={{ color: 'rgba(255,255,255,0.45)' }}>{section.icon}</span>
+                      <span
+                        className="text-[11px] font-bold uppercase tracking-wider"
+                        style={{ color: 'rgba(255,255,255,0.55)' }}
+                      >
+                        {section.title}
+                      </span>
+                      {section.subtitle && (
+                        <span className="text-[11px]" style={{ color: 'rgba(255,255,255,0.28)' }}>
+                          · {section.subtitle}
+                        </span>
+                      )}
+                      <span
+                        className="ml-auto text-[10px]"
+                        style={{ color: 'rgba(255,255,255,0.3)' }}
+                      >
+                        {section.items.length}
+                      </span>
+                    </div>
+                    <div className="grid grid-cols-2 gap-2.5">
+                      {section.items.map((item) => (
+                        <LauncherCard
+                          key={`${section.key}:${item.id}`}
+                          item={item}
+                          isSelected={selectedId === item.id}
+                          isPinned={pinnedIds.includes(item.id)}
+                          onClick={() => launchItem(item)}
+                          onMouseEnter={() => setSelectedId(item.id)}
+                          onTogglePin={(e) => {
+                            e.stopPropagation();
+                            togglePin(item.id);
+                          }}
+                          badge={
+                            section.key === 'recent'
+                              ? undefined
+                              : section.key === 'pinned'
+                              ? undefined
+                              : (usageCounts[item.id] ?? 0) > 0
+                              ? `${usageCounts[item.id]}`
+                              : undefined
+                          }
+                        />
+                      ))}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
 
           {/* 底部提示 */}
           <div
-            className="mt-12 flex justify-center gap-8"
+            className="shrink-0 flex items-center justify-between px-5 h-[38px] text-[11px]"
             style={{
-              animation: isClosing ? 'none' : 'hintFadeIn 0.5s cubic-bezier(0.22, 1, 0.36, 1) 0.35s both',
-              opacity: isTransitioning ? 0 : undefined,
-              transition: isTransitioning ? 'opacity 0.2s ease-out' : undefined,
+              borderTop: '1px solid rgba(255,255,255,0.06)',
+              color: 'rgba(255,255,255,0.4)',
+              background: 'rgba(255,255,255,0.015)',
             }}
           >
-            <div
-              className="flex items-center gap-3 text-[13px]"
-              style={{ color: 'rgba(255, 255, 255, 0.35)' }}
-            >
-              <div className="flex gap-1">
-                <span
-                  className="px-2 py-1 rounded-lg"
-                  style={{
-                    background: 'rgba(255, 255, 255, 0.06)',
-                    border: '1px solid rgba(255, 255, 255, 0.08)',
-                  }}
+            <div className="flex items-center gap-4">
+              <span className="flex items-center gap-1.5">
+                <kbd
+                  className="px-1.5 py-0.5 rounded font-mono"
+                  style={{ background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.08)' }}
                 >
-                  ←
-                </span>
-                <span
-                  className="px-2 py-1 rounded-lg"
-                  style={{
-                    background: 'rgba(255, 255, 255, 0.06)',
-                    border: '1px solid rgba(255, 255, 255, 0.08)',
-                  }}
+                  ↑↓←→
+                </kbd>
+                <span>导航</span>
+              </span>
+              <span className="flex items-center gap-1.5">
+                <kbd
+                  className="px-1.5 py-0.5 rounded font-mono"
+                  style={{ background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.08)' }}
                 >
-                  →
-                </span>
-              </div>
-              <span>切换选择</span>
-            </div>
-            <div
-              className="flex items-center gap-3 text-[13px]"
-              style={{ color: 'rgba(255, 255, 255, 0.35)' }}
-            >
-              <span
-                className="px-3 py-1 rounded-lg"
-                style={{
-                  background: 'rgba(255, 255, 255, 0.06)',
-                  border: '1px solid rgba(255, 255, 255, 0.08)',
-                }}
-              >
-                Enter
+                  Enter
+                </kbd>
+                <span>进入</span>
               </span>
-              <span>确认进入</span>
-            </div>
-            <div
-              className="flex items-center gap-3 text-[13px]"
-              style={{ color: 'rgba(255, 255, 255, 0.35)' }}
-            >
-              <span
-                className="px-3 py-1 rounded-lg"
-                style={{
-                  background: 'rgba(255, 255, 255, 0.06)',
-                  border: '1px solid rgba(255, 255, 255, 0.08)',
-                }}
-              >
-                Esc
+              <span className="flex items-center gap-1.5">
+                <Pin size={11} />
+                <span>点击星标置顶</span>
               </span>
-              <span>关闭</span>
+            </div>
+            <div style={{ color: 'rgba(255,255,255,0.3)' }}>
+              {flatList.length} 个入口 · 在「设置 → 我的空间」管理
             </div>
           </div>
         </div>
-
-        {/* 动画样式 */}
-        <style>{`
-          @keyframes bgFadeIn {
-            from { opacity: 0; }
-            to { opacity: 1; }
-          }
-          @keyframes bgFadeOut {
-            from { opacity: 1; }
-            to { opacity: 0; }
-          }
-          @keyframes contentFadeIn {
-            from {
-              opacity: 0;
-              transform: scale(0.98);
-            }
-            to {
-              opacity: 1;
-              transform: scale(1);
-            }
-          }
-          @keyframes contentFadeOut {
-            from {
-              opacity: 1;
-              transform: scale(1);
-            }
-            to {
-              opacity: 0;
-              transform: scale(0.98);
-            }
-          }
-          @keyframes titleSlideIn {
-            from {
-              opacity: 0;
-              transform: translateY(-15px);
-            }
-            to {
-              opacity: 1;
-              transform: translateY(0);
-            }
-          }
-          @keyframes hintFadeIn {
-            from {
-              opacity: 0;
-              transform: translateY(8px);
-            }
-            to {
-              opacity: 1;
-              transform: translateY(0);
-            }
-          }
-          @keyframes cardEnter {
-            0% {
-              opacity: 0;
-              transform: translate(var(--entry-x), var(--entry-y)) rotate(var(--entry-rotate)) scale(0.85);
-            }
-            100% {
-              opacity: 1;
-              transform: translate(0, 0) rotate(0deg) scale(1);
-            }
-          }
-          @keyframes cardExit {
-            from {
-              opacity: 1;
-              transform: translate(0, 0) rotate(0deg) scale(1);
-            }
-            to {
-              opacity: 0;
-              transform: translate(calc(var(--entry-x) * 0.5), calc(var(--entry-y) * 0.5)) rotate(calc(var(--entry-rotate) * 0.5)) scale(0.9);
-            }
-          }
-        `}</style>
       </div>
 
-      {/* 传送门穿越过渡层 — 点击后立即展示 */}
-      {transitionAgent && transitionRect && (
-        <PortalTransition
-          agent={transitionAgent}
-          startRect={transitionRect}
-          onNavigate={handleNavigate}
-          onComplete={handleTransitionComplete}
-        />
-      )}
-    </>,
+      <style>{`
+        @keyframes switcherBgIn {
+          from { opacity: 0; }
+          to { opacity: 1; }
+        }
+        @keyframes switcherPanelIn {
+          from {
+            opacity: 0;
+            transform: translateY(-12px) scale(0.985);
+          }
+          to {
+            opacity: 1;
+            transform: translateY(0) scale(1);
+          }
+        }
+      `}</style>
+    </div>,
     document.body
   );
 }
