@@ -27,7 +27,7 @@ import {
   Brain, Cpu, Database, Globe, Image, Music, Video, BookOpen,
   GraduationCap, Briefcase, Heart, Star, Shield, Lock, Search, Layers,
   Swords, Paperclip, ImagePlus, X, File,
-  Plus, MessageCircle, Share2, Globe2, AlertCircle,
+  Plus, MessageCircle, Link2, Globe2, AlertCircle,
   Square, Copy, Check, RotateCcw, RefreshCw, Download, Eraser,
   ThumbsUp, ThumbsDown, Pencil, Archive, Pin, ChevronDown,
   Eye, ChevronRight,
@@ -349,8 +349,19 @@ export function ToolDetail() {
   const handleTogglePublish = async () => {
     if (!selectedItem) return;
     const newValue = !isPublic;
+    // 公开是面向全体用户的动作，加一次确认避免误点
+    if (newValue) {
+      const ok = window.confirm(
+        '公开发布后，所有用户都能在百宝箱「公开市场」Tab 看到并 Fork 这个智能体' +
+          '（包含名称、描述、提示词、标签）。\n\n确定要公开发布吗？'
+      );
+      if (!ok) return;
+    }
     const ok = await togglePublish(selectedItem.id, newValue);
-    if (ok) setIsPublic(newValue);
+    if (ok) {
+      setIsPublic(newValue);
+      toast.success(newValue ? '已公开发布到市场' : '已取消公开');
+    }
   };
 
   // Share conversation (Agent C)
@@ -691,16 +702,32 @@ export function ToolDetail() {
               返回
             </Button>
             {messages.length > 0 && (
-              <Button variant="secondary" size="sm" onClick={handleShare} disabled={isSharing}>
-                <Share2 size={14} />
-                分享
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={handleShare}
+                disabled={isSharing}
+                title="生成只读链接，复制给别人查看本次对话"
+              >
+                <Link2 size={14} />
+                分享对话
               </Button>
             )}
             {isCustom ? (
               <>
-                <Button variant="secondary" size="sm" onClick={handleTogglePublish} title={isPublic ? '取消发布' : '发布到市场'}>
-                  {isPublic ? <Globe2 size={14} /> : <Share2 size={14} />}
-                  {isPublic ? '已公开' : '发布'}
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={handleTogglePublish}
+                  title={
+                    isPublic
+                      ? '已公开 — 他人可在「公开市场」Tab 中找到并 Fork 此智能体；点击取消公开'
+                      : '公开到「公开市场」Tab，让其他用户都能看到并 Fork 此智能体'
+                  }
+                  style={isPublic ? { color: '#6ee7b7', borderColor: 'rgba(16, 185, 129, 0.45)' } : undefined}
+                >
+                  <Globe2 size={14} />
+                  {isPublic ? '已公开' : '公开发布'}
                 </Button>
                 <Button variant="secondary" size="sm" onClick={() => startEdit(selectedItem)}>
                   <Edit size={14} />
@@ -712,19 +739,24 @@ export function ToolDetail() {
                 </Button>
               </>
             ) : !selectedItem.routePath && (
-              <Button variant="secondary" size="sm" onClick={() => {
-                // Fork built-in agent into a custom copy for editing
-                startEdit({
-                  ...selectedItem,
-                  id: '', // no id = create new
-                  name: `${selectedItem.name}（自定义）`,
-                  category: 'custom',
-                  type: 'custom',
-                  prompt: selectedItem.systemPrompt,
-                } as any);
-              }}>
+              <Button
+                variant="secondary"
+                size="sm"
+                title="复制一份内置工具到我的百宝箱，复制后可自由修改提示词、模型等参数"
+                onClick={() => {
+                  // Fork built-in agent into a custom copy for editing
+                  startEdit({
+                    ...selectedItem,
+                    id: '', // no id = create new
+                    name: `${selectedItem.name}（我的副本）`,
+                    category: 'custom',
+                    type: 'custom',
+                    prompt: selectedItem.systemPrompt,
+                  } as any);
+                }}
+              >
                 <Copy size={14} />
-                自定义副本
+                复制并编辑
               </Button>
             )}
           </div>
