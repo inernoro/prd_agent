@@ -105,7 +105,7 @@ public class PaAgentController : ControllerBase
             await _db.PaSessions.InsertOneAsync(session);
         }
 
-        return Ok(new { success = true, data = new { sessionId = session.Id } });
+        return Ok(ApiResponse<object>.Ok(new { sessionId = session.Id }));
     }
 
     // ──────────────────────────────────────────────────────────────────
@@ -244,7 +244,7 @@ public class PaAgentController : ControllerBase
     {
         var userId = GetUserId();
         if (string.IsNullOrWhiteSpace(sessionId))
-            return BadRequest(new { success = false, error = new { code = "INVALID_FORMAT", message = "sessionId 不能为空" } });
+            return BadRequest(ApiResponse<object>.Fail("INVALID_FORMAT", "sessionId 不能为空"));
 
         var messages = await _db.PaMessages
             .Find(m => m.UserId == userId && m.SessionId == sessionId)
@@ -253,7 +253,7 @@ public class PaAgentController : ControllerBase
             .ToListAsync();
         messages.Reverse();
 
-        return Ok(new { success = true, data = messages });
+        return Ok(ApiResponse<List<PaMessage>>.Ok(messages));
     }
 
     // ──────────────────────────────────────────────────────────────────
@@ -281,7 +281,7 @@ public class PaAgentController : ControllerBase
             .SortByDescending(t => t.CreatedAt)
             .ToListAsync();
 
-        return Ok(new { success = true, data = tasks });
+        return Ok(ApiResponse<List<PaTask>>.Ok(tasks));
     }
 
     public class CreateTaskRequest
@@ -304,7 +304,7 @@ public class PaAgentController : ControllerBase
         var userId = GetUserId();
 
         if (string.IsNullOrWhiteSpace(req.Title))
-            return BadRequest(new { success = false, error = new { code = "CONTENT_EMPTY", message = "标题不能为空" } });
+            return BadRequest(ApiResponse<object>.Fail("CONTENT_EMPTY", "标题不能为空"));
 
         if (!string.IsNullOrWhiteSpace(req.ContentHash))
         {
@@ -313,7 +313,7 @@ public class PaAgentController : ControllerBase
                 .Find(t => t.UserId == userId && t.ContentHash == req.ContentHash && t.CreatedAt >= cutoff)
                 .FirstOrDefaultAsync();
             if (existing != null)
-                return Ok(new { success = true, data = existing, duplicate = true });
+                return Ok(ApiResponse<PaTask>.Ok(existing));
         }
 
         var quadrant = PaTaskQuadrant.All.Contains(req.Quadrant) ? req.Quadrant : PaTaskQuadrant.Q2;
@@ -332,7 +332,7 @@ public class PaAgentController : ControllerBase
         };
 
         await _db.PaTasks.InsertOneAsync(task);
-        return Ok(new { success = true, data = task });
+        return Ok(ApiResponse<PaTask>.Ok(task));
     }
 
     public class UpdateTaskRequest
@@ -353,7 +353,7 @@ public class PaAgentController : ControllerBase
         var userId = GetUserId();
         var task = await _db.PaTasks.Find(t => t.Id == id && t.UserId == userId).FirstOrDefaultAsync();
         if (task == null)
-            return NotFound(new { success = false, error = new { code = "DOCUMENT_NOT_FOUND", message = "任务不存在" } });
+            return NotFound(ApiResponse<object>.Fail("DOCUMENT_NOT_FOUND", "任务不存在"));
 
         var updates = new List<UpdateDefinition<PaTask>>();
         updates.Add(Builders<PaTask>.Update.Set(t => t.UpdatedAt, DateTime.UtcNow));
@@ -378,7 +378,7 @@ public class PaAgentController : ControllerBase
             Builders<PaTask>.Update.Combine(updates));
 
         var updated = await _db.PaTasks.Find(t => t.Id == id).FirstOrDefaultAsync();
-        return Ok(new { success = true, data = updated });
+        return Ok(ApiResponse<PaTask?>.Ok(updated));
     }
 
     /// <summary>
@@ -395,9 +395,9 @@ public class PaAgentController : ControllerBase
                 .Set(t => t.UpdatedAt, DateTime.UtcNow));
 
         if (result.MatchedCount == 0)
-            return NotFound(new { success = false, error = new { code = "DOCUMENT_NOT_FOUND", message = "任务不存在" } });
+            return NotFound(ApiResponse<object>.Fail("DOCUMENT_NOT_FOUND", "任务不存在"));
 
-        return Ok(new { success = true });
+        return Ok(ApiResponse<object>.Ok(new { }));
     }
 
     /// <summary>
@@ -409,16 +409,16 @@ public class PaAgentController : ControllerBase
         var userId = GetUserId();
         var task = await _db.PaTasks.Find(t => t.Id == id && t.UserId == userId).FirstOrDefaultAsync();
         if (task == null)
-            return NotFound(new { success = false, error = new { code = "DOCUMENT_NOT_FOUND", message = "任务不存在" } });
+            return NotFound(ApiResponse<object>.Fail("DOCUMENT_NOT_FOUND", "任务不存在"));
 
         if (index < 0 || index >= task.SubTasks.Count)
-            return BadRequest(new { success = false, error = new { code = "INVALID_FORMAT", message = "子步骤索引越界" } });
+            return BadRequest(ApiResponse<object>.Fail("INVALID_FORMAT", "子步骤索引越界"));
 
         task.SubTasks[index].Done = req.Done;
         task.UpdatedAt = DateTime.UtcNow;
 
         await _db.PaTasks.ReplaceOneAsync(t => t.Id == id && t.UserId == userId, task);
-        return Ok(new { success = true, data = task });
+        return Ok(ApiResponse<PaTask>.Ok(task));
     }
 
     public class UpdateSubTaskRequest
