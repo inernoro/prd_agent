@@ -8,10 +8,11 @@
  *   3. Switch json → mongo at runtime (with automatic state import)
  *   4. Switch mongo → json as a rollback path
  *
- * The routes NEVER touch process.env — switches are ephemeral until
- * the operator also sets CDS_STORAGE_MODE / CDS_MONGO_URI in .cds.env
- * for the next process restart. The UI makes this explicit so users
- * aren't surprised on reboot.
+ * Persistence note (2026-04-18): switch-to-mongo / switch-to-json now
+ * upsert/remove CDS_STORAGE_MODE / CDS_MONGO_URI / CDS_MONGO_DB lines in
+ * cds/.cds.env so the next CDS restart re-enters the same mode without
+ * manual operator intervention. Previously switches were runtime-only
+ * and one restart silently dropped back to JSON.
  *
  * Contract summary:
  *   GET  /api/storage-mode
@@ -31,6 +32,7 @@ import type { StateBackingStore } from '../infra/state-store/backing-store.js';
 import { JsonStateBackingStore } from '../infra/state-store/json-backing-store.js';
 import { MongoStateBackingStore } from '../infra/state-store/mongo-backing-store.js';
 import { RealMongoHandle } from '../infra/state-store/mongo-handle.js';
+import { createEnvFileOps } from '../infra/env-file.js';
 
 /**
  * Mutable context shared between index.ts and this router. index.ts
@@ -72,6 +74,41 @@ function maskMongoUri(uri: string | null): string | null {
 export function createStorageModeRouter(deps: StorageModeRouterDeps): Router {
   const router = Router();
   const { stateService, stateFile, context } = deps;
+
+  // .cds.env sits alongside exec_cds.sh in the cds/ repo. Best-effort:
+  // if the process can't write this file (e.g. readonly FS, or CDS is
+  // running outside of the expected layout), switch-to-mongo still
+  // succeeds at runtime — we just log a warning so operators know the
+  // next restart won't re-enter mongo mode automatically.
+  const envFile = createEnvFileOps(path.join(deps.repoRoot, 'cds', '.cds.env'));
+
+  function persistMongoToEnvFile(uri: string, dbName: string): { persisted: boolean; note: string } {
+    try {
+      envFile.upsert('CDS_STORAGE_MODE', 'mongo');
+      envFile.upsert('CDS_MONGO_URI', uri);
+      envFile.upsert('CDS_MONGO_DB', dbName);
+      return {
+        persisted: true,
+        note: `已将 CDS_STORAGE_MODE/CDS_MONGO_URI/CDS_MONGO_DB 写入 ${envFile.getPath()}，下次重启自动进 mongo 模式`,
+      };
+    } catch (err) {
+      return {
+        persisted: false,
+        note: `运行时切换成功，但写 .cds.env 失败（${(err as Error).message}）。下次重启会退回 json 模式，请手动设置 CDS_STORAGE_MODE=mongo + CDS_MONGO_URI`,
+      };
+    }
+  }
+
+  function removeMongoFromEnvFile(): { persisted: boolean; note: string } {
+    try {
+      envFile.removeKey('CDS_STORAGE_MODE');
+      envFile.removeKey('CDS_MONGO_URI');
+      envFile.removeKey('CDS_MONGO_DB');
+      return { persisted: true, note: `已从 ${envFile.getPath()} 清除 mongo 启动变量` };
+    } catch (err) {
+      return { persisted: false, note: `清除 .cds.env 里 mongo 变量失败: ${(err as Error).message}` };
+    }
+  }
 
   // GET /api/storage-mode — current state + health
   router.get('/storage-mode', async (_req, res) => {
@@ -206,10 +243,17 @@ export function createStorageModeRouter(deps: StorageModeRouterDeps): Router {
       try { await oldHandle.close(); } catch { /* */ }
     }
 
+    // Persist to .cds.env so the next CDS restart picks up mongo
+    // mode automatically. Failure here doesn't roll back the runtime
+    // switch — operator can fix .cds.env manually from the warning.
+    const persisted = persistMongoToEnvFile(uri, dbName);
+
     res.json({
       ok: true,
       kind: 'mongo',
       imported,
+      persisted: persisted.persisted,
+      persistNote: persisted.note,
       message: imported
         ? '切换成功，已将当前 state 一次性导入 mongo'
         : '切换成功，mongo 已有数据，未重复导入',
@@ -274,7 +318,19 @@ export function createStorageModeRouter(deps: StorageModeRouterDeps): Router {
       try { await oldHandle.close(); } catch { /* */ }
     }
 
-    res.json({ ok: true, kind: 'json', message: '已切回 JSON 模式，state.json 已重新写入' });
+    // Symmetric to switch-to-mongo: remove the persisted mongo vars
+    // from .cds.env so the next restart actually honours the json
+    // choice. Leaving stale CDS_MONGO_URI in .cds.env would trap the
+    // operator on reboot.
+    const cleaned = removeMongoFromEnvFile();
+
+    res.json({
+      ok: true,
+      kind: 'json',
+      persisted: cleaned.persisted,
+      persistNote: cleaned.note,
+      message: '已切回 JSON 模式，state.json 已重新写入',
+    });
   });
 
   return router;
