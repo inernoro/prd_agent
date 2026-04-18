@@ -2586,27 +2586,51 @@ function getPortIcon(profileId, profile) {
   return key ? ICON[key] : ICON.portDefault;
 }
 
+// Scope-aware factory reset. On a per-project page (CURRENT_PROJECT_ID
+// !== 'default'), default to resetting THIS project only. The user can
+// still opt into the global reset by cancelling and running it from
+// the project list page where no project context is active.
 async function factoryReset() {
-  if (!confirm('[警告] 恢复出厂设置\n\n将清除所有：分支、构建配置、环境变量、基础设施服务、路由规则。\nDocker 数据卷（数据库文件等）会保留。\n\n确定继续？')) return;
+  var scoped = typeof CURRENT_PROJECT_ID !== 'undefined'
+    && CURRENT_PROJECT_ID
+    && CURRENT_PROJECT_ID !== 'default';
+  var url = scoped
+    ? `${API}/factory-reset?project=${encodeURIComponent(CURRENT_PROJECT_ID)}`
+    : `${API}/factory-reset`;
+  var msg = scoped
+    ? `[警告] 重置当前项目\n\n将清除本项目的所有：分支、构建配置、基础设施服务、路由规则、项目级环境变量。\n全局环境变量和其他项目不受影响。\nDocker 数据卷（数据库文件等）会保留。\n\n确定继续？`
+    : '[警告] 恢复出厂设置\n\n将清除所有项目的所有：分支、构建配置、环境变量、基础设施服务、路由规则。\nDocker 数据卷（数据库文件等）会保留。\n\n确定继续？';
+  if (!confirm(msg)) return;
   if (!confirm('二次确认：所有配置将被清空，此操作不可撤销。')) return;
   globalBusy = true;
   renderBranches();
   try {
-    const res = await fetch(`${API}/factory-reset`, { method: 'POST' });
+    const res = await fetch(url, { method: 'POST' });
     const reader = res.body.getReader();
     while (!(await reader.read()).done) {}
-    showToast('已恢复出厂设置', 'success');
+    showToast(scoped ? '已重置本项目' : '已恢复出厂设置', 'success');
   } catch (e) { showToast(e.message, 'error'); }
   globalBusy = false;
   await loadBranches();
 }
 
 async function cleanupAll() {
-  if (!confirm('确定清理所有非默认分支？')) return;
+  // Same scope rule as factoryReset: on a project page, clean only
+  // that project's non-default branches.
+  var scoped = typeof CURRENT_PROJECT_ID !== 'undefined'
+    && CURRENT_PROJECT_ID
+    && CURRENT_PROJECT_ID !== 'default';
+  var url = scoped
+    ? `${API}/cleanup?project=${encodeURIComponent(CURRENT_PROJECT_ID)}`
+    : `${API}/cleanup`;
+  var prompt = scoped
+    ? '确定清理本项目的所有非默认分支？'
+    : '确定清理所有项目的所有非默认分支？';
+  if (!confirm(prompt)) return;
   globalBusy = true;
   renderBranches();
   try {
-    const res = await fetch(`${API}/cleanup`, { method: 'POST' });
+    const res = await fetch(url, { method: 'POST' });
     const reader = res.body.getReader();
     while (!(await reader.read()).done) {}
     showToast('清理完成', 'success');

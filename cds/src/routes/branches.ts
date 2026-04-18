@@ -2906,11 +2906,20 @@ export function createBranchRouter(deps: RouterDeps): Router {
     }
   });
 
-  router.post('/cleanup', async (_req, res) => {
+  router.post('/cleanup', async (req, res) => {
     initSSE(res);
     try {
+      // Optional ?project=<id> scopes the cleanup to one project's
+      // branches. Without the filter, all non-default branches across
+      // every project are removed (pre-feature global behaviour).
+      const projectFilter = typeof req.query.project === 'string' ? req.query.project : null;
+
       const state = stateService.getState();
-      const toRemove = Object.values(state.branches).filter(b => b.id !== state.defaultBranch);
+      const toRemove = Object.values(state.branches).filter((b) => {
+        if (b.id === state.defaultBranch) return false;
+        if (projectFilter && (b.projectId || 'default') !== projectFilter) return false;
+        return true;
+      });
       for (const entry of toRemove) {
         sendSSE(res, 'step', { step: 'cleanup', status: 'running', title: `正在删除 ${entry.id}...` });
         for (const svc of Object.values(entry.services)) {
@@ -2925,7 +2934,10 @@ export function createBranchRouter(deps: RouterDeps): Router {
         sendSSE(res, 'step', { step: 'cleanup', status: 'done', title: `已删除 ${entry.id}` });
       }
       stateService.save();
-      sendSSE(res, 'complete', { message: `已清理 ${toRemove.length} 个分支` });
+      const msg = projectFilter
+        ? `已清理项目 ${projectFilter} 的 ${toRemove.length} 个分支`
+        : `已清理 ${toRemove.length} 个分支`;
+      sendSSE(res, 'complete', { message: msg, removedCount: toRemove.length, scope: projectFilter || '_all' });
     } catch (err) {
       sendSSE(res, 'error', { message: (err as Error).message });
     } finally {
@@ -3114,10 +3126,88 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
   // ── Factory reset: stop all containers, clear all config, keep Docker volumes ──
 
-  router.post('/factory-reset', async (_req, res) => {
+  router.post('/factory-reset', async (req, res) => {
     initSSE(res);
     try {
+      // Optional ?project=<id> scopes the reset to that project only:
+      //   - stop/remove only that project's containers + worktrees
+      //   - clear only that project's buildProfiles / infra / routing
+      //   - clear only that project's customEnv bucket (_global untouched)
+      //   - the Project entity itself stays (so the user doesn't have
+      //     to recreate it + re-clone the repo)
+      //
+      // Without the filter, pre-feature behaviour applies: nuke EVERY
+      // project's state and reset CDS to an empty-slate install.
+      const projectFilter = typeof req.query.project === 'string' ? req.query.project : null;
       const state = stateService.getState();
+
+      if (projectFilter) {
+        const project = stateService.getProject(projectFilter);
+        if (!project) {
+          sendSSE(res, 'error', { message: `项目 ${projectFilter} 不存在` });
+          res.end();
+          return;
+        }
+
+        // 1. Stop + remove that project's branches
+        const branches = Object.values(state.branches)
+          .filter((b) => (b.projectId || 'default') === projectFilter);
+        for (const entry of branches) {
+          sendSSE(res, 'step', { step: 'reset', status: 'running', title: `停止分支 ${entry.id}...` });
+          for (const svc of Object.values(entry.services)) {
+            try { await containerService.stop(svc.containerName); } catch { /* ok */ }
+          }
+          try {
+            const repoRoot = stateService.getProjectRepoRoot(entry.projectId, config.repoRoot);
+            await worktreeService.remove(repoRoot, entry.worktreePath);
+          } catch { /* ok */ }
+          stateService.removeLogs(entry.id);
+          stateService.removeBranch(entry.id);
+        }
+
+        // 2. Stop + remove that project's infra containers (volumes preserved).
+        //    We intentionally call getInfraServicesForProject before mutation
+        //    and container operations so a partial failure still reports
+        //    the right count.
+        const infra = stateService.getInfraServicesForProject(projectFilter);
+        for (const svc of infra) {
+          sendSSE(res, 'step', { step: 'reset', status: 'running', title: `停止基础设施 ${svc.name}...` });
+          try { await containerService.stop(svc.containerName); } catch { /* ok */ }
+        }
+
+        // 3. Remove this project's profiles / infra / routing / env bucket
+        //    from state. Keep the Project entity + its dockerNetwork so
+        //    the user doesn't have to recreate the project shell.
+        //    getState() returns Readonly<CdsState>; cast away so we can
+        //    replace the arrays in place (the same pattern as the
+        //    global-reset branch below).
+        const removedProfiles = stateService
+          .getBuildProfilesForProject(projectFilter).length;
+        const mutableState = state as unknown as {
+          buildProfiles: BuildProfile[];
+          infraServices: InfraService[];
+          routingRules: RoutingRule[];
+        };
+        mutableState.buildProfiles = (state.buildProfiles || [])
+          .filter((p) => (p.projectId || 'default') !== projectFilter);
+        mutableState.infraServices = (state.infraServices || [])
+          .filter((s) => (s.projectId || 'default') !== projectFilter);
+        mutableState.routingRules = (state.routingRules || [])
+          .filter((r) => (r.projectId || 'default') !== projectFilter);
+        stateService.dropCustomEnvScope(projectFilter);
+        stateService.save();
+
+        sendSSE(res, 'complete', {
+          message: `项目 ${project.name} 已重置：清除 ${branches.length} 个分支、${infra.length} 个基础设施、${removedProfiles} 个构建配置、环境变量作用域。项目实体 + Docker 数据卷保留。`,
+          scope: projectFilter,
+          removedBranches: branches.length,
+          removedInfra: infra.length,
+          removedProfiles,
+        });
+        return;
+      }
+
+      // ── Global factory-reset (all projects) — pre-feature path ──
 
       // 1. Stop and remove all branch containers + worktrees
       const branches = Object.values(state.branches);
@@ -3146,7 +3236,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
         nextPortIndex: 0,
         logs: {},
         defaultBranch: null,
-        customEnv: {},
+        customEnv: { _global: {} },
         infraServices: [],
       };
       Object.assign(state, freshState);
