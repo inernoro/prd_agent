@@ -57,34 +57,49 @@ public class VideoGenRunWorker : BackgroundService
         {
             try
             {
-                // 路径 0 (新增): videogen 模式 Queued → 直接走 OpenRouter，不经分镜流程
-                var directRun = await ClaimQueuedDirectVideoGenRunAsync(stoppingToken);
-                if (directRun != null)
-                {
-                    try
-                    {
-                        await ProcessDirectVideoGenAsync(directRun);
-                    }
-                    catch (Exception ex)
-                    {
-                        _logger.LogError(ex, "VideoGenRunWorker 直出视频失败: runId={RunId}", directRun.Id);
-                        await FailRunAsync(directRun, "VIDEOGEN_ERROR", ex.Message);
-                    }
-                    continue;
-                }
-
-                // 路径 1: Queued → Scripting → Editing
-                var queued = await ClaimQueuedRunAsync(stoppingToken);
+                // 统一拾取 Queued 状态的任何 run（不按模式过滤，避免 MongoDB 字段名/null
+                // 语义踩坑），然后在内存里根据 RenderMode 分发到对应处理器
+                var queued = await ClaimAnyQueuedRunAsync(stoppingToken);
                 if (queued != null)
                 {
-                    try
+                    var mode = queued.RenderMode ?? VideoRenderMode.Remotion;
+                    _logger.LogInformation("[VideoGenWorker] Claimed queued run: runId={RunId}, renderMode={Mode}, directPrompt={HasPrompt}",
+                        queued.Id, mode, !string.IsNullOrEmpty(queued.DirectPrompt));
+
+                    if (mode == VideoRenderMode.VideoGen || !string.IsNullOrEmpty(queued.DirectPrompt))
                     {
-                        await ProcessScriptingAsync(queued);
+                        // videogen 直出：把 Status 从 Scripting 纠正为 Rendering
+                        await _db.VideoGenRuns.UpdateOneAsync(
+                            x => x.Id == queued.Id,
+                            Builders<VideoGenRun>.Update
+                                .Set(x => x.Status, VideoGenRunStatus.Rendering)
+                                .Set(x => x.CurrentPhase, "videogen-submitting")
+                                .Set(x => x.PhaseProgress, 1),
+                            cancellationToken: CancellationToken.None);
+                        queued.Status = VideoGenRunStatus.Rendering;
+                        queued.RenderMode = VideoRenderMode.VideoGen;
+
+                        try
+                        {
+                            await ProcessDirectVideoGenAsync(queued);
+                        }
+                        catch (Exception ex)
+                        {
+                            _logger.LogError(ex, "VideoGenRunWorker 直出视频失败: runId={RunId}", queued.Id);
+                            await FailRunAsync(queued, "VIDEOGEN_ERROR", ex.Message);
+                        }
                     }
-                    catch (Exception ex)
+                    else
                     {
-                        _logger.LogError(ex, "VideoGenRunWorker 分镜生成失败: runId={RunId}", queued.Id);
-                        await FailRunAsync(queued, "SCRIPTING_ERROR", ex.Message);
+                        try
+                        {
+                            await ProcessScriptingAsync(queued);
+                        }
+                        catch (Exception ex)
+                        {
+                            _logger.LogError(ex, "VideoGenRunWorker 分镜生成失败: runId={RunId}", queued.Id);
+                            await FailRunAsync(queued, "SCRIPTING_ERROR", ex.Message);
+                        }
                     }
                     continue;
                 }
@@ -288,58 +303,23 @@ public class VideoGenRunWorker : BackgroundService
 
     // ─── Claim Methods ───
 
-    private async Task<VideoGenRun?> ClaimQueuedRunAsync(CancellationToken ct)
-    {
-        // 只拾取非 videogen 模式的 Queued 任务（remotion/空值/缺失字段）
-        // 改为正向匹配：RenderMode 在 {null, "", "remotion"} 中，避免 $ne 的微妙陷阱
-        var fb = Builders<VideoGenRun>.Filter;
-        var filter = fb.And(
-            fb.Eq(x => x.Status, VideoGenRunStatus.Queued),
-            fb.Or(
-                fb.Eq(x => x.RenderMode, VideoRenderMode.Remotion),
-                fb.Eq(x => x.RenderMode, string.Empty),
-                fb.Eq(x => x.RenderMode, (string)null!)  // 兼容 old docs 没有此字段
-            )
-        );
-        var update = Builders<VideoGenRun>.Update
-            .Set(x => x.Status, VideoGenRunStatus.Scripting)
-            .Set(x => x.StartedAt, DateTime.UtcNow)
-            .Set(x => x.CurrentPhase, "scripting");
-
-        var claimed = await _db.VideoGenRuns.FindOneAndUpdateAsync(filter, update,
-            new FindOneAndUpdateOptions<VideoGenRun> { ReturnDocument = ReturnDocument.After }, ct);
-        if (claimed != null)
-        {
-            _logger.LogInformation("[VideoGenWorker] Claimed Remotion run: runId={RunId}, renderMode={Mode}",
-                claimed.Id, claimed.RenderMode ?? "(null)");
-        }
-        return claimed;
-    }
-
     /// <summary>
-    /// 拾取 videogen 模式的 Queued 任务，直接交给 OpenRouter 处理
+    /// 拾取任意 Queued 任务（不区分模式），由调用方根据 RenderMode 派发到对应处理器。
+    /// 默认把 Status 设置为 Scripting（Remotion 路径）；若调用方检测是 videogen，
+    /// 会立即再把 Status 纠正为 Rendering 并启动直出流程。这样既保证原子 claim，
+    /// 又避免 MongoDB $eq null / 字段缺失 的语义歧义。
     /// </summary>
-    private async Task<VideoGenRun?> ClaimQueuedDirectVideoGenRunAsync(CancellationToken ct)
+    private async Task<VideoGenRun?> ClaimAnyQueuedRunAsync(CancellationToken ct)
     {
         var fb = Builders<VideoGenRun>.Filter;
-        var filter = fb.And(
-            fb.Eq(x => x.Status, VideoGenRunStatus.Queued),
-            fb.Eq(x => x.RenderMode, VideoRenderMode.VideoGen)
-        );
+        var filter = fb.Eq(x => x.Status, VideoGenRunStatus.Queued);
         var update = Builders<VideoGenRun>.Update
-            .Set(x => x.Status, VideoGenRunStatus.Rendering)
+            .Set(x => x.Status, VideoGenRunStatus.Scripting) // 临时；videogen 会立即覆盖
             .Set(x => x.StartedAt, DateTime.UtcNow)
-            .Set(x => x.CurrentPhase, "videogen-submitting")
-            .Set(x => x.PhaseProgress, 1);
+            .Set(x => x.CurrentPhase, "claiming");
 
-        var claimed = await _db.VideoGenRuns.FindOneAndUpdateAsync(filter, update,
+        return await _db.VideoGenRuns.FindOneAndUpdateAsync(filter, update,
             new FindOneAndUpdateOptions<VideoGenRun> { ReturnDocument = ReturnDocument.After }, ct);
-        if (claimed != null)
-        {
-            _logger.LogInformation("[VideoGenWorker] Claimed VideoGen run: runId={RunId}, model={Model}",
-                claimed.Id, claimed.DirectVideoModel);
-        }
-        return claimed;
     }
 
     private async Task<VideoGenRun?> ClaimRenderingRunAsync(CancellationToken ct)
