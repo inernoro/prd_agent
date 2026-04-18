@@ -19,6 +19,8 @@ import { combinedOutput } from '../types.js';
 import { topoSortLayers } from '../services/topo-sort.js';
 import { detectStack } from '../services/stack-detector.js';
 import { assertProjectAccess } from './projects.js';
+import { CheckRunRunner } from '../services/check-run-runner.js';
+import { GitHubAppClient } from '../services/github-app-client.js';
 
 /**
  * P4 Part 18 (hardening): pre-restart sanity check for self-update.
@@ -97,6 +99,12 @@ export interface RouterDeps {
    * Defaults to `least-load` if not provided.
    */
   getClusterStrategy?: () => 'least-branches' | 'least-load' | 'round-robin';
+  /**
+   * Optional GitHubAppClient — when provided, deploys post "CDS Deploy"
+   * check runs back to GitHub so the PR's Checks panel mirrors CDS's
+   * build status. Absent when CDS_GITHUB_APP_* env vars aren't set.
+   */
+  githubApp?: GitHubAppClient;
 }
 
 export function createBranchRouter(deps: RouterDeps): Router {
@@ -109,9 +117,16 @@ export function createBranchRouter(deps: RouterDeps): Router {
     schedulerService,
     registry,
     getClusterStrategy,
+    githubApp,
   } = deps;
 
   const router = Router();
+
+  const checkRunRunner = new CheckRunRunner({
+    stateService,
+    githubApp,
+    config,
+  });
 
   // ── Cluster dispatch helper ──
   //
@@ -1007,7 +1022,26 @@ export function createBranchRouter(deps: RouterDeps): Router {
         if (svc.errorMessage) svc.errorMessage = undefined;
       }
       entry.status = 'building';
+
+      // ── GitHub Checks integration ──
+      // If the branch was pushed by a webhook we stored the triggering
+      // commit SHA on it. When the deploy is triggered by the UI (no
+      // SHA yet) fall back to the current worktree HEAD so every deploy
+      // that links to a GitHub repo produces a check run.
+      if (entry.githubRepoFullName && !entry.githubCommitSha) {
+        try {
+          const sha = await shell.exec('git rev-parse HEAD', { cwd: entry.worktreePath });
+          if (sha.exitCode === 0) {
+            entry.githubCommitSha = sha.stdout.trim();
+          }
+        } catch {
+          /* non-fatal — check run just won't fire */
+        }
+      }
       stateService.save();
+      // Open an in-progress check run — best effort, errors logged not
+      // thrown (so GitHub connectivity issues don't block the deploy).
+      await checkRunRunner.ensureOpen(entry);
 
       // Pull latest code
       logEvent({ step: 'pull', status: 'running', title: '正在拉取最新代码...', timestamp: new Date().toISOString() });
@@ -1227,6 +1261,14 @@ export function createBranchRouter(deps: RouterDeps): Router {
         message: completeMsg,
         services: entry.services,
       });
+      // Finalize the GitHub check run (best-effort). `hasError` decides
+      // success vs failure; the preview URL surfaces in the check-run
+      // summary so GitHub's "Details" button jumps straight to preview.
+      await checkRunRunner.finalize(entry, {
+        conclusion: hasError ? 'failure' : 'success',
+        summary: completeMsg,
+        previewUrl: checkRunRunner.derivePreviewUrl(entry),
+      });
     } catch (err) {
       entry.status = 'error';
       entry.errorMessage = (err as Error).message;
@@ -1236,6 +1278,11 @@ export function createBranchRouter(deps: RouterDeps): Router {
       stateService.save();
       logDeploy(id, `部署失败: ${(err as Error).message}`);
       sendSSE(res, 'error', { message: (err as Error).message });
+      await checkRunRunner.finalize(entry, {
+        conclusion: 'failure',
+        summary: (err as Error).message || '部署失败',
+        previewUrl: checkRunRunner.derivePreviewUrl(entry),
+      });
     } finally {
       res.end();
     }

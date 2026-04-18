@@ -744,7 +744,19 @@ export class StateService {
   updateProject(
     id: string,
     updates: Partial<
-      Pick<Project, 'name' | 'description' | 'gitRepoUrl' | 'repoPath' | 'cloneStatus' | 'cloneError'>
+      Pick<
+        Project,
+        | 'name'
+        | 'description'
+        | 'gitRepoUrl'
+        | 'repoPath'
+        | 'cloneStatus'
+        | 'cloneError'
+        | 'githubRepoFullName'
+        | 'githubInstallationId'
+        | 'githubAutoDeploy'
+        | 'githubLinkedAt'
+      >
     >,
   ): void {
     if (!this.state.projects) return;
@@ -757,6 +769,46 @@ export class StateService {
       updatedAt: new Date().toISOString(),
     };
     this.save();
+  }
+
+  /**
+   * Find a project linked to the given GitHub repository (case-insensitive
+   * "owner/repo" match). Used by the webhook dispatcher when a `push` or
+   * `check_run` event arrives — the repo full_name is the only identifier
+   * GitHub gives us that stays stable across renames within an org.
+   *
+   * Returns undefined when no project is linked. A repo linked to multiple
+   * projects shouldn't happen in practice (the link endpoint refuses that),
+   * but this picks the first match defensively.
+   */
+  findProjectByRepoFullName(repoFullName: string): Project | undefined {
+    const needle = repoFullName.toLowerCase();
+    return (this.state.projects || []).find(
+      (p) => p.githubRepoFullName?.toLowerCase() === needle,
+    );
+  }
+
+  /**
+   * Patch the GitHub-related fields of a branch in-place. Separated from
+   * `updateBranchMeta` because those fields are orthogonal (user-facing
+   * vs system-managed) and we don't want a typo in the webhook handler
+   * to accidentally null out user notes.
+   */
+  updateBranchGithubMeta(
+    id: string,
+    updates: {
+      githubRepoFullName?: string;
+      githubCommitSha?: string;
+      githubCheckRunId?: number;
+      githubInstallationId?: number;
+    },
+  ): void {
+    const branch = this.state.branches[id];
+    if (!branch) return;
+    if (updates.githubRepoFullName !== undefined) branch.githubRepoFullName = updates.githubRepoFullName;
+    if (updates.githubCommitSha !== undefined) branch.githubCommitSha = updates.githubCommitSha;
+    if (updates.githubCheckRunId !== undefined) branch.githubCheckRunId = updates.githubCheckRunId;
+    if (updates.githubInstallationId !== undefined) branch.githubInstallationId = updates.githubInstallationId;
   }
 
   // ── Project-scoped Agent Keys ──
