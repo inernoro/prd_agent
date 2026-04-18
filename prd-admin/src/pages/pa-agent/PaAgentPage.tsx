@@ -1,5 +1,5 @@
-import { useState, useEffect } from 'react';
-import { MessageSquare, LayoutGrid } from 'lucide-react';
+import { useState, useEffect, useCallback } from 'react';
+import { MessageSquare, LayoutGrid, RefreshCw, AlertCircle } from 'lucide-react';
 import { getPaSession } from '@/services/real/paAgentService';
 import type { PaTask } from '@/services/real/paAgentService';
 import { PaAssistantChat } from './PaAssistantChat';
@@ -7,19 +7,34 @@ import { PaTaskBoard } from './PaTaskBoard';
 
 type Tab = 'chat' | 'board';
 
+function generateLocalSessionId(): string {
+  return `local-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
 export function PaAgentPage() {
   const [tab, setTab] = useState<Tab>('chat');
   const [sessionId, setSessionId] = useState<string | null>(null);
+  const [sessionError, setSessionError] = useState<string | null>(null);
   const [boardRefreshKey, setBoardRefreshKey] = useState(0);
 
-  useEffect(() => {
-    (async () => {
-      const res = await getPaSession();
-      if (res.success && res.data) {
-        setSessionId(res.data.sessionId);
-      }
-    })();
+  const initSession = useCallback(async () => {
+    setSessionError(null);
+    const res = await getPaSession();
+    if (res.success && res.data?.sessionId) {
+      setSessionId(res.data.sessionId);
+    } else {
+      // Fall back to a client-generated session ID so the chat UI is usable
+      // even if the session API is temporarily unavailable
+      const fallback = generateLocalSessionId();
+      setSessionId(fallback);
+      const errMsg = res.error?.message ?? '会话初始化失败，已使用临时会话';
+      setSessionError(errMsg);
+    }
   }, []);
+
+  useEffect(() => {
+    void initSession();
+  }, [initSession]);
 
   const handleTaskSaved = (_task: PaTask) => {
     setBoardRefreshKey(k => k + 1);
@@ -79,13 +94,39 @@ export function PaAgentPage() {
         </div>
       </div>
 
+      {/* Session error banner */}
+      {sessionError && (
+        <div
+          className="shrink-0 flex items-center gap-2 px-4 py-2 text-xs"
+          style={{
+            background: 'var(--color-yellow-950, #422006)',
+            color: 'var(--color-yellow-400, #facc15)',
+            borderBottom: '1px solid var(--border-default)',
+          }}
+        >
+          <AlertCircle size={13} className="shrink-0" />
+          <span className="flex-1">{sessionError}</span>
+          <button
+            onClick={() => void initSession()}
+            className="flex items-center gap-1 px-2 py-0.5 rounded whitespace-nowrap"
+            style={{ background: 'rgba(255,255,255,0.1)' }}
+          >
+            <RefreshCw size={11} />
+            重试
+          </button>
+        </div>
+      )}
+
       {/* Content */}
       <div className="flex-1 overflow-hidden">
         {tab === 'chat' ? (
           sessionId ? (
             <PaAssistantChat sessionId={sessionId} onTaskSaved={handleTaskSaved} />
           ) : (
-            <div className="flex items-center justify-center h-full">
+            <div className="flex flex-col items-center justify-center h-full gap-3">
+              <div className="w-5 h-5 border-2 border-t-transparent rounded-full animate-spin"
+                style={{ borderColor: 'var(--text-muted)', borderTopColor: 'transparent' }}
+              />
               <span className="text-sm" style={{ color: 'var(--text-muted)' }}>
                 初始化中...
               </span>
