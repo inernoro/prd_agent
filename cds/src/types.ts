@@ -531,6 +531,44 @@ export interface Project {
   createdAt: string;
   /** ISO timestamp of most recent mutation. */
   updatedAt: string;
+  /**
+   * Project-scoped Agent Keys. Each entry stores only the sha256 of
+   * the plaintext key so a leaked state.json can't be replayed; the
+   * plaintext is shown once at signing time and never again. The
+   * prefix of the plaintext key (`cdsp_<slugHead12>_<suffix>`) encodes
+   * the owning project so auth middleware can look up the owning
+   * project without the caller having to also send projectId.
+   *
+   * Absent for legacy projects / pre-feature state.json. See
+   * StateService.addAgentKey / findAgentKeyForAuth for the storage
+   * + auth contract.
+   */
+  agentKeys?: AgentKey[];
+}
+
+/**
+ * A project-scoped Agent Key. Plaintext is never persisted — only the
+ * sha256 hash. Scope is always 'rw' in the current implementation;
+ * kept as a field so a later read-only tier can slot in without a
+ * schema migration.
+ */
+export interface AgentKey {
+  /** Random 8-hex id, used for revocation by keyId. */
+  id: string;
+  /** Human-readable label, e.g. "签发于 2026-04-18 10:32" or user-supplied. */
+  label: string;
+  /** sha256 hex of the plaintext key (`cdsp_<slug>_<base64url suffix>`). */
+  hash: string;
+  /** Permission scope. Always 'rw' — a placeholder for future tiers. */
+  scope: 'rw';
+  /** ISO timestamp of sign time. */
+  createdAt: string;
+  /** GitHub login of the signer if github auth mode, else undefined. */
+  createdBy?: string;
+  /** ISO timestamp updated (best-effort) each time the key authenticates. */
+  lastUsedAt?: string;
+  /** ISO timestamp set by DELETE — revoked keys stay in state for audit. */
+  revokedAt?: string;
 }
 
 /**
