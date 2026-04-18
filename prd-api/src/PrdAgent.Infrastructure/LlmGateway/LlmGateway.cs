@@ -301,9 +301,11 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             {
                 var errorBody = await response.Content.ReadAsStringAsync(ct);
                 var errorMsg = TryExtractErrorMessage(errorBody) ?? $"HTTP {(int)response.StatusCode}";
-                yield return GatewayStreamChunk.Fail(errorMsg);
 
-                // 更新日志状态为失败
+                // 先落日志再 yield：caller 收到 Error chunk 后可能立刻 return 释放迭代器，
+                // 导致 yield 之后的代码永不执行。这样 MarkError 就会被跳过，日志滞留 running
+                // 直到 Watchdog 5 分钟后盖成 "TIMEOUT"——这正是"禁用 key 秒级返回但日志仍
+                // 显示 TIMEOUT"的罪魁祸首。
                 if (logId != null)
                 {
                     _logWriter?.MarkError(logId, errorMsg, (int)response.StatusCode);
@@ -313,6 +315,8 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                 {
                     await _modelResolver.RecordFailureAsync(resolution, ct);
                 }
+
+                yield return GatewayStreamChunk.Fail(errorMsg);
                 yield break;
             }
 
