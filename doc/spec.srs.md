@@ -35,8 +35,9 @@
   - `(platformId, modelId)` 作为业务唯一标识
 
 - **应用身份隔离** ✅ 新增：
-  - 每个应用通过 `appKey` 标识（`prd-agent`、`visual-agent`、`literary-agent`）
+  - 每个应用通过 `appKey` 标识。当前 8 个 appKey：`prd-agent`、`visual-agent`、`literary-agent`、`defect-agent`、`video-agent`、`report-agent`、`review-agent`、`pr-review`
   - Controller 层硬编码 appKey，不由前端传递
+  - 权威清单维护在 `.claude/rules/app-identity.md`，新增 Agent 时须同步更新
 
 - **新增功能模块** ✅ 已记录：
   - 视觉代理（VisualAgent）：替代原 ImageMaster

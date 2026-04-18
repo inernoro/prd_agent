@@ -3,7 +3,20 @@
 > **适用对象**：产品经理、业务负责人、首次在 PRD Agent 平台开发 Agent 的任何人
 > **阅读时间**：约 30 分钟
 > **前置要求**：能打开终端、能与 AI 对话即可
-> **最后更新**：2026-04-14（覆盖涌现探索器、产品评审员、PR 审查 V2、CLI 执行器分发架构等新增能力）
+> **最后更新**：2026-04-18（覆盖涌现探索器、产品评审员、PR 审查 V2、CLI 执行器分发架构、8 个 appKey 体系）
+
+## 和其他入门材料的关系
+
+| 你的诉求 | 去哪里 |
+|---------|--------|
+| **"我要亲手做一个 Agent"**（推荐起点） | 本文 ↓，或直接在终端敲 `/help` 启动陪伴式引导 |
+| 只想把代码跑起来、不涉及 Agent 开发 | [`README.md`](../README.md) → "Quick Start" |
+| 想 30 秒扫完"项目在讲什么" | [`README.md`](../README.md) 顶部 + [`.cursorrules`](../.cursorrules) |
+| 想知道产品愿景和方法论由来 | [`doc/spec.project-vision.md`](spec.project-vision.md)（"四味药" 故事） |
+| 想查当前平台有什么功能/集合/模式 | [`.claude/rules/codebase-snapshot.md`](../.claude/rules/codebase-snapshot.md) |
+| 想查 8 个 appKey 的权威清单 | [`.claude/rules/app-identity.md`](../.claude/rules/app-identity.md) |
+
+> **文档分工一句话**：`.cursorrules` 是给 AI / IDE 看的规则源；`README.md` 是给"运行者"看的入口；**本指南是给"创造者"看的旅程**；`codebase-snapshot.md` 是给"维护者"看的活地图。四份文件交叉引用，不重复内容。
 
 ---
 
