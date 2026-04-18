@@ -396,7 +396,9 @@ export function ToolDetail() {
 
   const IconComponent = getIconComponent(selectedItem.icon);
   const accentHue = getAccentHue(selectedItem.icon);
-  const isCustom = selectedItem.type === 'custom';
+  // 后端 ToolboxItem 可能未返回 type 字段，回退用 createdBy/createdByName 判定是否为用户自建
+  const isCustom =
+    selectedItem.type === 'custom' || !!selectedItem.createdBy || !!selectedItem.createdByName;
 
   // Get welcome message and starters from item (custom) or defaults (builtin)
   const welcomeMessage = selectedItem.welcomeMessage || getWelcomeText(selectedItem.agentKey);

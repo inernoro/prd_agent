@@ -359,8 +359,14 @@ export const useToolboxStore = create<ToolboxState>((set, get) => ({
     set({ itemsLoading: true });
     try {
       const res = await listToolboxItems();
-      const customItems = res.success && res.data ? res.data.items : [];
-      // 合并内置工具和自定义工具
+      const raw = res.success && res.data ? res.data.items : [];
+      // 后端 ToolboxItem 模型没有 type/category 字段，前端需要归一化
+      // 否则会被误判为"系统内置"，导致作者头像、编辑按钮等 custom-only UI 失效
+      const customItems = raw.map((it) => ({
+        ...it,
+        type: 'custom' as const,
+        category: 'custom' as const,
+      }));
       set({ items: [...BUILTIN_TOOLS, ...customItems] });
     } catch {
       // 即使API失败，也显示内置工具

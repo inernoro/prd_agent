@@ -76,10 +76,13 @@ export default function AiToolboxPage() {
     let result = items;
 
     // Filter by category
+    // 注：后端 ToolboxItem 可能没有 type 字段，用 createdBy/createdByName 作为兜底判定
+    const isUserCreated = (it: (typeof items)[number]) =>
+      it.type === 'custom' || !!it.createdBy || !!it.createdByName;
     if (category === 'builtin') {
-      result = result.filter((item) => item.type === 'builtin');
+      result = result.filter((item) => item.type === 'builtin' && !isUserCreated(item));
     } else if (category === 'custom') {
-      result = result.filter((item) => item.type === 'custom');
+      result = result.filter(isUserCreated);
     } else if (category === 'favorite') {
       result = result.filter((item) => favoriteIds.has(item.id));
     }
@@ -226,7 +229,7 @@ export default function AiToolboxPage() {
             )}
           </GlassCard>
         ) : (
-          <div className="grid gap-2" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))' }}>
+          <div className="grid gap-3" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))' }}>
             {filteredItems.map((item) => (
               <ToolCard key={item.id} item={item} source={isMarketplace ? 'marketplace' : 'mine'} />
             ))}

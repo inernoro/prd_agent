@@ -182,10 +182,16 @@ export function ToolCard({ item, source = 'mine' }: ToolCardProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
 
   const isMarketplaceCard = source === 'marketplace';
-  const isOwnCustomCard = source === 'mine' && item.type === 'custom';
+  // 双重判定：有 createdByUserId 也视为用户自建（兼容后端旧数据未返回 type 字段）
+  const isOwnCustomCard =
+    source === 'mine' && (item.type === 'custom' || !!item.createdBy || !!item.createdByName);
   /** 内置但非"定制版"（无独立路由页），可以被克隆为我的副本 */
   const isForkableBuiltin =
-    source === 'mine' && item.type === 'builtin' && !item.routePath && item.agentKey !== 'prd-agent';
+    source === 'mine' &&
+    item.type === 'builtin' &&
+    !isOwnCustomCard &&
+    !item.routePath &&
+    item.agentKey !== 'prd-agent';
 
   const handleFork = async () => {
     if (forking) return;
@@ -459,12 +465,12 @@ export function ToolCard({ item, source = 'mine' }: ToolCardProps) {
 
       {/* 底部信息区 */}
       <div
-        className="absolute bottom-0 left-0 right-0 px-2.5 pb-2 pt-1 z-20"
+        className="absolute bottom-0 left-0 right-0 px-3 pb-2.5 pt-1.5 z-20"
       >
         {/* 标题行 */}
-        <div className="flex items-center gap-1 mb-0.5">
+        <div className="flex items-center gap-1 mb-1">
           <div
-            className="font-semibold text-[11px] truncate flex-1"
+            className="font-semibold text-[13px] truncate flex-1"
             style={{
               color: '#ffffff',
               textShadow: '0 1px 4px rgba(0,0,0,0.8)',
@@ -473,7 +479,7 @@ export function ToolCard({ item, source = 'mine' }: ToolCardProps) {
             {item.name}
           </div>
           <ArrowUpRight
-            size={11}
+            size={13}
             className="shrink-0 opacity-0 group-hover:opacity-100 transition-all duration-300 group-hover:translate-x-0.5 group-hover:-translate-y-0.5"
             style={{ color: palette.soft }}
           />
@@ -481,9 +487,9 @@ export function ToolCard({ item, source = 'mine' }: ToolCardProps) {
 
         {/* 描述 */}
         <div
-          className="text-[9px] line-clamp-2 leading-snug mb-1.5 transition-colors duration-300 group-hover:text-white/85"
+          className="text-[11px] line-clamp-2 leading-snug mb-2 transition-colors duration-300 group-hover:text-white/85"
           style={{
-            color: 'rgba(255, 255, 255, 0.55)',
+            color: 'rgba(255, 255, 255, 0.6)',
             textShadow: '0 1px 4px rgba(0,0,0,0.8)',
             minHeight: '2em',
           }}
@@ -493,11 +499,11 @@ export function ToolCard({ item, source = 'mine' }: ToolCardProps) {
 
         {/* Tags */}
         {item.tags.length > 0 && (
-          <div className="flex flex-wrap gap-1 mb-1.5">
+          <div className="flex flex-wrap gap-1 mb-2">
             {item.tags.slice(0, 2).map((tag) => (
               <span
                 key={tag}
-                className="text-[8px] px-1.5 py-px rounded backdrop-blur-md transition-colors duration-300"
+                className="text-[10px] px-1.5 py-0.5 rounded backdrop-blur-md transition-colors duration-300"
                 style={{
                   background: 'rgba(255, 255, 255, 0.05)',
                   color: 'rgba(255, 255, 255, 0.7)',
@@ -508,7 +514,7 @@ export function ToolCard({ item, source = 'mine' }: ToolCardProps) {
               </span>
             ))}
             {item.tags.length > 2 && (
-              <span className="text-[8px] px-0.5 font-medium" style={{ color: 'rgba(255, 255, 255, 0.4)' }}>
+              <span className="text-[10px] px-0.5 font-medium" style={{ color: 'rgba(255, 255, 255, 0.4)' }}>
                 +{item.tags.length - 2}
               </span>
             )}
@@ -520,13 +526,13 @@ export function ToolCard({ item, source = 'mine' }: ToolCardProps) {
           className="flex items-center justify-between gap-1 pt-1.5"
           style={{ borderTop: '1px solid rgba(255, 255, 255, 0.08)' }}
         >
-          {item.type === 'custom' ? (
+          {item.type === 'custom' || !!item.createdBy || !!item.createdByName ? (
             <>
               {/* 作者头像 + 名字 + 徽章（已公开 / 施工中） */}
               <div className="flex items-center gap-1 min-w-0">
                 {item.wip && (
                   <span
-                    className="shrink-0 text-[8px] px-1.5 py-0.5 rounded font-medium inline-flex items-center gap-1"
+                    className="shrink-0 text-[10px] px-1.5 py-0.5 rounded font-medium inline-flex items-center gap-1"
                     style={{
                       background: 'rgba(245, 158, 11, 0.18)',
                       color: '#fcd34d',
@@ -534,13 +540,13 @@ export function ToolCard({ item, source = 'mine' }: ToolCardProps) {
                     }}
                     title="未正式发布"
                   >
-                    <HardHat size={8} />
+                    <HardHat size={10} />
                     施工中
                   </span>
                 )}
                 {item.isPublic && !isMarketplaceCard && (
                   <span
-                    className="shrink-0 text-[8px] px-1.5 py-0.5 rounded font-medium inline-flex items-center gap-1"
+                    className="shrink-0 text-[10px] px-1.5 py-0.5 rounded font-medium inline-flex items-center gap-1"
                     style={{
                       background: 'rgba(16, 185, 129, 0.18)',
                       color: '#6ee7b7',
@@ -548,21 +554,22 @@ export function ToolCard({ item, source = 'mine' }: ToolCardProps) {
                     }}
                     title="已公开到市场，他人可 Fork"
                   >
-                    <Globe2 size={8} />
+                    <Globe2 size={10} />
                     已公开
                   </span>
                 )}
                 <div
-                  className="w-3.5 h-3.5 rounded-full shrink-0 flex items-center justify-center text-[7px] font-bold"
+                  className="w-4 h-4 rounded-full shrink-0 flex items-center justify-center text-[9px] font-bold"
                   style={{
                     background: `linear-gradient(135deg, ${palette.from}, ${palette.soft})`,
                     color: 'rgba(0, 0, 0, 0.7)',
                   }}
+                  title={item.createdByName || ''}
                 >
                   {(item.createdByName || '?')[0]}
                 </div>
                 <span
-                  className="text-[8px] truncate"
+                  className="text-[10px] truncate"
                   style={{ color: 'rgba(255, 255, 255, 0.5)' }}
                 >
                   {item.createdByName || '未知'}
@@ -574,11 +581,11 @@ export function ToolCard({ item, source = 'mine' }: ToolCardProps) {
                   <>
                     {(item.forkCount ?? 0) > 0 && (
                       <span
-                        className="flex items-center gap-0.5 text-[8px]"
+                        className="flex items-center gap-0.5 text-[10px]"
                         style={{ color: 'rgba(255, 255, 255, 0.5)' }}
                         title="被 Fork 次数"
                       >
-                        <GitFork size={8} style={{ color: palette.soft }} />
+                        <GitFork size={10} style={{ color: palette.soft }} />
                         {item.forkCount}
                       </span>
                     )}
@@ -588,7 +595,7 @@ export function ToolCard({ item, source = 'mine' }: ToolCardProps) {
                         void handleFork();
                       }}
                       disabled={forking}
-                      className="flex items-center gap-0.5 text-[8px] px-1.5 py-0.5 rounded font-medium transition-all duration-300 hover:scale-105 disabled:opacity-50"
+                      className="flex items-center gap-0.5 text-[10px] px-1.5 py-0.5 rounded font-medium transition-all duration-300 hover:scale-105 disabled:opacity-50"
                       style={{
                         background: `${palette.from}25`,
                         color: palette.soft,
@@ -596,7 +603,7 @@ export function ToolCard({ item, source = 'mine' }: ToolCardProps) {
                       }}
                       title="复制到我的百宝箱"
                     >
-                      <GitFork size={9} />
+                      <GitFork size={11} />
                       {forking ? 'Fork 中…' : 'Fork'}
                     </button>
                   </>
@@ -604,10 +611,10 @@ export function ToolCard({ item, source = 'mine' }: ToolCardProps) {
                   <>
                     {item.usageCount > 0 && (
                       <span
-                        className="flex items-center gap-0.5 text-[8px]"
+                        className="flex items-center gap-0.5 text-[10px]"
                         style={{ color: 'rgba(255, 255, 255, 0.45)' }}
                       >
-                        <Zap size={8} style={{ color: palette.soft }} />
+                        <Zap size={10} style={{ color: palette.soft }} />
                         {item.usageCount >= 1000 ? `${(item.usageCount / 1000).toFixed(1)}k` : item.usageCount}
                       </span>
                     )}
@@ -617,7 +624,7 @@ export function ToolCard({ item, source = 'mine' }: ToolCardProps) {
                       title={favorited ? '取消收藏' : '收藏'}
                     >
                       <Star
-                        size={10}
+                        size={12}
                         fill={favorited ? '#FBBF24' : 'none'}
                         style={{
                           color: favorited ? '#FBBF24' : 'rgba(255, 255, 255, 0.25)',
@@ -635,7 +642,7 @@ export function ToolCard({ item, source = 'mine' }: ToolCardProps) {
               <div className="flex items-center gap-1 min-w-0">
                 {item.wip && (
                   <span
-                    className="shrink-0 text-[8px] px-1.5 py-0.5 rounded font-medium inline-flex items-center gap-1"
+                    className="shrink-0 text-[10px] px-1.5 py-0.5 rounded font-medium inline-flex items-center gap-1"
                     style={{
                       background: 'rgba(245, 158, 11, 0.18)',
                       color: '#fcd34d',
@@ -643,12 +650,12 @@ export function ToolCard({ item, source = 'mine' }: ToolCardProps) {
                     }}
                     title="未正式发布"
                   >
-                    <HardHat size={8} />
+                    <HardHat size={10} />
                     施工中
                   </span>
                 )}
                 <span
-                  className="text-[8px] px-1.5 py-0.5 rounded font-medium inline-flex items-center gap-1"
+                  className="text-[10px] px-1.5 py-0.5 rounded font-medium inline-flex items-center gap-1"
                   style={{
                     background: isCustomized ? `${palette.from}25` : 'transparent',
                     color: isCustomized ? palette.soft : 'rgba(255, 255, 255, 0.4)',
@@ -657,7 +664,7 @@ export function ToolCard({ item, source = 'mine' }: ToolCardProps) {
                 >
                   {isCustomized ? (
                     <>
-                      <Sparkles size={8} />
+                      <Sparkles size={10} />
                       定制版
                     </>
                   ) : '系统内置'}
