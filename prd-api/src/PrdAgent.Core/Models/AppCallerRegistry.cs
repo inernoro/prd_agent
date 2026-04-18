@@ -1054,6 +1054,23 @@ public static class SkillAgent
         public const string GenerateReadme = "skill-agent.export.readme::chat";
     }
 }
+
+/// <summary>
+/// PA Agent 私人执行助理
+/// </summary>
+public static class PaAgent
+{
+    public static class Chat
+    {
+        [AppCallerMetadata(
+            "私人助理-对话",
+            "MBB 级执行助理：MECE 任务拆解、四象限排序、执行建议",
+            ModelTypes = new[] { ModelTypes.Chat },
+            Category = "Assistant"
+        )]
+        public const string Conversation = "pa-agent.chat::chat";
+    }
+}
 }
 
 /// <summary>
