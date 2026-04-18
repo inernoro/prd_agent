@@ -1,6 +1,17 @@
 namespace PrdAgent.Core.Models;
 
 /// <summary>
+/// 视频渲染模式
+/// - "remotion"（默认）：走现有分镜 → Remotion 合成的完整流程
+/// - "videogen"：跳过分镜，直接走外部视频大模型（如 OpenRouter Seedance/Wan/Veo）
+/// </summary>
+public static class VideoRenderMode
+{
+    public const string Remotion = "remotion";
+    public const string VideoGen = "videogen";
+}
+
+/// <summary>
 /// 视频生成任务状态
 /// </summary>
 public static class VideoGenRunStatus
@@ -92,6 +103,32 @@ public class VideoGenRun
     public bool CancelRequested { get; set; }
     public string? ErrorCode { get; set; }
     public string? ErrorMessage { get; set; }
+
+    // ─── 渲染模式切换（2026-04 新增：支持直接走视频大模型） ───
+
+    /// <summary>渲染模式：remotion（默认，分镜 + Remotion 合成）或 videogen（直接调 OpenRouter 视频模型）</summary>
+    public string RenderMode { get; set; } = VideoRenderMode.Remotion;
+
+    /// <summary>videogen 模式下的用户 prompt（取代 ArticleMarkdown）</summary>
+    public string? DirectPrompt { get; set; }
+
+    /// <summary>videogen 模式下选择的模型 id（如 alibaba/wan-2.6、bytedance/seedance-2.0）</summary>
+    public string? DirectVideoModel { get; set; }
+
+    /// <summary>videogen 模式下的宽高比：16:9 / 9:16 / 1:1 等</summary>
+    public string? DirectAspectRatio { get; set; }
+
+    /// <summary>videogen 模式下的时长（秒）</summary>
+    public int? DirectDuration { get; set; }
+
+    /// <summary>videogen 模式下的分辨率：480p/720p/1080p 等</summary>
+    public string? DirectResolution { get; set; }
+
+    /// <summary>OpenRouter 返回的 job id（用于轮询状态）</summary>
+    public string? DirectVideoJobId { get; set; }
+
+    /// <summary>videogen 任务生成成本（美元）</summary>
+    public double? DirectVideoCost { get; set; }
 }
 
 /// <summary>
@@ -172,6 +209,26 @@ public class CreateVideoGenRunRequest
 
     /// <summary>TTS 声音 ID</summary>
     public string? VoiceId { get; set; }
+
+    // ─── 渲染模式切换（2026-04 新增：videogen 直出） ───
+
+    /// <summary>渲染模式：remotion（默认）或 videogen（直接调外部视频模型）</summary>
+    public string? RenderMode { get; set; }
+
+    /// <summary>videogen 模式专用：用户 prompt</summary>
+    public string? DirectPrompt { get; set; }
+
+    /// <summary>videogen 模式专用：模型 id（默认 alibaba/wan-2.6，按秒计费最便宜）</summary>
+    public string? DirectVideoModel { get; set; }
+
+    /// <summary>videogen 模式专用：宽高比（16:9/9:16/1:1，默认 16:9）</summary>
+    public string? DirectAspectRatio { get; set; }
+
+    /// <summary>videogen 模式专用：时长（秒，默认 5）</summary>
+    public int? DirectDuration { get; set; }
+
+    /// <summary>videogen 模式专用：分辨率（720p/1080p，默认 720p）</summary>
+    public string? DirectResolution { get; set; }
 }
 
 /// <summary>

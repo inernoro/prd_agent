@@ -169,6 +169,10 @@ builder.Services.AddSingleton<WatermarkRenderer>();
 // 视频生成领域服务（供 Controller + 工作流胶囊复用）
 builder.Services.AddScoped<PrdAgent.Core.Interfaces.IVideoGenService, PrdAgent.Infrastructure.Services.VideoGenService>();
 
+// OpenRouter 视频生成客户端（Seedance / Wan / Veo / Sora 统一入口，异步 submit + poll）
+// 走 ILlmGateway.SendRawAsync，API Key 由平台管理提供，不依赖环境变量
+builder.Services.AddScoped<PrdAgent.Core.Interfaces.IOpenRouterVideoClient, PrdAgent.Infrastructure.Services.OpenRouterVideoClient>();
+
 // Account Data Transfer 数据分享
 builder.Services.AddScoped<PrdAgent.Infrastructure.Services.WorkspaceCloneService>();
 // 资产披露 Provider（IAssetProvider 被动注册 — 新模块只需实现接口并在此注册）

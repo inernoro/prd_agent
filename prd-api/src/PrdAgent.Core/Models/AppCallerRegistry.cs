@@ -618,6 +618,21 @@ public static class VideoAgent
         public const string Text2Img = "video-agent.image.text2img::generation";
     }
 
+    /// <summary>
+    /// 视频直出生成（OpenRouter 统一视频 API：Sora 2 / Veo 3.1 / Seedance / Wan 等）
+    /// 跳过分镜流程，直接把 prompt 交给视频大模型生成 MP4
+    /// </summary>
+    public static class VideoGen
+    {
+        [AppCallerMetadata(
+            "视频直出",
+            "直接调用视频大模型（Wan / Seedance / Veo / Sora）从 prompt 生成 MP4",
+            ModelTypes = new[] { ModelTypes.VideoGen },
+            Category = "Video"
+        )]
+        public const string Generate = "video-agent.videogen::video-gen";
+    }
+
     public static class Audio
     {
         [AppCallerMetadata(

@@ -170,6 +170,16 @@ export function isTextToImageModel(model: CherryModelInput): boolean {
   return TEXT_TO_IMAGE_REGEX.test(modelId);
 }
 
+// 视频生成模型（2026-04 OpenRouter 上架清单 + 常见竞品关键词）
+// 包含 Sora / Veo / Seedance / Wan / Kling / Runway / Pika 等
+const VIDEO_GEN_REGEX = /\b(sora|veo|seedance|wan-\d|kling|runway|pika|hailuo|mochi|cogvideo|hunyuan.?video|videocraft)\b|video-gen|text-to-video|i2v|t2v/i;
+
+export function isVideoGenModel(model: CherryModelInput): boolean {
+  const modelId = getLowerBaseModelName(model.id);
+  const name = (model.name || '').toLowerCase();
+  return VIDEO_GEN_REGEX.test(modelId) || VIDEO_GEN_REGEX.test(name);
+}
+
 export function isVisionModel(model: CherryModelInput): boolean {
   if (!model || isEmbeddingModel(model) || isRerankModel(model)) return false;
   const ov = pickOverride(model, 'vision');
@@ -533,7 +543,7 @@ export function isWebSearchModel(model: CherryModelInput): boolean {
 // public: tags + tab filtering
 // -----------------------------
 
-export type CherryModelTagKey = 'reasoning' | 'vision' | 'websearch' | 'function_calling' | 'embedding' | 'rerank' | 'free';
+export type CherryModelTagKey = 'reasoning' | 'vision' | 'websearch' | 'function_calling' | 'embedding' | 'rerank' | 'free' | 'video_generation';
 
 export function isFreeModel(model: CherryModelInput): boolean {
   const pid = normProviderId(model.providerId);
@@ -547,16 +557,18 @@ export function getCherryPresetTags(model: CherryModelInput): CherryModelTagKey[
   if (isEmbeddingModel(model)) out.push('embedding');
   if (isReasoningModel(model)) out.push('reasoning');
   if (isFunctionCallingModel(model)) out.push('function_calling');
+  if (isVideoGenModel(model)) out.push('video_generation');
   if (isWebSearchModel(model)) out.push('websearch');
   if (isRerankModel(model)) out.push('rerank');
   if (isFreeModel(model)) out.push('free');
   return out;
 }
 
-export type CherryAvailableTab = 'all' | 'reasoning' | 'vision' | 'web' | 'free' | 'embedding' | 'rerank' | 'tools';
+export type CherryAvailableTab = 'all' | 'reasoning' | 'vision' | 'web' | 'free' | 'embedding' | 'rerank' | 'tools' | 'video';
 
 export function matchCherryAvailableTab(tab: CherryAvailableTab, model: CherryModelInput): boolean {
   if (tab === 'all') return true;
+  if (tab === 'video') return isVideoGenModel(model);
   if (tab === 'vision') return isVisionModel(model);
   if (tab === 'embedding') return isEmbeddingModel(model);
   if (tab === 'rerank') return isRerankModel(model);
