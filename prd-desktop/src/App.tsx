@@ -19,7 +19,6 @@ import AssetsDiagPage from './components/Assets/AssetsDiagPage';
 import DefectListPage from './components/Defect/DefectListPage';
 import StartLoadOverlay from './components/Assets/StartLoadOverlay';
 import { isSystemErrorCode } from './lib/systemError';
-import { useConnectionStore } from './stores/connectionStore';
 import { useDesktopBrandingStore } from './stores/desktopBrandingStore';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import type { ApiResponse, UserRole } from './types';
