@@ -18,7 +18,7 @@
 - **对话链路**：引入 Run/Worker 闭环模式，支持断线重连（`afterSeq`/`Last-Event-ID`）、取消
 - **模型配置**：从"Provider + Model"演进为"Platform + Model"（`platformId + modelId` 唯一标识）
 - **管理后台扩展**：新增群组管理、提示词阶段管理、权限矩阵、水印系统、速率限制、视觉代理、文学代理、AI 对话、数据管理、实验室等模块
-- **应用身份隔离**：通过 `appKey` 实现（`prd-agent`、`visual-agent`、`literary-agent`）
+- **应用身份隔离**：通过 `appKey` 实现，当前 8 个 appKey（`prd-agent`、`visual-agent`、`literary-agent`、`defect-agent`、`video-agent`、`report-agent`、`review-agent`、`pr-review`），权威清单见 `.claude/rules/app-identity.md`
 - **主题系统**：液态玻璃主题、用户自定义主题
 - **桌面端增强**：自动更新、品牌配置、本地偏好设置
 

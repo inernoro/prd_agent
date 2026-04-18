@@ -1,6 +1,18 @@
 # PRD Agent
 
-> Full-stack AI workspace with six specialized agents, an LLM gateway, and a configuration marketplace.
+> Full-stack AI workspace — **8 specialized agents** behind an LLM gateway, a configuration marketplace, and a CDS branch-preview platform. Vision: **"文档即共识"** — ship AI so teams stop re-narrating PRDs.
+
+## New here? Start in this order
+
+| Step | Read | Why |
+|------|------|-----|
+| 1 | This README → "Quick Start" | One `docker compose` command gets the stack running |
+| 2 | [`CLAUDE.md`](CLAUDE.md) | Mandatory rules (pnpm only, changelog fragments, LLM visibility) + 8 hard conventions every AI/human follows |
+| 3 | [`doc/spec.project-vision.md`](doc/spec.project-vision.md) | Why this project exists — the "four-dose prescription" story and why specialized agents beat a generic RAG |
+| 4 | [`.claude/rules/codebase-snapshot.md`](.claude/rules/codebase-snapshot.md) | Live feature registry, 115 MongoDB collections, architecture patterns in one page |
+| 5 | Pick an agent below → its own `design.*.md` in `doc/` | Deep-dive into the one you'll work on |
+
+Skim [`.cursorrules`](.cursorrules) for the top-level AI rules and deprecated concepts you should avoid.
 
 ---
 
@@ -79,7 +91,11 @@ See each sub-directory's `CLAUDE.md` for module-specific build commands.
 | **Defect Agent** | Issue tracking and defect management — project-scoped templates, escalation workflows, webhook notifications, timeout reminders, and statistics dashboard |
 | **Video Agent** | Article-to-video tutorial generation powered by Remotion 4.0 — scene composition, animated text, particle effects, SVG path drawing, and transitions |
 | **Report Agent** | Weekly report management — team structure, daily logs, data source integration, AI-assisted summaries, and review workflows |
+| **Review Agent** | Product review bot — dimension-scored evaluation of submissions, webhook-driven feedback loops, reviewer routing |
+| **PR Review** | GitHub PR review workbench — per-user OAuth Device Flow, PR snapshots, reviewer notes, CI-aware triage |
 | **Workflow Agent** | Visual workflow builder — drag-and-drop capsules, scheduled execution, secret management, and video generation integration |
+
+> **Current appKeys (8)**: `prd-agent`, `visual-agent`, `literary-agent`, `defect-agent`, `video-agent`, `report-agent`, `review-agent`, `pr-review`. Authoritative list: [`.claude/rules/app-identity.md`](.claude/rules/app-identity.md).
 
 #### Workflow Agent Template Update: TAPD Defect Collection & Analysis
 
