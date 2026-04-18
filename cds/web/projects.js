@@ -447,6 +447,67 @@ window.cdsDoLogout = cdsDoLogout;
     return new Date(iso).toLocaleDateString();
   }
 
+  // ── Roll-up stats strip ─────────────────────────────────────────
+  //
+  // Reads {branchCount, runningBranchCount, runningServiceCount,
+  // lastDeployedAt} from the /api/projects summary (see routes/projects.ts
+  // ProjectStats). Renders three pill-shaped chips:
+  //   • N 分支   — total branches in this project
+  //   • M 运行中 — live if any service is running (green pulse dot)
+  //   • 最近部署 X — lastAccessedAt of most-recently-deployed branch
+  // Returns empty string when the project has no stats (e.g. freshly
+  // created from the legacy fallback path) so the layout collapses.
+  function renderStatsStrip(project) {
+    var bc = typeof project.branchCount === 'number' ? project.branchCount : null;
+    if (bc === null) return '';
+    var rsc = project.runningServiceCount || 0;
+    var runningClass = rsc > 0 ? 'cds-stat cds-stat-running' : 'cds-stat cds-stat-idle';
+    var dotClass = rsc > 0 ? 'live-dot pulsing' : 'live-dot';
+    var lastLabel = project.lastDeployedAt
+      ? '最近部署 ' + formatRelative(project.lastDeployedAt)
+      : '尚未部署';
+    return [
+      '<div class="cds-card-stats">',
+      '  <span class="cds-stat" title="分支总数">',
+      '    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">',
+      '      <line x1="6" y1="3" x2="6" y2="15"/>',
+      '      <circle cx="18" cy="6" r="3"/>',
+      '      <circle cx="6" cy="18" r="3"/>',
+      '      <path d="M18 9a9 9 0 0 1-9 9"/>',
+      '    </svg>',
+      '    <strong>' + bc + '</strong> 分支',
+      '  </span>',
+      '  <span class="' + runningClass + '" title="运行中的服务数量">',
+      '    <span class="' + dotClass + '"></span>',
+      '    <strong>' + rsc + '</strong> 运行中',
+      '  </span>',
+      '  <span class="cds-stat" title="最近一次部署时间">',
+      '    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">',
+      '      <circle cx="12" cy="12" r="9"/>',
+      '      <polyline points="12 7 12 12 15 14"/>',
+      '    </svg>',
+      '    ' + escapeHtml(lastLabel),
+      '  </span>',
+      '</div>',
+    ].join('');
+  }
+
+  // Clear "→ 进入分支" affordance. The whole card is already a link
+  // so this is purely visual reinforcement — many users miss that the
+  // card is clickable when the only thing in the foot is a service
+  // count. Slides right on hover (see .cds-project-card:hover rule).
+  function renderEnterCta() {
+    return [
+      '<span class="cds-enter-cta">',
+      '  进入分支',
+      '  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">',
+      '    <line x1="5" y1="12" x2="19" y2="12"/>',
+      '    <polyline points="12 5 19 12 12 19"/>',
+      '  </svg>',
+      '</span>',
+    ].join('');
+  }
+
   function renderServiceStrip(project, services) {
     // services: { profiles: [...], infra: [...] }
     // We union them, dedupe by icon key, show up to 4 tiles and a "+N"
@@ -611,6 +672,12 @@ window.cdsDoLogout = cdsDoLogout;
       ? progressBar
       : '<div class="cds-service-strip">' + renderServiceStrip(project, services || {}) + '</div>';
 
+    // Per-project rollup stats (branches / running / last deploy).
+    // Hidden while the project is mid-clone because the numbers are all
+    // zero until the first deploy lands, which just looks noisy.
+    var statsStrip = progressBar ? '' : renderStatsStrip(project);
+    var enterCta = progressBar ? '' : renderEnterCta();
+
     // Wrap in a div so the delete button can sit OUTSIDE the <a> tag.
     // <button> inside <a> is invalid HTML — click events on the button
     // bubble to the <a> in some browsers and navigate instead of deleting.
@@ -623,10 +690,14 @@ window.cdsDoLogout = cdsDoLogout;
       '    </div>',
       '    ', bodyHtml,
       errorBlock,
+      '    ', statsStrip,
       '    <div class="cds-project-card-foot">',
-      '      <span class="cds-env-dot">', envLabel, '</span>',
-      '      <span class="cds-service-count"><strong>', totalServices, '</strong> service', totalServices === 1 ? '' : 's', '</span>',
+      '      <span style="display:inline-flex;align-items:center;gap:10px">',
+      '        <span class="cds-env-dot">', envLabel, '</span>',
+      '        <span class="cds-service-count"><strong>', totalServices, '</strong> service', totalServices === 1 ? '' : 's', '</span>',
       cloneBtn ? '<span style="flex-shrink:0">' + cloneBtn + '</span>' : '',
+      '      </span>',
+      '      ', enterCta,
       '    </div>',
       '  </a>',
       '  ', agentKeyBtn,

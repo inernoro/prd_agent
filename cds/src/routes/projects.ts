@@ -246,25 +246,67 @@ export function assertProjectAccess(
   };
 }
 
-interface ProjectSummary extends Project {
+/**
+ * Roll-up runtime stats rendered on the project list card so the user
+ * can tell at a glance whether a project is alive without clicking in.
+ *
+ * - branchCount: total branches in the project (including cold / error)
+ * - runningBranchCount: branches with at least one running service
+ * - runningServiceCount: sum of services in `running` state across branches
+ * - lastDeployedAt: max(lastAccessedAt) across branches; BranchEntry
+ *   updates lastAccessedAt on deploy completion (branches.ts:1210/1366),
+ *   so this is a good "latest deploy" proxy. null when no branch ever
+ *   deployed. Cached values from state.json — not a live docker check.
+ */
+interface ProjectStats {
   branchCount: number;
+  runningBranchCount: number;
+  runningServiceCount: number;
+  lastDeployedAt: string | null;
 }
 
-function toSummary(project: Project, branchCount: number): ProjectSummary {
-  return { ...project, branchCount };
+const EMPTY_STATS: ProjectStats = {
+  branchCount: 0,
+  runningBranchCount: 0,
+  runningServiceCount: 0,
+  lastDeployedAt: null,
+};
+
+interface ProjectSummary extends Project, ProjectStats {}
+
+function toSummary(project: Project, stats: ProjectStats): ProjectSummary {
+  return { ...project, ...stats };
 }
 
 export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
   const router = Router();
   const { stateService, shell, config } = deps;
 
-  function countBranchesFor(project: Project): number {
+  function statsFor(project: Project): ProjectStats {
     // P4 Part 17 (G9 fix): use the project-scoped helper so non-legacy
     // projects show their real branch count instead of always 0. The
     // helper treats branches without a projectId as belonging to the
     // legacy 'default' project, which preserves the pre-P4 rollup
     // behaviour for the legacy project.
-    return stateService.getBranchesForProject(project.id).length;
+    const branches = stateService.getBranchesForProject(project.id);
+    let runningBranchCount = 0;
+    let runningServiceCount = 0;
+    let lastDeployedAt: string | null = null;
+    for (const b of branches) {
+      const services = Object.values(b.services || {});
+      const runningHere = services.filter((s) => s.status === 'running').length;
+      if (runningHere > 0) runningBranchCount++;
+      runningServiceCount += runningHere;
+      if (b.lastAccessedAt && (!lastDeployedAt || b.lastAccessedAt > lastDeployedAt)) {
+        lastDeployedAt = b.lastAccessedAt;
+      }
+    }
+    return {
+      branchCount: branches.length,
+      runningBranchCount,
+      runningServiceCount,
+      lastDeployedAt,
+    };
   }
 
   /**
@@ -304,7 +346,7 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
   // GET /api/projects — list all projects.
   //
   // Wrapped in try/catch so an unexpected exception inside
-  // countBranchesFor (e.g. a malformed branch entry in state.json)
+  // statsFor (e.g. a malformed branch entry in state.json)
   // surfaces a clear 500 with diagnostics instead of bubbling out as
   // an opaque Express default response. Without this, the dashboard
   // showed the unhelpful "加载项目列表失败：HTTP 400" with no clue
@@ -312,7 +354,21 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
   router.get('/projects', (_req, res) => {
     try {
       const projects = stateService.getProjects();
-      const summaries = projects.map((p) => toSummary(p, countBranchesFor(p)));
+      const summaries = projects.map((p) => toSummary(p, statsFor(p)));
+      // Sort: legacy pinned first (existing UX), then by runtime liveness
+      // so projects with running services bubble up — useful once you
+      // have many projects and only a few are active.
+      summaries.sort((a, b) => {
+        if (a.legacyFlag && !b.legacyFlag) return -1;
+        if (!a.legacyFlag && b.legacyFlag) return 1;
+        if (a.runningServiceCount !== b.runningServiceCount) {
+          return b.runningServiceCount - a.runningServiceCount;
+        }
+        const at = a.lastDeployedAt || '';
+        const bt = b.lastDeployedAt || '';
+        if (at !== bt) return bt.localeCompare(at);
+        return 0;
+      });
       res.json({ projects: summaries, total: summaries.length });
     } catch (err) {
       const msg = (err as Error)?.message || String(err);
@@ -335,7 +391,7 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
       });
       return;
     }
-    res.json(toSummary(project, countBranchesFor(project)));
+    res.json(toSummary(project, statsFor(project)));
   });
 
   // POST /api/projects — real creation (P4 Part 2).
@@ -498,7 +554,7 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
     }
 
     res.status(201).json({
-      project: toSummary(newProject, 0),
+      project: toSummary(newProject, EMPTY_STATS),
       // Surface the auto-suffix so the frontend can show a friendly
       // toast like "已自动调整 slug 为 prd-agent-2 (原 slug 已被占用)".
       slugAutoAdjusted: slugAutoAdjusted ? { from: baseSlug, to: slug } : undefined,
@@ -570,7 +626,7 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
     }
 
     const updated = stateService.getProject(project.id)!;
-    res.json({ project: toSummary(updated, countBranchesFor(updated)) });
+    res.json({ project: toSummary(updated, statsFor(updated)) });
   });
 
   // POST /api/projects/:id/clone — run the async git clone (P4 Part 18 G1.3).

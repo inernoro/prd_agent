@@ -212,6 +212,84 @@ describe('Projects router (P4 Part 2)', () => {
       expect(byId[LEGACY_PROJECT_ID].branchCount).toBe(1);
       expect(byId.alt.branchCount).toBe(2);
     });
+
+    // Project card UX (2026-04-18): summary also reports running-service
+    // count + most-recent lastAccessedAt so the card can show a "live"
+    // dot and "最近部署 X 前" without an extra /api/branches round trip.
+    it('rolls up runningServiceCount and lastDeployedAt for the card stats strip', async () => {
+      stateService.addProject({
+        id: 'live',
+        slug: 'live-proj',
+        name: 'Live Project',
+        kind: 'git',
+        dockerNetwork: 'cds-proj-live',
+        legacyFlag: false,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      });
+
+      const older = new Date(Date.now() - 3600_000).toISOString(); // 1h ago
+      const newer = new Date(Date.now() - 60_000).toISOString();   // 1m ago
+
+      // Branch A: 2 running services, older lastAccessedAt
+      stateService.addBranch({
+        id: 'br-a',
+        branch: 'feat/a',
+        projectId: 'live',
+        worktreePath: '/tmp/a',
+        status: 'running',
+        services: {
+          api: { profileId: 'api', containerName: 'c1', hostPort: 10001, status: 'running' },
+          web: { profileId: 'web', containerName: 'c2', hostPort: 10002, status: 'running' },
+        },
+        createdAt: older,
+        lastAccessedAt: older,
+      });
+
+      // Branch B: 1 running + 1 stopped, NEWER lastAccessedAt → should win
+      stateService.addBranch({
+        id: 'br-b',
+        branch: 'feat/b',
+        projectId: 'live',
+        worktreePath: '/tmp/b',
+        status: 'running',
+        services: {
+          api: { profileId: 'api', containerName: 'c3', hostPort: 10003, status: 'running' },
+          worker: { profileId: 'worker', containerName: 'c4', hostPort: 10004, status: 'stopped' },
+        },
+        createdAt: older,
+        lastAccessedAt: newer,
+      });
+
+      const res = await request(server, 'GET', '/api/projects');
+      expect(res.status).toBe(200);
+      const live = res.body.projects.find((p: any) => p.id === 'live');
+      expect(live).toBeDefined();
+      expect(live.branchCount).toBe(2);
+      expect(live.runningBranchCount).toBe(2);
+      expect(live.runningServiceCount).toBe(3);
+      expect(live.lastDeployedAt).toBe(newer);
+    });
+
+    it('emits null lastDeployedAt and zero runtime counts for idle projects', async () => {
+      stateService.addProject({
+        id: 'idle',
+        slug: 'idle-proj',
+        name: 'Idle Project',
+        kind: 'git',
+        dockerNetwork: 'cds-proj-idle',
+        legacyFlag: false,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      });
+
+      const res = await request(server, 'GET', '/api/projects');
+      const idle = res.body.projects.find((p: any) => p.id === 'idle');
+      expect(idle.branchCount).toBe(0);
+      expect(idle.runningBranchCount).toBe(0);
+      expect(idle.runningServiceCount).toBe(0);
+      expect(idle.lastDeployedAt).toBeNull();
+    });
   });
 
   describe('GET /api/projects/:id', () => {
