@@ -3,9 +3,10 @@ import { GlassCard } from '@/components/design/GlassCard';
 import { glassPanel } from '@/lib/glassStyles';
 import { Button } from '@/components/design/Button';
 import { Badge } from '@/components/design/Badge';
-import { Select } from '@/components/design/Select';
 import { Dialog } from '@/components/ui/Dialog';
 import { channelService, getUsers } from '@/services';
+import { UserSearchSelect } from '@/components/UserSearchSelect';
+import type { AdminUser } from '@/types/admin';
 import {
   Plus,
   Trash2,
@@ -336,19 +337,12 @@ function IdentityMappingDialog({
 
           <div>
             <label className="block text-sm font-medium mb-1.5">映射用户 *</label>
-            <Select
+            <UserSearchSelect
               value={userId}
-              onChange={(e) => setUserId(e.target.value)}
-              disabled={loadingUsers}
-              uiSize="md"
-            >
-              <option value="">{loadingUsers ? '加载中...' : '请选择用户'}</option>
-              {users.map((u) => (
-                <option key={u.userId} value={u.userId}>
-                  {u.displayName} (@{u.username})
-                </option>
-              ))}
-            </Select>
+              onChange={setUserId}
+              users={users as unknown as AdminUser[]}
+              placeholder={loadingUsers ? '加载中...' : '搜索用户名或昵称...'}
+            />
             <p className="text-xs text-muted-foreground mt-1">
               该邮箱的操作将关联到此系统用户
             </p>

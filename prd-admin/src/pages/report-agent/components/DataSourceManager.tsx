@@ -5,6 +5,8 @@ import { GlassCard } from '@/components/design/GlassCard';
 import { Button } from '@/components/design/Button';
 import { toast } from '@/lib/toast';
 import { useReportAgentStore } from '@/stores/reportAgentStore';
+import { UserSearchSelect } from '@/components/UserSearchSelect';
+import type { AdminUser } from '@/types/admin';
 import {
   listDataSources,
   createDataSource,
@@ -432,17 +434,20 @@ export function DataSourceManager() {
                       onChange={(e) => updateMappingEntry(idx, 'gitAuthor', e.target.value)}
                     />
                     <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>→</span>
-                    <select
-                      className="flex-1 px-2 py-1.5 rounded text-[12px]"
-                      style={{ background: 'var(--bg-secondary)', color: 'var(--text-primary)', border: '1px solid var(--border-primary)' }}
-                      value={entry.userId}
-                      onChange={(e) => updateMappingEntry(idx, 'userId', e.target.value)}
-                    >
-                      <option value="">选择用户</option>
-                      {users.map((u) => (
-                        <option key={u.id} value={u.id}>{u.displayName || u.username}</option>
-                      ))}
-                    </select>
+                    <div className="flex-1 min-w-0">
+                      <UserSearchSelect
+                        value={entry.userId}
+                        onChange={(v) => updateMappingEntry(idx, 'userId', v)}
+                        users={users.map((u) => ({
+                          userId: u.id,
+                          username: u.username,
+                          displayName: u.displayName || u.username,
+                          avatarFileName: u.avatarFileName,
+                        })) as unknown as AdminUser[]}
+                        placeholder="搜索用户名或昵称..."
+                        uiSize="sm"
+                      />
+                    </div>
                     <Button variant="ghost" size="sm" onClick={() => removeMappingEntry(idx)}>
                       <Trash2 size={12} />
                     </Button>
