@@ -19,15 +19,20 @@ export function PaAgentPage() {
 
   const initSession = useCallback(async () => {
     setSessionError(null);
-    const res = await getPaSession();
-    if (res.success && res.data?.sessionId) {
-      setSessionId(res.data.sessionId);
+
+    // Race the API call against a 5-second timeout so the UI never hangs
+    const timeout = new Promise<null>(resolve => setTimeout(() => resolve(null), 5000));
+    const result = await Promise.race([getPaSession(), timeout]);
+
+    if (result && result.success && result.data?.sessionId) {
+      setSessionId(result.data.sessionId);
     } else {
-      // Fall back to a client-generated session ID so the chat UI is usable
-      // even if the session API is temporarily unavailable
+      // API failed or timed out — fall back to a local ID so chat renders now
       const fallback = generateLocalSessionId();
       setSessionId(fallback);
-      const errMsg = res.error?.message ?? '会话初始化失败，已使用临时会话';
+      const errMsg = result
+        ? (result.error?.message ?? '会话初始化失败，已使用临时会话')
+        : '会话接口超时，已使用临时会话（消息不会持久化）';
       setSessionError(errMsg);
     }
   }, []);
