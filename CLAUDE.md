@@ -84,11 +84,52 @@ cd prd-api && dotnet build --no-restore 2>&1 | grep -E "error CS|warning CS" | h
 
 多分支并行开发时，直接编辑 `CHANGELOG.md` 会在同一位置插入内容导致 **必然冲突**。碎片文件各自独立，彻底消除合并冲突。
 
-### 5. 禁止自动提交 PR
+### 5. 提交与 PR 工作流
+
+#### 5.1 Commit message 必须使用中文
+
+所有 `git commit` 信息**必须用中文**撰写（标题 + 正文）。允许保留英文技术术语（API/SSE/createPortal 等专有名词）和 Conventional Commits 前缀（`feat`/`fix`/`refactor`/`perf`/`docs`/`chore`/`test`），其余表述一律中文。
+
+```
+✅ fix(prd-admin): 修复周报弹窗样式错乱
+✅ feat(prd-api): 新增缺陷分享 SSE 流式推送
+❌ fix: resolve modal styling issue
+```
+
+#### 5.2 测试全部通过后才推送 / 提 PR
+
+`git push` 与创建 PR **前必须**跑通对应模块的本地校验，**任意一项失败都不得推送**：
+
+| 改动范围 | 必跑校验 |
+|----------|----------|
+| `prd-api/` `.cs` | `cd prd-api && dotnet build --no-restore`（零 `error CS*`） |
+| `prd-admin/` / `prd-desktop/` `.ts` `.tsx` | `pnpm tsc --noEmit` + `pnpm lint`（本次改动文件零新增告警） |
+| 含单元/集成测试的模块 | `pnpm test` / `dotnet test` 对应套件全绿 |
+| 本地缺 SDK 无法验证 | 必须走 `/cds-deploy` 远端编译，CDS 绿灯后才推送 |
+
+#### 5.3 PR 创建条件
 
 除非用户明确要求"提交 PR"/"创建 PR"/"提 PR"，否则**禁止自动创建 Pull Request**。
 任务完成后只做 commit + push，不得擅自调用 PR 创建工具。
 遇到阻塞无法完成的任务，向用户说明阻塞原因并等待指示，禁止提交半成品。
+
+#### 5.4 PR 描述必须简洁注明 diff
+
+被允许创建 PR 时，描述模板必须包含「改动摘要」段落，**简洁列出 diff 范围**（修改的文件/模块 + 一句话变更说明）。禁止只写一行标题就提交。
+
+```markdown
+## 摘要
+1-3 句话说明 PR 解决了什么问题、用什么方案。
+
+## 改动 diff
+- `prd-admin/src/pages/report-agent/ReportDetailPage.tsx`：浏览记录 popover 改用 createPortal + inline style
+- `changelogs/2026-04-19_xxx.md`：新增 changelog 碎片
+
+## 测试
+- [x] pnpm tsc --noEmit 通过
+- [x] pnpm lint 本文件零新增告警
+- [ ] 真人通过预览域名验收
+```
 
 ### 6. LLM 交互过程可视化
 
