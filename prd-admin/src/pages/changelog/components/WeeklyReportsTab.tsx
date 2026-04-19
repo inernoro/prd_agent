@@ -27,6 +27,39 @@ function readConfig(): Config | null {
   }
 }
 
+/**
+ * 取条目对应的"最后修改时间"。
+ * 优先 git commit time（sync 时由后端从 GitHub commits API 回填到 metadata.github_last_commit_at），
+ * 否则按拉取时间回退。
+ */
+function getEntryTime(e: DocumentEntry): string {
+  return (
+    e.metadata?.github_last_commit_at
+    || e.lastChangedAt
+    || e.updatedAt
+    || e.createdAt
+    || ''
+  );
+}
+
+/** 本周（周一 00:00:00 本地时区）起始时间戳。 */
+function getThisWeekStart(): number {
+  const now = new Date();
+  const day = now.getDay(); // 0=周日, 1=周一
+  const diff = day === 0 ? -6 : 1 - day;
+  const monday = new Date(now);
+  monday.setDate(now.getDate() + diff);
+  monday.setHours(0, 0, 0, 0);
+  return monday.getTime();
+}
+
+function isThisWeek(timeStr: string, weekStart: number): boolean {
+  if (!timeStr) return false;
+  const t = Date.parse(timeStr);
+  if (Number.isNaN(t)) return false;
+  return t >= weekStart;
+}
+
 export function WeeklyReportsTab() {
   const [config, setConfig] = useState<Config | null>(() => readConfig());
   const [stores, setStores] = useState<DocumentStore[]>([]);
@@ -66,7 +99,7 @@ export function WeeklyReportsTab() {
     return () => { alive = false; };
   }, [config]);
 
-  // 前端过滤 + 按最新时间倒序
+  // 前端过滤 + 按最新 git commit 时间倒序
   const filtered = useMemo(() => {
     if (!config) return [];
     const q = (config.prefix || '').trim().toLowerCase();
@@ -74,12 +107,10 @@ export function WeeklyReportsTab() {
     const matched = q
       ? pool.filter(e => e.title.toLowerCase().includes(q))
       : pool;
-    return [...matched].sort((a, b) => {
-      const at = a.lastChangedAt || a.updatedAt || a.createdAt || '';
-      const bt = b.lastChangedAt || b.updatedAt || b.createdAt || '';
-      return bt.localeCompare(at);
-    });
+    return [...matched].sort((a, b) => getEntryTime(b).localeCompare(getEntryTime(a)));
   }, [config, entries]);
+
+  const weekStart = useMemo(() => getThisWeekStart(), []);
 
   // 默认自动选中最新一篇；过滤变化后如选中不在列表里则切到最新
   useEffect(() => {
@@ -215,7 +246,7 @@ export function WeeklyReportsTab() {
               flexShrink: 0,
             }}
           >
-            周报列表 · 按最新更新排序
+            周报列表 · 按最近 git 提交排序
           </div>
           <div
             style={{
@@ -239,7 +270,10 @@ export function WeeklyReportsTab() {
               <ul className="py-1">
                 {filtered.map(e => {
                   const active = selectedId === e.id;
-                  const date = (e.lastChangedAt || e.updatedAt || e.createdAt || '').slice(0, 10);
+                  const time = getEntryTime(e);
+                  const date = time.slice(0, 10);
+                  const isGit = !!e.metadata?.github_last_commit_at;
+                  const fresh = isThisWeek(time, weekStart);
                   return (
                     <li key={e.id}>
                       <button
@@ -255,13 +289,34 @@ export function WeeklyReportsTab() {
                         <div className="flex items-center gap-2 min-w-0">
                           <FileText size={12} style={{ flexShrink: 0, opacity: 0.7 }} />
                           <span className="text-[12px] truncate flex-1">{e.title}</span>
+                          {fresh && (
+                            <span
+                              className="text-[9px] font-bold tracking-wider px-1.5 py-[1px] rounded"
+                              style={{
+                                background: 'rgba(34, 197, 94, 0.18)',
+                                color: '#86efac',
+                                border: '1px solid rgba(34, 197, 94, 0.35)',
+                                flexShrink: 0,
+                                lineHeight: '1.3',
+                              }}
+                              title="本周有新提交"
+                            >
+                              NEW
+                            </span>
+                          )}
                         </div>
                         {date && (
                           <div
-                            className="text-[10px] mt-0.5"
+                            className="text-[10px] mt-0.5 flex items-center gap-1"
                             style={{ paddingLeft: 20, color: 'var(--text-muted)' }}
+                            title={isGit ? '最近 git 提交时间' : '同步入库时间（尚未回填 git 提交时间）'}
                           >
-                            {date}
+                            <span>{date}</span>
+                            {isGit ? (
+                              <span style={{ opacity: 0.5 }}>· git</span>
+                            ) : (
+                              <span style={{ opacity: 0.4 }}>· 同步</span>
+                            )}
                           </div>
                         )}
                       </button>
