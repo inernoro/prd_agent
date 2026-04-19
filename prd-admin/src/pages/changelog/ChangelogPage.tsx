@@ -4,7 +4,6 @@ import { useChangelogStore } from '@/stores/changelogStore';
 import { MapSectionLoader, MapSpinner } from '@/components/ui/VideoLoader';
 import { glassPanel } from '@/lib/glassStyles';
 import type { ChangelogEntry } from '@/services';
-import { ChangelogAiSummary } from './components/ChangelogAiSummary';
 import { RichTextMarkdownContent } from '@/pages/report-agent/components/RichTextMarkdownContent';
 
 import { TabBar } from '@/components/design/TabBar';
@@ -320,11 +319,6 @@ export default function ChangelogPage() {
             共 {totalCurrentWeek} 条
           </span>
         </div>
-
-        {/* ── 回调式 AI 总结流 ── */}
-        {totalCurrentWeek > 0 && !loadingCurrent && (
-          <ChangelogAiSummary entries={currentWeekEntries} />
-        )}
 
         {loadingCurrent && !currentWeek && <MapSectionLoader text="正在加载本周更新…" />}
 
