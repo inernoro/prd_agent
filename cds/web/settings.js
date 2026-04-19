@@ -116,6 +116,14 @@
           '<input id="settingsName" class="settings-input" type="text" maxlength="60" value="' + escapeHtml(p.name) + '">' +
         '</div>' +
         '<div class="settings-field">' +
+          '<label class="settings-field-label" for="settingsAliasName">显示别名</label>' +
+          '<input id="settingsAliasName" class="settings-input" type="text" maxlength="60" placeholder="留空则使用「名称」字段,用于替换导航/卡片/面包屑中显示的名字" value="' + escapeHtml(p.aliasName || '') + '">' +
+        '</div>' +
+        '<div class="settings-field">' +
+          '<label class="settings-field-label" for="settingsAliasSlug">别名 slug <span style="color:var(--text-muted);font-size:11px;font-weight:400">（预留,暂不影响路由）</span></label>' +
+          '<input id="settingsAliasSlug" class="settings-input mono" type="text" maxlength="50" placeholder="留空则使用项目原 slug; 未来可选作为新分支 id 前缀" value="' + escapeHtml(p.aliasSlug || '') + '">' +
+        '</div>' +
+        '<div class="settings-field">' +
           '<label class="settings-field-label" for="settingsDescription">描述</label>' +
           '<input id="settingsDescription" class="settings-input" type="text" maxlength="200" placeholder="可选,用一两句话说明这个项目是做什么的" value="' + escapeHtml(p.description || '') + '">' +
         '</div>' +
@@ -1172,6 +1180,10 @@
     if (!currentProject) return;
     var btn = document.getElementById('settingsSaveBtn');
     var name = document.getElementById('settingsName').value.trim();
+    var aliasNameEl = document.getElementById('settingsAliasName');
+    var aliasSlugEl = document.getElementById('settingsAliasSlug');
+    var aliasName = aliasNameEl ? aliasNameEl.value.trim() : '';
+    var aliasSlug = aliasSlugEl ? aliasSlugEl.value.trim() : '';
     var description = document.getElementById('settingsDescription').value.trim();
     var gitRepoUrl = document.getElementById('settingsGitRepoUrl').value.trim();
     if (!name) {
@@ -1179,14 +1191,20 @@
       return;
     }
     if (btn) { btn.disabled = true; btn.textContent = '保存中…'; }
-    saveProject({ name: name, description: description, gitRepoUrl: gitRepoUrl })
+    saveProject({
+      name: name,
+      aliasName: aliasName,
+      aliasSlug: aliasSlug,
+      description: description,
+      gitRepoUrl: gitRepoUrl,
+    })
       .then(function (result) {
         if (result.status === 200) {
           currentProject = result.body.project;
           showToast('已保存');
-          // Refresh the breadcrumb name
+          // Refresh the breadcrumb using alias-aware display name
           var nameEl = document.getElementById('breadcrumbProjectName');
-          if (nameEl) nameEl.textContent = currentProject.name;
+          if (nameEl) nameEl.textContent = currentProject.aliasName || currentProject.name;
         } else {
           showToast((result.body && result.body.message) || ('保存失败 (HTTP ' + result.status + ')'));
         }
@@ -1201,8 +1219,9 @@
 
   window._settingsDelete = function () {
     if (!currentProject || currentProject.legacyFlag) return;
+    var displayName = currentProject.aliasName || currentProject.name;
     var ok = window.confirm(
-      '确定要永久删除项目 “' + currentProject.name + '” 吗？\n\n' +
+      '确定要永久删除项目 “' + displayName + '” 吗？\n\n' +
       'Docker 网络会被一起移除，且不可撤销。'
     );
     if (!ok) return;
@@ -1237,7 +1256,7 @@
     .then(function (p) {
       currentProject = p;
       var nameEl = document.getElementById('breadcrumbProjectName');
-      if (nameEl) nameEl.textContent = p.name;
+      if (nameEl) nameEl.textContent = p.aliasName || p.name;
       // Apply hash-based tab
       var initialTab = (location.hash || '#general').slice(1) || 'general';
       switchSettingsTab(initialTab);

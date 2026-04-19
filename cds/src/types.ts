@@ -553,6 +553,30 @@ export interface Project {
   slug: string;
   /** Human-friendly display name shown on the projects list card. */
   name: string;
+  /**
+   * Optional display-only alias. Populated via Settings → 基础信息 →「显示别名」.
+   * All UI call sites (project cards, breadcrumb, Settings title,
+   * Agent-key modal) read `aliasName || name`, so the pre-feature
+   * behaviour is preserved when this field is absent.
+   *
+   * Does NOT rename the project — `id` / `slug` / branch id prefixes
+   * remain anchored to the original values so existing branches keep
+   * working and GitHub webhooks keep routing by `githubRepoFullName`.
+   * Use this field when the auto-migrated `name` (e.g. "prd-agent" from
+   * the legacy default project) is not the label the user wants to see.
+   */
+  aliasName?: string;
+  /**
+   * Optional alternative slug, reserved for a future "use alias in new
+   * branch ids" toggle. Stored here so the Settings UI can capture it
+   * alongside `aliasName`, but NOT consumed by branch-id derivation
+   * yet (see doc/plan.cds-github-integration-followups.md §1 — branch
+   * prefix change is scoped to a follow-up PR).
+   *
+   * Must pass the same SLUG_REGEX as `slug` and must not collide with
+   * any other project's `slug` or `aliasSlug`.
+   */
+  aliasSlug?: string;
   /** Optional one-line description shown under the name. */
   description?: string;
   /**
