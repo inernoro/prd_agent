@@ -421,6 +421,35 @@ async function cdsOpenSelfUpdate() {
         break;
       }
     }
+    // Stream ended without an explicit `done` event — almost always
+    // because CDS's restart killed the SSE mid-flight. Show a "正在
+    // 重启" state and poll /healthz until CDS responds, then reload.
+    // Without this fallback the button stays "更新中…" forever.
+    if (!done) {
+      status.innerHTML = '<span style="color:var(--amber,#f59e0b)">⌛ CDS 正在重启，等待端口就绪…</span>';
+      goBtn.textContent = '等待重启';
+      var tries = 0;
+      var poll = function () {
+        tries++;
+        fetch('/healthz', { credentials: 'same-origin', cache: 'no-store' })
+          .then(function (r) { return r.ok ? r.json() : null; })
+          .then(function (h) {
+            if (h && h.ok) {
+              status.innerHTML = '<span style="color:var(--green)">✓ CDS 已重启,刷新页面...</span>';
+              setTimeout(function () { location.reload(); }, 600);
+            } else if (tries < 40) {
+              setTimeout(poll, 1500);
+            } else {
+              status.innerHTML = '<span style="color:var(--red)">✗ 重启超时,请手动刷新页面确认</span>';
+              goBtn.disabled = false;
+              forceBtn.disabled = false;
+              goBtn.textContent = '重试';
+            }
+          })
+          .catch(function () { if (tries < 40) setTimeout(poll, 1500); });
+      };
+      setTimeout(poll, 2000);
+    }
   }
 
   dlg.querySelector('#_plSuGo').onclick = () => runSelfSync('/api/self-update', '更新');
