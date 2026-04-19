@@ -283,7 +283,18 @@ export class ProxyService {
     const branchRef = this.resolveBranch(req);
 
     if (!branchRef) {
-      res.writeHead(502, { 'Content-Type': 'application/json' });
+      // No routing rule matched and no default branch set. Historically returned
+      // 502 JSON which rendered as Chrome's raw "HTTP ERROR" page for browsers.
+      // Prefer a 404 HTML for browser requests so the tab isn't blank.
+      const acceptsHtml = (req.headers.accept || '').toLowerCase().includes('text/html');
+      if (acceptsHtml) {
+        // Truncate host so a client sending a 4KB Host header can't bloat the
+        // HTML body. DNS labels cap at 253 chars total; we allow 120 for safety.
+        const hostDisplay = (req.headers.host || '(no host)').slice(0, 120);
+        this.serveBranchGoneFallback(res, hostDisplay);
+        return;
+      }
+      res.writeHead(404, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ error: 'No branch matched. Set X-Branch header or configure routing rules.' }));
       return;
     }
@@ -323,11 +334,19 @@ export class ProxyService {
         this.serveStartingPage(res, branchSlug, branch);
         return;
       }
-      res.writeHead(503, { 'Content-Type': 'application/json' });
+      // No branch, no auto-build (executor-only mode or mis-configured proxy):
+      // serve a minimal 404 HTML for browsers, JSON for API clients. Avoids the
+      // Chrome "HTTP ERROR 400/503" blank screen when users land on a
+      // subdomain for a deleted branch.
+      const acceptsHtml = (req.headers.accept || '').toLowerCase().includes('text/html');
+      if (acceptsHtml) {
+        this.serveBranchGoneFallback(res, branchSlug);
+        return;
+      }
+      res.writeHead(404, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({
-        error: `Branch "${branchSlug}" is not running.`,
+        error: `Branch "${branchSlug}" not found.`,
         status: 'not-found',
-        hint: 'Branch will be auto-built on next request.',
       }));
       return;
     }
@@ -472,6 +491,41 @@ h2{font-size:16px;font-weight:600;color:#f0f6fc;margin-bottom:8px}
       'Content-Type': 'text/html; charset=utf-8',
       'Cache-Control': 'no-cache, no-store, must-revalidate',
       'Retry-After': '2',
+    });
+    res.end(html);
+  }
+
+  /**
+   * Minimal "branch gone" fallback page for the rare case where no auto-build
+   * hook is wired (executor-only mode, mis-configured proxy). The richer page
+   * with live-branch suggestions lives in index.ts `serveBranchGonePage` — it
+   * needs state + config access that the pure proxy layer deliberately avoids.
+   */
+  private serveBranchGoneFallback(res: http.ServerResponse, slug: string): void {
+    const safe = this.escapeHtml(slug);
+    const html = `<!DOCTYPE html>
+<html lang="zh"><head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>预览已下线 — ${safe}</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:#0d1117;color:#c9d1d9;display:flex;align-items:center;justify-content:center;min-height:100vh;padding:20px}
+.card{max-width:420px;width:100%;padding:32px;background:#161b22;border:1px solid #30363d;border-radius:12px;text-align:center}
+.emoji{font-size:40px;margin-bottom:12px}
+h2{font-size:18px;color:#f0f6fc;margin-bottom:8px}
+.branch{font-family:ui-monospace,SFMono-Regular,monospace;font-size:13px;color:#f85149;background:#2a0d11;border:1px solid #5a1d1d;padding:4px 10px;border-radius:4px;margin-bottom:16px;display:inline-block;word-break:break-all}
+.desc{font-size:13px;color:#8b949e;line-height:1.6}
+</style></head><body>
+<div class="card">
+  <div class="emoji">🪦</div>
+  <h2>预览已下线</h2>
+  <div class="branch">${safe}</div>
+  <div class="desc">该分支在此 CDS 实例上未注册。<br>请确认分支名称或联系管理员。</div>
+</div>
+</body></html>`;
+    res.writeHead(404, {
+      'Content-Type': 'text/html; charset=utf-8',
+      'Cache-Control': 'no-cache, no-store, must-revalidate',
     });
     res.end(html);
   }

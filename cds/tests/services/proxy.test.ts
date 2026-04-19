@@ -249,6 +249,49 @@ describe('ProxyService', () => {
 
       expect(autoBuildCalled).toBe(true);
     });
+
+    it('should serve HTML "branch gone" fallback for unknown branch when no onAutoBuild is wired', () => {
+      // Executor-only / misconfigured mode: no auto-build hook. Without this
+      // fallback the user used to land on Chrome's raw "HTTP ERROR 400/503"
+      // blank page. Now we return a 404 HTML that explains the situation.
+      stateService.setDefaultBranch('missing-branch');
+      stateService.save();
+      // Deliberately DO NOT call setOnAutoBuild
+
+      const req = makeReq({ host: 'localhost', accept: 'text/html,*/*' }, '/');
+      const { res, written } = makeRes();
+      proxy.handleRequest(req, res);
+
+      expect(written.statusCode).toBe(404);
+      expect(written.headers['Content-Type']).toContain('text/html');
+      expect(written.body).toContain('预览已下线');
+      expect(written.body).toContain('missing-branch');
+    });
+
+    it('should still return JSON 404 for API clients (non-HTML Accept) when branch missing', () => {
+      stateService.setDefaultBranch('missing-branch');
+      stateService.save();
+
+      const req = makeReq({ host: 'localhost', accept: 'application/json' }, '/api/x');
+      const { res, written } = makeRes();
+      proxy.handleRequest(req, res);
+
+      expect(written.statusCode).toBe(404);
+      expect(written.headers['Content-Type']).toContain('application/json');
+      expect(written.body).toContain('not-found');
+    });
+
+    it('should serve HTML fallback when no routing rule matches and no default branch', () => {
+      // No branches, no rules, no default. Browser request (Accept: text/html)
+      // gets the friendly page instead of a 502 JSON.
+      const req = makeReq({ host: 'stranger.example.com', accept: 'text/html' }, '/');
+      const { res, written } = makeRes();
+      proxy.handleRequest(req, res);
+
+      expect(written.statusCode).toBe(404);
+      expect(written.headers['Content-Type']).toContain('text/html');
+      expect(written.body).toContain('预览已下线');
+    });
   });
 
   describe('matchRule', () => {

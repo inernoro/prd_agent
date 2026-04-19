@@ -1232,13 +1232,22 @@ button.text-btn:hover { color: var(--accent); }
   opacity: 1;
 }
 .status-dot-building, .status-dot-starting {
-  background: var(--blue);
+  /* Amber pulse instead of the previous blue — the green primary +
+   * blue active clash confused which state was "good". Amber reads
+   * clearly as "in progress" across both dark and light themes. */
+  background: var(--yellow);
   opacity: 1;
-  animation: status-dot-blink-blue 1.2s ease-in-out infinite;
+  animation: status-dot-blink-amber 1.2s ease-in-out infinite;
 }
-@keyframes status-dot-blink-blue {
+@keyframes status-dot-blink-amber {
   0%, 100% { opacity: 1; }
   50% { opacity: 0.3; }
+}
+/* Idle / stopped branches: dot fades to muted gray so only active
+ * branches draw the eye in a long list. */
+.status-dot-idle, .status-dot-unknown {
+  background: var(--text-muted);
+  opacity: 0.55;
 }
 .status-dot-stopping {
   background: var(--red);
@@ -1295,7 +1304,9 @@ button.text-btn:hover { color: var(--accent); }
   animation: port-building-pulse 2s ease-in-out infinite;
 }
 .status-badge-building {
-  color: var(--blue); background: var(--blue-bg); border: 1px solid var(--blue-border);
+  /* Matches port-badge.port-building (amber) so one branch's two
+   * "building" chips don't disagree on color. */
+  color: var(--yellow); background: var(--yellow-bg); border: 1px solid rgba(251, 191, 36, 0.2);
   animation: port-building-pulse 2s ease-in-out infinite;
 }
 
@@ -1453,13 +1464,19 @@ a.branch-name:hover { color: var(--accent); }
   font-weight: 500; border-radius: 4px;
   transition: all var(--transition); cursor: pointer;
 }
-.port-badge svg.inline-icon { width: 12px; height: 12px; opacity: 0.8; }
+/* Stack-logo SVGs inside port badges inherit the badge's `color` so they
+ * follow the state palette (green running / yellow building / gray idle).
+ * Brand hex fills on individual icons were removed — they clashed with the
+ * theme and the blue/purple ones were illegible on our dark surface. */
+.port-badge svg.inline-icon { width: 12px; height: 12px; opacity: 0.8; color: inherit; }
 .port-badge.run-port { color: var(--green); background: var(--green-bg); border: 1px solid var(--green-border); }
 .port-badge.run-port:hover { background: rgba(16, 185, 129, 0.18); border-color: rgba(16, 185, 129, 0.3); }
 .port-badge.port-starting { color: var(--yellow); background: var(--yellow-bg); border: 1px solid rgba(251, 191, 36, 0.15); }
 .port-badge.port-starting:hover { background: rgba(251, 191, 36, 0.15); }
+/* Building uses amber (same family as starting) rather than blue — the
+ * original blue read as "info" against a green primary palette. */
 .port-badge.port-building {
-  color: var(--blue); background: var(--blue-bg); border: 1px solid var(--blue-border);
+  color: var(--yellow); background: var(--yellow-bg); border: 1px solid rgba(251, 191, 36, 0.2);
   animation: port-building-pulse 2s ease-in-out infinite;
 }
 @keyframes port-building-pulse {
@@ -1477,6 +1494,39 @@ a.branch-name:hover { color: var(--accent); }
 .port-badge.port-idle { color: var(--text-muted); background: rgba(255, 255, 255, 0.03); border: 1px solid transparent; }
 .port-badge.port-idle:hover { background: rgba(255, 255, 255, 0.06); }
 .port-badge.port-error { color: var(--red); background: var(--red-bg); border: 1px solid var(--red-border); }
+
+/* Inactive branch cards fade to monochrome so the eye jumps straight to
+ * running/building ones. Preserve the GitHub mark's tint and the action
+ * buttons' hover states — they still need to be legible + clickable.
+ *
+ * We can't just `filter: grayscale(1)` the whole card because it would
+ * also grayscale the primary "部署" button, defeating the CTA. Instead:
+ *   - port badges + port-icon SVGs: tinted muted gray via color cascade
+ *     (already handled above since they use currentColor)
+ *   - status dot: forced gray
+ *   - branch name: lowered opacity (existing rule, strengthened here)
+ *   - stack badge icons: explicit grayscale filter so any future non-
+ *     currentColor icon also desaturates */
+.branch-card.status-idle .port-badge,
+.branch-card.status-stopped .port-badge,
+.branch-card.status-error .port-badge {
+  color: var(--text-muted);
+  background: rgba(255, 255, 255, 0.02);
+  border-color: transparent;
+}
+.branch-card.status-idle .port-badge svg.inline-icon,
+.branch-card.status-stopped .port-badge svg.inline-icon,
+.branch-card.status-error .port-badge svg.inline-icon {
+  filter: grayscale(1);
+  opacity: 0.55;
+}
+.branch-card.status-idle .gh-branch-mark,
+.branch-card.status-stopped .gh-branch-mark,
+.branch-card.status-error .gh-branch-mark {
+  /* GitHub mark stays legible but desaturates to match the inactive tone —
+   * still recognizable as the GitHub silhouette, no longer shouting color. */
+  opacity: 0.6;
+}
 
 .branch-error {
   font-size: 11px; color: var(--red); margin-top: 6px;
