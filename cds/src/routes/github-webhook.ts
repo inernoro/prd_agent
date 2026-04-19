@@ -359,11 +359,16 @@ export function createGithubWebhookRouter(deps: GitHubWebhookRouterDeps): Router
     const payload = body.payload ?? {};
     let result;
     try {
-      result = await dispatcher.handle(eventName, payload);
+      // dryRun=true: dispatcher parses events & returns what WOULD
+      // happen but skips every state mutation (addBranch / worktree
+      // create / updateProject / save). This is safe for diagnosing
+      // slash commands / signature chain without corrupting state.
+      // Caught by Cursor Bugbot #450 round 3.
+      result = await dispatcher.handle(eventName, payload, { dryRun: true });
     } catch (err) {
       // Don't leak the stack trace to the client — file paths, module
-      // versions, and internal structure help post-auth attackers
-      // (Cursor Bugbot #450). Log it server-side for operator access.
+      // versions, and internal structure help post-auth attackers.
+      // Log it server-side for operator access.
       // eslint-disable-next-line no-console
       console.warn(`[webhook/self-test] dispatch error: ${(err as Error).stack || (err as Error).message}`);
       res.status(500).json({
@@ -372,12 +377,12 @@ export function createGithubWebhookRouter(deps: GitHubWebhookRouterDeps): Router
       });
       return;
     }
-    // Do NOT actually fire deploy/stop/comment side-effects in
-    // self-test — the point is to confirm the dispatch chain. Return
-    // what WOULD have happened.
+    // Neither the dispatcher mutations NOR the post-dispatch
+    // side-effects (deploy / stop / PR comment) fire in self-test.
     res.json({
       ok: true,
       event: eventName,
+      dryRun: true,
       dispatcherResult: result,
       sideEffectsSimulated: {
         deployDispatch: Boolean(result.deployRequest),

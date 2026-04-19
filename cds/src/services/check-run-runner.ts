@@ -199,6 +199,7 @@ export class CheckRunRunner {
       text = '### Deploy log (尾部)\n\n```\n' + tail + '\n```';
     }
 
+    let patched = false;
     try {
       await this.deps.githubApp!.updateCheckRun(instId, parsed.owner, parsed.repo, id, {
         status: 'completed',
@@ -211,6 +212,7 @@ export class CheckRunRunner {
           ...(text ? { text } : {}),
         },
       });
+      patched = true;
     } catch (err) {
       // eslint-disable-next-line no-console
       console.warn(
@@ -219,6 +221,18 @@ export class CheckRunRunner {
       );
     }
     this._lastProgressMs.delete(id);
+    // After GitHub confirms the completed state, clear the stamped id
+    // from state so the next CDS restart's reconcileOrphans doesn't
+    // re-PATCH this already-completed run to `neutral` (which would
+    // overwrite green/red with grey). If the PATCH failed we KEEP the
+    // id so the reconciler can try again. Caught by Cursor Bugbot
+    // review on #450.
+    if (patched) {
+      this.deps.stateService.updateBranchGithubMeta(entry.id, {
+        githubCheckRunId: undefined,
+      });
+      try { this.deps.stateService.save(); } catch { /* best-effort */ }
+    }
   }
 
   /**

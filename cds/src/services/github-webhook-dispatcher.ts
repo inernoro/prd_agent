@@ -251,31 +251,59 @@ export class GitHubWebhookDispatcher {
    * The caller is responsible for HMAC verification — signatures that
    * don't match must be rejected BEFORE reaching this method.
    */
-  async handle(eventName: string, payload: unknown): Promise<WebhookDispatchResult> {
-    switch (eventName) {
-      case 'ping':
-        return { action: 'ignored-ping', message: 'pong' };
-      case 'push':
-        return this.handlePush(payload as GitHubPushEvent);
-      case 'installation':
-        return this.handleInstallation(payload as GitHubInstallationEvent);
-      case 'installation_repositories':
-        return this.handleInstallationRepos(payload as GitHubInstallationReposEvent);
-      case 'check_run':
-        return this.handleCheckRun(payload as GitHubCheckRunEvent);
-      case 'pull_request':
-        return this.handlePullRequest(payload as GitHubPullRequestEvent);
-      case 'issue_comment':
-        return this.handleIssueComment(payload as GitHubIssueCommentEvent);
-      case 'delete':
-        return this.handleDelete(payload as GitHubDeleteEvent);
-      case 'repository':
-        return this.handleRepository(payload as GitHubRepositoryEvent);
-      case 'release':
-        return this.handleRelease(payload as GitHubReleaseEvent);
-      default:
-        return { action: 'ignored-event', message: `Unhandled event type '${eventName}'` };
+  /**
+   * Dispatch a webhook event. The `dryRun` option is set by the
+   * `/api/github/webhook/self-test` endpoint to skip all state
+   * mutations (addBranch / updateProject / worktree create / save).
+   * Parsing and routing logic still runs so the result accurately
+   * describes what a REAL webhook would have triggered — just without
+   * creating files on disk or writing to state.json.
+   */
+  private _dryRun = false;
+  async handle(
+    eventName: string,
+    payload: unknown,
+    options?: { dryRun?: boolean },
+  ): Promise<WebhookDispatchResult> {
+    this._dryRun = options?.dryRun === true;
+    try {
+      switch (eventName) {
+        case 'ping':
+          return { action: 'ignored-ping', message: 'pong' };
+        case 'push':
+          return await this.handlePush(payload as GitHubPushEvent);
+        case 'installation':
+          return await this.handleInstallation(payload as GitHubInstallationEvent);
+        case 'installation_repositories':
+          return await this.handleInstallationRepos(payload as GitHubInstallationReposEvent);
+        case 'check_run':
+          return await this.handleCheckRun(payload as GitHubCheckRunEvent);
+        case 'pull_request':
+          return await this.handlePullRequest(payload as GitHubPullRequestEvent);
+        case 'issue_comment':
+          return await this.handleIssueComment(payload as GitHubIssueCommentEvent);
+        case 'delete':
+          return await this.handleDelete(payload as GitHubDeleteEvent);
+        case 'repository':
+          return await this.handleRepository(payload as GitHubRepositoryEvent);
+        case 'release':
+          return await this.handleRelease(payload as GitHubReleaseEvent);
+        default:
+          return { action: 'ignored-event', message: `Unhandled event type '${eventName}'` };
+      }
+    } finally {
+      this._dryRun = false;
     }
+  }
+
+  /**
+   * Guard for state-mutating ops: honored by every handler that
+   * would otherwise call addBranch/updateProject/worktree.create.
+   * When true, the handler returns its result as if the mutation
+   * happened (for accurate self-test output) but skips writes.
+   */
+  private get dryRun(): boolean {
+    return this._dryRun;
   }
 
   /**
@@ -421,15 +449,17 @@ export class GitHubWebhookDispatcher {
     // new name — kept detached for now so the operator explicitly
     // re-binds via the UI, avoiding silent cross-wiring.
     if (event.action === 'deleted' || event.action === 'renamed' || event.action === 'transferred') {
-      this.deps.stateService.updateProject(project.id, {
-        githubRepoFullName: undefined,
-        githubInstallationId: undefined,
-        githubAutoDeploy: undefined,
-        githubLinkedAt: undefined,
-      });
+      if (!this.dryRun) {
+        this.deps.stateService.updateProject(project.id, {
+          githubRepoFullName: undefined,
+          githubInstallationId: undefined,
+          githubAutoDeploy: undefined,
+          githubLinkedAt: undefined,
+        });
+      }
       return {
         action: event.action === 'deleted' ? 'repo-detached' : 'repo-renamed',
-        message: `Project '${project.name}' unlinked because repository.${event.action} (${currentFullName})`,
+        message: `${this.dryRun ? '[dry-run] ' : ''}Project '${project.name}' unlinked because repository.${event.action} (${currentFullName})`,
       };
     }
     return { action: 'ignored-event', message: `repository.${event.action} acknowledged` };
@@ -500,7 +530,7 @@ export class GitHubWebhookDispatcher {
     // route-layer comment poster has it, and let the push handler (which
     // already runs in parallel from synchronize) drive the deploy.
     if (event.action === 'opened' || event.action === 'reopened') {
-      if (entry) {
+      if (entry && !this.dryRun) {
         this.deps.stateService.updateBranchGithubMeta(branchId, {
           githubPrNumber: event.pull_request.number,
           githubInstallationId: project.githubInstallationId ?? event.installation?.id,
@@ -510,7 +540,7 @@ export class GitHubWebhookDispatcher {
       }
       return {
         action: 'pr-comment-posted',
-        message: `PR #${event.pull_request.number} ${event.action}; marked branch '${branchId}' for comment`,
+        message: `${this.dryRun ? '[dry-run] ' : ''}PR #${event.pull_request.number} ${event.action}; marked branch '${branchId}' for comment`,
         branchId,
       };
     }
@@ -591,6 +621,17 @@ export class GitHubWebhookDispatcher {
         };
       }
 
+      if (this.dryRun) {
+        // In dry-run we return the shape of "would-create" without
+        // touching disk or state — self-test wants accurate signals.
+        return {
+          action: 'branch-created',
+          message: `[dry-run] Would create branch '${branchId}' from push at ${commitSha.slice(0, 7)}`,
+          branchId,
+          deployRequest: { branchId, commitSha },
+        };
+      }
+
       const repoRoot = this.deps.stateService.getProjectRepoRoot(project.id, this.deps.config.repoRoot);
       const worktreePath = (await import('./worktree.js')).WorktreeService.worktreePathFor(
         this.deps.config.worktreeBase,
@@ -619,6 +660,15 @@ export class GitHubWebhookDispatcher {
       };
       this.deps.stateService.addBranch(entry);
       created = true;
+    }
+
+    if (this.dryRun) {
+      return {
+        action: created ? 'branch-created' : 'branch-refreshed',
+        message: `[dry-run] Would stamp ${commitSha.slice(0, 7)} on '${branchId}'`,
+        branchId,
+        deployRequest: { branchId, commitSha },
+      };
     }
 
     // Stamp GitHub metadata on the branch so the deploy route and check-run
@@ -663,7 +713,7 @@ export class GitHubWebhookDispatcher {
     }
     // If a repo was removed from the installation AND it's linked to a
     // project, detach the link so webhooks for it stop triggering deploys.
-    if (event.action === 'removed') {
+    if (event.action === 'removed' && !this.dryRun) {
       for (const repo of event.repositories_removed || []) {
         const project = this.deps.stateService.findProjectByRepoFullName(repo.full_name);
         if (project && project.githubInstallationId === instId) {
@@ -691,11 +741,13 @@ export class GitHubWebhookDispatcher {
     const entry = this.deps.stateService.getBranch(branchId);
     if (!entry) return { action: 'ignored-event', message: `check_run branch '${branchId}' not found` };
     const commitSha = event.check_run!.head_sha;
-    this.deps.stateService.updateBranchGithubMeta(branchId, { githubCommitSha: commitSha });
-    this.deps.stateService.save();
+    if (!this.dryRun) {
+      this.deps.stateService.updateBranchGithubMeta(branchId, { githubCommitSha: commitSha });
+      this.deps.stateService.save();
+    }
     return {
       action: 'check-run-requeued',
-      message: `Queued redeploy of '${branchId}' at ${commitSha.slice(0, 7)}`,
+      message: `${this.dryRun ? '[dry-run] ' : ''}Queued redeploy of '${branchId}' at ${commitSha.slice(0, 7)}`,
       branchId,
       deployRequest: { branchId, commitSha },
     };
