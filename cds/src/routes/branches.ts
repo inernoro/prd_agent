@@ -5576,6 +5576,132 @@ cdscli project list --human
   });
 
   // ─────────────────────────────────────────────────────────────────────
+  // POST /api/self-force-sync — recovery endpoint for divergent repos.
+  //
+  // When the CDS host's local git checkout has diverged from origin (e.g.
+  // a prior self-update silently merged, or an operator made a hot-patch
+  // commit), the regular /api/self-update can't recover because its
+  // `git pull` keeps creating merge commits that DROP remote changes.
+  // This endpoint is the escape hatch: hard-reset to origin + clear the
+  // dist/.build-sha cache so the next start recompiles from scratch +
+  // restart. Destructive to local commits, intentionally so.
+  //
+  // Streams SSE so the operator watching the UI gets real-time progress.
+  // ─────────────────────────────────────────────────────────────────────
+  router.post('/self-force-sync', async (req, res) => {
+    const { branch } = (req.body || {}) as { branch?: string };
+
+    initSSE(res);
+    const send = (step: string, status: string, title: string, extra?: Record<string, unknown>) => {
+      sendSSE(res, 'step', { step, status, title, timestamp: new Date().toISOString(), ...(extra || {}) });
+    };
+
+    try {
+      const repoRoot = config.repoRoot;
+      const cdsDir = path.join(repoRoot, 'cds');
+
+      // Step 1: fetch
+      send('fetch', 'running', '正在拉取远端 ref…');
+      const fetchRes = await shell.exec('git fetch --all --prune', { cwd: repoRoot, timeout: 60_000 });
+      if (fetchRes.exitCode !== 0) {
+        send('fetch', 'error', 'git fetch 失败: ' + (combinedOutput(fetchRes) || '').slice(0, 200));
+        sendSSE(res, 'error', { message: 'git fetch 失败' });
+        res.end();
+        return;
+      }
+      send('fetch', 'done', '远端 ref 已同步');
+
+      // Step 2: resolve target branch (use current if not supplied)
+      let target = branch;
+      if (!target) {
+        const cur = await shell.exec('git rev-parse --abbrev-ref HEAD', { cwd: repoRoot });
+        target = cur.stdout.trim() || 'main';
+      }
+      send('resolve', 'done', '目标分支: ' + target);
+
+      // Step 3: hard-reset to origin/<target>
+      send('reset', 'running', `硬对齐 HEAD → origin/${target}`);
+      const resetRes = await shell.exec(`git reset --hard origin/${target}`, { cwd: repoRoot, timeout: 30_000 });
+      if (resetRes.exitCode !== 0) {
+        send('reset', 'error', 'reset 失败: ' + (combinedOutput(resetRes) || '').slice(0, 200));
+        sendSSE(res, 'error', { message: `git reset --hard origin/${target} 失败` });
+        res.end();
+        return;
+      }
+      const newHead = (await shell.exec('git rev-parse --short HEAD', { cwd: repoRoot })).stdout.trim();
+      send('reset', 'done', `HEAD = ${newHead}`, { commitHash: newHead });
+
+      // Step 4: drop dist build cache so next start recompiles.
+      send('cache', 'running', '清除 dist/.build-sha 编译缓存…');
+      const shaFile = path.join(cdsDir, 'dist', '.build-sha');
+      try {
+        if (fs.existsSync(shaFile)) {
+          fs.unlinkSync(shaFile);
+          send('cache', 'done', '已删除 .build-sha');
+        } else {
+          send('cache', 'done', '.build-sha 不存在, 跳过');
+        }
+      } catch (err) {
+        send('cache', 'warning', '删除 .build-sha 失败: ' + (err as Error).message);
+      }
+
+      // Step 5: validate new code compiles before restart.
+      send('validate', 'running', '预检: pnpm install + tsc --noEmit…');
+      const validation = await validateBuildReadiness(shell, cdsDir);
+      if (!validation.ok) {
+        send('validate', 'error', `预检失败: ${validation.error.slice(0, 300)}`);
+        sendSSE(res, 'error', {
+          message: `force-sync 已中止 — ${target} 的代码没过预检: ${validation.error}`,
+        });
+        res.end();
+        return;
+      }
+      send('validate', 'done', validation.summary);
+
+      // Step 6: restart via exec_cds.sh daemon spawn, exit after 1s.
+      send('restart', 'running', '正在重启 CDS…');
+      sendSSE(res, 'done', { message: `CDS 即将重启, HEAD=${newHead}`, commitHash: newHead });
+      res.end();
+
+      // Same restart technique as /api/self-update — spawn a detached bash
+      // that runs exec_cds.sh daemon and let the current process die after
+      // a short grace period so the child can bind the port.
+      const errorLogPath = path.join(cdsDir, '.cds', 'self-update-error.log');
+      try {
+        fs.mkdirSync(path.dirname(errorLogPath), { recursive: true });
+        fs.appendFileSync(
+          errorLogPath,
+          `\n=== self-force-sync spawn at ${new Date().toISOString()} (branch=${target}) ===\n`,
+        );
+        const out = fs.openSync(errorLogPath, 'a');
+        const errFd = fs.openSync(errorLogPath, 'a');
+        const child = spawn('bash', ['./exec_cds.sh', 'daemon'], {
+          cwd: cdsDir,
+          detached: true,
+          stdio: ['ignore', out, errFd],
+          env: { ...process.env },
+        });
+        child.on('error', (err) => {
+          fs.appendFileSync(errorLogPath, `spawn error: ${err.message}\n`);
+        });
+        child.unref();
+        setTimeout(() => process.exit(0), 1000);
+      } catch (spawnErr) {
+        // If we can't spawn the replacement, at least we've persisted the
+        // reset — operator can manually `./exec_cds.sh restart` afterwards.
+        try {
+          fs.appendFileSync(errorLogPath, `pre-spawn error: ${(spawnErr as Error).message}\n`);
+        } catch {
+          /* ignore */
+        }
+      }
+    } catch (err) {
+      sendSSE(res, 'error', { message: (err as Error).message });
+      try { res.end(); } catch { /* already ended */ }
+    }
+  });
+
+  // ─────────────────────────────────────────────────────────────────────
   // Warm-pool scheduler API (v3.1)
   // See doc/design.cds-resilience.md §九.
   // When schedulerService is not wired in, these endpoints return a

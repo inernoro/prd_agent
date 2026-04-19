@@ -1023,6 +1023,26 @@
     var p = currentProject;
     var canDelete = !p.legacyFlag;
     contentEl.innerHTML =
+      // ── CDS self-recovery (admin-level, not project-scoped) ──
+      '<div class="settings-section">' +
+        '<div class="settings-section-title" style="color:var(--amber,#f59e0b)">CDS 自维护</div>' +
+        '<div class="settings-section-desc">这些操作影响整个 CDS 实例,会在几秒内让管理面板短暂不可用。</div>' +
+        '<div style="background:var(--bg-card);border:1px solid rgba(245,158,11,0.3);border-radius:10px;padding:18px;margin-bottom:14px">' +
+          '<div style="font-weight:700;color:var(--text-primary);margin-bottom:6px">强制同步 CDS 源码到 origin</div>' +
+          '<div style="font-size:12px;color:var(--text-muted);margin-bottom:14px;line-height:1.6">' +
+            '当 self-update 的 git pull 把远端改动合并掉、CDS 运行的仍是旧代码时,用这个强制命令:' +
+            '<code>git fetch + git reset --hard origin/&lt;branch&gt; + 清 dist 缓存 + 重启</code>。' +
+            '<br>⚠ 会丢弃 host 上本地未推送的提交。正常部署场景下不会有本地提交,所以是安全的。' +
+          '</div>' +
+          '<div style="display:flex;gap:10px;align-items:center">' +
+            '<input type="text" id="sfsBranch" placeholder="分支名 (留空 = 当前分支)" ' +
+              'style="flex:1;background:var(--bg-elevated);border:1px solid var(--card-border);border-radius:8px;padding:8px 12px;color:var(--text-primary);font-family:var(--font-mono,monospace);font-size:12px">' +
+            '<button type="button" class="settings-btn-outline" style="color:var(--amber,#f59e0b);border-color:rgba(245,158,11,0.4)" onclick="_settingsForceSync()">强制同步</button>' +
+          '</div>' +
+          '<div id="sfsProgress" style="margin-top:14px;font-size:12px;color:var(--text-muted);font-family:var(--font-mono,monospace);white-space:pre-wrap;max-height:240px;overflow-y:auto;line-height:1.5"></div>' +
+        '</div>' +
+      '</div>' +
+      // ── Project deletion (original danger zone) ──
       '<div class="settings-section">' +
         '<div class="settings-section-title" style="color:var(--red,#f43f5e)">危险区</div>' +
         '<div class="settings-section-desc">这些操作不可撤销。请谨慎。</div>' +
@@ -1037,6 +1057,104 @@
         '</div>' +
       '</div>';
   }
+
+  // Force-sync the CDS source repo to origin. Calls POST /api/self-force-sync
+  // and streams the SSE progress events into the preview box. Equivalent to
+  // SSH-ing in and running `git reset --hard + rm dist/.build-sha + restart`
+  // but 100% in-UI.
+  window._settingsForceSync = function () {
+    var inp = document.getElementById('sfsBranch');
+    var progress = document.getElementById('sfsProgress');
+    var branch = inp && inp.value ? inp.value.trim() : '';
+    if (!window.confirm(
+      '确认强制同步 CDS 源码到 origin/' + (branch || '<当前分支>') + '?\n\n' +
+      '会硬重置 host 上的 /root/…/prd_agent, 清 dist 缓存, 然后重启 CDS。\n' +
+      '所有本地未推送的提交会被丢弃。'
+    )) return;
+
+    if (progress) progress.textContent = '→ 启动 force-sync…\n';
+
+    // SSE consumer — we rely on fetch + ReadableStream rather than EventSource
+    // because EventSource doesn't let us POST a body. The server frames each
+    // event as `event: <name>\ndata: <json>\n\n`.
+    fetch('/api/self-force-sync', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'same-origin',
+      body: JSON.stringify({ branch: branch || undefined }),
+    })
+      .then(function (r) {
+        if (!r.body || !r.body.getReader) {
+          return r.text().then(function (t) {
+            if (progress) progress.textContent += '(no-stream) ' + t;
+          });
+        }
+        var reader = r.body.getReader();
+        var decoder = new TextDecoder();
+        var buf = '';
+        function pump() {
+          return reader.read().then(function (chunk) {
+            if (chunk.done) return;
+            buf += decoder.decode(chunk.value, { stream: true });
+            // SSE frame: blank line separates events.
+            var parts = buf.split('\n\n');
+            buf = parts.pop();
+            parts.forEach(function (frame) {
+              var line = frame.split('\n').find(function (l) { return l.startsWith('data: '); });
+              if (!line) return;
+              try {
+                var data = JSON.parse(line.slice(6));
+                if (data.title) {
+                  var marker = data.status === 'error' ? '✖'
+                              : data.status === 'warning' ? '⚠'
+                              : data.status === 'done' ? '✓' : '·';
+                  if (progress) {
+                    progress.textContent += marker + ' [' + (data.step || '') + '] ' + data.title + '\n';
+                    progress.scrollTop = progress.scrollHeight;
+                  }
+                } else if (data.message) {
+                  if (progress) {
+                    progress.textContent += '⇢ ' + data.message + '\n';
+                    progress.scrollTop = progress.scrollHeight;
+                  }
+                }
+              } catch (_) {}
+            });
+            return pump();
+          });
+        }
+        return pump();
+      })
+      .then(function () {
+        if (progress) progress.textContent += '\n→ CDS 正在重启, 刷新页面确认…\n';
+        showToast('强制同步完成, 正在重启');
+        // Poll /healthz until back online, then reload the tab.
+        var tries = 0;
+        function poll() {
+          tries++;
+          fetch('/healthz', { credentials: 'same-origin', cache: 'no-store' })
+            .then(function (r) { return r.ok ? r.json() : null; })
+            .then(function (h) {
+              if (h && h.ok) {
+                if (progress) progress.textContent += '✓ CDS 已重新上线\n';
+                setTimeout(function () { location.reload(); }, 800);
+              } else if (tries < 40) {
+                setTimeout(poll, 1500);
+              } else {
+                if (progress) progress.textContent += '✖ 重启超时, 请手动检查\n';
+              }
+            })
+            .catch(function () {
+              if (tries < 40) setTimeout(poll, 1500);
+            });
+        }
+        setTimeout(poll, 3000);
+      })
+      .catch(function (err) {
+        if (progress) progress.textContent += '✖ 网络错误: ' + (err && err.message ? err.message : err) + '\n';
+        showToast('force-sync 失败: ' + (err && err.message ? err.message : err));
+      });
+  };
 
   // ── Form actions (exposed on window) ──
   window._settingsCopyId = function () {
