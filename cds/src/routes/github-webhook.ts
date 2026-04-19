@@ -330,6 +330,60 @@ export function createGithubWebhookRouter(deps: GitHubWebhookRouterDeps): Router
     res.json({ project: updated });
   });
 
+  // ── POST /api/github/webhook/self-test ─────────────────────────────
+  //
+  // Synthetic webhook dispatcher — lets the admin exercise the event
+  // handler path WITHOUT depending on GitHub actually delivering a
+  // webhook. Critical for diagnosing "is slash command flow broken, or
+  // is the App just not subscribed to issue_comment?"
+  //
+  // Request body: { eventName, payload } — same shape GitHub sends.
+  // No HMAC verification (auth sits at the outer /api middleware).
+  //
+  // Returns the dispatcher result + whether deploy/stop/comment
+  // actions were triggered. Safe to invoke from Settings UI.
+  router.post('/github/webhook/self-test', async (req, res) => {
+    if (!config.githubApp) {
+      res.status(503).json({ error: 'not_configured', message: 'GitHub App 未配置' });
+      return;
+    }
+    const body = (req.body || {}) as {
+      eventName?: string;
+      payload?: unknown;
+    };
+    const eventName = typeof body.eventName === 'string' ? body.eventName : '';
+    if (!eventName) {
+      res.status(400).json({ error: 'missing_event', message: 'eventName (e.g. "push", "issue_comment") is required' });
+      return;
+    }
+    const payload = body.payload ?? {};
+    let result;
+    try {
+      result = await dispatcher.handle(eventName, payload);
+    } catch (err) {
+      res.status(500).json({
+        error: 'dispatch_error',
+        message: (err as Error).message,
+        stack: (err as Error).stack?.slice(0, 1000),
+      });
+      return;
+    }
+    // Do NOT actually fire deploy/stop/comment side-effects in
+    // self-test — the point is to confirm the dispatch chain. Return
+    // what WOULD have happened.
+    res.json({
+      ok: true,
+      event: eventName,
+      dispatcherResult: result,
+      sideEffectsSimulated: {
+        deployDispatch: Boolean(result.deployRequest),
+        stopDispatch: Boolean(result.stopRequest),
+        prComment: result.action === 'pr-comment-posted',
+        slashCommand: result.slashCommand?.command,
+      },
+    });
+  });
+
   // ── DELETE /api/projects/:id/github/link ───────────────────────────
   router.delete('/projects/:id/github/link', (req, res) => {
     const project = stateService.getProject(req.params.id);
@@ -357,7 +411,7 @@ export function createGithubWebhookRouter(deps: GitHubWebhookRouterDeps): Router
  * are logged server-side anyway).
  */
 function defaultLocalhostDeploy(config: CdsConfig): (branchId: string, commitSha: string) => Promise<void> {
-  return async (branchId) => {
+  return async (branchId, commitSha) => {
     const url = `http://127.0.0.1:${config.masterPort}/api/branches/${encodeURIComponent(branchId)}/deploy`;
     const res = await fetch(url, {
       method: 'POST',
@@ -365,7 +419,12 @@ function defaultLocalhostDeploy(config: CdsConfig): (branchId: string, commitSha
         'Content-Type': 'application/json',
         'X-CDS-Internal': '1',
       },
-      body: JSON.stringify({}),
+      // Pass the triggering commit SHA so the deploy route can stamp it
+      // authoritatively instead of racing against concurrent pushes
+      // that may have updated the branch entry between dispatch and
+      // the route's own re-read. The deploy route falls back to
+      // `entry.githubCommitSha` when body.commitSha is missing.
+      body: JSON.stringify({ commitSha }),
     });
     // Drain the SSE stream so Node doesn't complain about unhandled
     // socket errors. We don't care about the events here — the deploy
@@ -545,6 +604,10 @@ async function runSlashCommand(
 
   if (sc.command === 'redeploy') {
     const dispatcherFn = dispatchDeploy || defaultLocalhostDeploy(config);
+    // We pass whatever SHA is currently on the branch entry. For a
+    // pure /cds redeploy without a preceding push, this may be stale
+    // or empty — the deploy route then falls back to `git rev-parse
+    // HEAD` on the worktree.
     const sha = branch.githubCommitSha || '';
     await postReply(
       `@${sc.commenter} 🔄 已排队重新部署 \`${sc.branchId}\`${sha ? ` @ ${sha.slice(0, 7)}` : ''}。` +

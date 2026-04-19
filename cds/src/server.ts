@@ -11,6 +11,7 @@ import { createStorageModeRouter, type StorageModeContext } from './routes/stora
 import { createGithubOAuthRouter } from './routes/github-oauth.js';
 import { createGithubWebhookRouter } from './routes/github-webhook.js';
 import { GitHubAppClient } from './services/github-app-client.js';
+import { CheckRunRunner } from './services/check-run-runner.js';
 import { createAuthRouter } from './routes/auth.js';
 import { createWorkspacesRouter } from './routes/workspaces.js';
 import { MemoryAuthStore } from './infra/auth-store/memory-store.js';
@@ -919,6 +920,30 @@ export function createServer(deps: ServerDeps): express.Express {
         appSlug: deps.config.githubApp.appSlug,
       })
     : undefined;
+
+  // ── Reconcile orphan check-runs on boot ──
+  //
+  // self-update / self-force-sync / crash can leave check-runs in
+  // `status=in_progress` forever because the finalize() PATCH was
+  // interrupted by restart. GitHub's PR Checks panel then shows every
+  // commit in "pending / 准备状态" indefinitely even though CDS has
+  // long since finished deploying.
+  //
+  // Walk every branch with a stamped checkRunId and PATCH to
+  // conclusion=neutral (grey dot) the ones that aren't currently
+  // building. Fire-and-forget so the server boot isn't blocked on
+  // GitHub API latency.
+  if (githubAppClient) {
+    const runner = new CheckRunRunner({
+      stateService: deps.stateService,
+      githubApp: githubAppClient,
+      config: deps.config,
+    });
+    runner.reconcileOrphans().catch((err: Error) => {
+      // eslint-disable-next-line no-console
+      console.warn('[check-run] startup reconciliation failed:', err.message);
+    });
+  }
 
   app.use('/api', createBranchRouter({
     stateService: deps.stateService,

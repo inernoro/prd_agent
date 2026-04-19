@@ -191,7 +191,7 @@ describe('GitHub webhook route', () => {
     server = startServer();
     const payload = {
       ref: 'refs/heads/feature-x',
-      after: 'deadbeef',
+      after: 'deadbeef01234567890abcdef1234567890abcde',
       repository: { id: 1, full_name: 'octocat/repo' },
       installation: { id: 42 },
     };
@@ -207,14 +207,14 @@ describe('GitHub webhook route', () => {
 
     // Deploy dispatcher runs async; allow it a beat.
     await new Promise((r) => setTimeout(r, 20));
-    expect(deployCalls).toEqual([{ branchId: 'sample-feature-x', commitSha: 'deadbeef' }]);
+    expect(deployCalls).toEqual([{ branchId: 'sample-feature-x', commitSha: 'deadbeef01234567890abcdef1234567890abcde' }]);
   });
 
   it('silently ignores push to unlinked repo (no deploy)', async () => {
     server = startServer();
     const payload = {
       ref: 'refs/heads/main',
-      after: 'abc',
+      after: 'abc1234567890abcdef1234567890abcdef12345',
       repository: { full_name: 'some-other/repo' },
     };
     const body = JSON.stringify(payload);

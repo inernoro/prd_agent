@@ -231,4 +231,67 @@ export class CheckRunRunner {
     if (!host) return undefined;
     return `https://${entry.id}.${host}`;
   }
+
+  /**
+   * Reconcile orphan check-runs on CDS startup.
+   *
+   * Background: when CDS restarts mid-deploy (self-update / self-force-
+   * sync / crash), the deploy's check-run was set to `in_progress` but
+   * never got its `finalize()` PATCH, so GitHub keeps showing a yellow
+   * spinner forever. Every commit on the page ends up with "pending"
+   * status even though the branch has long since finished deploying
+   * (or errored out).
+   *
+   * At startup we walk every tracked branch and for each one that:
+   *   - has a `githubCheckRunId` stored, AND
+   *   - is NOT currently building/starting,
+   * we PATCH the check run to `conclusion: 'neutral'` with a short
+   * "superseded by restart" note. GitHub replaces the spinner with a
+   * grey neutral dot — accurate and no longer "stuck".
+   *
+   * Safe to call repeatedly; already-completed check-runs are no-ops
+   * on GitHub (PATCH of completed → completed is idempotent).
+   */
+  async reconcileOrphans(): Promise<void> {
+    if (!this.enabled) return;
+    const branches = this.deps.stateService.getAllBranches();
+    for (const entry of branches) {
+      const id = entry.githubCheckRunId;
+      const repoFullName = entry.githubRepoFullName;
+      const instId = entry.githubInstallationId;
+      if (!id || !repoFullName || !instId) continue;
+      // Skip branches that are mid-deploy right now — their finalize()
+      // will fire normally and shouldn't be preempted.
+      if (entry.status === 'building' || entry.status === 'starting') continue;
+      const parsed = this.parseRepo(repoFullName);
+      if (!parsed) continue;
+      try {
+        await this.deps.githubApp!.updateCheckRun(instId, parsed.owner, parsed.repo, id, {
+          status: 'completed',
+          conclusion: 'neutral',
+          completedAt: new Date().toISOString(),
+          detailsUrl: this.buildDetailsUrl(entry.id),
+          output: {
+            title: 'Deploy state unknown after CDS restart',
+            summary:
+              '此 check run 的 CDS 部署过程被 self-update / 重启打断,' +
+              '无法确认最终状态。已标记为 neutral 供展示参考,' +
+              `push 或 \`/cds redeploy\` 会触发一次干净的新部署。` +
+              (entry.status === 'running' ? '\n\n(当前分支: running 运行中)' : '') +
+              (entry.status === 'error' ? '\n\n(当前分支: error — 查看 CDS 日志)' : ''),
+          },
+        });
+        // Drop the stale id so next deploy creates a fresh check run
+        // instead of PATCHing this one to in_progress.
+        this.deps.stateService.updateBranchGithubMeta(entry.id, { githubCheckRunId: undefined });
+      } catch (err) {
+        // eslint-disable-next-line no-console
+        console.warn(
+          `[check-run] reconcileOrphans failed for branch=${entry.id}:`,
+          (err as Error).message,
+        );
+      }
+    }
+    try { this.deps.stateService.save(); } catch { /* best-effort */ }
+  }
 }

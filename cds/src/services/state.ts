@@ -807,12 +807,16 @@ export class StateService {
   ): void {
     const branch = this.state.branches[id];
     if (!branch) return;
-    if (updates.githubRepoFullName !== undefined) branch.githubRepoFullName = updates.githubRepoFullName;
-    if (updates.githubCommitSha !== undefined) branch.githubCommitSha = updates.githubCommitSha;
-    if (updates.githubCheckRunId !== undefined) branch.githubCheckRunId = updates.githubCheckRunId;
-    if (updates.githubInstallationId !== undefined) branch.githubInstallationId = updates.githubInstallationId;
-    if (updates.githubPrNumber !== undefined) branch.githubPrNumber = updates.githubPrNumber;
-    if (updates.githubPreviewCommentId !== undefined) branch.githubPreviewCommentId = updates.githubPreviewCommentId;
+    // Use `in updates` rather than `!== undefined` so explicit
+    // `{ githubCheckRunId: undefined }` can CLEAR a stamped field
+    // (used by the orphan-reconciliation startup routine to drop stale
+    // check-run ids after marking them as neutral on GitHub).
+    if ('githubRepoFullName' in updates) branch.githubRepoFullName = updates.githubRepoFullName;
+    if ('githubCommitSha' in updates) branch.githubCommitSha = updates.githubCommitSha;
+    if ('githubCheckRunId' in updates) branch.githubCheckRunId = updates.githubCheckRunId;
+    if ('githubInstallationId' in updates) branch.githubInstallationId = updates.githubInstallationId;
+    if ('githubPrNumber' in updates) branch.githubPrNumber = updates.githubPrNumber;
+    if ('githubPreviewCommentId' in updates) branch.githubPreviewCommentId = updates.githubPreviewCommentId;
   }
 
   // ── Project-scoped Agent Keys ──

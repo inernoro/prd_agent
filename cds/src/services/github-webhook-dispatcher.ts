@@ -24,6 +24,35 @@ import type { GitHubAppClient } from './github-app-client.js';
 import path from 'node:path';
 import { StateService as StateServiceClass } from './state.js';
 
+/**
+ * Validate a git ref (branch/tag) name against a strict allow-list before
+ * interpolating it into any shell command. Git's own rules
+ * (git-check-ref-format) are more permissive but pass through characters
+ * that survive a single pair of double quotes (`"$(cmd)"`, `"`x``),
+ * enabling command injection when the ref is fed to `sh -c`.
+ *
+ * Our allow-list is deliberately narrower than git's: ASCII alnum,
+ * dot, underscore, dash, slash. This covers every real-world branch
+ * name we've seen (feature/x, claude/fix-foo-bzAzq, v1.2.3, main,
+ * hotfix_123) while blocking all shell meta-characters.
+ *
+ * Webhook-originated branch names come from untrusted GitHub users who
+ * can push to the linked repo (including fork PRs), so this is
+ * defense-in-depth: the attacker must first get a push ack'd, then the
+ * branch name must pass this check — only THEN is it interpolated.
+ */
+export function isSafeGitRef(ref: string): boolean {
+  if (typeof ref !== 'string') return false;
+  if (ref.length === 0 || ref.length > 255) return false;
+  if (!/^[A-Za-z0-9][A-Za-z0-9._/-]*$/.test(ref)) return false;
+  // git-check-ref-format also forbids `..`, trailing `.lock`, leading `-`.
+  if (ref.includes('..')) return false;
+  if (ref.endsWith('.lock')) return false;
+  if (ref.endsWith('/')) return false;
+  if (ref.includes('//')) return false;
+  return true;
+}
+
 export interface WebhookDispatchResult {
   /** Machine-readable outcome. */
   action:
@@ -337,6 +366,9 @@ export class GitHubWebhookDispatcher {
     if (!project) {
       return { action: 'ignored-no-project', message: `No project linked to ${event.repository.full_name}` };
     }
+    if (!isSafeGitRef(event.ref)) {
+      return { action: 'ignored-event', message: `Rejected unsafe delete ref: ${event.ref.slice(0, 80)}` };
+    }
     const slugified = StateServiceClass.slugify(event.ref);
     const branchId = project.legacyFlag ? slugified : `${project.slug}-${slugified}`;
     const entry = this.deps.stateService.getBranch(branchId);
@@ -437,6 +469,16 @@ export class GitHubWebhookDispatcher {
     }
 
     const branchName = event.pull_request.head.ref;
+    // PR head refs come from untrusted forks too — reject shell-unsafe
+    // names. Note: pull_request handler doesn't itself shell-exec, but
+    // downstream paths (stop/deploy routes) may, so enforce the
+    // invariant at dispatch time.
+    if (!isSafeGitRef(branchName)) {
+      return {
+        action: 'ignored-event',
+        message: `Rejected unsafe PR branch name: ${branchName.slice(0, 80)}`,
+      };
+    }
     const slugified = StateServiceClass.slugify(branchName);
     const branchId = project.legacyFlag ? slugified : `${project.slug}-${slugified}`;
     const entry = this.deps.stateService.getBranch(branchId);
@@ -496,6 +538,21 @@ export class GitHubWebhookDispatcher {
       return { action: 'ignored-non-branch', message: `Non-branch ref ignored (${event.ref})` };
     }
     const branchName = event.ref.substring('refs/heads/'.length);
+    // Defense-in-depth: reject shell-unsafe branch names before they
+    // reach any `shell.exec()` call further down (git worktree add /
+    // mkdir / git fetch). See isSafeGitRef above.
+    if (!isSafeGitRef(branchName)) {
+      return {
+        action: 'ignored-event',
+        message: `Rejected unsafe branch name from webhook: ${branchName.slice(0, 80)}`,
+      };
+    }
+    // commitSha must be a 40-hex git SHA. Rejecting anything else
+    // prevents command injection even if attacker can push a malformed
+    // "after" field (unlikely — GitHub always sends real SHAs).
+    if (typeof event.after !== 'string' || !/^[0-9a-f]{7,40}$/i.test(event.after)) {
+      return { action: 'ignored-event', message: 'Rejected non-hex commit SHA from webhook' };
+    }
     const commitSha = event.after;
     const repoFullName = event.repository.full_name;
 
@@ -645,10 +702,3 @@ export class GitHubWebhookDispatcher {
   }
 }
 
-/**
- * Type guard the route uses to decide whether to kick off a deploy.
- * Exported so mocks don't need to duplicate the check.
- */
-export function shouldDispatchDeploy(result: WebhookDispatchResult): boolean {
-  return Boolean(result.deployRequest);
-}

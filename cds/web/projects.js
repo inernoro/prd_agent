@@ -638,8 +638,10 @@ window.cdsDoLogout = cdsDoLogout;
       ? '最近部署 ' + formatRelative(project.lastDeployedAt)
       : '尚未部署';
     // GitHub link chip — same pill style as the other stats so the strip
-    // stays homogeneous. Links to github.com, stops click bubbling so it
-    // doesn't also navigate into the card.
+    // stays homogeneous. CANNOT use a nested <a> (the whole card is already
+    // an <a>; nested <a> is invalid HTML and browsers silently close the
+    // outer <a>, breaking the card layout — the chip renders as a huge
+    // circle). Use <span> + onclick that calls window.open.
     var ghChip = '';
     if (project.githubRepoFullName) {
       var repo = project.githubRepoFullName;
@@ -647,15 +649,16 @@ window.cdsDoLogout = cdsDoLogout;
       var ghTitle = autoOff
         ? 'GitHub: ' + repo + ' (自动部署已关闭)'
         : 'GitHub: ' + repo + ' (push 自动部署)';
+      var ghUrl = 'https://github.com/' + encodeURI(repo);
       ghChip =
-        '<a class="cds-stat cds-stat-github" href="https://github.com/' + escapeHtml(repo) + '"' +
-          ' target="_blank" rel="noopener" onclick="event.stopPropagation()"' +
+        '<span class="cds-stat cds-stat-github" role="link" tabindex="0"' +
+          ' onclick="event.preventDefault();event.stopPropagation();window.open(\'' + escapeHtml(ghUrl).replace(/'/g, '&#39;') + '\',\'_blank\',\'noopener\')"' +
           ' title="' + escapeHtml(ghTitle) + '"' +
-          ' style="text-decoration:none' + (autoOff ? ';opacity:0.55' : '') + '">' +
-          '<svg viewBox="0 0 16 16" fill="currentColor" style="width:12px;height:12px"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>' +
+          ' style="cursor:pointer' + (autoOff ? ';opacity:0.55' : '') + '">' +
+          '<svg viewBox="0 0 16 16" fill="currentColor" style="width:12px;height:12px;flex-shrink:0"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>' +
           escapeHtml(repo.split('/').slice(-1)[0] || repo) +
           (autoOff ? ' <span style="opacity:0.7">(off)</span>' : '') +
-        '</a>';
+        '</span>';
     }
     return [
       '<div class="cds-card-stats">',
@@ -751,35 +754,10 @@ window.cdsDoLogout = cdsDoLogout;
   //   cloning  — SSE in progress
   //   ready    — clone finished, usable for deploy
   //   error    — last clone attempt failed (hover → cloneError)
-  // GitHub link badge — shown on project cards when the project is
-  // bound to a GitHub repo via the new Check Runs integration. Links
-  // straight to github.com/<owner>/<repo> in a new tab. `onclick` is
-  // only on a nested <a>, but the parent is ALSO an <a> (the card
-  // href). Native behaviour: clicking the inner <a> navigates to its
-  // href without going through the outer one, so we don't need
-  // preventDefault.
-  function renderGithubBadge(project) {
-    if (!project.githubRepoFullName) return '';
-    var repo = project.githubRepoFullName;
-    var autoDeployOff = project.githubAutoDeploy === false;
-    var title = autoDeployOff
-      ? 'GitHub: ' + repo + ' (自动部署已关闭)'
-      : 'GitHub: ' + repo + ' (push 自动部署)';
-    return (
-      '<a href="https://github.com/' + escapeHtml(repo) + '" target="_blank" rel="noopener" ' +
-        'onclick="event.stopPropagation()" ' +
-        'title="' + escapeHtml(title) + '" ' +
-        'style="display:inline-flex;align-items:center;gap:5px;padding:2px 8px;border-radius:10px;' +
-               'background:rgba(96,165,250,0.1);border:1px solid rgba(96,165,250,0.3);' +
-               'color:' + (autoDeployOff ? 'var(--text-muted)' : '#60a5fa') + ';' +
-               'font-size:11px;font-weight:600;text-decoration:none;font-family:var(--font-mono,monospace)">' +
-        '<svg width="11" height="11" viewBox="0 0 16 16" fill="currentColor"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>' +
-        escapeHtml(repo.split('/').slice(-1)[0] || repo) +
-        (autoDeployOff ? ' <span style="opacity:0.6">(off)</span>' : '') +
-      '</a>'
-    );
-  }
-
+  //
+  // GitHub link badge for bound projects lives inside renderStatsStrip
+  // (cds-stat-github chip). The old standalone renderGithubBadge helper
+  // was removed after the strip-integrated version replaced it.
   function renderCloneBadge(project) {
     if (project.legacyFlag) {
       return '<span class="cds-legacy-badge">Legacy</span>';
@@ -889,10 +867,8 @@ window.cdsDoLogout = cdsDoLogout;
     var envLabel = project.legacyFlag ? 'production' : 'production';
     var cloneBadge = renderCloneBadge(project);
     // GitHub link: rendered INSIDE renderStatsStrip as a 4th chip
-    // (cds-stat-github) so the badge shares the same pill style as the
-    // other stats and doesn't need its own row. The standalone
-    // renderGithubBadge() helper below is kept for potential reuse but
-    // not called by the card template anymore.
+    // (cds-stat-github) so the badge shares the same pill style as
+    // the other stats and doesn't need its own row.
     var cloneBtn = renderCloneButton(project);
     // Show the clone error inline under the service strip when the
     // last attempt failed AND we're not already using the full-size
