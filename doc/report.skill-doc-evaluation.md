@@ -17,9 +17,9 @@
 | A | **已有文档** | `guide.weekly-report.md` | 1020 | 操作指南（手工编写，迭代 3 版） |
 | B | **已有文档** | `spec.report-agent.md` | 822 | 产品需求规格（手工编写） |
 | C | **已有文档** | `design.ai-report-systems.md` | 289 | 市场调研报告（手工编写） |
-| ① | **user-guide-writing** | `output-user-guide-writing.md` | 752 | 用户操作指南（中文） |
-| ② | **technical-writing** | `output-technical-writing.md` | 961 | 技术规格文档（中文） |
-| ③ | **documentation-writer** | `output-documentation-writer.md` | 753 | Diátaxis 四象限文档（中文） |
+| ① | **user-guide-writing** | `report.skill-eval-sample-user-guide.md` | 752 | 用户操作指南（中文） |
+| ② | **technical-writing** | `report.skill-eval-sample-technical.md` | 961 | 技术规格文档（中文） |
+| ③ | **documentation-writer** | `report.skill-eval-sample-diataxis.md` | 753 | Diátaxis 四象限文档（中文） |
 
 ### 1.2 评分维度（满分 10 分）
 

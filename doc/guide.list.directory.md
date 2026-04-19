@@ -403,12 +403,24 @@
 - [文档技能评测报告](report.skill-doc-evaluation) `report.skill-doc-evaluation`
   > 三种文档技能 vs 已有文档的评测对比报告
 
+- [文档技能评测·user-guide-writing 样本输出](report.skill-eval-sample-user-guide) `report.skill-eval-sample-user-guide`
+  > 评测报告引用的 skill 原始输出样本（用户操作指南类）
+
+- [文档技能评测·technical-writing 样本输出](report.skill-eval-sample-technical) `report.skill-eval-sample-technical`
+  > 评测报告引用的 skill 原始输出样本（技术规格类）
+
+- [文档技能评测·documentation-writer 样本输出](report.skill-eval-sample-diataxis) `report.skill-eval-sample-diataxis`
+  > 评测报告引用的 skill 原始输出样本（Diátaxis 四象限类）
+
 ---
 
 ## 变更历史
 
 | 日期 | 操作 | 文件名 | 中文标题 |
 | :--- | :--- | :--- | :--- |
+| 2026-04-19 | 🔄 重命名 | `output-user-guide-writing` → `report.skill-eval-sample-user-guide` | 文档技能评测·user-guide-writing 样本输出 |
+| 2026-04-19 | 🔄 重命名 | `output-technical-writing` → `report.skill-eval-sample-technical` | 文档技能评测·technical-writing 样本输出 |
+| 2026-04-19 | 🔄 重命名 | `output-documentation-writer` → `report.skill-eval-sample-diataxis` | 文档技能评测·documentation-writer 样本输出 |
 | 2026-03-31 | 🟢 新增 | `report.2026-W13` | 周报 2026-W13 (03-23 ~ 03-29) |
 | 2026-03-31 | 🟢 新增 | `design.llm-gateway` | LLM Gateway 统一调用架构设计 |
 | 2026-03-31 | 🟢 新增 | `design.marketplace` | 配置市场（海鲜市场）技术设计 |
