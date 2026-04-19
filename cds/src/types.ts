@@ -215,8 +215,14 @@ export interface BranchEntry {
   worktreePath: string;
   /** Per-profile container state */
   services: Record<string, ServiceState>;
-  /** Overall branch status */
-  status: 'idle' | 'building' | 'starting' | 'running' | 'stopping' | 'error';
+  /**
+   * Overall branch status.
+   * `restarting` is a transient state entered when a container is being
+   * hot-reloaded via `docker restart` without teardown — the proxy layer
+   * treats it like `starting` (serves a loading page) so users never see
+   * a 502 during the restart window.
+   */
+  status: 'idle' | 'building' | 'starting' | 'running' | 'restarting' | 'stopping' | 'error';
   errorMessage?: string;
   createdAt: string;
   lastAccessedAt?: string;
@@ -319,7 +325,7 @@ export interface ServiceState {
   containerName: string;
   /** Host port allocated for this service */
   hostPort: number;
-  status: 'idle' | 'building' | 'starting' | 'running' | 'stopping' | 'stopped' | 'error';
+  status: 'idle' | 'building' | 'starting' | 'running' | 'restarting' | 'stopping' | 'stopped' | 'error';
   buildLog?: string;
   errorMessage?: string;
 }

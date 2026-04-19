@@ -132,7 +132,7 @@ describe('ProxyService', () => {
       return { res, written };
     }
 
-    function addBranch(id: string, status: 'running' | 'starting' | 'building', services: Record<string, { profileId: string; status: string }> = {}) {
+    function addBranch(id: string, status: 'running' | 'starting' | 'building' | 'idle' | 'error' | 'restarting' | 'stopping', services: Record<string, { profileId: string; status: string }> = {}) {
       const svcState: Record<string, any> = {};
       for (const [k, v] of Object.entries(services)) {
         svcState[k] = { profileId: v.profileId, containerName: `cds-${id}-${k}`, hostPort: 9000, status: v.status };
@@ -144,7 +144,7 @@ describe('ProxyService', () => {
       stateService.save();
     }
 
-    it('should serve loading page when branch status is starting', () => {
+    it('should serve loading page (HTTP 503 + Retry-After) when branch status is starting', () => {
       addBranch('my-branch', 'starting', {
         admin: { profileId: 'admin', status: 'starting' },
       });
@@ -155,8 +155,12 @@ describe('ProxyService', () => {
       const { res, written } = makeRes();
       proxy.handleRequest(req, res);
 
-      expect(written.statusCode).toBe(200);
+      // 503 + Retry-After lets Cloudflare + browsers know this is transient;
+      // the HTML body still renders in the browser. See
+      // .claude/rules/cds-auto-deploy.md and proxy.serveStartingPage.
+      expect(written.statusCode).toBe(503);
       expect(written.headers['Content-Type']).toContain('text/html');
+      expect(written.headers['Retry-After']).toBe('2');
       expect(written.body).toContain('启动中');
       expect(written.body).toContain('setTimeout');
     });
@@ -185,10 +189,30 @@ describe('ProxyService', () => {
       const { res, written } = makeRes();
       proxy.handleRequest(req, res);
 
-      expect(written.statusCode).toBe(200);
+      expect(written.statusCode).toBe(503);
       expect(written.headers['Content-Type']).toContain('text/html');
       expect(written.body).toContain('启动中');
       expect(written.body).toContain('admin');
+    });
+
+    it('should serve loading page (not auto-build) when branch is already building', () => {
+      // 'building' is a loading state — a build is already in progress, so
+      // firing another onAutoBuild would race the running deploy. Loading
+      // page auto-refreshes until the build flips status to 'running'.
+      addBranch('my-branch', 'building', {});
+      stateService.setDefaultBranch('my-branch');
+      stateService.save();
+
+      let autoBuildCalled = false;
+      proxy.setOnAutoBuild(() => { autoBuildCalled = true; });
+
+      const req = makeReq({ host: 'localhost' }, '/');
+      const { res, written } = makeRes();
+      proxy.handleRequest(req, res);
+
+      expect(autoBuildCalled).toBe(false);
+      expect(written.statusCode).toBe(503);
+      expect(written.body).toContain('构建中');
     });
 
     it('should proxy to upstream when target service is running', () => {
@@ -209,8 +233,10 @@ describe('ProxyService', () => {
       expect(resolvedUpstream).toBe('http://localhost:9000');
     });
 
-    it('should still trigger auto-build for building/idle/error states', () => {
-      addBranch('my-branch', 'building', {});
+    it('should trigger auto-build for idle/error branches (no in-progress build)', () => {
+      // 'idle' is not a loading state — there is nothing running or being
+      // built, so auto-build should kick in to wake the branch on demand.
+      addBranch('my-branch', 'idle', {});
       stateService.setDefaultBranch('my-branch');
       stateService.save();
 

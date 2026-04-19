@@ -582,6 +582,25 @@ emit_server_blocks() {
   [ -n "$ssl_block" ] && printf '%s' "$ssl_block"
   echo "    server_name *.${d};"
   echo ""
+  echo "    # Friendly fallback when CDS master is unreachable or times out."
+  echo "    # Fires only on nginx-generated 502/504 (upstream dead); upstream"
+  echo "    # 503 HTML responses from CDS pass through untouched because"
+  echo "    # proxy_intercept_errors defaults to off. See cds/src/services/proxy.ts"
+  echo "    # serveStartingPage and .claude/rules/cds-auto-deploy.md."
+  echo "    error_page 502 504 = @cds_waiting;"
+  echo "    location @cds_waiting {"
+  echo "        root /var/www/html;"
+  echo "        try_files /cds-waiting.html =503;"
+  echo "        add_header Retry-After 5 always;"
+  echo "        add_header Cache-Control \"no-cache, no-store, must-revalidate\" always;"
+  echo "        default_type text/html;"
+  echo "        internal;"
+  echo "    }"
+  echo "    location = /cds-waiting.html {"
+  echo "        root /var/www/html;"
+  echo "        add_header Cache-Control \"no-cache, no-store, must-revalidate\" always;"
+  echo "    }"
+  echo ""
   echo "    location ^~ /.well-known/acme-challenge/ {"
   echo "        root /var/www/html;"
   echo "        allow all;"
@@ -593,6 +612,50 @@ emit_server_blocks() {
   echo "    }"
   echo "}"
   echo ""
+}
+
+# Static waiting page baked into nginx. Fires when cds_worker (CDS master)
+# is unreachable — typically during self-update restart or process crash.
+# For every other half-ready state CDS's own proxy renders a richer loading
+# page with service-level progress; this file is the last-resort safety net.
+# See .claude/rules/cds-auto-deploy.md.
+write_waiting_html() {
+  local target="$NGINX_WWW_DIR/cds-waiting.html"
+  mkdir -p "$NGINX_WWW_DIR"
+  local content
+  content=$(cat <<'WAITING_HTML'
+<!DOCTYPE html>
+<html lang="zh"><head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>预览环境准备中</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:#0d1117;color:#c9d1d9;display:flex;align-items:center;justify-content:center;min-height:100vh;padding:20px}
+.card{max-width:460px;width:100%;padding:32px;background:#161b22;border:1px solid #30363d;border-radius:12px;text-align:center}
+.spinner{width:28px;height:28px;border:3px solid #30363d;border-top-color:#58a6ff;border-radius:50%;animation:spin .8s linear infinite;margin:0 auto 16px}
+@keyframes spin{to{transform:rotate(360deg)}}
+h2{font-size:16px;font-weight:600;color:#f0f6fc;margin-bottom:8px}
+.tag{display:inline-block;font-size:11px;padding:2px 8px;border-radius:99px;background:#1f6feb22;color:#58a6ff;border:1px solid #1f6feb55;margin-bottom:16px}
+.desc{font-size:13px;color:#8b949e;line-height:1.6;margin-bottom:16px}
+.kbd{font-family:ui-monospace,SFMono-Regular,monospace;font-size:12px;color:#c9d1d9;background:#21262d;padding:2px 6px;border-radius:4px}
+.hint{font-size:12px;color:#6e7681}
+</style>
+</head><body>
+<div class="card">
+  <div class="spinner"></div>
+  <h2>预览环境准备中</h2>
+  <div class="tag">CDS 控制面暂时不可达</div>
+  <div class="desc">
+    分支预览正在构建或 CDS 正在自升级，几秒钟后会自动恢复。<br>
+    本页面每 <span class="kbd">3s</span> 自动刷新。
+  </div>
+  <div class="hint">如果持续看到此页面，请在 PR Checks 面板查看 CDS Deploy 状态。</div>
+</div>
+<script>setTimeout(function(){location.reload()},3000)</script>
+</body></html>
+WAITING_HTML
+)
+  write_if_changed "$target" "$content"
 }
 
 # Write content to a target file only if it differs from what's on disk.
@@ -626,6 +689,11 @@ render_nginx() {
 
   mkdir -p "$NGINX_CERTS_DIR" "$NGINX_WWW_DIR/.well-known/acme-challenge"
   NGINX_CHANGED_FILES=""
+
+  # Static last-resort waiting page served by nginx itself when cds_worker
+  # is unreachable. Generated alongside the per-domain configs so a fresh
+  # install has it ready before any upstream 502 can happen.
+  write_waiting_html
 
   # Top-level nginx.conf (static base, rarely changes)
   local base_content

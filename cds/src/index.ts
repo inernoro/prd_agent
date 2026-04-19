@@ -955,16 +955,46 @@ proxyService.setOnAutoBuild(async (branchSlug, _req, res) => {
         sendEvent('log', { profileId: profile.id, chunk });
       }, mergedEnv);
 
-      svc.status = 'running';
-      sendEvent('step', { step: `build-${profile.id}`, status: 'done', title: `${profile.name} 就绪 :${svc.hostPort}` });
+      // Gate 'running' on readiness probe — container alive isn't enough.
+      // See .claude/rules/cds-auto-deploy.md. Auto-build path does not block
+      // on HTTP probes (users tapping a cold subdomain want the loading page,
+      // not a long SSE stream) but TCP readiness is cheap and closes the
+      // window where the host port is bound but not yet accepting.
+      svc.status = 'starting';
+      stateService.save();
+      const ready = await containerService.waitForReadiness(
+        svc.hostPort,
+        profile.readinessProbe,
+        (info) => sendEvent('probe', { profileId: profile.id, attempt: info.attempt, max: info.max, stage: info.stage, ok: info.ok, error: info.error }),
+      );
+      if (ready) {
+        svc.status = 'running';
+        sendEvent('step', { step: `build-${profile.id}`, status: 'done', title: `${profile.name} 就绪 :${svc.hostPort}` });
+      } else {
+        svc.status = 'error';
+        svc.errorMessage = '就绪探测超时';
+        sendEvent('step', { step: `build-${profile.id}`, status: 'error', title: `${profile.name} 就绪探测超时 :${svc.hostPort}` });
+      }
     }
 
-    entry.status = 'running';
+    // Aggregate overall branch state from the per-service status so a
+    // readiness-timeout on any service doesn't silently resolve as 'running'.
+    const svcStatuses = Object.values(entry.services).map(s => s.status);
+    const anyError = svcStatuses.some(s => s === 'error');
+    const anyStarting = svcStatuses.some(s => s === 'starting');
+    const anyRunning = svcStatuses.some(s => s === 'running');
+    entry.status = anyError && !anyRunning
+      ? 'error'
+      : anyStarting && !anyRunning
+        ? 'starting'
+        : 'running';
     entry.lastAccessedAt = new Date().toISOString();
     stateService.save();
 
     sendEvent('complete', {
-      message: `分支 "${finalSlug}" 已就绪`,
+      message: anyError
+        ? `分支 "${finalSlug}" 部分服务就绪探测超时，详见日志`
+        : `分支 "${finalSlug}" 已就绪`,
       hint: '即将自动刷新...',
     });
     resolveLock!();
