@@ -654,8 +654,8 @@ export default function AgentLauncherPage() {
               className="absolute inset-0 pointer-events-none"
               style={{
                 background: isMobile
-                  ? 'linear-gradient(180deg, var(--bg-base) 0%, rgba(20,20,24,0.85) 40%, rgba(20,20,24,0.5) 100%)'
-                  : 'linear-gradient(90deg, var(--bg-base) 0%, var(--bg-base) 30%, rgba(20,20,24,0.7) 55%, rgba(20,20,24,0.15) 80%, transparent 100%)',
+                  ? 'linear-gradient(180deg, rgba(10,10,14,0.95) 0%, rgba(10,10,14,0.7) 40%, transparent 100%)'
+                  : 'linear-gradient(90deg, rgba(10,10,11,0.95) 0%, rgba(10,10,11,0.8) 25%, rgba(10,10,11,0.4) 50%, transparent 80%)',
               }}
             />
             {/* Bottom fade — blend with page */}
