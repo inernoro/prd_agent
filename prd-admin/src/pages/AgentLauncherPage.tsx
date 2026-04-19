@@ -619,6 +619,16 @@ export default function AgentLauncherPage() {
       {/* 环境光背景层（blobs + film grain + top spotlight） —— 单独一层，不影响布局 */}
       <HomeAmbientBackdrop />
 
+      <style>{`
+        @keyframes gradientSlowFlow {
+          0% { background-position: 0% 50%; }
+          50% { background-position: 100% 50%; }
+          100% { background-position: 0% 50%; }
+        }
+        .animate-gradient-flow {
+          animation: gradientSlowFlow 8s ease-in-out infinite;
+        }
+      `}</style>
       <div className="flex-1 min-h-0 overflow-auto relative" style={{ zIndex: 1 }}>
 
           {/* ── Hero banner with background image — full width ── */}
@@ -703,8 +713,10 @@ export default function AgentLauncherPage() {
                       {displayName ? '，' : ''}
                       {displayName && (
                         <span
+                          className="animate-gradient-flow"
                           style={{
                             background: MAP_ACCENT_GRADIENT,
+                            backgroundSize: '200% auto',
                             WebkitBackgroundClip: 'text',
                             WebkitTextFillColor: 'transparent',
                             backgroundClip: 'text',
