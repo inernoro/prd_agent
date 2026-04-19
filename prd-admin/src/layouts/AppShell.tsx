@@ -1052,11 +1052,27 @@ export default function AppShell() {
                   <span className="text-[13px]">数据分享</span>
                 </DropdownMenu.Item>
 
+                <DropdownMenu.Item
+                  className="flex items-center gap-3 px-3 py-2.5 rounded-[10px] cursor-pointer outline-none transition-colors hover:bg-white/6"
+                  style={{ color: 'var(--text-secondary)' }}
+                  onSelect={() => navigate('/settings?tab=user-space')}
+                >
+                  <Sparkles size={16} className="shrink-0" />
+                  <span className="text-[13px]">我的空间</span>
+                  <span
+                    className="ml-auto text-[10px]"
+                    style={{ color: 'var(--text-muted)' }}
+                  >
+                    常用 / 最近 / 置顶
+                  </span>
+                </DropdownMenu.Item>
+
                 {/* 注意：工具类菜单项（网页托管/知识库/涌现/提示词/实验室/自动化/快捷指令/PR 审查/请求日志 等）
                     已从用户菜单移除。它们的入口现在是：
                     - 首页「实用工具」区（AgentLauncherPage staticUtilities）
                     - 百宝箱 BUILTIN_TOOLS
-                    原则：用户菜单只保留「账户 + 系统 + 退出」三类，不承载工具导航。 */}
+                    - Cmd/Ctrl + K 命令面板（Agent / 工具 / 实用工具 统一搜索）
+                    原则：用户菜单只保留「账户 + 系统 + 我的空间 + 退出」四类，不承载工具导航。 */}
 
                 <DropdownMenu.Item
                   className="flex items-center gap-3 px-3 py-2.5 rounded-[10px] cursor-pointer outline-none transition-colors hover:bg-white/6"

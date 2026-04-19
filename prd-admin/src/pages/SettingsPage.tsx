@@ -6,7 +6,7 @@ import type { TabBarItem } from '@/components/design/TabBar';
 import { Button } from '@/components/design/Button';
 import { useNavOrderStore } from '@/stores/navOrderStore';
 import { useAuthStore } from '@/stores/authStore';
-import { GripVertical, Palette, RefreshCw, RotateCcw, Image, UserCog, Database, ListOrdered, Zap } from 'lucide-react';
+import { GripVertical, Palette, RefreshCw, RotateCcw, Image, UserCog, Database, ListOrdered, Zap, Sparkles } from 'lucide-react';
 import { MapSpinner } from '@/components/ui/VideoLoader';
 import * as LucideIcons from 'lucide-react';
 import { ThemeSkinEditor } from '@/pages/settings/ThemeSkinEditor';
@@ -14,6 +14,7 @@ import AssetsManagePage from '@/pages/AssetsManagePage';
 import AuthzPage from '@/pages/AuthzPage';
 import DataManagePage from '@/pages/DataManagePage';
 import { UpdateAccelerationSettings } from '@/pages/settings/UpdateAccelerationSettings';
+import { UserSpaceSettings } from '@/pages/settings/UserSpaceSettings';
 
 interface NavItem {
   key: string;
@@ -259,6 +260,7 @@ export default function SettingsPage() {
   // 根据权限构建可见 tab 列表
   const tabs = useMemo(() => {
     const list: TabBarItem[] = [
+      { key: 'user-space', label: '我的空间', icon: <Sparkles size={14} /> },
       { key: 'skin', label: '皮肤设置', icon: <Palette size={14} /> },
       { key: 'nav-order', label: '导航顺序', icon: <ListOrdered size={14} /> },
     ];
@@ -270,7 +272,7 @@ export default function SettingsPage() {
     return list;
   }, [perms, isRoot]);
 
-  const tabFromUrl = searchParams.get('tab') || 'skin';
+  const tabFromUrl = searchParams.get('tab') || 'user-space';
   const [activeTab, setActiveTab] = useState(tabFromUrl);
 
   // 同步 URL 参数
@@ -295,6 +297,7 @@ export default function SettingsPage() {
       />
 
       <div className="flex-1 min-h-0">
+        {activeTab === 'user-space' && <UserSpaceSettings />}
         {activeTab === 'skin' && <SkinSettings />}
         {activeTab === 'nav-order' && <NavOrderSettings />}
         {activeTab === 'assets' && <AssetsManagePage />}
