@@ -1230,7 +1230,7 @@ export function DocBrowser({
 
   if (loading) {
     return (
-      <div className="flex-1 flex items-center justify-center" style={{ minHeight: 'calc(100vh - 160px)' }}>
+      <div className="flex-1 flex items-center justify-center" style={{ minHeight: 0, height: '100%' }}>
         <MapSectionLoader />
       </div>
     );
@@ -1241,13 +1241,14 @@ export function DocBrowser({
   }
 
   return (
-    <div className="flex-1 min-h-0 flex gap-0 rounded-[12px] overflow-hidden"
-      style={{ border: '1px solid rgba(255,255,255,0.06)', background: 'rgba(0,0,0,0.12)', minHeight: 'calc(100vh - 160px)' }}>
+    <div className="flex-1 flex gap-0 rounded-[12px] overflow-hidden"
+      style={{ border: '1px solid rgba(255,255,255,0.06)', background: 'rgba(0,0,0,0.12)', minHeight: 0 }}>
 
       {/* 左侧：文件树（液态玻璃效果 + 可拖拽调整宽度） */}
       <div className="flex flex-col flex-shrink-0 relative"
         style={{
           width: `${sidebarWidth}px`,
+          minHeight: 0,
           background: 'linear-gradient(180deg, rgba(255,255,255,0.045) 0%, rgba(255,255,255,0.02) 100%)',
           backdropFilter: 'blur(40px) saturate(180%)',
           WebkitBackdropFilter: 'blur(40px) saturate(180%)',
@@ -1391,7 +1392,10 @@ export function DocBrowser({
         </div>
 
         {/* 文件树 */}
-        <div className="flex-1 overflow-y-auto py-1">
+        <div
+          className="flex-1 py-1"
+          style={{ minHeight: 0, overflowY: 'auto', overscrollBehavior: 'contain' }}
+        >
           {filteredRoots.length === 0 ? (
             <div className="px-3 py-6 text-center text-[11px]" style={{ color: 'var(--text-muted)' }}>
               {search ? (searching ? '搜索中...' : '无匹配文件') : '暂无文档'}
@@ -1454,7 +1458,10 @@ export function DocBrowser({
       </div>
 
       {/* 右侧：文档预览 */}
-      <div className="flex-1 min-w-0 flex flex-col overflow-hidden">
+      <div
+        className="flex-1 min-w-0 flex flex-col overflow-hidden"
+        style={{ minHeight: 0 }}
+      >
         {selectedEntryId ? (
           <>
             {/* 面包屑导航 header */}
@@ -1661,7 +1668,11 @@ export function DocBrowser({
               })()}
             </div>
             {/* 内容区 */}
-            <div ref={contentAreaRef} className="flex-1 overflow-y-auto px-6 py-4 relative">
+            <div
+              ref={contentAreaRef}
+              className="flex-1 px-6 py-4 relative"
+              style={{ minHeight: 0, overflowY: 'auto', overscrollBehavior: 'contain' }}
+            >
               {contentLoading ? (
                 <MapSectionLoader text="加载文档内容…" />
               ) : editMode ? (

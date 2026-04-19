@@ -4,8 +4,6 @@ import { useChangelogStore } from '@/stores/changelogStore';
 import { MapSectionLoader, MapSpinner } from '@/components/ui/VideoLoader';
 import { glassPanel } from '@/lib/glassStyles';
 import type { ChangelogEntry } from '@/services';
-import { RichTextMarkdownContent } from '@/pages/report-agent/components/RichTextMarkdownContent';
-
 import { TabBar } from '@/components/design/TabBar';
 import { WeeklyReportsTab } from './components/WeeklyReportsTab';
 

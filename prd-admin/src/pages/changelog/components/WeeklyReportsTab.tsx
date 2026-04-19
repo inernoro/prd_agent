@@ -12,7 +12,7 @@ import {
   deleteDocumentStore
 } from '@/services';
 import type { DocumentStoreWithPreview, DocumentEntry } from '@/services/contracts/documentStore';
-import type { EntryPreview } from '@/components/doc-browser/fileTypeRegistry';
+import type { EntryPreview } from '@/components/doc-browser/DocBrowser';
 import { toast } from '@/lib/toast';
 
 const STORE_NAME = 'map周报';
@@ -40,7 +40,7 @@ export function WeeklyReportsTab() {
         if (found) {
           setStore(found);
           // 查找该知识库下面的 github 订阅条目，为了支持“手动更新”按钮
-          const er = await listDocumentEntries(found.id, 1, 500, undefined, undefined, undefined, true);
+          const er = await listDocumentEntries(found.id, 1, 500);
           if (er.success) {
             setEntries(er.data.items);
             const ghEntry = er.data.items.find(e => e.sourceType === 'github_directory');
@@ -244,8 +244,11 @@ export function WeeklyReportsTab() {
 
   // == 完整展示页 (复用 DocBrowser) ==
   return (
-    <div className="flex flex-col flex-1 h-[calc(100vh-140px)] min-h-[500px]">
-      <div className="flex items-center justify-between mb-4">
+    <div
+      className="flex flex-col flex-1"
+      style={{ height: 'calc(100vh - 140px)', minHeight: '500px' }}
+    >
+      <div className="flex items-center justify-between mb-4 shrink-0">
         <div className="flex items-center gap-3 pl-1">
           <div className="px-2.5 py-1 rounded-md text-[11px] font-bold font-mono tracking-wider"
             style={{
@@ -291,14 +294,16 @@ export function WeeklyReportsTab() {
         </div>
       </div>
       
-      <div className="flex-1 min-h-0 rounded-2xl overflow-hidden relative"
+      <div
+        className="flex-1 flex flex-col rounded-2xl overflow-hidden relative"
         style={{
           background: 'rgba(0, 0, 0, 0.25)',
           border: '1px solid rgba(255, 255, 255, 0.08)',
-          boxShadow: 'inset 0 0 40px rgba(0,0,0,0.2)'
+          boxShadow: 'inset 0 0 40px rgba(0,0,0,0.2)',
+          minHeight: 0,
         }}
       >
-        <DocBrowser 
+        <DocBrowser
           entries={entries}
           selectedEntryId={selectedEntryId}
           onSelectEntry={setSelectedEntryId}
