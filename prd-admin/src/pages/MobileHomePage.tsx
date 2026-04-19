@@ -132,11 +132,17 @@ export default function MobileHomePage() {
               {(user?.displayName || user?.username || '?')[0]}
             </div>
           )}
-          <div>
-            <div className="text-lg font-semibold" style={{ color: 'var(--text-primary)' }}>
+          <div className="flex flex-col items-start">
+            <div
+              className="text-lg font-semibold px-2.5 py-0.5 rounded-lg bg-black/20 backdrop-blur-md shadow-sm border border-white/5"
+              style={{ color: 'var(--text-primary)', textShadow: '0 1px 3px rgba(0,0,0,0.5)' }}
+            >
               {greeting}，{user?.displayName || user?.username}
             </div>
-            <div className="text-xs" style={{ color: 'var(--text-muted)' }}>
+            <div
+              className="text-xs mt-1.5 px-2 py-0.5 rounded-md bg-black/20 backdrop-blur-md shadow-sm border border-white/5"
+              style={{ color: 'var(--text-muted)' }}
+            >
               看看今天能帮你做什么
             </div>
           </div>
@@ -144,7 +150,10 @@ export default function MobileHomePage() {
 
         {/* ── 快捷 Agent 入口 ── */}
         <div className="mb-5">
-          <div className="text-xs font-medium mb-3" style={{ color: 'var(--text-muted)' }}>
+          <div
+            className="text-xs font-medium mb-3 px-2.5 py-1 rounded-md inline-block bg-black/20 backdrop-blur-md shadow-sm border border-white/5"
+            style={{ color: 'var(--text-primary)' }}
+          >
             快捷入口
           </div>
           <div className={`grid gap-3 ${quickAgents.length > 4 ? 'grid-cols-5' : 'grid-cols-4'}`}>
@@ -163,8 +172,8 @@ export default function MobileHomePage() {
                     <AgentIcon size={20} style={{ color: agent.color }} />
                   </div>
                   <span
-                    className="text-[10px] font-medium text-center leading-tight px-0.5 line-clamp-2"
-                    style={{ color: 'var(--text-secondary)' }}
+                    className="text-[10px] font-medium text-center leading-tight px-1.5 py-0.5 mt-0.5 rounded bg-black/20 backdrop-blur-md shadow-sm border border-white/5 line-clamp-2"
+                    style={{ color: 'var(--text-primary)' }}
                   >
                     {agent.label}
                   </span>
@@ -177,7 +186,10 @@ export default function MobileHomePage() {
         {/* ── 统计卡片 (近 7 日) ── */}
         {stats && (
           <div className="mb-5">
-            <div className="text-xs font-medium mb-3" style={{ color: 'var(--text-muted)' }}>
+            <div
+              className="text-xs font-medium mb-3 px-2.5 py-1 rounded-md inline-block bg-black/20 backdrop-blur-md shadow-sm border border-white/5"
+              style={{ color: 'var(--text-primary)' }}
+            >
               近 7 日统计
             </div>
             <div className="grid grid-cols-4 gap-2">
@@ -190,11 +202,17 @@ export default function MobileHomePage() {
                     key={card.key}
                     className="surface-inset flex flex-col items-center gap-1.5 py-3 rounded-xl"
                   >
-                    <CardIcon size={16} style={{ color: card.color }} />
-                    <div className="text-base font-bold" style={{ color: 'var(--text-primary)' }}>
+                    <CardIcon size={16} className="mb-0.5" style={{ color: card.color }} />
+                    <div
+                      className="text-base font-bold px-2 py-0.5 rounded-md bg-black/20 backdrop-blur-md shadow-sm border border-white/5"
+                      style={{ color: 'var(--text-primary)', textShadow: '0 1px 2px rgba(0,0,0,0.5)' }}
+                    >
                       {display}
                     </div>
-                    <div className="text-[10px]" style={{ color: 'var(--text-muted)' }}>
+                    <div
+                      className="text-[10px] px-1.5 py-0.5 rounded bg-black/20 backdrop-blur-md shadow-sm border border-white/5"
+                      style={{ color: 'var(--text-muted)' }}
+                    >
                       {card.label}
                     </div>
                   </div>
@@ -208,10 +226,16 @@ export default function MobileHomePage() {
         {notifications.length > 0 && (
           <div className="mb-5">
             <div className="flex items-center justify-between mb-3">
-              <div className="text-xs font-medium" style={{ color: 'var(--text-muted)' }}>
+              <div
+                className="text-xs font-medium px-2.5 py-1 rounded-md inline-block bg-black/20 backdrop-blur-md shadow-sm border border-white/5"
+                style={{ color: 'var(--text-primary)' }}
+              >
                 通知
               </div>
-              <div className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
+              <div
+                className="text-[11px] px-2 py-0.5 rounded-md bg-black/20 backdrop-blur-md shadow-sm border border-white/5"
+                style={{ color: 'var(--text-muted)' }}
+              >
                 {notifications.length} 条未读
               </div>
             </div>
@@ -223,11 +247,17 @@ export default function MobileHomePage() {
                 >
                   <Bell size={16} className="mt-0.5 shrink-0" style={{ color: 'var(--text-muted)' }} />
                   <div className="flex-1 min-w-0">
-                    <div className="text-sm font-medium truncate" style={{ color: 'var(--text-primary)' }}>
+                    <div
+                      className="text-sm font-medium truncate px-1.5 py-0.5 rounded bg-black/20 w-fit max-w-full backdrop-blur-md shadow-sm border border-white/5"
+                      style={{ color: 'var(--text-primary)' }}
+                    >
                       {n.title}
                     </div>
                     {n.message && (
-                      <div className="text-xs mt-0.5 line-clamp-2" style={{ color: 'var(--text-muted)' }}>
+                      <div
+                        className="text-xs mt-1 line-clamp-2 px-1.5 py-0.5 rounded bg-black/20 w-fit backdrop-blur-md shadow-sm border border-white/5"
+                        style={{ color: 'var(--text-muted)' }}
+                      >
                         {n.message}
                       </div>
                     )}
@@ -264,7 +294,10 @@ export default function MobileHomePage() {
         {/* ── Feed 流 (最近活动) ── */}
         {feed.length > 0 && (
           <div>
-            <div className="text-xs font-medium mb-3" style={{ color: 'var(--text-muted)' }}>
+            <div
+              className="text-xs font-medium mb-3 px-2.5 py-1 rounded-md inline-block bg-black/20 backdrop-blur-md shadow-sm border border-white/5"
+              style={{ color: 'var(--text-primary)' }}
+            >
               最近活动
             </div>
             <div className="space-y-2">
@@ -284,10 +317,16 @@ export default function MobileHomePage() {
                       <FeedIcon size={18} style={{ color: meta.color }} />
                     </div>
                     <div className="flex-1 min-w-0">
-                      <div className="text-sm font-medium truncate" style={{ color: 'var(--text-primary)' }}>
+                      <div
+                        className="text-sm font-medium truncate px-1.5 py-0.5 rounded bg-black/20 w-fit max-w-full backdrop-blur-md shadow-sm border border-white/5"
+                        style={{ color: 'var(--text-primary)' }}
+                      >
                         {item.title}
                       </div>
-                      <div className="text-[11px] truncate" style={{ color: 'var(--text-muted)' }}>
+                      <div
+                        className="text-[11px] truncate mt-1 px-1.5 py-0.5 rounded bg-black/20 w-fit max-w-full backdrop-blur-md shadow-sm border border-white/5"
+                        style={{ color: 'var(--text-muted)' }}
+                      >
                         {item.subtitle}
                       </div>
                     </div>
