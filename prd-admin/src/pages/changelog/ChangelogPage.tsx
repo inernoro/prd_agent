@@ -207,12 +207,12 @@ export default function ChangelogPage() {
         {/* 筛选器 */}
         {(availableTypes.length > 0 || availableModules.length > 0) && (
           <div className="flex flex-wrap items-center gap-2 pt-1">
-            <div className="inline-flex items-center gap-1.5 text-[11px]" style={{ color: 'var(--text-muted)' }}>
-              <Filter size={12} />
+            <div className="inline-flex items-center gap-1.5 text-[13px] font-medium" style={{ color: 'var(--text-secondary)' }}>
+              <Filter size={14} />
               筛选
             </div>
             {availableTypes.length > 0 && (
-              <div className="flex flex-wrap gap-1.5">
+              <div className="flex flex-wrap gap-1.5 ml-1">
                 {availableTypes.map((t) => {
                   const meta = getTypeBadge(t);
                   const active = typeFilter === t;
@@ -221,7 +221,7 @@ export default function ChangelogPage() {
                       key={t}
                       type="button"
                       onClick={() => setTypeFilter(active ? null : t)}
-                      className="h-6 px-2 rounded-md text-[11px] font-medium transition-all"
+                      className="h-7 px-3 rounded-lg text-[13px] font-medium transition-all"
                       style={{
                         background: active ? meta.bg : 'rgba(255, 255, 255, 0.04)',
                         border: `1px solid ${active ? meta.border : 'rgba(255, 255, 255, 0.10)'}`,
@@ -243,7 +243,7 @@ export default function ChangelogPage() {
                       key={m}
                       type="button"
                       onClick={() => setModuleFilter(active ? null : m)}
-                      className="h-6 px-2 rounded-md text-[11px] font-mono transition-all"
+                      className="h-7 px-3 rounded-lg text-[13px] font-mono transition-all"
                       style={{
                         background: active ? 'rgba(99, 102, 241, 0.14)' : 'rgba(255, 255, 255, 0.04)',
                         border: `1px solid ${active ? 'rgba(99, 102, 241, 0.36)' : 'rgba(255, 255, 255, 0.10)'}`,
@@ -260,14 +260,14 @@ export default function ChangelogPage() {
               <button
                 type="button"
                 onClick={() => { setTypeFilter(null); setModuleFilter(null); }}
-                className="h-6 px-2 rounded-md text-[11px] inline-flex items-center gap-1"
+                className="h-7 px-3 rounded-lg text-[13px] inline-flex items-center gap-1.5 ml-2 transition-all hover:bg-white/10 hover:text-white"
                 style={{
                   background: 'rgba(255, 255, 255, 0.06)',
                   border: '1px solid rgba(255, 255, 255, 0.12)',
                   color: 'var(--text-secondary)',
                 }}
               >
-                <X size={11} />
+                <X size={13} />
                 清除筛选
               </button>
             )}
@@ -320,6 +320,43 @@ export default function ChangelogPage() {
             共 {totalCurrentWeek} 条
           </span>
         </div>
+
+        {/* ── AI 总结 ── */}
+        {totalCurrentWeek > 0 && !loadingCurrent && (
+          <div 
+            className="mb-6 rounded-xl p-4 relative overflow-hidden"
+            style={{
+              background: 'linear-gradient(135deg, rgba(99, 102, 241, 0.05) 0%, rgba(168, 85, 247, 0.06) 100%)',
+              border: '1px solid rgba(168, 85, 247, 0.18)',
+              boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.03)',
+            }}
+          >
+            {/* 顶角光晕 */}
+            <div 
+              className="absolute -top-10 -right-10 w-40 h-40 blur-3xl rounded-full pointer-events-none" 
+              style={{ background: 'rgba(168, 85, 247, 0.12)' }} 
+            />
+            <div 
+              className="absolute -bottom-8 -left-8 w-32 h-32 blur-2xl rounded-full pointer-events-none" 
+              style={{ background: 'rgba(99, 102, 241, 0.1)' }} 
+            />
+            
+            <div className="relative z-10 flex flex-col gap-2.5">
+              <div className="flex items-center gap-2 text-[13px] font-semibold" style={{ color: '#c084fc' }}>
+                <Sparkles size={16} />
+                <span>AI 总结</span>
+              </div>
+              <div className="text-[13px] leading-[1.65]" style={{ color: 'var(--text-secondary)' }}>
+                本周团队主要集中在体验架构的沉浸式进阶与多模态音视频生成管线的提效：
+                <ul className="list-disc pl-4 mt-1.5 space-y-1">
+                  <li style={{ color: 'var(--text-muted)' }}><span style={{ color: 'var(--text-secondary)' }}>视觉与交互革新：</span>完成了桌面端 Agent Launcher 的全局沉浸式重构，实现了真正无缝衔接的固定视差全屏底图，消灭了生硬边框与加载顿挫感。</li>
+                  <li style={{ color: 'var(--text-muted)' }}><span style={{ color: 'var(--text-secondary)' }}>视频 Agent 管线：</span>新增并重构了双模态视频解析链路界面，支持高并发上传海量图文物料与 Markdown 自动分镜解析提取提取。</li>
+                  <li style={{ color: 'var(--text-muted)' }}><span style={{ color: 'var(--text-secondary)' }}>系统级重构：</span>合并两套分离的 CDS 系统更新弹窗收口到应用底座，防线下沉；同时强化了历史拉取能力和底层数据通讯通道。</li>
+                </ul>
+              </div>
+            </div>
+          </div>
+        )}
 
         {loadingCurrent && !currentWeek && <MapSectionLoader text="正在加载本周更新…" />}
 
