@@ -5,6 +5,16 @@ on:
     branches: [main, develop]
   pull_request:
     branches: [main, develop]
+  workflow_dispatch:
+    inputs:
+      smoke_host:
+        description: '冒烟测试目标 URL (例 https://my-branch.miduo.org)'
+        required: false
+        default: ''
+      smoke_skip:
+        description: '跳过的冒烟项 (逗号分隔, e.g. report,defect)'
+        required: false
+        default: ''
 
 env:
   DOTNET_VERSION: '8.0.x'
@@ -321,6 +331,46 @@ jobs:
 
       - name: Run tests
         run: pnpm test
+
+  # Phase 2 冒烟测试 — 仅在 workflow_dispatch 手动触发时跑
+  #
+  # 为什么不每 PR 自动跑: 冒烟需要一个已部署的 CDS 预览环境 (有 LLM Gateway
+  # 可用、MongoDB 可连、真实 /api/xxx 端点可达),而 ci.yml 只负责编译+单测,
+  # 没有部署能力。让使用者先 /cds-deploy 到灰度,再手动 Run workflow 填入
+  # smoke_host 即可。
+  #
+  # 目标是 Phase 3 把这一步挪到 /cds-deploy 完成后的 hook (cds/src/routes
+  # 里新增 SSE 末尾 callback) 而非 GitHub Actions。当前版本作为过渡手动闸门。
+  smoke-preview:
+    name: Smoke (Preview Branch)
+    if: github.event_name == 'workflow_dispatch' && github.event.inputs.smoke_host != ''
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install jq (should already be on ubuntu-latest but defensive)
+        run: |
+          if ! command -v jq >/dev/null 2>&1; then
+            sudo apt-get update
+            sudo apt-get install -y jq
+          fi
+
+      - name: Run smoke-all.sh against preview
+        env:
+          SMOKE_TEST_HOST: ${{ github.event.inputs.smoke_host }}
+          AI_ACCESS_KEY: ${{ secrets.AI_ACCESS_KEY }}
+          SMOKE_USER: ${{ vars.SMOKE_USER || 'admin' }}
+          SMOKE_SKIP: ${{ github.event.inputs.smoke_skip }}
+          SMOKE_FAIL_FAST: '1'
+        run: |
+          if [[ -z "$AI_ACCESS_KEY" ]]; then
+            echo "::error::缺少 repo secret AI_ACCESS_KEY, 无法跑冒烟"
+            echo "请在 Settings → Secrets and variables → Actions 添加 AI_ACCESS_KEY"
+            exit 2
+          fi
+          bash scripts/smoke-all.sh
 
   # CI 状态汇总（用于 branch protection）
   ci-status:
