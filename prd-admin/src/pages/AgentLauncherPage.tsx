@@ -662,7 +662,7 @@ export default function AgentLauncherPage() {
             <div
               className="absolute inset-0 pointer-events-none"
               style={{
-                background: 'linear-gradient(180deg, transparent 50%, var(--bg-base) 100%)',
+                background: 'linear-gradient(180deg, transparent 85%, var(--bg-base) 100%)',
               }}
             />
 
