@@ -1,15 +1,17 @@
 /**
- * 直出模式面板：跳过分镜，直接把 prompt 交给 OpenRouter 视频大模型
- * 设计风格参考：Sora / Pika —— 黑色沉浸、单焦点画布、prompt 前置
+ * 直出模式面板（双模式）
  *
- * 交互流程：
- *   1. 用户输入 prompt + 选模型 + 选时长/比例
- *   2. 点"生成"→ 后端 VideoGenRun (renderMode=videogen) 异步跑
- *   3. 前端每 3 秒轮询 getVideoGenRun，展示 phase.progress
- *   4. status === 'Completed' 时 videoAssetUrl 就位，内嵌播放器直接播放
+ * 模式 A（输入模式）：走 props.externalRunId === undefined
+ *   用户输入 prompt + 选参数 → 提交 → 内嵌轮询。独立使用时可直接挂在页面里。
+ *
+ * 模式 B（纯输出模式）：走 props.externalRunId !== undefined
+ *   由外层（如统一入口页）已经创建好 run，panel 只负责展示 canvas + 进度 +
+ *   完成后的 videoAssetUrl。输入区隐藏。
+ *
+ * 设计风格参考：Sora / Pika —— 黑色沉浸、单焦点画布、prompt 前置
  */
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { Sparkles, Play, Download, RefreshCw, Wand2, Clock, Maximize2, AlertCircle } from 'lucide-react';
+import { Sparkles, Play, Download, RefreshCw, Wand2, Clock, Maximize2, AlertCircle, ChevronDown, ChevronUp, Zap, Scale, Crown } from 'lucide-react';
 import { cn } from '@/lib/cn';
 import { Button } from '@/components/design/Button';
 import { MapSpinner } from '@/components/ui/VideoLoader';
@@ -20,8 +22,11 @@ import {
 } from '@/services/real/videoAgent';
 import {
   OPENROUTER_VIDEO_MODELS,
+  VIDEO_MODEL_TIERS,
   type VideoGenRun,
 } from '@/services/contracts/videoAgent';
+
+const TIER_ICONS = { economy: Zap, balanced: Scale, premium: Crown } as const;
 
 type AspectRatio = '16:9' | '9:16' | '1:1';
 type Resolution = '480p' | '720p' | '1080p';
@@ -36,9 +41,19 @@ const RESOLUTION_OPTIONS: Resolution[] = ['480p', '720p', '1080p'];
 
 const AUTO_MODEL = ''; // 空字符串 = 交由后端模型池自动选择
 
-export const VideoGenDirectPanel: React.FC = () => {
+export interface VideoGenDirectPanelProps {
+  /** 外部已创建的 runId（纯输出模式），不传则启用完整输入模式 */
+  externalRunId?: string;
+  /** 外部传入后，点"再来一条"回调，通常外层用来回到输入 Hero */
+  onReset?: () => void;
+}
+
+export const VideoGenDirectPanel: React.FC<VideoGenDirectPanelProps> = ({ externalRunId, onReset }) => {
+  const isOutputOnly = !!externalRunId;
+
   const [prompt, setPrompt] = useState('');
   const [model, setModel] = useState<string>(AUTO_MODEL);
+  const [showAdvanced, setShowAdvanced] = useState(false);
   const [duration, setDuration] = useState<number>(5);
   const [aspect, setAspect] = useState<AspectRatio>('16:9');
   const [resolution, setResolution] = useState<Resolution>('720p');
@@ -76,6 +91,28 @@ export const VideoGenDirectPanel: React.FC = () => {
       }
     }, 3000);
   }, []);
+
+  // 纯输出模式：外部传入 runId 后立即拉一次 + 开启轮询
+  useEffect(() => {
+    if (!externalRunId) return;
+    let cancelled = false;
+    (async () => {
+      const res = await getVideoGenRunReal(externalRunId);
+      if (!cancelled && res.success && res.data) {
+        setCurrentRun(res.data);
+        if (!['Completed', 'Failed', 'Cancelled'].includes(res.data.status)) {
+          startPolling(externalRunId);
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+      if (pollRef.current) {
+        clearInterval(pollRef.current);
+        pollRef.current = null;
+      }
+    };
+  }, [externalRunId, startPolling]);
 
   const handleGenerate = useCallback(async () => {
     const trimmed = prompt.trim();
@@ -122,7 +159,11 @@ export const VideoGenDirectPanel: React.FC = () => {
       pollRef.current = null;
     }
     setCurrentRun(null);
-  }, []);
+    // 纯输出模式下交给外层回调（通常是"回到输入 Hero"）
+    if (isOutputOnly && onReset) {
+      onReset();
+    }
+  }, [isOutputOnly, onReset]);
 
   const progressText = (() => {
     if (!currentRun) return '';
@@ -203,7 +244,8 @@ export const VideoGenDirectPanel: React.FC = () => {
           </div>
         </div>
 
-        {/* ═══ Prompt 输入 ═══ */}
+        {/* ═══ Prompt 输入（纯输出模式下整个隐藏） ═══ */}
+        {!isOutputOnly && (
         <div
           className="rounded-[16px] p-4 flex flex-col gap-3"
           style={{
@@ -226,23 +268,99 @@ export const VideoGenDirectPanel: React.FC = () => {
             }}
           />
 
+          {/* ─── 模型档位（3 张卡片，默认推荐；展开"高级"才露出全量 7 个 OpenRouter 模型） ─── */}
+          <div className="flex flex-col gap-2">
+            <div className="flex items-center gap-2 flex-wrap">
+              {/* 自动档 */}
+              <button
+                onClick={() => setModel(AUTO_MODEL)}
+                disabled={isActive || isSubmitting}
+                className={cn(
+                  'flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs transition-colors',
+                  model === AUTO_MODEL && 'ring-1'
+                )}
+                style={{
+                  background: model === AUTO_MODEL ? 'rgba(236,72,153,0.14)' : 'var(--bg-base)',
+                  border: '1px solid ' + (model === AUTO_MODEL ? 'rgba(236,72,153,0.4)' : 'var(--border-default)'),
+                  color: model === AUTO_MODEL ? '#f472b6' : 'var(--text-primary)',
+                }}
+                title="由后端模型池按负载 / 健康度自动选择"
+              >
+                <Sparkles size={11} /> 自动
+              </button>
+
+              {/* 三档推荐 */}
+              {VIDEO_MODEL_TIERS.map((t) => {
+                const Icon = TIER_ICONS[t.tier];
+                const active = model === t.modelId;
+                return (
+                  <button
+                    key={t.tier}
+                    onClick={() => setModel(t.modelId)}
+                    disabled={isActive || isSubmitting}
+                    className={cn(
+                      'flex flex-col items-start gap-0.5 px-3 py-1.5 rounded-lg text-left transition-colors min-w-[120px]',
+                      active && 'ring-1'
+                    )}
+                    style={{
+                      background: active ? 'rgba(236,72,153,0.14)' : 'var(--bg-base)',
+                      border: '1px solid ' + (active ? 'rgba(236,72,153,0.4)' : 'var(--border-default)'),
+                      color: active ? '#f472b6' : 'var(--text-primary)',
+                    }}
+                    title={t.desc}
+                  >
+                    <span className="inline-flex items-center gap-1 text-xs font-medium">
+                      <Icon size={11} />
+                      {t.label}
+                      <span className="ml-1 text-[10px]" style={{ color: 'var(--text-muted)' }}>
+                        {t.tagline}
+                      </span>
+                    </span>
+                    <span className="text-[10px] leading-tight" style={{ color: 'var(--text-muted)' }}>
+                      {t.desc}
+                    </span>
+                  </button>
+                );
+              })}
+
+              {/* 高级展开 */}
+              <button
+                onClick={() => setShowAdvanced((s) => !s)}
+                disabled={isActive || isSubmitting}
+                className="inline-flex items-center gap-1 px-2 py-1.5 rounded-lg text-[11px]"
+                style={{ background: 'transparent', color: 'var(--text-muted)', border: '1px solid var(--border-default)' }}
+                title="展开 OpenRouter 全量视频模型（含 Wan 2.7 / Seedance / Sora）"
+              >
+                高级 {showAdvanced ? <ChevronUp size={11} /> : <ChevronDown size={11} />}
+              </button>
+            </div>
+
+            {showAdvanced && (
+              <div
+                className="flex flex-col gap-1 rounded-lg p-2"
+                style={{ background: 'var(--bg-base)', border: '1px dashed var(--border-default)' }}
+              >
+                <div className="text-[10px]" style={{ color: 'var(--text-muted)' }}>
+                  不知道选什么？保持"自动"即可；需要指定型号时从下面挑选：
+                </div>
+                <select
+                  value={model}
+                  onChange={(e) => setModel(e.target.value)}
+                  disabled={isActive || isSubmitting}
+                  className="text-xs rounded-md px-2 py-1.5"
+                  style={{ background: 'var(--panel)', border: '1px solid var(--border-default)', color: 'var(--text-primary)' }}
+                >
+                  <option value={AUTO_MODEL}>自动（由模型池决定）</option>
+                  {OPENROUTER_VIDEO_MODELS.map((m) => (
+                    <option key={m.id} value={m.id}>{m.label}</option>
+                  ))}
+                </select>
+              </div>
+            )}
+          </div>
+
           {/* 参数栏 */}
           <div className="flex flex-wrap items-center gap-2">
-            {/* 模型（可选：空 = 由模型池自动选择最优） */}
-            <select
-              value={model}
-              onChange={(e) => setModel(e.target.value)}
-              disabled={isActive || isSubmitting}
-              className="text-xs rounded-lg px-2 py-1.5 max-w-[280px] truncate"
-              style={{ background: 'var(--bg-base)', border: '1px solid var(--border-default)', color: 'var(--text-primary)' }}
-              title="留空让模型池自动选择，或指定偏好模型"
-            >
-              <option value={AUTO_MODEL}>自动（由模型池决定）</option>
-              {OPENROUTER_VIDEO_MODELS.map((m) => (
-                <option key={m.id} value={m.id}>{m.label}</option>
-              ))}
-            </select>
-
             {/* 时长 */}
             <div className="flex items-center gap-1 px-2 py-1 rounded-lg text-xs" style={{ background: 'var(--bg-base)', border: '1px solid var(--border-default)' }}>
               <Clock size={11} style={{ color: 'var(--text-muted)' }} />
@@ -335,6 +453,39 @@ export const VideoGenDirectPanel: React.FC = () => {
             )}
           </div>
         </div>
+        )}
+
+        {/* 纯输出模式的紧凑信息栏（没有输入区时，把关键信息展示在画布下方） */}
+        {isOutputOnly && (
+          <div
+            className="rounded-[14px] p-3 flex items-center gap-3 flex-wrap text-xs"
+            style={{ background: 'var(--panel)', border: '1px solid var(--border-default)' }}
+          >
+            <span style={{ color: 'var(--text-muted)' }}>{progressText || '—'}</span>
+            <div className="flex-1" />
+            {currentRun?.directVideoCost != null && (
+              <span style={{ color: 'var(--text-muted)' }}>
+                费用 ${currentRun.directVideoCost.toFixed(3)}
+              </span>
+            )}
+            {(isCompleted || isFailed) && (
+              <Button size="sm" variant="ghost" onClick={handleReset}>
+                <RefreshCw size={12} /> 新任务
+              </Button>
+            )}
+            {isCompleted && currentRun?.videoAssetUrl && (
+              <a
+                href={currentRun.videoAssetUrl}
+                target="_blank"
+                rel="noreferrer"
+                className="text-xs inline-flex items-center gap-1 px-3 py-1.5 rounded-lg"
+                style={{ background: 'rgba(34,197,94,0.14)', color: '#4ade80', border: '1px solid rgba(34,197,94,0.3)' }}
+              >
+                <Download size={12} /> 下载 MP4
+              </a>
+            )}
+          </div>
+        )}
 
         {/* 完成后的播放器信息 */}
         {isCompleted && currentRun?.videoAssetUrl && (

@@ -129,6 +129,26 @@ public class VideoGenRun
 
     /// <summary>videogen 任务生成成本（美元）</summary>
     public double? DirectVideoCost { get; set; }
+
+    // ─── 分镜输入来源（2026-04 新增：支持 PRD 文档上传） ───
+
+    /// <summary>输入来源类型：article（默认，技术文章）/ prd（PRD 文档，使用专用拆分镜 prompt）</summary>
+    public string InputSourceType { get; set; } = VideoInputSourceType.Article;
+
+    /// <summary>关联的附件 id 列表（PRD 模式下由附件 ExtractedText 拼接成 ArticleMarkdown）</summary>
+    public List<string> AttachmentIds { get; set; } = new();
+}
+
+/// <summary>
+/// 分镜输入来源类型
+/// </summary>
+public static class VideoInputSourceType
+{
+    /// <summary>技术文章 Markdown（默认，通用拆分镜 prompt）</summary>
+    public const string Article = "article";
+
+    /// <summary>PRD 文档（使用 PRD 专用拆分镜 prompt，强调产品价值 → 功能演示 → 用户体验）</summary>
+    public const string Prd = "prd";
 }
 
 /// <summary>
@@ -229,6 +249,14 @@ public class CreateVideoGenRunRequest
 
     /// <summary>videogen 模式专用：分辨率（720p/1080p，默认 720p）</summary>
     public string? DirectResolution { get; set; }
+
+    // ─── 分镜输入来源（2026-04 新增：支持 PRD 文档上传） ───
+
+    /// <summary>输入来源类型：article（默认）/ prd；prd 时允许仅传 attachmentIds，后端自动拼接 ExtractedText</summary>
+    public string? InputSourceType { get; set; }
+
+    /// <summary>关联的附件 id 列表（PRD 模式使用；PDF/Word/Markdown 等上传后 ExtractedText 已落库）</summary>
+    public List<string>? AttachmentIds { get; set; }
 }
 
 /// <summary>

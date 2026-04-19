@@ -1,3 +1,4 @@
+using System.Text;
 using Microsoft.Extensions.Logging;
 using MongoDB.Driver;
 using PrdAgent.Core.Interfaces;
@@ -80,12 +81,41 @@ public class VideoGenService : IVideoGenService
         }
 
         // ─── 默认分支：remotion（原流程） ───
+        var inputSourceType = (request?.InputSourceType ?? VideoInputSourceType.Article).Trim().ToLowerInvariant();
+        if (inputSourceType is not (VideoInputSourceType.Article or VideoInputSourceType.Prd))
+            inputSourceType = VideoInputSourceType.Article;
+
+        var attachmentIds = (request?.AttachmentIds ?? new List<string>())
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .Select(x => x.Trim())
+            .Distinct()
+            .ToList();
+
         var markdown = (request?.ArticleMarkdown ?? string.Empty).Trim();
+
+        // PRD 模式：允许 markdown 为空，从附件提取
+        if (string.IsNullOrWhiteSpace(markdown) && attachmentIds.Count > 0)
+        {
+            var extracted = await BuildMarkdownFromAttachmentsAsync(attachmentIds, ownerAdminId, ct);
+            markdown = extracted.Markdown;
+            if (string.IsNullOrWhiteSpace(markdown))
+                throw new ArgumentException("所选附件未能提取到可用文本，请换一份文档或粘贴文本");
+            // 若用户没指定标题，用首个附件名兜底
+            if (string.IsNullOrWhiteSpace(request?.ArticleTitle) && !string.IsNullOrWhiteSpace(extracted.Title))
+            {
+                request!.ArticleTitle = extracted.Title;
+            }
+        }
+
         if (string.IsNullOrWhiteSpace(markdown))
             throw new ArgumentException("文章内容不能为空");
 
         if (markdown.Length > 100_000)
-            throw new ArgumentException("文章内容超过 10 万字限制");
+        {
+            // PRD/长文档截断而不是报错，避免用户上传大文档直接失败
+            markdown = markdown[..100_000];
+            _logger.LogWarning("VideoGen 输入超过 10 万字，已截断: appKey={AppKey}", appKey);
+        }
 
         var title = (request?.ArticleTitle ?? string.Empty).Trim();
         if (string.IsNullOrWhiteSpace(title)) title = null;
@@ -104,6 +134,8 @@ public class VideoGenService : IVideoGenService
             EnableTts = request?.EnableTts ?? false,
             VoiceId = request?.VoiceId?.Trim(),
             RenderMode = VideoRenderMode.Remotion,
+            InputSourceType = inputSourceType,
+            AttachmentIds = attachmentIds,
             CreatedAt = DateTime.UtcNow
         };
 
@@ -345,6 +377,47 @@ public class VideoGenService : IVideoGenService
         }
 
         await PublishEventAsync(runId, "audio.all.queued", new { sceneCount = updates.Count });
+    }
+
+    private async Task<(string Markdown, string? Title)> BuildMarkdownFromAttachmentsAsync(
+        List<string> attachmentIds, string ownerAdminId, CancellationToken ct)
+    {
+        if (attachmentIds.Count == 0) return (string.Empty, null);
+
+        var fb = Builders<Attachment>.Filter;
+        var filter = fb.In(a => a.AttachmentId, attachmentIds) & fb.Eq(a => a.UploaderId, ownerAdminId);
+        var atts = await _db.Attachments.Find(filter).ToListAsync(ct);
+
+        if (atts.Count == 0)
+            throw new ArgumentException("附件不存在或无权访问");
+
+        // 按请求顺序排序
+        var ordered = attachmentIds
+            .Select(id => atts.FirstOrDefault(a => a.AttachmentId == id))
+            .Where(a => a != null)
+            .ToList();
+
+        var sb = new StringBuilder();
+        string? firstTitle = null;
+        foreach (var att in ordered)
+        {
+            var text = (att!.ExtractedText ?? string.Empty).Trim();
+            if (string.IsNullOrWhiteSpace(text)) continue;
+
+            if (sb.Length > 0) sb.AppendLine().AppendLine("---").AppendLine();
+            sb.AppendLine($"# {att.FileName}");
+            sb.AppendLine();
+            sb.AppendLine(text);
+
+            if (firstTitle == null)
+            {
+                // 去掉扩展名作为兜底标题
+                var dot = att.FileName.LastIndexOf('.');
+                firstTitle = dot > 0 ? att.FileName[..dot] : att.FileName;
+            }
+        }
+
+        return (sb.ToString(), firstTitle);
     }
 
     private async Task PublishEventAsync(string runId, string eventName, object payload)

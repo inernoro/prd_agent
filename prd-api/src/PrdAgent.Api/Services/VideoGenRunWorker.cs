@@ -708,8 +708,11 @@ public class VideoGenRunWorker : BackgroundService
         var gateway = scope.ServiceProvider.GetRequiredService<ILlmGateway>();
 
         // 构建系统提示词（可能包含用户自定义系统提示词和风格描述）
-        var systemPrompt = BuildScriptSystemPrompt(run.SystemPrompt, run.StyleDescription);
-        var userPrompt = $"请将以下技术文章转化为视频脚本：\n\n{run.ArticleMarkdown}";
+        var systemPrompt = BuildScriptSystemPrompt(run.SystemPrompt, run.StyleDescription, run.InputSourceType);
+        var userPromptHeader = run.InputSourceType == VideoInputSourceType.Prd
+            ? "请将以下产品需求文档（PRD）转化为产品介绍视频脚本："
+            : "请将以下技术文章转化为视频脚本：";
+        var userPrompt = $"{userPromptHeader}\n\n{run.ArticleMarkdown}";
 
         var request = new GatewayRequest
         {
@@ -1271,45 +1274,98 @@ public class VideoGenRunWorker : BackgroundService
         }
     }
 
-    private static string BuildScriptSystemPrompt(string? userSystemPrompt, string? styleDescription)
+    private static string BuildScriptSystemPrompt(string? userSystemPrompt, string? styleDescription, string? inputSourceType = null)
     {
         var sb = new StringBuilder();
-        sb.AppendLine("""
-            你是一个专业的技术视频脚本编写者。你的任务是将技术文章转化为8-10个视频镜头的脚本。
 
-            请严格按照以下 JSON 格式输出，不要包含任何其他文字：
+        // PRD 专用拆分镜 prompt — 强调产品价值 → 用户痛点 → 功能演示 → 体验收尾
+        if (inputSourceType == VideoInputSourceType.Prd)
+        {
+            sb.AppendLine("""
+                你是一个资深的产品视频导演。你的任务是将产品需求文档（PRD）转化为 8-12 个镜头的产品介绍视频脚本。
 
-            ```json
-            [
-              {
-                "index": 0,
-                "topic": "镜头主题（一句话概括）",
-                "narration": "旁白文本（朗读的台词）",
-                "visualDescription": "画面描述（该镜头展示的视觉元素）",
-                "sceneType": "intro"
-              }
-            ]
-            ```
+                请严格按照以下 JSON 格式输出，不要包含任何其他文字：
 
-            sceneType 可选值：
-            - intro: 开场介绍
-            - concept: 概念解释
-            - steps: 步骤演示
-            - code: 代码展示
-            - comparison: 对比说明
-            - diagram: 图表/架构
-            - summary: 总结回顾
-            - outro: 结尾
+                ```json
+                [
+                  {
+                    "index": 0,
+                    "topic": "镜头主题（一句话概括）",
+                    "narration": "旁白文本（朗读的台词）",
+                    "visualDescription": "画面描述（该镜头展示的视觉元素）",
+                    "sceneType": "intro"
+                  }
+                ]
+                ```
 
-            规则：
-            1. 第一个镜头必须是 intro 类型，最后一个必须是 outro 类型
-            2. 旁白文本要口语化、自然，适合朗读
-            3. 每个镜头的旁白控制在 20-60 字之间
-            4. 画面描述要具体，包含可视化的元素（标题、卡片、代码块、流程图等）
-            5. 确保所有关键信息都被覆盖，不遗漏重要内容
-            6. 只输出 JSON 数组，不要包含 markdown 代码块标记
-            7. **所有输出必须使用中文**，包括 topic、narration 和 visualDescription，即使原文是英文也要翻译为中文
-            """);
+                sceneType 可选值：
+                - intro: 开场介绍（点题 + 引发共鸣）
+                - concept: 产品定位 / 核心价值说明
+                - steps: 功能操作步骤演示
+                - code: （PRD 场景少用）技术亮点/架构说明
+                - comparison: 新旧对比 / 竞品对比
+                - diagram: 流程图 / 架构图 / 数据图
+                - summary: 收益总结
+                - outro: 行动号召 / 结尾
+
+                PRD 拆分镜结构建议（按顺序）：
+                1. 开场（intro）：产品名 + 一句话价值主张
+                2. 痛点（concept）：用户遇到的问题是什么
+                3. 解决方案（concept）：产品如何解决
+                4-6. 核心功能演示（steps / diagram 交替）：挑 3 个最有差异化的功能，每个单独一镜
+                7. 对比（comparison）：和现有方案/竞品的差异（若 PRD 中有相关内容）
+                8. 收益（summary）：量化指标 / 用户收益
+                9. 结尾（outro）：Call to Action（如"立即体验"/"访问官网"）
+
+                规则：
+                1. 第一个镜头必须是 intro 类型，最后一个必须是 outro 类型
+                2. 旁白文本要口语化、有画面感，避免 PRD 里"用户可以"这种干瘪句式
+                3. 每个镜头的旁白控制在 20-60 字之间
+                4. 画面描述要具体：标题文案、UI 截图描述、图表类型、数据高亮等
+                5. 忽略 PRD 中的技术实现细节（如 API 字段、数据库表结构），聚焦用户可见的价值
+                6. 只输出 JSON 数组，不要包含 markdown 代码块标记
+                7. **所有输出必须使用中文**，即使原文是英文也要翻译为中文
+                """);
+        }
+        else
+        {
+            sb.AppendLine("""
+                你是一个专业的技术视频脚本编写者。你的任务是将技术文章转化为8-10个视频镜头的脚本。
+
+                请严格按照以下 JSON 格式输出，不要包含任何其他文字：
+
+                ```json
+                [
+                  {
+                    "index": 0,
+                    "topic": "镜头主题（一句话概括）",
+                    "narration": "旁白文本（朗读的台词）",
+                    "visualDescription": "画面描述（该镜头展示的视觉元素）",
+                    "sceneType": "intro"
+                  }
+                ]
+                ```
+
+                sceneType 可选值：
+                - intro: 开场介绍
+                - concept: 概念解释
+                - steps: 步骤演示
+                - code: 代码展示
+                - comparison: 对比说明
+                - diagram: 图表/架构
+                - summary: 总结回顾
+                - outro: 结尾
+
+                规则：
+                1. 第一个镜头必须是 intro 类型，最后一个必须是 outro 类型
+                2. 旁白文本要口语化、自然，适合朗读
+                3. 每个镜头的旁白控制在 20-60 字之间
+                4. 画面描述要具体，包含可视化的元素（标题、卡片、代码块、流程图等）
+                5. 确保所有关键信息都被覆盖，不遗漏重要内容
+                6. 只输出 JSON 数组，不要包含 markdown 代码块标记
+                7. **所有输出必须使用中文**，包括 topic、narration 和 visualDescription，即使原文是英文也要翻译为中文
+                """);
+        }
 
         if (!string.IsNullOrWhiteSpace(userSystemPrompt))
         {
