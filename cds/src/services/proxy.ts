@@ -283,7 +283,18 @@ export class ProxyService {
     const branchRef = this.resolveBranch(req);
 
     if (!branchRef) {
-      res.writeHead(502, { 'Content-Type': 'application/json' });
+      // No routing rule matched and no default branch set. Historically returned
+      // 502 JSON which rendered as Chrome's raw "HTTP ERROR" page for browsers.
+      // Prefer a 404 HTML for browser requests so the tab isn't blank.
+      const acceptsHtml = (req.headers.accept || '').toLowerCase().includes('text/html');
+      if (acceptsHtml) {
+        // Truncate host so a client sending a 4KB Host header can't bloat the
+        // HTML body. DNS labels cap at 253 chars total; we allow 120 for safety.
+        const hostDisplay = (req.headers.host || '(no host)').slice(0, 120);
+        this.serveBranchGoneFallback(res, hostDisplay);
+        return;
+      }
+      res.writeHead(404, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ error: 'No branch matched. Set X-Branch header or configure routing rules.' }));
       return;
     }
@@ -302,23 +313,46 @@ export class ProxyService {
     const state = this.stateService.getState();
     const branch = state.branches[branchSlug];
 
-    // Branch doesn't exist or isn't running — trigger auto-build or show loading
-    if (!branch || (branch.status !== 'running' && branch.status !== 'starting')) {
+    // Loading states — serve friendly waiting page instead of 502/503 so
+    // users never see a raw Cloudflare gateway error during build/restart.
+    // See `.claude/rules/cds-auto-deploy.md` + doc/design.cds-resilience.md.
+    const LOADING_BRANCH_STATUSES: ReadonlySet<string> = new Set([
+      'starting', 'building', 'restarting',
+    ]);
+
+    // Branch doesn't exist or is in a non-loading, non-running state — trigger
+    // auto-build (if configured) or fall back to loading page / 503.
+    if (!branch || (branch.status !== 'running' && !LOADING_BRANCH_STATUSES.has(branch.status))) {
       if (this.onAutoBuild) {
         this.onAutoBuild(branchRef, req, res);
         return;
       }
-      res.writeHead(503, { 'Content-Type': 'application/json' });
+      // No auto-build — still prefer the friendly loading page over a 503 JSON
+      // so returning users see something recognizable while they figure out
+      // how to restart the branch.
+      if (branch) {
+        this.serveStartingPage(res, branchSlug, branch);
+        return;
+      }
+      // No branch, no auto-build (executor-only mode or mis-configured proxy):
+      // serve a minimal 404 HTML for browsers, JSON for API clients. Avoids the
+      // Chrome "HTTP ERROR 400/503" blank screen when users land on a
+      // subdomain for a deleted branch.
+      const acceptsHtml = (req.headers.accept || '').toLowerCase().includes('text/html');
+      if (acceptsHtml) {
+        this.serveBranchGoneFallback(res, branchSlug);
+        return;
+      }
+      res.writeHead(404, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({
-        error: `Branch "${branchSlug}" is not running.`,
-        status: branch?.status || 'not-found',
-        hint: branch?.status === 'building' ? 'Build in progress, please wait...' : 'Branch will be auto-built on next request.',
+        error: `Branch "${branchSlug}" not found.`,
+        status: 'not-found',
       }));
       return;
     }
 
-    // Branch-level starting: all services still initializing
-    if (branch.status === 'starting') {
+    // Branch-level loading: container creating / building / restarting
+    if (LOADING_BRANCH_STATUSES.has(branch.status)) {
       this.serveStartingPage(res, branchSlug, branch);
       return;
     }
@@ -332,13 +366,13 @@ export class ProxyService {
 
     const profileId = this.detectProfileFromRequest(req, branch);
 
-    // Service-level starting: branch is "running" (some services up) but
+    // Service-level loading: branch is "running" (some services up) but
     // the specific service for this request is still initializing.
     // Show loading page instead of proxying to a half-ready server
     // (prevents CSS MIME type errors from Vite returning HTML before ready).
     if (profileId) {
       const svc = branch.services[profileId];
-      if (svc && svc.status === 'starting') {
+      if (svc && (svc.status === 'starting' || svc.status === 'building' || svc.status === 'restarting')) {
         this.serveStartingPage(res, branchSlug, branch, profileId);
         return;
       }
@@ -347,8 +381,10 @@ export class ProxyService {
     const upstream = this.resolveUpstream(branchSlug, profileId);
 
     if (!upstream) {
-      res.writeHead(502, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ error: `No upstream available for branch "${branchSlug}"` }));
+      // No upstream URL resolvable — branch record exists but host port is
+      // unallocated / executor lost. Still prefer the waiting page over 502
+      // so the user sees the branch context instead of a blank gateway error.
+      this.serveStartingPage(res, branchSlug, branch, profileId);
       return;
     }
 
@@ -363,47 +399,147 @@ export class ProxyService {
   }
 
   /**
-   * Serve a loading page when a branch or service is in 'starting' state.
-   * Auto-refreshes every 2 seconds until the service is ready.
+   * Serve a loading page when a branch or service is not yet ready.
+   * Covers starting / building / restarting / unknown states — any time the
+   * upstream container isn't guaranteed to answer cleanly. Auto-refreshes
+   * every 2 seconds so the user lands on the real app the moment it is ready.
+   *
+   * Returns HTTP 503 with Retry-After so Cloudflare + crawlers know this is a
+   * transient state (not a cache-forever 200), while browsers still render
+   * the HTML body. See .claude/rules/cds-auto-deploy.md.
    */
   private serveStartingPage(res: http.ServerResponse, branchSlug: string, branch: BranchEntry, waitingProfileId?: string): void {
     const services = Object.values(branch.services);
-    const serviceRows = services.map(svc => {
-      const icon = svc.status === 'running' ? '✓' : svc.status === 'starting' ? '◌' : svc.status === 'error' ? '✗' : '·';
-      const color = svc.status === 'running' ? '#3fb950' : svc.status === 'starting' ? '#58a6ff' : svc.status === 'error' ? '#f85149' : '#8b949e';
-      const label = waitingProfileId === svc.profileId ? `${svc.profileId} (等待就绪...)` : svc.profileId;
-      return `<div class="svc"><span style="color:${color}">${icon}</span> ${label}</div>`;
-    }).join('');
+    const stageLabel = (s: string): string => {
+      switch (s) {
+        case 'building': return '构建中';
+        case 'starting': return '启动中';
+        case 'restarting': return '重启中';
+        case 'running': return '已就绪';
+        case 'error': return '失败';
+        case 'stopping': return '停止中';
+        case 'stopped': return '已停止';
+        default: return '待命';
+      }
+    };
+    const iconFor = (s: string): string => {
+      if (s === 'running') return '✓';
+      if (s === 'error') return '✗';
+      if (s === 'building' || s === 'starting' || s === 'restarting') return '◌';
+      return '·';
+    };
+    const colorFor = (s: string): string => {
+      if (s === 'running') return '#3fb950';
+      if (s === 'error') return '#f85149';
+      if (s === 'building' || s === 'starting' || s === 'restarting') return '#58a6ff';
+      return '#8b949e';
+    };
+    const serviceRows = services.length > 0
+      ? services.map(svc => {
+          const base = `${svc.profileId} · ${stageLabel(svc.status)}`;
+          const label = waitingProfileId === svc.profileId ? `${base}（等待此服务就绪）` : base;
+          return `<div class="svc"><span style="color:${colorFor(svc.status)}">${iconFor(svc.status)}</span> ${label}</div>`;
+        }).join('')
+      : `<div class="svc"><span style="color:#8b949e">·</span> 服务尚未创建</div>`;
+
+    const branchLabel = stageLabel(branch.status);
+    const errorNote = branch.status === 'error' && branch.errorMessage
+      ? `<div class="err">${this.escapeHtml(branch.errorMessage).slice(0, 400)}</div>`
+      : '';
+    const heading = branch.status === 'error'
+      ? '部署失败，请查看日志'
+      : branch.status === 'restarting'
+        ? '服务正在热重启'
+        : branch.status === 'building'
+          ? '服务正在构建'
+          : '服务正在启动中';
 
     const html = `<!DOCTYPE html>
 <html lang="zh"><head>
 <meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>启动中 — ${branchSlug}</title>
+<title>${heading} — ${branchSlug}</title>
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
 body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:#0d1117;color:#c9d1d9;display:flex;align-items:center;justify-content:center;min-height:100vh;padding:20px}
-.card{max-width:420px;width:100%;padding:32px;background:#161b22;border:1px solid #30363d;border-radius:12px;text-align:center}
+.card{max-width:460px;width:100%;padding:32px;background:#161b22;border:1px solid #30363d;border-radius:12px;text-align:center}
 .spinner{width:28px;height:28px;border:3px solid #30363d;border-top-color:#58a6ff;border-radius:50%;animation:spin .8s linear infinite;margin:0 auto 16px}
 @keyframes spin{to{transform:rotate(360deg)}}
 h2{font-size:16px;font-weight:600;color:#f0f6fc;margin-bottom:8px}
-.branch{font-family:ui-monospace,SFMono-Regular,monospace;font-size:13px;color:#58a6ff;background:#21262d;padding:4px 8px;border-radius:4px;margin-bottom:20px;display:inline-block;word-break:break-all}
+.branch{font-family:ui-monospace,SFMono-Regular,monospace;font-size:13px;color:#58a6ff;background:#21262d;padding:4px 8px;border-radius:4px;margin-bottom:8px;display:inline-block;word-break:break-all}
+.tag{display:inline-block;font-size:11px;padding:2px 8px;border-radius:99px;background:#1f6feb22;color:#58a6ff;border:1px solid #1f6feb55;margin-bottom:20px}
 .services{display:flex;flex-direction:column;gap:6px;margin-bottom:16px;text-align:left}
 .svc{font-size:13px;padding:6px 10px;background:#0d1117;border:1px solid #21262d;border-radius:6px;font-family:ui-monospace,monospace}
 .hint{font-size:12px;color:#8b949e}
+.err{font-size:12px;color:#f85149;background:#2a0d11;border:1px solid #5a1d1d;border-radius:6px;padding:8px;margin-bottom:12px;font-family:ui-monospace,monospace;text-align:left;max-height:120px;overflow:auto}
 </style>
 </head><body>
 <div class="card">
   <div class="spinner"></div>
-  <h2>服务正在启动中</h2>
+  <h2>${heading}</h2>
   <div class="branch">${branchSlug}</div>
+  <div class="tag">分支状态：${branchLabel}</div>
+  ${errorNote}
   <div class="services">${serviceRows}</div>
-  <div class="hint">页面将在服务就绪后自动刷新...</div>
+  <div class="hint">页面将在服务就绪后自动刷新…</div>
 </div>
 <script>setTimeout(function(){location.reload()},2000)</script>
 </body></html>`;
 
-    res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-cache, no-store' });
+    // Retry-After tells Cloudflare + bots this is transient. 2 matches the
+    // client-side setTimeout so caches don't outlive our poll interval.
+    res.writeHead(503, {
+      'Content-Type': 'text/html; charset=utf-8',
+      'Cache-Control': 'no-cache, no-store, must-revalidate',
+      'Retry-After': '2',
+    });
     res.end(html);
+  }
+
+  /**
+   * Minimal "branch gone" fallback page for the rare case where no auto-build
+   * hook is wired (executor-only mode, mis-configured proxy). The richer page
+   * with live-branch suggestions lives in index.ts `serveBranchGonePage` — it
+   * needs state + config access that the pure proxy layer deliberately avoids.
+   */
+  private serveBranchGoneFallback(res: http.ServerResponse, slug: string): void {
+    const safe = this.escapeHtml(slug);
+    const html = `<!DOCTYPE html>
+<html lang="zh"><head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>预览已下线 — ${safe}</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:#0d1117;color:#c9d1d9;display:flex;align-items:center;justify-content:center;min-height:100vh;padding:20px}
+.card{max-width:420px;width:100%;padding:32px;background:#161b22;border:1px solid #30363d;border-radius:12px;text-align:center}
+.emoji{font-size:40px;margin-bottom:12px}
+h2{font-size:18px;color:#f0f6fc;margin-bottom:8px}
+.branch{font-family:ui-monospace,SFMono-Regular,monospace;font-size:13px;color:#f85149;background:#2a0d11;border:1px solid #5a1d1d;padding:4px 10px;border-radius:4px;margin-bottom:16px;display:inline-block;word-break:break-all}
+.desc{font-size:13px;color:#8b949e;line-height:1.6}
+</style></head><body>
+<div class="card">
+  <div class="emoji">🪦</div>
+  <h2>预览已下线</h2>
+  <div class="branch">${safe}</div>
+  <div class="desc">该分支在此 CDS 实例上未注册。<br>请确认分支名称或联系管理员。</div>
+</div>
+</body></html>`;
+    res.writeHead(404, {
+      'Content-Type': 'text/html; charset=utf-8',
+      'Cache-Control': 'no-cache, no-store, must-revalidate',
+    });
+    res.end(html);
+  }
+
+  private escapeHtml(s: string): string {
+    return s.replace(/[&<>"']/g, (c) => {
+      switch (c) {
+        case '&': return '&amp;';
+        case '<': return '&lt;';
+        case '>': return '&gt;';
+        case '"': return '&quot;';
+        default: return '&#39;';
+      }
+    });
   }
 
   /**
@@ -691,12 +827,29 @@ h2{font-size:16px;font-weight:600;color:#f0f6fc;margin-bottom:8px}
       }
     });
 
-    proxyReq.on('error', (err) => {
+    proxyReq.on('error', (err: NodeJS.ErrnoException) => {
       console.error(`[proxy] upstream error: ${err.message} → ${upstream}`);
-      if (!clientRes.headersSent) {
-        clientRes.writeHead(502, { 'Content-Type': 'application/json' });
-        clientRes.end(JSON.stringify({ error: `Upstream error: ${err.message}` }));
+      if (clientRes.headersSent) return;
+
+      // Connection-level errors to the upstream container (not yet listening,
+      // briefly unreachable during hot-restart, or port bound but dropping) —
+      // serve the loading page instead of a 502 JSON so the user sees a
+      // refreshing "服务正在启动中" card rather than a Cloudflare gateway
+      // error. HTML requests only; API/XHR/fetch callers still get 502 JSON
+      // so their clients can handle the failure mode explicitly.
+      const isConnLevel = ['ECONNREFUSED', 'ECONNRESET', 'ETIMEDOUT', 'EHOSTUNREACH', 'ENOTFOUND'].includes(err.code || '');
+      const acceptsHtml = (clientReq.headers.accept || '').toLowerCase().includes('text/html');
+      if (isConnLevel && acceptsHtml && branchCtx) {
+        const state = this.stateService.getState();
+        const branch = state.branches[branchCtx.branchId];
+        if (branch) {
+          this.serveStartingPage(clientRes, branchCtx.branchId, branch, branchCtx.profileId);
+          return;
+        }
       }
+
+      clientRes.writeHead(502, { 'Content-Type': 'application/json' });
+      clientRes.end(JSON.stringify({ error: `Upstream error: ${err.message}`, code: err.code || 'UNKNOWN' }));
     });
 
     clientReq.pipe(proxyReq, { end: true });

@@ -607,6 +607,83 @@ proxyService.setOnAccess((branchId, method, reqPath, status, duration, profileId
 // Concurrent requests for the same branch wait for the first build to finish.
 const buildLocks = new Map<string, { promise: Promise<void>; listeners: http.ServerResponse[] }>();
 
+// ── "Branch is gone" friendly page ──
+/**
+ * Rendered when a preview subdomain resolves to a branch that neither exists
+ * locally nor in the remote git repo. Replaces the old SSE-error-inside-
+ * transit-page experience (which landed on Chrome's raw 400 for most users)
+ * with a proper HTML page that:
+ *   - Explains the branch is deleted / never deployed
+ *   - Lists live preview branches the user can jump to
+ *   - Auto-redirects to the dashboard so the tab doesn't sit blank forever
+ * See .claude/rules/cds-auto-deploy.md (no-blank-wait principle).
+ */
+function buildBranchGonePageHtml(slug: string, opts: { dashboardUrl?: string; mainDomain?: string; liveBranches?: Array<{ slug: string; url: string | null }> }): string {
+  const escape = (s: string): string => s.replace(/[&<>"']/g, (c) => {
+    switch (c) {
+      case '&': return '&amp;';
+      case '<': return '&lt;';
+      case '>': return '&gt;';
+      case '"': return '&quot;';
+      default: return '&#39;';
+    }
+  });
+  const live = (opts.liveBranches || []).slice(0, 8);
+  const liveHtml = live.length > 0
+    ? `<div class="section-title">当前可用预览（${live.length}）</div><div class="live-list">${live.map(b => {
+        const safe = escape(b.slug);
+        return b.url
+          ? `<a class="live-item" href="${escape(b.url)}">${safe}</a>`
+          : `<div class="live-item disabled">${safe}</div>`;
+      }).join('')}</div>`
+    : '';
+  const dashHtml = opts.dashboardUrl
+    ? `<a class="btn primary" href="${escape(opts.dashboardUrl)}">返回 CDS 控制台</a>`
+    : '';
+  const redirectScript = opts.dashboardUrl
+    ? `<script>setTimeout(function(){location.href=${JSON.stringify(opts.dashboardUrl)}},15000)</script>`
+    : '';
+
+  return `<!DOCTYPE html>
+<html lang="zh"><head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>预览已下线 — ${escape(slug)}</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:#0d1117;color:#c9d1d9;display:flex;align-items:center;justify-content:center;min-height:100vh;padding:20px}
+.card{max-width:520px;width:100%;padding:32px;background:#161b22;border:1px solid #30363d;border-radius:12px;text-align:center}
+.emoji{font-size:40px;margin-bottom:12px}
+h2{font-size:18px;font-weight:600;color:#f0f6fc;margin-bottom:8px}
+.branch{font-family:ui-monospace,SFMono-Regular,monospace;font-size:13px;color:#f85149;background:#2a0d11;border:1px solid #5a1d1d;padding:4px 10px;border-radius:4px;margin-bottom:16px;display:inline-block;word-break:break-all}
+.desc{font-size:13px;color:#8b949e;line-height:1.6;margin-bottom:20px}
+.section-title{font-size:12px;color:#8b949e;text-align:left;margin-bottom:8px;text-transform:uppercase;letter-spacing:.5px}
+.live-list{display:flex;flex-direction:column;gap:4px;margin-bottom:20px;text-align:left}
+.live-item{display:block;padding:8px 12px;background:#0d1117;border:1px solid #21262d;border-radius:6px;color:#58a6ff;font-size:13px;font-family:ui-monospace,monospace;text-decoration:none;transition:border-color .15s}
+.live-item:hover{border-color:#58a6ff}
+.live-item.disabled{color:#6e7681;cursor:not-allowed}
+.btn{display:inline-block;padding:8px 16px;border-radius:6px;text-decoration:none;font-size:13px;border:1px solid #30363d;color:#c9d1d9;background:#21262d;transition:background .15s}
+.btn:hover{background:#30363d}
+.btn.primary{background:#238636;border-color:#238636;color:#fff}
+.btn.primary:hover{background:#2ea043}
+.hint{font-size:11px;color:#6e7681;margin-top:16px}
+</style>
+</head><body>
+<div class="card">
+  <div class="emoji">🪦</div>
+  <h2>预览已下线</h2>
+  <div class="branch">${escape(slug)}</div>
+  <div class="desc">
+    该分支已被删除，或从未在 CDS 上部署过。<br>
+    如果分支仍在开发，请先运行部署流水线再来访问。
+  </div>
+  ${liveHtml}
+  ${dashHtml}
+  ${opts.dashboardUrl ? '<div class="hint">15 秒后自动返回控制台</div>' : ''}
+</div>
+${redirectScript}
+</body></html>`;
+}
+
 // ── Auto-build transit page HTML ──
 function buildTransitPageHtml(branchName: string): string {
   return `<!DOCTYPE html>
@@ -739,13 +816,80 @@ h2{font-size:16px;font-weight:600;color:#f0f6fc}
 </body></html>`;
 }
 
+// Helper: collect currently-running preview branches + build their public
+// URLs so the "branch gone" page can offer live alternatives to jump to.
+function liveBranchesForGonePage(host: string): Array<{ slug: string; url: string | null }> {
+  const state = stateService.getState();
+  // Derive the preview suffix from the requesting host ("foo.miduo.org" → ".miduo.org")
+  // so links work under any configured root domain without hardcoding.
+  const rootDomains = config.rootDomains || (config.previewDomain ? [config.previewDomain] : []);
+  const hostLower = host.split(':')[0].toLowerCase();
+  let suffix: string | null = null;
+  for (const rd of rootDomains) {
+    const s = `.${rd.toLowerCase()}`;
+    if (hostLower.endsWith(s)) { suffix = s; break; }
+  }
+  const out: Array<{ slug: string; url: string | null }> = [];
+  for (const [slug, b] of Object.entries(state.branches)) {
+    if (b.status !== 'running' && b.status !== 'starting') continue;
+    out.push({ slug, url: suffix ? `https://${slug}${suffix}` : null });
+  }
+  // Newest (most recently accessed) first — best signals what's active today.
+  out.sort((a, b) => {
+    const ba = state.branches[a.slug]?.lastAccessedAt || '';
+    const bb = state.branches[b.slug]?.lastAccessedAt || '';
+    return bb.localeCompare(ba);
+  });
+  return out;
+}
+
+// Serve the friendly "branch is gone" page. Returns HTTP 404 + HTML so
+// browsers render the body, search engines don't index, and Cloudflare
+// won't treat it as a long-lived 200 to cache.
+function serveBranchGonePage(slug: string, req: http.IncomingMessage, res: http.ServerResponse): void {
+  const host = req.headers.host || '';
+  const dashboardDomain = config.dashboardDomain || config.mainDomain || null;
+  const dashboardUrl = dashboardDomain ? `https://${dashboardDomain}` : undefined;
+  const live = liveBranchesForGonePage(host);
+  const html = buildBranchGonePageHtml(slug, { dashboardUrl, mainDomain: config.mainDomain, liveBranches: live });
+  res.writeHead(404, {
+    'Content-Type': 'text/html; charset=utf-8',
+    'Cache-Control': 'no-cache, no-store, must-revalidate',
+  });
+  res.end(html);
+}
+
 // Auto-build: when a request hits an unbuilt branch
 proxyService.setOnAutoBuild(async (branchSlug, _req, res) => {
   const url = new URL(_req.url || '/', `http://${_req.headers.host || 'localhost'}`);
   const isSSE = url.searchParams.get('sse') === '1';
 
-  // Browser request (no ?sse=1): serve the transit HTML page
+  // Browser request (no ?sse=1): decide up-front between the transit page
+  // (branch exists → build will kick off) and the friendly "gone" page
+  // (branch nowhere to be found — deleted, typo, never deployed). Doing the
+  // remote existence check here avoids the old UX where the user waited
+  // through a spinner just to see "远程仓库中未找到分支" — or worse, landed
+  // on a raw Chrome 400 when the SSE connection was never established.
   if (!isSSE) {
+    // Skip remote check when the branch already exists locally (deploy in
+    // progress, or just-created with status=running) — the transit page
+    // will handle it via the SSE path.
+    const localBranch = stateService.getBranch(branchSlug);
+    if (!localBranch) {
+      const autoRepoRoot = config.repoRoot;
+      let foundRemote = false;
+      try {
+        foundRemote = await worktreeService.branchExists(autoRepoRoot, branchSlug)
+          || !!(await worktreeService.findBranchBySuffix(autoRepoRoot, branchSlug))
+          || !!(await worktreeService.findBranchBySlug(autoRepoRoot, branchSlug));
+      } catch {
+        foundRemote = false;
+      }
+      if (!foundRemote) {
+        serveBranchGonePage(branchSlug, _req, res);
+        return;
+      }
+    }
     const displayName = branchSlug;
     res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-cache' });
     res.end(buildTransitPageHtml(displayName));
@@ -955,16 +1099,46 @@ proxyService.setOnAutoBuild(async (branchSlug, _req, res) => {
         sendEvent('log', { profileId: profile.id, chunk });
       }, mergedEnv);
 
-      svc.status = 'running';
-      sendEvent('step', { step: `build-${profile.id}`, status: 'done', title: `${profile.name} 就绪 :${svc.hostPort}` });
+      // Gate 'running' on readiness probe — container alive isn't enough.
+      // See .claude/rules/cds-auto-deploy.md. Auto-build path does not block
+      // on HTTP probes (users tapping a cold subdomain want the loading page,
+      // not a long SSE stream) but TCP readiness is cheap and closes the
+      // window where the host port is bound but not yet accepting.
+      svc.status = 'starting';
+      stateService.save();
+      const ready = await containerService.waitForReadiness(
+        svc.hostPort,
+        profile.readinessProbe,
+        (info) => sendEvent('probe', { profileId: profile.id, attempt: info.attempt, max: info.max, stage: info.stage, ok: info.ok, error: info.error }),
+      );
+      if (ready) {
+        svc.status = 'running';
+        sendEvent('step', { step: `build-${profile.id}`, status: 'done', title: `${profile.name} 就绪 :${svc.hostPort}` });
+      } else {
+        svc.status = 'error';
+        svc.errorMessage = '就绪探测超时';
+        sendEvent('step', { step: `build-${profile.id}`, status: 'error', title: `${profile.name} 就绪探测超时 :${svc.hostPort}` });
+      }
     }
 
-    entry.status = 'running';
+    // Aggregate overall branch state from the per-service status so a
+    // readiness-timeout on any service doesn't silently resolve as 'running'.
+    const svcStatuses = Object.values(entry.services).map(s => s.status);
+    const anyError = svcStatuses.some(s => s === 'error');
+    const anyStarting = svcStatuses.some(s => s === 'starting');
+    const anyRunning = svcStatuses.some(s => s === 'running');
+    entry.status = anyError && !anyRunning
+      ? 'error'
+      : anyStarting && !anyRunning
+        ? 'starting'
+        : 'running';
     entry.lastAccessedAt = new Date().toISOString();
     stateService.save();
 
     sendEvent('complete', {
-      message: `分支 "${finalSlug}" 已就绪`,
+      message: anyError
+        ? `分支 "${finalSlug}" 部分服务就绪探测超时，详见日志`
+        : `分支 "${finalSlug}" 已就绪`,
       hint: '即将自动刷新...',
     });
     resolveLock!();

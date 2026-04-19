@@ -1,8 +1,10 @@
 import fs from 'node:fs';
+import net from 'node:net';
+import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
-import type { IShellExecutor, CdsConfig, BuildProfile, BranchEntry, ServiceState, InfraService, DeployModeOverride, BuildProfileOverride } from '../types.js';
+import type { IShellExecutor, CdsConfig, BuildProfile, BranchEntry, ServiceState, InfraService, DeployModeOverride, BuildProfileOverride, ReadinessProbe } from '../types.js';
 import { combinedOutput } from '../types.js';
 import { resolveEnvTemplates } from './compose-parser.js';
 
@@ -340,6 +342,128 @@ export class ContainerService {
         if (!resolved) { clearTimeout(timeout); resolve(false); }
       });
     });
+  }
+
+  /**
+   * Readiness probe — the missing half of the "container alive ≠ app ready"
+   * gap that used to produce Cloudflare 502 errors. Runs after
+   * `waitForContainerAlive` and before the service is marked `running`:
+   *
+   *   1. TCP probe on hostPort (connection accepted = listening)
+   *   2. Optional HTTP GET on probe.path (status 2xx/3xx = ready)
+   *
+   * Emits one `onAttempt` callback per probe round so the deploy SSE stream
+   * can surface "attempt 3/30, last: connection refused" to the user.
+   * Returns true when both checks pass, false on timeout.
+   *
+   * See `.claude/rules/cds-auto-deploy.md` — users should never face a raw
+   * 502 during build/restart windows.
+   */
+  async waitForReadiness(
+    hostPort: number,
+    probe: ReadinessProbe | undefined,
+    onAttempt?: (info: { attempt: number; max: number; stage: 'tcp' | 'http'; ok: boolean; error?: string }) => void,
+    onOutput?: (chunk: string) => void,
+  ): Promise<boolean> {
+    const intervalMs = Math.max(1, (probe?.intervalSeconds ?? 2)) * 1000;
+    const timeoutMs = Math.max(intervalMs, (probe?.timeoutSeconds ?? 180) * 1000);
+    const maxAttempts = Math.max(1, Math.ceil(timeoutMs / intervalMs));
+    const probePath = probe?.path || null;
+    const host = '127.0.0.1';
+
+    let tcpOk = false;
+    let lastError = '';
+
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      if (!tcpOk) {
+        const tcp = await this.probeTcp(host, hostPort, Math.min(3000, intervalMs));
+        onAttempt?.({ attempt, max: maxAttempts, stage: 'tcp', ok: tcp.ok, error: tcp.error });
+        if (!tcp.ok) {
+          lastError = tcp.error || 'tcp refused';
+          onOutput?.(`── 就绪探测 ${attempt}/${maxAttempts}: TCP ${host}:${hostPort} 未就绪 (${lastError}) ──\n`);
+          await new Promise(r => setTimeout(r, intervalMs));
+          continue;
+        }
+        tcpOk = true;
+        onOutput?.(`── 就绪探测: TCP ${host}:${hostPort} 已就绪 ✓ ──\n`);
+        if (!probePath) return true;
+      }
+
+      const httpRes = await this.probeHttp(host, hostPort, probePath!, Math.min(5000, intervalMs));
+      onAttempt?.({ attempt, max: maxAttempts, stage: 'http', ok: httpRes.ok, error: httpRes.error });
+      if (httpRes.ok) {
+        onOutput?.(`── 就绪探测: HTTP ${probePath} 返回 ${httpRes.status} ✓ ──\n`);
+        return true;
+      }
+      lastError = httpRes.error || `http ${httpRes.status}`;
+      onOutput?.(`── 就绪探测 ${attempt}/${maxAttempts}: HTTP ${probePath} (${lastError}) ──\n`);
+      await new Promise(r => setTimeout(r, intervalMs));
+    }
+
+    onOutput?.(`── 就绪探测超时 (${Math.round(timeoutMs / 1000)}s)，最后错误: ${lastError} ──\n`);
+    return false;
+  }
+
+  private probeTcp(host: string, port: number, timeoutMs: number): Promise<{ ok: boolean; error?: string }> {
+    return new Promise((resolve) => {
+      const socket = new net.Socket();
+      let settled = false;
+      const done = (ok: boolean, error?: string) => {
+        if (settled) return;
+        settled = true;
+        socket.destroy();
+        resolve({ ok, error });
+      };
+      socket.setTimeout(timeoutMs);
+      socket.once('connect', () => done(true));
+      socket.once('timeout', () => done(false, 'tcp timeout'));
+      socket.once('error', (err: NodeJS.ErrnoException) => done(false, err.code || err.message));
+      socket.connect(port, host);
+    });
+  }
+
+  private probeHttp(host: string, port: number, path: string, timeoutMs: number): Promise<{ ok: boolean; status?: number; error?: string }> {
+    return new Promise((resolve) => {
+      const req = http.request({ host, port, path, method: 'GET', timeout: timeoutMs }, (res) => {
+        const status = res.statusCode || 0;
+        res.resume();
+        // 2xx/3xx = ready; 4xx = route exists but maybe needs auth, still "ready"
+        // Only 5xx / no response counts as not ready.
+        if (status >= 200 && status < 500) resolve({ ok: true, status });
+        else resolve({ ok: false, status, error: `http ${status}` });
+      });
+      req.on('timeout', () => { req.destroy(); resolve({ ok: false, error: 'http timeout' }); });
+      req.on('error', (err: NodeJS.ErrnoException) => resolve({ ok: false, error: err.code || err.message }));
+      req.end();
+    });
+  }
+
+  /**
+   * Restart an existing container in place via `docker restart` — preserves
+   * the container id, volume mounts, and env. Intended for hot-reload paths
+   * where the image tag hasn't changed (bind-mounted source, config-only
+   * tweak). Returns true on success, false if the container doesn't exist
+   * or restart failed (caller should fall back to full rm+run).
+   */
+  async restartServiceInPlace(containerName: string, onOutput?: (chunk: string) => void): Promise<boolean> {
+    const inspect = await this.shell.exec(`docker inspect --format="{{.State.Status}}" ${containerName}`);
+    if (inspect.exitCode !== 0) {
+      onOutput?.(`── 容器 ${containerName} 不存在，无法原地重启 ──\n`);
+      return false;
+    }
+    onOutput?.(`── 原地重启: docker restart ${containerName} ──\n`);
+    const result = await this.shell.exec(`docker restart ${containerName}`);
+    if (result.exitCode !== 0) {
+      onOutput?.(`── docker restart 失败: ${combinedOutput(result)} ──\n`);
+      return false;
+    }
+    try {
+      await this.waitForContainerAlive(containerName, onOutput);
+      return true;
+    } catch (err) {
+      onOutput?.(`── 重启后容器未存活: ${(err as Error).message} ──\n`);
+      return false;
+    }
   }
 
   async stop(containerName: string): Promise<void> {
