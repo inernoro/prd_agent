@@ -311,6 +311,7 @@ export async function addGitHubSubscription(storeId: string, input: {
   title?: string;
   syncIntervalMinutes?: number;
   tags?: string[];
+  includeGlob?: string;
 }) {
   return await apiRequest<import('@/services/contracts/documentStore').DocumentEntry>(
     api.documentStore.entries.subscribeGithub(storeId),

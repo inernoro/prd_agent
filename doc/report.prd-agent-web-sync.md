@@ -1,4 +1,4 @@
-# PRD Agent Web 端同步 — 开发报告
+# PRD Agent Web 端同步 — 开发 · 报告
 
 > **分支**：`claude/prd-agent-web-sync-H7Y9d`
 > **周期**：2026-03-19 ~ 2026-03-21

@@ -1,4 +1,4 @@
-# 总裁面板 & 周报 Agent 设计文档
+# 总裁面板 & 周报 Agent · 设计
 
 > **版本**：v3.0 | **日期**：2026-02-09 | **状态**：Phase 1 Implemented (Real Data)
 

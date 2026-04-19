@@ -1,4 +1,4 @@
-# Report Agent v3.0 升级方案 — 采集优先架构
+# Report Agent v3.0 升级方案 — 采集优先架构 · 计划
 
 > **编写日期**：2026-03-08
 > **基于**：`doc/research.ai-report-systems.md` 市场调研 + 现有 v2.0 架构分析 + 业界最佳实践

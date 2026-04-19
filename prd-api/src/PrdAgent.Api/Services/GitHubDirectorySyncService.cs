@@ -1,6 +1,7 @@
 using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
+using Microsoft.Extensions.FileSystemGlobbing;
 using MongoDB.Driver;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
@@ -56,8 +57,16 @@ public class GitHubDirectorySyncService
             owner, repo, path, branch, parentEntry.StoreId);
 
         // 1) 调用 GitHub Contents API 获取目录文件列表
-        var files = await ListDirectoryFilesAsync(owner, repo, path, branch, ct);
-        _logger.LogInformation("[GitHubSync] Found {Count} files in {Owner}/{Repo}/{Path}", files.Count, owner, repo, path);
+        var includeGlob = meta.GetValueOrDefault("github_include_glob", null);
+        Matcher? matcher = null;
+        if (!string.IsNullOrWhiteSpace(includeGlob))
+        {
+            matcher = new Matcher();
+            matcher.AddInclude(includeGlob);
+        }
+
+        var files = await ListDirectoryFilesAsync(owner, repo, path, branch, matcher, ct);
+        _logger.LogInformation("[GitHubSync] Found {Count} files in {Owner}/{Repo}/{Path} matching glob '{Glob}'", files.Count, owner, repo, path, includeGlob ?? "*");
 
         if (files.Count == 0) return diff;
 
@@ -84,11 +93,23 @@ public class GitHubDirectorySyncService
                 if (existingSha == file.Sha)
                 {
                     diff.SkippedCount++;
+                    // 回填 github_last_commit_at：历史条目没有这个字段，无需重新拉内容，只补时间戳
+                    if (!existing.Metadata.ContainsKey("github_last_commit_at"))
+                    {
+                        var backfillDate = await GetLatestCommitDateAsync(owner, repo, file.Path, branch, ct);
+                        if (backfillDate.HasValue)
+                        {
+                            existing.Metadata["github_last_commit_at"] = backfillDate.Value.ToString("O");
+                            existing.UpdatedAt = DateTime.UtcNow;
+                            await db.DocumentEntries.ReplaceOneAsync(
+                                e => e.Id == existing.Id, existing, cancellationToken: CancellationToken.None);
+                        }
+                    }
                     continue;
                 }
 
                 // SHA 变了 → 重新拉取内容并更新
-                await SyncSingleFileAsync(db, documentService, existing, file, ct);
+                await SyncSingleFileAsync(db, documentService, existing, file, owner, repo, branch, ct);
                 diff.UpdatedCount++;
                 diff.FileChanges.Add(new DocumentSyncFileChange
                 {
@@ -119,7 +140,7 @@ public class GitHubDirectorySyncService
                     },
                 };
 
-                await SyncSingleFileAsync(db, documentService, entry, file, ct, isNew: true);
+                await SyncSingleFileAsync(db, documentService, entry, file, owner, repo, branch, ct, isNew: true);
                 diff.AddedCount++;
                 diff.FileChanges.Add(new DocumentSyncFileChange
                 {
@@ -166,11 +187,69 @@ public class GitHubDirectorySyncService
         IDocumentService documentService,
         DocumentEntry entry,
         GitHubFile file,
+        string owner,
+        string repo,
+        string branch,
         CancellationToken ct,
         bool isNew = false)
     {
+        // 拉 git 最后提交时间（用来驱动前端显示的时间 + "NEW" 徽标）。
+        // 和文件内容拉取并行，不把网络往返叠加在同步延迟上。
+        var commitDateTask = GetLatestCommitDateAsync(owner, repo, file.Path, branch, ct);
         try
         {
+            // 优化：跨知识库/同文件多次拉取复用检查 (Pooling by SHA)
+            var filter = Builders<DocumentEntry>.Filter.Eq("Metadata.github_sha", file.Sha);
+            var cachedEntry = await db.DocumentEntries.Find(
+                filter & Builders<DocumentEntry>.Filter.Ne(e => e.DocumentId, null)
+            ).FirstOrDefaultAsync(ct);
+
+            if (cachedEntry != null && cachedEntry.DocumentId != null)
+            {
+                var cachedDoc = await documentService.GetByIdAsync(cachedEntry.DocumentId);
+                if (cachedDoc != null)
+                {
+                    _logger.LogInformation("[GitHubSync] Reusing cached content for SHA {Sha} from Entry {EntryId}", file.Sha, cachedEntry.Id);
+
+                    // 序列化深拷贝，生成独立底层副本确保级联删除时互不干扰
+                    var cloneJson = System.Text.Json.JsonSerializer.Serialize(cachedDoc);
+                    var newDoc = System.Text.Json.JsonSerializer.Deserialize<PrdAgent.Core.Models.ParsedPrd>(cloneJson)!;
+                    newDoc.Id = Guid.NewGuid().ToString("N");
+                    newDoc.CreatedAt = DateTime.UtcNow;
+
+                    await documentService.SaveAsync(newDoc);
+
+                    entry.DocumentId = newDoc.Id;
+                    entry.ContentType = cachedEntry.ContentType;
+                    entry.FileSize = cachedEntry.FileSize;
+                    entry.Summary = cachedEntry.Summary;
+                    entry.ContentIndex = cachedEntry.ContentIndex;
+                    
+                    entry.SyncStatus = DocumentSyncStatus.Idle;
+                    entry.SyncError = null;
+                    entry.LastSyncAt = DateTime.UtcNow;
+                    entry.LastChangedAt = DateTime.UtcNow;
+                    entry.UpdatedAt = DateTime.UtcNow;
+                    entry.Metadata["github_sha"] = file.Sha;
+                    var cachedCommitDate = await commitDateTask;
+                    if (cachedCommitDate.HasValue)
+                    {
+                        entry.Metadata["github_last_commit_at"] = cachedCommitDate.Value.ToString("O");
+                    }
+
+                    if (isNew)
+                    {
+                        await db.DocumentEntries.InsertOneAsync(entry, cancellationToken: CancellationToken.None);
+                    }
+                    else
+                    {
+                        await db.DocumentEntries.ReplaceOneAsync(
+                            e => e.Id == entry.Id, entry, cancellationToken: CancellationToken.None);
+                    }
+                    return; // 跳过后续的外网拉取
+                }
+            }
+
             // 拉取文件内容（通过 raw.githubusercontent.com）
             var content = await Http.GetStringAsync(file.DownloadUrl, ct);
 
@@ -198,6 +277,11 @@ public class GitHubDirectorySyncService
             entry.LastChangedAt = DateTime.UtcNow; // SHA 变了才会进入此函数（除新建外），即真的有变化
             entry.UpdatedAt = DateTime.UtcNow;
             entry.Metadata["github_sha"] = file.Sha;
+            var freshCommitDate = await commitDateTask;
+            if (freshCommitDate.HasValue)
+            {
+                entry.Metadata["github_last_commit_at"] = freshCommitDate.Value.ToString("O");
+            }
 
             if (isNew)
             {
@@ -217,7 +301,7 @@ public class GitHubDirectorySyncService
 
     /// <summary>调用 GitHub Contents API 获取目录下的文件列表</summary>
     private async Task<List<GitHubFile>> ListDirectoryFilesAsync(
-        string owner, string repo, string path, string branch, CancellationToken ct)
+        string owner, string repo, string path, string branch, Matcher? matcher, CancellationToken ct)
     {
         var url = $"https://api.github.com/repos/{Uri.EscapeDataString(owner)}/{Uri.EscapeDataString(repo)}/contents/{path}?ref={Uri.EscapeDataString(branch)}";
 
@@ -241,6 +325,9 @@ public class GitHubDirectorySyncService
             // 只同步 .md 文件
             if (!name.EndsWith(".md", StringComparison.OrdinalIgnoreCase)) continue;
 
+            // Glob 匹配（如匹配失败则丢弃）
+            if (matcher != null && !matcher.Match(name).HasMatches) continue;
+
             var downloadUrl = item.GetProperty("download_url").GetString();
             if (string.IsNullOrEmpty(downloadUrl)) continue;
 
@@ -255,6 +342,57 @@ public class GitHubDirectorySyncService
         }
 
         return files;
+    }
+
+    /// <summary>
+    /// 查询单个文件在指定分支上的最近一次 commit 时间。
+    /// GitHub Commits API: GET /repos/:owner/:repo/commits?path=:path&sha=:branch&per_page=1
+    /// 返回 UTC DateTime；失败/无结果返回 null（不抛异常，避免影响主同步流程）。
+    /// </summary>
+    private async Task<DateTime?> GetLatestCommitDateAsync(
+        string owner, string repo, string path, string branch, CancellationToken ct)
+    {
+        try
+        {
+            var url = $"https://api.github.com/repos/{Uri.EscapeDataString(owner)}/{Uri.EscapeDataString(repo)}/commits"
+                    + $"?path={Uri.EscapeDataString(path)}&sha={Uri.EscapeDataString(branch)}&per_page=1";
+            var response = await Http.GetAsync(url, ct);
+            if (!response.IsSuccessStatusCode)
+            {
+                _logger.LogDebug("[GitHubSync] commits API {Code} for {Path}", response.StatusCode, path);
+                return null;
+            }
+
+            var json = await response.Content.ReadAsStringAsync(ct);
+            using var doc = JsonDocument.Parse(json);
+            if (doc.RootElement.ValueKind != JsonValueKind.Array || doc.RootElement.GetArrayLength() == 0)
+            {
+                return null;
+            }
+
+            var first = doc.RootElement[0];
+            if (!first.TryGetProperty("commit", out var commit)) return null;
+
+            // 优先 committer.date（提交入仓时间），兜底 author.date（原始作者时间）
+            if (commit.TryGetProperty("committer", out var committer)
+                && committer.TryGetProperty("date", out var committerDate)
+                && DateTime.TryParse(committerDate.GetString(), out var dtCommitter))
+            {
+                return dtCommitter.ToUniversalTime();
+            }
+            if (commit.TryGetProperty("author", out var author)
+                && author.TryGetProperty("date", out var authorDate)
+                && DateTime.TryParse(authorDate.GetString(), out var dtAuthor))
+            {
+                return dtAuthor.ToUniversalTime();
+            }
+            return null;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "[GitHubSync] fetch commit date failed for {Path}", path);
+            return null;
+        }
     }
 
     /// <summary>解析 GitHub 仓库地址，提取 owner/repo/path/branch</summary>

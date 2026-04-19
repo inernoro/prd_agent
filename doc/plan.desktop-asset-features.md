@@ -1,4 +1,4 @@
-# Desktop 资产功能方案 (Desktop Asset Features)
+# Desktop 资产功能方案 (Desktop Asset Features) · 计划
 
 > **状态**：计划中 | **版本**：v1.0 | **日期**：2026-03-02
 

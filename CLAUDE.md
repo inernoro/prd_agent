@@ -185,6 +185,21 @@ cd prd-api && dotnet build --no-restore 2>&1 | grep -E "error CS|warning CS" | h
 
 禁止只给路由、位置模糊、未注册百宝箱就声称完成。详见 `.claude/rules/navigation-registry.md`。
 
+### 10. doc/ 文件命名必须走 6 类前缀
+
+`doc/` 下所有 `.md` 文件**必须**以 `spec.` / `design.` / `plan.` / `rule.` / `guide.` / `report.` 其中一个前缀开头，否则不允许落盘。详细前缀语义、文件头部格式、状态枚举见 `doc/rule.doc-naming.md`。
+
+- ✅ `doc/design.report-agent.md`、`doc/guide.quickstart.md`、`doc/report.2026-W13.md`
+- ❌ `doc/output-xxx.md`、`doc/notes-temp.md`、`doc/report-agent.md`（无类型前缀）
+- ❌ `doc/samples/xxx.md`（禁止建子目录，保持 doc/ 扁平）
+
+新增或重命名文档前：
+1. 先读 `doc/rule.doc-naming.md` 确认前缀、头部、状态枚举
+2. 同步更新 `doc/index.yml`（外部同步工具消费）与 `doc/guide.list.directory.md`（人类索引）
+3. 触发 `/doc-sync` 技能校验一致性（可选）
+
+跑评测/脚手架产出的"样本/证据"文件也必须套用合适的前缀（如 `report.skill-eval-sample-*.md`），不允许留 `output-*.md` / `tmp-*.md` 之类的裸文件名。
+
 ---
 
 ## 架构规则索引

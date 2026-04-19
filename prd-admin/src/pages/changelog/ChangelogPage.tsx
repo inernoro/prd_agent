@@ -1,9 +1,11 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Sparkles, Calendar, Tag, RefreshCw, Filter, X } from 'lucide-react';
+import { Sparkles, Calendar, Tag, RefreshCw, Filter, X, FileText } from 'lucide-react';
 import { useChangelogStore } from '@/stores/changelogStore';
 import { MapSectionLoader, MapSpinner } from '@/components/ui/VideoLoader';
 import { glassPanel } from '@/lib/glassStyles';
 import type { ChangelogEntry } from '@/services';
+import { TabBar } from '@/components/design/TabBar';
+import { WeeklyReportsTab } from './components/WeeklyReportsTab';
 
 /** 类型徽章配色（注册表，禁止 switch / if-else） */
 const TYPE_BADGE_REGISTRY: Record<string, { label: string; color: string; bg: string; border: string }> = {
@@ -13,6 +15,11 @@ const TYPE_BADGE_REGISTRY: Record<string, { label: string; color: string; bg: st
   perf: { label: '优化', color: '#c4b5fd', bg: 'rgba(139, 92, 246, 0.10)', border: 'rgba(139, 92, 246, 0.32)' },
   docs: { label: '文档', color: '#67e8f9', bg: 'rgba(6, 182, 212, 0.10)', border: 'rgba(6, 182, 212, 0.32)' },
   chore: { label: '杂项', color: '#d4d4d8', bg: 'rgba(161, 161, 170, 0.10)', border: 'rgba(161, 161, 170, 0.32)' },
+  enhance: { label: '增强', color: '#f472b6', bg: 'rgba(244, 114, 182, 0.10)', border: 'rgba(244, 114, 182, 0.32)' },
+  rule: { label: '规范', color: '#e879f9', bg: 'rgba(232, 121, 249, 0.10)', border: 'rgba(232, 121, 249, 0.32)' },
+  test: { label: '测试', color: '#34d399', bg: 'rgba(52, 211, 153, 0.10)', border: 'rgba(52, 211, 153, 0.32)' },
+  ci: { label: '构筑', color: '#cbd5e1', bg: 'rgba(203, 213, 225, 0.10)', border: 'rgba(203, 213, 225, 0.32)' },
+  deploy: { label: '部署', color: '#6ee7b7', bg: 'rgba(110, 231, 183, 0.10)', border: 'rgba(110, 231, 183, 0.32)' },
 };
 
 const FALLBACK_BADGE = {
@@ -44,7 +51,7 @@ export default function ChangelogPage() {
   const markAsSeen = useChangelogStore((s) => s.markAsSeen);
 
   const [typeFilter, setTypeFilter] = useState<string | null>(null);
-  const [moduleFilter, setModuleFilter] = useState<string | null>(null);
+  const [activeTab, setActiveTab] = useState<string>('update_center');
 
   // 进入页面：拉取数据 + 标记已读
   useEffect(() => {
@@ -59,14 +66,12 @@ export default function ChangelogPage() {
     void loadReleases(20, true);
   };
 
-  // 收集所有出现过的 type / module 用于筛选 chip
-  const { availableTypes, availableModules } = useMemo(() => {
+  // 收集所有出现过的 type 用于筛选 chip
+  const { availableTypes } = useMemo(() => {
     const types = new Set<string>();
-    const modules = new Set<string>();
     const collect = (entries: ChangelogEntry[]) => {
       for (const e of entries) {
         if (e.type) types.add(e.type.toLowerCase());
-        if (e.module) modules.add(e.module);
       }
     };
     if (currentWeek) {
@@ -77,13 +82,11 @@ export default function ChangelogPage() {
     }
     return {
       availableTypes: Array.from(types).sort(),
-      availableModules: Array.from(modules).sort(),
     };
   }, [currentWeek, releases]);
 
   const matchFilter = (e: ChangelogEntry): boolean => {
     if (typeFilter && e.type.toLowerCase() !== typeFilter) return false;
-    if (moduleFilter && e.module !== moduleFilter) return false;
     return true;
   };
 
@@ -99,7 +102,7 @@ export default function ChangelogPage() {
     }
     return flat;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [currentWeek, typeFilter, moduleFilter]);
+  }, [currentWeek, typeFilter]);
 
   const currentWeekByDate = useMemo(() => {
     const map = new Map<string, FlatEntry[]>();
@@ -143,6 +146,19 @@ export default function ChangelogPage() {
 
   return (
     <div className="flex flex-col gap-5">
+      {/* ── 顶部切换导航 ── */}
+      <TabBar
+        items={[
+          { key: 'update_center', label: '更新中心', icon: <Sparkles size={14} /> },
+          { key: 'weekly_reports', label: 'map周报', icon: <FileText size={14} /> },
+        ]}
+        activeKey={activeTab}
+        onChange={setActiveTab}
+        variant="gold"
+      />
+
+      {activeTab === 'update_center' && (
+      <div className="flex flex-col gap-5">
       {/* ── Header ───────────────────────────────────────── */}
       <header
         style={glassPanel}
@@ -205,69 +221,50 @@ export default function ChangelogPage() {
         </div>
 
         {/* 筛选器 */}
-        {(availableTypes.length > 0 || availableModules.length > 0) && (
+        {availableTypes.length > 0 && (
           <div className="flex flex-wrap items-center gap-2 pt-1">
-            <div className="inline-flex items-center gap-1.5 text-[11px]" style={{ color: 'var(--text-muted)' }}>
-              <Filter size={12} />
+            <div className="inline-flex items-center gap-1.5 text-[13px] font-medium" style={{ color: 'var(--text-secondary)' }}>
+              <Filter size={14} />
               筛选
             </div>
-            {availableTypes.length > 0 && (
-              <div className="flex flex-wrap gap-1.5">
-                {availableTypes.map((t) => {
-                  const meta = getTypeBadge(t);
-                  const active = typeFilter === t;
-                  return (
-                    <button
-                      key={t}
-                      type="button"
-                      onClick={() => setTypeFilter(active ? null : t)}
-                      className="h-6 px-2 rounded-md text-[11px] font-medium transition-all"
-                      style={{
-                        background: active ? meta.bg : 'rgba(255, 255, 255, 0.04)',
-                        border: `1px solid ${active ? meta.border : 'rgba(255, 255, 255, 0.10)'}`,
-                        color: active ? meta.color : 'var(--text-muted)',
-                      }}
-                    >
-                      {meta.label}
-                    </button>
-                  );
-                })}
-              </div>
-            )}
-            {availableModules.length > 0 && (
-              <div className="flex flex-wrap gap-1.5">
-                {availableModules.map((m) => {
-                  const active = moduleFilter === m;
-                  return (
-                    <button
-                      key={m}
-                      type="button"
-                      onClick={() => setModuleFilter(active ? null : m)}
-                      className="h-6 px-2 rounded-md text-[11px] font-mono transition-all"
-                      style={{
-                        background: active ? 'rgba(99, 102, 241, 0.14)' : 'rgba(255, 255, 255, 0.04)',
-                        border: `1px solid ${active ? 'rgba(99, 102, 241, 0.36)' : 'rgba(255, 255, 255, 0.10)'}`,
-                        color: active ? '#a5b4fc' : 'var(--text-muted)',
-                      }}
-                    >
-                      {m}
-                    </button>
-                  );
-                })}
-              </div>
-            )}
-            {(typeFilter || moduleFilter) && (
+            
+            <div className="flex flex-wrap gap-1.5 ml-1">
+              {availableTypes.map((t) => {
+                const meta = getTypeBadge(t);
+                const active = typeFilter === t;
+                return (
+                  <button
+                    key={t}
+                    type="button"
+                    onClick={() => setTypeFilter(active ? null : t)}
+                    className="h-8 px-4 rounded-lg text-[13px] font-medium transition-all cursor-pointer"
+                    style={{
+                      background: active ? meta.bg : 'rgba(255, 255, 255, 0.04)',
+                      border: `1px solid ${active ? meta.border : 'rgba(255, 255, 255, 0.10)'}`,
+                      color: active ? meta.color : 'var(--text-muted)',
+                      lineHeight: '1',
+                      display: 'flex',
+                      alignItems: 'center',
+                    }}
+                  >
+                    {meta.label}
+                  </button>
+                );
+              })}
+            </div>
+            
+            {typeFilter && (
               <button
                 type="button"
-                onClick={() => { setTypeFilter(null); setModuleFilter(null); }}
-                className="h-6 px-2 rounded-md text-[11px] inline-flex items-center gap-1"
+                onClick={() => setTypeFilter(null)}
+                className="h-8 px-3 rounded-lg text-[13px] inline-flex items-center gap-1.5 ml-2 transition-all hover:bg-white/10 hover:text-white cursor-pointer"
                 style={{
                   background: 'rgba(255, 255, 255, 0.06)',
                   border: '1px solid rgba(255, 255, 255, 0.12)',
                   color: 'var(--text-secondary)',
                 }}
               >
-                <X size={11} />
+                <X size={13} />
                 清除筛选
               </button>
             )}
@@ -340,8 +337,8 @@ export default function ChangelogPage() {
 
         {totalCurrentWeek > 0 && (
           <div className="flex flex-col gap-5">
-            {currentWeekByDate.map(([date, entries]) => (
-              <div key={date}>
+            {currentWeekByDate.map(([date, entries], dateIdx) => (
+              <div key={`${date}-${dateIdx}`}>
                 <div
                   className="flex items-center gap-2 mb-2 text-[11px] font-mono"
                   style={{ color: 'var(--text-muted)' }}
@@ -452,8 +449,8 @@ export default function ChangelogPage() {
 
                   {visibleDays.length > 0 && (
                     <div className="flex flex-col gap-3">
-                      {visibleDays.map((day) => (
-                        <div key={day.date}>
+                      {visibleDays.map((day, dayIdx) => (
+                        <div key={`${day.date}-${dayIdx}`}>
                           <div
                             className="flex items-center gap-2 mb-1.5 text-[11px] font-mono"
                             style={{ color: 'var(--text-muted)' }}
@@ -484,6 +481,13 @@ export default function ChangelogPage() {
           </div>
         )}
       </section>
+      </div>
+      )}
+
+      {activeTab === 'weekly_reports' && (
+        <WeeklyReportsTab />
+      )}
+
     </div>
   );
 }

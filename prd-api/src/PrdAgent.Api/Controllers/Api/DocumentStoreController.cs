@@ -1161,6 +1161,11 @@ public class DocumentStoreController : ControllerBase
             Tags = request.Tags ?? new List<string>(),
         };
 
+        if (!string.IsNullOrWhiteSpace(request.IncludeGlob))
+        {
+            entry.Metadata["github_include_glob"] = request.IncludeGlob.Trim();
+        }
+
         await _db.DocumentEntries.InsertOneAsync(entry);
 
         await _db.DocumentStores.UpdateOneAsync(
@@ -2432,6 +2437,7 @@ public class AddGitHubSubscriptionRequest
     public string? Title { get; set; }
     public int? SyncIntervalMinutes { get; set; }
     public List<string>? Tags { get; set; }
+    public string? IncludeGlob { get; set; }
 }
 
 public class UpdateSubscriptionRequest

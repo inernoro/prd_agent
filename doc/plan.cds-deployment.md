@@ -1,4 +1,4 @@
-# CDS 部署规划
+# CDS 部署规划 · 计划
 
 > **版本**：v1.0 | **日期**：2026-03-11 | **关联**：design.exec-bt-deployment.md, docker-compose.yml, cds/
 

@@ -1,4 +1,4 @@
-# AI 文本辅助（Text Assist）— 通用 Domain 设计
+# AI 文本辅助（Text Assist）— 通用 Domain · 计划
 
 ## 定位
 

@@ -1,4 +1,4 @@
-# 周报 Agent (Report Agent) v2.0 - 产品需求文档
+# 周报 Agent (Report Agent) v2.0 - 产品需求文档 · 规格
 
 > **版本**: v2.0 | **创建日期**: 2026-03-05 | **appKey**: `report-agent`
 >

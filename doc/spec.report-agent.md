@@ -1,4 +1,4 @@
-# 周报 Agent (Report Agent) — 产品需求文档
+# 周报 Agent (Report Agent) — 产品需求文档 · 规格
 
 > **版本**：v1.0 | **创建日期**：2026-02-24 | **appKey**：`report-agent`
 >
