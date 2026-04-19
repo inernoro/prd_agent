@@ -5415,11 +5415,37 @@ cdscli project list --human
         send('checkout', 'done', `已切换到 ${branch}`);
       }
 
-      // Step 3: pull latest
-      send('pull', 'running', '正在拉取最新代码...');
-      const pullResult = await shell.exec('git pull', { cwd: repoRoot });
-      const pullOutput = pullResult.stdout.trim();
-      send('pull', 'done', pullOutput.includes('Already up to date') ? '代码已是最新' : '代码已更新');
+      // Step 3: hard-reset local to the remote tip.
+      //
+      // Prior implementation used `git pull` which creates a merge commit
+      // when the local branch has diverged from origin. In managed CDS
+      // deployments divergence happens easily (e.g. a prior self-update
+      // left a locally-committed state, or the operator ran git commands
+      // on the host). An auto-merge can silently drop file changes — we
+      // actually hit this: settings.js grew by 438 lines on origin but
+      // pull's merge kept the local OLD version, serving stale UI.
+      //
+      // origin is the source of truth for a managed deployment, so we
+      // hard-reset to `origin/<branch>` after fetch. This is destructive
+      // to local uncommitted changes (checkout -f above already discards
+      // those) and to local-only commits (which shouldn't exist on a
+      // prod CDS anyway). For manual debugging branches, operators can
+      // still use `git reflog` to recover.
+      send('pull', 'running', '正在硬对齐到远端最新...');
+      const targetBranch = branch || (await shell.exec('git rev-parse --abbrev-ref HEAD', { cwd: repoRoot })).stdout.trim();
+      const resetResult = await shell.exec(
+        `git reset --hard origin/${targetBranch}`,
+        { cwd: repoRoot },
+      );
+      if (resetResult.exitCode !== 0) {
+        const errMsg = (resetResult.stderr || resetResult.stdout || '未知错误').trim();
+        send('pull', 'error', `硬对齐失败: ${errMsg}`);
+        sendSSE(res, 'error', { message: `无法对齐到 origin/${targetBranch}: ${errMsg}` });
+        res.end();
+        return;
+      }
+      const newHead = (await shell.exec('git rev-parse --short HEAD', { cwd: repoRoot })).stdout.trim();
+      send('pull', 'done', `已对齐到 origin/${targetBranch} @ ${newHead}`);
 
       // ──────────────────────────────────────────────────────────────
       // Step 3.5: pre-restart validation (P4 Part 18 hardening).
