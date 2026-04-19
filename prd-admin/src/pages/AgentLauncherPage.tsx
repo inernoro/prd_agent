@@ -764,20 +764,17 @@ export default function AgentLauncherPage() {
               </div>
             </div>
             {/* end hero content */}
-          </div>
-          {/* end hero banner */}
 
-        <div className={isMobile ? 'px-4 pt-4 pb-8' : 'px-8 pt-5 pb-12'}>
-          {/* ── Quick Links — 4 张独立卡片，同宽响应式（1/2/4 列） ── */}
-          {!searchQuery.trim() && (
-            <div
-              className="grid"
-              style={{
-                marginBottom: isMobile ? 20 : 32,
-                gap: isMobile ? 10 : 14,
-                gridTemplateColumns: `repeat(auto-fit, minmax(${isMobile ? 160 : 220}px, 1fr))`,
-              }}
-            >
+            {/* ── Quick Links — Extended Hero Background Area ── */}
+            {!searchQuery.trim() && (
+              <div className={`relative z-10 ${isMobile ? 'px-5 pb-6' : 'px-8 pb-10'}`}>
+                <div
+                  className="grid"
+                  style={{
+                    gap: isMobile ? 10 : 14,
+                    gridTemplateColumns: `repeat(auto-fit, minmax(${isMobile ? 160 : 220}px, 1fr))`,
+                  }}
+                >
               {quickLinks.map((link, idx) => {
                 const Icon = link.icon;
                 const isUpdates = link.id === 'updates';
@@ -897,9 +894,13 @@ export default function AgentLauncherPage() {
                   </Reveal>
                 );
               })}
-            </div>
-          )}
+                </div>
+              </div>
+            )}
+          </div>
+          {/* end expansive hero banner */}
 
+        <div className={isMobile ? 'px-4 pt-2 pb-8' : 'px-8 pt-4 pb-12'}>
           {/* ── Loading ── */}
           {itemsLoading ? (
             <div className="flex items-center justify-center h-48">
