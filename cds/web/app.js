@@ -3923,22 +3923,16 @@ function renderBranches() {
             </span>
           </div>
           ${(() => {
-            // Unified chip row — combines GitHub source chip + port badges +
-            // pinned-commit badge into ONE wrappable flex row. Keeps the
+            // Unified chip row — combines port badges + pinned-commit badge +
+            // last-updated timestamp into ONE wrappable flex row. Keeps the
             // card compact and visually consistent between branches that
             // have/don't have a GitHub source.
             //
-            // GitHub chip is just an icon + 7-char SHA (no "from GitHub"
-            // label — the GitHub logo is self-explanatory and the SHA
-            // tells you "this branch was triggered by a webhook push").
-            // 2026-04-19: GitHub icon 上移到分支标题前(当
-            // b.githubRepoFullName 存在时,ICON.githubMark 替换
-            // ICON.branch),这里的 chip 只保留 7 位 SHA,避免两处
-            // 重复 logo。tooltip 仍然标明"来自 GitHub"以免裸 SHA
-            // 显得莫名其妙。
-            const ghChip = (b.githubCommitSha && b.githubRepoFullName && /^[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+$/.test(b.githubRepoFullName))
-              ? `<a class="branch-gh-badge" href="https://github.com/${b.githubRepoFullName.split('/').map(encodeURIComponent).join('/')}/commit/${encodeURIComponent(b.githubCommitSha)}" target="_blank" rel="noopener" onclick="event.stopPropagation()" title="来自 GitHub webhook · 点击查看 commit ${esc(b.githubCommitSha)}" style="display:inline-flex;align-items:center;padding:2px 8px;border-radius:10px;background:rgba(96,165,250,0.1);border:1px solid rgba(96,165,250,0.3);color:#60a5fa;font-size:10px;font-weight:600;text-decoration:none;font-family:var(--font-mono,monospace)">${esc(String(b.githubCommitSha).slice(0, 7))}</a>`
-              : '';
+            // 2026-04-19 user feedback: 原 GitHub commit SHA 胶囊 (蓝色
+            // `658aa87` 之类)已删 —— 标题前的 GitHub icon 已经说明"这是
+            // 从 GitHub 来的",commit hash 对运维体验没增加信息,反而挤占
+            // chips row 宝贵的视觉空间。需要具体 SHA 可以在分支详情页或
+            // PR Checks 面板里看。
             const pinChip = b.pinnedCommit
               ? `<span class="pinned-commit-badge" onclick="event.stopPropagation(); checkoutCommit('${esc(b.id)}', '', true, '')" title="已固定到历史提交 ${esc(b.pinnedCommit)}，点击恢复最新"><svg width="10" height="10" viewBox="0 0 16 16" fill="currentColor" style="vertical-align:-1px"><path d="M4.456.734a1.75 1.75 0 012.826.504l.613 1.327a3.081 3.081 0 002.084 1.707l2.454.584c1.332.317 1.8 1.972.832 2.94L11.06 9.695a.75.75 0 01-.19.436l-4.552 4.552a.75.75 0 01-1.06-1.06l4.305-4.305L7.307 7.13A4.581 4.581 0 005.03 4.929L4.416 3.6A.25.25 0 004.01 3.49L2.606 4.893a.25.25 0 00.104.407l1.328.613a4.581 4.581 0 012.204 2.277l.248.538a.75.75 0 01-1.36.628l-.248-.538a3.081 3.081 0 00-1.483-1.532L2.07 6.773C.783 6.19.381 4.602 1.3 3.682L2.703 2.28A1.75 1.75 0 014.456.734z"/></svg> ${esc(b.pinnedCommit)}</span>`
               : '';
@@ -3953,9 +3947,9 @@ function renderBranches() {
             const updatedChip = __lastSeen
               ? `<span class="branch-updated-at" title="${b.lastAccessedAt ? '最近部署' : '创建'}于 ${esc(new Date(__lastSeen).toLocaleString())}"><svg width="10" height="10" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true" style="vertical-align:-1px;margin-right:3px;opacity:0.7"><path d="M8 0a8 8 0 100 16A8 8 0 008 0zM1.5 8a6.5 6.5 0 1113 0 6.5 6.5 0 01-13 0zM8 3.75a.75.75 0 01.75.75v3.25h2.25a.75.75 0 010 1.5h-3a.75.75 0 01-.75-.75v-4a.75.75 0 01.75-.75z"/></svg>${esc(relativeTime(__lastSeen))}${b.lastAccessedAt ? '' : ' 创建'}</span>`
               : '';
-            const hasAnyChip = ghChip || pinChip || portBadgesHtml || updatedChip;
+            const hasAnyChip = pinChip || portBadgesHtml || updatedChip;
             return hasAnyChip
-              ? `<div class="branch-card-chips">${ghChip}${portBadgesHtml || ''}${pinChip}${updatedChip}</div>`
+              ? `<div class="branch-card-chips">${portBadgesHtml || ''}${pinChip}${updatedChip}</div>`
               : '';
           })()}
         </div>
