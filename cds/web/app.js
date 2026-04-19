@@ -2891,6 +2891,137 @@ async function viewBranchLogs(id) {
 
 let _logStreamController = null;
 
+// ── Phase 3 冒烟测试: 从分支卡触发 smoke-all.sh ──
+//
+// Flow:
+//   1. 弹窗提示输入 AI_ACCESS_KEY (或从 _global.customEnv 读取 —— 后端
+//      优先后者)
+//   2. POST /api/branches/:id/smoke + SSE 流式接收 stdout/stderr
+//   3. 每行 event:line 追加到模态框
+//   4. event:complete 关闭流、更新头部"通过 X / 失败 Y"
+//
+// 不做的: 不存 AI_ACCESS_KEY 到 localStorage (安全); 不做自动重跑
+// (失败就失败, 要重来点一次就行)。
+async function runBranchSmoke(branchId) {
+  // Prompt for AI access key (leave blank to use server-side _global.customEnv)
+  const accessKey = window.prompt(
+    '输入 AI_ACCESS_KEY\n\n留空 = 使用 CDS 环境变量 _global.AI_ACCESS_KEY\n(首次冒烟建议先在「环境变量」面板把它存到 _global)',
+    ''
+  );
+  if (accessKey === null) return; // user cancelled
+
+  const modalHtml = `
+    <div class="smoke-modal-wrap" id="smokeModalWrap" style="display:flex;flex-direction:column;gap:10px;min-height:0;height:60vh">
+      <div class="smoke-modal-header" style="display:flex;justify-content:space-between;align-items:center;flex-shrink:0">
+        <div style="font-size:12px;color:var(--text-muted)">
+          分支 <code>${esc(branchId)}</code> 冒烟测试
+          <span id="smokeSummary" style="margin-left:12px;color:var(--text-secondary)">准备中…</span>
+        </div>
+        <button class="sm" id="smokeAbortBtn" onclick="_abortSmokeStream()" title="中止并关闭">关闭</button>
+      </div>
+      <pre id="smokeOutput" style="flex:1;min-height:0;overflow:auto;background:var(--bg-code-block,rgba(8,12,28,0.6));border:1px solid var(--border);border-radius:6px;padding:10px 14px;font-size:12px;font-family:var(--font-mono);color:var(--text-primary);white-space:pre-wrap;margin:0"></pre>
+    </div>
+  `;
+  openConfigModal(`冒烟测试: ${branchId}`, modalHtml);
+
+  const outEl = document.getElementById('smokeOutput');
+  const sumEl = document.getElementById('smokeSummary');
+  if (!outEl || !sumEl) return;
+  const append = (txt, color) => {
+    const span = document.createElement('span');
+    if (color) span.style.color = color;
+    span.textContent = txt + '\n';
+    outEl.appendChild(span);
+    outEl.scrollTop = outEl.scrollHeight;
+  };
+
+  // SSE over POST requires fetch + ReadableStream; built-in EventSource only does GET
+  const controller = new AbortController();
+  _smokeStreamController = controller;
+  try {
+    const res = await fetch(`/api/branches/${encodeURIComponent(branchId)}/smoke`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        accessKey: accessKey || undefined,
+        impersonateUser: 'admin',
+        failFast: false,
+      }),
+      signal: controller.signal,
+    });
+    if (!res.ok) {
+      let errBody = ''; try { errBody = JSON.stringify(await res.json()); } catch {}
+      append(`[HTTP ${res.status}] ${errBody}`, 'var(--red)');
+      sumEl.textContent = '启动失败';
+      return;
+    }
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buf = '';
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buf += decoder.decode(value, { stream: true });
+      // SSE events are split by \n\n
+      let idx;
+      while ((idx = buf.indexOf('\n\n')) >= 0) {
+        const rawEvent = buf.slice(0, idx);
+        buf = buf.slice(idx + 2);
+        const event = _parseSseEvent(rawEvent);
+        if (!event) continue;
+        if (event.event === 'start') {
+          sumEl.textContent = `目标 ${event.data.host}`;
+          append(`>>> smoke starting on ${event.data.host}`, 'var(--text-muted)');
+        } else if (event.event === 'line') {
+          const isErr = event.data.stream === 'stderr';
+          append(event.data.text, isErr ? 'var(--red)' : undefined);
+        } else if (event.event === 'complete') {
+          const d = event.data;
+          const ok = d.exitCode === 0 && d.failedCount === 0;
+          sumEl.textContent = ok
+            ? `✅ 通过 ${d.passedCount} 项 · ${d.elapsedSec}s`
+            : `❌ 失败 ${d.failedCount} / 通过 ${d.passedCount} · 退出码 ${d.exitCode}`;
+          sumEl.style.color = ok ? 'var(--green)' : 'var(--red)';
+          append(`>>> smoke ${ok ? 'PASSED' : 'FAILED'} (exit=${d.exitCode}, ${d.elapsedSec}s)`, ok ? 'var(--green)' : 'var(--red)');
+        } else if (event.event === 'error') {
+          sumEl.textContent = `❌ ${event.data.message}`;
+          sumEl.style.color = 'var(--red)';
+          append(`[error] ${event.data.message}`, 'var(--red)');
+        }
+      }
+    }
+  } catch (err) {
+    if (err.name === 'AbortError') {
+      append('>>> 已中止 (用户关闭)', 'var(--text-muted)');
+    } else {
+      append(`[network] ${err.message}`, 'var(--red)');
+    }
+  } finally {
+    _smokeStreamController = null;
+  }
+}
+
+let _smokeStreamController = null;
+function _abortSmokeStream() {
+  if (_smokeStreamController) _smokeStreamController.abort();
+  closeConfigModal();
+}
+
+function _parseSseEvent(raw) {
+  // Parse a single SSE event block: "event: xxx\ndata: yyy"
+  const lines = raw.split('\n');
+  let ev = 'message';
+  let data = '';
+  for (const line of lines) {
+    if (line.startsWith(':')) continue; // keepalive comment
+    if (line.startsWith('event:')) ev = line.slice(6).trim();
+    else if (line.startsWith('data:')) data += line.slice(5).trim();
+  }
+  if (!data) return null;
+  try { return { event: ev, data: JSON.parse(data) }; }
+  catch { return { event: ev, data: { raw: data } }; }
+}
+
 async function viewContainerLogs(id, profileId) {
   // Abort any previous log stream
   if (_logStreamController) { _logStreamController.abort(); _logStreamController = null; }
@@ -3597,6 +3728,7 @@ function renderBranches() {
         ${targetMenuItems}
         ${isRunning ? `<div class="deploy-menu-divider"></div>
         <div class="deploy-menu-item" onclick="event.stopPropagation(); closeDeployMenu('${esc(b.id)}'); viewBranchLogs('${esc(b.id)}')"><svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor" style="vertical-align:-1px;margin-right:4px"><path d="M1 2.75C1 1.784 1.784 1 2.75 1h10.5c.966 0 1.75.784 1.75 1.75v7.5A1.75 1.75 0 0113.25 12H9.06l-2.573 2.573A1.458 1.458 0 014 13.543V12H2.75A1.75 1.75 0 011 10.25v-7.5zm1.5 0a.25.25 0 01.25-.25h10.5a.25.25 0 01.25.25v7.5a.25.25 0 01-.25.25h-4.5a.75.75 0 00-.75.75v2.19l-2.72-2.72a.75.75 0 00-.53-.22H2.75a.25.25 0 01-.25-.25v-7.5z"/></svg>部署日志</div>
+        <div class="deploy-menu-item" onclick="event.stopPropagation(); closeDeployMenu('${esc(b.id)}'); runBranchSmoke('${esc(b.id)}')" title="运行 scripts/smoke-all.sh 针对本分支预览域名"><svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor" style="vertical-align:-1px;margin-right:4px"><path d="M8 16A3.5 3.5 0 004.5 12.5c0-1.81 1.63-3.04 1.63-3.04C5.48 10.89 6.5 12 8 12c1.5 0 2.52-1.11 1.87-2.54 0 0 1.63 1.23 1.63 3.04A3.5 3.5 0 018 16zM11 1s-1.5 1.5-2 3.5C6 3 4.5 5 4.5 7.5c0 1 .5 2 1 2.5C4 9 2.5 7 2.5 5 2.5 2 5.5 0 8 0c1.8 0 3 1 3 1z"/></svg>冒烟测试</div>
         ${stopMenuItem}` : ''}
         <div class="deploy-menu-divider"></div>
         <div class="deploy-menu-item" onclick="event.stopPropagation(); closeDeployMenu('${esc(b.id)}'); openOverrideModal('${esc(b.id)}')"><svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor" style="vertical-align:-1px;margin-right:4px"><path d="M8 0a8 8 0 100 16A8 8 0 008 0zM1.5 8a6.5 6.5 0 1113 0 6.5 6.5 0 01-13 0zM8 4a.75.75 0 01.75.75v2.5h2.5a.75.75 0 010 1.5h-2.5v2.5a.75.75 0 01-1.5 0v-2.5h-2.5a.75.75 0 010-1.5h2.5v-2.5A.75.75 0 018 4z"/></svg>容器配置 (继承/覆盖)</div>

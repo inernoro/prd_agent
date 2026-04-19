@@ -1476,6 +1476,166 @@ export function createBranchRouter(deps: RouterDeps): Router {
     }
   });
 
+  // ── Smoke test a branch's preview URL ──
+  //
+  // Phase 3 交付: 部署绿灯后,操作员点「冒烟测试」按钮触发这个端点,
+  // CDS 以当前分支预览域名作为 SMOKE_TEST_HOST 运行 scripts/smoke-all.sh,
+  // 并把 bash 子进程的 stdout/stderr 逐行以 SSE `line` 事件推给前端,
+  // 最后 `complete` 事件带上退出码 + 耗时。
+  //
+  // AI_ACCESS_KEY 从 request body 或 project-scoped customEnv 里取,
+  // CDS 自身的 state.json 不落库 plaintext(operator 每次触发都要粘,
+  // 或一次性写进项目 env 的 _global 作用域即可)。
+  //
+  // 设计约束 (对齐 .claude/rules/server-authority.md):
+  //   - 使用 CancellationToken.None 等价语义: 客户端断 SSE 不杀 bash
+  //   - 10 秒 keepalive 心跳防 proxy 超时
+  //   - stdout/stderr 合并推送(smoke-*.sh 的 ❌ 都在 stderr)
+  //
+  // SMOKE_SCRIPT_DIR 默认为 `<process.cwd()>/scripts` (CDS 进程启动目录的
+  // scripts 子目录),可通过 env `CDS_SMOKE_SCRIPT_DIR` 覆盖 —— 方便容器化
+  // 部署时把脚本挂到固定路径。
+  router.post('/branches/:id/smoke', async (req, res) => {
+    const { id } = req.params;
+    const entry = stateService.getBranch(id);
+    if (!entry) {
+      res.status(404).json({ error: `分支 "${id}" 不存在` });
+      return;
+    }
+    {
+      const m = assertProjectAccess(req as any, entry.projectId || 'default');
+      if (m) { res.status(m.status).json(m.body); return; }
+    }
+
+    // Resolve preview URL. Without one the smoke has no target, so we
+    // refuse up-front with a clear message instead of letting bash try
+    // to hit an empty URL.
+    const previewHost = config.previewDomain || config.rootDomains?.[0];
+    if (!previewHost) {
+      res.status(400).json({
+        error: 'preview_host_missing',
+        message: '未配置 previewDomain / rootDomains,无法推导预览 URL — 请先在 cds.config.json 设置。',
+      });
+      return;
+    }
+    const smokeHost = `https://${entry.id}.${previewHost}`;
+
+    const body = (req.body || {}) as {
+      accessKey?: string;
+      impersonateUser?: string;
+      skip?: string;
+      failFast?: boolean;
+    };
+
+    // AI_ACCESS_KEY resolution order:
+    //   1. request body `accessKey` (operator paste)
+    //   2. state.customEnv._global.AI_ACCESS_KEY (project-global fallback)
+    // Never reads from process.env — that would leak the CDS process
+    // env into the smoke target.
+    const globalEnv = stateService.getCustomEnv('_global');
+    const accessKey = (body.accessKey || globalEnv?.AI_ACCESS_KEY || '').trim();
+    if (!accessKey) {
+      res.status(400).json({
+        error: 'access_key_missing',
+        message: '需要 accessKey (请求体字段) 或在环境变量 _global.AI_ACCESS_KEY 预设。',
+      });
+      return;
+    }
+
+    // Script dir: env override > default <cwd>/scripts.
+    const scriptDir = process.env.CDS_SMOKE_SCRIPT_DIR
+      || path.join(process.cwd(), 'scripts');
+    const smokeEntry = path.join(scriptDir, 'smoke-all.sh');
+    if (!fs.existsSync(smokeEntry)) {
+      res.status(500).json({
+        error: 'smoke_script_missing',
+        message: `找不到 smoke-all.sh (查找路径 ${smokeEntry})。请确认 scripts/ 目录已随 CDS 部署并设置 CDS_SMOKE_SCRIPT_DIR。`,
+      });
+      return;
+    }
+
+    // ── Open SSE ──
+    res.writeHead(200, {
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache',
+      Connection: 'keep-alive',
+      'X-Accel-Buffering': 'no',
+    });
+    const safeSend = (event: string, data: unknown) => {
+      try { sendSSE(res, event, data); } catch { /* client gone */ }
+    };
+    const keepalive = setInterval(() => {
+      try { res.write(':keepalive\n\n'); } catch { /* noop */ }
+    }, 10_000);
+
+    safeSend('start', {
+      branchId: entry.id,
+      host: smokeHost,
+      impersonateUser: body.impersonateUser || 'admin',
+      skip: body.skip || '',
+      script: smokeEntry,
+    });
+
+    const child = spawn('bash', [smokeEntry], {
+      cwd: scriptDir,
+      env: {
+        ...process.env,
+        SMOKE_TEST_HOST: smokeHost,
+        AI_ACCESS_KEY: accessKey,
+        SMOKE_USER: body.impersonateUser || 'admin',
+        SMOKE_SKIP: body.skip || '',
+        SMOKE_FAIL_FAST: body.failFast ? '1' : '',
+      },
+    });
+
+    const startedAt = Date.now();
+    let passed = 0;
+    let failed = 0;
+
+    const forward = (stream: NodeJS.ReadableStream, channel: 'stdout' | 'stderr') => {
+      let buffer = '';
+      stream.on('data', (chunk: Buffer) => {
+        buffer += chunk.toString('utf8');
+        let idx: number;
+        while ((idx = buffer.indexOf('\n')) >= 0) {
+          const line = buffer.slice(0, idx);
+          buffer = buffer.slice(idx + 1);
+          // Tally pass/fail counters from the emoji-prefixed summary
+          // lines printed by smoke-all.sh footer. Doesn't rely on
+          // exit code alone — the footer is what CI / UI displays.
+          if (line.startsWith('✅ 通过:') || line.startsWith('\u2705 通过:')) {
+            const m = /通过:\s*(\d+)/.exec(line);
+            if (m) passed = parseInt(m[1], 10);
+          } else if (line.startsWith('❌ 失败:') || line.startsWith('\u274c 失败:')) {
+            const m = /失败:\s*(\d+)/.exec(line);
+            if (m) failed = parseInt(m[1], 10);
+          }
+          safeSend('line', { stream: channel, text: line });
+        }
+      });
+    };
+    forward(child.stdout!, 'stdout');
+    forward(child.stderr!, 'stderr');
+
+    child.on('error', (err) => {
+      clearInterval(keepalive);
+      safeSend('error', { message: err.message });
+      try { res.end(); } catch { /* noop */ }
+    });
+
+    child.on('close', (code) => {
+      clearInterval(keepalive);
+      const elapsedSec = Math.round((Date.now() - startedAt) / 1000);
+      safeSend('complete', {
+        exitCode: code,
+        elapsedSec,
+        passedCount: passed,
+        failedCount: failed,
+      });
+      try { res.end(); } catch { /* noop */ }
+    });
+  });
+
   // ── Stop all services for a branch ──
 
   router.post('/branches/:id/stop', async (req, res) => {
