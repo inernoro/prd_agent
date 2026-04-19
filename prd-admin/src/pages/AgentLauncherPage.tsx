@@ -299,8 +299,8 @@ function FeaturedCard({ item, onClick }: { item: ToolboxItem; onClick: () => voi
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-2">
               <h3
-                className="text-[15px] font-semibold truncate"
-                style={{ color: '#fff', textShadow: '0 1px 4px rgba(0,0,0,0.5)' }}
+                className="text-[15px] font-semibold truncate px-2 py-0.5 rounded-md bg-black/20 backdrop-blur-md shadow-sm w-fit"
+                style={{ color: '#fff', textShadow: '0 1px 4px rgba(0,0,0,0.5)', border: '1px solid rgba(255,255,255,0.05)' }}
               >
                 {item.name}
               </h3>
@@ -311,8 +311,8 @@ function FeaturedCard({ item, onClick }: { item: ToolboxItem; onClick: () => voi
               />
             </div>
             <p
-              className="text-[12px] leading-relaxed mt-1 line-clamp-2"
-              style={{ color: 'rgba(255,255,255,0.55)' }}
+              className="text-[12px] leading-relaxed mt-1 line-clamp-2 px-2 py-1 rounded-md bg-black/20 backdrop-blur-md shadow-sm w-fit max-w-full"
+              style={{ color: 'var(--text-muted, rgba(255,255,255,0.85))', border: '1px solid rgba(255,255,255,0.05)' }}
             >
               {item.description}
             </p>
@@ -321,11 +321,11 @@ function FeaturedCard({ item, onClick }: { item: ToolboxItem; onClick: () => voi
                 {item.tags.slice(0, 3).map((t) => (
                   <span
                     key={t}
-                    className="text-[10px] px-2 py-0.5 rounded-md"
+                    className="text-[10px] px-2 py-0.5 rounded-[5px] backdrop-blur-md shadow-sm"
                     style={{
-                      background: 'rgba(255,255,255,0.06)',
-                      color: 'rgba(255,255,255,0.5)',
-                      border: '1px solid rgba(255,255,255,0.04)',
+                      background: 'rgba(0,0,0,0.3)',
+                      color: 'rgba(255,255,255,0.7)',
+                      border: '1px solid rgba(255,255,255,0.08)',
                     }}
                   >
                     {t}
@@ -891,14 +891,14 @@ export default function AgentLauncherPage() {
                       </div>
 
                       <div
-                        className={`mt-3 font-semibold tracking-tight ${isMobile ? 'text-[14px]' : 'text-[15px]'}`}
-                        style={{ color: 'var(--text-primary, #fff)' }}
+                        className={`mt-3 font-semibold tracking-tight px-2.5 py-0.5 rounded-md bg-black/20 backdrop-blur-md shadow-sm w-fit ${isMobile ? 'text-[14px]' : 'text-[15px]'}`}
+                        style={{ color: 'var(--text-primary, #fff)', border: '1px solid rgba(255,255,255,0.05)' }}
                       >
                         {link.label}
                       </div>
                       <div
-                        className="text-[11px] mt-1 leading-relaxed line-clamp-2"
-                        style={{ color: 'var(--text-muted, rgba(255,255,255,0.5))' }}
+                        className="text-[11px] mt-1.5 leading-relaxed line-clamp-2 px-2 py-1 rounded-md bg-black/20 backdrop-blur-md shadow-sm w-fit max-w-full"
+                        style={{ color: 'var(--text-muted, rgba(255,255,255,0.85))', border: '1px solid rgba(255,255,255,0.05)' }}
                       >
                         {link.desc}
                       </div>
