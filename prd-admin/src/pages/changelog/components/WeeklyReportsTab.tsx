@@ -9,6 +9,7 @@ import {
 import type { DocumentStore, DocumentEntry } from '@/services/contracts/documentStore';
 import { MarkdownContent } from '@/components/ui/MarkdownContent';
 import { MapSectionLoader, MapSpinner } from '@/components/ui/VideoLoader';
+import { extractDocType, getDocTypeMeta } from '@/lib/docTypeRegistry';
 import { toast } from '@/lib/toast';
 
 const STORAGE_KEY = 'weekly-reports-tab-config';
@@ -289,6 +290,25 @@ export function WeeklyReportsTab() {
                         <div className="flex items-center gap-2 min-w-0">
                           <FileText size={12} style={{ flexShrink: 0, opacity: 0.7 }} />
                           <span className="text-[12px] truncate flex-1">{e.title}</span>
+                          {(() => {
+                            const typeMeta = getDocTypeMeta(extractDocType(e.title));
+                            if (!typeMeta) return null;
+                            return (
+                              <span
+                                className="text-[9px] font-semibold tracking-wide px-1.5 py-[1px] rounded-full"
+                                style={{
+                                  background: typeMeta.bg,
+                                  color: typeMeta.color,
+                                  border: `1px solid ${typeMeta.border}`,
+                                  flexShrink: 0,
+                                  lineHeight: '1.3',
+                                }}
+                                title={`文档类型：${typeMeta.label}`}
+                              >
+                                {typeMeta.label}
+                              </span>
+                            );
+                          })()}
                           {fresh && (
                             <span
                               className="text-[9px] font-bold tracking-wider px-1.5 py-[1px] rounded"

@@ -32,6 +32,7 @@ import {
 } from 'lucide-react';
 import { getFileTypeConfig } from '@/lib/fileTypeRegistry';
 import type { FilePreviewKind } from '@/lib/fileTypeRegistry';
+import { extractDocType, getDocTypeMeta } from '@/lib/docTypeRegistry';
 import { MapSpinner, MapSectionLoader } from '@/components/ui/VideoLoader';
 import { systemDialog } from '@/lib/systemDialog';
 import { useViewTracking } from '@/lib/useViewTracking';
@@ -499,7 +500,7 @@ function TreeNode({
             onMoveEntry(draggedId, entry.id);
           }
         }}
-        className="w-full flex items-center gap-1.5 py-[5px] text-left cursor-pointer transition-all duration-100 group"
+        className="w-full flex items-center gap-1.5 py-[5px] text-left cursor-pointer transition-colors duration-100 group"
         style={{
           paddingLeft: `${8 + depth * 16}px`,
           paddingRight: '8px',
@@ -526,6 +527,26 @@ function TreeNode({
           }}>
           {displayTitle}
         </span>
+
+        {/* 类型徽标（从文件名前缀 spec/design/plan/rule/guide/report 识别），不管标题显示模式都附在末尾 */}
+        {!isFolder && (() => {
+          const meta = getDocTypeMeta(extractDocType(entry.title));
+          if (!meta) return null;
+          return (
+            <span
+              className="text-[9px] px-1.5 py-0.5 rounded-full flex-shrink-0 font-semibold"
+              style={{
+                background: meta.bg,
+                color: meta.color,
+                border: `1px solid ${meta.border}`,
+                letterSpacing: '0.2px',
+              }}
+              title={`文档类型：${meta.label}`}
+            >
+              {meta.label}
+            </span>
+          );
+        })()}
 
         {!isFolder && (entry.tags?.length ?? 0) > 0 && (
           <span
@@ -1394,7 +1415,7 @@ export function DocBrowser({
         {/* 文件树 */}
         <div
           className="flex-1 py-1"
-          style={{ minHeight: 0, overflowY: 'auto', overscrollBehavior: 'contain' }}
+          style={{ minHeight: 0, overflowY: 'auto' }}
         >
           {filteredRoots.length === 0 ? (
             <div className="px-3 py-6 text-center text-[11px]" style={{ color: 'var(--text-muted)' }}>
@@ -1671,7 +1692,7 @@ export function DocBrowser({
             <div
               ref={contentAreaRef}
               className="flex-1 px-6 py-4 relative"
-              style={{ minHeight: 0, overflowY: 'auto', overscrollBehavior: 'contain' }}
+              style={{ minHeight: 0, overflowY: 'auto' }}
             >
               {contentLoading ? (
                 <MapSectionLoader text="加载文档内容…" />
