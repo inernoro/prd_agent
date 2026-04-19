@@ -1,0 +1,3 @@
+| feat | cds | 新增 POST /api/branches/:id/smoke SSE 端点,CDS 就地触发 scripts/smoke-all.sh 跑针对本分支预览域名(https://<branch>.<rootDomain>) 的冒烟测试;AI_ACCESS_KEY 支持 body 传入或从 _global.customEnv 回落,脚本目录走 CDS_SMOKE_SCRIPT_DIR env override;stdout/stderr 每行推 SSE `line` 事件,`complete` 带 exitCode + 耗时 + 通过/失败计数 |
+| feat | cds | 分支卡 deploy 下拉菜单(isRunning 时可见)新增「🍳 冒烟测试」项,点开弹出 60vh 流式输出弹窗,SSE 逐行渲染绿/红色,头部显示"✅ 通过 3 项 · 12s"或"❌ 失败 N / 通过 M"汇总;关闭即 abort 当前流(但后端 bash 进程继续跑到结束,遵循 server-authority) |
+| test | cds | 新增 tests/routes/branches-smoke.test.ts 6 个用例: 404 / 缺 preview / 缺 key / fallback _global / 缺 script / SSE 流 + 计数抽取,744/744 通过 |

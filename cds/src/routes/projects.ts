@@ -589,8 +589,11 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
 
     const body = (req.body || {}) as Partial<{
       name: string;
+      aliasName: string;
+      aliasSlug: string;
       description: string;
       gitRepoUrl: string;
+      autoSmokeEnabled: boolean;
     }>;
 
     // Validate name when supplied
@@ -610,8 +613,80 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
       }
     }
 
-    const patch: Partial<Pick<Project, 'name' | 'description' | 'gitRepoUrl'>> = {};
+    // Validate aliasName when supplied. Empty string = clear the alias.
+    if (body.aliasName !== undefined) {
+      const trimmed = String(body.aliasName).trim();
+      if (trimmed.length > MAX_NAME_LENGTH) {
+        res.status(400).json({
+          error: 'validation',
+          field: 'aliasName',
+          message: `显示别名长度不能超过 ${MAX_NAME_LENGTH}`,
+        });
+        return;
+      }
+    }
+
+    // Validate aliasSlug when supplied. Empty string = clear. Non-empty
+    // must pass SLUG_REGEX AND not collide with any project's slug /
+    // aliasSlug (including the current project's own slug — that would
+    // be redundant and confusing).
+    if (body.aliasSlug !== undefined) {
+      const trimmed = String(body.aliasSlug).trim().toLowerCase();
+      if (trimmed !== '') {
+        if (!SLUG_REGEX.test(trimmed)) {
+          res.status(400).json({
+            error: 'validation',
+            field: 'aliasSlug',
+            message: '别名 slug 只能包含小写字母、数字和短横线，且不能以短横线开头或结尾',
+          });
+          return;
+        }
+        if (trimmed === project.slug) {
+          res.status(400).json({
+            error: 'validation',
+            field: 'aliasSlug',
+            message: '别名 slug 不能与项目原 slug 相同',
+          });
+          return;
+        }
+        // Walk every OTHER project and check both slug and aliasSlug.
+        const collision = stateService
+          .getProjects()
+          .find(
+            (p) =>
+              p.id !== project.id &&
+              (p.slug === trimmed || p.aliasSlug === trimmed),
+          );
+        if (collision) {
+          res.status(409).json({
+            error: 'duplicate',
+            field: 'aliasSlug',
+            message: `别名 slug '${trimmed}' 已被项目 '${collision.name}' 占用`,
+          });
+          return;
+        }
+      }
+    }
+
+    const patch: Partial<Pick<Project, 'name' | 'aliasName' | 'aliasSlug' | 'description' | 'gitRepoUrl' | 'autoSmokeEnabled'>> = {};
+    if (body.autoSmokeEnabled !== undefined) {
+      // Booleans come in as true / false / 'true' / 'false' depending on
+      // the UI; coerce everything truthy but 'false' into a real boolean.
+      patch.autoSmokeEnabled = body.autoSmokeEnabled === true || body.autoSmokeEnabled === 'true' as unknown as boolean;
+    }
     if (body.name !== undefined) patch.name = String(body.name).trim();
+    // For alias fields an empty string explicitly clears them so the UI
+    // can revert to showing `name` / `slug`. updateProject() serialises
+    // undefined fields out via spread, so we pass undefined (not '') to
+    // remove the key entirely — keeps state.json tidy.
+    if (body.aliasName !== undefined) {
+      const trimmed = String(body.aliasName).trim();
+      patch.aliasName = trimmed === '' ? undefined : trimmed;
+    }
+    if (body.aliasSlug !== undefined) {
+      const trimmed = String(body.aliasSlug).trim().toLowerCase();
+      patch.aliasSlug = trimmed === '' ? undefined : trimmed;
+    }
     if (body.description !== undefined) patch.description = String(body.description).trim();
     if (body.gitRepoUrl !== undefined) patch.gitRepoUrl = String(body.gitRepoUrl).trim();
 

@@ -1026,38 +1026,30 @@ button.text-btn:hover { color: var(--accent); }
 
 /* ════════════════ Branch Cards ════════════════ */
 
+/* 分支列表布局 (2026-04-19 rewrite):
+   - 原版本用 CSS `column-count` 多列布局,卡片高度不一致时在列之间
+     产生莫名奇妙的空白带 (user image 2: 窗口中等大时两列间竖着
+     一条红色空柱),视觉像 bug。而且在 1680px+ 宽屏下 4 列强制
+     垂直流动,卡片按 top-bottom-left-right 填充看起来也乱(image 3)。
+   - 新版本 CSS Grid auto-fill: 基于 min-width 自动填列,每格
+     max-content 高度,同一行的卡片高度统一,没有列间空柱,也没有
+     "卡片挤得很紧"的问题。简单可预期。
+   - 代价: 一行里如果有一张卡特别高,其它格子会留白底部(典型 masonry
+     痛点)。但相比 column-count 的问题要小得多 —— 用户愿意接受。
+*/
 .branch-list {
-  display: flex; flex-direction: column; gap: 10px; margin-bottom: 24px;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+  gap: 16px;
+  margin-bottom: 24px;
   padding-bottom: 60px; /* 为底部 Activity 浮窗留出空间 */
+  /* 显式对齐卡片到每格顶端,避免内容不等高时被 stretch 拉高 */
+  align-items: start;
 }
-
-@media (min-width: 768px) {
-  /* Masonry-style layout via CSS multi-column.
-     Grid layout forces every cell in a row to the tallest card's height,
-     leaving ugly vertical gaps when cards differ in tag/badge count.
-     Multi-column flows cards vertically down each column, filling gaps
-     automatically. Reading order changes from left-right-top-bottom to
-     top-bottom-left-right — acceptable since users sort by most-recent,
-     newest still ends up at column 1 top which is the eye's first anchor.
-     User feedback #450. */
-  .branch-list {
-    column-count: 3;
-    column-gap: 16px;
-    column-fill: balance;
-    /* Cards must explicitly break-inside:avoid or they'd split across columns. */
-  }
-  .branch-list .branch-card,
-  .branch-list > * {
-    break-inside: avoid;
-    page-break-inside: avoid;  /* legacy */
-    margin-bottom: 16px;
-    display: inline-block;
-    width: 100%;
-  }
+/* 小屏回落单列,卡片可读性优先 */
+@media (max-width: 640px) {
+  .branch-list { grid-template-columns: 1fr; gap: 10px; }
 }
-@media (min-width: 1280px) { .branch-list { column-count: 3; } }
-@media (min-width: 1680px) { .branch-list { column-count: 4; } }
-@media (min-width: 768px) and (max-width: 1100px) { .branch-list { column-count: 2; } }
 
 .branch-card {
   display: flex; flex-direction: column; gap: 0;
@@ -1340,6 +1332,24 @@ button.text-btn:hover { color: var(--accent); }
   padding-top: 4px;
 }
 
+/* "xx 分钟前" 时间戳 (2026-04-19): 小字 muted,margin-left:auto 推到
+   chips row 最右边与其它胶囊对齐,不额外占垂直行。窗口极窄时
+   flex-wrap 会把它折到新行,仍然是右对齐(因为 auto margin 在折行后
+   继续生效)。悬浮变亮,tooltip 显示完整时间戳。*/
+.branch-updated-at {
+  margin-left: auto;
+  display: inline-flex; align-items: center;
+  padding: 2px 6px;
+  font-size: 10.5px;
+  color: var(--text-muted);
+  font-weight: 500;
+  white-space: nowrap;
+  cursor: default;
+  user-select: none;
+  transition: color var(--transition);
+}
+.branch-updated-at:hover { color: var(--text-secondary); }
+
 /* Favorite toggle — inline, minimal */
 .fav-toggle {
   display: inline-flex; align-items: center;
@@ -1381,6 +1391,60 @@ a.branch-name:hover { color: var(--accent); }
   color: var(--accent); background: var(--surface-hover, rgba(255,255,255,0.08));
 }
 .branch-quick-btn svg.inline-icon { width: 13px; height: 13px; }
+/* GitHub mark shown at branch-card title when the branch was auto-
+   created by a webhook push (see ICON.githubMark). Subtle purple tint
+   signals "this is GitHub-sourced" while keeping the title row
+   monochrome in tone. Light theme gets a slightly darker shade so the
+   logo stays readable on warm parchment. */
+.branch-name svg.gh-branch-mark { color: #8b5cf6; opacity: 0.95; }
+[data-theme="light"] .branch-name svg.gh-branch-mark { color: #6d28d9; }
+
+/* ── Fresh-arrival animation (2026-04-19) ──
+   When a branch first shows up via state-stream push (GitHub webhook
+   auto-create or manual POST from another tab/client), the card gets
+   `.fresh-arrival` for 5 seconds:
+     1) slide + fade in from top (so the eye catches "something new just
+        appeared",不是刷新页面)
+     2) 紫色外发光脉冲,和 .fresh-gh 叠加时更强,告诉用户"这是 GitHub
+        刚给你建的分支"
+   对齐 .claude/rules/cds-auto-deploy.md §3 "UI 开着时必须有动画"。
+   用 composite-friendly transform + opacity (GPU accelerated),不会
+   触发 layout reflow,对长列表表现稳定。*/
+@keyframes cds-card-arrival {
+  0%   { opacity: 0; transform: translateY(-10px) scale(0.98); }
+  60%  { opacity: 1; }
+  100% { opacity: 1; transform: translateY(0) scale(1); }
+}
+@keyframes cds-card-gh-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(139, 92, 246, 0.0), 0 1px 3px rgba(0,0,0,0.2); }
+  50%      { box-shadow: 0 0 0 4px rgba(139, 92, 246, 0.22), 0 1px 3px rgba(0,0,0,0.2); }
+}
+.branch-card.fresh-arrival {
+  animation: cds-card-arrival 600ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+.branch-card.fresh-arrival.fresh-gh {
+  /* GitHub webhook 来源时叠加紫色脉冲,持续到 5s 清除 class 为止 */
+  animation:
+    cds-card-arrival 600ms cubic-bezier(0.2, 0.8, 0.2, 1),
+    cds-card-gh-pulse 1.4s ease-in-out 600ms 3;
+}
+[data-theme="light"] .branch-card.fresh-arrival.fresh-gh {
+  animation:
+    cds-card-arrival 600ms cubic-bezier(0.2, 0.8, 0.2, 1),
+    cds-card-gh-pulse-light 1.4s ease-in-out 600ms 3;
+}
+@keyframes cds-card-gh-pulse-light {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(109, 40, 217, 0.0), 0 1px 4px #2c1c140d; }
+  50%      { box-shadow: 0 0 0 4px rgba(109, 40, 217, 0.22), 0 1px 4px #2c1c140d; }
+}
+/* 用户手动 prefers-reduced-motion 时去掉动画,只保留 class (方便 DOM
+   查询). 对齐 WCAG 2.3.3。 */
+@media (prefers-reduced-motion: reduce) {
+  .branch-card.fresh-arrival,
+  .branch-card.fresh-arrival.fresh-gh {
+    animation: none;
+  }
+}
 .branch-meta { font-size: 11px; color: var(--text-secondary); line-height: 1.4; white-space: nowrap; }
 .port-badge {
   display: inline-flex; align-items: center; gap: 3px;
@@ -2002,6 +2066,15 @@ a.branch-name:hover { color: var(--accent); }
 .settings-menu-item.danger { color: var(--red); }
 .settings-menu-item.danger:hover { background: var(--red-bg); }
 .settings-menu-divider { height: 1px; background: var(--border); margin: 4px 0; }
+.settings-menu-group-label {
+  padding: 4px 14px 2px;
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  user-select: none;
+}
 
 /* ── Settings switch toggle ── */
 .settings-menu-switch { justify-content: space-between; }
@@ -4944,11 +5017,21 @@ a.branch-name:hover { color: var(--accent); }
   display: inline-flex;
   gap: 2px;
   padding: 3px;
-  margin: 0 0 10px;
+  /* Lives inside `.header-actions` (a flex row with `align-items:center`).
+     The previous `margin: 0 0 10px` left a 10px bottom margin that the
+     flex aligner respected (it centres the margin box), pushing the
+     toggle visibly higher than the sibling 36×36 icon buttons. Zero
+     margin keeps the baseline tidy. */
+  margin: 0;
   background: var(--bg-card-solid);
   border: 1px solid var(--border);
   border-radius: 8px;
   width: fit-content;
+  /* Match the 36px visual height of sibling `.icon-btn` buttons so the
+     whole header-actions row shares one baseline. Compensates for the
+     toggle's 6px-padded buttons that come in ~30px tall. */
+  min-height: 36px;
+  box-sizing: border-box;
 }
 .view-mode-btn {
   display: inline-flex;

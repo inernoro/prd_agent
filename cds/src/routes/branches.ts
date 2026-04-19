@@ -20,6 +20,7 @@ import { topoSortLayers } from '../services/topo-sort.js';
 import { detectStack } from '../services/stack-detector.js';
 import { assertProjectAccess } from './projects.js';
 import { CheckRunRunner } from '../services/check-run-runner.js';
+import { branchEvents, nowIso } from '../services/branch-events.js';
 import { GitHubAppClient } from '../services/github-app-client.js';
 import { isSafeGitRef } from '../services/github-webhook-dispatcher.js';
 
@@ -76,6 +77,115 @@ export async function validateBuildReadiness(
     ok: true,
     summary: 'pnpm install + tsc --noEmit 通过',
   };
+}
+
+/**
+ * Result of a single smoke-all.sh run — surface area shared between the
+ * manual `/api/branches/:id/smoke` endpoint (Phase 3) and the auto-hook
+ * triggered after a successful `/deploy` when `project.autoSmokeEnabled`
+ * is true (Phase 4).
+ */
+export interface SmokeRunResult {
+  exitCode: number | null;
+  elapsedSec: number;
+  passedCount: number;
+  failedCount: number;
+}
+
+export interface SmokeRunOptions {
+  branch: BranchEntry;
+  previewHost: string;        // e.g. "https://my-branch.miduo.org"
+  accessKey: string;           // resolved AI_ACCESS_KEY
+  impersonateUser?: string;    // default 'admin'
+  skip?: string;               // comma-separated smoke keys to skip
+  failFast?: boolean;
+  scriptDir: string;           // dir containing smoke-all.sh
+  /** Per-line callback; receives the raw stdout/stderr line. */
+  onLine?: (stream: 'stdout' | 'stderr', line: string) => void;
+  /** Fires when the bash process exits or errors before exit. */
+  onComplete?: (result: SmokeRunResult) => void;
+  /** Fires when spawn itself fails (ENOENT, EACCES, etc). */
+  onError?: (err: Error) => void;
+}
+
+/**
+ * Spawn scripts/smoke-all.sh as a child process and fan out its output
+ * via callbacks. Callers own the IO side (SSE, check-run update, etc.);
+ * this helper just wraps the child-process bookkeeping + pass/fail
+ * tally extraction so we don't copy-paste 60 lines of spawn boilerplate.
+ *
+ * Does NOT validate inputs — callers must have verified that smoke-all.sh
+ * exists, that the branch has a preview URL, and that accessKey is
+ * non-empty. This is a pure execution helper; validation belongs at the
+ * HTTP boundary.
+ */
+export function runSmokeForBranch(opts: SmokeRunOptions): void {
+  const smokeEntry = path.join(opts.scriptDir, 'smoke-all.sh');
+  const child = spawn('bash', [smokeEntry], {
+    cwd: opts.scriptDir,
+    env: {
+      ...process.env,
+      SMOKE_TEST_HOST: opts.previewHost,
+      AI_ACCESS_KEY: opts.accessKey,
+      SMOKE_USER: opts.impersonateUser || 'admin',
+      SMOKE_SKIP: opts.skip || '',
+      SMOKE_FAIL_FAST: opts.failFast ? '1' : '',
+    },
+  });
+  const startedAt = Date.now();
+  let passed = 0;
+  let failed = 0;
+
+  const forward = (stream: NodeJS.ReadableStream, channel: 'stdout' | 'stderr') => {
+    let buffer = '';
+    stream.on('data', (chunk: Buffer) => {
+      buffer += chunk.toString('utf8');
+      let idx: number;
+      while ((idx = buffer.indexOf('\n')) >= 0) {
+        const line = buffer.slice(0, idx);
+        buffer = buffer.slice(idx + 1);
+        // Tally from the "✅ 通过: N 项" / "❌ 失败: N 项" footer lines
+        // printed by smoke-all.sh. Not rely on exit code alone — the
+        // footer is what CI / UI surface.
+        if (line.startsWith('✅ 通过:') || line.startsWith('\u2705 通过:')) {
+          const m = /通过:\s*(\d+)/.exec(line);
+          if (m) passed = parseInt(m[1], 10);
+        } else if (line.startsWith('❌ 失败:') || line.startsWith('\u274c 失败:')) {
+          const m = /失败:\s*(\d+)/.exec(line);
+          if (m) failed = parseInt(m[1], 10);
+        }
+        opts.onLine?.(channel, line);
+      }
+    });
+  };
+  forward(child.stdout!, 'stdout');
+  forward(child.stderr!, 'stderr');
+
+  child.on('error', (err) => {
+    opts.onError?.(err);
+  });
+
+  child.on('close', (code) => {
+    opts.onComplete?.({
+      exitCode: code,
+      elapsedSec: Math.round((Date.now() - startedAt) / 1000),
+      passedCount: passed,
+      failedCount: failed,
+    });
+  });
+}
+
+/**
+ * Locate the smoke-all.sh script. Shared between the manual endpoint
+ * and the auto-hook. Returns null when the script is missing so the
+ * caller can decide between 500 error (manual endpoint) or warning
+ * SSE line (auto-hook, best-effort).
+ */
+export function resolveSmokeScriptDir(): { dir: string; entry: string; exists: boolean } {
+  const dir = process.env.CDS_SMOKE_SCRIPT_DIR
+    || path.join(process.cwd(), 'scripts');
+  const entry = path.join(dir, 'smoke-all.sh');
+  return { dir, entry, exists: fs.existsSync(entry) };
 }
 
 export interface RouterDeps {
@@ -395,6 +505,75 @@ export function createBranchRouter(deps: RouterDeps): Router {
   }
 
   /**
+   * Phase 4: optionally run scripts/smoke-all.sh after a successful
+   * deploy, piggy-backing SSE events on the deploy stream as
+   * `smoke-start` / `smoke-line` / `smoke-complete`. Returns the
+   * result so the caller can fold it into the GitHub check-run
+   * conclusion (Phase 5).
+   *
+   * All failure paths emit exactly one `smoke-skip` line and resolve
+   * with null so the deploy flow keeps going. This is intentionally
+   * best-effort — smoke is diagnostic, not a gate.
+   */
+  async function maybeRunAutoSmoke(
+    res: import('express').Response,
+    entry: BranchEntry,
+    deployFailed: boolean,
+  ): Promise<SmokeRunResult | null> {
+    if (deployFailed) return null;
+    const project = stateService.getProject(entry.projectId || 'default');
+    if (!project?.autoSmokeEnabled) return null;
+
+    const emitSkip = (reason: string) => {
+      try {
+        res.write(`event: smoke-skip\ndata: ${JSON.stringify({ reason })}\n\n`);
+      } catch { /* client gone */ }
+    };
+
+    const previewHost = config.previewDomain || config.rootDomains?.[0];
+    if (!previewHost) {
+      emitSkip('preview_host_missing');
+      return null;
+    }
+    const smokeHost = `https://${entry.id}.${previewHost}`;
+
+    const globalEnv = stateService.getCustomEnv('_global');
+    const accessKey = (globalEnv?.AI_ACCESS_KEY || '').trim();
+    if (!accessKey) {
+      emitSkip('access_key_missing');
+      return null;
+    }
+
+    const script = resolveSmokeScriptDir();
+    if (!script.exists) {
+      emitSkip('smoke_script_missing');
+      return null;
+    }
+
+    sendSSE(res, 'smoke-start', { host: smokeHost, branchId: entry.id });
+
+    return new Promise<SmokeRunResult | null>((resolve) => {
+      runSmokeForBranch({
+        branch: entry,
+        previewHost: smokeHost,
+        accessKey,
+        scriptDir: script.dir,
+        failFast: true, // CI-style — first failure stops the chain
+        onLine: (channel, text) => sendSSE(res, 'smoke-line', { stream: channel, text }),
+        onError: (err) => {
+          sendSSE(res, 'smoke-line', { stream: 'stderr', text: `[auto-smoke] ${err.message}` });
+          sendSSE(res, 'smoke-complete', { exitCode: -1, elapsedSec: 0, passedCount: 0, failedCount: 0, error: err.message });
+          resolve(null);
+        },
+        onComplete: (result) => {
+          sendSSE(res, 'smoke-complete', result);
+          resolve(result);
+        },
+      });
+    });
+  }
+
+  /**
    * Compute current container capacity status.
    * Returns `current / max` — when `current >= max` the host is considered
    * over-subscribed and the caller should warn (or, with scheduler enabled,
@@ -618,6 +797,82 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
   // ── Branches CRUD ──
 
+  // Live UI stream — 2026-04-19.
+  //
+  // Dashboards subscribe to this SSE once on page load. We emit:
+  //   - event: snapshot         (initial full branch list, for late joiners)
+  //   - event: branch.created   (GitHub webhook or manual add)
+  //   - event: branch.updated   (commit SHA refresh, favorite/tag/notes change)
+  //   - event: branch.status    (idle → building → running/error)
+  //   - event: branch.removed   (delete from any path)
+  //   - event: branch.deploy-step (per step of ongoing deploy)
+  //   - :keepalive every 10s    (prevents proxy idle timeout)
+  //
+  // No auth differentiation — the dashboard was already authenticated to
+  // get HERE; the stream just mirrors the same data a GET /branches would
+  // return. Optional ?project= filters events to a single project so a
+  // Dashboard opened on one project doesn't animate for another project's
+  // push (prevents cross-project noise).
+  //
+  // server-authority rule: client disconnect does NOT cancel any backend
+  // work; only the listener handle is detached.
+  router.get('/branches/stream', (req, res) => {
+    const projectFilter = typeof req.query.project === 'string' && req.query.project
+      ? req.query.project
+      : null;
+
+    res.writeHead(200, {
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache',
+      Connection: 'keep-alive',
+      'X-Accel-Buffering': 'no',
+    });
+
+    const safeSend = (event: string, data: unknown) => {
+      try { res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`); }
+      catch { /* client gone */ }
+    };
+
+    // Helper: filter events that belong to a different project. Every
+    // payload may carry projectId or branch.projectId; events missing a
+    // projectId (legacy / global) always pass through.
+    const eventMatchesFilter = (type: string, payload: any): boolean => {
+      if (!projectFilter) return true;
+      if (type === 'branch.created') return !payload.branch?.projectId || payload.branch.projectId === projectFilter;
+      if ('projectId' in (payload || {})) return !payload.projectId || payload.projectId === projectFilter;
+      return true;
+    };
+
+    // Initial snapshot — the dashboard can populate its list without
+    // waiting for the first event. Also acts as a liveness confirmation
+    // so the client knows the stream is alive even when nothing's
+    // happening upstream.
+    const all = stateService.getAllBranches();
+    const snapshot = projectFilter
+      ? all.filter((b) => (b.projectId || 'default') === projectFilter)
+      : all;
+    safeSend('snapshot', { branches: snapshot, ts: nowIso() });
+
+    // Subscribe to the 'any' channel so we get one envelope per emit
+    // with {type, payload} and can route with a single listener.
+    const anyHandler = (envelope: any) => {
+      if (!envelope || !envelope.type) return;
+      if (!eventMatchesFilter(envelope.type, envelope.payload)) return;
+      safeSend(envelope.type, envelope.payload);
+    };
+    branchEvents.on('any', anyHandler);
+
+    const keepalive = setInterval(() => {
+      try { res.write(':keepalive\n\n'); } catch { /* noop */ }
+    }, 10_000);
+
+    // Detach on client close — does NOT cancel any backend work.
+    req.on('close', () => {
+      clearInterval(keepalive);
+      branchEvents.off('any', anyHandler);
+    });
+  });
+
   router.get('/branches', async (req, res) => {
     const state = stateService.getState();
     // P4 Part 3b: optional ?project=<id> filter. When absent or set to
@@ -775,6 +1030,13 @@ export function createBranchRouter(deps: RouterDeps): Router {
       stateService.addBranch(entry);
       stateService.save();
 
+      // Live UI: notify open dashboards that a branch just got added
+      // manually so their card list animates in without a page refresh.
+      branchEvents.emitEvent({
+        type: 'branch.created',
+        payload: { branch: entry, source: 'manual', ts: nowIso() },
+      });
+
       res.status(201).json({ branch: entry });
     } catch (err) {
       res.status(500).json({ error: (err as Error).message });
@@ -864,6 +1126,11 @@ export function createBranchRouter(deps: RouterDeps): Router {
         stateService.removeBranch(id);
         stateService.save();
 
+        branchEvents.emitEvent({
+          type: 'branch.removed',
+          payload: { branchId: id, projectId: entry.projectId, ts: nowIso() },
+        });
+
         sendSSE(res, 'complete', {
           message: proxied
             ? `分支 "${id}" 已在执行器 ${remoteExecutor.id} 上删除`
@@ -890,6 +1157,11 @@ export function createBranchRouter(deps: RouterDeps): Router {
       stateService.removeLogs(id);
       stateService.removeBranch(id);
       stateService.save();
+
+      branchEvents.emitEvent({
+        type: 'branch.removed',
+        payload: { branchId: id, projectId: entry.projectId, ts: nowIso() },
+      });
 
       sendSSE(res, 'complete', { message: `分支 "${id}" 已删除` });
     } catch (err) {
@@ -1022,7 +1294,18 @@ export function createBranchRouter(deps: RouterDeps): Router {
       for (const svc of Object.values(entry.services)) {
         if (svc.errorMessage) svc.errorMessage = undefined;
       }
+      const __prevStatus = entry.status;
       entry.status = 'building';
+      // Live UI: surface the "building" transition to subscribed dashboards
+      // so the branch card can flip to a spinner immediately on deploy kick-
+      // off, not several seconds later when the first SSE step arrives.
+      branchEvents.emitEvent({
+        type: 'branch.status',
+        payload: {
+          branchId: id, projectId: entry.projectId,
+          status: 'building', previousStatus: __prevStatus, ts: nowIso(),
+        },
+      });
 
       // ── GitHub Checks integration ──
       // Priority for the commit SHA fed to the check run:
@@ -1267,6 +1550,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       const hasRunning = statuses.some(s => s === 'running');
       const hasStarting = statuses.some(s => s === 'starting');
       const hasError = statuses.some(s => s === 'error');
+      const __statusPrev = entry.status;
       entry.status = hasRunning ? 'running' : hasStarting ? 'starting' : 'error';
       entry.lastAccessedAt = new Date().toISOString();
 
@@ -1274,6 +1558,18 @@ export function createBranchRouter(deps: RouterDeps): Router {
       opLog.finishedAt = new Date().toISOString();
       stateService.appendLog(id, opLog);
       stateService.save();
+
+      // Live UI: final status transition so the branch card stops
+      // spinning (running/error/starting). Same envelope shape as the
+      // 'building' emit earlier so the client can render transitions
+      // with one branch.
+      branchEvents.emitEvent({
+        type: 'branch.status',
+        payload: {
+          branchId: id, projectId: entry.projectId,
+          status: entry.status, previousStatus: __statusPrev, ts: nowIso(),
+        },
+      });
 
       const failedNames = Object.values(entry.services)
         .filter(s => s.status === 'error')
@@ -1286,14 +1582,31 @@ export function createBranchRouter(deps: RouterDeps): Router {
         message: completeMsg,
         services: entry.services,
       });
+
+      // Phase 4: auto-smoke after a green deploy (best-effort; never
+      // blocks the deploy conclusion, never throws out of the handler).
+      const smokeResult = await maybeRunAutoSmoke(res, entry, hasError);
+
       // Finalize the GitHub check run (best-effort). `hasError` decides
       // success vs failure; the preview URL surfaces in the check-run
       // summary so GitHub's "Details" button jumps straight to preview.
       // logTail = last 80 events rendered as "[status] step: title"
       // lines, surfaced under "Show more" in GitHub's Checks panel.
+      //
+      // Phase 5: if auto-smoke ran, fold its result into the check-run
+      // conclusion so the PR Checks panel shows "CDS Deploy" red when
+      // deploy is green but smoke tripped (most useful signal for PR
+      // reviewers — "deployed fine but API is broken").
+      const smokeOk = smokeResult
+        ? smokeResult.exitCode === 0 && smokeResult.failedCount === 0
+        : true;
+      const finalConclusion = hasError || !smokeOk ? 'failure' : 'success';
+      const summary = smokeResult
+        ? `${completeMsg} | 冒烟 ${smokeOk ? '✅' : '❌'} pass=${smokeResult.passedCount} fail=${smokeResult.failedCount} (${smokeResult.elapsedSec}s)`
+        : completeMsg;
       await checkRunRunner.finalize(entry, {
-        conclusion: hasError ? 'failure' : 'success',
-        summary: completeMsg,
+        conclusion: finalConclusion,
+        summary,
         previewUrl: checkRunRunner.derivePreviewUrl(entry),
         logTail: opLog.events.slice(-80).map((ev) => {
           const st = ev.status || '?';
@@ -1474,6 +1787,126 @@ export function createBranchRouter(deps: RouterDeps): Router {
     } finally {
       res.end();
     }
+  });
+
+  // ── Smoke test a branch's preview URL ──
+  //
+  // Phase 3 交付: 部署绿灯后,操作员点「冒烟测试」按钮触发这个端点,
+  // CDS 以当前分支预览域名作为 SMOKE_TEST_HOST 运行 scripts/smoke-all.sh,
+  // 并把 bash 子进程的 stdout/stderr 逐行以 SSE `line` 事件推给前端,
+  // 最后 `complete` 事件带上退出码 + 耗时。
+  //
+  // AI_ACCESS_KEY 从 request body 或 project-scoped customEnv 里取,
+  // CDS 自身的 state.json 不落库 plaintext(operator 每次触发都要粘,
+  // 或一次性写进项目 env 的 _global 作用域即可)。
+  //
+  // 设计约束 (对齐 .claude/rules/server-authority.md):
+  //   - 使用 CancellationToken.None 等价语义: 客户端断 SSE 不杀 bash
+  //   - 10 秒 keepalive 心跳防 proxy 超时
+  //   - stdout/stderr 合并推送(smoke-*.sh 的 ❌ 都在 stderr)
+  //
+  // SMOKE_SCRIPT_DIR 默认为 `<process.cwd()>/scripts` (CDS 进程启动目录的
+  // scripts 子目录),可通过 env `CDS_SMOKE_SCRIPT_DIR` 覆盖 —— 方便容器化
+  // 部署时把脚本挂到固定路径。
+  router.post('/branches/:id/smoke', async (req, res) => {
+    const { id } = req.params;
+    const entry = stateService.getBranch(id);
+    if (!entry) {
+      res.status(404).json({ error: `分支 "${id}" 不存在` });
+      return;
+    }
+    {
+      const m = assertProjectAccess(req as any, entry.projectId || 'default');
+      if (m) { res.status(m.status).json(m.body); return; }
+    }
+
+    // Resolve preview URL. Without one the smoke has no target, so we
+    // refuse up-front with a clear message instead of letting bash try
+    // to hit an empty URL.
+    const previewHost = config.previewDomain || config.rootDomains?.[0];
+    if (!previewHost) {
+      res.status(400).json({
+        error: 'preview_host_missing',
+        message: '未配置 previewDomain / rootDomains,无法推导预览 URL — 请先在 cds.config.json 设置。',
+      });
+      return;
+    }
+    const smokeHost = `https://${entry.id}.${previewHost}`;
+
+    const body = (req.body || {}) as {
+      accessKey?: string;
+      impersonateUser?: string;
+      skip?: string;
+      failFast?: boolean;
+    };
+
+    // AI_ACCESS_KEY resolution order:
+    //   1. request body `accessKey` (operator paste)
+    //   2. state.customEnv._global.AI_ACCESS_KEY (project-global fallback)
+    // Never reads from process.env — that would leak the CDS process
+    // env into the smoke target.
+    const globalEnv = stateService.getCustomEnv('_global');
+    const accessKey = (body.accessKey || globalEnv?.AI_ACCESS_KEY || '').trim();
+    if (!accessKey) {
+      res.status(400).json({
+        error: 'access_key_missing',
+        message: '需要 accessKey (请求体字段) 或在环境变量 _global.AI_ACCESS_KEY 预设。',
+      });
+      return;
+    }
+
+    // Resolve script location (helper shared with the auto-deploy hook).
+    const script = resolveSmokeScriptDir();
+    if (!script.exists) {
+      res.status(500).json({
+        error: 'smoke_script_missing',
+        message: `找不到 smoke-all.sh (查找路径 ${script.entry})。请确认 scripts/ 目录已随 CDS 部署并设置 CDS_SMOKE_SCRIPT_DIR。`,
+      });
+      return;
+    }
+
+    // ── Open SSE ──
+    res.writeHead(200, {
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache',
+      Connection: 'keep-alive',
+      'X-Accel-Buffering': 'no',
+    });
+    const safeSend = (event: string, data: unknown) => {
+      try { sendSSE(res, event, data); } catch { /* client gone */ }
+    };
+    const keepalive = setInterval(() => {
+      try { res.write(':keepalive\n\n'); } catch { /* noop */ }
+    }, 10_000);
+
+    safeSend('start', {
+      branchId: entry.id,
+      host: smokeHost,
+      impersonateUser: body.impersonateUser || 'admin',
+      skip: body.skip || '',
+      script: script.entry,
+    });
+
+    runSmokeForBranch({
+      branch: entry,
+      previewHost: smokeHost,
+      accessKey,
+      impersonateUser: body.impersonateUser,
+      skip: body.skip,
+      failFast: body.failFast,
+      scriptDir: script.dir,
+      onLine: (channel, text) => safeSend('line', { stream: channel, text }),
+      onError: (err) => {
+        clearInterval(keepalive);
+        safeSend('error', { message: err.message });
+        try { res.end(); } catch { /* noop */ }
+      },
+      onComplete: (result) => {
+        clearInterval(keepalive);
+        safeSend('complete', result);
+        try { res.end(); } catch { /* noop */ }
+      },
+    });
   });
 
   // ── Stop all services for a branch ──

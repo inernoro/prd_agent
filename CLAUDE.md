@@ -211,6 +211,7 @@ cd prd-api && dotnet build --no-restore 2>&1 | grep -E "error CS|warning CS" | h
 | `navigation-registry.md` | 新 Agent / 新功能入口 | 默认注册百宝箱 + 交付必须声明"位置"与"点击路径"，禁止只给路由 |
 | `quickstart-zero-friction.md` | 入口脚本 (`*init*`, `*quick*`, `*setup*`, `Dockerfile`) | 快启动大包大揽：假设用户是小白，自动检测+安装依赖，不能自动的给复制粘贴命令 |
 | `cds-first-verification.md` | 任何可执行代码改动 (`.cs`, `.ts`, `.tsx`, `.rs`, Dockerfile) | 本地无 SDK ≠ 无法验证：必须用 `/cds-deploy` 兜底，禁止把验证负担转嫁给用户 |
+| `cds-auto-deploy.md` | 已 link GitHub 的项目交付收尾 | push 即部署 — 不再提示用户手动跑 `/cds-deploy-pipeline`；CDS 通过 webhook 自动建分支 + 构建 + 部署；UI 开着时必须有"分支出现 + 构建中"动画 |
 | `gesture-unification.md` | 任何可平移/缩放的 2D 画布（ReactFlow / 自定义 DOM canvas / Konva 等） | 手势统一：两指拖动=平移、双指捏合或 ⌘/Ctrl+滚轮=缩放、禁止双击缩放；提供 ReactFlow + 自定义 canvas 两套标准配置 |
 
 ---

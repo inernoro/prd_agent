@@ -74,6 +74,12 @@ const justDeployed = new Set();
 // ── Icons (Octicons 16px) ──
 const ICON = {
   branch: '<svg class="inline-icon" width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M9.5 3.25a2.25 2.25 0 113 2.122V6A2.5 2.5 0 0110 8.5H6a1 1 0 00-1 1v1.128a2.251 2.251 0 11-1.5 0V5.372a2.25 2.25 0 111.5 0v1.836A2.493 2.493 0 016 7h4a1 1 0 001-1v-.628A2.25 2.25 0 019.5 3.25z"/></svg>',
+  // GitHub Octocat — 16x16 mark used at the branch-card title when the
+  // branch was auto-created by a webhook push. Same visual footprint as
+  // `branch` so the title row layout stays stable. `.gh-branch-mark`
+  // class on the <svg> lets CSS tint it (GitHub purple-ish) to signal
+  // "this is GitHub-sourced" at a glance.
+  githubMark: '<svg class="inline-icon gh-branch-mark" width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>',
   commit: '<svg class="inline-icon" width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M11.93 8.5a4.002 4.002 0 01-7.86 0H.75a.75.75 0 010-1.5h3.32a4.002 4.002 0 017.86 0h3.32a.75.75 0 010 1.5h-3.32zM8 10.5a2.5 2.5 0 100-5 2.5 2.5 0 000 5z"/></svg>',
   pr: '<svg class="inline-icon" width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M5.45 5.154A4.25 4.25 0 009.25 7.5h1.378a2.251 2.251 0 110 1.5H9.25A5.734 5.734 0 015 7.123v3.505a2.25 2.25 0 11-1.5 0V5.372a2.25 2.25 0 111.95-.218zM4.25 13.5a.75.75 0 100-1.5.75.75 0 000 1.5zm8.5-4.5a.75.75 0 100-1.5.75.75 0 000 1.5zM5 3.25a.75.75 0 10-1.5 0 .75.75 0 001.5 0z"/></svg>',
   pull: '<svg class="inline-icon" width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M8 2.004a.75.75 0 01.75.75v5.689l1.97-1.97a.749.749 0 111.06 1.06l-3.25 3.25a.749.749 0 01-1.06 0L4.22 7.533a.749.749 0 111.06-1.06l1.97 1.97V2.754a.75.75 0 01.75-.75zM2.75 12.5h10.5a.75.75 0 010 1.5H2.75a.75.75 0 010-1.5z"/></svg>',
@@ -88,19 +94,77 @@ const ICON = {
   // Human footprint (web access indicator)
   footprint: '<svg class="human-access-icon" width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C9.24 2 7 4.24 7 7c0 2.85 2.92 7.21 5 9.88 2.11-2.69 5-7 5-9.88 0-2.76-2.24-5-5-5zm0 7.5a2.5 2.5 0 010-5 2.5 2.5 0 010 5z"/><path d="M7.05 16.87C5.01 17.46 3.5 18.5 3.5 19.5 3.5 21.15 7.36 22 12 22s8.5-.85 8.5-2.5c0-1-.51-2.04-2.55-2.63-.53 1.04-1.3 2.13-2.21 3.13H8.26c-.91-1-1.68-2.09-2.21-3.13z"/></svg>',
   lightbulb: '<svg class="inline-icon" width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M8 1.5a4.5 4.5 0 00-1.68 8.68.5.5 0 01.3.46v1.86h2.76v-1.86a.5.5 0 01.3-.46A4.5 4.5 0 008 1.5zM5.5 13v.5c0 .83.67 1.5 1.5 1.5h2c.83 0 1.5-.67 1.5-1.5V13h-5z"/></svg>',
-  // Port beacon icons by profile type
+  // Port beacon icons by language/framework. Rendered inside `.port-badge`
+  // chips on the branch list. Each shape is a trimmed stylised mark of
+  // the stack's logo — we don't claim licensed logos but shoot for
+  // instantly-recognisable silhouettes (hex for node, vertical bars for
+  // .NET, diamond for python, cog for rust, etc.).
   portApi: '<svg class="inline-icon" width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M1.5 1.75a.75.75 0 00-1.5 0v12.5c0 .414.336.75.75.75h14.5a.75.75 0 000-1.5H1.5V1.75zm14.28 2.53a.75.75 0 00-1.06-1.06L10 7.94 7.53 5.47a.75.75 0 00-1.06 0L2.22 9.72a.75.75 0 001.06 1.06L7 7.06l2.47 2.47a.75.75 0 001.06 0l5.25-5.25z"/></svg>',
   portWeb: '<svg class="inline-icon" width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M0 8a8 8 0 1116 0A8 8 0 010 8zm7.5-6.923c-.67.204-1.335.82-1.887 1.855A7.97 7.97 0 005.145 4H7.5V1.077zM4.09 4a9.27 9.27 0 01.64-1.539 6.7 6.7 0 01.597-.933A6.536 6.536 0 002.535 4H4.09zm-.582 3.5c.03-.877.138-1.718.312-2.5H1.674a6.958 6.958 0 00-.656 2.5H3.508zM7.5 11H5.145a7.97 7.97 0 00.468 1.068c.552 1.035 1.218 1.65 1.887 1.855V11zm1 2.923c.67-.204 1.335-.82 1.887-1.855A7.97 7.97 0 0010.855 11H8.5v2.923zM11.91 11a9.27 9.27 0 00.64 1.539 6.7 6.7 0 00.597.933A6.536 6.536 0 0015.465 11H11.91zm.582-1.5c.03-.877.138-1.718.312-2.5h2.49a6.958 6.958 0 01.656 2.5h-3.458z"/></svg>',
+  // Node.js — hexagon with "N" notch (simplified)
+  portNode: '<svg class="inline-icon" width="14" height="14" viewBox="0 0 24 24" fill="#339933"><path d="M12 1.85c-.27 0-.55.07-.78.2l-7.44 4.3c-.48.28-.78.8-.78 1.36v8.58c0 .56.3 1.08.78 1.36l1.95 1.12c.95.46 1.29.47 1.71.47 1.41 0 2.22-.85 2.22-2.33V8.44c0-.12-.1-.22-.22-.22H9.31c-.13 0-.23.1-.23.22v8.47c0 .66-.68 1.31-1.77.76l-2.02-1.17c-.07-.04-.11-.12-.11-.2V7.7c0-.08.04-.16.11-.2l7.44-4.29c.07-.04.15-.04.22 0l7.44 4.29c.07.04.11.12.11.2v8.58c0 .08-.04.16-.11.2l-7.44 4.29c-.06.04-.15.04-.22 0L13 19.88c-.09-.05-.13-.12-.07-.16.71-.45.86-.53 1.49-.77.09-.03.16-.02.24.03l1.48.88c.07.04.15.04.22 0l7.44-4.29c.48-.28.78-.8.78-1.36V7.71c0-.56-.3-1.08-.78-1.36l-7.44-4.3c-.24-.13-.51-.2-.78-.2h-3.59z"/></svg>',
+  // .NET — three vertical bars (like the dotnet logo mark)
+  portDotnet: '<svg class="inline-icon" width="14" height="14" viewBox="0 0 24 24" fill="#512bd4"><path d="M4 4h3v16H4zM10.5 4h2.5l4.5 10V4H20v16h-2.5l-4.5-10v10h-2.5z"/></svg>',
+  // Python — stylised two-tone S (diamond ribbon)
+  portPython: '<svg class="inline-icon" width="14" height="14" viewBox="0 0 24 24" fill="#3776ab"><path d="M11.9 2C6.2 2 6.5 4.5 6.5 4.5V7h5.5v.7H4.5C4.5 7.7 2 7.4 2 13.3s2 5.5 2 5.5H6v-3.2c0-2.2 1.8-4 4-4h5c1.4 0 2.5-1.1 2.5-2.5V4.5S17.7 2 11.9 2zM9 3.7c.6 0 1 .4 1 1s-.4 1-1 1-1-.4-1-1 .4-1 1-1z"/><path d="M12.1 22c5.7 0 5.4-2.5 5.4-2.5V17h-5.5v-.7h7.5s2.5.3 2.5-5.5-2-5.5-2-5.5H18v3.2c0 2.2-1.8 4-4 4H9c-1.4 0-2.5 1.1-2.5 2.5v4.5S6.3 22 12.1 22zm3-1.7c-.6 0-1-.4-1-1s.4-1 1-1 1 .4 1 1-.4 1-1 1z"/></svg>',
+  // Rust — gear cog (recognisable silhouette)
+  portRust: '<svg class="inline-icon" width="14" height="14" viewBox="0 0 24 24" fill="#dea584"><path d="M12 2l1.5 2.5L16 3.5l.5 3L19 7l-.5 2.5 2 1.5-2 1.5.5 2.5-2.5.5-.5 3-2.5-1L12 22l-1.5-2.5L8 20.5l-.5-3L5 17l.5-2.5-2-1.5 2-1.5L5 9l2.5-.5L8 5.5l2.5 1zm0 4a6 6 0 100 12 6 6 0 000-12z"/></svg>',
+  // Go — pocket gopher mouth arcs (simplified)
+  portGo: '<svg class="inline-icon" width="14" height="14" viewBox="0 0 24 24" fill="#00add8"><path d="M2.9 10.5c-.1 0-.1-.1-.1-.1l.3-.4c.1-.1.2-.1.3-.1h4c.1 0 .1.1.1.1l-.3.4c-.1.1-.2.1-.3.1zM12 3a9 9 0 100 18 9 9 0 000-18zm0 16.5a7.5 7.5 0 110-15 7.5 7.5 0 010 15zm-2-9a1.5 1.5 0 100 3 1.5 1.5 0 000-3zm4 0a1.5 1.5 0 100 3 1.5 1.5 0 000-3z"/></svg>',
+  // React — atom orbitals (three rotated ellipses)
+  portReact: '<svg class="inline-icon" width="14" height="14" viewBox="0 0 24 24" fill="#61dafb"><circle cx="12" cy="12" r="2"/><g fill="none" stroke="#61dafb" stroke-width="1.5"><ellipse cx="12" cy="12" rx="10" ry="4"/><ellipse cx="12" cy="12" rx="10" ry="4" transform="rotate(60 12 12)"/><ellipse cx="12" cy="12" rx="10" ry="4" transform="rotate(120 12 12)"/></g></svg>',
+  // Vue — chevron-down triangle
+  portVue: '<svg class="inline-icon" width="14" height="14" viewBox="0 0 24 24" fill="#4fc08d"><path d="M2 3h5l5 8 5-8h5L12 21z"/></svg>',
+  // Generic database (used when we can only tell it's data-tier)
+  portDb: '<svg class="inline-icon" width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><ellipse cx="8" cy="3" rx="6" ry="2"/><path d="M2 5.5c1.5 1 4 1.5 6 1.5s4.5-.5 6-1.5V7c0 1.1-2.7 2-6 2S2 8.1 2 7V5.5zM2 9.5c1.5 1 4 1.5 6 1.5s4.5-.5 6-1.5V11c0 1.1-2.7 2-6 2s-6-.9-6-2V9.5z"/></svg>',
   portDefault: '<svg class="inline-icon" width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M4.75 7.25a.75.75 0 000 1.5h6.5a.75.75 0 000-1.5h-6.5z"/><path d="M0 8a8 8 0 1116 0A8 8 0 010 8zm8-6.5a6.5 6.5 0 100 13 6.5 6.5 0 000-13z"/></svg>',
 };
 
-// Port beacon icon mapping: profileId → icon key
+// Port beacon icon mapping: profileId → icon key. This is the second-
+// tier fallback when the dockerImage/command doesn't reveal the stack.
 const PORT_ICON_MAP = {
   api: 'portApi',
   web: 'portWeb',
   admin: 'portWeb',
   frontend: 'portWeb',
+  ui: 'portWeb',
+  dashboard: 'portWeb',
 };
+
+/**
+ * Infer the dominant language/framework icon key for a build profile
+ * from its dockerImage first, falling back to its command, then its id.
+ * Keeps logic synchronous (no DOM) so callers can use it inline from
+ * render templates.
+ *
+ * Precedence (first truthy wins):
+ *   1. Explicit `profile.icon` — user chose one in build-profile edit
+ *   2. dockerImage substring (e.g. "node:22-alpine" → portNode)
+ *   3. command substring (e.g. "dotnet run" → portDotnet)
+ *   4. PORT_ICON_MAP lookup by profile.id
+ *   5. portDefault
+ *
+ * Returns ICON[key] SVG string (ready to `${} inline` into templates).
+ */
+function detectPortIconKey(profile) {
+  if (!profile) return null;
+  const hay = [profile.dockerImage, profile.command, profile.id, profile.name]
+    .filter(Boolean)
+    .join(' ')
+    .toLowerCase();
+  if (!hay) return null;
+  // Ordering matters: `react` must beat `node` (react images ARE node),
+  // `dotnet` must beat `net`, `mongo` must beat `go`, etc.
+  if (/(mongo|redis|postgres|mysql|mariadb|elasticsearch|clickhouse|cassandra)/.test(hay)) return 'portDb';
+  if (/(react|vite|next|remix|gatsby)/.test(hay)) return 'portReact';
+  if (/(vue|nuxt)/.test(hay)) return 'portVue';
+  if (/(dotnet|aspnet|mcr\.microsoft\.com\/dotnet)/.test(hay)) return 'portDotnet';
+  if (/\b(rust|cargo)\b/.test(hay)) return 'portRust';
+  if (/\bpython\b|django|flask|fastapi|uvicorn|gunicorn/.test(hay)) return 'portPython';
+  if (/\bgolang\b|\bgo:\d/.test(hay)) return 'portGo';
+  if (/\b(node|npm|pnpm|yarn|nestjs|express)\b/.test(hay)) return 'portNode';
+  return null;
+}
 
 /** Pick commit/PR icon based on subject text */
 function commitIcon(subject) {
@@ -110,6 +174,11 @@ function commitIcon(subject) {
 // ── Update tracking ──
 let branchUpdates = JSON.parse(localStorage.getItem('cds_branch_updates') || '{}'); // { branchId: { behind: number, latestRemoteSubject?: string } }
 const recentlyTouched = new Map(); // { branchId: timestamp } — branches user just operated on
+// 2026-04-19: GitHub webhook 自动创建或 API 手工添加的分支首次到达时
+// 进入这个集合,触发 .fresh-arrival CSS 动画(向下滑入 + 紫色脉冲),
+// 5 秒后自动清掉。用户打开 Dashboard 期间 git push 就能亲眼看到分支
+// 出现,不用刷新。
+const freshlyArrived = new Set();
 let isCheckingUpdates = false;
 
 // ── Preview mode: 'simple' (set default + open main) | 'port' (dynamic port) | 'multi' (subdomain per branch) ──
@@ -532,12 +601,24 @@ function initStateStream() {
               commitSha: existing.commitSha,
             });
           } else {
+            // 2026-04-19: 新分支通过 state-stream 首次到达(最常见情况:
+            // GitHub webhook 创建 + dispatcher addBranch + save 触发
+            // broadcastState)。标记为 fresh 让 renderBranches 添加
+            // card-in 动画 class;5 秒后清掉,下次重绘就回到普通卡片。
+            // 这比在后端单独推 branch.created 事件简单:state-stream
+            // 已经是权威源,不引入第二条管道。
+            if (_branchesFirstLoadDone) {
+              freshlyArrived.add(pushed.id);
+              setTimeout(() => { freshlyArrived.delete(pushed.id); }, 5000);
+            }
             branches.push(pushed);
           }
         }
         // Remove branches that no longer exist
         const pushedIds = new Set(data.branches.map(b => b.id));
+        const removedIds = branches.filter(b => !pushedIds.has(b.id)).map(b => b.id);
         branches = branches.filter(b => pushedIds.has(b.id));
+        for (const rid of removedIds) freshlyArrived.delete(rid);
         if (data.defaultBranch !== undefined) defaultBranch = data.defaultBranch;
         renderBranches();
       }
@@ -2085,6 +2166,10 @@ async function deployBranchDirect(id, targetExecutorId) {
     const reader = res.body.getReader();
     const decoder = new TextDecoder();
     let buffer = '';
+    // Track the most recent `event:` line so we can route smoke-* events
+    // (Phase 4 auto-smoke) into the log with a 🍳 prefix distinct from
+    // deploy steps.
+    let currentEvent = 'message';
 
     while (true) {
       const { done, value } = await reader.read();
@@ -2095,20 +2180,43 @@ async function deployBranchDirect(id, targetExecutorId) {
       buffer = lines.pop();
 
       for (const line of lines) {
-        if (line.startsWith('data: ')) {
-          const data = JSON.parse(line.slice(6));
-          const log = inlineDeployLogs.get(id);
-          if (!log) continue;
-
-          if (data.chunk) {
-            data.chunk.split('\n').filter(l => l.trim()).forEach(l => log.lines.push(l));
-          } else if (data.step) {
-            log.lines.push(`[${data.status}] ${data.title || data.step}`);
-          } else if (data.message) {
-            data.message.split('\n').filter(l => l.trim()).forEach(l => log.lines.push(l));
-          }
-          updateInlineLog(id);
+        if (line.startsWith('event: ')) {
+          currentEvent = line.slice(7).trim();
+          continue;
         }
+        if (!line.startsWith('data: ')) {
+          // Blank line = end of SSE block — reset event scope so the
+          // next data: without a preceding event: defaults to message.
+          if (line === '') currentEvent = 'message';
+          continue;
+        }
+        const data = JSON.parse(line.slice(6));
+        const log = inlineDeployLogs.get(id);
+        if (!log) { currentEvent = 'message'; continue; }
+
+        if (currentEvent === 'smoke-start') {
+          log.lines.push(`🍳 自动冒烟测试启动 → ${data.host || ''}`);
+        } else if (currentEvent === 'smoke-skip') {
+          const reasons = {
+            preview_host_missing: '未配置 previewDomain',
+            access_key_missing: '_global.AI_ACCESS_KEY 未设置',
+            smoke_script_missing: '找不到 smoke-all.sh',
+          };
+          log.lines.push(`🍳 跳过自动冒烟: ${reasons[data.reason] || data.reason}`);
+        } else if (currentEvent === 'smoke-line') {
+          log.lines.push(`  │ ${data.text}`);
+        } else if (currentEvent === 'smoke-complete') {
+          const ok = data.exitCode === 0 && data.failedCount === 0;
+          log.lines.push(`🍳 冒烟 ${ok ? '✅' : '❌'} pass=${data.passedCount} fail=${data.failedCount} (${data.elapsedSec}s, exit=${data.exitCode})`);
+        } else if (data.chunk) {
+          data.chunk.split('\n').filter(l => l.trim()).forEach(l => log.lines.push(l));
+        } else if (data.step) {
+          log.lines.push(`[${data.status}] ${data.title || data.step}`);
+        } else if (data.message) {
+          data.message.split('\n').filter(l => l.trim()).forEach(l => log.lines.push(l));
+        }
+        updateInlineLog(id);
+        currentEvent = 'message';
       }
     }
     // Deploy succeeded
@@ -2577,12 +2685,15 @@ function renderTagFilterBar() {
 }
 
 function getPortIcon(profileId, profile) {
-  // Use profile's custom icon if set
+  // 1. Explicit user-chosen icon wins
   if (profile && profile.icon && ICON['port' + profile.icon.charAt(0).toUpperCase() + profile.icon.slice(1)]) {
     return ICON['port' + profile.icon.charAt(0).toUpperCase() + profile.icon.slice(1)];
   }
-  // Fall back to map
-  const key = PORT_ICON_MAP[profileId.toLowerCase()];
+  // 2. Inferred from dockerImage / command / id (node / dotnet / …)
+  const inferred = detectPortIconKey(profile || { id: profileId });
+  if (inferred && ICON[inferred]) return ICON[inferred];
+  // 3. Hardcoded profile-id map (api / admin / frontend)
+  const key = PORT_ICON_MAP[(profileId || '').toLowerCase()];
   return key ? ICON[key] : ICON.portDefault;
 }
 
@@ -2830,6 +2941,137 @@ async function viewBranchLogs(id) {
 
 let _logStreamController = null;
 
+// ── Phase 3 冒烟测试: 从分支卡触发 smoke-all.sh ──
+//
+// Flow:
+//   1. 弹窗提示输入 AI_ACCESS_KEY (或从 _global.customEnv 读取 —— 后端
+//      优先后者)
+//   2. POST /api/branches/:id/smoke + SSE 流式接收 stdout/stderr
+//   3. 每行 event:line 追加到模态框
+//   4. event:complete 关闭流、更新头部"通过 X / 失败 Y"
+//
+// 不做的: 不存 AI_ACCESS_KEY 到 localStorage (安全); 不做自动重跑
+// (失败就失败, 要重来点一次就行)。
+async function runBranchSmoke(branchId) {
+  // Prompt for AI access key (leave blank to use server-side _global.customEnv)
+  const accessKey = window.prompt(
+    '输入 AI_ACCESS_KEY\n\n留空 = 使用 CDS 环境变量 _global.AI_ACCESS_KEY\n(首次冒烟建议先在「环境变量」面板把它存到 _global)',
+    ''
+  );
+  if (accessKey === null) return; // user cancelled
+
+  const modalHtml = `
+    <div class="smoke-modal-wrap" id="smokeModalWrap" style="display:flex;flex-direction:column;gap:10px;min-height:0;height:60vh">
+      <div class="smoke-modal-header" style="display:flex;justify-content:space-between;align-items:center;flex-shrink:0">
+        <div style="font-size:12px;color:var(--text-muted)">
+          分支 <code>${esc(branchId)}</code> 冒烟测试
+          <span id="smokeSummary" style="margin-left:12px;color:var(--text-secondary)">准备中…</span>
+        </div>
+        <button class="sm" id="smokeAbortBtn" onclick="_abortSmokeStream()" title="中止并关闭">关闭</button>
+      </div>
+      <pre id="smokeOutput" style="flex:1;min-height:0;overflow:auto;background:var(--bg-code-block,rgba(8,12,28,0.6));border:1px solid var(--border);border-radius:6px;padding:10px 14px;font-size:12px;font-family:var(--font-mono);color:var(--text-primary);white-space:pre-wrap;margin:0"></pre>
+    </div>
+  `;
+  openConfigModal(`冒烟测试: ${branchId}`, modalHtml);
+
+  const outEl = document.getElementById('smokeOutput');
+  const sumEl = document.getElementById('smokeSummary');
+  if (!outEl || !sumEl) return;
+  const append = (txt, color) => {
+    const span = document.createElement('span');
+    if (color) span.style.color = color;
+    span.textContent = txt + '\n';
+    outEl.appendChild(span);
+    outEl.scrollTop = outEl.scrollHeight;
+  };
+
+  // SSE over POST requires fetch + ReadableStream; built-in EventSource only does GET
+  const controller = new AbortController();
+  _smokeStreamController = controller;
+  try {
+    const res = await fetch(`/api/branches/${encodeURIComponent(branchId)}/smoke`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        accessKey: accessKey || undefined,
+        impersonateUser: 'admin',
+        failFast: false,
+      }),
+      signal: controller.signal,
+    });
+    if (!res.ok) {
+      let errBody = ''; try { errBody = JSON.stringify(await res.json()); } catch {}
+      append(`[HTTP ${res.status}] ${errBody}`, 'var(--red)');
+      sumEl.textContent = '启动失败';
+      return;
+    }
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buf = '';
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buf += decoder.decode(value, { stream: true });
+      // SSE events are split by \n\n
+      let idx;
+      while ((idx = buf.indexOf('\n\n')) >= 0) {
+        const rawEvent = buf.slice(0, idx);
+        buf = buf.slice(idx + 2);
+        const event = _parseSseEvent(rawEvent);
+        if (!event) continue;
+        if (event.event === 'start') {
+          sumEl.textContent = `目标 ${event.data.host}`;
+          append(`>>> smoke starting on ${event.data.host}`, 'var(--text-muted)');
+        } else if (event.event === 'line') {
+          const isErr = event.data.stream === 'stderr';
+          append(event.data.text, isErr ? 'var(--red)' : undefined);
+        } else if (event.event === 'complete') {
+          const d = event.data;
+          const ok = d.exitCode === 0 && d.failedCount === 0;
+          sumEl.textContent = ok
+            ? `✅ 通过 ${d.passedCount} 项 · ${d.elapsedSec}s`
+            : `❌ 失败 ${d.failedCount} / 通过 ${d.passedCount} · 退出码 ${d.exitCode}`;
+          sumEl.style.color = ok ? 'var(--green)' : 'var(--red)';
+          append(`>>> smoke ${ok ? 'PASSED' : 'FAILED'} (exit=${d.exitCode}, ${d.elapsedSec}s)`, ok ? 'var(--green)' : 'var(--red)');
+        } else if (event.event === 'error') {
+          sumEl.textContent = `❌ ${event.data.message}`;
+          sumEl.style.color = 'var(--red)';
+          append(`[error] ${event.data.message}`, 'var(--red)');
+        }
+      }
+    }
+  } catch (err) {
+    if (err.name === 'AbortError') {
+      append('>>> 已中止 (用户关闭)', 'var(--text-muted)');
+    } else {
+      append(`[network] ${err.message}`, 'var(--red)');
+    }
+  } finally {
+    _smokeStreamController = null;
+  }
+}
+
+let _smokeStreamController = null;
+function _abortSmokeStream() {
+  if (_smokeStreamController) _smokeStreamController.abort();
+  closeConfigModal();
+}
+
+function _parseSseEvent(raw) {
+  // Parse a single SSE event block: "event: xxx\ndata: yyy"
+  const lines = raw.split('\n');
+  let ev = 'message';
+  let data = '';
+  for (const line of lines) {
+    if (line.startsWith(':')) continue; // keepalive comment
+    if (line.startsWith('event:')) ev = line.slice(6).trim();
+    else if (line.startsWith('data:')) data += line.slice(5).trim();
+  }
+  if (!data) return null;
+  try { return { event: ev, data: JSON.parse(data) }; }
+  catch { return { event: ev, data: { raw: data } }; }
+}
+
 async function viewContainerLogs(id, profileId) {
   // Abort any previous log stream
   if (_logStreamController) { _logStreamController.abort(); _logStreamController = null; }
@@ -3074,11 +3316,29 @@ function toggleSettingsMenu(event) {
   menu.className = 'settings-menu';
   menu.id = 'settings-menu-portal';
   menu.onclick = (e) => e.stopPropagation();
+  // Lookup label for the cycling preview-mode switch so the current
+  // choice is visible at a glance without opening a modal.
+  const previewModeLabels = { simple: '简洁', port: '端口直连', multi: '子域名' };
+  const previewModeLabel = previewModeLabels[previewMode] || previewMode || '简洁';
+  // Show "初始化配置" quick action when no build profiles exist yet.
+  const needsQuickstart = !buildProfiles || buildProfiles.length === 0;
+
   menu.innerHTML = `
     <div class="settings-menu-item" onclick="closeSettingsMenu(); openImportModal()" style="color:#58a6ff">
       <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M8 2.004a.75.75 0 01.75.75v5.689l1.97-1.97a.749.749 0 111.06 1.06l-3.25 3.25a.749.749 0 01-1.06 0L4.22 7.533a.749.749 0 111.06-1.06l1.97 1.97V2.754a.75.75 0 01.75-.75zM2.75 12.5h10.5a.75.75 0 010 1.5H2.75a.75.75 0 010-1.5z"/></svg>
       一键导入配置
     </div>
+    <div class="settings-menu-item" onclick="closeSettingsMenu(); openExportModal()">
+      <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M8.75 1.75a.75.75 0 00-1.5 0v6.69L4.78 5.97a.75.75 0 10-1.06 1.06l4.25 4.25a.75.75 0 001.06 0l4.25-4.25a.75.75 0 00-1.06-1.06L8.75 8.44V1.75zM2.75 13a.75.75 0 000 1.5h10.5a.75.75 0 000-1.5H2.75z" transform="rotate(180 8 8)"/></svg>
+      一键导出配置
+    </div>
+    ${needsQuickstart ? `
+      <div class="settings-menu-item" onclick="closeSettingsMenu(); runQuickstart()" style="color:#3fb950">
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M8 0a8 8 0 110 16A8 8 0 018 0zm3.78 5.22a.75.75 0 00-1.06 0L6.75 9.19 5.28 7.72a.751.751 0 00-1.042.018.751.751 0 00-.018 1.042l2 2a.75.75 0 001.06 0l4.5-4.5a.75.75 0 000-1.06z"/></svg>
+        初始化配置（快速开始）
+        <span style="margin-left:auto;font-size:11px;color:#3fb950">未就绪</span>
+      </div>
+    ` : ''}
     <div class="settings-menu-divider"></div>
     <div class="settings-menu-item" onclick="closeSettingsMenu(); openProfileModal()">
       <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M7.22 1.547a2.403 2.403 0 011.56 0l4.03 1.384a.48.48 0 01.33.457v1.224a.48.48 0 01-.33.457L8.78 6.453a2.403 2.403 0 01-1.56 0L3.19 5.069a.48.48 0 01-.33-.457V3.388a.48.48 0 01.33-.457l4.03-1.384zM3.19 6.903l4.03 1.384a2.403 2.403 0 001.56 0l4.03-1.384a.48.48 0 01.33.457v1.224a.48.48 0 01-.33.457L8.78 10.425a2.403 2.403 0 01-1.56 0L3.19 9.041a.48.48 0 01-.33-.457V7.36a.48.48 0 01.33-.457zm0 3.972l4.03 1.384a2.403 2.403 0 001.56 0l4.03-1.384a.48.48 0 01.33.457v1.224a.48.48 0 01-.33.457l-4.03 1.384a2.403 2.403 0 01-1.56 0l-4.03-1.384a.48.48 0 01-.33-.457v-1.224a.48.48 0 01.33-.457z"/></svg>
@@ -3087,6 +3347,10 @@ function toggleSettingsMenu(event) {
     <div class="settings-menu-item" onclick="closeSettingsMenu(); openEnvModal()">
       <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M2.5 2a.5.5 0 00-.5.5v11a.5.5 0 00.5.5h11a.5.5 0 00.5-.5v-11a.5.5 0 00-.5-.5h-11zM1 2.5A1.5 1.5 0 012.5 1h11A1.5 1.5 0 0115 2.5v11a1.5 1.5 0 01-1.5 1.5h-11A1.5 1.5 0 011 13.5v-11zM4 5h2v1H4V5zm3 0h5v1H7V5zM4 8h2v1H4V8zm3 0h5v1H7V8zM4 11h2v1H4v-1zm3 0h5v1H7v-1z"/></svg>
       环境变量
+    </div>
+    <div class="settings-menu-item" onclick="closeSettingsMenu(); openBulkEnvModal()">
+      <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M0 1.75C0 .784.784 0 1.75 0h12.5C15.216 0 16 .784 16 1.75v12.5A1.75 1.75 0 0114.25 16H1.75A1.75 1.75 0 010 14.25V1.75zm1.75-.25a.25.25 0 00-.25.25v12.5c0 .138.112.25.25.25h12.5a.25.25 0 00.25-.25V1.75a.25.25 0 00-.25-.25H1.75zM11.75 3a.75.75 0 01.75.75v7.5a.75.75 0 01-1.5 0v-7.5a.75.75 0 01.75-.75zm-8.25.75a.75.75 0 00-1.5 0v7.5a.75.75 0 001.5 0v-7.5zM8 3a.75.75 0 01.75.75v7.5a.75.75 0 01-1.5 0v-7.5A.75.75 0 018 3z"/></svg>
+      批量编辑环境变量
     </div>
     <div class="settings-menu-item" onclick="closeSettingsMenu(); openInfraModal()">
       <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M2 2a2 2 0 012-2h8a2 2 0 012 2v2a2 2 0 01-2 2H4a2 2 0 01-2-2V2zm2-.5a.5.5 0 00-.5.5v2a.5.5 0 00.5.5h8a.5.5 0 00.5-.5V2a.5.5 0 00-.5-.5H4zM2 9.5A1.5 1.5 0 013.5 8h9A1.5 1.5 0 0114 9.5v3a1.5 1.5 0 01-1.5 1.5h-9A1.5 1.5 0 012 12.5v-3zm1.5 0v3h9v-3h-9zM4 10.5a.5.5 0 01.5-.5h1a.5.5 0 010 1h-1a.5.5 0 01-.5-.5z"/></svg>
@@ -3105,6 +3369,31 @@ function toggleSettingsMenu(event) {
     <div class="settings-menu-item" onclick="closeSettingsMenu(); openRoutingModal()">
       <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M8 0a8 8 0 100 16A8 8 0 008 0zM1.5 8a6.5 6.5 0 0113 0h-2.1a8.3 8.3 0 00-.4-2.2 9 9 0 00-1-1.9A4.5 4.5 0 017 7.5H4.5A8.3 8.3 0 001.5 8zm5.5 5.5a6.5 6.5 0 01-5.4-3h2.3c.3 1.2.8 2.2 1.5 3H7zm1-5.5a7.8 7.8 0 014-3.8c.5.6.9 1.2 1.2 1.8H8zm0 1h5.4a8.3 8.3 0 01-.3 2H8.9 8V9zm0 3h3.8c-.6 1.3-1.5 2.4-2.8 3A6.5 6.5 0 018 9z"/></svg>
       路由规则
+    </div>
+    <div class="settings-menu-divider"></div>
+    <div class="settings-menu-group-label">快捷 · CDS 全局开关</div>
+    <div class="settings-menu-item settings-menu-switch" onclick="cyclePreviewMode()">
+      <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M1.679 7.932c.412-.621 1.242-1.75 2.366-2.717C5.175 4.242 6.527 3.5 8 3.5c1.473 0 2.824.742 3.955 1.715 1.124.967 1.954 2.096 2.366 2.717a.119.119 0 010 .136c-.412.621-1.242 1.75-2.366 2.717C10.825 11.758 9.473 12.5 8 12.5c-1.473 0-2.824-.742-3.955-1.715C2.92 9.818 2.09 8.689 1.679 8.068a.119.119 0 010-.136zM8 2c-1.981 0-3.67.992-4.933 2.078C1.797 5.169.88 6.423.43 7.1a1.619 1.619 0 000 1.798c.45.678 1.367 1.932 2.637 3.024C4.329 13.008 6.019 14 8 14c1.981 0 3.67-.992 4.933-2.078 1.27-1.091 2.187-2.345 2.637-3.023a1.619 1.619 0 000-1.798c-.45-.678-1.367-1.932-2.637-3.024C11.671 2.992 9.981 2 8 2z"/><path d="M8 10a2 2 0 100-4 2 2 0 000 4z"/></svg>
+      <span class="settings-menu-switch-label">预览模式</span>
+      <span class="preview-mode-label" style="margin-left:auto;font-size:11px;color:#58a6ff;font-weight:500">${previewModeLabel}</span>
+    </div>
+    <div class="settings-menu-item settings-menu-switch" onclick="toggleMirror()">
+      <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M13 2.5a.5.5 0 01.5.5v8a.5.5 0 01-.5.5h-2.086a1 1 0 00-.707.293l-1.5 1.5a.5.5 0 01-.707 0l-1.5-1.5A1 1 0 005.793 11.5H3.5a.5.5 0 01-.5-.5V3a.5.5 0 01.5-.5h9.5zM3.5 1A1.5 1.5 0 002 2.5v9A1.5 1.5 0 003.5 13h2.293l1.5 1.5a1.5 1.5 0 002.121 0l1.5-1.5h2.086A1.5 1.5 0 0014.5 11.5v-9A1.5 1.5 0 0013 1H3.5z"/></svg>
+      <span class="settings-menu-switch-label">镜像加速</span>
+      <span class="settings-switch settings-switch-mirror ${mirrorEnabled ? 'on' : ''}">
+        <span class="settings-switch-track"><span class="settings-switch-thumb"></span></span>
+      </span>
+    </div>
+    <div class="settings-menu-item settings-menu-switch" onclick="toggleTabTitle()">
+      <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M0 4.75C0 3.784.784 3 1.75 3h12.5c.966 0 1.75.784 1.75 1.75v6.5A1.75 1.75 0 0114.25 13H1.75A1.75 1.75 0 010 11.25v-6.5zm1.75-.25a.25.25 0 00-.25.25v6.5c0 .138.112.25.25.25h12.5a.25.25 0 00.25-.25v-6.5a.25.25 0 00-.25-.25H1.75z"/></svg>
+      <span class="settings-menu-switch-label">浏览器标签名</span>
+      <span class="settings-switch settings-switch-tabtitle ${tabTitleEnabled ? 'on' : ''}">
+        <span class="settings-switch-track"><span class="settings-switch-thumb"></span></span>
+      </span>
+    </div>
+    <div class="settings-menu-item" onclick="closeSettingsMenu(); openSelfUpdate()">
+      <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M8 2.5a5.487 5.487 0 00-4.131 1.869l1.204 1.204A.25.25 0 014.896 6H1.25A.25.25 0 011 5.75V2.104a.25.25 0 01.427-.177l1.38 1.38A7.002 7.002 0 0115 8a.75.75 0 01-1.5 0A5.5 5.5 0 008 2.5zM2.5 8a.75.75 0 00-1.5 0 7.002 7.002 0 0012.023 4.87l1.38 1.38a.25.25 0 00.427-.177V10.5a.25.25 0 00-.25-.25h-3.646a.25.25 0 00-.177.427l1.204 1.204A5.5 5.5 0 012.5 8z"/></svg>
+      CDS 自动更新
     </div>
     <div class="settings-menu-divider"></div>
     <div class="settings-menu-item danger" onclick="closeSettingsMenu(); openCleanupModal()">
@@ -3416,16 +3705,23 @@ function renderBranches() {
         </span>`
       : '';
 
-    // Port badges — icon + name:port, icon from profile config
+    // Port badges — language icon + port number only. Profile name
+    // moves into the tooltip so the chip stays compact and the icon
+    // does the identifying (node → Node.js, dotnet → .NET, react →
+    // React/Vite, etc.). See getPortIcon() → detectPortIconKey() for
+    // the inference order. User feedback #450 part 5 "要托管软件的
+    // icon,例如node程序就显示node的icon,而非随意的两个icon,并且不
+    // 用显示名字"
     const portBadgesInner = services.length > 0 ? services.map(([pid, svc]) => {
       const profile = buildProfiles.find(p => p.id === pid);
       const icon = getPortIcon(pid, profile);
       const badgeClass = svc.status === 'running' ? 'run-port' : svc.status === 'starting' ? 'port-starting' : svc.status === 'stopping' ? 'port-stopping' : svc.status === 'building' ? 'port-building' : svc.status === 'error' ? 'port-error' : 'port-idle';
-      const portTitle = `${esc(pid)}: ${statusLabel(svc.status)}${b.lastAccessedAt ? '\n运行时间: ' + relativeTime(b.lastAccessedAt) : ''}`;
+      const displayName = (profile && profile.name) || pid;
+      const portTitle = `${esc(displayName)} (${esc(pid)}): ${statusLabel(svc.status)}${b.lastAccessedAt ? '\n运行时间: ' + relativeTime(b.lastAccessedAt) : ''}`;
       return `<span class="port-badge ${badgeClass}"
                     onclick="event.stopPropagation(); viewContainerLogs('${esc(b.id)}', '${esc(pid)}')"
                     title="${portTitle}">
-                ${icon} ${esc(pid)}:${svc.hostPort}
+                ${icon}${svc.hostPort}
               </span>`;
     }).join('') : '';
     const portBadgesHtml = (executorTagHtml || portBadgesInner)
@@ -3482,6 +3778,7 @@ function renderBranches() {
         ${targetMenuItems}
         ${isRunning ? `<div class="deploy-menu-divider"></div>
         <div class="deploy-menu-item" onclick="event.stopPropagation(); closeDeployMenu('${esc(b.id)}'); viewBranchLogs('${esc(b.id)}')"><svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor" style="vertical-align:-1px;margin-right:4px"><path d="M1 2.75C1 1.784 1.784 1 2.75 1h10.5c.966 0 1.75.784 1.75 1.75v7.5A1.75 1.75 0 0113.25 12H9.06l-2.573 2.573A1.458 1.458 0 014 13.543V12H2.75A1.75 1.75 0 011 10.25v-7.5zm1.5 0a.25.25 0 01.25-.25h10.5a.25.25 0 01.25.25v7.5a.25.25 0 01-.25.25h-4.5a.75.75 0 00-.75.75v2.19l-2.72-2.72a.75.75 0 00-.53-.22H2.75a.25.25 0 01-.25-.25v-7.5z"/></svg>部署日志</div>
+        <div class="deploy-menu-item" onclick="event.stopPropagation(); closeDeployMenu('${esc(b.id)}'); runBranchSmoke('${esc(b.id)}')" title="运行 scripts/smoke-all.sh 针对本分支预览域名"><svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor" style="vertical-align:-1px;margin-right:4px"><path d="M8 16A3.5 3.5 0 004.5 12.5c0-1.81 1.63-3.04 1.63-3.04C5.48 10.89 6.5 12 8 12c1.5 0 2.52-1.11 1.87-2.54 0 0 1.63 1.23 1.63 3.04A3.5 3.5 0 018 16zM11 1s-1.5 1.5-2 3.5C6 3 4.5 5 4.5 7.5c0 1 .5 2 1 2.5C4 9 2.5 7 2.5 5 2.5 2 5.5 0 8 0c1.8 0 3 1 3 1z"/></svg>冒烟测试</div>
         ${stopMenuItem}` : ''}
         <div class="deploy-menu-divider"></div>
         <div class="deploy-menu-item" onclick="event.stopPropagation(); closeDeployMenu('${esc(b.id)}'); openOverrideModal('${esc(b.id)}')"><svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor" style="vertical-align:-1px;margin-right:4px"><path d="M8 0a8 8 0 100 16A8 8 0 008 0zM1.5 8a6.5 6.5 0 1113 0 6.5 6.5 0 01-13 0zM8 4a.75.75 0 01.75.75v2.5h2.5a.75.75 0 010 1.5h-2.5v2.5a.75.75 0 01-1.5 0v-2.5h-2.5a.75.75 0 010-1.5h2.5v-2.5A.75.75 0 018 4z"/></svg>容器配置 (继承/覆盖)</div>
@@ -3578,7 +3875,7 @@ function renderBranches() {
     // Deploy logs are accessible via the log button in toolbar.
 
     return `
-      <div class="branch-card status-${b.status || 'idle'} ${isDefault ? 'active' : ''} ${isBusy ? 'is-busy' : ''} ${hasError ? 'has-error' : ''} expanded ${b.isFavorite ? 'is-favorite' : ''} ${hasUpdates ? 'has-updates' : ''} ${recentlyTouched.has(b.id) ? 'recently-touched' : ''} ${isDeploying ? 'is-deploying' : ''} ${b.isColorMarked ? 'is-color-marked' : ''} ${getAiOccupant(b.id) ? 'is-ai-occupied' : ''} ${b.pinnedCommit ? 'is-pinned' : ''}" data-branch-id="${esc(b.id)}">
+      <div class="branch-card status-${b.status || 'idle'} ${isDefault ? 'active' : ''} ${isBusy ? 'is-busy' : ''} ${hasError ? 'has-error' : ''} expanded ${b.isFavorite ? 'is-favorite' : ''} ${hasUpdates ? 'has-updates' : ''} ${recentlyTouched.has(b.id) ? 'recently-touched' : ''} ${isDeploying ? 'is-deploying' : ''} ${b.isColorMarked ? 'is-color-marked' : ''} ${getAiOccupant(b.id) ? 'is-ai-occupied' : ''} ${b.pinnedCommit ? 'is-pinned' : ''} ${freshlyArrived.has(b.id) ? 'fresh-arrival' : ''} ${freshlyArrived.has(b.id) && b.githubRepoFullName ? 'fresh-gh' : ''}" data-branch-id="${esc(b.id)}">
         ${isDeploying ? `<div class="deploy-progress-bar"><div class="deploy-progress-bar-fill"></div></div>
           <div class="branch-deploy-timer" data-since="${_branchDeployStartedAt(b.id)}"><span class="branch-deploy-timer-label">${b.status === 'building' ? 'Building' : 'Initializing'}</span><span class="branch-deploy-timer-value">00:00</span></div>` : ''}
         <div class="branch-card-toolbar">
@@ -3615,7 +3912,7 @@ function renderBranches() {
             <span class="fav-toggle ${b.isFavorite ? 'active' : ''}" onclick="event.stopPropagation(); toggleFavorite('${esc(b.id)}')" title="${b.isFavorite ? '取消收藏' : '收藏'}">
               ${b.isFavorite ? ICON.star : ICON.starOutline}
             </span>
-            <a class="branch-name" href="${githubRepoUrl ? githubRepoUrl.replace('github.com', 'github.dev') + '/tree/' + encodeURIComponent(b.branch) : '#'}" target="_blank" onclick="event.stopPropagation(); return confirmOpenGithub(event)" title="在 GitHub.dev 中浏览代码">${ICON.branch} ${esc(b.branch)}</a>
+            <a class="branch-name" href="${githubRepoUrl ? githubRepoUrl.replace('github.com', 'github.dev') + '/tree/' + encodeURIComponent(b.branch) : '#'}" target="_blank" onclick="event.stopPropagation(); return confirmOpenGithub(event)" title="${b.githubRepoFullName ? 'GitHub 自动触发的分支 (来自 ' + esc(b.githubRepoFullName) + ') · 点击在 GitHub.dev 浏览代码' : '在 GitHub.dev 中浏览代码'}">${b.githubRepoFullName ? ICON.githubMark : ICON.branch} ${esc(b.branch)}</a>
             <span class="branch-quick-actions">
               <button class="branch-quick-btn" onclick="event.stopPropagation(); copyBranchName('${esc(b.branch)}')" title="复制分支名">
                 <svg class="inline-icon" width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M0 6.75C0 5.784.784 5 1.75 5h1.5a.75.75 0 010 1.5h-1.5a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-1.5a.75.75 0 011.5 0v1.5A1.75 1.75 0 019.25 16h-7.5A1.75 1.75 0 010 14.25v-7.5z"/><path d="M5 1.75C5 .784 5.784 0 6.75 0h7.5C15.216 0 16 .784 16 1.75v7.5A1.75 1.75 0 0114.25 11h-7.5A1.75 1.75 0 015 9.25v-7.5zm1.75-.25a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-7.5a.25.25 0 00-.25-.25h-7.5z"/></svg>
@@ -3626,23 +3923,33 @@ function renderBranches() {
             </span>
           </div>
           ${(() => {
-            // Unified chip row — combines GitHub source chip + port badges +
-            // pinned-commit badge into ONE wrappable flex row. Keeps the
+            // Unified chip row — combines port badges + pinned-commit badge +
+            // last-updated timestamp into ONE wrappable flex row. Keeps the
             // card compact and visually consistent between branches that
             // have/don't have a GitHub source.
             //
-            // GitHub chip is just an icon + 7-char SHA (no "from GitHub"
-            // label — the GitHub logo is self-explanatory and the SHA
-            // tells you "this branch was triggered by a webhook push").
-            const ghChip = (b.githubCommitSha && b.githubRepoFullName && /^[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+$/.test(b.githubRepoFullName))
-              ? `<a class="branch-gh-badge" href="https://github.com/${b.githubRepoFullName.split('/').map(encodeURIComponent).join('/')}/commit/${encodeURIComponent(b.githubCommitSha)}" target="_blank" rel="noopener" onclick="event.stopPropagation()" title="来自 GitHub webhook · 点击查看 commit ${esc(b.githubCommitSha)}" style="display:inline-flex;align-items:center;gap:4px;padding:2px 7px;border-radius:10px;background:rgba(96,165,250,0.1);border:1px solid rgba(96,165,250,0.3);color:#60a5fa;font-size:10px;font-weight:600;text-decoration:none;font-family:var(--font-mono,monospace)"><svg width="10" height="10" viewBox="0 0 16 16" fill="currentColor"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>${esc(String(b.githubCommitSha).slice(0, 7))}</a>`
-              : '';
+            // 2026-04-19 user feedback: 原 GitHub commit SHA 胶囊 (蓝色
+            // `658aa87` 之类)已删 —— 标题前的 GitHub icon 已经说明"这是
+            // 从 GitHub 来的",commit hash 对运维体验没增加信息,反而挤占
+            // chips row 宝贵的视觉空间。需要具体 SHA 可以在分支详情页或
+            // PR Checks 面板里看。
             const pinChip = b.pinnedCommit
               ? `<span class="pinned-commit-badge" onclick="event.stopPropagation(); checkoutCommit('${esc(b.id)}', '', true, '')" title="已固定到历史提交 ${esc(b.pinnedCommit)}，点击恢复最新"><svg width="10" height="10" viewBox="0 0 16 16" fill="currentColor" style="vertical-align:-1px"><path d="M4.456.734a1.75 1.75 0 012.826.504l.613 1.327a3.081 3.081 0 002.084 1.707l2.454.584c1.332.317 1.8 1.972.832 2.94L11.06 9.695a.75.75 0 01-.19.436l-4.552 4.552a.75.75 0 01-1.06-1.06l4.305-4.305L7.307 7.13A4.581 4.581 0 005.03 4.929L4.416 3.6A.25.25 0 004.01 3.49L2.606 4.893a.25.25 0 00.104.407l1.328.613a4.581 4.581 0 012.204 2.277l.248.538a.75.75 0 01-1.36.628l-.248-.538a3.081 3.081 0 00-1.483-1.532L2.07 6.773C.783 6.19.381 4.602 1.3 3.682L2.703 2.28A1.75 1.75 0 014.456.734z"/></svg> ${esc(b.pinnedCommit)}</span>`
               : '';
-            const hasAnyChip = ghChip || pinChip || portBadgesHtml;
+            // 2026-04-19 用户反馈: 卡片需要"最近更新时间"。找合适位置,
+            // 左下角/右下角都被按钮占了,右上角和 toolbar 按钮挨着,
+            // 最干净的办法是放在 chips row 的最右端(margin-left:auto
+            // 自动推到右): 和 SHA/port 胶囊同一行、同样样式级别、
+            // 无需额外占用垂直空间。
+            // 优先显示 lastAccessedAt(最近一次部署时间,信号最强),
+            // 没有则 fallback 到 createdAt。`<1 分钟` 时显示"刚刚"。
+            const __lastSeen = b.lastAccessedAt || b.createdAt;
+            const updatedChip = __lastSeen
+              ? `<span class="branch-updated-at" title="${b.lastAccessedAt ? '最近部署' : '创建'}于 ${esc(new Date(__lastSeen).toLocaleString())}"><svg width="10" height="10" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true" style="vertical-align:-1px;margin-right:3px;opacity:0.7"><path d="M8 0a8 8 0 100 16A8 8 0 008 0zM1.5 8a6.5 6.5 0 1113 0 6.5 6.5 0 01-13 0zM8 3.75a.75.75 0 01.75.75v3.25h2.25a.75.75 0 010 1.5h-3a.75.75 0 01-.75-.75v-4a.75.75 0 01.75-.75z"/></svg>${esc(relativeTime(__lastSeen))}${b.lastAccessedAt ? '' : ' 创建'}</span>`
+              : '';
+            const hasAnyChip = pinChip || portBadgesHtml || updatedChip;
             return hasAnyChip
-              ? `<div class="branch-card-chips">${ghChip}${portBadgesHtml || ''}${pinChip}</div>`
+              ? `<div class="branch-card-chips">${portBadgesHtml || ''}${pinChip}${updatedChip}</div>`
               : '';
           })()}
         </div>
@@ -4345,208 +4652,34 @@ async function waitForCdsHealthy(statusEl, timeoutMs) {
   return false;
 }
 
-async function openSelfUpdate() {
-  // Fetch branch list
-  let data;
-  try {
-    data = await api('GET', '/self-branches');
-  } catch (e) {
-    showToast('获取分支列表失败: ' + e.message, 'error');
-    return;
+// CDS 系统更新 — 收敛到 web/self-update.js 的统一实现,避免两套 UI
+// 分叉(旧版 openConfigModal + 分支页 combobox、projects.js 的原生
+// select 弹窗,UX 不一致,维护成本双倍)。
+//
+// 保留函数名兼容所有既有调用点(齿轮菜单、topology 工具栏、cmd-k
+// 命令面板、移动端工具栏等),只是都路由到 window.openSelfUpdateModal。
+function openSelfUpdate() {
+  if (typeof window.openSelfUpdateModal === 'function') {
+    return window.openSelfUpdateModal();
   }
-
-  const { current, commitHash, branches } = data;
-  const branchItems = branches.map(b =>
-    `<div class="combobox-item${b === current ? ' active' : ''}" data-value="${esc(b)}" onclick="selectComboItem(this)">
-      ${b === current ? '<span style="color:var(--green);margin-right:4px">✓</span>' : ''}${esc(b)}${b === current ? ' <span style="color:var(--fg-muted);font-size:11px">(当前)</span>' : ''}
-    </div>`
-  ).join('');
-
-  openConfigModal('CDS 系统更新', `
-    <p class="config-panel-desc">
-      拉取当前分支最新代码并重启 CDS。操作流程：<code>git fetch → git pull → restart</code>
-    </p>
-    <div class="form-row" style="margin-top:4px;font-size:13px;color:var(--text-secondary)">
-      当前分支：<code style="color:var(--accent)">${esc(current)}</code>${commitHash ? `<span style="white-space:nowrap;color:var(--text-muted)"> @ <code style="color:var(--blue)">${esc(commitHash.slice(0, 8))}</code></span>` : ''}
-    </div>
-    <details style="margin-top:10px">
-      <summary style="font-size:12px;color:var(--text-muted);cursor:pointer;user-select:none">切换到其他分支（高级）</summary>
-      <div class="form-row" style="flex-direction:column;align-items:stretch;margin-top:8px">
-        <label class="form-label">目标分支</label>
-        <div class="combobox" id="selfUpdateCombobox">
-          <div class="combobox-input-wrap">
-            <input id="selfUpdateBranch" class="form-input" style="width:100%;padding-right:36px"
-              value="${esc(current)}" placeholder="输入或选择分支名" autocomplete="off"
-              onfocus="openComboDropdown()" oninput="filterComboItems(this.value)">
-            <button type="button" class="combobox-toggle" onclick="toggleComboDropdown()" tabindex="-1">
-              <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 6 8 10 12 6"/></svg>
-            </button>
-          </div>
-          <div class="combobox-dropdown" id="selfUpdateDropdown">
-            ${branchItems}
-          </div>
-        </div>
-      </div>
-    </details>
-    <div id="selfUpdateProgress" style="display:none;margin-top:12px">
-      <div id="selfUpdateSteps" style="display:flex;flex-direction:column;gap:6px"></div>
-      <div id="selfUpdateStatus" style="margin-top:8px;font-size:13px"></div>
-    </div>
-    <div class="form-row" style="margin-top:16px;display:flex;gap:8px;align-items:center">
-      <button class="sm" id="selfUpdateBtn" onclick="executeSelfUpdate()">更新当前分支并重启</button>
-      <button class="sm ghost" onclick="closeConfigModal()">取消</button>
-    </div>
-  `);
-
-  // Close dropdown when clicking outside
-  document.addEventListener('click', _comboOutsideClick);
+  // 理论上 self-update.js 由 index.html 在 app.js 之前加载,走不到此 fallback。
+  if (typeof showToast === 'function') showToast('self-update.js 未加载', 'error');
 }
 
-// ── Combobox helpers ──
+// Legacy combobox helpers — 所有 selfUpdate* ID 随旧弹窗一起退休,
+// 这些函数保留做空壳防 cmd-k 里遗留的 onclick 报 ReferenceError。
+function _comboOutsideClick() { /* retired */ }
+function openComboDropdown() { /* retired */ }
+function closeComboDropdown() { /* retired */ }
+function toggleComboDropdown() { /* retired */ }
+function filterComboItems() { /* retired */ }
+function selectComboItem() { /* retired */ }
 
-function _comboOutsideClick(e) {
-  const box = document.getElementById('selfUpdateCombobox');
-  if (box && !box.contains(e.target)) {
-    closeComboDropdown();
-  }
-}
-
-function openComboDropdown() {
-  const dd = document.getElementById('selfUpdateDropdown');
-  if (dd) dd.classList.add('open');
-}
-
-function closeComboDropdown() {
-  const dd = document.getElementById('selfUpdateDropdown');
-  if (dd) dd.classList.remove('open');
-  document.removeEventListener('click', _comboOutsideClick);
-}
-
-function toggleComboDropdown() {
-  const dd = document.getElementById('selfUpdateDropdown');
-  if (dd) {
-    if (dd.classList.contains('open')) {
-      closeComboDropdown();
-    } else {
-      // Reset filter to show all
-      filterComboItems('');
-      dd.classList.add('open');
-      document.getElementById('selfUpdateBranch')?.focus();
-    }
-  }
-}
-
-function filterComboItems(query) {
-  const dd = document.getElementById('selfUpdateDropdown');
-  if (!dd) return;
-  const q = query.toLowerCase();
-  let visible = 0;
-  for (const item of dd.querySelectorAll('.combobox-item')) {
-    const val = (item.dataset.value || '').toLowerCase();
-    const show = !q || val.includes(q);
-    item.style.display = show ? '' : 'none';
-    if (show) visible++;
-  }
-  if (visible > 0 && q) dd.classList.add('open');
-}
-
-function selectComboItem(el) {
-  const input = document.getElementById('selfUpdateBranch');
-  if (input) input.value = el.dataset.value;
-  closeComboDropdown();
-}
-
-function executeSelfUpdate() {
-  const input = document.getElementById('selfUpdateBranch');
-  const branch = input ? input.value.trim() : '';
-  const btn = document.getElementById('selfUpdateBtn');
-  const progress = document.getElementById('selfUpdateProgress');
-  const stepsEl = document.getElementById('selfUpdateSteps');
-  const statusEl = document.getElementById('selfUpdateStatus');
-
-  if (btn) btn.disabled = true;
-  if (progress) progress.style.display = 'block';
-
-  const stepMap = {};
-  function updateStep(id, status, title) {
-    let el = stepMap[id];
-    if (!el) {
-      el = document.createElement('div');
-      el.style.cssText = 'display:flex;align-items:center;gap:8px;padding:6px 10px;background:var(--bg-secondary);border:1px solid var(--border);border-radius:6px;font-size:13px';
-      el.innerHTML = '<span class="step-dot"></span><span></span>';
-      stepsEl.appendChild(el);
-      stepMap[id] = el;
-    }
-    const dot = el.querySelector('.step-dot');
-    const label = el.querySelector('span:last-child');
-    label.textContent = title;
-    const colors = { running: 'var(--blue)', done: 'var(--green)', error: 'var(--red)' };
-    dot.style.cssText = `width:8px;height:8px;border-radius:50%;background:${colors[status] || 'var(--fg-muted)'}`;
-    if (status === 'running') {
-      dot.style.animation = 'pulse 1s infinite';
-    }
-  }
-
-  // SSE request via fetch
-  fetch(API + '/self-update', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ branch: branch || undefined }),
-  }).then(resp => {
-    const reader = resp.body.getReader();
-    const decoder = new TextDecoder();
-    let buffer = '';
-
-    function processChunk() {
-      return reader.read().then(({ done, value }) => {
-        if (done) return;
-        buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split('\n');
-        buffer = lines.pop() || '';
-
-        let eventType = '';
-        for (const line of lines) {
-          if (line.startsWith('event: ')) {
-            eventType = line.slice(7).trim();
-          } else if (line.startsWith('data: ')) {
-            try {
-              const data = JSON.parse(line.slice(6));
-              if (eventType === 'step') {
-                updateStep(data.step, data.status, data.title);
-              } else if (eventType === 'done') {
-                statusEl.innerHTML =
-                  '<span style="color:var(--green)">' + esc(data.message) + '</span>' +
-                  '<br><span style="font-size:12px;color:var(--fg-muted)">等待 CDS 重启...</span>';
-                // Poll /healthz instead of a fixed 5s delay, which used to
-                // race the restart and land on a 502 when the new process
-                // wasn't listening yet.
-                waitForCdsHealthy(statusEl, 120000).then((ok) => {
-                  if (ok) location.reload();
-                });
-              } else if (eventType === 'error') {
-                statusEl.innerHTML = '<span style="color:var(--red);display:inline-flex;align-items:center;gap:4px"><svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor"><path d="M3.72 3.72a.75.75 0 011.06 0L8 6.94l3.22-3.22a.75.75 0 111.06 1.06L9.06 8l3.22 3.22a.75.75 0 11-1.06 1.06L8 9.06l-3.22 3.22a.75.75 0 01-1.06-1.06L6.94 8 3.72 4.78a.75.75 0 010-1.06z"/></svg>' + esc(data.message) + '</span>';
-                if (btn) btn.disabled = false;
-              }
-            } catch {}
-          }
-        }
-        return processChunk();
-      });
-    }
-    return processChunk();
-  }).catch(err => {
-    // Connection lost is expected during restart — the SSE stream dies as
-    // the process goes down. Swap to the health-polling helper so we only
-    // reload once the new process is actually serving traffic.
-    if (statusEl && !statusEl.textContent) {
-      statusEl.innerHTML =
-        '<span style="color:var(--fg-muted)">连接已断开（CDS 正在重启）...</span>';
-      waitForCdsHealthy(statusEl, 120000).then((ok) => {
-        if (ok) location.reload();
-      });
-    }
-  });
-}
+// executeSelfUpdate — retired when the old openConfigModal-based self-
+// update UI was collapsed into the shared self-update.js module.
+// Kept as a no-op stub because cmd-k / legacy onclick references may
+// still exist in cached client bundles; future cleanup can remove.
+function executeSelfUpdate() { /* retired — see self-update.js */ }
 
 // ── Infrastructure services ──
 

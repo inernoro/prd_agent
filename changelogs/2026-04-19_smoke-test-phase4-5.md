@@ -1,0 +1,6 @@
+| feat | cds | Project 新增 `autoSmokeEnabled` 字段 + PUT /api/projects/:id 接受布尔值,Settings → 基础信息里新增「部署成功后自动冒烟测试」开关;默认关闭,开启后每次 deploy 成功都会在同条 SSE 流里跑完 scripts/smoke-all.sh(Phase 4) |
+| feat | cds | 重构: `runSmokeForBranch(opts)` + `resolveSmokeScriptDir()` 提取为 branches.ts 顶层导出的纯函数,Phase 3 手动端点和 Phase 4 自动 hook 共用同一套 spawn + 计数解析逻辑,避免重复 60 行子进程管理代码 |
+| feat | cds | branches.ts 部署 handler 在 deploy `complete` 之后、GitHub check-run finalize 之前调 `maybeRunAutoSmoke(...)`: 仅当 project.autoSmokeEnabled=true + previewDomain 配置 + _global.AI_ACCESS_KEY 存在 + smoke-all.sh 可定位四条全满足才跑;其它情况推一条 `smoke-skip` 事件,不阻断部署(Phase 4) |
+| feat | cds | 自动冒烟事件以 `smoke-start` / `smoke-line` / `smoke-skip` / `smoke-complete` 推给 deploy SSE 同一条流,前端 app.js 的 deployBranchDirect 新增 currentEvent 解析,把冒烟日志用 🍳 前缀 + `│` 缩进渲染进 inline deploy log,操作员一个视图看到"部署 → 冒烟"完整叙事 |
+| feat | cds | GitHub Check Run finalize 融合冒烟结果(Phase 5): conclusion = hasError \|\| smokeFailed ? 'failure' : 'success'; summary 追加 `冒烟 ✅/❌ pass=N fail=M (Xs)` 字段,PR 的 Checks 面板直接反映"部署绿但冒烟红"这类高价值信号 |
+| test | cds | 新增 Phase 4/5 单测:projects.test.ts 增 2 条(autoSmokeEnabled 持久化 + 显式设 false);branches-smoke.test.ts 增 2 条(runSmokeForBranch helper 的 env 透传 + resolveSmokeScriptDir 缺脚本检测)。748/748 全绿 |

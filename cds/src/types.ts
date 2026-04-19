@@ -553,6 +553,30 @@ export interface Project {
   slug: string;
   /** Human-friendly display name shown on the projects list card. */
   name: string;
+  /**
+   * Optional display-only alias. Populated via Settings → 基础信息 →「显示别名」.
+   * All UI call sites (project cards, breadcrumb, Settings title,
+   * Agent-key modal) read `aliasName || name`, so the pre-feature
+   * behaviour is preserved when this field is absent.
+   *
+   * Does NOT rename the project — `id` / `slug` / branch id prefixes
+   * remain anchored to the original values so existing branches keep
+   * working and GitHub webhooks keep routing by `githubRepoFullName`.
+   * Use this field when the auto-migrated `name` (e.g. "prd-agent" from
+   * the legacy default project) is not the label the user wants to see.
+   */
+  aliasName?: string;
+  /**
+   * Optional alternative slug, reserved for a future "use alias in new
+   * branch ids" toggle. Stored here so the Settings UI can capture it
+   * alongside `aliasName`, but NOT consumed by branch-id derivation
+   * yet (see doc/plan.cds-github-integration-followups.md §1 — branch
+   * prefix change is scoped to a follow-up PR).
+   *
+   * Must pass the same SLUG_REGEX as `slug` and must not collide with
+   * any other project's `slug` or `aliasSlug`.
+   */
+  aliasSlug?: string;
   /** Optional one-line description shown under the name. */
   description?: string;
   /**
@@ -643,6 +667,25 @@ export interface Project {
   githubInstallationId?: number;
   githubAutoDeploy?: boolean;
   githubLinkedAt?: string;
+  /**
+   * Phase 4 (冒烟自动化): when true, every successful `POST /branches/
+   * :id/deploy` call that owns this project auto-triggers
+   * scripts/smoke-all.sh against the branch's preview URL right after
+   * the deploy SSE `complete` event. Results stream through the same
+   * SSE as `smoke-line` / `smoke-complete` events so the dashboard
+   * deploy log keeps going without a second round-trip.
+   *
+   * Requires `_global.customEnv.AI_ACCESS_KEY` to be set (the deploy
+   * flow has no operator UI to prompt for it). Silent no-op when the
+   * key is missing — we emit a single `smoke-line` warning line so the
+   * operator sees why it didn't run. Default `undefined` ⇒ false.
+   *
+   * Phase 5 piggybacks on the same flag: when true AND a GitHub check
+   * run was opened for this deploy, the smoke conclusion PATCHes the
+   * run (or appends a second check run named "CDS Smoke") so the PR
+   * Checks panel also reports smoke status.
+   */
+  autoSmokeEnabled?: boolean;
 }
 
 /**

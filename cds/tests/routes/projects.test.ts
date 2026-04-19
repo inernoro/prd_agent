@@ -488,6 +488,97 @@ describe('Projects router (P4 Part 2)', () => {
       expect(res.body.project.name).toBe('First Name'); // unchanged
       expect(res.body.project.description).toBe('Second Desc');
     });
+
+    // ── Alias fields (follow-up PR for doc/plan.cds-github-integration-followups P0) ──
+    it('accepts aliasName + aliasSlug and returns them on the project', async () => {
+      const res = await request(server, 'PUT', '/api/projects/default', {
+        aliasName: 'PRD Agent',
+        aliasSlug: 'prd',
+      });
+      expect(res.status).toBe(200);
+      expect(res.body.project.aliasName).toBe('PRD Agent');
+      expect(res.body.project.aliasSlug).toBe('prd');
+    });
+
+    it('clears alias when an empty string is sent', async () => {
+      await request(server, 'PUT', '/api/projects/default', {
+        aliasName: 'PRD Agent',
+        aliasSlug: 'prd',
+      });
+      const res = await request(server, 'PUT', '/api/projects/default', {
+        aliasName: '',
+        aliasSlug: '',
+      });
+      expect(res.status).toBe(200);
+      // Cleared fields should not be truthy — either undefined or missing.
+      expect(res.body.project.aliasName || null).toBeNull();
+      expect(res.body.project.aliasSlug || null).toBeNull();
+    });
+
+    it('rejects aliasSlug that fails the slug regex with 400', async () => {
+      const res = await request(server, 'PUT', '/api/projects/default', {
+        aliasSlug: 'Bad Slug!',
+      });
+      expect(res.status).toBe(400);
+      expect(res.body.field).toBe('aliasSlug');
+    });
+
+    it('rejects aliasSlug that equals the project own slug with 400', async () => {
+      // Legacy default's slug is derived from projectSlug, not the id. Fetch
+      // it so the assertion doesn't depend on the test repo name.
+      const get = await request(server, 'GET', '/api/projects/default');
+      const ownSlug = get.body.slug as string;
+      const res = await request(server, 'PUT', '/api/projects/default', {
+        aliasSlug: ownSlug,
+      });
+      expect(res.status).toBe(400);
+      expect(res.body.field).toBe('aliasSlug');
+    });
+
+    it('rejects aliasSlug that collides with another project slug with 409', async () => {
+      const other = await request(server, 'POST', '/api/projects', {
+        name: 'Taken',
+        slug: 'taken-slug',
+      });
+      expect(other.status).toBe(201);
+
+      const res = await request(server, 'PUT', '/api/projects/default', {
+        aliasSlug: 'taken-slug',
+      });
+      expect(res.status).toBe(409);
+      expect(res.body.field).toBe('aliasSlug');
+    });
+
+    it('rejects aliasName longer than 60 chars with 400', async () => {
+      const res = await request(server, 'PUT', '/api/projects/default', {
+        aliasName: 'x'.repeat(61),
+      });
+      expect(res.status).toBe(400);
+      expect(res.body.field).toBe('aliasName');
+    });
+
+    // ── Phase 4: autoSmokeEnabled toggle ──
+    it('accepts autoSmokeEnabled=true and persists it', async () => {
+      const res = await request(server, 'PUT', '/api/projects/default', {
+        autoSmokeEnabled: true,
+      });
+      expect(res.status).toBe(200);
+      expect(res.body.project.autoSmokeEnabled).toBe(true);
+      // Round-trip: GET returns the same flag
+      const get = await request(server, 'GET', '/api/projects/default');
+      expect(get.body.autoSmokeEnabled).toBe(true);
+    });
+
+    it('autoSmokeEnabled=false turns the flag off explicitly', async () => {
+      // first set it on
+      await request(server, 'PUT', '/api/projects/default', { autoSmokeEnabled: true });
+      // then set false
+      const res = await request(server, 'PUT', '/api/projects/default', {
+        autoSmokeEnabled: false,
+      });
+      expect(res.status).toBe(200);
+      expect(res.body.project.autoSmokeEnabled).toBe(false);
+    });
   });
 
   describe('DELETE /api/projects/:id', () => {

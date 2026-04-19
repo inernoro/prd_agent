@@ -21,6 +21,7 @@ import type { StateService } from './state.js';
 import type { WorktreeService } from './worktree.js';
 import type { IShellExecutor, CdsConfig, BranchEntry } from '../types.js';
 import type { GitHubAppClient } from './github-app-client.js';
+import { branchEvents, nowIso } from './branch-events.js';
 import path from 'node:path';
 import { StateService as StateServiceClass } from './state.js';
 
@@ -667,6 +668,33 @@ export class GitHubWebhookDispatcher {
       githubInstallationId: project.githubInstallationId ?? event.installation?.id,
     });
     this.deps.stateService.save();
+
+    // Live UI stream: notify any subscribed Dashboard about this change
+    // so the branch card animates in / refreshes without a page reload.
+    // `source: 'github-webhook'` drives the frontend to paint the GitHub
+    // Octocat icon (vs generic branch mark) in the card title.
+    const updatedEntry = this.deps.stateService.getBranch(branchId);
+    if (updatedEntry) {
+      if (created) {
+        branchEvents.emitEvent({
+          type: 'branch.created',
+          payload: { branch: updatedEntry, source: 'github-webhook', ts: nowIso() },
+        });
+      } else {
+        branchEvents.emitEvent({
+          type: 'branch.updated',
+          payload: {
+            branchId,
+            projectId: updatedEntry.projectId,
+            patch: {
+              githubRepoFullName: updatedEntry.githubRepoFullName,
+              githubCommitSha: updatedEntry.githubCommitSha,
+            },
+            ts: nowIso(),
+          },
+        });
+      }
+    }
 
     return {
       action: created ? 'branch-created' : 'branch-refreshed',

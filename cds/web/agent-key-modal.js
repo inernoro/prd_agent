@@ -180,7 +180,7 @@
         style: { fontSize: '12px', color: 'var(--text-secondary, #a0a0b0)', marginBottom: '10px', lineHeight: '1.55' },
       }, [
         '已为项目 ',
-        h('strong', { style: { color: 'var(--text-primary, #e8e8ec)' } }, [project ? project.name : projectId]),
+        h('strong', { style: { color: 'var(--text-primary, #e8e8ec)' } }, [project ? (project.aliasName || project.name) : projectId]),
         ' 签发一把 Agent Key。把下面这三行贴给 Claude / Codex / 任何 AI Agent，它们即可操作本项目（且只能操作本项目）。',
       ]);
       body.appendChild(intro);

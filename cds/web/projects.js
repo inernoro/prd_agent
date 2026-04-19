@@ -248,14 +248,16 @@ async function cdsToggleTabTitle() {
 }
 
 async function cdsOpenSelfUpdate() {
-  // 完整 modal 版本 —— 2026-04-18 恢复。
-  // 之前此函数是 v1 占位符（confirm + /api/self-update on current branch），
-  // 丢失了分支选择器。分支列表页的 openSelfUpdate 用 openConfigModal +
-  // combobox helpers（只在 app.js 里），不能共享。这里用 vanilla DOM
-  // 重实现一个小 modal：原生 <select> 列分支 + SSE 流式反馈。
+  // 2026-04-19 统一: 分支列表页和项目列表页 collapse 到同一个
+  // web/self-update.js 的 openSelfUpdateModal() —— 支持搜索 / 粘贴 /
+  // 强制同步,并且粘性底部按钮解决之前被截断的问题。
   //
-  // 本函数声明在文件顶层(IIFE 外),拿不到 IIFE 内的 escapeHtml,
-  // 所以这里自带一个本地实现避免 ReferenceError。
+  // 先尝试全局模块;未加载时回退到原内置实现,保证刷新不完全的客户端
+  // 也能继续工作。
+  if (typeof window.openSelfUpdateModal === 'function') {
+    return window.openSelfUpdateModal();
+  }
+  // ── Legacy fallback (极少触发:self-update.js 没加载时才走这里) ──
   const escapeHtml = (s) => String(s == null ? '' : s)
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
@@ -836,7 +838,7 @@ window.cdsDoLogout = cdsDoLogout;
     var cls = project.cloneStatus === 'error' ? 'cds-clone-btn retry' : 'cds-clone-btn';
     return (
       '<button class="' + cls + '" ' +
-      'onclick="handleCloneProject(event, \'' + escapeHtml(project.id) + '\', \'' + escapeHtml(project.name) + '\', \'' + escapeHtml(project.gitRepoUrl || '') + '\')">' +
+      'onclick="handleCloneProject(event, \'' + escapeHtml(project.id) + '\', \'' + escapeHtml(project.aliasName || project.name) + '\', \'' + escapeHtml(project.gitRepoUrl || '') + '\')">' +
       escapeHtml(label) +
       '</button>'
     );
@@ -880,7 +882,7 @@ window.cdsDoLogout = cdsDoLogout;
     var deleteBtn = project.legacyFlag
       ? ''
       : '<button class="cds-project-card-delete" title="删除项目" onclick="handleDeleteProject(event, ' +
-        "'" + escapeHtml(project.id) + "', '" + escapeHtml(project.name) + "')\">" +
+        "'" + escapeHtml(project.id) + "', '" + escapeHtml(project.aliasName || project.name) + "')\">" +
         '<svg width="14" height="14" viewBox="0 0 16 16" fill="#f43f5e" aria-hidden="true"><path d="M11 1.75V3h2.25a.75.75 0 010 1.5H2.75a.75.75 0 010-1.5H5V1.75C5 .784 5.784 0 6.75 0h2.5C10.216 0 11 .784 11 1.75zM4.496 6.675l.66 6.6a.25.25 0 00.249.225h5.19a.25.25 0 00.249-.225l.66-6.6a.75.75 0 111.492.149l-.66 6.6A1.748 1.748 0 0110.595 15h-5.19a1.75 1.75 0 01-1.741-1.575l-.66-6.6a.75.75 0 111.492-.15z"/></svg>' +
         '</button>';
     // 🔑 授权 Agent / 📦 下载 cds 技能 —— 两个 icon button 并排靠右上，
@@ -941,7 +943,7 @@ window.cdsDoLogout = cdsDoLogout;
       '<div class="cds-project-card-wrapper" style="position:relative">',
       '  <a class="cds-project-card" href="', href, '">',
       '    <div class="cds-project-card-head">',
-      '      <div class="cds-project-card-title">', escapeHtml(project.name), '</div>',
+      '      <div class="cds-project-card-title">', escapeHtml(project.aliasName || project.name), '</div>',
       '      ', cloneBadge,
       '    </div>',
       '    ', bodyHtml,

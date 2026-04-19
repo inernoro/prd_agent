@@ -2,17 +2,44 @@
 
 Agent 通过 CDS Bridge 操作预览页面时的强制规则。
 
+## 端点 URL 规约（2026-04-19 核对)
+
+> **分支 id 在 URL path 里,不在 body 里。** 历史上文档里有误把 branchId
+> 写进 body、URL 用 `POST /api/bridge/command` 的版本 —— 那个会返回
+> `Cannot POST /api/bridge/command` (404)。正确路径必须带 `:branchId`。
+
+| 用途 | 方法 | URL |
+|------|------|-----|
+| 启动 Bridge session | POST | `/api/bridge/start-session` (branchId 放 body) |
+| 结束 session | POST | `/api/bridge/end-session` (branchId 放 body) |
+| **发送命令** | **POST** | **`/api/bridge/command/:branchId`** (branchId 放 path) |
+| 读取页面 state | GET | `/api/bridge/state/:branchId` |
+| 握手请求(可选) | POST | `/api/bridge/handshake-request` (branchId 放 body) |
+| 查询握手状态 | GET | `/api/bridge/handshake-status/:id` |
+
+源码真值见 `cds/src/routes/bridge.ts`。若 AI Agent 遇到 "Cannot POST
+/api/bridge/..." 错误,先比对上表,多半是误把 branchId 写到了 body/URL
+的错位置。
+
 ## 强制规则
 
 ### 1. 操作前必须带 description
 
-每条 `POST /api/bridge/command` 必须包含 `description` 字段，用中文描述操作意图。用户在 Widget 操作面板中看到的就是这个文字。
+每条 `POST /api/bridge/command/:branchId` 必须包含 `description` 字段，用中文描述操作意图。用户在 Widget 操作面板中看到的就是这个文字。
 
-```json
-// ✅ 正确
-{"action":"click","params":{"index":6},"description":"点击「登录」按钮"}
-// ❌ 禁止
-{"action":"click","params":{"index":6}}
+```bash
+# ✅ 正确 (branchId 在 URL, description 在 body)
+curl -X POST "$CDS/api/bridge/command/$BRANCH_ID" \
+  -H "Content-Type: application/json" \
+  -d '{"action":"click","params":{"index":6},"description":"点击「登录」按钮"}'
+
+# ❌ 会 404 (branchId 漏了 URL)
+curl -X POST "$CDS/api/bridge/command" \
+  -d '{"branchId":"xxx","action":"click","params":{"index":6}}'
+
+# ❌ 缺 description,用户看不懂 AI 要干啥
+curl -X POST "$CDS/api/bridge/command/$BRANCH_ID" \
+  -d '{"action":"click","params":{"index":6}}'
 ```
 
 ### 2. 页面内跳转用 `spa-navigate`，禁止 `navigate`

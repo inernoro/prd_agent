@@ -116,6 +116,14 @@
           '<input id="settingsName" class="settings-input" type="text" maxlength="60" value="' + escapeHtml(p.name) + '">' +
         '</div>' +
         '<div class="settings-field">' +
+          '<label class="settings-field-label" for="settingsAliasName">显示别名</label>' +
+          '<input id="settingsAliasName" class="settings-input" type="text" maxlength="60" placeholder="留空则使用「名称」字段,用于替换导航/卡片/面包屑中显示的名字" value="' + escapeHtml(p.aliasName || '') + '">' +
+        '</div>' +
+        '<div class="settings-field">' +
+          '<label class="settings-field-label" for="settingsAliasSlug">别名 slug <span style="color:var(--text-muted);font-size:11px;font-weight:400">（预留,暂不影响路由）</span></label>' +
+          '<input id="settingsAliasSlug" class="settings-input mono" type="text" maxlength="50" placeholder="留空则使用项目原 slug; 未来可选作为新分支 id 前缀" value="' + escapeHtml(p.aliasSlug || '') + '">' +
+        '</div>' +
+        '<div class="settings-field">' +
           '<label class="settings-field-label" for="settingsDescription">描述</label>' +
           '<input id="settingsDescription" class="settings-input" type="text" maxlength="200" placeholder="可选,用一两句话说明这个项目是做什么的" value="' + escapeHtml(p.description || '') + '">' +
         '</div>' +
@@ -131,6 +139,11 @@
         '<div class="settings-field">' +
           '<label class="settings-field-label" for="settingsGitRepoUrl">Git 仓库地址</label>' +
           '<input id="settingsGitRepoUrl" class="settings-input mono" type="url" placeholder="https://github.com/your-org/repo.git" value="' + escapeHtml(p.gitRepoUrl || '') + '">' +
+        '</div>' +
+        '<div class="settings-field" style="display:flex;align-items:center;gap:10px;padding:8px 0">' +
+          '<input id="settingsAutoSmoke" type="checkbox" ' + (p.autoSmokeEnabled ? 'checked' : '') + ' style="width:16px;height:16px;cursor:pointer">' +
+          '<label for="settingsAutoSmoke" style="cursor:pointer;font-size:13px;color:var(--text-primary);font-weight:500">部署成功后自动冒烟测试</label>' +
+          '<span style="font-size:11px;color:var(--text-muted);margin-left:auto">需先在「环境变量」→ _global 作用域里存 <code style="font-size:10.5px;padding:1px 4px;background:var(--bg-code-block);border-radius:3px">AI_ACCESS_KEY</code></span>' +
         '</div>' +
         '<button type="button" id="settingsSaveBtn" class="settings-btn-primary" onclick="_settingsSave()">保存修改</button>' +
       '</div>' +
@@ -1172,21 +1185,34 @@
     if (!currentProject) return;
     var btn = document.getElementById('settingsSaveBtn');
     var name = document.getElementById('settingsName').value.trim();
+    var aliasNameEl = document.getElementById('settingsAliasName');
+    var aliasSlugEl = document.getElementById('settingsAliasSlug');
+    var aliasName = aliasNameEl ? aliasNameEl.value.trim() : '';
+    var aliasSlug = aliasSlugEl ? aliasSlugEl.value.trim() : '';
     var description = document.getElementById('settingsDescription').value.trim();
     var gitRepoUrl = document.getElementById('settingsGitRepoUrl').value.trim();
+    var autoSmokeEl = document.getElementById('settingsAutoSmoke');
+    var autoSmokeEnabled = autoSmokeEl ? !!autoSmokeEl.checked : false;
     if (!name) {
       showToast('项目名称不能为空');
       return;
     }
     if (btn) { btn.disabled = true; btn.textContent = '保存中…'; }
-    saveProject({ name: name, description: description, gitRepoUrl: gitRepoUrl })
+    saveProject({
+      name: name,
+      aliasName: aliasName,
+      aliasSlug: aliasSlug,
+      description: description,
+      gitRepoUrl: gitRepoUrl,
+      autoSmokeEnabled: autoSmokeEnabled,
+    })
       .then(function (result) {
         if (result.status === 200) {
           currentProject = result.body.project;
           showToast('已保存');
-          // Refresh the breadcrumb name
+          // Refresh the breadcrumb using alias-aware display name
           var nameEl = document.getElementById('breadcrumbProjectName');
-          if (nameEl) nameEl.textContent = currentProject.name;
+          if (nameEl) nameEl.textContent = currentProject.aliasName || currentProject.name;
         } else {
           showToast((result.body && result.body.message) || ('保存失败 (HTTP ' + result.status + ')'));
         }
@@ -1201,8 +1227,9 @@
 
   window._settingsDelete = function () {
     if (!currentProject || currentProject.legacyFlag) return;
+    var displayName = currentProject.aliasName || currentProject.name;
     var ok = window.confirm(
-      '确定要永久删除项目 “' + currentProject.name + '” 吗？\n\n' +
+      '确定要永久删除项目 “' + displayName + '” 吗？\n\n' +
       'Docker 网络会被一起移除，且不可撤销。'
     );
     if (!ok) return;
@@ -1237,7 +1264,7 @@
     .then(function (p) {
       currentProject = p;
       var nameEl = document.getElementById('breadcrumbProjectName');
-      if (nameEl) nameEl.textContent = p.name;
+      if (nameEl) nameEl.textContent = p.aliasName || p.name;
       // Apply hash-based tab
       var initialTab = (location.hash || '#general').slice(1) || 'general';
       switchSettingsTab(initialTab);

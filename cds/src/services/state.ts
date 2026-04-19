@@ -747,6 +747,8 @@ export class StateService {
       Pick<
         Project,
         | 'name'
+        | 'aliasName'
+        | 'aliasSlug'
         | 'description'
         | 'gitRepoUrl'
         | 'repoPath'
@@ -756,6 +758,7 @@ export class StateService {
         | 'githubInstallationId'
         | 'githubAutoDeploy'
         | 'githubLinkedAt'
+        | 'autoSmokeEnabled'
       >
     >,
   ): void {
