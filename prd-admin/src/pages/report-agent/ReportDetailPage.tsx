@@ -1,5 +1,6 @@
 import { MapSectionLoader } from '@/components/ui/VideoLoader';
 import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
+import { createPortal } from 'react-dom';
 import { useParams, useNavigate } from 'react-router-dom';
 import { ArrowLeft, MessageSquare, CornerDownRight, Trash2, Send, GitCompare, X, CheckCircle2 } from 'lucide-react';
 import { GlassCard } from '@/components/design/GlassCard';
@@ -35,7 +36,28 @@ export default function ReportDetailPage() {
   const [submitting, setSubmitting] = useState(false);
   const [viewSummary, setViewSummary] = useState<ReportViewSummary>({ count: 0, totalViewCount: 0, users: [] });
   const [showViewPopover, setShowViewPopover] = useState(false);
-  const viewPopoverRef = useRef<HTMLDivElement | null>(null);
+  const [viewPopoverAnchor, setViewPopoverAnchor] = useState<{ top: number; right: number } | null>(null);
+  const viewButtonRef = useRef<HTMLButtonElement | null>(null);
+
+  const handleToggleViewPopover = useCallback(() => {
+    setShowViewPopover((prev) => {
+      const next = !prev;
+      if (next && viewButtonRef.current) {
+        const rect = viewButtonRef.current.getBoundingClientRect();
+        setViewPopoverAnchor({ top: rect.bottom + 8, right: window.innerWidth - rect.right });
+      }
+      return next;
+    });
+  }, []);
+
+  useEffect(() => {
+    if (!showViewPopover) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setShowViewPopover(false);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [showViewPopover]);
   const currentUserId = useAuthStore((s) => s.user?.userId);
 
   // Return dialog state
@@ -147,17 +169,6 @@ export default function ReportDetailPage() {
     return map;
   }, [comments]);
 
-  useEffect(() => {
-    if (!showViewPopover) return;
-    const onMouseDown = (event: MouseEvent) => {
-      if (!viewPopoverRef.current?.contains(event.target as Node)) {
-        setShowViewPopover(false);
-      }
-    };
-    window.addEventListener('mousedown', onMouseDown);
-    return () => window.removeEventListener('mousedown', onMouseDown);
-  }, [showViewPopover]);
-
   if (!report) {
     return <MapSectionLoader />;
   }
@@ -206,75 +217,98 @@ export default function ReportDetailPage() {
               </div>
             </div>
           </div>
-          <div className="flex items-center gap-2 relative" ref={viewPopoverRef}>
+          <div className="flex items-center gap-2">
             <button
+              ref={viewButtonRef}
               className="text-[11px] px-2.5 py-1 rounded-full transition-opacity hover:opacity-85"
               style={{
                 color: 'rgba(220, 38, 38, 0.88)',
                 background: 'rgba(220, 38, 38, 0.08)',
                 border: '1px solid rgba(220, 38, 38, 0.2)',
               }}
-              onClick={() => setShowViewPopover((prev) => !prev)}
+              onClick={handleToggleViewPopover}
               title="查看浏览记录"
             >
               已阅 {viewSummary.count}
             </button>
-            {showViewPopover && (
-              <div
-                className="absolute top-[38px] right-0 z-30 w-[320px] rounded-xl p-3"
-                style={{
-                  background: 'var(--bg-primary)',
-                  border: '1px solid var(--border-primary)',
-                  boxShadow: '0 10px 28px rgba(0, 0, 0, 0.16)',
-                }}
-              >
-                <div className="flex items-center justify-between mb-2">
-                  <span className="text-[12px] font-medium" style={{ color: 'var(--text-primary)' }}>浏览记录</span>
-                  <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
-                    去重 {viewSummary.count} · 总计 {viewSummary.totalViewCount}
-                  </span>
-                </div>
-                {viewSummary.users.length === 0 ? (
-                  <div className="text-[12px]" style={{ color: 'var(--text-muted)' }}>暂无浏览记录</div>
-                ) : (
-                  <div className="max-h-[280px] overflow-auto space-y-1.5 pr-1">
-                    {viewSummary.users.map((user) => (
-                      <div
-                        key={user.userId}
-                        className="flex items-center justify-between rounded-lg px-2.5 py-1.5"
-                        style={{ background: 'var(--bg-secondary)' }}
-                      >
-                        <div className="min-w-0">
-                          <div className="flex items-center gap-1.5">
-                            <span className="text-[12px] truncate" style={{ color: 'var(--text-primary)' }}>{user.userName}</span>
-                            {user.isFrequent && (
-                              <span
-                                className="text-[10px] px-1.5 py-0.5 rounded-md"
-                                style={{ color: 'rgba(16, 185, 129, 0.9)', background: 'rgba(16, 185, 129, 0.1)' }}
-                              >
-                                常来
-                              </span>
-                            )}
-                          </div>
-                          <div className="text-[10px]" style={{ color: 'var(--text-muted)' }}>
-                            {new Date(user.lastViewedAt).toLocaleString('zh-CN', {
-                              year: 'numeric',
-                              month: '2-digit',
-                              day: '2-digit',
-                              hour: '2-digit',
-                              minute: '2-digit',
-                              second: '2-digit',
-                            })}
-                          </div>
-                        </div>
-                        <span className="text-[11px]" style={{ color: 'var(--text-secondary)' }}>
-                          {user.viewCount} 次
-                        </span>
-                      </div>
-                    ))}
+            {showViewPopover && viewPopoverAnchor && createPortal(
+              <>
+                <div
+                  className="fixed inset-0"
+                  style={{ zIndex: 100 }}
+                  onClick={() => setShowViewPopover(false)}
+                />
+                <div
+                  className="rounded-xl"
+                  style={{
+                    position: 'fixed',
+                    top: viewPopoverAnchor.top,
+                    right: Math.max(8, viewPopoverAnchor.right),
+                    width: 320,
+                    maxHeight: 360,
+                    minHeight: 0,
+                    zIndex: 101,
+                    display: 'flex',
+                    flexDirection: 'column',
+                    background: 'var(--bg-primary)',
+                    border: '1px solid var(--border-primary)',
+                    boxShadow: '0 10px 28px rgba(0, 0, 0, 0.16)',
+                    padding: 12,
+                  }}
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  <div className="flex items-center justify-between mb-2 shrink-0">
+                    <span className="text-[12px] font-medium" style={{ color: 'var(--text-primary)' }}>浏览记录</span>
+                    <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
+                      去重 {viewSummary.count} · 总计 {viewSummary.totalViewCount}
+                    </span>
                   </div>
-                )}
-              </div>
+                  {viewSummary.users.length === 0 ? (
+                    <div className="text-[12px] shrink-0" style={{ color: 'var(--text-muted)' }}>暂无浏览记录</div>
+                  ) : (
+                    <div
+                      className="space-y-1.5 pr-1"
+                      style={{ flex: 1, minHeight: 0, overflowY: 'auto', overscrollBehavior: 'contain' }}
+                    >
+                      {viewSummary.users.map((user) => (
+                        <div
+                          key={user.userId}
+                          className="flex items-center justify-between rounded-lg px-2.5 py-1.5"
+                          style={{ background: 'var(--bg-secondary)' }}
+                        >
+                          <div className="min-w-0">
+                            <div className="flex items-center gap-1.5">
+                              <span className="text-[12px] truncate" style={{ color: 'var(--text-primary)' }}>{user.userName}</span>
+                              {user.isFrequent && (
+                                <span
+                                  className="text-[10px] px-1.5 py-0.5 rounded-md"
+                                  style={{ color: 'rgba(16, 185, 129, 0.9)', background: 'rgba(16, 185, 129, 0.1)' }}
+                                >
+                                  常来
+                                </span>
+                              )}
+                            </div>
+                            <div className="text-[10px]" style={{ color: 'var(--text-muted)' }}>
+                              {new Date(user.lastViewedAt).toLocaleString('zh-CN', {
+                                year: 'numeric',
+                                month: '2-digit',
+                                day: '2-digit',
+                                hour: '2-digit',
+                                minute: '2-digit',
+                                second: '2-digit',
+                              })}
+                            </div>
+                          </div>
+                          <span className="text-[11px]" style={{ color: 'var(--text-secondary)' }}>
+                            {user.viewCount} 次
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </>,
+              document.body,
             )}
             {(report.status === WeeklyReportStatus.Submitted || report.status === WeeklyReportStatus.Reviewed) && (
               <>
