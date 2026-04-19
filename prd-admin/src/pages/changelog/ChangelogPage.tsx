@@ -339,8 +339,8 @@ export default function ChangelogPage() {
 
         {totalCurrentWeek > 0 && (
           <div className="flex flex-col gap-5">
-            {currentWeekByDate.map(([date, entries]) => (
-              <div key={date}>
+            {currentWeekByDate.map(([date, entries], dateIdx) => (
+              <div key={`${date}-${dateIdx}`}>
                 <div
                   className="flex items-center gap-2 mb-2 text-[11px] font-mono"
                   style={{ color: 'var(--text-muted)' }}
@@ -451,8 +451,8 @@ export default function ChangelogPage() {
 
                   {visibleDays.length > 0 && (
                     <div className="flex flex-col gap-3">
-                      {visibleDays.map((day) => (
-                        <div key={day.date}>
+                      {visibleDays.map((day, dayIdx) => (
+                        <div key={`${day.date}-${dayIdx}`}>
                           <div
                             className="flex items-center gap-2 mb-1.5 text-[11px] font-mono"
                             style={{ color: 'var(--text-muted)' }}

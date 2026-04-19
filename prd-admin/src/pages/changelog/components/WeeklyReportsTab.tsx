@@ -7,9 +7,11 @@ import {
   createDocumentStore, 
   addGitHubSubscription,
   listDocumentEntries,
-  triggerSync
+  triggerSync,
+  getDocumentContent
 } from '@/services';
 import type { DocumentStoreWithPreview, DocumentEntry } from '@/services/contracts/documentStore';
+import type { EntryPreview } from '@/components/doc-browser/fileTypeRegistry';
 import { toast } from '@/lib/toast';
 
 const STORE_NAME = 'map周报';
@@ -18,6 +20,9 @@ export function WeeklyReportsTab() {
   const [store, setStore] = useState<DocumentStoreWithPreview | null>(null);
   const [subEntry, setSubEntry] = useState<DocumentEntry | null>(null);
   const [loading, setLoading] = useState(true);
+  
+  const [entries, setEntries] = useState<DocumentEntry[]>([]);
+  const [selectedEntryId, setSelectedEntryId] = useState<string | undefined>();
   
   // Setup inputs
   const [repoUrl, setRepoUrl] = useState('');
@@ -34,9 +39,10 @@ export function WeeklyReportsTab() {
         if (found) {
           setStore(found);
           // 查找该知识库下面的 github 订阅条目，为了支持“手动更新”按钮
-          const er = await listDocumentEntries(found.id, 1, 10);
+          const er = await listDocumentEntries(found.id, 1, 500, undefined, undefined, undefined, true);
           if (er.success) {
-            const ghEntry = er.data.items.find(e => e.sourceType === 'github');
+            setEntries(er.data.items);
+            const ghEntry = er.data.items.find(e => e.sourceType === 'github_directory');
             if (ghEntry) setSubEntry(ghEntry);
           }
         }
@@ -105,6 +111,16 @@ export function WeeklyReportsTab() {
     // 防止快速狂点
     setTimeout(() => setSyncing(false), 2000);
   };
+
+  const loadContent = useCallback(async (entryId: string): Promise<EntryPreview | null> => {
+    const res = await getDocumentContent(entryId);
+    if (!res.success) return null;
+    return {
+      text: res.data.hasContent ? res.data.content : null,
+      fileUrl: res.data.fileUrl,
+      contentType: res.data.contentType,
+    };
+  }, []);
 
   if (loading) {
     return (
@@ -248,7 +264,12 @@ export function WeeklyReportsTab() {
           boxShadow: 'inset 0 0 40px rgba(0,0,0,0.2)'
         }}
       >
-        <DocBrowser storeId={store.id} />
+        <DocBrowser 
+          entries={entries}
+          selectedEntryId={selectedEntryId}
+          onSelectEntry={setSelectedEntryId}
+          loadContent={loadContent}
+        />
       </div>
     </div>
   );
