@@ -1032,13 +1032,32 @@ button.text-btn:hover { color: var(--accent); }
 }
 
 @media (min-width: 768px) {
+  /* Masonry-style layout via CSS multi-column.
+     Grid layout forces every cell in a row to the tallest card's height,
+     leaving ugly vertical gaps when cards differ in tag/badge count.
+     Multi-column flows cards vertically down each column, filling gaps
+     automatically. Reading order changes from left-right-top-bottom to
+     top-bottom-left-right — acceptable since users sort by most-recent,
+     newest still ends up at column 1 top which is the eye's first anchor.
+     User feedback #450. */
   .branch-list {
-    display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
-    align-items: start;
-    gap: 16px;
+    column-count: 3;
+    column-gap: 16px;
+    column-fill: balance;
+    /* Cards must explicitly break-inside:avoid or they'd split across columns. */
+  }
+  .branch-list .branch-card,
+  .branch-list > * {
+    break-inside: avoid;
+    page-break-inside: avoid;  /* legacy */
+    margin-bottom: 16px;
+    display: inline-block;
+    width: 100%;
   }
 }
+@media (min-width: 1280px) { .branch-list { column-count: 3; } }
+@media (min-width: 1680px) { .branch-list { column-count: 4; } }
+@media (min-width: 768px) and (max-width: 1100px) { .branch-list { column-count: 2; } }
 
 .branch-card {
   display: flex; flex-direction: column; gap: 0;
@@ -1312,6 +1331,13 @@ button.text-btn:hover { color: var(--accent); }
 .branch-card-ports {
   display: flex; gap: 6px; flex-wrap: wrap; align-items: center;
   padding-top: 2px;
+}
+/* Unified chip row — replaces separate ports / github / pinned rows so
+   every branch card has exactly ONE chip strip,eliminating the "some
+   cards have 3 rows, some have 1" inconsistency (#450 user feedback). */
+.branch-card-chips {
+  display: flex; gap: 6px; flex-wrap: wrap; align-items: center;
+  padding-top: 4px;
 }
 
 /* Favorite toggle — inline, minimal */

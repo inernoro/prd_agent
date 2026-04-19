@@ -253,6 +253,15 @@ async function cdsOpenSelfUpdate() {
   // 丢失了分支选择器。分支列表页的 openSelfUpdate 用 openConfigModal +
   // combobox helpers（只在 app.js 里），不能共享。这里用 vanilla DOM
   // 重实现一个小 modal：原生 <select> 列分支 + SSE 流式反馈。
+  //
+  // 本函数声明在文件顶层(IIFE 外),拿不到 IIFE 内的 escapeHtml,
+  // 所以这里自带一个本地实现避免 ReferenceError。
+  const escapeHtml = (s) => String(s == null ? '' : s)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
   let info;
   try {
     const r = await fetch('/api/self-branches', { credentials: 'same-origin' });
@@ -302,9 +311,12 @@ async function cdsOpenSelfUpdate() {
     '  <div id="_plSuProgress" style="display:none;margin-top:12px;border:1px solid var(--card-border);border-radius:6px;padding:10px;background:var(--bg-base);font-family:monospace;font-size:11px;max-height:240px;overflow-y:auto;line-height:1.55"></div>',
     '  <div id="_plSuStatus" style="margin-top:8px;font-size:12px;color:var(--text-muted);min-height:14px"></div>',
     '</div>',
-    '<div style="flex-shrink:0;padding:12px 18px;border-top:1px solid var(--card-border);display:flex;gap:8px;justify-content:flex-end">',
-    '  <button id="_plSuCancel" style="padding:7px 14px;border-radius:6px;border:1px solid var(--card-border);background:transparent;color:var(--text-primary);cursor:pointer;font-size:12px">取消</button>',
-    '  <button id="_plSuGo" style="padding:7px 14px;border-radius:6px;border:none;background:var(--accent,#10b981);color:#fff;cursor:pointer;font-size:12px;font-weight:600">拉取并重启</button>',
+    '<div style="flex-shrink:0;padding:12px 18px;border-top:1px solid var(--card-border);display:flex;gap:8px;justify-content:space-between;align-items:center;flex-wrap:wrap">',
+    '  <button id="_plSuForce" title="git fetch + reset --hard origin/<branch> + 清 dist 缓存 + restart. 用于 self-update 因本地分叉 merge 而丢远端改动时救急" style="padding:7px 12px;border-radius:6px;border:1px solid rgba(245,158,11,0.4);background:transparent;color:var(--amber,#f59e0b);cursor:pointer;font-size:12px">💥 强制同步 (hard-reset)</button>',
+    '  <div style="display:flex;gap:8px">',
+    '    <button id="_plSuCancel" style="padding:7px 14px;border-radius:6px;border:1px solid var(--card-border);background:transparent;color:var(--text-primary);cursor:pointer;font-size:12px">取消</button>',
+    '    <button id="_plSuGo" style="padding:7px 14px;border-radius:6px;border:none;background:var(--accent,#10b981);color:#fff;cursor:pointer;font-size:12px;font-weight:600">拉取并重启</button>',
+    '  </div>',
     '</div>',
   ].join('');
 
@@ -317,20 +329,25 @@ async function cdsOpenSelfUpdate() {
   const esc = (ev) => { if (ev.key === 'Escape') { close(); document.removeEventListener('keydown', esc); } };
   document.addEventListener('keydown', esc);
 
-  dlg.querySelector('#_plSuGo').onclick = async () => {
+  // Shared SSE runner — both 拉取并重启 (self-update) and 强制同步
+  // (self-force-sync) stream the same {event, data:{step,status,title}}
+  // envelope. Extracted so the "Force" button reuses all the UI glue.
+  async function runSelfSync(endpoint, label) {
     const target = dlg.querySelector('#_plSuBranch').value;
     const progress = dlg.querySelector('#_plSuProgress');
     const status = dlg.querySelector('#_plSuStatus');
     const goBtn = dlg.querySelector('#_plSuGo');
+    const forceBtn = dlg.querySelector('#_plSuForce');
     goBtn.disabled = true;
-    goBtn.textContent = '更新中…';
+    forceBtn.disabled = true;
+    goBtn.textContent = label + '中…';
     progress.style.display = 'block';
     progress.innerHTML = '';
-    status.textContent = '连接 /api/self-update …';
+    status.textContent = '连接 ' + endpoint + ' …';
 
     let resp;
     try {
-      resp = await fetch('/api/self-update', {
+      resp = await fetch(endpoint, {
         method: 'POST', credentials: 'same-origin',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ branch: target }),
@@ -338,12 +355,14 @@ async function cdsOpenSelfUpdate() {
     } catch (e) {
       status.innerHTML = '<span style="color:var(--red)">✗ ' + escapeHtml(e.message) + '</span>';
       goBtn.disabled = false;
+      forceBtn.disabled = false;
       goBtn.textContent = '重试';
       return;
     }
     if (!resp.ok) {
       status.innerHTML = '<span style="color:var(--red)">✗ HTTP ' + resp.status + '</span>';
       goBtn.disabled = false;
+      forceBtn.disabled = false;
       goBtn.textContent = '重试';
       return;
     }
@@ -372,23 +391,25 @@ async function cdsOpenSelfUpdate() {
           else if (line.startsWith('data: ')) {
             try {
               const d = JSON.parse(line.slice(6));
-              const label = d.step || curEvent;
               const title = d.title || d.message || '';
+              const stepLabel = d.step || curEvent;
               const color = d.status === 'done' ? 'var(--green)'
                 : d.status === 'error' ? 'var(--red)'
+                : d.status === 'warning' ? 'var(--amber,#f59e0b)'
                 : curEvent === 'done' ? 'var(--green)'
                 : curEvent === 'error' ? 'var(--red)'
                 : 'var(--text-secondary)';
-              progress.innerHTML += '<div style="color:' + color + '">[' + escapeHtml(label) + '] ' + escapeHtml(title) + '</div>';
+              progress.innerHTML += '<div style="color:' + color + '">[' + escapeHtml(stepLabel) + '] ' + escapeHtml(title) + '</div>';
               progress.scrollTop = progress.scrollHeight;
               if (curEvent === 'done') {
-                status.innerHTML = '<span style="color:var(--green)">✓ 更新已触发，CDS 正在重启… 5s 后自动刷新页面</span>';
+                status.innerHTML = '<span style="color:var(--green)">✓ ' + label + '已触发，CDS 正在重启… 5s 后自动刷新页面</span>';
                 done = true;
                 setTimeout(() => location.reload(), 5000);
               }
               if (curEvent === 'error') {
                 status.innerHTML = '<span style="color:var(--red)">✗ ' + escapeHtml(title) + '</span>';
                 goBtn.disabled = false;
+                forceBtn.disabled = false;
                 goBtn.textContent = '重试';
                 done = true;
               }
@@ -400,6 +421,43 @@ async function cdsOpenSelfUpdate() {
         break;
       }
     }
+    // Stream ended without an explicit `done` event — almost always
+    // because CDS's restart killed the SSE mid-flight. Show a "正在
+    // 重启" state and poll /healthz until CDS responds, then reload.
+    // Without this fallback the button stays "更新中…" forever.
+    if (!done) {
+      status.innerHTML = '<span style="color:var(--amber,#f59e0b)">⌛ CDS 正在重启，等待端口就绪…</span>';
+      goBtn.textContent = '等待重启';
+      var tries = 0;
+      var poll = function () {
+        tries++;
+        fetch('/healthz', { credentials: 'same-origin', cache: 'no-store' })
+          .then(function (r) { return r.ok ? r.json() : null; })
+          .then(function (h) {
+            if (h && h.ok) {
+              status.innerHTML = '<span style="color:var(--green)">✓ CDS 已重启,刷新页面...</span>';
+              setTimeout(function () { location.reload(); }, 600);
+            } else if (tries < 40) {
+              setTimeout(poll, 1500);
+            } else {
+              status.innerHTML = '<span style="color:var(--red)">✗ 重启超时,请手动刷新页面确认</span>';
+              goBtn.disabled = false;
+              forceBtn.disabled = false;
+              goBtn.textContent = '重试';
+            }
+          })
+          .catch(function () { if (tries < 40) setTimeout(poll, 1500); });
+      };
+      setTimeout(poll, 2000);
+    }
+  }
+
+  dlg.querySelector('#_plSuGo').onclick = () => runSelfSync('/api/self-update', '更新');
+  dlg.querySelector('#_plSuForce').onclick = () => {
+    if (!window.confirm(
+      '💥 强制同步会丢弃 host 上所有本地未推送的提交,硬重置到 origin/<当前选中分支>,再清 dist 缓存 + 重启。\n\n用于 self-update 的 git pull 合并错误导致代码没更新的场景。\n\n确定继续?'
+    )) return;
+    runSelfSync('/api/self-force-sync', '强制同步');
   };
 }
 
@@ -608,6 +666,43 @@ window.cdsDoLogout = cdsDoLogout;
     var lastLabel = project.lastDeployedAt
       ? '最近部署 ' + formatRelative(project.lastDeployedAt)
       : '尚未部署';
+    // GitHub link chip — same pill style as the other stats so the strip
+    // stays homogeneous. CANNOT use a nested <a> (the whole card is already
+    // an <a>; nested <a> is invalid HTML and browsers silently close the
+    // outer <a>, breaking the card layout — the chip renders as a huge
+    // circle). Use <span> + onclick that calls window.open.
+    var ghChip = '';
+    if (project.githubRepoFullName) {
+      var repo = project.githubRepoFullName;
+      // Strict GitHub repo name pattern: owner/repo where each side is
+      // [A-Za-z0-9._-]+. GitHub's actual rules are a bit more lenient
+      // but this covers every real repo and rejects anything containing
+      // shell/JS meta-characters. If a malicious state.json gets a
+      // crafted repoFullName (e.g. "owner/x'+alert(1)+'"), we refuse
+      // to render the chip rather than inject it into an onclick JS
+      // literal. Caught by Cursor Bugbot #450 round 5.
+      if (!/^[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+$/.test(repo)) {
+        ghChip = '';
+      } else {
+      var autoOff = project.githubAutoDeploy === false;
+      var ghTitle = autoOff
+        ? 'GitHub: ' + repo + ' (自动部署已关闭)'
+        : 'GitHub: ' + repo + ' (push 自动部署)';
+      // Build the URL with encodeURIComponent on each path segment —
+      // unlike encodeURI, encodeURIComponent encodes single quotes
+      // (`%27`), eliminating the onclick JS-string-literal injection.
+      var ghUrl = 'https://github.com/' + repo.split('/').map(encodeURIComponent).join('/');
+      ghChip =
+        '<span class="cds-stat cds-stat-github" role="link" tabindex="0"' +
+          ' onclick="event.preventDefault();event.stopPropagation();window.open(\'' + escapeHtml(ghUrl).replace(/'/g, '&#39;') + '\',\'_blank\',\'noopener\')"' +
+          ' title="' + escapeHtml(ghTitle) + '"' +
+          ' style="cursor:pointer' + (autoOff ? ';opacity:0.55' : '') + '">' +
+          '<svg viewBox="0 0 16 16" fill="currentColor" style="width:12px;height:12px;flex-shrink:0"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>' +
+          escapeHtml(repo.split('/').slice(-1)[0] || repo) +
+          (autoOff ? ' <span style="opacity:0.7">(off)</span>' : '') +
+        '</span>';
+      }
+    }
     return [
       '<div class="cds-card-stats">',
       '  <span class="cds-stat" title="分支总数">',
@@ -630,6 +725,7 @@ window.cdsDoLogout = cdsDoLogout;
       '    </svg>',
       '    ' + escapeHtml(lastLabel),
       '  </span>',
+      ghChip,
       '</div>',
     ].join('');
   }
@@ -701,6 +797,10 @@ window.cdsDoLogout = cdsDoLogout;
   //   cloning  — SSE in progress
   //   ready    — clone finished, usable for deploy
   //   error    — last clone attempt failed (hover → cloneError)
+  //
+  // GitHub link badge for bound projects lives inside renderStatsStrip
+  // (cds-stat-github chip). The old standalone renderGithubBadge helper
+  // was removed after the strip-integrated version replaced it.
   function renderCloneBadge(project) {
     if (project.legacyFlag) {
       return '<span class="cds-legacy-badge">Legacy</span>';
@@ -809,6 +909,9 @@ window.cdsDoLogout = cdsDoLogout;
       ((services && services.infra && services.infra.length) || 0);
     var envLabel = project.legacyFlag ? 'production' : 'production';
     var cloneBadge = renderCloneBadge(project);
+    // GitHub link: rendered INSIDE renderStatsStrip as a 4th chip
+    // (cds-stat-github) so the badge shares the same pill style as
+    // the other stats and doesn't need its own row.
     var cloneBtn = renderCloneButton(project);
     // Show the clone error inline under the service strip when the
     // last attempt failed AND we're not already using the full-size

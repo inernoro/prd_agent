@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import type { CdsConfig, CdsMode } from './types.js';
+import type { CdsConfig, CdsMode, GitHubAppConfig } from './types.js';
 
 function parseCsv(value: string | undefined): string[] | undefined {
   if (!value) return undefined;
@@ -16,6 +16,35 @@ function resolveMode(): CdsMode {
 
 const configuredRootDomains = parseCsv(process.env.CDS_ROOT_DOMAINS || process.env.ROOT_DOMAINS);
 const primaryRootDomain = configuredRootDomains?.[0];
+
+/**
+ * Resolve the GitHub App credentials from env vars so operators can keep
+ * the PEM private key in `.cds.env` (produced by `exec_cds.sh`) without
+ * hand-editing cds.config.json. Returns undefined when any required field
+ * is missing — the webhook router and deploy-side check-run hooks both
+ * tolerate the dormant state and short-circuit to a friendly 503 / no-op.
+ *
+ * Env contract:
+ *   CDS_GITHUB_APP_ID              — numeric App ID (required)
+ *   CDS_GITHUB_APP_PRIVATE_KEY     — PEM, literal `\n` tolerated (required)
+ *   CDS_GITHUB_WEBHOOK_SECRET      — HMAC-SHA256 secret (required)
+ *   CDS_GITHUB_APP_SLUG            — optional, only for rendering install URL
+ */
+function resolveGitHubApp(): GitHubAppConfig | undefined {
+  const appId = process.env.CDS_GITHUB_APP_ID?.trim();
+  const rawKey = process.env.CDS_GITHUB_APP_PRIVATE_KEY?.trim();
+  const webhookSecret = process.env.CDS_GITHUB_WEBHOOK_SECRET?.trim();
+  if (!appId || !rawKey || !webhookSecret) return undefined;
+  // PEM keys embedded in env vars often arrive with literal `\n` instead of
+  // real newlines. Accept both so `.cds.env` and docker-compose env work.
+  const privateKey = rawKey.includes('\\n') ? rawKey.replace(/\\n/g, '\n') : rawKey;
+  return {
+    appId,
+    privateKey,
+    webhookSecret,
+    appSlug: process.env.CDS_GITHUB_APP_SLUG?.trim() || undefined,
+  };
+}
 
 function resolveBootstrapToken(): { value: string; expiresAt: string } | undefined {
   const value = process.env.CDS_BOOTSTRAP_TOKEN;
@@ -83,6 +112,14 @@ const DEFAULT_CONFIG: CdsConfig = {
     diskWarnPercent: 80,
     sweepIntervalSeconds: 3600,
   },
+  // GitHub App credentials for the Railway-style check-run integration.
+  // Absent when any of CDS_GITHUB_APP_ID / _PRIVATE_KEY / _WEBHOOK_SECRET
+  // is unset — the webhook route returns 503 not_configured in that case.
+  githubApp: resolveGitHubApp(),
+  // Public-facing base URL used for GitHub check-run `details_url` and the
+  // GitHub App install redirect. Falls back to http://localhost:<masterPort>
+  // at call-sites when unset so local-dev setups still function.
+  publicBaseUrl: process.env.CDS_PUBLIC_BASE_URL?.trim() || undefined,
 };
 
 export function loadConfig(configPath?: string): CdsConfig {

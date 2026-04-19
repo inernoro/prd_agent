@@ -274,6 +274,43 @@ export interface BranchEntry {
    * Absent / empty = pure inheritance (legacy behavior).
    */
   profileOverrides?: Record<string, BuildProfileOverride>;
+  /**
+   * GitHub Checks integration — populated when the branch was
+   * auto-created by a webhook push or the user linked a repo to the
+   * owning project. Used to post check-run status back to GitHub
+   * (PR "Checks" panel) as the branch deploys.
+   *
+   * - `githubRepoFullName`: "owner/repo" copied from the project at
+   *   webhook-dispatch time. Cached on the branch so a project re-link
+   *   doesn't break ongoing check runs.
+   * - `githubCommitSha`: the head SHA that triggered the current deploy.
+   *   Required by GitHub's POST /check-runs.
+   * - `githubCheckRunId`: the id returned by POST /check-runs so the
+   *   deploy-complete path can PATCH the same run instead of creating
+   *   a new one.
+   * - `githubInstallationId`: the GitHub App install id that has write
+   *   access to the repo. Cached so check-run updates don't need to
+   *   walk back through the project record.
+   */
+  githubRepoFullName?: string;
+  githubCommitSha?: string;
+  githubCheckRunId?: number;
+  githubInstallationId?: number;
+  /**
+   * PR number this branch is associated with (via webhook `pull_request`
+   * event). Populated when CDS first sees a PR opened/reopened from this
+   * branch. Used so subsequent deploys can refresh the bot comment
+   * instead of duplicating it.
+   */
+  githubPrNumber?: number;
+  /**
+   * Id of the Railway-style preview-URL bot comment posted on the PR.
+   * Set when the first PR-opened event is handled and the comment is
+   * created; on later push events the webhook dispatcher will PATCH the
+   * same comment instead of creating a new one, so the PR thread stays
+   * quiet.
+   */
+  githubPreviewCommentId?: number;
 }
 
 /** State of a single service (one build profile instance) within a branch */
@@ -585,6 +622,27 @@ export interface Project {
    * + auth contract.
    */
   agentKeys?: AgentKey[];
+  /**
+   * GitHub Checks integration — when set, pushes to the linked
+   * repository auto-create/update CDS branches and post back to
+   * GitHub as a "CDS Deploy" check run (shown in the PR "Checks"
+   * panel, Railway-style).
+   *
+   * - `githubRepoFullName`: "owner/repo" (case-preserved as returned
+   *   by the GitHub App installation_repositories event).
+   * - `githubInstallationId`: numeric install id granted to the CDS
+   *   GitHub App for this project's org/user. Required to mint
+   *   installation access tokens.
+   * - `githubAutoDeploy`: when true (default when the link is created)
+   *   every push auto-creates+deploys a matching CDS branch. When
+   *   false, CDS still posts check runs for branches created manually
+   *   but won't trigger deploys from webhooks.
+   * - `githubLinkedAt`: ISO timestamp of the most recent link event.
+   */
+  githubRepoFullName?: string;
+  githubInstallationId?: number;
+  githubAutoDeploy?: boolean;
+  githubLinkedAt?: string;
 }
 
 /**
@@ -990,6 +1048,48 @@ export interface CdsConfig {
    * TTL cleanup (disk warnings still work if enabled).
    */
   janitor?: JanitorConfig;
+  /**
+   * GitHub App credentials powering the Railway-style check-run
+   * integration. When every field is set, CDS:
+   *   1. Accepts webhook events at POST /api/github/webhook
+   *   2. Auto-creates+deploys branches for pushes on linked projects
+   *   3. Posts "CDS Deploy" check runs back to GitHub so the PR's
+   *      Checks panel shows the preview URL + success/failure
+   *
+   * Partially-set config (e.g. appId without privateKey) leaves the
+   * feature dormant — the webhook route returns 503 not_configured
+   * and deploys skip check-run creation silently.
+   */
+  githubApp?: GitHubAppConfig;
+  /**
+   * Public base URL of this CDS install (e.g. "https://cds.miduo.org").
+   * Used as the `details_url` in GitHub check runs and for the
+   * GitHub App install-callback redirect. Falls back to the
+   * CDS_PUBLIC_BASE_URL env var consumed by auth.ts.
+   */
+  publicBaseUrl?: string;
+}
+
+/**
+ * GitHub App credentials. `appId` + `privateKey` together mint
+ * installation access tokens (RS256 JWT → POST /app/installations/
+ * {id}/access_tokens), which write check runs. `webhookSecret` is
+ * the HMAC-SHA256 secret configured in the App settings and used to
+ * verify X-Hub-Signature-256 on every incoming webhook.
+ *
+ * `appSlug` is the lowercase App slug (e.g. "cds-deploy") used only
+ * for rendering the install URL on the Settings page. Optional
+ * because GitHub doesn't require it for any API call — it's UI sugar.
+ */
+export interface GitHubAppConfig {
+  /** Numeric App ID from https://github.com/settings/apps/<slug>. */
+  appId: string;
+  /** RSA private key in PEM format (BEGIN RSA PRIVATE KEY …). */
+  privateKey: string;
+  /** Webhook signing secret configured in the App settings. */
+  webhookSecret: string;
+  /** Lowercase App slug, used only for `https://github.com/apps/<slug>/installations/new` links. */
+  appSlug?: string;
 }
 
 /** Shell execution result */

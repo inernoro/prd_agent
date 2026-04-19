@@ -9,6 +9,9 @@ import { createProjectsRouter } from './routes/projects.js';
 import { createPendingImportRouter } from './routes/pending-import.js';
 import { createStorageModeRouter, type StorageModeContext } from './routes/storage-mode.js';
 import { createGithubOAuthRouter } from './routes/github-oauth.js';
+import { createGithubWebhookRouter } from './routes/github-webhook.js';
+import { GitHubAppClient } from './services/github-app-client.js';
+import { CheckRunRunner } from './services/check-run-runner.js';
 import { createAuthRouter } from './routes/auth.js';
 import { createWorkspacesRouter } from './routes/workspaces.js';
 import { MemoryAuthStore } from './infra/auth-store/memory-store.js';
@@ -143,6 +146,9 @@ function resolveApiLabel(method: string, path: string): string {
     'POST /bridge/navigate-request': 'AI 请求用户导航',
     'POST /bridge/start-session': 'AI 开始操作页面',
     'POST /bridge/end-session': 'AI 操作完成',
+    'POST /github/webhook': 'GitHub 推送 Webhook',
+    'GET /github/app': '查询 GitHub App 配置',
+    'GET /github/installations': '列出 GitHub App 安装',
   };
 
   const key = `${method} ${p}`;
@@ -301,7 +307,15 @@ function resolveAiSession(req: express.Request, stateService?: StateService): Ap
 export function createServer(deps: ServerDeps): express.Express {
   const app = express();
   app.set('etag', false);            // Disable ETag — prevents 304 on API polling (CDS is a dev tool, caching is misleading)
-  app.use(express.json());
+  // `verify` is called with the raw buffer before body-parser parses it.
+  // We stash the bytes on req.rawBody so the GitHub webhook route can
+  // HMAC-verify the exact payload GitHub signed (re-serialized JSON
+  // would produce a different hash and fail signature checks).
+  app.use(express.json({
+    verify: (req, _res, buf) => {
+      (req as { rawBody?: Buffer }).rawBody = buf;
+    },
+  }));
 
   const webDir = path.resolve(__dirname, '..', 'web');
 
@@ -569,6 +583,9 @@ export function createServer(deps: ServerDeps): express.Express {
     app.use((req, res, next) => {
       if (req.path === '/login.html' || req.path === '/api/login' || req.path === '/api/logout') return next();
       if (req.path.startsWith('/api/ai/request-access') || req.path.startsWith('/api/ai/request-status/')) return next();
+      // GitHub webhook is public — it's authenticated by HMAC signature
+      // verification inside the handler, not by the cookie/token middleware.
+      if (req.method === 'POST' && req.path === '/api/github/webhook') return next();
       if (/\.(css|js|ico|png|svg|woff2?)$/i.test(req.path)) return next();
       // Allow internal requests from widget proxy (/_cds/ → master)
       if (req.headers['x-cds-internal'] === '1') return next();
@@ -890,6 +907,44 @@ export function createServer(deps: ServerDeps): express.Express {
   // Mounted at /api so the nested /projects/:id/pending-import path works
   // alongside the rest of the projects router.
   app.use('/api', createPendingImportRouter({ stateService: deps.stateService }));
+  // ── GitHub App client (optional) ──
+  //
+  // Instantiate once and share between the webhook router and the branch
+  // router. Absent when CDS_GITHUB_APP_* env vars are not set — both
+  // consumers handle `undefined` gracefully (routes return 503, deploys
+  // skip check-run creation).
+  const githubAppClient = deps.config.githubApp
+    ? new GitHubAppClient({
+        appId: deps.config.githubApp.appId,
+        privateKey: deps.config.githubApp.privateKey,
+        appSlug: deps.config.githubApp.appSlug,
+      })
+    : undefined;
+
+  // ── Reconcile orphan check-runs on boot ──
+  //
+  // self-update / self-force-sync / crash can leave check-runs in
+  // `status=in_progress` forever because the finalize() PATCH was
+  // interrupted by restart. GitHub's PR Checks panel then shows every
+  // commit in "pending / 准备状态" indefinitely even though CDS has
+  // long since finished deploying.
+  //
+  // Walk every branch with a stamped checkRunId and PATCH to
+  // conclusion=neutral (grey dot) the ones that aren't currently
+  // building. Fire-and-forget so the server boot isn't blocked on
+  // GitHub API latency.
+  if (githubAppClient) {
+    const runner = new CheckRunRunner({
+      stateService: deps.stateService,
+      githubApp: githubAppClient,
+      config: deps.config,
+    });
+    runner.reconcileOrphans().catch((err: Error) => {
+      // eslint-disable-next-line no-console
+      console.warn('[check-run] startup reconciliation failed:', err.message);
+    });
+  }
+
   app.use('/api', createBranchRouter({
     stateService: deps.stateService,
     worktreeService: deps.worktreeService,
@@ -899,6 +954,23 @@ export function createServer(deps: ServerDeps): express.Express {
     schedulerService: deps.schedulerService,
     registry: deps.registry,
     getClusterStrategy: deps.getClusterStrategy,
+    githubApp: githubAppClient,
+  }));
+
+  // ── GitHub App webhook + linking endpoints (P6) ──
+  //
+  // POST /api/github/webhook is public-facing (GitHub hits it) but
+  // protected by HMAC signature verification inside the route handler.
+  // The GET /api/github/app + /installations + /projects/:id/github/link
+  // endpoints go through the normal auth middleware (cookie or AI key).
+  // When githubApp isn't configured, /github/webhook returns 503 and the
+  // other endpoints return 503 — the frontend hides the integration UI.
+  app.use('/api', createGithubWebhookRouter({
+    stateService: deps.stateService,
+    worktreeService: deps.worktreeService,
+    shell: deps.shell,
+    config: deps.config,
+    githubApp: githubAppClient,
   }));
 
   // P4 Part 18 (D.3): storage-mode management endpoints. Requires the

@@ -24,6 +24,10 @@ const PUBLIC_PATHS: (string | RegExp)[] = [
   '/login-gh.html',
   '/api/auth/github/login',
   '/api/auth/github/callback',
+  // GitHub App webhook is authenticated by HMAC signature verification
+  // inside the route handler, not by the CDS session cookie. Must be
+  // public so GitHub's outbound webhook can reach it.
+  '/api/github/webhook',
   // Static assets the login page needs before a session exists.
   '/style.css',
   '/favicon.svg',
