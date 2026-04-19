@@ -867,6 +867,13 @@ window.cdsDoLogout = cdsDoLogout;
     // Wrap in a div so the delete button can sit OUTSIDE the <a> tag.
     // <button> inside <a> is invalid HTML — click events on the button
     // bubble to the <a> in some browsers and navigate instead of deleting.
+    // Dedicated row for the GitHub link badge — sits between the stats
+    // strip and the foot so it doesn't squeeze the env-dot / service-count
+    // layout on narrow cards. Renders only when the project is linked.
+    var githubRow = githubBadge
+      ? '<div class="cds-project-card-github-row" style="padding:0 18px 10px;display:flex">' + githubBadge + '</div>'
+      : '';
+
     return [
       '<div class="cds-project-card-wrapper" style="position:relative">',
       '  <a class="cds-project-card" href="', href, '">',
@@ -877,11 +884,11 @@ window.cdsDoLogout = cdsDoLogout;
       '    ', bodyHtml,
       errorBlock,
       '    ', statsStrip,
+      '    ', githubRow,
       '    <div class="cds-project-card-foot">',
-      '      <span style="display:inline-flex;align-items:center;gap:10px;flex-wrap:wrap">',
+      '      <span style="display:inline-flex;align-items:center;gap:10px">',
       '        <span class="cds-env-dot">', envLabel, '</span>',
       '        <span class="cds-service-count"><strong>', totalServices, '</strong> service', totalServices === 1 ? '' : 's', '</span>',
-      githubBadge,
       cloneBtn ? '<span style="flex-shrink:0">' + cloneBtn + '</span>' : '',
       '      </span>',
       '      ', enterCta,
