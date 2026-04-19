@@ -270,28 +270,37 @@ function FeaturedCard({ item, onClick }: { item: ToolboxItem; onClick: () => voi
         />
       )}
 
-      {/* Bottom gradient overlay */}
+      {/* Subtle fade to blend image with glass panel */}
       <div
-        className="absolute inset-0 pointer-events-none"
+        className="absolute inset-0 pointer-events-none z-[2]"
         style={{
-          background: 'linear-gradient(180deg, rgba(0,0,0,0) 30%, rgba(0,0,0,0.7) 70%, rgba(0,0,0,0.9) 100%)',
+          background: 'linear-gradient(180deg, rgba(0,0,0,0) 40%, rgba(0,0,0,0.7) 100%)',
         }}
       />
 
       {/* Hover border glow */}
       <div
-        className="absolute inset-0 rounded-2xl opacity-0 group-hover:opacity-100 transition-opacity duration-300 pointer-events-none"
+        className="absolute inset-0 rounded-2xl opacity-0 group-hover:opacity-100 transition-opacity duration-300 pointer-events-none flex z-[20]"
         style={{ boxShadow: `inset 0 0 0 1px ${accent.from}40, 0 0 20px ${accent.from}10` }}
       />
 
-      {/* Content */}
-      <div className="absolute bottom-0 left-0 right-0 p-5 z-10">
+      {/* Content — Unified Glassmorphism Panel */}
+      <div 
+        className="absolute bottom-0 left-0 right-0 p-5 z-[10] transition-all duration-300 border-t"
+        style={{ 
+          borderColor: 'rgba(255,255,255,0.06)',
+          background: 'var(--card-glass-bg, rgba(16,16,24,0.45))',
+          backdropFilter: 'blur(16px)',
+          WebkitBackdropFilter: 'blur(16px)'
+        }}
+      >
         <div className="flex items-start gap-3">
           <div
-            className="shrink-0 w-10 h-10 rounded-xl flex items-center justify-center"
+            className="shrink-0 w-10 h-10 rounded-xl flex items-center justify-center transition-transform duration-300 group-hover:scale-105"
             style={{
-              background: `linear-gradient(135deg, ${accent.from}30, ${accent.from}10)`,
-              border: `1px solid ${accent.from}30`,
+              background: `linear-gradient(135deg, ${accent.from}40, ${accent.from}15)`,
+              border: `1px solid ${accent.from}40`,
+              boxShadow: `0 8px 24px -10px ${accent.from}60`
             }}
           >
             <Icon size={20} style={{ color: accent.to }} />
@@ -299,8 +308,8 @@ function FeaturedCard({ item, onClick }: { item: ToolboxItem; onClick: () => voi
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-2">
               <h3
-                className="text-[15px] font-semibold truncate px-2 py-0.5 rounded-md bg-black/20 backdrop-blur-md shadow-sm w-fit"
-                style={{ color: '#fff', textShadow: '0 1px 4px rgba(0,0,0,0.5)', border: '1px solid rgba(255,255,255,0.05)' }}
+                className="text-[15px] font-semibold truncate transition-colors"
+                style={{ color: '#fff', textShadow: '0 2px 4px rgba(0,0,0,0.4)' }}
               >
                 {item.name}
               </h3>
@@ -311,8 +320,8 @@ function FeaturedCard({ item, onClick }: { item: ToolboxItem; onClick: () => voi
               />
             </div>
             <p
-              className="text-[12px] leading-relaxed mt-1 line-clamp-2 px-2 py-1 rounded-md bg-black/20 backdrop-blur-md shadow-sm w-fit max-w-full"
-              style={{ color: 'var(--text-muted, rgba(255,255,255,0.85))', border: '1px solid rgba(255,255,255,0.05)' }}
+              className="text-[12px] leading-relaxed mt-1 line-clamp-2"
+              style={{ color: 'rgba(255,255,255,0.7)', textShadow: '0 1px 2px rgba(0,0,0,0.3)' }}
             >
               {item.description}
             </p>
@@ -321,11 +330,11 @@ function FeaturedCard({ item, onClick }: { item: ToolboxItem; onClick: () => voi
                 {item.tags.slice(0, 3).map((t) => (
                   <span
                     key={t}
-                    className="text-[10px] px-2 py-0.5 rounded-[5px] backdrop-blur-md shadow-sm"
+                    className="text-[10px] px-2 py-0.5 rounded-[5px]"
                     style={{
-                      background: 'rgba(0,0,0,0.3)',
+                      background: 'rgba(255,255,255,0.08)',
                       color: 'rgba(255,255,255,0.7)',
-                      border: '1px solid rgba(255,255,255,0.08)',
+                      border: '1px solid rgba(255,255,255,0.05)',
                     }}
                   >
                     {t}
@@ -830,10 +839,11 @@ export default function AgentLauncherPage() {
                             backgroundPosition: 'center',
                           }}
                         />
+                        {/* Stronger unified gradient for text readability over bright images */}
                         <div
                           className="absolute inset-0 pointer-events-none"
                           style={{
-                            background: 'linear-gradient(180deg, rgba(0,0,0,0.15) 0%, rgba(0,0,0,0.55) 70%, rgba(0,0,0,0.8) 100%)',
+                            background: 'linear-gradient(180deg, rgba(0,0,0,0.4) 0%, rgba(0,0,0,0.7) 50%, rgba(0,0,0,0.9) 100%)',
                           }}
                         />
                       </>
@@ -891,14 +901,14 @@ export default function AgentLauncherPage() {
                       </div>
 
                       <div
-                        className={`mt-3 font-semibold tracking-tight px-2.5 py-0.5 rounded-md bg-black/20 backdrop-blur-md shadow-sm w-fit ${isMobile ? 'text-[14px]' : 'text-[15px]'}`}
-                        style={{ color: 'var(--text-primary, #fff)', border: '1px solid rgba(255,255,255,0.05)' }}
+                        className={`mt-3 font-semibold tracking-tight ${isMobile ? 'text-[14px]' : 'text-[15px]'}`}
+                        style={{ color: 'var(--text-primary, #fff)', textShadow: '0 2px 4px rgba(0,0,0,0.5)' }}
                       >
                         {link.label}
                       </div>
                       <div
-                        className="text-[11px] mt-1.5 leading-relaxed line-clamp-2 px-2 py-1 rounded-md bg-black/20 backdrop-blur-md shadow-sm w-fit max-w-full"
-                        style={{ color: 'var(--text-muted, rgba(255,255,255,0.85))', border: '1px solid rgba(255,255,255,0.05)' }}
+                        className="text-[11px] mt-1 leading-relaxed line-clamp-2"
+                        style={{ color: 'var(--text-muted, rgba(255,255,255,0.8))', textShadow: '0 1px 3px rgba(0,0,0,0.4)' }}
                       >
                         {link.desc}
                       </div>
