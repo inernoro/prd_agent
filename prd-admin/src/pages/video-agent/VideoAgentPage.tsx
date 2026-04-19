@@ -20,6 +20,8 @@ import {
   Pencil,
   Eye,
   Bug,
+  FileType2,
+  Paperclip,
 } from 'lucide-react';
 import { toast } from '@/lib/toast';
 import { MapSpinner } from '@/components/ui/VideoLoader';
@@ -36,7 +38,8 @@ import {
   getVideoGenStreamUrl,
   getVideoGenDownloadUrl,
 } from '@/services/real/videoAgent';
-import type { VideoGenRun, VideoGenRunListItem } from '@/services/contracts/videoAgent';
+import type { VideoGenRun, VideoGenRunListItem, VideoInputSourceType } from '@/services/contracts/videoAgent';
+import { uploadAttachment } from '@/services/real/aiToolbox';
 import { VideoGenDirectPanel } from './VideoGenDirectPanel';
 
 // 顶部模式切换：remotion（原分镜流程） | videogen（OpenRouter 直出）
@@ -139,6 +142,11 @@ export const VideoAgentPage: React.FC = () => {
   const [isEditingArticle, setIsEditingArticle] = useState(false);
   const [showDebugModal, setShowDebugModal] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // ─── 输入来源类型（article 默认技术文章 / prd 产品需求文档） ───
+  const [inputSourceType, setInputSourceType] = useState<VideoInputSourceType>('article');
+  const [prdAttachments, setPrdAttachments] = useState<Array<{ attachmentId: string; fileName: string }>>([]);
+  const [prdUploading, setPrdUploading] = useState(false);
 
   // ─── Config state ───
   const [systemPrompt, setSystemPrompt] = useState('');
@@ -351,37 +359,83 @@ export const VideoAgentPage: React.FC = () => {
   }, [runs.map((r) => `${r.id}:${r.status}`).join(',')]);
 
   // ─── File upload handler ───
-  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    setUploadedFileName(file.name);
-    const reader = new FileReader();
-    reader.onload = () => {
-      const text = reader.result as string;
-      setArticleContent(text);
-      if (!articleTitle) {
-        // Auto-extract title from first heading
-        const match = text.match(/^#\s+(.+)/m);
-        if (match) setArticleTitle(match[1]);
+  // 根据当前 inputSourceType 分流：
+  //   - article 模式：.md/.txt 走 FileReader 直接读成 string（旧逻辑保留）
+  //   - prd 模式：任意文档（PDF/Word/.md 等）走 /api/v1/attachments 上传，让后端提取文本
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(e.target.files ?? []);
+    e.target.value = ''; // 先清空，避免重复选择同一文件无事件
+    if (files.length === 0) return;
+
+    if (inputSourceType === 'article') {
+      const file = files[0];
+      setUploadedFileName(file.name);
+      const reader = new FileReader();
+      reader.onload = () => {
+        const text = reader.result as string;
+        setArticleContent(text);
+        if (!articleTitle) {
+          const match = text.match(/^#\s+(.+)/m);
+          if (match) setArticleTitle(match[1]);
+        }
+      };
+      reader.readAsText(file);
+      return;
+    }
+
+    // PRD 模式：批量上传附件，ExtractedText 由后端 Worker 使用
+    setPrdUploading(true);
+    try {
+      const uploaded: Array<{ attachmentId: string; fileName: string }> = [];
+      for (const file of files) {
+        const res = await uploadAttachment(file);
+        if (res.success && res.data) {
+          uploaded.push({ attachmentId: res.data.attachmentId, fileName: res.data.fileName });
+        } else {
+          toast.error('上传失败', res.error?.message || file.name);
+        }
       }
-    };
-    reader.readAsText(file);
-    e.target.value = ''; // Reset
+      if (uploaded.length > 0) {
+        setPrdAttachments((prev) => [...prev, ...uploaded]);
+        if (!articleTitle) {
+          const first = uploaded[0].fileName;
+          const dot = first.lastIndexOf('.');
+          setArticleTitle(dot > 0 ? first.slice(0, dot) : first);
+        }
+      }
+    } catch (err) {
+      toast.error('上传失败', err instanceof Error ? err.message : '未知错误');
+    } finally {
+      setPrdUploading(false);
+    }
+  };
+
+  const handleRemovePrdAttachment = (attachmentId: string) => {
+    setPrdAttachments((prev) => prev.filter((a) => a.attachmentId !== attachmentId));
   };
 
   // ─── Create run ───
   const handleCreate = async () => {
-    if (!articleContent.trim()) {
-      toast.warning('缺少文章内容', '请先上传或粘贴文章');
+    const hasText = !!articleContent.trim();
+    const hasAttachments = inputSourceType === 'prd' && prdAttachments.length > 0;
+    if (!hasText && !hasAttachments) {
+      toast.warning(
+        '缺少输入内容',
+        inputSourceType === 'prd'
+          ? '请上传 PRD 文档，或粘贴文本'
+          : '请先上传或粘贴文章'
+      );
       return;
     }
     setCreating(true);
     try {
       const res = await createVideoGenRunReal({
-        articleMarkdown: articleContent,
+        articleMarkdown: hasText ? articleContent : undefined,
         articleTitle: articleTitle || undefined,
         systemPrompt: systemPrompt || undefined,
         styleDescription: styleDescription || undefined,
+        inputSourceType,
+        attachmentIds: hasAttachments ? prdAttachments.map((a) => a.attachmentId) : undefined,
       });
       if (res.success) {
         toast.success('已提交', '正在生成分镜脚本...');
@@ -550,7 +604,11 @@ export const VideoAgentPage: React.FC = () => {
   // ─── Active button (depends on phase) ───
   const activeButton = (() => {
     if ((phase === 0 || phase === 1) && !selectedRun) {
-      return { label: '生成分镜标记', icon: Sparkles, action: handleCreate, disabled: !articleContent.trim() };
+      const canSubmit =
+        articleContent.trim().length > 0 ||
+        (inputSourceType === 'prd' && prdAttachments.length > 0);
+      const label = inputSourceType === 'prd' ? '拆分镜（PRD 模式）' : '生成分镜标记';
+      return { label, icon: Sparkles, action: handleCreate, disabled: !canSubmit };
     }
     if (isEditing) {
       return { label: exporting ? '渲染中...' : '导出视频', icon: Video, action: handleExport, disabled: exporting };
@@ -565,6 +623,7 @@ export const VideoAgentPage: React.FC = () => {
     setArticleContent('');
     setArticleTitle('');
     setUploadedFileName(null);
+    setPrdAttachments([]);
     setIsEditingArticle(false);
     setPhase(0);
   };
@@ -694,15 +753,55 @@ export const VideoAgentPage: React.FC = () => {
             {/* Content area */}
             <div className="flex-1 min-h-0 overflow-auto">
               {phase === 0 ? (
-                /* Upload / Input phase — textarea always visible */
-                <div className="h-full flex flex-col gap-4 p-2">
-                  {/* File upload button */}
-                  <div className="flex items-center gap-3">
-                    <Button variant="secondary" size="sm" onClick={() => fileInputRef.current?.click()}>
-                      <Upload size={14} />
-                      选择文件
+                /* Upload / Input phase — 双通道：article(Markdown) / prd(PRD 文档) */
+                <div className="h-full flex flex-col gap-3 p-2">
+                  {/* 输入来源切换 */}
+                  <div
+                    className="inline-flex rounded-full overflow-hidden self-start"
+                    style={{ border: '1px solid var(--border-default)' }}
+                  >
+                    {([
+                      { key: 'article', label: 'Markdown 文章', icon: FileText },
+                      { key: 'prd', label: 'PRD 文档', icon: FileType2 },
+                    ] as const).map((opt) => {
+                      const Icon = opt.icon;
+                      const active = inputSourceType === opt.key;
+                      return (
+                        <button
+                          key={opt.key}
+                          onClick={() => setInputSourceType(opt.key)}
+                          className={cn('px-3 py-1 text-xs font-medium transition-colors inline-flex items-center gap-1.5')}
+                          style={{
+                            background: active ? 'rgba(236,72,153,0.18)' : 'transparent',
+                            color: active ? '#f472b6' : 'var(--text-muted)',
+                          }}
+                        >
+                          <Icon size={12} />
+                          {opt.label}
+                        </button>
+                      );
+                    })}
+                  </div>
+
+                  {/* 来源说明 */}
+                  <div className="text-[11px] leading-relaxed" style={{ color: 'var(--text-muted)' }}>
+                    {inputSourceType === 'prd'
+                      ? '上传 PRD 文档（PDF / Word / Markdown / TXT 等）→ AI 按"痛点→方案→功能演示→收益"拆成产品介绍视频分镜。'
+                      : '粘贴或上传技术文章 Markdown → AI 按"概念→步骤→演示→总结"拆成讲解视频分镜。'}
+                  </div>
+
+                  {/* 上传入口 */}
+                  <div className="flex items-center gap-3 flex-wrap">
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      onClick={() => fileInputRef.current?.click()}
+                      disabled={prdUploading}
+                    >
+                      {prdUploading ? <MapSpinner size={12} /> : <Upload size={14} />}
+                      {inputSourceType === 'prd' ? '上传 PRD 文档' : '选择 Markdown 文件'}
                     </Button>
-                    {uploadedFileName && (
+                    {inputSourceType === 'article' && uploadedFileName && (
                       <span className="text-xs truncate" style={{ color: 'var(--text-muted)' }}>
                         {uploadedFileName}
                       </span>
@@ -710,18 +809,55 @@ export const VideoAgentPage: React.FC = () => {
                     <input
                       ref={fileInputRef}
                       type="file"
-                      accept=".md,.txt,.markdown"
+                      multiple={inputSourceType === 'prd'}
+                      accept={
+                        inputSourceType === 'prd'
+                          ? '.pdf,.doc,.docx,.md,.markdown,.txt,.html,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/plain,text/markdown'
+                          : '.md,.txt,.markdown'
+                      }
                       className="hidden"
                       onChange={handleFileUpload}
                     />
                   </div>
-                  {/* Article content textarea — always visible, won't unmount */}
+
+                  {/* PRD 附件列表 */}
+                  {inputSourceType === 'prd' && prdAttachments.length > 0 && (
+                    <div className="flex flex-wrap gap-1.5">
+                      {prdAttachments.map((att) => (
+                        <span
+                          key={att.attachmentId}
+                          className="inline-flex items-center gap-1.5 px-2 py-1 rounded-md text-[11px]"
+                          style={{
+                            background: 'rgba(236,72,153,0.08)',
+                            border: '1px solid rgba(236,72,153,0.25)',
+                            color: 'var(--text-primary)',
+                          }}
+                        >
+                          <Paperclip size={10} />
+                          <span className="max-w-[200px] truncate">{att.fileName}</span>
+                          <button
+                            onClick={() => handleRemovePrdAttachment(att.attachmentId)}
+                            className="ml-0.5 opacity-60 hover:opacity-100"
+                            title="移除"
+                          >
+                            <X size={10} />
+                          </button>
+                        </span>
+                      ))}
+                    </div>
+                  )}
+
+                  {/* 文本输入（PRD 模式下为可选，用于补充说明） */}
                   <textarea
-                    placeholder="粘贴 Markdown 文章内容，或点击上方按钮选择文件..."
+                    placeholder={
+                      inputSourceType === 'prd'
+                        ? '（可选）额外补充说明，例如：视频风格偏活泼 / 目标用户是 XX / 重点突出 XX 功能……'
+                        : '粘贴 Markdown 文章内容，或点击上方按钮选择文件…'
+                    }
                     value={articleContent}
                     onChange={(e) => setArticleContent(e.target.value)}
                     className="flex-1 w-full rounded-[14px] px-3 py-2.5 text-sm outline-none resize-none prd-field"
-                    style={{ minHeight: 200 }}
+                    style={{ minHeight: 160 }}
                   />
                 </div>
               ) : selectedRun && (selectedRun.status === 'Scripting' || selectedRun.status === 'Queued') ? (

@@ -14,6 +14,39 @@ export const OPENROUTER_VIDEO_MODELS = [
   { id: 'openai/sora-2-pro', label: 'Sora 2 Pro（OpenAI，~$0.30/秒，最贵最强）', defaultDuration: 5 },
 ] as const;
 
+/**
+ * 三档推荐模型（MVP：默认展示这三张卡片，用户不懂型号也能做决定）
+ * 对应的 modelId 会直接作为 directVideoModel 传给后端；空串 = auto
+ */
+export const VIDEO_MODEL_TIERS = [
+  {
+    tier: 'economy',
+    label: '经济',
+    modelId: 'alibaba/wan-2.6',
+    tagline: '日常使用',
+    desc: '阿里 Wan 2.6，1080p/24fps，约 $0.04/秒',
+  },
+  {
+    tier: 'balanced',
+    label: '平衡',
+    modelId: 'bytedance/seedance-2.0',
+    tagline: '性价比推荐',
+    desc: '字节 Seedance 2.0 精品版，含音频',
+  },
+  {
+    tier: 'premium',
+    label: '顶配',
+    modelId: 'google/veo-3.1',
+    tagline: '大片质感',
+    desc: 'Google Veo 3.1，1080p/4K，电影级光影',
+  },
+] as const;
+
+export type VideoModelTier = typeof VIDEO_MODEL_TIERS[number]['tier'];
+
+/** 分镜模式的输入来源：article（技术文章）/ prd（产品需求文档） */
+export type VideoInputSourceType = 'article' | 'prd';
+
 /** 分镜状态 */
 export type SceneItemStatus = 'Draft' | 'Generating' | 'Done' | 'Error';
 
@@ -73,6 +106,9 @@ export interface VideoGenRun {
   directDuration?: number;
   directVideoJobId?: string;
   directVideoCost?: number;
+  // ─── 分镜输入来源（PRD 模式专用） ───
+  inputSourceType?: VideoInputSourceType;
+  attachmentIds?: string[];
 }
 
 /** 任务列表项（精简版） */
@@ -104,6 +140,9 @@ export type CreateVideoGenRunContract = (input: {
   directAspectRatio?: '16:9' | '9:16' | '1:1' | '4:3' | '3:4' | '21:9' | '9:21';
   directResolution?: '480p' | '720p' | '1080p';
   directDuration?: number;
+  // ─── 分镜模式输入来源（PRD 模式专用） ───
+  inputSourceType?: VideoInputSourceType;
+  attachmentIds?: string[];
 }) => Promise<ApiResponse<{ runId: string }>>;
 
 export type ListVideoGenRunsContract = (input?: {

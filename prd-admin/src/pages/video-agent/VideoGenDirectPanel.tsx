@@ -9,7 +9,7 @@
  *   4. status === 'Completed' 时 videoAssetUrl 就位，内嵌播放器直接播放
  */
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { Sparkles, Play, Download, RefreshCw, Wand2, Clock, Maximize2, AlertCircle } from 'lucide-react';
+import { Sparkles, Play, Download, RefreshCw, Wand2, Clock, Maximize2, AlertCircle, ChevronDown, ChevronUp, Zap, Scale, Crown } from 'lucide-react';
 import { cn } from '@/lib/cn';
 import { Button } from '@/components/design/Button';
 import { MapSpinner } from '@/components/ui/VideoLoader';
@@ -20,8 +20,11 @@ import {
 } from '@/services/real/videoAgent';
 import {
   OPENROUTER_VIDEO_MODELS,
+  VIDEO_MODEL_TIERS,
   type VideoGenRun,
 } from '@/services/contracts/videoAgent';
+
+const TIER_ICONS = { economy: Zap, balanced: Scale, premium: Crown } as const;
 
 type AspectRatio = '16:9' | '9:16' | '1:1';
 type Resolution = '480p' | '720p' | '1080p';
@@ -39,6 +42,7 @@ const AUTO_MODEL = ''; // 空字符串 = 交由后端模型池自动选择
 export const VideoGenDirectPanel: React.FC = () => {
   const [prompt, setPrompt] = useState('');
   const [model, setModel] = useState<string>(AUTO_MODEL);
+  const [showAdvanced, setShowAdvanced] = useState(false);
   const [duration, setDuration] = useState<number>(5);
   const [aspect, setAspect] = useState<AspectRatio>('16:9');
   const [resolution, setResolution] = useState<Resolution>('720p');
@@ -226,23 +230,99 @@ export const VideoGenDirectPanel: React.FC = () => {
             }}
           />
 
+          {/* ─── 模型档位（3 张卡片，默认推荐；展开"高级"才露出全量 7 个 OpenRouter 模型） ─── */}
+          <div className="flex flex-col gap-2">
+            <div className="flex items-center gap-2 flex-wrap">
+              {/* 自动档 */}
+              <button
+                onClick={() => setModel(AUTO_MODEL)}
+                disabled={isActive || isSubmitting}
+                className={cn(
+                  'flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs transition-colors',
+                  model === AUTO_MODEL && 'ring-1'
+                )}
+                style={{
+                  background: model === AUTO_MODEL ? 'rgba(236,72,153,0.14)' : 'var(--bg-base)',
+                  border: '1px solid ' + (model === AUTO_MODEL ? 'rgba(236,72,153,0.4)' : 'var(--border-default)'),
+                  color: model === AUTO_MODEL ? '#f472b6' : 'var(--text-primary)',
+                }}
+                title="由后端模型池按负载 / 健康度自动选择"
+              >
+                <Sparkles size={11} /> 自动
+              </button>
+
+              {/* 三档推荐 */}
+              {VIDEO_MODEL_TIERS.map((t) => {
+                const Icon = TIER_ICONS[t.tier];
+                const active = model === t.modelId;
+                return (
+                  <button
+                    key={t.tier}
+                    onClick={() => setModel(t.modelId)}
+                    disabled={isActive || isSubmitting}
+                    className={cn(
+                      'flex flex-col items-start gap-0.5 px-3 py-1.5 rounded-lg text-left transition-colors min-w-[120px]',
+                      active && 'ring-1'
+                    )}
+                    style={{
+                      background: active ? 'rgba(236,72,153,0.14)' : 'var(--bg-base)',
+                      border: '1px solid ' + (active ? 'rgba(236,72,153,0.4)' : 'var(--border-default)'),
+                      color: active ? '#f472b6' : 'var(--text-primary)',
+                    }}
+                    title={t.desc}
+                  >
+                    <span className="inline-flex items-center gap-1 text-xs font-medium">
+                      <Icon size={11} />
+                      {t.label}
+                      <span className="ml-1 text-[10px]" style={{ color: 'var(--text-muted)' }}>
+                        {t.tagline}
+                      </span>
+                    </span>
+                    <span className="text-[10px] leading-tight" style={{ color: 'var(--text-muted)' }}>
+                      {t.desc}
+                    </span>
+                  </button>
+                );
+              })}
+
+              {/* 高级展开 */}
+              <button
+                onClick={() => setShowAdvanced((s) => !s)}
+                disabled={isActive || isSubmitting}
+                className="inline-flex items-center gap-1 px-2 py-1.5 rounded-lg text-[11px]"
+                style={{ background: 'transparent', color: 'var(--text-muted)', border: '1px solid var(--border-default)' }}
+                title="展开 OpenRouter 全量视频模型（含 Wan 2.7 / Seedance / Sora）"
+              >
+                高级 {showAdvanced ? <ChevronUp size={11} /> : <ChevronDown size={11} />}
+              </button>
+            </div>
+
+            {showAdvanced && (
+              <div
+                className="flex flex-col gap-1 rounded-lg p-2"
+                style={{ background: 'var(--bg-base)', border: '1px dashed var(--border-default)' }}
+              >
+                <div className="text-[10px]" style={{ color: 'var(--text-muted)' }}>
+                  不知道选什么？保持"自动"即可；需要指定型号时从下面挑选：
+                </div>
+                <select
+                  value={model}
+                  onChange={(e) => setModel(e.target.value)}
+                  disabled={isActive || isSubmitting}
+                  className="text-xs rounded-md px-2 py-1.5"
+                  style={{ background: 'var(--panel)', border: '1px solid var(--border-default)', color: 'var(--text-primary)' }}
+                >
+                  <option value={AUTO_MODEL}>自动（由模型池决定）</option>
+                  {OPENROUTER_VIDEO_MODELS.map((m) => (
+                    <option key={m.id} value={m.id}>{m.label}</option>
+                  ))}
+                </select>
+              </div>
+            )}
+          </div>
+
           {/* 参数栏 */}
           <div className="flex flex-wrap items-center gap-2">
-            {/* 模型（可选：空 = 由模型池自动选择最优） */}
-            <select
-              value={model}
-              onChange={(e) => setModel(e.target.value)}
-              disabled={isActive || isSubmitting}
-              className="text-xs rounded-lg px-2 py-1.5 max-w-[280px] truncate"
-              style={{ background: 'var(--bg-base)', border: '1px solid var(--border-default)', color: 'var(--text-primary)' }}
-              title="留空让模型池自动选择，或指定偏好模型"
-            >
-              <option value={AUTO_MODEL}>自动（由模型池决定）</option>
-              {OPENROUTER_VIDEO_MODELS.map((m) => (
-                <option key={m.id} value={m.id}>{m.label}</option>
-              ))}
-            </select>
-
             {/* 时长 */}
             <div className="flex items-center gap-1 px-2 py-1 rounded-lg text-xs" style={{ background: 'var(--bg-base)', border: '1px solid var(--border-default)' }}>
               <Clock size={11} style={{ color: 'var(--text-muted)' }} />
