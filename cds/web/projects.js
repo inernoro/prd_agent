@@ -701,6 +701,35 @@ window.cdsDoLogout = cdsDoLogout;
   //   cloning  — SSE in progress
   //   ready    — clone finished, usable for deploy
   //   error    — last clone attempt failed (hover → cloneError)
+  // GitHub link badge — shown on project cards when the project is
+  // bound to a GitHub repo via the new Check Runs integration. Links
+  // straight to github.com/<owner>/<repo> in a new tab. `onclick` is
+  // only on a nested <a>, but the parent is ALSO an <a> (the card
+  // href). Native behaviour: clicking the inner <a> navigates to its
+  // href without going through the outer one, so we don't need
+  // preventDefault.
+  function renderGithubBadge(project) {
+    if (!project.githubRepoFullName) return '';
+    var repo = project.githubRepoFullName;
+    var autoDeployOff = project.githubAutoDeploy === false;
+    var title = autoDeployOff
+      ? 'GitHub: ' + repo + ' (自动部署已关闭)'
+      : 'GitHub: ' + repo + ' (push 自动部署)';
+    return (
+      '<a href="https://github.com/' + escapeHtml(repo) + '" target="_blank" rel="noopener" ' +
+        'onclick="event.stopPropagation()" ' +
+        'title="' + escapeHtml(title) + '" ' +
+        'style="display:inline-flex;align-items:center;gap:5px;padding:2px 8px;border-radius:10px;' +
+               'background:rgba(96,165,250,0.1);border:1px solid rgba(96,165,250,0.3);' +
+               'color:' + (autoDeployOff ? 'var(--text-muted)' : '#60a5fa') + ';' +
+               'font-size:11px;font-weight:600;text-decoration:none;font-family:var(--font-mono,monospace)">' +
+        '<svg width="11" height="11" viewBox="0 0 16 16" fill="currentColor"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>' +
+        escapeHtml(repo.split('/').slice(-1)[0] || repo) +
+        (autoDeployOff ? ' <span style="opacity:0.6">(off)</span>' : '') +
+      '</a>'
+    );
+  }
+
   function renderCloneBadge(project) {
     if (project.legacyFlag) {
       return '<span class="cds-legacy-badge">Legacy</span>';
@@ -809,6 +838,10 @@ window.cdsDoLogout = cdsDoLogout;
       ((services && services.infra && services.infra.length) || 0);
     var envLabel = project.legacyFlag ? 'production' : 'production';
     var cloneBadge = renderCloneBadge(project);
+    // GitHub link badge — shown in the foot strip when the project is
+    // bound to a GitHub repo (new Check Runs integration). Links to the
+    // repo on github.com. When not linked, renders empty.
+    var githubBadge = renderGithubBadge(project);
     var cloneBtn = renderCloneButton(project);
     // Show the clone error inline under the service strip when the
     // last attempt failed AND we're not already using the full-size
@@ -845,9 +878,10 @@ window.cdsDoLogout = cdsDoLogout;
       errorBlock,
       '    ', statsStrip,
       '    <div class="cds-project-card-foot">',
-      '      <span style="display:inline-flex;align-items:center;gap:10px">',
+      '      <span style="display:inline-flex;align-items:center;gap:10px;flex-wrap:wrap">',
       '        <span class="cds-env-dot">', envLabel, '</span>',
       '        <span class="cds-service-count"><strong>', totalServices, '</strong> service', totalServices === 1 ? '' : 's', '</span>',
+      githubBadge,
       cloneBtn ? '<span style="flex-shrink:0">' + cloneBtn + '</span>' : '',
       '      </span>',
       '      ', enterCta,
