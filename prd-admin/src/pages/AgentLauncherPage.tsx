@@ -793,8 +793,9 @@ export default function AgentLauncherPage() {
                     style={{
                       background: 'linear-gradient(180deg, rgba(255,255,255,0.045) 0%, rgba(255,255,255,0.02) 100%)',
                       border: '1px solid rgba(255,255,255,0.08)',
-                      padding: isMobile ? '14px 14px 16px' : '18px 18px 20px',
-                      minHeight: isMobile ? 96 : 120,
+                      padding: isMobile ? '14px 14px 16px' : '20px',
+                      minHeight: isMobile ? 96 : 140,
+                      aspectRatio: isMobile ? 'auto' : '16/10',
                     }}
                   >
                     {/* 管理员上传的背景图（如有）：铺满卡片，底部渐变压暗保证文字可读 */}
