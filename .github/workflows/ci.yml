@@ -20,6 +20,7 @@ jobs:
       server: ${{ steps.filter.outputs.server }}
       admin: ${{ steps.filter.outputs.admin }}
       desktop: ${{ steps.filter.outputs.desktop }}
+      cds: ${{ steps.filter.outputs.cds }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -269,11 +270,63 @@ jobs:
             sccache --show-stats || true
           fi
 
+  # CDS dashboard (Node/Express) — tsc + vitest (738 tests baseline).
+  # Mirrors the dedicated `cds.yml` workflow so every aggregate `ci.yml`
+  # run reports a unified ci-status for branch protection, even though
+  # cds.yml still exists for operator familiarity. The jobs are
+  # path-filtered so a PR that only touches cds/** doesn't pay the
+  # full admin+desktop+server price here.
+  cds-build:
+    name: CDS Build & Test
+    needs: changes
+    if: needs.changes.outputs.cds == 'true'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: cds
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Get pnpm store directory
+        id: pnpm_store
+        shell: bash
+        run: |
+          echo "path=$(pnpm store path --silent)" >> "$GITHUB_OUTPUT"
+
+      - name: Cache pnpm store
+        uses: actions/cache@v4
+        with:
+          path: ${{ steps.pnpm_store.outputs.path }}
+          key: ${{ runner.os }}-pnpm-cds-${{ hashFiles('cds/pnpm-lock.yaml', 'cds/package.json') }}
+          restore-keys: |
+            ${{ runner.os }}-pnpm-cds-
+
+      - name: Install dependencies
+        run: pnpm install
+
+      - name: Type check
+        run: pnpm exec tsc --noEmit
+
+      - name: Run tests
+        run: pnpm test
+
   # CI 状态汇总（用于 branch protection）
   ci-status:
     name: CI Status
     runs-on: ubuntu-latest
-    needs: [changes, server-build, admin-build, desktop-check]
+    needs: [changes, server-build, admin-build, desktop-check, cds-build]
     if: always()
     steps:
       - name: Check CI status
@@ -282,13 +335,15 @@ jobs:
           echo "  Server: ${{ needs.changes.outputs.server }}"
           echo "  Admin: ${{ needs.changes.outputs.admin }}"
           echo "  Desktop: ${{ needs.changes.outputs.desktop }}"
-          
+          echo "  CDS: ${{ needs.changes.outputs.cds }}"
+
           # 检查需要运行的 job 是否成功
           server_ok="${{ needs.changes.outputs.server != 'true' || needs.server-build.result == 'success' }}"
           admin_ok="${{ needs.changes.outputs.admin != 'true' || needs.admin-build.result == 'success' }}"
           desktop_ok="${{ needs.changes.outputs.desktop != 'true' || needs.desktop-check.result == 'success' }}"
-          
-          if [[ "$server_ok" == "true" && "$admin_ok" == "true" && "$desktop_ok" == "true" ]]; then
+          cds_ok="${{ needs.changes.outputs.cds != 'true' || needs.cds-build.result == 'success' }}"
+
+          if [[ "$server_ok" == "true" && "$admin_ok" == "true" && "$desktop_ok" == "true" && "$cds_ok" == "true" ]]; then
             echo "All required checks passed!"
             exit 0
           else
@@ -296,5 +351,6 @@ jobs:
             echo "  Server: ${{ needs.server-build.result }}"
             echo "  Admin: ${{ needs.admin-build.result }}"
             echo "  Desktop: ${{ needs.desktop-check.result }}"
+            echo "  CDS: ${{ needs.cds-build.result }}"
             exit 1
           fi

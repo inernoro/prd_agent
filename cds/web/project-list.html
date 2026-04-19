@@ -295,13 +295,19 @@
     }
     .cds-main-actions { display: flex; gap: 10px; align-items: center; }
 
-    .btn-primary-solid {
+    /* Upgrade the selector to `button.btn-primary-solid` so the global
+       [data-theme="light"] button {...} rule in style.css (specificity
+       0,1,1) doesn't outrank us and strip the vermillion fill, leaving
+       「新建项目」 looking like a disabled ghost in light mode. Both
+       selectors now tie at (0,1,1); this inline stylesheet is loaded
+       after style.css, so the cascade picks this rule. */
+    button.btn-primary-solid {
       display: inline-flex;
       align-items: center;
       gap: 8px;
       padding: 9px 18px;
       background: var(--accent);
-      border: none;
+      border: 1px solid var(--accent);
       border-radius: 8px;
       color: #fff;
       font-size: 13px;
@@ -310,8 +316,10 @@
       transition: background 120ms ease, transform 120ms ease;
       box-shadow: 0 1px 0 rgba(0,0,0,0.2), 0 4px 10px rgba(16, 185, 129, 0.15);
     }
-    .btn-primary-solid:hover {
+    button.btn-primary-solid:hover {
       background: var(--accent-dim);
+      border-color: var(--accent-dim);
+      color: #fff;
       transform: translateY(-1px);
     }
 

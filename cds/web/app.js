@@ -88,19 +88,77 @@ const ICON = {
   // Human footprint (web access indicator)
   footprint: '<svg class="human-access-icon" width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C9.24 2 7 4.24 7 7c0 2.85 2.92 7.21 5 9.88 2.11-2.69 5-7 5-9.88 0-2.76-2.24-5-5-5zm0 7.5a2.5 2.5 0 010-5 2.5 2.5 0 010 5z"/><path d="M7.05 16.87C5.01 17.46 3.5 18.5 3.5 19.5 3.5 21.15 7.36 22 12 22s8.5-.85 8.5-2.5c0-1-.51-2.04-2.55-2.63-.53 1.04-1.3 2.13-2.21 3.13H8.26c-.91-1-1.68-2.09-2.21-3.13z"/></svg>',
   lightbulb: '<svg class="inline-icon" width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M8 1.5a4.5 4.5 0 00-1.68 8.68.5.5 0 01.3.46v1.86h2.76v-1.86a.5.5 0 01.3-.46A4.5 4.5 0 008 1.5zM5.5 13v.5c0 .83.67 1.5 1.5 1.5h2c.83 0 1.5-.67 1.5-1.5V13h-5z"/></svg>',
-  // Port beacon icons by profile type
+  // Port beacon icons by language/framework. Rendered inside `.port-badge`
+  // chips on the branch list. Each shape is a trimmed stylised mark of
+  // the stack's logo — we don't claim licensed logos but shoot for
+  // instantly-recognisable silhouettes (hex for node, vertical bars for
+  // .NET, diamond for python, cog for rust, etc.).
   portApi: '<svg class="inline-icon" width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M1.5 1.75a.75.75 0 00-1.5 0v12.5c0 .414.336.75.75.75h14.5a.75.75 0 000-1.5H1.5V1.75zm14.28 2.53a.75.75 0 00-1.06-1.06L10 7.94 7.53 5.47a.75.75 0 00-1.06 0L2.22 9.72a.75.75 0 001.06 1.06L7 7.06l2.47 2.47a.75.75 0 001.06 0l5.25-5.25z"/></svg>',
   portWeb: '<svg class="inline-icon" width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M0 8a8 8 0 1116 0A8 8 0 010 8zm7.5-6.923c-.67.204-1.335.82-1.887 1.855A7.97 7.97 0 005.145 4H7.5V1.077zM4.09 4a9.27 9.27 0 01.64-1.539 6.7 6.7 0 01.597-.933A6.536 6.536 0 002.535 4H4.09zm-.582 3.5c.03-.877.138-1.718.312-2.5H1.674a6.958 6.958 0 00-.656 2.5H3.508zM7.5 11H5.145a7.97 7.97 0 00.468 1.068c.552 1.035 1.218 1.65 1.887 1.855V11zm1 2.923c.67-.204 1.335-.82 1.887-1.855A7.97 7.97 0 0010.855 11H8.5v2.923zM11.91 11a9.27 9.27 0 00.64 1.539 6.7 6.7 0 00.597.933A6.536 6.536 0 0015.465 11H11.91zm.582-1.5c.03-.877.138-1.718.312-2.5h2.49a6.958 6.958 0 01.656 2.5h-3.458z"/></svg>',
+  // Node.js — hexagon with "N" notch (simplified)
+  portNode: '<svg class="inline-icon" width="14" height="14" viewBox="0 0 24 24" fill="#339933"><path d="M12 1.85c-.27 0-.55.07-.78.2l-7.44 4.3c-.48.28-.78.8-.78 1.36v8.58c0 .56.3 1.08.78 1.36l1.95 1.12c.95.46 1.29.47 1.71.47 1.41 0 2.22-.85 2.22-2.33V8.44c0-.12-.1-.22-.22-.22H9.31c-.13 0-.23.1-.23.22v8.47c0 .66-.68 1.31-1.77.76l-2.02-1.17c-.07-.04-.11-.12-.11-.2V7.7c0-.08.04-.16.11-.2l7.44-4.29c.07-.04.15-.04.22 0l7.44 4.29c.07.04.11.12.11.2v8.58c0 .08-.04.16-.11.2l-7.44 4.29c-.06.04-.15.04-.22 0L13 19.88c-.09-.05-.13-.12-.07-.16.71-.45.86-.53 1.49-.77.09-.03.16-.02.24.03l1.48.88c.07.04.15.04.22 0l7.44-4.29c.48-.28.78-.8.78-1.36V7.71c0-.56-.3-1.08-.78-1.36l-7.44-4.3c-.24-.13-.51-.2-.78-.2h-3.59z"/></svg>',
+  // .NET — three vertical bars (like the dotnet logo mark)
+  portDotnet: '<svg class="inline-icon" width="14" height="14" viewBox="0 0 24 24" fill="#512bd4"><path d="M4 4h3v16H4zM10.5 4h2.5l4.5 10V4H20v16h-2.5l-4.5-10v10h-2.5z"/></svg>',
+  // Python — stylised two-tone S (diamond ribbon)
+  portPython: '<svg class="inline-icon" width="14" height="14" viewBox="0 0 24 24" fill="#3776ab"><path d="M11.9 2C6.2 2 6.5 4.5 6.5 4.5V7h5.5v.7H4.5C4.5 7.7 2 7.4 2 13.3s2 5.5 2 5.5H6v-3.2c0-2.2 1.8-4 4-4h5c1.4 0 2.5-1.1 2.5-2.5V4.5S17.7 2 11.9 2zM9 3.7c.6 0 1 .4 1 1s-.4 1-1 1-1-.4-1-1 .4-1 1-1z"/><path d="M12.1 22c5.7 0 5.4-2.5 5.4-2.5V17h-5.5v-.7h7.5s2.5.3 2.5-5.5-2-5.5-2-5.5H18v3.2c0 2.2-1.8 4-4 4H9c-1.4 0-2.5 1.1-2.5 2.5v4.5S6.3 22 12.1 22zm3-1.7c-.6 0-1-.4-1-1s.4-1 1-1 1 .4 1 1-.4 1-1 1z"/></svg>',
+  // Rust — gear cog (recognisable silhouette)
+  portRust: '<svg class="inline-icon" width="14" height="14" viewBox="0 0 24 24" fill="#dea584"><path d="M12 2l1.5 2.5L16 3.5l.5 3L19 7l-.5 2.5 2 1.5-2 1.5.5 2.5-2.5.5-.5 3-2.5-1L12 22l-1.5-2.5L8 20.5l-.5-3L5 17l.5-2.5-2-1.5 2-1.5L5 9l2.5-.5L8 5.5l2.5 1zm0 4a6 6 0 100 12 6 6 0 000-12z"/></svg>',
+  // Go — pocket gopher mouth arcs (simplified)
+  portGo: '<svg class="inline-icon" width="14" height="14" viewBox="0 0 24 24" fill="#00add8"><path d="M2.9 10.5c-.1 0-.1-.1-.1-.1l.3-.4c.1-.1.2-.1.3-.1h4c.1 0 .1.1.1.1l-.3.4c-.1.1-.2.1-.3.1zM12 3a9 9 0 100 18 9 9 0 000-18zm0 16.5a7.5 7.5 0 110-15 7.5 7.5 0 010 15zm-2-9a1.5 1.5 0 100 3 1.5 1.5 0 000-3zm4 0a1.5 1.5 0 100 3 1.5 1.5 0 000-3z"/></svg>',
+  // React — atom orbitals (three rotated ellipses)
+  portReact: '<svg class="inline-icon" width="14" height="14" viewBox="0 0 24 24" fill="#61dafb"><circle cx="12" cy="12" r="2"/><g fill="none" stroke="#61dafb" stroke-width="1.5"><ellipse cx="12" cy="12" rx="10" ry="4"/><ellipse cx="12" cy="12" rx="10" ry="4" transform="rotate(60 12 12)"/><ellipse cx="12" cy="12" rx="10" ry="4" transform="rotate(120 12 12)"/></g></svg>',
+  // Vue — chevron-down triangle
+  portVue: '<svg class="inline-icon" width="14" height="14" viewBox="0 0 24 24" fill="#4fc08d"><path d="M2 3h5l5 8 5-8h5L12 21z"/></svg>',
+  // Generic database (used when we can only tell it's data-tier)
+  portDb: '<svg class="inline-icon" width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><ellipse cx="8" cy="3" rx="6" ry="2"/><path d="M2 5.5c1.5 1 4 1.5 6 1.5s4.5-.5 6-1.5V7c0 1.1-2.7 2-6 2S2 8.1 2 7V5.5zM2 9.5c1.5 1 4 1.5 6 1.5s4.5-.5 6-1.5V11c0 1.1-2.7 2-6 2s-6-.9-6-2V9.5z"/></svg>',
   portDefault: '<svg class="inline-icon" width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M4.75 7.25a.75.75 0 000 1.5h6.5a.75.75 0 000-1.5h-6.5z"/><path d="M0 8a8 8 0 1116 0A8 8 0 010 8zm8-6.5a6.5 6.5 0 100 13 6.5 6.5 0 000-13z"/></svg>',
 };
 
-// Port beacon icon mapping: profileId → icon key
+// Port beacon icon mapping: profileId → icon key. This is the second-
+// tier fallback when the dockerImage/command doesn't reveal the stack.
 const PORT_ICON_MAP = {
   api: 'portApi',
   web: 'portWeb',
   admin: 'portWeb',
   frontend: 'portWeb',
+  ui: 'portWeb',
+  dashboard: 'portWeb',
 };
+
+/**
+ * Infer the dominant language/framework icon key for a build profile
+ * from its dockerImage first, falling back to its command, then its id.
+ * Keeps logic synchronous (no DOM) so callers can use it inline from
+ * render templates.
+ *
+ * Precedence (first truthy wins):
+ *   1. Explicit `profile.icon` — user chose one in build-profile edit
+ *   2. dockerImage substring (e.g. "node:22-alpine" → portNode)
+ *   3. command substring (e.g. "dotnet run" → portDotnet)
+ *   4. PORT_ICON_MAP lookup by profile.id
+ *   5. portDefault
+ *
+ * Returns ICON[key] SVG string (ready to `${} inline` into templates).
+ */
+function detectPortIconKey(profile) {
+  if (!profile) return null;
+  const hay = [profile.dockerImage, profile.command, profile.id, profile.name]
+    .filter(Boolean)
+    .join(' ')
+    .toLowerCase();
+  if (!hay) return null;
+  // Ordering matters: `react` must beat `node` (react images ARE node),
+  // `dotnet` must beat `net`, `mongo` must beat `go`, etc.
+  if (/(mongo|redis|postgres|mysql|mariadb|elasticsearch|clickhouse|cassandra)/.test(hay)) return 'portDb';
+  if (/(react|vite|next|remix|gatsby)/.test(hay)) return 'portReact';
+  if (/(vue|nuxt)/.test(hay)) return 'portVue';
+  if (/(dotnet|aspnet|mcr\.microsoft\.com\/dotnet)/.test(hay)) return 'portDotnet';
+  if (/\b(rust|cargo)\b/.test(hay)) return 'portRust';
+  if (/\bpython\b|django|flask|fastapi|uvicorn|gunicorn/.test(hay)) return 'portPython';
+  if (/\bgolang\b|\bgo:\d/.test(hay)) return 'portGo';
+  if (/\b(node|npm|pnpm|yarn|nestjs|express)\b/.test(hay)) return 'portNode';
+  return null;
+}
 
 /** Pick commit/PR icon based on subject text */
 function commitIcon(subject) {
@@ -2577,12 +2635,15 @@ function renderTagFilterBar() {
 }
 
 function getPortIcon(profileId, profile) {
-  // Use profile's custom icon if set
+  // 1. Explicit user-chosen icon wins
   if (profile && profile.icon && ICON['port' + profile.icon.charAt(0).toUpperCase() + profile.icon.slice(1)]) {
     return ICON['port' + profile.icon.charAt(0).toUpperCase() + profile.icon.slice(1)];
   }
-  // Fall back to map
-  const key = PORT_ICON_MAP[profileId.toLowerCase()];
+  // 2. Inferred from dockerImage / command / id (node / dotnet / …)
+  const inferred = detectPortIconKey(profile || { id: profileId });
+  if (inferred && ICON[inferred]) return ICON[inferred];
+  // 3. Hardcoded profile-id map (api / admin / frontend)
+  const key = PORT_ICON_MAP[(profileId || '').toLowerCase()];
   return key ? ICON[key] : ICON.portDefault;
 }
 
@@ -3074,11 +3135,29 @@ function toggleSettingsMenu(event) {
   menu.className = 'settings-menu';
   menu.id = 'settings-menu-portal';
   menu.onclick = (e) => e.stopPropagation();
+  // Lookup label for the cycling preview-mode switch so the current
+  // choice is visible at a glance without opening a modal.
+  const previewModeLabels = { simple: '简洁', port: '端口直连', multi: '子域名' };
+  const previewModeLabel = previewModeLabels[previewMode] || previewMode || '简洁';
+  // Show "初始化配置" quick action when no build profiles exist yet.
+  const needsQuickstart = !buildProfiles || buildProfiles.length === 0;
+
   menu.innerHTML = `
     <div class="settings-menu-item" onclick="closeSettingsMenu(); openImportModal()" style="color:#58a6ff">
       <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M8 2.004a.75.75 0 01.75.75v5.689l1.97-1.97a.749.749 0 111.06 1.06l-3.25 3.25a.749.749 0 01-1.06 0L4.22 7.533a.749.749 0 111.06-1.06l1.97 1.97V2.754a.75.75 0 01.75-.75zM2.75 12.5h10.5a.75.75 0 010 1.5H2.75a.75.75 0 010-1.5z"/></svg>
       一键导入配置
     </div>
+    <div class="settings-menu-item" onclick="closeSettingsMenu(); openExportModal()">
+      <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M8.75 1.75a.75.75 0 00-1.5 0v6.69L4.78 5.97a.75.75 0 10-1.06 1.06l4.25 4.25a.75.75 0 001.06 0l4.25-4.25a.75.75 0 00-1.06-1.06L8.75 8.44V1.75zM2.75 13a.75.75 0 000 1.5h10.5a.75.75 0 000-1.5H2.75z" transform="rotate(180 8 8)"/></svg>
+      一键导出配置
+    </div>
+    ${needsQuickstart ? `
+      <div class="settings-menu-item" onclick="closeSettingsMenu(); runQuickstart()" style="color:#3fb950">
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M8 0a8 8 0 110 16A8 8 0 018 0zm3.78 5.22a.75.75 0 00-1.06 0L6.75 9.19 5.28 7.72a.751.751 0 00-1.042.018.751.751 0 00-.018 1.042l2 2a.75.75 0 001.06 0l4.5-4.5a.75.75 0 000-1.06z"/></svg>
+        初始化配置（快速开始）
+        <span style="margin-left:auto;font-size:11px;color:#3fb950">未就绪</span>
+      </div>
+    ` : ''}
     <div class="settings-menu-divider"></div>
     <div class="settings-menu-item" onclick="closeSettingsMenu(); openProfileModal()">
       <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M7.22 1.547a2.403 2.403 0 011.56 0l4.03 1.384a.48.48 0 01.33.457v1.224a.48.48 0 01-.33.457L8.78 6.453a2.403 2.403 0 01-1.56 0L3.19 5.069a.48.48 0 01-.33-.457V3.388a.48.48 0 01.33-.457l4.03-1.384zM3.19 6.903l4.03 1.384a2.403 2.403 0 001.56 0l4.03-1.384a.48.48 0 01.33.457v1.224a.48.48 0 01-.33.457L8.78 10.425a2.403 2.403 0 01-1.56 0L3.19 9.041a.48.48 0 01-.33-.457V7.36a.48.48 0 01.33-.457zm0 3.972l4.03 1.384a2.403 2.403 0 001.56 0l4.03-1.384a.48.48 0 01.33.457v1.224a.48.48 0 01-.33.457l-4.03 1.384a2.403 2.403 0 01-1.56 0l-4.03-1.384a.48.48 0 01-.33-.457v-1.224a.48.48 0 01.33-.457z"/></svg>
@@ -3087,6 +3166,10 @@ function toggleSettingsMenu(event) {
     <div class="settings-menu-item" onclick="closeSettingsMenu(); openEnvModal()">
       <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M2.5 2a.5.5 0 00-.5.5v11a.5.5 0 00.5.5h11a.5.5 0 00.5-.5v-11a.5.5 0 00-.5-.5h-11zM1 2.5A1.5 1.5 0 012.5 1h11A1.5 1.5 0 0115 2.5v11a1.5 1.5 0 01-1.5 1.5h-11A1.5 1.5 0 011 13.5v-11zM4 5h2v1H4V5zm3 0h5v1H7V5zM4 8h2v1H4V8zm3 0h5v1H7V8zM4 11h2v1H4v-1zm3 0h5v1H7v-1z"/></svg>
       环境变量
+    </div>
+    <div class="settings-menu-item" onclick="closeSettingsMenu(); openBulkEnvModal()">
+      <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M0 1.75C0 .784.784 0 1.75 0h12.5C15.216 0 16 .784 16 1.75v12.5A1.75 1.75 0 0114.25 16H1.75A1.75 1.75 0 010 14.25V1.75zm1.75-.25a.25.25 0 00-.25.25v12.5c0 .138.112.25.25.25h12.5a.25.25 0 00.25-.25V1.75a.25.25 0 00-.25-.25H1.75zM11.75 3a.75.75 0 01.75.75v7.5a.75.75 0 01-1.5 0v-7.5a.75.75 0 01.75-.75zm-8.25.75a.75.75 0 00-1.5 0v7.5a.75.75 0 001.5 0v-7.5zM8 3a.75.75 0 01.75.75v7.5a.75.75 0 01-1.5 0v-7.5A.75.75 0 018 3z"/></svg>
+      批量编辑环境变量
     </div>
     <div class="settings-menu-item" onclick="closeSettingsMenu(); openInfraModal()">
       <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M2 2a2 2 0 012-2h8a2 2 0 012 2v2a2 2 0 01-2 2H4a2 2 0 01-2-2V2zm2-.5a.5.5 0 00-.5.5v2a.5.5 0 00.5.5h8a.5.5 0 00.5-.5V2a.5.5 0 00-.5-.5H4zM2 9.5A1.5 1.5 0 013.5 8h9A1.5 1.5 0 0114 9.5v3a1.5 1.5 0 01-1.5 1.5h-9A1.5 1.5 0 012 12.5v-3zm1.5 0v3h9v-3h-9zM4 10.5a.5.5 0 01.5-.5h1a.5.5 0 010 1h-1a.5.5 0 01-.5-.5z"/></svg>
@@ -3105,6 +3188,31 @@ function toggleSettingsMenu(event) {
     <div class="settings-menu-item" onclick="closeSettingsMenu(); openRoutingModal()">
       <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M8 0a8 8 0 100 16A8 8 0 008 0zM1.5 8a6.5 6.5 0 0113 0h-2.1a8.3 8.3 0 00-.4-2.2 9 9 0 00-1-1.9A4.5 4.5 0 017 7.5H4.5A8.3 8.3 0 001.5 8zm5.5 5.5a6.5 6.5 0 01-5.4-3h2.3c.3 1.2.8 2.2 1.5 3H7zm1-5.5a7.8 7.8 0 014-3.8c.5.6.9 1.2 1.2 1.8H8zm0 1h5.4a8.3 8.3 0 01-.3 2H8.9 8V9zm0 3h3.8c-.6 1.3-1.5 2.4-2.8 3A6.5 6.5 0 018 9z"/></svg>
       路由规则
+    </div>
+    <div class="settings-menu-divider"></div>
+    <div class="settings-menu-group-label">快捷 · CDS 全局开关</div>
+    <div class="settings-menu-item settings-menu-switch" onclick="cyclePreviewMode()">
+      <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M1.679 7.932c.412-.621 1.242-1.75 2.366-2.717C5.175 4.242 6.527 3.5 8 3.5c1.473 0 2.824.742 3.955 1.715 1.124.967 1.954 2.096 2.366 2.717a.119.119 0 010 .136c-.412.621-1.242 1.75-2.366 2.717C10.825 11.758 9.473 12.5 8 12.5c-1.473 0-2.824-.742-3.955-1.715C2.92 9.818 2.09 8.689 1.679 8.068a.119.119 0 010-.136zM8 2c-1.981 0-3.67.992-4.933 2.078C1.797 5.169.88 6.423.43 7.1a1.619 1.619 0 000 1.798c.45.678 1.367 1.932 2.637 3.024C4.329 13.008 6.019 14 8 14c1.981 0 3.67-.992 4.933-2.078 1.27-1.091 2.187-2.345 2.637-3.023a1.619 1.619 0 000-1.798c-.45-.678-1.367-1.932-2.637-3.024C11.671 2.992 9.981 2 8 2z"/><path d="M8 10a2 2 0 100-4 2 2 0 000 4z"/></svg>
+      <span class="settings-menu-switch-label">预览模式</span>
+      <span class="preview-mode-label" style="margin-left:auto;font-size:11px;color:#58a6ff;font-weight:500">${previewModeLabel}</span>
+    </div>
+    <div class="settings-menu-item settings-menu-switch" onclick="toggleMirror()">
+      <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M13 2.5a.5.5 0 01.5.5v8a.5.5 0 01-.5.5h-2.086a1 1 0 00-.707.293l-1.5 1.5a.5.5 0 01-.707 0l-1.5-1.5A1 1 0 005.793 11.5H3.5a.5.5 0 01-.5-.5V3a.5.5 0 01.5-.5h9.5zM3.5 1A1.5 1.5 0 002 2.5v9A1.5 1.5 0 003.5 13h2.293l1.5 1.5a1.5 1.5 0 002.121 0l1.5-1.5h2.086A1.5 1.5 0 0014.5 11.5v-9A1.5 1.5 0 0013 1H3.5z"/></svg>
+      <span class="settings-menu-switch-label">镜像加速</span>
+      <span class="settings-switch settings-switch-mirror ${mirrorEnabled ? 'on' : ''}">
+        <span class="settings-switch-track"><span class="settings-switch-thumb"></span></span>
+      </span>
+    </div>
+    <div class="settings-menu-item settings-menu-switch" onclick="toggleTabTitle()">
+      <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M0 4.75C0 3.784.784 3 1.75 3h12.5c.966 0 1.75.784 1.75 1.75v6.5A1.75 1.75 0 0114.25 13H1.75A1.75 1.75 0 010 11.25v-6.5zm1.75-.25a.25.25 0 00-.25.25v6.5c0 .138.112.25.25.25h12.5a.25.25 0 00.25-.25v-6.5a.25.25 0 00-.25-.25H1.75z"/></svg>
+      <span class="settings-menu-switch-label">浏览器标签名</span>
+      <span class="settings-switch settings-switch-tabtitle ${tabTitleEnabled ? 'on' : ''}">
+        <span class="settings-switch-track"><span class="settings-switch-thumb"></span></span>
+      </span>
+    </div>
+    <div class="settings-menu-item" onclick="closeSettingsMenu(); openSelfUpdate()">
+      <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M8 2.5a5.487 5.487 0 00-4.131 1.869l1.204 1.204A.25.25 0 014.896 6H1.25A.25.25 0 011 5.75V2.104a.25.25 0 01.427-.177l1.38 1.38A7.002 7.002 0 0115 8a.75.75 0 01-1.5 0A5.5 5.5 0 008 2.5zM2.5 8a.75.75 0 00-1.5 0 7.002 7.002 0 0012.023 4.87l1.38 1.38a.25.25 0 00.427-.177V10.5a.25.25 0 00-.25-.25h-3.646a.25.25 0 00-.177.427l1.204 1.204A5.5 5.5 0 012.5 8z"/></svg>
+      CDS 自动更新
     </div>
     <div class="settings-menu-divider"></div>
     <div class="settings-menu-item danger" onclick="closeSettingsMenu(); openCleanupModal()">
@@ -3416,16 +3524,23 @@ function renderBranches() {
         </span>`
       : '';
 
-    // Port badges — icon + name:port, icon from profile config
+    // Port badges — language icon + port number only. Profile name
+    // moves into the tooltip so the chip stays compact and the icon
+    // does the identifying (node → Node.js, dotnet → .NET, react →
+    // React/Vite, etc.). See getPortIcon() → detectPortIconKey() for
+    // the inference order. User feedback #450 part 5 "要托管软件的
+    // icon,例如node程序就显示node的icon,而非随意的两个icon,并且不
+    // 用显示名字"
     const portBadgesInner = services.length > 0 ? services.map(([pid, svc]) => {
       const profile = buildProfiles.find(p => p.id === pid);
       const icon = getPortIcon(pid, profile);
       const badgeClass = svc.status === 'running' ? 'run-port' : svc.status === 'starting' ? 'port-starting' : svc.status === 'stopping' ? 'port-stopping' : svc.status === 'building' ? 'port-building' : svc.status === 'error' ? 'port-error' : 'port-idle';
-      const portTitle = `${esc(pid)}: ${statusLabel(svc.status)}${b.lastAccessedAt ? '\n运行时间: ' + relativeTime(b.lastAccessedAt) : ''}`;
+      const displayName = (profile && profile.name) || pid;
+      const portTitle = `${esc(displayName)} (${esc(pid)}): ${statusLabel(svc.status)}${b.lastAccessedAt ? '\n运行时间: ' + relativeTime(b.lastAccessedAt) : ''}`;
       return `<span class="port-badge ${badgeClass}"
                     onclick="event.stopPropagation(); viewContainerLogs('${esc(b.id)}', '${esc(pid)}')"
                     title="${portTitle}">
-                ${icon} ${esc(pid)}:${svc.hostPort}
+                ${icon}${svc.hostPort}
               </span>`;
     }).join('') : '';
     const portBadgesHtml = (executorTagHtml || portBadgesInner)

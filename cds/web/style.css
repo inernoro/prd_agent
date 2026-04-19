@@ -1039,11 +1039,21 @@ button.text-btn:hover { color: var(--accent); }
      automatically. Reading order changes from left-right-top-bottom to
      top-bottom-left-right — acceptable since users sort by most-recent,
      newest still ends up at column 1 top which is the eye's first anchor.
-     User feedback #450. */
+     User feedback #450.
+
+     `column-count` is IGNORED when the host is `display: flex` — CSS
+     multi-column only engages on block-level containers. The base rule
+     above sets `display: flex` for mobile (1 col stacked), so desktop
+     must explicitly flip back to `display: block` AND zero out the flex
+     `gap` (column-gap takes over). Without this reset the dashboard
+     renders every branch card at 100% width stacked vertically even on
+     a 2000px monitor. */
   .branch-list {
+    display: block;
     column-count: 3;
     column-gap: 16px;
     column-fill: balance;
+    gap: 0;
     /* Cards must explicitly break-inside:avoid or they'd split across columns. */
   }
   .branch-list .branch-card,
@@ -2002,6 +2012,15 @@ a.branch-name:hover { color: var(--accent); }
 .settings-menu-item.danger { color: var(--red); }
 .settings-menu-item.danger:hover { background: var(--red-bg); }
 .settings-menu-divider { height: 1px; background: var(--border); margin: 4px 0; }
+.settings-menu-group-label {
+  padding: 4px 14px 2px;
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  user-select: none;
+}
 
 /* ── Settings switch toggle ── */
 .settings-menu-switch { justify-content: space-between; }
@@ -4944,11 +4963,21 @@ a.branch-name:hover { color: var(--accent); }
   display: inline-flex;
   gap: 2px;
   padding: 3px;
-  margin: 0 0 10px;
+  /* Lives inside `.header-actions` (a flex row with `align-items:center`).
+     The previous `margin: 0 0 10px` left a 10px bottom margin that the
+     flex aligner respected (it centres the margin box), pushing the
+     toggle visibly higher than the sibling 36×36 icon buttons. Zero
+     margin keeps the baseline tidy. */
+  margin: 0;
   background: var(--bg-card-solid);
   border: 1px solid var(--border);
   border-radius: 8px;
   width: fit-content;
+  /* Match the 36px visual height of sibling `.icon-btn` buttons so the
+     whole header-actions row shares one baseline. Compensates for the
+     toggle's 6px-padded buttons that come in ~30px tall. */
+  min-height: 36px;
+  box-sizing: border-box;
 }
 .view-mode-btn {
   display: inline-flex;
