@@ -1,9 +1,28 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Sparkles, Calendar, Tag, RefreshCw, Filter, X } from 'lucide-react';
+import { Sparkles, Calendar, Tag, RefreshCw, Filter, X, FileText } from 'lucide-react';
 import { useChangelogStore } from '@/stores/changelogStore';
 import { MapSectionLoader, MapSpinner } from '@/components/ui/VideoLoader';
 import { glassPanel } from '@/lib/glassStyles';
 import type { ChangelogEntry } from '@/services';
+import { ChangelogAiSummary } from './components/ChangelogAiSummary';
+import { RichTextMarkdownContent } from '@/pages/report-agent/components/RichTextMarkdownContent';
+
+// 采用构建期预载所有历史周报文件 (位于项目根目录的 doc/ 文件夹)
+const mdModules = import.meta.glob('../../../../../doc/report.*.md', { as: 'raw', eager: true });
+const historicalReports = Object.entries(mdModules)
+  .map(([path, rawContent]) => {
+    // path 长相大概是: ../../../../../doc/report.2026-W06.md
+    const fileName = path.split('/').pop() || '';
+    const nameMatch = fileName.match(/report\.(.+)\.md/);
+    const title = nameMatch ? nameMatch[1] : fileName;
+    return {
+      path,
+      fileName,
+      title,
+      content: String(rawContent)
+    };
+  })
+  .sort((a, b) => b.title.localeCompare(a.title)); // 按名称倒序 (最新在前)
 
 /** 类型徽章配色（注册表，禁止 switch / if-else） */
 const TYPE_BADGE_REGISTRY: Record<string, { label: string; color: string; bg: string; border: string }> = {
@@ -13,6 +32,11 @@ const TYPE_BADGE_REGISTRY: Record<string, { label: string; color: string; bg: st
   perf: { label: '优化', color: '#c4b5fd', bg: 'rgba(139, 92, 246, 0.10)', border: 'rgba(139, 92, 246, 0.32)' },
   docs: { label: '文档', color: '#67e8f9', bg: 'rgba(6, 182, 212, 0.10)', border: 'rgba(6, 182, 212, 0.32)' },
   chore: { label: '杂项', color: '#d4d4d8', bg: 'rgba(161, 161, 170, 0.10)', border: 'rgba(161, 161, 170, 0.32)' },
+  enhance: { label: '增强', color: '#f472b6', bg: 'rgba(244, 114, 182, 0.10)', border: 'rgba(244, 114, 182, 0.32)' },
+  rule: { label: '规范', color: '#e879f9', bg: 'rgba(232, 121, 249, 0.10)', border: 'rgba(232, 121, 249, 0.32)' },
+  test: { label: '测试', color: '#34d399', bg: 'rgba(52, 211, 153, 0.10)', border: 'rgba(52, 211, 153, 0.32)' },
+  ci: { label: '构筑', color: '#cbd5e1', bg: 'rgba(203, 213, 225, 0.10)', border: 'rgba(203, 213, 225, 0.32)' },
+  deploy: { label: '部署', color: '#6ee7b7', bg: 'rgba(110, 231, 183, 0.10)', border: 'rgba(110, 231, 183, 0.32)' },
 };
 
 const FALLBACK_BADGE = {
@@ -44,7 +68,7 @@ export default function ChangelogPage() {
   const markAsSeen = useChangelogStore((s) => s.markAsSeen);
 
   const [typeFilter, setTypeFilter] = useState<string | null>(null);
-  const [moduleFilter, setModuleFilter] = useState<string | null>(null);
+  const [activeReportIdx, setActiveReportIdx] = useState<number>(-1);
 
   // 进入页面：拉取数据 + 标记已读
   useEffect(() => {
@@ -59,14 +83,12 @@ export default function ChangelogPage() {
     void loadReleases(20, true);
   };
 
-  // 收集所有出现过的 type / module 用于筛选 chip
-  const { availableTypes, availableModules } = useMemo(() => {
+  // 收集所有出现过的 type 用于筛选 chip
+  const { availableTypes } = useMemo(() => {
     const types = new Set<string>();
-    const modules = new Set<string>();
     const collect = (entries: ChangelogEntry[]) => {
       for (const e of entries) {
         if (e.type) types.add(e.type.toLowerCase());
-        if (e.module) modules.add(e.module);
       }
     };
     if (currentWeek) {
@@ -77,13 +99,11 @@ export default function ChangelogPage() {
     }
     return {
       availableTypes: Array.from(types).sort(),
-      availableModules: Array.from(modules).sort(),
     };
   }, [currentWeek, releases]);
 
   const matchFilter = (e: ChangelogEntry): boolean => {
     if (typeFilter && e.type.toLowerCase() !== typeFilter) return false;
-    if (moduleFilter && e.module !== moduleFilter) return false;
     return true;
   };
 
@@ -99,7 +119,7 @@ export default function ChangelogPage() {
     }
     return flat;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [currentWeek, typeFilter, moduleFilter]);
+  }, [currentWeek, typeFilter]);
 
   const currentWeekByDate = useMemo(() => {
     const map = new Map<string, FlatEntry[]>();
@@ -205,62 +225,43 @@ export default function ChangelogPage() {
         </div>
 
         {/* 筛选器 */}
-        {(availableTypes.length > 0 || availableModules.length > 0) && (
+        {availableTypes.length > 0 && (
           <div className="flex flex-wrap items-center gap-2 pt-1">
             <div className="inline-flex items-center gap-1.5 text-[13px] font-medium" style={{ color: 'var(--text-secondary)' }}>
               <Filter size={14} />
               筛选
             </div>
-            {availableTypes.length > 0 && (
-              <div className="flex flex-wrap gap-1.5 ml-1">
-                {availableTypes.map((t) => {
-                  const meta = getTypeBadge(t);
-                  const active = typeFilter === t;
-                  return (
-                    <button
-                      key={t}
-                      type="button"
-                      onClick={() => setTypeFilter(active ? null : t)}
-                      className="h-7 px-3 rounded-lg text-[13px] font-medium transition-all"
-                      style={{
-                        background: active ? meta.bg : 'rgba(255, 255, 255, 0.04)',
-                        border: `1px solid ${active ? meta.border : 'rgba(255, 255, 255, 0.10)'}`,
-                        color: active ? meta.color : 'var(--text-muted)',
-                      }}
-                    >
-                      {meta.label}
-                    </button>
-                  );
-                })}
-              </div>
-            )}
-            {availableModules.length > 0 && (
-              <div className="flex flex-wrap gap-1.5">
-                {availableModules.map((m) => {
-                  const active = moduleFilter === m;
-                  return (
-                    <button
-                      key={m}
-                      type="button"
-                      onClick={() => setModuleFilter(active ? null : m)}
-                      className="h-7 px-3 rounded-lg text-[13px] font-mono transition-all"
-                      style={{
-                        background: active ? 'rgba(99, 102, 241, 0.14)' : 'rgba(255, 255, 255, 0.04)',
-                        border: `1px solid ${active ? 'rgba(99, 102, 241, 0.36)' : 'rgba(255, 255, 255, 0.10)'}`,
-                        color: active ? '#a5b4fc' : 'var(--text-muted)',
-                      }}
-                    >
-                      {m}
-                    </button>
-                  );
-                })}
-              </div>
-            )}
-            {(typeFilter || moduleFilter) && (
+            
+            <div className="flex flex-wrap gap-1.5 ml-1">
+              {availableTypes.map((t) => {
+                const meta = getTypeBadge(t);
+                const active = typeFilter === t;
+                return (
+                  <button
+                    key={t}
+                    type="button"
+                    onClick={() => setTypeFilter(active ? null : t)}
+                    className="h-8 px-4 rounded-lg text-[13px] font-medium transition-all cursor-pointer"
+                    style={{
+                      background: active ? meta.bg : 'rgba(255, 255, 255, 0.04)',
+                      border: `1px solid ${active ? meta.border : 'rgba(255, 255, 255, 0.10)'}`,
+                      color: active ? meta.color : 'var(--text-muted)',
+                      lineHeight: '1',
+                      display: 'flex',
+                      alignItems: 'center',
+                    }}
+                  >
+                    {meta.label}
+                  </button>
+                );
+              })}
+            </div>
+            
+            {typeFilter && (
               <button
                 type="button"
-                onClick={() => { setTypeFilter(null); setModuleFilter(null); }}
-                className="h-7 px-3 rounded-lg text-[13px] inline-flex items-center gap-1.5 ml-2 transition-all hover:bg-white/10 hover:text-white"
+                onClick={() => setTypeFilter(null)}
+                className="h-8 px-3 rounded-lg text-[13px] inline-flex items-center gap-1.5 ml-2 transition-all hover:bg-white/10 hover:text-white cursor-pointer"
                 style={{
                   background: 'rgba(255, 255, 255, 0.06)',
                   border: '1px solid rgba(255, 255, 255, 0.12)',
@@ -321,41 +322,9 @@ export default function ChangelogPage() {
           </span>
         </div>
 
-        {/* ── AI 总结 ── */}
+        {/* ── 回调式 AI 总结流 ── */}
         {totalCurrentWeek > 0 && !loadingCurrent && (
-          <div 
-            className="mb-6 rounded-xl p-4 relative overflow-hidden"
-            style={{
-              background: 'linear-gradient(135deg, rgba(99, 102, 241, 0.05) 0%, rgba(168, 85, 247, 0.06) 100%)',
-              border: '1px solid rgba(168, 85, 247, 0.18)',
-              boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.03)',
-            }}
-          >
-            {/* 顶角光晕 */}
-            <div 
-              className="absolute -top-10 -right-10 w-40 h-40 blur-3xl rounded-full pointer-events-none" 
-              style={{ background: 'rgba(168, 85, 247, 0.12)' }} 
-            />
-            <div 
-              className="absolute -bottom-8 -left-8 w-32 h-32 blur-2xl rounded-full pointer-events-none" 
-              style={{ background: 'rgba(99, 102, 241, 0.1)' }} 
-            />
-            
-            <div className="relative z-10 flex flex-col gap-2.5">
-              <div className="flex items-center gap-2 text-[13px] font-semibold" style={{ color: '#c084fc' }}>
-                <Sparkles size={16} />
-                <span>AI 总结</span>
-              </div>
-              <div className="text-[13px] leading-[1.65]" style={{ color: 'var(--text-secondary)' }}>
-                本周团队主要集中在体验架构的沉浸式进阶与多模态音视频生成管线的提效：
-                <ul className="list-disc pl-4 mt-1.5 space-y-1">
-                  <li style={{ color: 'var(--text-muted)' }}><span style={{ color: 'var(--text-secondary)' }}>视觉与交互革新：</span>完成了桌面端 Agent Launcher 的全局沉浸式重构，实现了真正无缝衔接的固定视差全屏底图，消灭了生硬边框与加载顿挫感。</li>
-                  <li style={{ color: 'var(--text-muted)' }}><span style={{ color: 'var(--text-secondary)' }}>视频 Agent 管线：</span>新增并重构了双模态视频解析链路界面，支持高并发上传海量图文物料与 Markdown 自动分镜解析提取提取。</li>
-                  <li style={{ color: 'var(--text-muted)' }}><span style={{ color: 'var(--text-secondary)' }}>系统级重构：</span>合并两套分离的 CDS 系统更新弹窗收口到应用底座，防线下沉；同时强化了历史拉取能力和底层数据通讯通道。</li>
-                </ul>
-              </div>
-            </div>
-          </div>
+          <ChangelogAiSummary entries={currentWeekEntries} />
         )}
 
         {loadingCurrent && !currentWeek && <MapSectionLoader text="正在加载本周更新…" />}
@@ -521,8 +490,87 @@ export default function ChangelogPage() {
           </div>
         )}
       </section>
+
+      {/* ── 历史档案区 (来自根目录 doc 实体) ───────────────────────────────────── */}
+      <section style={glassPanel} className="rounded-2xl p-5 mb-10">
+        <div className="flex items-baseline justify-between gap-3 mb-4">
+          <h2 className="text-base font-semibold text-purple-400">
+            存档周报 (doc/)
+          </h2>
+          <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
+            来自于项目 doc 目录的归档文件
+          </span>
+        </div>
+
+        {historicalReports.length === 0 ? (
+          <div
+            className="rounded-xl px-4 py-6 text-center text-[12px]"
+            style={{
+              background: 'rgba(255, 255, 255, 0.02)',
+              border: '1px dashed rgba(255, 255, 255, 0.08)',
+              color: 'var(--text-muted)',
+            }}
+          >
+            未发现历史周报 (`doc/report.*.*`)
+          </div>
+        ) : (
+          <div className="flex flex-col gap-4">
+            <div className="flex flex-wrap gap-2">
+              {historicalReports.map((report, idx) => (
+                <button
+                  key={report.path}
+                  onClick={() => setActiveReportIdx(idx === activeReportIdx ? -1 : idx)}
+                  className="px-3 py-1.5 rounded-lg text-[13px] inline-flex items-center gap-1.5 transition-colors font-mono"
+                  style={{
+                    background: idx === activeReportIdx ? 'rgba(168, 85, 247, 0.15)' : 'rgba(255, 255, 255, 0.05)',
+                    border: `1px solid ${idx === activeReportIdx ? 'rgba(168, 85, 247, 0.4)' : 'rgba(255, 255, 255, 0.1)'}`,
+                    color: idx === activeReportIdx ? '#d8b4fe' : 'var(--text-secondary)',
+                  }}
+                >
+                  <FileText size={14} />
+                  {titleWithoutExt(report.title)}
+                </button>
+              ))}
+            </div>
+
+            {/* 当处于点开状态，渲染预览窗 */}
+            {activeReportIdx >= 0 && (
+              <div 
+                className="mt-2 rounded-xl p-6 relative overflow-hidden"
+                style={{
+                  background: 'rgba(0, 0, 0, 0.3)',
+                  border: '1px solid rgba(255, 255, 255, 0.1)',
+                }}
+              >
+                <div className="flex justify-between items-center mb-4 pb-3 border-b border-white/5">
+                  <div className="font-mono text-[14px] text-purple-300">
+                    {historicalReports[activeReportIdx].fileName}
+                  </div>
+                  <button 
+                    onClick={() => setActiveReportIdx(-1)}
+                    className="p-1 rounded bg-white/5 hover:bg-white/10 text-white transition-colors"
+                  >
+                    <X size={16} />
+                  </button>
+                </div>
+                
+                <div className="max-h-[60vh] overflow-y-auto pr-2 custom-scrollbar markdown-body" style={{ color: 'var(--text-secondary)' }}>
+                  <RichTextMarkdownContent 
+                    content={historicalReports[activeReportIdx].content} 
+                  />
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+      </section>
     </div>
   );
+}
+
+// Helper for title mapping
+function titleWithoutExt(title: string) {
+  return title.replace(/\.md$/, '').replace(/^report\./, '');
 }
 
 /** 单行更新条目 */
