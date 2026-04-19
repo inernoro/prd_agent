@@ -64,8 +64,8 @@ const REVEAL = {
   agentsHeader: 430,
   agentsCardBase: 470,
   agentsCardStep: 35,
-  utilitiesHeader: 800,
-  utilitiesCardBase: 840,
+  utilitiesHeader: 600,
+  utilitiesCardBase: 630,
   utilitiesCardStep: 25,
   showcaseHeader: 970, // 仅当首屏即可见时生效；滚动触发走 IntersectionObserver
 };
@@ -618,7 +618,6 @@ export default function AgentLauncherPage() {
     <div className="h-full min-h-0 flex flex-col relative" style={{ background: '#111215' }}>
       {/* 环境光背景层（blobs + film grain + top spotlight） —— 单独一层，不影响布局 */}
       <HomeAmbientBackdrop />
-
       <style>{`
         @keyframes gradientSlowFlow {
           0% { background-position: 0% 50%; }
@@ -629,33 +628,35 @@ export default function AgentLauncherPage() {
           animation: gradientSlowFlow 8s ease-in-out infinite;
         }
       `}</style>
-      <div className="flex-1 min-h-0 overflow-auto relative" style={{ zIndex: 1 }}>
+      
+      {/* ── 全局页面背景大画幅层 (Global Page Hero Backing) ── */}
+      {/* 置于 flex-col relative 父级，而不放进 overflow-auto 内部，使其成为视差固定的完美静态背景 */}
+      <div className="absolute inset-x-0 top-0 pointer-events-none" style={{ height: isMobile ? '70vh' : '90vh', zIndex: 0 }}>
+        {/* Background image */}
+        <div
+          className="absolute inset-0"
+          style={{
+            backgroundImage: `url(${heroBgUrl})`,
+            backgroundSize: 'cover',
+            backgroundPosition: 'center top',
+            backgroundRepeat: 'no-repeat',
+            opacity: 0.85,
+            maskImage: 'linear-gradient(to bottom, rgba(0,0,0,1) 50%, rgba(0,0,0,0) 100%)',
+            WebkitMaskImage: 'linear-gradient(to bottom, rgba(0,0,0,1) 50%, rgba(0,0,0,0) 100%)',
+          }}
+        />
+        {/* Left fade overlay — text readability */}
+        <div
+          className="absolute inset-0"
+          style={{
+            background: isMobile
+              ? 'linear-gradient(180deg, rgba(17,18,21,1) 0%, rgba(17,18,21,0.7) 40%, transparent 100%)'
+              : 'linear-gradient(90deg, rgba(17,18,21,0.95) 0%, rgba(17,18,21,0.8) 25%, rgba(17,18,21,0.4) 50%, transparent 80%)',
+          }}
+        />
+      </div>
 
-        {/* ── 全局页面背景大画幅层 (Global Page Hero Backing) ── */}
-        <div className="absolute inset-x-0 top-0 pointer-events-none" style={{ height: isMobile ? '70vh' : '90vh', zIndex: 0 }}>
-          {/* Background image */}
-          <div
-            className="absolute inset-0"
-            style={{
-              backgroundImage: `url(${heroBgUrl})`,
-              backgroundSize: 'cover',
-              backgroundPosition: 'center top',
-              backgroundRepeat: 'no-repeat',
-              opacity: 0.85,
-              maskImage: 'linear-gradient(to bottom, rgba(0,0,0,1) 50%, rgba(0,0,0,0) 100%)',
-              WebkitMaskImage: 'linear-gradient(to bottom, rgba(0,0,0,1) 50%, rgba(0,0,0,0) 100%)',
-            }}
-          />
-          {/* Left fade overlay — text readability */}
-          <div
-            className="absolute inset-0"
-            style={{
-              background: isMobile
-                ? 'linear-gradient(180deg, rgba(17,18,21,1) 0%, rgba(17,18,21,0.7) 40%, transparent 100%)'
-                : 'linear-gradient(90deg, rgba(17,18,21,0.95) 0%, rgba(17,18,21,0.8) 25%, rgba(17,18,21,0.4) 50%, transparent 80%)',
-            }}
-          />
-        </div>
+      <div className="flex-1 min-h-0 overflow-auto relative" style={{ zIndex: 1 }}>
 
         {/* Hero 本地 aurora 光晕 */}
         <div
