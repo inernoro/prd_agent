@@ -361,10 +361,14 @@ export function createGithubWebhookRouter(deps: GitHubWebhookRouterDeps): Router
     try {
       result = await dispatcher.handle(eventName, payload);
     } catch (err) {
+      // Don't leak the stack trace to the client — file paths, module
+      // versions, and internal structure help post-auth attackers
+      // (Cursor Bugbot #450). Log it server-side for operator access.
+      // eslint-disable-next-line no-console
+      console.warn(`[webhook/self-test] dispatch error: ${(err as Error).stack || (err as Error).message}`);
       res.status(500).json({
         error: 'dispatch_error',
         message: (err as Error).message,
-        stack: (err as Error).stack?.slice(0, 1000),
       });
       return;
     }

@@ -260,9 +260,13 @@ export class CheckRunRunner {
       const repoFullName = entry.githubRepoFullName;
       const instId = entry.githubInstallationId;
       if (!id || !repoFullName || !instId) continue;
-      // Skip branches that are mid-deploy right now — their finalize()
-      // will fire normally and shouldn't be preempted.
-      if (entry.status === 'building' || entry.status === 'starting') continue;
+      // DON'T skip building/starting statuses — those are EXACTLY the
+      // ones we need to reconcile. reconcileOrphans is only called once
+      // at boot; at that moment no deploy is actually in flight in this
+      // process, so a "building" status can only be a leftover from the
+      // crash/restart that stranded this check run.
+      // (An earlier version skipped these, which defeated the whole
+      // purpose. Caught by Cursor Bugbot review on #450.)
       const parsed = this.parseRepo(repoFullName);
       if (!parsed) continue;
       try {
