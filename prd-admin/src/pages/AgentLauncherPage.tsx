@@ -618,7 +618,15 @@ export default function AgentLauncherPage() {
     <div className="h-full min-h-0 flex flex-col relative" style={{ background: 'var(--bg-base)' }}>
       
       {/* ── 页面背景大画幅层 (Page Hero Backing) ── */}
-      <div className="absolute inset-x-0 top-0 pointer-events-none" style={{ height: isMobile ? '70vh' : '90vh', zIndex: 0 }}>
+      <div 
+        className="absolute inset-x-0 top-0 pointer-events-none" 
+        style={{ 
+          height: isMobile ? '70vh' : '90vh', 
+          zIndex: 0,
+          maskImage: 'linear-gradient(to bottom, rgba(0,0,0,1) 50%, rgba(0,0,0,0) 100%)',
+          WebkitMaskImage: 'linear-gradient(to bottom, rgba(0,0,0,1) 50%, rgba(0,0,0,0) 100%)',
+        }}
+      >
         {/* Background image */}
         <div
           className="absolute inset-0"
@@ -628,8 +636,6 @@ export default function AgentLauncherPage() {
             backgroundPosition: 'center top',
             backgroundRepeat: 'no-repeat',
             opacity: 0.85,
-            maskImage: 'linear-gradient(to bottom, rgba(0,0,0,1) 50%, rgba(0,0,0,0) 100%)',
-            WebkitMaskImage: 'linear-gradient(to bottom, rgba(0,0,0,1) 50%, rgba(0,0,0,0) 100%)',
           }}
         />
         {/* Left fade overlay — text readability */}
