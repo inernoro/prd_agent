@@ -615,23 +615,10 @@ export default function AgentLauncherPage() {
   );
 
   return (
-    <div className="h-full min-h-0 flex flex-col relative" style={{ background: '#111215' }}>
-      {/* 环境光背景层（blobs + film grain + top spotlight） —— 单独一层，不影响布局 */}
-      <HomeAmbientBackdrop />
-      <style>{`
-        @keyframes gradientSlowFlow {
-          0% { background-position: 0% 50%; }
-          50% { background-position: 100% 50%; }
-          100% { background-position: 0% 50%; }
-        }
-        .animate-gradient-flow {
-          animation: gradientSlowFlow 8s ease-in-out infinite;
-        }
-      `}</style>
+    <div className="h-full min-h-0 flex flex-col relative" style={{ background: 'transparent' }}>
       
-      {/* ── 全局页面背景大画幅层 (Global Page Hero Backing) ── */}
-      {/* 置于 flex-col relative 父级，而不放进 overflow-auto 内部，使其成为视差固定的完美静态背景 */}
-      <div className="absolute inset-x-0 top-0 pointer-events-none" style={{ height: isMobile ? '70vh' : '90vh', zIndex: 0 }}>
+      {/* ── 真正的全屏深空背景（穿透侧边栏，达到究极全屏） ── */}
+      <div className="fixed inset-0 pointer-events-none" style={{ zIndex: -1, background: '#111215' }}>
         {/* Background image */}
         <div
           className="absolute inset-0"
@@ -641,8 +628,8 @@ export default function AgentLauncherPage() {
             backgroundPosition: 'center top',
             backgroundRepeat: 'no-repeat',
             opacity: 0.85,
-            maskImage: 'linear-gradient(to bottom, rgba(0,0,0,1) 50%, rgba(0,0,0,0) 100%)',
-            WebkitMaskImage: 'linear-gradient(to bottom, rgba(0,0,0,1) 50%, rgba(0,0,0,0) 100%)',
+            maskImage: 'linear-gradient(to bottom, rgba(0,0,0,1) 60%, rgba(0,0,0,0) 100%)',
+            WebkitMaskImage: 'linear-gradient(to bottom, rgba(0,0,0,1) 60%, rgba(0,0,0,0) 100%)',
           }}
         />
         {/* Left fade overlay — text readability */}
@@ -656,6 +643,19 @@ export default function AgentLauncherPage() {
         />
       </div>
 
+      {/* 环境光背景层（blobs + film grain + top spotlight） —— 单独一层，不影响布局 */}
+      <HomeAmbientBackdrop />
+      <style>{`
+        @keyframes gradientSlowFlow {
+          0% { background-position: 0% 50%; }
+          50% { background-position: 100% 50%; }
+          100% { background-position: 0% 50%; }
+        }
+        .animate-gradient-flow {
+          animation: gradientSlowFlow 8s ease-in-out infinite;
+        }
+      `}</style>
+      
       <div className="flex-1 min-h-0 overflow-auto relative" style={{ zIndex: 1 }}>
 
         {/* Hero 本地 aurora 光晕 */}
