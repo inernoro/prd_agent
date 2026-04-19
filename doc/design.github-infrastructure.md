@@ -1,4 +1,4 @@
-# GitHub 基础设施层（Infrastructure.GitHub）
+# GitHub 基础设施层（Infrastructure.GitHub） · 设计
 
 > 状态：落地中 · 定位同 `design.llm-gateway.md` · 关联 `rule.app-identity.md`
 

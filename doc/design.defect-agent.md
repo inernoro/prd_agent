@@ -1,4 +1,4 @@
-# 缺陷管理 Agent 功能设计
+# 缺陷管理 Agent · 设计
 
 > **appKey**：`defect-agent` | **状态**：已实现
 

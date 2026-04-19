@@ -1,4 +1,4 @@
-# CDS state.json → MongoDB 迁移指南
+# CDS state.json → MongoDB 迁移 · 指南
 
 > **类型**：操作指南 (How-to) | **日期**：2026-04-18 | **版本**：v1.1
 

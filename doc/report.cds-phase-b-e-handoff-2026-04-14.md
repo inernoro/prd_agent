@@ -1,4 +1,4 @@
-# CDS Phase B/C/D/E + Hardening 交接报告
+# CDS Phase B/C/D/E + Hardening 交接 · 报告
 
 > **日期**: 2026-04-14 | **分支**: `claude/phase-a-handoff-76ox4` | **作者**: Claude (会话 76ox4)
 >

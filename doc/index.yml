@@ -161,3 +161,6 @@ docs:
   report.prd-agent-web-sync: PRD Agent Web 端同步开发报告
   report.cds-api-full-test-2026-03-28: CDS API 全功能测试报告
   report.skill-doc-evaluation: 文档技能评测报告：三技能 vs 已有文档
+  report.skill-eval-sample-user-guide: 文档技能评测·user-guide-writing 样本输出
+  report.skill-eval-sample-technical: 文档技能评测·technical-writing 样本输出
+  report.skill-eval-sample-diataxis: 文档技能评测·documentation-writer（Diátaxis）样本输出

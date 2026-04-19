@@ -1,4 +1,4 @@
-# 海鲜市场（Configuration Marketplace）
+# 海鲜市场（Configuration Marketplace） · 规格
 
 > 文档版本：3.0
 > 最后更新：2026-02-03

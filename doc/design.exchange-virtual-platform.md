@@ -1,4 +1,4 @@
-# 模型中继虚拟平台 (Exchange as Virtual Platform) 设计方案
+# 模型中继虚拟平台 (Exchange as Virtual Platform) · 设计
 
 > **版本**：v1.0 | **日期**：2026-04-16 | **状态**：已实现
 

@@ -1,4 +1,4 @@
-# design.workspace — CLI Agent 工作空间设计
+# design.workspace — CLI Agent 工作空间 · 设计
 
 > **核心原则**：不和智能体竞争，只做接入层。智能体负责生成，我们负责显示和控制。
 

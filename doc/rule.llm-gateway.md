@@ -1,4 +1,4 @@
-# LLM Gateway 流式调用与 Reasoning 规则
+# LLM Gateway 流式调用与 Reasoning · 规则
 
 所有大模型调用必须通过 `ILlmGateway`，禁止直接调用底层 LLM 客户端。本文档除了约束调用方式，还沉淀了流式场景下的 5 个关键陷阱——每一条都对应过线上级故障。
 

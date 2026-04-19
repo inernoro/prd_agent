@@ -1,4 +1,4 @@
-# 周报管理 Agent (Report Agent) 架构设计
+# 周报管理 Agent (Report Agent) · 设计
 
 > **appKey**：`report-agent` | **状态**：Phase 1-4 已实现
 

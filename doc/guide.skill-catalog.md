@@ -1,4 +1,4 @@
-# guide.skill-catalog — 技能百科全书
+# guide.skill-catalog — 技能百科全书 · 指南
 
 > 完整的 Claude Code 技能索引。每个技能说明"输入什么、输出什么、什么时候用"。
 >

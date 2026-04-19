@@ -5,7 +5,7 @@ created: 2026-03-20
 updated: 2026-03-20
 ---
 
-# PRD Agent 全平台操作手册
+# PRD Agent 全平台 · 指南
 
 > 本文档完整描述 PRD Agent 在桌面端（Tauri）和 Web 管理后台（prd-admin）上的所有用户可见功能、操作流程、UI 布局及 API 端点，供产品验收、QA 测试和开发对齐使用。
 

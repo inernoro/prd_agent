@@ -1,4 +1,4 @@
-# CDS Phase F (UF-01..22 + GAP-01..16 + L10N + FU-01/03/04/05) 交接报告
+# CDS Phase F (UF-01..22 + GAP-01..16 + L10N + FU-01/03/04/05) 交接 · 报告
 
 > **日期**: 2026-04-16 | **分支**: `claude/review-handoff-report-updYh` | **作者**: Claude (本 session)
 >

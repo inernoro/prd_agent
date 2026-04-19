@@ -1,4 +1,4 @@
-# PRD Agent 产品需求文档
+# PRD Agent 产品需求文档 · 规格
 
 **产品名称**：PRD Agent（PRD智能解读助手）
 **文档版本**：v2.0

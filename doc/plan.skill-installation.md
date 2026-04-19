@@ -1,4 +1,4 @@
-# Claude Code Skill 安装计划
+# Claude Code Skill 安装 · 计划
 
 > **创建日期**：2026-02-01
 > **适用范围**：prd_agent 项目的 Claude Code 开发环境

@@ -1,4 +1,4 @@
-# PR Review V2 —— 以 OAuth 为根的最小可审查工作台
+# PR Review V2 —— 以 OAuth 为根的最小可审查工作台 · 设计
 
 > 状态：起草中 · 替代 `design.pr-review-prism.md`（若存在） · 关联 `rule.app-identity.md`、`rule.snapshot-fallback.md`、`rule.no-localstorage.md`
 

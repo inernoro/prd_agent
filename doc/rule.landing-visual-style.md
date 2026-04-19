@@ -1,4 +1,4 @@
-# rule.landing-visual-style — 首页 / 登录页视觉语言规范
+# rule.landing-visual-style — 首页 / 登录页视觉语言 · 规则
 
 > **范围**：`prd-admin/src/pages/home/` + 所有对外展示类页面（登录、分享、落地、订阅邮件 H5 等）。
 > **权威出处**：PR inernoro/prd_agent#405（`claude/redesign-homepage-gTSAf`），把 /home 从"粒子堆 + 代理卡片秀"重做成 Linear.app × Retro-Futurism 融合的九幕叙事。

@@ -1,4 +1,4 @@
-# CDS (Cloud Development Suite) 技术架构文档
+# CDS (Cloud Development Suite) · 设计
 
 > **版本**：v3.2 | **日期**：2026-04-10 | **状态**：已落地
 >

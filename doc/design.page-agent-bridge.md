@@ -1,4 +1,4 @@
-# Page Agent Bridge — 编码 Agent 的浏览器之眼
+# Page Agent Bridge — 编码 Agent 的浏览器之眼 · 设计
 
 > **日期**：2026-04-06 | **状态**：已落地（HTTP 轮询 + 按需激活）
 >
