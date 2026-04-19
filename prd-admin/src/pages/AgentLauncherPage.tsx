@@ -56,18 +56,18 @@ import { Reveal } from '@/pages/home/components/Reveal';
 const REVEAL_DURATION = 1000; // /home 默认 2000 的一半
 const REVEAL = {
   heroEyebrow: 0,
-  heroTitle: 50,
-  heroSubtitle: 100,
-  heroSearch: 150,
-  quickLinkBase: 200,
-  quickLinkStep: 50,
-  agentsHeader: 430,
-  agentsCardBase: 470,
-  agentsCardStep: 35,
-  utilitiesHeader: 600,
-  utilitiesCardBase: 630,
-  utilitiesCardStep: 25,
-  showcaseHeader: 970, // 仅当首屏即可见时生效；滚动触发走 IntersectionObserver
+  heroTitle: 30,
+  heroSubtitle: 60,
+  heroSearch: 90,
+  quickLinkBase: 120,
+  quickLinkStep: 30,
+  agentsHeader: 250,
+  agentsCardBase: 280,
+  agentsCardStep: 20,
+  utilitiesHeader: 400,
+  utilitiesCardBase: 420,
+  utilitiesCardStep: 15,
+  showcaseHeader: 550, // 仅当首屏即可见时生效；滚动触发走 IntersectionObserver
 };
 
 // ── Icon & Color mapping (self-contained, doesn't touch ToolCard) ──
