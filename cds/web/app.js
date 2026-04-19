@@ -3625,16 +3625,26 @@ function renderBranches() {
               </button>
             </span>
           </div>
-          ${b.pinnedCommit ? `<div class="branch-card-row2">
-            <span class="pinned-commit-badge" onclick="event.stopPropagation(); checkoutCommit('${esc(b.id)}', '', true, '')" title="已固定到历史提交 ${esc(b.pinnedCommit)}，点击恢复最新"><svg width="10" height="10" viewBox="0 0 16 16" fill="currentColor" style="vertical-align:-1px"><path d="M4.456.734a1.75 1.75 0 012.826.504l.613 1.327a3.081 3.081 0 002.084 1.707l2.454.584c1.332.317 1.8 1.972.832 2.94L11.06 9.695a.75.75 0 01-.19.436l-4.552 4.552a.75.75 0 01-1.06-1.06l4.305-4.305L7.307 7.13A4.581 4.581 0 005.03 4.929L4.416 3.6A.25.25 0 004.01 3.49L2.606 4.893a.25.25 0 00.104.407l1.328.613a4.581 4.581 0 012.204 2.277l.248.538a.75.75 0 01-1.36.628l-.248-.538a3.081 3.081 0 00-1.483-1.532L2.07 6.773C.783 6.19.381 4.602 1.3 3.682L2.703 2.28A1.75 1.75 0 014.456.734z"/></svg> ${esc(b.pinnedCommit)}</span>
-          </div>` : ''}
-          ${b.githubCommitSha && b.githubRepoFullName ? `<div class="branch-card-row2">
-            <a class="branch-gh-badge" href="https://github.com/${esc(b.githubRepoFullName)}/commit/${esc(b.githubCommitSha)}" target="_blank" rel="noopener" onclick="event.stopPropagation()" title="来自 GitHub webhook — 点击查看 commit: ${esc(b.githubCommitSha)}" style="display:inline-flex;align-items:center;gap:5px;padding:2px 8px;border-radius:10px;background:rgba(96,165,250,0.1);border:1px solid rgba(96,165,250,0.3);color:#60a5fa;font-size:10px;font-weight:600;text-decoration:none;font-family:var(--font-mono,monospace)">
-              <svg width="10" height="10" viewBox="0 0 16 16" fill="currentColor"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
-              from GitHub · ${esc(String(b.githubCommitSha).slice(0, 7))}
-            </a>
-          </div>` : ''}
-          ${portBadgesHtml ? `<div class="branch-card-ports">${portBadgesHtml}</div>` : ''}
+          ${(() => {
+            // Unified chip row — combines GitHub source chip + port badges +
+            // pinned-commit badge into ONE wrappable flex row. Keeps the
+            // card compact and visually consistent between branches that
+            // have/don't have a GitHub source.
+            //
+            // GitHub chip is just an icon + 7-char SHA (no "from GitHub"
+            // label — the GitHub logo is self-explanatory and the SHA
+            // tells you "this branch was triggered by a webhook push").
+            const ghChip = (b.githubCommitSha && b.githubRepoFullName && /^[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+$/.test(b.githubRepoFullName))
+              ? `<a class="branch-gh-badge" href="https://github.com/${b.githubRepoFullName.split('/').map(encodeURIComponent).join('/')}/commit/${encodeURIComponent(b.githubCommitSha)}" target="_blank" rel="noopener" onclick="event.stopPropagation()" title="来自 GitHub webhook · 点击查看 commit ${esc(b.githubCommitSha)}" style="display:inline-flex;align-items:center;gap:4px;padding:2px 7px;border-radius:10px;background:rgba(96,165,250,0.1);border:1px solid rgba(96,165,250,0.3);color:#60a5fa;font-size:10px;font-weight:600;text-decoration:none;font-family:var(--font-mono,monospace)"><svg width="10" height="10" viewBox="0 0 16 16" fill="currentColor"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>${esc(String(b.githubCommitSha).slice(0, 7))}</a>`
+              : '';
+            const pinChip = b.pinnedCommit
+              ? `<span class="pinned-commit-badge" onclick="event.stopPropagation(); checkoutCommit('${esc(b.id)}', '', true, '')" title="已固定到历史提交 ${esc(b.pinnedCommit)}，点击恢复最新"><svg width="10" height="10" viewBox="0 0 16 16" fill="currentColor" style="vertical-align:-1px"><path d="M4.456.734a1.75 1.75 0 012.826.504l.613 1.327a3.081 3.081 0 002.084 1.707l2.454.584c1.332.317 1.8 1.972.832 2.94L11.06 9.695a.75.75 0 01-.19.436l-4.552 4.552a.75.75 0 01-1.06-1.06l4.305-4.305L7.307 7.13A4.581 4.581 0 005.03 4.929L4.416 3.6A.25.25 0 004.01 3.49L2.606 4.893a.25.25 0 00.104.407l1.328.613a4.581 4.581 0 012.204 2.277l.248.538a.75.75 0 01-1.36.628l-.248-.538a3.081 3.081 0 00-1.483-1.532L2.07 6.773C.783 6.19.381 4.602 1.3 3.682L2.703 2.28A1.75 1.75 0 014.456.734z"/></svg> ${esc(b.pinnedCommit)}</span>`
+              : '';
+            const hasAnyChip = ghChip || pinChip || portBadgesHtml;
+            return hasAnyChip
+              ? `<div class="branch-card-chips">${ghChip}${portBadgesHtml || ''}${pinChip}</div>`
+              : '';
+          })()}
         </div>
         ${b.errorMessage && !deployLog ? (() => {
           // P4 Part 8 (MECE R4): rich inline failure preview.

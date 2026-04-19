@@ -729,7 +729,14 @@ export class GitHubWebhookDispatcher {
     if (!branchId) return { action: 'ignored-event', message: 'check_run missing external_id' };
     const entry = this.deps.stateService.getBranch(branchId);
     if (!entry) return { action: 'ignored-event', message: `check_run branch '${branchId}' not found` };
-    const commitSha = event.check_run!.head_sha;
+    const commitSha = event.check_run?.head_sha;
+    // SHA format validation — parallel to handlePush (defense-in-depth).
+    // Bugbot #450 round 6 pointed out that handleCheckRun was missing
+    // this check, and unvalidated SHA would get persisted + .slice()'d
+    // later (throwing on undefined / malformed input).
+    if (typeof commitSha !== 'string' || !/^[0-9a-f]{7,40}$/i.test(commitSha)) {
+      return { action: 'ignored-event', message: 'check_run has malformed or missing head_sha' };
+    }
     if (!dryRun) {
       this.deps.stateService.updateBranchGithubMeta(branchId, { githubCommitSha: commitSha });
       this.deps.stateService.save();
