@@ -20,6 +20,7 @@ import { topoSortLayers } from '../services/topo-sort.js';
 import { detectStack } from '../services/stack-detector.js';
 import { assertProjectAccess } from './projects.js';
 import { CheckRunRunner } from '../services/check-run-runner.js';
+import { branchEvents, nowIso } from '../services/branch-events.js';
 import { GitHubAppClient } from '../services/github-app-client.js';
 import { isSafeGitRef } from '../services/github-webhook-dispatcher.js';
 
@@ -796,6 +797,82 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
   // ── Branches CRUD ──
 
+  // Live UI stream — 2026-04-19.
+  //
+  // Dashboards subscribe to this SSE once on page load. We emit:
+  //   - event: snapshot         (initial full branch list, for late joiners)
+  //   - event: branch.created   (GitHub webhook or manual add)
+  //   - event: branch.updated   (commit SHA refresh, favorite/tag/notes change)
+  //   - event: branch.status    (idle → building → running/error)
+  //   - event: branch.removed   (delete from any path)
+  //   - event: branch.deploy-step (per step of ongoing deploy)
+  //   - :keepalive every 10s    (prevents proxy idle timeout)
+  //
+  // No auth differentiation — the dashboard was already authenticated to
+  // get HERE; the stream just mirrors the same data a GET /branches would
+  // return. Optional ?project= filters events to a single project so a
+  // Dashboard opened on one project doesn't animate for another project's
+  // push (prevents cross-project noise).
+  //
+  // server-authority rule: client disconnect does NOT cancel any backend
+  // work; only the listener handle is detached.
+  router.get('/branches/stream', (req, res) => {
+    const projectFilter = typeof req.query.project === 'string' && req.query.project
+      ? req.query.project
+      : null;
+
+    res.writeHead(200, {
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache',
+      Connection: 'keep-alive',
+      'X-Accel-Buffering': 'no',
+    });
+
+    const safeSend = (event: string, data: unknown) => {
+      try { res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`); }
+      catch { /* client gone */ }
+    };
+
+    // Helper: filter events that belong to a different project. Every
+    // payload may carry projectId or branch.projectId; events missing a
+    // projectId (legacy / global) always pass through.
+    const eventMatchesFilter = (type: string, payload: any): boolean => {
+      if (!projectFilter) return true;
+      if (type === 'branch.created') return !payload.branch?.projectId || payload.branch.projectId === projectFilter;
+      if ('projectId' in (payload || {})) return !payload.projectId || payload.projectId === projectFilter;
+      return true;
+    };
+
+    // Initial snapshot — the dashboard can populate its list without
+    // waiting for the first event. Also acts as a liveness confirmation
+    // so the client knows the stream is alive even when nothing's
+    // happening upstream.
+    const all = stateService.getAllBranches();
+    const snapshot = projectFilter
+      ? all.filter((b) => (b.projectId || 'default') === projectFilter)
+      : all;
+    safeSend('snapshot', { branches: snapshot, ts: nowIso() });
+
+    // Subscribe to the 'any' channel so we get one envelope per emit
+    // with {type, payload} and can route with a single listener.
+    const anyHandler = (envelope: any) => {
+      if (!envelope || !envelope.type) return;
+      if (!eventMatchesFilter(envelope.type, envelope.payload)) return;
+      safeSend(envelope.type, envelope.payload);
+    };
+    branchEvents.on('any', anyHandler);
+
+    const keepalive = setInterval(() => {
+      try { res.write(':keepalive\n\n'); } catch { /* noop */ }
+    }, 10_000);
+
+    // Detach on client close — does NOT cancel any backend work.
+    req.on('close', () => {
+      clearInterval(keepalive);
+      branchEvents.off('any', anyHandler);
+    });
+  });
+
   router.get('/branches', async (req, res) => {
     const state = stateService.getState();
     // P4 Part 3b: optional ?project=<id> filter. When absent or set to
@@ -953,6 +1030,13 @@ export function createBranchRouter(deps: RouterDeps): Router {
       stateService.addBranch(entry);
       stateService.save();
 
+      // Live UI: notify open dashboards that a branch just got added
+      // manually so their card list animates in without a page refresh.
+      branchEvents.emitEvent({
+        type: 'branch.created',
+        payload: { branch: entry, source: 'manual', ts: nowIso() },
+      });
+
       res.status(201).json({ branch: entry });
     } catch (err) {
       res.status(500).json({ error: (err as Error).message });
@@ -1042,6 +1126,11 @@ export function createBranchRouter(deps: RouterDeps): Router {
         stateService.removeBranch(id);
         stateService.save();
 
+        branchEvents.emitEvent({
+          type: 'branch.removed',
+          payload: { branchId: id, projectId: entry.projectId, ts: nowIso() },
+        });
+
         sendSSE(res, 'complete', {
           message: proxied
             ? `分支 "${id}" 已在执行器 ${remoteExecutor.id} 上删除`
@@ -1068,6 +1157,11 @@ export function createBranchRouter(deps: RouterDeps): Router {
       stateService.removeLogs(id);
       stateService.removeBranch(id);
       stateService.save();
+
+      branchEvents.emitEvent({
+        type: 'branch.removed',
+        payload: { branchId: id, projectId: entry.projectId, ts: nowIso() },
+      });
 
       sendSSE(res, 'complete', { message: `分支 "${id}" 已删除` });
     } catch (err) {
@@ -1200,7 +1294,18 @@ export function createBranchRouter(deps: RouterDeps): Router {
       for (const svc of Object.values(entry.services)) {
         if (svc.errorMessage) svc.errorMessage = undefined;
       }
+      const __prevStatus = entry.status;
       entry.status = 'building';
+      // Live UI: surface the "building" transition to subscribed dashboards
+      // so the branch card can flip to a spinner immediately on deploy kick-
+      // off, not several seconds later when the first SSE step arrives.
+      branchEvents.emitEvent({
+        type: 'branch.status',
+        payload: {
+          branchId: id, projectId: entry.projectId,
+          status: 'building', previousStatus: __prevStatus, ts: nowIso(),
+        },
+      });
 
       // ── GitHub Checks integration ──
       // Priority for the commit SHA fed to the check run:
@@ -1445,6 +1550,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       const hasRunning = statuses.some(s => s === 'running');
       const hasStarting = statuses.some(s => s === 'starting');
       const hasError = statuses.some(s => s === 'error');
+      const __statusPrev = entry.status;
       entry.status = hasRunning ? 'running' : hasStarting ? 'starting' : 'error';
       entry.lastAccessedAt = new Date().toISOString();
 
@@ -1452,6 +1558,18 @@ export function createBranchRouter(deps: RouterDeps): Router {
       opLog.finishedAt = new Date().toISOString();
       stateService.appendLog(id, opLog);
       stateService.save();
+
+      // Live UI: final status transition so the branch card stops
+      // spinning (running/error/starting). Same envelope shape as the
+      // 'building' emit earlier so the client can render transitions
+      // with one branch.
+      branchEvents.emitEvent({
+        type: 'branch.status',
+        payload: {
+          branchId: id, projectId: entry.projectId,
+          status: entry.status, previousStatus: __statusPrev, ts: nowIso(),
+        },
+      });
 
       const failedNames = Object.values(entry.services)
         .filter(s => s.status === 'error')

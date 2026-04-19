@@ -174,6 +174,11 @@ function commitIcon(subject) {
 // ── Update tracking ──
 let branchUpdates = JSON.parse(localStorage.getItem('cds_branch_updates') || '{}'); // { branchId: { behind: number, latestRemoteSubject?: string } }
 const recentlyTouched = new Map(); // { branchId: timestamp } — branches user just operated on
+// 2026-04-19: GitHub webhook 自动创建或 API 手工添加的分支首次到达时
+// 进入这个集合,触发 .fresh-arrival CSS 动画(向下滑入 + 紫色脉冲),
+// 5 秒后自动清掉。用户打开 Dashboard 期间 git push 就能亲眼看到分支
+// 出现,不用刷新。
+const freshlyArrived = new Set();
 let isCheckingUpdates = false;
 
 // ── Preview mode: 'simple' (set default + open main) | 'port' (dynamic port) | 'multi' (subdomain per branch) ──
@@ -596,12 +601,24 @@ function initStateStream() {
               commitSha: existing.commitSha,
             });
           } else {
+            // 2026-04-19: 新分支通过 state-stream 首次到达(最常见情况:
+            // GitHub webhook 创建 + dispatcher addBranch + save 触发
+            // broadcastState)。标记为 fresh 让 renderBranches 添加
+            // card-in 动画 class;5 秒后清掉,下次重绘就回到普通卡片。
+            // 这比在后端单独推 branch.created 事件简单:state-stream
+            // 已经是权威源,不引入第二条管道。
+            if (_branchesFirstLoadDone) {
+              freshlyArrived.add(pushed.id);
+              setTimeout(() => { freshlyArrived.delete(pushed.id); }, 5000);
+            }
             branches.push(pushed);
           }
         }
         // Remove branches that no longer exist
         const pushedIds = new Set(data.branches.map(b => b.id));
+        const removedIds = branches.filter(b => !pushedIds.has(b.id)).map(b => b.id);
         branches = branches.filter(b => pushedIds.has(b.id));
+        for (const rid of removedIds) freshlyArrived.delete(rid);
         if (data.defaultBranch !== undefined) defaultBranch = data.defaultBranch;
         renderBranches();
       }
@@ -3858,7 +3875,7 @@ function renderBranches() {
     // Deploy logs are accessible via the log button in toolbar.
 
     return `
-      <div class="branch-card status-${b.status || 'idle'} ${isDefault ? 'active' : ''} ${isBusy ? 'is-busy' : ''} ${hasError ? 'has-error' : ''} expanded ${b.isFavorite ? 'is-favorite' : ''} ${hasUpdates ? 'has-updates' : ''} ${recentlyTouched.has(b.id) ? 'recently-touched' : ''} ${isDeploying ? 'is-deploying' : ''} ${b.isColorMarked ? 'is-color-marked' : ''} ${getAiOccupant(b.id) ? 'is-ai-occupied' : ''} ${b.pinnedCommit ? 'is-pinned' : ''}" data-branch-id="${esc(b.id)}">
+      <div class="branch-card status-${b.status || 'idle'} ${isDefault ? 'active' : ''} ${isBusy ? 'is-busy' : ''} ${hasError ? 'has-error' : ''} expanded ${b.isFavorite ? 'is-favorite' : ''} ${hasUpdates ? 'has-updates' : ''} ${recentlyTouched.has(b.id) ? 'recently-touched' : ''} ${isDeploying ? 'is-deploying' : ''} ${b.isColorMarked ? 'is-color-marked' : ''} ${getAiOccupant(b.id) ? 'is-ai-occupied' : ''} ${b.pinnedCommit ? 'is-pinned' : ''} ${freshlyArrived.has(b.id) ? 'fresh-arrival' : ''} ${freshlyArrived.has(b.id) && b.githubRepoFullName ? 'fresh-gh' : ''}" data-branch-id="${esc(b.id)}">
         ${isDeploying ? `<div class="deploy-progress-bar"><div class="deploy-progress-bar-fill"></div></div>
           <div class="branch-deploy-timer" data-since="${_branchDeployStartedAt(b.id)}"><span class="branch-deploy-timer-label">${b.status === 'building' ? 'Building' : 'Initializing'}</span><span class="branch-deploy-timer-value">00:00</span></div>` : ''}
         <div class="branch-card-toolbar">

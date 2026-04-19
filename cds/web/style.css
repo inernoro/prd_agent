@@ -1398,6 +1398,53 @@ a.branch-name:hover { color: var(--accent); }
    logo stays readable on warm parchment. */
 .branch-name svg.gh-branch-mark { color: #8b5cf6; opacity: 0.95; }
 [data-theme="light"] .branch-name svg.gh-branch-mark { color: #6d28d9; }
+
+/* ── Fresh-arrival animation (2026-04-19) ──
+   When a branch first shows up via state-stream push (GitHub webhook
+   auto-create or manual POST from another tab/client), the card gets
+   `.fresh-arrival` for 5 seconds:
+     1) slide + fade in from top (so the eye catches "something new just
+        appeared",不是刷新页面)
+     2) 紫色外发光脉冲,和 .fresh-gh 叠加时更强,告诉用户"这是 GitHub
+        刚给你建的分支"
+   对齐 .claude/rules/cds-auto-deploy.md §3 "UI 开着时必须有动画"。
+   用 composite-friendly transform + opacity (GPU accelerated),不会
+   触发 layout reflow,对长列表表现稳定。*/
+@keyframes cds-card-arrival {
+  0%   { opacity: 0; transform: translateY(-10px) scale(0.98); }
+  60%  { opacity: 1; }
+  100% { opacity: 1; transform: translateY(0) scale(1); }
+}
+@keyframes cds-card-gh-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(139, 92, 246, 0.0), 0 1px 3px rgba(0,0,0,0.2); }
+  50%      { box-shadow: 0 0 0 4px rgba(139, 92, 246, 0.22), 0 1px 3px rgba(0,0,0,0.2); }
+}
+.branch-card.fresh-arrival {
+  animation: cds-card-arrival 600ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+.branch-card.fresh-arrival.fresh-gh {
+  /* GitHub webhook 来源时叠加紫色脉冲,持续到 5s 清除 class 为止 */
+  animation:
+    cds-card-arrival 600ms cubic-bezier(0.2, 0.8, 0.2, 1),
+    cds-card-gh-pulse 1.4s ease-in-out 600ms 3;
+}
+[data-theme="light"] .branch-card.fresh-arrival.fresh-gh {
+  animation:
+    cds-card-arrival 600ms cubic-bezier(0.2, 0.8, 0.2, 1),
+    cds-card-gh-pulse-light 1.4s ease-in-out 600ms 3;
+}
+@keyframes cds-card-gh-pulse-light {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(109, 40, 217, 0.0), 0 1px 4px #2c1c140d; }
+  50%      { box-shadow: 0 0 0 4px rgba(109, 40, 217, 0.22), 0 1px 4px #2c1c140d; }
+}
+/* 用户手动 prefers-reduced-motion 时去掉动画,只保留 class (方便 DOM
+   查询). 对齐 WCAG 2.3.3。 */
+@media (prefers-reduced-motion: reduce) {
+  .branch-card.fresh-arrival,
+  .branch-card.fresh-arrival.fresh-gh {
+    animation: none;
+  }
+}
 .branch-meta { font-size: 11px; color: var(--text-secondary); line-height: 1.4; white-space: nowrap; }
 .port-badge {
   display: inline-flex; align-items: center; gap: 3px;
