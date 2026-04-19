@@ -1,4 +1,4 @@
-# CDS FU-02 · MapAuthStore (Mongo 后端) 设计稿
+# CDS FU-02 · MapAuthStore (Mongo 后端) · 设计
 
 > **版本**:v0.1 | **日期**:2026-04-16 | **类型**:design | **状态**:草案,等下一棒承接
 

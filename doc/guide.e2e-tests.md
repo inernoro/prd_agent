@@ -1,4 +1,4 @@
-# Playwright E2E 使用指南
+# Playwright E2E · 指南
 
 > Phase 6 交付物 —— 金字塔顶层的浏览器 E2E 测试,补齐"单测过 + 冒烟过,但 UI 依然坏"这类缺陷的拦截层。
 

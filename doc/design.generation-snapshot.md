@@ -1,4 +1,4 @@
-# design.generation-snapshot — 生成快照设计
+# design.generation-snapshot — 生成快照 · 设计
 
 > **版本**：v1.0 | **日期**：2026-03-21 | **状态**：已实现
 

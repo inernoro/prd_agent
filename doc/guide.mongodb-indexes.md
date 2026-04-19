@@ -1,4 +1,4 @@
-# MongoDB 索引手册
+# MongoDB 索引 · 指南
 
 > 本项目禁止应用启动时自动创建索引。所有索引由 DBA 在数据库中手动创建。
 > 索引定义源码位置：`prd-api/src/PrdAgent.Infrastructure/Database/MongoDbContext.cs` → `CreateIndexes()`

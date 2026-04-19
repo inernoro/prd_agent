@@ -1,4 +1,4 @@
-# Design 文档优化项目进度
+# Design 文档优化项目进度 · 计划
 
 > **分支**：`claude/simplify-design-doc-cer4E`
 > **最后更新**：2026-03-28

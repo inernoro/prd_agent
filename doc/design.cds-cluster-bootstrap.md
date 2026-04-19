@@ -1,4 +1,4 @@
-# CDS 集群引导协议（Connect / Disconnect / Capacity Auto-Expand）
+# CDS 集群引导协议（Connect / Disconnect / Capacity Auto-Expand） · 设计
 
 > **版本**：v1.0 | **日期**：2026-04-10 | **状态**：设计已确认，代码已落地
 >

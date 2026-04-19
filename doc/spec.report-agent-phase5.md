@@ -1,4 +1,4 @@
-# 周报 Agent Phase 5 — 用户故事
+# 周报 Agent Phase 5 — 用户故事 · 规格
 
 > **版本**: v1.0 | **创建日期**: 2026-03-05 | **关联 PRD**: `doc/spec.report-agent.v2.md`
 >

@@ -1,4 +1,4 @@
-# CDS GitHub 集成 — 交接给下一个 Agent 的待办清单
+# CDS GitHub 集成 — 交接给下一个 Agent 的待办清单 · 计划
 
 > **背景**：PR #450 实现了 CDS 的 Railway 风格 GitHub 集成(push 自动部署 + 实时 Check Run 进度 + PR 预览评论 + `/cds` slash 命令 + 删分支停容器 + 注入防御 + orphan check run 回收)。合主干后下一个 Agent 接手继续做剩余工作。
 >

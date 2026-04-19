@@ -1,4 +1,4 @@
-# CDS state.json → MongoDB 迁移与回滚规范
+# CDS state.json → MongoDB 迁移与回滚 · 规则
 
 > **版本**：v0.1 | **日期**：2026-04-12 | **类型**：rule | **状态**：草案
 >

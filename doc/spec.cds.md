@@ -1,4 +1,4 @@
-# CDS (Cloud Development Suite) 功能需求说明书
+# CDS (Cloud Development Suite) 功能需求说明书 · 规格
 
 > **版本**：v1.0 | **日期**：2026-03-15 | **类型**：spec
 >

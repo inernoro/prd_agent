@@ -1,4 +1,4 @@
-# 文学创作 Agent (Literary Agent) 架构设计
+# 文学创作 Agent (Literary Agent) · 设计
 
 > **版本**：v1.0 | **日期**：2026-03-28 | **状态**：已实现
 >
