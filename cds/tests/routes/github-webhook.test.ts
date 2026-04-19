@@ -17,7 +17,10 @@ import { createHmac } from 'node:crypto';
 import { StateService } from '../../src/services/state.js';
 import { WorktreeService } from '../../src/services/worktree.js';
 import type { IShellExecutor, CdsConfig } from '../../src/types.js';
-import { createGithubWebhookRouter } from '../../src/routes/github-webhook.js';
+import {
+  createGithubWebhookRouter,
+  __resetWebhookDedupForTests,
+} from '../../src/routes/github-webhook.js';
 
 class MockShell implements IShellExecutor {
   async exec() {
@@ -35,7 +38,7 @@ async function request(
   urlPath: string,
   body: string,
   headers: Record<string, string> = {},
-): Promise<{ status: number; body: any }> {
+): Promise<{ status: number; body: any; headers: http.IncomingHttpHeaders }> {
   return new Promise((resolve, reject) => {
     const addr = server.address() as { port: number };
     const req = http.request(
@@ -55,9 +58,9 @@ async function request(
         res.on('data', (c: Buffer) => (raw += c.toString()));
         res.on('end', () => {
           try {
-            resolve({ status: res.statusCode!, body: raw ? JSON.parse(raw) : null });
+            resolve({ status: res.statusCode!, body: raw ? JSON.parse(raw) : null, headers: res.headers });
           } catch {
-            resolve({ status: res.statusCode!, body: raw });
+            resolve({ status: res.statusCode!, body: raw, headers: res.headers });
           }
         });
       },
@@ -128,6 +131,7 @@ describe('GitHub webhook route', () => {
     tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'cds-webhook-'));
     stateService = new StateService(path.join(tmp, 'state.json'), tmp);
     stateService.load();
+    __resetWebhookDedupForTests();
   });
 
   afterEach(async () => {
@@ -227,6 +231,131 @@ describe('GitHub webhook route', () => {
     expect(res.body.deployDispatched).toBe(false);
     await new Promise((r) => setTimeout(r, 20));
     expect(deployCalls).toHaveLength(0);
+  });
+
+  it('ack-and-skip (200 + suppress-activity header) for unsubscribed noise events', async () => {
+    server = startServer();
+    // check_suite / workflow_run / pull_request_review / status are
+    // common culprits when the GitHub App is subscribed to "all events"
+    // — none actionable by CDS, should bypass the dispatcher entirely.
+    for (const noiseEvent of ['check_suite', 'workflow_run', 'pull_request_review', 'status', 'star']) {
+      const body = JSON.stringify({ repository: { full_name: 'octocat/repo' } });
+      const res = await request(server, 'POST', '/api/github/webhook', body, {
+        'X-GitHub-Event': noiseEvent,
+        'X-Hub-Signature-256': sign('whsec-test', body),
+      });
+      expect(res.status).toBe(200);
+      expect(res.body.ok).toBe(true);
+      expect(res.body.action).toBe('ignored-unsubscribed');
+      expect(res.body.event).toBe(noiseEvent);
+      expect(res.headers['x-cds-suppress-activity']).toBe('1');
+    }
+    await new Promise((r) => setTimeout(r, 20));
+    expect(deployCalls).toHaveLength(0);
+  });
+
+  it('returns 200 (ok:false) — NOT 500 — when the dispatcher throws', async () => {
+    // Wire a worktree mock that explodes so handlePush throws synchronously
+    // inside the dispatcher. Before the fix, the route surfaced this as a
+    // 500, which made GitHub retry the delivery — a real user hit this and
+    // the retry storm rebuilt the app in a loop.
+    stateService.addProject({
+      id: 'pY',
+      slug: 'boom',
+      name: 'Boom',
+      kind: 'git',
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      githubRepoFullName: 'octocat/repo',
+      githubInstallationId: 42,
+    });
+
+    const app = express();
+    app.use(express.json({
+      verify: (req, _res, buf) => {
+        (req as { rawBody?: Buffer }).rawBody = buf;
+      },
+    }));
+    const shell = new MockShell();
+    class BoomWorktree extends WorktreeService {
+      override async create(): Promise<void> { throw new Error('simulated git worktree failure'); }
+    }
+    const worktree = new BoomWorktree(shell);
+    deployCalls = [];
+    app.use('/api', createGithubWebhookRouter({
+      stateService,
+      worktreeService: worktree,
+      shell,
+      config: buildConfig(),
+      githubApp: null,
+      dispatchDeploy: async (b, s) => { deployCalls.push({ branchId: b, commitSha: s }); },
+    }));
+    server = app.listen(0);
+
+    const payload = {
+      ref: 'refs/heads/unknown-branch',
+      after: 'feedface01234567890abcdef1234567890abcde',
+      repository: { full_name: 'octocat/repo' },
+      installation: { id: 42 },
+    };
+    const body = JSON.stringify(payload);
+    const res = await request(server, 'POST', '/api/github/webhook', body, {
+      'X-GitHub-Event': 'push',
+      'X-Hub-Signature-256': sign('whsec-test', body),
+    });
+    // Critical: 200 (not 500) so GitHub doesn't retry the delivery.
+    expect(res.status).toBe(200);
+    expect(res.body.ok).toBe(false);
+    expect(res.body.error).toBe('dispatch_error');
+    expect(res.body.event).toBe('push');
+    expect(res.body.message).toContain('simulated git worktree failure');
+    // No deploy should have been dispatched.
+    await new Promise((r) => setTimeout(r, 20));
+    expect(deployCalls).toHaveLength(0);
+  });
+
+  it('dedups repeated (branchId, sha) deploy dispatches within the window', async () => {
+    stateService.addProject({
+      id: 'pZ',
+      slug: 'sample',
+      name: 'Sample',
+      kind: 'git',
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      githubRepoFullName: 'octocat/repo',
+      githubInstallationId: 42,
+    });
+    server = startServer();
+
+    const payload = {
+      ref: 'refs/heads/feature-dedup',
+      after: 'cafef00d1234567890abcdef1234567890abcdef',
+      repository: { full_name: 'octocat/repo' },
+      installation: { id: 42 },
+    };
+    const body = JSON.stringify(payload);
+    const headers = {
+      'X-GitHub-Event': 'push',
+      'X-Hub-Signature-256': sign('whsec-test', body),
+    };
+
+    // First delivery — dispatches.
+    const res1 = await request(server, 'POST', '/api/github/webhook', body, headers);
+    expect(res1.status).toBe(200);
+    expect(res1.body.deployDispatched).toBe(true);
+    expect(res1.body.deployDedupSkipped).toBeUndefined();
+
+    // Immediate second delivery (GitHub retry or check_run.rerequested)
+    // — same branch + same SHA — should be deduped, no extra dispatch.
+    const res2 = await request(server, 'POST', '/api/github/webhook', body, headers);
+    expect(res2.status).toBe(200);
+    expect(res2.body.deployDispatched).toBe(false);
+    expect(res2.body.deployDedupSkipped).toBe(true);
+
+    await new Promise((r) => setTimeout(r, 20));
+    // Only the first delivery reached the deploy dispatcher.
+    expect(deployCalls).toHaveLength(1);
+    expect(deployCalls[0].commitSha).toBe(payload.after);
   });
 });
 
