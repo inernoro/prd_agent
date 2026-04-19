@@ -106,6 +106,7 @@ docs:
   guide.troubleshooting: 疑难杂症排查手册
   guide.prd-agent-operations: PRD Agent 全平台操作手册
   guide.cds-ai-auth: CDS + 后端 API 双层认证诊断指南
+  guide.cds-github-webhook-events: CDS GitHub Webhook 订阅配置指南
   guide.skill-workflow: AI 技能工作流指南
   guide.mongodb-indexes: MongoDB 索引手册
   guide.multi-image-compose-test: 多图组合功能测试备忘录

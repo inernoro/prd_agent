@@ -250,6 +250,9 @@
 - [CDS + 后端 API 双层认证诊断指南](guide.cds-ai-auth) `guide.cds-ai-auth`
   > CDS 与后端 API 双层认证的诊断与排查指南
 
+- [CDS GitHub Webhook 订阅配置指南](guide.cds-github-webhook-events) `guide.cds-github-webhook-events`
+  > 说明 CDS 消费哪些 GitHub webhook 事件、哪些被静默过滤,以及如何在 GitHub App 后台配置订阅
+
 - [AI 技能工作流指南](guide.skill-workflow) `guide.skill-workflow`
   > 从需求到上线的完整技能链工作流指南
 
