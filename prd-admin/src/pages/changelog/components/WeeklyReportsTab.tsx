@@ -8,7 +8,8 @@ import {
   addGitHubSubscription,
   listDocumentEntries,
   triggerSync,
-  getDocumentContent
+  getDocumentContent,
+  deleteDocumentStore
 } from '@/services';
 import type { DocumentStoreWithPreview, DocumentEntry } from '@/services/contracts/documentStore';
 import type { EntryPreview } from '@/components/doc-browser/fileTypeRegistry';
@@ -26,7 +27,7 @@ export function WeeklyReportsTab() {
   
   // Setup inputs
   const [repoUrl, setRepoUrl] = useState('');
-  const [includeGlob, setIncludeGlob] = useState('report*.md');
+  const [includeGlob, setIncludeGlob] = useState('week*.md');
   const [configuring, setConfiguring] = useState(false);
   const [syncing, setSyncing] = useState(false);
 
@@ -122,6 +123,24 @@ export function WeeklyReportsTab() {
     };
   }, []);
 
+  const handleReset = async () => {
+    if (!store) return;
+    if (!confirm('确定要清空当前的分类并重新配置吗？(如果之前抓取了太多不需要的文件，清空后可重新填写过滤通配符)')) return;
+    try {
+      const res = await deleteDocumentStore(store.id);
+      if (res.success) {
+        toast.success('已清空旧数据，请重新配置订阅');
+        setStore(null);
+        setSubEntry(null);
+        setEntries([]);
+      } else {
+        toast.error('清理失败', res.error?.message);
+      }
+    } catch (e: any) {
+      toast.error('清理失败', e.message);
+    }
+  };
+
   if (loading) {
     return (
       <div className="flex items-center justify-center py-20 text-indigo-400">
@@ -187,7 +206,7 @@ export function WeeklyReportsTab() {
             <input 
               value={includeGlob}
               onChange={(e) => setIncludeGlob(e.target.value)}
-              placeholder="例如：report*.md (为空则匹配所有 .md 文件)"
+              placeholder="例如：week*.md (为空则匹配所有 .md 文件)"
               className="w-full h-11 px-4 rounded-xl outline-none text-[13px] font-mono transition-all"
               style={{
                 background: 'rgba(0,0,0,0.2)',
@@ -225,7 +244,7 @@ export function WeeklyReportsTab() {
 
   // == 完整展示页 (复用 DocBrowser) ==
   return (
-    <div className="flex flex-col h-[75vh] min-h-[500px]">
+    <div className="flex flex-col flex-1 h-[calc(100vh-140px)] min-h-[500px]">
       <div className="flex items-center justify-between mb-4">
         <div className="flex items-center gap-3 pl-1">
           <div className="px-2.5 py-1 rounded-md text-[11px] font-bold font-mono tracking-wider"
@@ -242,19 +261,34 @@ export function WeeklyReportsTab() {
           </span>
         </div>
         
-        {subEntry && (
-          <Button 
-            variant="ghost" 
-            size="xs" 
-            onClick={handleManualSync} 
-            disabled={syncing}
-            className="rounded-lg text-[12px] h-8 px-3 ml-auto transition-colors bg-white/5 hover:bg-white/10"
-            style={{ color: 'var(--text-secondary)' }}
-          >
-            <RefreshCw size={14} className={`mr-1.5 ${syncing ? 'animate-spin' : ''}`} />
-            强制手动触发更新
-          </Button>
-        )}
+        
+        <div className="flex items-center gap-2 ml-auto">
+          {store && (
+            <Button 
+              variant="ghost" 
+              size="xs" 
+              onClick={handleReset} 
+              className="rounded-lg text-[12px] h-8 px-3 transition-colors bg-white/5 hover:bg-red-500/10 hover:text-red-400"
+              style={{ color: 'var(--text-muted)' }}
+            >
+              重新配置
+            </Button>
+          )}
+
+          {subEntry && (
+            <Button 
+              variant="ghost" 
+              size="xs" 
+              onClick={handleManualSync} 
+              disabled={syncing}
+              className="rounded-lg text-[12px] h-8 px-3 transition-colors bg-white/5 hover:bg-white/10"
+              style={{ color: 'var(--text-secondary)' }}
+            >
+              <RefreshCw size={14} className={`mr-1.5 ${syncing ? 'animate-spin' : ''}`} />
+              强制更新
+            </Button>
+          )}
+        </div>
       </div>
       
       <div className="flex-1 min-h-0 rounded-2xl overflow-hidden relative"
