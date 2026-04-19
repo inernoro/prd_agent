@@ -1026,48 +1026,30 @@ button.text-btn:hover { color: var(--accent); }
 
 /* ════════════════ Branch Cards ════════════════ */
 
+/* 分支列表布局 (2026-04-19 rewrite):
+   - 原版本用 CSS `column-count` 多列布局,卡片高度不一致时在列之间
+     产生莫名奇妙的空白带 (user image 2: 窗口中等大时两列间竖着
+     一条红色空柱),视觉像 bug。而且在 1680px+ 宽屏下 4 列强制
+     垂直流动,卡片按 top-bottom-left-right 填充看起来也乱(image 3)。
+   - 新版本 CSS Grid auto-fill: 基于 min-width 自动填列,每格
+     max-content 高度,同一行的卡片高度统一,没有列间空柱,也没有
+     "卡片挤得很紧"的问题。简单可预期。
+   - 代价: 一行里如果有一张卡特别高,其它格子会留白底部(典型 masonry
+     痛点)。但相比 column-count 的问题要小得多 —— 用户愿意接受。
+*/
 .branch-list {
-  display: flex; flex-direction: column; gap: 10px; margin-bottom: 24px;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+  gap: 16px;
+  margin-bottom: 24px;
   padding-bottom: 60px; /* 为底部 Activity 浮窗留出空间 */
+  /* 显式对齐卡片到每格顶端,避免内容不等高时被 stretch 拉高 */
+  align-items: start;
 }
-
-@media (min-width: 768px) {
-  /* Masonry-style layout via CSS multi-column.
-     Grid layout forces every cell in a row to the tallest card's height,
-     leaving ugly vertical gaps when cards differ in tag/badge count.
-     Multi-column flows cards vertically down each column, filling gaps
-     automatically. Reading order changes from left-right-top-bottom to
-     top-bottom-left-right — acceptable since users sort by most-recent,
-     newest still ends up at column 1 top which is the eye's first anchor.
-     User feedback #450.
-
-     `column-count` is IGNORED when the host is `display: flex` — CSS
-     multi-column only engages on block-level containers. The base rule
-     above sets `display: flex` for mobile (1 col stacked), so desktop
-     must explicitly flip back to `display: block` AND zero out the flex
-     `gap` (column-gap takes over). Without this reset the dashboard
-     renders every branch card at 100% width stacked vertically even on
-     a 2000px monitor. */
-  .branch-list {
-    display: block;
-    column-count: 3;
-    column-gap: 16px;
-    column-fill: balance;
-    gap: 0;
-    /* Cards must explicitly break-inside:avoid or they'd split across columns. */
-  }
-  .branch-list .branch-card,
-  .branch-list > * {
-    break-inside: avoid;
-    page-break-inside: avoid;  /* legacy */
-    margin-bottom: 16px;
-    display: inline-block;
-    width: 100%;
-  }
+/* 小屏回落单列,卡片可读性优先 */
+@media (max-width: 640px) {
+  .branch-list { grid-template-columns: 1fr; gap: 10px; }
 }
-@media (min-width: 1280px) { .branch-list { column-count: 3; } }
-@media (min-width: 1680px) { .branch-list { column-count: 4; } }
-@media (min-width: 768px) and (max-width: 1100px) { .branch-list { column-count: 2; } }
 
 .branch-card {
   display: flex; flex-direction: column; gap: 0;
@@ -1349,6 +1331,24 @@ button.text-btn:hover { color: var(--accent); }
   display: flex; gap: 6px; flex-wrap: wrap; align-items: center;
   padding-top: 4px;
 }
+
+/* "xx 分钟前" 时间戳 (2026-04-19): 小字 muted,margin-left:auto 推到
+   chips row 最右边与其它胶囊对齐,不额外占垂直行。窗口极窄时
+   flex-wrap 会把它折到新行,仍然是右对齐(因为 auto margin 在折行后
+   继续生效)。悬浮变亮,tooltip 显示完整时间戳。*/
+.branch-updated-at {
+  margin-left: auto;
+  display: inline-flex; align-items: center;
+  padding: 2px 6px;
+  font-size: 10.5px;
+  color: var(--text-muted);
+  font-weight: 500;
+  white-space: nowrap;
+  cursor: default;
+  user-select: none;
+  transition: color var(--transition);
+}
+.branch-updated-at:hover { color: var(--text-secondary); }
 
 /* Favorite toggle — inline, minimal */
 .fav-toggle {

@@ -1,7 +1,7 @@
 /**
  * CDS Dashboard UI 路径 — 复盘 2026-04-19 发现的 4 个样式回归:
  *   1) 白天模式「+ 新建项目」按钮可见 + 有 accent 背景
- *   2) 桌面宽度下分支列表走多列布局(column-count > 1)
+ *   2) 桌面宽度下分支列表走多列布局 (Grid auto-fill,实际呈现列数 > 1)
  *   3) 列表/拓扑 toggle 和右侧 icon 按钮上下对齐
  *   4) ⚙ 下拉里「冒烟测试」项存在(Phase 3/4 回归保护)
  *
@@ -37,21 +37,23 @@ test.describe('CDS Dashboard 样式回归', () => {
     expect(b).toBeLessThan(150);
   });
 
-  test('桌面宽度下分支列表 .branch-list 走 column-count > 1', async ({ page }) => {
+  test('桌面宽度下分支列表多列呈现 (Grid auto-fill 计算后 tracks > 1)', async ({ page }) => {
     await page.setViewportSize({ width: 1440, height: 900 });
-    // 需要一个已有分支的页面才有 .branch-list 元素。project-list 页
-    // 是项目卡,/branch-list?project=default 才是分支页 — 直接访问
-    // default project 的分支列表。
     await page.goto('/branch-list?project=default');
     const branchList = page.locator('.branch-list');
-    // 列表本身始终存在,即使空分支也会渲染 skeleton
     await expect(branchList).toBeVisible();
-    const colCount = await branchList.evaluate((el) => getComputedStyle(el).columnCount);
-    // column-count = 'auto' 或 '1' 都说明回归了。需要 >= 2。
-    const n = parseInt(colCount, 10);
+    // 2026-04-19 rewrite: 改用 CSS Grid auto-fill,所以断言对象从
+    // columnCount 换到 grid-template-columns 实际解析出的 track 数。
+    // `repeat(auto-fill, minmax(340px, 1fr))` 在 1440px 下会产出
+    // 3-4 个 track。浏览器把最终值 resolve 成一串像素数值,用空格
+    // 分隔,拆 split 数组长度 >= 2 就算多列布局生效。
+    const trackCount = await branchList.evaluate((el) => {
+      const val = getComputedStyle(el).gridTemplateColumns;
+      return val && val !== 'none' ? val.split(/\s+/).length : 0;
+    });
     expect(
-      Number.isNaN(n) ? 0 : n,
-      `desktop branch-list column-count=${colCount} — expected multi-col layout`,
+      trackCount,
+      `desktop branch-list grid tracks=${trackCount} — expected >= 2`,
     ).toBeGreaterThanOrEqual(2);
   });
 

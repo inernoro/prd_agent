@@ -124,18 +124,11 @@
       '        <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 6 8 10 12 6"/></svg>',
       '      </button>',
       '    </div>',
-      '    <div id="_suDropdown" style="display:none;position:absolute;top:calc(100% + 4px);left:0;right:0;max-height:240px;overflow-y:auto;background:var(--bg-card,#0f1014);border:1px solid var(--card-border,rgba(255,255,255,0.08));border-radius:6px;box-shadow:0 8px 24px rgba(0,0,0,0.3);z-index:10">',
-      sorted.map((b) => {
-        const isCurrent = b === current;
-        return '<div class="_sui" data-value="' + escHtml(b) + '" style="padding:7px 12px;font-size:12px;color:var(--text-primary);font-family:var(--font-mono,monospace);cursor:pointer;white-space:nowrap;overflow:hidden;text-overflow:ellipsis' +
-          (isCurrent ? ';background:var(--bg-hover,rgba(255,255,255,0.04))' : '') +
-          '">' +
-          (isCurrent ? '<span style="color:var(--green,#10b981);margin-right:6px">✓</span>' : '') +
-          escHtml(b) +
-          (isCurrent ? ' <span style="color:var(--text-muted);font-size:11px">(当前)</span>' : '') +
-          '</div>';
-      }).join(''),
-      '    </div>',
+      // Dropdown 使用 position:fixed + portal 到 document.body,而不是
+      // 相对 combobox 的 absolute — 否则外层 `overflow-y:auto` 滚动体
+      // 会在弹窗底部把下拉框裁切一半(image 1 红框就是这个问题)。
+      // fixed + JS 定位跟随 input 的 boundingRect,scroll / resize 时
+      // 重算,保证永远贴在输入框正下方。
       '  </div>',
       // Progress area (initially hidden)
       '  <div id="_suProgress" style="display:none;margin-top:16px;border:1px solid var(--card-border,rgba(255,255,255,0.08));border-radius:6px;padding:10px 12px;background:var(--bg-base,#0b0b10);font-family:var(--font-mono,monospace);font-size:11px;max-height:260px;overflow-y:auto;line-height:1.6"></div>',
@@ -157,7 +150,6 @@
     // ── Interactions ──
     const $ = (id) => dlg.querySelector('#' + id);
     const input = $('_suBranch');
-    const dropdown = $('_suDropdown');
     const toggle = $('_suToggle');
     const goBtn = $('_suGo');
     const forceBtn = $('_suForce');
@@ -166,8 +158,54 @@
     const progressEl = $('_suProgress');
     const statusEl = $('_suStatus');
 
+    // Build the dropdown as a sibling of <body>, positioned fixed. Keeps
+    // it outside the modal's scrollable body so it can't be clipped.
+    const dropdown = document.createElement('div');
+    dropdown.id = '_suDropdown';
+    dropdown.style.cssText = [
+      'display:none', 'position:fixed',
+      'max-height:240px', 'overflow-y:auto',
+      'background:var(--bg-card,#0f1014)',
+      'border:1px solid var(--card-border,rgba(255,255,255,0.08))',
+      'border-radius:6px', 'box-shadow:0 8px 24px rgba(0,0,0,0.3)',
+      'z-index:10010', // 比 backdrop(10000) 高
+    ].join(';');
+    dropdown.innerHTML = sorted.map((b) => {
+      const isCurrent = b === current;
+      return '<div class="_sui" data-value="' + escHtml(b) + '" style="padding:7px 12px;font-size:12px;color:var(--text-primary);font-family:var(--font-mono,monospace);cursor:pointer;white-space:nowrap;overflow:hidden;text-overflow:ellipsis' +
+        (isCurrent ? ';background:var(--bg-hover,rgba(255,255,255,0.04))' : '') +
+        '">' +
+        (isCurrent ? '<span style="color:var(--green,#10b981);margin-right:6px">✓</span>' : '') +
+        escHtml(b) +
+        (isCurrent ? ' <span style="color:var(--text-muted);font-size:11px">(当前)</span>' : '') +
+        '</div>';
+    }).join('');
+    document.body.appendChild(dropdown);
+
+    // 跟随 input 位置: 贴在 input 正下方。scroll / resize 时重算,
+    // 否则 modal body 滚动会让下拉浮在空中。
+    function positionDropdown() {
+      const r = input.getBoundingClientRect();
+      dropdown.style.top = (r.bottom + 4) + 'px';
+      dropdown.style.left = r.left + 'px';
+      dropdown.style.width = r.width + 'px';
+    }
+    dlg.querySelector('[id="_suCombo"] + *')?.before?.(); // noop; just for clarity
+
     function closeDropdown() { dropdown.style.display = 'none'; }
-    function openDropdown() { dropdown.style.display = 'block'; }
+    function openDropdown() { positionDropdown(); dropdown.style.display = 'block'; }
+
+    // Body 滚 / 窗口变尺寸要重定位。用 rAF 节流避免抖动。
+    let __rafId = 0;
+    const reposition = () => {
+      if (dropdown.style.display !== 'block') return;
+      if (__rafId) return;
+      __rafId = requestAnimationFrame(() => { __rafId = 0; positionDropdown(); });
+    };
+    const scrollHost = dlg.querySelector('div[style*="overflow-y:auto"]');
+    if (scrollHost) scrollHost.addEventListener('scroll', reposition, { passive: true });
+    window.addEventListener('resize', reposition, { passive: true });
+    window.addEventListener('scroll', reposition, { passive: true });
     function filter(q) {
       const needle = (q || '').toLowerCase();
       let anyVisible = false;
@@ -202,13 +240,26 @@
       closeDropdown();
       input.focus();
     });
-    // 点击 modal 其它地方关闭下拉(但保留 modal)
-    dlg.addEventListener('click', (e) => {
-      if (!e.target.closest('#_suCombo')) closeDropdown();
-    });
+    // 点击 modal 其它地方关闭下拉(但保留 modal). Dropdown 是 portal
+    // 到 body 的独立元素,这里要单独判断两处:
+    //   - 点在 #_suCombo 里:不关(用户在输入)
+    //   - 点在 dropdown 里:不关(点选分支)
+    //   - 其它地方:关下拉
+    const onBodyClick = (e) => {
+      if (e.target.closest('#_suCombo')) return;
+      if (e.target.closest('#_suDropdown')) return;
+      closeDropdown();
+    };
+    document.addEventListener('click', onBodyClick, true);
 
     const close = () => {
       document.removeEventListener('keydown', onEsc);
+      document.removeEventListener('click', onBodyClick, true);
+      window.removeEventListener('resize', reposition);
+      window.removeEventListener('scroll', reposition);
+      if (scrollHost) scrollHost.removeEventListener('scroll', reposition);
+      // Portal 过的 dropdown 也要一起清掉,否则残留在 body 上
+      if (dropdown && dropdown.parentNode) dropdown.parentNode.removeChild(dropdown);
       closeAny();
     };
     const onEsc = (ev) => { if (ev.key === 'Escape') close(); };

@@ -3942,9 +3942,20 @@ function renderBranches() {
             const pinChip = b.pinnedCommit
               ? `<span class="pinned-commit-badge" onclick="event.stopPropagation(); checkoutCommit('${esc(b.id)}', '', true, '')" title="已固定到历史提交 ${esc(b.pinnedCommit)}，点击恢复最新"><svg width="10" height="10" viewBox="0 0 16 16" fill="currentColor" style="vertical-align:-1px"><path d="M4.456.734a1.75 1.75 0 012.826.504l.613 1.327a3.081 3.081 0 002.084 1.707l2.454.584c1.332.317 1.8 1.972.832 2.94L11.06 9.695a.75.75 0 01-.19.436l-4.552 4.552a.75.75 0 01-1.06-1.06l4.305-4.305L7.307 7.13A4.581 4.581 0 005.03 4.929L4.416 3.6A.25.25 0 004.01 3.49L2.606 4.893a.25.25 0 00.104.407l1.328.613a4.581 4.581 0 012.204 2.277l.248.538a.75.75 0 01-1.36.628l-.248-.538a3.081 3.081 0 00-1.483-1.532L2.07 6.773C.783 6.19.381 4.602 1.3 3.682L2.703 2.28A1.75 1.75 0 014.456.734z"/></svg> ${esc(b.pinnedCommit)}</span>`
               : '';
-            const hasAnyChip = ghChip || pinChip || portBadgesHtml;
+            // 2026-04-19 用户反馈: 卡片需要"最近更新时间"。找合适位置,
+            // 左下角/右下角都被按钮占了,右上角和 toolbar 按钮挨着,
+            // 最干净的办法是放在 chips row 的最右端(margin-left:auto
+            // 自动推到右): 和 SHA/port 胶囊同一行、同样样式级别、
+            // 无需额外占用垂直空间。
+            // 优先显示 lastAccessedAt(最近一次部署时间,信号最强),
+            // 没有则 fallback 到 createdAt。`<1 分钟` 时显示"刚刚"。
+            const __lastSeen = b.lastAccessedAt || b.createdAt;
+            const updatedChip = __lastSeen
+              ? `<span class="branch-updated-at" title="${b.lastAccessedAt ? '最近部署' : '创建'}于 ${esc(new Date(__lastSeen).toLocaleString())}"><svg width="10" height="10" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true" style="vertical-align:-1px;margin-right:3px;opacity:0.7"><path d="M8 0a8 8 0 100 16A8 8 0 008 0zM1.5 8a6.5 6.5 0 1113 0 6.5 6.5 0 01-13 0zM8 3.75a.75.75 0 01.75.75v3.25h2.25a.75.75 0 010 1.5h-3a.75.75 0 01-.75-.75v-4a.75.75 0 01.75-.75z"/></svg>${esc(relativeTime(__lastSeen))}${b.lastAccessedAt ? '' : ' 创建'}</span>`
+              : '';
+            const hasAnyChip = ghChip || pinChip || portBadgesHtml || updatedChip;
             return hasAnyChip
-              ? `<div class="branch-card-chips">${ghChip}${portBadgesHtml || ''}${pinChip}</div>`
+              ? `<div class="branch-card-chips">${ghChip}${portBadgesHtml || ''}${pinChip}${updatedChip}</div>`
               : '';
           })()}
         </div>
