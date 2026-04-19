@@ -865,8 +865,31 @@ export function createServer(deps: ServerDeps): express.Express {
     const branchTags = branchId ? (deps.stateService.getBranch(branchId)?.tags ?? []) : [];
 
     (res as any).end = function (...args: any[]) {
+      // Routes can opt out of broadcasting to the activity stream by
+      // setting `X-CDS-Suppress-Activity: 1`. Used by the GitHub
+      // webhook receiver to skip noise events (check_suite,
+      // workflow_run, etc.) that fire per push when the App is
+      // subscribed to "all events" — otherwise the operator's
+      // monitor is drowned out by ignored deliveries.
+      if (res.getHeader('X-CDS-Suppress-Activity') === '1') {
+        // Strip the internal signalling header before sending to the
+        // client — it's a CDS internal, not something the GitHub webhook
+        // delivery log needs to show.
+        try { res.removeHeader('X-CDS-Suppress-Activity'); } catch { /* ignore */ }
+        return origEnd(...args);
+      }
       const duration = Date.now() - start;
       const fullPath = `/api${req.path}`;
+      // Refine the label for GitHub webhook deliveries so the operator
+      // can tell "push" from "check_run" / "issue_comment" / ... at a
+      // glance, instead of seeing a homogeneous stream of "GitHub 推送
+      // Webhook". The event name is stashed on res.locals by the
+      // webhook route after signature verification.
+      let label = resolveApiLabel(req.method, fullPath);
+      const ghEvent = (res.locals as { cdsGithubEvent?: string }).cdsGithubEvent;
+      if (ghEvent && fullPath.endsWith('/github/webhook')) {
+        label = `${label} · ${ghEvent}`;
+      }
       const event: ActivityEvent = {
         id: ++activitySeq,
         ts: new Date().toISOString(),
@@ -877,7 +900,7 @@ export function createServer(deps: ServerDeps): express.Express {
         type: 'cds',
         source: aiSession ? 'ai' : 'user',
         agent: aiSession?.agentName,
-        label: resolveApiLabel(req.method, fullPath),
+        label,
         body: reqBody,
         query: reqQuery,
         branchId,

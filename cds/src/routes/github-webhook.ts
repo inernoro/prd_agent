@@ -65,6 +65,61 @@ export interface GitHubWebhookRouterDeps {
  */
 type RawBodyRequest = Request & { rawBody?: Buffer };
 
+/**
+ * Events the dispatcher actively reacts to (creates/refreshes branches,
+ * posts comments, runs slash commands, etc.). Anything outside this set
+ * is routed through a cheap ack path that skips the dispatcher entirely
+ * — avoids running parse/validate work for events CDS can't action.
+ *
+ * Kept in sync with the switch in GitHubWebhookDispatcher.handle().
+ */
+const SUPPORTED_EVENTS: ReadonlySet<string> = new Set([
+  'ping',
+  'push',
+  'installation',
+  'installation_repositories',
+  'check_run',
+  'pull_request',
+  'issue_comment',
+  'delete',
+  'repository',
+  'release',
+]);
+
+/**
+ * Deploy dispatch dedup window. When a GitHub App is subscribed to
+ * many events (or GitHub retries a delivery because we returned a
+ * non-2xx), the SAME (branchId, commitSha) can arrive as a push AND
+ * as a check_run.rerequested within seconds. Without dedup the build
+ * fires twice back-to-back, tearing down containers the first build
+ * just started. We remember recent dispatches and skip duplicates
+ * within the window. Slash commands (`/cds redeploy`) bypass this
+ * because they go through a separate code path.
+ */
+const DEPLOY_DEDUP_WINDOW_MS = 30_000;
+const recentDeployDispatches = new Map<string, number>();
+
+function shouldSkipDuplicateDispatch(branchId: string, commitSha: string): boolean {
+  const key = `${branchId}:${commitSha}`;
+  const now = Date.now();
+  // Tidy stale entries so the map doesn't grow unbounded on a chatty
+  // install (one entry per push over the service's lifetime).
+  for (const [k, ts] of recentDeployDispatches) {
+    if (now - ts > DEPLOY_DEDUP_WINDOW_MS * 2) {
+      recentDeployDispatches.delete(k);
+    }
+  }
+  const prev = recentDeployDispatches.get(key);
+  if (prev && now - prev < DEPLOY_DEDUP_WINDOW_MS) return true;
+  recentDeployDispatches.set(key, now);
+  return false;
+}
+
+/** Test-only: reset dedup state between cases so they don't leak. */
+export function __resetWebhookDedupForTests(): void {
+  recentDeployDispatches.clear();
+}
+
 export function createGithubWebhookRouter(deps: GitHubWebhookRouterDeps): Router {
   const router = Router();
   const {
@@ -120,6 +175,32 @@ export function createGithubWebhookRouter(deps: GitHubWebhookRouterDeps): Router
       return;
     }
 
+    // Stash the event name on res.locals so the activity middleware can
+    // render a finer-grained label (e.g. "GitHub Webhook · push" vs
+    // "GitHub Webhook · check_run"). Must come before any early-return
+    // below so the label is set even on noise-filtered events.
+    (res.locals as { cdsGithubEvent?: string }).cdsGithubEvent = eventName;
+
+    // ── Noise filter ─────────────────────────────────────────────────
+    // If a user subscribes the GitHub App to "all events", a single
+    // push can flood CDS with check_suite / workflow_run / status /
+    // pull_request_review / ... deliveries. We don't act on any of
+    // those, so short-circuit before the dispatcher and tell the
+    // activity stream to skip the entry so the operator's monitor
+    // isn't drowned out. Signature verification runs first, so this
+    // path still requires a valid HMAC.
+    if (!SUPPORTED_EVENTS.has(eventName)) {
+      res.setHeader('X-CDS-Suppress-Activity', '1');
+      res.json({
+        ok: true,
+        event: eventName,
+        delivery: deliveryId,
+        action: 'ignored-unsubscribed',
+        message: `Event '${eventName}' not handled by CDS; acknowledged without dispatch.`,
+      });
+      return;
+    }
+
     let payload: unknown;
     try {
       payload = JSON.parse(rawBody.toString('utf-8'));
@@ -132,12 +213,21 @@ export function createGithubWebhookRouter(deps: GitHubWebhookRouterDeps): Router
     try {
       result = await dispatcher.handle(eventName, payload);
     } catch (err) {
+      // Return 200 on dispatcher failure so GitHub DOES NOT retry the
+      // delivery. A retry storm (5xx → GitHub re-POSTs every few
+      // minutes for up to 8 hours) was visibly rebuilding the user's
+      // app in a loop. The error is still recorded server-side so an
+      // operator can grep it. Also persist the error body as a 200 so
+      // the Dashboard activity entry surfaces the failure clearly.
       // eslint-disable-next-line no-console
       console.error(
         `[webhook] dispatch error event=${eventName} delivery=${deliveryId || '?'}:`,
         err,
       );
-      res.status(500).json({
+      res.status(200).json({
+        ok: false,
+        event: eventName,
+        delivery: deliveryId,
         error: 'dispatch_error',
         message: (err as Error).message,
       });
@@ -147,18 +237,36 @@ export function createGithubWebhookRouter(deps: GitHubWebhookRouterDeps): Router
     // Kick off the deploy asynchronously. The webhook response is sent
     // back to GitHub within the GitHub 10s timeout regardless of how
     // long the build takes.
+    //
+    // Dedup by (branchId, commitSha) within a short window: the same
+    // SHA can legitimately arrive twice — once as a `push`, once as a
+    // `check_run.rerequested` piggy-backed on our own check-run PATCH,
+    // plus any GitHub retries. Building twice tears down the first
+    // build's containers mid-flight and doubles the user's wait. The
+    // /cds redeploy slash command doesn't go through this branch (it
+    // posts directly from runSlashCommand), so explicit redeploys are
+    // unaffected.
+    let deployDedupSkipped = false;
     if (result.deployRequest) {
       const request = result.deployRequest;
-      // Use the injected dispatcher for tests; default to a localhost HTTP
-      // call to this same CDS instance.
-      const dispatcherFn = dispatchDeploy || defaultLocalhostDeploy(config);
-      dispatcherFn(request.branchId, request.commitSha).catch((err) => {
+      if (shouldSkipDuplicateDispatch(request.branchId, request.commitSha)) {
+        deployDedupSkipped = true;
         // eslint-disable-next-line no-console
-        console.error(
-          `[webhook] deploy dispatch failed for branch=${request.branchId}:`,
-          (err as Error).message,
+        console.log(
+          `[webhook] skip duplicate deploy dispatch branch=${request.branchId} sha=${request.commitSha.slice(0, 7)} (within ${DEPLOY_DEDUP_WINDOW_MS}ms)`,
         );
-      });
+      } else {
+        // Use the injected dispatcher for tests; default to a localhost HTTP
+        // call to this same CDS instance.
+        const dispatcherFn = dispatchDeploy || defaultLocalhostDeploy(config);
+        dispatcherFn(request.branchId, request.commitSha).catch((err) => {
+          // eslint-disable-next-line no-console
+          console.error(
+            `[webhook] deploy dispatch failed for branch=${request.branchId}:`,
+            (err as Error).message,
+          );
+        });
+      }
     }
 
     // PR opened/reopened → post (or refresh) the preview-URL bot comment.
@@ -213,6 +321,13 @@ export function createGithubWebhookRouter(deps: GitHubWebhookRouterDeps): Router
       });
     }
 
+    // Actions that are pure "received but nothing to do" — same UX as
+    // the noise filter above. Keeps the activity stream focused on
+    // events that actually moved state.
+    if (result.action === 'ignored-event' || result.action === 'ignored-ping') {
+      res.setHeader('X-CDS-Suppress-Activity', '1');
+    }
+
     res.json({
       ok: true,
       event: eventName,
@@ -220,7 +335,8 @@ export function createGithubWebhookRouter(deps: GitHubWebhookRouterDeps): Router
       action: result.action,
       message: result.message,
       branchId: result.branchId,
-      deployDispatched: Boolean(result.deployRequest),
+      deployDispatched: Boolean(result.deployRequest) && !deployDedupSkipped,
+      deployDedupSkipped: deployDedupSkipped || undefined,
       stopDispatched: Boolean(result.stopRequest),
       slashCommand: result.slashCommand?.command,
     });
