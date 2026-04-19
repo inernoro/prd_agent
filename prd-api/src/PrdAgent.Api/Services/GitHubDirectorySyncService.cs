@@ -180,6 +180,53 @@ public class GitHubDirectorySyncService
     {
         try
         {
+            // 优化：跨知识库/同文件多次拉取复用检查 (Pooling by SHA)
+            var filter = Builders<DocumentEntry>.Filter.Eq("Metadata.github_sha", file.Sha);
+            var cachedEntry = await db.DocumentEntries.Find(
+                filter & Builders<DocumentEntry>.Filter.Ne(e => e.DocumentId, null)
+            ).FirstOrDefaultAsync(ct);
+
+            if (cachedEntry != null && cachedEntry.DocumentId != null)
+            {
+                var cachedDoc = await documentService.GetByIdAsync(cachedEntry.DocumentId);
+                if (cachedDoc != null)
+                {
+                    _logger.LogInformation("[GitHubSync] Reusing cached content for SHA {Sha} from Entry {EntryId}", file.Sha, cachedEntry.Id);
+
+                    // 序列化深拷贝，生成独立底层副本确保级联删除时互不干扰
+                    var cloneJson = System.Text.Json.JsonSerializer.Serialize(cachedDoc);
+                    var newDoc = System.Text.Json.JsonSerializer.Deserialize<PrdAgent.Core.Models.ParsedPrd>(cloneJson)!;
+                    newDoc.Id = Guid.NewGuid().ToString("N");
+                    newDoc.CreatedAt = DateTime.UtcNow;
+
+                    await documentService.SaveAsync(newDoc);
+
+                    entry.DocumentId = newDoc.Id;
+                    entry.ContentType = cachedEntry.ContentType;
+                    entry.FileSize = cachedEntry.FileSize;
+                    entry.Summary = cachedEntry.Summary;
+                    entry.ContentIndex = cachedEntry.ContentIndex;
+                    
+                    entry.SyncStatus = DocumentSyncStatus.Idle;
+                    entry.SyncError = null;
+                    entry.LastSyncAt = DateTime.UtcNow;
+                    entry.LastChangedAt = DateTime.UtcNow;
+                    entry.UpdatedAt = DateTime.UtcNow;
+                    entry.Metadata["github_sha"] = file.Sha;
+
+                    if (isNew)
+                    {
+                        await db.DocumentEntries.InsertOneAsync(entry, cancellationToken: CancellationToken.None);
+                    }
+                    else
+                    {
+                        await db.DocumentEntries.ReplaceOneAsync(
+                            e => e.Id == entry.Id, entry, cancellationToken: CancellationToken.None);
+                    }
+                    return; // 跳过后续的外网拉取
+                }
+            }
+
             // 拉取文件内容（通过 raw.githubusercontent.com）
             var content = await Http.GetStringAsync(file.DownloadUrl, ct);
 
