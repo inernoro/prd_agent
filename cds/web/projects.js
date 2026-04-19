@@ -674,11 +674,24 @@ window.cdsDoLogout = cdsDoLogout;
     var ghChip = '';
     if (project.githubRepoFullName) {
       var repo = project.githubRepoFullName;
+      // Strict GitHub repo name pattern: owner/repo where each side is
+      // [A-Za-z0-9._-]+. GitHub's actual rules are a bit more lenient
+      // but this covers every real repo and rejects anything containing
+      // shell/JS meta-characters. If a malicious state.json gets a
+      // crafted repoFullName (e.g. "owner/x'+alert(1)+'"), we refuse
+      // to render the chip rather than inject it into an onclick JS
+      // literal. Caught by Cursor Bugbot #450 round 5.
+      if (!/^[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+$/.test(repo)) {
+        ghChip = '';
+      } else {
       var autoOff = project.githubAutoDeploy === false;
       var ghTitle = autoOff
         ? 'GitHub: ' + repo + ' (自动部署已关闭)'
         : 'GitHub: ' + repo + ' (push 自动部署)';
-      var ghUrl = 'https://github.com/' + encodeURI(repo);
+      // Build the URL with encodeURIComponent on each path segment —
+      // unlike encodeURI, encodeURIComponent encodes single quotes
+      // (`%27`), eliminating the onclick JS-string-literal injection.
+      var ghUrl = 'https://github.com/' + repo.split('/').map(encodeURIComponent).join('/');
       ghChip =
         '<span class="cds-stat cds-stat-github" role="link" tabindex="0"' +
           ' onclick="event.preventDefault();event.stopPropagation();window.open(\'' + escapeHtml(ghUrl).replace(/'/g, '&#39;') + '\',\'_blank\',\'noopener\')"' +
@@ -688,6 +701,7 @@ window.cdsDoLogout = cdsDoLogout;
           escapeHtml(repo.split('/').slice(-1)[0] || repo) +
           (autoOff ? ' <span style="opacity:0.7">(off)</span>' : '') +
         '</span>';
+      }
     }
     return [
       '<div class="cds-card-stats">',

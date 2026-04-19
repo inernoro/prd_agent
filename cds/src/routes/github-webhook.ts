@@ -303,11 +303,17 @@ export function createGithubWebhookRouter(deps: GitHubWebhookRouterDeps): Router
       });
       return;
     }
-    if (!/^[^/\s]+\/[^/\s]+$/.test(repoFullName)) {
+    // Strict allow-list: GitHub owner/repo names use ASCII alnum plus
+    // a handful of safe punctuation. Previous looser regex let through
+    // shell/JS meta-characters (single quotes, backticks) which were
+    // picked up by the client-side onclick handler and caused XSS.
+    // Matches what GitHub itself accepts + what our client-side chip
+    // renderer will accept. Caught by Cursor Bugbot #450 round 5.
+    if (!/^[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+$/.test(repoFullName)) {
       res.status(400).json({
         error: 'validation',
         field: 'repoFullName',
-        message: 'repoFullName 必须是 "owner/repo" 格式',
+        message: 'repoFullName 必须是 "owner/repo" 格式,仅允许字母/数字/点/下划线/短横线',
       });
       return;
     }

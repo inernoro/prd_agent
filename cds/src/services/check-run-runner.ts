@@ -301,7 +301,18 @@ export class CheckRunRunner {
         });
         // Drop the stale id so next deploy creates a fresh check run
         // instead of PATCHing this one to in_progress.
-        this.deps.stateService.updateBranchGithubMeta(entry.id, { githubCheckRunId: undefined });
+        //
+        // Compare-and-swap: if a concurrent webhook-triggered deploy
+        // already called ensureOpen() between our iteration start and
+        // here, the branch entry's checkRunId would have been replaced
+        // by a NEW id. Clearing blindly would wipe that fresh id,
+        // leaving the deploy's finalize() unable to close the run.
+        // Only clear when the id still matches the one we just PATCHed.
+        // Caught by Cursor Bugbot #450 round 5.
+        const latest = this.deps.stateService.getBranch(entry.id);
+        if (latest && latest.githubCheckRunId === id) {
+          this.deps.stateService.updateBranchGithubMeta(entry.id, { githubCheckRunId: undefined });
+        }
       } catch (err) {
         // eslint-disable-next-line no-console
         console.warn(
