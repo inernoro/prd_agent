@@ -1,6 +1,7 @@
 using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
+using Microsoft.Extensions.FileSystemGlobbing;
 using MongoDB.Driver;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
@@ -56,8 +57,16 @@ public class GitHubDirectorySyncService
             owner, repo, path, branch, parentEntry.StoreId);
 
         // 1) 调用 GitHub Contents API 获取目录文件列表
-        var files = await ListDirectoryFilesAsync(owner, repo, path, branch, ct);
-        _logger.LogInformation("[GitHubSync] Found {Count} files in {Owner}/{Repo}/{Path}", files.Count, owner, repo, path);
+        var includeGlob = meta.GetValueOrDefault("github_include_glob", null);
+        Matcher? matcher = null;
+        if (!string.IsNullOrWhiteSpace(includeGlob))
+        {
+            matcher = new Matcher();
+            matcher.AddInclude(includeGlob);
+        }
+
+        var files = await ListDirectoryFilesAsync(owner, repo, path, branch, matcher, ct);
+        _logger.LogInformation("[GitHubSync] Found {Count} files in {Owner}/{Repo}/{Path} matching glob '{Glob}'", files.Count, owner, repo, path, includeGlob ?? "*");
 
         if (files.Count == 0) return diff;
 
@@ -217,7 +226,7 @@ public class GitHubDirectorySyncService
 
     /// <summary>调用 GitHub Contents API 获取目录下的文件列表</summary>
     private async Task<List<GitHubFile>> ListDirectoryFilesAsync(
-        string owner, string repo, string path, string branch, CancellationToken ct)
+        string owner, string repo, string path, string branch, Matcher? matcher, CancellationToken ct)
     {
         var url = $"https://api.github.com/repos/{Uri.EscapeDataString(owner)}/{Uri.EscapeDataString(repo)}/contents/{path}?ref={Uri.EscapeDataString(branch)}";
 
@@ -240,6 +249,9 @@ public class GitHubDirectorySyncService
             var name = item.GetProperty("name").GetString() ?? "";
             // 只同步 .md 文件
             if (!name.EndsWith(".md", StringComparison.OrdinalIgnoreCase)) continue;
+
+            // Glob 匹配（如匹配失败则丢弃）
+            if (matcher != null && !matcher.Match(name).HasMatches) continue;
 
             var downloadUrl = item.GetProperty("download_url").GetString();
             if (string.IsNullOrEmpty(downloadUrl)) continue;

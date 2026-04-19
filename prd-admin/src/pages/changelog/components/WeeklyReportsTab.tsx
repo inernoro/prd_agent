@@ -21,6 +21,7 @@ export function WeeklyReportsTab() {
   
   // Setup inputs
   const [repoUrl, setRepoUrl] = useState('');
+  const [includeGlob, setIncludeGlob] = useState('report*.md');
   const [configuring, setConfiguring] = useState(false);
   const [syncing, setSyncing] = useState(false);
 
@@ -70,6 +71,7 @@ export function WeeklyReportsTab() {
           title: 'MAP 自动同步',
           githubUrl: repoUrl.trim(),
           syncIntervalMinutes: 1440,
+          includeGlob: includeGlob.trim(),
         });
 
         if (subRes.success) {
@@ -151,6 +153,25 @@ export function WeeklyReportsTab() {
               value={repoUrl}
               onChange={(e) => setRepoUrl(e.target.value)}
               placeholder="https://github.com/owner/repo/tree/main/doc"
+              className="w-full h-11 px-4 rounded-xl outline-none text-[13px] font-mono transition-all"
+              style={{
+                background: 'rgba(0,0,0,0.2)',
+                border: '1px solid rgba(255,255,255,0.1)',
+                color: 'var(--text-primary)',
+              }}
+              onFocus={(e) => e.target.style.borderColor = 'rgba(168,85,247,0.5)'}
+              onBlur={(e) => e.target.style.borderColor = 'rgba(255,255,255,0.1)'}
+            />
+          </div>
+
+          <div className="flex flex-col gap-2 relative">
+            <label className="text-xs font-semibold uppercase tracking-wider text-gray-500 flex items-center gap-1.5 pt-1">
+              模糊匹配 (Glob 文件约束)
+            </label>
+            <input 
+              value={includeGlob}
+              onChange={(e) => setIncludeGlob(e.target.value)}
+              placeholder="例如：report*.md (为空则匹配所有 .md 文件)"
               className="w-full h-11 px-4 rounded-xl outline-none text-[13px] font-mono transition-all"
               style={{
                 background: 'rgba(0,0,0,0.2)',
