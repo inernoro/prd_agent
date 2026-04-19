@@ -44,7 +44,7 @@ export default function ReportDetailPage() {
       const next = !prev;
       if (next && viewButtonRef.current) {
         const rect = viewButtonRef.current.getBoundingClientRect();
-        setViewPopoverAnchor({ top: rect.bottom + 8, right: window.innerWidth - rect.right });
+        setViewPopoverAnchor({ top: rect.bottom + 6, right: window.innerWidth - rect.right });
       }
       return next;
     });
@@ -235,60 +235,102 @@ export default function ReportDetailPage() {
               <>
                 <div
                   className="fixed inset-0"
-                  style={{ zIndex: 100 }}
+                  style={{ zIndex: 100, background: 'rgba(0, 0, 0, 0.28)', backdropFilter: 'blur(2px)' }}
                   onClick={() => setShowViewPopover(false)}
                 />
                 <div
-                  className="rounded-xl"
                   style={{
                     position: 'fixed',
                     top: viewPopoverAnchor.top,
                     right: Math.max(8, viewPopoverAnchor.right),
                     width: 320,
+                    minWidth: 320,
+                    maxWidth: 320,
                     maxHeight: 360,
                     minHeight: 0,
                     zIndex: 101,
                     display: 'flex',
                     flexDirection: 'column',
-                    background: 'var(--bg-primary)',
-                    border: '1px solid var(--border-primary)',
-                    boxShadow: '0 10px 28px rgba(0, 0, 0, 0.16)',
+                    background: '#1a1b1f',
+                    backgroundImage: 'linear-gradient(180deg, rgba(255,255,255,0.04) 0%, rgba(255,255,255,0) 100%)',
+                    border: '1px solid rgba(255, 255, 255, 0.12)',
+                    borderRadius: 12,
+                    boxShadow: '0 12px 32px rgba(0, 0, 0, 0.55), 0 0 0 1px rgba(0, 0, 0, 0.4)',
                     padding: 12,
+                    backdropFilter: 'blur(20px) saturate(140%)',
                   }}
                   onClick={(e) => e.stopPropagation()}
+                  role="dialog"
+                  aria-label="浏览记录"
                 >
-                  <div className="flex items-center justify-between mb-2 shrink-0">
-                    <span className="text-[12px] font-medium" style={{ color: 'var(--text-primary)' }}>浏览记录</span>
-                    <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
+                  <div
+                    className="flex items-center justify-between mb-2 shrink-0"
+                    style={{ paddingBottom: 8, borderBottom: '1px solid rgba(255, 255, 255, 0.08)' }}
+                  >
+                    <span className="text-[12px] font-medium" style={{ color: 'rgba(255, 255, 255, 0.92)' }}>浏览记录</span>
+                    <span className="text-[11px]" style={{ color: 'rgba(255, 255, 255, 0.5)' }}>
                       去重 {viewSummary.count} · 总计 {viewSummary.totalViewCount}
                     </span>
                   </div>
                   {viewSummary.users.length === 0 ? (
-                    <div className="text-[12px] shrink-0" style={{ color: 'var(--text-muted)' }}>暂无浏览记录</div>
+                    <div
+                      className="text-[12px] shrink-0"
+                      style={{ color: 'rgba(255, 255, 255, 0.5)', padding: '12px 4px' }}
+                    >
+                      暂无浏览记录
+                    </div>
                   ) : (
                     <div
-                      className="space-y-1.5 pr-1"
-                      style={{ flex: 1, minHeight: 0, overflowY: 'auto', overscrollBehavior: 'contain' }}
+                      className="pr-1"
+                      style={{
+                        flex: 1,
+                        minHeight: 0,
+                        overflowY: 'auto',
+                        overscrollBehavior: 'contain',
+                        marginTop: 8,
+                        display: 'flex',
+                        flexDirection: 'column',
+                        gap: 4,
+                      }}
                     >
                       {viewSummary.users.map((user) => (
                         <div
                           key={user.userId}
-                          className="flex items-center justify-between rounded-lg px-2.5 py-1.5"
-                          style={{ background: 'var(--bg-secondary)' }}
+                          className="flex items-center justify-between transition-colors"
+                          style={{
+                            background: 'rgba(255, 255, 255, 0.04)',
+                            border: '1px solid rgba(255, 255, 255, 0.06)',
+                            borderRadius: 8,
+                            padding: '8px 10px',
+                          }}
+                          onMouseEnter={(e) => {
+                            e.currentTarget.style.background = 'rgba(255, 255, 255, 0.08)';
+                          }}
+                          onMouseLeave={(e) => {
+                            e.currentTarget.style.background = 'rgba(255, 255, 255, 0.04)';
+                          }}
                         >
                           <div className="min-w-0">
                             <div className="flex items-center gap-1.5">
-                              <span className="text-[12px] truncate" style={{ color: 'var(--text-primary)' }}>{user.userName}</span>
+                              <span
+                                className="text-[12px] truncate"
+                                style={{ color: 'rgba(255, 255, 255, 0.92)' }}
+                              >
+                                {user.userName}
+                              </span>
                               {user.isFrequent && (
                                 <span
                                   className="text-[10px] px-1.5 py-0.5 rounded-md"
-                                  style={{ color: 'rgba(16, 185, 129, 0.9)', background: 'rgba(16, 185, 129, 0.1)' }}
+                                  style={{ color: 'rgba(16, 185, 129, 0.95)', background: 'rgba(16, 185, 129, 0.14)' }}
                                 >
                                   常来
                                 </span>
                               )}
                             </div>
-                            <div className="text-[10px]" style={{ color: 'var(--text-muted)' }}>
+                            <div
+                              className="text-[10px] mt-0.5"
+                              style={{ color: 'rgba(255, 255, 255, 0.42)' }}
+                            >
                               {new Date(user.lastViewedAt).toLocaleString('zh-CN', {
                                 year: 'numeric',
                                 month: '2-digit',
@@ -299,7 +341,7 @@ export default function ReportDetailPage() {
                               })}
                             </div>
                           </div>
-                          <span className="text-[11px]" style={{ color: 'var(--text-secondary)' }}>
+                          <span className="text-[11px]" style={{ color: 'rgba(255, 255, 255, 0.7)' }}>
                             {user.viewCount} 次
                           </span>
                         </div>
