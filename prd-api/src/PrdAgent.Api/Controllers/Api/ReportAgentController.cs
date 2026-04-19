@@ -24,6 +24,10 @@ public class ReportAgentController : ControllerBase
 {
     private const string AppKey = "report-agent";
     private const long MaxRichTextImageBytes = 5 * 1024 * 1024;
+    // Kestrel 的 RequestSizeLimit 限定整个 HTTP 请求体（包含 multipart boundary/Content-Disposition 等头部开销）。
+    // 当压缩产物贴着 MaxRichTextImageBytes 时整体请求体会略大于文件本身，直接把限额设成 5MB 会导致 413 空 body。
+    // 这里放宽到 6MB 留余量，业务层仍通过 file.Length > MaxRichTextImageBytes 强制用户可见的 5MB 上限。
+    private const long MaxRichTextRequestBytes = MaxRichTextImageBytes + 1 * 1024 * 1024;
     private const int MaxDailyLogCustomTagCount = 20;
     private const int MaxDailyLogCustomTagLength = 16;
     private const string DailyLogTodoPlanWeekInvalidMessage = "Todo 标签必须提供有效的 ISO 周（planWeekYear + planWeekNumber）";
@@ -1257,7 +1261,7 @@ public class ReportAgentController : ControllerBase
     /// 上传富文本粘贴图片（仅作者、仅可编辑状态）
     /// </summary>
     [HttpPost("reports/{id}/rich-text/images")]
-    [RequestSizeLimit(MaxRichTextImageBytes)]
+    [RequestSizeLimit(MaxRichTextRequestBytes)]
     public async Task<IActionResult> UploadRichTextImage(string id, [FromForm] IFormFile file, CancellationToken ct)
     {
         var userId = GetUserId();
@@ -1905,7 +1909,7 @@ public class ReportAgentController : ControllerBase
     /// 上传日常记录富文本图片（粘贴/选择即用，不绑定具体某条 daily-log）
     /// </summary>
     [HttpPost("daily-logs/upload-image")]
-    [RequestSizeLimit(MaxRichTextImageBytes)]
+    [RequestSizeLimit(MaxRichTextRequestBytes)]
     public async Task<IActionResult> UploadDailyLogImage([FromForm] IFormFile file, CancellationToken ct)
     {
         var userId = GetUserId();

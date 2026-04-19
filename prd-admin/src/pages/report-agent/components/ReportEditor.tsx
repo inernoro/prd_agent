@@ -7,7 +7,7 @@ import { toast } from '@/lib/toast';
 import { systemDialog } from '@/lib/systemDialog';
 import { useReportAgentStore } from '@/stores/reportAgentStore';
 import { useAutosave } from '@/hooks/useAutosave';
-import { compressImageToLimit, hasMarkdownImage, MAX_RICH_TEXT_IMAGE_BYTES } from '@/lib/imageCompress';
+import { compressImageToLimit, hasMarkdownImage, MAX_RICH_TEXT_IMAGE_COMPRESS_TARGET_BYTES } from '@/lib/imageCompress';
 import {
   createWeeklyReport,
   updateWeeklyReport,
@@ -428,10 +428,10 @@ export function ReportEditor({ reportId, weekYear, weekNumber, onClose }: Props)
     setPastingImageKey(uploadKey);
 
     try {
-      const { file: uploadFile, compressed } = await compressImageToLimit(file, MAX_RICH_TEXT_IMAGE_BYTES);
+      const { file: uploadFile, compressed } = await compressImageToLimit(file, MAX_RICH_TEXT_IMAGE_COMPRESS_TARGET_BYTES);
       const res = await uploadReportRichTextImage({ id: report.id, file: uploadFile });
       if (!res.success || !res.data?.url) {
-        toast.error(res.error?.message || '图片上传失败');
+        toast.error('图片上传失败', res.error?.message);
         return;
       }
 

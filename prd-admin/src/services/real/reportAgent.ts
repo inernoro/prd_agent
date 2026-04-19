@@ -322,7 +322,14 @@ export const updateWeeklyReportReal: UpdateWeeklyReportContract = async (input) 
   );
 };
 
-export const uploadReportRichTextImageReal: UploadReportRichTextImageContract = async (input) => {
+function mapUploadStatusToError(status: number): { code: string; message: string } | null {
+  if (status === 413) return { code: 'FILE_TOO_LARGE', message: '图片超过 5MB 上传限制，请压缩后重试' };
+  if (status === 415) return { code: 'UNSUPPORTED_TYPE', message: '不支持的图片类型，请使用 PNG / JPG / WebP / GIF' };
+  if (status >= 500) return { code: 'SERVER_ERROR', message: `服务器错误（HTTP ${status}），请稍后重试` };
+  return null;
+}
+
+async function uploadReportFormDataWithRefresh<T>(url: string, file: File): Promise<ApiResponse<T>> {
   const buildHeaders = (token: string | null | undefined) => {
     const headers: Record<string, string> = { Accept: 'application/json' };
     if (token) headers.Authorization = `Bearer ${token}`;
@@ -330,106 +337,76 @@ export const uploadReportRichTextImageReal: UploadReportRichTextImageContract = 
   };
   const createFormData = () => {
     const fd = new FormData();
-    fd.append('file', input.file);
+    fd.append('file', file);
     return fd;
   };
 
-  const parseResponse = async (res: Response): Promise<ApiResponse<ReportRichTextImageUploadData>> => {
-    const text = await res.text();
+  const parseResponse = async (res: Response): Promise<ApiResponse<T>> => {
+    let text = '';
+    try { text = await res.text(); } catch { /* 连接提前关闭时 text() 可能抛错，当作空串处理 */ }
+
+    const statusMapped = mapUploadStatusToError(res.status);
+    if (!text) {
+      if (statusMapped) {
+        console.error('[reportAgent upload] status-mapped error', { status: res.status, url, fileSize: file.size });
+        return { success: false, error: statusMapped } as ApiResponse<T>;
+      }
+      console.error('[reportAgent upload] empty body', { status: res.status, url, fileSize: file.size });
+      return { success: false, error: { code: 'EMPTY_RESPONSE', message: `服务器返回空响应（HTTP ${res.status}）` } } as ApiResponse<T>;
+    }
+
     try {
-      return JSON.parse(text) as ApiResponse<ReportRichTextImageUploadData>;
+      return JSON.parse(text) as ApiResponse<T>;
     } catch {
-      return { success: false, error: { code: 'PARSE_ERROR', message: text || '上传失败' } } as ApiResponse<ReportRichTextImageUploadData>;
+      if (statusMapped) return { success: false, error: statusMapped } as ApiResponse<T>;
+      console.error('[reportAgent upload] parse error', { status: res.status, bodyPreview: text.slice(0, 200), url });
+      return { success: false, error: { code: 'PARSE_ERROR', message: `上传失败（HTTP ${res.status}）` } } as ApiResponse<T>;
     }
   };
 
+  try {
+    const firstRes = await fetch(url, {
+      method: 'POST',
+      headers: buildHeaders(useAuthStore.getState().token),
+      body: createFormData(),
+    });
+    const firstParsed = await parseResponse(firstRes);
+    const firstUnauthorized = firstRes.status === 401 || firstParsed.error?.code === 'UNAUTHORIZED';
+    if (!firstUnauthorized) return firstParsed;
+
+    const refreshed = await tryRefreshAdminTokenForUpload();
+    if (!refreshed) return firstParsed;
+
+    const retryRes = await fetch(url, {
+      method: 'POST',
+      headers: buildHeaders(useAuthStore.getState().token),
+      body: createFormData(),
+    });
+    return await parseResponse(retryRes);
+  } catch (error) {
+    console.error('[reportAgent upload] network error', { url, fileSize: file.size, error });
+    return {
+      success: false,
+      error: {
+        code: 'NETWORK_ERROR',
+        message: error instanceof Error ? error.message : '网络错误，上传失败',
+      },
+    } as ApiResponse<T>;
+  }
+}
+
+export const uploadReportRichTextImageReal: UploadReportRichTextImageContract = async (input) => {
   const rawBase = getApiBaseUrl();
   const path = api.reportAgent.reports.richTextImages(encodeURIComponent(input.id));
   const url = rawBase ? `${rawBase}${path}` : path;
-
-  try {
-    const firstRes = await fetch(url, {
-      method: 'POST',
-      headers: buildHeaders(useAuthStore.getState().token),
-      body: createFormData(),
-    });
-    const firstParsed = await parseResponse(firstRes);
-    const firstUnauthorized = firstRes.status === 401 || firstParsed.error?.code === 'UNAUTHORIZED';
-    if (!firstUnauthorized) return firstParsed;
-
-    const refreshed = await tryRefreshAdminTokenForUpload();
-    if (!refreshed) return firstParsed;
-
-    const retryRes = await fetch(url, {
-      method: 'POST',
-      headers: buildHeaders(useAuthStore.getState().token),
-      body: createFormData(),
-    });
-    return await parseResponse(retryRes);
-  } catch (error) {
-    return {
-      success: false,
-      error: {
-        code: 'NETWORK_ERROR',
-        message: error instanceof Error ? error.message : '网络错误，上传失败',
-      },
-    } as ApiResponse<ReportRichTextImageUploadData>;
-  }
+  return await uploadReportFormDataWithRefresh<ReportRichTextImageUploadData>(url, input.file);
 };
 
 export const uploadDailyLogImageReal: UploadDailyLogImageContract = async (input) => {
-  const buildHeaders = (token: string | null | undefined) => {
-    const headers: Record<string, string> = { Accept: 'application/json' };
-    if (token) headers.Authorization = `Bearer ${token}`;
-    return headers;
-  };
-  const createFormData = () => {
-    const fd = new FormData();
-    fd.append('file', input.file);
-    return fd;
-  };
-
-  const parseResponse = async (res: Response): Promise<ApiResponse<ReportRichTextImageUploadData>> => {
-    const text = await res.text();
-    try {
-      return JSON.parse(text) as ApiResponse<ReportRichTextImageUploadData>;
-    } catch {
-      return { success: false, error: { code: 'PARSE_ERROR', message: text || '上传失败' } } as ApiResponse<ReportRichTextImageUploadData>;
-    }
-  };
-
   const rawBase = getApiBaseUrl();
   const path = api.reportAgent.dailyLogs.uploadImage();
   const url = rawBase ? `${rawBase}${path}` : path;
-
-  try {
-    const firstRes = await fetch(url, {
-      method: 'POST',
-      headers: buildHeaders(useAuthStore.getState().token),
-      body: createFormData(),
-    });
-    const firstParsed = await parseResponse(firstRes);
-    const firstUnauthorized = firstRes.status === 401 || firstParsed.error?.code === 'UNAUTHORIZED';
-    if (!firstUnauthorized) return firstParsed;
-
-    const refreshed = await tryRefreshAdminTokenForUpload();
-    if (!refreshed) return firstParsed;
-
-    const retryRes = await fetch(url, {
-      method: 'POST',
-      headers: buildHeaders(useAuthStore.getState().token),
-      body: createFormData(),
-    });
-    return await parseResponse(retryRes);
-  } catch (error) {
-    return {
-      success: false,
-      error: {
-        code: 'NETWORK_ERROR',
-        message: error instanceof Error ? error.message : '网络错误，上传失败',
-      },
-    } as ApiResponse<ReportRichTextImageUploadData>;
-  }
+  return await uploadReportFormDataWithRefresh<ReportRichTextImageUploadData>(url, input.file);
 };
 
 export const deleteWeeklyReportReal: DeleteWeeklyReportContract = async (input) => {

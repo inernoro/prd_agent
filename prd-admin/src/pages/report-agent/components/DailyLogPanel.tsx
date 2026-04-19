@@ -23,7 +23,7 @@ import {
   DailyLogCategory,
 } from '@/services/contracts/reportAgent';
 import type { DailyLog, DailyLogItem, ReportCommit, PersonalSource } from '@/services/contracts/reportAgent';
-import { compressImageToLimit, hasMarkdownImage, MAX_RICH_TEXT_IMAGE_BYTES } from '@/lib/imageCompress';
+import { compressImageToLimit, hasMarkdownImage, MAX_RICH_TEXT_IMAGE_COMPRESS_TARGET_BYTES } from '@/lib/imageCompress';
 import { RichTextMarkdownContent } from './RichTextMarkdownContent';
 import { DailyLogPolishPopover } from './DailyLogPolishPopover';
 
@@ -422,10 +422,10 @@ export function DailyLogPanel() {
     const textarea = e.currentTarget;
     setPastingTarget(scope);
     try {
-      const { file: uploadFile, compressed } = await compressImageToLimit(file, MAX_RICH_TEXT_IMAGE_BYTES);
+      const { file: uploadFile, compressed } = await compressImageToLimit(file, MAX_RICH_TEXT_IMAGE_COMPRESS_TARGET_BYTES);
       const res = await uploadDailyLogImage({ file: uploadFile });
       if (!res.success || !res.data?.url) {
-        toast.error(res.error?.message || '图片上传失败');
+        toast.error('图片上传失败', res.error?.message);
         return;
       }
       const start = textarea.selectionStart ?? textarea.value.length;

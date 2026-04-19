@@ -4,6 +4,9 @@
  */
 
 export const MAX_RICH_TEXT_IMAGE_BYTES = 5 * 1024 * 1024;
+// 压缩目标比服务端 RequestSizeLimit 小 512KB，用于给 multipart/form-data 的 boundary
+// 与 Content-Disposition 头留出余量，避免压缩产物贴着 5MB 上限后整体请求体被 Kestrel 拒绝。
+export const MAX_RICH_TEXT_IMAGE_COMPRESS_TARGET_BYTES = 4.5 * 1024 * 1024;
 const MAX_COMPRESS_DIMENSION = 4096;
 const MIN_COMPRESS_SCALE = 0.4;
 const SCALE_REDUCE_FACTOR = 0.86;
