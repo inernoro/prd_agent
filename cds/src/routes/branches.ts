@@ -5685,7 +5685,40 @@ cdscli project list --human
       }
       send('resolve', 'done', '目标分支: ' + target);
 
-      // Step 3: hard-reset to origin/<target>
+      // Step 3a: checkout target branch BEFORE the hard reset.
+      //
+      // Without this, calling with {branch:'develop'} while HEAD is on
+      // 'main' would `git reset --hard origin/develop` and move the
+      // CURRENT branch (main) to develop's commit — corrupting main's
+      // tracking. self-update does this right; we were missing it.
+      // Caught by Cursor Bugbot #450 round 7 (HIGH).
+      send('checkout', 'running', `切换到 ${target} 分支...`);
+      const coRes = await shell.exec(`git checkout -f ${target}`, { cwd: repoRoot, timeout: 30_000 });
+      if (coRes.exitCode !== 0) {
+        // Fallback: create tracking branch from origin if it doesn't exist
+        // locally yet (same dance self-update performs).
+        const fbRes = await shell.exec(`git checkout -f -b ${target} origin/${target}`, { cwd: repoRoot, timeout: 30_000 });
+        if (fbRes.exitCode !== 0) {
+          const errMsg = (combinedOutput(fbRes) || '未知错误').trim();
+          send('checkout', 'error', `切换失败: ${errMsg.slice(0, 200)}`);
+          sendSSE(res, 'error', { message: `无法切换到 ${target}: ${errMsg}` });
+          res.end();
+          return;
+        }
+      }
+      // Verify we actually ended up on the target branch — catch any
+      // silent checkout-succeeds-but-HEAD-elsewhere edge case.
+      const verify = await shell.exec('git rev-parse --abbrev-ref HEAD', { cwd: repoRoot });
+      const actual = verify.stdout.trim();
+      if (actual !== target) {
+        send('checkout', 'error', `切换未生效: 期望 ${target},实际 ${actual}`);
+        sendSSE(res, 'error', { message: `git checkout 未生效: 仍在 ${actual}` });
+        res.end();
+        return;
+      }
+      send('checkout', 'done', `已切到 ${target}`);
+
+      // Step 3b: hard-reset to origin/<target>
       send('reset', 'running', `硬对齐 HEAD → origin/${target}`);
       const resetRes = await shell.exec(`git reset --hard origin/${target}`, { cwd: repoRoot, timeout: 30_000 });
       if (resetRes.exitCode !== 0) {
