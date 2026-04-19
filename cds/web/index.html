@@ -54,7 +54,14 @@
           </button>
         </div>
         <!-- Quick-access config shortcuts removed: settings menu (⚙) has them all.
-             User feedback 2026-04-18: 4 icons 冗余；留一把齿轮够用。 -->
+             User feedback 2026-04-18: 4 icons 冗余；留一把齿轮够用。
+             Exception: 2026-04-19 用户反馈「CDS 自动更新」是高频操作,
+             单独拉回一个 🔄 按钮在 header,点开走统一的
+             window.openSelfUpdateModal(),不再藏在齿轮下拉里(同样的
+             入口在 ⚙ 菜单也保留,兼容肌肉记忆)。 -->
+        <button class="icon-btn" id="selfUpdateBtn" onclick="if(window.openSelfUpdateModal)window.openSelfUpdateModal();" title="CDS 自动更新 (拉取最新代码并重启)">
+          <svg width="18" height="18" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 2.5a5.487 5.487 0 00-4.131 1.869l1.204 1.204A.25.25 0 014.896 6H1.25A.25.25 0 011 5.75V2.104a.25.25 0 01.427-.177l1.38 1.38A7.002 7.002 0 0115 8a.75.75 0 01-1.5 0A5.5 5.5 0 008 2.5zM2.5 8a.75.75 0 00-1.5 0 7.002 7.002 0 0012.023 4.87l1.38 1.38a.25.25 0 00.427-.177V10.5a.25.25 0 00-.25-.25h-3.646a.25.25 0 00-.177.427l1.204 1.204A5.5 5.5 0 012.5 8z"/></svg>
+        </button>
         <button class="icon-btn" id="agentKeyBtn" onclick="window.cdsOpenAgentKeyModal(typeof CURRENT_PROJECT_ID !== 'undefined' ? CURRENT_PROJECT_ID : 'default')" title="授权 Agent 操作本项目">
           <span style="font-size:16px">🔑</span>
         </button>
@@ -261,6 +268,7 @@
   </div>
 
   <script>document.write('<scr'+'ipt src="agent-key-modal.js?t='+Date.now()+'"></scr'+'ipt>');</script>
+  <script>document.write('<scr'+'ipt src="self-update.js?t='+Date.now()+'"></scr'+'ipt>');</script>
   <script>document.write('<scr'+'ipt src="app.js?t='+Date.now()+'"></scr'+'ipt>');</script>
 </body>
 </html>

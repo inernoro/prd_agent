@@ -4619,208 +4619,34 @@ async function waitForCdsHealthy(statusEl, timeoutMs) {
   return false;
 }
 
-async function openSelfUpdate() {
-  // Fetch branch list
-  let data;
-  try {
-    data = await api('GET', '/self-branches');
-  } catch (e) {
-    showToast('获取分支列表失败: ' + e.message, 'error');
-    return;
+// CDS 系统更新 — 收敛到 web/self-update.js 的统一实现,避免两套 UI
+// 分叉(旧版 openConfigModal + 分支页 combobox、projects.js 的原生
+// select 弹窗,UX 不一致,维护成本双倍)。
+//
+// 保留函数名兼容所有既有调用点(齿轮菜单、topology 工具栏、cmd-k
+// 命令面板、移动端工具栏等),只是都路由到 window.openSelfUpdateModal。
+function openSelfUpdate() {
+  if (typeof window.openSelfUpdateModal === 'function') {
+    return window.openSelfUpdateModal();
   }
-
-  const { current, commitHash, branches } = data;
-  const branchItems = branches.map(b =>
-    `<div class="combobox-item${b === current ? ' active' : ''}" data-value="${esc(b)}" onclick="selectComboItem(this)">
-      ${b === current ? '<span style="color:var(--green);margin-right:4px">✓</span>' : ''}${esc(b)}${b === current ? ' <span style="color:var(--fg-muted);font-size:11px">(当前)</span>' : ''}
-    </div>`
-  ).join('');
-
-  openConfigModal('CDS 系统更新', `
-    <p class="config-panel-desc">
-      拉取当前分支最新代码并重启 CDS。操作流程：<code>git fetch → git pull → restart</code>
-    </p>
-    <div class="form-row" style="margin-top:4px;font-size:13px;color:var(--text-secondary)">
-      当前分支：<code style="color:var(--accent)">${esc(current)}</code>${commitHash ? `<span style="white-space:nowrap;color:var(--text-muted)"> @ <code style="color:var(--blue)">${esc(commitHash.slice(0, 8))}</code></span>` : ''}
-    </div>
-    <details style="margin-top:10px">
-      <summary style="font-size:12px;color:var(--text-muted);cursor:pointer;user-select:none">切换到其他分支（高级）</summary>
-      <div class="form-row" style="flex-direction:column;align-items:stretch;margin-top:8px">
-        <label class="form-label">目标分支</label>
-        <div class="combobox" id="selfUpdateCombobox">
-          <div class="combobox-input-wrap">
-            <input id="selfUpdateBranch" class="form-input" style="width:100%;padding-right:36px"
-              value="${esc(current)}" placeholder="输入或选择分支名" autocomplete="off"
-              onfocus="openComboDropdown()" oninput="filterComboItems(this.value)">
-            <button type="button" class="combobox-toggle" onclick="toggleComboDropdown()" tabindex="-1">
-              <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 6 8 10 12 6"/></svg>
-            </button>
-          </div>
-          <div class="combobox-dropdown" id="selfUpdateDropdown">
-            ${branchItems}
-          </div>
-        </div>
-      </div>
-    </details>
-    <div id="selfUpdateProgress" style="display:none;margin-top:12px">
-      <div id="selfUpdateSteps" style="display:flex;flex-direction:column;gap:6px"></div>
-      <div id="selfUpdateStatus" style="margin-top:8px;font-size:13px"></div>
-    </div>
-    <div class="form-row" style="margin-top:16px;display:flex;gap:8px;align-items:center">
-      <button class="sm" id="selfUpdateBtn" onclick="executeSelfUpdate()">更新当前分支并重启</button>
-      <button class="sm ghost" onclick="closeConfigModal()">取消</button>
-    </div>
-  `);
-
-  // Close dropdown when clicking outside
-  document.addEventListener('click', _comboOutsideClick);
+  // 理论上 self-update.js 由 index.html 在 app.js 之前加载,走不到此 fallback。
+  if (typeof showToast === 'function') showToast('self-update.js 未加载', 'error');
 }
 
-// ── Combobox helpers ──
+// Legacy combobox helpers — 所有 selfUpdate* ID 随旧弹窗一起退休,
+// 这些函数保留做空壳防 cmd-k 里遗留的 onclick 报 ReferenceError。
+function _comboOutsideClick() { /* retired */ }
+function openComboDropdown() { /* retired */ }
+function closeComboDropdown() { /* retired */ }
+function toggleComboDropdown() { /* retired */ }
+function filterComboItems() { /* retired */ }
+function selectComboItem() { /* retired */ }
 
-function _comboOutsideClick(e) {
-  const box = document.getElementById('selfUpdateCombobox');
-  if (box && !box.contains(e.target)) {
-    closeComboDropdown();
-  }
-}
-
-function openComboDropdown() {
-  const dd = document.getElementById('selfUpdateDropdown');
-  if (dd) dd.classList.add('open');
-}
-
-function closeComboDropdown() {
-  const dd = document.getElementById('selfUpdateDropdown');
-  if (dd) dd.classList.remove('open');
-  document.removeEventListener('click', _comboOutsideClick);
-}
-
-function toggleComboDropdown() {
-  const dd = document.getElementById('selfUpdateDropdown');
-  if (dd) {
-    if (dd.classList.contains('open')) {
-      closeComboDropdown();
-    } else {
-      // Reset filter to show all
-      filterComboItems('');
-      dd.classList.add('open');
-      document.getElementById('selfUpdateBranch')?.focus();
-    }
-  }
-}
-
-function filterComboItems(query) {
-  const dd = document.getElementById('selfUpdateDropdown');
-  if (!dd) return;
-  const q = query.toLowerCase();
-  let visible = 0;
-  for (const item of dd.querySelectorAll('.combobox-item')) {
-    const val = (item.dataset.value || '').toLowerCase();
-    const show = !q || val.includes(q);
-    item.style.display = show ? '' : 'none';
-    if (show) visible++;
-  }
-  if (visible > 0 && q) dd.classList.add('open');
-}
-
-function selectComboItem(el) {
-  const input = document.getElementById('selfUpdateBranch');
-  if (input) input.value = el.dataset.value;
-  closeComboDropdown();
-}
-
-function executeSelfUpdate() {
-  const input = document.getElementById('selfUpdateBranch');
-  const branch = input ? input.value.trim() : '';
-  const btn = document.getElementById('selfUpdateBtn');
-  const progress = document.getElementById('selfUpdateProgress');
-  const stepsEl = document.getElementById('selfUpdateSteps');
-  const statusEl = document.getElementById('selfUpdateStatus');
-
-  if (btn) btn.disabled = true;
-  if (progress) progress.style.display = 'block';
-
-  const stepMap = {};
-  function updateStep(id, status, title) {
-    let el = stepMap[id];
-    if (!el) {
-      el = document.createElement('div');
-      el.style.cssText = 'display:flex;align-items:center;gap:8px;padding:6px 10px;background:var(--bg-secondary);border:1px solid var(--border);border-radius:6px;font-size:13px';
-      el.innerHTML = '<span class="step-dot"></span><span></span>';
-      stepsEl.appendChild(el);
-      stepMap[id] = el;
-    }
-    const dot = el.querySelector('.step-dot');
-    const label = el.querySelector('span:last-child');
-    label.textContent = title;
-    const colors = { running: 'var(--blue)', done: 'var(--green)', error: 'var(--red)' };
-    dot.style.cssText = `width:8px;height:8px;border-radius:50%;background:${colors[status] || 'var(--fg-muted)'}`;
-    if (status === 'running') {
-      dot.style.animation = 'pulse 1s infinite';
-    }
-  }
-
-  // SSE request via fetch
-  fetch(API + '/self-update', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ branch: branch || undefined }),
-  }).then(resp => {
-    const reader = resp.body.getReader();
-    const decoder = new TextDecoder();
-    let buffer = '';
-
-    function processChunk() {
-      return reader.read().then(({ done, value }) => {
-        if (done) return;
-        buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split('\n');
-        buffer = lines.pop() || '';
-
-        let eventType = '';
-        for (const line of lines) {
-          if (line.startsWith('event: ')) {
-            eventType = line.slice(7).trim();
-          } else if (line.startsWith('data: ')) {
-            try {
-              const data = JSON.parse(line.slice(6));
-              if (eventType === 'step') {
-                updateStep(data.step, data.status, data.title);
-              } else if (eventType === 'done') {
-                statusEl.innerHTML =
-                  '<span style="color:var(--green)">' + esc(data.message) + '</span>' +
-                  '<br><span style="font-size:12px;color:var(--fg-muted)">等待 CDS 重启...</span>';
-                // Poll /healthz instead of a fixed 5s delay, which used to
-                // race the restart and land on a 502 when the new process
-                // wasn't listening yet.
-                waitForCdsHealthy(statusEl, 120000).then((ok) => {
-                  if (ok) location.reload();
-                });
-              } else if (eventType === 'error') {
-                statusEl.innerHTML = '<span style="color:var(--red);display:inline-flex;align-items:center;gap:4px"><svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor"><path d="M3.72 3.72a.75.75 0 011.06 0L8 6.94l3.22-3.22a.75.75 0 111.06 1.06L9.06 8l3.22 3.22a.75.75 0 11-1.06 1.06L8 9.06l-3.22 3.22a.75.75 0 01-1.06-1.06L6.94 8 3.72 4.78a.75.75 0 010-1.06z"/></svg>' + esc(data.message) + '</span>';
-                if (btn) btn.disabled = false;
-              }
-            } catch {}
-          }
-        }
-        return processChunk();
-      });
-    }
-    return processChunk();
-  }).catch(err => {
-    // Connection lost is expected during restart — the SSE stream dies as
-    // the process goes down. Swap to the health-polling helper so we only
-    // reload once the new process is actually serving traffic.
-    if (statusEl && !statusEl.textContent) {
-      statusEl.innerHTML =
-        '<span style="color:var(--fg-muted)">连接已断开（CDS 正在重启）...</span>';
-      waitForCdsHealthy(statusEl, 120000).then((ok) => {
-        if (ok) location.reload();
-      });
-    }
-  });
-}
+// executeSelfUpdate — retired when the old openConfigModal-based self-
+// update UI was collapsed into the shared self-update.js module.
+// Kept as a no-op stub because cmd-k / legacy onclick references may
+// still exist in cached client bundles; future cleanup can remove.
+function executeSelfUpdate() { /* retired — see self-update.js */ }
 
 // ── Infrastructure services ──
 
