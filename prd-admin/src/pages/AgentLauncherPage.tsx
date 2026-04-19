@@ -615,10 +615,10 @@ export default function AgentLauncherPage() {
   );
 
   return (
-    <div className="h-full min-h-0 flex flex-col relative" style={{ background: 'transparent' }}>
+    <div className="h-full min-h-0 flex flex-col relative" style={{ background: 'var(--bg-base)' }}>
       
-      {/* ── 真正的全屏深空背景（穿透侧边栏，达到究极全屏） ── */}
-      <div className="fixed inset-0 pointer-events-none" style={{ zIndex: -1, background: '#111215' }}>
+      {/* ── 页面背景大画幅层 (Page Hero Backing) ── */}
+      <div className="absolute inset-x-0 top-0 pointer-events-none" style={{ height: isMobile ? '70vh' : '90vh', zIndex: 0 }}>
         {/* Background image */}
         <div
           className="absolute inset-0"
@@ -628,8 +628,8 @@ export default function AgentLauncherPage() {
             backgroundPosition: 'center top',
             backgroundRepeat: 'no-repeat',
             opacity: 0.85,
-            maskImage: 'linear-gradient(to bottom, rgba(0,0,0,1) 60%, rgba(0,0,0,0) 100%)',
-            WebkitMaskImage: 'linear-gradient(to bottom, rgba(0,0,0,1) 60%, rgba(0,0,0,0) 100%)',
+            maskImage: 'linear-gradient(to bottom, rgba(0,0,0,1) 50%, rgba(0,0,0,0) 100%)',
+            WebkitMaskImage: 'linear-gradient(to bottom, rgba(0,0,0,1) 50%, rgba(0,0,0,0) 100%)',
           }}
         />
         {/* Left fade overlay — text readability */}
@@ -637,8 +637,8 @@ export default function AgentLauncherPage() {
           className="absolute inset-0"
           style={{
             background: isMobile
-              ? 'linear-gradient(180deg, rgba(17,18,21,1) 0%, rgba(17,18,21,0.7) 40%, transparent 100%)'
-              : 'linear-gradient(90deg, rgba(17,18,21,0.95) 0%, rgba(17,18,21,0.8) 25%, rgba(17,18,21,0.4) 50%, transparent 80%)',
+              ? 'linear-gradient(180deg, var(--bg-base) 0%, rgba(10,10,11,0.7) 40%, transparent 100%)'
+              : 'linear-gradient(90deg, var(--bg-base) 0%, rgba(10,10,11,0.8) 25%, rgba(10,10,11,0.4) 50%, transparent 80%)',
           }}
         />
       </div>
