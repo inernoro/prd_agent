@@ -273,8 +273,10 @@ describe('GitHubWebhookDispatcher', () => {
 
   describe('unhandled events', () => {
     it('returns ignored-event', async () => {
+      // Use an event we genuinely don't handle (not in the case switch).
+      // `release` now has its own acknowledgement handler.
       const d = buildDispatcher();
-      const result = await d.handle('release', { action: 'published' });
+      const result = await d.handle('deployment_status', { action: 'created' });
       expect(result.action).toBe('ignored-event');
     });
   });
@@ -378,6 +380,183 @@ describe('GitHubWebhookDispatcher', () => {
         repository: { full_name: 'stranger/repo' },
       });
       expect(result.action).toBe('ignored-no-project');
+    });
+  });
+
+  describe('issue_comment slash commands', () => {
+    beforeEach(() => {
+      stateService.addProject({
+        id: 'p1', slug: 'proj', name: 'Proj', kind: 'git',
+        createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
+        githubRepoFullName: 'octocat/repo', githubInstallationId: 42,
+      });
+      stateService.addBranch({
+        id: 'proj-feat', projectId: 'p1', branch: 'feat',
+        worktreePath: '/tmp/wt', services: {}, status: 'running',
+        createdAt: new Date().toISOString(),
+        githubPrNumber: 7,
+      });
+    });
+
+    async function fireComment(body: string) {
+      const d = buildDispatcher();
+      return d.handle('issue_comment', {
+        action: 'created',
+        comment: { id: 99, body, user: { login: 'alice' } },
+        issue: { number: 7, pull_request: { url: 'x', html_url: 'y' } },
+        repository: { full_name: 'octocat/repo' },
+        installation: { id: 42 },
+      });
+    }
+
+    it('parses /cds redeploy + resolves branch from PR number', async () => {
+      const r = await fireComment('/cds redeploy');
+      expect(r.action).toBe('slash-command-invoked');
+      expect(r.slashCommand?.command).toBe('redeploy');
+      expect(r.slashCommand?.branchId).toBe('proj-feat');
+      expect(r.slashCommand?.commenter).toBe('alice');
+    });
+
+    it('parses /cds stop', async () => {
+      const r = await fireComment('/cds stop');
+      expect(r.slashCommand?.command).toBe('stop');
+    });
+
+    it('parses /cds logs', async () => {
+      const r = await fireComment('/cds logs');
+      expect(r.slashCommand?.command).toBe('logs');
+    });
+
+    it('parses /cds help', async () => {
+      const r = await fireComment('/cds help');
+      expect(r.slashCommand?.command).toBe('help');
+    });
+
+    it('defaults bare /cds to help', async () => {
+      const r = await fireComment('/cds');
+      expect(r.slashCommand?.command).toBe('help');
+    });
+
+    it('maps unknown verbs to help with arg', async () => {
+      const r = await fireComment('/cds foobar');
+      expect(r.slashCommand?.command).toBe('unknown');
+      expect(r.slashCommand?.arg).toBe('foobar');
+    });
+
+    it('ignores non-slash comments', async () => {
+      const r = await fireComment('looks good to me');
+      expect(r.action).toBe('ignored-event');
+    });
+
+    it('ignores comment on non-PR issue (no pull_request field)', async () => {
+      const d = buildDispatcher();
+      const r = await d.handle('issue_comment', {
+        action: 'created',
+        comment: { id: 1, body: '/cds redeploy', user: { login: 'alice' } },
+        issue: { number: 99 },
+        repository: { full_name: 'octocat/repo' },
+      });
+      expect(r.action).toBe('ignored-event');
+    });
+  });
+
+  describe('delete event (branch deletion on GitHub)', () => {
+    beforeEach(() => {
+      stateService.addProject({
+        id: 'p1', slug: 'proj', name: 'Proj', kind: 'git',
+        createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
+        githubRepoFullName: 'octocat/repo', githubInstallationId: 42,
+      });
+      stateService.addBranch({
+        id: 'proj-feat', projectId: 'p1', branch: 'feat',
+        worktreePath: '/tmp/wt', services: {}, status: 'running',
+        createdAt: new Date().toISOString(),
+      });
+    });
+
+    it('returns branch-deleted with stopRequest for branch ref_type', async () => {
+      const d = buildDispatcher();
+      const r = await d.handle('delete', {
+        ref: 'feat',
+        ref_type: 'branch',
+        repository: { full_name: 'octocat/repo' },
+      });
+      expect(r.action).toBe('branch-deleted');
+      expect(r.stopRequest).toEqual({ branchId: 'proj-feat' });
+    });
+
+    it('ignores tag deletions', async () => {
+      const d = buildDispatcher();
+      const r = await d.handle('delete', {
+        ref: 'v1.0.0',
+        ref_type: 'tag',
+        repository: { full_name: 'octocat/repo' },
+      });
+      expect(r.action).toBe('ignored-event');
+    });
+
+    it('ignores delete for branch CDS never tracked', async () => {
+      const d = buildDispatcher();
+      const r = await d.handle('delete', {
+        ref: 'never-existed',
+        ref_type: 'branch',
+        repository: { full_name: 'octocat/repo' },
+      });
+      expect(r.action).toBe('ignored-event');
+    });
+  });
+
+  describe('repository event (rename / delete / transfer)', () => {
+    beforeEach(() => {
+      stateService.addProject({
+        id: 'p1', slug: 'proj', name: 'Proj', kind: 'git',
+        createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
+        githubRepoFullName: 'octocat/repo', githubInstallationId: 42,
+      });
+    });
+
+    it('detaches link on repository.deleted', async () => {
+      const d = buildDispatcher();
+      const r = await d.handle('repository', {
+        action: 'deleted',
+        repository: { full_name: 'octocat/repo', name: 'repo', owner: { login: 'octocat' } },
+      });
+      expect(r.action).toBe('repo-detached');
+      const p = stateService.getProject('p1')!;
+      expect(p.githubRepoFullName).toBeUndefined();
+    });
+
+    it('detaches link on repository.renamed using changes.repository.name.from', async () => {
+      const d = buildDispatcher();
+      const r = await d.handle('repository', {
+        action: 'renamed',
+        repository: { full_name: 'octocat/new-name', name: 'new-name', owner: { login: 'octocat' } },
+        changes: { repository: { name: { from: 'repo' } } },
+      });
+      expect(r.action).toBe('repo-renamed');
+      const p = stateService.getProject('p1')!;
+      expect(p.githubRepoFullName).toBeUndefined();
+    });
+
+    it('ignores repository events with no linked project', async () => {
+      const d = buildDispatcher();
+      const r = await d.handle('repository', {
+        action: 'deleted',
+        repository: { full_name: 'stranger/thing', name: 'thing', owner: { login: 'stranger' } },
+      });
+      expect(r.action).toBe('ignored-event');
+    });
+  });
+
+  describe('release event', () => {
+    it('acknowledges release events for future implementation', async () => {
+      const d = buildDispatcher();
+      const r = await d.handle('release', {
+        action: 'published',
+        release: { tag_name: 'v1.0.0', name: '1.0', html_url: 'x', draft: false, prerelease: false },
+        repository: { full_name: 'octocat/repo' },
+      });
+      expect(r.action).toBe('release-acknowledged');
     });
   });
 });

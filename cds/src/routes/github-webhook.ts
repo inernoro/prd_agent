@@ -191,6 +191,28 @@ export function createGithubWebhookRouter(deps: GitHubWebhookRouterDeps): Router
       });
     }
 
+    // Slash commands — run the command + post a reply comment on the PR.
+    // Route-layer handles it so all GitHub API calls sit together, and
+    // the dispatcher stays pure (easy to unit-test).
+    if (result.slashCommand && githubApp) {
+      const sc = result.slashCommand;
+      const repoFullName = (payload as { repository?: { full_name: string } })?.repository?.full_name || '';
+      void runSlashCommand(
+        stateService,
+        githubApp,
+        config,
+        repoFullName,
+        sc,
+        dispatchDeploy,
+      ).catch((err) => {
+        // eslint-disable-next-line no-console
+        console.warn(
+          `[webhook] slash command failed for '${sc.command}':`,
+          (err as Error).message,
+        );
+      });
+    }
+
     res.json({
       ok: true,
       event: eventName,
@@ -200,6 +222,7 @@ export function createGithubWebhookRouter(deps: GitHubWebhookRouterDeps): Router
       branchId: result.branchId,
       deployDispatched: Boolean(result.deployRequest),
       stopDispatched: Boolean(result.stopRequest),
+      slashCommand: result.slashCommand?.command,
     });
   });
 
@@ -452,4 +475,116 @@ async function postOrUpdatePrComment(
     githubPreviewCommentId: result.id,
   });
   stateService.save();
+}
+
+/**
+ * Execute a `/cds <cmd>` slash command received via issue_comment on a
+ * PR. Dispatches the command and posts a reply comment on the PR so
+ * the user (or collaborator) sees a confirmation in the thread.
+ */
+async function runSlashCommand(
+  stateService: StateService,
+  githubApp: GitHubAppClient,
+  config: CdsConfig,
+  repoFullName: string,
+  sc: {
+    command: 'redeploy' | 'stop' | 'logs' | 'help' | 'unknown';
+    branchId?: string;
+    prNumber: number;
+    commentId: number;
+    arg?: string;
+    commenter: string;
+  },
+  dispatchDeploy?: (branchId: string, commitSha: string) => Promise<void>,
+): Promise<void> {
+  const parts = repoFullName.split('/');
+  if (parts.length !== 2) return;
+  const [owner, repo] = parts;
+
+  // Any command other than `help` needs a CDS branch to target. If we
+  // can't resolve one, reply with a hint instead of silently failing.
+  const project = stateService.findProjectByRepoFullName(repoFullName);
+  const instId = project?.githubInstallationId;
+  if (!instId) return;
+
+  const postReply = (body: string) =>
+    githubApp.createIssueComment(instId, owner, repo, sc.prNumber, body).catch((err) => {
+      // eslint-disable-next-line no-console
+      console.warn(`[slash] reply comment failed: ${(err as Error).message}`);
+    });
+
+  if (sc.command === 'help' || sc.command === 'unknown') {
+    const unknownLine = sc.command === 'unknown' ? `未知命令 \`${sc.arg}\` — 列一下支持的:\n\n` : '';
+    await postReply(
+      '## 🤖 CDS Slash Commands\n\n' +
+      unknownLine +
+      '| 命令 | 说明 |\n' +
+      '|------|------|\n' +
+      '| `/cds redeploy` | 强制触发一次新部署(适用于代码没变但想重跑构建) |\n' +
+      '| `/cds stop` | 停掉这个 PR 分支的预览容器 |\n' +
+      '| `/cds logs` | 回复一段最近 40 条部署日志尾部 |\n' +
+      '| `/cds help` | 显示本帮助 |\n\n' +
+      '<sub>@' + sc.commenter + ' 输入命令即可,无需引号。push 到分支也会自动触发 redeploy。</sub>',
+    );
+    return;
+  }
+
+  if (!sc.branchId) {
+    await postReply(
+      `@${sc.commenter} ⚠ 这个 PR 的分支 CDS 还没跟踪到,无法执行 \`/cds ${sc.command}\`。` +
+      `通常等一次 push 触发 webhook 后就能跟踪到; 或者手动推一次空 commit 再试。`,
+    );
+    return;
+  }
+
+  const branch = stateService.getBranch(sc.branchId);
+  if (!branch) {
+    await postReply(`@${sc.commenter} ⚠ CDS 分支 \`${sc.branchId}\` 不存在或已被删除。`);
+    return;
+  }
+
+  if (sc.command === 'redeploy') {
+    const dispatcherFn = dispatchDeploy || defaultLocalhostDeploy(config);
+    const sha = branch.githubCommitSha || '';
+    await postReply(
+      `@${sc.commenter} 🔄 已排队重新部署 \`${sc.branchId}\`${sha ? ` @ ${sha.slice(0, 7)}` : ''}。` +
+      `进度见 Checks 面板的 "CDS Deploy" 条目。`,
+    );
+    dispatcherFn(sc.branchId, sha).catch((err) => {
+      // eslint-disable-next-line no-console
+      console.warn(`[slash] redeploy dispatch failed: ${(err as Error).message}`);
+    });
+    return;
+  }
+
+  if (sc.command === 'stop') {
+    await postReply(`@${sc.commenter} 🛑 正在停止 \`${sc.branchId}\` 的预览容器…`);
+    try {
+      await defaultLocalhostStop(config, sc.branchId);
+      await postReply(`@${sc.commenter} ✓ 预览容器已停。push 或 \`/cds redeploy\` 可重新启动。`);
+    } catch (err) {
+      await postReply(`@${sc.commenter} ✖ 停止失败: ${(err as Error).message}`);
+    }
+    return;
+  }
+
+  if (sc.command === 'logs') {
+    // Pull the latest deploy's last 40 events — same data the
+    // check-run tail shows, but surfaced inline for quick diagnosis.
+    const logs = stateService.getLogs?.(sc.branchId) || stateService.getState().logs?.[sc.branchId] || [];
+    const latest = logs.length > 0 ? logs[logs.length - 1] : null;
+    if (!latest) {
+      await postReply(`@${sc.commenter} ℹ 分支 \`${sc.branchId}\` 暂无部署日志。`);
+      return;
+    }
+    const events = (latest.events || []).slice(-40);
+    const rendered = events.map((ev) => `[${ev.status || '?'}] ${ev.step}: ${ev.title || ''}`).join('\n');
+    const tail = rendered.slice(-8000);
+    await postReply(
+      `@${sc.commenter} 📋 \`${sc.branchId}\` 最近 ${events.length} 条部署事件:\n\n` +
+      '```\n' + tail + '\n```\n\n' +
+      `<sub>完整日志: ${(config.publicBaseUrl || '').replace(/\/$/, '')}/branch-panel?id=${encodeURIComponent(sc.branchId)}</sub>`,
+    );
+    return;
+  }
 }

@@ -39,7 +39,12 @@ export interface WebhookDispatchResult {
     | 'installation-acknowledged'
     | 'check-run-requeued'
     | 'pr-comment-posted'
-    | 'pr-branch-stopped';
+    | 'pr-branch-stopped'
+    | 'slash-command-invoked'
+    | 'branch-deleted'
+    | 'repo-renamed'
+    | 'repo-detached'
+    | 'release-acknowledged';
   /** Short human message for the response + logs. */
   message: string;
   /** Populated when a branch was touched. */
@@ -50,12 +55,25 @@ export interface WebhookDispatchResult {
     commitSha: string;
   };
   /**
-   * Populated on `pull_request.closed` to ask the route to tear down the
-   * preview containers. Separate from deployRequest so the route decides
-   * between "deploy" and "stop".
+   * Populated on `pull_request.closed` or `delete` (branch) to ask the
+   * route to tear down the preview containers. Separate from
+   * deployRequest so the route decides between "deploy" and "stop".
    */
   stopRequest?: {
     branchId: string;
+  };
+  /**
+   * Populated on slash-command events (`/cds <cmd>` in issue_comment).
+   * The route layer wires the command to the right action + posts a
+   * reply comment on the PR.
+   */
+  slashCommand?: {
+    command: 'redeploy' | 'stop' | 'logs' | 'help' | 'unknown';
+    branchId?: string;
+    prNumber: number;
+    commentId: number;
+    arg?: string;
+    commenter: string;
   };
 }
 
@@ -116,6 +134,78 @@ export interface GitHubPullRequestEvent {
   installation?: { id: number };
 }
 
+/**
+ * `issue_comment` event — GitHub fires this for BOTH issue and PR
+ * comments (PR is an issue under the hood). We only act on comments
+ * where `issue.pull_request` is set (meaning it's a PR comment) AND
+ * the body matches our `/cds <cmd>` slash-command pattern.
+ */
+export interface GitHubIssueCommentEvent {
+  action: 'created' | 'edited' | 'deleted';
+  comment?: {
+    id: number;
+    body: string;
+    user: { login: string };
+  };
+  issue?: {
+    number: number;
+    pull_request?: { url: string; html_url: string };
+  };
+  repository?: { full_name: string };
+  installation?: { id: number };
+}
+
+/**
+ * `delete` event — fires when a branch or tag is deleted on GitHub
+ * (push of an empty ref). We care about branches so we can tear down
+ * their preview containers on CDS.
+ */
+export interface GitHubDeleteEvent {
+  ref: string;
+  ref_type: 'branch' | 'tag';
+  repository?: { full_name: string };
+  installation?: { id: number };
+}
+
+/**
+ * `repository` event — fires on repo-level lifecycle changes
+ * (renamed, transferred, archived, edited, deleted). We auto-unlink
+ * projects that reference a repo that's been renamed or removed so
+ * the link dictionary doesn't accumulate stale entries.
+ */
+export interface GitHubRepositoryEvent {
+  action: 'created' | 'deleted' | 'renamed' | 'transferred' | 'archived' | 'unarchived' | 'edited' | 'publicized' | 'privatized';
+  repository?: {
+    full_name: string;
+    name: string;
+    owner: { login: string };
+  };
+  changes?: {
+    repository?: {
+      name?: { from: string };
+      owner?: { from: { user?: { login: string }; organization?: { login: string } } };
+    };
+  };
+  installation?: { id: number };
+}
+
+/**
+ * `release` event — currently acknowledged but not wired to a deploy
+ * action. Hook for a future production-tag deploy feature.
+ */
+export interface GitHubReleaseEvent {
+  action: 'published' | 'created' | 'edited' | 'deleted' | 'prereleased' | 'released';
+  release?: {
+    tag_name: string;
+    name: string;
+    html_url: string;
+    draft: boolean;
+    prerelease: boolean;
+  };
+  repository?: { full_name: string };
+  installation?: { id: number };
+}
+
 export interface WebhookDispatcherDeps {
   stateService: StateService;
   worktreeService: WorktreeService;
@@ -146,9 +236,181 @@ export class GitHubWebhookDispatcher {
         return this.handleCheckRun(payload as GitHubCheckRunEvent);
       case 'pull_request':
         return this.handlePullRequest(payload as GitHubPullRequestEvent);
+      case 'issue_comment':
+        return this.handleIssueComment(payload as GitHubIssueCommentEvent);
+      case 'delete':
+        return this.handleDelete(payload as GitHubDeleteEvent);
+      case 'repository':
+        return this.handleRepository(payload as GitHubRepositoryEvent);
+      case 'release':
+        return this.handleRelease(payload as GitHubReleaseEvent);
       default:
         return { action: 'ignored-event', message: `Unhandled event type '${eventName}'` };
     }
+  }
+
+  /**
+   * Parse a slash command from a PR comment body. Format:
+   *   /cds <command> [arg…]
+   * Leading whitespace tolerated. Only the FIRST line is inspected so a
+   * comment like "/cds redeploy\n\nThis should force a new build" still
+   * parses as a redeploy command.
+   */
+  private parseSlashCommand(body: string): { command: WebhookDispatchResult['slashCommand'] extends infer R ? R extends { command: infer C } ? C : never : never; arg?: string } | null {
+    if (!body) return null;
+    const firstLine = body.split(/\r?\n/)[0].trim();
+    const match = firstLine.match(/^\/cds(?:\s+(\S+))?(?:\s+(.*))?$/i);
+    if (!match) return null;
+    const cmd = (match[1] || 'help').toLowerCase();
+    const arg = match[2]?.trim() || undefined;
+    if (cmd === 'redeploy' || cmd === 'rebuild' || cmd === 'deploy') return { command: 'redeploy', arg };
+    if (cmd === 'stop' || cmd === 'pause' || cmd === 'shutdown') return { command: 'stop', arg };
+    if (cmd === 'logs' || cmd === 'log' || cmd === 'tail') return { command: 'logs', arg };
+    if (cmd === 'help' || cmd === '?' || cmd === '-h') return { command: 'help', arg };
+    return { command: 'unknown', arg: cmd };
+  }
+
+  /**
+   * Resolve the CDS branchId associated with a PR. We stored
+   * githubPrNumber on the branch entry when the PR was opened, so we
+   * walk the branches list for that project looking for a match.
+   * Falls back to null if no branch found (comment on a PR CDS doesn't
+   * track yet — maybe the user linked the repo after PR was open).
+   */
+  private findBranchForPr(projectId: string, prNumber: number): string | null {
+    const branches = this.deps.stateService.getBranchesForProject(projectId);
+    const hit = branches.find((b) => b.githubPrNumber === prNumber);
+    return hit ? hit.id : null;
+  }
+
+  /**
+   * Handle `issue_comment.created` events. We only act when the comment
+   * is on a PR (issue.pull_request is set) and starts with `/cds`.
+   * The route layer does the actual work (triggering deploy / stop /
+   * posting reply) because those all need the GitHubAppClient.
+   */
+  private async handleIssueComment(event: GitHubIssueCommentEvent): Promise<WebhookDispatchResult> {
+    if (event.action !== 'created') {
+      return { action: 'ignored-event', message: `issue_comment.${event.action} ignored` };
+    }
+    if (!event.issue?.pull_request || !event.comment || !event.repository) {
+      return { action: 'ignored-event', message: 'issue_comment not on a PR or missing fields' };
+    }
+    const parsed = this.parseSlashCommand(event.comment.body);
+    if (!parsed) {
+      return { action: 'ignored-event', message: 'comment not a /cds slash command' };
+    }
+    const repoFullName = event.repository.full_name;
+    const project = this.deps.stateService.findProjectByRepoFullName(repoFullName);
+    if (!project) {
+      return { action: 'ignored-no-project', message: `No project linked to ${repoFullName}` };
+    }
+    const branchId = this.findBranchForPr(project.id, event.issue.number) || undefined;
+    return {
+      action: 'slash-command-invoked',
+      message: `/cds ${parsed.command} invoked by @${event.comment.user.login} on PR #${event.issue.number}`,
+      branchId,
+      slashCommand: {
+        command: parsed.command,
+        branchId,
+        prNumber: event.issue.number,
+        commentId: event.comment.id,
+        arg: parsed.arg,
+        commenter: event.comment.user.login,
+      },
+    };
+  }
+
+  /**
+   * `delete` event — branch or tag removed on GitHub. For branches we
+   * stop the corresponding CDS preview container so the user deleting
+   * on GitHub's side automatically cleans up CDS too.
+   */
+  private async handleDelete(event: GitHubDeleteEvent): Promise<WebhookDispatchResult> {
+    if (event.ref_type !== 'branch') {
+      return { action: 'ignored-event', message: `delete ref_type=${event.ref_type} ignored` };
+    }
+    if (!event.repository) {
+      return { action: 'ignored-event', message: 'delete event missing repository' };
+    }
+    const project = this.deps.stateService.findProjectByRepoFullName(event.repository.full_name);
+    if (!project) {
+      return { action: 'ignored-no-project', message: `No project linked to ${event.repository.full_name}` };
+    }
+    const slugified = StateServiceClass.slugify(event.ref);
+    const branchId = project.legacyFlag ? slugified : `${project.slug}-${slugified}`;
+    const entry = this.deps.stateService.getBranch(branchId);
+    if (!entry) {
+      return { action: 'ignored-event', message: `branch deleted on GitHub but not tracked by CDS: ${branchId}` };
+    }
+    return {
+      action: 'branch-deleted',
+      message: `GitHub branch '${event.ref}' deleted; stopping CDS preview '${branchId}'`,
+      branchId,
+      stopRequest: { branchId },
+    };
+  }
+
+  /**
+   * `repository` event — repo renamed, transferred, archived, deleted.
+   * We defensively detach the link in each of these cases rather than
+   * trying to auto-rename (rename could also collide with another
+   * project's linkage). The operator can re-link via the UI after.
+   */
+  private async handleRepository(event: GitHubRepositoryEvent): Promise<WebhookDispatchResult> {
+    if (!event.repository) {
+      return { action: 'ignored-event', message: 'repository event missing payload' };
+    }
+    const currentFullName = event.repository.full_name;
+    // Try to find a project matching either the new OR the old full name
+    // (renamed/transferred events pass the new name in repository but
+    // include the old name in changes.repository.{name,owner}).
+    let project = this.deps.stateService.findProjectByRepoFullName(currentFullName);
+    if (!project && event.action === 'renamed') {
+      const oldName = event.changes?.repository?.name?.from;
+      if (oldName) {
+        const owner = event.repository.owner.login;
+        project = this.deps.stateService.findProjectByRepoFullName(`${owner}/${oldName}`);
+      }
+    }
+    if (!project && event.action === 'transferred') {
+      const oldOwner = event.changes?.repository?.owner?.from?.user?.login
+        || event.changes?.repository?.owner?.from?.organization?.login;
+      if (oldOwner) {
+        project = this.deps.stateService.findProjectByRepoFullName(`${oldOwner}/${event.repository.name}`);
+      }
+    }
+    if (!project) {
+      return { action: 'ignored-event', message: `repository.${event.action} for ${currentFullName} — no linked project` };
+    }
+
+    // For destructive actions, detach entirely so the stale link doesn't
+    // accept future webhooks. For a rename, we COULD auto-update to the
+    // new name — kept detached for now so the operator explicitly
+    // re-binds via the UI, avoiding silent cross-wiring.
+    if (event.action === 'deleted' || event.action === 'renamed' || event.action === 'transferred') {
+      this.deps.stateService.updateProject(project.id, {
+        githubRepoFullName: undefined,
+        githubInstallationId: undefined,
+        githubAutoDeploy: undefined,
+        githubLinkedAt: undefined,
+      });
+      return {
+        action: event.action === 'deleted' ? 'repo-detached' : 'repo-renamed',
+        message: `Project '${project.name}' unlinked because repository.${event.action} (${currentFullName})`,
+      };
+    }
+    return { action: 'ignored-event', message: `repository.${event.action} acknowledged` };
+  }
+
+  /**
+   * `release` event — currently just acknowledged. Future: trigger a
+   * production-flavored deploy on `released` / `published` action, pin
+   * a specific build profile ("prod"), or post a release-notes comment.
+   */
+  private async handleRelease(event: GitHubReleaseEvent): Promise<WebhookDispatchResult> {
+    const tag = event.release?.tag_name || '?';
+    return { action: 'release-acknowledged', message: `release.${event.action} (${tag}) — future: production deploy` };
   }
 
   /**
