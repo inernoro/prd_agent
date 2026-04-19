@@ -32,7 +32,6 @@ import {
 } from 'lucide-react';
 import { getFileTypeConfig } from '@/lib/fileTypeRegistry';
 import type { FilePreviewKind } from '@/lib/fileTypeRegistry';
-import { extractDocType, getDocTypeMeta } from '@/lib/docTypeRegistry';
 import { MapSpinner, MapSectionLoader } from '@/components/ui/VideoLoader';
 import { systemDialog } from '@/lib/systemDialog';
 import { useViewTracking } from '@/lib/useViewTracking';
@@ -527,26 +526,6 @@ function TreeNode({
           }}>
           {displayTitle}
         </span>
-
-        {/* 类型徽标（从文件名前缀 spec/design/plan/rule/guide/report 识别），不管标题显示模式都附在末尾 */}
-        {!isFolder && (() => {
-          const meta = getDocTypeMeta(extractDocType(entry.title));
-          if (!meta) return null;
-          return (
-            <span
-              className="text-[9px] px-1.5 py-0.5 rounded-full flex-shrink-0 font-semibold"
-              style={{
-                background: meta.bg,
-                color: meta.color,
-                border: `1px solid ${meta.border}`,
-                letterSpacing: '0.2px',
-              }}
-              title={`文档类型：${meta.label}`}
-            >
-              {meta.label}
-            </span>
-          );
-        })()}
 
         {!isFolder && (entry.tags?.length ?? 0) > 0 && (
           <span
