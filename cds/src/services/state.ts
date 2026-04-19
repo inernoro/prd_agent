@@ -758,6 +758,7 @@ export class StateService {
         | 'githubInstallationId'
         | 'githubAutoDeploy'
         | 'githubLinkedAt'
+        | 'autoSmokeEnabled'
       >
     >,
   ): void {

@@ -593,6 +593,7 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
       aliasSlug: string;
       description: string;
       gitRepoUrl: string;
+      autoSmokeEnabled: boolean;
     }>;
 
     // Validate name when supplied
@@ -667,7 +668,12 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
       }
     }
 
-    const patch: Partial<Pick<Project, 'name' | 'aliasName' | 'aliasSlug' | 'description' | 'gitRepoUrl'>> = {};
+    const patch: Partial<Pick<Project, 'name' | 'aliasName' | 'aliasSlug' | 'description' | 'gitRepoUrl' | 'autoSmokeEnabled'>> = {};
+    if (body.autoSmokeEnabled !== undefined) {
+      // Booleans come in as true / false / 'true' / 'false' depending on
+      // the UI; coerce everything truthy but 'false' into a real boolean.
+      patch.autoSmokeEnabled = body.autoSmokeEnabled === true || body.autoSmokeEnabled === 'true' as unknown as boolean;
+    }
     if (body.name !== undefined) patch.name = String(body.name).trim();
     // For alias fields an empty string explicitly clears them so the UI
     // can revert to showing `name` / `slug`. updateProject() serialises

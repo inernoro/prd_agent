@@ -667,6 +667,25 @@ export interface Project {
   githubInstallationId?: number;
   githubAutoDeploy?: boolean;
   githubLinkedAt?: string;
+  /**
+   * Phase 4 (冒烟自动化): when true, every successful `POST /branches/
+   * :id/deploy` call that owns this project auto-triggers
+   * scripts/smoke-all.sh against the branch's preview URL right after
+   * the deploy SSE `complete` event. Results stream through the same
+   * SSE as `smoke-line` / `smoke-complete` events so the dashboard
+   * deploy log keeps going without a second round-trip.
+   *
+   * Requires `_global.customEnv.AI_ACCESS_KEY` to be set (the deploy
+   * flow has no operator UI to prompt for it). Silent no-op when the
+   * key is missing — we emit a single `smoke-line` warning line so the
+   * operator sees why it didn't run. Default `undefined` ⇒ false.
+   *
+   * Phase 5 piggybacks on the same flag: when true AND a GitHub check
+   * run was opened for this deploy, the smoke conclusion PATCHes the
+   * run (or appends a second check run named "CDS Smoke") so the PR
+   * Checks panel also reports smoke status.
+   */
+  autoSmokeEnabled?: boolean;
 }
 
 /**

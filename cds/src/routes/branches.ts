@@ -78,6 +78,115 @@ export async function validateBuildReadiness(
   };
 }
 
+/**
+ * Result of a single smoke-all.sh run — surface area shared between the
+ * manual `/api/branches/:id/smoke` endpoint (Phase 3) and the auto-hook
+ * triggered after a successful `/deploy` when `project.autoSmokeEnabled`
+ * is true (Phase 4).
+ */
+export interface SmokeRunResult {
+  exitCode: number | null;
+  elapsedSec: number;
+  passedCount: number;
+  failedCount: number;
+}
+
+export interface SmokeRunOptions {
+  branch: BranchEntry;
+  previewHost: string;        // e.g. "https://my-branch.miduo.org"
+  accessKey: string;           // resolved AI_ACCESS_KEY
+  impersonateUser?: string;    // default 'admin'
+  skip?: string;               // comma-separated smoke keys to skip
+  failFast?: boolean;
+  scriptDir: string;           // dir containing smoke-all.sh
+  /** Per-line callback; receives the raw stdout/stderr line. */
+  onLine?: (stream: 'stdout' | 'stderr', line: string) => void;
+  /** Fires when the bash process exits or errors before exit. */
+  onComplete?: (result: SmokeRunResult) => void;
+  /** Fires when spawn itself fails (ENOENT, EACCES, etc). */
+  onError?: (err: Error) => void;
+}
+
+/**
+ * Spawn scripts/smoke-all.sh as a child process and fan out its output
+ * via callbacks. Callers own the IO side (SSE, check-run update, etc.);
+ * this helper just wraps the child-process bookkeeping + pass/fail
+ * tally extraction so we don't copy-paste 60 lines of spawn boilerplate.
+ *
+ * Does NOT validate inputs — callers must have verified that smoke-all.sh
+ * exists, that the branch has a preview URL, and that accessKey is
+ * non-empty. This is a pure execution helper; validation belongs at the
+ * HTTP boundary.
+ */
+export function runSmokeForBranch(opts: SmokeRunOptions): void {
+  const smokeEntry = path.join(opts.scriptDir, 'smoke-all.sh');
+  const child = spawn('bash', [smokeEntry], {
+    cwd: opts.scriptDir,
+    env: {
+      ...process.env,
+      SMOKE_TEST_HOST: opts.previewHost,
+      AI_ACCESS_KEY: opts.accessKey,
+      SMOKE_USER: opts.impersonateUser || 'admin',
+      SMOKE_SKIP: opts.skip || '',
+      SMOKE_FAIL_FAST: opts.failFast ? '1' : '',
+    },
+  });
+  const startedAt = Date.now();
+  let passed = 0;
+  let failed = 0;
+
+  const forward = (stream: NodeJS.ReadableStream, channel: 'stdout' | 'stderr') => {
+    let buffer = '';
+    stream.on('data', (chunk: Buffer) => {
+      buffer += chunk.toString('utf8');
+      let idx: number;
+      while ((idx = buffer.indexOf('\n')) >= 0) {
+        const line = buffer.slice(0, idx);
+        buffer = buffer.slice(idx + 1);
+        // Tally from the "✅ 通过: N 项" / "❌ 失败: N 项" footer lines
+        // printed by smoke-all.sh. Not rely on exit code alone — the
+        // footer is what CI / UI surface.
+        if (line.startsWith('✅ 通过:') || line.startsWith('\u2705 通过:')) {
+          const m = /通过:\s*(\d+)/.exec(line);
+          if (m) passed = parseInt(m[1], 10);
+        } else if (line.startsWith('❌ 失败:') || line.startsWith('\u274c 失败:')) {
+          const m = /失败:\s*(\d+)/.exec(line);
+          if (m) failed = parseInt(m[1], 10);
+        }
+        opts.onLine?.(channel, line);
+      }
+    });
+  };
+  forward(child.stdout!, 'stdout');
+  forward(child.stderr!, 'stderr');
+
+  child.on('error', (err) => {
+    opts.onError?.(err);
+  });
+
+  child.on('close', (code) => {
+    opts.onComplete?.({
+      exitCode: code,
+      elapsedSec: Math.round((Date.now() - startedAt) / 1000),
+      passedCount: passed,
+      failedCount: failed,
+    });
+  });
+}
+
+/**
+ * Locate the smoke-all.sh script. Shared between the manual endpoint
+ * and the auto-hook. Returns null when the script is missing so the
+ * caller can decide between 500 error (manual endpoint) or warning
+ * SSE line (auto-hook, best-effort).
+ */
+export function resolveSmokeScriptDir(): { dir: string; entry: string; exists: boolean } {
+  const dir = process.env.CDS_SMOKE_SCRIPT_DIR
+    || path.join(process.cwd(), 'scripts');
+  const entry = path.join(dir, 'smoke-all.sh');
+  return { dir, entry, exists: fs.existsSync(entry) };
+}
+
 export interface RouterDeps {
   stateService: StateService;
   worktreeService: WorktreeService;
@@ -392,6 +501,75 @@ export function createBranchRouter(deps: RouterDeps): Router {
     try {
       res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
     } catch { /* client disconnected */ }
+  }
+
+  /**
+   * Phase 4: optionally run scripts/smoke-all.sh after a successful
+   * deploy, piggy-backing SSE events on the deploy stream as
+   * `smoke-start` / `smoke-line` / `smoke-complete`. Returns the
+   * result so the caller can fold it into the GitHub check-run
+   * conclusion (Phase 5).
+   *
+   * All failure paths emit exactly one `smoke-skip` line and resolve
+   * with null so the deploy flow keeps going. This is intentionally
+   * best-effort — smoke is diagnostic, not a gate.
+   */
+  async function maybeRunAutoSmoke(
+    res: import('express').Response,
+    entry: BranchEntry,
+    deployFailed: boolean,
+  ): Promise<SmokeRunResult | null> {
+    if (deployFailed) return null;
+    const project = stateService.getProject(entry.projectId || 'default');
+    if (!project?.autoSmokeEnabled) return null;
+
+    const emitSkip = (reason: string) => {
+      try {
+        res.write(`event: smoke-skip\ndata: ${JSON.stringify({ reason })}\n\n`);
+      } catch { /* client gone */ }
+    };
+
+    const previewHost = config.previewDomain || config.rootDomains?.[0];
+    if (!previewHost) {
+      emitSkip('preview_host_missing');
+      return null;
+    }
+    const smokeHost = `https://${entry.id}.${previewHost}`;
+
+    const globalEnv = stateService.getCustomEnv('_global');
+    const accessKey = (globalEnv?.AI_ACCESS_KEY || '').trim();
+    if (!accessKey) {
+      emitSkip('access_key_missing');
+      return null;
+    }
+
+    const script = resolveSmokeScriptDir();
+    if (!script.exists) {
+      emitSkip('smoke_script_missing');
+      return null;
+    }
+
+    sendSSE(res, 'smoke-start', { host: smokeHost, branchId: entry.id });
+
+    return new Promise<SmokeRunResult | null>((resolve) => {
+      runSmokeForBranch({
+        branch: entry,
+        previewHost: smokeHost,
+        accessKey,
+        scriptDir: script.dir,
+        failFast: true, // CI-style — first failure stops the chain
+        onLine: (channel, text) => sendSSE(res, 'smoke-line', { stream: channel, text }),
+        onError: (err) => {
+          sendSSE(res, 'smoke-line', { stream: 'stderr', text: `[auto-smoke] ${err.message}` });
+          sendSSE(res, 'smoke-complete', { exitCode: -1, elapsedSec: 0, passedCount: 0, failedCount: 0, error: err.message });
+          resolve(null);
+        },
+        onComplete: (result) => {
+          sendSSE(res, 'smoke-complete', result);
+          resolve(result);
+        },
+      });
+    });
   }
 
   /**
@@ -1286,14 +1464,31 @@ export function createBranchRouter(deps: RouterDeps): Router {
         message: completeMsg,
         services: entry.services,
       });
+
+      // Phase 4: auto-smoke after a green deploy (best-effort; never
+      // blocks the deploy conclusion, never throws out of the handler).
+      const smokeResult = await maybeRunAutoSmoke(res, entry, hasError);
+
       // Finalize the GitHub check run (best-effort). `hasError` decides
       // success vs failure; the preview URL surfaces in the check-run
       // summary so GitHub's "Details" button jumps straight to preview.
       // logTail = last 80 events rendered as "[status] step: title"
       // lines, surfaced under "Show more" in GitHub's Checks panel.
+      //
+      // Phase 5: if auto-smoke ran, fold its result into the check-run
+      // conclusion so the PR Checks panel shows "CDS Deploy" red when
+      // deploy is green but smoke tripped (most useful signal for PR
+      // reviewers — "deployed fine but API is broken").
+      const smokeOk = smokeResult
+        ? smokeResult.exitCode === 0 && smokeResult.failedCount === 0
+        : true;
+      const finalConclusion = hasError || !smokeOk ? 'failure' : 'success';
+      const summary = smokeResult
+        ? `${completeMsg} | 冒烟 ${smokeOk ? '✅' : '❌'} pass=${smokeResult.passedCount} fail=${smokeResult.failedCount} (${smokeResult.elapsedSec}s)`
+        : completeMsg;
       await checkRunRunner.finalize(entry, {
-        conclusion: hasError ? 'failure' : 'success',
-        summary: completeMsg,
+        conclusion: finalConclusion,
+        summary,
         previewUrl: checkRunRunner.derivePreviewUrl(entry),
         logTail: opLog.events.slice(-80).map((ev) => {
           const st = ev.status || '?';
@@ -1542,14 +1737,12 @@ export function createBranchRouter(deps: RouterDeps): Router {
       return;
     }
 
-    // Script dir: env override > default <cwd>/scripts.
-    const scriptDir = process.env.CDS_SMOKE_SCRIPT_DIR
-      || path.join(process.cwd(), 'scripts');
-    const smokeEntry = path.join(scriptDir, 'smoke-all.sh');
-    if (!fs.existsSync(smokeEntry)) {
+    // Resolve script location (helper shared with the auto-deploy hook).
+    const script = resolveSmokeScriptDir();
+    if (!script.exists) {
       res.status(500).json({
         error: 'smoke_script_missing',
-        message: `找不到 smoke-all.sh (查找路径 ${smokeEntry})。请确认 scripts/ 目录已随 CDS 部署并设置 CDS_SMOKE_SCRIPT_DIR。`,
+        message: `找不到 smoke-all.sh (查找路径 ${script.entry})。请确认 scripts/ 目录已随 CDS 部署并设置 CDS_SMOKE_SCRIPT_DIR。`,
       });
       return;
     }
@@ -1573,66 +1766,28 @@ export function createBranchRouter(deps: RouterDeps): Router {
       host: smokeHost,
       impersonateUser: body.impersonateUser || 'admin',
       skip: body.skip || '',
-      script: smokeEntry,
+      script: script.entry,
     });
 
-    const child = spawn('bash', [smokeEntry], {
-      cwd: scriptDir,
-      env: {
-        ...process.env,
-        SMOKE_TEST_HOST: smokeHost,
-        AI_ACCESS_KEY: accessKey,
-        SMOKE_USER: body.impersonateUser || 'admin',
-        SMOKE_SKIP: body.skip || '',
-        SMOKE_FAIL_FAST: body.failFast ? '1' : '',
+    runSmokeForBranch({
+      branch: entry,
+      previewHost: smokeHost,
+      accessKey,
+      impersonateUser: body.impersonateUser,
+      skip: body.skip,
+      failFast: body.failFast,
+      scriptDir: script.dir,
+      onLine: (channel, text) => safeSend('line', { stream: channel, text }),
+      onError: (err) => {
+        clearInterval(keepalive);
+        safeSend('error', { message: err.message });
+        try { res.end(); } catch { /* noop */ }
       },
-    });
-
-    const startedAt = Date.now();
-    let passed = 0;
-    let failed = 0;
-
-    const forward = (stream: NodeJS.ReadableStream, channel: 'stdout' | 'stderr') => {
-      let buffer = '';
-      stream.on('data', (chunk: Buffer) => {
-        buffer += chunk.toString('utf8');
-        let idx: number;
-        while ((idx = buffer.indexOf('\n')) >= 0) {
-          const line = buffer.slice(0, idx);
-          buffer = buffer.slice(idx + 1);
-          // Tally pass/fail counters from the emoji-prefixed summary
-          // lines printed by smoke-all.sh footer. Doesn't rely on
-          // exit code alone — the footer is what CI / UI displays.
-          if (line.startsWith('✅ 通过:') || line.startsWith('\u2705 通过:')) {
-            const m = /通过:\s*(\d+)/.exec(line);
-            if (m) passed = parseInt(m[1], 10);
-          } else if (line.startsWith('❌ 失败:') || line.startsWith('\u274c 失败:')) {
-            const m = /失败:\s*(\d+)/.exec(line);
-            if (m) failed = parseInt(m[1], 10);
-          }
-          safeSend('line', { stream: channel, text: line });
-        }
-      });
-    };
-    forward(child.stdout!, 'stdout');
-    forward(child.stderr!, 'stderr');
-
-    child.on('error', (err) => {
-      clearInterval(keepalive);
-      safeSend('error', { message: err.message });
-      try { res.end(); } catch { /* noop */ }
-    });
-
-    child.on('close', (code) => {
-      clearInterval(keepalive);
-      const elapsedSec = Math.round((Date.now() - startedAt) / 1000);
-      safeSend('complete', {
-        exitCode: code,
-        elapsedSec,
-        passedCount: passed,
-        failedCount: failed,
-      });
-      try { res.end(); } catch { /* noop */ }
+      onComplete: (result) => {
+        clearInterval(keepalive);
+        safeSend('complete', result);
+        try { res.end(); } catch { /* noop */ }
+      },
     });
   });
 

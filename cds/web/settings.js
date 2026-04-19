@@ -140,6 +140,11 @@
           '<label class="settings-field-label" for="settingsGitRepoUrl">Git 仓库地址</label>' +
           '<input id="settingsGitRepoUrl" class="settings-input mono" type="url" placeholder="https://github.com/your-org/repo.git" value="' + escapeHtml(p.gitRepoUrl || '') + '">' +
         '</div>' +
+        '<div class="settings-field" style="display:flex;align-items:center;gap:10px;padding:8px 0">' +
+          '<input id="settingsAutoSmoke" type="checkbox" ' + (p.autoSmokeEnabled ? 'checked' : '') + ' style="width:16px;height:16px;cursor:pointer">' +
+          '<label for="settingsAutoSmoke" style="cursor:pointer;font-size:13px;color:var(--text-primary);font-weight:500">部署成功后自动冒烟测试</label>' +
+          '<span style="font-size:11px;color:var(--text-muted);margin-left:auto">需先在「环境变量」→ _global 作用域里存 <code style="font-size:10.5px;padding:1px 4px;background:var(--bg-code-block);border-radius:3px">AI_ACCESS_KEY</code></span>' +
+        '</div>' +
         '<button type="button" id="settingsSaveBtn" class="settings-btn-primary" onclick="_settingsSave()">保存修改</button>' +
       '</div>' +
 
@@ -1186,6 +1191,8 @@
     var aliasSlug = aliasSlugEl ? aliasSlugEl.value.trim() : '';
     var description = document.getElementById('settingsDescription').value.trim();
     var gitRepoUrl = document.getElementById('settingsGitRepoUrl').value.trim();
+    var autoSmokeEl = document.getElementById('settingsAutoSmoke');
+    var autoSmokeEnabled = autoSmokeEl ? !!autoSmokeEl.checked : false;
     if (!name) {
       showToast('项目名称不能为空');
       return;
@@ -1197,6 +1204,7 @@
       aliasSlug: aliasSlug,
       description: description,
       gitRepoUrl: gitRepoUrl,
+      autoSmokeEnabled: autoSmokeEnabled,
     })
       .then(function (result) {
         if (result.status === 200) {

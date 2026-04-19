@@ -2143,6 +2143,10 @@ async function deployBranchDirect(id, targetExecutorId) {
     const reader = res.body.getReader();
     const decoder = new TextDecoder();
     let buffer = '';
+    // Track the most recent `event:` line so we can route smoke-* events
+    // (Phase 4 auto-smoke) into the log with a 🍳 prefix distinct from
+    // deploy steps.
+    let currentEvent = 'message';
 
     while (true) {
       const { done, value } = await reader.read();
@@ -2153,20 +2157,43 @@ async function deployBranchDirect(id, targetExecutorId) {
       buffer = lines.pop();
 
       for (const line of lines) {
-        if (line.startsWith('data: ')) {
-          const data = JSON.parse(line.slice(6));
-          const log = inlineDeployLogs.get(id);
-          if (!log) continue;
-
-          if (data.chunk) {
-            data.chunk.split('\n').filter(l => l.trim()).forEach(l => log.lines.push(l));
-          } else if (data.step) {
-            log.lines.push(`[${data.status}] ${data.title || data.step}`);
-          } else if (data.message) {
-            data.message.split('\n').filter(l => l.trim()).forEach(l => log.lines.push(l));
-          }
-          updateInlineLog(id);
+        if (line.startsWith('event: ')) {
+          currentEvent = line.slice(7).trim();
+          continue;
         }
+        if (!line.startsWith('data: ')) {
+          // Blank line = end of SSE block — reset event scope so the
+          // next data: without a preceding event: defaults to message.
+          if (line === '') currentEvent = 'message';
+          continue;
+        }
+        const data = JSON.parse(line.slice(6));
+        const log = inlineDeployLogs.get(id);
+        if (!log) { currentEvent = 'message'; continue; }
+
+        if (currentEvent === 'smoke-start') {
+          log.lines.push(`🍳 自动冒烟测试启动 → ${data.host || ''}`);
+        } else if (currentEvent === 'smoke-skip') {
+          const reasons = {
+            preview_host_missing: '未配置 previewDomain',
+            access_key_missing: '_global.AI_ACCESS_KEY 未设置',
+            smoke_script_missing: '找不到 smoke-all.sh',
+          };
+          log.lines.push(`🍳 跳过自动冒烟: ${reasons[data.reason] || data.reason}`);
+        } else if (currentEvent === 'smoke-line') {
+          log.lines.push(`  │ ${data.text}`);
+        } else if (currentEvent === 'smoke-complete') {
+          const ok = data.exitCode === 0 && data.failedCount === 0;
+          log.lines.push(`🍳 冒烟 ${ok ? '✅' : '❌'} pass=${data.passedCount} fail=${data.failedCount} (${data.elapsedSec}s, exit=${data.exitCode})`);
+        } else if (data.chunk) {
+          data.chunk.split('\n').filter(l => l.trim()).forEach(l => log.lines.push(l));
+        } else if (data.step) {
+          log.lines.push(`[${data.status}] ${data.title || data.step}`);
+        } else if (data.message) {
+          data.message.split('\n').filter(l => l.trim()).forEach(l => log.lines.push(l));
+        }
+        updateInlineLog(id);
+        currentEvent = 'message';
       }
     }
     // Deploy succeeded

@@ -20,7 +20,7 @@ import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
-import { createBranchRouter } from '../../src/routes/branches.js';
+import { createBranchRouter, runSmokeForBranch, resolveSmokeScriptDir } from '../../src/routes/branches.js';
 import { StateService } from '../../src/services/state.js';
 import { WorktreeService } from '../../src/services/worktree.js';
 import { ContainerService } from '../../src/services/container.js';
@@ -255,5 +255,77 @@ describe('POST /api/branches/:id/smoke', () => {
     expect((complete.data as any).exitCode).toBe(0);
     expect((complete.data as any).passedCount).toBe(3);
     expect((complete.data as any).failedCount).toBe(0);
+  });
+});
+
+// ── Phase 4 helpers ──
+// Unit tests for runSmokeForBranch + resolveSmokeScriptDir independent
+// of the HTTP endpoint. Validates that the helper is reusable by the
+// auto-deploy hook path (which doesn't go through Express).
+
+describe('runSmokeForBranch (Phase 4 helper)', () => {
+  let scriptDir: string;
+
+  beforeEach(() => {
+    scriptDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cds-smoke-helper-'));
+    const entry = path.join(scriptDir, 'smoke-all.sh');
+    fs.writeFileSync(entry, [
+      '#!/usr/bin/env bash',
+      'echo "probe host=$SMOKE_TEST_HOST"',
+      'echo "probe user=$SMOKE_USER"',
+      'echo "✅ 通过: 7 项"',
+      'echo "❌ 失败: 2 项"',
+      'exit 42',
+    ].join('\n'));
+    fs.chmodSync(entry, 0o755);
+  });
+
+  afterEach(() => {
+    if (fs.existsSync(scriptDir)) fs.rmSync(scriptDir, { recursive: true });
+  });
+
+  it('propagates env vars, forwards lines, reports pass/fail counts + exit code', async () => {
+    const lines: Array<{ stream: string; text: string }> = [];
+    const result = await new Promise<any>((resolve, reject) => {
+      runSmokeForBranch({
+        branch: { id: 'ut-branch' } as any,
+        previewHost: 'https://ut.example.test',
+        accessKey: 'ut-key',
+        impersonateUser: 'ut-user',
+        scriptDir,
+        onLine: (stream, text) => lines.push({ stream, text }),
+        onComplete: resolve,
+        onError: reject,
+      });
+    });
+
+    // pass/fail parsed from the 通过/失败 footer lines
+    expect(result.passedCount).toBe(7);
+    expect(result.failedCount).toBe(2);
+    // exit code comes straight from bash
+    expect(result.exitCode).toBe(42);
+    // elapsed is a non-negative int
+    expect(result.elapsedSec).toBeGreaterThanOrEqual(0);
+
+    // Confirm env propagation via the planted probe lines
+    const hostLine = lines.find((l) => /probe host=/.test(l.text));
+    expect(hostLine?.text).toBe('probe host=https://ut.example.test');
+    const userLine = lines.find((l) => /probe user=/.test(l.text));
+    expect(userLine?.text).toBe('probe user=ut-user');
+  });
+
+  it('resolveSmokeScriptDir reports exists=false when smoke-all.sh missing', () => {
+    const emptyDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cds-smoke-empty-'));
+    const prev = process.env.CDS_SMOKE_SCRIPT_DIR;
+    process.env.CDS_SMOKE_SCRIPT_DIR = emptyDir;
+    try {
+      const r = resolveSmokeScriptDir();
+      expect(r.dir).toBe(emptyDir);
+      expect(r.exists).toBe(false);
+    } finally {
+      if (prev === undefined) delete process.env.CDS_SMOKE_SCRIPT_DIR;
+      else process.env.CDS_SMOKE_SCRIPT_DIR = prev;
+      fs.rmSync(emptyDir, { recursive: true });
+    }
   });
 });

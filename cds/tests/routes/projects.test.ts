@@ -556,6 +556,29 @@ describe('Projects router (P4 Part 2)', () => {
       expect(res.status).toBe(400);
       expect(res.body.field).toBe('aliasName');
     });
+
+    // ── Phase 4: autoSmokeEnabled toggle ──
+    it('accepts autoSmokeEnabled=true and persists it', async () => {
+      const res = await request(server, 'PUT', '/api/projects/default', {
+        autoSmokeEnabled: true,
+      });
+      expect(res.status).toBe(200);
+      expect(res.body.project.autoSmokeEnabled).toBe(true);
+      // Round-trip: GET returns the same flag
+      const get = await request(server, 'GET', '/api/projects/default');
+      expect(get.body.autoSmokeEnabled).toBe(true);
+    });
+
+    it('autoSmokeEnabled=false turns the flag off explicitly', async () => {
+      // first set it on
+      await request(server, 'PUT', '/api/projects/default', { autoSmokeEnabled: true });
+      // then set false
+      const res = await request(server, 'PUT', '/api/projects/default', {
+        autoSmokeEnabled: false,
+      });
+      expect(res.status).toBe(200);
+      expect(res.body.project.autoSmokeEnabled).toBe(false);
+    });
   });
 
   describe('DELETE /api/projects/:id', () => {
