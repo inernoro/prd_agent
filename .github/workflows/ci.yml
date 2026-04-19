@@ -15,6 +15,10 @@ on:
         description: '跳过的冒烟项 (逗号分隔, e.g. report,defect)'
         required: false
         default: ''
+      e2e_base_url:
+        description: 'Playwright E2E 目标 URL (例 https://my-branch.miduo.org); 留空则跳过 e2e job'
+        required: false
+        default: ''
 
 env:
   DOTNET_VERSION: '8.0.x'
@@ -371,6 +375,73 @@ jobs:
             exit 2
           fi
           bash scripts/smoke-all.sh
+
+  # Phase 6 浏览器 E2E — workflow_dispatch 手动触发,跑 Playwright 针对
+  # 已部署 CDS 预览域名的 golden-path specs。目标 URL 来自入参
+  # e2e_base_url,留空即跳过(避免每个 workflow_dispatch 都强制填)。
+  #
+  # 为什么和 smoke-preview 分开 job:
+  #   - smoke 是 HTTP API 层、Playwright 是浏览器渲染层,关注点不同
+  #   - Playwright 装浏览器比较重(首次 ~150MB),单独 job 便于缓存
+  #   - 失败也分开定位,"API 挂" vs "UI 挂" 对排障效率差别很大
+  e2e-preview:
+    name: Playwright E2E (Preview)
+    if: github.event_name == 'workflow_dispatch' && github.event.inputs.e2e_base_url != ''
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: e2e
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Install deps
+        run: pnpm install
+
+      - name: Cache Playwright browsers
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: ${{ runner.os }}-playwright-${{ hashFiles('e2e/package.json') }}
+          restore-keys: |
+            ${{ runner.os }}-playwright-
+
+      - name: Install Playwright browsers (Chromium)
+        run: pnpm exec playwright install --with-deps chromium
+
+      - name: Run Playwright tests
+        env:
+          E2E_BASE_URL: ${{ github.event.inputs.e2e_base_url }}
+          E2E_USER: ${{ secrets.E2E_USER }}
+          E2E_PASSWORD: ${{ secrets.E2E_PASSWORD }}
+        run: pnpm test
+
+      - name: Upload HTML report on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: e2e/playwright-report/
+          retention-days: 14
+
+      - name: Upload JSON results on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-results-json
+          path: e2e/results.json
+          retention-days: 14
 
   # CI 状态汇总（用于 branch protection）
   ci-status:
