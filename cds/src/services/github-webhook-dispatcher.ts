@@ -37,7 +37,9 @@ export interface WebhookDispatchResult {
     | 'branch-created'
     | 'branch-refreshed'
     | 'installation-acknowledged'
-    | 'check-run-requeued';
+    | 'check-run-requeued'
+    | 'pr-comment-posted'
+    | 'pr-branch-stopped';
   /** Short human message for the response + logs. */
   message: string;
   /** Populated when a branch was touched. */
@@ -46,6 +48,14 @@ export interface WebhookDispatchResult {
   deployRequest?: {
     branchId: string;
     commitSha: string;
+  };
+  /**
+   * Populated on `pull_request.closed` to ask the route to tear down the
+   * preview containers. Separate from deployRequest so the route decides
+   * between "deploy" and "stop".
+   */
+  stopRequest?: {
+    branchId: string;
   };
 }
 
@@ -90,6 +100,22 @@ export interface GitHubCheckRunEvent {
   installation?: { id: number };
 }
 
+export interface GitHubPullRequestEvent {
+  action: 'opened' | 'closed' | 'reopened' | 'synchronize' | 'edited' | 'ready_for_review' | string;
+  number: number;
+  pull_request?: {
+    number: number;
+    state: 'open' | 'closed';
+    merged?: boolean;
+    head: { ref: string; sha: string };
+    base: { ref: string };
+    html_url: string;
+    title: string;
+  };
+  repository?: { full_name: string };
+  installation?: { id: number };
+}
+
 export interface WebhookDispatcherDeps {
   stateService: StateService;
   worktreeService: WorktreeService;
@@ -118,9 +144,75 @@ export class GitHubWebhookDispatcher {
         return this.handleInstallationRepos(payload as GitHubInstallationReposEvent);
       case 'check_run':
         return this.handleCheckRun(payload as GitHubCheckRunEvent);
+      case 'pull_request':
+        return this.handlePullRequest(payload as GitHubPullRequestEvent);
       default:
         return { action: 'ignored-event', message: `Unhandled event type '${eventName}'` };
     }
+  }
+
+  /**
+   * Handle `pull_request` events. The three actions we care about:
+   *   - `opened` / `reopened`: remember the PR number on the branch so
+   *     later deploys can refresh the preview-URL bot comment. The actual
+   *     comment is posted by the route layer (it has the GitHubAppClient).
+   *   - `closed` (merged or not): flag the branch so the route can stop
+   *     its containers — saves resources and declutters the dashboard.
+   *   - `synchronize`: already covered by the accompanying `push` event,
+   *     so we no-op here.
+   *
+   * All other actions (edited / labeled / assigned / review_requested /
+   * ready_for_review / etc.) are acknowledged but don't trigger anything.
+   */
+  private async handlePullRequest(event: GitHubPullRequestEvent): Promise<WebhookDispatchResult> {
+    if (!event.pull_request || !event.repository) {
+      return { action: 'ignored-event', message: 'pull_request missing pull_request/repository' };
+    }
+    const repoFullName = event.repository.full_name;
+    const project = this.deps.stateService.findProjectByRepoFullName(repoFullName);
+    if (!project) {
+      return { action: 'ignored-no-project', message: `No project linked to ${repoFullName}` };
+    }
+
+    const branchName = event.pull_request.head.ref;
+    const slugified = StateServiceClass.slugify(branchName);
+    const branchId = project.legacyFlag ? slugified : `${project.slug}-${slugified}`;
+    const entry = this.deps.stateService.getBranch(branchId);
+
+    // `closed` action — tear down preview containers.
+    if (event.action === 'closed') {
+      if (!entry) {
+        return { action: 'ignored-event', message: `PR closed but branch '${branchId}' not in CDS` };
+      }
+      return {
+        action: 'pr-branch-stopped',
+        message: `PR #${event.pull_request.number} ${event.pull_request.merged ? 'merged' : 'closed'}; stopping preview`,
+        branchId,
+        stopRequest: { branchId },
+      };
+    }
+
+    // `opened` / `reopened` — stash the PR number on the branch so the
+    // route-layer comment poster has it, and let the push handler (which
+    // already runs in parallel from synchronize) drive the deploy.
+    if (event.action === 'opened' || event.action === 'reopened') {
+      if (entry) {
+        this.deps.stateService.updateBranchGithubMeta(branchId, {
+          githubPrNumber: event.pull_request.number,
+          githubInstallationId: project.githubInstallationId ?? event.installation?.id,
+          githubRepoFullName: repoFullName,
+        });
+        this.deps.stateService.save();
+      }
+      return {
+        action: 'pr-comment-posted',
+        message: `PR #${event.pull_request.number} ${event.action}; marked branch '${branchId}' for comment`,
+        branchId,
+      };
+    }
+
+    // synchronize / edited / etc.
+    return { action: 'ignored-event', message: `pull_request.${event.action} ignored` };
   }
 
   private async handlePush(event: GitHubPushEvent): Promise<WebhookDispatchResult> {

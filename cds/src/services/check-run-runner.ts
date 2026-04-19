@@ -30,6 +30,13 @@ export interface CheckRunRunnerDeps {
 export class CheckRunRunner {
   constructor(private readonly deps: CheckRunRunnerDeps) {}
 
+  // Tracks the last progress PATCH time per check-run id so we don't
+  // flood GitHub's API during a chatty deploy (dozens of log lines
+  // per second). 5s throttle = ~12 PATCHes/minute, well under the
+  // 5000/hour core limit even for a single noisy deploy.
+  private readonly _lastProgressMs = new Map<number, number>();
+  private static readonly PROGRESS_THROTTLE_MS = 5_000;
+
   private get enabled(): boolean {
     return Boolean(this.deps.githubApp);
   }
@@ -103,6 +110,53 @@ export class CheckRunRunner {
   }
 
   /**
+   * Push an intermediate progress update. Keeps status=in_progress but
+   * updates the output title + summary so users refreshing GitHub's PR
+   * Checks panel see "正在构建 admin (1/2)…" instead of a stale
+   * "Deploying to CDS…" for the entire build.
+   *
+   * Throttled per check-run so we don't spam GitHub during a chatty
+   * deploy. `force=true` bypasses the throttle (use for layer start /
+   * layer done milestones that should always land).
+   */
+  async progress(entry: BranchEntry, opts: {
+    title: string;
+    summary: string;
+    force?: boolean;
+  }): Promise<void> {
+    if (!this.enabled) return;
+    const id = entry.githubCheckRunId;
+    const repoFullName = entry.githubRepoFullName;
+    const instId = entry.githubInstallationId;
+    if (!id || !repoFullName || !instId) return;
+    const parsed = this.parseRepo(repoFullName);
+    if (!parsed) return;
+
+    if (!opts.force) {
+      const last = this._lastProgressMs.get(id) || 0;
+      if (Date.now() - last < CheckRunRunner.PROGRESS_THROTTLE_MS) return;
+    }
+    this._lastProgressMs.set(id, Date.now());
+
+    try {
+      await this.deps.githubApp!.updateCheckRun(instId, parsed.owner, parsed.repo, id, {
+        status: 'in_progress',
+        detailsUrl: this.buildDetailsUrl(entry.id),
+        output: {
+          title: opts.title,
+          summary: opts.summary,
+        },
+      });
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.warn(
+        `[check-run] progress PATCH failed for branch=${entry.id}:`,
+        (err as Error).message,
+      );
+    }
+  }
+
+  /**
    * Close out the check run with the final status + a summary the user
    * can read in GitHub's UI. No-op when no check-run was opened.
    */
@@ -110,6 +164,13 @@ export class CheckRunRunner {
     conclusion: 'success' | 'failure' | 'neutral' | 'cancelled';
     summary: string;
     previewUrl?: string;
+    /**
+     * Optional tail of deploy log events to embed in the check-run
+     * output. Rendered as a fenced code block in `output.text` — GitHub
+     * collapses `text` by default but makes it expandable under a
+     * "Show more" affordance, which is perfect for failure postmortem.
+     */
+    logTail?: string;
   }): Promise<void> {
     if (!this.enabled) return;
     const id = entry.githubCheckRunId;
@@ -130,6 +191,14 @@ export class CheckRunRunner {
     const summaryLines = [opts.summary];
     if (opts.previewUrl) summaryLines.push('', `预览地址: ${opts.previewUrl}`);
 
+    // GitHub's output.text caps at 65535 chars; we trim to 30k to stay
+    // comfortably under the limit with room for markdown chrome.
+    let text: string | undefined;
+    if (opts.logTail && opts.logTail.trim()) {
+      const tail = opts.logTail.slice(-30_000);
+      text = '### Deploy log (尾部)\n\n```\n' + tail + '\n```';
+    }
+
     try {
       await this.deps.githubApp!.updateCheckRun(instId, parsed.owner, parsed.repo, id, {
         status: 'completed',
@@ -139,6 +208,7 @@ export class CheckRunRunner {
         output: {
           title,
           summary: summaryLines.join('\n'),
+          ...(text ? { text } : {}),
         },
       });
     } catch (err) {
@@ -148,6 +218,7 @@ export class CheckRunRunner {
         (err as Error).message,
       );
     }
+    this._lastProgressMs.delete(id);
   }
 
   /**

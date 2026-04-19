@@ -296,6 +296,21 @@ export interface BranchEntry {
   githubCommitSha?: string;
   githubCheckRunId?: number;
   githubInstallationId?: number;
+  /**
+   * PR number this branch is associated with (via webhook `pull_request`
+   * event). Populated when CDS first sees a PR opened/reopened from this
+   * branch. Used so subsequent deploys can refresh the bot comment
+   * instead of duplicating it.
+   */
+  githubPrNumber?: number;
+  /**
+   * Id of the Railway-style preview-URL bot comment posted on the PR.
+   * Set when the first PR-opened event is handled and the comment is
+   * created; on later push events the webhook dispatcher will PATCH the
+   * same comment instead of creating a new one, so the PR thread stays
+   * quiet.
+   */
+  githubPreviewCommentId?: number;
 }
 
 /** State of a single service (one build profile instance) within a branch */

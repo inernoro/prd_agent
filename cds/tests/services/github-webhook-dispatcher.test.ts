@@ -278,4 +278,106 @@ describe('GitHubWebhookDispatcher', () => {
       expect(result.action).toBe('ignored-event');
     });
   });
+
+  describe('pull_request events', () => {
+    beforeEach(() => {
+      stateService.addProject({
+        id: 'p1',
+        slug: 'proj',
+        name: 'Proj',
+        kind: 'git',
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+        githubRepoFullName: 'octocat/repo',
+        githubInstallationId: 42,
+      });
+      stateService.addBranch({
+        id: 'proj-feature',
+        projectId: 'p1',
+        branch: 'feature',
+        worktreePath: '/tmp/wt',
+        services: {},
+        status: 'running',
+        createdAt: new Date().toISOString(),
+      });
+    });
+
+    it('returns pr-comment-posted on opened and stamps prNumber on branch', async () => {
+      const d = buildDispatcher();
+      const result = await d.handle('pull_request', {
+        action: 'opened',
+        number: 99,
+        pull_request: {
+          number: 99,
+          state: 'open',
+          head: { ref: 'feature', sha: 'abc' },
+          base: { ref: 'main' },
+          html_url: 'https://github.com/octocat/repo/pull/99',
+          title: 'Great feature',
+        },
+        repository: { full_name: 'octocat/repo' },
+        installation: { id: 42 },
+      });
+      expect(result.action).toBe('pr-comment-posted');
+      expect(result.branchId).toBe('proj-feature');
+      const branch = stateService.getBranch('proj-feature');
+      expect(branch!.githubPrNumber).toBe(99);
+    });
+
+    it('returns pr-branch-stopped on closed with stopRequest', async () => {
+      const d = buildDispatcher();
+      const result = await d.handle('pull_request', {
+        action: 'closed',
+        number: 99,
+        pull_request: {
+          number: 99,
+          state: 'closed',
+          merged: true,
+          head: { ref: 'feature', sha: 'abc' },
+          base: { ref: 'main' },
+          html_url: 'https://github.com/octocat/repo/pull/99',
+          title: 'Great feature',
+        },
+        repository: { full_name: 'octocat/repo' },
+      });
+      expect(result.action).toBe('pr-branch-stopped');
+      expect(result.stopRequest).toEqual({ branchId: 'proj-feature' });
+    });
+
+    it('ignores synchronize (handled by companion push)', async () => {
+      const d = buildDispatcher();
+      const result = await d.handle('pull_request', {
+        action: 'synchronize',
+        number: 99,
+        pull_request: {
+          number: 99,
+          state: 'open',
+          head: { ref: 'feature', sha: 'abc' },
+          base: { ref: 'main' },
+          html_url: 'x',
+          title: 't',
+        },
+        repository: { full_name: 'octocat/repo' },
+      });
+      expect(result.action).toBe('ignored-event');
+    });
+
+    it('ignores pull_request for unlinked repo', async () => {
+      const d = buildDispatcher();
+      const result = await d.handle('pull_request', {
+        action: 'opened',
+        number: 1,
+        pull_request: {
+          number: 1,
+          state: 'open',
+          head: { ref: 'x', sha: 'y' },
+          base: { ref: 'main' },
+          html_url: 'z',
+          title: 't',
+        },
+        repository: { full_name: 'stranger/repo' },
+      });
+      expect(result.action).toBe('ignored-no-project');
+    });
+  });
 });

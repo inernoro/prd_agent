@@ -801,6 +801,8 @@ export class StateService {
       githubCommitSha?: string;
       githubCheckRunId?: number;
       githubInstallationId?: number;
+      githubPrNumber?: number;
+      githubPreviewCommentId?: number;
     },
   ): void {
     const branch = this.state.branches[id];
@@ -809,6 +811,8 @@ export class StateService {
     if (updates.githubCommitSha !== undefined) branch.githubCommitSha = updates.githubCommitSha;
     if (updates.githubCheckRunId !== undefined) branch.githubCheckRunId = updates.githubCheckRunId;
     if (updates.githubInstallationId !== undefined) branch.githubInstallationId = updates.githubInstallationId;
+    if (updates.githubPrNumber !== undefined) branch.githubPrNumber = updates.githubPrNumber;
+    if (updates.githubPreviewCommentId !== undefined) branch.githubPreviewCommentId = updates.githubPreviewCommentId;
   }
 
   // ── Project-scoped Agent Keys ──

@@ -1045,6 +1045,11 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
       // Pull latest code
       logEvent({ step: 'pull', status: 'running', title: '正在拉取最新代码...', timestamp: new Date().toISOString() });
+      await checkRunRunner.progress(entry, {
+        title: '拉取最新代码…',
+        summary: `分支: \`${entry.branch}\`\n阶段: git fetch + reset`,
+        force: true,
+      });
       const pullResult = await worktreeService.pull(entry.branch, entry.worktreePath);
       logEvent({ step: 'pull', status: 'done', title: `已拉取: ${pullResult.head}`, detail: pullResult as unknown as Record<string, unknown>, timestamp: new Date().toISOString() });
 
@@ -1106,13 +1111,23 @@ export function createBranchRouter(deps: RouterDeps): Router {
       stateService.save();
 
       // ── Execute layer by layer (parallel within each layer) ──
-      for (const layer of layers) {
+      for (let layerIdx = 0; layerIdx < layers.length; layerIdx++) {
+        const layer = layers[layerIdx];
         const layerServiceNames = layer.items.map(p => p.name).join(', ');
         logEvent({
           step: `layer-${layer.layer}`,
           status: 'running',
           title: `启动第 ${layer.layer} 层: ${layerServiceNames}`,
           timestamp: new Date().toISOString(),
+        });
+        // Progress PATCH to GitHub so PR reviewers refreshing the Checks
+        // panel see "构建第 X/Y 层 (services...)" instead of a stale
+        // "Deploying to CDS…" for the entire build. Force=true so layer
+        // transitions always push even inside the 5s throttle window.
+        await checkRunRunner.progress(entry, {
+          title: `构建第 ${layerIdx + 1}/${layers.length} 层`,
+          summary: `分支 \`${entry.branch}\` 正在并行构建: ${layerServiceNames}`,
+          force: true,
         });
 
         const layerStartTime = Date.now();
@@ -1264,10 +1279,17 @@ export function createBranchRouter(deps: RouterDeps): Router {
       // Finalize the GitHub check run (best-effort). `hasError` decides
       // success vs failure; the preview URL surfaces in the check-run
       // summary so GitHub's "Details" button jumps straight to preview.
+      // logTail = last 80 events rendered as "[status] step: title"
+      // lines, surfaced under "Show more" in GitHub's Checks panel.
       await checkRunRunner.finalize(entry, {
         conclusion: hasError ? 'failure' : 'success',
         summary: completeMsg,
         previewUrl: checkRunRunner.derivePreviewUrl(entry),
+        logTail: opLog.events.slice(-80).map((ev) => {
+          const st = ev.status || '?';
+          const ttl = ev.title || ev.step;
+          return `[${st}] ${ev.step}: ${ttl}`;
+        }).join('\n'),
       });
     } catch (err) {
       entry.status = 'error';
@@ -1282,6 +1304,11 @@ export function createBranchRouter(deps: RouterDeps): Router {
         conclusion: 'failure',
         summary: (err as Error).message || '部署失败',
         previewUrl: checkRunRunner.derivePreviewUrl(entry),
+        logTail: opLog.events.slice(-80).map((ev) => {
+          const st = ev.status || '?';
+          const ttl = ev.title || ev.step;
+          return `[${st}] ${ev.step}: ${ttl}`;
+        }).join('\n'),
       });
     } finally {
       res.end();

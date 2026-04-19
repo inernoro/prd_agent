@@ -161,6 +161,36 @@ export function createGithubWebhookRouter(deps: GitHubWebhookRouterDeps): Router
       });
     }
 
+    // PR opened/reopened → post (or refresh) the preview-URL bot comment.
+    // PR closed → stop the branch's containers.
+    // Fire-and-forget; failures log to stderr, never bubble to the
+    // webhook response (GitHub only cares we returned 200 in time).
+    if (result.action === 'pr-comment-posted' && result.branchId && githubApp) {
+      void postOrUpdatePrComment(
+        stateService,
+        githubApp,
+        config,
+        result.branchId,
+        payload as { pull_request?: { number: number; html_url?: string; title?: string } },
+      ).catch((err) => {
+        // eslint-disable-next-line no-console
+        console.warn(
+          `[webhook] PR comment failed for branch=${result.branchId}:`,
+          (err as Error).message,
+        );
+      });
+    }
+    if (result.stopRequest) {
+      const stopReq = result.stopRequest;
+      void defaultLocalhostStop(config, stopReq.branchId).catch((err) => {
+        // eslint-disable-next-line no-console
+        console.warn(
+          `[webhook] stop dispatch failed for branch=${stopReq.branchId}:`,
+          (err as Error).message,
+        );
+      });
+    }
+
     res.json({
       ok: true,
       event: eventName,
@@ -169,6 +199,7 @@ export function createGithubWebhookRouter(deps: GitHubWebhookRouterDeps): Router
       message: result.message,
       branchId: result.branchId,
       deployDispatched: Boolean(result.deployRequest),
+      stopDispatched: Boolean(result.stopRequest),
     });
   });
 
@@ -330,4 +361,95 @@ function defaultLocalhostDeploy(config: CdsConfig): (branchId: string, commitSha
       })();
     }
   };
+}
+
+/**
+ * POST /api/branches/:id/stop to tear down a branch's preview containers.
+ * Called when a PR gets closed (merged or not) so we don't leave stale
+ * preview containers eating RAM after the PR is gone.
+ */
+async function defaultLocalhostStop(config: CdsConfig, branchId: string): Promise<void> {
+  const url = `http://127.0.0.1:${config.masterPort}/api/branches/${encodeURIComponent(branchId)}/stop`;
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-CDS-Internal': '1' },
+    body: JSON.stringify({}),
+  });
+  if (res.body && typeof (res.body as any).getReader === 'function') {
+    const reader = (res.body as any).getReader();
+    (async () => {
+      try {
+        while (true) {
+          const { done } = await reader.read();
+          if (done) break;
+        }
+      } catch { /* ignore */ }
+    })();
+  }
+}
+
+/**
+ * Post or refresh the preview-URL bot comment on a PR.
+ *
+ * First call for a branch creates the comment + stores its id on the
+ * branch (`githubPreviewCommentId`). Subsequent calls (e.g. triggered
+ * by a re-open) PATCH the same comment so the PR thread stays quiet.
+ *
+ * When the stored comment id fails to update (404 = user deleted it),
+ * we transparently recreate it.
+ */
+async function postOrUpdatePrComment(
+  stateService: StateService,
+  githubApp: GitHubAppClient,
+  config: CdsConfig,
+  branchId: string,
+  payload: { pull_request?: { number: number; html_url?: string; title?: string } },
+): Promise<void> {
+  const branch = stateService.getBranch(branchId);
+  if (!branch) return;
+  const repoFullName = branch.githubRepoFullName;
+  const instId = branch.githubInstallationId;
+  const prNumber = branch.githubPrNumber || payload.pull_request?.number;
+  if (!repoFullName || !instId || !prNumber) return;
+  const parts = repoFullName.split('/');
+  if (parts.length !== 2) return;
+  const [owner, repo] = parts;
+
+  // Build the comment body — Railway-style: bold "CDS Deploy" header +
+  // preview link + branch/SHA ref + autoDeploy toggle hint.
+  const host = config.previewDomain || config.rootDomains?.[0];
+  const previewUrl = host ? `https://${branchId}.${host}` : null;
+  const shortSha = (branch.githubCommitSha || '').slice(0, 7);
+  const lines = [
+    '## 🚀 CDS Deploy Preview',
+    '',
+    previewUrl
+      ? `- **Preview**: [${previewUrl}](${previewUrl})`
+      : '- **Preview**: (当前 CDS 未配置 previewDomain / rootDomains, 预览 URL 不可用)',
+    `- **Branch**: \`${branch.branch}\`${shortSha ? ` @ ${shortSha}` : ''}`,
+    `- **CDS Dashboard**: [${branchId}](${(config.publicBaseUrl || '').replace(/\/$/, '')}/branch-panel?id=${encodeURIComponent(branchId)})`,
+    '',
+    '<sub>push 到此分支会自动触发新部署, 本条评论会在每次部署后原地刷新。</sub>',
+  ];
+  const body = lines.join('\n');
+
+  if (branch.githubPreviewCommentId) {
+    try {
+      await githubApp.updateIssueComment(instId, owner, repo, branch.githubPreviewCommentId, body);
+      return;
+    } catch (err) {
+      // Fall through to recreate if PATCH fails (user deleted the comment)
+      // eslint-disable-next-line no-console
+      console.warn(
+        `[webhook] PR comment PATCH failed (id=${branch.githubPreviewCommentId}), will recreate:`,
+        (err as Error).message,
+      );
+    }
+  }
+
+  const result = await githubApp.createIssueComment(instId, owner, repo, prNumber, body);
+  stateService.updateBranchGithubMeta(branchId, {
+    githubPreviewCommentId: result.id,
+  });
+  stateService.save();
 }

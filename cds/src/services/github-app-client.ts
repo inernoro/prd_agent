@@ -76,7 +76,16 @@ export interface CheckRunUpdatePayload {
   conclusion?: 'success' | 'failure' | 'neutral' | 'cancelled' | 'skipped' | 'timed_out' | 'action_required';
   detailsUrl?: string;
   completedAt?: string;
-  output?: { title: string; summary: string };
+  output?: {
+    title: string;
+    summary: string;
+    /**
+     * Optional markdown body shown under "Show more" in GitHub's check-run
+     * panel. Useful for embedding deploy log tails on failure. Capped at
+     * 65535 chars by GitHub; callers should trim before passing.
+     */
+    text?: string;
+  };
 }
 
 export interface InstallationSummary {
@@ -281,6 +290,84 @@ export class GitHubAppClient {
       throw new GitHubAppError(
         'update_check_run_failed',
         `PATCH /check-runs/${checkRunId} failed (HTTP ${res.status}): ${text.slice(0, 300)}`,
+        res.status,
+      );
+    }
+  }
+
+  /**
+   * Post a comment to a PR (or issue). PR comments go through the issues
+   * API — `POST /repos/:owner/:repo/issues/:number/comments`. Used for
+   * the Railway-style "preview URL on PR open" bot comment.
+   *
+   * Returns the comment id + HTML url so callers can cache it and edit
+   * later (e.g. update the preview URL when the slug changes).
+   */
+  async createIssueComment(
+    installationId: number,
+    owner: string,
+    repo: string,
+    issueNumber: number,
+    body: string,
+  ): Promise<{ id: number; htmlUrl: string }> {
+    const token = await this.getInstallationToken(installationId);
+    const res = await this.fetchImpl(
+      `https://api.github.com/repos/${owner}/${repo}/issues/${issueNumber}/comments`,
+      {
+        method: 'POST',
+        headers: {
+          Authorization: `token ${token}`,
+          Accept: 'application/vnd.github+json',
+          'X-GitHub-Api-Version': '2022-11-28',
+          'User-Agent': 'CDS-GitHubApp/1.0',
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ body }),
+      },
+    );
+    if (!res.ok) {
+      const text = await res.text().catch(() => '');
+      throw new GitHubAppError(
+        'create_comment_failed',
+        `POST /issues/${issueNumber}/comments failed (HTTP ${res.status}): ${text.slice(0, 300)}`,
+        res.status,
+      );
+    }
+    const json = (await res.json()) as { id: number; html_url: string };
+    return { id: json.id, htmlUrl: json.html_url };
+  }
+
+  /**
+   * Update an existing issue/PR comment. Used to refresh the preview-URL
+   * bot comment when a subsequent push changes the preview state.
+   */
+  async updateIssueComment(
+    installationId: number,
+    owner: string,
+    repo: string,
+    commentId: number,
+    body: string,
+  ): Promise<void> {
+    const token = await this.getInstallationToken(installationId);
+    const res = await this.fetchImpl(
+      `https://api.github.com/repos/${owner}/${repo}/issues/comments/${commentId}`,
+      {
+        method: 'PATCH',
+        headers: {
+          Authorization: `token ${token}`,
+          Accept: 'application/vnd.github+json',
+          'X-GitHub-Api-Version': '2022-11-28',
+          'User-Agent': 'CDS-GitHubApp/1.0',
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ body }),
+      },
+    );
+    if (!res.ok) {
+      const text = await res.text().catch(() => '');
+      throw new GitHubAppError(
+        'update_comment_failed',
+        `PATCH /issues/comments/${commentId} failed (HTTP ${res.status}): ${text.slice(0, 300)}`,
         res.status,
       );
     }
