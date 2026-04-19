@@ -270,11 +270,11 @@ function FeaturedCard({ item, onClick }: { item: ToolboxItem; onClick: () => voi
         />
       )}
 
-      {/* Subtle fade to blend image with glass panel */}
+      {/* Strong dark fade at the bottom for text readability */}
       <div
-        className="absolute inset-0 pointer-events-none z-[2]"
+        className="absolute inset-x-0 bottom-0 pointer-events-none z-[2] h-1/2"
         style={{
-          background: 'linear-gradient(180deg, rgba(0,0,0,0) 40%, rgba(0,0,0,0.7) 100%)',
+          background: 'linear-gradient(180deg, transparent 0%, rgba(0,0,0,0.6) 50%, rgba(0,0,0,0.95) 100%)',
         }}
       />
 
@@ -284,66 +284,38 @@ function FeaturedCard({ item, onClick }: { item: ToolboxItem; onClick: () => voi
         style={{ boxShadow: `inset 0 0 0 1px ${accent.from}40, 0 0 20px ${accent.from}10` }}
       />
 
-      {/* Content — Unified Glassmorphism Panel */}
+      {/* Top Floating App Icon */}
       <div 
-        className="absolute bottom-0 left-0 right-0 p-5 z-[10] transition-all duration-300 border-t"
-        style={{ 
-          borderColor: 'rgba(255,255,255,0.06)',
-          background: 'var(--card-glass-bg, rgba(16,16,24,0.45))',
-          backdropFilter: 'blur(16px)',
-          WebkitBackdropFilter: 'blur(16px)'
+        className="absolute top-4 left-4 z-[10] shrink-0 w-11 h-11 rounded-2xl flex items-center justify-center transition-transform duration-300 group-hover:scale-110"
+        style={{
+          background: `linear-gradient(135deg, ${accent.from}50, ${accent.from}15)`,
+          border: `1px solid ${accent.from}60`,
+          boxShadow: `0 8px 24px -8px ${accent.from}90, inset 0 1px 0 rgba(255,255,255,0.25)`,
+          backdropFilter: 'blur(8px)'
         }}
       >
-        <div className="flex items-start gap-3">
-          <div
-            className="shrink-0 w-10 h-10 rounded-xl flex items-center justify-center transition-transform duration-300 group-hover:scale-105"
-            style={{
-              background: `linear-gradient(135deg, ${accent.from}40, ${accent.from}15)`,
-              border: `1px solid ${accent.from}40`,
-              boxShadow: `0 8px 24px -10px ${accent.from}60`
-            }}
-          >
-            <Icon size={20} style={{ color: accent.to }} />
-          </div>
-          <div className="flex-1 min-w-0">
-            <div className="flex items-center gap-2">
-              <h3
-                className="text-[15px] font-semibold truncate transition-colors"
-                style={{ color: '#fff', textShadow: '0 2px 4px rgba(0,0,0,0.4)' }}
-              >
-                {item.name}
-              </h3>
-              <ArrowRight
-                size={14}
-                className="shrink-0 opacity-0 group-hover:opacity-80 transition-all duration-200 group-hover:translate-x-0.5"
-                style={{ color: accent.to }}
-              />
-            </div>
-            <p
-              className="text-[12px] leading-relaxed mt-1 line-clamp-2"
-              style={{ color: 'rgba(255,255,255,0.7)', textShadow: '0 1px 2px rgba(0,0,0,0.3)' }}
-            >
-              {item.description}
-            </p>
-            {item.tags.length > 0 && (
-              <div className="flex gap-1.5 mt-2.5">
-                {item.tags.slice(0, 3).map((t) => (
-                  <span
-                    key={t}
-                    className="text-[10px] px-2 py-0.5 rounded-[5px]"
-                    style={{
-                      background: 'rgba(255,255,255,0.08)',
-                      color: 'rgba(255,255,255,0.7)',
-                      border: '1px solid rgba(255,255,255,0.05)',
-                    }}
-                  >
-                    {t}
-                  </span>
-                ))}
-              </div>
-            )}
-          </div>
-        </div>
+        <Icon size={22} style={{ color: accent.to, filter: `drop-shadow(0 2px 4px ${accent.from}80)` }} />
+      </div>
+
+      {/* Top-Right Arrow Indicator */}
+      <div className="absolute top-5 right-5 z-[10] shrink-0 opacity-0 -translate-x-3 group-hover:opacity-100 group-hover:translate-x-0 transition-all duration-300">
+        <ArrowRight size={18} style={{ color: accent.to, filter: `drop-shadow(0 2px 4px ${accent.from}80)` }} />
+      </div>
+
+      {/* Content — Clean Bottom Aligned */}
+      <div className="absolute bottom-0 left-0 right-0 p-5 z-[10]">
+        <h3
+          className="text-[17px] font-semibold truncate transition-all duration-300 group-hover:translate-y-[-2px]"
+          style={{ color: '#fff', textShadow: '0 2px 8px rgba(0,0,0,0.8), 0 1px 3px rgba(0,0,0,0.6)' }}
+        >
+          {item.name}
+        </h3>
+        <p
+          className="text-[13px] leading-relaxed mt-1.5 line-clamp-2 transition-all duration-300 group-hover:translate-y-[-2px] group-hover:opacity-100 opacity-80"
+          style={{ color: 'rgba(255,255,255,0.9)', textShadow: '0 1px 4px rgba(0,0,0,0.8)' }}
+        >
+          {item.description}
+        </p>
       </div>
     </button>
   );
