@@ -1,0 +1,3 @@
+| chore | rules | 新增 `.claude/rules/cds-auto-deploy.md` — 明确 push 即部署的知识: 对已 link GitHub 的项目不再提示用户手动跑 `/cds-deploy-pipeline`,交付文案用"commit 已推送,CDS 收到 webhook 后几分钟内 `<url>` 就位"替代旧的"需要真人在预览域名验收(我这边无法)"。`CLAUDE.md` 架构规则索引同步补一行;`codebase-snapshot.md` 追加 PR #450 后状态条目 |
+| feat | cds | 分支卡标题 icon 按来源区分: 手工添加分支走原 git-branch icon,GitHub webhook 自动触发的分支(`branch.githubRepoFullName` 非空)走 GitHub Octocat icon,tooltip 注明"来自 <org/repo>",一眼分辨"手工加 vs 自动建"。commit SHA chip 去掉重复的 GitHub logo 变纯 hash(tooltip 仍然标注来源),避免两处重复 |
+| feat | cds | 新增 `ICON.githubMark` 到 app.js ICON 注册表 + `.branch-name svg.gh-branch-mark` CSS (dark / light 两版颜色) — 紫色调提示"GitHub 源"并与普通分支保持一致占位宽度,标题行布局不抖 |

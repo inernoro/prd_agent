@@ -37,6 +37,8 @@ prd_agent/
 
 **CDS (P4 Part 18, 2026-04-14)**: 多项目隔离 (Project model + dockerNetwork) + **多仓库 git clone (G1 — Project.repoPath + 无状态 WorktreeService + POST /projects/:id/clone SSE)** + Topology 视图 Deploy 按钮 + Public URL 卡片 + Infra 连接串 + **MongoDB 存储后端 (D.1-D.3, JSON ↔ Mongo 运行时切换 + auto-fallback + seed-from-json)** + **GitHub Device Flow 仓库选择器 (E.1-E.3, /api/github/oauth/device-start + repos picker + Settings tab)** + **Stack auto-detect (G10, 8 种栈 nodejs/python/go/rust/java/ruby/php/dockerfile)** + **Self-update pre-check 防护 (validateBuildReadiness + /api/self-update-dry-run + module-load smoke test)** + 空模板 → 创建 → clone → detect → 自动 build profile 端到端 zero-friction 流程
 
+**CDS GitHub 集成 (PR #450, 2026-04-19)**: **push 即部署** —— GitHub App webhook (POST /api/github/webhook) + check-run runner 实时把构建状态推回 PR Checks 面板 + `/cds help|redeploy|stop|logs` PR 评论 slash 命令 + 自动删分支/归档 + 注入防御 + orphan check run 回收。**AI Agent 交付流程相应更新**：对已 link 项目不再提示跑 `/cds-deploy-pipeline`(那是旧版流),push 后 CDS 自动建分支 + 构建 + 部署,2-5 分钟后预览域名就位。后端发 `branch.created/status` SSE 事件(GET /api/branches/stream),前端 Dashboard 打开时能实时看到分支出现 + 构建动画,无需刷新。详见 `.claude/rules/cds-auto-deploy.md`
+
 **部分完成**：知识库 (多文档上传+类型管理+三阶段格式检测+UTF-16 BOM 支持已实现, RAG/embedding 未实现)
 
 **未实现**：i18n, K8s 部署, 告警通知 (邮件/Webhook)

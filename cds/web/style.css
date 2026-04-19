@@ -1391,6 +1391,13 @@ a.branch-name:hover { color: var(--accent); }
   color: var(--accent); background: var(--surface-hover, rgba(255,255,255,0.08));
 }
 .branch-quick-btn svg.inline-icon { width: 13px; height: 13px; }
+/* GitHub mark shown at branch-card title when the branch was auto-
+   created by a webhook push (see ICON.githubMark). Subtle purple tint
+   signals "this is GitHub-sourced" while keeping the title row
+   monochrome in tone. Light theme gets a slightly darker shade so the
+   logo stays readable on warm parchment. */
+.branch-name svg.gh-branch-mark { color: #8b5cf6; opacity: 0.95; }
+[data-theme="light"] .branch-name svg.gh-branch-mark { color: #6d28d9; }
 .branch-meta { font-size: 11px; color: var(--text-secondary); line-height: 1.4; white-space: nowrap; }
 .port-badge {
   display: inline-flex; align-items: center; gap: 3px;
