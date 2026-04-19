@@ -1,12 +1,14 @@
 /**
- * 直出模式面板：跳过分镜，直接把 prompt 交给 OpenRouter 视频大模型
- * 设计风格参考：Sora / Pika —— 黑色沉浸、单焦点画布、prompt 前置
+ * 直出模式面板（双模式）
  *
- * 交互流程：
- *   1. 用户输入 prompt + 选模型 + 选时长/比例
- *   2. 点"生成"→ 后端 VideoGenRun (renderMode=videogen) 异步跑
- *   3. 前端每 3 秒轮询 getVideoGenRun，展示 phase.progress
- *   4. status === 'Completed' 时 videoAssetUrl 就位，内嵌播放器直接播放
+ * 模式 A（输入模式）：走 props.externalRunId === undefined
+ *   用户输入 prompt + 选参数 → 提交 → 内嵌轮询。独立使用时可直接挂在页面里。
+ *
+ * 模式 B（纯输出模式）：走 props.externalRunId !== undefined
+ *   由外层（如统一入口页）已经创建好 run，panel 只负责展示 canvas + 进度 +
+ *   完成后的 videoAssetUrl。输入区隐藏。
+ *
+ * 设计风格参考：Sora / Pika —— 黑色沉浸、单焦点画布、prompt 前置
  */
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Sparkles, Play, Download, RefreshCw, Wand2, Clock, Maximize2, AlertCircle, ChevronDown, ChevronUp, Zap, Scale, Crown } from 'lucide-react';
@@ -39,7 +41,16 @@ const RESOLUTION_OPTIONS: Resolution[] = ['480p', '720p', '1080p'];
 
 const AUTO_MODEL = ''; // 空字符串 = 交由后端模型池自动选择
 
-export const VideoGenDirectPanel: React.FC = () => {
+export interface VideoGenDirectPanelProps {
+  /** 外部已创建的 runId（纯输出模式），不传则启用完整输入模式 */
+  externalRunId?: string;
+  /** 外部传入后，点"再来一条"回调，通常外层用来回到输入 Hero */
+  onReset?: () => void;
+}
+
+export const VideoGenDirectPanel: React.FC<VideoGenDirectPanelProps> = ({ externalRunId, onReset }) => {
+  const isOutputOnly = !!externalRunId;
+
   const [prompt, setPrompt] = useState('');
   const [model, setModel] = useState<string>(AUTO_MODEL);
   const [showAdvanced, setShowAdvanced] = useState(false);
@@ -80,6 +91,28 @@ export const VideoGenDirectPanel: React.FC = () => {
       }
     }, 3000);
   }, []);
+
+  // 纯输出模式：外部传入 runId 后立即拉一次 + 开启轮询
+  useEffect(() => {
+    if (!externalRunId) return;
+    let cancelled = false;
+    (async () => {
+      const res = await getVideoGenRunReal(externalRunId);
+      if (!cancelled && res.success && res.data) {
+        setCurrentRun(res.data);
+        if (!['Completed', 'Failed', 'Cancelled'].includes(res.data.status)) {
+          startPolling(externalRunId);
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+      if (pollRef.current) {
+        clearInterval(pollRef.current);
+        pollRef.current = null;
+      }
+    };
+  }, [externalRunId, startPolling]);
 
   const handleGenerate = useCallback(async () => {
     const trimmed = prompt.trim();
@@ -126,7 +159,11 @@ export const VideoGenDirectPanel: React.FC = () => {
       pollRef.current = null;
     }
     setCurrentRun(null);
-  }, []);
+    // 纯输出模式下交给外层回调（通常是"回到输入 Hero"）
+    if (isOutputOnly && onReset) {
+      onReset();
+    }
+  }, [isOutputOnly, onReset]);
 
   const progressText = (() => {
     if (!currentRun) return '';
@@ -207,7 +244,8 @@ export const VideoGenDirectPanel: React.FC = () => {
           </div>
         </div>
 
-        {/* ═══ Prompt 输入 ═══ */}
+        {/* ═══ Prompt 输入（纯输出模式下整个隐藏） ═══ */}
+        {!isOutputOnly && (
         <div
           className="rounded-[16px] p-4 flex flex-col gap-3"
           style={{
@@ -415,6 +453,39 @@ export const VideoGenDirectPanel: React.FC = () => {
             )}
           </div>
         </div>
+        )}
+
+        {/* 纯输出模式的紧凑信息栏（没有输入区时，把关键信息展示在画布下方） */}
+        {isOutputOnly && (
+          <div
+            className="rounded-[14px] p-3 flex items-center gap-3 flex-wrap text-xs"
+            style={{ background: 'var(--panel)', border: '1px solid var(--border-default)' }}
+          >
+            <span style={{ color: 'var(--text-muted)' }}>{progressText || '—'}</span>
+            <div className="flex-1" />
+            {currentRun?.directVideoCost != null && (
+              <span style={{ color: 'var(--text-muted)' }}>
+                费用 ${currentRun.directVideoCost.toFixed(3)}
+              </span>
+            )}
+            {(isCompleted || isFailed) && (
+              <Button size="sm" variant="ghost" onClick={handleReset}>
+                <RefreshCw size={12} /> 新任务
+              </Button>
+            )}
+            {isCompleted && currentRun?.videoAssetUrl && (
+              <a
+                href={currentRun.videoAssetUrl}
+                target="_blank"
+                rel="noreferrer"
+                className="text-xs inline-flex items-center gap-1 px-3 py-1.5 rounded-lg"
+                style={{ background: 'rgba(34,197,94,0.14)', color: '#4ade80', border: '1px solid rgba(34,197,94,0.3)' }}
+              >
+                <Download size={12} /> 下载 MP4
+              </a>
+            )}
+          </div>
+        )}
 
         {/* 完成后的播放器信息 */}
         {isCompleted && currentRun?.videoAssetUrl && (
