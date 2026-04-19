@@ -56,18 +56,18 @@ import { Reveal } from '@/pages/home/components/Reveal';
 const REVEAL_DURATION = 1000; // /home 默认 2000 的一半
 const REVEAL = {
   heroEyebrow: 0,
-  heroTitle: 50,
-  heroSubtitle: 100,
-  heroSearch: 150,
-  quickLinkBase: 200,
-  quickLinkStep: 50,
-  agentsHeader: 430,
-  agentsCardBase: 470,
-  agentsCardStep: 35,
-  utilitiesHeader: 800,
-  utilitiesCardBase: 840,
-  utilitiesCardStep: 25,
-  showcaseHeader: 970, // 仅当首屏即可见时生效；滚动触发走 IntersectionObserver
+  heroTitle: 30,
+  heroSubtitle: 60,
+  heroSearch: 90,
+  quickLinkBase: 120,
+  quickLinkStep: 30,
+  agentsHeader: 250,
+  agentsCardBase: 280,
+  agentsCardStep: 20,
+  utilitiesHeader: 400,
+  utilitiesCardBase: 420,
+  utilitiesCardStep: 15,
+  showcaseHeader: 550, // 仅当首屏即可见时生效；滚动触发走 IntersectionObserver
 };
 
 // ── Icon & Color mapping (self-contained, doesn't touch ToolCard) ──
@@ -616,63 +616,75 @@ export default function AgentLauncherPage() {
 
   return (
     <div className="h-full min-h-0 flex flex-col relative" style={{ background: 'var(--bg-base)' }}>
+      
+      {/* ── 页面背景大画幅层 (Page Hero Backing) ── */}
+      <div 
+        className="absolute inset-x-0 top-0 pointer-events-none" 
+        style={{ 
+          height: isMobile ? '70vh' : '90vh', 
+          zIndex: 0,
+          maskImage: 'linear-gradient(to bottom, rgba(0,0,0,1) 50%, rgba(0,0,0,0) 100%)',
+          WebkitMaskImage: 'linear-gradient(to bottom, rgba(0,0,0,1) 50%, rgba(0,0,0,0) 100%)',
+        }}
+      >
+        {/* Background image */}
+        <div
+          className="absolute inset-0"
+          style={{
+            backgroundImage: `url(${heroBgUrl})`,
+            backgroundSize: 'cover',
+            backgroundPosition: 'center top',
+            backgroundRepeat: 'no-repeat',
+            opacity: 0.85,
+          }}
+        />
+        {/* Left fade overlay — text readability */}
+        <div
+          className="absolute inset-0"
+          style={{
+            background: isMobile
+              ? 'linear-gradient(180deg, var(--bg-base) 0%, rgba(10,10,11,0.7) 40%, transparent 100%)'
+              : 'linear-gradient(90deg, var(--bg-base) 0%, rgba(10,10,11,0.8) 25%, rgba(10,10,11,0.4) 50%, transparent 80%)',
+          }}
+        />
+      </div>
+
       {/* 环境光背景层（blobs + film grain + top spotlight） —— 单独一层，不影响布局 */}
       <HomeAmbientBackdrop />
-
+      <style>{`
+        @keyframes gradientSlowFlow {
+          0% { background-position: 0% 50%; }
+          50% { background-position: 100% 50%; }
+          100% { background-position: 0% 50%; }
+        }
+        .animate-gradient-flow {
+          animation: gradientSlowFlow 8s ease-in-out infinite;
+        }
+      `}</style>
+      
       <div className="flex-1 min-h-0 overflow-auto relative" style={{ zIndex: 1 }}>
 
-          {/* ── Hero banner with background image — full width ── */}
-          <div
-            className="relative overflow-hidden"
-            style={{
-              marginBottom: 0,
-            }}
-          >
-            {/* Background image — positioned right, like 文心 reference */}
-            <div
-              className="absolute inset-0 pointer-events-none"
-              style={{
-                backgroundImage: `url(${heroBgUrl})`,
-                backgroundSize: 'cover',
-                backgroundPosition: 'center top',
-                backgroundRepeat: 'no-repeat',
-                opacity: 0.85,
-              }}
-            />
-            {/* Left fade overlay — text readability */}
-            <div
-              className="absolute inset-0 pointer-events-none"
-              style={{
-                background: isMobile
-                  ? 'linear-gradient(180deg, var(--bg-base) 0%, rgba(20,20,24,0.85) 40%, rgba(20,20,24,0.5) 100%)'
-                  : 'linear-gradient(90deg, var(--bg-base) 0%, var(--bg-base) 30%, rgba(20,20,24,0.7) 55%, rgba(20,20,24,0.15) 80%, transparent 100%)',
-              }}
-            />
-            {/* Bottom fade — blend with page */}
-            <div
-              className="absolute inset-0 pointer-events-none"
-              style={{
-                background: 'linear-gradient(180deg, transparent 50%, var(--bg-base) 100%)',
-              }}
-            />
+        {/* Hero 本地 aurora 光晕 */}
+        <div
+          className="absolute pointer-events-none"
+          style={{
+            top: '5%',
+            left: isMobile ? '-20%' : '2%',
+            width: isMobile ? '140%' : 520,
+            height: isMobile ? 260 : 340,
+            background:
+              'radial-gradient(ellipse at 30% 50%, rgba(124, 58, 237, 0.15) 0%, rgba(0, 240, 255, 0.05) 35%, transparent 65%)',
+            filter: 'blur(40px)',
+            opacity: 0.9,
+            zIndex: 0,
+          }}
+        />
 
-            {/* Hero 本地 aurora 光晕（/home 风格节选，只影响 Hero 自身）*/}
-            <div
-              className="absolute pointer-events-none"
-              style={{
-                top: '10%',
-                left: isMobile ? '-20%' : '2%',
-                width: isMobile ? '140%' : 520,
-                height: isMobile ? 260 : 340,
-                background:
-                  'radial-gradient(ellipse at 30% 50%, rgba(124, 58, 237, 0.18) 0%, rgba(0, 240, 255, 0.08) 35%, transparent 65%)',
-                filter: 'blur(40px)',
-                opacity: 0.9,
-              }}
-            />
+        {/* ── 页面主体内容（悬浮在背景图之上） ── */}
+        <div className="relative z-10">
 
             {/* Hero content */}
-            <div className={`relative z-10 ${isMobile ? 'px-5 pt-8 pb-6' : 'px-8 pt-10 pb-8'}`}>
+            <div className={`relative ${isMobile ? 'px-5 pt-8 pb-6' : 'px-8 pt-10 pb-8'}`}>
               <div className={`flex ${isMobile ? 'flex-col gap-4' : 'items-start justify-between gap-8'}`}>
                 <div className="shrink-0">
                   {/* 小型 eyebrow 标签：品牌定位 */}
@@ -703,8 +715,10 @@ export default function AgentLauncherPage() {
                       {displayName ? '，' : ''}
                       {displayName && (
                         <span
+                          className="animate-gradient-flow"
                           style={{
                             background: MAP_ACCENT_GRADIENT,
+                            backgroundSize: '200% auto',
                             WebkitBackgroundClip: 'text',
                             WebkitTextFillColor: 'transparent',
                             backgroundClip: 'text',
@@ -764,20 +778,17 @@ export default function AgentLauncherPage() {
               </div>
             </div>
             {/* end hero content */}
-          </div>
-          {/* end hero banner */}
 
-        <div className={isMobile ? 'px-4 pt-4 pb-8' : 'px-8 pt-5 pb-12'}>
-          {/* ── Quick Links — 4 张独立卡片，同宽响应式（1/2/4 列） ── */}
-          {!searchQuery.trim() && (
-            <div
-              className="grid"
-              style={{
-                marginBottom: isMobile ? 20 : 32,
-                gap: isMobile ? 10 : 14,
-                gridTemplateColumns: `repeat(auto-fit, minmax(${isMobile ? 160 : 220}px, 1fr))`,
-              }}
-            >
+            {/* ── Quick Links — Extended Hero Background Area ── */}
+            {!searchQuery.trim() && (
+              <div className={`relative z-10 ${isMobile ? 'px-5 pb-6' : 'px-8 pb-10'}`}>
+                <div
+                  className="grid"
+                  style={{
+                    gap: isMobile ? 10 : 14,
+                    gridTemplateColumns: `repeat(auto-fit, minmax(${isMobile ? 160 : 220}px, 1fr))`,
+                  }}
+                >
               {quickLinks.map((link, idx) => {
                 const Icon = link.icon;
                 const isUpdates = link.id === 'updates';
@@ -796,8 +807,9 @@ export default function AgentLauncherPage() {
                     style={{
                       background: 'linear-gradient(180deg, rgba(255,255,255,0.045) 0%, rgba(255,255,255,0.02) 100%)',
                       border: '1px solid rgba(255,255,255,0.08)',
-                      padding: isMobile ? '14px 14px 16px' : '18px 18px 20px',
-                      minHeight: isMobile ? 96 : 120,
+                      padding: isMobile ? '14px 14px 16px' : '20px',
+                      minHeight: isMobile ? 96 : 140,
+                      aspectRatio: isMobile ? 'auto' : '16/10',
                     }}
                   >
                     {/* 管理员上传的背景图（如有）：铺满卡片，底部渐变压暗保证文字可读 */}
@@ -811,11 +823,11 @@ export default function AgentLauncherPage() {
                             backgroundPosition: 'center',
                           }}
                         />
-                        {/* Stronger unified gradient for text readability over bright images */}
+                        {/* Downward shifted gradient to expose bright beautiful card tops */}
                         <div
-                          className="absolute inset-0 pointer-events-none"
+                          className="absolute inset-x-0 bottom-0 pointer-events-none h-[75%]"
                           style={{
-                            background: 'linear-gradient(180deg, rgba(0,0,0,0.4) 0%, rgba(0,0,0,0.7) 50%, rgba(0,0,0,0.9) 100%)',
+                            background: 'linear-gradient(180deg, transparent 0%, rgba(0,0,0,0.5) 50%, rgba(0,0,0,0.95) 100%)',
                           }}
                         />
                       </>
@@ -846,62 +858,64 @@ export default function AgentLauncherPage() {
 
                     {/* 内容 */}
                     <div className="relative z-10 flex flex-col h-full">
-                      <div className="flex items-center justify-between">
+                      <div className="flex items-start justify-between">
                         <div
-                          className="shrink-0 w-10 h-10 rounded-xl flex items-center justify-center transition-transform duration-200 group-hover:scale-105"
+                          className="shrink-0 w-10 h-10 rounded-xl flex items-center justify-center transition-transform duration-300 group-hover:scale-110"
                           style={{
-                            background: `linear-gradient(135deg, ${link.accent}26, ${link.accent}08)`,
-                            border: `1px solid ${link.accent}36`,
-                            boxShadow: `0 4px 20px -8px ${link.accent}50`,
+                            background: `linear-gradient(135deg, ${link.accent}35, ${link.accent}10)`,
+                            border: `1px solid ${link.accent}40`,
+                            boxShadow: `0 4px 20px -8px ${link.accent}50, inset 0 1px 0 rgba(255,255,255,0.15)`,
+                            backdropFilter: 'blur(8px)',
                           }}
                         >
-                          <Icon size={18} style={{ color: link.accent }} />
+                          <Icon size={18} style={{ color: link.accent, filter: `drop-shadow(0 2px 4px ${link.accent}80)` }} />
                         </div>
-                        {/* 未读徽章（仅更新中心） */}
-                        {showUnread && (
-                          <span
-                            className="px-1.5 h-5 min-w-5 rounded-full inline-flex items-center justify-center text-[10px] font-bold shrink-0"
-                            style={{
-                              background: 'linear-gradient(135deg, #fbbf24, #f97316)',
-                              color: '#1a1a1a',
-                              boxShadow: '0 0 0 1.5px rgba(20, 20, 24, 0.92), 0 2px 8px rgba(251, 191, 36, 0.4)',
-                            }}
-                          >
-                            {changelogUnread > 9 ? '9+' : changelogUnread}
-                          </span>
-                        )}
-                      </div>
-
-                      <div
-                        className={`mt-3 font-semibold tracking-tight ${isMobile ? 'text-[14px]' : 'text-[15px]'}`}
-                        style={{ color: 'var(--text-primary, #ffffff)', textShadow: '0 1px 2px rgba(0,0,0,1), 0 2px 6px rgba(0,0,0,0.6)' }}
-                      >
-                        {link.label}
-                      </div>
-                      <div
-                        className="text-[11px] mt-1 leading-relaxed line-clamp-2"
-                        style={{ color: 'var(--text-muted, rgba(255,255,255,0.85))', textShadow: '0 1px 2px rgba(0,0,0,0.9), 0 2px 4px rgba(0,0,0,0.6)' }}
-                      >
-                        {link.desc}
+                        <div className="flex items-center gap-2">
+                          <div className="opacity-0 -translate-x-2 group-hover:opacity-100 group-hover:translate-x-0 transition-all duration-300">
+                             <ArrowRight size={16} style={{ color: link.accent, filter: `drop-shadow(0 2px 4px ${link.accent}60)` }} />
+                          </div>
+                          {/* 未读徽章（仅更新中心） */}
+                          {showUnread && (
+                            <span
+                              className="px-1.5 h-5 min-w-5 rounded-full inline-flex items-center justify-center text-[10px] font-bold shrink-0"
+                              style={{
+                                background: 'linear-gradient(135deg, #fbbf24, #f97316)',
+                                color: '#1a1a1a',
+                                boxShadow: '0 0 0 1.5px rgba(20, 20, 24, 0.92), 0 2px 8px rgba(251, 191, 36, 0.4)',
+                              }}
+                            >
+                              {changelogUnread > 9 ? '9+' : changelogUnread}
+                            </span>
+                          )}
+                        </div>
                       </div>
 
                       <div className="flex-1" />
 
                       <div
-                        className="mt-3 flex items-center gap-1 text-[10px] font-medium opacity-50 group-hover:opacity-100 transition-opacity duration-200"
-                        style={{ color: link.accent }}
+                        className={`mt-2 font-semibold tracking-tight transition-transform duration-300 group-hover:-translate-y-0.5 ${isMobile ? 'text-[14px]' : 'text-[16px]'}`}
+                        style={{ color: 'var(--text-primary, #ffffff)', textShadow: '0 1px 2px rgba(0,0,0,1), 0 2px 8px rgba(0,0,0,0.6)' }}
                       >
-                        <span>进入</span>
-                        <ArrowRight size={11} className="group-hover:translate-x-0.5 transition-transform duration-200" />
+                        {link.label}
+                      </div>
+                      <div
+                        className="text-[12px] mt-1.5 leading-relaxed line-clamp-2 transition-transform duration-300 group-hover:-translate-y-0.5 opacity-85 group-hover:opacity-100"
+                        style={{ color: 'var(--text-muted, rgba(255,255,255,0.95))', textShadow: '0 1px 2px rgba(0,0,0,0.9), 0 2px 4px rgba(0,0,0,0.6)' }}
+                      >
+                        {link.desc}
                       </div>
                     </div>
                   </button>
                   </Reveal>
                 );
               })}
-            </div>
-          )}
+                </div>
+              </div>
+            )}
+          </div>
+          {/* end expansive hero banner */}
 
+        <div className={isMobile ? 'px-4 pt-2 pb-8' : 'px-8 pt-4 pb-12'}>
           {/* ── Loading ── */}
           {itemsLoading ? (
             <div className="flex items-center justify-center h-48">
