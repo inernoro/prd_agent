@@ -811,11 +811,11 @@ export default function AgentLauncherPage() {
                             backgroundPosition: 'center',
                           }}
                         />
-                        {/* Stronger unified gradient for text readability over bright images */}
+                        {/* Downward shifted gradient to expose bright beautiful card tops */}
                         <div
-                          className="absolute inset-0 pointer-events-none"
+                          className="absolute inset-x-0 bottom-0 pointer-events-none h-[75%]"
                           style={{
-                            background: 'linear-gradient(180deg, rgba(0,0,0,0.4) 0%, rgba(0,0,0,0.7) 50%, rgba(0,0,0,0.9) 100%)',
+                            background: 'linear-gradient(180deg, transparent 0%, rgba(0,0,0,0.5) 50%, rgba(0,0,0,0.95) 100%)',
                           }}
                         />
                       </>
@@ -846,53 +846,51 @@ export default function AgentLauncherPage() {
 
                     {/* 内容 */}
                     <div className="relative z-10 flex flex-col h-full">
-                      <div className="flex items-center justify-between">
+                      <div className="flex items-start justify-between">
                         <div
-                          className="shrink-0 w-10 h-10 rounded-xl flex items-center justify-center transition-transform duration-200 group-hover:scale-105"
+                          className="shrink-0 w-10 h-10 rounded-xl flex items-center justify-center transition-transform duration-300 group-hover:scale-110"
                           style={{
-                            background: `linear-gradient(135deg, ${link.accent}26, ${link.accent}08)`,
-                            border: `1px solid ${link.accent}36`,
-                            boxShadow: `0 4px 20px -8px ${link.accent}50`,
+                            background: `linear-gradient(135deg, ${link.accent}35, ${link.accent}10)`,
+                            border: `1px solid ${link.accent}40`,
+                            boxShadow: `0 4px 20px -8px ${link.accent}50, inset 0 1px 0 rgba(255,255,255,0.15)`,
+                            backdropFilter: 'blur(8px)',
                           }}
                         >
-                          <Icon size={18} style={{ color: link.accent }} />
+                          <Icon size={18} style={{ color: link.accent, filter: `drop-shadow(0 2px 4px ${link.accent}80)` }} />
                         </div>
-                        {/* 未读徽章（仅更新中心） */}
-                        {showUnread && (
-                          <span
-                            className="px-1.5 h-5 min-w-5 rounded-full inline-flex items-center justify-center text-[10px] font-bold shrink-0"
-                            style={{
-                              background: 'linear-gradient(135deg, #fbbf24, #f97316)',
-                              color: '#1a1a1a',
-                              boxShadow: '0 0 0 1.5px rgba(20, 20, 24, 0.92), 0 2px 8px rgba(251, 191, 36, 0.4)',
-                            }}
-                          >
-                            {changelogUnread > 9 ? '9+' : changelogUnread}
-                          </span>
-                        )}
-                      </div>
-
-                      <div
-                        className={`mt-3 font-semibold tracking-tight ${isMobile ? 'text-[14px]' : 'text-[15px]'}`}
-                        style={{ color: 'var(--text-primary, #ffffff)', textShadow: '0 1px 2px rgba(0,0,0,1), 0 2px 6px rgba(0,0,0,0.6)' }}
-                      >
-                        {link.label}
-                      </div>
-                      <div
-                        className="text-[11px] mt-1 leading-relaxed line-clamp-2"
-                        style={{ color: 'var(--text-muted, rgba(255,255,255,0.85))', textShadow: '0 1px 2px rgba(0,0,0,0.9), 0 2px 4px rgba(0,0,0,0.6)' }}
-                      >
-                        {link.desc}
+                        <div className="flex items-center gap-2">
+                          <div className="opacity-0 -translate-x-2 group-hover:opacity-100 group-hover:translate-x-0 transition-all duration-300">
+                             <ArrowRight size={16} style={{ color: link.accent, filter: `drop-shadow(0 2px 4px ${link.accent}60)` }} />
+                          </div>
+                          {/* 未读徽章（仅更新中心） */}
+                          {showUnread && (
+                            <span
+                              className="px-1.5 h-5 min-w-5 rounded-full inline-flex items-center justify-center text-[10px] font-bold shrink-0"
+                              style={{
+                                background: 'linear-gradient(135deg, #fbbf24, #f97316)',
+                                color: '#1a1a1a',
+                                boxShadow: '0 0 0 1.5px rgba(20, 20, 24, 0.92), 0 2px 8px rgba(251, 191, 36, 0.4)',
+                              }}
+                            >
+                              {changelogUnread > 9 ? '9+' : changelogUnread}
+                            </span>
+                          )}
+                        </div>
                       </div>
 
                       <div className="flex-1" />
 
                       <div
-                        className="mt-3 flex items-center gap-1 text-[10px] font-medium opacity-50 group-hover:opacity-100 transition-opacity duration-200"
-                        style={{ color: link.accent }}
+                        className={`mt-2 font-semibold tracking-tight transition-transform duration-300 group-hover:-translate-y-0.5 ${isMobile ? 'text-[14px]' : 'text-[16px]'}`}
+                        style={{ color: 'var(--text-primary, #ffffff)', textShadow: '0 1px 2px rgba(0,0,0,1), 0 2px 8px rgba(0,0,0,0.6)' }}
                       >
-                        <span>进入</span>
-                        <ArrowRight size={11} className="group-hover:translate-x-0.5 transition-transform duration-200" />
+                        {link.label}
+                      </div>
+                      <div
+                        className="text-[12px] mt-1.5 leading-relaxed line-clamp-2 transition-transform duration-300 group-hover:-translate-y-0.5 opacity-85 group-hover:opacity-100"
+                        style={{ color: 'var(--text-muted, rgba(255,255,255,0.95))', textShadow: '0 1px 2px rgba(0,0,0,0.9), 0 2px 4px rgba(0,0,0,0.6)' }}
+                      >
+                        {link.desc}
                       </div>
                     </div>
                   </button>
