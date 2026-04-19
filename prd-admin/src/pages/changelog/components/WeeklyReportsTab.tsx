@@ -12,7 +12,7 @@ import {
   deleteDocumentStore
 } from '@/services';
 import type { DocumentStoreWithPreview, DocumentEntry } from '@/services/contracts/documentStore';
-import type { EntryPreview } from '@/components/doc-browser/fileTypeRegistry';
+import type { EntryPreview } from '@/components/doc-browser/DocBrowser';
 import { toast } from '@/lib/toast';
 
 const STORE_NAME = 'map周报';
@@ -40,7 +40,7 @@ export function WeeklyReportsTab() {
         if (found) {
           setStore(found);
           // 查找该知识库下面的 github 订阅条目，为了支持“手动更新”按钮
-          const er = await listDocumentEntries(found.id, 1, 500, undefined, undefined, undefined, true);
+          const er = await listDocumentEntries(found.id, 1, 500);
           if (er.success) {
             setEntries(er.data.items);
             const ghEntry = er.data.items.find(e => e.sourceType === 'github_directory');

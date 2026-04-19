@@ -1030,11 +1030,13 @@ export function DocBrowser({
   // 构建树结构
   const { rootEntries, childrenMap, fileCount } = useMemo(() => {
     // 移除对 'github_directory' 的硬编码过滤，使订阅文件夹与文件可以在树结构中正常显示。
+    // 对于 parentId 指向不存在节点的 orphan entry，回退到根级展示，避免被树构建过程“吞掉”。
     const cMap = new Map<string, DocBrowserEntry[]>();
     const roots: DocBrowserEntry[] = [];
+    const entryIds = new Set(entries.map(e => e.id));
 
     for (const e of entries) {
-      if (!e.parentId) {
+      if (!e.parentId || !entryIds.has(e.parentId)) {
         roots.push(e);
       } else {
         const siblings = cMap.get(e.parentId) ?? [];
@@ -1230,7 +1232,7 @@ export function DocBrowser({
 
   if (loading) {
     return (
-      <div className="flex-1 flex items-center justify-center" style={{ minHeight: 'calc(100vh - 160px)' }}>
+      <div className="flex-1 min-h-0 flex items-center justify-center">
         <MapSectionLoader />
       </div>
     );
@@ -1241,8 +1243,8 @@ export function DocBrowser({
   }
 
   return (
-    <div className="flex-1 min-h-0 flex gap-0 rounded-[12px] overflow-hidden"
-      style={{ border: '1px solid rgba(255,255,255,0.06)', background: 'rgba(0,0,0,0.12)', minHeight: 'calc(100vh - 160px)' }}>
+    <div className="flex-1 h-full min-h-0 flex gap-0 rounded-[12px] overflow-hidden"
+      style={{ border: '1px solid rgba(255,255,255,0.06)', background: 'rgba(0,0,0,0.12)' }}>
 
       {/* 左侧：文件树（液态玻璃效果 + 可拖拽调整宽度） */}
       <div className="flex flex-col flex-shrink-0 relative"
