@@ -272,9 +272,9 @@ function FeaturedCard({ item, onClick }: { item: ToolboxItem; onClick: () => voi
 
       {/* Strong dark fade at the bottom for text readability */}
       <div
-        className="absolute inset-x-0 bottom-0 pointer-events-none z-[2] h-1/2"
+        className="absolute inset-x-0 bottom-0 pointer-events-none z-[2] h-[65%]"
         style={{
-          background: 'linear-gradient(180deg, transparent 0%, rgba(0,0,0,0.6) 50%, rgba(0,0,0,0.95) 100%)',
+          background: 'linear-gradient(180deg, transparent 0%, rgba(0,0,0,0.4) 30%, rgba(0,0,0,0.85) 65%, rgba(0,0,0,0.98) 100%)',
         }}
       />
 
@@ -306,13 +306,13 @@ function FeaturedCard({ item, onClick }: { item: ToolboxItem; onClick: () => voi
       <div className="absolute bottom-0 left-0 right-0 p-5 z-[10]">
         <h3
           className="text-[17px] font-semibold truncate transition-all duration-300 group-hover:translate-y-[-2px]"
-          style={{ color: '#fff', textShadow: '0 2px 8px rgba(0,0,0,0.8), 0 1px 3px rgba(0,0,0,0.6)' }}
+          style={{ color: '#ffffff', textShadow: '0 1px 2px rgba(0,0,0,1), 0 2px 8px rgba(0,0,0,0.9), 0 4px 16px rgba(0,0,0,0.5)' }}
         >
           {item.name}
         </h3>
         <p
           className="text-[13px] leading-relaxed mt-1.5 line-clamp-2 transition-all duration-300 group-hover:translate-y-[-2px] group-hover:opacity-100 opacity-80"
-          style={{ color: 'rgba(255,255,255,0.9)', textShadow: '0 1px 4px rgba(0,0,0,0.8)' }}
+          style={{ color: 'rgba(255,255,255,0.95)', textShadow: '0 1px 2px rgba(0,0,0,1), 0 2px 6px rgba(0,0,0,0.8)' }}
         >
           {item.description}
         </p>
@@ -874,13 +874,13 @@ export default function AgentLauncherPage() {
 
                       <div
                         className={`mt-3 font-semibold tracking-tight ${isMobile ? 'text-[14px]' : 'text-[15px]'}`}
-                        style={{ color: 'var(--text-primary, #fff)', textShadow: '0 2px 4px rgba(0,0,0,0.5)' }}
+                        style={{ color: 'var(--text-primary, #ffffff)', textShadow: '0 1px 2px rgba(0,0,0,1), 0 2px 6px rgba(0,0,0,0.6)' }}
                       >
                         {link.label}
                       </div>
                       <div
                         className="text-[11px] mt-1 leading-relaxed line-clamp-2"
-                        style={{ color: 'var(--text-muted, rgba(255,255,255,0.8))', textShadow: '0 1px 3px rgba(0,0,0,0.4)' }}
+                        style={{ color: 'var(--text-muted, rgba(255,255,255,0.85))', textShadow: '0 1px 2px rgba(0,0,0,0.9), 0 2px 4px rgba(0,0,0,0.6)' }}
                       >
                         {link.desc}
                       </div>
