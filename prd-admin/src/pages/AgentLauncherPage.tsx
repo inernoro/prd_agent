@@ -615,7 +615,7 @@ export default function AgentLauncherPage() {
   );
 
   return (
-    <div className="h-full min-h-0 flex flex-col relative" style={{ background: 'var(--bg-base)' }}>
+    <div className="h-full min-h-0 flex flex-col relative" style={{ background: '#111215' }}>
       {/* 环境光背景层（blobs + film grain + top spotlight） —— 单独一层，不影响布局 */}
       <HomeAmbientBackdrop />
 
@@ -631,58 +631,53 @@ export default function AgentLauncherPage() {
       `}</style>
       <div className="flex-1 min-h-0 overflow-auto relative" style={{ zIndex: 1 }}>
 
-          {/* ── Hero banner with background image — full width ── */}
+        {/* ── 全局页面背景大画幅层 (Global Page Hero Backing) ── */}
+        <div className="absolute inset-x-0 top-0 pointer-events-none" style={{ height: isMobile ? '70vh' : '90vh', zIndex: 0 }}>
+          {/* Background image */}
           <div
-            className="relative overflow-hidden"
+            className="absolute inset-0"
             style={{
-              marginBottom: 0,
+              backgroundImage: `url(${heroBgUrl})`,
+              backgroundSize: 'cover',
+              backgroundPosition: 'center top',
+              backgroundRepeat: 'no-repeat',
+              opacity: 0.85,
+              maskImage: 'linear-gradient(to bottom, rgba(0,0,0,1) 50%, rgba(0,0,0,0) 100%)',
+              WebkitMaskImage: 'linear-gradient(to bottom, rgba(0,0,0,1) 50%, rgba(0,0,0,0) 100%)',
             }}
-          >
-            {/* Background image — positioned right, like 文心 reference */}
-            <div
-              className="absolute inset-0 pointer-events-none"
-              style={{
-                backgroundImage: `url(${heroBgUrl})`,
-                backgroundSize: 'cover',
-                backgroundPosition: 'center top',
-                backgroundRepeat: 'no-repeat',
-                opacity: 0.85,
-              }}
-            />
-            {/* Left fade overlay — text readability */}
-            <div
-              className="absolute inset-0 pointer-events-none"
-              style={{
-                background: isMobile
-                  ? 'linear-gradient(180deg, rgba(10,10,14,0.95) 0%, rgba(10,10,14,0.7) 40%, transparent 100%)'
-                  : 'linear-gradient(90deg, rgba(10,10,11,0.95) 0%, rgba(10,10,11,0.8) 25%, rgba(10,10,11,0.4) 50%, transparent 80%)',
-              }}
-            />
-            {/* Bottom fade — blend with page */}
-            <div
-              className="absolute inset-0 pointer-events-none"
-              style={{
-                background: 'linear-gradient(180deg, transparent 85%, var(--bg-base) 100%)',
-              }}
-            />
+          />
+          {/* Left fade overlay — text readability */}
+          <div
+            className="absolute inset-0"
+            style={{
+              background: isMobile
+                ? 'linear-gradient(180deg, rgba(17,18,21,1) 0%, rgba(17,18,21,0.7) 40%, transparent 100%)'
+                : 'linear-gradient(90deg, rgba(17,18,21,0.95) 0%, rgba(17,18,21,0.8) 25%, rgba(17,18,21,0.4) 50%, transparent 80%)',
+            }}
+          />
+        </div>
 
-            {/* Hero 本地 aurora 光晕（/home 风格节选，只影响 Hero 自身）*/}
-            <div
-              className="absolute pointer-events-none"
-              style={{
-                top: '10%',
-                left: isMobile ? '-20%' : '2%',
-                width: isMobile ? '140%' : 520,
-                height: isMobile ? 260 : 340,
-                background:
-                  'radial-gradient(ellipse at 30% 50%, rgba(124, 58, 237, 0.18) 0%, rgba(0, 240, 255, 0.08) 35%, transparent 65%)',
-                filter: 'blur(40px)',
-                opacity: 0.9,
-              }}
-            />
+        {/* Hero 本地 aurora 光晕 */}
+        <div
+          className="absolute pointer-events-none"
+          style={{
+            top: '5%',
+            left: isMobile ? '-20%' : '2%',
+            width: isMobile ? '140%' : 520,
+            height: isMobile ? 260 : 340,
+            background:
+              'radial-gradient(ellipse at 30% 50%, rgba(124, 58, 237, 0.15) 0%, rgba(0, 240, 255, 0.05) 35%, transparent 65%)',
+            filter: 'blur(40px)',
+            opacity: 0.9,
+            zIndex: 0,
+          }}
+        />
+
+        {/* ── 页面主体内容（悬浮在背景图之上） ── */}
+        <div className="relative z-10">
 
             {/* Hero content */}
-            <div className={`relative z-10 ${isMobile ? 'px-5 pt-8 pb-6' : 'px-8 pt-10 pb-8'}`}>
+            <div className={`relative ${isMobile ? 'px-5 pt-8 pb-6' : 'px-8 pt-10 pb-8'}`}>
               <div className={`flex ${isMobile ? 'flex-col gap-4' : 'items-start justify-between gap-8'}`}>
                 <div className="shrink-0">
                   {/* 小型 eyebrow 标签：品牌定位 */}
