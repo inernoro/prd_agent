@@ -1029,11 +1029,11 @@ export function DocBrowser({
 
   // 构建树结构
   const { rootEntries, childrenMap, fileCount } = useMemo(() => {
-    const visible = entries.filter(e => e.sourceType !== 'github_directory');
+    // 移除对 'github_directory' 的硬编码过滤，使订阅文件夹与文件可以在树结构中正常显示。
     const cMap = new Map<string, DocBrowserEntry[]>();
     const roots: DocBrowserEntry[] = [];
 
-    for (const e of visible) {
+    for (const e of entries) {
       if (!e.parentId) {
         roots.push(e);
       } else {
@@ -1056,7 +1056,7 @@ export function DocBrowser({
     roots.sort(sortFn);
     for (const [, children] of cMap) children.sort(sortFn);
 
-    const fCount = visible.filter(e => !e.isFolder).length;
+    const fCount = entries.filter(e => !e.isFolder).length;
 
     return { rootEntries: roots, childrenMap: cMap, fileCount: fCount };
   }, [entries, primaryEntryId, pinnedSet]);
@@ -1090,8 +1090,7 @@ export function DocBrowser({
       // 使用后端搜索结果或不搜索
       if (searchResults !== null) {
         // 后端搜索结果扁平展示
-        const resultEntries = searchResults.filter(e => e.sourceType !== 'github_directory');
-        return { filteredRoots: resultEntries, filteredChildrenMap: new Map() };
+        return { filteredRoots: searchResults, filteredChildrenMap: new Map() };
       }
       return { filteredRoots: rootEntries, filteredChildrenMap: childrenMap };
     }
@@ -1101,7 +1100,6 @@ export function DocBrowser({
     const matchIds = new Set<string>();
     const entryMap = new Map(entries.map(e => [e.id, e]));
     for (const e of entries) {
-      if (e.sourceType === 'github_directory') continue;
       const titleMatch = e.title.toLowerCase().includes(kw);
       const summaryMatch = e.summary?.toLowerCase().includes(kw) ?? false;
       const firstLineMatch = contentFirstLines.get(e.id)?.toLowerCase().includes(kw) ?? false;
@@ -1681,11 +1679,16 @@ export function DocBrowser({
                   }}
                   placeholder="在此编辑文档内容..."
                 />
-              ) : (
+              ) : preview ? (
                 <FilePreview
                   entry={entries.find(e => e.id === selectedEntryId)}
                   preview={preview}
                 />
+              ) : (
+                <div className="flex flex-col items-center justify-center h-full text-center text-gray-400 gap-2">
+                  <FolderOpen size={48} className="opacity-20 mb-2" />
+                  <p className="text-[13px]">{entries.find(e => e.id === selectedEntryId)?.isFolder ? '这是一个目录' : '无法预览该文件'}</p>
+                </div>
               )}
               {/* 划词选中时的浮层"添加评论"按钮 */}
               {liveSelection && !editMode && (
