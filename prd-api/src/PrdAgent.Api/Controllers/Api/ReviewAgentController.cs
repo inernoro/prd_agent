@@ -603,14 +603,38 @@ public class ReviewAgentController : ControllerBase
             if (dim.Items != null && dim.Items.Count > 0)
             {
                 sb.AppendLine();
-                sb.AppendLine($"该维度为清单类，共 {dim.Items.Count} 项检查点。对**每一项**独立做两步判断：");
-                sb.AppendLine("1. `involved`（是否涉及）：方案的业务场景是否会触发该规则？");
-                sb.AppendLine("2. `covered`（方案是否包含）：仅当 involved=true 时有意义——方案中是否明确写出了对应设计/说明？");
-                sb.AppendLine("**通过条件**：involved=false（不涉及→自动通过）或 involved=true 且 covered=true（涉及且已覆盖）。");
-                sb.AppendLine("**未通过**：involved=true 且 covered=false（涉及但缺失）。");
-                sb.AppendLine("**得分公式**：`MaxScore × 通过项数 / 总项数` 向下取整，由系统按公式重算（你仍需输出 score，系统会覆盖）。");
+                sb.AppendLine($"**该维度是清单类**，共 {dim.Items.Count} 项检查点。方案文档里**应有一张对应表格**，包含「检查项 / 是否涉及 / 方案是否包含」三列，用户在每一行的两个复选框列里勾选 `[√]是 / [√]否 / [ ]未勾`。");
                 sb.AppendLine();
-                sb.AppendLine("检查项清单：");
+                sb.AppendLine("你的任务**不是自己判断涉及与否**，而是按下面三步操作：");
+                sb.AppendLine();
+                sb.AppendLine("**第 1 步：读出用户在表格里的实际勾选**");
+                sb.AppendLine("- `involvedChecked`：用户在「是否涉及」列勾的是 `yes` / `no` / `none`（找不到这一行 或 两个框都没勾）");
+                sb.AppendLine("- `coverageChecked`：用户在「方案是否包含」列勾的是 `yes` / `no` / `none`");
+                sb.AppendLine("- 注意：表格可能用 `[√]`、`[x]`、`☑`、`✓`、`■`、`【是】`、`(是)`、加粗的「是/否」、单元格背景色、明确的"是/否"汉字 等任意方式表示勾选。多种线索都要识别。");
+                sb.AppendLine("- 如果方案文档里**没有这张清单表格**，所有项的 involvedChecked 与 coverageChecked 都填 `none`。");
+                sb.AppendLine();
+                sb.AppendLine("**第 2 步：反作弊核查**（仅当 `involvedChecked=yes` 且 `coverageChecked=yes` 时执行）");
+                sb.AppendLine("- 在方案正文（实现思路、设计章节等）里检索是否真的写出了对应规则的解决方案。");
+                sb.AppendLine("- 找到对应内容 → `solutionFound=true`；找不到（用户勾了但正文未提）→ `solutionFound=false`。");
+                sb.AppendLine("- 其他场景 `solutionFound=null`（不需要核查）。");
+                sb.AppendLine();
+                sb.AppendLine("**第 3 步：填写 evidence**（≤80 字）");
+                sb.AppendLine("- 简述你看到了什么：「表格中此项勾选『涉及=是、包含=是』，正文 X 章节确实写明…」");
+                sb.AppendLine("- 或失败原因：「表格未勾选」「表格勾涉及=是但未勾包含」「勾了已包含但正文未找到」「方案未提供检查清单表格」。");
+                sb.AppendLine();
+                sb.AppendLine("**通过判定由系统按 truth table 自动派生（你不需要也不应该自己判 passed）**：");
+                sb.AppendLine("| involvedChecked | coverageChecked | solutionFound | 系统判定 |");
+                sb.AppendLine("|---|---|---|---|");
+                sb.AppendLine("| none | * | * | 不通过（未勾选视为未完成）|");
+                sb.AppendLine("| no | * | * | 通过（用户声明不涉及）|");
+                sb.AppendLine("| yes | none | * | 不通过（涉及但未声明是否包含）|");
+                sb.AppendLine("| yes | no | * | 不通过（用户自认未包含）|");
+                sb.AppendLine("| yes | yes | true | 通过（勾且方案确有写）|");
+                sb.AppendLine("| yes | yes | false | 不通过（勾了但方案中找不到，作弊）|");
+                sb.AppendLine();
+                sb.AppendLine("**得分公式**：`MaxScore × 通过项数 / 总项数` 向下取整，由系统按上表自动计算（你仍需输出 score，系统会覆盖）。");
+                sb.AppendLine();
+                sb.AppendLine("检查项清单（id 必须原样回填）：");
                 var byCategory = dim.Items.GroupBy(x => x.Category);
                 foreach (var grp in byCategory)
                 {
@@ -641,13 +665,13 @@ public class ReviewAgentController : ControllerBase
                 sb.AppendLine($"    {{");
                 sb.AppendLine($"      \"key\": \"{dim.Key}\",");
                 sb.AppendLine($"      \"score\": <0-{dim.MaxScore}的整数，系统会按 items 自动重算>,");
-                sb.AppendLine($"      \"comment\": \"<对整份清单的综合点评，突出最关键的遗漏项，100字以内>\",");
+                sb.AppendLine($"      \"comment\": \"<对整份清单的综合点评：用户填表完整度、勾选作弊嫌疑、最关键的遗漏项，100字以内>\",");
                 sb.AppendLine($"      \"items\": [");
                 for (int j = 0; j < dim.Items.Count; j++)
                 {
                     var item = dim.Items[j];
                     var itemComma = j < dim.Items.Count - 1 ? "," : "";
-                    sb.AppendLine($"        {{ \"id\": \"{item.Id}\", \"involved\": <true|false>, \"covered\": <true|false>, \"evidence\": \"<判断依据：引用原文片段或说明为何不涉及/缺失，80字以内>\" }}{itemComma}");
+                    sb.AppendLine($"        {{ \"id\": \"{item.Id}\", \"involvedChecked\": \"<yes|no|none>\", \"coverageChecked\": \"<yes|no|none>\", \"solutionFound\": <true|false|null>, \"evidence\": \"<≤80字：用户勾选了什么 + 正文核查结果 / 失败原因>\" }}{itemComma}");
                 }
                 sb.AppendLine($"      ]");
                 sb.AppendLine($"    }}{comma}");
@@ -704,7 +728,7 @@ public class ReviewAgentController : ControllerBase
             }
         }
 
-        // 补全未解析到的维度（清单类维度的 items 按「涉及但未覆盖」严格扣 0 分处理）
+        // 补全未解析到的维度（清单类维度的 items 按「未勾选」失败处理）
         var parsedKeys = scores.Select(s => s.Key).ToHashSet();
         foreach (var dim in dims.Where(d => !parsedKeys.Contains(d.Key)))
         {
@@ -716,9 +740,11 @@ public class ReviewAgentController : ControllerBase
                     Id = it.Id,
                     Category = it.Category,
                     Text = it.Text,
-                    Involved = true,
-                    Covered = false,
-                    Evidence = "LLM 输出未包含该项判断，按「涉及但未覆盖」严格扣分",
+                    InvolvedChecked = "none",
+                    CoverageChecked = "none",
+                    SolutionFound = null,
+                    Passed = false,
+                    Evidence = "LLM 输出未涵盖该项，按「未勾选」处理",
                 }).ToList();
             }
             scores.Add(new ReviewDimensionScore
@@ -732,7 +758,7 @@ public class ReviewAgentController : ControllerBase
             });
         }
 
-        // 为清单类维度补齐 items 中缺失的项（LLM 可能漏报某几项，按严格规则补 Involved=true/Covered=false）
+        // 为清单类维度补齐 items 中缺失的项（LLM 可能漏报某几项，按「未勾选」严格判失败）
         foreach (var score in scores)
         {
             var dimConfig = dims.FirstOrDefault(d => d.Key == score.Key);
@@ -747,16 +773,18 @@ public class ReviewAgentController : ControllerBase
                     Id = itemConfig.Id,
                     Category = itemConfig.Category,
                     Text = itemConfig.Text,
-                    Involved = true,
-                    Covered = false,
-                    Evidence = "LLM 输出未涵盖该项，按「涉及但未覆盖」严格扣分",
+                    InvolvedChecked = "none",
+                    CoverageChecked = "none",
+                    SolutionFound = null,
+                    Passed = false,
+                    Evidence = "LLM 输出未涵盖该项，按「未勾选」处理",
                 });
             }
             // 按配置顺序重排
             score.Items = dimConfig.Items
                 .Select(cfg => score.Items.First(i => i.Id == cfg.Id))
                 .ToList();
-            // 重算最终分数（兜底）
+            // 重算最终分数（系统派生 Passed → 公式重算，避免 LLM 自填的 score 干扰）
             score.Score = ComputeChecklistScore(dimConfig.MaxScore, score.Items);
         }
 
@@ -944,6 +972,7 @@ public class ReviewAgentController : ControllerBase
 
     /// <summary>
     /// 从维度 JSON 元素中提取 items[] 并映射到配置中的检查项（按 id 匹配，遗漏项由上层兜底补齐）。
+    /// 每项的 Passed 由系统按 truth table 派生，不取 LLM 自填值。
     /// </summary>
     private static List<DimensionCheckItemResult> BuildItemResults(
         JsonElement dimEl, List<DimensionCheckItem> configItems)
@@ -959,8 +988,12 @@ public class ReviewAgentController : ControllerBase
             if (string.IsNullOrEmpty(id) || !cfgMap.TryGetValue(id, out var cfg)) continue;
             if (results.Any(r => r.Id == id)) continue; // 去重
 
-            var involved = itemEl.TryGetProperty("involved", out var invEl) && ParseBool(invEl);
-            var covered = itemEl.TryGetProperty("covered", out var covEl) && ParseBool(covEl);
+            var involvedChecked = NormalizeCheckboxState(
+                itemEl.TryGetProperty("involvedChecked", out var invEl) ? invEl.GetString() : null);
+            var coverageChecked = NormalizeCheckboxState(
+                itemEl.TryGetProperty("coverageChecked", out var covEl) ? covEl.GetString() : null);
+            var solutionFound = ParseNullableBool(
+                itemEl.TryGetProperty("solutionFound", out var solEl) ? solEl : default);
             var evidence = itemEl.TryGetProperty("evidence", out var evEl) ? evEl.GetString() : null;
 
             results.Add(new DimensionCheckItemResult
@@ -968,30 +1001,59 @@ public class ReviewAgentController : ControllerBase
                 Id = id,
                 Category = cfg.Category,
                 Text = cfg.Text,
-                Involved = involved,
-                Covered = covered,
+                InvolvedChecked = involvedChecked,
+                CoverageChecked = coverageChecked,
+                SolutionFound = solutionFound,
+                Passed = DerivePassed(involvedChecked, coverageChecked, solutionFound),
                 Evidence = evidence,
             });
         }
         return results;
     }
 
-    private static bool ParseBool(JsonElement el) => el.ValueKind switch
+    /// <summary>
+    /// 把 LLM 输出的勾选状态归一化为 "yes" / "no" / "none"，兼容多种写法。
+    /// </summary>
+    private static string NormalizeCheckboxState(string? raw)
+    {
+        if (string.IsNullOrWhiteSpace(raw)) return "none";
+        var s = raw.Trim().ToLowerInvariant();
+        if (s is "yes" or "y" or "true" or "1" or "是" or "✓" or "√") return "yes";
+        if (s is "no" or "n" or "false" or "0" or "否" or "✗" or "x") return "no";
+        return "none";
+    }
+
+    private static bool? ParseNullableBool(JsonElement el) => el.ValueKind switch
     {
         JsonValueKind.True => true,
         JsonValueKind.False => false,
-        JsonValueKind.String => bool.TryParse(el.GetString(), out var b) && b,
-        _ => false,
+        JsonValueKind.String when bool.TryParse(el.GetString(), out var b) => b,
+        _ => null,
     };
 
     /// <summary>
+    /// Truth table（系统派生 passed，不让 LLM 自己算）：
+    ///   involvedChecked=none → 失败（用户未勾选）
+    ///   involvedChecked=no   → 通过
+    ///   involvedChecked=yes & coverageChecked=none → 失败
+    ///   involvedChecked=yes & coverageChecked=no   → 失败（用户自认未包含）
+    ///   involvedChecked=yes & coverageChecked=yes  → solutionFound==true 才通过（反作弊核查）
+    /// </summary>
+    private static bool DerivePassed(string involvedChecked, string coverageChecked, bool? solutionFound)
+    {
+        if (involvedChecked == "no") return true;
+        if (involvedChecked != "yes") return false;
+        if (coverageChecked != "yes") return false;
+        return solutionFound == true;
+    }
+
+    /// <summary>
     /// 清单类维度得分公式：MaxScore × 通过项数 / 总项数，向下取整。
-    /// 通过定义：!involved || (involved && covered)
     /// </summary>
     private static int ComputeChecklistScore(int maxScore, List<DimensionCheckItemResult> items)
     {
         if (items.Count == 0) return 0;
-        var passed = items.Count(i => !i.Involved || i.Covered);
+        var passed = items.Count(i => i.Passed);
         return (int)Math.Floor((double)maxScore * passed / items.Count);
     }
 

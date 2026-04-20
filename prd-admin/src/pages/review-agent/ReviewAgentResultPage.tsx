@@ -8,6 +8,27 @@ import { SseTypingBlock } from '@/components/sse/SseTypingBlock';
 import { getReviewSubmission, getReviewResultStreamUrl, rerunReviewSubmission, getReviewDimensions } from '@/services';
 import type { ReviewSubmission, ReviewResult, ReviewDimensionScore, ReviewDimensionConfig, DimensionCheckItemResult } from '@/services';
 
+function CheckboxBadge({ state }: { state: 'yes' | 'no' | 'none' }) {
+  if (state === 'yes') {
+    return <span className="text-[10px] px-1.5 py-0.5 rounded bg-cyan-500/15 text-cyan-300">是</span>;
+  }
+  if (state === 'no') {
+    return <span className="text-[10px] px-1.5 py-0.5 rounded bg-white/8 text-white/55">否</span>;
+  }
+  return <span className="text-[10px] px-1.5 py-0.5 rounded bg-white/4 text-white/30">未勾</span>;
+}
+
+function verdictLabel(item: DimensionCheckItemResult): { text: string; tone: 'pass' | 'fail-soft' | 'fail-hard' } {
+  if (item.passed) return { text: '完成', tone: 'pass' };
+  if (item.involvedChecked === 'none') return { text: '未勾选', tone: 'fail-soft' };
+  if (item.involvedChecked === 'yes' && item.coverageChecked === 'none') return { text: '涉及未声明', tone: 'fail-soft' };
+  if (item.involvedChecked === 'yes' && item.coverageChecked === 'no') return { text: '自认未包含', tone: 'fail-soft' };
+  if (item.involvedChecked === 'yes' && item.coverageChecked === 'yes' && item.solutionFound === false) {
+    return { text: '勾了但找不到', tone: 'fail-hard' };
+  }
+  return { text: '未完成', tone: 'fail-soft' };
+}
+
 function ChecklistTable({ items }: { items: DimensionCheckItemResult[] }) {
   const grouped = items.reduce<Record<string, DimensionCheckItemResult[]>>((acc, it) => {
     const key = it.category || '其他';
@@ -15,7 +36,7 @@ function ChecklistTable({ items }: { items: DimensionCheckItemResult[] }) {
     return acc;
   }, {});
   const total = items.length;
-  const passed = items.filter(it => !it.involved || it.covered).length;
+  const passed = items.filter(it => it.passed).length;
 
   return (
     <div
@@ -23,10 +44,16 @@ function ChecklistTable({ items }: { items: DimensionCheckItemResult[] }) {
       style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.08)' }}
     >
       <div className="flex items-center justify-between px-3 py-2 border-b border-white/5">
-        <p className="text-xs text-white/50 font-medium">全局规则检查清单</p>
+        <p className="text-xs text-white/50 font-medium">全局规则检查清单（读取用户表格勾选 + 反作弊核查）</p>
         <p className="text-xs tabular-nums text-white/40">
           通过 <span className="text-emerald-400">{passed}</span> / {total}
         </p>
+      </div>
+      <div className="grid grid-cols-[1fr_auto_auto_auto] gap-x-3 gap-y-1 px-3 py-1.5 border-b border-white/5 text-[10px] text-white/35">
+        <div>检查项</div>
+        <div className="text-center">是否涉及</div>
+        <div className="text-center">方案是否包含</div>
+        <div className="text-center">评审判定</div>
       </div>
       <div className="divide-y divide-white/5">
         {Object.entries(grouped).map(([cat, list]) => (
@@ -34,27 +61,29 @@ function ChecklistTable({ items }: { items: DimensionCheckItemResult[] }) {
             <p className="text-[11px] text-indigo-400/80 mb-1.5 font-medium">{cat}</p>
             <div className="space-y-1">
               {list.map(item => {
-                const passedItem = !item.involved || item.covered;
-                const isRisk = item.involved && !item.covered;
-                const tagBg = !item.involved
-                  ? 'bg-white/5 text-white/40'
-                  : item.covered
-                    ? 'bg-emerald-500/10 text-emerald-300'
-                    : 'bg-rose-500/15 text-rose-300';
-                const label = !item.involved ? '不涉及' : item.covered ? '已包含' : '涉及 · 缺失';
+                const v = verdictLabel(item);
+                const verdictBg = v.tone === 'pass'
+                  ? 'bg-emerald-500/15 text-emerald-300'
+                  : v.tone === 'fail-hard'
+                    ? 'bg-rose-500/20 text-rose-200'
+                    : 'bg-amber-500/15 text-amber-300';
                 return (
                   <div
                     key={item.id}
-                    className={`flex items-start gap-2 rounded px-2 py-1.5 ${isRisk ? 'bg-rose-500/5' : ''}`}
+                    className={`grid grid-cols-[1fr_auto_auto_auto] items-start gap-x-3 gap-y-0.5 rounded px-2 py-1.5 ${v.tone === 'fail-hard' ? 'bg-rose-500/5' : ''}`}
                   >
-                    <span className={`shrink-0 text-[10px] px-1.5 py-0.5 rounded ${tagBg}`}>{label}</span>
-                    <div className="flex-1 min-w-0">
-                      <p className={`text-xs leading-relaxed ${passedItem ? 'text-white/55' : 'text-rose-200'}`}>
+                    <div className="min-w-0">
+                      <p className={`text-xs leading-relaxed ${item.passed ? 'text-white/55' : 'text-white/70'}`}>
                         {item.text}
                       </p>
                       {item.evidence && (
                         <p className="text-[11px] text-white/35 mt-0.5 leading-relaxed">{item.evidence}</p>
                       )}
+                    </div>
+                    <div className="text-center pt-0.5"><CheckboxBadge state={item.involvedChecked} /></div>
+                    <div className="text-center pt-0.5"><CheckboxBadge state={item.coverageChecked} /></div>
+                    <div className="text-center pt-0.5">
+                      <span className={`text-[10px] px-1.5 py-0.5 rounded whitespace-nowrap ${verdictBg}`}>{v.text}</span>
                     </div>
                   </div>
                 );

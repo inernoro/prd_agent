@@ -12,12 +12,21 @@ export interface DimensionCheckItem {
   note?: string;
 }
 
+/** 用户在表格中的勾选状态：'yes' 勾选了"是" / 'no' 勾选了"否" / 'none' 未勾选或未填表 */
+export type CheckboxState = 'yes' | 'no' | 'none';
+
 export interface DimensionCheckItemResult {
   id: string;
   category: string;
   text: string;
-  involved: boolean;
-  covered: boolean;
+  /** 用户在「是否涉及」列的实际勾选 */
+  involvedChecked: CheckboxState;
+  /** 用户在「方案是否包含」列的实际勾选 */
+  coverageChecked: CheckboxState;
+  /** 反作弊核查：仅当 involvedChecked='yes' 且 coverageChecked='yes' 时才有意义 */
+  solutionFound?: boolean | null;
+  /** 系统按 truth table 派生的最终通过状态 */
+  passed: boolean;
   evidence?: string;
 }
 

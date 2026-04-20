@@ -1577,6 +1577,7 @@ export type {
   ReviewWebhookConfig,
   DimensionCheckItem,
   DimensionCheckItemResult,
+  CheckboxState,
 } from '@/services/real/reviewAgent';
 
 // ============ PR Review（pr-review）基于每用户 GitHub Device Flow 的审查工作台 ============

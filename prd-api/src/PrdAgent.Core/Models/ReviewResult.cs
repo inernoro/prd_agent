@@ -65,12 +65,21 @@ public class DimensionCheckItemResult
     /// <summary>检查项名称快照</summary>
     public string Text { get; set; } = string.Empty;
 
-    /// <summary>LLM 判断：方案是否涉及该规则</summary>
-    public bool Involved { get; set; }
+    /// <summary>用户在「是否涉及」列的勾选状态："yes" / "no" / "none"（未勾或未填表）</summary>
+    public string InvolvedChecked { get; set; } = "none";
 
-    /// <summary>LLM 判断：方案是否已覆盖该规则（仅当 Involved=true 时有意义）</summary>
-    public bool Covered { get; set; }
+    /// <summary>用户在「方案是否包含」列的勾选状态："yes" / "no" / "none"</summary>
+    public string CoverageChecked { get; set; } = "none";
 
-    /// <summary>判断依据/原文证据/缺失说明（≤80 字）</summary>
+    /// <summary>
+    /// 反作弊核查：仅当 InvolvedChecked=yes 且 CoverageChecked=yes 时才填。
+    /// LLM 检索方案正文，确认是否真的写出了对应解决方案，true=找到，false=找不到，null=未触发核查。
+    /// </summary>
+    public bool? SolutionFound { get; set; }
+
+    /// <summary>系统按 truth table 派生的最终通过状态（不让 LLM 自己算）</summary>
+    public bool Passed { get; set; }
+
+    /// <summary>判定依据/原文证据/失败原因（≤80 字）</summary>
     public string? Evidence { get; set; }
 }
