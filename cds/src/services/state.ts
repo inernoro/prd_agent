@@ -1361,6 +1361,21 @@ export class StateService {
     this.state.previewMode = mode;
   }
 
+  // ── GitHub PR preview comment template ──
+  //
+  // The settings panel edits this; postOrUpdatePrComment reads it.
+  // Returning `null` when absent (instead of a materialised default)
+  // lets callers distinguish "user never saved" from "user saved an
+  // empty body" and pick the default template accordingly.
+
+  getCommentTemplate(): import('../types.js').CommentTemplateSettings | null {
+    return this.state.commentTemplate ?? null;
+  }
+
+  setCommentTemplate(settings: import('../types.js').CommentTemplateSettings): void {
+    this.state.commentTemplate = settings;
+  }
+
   // ── Executor management ──
 
   getExecutors(): Record<string, ExecutorNode> {

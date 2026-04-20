@@ -41,6 +41,11 @@ import {
   GitHubWebhookDispatcher,
   type WebhookDispatchResult,
 } from '../services/github-webhook-dispatcher.js';
+import {
+  DEFAULT_TEMPLATE_BODY,
+  buildTemplateVariables,
+  renderTemplate,
+} from '../services/comment-template.js';
 
 export interface GitHubWebhookRouterDeps {
   stateService: StateService;
@@ -628,23 +633,33 @@ async function postOrUpdatePrComment(
   if (parts.length !== 2) return;
   const [owner, repo] = parts;
 
-  // Build the comment body — Railway-style: bold "CDS Deploy" header +
-  // preview link + branch/SHA ref + autoDeploy toggle hint.
+  // Build the comment body by rendering the user-editable template
+  // from state (services/comment-template.ts). When no template has
+  // been saved we fall back to DEFAULT_TEMPLATE_BODY, which is
+  // byte-equivalent to the pre-customisation hard-coded markdown +
+  // a new "PR Review" deeplink line.
+  //
+  // All the dynamic bits (branch, SHA, preview URL, dashboard URL,
+  // PR review deeplink) go through buildTemplateVariables so the
+  // settings-panel preview and the live render stay in lock-step.
   const host = config.previewDomain || config.rootDomains?.[0];
-  const previewUrl = host ? `https://${branchId}.${host}` : null;
-  const shortSha = (branch.githubCommitSha || '').slice(0, 7);
-  const lines = [
-    '## 🚀 CDS Deploy Preview',
-    '',
-    previewUrl
-      ? `- **Preview**: [${previewUrl}](${previewUrl})`
-      : '- **Preview**: (当前 CDS 未配置 previewDomain / rootDomains, 预览 URL 不可用)',
-    `- **Branch**: \`${branch.branch}\`${shortSha ? ` @ ${shortSha}` : ''}`,
-    `- **CDS Dashboard**: [${branchId}](${(config.publicBaseUrl || '').replace(/\/$/, '')}/branch-panel?id=${encodeURIComponent(branchId)})`,
-    '',
-    '<sub>push 到此分支会自动触发新部署, 本条评论会在每次部署后原地刷新。</sub>',
-  ];
-  const body = lines.join('\n');
+  const previewUrl = host ? `https://${branchId}.${host}` : '';
+  const dashboardUrl =
+    (config.publicBaseUrl || '').replace(/\/$/, '') +
+    '/branch-panel?id=' + encodeURIComponent(branchId);
+  const settings = stateService.getCommentTemplate();
+  const templateBody = settings?.body && settings.body.length > 0 ? settings.body : DEFAULT_TEMPLATE_BODY;
+  const vars = buildTemplateVariables({
+    branch: branch.branch,
+    commitSha: branch.githubCommitSha || '',
+    previewUrl,
+    dashboardUrl,
+    repoFullName,
+    prNumber,
+    prUrl: payload.pull_request?.html_url || '',
+    prReviewBaseUrl: settings?.prReviewBaseUrl,
+  });
+  const body = renderTemplate(templateBody, vars);
 
   if (branch.githubPreviewCommentId) {
     try {

@@ -484,6 +484,41 @@ export interface CdsState {
    * one-shot move don't repeatedly re-scan the legacy layout.
    */
   worktreeLayoutVersion?: number;
+  /**
+   * User-customisable settings for the GitHub PR preview comment that
+   * CDS posts on PR open / refreshes on every deploy
+   * (postOrUpdatePrComment in routes/github-webhook.ts).
+   *
+   * Stored under state so it lives through the same JSON ↔ Mongo
+   * storage swap as the rest of CDS state (no separate collection).
+   *
+   * Absent on pre-feature state.json — the renderer falls back to the
+   * built-in default template (services/comment-template.ts).
+   */
+  commentTemplate?: CommentTemplateSettings;
+}
+
+/**
+ * GitHub PR preview comment template settings.
+ *
+ * `body` is a Markdown blob with `{{var}}` placeholders. The list of
+ * supported variables is fixed at code level (see VARIABLE_DEFS in
+ * services/comment-template.ts) — adding a new one requires touching
+ * both the renderer and the settings-panel UI so the user speaks the
+ * same vocabulary as the renderer.
+ *
+ * `prReviewBaseUrl` is the prd-admin (or equivalent) root URL used to
+ * build `{{prReviewUrl}}` — e.g. `https://prd-admin.miduo.org`. If
+ * empty, `{{prReviewUrl}}` resolves to an empty string so a template
+ * that doesn't reference it keeps working on standalone CDS installs.
+ */
+export interface CommentTemplateSettings {
+  /** Markdown body with {{var}} placeholders. Empty string = use default. */
+  body: string;
+  /** Base URL for the PR-review deeplink target app. Optional. */
+  prReviewBaseUrl?: string;
+  /** ISO timestamp of the last save, for UI display. */
+  updatedAt?: string;
 }
 
 /**

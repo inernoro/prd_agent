@@ -94,6 +94,8 @@
       renderStorageTab();
     } else if (currentTab === 'github') {
       renderGithubTab();
+    } else if (currentTab === 'comment-template') {
+      renderCommentTemplateTab();
     } else {
       // P4 Part 18 cleanup: unknown tab → fall back to General,
       // not a stale "coming soon" placeholder. Dead subnav items
@@ -1251,6 +1253,219 @@
       .catch(function (err) {
         showToast('网络错误：' + (err && err.message ? err.message : err));
       });
+  };
+
+  // ── Comment template tab ──
+  //
+  // Lets the operator customise the GitHub PR preview comment posted
+  // by CDS on every PR open / deploy refresh. Talks to:
+  //   GET  /api/comment-template   → body + prReviewBaseUrl + variable catalog
+  //   PUT  /api/comment-template   → save
+  //   POST /api/comment-template/preview → render-with-samples for live preview
+  //
+  // The variable catalog comes from the backend so adding a new
+  // variable there (services/comment-template.ts) auto-surfaces in
+  // the sidebar without touching this file.
+  var _ct_state = { body: '', prReviewBaseUrl: '', variables: [], defaultBody: '' };
+
+  function renderCommentTemplateTab() {
+    contentEl.innerHTML =
+      '<div class="settings-section">' +
+        '<div class="settings-section-title">GitHub PR 预览评论模板</div>' +
+        '<div class="settings-section-desc">' +
+          '每当 PR 打开或部署完成时，CDS 会在 PR 下发一条预览评论（或刷新已有那条）。<br>' +
+          '在下方编辑 Markdown 内容，支持 <code>{{变量名}}</code> 动态占位符。' +
+          '留空则恢复默认模板。' +
+        '</div>' +
+        '<div id="commentTemplateLoading" class="settings-placeholder">加载模板…</div>' +
+      '</div>';
+
+    fetch('/api/comment-template', { credentials: 'same-origin' })
+      .then(function (r) { return r.json(); })
+      .then(function (data) {
+        if (!data || !data.ok) throw new Error((data && data.message) || '加载失败');
+        _ct_state.body = data.body || '';
+        _ct_state.prReviewBaseUrl = data.prReviewBaseUrl || '';
+        _ct_state.variables = data.variables || [];
+        _ct_state.defaultBody = data.defaultBody || '';
+        _ct_state.updatedAt = data.updatedAt || null;
+        _ct_state.isDefault = !!data.isDefault;
+        _ctRenderEditor();
+      })
+      .catch(function (err) {
+        var el = document.getElementById('commentTemplateLoading');
+        if (el) el.innerHTML = '<span style="color:var(--red)">加载失败：' + escapeHtml(err && err.message ? err.message : String(err)) + '</span>';
+      });
+  }
+
+  function _ctRenderEditor() {
+    var varRows = _ct_state.variables.map(function (v) {
+      return (
+        '<div class="ct-var-row" data-key="' + escapeHtml(v.key) + '">' +
+          '<button type="button" class="ct-var-insert" onclick="_ctInsertVar(\'' + escapeHtml(v.key) + '\')" title="点击插入到光标位置">' +
+            '<code>{{' + escapeHtml(v.key) + '}}</code>' +
+          '</button>' +
+          '<div class="ct-var-meta">' +
+            '<div class="ct-var-label">' + escapeHtml(v.label) + '</div>' +
+            '<div class="ct-var-example">例: ' + escapeHtml(v.example) + '</div>' +
+          '</div>' +
+        '</div>'
+      );
+    }).join('');
+
+    var updatedLabel = _ct_state.isDefault
+      ? '（尚未自定义，使用默认模板）'
+      : '最近保存: ' + escapeHtml(_ct_state.updatedAt || '-');
+
+    contentEl.innerHTML =
+      '<style>' +
+        '.ct-layout{display:grid;grid-template-columns:1fr 280px;gap:20px;align-items:start}' +
+        '@media(max-width:900px){.ct-layout{grid-template-columns:1fr}}' +
+        '.ct-textarea{width:100%;min-height:280px;background:var(--bg-card);border:1px solid var(--card-border);border-radius:8px;padding:12px;color:var(--text-primary);font-family:var(--font-mono,monospace);font-size:12.5px;line-height:1.55;outline:none;resize:vertical;white-space:pre;tab-size:2}' +
+        '.ct-textarea:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(16,185,129,0.15)}' +
+        '.ct-sidebar{background:var(--bg-card);border:1px solid var(--card-border);border-radius:10px;padding:12px}' +
+        '.ct-sidebar-title{font-size:12px;font-weight:700;color:var(--text-secondary);text-transform:uppercase;letter-spacing:0.04em;margin-bottom:10px}' +
+        '.ct-var-row{display:flex;gap:8px;align-items:flex-start;padding:6px;border-radius:6px;transition:background 120ms ease}' +
+        '.ct-var-row:hover{background:var(--bg-hover)}' +
+        '.ct-var-insert{background:transparent;border:1px dashed var(--card-border);border-radius:6px;padding:2px 6px;cursor:pointer;color:var(--accent,#10b981);font-family:var(--font-mono,monospace);font-size:11px;flex-shrink:0}' +
+        '.ct-var-insert:hover{border-style:solid;background:rgba(16,185,129,0.08)}' +
+        '.ct-var-meta{flex:1;min-width:0}' +
+        '.ct-var-label{font-size:12px;color:var(--text-primary);line-height:1.3}' +
+        '.ct-var-example{font-size:10.5px;color:var(--text-muted);margin-top:2px;font-family:var(--font-mono,monospace);overflow:hidden;text-overflow:ellipsis}' +
+        '.ct-preview{background:var(--bg-card);border:1px solid var(--card-border);border-radius:8px;padding:14px 16px;color:var(--text-primary);font-size:13px;line-height:1.55;min-height:120px;white-space:pre-wrap;word-break:break-word}' +
+        '.ct-preview code{background:var(--bg-elevated);padding:1px 5px;border-radius:3px;font-size:11.5px}' +
+        '.ct-action-row{display:flex;gap:8px;align-items:center;margin-top:12px}' +
+        '.ct-meta-line{font-size:11px;color:var(--text-muted);margin-top:4px}' +
+      '</style>' +
+
+      '<div class="settings-section">' +
+        '<div class="settings-section-title">GitHub PR 预览评论模板</div>' +
+        '<div class="settings-section-desc">' +
+          '每当 PR 打开或部署完成时，CDS 会在 PR 下发一条预览评论（或刷新已有那条）。<br>' +
+          '在下方编辑 Markdown 内容，支持 <code>{{变量名}}</code> 动态占位符。留空则恢复默认模板。' +
+        '</div>' +
+
+        '<div class="ct-layout">' +
+          '<div>' +
+            '<label class="settings-field-label" for="ctBody">模板正文（Markdown）</label>' +
+            '<textarea id="ctBody" class="ct-textarea" placeholder="支持 {{变量名}} 占位符，右侧可一键插入"></textarea>' +
+            '<div class="ct-meta-line" id="ctUpdatedAt">' + updatedLabel + '</div>' +
+
+            '<div class="settings-field" style="margin-top:18px">' +
+              '<label class="settings-field-label" for="ctBaseUrl">PR 审查 Agent 根地址</label>' +
+              '<input id="ctBaseUrl" class="settings-input mono" type="url" placeholder="https://prd-admin.miduo.org" autocomplete="off">' +
+              '<div class="ct-meta-line">' +
+                '用于构造 <code>{{prReviewUrl}}</code>。若为空，该变量渲染为空字符串。登录态由目标应用的 returnUrl 机制自动处理。' +
+              '</div>' +
+            '</div>' +
+
+            '<div class="ct-action-row">' +
+              '<button type="button" class="settings-btn-primary" onclick="_ctSave()">保存</button>' +
+              '<button type="button" class="settings-btn-outline" onclick="_ctPreview()">预览（示例数据）</button>' +
+              '<button type="button" class="settings-btn-outline" onclick="_ctResetDefault()">恢复默认模板</button>' +
+            '</div>' +
+          '</div>' +
+
+          '<aside class="ct-sidebar">' +
+            '<div class="ct-sidebar-title">可用变量</div>' +
+            varRows +
+            '<div style="margin-top:10px;padding-top:10px;border-top:1px solid var(--border-light);font-size:11px;color:var(--text-muted);line-height:1.5">' +
+              '点变量按钮可将占位符插入到左侧光标位置。未定义的 <code>{{变量}}</code> 会原样保留，便于排查拼写错误。' +
+            '</div>' +
+          '</aside>' +
+        '</div>' +
+      '</div>' +
+
+      '<div class="settings-section">' +
+        '<div class="settings-section-title">实时预览</div>' +
+        '<div class="settings-section-desc">' +
+          '使用示例数据（branch=<code>feature/preview</code>, PR #123 等）渲染当前编辑的模板，展示 GitHub 评论实际效果。' +
+        '</div>' +
+        '<div id="ctPreviewBox" class="ct-preview">点"预览（示例数据）"按钮渲染。</div>' +
+      '</div>';
+
+    var ta = document.getElementById('ctBody');
+    if (ta) ta.value = _ct_state.body || _ct_state.defaultBody || '';
+    var base = document.getElementById('ctBaseUrl');
+    if (base) base.value = _ct_state.prReviewBaseUrl || '';
+  }
+
+  // Insert `{{key}}` at the textarea caret. Falls back to append if
+  // the textarea has never been focused. Re-focuses so the operator
+  // can keep typing without clicking back.
+  window._ctInsertVar = function (key) {
+    var ta = document.getElementById('ctBody');
+    if (!ta) return;
+    var insert = '{{' + key + '}}';
+    var start = ta.selectionStart;
+    var end = ta.selectionEnd;
+    var before = ta.value.slice(0, start);
+    var after = ta.value.slice(end);
+    ta.value = before + insert + after;
+    var caret = before.length + insert.length;
+    ta.focus();
+    try { ta.setSelectionRange(caret, caret); } catch (e) { /* Safari quirk */ }
+  };
+
+  window._ctSave = function () {
+    var ta = document.getElementById('ctBody');
+    var base = document.getElementById('ctBaseUrl');
+    if (!ta) return;
+    var body = ta.value;
+    var baseUrl = (base && base.value || '').trim();
+    fetch('/api/comment-template', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'same-origin',
+      body: JSON.stringify({ body: body, prReviewBaseUrl: baseUrl }),
+    })
+      .then(function (r) { return r.json().then(function (b) { return { ok: r.ok, status: r.status, body: b }; }); })
+      .then(function (resp) {
+        if (!resp.ok || !resp.body || !resp.body.ok) {
+          showToast((resp.body && resp.body.message) || ('保存失败 (HTTP ' + resp.status + ')'));
+          return;
+        }
+        _ct_state.body = resp.body.body || '';
+        _ct_state.prReviewBaseUrl = resp.body.prReviewBaseUrl || '';
+        _ct_state.updatedAt = resp.body.updatedAt;
+        _ct_state.isDefault = false;
+        var meta = document.getElementById('ctUpdatedAt');
+        if (meta) meta.textContent = '最近保存: ' + (resp.body.updatedAt || '-');
+        showToast('模板已保存，下一次 PR 部署生效');
+      })
+      .catch(function (err) {
+        showToast('网络错误：' + (err && err.message ? err.message : err));
+      });
+  };
+
+  window._ctPreview = function () {
+    var ta = document.getElementById('ctBody');
+    var previewBox = document.getElementById('ctPreviewBox');
+    if (!ta || !previewBox) return;
+    previewBox.textContent = '渲染中…';
+    fetch('/api/comment-template/preview', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'same-origin',
+      body: JSON.stringify({ body: ta.value }),
+    })
+      .then(function (r) { return r.json(); })
+      .then(function (data) {
+        if (!data || !data.ok) {
+          previewBox.innerHTML = '<span style="color:var(--red)">预览失败：' + escapeHtml((data && data.message) || '未知错误') + '</span>';
+          return;
+        }
+        previewBox.textContent = data.rendered || '(空)';
+      })
+      .catch(function (err) {
+        previewBox.innerHTML = '<span style="color:var(--red)">预览失败：' + escapeHtml(err && err.message ? err.message : String(err)) + '</span>';
+      });
+  };
+
+  window._ctResetDefault = function () {
+    if (!confirm('确定恢复为默认模板？当前未保存的修改会丢失。')) return;
+    var ta = document.getElementById('ctBody');
+    if (ta) ta.value = _ct_state.defaultBody || '';
   };
 
   // ── Wire leftnav links to current project's topology / list / logs ──
