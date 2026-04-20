@@ -2,11 +2,11 @@ import { MapSectionLoader } from '@/components/ui/VideoLoader';
 import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
-import { ArrowLeft, MessageSquare, CornerDownRight, Trash2, Send, GitCompare, X, CheckCircle2, AlertCircle, Clock } from 'lucide-react';
+import { ArrowLeft, MessageSquare, CornerDownRight, Trash2, Send, GitCompare, X, CheckCircle2, AlertCircle, Clock, Pencil } from 'lucide-react';
 import { GlassCard } from '@/components/design/GlassCard';
 import { Button } from '@/components/design/Button';
 import { toast } from '@/lib/toast';
-import { getWeeklyReport, listComments, createComment, deleteComment, reviewWeeklyReport, returnWeeklyReport, recordReportView, getReportViewsSummary, getTeamReportsView } from '@/services';
+import { getWeeklyReport, listComments, createComment, updateComment, deleteComment, reviewWeeklyReport, returnWeeklyReport, recordReportView, getReportViewsSummary, getTeamReportsView } from '@/services';
 import { useAuthStore } from '@/stores/authStore';
 import type { WeeklyReport, ReportComment, ReportViewSummary, TeamReportListItem } from '@/services/contracts/reportAgent';
 import { WeeklyReportStatus, ReportInputType } from '@/services/contracts/reportAgent';
@@ -160,6 +160,22 @@ export default function ReportDetailPage() {
       toast.error(res.error?.message || '删除失败');
     }
   };
+
+  const handleUpdateComment = useCallback(async (commentId: string, content: string): Promise<boolean> => {
+    if (!reportId) return false;
+    const trimmed = content.trim();
+    if (!trimmed) {
+      toast.error('评论内容不能为空');
+      return false;
+    }
+    const res = await updateComment({ reportId, commentId, content: trimmed });
+    if (res.success) {
+      await loadComments();
+      return true;
+    }
+    toast.error(res.error?.message || '修改失败');
+    return false;
+  }, [reportId, loadComments]);
 
   const openCommentInput = (sectionIndex: number, parentId?: string) => {
     const isSameTarget = replyTo?.sectionIndex === sectionIndex && replyTo?.parentId === parentId;
@@ -512,7 +528,8 @@ export default function ReportDetailPage() {
                               comment={comment}
                               isMine={comment.authorUserId === currentUserId}
                               onDelete={() => handleDeleteComment(comment.id)}
-                                onReply={() => openCommentInput(idx, comment.id)}
+                              onReply={() => openCommentInput(idx, comment.id)}
+                              onEdit={(newContent) => handleUpdateComment(comment.id, newContent)}
                             />
                             {replies.map((reply) => (
                               <div key={reply.id} className="ml-4 mt-1">
@@ -520,7 +537,8 @@ export default function ReportDetailPage() {
                                   comment={reply}
                                   isMine={reply.authorUserId === currentUserId}
                                   onDelete={() => handleDeleteComment(reply.id)}
-                                    onReply={() => openCommentInput(idx, comment.id)}
+                                  onReply={() => openCommentInput(idx, comment.id)}
+                                  onEdit={(newContent) => handleUpdateComment(reply.id, newContent)}
                                   isReply
                                 />
                               </div>
@@ -689,14 +707,40 @@ function CommentItem({
   isMine,
   onDelete,
   onReply,
+  onEdit,
   isReply,
 }: {
   comment: ReportComment;
   isMine: boolean;
   onDelete: () => void;
   onReply: () => void;
+  onEdit: (newContent: string) => Promise<boolean>;
   isReply?: boolean;
 }) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(comment.content);
+  const [saving, setSaving] = useState(false);
+
+  const startEdit = () => {
+    setDraft(comment.content);
+    setEditing(true);
+  };
+
+  const cancelEdit = () => {
+    setEditing(false);
+    setDraft(comment.content);
+  };
+
+  const saveEdit = async () => {
+    if (saving) return;
+    setSaving(true);
+    const ok = await onEdit(draft);
+    setSaving(false);
+    if (ok) setEditing(false);
+  };
+
+  const isEdited = !!comment.updatedAt && comment.updatedAt !== comment.createdAt;
+
   return (
     <div className="group flex items-start gap-1.5">
       {isReply && <CornerDownRight size={10} style={{ color: 'var(--text-muted)', marginTop: 2 }} />}
@@ -717,19 +761,77 @@ function CommentItem({
           <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
             {new Date(comment.createdAt).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })}
           </span>
+          {isEdited && (
+            <span
+              className="text-[10px]"
+              style={{ color: 'var(--text-muted)' }}
+              title={`编辑于 ${new Date(comment.updatedAt!).toLocaleString('zh-CN')}`}
+            >
+              · 已编辑
+            </span>
+          )}
         </div>
-        <div className="text-[12px] leading-relaxed mt-1 whitespace-pre-wrap break-words" style={{ color: 'var(--text-secondary)' }}>{comment.content}</div>
-      </div>
-      <div className="opacity-0 group-hover:opacity-100 flex items-center gap-0.5 transition-opacity">
-        <button className="p-0.5 rounded hover:bg-[var(--bg-tertiary)]" onClick={onReply} title="回复">
-          <CornerDownRight size={10} style={{ color: 'var(--text-muted)' }} />
-        </button>
-        {isMine && (
-          <button className="p-0.5 rounded hover:bg-[var(--bg-tertiary)]" onClick={onDelete} title="删除">
-            <Trash2 size={10} style={{ color: 'rgba(239, 68, 68, 0.7)' }} />
-          </button>
+        {editing ? (
+          <div className="mt-1.5">
+            <textarea
+              className="w-full text-[12px] px-2.5 py-1.5 rounded-md resize-none"
+              style={{
+                background: 'var(--bg-primary)',
+                color: 'var(--text-primary)',
+                border: '1px solid var(--border-primary)',
+                minHeight: 60,
+              }}
+              value={draft}
+              onChange={(e) => setDraft(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+                  e.preventDefault();
+                  void saveEdit();
+                } else if (e.key === 'Escape') {
+                  e.preventDefault();
+                  cancelEdit();
+                }
+              }}
+              autoFocus
+              disabled={saving}
+            />
+            <div className="mt-1.5 flex items-center justify-end gap-1.5">
+              <Button variant="ghost" size="sm" onClick={cancelEdit} disabled={saving}>
+                取消
+              </Button>
+              <Button
+                variant="primary"
+                size="sm"
+                onClick={saveEdit}
+                disabled={saving || !draft.trim() || draft.trim() === comment.content}
+              >
+                {saving ? '保存中…' : '保存'}
+              </Button>
+            </div>
+          </div>
+        ) : (
+          <div className="text-[12px] leading-relaxed mt-1 whitespace-pre-wrap break-words" style={{ color: 'var(--text-secondary)' }}>
+            {comment.content}
+          </div>
         )}
       </div>
+      {!editing && (
+        <div className="opacity-0 group-hover:opacity-100 flex items-center gap-0.5 transition-opacity">
+          <button className="p-0.5 rounded hover:bg-[var(--bg-tertiary)]" onClick={onReply} title="回复">
+            <CornerDownRight size={10} style={{ color: 'var(--text-muted)' }} />
+          </button>
+          {isMine && (
+            <>
+              <button className="p-0.5 rounded hover:bg-[var(--bg-tertiary)]" onClick={startEdit} title="编辑">
+                <Pencil size={10} style={{ color: 'var(--text-muted)' }} />
+              </button>
+              <button className="p-0.5 rounded hover:bg-[var(--bg-tertiary)]" onClick={onDelete} title="删除">
+                <Trash2 size={10} style={{ color: 'rgba(239, 68, 68, 0.7)' }} />
+              </button>
+            </>
+          )}
+        </div>
+      )}
     </div>
   );
 }

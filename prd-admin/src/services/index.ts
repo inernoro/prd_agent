@@ -595,6 +595,7 @@ import type {
   GetCollectedActivityContract,
   ListCommentsContract,
   CreateCommentContract,
+  UpdateCommentContract,
   DeleteCommentContract,
   ListReportLikesContract,
   LikeReportContract,
@@ -680,6 +681,7 @@ import {
   getCollectedActivityReal,
   listCommentsReal,
   createCommentReal,
+  updateCommentReal,
   deleteCommentReal,
   listReportLikesReal,
   likeReportReal,
@@ -1109,6 +1111,7 @@ export const getCollectedActivity: GetCollectedActivityContract = withAuth(getCo
 // Report Agent Phase 3: Comments + Plan Comparison + Team Summary
 export const listComments: ListCommentsContract = withAuth(listCommentsReal);
 export const createComment: CreateCommentContract = withAuth(createCommentReal);
+export const updateComment: UpdateCommentContract = withAuth(updateCommentReal);
 export const deleteComment: DeleteCommentContract = withAuth(deleteCommentReal);
 export const listReportLikes: ListReportLikesContract = withAuth(listReportLikesReal);
 export const likeReport: LikeReportContract = withAuth(likeReportReal);

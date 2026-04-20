@@ -611,6 +611,12 @@ export type CreateCommentContract = (input: {
   parentCommentId?: string;
 }) => Promise<ApiResponse<{ comment: ReportComment }>>;
 
+export type UpdateCommentContract = (input: {
+  reportId: string;
+  commentId: string;
+  content: string;
+}) => Promise<ApiResponse<{ comment: ReportComment }>>;
+
 export type DeleteCommentContract = (input: {
   reportId: string;
   commentId: string;

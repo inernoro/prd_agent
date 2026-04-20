@@ -45,6 +45,7 @@ import type {
   GetCollectedActivityContract,
   ListCommentsContract,
   CreateCommentContract,
+  UpdateCommentContract,
   DeleteCommentContract,
   ListReportLikesContract,
   LikeReportContract,
@@ -605,6 +606,13 @@ export const createCommentReal: CreateCommentContract = async (input) => {
   return await apiRequest<{ comment: ReportComment }>(
     api.reportAgent.reports.comments(encodeURIComponent(reportId)),
     { method: 'POST', body }
+  );
+};
+
+export const updateCommentReal: UpdateCommentContract = async (input) => {
+  return await apiRequest<{ comment: ReportComment }>(
+    api.reportAgent.reports.comment(encodeURIComponent(input.reportId), encodeURIComponent(input.commentId)),
+    { method: 'PUT', body: { content: input.content } }
   );
 };
 

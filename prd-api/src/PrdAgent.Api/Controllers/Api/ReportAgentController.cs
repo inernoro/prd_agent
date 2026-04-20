@@ -3006,6 +3006,37 @@ public class ReportAgentController : ControllerBase
     }
 
     /// <summary>
+    /// 编辑评论（仅作者或管理员）
+    /// </summary>
+    [HttpPut("reports/{reportId}/comments/{commentId}")]
+    public async Task<IActionResult> UpdateComment(string reportId, string commentId, [FromBody] UpdateCommentRequest req)
+    {
+        var userId = GetUserId();
+        var comment = await _db.ReportComments.Find(c => c.Id == commentId && c.ReportId == reportId).FirstOrDefaultAsync();
+        if (comment == null)
+            return NotFound(ApiResponse<object>.Fail("NOT_FOUND", "评论不存在"));
+
+        if (comment.AuthorUserId != userId && !HasPermission(AdminPermissionCatalog.ReportAgentViewAll))
+            return StatusCode(403, ApiResponse<object>.Fail("PERMISSION_DENIED", "只能编辑自己的评论"));
+
+        if (string.IsNullOrWhiteSpace(req.Content))
+            return BadRequest(ApiResponse<object>.Fail("INVALID_FORMAT", "评论内容不能为空"));
+
+        var trimmed = req.Content.Trim();
+        if (trimmed == comment.Content)
+            return Ok(ApiResponse<object>.Ok(new { comment }));
+
+        var update = Builders<ReportComment>.Update
+            .Set(c => c.Content, trimmed)
+            .Set(c => c.UpdatedAt, DateTime.UtcNow);
+        await _db.ReportComments.UpdateOneAsync(c => c.Id == commentId, update);
+
+        comment.Content = trimmed;
+        comment.UpdatedAt = DateTime.UtcNow;
+        return Ok(ApiResponse<object>.Ok(new { comment }));
+    }
+
+    /// <summary>
     /// 删除评论（仅作者或管理员）
     /// </summary>
     [HttpDelete("reports/{reportId}/comments/{commentId}")]
@@ -4345,6 +4376,11 @@ public class CreateCommentRequest
     public int SectionIndex { get; set; }
     public string Content { get; set; } = string.Empty;
     public string? ParentCommentId { get; set; }
+}
+
+public class UpdateCommentRequest
+{
+    public string Content { get; set; } = string.Empty;
 }
 
 public class MarkVacationRequest
