@@ -66,7 +66,22 @@ export const MarketplaceCard: React.FC<MarketplaceCardProps> = ({
   };
 
   return (
-    <GlassCard className="p-0 overflow-hidden">
+    <GlassCard
+      className="p-0 overflow-hidden marketplace-card-float"
+      style={{
+        // 阴影层次：外阴影让卡片浮起，顶部 1px 高光增加"厚度"
+        boxShadow:
+          '0 10px 28px -14px rgba(0, 0, 0, 0.55), 0 2px 6px rgba(0, 0, 0, 0.18), inset 0 1px 0 rgba(255, 255, 255, 0.04)',
+        transition: 'transform 220ms cubic-bezier(0.4, 0, 0.2, 1), box-shadow 220ms cubic-bezier(0.4, 0, 0.2, 1)',
+      }}
+    >
+      {/* hover 放大 + 加深阴影：纯 CSS，零 re-render */}
+      <style>{`
+        .marketplace-card-float:hover {
+          transform: translateY(-2px);
+          box-shadow: 0 18px 40px -16px rgba(0, 0, 0, 0.65), 0 4px 10px rgba(0, 0, 0, 0.22), inset 0 1px 0 rgba(255, 255, 255, 0.06);
+        }
+      `}</style>
       <div className="flex flex-col h-full">
         {/* ========== 标题栏：通用结构 ========== */}
         <div className="p-2 pb-1 flex-shrink-0">

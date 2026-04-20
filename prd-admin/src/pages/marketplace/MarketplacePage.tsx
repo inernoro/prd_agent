@@ -165,7 +165,7 @@ export const MarketplacePage: React.FC = () => {
 
   return (
     <div
-      className="relative min-h-screen"
+      className="relative min-h-screen overflow-hidden"
       style={{
         // 未上传海报 → 保持原生 var(--bg-primary)；上传了 → 铺用户的图
         background: marketplaceBgUrl
@@ -173,6 +173,76 @@ export const MarketplacePage: React.FC = () => {
           : 'var(--bg-primary)',
       }}
     >
+      {/* 质感装饰层：中性色四角柔光 + 点阵纹理 + 右下角品牌 emoji。
+          透明度全部 ≤ 0.05，合起来有质感但不盖用户上传的海报图。 */}
+      {!marketplaceBgUrl && (
+        <>
+          {/* 点阵纹理：铺满整屏，几乎看不见但眼睛能感知 */}
+          <div
+            className="absolute inset-0 pointer-events-none"
+            aria-hidden
+            style={{
+              backgroundImage:
+                'radial-gradient(rgba(255, 255, 255, 0.035) 1px, transparent 1px)',
+              backgroundSize: '24px 24px',
+              backgroundPosition: '0 0',
+            }}
+          />
+          {/* 四角柔光：中性白（不染蓝），超低透明度 */}
+          <div
+            className="absolute pointer-events-none"
+            aria-hidden
+            style={{
+              top: '-20%', left: '-10%', width: '55vw', height: '55vh',
+              background: 'radial-gradient(circle, rgba(255, 255, 255, 0.05) 0%, transparent 60%)',
+              filter: 'blur(40px)',
+            }}
+          />
+          <div
+            className="absolute pointer-events-none"
+            aria-hidden
+            style={{
+              top: '-15%', right: '-15%', width: '50vw', height: '50vh',
+              background: 'radial-gradient(circle, rgba(255, 255, 255, 0.04) 0%, transparent 60%)',
+              filter: 'blur(40px)',
+            }}
+          />
+          <div
+            className="absolute pointer-events-none"
+            aria-hidden
+            style={{
+              bottom: '-25%', left: '-5%', width: '60vw', height: '55vh',
+              background: 'radial-gradient(circle, rgba(255, 255, 255, 0.035) 0%, transparent 60%)',
+              filter: 'blur(40px)',
+            }}
+          />
+          <div
+            className="absolute pointer-events-none"
+            aria-hidden
+            style={{
+              bottom: '-20%', right: '-10%', width: '55vw', height: '60vh',
+              background: 'radial-gradient(circle, rgba(255, 255, 255, 0.04) 0%, transparent 60%)',
+              filter: 'blur(40px)',
+            }}
+          />
+          {/* 右下角品牌锚点：超大号 emoji 水印，满足视觉"有东西"但不分心 */}
+          <div
+            className="absolute pointer-events-none select-none"
+            aria-hidden
+            style={{
+              bottom: '-40px',
+              right: '-30px',
+              fontSize: '320px',
+              lineHeight: 1,
+              opacity: 0.03,
+              filter: 'grayscale(1)',
+            }}
+          >
+            🐟
+          </div>
+        </>
+      )}
+
       {/* 顶部导航栏：恢复原生半透明 */}
       <div
         className="sticky top-0 z-10 border-b backdrop-blur-xl relative"
