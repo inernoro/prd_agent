@@ -33,6 +33,11 @@ export function PrReviewPage() {
   // 单次触发标志：首次成功/重复跳过后就认这个 prUrl 处理完了，
   // 避免 store.items 或 authStatus 变化导致的重复提交。
   const autoStartedForUrlRef = useRef<string | null>(null);
+  // 列表是否已完成首次加载。没有这个 gate，深链 effect 会在
+  // loadItems 返回之前就用空列表做去重，命中"未在列表里"分支 →
+  // 重复调 addItem → 服务端以 duplicate 拒掉 → 用户看到"自动发起
+  // 失败"，而不是"PR 已在审查列表中"。
+  const [itemsLoadedOnce, setItemsLoadedOnce] = useState(false);
 
   // 初始加载
   useEffect(() => {
@@ -41,19 +46,26 @@ export function PrReviewPage() {
 
   // 连接态就绪后拉一次列表
   useEffect(() => {
-    if (authStatus?.connected) {
-      void loadItems(1);
-    }
+    if (!authStatus?.connected) return;
+    let cancelled = false;
+    loadItems(1).finally(() => {
+      if (!cancelled) setItemsLoadedOnce(true);
+    });
+    return () => {
+      cancelled = true;
+    };
   }, [authStatus?.connected, loadItems]);
 
   // 深链自动发起审查：仅当 ①已连接 GitHub ②URL 里带 prUrl
-  // ③此 prUrl 未被本次访问处理过 ④列表里还没有同一 PR。
-  // 成功/重复后从 URL 里清掉 prUrl/autoStart，留 returnUrl 体验干净。
+  // ③首次列表加载已完成（否则 items 是空数组，去重永远 false）
+  // ④此 prUrl 未被本次访问处理过。成功/重复后从 URL 里清掉
+  // prUrl/autoStart，留 returnUrl 体验干净。
   useEffect(() => {
     const rawPrUrl = searchParams.get('prUrl');
     const autoStart = searchParams.get('autoStart');
     if (!rawPrUrl) return;
     if (!authStatus?.connected) return;
+    if (!itemsLoadedOnce) return;
     if (autoStartedForUrlRef.current === rawPrUrl) return;
 
     const prUrl = rawPrUrl.trim();
@@ -98,7 +110,7 @@ export function PrReviewPage() {
       }
       cleanupParams();
     });
-  }, [authStatus?.connected, searchParams, setSearchParams, items, addItem]);
+  }, [authStatus?.connected, itemsLoadedOnce, searchParams, setSearchParams, items, addItem]);
 
   return (
     <div className="min-h-full bg-[#0d0b16] text-white">

@@ -43,6 +43,7 @@ import {
 } from '../services/github-webhook-dispatcher.js';
 import {
   DEFAULT_TEMPLATE_BODY,
+  buildDashboardUrl,
   buildTemplateVariables,
   renderTemplate,
 } from '../services/comment-template.js';
@@ -644,9 +645,7 @@ async function postOrUpdatePrComment(
   // settings-panel preview and the live render stay in lock-step.
   const host = config.previewDomain || config.rootDomains?.[0];
   const previewUrl = host ? `https://${branchId}.${host}` : '';
-  const dashboardUrl =
-    (config.publicBaseUrl || '').replace(/\/$/, '') +
-    '/branch-panel?id=' + encodeURIComponent(branchId);
+  const dashboardUrl = buildDashboardUrl(config.publicBaseUrl, branchId);
   const settings = stateService.getCommentTemplate();
   const templateBody = settings?.body && settings.body.length > 0 ? settings.body : DEFAULT_TEMPLATE_BODY;
   const vars = buildTemplateVariables({

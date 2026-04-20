@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   DEFAULT_TEMPLATE_BODY,
   VARIABLE_DEFS,
+  buildDashboardUrl,
   buildPrReviewDeeplink,
   buildTemplateVariables,
   renderTemplate,
@@ -46,6 +47,27 @@ describe('renderTemplate', () => {
   it('treats undefined values as "do not substitute"', () => {
     expect(renderTemplate('{{prUrl}}', {} as unknown as Parameters<typeof renderTemplate>[1]))
       .toBe('{{prUrl}}');
+  });
+});
+
+describe('buildDashboardUrl', () => {
+  it('returns empty string when publicBaseUrl is missing', () => {
+    // Regression test for the "preview vs live webhook disagree" bug
+    // where the webhook would emit a dangling relative path
+    // `/branch-panel?id=...` while the preview returned '' for the
+    // same input. Both paths now share this helper.
+    expect(buildDashboardUrl(undefined, 'feat')).toBe('');
+    expect(buildDashboardUrl('', 'feat')).toBe('');
+    expect(buildDashboardUrl(null, 'feat')).toBe('');
+  });
+
+  it('returns empty string when branchId is missing', () => {
+    expect(buildDashboardUrl('https://cds.example.com', '')).toBe('');
+  });
+
+  it('drops trailing slash and URL-encodes branchId', () => {
+    expect(buildDashboardUrl('https://cds.example.com/', 'feat/a'))
+      .toBe('https://cds.example.com/branch-panel?id=feat%2Fa');
   });
 });
 

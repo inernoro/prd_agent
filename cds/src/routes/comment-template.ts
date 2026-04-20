@@ -28,8 +28,9 @@ import type { CdsConfig, CommentTemplateSettings } from '../types.js';
 import {
   DEFAULT_TEMPLATE_BODY,
   VARIABLE_DEFS,
-  renderTemplate,
+  buildDashboardUrl,
   buildTemplateVariables,
+  renderTemplate,
 } from '../services/comment-template.js';
 
 export interface CommentTemplateRouterDeps {
@@ -70,12 +71,6 @@ export function createCommentTemplateRouter(deps: CommentTemplateRouterDeps): Ro
   function previewUrlFor(branchId: string): string {
     const host = config.previewDomain || config.rootDomains?.[0];
     return host ? `https://${branchId}.${host}` : '';
-  }
-
-  function dashboardUrlFor(branchId: string): string {
-    const base = (config.publicBaseUrl || '').replace(/\/$/, '');
-    if (!base) return '';
-    return `${base}/branch-panel?id=${encodeURIComponent(branchId)}`;
   }
 
   // GET /api/comment-template
@@ -146,7 +141,7 @@ export function createCommentTemplateRouter(deps: CommentTemplateRouterDeps): Ro
       branch: PREVIEW_SAMPLE.branch,
       commitSha: PREVIEW_SAMPLE.commitSha,
       previewUrl: previewUrlFor(effectiveBranchId),
-      dashboardUrl: dashboardUrlFor(effectiveBranchId),
+      dashboardUrl: buildDashboardUrl(config.publicBaseUrl, effectiveBranchId),
       repoFullName: PREVIEW_SAMPLE.repoFullName,
       prNumber: PREVIEW_SAMPLE.prNumber,
       prUrl: PREVIEW_SAMPLE.prUrl,

@@ -122,6 +122,26 @@ export function renderTemplate(
 }
 
 /**
+ * Assemble the CDS branch-panel dashboard URL.
+ *
+ * Shared by both the live webhook (routes/github-webhook.ts) and the
+ * settings-panel preview so the rendered `{{dashboardUrl}}` matches
+ * what GitHub actually sees. Returns '' when publicBaseUrl is unset
+ * (instead of a dangling relative path like `/branch-panel?id=...`),
+ * because GitHub comments don't resolve relative URLs to anything
+ * meaningful — an empty string at least lets the surrounding Markdown
+ * render without a broken link.
+ */
+export function buildDashboardUrl(
+  publicBaseUrl: string | undefined | null,
+  branchId: string,
+): string {
+  if (!publicBaseUrl || !branchId) return '';
+  const trimmed = publicBaseUrl.replace(/\/$/, '');
+  return `${trimmed}/branch-panel?id=${encodeURIComponent(branchId)}`;
+}
+
+/**
  * Assemble the PR-review Agent deeplink from the current branch's
  * preview URL.
  *
