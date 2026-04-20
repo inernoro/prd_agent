@@ -1315,10 +1315,10 @@
     // key + label + example without word-break tricks.
     var varCards = _ct_state.variables.map(function (v) {
       return (
-        '<button type="button" class="ct-var-card" onclick="_ctInsertVar(\'' + escapeHtml(v.key) + '\')" title="点击插入到光标位置">' +
-          '<div class="ct-var-key">{{' + escapeHtml(v.key) + '}}</div>' +
-          '<div class="ct-var-label">' + escapeHtml(v.label) + '</div>' +
-          '<div class="ct-var-example">例: ' + escapeHtml(v.example) + '</div>' +
+        '<button type="button" class="ct-var-card" onclick="_ctInsertVar(\'' + escapeHtml(v.key) + '\')" title="点击插入 {{' + escapeHtml(v.key) + '}} 到光标位置">' +
+          '<span class="ct-var-key">{{' + escapeHtml(v.key) + '}}</span>' +
+          '<span class="ct-var-label">' + escapeHtml(v.label) + '</span>' +
+          '<span class="ct-var-example">例: ' + escapeHtml(v.example) + '</span>' +
         '</button>'
       );
     }).join('');
@@ -1348,16 +1348,29 @@
         '.ct-vars-body{padding:4px 16px 16px;border-top:1px solid var(--border-light)}' +
         '.ct-vars-intro{font-size:11.5px;color:var(--text-muted);line-height:1.55;margin:12px 0 14px;padding:10px 12px;background:var(--bg-elevated);border-radius:6px}' +
 
-        /* Multi-column grid — each card has enough width to show
-           long keys + full label + example without wrapping into
-           3-char columns. Auto-fill lets it reflow to 1/2/3 cols. */
-        '.ct-var-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:10px}' +
-        '.ct-var-card{display:block;text-align:left;background:var(--bg-elevated);border:1px solid var(--card-border);border-radius:8px;padding:11px 13px;cursor:pointer;font-family:inherit;transition:background 120ms ease,border-color 120ms ease,transform 80ms ease}' +
+        /* One variable per row — multi-column grid in v3 let long
+           URL examples (prUrl / prReviewUrl) bleed across card borders
+           because their mono text ignored word-break under the narrow
+           260px column width. Going linear gives each row the full
+           panel width, so the three slots (key / label / example)
+           always have room and long examples wrap inside their own
+           cell without touching neighbours. */
+        '.ct-var-grid{display:flex;flex-direction:column;gap:6px}' +
+        '.ct-var-card{display:flex;align-items:center;gap:14px;text-align:left;background:var(--bg-elevated);border:1px solid var(--card-border);border-radius:8px;padding:10px 14px;cursor:pointer;font-family:inherit;transition:background 120ms ease,border-color 120ms ease,transform 80ms ease;width:100%}' +
         '.ct-var-card:hover{background:var(--bg-hover);border-color:var(--accent-border,rgba(16,185,129,0.3))}' +
         '.ct-var-card:active{transform:translateY(1px)}' +
-        '.ct-var-key{display:inline-block;font-family:var(--font-mono,monospace);font-size:12px;color:var(--accent,#10b981);background:rgba(16,185,129,0.1);border:1px solid rgba(16,185,129,0.3);padding:2px 8px;border-radius:5px;margin-bottom:7px;word-break:break-all}' +
-        '.ct-var-label{font-size:12.5px;color:var(--text-primary);line-height:1.4;font-weight:500}' +
-        '.ct-var-example{font-size:11px;color:var(--text-muted);margin-top:4px;font-family:var(--font-mono,monospace);line-height:1.45;word-break:break-all;opacity:0.85}' +
+        /* Fixed-width key badge so every row starts at the same
+           column. 170px fits {{prReviewUrl}} (16 chars) without
+           wrapping while keeping shorter keys aligned. */
+        '.ct-var-key{flex:0 0 170px;font-family:var(--font-mono,monospace);font-size:12px;color:var(--accent,#10b981);background:rgba(16,185,129,0.1);border:1px solid rgba(16,185,129,0.3);padding:3px 8px;border-radius:5px;text-align:center;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}' +
+        /* Label gets its own column, wraps if needed. */
+        '.ct-var-label{flex:0 0 auto;min-width:140px;max-width:280px;font-size:12.5px;color:var(--text-primary);line-height:1.4;font-weight:500}' +
+        /* Example takes remaining width; word-break handles long URLs
+           so they wrap inside this cell instead of pushing out. */
+        '.ct-var-example{flex:1 1 auto;min-width:0;font-size:11px;color:var(--text-muted);font-family:var(--font-mono,monospace);line-height:1.45;word-break:break-all;opacity:0.85}' +
+        /* Narrow screens: stack key → label → example vertically
+           so the three slots never collide. */
+        '@media(max-width:720px){.ct-var-card{flex-direction:column;align-items:flex-start;gap:5px}.ct-var-key{flex:0 0 auto}.ct-var-label{max-width:100%}}' +
 
         '.ct-preview{background:var(--bg-card);border:1px solid var(--card-border);border-radius:8px;padding:14px 16px;color:var(--text-primary);font-size:13px;line-height:1.7;min-height:120px;white-space:pre-wrap;word-break:break-word}' +
         '.ct-preview code{background:var(--bg-elevated);padding:1px 5px;border-radius:3px;font-size:11.5px}' +
