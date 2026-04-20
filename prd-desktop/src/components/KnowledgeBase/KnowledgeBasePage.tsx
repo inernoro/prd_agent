@@ -64,6 +64,40 @@ export default function KnowledgeBasePage() {
   }, []);
 
   // 更新文档类型
+  const handleRenameDocument = useCallback(async (documentId: string, currentTitle: string) => {
+    const next = window.prompt('重命名文档', currentTitle || '');
+    if (next == null) return;
+    const trimmed = next.trim();
+    if (!trimmed || trimmed === currentTitle) return;
+    if (trimmed.length > 200) {
+      setError('文档标题最长 200 字符');
+      return;
+    }
+    try {
+      setBusy(true);
+      setError('');
+      const resp = await invoke<ApiResponse<Document>>('update_document_title', {
+        documentId,
+        title: trimmed,
+        groupId: activeGroupId || null,
+        sessionId: sessionId || null,
+      });
+      if (!resp.success || !resp.data) {
+        setError(resp.error?.message || '重命名失败');
+        return;
+      }
+      const updatedTitle = resp.data.title || trimmed;
+      useSessionStore.setState((s) => ({
+        document: s.document && s.document.id === documentId ? { ...s.document, title: updatedTitle } : s.document,
+        documents: s.documents.map(d => d.id === documentId ? { ...d, title: updatedTitle } : d),
+      }));
+    } catch (err) {
+      setError('重命名失败：' + String(err));
+    } finally {
+      setBusy(false);
+    }
+  }, [activeGroupId, sessionId]);
+
   const handleChangeDocumentType = useCallback(async (documentId: string, newType: DocumentType) => {
     if (!sessionId) return;
     try {
@@ -332,10 +366,32 @@ export default function KnowledgeBasePage() {
                 <div
                   key={doc.id}
                   className="flex items-center justify-between p-3 rounded-lg bg-black/5 dark:bg-white/5"
+                  onContextMenu={(e) => {
+                    e.preventDefault();
+                    void handleRenameDocument(doc.id, doc.title || '');
+                  }}
                 >
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2 flex-wrap">
-                      <span className="text-sm font-medium truncate">{doc.title || `文档 ${idx + 1}`}</span>
+                      <span
+                        className="text-sm font-medium truncate cursor-text"
+                        title="右键或点击铅笔重命名"
+                        onDoubleClick={() => { void handleRenameDocument(doc.id, doc.title || ''); }}
+                      >
+                        {doc.title || `文档 ${idx + 1}`}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => { void handleRenameDocument(doc.id, doc.title || ''); }}
+                        disabled={busy}
+                        className="text-[10px] px-1.5 py-0.5 rounded text-text-secondary hover:text-primary-500 hover:bg-primary-500/10 transition-colors disabled:opacity-50"
+                        title="重命名"
+                        aria-label="重命名"
+                      >
+                        <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                        </svg>
+                      </button>
                       {idx === 0 && (
                         <span className="text-[10px] px-1.5 py-0.5 rounded bg-blue-500/15 text-blue-500 whitespace-nowrap">
                           主文档

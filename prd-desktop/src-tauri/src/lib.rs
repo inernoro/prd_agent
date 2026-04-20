@@ -206,6 +206,7 @@ pub fn run() {
             commands::document::upload_file_to_session,
             commands::document::remove_document_from_session,
             commands::document::update_document_type,
+            commands::document::update_document_title,
             commands::intent::suggest_group_name,
             commands::session::get_session,
             commands::session::get_message_history,

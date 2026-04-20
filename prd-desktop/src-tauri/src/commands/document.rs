@@ -55,6 +55,16 @@ struct UpdateDocumentTypeRequest {
     document_type: String,
 }
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct UpdateDocumentTitleRequest {
+    title: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    group_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    session_id: Option<String>,
+}
+
 #[command]
 pub async fn add_document_to_session(
     session_id: String,
@@ -143,5 +153,23 @@ pub async fn update_document_type(
             &format!("/sessions/{}/documents/{}/type", session_id, document_id),
             &request,
         )
+        .await
+}
+
+#[command]
+pub async fn update_document_title(
+    document_id: String,
+    title: String,
+    group_id: Option<String>,
+    session_id: Option<String>,
+) -> Result<ApiResponse<DocumentInfo>, String> {
+    let client = ApiClient::new();
+    let request = UpdateDocumentTitleRequest {
+        title,
+        group_id,
+        session_id,
+    };
+    client
+        .patch(&format!("/documents/{}/title", document_id), &request)
         .await
 }
