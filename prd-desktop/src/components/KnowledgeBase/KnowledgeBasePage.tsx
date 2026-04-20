@@ -218,49 +218,14 @@ export default function KnowledgeBasePage() {
     }
   }, [sessionId, refreshDocuments, updateTask]);
 
-  // 移除资料文件
+  // 移除资料文件（走共享 hook 实现，避免与 context-menu 的删除路径分叉）
   const handleRemoveDocument = useCallback(async (documentId: string) => {
-    if (!sessionId) return;
     if (documents.length <= 1) {
       setError('至少保留一个文档');
       return;
     }
-
-    try {
-      setBusy(true);
-      setError('');
-
-      const resp = await invoke<ApiResponse<{ sessionId: string; documentIds: string[]; documentMetas: Array<{ documentId: string; documentType: string }> }>>(
-        'remove_document_from_session',
-        { sessionId, documentId }
-      );
-
-      if (!resp.success) {
-        setError(resp.error?.message || '移除失败');
-        return;
-      }
-
-      // 更新文档列表
-      const newDocIds: string[] = resp.data?.documentIds ?? [];
-      const metaMap = new Map((resp.data?.documentMetas ?? []).map(m => [m.documentId, m.documentType as DocumentType]));
-      const newDocs: Document[] = [];
-      for (const did of newDocIds) {
-        try {
-          const r = await invoke<ApiResponse<Document>>('get_document', { documentId: did });
-          if (r.success && r.data) {
-            r.data.documentType = metaMap.get(did) ?? 'reference';
-            newDocs.push(r.data);
-          }
-        } catch { /* skip */ }
-      }
-      setDocuments(newDocs);
-    } catch (err) {
-      setError('移除失败');
-      console.error(err);
-    } finally {
-      setBusy(false);
-    }
-  }, [sessionId, documents.length, setDocuments]);
+    await docActions.removeDocument(documentId);
+  }, [documents.length, docActions]);
 
   if (!activeGroupId || !group) {
     return (
