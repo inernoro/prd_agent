@@ -153,6 +153,17 @@ describe('comment-template router', () => {
       expect(res.body.body).toBe('');
     });
 
+    it('GET after saving empty body reports isDefault=true (reset-to-default contract)', async () => {
+      // Regression: the PUT endpoint documents empty body as
+      // "reset to default". GET must surface that via isDefault:true
+      // so the UI doesn't show a "最近保存 <timestamp>" label next to
+      // a rendered body that's actually DEFAULT_TEMPLATE_BODY.
+      await request(app, 'PUT', '/api/comment-template', { body: '' });
+      const getRes = await request(app, 'GET', '/api/comment-template');
+      expect(getRes.body.body).toBe(DEFAULT_TEMPLATE_BODY);
+      expect(getRes.body.isDefault).toBe(true);
+    });
+
     it('rejects non-string body', async () => {
       const res = await request(app, 'PUT', '/api/comment-template', { body: 42 });
       expect(res.status).toBe(400);

@@ -29,6 +29,7 @@ import {
   DEFAULT_TEMPLATE_BODY,
   VARIABLE_DEFS,
   buildDashboardUrl,
+  buildPreviewUrl,
   buildTemplateVariables,
   renderTemplate,
 } from '../services/comment-template.js';
@@ -64,13 +65,12 @@ export function createCommentTemplateRouter(deps: CommentTemplateRouterDeps): Ro
   const { stateService, config } = deps;
 
   /**
-   * Compute the `{{previewUrl}}` the webhook would use for a given
-   * branch id. Mirrors the inline logic in github-webhook.ts so the
-   * preview mode and the real path stay consistent.
+   * Resolve the configured preview host the same way the webhook
+   * does. Extracted once so the two callers (preview branch + live
+   * webhook) pass identical inputs into `buildPreviewUrl`.
    */
-  function previewUrlFor(branchId: string): string {
-    const host = config.previewDomain || config.rootDomains?.[0];
-    return host ? `https://${branchId}.${host}` : '';
+  function previewHost(): string | undefined {
+    return config.previewDomain || config.rootDomains?.[0];
   }
 
   // GET /api/comment-template
@@ -81,11 +81,19 @@ export function createCommentTemplateRouter(deps: CommentTemplateRouterDeps): Ro
   // the list on the frontend.
   router.get('/comment-template', (_req, res) => {
     const current = stateService.getCommentTemplate();
+    // isDefault reflects what the user is ACTUALLY seeing in the
+    // rendered GitHub comment, not whether a state record exists.
+    // After PUT with empty body (documented as "reset to default"),
+    // `current` is non-null but `current.body` is '', so we fall
+    // through to DEFAULT_TEMPLATE_BODY — in that case `isDefault`
+    // must still be true, otherwise the UI would show a "最近保存"
+    // timestamp next to a body that's actually the built-in default.
+    const effectivelyDefault = !current || !current.body;
     res.json({
       ok: true,
       body: current?.body || DEFAULT_TEMPLATE_BODY,
       updatedAt: current?.updatedAt || null,
-      isDefault: !current,
+      isDefault: effectivelyDefault,
       defaultBody: DEFAULT_TEMPLATE_BODY,
       variables: VARIABLE_DEFS,
     });
@@ -140,7 +148,7 @@ export function createCommentTemplateRouter(deps: CommentTemplateRouterDeps): Ro
     const vars = buildTemplateVariables({
       branch: PREVIEW_SAMPLE.branch,
       commitSha: PREVIEW_SAMPLE.commitSha,
-      previewUrl: previewUrlFor(effectiveBranchId),
+      previewUrl: buildPreviewUrl(previewHost(), effectiveBranchId),
       dashboardUrl: buildDashboardUrl(config.publicBaseUrl, effectiveBranchId),
       repoFullName: PREVIEW_SAMPLE.repoFullName,
       prNumber: PREVIEW_SAMPLE.prNumber,

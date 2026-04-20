@@ -142,6 +142,27 @@ export function buildDashboardUrl(
 }
 
 /**
+ * Assemble the branch's preview URL.
+ *
+ * Shared between webhook (routes/github-webhook.ts) and the settings
+ * preview handler so `{{previewUrl}}` renders identically in both.
+ * Returns '' when no host is configured — the default template still
+ * produces a harmless empty link rather than `https://${branchId}.`.
+ *
+ * The caller is responsible for picking `config.previewDomain ||
+ * config.rootDomains?.[0]` as the `host` argument; keeping that
+ * decision at the call site avoids importing the full CdsConfig type
+ * into this service.
+ */
+export function buildPreviewUrl(
+  host: string | undefined | null,
+  branchId: string,
+): string {
+  if (!host || !branchId) return '';
+  return `https://${branchId}.${host}`;
+}
+
+/**
  * Assemble the PR-review Agent deeplink from the current branch's
  * preview URL.
  *
