@@ -64,6 +64,19 @@ public class DocumentService : IDocumentService
         return document;
     }
 
+    public async Task<ParsedPrd?> UpdateTitleAsync(string documentId, string title)
+    {
+        var trimmed = (title ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(trimmed)) return null;
+
+        var doc = await GetByIdAsync(documentId);
+        if (doc == null) return null;
+
+        doc.Title = trimmed;
+        await SaveAsync(doc);
+        return doc;
+    }
+
     public int EstimateTokens(string content)
     {
         return _parser.EstimateTokens(content);

@@ -278,6 +278,112 @@ public class DocumentsController : ControllerBase
 
         return Ok(ApiResponse<DocumentContentInfo>.Ok(response));
     }
+
+    /// <summary>
+    /// 重命名 PRD 文档（仅更新 Title，保留 content-hash 作为 Id）。
+    /// 调用方需提供 groupId（群组成员）或 sessionId（会话拥有者）以完成授权。
+    /// </summary>
+    [HttpPatch("{documentId}/title")]
+    [ProducesResponseType(typeof(ApiResponse<DocumentInfo>), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status403Forbidden)]
+    [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> UpdateDocumentTitle(
+        string documentId,
+        [FromBody] UpdateDocumentTitleRequest request)
+    {
+        var userId = GetUserId(User);
+        if (string.IsNullOrEmpty(userId))
+        {
+            return Unauthorized(ApiResponse<object>.Fail(ErrorCodes.UNAUTHORIZED, "未授权"));
+        }
+
+        var newTitle = (request?.Title ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(newTitle))
+        {
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "文档标题不能为空"));
+        }
+        if (newTitle.Length > 200)
+        {
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "文档标题最长 200 字符"));
+        }
+
+        // 授权：复用 GetDocumentContent 的双通道鉴权
+        if (!string.IsNullOrWhiteSpace(request?.GroupId))
+        {
+            var group = await _groupService.GetByIdAsync(request.GroupId);
+            if (group == null)
+            {
+                return NotFound(ApiResponse<object>.Fail(ErrorCodes.GROUP_NOT_FOUND, "群组不存在"));
+            }
+            if (!await _groupService.IsMemberAsync(request.GroupId, userId))
+            {
+                return StatusCode(StatusCodes.Status403Forbidden,
+                    ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "您不是该群组成员"));
+            }
+            var isGroupPrimary = string.Equals(group.PrdDocumentId, documentId, StringComparison.OrdinalIgnoreCase);
+            if (!isGroupPrimary)
+            {
+                var session = await _sessionService.GetByGroupIdAsync(request.GroupId);
+                var isSessionDoc = session?.GetAllDocumentIds().Contains(documentId, StringComparer.OrdinalIgnoreCase) == true;
+                if (!isSessionDoc)
+                {
+                    return StatusCode(StatusCodes.Status403Forbidden,
+                        ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "该文档未绑定到当前群组"));
+                }
+            }
+        }
+        else if (!string.IsNullOrWhiteSpace(request?.SessionId))
+        {
+            var session = await _sessionService.GetByIdAsync(request.SessionId);
+            if (session == null)
+            {
+                return NotFound(ApiResponse<object>.Fail(ErrorCodes.SESSION_NOT_FOUND, "会话不存在"));
+            }
+            if (!string.Equals(session.OwnerUserId, userId, StringComparison.OrdinalIgnoreCase))
+            {
+                return StatusCode(StatusCodes.Status403Forbidden,
+                    ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "您不是该会话的拥有者"));
+            }
+            if (!session.GetAllDocumentIds().Contains(documentId, StringComparer.OrdinalIgnoreCase))
+            {
+                return StatusCode(StatusCodes.Status403Forbidden,
+                    ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "该文档未绑定到当前会话"));
+            }
+        }
+        else
+        {
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "groupId 或 sessionId 不能同时为空"));
+        }
+
+        var updated = await _documentService.UpdateTitleAsync(documentId, newTitle);
+        if (updated == null)
+        {
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.DOCUMENT_NOT_FOUND, "文档不存在或已过期"));
+        }
+
+        _logger.LogInformation("Document renamed: {DocumentId}", documentId);
+
+        var info = new DocumentInfo
+        {
+            Id = updated.Id,
+            Title = updated.Title,
+            CharCount = updated.CharCount,
+            TokenEstimate = updated.TokenEstimate,
+            Sections = updated.Sections.Select(SectionInfo.FromSection).ToList()
+        };
+        return Ok(ApiResponse<DocumentInfo>.Ok(info));
+    }
+}
+
+/// <summary>
+/// 重命名文档请求
+/// </summary>
+public class UpdateDocumentTitleRequest
+{
+    public string Title { get; set; } = string.Empty;
+    public string? GroupId { get; set; }
+    public string? SessionId { get; set; }
 }
 
 /// <summary>

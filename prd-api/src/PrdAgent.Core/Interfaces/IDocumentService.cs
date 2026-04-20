@@ -15,7 +15,10 @@ public interface IDocumentService
     
     /// <summary>保存文档（元数据持久化，内容缓存）</summary>
     Task<ParsedPrd> SaveAsync(ParsedPrd document);
-    
+
+    /// <summary>重命名文档标题（更新 Mongo 并刷新缓存，返回更新后的文档或 null）</summary>
+    Task<ParsedPrd?> UpdateTitleAsync(string documentId, string title);
+
     /// <summary>估算Token数量</summary>
     int EstimateTokens(string content);
 }

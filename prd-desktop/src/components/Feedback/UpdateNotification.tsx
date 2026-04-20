@@ -1,8 +1,37 @@
+import { useEffect, useState } from 'react';
 import { useUpdateStore } from '../../stores/updateStore';
+
+interface RecentUpdateItem {
+  date: string;
+  type: string;
+  module: string;
+  description: string;
+}
+
+interface RecentUpdatesPayload {
+  generatedAt: string;
+  windowDays: number;
+  items: RecentUpdateItem[];
+}
+
+// type → 中文标签/色调
+const TYPE_META: Record<string, { label: string; className: string }> = {
+  feat: { label: '新增', className: 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30' },
+  fix: { label: '修复', className: 'bg-amber-500/20 text-amber-300 border-amber-500/30' },
+  refactor: { label: '重构', className: 'bg-sky-500/20 text-sky-300 border-sky-500/30' },
+  perf: { label: '优化', className: 'bg-violet-500/20 text-violet-300 border-violet-500/30' },
+  docs: { label: '文档', className: 'bg-slate-500/20 text-slate-300 border-slate-500/30' },
+  chore: { label: '杂项', className: 'bg-slate-500/20 text-slate-300 border-slate-500/30' },
+};
+
+function typeMeta(type: string) {
+  const key = (type || '').trim().toLowerCase();
+  return TYPE_META[key] ?? { label: type || '变更', className: 'bg-white/10 text-white/70 border-white/20' };
+}
 
 /**
  * 右下角浮层通知：静默下载完成后提示用户点击安装更新。
- * 仅在 phase === 'ready' && !isDismissed 时显示。
+ * 仅在 phase === 'ready' && !isDismissed 时显示，同时展示最近 1 个月桌面端更新（至少 3 条）。
  */
 export default function UpdateNotification() {
   const phase = useUpdateStore((s) => s.phase);
@@ -12,13 +41,36 @@ export default function UpdateNotification() {
   const dismiss = useUpdateStore((s) => s.dismiss);
   const updateSource = useUpdateStore((s) => s.updateSource);
 
+  const [recent, setRecent] = useState<RecentUpdatesPayload | null>(null);
+  const [expanded, setExpanded] = useState(false);
+
+  useEffect(() => {
+    if (phase !== 'ready' || isDismissed) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const resp = await fetch('/recent-updates.json', { cache: 'no-cache' });
+        if (!resp.ok) return;
+        const data: RecentUpdatesPayload = await resp.json();
+        if (!cancelled) setRecent(data);
+      } catch {
+        // 无关键失败：没有列表也不影响主流程
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [phase, isDismissed]);
+
   if (phase !== 'ready' || isDismissed) return null;
 
   const isAccelerated = updateSource === 'accelerated';
+  const items = recent?.items ?? [];
+  const previewCount = 3;
+  const shown = expanded ? items : items.slice(0, previewCount);
+  const hasMore = items.length > previewCount;
 
   return (
     <div className="fixed bottom-4 right-4 z-50 animate-slide-in-right">
-      <div className="relative max-w-xs rounded-xl backdrop-blur-xl bg-black/40 dark:bg-white/10 ring-1 ring-white/15 shadow-2xl p-4">
+      <div className="relative rounded-xl backdrop-blur-xl bg-black/40 dark:bg-white/10 ring-1 ring-white/15 shadow-2xl p-4" style={{ width: 360, maxWidth: '92vw' }}>
         {/* 关闭按钮 */}
         <button
           onClick={dismiss}
@@ -62,6 +114,48 @@ export default function UpdateNotification() {
             </p>
           </div>
         </div>
+
+        {/* 最近更新列表（最近 1 个月的 prd-desktop 条目，至少 3 条） */}
+        {items.length > 0 && (
+          <div className="mt-3 pt-3 border-t border-white/10">
+            <div className="flex items-center justify-between mb-2">
+              <div className="text-[11px] font-medium text-white/70">
+                最近更新
+                <span className="ml-1 text-white/40">· 近 {recent?.windowDays ?? 30} 天</span>
+              </div>
+              {hasMore && (
+                <button
+                  type="button"
+                  onClick={() => setExpanded((v) => !v)}
+                  className="text-[11px] text-cyan-300 hover:text-cyan-200 transition-colors"
+                >
+                  {expanded ? '收起' : `查看全部 (${items.length})`}
+                </button>
+              )}
+            </div>
+            <ul
+              className="space-y-1.5 pr-1 overflow-y-auto"
+              style={{ maxHeight: expanded ? 220 : undefined, minHeight: 0 }}
+            >
+              {shown.map((it, i) => {
+                const meta = typeMeta(it.type);
+                return (
+                  <li key={`${it.date}-${i}`} className="flex items-start gap-2">
+                    <span className={`shrink-0 text-[10px] px-1.5 py-0.5 rounded border ${meta.className}`}>
+                      {meta.label}
+                    </span>
+                    <div className="min-w-0 flex-1">
+                      <div className="text-[11px] text-white/80 leading-snug break-words">
+                        {it.description}
+                      </div>
+                      <div className="text-[10px] text-white/40 mt-0.5">{it.date}</div>
+                    </div>
+                  </li>
+                );
+              })}
+            </ul>
+          </div>
+        )}
 
         {/* 安装按钮 */}
         <button
