@@ -406,6 +406,39 @@ const SkillPreviewRenderer: React.FC<{ item: MarketplaceSkill }> = ({ item }) =>
  * 新增类型只需在此处添加配置，无需修改其他文件。
  */
 export const CONFIG_TYPE_REGISTRY: Record<string, ConfigTypeDefinition<any>> = {
+  skill: {
+    key: 'skill',
+    label: '技能',
+    icon: Package,
+    color: {
+      bg: 'rgba(56, 189, 248, 0.14)',
+      text: 'rgba(125, 211, 252, 0.98)',
+      border: '1px solid rgba(56, 189, 248, 0.35)',
+      iconColor: 'rgba(125, 211, 252, 0.95)',
+    },
+    api: {
+      listMarketplace: listMarketplaceSkills,
+      // 技能「上传即公开」，MarketplacePage 只会调 listMarketplace + fork；publish / unpublish 是接口契约占位
+      publish: async () => ({
+        success: false,
+        data: null,
+        error: { code: 'NOT_SUPPORTED', message: '技能通过上传即公开，无需 publish' },
+      } as ApiResponse<unknown>),
+      unpublish: async () => ({
+        success: false,
+        data: null,
+        error: { code: 'NOT_SUPPORTED', message: '通过删除技能来下架' },
+      } as ApiResponse<unknown>),
+      fork: forkMarketplaceSkill,
+    },
+    getDisplayName: (item: MarketplaceSkill) => item.title,
+    getPreviewText: (item: MarketplaceSkill) => {
+      const tagText = (item.tags || []).join(' ');
+      return `${item.description || ''} ${tagText}`.trim();
+    },
+    PreviewRenderer: SkillPreviewRenderer,
+  },
+
   prompt: {
     key: 'prompt',
     label: '提示词',
@@ -467,39 +500,6 @@ export const CONFIG_TYPE_REGISTRY: Record<string, ConfigTypeDefinition<any>> = {
     getDisplayName: (item: MarketplaceWatermark) => item.name,
     getPreviewText: (item: MarketplaceWatermark) => item.text || '',
     PreviewRenderer: WatermarkPreviewRenderer,
-  },
-
-  skill: {
-    key: 'skill',
-    label: '技能',
-    icon: Package,
-    color: {
-      bg: 'rgba(56, 189, 248, 0.14)',
-      text: 'rgba(125, 211, 252, 0.98)',
-      border: '1px solid rgba(56, 189, 248, 0.35)',
-      iconColor: 'rgba(125, 211, 252, 0.95)',
-    },
-    api: {
-      listMarketplace: listMarketplaceSkills,
-      // 技能「上传即公开」，MarketplacePage 只会调 listMarketplace + fork；publish / unpublish 是接口契约占位
-      publish: async () => ({
-        success: false,
-        data: null,
-        error: { code: 'NOT_SUPPORTED', message: '技能通过上传即公开，无需 publish' },
-      } as ApiResponse<unknown>),
-      unpublish: async () => ({
-        success: false,
-        data: null,
-        error: { code: 'NOT_SUPPORTED', message: '通过删除技能来下架' },
-      } as ApiResponse<unknown>),
-      fork: forkMarketplaceSkill,
-    },
-    getDisplayName: (item: MarketplaceSkill) => item.title,
-    getPreviewText: (item: MarketplaceSkill) => {
-      const tagText = (item.tags || []).join(' ');
-      return `${item.description || ''} ${tagText}`.trim();
-    },
-    PreviewRenderer: SkillPreviewRenderer,
   },
 };
 

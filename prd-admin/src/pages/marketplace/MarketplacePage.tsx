@@ -167,29 +167,18 @@ export const MarketplacePage: React.FC = () => {
     <div
       className="relative min-h-screen"
       style={{
-        // 海报：用户上传的海鲜市场背景图 覆盖 / 未上传时走内置深海蓝渐变（符合"大气海洋主题"定位）
+        // 未上传海报 → 保持原生 var(--bg-primary)；上传了 → 铺用户的图
         background: marketplaceBgUrl
-          ? `url("${marketplaceBgUrl}") center / cover no-repeat fixed`
-          : 'radial-gradient(circle at 18% 12%, rgba(59, 130, 246, 0.25), transparent 45%), radial-gradient(circle at 82% 78%, rgba(14, 165, 233, 0.22), transparent 48%), linear-gradient(160deg, #041228 0%, #061a36 55%, #042548 100%)',
+          ? `url("${marketplaceBgUrl}") center / cover no-repeat fixed, var(--bg-primary)`
+          : 'var(--bg-primary)',
       }}
     >
-      {/* 可选：自定义海报上叠一层半透明暗色，保证前景卡片可读 */}
-      {marketplaceBgUrl && (
-        <div
-          className="absolute inset-0 pointer-events-none"
-          style={{
-            background:
-              'linear-gradient(180deg, rgba(3, 7, 18, 0.55) 0%, rgba(3, 7, 18, 0.72) 100%)',
-          }}
-        />
-      )}
-
-      {/* 顶部导航栏（相对定位确保在 overlay 之上） */}
+      {/* 顶部导航栏：恢复原生半透明 */}
       <div
         className="sticky top-0 z-10 border-b backdrop-blur-xl relative"
         style={{
-          background: 'rgba(3, 7, 18, 0.55)',
-          borderColor: 'rgba(255, 255, 255, 0.08)',
+          background: 'rgba(var(--bg-primary-rgb), 0.8)',
+          borderColor: 'var(--border-subtle)',
         }}
       >
         <div className="max-w-7xl mx-auto px-4 py-3">
