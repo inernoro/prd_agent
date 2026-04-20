@@ -1036,17 +1036,18 @@ export default function Sidebar() {
           },
         ];
         if (ctx.isMain) {
-          // 主文档：支持"更换 PRD"（走已有的绑定选择器）
+          // 主文档：支持"更换 PRD"（走已有的绑定选择器）；权限不足时禁用，避免 openBindPrdPicker 里的 alert 兜底
           items.push({
             key: 'swap',
-            label: '更换 PRD',
+            label: canReplacePrd ? '更换 PRD' : '更换 PRD（仅群主/管理员）',
+            disabled: !canReplacePrd,
             icon: (
               <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v6h6M20 20v-6h-6M20 8a8 8 0 00-14.9-2M4 16a8 8 0 0014.9 2" />
               </svg>
             ),
             onClick: () => { openBindPrdPicker(); },
-          });
+          } as typeof items[number]);
         } else {
           // 补充资料：支持"替换文件"与"删除"
           const docType = documents.find((d) => d.id === ctx.docId)?.documentType;

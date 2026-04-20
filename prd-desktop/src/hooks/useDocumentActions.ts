@@ -74,15 +74,25 @@ export function useDocumentActions(): UseDocumentActionsResult {
         setError(up.error?.message || '替换失败');
         return false;
       }
-      // 仅当新旧 documentId 不同（即内容 hash 不同）时，才删除旧的并从列表里剔除
+      // 仅当新旧 documentId 不同（即内容 hash 不同）时，才需要删除旧文件
       const newDocId = up.data.documentId;
       const sameContent = !newDocId || newDocId === docId;
+      // 以服务端权威响应为最终列表；内容相同则直接用 upload 的返回
       let finalIds = up.data.documentIds || [];
+      let finalMetas = up.data.documentMetas;
       if (!sameContent) {
-        await invoke<ApiResponse<unknown>>('remove_document_from_session', { sessionId, documentId: docId });
-        finalIds = finalIds.filter((id) => id !== docId);
+        const rm = await invoke<ApiResponse<RemoveSessionResponse>>('remove_document_from_session', {
+          sessionId,
+          documentId: docId,
+        });
+        if (!rm.success || !rm.data) {
+          setError(rm.error?.message || '替换失败：旧文件移除失败');
+          return false;
+        }
+        finalIds = rm.data.documentIds || [];
+        finalMetas = rm.data.documentMetas;
       }
-      const fresh = await refreshDocuments(finalIds, up.data.documentMetas);
+      const fresh = await refreshDocuments(finalIds, finalMetas);
       if (fresh.length > 0) setDocuments(fresh);
       done = true;
     } catch (err) {
