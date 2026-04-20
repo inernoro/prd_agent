@@ -484,6 +484,39 @@ export interface CdsState {
    * one-shot move don't repeatedly re-scan the legacy layout.
    */
   worktreeLayoutVersion?: number;
+  /**
+   * User-customisable settings for the GitHub PR preview comment that
+   * CDS posts on PR open / refreshes on every deploy
+   * (postOrUpdatePrComment in routes/github-webhook.ts).
+   *
+   * Stored under state so it lives through the same JSON ↔ Mongo
+   * storage swap as the rest of CDS state (no separate collection).
+   *
+   * Absent on pre-feature state.json — the renderer falls back to the
+   * built-in default template (services/comment-template.ts).
+   */
+  commentTemplate?: CommentTemplateSettings;
+}
+
+/**
+ * GitHub PR preview comment template settings.
+ *
+ * `body` is a Markdown blob with `{{var}}` placeholders. The list of
+ * supported variables is fixed at code level (see VARIABLE_DEFS in
+ * services/comment-template.ts) — adding a new one requires touching
+ * both the renderer and the settings-panel UI so the user speaks the
+ * same vocabulary as the renderer.
+ *
+ * No separate "PR review host" field: the deeplink reuses the current
+ * branch's previewUrl (the frontend hosting PrReviewPage is itself
+ * deployed per-branch by CDS), so {{prReviewUrl}} is fully derivable
+ * from state the webhook already has.
+ */
+export interface CommentTemplateSettings {
+  /** Markdown body with {{var}} placeholders. Empty string = use default. */
+  body: string;
+  /** ISO timestamp of the last save, for UI display. */
+  updatedAt?: string;
 }
 
 /**

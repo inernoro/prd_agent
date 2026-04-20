@@ -8,6 +8,7 @@ import { createBridgeRouter } from './routes/bridge.js';
 import { createProjectsRouter } from './routes/projects.js';
 import { createPendingImportRouter } from './routes/pending-import.js';
 import { createStorageModeRouter, type StorageModeContext } from './routes/storage-mode.js';
+import { createCommentTemplateRouter } from './routes/comment-template.js';
 import { createGithubOAuthRouter } from './routes/github-oauth.js';
 import { createGithubWebhookRouter } from './routes/github-webhook.js';
 import { GitHubAppClient } from './services/github-app-client.js';
@@ -1008,6 +1009,15 @@ export function createServer(deps: ServerDeps): express.Express {
       context: deps.storageModeContext,
     }));
   }
+
+  // Customisable PR preview comment template (GET/PUT/preview). The
+  // Settings panel "评论模板" tab talks to this router; the webhook
+  // path (postOrUpdatePrComment) reads state back via StateService,
+  // not through HTTP — the router is purely for admin editing.
+  app.use('/api', createCommentTemplateRouter({
+    stateService: deps.stateService,
+    config: deps.config,
+  }));
 
   // P4 Part 18 (Phase E): GitHub OAuth Device Flow router.
   //
