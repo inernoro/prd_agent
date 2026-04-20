@@ -1,0 +1,78 @@
+{
+  "generatedAt": "2026-04-20T18:41:29.516Z",
+  "windowDays": 30,
+  "items": [
+    {
+      "date": "2026-03-23",
+      "type": "fix",
+      "module": "prd-desktop",
+      "description": "用户消息气泡支持渲染图片附件"
+    },
+    {
+      "date": "2026-03-23",
+      "type": "fix",
+      "module": "prd-desktop",
+      "description": "发送消息时保留本地附件信息，SSE 合并时不丢失"
+    },
+    {
+      "date": "2026-03-23",
+      "type": "fix",
+      "module": "prd-desktop",
+      "description": "修复服务器选择下拉框样式错乱，改用自定义下拉组件适配 Glass UI"
+    },
+    {
+      "date": "2026-03-23",
+      "type": "fix",
+      "module": "prd-desktop",
+      "description": "更新按钮样式更醒目（实色背景+阴影），提升可发现性"
+    },
+    {
+      "date": "2026-03-23",
+      "type": "feat",
+      "module": "prd-desktop",
+      "description": "macOS 更新安装后弹窗提示用户手动退出重启，不再依赖无效的自动重启"
+    },
+    {
+      "date": "2026-03-23",
+      "type": "fix",
+      "module": "prd-desktop",
+      "description": "菜单\"检查更新\"对话框从无用的 OK 按钮改为\"立即更新/稍后\"确认框，点击立即更新直接下载安装"
+    },
+    {
+      "date": "2026-03-23",
+      "type": "feat",
+      "module": "prd-desktop",
+      "description": "Header 标题右侧显示版本号（v1.x.x），mono 字体偏右下角，亮/暗主题自适应"
+    },
+    {
+      "date": "2026-03-23",
+      "type": "refactor",
+      "module": "prd-desktop",
+      "description": "服务器选择改为三卡片布局（主站/测试站/备用 + 其他自定义），移除\"我是开发者\"开关"
+    },
+    {
+      "date": "2026-03-23",
+      "type": "feat",
+      "module": "prd-desktop",
+      "description": "三阶段文件上传体验：已知格式直接放行、已知二进制立即拒绝、未知格式标记\"探测中\"后上传并反馈结果"
+    },
+    {
+      "date": "2026-03-23",
+      "type": "feat",
+      "module": "prd-desktop",
+      "description": "逐文件上传进度面板，实时显示每个文件的状态（排队/检测/上传/成功/失败）"
+    },
+    {
+      "date": "2026-03-23",
+      "type": "refactor",
+      "module": "prd-desktop",
+      "description": "移除文件格式白名单和 read_text_file 命令，所有文件统一走 upload 接口"
+    },
+    {
+      "date": "2026-03-22",
+      "type": "fix",
+      "module": "prd-desktop",
+      "description": "同步 UserRole 类型定义，补全 HR/FINANCE/RD/TEST/COPYWRITER/CSM/SUPPORT/SALES 8个新角色"
+    }
+  ]
+}

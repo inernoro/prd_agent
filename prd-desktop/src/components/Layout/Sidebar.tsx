@@ -14,6 +14,7 @@ import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import { extractMarkdownTitle, isMeaninglessName, normalizeCandidateName, stripFileExtension } from '../utils/nameHeuristics';
 import DocumentContextMenu from '../Document/DocumentContextMenu';
 import RenameDocumentModal from '../Document/RenameDocumentModal';
+import ConfirmDialog from '../ui/ConfirmDialog';
 
 export default function Sidebar() {
   const { user, logout } = useAuthStore();
@@ -36,13 +37,83 @@ export default function Sidebar() {
   const [addingDoc, setAddingDoc] = useState(false);
 
   // 右键菜单 + 改名模态窗状态（目标文档）
-  const [docContextMenu, setDocContextMenu] = useState<null | { x: number; y: number; docId: string; currentTitle: string }>(null);
+  const [docContextMenu, setDocContextMenu] = useState<null | { x: number; y: number; docId: string; currentTitle: string; isMain: boolean }>(null);
   const [renameTarget, setRenameTarget] = useState<null | { docId: string; currentTitle: string }>(null);
+  const [deleteTarget, setDeleteTarget] = useState<null | { docId: string; title: string }>(null);
+  const [busyDocAction, setBusyDocAction] = useState(false);
 
-  const openDocContextMenu = useCallback((e: React.MouseEvent, docId: string, currentTitle: string) => {
+  const openDocContextMenu = useCallback((e: React.MouseEvent, docId: string, currentTitle: string, isMain: boolean) => {
     e.preventDefault();
-    setDocContextMenu({ x: e.clientX, y: e.clientY, docId, currentTitle });
+    setDocContextMenu({ x: e.clientX, y: e.clientY, docId, currentTitle, isMain });
   }, []);
+
+  // 替换文件：Tauri 文件选择 → upload_file_to_session 追加 → remove_document_from_session 移除旧
+  const replaceDocumentFile = useCallback(async (docId: string, documentType?: string) => {
+    if (!sessionId) return;
+    try {
+      const { open: openDialog } = await import('@tauri-apps/plugin-dialog');
+      const selected = await openDialog({
+        multiple: false,
+        title: '选择替换后的文件',
+      });
+      if (!selected || Array.isArray(selected)) return;
+      setBusyDocAction(true);
+      // 1) 上传新文件
+      const up = await invoke<ApiResponse<{ sessionId: string; documentId: string; documentIds: string[]; documentMetas?: Array<{ documentId: string; documentType: string }> }>>(
+        'upload_file_to_session',
+        { sessionId, filePath: selected, documentType: documentType || null },
+      );
+      if (!up.success || !up.data) return;
+      // 2) 删除旧文件（若新旧 id 相同说明内容一致，跳过）
+      if (up.data.documentId && up.data.documentId !== docId) {
+        await invoke<ApiResponse<unknown>>('remove_document_from_session', { sessionId, documentId: docId });
+      }
+      // 3) 刷新文档列表
+      const finalIds = (up.data.documentIds || []).filter((id) => id !== docId);
+      const metaMap = new Map((up.data.documentMetas ?? []).map((m) => [m.documentId, m.documentType]));
+      const freshDocs: Document[] = [];
+      for (const did of finalIds) {
+        const r = await invoke<ApiResponse<Document>>('get_document', { documentId: did });
+        if (r.success && r.data) {
+          r.data.documentType = (metaMap.get(did) ?? r.data.documentType) as Document['documentType'];
+          freshDocs.push(r.data);
+        }
+      }
+      if (freshDocs.length > 0) setDocuments(freshDocs);
+    } catch {
+      // 忽略用户取消 / 网络错
+    } finally {
+      setBusyDocAction(false);
+    }
+  }, [sessionId, setDocuments]);
+
+  // 删除（仅补充资料，主文档由"更换 PRD"统一处理）
+  const confirmDeleteDocument = useCallback(async () => {
+    if (!deleteTarget || !sessionId) return;
+    setBusyDocAction(true);
+    try {
+      const resp = await invoke<ApiResponse<{ documentIds: string[]; documentMetas?: Array<{ documentId: string; documentType: string }> }>>(
+        'remove_document_from_session',
+        { sessionId, documentId: deleteTarget.docId },
+      );
+      if (!resp.success || !resp.data) return;
+      const metaMap = new Map((resp.data.documentMetas ?? []).map((m) => [m.documentId, m.documentType]));
+      const freshDocs: Document[] = [];
+      for (const did of resp.data.documentIds) {
+        const r = await invoke<ApiResponse<Document>>('get_document', { documentId: did });
+        if (r.success && r.data) {
+          r.data.documentType = (metaMap.get(did) ?? r.data.documentType) as Document['documentType'];
+          freshDocs.push(r.data);
+        }
+      }
+      setDocuments(freshDocs);
+      setDeleteTarget(null);
+    } catch {
+      // ignore
+    } finally {
+      setBusyDocAction(false);
+    }
+  }, [deleteTarget, sessionId, setDocuments]);
 
   // 侧边栏追加资料
   const handleSidebarAddDoc = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -687,7 +758,7 @@ export default function Sidebar() {
                 }}
                 onContextMenu={(e) => {
                   if (!documentLoaded || !prdDocument) return;
-                  openDocContextMenu(e, prdDocument.id, prdDocument.title || '');
+                  openDocContextMenu(e, prdDocument.id, prdDocument.title || '', true);
                 }}
                 onKeyDown={(e) => {
                   if (e.key === 'Enter' || e.key === ' ') {
@@ -759,7 +830,7 @@ export default function Sidebar() {
                   key={doc.id}
                   className="w-full px-3 py-1.5 rounded-lg text-left text-sm text-text-secondary hover:bg-black/5 dark:hover:bg-white/5 transition-colors flex items-center gap-2 min-w-0 group"
                   title={doc.title}
-                  onContextMenu={(e) => openDocContextMenu(e, doc.id, doc.title || '')}
+                  onContextMenu={(e) => openDocContextMenu(e, doc.id, doc.title || '', false)}
                 >
                   <svg className="w-3.5 h-3.5 shrink-0 opacity-50" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z" />
@@ -1010,27 +1081,66 @@ export default function Sidebar() {
       </div>
 
       {/* 文档右键菜单 */}
-      {docContextMenu && (
-        <DocumentContextMenu
-          x={docContextMenu.x}
-          y={docContextMenu.y}
-          items={[
-            {
-              key: 'rename',
-              label: '重命名',
-              icon: (
-                <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
-                </svg>
-              ),
-              onClick: () => {
-                setRenameTarget({ docId: docContextMenu.docId, currentTitle: docContextMenu.currentTitle });
-              },
-            },
-          ]}
-          onClose={() => setDocContextMenu(null)}
-        />
-      )}
+      {docContextMenu && (() => {
+        const ctx = docContextMenu;
+        const items = [
+          {
+            key: 'rename',
+            label: '重命名',
+            icon: (
+              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+              </svg>
+            ),
+            onClick: () => setRenameTarget({ docId: ctx.docId, currentTitle: ctx.currentTitle }),
+          },
+        ];
+        if (ctx.isMain) {
+          // 主文档：支持"更换 PRD"（走已有的绑定选择器）
+          items.push({
+            key: 'swap',
+            label: '更换 PRD',
+            icon: (
+              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v6h6M20 20v-6h-6M20 8a8 8 0 00-14.9-2M4 16a8 8 0 0014.9 2" />
+              </svg>
+            ),
+            onClick: () => { openBindPrdPicker(); },
+          });
+        } else {
+          // 补充资料：支持"替换文件"与"删除"
+          const docType = documents.find((d) => d.id === ctx.docId)?.documentType;
+          items.push({
+            key: 'replace',
+            label: '替换文件',
+            icon: (
+              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v2a2 2 0 002 2h12a2 2 0 002-2v-2M16 12l-4-4m0 0l-4 4m4-4v12" />
+              </svg>
+            ),
+            onClick: () => { void replaceDocumentFile(ctx.docId, docType); },
+          });
+          items.push({
+            key: 'delete',
+            label: '删除',
+            danger: true,
+            icon: (
+              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6M1 7h22M10 7V4a1 1 0 011-1h2a1 1 0 011 1v3" />
+              </svg>
+            ),
+            onClick: () => setDeleteTarget({ docId: ctx.docId, title: ctx.currentTitle || '未命名文档' }),
+          } as typeof items[number]);
+        }
+        return (
+          <DocumentContextMenu
+            x={ctx.x}
+            y={ctx.y}
+            items={items}
+            onClose={() => setDocContextMenu(null)}
+          />
+        );
+      })()}
 
       {/* 重命名模态窗 */}
       <RenameDocumentModal
@@ -1038,6 +1148,24 @@ export default function Sidebar() {
         documentId={renameTarget?.docId || ''}
         currentTitle={renameTarget?.currentTitle || ''}
         onClose={() => setRenameTarget(null)}
+      />
+
+      {/* 删除确认 */}
+      <ConfirmDialog
+        open={!!deleteTarget}
+        title="删除文档"
+        danger
+        busy={busyDocAction}
+        confirmText="删除"
+        message={
+          <>
+            将从当前会话中移除资料文档
+            <span className="mx-1 font-medium text-text-primary">「{deleteTarget?.title}」</span>
+            。文档本身不会从系统中永久删除，但 AI 对话将不再引用它。
+          </>
+        }
+        onConfirm={() => { void confirmDeleteDocument(); }}
+        onClose={() => { if (!busyDocAction) setDeleteTarget(null); }}
       />
     </aside>
   );

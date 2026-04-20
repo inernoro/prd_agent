@@ -11,6 +11,7 @@ import type { ApiResponse, Document, DocumentType } from '../../types';
 import { DOCUMENT_TYPE_LABELS } from '../../types';
 import DocumentContextMenu from '../Document/DocumentContextMenu';
 import RenameDocumentModal from '../Document/RenameDocumentModal';
+import ConfirmDialog from '../ui/ConfirmDialog';
 
 const DOC_TYPES: DocumentType[] = ['product', 'technical', 'design', 'reference'];
 
@@ -65,14 +66,86 @@ export default function KnowledgeBasePage() {
     setFileTasks([...fileTasksRef.current]);
   }, []);
 
-  // 右键菜单 + 重命名模态窗状态
-  const [docContextMenu, setDocContextMenu] = useState<null | { x: number; y: number; docId: string; currentTitle: string }>(null);
+  // 右键菜单 + 重命名 + 删除状态
+  const [docContextMenu, setDocContextMenu] = useState<null | { x: number; y: number; docId: string; currentTitle: string; isMain: boolean }>(null);
   const [renameTarget, setRenameTarget] = useState<null | { docId: string; currentTitle: string }>(null);
+  const [deleteTarget, setDeleteTarget] = useState<null | { docId: string; title: string }>(null);
 
-  const openDocContextMenu = useCallback((e: React.MouseEvent, docId: string, currentTitle: string) => {
+  const openDocContextMenu = useCallback((e: React.MouseEvent, docId: string, currentTitle: string, isMain: boolean) => {
     e.preventDefault();
-    setDocContextMenu({ x: e.clientX, y: e.clientY, docId, currentTitle });
+    setDocContextMenu({ x: e.clientX, y: e.clientY, docId, currentTitle, isMain });
   }, []);
+
+  const replaceDocumentFile = useCallback(async (docId: string, documentType?: string) => {
+    if (!sessionId) return;
+    try {
+      const selected = await open({
+        multiple: false,
+        title: '选择替换后的文件',
+      });
+      if (!selected || Array.isArray(selected)) return;
+      setBusy(true);
+      setError('');
+      const up = await invoke<ApiResponse<{ sessionId: string; documentId: string; documentIds: string[]; documentMetas?: Array<{ documentId: string; documentType: string }> }>>(
+        'upload_file_to_session',
+        { sessionId, filePath: selected, documentType: documentType || null },
+      );
+      if (!up.success || !up.data) {
+        setError(up.error?.message || '替换失败');
+        return;
+      }
+      if (up.data.documentId && up.data.documentId !== docId) {
+        await invoke<ApiResponse<unknown>>('remove_document_from_session', { sessionId, documentId: docId });
+      }
+      // 刷新文档列表
+      const finalIds = (up.data.documentIds || []).filter((id) => id !== docId);
+      const metaMap = new Map((up.data.documentMetas ?? []).map((m) => [m.documentId, m.documentType]));
+      const freshDocs: Document[] = [];
+      for (const did of finalIds) {
+        const r = await invoke<ApiResponse<Document>>('get_document', { documentId: did });
+        if (r.success && r.data) {
+          r.data.documentType = (metaMap.get(did) ?? r.data.documentType) as Document['documentType'];
+          freshDocs.push(r.data);
+        }
+      }
+      if (freshDocs.length > 0) setDocuments(freshDocs);
+    } catch (err) {
+      setError('替换失败：' + String(err));
+    } finally {
+      setBusy(false);
+    }
+  }, [sessionId, setDocuments]);
+
+  const confirmDeleteDocument = useCallback(async () => {
+    if (!deleteTarget || !sessionId) return;
+    try {
+      setBusy(true);
+      setError('');
+      const resp = await invoke<ApiResponse<{ documentIds: string[]; documentMetas?: Array<{ documentId: string; documentType: string }> }>>(
+        'remove_document_from_session',
+        { sessionId, documentId: deleteTarget.docId },
+      );
+      if (!resp.success || !resp.data) {
+        setError(resp.error?.message || '删除失败');
+        return;
+      }
+      const metaMap = new Map((resp.data.documentMetas ?? []).map((m) => [m.documentId, m.documentType]));
+      const freshDocs: Document[] = [];
+      for (const did of resp.data.documentIds) {
+        const r = await invoke<ApiResponse<Document>>('get_document', { documentId: did });
+        if (r.success && r.data) {
+          r.data.documentType = (metaMap.get(did) ?? r.data.documentType) as Document['documentType'];
+          freshDocs.push(r.data);
+        }
+      }
+      setDocuments(freshDocs);
+      setDeleteTarget(null);
+    } catch (err) {
+      setError('删除失败：' + String(err));
+    } finally {
+      setBusy(false);
+    }
+  }, [deleteTarget, sessionId, setDocuments]);
 
   const handleChangeDocumentType = useCallback(async (documentId: string, newType: DocumentType) => {
     if (!sessionId) return;
@@ -342,7 +415,7 @@ export default function KnowledgeBasePage() {
                 <div
                   key={doc.id}
                   className="flex items-center justify-between p-3 rounded-lg bg-black/5 dark:bg-white/5"
-                  onContextMenu={(e) => openDocContextMenu(e, doc.id, doc.title || '')}
+                  onContextMenu={(e) => openDocContextMenu(e, doc.id, doc.title || '', idx === 0)}
                 >
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2 flex-wrap">
@@ -421,25 +494,54 @@ export default function KnowledgeBasePage() {
       </div>
 
       {/* 文档右键菜单 */}
-      {docContextMenu && (
-        <DocumentContextMenu
-          x={docContextMenu.x}
-          y={docContextMenu.y}
-          items={[
-            {
-              key: 'rename',
-              label: '重命名',
-              icon: (
-                <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
-                </svg>
-              ),
-              onClick: () => setRenameTarget({ docId: docContextMenu.docId, currentTitle: docContextMenu.currentTitle }),
-            },
-          ]}
-          onClose={() => setDocContextMenu(null)}
-        />
-      )}
+      {docContextMenu && (() => {
+        const ctx = docContextMenu;
+        const docType = documents.find((d) => d.id === ctx.docId)?.documentType;
+        const items = [
+          {
+            key: 'rename',
+            label: '重命名',
+            icon: (
+              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+              </svg>
+            ),
+            onClick: () => setRenameTarget({ docId: ctx.docId, currentTitle: ctx.currentTitle }),
+          },
+          {
+            key: 'replace',
+            label: '替换文件',
+            icon: (
+              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v2a2 2 0 002 2h12a2 2 0 002-2v-2M16 12l-4-4m0 0l-4 4m4-4v12" />
+              </svg>
+            ),
+            onClick: () => { void replaceDocumentFile(ctx.docId, docType); },
+          },
+        ];
+        if (!ctx.isMain) {
+          // 主文档不允许删除（删除后会破坏会话），仅补充资料可删除
+          items.push({
+            key: 'delete',
+            label: '删除',
+            danger: true,
+            icon: (
+              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6M1 7h22M10 7V4a1 1 0 011-1h2a1 1 0 011 1v3" />
+              </svg>
+            ),
+            onClick: () => setDeleteTarget({ docId: ctx.docId, title: ctx.currentTitle || '未命名文档' }),
+          } as typeof items[number]);
+        }
+        return (
+          <DocumentContextMenu
+            x={ctx.x}
+            y={ctx.y}
+            items={items}
+            onClose={() => setDocContextMenu(null)}
+          />
+        );
+      })()}
 
       {/* 重命名模态窗 */}
       <RenameDocumentModal
@@ -447,6 +549,24 @@ export default function KnowledgeBasePage() {
         documentId={renameTarget?.docId || ''}
         currentTitle={renameTarget?.currentTitle || ''}
         onClose={() => setRenameTarget(null)}
+      />
+
+      {/* 删除确认 */}
+      <ConfirmDialog
+        open={!!deleteTarget}
+        title="删除文档"
+        danger
+        busy={busy}
+        confirmText="删除"
+        message={
+          <>
+            将从当前会话中移除资料文档
+            <span className="mx-1 font-medium text-text-primary">「{deleteTarget?.title}」</span>
+            。文档本身不会从系统中永久删除，但 AI 对话将不再引用它。
+          </>
+        }
+        onConfirm={() => { void confirmDeleteDocument(); }}
+        onClose={() => { if (!busy) setDeleteTarget(null); }}
       />
     </div>
   );
