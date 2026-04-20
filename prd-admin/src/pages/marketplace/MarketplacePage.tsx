@@ -174,28 +174,32 @@ export const MarketplacePage: React.FC = () => {
       }}
     >
       {/* 质感装饰层：中性色四角柔光 + 点阵纹理 + 右下角品牌 emoji。
-          透明度全部 ≤ 0.05，合起来有质感但不盖用户上传的海报图。 */}
+          透明度适度提高以能被人眼感知；自定义海报上传时全部隐藏让图做主角。 */}
       {!marketplaceBgUrl && (
         <>
-          {/* 点阵纹理：铺满整屏，几乎看不见但眼睛能感知 */}
+          {/* 点阵纹理：铺满整屏，给扁平背景加"材质" */}
           <div
             className="absolute inset-0 pointer-events-none"
             aria-hidden
             style={{
               backgroundImage:
-                'radial-gradient(rgba(255, 255, 255, 0.035) 1px, transparent 1px)',
-              backgroundSize: '24px 24px',
+                'radial-gradient(rgba(255, 255, 255, 0.08) 1.2px, transparent 1.2px)',
+              backgroundSize: '22px 22px',
               backgroundPosition: '0 0',
+              maskImage:
+                'radial-gradient(ellipse at center, rgba(0,0,0,0.9) 30%, rgba(0,0,0,0.4) 80%)',
+              WebkitMaskImage:
+                'radial-gradient(ellipse at center, rgba(0,0,0,0.9) 30%, rgba(0,0,0,0.4) 80%)',
             }}
           />
-          {/* 四角柔光：中性白（不染蓝），超低透明度 */}
+          {/* 四角柔光：中性白（不染色），现在能看出体积感 */}
           <div
             className="absolute pointer-events-none"
             aria-hidden
             style={{
               top: '-20%', left: '-10%', width: '55vw', height: '55vh',
-              background: 'radial-gradient(circle, rgba(255, 255, 255, 0.05) 0%, transparent 60%)',
-              filter: 'blur(40px)',
+              background: 'radial-gradient(circle, rgba(255, 255, 255, 0.12) 0%, transparent 60%)',
+              filter: 'blur(60px)',
             }}
           />
           <div
@@ -203,8 +207,8 @@ export const MarketplacePage: React.FC = () => {
             aria-hidden
             style={{
               top: '-15%', right: '-15%', width: '50vw', height: '50vh',
-              background: 'radial-gradient(circle, rgba(255, 255, 255, 0.04) 0%, transparent 60%)',
-              filter: 'blur(40px)',
+              background: 'radial-gradient(circle, rgba(255, 255, 255, 0.10) 0%, transparent 60%)',
+              filter: 'blur(60px)',
             }}
           />
           <div
@@ -212,8 +216,8 @@ export const MarketplacePage: React.FC = () => {
             aria-hidden
             style={{
               bottom: '-25%', left: '-5%', width: '60vw', height: '55vh',
-              background: 'radial-gradient(circle, rgba(255, 255, 255, 0.035) 0%, transparent 60%)',
-              filter: 'blur(40px)',
+              background: 'radial-gradient(circle, rgba(255, 255, 255, 0.09) 0%, transparent 60%)',
+              filter: 'blur(60px)',
             }}
           />
           <div
@@ -221,11 +225,11 @@ export const MarketplacePage: React.FC = () => {
             aria-hidden
             style={{
               bottom: '-20%', right: '-10%', width: '55vw', height: '60vh',
-              background: 'radial-gradient(circle, rgba(255, 255, 255, 0.04) 0%, transparent 60%)',
-              filter: 'blur(40px)',
+              background: 'radial-gradient(circle, rgba(255, 255, 255, 0.11) 0%, transparent 60%)',
+              filter: 'blur(60px)',
             }}
           />
-          {/* 右下角品牌锚点：超大号 emoji 水印，满足视觉"有东西"但不分心 */}
+          {/* 右下角品牌锚点：超大号 emoji 水印 */}
           <div
             className="absolute pointer-events-none select-none"
             aria-hidden
@@ -234,7 +238,7 @@ export const MarketplacePage: React.FC = () => {
               right: '-30px',
               fontSize: '320px',
               lineHeight: 1,
-              opacity: 0.03,
+              opacity: 0.06,
               filter: 'grayscale(1)',
             }}
           >
@@ -340,70 +344,92 @@ export const MarketplacePage: React.FC = () => {
 
       {/* 主内容区 */}
       <div className="relative max-w-7xl mx-auto px-4 py-6">
-        {/* 类型筛选标签 */}
-        <div className="flex items-center gap-2 mb-4 flex-wrap">
-          {filterOptions.map(({ key, label, icon: Icon }) => (
-            <button
-              key={key}
-              type="button"
-              onClick={() => updateTypeFilter(key)}
-              className={`flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-medium transition-all ${
-                categoryFilter === key
-                  ? 'bg-blue-500/20 text-blue-400 border border-blue-500/30'
-                  : 'hover:bg-white/5 border border-transparent'
-              }`}
-              style={{ color: categoryFilter === key ? undefined : 'var(--text-muted)' }}
-            >
-              {Icon && <Icon size={14} />}
-              {label}
-            </button>
-          ))}
-        </div>
-
-        {/* 技能标签筛选栏（仅在"技能"或"全部"时出现） */}
-        {showSkillControls && skillTags.length > 0 && (
-          <div className="flex items-center gap-1.5 flex-wrap mb-6">
-            <span
-              className="text-[11px] mr-1 inline-flex items-center gap-1"
-              style={{ color: 'var(--text-muted)' }}
-            >
-              <Hash size={11} />
-              技能标签
-            </span>
-            <button
-              type="button"
-              onClick={() => setTagFilter('')}
-              className="px-2.5 py-1 rounded-full text-[11px] transition-all"
-              style={{
-                background: !tagFilter ? 'rgba(56, 189, 248, 0.18)' : 'rgba(255, 255, 255, 0.04)',
-                border: `1px solid ${!tagFilter ? 'rgba(56, 189, 248, 0.4)' : 'rgba(255, 255, 255, 0.1)'}`,
-                color: !tagFilter ? 'rgba(186, 230, 253, 0.98)' : 'var(--text-muted)',
-              }}
-            >
-              不限
-            </button>
-            {skillTags.slice(0, 20).map(({ tag, count }) => (
+        {/* 筛选玻璃面板：类型筛选 + 技能标签筛选统一在一个液态玻璃卡里，不再悬空 */}
+        <div
+          className="mb-6 rounded-[14px] px-3 py-3 relative overflow-hidden"
+          style={{
+            background: 'rgba(255, 255, 255, 0.04)',
+            border: '1px solid var(--glass-border, rgba(255, 255, 255, 0.09))',
+            backdropFilter: 'blur(24px) saturate(160%)',
+            WebkitBackdropFilter: 'blur(24px) saturate(160%)',
+            boxShadow:
+              '0 8px 20px -8px rgba(0, 0, 0, 0.45), inset 0 1px 0 rgba(255, 255, 255, 0.06)',
+          }}
+        >
+          {/* 类型筛选标签 */}
+          <div className="flex items-center gap-2 flex-wrap">
+            {filterOptions.map(({ key, label, icon: Icon }) => (
               <button
-                key={tag}
+                key={key}
                 type="button"
-                onClick={() => setTagFilter((prev) => (prev === tag ? '' : tag))}
-                className="px-2.5 py-1 rounded-full text-[11px] transition-all"
-                style={{
-                  background:
-                    tagFilter === tag ? 'rgba(56, 189, 248, 0.22)' : 'rgba(255, 255, 255, 0.04)',
-                  border: `1px solid ${
-                    tagFilter === tag ? 'rgba(56, 189, 248, 0.5)' : 'rgba(255, 255, 255, 0.1)'
-                  }`,
-                  color:
-                    tagFilter === tag ? 'rgba(186, 230, 253, 0.98)' : 'var(--text-secondary)',
-                }}
+                onClick={() => updateTypeFilter(key)}
+                className={`flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-medium transition-all ${
+                  categoryFilter === key
+                    ? 'bg-blue-500/20 text-blue-400 border border-blue-500/30'
+                    : 'hover:bg-white/5 border border-transparent'
+                }`}
+                style={{ color: categoryFilter === key ? undefined : 'var(--text-muted)' }}
               >
-                #{tag}
-                <span className="ml-1 opacity-60">{count}</span>
+                {Icon && <Icon size={14} />}
+                {label}
               </button>
             ))}
           </div>
-        )}
+
+          {/* 技能标签筛选栏（仅在"技能"或"全部"时出现） */}
+          {showSkillControls && skillTags.length > 0 && (
+            <>
+              <div
+                className="my-3 h-px"
+                style={{
+                  background:
+                    'linear-gradient(90deg, transparent 0%, rgba(255,255,255,0.1) 30%, rgba(255,255,255,0.1) 70%, transparent 100%)',
+                }}
+              />
+              <div className="flex items-center gap-1.5 flex-wrap">
+                <span
+                  className="text-[11px] mr-1 inline-flex items-center gap-1"
+                  style={{ color: 'var(--text-muted)' }}
+                >
+                  <Hash size={11} />
+                  技能标签
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setTagFilter('')}
+                  className="px-2.5 py-1 rounded-full text-[11px] transition-all"
+                  style={{
+                    background: !tagFilter ? 'rgba(56, 189, 248, 0.18)' : 'rgba(255, 255, 255, 0.04)',
+                    border: `1px solid ${!tagFilter ? 'rgba(56, 189, 248, 0.4)' : 'rgba(255, 255, 255, 0.1)'}`,
+                    color: !tagFilter ? 'rgba(186, 230, 253, 0.98)' : 'var(--text-muted)',
+                  }}
+                >
+                  不限
+                </button>
+                {skillTags.slice(0, 20).map(({ tag, count }) => (
+                  <button
+                    key={tag}
+                    type="button"
+                    onClick={() => setTagFilter((prev) => (prev === tag ? '' : tag))}
+                    className="px-2.5 py-1 rounded-full text-[11px] transition-all"
+                    style={{
+                      background:
+                        tagFilter === tag ? 'rgba(56, 189, 248, 0.22)' : 'rgba(255, 255, 255, 0.04)',
+                      border: `1px solid ${
+                        tagFilter === tag ? 'rgba(56, 189, 248, 0.5)' : 'rgba(255, 255, 255, 0.1)'
+                      }`,
+                      color:
+                        tagFilter === tag ? 'rgba(186, 230, 253, 0.98)' : 'var(--text-secondary)',
+                    }}
+                  >
+                    #{tag}
+                    <span className="ml-1 opacity-60">{count}</span>
+                  </button>
+                ))}
+              </div>
+            </>
+          )}
+        </div>
 
         {/* 内容区 */}
         {loading ? (
