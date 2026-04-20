@@ -587,17 +587,28 @@ public sealed class ChangelogReader : IChangelogReader
         view.DataSourceAvailable = true;
         view.Releases = ParseChangelogMarkdown(content, limit);
 
-        // 额外抓一次 CHANGELOG.md 的 commit 历史，为每个日期段落附上秒级提交时间
+        // 额外抓一次 CHANGELOG.md 的 commit 历史，为每个日期段落附上秒级提交时间。
+        // CHANGELOG 的 ### YYYY-MM-DD 日期绝大多数不会和 commit 日期严格相等
+        //（比如碎片合并是几天后才发生），所以用"首个 commit.cnDate >= 日期段"
+        // 的近似匹配，认为那次 commit 就是把这些条目写进 CHANGELOG 的时刻。
         try
         {
-            var commitMap = await FetchChangelogCommitTimesAsync(client).ConfigureAwait(false);
-            if (commitMap.Count > 0)
+            var commits = await FetchChangelogCommitTimesAsync(client).ConfigureAwait(false);
+            if (commits.Count > 0)
             {
+                // 升序：commitTime 越早的越前
+                commits.Sort((a, b) => a.CommitTimeUtc.CompareTo(b.CommitTimeUtc));
                 foreach (var release in view.Releases)
                 foreach (var day in release.Days)
                 {
-                    if (commitMap.TryGetValue(day.Date, out var commitTime))
-                        day.CommitTimeUtc = commitTime;
+                    foreach (var c in commits)
+                    {
+                        if (c.CnDate >= day.Date)
+                        {
+                            day.CommitTimeUtc = c.CommitTimeUtc;
+                            break;
+                        }
+                    }
                 }
             }
         }
@@ -609,14 +620,17 @@ public sealed class ChangelogReader : IChangelogReader
         return view;
     }
 
+    /// <summary>commit 条目：UTC 时间 + 按 CN(UTC+8) 换算出的日期（用于匹配 CHANGELOG ### 日期段）</summary>
+    private sealed record ChangelogCommit(DateOnly CnDate, DateTime CommitTimeUtc);
+
     /// <summary>
-    /// 拉取 CHANGELOG.md 文件的 commit 历史，按提交日期（UTC）聚合，
-    /// 返回每个日期对应的「该日最晚一次 commit 的 ISO 时间」。
+    /// 拉取 CHANGELOG.md 文件的 commit 历史。返回列表（caller 负责排序），
+    /// 每条含 UTC 原始提交时间 + 按 CN(UTC+8) 时区换算的日期。
     /// 单次 API 调用（per_page=100），覆盖最近 ~100 个 PR 足够绝大多数场景。
     /// </summary>
-    private async Task<Dictionary<DateOnly, DateTime>> FetchChangelogCommitTimesAsync(HttpClient client)
+    private async Task<List<ChangelogCommit>> FetchChangelogCommitTimesAsync(HttpClient client)
     {
-        var result = new Dictionary<DateOnly, DateTime>();
+        var result = new List<ChangelogCommit>();
         var owner = GetGitHubOwner();
         var repo = GetGitHubRepo();
         var branch = GetGitHubBranch();
@@ -635,6 +649,7 @@ public sealed class ChangelogReader : IChangelogReader
         using var doc = JsonDocument.Parse(json);
         if (doc.RootElement.ValueKind != JsonValueKind.Array) return result;
 
+        var cnOffset = TimeSpan.FromHours(8);
         foreach (var item in doc.RootElement.EnumerateArray())
         {
             if (!item.TryGetProperty("commit", out var commitEl)) continue;
@@ -647,10 +662,8 @@ public sealed class ChangelogReader : IChangelogReader
                     DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal,
                     out var commitTimeUtc))
                 continue;
-            var day = DateOnly.FromDateTime(commitTimeUtc);
-            // 同一日期：保留最晚一次 commit
-            if (!result.TryGetValue(day, out var existing) || commitTimeUtc > existing)
-                result[day] = commitTimeUtc;
+            var cnDate = DateOnly.FromDateTime(commitTimeUtc + cnOffset);
+            result.Add(new ChangelogCommit(cnDate, commitTimeUtc));
         }
         return result;
     }

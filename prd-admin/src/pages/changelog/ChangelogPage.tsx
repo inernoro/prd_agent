@@ -77,6 +77,21 @@ export default function ChangelogPage() {
   const [typeFilter, setTypeFilter] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<string>('update_center');
 
+  /**
+   * NEW 徽章 cutoff：用户上次打开更新中心那天的 23:59:59.999。
+   * useState 惰性初始化只跑一次，拿到的一定是"进入本次页面之前"的值——
+   * ChangelogPage 进页后 markAsSeen() 会把 store 里的 lastSeenAt 更新为当前，
+   * 但本 hook 冻结在 mount 瞬间的旧值，整场 session 稳定不变。
+   */
+  const [newBadgeCutoff] = useState<number | null>(() => {
+    const iso = useChangelogStore.getState().lastSeenAt;
+    if (!iso) return null;
+    const d = new Date(iso);
+    if (Number.isNaN(d.getTime())) return null;
+    d.setHours(23, 59, 59, 999);
+    return d.getTime();
+  });
+
   // 进入页面：拉取数据 + 标记已读
   // 「本周更新」section 已下线；但仍拉 currentWeek 以驱动已读计数 & 顶部的数据源徽标
   useEffect(() => {
@@ -414,6 +429,7 @@ export default function ChangelogPage() {
                                   source: 'release',
                                   releaseVersion: release.version,
                                 }}
+                                newCutoff={newBadgeCutoff}
                               />
                             ))}
                           </div>
@@ -442,13 +458,20 @@ export default function ChangelogPage() {
 }
 
 /** 单行更新条目 */
-function EntryRow({ entry }: { entry: FlatEntry }) {
+function EntryRow({ entry, newCutoff }: { entry: FlatEntry; newCutoff: number | null }) {
   const meta = getTypeBadge(entry.type);
   const Icon = meta.icon;
   const timeText = formatEntryTime(entry.date, entry.commitTimeUtc);
   const timeTitle = entry.commitTimeUtc
     ? `GitHub commit 时间：${timeText}`
     : `提交日期：${entry.date}（无秒级 commit 时间）`;
+  const isFresh = (() => {
+    if (newCutoff === null) return false;
+    if (!entry.commitTimeUtc) return false;
+    const t = Date.parse(entry.commitTimeUtc);
+    if (Number.isNaN(t)) return false;
+    return t > newCutoff;
+  })();
   return (
     <div
       className="rounded-lg px-3.5 py-2.5 flex items-center gap-3 transition-colors"
@@ -457,6 +480,20 @@ function EntryRow({ entry }: { entry: FlatEntry }) {
         border: '1px solid rgba(255, 255, 255, 0.06)',
       }}
     >
+      {isFresh && (
+        <span
+          className="shrink-0 text-[9px] font-bold tracking-wider px-1.5 h-[18px] rounded inline-flex items-center"
+          style={{
+            background: 'rgba(34, 197, 94, 0.18)',
+            color: '#86efac',
+            border: '1px solid rgba(34, 197, 94, 0.35)',
+            lineHeight: '1.3',
+          }}
+          title="自上次查看更新中心以来有新提交"
+        >
+          NEW
+        </span>
+      )}
       <div
         className="shrink-0 inline-flex items-center gap-1 px-2 h-[24px] rounded-md text-[12px] font-semibold"
         style={{
