@@ -1302,15 +1302,23 @@
   }
 
   function _ctRenderEditor() {
-    // Vertical card per variable: key button on its own line, label
-    // below, example below that. Keeps long names ({{prReviewUrl}})
-    // from collapsing the description to 2-char columns.
-    var varRows = _ct_state.variables.map(function (v) {
+    // Layout (2026-04-20 v3): full-width editor on top, available
+    // variables as a collapsible <details> at the bottom. Two earlier
+    // attempts at a right sidebar (horizontal card, vertical card) both
+    // felt cramped because long variable names like {{prReviewUrl}}
+    // need real horizontal space.
+    //
+    // With the variable list as a collapsible below the actions, the
+    // editor gets the entire settings content width and — when the
+    // user needs to remember a placeholder — one click expands a
+    // multi-column grid where every card gets enough room for its
+    // key + label + example without word-break tricks.
+    var varCards = _ct_state.variables.map(function (v) {
       return (
-        '<button type="button" class="ct-var-card" onclick="_ctInsertVar(\'' + escapeHtml(v.key) + '\')" title="点击插入到左侧光标位置">' +
+        '<button type="button" class="ct-var-card" onclick="_ctInsertVar(\'' + escapeHtml(v.key) + '\')" title="点击插入到光标位置">' +
           '<div class="ct-var-key">{{' + escapeHtml(v.key) + '}}</div>' +
           '<div class="ct-var-label">' + escapeHtml(v.label) + '</div>' +
-          '<div class="ct-var-example">' + escapeHtml(v.example) + '</div>' +
+          '<div class="ct-var-example">例: ' + escapeHtml(v.example) + '</div>' +
         '</button>'
       );
     }).join('');
@@ -1321,26 +1329,37 @@
 
     contentEl.innerHTML =
       '<style>' +
-        '.ct-layout{display:grid;grid-template-columns:1fr 300px;gap:20px;align-items:start}' +
-        '@media(max-width:960px){.ct-layout{grid-template-columns:1fr}}' +
-        '.ct-textarea{width:100%;min-height:320px;background:var(--bg-card);border:1px solid var(--card-border);border-radius:8px;padding:12px 14px;color:var(--text-primary);font-family:var(--font-mono,monospace);font-size:12.5px;line-height:1.65;outline:none;resize:vertical;tab-size:2}' +
+        /* Full-width editor — no sidebar. Variables sit underneath. */
+        '.ct-textarea{width:100%;min-height:360px;background:var(--bg-card);border:1px solid var(--card-border);border-radius:8px;padding:14px 16px;color:var(--text-primary);font-family:var(--font-mono,monospace);font-size:13px;line-height:1.7;outline:none;resize:vertical;tab-size:2}' +
         '.ct-textarea:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(16,185,129,0.15)}' +
 
-        '.ct-sidebar{background:var(--bg-card);border:1px solid var(--card-border);border-radius:10px;padding:14px;position:sticky;top:18px}' +
-        '.ct-sidebar-title{font-size:11px;font-weight:700;color:var(--text-secondary);text-transform:uppercase;letter-spacing:0.06em;margin-bottom:10px;padding-left:2px}' +
-        '.ct-sidebar-hint{font-size:11px;color:var(--text-muted);line-height:1.55;margin-bottom:12px;padding:8px 10px;background:var(--bg-elevated);border-radius:6px}' +
+        /* Collapsible variable panel — native <details> styled
+           to match Settings cards. Summary is the clickable header. */
+        '.ct-vars-panel{margin-top:20px;background:var(--bg-card);border:1px solid var(--card-border);border-radius:10px;overflow:hidden}' +
+        '.ct-vars-panel[open]{border-color:var(--accent-border,rgba(16,185,129,0.3))}' +
+        '.ct-vars-summary{list-style:none;cursor:pointer;user-select:none;padding:12px 16px;display:flex;align-items:center;gap:10px;font-size:13px;color:var(--text-primary);transition:background 120ms ease}' +
+        '.ct-vars-summary::-webkit-details-marker{display:none}' +
+        '.ct-vars-summary:hover{background:var(--bg-hover)}' +
+        '.ct-vars-chevron{display:inline-flex;transition:transform 180ms ease;color:var(--text-muted)}' +
+        '.ct-vars-panel[open] .ct-vars-chevron{transform:rotate(90deg);color:var(--accent,#10b981)}' +
+        '.ct-vars-count{font-family:var(--font-mono,monospace);font-size:11px;color:var(--accent,#10b981);background:rgba(16,185,129,0.08);border:1px solid rgba(16,185,129,0.25);padding:1px 8px;border-radius:5px;margin-left:auto}' +
+        '.ct-vars-hint{font-size:11px;color:var(--text-muted);margin-left:8px}' +
 
-        /* Vertical variable card: key mono badge on its own line,
-           label on second line (break-any), example small + muted. */
-        '.ct-var-list{display:flex;flex-direction:column;gap:4px}' +
-        '.ct-var-card{display:block;width:100%;text-align:left;background:transparent;border:1px solid transparent;border-radius:8px;padding:9px 11px;cursor:pointer;font-family:inherit;transition:background 120ms ease,border-color 120ms ease}' +
-        '.ct-var-card:hover{background:var(--bg-hover);border-color:var(--card-border)}' +
-        '.ct-var-card:active{background:var(--bg-elevated)}' +
-        '.ct-var-key{display:inline-block;font-family:var(--font-mono,monospace);font-size:11.5px;color:var(--accent,#10b981);background:rgba(16,185,129,0.08);border:1px solid rgba(16,185,129,0.25);padding:1px 7px;border-radius:5px;margin-bottom:6px;word-break:break-all}' +
+        '.ct-vars-body{padding:4px 16px 16px;border-top:1px solid var(--border-light)}' +
+        '.ct-vars-intro{font-size:11.5px;color:var(--text-muted);line-height:1.55;margin:12px 0 14px;padding:10px 12px;background:var(--bg-elevated);border-radius:6px}' +
+
+        /* Multi-column grid — each card has enough width to show
+           long keys + full label + example without wrapping into
+           3-char columns. Auto-fill lets it reflow to 1/2/3 cols. */
+        '.ct-var-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:10px}' +
+        '.ct-var-card{display:block;text-align:left;background:var(--bg-elevated);border:1px solid var(--card-border);border-radius:8px;padding:11px 13px;cursor:pointer;font-family:inherit;transition:background 120ms ease,border-color 120ms ease,transform 80ms ease}' +
+        '.ct-var-card:hover{background:var(--bg-hover);border-color:var(--accent-border,rgba(16,185,129,0.3))}' +
+        '.ct-var-card:active{transform:translateY(1px)}' +
+        '.ct-var-key{display:inline-block;font-family:var(--font-mono,monospace);font-size:12px;color:var(--accent,#10b981);background:rgba(16,185,129,0.1);border:1px solid rgba(16,185,129,0.3);padding:2px 8px;border-radius:5px;margin-bottom:7px;word-break:break-all}' +
         '.ct-var-label{font-size:12.5px;color:var(--text-primary);line-height:1.4;font-weight:500}' +
-        '.ct-var-example{font-size:10.5px;color:var(--text-muted);margin-top:3px;font-family:var(--font-mono,monospace);line-height:1.4;word-break:break-all;opacity:0.85}' +
+        '.ct-var-example{font-size:11px;color:var(--text-muted);margin-top:4px;font-family:var(--font-mono,monospace);line-height:1.45;word-break:break-all;opacity:0.85}' +
 
-        '.ct-preview{background:var(--bg-card);border:1px solid var(--card-border);border-radius:8px;padding:14px 16px;color:var(--text-primary);font-size:13px;line-height:1.65;min-height:120px;white-space:pre-wrap;word-break:break-word}' +
+        '.ct-preview{background:var(--bg-card);border:1px solid var(--card-border);border-radius:8px;padding:14px 16px;color:var(--text-primary);font-size:13px;line-height:1.7;min-height:120px;white-space:pre-wrap;word-break:break-word}' +
         '.ct-preview code{background:var(--bg-elevated);padding:1px 5px;border-radius:3px;font-size:11.5px}' +
         '.ct-action-row{display:flex;gap:8px;align-items:center;margin-top:14px;flex-wrap:wrap}' +
         '.ct-meta-line{font-size:11px;color:var(--text-muted);margin-top:6px}' +
@@ -1353,25 +1372,37 @@
           '在下方编辑 Markdown 内容，支持 <code>{{变量名}}</code> 动态占位符。留空则恢复默认模板。' +
         '</div>' +
 
-        '<div class="ct-layout">' +
-          '<div>' +
-            '<label class="settings-field-label" for="ctBody">模板正文（Markdown）</label>' +
-            '<textarea id="ctBody" class="ct-textarea" placeholder="支持 {{变量名}} 占位符，右侧可一键插入"></textarea>' +
-            '<div class="ct-meta-line" id="ctUpdatedAt">' + updatedLabel + '</div>' +
+        '<label class="settings-field-label" for="ctBody">模板正文（Markdown）</label>' +
+        '<textarea id="ctBody" class="ct-textarea" placeholder="支持 {{变量名}} 占位符，可在下方展开「可用变量」一键插入"></textarea>' +
+        '<div class="ct-meta-line" id="ctUpdatedAt">' + updatedLabel + '</div>' +
 
-            '<div class="ct-action-row">' +
-              '<button type="button" class="settings-btn-primary" onclick="_ctSave()">保存</button>' +
-              '<button type="button" class="settings-btn-outline" onclick="_ctPreview()">预览（示例数据）</button>' +
-              '<button type="button" class="settings-btn-outline" onclick="_ctResetDefault()">恢复默认模板</button>' +
-            '</div>' +
-          '</div>' +
-
-          '<aside class="ct-sidebar">' +
-            '<div class="ct-sidebar-title">可用变量</div>' +
-            '<div class="ct-sidebar-hint">点卡片将 <code>{{变量}}</code> 插入到左侧光标位置。未定义的 <code>{{变量}}</code> 会原样保留，便于排查拼写错误。</div>' +
-            '<div class="ct-var-list">' + varRows + '</div>' +
-          '</aside>' +
+        '<div class="ct-action-row">' +
+          '<button type="button" class="settings-btn-primary" onclick="_ctSave()">保存</button>' +
+          '<button type="button" class="settings-btn-outline" onclick="_ctPreview()">预览（示例数据）</button>' +
+          '<button type="button" class="settings-btn-outline" onclick="_ctResetDefault()">恢复默认模板</button>' +
         '</div>' +
+
+        /* Native <details> — no custom state tracking needed; click
+           to expand, click again to collapse. Persists accordion state
+           across Tab switches because the DOM is re-rendered, which
+           is fine — opening it is one click. */
+        '<details class="ct-vars-panel">' +
+          '<summary class="ct-vars-summary">' +
+            '<span class="ct-vars-chevron">' +
+              '<svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor"><path d="M6.22 3.22a.75.75 0 011.06 0l4.25 4.25a.75.75 0 010 1.06l-4.25 4.25a.75.75 0 01-1.06-1.06L9.94 8 6.22 4.28a.75.75 0 010-1.06z"/></svg>' +
+            '</span>' +
+            '<strong>可用变量</strong>' +
+            '<span class="ct-vars-hint">点击展开，选择变量一键插入到光标位置</span>' +
+            '<span class="ct-vars-count">' + _ct_state.variables.length + ' 个</span>' +
+          '</summary>' +
+          '<div class="ct-vars-body">' +
+            '<div class="ct-vars-intro">' +
+              '点卡片将 <code>{{变量}}</code> 插入到编辑区光标位置。未定义的 <code>{{变量}}</code> 会原样保留，便于排查拼写错误。' +
+              '<code>{{prReviewUrl}}</code> 自动指向「本分支预览地址 + /pr-review」，无需额外配置域名。' +
+            '</div>' +
+            '<div class="ct-var-grid">' + varCards + '</div>' +
+          '</div>' +
+        '</details>' +
       '</div>' +
 
       '<div class="settings-section">' +
