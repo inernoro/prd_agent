@@ -12,6 +12,8 @@ import { openGroupSessionAndSetStore } from '../../lib/openGroupSession';
 import GroupList from '../Group/GroupList';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import { extractMarkdownTitle, isMeaninglessName, normalizeCandidateName, stripFileExtension } from '../utils/nameHeuristics';
+import DocumentContextMenu from '../Document/DocumentContextMenu';
+import RenameDocumentModal from '../Document/RenameDocumentModal';
 
 export default function Sidebar() {
   const { user, logout } = useAuthStore();
@@ -33,37 +35,14 @@ export default function Sidebar() {
   const sidebarDocInputRef = useRef<HTMLInputElement | null>(null);
   const [addingDoc, setAddingDoc] = useState(false);
 
-  // 重命名文档（右键触发）：用原生 prompt 完成最小交互
-  const renameDocument = useCallback(async (docId: string, currentTitle: string) => {
-    const next = window.prompt('重命名文档', currentTitle || '');
-    if (next == null) return; // 用户取消
-    const trimmed = next.trim();
-    if (!trimmed || trimmed === currentTitle) return;
-    if (trimmed.length > 200) {
-      window.alert('文档标题最长 200 字符');
-      return;
-    }
-    try {
-      const resp = await invoke<ApiResponse<Document>>('update_document_title', {
-        documentId: docId,
-        title: trimmed,
-        groupId: activeGroupId || null,
-        sessionId: sessionId || null,
-      });
-      if (!resp.success || !resp.data) {
-        window.alert(resp.error?.message || '重命名失败');
-        return;
-      }
-      const updatedTitle = resp.data.title || trimmed;
-      // 同步 store：主文档 + documents 数组
-      useSessionStore.setState((s) => ({
-        document: s.document && s.document.id === docId ? { ...s.document, title: updatedTitle } : s.document,
-        documents: s.documents.map(d => d.id === docId ? { ...d, title: updatedTitle } : d),
-      }));
-    } catch (err) {
-      window.alert('重命名失败：' + String(err));
-    }
-  }, [activeGroupId, sessionId]);
+  // 右键菜单 + 改名模态窗状态（目标文档）
+  const [docContextMenu, setDocContextMenu] = useState<null | { x: number; y: number; docId: string; currentTitle: string }>(null);
+  const [renameTarget, setRenameTarget] = useState<null | { docId: string; currentTitle: string }>(null);
+
+  const openDocContextMenu = useCallback((e: React.MouseEvent, docId: string, currentTitle: string) => {
+    e.preventDefault();
+    setDocContextMenu({ x: e.clientX, y: e.clientY, docId, currentTitle });
+  }, []);
 
   // 侧边栏追加资料
   const handleSidebarAddDoc = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -708,8 +687,7 @@ export default function Sidebar() {
                 }}
                 onContextMenu={(e) => {
                   if (!documentLoaded || !prdDocument) return;
-                  e.preventDefault();
-                  void renameDocument(prdDocument.id, prdDocument.title || '');
+                  openDocContextMenu(e, prdDocument.id, prdDocument.title || '');
                 }}
                 onKeyDown={(e) => {
                   if (e.key === 'Enter' || e.key === ' ') {
@@ -781,10 +759,7 @@ export default function Sidebar() {
                   key={doc.id}
                   className="w-full px-3 py-1.5 rounded-lg text-left text-sm text-text-secondary hover:bg-black/5 dark:hover:bg-white/5 transition-colors flex items-center gap-2 min-w-0 group"
                   title={doc.title}
-                  onContextMenu={(e) => {
-                    e.preventDefault();
-                    void renameDocument(doc.id, doc.title || '');
-                  }}
+                  onContextMenu={(e) => openDocContextMenu(e, doc.id, doc.title || '')}
                 >
                   <svg className="w-3.5 h-3.5 shrink-0 opacity-50" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z" />
@@ -1033,6 +1008,37 @@ export default function Sidebar() {
         {/* hover 提示（不改变边界线颜色，避免视觉跳动） */}
         <div className={`h-full w-full ${isCollapsed ? '' : 'hover:bg-primary-500/10'}`} />
       </div>
+
+      {/* 文档右键菜单 */}
+      {docContextMenu && (
+        <DocumentContextMenu
+          x={docContextMenu.x}
+          y={docContextMenu.y}
+          items={[
+            {
+              key: 'rename',
+              label: '重命名',
+              icon: (
+                <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                </svg>
+              ),
+              onClick: () => {
+                setRenameTarget({ docId: docContextMenu.docId, currentTitle: docContextMenu.currentTitle });
+              },
+            },
+          ]}
+          onClose={() => setDocContextMenu(null)}
+        />
+      )}
+
+      {/* 重命名模态窗 */}
+      <RenameDocumentModal
+        open={!!renameTarget}
+        documentId={renameTarget?.docId || ''}
+        currentTitle={renameTarget?.currentTitle || ''}
+        onClose={() => setRenameTarget(null)}
+      />
     </aside>
   );
 }
