@@ -63,6 +63,33 @@ function rehypeStripInlineColors() {
   return (tree: any) => { walkHast(tree); };
 }
 
+/**
+ * react-markdown v10 默认的 urlTransform 只保留 http(s)/mailto/xmpp/irc 等协议，
+ * 会把 Word → Markdown 转换器常见的 `data:image/...;base64` 图片直接置空。
+ * 表现为目录项只剩一个空白的项目符号（• 后面什么也没有），因为 <img> 的 src 被抹掉。
+ * 这里放行 data:image/ 与 blob: 给图片使用，其余协议仍按默认安全白名单处理。
+ */
+function safePrdUrlTransform(url: string): string {
+  const raw = String(url || '').trim();
+  if (!raw) return raw;
+  if (/^data:image\//i.test(raw)) return raw;
+  if (/^blob:/i.test(raw)) return raw;
+  const colon = raw.indexOf(':');
+  const question = raw.indexOf('?');
+  const hash = raw.indexOf('#');
+  const slash = raw.indexOf('/');
+  if (
+    colon < 0 ||
+    (slash > -1 && colon > slash) ||
+    (question > -1 && colon > question) ||
+    (hash > -1 && colon > hash) ||
+    /^(https?|ircs?|mailto|xmpp)$/i.test(raw.slice(0, colon))
+  ) {
+    return raw;
+  }
+  return '';
+}
+
 type DocumentContent = { id: string; title: string; content: string };
 
 export default function PrdPreviewPage(props: {
@@ -344,18 +371,61 @@ export default function PrdPreviewPage(props: {
     return { h1: make('h1'), h2: make('h2'), h3: make('h3'), h4: make('h4'), h5: make('h5'), h6: make('h6') };
   }, [slugger]);
 
+  const markdownComponents = useMemo(() => ({
+    ...headingComponents,
+    img: ({ src, alt, ...props }: any) => {
+      const safeSrc = typeof src === 'string' ? src.trim() : '';
+      if (!safeSrc) {
+        return (
+          <span
+            className="inline-flex items-center gap-1 rounded border px-2 py-1 text-xs align-middle"
+            style={{ borderColor: 'var(--border)', color: 'var(--text-muted)' }}
+            title={alt || ''}
+          >
+            <span>[图片]</span>
+            <span>{alt ? `：${alt}` : '（链接缺失或被清理）'}</span>
+          </span>
+        );
+      }
+      return (
+        <img
+          src={safeSrc}
+          alt={alt || ''}
+          loading="lazy"
+          style={{ maxWidth: '100%', borderRadius: 8 }}
+          onError={(e) => {
+            const el = e.currentTarget;
+            // 避免死循环：只降级一次
+            if (el.dataset.fallback === '1') return;
+            el.dataset.fallback = '1';
+            const span = document.createElement('span');
+            span.textContent = alt ? `图片加载失败：${alt}` : '图片加载失败';
+            span.style.cssText = 'display:inline-flex;align-items:center;gap:4px;padding:4px 8px;border:1px solid var(--border,#333);border-radius:4px;font-size:12px;color:var(--text-muted,#888);';
+            el.replaceWith(span);
+          }}
+          {...props}
+        />
+      );
+    },
+  }), [headingComponents]);
+
   const prdPreviewBody = useMemo(() => {
     if (!canPreview) return <div className="text-sm" style={{ color: 'var(--text-muted)' }}>请先选择群组并绑定 PRD</div>;
     if (loading) return <div className="text-sm" style={{ color: 'var(--text-muted)' }}>加载中...</div>;
     if (error) return <div className="text-sm text-red-500">{error}</div>;
     return (
       <div className="prose prose-sm max-w-none prd-preview-content" style={{ color: 'var(--text-primary)' }}>
-        <ReactMarkdown remarkPlugins={[remarkGfm, remarkBreaks]} rehypePlugins={[rehypeRaw, rehypeStripInlineColors]} components={headingComponents}>
+        <ReactMarkdown
+          remarkPlugins={[remarkGfm, remarkBreaks]}
+          rehypePlugins={[rehypeRaw, rehypeStripInlineColors]}
+          urlTransform={safePrdUrlTransform}
+          components={markdownComponents}
+        >
           {prdPreview?.content || ''}
         </ReactMarkdown>
       </div>
     );
-  }, [canPreview, prdPreview?.content, error, loading, headingComponents]);
+  }, [canPreview, prdPreview?.content, error, loading, markdownComponents]);
 
   // 从 DOM 抽取 TOC
   useEffect(() => {
