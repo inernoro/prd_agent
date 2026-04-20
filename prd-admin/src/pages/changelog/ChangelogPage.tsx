@@ -360,10 +360,18 @@ export default function ChangelogPage() {
                       {visibleDays.map((day, dayIdx) => (
                         <div key={`${day.date}-${dayIdx}`}>
                           <div
-                            className="flex items-center gap-2 mb-1.5 text-[11px] font-mono"
-                            style={{ color: 'var(--text-muted)' }}
+                            className="inline-flex items-center gap-2 mb-2.5 px-2.5 py-1 rounded-md"
+                            style={{
+                              background: 'rgba(255, 255, 255, 0.04)',
+                              border: '1px solid rgba(255, 255, 255, 0.08)',
+                              color: 'var(--text-secondary)',
+                              fontSize: '13px',
+                              fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',
+                              fontWeight: 600,
+                              letterSpacing: '0.02em',
+                            }}
                           >
-                            <Calendar size={11} />
+                            <Calendar size={13} />
                             {day.date}
                           </div>
                           <div className="flex flex-col gap-1.5">
@@ -405,38 +413,53 @@ function EntryRow({ entry }: { entry: FlatEntry }) {
   const meta = getTypeBadge(entry.type);
   return (
     <div
-      className="rounded-lg px-3 py-2 flex items-start gap-2.5 transition-colors"
+      className="rounded-lg px-3.5 py-2.5 flex items-center gap-3 transition-colors"
       style={{
         background: 'rgba(255, 255, 255, 0.025)',
         border: '1px solid rgba(255, 255, 255, 0.06)',
       }}
     >
       <div
-        className="shrink-0 px-1.5 h-5 rounded inline-flex items-center text-[10px] font-medium mt-0.5"
+        className="shrink-0 px-2 h-[24px] rounded-md inline-flex items-center text-[12px] font-semibold"
         style={{
           background: meta.bg,
           color: meta.color,
           border: `1px solid ${meta.border}`,
+          letterSpacing: '0.02em',
         }}
       >
         {meta.label}
       </div>
       <div
-        className="shrink-0 inline-flex items-center gap-1 h-5 px-1.5 rounded text-[10px] font-mono mt-0.5"
+        className="shrink-0 inline-flex items-center gap-1 h-[24px] px-2 rounded-md text-[12px]"
         style={{
-          color: 'var(--text-muted)',
-          background: 'rgba(255, 255, 255, 0.03)',
-          border: '1px solid rgba(255, 255, 255, 0.06)',
+          color: 'var(--text-secondary)',
+          background: 'rgba(255, 255, 255, 0.04)',
+          border: '1px solid rgba(255, 255, 255, 0.08)',
+          fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',
+          fontWeight: 500,
         }}
       >
-        <Tag size={9} />
+        <Tag size={11} />
         {entry.module}
       </div>
       <div
-        className="text-[12.5px] leading-relaxed flex-1"
-        style={{ color: 'var(--text-secondary)' }}
+        className="text-[13px] leading-relaxed flex-1 truncate"
+        style={{ color: 'var(--text-secondary)', minWidth: 0 }}
+        title={entry.description}
       >
         {entry.description}
+      </div>
+      <div
+        className="shrink-0 text-[12px]"
+        style={{
+          color: 'var(--text-muted)',
+          fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',
+          fontVariantNumeric: 'tabular-nums',
+        }}
+        title="提交日期"
+      >
+        {entry.date}
       </div>
     </div>
   );
