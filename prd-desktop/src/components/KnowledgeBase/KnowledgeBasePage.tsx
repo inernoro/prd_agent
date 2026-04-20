@@ -475,10 +475,19 @@ export default function KnowledgeBasePage() {
             将从当前会话中移除资料文档
             <span className="mx-1 font-medium text-text-primary">「{deleteTarget?.title}」</span>
             。文档本身不会从系统中永久删除，但 AI 对话将不再引用它。
+            {docActions.error ? (
+              <div className="mt-2 px-2 py-1.5 rounded text-[11px] bg-red-500/10 text-red-400 break-words">
+                {docActions.error}
+              </div>
+            ) : null}
           </>
         }
         onConfirm={() => { void confirmDeleteDocument(); }}
-        onClose={() => { if (!anyBusy) setDeleteTarget(null); }}
+        onClose={() => {
+          if (anyBusy) return;
+          docActions.clearError();
+          setDeleteTarget(null);
+        }}
       />
     </div>
   );
