@@ -2,11 +2,31 @@
 
 > 被 SKILL.md Phase 2 引用。依次执行以下 6 组 git 命令收集原始数据。
 
+## 2.0 边界准备
+
+> **核心原则**：
+>
+> 1. 只统计默认主干分支，不使用 `--all`
+> 2. 使用 **提交时间** `"%cd"`，并配合 `--date=short` 输出 `YYYY-MM-DD`
+> 3. 只按日期文本过滤：`MONDAY <= date <= SUNDAY`
+> 4. 不做时区换算，不再用 `--since/--until` 作为最终边界判断
+
+```bash
+DEFAULT_BRANCH=$(git symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null | sed 's#^origin/##')
+DEFAULT_BRANCH=${DEFAULT_BRANCH:-main}
+
+COMMITS_FILE=/tmp/weekly-commits.$$.tsv
+PRS_FILE=/tmp/weekly-prs.$$.tsv
+
+git log "$DEFAULT_BRANCH" --format="%cd\t%H\t%an\t%s" --date=short | \
+  awk -F '\t' -v s="$MONDAY" -v e="$SUNDAY" '$1 >= s && $1 <= e' > "$COMMITS_FILE"
+```
+
 ## 2.1 提交总量
 
 ```bash
-COMMIT_COUNT=$(git log --oneline --since="$MONDAY" --until="$NEXT_MONDAY" | wc -l)
-git log --oneline --since="$MONDAY" --until="$NEXT_MONDAY"
+COMMIT_COUNT=$(wc -l < "$COMMITS_FILE" | tr -d ' ')
+cut -f1,2,4 "$COMMITS_FILE"
 ```
 
 ## 2.2 去重文件/行数统计
@@ -21,8 +41,8 @@ git log --oneline --since="$MONDAY" --until="$NEXT_MONDAY"
 **正确做法** — 使用 `git diff --shortstat` 在首尾提交之间做一次性差分：
 
 ```bash
-FIRST_COMMIT=$(git log --since="$MONDAY" --until="$NEXT_MONDAY" --reverse --format="%H" | head -1)
-LAST_COMMIT=$(git log --since="$MONDAY" --until="$NEXT_MONDAY" --format="%H" | head -1)
+FIRST_COMMIT=$(tail -n 1 "$COMMITS_FILE" | cut -f2)
+LAST_COMMIT=$(head -n 1 "$COMMITS_FILE" | cut -f2)
 
 # 尝试包含第一个提交的变更 (FIRST^..LAST)
 STATS=$(git diff --shortstat "$FIRST_COMMIT^..$LAST_COMMIT" 2>/dev/null)
@@ -38,44 +58,57 @@ echo "$STATS"
 
 ## 2.3 PR 列表与深度分析
 
-**Step 1 — 确定 PR 范围**（基于上周报告，见纪律 1）：
+**Step 1 — 优先用 GitHub PR 元数据确定“哪些 PR 真正落到默认主干”**：
+
+> **为什么**：`git log --merges` 只能看到 merge commit，看不到 fast-forward / rebase merge 到主干的 PR。
+>
+> **正确口径**：
+>
+> 1. 只取 `base = DEFAULT_BRANCH` 且 `merged = true` 的 PR
+> 2. 对每个 PR，取其最终落地主干的 SHA（优先 `merge_commit_sha`）
+> 3. 用本地 `git show -s --format="%cd" --date=short <sha>` 判定是否属于 `MONDAY ~ SUNDAY`
 
 ```bash
-# 从上周报告读取最后一个 PR 号
-PREV_LAST_PR=$(grep -oP '#\d+ ~ #\K\d+' "$PREV_FILE" 2>/dev/null | head -1)
-if [ -n "$PREV_LAST_PR" ]; then
-  THIS_FIRST_PR=$((PREV_LAST_PR + 1))
-else
-  # 退化：从 merge commit 日期范围搜索
-  THIS_FIRST_PR=$(git log --all --merges --format="%s" --since="$MONDAY" --until="$NEXT_MONDAY" | grep -oP 'Merge pull request #\K\d+' | sort -n | head -1)
-fi
-THIS_LAST_PR=$(git log --all --merges --format="%s" | grep -oP 'Merge pull request #\K\d+' | sort -n | tail -1)
+# 建议优先使用 GitHub MCP / gh / GitHub API 获取：
+# - pr.number
+# - pr.title
+# - pr.base.ref
+# - pr.merged
+# - pr.merge_commit_sha
+#
+# 然后对每个候选 PR 执行：
+git show -s --format="%cd\t%H\t%s" --date=short "$LANDING_SHA"
+```
+
+**Step 1 fallback — 如果拿不到 GitHub 元数据，再退化为主干 first-parent merge commits**：
+
+```bash
+git log "$DEFAULT_BRANCH" --first-parent --merges --format="%cd\t%H\t%s" --date=short | \
+  awk -F '\t' -v s="$MONDAY" -v e="$SUNDAY" \
+    '$1 >= s && $1 <= e && $3 ~ /^Merge pull request #[0-9]+ /' > "$PRS_FILE"
 ```
 
 **Step 2 — 获取 PR 列表**：
 
 ```bash
-for PR_NUM in $(seq $THIS_FIRST_PR $THIS_LAST_PR); do
-  HASH=$(git log --all --merges --format="%H %s" | grep "Merge pull request #${PR_NUM} " | head -1 | awk '{print $1}')
-  if [ -n "$HASH" ]; then
-    TITLE=$(git log "$HASH^2" --oneline -1 --format="%s" 2>/dev/null)
-    COMMITS=$(git log "$HASH^1..$HASH^2" --oneline 2>/dev/null | wc -l)
-    echo "#$PR_NUM ($COMMITS commits) | $TITLE"
-  fi
-done
+while IFS=$'\t' read -r PR_DATE HASH SUBJECT; do
+  PR_NUM=$(printf "%s" "$SUBJECT" | grep -oE '#[0-9]+' | head -1 | tr -d '#')
+  TITLE=$(git log "$HASH^2" --oneline -1 --format="%s" 2>/dev/null)
+  COMMITS=$(git log "$HASH^1..$HASH^2" --oneline 2>/dev/null | wc -l | tr -d ' ')
+  echo "#$PR_NUM ($COMMITS commits) | $TITLE"
+done < "$PRS_FILE"
 ```
+
+> 如果使用 GitHub 元数据拿到的是 fast-forward / rebase merge，可能不存在 `HASH^2`。此时标题应直接使用 PR title，commit 数通过 GitHub PR metadata 或其它可验证方式补齐。
 
 **Step 3 — 深读每个 PR 的实际 commits**（见纪律 2）：
 
 ```bash
-# 对每个 PR，读取其完整 commit 列表
-for PR_NUM in $(seq $THIS_FIRST_PR $THIS_LAST_PR); do
-  HASH=$(git log --all --merges --format="%H %s" | grep "Merge pull request #${PR_NUM} " | head -1 | awk '{print $1}')
-  if [ -n "$HASH" ]; then
-    echo "=== PR #$PR_NUM ==="
-    git log "$HASH^1..$HASH^2" --oneline 2>/dev/null | head -10
-  fi
-done
+while IFS=$'\t' read -r PR_DATE HASH SUBJECT; do
+  PR_NUM=$(printf "%s" "$SUBJECT" | grep -oE '#[0-9]+' | head -1 | tr -d '#')
+  echo "=== PR #$PR_NUM ==="
+  git log "$HASH^1..$HASH^2" --oneline 2>/dev/null | head -10
+done < "$PRS_FILE"
 ```
 
 > **⚠️ 为什么必须深读**：merge commit 标题往往是 PR 分支的最后一次 commit 消息（可能是 merge/fix），不代表 PR 的真实主题。例如 PR #201 标题为 `remove: delete TAPD template`，但实际包含 25 个 commits 的 ECharts 报告系统重构。
@@ -83,13 +116,13 @@ done
 ## 2.4 贡献者统计
 
 ```bash
-git log --since="$MONDAY" --until="$NEXT_MONDAY" --format="%an" | sort | uniq -c | sort -rn
+cut -f3 "$COMMITS_FILE" | sort | uniq -c | sort -rn
 ```
 
 ## 2.5 提交类型分布
 
 ```bash
-git log --since="$MONDAY" --until="$NEXT_MONDAY" --format="%s" | \
+cut -f4 "$COMMITS_FILE" | \
   sed 's/(.*//; s/:.*//' | sort | uniq -c | sort -rn
 ```
 
@@ -98,8 +131,7 @@ git log --since="$MONDAY" --until="$NEXT_MONDAY" --format="%s" | \
 ## 2.6 每日提交分布
 
 ```bash
-git log --since="$MONDAY" --until="$NEXT_MONDAY" \
-  --format="%ad" --date=format:"%m-%d %A" | sort | uniq -c
+cut -f1 "$COMMITS_FILE" | sort | uniq -c
 ```
 
 对每天标注重点方向（分析当天 commit 消息中的关键词聚类）。

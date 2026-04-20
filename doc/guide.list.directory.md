@@ -1,6 +1,6 @@
 # MAP 平台文档索引 · 指南
 
-> 最后更新：2026-03-31
+> 最后更新：2026-04-20
 >
 > 本文件是 `doc/` 目录的结构化索引，供外部同步工具（语雀、Confluence 等）消费。
 > 元数据定义见 `doc/index.yml`，命名规范见 `doc/rule.doc-naming.md`。
@@ -376,6 +376,15 @@
 
 ### 六、周报
 
+- [周报 2026-W16 (04-13 ~ 04-19)](report.2026-W16) `report.2026-W16`
+  > 2026 年第 16 周工作总结（329 commits / 38 PRs，CDS 多项目化收官与 GitHub 自动部署闭环）
+
+- [周报 2026-W15 (04-06 ~ 04-12)](report.2026-W15) `report.2026-W15`
+  > 2026 年第 15 周工作总结（301 commits / 39 PRs，CDS 平台化升级与首页重写）
+
+- [周报 2026-W14 (03-30 ~ 04-05)](report.2026-W14) `report.2026-W14`
+  > 2026 年第 14 周工作总结（95 commits / 12 PRs，文档空间起步与 Page Agent Bridge 开工）
+
 - [周报 2026-W13 (03-23 ~ 03-29)](report.2026-W13) `report.2026-W13`
   > 2026 年第 13 周工作总结（312 commits / 44 PRs，两个新 Agent 上线）
 
@@ -421,6 +430,9 @@
 
 | 日期 | 操作 | 文件名 | 中文标题 |
 | :--- | :--- | :--- | :--- |
+| 2026-04-20 | 🟢 新增 | `report.2026-W16` | 周报 2026-W16 (04-13 ~ 04-19) |
+| 2026-04-20 | 🟢 新增 | `report.2026-W15` | 周报 2026-W15 (04-06 ~ 04-12) |
+| 2026-04-20 | 🟢 新增 | `report.2026-W14` | 周报 2026-W14 (03-30 ~ 04-05) |
 | 2026-04-19 | 🔄 重命名 | `output-user-guide-writing` → `report.skill-eval-sample-user-guide` | 文档技能评测·user-guide-writing 样本输出 |
 | 2026-04-19 | 🔄 重命名 | `output-technical-writing` → `report.skill-eval-sample-technical` | 文档技能评测·technical-writing 样本输出 |
 | 2026-04-19 | 🔄 重命名 | `output-documentation-writer` → `report.skill-eval-sample-diataxis` | 文档技能评测·documentation-writer 样本输出 |
