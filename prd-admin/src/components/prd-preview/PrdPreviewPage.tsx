@@ -64,9 +64,10 @@ function rehypeStripInlineColors() {
 }
 
 /**
- * react-markdown v10 默认 urlTransform 只放行 http(s)/mailto/xmpp/irc，
- * Word → Markdown 转出的 `data:image/...;base64` 会被直接抹掉。
- * 这里放行 data:image/ 与 blob:，其余协议仍按默认安全白名单处理。
+ * react-markdown v10 默认的 urlTransform 只保留 http(s)/mailto/xmpp/irc 等协议，
+ * 会把 Word → Markdown 转换器常见的 `data:image/...;base64` 图片直接置空。
+ * 表现为目录项只剩一个空白的项目符号（• 后面什么也没有），因为 <img> 的 src 被抹掉。
+ * 这里放行 data:image/ 与 blob: 给图片使用，其余协议仍按默认安全白名单处理。
  */
 function safePrdUrlTransform(url: string): string {
   const raw = String(url || '').trim();
@@ -394,6 +395,7 @@ export default function PrdPreviewPage(props: {
           style={{ maxWidth: '100%', borderRadius: 8 }}
           onError={(e) => {
             const el = e.currentTarget;
+            // 避免死循环：只降级一次
             if (el.dataset.fallback === '1') return;
             el.dataset.fallback = '1';
             const span = document.createElement('span');
