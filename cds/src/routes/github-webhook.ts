@@ -44,6 +44,7 @@ import {
 import {
   DEFAULT_TEMPLATE_BODY,
   buildDashboardUrl,
+  buildPreviewUrl,
   buildTemplateVariables,
   renderTemplate,
 } from '../services/comment-template.js';
@@ -644,7 +645,7 @@ async function postOrUpdatePrComment(
   // PR review deeplink) go through buildTemplateVariables so the
   // settings-panel preview and the live render stay in lock-step.
   const host = config.previewDomain || config.rootDomains?.[0];
-  const previewUrl = host ? `https://${branchId}.${host}` : '';
+  const previewUrl = buildPreviewUrl(host, branchId);
   const dashboardUrl = buildDashboardUrl(config.publicBaseUrl, branchId);
   const settings = stateService.getCommentTemplate();
   const templateBody = settings?.body && settings.body.length > 0 ? settings.body : DEFAULT_TEMPLATE_BODY;

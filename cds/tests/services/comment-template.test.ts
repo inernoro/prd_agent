@@ -4,6 +4,7 @@ import {
   VARIABLE_DEFS,
   buildDashboardUrl,
   buildPrReviewDeeplink,
+  buildPreviewUrl,
   buildTemplateVariables,
   renderTemplate,
 } from '../../src/services/comment-template.js';
@@ -47,6 +48,20 @@ describe('renderTemplate', () => {
   it('treats undefined values as "do not substitute"', () => {
     expect(renderTemplate('{{prUrl}}', {} as unknown as Parameters<typeof renderTemplate>[1]))
       .toBe('{{prUrl}}');
+  });
+});
+
+describe('buildPreviewUrl', () => {
+  it('returns empty string when host or branchId missing', () => {
+    expect(buildPreviewUrl(undefined, 'feat')).toBe('');
+    expect(buildPreviewUrl('', 'feat')).toBe('');
+    expect(buildPreviewUrl(null, 'feat')).toBe('');
+    expect(buildPreviewUrl('example.com', '')).toBe('');
+  });
+
+  it('produces the subdomain form used by CDS preview routing', () => {
+    expect(buildPreviewUrl('example.com', 'feature-a'))
+      .toBe('https://feature-a.example.com');
   });
 });
 
