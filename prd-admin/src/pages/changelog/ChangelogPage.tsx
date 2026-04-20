@@ -9,7 +9,12 @@ import { MapSectionLoader, MapSpinner } from '@/components/ui/VideoLoader';
 import { glassPanel } from '@/lib/glassStyles';
 import type { ChangelogEntry } from '@/services';
 import { TabBar } from '@/components/design/TabBar';
-import { WeeklyReportsTab } from './components/WeeklyReportsTab';
+import {
+  WeeklyReportsTab,
+  WeeklyReportSourceChips,
+  WeeklyReportSourceDialog,
+} from './components/WeeklyReportsTab';
+import { WeeklyReportSourcesProvider } from './components/weeklyReportSourcesContext';
 
 
 /** 类型徽章注册表（禁止 switch / if-else） */
@@ -131,8 +136,9 @@ export default function ChangelogPage() {
   })();
 
   return (
+    <WeeklyReportSourcesProvider>
     <div className="flex flex-col gap-5 h-full min-h-0">
-      {/* ── 顶部切换导航 ── */}
+      {/* ── 顶部切换导航（周报 tab 下把来源 chip 合并到右侧 actions 槽，省一行） ── */}
       <TabBar
         items={[
           { key: 'update_center', label: '更新中心', icon: <Sparkles size={14} /> },
@@ -141,7 +147,9 @@ export default function ChangelogPage() {
         activeKey={activeTab}
         onChange={setActiveTab}
         variant="gold"
+        actions={activeTab === 'weekly_reports' ? <WeeklyReportSourceChips /> : undefined}
       />
+      <WeeklyReportSourceDialog />
 
       {activeTab === 'update_center' && (
       <div className="flex flex-col gap-5 flex-1 min-h-0 overflow-y-auto pr-1"
@@ -429,6 +437,7 @@ export default function ChangelogPage() {
       )}
 
     </div>
+    </WeeklyReportSourcesProvider>
   );
 }
 

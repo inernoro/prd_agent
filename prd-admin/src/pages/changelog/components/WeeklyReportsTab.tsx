@@ -3,21 +3,16 @@ import { Button } from '@/components/design/Button';
 import { Dialog } from '@/components/ui/Dialog';
 import {
   FileText,
-  Filter,
   Plus,
   Pencil,
   Trash2,
   Database,
-  BookOpen,
 } from 'lucide-react';
 import {
-  listDocumentStoresWithPreview,
   listDocumentEntries,
   getDocumentContent,
-  listChangelogReportSources,
   createChangelogReportSource,
   updateChangelogReportSource,
-  deleteChangelogReportSource,
 } from '@/services';
 import type { DocumentStore, DocumentEntry } from '@/services/contracts/documentStore';
 import type {
@@ -26,8 +21,9 @@ import type {
 } from '@/services/real/changelog';
 import { MarkdownContent } from '@/components/ui/MarkdownContent';
 import { MapSectionLoader, MapSpinner } from '@/components/ui/VideoLoader';
-import { glassPanel, glassBar } from '@/lib/glassStyles';
+import { glassPanel } from '@/lib/glassStyles';
 import { toast } from '@/lib/toast';
+import { useWeeklyReportSources } from './weeklyReportSourcesContext';
 
 /** 取条目对应的"最后修改时间"（优先 git commit time） */
 function getEntryTime(e: DocumentEntry): string {
@@ -57,59 +53,13 @@ function isThisWeek(timeStr: string, weekStart: number): boolean {
   return t >= weekStart;
 }
 
-/** sessionStorage 里记住"上次选的 source id"，改善体验（不存业务数据） */
-const ACTIVE_SOURCE_KEY = 'weekly-reports-active-source';
-
 export function WeeklyReportsTab() {
-  const [sources, setSources] = useState<ChangelogReportSource[] | null>(null);
-  const [loadingSources, setLoadingSources] = useState(true);
-  const [activeId, setActiveId] = useState<string | null>(null);
-  const [stores, setStores] = useState<DocumentStore[]>([]);
-  const [loadingStores, setLoadingStores] = useState(false);
+  const { sources, loadingSources, activeSource, stores, onCreateOpen } = useWeeklyReportSources();
   const [entries, setEntries] = useState<DocumentEntry[]>([]);
   const [loadingEntries, setLoadingEntries] = useState(false);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [content, setContent] = useState<string | null>(null);
   const [loadingContent, setLoadingContent] = useState(false);
-
-  // 编辑弹窗
-  const [editorOpen, setEditorOpen] = useState(false);
-  const [editorTarget, setEditorTarget] = useState<ChangelogReportSource | null>(null);
-
-  // 首次加载：拉所有周报来源 + 所有知识库
-  useEffect(() => {
-    let alive = true;
-    setLoadingSources(true);
-    listChangelogReportSources()
-      .then(res => {
-        if (!alive) return;
-        if (res.success) {
-          setSources(res.data);
-          const saved = sessionStorage.getItem(ACTIVE_SOURCE_KEY);
-          const savedHit = saved && res.data.find(s => s.id === saved);
-          setActiveId(savedHit ? savedHit.id : (res.data[0]?.id ?? null));
-        } else {
-          setSources([]);
-          toast.error('加载周报来源失败', res.error?.message);
-        }
-      })
-      .finally(() => { if (alive) setLoadingSources(false); });
-
-    setLoadingStores(true);
-    listDocumentStoresWithPreview(1, 200)
-      .then(res => {
-        if (!alive) return;
-        if (res.success) setStores(res.data.items);
-      })
-      .finally(() => { if (alive) setLoadingStores(false); });
-
-    return () => { alive = false; };
-  }, []);
-
-  const activeSource = useMemo(
-    () => sources?.find(s => s.id === activeId) ?? null,
-    [sources, activeId],
-  );
 
   // 跟随 activeSource 变化：加载条目
   useEffect(() => {
@@ -166,68 +116,9 @@ export function WeeklyReportsTab() {
     return () => { alive = false; };
   }, [selectedId]);
 
-  const handleSelectSource = (id: string) => {
-    setActiveId(id);
-    setSelectedId(null);
-    sessionStorage.setItem(ACTIVE_SOURCE_KEY, id);
-  };
-
-  const handleOpenCreate = () => {
-    setEditorTarget(null);
-    setEditorOpen(true);
-  };
-
-  const handleOpenEdit = (src: ChangelogReportSource) => {
-    setEditorTarget(src);
-    setEditorOpen(true);
-  };
-
-  const handleDelete = async (src: ChangelogReportSource) => {
-    if (!window.confirm(`确定删除周报来源「${src.name}」？此操作不会影响知识库数据。`)) return;
-    const res = await deleteChangelogReportSource(src.id);
-    if (!res.success) {
-      toast.error('删除失败', res.error?.message);
-      return;
-    }
-    toast.success('已删除');
-    setSources(prev => {
-      const next = (prev ?? []).filter(s => s.id !== src.id);
-      if (activeId === src.id) {
-        setActiveId(next[0]?.id ?? null);
-        sessionStorage.removeItem(ACTIVE_SOURCE_KEY);
-      }
-      return next;
-    });
-  };
-
-  const handleSaved = (saved: ChangelogReportSource, isNew: boolean) => {
-    setSources(prev => {
-      const base = prev ?? [];
-      if (isNew) return [...base, saved];
-      return base.map(s => (s.id === saved.id ? saved : s));
-    });
-    if (isNew) {
-      setActiveId(saved.id);
-      sessionStorage.setItem(ACTIVE_SOURCE_KEY, saved.id);
-    }
-    setEditorOpen(false);
-  };
-
   // ── 空状态：没有任何来源 ──
   if (!loadingSources && sources && sources.length === 0) {
-    return (
-      <>
-        <EmptyState onCreate={handleOpenCreate} />
-        <SourceEditorDialog
-          open={editorOpen}
-          target={editorTarget}
-          stores={stores}
-          storesLoading={loadingStores}
-          onClose={() => setEditorOpen(false)}
-          onSaved={handleSaved}
-        />
-      </>
-    );
+    return <EmptyState onCreate={onCreateOpen} />;
   }
 
   // ── 加载中 ──
@@ -242,64 +133,7 @@ export function WeeklyReportsTab() {
   const currentStore = stores.find(s => s.id === activeSource?.storeId);
 
   return (
-    <div
-      className="flex flex-col flex-1 min-h-0"
-      style={{ minHeight: '560px' }}
-    >
-      {/* ── 周报来源 chip 栏 ── */}
-      <SourceChipBar
-        sources={sources}
-        activeId={activeId}
-        onSelect={handleSelectSource}
-        onCreate={handleOpenCreate}
-        onEdit={handleOpenEdit}
-        onDelete={handleDelete}
-      />
-
-      {/* ── 当前来源信息条 ── */}
-      {activeSource && (
-        <div
-          className="flex items-center justify-between flex-wrap gap-2 px-4 py-2 mb-3 rounded-xl"
-          style={{ ...glassBar, borderRadius: 12 }}
-        >
-          <div className="flex items-center gap-2.5 flex-wrap min-w-0">
-            <span
-              className="px-2 py-[3px] rounded-md text-[10.5px] font-bold font-mono tracking-wider flex-shrink-0"
-              style={{
-                background: 'rgba(168, 85, 247, 0.12)',
-                border: '1px solid rgba(168, 85, 247, 0.28)',
-                color: '#d8b4fe',
-              }}
-            >● LIVE</span>
-            <span className="text-[12px] font-medium truncate" style={{ color: 'var(--text-secondary)' }}>
-              <BookOpen size={11} className="inline mr-1 -mt-0.5 opacity-60" />
-              {currentStore?.name || '（知识库已失效）'}
-            </span>
-            {activeSource.prefix && (
-              <span
-                className="text-[11px] flex items-center gap-1 px-1.5 py-0.5 rounded-md"
-                style={{ background: 'rgba(255,255,255,0.04)', color: 'var(--text-muted)' }}
-              >
-                <Filter size={10} />
-                {activeSource.prefix}
-              </span>
-            )}
-            <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
-              共 {filtered.length} 篇
-            </span>
-          </div>
-          {activeSource.description && (
-            <span
-              className="text-[11px] truncate max-w-[50%]"
-              style={{ color: 'var(--text-muted)' }}
-              title={activeSource.description}
-            >
-              {activeSource.description}
-            </span>
-          )}
-        </div>
-      )}
-
+    <div className="flex flex-col flex-1 min-h-0" style={{ minHeight: '560px' }}>
       {/* ── 主体：左右独立滚动 ── */}
       <div
         className="flex gap-3 rounded-2xl"
@@ -324,14 +158,32 @@ export function WeeklyReportsTab() {
           }}
         >
           <div
-            className="px-3 py-2 text-[11px] font-semibold uppercase tracking-wider flex items-center justify-between"
+            className="px-3 py-2 flex items-center justify-between gap-2"
             style={{
-              color: 'var(--text-muted)',
               borderBottom: '1px solid rgba(255,255,255,0.04)',
               flexShrink: 0,
             }}
           >
-            <span>周报列表 · 按最近提交</span>
+            <div className="flex items-center gap-2 min-w-0">
+              <span
+                className="text-[11px] font-semibold uppercase tracking-wider truncate"
+                style={{ color: 'var(--text-muted)' }}
+                title={currentStore ? `知识库：${currentStore.name}${activeSource?.prefix ? ' · 关键词：' + activeSource.prefix : ''}` : undefined}
+              >
+                周报列表 · 按最近提交
+              </span>
+            </div>
+            <span
+              className="text-[10.5px] px-1.5 py-0.5 rounded shrink-0"
+              style={{
+                background: 'rgba(168,85,247,0.14)',
+                color: '#d8b4fe',
+                border: '1px solid rgba(168,85,247,0.28)',
+                fontVariantNumeric: 'tabular-nums',
+              }}
+            >
+              {filtered.length} 篇
+            </span>
           </div>
           <div
             style={{
@@ -456,40 +308,37 @@ export function WeeklyReportsTab() {
           </div>
         </section>
       </div>
-
-      <SourceEditorDialog
-        open={editorOpen}
-        target={editorTarget}
-        stores={stores}
-        storesLoading={loadingStores}
-        onClose={() => setEditorOpen(false)}
-        onSaved={handleSaved}
-      />
     </div>
   );
 }
 
-// ── 顶部：周报来源 chip 栏（tab 风 + 内联编辑删除） ──
-function SourceChipBar({
-  sources,
-  activeId,
-  onSelect,
-  onCreate,
-  onEdit,
-  onDelete,
-}: {
-  sources: ChangelogReportSource[];
-  activeId: string | null;
-  onSelect: (id: string) => void;
-  onCreate: () => void;
-  onEdit: (src: ChangelogReportSource) => void;
-  onDelete: (src: ChangelogReportSource) => void;
-}) {
+/**
+ * 独立导出：周报来源 chip 栏（给 TabBar 的 actions 槽用）。
+ * 消费 Context，不接 props。
+ */
+export function WeeklyReportSourceChips() {
+  const { sources, activeId, onSelect, onCreateOpen, onEditOpen, onDelete } = useWeeklyReportSources();
+  if (!sources || sources.length === 0) {
+    return (
+      <button
+        type="button"
+        onClick={onCreateOpen}
+        className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-[12px] font-medium transition-all"
+        style={{
+          background: 'rgba(168,85,247,0.10)',
+          border: '1px dashed rgba(168,85,247,0.42)',
+          color: '#d8b4fe',
+          cursor: 'pointer',
+        }}
+        title="添加周报来源"
+      >
+        <Plus size={12} /> 添加周报
+      </button>
+    );
+  }
+
   return (
-    <div
-      className="flex items-center gap-1.5 mb-3 p-1.5 rounded-xl flex-wrap"
-      style={{ ...glassBar, borderRadius: 12 }}
-    >
+    <div className="flex items-center gap-1.5 flex-wrap">
       {sources.map(src => {
         const active = src.id === activeId;
         return (
@@ -497,43 +346,41 @@ function SourceChipBar({
             key={src.id}
             className="group relative flex items-center rounded-lg transition-all"
             style={{
-              background: active ? 'rgba(168,85,247,0.14)' : 'rgba(255,255,255,0.02)',
-              border: `1px solid ${active ? 'rgba(168,85,247,0.38)' : 'rgba(255,255,255,0.06)'}`,
+              background: active ? 'rgba(168,85,247,0.16)' : 'rgba(255,255,255,0.04)',
+              border: `1px solid ${active ? 'rgba(168,85,247,0.42)' : 'rgba(255,255,255,0.10)'}`,
             }}
           >
             <button
               type="button"
               onClick={() => onSelect(src.id)}
-              className="px-3 py-1.5 text-[12.5px] font-medium transition-colors"
+              className="pl-2.5 pr-2 py-1 text-[12px] font-medium inline-flex items-center gap-1.5 transition-colors"
               style={{
                 color: active ? '#e9d5ff' : 'var(--text-secondary)',
                 cursor: 'pointer',
               }}
               title={src.description || src.name}
             >
-              <FileText size={12} className="inline mr-1.5 -mt-0.5 opacity-70" />
+              <FileText size={11} className="opacity-70" />
               {src.name}
             </button>
-            <div
-              className="flex items-center pr-1 gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity"
-            >
+            <div className="flex items-center pr-1 gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
               <button
                 type="button"
-                onClick={(e) => { e.stopPropagation(); onEdit(src); }}
+                onClick={(e) => { e.stopPropagation(); onEditOpen(src); }}
                 className="p-1 rounded hover:bg-white/10"
                 title="编辑"
                 style={{ color: 'var(--text-muted)' }}
               >
-                <Pencil size={11} />
+                <Pencil size={10} />
               </button>
               <button
                 type="button"
-                onClick={(e) => { e.stopPropagation(); onDelete(src); }}
+                onClick={(e) => { e.stopPropagation(); void onDelete(src); }}
                 className="p-1 rounded hover:bg-red-500/20"
                 title="删除"
                 style={{ color: 'var(--text-muted)' }}
               >
-                <Trash2 size={11} />
+                <Trash2 size={10} />
               </button>
             </div>
           </div>
@@ -541,8 +388,8 @@ function SourceChipBar({
       })}
       <button
         type="button"
-        onClick={onCreate}
-        className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-[12px] font-medium transition-all"
+        onClick={onCreateOpen}
+        className="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-[12px] font-medium transition-all"
         style={{
           background: 'rgba(168,85,247,0.08)',
           border: '1px dashed rgba(168,85,247,0.4)',
@@ -551,9 +398,27 @@ function SourceChipBar({
         }}
         title="添加周报来源"
       >
-        <Plus size={12} /> 添加来源
+        <Plus size={12} /> 添加
       </button>
     </div>
+  );
+}
+
+/**
+ * 独立导出：挂载在 Provider 下的创建/编辑弹窗。
+ * ChangelogPage 在 TabBar 旁边渲染一次即可。
+ */
+export function WeeklyReportSourceDialog() {
+  const { editorOpen, editorTarget, stores, loadingStores, closeEditor, onSaved } = useWeeklyReportSources();
+  return (
+    <SourceEditorDialog
+      open={editorOpen}
+      target={editorTarget}
+      stores={stores}
+      storesLoading={loadingStores}
+      onClose={closeEditor}
+      onSaved={onSaved}
+    />
   );
 }
 
