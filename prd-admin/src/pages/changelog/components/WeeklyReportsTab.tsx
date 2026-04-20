@@ -242,8 +242,8 @@ export function WeeklyReportsTab() {
 
   return (
     <div
-      className="flex flex-col"
-      style={{ height: 'calc(100vh - 160px)', minHeight: '560px' }}
+      className="flex flex-col flex-1 min-h-0"
+      style={{ minHeight: '560px' }}
     >
       {/* ── 周报来源 chip 栏 ── */}
       <SourceChipBar

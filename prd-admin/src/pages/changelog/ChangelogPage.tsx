@@ -131,7 +131,7 @@ export default function ChangelogPage() {
   })();
 
   return (
-    <div className="flex flex-col gap-5">
+    <div className="flex flex-col gap-5 h-full min-h-0">
       {/* ── 顶部切换导航 ── */}
       <TabBar
         items={[
@@ -144,7 +144,8 @@ export default function ChangelogPage() {
       />
 
       {activeTab === 'update_center' && (
-      <div className="flex flex-col gap-5">
+      <div className="flex flex-col gap-5 flex-1 min-h-0 overflow-y-auto pr-1"
+        style={{ overscrollBehavior: 'contain' }}>
       {/* ── Header ───────────────────────────────────────── */}
       <header
         style={glassPanel}
@@ -422,7 +423,9 @@ export default function ChangelogPage() {
       )}
 
       {activeTab === 'weekly_reports' && (
-        <WeeklyReportsTab />
+        <div className="flex-1 min-h-0 flex flex-col">
+          <WeeklyReportsTab />
+        </div>
       )}
 
     </div>
