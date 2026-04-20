@@ -82,6 +82,28 @@ type WorkflowPhase = 0 | 1 | 2;
 
 type MarkerRunStatus = 'idle' | 'parsing' | 'parsed' | 'running' | 'done' | 'error';
 
+// Phase 1: 位置策略。后续阶段计划见 doc/plan.manual-image-marking-control.md
+type PositionStrategy = 'auto' | 'per-h1' | 'per-h2' | 'user-anchor';
+
+const POSITION_STRATEGY_OPTIONS: Array<{ value: PositionStrategy; label: string; hint: string }> = [
+  { value: 'auto', label: '自动', hint: '' },
+  {
+    value: 'per-h1',
+    label: '每大标题一张',
+    hint: '【位置策略】请在每一个一级标题（# 开头或形式上的大标题）之后紧邻插入 1 个 [插图] 标记，其余段落不要插入。',
+  },
+  {
+    value: 'per-h2',
+    label: '每小标题一张',
+    hint: '【位置策略】请在每一个二级及以下小标题（##/### 或形式上的小标题）之后紧邻插入 1 个 [插图] 标记，其余段落不要插入。',
+  },
+  {
+    value: 'user-anchor',
+    label: '尊重用户锚点',
+    hint: '【位置策略】用户已在文章中用 [IMG] / [配图] / 【插图位置】等占位符标记了期望插图的位置。请严格在这些占位符位置插入 [插图] 标记，不要在用户未标记的段落插入；若用户未标记任何占位符，再按你的判断选择 3 个最合适的场景段落插入。',
+  },
+];
+
 type MarkerRunItem = {
   markerIndex: number;
   markerText: string; // 原始（从文章提取）文本
@@ -592,6 +614,23 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
   const [selectedPrompt, setSelectedPromptRaw] = useState<PromptTemplate | null>(null);
   // 从 workspace 加载的 selectedPromptId（用于 loadLiteraryPrompts 后恢复选中状态）
   const pendingSelectedPromptIdRef = useRef<string | null>(null);
+
+  // Phase 1: 位置策略（自动 / 固定位置 / 用户锚点）
+  // 存 sessionStorage，键 = 'articleMarkerStrategy:' + workspaceId
+  // 下一阶段（Phase 2/3）再下沉到 workspace 持久化，见 doc/plan.manual-image-marking-control.md
+  const [positionStrategy, setPositionStrategyRaw] = useState<PositionStrategy>('auto');
+  const [positionStrategyOpen, setPositionStrategyOpen] = useState(false);
+  useEffect(() => {
+    if (!workspaceId) return;
+    const saved = sessionStorage.getItem(`articleMarkerStrategy:${workspaceId}`);
+    if (saved && POSITION_STRATEGY_OPTIONS.some(o => o.value === saved)) {
+      setPositionStrategyRaw(saved as PositionStrategy);
+    }
+  }, [workspaceId]);
+  const setPositionStrategy = useCallback((s: PositionStrategy) => {
+    setPositionStrategyRaw(s);
+    if (workspaceId) sessionStorage.setItem(`articleMarkerStrategy:${workspaceId}`, s);
+  }, [workspaceId]);
 
   // 选择/取消提示词时同步持久化到后端
   const setSelectedPrompt = useCallback((prompt: PromptTemplate | null) => {
@@ -1118,7 +1157,12 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
     }
 
     // 使用选中的风格提示词（可选，不选则后端使用系统推断风格）
-    const systemPrompt = selectedPrompt?.content ?? '';
+    // Phase 1: 位置策略以文本提示形式拼到 userInstruction 前部，后端无需改动
+    const strategyHint = POSITION_STRATEGY_OPTIONS.find(o => o.value === positionStrategy)?.hint ?? '';
+    const basePrompt = selectedPrompt?.content ?? '';
+    const systemPrompt = strategyHint
+      ? (basePrompt ? `${strategyHint}\n\n${basePrompt}` : strategyHint)
+      : basePrompt;
 
     setMarkerStreaming(true);
     setThinkingContent('');
@@ -2794,9 +2838,9 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
               {/* 水印 */}
               <div
                 className={configPillBaseClass}
-                style={{ 
+                style={{
                   background: watermarkStatus.enabled ? 'rgba(251, 191, 36, 0.08)' : 'var(--nested-block-bg)',
-                  border: watermarkStatus.enabled ? '1px solid rgba(251, 191, 36, 0.15)' : '1px solid var(--border-subtle)' 
+                  border: watermarkStatus.enabled ? '1px solid rgba(251, 191, 36, 0.15)' : '1px solid var(--border-subtle)'
                 }}
                 onClick={() => {
                   setPendingWatermarkEdit(true);
@@ -2809,6 +2853,64 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                   {watermarkStatus.enabled ? (watermarkStatus.name || '水印') : '水印'}
                 </span>
               </div>
+              {/* 位置策略（Phase 1） */}
+              <DropdownMenu.Root open={positionStrategyOpen} onOpenChange={setPositionStrategyOpen}>
+                <DropdownMenu.Trigger asChild>
+                  <div
+                    className={configPillBaseClass}
+                    style={{
+                      background: positionStrategy !== 'auto' ? 'rgba(52, 211, 153, 0.08)' : 'var(--nested-block-bg)',
+                      border: positionStrategy !== 'auto' ? '1px solid rgba(52, 211, 153, 0.15)' : '1px solid var(--border-subtle)',
+                    }}
+                    title="配图位置策略：控制 AI 在哪些段落插入配图标记"
+                  >
+                    <MapPin size={12} style={{ color: positionStrategy !== 'auto' ? '#34D399' : '#9CA3AF', flexShrink: 0 }} />
+                    <span className={configPillTextClass} style={{ color: positionStrategy !== 'auto' ? 'var(--text-primary)' : 'var(--text-muted)' }}>
+                      {POSITION_STRATEGY_OPTIONS.find(o => o.value === positionStrategy)?.label ?? '自动'}
+                    </span>
+                  </div>
+                </DropdownMenu.Trigger>
+                <DropdownMenu.Portal>
+                  <DropdownMenu.Content
+                    side="bottom"
+                    align="start"
+                    sideOffset={6}
+                    className="z-50 rounded-[12px] p-2.5"
+                    style={{ width: 260, maxWidth: 'min(92vw, 260px)', ...glassPanel }}
+                  >
+                    <div className="text-[12px] font-semibold mb-2" style={{ color: 'var(--text-primary)' }}>
+                      配图位置策略
+                    </div>
+                    <div className="text-[11px] mb-2" style={{ color: 'var(--text-muted)', lineHeight: 1.5 }}>
+                      选择「尊重用户锚点」时，可在文章里用 <code style={{ background: 'rgba(255,255,255,0.08)', padding: '0 4px', borderRadius: 4 }}>[IMG]</code> 标出需要配图的位置。
+                    </div>
+                    <div className="space-y-1.5">
+                      {POSITION_STRATEGY_OPTIONS.map((opt) => {
+                        const picked = positionStrategy === opt.value;
+                        return (
+                          <button
+                            key={opt.value}
+                            type="button"
+                            className="w-full text-left rounded-[10px] px-2.5 py-1.5 hover:bg-white/5 transition-colors"
+                            style={{
+                              border: picked ? '1px solid rgba(52,211,153,0.35)' : '1px solid rgba(255,255,255,0.08)',
+                              background: picked ? 'rgba(52,211,153,0.06)' : 'rgba(255,255,255,0.02)',
+                            }}
+                            onClick={() => { setPositionStrategy(opt.value); setPositionStrategyOpen(false); }}
+                          >
+                            <div className="flex items-center justify-between gap-2">
+                              <span className="text-[12px] font-medium" style={{ color: 'var(--text-primary)' }}>{opt.label}</span>
+                              {picked && (
+                                <Check size={12} style={{ color: 'rgba(52,211,153,0.95)', flexShrink: 0 }} />
+                              )}
+                            </div>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </DropdownMenu.Content>
+                </DropdownMenu.Portal>
+              </DropdownMenu.Root>
             </div>
 
             {/* 配置按钮 */}
