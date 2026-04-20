@@ -720,6 +720,17 @@ export const api = {
     fork: (id: string) => `/api/watermarks/${id}/fork`,
   },
 
+  // ============ Marketplace Skills 海鲜市场技能（zip 上传） ============
+  marketplaceSkills: {
+    list: () => '/api/marketplace/skills',
+    tags: () => '/api/marketplace/skills/tags',
+    upload: () => '/api/marketplace/skills/upload',
+    fork: (id: string) => `/api/marketplace/skills/${id}/fork`,
+    favorite: (id: string) => `/api/marketplace/skills/${id}/favorite`,
+    unfavorite: (id: string) => `/api/marketplace/skills/${id}/unfavorite`,
+    byId: (id: string) => `/api/marketplace/skills/${id}`,
+  },
+
   // ============ Model Sizes ============
   modelSizes: (modelKey: string) => `/api/model/${modelKey}/sizes`,
 

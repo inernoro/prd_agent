@@ -86,6 +86,36 @@ export const HOMEPAGE_HERO_SLOTS: HomepageHeroSlot[] = [
   { id: 'home', slot: 'hero.home', label: '顶部 Banner', hint: '登录后首页最上方的大图，建议宽屏 1920×640 左右' },
 ];
 
+/**
+ * 海鲜市场海报背景（整页背景，当前只用一张"大气海洋主题"全局海报）。
+ *
+ * 未来若要拆成每个 Tab 一张背景（提示词/风格图/水印/技能），只需扩展这个数组，
+ * 消费方（MarketplacePage）按 `activeTab` 查 slot 即可，无需改后端。
+ */
+export type MarketplaceBgSlot = {
+  /** slot id（稳定 key，前端消费时用此字段匹配） */
+  id: 'hero';
+  /** 后端 slot 字符串 */
+  slot: string;
+  /** UI 展示用标签 */
+  label: string;
+  /** UI 次级说明 */
+  hint: string;
+};
+
+export const MARKETPLACE_BG_SLOTS: MarketplaceBgSlot[] = [
+  {
+    id: 'hero',
+    slot: 'marketplace.bg.hero',
+    label: '海鲜市场海报背景',
+    hint: '整个海鲜市场页的背景图；推荐 1920×1080 的大气海洋主题图。未上传时使用内置深海蓝渐变。',
+  },
+];
+
+export function marketplaceBgSlot(id: MarketplaceBgSlot['id']): string {
+  return `marketplace.bg.${id}`;
+}
+
 export const HERO_DEFAULTS: Record<string, string> = {
   home: 'icon/title/home.png',
 };

@@ -10,11 +10,12 @@
  *   /marketplace?source=visual-agent - 标识来源应用
  */
 
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { MapSectionLoader } from '@/components/ui/VideoLoader';
 import { useSearchParams, useNavigate } from 'react-router-dom';
-import { Search, TrendingUp, Clock, ArrowLeft, Store } from 'lucide-react';
+import { ArrowLeft, Clock, Hash, Search, Store, TrendingUp, UploadCloud } from 'lucide-react';
 import { MarketplaceCard } from '@/components/marketplace/MarketplaceCard';
+import { Button } from '@/components/design/Button';
 import {
   CONFIG_TYPE_REGISTRY,
   getCategoryFilterOptions,
@@ -24,6 +25,9 @@ import {
   type MarketplaceItemBase,
 } from '@/lib/marketplaceTypes';
 import { toast } from '@/lib/toast';
+import { getMarketplaceSkillTags } from '@/services';
+import { useHomepageAssetsStore, useMarketplaceBgUrl } from '@/stores/homepageAssetsStore';
+import { SkillUploadDialog } from './SkillUploadDialog';
 
 type SortMode = 'hot' | 'new';
 
@@ -42,6 +46,32 @@ export const MarketplacePage: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [dataByType, setDataByType] = useState<Record<string, MarketplaceItemBase[]>>({});
   const [forkingId, setForkingId] = useState<string | null>(null);
+  const [tagFilter, setTagFilter] = useState<string>('');
+  const [skillTags, setSkillTags] = useState<Array<{ tag: string; count: number }>>([]);
+  const [uploadOpen, setUploadOpen] = useState(false);
+
+  // 海报背景：资源管理里上传的 `marketplace.bg.hero`，未上传走内置深海蓝渐变
+  const loadHomepageAssets = useHomepageAssetsStore((s) => s.load);
+  const marketplaceBgUrl = useMarketplaceBgUrl('hero');
+
+  useEffect(() => {
+    void loadHomepageAssets();
+  }, [loadHomepageAssets]);
+
+  // 拉技能标签（技能 Tab 顶部的筛选芯片）
+  const loadSkillTags = useCallback(async () => {
+    try {
+      const res = await getMarketplaceSkillTags();
+      if (res.success && res.data?.tags) {
+        setSkillTags(res.data.tags);
+      }
+    } catch {
+      // 忽略，筛选栏空也不阻断
+    }
+  }, []);
+  useEffect(() => {
+    void loadSkillTags();
+  }, [loadSkillTags]);
 
   // 同步 URL 参数到状态
   useEffect(() => {
@@ -101,7 +131,8 @@ export const MarketplacePage: React.FC = () => {
     try {
       const res = await typeDef.api.fork({ id, name: customName });
       if (res.success) {
-        toast.success('已添加到我的配置');
+        // 技能走浏览器下载 zip（已在 forkMarketplaceSkillReal 里触发）
+        toast.success(typeKey === 'skill' ? '已开始下载技能包' : '已添加到我的配置');
         // 重新加载数据以更新 forkCount
         await loadAllData();
       } else {
@@ -115,19 +146,50 @@ export const MarketplacePage: React.FC = () => {
   // 处理数据
   const merged = mergeMarketplaceData(dataByType, categoryFilter);
   const sorted = sortMarketplaceItems(merged, sortBy);
-  const filtered = filterMarketplaceItems(sorted, searchKeyword);
+  const searchFiltered = filterMarketplaceItems(sorted, searchKeyword);
+
+  // 标签筛选：仅在 "技能" Tab 或 "全部" 视图下对 skill 类型生效
+  const filtered = useMemo(() => {
+    if (!tagFilter) return searchFiltered;
+    return searchFiltered.filter((item) => {
+      if (item.type !== 'skill') return true;
+      const tags = (item.data as unknown as { tags?: string[] }).tags || [];
+      return tags.some((t) => t === tagFilter);
+    });
+  }, [searchFiltered, tagFilter]);
+
+  const showSkillControls = categoryFilter === 'skill' || categoryFilter === 'all';
 
   // 类型筛选选项
   const filterOptions = getCategoryFilterOptions();
 
   return (
-    <div className="min-h-screen" style={{ background: 'var(--bg-primary)' }}>
-      {/* 顶部导航栏 */}
+    <div
+      className="relative min-h-screen"
+      style={{
+        // 海报：用户上传的海鲜市场背景图 覆盖 / 未上传时走内置深海蓝渐变（符合"大气海洋主题"定位）
+        background: marketplaceBgUrl
+          ? `url("${marketplaceBgUrl}") center / cover no-repeat fixed`
+          : 'radial-gradient(circle at 18% 12%, rgba(59, 130, 246, 0.25), transparent 45%), radial-gradient(circle at 82% 78%, rgba(14, 165, 233, 0.22), transparent 48%), linear-gradient(160deg, #041228 0%, #061a36 55%, #042548 100%)',
+      }}
+    >
+      {/* 可选：自定义海报上叠一层半透明暗色，保证前景卡片可读 */}
+      {marketplaceBgUrl && (
+        <div
+          className="absolute inset-0 pointer-events-none"
+          style={{
+            background:
+              'linear-gradient(180deg, rgba(3, 7, 18, 0.55) 0%, rgba(3, 7, 18, 0.72) 100%)',
+          }}
+        />
+      )}
+
+      {/* 顶部导航栏（相对定位确保在 overlay 之上） */}
       <div
-        className="sticky top-0 z-10 border-b backdrop-blur-xl"
+        className="sticky top-0 z-10 border-b backdrop-blur-xl relative"
         style={{
-          background: 'rgba(var(--bg-primary-rgb), 0.8)',
-          borderColor: 'var(--border-subtle)',
+          background: 'rgba(3, 7, 18, 0.55)',
+          borderColor: 'rgba(255, 255, 255, 0.08)',
         }}
       >
         <div className="max-w-7xl mx-auto px-4 py-3">
@@ -207,14 +269,20 @@ export const MarketplacePage: React.FC = () => {
                 最新
               </button>
             </div>
+
+            {/* 上传技能按钮（常驻）：点亮 Skill Tab 场景最核心的 CTA */}
+            <Button variant="primary" size="sm" onClick={() => setUploadOpen(true)}>
+              <UploadCloud size={13} />
+              上传技能
+            </Button>
           </div>
         </div>
       </div>
 
       {/* 主内容区 */}
-      <div className="max-w-7xl mx-auto px-4 py-6">
+      <div className="relative max-w-7xl mx-auto px-4 py-6">
         {/* 类型筛选标签 */}
-        <div className="flex items-center gap-2 mb-6 flex-wrap">
+        <div className="flex items-center gap-2 mb-4 flex-wrap">
           {filterOptions.map(({ key, label, icon: Icon }) => (
             <button
               key={key}
@@ -233,6 +301,51 @@ export const MarketplacePage: React.FC = () => {
           ))}
         </div>
 
+        {/* 技能标签筛选栏（仅在"技能"或"全部"时出现） */}
+        {showSkillControls && skillTags.length > 0 && (
+          <div className="flex items-center gap-1.5 flex-wrap mb-6">
+            <span
+              className="text-[11px] mr-1 inline-flex items-center gap-1"
+              style={{ color: 'var(--text-muted)' }}
+            >
+              <Hash size={11} />
+              技能标签
+            </span>
+            <button
+              type="button"
+              onClick={() => setTagFilter('')}
+              className="px-2.5 py-1 rounded-full text-[11px] transition-all"
+              style={{
+                background: !tagFilter ? 'rgba(56, 189, 248, 0.18)' : 'rgba(255, 255, 255, 0.04)',
+                border: `1px solid ${!tagFilter ? 'rgba(56, 189, 248, 0.4)' : 'rgba(255, 255, 255, 0.1)'}`,
+                color: !tagFilter ? 'rgba(186, 230, 253, 0.98)' : 'var(--text-muted)',
+              }}
+            >
+              不限
+            </button>
+            {skillTags.slice(0, 20).map(({ tag, count }) => (
+              <button
+                key={tag}
+                type="button"
+                onClick={() => setTagFilter((prev) => (prev === tag ? '' : tag))}
+                className="px-2.5 py-1 rounded-full text-[11px] transition-all"
+                style={{
+                  background:
+                    tagFilter === tag ? 'rgba(56, 189, 248, 0.22)' : 'rgba(255, 255, 255, 0.04)',
+                  border: `1px solid ${
+                    tagFilter === tag ? 'rgba(56, 189, 248, 0.5)' : 'rgba(255, 255, 255, 0.1)'
+                  }`,
+                  color:
+                    tagFilter === tag ? 'rgba(186, 230, 253, 0.98)' : 'var(--text-secondary)',
+                }}
+              >
+                #{tag}
+                <span className="ml-1 opacity-60">{count}</span>
+              </button>
+            ))}
+          </div>
+        )}
+
         {/* 内容区 */}
         {loading ? (
           <MapSectionLoader />
@@ -240,8 +353,20 @@ export const MarketplacePage: React.FC = () => {
           <div className="flex flex-col items-center justify-center py-20 gap-3">
             <Store size={48} style={{ color: 'var(--text-muted)', opacity: 0.5 }} />
             <div className="text-sm" style={{ color: 'var(--text-muted)' }}>
-              {searchKeyword ? '没有找到匹配的配置' : '暂无公开配置'}
+              {searchKeyword
+                ? '没有找到匹配的配置'
+                : tagFilter
+                  ? `没有带 #${tagFilter} 的配置`
+                  : categoryFilter === 'skill'
+                    ? '还没有人上传技能，第一个就是你'
+                    : '暂无公开配置'}
             </div>
+            {categoryFilter === 'skill' && (
+              <Button variant="primary" size="sm" onClick={() => setUploadOpen(true)}>
+                <UploadCloud size={13} />
+                上传第一个技能包
+              </Button>
+            )}
           </div>
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
@@ -256,6 +381,16 @@ export const MarketplacePage: React.FC = () => {
           </div>
         )}
       </div>
+
+      {uploadOpen && (
+        <SkillUploadDialog
+          onClose={() => setUploadOpen(false)}
+          onUploaded={() => {
+            void loadAllData();
+            void loadSkillTags();
+          }}
+        />
+      )}
     </div>
   );
 };

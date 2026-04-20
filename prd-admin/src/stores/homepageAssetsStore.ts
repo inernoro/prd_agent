@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 import { getHomepageAssetsPublic } from '@/services';
 import type { HomepageAssetDto, HomepageAssetsMap } from '@/services/contracts/homepageAssets';
-import { agentImageSlot, agentVideoSlot, cardSlot, heroSlot, type HomepageCardSlot, type HomepageHeroSlot } from '@/lib/homepageAssetSlots';
+import { agentImageSlot, agentVideoSlot, cardSlot, heroSlot, marketplaceBgSlot, type HomepageCardSlot, type HomepageHeroSlot, type MarketplaceBgSlot } from '@/lib/homepageAssetSlots';
 
 interface HomepageAssetsState {
   loaded: boolean;
@@ -85,5 +85,13 @@ export function useAgentVideoUrl(agentKey: string | undefined): string | null {
 
 export function useHeroBgUrl(id: HomepageHeroSlot['id']): string | null {
   const asset = useHomepageAssetsStore((s) => s.assets[heroSlot(id)]);
+  return asset ? appendCacheBust(asset.url, asset.updatedAt) : null;
+}
+
+/**
+ * 海鲜市场整页海报背景。未上传时返回 null，消费方回退到内置渐变。
+ */
+export function useMarketplaceBgUrl(id: MarketplaceBgSlot['id'] = 'hero'): string | null {
+  const asset = useHomepageAssetsStore((s) => s.assets[marketplaceBgSlot(id)]);
   return asset ? appendCacheBust(asset.url, asset.updatedAt) : null;
 }

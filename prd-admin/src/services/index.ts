@@ -1284,6 +1284,33 @@ export const publishWatermark: PublishWatermarkContract = withAuth(publishWaterm
 export const unpublishWatermark: UnpublishWatermarkContract = withAuth(unpublishWatermarkReal);
 export const forkWatermark: ForkWatermarkContract = withAuth(forkWatermarkReal);
 
+// 海鲜市场「技能」板块（zip 上传）
+import type {
+  DeleteMarketplaceSkillContract,
+  FavoriteMarketplaceSkillContract,
+  ForkMarketplaceSkillContract,
+  GetMarketplaceSkillTagsContract,
+  ListMarketplaceSkillsContract,
+  UnfavoriteMarketplaceSkillContract,
+  UploadMarketplaceSkillContract,
+} from '@/services/contracts/marketplaceSkills';
+import {
+  deleteMarketplaceSkillReal,
+  favoriteMarketplaceSkillReal,
+  forkMarketplaceSkillReal,
+  getMarketplaceSkillTagsReal,
+  listMarketplaceSkillsReal,
+  unfavoriteMarketplaceSkillReal,
+  uploadMarketplaceSkillReal,
+} from '@/services/real/marketplaceSkills';
+export const listMarketplaceSkills: ListMarketplaceSkillsContract = withAuth(listMarketplaceSkillsReal);
+export const getMarketplaceSkillTags: GetMarketplaceSkillTagsContract = withAuth(getMarketplaceSkillTagsReal);
+export const uploadMarketplaceSkill: UploadMarketplaceSkillContract = withAuth(uploadMarketplaceSkillReal);
+export const forkMarketplaceSkill: ForkMarketplaceSkillContract = withAuth(forkMarketplaceSkillReal);
+export const favoriteMarketplaceSkill: FavoriteMarketplaceSkillContract = withAuth(favoriteMarketplaceSkillReal);
+export const unfavoriteMarketplaceSkill: UnfavoriteMarketplaceSkillContract = withAuth(unfavoriteMarketplaceSkillReal);
+export const deleteMarketplaceSkill: DeleteMarketplaceSkillContract = withAuth(deleteMarketplaceSkillReal);
+
 // 限流配置服务
 import type {
   GetGlobalRateLimitContract,

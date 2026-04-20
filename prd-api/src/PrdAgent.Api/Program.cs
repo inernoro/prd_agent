@@ -410,6 +410,9 @@ builder.Services.AddSingleton<IAssetStorage>(sp =>
 // 文件内容提取器（PDF/Word/Excel/PPT）
 builder.Services.AddSingleton<IFileContentExtractor, FileContentExtractor>();
 
+// 海鲜市场「技能包」zip 元数据解析
+builder.Services.AddSingleton<PrdAgent.Infrastructure.Services.MarketplaceSkills.SkillZipMetadataExtractor>();
+
 // 配置Redis
 var redisConnectionString = builder.Configuration["Redis:ConnectionString"] ?? "localhost:6379";
 var sessionTimeout = builder.Configuration.GetValue<int>("Session:TimeoutMinutes", 30);

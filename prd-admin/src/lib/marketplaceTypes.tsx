@@ -24,11 +24,11 @@
  * ```
  */
 
-import React from 'react';
+import React, { useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import remarkBreaks from 'remark-breaks';
-import { FileText, Image as ImageIcon, Sparkles, type LucideIcon } from 'lucide-react';
+import { FileText, Heart, Image as ImageIcon, Package, Sparkles, Tag as TagIcon, type LucideIcon } from 'lucide-react';
 import { WatermarkDescriptionGrid } from '@/components/watermark/WatermarkDescriptionGrid';
 import {
   listLiteraryPromptsMarketplace,
@@ -43,8 +43,13 @@ import {
   publishWatermark,
   unpublishWatermark,
   forkWatermark,
+  listMarketplaceSkills,
+  forkMarketplaceSkill,
+  favoriteMarketplaceSkill,
+  unfavoriteMarketplaceSkill,
 } from '@/services';
 import type { ApiResponse } from '@/types/api';
+import type { MarketplaceSkillDto } from '@/services/contracts/marketplaceSkills';
 
 // ============================================================================
 // 基础类型定义
@@ -121,6 +126,12 @@ export interface MarketplaceRefImage extends MarketplaceItemBase {
   prompt?: string;
   imageUrl?: string;
 }
+
+/**
+ * 海鲜市场「技能」条目（zip 上传的社区技能包）
+ * 对应后端 `MarketplaceSkillsController.ToDto` 产出的结构。
+ */
+export type MarketplaceSkill = MarketplaceSkillDto;
 
 export interface MarketplaceWatermark extends MarketplaceItemBase {
   name: string;
@@ -258,6 +269,133 @@ const WatermarkPreviewRenderer: React.FC<{ item: MarketplaceWatermark }> = ({ it
   </div>
 );
 
+/**
+ * 技能预览：海报式大图，展示 emoji 图标 + 描述 + 标签 + 收藏按钮。
+ * 文件大小 / 下载次数 / 作者名 由外层通用 MarketplaceCard 的底栏展示，这里不重复。
+ */
+const SkillPreviewRenderer: React.FC<{ item: MarketplaceSkill }> = ({ item }) => {
+  const [favorited, setFavorited] = useState(item.isFavoritedByCurrentUser);
+  const [favoriteCount, setFavoriteCount] = useState(item.favoriteCount);
+  const [pending, setPending] = useState(false);
+
+  const toggleFavorite = async (e: React.MouseEvent) => {
+    e.stopPropagation();
+    e.preventDefault();
+    if (pending) return;
+    setPending(true);
+    // 乐观更新
+    const next = !favorited;
+    setFavorited(next);
+    setFavoriteCount((c) => (next ? c + 1 : Math.max(0, c - 1)));
+    try {
+      const res = next
+        ? await favoriteMarketplaceSkill({ id: item.id })
+        : await unfavoriteMarketplaceSkill({ id: item.id });
+      if (!res.success) {
+        // 回滚
+        setFavorited(!next);
+        setFavoriteCount((c) => (next ? Math.max(0, c - 1) : c + 1));
+      }
+    } catch {
+      setFavorited(!next);
+      setFavoriteCount((c) => (next ? Math.max(0, c - 1) : c + 1));
+    } finally {
+      setPending(false);
+    }
+  };
+
+  const tags = item.tags || [];
+  return (
+    <div
+      className="relative overflow-hidden rounded-[6px] flex flex-col"
+      style={{
+        height: PREVIEW_HEIGHT,
+        background:
+          'linear-gradient(135deg, rgba(37, 99, 235, 0.22) 0%, rgba(14, 165, 233, 0.18) 40%, rgba(6, 182, 212, 0.15) 100%)',
+        border: '1px solid rgba(56, 189, 248, 0.28)',
+      }}
+    >
+      {/* 背景水波纹装饰 */}
+      <div
+        className="absolute inset-0 pointer-events-none opacity-30"
+        style={{
+          backgroundImage:
+            'radial-gradient(circle at 85% 18%, rgba(125, 211, 252, 0.38), transparent 40%), radial-gradient(circle at 15% 85%, rgba(56, 189, 248, 0.28), transparent 45%)',
+        }}
+      />
+      {/* 内容 */}
+      <div className="relative flex gap-2 p-2 flex-1 min-h-0">
+        {/* 左侧：大 emoji 图标 */}
+        <div
+          className="flex-shrink-0 flex items-center justify-center rounded-[6px]"
+          style={{
+            width: 52,
+            height: 52,
+            fontSize: 32,
+            lineHeight: 1,
+            background: 'rgba(255, 255, 255, 0.08)',
+            border: '1px solid rgba(255, 255, 255, 0.12)',
+          }}
+        >
+          <span>{item.iconEmoji || '🧩'}</span>
+        </div>
+        {/* 右侧：描述 + 标签 */}
+        <div className="flex-1 min-w-0 flex flex-col gap-1">
+          <div
+            className="text-[11px] leading-[1.35] line-clamp-2"
+            style={{ color: 'rgba(241, 245, 249, 0.92)' }}
+            title={item.description}
+          >
+            {item.description || '（暂无详情）'}
+          </div>
+          {tags.length > 0 && (
+            <div className="flex items-center gap-1 flex-wrap overflow-hidden" style={{ maxHeight: 18 }}>
+              {tags.slice(0, 4).map((t) => (
+                <span
+                  key={t}
+                  className="inline-flex items-center gap-0.5 px-1.5 rounded-full text-[9px]"
+                  style={{
+                    background: 'rgba(255, 255, 255, 0.10)',
+                    border: '1px solid rgba(255, 255, 255, 0.15)',
+                    color: 'rgba(224, 242, 254, 0.92)',
+                    height: 16,
+                  }}
+                >
+                  <TagIcon size={8} />
+                  {t}
+                </span>
+              ))}
+              {tags.length > 4 && (
+                <span className="text-[9px]" style={{ color: 'rgba(224, 242, 254, 0.6)' }}>
+                  +{tags.length - 4}
+                </span>
+              )}
+            </div>
+          )}
+        </div>
+      </div>
+      {/* 右上角：收藏按钮 + 计数（计数单独显示，即使未点击也展示） */}
+      <button
+        type="button"
+        onClick={toggleFavorite}
+        disabled={pending}
+        title={favorited ? '取消收藏' : '收藏'}
+        className="absolute top-1 right-1 flex items-center gap-1 px-1.5 rounded-full text-[10px] transition-all"
+        style={{
+          height: 20,
+          background: favorited ? 'rgba(244, 63, 94, 0.22)' : 'rgba(15, 23, 42, 0.5)',
+          border: `1px solid ${favorited ? 'rgba(244, 63, 94, 0.6)' : 'rgba(255, 255, 255, 0.15)'}`,
+          color: favorited ? 'rgba(251, 113, 133, 0.98)' : 'rgba(226, 232, 240, 0.9)',
+          cursor: pending ? 'wait' : 'pointer',
+        }}
+      >
+        <Heart size={10} fill={favorited ? 'currentColor' : 'none'} />
+        <span>{favoriteCount}</span>
+      </button>
+    </div>
+  );
+};
+
 // ============================================================================
 // 类型注册表
 // ============================================================================
@@ -329,6 +467,39 @@ export const CONFIG_TYPE_REGISTRY: Record<string, ConfigTypeDefinition<any>> = {
     getDisplayName: (item: MarketplaceWatermark) => item.name,
     getPreviewText: (item: MarketplaceWatermark) => item.text || '',
     PreviewRenderer: WatermarkPreviewRenderer,
+  },
+
+  skill: {
+    key: 'skill',
+    label: '技能',
+    icon: Package,
+    color: {
+      bg: 'rgba(56, 189, 248, 0.14)',
+      text: 'rgba(125, 211, 252, 0.98)',
+      border: '1px solid rgba(56, 189, 248, 0.35)',
+      iconColor: 'rgba(125, 211, 252, 0.95)',
+    },
+    api: {
+      listMarketplace: listMarketplaceSkills,
+      // 技能「上传即公开」，MarketplacePage 只会调 listMarketplace + fork；publish / unpublish 是接口契约占位
+      publish: async () => ({
+        success: false,
+        data: null,
+        error: { code: 'NOT_SUPPORTED', message: '技能通过上传即公开，无需 publish' },
+      } as ApiResponse<unknown>),
+      unpublish: async () => ({
+        success: false,
+        data: null,
+        error: { code: 'NOT_SUPPORTED', message: '通过删除技能来下架' },
+      } as ApiResponse<unknown>),
+      fork: forkMarketplaceSkill,
+    },
+    getDisplayName: (item: MarketplaceSkill) => item.title,
+    getPreviewText: (item: MarketplaceSkill) => {
+      const tagText = (item.tags || []).join(' ');
+      return `${item.description || ''} ${tagText}`.trim();
+    },
+    PreviewRenderer: SkillPreviewRenderer,
   },
 };
 
