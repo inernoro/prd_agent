@@ -1259,23 +1259,27 @@
   //
   // Lets the operator customise the GitHub PR preview comment posted
   // by CDS on every PR open / deploy refresh. Talks to:
-  //   GET  /api/comment-template   → body + prReviewBaseUrl + variable catalog
-  //   PUT  /api/comment-template   → save
+  //   GET  /api/comment-template   → body + variable catalog
+  //   PUT  /api/comment-template   → save body
   //   POST /api/comment-template/preview → render-with-samples for live preview
   //
   // The variable catalog comes from the backend so adding a new
   // variable there (services/comment-template.ts) auto-surfaces in
   // the sidebar without touching this file.
-  var _ct_state = { body: '', prReviewBaseUrl: '', variables: [], defaultBody: '' };
+  //
+  // There is no "PR review host" input — `{{prReviewUrl}}` is derived
+  // at render time by appending /pr-review?prUrl=...&autoStart=1 onto
+  // the current branch's previewUrl. Each branch's PR comment points
+  // back to that branch's own preview, no separate domain to configure.
+  var _ct_state = { body: '', variables: [], defaultBody: '' };
 
   function renderCommentTemplateTab() {
     contentEl.innerHTML =
       '<div class="settings-section">' +
         '<div class="settings-section-title">GitHub PR 预览评论模板</div>' +
         '<div class="settings-section-desc">' +
-          '每当 PR 打开或部署完成时，CDS 会在 PR 下发一条预览评论（或刷新已有那条）。<br>' +
-          '在下方编辑 Markdown 内容，支持 <code>{{变量名}}</code> 动态占位符。' +
-          '留空则恢复默认模板。' +
+          '每当 PR 打开或部署完成时，CDS 会在 PR 下发一条预览评论（或刷新已有那条）。' +
+          '在下方编辑 Markdown 内容，支持 <code>{{变量名}}</code> 动态占位符。留空则恢复默认模板。' +
         '</div>' +
         '<div id="commentTemplateLoading" class="settings-placeholder">加载模板…</div>' +
       '</div>';
@@ -1285,7 +1289,6 @@
       .then(function (data) {
         if (!data || !data.ok) throw new Error((data && data.message) || '加载失败');
         _ct_state.body = data.body || '';
-        _ct_state.prReviewBaseUrl = data.prReviewBaseUrl || '';
         _ct_state.variables = data.variables || [];
         _ct_state.defaultBody = data.defaultBody || '';
         _ct_state.updatedAt = data.updatedAt || null;
@@ -1299,17 +1302,16 @@
   }
 
   function _ctRenderEditor() {
+    // Vertical card per variable: key button on its own line, label
+    // below, example below that. Keeps long names ({{prReviewUrl}})
+    // from collapsing the description to 2-char columns.
     var varRows = _ct_state.variables.map(function (v) {
       return (
-        '<div class="ct-var-row" data-key="' + escapeHtml(v.key) + '">' +
-          '<button type="button" class="ct-var-insert" onclick="_ctInsertVar(\'' + escapeHtml(v.key) + '\')" title="点击插入到光标位置">' +
-            '<code>{{' + escapeHtml(v.key) + '}}</code>' +
-          '</button>' +
-          '<div class="ct-var-meta">' +
-            '<div class="ct-var-label">' + escapeHtml(v.label) + '</div>' +
-            '<div class="ct-var-example">例: ' + escapeHtml(v.example) + '</div>' +
-          '</div>' +
-        '</div>'
+        '<button type="button" class="ct-var-card" onclick="_ctInsertVar(\'' + escapeHtml(v.key) + '\')" title="点击插入到左侧光标位置">' +
+          '<div class="ct-var-key">{{' + escapeHtml(v.key) + '}}</div>' +
+          '<div class="ct-var-label">' + escapeHtml(v.label) + '</div>' +
+          '<div class="ct-var-example">' + escapeHtml(v.example) + '</div>' +
+        '</button>'
       );
     }).join('');
 
@@ -1319,29 +1321,35 @@
 
     contentEl.innerHTML =
       '<style>' +
-        '.ct-layout{display:grid;grid-template-columns:1fr 280px;gap:20px;align-items:start}' +
-        '@media(max-width:900px){.ct-layout{grid-template-columns:1fr}}' +
-        '.ct-textarea{width:100%;min-height:280px;background:var(--bg-card);border:1px solid var(--card-border);border-radius:8px;padding:12px;color:var(--text-primary);font-family:var(--font-mono,monospace);font-size:12.5px;line-height:1.55;outline:none;resize:vertical;white-space:pre;tab-size:2}' +
+        '.ct-layout{display:grid;grid-template-columns:1fr 300px;gap:20px;align-items:start}' +
+        '@media(max-width:960px){.ct-layout{grid-template-columns:1fr}}' +
+        '.ct-textarea{width:100%;min-height:320px;background:var(--bg-card);border:1px solid var(--card-border);border-radius:8px;padding:12px 14px;color:var(--text-primary);font-family:var(--font-mono,monospace);font-size:12.5px;line-height:1.65;outline:none;resize:vertical;tab-size:2}' +
         '.ct-textarea:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(16,185,129,0.15)}' +
-        '.ct-sidebar{background:var(--bg-card);border:1px solid var(--card-border);border-radius:10px;padding:12px}' +
-        '.ct-sidebar-title{font-size:12px;font-weight:700;color:var(--text-secondary);text-transform:uppercase;letter-spacing:0.04em;margin-bottom:10px}' +
-        '.ct-var-row{display:flex;gap:8px;align-items:flex-start;padding:6px;border-radius:6px;transition:background 120ms ease}' +
-        '.ct-var-row:hover{background:var(--bg-hover)}' +
-        '.ct-var-insert{background:transparent;border:1px dashed var(--card-border);border-radius:6px;padding:2px 6px;cursor:pointer;color:var(--accent,#10b981);font-family:var(--font-mono,monospace);font-size:11px;flex-shrink:0}' +
-        '.ct-var-insert:hover{border-style:solid;background:rgba(16,185,129,0.08)}' +
-        '.ct-var-meta{flex:1;min-width:0}' +
-        '.ct-var-label{font-size:12px;color:var(--text-primary);line-height:1.3}' +
-        '.ct-var-example{font-size:10.5px;color:var(--text-muted);margin-top:2px;font-family:var(--font-mono,monospace);overflow:hidden;text-overflow:ellipsis}' +
-        '.ct-preview{background:var(--bg-card);border:1px solid var(--card-border);border-radius:8px;padding:14px 16px;color:var(--text-primary);font-size:13px;line-height:1.55;min-height:120px;white-space:pre-wrap;word-break:break-word}' +
+
+        '.ct-sidebar{background:var(--bg-card);border:1px solid var(--card-border);border-radius:10px;padding:14px;position:sticky;top:18px}' +
+        '.ct-sidebar-title{font-size:11px;font-weight:700;color:var(--text-secondary);text-transform:uppercase;letter-spacing:0.06em;margin-bottom:10px;padding-left:2px}' +
+        '.ct-sidebar-hint{font-size:11px;color:var(--text-muted);line-height:1.55;margin-bottom:12px;padding:8px 10px;background:var(--bg-elevated);border-radius:6px}' +
+
+        /* Vertical variable card: key mono badge on its own line,
+           label on second line (break-any), example small + muted. */
+        '.ct-var-list{display:flex;flex-direction:column;gap:4px}' +
+        '.ct-var-card{display:block;width:100%;text-align:left;background:transparent;border:1px solid transparent;border-radius:8px;padding:9px 11px;cursor:pointer;font-family:inherit;transition:background 120ms ease,border-color 120ms ease}' +
+        '.ct-var-card:hover{background:var(--bg-hover);border-color:var(--card-border)}' +
+        '.ct-var-card:active{background:var(--bg-elevated)}' +
+        '.ct-var-key{display:inline-block;font-family:var(--font-mono,monospace);font-size:11.5px;color:var(--accent,#10b981);background:rgba(16,185,129,0.08);border:1px solid rgba(16,185,129,0.25);padding:1px 7px;border-radius:5px;margin-bottom:6px;word-break:break-all}' +
+        '.ct-var-label{font-size:12.5px;color:var(--text-primary);line-height:1.4;font-weight:500}' +
+        '.ct-var-example{font-size:10.5px;color:var(--text-muted);margin-top:3px;font-family:var(--font-mono,monospace);line-height:1.4;word-break:break-all;opacity:0.85}' +
+
+        '.ct-preview{background:var(--bg-card);border:1px solid var(--card-border);border-radius:8px;padding:14px 16px;color:var(--text-primary);font-size:13px;line-height:1.65;min-height:120px;white-space:pre-wrap;word-break:break-word}' +
         '.ct-preview code{background:var(--bg-elevated);padding:1px 5px;border-radius:3px;font-size:11.5px}' +
-        '.ct-action-row{display:flex;gap:8px;align-items:center;margin-top:12px}' +
-        '.ct-meta-line{font-size:11px;color:var(--text-muted);margin-top:4px}' +
+        '.ct-action-row{display:flex;gap:8px;align-items:center;margin-top:14px;flex-wrap:wrap}' +
+        '.ct-meta-line{font-size:11px;color:var(--text-muted);margin-top:6px}' +
       '</style>' +
 
       '<div class="settings-section">' +
         '<div class="settings-section-title">GitHub PR 预览评论模板</div>' +
         '<div class="settings-section-desc">' +
-          '每当 PR 打开或部署完成时，CDS 会在 PR 下发一条预览评论（或刷新已有那条）。<br>' +
+          '每当 PR 打开或部署完成时，CDS 会在 PR 下发一条预览评论（或刷新已有那条）。' +
           '在下方编辑 Markdown 内容，支持 <code>{{变量名}}</code> 动态占位符。留空则恢复默认模板。' +
         '</div>' +
 
@@ -1350,14 +1358,6 @@
             '<label class="settings-field-label" for="ctBody">模板正文（Markdown）</label>' +
             '<textarea id="ctBody" class="ct-textarea" placeholder="支持 {{变量名}} 占位符，右侧可一键插入"></textarea>' +
             '<div class="ct-meta-line" id="ctUpdatedAt">' + updatedLabel + '</div>' +
-
-            '<div class="settings-field" style="margin-top:18px">' +
-              '<label class="settings-field-label" for="ctBaseUrl">PR 审查 Agent 根地址</label>' +
-              '<input id="ctBaseUrl" class="settings-input mono" type="url" placeholder="https://prd-admin.miduo.org" autocomplete="off">' +
-              '<div class="ct-meta-line">' +
-                '用于构造 <code>{{prReviewUrl}}</code>。若为空，该变量渲染为空字符串。登录态由目标应用的 returnUrl 机制自动处理。' +
-              '</div>' +
-            '</div>' +
 
             '<div class="ct-action-row">' +
               '<button type="button" class="settings-btn-primary" onclick="_ctSave()">保存</button>' +
@@ -1368,10 +1368,8 @@
 
           '<aside class="ct-sidebar">' +
             '<div class="ct-sidebar-title">可用变量</div>' +
-            varRows +
-            '<div style="margin-top:10px;padding-top:10px;border-top:1px solid var(--border-light);font-size:11px;color:var(--text-muted);line-height:1.5">' +
-              '点变量按钮可将占位符插入到左侧光标位置。未定义的 <code>{{变量}}</code> 会原样保留，便于排查拼写错误。' +
-            '</div>' +
+            '<div class="ct-sidebar-hint">点卡片将 <code>{{变量}}</code> 插入到左侧光标位置。未定义的 <code>{{变量}}</code> 会原样保留，便于排查拼写错误。</div>' +
+            '<div class="ct-var-list">' + varRows + '</div>' +
           '</aside>' +
         '</div>' +
       '</div>' +
@@ -1386,8 +1384,6 @@
 
     var ta = document.getElementById('ctBody');
     if (ta) ta.value = _ct_state.body || _ct_state.defaultBody || '';
-    var base = document.getElementById('ctBaseUrl');
-    if (base) base.value = _ct_state.prReviewBaseUrl || '';
   }
 
   // Insert `{{key}}` at the textarea caret. Falls back to append if
@@ -1409,15 +1405,12 @@
 
   window._ctSave = function () {
     var ta = document.getElementById('ctBody');
-    var base = document.getElementById('ctBaseUrl');
     if (!ta) return;
-    var body = ta.value;
-    var baseUrl = (base && base.value || '').trim();
     fetch('/api/comment-template', {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       credentials: 'same-origin',
-      body: JSON.stringify({ body: body, prReviewBaseUrl: baseUrl }),
+      body: JSON.stringify({ body: ta.value }),
     })
       .then(function (r) { return r.json().then(function (b) { return { ok: r.ok, status: r.status, body: b }; }); })
       .then(function (resp) {
@@ -1426,7 +1419,6 @@
           return;
         }
         _ct_state.body = resp.body.body || '';
-        _ct_state.prReviewBaseUrl = resp.body.prReviewBaseUrl || '';
         _ct_state.updatedAt = resp.body.updatedAt;
         _ct_state.isDefault = false;
         var meta = document.getElementById('ctUpdatedAt');

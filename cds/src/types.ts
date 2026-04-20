@@ -507,16 +507,14 @@ export interface CdsState {
  * both the renderer and the settings-panel UI so the user speaks the
  * same vocabulary as the renderer.
  *
- * `prReviewBaseUrl` is the prd-admin (or equivalent) root URL used to
- * build `{{prReviewUrl}}` — e.g. `https://prd-admin.miduo.org`. If
- * empty, `{{prReviewUrl}}` resolves to an empty string so a template
- * that doesn't reference it keeps working on standalone CDS installs.
+ * No separate "PR review host" field: the deeplink reuses the current
+ * branch's previewUrl (the frontend hosting PrReviewPage is itself
+ * deployed per-branch by CDS), so {{prReviewUrl}} is fully derivable
+ * from state the webhook already has.
  */
 export interface CommentTemplateSettings {
   /** Markdown body with {{var}} placeholders. Empty string = use default. */
   body: string;
-  /** Base URL for the PR-review deeplink target app. Optional. */
-  prReviewBaseUrl?: string;
   /** ISO timestamp of the last save, for UI display. */
   updatedAt?: string;
 }

@@ -50,19 +50,19 @@ describe('renderTemplate', () => {
 });
 
 describe('buildPrReviewDeeplink', () => {
-  it('returns empty string when base URL is missing', () => {
+  it('returns empty string when previewUrl is missing', () => {
     expect(buildPrReviewDeeplink(undefined, 'https://github.com/o/r/pull/1')).toBe('');
     expect(buildPrReviewDeeplink('', 'https://github.com/o/r/pull/1')).toBe('');
     expect(buildPrReviewDeeplink(null, 'https://github.com/o/r/pull/1')).toBe('');
   });
 
   it('returns empty string when PR URL is missing', () => {
-    expect(buildPrReviewDeeplink('https://app.example.com', '')).toBe('');
+    expect(buildPrReviewDeeplink('https://feature.example.com', '')).toBe('');
   });
 
-  it('drops trailing slash from base and URL-encodes PR URL', () => {
-    expect(buildPrReviewDeeplink('https://app.example.com/', 'https://github.com/o/r/pull/1'))
-      .toBe('https://app.example.com/pr-review?prUrl=https%3A%2F%2Fgithub.com%2Fo%2Fr%2Fpull%2F1&autoStart=1');
+  it('appends /pr-review to previewUrl and URL-encodes PR URL', () => {
+    expect(buildPrReviewDeeplink('https://feature.example.com/', 'https://github.com/o/r/pull/1'))
+      .toBe('https://feature.example.com/pr-review?prUrl=https%3A%2F%2Fgithub.com%2Fo%2Fr%2Fpull%2F1&autoStart=1');
   });
 });
 
@@ -76,16 +76,16 @@ describe('buildTemplateVariables', () => {
       repoFullName: 'o/r',
       prNumber: 7,
       prUrl: 'https://github.com/o/r/pull/7',
-      prReviewBaseUrl: 'https://app.example.com',
     });
     expect(vars.branch).toBe('main');
     expect(vars.shortSha).toBe('a1b2c3d');
     expect(vars.prNumber).toBe('7');
-    expect(vars.prReviewUrl).toContain('/pr-review?prUrl=');
-    expect(vars.prReviewUrl).toContain('autoStart=1');
+    expect(vars.prReviewUrl).toBe(
+      'https://main.example.com/pr-review?prUrl=https%3A%2F%2Fgithub.com%2Fo%2Fr%2Fpull%2F7&autoStart=1',
+    );
   });
 
-  it('yields empty prReviewUrl when no base is configured', () => {
+  it('yields empty prReviewUrl when previewUrl is empty', () => {
     const vars = buildTemplateVariables({
       branch: 'main',
       commitSha: 'abc',
@@ -94,7 +94,6 @@ describe('buildTemplateVariables', () => {
       repoFullName: 'o/r',
       prNumber: 1,
       prUrl: 'https://github.com/o/r/pull/1',
-      prReviewBaseUrl: undefined,
     });
     expect(vars.prReviewUrl).toBe('');
   });
@@ -119,13 +118,13 @@ describe('DEFAULT_TEMPLATE_BODY + VARIABLE_DEFS integration', () => {
       repoFullName: 'acme/demo',
       prNumber: 42,
       prUrl: 'https://github.com/acme/demo/pull/42',
-      prReviewBaseUrl: 'https://app.example.com',
     });
     const rendered = renderTemplate(DEFAULT_TEMPLATE_BODY, vars);
     expect(rendered).toContain('feature/login');
     expect(rendered).toContain('abcdef1');
     expect(rendered).toContain('https://feature-login.example.com');
-    expect(rendered).toContain('/pr-review?prUrl=');
+    // prReviewUrl lands under the SAME preview host, not a separate domain
+    expect(rendered).toContain('https://feature-login.example.com/pr-review?prUrl=');
     expect(rendered).not.toMatch(/\{\{[^}]+\}\}/); // no unresolved placeholders
   });
 });

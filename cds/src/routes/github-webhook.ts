@@ -657,7 +657,6 @@ async function postOrUpdatePrComment(
     repoFullName,
     prNumber,
     prUrl: payload.pull_request?.html_url || '',
-    prReviewBaseUrl: settings?.prReviewBaseUrl,
   });
   const body = renderTemplate(templateBody, vars);
 

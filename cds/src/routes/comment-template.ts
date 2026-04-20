@@ -4,16 +4,17 @@
  * redeploying CDS to change text.
  *
  * Endpoints:
- *   GET  /api/comment-template            — current body + base URL + variable catalog
- *   PUT  /api/comment-template            — save body + prReviewBaseUrl
+ *   GET  /api/comment-template            — current body + variable catalog
+ *   PUT  /api/comment-template            — save body (only body — {{prReviewUrl}}
+ *                                           is derived from each branch's previewUrl
+ *                                           at render time, no separate base URL)
  *   POST /api/comment-template/preview    — render a trial body with sample vars,
  *                                           so the panel can live-preview before saving
  *
  * Auth: mounted under `/api` which is covered by the cookie/token or
  * github auth middleware in server.ts — no extra guard here. We don't
  * enforce per-project scope because the template is a single global
- * setting (see doc/design.cds-auto-deploy consideration: per-project
- * override is a deliberate non-goal for v1).
+ * setting (per-project override is a deliberate non-goal for v1).
  *
  * Storage: goes through StateService.setCommentTemplate, which rides
  * on the same state-save pipeline as routingRules/customEnv. In JSON
@@ -43,12 +44,6 @@ export interface CommentTemplateRouterDeps {
  * reasonable and leaves headroom after placeholder substitution.
  */
 const MAX_BODY_LENGTH = 16 * 1024;
-
-/**
- * Guard rails on base URL. Prevent the "someone pastes whole comment
- * into the URL field" accident from producing broken deeplinks.
- */
-const MAX_BASE_URL_LENGTH = 512;
 
 /**
  * Sample values used by /preview. Chosen to be obviously-fake so the
@@ -94,7 +89,6 @@ export function createCommentTemplateRouter(deps: CommentTemplateRouterDeps): Ro
     res.json({
       ok: true,
       body: current?.body || DEFAULT_TEMPLATE_BODY,
-      prReviewBaseUrl: current?.prReviewBaseUrl || '',
       updatedAt: current?.updatedAt || null,
       isDefault: !current,
       defaultBody: DEFAULT_TEMPLATE_BODY,
@@ -104,40 +98,20 @@ export function createCommentTemplateRouter(deps: CommentTemplateRouterDeps): Ro
 
   // PUT /api/comment-template
   //
-  // Saves a new body + prReviewBaseUrl. Empty body is accepted and
-  // is interpreted as "reset to default" — the renderer falls back
-  // when `body` is falsy (see postOrUpdatePrComment).
+  // Saves a new body. Empty body is accepted and is interpreted as
+  // "reset to default" — the renderer falls back when `body` is
+  // falsy (see postOrUpdatePrComment).
   router.put('/comment-template', (req, res) => {
-    const { body, prReviewBaseUrl } = (req.body || {}) as {
-      body?: string;
-      prReviewBaseUrl?: string;
-    };
+    const { body } = (req.body || {}) as { body?: string };
 
     if (body !== undefined && typeof body !== 'string') {
       res.status(400).json({ ok: false, message: 'body 必须是字符串' });
       return;
     }
-    if (prReviewBaseUrl !== undefined && typeof prReviewBaseUrl !== 'string') {
-      res.status(400).json({ ok: false, message: 'prReviewBaseUrl 必须是字符串' });
-      return;
-    }
     const trimmedBody = (body ?? '').slice(0, MAX_BODY_LENGTH);
-    const trimmedBaseUrl = (prReviewBaseUrl ?? '').trim().slice(0, MAX_BASE_URL_LENGTH);
-
-    // Non-empty base URL must look like a URL — a bare string would
-    // produce broken links. Require http(s) scheme so the user can't
-    // accidentally paste a relative path.
-    if (trimmedBaseUrl && !/^https?:\/\//i.test(trimmedBaseUrl)) {
-      res.status(400).json({
-        ok: false,
-        message: 'prReviewBaseUrl 必须以 http:// 或 https:// 开头',
-      });
-      return;
-    }
 
     const settings: CommentTemplateSettings = {
       body: trimmedBody,
-      prReviewBaseUrl: trimmedBaseUrl || undefined,
       updatedAt: new Date().toISOString(),
     };
     stateService.setCommentTemplate(settings);
@@ -146,7 +120,6 @@ export function createCommentTemplateRouter(deps: CommentTemplateRouterDeps): Ro
     res.json({
       ok: true,
       body: settings.body,
-      prReviewBaseUrl: settings.prReviewBaseUrl || '',
       updatedAt: settings.updatedAt,
     });
   });
@@ -169,7 +142,6 @@ export function createCommentTemplateRouter(deps: CommentTemplateRouterDeps): Ro
     const effectiveBranchId =
       (branchId && stateService.getBranch(branchId)?.id) || 'preview-branch';
 
-    const saved = stateService.getCommentTemplate();
     const vars = buildTemplateVariables({
       branch: PREVIEW_SAMPLE.branch,
       commitSha: PREVIEW_SAMPLE.commitSha,
@@ -178,7 +150,6 @@ export function createCommentTemplateRouter(deps: CommentTemplateRouterDeps): Ro
       repoFullName: PREVIEW_SAMPLE.repoFullName,
       prNumber: PREVIEW_SAMPLE.prNumber,
       prUrl: PREVIEW_SAMPLE.prUrl,
-      prReviewBaseUrl: saved?.prReviewBaseUrl,
     });
     const rendered = renderTemplate(source, vars);
     res.json({ ok: true, rendered, variables: vars });

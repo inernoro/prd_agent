@@ -125,46 +125,32 @@ describe('comment-template router', () => {
     it('returns the saved template when one exists', async () => {
       stateService.setCommentTemplate({
         body: '# custom {{branch}}',
-        prReviewBaseUrl: 'https://app.example.com',
         updatedAt: '2026-04-20T00:00:00.000Z',
       });
       const res = await request(app, 'GET', '/api/comment-template');
       expect(res.body.body).toBe('# custom {{branch}}');
-      expect(res.body.prReviewBaseUrl).toBe('https://app.example.com');
       expect(res.body.isDefault).toBe(false);
     });
   });
 
   describe('PUT /api/comment-template', () => {
-    it('saves body + baseUrl and timestamps it', async () => {
+    it('saves body and timestamps it', async () => {
       const res = await request(app, 'PUT', '/api/comment-template', {
         body: '# body',
-        prReviewBaseUrl: 'https://app.example.com',
       });
       expect(res.status).toBe(200);
       expect(res.body.ok).toBe(true);
       expect(res.body.body).toBe('# body');
-      expect(res.body.prReviewBaseUrl).toBe('https://app.example.com');
       expect(typeof res.body.updatedAt).toBe('string');
       // persists
       const saved = stateService.getCommentTemplate();
       expect(saved?.body).toBe('# body');
     });
 
-    it('rejects non-http(s) prReviewBaseUrl', async () => {
-      const res = await request(app, 'PUT', '/api/comment-template', {
-        body: 'x',
-        prReviewBaseUrl: 'ftp://nope.example.com',
-      });
-      expect(res.status).toBe(400);
-      expect(res.body.ok).toBe(false);
-    });
-
     it('accepts empty body (= reset to default at render time)', async () => {
-      const res = await request(app, 'PUT', '/api/comment-template', { body: '', prReviewBaseUrl: '' });
+      const res = await request(app, 'PUT', '/api/comment-template', { body: '' });
       expect(res.status).toBe(200);
       expect(res.body.body).toBe('');
-      expect(res.body.prReviewBaseUrl).toBe('');
     });
 
     it('rejects non-string body', async () => {

@@ -10,12 +10,16 @@
  *      in the template is visible in the rendered comment rather
  *      than silently eating the literal text.
  *
- *   2. `buildPrReviewDeeplink(base, prUrl)` — assemble the URL that
- *      jumps a user into the internal PR-review Agent with a PR URL
- *      pre-filled + autoStart flag so the review kicks off without a
- *      second click. If the user is not logged in, the target app's
- *      RequireAuth guard appends `?returnUrl=...` automatically, so
- *      the post-login redirect lands back on the same deeplink.
+ *   2. `buildPrReviewDeeplink(previewUrl, prUrl)` — assemble the URL
+ *      that jumps a user into the internal PR-review Agent with a PR
+ *      URL pre-filled + autoStart flag so the review kicks off
+ *      without a second click.
+ *
+ *      PR审查 Agent 本身就是随分支一起部署的前端应用的一部分(路由
+ *      `/pr-review`),所以跳转地址 = 当前分支的 previewUrl + 该路由。
+ *      不需要额外配置"prd-admin 根域名"——每条 PR 的评论里贴的深链
+ *      自然落回该 PR 自己那条分支的预览,用户登录状态由目标页面的
+ *      RequireAuth 经 returnUrl 接管。
  *
  * The default template deliberately mirrors the pre-customisation
  * format (🚀 CDS Deploy Preview + Preview link + Branch + Dashboard)
@@ -51,7 +55,11 @@ export const VARIABLE_DEFS: readonly TemplateVariableDef[] = [
   { key: 'repoFullName', label: 'owner/repo', example: 'inernoro/prd_agent' },
   { key: 'prNumber', label: 'PR 号', example: '123' },
   { key: 'prUrl', label: 'PR 完整 URL', example: 'https://github.com/inernoro/prd_agent/pull/123' },
-  { key: 'prReviewUrl', label: '一键跳转 PR 审查 Agent', example: 'https://prd-admin.miduo.org/pr-review?prUrl=...&autoStart=1' },
+  {
+    key: 'prReviewUrl',
+    label: '一键跳转 PR 审查 Agent（= 本分支预览地址 + /pr-review）',
+    example: 'https://<branch>.miduo.org/pr-review?prUrl=...&autoStart=1',
+  },
 ] as const;
 
 export interface TemplateVariables {
@@ -114,13 +122,15 @@ export function renderTemplate(
 }
 
 /**
- * Assemble the PR-review Agent deeplink.
+ * Assemble the PR-review Agent deeplink from the current branch's
+ * preview URL.
  *
- * Returns empty string when base URL is not configured, so the
- * default template's `{{prReviewUrl}}` placeholder produces a
- * harmless empty link rather than a broken one. Template authors
- * can hide the whole line by removing the `{{prReviewUrl}}`
- * reference from their body.
+ * The PR-review page is served by the frontend that rides on the
+ * preview subdomain (path `/pr-review`), so we reuse `previewUrl`
+ * as-is — no separate configuration for a standalone prd-admin host.
+ * Returns empty string when either `previewUrl` or `prUrl` is missing
+ * so the default template's `{{prReviewUrl}}` placeholder produces
+ * an empty link (harmless) rather than a broken one.
  *
  * The target page (prd-admin PrReviewPage) reads `prUrl` +
  * `autoStart=1` from the query string on mount; the wrapping
@@ -128,9 +138,12 @@ export function renderTemplate(
  * logged in, so this URL works for both logged-in and logged-out
  * visitors.
  */
-export function buildPrReviewDeeplink(baseUrl: string | undefined | null, prUrl: string): string {
-  if (!baseUrl || !prUrl) return '';
-  const trimmed = baseUrl.replace(/\/$/, '');
+export function buildPrReviewDeeplink(
+  previewUrl: string | undefined | null,
+  prUrl: string,
+): string {
+  if (!previewUrl || !prUrl) return '';
+  const trimmed = previewUrl.replace(/\/$/, '');
   const encoded = encodeURIComponent(prUrl);
   return `${trimmed}/pr-review?prUrl=${encoded}&autoStart=1`;
 }
@@ -149,7 +162,6 @@ export interface BuildVariablesInput {
   repoFullName: string;
   prNumber: number | string;
   prUrl: string;
-  prReviewBaseUrl: string | undefined | null;
 }
 
 export function buildTemplateVariables(input: BuildVariablesInput): TemplateVariables {
@@ -163,6 +175,7 @@ export function buildTemplateVariables(input: BuildVariablesInput): TemplateVari
     repoFullName: input.repoFullName || '',
     prNumber: input.prNumber != null ? String(input.prNumber) : '',
     prUrl: input.prUrl || '',
-    prReviewUrl: buildPrReviewDeeplink(input.prReviewBaseUrl, input.prUrl || ''),
+    prReviewUrl: buildPrReviewDeeplink(input.previewUrl || '', input.prUrl || ''),
   };
 }
+
