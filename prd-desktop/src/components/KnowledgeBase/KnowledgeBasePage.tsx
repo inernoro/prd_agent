@@ -78,10 +78,12 @@ export default function KnowledgeBasePage() {
   }, []);
 
   const docActions = useDocumentActions();
+  // 页面 busy = 本地 busy ∪ hook busy，避免 hook 在跑时按钮仍可点造成并发
+  const anyBusy = busy || docActions.busy;
 
-  // docActions 有独立 busy/error，合并到页面的 busy/error 显示
+  // docActions.error 同步到页面错误显示（双向：hook 清空时也清空页面残留）
   useEffect(() => {
-    if (docActions.error) setError(docActions.error);
+    setError(docActions.error);
   }, [docActions.error]);
 
   const confirmDeleteDocument = useCallback(async () => {
@@ -271,7 +273,7 @@ export default function KnowledgeBasePage() {
             <div className="flex items-center justify-between mb-3">
               <div className="text-lg font-semibold">资料文件 ({docList.length})</div>
               <button
-                disabled={busy}
+                disabled={anyBusy}
                 onClick={handleAddDocumentNative}
                 className="px-3 py-1.5 rounded-lg ui-control text-sm hover:opacity-80 transition-opacity disabled:opacity-50 disabled:cursor-not-allowed"
               >
@@ -342,7 +344,7 @@ export default function KnowledgeBasePage() {
                       <select
                         value={doc.documentType || (idx === 0 ? 'product' : 'reference')}
                         onChange={(e) => handleChangeDocumentType(doc.id, e.target.value as DocumentType)}
-                        disabled={busy}
+                        disabled={anyBusy}
                         className="text-[10px] px-1.5 py-0.5 rounded bg-black/5 dark:bg-white/10 border border-black/10 dark:border-white/10 text-text-secondary cursor-pointer disabled:opacity-50 focus:outline-none focus:ring-1 focus:ring-primary-500"
                       >
                         {DOC_TYPES.map(t => (
@@ -375,7 +377,7 @@ export default function KnowledgeBasePage() {
                     </button>
                     {docList.length > 1 && (
                       <button
-                        disabled={busy}
+                        disabled={anyBusy}
                         onClick={() => handleRemoveDocument(doc.id)}
                         className="px-2 py-1 text-xs rounded hover:bg-red-500/15 hover:text-red-500 text-text-secondary transition-colors disabled:opacity-50"
                         title="移除此文档"
@@ -466,7 +468,7 @@ export default function KnowledgeBasePage() {
         open={!!deleteTarget}
         title="删除文档"
         danger
-        busy={busy || docActions.busy}
+        busy={anyBusy}
         confirmText="删除"
         message={
           <>
@@ -476,7 +478,7 @@ export default function KnowledgeBasePage() {
           </>
         }
         onConfirm={() => { void confirmDeleteDocument(); }}
-        onClose={() => { if (!busy && !docActions.busy) setDeleteTarget(null); }}
+        onClose={() => { if (!anyBusy) setDeleteTarget(null); }}
       />
     </div>
   );
