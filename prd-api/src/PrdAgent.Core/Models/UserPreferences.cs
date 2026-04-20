@@ -110,6 +110,12 @@ public class LiteraryAgentPreferences
 
     /// <summary>用户选择的文生提示词（对话/标记生成）模型池 ID</summary>
     public string? ChatModelId { get; set; }
+
+    /// <summary>
+    /// 配图锚点教程气泡是否已看过。
+    /// 用户点击"知道啦"后置为 true，之后不再弹出。
+    /// </summary>
+    public bool? AnchorTutorialSeen { get; set; }
 }
 
 /// <summary>

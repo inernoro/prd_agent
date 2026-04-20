@@ -142,6 +142,59 @@ Upload(0) → Editing(1) → MarkersGenerated(2) → ImagesGenerating(3) → Ima
 - 浏览器刷新以服务端 `workflow.Phase` 为准恢复阶段
 - 生图进度通过 `ExpectedImageCount` / `DoneImageCount` 实时追踪
 
+### 配图位置策略（Position Strategy）——手动干预原理
+
+> 解决两类用户痛点：① 自动生成的配图位置不符合意图（慕雪）；② 无法为指定段落单独补标记 / 删除差标记（缺陷报告）。合并为同一功能，从"自动黑盒"升级为"可控流程"。
+
+**4 档策略**（入口：右侧配置栏 📍 pill）：
+
+| 策略 | 语义 | LLM 行为 | 前端反馈 |
+|------|------|----------|----------|
+| `auto` | AI 自主判断 | 按原 prompt 智能选 3 个场景段落 | 无额外反馈（默认） |
+| `per-h1` | 每个大标题一张 | 识别文章**最顶级**标题层 → 每个后面插 1 个 `[插图]` | 每个大标题后渲染 1:1 dashed 占位框 |
+| `per-h2` | 每个小标题一张 | 识别文章最顶级标题层 → **比它更深**的每个小标题后插 1 个 | 每个小标题后渲染同款占位框 |
+| `user-anchor` | 尊重用户锚点 | 识别文章中 `[IMG]` / `[配图]` / `【插图位置】` 占位符 → 严格按位置插入 | 每个锚点渲染顶栏 + 1:1 ghost 预览 |
+
+**"大/小标题"自适应判定**（关键原理）：
+
+文章作者的"大标题"不一定是 `#`。有的用 `##` 当顶级、`###` 当二级；也有的用纯文本当标题不写 `#`。所以前端和 LLM 都不能硬编码 `^# `。
+
+正确做法：**扫全文，取所有 `#{1,6}` heading 中 level 最小的那一级当"大标题"**，小标题 = 大标题之下任意更深的 level。前端 `bigHeadingLevel = Math.min(...levels)`；后端 prompt 用文字描述让 LLM 做同样的相对判断："先识别本文中所有标题里 level 最小的那一级……"
+
+```ts
+// prd-admin/src/pages/literary-agent/ArticleIllustrationEditorPage.tsx
+const bigHeadingLevel = useMemo(() => {
+  const levels = splitParagraphs(articleContent)
+    .map(headingLevelOf).filter(l => l > 0);
+  return levels.length > 0 ? Math.min(...levels) : 0;
+}, [articleContent]);
+```
+
+**用户锚点（user-anchor）的三种打点路径**：
+
+1. **段落 gutter + 按钮**：hover 段落左侧 24px gutter → 出现绿色「+」→ 点击在此段**上方**插入 `[IMG]` 占位段
+2. **段落右键菜单**：右键任一段落 → 「在此段上方插入配图 / 在此段下方插入配图」
+3. **文章里手写占位符**：直接在 md 文本里写 `[IMG]`、`[配图]`、`【插图位置】` 均可
+
+三条路径殊途同归——都是往 `articleContent` 里塞一段独立的 `[IMG]` 段落，LLM 看到后严格在该位置插入 `[插图]` 标记。
+
+**"框框反应"视觉约定**：
+
+| 视觉元素 | 用途 | 颜色 |
+|---------|------|------|
+| 绿色 dashed 大框 + 1:1 占位图 | 用户已确认的锚点位置 | `rgba(52, 211, 153, ...)` |
+| 蓝色 dashed 大框 + 1:1 占位图 | per-h1/per-h2 策略的预览（未提交前） | `rgba(147, 197, 253, ...)` |
+| 绿色实线细边框 + 浅绿背景 | 紧邻锚点的段落（上方或下方有锚点） | 同绿 |
+| 脉冲图标 + 引导横幅 | user-anchor 已启用但文章里一个锚点都没有 | 同绿 |
+
+**教程气泡持久化**：
+
+`LiteraryAgentPreferences.AnchorTutorialSeen: bool?` 存在 `user_preferences` 集合。`null` / `false` = 未看过，第一次进入编辑页弹出右下角玻璃卡片；点「知道啦」→ `true`，跨设备跨会话永不再弹。
+
+**策略下放到后端的传输方式**：
+
+目前策略本身**不作为独立字段**发到后端——策略提示词在前端拼到 `userInstruction` 前部，后端 `ImageMasterController.GenerateArticleMarkers` 完全无感知。这让 Phase 1/1.5/1.6 后端零改动上线。Phase 2 会把 `positionStrategy` 下沉到 `ArticleIllustrationWorkflow` 做持久化，并在 `ArticleMarkerExtractor` 里对 `[IMG]` 占位符做强约束识别（绕过 LLM 随机性）。详见 `plan.manual-image-marking-control.md`。
+
 ## 六、数据设计
 
 | 集合 | 用途 | 关键字段 |
@@ -151,6 +204,7 @@ Upload(0) → Editing(1) → MarkersGenerated(2) → ImagesGenerating(3) → Ima
 | `reference_image_configs` | 参考图配置 | Name, ImageUrl, IsActive, IsPublic, ForkCount |
 | `image_master_workspaces` | 工作空间（复用 VisualAgent 集合） | ArticleIllustrationWorkflow 嵌入文档扩展配图工作流状态 |
 | `image_assets` | 生成图片资产（复用 VisualAgent 集合） | 配图生成结果存储 |
+| `user_preferences.literaryAgentPreferences` | 用户级偏好（复用系统集合） | `ImageModelId` / `ChatModelId` / `AnchorTutorialSeen`（配图锚点教程是否已看过） |
 
 ## 七、接口设计
 
@@ -216,6 +270,7 @@ Upload(0) → Editing(1) → MarkersGenerated(2) → ImagesGenerating(3) → Ima
 | `design.visual-agent.md` | 共享底层生图引擎（ImageGen），Literary Agent 复用 VisualAgent 的工作空间和资产集合 |
 | `design.system-emergence.md` | 涌现篇中"内容创作流水线"场景的详细来源 |
 | `design.unified-skill-system.md` | 提示词与技能系统统一设计 |
+| `plan.manual-image-marking-control.md` | 配图位置策略（Phase 1~3）的分阶段实施计划与落地记录 |
 
 ## 九、影响范围与风险
 

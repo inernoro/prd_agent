@@ -82,6 +82,67 @@ type WorkflowPhase = 0 | 1 | 2;
 
 type MarkerRunStatus = 'idle' | 'parsing' | 'parsed' | 'running' | 'done' | 'error';
 
+// Phase 1: 位置策略。后续阶段计划见 doc/plan.manual-image-marking-control.md
+type PositionStrategy = 'auto' | 'per-h1' | 'per-h2' | 'user-anchor';
+
+// 用户锚点占位符：匹配 [IMG] / [配图] / 【插图位置】（整行）
+const USER_ANCHOR_LINE_REGEX = /^\s*(?:\[IMG\]|\[配图\]|【插图位置】)\s*$/;
+
+function splitParagraphs(content: string): string[] {
+  const blocks: string[] = [];
+  let current: string[] = [];
+  for (const line of (content ?? '').split('\n')) {
+    if (line.trim() === '') {
+      if (current.length) { blocks.push(current.join('\n')); current = []; }
+    } else {
+      current.push(line);
+    }
+  }
+  if (current.length) blocks.push(current.join('\n'));
+  return blocks;
+}
+
+function joinParagraphs(blocks: string[]): string {
+  return blocks.join('\n\n');
+}
+
+function isAnchorParagraph(text: string): boolean {
+  return USER_ANCHOR_LINE_REGEX.test(text.trim());
+}
+
+function insertAnchorAt(content: string, insertAt: number): string {
+  const blocks = splitParagraphs(content);
+  const clamped = Math.max(0, Math.min(insertAt, blocks.length));
+  blocks.splice(clamped, 0, '[IMG]');
+  return joinParagraphs(blocks);
+}
+
+function removeParagraphAt(content: string, pIdx: number): string {
+  const blocks = splitParagraphs(content);
+  if (pIdx < 0 || pIdx >= blocks.length) return content;
+  blocks.splice(pIdx, 1);
+  return joinParagraphs(blocks);
+}
+
+const POSITION_STRATEGY_OPTIONS: Array<{ value: PositionStrategy; label: string; hint: string }> = [
+  { value: 'auto', label: '自动', hint: '' },
+  {
+    value: 'per-h1',
+    label: '每大标题一张',
+    hint: '【位置策略】请先识别本文中所有标题里 level 最小的那一级（可能是 # 也可能是 ##，以本文实际用法为准），把它当作"大标题"。在每一个大标题之后紧邻插入 1 个 [插图] 标记，其余段落不要插入。',
+  },
+  {
+    value: 'per-h2',
+    label: '每小标题一张',
+    hint: '【位置策略】请先识别本文中所有标题里 level 最小的那一级，定义为"大标题"；比它更深一层或更深的（level 更大）称为"小标题"。在每一个小标题之后紧邻插入 1 个 [插图] 标记，大标题和正文段落都不要插入。',
+  },
+  {
+    value: 'user-anchor',
+    label: '尊重用户锚点',
+    hint: '【位置策略】用户已在文章中用 [IMG] / [配图] / 【插图位置】等占位符标记了期望插图的位置。请严格在这些占位符位置插入 [插图] 标记，不要在用户未标记的段落插入；若用户未标记任何占位符，再按你的判断选择 3 个最合适的场景段落插入。',
+  },
+];
+
 type MarkerRunItem = {
   markerIndex: number;
   markerText: string; // 原始（从文章提取）文本
@@ -593,6 +654,67 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
   // 从 workspace 加载的 selectedPromptId（用于 loadLiteraryPrompts 后恢复选中状态）
   const pendingSelectedPromptIdRef = useRef<string | null>(null);
 
+  // Phase 1: 位置策略（自动 / 固定位置 / 用户锚点）
+  // 存 sessionStorage，键 = 'articleMarkerStrategy:' + workspaceId
+  // 下一阶段（Phase 2/3）再下沉到 workspace 持久化，见 doc/plan.manual-image-marking-control.md
+  const [positionStrategy, setPositionStrategyRaw] = useState<PositionStrategy>('auto');
+  const [positionStrategyOpen, setPositionStrategyOpen] = useState(false);
+  useEffect(() => {
+    if (!workspaceId) return;
+    const saved = sessionStorage.getItem(`articleMarkerStrategy:${workspaceId}`);
+    if (saved && POSITION_STRATEGY_OPTIONS.some(o => o.value === saved)) {
+      setPositionStrategyRaw(saved as PositionStrategy);
+    }
+  }, [workspaceId]);
+  const setPositionStrategy = useCallback((s: PositionStrategy) => {
+    setPositionStrategyRaw(s);
+    if (workspaceId) sessionStorage.setItem(`articleMarkerStrategy:${workspaceId}`, s);
+  }, [workspaceId]);
+
+  // Phase 1.7: 自适应 heading 检测。
+  // 用户的"大标题"不一定是 `#`，可能整篇文章都用 `##` 作为顶级（这是很常见的写法）。
+  // 因此我们先扫一遍文章，取所有 heading 中 level 最小的那一级当作"大标题"，
+  // 其次（min+1 以及更深）当作"小标题"。
+  const headingLevelOf = (text: string): number => {
+    const firstLine = text.split('\n')[0] ?? '';
+    const m = /^(#{1,6})\s+/.exec(firstLine);
+    return m ? m[1].length : 0;
+  };
+  const bigHeadingLevel = useMemo(() => {
+    const levels = splitParagraphs(articleContent)
+      .map(headingLevelOf)
+      .filter(l => l > 0);
+    return levels.length > 0 ? Math.min(...levels) : 0;
+  }, [articleContent]);
+  const isBigHeadingParagraph = useCallback((text: string): boolean => {
+    if (bigHeadingLevel === 0) return false;
+    return headingLevelOf(text) === bigHeadingLevel;
+  }, [bigHeadingLevel]);
+  const isSmallHeadingParagraph = useCallback((text: string): boolean => {
+    if (bigHeadingLevel === 0) return false;
+    const lvl = headingLevelOf(text);
+    return lvl > 0 && lvl > bigHeadingLevel;
+  }, [bigHeadingLevel]);
+
+  // Phase 1: 锚点教程气泡（每个用户一次，点击"知道啦"后不再弹出）
+  // null = 未加载；false = 未看过 → 应展示；true = 已看过 → 不展示
+  const [anchorTutorialSeen, setAnchorTutorialSeen] = useState<boolean | null>(null);
+
+  // Phase 1: 段落右键上下文菜单
+  const [paragraphCtxMenu, setParagraphCtxMenu] = useState<{
+    visible: boolean; x: number; y: number; pIdx: number; isAnchor: boolean;
+  }>({ visible: false, x: 0, y: 0, pIdx: -1, isAnchor: false });
+  useEffect(() => {
+    if (!paragraphCtxMenu.visible) return;
+    const close = () => setParagraphCtxMenu(m => ({ ...m, visible: false }));
+    window.addEventListener('click', close);
+    window.addEventListener('scroll', close, true);
+    return () => {
+      window.removeEventListener('click', close);
+      window.removeEventListener('scroll', close, true);
+    };
+  }, [paragraphCtxMenu.visible]);
+
   // 选择/取消提示词时同步持久化到后端
   const setSelectedPrompt = useCallback((prompt: PromptTemplate | null) => {
     setSelectedPromptRaw(prompt);
@@ -647,6 +769,9 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
         const prefs = prefsRes.data.literaryAgentPreferences;
         setImageModelPrefId(prefs.imageModelId ?? '');
         setChatModelPrefId(prefs.chatModelId ?? '');
+        setAnchorTutorialSeen(!!prefs.anchorTutorialSeen);
+      } else {
+        setAnchorTutorialSeen(false);
       }
       setModelPrefReady(true);
       setModelsLoading(false);
@@ -1111,6 +1236,29 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
     setPhase(1); // Editing
   }, []);
 
+  // Phase 1: 关闭锚点教程气泡（点"知道啦"后不再弹出）
+  const dismissAnchorTutorial = useCallback(() => {
+    setAnchorTutorialSeen(true);
+    void updateLiteraryAgentPreferences({
+      imageModelId: imageModelPrefId || undefined,
+      chatModelId: chatModelPrefId || undefined,
+      anchorTutorialSeen: true,
+    }).catch(() => {});
+  }, [imageModelPrefId, chatModelPrefId]);
+
+  // Phase 1: 段落级锚点操作（仅 phase=1 编辑阶段使用）
+  const addAnchorAbove = useCallback((pIdx: number) => {
+    setArticleContent(prev => insertAnchorAt(prev, pIdx));
+    setPositionStrategy('user-anchor');
+  }, [setPositionStrategy]);
+  const addAnchorBelow = useCallback((pIdx: number) => {
+    setArticleContent(prev => insertAnchorAt(prev, pIdx + 1));
+    setPositionStrategy('user-anchor');
+  }, [setPositionStrategy]);
+  const removeAnchorParagraph = useCallback((pIdx: number) => {
+    setArticleContent(prev => removeParagraphAt(prev, pIdx));
+  }, []);
+
   const handleGenerateMarkers = async () => {
     if (!articleContent.trim()) {
       toast.warning('请先输入文章内容');
@@ -1118,7 +1266,12 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
     }
 
     // 使用选中的风格提示词（可选，不选则后端使用系统推断风格）
-    const systemPrompt = selectedPrompt?.content ?? '';
+    // Phase 1: 位置策略以文本提示形式拼到 userInstruction 前部，后端无需改动
+    const strategyHint = POSITION_STRATEGY_OPTIONS.find(o => o.value === positionStrategy)?.hint ?? '';
+    const basePrompt = selectedPrompt?.content ?? '';
+    const systemPrompt = strategyHint
+      ? (basePrompt ? `${strategyHint}\n\n${basePrompt}` : strategyHint)
+      : basePrompt;
 
     setMarkerStreaming(true);
     setThinkingContent('');
@@ -2525,25 +2678,228 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
               </div>
             )}
 
-            {/* 预览阶段：渲染原文（不提供手动编辑入口） */}
+            {/* 预览阶段：按段落渲染，左侧 gutter 可打锚点，右键菜单可在上/下方插入配图 */}
             {phase === 1 && ( // Editing
               <div className="p-4 relative">
-                <div className="prd-md">
-                  <ReactMarkdown
-                    remarkPlugins={[remarkGfm, remarkBreaks]}
-                    rehypePlugins={[rehypeRaw]}
-                    components={{
-                      p: ({ node: _node, children, ...props }) => <p {...props}>{highlightChildren(children)}</p>,
-                      li: ({ node: _node, children, ...props }) => <li {...props}>{highlightChildren(children)}</li>,
-                      blockquote: ({ node: _node, children, ...props }) => <blockquote {...props}>{highlightChildren(children)}</blockquote>,
-                      h1: ({ node: _node, children, ...props }) => <h1 {...props}>{highlightChildren(children)}</h1>,
-                      h2: ({ node: _node, children, ...props }) => <h2 {...props}>{highlightChildren(children)}</h2>,
-                      h3: ({ node: _node, children, ...props }) => <h3 {...props}>{highlightChildren(children)}</h3>,
+                {/* 策略引导横幅：user-anchor 但还没锚点时提示用户怎么打 */}
+                {positionStrategy === 'user-anchor' &&
+                  !splitParagraphs(articleContent).some(isAnchorParagraph) &&
+                  articleContent.trim() && (
+                  <div
+                    className="mb-3 rounded-xl px-3 py-2.5 flex items-center gap-2"
+                    style={{
+                      background: 'linear-gradient(135deg, rgba(52,211,153,0.10) 0%, rgba(147,197,253,0.06) 100%)',
+                      border: '1px dashed rgba(52,211,153,0.4)',
                     }}
                   >
-                    {leftPreviewMarkdown}
-                  </ReactMarkdown>
+                    <MapPin size={14} style={{ color: 'rgba(52,211,153,0.95)', flexShrink: 0 }} className="animate-pulse" />
+                    <div className="text-[12px]" style={{ color: 'var(--text-primary)', lineHeight: 1.5 }}>
+                      <strong>「尊重用户锚点」已启用</strong>，但还没打锚点。
+                      <span style={{ color: 'var(--text-secondary)' }}>
+                        把鼠标悬停在任一段落左侧 → 点绿色 <Plus size={10} className="inline" /> 加锚点；或在段落上右键选择"在上方/下方插入配图"。
+                      </span>
+                    </div>
+                  </div>
+                )}
+                {/* 策略引导横幅：per-h1/per-h2 提示"会在这些位置插入" */}
+                {(positionStrategy === 'per-h1' || positionStrategy === 'per-h2') && articleContent.trim() && (
+                  <div
+                    className="mb-3 rounded-xl px-3 py-2 flex items-center gap-2"
+                    style={{
+                      background: 'rgba(147,197,253,0.06)',
+                      border: '1px solid rgba(147,197,253,0.2)',
+                    }}
+                  >
+                    <ImageIcon size={13} style={{ color: 'rgba(147,197,253,0.95)', flexShrink: 0 }} />
+                    <div className="text-[12px]" style={{ color: 'var(--text-secondary)', lineHeight: 1.5 }}>
+                      已切到「{POSITION_STRATEGY_OPTIONS.find(o => o.value === positionStrategy)?.label}」。
+                      下面预览中每个灰色占位框就是生成后配图会插入的位置。
+                    </div>
+                  </div>
+                )}
+
+                <div className="prd-md">
+                  {(() => {
+                    const paragraphs = splitParagraphs(articleContent);
+                    // Phase 1.6: 基于策略计算哪些段落后方需要渲染"配图占位"ghost
+                    const ghostAfter = new Set<number>();
+                    if (positionStrategy === 'per-h1') {
+                      paragraphs.forEach((t, i) => { if (!isAnchorParagraph(t) && isBigHeadingParagraph(t)) ghostAfter.add(i); });
+                    } else if (positionStrategy === 'per-h2') {
+                      paragraphs.forEach((t, i) => { if (!isAnchorParagraph(t) && isSmallHeadingParagraph(t)) ghostAfter.add(i); });
+                    }
+                    return paragraphs.map((text, pIdx) => {
+                      const anchored = isAnchorParagraph(text);
+                      const prevIsAnchor = pIdx > 0 && isAnchorParagraph(paragraphs[pIdx - 1]);
+                      const nextIsAnchor = pIdx < paragraphs.length - 1 && isAnchorParagraph(paragraphs[pIdx + 1]);
+                      const hasAdjacentAnchor = prevIsAnchor || nextIsAnchor;
+                      const showGhostAfter = ghostAfter.has(pIdx);
+
+                      if (anchored) {
+                        // 锚点占位：展示一个与生成后配图同尺寸的 ghost 预览 + 顶栏 pill（含移除）
+                        return (
+                          <div
+                            key={`anchor-${pIdx}`}
+                            className="my-3 rounded-xl overflow-hidden"
+                            style={{
+                              border: '2px dashed rgba(52, 211, 153, 0.5)',
+                              background: 'linear-gradient(135deg, rgba(52,211,153,0.06) 0%, rgba(52,211,153,0.02) 100%)',
+                            }}
+                          >
+                            <div
+                              className="flex items-center justify-between px-3 py-1.5"
+                              style={{ borderBottom: '1px dashed rgba(52,211,153,0.35)', background: 'rgba(52,211,153,0.08)' }}
+                            >
+                              <div className="flex items-center gap-1.5 text-[11px] font-medium" style={{ color: 'rgba(52,211,153,0.95)' }}>
+                                <MapPin size={11} />
+                                <span>此处将插入配图（1:1）</span>
+                              </div>
+                              <button
+                                type="button"
+                                onClick={() => removeAnchorParagraph(pIdx)}
+                                className="opacity-70 hover:opacity-100 transition-opacity flex items-center gap-1 text-[11px]"
+                                title="移除此锚点"
+                                style={{ color: 'rgba(52, 211, 153, 0.95)' }}
+                              >
+                                <Trash2 size={11} />
+                                移除
+                              </button>
+                            </div>
+                            {/* 与实际生成配图同尺寸的占位（默认 1:1） */}
+                            <div
+                              className="flex items-center justify-center"
+                              style={{
+                                width: '100%',
+                                aspectRatio: '1 / 1',
+                                maxWidth: 360,
+                                margin: '12px auto',
+                                background: 'rgba(255,255,255,0.03)',
+                                border: '1px dashed rgba(52,211,153,0.3)',
+                                borderRadius: 8,
+                              }}
+                            >
+                              <div className="flex flex-col items-center gap-1.5" style={{ color: 'rgba(52,211,153,0.6)' }}>
+                                <ImageIcon size={28} />
+                                <span className="text-[11px]">配图占位</span>
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      }
+
+                      return (
+                        <React.Fragment key={`p-${pIdx}`}>
+                          <div
+                            className="group relative flex items-stretch"
+                            onContextMenu={(e) => {
+                              e.preventDefault();
+                              setParagraphCtxMenu({
+                                visible: true,
+                                x: e.clientX,
+                                y: e.clientY,
+                                pIdx,
+                                isAnchor: false,
+                              });
+                            }}
+                          >
+                            {/* 左侧 gutter：悬停显示"+"加锚点 */}
+                            <button
+                              type="button"
+                              onClick={() => addAnchorAbove(pIdx)}
+                              className="shrink-0 w-6 flex items-start justify-center pt-2 opacity-0 group-hover:opacity-100 transition-opacity"
+                              title="在此段上方插入配图锚点"
+                              style={{ cursor: 'pointer' }}
+                            >
+                              <span
+                                className="inline-flex items-center justify-center rounded-full w-4 h-4 text-[10px]"
+                                style={{
+                                  background: 'rgba(52, 211, 153, 0.15)',
+                                  color: 'rgba(52, 211, 153, 0.95)',
+                                  border: '1px solid rgba(52, 211, 153, 0.4)',
+                                }}
+                              >
+                                <Plus size={10} />
+                              </span>
+                            </button>
+
+                            {/* 段落内容：相邻有锚点 → 边框高亮（"框框反应"） */}
+                            <div
+                              className="flex-1 min-w-0 rounded-md transition-all px-2 py-0.5"
+                              style={{
+                                border: hasAdjacentAnchor
+                                  ? '1px solid rgba(52, 211, 153, 0.35)'
+                                  : '1px solid transparent',
+                                background: hasAdjacentAnchor ? 'rgba(52, 211, 153, 0.04)' : 'transparent',
+                              }}
+                            >
+                              <ReactMarkdown
+                                remarkPlugins={[remarkGfm, remarkBreaks]}
+                                rehypePlugins={[rehypeRaw]}
+                                components={{
+                                  p: ({ node: _node, children, ...props }) => <p {...props}>{highlightChildren(children)}</p>,
+                                  li: ({ node: _node, children, ...props }) => <li {...props}>{highlightChildren(children)}</li>,
+                                  blockquote: ({ node: _node, children, ...props }) => <blockquote {...props}>{highlightChildren(children)}</blockquote>,
+                                  h1: ({ node: _node, children, ...props }) => <h1 {...props}>{highlightChildren(children)}</h1>,
+                                  h2: ({ node: _node, children, ...props }) => <h2 {...props}>{highlightChildren(children)}</h2>,
+                                  h3: ({ node: _node, children, ...props }) => <h3 {...props}>{highlightChildren(children)}</h3>,
+                                }}
+                              >
+                                {text}
+                              </ReactMarkdown>
+                            </div>
+                          </div>
+                          {/* 策略预览 ghost：per-h1/per-h2 在相应标题段落后显示配图占位（1:1，与生成后尺寸一致） */}
+                          {showGhostAfter && (
+                            <div
+                              className="my-3 rounded-xl"
+                              style={{
+                                border: '2px dashed rgba(147, 197, 253, 0.45)',
+                                background: 'linear-gradient(135deg, rgba(147,197,253,0.06) 0%, rgba(147,197,253,0.02) 100%)',
+                              }}
+                            >
+                              <div
+                                className="px-3 py-1.5 flex items-center gap-1.5 text-[11px] font-medium"
+                                style={{
+                                  color: 'rgba(147,197,253,0.95)',
+                                  borderBottom: '1px dashed rgba(147,197,253,0.3)',
+                                  background: 'rgba(147,197,253,0.06)',
+                                }}
+                              >
+                                <ImageIcon size={11} />
+                                <span>
+                                  {positionStrategy === 'per-h1' ? '策略：每大标题一张 · 生成后配图将出现在此处' : '策略：每小标题一张 · 生成后配图将出现在此处'}
+                                </span>
+                              </div>
+                              <div
+                                className="flex items-center justify-center"
+                                style={{
+                                  width: '100%',
+                                  aspectRatio: '1 / 1',
+                                  maxWidth: 360,
+                                  margin: '12px auto',
+                                  background: 'rgba(255,255,255,0.03)',
+                                  border: '1px dashed rgba(147,197,253,0.3)',
+                                  borderRadius: 8,
+                                }}
+                              >
+                                <div className="flex flex-col items-center gap-1.5" style={{ color: 'rgba(147,197,253,0.55)' }}>
+                                  <ImageIcon size={28} />
+                                  <span className="text-[11px]">配图占位（1:1）</span>
+                                </div>
+                              </div>
+                            </div>
+                          )}
+                        </React.Fragment>
+                      );
+                    });
+                  })()}
                 </div>
+                {/* 空态提示 */}
+                {splitParagraphs(articleContent).length === 0 && (
+                  <div className="text-[12px] py-8 text-center" style={{ color: 'var(--text-muted)' }}>
+                    请先上传文章
+                  </div>
+                )}
               </div>
             )}
 
@@ -2794,9 +3150,9 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
               {/* 水印 */}
               <div
                 className={configPillBaseClass}
-                style={{ 
+                style={{
                   background: watermarkStatus.enabled ? 'rgba(251, 191, 36, 0.08)' : 'var(--nested-block-bg)',
-                  border: watermarkStatus.enabled ? '1px solid rgba(251, 191, 36, 0.15)' : '1px solid var(--border-subtle)' 
+                  border: watermarkStatus.enabled ? '1px solid rgba(251, 191, 36, 0.15)' : '1px solid var(--border-subtle)'
                 }}
                 onClick={() => {
                   setPendingWatermarkEdit(true);
@@ -2809,6 +3165,74 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                   {watermarkStatus.enabled ? (watermarkStatus.name || '水印') : '水印'}
                 </span>
               </div>
+              {/* 位置策略（Phase 1） */}
+              <DropdownMenu.Root open={positionStrategyOpen} onOpenChange={setPositionStrategyOpen}>
+                <DropdownMenu.Trigger asChild>
+                  <div
+                    className={configPillBaseClass}
+                    style={{
+                      background: positionStrategy !== 'auto' ? 'rgba(52, 211, 153, 0.08)' : 'var(--nested-block-bg)',
+                      border: positionStrategy !== 'auto' ? '1px solid rgba(52, 211, 153, 0.15)' : '1px solid var(--border-subtle)',
+                    }}
+                    title="配图位置策略：控制 AI 在哪些段落插入配图标记"
+                  >
+                    <MapPin size={12} style={{ color: positionStrategy !== 'auto' ? '#34D399' : '#9CA3AF', flexShrink: 0 }} />
+                    <span className={configPillTextClass} style={{ color: positionStrategy !== 'auto' ? 'var(--text-primary)' : 'var(--text-muted)' }}>
+                      {POSITION_STRATEGY_OPTIONS.find(o => o.value === positionStrategy)?.label ?? '自动'}
+                    </span>
+                  </div>
+                </DropdownMenu.Trigger>
+                <DropdownMenu.Portal>
+                  <DropdownMenu.Content
+                    side="bottom"
+                    align="start"
+                    sideOffset={6}
+                    className="z-50 rounded-[12px] p-2.5"
+                    style={{ width: 260, maxWidth: 'min(92vw, 260px)', ...glassPanel }}
+                  >
+                    <div className="text-[12px] font-semibold mb-2" style={{ color: 'var(--text-primary)' }}>
+                      配图位置策略
+                    </div>
+                    <div className="text-[11px] mb-2" style={{ color: 'var(--text-muted)', lineHeight: 1.5 }}>
+                      选择「尊重用户锚点」时，可在文章里用 <code style={{ background: 'rgba(255,255,255,0.08)', padding: '0 4px', borderRadius: 4 }}>[IMG]</code> 标出需要配图的位置。
+                    </div>
+                    <div className="space-y-1.5">
+                      {POSITION_STRATEGY_OPTIONS.map((opt) => {
+                        const picked = positionStrategy === opt.value;
+                        return (
+                          <button
+                            key={opt.value}
+                            type="button"
+                            className="w-full text-left rounded-[10px] px-2.5 py-1.5 hover:bg-white/5 transition-colors"
+                            style={{
+                              border: picked ? '1px solid rgba(52,211,153,0.35)' : '1px solid rgba(255,255,255,0.08)',
+                              background: picked ? 'rgba(52,211,153,0.06)' : 'rgba(255,255,255,0.02)',
+                            }}
+                            onClick={() => {
+                              setPositionStrategy(opt.value);
+                              setPositionStrategyOpen(false);
+                              // 用户选 user-anchor 时，若当前不在「预览」tab，自动跳过去便于打锚点
+                              if (opt.value === 'user-anchor' && phase !== 1 && articleContent.trim()) {
+                                setPhase(1);
+                                toast.info('已切到「预览」页，可以开始打锚点了');
+                              } else if (opt.value !== 'auto' && phase === 1) {
+                                toast.info(`已切换到「${opt.label}」，预览中会显示配图占位`);
+                              }
+                            }}
+                          >
+                            <div className="flex items-center justify-between gap-2">
+                              <span className="text-[12px] font-medium" style={{ color: 'var(--text-primary)' }}>{opt.label}</span>
+                              {picked && (
+                                <Check size={12} style={{ color: 'rgba(52,211,153,0.95)', flexShrink: 0 }} />
+                              )}
+                            </div>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </DropdownMenu.Content>
+                </DropdownMenu.Portal>
+              </DropdownMenu.Root>
             </div>
 
             {/* 配置按钮 */}
@@ -4372,6 +4796,75 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
           ) : null
         }
       />
+
+      {/* Phase 1: 段落右键菜单（在此段上方/下方插入配图锚点） */}
+      {paragraphCtxMenu.visible && (
+        <div
+          className="fixed z-[1000] rounded-lg py-1 min-w-[180px] shadow-lg"
+          style={{
+            left: Math.min(paragraphCtxMenu.x, window.innerWidth - 200),
+            top: Math.min(paragraphCtxMenu.y, window.innerHeight - 120),
+            ...glassPanel,
+          }}
+          onClick={(e) => e.stopPropagation()}
+        >
+          <button
+            type="button"
+            className="w-full text-left px-3 py-1.5 text-[12px] hover:bg-white/10 transition-colors flex items-center gap-2"
+            style={{ color: 'var(--text-primary)' }}
+            onClick={() => {
+              addAnchorAbove(paragraphCtxMenu.pIdx);
+              setParagraphCtxMenu(m => ({ ...m, visible: false }));
+            }}
+          >
+            <MapPin size={12} style={{ color: 'rgba(52, 211, 153, 0.95)' }} />
+            在此段上方插入配图
+          </button>
+          <button
+            type="button"
+            className="w-full text-left px-3 py-1.5 text-[12px] hover:bg-white/10 transition-colors flex items-center gap-2"
+            style={{ color: 'var(--text-primary)' }}
+            onClick={() => {
+              addAnchorBelow(paragraphCtxMenu.pIdx);
+              setParagraphCtxMenu(m => ({ ...m, visible: false }));
+            }}
+          >
+            <MapPin size={12} style={{ color: 'rgba(52, 211, 153, 0.95)' }} />
+            在此段下方插入配图
+          </button>
+        </div>
+      )}
+
+      {/* Phase 1: 首次进入的锚点教程气泡（每个用户一次，点"知道啦"后永不再弹） */}
+      {anchorTutorialSeen === false && phase !== 0 && (
+        <div
+          className="fixed z-[1000] rounded-xl p-4 max-w-[340px] shadow-2xl"
+          style={{
+            right: 24,
+            bottom: 24,
+            ...glassPanel,
+            border: '1px solid rgba(52, 211, 153, 0.3)',
+          }}
+        >
+          <div className="flex items-start gap-2 mb-2">
+            <MapPin size={14} style={{ color: 'rgba(52, 211, 153, 0.95)', marginTop: 2, flexShrink: 0 }} />
+            <div className="text-[13px] font-semibold" style={{ color: 'var(--text-primary)' }}>
+              新功能：手动指定配图位置
+            </div>
+          </div>
+          <div className="text-[12px] mb-3" style={{ color: 'var(--text-secondary)', lineHeight: 1.6 }}>
+            <div className="mb-1.5">· 右上角「📍 位置策略」可切换 4 种生成策略</div>
+            <div className="mb-1.5">· 鼠标悬停段落左侧 → 点 <span style={{ color: 'rgba(52, 211, 153, 0.95)' }}>+</span> 在上方打锚点</div>
+            <div>· 段落上<span style={{ color: 'rgba(52, 211, 153, 0.95)' }}>右键</span> → 选择"在上方/下方插入配图"</div>
+          </div>
+          <div className="flex justify-end">
+            <Button size="sm" variant="primary" onClick={dismissAnchorTutorial}>
+              <Check size={13} />
+              知道啦
+            </Button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

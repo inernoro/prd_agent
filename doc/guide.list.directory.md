@@ -344,6 +344,9 @@
 - [AI 文本辅助通用 Domain 设计](plan.ai-text-assist) `plan.ai-text-assist`
   > AI 文本辅助功能的通用领域模型设计
 
+- [配图标记手动干预](plan.manual-image-marking-control) `plan.manual-image-marking-control`
+  > 配图标记从"自动黑盒"升级为"提示词+位置策略+段落级操作"的分阶段计划（Phase 1/2/3）
+
 - [动画优化计划](plan.animation-optimization) `plan.animation-optimization`
   > 基于 ReactBits 组件库的动画优化实施计划
 
