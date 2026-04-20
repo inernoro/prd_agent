@@ -129,12 +129,12 @@ const POSITION_STRATEGY_OPTIONS: Array<{ value: PositionStrategy; label: string;
   {
     value: 'per-h1',
     label: '每大标题一张',
-    hint: '【位置策略】请在每一个一级标题（# 开头或形式上的大标题）之后紧邻插入 1 个 [插图] 标记，其余段落不要插入。',
+    hint: '【位置策略】请先识别本文中所有标题里 level 最小的那一级（可能是 # 也可能是 ##，以本文实际用法为准），把它当作"大标题"。在每一个大标题之后紧邻插入 1 个 [插图] 标记，其余段落不要插入。',
   },
   {
     value: 'per-h2',
     label: '每小标题一张',
-    hint: '【位置策略】请在每一个二级及以下小标题（##/### 或形式上的小标题）之后紧邻插入 1 个 [插图] 标记，其余段落不要插入。',
+    hint: '【位置策略】请先识别本文中所有标题里 level 最小的那一级，定义为"大标题"；比它更深一层或更深的（level 更大）称为"小标题"。在每一个小标题之后紧邻插入 1 个 [插图] 标记，大标题和正文段落都不要插入。',
   },
   {
     value: 'user-anchor',
@@ -671,15 +671,30 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
     if (workspaceId) sessionStorage.setItem(`articleMarkerStrategy:${workspaceId}`, s);
   }, [workspaceId]);
 
-  // Phase 1: heading 检测（为策略预览占位图判定段落类型）
-  const isH1Paragraph = useCallback((text: string): boolean => {
+  // Phase 1.7: 自适应 heading 检测。
+  // 用户的"大标题"不一定是 `#`，可能整篇文章都用 `##` 作为顶级（这是很常见的写法）。
+  // 因此我们先扫一遍文章，取所有 heading 中 level 最小的那一级当作"大标题"，
+  // 其次（min+1 以及更深）当作"小标题"。
+  const headingLevelOf = (text: string): number => {
     const firstLine = text.split('\n')[0] ?? '';
-    return /^#\s+/.test(firstLine);
-  }, []);
-  const isH2PlusParagraph = useCallback((text: string): boolean => {
-    const firstLine = text.split('\n')[0] ?? '';
-    return /^#{2,6}\s+/.test(firstLine);
-  }, []);
+    const m = /^(#{1,6})\s+/.exec(firstLine);
+    return m ? m[1].length : 0;
+  };
+  const bigHeadingLevel = useMemo(() => {
+    const levels = splitParagraphs(articleContent)
+      .map(headingLevelOf)
+      .filter(l => l > 0);
+    return levels.length > 0 ? Math.min(...levels) : 0;
+  }, [articleContent]);
+  const isBigHeadingParagraph = useCallback((text: string): boolean => {
+    if (bigHeadingLevel === 0) return false;
+    return headingLevelOf(text) === bigHeadingLevel;
+  }, [bigHeadingLevel]);
+  const isSmallHeadingParagraph = useCallback((text: string): boolean => {
+    if (bigHeadingLevel === 0) return false;
+    const lvl = headingLevelOf(text);
+    return lvl > 0 && lvl > bigHeadingLevel;
+  }, [bigHeadingLevel]);
 
   // Phase 1: 锚点教程气泡（每个用户一次，点击"知道啦"后不再弹出）
   // null = 未加载；false = 未看过 → 应展示；true = 已看过 → 不展示
@@ -2709,9 +2724,9 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                     // Phase 1.6: 基于策略计算哪些段落后方需要渲染"配图占位"ghost
                     const ghostAfter = new Set<number>();
                     if (positionStrategy === 'per-h1') {
-                      paragraphs.forEach((t, i) => { if (!isAnchorParagraph(t) && isH1Paragraph(t)) ghostAfter.add(i); });
+                      paragraphs.forEach((t, i) => { if (!isAnchorParagraph(t) && isBigHeadingParagraph(t)) ghostAfter.add(i); });
                     } else if (positionStrategy === 'per-h2') {
-                      paragraphs.forEach((t, i) => { if (!isAnchorParagraph(t) && isH2PlusParagraph(t)) ghostAfter.add(i); });
+                      paragraphs.forEach((t, i) => { if (!isAnchorParagraph(t) && isSmallHeadingParagraph(t)) ghostAfter.add(i); });
                     }
                     return paragraphs.map((text, pIdx) => {
                       const anchored = isAnchorParagraph(text);
