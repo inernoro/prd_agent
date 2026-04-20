@@ -8,6 +8,14 @@
 
 ## [未发布]
 
+## [1.8.3] - 2026-04-20
+
+> 🚀 **用户更新项**
+> - 更新中心「周报」tab 支持多来源（全员可加/改/删），mermaid 代码块自动渲染成图
+> - 历史发布条目加 icon、等宽字体时间、秒级 GitHub commit 时间
+> - CDS 多项目 + GitHub Webhook 自动部署；push 即预览，预览就绪三层兜底消灭 502
+> - 视觉创作、视频 Agent、涌现探索器、文档空间、PR 审查工作台 V2、缺陷分享外部 Agent 等主线持续推进
+
 ### 2026-04-20
 
 | 类型 | 模块 | 描述 |
@@ -22,6 +30,8 @@
 | feat | prd-admin | 新增 MermaidDiagram 组件（懒加载 mermaid 主包），MarkdownContent 对 mermaid 代码块自动渲染图表，不再暴露源码 |
 | refactor | prd-admin | 更新中心移除「本周更新」冗余 section，保留历史发布；周报改由「map周报」tab 承载 |
 | perf | prd-admin | 周报来源选择采用 chip 栏 + hover 内联编辑/删除，视觉与 Surface System 对齐 |
+| refactor | prd-admin | 更新中心顶部 tab「map周报」改名为「周报」，去掉 map 前缀更通用 |
+| chore | doc | scripts/assemble-changelog.sh 合并 203 个碎片到 [未发布]，按日期去重（2026-03-22 / 03-28 / 03-29 重复头消除） |
 
 ### 2026-04-19
 
