@@ -671,6 +671,16 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
     if (workspaceId) sessionStorage.setItem(`articleMarkerStrategy:${workspaceId}`, s);
   }, [workspaceId]);
 
+  // Phase 1: heading 检测（为策略预览占位图判定段落类型）
+  const isH1Paragraph = useCallback((text: string): boolean => {
+    const firstLine = text.split('\n')[0] ?? '';
+    return /^#\s+/.test(firstLine);
+  }, []);
+  const isH2PlusParagraph = useCallback((text: string): boolean => {
+    const firstLine = text.split('\n')[0] ?? '';
+    return /^#{2,6}\s+/.test(firstLine);
+  }, []);
+
   // Phase 1: 锚点教程气泡（每个用户一次，点击"知道啦"后不再弹出）
   // null = 未加载；false = 未看过 → 应展示；true = 已看过 → 不展示
   const [anchorTutorialSeen, setAnchorTutorialSeen] = useState<boolean | null>(null);
@@ -2656,108 +2666,215 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
             {/* 预览阶段：按段落渲染，左侧 gutter 可打锚点，右键菜单可在上/下方插入配图 */}
             {phase === 1 && ( // Editing
               <div className="p-4 relative">
+                {/* 策略引导横幅：user-anchor 但还没锚点时提示用户怎么打 */}
+                {positionStrategy === 'user-anchor' &&
+                  !splitParagraphs(articleContent).some(isAnchorParagraph) &&
+                  articleContent.trim() && (
+                  <div
+                    className="mb-3 rounded-xl px-3 py-2.5 flex items-center gap-2"
+                    style={{
+                      background: 'linear-gradient(135deg, rgba(52,211,153,0.10) 0%, rgba(147,197,253,0.06) 100%)',
+                      border: '1px dashed rgba(52,211,153,0.4)',
+                    }}
+                  >
+                    <MapPin size={14} style={{ color: 'rgba(52,211,153,0.95)', flexShrink: 0 }} className="animate-pulse" />
+                    <div className="text-[12px]" style={{ color: 'var(--text-primary)', lineHeight: 1.5 }}>
+                      <strong>「尊重用户锚点」已启用</strong>，但还没打锚点。
+                      <span style={{ color: 'var(--text-secondary)' }}>
+                        把鼠标悬停在任一段落左侧 → 点绿色 <Plus size={10} className="inline" /> 加锚点；或在段落上右键选择"在上方/下方插入配图"。
+                      </span>
+                    </div>
+                  </div>
+                )}
+                {/* 策略引导横幅：per-h1/per-h2 提示"会在这些位置插入" */}
+                {(positionStrategy === 'per-h1' || positionStrategy === 'per-h2') && articleContent.trim() && (
+                  <div
+                    className="mb-3 rounded-xl px-3 py-2 flex items-center gap-2"
+                    style={{
+                      background: 'rgba(147,197,253,0.06)',
+                      border: '1px solid rgba(147,197,253,0.2)',
+                    }}
+                  >
+                    <ImageIcon size={13} style={{ color: 'rgba(147,197,253,0.95)', flexShrink: 0 }} />
+                    <div className="text-[12px]" style={{ color: 'var(--text-secondary)', lineHeight: 1.5 }}>
+                      已切到「{POSITION_STRATEGY_OPTIONS.find(o => o.value === positionStrategy)?.label}」。
+                      下面预览中每个灰色占位框就是生成后配图会插入的位置。
+                    </div>
+                  </div>
+                )}
+
                 <div className="prd-md">
                   {(() => {
                     const paragraphs = splitParagraphs(articleContent);
+                    // Phase 1.6: 基于策略计算哪些段落后方需要渲染"配图占位"ghost
+                    const ghostAfter = new Set<number>();
+                    if (positionStrategy === 'per-h1') {
+                      paragraphs.forEach((t, i) => { if (!isAnchorParagraph(t) && isH1Paragraph(t)) ghostAfter.add(i); });
+                    } else if (positionStrategy === 'per-h2') {
+                      paragraphs.forEach((t, i) => { if (!isAnchorParagraph(t) && isH2PlusParagraph(t)) ghostAfter.add(i); });
+                    }
                     return paragraphs.map((text, pIdx) => {
                       const anchored = isAnchorParagraph(text);
                       const prevIsAnchor = pIdx > 0 && isAnchorParagraph(paragraphs[pIdx - 1]);
                       const nextIsAnchor = pIdx < paragraphs.length - 1 && isAnchorParagraph(paragraphs[pIdx + 1]);
                       const hasAdjacentAnchor = prevIsAnchor || nextIsAnchor;
+                      const showGhostAfter = ghostAfter.has(pIdx);
 
                       if (anchored) {
-                        // 锚点占位：小型 pill 展示，带移除按钮
+                        // 锚点占位：展示一个与生成后配图同尺寸的 ghost 预览 + 顶栏 pill（含移除）
                         return (
                           <div
                             key={`anchor-${pIdx}`}
-                            className="group flex items-center gap-2 my-2"
-                            style={{ paddingLeft: 28 }}
+                            className="my-3 rounded-xl overflow-hidden"
+                            style={{
+                              border: '2px dashed rgba(52, 211, 153, 0.5)',
+                              background: 'linear-gradient(135deg, rgba(52,211,153,0.06) 0%, rgba(52,211,153,0.02) 100%)',
+                            }}
                           >
                             <div
-                              className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-medium"
-                              style={{
-                                background: 'rgba(52, 211, 153, 0.10)',
-                                border: '1px dashed rgba(52, 211, 153, 0.45)',
-                                color: 'rgba(52, 211, 153, 0.95)',
-                              }}
+                              className="flex items-center justify-between px-3 py-1.5"
+                              style={{ borderBottom: '1px dashed rgba(52,211,153,0.35)', background: 'rgba(52,211,153,0.08)' }}
                             >
-                              <MapPin size={11} />
-                              <span>此处将插入配图</span>
+                              <div className="flex items-center gap-1.5 text-[11px] font-medium" style={{ color: 'rgba(52,211,153,0.95)' }}>
+                                <MapPin size={11} />
+                                <span>此处将插入配图（1:1）</span>
+                              </div>
                               <button
                                 type="button"
                                 onClick={() => removeAnchorParagraph(pIdx)}
-                                className="ml-1 opacity-60 hover:opacity-100 transition-opacity"
+                                className="opacity-70 hover:opacity-100 transition-opacity flex items-center gap-1 text-[11px]"
                                 title="移除此锚点"
                                 style={{ color: 'rgba(52, 211, 153, 0.95)' }}
                               >
                                 <Trash2 size={11} />
+                                移除
                               </button>
+                            </div>
+                            {/* 与实际生成配图同尺寸的占位（默认 1:1） */}
+                            <div
+                              className="flex items-center justify-center"
+                              style={{
+                                width: '100%',
+                                aspectRatio: '1 / 1',
+                                maxWidth: 360,
+                                margin: '12px auto',
+                                background: 'rgba(255,255,255,0.03)',
+                                border: '1px dashed rgba(52,211,153,0.3)',
+                                borderRadius: 8,
+                              }}
+                            >
+                              <div className="flex flex-col items-center gap-1.5" style={{ color: 'rgba(52,211,153,0.6)' }}>
+                                <ImageIcon size={28} />
+                                <span className="text-[11px]">配图占位</span>
+                              </div>
                             </div>
                           </div>
                         );
                       }
 
                       return (
-                        <div
-                          key={`p-${pIdx}`}
-                          className="group relative flex items-stretch"
-                          onContextMenu={(e) => {
-                            e.preventDefault();
-                            setParagraphCtxMenu({
-                              visible: true,
-                              x: e.clientX,
-                              y: e.clientY,
-                              pIdx,
-                              isAnchor: false,
-                            });
-                          }}
-                        >
-                          {/* 左侧 gutter：悬停显示"+"加锚点 */}
-                          <button
-                            type="button"
-                            onClick={() => addAnchorAbove(pIdx)}
-                            className="shrink-0 w-6 flex items-start justify-center pt-2 opacity-0 group-hover:opacity-100 transition-opacity"
-                            title="在此段上方插入配图锚点"
-                            style={{ cursor: 'pointer' }}
-                          >
-                            <span
-                              className="inline-flex items-center justify-center rounded-full w-4 h-4 text-[10px]"
-                              style={{
-                                background: 'rgba(52, 211, 153, 0.15)',
-                                color: 'rgba(52, 211, 153, 0.95)',
-                                border: '1px solid rgba(52, 211, 153, 0.4)',
-                              }}
-                            >
-                              <Plus size={10} />
-                            </span>
-                          </button>
-
-                          {/* 段落内容：相邻有锚点 → 边框高亮（"框框反应"） */}
+                        <React.Fragment key={`p-${pIdx}`}>
                           <div
-                            className="flex-1 min-w-0 rounded-md transition-all px-2 py-0.5"
-                            style={{
-                              border: hasAdjacentAnchor
-                                ? '1px solid rgba(52, 211, 153, 0.35)'
-                                : '1px solid transparent',
-                              background: hasAdjacentAnchor ? 'rgba(52, 211, 153, 0.04)' : 'transparent',
+                            className="group relative flex items-stretch"
+                            onContextMenu={(e) => {
+                              e.preventDefault();
+                              setParagraphCtxMenu({
+                                visible: true,
+                                x: e.clientX,
+                                y: e.clientY,
+                                pIdx,
+                                isAnchor: false,
+                              });
                             }}
                           >
-                            <ReactMarkdown
-                              remarkPlugins={[remarkGfm, remarkBreaks]}
-                              rehypePlugins={[rehypeRaw]}
-                              components={{
-                                p: ({ node: _node, children, ...props }) => <p {...props}>{highlightChildren(children)}</p>,
-                                li: ({ node: _node, children, ...props }) => <li {...props}>{highlightChildren(children)}</li>,
-                                blockquote: ({ node: _node, children, ...props }) => <blockquote {...props}>{highlightChildren(children)}</blockquote>,
-                                h1: ({ node: _node, children, ...props }) => <h1 {...props}>{highlightChildren(children)}</h1>,
-                                h2: ({ node: _node, children, ...props }) => <h2 {...props}>{highlightChildren(children)}</h2>,
-                                h3: ({ node: _node, children, ...props }) => <h3 {...props}>{highlightChildren(children)}</h3>,
+                            {/* 左侧 gutter：悬停显示"+"加锚点 */}
+                            <button
+                              type="button"
+                              onClick={() => addAnchorAbove(pIdx)}
+                              className="shrink-0 w-6 flex items-start justify-center pt-2 opacity-0 group-hover:opacity-100 transition-opacity"
+                              title="在此段上方插入配图锚点"
+                              style={{ cursor: 'pointer' }}
+                            >
+                              <span
+                                className="inline-flex items-center justify-center rounded-full w-4 h-4 text-[10px]"
+                                style={{
+                                  background: 'rgba(52, 211, 153, 0.15)',
+                                  color: 'rgba(52, 211, 153, 0.95)',
+                                  border: '1px solid rgba(52, 211, 153, 0.4)',
+                                }}
+                              >
+                                <Plus size={10} />
+                              </span>
+                            </button>
+
+                            {/* 段落内容：相邻有锚点 → 边框高亮（"框框反应"） */}
+                            <div
+                              className="flex-1 min-w-0 rounded-md transition-all px-2 py-0.5"
+                              style={{
+                                border: hasAdjacentAnchor
+                                  ? '1px solid rgba(52, 211, 153, 0.35)'
+                                  : '1px solid transparent',
+                                background: hasAdjacentAnchor ? 'rgba(52, 211, 153, 0.04)' : 'transparent',
                               }}
                             >
-                              {text}
-                            </ReactMarkdown>
+                              <ReactMarkdown
+                                remarkPlugins={[remarkGfm, remarkBreaks]}
+                                rehypePlugins={[rehypeRaw]}
+                                components={{
+                                  p: ({ node: _node, children, ...props }) => <p {...props}>{highlightChildren(children)}</p>,
+                                  li: ({ node: _node, children, ...props }) => <li {...props}>{highlightChildren(children)}</li>,
+                                  blockquote: ({ node: _node, children, ...props }) => <blockquote {...props}>{highlightChildren(children)}</blockquote>,
+                                  h1: ({ node: _node, children, ...props }) => <h1 {...props}>{highlightChildren(children)}</h1>,
+                                  h2: ({ node: _node, children, ...props }) => <h2 {...props}>{highlightChildren(children)}</h2>,
+                                  h3: ({ node: _node, children, ...props }) => <h3 {...props}>{highlightChildren(children)}</h3>,
+                                }}
+                              >
+                                {text}
+                              </ReactMarkdown>
+                            </div>
                           </div>
-                        </div>
+                          {/* 策略预览 ghost：per-h1/per-h2 在相应标题段落后显示配图占位（1:1，与生成后尺寸一致） */}
+                          {showGhostAfter && (
+                            <div
+                              className="my-3 rounded-xl"
+                              style={{
+                                border: '2px dashed rgba(147, 197, 253, 0.45)',
+                                background: 'linear-gradient(135deg, rgba(147,197,253,0.06) 0%, rgba(147,197,253,0.02) 100%)',
+                              }}
+                            >
+                              <div
+                                className="px-3 py-1.5 flex items-center gap-1.5 text-[11px] font-medium"
+                                style={{
+                                  color: 'rgba(147,197,253,0.95)',
+                                  borderBottom: '1px dashed rgba(147,197,253,0.3)',
+                                  background: 'rgba(147,197,253,0.06)',
+                                }}
+                              >
+                                <ImageIcon size={11} />
+                                <span>
+                                  {positionStrategy === 'per-h1' ? '策略：每大标题一张 · 生成后配图将出现在此处' : '策略：每小标题一张 · 生成后配图将出现在此处'}
+                                </span>
+                              </div>
+                              <div
+                                className="flex items-center justify-center"
+                                style={{
+                                  width: '100%',
+                                  aspectRatio: '1 / 1',
+                                  maxWidth: 360,
+                                  margin: '12px auto',
+                                  background: 'rgba(255,255,255,0.03)',
+                                  border: '1px dashed rgba(147,197,253,0.3)',
+                                  borderRadius: 8,
+                                }}
+                              >
+                                <div className="flex flex-col items-center gap-1.5" style={{ color: 'rgba(147,197,253,0.55)' }}>
+                                  <ImageIcon size={28} />
+                                  <span className="text-[11px]">配图占位（1:1）</span>
+                                </div>
+                              </div>
+                            </div>
+                          )}
+                        </React.Fragment>
                       );
                     });
                   })()}
@@ -3076,7 +3193,17 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                               border: picked ? '1px solid rgba(52,211,153,0.35)' : '1px solid rgba(255,255,255,0.08)',
                               background: picked ? 'rgba(52,211,153,0.06)' : 'rgba(255,255,255,0.02)',
                             }}
-                            onClick={() => { setPositionStrategy(opt.value); setPositionStrategyOpen(false); }}
+                            onClick={() => {
+                              setPositionStrategy(opt.value);
+                              setPositionStrategyOpen(false);
+                              // 用户选 user-anchor 时，若当前不在「预览」tab，自动跳过去便于打锚点
+                              if (opt.value === 'user-anchor' && phase !== 1 && articleContent.trim()) {
+                                setPhase(1);
+                                toast.info('已切到「预览」页，可以开始打锚点了');
+                              } else if (opt.value !== 'auto' && phase === 1) {
+                                toast.info(`已切换到「${opt.label}」，预览中会显示配图占位`);
+                              }
+                            }}
                           >
                             <div className="flex items-center justify-between gap-2">
                               <span className="text-[12px] font-medium" style={{ color: 'var(--text-primary)' }}>{opt.label}</span>

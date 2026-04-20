@@ -18,6 +18,7 @@ branch: claude/manual-image-marking-control-GALGQ
 |------|------|------|----------|
 | **Phase 1** | 位置策略选择器（自动 / 每大标题 / 每小标题 / 尊重用户锚点） | ✅ 已完成（2026-04-20） | `ArticleIllustrationEditorPage.tsx` 右侧配置栏第 4 个 pill |
 | **Phase 1.5** | 首次用户教程气泡（每账户一次，点「知道啦」后永不再弹） + 段落左侧 gutter 点击加锚点 + 段落右键菜单「在上方/下方插入配图」 + 相邻锚点段落绿色边框视觉反馈 | ✅ 已完成（2026-04-20） | 同上文件 + 后端 `LiteraryAgentPreferences.AnchorTutorialSeen` 字段 |
+| **Phase 1.6** | 策略切换体感补丁：切 `user-anchor` 自动跳「预览」tab；切 per-h1/per-h2 在预览中显示同尺寸 1:1 ghost 配图占位；`user-anchor` 无锚点时顶部脉冲引导横幅 | ✅ 已完成（2026-04-20） | 同上文件 |
 | **Phase 2** | 策略持久化下沉到 workspace（目前存 sessionStorage），补后端 `positionStrategy` 字段；服务端 `ArticleMarkerExtractor` 对 `[IMG]` 占位符做强约束识别（绕过 LLM 随机性） | 🔲 待启动 | `ArticleIllustrationWorkflow.cs` + `ImageMasterController.GenerateArticleMarkers` |
 | **Phase 3** | 生成后段落级操作：hover 某段 → 显示 `+ 加标记 / ✕ 删除标记 / ↻ 重生成`；新增 3 个端点 `POST/DELETE/regenerate markers/{markerIndex}` | 🔲 待启动 | `ImageMasterController.cs` 新增 3 个端点 + 前端段落悬浮菜单 |
 
