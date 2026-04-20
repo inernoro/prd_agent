@@ -31,13 +31,14 @@ export default function ConfirmDialog({
 }: Props) {
   useEffect(() => {
     if (!open) return;
+    // 仅监听 ESC 取消；Enter 不绑定——删除等危险操作要求用户显式点击按钮，
+    // 避免上一次 click/context-menu 后的反射性 Enter 触发误删（Bugbot 反馈）。
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') onClose();
-      if (e.key === 'Enter' && !busy) onConfirm();
     };
     document.addEventListener('keydown', onKey);
     return () => document.removeEventListener('keydown', onKey);
-  }, [open, busy, onClose, onConfirm]);
+  }, [open, onClose]);
 
   if (!open) return null;
 

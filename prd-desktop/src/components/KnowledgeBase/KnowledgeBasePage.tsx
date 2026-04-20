@@ -1,4 +1,4 @@
-import { useCallback, useState, useRef } from 'react';
+import { useCallback, useEffect, useState, useRef } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import remarkBreaks from 'remark-breaks';
@@ -12,6 +12,7 @@ import { DOCUMENT_TYPE_LABELS } from '../../types';
 import DocumentContextMenu from '../Document/DocumentContextMenu';
 import RenameDocumentModal from '../Document/RenameDocumentModal';
 import ConfirmDialog from '../ui/ConfirmDialog';
+import { useDocumentActions } from '../../hooks/useDocumentActions';
 
 const DOC_TYPES: DocumentType[] = ['product', 'technical', 'design', 'reference'];
 
@@ -76,76 +77,18 @@ export default function KnowledgeBasePage() {
     setDocContextMenu({ x: e.clientX, y: e.clientY, docId, currentTitle, isMain });
   }, []);
 
-  const replaceDocumentFile = useCallback(async (docId: string, documentType?: string) => {
-    if (!sessionId) return;
-    try {
-      const selected = await open({
-        multiple: false,
-        title: '选择替换后的文件',
-      });
-      if (!selected || Array.isArray(selected)) return;
-      setBusy(true);
-      setError('');
-      const up = await invoke<ApiResponse<{ sessionId: string; documentId: string; documentIds: string[]; documentMetas?: Array<{ documentId: string; documentType: string }> }>>(
-        'upload_file_to_session',
-        { sessionId, filePath: selected, documentType: documentType || null },
-      );
-      if (!up.success || !up.data) {
-        setError(up.error?.message || '替换失败');
-        return;
-      }
-      if (up.data.documentId && up.data.documentId !== docId) {
-        await invoke<ApiResponse<unknown>>('remove_document_from_session', { sessionId, documentId: docId });
-      }
-      // 刷新文档列表
-      const finalIds = (up.data.documentIds || []).filter((id) => id !== docId);
-      const metaMap = new Map((up.data.documentMetas ?? []).map((m) => [m.documentId, m.documentType]));
-      const freshDocs: Document[] = [];
-      for (const did of finalIds) {
-        const r = await invoke<ApiResponse<Document>>('get_document', { documentId: did });
-        if (r.success && r.data) {
-          r.data.documentType = (metaMap.get(did) ?? r.data.documentType) as Document['documentType'];
-          freshDocs.push(r.data);
-        }
-      }
-      if (freshDocs.length > 0) setDocuments(freshDocs);
-    } catch (err) {
-      setError('替换失败：' + String(err));
-    } finally {
-      setBusy(false);
-    }
-  }, [sessionId, setDocuments]);
+  const docActions = useDocumentActions();
+
+  // docActions 有独立 busy/error，合并到页面的 busy/error 显示
+  useEffect(() => {
+    if (docActions.error) setError(docActions.error);
+  }, [docActions.error]);
 
   const confirmDeleteDocument = useCallback(async () => {
-    if (!deleteTarget || !sessionId) return;
-    try {
-      setBusy(true);
-      setError('');
-      const resp = await invoke<ApiResponse<{ documentIds: string[]; documentMetas?: Array<{ documentId: string; documentType: string }> }>>(
-        'remove_document_from_session',
-        { sessionId, documentId: deleteTarget.docId },
-      );
-      if (!resp.success || !resp.data) {
-        setError(resp.error?.message || '删除失败');
-        return;
-      }
-      const metaMap = new Map((resp.data.documentMetas ?? []).map((m) => [m.documentId, m.documentType]));
-      const freshDocs: Document[] = [];
-      for (const did of resp.data.documentIds) {
-        const r = await invoke<ApiResponse<Document>>('get_document', { documentId: did });
-        if (r.success && r.data) {
-          r.data.documentType = (metaMap.get(did) ?? r.data.documentType) as Document['documentType'];
-          freshDocs.push(r.data);
-        }
-      }
-      setDocuments(freshDocs);
-      setDeleteTarget(null);
-    } catch (err) {
-      setError('删除失败：' + String(err));
-    } finally {
-      setBusy(false);
-    }
-  }, [deleteTarget, sessionId, setDocuments]);
+    if (!deleteTarget) return;
+    const ok = await docActions.removeDocument(deleteTarget.docId);
+    if (ok) setDeleteTarget(null);
+  }, [deleteTarget, docActions]);
 
   const handleChangeDocumentType = useCallback(async (documentId: string, newType: DocumentType) => {
     if (!sessionId) return;
@@ -508,7 +451,11 @@ export default function KnowledgeBasePage() {
             ),
             onClick: () => setRenameTarget({ docId: ctx.docId, currentTitle: ctx.currentTitle }),
           },
-          {
+        ];
+        if (!ctx.isMain) {
+          // 主文档不走"替换文件"——raw upload+remove 不会更新 group.PrdDocumentId，会破坏绑定；
+          // 要换主 PRD 请在侧边栏"更换 PRD"按钮走 openBindPrdPicker 流程。
+          items.push({
             key: 'replace',
             label: '替换文件',
             icon: (
@@ -516,11 +463,9 @@ export default function KnowledgeBasePage() {
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v2a2 2 0 002 2h12a2 2 0 002-2v-2M16 12l-4-4m0 0l-4 4m4-4v12" />
               </svg>
             ),
-            onClick: () => { void replaceDocumentFile(ctx.docId, docType); },
-          },
-        ];
-        if (!ctx.isMain) {
-          // 主文档不允许删除（删除后会破坏会话），仅补充资料可删除
+            onClick: () => { void docActions.replaceDocumentFile({ docId: ctx.docId, documentType: docType }); },
+          } as typeof items[number]);
+          // 主文档也不允许删除（会破坏会话）
           items.push({
             key: 'delete',
             label: '删除',
@@ -556,7 +501,7 @@ export default function KnowledgeBasePage() {
         open={!!deleteTarget}
         title="删除文档"
         danger
-        busy={busy}
+        busy={busy || docActions.busy}
         confirmText="删除"
         message={
           <>
@@ -566,7 +511,7 @@ export default function KnowledgeBasePage() {
           </>
         }
         onConfirm={() => { void confirmDeleteDocument(); }}
-        onClose={() => { if (!busy) setDeleteTarget(null); }}
+        onClose={() => { if (!busy && !docActions.busy) setDeleteTarget(null); }}
       />
     </div>
   );

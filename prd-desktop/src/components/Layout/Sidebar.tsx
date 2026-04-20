@@ -15,6 +15,7 @@ import { extractMarkdownTitle, isMeaninglessName, normalizeCandidateName, stripF
 import DocumentContextMenu from '../Document/DocumentContextMenu';
 import RenameDocumentModal from '../Document/RenameDocumentModal';
 import ConfirmDialog from '../ui/ConfirmDialog';
+import { useDocumentActions } from '../../hooks/useDocumentActions';
 
 export default function Sidebar() {
   const { user, logout } = useAuthStore();
@@ -40,80 +41,19 @@ export default function Sidebar() {
   const [docContextMenu, setDocContextMenu] = useState<null | { x: number; y: number; docId: string; currentTitle: string; isMain: boolean }>(null);
   const [renameTarget, setRenameTarget] = useState<null | { docId: string; currentTitle: string }>(null);
   const [deleteTarget, setDeleteTarget] = useState<null | { docId: string; title: string }>(null);
-  const [busyDocAction, setBusyDocAction] = useState(false);
+
+  const { busy: busyDocAction, replaceDocumentFile, removeDocument } = useDocumentActions();
 
   const openDocContextMenu = useCallback((e: React.MouseEvent, docId: string, currentTitle: string, isMain: boolean) => {
     e.preventDefault();
     setDocContextMenu({ x: e.clientX, y: e.clientY, docId, currentTitle, isMain });
   }, []);
 
-  // 替换文件：Tauri 文件选择 → upload_file_to_session 追加 → remove_document_from_session 移除旧
-  const replaceDocumentFile = useCallback(async (docId: string, documentType?: string) => {
-    if (!sessionId) return;
-    try {
-      const { open: openDialog } = await import('@tauri-apps/plugin-dialog');
-      const selected = await openDialog({
-        multiple: false,
-        title: '选择替换后的文件',
-      });
-      if (!selected || Array.isArray(selected)) return;
-      setBusyDocAction(true);
-      // 1) 上传新文件
-      const up = await invoke<ApiResponse<{ sessionId: string; documentId: string; documentIds: string[]; documentMetas?: Array<{ documentId: string; documentType: string }> }>>(
-        'upload_file_to_session',
-        { sessionId, filePath: selected, documentType: documentType || null },
-      );
-      if (!up.success || !up.data) return;
-      // 2) 删除旧文件（若新旧 id 相同说明内容一致，跳过）
-      if (up.data.documentId && up.data.documentId !== docId) {
-        await invoke<ApiResponse<unknown>>('remove_document_from_session', { sessionId, documentId: docId });
-      }
-      // 3) 刷新文档列表
-      const finalIds = (up.data.documentIds || []).filter((id) => id !== docId);
-      const metaMap = new Map((up.data.documentMetas ?? []).map((m) => [m.documentId, m.documentType]));
-      const freshDocs: Document[] = [];
-      for (const did of finalIds) {
-        const r = await invoke<ApiResponse<Document>>('get_document', { documentId: did });
-        if (r.success && r.data) {
-          r.data.documentType = (metaMap.get(did) ?? r.data.documentType) as Document['documentType'];
-          freshDocs.push(r.data);
-        }
-      }
-      if (freshDocs.length > 0) setDocuments(freshDocs);
-    } catch {
-      // 忽略用户取消 / 网络错
-    } finally {
-      setBusyDocAction(false);
-    }
-  }, [sessionId, setDocuments]);
-
-  // 删除（仅补充资料，主文档由"更换 PRD"统一处理）
   const confirmDeleteDocument = useCallback(async () => {
-    if (!deleteTarget || !sessionId) return;
-    setBusyDocAction(true);
-    try {
-      const resp = await invoke<ApiResponse<{ documentIds: string[]; documentMetas?: Array<{ documentId: string; documentType: string }> }>>(
-        'remove_document_from_session',
-        { sessionId, documentId: deleteTarget.docId },
-      );
-      if (!resp.success || !resp.data) return;
-      const metaMap = new Map((resp.data.documentMetas ?? []).map((m) => [m.documentId, m.documentType]));
-      const freshDocs: Document[] = [];
-      for (const did of resp.data.documentIds) {
-        const r = await invoke<ApiResponse<Document>>('get_document', { documentId: did });
-        if (r.success && r.data) {
-          r.data.documentType = (metaMap.get(did) ?? r.data.documentType) as Document['documentType'];
-          freshDocs.push(r.data);
-        }
-      }
-      setDocuments(freshDocs);
-      setDeleteTarget(null);
-    } catch {
-      // ignore
-    } finally {
-      setBusyDocAction(false);
-    }
-  }, [deleteTarget, sessionId, setDocuments]);
+    if (!deleteTarget) return;
+    const ok = await removeDocument(deleteTarget.docId);
+    if (ok) setDeleteTarget(null);
+  }, [deleteTarget, removeDocument]);
 
   // 侧边栏追加资料
   const handleSidebarAddDoc = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -1118,7 +1058,7 @@ export default function Sidebar() {
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v2a2 2 0 002 2h12a2 2 0 002-2v-2M16 12l-4-4m0 0l-4 4m4-4v12" />
               </svg>
             ),
-            onClick: () => { void replaceDocumentFile(ctx.docId, docType); },
+            onClick: () => { void replaceDocumentFile({ docId: ctx.docId, documentType: docType }); },
           });
           items.push({
             key: 'delete',
