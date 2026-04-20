@@ -26,6 +26,7 @@ import type {
 } from '@/services/real/changelog';
 import { MarkdownContent } from '@/components/ui/MarkdownContent';
 import { MapSectionLoader, MapSpinner } from '@/components/ui/VideoLoader';
+import { glassPanel, glassBar } from '@/lib/glassStyles';
 import { toast } from '@/lib/toast';
 
 /** 取条目对应的"最后修改时间"（优先 git commit time） */
@@ -259,10 +260,7 @@ export function WeeklyReportsTab() {
       {activeSource && (
         <div
           className="flex items-center justify-between flex-wrap gap-2 px-4 py-2 mb-3 rounded-xl"
-          style={{
-            background: 'rgba(255,255,255,0.02)',
-            border: '1px solid rgba(255,255,255,0.06)',
-          }}
+          style={{ ...glassBar, borderRadius: 12 }}
         >
           <div className="flex items-center gap-2.5 flex-wrap min-w-0">
             <span
@@ -306,10 +304,9 @@ export function WeeklyReportsTab() {
       <div
         className="flex gap-3 rounded-2xl"
         style={{
+          ...glassPanel,
           flex: 1,
           minHeight: 0,
-          background: 'rgba(0,0,0,0.22)',
-          border: '1px solid rgba(255,255,255,0.06)',
           padding: '12px',
           overflow: 'hidden',
         }}
@@ -321,8 +318,8 @@ export function WeeklyReportsTab() {
             width: '300px',
             flexShrink: 0,
             minHeight: 0,
-            background: 'rgba(255,255,255,0.02)',
-            border: '1px solid rgba(255,255,255,0.04)',
+            background: 'rgba(255,255,255,0.05)',
+            border: '1px solid rgba(255,255,255,0.10)',
             overflow: 'hidden',
           }}
         >
@@ -423,8 +420,8 @@ export function WeeklyReportsTab() {
             flex: 1,
             minWidth: 0,
             minHeight: 0,
-            background: 'rgba(255,255,255,0.02)',
-            border: '1px solid rgba(255,255,255,0.04)',
+            background: 'rgba(255,255,255,0.05)',
+            border: '1px solid rgba(255,255,255,0.10)',
             overflow: 'hidden',
           }}
         >
@@ -491,10 +488,7 @@ function SourceChipBar({
   return (
     <div
       className="flex items-center gap-1.5 mb-3 p-1.5 rounded-xl flex-wrap"
-      style={{
-        background: 'rgba(255,255,255,0.02)',
-        border: '1px solid rgba(255,255,255,0.06)',
-      }}
+      style={{ ...glassBar, borderRadius: 12 }}
     >
       {sources.map(src => {
         const active = src.id === activeId;
