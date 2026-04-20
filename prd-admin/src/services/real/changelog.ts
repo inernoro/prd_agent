@@ -72,3 +72,61 @@ export async function getCurrentWeekChangelog(force = false): Promise<ApiRespons
 export async function getChangelogReleases(limit = 20, force = false): Promise<ApiResponse<ReleasesView>> {
   return await apiRequest<ReleasesView>(api.changelog.releases(limit, force), { method: 'GET' });
 }
+
+// ============ Report Sources（周报来源配置，全员共享） ============
+
+export interface ChangelogReportSource {
+  id: string;
+  name: string;
+  storeId: string;
+  prefix: string;
+  description?: string | null;
+  sortOrder: number;
+  createdBy: string;
+  updatedBy: string;
+  /** ISO 8601 */
+  createdAt: string;
+  /** ISO 8601 */
+  updatedAt: string;
+}
+
+export interface ChangelogReportSourceUpsert {
+  name: string;
+  storeId: string;
+  prefix?: string;
+  description?: string | null;
+  sortOrder?: number;
+}
+
+/** 列出所有周报来源（按 sortOrder 排序） */
+export async function listChangelogReportSources(): Promise<ApiResponse<ChangelogReportSource[]>> {
+  return await apiRequest<ChangelogReportSource[]>(api.changelog.sources.list(), { method: 'GET' });
+}
+
+/** 创建周报来源 */
+export async function createChangelogReportSource(
+  body: ChangelogReportSourceUpsert,
+): Promise<ApiResponse<ChangelogReportSource>> {
+  return await apiRequest<ChangelogReportSource>(api.changelog.sources.create(), {
+    method: 'POST',
+    body,
+  });
+}
+
+/** 更新周报来源 */
+export async function updateChangelogReportSource(
+  id: string,
+  body: ChangelogReportSourceUpsert,
+): Promise<ApiResponse<ChangelogReportSource>> {
+  return await apiRequest<ChangelogReportSource>(api.changelog.sources.update(id), {
+    method: 'PUT',
+    body,
+  });
+}
+
+/** 删除周报来源 */
+export async function deleteChangelogReportSource(id: string): Promise<ApiResponse<{ id: string }>> {
+  return await apiRequest<{ id: string }>(api.changelog.sources.delete(id), {
+    method: 'DELETE',
+  });
+}

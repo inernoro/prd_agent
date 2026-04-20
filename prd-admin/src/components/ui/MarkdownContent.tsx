@@ -5,6 +5,7 @@ import remarkBreaks from 'remark-breaks';
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { oneDark } from 'react-syntax-highlighter/dist/esm/styles/prism';
 import { Copy } from 'lucide-react';
+import { MermaidDiagram } from '@/components/ui/MermaidDiagram';
 
 interface MarkdownContentProps {
   content: string;
@@ -34,8 +35,12 @@ export const MarkdownContent = memo(function MarkdownContent({ content, classNam
                 </code>
               );
             }
-            // 块级且指定语言 → Prism 高亮
+            // 块级且指定语言
             if (match) {
+              // Mermaid 图表：交给 MermaidDiagram 组件渲染
+              if (match[1].toLowerCase() === 'mermaid') {
+                return <MermaidDiagram code={codeStr} />;
+              }
               return (
                 <div className="relative group/code my-2">
                   <div className="flex items-center justify-between px-3 py-1 rounded-t-lg text-[10px]"

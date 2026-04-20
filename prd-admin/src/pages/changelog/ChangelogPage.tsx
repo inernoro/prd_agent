@@ -7,6 +7,7 @@ import type { ChangelogEntry } from '@/services';
 import { TabBar } from '@/components/design/TabBar';
 import { WeeklyReportsTab } from './components/WeeklyReportsTab';
 
+
 /** 类型徽章配色（注册表，禁止 switch / if-else） */
 const TYPE_BADGE_REGISTRY: Record<string, { label: string; color: string; bg: string; border: string }> = {
   feat: { label: '新功能', color: '#86efac', bg: 'rgba(34, 197, 94, 0.10)', border: 'rgba(34, 197, 94, 0.32)' },
@@ -35,15 +36,13 @@ function getTypeBadge(type: string) {
 
 interface FlatEntry extends ChangelogEntry {
   date: string;
-  source: 'fragment' | 'release';
+  source: 'release';
   releaseVersion?: string;
-  fileName?: string;
 }
 
 export default function ChangelogPage() {
   const currentWeek = useChangelogStore((s) => s.currentWeek);
   const releases = useChangelogStore((s) => s.releases);
-  const loadingCurrent = useChangelogStore((s) => s.loadingCurrent);
   const loadingReleases = useChangelogStore((s) => s.loadingReleases);
   const error = useChangelogStore((s) => s.error);
   const loadCurrentWeek = useChangelogStore((s) => s.loadCurrentWeek);
@@ -54,6 +53,7 @@ export default function ChangelogPage() {
   const [activeTab, setActiveTab] = useState<string>('update_center');
 
   // 进入页面：拉取数据 + 标记已读
+  // 「本周更新」section 已下线；但仍拉 currentWeek 以驱动已读计数 & 顶部的数据源徽标
   useEffect(() => {
     void loadCurrentWeek();
     void loadReleases(20);
@@ -66,59 +66,25 @@ export default function ChangelogPage() {
     void loadReleases(20, true);
   };
 
-  // 收集所有出现过的 type 用于筛选 chip
+  // 收集 release 中出现过的 type 用于筛选 chip
   const { availableTypes } = useMemo(() => {
     const types = new Set<string>();
-    const collect = (entries: ChangelogEntry[]) => {
-      for (const e of entries) {
-        if (e.type) types.add(e.type.toLowerCase());
-      }
-    };
-    if (currentWeek) {
-      currentWeek.fragments.forEach((f) => collect(f.entries));
-    }
     if (releases) {
-      releases.releases.forEach((r) => r.days.forEach((d) => collect(d.entries)));
+      for (const r of releases.releases) {
+        for (const d of r.days) {
+          for (const e of d.entries) {
+            if (e.type) types.add(e.type.toLowerCase());
+          }
+        }
+      }
     }
-    return {
-      availableTypes: Array.from(types).sort(),
-    };
-  }, [currentWeek, releases]);
+    return { availableTypes: Array.from(types).sort() };
+  }, [releases]);
 
   const matchFilter = (e: ChangelogEntry): boolean => {
     if (typeFilter && e.type.toLowerCase() !== typeFilter) return false;
     return true;
   };
-
-  // 本周条目：按日期分组
-  const currentWeekEntries: FlatEntry[] = useMemo(() => {
-    if (!currentWeek) return [];
-    const flat: FlatEntry[] = [];
-    for (const fragment of currentWeek.fragments) {
-      for (const entry of fragment.entries) {
-        if (!matchFilter(entry)) continue;
-        flat.push({ ...entry, date: fragment.date, source: 'fragment', fileName: fragment.fileName });
-      }
-    }
-    return flat;
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [currentWeek, typeFilter]);
-
-  const currentWeekByDate = useMemo(() => {
-    const map = new Map<string, FlatEntry[]>();
-    for (const e of currentWeekEntries) {
-      if (!map.has(e.date)) map.set(e.date, []);
-      map.get(e.date)!.push(e);
-    }
-    return Array.from(map.entries()).sort((a, b) => (a[0] < b[0] ? 1 : -1));
-  }, [currentWeekEntries]);
-
-  const totalCurrentWeek = currentWeekEntries.length;
-
-  // 友好周范围
-  const weekRangeText = currentWeek
-    ? `${currentWeek.weekStart} ~ ${currentWeek.weekEnd}`
-    : '';
 
   // 数据源标签 + 拉取时间显示（github / local / none）
   const sourceLabel = (() => {
@@ -206,7 +172,7 @@ export default function ChangelogPage() {
           <button
             type="button"
             onClick={handleRefresh}
-            disabled={loadingCurrent || loadingReleases}
+            disabled={loadingReleases}
             className="h-9 px-3 rounded-lg inline-flex items-center gap-1.5 text-[12px] transition-colors disabled:opacity-50"
             style={{
               border: '1px solid rgba(255, 255, 255, 0.12)',
@@ -215,7 +181,7 @@ export default function ChangelogPage() {
             }}
             title="刷新（绕过 5 分钟服务端缓存）"
           >
-            {loadingCurrent || loadingReleases ? <MapSpinner size={14} /> : <RefreshCw size={14} />}
+            {loadingReleases ? <MapSpinner size={14} /> : <RefreshCw size={14} />}
             <span>刷新</span>
           </button>
         </div>
@@ -299,64 +265,6 @@ export default function ChangelogPage() {
           ⚠ {error}
         </div>
       )}
-
-      {/* ── 本周更新 ───────────────────────────────────── */}
-      <section style={glassPanel} className="rounded-2xl p-5">
-        <div className="flex items-baseline justify-between gap-3 mb-4">
-          <div className="flex items-baseline gap-3">
-            <h2 className="text-base font-semibold" style={{ color: 'var(--text-primary)' }}>
-              本周更新
-            </h2>
-            {weekRangeText && (
-              <span className="text-[11px] font-mono" style={{ color: 'var(--text-muted)' }}>
-                {weekRangeText}
-              </span>
-            )}
-          </div>
-          <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
-            共 {totalCurrentWeek} 条
-          </span>
-        </div>
-
-        {loadingCurrent && !currentWeek && <MapSectionLoader text="正在加载本周更新…" />}
-
-        {!loadingCurrent && totalCurrentWeek === 0 && (
-          <div
-            className="rounded-xl px-4 py-8 text-center text-[12px]"
-            style={{
-              background: 'rgba(255, 255, 255, 0.02)',
-              border: '1px dashed rgba(255, 255, 255, 0.08)',
-              color: 'var(--text-muted)',
-            }}
-          >
-            {currentWeek?.dataSourceAvailable
-              ? '本周还没有新的更新记录。每次 PR 合入时会自动出现在这里。'
-              : '暂无数据'}
-          </div>
-        )}
-
-        {totalCurrentWeek > 0 && (
-          <div className="flex flex-col gap-5">
-            {currentWeekByDate.map(([date, entries], dateIdx) => (
-              <div key={`${date}-${dateIdx}`}>
-                <div
-                  className="flex items-center gap-2 mb-2 text-[11px] font-mono"
-                  style={{ color: 'var(--text-muted)' }}
-                >
-                  <Calendar size={12} />
-                  {date}
-                  <span style={{ opacity: 0.5 }}>· {entries.length} 条</span>
-                </div>
-                <div className="flex flex-col gap-1.5">
-                  {entries.map((e, idx) => (
-                    <EntryRow key={`${date}-${idx}`} entry={e} />
-                  ))}
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
-      </section>
 
       {/* ── 历史发布 ───────────────────────────────────── */}
       <section style={glassPanel} className="rounded-2xl p-5">
