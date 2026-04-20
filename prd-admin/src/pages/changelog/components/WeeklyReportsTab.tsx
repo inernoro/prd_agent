@@ -53,6 +53,47 @@ function isThisWeek(timeStr: string, weekStart: number): boolean {
   return t >= weekStart;
 }
 
+/**
+ * 从 markdown 原文里抽出用于列表展示的"标题"：
+ * - 优先第一条 H1 / H2（# / ##），去掉前缀 # 符号
+ * - 否则取第一条非空、非 frontmatter、非 HTML 注释的纯文本行
+ * - 跳过 YAML frontmatter（--- ... ---）与 HTML 注释块
+ * 最长 80 字符，超出截断 + ...
+ */
+function extractTitleFromContent(raw: string): string | null {
+  if (!raw) return null;
+  const lines = raw.split(/\r?\n/);
+  let i = 0;
+  // YAML frontmatter
+  if (lines[0]?.trim() === '---') {
+    i = 1;
+    while (i < lines.length && lines[i].trim() !== '---') i++;
+    i++; // skip closing ---
+  }
+  let firstPlain: string | null = null;
+  for (; i < lines.length; i++) {
+    const line = lines[i].trim();
+    if (!line) continue;
+    // HTML 注释单行
+    if (line.startsWith('<!--') && line.endsWith('-->')) continue;
+    // H1 / H2
+    const hMatch = line.match(/^#{1,2}\s+(.+?)\s*#*\s*$/);
+    if (hMatch) {
+      const t = hMatch[1].trim();
+      return t.length > 80 ? t.slice(0, 80) + '…' : t;
+    }
+    if (firstPlain === null) {
+      // 剥除 markdown 标记：> 引用、- / * / 数字 列表、` 代码
+      const stripped = line.replace(/^[>\-*+\d.`\s]+/, '').trim();
+      if (stripped) firstPlain = stripped;
+    }
+  }
+  if (firstPlain) {
+    return firstPlain.length > 80 ? firstPlain.slice(0, 80) + '…' : firstPlain;
+  }
+  return null;
+}
+
 export function WeeklyReportsTab() {
   const { sources, loadingSources, activeSource, stores, onCreateOpen } = useWeeklyReportSources();
   const [entries, setEntries] = useState<DocumentEntry[]>([]);
@@ -60,6 +101,8 @@ export function WeeklyReportsTab() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [content, setContent] = useState<string | null>(null);
   const [loadingContent, setLoadingContent] = useState(false);
+  /** 文件列表展示用的"首行/H1 标题"缓存：entryId -> 抽出的标题（null = 正在加载；'' = 无法抽出，用文件名兜底） */
+  const [titlePreviews, setTitlePreviews] = useState<Record<string, string>>({});
 
   // 跟随 activeSource 变化：加载条目
   useEffect(() => {
@@ -88,6 +131,49 @@ export function WeeklyReportsTab() {
   }, [activeSource, entries]);
 
   const weekStart = useMemo(() => getThisWeekStart(), []);
+
+  // 懒加载：为文件列表拉取首行/H1 预览作为展示标题
+  // 每个 entry 只拉一次；切换 activeSource 时清空缓存
+  useEffect(() => {
+    setTitlePreviews({});
+  }, [activeSource?.id]);
+
+  useEffect(() => {
+    if (filtered.length === 0) return;
+    let alive = true;
+    // 取当前未缓存的 entry，批量并发拉取（限制并发 6 以免瞬时突刺）
+    const toFetch = filtered.filter(e => !(e.id in titlePreviews));
+    if (toFetch.length === 0) return;
+
+    const CONCURRENCY = 6;
+    let cursor = 0;
+    const workers: Promise<void>[] = [];
+    const runOne = async () => {
+      while (alive) {
+        const idx = cursor++;
+        if (idx >= toFetch.length) return;
+        const entry = toFetch[idx];
+        try {
+          const res = await getDocumentContent(entry.id);
+          if (!alive) return;
+          if (res.success && res.data.hasContent && res.data.content) {
+            const title = extractTitleFromContent(res.data.content) ?? '';
+            setTitlePreviews(prev => ({ ...prev, [entry.id]: title }));
+          } else {
+            setTitlePreviews(prev => ({ ...prev, [entry.id]: '' }));
+          }
+        } catch {
+          if (!alive) return;
+          setTitlePreviews(prev => ({ ...prev, [entry.id]: '' }));
+        }
+      }
+    };
+    for (let i = 0; i < Math.min(CONCURRENCY, toFetch.length); i++) {
+      workers.push(runOne());
+    }
+    return () => { alive = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [filtered]);
 
   useEffect(() => {
     if (filtered.length === 0) { setSelectedId(null); return; }
@@ -225,7 +311,12 @@ export function WeeklyReportsTab() {
                       >
                         <div className="flex items-center gap-2 min-w-0">
                           <FileText size={12} style={{ flexShrink: 0, opacity: 0.7 }} />
-                          <span className="text-[12px] truncate flex-1">{e.title}</span>
+                          <span
+                            className="text-[12px] truncate flex-1"
+                            title={`${e.title}${titlePreviews[e.id] ? '\n\n' + titlePreviews[e.id] : ''}`}
+                          >
+                            {titlePreviews[e.id] || e.title}
+                          </span>
                           {fresh && (
                             <span
                               className="text-[9px] font-bold tracking-wider px-1.5 py-[1px] rounded"
