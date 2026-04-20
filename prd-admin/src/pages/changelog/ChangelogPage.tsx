@@ -136,7 +136,7 @@ export default function ChangelogPage() {
       <TabBar
         items={[
           { key: 'update_center', label: '更新中心', icon: <Sparkles size={14} /> },
-          { key: 'weekly_reports', label: 'map周报', icon: <FileText size={14} /> },
+          { key: 'weekly_reports', label: '周报', icon: <FileText size={14} /> },
         ]}
         activeKey={activeTab}
         onChange={setActiveTab}
