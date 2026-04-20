@@ -32,6 +32,7 @@ import {
   Plus,
   Save,
   Sparkles,
+  Store,
   Trash2,
   Upload,
   User,
@@ -41,12 +42,14 @@ import {
   HOMEPAGE_CARD_SLOTS,
   HOMEPAGE_AGENT_SLOTS,
   HOMEPAGE_HERO_SLOTS,
+  MARKETPLACE_BG_SLOTS,
   buildDefaultCoverUrl,
   buildDefaultVideoUrl,
   buildDefaultHeroUrl,
   type HomepageCardSlot,
   type HomepageAgentSlot,
   type HomepageHeroSlot,
+  type MarketplaceBgSlot,
 } from '@/lib/homepageAssetSlots';
 import { useToolboxStore, BUILTIN_TOOLS } from '@/stores/toolboxStore';
 import { useHomepageAssetsStore } from '@/stores/homepageAssetsStore';
@@ -233,7 +236,7 @@ type HomepageAssetsMap = Record<string, HomepageAssetDto>;
 
 export default function AssetsManagePage() {
   const { isMobile } = useBreakpoint();
-  const [activeTab, setActiveTab] = useState<'desktop' | 'single' | 'homepage'>('homepage'); // 默认落到新的首页资源 Tab，便于用户直接看到新功能
+  const [activeTab, setActiveTab] = useState<'desktop' | 'single' | 'homepage' | 'marketplace'>('homepage'); // 默认落到新的首页资源 Tab，便于用户直接看到新功能
   const [skins, setSkins] = useState<DesktopAssetSkin[]>([]);
   const [matrixData, setMatrixData] = useState<AdminDesktopAssetMatrixRow[]>([]);
   const [loading, setLoading] = useState(false);
@@ -361,7 +364,7 @@ export default function AssetsManagePage() {
   };
 
   useEffect(() => {
-    if (activeTab === 'homepage') {
+    if (activeTab === 'homepage' || activeTab === 'marketplace') {
       void reloadHomepage();
     }
   }, [activeTab]);
@@ -686,11 +689,12 @@ export default function AssetsManagePage() {
         variant="gold"
         items={[
           { key: 'homepage', label: '首页资源', icon: <Home size={14} /> },
+          { key: 'marketplace', label: '海鲜市场背景', icon: <Store size={14} /> },
           { key: 'desktop', label: 'Desktop 皮肤资源', icon: <Monitor size={14} /> },
           { key: 'single', label: '全局资源', icon: <Layers size={14} /> },
         ]}
         activeKey={activeTab}
-        onChange={(key) => setActiveTab(key as 'desktop' | 'single' | 'homepage')}
+        onChange={(key) => setActiveTab(key as 'desktop' | 'single' | 'homepage' | 'marketplace')}
       />
 
       <input
@@ -711,6 +715,18 @@ export default function AssetsManagePage() {
           onDelete={handleDeleteHomepage}
           onReload={() => void reloadHomepage()}
           isMobile={isMobile}
+        />
+      )}
+
+      {activeTab === 'marketplace' && (
+        <MarketplaceAssetsSection
+          assets={homepageAssets}
+          loading={homepageLoading}
+          uploadingId={uploadingId}
+          cacheBust={homepageCacheBust}
+          onUpload={chooseHomepageUpload}
+          onDelete={handleDeleteHomepage}
+          onReload={() => void reloadHomepage()}
         />
       )}
 
@@ -1348,6 +1364,64 @@ function HomepageAssetsSection({
               </div>
             );
           })}
+        </div>
+      </GlassCard>
+    </div>
+  );
+}
+
+// ==================== 海鲜市场背景 ====================
+
+function MarketplaceAssetsSection({
+  assets,
+  loading,
+  uploadingId,
+  cacheBust,
+  onUpload,
+  onDelete,
+  onReload,
+}: {
+  assets: Record<string, HomepageAssetDto>;
+  loading: boolean;
+  uploadingId: string;
+  cacheBust: number;
+  onUpload: (slot: string, accept?: string) => void;
+  onDelete: (slot: string) => void;
+  onReload: () => void;
+}) {
+  return (
+    <div className="flex flex-col gap-4">
+      <GlassCard animated glow className="overflow-hidden">
+        <div className="flex items-center justify-between gap-3 mb-4">
+          <SectionTitle
+            icon={<Store size={16} />}
+            title="海鲜市场海报背景"
+            badge={`${MARKETPLACE_BG_SLOTS.length} 张`}
+          />
+          <Button variant="ghost" size="xs" onClick={onReload} disabled={loading}>
+            {loading ? '加载中…' : '刷新'}
+          </Button>
+        </div>
+        <p className="text-[12px] mb-4" style={{ color: 'var(--text-muted)' }}>
+          海鲜市场整页的大气海报背景。建议 1920×1080 以上、深色海洋主题（深蓝 / 青绿 / 暗夜色），图片会叠一层半透明暗色保证卡片可读性。
+          未上传时使用内置深海蓝渐变。
+        </p>
+        <div className="grid grid-cols-1 gap-3">
+          {MARKETPLACE_BG_SLOTS.map((bg: MarketplaceBgSlot) => (
+            <HomepageSlotTile
+              key={bg.slot}
+              slot={bg.slot}
+              label={bg.label}
+              hint={bg.hint}
+              asset={assets[bg.slot]}
+              cacheBust={cacheBust}
+              uploading={uploadingId === `homepage::${bg.slot}`}
+              accept="image/*"
+              previewAspect="16 / 9"
+              onUpload={() => onUpload(bg.slot, 'image/*')}
+              onDelete={() => onDelete(bg.slot)}
+            />
+          ))}
         </div>
       </GlassCard>
     </div>

@@ -311,6 +311,7 @@ export const api = {
       theme: () => '/api/dashboard/user-preferences/theme',
       visualAgent: () => '/api/dashboard/user-preferences/visual-agent',
       literaryAgent: () => '/api/dashboard/user-preferences/literary-agent',
+      agentSwitcher: () => '/api/dashboard/user-preferences/agent-switcher',
     },
     stats: {
       overview: () => '/api/dashboard/stats/overview',
@@ -718,6 +719,18 @@ export const api = {
     publish: (id: string) => `/api/watermarks/${id}/publish`,
     unpublish: (id: string) => `/api/watermarks/${id}/unpublish`,
     fork: (id: string) => `/api/watermarks/${id}/fork`,
+  },
+
+  // ============ Marketplace Skills 海鲜市场技能（zip 上传） ============
+  marketplaceSkills: {
+    list: () => '/api/marketplace/skills',
+    favorites: () => '/api/marketplace/skills/favorites',
+    tags: () => '/api/marketplace/skills/tags',
+    upload: () => '/api/marketplace/skills/upload',
+    fork: (id: string) => `/api/marketplace/skills/${id}/fork`,
+    favorite: (id: string) => `/api/marketplace/skills/${id}/favorite`,
+    unfavorite: (id: string) => `/api/marketplace/skills/${id}/unfavorite`,
+    byId: (id: string) => `/api/marketplace/skills/${id}`,
   },
 
   // ============ Model Sizes ============

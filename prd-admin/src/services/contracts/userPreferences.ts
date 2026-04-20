@@ -40,6 +40,24 @@ export type VisualAgentPreferences = {
   quickActions?: QuickActionConfig[];
 };
 
+/** Agent Switcher 最近访问记录项（服务端同步版） */
+export type AgentSwitcherRecentVisit = {
+  id: string;
+  agentKey: string;
+  agentName: string;
+  title: string;
+  path: string;
+  icon?: string;
+  timestamp: number;
+};
+
+/** Agent Switcher / 命令面板偏好（云端同步） */
+export type AgentSwitcherPreferences = {
+  pinnedIds?: string[];
+  recentVisits?: AgentSwitcherRecentVisit[];
+  usageCounts?: Record<string, number>;
+};
+
 /** 文学创作 Agent 偏好设置 */
 export type LiteraryAgentPreferences = {
   /** 用户选择的生图模型池 ID */
@@ -53,6 +71,7 @@ export type UserPreferences = {
   themeConfig?: ThemeConfigResponse;
   visualAgentPreferences?: VisualAgentPreferences;
   literaryAgentPreferences?: LiteraryAgentPreferences;
+  agentSwitcherPreferences?: AgentSwitcherPreferences;
 };
 
 export type GetUserPreferencesContract = () => Promise<ApiResponse<UserPreferences>>;
@@ -64,3 +83,5 @@ export type UpdateThemeConfigContract = (themeConfig: ThemeConfig) => Promise<Ap
 export type UpdateVisualAgentPreferencesContract = (prefs: VisualAgentPreferences) => Promise<ApiResponse<void>>;
 
 export type UpdateLiteraryAgentPreferencesContract = (prefs: LiteraryAgentPreferences) => Promise<ApiResponse<void>>;
+
+export type UpdateAgentSwitcherPreferencesContract = (prefs: AgentSwitcherPreferences) => Promise<ApiResponse<void>>;

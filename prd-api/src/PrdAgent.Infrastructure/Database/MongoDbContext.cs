@@ -91,6 +91,9 @@ public class MongoDbContext
     // 海鲜市场 Fork 下载记录
     public IMongoCollection<MarketplaceForkLog> MarketplaceForkLogs => _database.GetCollection<MarketplaceForkLog>("marketplace_fork_logs");
 
+    // 海鲜市场「技能」条目（用户上传的 zip 技能包）
+    public IMongoCollection<MarketplaceSkill> MarketplaceSkills => _database.GetCollection<MarketplaceSkill>("marketplace_skills");
+
     // Literary Agent 文学创作配置
     public IMongoCollection<LiteraryAgentConfig> LiteraryAgentConfigs => _database.GetCollection<LiteraryAgentConfig>("literary_agent_configs");
     public IMongoCollection<ReferenceImageConfig> ReferenceImageConfigs => _database.GetCollection<ReferenceImageConfig>("reference_image_configs");

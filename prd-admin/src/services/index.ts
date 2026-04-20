@@ -536,7 +536,7 @@ import { AutomationsService } from '@/services/real/automations';
 import { ModelGroupsService } from '@/services/real/modelGroups';
 import { AppCallersService } from '@/services/real/appCallers';
 import { SchedulerConfigService } from '@/services/real/schedulerConfig';
-import { getUserPreferencesReal, updateNavOrderReal, updateThemeConfigReal, updateVisualAgentPreferencesReal, updateLiteraryAgentPreferencesReal } from '@/services/real/userPreferences';
+import { getUserPreferencesReal, updateNavOrderReal, updateThemeConfigReal, updateVisualAgentPreferencesReal, updateLiteraryAgentPreferencesReal, updateAgentSwitcherPreferencesReal } from '@/services/real/userPreferences';
 import {
   getAdminNotificationsReal,
   handleAdminNotificationReal,
@@ -1264,6 +1264,8 @@ export const updateNavOrder: UpdateNavOrderContract = withAuth(updateNavOrderRea
 export const updateThemeConfig: UpdateThemeConfigContract = withAuth(updateThemeConfigReal);
 export const updateVisualAgentPreferences: UpdateVisualAgentPreferencesContract = withAuth(updateVisualAgentPreferencesReal);
 export const updateLiteraryAgentPreferences: UpdateLiteraryAgentPreferencesContract = withAuth(updateLiteraryAgentPreferencesReal);
+import type { UpdateAgentSwitcherPreferencesContract } from '@/services/contracts/userPreferences';
+export const updateAgentSwitcherPreferences: UpdateAgentSwitcherPreferencesContract = withAuth(updateAgentSwitcherPreferencesReal);
 
 export const getWatermarks: GetWatermarksContract = withAuth(getWatermarksReal);
 export const getWatermarkByApp: GetWatermarkByAppContract = withAuth(getWatermarkByAppReal);
@@ -1283,6 +1285,36 @@ export const listWatermarksMarketplace: ListWatermarksMarketplaceContract = with
 export const publishWatermark: PublishWatermarkContract = withAuth(publishWatermarkReal);
 export const unpublishWatermark: UnpublishWatermarkContract = withAuth(unpublishWatermarkReal);
 export const forkWatermark: ForkWatermarkContract = withAuth(forkWatermarkReal);
+
+// 海鲜市场「技能」板块（zip 上传）
+import type {
+  DeleteMarketplaceSkillContract,
+  FavoriteMarketplaceSkillContract,
+  ForkMarketplaceSkillContract,
+  GetMarketplaceSkillTagsContract,
+  ListMarketplaceSkillsContract,
+  ListMyFavoriteSkillsContract,
+  UnfavoriteMarketplaceSkillContract,
+  UploadMarketplaceSkillContract,
+} from '@/services/contracts/marketplaceSkills';
+import {
+  deleteMarketplaceSkillReal,
+  favoriteMarketplaceSkillReal,
+  forkMarketplaceSkillReal,
+  getMarketplaceSkillTagsReal,
+  listMarketplaceSkillsReal,
+  listMyFavoriteSkillsReal,
+  unfavoriteMarketplaceSkillReal,
+  uploadMarketplaceSkillReal,
+} from '@/services/real/marketplaceSkills';
+export const listMarketplaceSkills: ListMarketplaceSkillsContract = withAuth(listMarketplaceSkillsReal);
+export const listMyFavoriteSkills: ListMyFavoriteSkillsContract = withAuth(listMyFavoriteSkillsReal);
+export const getMarketplaceSkillTags: GetMarketplaceSkillTagsContract = withAuth(getMarketplaceSkillTagsReal);
+export const uploadMarketplaceSkill: UploadMarketplaceSkillContract = withAuth(uploadMarketplaceSkillReal);
+export const forkMarketplaceSkill: ForkMarketplaceSkillContract = withAuth(forkMarketplaceSkillReal);
+export const favoriteMarketplaceSkill: FavoriteMarketplaceSkillContract = withAuth(favoriteMarketplaceSkillReal);
+export const unfavoriteMarketplaceSkill: UnfavoriteMarketplaceSkillContract = withAuth(unfavoriteMarketplaceSkillReal);
+export const deleteMarketplaceSkill: DeleteMarketplaceSkillContract = withAuth(deleteMarketplaceSkillReal);
 
 // 限流配置服务
 import type {
