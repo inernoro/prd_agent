@@ -9,29 +9,62 @@ description: Generates weekly project reports from git history. Collects commits
 
 ## 核心纪律（必须遵守）
 
-### 纪律 1：PR 范围从上周报告的最后一个 PR 之后开始
+### 纪律 1：时间边界按“提交日期文本”判断，不做时区换算
 
-> **根因案例**：W10 周报仅按日期范围搜索 merge commit，遗漏了时区边界外的 PR，导致 PR 范围错误。
+> **根因案例**：同一批提交如果按 `--since/--until` 直接让 Git 解析日期，容易受提交自带时区影响，把周日晚或下周一的提交卷进错误周次。
 
 **正确做法**：
-1. 找到上周周报文件，读取其 PR 范围（如 `#128 ~ #162`）
-2. 本周 PR 从 `上周最后一个 PR + 1` 开始
-3. 本周 PR 到当前 `git log --merges` 能找到的最大 PR 编号结束
-4. 如果上周周报不存在，才退化为纯日期范围搜索
+1. 周边界只定义为 `MONDAY ~ SUNDAY` 两个日期字符串，例如 `2026-04-13 ~ 2026-04-19`
+2. 统一使用 **提交时间**（`%cd`）并配合 `--date=short` 输出 `YYYY-MM-DD`
+3. 只按这个日期文本过滤：`$1 >= MONDAY && $1 <= SUNDAY`
+4. **不要**再用 `--since/--until` 做最终统计判断
 
 ```bash
-PREV_LAST_PR=$(grep -oP '#\d+ ~ #\K\d+' "$PREV_FILE" | head -1)
-THIS_FIRST_PR=$((PREV_LAST_PR + 1))
-THIS_LAST_PR=$(git log --all --merges --format="%s" | grep -oP 'Merge pull request #\K\d+' | sort -n | tail -1)
+git log "$DEFAULT_BRANCH" --format="%cd\t%H\t%an\t%s" --date=short | \
+  awk -F '\t' -v s="$MONDAY" -v e="$SUNDAY" '$1 >= s && $1 <= e'
 ```
 
-### 纪律 2：深读 PR 实际 commits，不信 merge commit 标题
+### 纪律 2：只统计默认主干分支，不使用 `--all`
+
+> **根因案例**：`--all` 会把未合并分支、WIP merge、临时调试分支和历史噪声一起统计进去，导致“研发活动周报”和“主干落地周报”混淆。
+
+**正确做法**：
+1. 先检测默认主干分支（通常是 `main`）
+2. 之后所有 commit、PR、贡献者、类型分布统计都只对这个分支执行
+3. **禁止** `git log --all ...`
+
+```bash
+DEFAULT_BRANCH=$(git symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null | sed 's#^origin/##')
+DEFAULT_BRANCH=${DEFAULT_BRANCH:-main}
+```
+### 纪律 3：PR 边界按“本周实际落地主干的 PR”判断，不按 PR 编号连续段
+
+> **根因案例**：本仓库存在“低编号 PR 晚于高编号 PR 合并”的情况。如果用 `#FIRST ~ #LAST` 当周边界，会把跨周 PR 和下周 PR 一起卷进来。
+>
+> **新增根因案例**：仅靠 `git log --merges` 会漏掉 fast-forward merge 到 `main` 的 PR，例如 PR #396 这种“已落地主干、但没有 merge commit”的情况。
+
+**正确做法**：
+1. **PR 身份**以 GitHub PR 元数据为准：只统计 `base = DEFAULT_BRANCH` 且 `merged = true` 的 PR
+2. **周归属**以该 PR 最终落地主干的 SHA 在本地 `git` 里的 `%cd --date=short` 为准
+3. 这一步要同时覆盖 merge commit、fast-forward merge、rebase merge
+4. 只有在拿不到 GitHub PR 元数据时，才退化为本地 `git log --first-parent --merges`
+5. 附录列出**本周实际 PR 集合**
+6. 头部和附录标题**不要**再写 `#FIRST ~ #LAST`
+
+```bash
+# 伪代码：
+# 1. 查询 GitHub PR：base=DEFAULT_BRANCH, merged=true
+# 2. 取 merge_commit_sha（或最终落地主干的 SHA）
+# 3. 用 git show -s --format="%cd" --date=short <sha> 判定是否属于 MONDAY~SUNDAY
+```
+
+### 纪律 4：深读 PR 实际 commits，不信 merge commit 标题
 
 > **根因案例**：PR #201 标题是 `remove: delete TAPD template`，但实际 25 个 commits 包含 ECharts 重构等重大功能。
 
 **正确做法**：对每个 PR，用 `git log HASH^1..HASH^2 --oneline` 读取全部 commits，基于 commits 内容判断 PR 真实主题。
 
-### 纪律 3：先列脉络确认，再写完整报告
+### 纪律 5：先列脉络确认，再写完整报告
 
 > **根因案例**：直接生成完整报告，脉络分组有误，修改成本高。先列脉络候选让用户确认，一次通过。
 
@@ -39,7 +72,7 @@ THIS_LAST_PR=$(git log --all --merges --format="%s" | grep -oP 'Merge pull reque
 
 输出格式：
 ```
-**W{NUM} ({DATE_RANGE}) | PR #{FIRST} ~ #{LAST} ({COUNT} 个 PR)**
+**W{NUM} ({DATE_RANGE}) | {COUNT} 个 PR**
 
 ### 重大脉络候选（按影响程度排序）：
 
@@ -50,7 +83,7 @@ THIS_LAST_PR=$(git log --all --merges --format="%s" | grep -oP 'Merge pull reque
 这些脉络你觉得对吗？有哪些需要调整、合并或拆分的？
 ```
 
-### 纪律 4：文件命名使用 `report.YYYY-WXX.md`
+### 纪律 6：文件命名使用 `report.YYYY-WXX.md`
 
 文件名为 `doc/report.{ISO_YEAR}-W{WEEK_NUM}.md`，搜索上周报告时也要用此格式。
 
@@ -86,7 +119,6 @@ elif [ "$DOW" -eq 1 ]; then
 fi
 
 SUNDAY=$(date -d "$MONDAY + 6 days" +%Y-%m-%d)
-NEXT_MONDAY=$(date -d "$MONDAY + 7 days" +%Y-%m-%d)
 WEEK_NUM=$(date -d "$MONDAY" +%V)
 ISO_YEAR=$(date -d "$MONDAY" +%G)
 
@@ -105,11 +137,12 @@ REPORT_FILE="doc/report.${ISO_YEAR}-W${WEEK_NUM}.md"
 
 | 步骤 | 目的 | 关键点 |
 |------|------|--------|
-| 2.1 | 提交总量 | `git log --oneline --since/--until` |
+| 2.0 | 边界准备 | 默认主干 + `MONDAY/SUNDAY` 日期字符串 |
+| 2.1 | 提交总量 | `git log "$DEFAULT_BRANCH" --date=short` + 日期文本过滤 |
 | 2.2 | 去重文件/行数 | **禁止** `--shortstat` 累加，用 `git diff --shortstat FIRST^..LAST` |
-| 2.3 | PR 列表与深读 | 基于上周报告确定范围 + 深读每个 PR 的 commits |
-| 2.4 | 贡献者统计 | `git log --format="%an"` |
-| 2.5 | 提交类型分布 | 按标准前缀归类 |
+| 2.3 | PR 列表与深读 | 只取本周实际 merge 到主干的 PR |
+| 2.4 | 贡献者统计 | 从本周 commit 集合提取 author |
+| 2.5 | 提交类型分布 | 从本周 commit 集合按标准前缀归类 |
 | 2.6 | 每日提交分布 | 标注每天重点方向 |
 
 ---
@@ -173,6 +206,7 @@ PREV_FILE="doc/report.${PREV_ISO_YEAR}-W$(printf '%02d' $PREV_WEEK_NUM).md"
 本周概要：
 - {COMMIT_COUNT} 次提交，{PR_COUNT} 个 PR 合并
 - {FILES_CHANGED} 个文件变更，+{INS} / -{DEL} 行
+- PR 边界按本周实际 merge commit 统计，详见附录
 - Top 3 功能：
   1. {Feature 1}
   2. {Feature 2}
@@ -200,4 +234,6 @@ PREV_FILE="doc/report.${PREV_ISO_YEAR}-W$(printf '%02d' $PREV_WEEK_NUM).md"
 3. **价值主张风格**：从用户/团队视角描述，避免技术术语
 4. **排版一致性**：严格遵循模板中的表格、分隔线、引用块格式
 5. **数字准确性**：所有统计数字必须来自 git 命令输出，不可估算
-6. **风格**：正式技术周报风格，表格中的分类 emoji 是结构标记
+6. **边界口径**：时间边界用 `%cd --date=short` 的日期文本，默认主干分支，不做时区换算
+7. **PR 展示**：不要再使用 `#FIRST ~ #LAST` 作为头部或附录标题
+8. **风格**：正式技术周报风格，表格中的分类 emoji 是结构标记
