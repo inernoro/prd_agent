@@ -42,7 +42,7 @@ export default function Sidebar() {
   const [renameTarget, setRenameTarget] = useState<null | { docId: string; currentTitle: string }>(null);
   const [deleteTarget, setDeleteTarget] = useState<null | { docId: string; title: string }>(null);
 
-  const { busy: busyDocAction, replaceDocumentFile, removeDocument } = useDocumentActions();
+  const { busy: busyDocAction, error: docError, clearError: clearDocError, replaceDocumentFile, removeDocument } = useDocumentActions();
 
   const openDocContextMenu = useCallback((e: React.MouseEvent, docId: string, currentTitle: string, isMain: boolean) => {
     e.preventDefault();
@@ -808,12 +808,27 @@ export default function Sidebar() {
                 </div>
               ))}
 
+              {/* 文档操作错误提示（替换/删除失败时显示；ConfirmDialog 关闭后仍可见） */}
+              {docError && !deleteTarget && (
+                <div className="mx-1 mt-1 px-2 py-1.5 rounded text-[11px] bg-red-500/10 text-red-400 flex items-start gap-1.5">
+                  <span className="flex-1 break-words">{docError}</span>
+                  <button
+                    type="button"
+                    onClick={clearDocError}
+                    className="shrink-0 opacity-60 hover:opacity-100"
+                    aria-label="关闭"
+                  >
+                    ×
+                  </button>
+                </div>
+              )}
+
               {/* 追加资料入口 */}
               {documentLoaded && prdDocument && (
                 <>
                   <button
                     type="button"
-                    disabled={addingDoc}
+                    disabled={addingDoc || busyDocAction}
                     onClick={() => sidebarDocInputRef.current?.click()}
                     className="w-full px-3 py-1.5 rounded-lg text-left text-xs text-text-secondary hover:text-primary-500 hover:bg-black/5 dark:hover:bg-white/5 transition-colors flex items-center gap-2 disabled:opacity-50"
                   >
@@ -1103,10 +1118,19 @@ export default function Sidebar() {
             将从当前会话中移除资料文档
             <span className="mx-1 font-medium text-text-primary">「{deleteTarget?.title}」</span>
             。文档本身不会从系统中永久删除，但 AI 对话将不再引用它。
+            {docError ? (
+              <div className="mt-2 px-2 py-1.5 rounded text-[11px] bg-red-500/10 text-red-400 break-words">
+                {docError}
+              </div>
+            ) : null}
           </>
         }
         onConfirm={() => { void confirmDeleteDocument(); }}
-        onClose={() => { if (!busyDocAction) setDeleteTarget(null); }}
+        onClose={() => {
+          if (busyDocAction) return;
+          clearDocError();
+          setDeleteTarget(null);
+        }}
       />
     </aside>
   );
