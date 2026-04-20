@@ -3,12 +3,22 @@
  *
  * 管理 Agent 快捷切换浮层（命令面板）的状态：
  * - 全局快捷键 Cmd/Ctrl + K 触发
- * - 最近访问 / 使用次数 / 置顶 全部本地持久化（sessionStorage）
- * - 支持 Agent / 工具 / 实用工具 统一收录
+ * - 最近访问 / 使用次数 / 置顶：**云端同步**（UserPreferences.AgentSwitcherPreferences）
+ *   sessionStorage 仅作本地缓存，避免首屏闪烁；真正权威在后端
+ * - 换分支 / 换浏览器 / 换设备 同一账号收藏保持一致
+ *
+ * 同步策略：
+ * - 启动时 `loadFromServer()` 拉取云端 → 合并本地（服务端优先；若服务端空但本地有，
+ *   push 上去免丢失老数据）
+ * - 每次 mutation（togglePin / addRecentVisit / clear / reset）debounce 800ms PUT 回后端
  */
 
 import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
+import {
+  getUserPreferences,
+  updateAgentSwitcherPreferences,
+} from '@/services';
 
 /** Agent 定义 */
 export interface AgentDefinition {
@@ -126,10 +136,14 @@ interface AgentSwitcherState {
   selectedId: string | null;
   searchQuery: string;
 
-  // 最近访问 / 使用统计 / 置顶（均持久化）
+  // 最近访问 / 使用统计 / 置顶（均持久化到 sessionStorage + 云端）
   recentVisits: RecentVisit[];
   usageCounts: Record<string, number>;
   pinnedIds: string[];
+
+  // 云端同步状态
+  serverLoaded: boolean;
+  serverLoading: boolean;
 
   // Actions
   open: () => void;
@@ -146,79 +160,185 @@ interface AgentSwitcherState {
   clearPins: () => void;
 
   resetUsage: () => void;
+
+  /** 从后端拉取并 merge 本地（首屏调用一次；登出 → 登入需再次调用） */
+  loadFromServer: () => Promise<void>;
+  /** 立即把当前三项写回后端（一般不需要手动调，mutation 会自动 debounce PUT） */
+  flushToServer: () => Promise<void>;
+  /** 重置加载标记（登出时调用，使下次登入重新拉取） */
+  resetServerSync: () => void;
 }
+
+// 模块级 debounce 定时器（跨组件共享；一次只排队一个 PUT）
+let pendingSyncTimer: ReturnType<typeof setTimeout> | null = null;
+const SYNC_DEBOUNCE_MS = 800;
 
 const MAX_RECENT_VISITS = 20;
 
 export const useAgentSwitcherStore = create<AgentSwitcherState>()(
   persist(
-    (set, get) => ({
-      // Initial state
-      isOpen: false,
-      selectedId: null,
-      searchQuery: '',
-      recentVisits: [],
-      usageCounts: {},
-      pinnedIds: [],
-
-      // Actions
-      open: () => set({ isOpen: true, selectedId: null, searchQuery: '' }),
-
-      close: () => set({ isOpen: false, searchQuery: '' }),
-
-      toggle: () => {
-        const { isOpen } = get();
-        if (isOpen) {
-          set({ isOpen: false, searchQuery: '' });
-        } else {
-          set({ isOpen: true, selectedId: null, searchQuery: '' });
+    (set, get) => {
+      /** debounce 把当前持久化三项写回后端 */
+      const scheduleSync = () => {
+        if (!get().serverLoaded) {
+          // 未完成首次 load 前不回写，避免用空态覆盖云端
+          return;
         }
-      },
+        if (pendingSyncTimer) clearTimeout(pendingSyncTimer);
+        pendingSyncTimer = setTimeout(() => {
+          pendingSyncTimer = null;
+          void get().flushToServer();
+        }, SYNC_DEBOUNCE_MS);
+      };
 
-      setSelectedId: (id) => set({ selectedId: id }),
+      return {
+        // Initial state
+        isOpen: false,
+        selectedId: null,
+        searchQuery: '',
+        recentVisits: [],
+        usageCounts: {},
+        pinnedIds: [],
+        serverLoaded: false,
+        serverLoading: false,
 
-      setSearchQuery: (query) => set({ searchQuery: query }),
+        // Actions
+        open: () => set({ isOpen: true, selectedId: null, searchQuery: '' }),
 
-      addRecentVisit: (visit) => {
-        const id = visit.id ?? visit.agentKey ?? visit.path;
-        const { recentVisits, usageCounts } = get();
-        const newVisit: RecentVisit = {
-          id,
-          agentKey: visit.agentKey,
-          agentName: visit.agentName,
-          title: visit.title,
-          path: visit.path,
-          icon: visit.icon,
-          timestamp: Date.now(),
-        };
+        close: () => set({ isOpen: false, searchQuery: '' }),
 
-        // 移除相同 id 的旧记录
-        const filtered = recentVisits.filter((v) => v.id !== id);
-        const updated = [newVisit, ...filtered].slice(0, MAX_RECENT_VISITS);
+        toggle: () => {
+          const { isOpen } = get();
+          if (isOpen) {
+            set({ isOpen: false, searchQuery: '' });
+          } else {
+            set({ isOpen: true, selectedId: null, searchQuery: '' });
+          }
+        },
 
-        set({
-          recentVisits: updated,
-          usageCounts: { ...usageCounts, [id]: (usageCounts[id] ?? 0) + 1 },
-        });
-      },
+        setSelectedId: (id) => set({ selectedId: id }),
 
-      clearRecentVisits: () => set({ recentVisits: [] }),
+        setSearchQuery: (query) => set({ searchQuery: query }),
 
-      togglePin: (id: string) => {
-        const { pinnedIds } = get();
-        if (pinnedIds.includes(id)) {
-          set({ pinnedIds: pinnedIds.filter((p) => p !== id) });
-        } else {
-          set({ pinnedIds: [id, ...pinnedIds].slice(0, 20) });
-        }
-      },
+        addRecentVisit: (visit) => {
+          const id = visit.id ?? visit.agentKey ?? visit.path;
+          const { recentVisits, usageCounts } = get();
+          const newVisit: RecentVisit = {
+            id,
+            agentKey: visit.agentKey,
+            agentName: visit.agentName,
+            title: visit.title,
+            path: visit.path,
+            icon: visit.icon,
+            timestamp: Date.now(),
+          };
 
-      isPinned: (id: string) => get().pinnedIds.includes(id),
+          // 移除相同 id 的旧记录
+          const filtered = recentVisits.filter((v) => v.id !== id);
+          const updated = [newVisit, ...filtered].slice(0, MAX_RECENT_VISITS);
 
-      clearPins: () => set({ pinnedIds: [] }),
+          set({
+            recentVisits: updated,
+            usageCounts: { ...usageCounts, [id]: (usageCounts[id] ?? 0) + 1 },
+          });
+          scheduleSync();
+        },
 
-      resetUsage: () => set({ usageCounts: {} }),
-    }),
+        clearRecentVisits: () => {
+          set({ recentVisits: [] });
+          scheduleSync();
+        },
+
+        togglePin: (id: string) => {
+          const { pinnedIds } = get();
+          if (pinnedIds.includes(id)) {
+            set({ pinnedIds: pinnedIds.filter((p) => p !== id) });
+          } else {
+            set({ pinnedIds: [id, ...pinnedIds].slice(0, 20) });
+          }
+          scheduleSync();
+        },
+
+        isPinned: (id: string) => get().pinnedIds.includes(id),
+
+        clearPins: () => {
+          set({ pinnedIds: [] });
+          scheduleSync();
+        },
+
+        resetUsage: () => {
+          set({ usageCounts: {} });
+          scheduleSync();
+        },
+
+        resetServerSync: () => {
+          if (pendingSyncTimer) {
+            clearTimeout(pendingSyncTimer);
+            pendingSyncTimer = null;
+          }
+          set({ serverLoaded: false, serverLoading: false });
+        },
+
+        loadFromServer: async () => {
+          const state = get();
+          if (state.serverLoading || state.serverLoaded) return;
+          set({ serverLoading: true });
+          try {
+            const res = await getUserPreferences();
+            if (!res.success) {
+              // 拉取失败保持本地缓存，标记为已尝试（避免无限重试打后端）
+              set({ serverLoading: false, serverLoaded: true });
+              return;
+            }
+            const remote = res.data?.agentSwitcherPreferences;
+            const hasRemote = !!(
+              remote && (
+                (remote.pinnedIds && remote.pinnedIds.length > 0) ||
+                (remote.recentVisits && remote.recentVisits.length > 0) ||
+                (remote.usageCounts && Object.keys(remote.usageCounts).length > 0)
+              )
+            );
+
+            if (hasRemote) {
+              // 服务端有数据 → 覆盖本地（真实的跨分支 / 跨浏览器恢复场景）
+              set({
+                pinnedIds: remote!.pinnedIds ?? [],
+                recentVisits: (remote!.recentVisits ?? []) as RecentVisit[],
+                usageCounts: remote!.usageCounts ?? {},
+                serverLoaded: true,
+                serverLoading: false,
+              });
+            } else {
+              // 服务端空 → 保留本地，并把本地 push 上去防止下次丢
+              set({ serverLoaded: true, serverLoading: false });
+              const { pinnedIds, recentVisits, usageCounts } = get();
+              const hasLocal =
+                pinnedIds.length > 0 ||
+                recentVisits.length > 0 ||
+                Object.keys(usageCounts).length > 0;
+              if (hasLocal) {
+                scheduleSync();
+              }
+            }
+          } catch {
+            set({ serverLoading: false, serverLoaded: true });
+          }
+        },
+
+        flushToServer: async () => {
+          const { pinnedIds, recentVisits, usageCounts } = get();
+          try {
+            await updateAgentSwitcherPreferences({
+              pinnedIds,
+              recentVisits,
+              usageCounts,
+            });
+          } catch {
+            // 静默失败，mutation 下次会再次 schedule
+          }
+        },
+      };
+    },
     {
       name: 'prd-admin-agent-switcher',
       version: 2,

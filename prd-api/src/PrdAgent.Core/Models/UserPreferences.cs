@@ -39,6 +39,12 @@ public class UserPreferences
     /// </summary>
     public ReportAgentPreferences? ReportAgentPreferences { get; set; }
 
+    /// <summary>
+    /// Agent Switcher / 命令面板偏好（置顶、最近访问、使用统计）。
+    /// 之前仅存 sessionStorage，换分支 / 浏览器 / 设备都会丢；改为云端同步。
+    /// </summary>
+    public AgentSwitcherPreferences? AgentSwitcherPreferences { get; set; }
+
     /// <summary>更新时间</summary>
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
 }
@@ -126,6 +132,44 @@ public class ReportAgentPreferences
     /// AI 生成周报草稿的自定义 Prompt（为空时使用系统默认 Prompt）
     /// </summary>
     public string? WeeklyReportPrompt { get; set; }
+}
+
+/// <summary>
+/// Agent Switcher / 命令面板偏好（置顶 / 最近 / 常用）
+/// </summary>
+[BsonIgnoreExtraElements]
+public class AgentSwitcherPreferences
+{
+    /// <summary>已置顶条目的 id 列表（上限约 20）</summary>
+    public List<string>? PinnedIds { get; set; }
+
+    /// <summary>最近访问记录（上限 20）</summary>
+    public List<AgentSwitcherRecentVisit>? RecentVisits { get; set; }
+
+    /// <summary>累计启动次数（id → count）</summary>
+    public Dictionary<string, int>? UsageCounts { get; set; }
+}
+
+/// <summary>
+/// Agent Switcher 最近访问记录项
+/// </summary>
+[BsonIgnoreExtraElements]
+public class AgentSwitcherRecentVisit
+{
+    /// <summary>稳定 id（Agent key / toolbox id / utility id）</summary>
+    public string Id { get; set; } = string.Empty;
+    /// <summary>兼容旧字段：Agent key（非 Agent 为空）</summary>
+    public string AgentKey { get; set; } = string.Empty;
+    /// <summary>条目展示名</summary>
+    public string AgentName { get; set; } = string.Empty;
+    /// <summary>副标题</summary>
+    public string Title { get; set; } = string.Empty;
+    /// <summary>跳转路径</summary>
+    public string Path { get; set; } = string.Empty;
+    /// <summary>Lucide 图标名（可选）</summary>
+    public string? Icon { get; set; }
+    /// <summary>访问时间戳（ms since epoch）</summary>
+    public long Timestamp { get; set; }
 }
 
 /// <summary>

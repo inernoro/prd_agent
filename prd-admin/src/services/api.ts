@@ -311,6 +311,7 @@ export const api = {
       theme: () => '/api/dashboard/user-preferences/theme',
       visualAgent: () => '/api/dashboard/user-preferences/visual-agent',
       literaryAgent: () => '/api/dashboard/user-preferences/literary-agent',
+      agentSwitcher: () => '/api/dashboard/user-preferences/agent-switcher',
     },
     stats: {
       overview: () => '/api/dashboard/stats/overview',

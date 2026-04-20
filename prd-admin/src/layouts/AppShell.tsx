@@ -45,6 +45,7 @@ import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'rea
 import { cn } from '@/lib/cn';
 import { glassPanel, glassSidebar, glassFloatingButton, glassMobileHeader } from '@/lib/glassStyles';
 import { useAuthStore } from '@/stores/authStore';
+import { useAgentSwitcherStore } from '@/stores/agentSwitcherStore';
 import { useThemeStore } from '@/stores/themeStore';
 import { useLayoutStore } from '@/stores/layoutStore';
 import { useNavOrderStore } from '@/stores/navOrderStore';
@@ -270,6 +271,15 @@ export default function AppShell() {
       void loadNavOrder();
     }
   }, [navOrderLoaded, user?.userId, loadNavOrder]);
+
+  // 加载 Agent Switcher 偏好（置顶 / 最近 / 常用）—— 换分支 / 浏览器也能恢复
+  const loadAgentSwitcher = useAgentSwitcherStore((s) => s.loadFromServer);
+  const agentSwitcherLoaded = useAgentSwitcherStore((s) => s.serverLoaded);
+  useEffect(() => {
+    if (!agentSwitcherLoaded && user?.userId) {
+      void loadAgentSwitcher();
+    }
+  }, [agentSwitcherLoaded, user?.userId, loadAgentSwitcher]);
 
   // 从后端菜单目录生成导航项，按 group 分组
   // 只有带 group 字段的菜单项才在侧边栏显示
@@ -684,7 +694,12 @@ export default function AppShell() {
             </button>
             <button
               type="button"
-              onClick={() => { logout(); setMobileDrawerOpen(false); navigate('/login', { replace: true }); }}
+              onClick={() => {
+                useAgentSwitcherStore.getState().resetServerSync();
+                logout();
+                setMobileDrawerOpen(false);
+                navigate('/login', { replace: true });
+              }}
               className="flex items-center gap-3 px-3 py-2.5 rounded-xl min-h-[44px]"
               style={{ color: 'var(--text-secondary)' }}
             >
@@ -1088,7 +1103,11 @@ export default function AppShell() {
                 <DropdownMenu.Item
                   className="flex items-center gap-3 px-3 py-2.5 rounded-[10px] cursor-pointer outline-none transition-colors hover:bg-white/6"
                   style={{ color: 'var(--text-secondary)' }}
-                  onSelect={() => { logout(); navigate('/login', { replace: true }); }}
+                  onSelect={() => {
+                    useAgentSwitcherStore.getState().resetServerSync();
+                    logout();
+                    navigate('/login', { replace: true });
+                  }}
                 >
                   <LogOut size={16} className="shrink-0" />
                   <span className="text-[13px]">退出登录</span>

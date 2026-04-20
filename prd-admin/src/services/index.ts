@@ -536,7 +536,7 @@ import { AutomationsService } from '@/services/real/automations';
 import { ModelGroupsService } from '@/services/real/modelGroups';
 import { AppCallersService } from '@/services/real/appCallers';
 import { SchedulerConfigService } from '@/services/real/schedulerConfig';
-import { getUserPreferencesReal, updateNavOrderReal, updateThemeConfigReal, updateVisualAgentPreferencesReal, updateLiteraryAgentPreferencesReal } from '@/services/real/userPreferences';
+import { getUserPreferencesReal, updateNavOrderReal, updateThemeConfigReal, updateVisualAgentPreferencesReal, updateLiteraryAgentPreferencesReal, updateAgentSwitcherPreferencesReal } from '@/services/real/userPreferences';
 import {
   getAdminNotificationsReal,
   handleAdminNotificationReal,
@@ -1264,6 +1264,8 @@ export const updateNavOrder: UpdateNavOrderContract = withAuth(updateNavOrderRea
 export const updateThemeConfig: UpdateThemeConfigContract = withAuth(updateThemeConfigReal);
 export const updateVisualAgentPreferences: UpdateVisualAgentPreferencesContract = withAuth(updateVisualAgentPreferencesReal);
 export const updateLiteraryAgentPreferences: UpdateLiteraryAgentPreferencesContract = withAuth(updateLiteraryAgentPreferencesReal);
+import type { UpdateAgentSwitcherPreferencesContract } from '@/services/contracts/userPreferences';
+export const updateAgentSwitcherPreferences: UpdateAgentSwitcherPreferencesContract = withAuth(updateAgentSwitcherPreferencesReal);
 
 export const getWatermarks: GetWatermarksContract = withAuth(getWatermarksReal);
 export const getWatermarkByApp: GetWatermarkByAppContract = withAuth(getWatermarkByAppReal);

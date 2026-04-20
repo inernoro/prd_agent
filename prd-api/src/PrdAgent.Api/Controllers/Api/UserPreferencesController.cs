@@ -49,8 +49,41 @@ public class UserPreferencesController : ControllerBase
             navOrder = prefs?.NavOrder ?? new List<string>(),
             themeConfig = prefs?.ThemeConfig,
             visualAgentPreferences = prefs?.VisualAgentPreferences,
-            literaryAgentPreferences = prefs?.LiteraryAgentPreferences
+            literaryAgentPreferences = prefs?.LiteraryAgentPreferences,
+            agentSwitcherPreferences = prefs?.AgentSwitcherPreferences
         }));
+    }
+
+    /// <summary>
+    /// 更新 Agent Switcher 偏好（置顶 / 最近 / 使用统计）
+    /// </summary>
+    [HttpPut("agent-switcher")]
+    public async Task<IActionResult> UpdateAgentSwitcherPreferences([FromBody] UpdateAgentSwitcherPreferencesRequest request)
+    {
+        var userId = GetCurrentUserId();
+        if (string.IsNullOrEmpty(userId))
+            return Unauthorized(ApiResponse<object>.Fail("UNAUTHORIZED", "未登录"));
+
+        if (request.AgentSwitcherPreferences == null)
+            return BadRequest(ApiResponse<object>.Fail("INVALID_FORMAT", "agentSwitcherPreferences 不能为空"));
+
+        // 轻量上限防御：避免不良客户端无限增长
+        var p = request.AgentSwitcherPreferences;
+        if (p.PinnedIds != null && p.PinnedIds.Count > 50) p.PinnedIds = p.PinnedIds.Take(50).ToList();
+        if (p.RecentVisits != null && p.RecentVisits.Count > 50) p.RecentVisits = p.RecentVisits.Take(50).ToList();
+        if (p.UsageCounts != null && p.UsageCounts.Count > 500)
+            p.UsageCounts = p.UsageCounts.OrderByDescending(kv => kv.Value).Take(500).ToDictionary(kv => kv.Key, kv => kv.Value);
+
+        var update = Builders<UserPreferences>.Update
+            .Set(x => x.AgentSwitcherPreferences, p)
+            .Set(x => x.UpdatedAt, DateTime.UtcNow);
+
+        await _db.UserPreferences.UpdateOneAsync(
+            x => x.UserId == userId,
+            update,
+            new UpdateOptions { IsUpsert = true });
+
+        return Ok(ApiResponse<object>.Ok(new { }));
     }
 
     /// <summary>
@@ -171,4 +204,9 @@ public class UpdateVisualAgentPreferencesRequest
 public class UpdateLiteraryAgentPreferencesRequest
 {
     public LiteraryAgentPreferences? LiteraryAgentPreferences { get; set; }
+}
+
+public class UpdateAgentSwitcherPreferencesRequest
+{
+    public AgentSwitcherPreferences? AgentSwitcherPreferences { get; set; }
 }

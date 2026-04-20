@@ -9,9 +9,11 @@ import type {
   UpdateThemeConfigContract,
   UpdateVisualAgentPreferencesContract,
   UpdateLiteraryAgentPreferencesContract,
+  UpdateAgentSwitcherPreferencesContract,
   ThemeConfigResponse,
   VisualAgentPreferences,
   LiteraryAgentPreferences,
+  AgentSwitcherPreferences,
 } from '@/services/contracts/userPreferences';
 
 // 去重：navOrderStore + themeStore + VisualAgentTab 可能同时调用，共享一个 in-flight 请求
@@ -28,7 +30,7 @@ export const getUserPreferencesReal: GetUserPreferencesContract = async (): Prom
 };
 
 async function doGetUserPreferences(): Promise<ApiResponse<UserPreferences>> {
-  const res = await apiRequest<{ navOrder: string[]; themeConfig?: ThemeConfigResponse; visualAgentPreferences?: VisualAgentPreferences; literaryAgentPreferences?: LiteraryAgentPreferences }>(
+  const res = await apiRequest<{ navOrder: string[]; themeConfig?: ThemeConfigResponse; visualAgentPreferences?: VisualAgentPreferences; literaryAgentPreferences?: LiteraryAgentPreferences; agentSwitcherPreferences?: AgentSwitcherPreferences }>(
     api.dashboard.userPreferences.get()
   );
   if (!res.success) return res as unknown as ApiResponse<UserPreferences>;
@@ -37,6 +39,7 @@ async function doGetUserPreferences(): Promise<ApiResponse<UserPreferences>> {
     themeConfig: res.data.themeConfig,
     visualAgentPreferences: res.data.visualAgentPreferences,
     literaryAgentPreferences: res.data.literaryAgentPreferences,
+    agentSwitcherPreferences: res.data.agentSwitcherPreferences,
   });
 }
 
@@ -77,6 +80,17 @@ export const updateLiteraryAgentPreferencesReal: UpdateLiteraryAgentPreferencesC
   const res = await apiRequest<void>(api.dashboard.userPreferences.literaryAgent(), {
     method: 'PUT',
     body: { literaryAgentPreferences: prefs },
+  });
+  if (!res.success) return res;
+  return ok(undefined);
+};
+
+export const updateAgentSwitcherPreferencesReal: UpdateAgentSwitcherPreferencesContract = async (
+  prefs: AgentSwitcherPreferences
+): Promise<ApiResponse<void>> => {
+  const res = await apiRequest<void>(api.dashboard.userPreferences.agentSwitcher(), {
+    method: 'PUT',
+    body: { agentSwitcherPreferences: prefs },
   });
   if (!res.success) return res;
   return ok(undefined);
