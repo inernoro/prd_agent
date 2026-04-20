@@ -35,6 +35,8 @@ export interface CurrentWeekView {
 export interface ChangelogDay {
   /** YYYY-MM-DD */
   date: string;
+  /** 该日期最晚一次 GitHub commit 的 ISO 8601 UTC 时间（仅 github 源可用） */
+  commitTimeUtc?: string | null;
   entries: ChangelogEntry[];
 }
 

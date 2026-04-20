@@ -1,5 +1,9 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Sparkles, Calendar, Tag, RefreshCw, Filter, X, FileText } from 'lucide-react';
+import type { LucideIcon } from 'lucide-react';
+import {
+  Sparkles, Calendar, Tag, RefreshCw, Filter, X, FileText,
+  Wrench, Zap, Gauge, Shuffle, Shield, Package, FlaskConical, UploadCloud, Cog,
+} from 'lucide-react';
 import { useChangelogStore } from '@/stores/changelogStore';
 import { MapSectionLoader, MapSpinner } from '@/components/ui/VideoLoader';
 import { glassPanel } from '@/lib/glassStyles';
@@ -8,19 +12,19 @@ import { TabBar } from '@/components/design/TabBar';
 import { WeeklyReportsTab } from './components/WeeklyReportsTab';
 
 
-/** 类型徽章配色（注册表，禁止 switch / if-else） */
-const TYPE_BADGE_REGISTRY: Record<string, { label: string; color: string; bg: string; border: string }> = {
-  feat: { label: '新功能', color: '#86efac', bg: 'rgba(34, 197, 94, 0.10)', border: 'rgba(34, 197, 94, 0.32)' },
-  fix: { label: '修复', color: '#fdba74', bg: 'rgba(251, 146, 60, 0.10)', border: 'rgba(251, 146, 60, 0.32)' },
-  refactor: { label: '重构', color: '#93c5fd', bg: 'rgba(59, 130, 246, 0.10)', border: 'rgba(59, 130, 246, 0.32)' },
-  perf: { label: '优化', color: '#c4b5fd', bg: 'rgba(139, 92, 246, 0.10)', border: 'rgba(139, 92, 246, 0.32)' },
-  docs: { label: '文档', color: '#67e8f9', bg: 'rgba(6, 182, 212, 0.10)', border: 'rgba(6, 182, 212, 0.32)' },
-  chore: { label: '杂项', color: '#d4d4d8', bg: 'rgba(161, 161, 170, 0.10)', border: 'rgba(161, 161, 170, 0.32)' },
-  enhance: { label: '增强', color: '#f472b6', bg: 'rgba(244, 114, 182, 0.10)', border: 'rgba(244, 114, 182, 0.32)' },
-  rule: { label: '规范', color: '#e879f9', bg: 'rgba(232, 121, 249, 0.10)', border: 'rgba(232, 121, 249, 0.32)' },
-  test: { label: '测试', color: '#34d399', bg: 'rgba(52, 211, 153, 0.10)', border: 'rgba(52, 211, 153, 0.32)' },
-  ci: { label: '构筑', color: '#cbd5e1', bg: 'rgba(203, 213, 225, 0.10)', border: 'rgba(203, 213, 225, 0.32)' },
-  deploy: { label: '部署', color: '#6ee7b7', bg: 'rgba(110, 231, 183, 0.10)', border: 'rgba(110, 231, 183, 0.32)' },
+/** 类型徽章注册表（禁止 switch / if-else） */
+const TYPE_BADGE_REGISTRY: Record<string, { label: string; color: string; bg: string; border: string; icon: LucideIcon }> = {
+  feat: { label: '新功能', color: '#86efac', bg: 'rgba(34, 197, 94, 0.10)', border: 'rgba(34, 197, 94, 0.32)', icon: Sparkles },
+  fix: { label: '修复', color: '#fdba74', bg: 'rgba(251, 146, 60, 0.10)', border: 'rgba(251, 146, 60, 0.32)', icon: Wrench },
+  refactor: { label: '重构', color: '#93c5fd', bg: 'rgba(59, 130, 246, 0.10)', border: 'rgba(59, 130, 246, 0.32)', icon: Shuffle },
+  perf: { label: '优化', color: '#c4b5fd', bg: 'rgba(139, 92, 246, 0.10)', border: 'rgba(139, 92, 246, 0.32)', icon: Gauge },
+  docs: { label: '文档', color: '#67e8f9', bg: 'rgba(6, 182, 212, 0.10)', border: 'rgba(6, 182, 212, 0.32)', icon: FileText },
+  chore: { label: '杂项', color: '#d4d4d8', bg: 'rgba(161, 161, 170, 0.10)', border: 'rgba(161, 161, 170, 0.32)', icon: Package },
+  enhance: { label: '增强', color: '#f472b6', bg: 'rgba(244, 114, 182, 0.10)', border: 'rgba(244, 114, 182, 0.32)', icon: Zap },
+  rule: { label: '规范', color: '#e879f9', bg: 'rgba(232, 121, 249, 0.10)', border: 'rgba(232, 121, 249, 0.32)', icon: Shield },
+  test: { label: '测试', color: '#34d399', bg: 'rgba(52, 211, 153, 0.10)', border: 'rgba(52, 211, 153, 0.32)', icon: FlaskConical },
+  ci: { label: '构筑', color: '#cbd5e1', bg: 'rgba(203, 213, 225, 0.10)', border: 'rgba(203, 213, 225, 0.32)', icon: Cog },
+  deploy: { label: '部署', color: '#6ee7b7', bg: 'rgba(110, 231, 183, 0.10)', border: 'rgba(110, 231, 183, 0.32)', icon: UploadCloud },
 };
 
 const FALLBACK_BADGE = {
@@ -28,6 +32,7 @@ const FALLBACK_BADGE = {
   color: '#d4d4d8',
   bg: 'rgba(161, 161, 170, 0.10)',
   border: 'rgba(161, 161, 170, 0.32)',
+  icon: Tag as LucideIcon,
 };
 
 function getTypeBadge(type: string) {
@@ -36,8 +41,23 @@ function getTypeBadge(type: string) {
 
 interface FlatEntry extends ChangelogEntry {
   date: string;
+  /** ISO 8601 秒级时间（仅 github 源可用） */
+  commitTimeUtc?: string | null;
   source: 'release';
   releaseVersion?: string;
+}
+
+/** 格式化右侧展示时间：有秒级则 "YYYY-MM-DD HH:mm:ss"，否则 "YYYY-MM-DD" */
+function formatEntryTime(date: string, commitTimeUtc?: string | null): string {
+  if (!commitTimeUtc) return date;
+  try {
+    const d = new Date(commitTimeUtc);
+    if (Number.isNaN(d.getTime())) return date;
+    const pad = (n: number) => n.toString().padStart(2, '0');
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+  } catch {
+    return date;
+  }
 }
 
 export default function ChangelogPage() {
@@ -198,21 +218,21 @@ export default function ChangelogPage() {
               {availableTypes.map((t) => {
                 const meta = getTypeBadge(t);
                 const active = typeFilter === t;
+                const Icon = meta.icon;
                 return (
                   <button
                     key={t}
                     type="button"
                     onClick={() => setTypeFilter(active ? null : t)}
-                    className="h-8 px-4 rounded-lg text-[13px] font-medium transition-all cursor-pointer"
+                    className="h-8 pl-2.5 pr-3 rounded-lg text-[13px] font-medium transition-all cursor-pointer inline-flex items-center gap-1.5"
                     style={{
                       background: active ? meta.bg : 'rgba(255, 255, 255, 0.04)',
                       border: `1px solid ${active ? meta.border : 'rgba(255, 255, 255, 0.10)'}`,
                       color: active ? meta.color : 'var(--text-muted)',
                       lineHeight: '1',
-                      display: 'flex',
-                      alignItems: 'center',
                     }}
                   >
+                    <Icon size={13} />
                     {meta.label}
                   </button>
                 );
@@ -381,6 +401,7 @@ export default function ChangelogPage() {
                                 entry={{
                                   ...e,
                                   date: day.date,
+                                  commitTimeUtc: day.commitTimeUtc ?? null,
                                   source: 'release',
                                   releaseVersion: release.version,
                                 }}
@@ -411,6 +432,11 @@ export default function ChangelogPage() {
 /** 单行更新条目 */
 function EntryRow({ entry }: { entry: FlatEntry }) {
   const meta = getTypeBadge(entry.type);
+  const Icon = meta.icon;
+  const timeText = formatEntryTime(entry.date, entry.commitTimeUtc);
+  const timeTitle = entry.commitTimeUtc
+    ? `GitHub commit 时间：${timeText}`
+    : `提交日期：${entry.date}（无秒级 commit 时间）`;
   return (
     <div
       className="rounded-lg px-3.5 py-2.5 flex items-center gap-3 transition-colors"
@@ -420,7 +446,7 @@ function EntryRow({ entry }: { entry: FlatEntry }) {
       }}
     >
       <div
-        className="shrink-0 px-2 h-[24px] rounded-md inline-flex items-center text-[12px] font-semibold"
+        className="shrink-0 inline-flex items-center gap-1 px-2 h-[24px] rounded-md text-[12px] font-semibold"
         style={{
           background: meta.bg,
           color: meta.color,
@@ -428,6 +454,7 @@ function EntryRow({ entry }: { entry: FlatEntry }) {
           letterSpacing: '0.02em',
         }}
       >
+        <Icon size={11} />
         {meta.label}
       </div>
       <div
@@ -457,9 +484,9 @@ function EntryRow({ entry }: { entry: FlatEntry }) {
           fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',
           fontVariantNumeric: 'tabular-nums',
         }}
-        title="提交日期"
+        title={timeTitle}
       >
-        {entry.date}
+        {timeText}
       </div>
     </div>
   );

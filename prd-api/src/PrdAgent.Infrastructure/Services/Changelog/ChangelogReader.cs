@@ -37,6 +37,12 @@ public sealed class ChangelogDay
 {
     public DateOnly Date { get; set; }
     public List<ChangelogEntry> Entries { get; set; } = new();
+    /// <summary>
+    /// 该日期对应的最新 GitHub commit 时间（秒级精度，UTC）。
+    /// 通过 GitHub Commits API 获取 CHANGELOG.md 的提交历史后，按日期取该日最后一次提交。
+    /// 仅 GitHub 源可用；本地源无法获取 commit 时间时为 null。
+    /// </summary>
+    public DateTime? CommitTimeUtc { get; set; }
 }
 
 /// <summary>
@@ -580,7 +586,73 @@ public sealed class ChangelogReader : IChangelogReader
 
         view.DataSourceAvailable = true;
         view.Releases = ParseChangelogMarkdown(content, limit);
+
+        // 额外抓一次 CHANGELOG.md 的 commit 历史，为每个日期段落附上秒级提交时间
+        try
+        {
+            var commitMap = await FetchChangelogCommitTimesAsync(client).ConfigureAwait(false);
+            if (commitMap.Count > 0)
+            {
+                foreach (var release in view.Releases)
+                foreach (var day in release.Days)
+                {
+                    if (commitMap.TryGetValue(day.Date, out var commitTime))
+                        day.CommitTimeUtc = commitTime;
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "[Changelog] 拉取 CHANGELOG.md commit 历史失败（降级为纯日期展示）");
+        }
+
         return view;
+    }
+
+    /// <summary>
+    /// 拉取 CHANGELOG.md 文件的 commit 历史，按提交日期（UTC）聚合，
+    /// 返回每个日期对应的「该日最晚一次 commit 的 ISO 时间」。
+    /// 单次 API 调用（per_page=100），覆盖最近 ~100 个 PR 足够绝大多数场景。
+    /// </summary>
+    private async Task<Dictionary<DateOnly, DateTime>> FetchChangelogCommitTimesAsync(HttpClient client)
+    {
+        var result = new Dictionary<DateOnly, DateTime>();
+        var owner = GetGitHubOwner();
+        var repo = GetGitHubRepo();
+        var branch = GetGitHubBranch();
+        var apiBase = GetGitHubApiBase();
+        var url = $"{apiBase}/repos/{owner}/{repo}/commits?path=CHANGELOG.md&sha={branch}&per_page=100";
+
+        using var req = CreateGitHubApiRequest(HttpMethod.Get, url);
+        using var resp = await client.SendAsync(req).ConfigureAwait(false);
+        if (!resp.IsSuccessStatusCode)
+        {
+            _logger.LogWarning("[Changelog] GitHub Commits API 失败 {Url} status={Status}", url, (int)resp.StatusCode);
+            return result;
+        }
+
+        var json = await resp.Content.ReadAsStringAsync().ConfigureAwait(false);
+        using var doc = JsonDocument.Parse(json);
+        if (doc.RootElement.ValueKind != JsonValueKind.Array) return result;
+
+        foreach (var item in doc.RootElement.EnumerateArray())
+        {
+            if (!item.TryGetProperty("commit", out var commitEl)) continue;
+            if (!commitEl.TryGetProperty("committer", out var committerEl)) continue;
+            if (!committerEl.TryGetProperty("date", out var dateEl)) continue;
+            var iso = dateEl.GetString();
+            if (string.IsNullOrWhiteSpace(iso)) continue;
+            if (!DateTime.TryParse(
+                    iso, CultureInfo.InvariantCulture,
+                    DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal,
+                    out var commitTimeUtc))
+                continue;
+            var day = DateOnly.FromDateTime(commitTimeUtc);
+            // 同一日期：保留最晚一次 commit
+            if (!result.TryGetValue(day, out var existing) || commitTimeUtc > existing)
+                result[day] = commitTimeUtc;
+        }
+        return result;
     }
 
     // ── 解析逻辑（local 与 github 共用） ──────────────────────────────

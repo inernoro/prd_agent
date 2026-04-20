@@ -79,6 +79,7 @@ public class ChangelogController : ControllerBase
             Days = r.Days.ConvertAll(d => new ChangelogDayDto
             {
                 Date = d.Date.ToString("yyyy-MM-dd"),
+                CommitTimeUtc = d.CommitTimeUtc?.ToString("o"),
                 Entries = d.Entries.ConvertAll(MapEntry),
             }),
         }),
@@ -122,6 +123,8 @@ public class ChangelogController : ControllerBase
     public sealed class ChangelogDayDto
     {
         public string Date { get; set; } = string.Empty;
+        /// <summary>该日期最晚一次 GitHub commit 的 ISO 8601 UTC 时间（仅 github 源可用）</summary>
+        public string? CommitTimeUtc { get; set; }
         public List<ChangelogEntryDto> Entries { get; set; } = new();
     }
 
