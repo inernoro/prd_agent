@@ -1,25 +1,35 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Sparkles, Calendar, Tag, RefreshCw, Filter, X, FileText } from 'lucide-react';
+import type { LucideIcon } from 'lucide-react';
+import {
+  Sparkles, Calendar, Tag, RefreshCw, Filter, X, FileText,
+  Wrench, Zap, Gauge, Shuffle, Shield, Package, FlaskConical, UploadCloud, Cog,
+} from 'lucide-react';
 import { useChangelogStore } from '@/stores/changelogStore';
 import { MapSectionLoader, MapSpinner } from '@/components/ui/VideoLoader';
 import { glassPanel } from '@/lib/glassStyles';
 import type { ChangelogEntry } from '@/services';
 import { TabBar } from '@/components/design/TabBar';
-import { WeeklyReportsTab } from './components/WeeklyReportsTab';
+import {
+  WeeklyReportsTab,
+  WeeklyReportSourceChips,
+  WeeklyReportSourceDialog,
+} from './components/WeeklyReportsTab';
+import { WeeklyReportSourcesProvider } from './components/weeklyReportSourcesContext';
 
-/** 类型徽章配色（注册表，禁止 switch / if-else） */
-const TYPE_BADGE_REGISTRY: Record<string, { label: string; color: string; bg: string; border: string }> = {
-  feat: { label: '新功能', color: '#86efac', bg: 'rgba(34, 197, 94, 0.10)', border: 'rgba(34, 197, 94, 0.32)' },
-  fix: { label: '修复', color: '#fdba74', bg: 'rgba(251, 146, 60, 0.10)', border: 'rgba(251, 146, 60, 0.32)' },
-  refactor: { label: '重构', color: '#93c5fd', bg: 'rgba(59, 130, 246, 0.10)', border: 'rgba(59, 130, 246, 0.32)' },
-  perf: { label: '优化', color: '#c4b5fd', bg: 'rgba(139, 92, 246, 0.10)', border: 'rgba(139, 92, 246, 0.32)' },
-  docs: { label: '文档', color: '#67e8f9', bg: 'rgba(6, 182, 212, 0.10)', border: 'rgba(6, 182, 212, 0.32)' },
-  chore: { label: '杂项', color: '#d4d4d8', bg: 'rgba(161, 161, 170, 0.10)', border: 'rgba(161, 161, 170, 0.32)' },
-  enhance: { label: '增强', color: '#f472b6', bg: 'rgba(244, 114, 182, 0.10)', border: 'rgba(244, 114, 182, 0.32)' },
-  rule: { label: '规范', color: '#e879f9', bg: 'rgba(232, 121, 249, 0.10)', border: 'rgba(232, 121, 249, 0.32)' },
-  test: { label: '测试', color: '#34d399', bg: 'rgba(52, 211, 153, 0.10)', border: 'rgba(52, 211, 153, 0.32)' },
-  ci: { label: '构筑', color: '#cbd5e1', bg: 'rgba(203, 213, 225, 0.10)', border: 'rgba(203, 213, 225, 0.32)' },
-  deploy: { label: '部署', color: '#6ee7b7', bg: 'rgba(110, 231, 183, 0.10)', border: 'rgba(110, 231, 183, 0.32)' },
+
+/** 类型徽章注册表（禁止 switch / if-else） */
+const TYPE_BADGE_REGISTRY: Record<string, { label: string; color: string; bg: string; border: string; icon: LucideIcon }> = {
+  feat: { label: '新功能', color: '#86efac', bg: 'rgba(34, 197, 94, 0.10)', border: 'rgba(34, 197, 94, 0.32)', icon: Sparkles },
+  fix: { label: '修复', color: '#fdba74', bg: 'rgba(251, 146, 60, 0.10)', border: 'rgba(251, 146, 60, 0.32)', icon: Wrench },
+  refactor: { label: '重构', color: '#93c5fd', bg: 'rgba(59, 130, 246, 0.10)', border: 'rgba(59, 130, 246, 0.32)', icon: Shuffle },
+  perf: { label: '优化', color: '#c4b5fd', bg: 'rgba(139, 92, 246, 0.10)', border: 'rgba(139, 92, 246, 0.32)', icon: Gauge },
+  docs: { label: '文档', color: '#67e8f9', bg: 'rgba(6, 182, 212, 0.10)', border: 'rgba(6, 182, 212, 0.32)', icon: FileText },
+  chore: { label: '杂项', color: '#d4d4d8', bg: 'rgba(161, 161, 170, 0.10)', border: 'rgba(161, 161, 170, 0.32)', icon: Package },
+  enhance: { label: '增强', color: '#f472b6', bg: 'rgba(244, 114, 182, 0.10)', border: 'rgba(244, 114, 182, 0.32)', icon: Zap },
+  rule: { label: '规范', color: '#e879f9', bg: 'rgba(232, 121, 249, 0.10)', border: 'rgba(232, 121, 249, 0.32)', icon: Shield },
+  test: { label: '测试', color: '#34d399', bg: 'rgba(52, 211, 153, 0.10)', border: 'rgba(52, 211, 153, 0.32)', icon: FlaskConical },
+  ci: { label: '构筑', color: '#cbd5e1', bg: 'rgba(203, 213, 225, 0.10)', border: 'rgba(203, 213, 225, 0.32)', icon: Cog },
+  deploy: { label: '部署', color: '#6ee7b7', bg: 'rgba(110, 231, 183, 0.10)', border: 'rgba(110, 231, 183, 0.32)', icon: UploadCloud },
 };
 
 const FALLBACK_BADGE = {
@@ -27,6 +37,7 @@ const FALLBACK_BADGE = {
   color: '#d4d4d8',
   bg: 'rgba(161, 161, 170, 0.10)',
   border: 'rgba(161, 161, 170, 0.32)',
+  icon: Tag as LucideIcon,
 };
 
 function getTypeBadge(type: string) {
@@ -35,15 +46,28 @@ function getTypeBadge(type: string) {
 
 interface FlatEntry extends ChangelogEntry {
   date: string;
-  source: 'fragment' | 'release';
+  /** ISO 8601 秒级时间（仅 github 源可用） */
+  commitTimeUtc?: string | null;
+  source: 'release';
   releaseVersion?: string;
-  fileName?: string;
+}
+
+/** 格式化右侧展示时间：有秒级则 "YYYY-MM-DD HH:mm:ss"，否则 "YYYY-MM-DD" */
+function formatEntryTime(date: string, commitTimeUtc?: string | null): string {
+  if (!commitTimeUtc) return date;
+  try {
+    const d = new Date(commitTimeUtc);
+    if (Number.isNaN(d.getTime())) return date;
+    const pad = (n: number) => n.toString().padStart(2, '0');
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+  } catch {
+    return date;
+  }
 }
 
 export default function ChangelogPage() {
   const currentWeek = useChangelogStore((s) => s.currentWeek);
   const releases = useChangelogStore((s) => s.releases);
-  const loadingCurrent = useChangelogStore((s) => s.loadingCurrent);
   const loadingReleases = useChangelogStore((s) => s.loadingReleases);
   const error = useChangelogStore((s) => s.error);
   const loadCurrentWeek = useChangelogStore((s) => s.loadCurrentWeek);
@@ -53,7 +77,23 @@ export default function ChangelogPage() {
   const [typeFilter, setTypeFilter] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<string>('update_center');
 
+  /**
+   * NEW 徽章 cutoff：用户上次打开更新中心那天的 23:59:59.999。
+   * useState 惰性初始化只跑一次，拿到的一定是"进入本次页面之前"的值——
+   * ChangelogPage 进页后 markAsSeen() 会把 store 里的 lastSeenAt 更新为当前，
+   * 但本 hook 冻结在 mount 瞬间的旧值，整场 session 稳定不变。
+   */
+  const [newBadgeCutoff] = useState<number | null>(() => {
+    const iso = useChangelogStore.getState().lastSeenAt;
+    if (!iso) return null;
+    const d = new Date(iso);
+    if (Number.isNaN(d.getTime())) return null;
+    d.setHours(23, 59, 59, 999);
+    return d.getTime();
+  });
+
   // 进入页面：拉取数据 + 标记已读
+  // 「本周更新」section 已下线；但仍拉 currentWeek 以驱动已读计数 & 顶部的数据源徽标
   useEffect(() => {
     void loadCurrentWeek();
     void loadReleases(20);
@@ -66,59 +106,25 @@ export default function ChangelogPage() {
     void loadReleases(20, true);
   };
 
-  // 收集所有出现过的 type 用于筛选 chip
+  // 收集 release 中出现过的 type 用于筛选 chip
   const { availableTypes } = useMemo(() => {
     const types = new Set<string>();
-    const collect = (entries: ChangelogEntry[]) => {
-      for (const e of entries) {
-        if (e.type) types.add(e.type.toLowerCase());
-      }
-    };
-    if (currentWeek) {
-      currentWeek.fragments.forEach((f) => collect(f.entries));
-    }
     if (releases) {
-      releases.releases.forEach((r) => r.days.forEach((d) => collect(d.entries)));
+      for (const r of releases.releases) {
+        for (const d of r.days) {
+          for (const e of d.entries) {
+            if (e.type) types.add(e.type.toLowerCase());
+          }
+        }
+      }
     }
-    return {
-      availableTypes: Array.from(types).sort(),
-    };
-  }, [currentWeek, releases]);
+    return { availableTypes: Array.from(types).sort() };
+  }, [releases]);
 
   const matchFilter = (e: ChangelogEntry): boolean => {
     if (typeFilter && e.type.toLowerCase() !== typeFilter) return false;
     return true;
   };
-
-  // 本周条目：按日期分组
-  const currentWeekEntries: FlatEntry[] = useMemo(() => {
-    if (!currentWeek) return [];
-    const flat: FlatEntry[] = [];
-    for (const fragment of currentWeek.fragments) {
-      for (const entry of fragment.entries) {
-        if (!matchFilter(entry)) continue;
-        flat.push({ ...entry, date: fragment.date, source: 'fragment', fileName: fragment.fileName });
-      }
-    }
-    return flat;
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [currentWeek, typeFilter]);
-
-  const currentWeekByDate = useMemo(() => {
-    const map = new Map<string, FlatEntry[]>();
-    for (const e of currentWeekEntries) {
-      if (!map.has(e.date)) map.set(e.date, []);
-      map.get(e.date)!.push(e);
-    }
-    return Array.from(map.entries()).sort((a, b) => (a[0] < b[0] ? 1 : -1));
-  }, [currentWeekEntries]);
-
-  const totalCurrentWeek = currentWeekEntries.length;
-
-  // 友好周范围
-  const weekRangeText = currentWeek
-    ? `${currentWeek.weekStart} ~ ${currentWeek.weekEnd}`
-    : '';
 
   // 数据源标签 + 拉取时间显示（github / local / none）
   const sourceLabel = (() => {
@@ -145,20 +151,24 @@ export default function ChangelogPage() {
   })();
 
   return (
-    <div className="flex flex-col gap-5">
-      {/* ── 顶部切换导航 ── */}
+    <WeeklyReportSourcesProvider>
+    <div className="flex flex-col gap-5 h-full min-h-0">
+      {/* ── 顶部切换导航（周报 tab 下把来源 chip 合并到右侧 actions 槽，省一行） ── */}
       <TabBar
         items={[
           { key: 'update_center', label: '更新中心', icon: <Sparkles size={14} /> },
-          { key: 'weekly_reports', label: 'map周报', icon: <FileText size={14} /> },
+          { key: 'weekly_reports', label: '周报', icon: <FileText size={14} /> },
         ]}
         activeKey={activeTab}
         onChange={setActiveTab}
         variant="gold"
+        actions={activeTab === 'weekly_reports' ? <WeeklyReportSourceChips /> : undefined}
       />
+      <WeeklyReportSourceDialog />
 
       {activeTab === 'update_center' && (
-      <div className="flex flex-col gap-5">
+      <div className="flex flex-col gap-5 flex-1 min-h-0 overflow-y-auto pr-1"
+        style={{ overscrollBehavior: 'contain' }}>
       {/* ── Header ───────────────────────────────────────── */}
       <header
         style={glassPanel}
@@ -206,7 +216,7 @@ export default function ChangelogPage() {
           <button
             type="button"
             onClick={handleRefresh}
-            disabled={loadingCurrent || loadingReleases}
+            disabled={loadingReleases}
             className="h-9 px-3 rounded-lg inline-flex items-center gap-1.5 text-[12px] transition-colors disabled:opacity-50"
             style={{
               border: '1px solid rgba(255, 255, 255, 0.12)',
@@ -215,7 +225,7 @@ export default function ChangelogPage() {
             }}
             title="刷新（绕过 5 分钟服务端缓存）"
           >
-            {loadingCurrent || loadingReleases ? <MapSpinner size={14} /> : <RefreshCw size={14} />}
+            {loadingReleases ? <MapSpinner size={14} /> : <RefreshCw size={14} />}
             <span>刷新</span>
           </button>
         </div>
@@ -232,21 +242,21 @@ export default function ChangelogPage() {
               {availableTypes.map((t) => {
                 const meta = getTypeBadge(t);
                 const active = typeFilter === t;
+                const Icon = meta.icon;
                 return (
                   <button
                     key={t}
                     type="button"
                     onClick={() => setTypeFilter(active ? null : t)}
-                    className="h-8 px-4 rounded-lg text-[13px] font-medium transition-all cursor-pointer"
+                    className="h-8 pl-2.5 pr-3 rounded-lg text-[13px] font-medium transition-all cursor-pointer inline-flex items-center gap-1.5"
                     style={{
                       background: active ? meta.bg : 'rgba(255, 255, 255, 0.04)',
                       border: `1px solid ${active ? meta.border : 'rgba(255, 255, 255, 0.10)'}`,
                       color: active ? meta.color : 'var(--text-muted)',
                       lineHeight: '1',
-                      display: 'flex',
-                      alignItems: 'center',
                     }}
                   >
+                    <Icon size={13} />
                     {meta.label}
                   </button>
                 );
@@ -299,64 +309,6 @@ export default function ChangelogPage() {
           ⚠ {error}
         </div>
       )}
-
-      {/* ── 本周更新 ───────────────────────────────────── */}
-      <section style={glassPanel} className="rounded-2xl p-5">
-        <div className="flex items-baseline justify-between gap-3 mb-4">
-          <div className="flex items-baseline gap-3">
-            <h2 className="text-base font-semibold" style={{ color: 'var(--text-primary)' }}>
-              本周更新
-            </h2>
-            {weekRangeText && (
-              <span className="text-[11px] font-mono" style={{ color: 'var(--text-muted)' }}>
-                {weekRangeText}
-              </span>
-            )}
-          </div>
-          <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
-            共 {totalCurrentWeek} 条
-          </span>
-        </div>
-
-        {loadingCurrent && !currentWeek && <MapSectionLoader text="正在加载本周更新…" />}
-
-        {!loadingCurrent && totalCurrentWeek === 0 && (
-          <div
-            className="rounded-xl px-4 py-8 text-center text-[12px]"
-            style={{
-              background: 'rgba(255, 255, 255, 0.02)',
-              border: '1px dashed rgba(255, 255, 255, 0.08)',
-              color: 'var(--text-muted)',
-            }}
-          >
-            {currentWeek?.dataSourceAvailable
-              ? '本周还没有新的更新记录。每次 PR 合入时会自动出现在这里。'
-              : '暂无数据'}
-          </div>
-        )}
-
-        {totalCurrentWeek > 0 && (
-          <div className="flex flex-col gap-5">
-            {currentWeekByDate.map(([date, entries], dateIdx) => (
-              <div key={`${date}-${dateIdx}`}>
-                <div
-                  className="flex items-center gap-2 mb-2 text-[11px] font-mono"
-                  style={{ color: 'var(--text-muted)' }}
-                >
-                  <Calendar size={12} />
-                  {date}
-                  <span style={{ opacity: 0.5 }}>· {entries.length} 条</span>
-                </div>
-                <div className="flex flex-col gap-1.5">
-                  {entries.map((e, idx) => (
-                    <EntryRow key={`${date}-${idx}`} entry={e} />
-                  ))}
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
-      </section>
 
       {/* ── 历史发布 ───────────────────────────────────── */}
       <section style={glassPanel} className="rounded-2xl p-5">
@@ -452,10 +404,18 @@ export default function ChangelogPage() {
                       {visibleDays.map((day, dayIdx) => (
                         <div key={`${day.date}-${dayIdx}`}>
                           <div
-                            className="flex items-center gap-2 mb-1.5 text-[11px] font-mono"
-                            style={{ color: 'var(--text-muted)' }}
+                            className="inline-flex items-center gap-2 mb-2.5 px-2.5 py-1 rounded-md"
+                            style={{
+                              background: 'rgba(255, 255, 255, 0.04)',
+                              border: '1px solid rgba(255, 255, 255, 0.08)',
+                              color: 'var(--text-secondary)',
+                              fontSize: '13px',
+                              fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',
+                              fontWeight: 600,
+                              letterSpacing: '0.02em',
+                            }}
                           >
-                            <Calendar size={11} />
+                            <Calendar size={13} />
                             {day.date}
                           </div>
                           <div className="flex flex-col gap-1.5">
@@ -465,9 +425,11 @@ export default function ChangelogPage() {
                                 entry={{
                                   ...e,
                                   date: day.date,
+                                  commitTimeUtc: day.commitTimeUtc ?? null,
                                   source: 'release',
                                   releaseVersion: release.version,
                                 }}
+                                newCutoff={newBadgeCutoff}
                               />
                             ))}
                           </div>
@@ -485,50 +447,95 @@ export default function ChangelogPage() {
       )}
 
       {activeTab === 'weekly_reports' && (
-        <WeeklyReportsTab />
+        <div className="flex-1 min-h-0 flex flex-col">
+          <WeeklyReportsTab />
+        </div>
       )}
 
     </div>
+    </WeeklyReportSourcesProvider>
   );
 }
 
 /** 单行更新条目 */
-function EntryRow({ entry }: { entry: FlatEntry }) {
+function EntryRow({ entry, newCutoff }: { entry: FlatEntry; newCutoff: number | null }) {
   const meta = getTypeBadge(entry.type);
+  const Icon = meta.icon;
+  const timeText = formatEntryTime(entry.date, entry.commitTimeUtc);
+  const timeTitle = entry.commitTimeUtc
+    ? `GitHub commit 时间：${timeText}`
+    : `提交日期：${entry.date}（无秒级 commit 时间）`;
+  const isFresh = (() => {
+    if (newCutoff === null) return false;
+    if (!entry.commitTimeUtc) return false;
+    const t = Date.parse(entry.commitTimeUtc);
+    if (Number.isNaN(t)) return false;
+    return t > newCutoff;
+  })();
   return (
     <div
-      className="rounded-lg px-3 py-2 flex items-start gap-2.5 transition-colors"
+      className="rounded-lg px-3.5 py-2.5 flex items-center gap-3 transition-colors"
       style={{
         background: 'rgba(255, 255, 255, 0.025)',
         border: '1px solid rgba(255, 255, 255, 0.06)',
       }}
     >
+      {isFresh && (
+        <span
+          className="shrink-0 text-[9px] font-bold tracking-wider px-1.5 h-[18px] rounded inline-flex items-center"
+          style={{
+            background: 'rgba(34, 197, 94, 0.18)',
+            color: '#86efac',
+            border: '1px solid rgba(34, 197, 94, 0.35)',
+            lineHeight: '1.3',
+          }}
+          title="自上次查看更新中心以来有新提交"
+        >
+          NEW
+        </span>
+      )}
       <div
-        className="shrink-0 px-1.5 h-5 rounded inline-flex items-center text-[10px] font-medium mt-0.5"
+        className="shrink-0 inline-flex items-center gap-1 px-2 h-[24px] rounded-md text-[12px] font-semibold"
         style={{
           background: meta.bg,
           color: meta.color,
           border: `1px solid ${meta.border}`,
+          letterSpacing: '0.02em',
         }}
       >
+        <Icon size={11} />
         {meta.label}
       </div>
       <div
-        className="shrink-0 inline-flex items-center gap-1 h-5 px-1.5 rounded text-[10px] font-mono mt-0.5"
+        className="shrink-0 inline-flex items-center gap-1 h-[24px] px-2 rounded-md text-[12px]"
         style={{
-          color: 'var(--text-muted)',
-          background: 'rgba(255, 255, 255, 0.03)',
-          border: '1px solid rgba(255, 255, 255, 0.06)',
+          color: 'var(--text-secondary)',
+          background: 'rgba(255, 255, 255, 0.04)',
+          border: '1px solid rgba(255, 255, 255, 0.08)',
+          fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',
+          fontWeight: 500,
         }}
       >
-        <Tag size={9} />
+        <Tag size={11} />
         {entry.module}
       </div>
       <div
-        className="text-[12.5px] leading-relaxed flex-1"
-        style={{ color: 'var(--text-secondary)' }}
+        className="text-[13px] leading-relaxed flex-1 truncate"
+        style={{ color: 'var(--text-secondary)', minWidth: 0 }}
+        title={entry.description}
       >
         {entry.description}
+      </div>
+      <div
+        className="shrink-0 text-[12px]"
+        style={{
+          color: 'var(--text-muted)',
+          fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',
+          fontVariantNumeric: 'tabular-nums',
+        }}
+        title={timeTitle}
+      >
+        {timeText}
       </div>
     </div>
   );

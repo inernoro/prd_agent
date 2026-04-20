@@ -36,6 +36,7 @@
     "katex": "^0.16.40",
     "lexical": "^0.39.0",
     "lucide-react": "^0.468.0",
+    "mermaid": "^11.14.0",
     "motion": "^12.34.3",
     "qrcode.react": "^4.2.0",
     "react": "^18.3.1",

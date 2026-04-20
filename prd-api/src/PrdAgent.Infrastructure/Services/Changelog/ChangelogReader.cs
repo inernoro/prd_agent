@@ -37,6 +37,12 @@ public sealed class ChangelogDay
 {
     public DateOnly Date { get; set; }
     public List<ChangelogEntry> Entries { get; set; } = new();
+    /// <summary>
+    /// 该日期对应的最新 GitHub commit 时间（秒级精度，UTC）。
+    /// 通过 GitHub Commits API 获取 CHANGELOG.md 的提交历史后，按日期取该日最后一次提交。
+    /// 仅 GitHub 源可用；本地源无法获取 commit 时间时为 null。
+    /// </summary>
+    public DateTime? CommitTimeUtc { get; set; }
 }
 
 /// <summary>
@@ -580,7 +586,86 @@ public sealed class ChangelogReader : IChangelogReader
 
         view.DataSourceAvailable = true;
         view.Releases = ParseChangelogMarkdown(content, limit);
+
+        // 额外抓一次 CHANGELOG.md 的 commit 历史，为每个日期段落附上秒级提交时间。
+        // CHANGELOG 的 ### YYYY-MM-DD 日期绝大多数不会和 commit 日期严格相等
+        //（比如碎片合并是几天后才发生），所以用"首个 commit.cnDate >= 日期段"
+        // 的近似匹配，认为那次 commit 就是把这些条目写进 CHANGELOG 的时刻。
+        try
+        {
+            var commits = await FetchChangelogCommitTimesAsync(client).ConfigureAwait(false);
+            if (commits.Count > 0)
+            {
+                // 升序：commitTime 越早的越前
+                commits.Sort((a, b) => a.CommitTimeUtc.CompareTo(b.CommitTimeUtc));
+                foreach (var release in view.Releases)
+                foreach (var day in release.Days)
+                {
+                    foreach (var c in commits)
+                    {
+                        if (c.CnDate >= day.Date)
+                        {
+                            day.CommitTimeUtc = c.CommitTimeUtc;
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "[Changelog] 拉取 CHANGELOG.md commit 历史失败（降级为纯日期展示）");
+        }
+
         return view;
+    }
+
+    /// <summary>commit 条目：UTC 时间 + 按 CN(UTC+8) 换算出的日期（用于匹配 CHANGELOG ### 日期段）</summary>
+    private sealed record ChangelogCommit(DateOnly CnDate, DateTime CommitTimeUtc);
+
+    /// <summary>
+    /// 拉取 CHANGELOG.md 文件的 commit 历史。返回列表（caller 负责排序），
+    /// 每条含 UTC 原始提交时间 + 按 CN(UTC+8) 时区换算的日期。
+    /// 单次 API 调用（per_page=100），覆盖最近 ~100 个 PR 足够绝大多数场景。
+    /// </summary>
+    private async Task<List<ChangelogCommit>> FetchChangelogCommitTimesAsync(HttpClient client)
+    {
+        var result = new List<ChangelogCommit>();
+        var owner = GetGitHubOwner();
+        var repo = GetGitHubRepo();
+        var branch = GetGitHubBranch();
+        var apiBase = GetGitHubApiBase();
+        var url = $"{apiBase}/repos/{owner}/{repo}/commits?path=CHANGELOG.md&sha={branch}&per_page=100";
+
+        using var req = CreateGitHubApiRequest(HttpMethod.Get, url);
+        using var resp = await client.SendAsync(req).ConfigureAwait(false);
+        if (!resp.IsSuccessStatusCode)
+        {
+            _logger.LogWarning("[Changelog] GitHub Commits API 失败 {Url} status={Status}", url, (int)resp.StatusCode);
+            return result;
+        }
+
+        var json = await resp.Content.ReadAsStringAsync().ConfigureAwait(false);
+        using var doc = JsonDocument.Parse(json);
+        if (doc.RootElement.ValueKind != JsonValueKind.Array) return result;
+
+        var cnOffset = TimeSpan.FromHours(8);
+        foreach (var item in doc.RootElement.EnumerateArray())
+        {
+            if (!item.TryGetProperty("commit", out var commitEl)) continue;
+            if (!commitEl.TryGetProperty("committer", out var committerEl)) continue;
+            if (!committerEl.TryGetProperty("date", out var dateEl)) continue;
+            var iso = dateEl.GetString();
+            if (string.IsNullOrWhiteSpace(iso)) continue;
+            if (!DateTime.TryParse(
+                    iso, CultureInfo.InvariantCulture,
+                    DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal,
+                    out var commitTimeUtc))
+                continue;
+            var cnDate = DateOnly.FromDateTime(commitTimeUtc + cnOffset);
+            result.Add(new ChangelogCommit(cnDate, commitTimeUtc));
+        }
+        return result;
     }
 
     // ── 解析逻辑（local 与 github 共用） ──────────────────────────────

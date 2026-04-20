@@ -1082,6 +1082,12 @@ export const api = {
       if (force) params.push('force=true');
       return `/api/changelog/releases${params.length ? `?${params.join('&')}` : ''}`;
     },
+    sources: {
+      list: () => '/api/changelog/sources',
+      create: () => '/api/changelog/sources',
+      update: (id: string) => `/api/changelog/sources/${id}`,
+      delete: (id: string) => `/api/changelog/sources/${id}`,
+    },
   },
 
   // ============ Emergence Explorer 涌现探索器 ============

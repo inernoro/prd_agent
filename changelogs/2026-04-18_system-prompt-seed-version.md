@@ -1,1 +1,0 @@
-| fix | prd-api | SystemPromptSettings 新增 SeededVersion 字段：SystemPromptService 检测到旧种子版本时自动用 PromptManager 最新默认值覆盖，解决 snapshot-fallback 陷阱（代码 PR 改了默认提示词，但老环境因首次启动已把旧默认持久化到 MongoDB 而继续返回旧文案）。管理员通过 PUT 保存的 doc 会清空 SeededVersion，永远保留，不被自动升级覆盖

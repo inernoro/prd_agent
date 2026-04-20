@@ -213,6 +213,7 @@ cd prd-api && dotnet build --no-restore 2>&1 | grep -E "error CS|warning CS" | h
 | `llm-gateway.md` | `prd-api/src/**/*.cs` | 所有 LLM 调用必须通过 ILlmGateway |
 | `frontend-architecture.md` | `**/*.{ts,tsx}` | 前端无业务状态 + SSOT + 组件复用 + 默认可编辑 |
 | `frontend-modal.md` | `prd-admin/src/**/*.tsx`, `prd-desktop/src/**/*.tsx` | 模态框 3 硬约束：inline style 高度 + createPortal + min-h:0 |
+| `full-height-layout.md` | `prd-admin/src/pages/**/*.tsx`, `prd-desktop/src/pages/**/*.tsx` | 宽屏页面必须撑满视口：根 `h-full min-h-0 flex flex-col`，禁止 `calc(100vh - Npx)` 魔数，滚动发生在最近内容层 |
 | `server-authority.md` | `prd-api/src/**/*.cs` | CancellationToken.None + Run/Worker + SSE 心跳 |
 | `doc-types.md` | `doc/**/*.md` | 6 种文档前缀（spec/design/plan/rule/guide/report） |
 | `marketplace.md` | 市场相关文件 | CONFIG_TYPE_REGISTRY + IForkable 白名单复制 |

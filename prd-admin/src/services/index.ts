@@ -1349,6 +1349,10 @@ export const channelService: IChannelService = new ChannelService();
 export {
   getCurrentWeekChangelog,
   getChangelogReleases,
+  listChangelogReportSources,
+  createChangelogReportSource,
+  updateChangelogReportSource,
+  deleteChangelogReportSource,
 } from '@/services/real/changelog';
 export type {
   ChangelogChangeType,
@@ -1358,6 +1362,8 @@ export type {
   ChangelogDay,
   ChangelogRelease,
   ReleasesView,
+  ChangelogReportSource,
+  ChangelogReportSourceUpsert,
 } from '@/services/real/changelog';
 
 // AI Toolbox 百宝箱

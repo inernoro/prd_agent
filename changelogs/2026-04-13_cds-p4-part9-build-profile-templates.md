@@ -1,1 +1,0 @@
-| feat | cds | P4 Part 9 (MECE B4) — BuildProfile 添加表单顶部新增"快速开始"模板栏：5 个一键模板按钮（Node.js / .NET / Python / Go / Static），点击自动填充 id+name+icon+image+workDir+port+install+build+run 全部字段，含 install/build 命令时自动展开高级选项，活跃模板按钮高亮，用户从 7+ 字段填写降为 1 click + 微调 |

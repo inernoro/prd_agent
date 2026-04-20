@@ -1,2 +1,0 @@
-| test | cds | 新增 `tests/integration/view-parity.smoke.test.ts` 端到端 smoke test —— 14 条断言真实启动 Express app + 命中列表视图和拓扑视图共用的所有 API 路径(/branches、/build-profiles、/infra、/routing-rules、/branches/:id/profile-overrides GET/PUT/DELETE、/github/oauth/status、/projects)。跑下来实际抓出 3 个假设错误(build-profiles 会 mask secret-like key / infra 响应是 `{services:[...]}` / POST /branches 需要真 git 仓库),全部已修,现在 574/574 绿 |
-| docs | cds | 新增 `doc/guide.cds-view-parity.md` —— 列表视图 16 个动作 × 拓扑视图 9 个 tab + 11 个外壳元素的功能对齐全表;标出 6 个剩余 gap(GAP-11..16)留给未来对齐 |
