@@ -610,7 +610,7 @@ public class ReviewAgentController : ControllerBase
                 sb.AppendLine("**第 1 步：读出用户在表格里的实际勾选**");
                 sb.AppendLine("- `involvedChecked`：用户在「是否涉及」列勾的是 `yes` / `no` / `none`（找不到这一行 或 两个框都没勾）");
                 sb.AppendLine("- `coverageChecked`：用户在「方案是否包含」列勾的是 `yes` / `no` / `none`");
-                sb.AppendLine("- 注意：表格可能用 `[√]`、`[x]`、`☑`、`✓`、`■`、`【是】`、`(是)`、加粗的「是/否」、单元格背景色、明确的"是/否"汉字 等任意方式表示勾选。多种线索都要识别。");
+                sb.AppendLine("- 注意：表格可能用 `[√]`、`[x]`、`☑`、`✓`、`■`、`【是】`、`(是)`、加粗的「是/否」、单元格背景色、明确的「是/否」汉字 等任意方式表示勾选。多种线索都要识别。");
                 sb.AppendLine("- 如果方案文档里**没有这张清单表格**，所有项的 involvedChecked 与 coverageChecked 都填 `none`。");
                 sb.AppendLine();
                 sb.AppendLine("**第 2 步：反作弊核查**（仅当 `involvedChecked=yes` 且 `coverageChecked=yes` 时执行）");
