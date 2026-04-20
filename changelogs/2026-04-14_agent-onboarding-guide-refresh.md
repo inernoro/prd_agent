@@ -1,1 +1,0 @@
-| docs | doc | 刷新「Agent 开发入门指南」：覆盖 3-27 至 4-14 的 532 个提交带来的能力变化——新增阶段 -1（涌现发散）和阶段 5（完工总结）、补齐 8 个新技能（`/emerge` `/plan-first` `/uat` `/dev-report` `/create-executor` `/bridge` `/deep-trace` `/fix-surface`）、新增"涌现思维"章节阐述反向自洽与三维涌现模型、Agent 速览补 review-agent + pr-review + 转录工作台、铁律从 5 条扩展到 7 条（导航注册默认百宝箱 + 无根之木禁令）、术语表新增 12 个新概念 |
