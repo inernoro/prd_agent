@@ -723,6 +723,7 @@ export const api = {
   // ============ Marketplace Skills 海鲜市场技能（zip 上传） ============
   marketplaceSkills: {
     list: () => '/api/marketplace/skills',
+    favorites: () => '/api/marketplace/skills/favorites',
     tags: () => '/api/marketplace/skills/tags',
     upload: () => '/api/marketplace/skills/upload',
     fork: (id: string) => `/api/marketplace/skills/${id}/fork`,

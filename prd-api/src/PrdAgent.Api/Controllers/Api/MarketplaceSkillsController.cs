@@ -96,6 +96,21 @@ public class MarketplaceSkillsController : ControllerBase
         return Ok(ApiResponse<object>.Ok(new { items = items.Select(s => ToDto(s, userId)) }));
     }
 
+    /// <summary>
+    /// 当前用户收藏的技能列表（供「我的空间 → 我收藏的技能」区块消费）
+    /// </summary>
+    [HttpGet("favorites")]
+    public async Task<IActionResult> MyFavorites(CancellationToken ct)
+    {
+        var userId = this.GetRequiredUserId();
+        var items = await _db.MarketplaceSkills
+            .Find(x => x.IsPublic && x.FavoritedByUserIds.Contains(userId))
+            .SortByDescending(x => x.UpdatedAt)
+            .Limit(50)
+            .ToListAsync(ct);
+        return Ok(ApiResponse<object>.Ok(new { items = items.Select(s => ToDto(s, userId)) }));
+    }
+
     [HttpGet("tags")]
     public async Task<IActionResult> Tags(CancellationToken ct)
     {

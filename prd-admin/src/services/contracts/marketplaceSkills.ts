@@ -49,6 +49,11 @@ export type ListMarketplaceSkillsContract = (input: {
   tag?: string;
 }) => Promise<ApiResponse<{ items: MarketplaceSkillDto[] }>>;
 
+/** 当前用户收藏的技能列表（供"我的空间"消费） */
+export type ListMyFavoriteSkillsContract = () => Promise<
+  ApiResponse<{ items: MarketplaceSkillDto[] }>
+>;
+
 export type GetMarketplaceSkillTagsContract = () => Promise<
   ApiResponse<{ tags: MarketplaceSkillTagCount[] }>
 >;

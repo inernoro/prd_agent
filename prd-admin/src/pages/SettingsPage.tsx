@@ -6,7 +6,7 @@ import type { TabBarItem } from '@/components/design/TabBar';
 import { Button } from '@/components/design/Button';
 import { useNavOrderStore } from '@/stores/navOrderStore';
 import { useAuthStore } from '@/stores/authStore';
-import { GripVertical, Palette, RefreshCw, RotateCcw, Image, UserCog, Database, ListOrdered, Zap, Sparkles } from 'lucide-react';
+import { GripVertical, Palette, RefreshCw, RotateCcw, Image, UserCog, UserCircle2, Database, ListOrdered, Zap, Sparkles } from 'lucide-react';
 import { MapSpinner } from '@/components/ui/VideoLoader';
 import * as LucideIcons from 'lucide-react';
 import { ThemeSkinEditor } from '@/pages/settings/ThemeSkinEditor';
@@ -15,6 +15,7 @@ import AuthzPage from '@/pages/AuthzPage';
 import DataManagePage from '@/pages/DataManagePage';
 import { UpdateAccelerationSettings } from '@/pages/settings/UpdateAccelerationSettings';
 import { UserSpaceSettings } from '@/pages/settings/UserSpaceSettings';
+import { AccountSettings } from '@/pages/settings/AccountSettings';
 
 interface NavItem {
   key: string;
@@ -261,6 +262,7 @@ export default function SettingsPage() {
   const tabs = useMemo(() => {
     const list: TabBarItem[] = [
       { key: 'user-space', label: '我的空间', icon: <Sparkles size={14} /> },
+      { key: 'account', label: '账户管理', icon: <UserCircle2 size={14} /> },
       { key: 'skin', label: '皮肤设置', icon: <Palette size={14} /> },
       { key: 'nav-order', label: '导航顺序', icon: <ListOrdered size={14} /> },
     ];
@@ -298,6 +300,7 @@ export default function SettingsPage() {
 
       <div className="flex-1 min-h-0">
         {activeTab === 'user-space' && <UserSpaceSettings />}
+        {activeTab === 'account' && <AccountSettings />}
         {activeTab === 'skin' && <SkinSettings />}
         {activeTab === 'nav-order' && <NavOrderSettings />}
         {activeTab === 'assets' && <AssetsManagePage />}

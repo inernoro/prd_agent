@@ -16,7 +16,6 @@ import {
   PenLine,
   Plug,
   UserCog,
-  User,
   Settings,
   Bell,
   CheckCircle2,
@@ -997,13 +996,20 @@ export default function AppShell() {
                   style={{ background: 'linear-gradient(90deg, transparent 0%, rgba(255, 255, 255, 0.08) 20%, rgba(255, 255, 255, 0.08) 80%, transparent 100%)' }}
                 />
 
+                {/* 我的空间：顶部入口。账户管理已合并到 /settings?tab=account，不再出现在此菜单 */}
                 <DropdownMenu.Item
                   className="flex items-center gap-3 px-3 py-2.5 rounded-[10px] cursor-pointer outline-none transition-colors hover:bg-white/6"
                   style={{ color: 'var(--text-secondary)' }}
-                  onSelect={() => setAvatarOpen(true)}
+                  onSelect={() => navigate('/settings?tab=user-space')}
                 >
-                  <User size={16} className="shrink-0" />
-                  <span className="text-[13px]">账户管理</span>
+                  <Sparkles size={16} className="shrink-0" />
+                  <span className="text-[13px]">我的空间</span>
+                  <span
+                    className="ml-auto text-[10px]"
+                    style={{ color: 'var(--text-muted)' }}
+                  >
+                    常用 / 最近 / 置顶
+                  </span>
                 </DropdownMenu.Item>
 
                 <DropdownMenu.Item
@@ -1050,21 +1056,6 @@ export default function AppShell() {
                 >
                   <Database size={16} className="shrink-0" />
                   <span className="text-[13px]">数据分享</span>
-                </DropdownMenu.Item>
-
-                <DropdownMenu.Item
-                  className="flex items-center gap-3 px-3 py-2.5 rounded-[10px] cursor-pointer outline-none transition-colors hover:bg-white/6"
-                  style={{ color: 'var(--text-secondary)' }}
-                  onSelect={() => navigate('/settings?tab=user-space')}
-                >
-                  <Sparkles size={16} className="shrink-0" />
-                  <span className="text-[13px]">我的空间</span>
-                  <span
-                    className="ml-auto text-[10px]"
-                    style={{ color: 'var(--text-muted)' }}
-                  >
-                    常用 / 最近 / 置顶
-                  </span>
                 </DropdownMenu.Item>
 
                 {/* 注意：工具类菜单项（网页托管/知识库/涌现/提示词/实验室/自动化/快捷指令/PR 审查/请求日志 等）

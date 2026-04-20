@@ -8,6 +8,7 @@ import type {
   ForkMarketplaceSkillContract,
   GetMarketplaceSkillTagsContract,
   ListMarketplaceSkillsContract,
+  ListMyFavoriteSkillsContract,
   MarketplaceSkillDto,
   UnfavoriteMarketplaceSkillContract,
   UploadMarketplaceSkillContract,
@@ -31,6 +32,13 @@ export const listMarketplaceSkillsReal: ListMarketplaceSkillsContract = async (i
  */
 export const getMarketplaceSkillTagsReal: GetMarketplaceSkillTagsContract = async () => {
   return await apiRequest(api.marketplaceSkills.tags(), { method: 'GET' });
+};
+
+/**
+ * 当前用户收藏的技能列表（供"我的空间 → 我收藏的技能"消费）
+ */
+export const listMyFavoriteSkillsReal: ListMyFavoriteSkillsContract = async () => {
+  return await apiRequest(api.marketplaceSkills.favorites(), { method: 'GET' });
 };
 
 /**

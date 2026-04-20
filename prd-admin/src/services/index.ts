@@ -1291,6 +1291,7 @@ import type {
   ForkMarketplaceSkillContract,
   GetMarketplaceSkillTagsContract,
   ListMarketplaceSkillsContract,
+  ListMyFavoriteSkillsContract,
   UnfavoriteMarketplaceSkillContract,
   UploadMarketplaceSkillContract,
 } from '@/services/contracts/marketplaceSkills';
@@ -1300,10 +1301,12 @@ import {
   forkMarketplaceSkillReal,
   getMarketplaceSkillTagsReal,
   listMarketplaceSkillsReal,
+  listMyFavoriteSkillsReal,
   unfavoriteMarketplaceSkillReal,
   uploadMarketplaceSkillReal,
 } from '@/services/real/marketplaceSkills';
 export const listMarketplaceSkills: ListMarketplaceSkillsContract = withAuth(listMarketplaceSkillsReal);
+export const listMyFavoriteSkills: ListMyFavoriteSkillsContract = withAuth(listMyFavoriteSkillsReal);
 export const getMarketplaceSkillTags: GetMarketplaceSkillTagsContract = withAuth(getMarketplaceSkillTagsReal);
 export const uploadMarketplaceSkill: UploadMarketplaceSkillContract = withAuth(uploadMarketplaceSkillReal);
 export const forkMarketplaceSkill: ForkMarketplaceSkillContract = withAuth(forkMarketplaceSkillReal);

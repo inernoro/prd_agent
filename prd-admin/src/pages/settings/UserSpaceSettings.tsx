@@ -30,6 +30,7 @@ import {
 } from '@/stores/agentSwitcherStore';
 import { useAuthStore } from '@/stores/authStore';
 import { getLauncherCatalog, type LauncherItem } from '@/lib/launcherCatalog';
+import { MyFavoriteSkills } from './MyFavoriteSkills';
 
 function getIcon(name: string, size = 16) {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -308,6 +309,9 @@ export function UserSpaceSettings() {
           </Button>
         </div>
       </GlassCard>
+
+      {/* 我收藏的技能（从海鲜市场心标的技能包） */}
+      <MyFavoriteSkills />
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
         {/* 置顶 */}
