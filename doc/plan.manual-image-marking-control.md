@@ -16,9 +16,10 @@ branch: claude/manual-image-marking-control-GALGQ
 
 | 阶段 | 内容 | 状态 | 落地位置 |
 |------|------|------|----------|
-| **Phase 1** | 位置策略选择器（自动 / 每大标题 / 每小标题 / 尊重用户锚点）+ 用户锚点（文章内 `[IMG]` 占位符） | ✅ 已完成（2026-04-20） | `ArticleIllustrationEditorPage.tsx` 右侧配置栏第 4 个 pill |
-| **Phase 2** | 策略持久化下沉到 workspace（目前存 sessionStorage），补后端 `positionStrategy` 字段 | 🔲 待启动 | `ArticleIllustrationWorkflow.cs` + `ImageMasterController.GenerateArticleMarkers` |
-| **Phase 3** | 段落级操作：hover 某段 → 显示 `+ 加标记 / ✕ 删除标记 / ↻ 重生成`；新增 3 个端点 `POST/DELETE/regenerate markers/{markerIndex}` | 🔲 待启动 | `ImageMasterController.cs` 新增 3 个端点 + 前端段落悬浮菜单 |
+| **Phase 1** | 位置策略选择器（自动 / 每大标题 / 每小标题 / 尊重用户锚点） | ✅ 已完成（2026-04-20） | `ArticleIllustrationEditorPage.tsx` 右侧配置栏第 4 个 pill |
+| **Phase 1.5** | 首次用户教程气泡（每账户一次，点「知道啦」后永不再弹） + 段落左侧 gutter 点击加锚点 + 段落右键菜单「在上方/下方插入配图」 + 相邻锚点段落绿色边框视觉反馈 | ✅ 已完成（2026-04-20） | 同上文件 + 后端 `LiteraryAgentPreferences.AnchorTutorialSeen` 字段 |
+| **Phase 2** | 策略持久化下沉到 workspace（目前存 sessionStorage），补后端 `positionStrategy` 字段；服务端 `ArticleMarkerExtractor` 对 `[IMG]` 占位符做强约束识别（绕过 LLM 随机性） | 🔲 待启动 | `ArticleIllustrationWorkflow.cs` + `ImageMasterController.GenerateArticleMarkers` |
+| **Phase 3** | 生成后段落级操作：hover 某段 → 显示 `+ 加标记 / ✕ 删除标记 / ↻ 重生成`；新增 3 个端点 `POST/DELETE/regenerate markers/{markerIndex}` | 🔲 待启动 | `ImageMasterController.cs` 新增 3 个端点 + 前端段落悬浮菜单 |
 
 ## Phase 1 落地记录（2026-04-20）
 
@@ -38,7 +39,26 @@ branch: claude/manual-image-marking-control-GALGQ
 - **无后端改动**：现有 `userInstruction` 通道已支持任意文本，追加策略提示词即可。
 - **尊重现有提示词模板**：用户选中的提示词模板内容依然完整发送，只是在前面多一段「位置策略」指令。
 
-### 未解决 / 下次别忘了
+## Phase 1.5 落地记录（2026-04-20）
+
+### 做了什么
+
+针对用户反馈「用户锚点要更清晰」补充了三件事：
+
+1. **一次性教程气泡**：用户首次进入编辑页时，右下角弹出一张玻璃卡片，解释「位置策略」「gutter 点锚点」「右键菜单」三种操作。点「知道啦」→ 后端 `LiteraryAgentPreferences.AnchorTutorialSeen = true`，之后永不再弹（跨会话、跨设备）。
+2. **段落 gutter 快速加锚点**：phase=1 编辑阶段改为按空行分段逐段渲染。每段左侧有 24px gutter，hover 时出现绿色「+」按钮，点一下在此段**上方**插入 `[IMG]` 锚点段落，并自动切到「尊重用户锚点」策略。
+3. **右键菜单**：在任一非锚点段落上右键 → 弹出「在此段上方插入配图 / 在此段下方插入配图」。菜单会在点击外部、滚动时自动收起。
+4. **锚点视觉反馈（框框反应）**：
+   - 锚点本身渲染为绿色 dashed pill「📍 此处将插入配图」，带 ✕ 移除按钮
+   - 紧邻锚点的段落获得绿色实线边框 + 浅绿背景，明确告诉用户「这段上/下方会插图」
+
+### 为什么这样做
+
+- **gutter + 右键菜单双通道**：gutter 面向"我只想快速在段上方打点"的用户；右键面向"我要精确控制上/下方"的用户。用户 2、3 条诉求同时覆盖。
+- **持久化用 `LiteraryAgentPreferences`**：教程 seen 状态不能用 sessionStorage（跨 tab 就丢了），必须走后端用户偏好。顺手把字段加进已有的 `LiteraryAgentPreferences` 对象，走现有 `updateLiteraryAgentPreferences` 通道，零端点新增。
+- **按段落拆分 + 逐段 ReactMarkdown**：比引入 rehype 插件映射源码位置简单得多；代价是单独渲染某些跨段结构（如 setext 标题）会被打散，但对绝大多数文章（paragraph/heading/list/blockquote 为主）视觉一致。
+
+### 未解决 / 下次别忘了（沿用下方原列表）
 
 1. **策略未持久化到 workspace**：换浏览器/换设备会回到「自动」。Phase 2 要把 `PositionStrategy` 字段加到 `ArticleIllustrationWorkflow` 并走 `updateVisualAgentWorkspace` 持久化。
 2. **用户锚点识别目前靠 LLM 自觉**：LLM 可能会忽略 `[IMG]` 占位符。Phase 2 要在服务端 `ArticleMarkerExtractor` 预扫描占位符，如命中则直接强制插入 `[插图]`，绕过 LLM 随机性。

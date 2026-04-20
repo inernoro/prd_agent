@@ -85,6 +85,45 @@ type MarkerRunStatus = 'idle' | 'parsing' | 'parsed' | 'running' | 'done' | 'err
 // Phase 1: 位置策略。后续阶段计划见 doc/plan.manual-image-marking-control.md
 type PositionStrategy = 'auto' | 'per-h1' | 'per-h2' | 'user-anchor';
 
+// 用户锚点占位符：匹配 [IMG] / [配图] / 【插图位置】（整行）
+const USER_ANCHOR_LINE_REGEX = /^\s*(?:\[IMG\]|\[配图\]|【插图位置】)\s*$/;
+
+function splitParagraphs(content: string): string[] {
+  const blocks: string[] = [];
+  let current: string[] = [];
+  for (const line of (content ?? '').split('\n')) {
+    if (line.trim() === '') {
+      if (current.length) { blocks.push(current.join('\n')); current = []; }
+    } else {
+      current.push(line);
+    }
+  }
+  if (current.length) blocks.push(current.join('\n'));
+  return blocks;
+}
+
+function joinParagraphs(blocks: string[]): string {
+  return blocks.join('\n\n');
+}
+
+function isAnchorParagraph(text: string): boolean {
+  return USER_ANCHOR_LINE_REGEX.test(text.trim());
+}
+
+function insertAnchorAt(content: string, insertAt: number): string {
+  const blocks = splitParagraphs(content);
+  const clamped = Math.max(0, Math.min(insertAt, blocks.length));
+  blocks.splice(clamped, 0, '[IMG]');
+  return joinParagraphs(blocks);
+}
+
+function removeParagraphAt(content: string, pIdx: number): string {
+  const blocks = splitParagraphs(content);
+  if (pIdx < 0 || pIdx >= blocks.length) return content;
+  blocks.splice(pIdx, 1);
+  return joinParagraphs(blocks);
+}
+
 const POSITION_STRATEGY_OPTIONS: Array<{ value: PositionStrategy; label: string; hint: string }> = [
   { value: 'auto', label: '自动', hint: '' },
   {
@@ -632,6 +671,25 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
     if (workspaceId) sessionStorage.setItem(`articleMarkerStrategy:${workspaceId}`, s);
   }, [workspaceId]);
 
+  // Phase 1: 锚点教程气泡（每个用户一次，点击"知道啦"后不再弹出）
+  // null = 未加载；false = 未看过 → 应展示；true = 已看过 → 不展示
+  const [anchorTutorialSeen, setAnchorTutorialSeen] = useState<boolean | null>(null);
+
+  // Phase 1: 段落右键上下文菜单
+  const [paragraphCtxMenu, setParagraphCtxMenu] = useState<{
+    visible: boolean; x: number; y: number; pIdx: number; isAnchor: boolean;
+  }>({ visible: false, x: 0, y: 0, pIdx: -1, isAnchor: false });
+  useEffect(() => {
+    if (!paragraphCtxMenu.visible) return;
+    const close = () => setParagraphCtxMenu(m => ({ ...m, visible: false }));
+    window.addEventListener('click', close);
+    window.addEventListener('scroll', close, true);
+    return () => {
+      window.removeEventListener('click', close);
+      window.removeEventListener('scroll', close, true);
+    };
+  }, [paragraphCtxMenu.visible]);
+
   // 选择/取消提示词时同步持久化到后端
   const setSelectedPrompt = useCallback((prompt: PromptTemplate | null) => {
     setSelectedPromptRaw(prompt);
@@ -686,6 +744,9 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
         const prefs = prefsRes.data.literaryAgentPreferences;
         setImageModelPrefId(prefs.imageModelId ?? '');
         setChatModelPrefId(prefs.chatModelId ?? '');
+        setAnchorTutorialSeen(!!prefs.anchorTutorialSeen);
+      } else {
+        setAnchorTutorialSeen(false);
       }
       setModelPrefReady(true);
       setModelsLoading(false);
@@ -1148,6 +1209,29 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
   // 进入预览阶段（保留 phase=editing，表示“已上传可生成标记”）
   const handleEnterPreview = useCallback(() => {
     setPhase(1); // Editing
+  }, []);
+
+  // Phase 1: 关闭锚点教程气泡（点"知道啦"后不再弹出）
+  const dismissAnchorTutorial = useCallback(() => {
+    setAnchorTutorialSeen(true);
+    void updateLiteraryAgentPreferences({
+      imageModelId: imageModelPrefId || undefined,
+      chatModelId: chatModelPrefId || undefined,
+      anchorTutorialSeen: true,
+    }).catch(() => {});
+  }, [imageModelPrefId, chatModelPrefId]);
+
+  // Phase 1: 段落级锚点操作（仅 phase=1 编辑阶段使用）
+  const addAnchorAbove = useCallback((pIdx: number) => {
+    setArticleContent(prev => insertAnchorAt(prev, pIdx));
+    setPositionStrategy('user-anchor');
+  }, [setPositionStrategy]);
+  const addAnchorBelow = useCallback((pIdx: number) => {
+    setArticleContent(prev => insertAnchorAt(prev, pIdx + 1));
+    setPositionStrategy('user-anchor');
+  }, [setPositionStrategy]);
+  const removeAnchorParagraph = useCallback((pIdx: number) => {
+    setArticleContent(prev => removeParagraphAt(prev, pIdx));
   }, []);
 
   const handleGenerateMarkers = async () => {
@@ -2569,25 +2653,121 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
               </div>
             )}
 
-            {/* 预览阶段：渲染原文（不提供手动编辑入口） */}
+            {/* 预览阶段：按段落渲染，左侧 gutter 可打锚点，右键菜单可在上/下方插入配图 */}
             {phase === 1 && ( // Editing
               <div className="p-4 relative">
                 <div className="prd-md">
-                  <ReactMarkdown
-                    remarkPlugins={[remarkGfm, remarkBreaks]}
-                    rehypePlugins={[rehypeRaw]}
-                    components={{
-                      p: ({ node: _node, children, ...props }) => <p {...props}>{highlightChildren(children)}</p>,
-                      li: ({ node: _node, children, ...props }) => <li {...props}>{highlightChildren(children)}</li>,
-                      blockquote: ({ node: _node, children, ...props }) => <blockquote {...props}>{highlightChildren(children)}</blockquote>,
-                      h1: ({ node: _node, children, ...props }) => <h1 {...props}>{highlightChildren(children)}</h1>,
-                      h2: ({ node: _node, children, ...props }) => <h2 {...props}>{highlightChildren(children)}</h2>,
-                      h3: ({ node: _node, children, ...props }) => <h3 {...props}>{highlightChildren(children)}</h3>,
-                    }}
-                  >
-                    {leftPreviewMarkdown}
-                  </ReactMarkdown>
+                  {(() => {
+                    const paragraphs = splitParagraphs(articleContent);
+                    return paragraphs.map((text, pIdx) => {
+                      const anchored = isAnchorParagraph(text);
+                      const prevIsAnchor = pIdx > 0 && isAnchorParagraph(paragraphs[pIdx - 1]);
+                      const nextIsAnchor = pIdx < paragraphs.length - 1 && isAnchorParagraph(paragraphs[pIdx + 1]);
+                      const hasAdjacentAnchor = prevIsAnchor || nextIsAnchor;
+
+                      if (anchored) {
+                        // 锚点占位：小型 pill 展示，带移除按钮
+                        return (
+                          <div
+                            key={`anchor-${pIdx}`}
+                            className="group flex items-center gap-2 my-2"
+                            style={{ paddingLeft: 28 }}
+                          >
+                            <div
+                              className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-medium"
+                              style={{
+                                background: 'rgba(52, 211, 153, 0.10)',
+                                border: '1px dashed rgba(52, 211, 153, 0.45)',
+                                color: 'rgba(52, 211, 153, 0.95)',
+                              }}
+                            >
+                              <MapPin size={11} />
+                              <span>此处将插入配图</span>
+                              <button
+                                type="button"
+                                onClick={() => removeAnchorParagraph(pIdx)}
+                                className="ml-1 opacity-60 hover:opacity-100 transition-opacity"
+                                title="移除此锚点"
+                                style={{ color: 'rgba(52, 211, 153, 0.95)' }}
+                              >
+                                <Trash2 size={11} />
+                              </button>
+                            </div>
+                          </div>
+                        );
+                      }
+
+                      return (
+                        <div
+                          key={`p-${pIdx}`}
+                          className="group relative flex items-stretch"
+                          onContextMenu={(e) => {
+                            e.preventDefault();
+                            setParagraphCtxMenu({
+                              visible: true,
+                              x: e.clientX,
+                              y: e.clientY,
+                              pIdx,
+                              isAnchor: false,
+                            });
+                          }}
+                        >
+                          {/* 左侧 gutter：悬停显示"+"加锚点 */}
+                          <button
+                            type="button"
+                            onClick={() => addAnchorAbove(pIdx)}
+                            className="shrink-0 w-6 flex items-start justify-center pt-2 opacity-0 group-hover:opacity-100 transition-opacity"
+                            title="在此段上方插入配图锚点"
+                            style={{ cursor: 'pointer' }}
+                          >
+                            <span
+                              className="inline-flex items-center justify-center rounded-full w-4 h-4 text-[10px]"
+                              style={{
+                                background: 'rgba(52, 211, 153, 0.15)',
+                                color: 'rgba(52, 211, 153, 0.95)',
+                                border: '1px solid rgba(52, 211, 153, 0.4)',
+                              }}
+                            >
+                              <Plus size={10} />
+                            </span>
+                          </button>
+
+                          {/* 段落内容：相邻有锚点 → 边框高亮（"框框反应"） */}
+                          <div
+                            className="flex-1 min-w-0 rounded-md transition-all px-2 py-0.5"
+                            style={{
+                              border: hasAdjacentAnchor
+                                ? '1px solid rgba(52, 211, 153, 0.35)'
+                                : '1px solid transparent',
+                              background: hasAdjacentAnchor ? 'rgba(52, 211, 153, 0.04)' : 'transparent',
+                            }}
+                          >
+                            <ReactMarkdown
+                              remarkPlugins={[remarkGfm, remarkBreaks]}
+                              rehypePlugins={[rehypeRaw]}
+                              components={{
+                                p: ({ node: _node, children, ...props }) => <p {...props}>{highlightChildren(children)}</p>,
+                                li: ({ node: _node, children, ...props }) => <li {...props}>{highlightChildren(children)}</li>,
+                                blockquote: ({ node: _node, children, ...props }) => <blockquote {...props}>{highlightChildren(children)}</blockquote>,
+                                h1: ({ node: _node, children, ...props }) => <h1 {...props}>{highlightChildren(children)}</h1>,
+                                h2: ({ node: _node, children, ...props }) => <h2 {...props}>{highlightChildren(children)}</h2>,
+                                h3: ({ node: _node, children, ...props }) => <h3 {...props}>{highlightChildren(children)}</h3>,
+                              }}
+                            >
+                              {text}
+                            </ReactMarkdown>
+                          </div>
+                        </div>
+                      );
+                    });
+                  })()}
                 </div>
+                {/* 空态提示 */}
+                {splitParagraphs(articleContent).length === 0 && (
+                  <div className="text-[12px] py-8 text-center" style={{ color: 'var(--text-muted)' }}>
+                    请先上传文章
+                  </div>
+                )}
               </div>
             )}
 
@@ -4474,6 +4654,75 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
           ) : null
         }
       />
+
+      {/* Phase 1: 段落右键菜单（在此段上方/下方插入配图锚点） */}
+      {paragraphCtxMenu.visible && (
+        <div
+          className="fixed z-[1000] rounded-lg py-1 min-w-[180px] shadow-lg"
+          style={{
+            left: Math.min(paragraphCtxMenu.x, window.innerWidth - 200),
+            top: Math.min(paragraphCtxMenu.y, window.innerHeight - 120),
+            ...glassPanel,
+          }}
+          onClick={(e) => e.stopPropagation()}
+        >
+          <button
+            type="button"
+            className="w-full text-left px-3 py-1.5 text-[12px] hover:bg-white/10 transition-colors flex items-center gap-2"
+            style={{ color: 'var(--text-primary)' }}
+            onClick={() => {
+              addAnchorAbove(paragraphCtxMenu.pIdx);
+              setParagraphCtxMenu(m => ({ ...m, visible: false }));
+            }}
+          >
+            <MapPin size={12} style={{ color: 'rgba(52, 211, 153, 0.95)' }} />
+            在此段上方插入配图
+          </button>
+          <button
+            type="button"
+            className="w-full text-left px-3 py-1.5 text-[12px] hover:bg-white/10 transition-colors flex items-center gap-2"
+            style={{ color: 'var(--text-primary)' }}
+            onClick={() => {
+              addAnchorBelow(paragraphCtxMenu.pIdx);
+              setParagraphCtxMenu(m => ({ ...m, visible: false }));
+            }}
+          >
+            <MapPin size={12} style={{ color: 'rgba(52, 211, 153, 0.95)' }} />
+            在此段下方插入配图
+          </button>
+        </div>
+      )}
+
+      {/* Phase 1: 首次进入的锚点教程气泡（每个用户一次，点"知道啦"后永不再弹） */}
+      {anchorTutorialSeen === false && phase !== 0 && (
+        <div
+          className="fixed z-[1000] rounded-xl p-4 max-w-[340px] shadow-2xl"
+          style={{
+            right: 24,
+            bottom: 24,
+            ...glassPanel,
+            border: '1px solid rgba(52, 211, 153, 0.3)',
+          }}
+        >
+          <div className="flex items-start gap-2 mb-2">
+            <MapPin size={14} style={{ color: 'rgba(52, 211, 153, 0.95)', marginTop: 2, flexShrink: 0 }} />
+            <div className="text-[13px] font-semibold" style={{ color: 'var(--text-primary)' }}>
+              新功能：手动指定配图位置
+            </div>
+          </div>
+          <div className="text-[12px] mb-3" style={{ color: 'var(--text-secondary)', lineHeight: 1.6 }}>
+            <div className="mb-1.5">· 右上角「📍 位置策略」可切换 4 种生成策略</div>
+            <div className="mb-1.5">· 鼠标悬停段落左侧 → 点 <span style={{ color: 'rgba(52, 211, 153, 0.95)' }}>+</span> 在上方打锚点</div>
+            <div>· 段落上<span style={{ color: 'rgba(52, 211, 153, 0.95)' }}>右键</span> → 选择"在上方/下方插入配图"</div>
+          </div>
+          <div className="flex justify-end">
+            <Button size="sm" variant="primary" onClick={dismissAnchorTutorial}>
+              <Check size={13} />
+              知道啦
+            </Button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

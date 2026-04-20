@@ -46,6 +46,8 @@ export type LiteraryAgentPreferences = {
   imageModelId?: string;
   /** 用户选择的文生提示词（对话/标记生成）模型池 ID */
   chatModelId?: string;
+  /** 配图锚点教程气泡是否已看过（点击"知道啦"后置 true，不再弹出） */
+  anchorTutorialSeen?: boolean;
 };
 
 export type UserPreferences = {
