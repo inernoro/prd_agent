@@ -401,7 +401,19 @@ export function TeamDashboard() {
     await reloadListAndSummaryIfNeeded();
   };
 
-  const openReportDetail = (reportId: string) => navigate(`/report-agent/report/${reportId}`);
+  const openReportDetail = (reportId: string) => {
+    if (!selectedTeamId) {
+      navigate(`/report-agent/report/${reportId}`);
+      return;
+    }
+    const params = new URLSearchParams({
+      teamId: selectedTeamId,
+      weekYear: String(weekYear),
+      weekNumber: String(weekNumber),
+      scope: teamScope,
+    });
+    navigate(`/report-agent/report/${reportId}?${params.toString()}`);
+  };
 
   return (
     <div className="mx-auto w-full max-w-[1180px] flex flex-col gap-4">

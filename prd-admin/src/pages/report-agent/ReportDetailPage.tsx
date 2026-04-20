@@ -1,14 +1,14 @@
 import { MapSectionLoader } from '@/components/ui/VideoLoader';
 import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { createPortal } from 'react-dom';
-import { useParams, useNavigate } from 'react-router-dom';
-import { ArrowLeft, MessageSquare, CornerDownRight, Trash2, Send, GitCompare, X, CheckCircle2 } from 'lucide-react';
+import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
+import { ArrowLeft, MessageSquare, CornerDownRight, Trash2, Send, GitCompare, X, CheckCircle2, AlertCircle, Clock } from 'lucide-react';
 import { GlassCard } from '@/components/design/GlassCard';
 import { Button } from '@/components/design/Button';
 import { toast } from '@/lib/toast';
-import { getWeeklyReport, listComments, createComment, deleteComment, reviewWeeklyReport, returnWeeklyReport, recordReportView, getReportViewsSummary } from '@/services';
+import { getWeeklyReport, listComments, createComment, deleteComment, reviewWeeklyReport, returnWeeklyReport, recordReportView, getReportViewsSummary, getTeamReportsView } from '@/services';
 import { useAuthStore } from '@/stores/authStore';
-import type { WeeklyReport, ReportComment, ReportViewSummary } from '@/services/contracts/reportAgent';
+import type { WeeklyReport, ReportComment, ReportViewSummary, TeamReportListItem } from '@/services/contracts/reportAgent';
 import { WeeklyReportStatus, ReportInputType } from '@/services/contracts/reportAgent';
 import { PlanComparisonPanel } from './components/PlanComparisonPanel';
 import { RichTextMarkdownContent } from './components/RichTextMarkdownContent';
@@ -28,6 +28,17 @@ const sectionColors = [
 export default function ReportDetailPage() {
   const { reportId } = useParams<{ reportId: string }>();
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const ctxTeamId = searchParams.get('teamId') ?? '';
+  const ctxWeekYearRaw = Number.parseInt(searchParams.get('weekYear') ?? '', 10);
+  const ctxWeekNumberRaw = Number.parseInt(searchParams.get('weekNumber') ?? '', 10);
+  const ctxWeekYear = Number.isFinite(ctxWeekYearRaw) ? ctxWeekYearRaw : null;
+  const ctxWeekNumber = Number.isFinite(ctxWeekNumberRaw) ? ctxWeekNumberRaw : null;
+  const hasSiblingCtx = !!ctxTeamId && ctxWeekYear !== null && ctxWeekNumber !== null;
+
+  const [siblings, setSiblings] = useState<TeamReportListItem[]>([]);
+  const siblingsKeyRef = useRef<string>('');
+
   const [report, setReport] = useState<WeeklyReport | null>(null);
   const [comments, setComments] = useState<ReportComment[]>([]);
   const [activeTab, setActiveTab] = useState<TabKey>('content');
@@ -93,6 +104,33 @@ export default function ReportDetailPage() {
     void loadComments();
     void loadViewSummaryAndTrack();
   }, [reportId, loadComments, loadViewSummaryAndTrack]);
+
+  useEffect(() => {
+    if (!hasSiblingCtx || ctxWeekYear === null || ctxWeekNumber === null) {
+      setSiblings([]);
+      siblingsKeyRef.current = '';
+      return;
+    }
+    const key = `${ctxTeamId}|${ctxWeekYear}|${ctxWeekNumber}`;
+    if (siblingsKeyRef.current === key) return;
+    siblingsKeyRef.current = key;
+    (async () => {
+      const res = await getTeamReportsView({ teamId: ctxTeamId, weekYear: ctxWeekYear, weekNumber: ctxWeekNumber });
+      if (res.success && res.data) {
+        setSiblings(res.data.items);
+      } else {
+        setSiblings([]);
+      }
+    })();
+  }, [hasSiblingCtx, ctxTeamId, ctxWeekYear, ctxWeekNumber]);
+
+  const handleSelectSibling = useCallback(
+    (id: string) => {
+      if (id === reportId) return;
+      navigate(`/report-agent/report/${id}?${searchParams.toString()}`, { replace: true });
+    },
+    [navigate, reportId, searchParams]
+  );
 
   const handleCreateComment = async () => {
     if (!replyTo || !commentText.trim() || !reportId) return;
@@ -366,6 +404,17 @@ export default function ReportDetailPage() {
         </div>
       </GlassCard>
 
+      <div className="flex-1 min-h-0 flex gap-4">
+        {hasSiblingCtx && siblings.length > 0 && (
+          <SiblingReportsSidebar
+            items={siblings}
+            currentId={reportId}
+            onSelect={handleSelectSibling}
+            weekYear={ctxWeekYear ?? undefined}
+            weekNumber={ctxWeekNumber ?? undefined}
+          />
+        )}
+        <div className="flex-1 min-w-0 min-h-0 flex flex-col gap-4">
       {/* Return banner */}
       {report.status === WeeklyReportStatus.Returned && report.returnReason && (
         <div className="px-5 py-2.5 rounded-xl" style={{ background: 'rgba(239, 68, 68, 0.06)', border: '1px solid rgba(239, 68, 68, 0.1)' }}>
@@ -530,7 +579,108 @@ export default function ReportDetailPage() {
       <GlassCard variant="subtle" className="px-5 py-3">
         <ReportLikeBar reportId={report.id} />
       </GlassCard>
+        </div>
+      </div>
     </div>
+  );
+}
+
+const sidebarStatusConfig: Record<string, { label: string; color: string; bg: string; icon: typeof CheckCircle2 }> = {
+  [WeeklyReportStatus.NotStarted]: { label: '未开始', color: 'rgba(156,163,175,.82)', bg: 'rgba(156,163,175,.08)', icon: Clock },
+  [WeeklyReportStatus.Draft]: { label: '草稿', color: 'rgba(156,163,175,.92)', bg: 'rgba(156,163,175,.08)', icon: Clock },
+  [WeeklyReportStatus.Submitted]: { label: '待审阅', color: 'rgba(59,130,246,.9)', bg: 'rgba(59,130,246,.08)', icon: AlertCircle },
+  [WeeklyReportStatus.Reviewed]: { label: '已审阅', color: 'rgba(34,197,94,.9)', bg: 'rgba(34,197,94,.08)', icon: CheckCircle2 },
+  [WeeklyReportStatus.Returned]: { label: '已打回', color: 'rgba(239,68,68,.9)', bg: 'rgba(239,68,68,.08)', icon: AlertCircle },
+  [WeeklyReportStatus.Overdue]: { label: '逾期', color: 'rgba(239,68,68,.9)', bg: 'rgba(239,68,68,.08)', icon: AlertCircle },
+  [WeeklyReportStatus.Viewed]: { label: '已查看', color: 'rgba(14,165,233,.9)', bg: 'rgba(14,165,233,.08)', icon: CheckCircle2 },
+};
+
+function SiblingReportsSidebar({
+  items,
+  currentId,
+  onSelect,
+  weekYear,
+  weekNumber,
+}: {
+  items: TeamReportListItem[];
+  currentId?: string;
+  onSelect: (id: string) => void;
+  weekYear?: number;
+  weekNumber?: number;
+}) {
+  return (
+    <aside
+      className="shrink-0 hidden md:flex flex-col rounded-2xl"
+      style={{
+        width: 240,
+        minHeight: 0,
+        background: 'var(--bg-secondary)',
+        border: '1px solid var(--border-primary)',
+      }}
+    >
+      <div
+        className="px-4 py-3 shrink-0"
+        style={{ borderBottom: '1px solid var(--border-primary)' }}
+      >
+        <div className="text-[12px] font-semibold" style={{ color: 'var(--text-primary)' }}>
+          本周周报
+        </div>
+        {weekYear && weekNumber && (
+          <div className="text-[11px] mt-0.5" style={{ color: 'var(--text-muted)' }}>
+            {weekYear} 年第 {weekNumber} 周 · 共 {items.length} 份
+          </div>
+        )}
+      </div>
+      <div
+        className="px-2 py-2"
+        style={{ flex: 1, minHeight: 0, overflowY: 'auto', overscrollBehavior: 'contain' }}
+      >
+        {items.map((item) => {
+          const cfg = sidebarStatusConfig[item.status] || sidebarStatusConfig[WeeklyReportStatus.Submitted];
+          const isActive = item.reportId === currentId;
+          return (
+            <button
+              key={item.reportId}
+              type="button"
+              onClick={() => onSelect(item.reportId)}
+              className="w-full text-left rounded-lg px-2.5 py-2 mb-1 transition-colors"
+              style={{
+                background: isActive ? 'rgba(59,130,246,.14)' : 'transparent',
+                border: isActive ? '1px solid rgba(59,130,246,.35)' : '1px solid transparent',
+                cursor: isActive ? 'default' : 'pointer',
+              }}
+              onMouseEnter={(e) => {
+                if (!isActive) e.currentTarget.style.background = 'rgba(255,255,255,0.04)';
+              }}
+              onMouseLeave={(e) => {
+                if (!isActive) e.currentTarget.style.background = 'transparent';
+              }}
+              title={item.userName || item.userId}
+            >
+              <div
+                className="text-[12.5px] font-medium truncate"
+                style={{ color: isActive ? 'rgba(59,130,246,.95)' : 'var(--text-primary)' }}
+              >
+                {item.userName || item.userId}
+              </div>
+              <div className="mt-1 flex items-center gap-1.5">
+                <span
+                  className="text-[10px] px-1.5 py-0.5 rounded-full font-medium"
+                  style={{ color: cfg.color, background: cfg.bg }}
+                >
+                  {cfg.label}
+                </span>
+                {item.submittedAt && (
+                  <span className="text-[10px] truncate" style={{ color: 'var(--text-muted)' }}>
+                    {new Date(item.submittedAt).toLocaleDateString('zh-CN', { month: '2-digit', day: '2-digit' })}
+                  </span>
+                )}
+              </div>
+            </button>
+          );
+        })}
+      </div>
+    </aside>
   );
 }
 
