@@ -600,6 +600,29 @@ public class ReviewAgentController : ControllerBase
         {
             sb.AppendLine($"### {dim.Name}（满分 {dim.MaxScore} 分）");
             sb.AppendLine(dim.Description);
+            if (dim.Items != null && dim.Items.Count > 0)
+            {
+                sb.AppendLine();
+                sb.AppendLine($"该维度为清单类，共 {dim.Items.Count} 项检查点。对**每一项**独立做两步判断：");
+                sb.AppendLine("1. `involved`（是否涉及）：方案的业务场景是否会触发该规则？");
+                sb.AppendLine("2. `covered`（方案是否包含）：仅当 involved=true 时有意义——方案中是否明确写出了对应设计/说明？");
+                sb.AppendLine("**通过条件**：involved=false（不涉及→自动通过）或 involved=true 且 covered=true（涉及且已覆盖）。");
+                sb.AppendLine("**未通过**：involved=true 且 covered=false（涉及但缺失）。");
+                sb.AppendLine("**得分公式**：`MaxScore × 通过项数 / 总项数` 向下取整，由系统按公式重算（你仍需输出 score，系统会覆盖）。");
+                sb.AppendLine();
+                sb.AppendLine("检查项清单：");
+                var byCategory = dim.Items.GroupBy(x => x.Category);
+                foreach (var grp in byCategory)
+                {
+                    sb.AppendLine($"- **{grp.Key}**");
+                    foreach (var item in grp)
+                    {
+                        var noteSuffix = string.IsNullOrWhiteSpace(item.Note) ? "" : $"（备注：{item.Note}）";
+                        sb.AppendLine($"  - `{item.Id}`：{item.Text}{noteSuffix}");
+                    }
+                }
+                sb.AppendLine();
+            }
             sb.AppendLine();
         }
         sb.AppendLine("## 输出格式要求");
@@ -613,7 +636,26 @@ public class ReviewAgentController : ControllerBase
         {
             var dim = dims[i];
             var comma = i < dims.Count - 1 ? "," : "";
-            sb.AppendLine($"    {{ \"key\": \"{dim.Key}\", \"score\": <0-{dim.MaxScore}的整数>, \"comment\": \"<该维度的具体评价，指出具体不足或亮点，100字以内>\" }}{comma}");
+            if (dim.Items != null && dim.Items.Count > 0)
+            {
+                sb.AppendLine($"    {{");
+                sb.AppendLine($"      \"key\": \"{dim.Key}\",");
+                sb.AppendLine($"      \"score\": <0-{dim.MaxScore}的整数，系统会按 items 自动重算>,");
+                sb.AppendLine($"      \"comment\": \"<对整份清单的综合点评，突出最关键的遗漏项，100字以内>\",");
+                sb.AppendLine($"      \"items\": [");
+                for (int j = 0; j < dim.Items.Count; j++)
+                {
+                    var item = dim.Items[j];
+                    var itemComma = j < dim.Items.Count - 1 ? "," : "";
+                    sb.AppendLine($"        {{ \"id\": \"{item.Id}\", \"involved\": <true|false>, \"covered\": <true|false>, \"evidence\": \"<判断依据：引用原文片段或说明为何不涉及/缺失，80字以内>\" }}{itemComma}");
+                }
+                sb.AppendLine($"      ]");
+                sb.AppendLine($"    }}{comma}");
+            }
+            else
+            {
+                sb.AppendLine($"    {{ \"key\": \"{dim.Key}\", \"score\": <0-{dim.MaxScore}的整数>, \"comment\": \"<该维度的具体评价，指出具体不足或亮点，100字以内>\" }}{comma}");
+            }
         }
         sb.AppendLine("  ],");
         sb.AppendLine("  \"summary\": \"<总体评语，完整输出不限字数，先指出最主要的不足，再说优点，给出改进方向>\"");
@@ -662,10 +704,23 @@ public class ReviewAgentController : ControllerBase
             }
         }
 
-        // 补全未解析到的维度
+        // 补全未解析到的维度（清单类维度的 items 按「涉及但未覆盖」严格扣 0 分处理）
         var parsedKeys = scores.Select(s => s.Key).ToHashSet();
         foreach (var dim in dims.Where(d => !parsedKeys.Contains(d.Key)))
         {
+            List<DimensionCheckItemResult>? missingItems = null;
+            if (dim.Items != null && dim.Items.Count > 0)
+            {
+                missingItems = dim.Items.Select(it => new DimensionCheckItemResult
+                {
+                    Id = it.Id,
+                    Category = it.Category,
+                    Text = it.Text,
+                    Involved = true,
+                    Covered = false,
+                    Evidence = "LLM 输出未包含该项判断，按「涉及但未覆盖」严格扣分",
+                }).ToList();
+            }
             scores.Add(new ReviewDimensionScore
             {
                 Key = dim.Key,
@@ -673,7 +728,36 @@ public class ReviewAgentController : ControllerBase
                 Score = 0,
                 MaxScore = dim.MaxScore,
                 Comment = parseError != null ? "解析失败" : "未在输出中找到",
+                Items = missingItems,
             });
+        }
+
+        // 为清单类维度补齐 items 中缺失的项（LLM 可能漏报某几项，按严格规则补 Involved=true/Covered=false）
+        foreach (var score in scores)
+        {
+            var dimConfig = dims.FirstOrDefault(d => d.Key == score.Key);
+            if (dimConfig?.Items == null || dimConfig.Items.Count == 0) continue;
+            score.Items ??= new List<DimensionCheckItemResult>();
+
+            var haveIds = score.Items.Select(i => i.Id).ToHashSet();
+            foreach (var itemConfig in dimConfig.Items.Where(i => !haveIds.Contains(i.Id)))
+            {
+                score.Items.Add(new DimensionCheckItemResult
+                {
+                    Id = itemConfig.Id,
+                    Category = itemConfig.Category,
+                    Text = itemConfig.Text,
+                    Involved = true,
+                    Covered = false,
+                    Evidence = "LLM 输出未涵盖该项，按「涉及但未覆盖」严格扣分",
+                });
+            }
+            // 按配置顺序重排
+            score.Items = dimConfig.Items
+                .Select(cfg => score.Items.First(i => i.Id == cfg.Id))
+                .ToList();
+            // 重算最终分数（兜底）
+            score.Score = ComputeChecklistScore(dimConfig.MaxScore, score.Items);
         }
 
         // ── summary 兜底提取（如果 JSON 解析没拿到或拿到空值） ──
@@ -780,13 +864,24 @@ public class ReviewAgentController : ControllerBase
 
                 if (dimMap.TryGetValue(key, out var dimConfig))
                 {
+                    List<DimensionCheckItemResult>? itemResults = null;
+                    int finalScore = Math.Clamp(score, 0, dimConfig.MaxScore);
+
+                    // 清单类维度：按 items[] 强制重算分数
+                    if (dimConfig.Items != null && dimConfig.Items.Count > 0)
+                    {
+                        itemResults = BuildItemResults(dimEl, dimConfig.Items);
+                        finalScore = ComputeChecklistScore(dimConfig.MaxScore, itemResults);
+                    }
+
                     scores.Add(new ReviewDimensionScore
                     {
                         Key = key,
                         Name = dimConfig.Name,
-                        Score = Math.Clamp(score, 0, dimConfig.MaxScore),
+                        Score = finalScore,
                         MaxScore = dimConfig.MaxScore,
                         Comment = comment,
+                        Items = itemResults,
                     });
                 }
             }
@@ -846,6 +941,59 @@ public class ReviewAgentController : ControllerBase
                                 double.TryParse(scoreEl.GetString(), out var d) ? (int)Math.Round(d) : 0,
         _ => 0,
     };
+
+    /// <summary>
+    /// 从维度 JSON 元素中提取 items[] 并映射到配置中的检查项（按 id 匹配，遗漏项由上层兜底补齐）。
+    /// </summary>
+    private static List<DimensionCheckItemResult> BuildItemResults(
+        JsonElement dimEl, List<DimensionCheckItem> configItems)
+    {
+        var results = new List<DimensionCheckItemResult>();
+        if (!dimEl.TryGetProperty("items", out var itemsEl) || itemsEl.ValueKind != JsonValueKind.Array)
+            return results;
+
+        var cfgMap = configItems.ToDictionary(c => c.Id);
+        foreach (var itemEl in itemsEl.EnumerateArray())
+        {
+            var id = itemEl.TryGetProperty("id", out var idEl) ? idEl.GetString() ?? "" : "";
+            if (string.IsNullOrEmpty(id) || !cfgMap.TryGetValue(id, out var cfg)) continue;
+            if (results.Any(r => r.Id == id)) continue; // 去重
+
+            var involved = itemEl.TryGetProperty("involved", out var invEl) && ParseBool(invEl);
+            var covered = itemEl.TryGetProperty("covered", out var covEl) && ParseBool(covEl);
+            var evidence = itemEl.TryGetProperty("evidence", out var evEl) ? evEl.GetString() : null;
+
+            results.Add(new DimensionCheckItemResult
+            {
+                Id = id,
+                Category = cfg.Category,
+                Text = cfg.Text,
+                Involved = involved,
+                Covered = covered,
+                Evidence = evidence,
+            });
+        }
+        return results;
+    }
+
+    private static bool ParseBool(JsonElement el) => el.ValueKind switch
+    {
+        JsonValueKind.True => true,
+        JsonValueKind.False => false,
+        JsonValueKind.String => bool.TryParse(el.GetString(), out var b) && b,
+        _ => false,
+    };
+
+    /// <summary>
+    /// 清单类维度得分公式：MaxScore × 通过项数 / 总项数，向下取整。
+    /// 通过定义：!involved || (involved && covered)
+    /// </summary>
+    private static int ComputeChecklistScore(int maxScore, List<DimensionCheckItemResult> items)
+    {
+        if (items.Count == 0) return 0;
+        var passed = items.Count(i => !i.Involved || i.Covered);
+        return (int)Math.Floor((double)maxScore * passed / items.Count);
+    }
 
     /// <summary>
     /// 修复 JSON 字符串值中未转义的换行符。

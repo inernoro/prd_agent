@@ -5,6 +5,22 @@ import type { ApiResponse } from '@/types/api';
 // 类型定义
 // ──────────────────────────────────────────────
 
+export interface DimensionCheckItem {
+  id: string;
+  category: string;
+  text: string;
+  note?: string;
+}
+
+export interface DimensionCheckItemResult {
+  id: string;
+  category: string;
+  text: string;
+  involved: boolean;
+  covered: boolean;
+  evidence?: string;
+}
+
 export interface ReviewDimensionConfig {
   id: string;
   key: string;
@@ -13,6 +29,8 @@ export interface ReviewDimensionConfig {
   description: string;
   orderIndex: number;
   isActive: boolean;
+  /** 子检查项（清单类维度使用，普通维度为 null/undefined） */
+  items?: DimensionCheckItem[] | null;
   updatedAt: string;
   updatedBy?: string;
 }
@@ -23,6 +41,8 @@ export interface ReviewDimensionScore {
   score: number;
   maxScore: number;
   comment: string;
+  /** 子检查项判断结果（清单类维度使用） */
+  items?: DimensionCheckItemResult[] | null;
 }
 
 export interface ReviewSubmission {

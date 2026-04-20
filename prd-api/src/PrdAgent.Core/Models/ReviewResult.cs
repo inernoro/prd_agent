@@ -48,4 +48,29 @@ public class ReviewDimensionScore
 
     /// <summary>AI 评语（该维度的具体评价）</summary>
     public string Comment { get; set; } = string.Empty;
+
+    /// <summary>子检查项判断结果（清单类维度使用，普通维度为 null）</summary>
+    public List<DimensionCheckItemResult>? Items { get; set; }
+}
+
+/// <summary>单条检查项的 LLM 判断结果</summary>
+public class DimensionCheckItemResult
+{
+    /// <summary>对应 DimensionCheckItem.Id</summary>
+    public string Id { get; set; } = string.Empty;
+
+    /// <summary>分类快照</summary>
+    public string Category { get; set; } = string.Empty;
+
+    /// <summary>检查项名称快照</summary>
+    public string Text { get; set; } = string.Empty;
+
+    /// <summary>LLM 判断：方案是否涉及该规则</summary>
+    public bool Involved { get; set; }
+
+    /// <summary>LLM 判断：方案是否已覆盖该规则（仅当 Involved=true 时有意义）</summary>
+    public bool Covered { get; set; }
+
+    /// <summary>判断依据/原文证据/缺失说明（≤80 字）</summary>
+    public string? Evidence { get; set; }
 }

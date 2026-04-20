@@ -6,7 +6,66 @@ import { useSseStream } from '@/lib/useSseStream';
 import { SsePhaseBar } from '@/components/sse/SsePhaseBar';
 import { SseTypingBlock } from '@/components/sse/SseTypingBlock';
 import { getReviewSubmission, getReviewResultStreamUrl, rerunReviewSubmission, getReviewDimensions } from '@/services';
-import type { ReviewSubmission, ReviewResult, ReviewDimensionScore, ReviewDimensionConfig } from '@/services';
+import type { ReviewSubmission, ReviewResult, ReviewDimensionScore, ReviewDimensionConfig, DimensionCheckItemResult } from '@/services';
+
+function ChecklistTable({ items }: { items: DimensionCheckItemResult[] }) {
+  const grouped = items.reduce<Record<string, DimensionCheckItemResult[]>>((acc, it) => {
+    const key = it.category || '其他';
+    (acc[key] ||= []).push(it);
+    return acc;
+  }, {});
+  const total = items.length;
+  const passed = items.filter(it => !it.involved || it.covered).length;
+
+  return (
+    <div
+      className="rounded-lg overflow-hidden"
+      style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.08)' }}
+    >
+      <div className="flex items-center justify-between px-3 py-2 border-b border-white/5">
+        <p className="text-xs text-white/50 font-medium">全局规则检查清单</p>
+        <p className="text-xs tabular-nums text-white/40">
+          通过 <span className="text-emerald-400">{passed}</span> / {total}
+        </p>
+      </div>
+      <div className="divide-y divide-white/5">
+        {Object.entries(grouped).map(([cat, list]) => (
+          <div key={cat} className="px-3 py-2">
+            <p className="text-[11px] text-indigo-400/80 mb-1.5 font-medium">{cat}</p>
+            <div className="space-y-1">
+              {list.map(item => {
+                const passedItem = !item.involved || item.covered;
+                const isRisk = item.involved && !item.covered;
+                const tagBg = !item.involved
+                  ? 'bg-white/5 text-white/40'
+                  : item.covered
+                    ? 'bg-emerald-500/10 text-emerald-300'
+                    : 'bg-rose-500/15 text-rose-300';
+                const label = !item.involved ? '不涉及' : item.covered ? '已包含' : '涉及 · 缺失';
+                return (
+                  <div
+                    key={item.id}
+                    className={`flex items-start gap-2 rounded px-2 py-1.5 ${isRisk ? 'bg-rose-500/5' : ''}`}
+                  >
+                    <span className={`shrink-0 text-[10px] px-1.5 py-0.5 rounded ${tagBg}`}>{label}</span>
+                    <div className="flex-1 min-w-0">
+                      <p className={`text-xs leading-relaxed ${passedItem ? 'text-white/55' : 'text-rose-200'}`}>
+                        {item.text}
+                      </p>
+                      {item.evidence && (
+                        <p className="text-[11px] text-white/35 mt-0.5 leading-relaxed">{item.evidence}</p>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
 
 function RawOutputDebug({ result }: { result: ReviewResult }) {
   const [expanded, setExpanded] = useState(false);
@@ -278,6 +337,9 @@ export function ReviewAgentResultPage() {
                     <div className="px-4 pb-3 border-t border-white/5 pt-3 space-y-2.5">
                       {dim.comment && (
                         <p className="text-sm text-white/60 leading-relaxed">{dim.comment}</p>
+                      )}
+                      {dim.items && dim.items.length > 0 && (
+                        <ChecklistTable items={dim.items} />
                       )}
                       {dimCfg?.description && (
                         <div className="rounded-lg px-3 py-2" style={{ background: 'rgba(99,102,241,0.06)', border: '1px solid rgba(99,102,241,0.15)' }}>

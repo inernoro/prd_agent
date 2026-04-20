@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
-import { X, Plus, Trash2, GripVertical, Save, ChevronDown, ChevronUp } from 'lucide-react';
+import { X, Plus, Trash2, GripVertical, Save, ChevronDown, ChevronUp, ClipboardList } from 'lucide-react';
 import { getReviewDimensions as getDimensions, updateReviewDimensions as updateDimensions } from '@/services';
-import type { ReviewDimensionConfig } from '@/services';
+import type { ReviewDimensionConfig, DimensionCheckItem } from '@/services';
 
 interface Props {
   open: boolean;
@@ -9,6 +9,46 @@ interface Props {
 }
 
 type EditableDim = Omit<ReviewDimensionConfig, 'updatedAt' | 'updatedBy'>;
+
+// 全局规则清单模板（与后端 DefaultReviewDimensions.All[0] 一致）
+const GLOBAL_RULES_TEMPLATE: EditableDim = {
+  id: '',
+  key: 'global_rules_checklist',
+  name: '全局规则检查清单',
+  maxScore: 30,
+  description:
+    '检查方案是否考虑到米多平台的硬性业务/技术规则。对每个检查项做二段判断：① 方案是否涉及该规则？② 若涉及，方案是否已明确写出对应设计？只有「涉及=是 且 覆盖=否」才算未通过，涉及=否直接视为通过。得分 = 30 × 通过项数 / 总项数（向下取整）。',
+  orderIndex: 1,
+  isActive: true,
+  items: [
+    { id: 'rule_risk_control', category: '安全与权限类', text: '风控接入（黑名单）' },
+    { id: 'rule_permission_control', category: '安全与权限类', text: '权限控制' },
+    { id: 'rule_app_permission_config', category: '安全与权限类', text: '应用权限配置规则（新增子系统/应用：不默认开放、支持单独订购）' },
+    { id: 'rule_operation_log', category: '安全与权限类', text: '操作日志写入' },
+    { id: 'rule_mobile_auth', category: '安全与权限类', text: '用户授权（移动端）' },
+    { id: 'rule_phone_verify', category: '安全与权限类', text: '手机号验证组件' },
+    { id: 'rule_3plus2_sso', category: '安全与权限类', text: '3+2账号单点登录' },
+    { id: 'rule_user_deregister', category: '安全与权限类', text: '用户注销' },
+    { id: 'rule_user_agreement', category: '安全与权限类', text: '用户协议' },
+    { id: 'rule_new_ui_framework', category: '组件与框架类', text: '新增子系统/应用：新UI框架顶部导航规范校验' },
+    { id: 'rule_mobile_footer', category: '组件与框架类', text: '移动端底部「米多技术支持」+「投诉」组件' },
+    { id: 'rule_sms_fee', category: '业务功能类', text: '短信费（扣平台/扣商户）' },
+    { id: 'rule_sms_signature', category: '业务功能类', text: '短信签名' },
+    { id: 'rule_message_notify', category: '业务功能类', text: '消息通知' },
+    { id: 'rule_store_multi_dealer', category: '业务功能类', text: '门店一对多个上级经销商（需确认是否已开通）', note: '该能力未全局开放：需邮件申请，经技术为品牌商配置开通' },
+    { id: 'rule_store_multi_account', category: '业务功能类', text: '门店账号（一个手机支持注册多个门店）', note: '该能力未全局开放：默认一个手机号只能注册一个门店；若需一个手机支持注册多个门店，需邮件申请由技术处理' },
+    { id: 'rule_cross_system', category: '系统边界与集成类', text: '跨子系统/应用母体（能力依赖/数据互通/入口挂载）' },
+    { id: 'rule_legacy_data', category: '数据与存量类', text: '旧数据处理（含历史存量、迁移、兼容、清洗、字段/结构变更对存量的影响等）', note: '若涉及旧数据，方案是否包含须为「是」，且须体现与技术对齐后的处理范围、方式及关键风险/回滚等要点' },
+  ],
+};
+
+function groupItemsByCategory(items: DimensionCheckItem[]): Record<string, DimensionCheckItem[]> {
+  return items.reduce<Record<string, DimensionCheckItem[]>>((acc, it) => {
+    const key = it.category || '未分类';
+    (acc[key] ||= []).push(it);
+    return acc;
+  }, {});
+}
 
 export function ReviewAgentDimensionsModal({ open, onClose }: Props) {
   const [dims, setDims] = useState<EditableDim[]>([]);
@@ -34,6 +74,7 @@ export function ReviewAgentDimensionsModal({ open, onClose }: Props) {
           maxScore: d.maxScore,
           orderIndex: d.orderIndex,
           isActive: d.isActive,
+          items: d.items ?? null,
         })));
       }
       setLoading(false);
@@ -67,10 +108,25 @@ export function ReviewAgentDimensionsModal({ open, onClose }: Props) {
       maxScore: 10,
       orderIndex: maxOrder + 1,
       isActive: true,
+      items: null,
     };
     setDims(prev => [...prev, newDim]);
     // 新增维度自动展开明细
     setExpandedKeys(prev => new Set([...prev, key]));
+  }
+
+  function insertGlobalRulesTemplate() {
+    // 若已存在同 key 维度，则直接展开；否则追加到列表末尾
+    const existsIdx = dims.findIndex(d => d.key === GLOBAL_RULES_TEMPLATE.key);
+    if (existsIdx >= 0) {
+      setExpandedKeys(prev => new Set([...prev, GLOBAL_RULES_TEMPLATE.key]));
+      setError('已存在「全局规则检查清单」维度，请勿重复插入');
+      return;
+    }
+    const maxOrder = dims.length > 0 ? Math.max(...dims.map(d => d.orderIndex)) : 0;
+    setDims(prev => [...prev, { ...GLOBAL_RULES_TEMPLATE, orderIndex: maxOrder + 1 }]);
+    setExpandedKeys(prev => new Set([...prev, GLOBAL_RULES_TEMPLATE.key]));
+    setError('');
   }
 
   function removeDim(idx: number) {
@@ -229,15 +285,42 @@ export function ReviewAgentDimensionsModal({ open, onClose }: Props) {
 
                   {/* Expandable: description / criteria */}
                   {isExpanded && (
-                    <div className="px-3 pb-3 border-t border-white/5 pt-2.5">
-                      <p className="text-xs text-white/35 mb-1.5">明细要求 <span className="text-white/20">（写入评审提示词，指导 AI 评分）</span></p>
-                      <textarea
-                        value={dim.description}
-                        onChange={e => updateDim(idx, { description: e.target.value })}
-                        placeholder="描述该维度的评分依据、检查要点和扣分规则..."
-                        rows={4}
-                        className="w-full bg-black/20 rounded-lg text-sm text-white/80 placeholder-white/20 outline-none px-3 py-2 resize-none border border-white/8 focus:border-indigo-500/40 transition-colors leading-relaxed"
-                      />
+                    <div className="px-3 pb-3 border-t border-white/5 pt-2.5 space-y-2.5">
+                      <div>
+                        <p className="text-xs text-white/35 mb-1.5">明细要求 <span className="text-white/20">（写入评审提示词，指导 AI 评分）</span></p>
+                        <textarea
+                          value={dim.description}
+                          onChange={e => updateDim(idx, { description: e.target.value })}
+                          placeholder="描述该维度的评分依据、检查要点和扣分规则..."
+                          rows={4}
+                          className="w-full bg-black/20 rounded-lg text-sm text-white/80 placeholder-white/20 outline-none px-3 py-2 resize-none border border-white/8 focus:border-indigo-500/40 transition-colors leading-relaxed"
+                        />
+                      </div>
+                      {dim.items && dim.items.length > 0 && (
+                        <div>
+                          <p className="text-xs text-white/35 mb-1.5">
+                            清单检查项 <span className="text-white/20">（共 {dim.items.length} 项，二段判断：涉及 → 覆盖）</span>
+                          </p>
+                          <div
+                            className="rounded-lg overflow-hidden"
+                            style={{ background: 'rgba(99,102,241,0.05)', border: '1px solid rgba(99,102,241,0.15)' }}
+                          >
+                            {Object.entries(groupItemsByCategory(dim.items)).map(([cat, list]) => (
+                              <div key={cat} className="px-3 py-2 border-b border-white/5 last:border-b-0">
+                                <p className="text-[11px] text-indigo-300/80 font-medium mb-1">{cat}</p>
+                                <ul className="space-y-0.5">
+                                  {list.map(it => (
+                                    <li key={it.id} className="text-xs text-white/55 leading-relaxed">
+                                      • {it.text}
+                                      {it.note && <span className="text-white/30 ml-1">（{it.note}）</span>}
+                                    </li>
+                                  ))}
+                                </ul>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
                     </div>
                   )}
                 </div>
@@ -248,13 +331,23 @@ export function ReviewAgentDimensionsModal({ open, onClose }: Props) {
 
         {/* Footer */}
         <div className="border-t border-white/8 px-4 py-3 flex items-center justify-between gap-3">
-          <button
-            onClick={addDim}
-            className="flex items-center gap-1.5 text-sm text-indigo-400 hover:text-indigo-300 transition-colors"
-          >
-            <Plus className="w-3.5 h-3.5" />
-            添加维度
-          </button>
+          <div className="flex items-center gap-4">
+            <button
+              onClick={addDim}
+              className="flex items-center gap-1.5 text-sm text-indigo-400 hover:text-indigo-300 transition-colors"
+            >
+              <Plus className="w-3.5 h-3.5" />
+              添加维度
+            </button>
+            <button
+              onClick={insertGlobalRulesTemplate}
+              className="flex items-center gap-1.5 text-sm text-emerald-400 hover:text-emerald-300 transition-colors"
+              title="插入「全局规则检查清单」维度模板（30 分，18 项检查点）"
+            >
+              <ClipboardList className="w-3.5 h-3.5" />
+              插入全局规则清单模板
+            </button>
+          </div>
 
           <div className="flex items-center gap-3">
             {error && <p className="text-xs text-rose-400">{error}</p>}
