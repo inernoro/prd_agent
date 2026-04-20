@@ -23,6 +23,7 @@ import { MarkdownContent } from '@/components/ui/MarkdownContent';
 import { MapSectionLoader, MapSpinner } from '@/components/ui/VideoLoader';
 import { glassPanel } from '@/lib/glassStyles';
 import { toast } from '@/lib/toast';
+import { useChangelogStore } from '@/stores/changelogStore';
 import { useWeeklyReportSources } from './weeklyReportSourcesContext';
 
 /** 取条目对应的"最后修改时间"（优先 git commit time） */
@@ -36,21 +37,25 @@ function getEntryTime(e: DocumentEntry): string {
   );
 }
 
-function getThisWeekStart(): number {
-  const now = new Date();
-  const day = now.getDay();
-  const diff = day === 0 ? -6 : 1 - day;
-  const monday = new Date(now);
-  monday.setDate(now.getDate() + diff);
-  monday.setHours(0, 0, 0, 0);
-  return monday.getTime();
+/**
+ * 计算 NEW 徽章 cutoff（用户上一次打开更新中心那一天的 23:59:59.999，本地时区）。
+ * 条目更新时间严格大于 cutoff → NEW。
+ * lastSeenAt 为 null（从未查看过）时返回 null，表示不展示任何 NEW。
+ */
+function computeLastSeenDayEnd(lastSeenAtIso: string | null): number | null {
+  if (!lastSeenAtIso) return null;
+  const d = new Date(lastSeenAtIso);
+  if (Number.isNaN(d.getTime())) return null;
+  d.setHours(23, 59, 59, 999);
+  return d.getTime();
 }
 
-function isThisWeek(timeStr: string, weekStart: number): boolean {
+function isAfterCutoff(timeStr: string, cutoff: number | null): boolean {
+  if (cutoff === null) return false;
   if (!timeStr) return false;
   const t = Date.parse(timeStr);
   if (Number.isNaN(t)) return false;
-  return t >= weekStart;
+  return t > cutoff;
 }
 
 /**
@@ -130,7 +135,14 @@ export function WeeklyReportsTab() {
     return [...matched].sort((a, b) => getEntryTime(b).localeCompare(getEntryTime(a)));
   }, [activeSource, entries]);
 
-  const weekStart = useMemo(() => getThisWeekStart(), []);
+  /**
+   * 冻结 cutoff：在组件 mount 的那一刻快照 lastSeenAt（ChangelogPage 会在同一
+   * render 周期调 markAsSeen 更新 store，但 useState 惰性初始化只跑一次，
+   * 拿到的一定是"这一次进页面之前"的值）。
+   */
+  const [cutoff] = useState<number | null>(() =>
+    computeLastSeenDayEnd(useChangelogStore.getState().lastSeenAt),
+  );
 
   // 懒加载：为文件列表拉取首行/H1 预览作为展示标题
   // 每个 entry 只拉一次；切换 activeSource 时清空缓存
@@ -296,7 +308,7 @@ export function WeeklyReportsTab() {
                   const time = getEntryTime(e);
                   const date = time.slice(0, 10);
                   const isGit = !!e.metadata?.github_last_commit_at;
-                  const fresh = isThisWeek(time, weekStart);
+                  const fresh = isAfterCutoff(time, cutoff);
                   return (
                     <li key={e.id}>
                       <button
@@ -327,7 +339,7 @@ export function WeeklyReportsTab() {
                                 flexShrink: 0,
                                 lineHeight: '1.3',
                               }}
-                              title="本周有新提交"
+                              title="自上次查看更新中心以来有新提交"
                             >
                               NEW
                             </span>
