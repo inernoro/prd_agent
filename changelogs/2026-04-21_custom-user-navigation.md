@@ -10,3 +10,5 @@
 | fix | prd-admin | 设置页所有可拖芯片（NavItemChip / DividerChip / PoolItemChip）补齐 onDragEnd 回调：按 Esc 或拖到无效位置取消时，`dragSource` / `dragOverNavIndex` / `dragOverPool` 及高亮动画立即复位，避免"拖拽遗留光圈"视觉残影 |
 | refactor | prd-admin | 清理 navOrderStore 死代码：移除未被任何文件引用的 `isDivider()` 导出（所有调用点直接对比 `NAV_DIVIDER_KEY` 常量） |
 | refactor | prd-admin | 清理 user-preferences services 死代码：移除前端 `updateNavHidden` 链（UpdateNavHiddenContract + updateNavHiddenReal + withAuth 导出），navOrderStore 统一走 `updateNavLayout` 一次性保存；后端 PUT /api/dashboard/user-preferences/nav-hidden 端点保留供外部 API 用 |
+| fix | prd-admin | 修复自定义导航的 launcher 分支绕过 navHidden：AppShell `groupedNav` 在按 navOrder 重排时，launcher id（agent:/toolbox:/utility:）走的是 `launcherById.get(token)` 回退分支，之前未经过 `visibleItems` 的隐藏过滤，导致"既在 navOrder 又在 navHidden"的 launcher 条目仍会在侧栏渲染。现在在 token 循环内显式 `hiddenSet.has(token)` 短路，menuCatalog + launcher 两条路径统一受 navHidden 约束；useMemo 依赖数组同步补齐 `navHidden` |
+| refactor | prd-admin | 清理 navOrderStore 剩余死代码：移除未被任何组件调用的 `setNavOrder` / `setNavHidden` 独立 setter（navOrderStore 对外只暴露 `setNavLayout` 一次性保存）与 `mergeNavOrder` 通用合并函数（AppShell 已自己实现按"---"切段逻辑），缩减 store 对外暴露的 API 面 |

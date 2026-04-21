@@ -20,10 +20,6 @@ type NavOrderState = {
   saving: boolean;
   /** 加载用户偏好 */
   loadFromServer: () => Promise<void>;
-  /** 设置导航顺序（本地 + 防抖保存到后端） */
-  setNavOrder: (order: string[]) => void;
-  /** 设置隐藏列表（本地 + 防抖保存到后端） */
-  setNavHidden: (hidden: string[]) => void;
   /** 同时设置顺序 + 隐藏（本地 + 防抖保存到后端，仅一次网络往返） */
   setNavLayout: (payload: { navOrder: string[]; navHidden: string[] }) => void;
   /** 恢复默认（清空自定义顺序与隐藏 → 回退到系统默认） */
@@ -95,16 +91,6 @@ export const useNavOrderStore = create<NavOrderState>()(
         }
       },
 
-      setNavOrder: (order: string[]) => {
-        set({ navOrder: order });
-        scheduleSave(get, set);
-      },
-
-      setNavHidden: (hidden: string[]) => {
-        set({ navHidden: hidden });
-        scheduleSave(get, set);
-      },
-
       setNavLayout: (payload) => {
         set({ navOrder: payload.navOrder, navHidden: payload.navHidden });
         scheduleSave(get, set);
@@ -141,37 +127,3 @@ export const useNavOrderStore = create<NavOrderState>()(
   )
 );
 
-/**
- * 合并导航顺序与权限过滤（仅处理非分隔符项，分隔符原样透传）。
- * @param allItems 所有导航项（默认顺序）
- * @param userOrder 用户自定义顺序（可能包含 NAV_DIVIDER_KEY）
- * @param permissions 当前用户权限
- * @returns 排序后的可见导航项 key 列表；分隔符以 `{ divider: true }` 形式返回
- */
-export function mergeNavOrder<T extends { key: string; perm?: string }>(
-  allItems: T[],
-  userOrder: string[],
-  permissions: string[]
-): T[] {
-  const perms = new Set(permissions);
-
-  const visibleItems = allItems.filter((it) => !it.perm || perms.has(it.perm));
-  const visibleKeys = new Set(visibleItems.map((it) => it.key));
-
-  const orderedKeys = userOrder.filter((k) => k !== NAV_DIVIDER_KEY && visibleKeys.has(k));
-  const orderedSet = new Set(orderedKeys);
-
-  const newItems = visibleItems.filter((it) => !orderedSet.has(it.key));
-
-  const result: T[] = [];
-  const itemMap = new Map(allItems.map((it) => [it.key, it]));
-
-  for (const key of orderedKeys) {
-    const item = itemMap.get(key);
-    if (item) result.push(item);
-  }
-
-  result.push(...newItems);
-
-  return result;
-}

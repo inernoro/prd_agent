@@ -294,6 +294,8 @@ export default function AppShell() {
       const launcherById = new Map(
         getLauncherCatalog({ permissions, isRoot }).map((li) => [li.id, li])
       );
+      // launcher 分支也要受 navHidden 约束，避免 "既在 navOrder 又在 navHidden" 的 launcher 条目穿透
+      const hiddenSet = new Set(navHidden);
       const appeared = new Set<string>();
       const segments: { key: string; label?: string; items: NavItem[] }[] = [];
       let current: NavItem[] = [];
@@ -308,6 +310,7 @@ export default function AppShell() {
           continue;
         }
         if (appeared.has(token)) continue;
+        if (hiddenSet.has(token)) continue;
         const item = byAppKey.get(token);
         if (item) {
           current.push(item);
@@ -351,7 +354,7 @@ export default function AppShell() {
         items: NON_HOME.filter((it) => it.group === g.key),
       }))
       .filter((g) => g.items.length > 0);
-  }, [visibleItems, navOrder, permissions, isRoot]);
+  }, [visibleItems, navOrder, navHidden, permissions, isRoot]);
   
   // 首页为 Agent Launcher 沉浸页，不自动跳转，让用户自主选择 Agent
   const isHomePage = location.pathname === '/';
