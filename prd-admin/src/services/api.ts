@@ -1082,6 +1082,12 @@ export const api = {
       if (force) params.push('force=true');
       return `/api/changelog/releases${params.length ? `?${params.join('&')}` : ''}`;
     },
+    githubLogs: (limit?: number, force?: boolean) => {
+      const params: string[] = [];
+      if (limit) params.push(`limit=${limit}`);
+      if (force) params.push('force=true');
+      return `/api/changelog/github-logs${params.length ? `?${params.join('&')}` : ''}`;
+    },
     sources: {
       list: () => '/api/changelog/sources',
       create: () => '/api/changelog/sources',

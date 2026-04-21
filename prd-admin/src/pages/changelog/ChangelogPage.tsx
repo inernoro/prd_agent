@@ -3,11 +3,13 @@ import type { LucideIcon } from 'lucide-react';
 import {
   Sparkles, Calendar, Tag, RefreshCw, Filter, X, FileText,
   Wrench, Zap, Gauge, Shuffle, Shield, Package, FlaskConical, UploadCloud, Cog,
+  Github, GitCommit, ExternalLink,
 } from 'lucide-react';
 import { useChangelogStore } from '@/stores/changelogStore';
 import { MapSectionLoader, MapSpinner } from '@/components/ui/VideoLoader';
 import { glassPanel } from '@/lib/glassStyles';
-import type { ChangelogEntry } from '@/services';
+import { getChangelogGitHubLogs } from '@/services';
+import type { ChangelogEntry, GitHubLogEntry, GitHubLogsView } from '@/services';
 import { TabBar } from '@/components/design/TabBar';
 import {
   WeeklyReportsTab,
@@ -48,21 +50,47 @@ interface FlatEntry extends ChangelogEntry {
   date: string;
   /** ISO 8601 秒级时间（仅 github 源可用） */
   commitTimeUtc?: string | null;
-  source: 'release';
+  source: 'release' | 'fragment';
   releaseVersion?: string;
 }
 
-/** 格式化右侧展示时间：有秒级则 "YYYY-MM-DD HH:mm:ss"，否则 "YYYY-MM-DD" */
-function formatEntryTime(date: string, commitTimeUtc?: string | null): string {
-  if (!commitTimeUtc) return date;
-  try {
-    const d = new Date(commitTimeUtc);
-    if (Number.isNaN(d.getTime())) return date;
-    const pad = (n: number) => n.toString().padStart(2, '0');
-    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
-  } catch {
-    return date;
+type HistorySubtab = 'releases' | 'fragments' | 'github_logs';
+
+function formatLocalDateValue(d: Date): string {
+  const pad = (n: number) => n.toString().padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
+
+function formatLocalDateTimeValue(d: Date): string {
+  const pad = (n: number) => n.toString().padStart(2, '0');
+  return `${formatLocalDateValue(d)} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+}
+
+function parseIsoDate(iso?: string | null): Date | null {
+  if (!iso) return null;
+  const d = new Date(iso);
+  return Number.isNaN(d.getTime()) ? null : d;
+}
+
+function formatDisplayDate(date: string, commitTimeUtc?: string | null): string {
+  const d = parseIsoDate(commitTimeUtc);
+  return d ? formatLocalDateValue(d) : date;
+}
+
+function formatCommitDateTime(commitTimeUtc?: string | null): string | null {
+  const d = parseIsoDate(commitTimeUtc);
+  return d ? formatLocalDateTimeValue(d) : null;
+}
+
+function getReleaseDisplayDate(releaseDate: string | null, days: Array<{ date: string; commitTimeUtc?: string | null }>): string | null {
+  const latestCommitDay = days
+    .map((d) => parseIsoDate(d.commitTimeUtc))
+    .filter((d): d is Date => d instanceof Date)
+    .sort((a, b) => b.getTime() - a.getTime())[0];
+  if (latestCommitDay) {
+    return formatLocalDateValue(latestCommitDay);
   }
+  return releaseDate;
 }
 
 export default function ChangelogPage() {
@@ -76,6 +104,10 @@ export default function ChangelogPage() {
 
   const [typeFilter, setTypeFilter] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<string>('update_center');
+  const [historySubtab, setHistorySubtab] = useState<HistorySubtab>('releases');
+  const [githubLogs, setGitHubLogs] = useState<GitHubLogsView | null>(null);
+  const [loadingGitHubLogs, setLoadingGitHubLogs] = useState(false);
+  const [gitHubLogsError, setGitHubLogsError] = useState<string | null>(null);
 
   /**
    * NEW 徽章 cutoff：用户上次打开更新中心那天的 23:59:59.999。
@@ -101,9 +133,38 @@ export default function ChangelogPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  useEffect(() => {
+    if (activeTab !== 'update_center' || historySubtab !== 'github_logs' || loadingGitHubLogs || githubLogs) return;
+    let alive = true;
+    setLoadingGitHubLogs(true);
+    setGitHubLogsError(null);
+    void getChangelogGitHubLogs(40).then((res) => {
+      if (!alive) return;
+      if (res.success) {
+        setGitHubLogs(res.data);
+      } else {
+        setGitHubLogsError(res.error?.message || '加载 GitHub 日志失败');
+      }
+    }).finally(() => {
+      if (alive) setLoadingGitHubLogs(false);
+    });
+    return () => { alive = false; };
+  }, [activeTab, historySubtab, loadingGitHubLogs, githubLogs]);
+
   const handleRefresh = () => {
     void loadCurrentWeek(true);
     void loadReleases(20, true);
+    if (historySubtab === 'github_logs' || githubLogs) {
+      setLoadingGitHubLogs(true);
+      setGitHubLogsError(null);
+      void getChangelogGitHubLogs(40, true).then((res) => {
+        if (res.success) {
+          setGitHubLogs(res.data);
+        } else {
+          setGitHubLogsError(res.error?.message || '加载 GitHub 日志失败');
+        }
+      }).finally(() => setLoadingGitHubLogs(false));
+    }
   };
 
   // 收集 release 中出现过的 type 用于筛选 chip
@@ -118,8 +179,15 @@ export default function ChangelogPage() {
         }
       }
     }
+    if (currentWeek) {
+      for (const fragment of currentWeek.fragments) {
+        for (const entry of fragment.entries) {
+          if (entry.type) types.add(entry.type.toLowerCase());
+        }
+      }
+    }
     return { availableTypes: Array.from(types).sort() };
-  }, [releases]);
+  }, [currentWeek, releases]);
 
   const matchFilter = (e: ChangelogEntry): boolean => {
     if (typeFilter && e.type.toLowerCase() !== typeFilter) return false;
@@ -310,137 +378,310 @@ export default function ChangelogPage() {
         </div>
       )}
 
-      {/* ── 历史发布 ───────────────────────────────────── */}
+      {/* ── 历史区：CHANGELOG / 碎片 / GitHub 日志 ───────────────────── */}
       <section style={glassPanel} className="rounded-2xl p-5">
-        <div className="flex items-baseline justify-between gap-3 mb-4">
-          <h2 className="text-base font-semibold" style={{ color: 'var(--text-primary)' }}>
-            历史发布
-          </h2>
-          <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
-            来自 CHANGELOG.md
-          </span>
-        </div>
-
-        {loadingReleases && !releases && <MapSectionLoader text="正在加载历史发布…" />}
-
-        {!loadingReleases && releases && releases.releases.length === 0 && (
-          <div
-            className="rounded-xl px-4 py-6 text-center text-[12px]"
-            style={{
-              background: 'rgba(255, 255, 255, 0.02)',
-              border: '1px dashed rgba(255, 255, 255, 0.08)',
-              color: 'var(--text-muted)',
-            }}
-          >
-            暂无历史发布
-          </div>
-        )}
-
-        {releases && releases.releases.length > 0 && (
-          <div className="flex flex-col gap-6">
-            {releases.releases.map((release) => {
-              const visibleDays = release.days
-                .map((d) => ({
-                  ...d,
-                  entries: d.entries.filter(matchFilter),
-                }))
-                .filter((d) => d.entries.length > 0);
-              const totalCount = visibleDays.reduce((s, d) => s + d.entries.length, 0);
-              if (totalCount === 0 && release.highlights.length === 0) {
-                return null;
-              }
-
-              const isUnreleased = release.version === '未发布';
-
+        <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
+          <div className="flex items-center gap-4 flex-wrap">
+            <h2 className="text-[18px] font-semibold tracking-wide" style={{ color: 'var(--text-primary)' }}>
+              历史发布
+            </h2>
+            {([
+              { key: 'releases', label: 'CHANGELOG', icon: <Calendar size={13} /> },
+              { key: 'fragments', label: '碎片补充', icon: <FileText size={13} /> },
+              { key: 'github_logs', label: 'GitHub 日志', icon: <Github size={13} /> },
+            ] as const).map((tab) => {
+              const active = historySubtab === tab.key;
               return (
-                <div key={`${release.version}-${release.releaseDate ?? ''}`}>
-                  <div className="flex items-center gap-2 mb-3">
-                    <div
-                      className="px-2.5 py-0.5 rounded-md text-[12px] font-semibold font-mono"
-                      style={{
-                        background: isUnreleased
-                          ? 'rgba(251, 191, 36, 0.10)'
-                          : 'rgba(99, 102, 241, 0.12)',
-                        border: `1px solid ${isUnreleased ? 'rgba(251, 191, 36, 0.32)' : 'rgba(99, 102, 241, 0.32)'}`,
-                        color: isUnreleased ? '#fbbf24' : '#a5b4fc',
-                      }}
-                    >
-                      {isUnreleased ? '未发布' : `v${release.version}`}
-                    </div>
-                    {release.releaseDate && (
-                      <span className="text-[11px] font-mono" style={{ color: 'var(--text-muted)' }}>
-                        {release.releaseDate}
-                      </span>
-                    )}
-                    <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
-                      · {totalCount} 条
-                    </span>
-                  </div>
-
-                  {release.highlights.length > 0 && (
-                    <div
-                      className="mb-3 rounded-lg px-3 py-2.5 text-[12px]"
-                      style={{
-                        background: 'rgba(99, 102, 241, 0.06)',
-                        border: '1px solid rgba(99, 102, 241, 0.18)',
-                      }}
-                    >
-                      <div
-                        className="text-[10px] font-semibold mb-1 tracking-wider"
-                        style={{ color: '#a5b4fc' }}
-                      >
-                        🚀 用户更新项
-                      </div>
-                      <ul className="flex flex-col gap-0.5" style={{ color: 'var(--text-secondary)' }}>
-                        {release.highlights.map((h, i) => (
-                          <li key={i}>• {h}</li>
-                        ))}
-                      </ul>
-                    </div>
-                  )}
-
-                  {visibleDays.length > 0 && (
-                    <div className="flex flex-col gap-3">
-                      {visibleDays.map((day, dayIdx) => (
-                        <div key={`${day.date}-${dayIdx}`}>
-                          <div
-                            className="inline-flex items-center gap-2 mb-2.5 px-2.5 py-1 rounded-md"
-                            style={{
-                              background: 'rgba(255, 255, 255, 0.04)',
-                              border: '1px solid rgba(255, 255, 255, 0.08)',
-                              color: 'var(--text-secondary)',
-                              fontSize: '13px',
-                              fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',
-                              fontWeight: 600,
-                              letterSpacing: '0.02em',
-                            }}
-                          >
-                            <Calendar size={13} />
-                            {day.date}
-                          </div>
-                          <div className="flex flex-col gap-1.5">
-                            {day.entries.map((e, idx) => (
-                              <EntryRow
-                                key={`${day.date}-${idx}`}
-                                entry={{
-                                  ...e,
-                                  date: day.date,
-                                  commitTimeUtc: day.commitTimeUtc ?? null,
-                                  source: 'release',
-                                  releaseVersion: release.version,
-                                }}
-                                newCutoff={newBadgeCutoff}
-                              />
-                            ))}
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
+                <button
+                  key={tab.key}
+                  type="button"
+                  onClick={() => setHistorySubtab(tab.key)}
+                  className="h-8 px-3 rounded-lg inline-flex items-center gap-1.5 text-[12px] font-medium transition-all"
+                  style={{
+                    background: active ? 'rgba(99, 102, 241, 0.14)' : 'rgba(255, 255, 255, 0.04)',
+                    border: `1px solid ${active ? 'rgba(99, 102, 241, 0.32)' : 'rgba(255, 255, 255, 0.08)'}`,
+                    color: active ? '#c7d2fe' : 'var(--text-muted)',
+                    cursor: 'pointer',
+                  }}
+                >
+                  {tab.icon}
+                  {tab.label}
+                </button>
               );
             })}
           </div>
+          <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
+            {historySubtab === 'releases' && '来自 CHANGELOG.md'}
+            {historySubtab === 'fragments' && '来自 changelogs/*.md（当前周碎片）'}
+            {historySubtab === 'github_logs' && (
+              githubLogs?.source === 'local' ? '来自本地 git log' : '来自 GitHub commits API'
+            )}
+          </span>
+        </div>
+
+        {historySubtab === 'releases' && (
+          <>
+            {loadingReleases && !releases && <MapSectionLoader text="正在加载历史发布…" />}
+
+            {!loadingReleases && releases && releases.releases.length === 0 && (
+              <div
+                className="rounded-xl px-4 py-6 text-center text-[12px]"
+                style={{
+                  background: 'rgba(255, 255, 255, 0.02)',
+                  border: '1px dashed rgba(255, 255, 255, 0.08)',
+                  color: 'var(--text-muted)',
+                }}
+              >
+                暂无历史发布
+              </div>
+            )}
+
+            {releases && releases.releases.length > 0 && (
+              <div className="flex flex-col gap-6">
+                {releases.releases.map((release) => {
+                  const visibleDays = release.days
+                    .map((d) => ({
+                      ...d,
+                      entries: d.entries.filter(matchFilter),
+                    }))
+                    .filter((d) => d.entries.length > 0);
+                  const totalCount = visibleDays.reduce((s, d) => s + d.entries.length, 0);
+                  if (totalCount === 0 && release.highlights.length === 0) {
+                    return null;
+                  }
+
+                  const isUnreleased = release.version === '未发布';
+                  const releaseDisplayDate = getReleaseDisplayDate(release.releaseDate, visibleDays);
+                  const releaseDateTitle = release.releaseDate && releaseDisplayDate && releaseDisplayDate !== release.releaseDate
+                    ? `CHANGELOG 标注日期：${release.releaseDate}\nGitHub 本地日期：${releaseDisplayDate}`
+                    : undefined;
+
+                  return (
+                    <div key={`${release.version}-${release.releaseDate ?? ''}`}>
+                      <div className="flex items-center gap-2 mb-3">
+                        <div
+                          className="px-2.5 py-0.5 rounded-md text-[12px] font-semibold font-mono"
+                          style={{
+                            background: isUnreleased
+                              ? 'rgba(251, 191, 36, 0.10)'
+                              : 'rgba(99, 102, 241, 0.12)',
+                            border: `1px solid ${isUnreleased ? 'rgba(251, 191, 36, 0.32)' : 'rgba(99, 102, 241, 0.32)'}`,
+                            color: isUnreleased ? '#fbbf24' : '#a5b4fc',
+                          }}
+                        >
+                          {isUnreleased ? '未发布' : `v${release.version}`}
+                        </div>
+                        {releaseDisplayDate && (
+                          <span className="text-[11px] font-mono" style={{ color: 'var(--text-muted)' }} title={releaseDateTitle}>
+                            {releaseDisplayDate}
+                          </span>
+                        )}
+                        <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
+                          · {totalCount} 条
+                        </span>
+                      </div>
+
+                      {release.highlights.length > 0 && (
+                        <div
+                          className="mb-3 rounded-lg px-3 py-2.5 text-[12px]"
+                          style={{
+                            background: 'rgba(99, 102, 241, 0.06)',
+                            border: '1px solid rgba(99, 102, 241, 0.18)',
+                          }}
+                        >
+                          <div
+                            className="text-[10px] font-semibold mb-1 tracking-wider"
+                            style={{ color: '#a5b4fc' }}
+                          >
+                            🚀 用户更新项
+                          </div>
+                          <ul className="flex flex-col gap-0.5" style={{ color: 'var(--text-secondary)' }}>
+                            {release.highlights.map((h, i) => (
+                              <li key={i}>• {h}</li>
+                            ))}
+                          </ul>
+                        </div>
+                      )}
+
+                      {visibleDays.length > 0 && (
+                        <div className="flex flex-col gap-3">
+                          {visibleDays.map((day, dayIdx) => {
+                            const dayDisplayDate = formatDisplayDate(day.date, day.commitTimeUtc);
+                            const dayTitle = day.commitTimeUtc && dayDisplayDate !== day.date
+                              ? `CHANGELOG 日期：${day.date}\nGitHub 本地日期：${dayDisplayDate}`
+                              : undefined;
+                            return (
+                              <div key={`${day.date}-${dayIdx}`}>
+                                <div
+                                  className="inline-flex items-center gap-2 mb-2.5 px-2.5 py-1 rounded-md"
+                                  style={{
+                                    background: 'rgba(255, 255, 255, 0.04)',
+                                    border: '1px solid rgba(255, 255, 255, 0.08)',
+                                    color: 'var(--text-secondary)',
+                                    fontSize: '13px',
+                                    fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',
+                                    fontWeight: 600,
+                                    letterSpacing: '0.02em',
+                                  }}
+                                  title={dayTitle}
+                                >
+                                  <Calendar size={13} />
+                                  {dayDisplayDate}
+                                </div>
+                                <div className="flex flex-col gap-1.5">
+                                  {day.entries.map((e, idx) => (
+                                    <EntryRow
+                                      key={`${day.date}-${idx}`}
+                                      entry={{
+                                        ...e,
+                                        date: day.date,
+                                        commitTimeUtc: day.commitTimeUtc ?? null,
+                                        source: 'release',
+                                        releaseVersion: release.version,
+                                      }}
+                                      newCutoff={newBadgeCutoff}
+                                    />
+                                  ))}
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </>
+        )}
+
+        {historySubtab === 'fragments' && (
+          <>
+            {!currentWeek && <MapSectionLoader text="正在加载碎片补充…" />}
+
+            {currentWeek && currentWeek.fragments.length === 0 && (
+              <div
+                className="rounded-xl px-4 py-6 text-center text-[12px]"
+                style={{
+                  background: 'rgba(255, 255, 255, 0.02)',
+                  border: '1px dashed rgba(255, 255, 255, 0.08)',
+                  color: 'var(--text-muted)',
+                }}
+              >
+                当前周暂无碎片日志
+              </div>
+            )}
+
+            {currentWeek && currentWeek.fragments.length > 0 && currentWeek.fragments.filter((f) => f.entries.some(matchFilter)).length === 0 && (
+              <div
+                className="rounded-xl px-4 py-6 text-center text-[12px]"
+                style={{
+                  background: 'rgba(255, 255, 255, 0.02)',
+                  border: '1px dashed rgba(255, 255, 255, 0.08)',
+                  color: 'var(--text-muted)',
+                }}
+              >
+                当前筛选条件下暂无碎片条目
+              </div>
+            )}
+
+            {currentWeek && currentWeek.fragments.filter((f) => f.entries.some(matchFilter)).length > 0 && (
+              <div className="flex flex-col gap-4">
+                {currentWeek.fragments.map((fragment) => {
+                  const visibleEntries = fragment.entries.filter(matchFilter);
+                  if (visibleEntries.length === 0) return null;
+                  return (
+                    <div
+                      key={fragment.fileName}
+                      className="rounded-xl px-4 py-3"
+                      style={{
+                        background: 'rgba(255, 255, 255, 0.025)',
+                        border: '1px solid rgba(255, 255, 255, 0.06)',
+                      }}
+                    >
+                      <div className="flex items-center gap-2 mb-3 flex-wrap">
+                        <div
+                          className="inline-flex items-center gap-2 px-2.5 py-1 rounded-md"
+                          style={{
+                            background: 'rgba(255, 255, 255, 0.04)',
+                            border: '1px solid rgba(255, 255, 255, 0.08)',
+                            color: 'var(--text-secondary)',
+                            fontSize: '13px',
+                            fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',
+                            fontWeight: 600,
+                          }}
+                        >
+                          <Calendar size={13} />
+                          {fragment.date}
+                        </div>
+                        <span className="text-[12px]" style={{ color: 'var(--text-muted)' }}>
+                          {fragment.fileName}
+                        </span>
+                        <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
+                          · {visibleEntries.length} 条
+                        </span>
+                      </div>
+                      <div className="flex flex-col gap-1.5">
+                        {visibleEntries.map((entry, idx) => (
+                          <EntryRow
+                            key={`${fragment.fileName}-${idx}`}
+                            entry={{
+                              ...entry,
+                              date: fragment.date,
+                              commitTimeUtc: null,
+                              source: 'fragment',
+                            }}
+                            newCutoff={newBadgeCutoff}
+                          />
+                        ))}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </>
+        )}
+
+        {historySubtab === 'github_logs' && (
+          <>
+            {loadingGitHubLogs && !githubLogs && <MapSectionLoader text="正在加载 GitHub 日志…" />}
+
+            {gitHubLogsError && (
+              <div
+                className="rounded-xl px-4 py-3 text-[12px]"
+                style={{
+                  background: 'rgba(248, 113, 113, 0.08)',
+                  border: '1px solid rgba(248, 113, 113, 0.32)',
+                  color: '#fca5a5',
+                }}
+              >
+                ⚠ {gitHubLogsError}
+              </div>
+            )}
+
+            {!loadingGitHubLogs && githubLogs && githubLogs.logs.length === 0 && (
+              <div
+                className="rounded-xl px-4 py-6 text-center text-[12px]"
+                style={{
+                  background: 'rgba(255, 255, 255, 0.02)',
+                  border: '1px dashed rgba(255, 255, 255, 0.08)',
+                  color: 'var(--text-muted)',
+                }}
+              >
+                暂无 GitHub 日志
+              </div>
+            )}
+
+            {githubLogs && githubLogs.logs.length > 0 && (
+              <div className="flex flex-col gap-2">
+                {githubLogs.logs.map((log) => (
+                  <GitHubLogRow key={log.sha} log={log} />
+                ))}
+              </div>
+            )}
+          </>
         )}
       </section>
       </div>
@@ -461,10 +702,11 @@ export default function ChangelogPage() {
 function EntryRow({ entry, newCutoff }: { entry: FlatEntry; newCutoff: number | null }) {
   const meta = getTypeBadge(entry.type);
   const Icon = meta.icon;
-  const timeText = formatEntryTime(entry.date, entry.commitTimeUtc);
-  const timeTitle = entry.commitTimeUtc
-    ? `GitHub commit 时间：${timeText}`
-    : `提交日期：${entry.date}（无秒级 commit 时间）`;
+  const timeText = formatDisplayDate(entry.date, entry.commitTimeUtc);
+  const commitDateTime = formatCommitDateTime(entry.commitTimeUtc);
+  const timeTitle = commitDateTime
+    ? `GitHub commit 时间：${commitDateTime}\n原始日期：${entry.date}`
+    : `${entry.source === 'fragment' ? '碎片日期' : 'CHANGELOG 日期'}：${entry.date}`;
   const isFresh = (() => {
     if (newCutoff === null) return false;
     if (!entry.commitTimeUtc) return false;
@@ -538,5 +780,62 @@ function EntryRow({ entry, newCutoff }: { entry: FlatEntry; newCutoff: number | 
         {timeText}
       </div>
     </div>
+  );
+}
+
+function GitHubLogRow({ log }: { log: GitHubLogEntry }) {
+  const commitDate = formatDisplayDate('', log.commitTimeUtc);
+  const commitDateTime = formatCommitDateTime(log.commitTimeUtc) ?? log.commitTimeUtc;
+  return (
+    <a
+      href={log.htmlUrl}
+      target="_blank"
+      rel="noreferrer"
+      className="rounded-lg px-3.5 py-3 flex items-center gap-3 transition-colors hover:bg-white/5"
+      style={{
+        background: 'rgba(255, 255, 255, 0.025)',
+        border: '1px solid rgba(255, 255, 255, 0.06)',
+        textDecoration: 'none',
+      }}
+      title={commitDateTime}
+    >
+      <div
+        className="shrink-0 inline-flex items-center gap-1 px-2 h-[24px] rounded-md text-[12px] font-semibold"
+        style={{
+          background: 'rgba(99, 102, 241, 0.12)',
+          color: '#c7d2fe',
+          border: '1px solid rgba(99, 102, 241, 0.24)',
+          fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',
+        }}
+      >
+        <GitCommit size={11} />
+        {log.shortSha}
+      </div>
+      <div
+        className="shrink-0 inline-flex items-center gap-1 h-[24px] px-2 rounded-md text-[12px]"
+        style={{
+          color: 'var(--text-secondary)',
+          background: 'rgba(255, 255, 255, 0.04)',
+          border: '1px solid rgba(255, 255, 255, 0.08)',
+        }}
+      >
+        <Github size={11} />
+        {log.authorName}
+      </div>
+      <div className="text-[13px] leading-relaxed flex-1 truncate" style={{ color: 'var(--text-secondary)', minWidth: 0 }}>
+        {log.message}
+      </div>
+      <div
+        className="shrink-0 text-[12px]"
+        style={{
+          color: 'var(--text-muted)',
+          fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',
+          fontVariantNumeric: 'tabular-nums',
+        }}
+      >
+        {commitDate}
+      </div>
+      <ExternalLink size={13} style={{ color: 'var(--text-muted)', opacity: 0.65, flexShrink: 0 }} />
+    </a>
   );
 }

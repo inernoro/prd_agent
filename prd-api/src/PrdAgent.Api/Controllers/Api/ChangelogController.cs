@@ -49,6 +49,17 @@ public class ChangelogController : ControllerBase
         return Ok(ApiResponse<ReleasesDto>.Ok(MapReleases(view)));
     }
 
+    /// <summary>
+    /// GitHub 日志（优先本地 git log，失败时回退 GitHub commits API）
+    /// </summary>
+    [HttpGet("github-logs")]
+    public async Task<IActionResult> GetGitHubLogs([FromQuery] int limit = 30, [FromQuery] bool force = false)
+    {
+        if (limit <= 0 || limit > 100) limit = 30;
+        var view = await _reader.GetGitHubLogsAsync(limit, force).ConfigureAwait(false);
+        return Ok(ApiResponse<GitHubLogsDto>.Ok(MapGitHubLogs(view)));
+    }
+
     // ── DTO 映射 ──────────────────────────────────────────────────────
 
     private static CurrentWeekDto MapCurrentWeek(CurrentWeekView view) => new()
@@ -82,6 +93,22 @@ public class ChangelogController : ControllerBase
                 CommitTimeUtc = d.CommitTimeUtc?.ToString("o"),
                 Entries = d.Entries.ConvertAll(MapEntry),
             }),
+        }),
+    };
+
+    private static GitHubLogsDto MapGitHubLogs(GitHubLogsView view) => new()
+    {
+        DataSourceAvailable = view.DataSourceAvailable,
+        Source = view.Source,
+        FetchedAt = view.FetchedAt.ToString("o"),
+        Logs = view.Logs.ConvertAll(l => new GitHubLogEntryDto
+        {
+            Sha = l.Sha,
+            ShortSha = l.ShortSha,
+            Message = l.Message,
+            AuthorName = l.AuthorName,
+            CommitTimeUtc = l.CommitTimeUtc.ToString("o"),
+            HtmlUrl = l.HtmlUrl,
         }),
     };
 
@@ -142,5 +169,23 @@ public class ChangelogController : ControllerBase
         public string Source { get; set; } = "none";
         public string FetchedAt { get; set; } = string.Empty;
         public List<ChangelogReleaseDto> Releases { get; set; } = new();
+    }
+
+    public sealed class GitHubLogEntryDto
+    {
+        public string Sha { get; set; } = string.Empty;
+        public string ShortSha { get; set; } = string.Empty;
+        public string Message { get; set; } = string.Empty;
+        public string AuthorName { get; set; } = string.Empty;
+        public string CommitTimeUtc { get; set; } = string.Empty;
+        public string HtmlUrl { get; set; } = string.Empty;
+    }
+
+    public sealed class GitHubLogsDto
+    {
+        public bool DataSourceAvailable { get; set; }
+        public string Source { get; set; } = "none";
+        public string FetchedAt { get; set; } = string.Empty;
+        public List<GitHubLogEntryDto> Logs { get; set; } = new();
     }
 }
