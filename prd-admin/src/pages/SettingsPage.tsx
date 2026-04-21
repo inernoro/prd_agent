@@ -7,6 +7,7 @@ import { Button } from '@/components/design/Button';
 import { useNavOrderStore, NAV_DIVIDER_KEY } from '@/stores/navOrderStore';
 import { useAuthStore } from '@/stores/authStore';
 import { getLauncherCatalog, LAUNCHER_GROUP_LABELS } from '@/lib/launcherCatalog';
+import { getShortLabel } from '@/lib/shortLabel';
 import { Palette, RotateCcw, Image, UserCog, UserCircle2, Database, ListOrdered, Zap, Sparkles, Plus, X, Minus } from 'lucide-react';
 import { MapSpinner } from '@/components/ui/VideoLoader';
 import * as LucideIcons from 'lucide-react';
@@ -22,6 +23,8 @@ import { AccountSettings } from '@/pages/settings/AccountSettings';
 interface NavMetaItem {
   navKey: string;
   label: string;
+  /** 折叠态短标签（与 AppShell 侧边栏 collapsed 态一致） */
+  shortLabel: string;
   icon: string;
   /** 分组（用于候选池分组展示，以及默认顺序生成分隔符）
    *  - 'tools' | 'personal' | 'admin' : 来自后端 menuCatalog
@@ -101,6 +104,7 @@ function NavOrderSettings() {
       m.set(entry.appKey, {
         navKey: entry.appKey,
         label: entry.label,
+        shortLabel: getShortLabel(entry.appKey, entry.label),
         icon: entry.icon,
         group: entry.group,
         source: 'menu',
@@ -117,6 +121,7 @@ function NavOrderSettings() {
       m.set(li.id, {
         navKey: li.id,
         label: li.name,
+        shortLabel: getShortLabel(li.agentKey ?? li.id, li.name),
         icon: li.icon,
         group: li.group,
         source: 'launcher',
@@ -251,9 +256,20 @@ function NavOrderSettings() {
     [currentOrder, navHidden, setNavLayout]
   );
 
-  // 追加分隔符到末尾
+  // 在末尾附近插入一根分隔符 —— collapseDividers 会剥掉真正末尾的分隔符
+  // （尾部分隔符无意义），因此插入到倒数第二位（最后一个条目之前），
+  // 保证用户点击后"我的导航"里立刻看到新横杆，可以再拖动到任意位置。
   const appendDivider = useCallback(() => {
-    const nextOrder = collapseDividers([...currentOrder, NAV_DIVIDER_KEY]);
+    const base = [...currentOrder];
+    // 剥掉末尾已有的分隔符，避免插入后出现连续两根
+    while (base.length > 0 && base[base.length - 1] === NAV_DIVIDER_KEY) base.pop();
+    if (base.length === 0) {
+      // 极端情况：导航被清空，直接忽略（分隔符不能独存）
+      return;
+    }
+    const insertAt = Math.max(0, base.length - 1);
+    const withDivider = [...base.slice(0, insertAt), NAV_DIVIDER_KEY, ...base.slice(insertAt)];
+    const nextOrder = collapseDividers(withDivider);
     setNavLayout({ navOrder: nextOrder, navHidden });
   }, [currentOrder, navHidden, setNavLayout]);
 
@@ -528,7 +544,7 @@ function NavItemChip({
     >
       <span style={{ color: 'var(--text-secondary)' }}>{getIcon(meta.icon, 14)}</span>
       <span className="text-[12px] font-medium" style={{ color: 'var(--text-primary)' }}>
-        {meta.label}
+        {meta.shortLabel}
       </span>
       <button
         type="button"
@@ -635,7 +651,7 @@ function PoolItemChip({
     >
       <span style={{ color: 'var(--text-muted)' }}>{getIcon(meta.icon, 14)}</span>
       <span className="text-[12px]" style={{ color: 'var(--text-secondary)' }}>
-        {meta.label}
+        {meta.shortLabel}
       </span>
       <button
         type="button"
