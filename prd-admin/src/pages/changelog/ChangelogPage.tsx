@@ -91,15 +91,15 @@ function formatCommitDateTime(commitTimeUtc?: string | null): string | null {
   return d ? formatLocalDateTimeValue(d) : null;
 }
 
-function getReleaseDisplayDate(releaseDate: string | null, days: Array<{ date: string; commitTimeUtc?: string | null }>): string | null {
+function getLatestCommitDateTime(days: Array<{ commitTimeUtc?: string | null }>): string | null {
   const latestCommitDay = days
     .map((d) => parseIsoDate(d.commitTimeUtc))
     .filter((d): d is Date => d instanceof Date)
     .sort((a, b) => b.getTime() - a.getTime())[0];
   if (latestCommitDay) {
-    return formatLocalDateValue(latestCommitDay);
+    return formatLocalDateTimeValue(latestCommitDay);
   }
-  return releaseDate;
+  return null;
 }
 
 function readGitHubLogsCache(): GitHubLogsView | null {
@@ -520,9 +520,10 @@ export default function ChangelogPage() {
                   }
 
                   const isUnreleased = release.version === '未发布';
-                  const releaseDisplayDate = getReleaseDisplayDate(release.releaseDate, visibleDays);
-                  const releaseDateTitle = release.releaseDate && releaseDisplayDate && releaseDisplayDate !== release.releaseDate
-                    ? `CHANGELOG 标注日期：${release.releaseDate}\nGitHub 本地日期：${releaseDisplayDate}`
+                  const releaseDisplayDate = release.releaseDate;
+                  const releaseCommitDateTime = getLatestCommitDateTime(visibleDays);
+                  const releaseDateTitle = releaseCommitDateTime
+                    ? `CHANGELOG 版本日期：${release.releaseDate ?? '未发布'}\n最近一次 CHANGELOG 合并提交：${releaseCommitDateTime}`
                     : undefined;
 
                   return (
@@ -575,38 +576,27 @@ export default function ChangelogPage() {
                       {visibleDays.length > 0 && (
                         <div className="flex flex-col gap-3">
                           {visibleDays.map((day, dayIdx) => {
-                            const dayCommitDisplayDate = formatDisplayDate(day.date, day.commitTimeUtc);
-                            const dayTitle = day.commitTimeUtc && dayCommitDisplayDate !== day.date
-                              ? `CHANGELOG 日期：${day.date}\nGitHub commit 本地日期：${dayCommitDisplayDate}`
+                            const dayCommitDateTime = formatCommitDateTime(day.commitTimeUtc);
+                            const dayTitle = dayCommitDateTime
+                              ? `CHANGELOG 日期：${day.date}\n最近一次 CHANGELOG 合并提交：${dayCommitDateTime}`
                               : undefined;
                             return (
                               <div key={`${day.date}-${dayIdx}`}>
-                                <div className="flex items-center gap-2 mb-2.5 flex-wrap">
-                                  <div
-                                    className="inline-flex items-center gap-2 px-2.5 py-1 rounded-md"
-                                    style={{
-                                      background: 'rgba(255, 255, 255, 0.04)',
-                                      border: '1px solid rgba(255, 255, 255, 0.08)',
-                                      color: 'var(--text-secondary)',
-                                      fontSize: '13px',
-                                      fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',
-                                      fontWeight: 600,
-                                      letterSpacing: '0.02em',
-                                    }}
-                                    title={dayTitle}
-                                  >
-                                    <Calendar size={13} />
-                                    {day.date}
-                                  </div>
-                                  {day.commitTimeUtc && dayCommitDisplayDate !== day.date && (
-                                    <span
-                                      className="text-[11px] font-mono"
-                                      style={{ color: 'var(--text-muted)' }}
-                                      title={`GitHub commit 本地日期：${dayCommitDisplayDate}`}
-                                    >
-                                      提交落地 {dayCommitDisplayDate}
-                                    </span>
-                                  )}
+                                <div
+                                  className="inline-flex items-center gap-2 mb-2.5 px-2.5 py-1 rounded-md"
+                                  style={{
+                                    background: 'rgba(255, 255, 255, 0.04)',
+                                    border: '1px solid rgba(255, 255, 255, 0.08)',
+                                    color: 'var(--text-secondary)',
+                                    fontSize: '13px',
+                                    fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',
+                                    fontWeight: 600,
+                                    letterSpacing: '0.02em',
+                                  }}
+                                  title={dayTitle}
+                                >
+                                  <Calendar size={13} />
+                                  {day.date}
                                 </div>
                                 <div className="flex flex-col gap-1.5">
                                   {day.entries.map((e, idx) => (
@@ -782,11 +772,6 @@ export default function ChangelogPage() {
 function EntryRow({ entry, newCutoff }: { entry: FlatEntry; newCutoff: number | null }) {
   const meta = getTypeBadge(entry.type);
   const Icon = meta.icon;
-  const timeText = formatDisplayDate(entry.date, entry.commitTimeUtc);
-  const commitDateTime = formatCommitDateTime(entry.commitTimeUtc);
-  const timeTitle = commitDateTime
-    ? `GitHub commit 时间：${commitDateTime}\n原始日期：${entry.date}`
-    : `${entry.source === 'fragment' ? '碎片日期' : 'CHANGELOG 日期'}：${entry.date}`;
   const isFresh = (() => {
     if (newCutoff === null) return false;
     if (!entry.commitTimeUtc) return false;
@@ -847,17 +832,6 @@ function EntryRow({ entry, newCutoff }: { entry: FlatEntry; newCutoff: number | 
         title={entry.description}
       >
         {entry.description}
-      </div>
-      <div
-        className="shrink-0 text-[12px]"
-        style={{
-          color: 'var(--text-muted)',
-          fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',
-          fontVariantNumeric: 'tabular-nums',
-        }}
-        title={timeTitle}
-      >
-        {timeText}
       </div>
     </div>
   );
