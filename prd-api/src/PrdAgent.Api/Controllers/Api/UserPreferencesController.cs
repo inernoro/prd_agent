@@ -47,6 +47,7 @@ public class UserPreferencesController : ControllerBase
         return Ok(ApiResponse<object>.Ok(new
         {
             navOrder = prefs?.NavOrder ?? new List<string>(),
+            navHidden = prefs?.NavHidden ?? new List<string>(),
             themeConfig = prefs?.ThemeConfig,
             visualAgentPreferences = prefs?.VisualAgentPreferences,
             literaryAgentPreferences = prefs?.LiteraryAgentPreferences,
@@ -101,6 +102,54 @@ public class UserPreferencesController : ControllerBase
 
         var update = Builders<UserPreferences>.Update
             .Set(x => x.NavOrder, request.NavOrder)
+            .Set(x => x.UpdatedAt, DateTime.UtcNow);
+
+        await _db.UserPreferences.UpdateOneAsync(
+            x => x.UserId == userId,
+            update,
+            new UpdateOptions { IsUpsert = true });
+
+        return Ok(ApiResponse<object>.Ok(new { }));
+    }
+
+    /// <summary>
+    /// 更新导航隐藏列表
+    /// </summary>
+    [HttpPut("nav-hidden")]
+    public async Task<IActionResult> UpdateNavHidden([FromBody] UpdateNavHiddenRequest request)
+    {
+        var userId = GetCurrentUserId();
+        if (string.IsNullOrEmpty(userId))
+            return Unauthorized(ApiResponse<object>.Fail("UNAUTHORIZED", "未登录"));
+
+        if (request.NavHidden == null)
+            return BadRequest(ApiResponse<object>.Fail("INVALID_FORMAT", "navHidden 不能为空"));
+
+        var update = Builders<UserPreferences>.Update
+            .Set(x => x.NavHidden, request.NavHidden)
+            .Set(x => x.UpdatedAt, DateTime.UtcNow);
+
+        await _db.UserPreferences.UpdateOneAsync(
+            x => x.UserId == userId,
+            update,
+            new UpdateOptions { IsUpsert = true });
+
+        return Ok(ApiResponse<object>.Ok(new { }));
+    }
+
+    /// <summary>
+    /// 一次性更新导航顺序 + 隐藏列表（减少网络往返）
+    /// </summary>
+    [HttpPut("nav-layout")]
+    public async Task<IActionResult> UpdateNavLayout([FromBody] UpdateNavLayoutRequest request)
+    {
+        var userId = GetCurrentUserId();
+        if (string.IsNullOrEmpty(userId))
+            return Unauthorized(ApiResponse<object>.Fail("UNAUTHORIZED", "未登录"));
+
+        var update = Builders<UserPreferences>.Update
+            .Set(x => x.NavOrder, request.NavOrder ?? new List<string>())
+            .Set(x => x.NavHidden, request.NavHidden ?? new List<string>())
             .Set(x => x.UpdatedAt, DateTime.UtcNow);
 
         await _db.UserPreferences.UpdateOneAsync(
@@ -189,6 +238,17 @@ public class UserPreferencesController : ControllerBase
 public class UpdateNavOrderRequest
 {
     public List<string>? NavOrder { get; set; }
+}
+
+public class UpdateNavHiddenRequest
+{
+    public List<string>? NavHidden { get; set; }
+}
+
+public class UpdateNavLayoutRequest
+{
+    public List<string>? NavOrder { get; set; }
+    public List<string>? NavHidden { get; set; }
 }
 
 public class UpdateThemeConfigRequest

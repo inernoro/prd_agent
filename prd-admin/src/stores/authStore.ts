@@ -77,6 +77,21 @@ export const useAuthStore = create<AuthState>()(
       patchUser: (patch) =>
         set((s) => (s.user ? { user: { ...s.user, ...patch } } : ({} as Partial<AuthState>))),
       logout: () => {
+        // 重置 user-scoped stores 的内存态，防止切换账号后旧用户数据残留。
+        // 用动态 import 是为了切开与 @/services 之间的循环引用（services 会 import authStore）。
+        void (async () => {
+          try {
+            const [{ useNavOrderStore }, { useAgentSwitcherStore }] = await Promise.all([
+              import('@/stores/navOrderStore'),
+              import('@/stores/agentSwitcherStore'),
+            ]);
+            useNavOrderStore.getState().reset();
+            useAgentSwitcherStore.getState().resetServerSync();
+            useAgentSwitcherStore.setState({ recentVisits: [], usageCounts: {}, pinnedIds: [] });
+          } catch {
+            // 动态 import 失败：退回到仅清 sessionStorage
+          }
+        })();
         sessionStorage.clear();
         set({ ...INITIAL_STATE });
       },

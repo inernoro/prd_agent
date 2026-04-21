@@ -6,6 +6,8 @@ import type {
   UserPreferences,
   GetUserPreferencesContract,
   UpdateNavOrderContract,
+  UpdateNavHiddenContract,
+  UpdateNavLayoutContract,
   UpdateThemeConfigContract,
   UpdateVisualAgentPreferencesContract,
   UpdateLiteraryAgentPreferencesContract,
@@ -30,12 +32,13 @@ export const getUserPreferencesReal: GetUserPreferencesContract = async (): Prom
 };
 
 async function doGetUserPreferences(): Promise<ApiResponse<UserPreferences>> {
-  const res = await apiRequest<{ navOrder: string[]; themeConfig?: ThemeConfigResponse; visualAgentPreferences?: VisualAgentPreferences; literaryAgentPreferences?: LiteraryAgentPreferences; agentSwitcherPreferences?: AgentSwitcherPreferences }>(
+  const res = await apiRequest<{ navOrder: string[]; navHidden: string[]; themeConfig?: ThemeConfigResponse; visualAgentPreferences?: VisualAgentPreferences; literaryAgentPreferences?: LiteraryAgentPreferences; agentSwitcherPreferences?: AgentSwitcherPreferences }>(
     api.dashboard.userPreferences.get()
   );
   if (!res.success) return res as unknown as ApiResponse<UserPreferences>;
   return ok({
     navOrder: res.data.navOrder ?? [],
+    navHidden: res.data.navHidden ?? [],
     themeConfig: res.data.themeConfig,
     visualAgentPreferences: res.data.visualAgentPreferences,
     literaryAgentPreferences: res.data.literaryAgentPreferences,
@@ -47,6 +50,24 @@ export const updateNavOrderReal: UpdateNavOrderContract = async (navOrder: strin
   const res = await apiRequest<void>(api.dashboard.userPreferences.navOrder(), {
     method: 'PUT',
     body: { navOrder },
+  });
+  if (!res.success) return res;
+  return ok(undefined);
+};
+
+export const updateNavHiddenReal: UpdateNavHiddenContract = async (navHidden: string[]): Promise<ApiResponse<void>> => {
+  const res = await apiRequest<void>(api.dashboard.userPreferences.navHidden(), {
+    method: 'PUT',
+    body: { navHidden },
+  });
+  if (!res.success) return res;
+  return ok(undefined);
+};
+
+export const updateNavLayoutReal: UpdateNavLayoutContract = async (payload): Promise<ApiResponse<void>> => {
+  const res = await apiRequest<void>(api.dashboard.userPreferences.navLayout(), {
+    method: 'PUT',
+    body: { navOrder: payload.navOrder, navHidden: payload.navHidden },
   });
   if (!res.success) return res;
   return ok(undefined);

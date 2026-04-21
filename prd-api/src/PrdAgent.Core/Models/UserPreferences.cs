@@ -15,9 +15,15 @@ public class UserPreferences
 
     /// <summary>
     /// 导航项排序（存储导航项 key 的有序列表）。
-    /// 仅存储用户自定义的顺序，不存在的导航项会追加到末尾。
+    /// 数组中字符串 "---" 表示分隔横杆（可出现多次，连续的会在渲染时合并）。
+    /// 为空时按后端菜单目录 + 分组默认顺序渲染。
     /// </summary>
     public List<string>? NavOrder { get; set; }
+
+    /// <summary>
+    /// 被用户隐藏的导航项 appKey 列表。隐藏后不在左侧导航显示，但保留页面访问权。
+    /// </summary>
+    public List<string>? NavHidden { get; set; }
 
     /// <summary>
     /// 主题/皮肤配置

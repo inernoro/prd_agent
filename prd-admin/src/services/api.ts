@@ -308,6 +308,8 @@ export const api = {
     userPreferences: {
       get: () => '/api/dashboard/user-preferences',
       navOrder: () => '/api/dashboard/user-preferences/nav-order',
+      navHidden: () => '/api/dashboard/user-preferences/nav-hidden',
+      navLayout: () => '/api/dashboard/user-preferences/nav-layout',
       theme: () => '/api/dashboard/user-preferences/theme',
       visualAgent: () => '/api/dashboard/user-preferences/visual-agent',
       literaryAgent: () => '/api/dashboard/user-preferences/literary-agent',

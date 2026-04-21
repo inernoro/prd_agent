@@ -123,7 +123,7 @@ function getShortLabel(appKey: string, label: string): string {
 
 /** 根据 mimeType 推断扩展名，确保下载文件名带后缀 */
 function ensureDownloadName(name: string | undefined | null, mimeType?: string | null): string {
-  let n = name || 'output';
+  const n = name || 'output';
   if (/\.\w{1,5}$/.test(n)) return n;
   if (!mimeType) return n + '.txt';
   if (mimeType.includes('markdown')) return n + '.md';
@@ -215,7 +215,7 @@ export default function AppShell() {
   const mobileDrawerOpen = useLayoutStore((s) => s.mobileDrawerOpen);
   const setMobileDrawerOpen = useLayoutStore((s) => s.setMobileDrawerOpen);
   const { isMobile } = useBreakpoint();
-  const { navOrder, loaded: navOrderLoaded, loadFromServer: loadNavOrder } = useNavOrderStore();
+  const { navOrder, navHidden, loaded: navOrderLoaded, loadFromServer: loadNavOrder } = useNavOrderStore();
   const [avatarOpen, setAvatarOpen] = useState(false);
   const [notificationDialogOpen, setNotificationDialogOpen] = useState(false);
   const [notifications, setNotifications] = useState<AdminNotificationItem[]>([]);
@@ -283,13 +283,13 @@ export default function AppShell() {
 
   // 从后端菜单目录生成导航项，按 group 分组
   // 只有带 group 字段的菜单项才在侧边栏显示
-  const visibleItems: NavItem[] = useMemo(() => {
+  const allCatalogItems: NavItem[] = useMemo(() => {
     if (!menuCatalogLoaded || !Array.isArray(menuCatalog) || menuCatalog.length === 0) {
       return [];
     }
 
     // 只显示有 group 的菜单项（无 group 的放在头像面板），并排除 HIDDEN_NAV_KEYS
-    const items = menuCatalog
+    return menuCatalog
       .filter((m) => !!m.group && !HIDDEN_NAV_KEYS.has(m.appKey))
       .map((m) => {
         const IconComp = iconMap[m.icon] ?? LayoutDashboard;
@@ -303,32 +303,73 @@ export default function AppShell() {
           group: m.group,
         };
       });
+  }, [menuCatalog, menuCatalogLoaded]);
 
-    // 如果有用户自定义顺序，则按该顺序排列
+  // 过滤掉用户隐藏的项（隐藏 = 不在导航展示，但保留页面访问权）
+  const visibleItems: NavItem[] = useMemo(() => {
+    const hiddenSet = new Set(navHidden);
+    return allCatalogItems.filter((it) => !hiddenSet.has(it.appKey));
+  }, [allCatalogItems, navHidden]);
+
+  // 首页独立项（不归属任何分组，始终可见，不参与用户自定义）
+  const homeItem = useMemo(
+    () => allCatalogItems.find((it) => it.group === 'home'),
+    [allCatalogItems]
+  );
+
+  /**
+   * 分组化的导航段（每段一块视觉区域，段之间渲染 1px 横杆）
+   * - 有用户自定义 navOrder → 以其中的 "---" 分隔符切段，item 按数组顺序排列
+   *   未在 navOrder 中出现的新 appKey 自动追加到末段（保证新功能上线不会"消失"）
+   * - 无自定义 → 回退到后端 `group` 字段（effort/personal/admin）默认分段
+   */
+  const groupedNav = useMemo(() => {
+    const NON_HOME = visibleItems.filter((it) => it.group !== 'home');
+
+    // 用户自定义模式：按 navOrder 展开 + "---" 切段，不再显示分组标签（纯视觉横杆）
     if (navOrder.length > 0) {
-      const orderMap = new Map(navOrder.map((k, i) => [k, i]));
-      items.sort((a, b) => {
-        const aOrder = orderMap.get(a.appKey) ?? 9999;
-        const bOrder = orderMap.get(b.appKey) ?? 9999;
-        return aOrder - bOrder;
-      });
+      const byAppKey = new Map(NON_HOME.map((it) => [it.appKey, it]));
+      const appeared = new Set<string>();
+      const segments: { key: string; label?: string; items: NavItem[] }[] = [];
+      let current: NavItem[] = [];
+      let segIdx = 0;
+
+      for (const token of navOrder) {
+        if (token === '---') {
+          if (current.length > 0) {
+            segments.push({ key: `custom-${segIdx++}`, items: current });
+            current = [];
+          }
+          continue;
+        }
+        const item = byAppKey.get(token);
+        if (item && !appeared.has(token)) {
+          current.push(item);
+          appeared.add(token);
+        }
+      }
+      // 追加未出现过的 item（新功能上线兜底）
+      for (const it of NON_HOME) {
+        if (!appeared.has(it.appKey)) {
+          current.push(it);
+          appeared.add(it.appKey);
+        }
+      }
+      if (current.length > 0) {
+        segments.push({ key: `custom-${segIdx++}`, items: current });
+      }
+      return segments.filter((s) => s.items.length > 0);
     }
 
-    return items;
-  }, [menuCatalog, menuCatalogLoaded, navOrder]);
-
-  // 首页独立项（不归属任何分组）
-  const homeItem = useMemo(() => visibleItems.find((it) => it.group === 'home'), [visibleItems]);
-
-  // 按 group 分组的导航项（排除 home）
-  const groupedNav = useMemo(() => {
+    // 默认模式：按后端 `group` 字段分段，保留分组标签
     return NAV_GROUPS
       .map((g) => ({
-        ...g,
-        items: visibleItems.filter((it) => it.group === g.key),
+        key: g.key,
+        label: g.label,
+        items: NON_HOME.filter((it) => it.group === g.key),
       }))
       .filter((g) => g.items.length > 0);
-  }, [visibleItems]);
+  }, [visibleItems, navOrder]);
   
   // 首页为 Agent Launcher 沉浸页，不自动跳转，让用户自主选择 Agent
   const isHomePage = location.pathname === '/';
@@ -650,12 +691,14 @@ export default function AppShell() {
                 {gi > 0 && (
                   <div className="h-px mx-3 my-3.5" style={{ background: 'rgba(255,255,255,0.06)' }} />
                 )}
-                <div
-                  className="px-3 pt-1 pb-1 text-[10px] font-semibold tracking-[0.08em] uppercase select-none"
-                  style={{ color: 'var(--text-muted, rgba(255,255,255,0.32))' }}
-                >
-                  {group.label}
-                </div>
+                {group.label && (
+                  <div
+                    className="px-3 pt-1 pb-1 text-[10px] font-semibold tracking-[0.08em] uppercase select-none"
+                    style={{ color: 'var(--text-muted, rgba(255,255,255,0.32))' }}
+                  >
+                    {group.label}
+                  </div>
+                )}
                 {group.items.map((it) => {
                   const active = it.key === activeKey;
                   return (
@@ -832,8 +875,8 @@ export default function AppShell() {
                     />
                   )}
 
-                  {/* 分组标题（仅展开时显示） */}
-                  {!collapsed && (
+                  {/* 分组标题（仅展开时显示；自定义导航模式下 group.label 为空，不渲染） */}
+                  {!collapsed && group.label && (
                     <div
                       className="px-2.5 pt-1 pb-1 text-[10px] font-semibold tracking-[0.08em] uppercase select-none"
                       style={{ color: 'var(--text-muted, rgba(255,255,255,0.32))' }}
