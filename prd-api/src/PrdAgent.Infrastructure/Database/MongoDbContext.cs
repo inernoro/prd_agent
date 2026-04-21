@@ -47,6 +47,7 @@ public class MongoDbContext
     public IMongoCollection<LLMModel> LLMModels => _database.GetCollection<LLMModel>("llmmodels");
     public IMongoCollection<AppSettings> AppSettings => _database.GetCollection<AppSettings>("appsettings");
     public IMongoCollection<AdminNotification> AdminNotifications => _database.GetCollection<AdminNotification>("admin_notifications");
+    public IMongoCollection<DailyTip> DailyTips => _database.GetCollection<DailyTip>("daily_tips");
     public IMongoCollection<AutomationRule> AutomationRules => _database.GetCollection<AutomationRule>("automation_rules");
     /// <summary>
     /// PRD 问答系统提示词（非 JSON 输出任务）：按角色（PM/DEV/QA）可被管理后台覆盖

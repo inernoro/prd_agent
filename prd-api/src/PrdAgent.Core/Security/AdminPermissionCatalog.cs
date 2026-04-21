@@ -120,6 +120,16 @@ public static class AdminPermissionCatalog
     public const string TutorialEmailWrite = "tutorial-email.write";
 
     /// <summary>
+    /// 小技巧管理权限（读）：查看首页副标题轮播及右上角抽屉的 tips 列表（管理视图）
+    /// </summary>
+    public const string DailyTipsRead = "daily-tips.read";
+
+    /// <summary>
+    /// 小技巧管理权限（写）：新建 / 编辑 / 删除 / 排序首页小技巧与引导卡片
+    /// </summary>
+    public const string DailyTipsWrite = "daily-tips.write";
+
+    /// <summary>
     /// 工作流引擎权限：使用工作流（创建、执行、查看自己的）
     /// </summary>
     public const string WorkflowAgentUse = "workflow-agent.use";
@@ -314,6 +324,9 @@ public static class AdminPermissionCatalog
         new(WorkspacesWrite, "工作空间-写", "创建/编辑/删除工作空间、发送指令"),
 
         new(SkillAgentUse, "技能引导 Agent", "AI 引导创建技能、导出技能包"),
+
+        new(DailyTipsRead, "小技巧-读", "查看小技巧列表（管理视图）"),
+        new(DailyTipsWrite, "小技巧-写", "新建/编辑/删除首页小技巧与引导卡片"),
 
         new(Super, "超级权限", "兜底放行：建议仅给 root/超级管理员"),
     };

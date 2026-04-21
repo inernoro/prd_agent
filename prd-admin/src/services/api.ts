@@ -1090,6 +1090,17 @@ export const api = {
     },
   },
 
+  // ============ Daily Tips 每日小贴士 ============
+  dailyTips: {
+    visible: () => '/api/daily-tips/visible',
+    admin: {
+      list: () => '/api/admin/daily-tips',
+      create: () => '/api/admin/daily-tips',
+      update: (id: string) => `/api/admin/daily-tips/${id}`,
+      delete: (id: string) => `/api/admin/daily-tips/${id}`,
+    },
+  },
+
   // ============ Emergence Explorer 涌现探索器 ============
   emergence: {
     trees: {

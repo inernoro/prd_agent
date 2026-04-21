@@ -16,6 +16,7 @@ import DataManagePage from '@/pages/DataManagePage';
 import { UpdateAccelerationSettings } from '@/pages/settings/UpdateAccelerationSettings';
 import { UserSpaceSettings } from '@/pages/settings/UserSpaceSettings';
 import { AccountSettings } from '@/pages/settings/AccountSettings';
+import { DailyTipsEditor } from '@/pages/settings/DailyTipsEditor';
 
 interface NavItem {
   key: string;
@@ -271,6 +272,7 @@ export default function SettingsPage() {
     if (hasPerm('authz.manage')) list.push({ key: 'authz', label: '权限管理', icon: <UserCog size={14} /> });
     if (hasPerm('data.read')) list.push({ key: 'data', label: '数据管理', icon: <Database size={14} /> });
     if (hasPerm('settings.write')) list.push({ key: 'update-accel', label: '更新加速', icon: <Zap size={14} /> });
+    if (hasPerm('daily-tips.read')) list.push({ key: 'daily-tips', label: '小技巧', icon: <Sparkles size={14} /> });
     return list;
   }, [perms, isRoot]);
 
@@ -307,6 +309,7 @@ export default function SettingsPage() {
         {activeTab === 'authz' && <AuthzPage />}
         {activeTab === 'data' && <DataManagePage />}
         {activeTab === 'update-accel' && <UpdateAccelerationSettings />}
+        {activeTab === 'daily-tips' && <DailyTipsEditor />}
       </div>
     </div>
   );

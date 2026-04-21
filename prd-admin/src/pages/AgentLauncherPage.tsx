@@ -42,6 +42,7 @@ import { DesktopDownloadDialog } from '@/components/ui/DesktopDownloadDialog';
 import { ReviewAgentCardArt } from '@/pages/ai-toolbox/components/ReviewAgentCardArt';
 import { HomeAmbientBackdrop } from '@/components/effects/HomeAmbientBackdrop';
 import { Reveal } from '@/pages/home/components/Reveal';
+import { TipsRotator } from '@/components/daily-tips/TipsRotator';
 
 /**
  * 进场动效节奏 —— 与 /home LandingPage 同款 Reveal 组件，duration 减半（1000ms）让整体速度翻倍。
@@ -616,7 +617,6 @@ export default function AgentLauncherPage() {
 
   return (
     <div className="h-full min-h-0 flex flex-col relative" style={{ background: 'var(--bg-base)' }}>
-      
       {/* ── 页面背景大画幅层 (Page Hero Backing) ── */}
       <div 
         className="absolute inset-x-0 top-0 pointer-events-none" 
@@ -730,7 +730,8 @@ export default function AgentLauncherPage() {
                     </h1>
                   </Reveal>
                   <Reveal delay={REVEAL.heroSubtitle} duration={REVEAL_DURATION}>
-                    <p
+                    <div
+                      data-tour-id="home-subtitle"
                       className={`mt-2 ${isMobile ? 'text-sm' : 'text-[15px]'}`}
                       style={{
                         color: 'var(--text-muted, rgba(255,255,255,0.6))',
@@ -738,8 +739,8 @@ export default function AgentLauncherPage() {
                         maxWidth: 520,
                       }}
                     >
-                      选一个智能助手开始创作，或在下方的实用工具里探索平台能力
-                    </p>
+                      <TipsRotator fallback="选一个智能助手开始创作,或在下方的实用工具里探索平台能力" />
+                    </div>
                   </Reveal>
                 </div>
 
@@ -752,6 +753,7 @@ export default function AgentLauncherPage() {
                       style={{ color: 'var(--text-muted, rgba(255,255,255,0.3))' }}
                     />
                     <input
+                      data-tour-id="home-search"
                       type="text"
                       placeholder="搜索 Agent..."
                       value={searchQuery}
@@ -783,10 +785,15 @@ export default function AgentLauncherPage() {
             {!searchQuery.trim() && (
               <div className={`relative z-10 ${isMobile ? 'px-5 pb-6' : 'px-8 pb-10'}`}>
                 <div
-                  className="grid"
+                  className="grid mx-auto"
                   style={{
                     gap: isMobile ? 10 : 14,
-                    gridTemplateColumns: `repeat(auto-fit, minmax(${isMobile ? 160 : 220}px, 1fr))`,
+                    // 带鱼屏收束：整体最大 1440px 居中；单卡上限 320px，避免在 2560+ 屏上被拉伸
+                    maxWidth: isMobile ? '100%' : 1440,
+                    gridTemplateColumns: isMobile
+                      ? `repeat(auto-fit, minmax(160px, 1fr))`
+                      : `repeat(auto-fit, minmax(220px, 320px))`,
+                    justifyContent: 'center',
                   }}
                 >
               {quickLinks.map((link, idx) => {
@@ -802,6 +809,7 @@ export default function AgentLauncherPage() {
                   >
                   <button
                     type="button"
+                    data-tour-id={`quicklink-${link.id}`}
                     onClick={() => navigate(link.path)}
                     className="group relative text-left rounded-2xl overflow-hidden transition-all duration-300 hover:-translate-y-0.5 w-full"
                     style={{
@@ -809,7 +817,8 @@ export default function AgentLauncherPage() {
                       border: '1px solid rgba(255,255,255,0.08)',
                       padding: isMobile ? '14px 14px 16px' : '20px',
                       minHeight: isMobile ? 96 : 140,
-                      aspectRatio: isMobile ? 'auto' : '16/10',
+                      // 更扁的卡片比例，避免带鱼屏上拉伸过高
+                      aspectRatio: isMobile ? 'auto' : '21/9',
                     }}
                   >
                     {/* 管理员上传的背景图（如有）：铺满卡片，底部渐变压暗保证文字可读 */}

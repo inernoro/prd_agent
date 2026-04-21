@@ -64,6 +64,9 @@ import { GlobalDefectSubmitDialog, DefectSubmitButton } from '@/components/ui/Gl
 import { useGlobalDefectStore } from '@/stores/globalDefectStore';
 import { ChangelogBell } from '@/components/changelog/ChangelogBell';
 import { useChangelogStore, selectUnreadCount } from '@/stores/changelogStore';
+import { SpotlightOverlay } from '@/components/daily-tips/SpotlightOverlay';
+import { TipsDrawer } from '@/components/daily-tips/TipsDrawer';
+import { CommandPalette } from '@/components/command-palette/CommandPalette';
 
 type NavItem = { key: string; appKey: string; label: string; shortLabel: string; icon: React.ReactNode; description?: string; group?: string | null };
 
@@ -226,7 +229,15 @@ export default function AppShell() {
   useEffect(() => {
     void loadChangelogCurrentWeek();
   }, [loadChangelogCurrentWeek]);
-  const [dismissedToastIds, setDismissedToastIds] = useState<Set<string>>(new Set());
+  // 本会话已关闭的 toast id 黑名单：持久化到 sessionStorage，避免 polling/刷新后重复弹出
+  const [dismissedToastIds, setDismissedToastIds] = useState<Set<string>>(() => {
+    try {
+      const raw = sessionStorage.getItem('dismissedToastIds');
+      return raw ? new Set<string>(JSON.parse(raw) as string[]) : new Set<string>();
+    } catch {
+      return new Set<string>();
+    }
+  });
   const [toastCollapsed, setToastCollapsed] = useState(false);
   const [toastHovering, setToastHovering] = useState(false);
 
@@ -391,6 +402,11 @@ export default function AppShell() {
     setDismissedToastIds((prev) => {
       const next = new Set(prev);
       next.add(id);
+      try {
+        sessionStorage.setItem('dismissedToastIds', JSON.stringify(Array.from(next)));
+      } catch {
+        // sessionStorage 不可用时静默降级（保持内存态黑名单）
+      }
       return next;
     });
   }, []);
@@ -427,6 +443,8 @@ export default function AppShell() {
     <div className="h-full w-full relative overflow-hidden" style={{ background: 'var(--bg-base)' }}>
       <SystemDialogHost />
       <GlobalDefectSubmitDialog />
+      <TipsDrawer />
+      <CommandPalette />
       {toastNotification && (
         toastCollapsed ? (
           // 收缩状态：浮动按钮
@@ -1299,6 +1317,8 @@ export default function AppShell() {
               <Suspense fallback={<InlinePageLoader />}>
                 <Outlet />
               </Suspense>
+              {/* 每日小贴士跳转后的 DOM 脉冲光圈。key=pathname 保证每次路由切换都重新读取 sessionStorage */}
+              <SpotlightOverlay key={location.pathname} />
             </div>
           </div>
         </main>
