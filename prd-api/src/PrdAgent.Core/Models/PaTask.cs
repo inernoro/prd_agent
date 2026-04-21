@@ -54,6 +54,21 @@ public class PaSession
 {
     public string Id { get; set; } = Guid.NewGuid().ToString("N");
     public string UserId { get; set; } = string.Empty;
+    /// <summary>会话标题（首条消息自动生成）</summary>
+    public string Title { get; set; } = "新对话";
+    /// <summary>最后一条消息摘要（用于侧边栏预览）</summary>
+    public string? LastMessagePreview { get; set; }
+    /// <summary>消息总数</summary>
+    public int MessageCount { get; set; } = 0;
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
+}
+
+/// <summary>任务意图置信度</summary>
+public static class PaTaskConfidence
+{
+    /// <summary>明确任务：自动加入看板</summary>
+    public const string Auto = "auto";
+    /// <summary>潜在任务：展示确认按钮</summary>
+    public const string Suggest = "suggest";
 }

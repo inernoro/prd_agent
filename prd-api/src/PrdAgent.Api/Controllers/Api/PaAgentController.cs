@@ -29,39 +29,51 @@ public class PaAgentController : ControllerBase
     private static readonly string SystemPrompt = """
         你是一位 MBB（麦肯锡/波士顿/贝恩）级别的私人执行助理，帮助用户进行清晰的任务规划与高效执行。
 
-        ## 你的核心能力
-
+        ## 核心能力
         1. **MECE 任务拆解**：将模糊目标拆解为互不重叠、完全穷尽的子步骤
         2. **四象限排序**：按重要性-紧急性对任务进行象限分类
            - Q1（紧急重要）：今日必须完成，直接影响核心目标
            - Q2（重要不紧急）：计划性投资，长期价值最高
            - Q3（紧急不重要）：可委托他人或快速处理
            - Q4（不重要不紧急）：可忽略或删除
-        3. **执行建议**：给出具体可操作的下一步行动，而非空泛建议
-        4. **进度追踪**：帮助用户回顾已完成事项，识别卡点
+        3. **执行建议**：给出具体可操作的下一步行动
+        4. **进度追踪**：回顾已完成事项，识别卡点
 
-        ## 输出规范
+        ## 任务识别规则（重要！每次回复必须执行）
 
-        - 简洁直接，避免废话
-        - 使用结构化输出（列表、表格）
-        - 当用户要求保存任务时，在回复末尾输出以下格式的 JSON 块（用 ```json 包裹）：
-          ```json
-          {
-            "action": "save_task",
-            "title": "任务标题",
-            "quadrant": "Q2",
-            "reasoning": "为什么是这个象限",
-            "subTasks": ["子步骤1", "子步骤2"]
-          }
-          ```
+        在每次回复末尾，**必须**对用户消息进行任务意图评估，并根据置信度输出对应 JSON：
+
+        ### 情况 A：明确任务（用户清楚表达了要做某件具体事情）
+        置信度 = "auto"，系统将**自动加入任务看板**，无需用户确认。
+        触发条件：消息含有明确待办（如"明天要做X"、"需要完成Y"、"帮我拆解Z"、"安排一下A"）
+
+        ### 情况 B：潜在任务（内容涉及工作/目标但未明确表达要做）
+        置信度 = "suggest"，系统将在对话下方**显示加入看板按钮**，由用户确认。
+        触发条件：消息涉及工作计划、会议安排、项目进展等，但没有明确的"我要做"意图
+
+        ### 情况 C：普通对话（闲聊、询问建议、情感表达等）
+        不输出任何 JSON 块。
+
+        ### JSON 格式（情况 A 或 B 时必须输出，放在回复最末尾）：
+        ```json
+        {
+          "action": "save_task",
+          "confidence": "auto",
+          "title": "简洁的任务标题（10字以内）",
+          "quadrant": "Q2",
+          "reasoning": "一句话说明为何是这个象限",
+          "subTasks": ["子步骤1", "子步骤2"],
+          "sessionTitle": "3-6字的会话主题"
+        }
+        ```
+        - confidence 必须是 "auto" 或 "suggest"
         - quadrant 必须是 Q1/Q2/Q3/Q4 之一
-        - 只有当用户明确说"保存"、"加入清单"、"记录"时，才输出 JSON 块
+        - sessionTitle 用于自动命名本次会话（首次发言才生成，之后为 null）
 
         ## 对话风格
-
         - 称呼用户为"你"，语气专业但不生硬
+        - 简洁直接，使用结构化输出（列表、表格）
         - 主动追问关键信息（截止时间、资源约束、优先级）
-        - 识别用户的隐性需求，给出超预期建议
         """;
 
     private readonly MongoDbContext _db;
@@ -94,12 +106,61 @@ public class PaAgentController : ControllerBase
            ?? User.FindFirst(ClaimTypes.Name)?.Value;
 
     // ──────────────────────────────────────────────────────────────────
-    // Session
+    // Sessions (multi-session management)
     // ──────────────────────────────────────────────────────────────────
 
-    /// <summary>
-    /// 获取或创建当前用户的会话
-    /// </summary>
+    /// <summary>获取用户所有会话列表（按最近更新倒序）</summary>
+    [HttpGet("sessions")]
+    public async Task<IActionResult> GetSessions()
+    {
+        var userId = GetUserId();
+        var sessions = await _db.PaSessions
+            .Find(s => s.UserId == userId)
+            .SortByDescending(s => s.UpdatedAt)
+            .Limit(100)
+            .ToListAsync();
+        return Ok(ApiResponse<List<PaSession>>.Ok(sessions));
+    }
+
+    /// <summary>创建新会话</summary>
+    [HttpPost("sessions")]
+    public async Task<IActionResult> CreateSession()
+    {
+        var userId = GetUserId();
+        var session = new PaSession { UserId = userId };
+        await _db.PaSessions.InsertOneAsync(session);
+        return Ok(ApiResponse<PaSession>.Ok(session));
+    }
+
+    /// <summary>重命名会话</summary>
+    [HttpPatch("sessions/{id}")]
+    public async Task<IActionResult> RenameSession(string id, [FromBody] RenameSessionRequest req)
+    {
+        var userId = GetUserId();
+        var result = await _db.PaSessions.UpdateOneAsync(
+            s => s.Id == id && s.UserId == userId,
+            Builders<PaSession>.Update
+                .Set(s => s.Title, req.Title ?? "新对话")
+                .Set(s => s.UpdatedAt, DateTime.UtcNow));
+        if (result.MatchedCount == 0)
+            return NotFound(ApiResponse<object>.Fail("DOCUMENT_NOT_FOUND", "会话不存在"));
+        var updated = await _db.PaSessions.Find(s => s.Id == id).FirstOrDefaultAsync();
+        return Ok(ApiResponse<PaSession>.Ok(updated!));
+    }
+
+    /// <summary>删除会话（及其消息）</summary>
+    [HttpDelete("sessions/{id}")]
+    public async Task<IActionResult> DeleteSession(string id)
+    {
+        var userId = GetUserId();
+        var result = await _db.PaSessions.DeleteOneAsync(s => s.Id == id && s.UserId == userId);
+        if (result.DeletedCount == 0)
+            return NotFound(ApiResponse<object>.Fail("DOCUMENT_NOT_FOUND", "会话不存在"));
+        await _db.PaMessages.DeleteManyAsync(m => m.SessionId == id);
+        return Ok(ApiResponse<object>.Ok(new { }));
+    }
+
+    /// <summary>获取或创建当前用户最新会话（兼容旧接口）</summary>
     [HttpGet("session")]
     public async Task<IActionResult> GetOrCreateSession()
     {
@@ -116,6 +177,11 @@ public class PaAgentController : ControllerBase
         }
 
         return Ok(ApiResponse<object>.Ok(new { sessionId = session.Id }));
+    }
+
+    public class RenameSessionRequest
+    {
+        public string? Title { get; set; }
     }
 
     // ──────────────────────────────────────────────────────────────────
@@ -347,22 +413,118 @@ public class PaAgentController : ControllerBase
             }
         }
 
-        // Persist assistant message
+        // Persist assistant message + extract task payload
         if (assistantContent.Length > 0)
         {
+            var fullReply = assistantContent.ToString();
+
             var assistantMsg = new PaMessage
             {
                 UserId = userId,
                 SessionId = sessionId,
                 Role = "assistant",
-                Content = assistantContent.ToString(),
+                Content = fullReply,
             };
             await _db.PaMessages.InsertOneAsync(assistantMsg);
 
-            // Update session timestamp
-            await _db.PaSessions.UpdateOneAsync(
-                s => s.Id == sessionId,
-                Builders<PaSession>.Update.Set(s => s.UpdatedAt, DateTime.UtcNow));
+            // ── Extract task payload from JSON block ──────────────────
+            string? autoTaskJson = null;
+            string? sessionTitleFromLLM = null;
+            var jsonMatch = System.Text.RegularExpressions.Regex.Match(
+                fullReply, @"```json\s*([\s\S]*?)```");
+            if (jsonMatch.Success)
+            {
+                try
+                {
+                    using var doc = JsonDocument.Parse(jsonMatch.Groups[1].Value);
+                    var root = doc.RootElement;
+                    if (root.TryGetProperty("action", out var actionEl) &&
+                        actionEl.GetString() == "save_task")
+                    {
+                        var confidence = root.TryGetProperty("confidence", out var confEl)
+                            ? confEl.GetString() : null;
+                        var title = root.TryGetProperty("title", out var tEl) ? tEl.GetString() : null;
+                        var quadrant = root.TryGetProperty("quadrant", out var qEl) ? qEl.GetString() : PaTaskQuadrant.Q2;
+                        var reasoning = root.TryGetProperty("reasoning", out var rEl) ? rEl.GetString() : null;
+                        var subTasks = new List<string>();
+                        if (root.TryGetProperty("subTasks", out var stEl) && stEl.ValueKind == JsonValueKind.Array)
+                            foreach (var s in stEl.EnumerateArray())
+                                subTasks.Add(s.GetString() ?? "");
+
+                        if (root.TryGetProperty("sessionTitle", out var stitleEl))
+                            sessionTitleFromLLM = stitleEl.GetString();
+
+                        if (!string.IsNullOrWhiteSpace(title) && confidence == PaTaskConfidence.Auto)
+                        {
+                            // Auto-save task silently
+                            var task = new PaTask
+                            {
+                                UserId = userId,
+                                SessionId = sessionId,
+                                Title = title,
+                                Quadrant = PaTaskQuadrant.All.Contains(quadrant ?? "") ? quadrant! : PaTaskQuadrant.Q2,
+                                Reasoning = reasoning,
+                                SubTasks = subTasks.Select(s => new PaSubTask { Content = s }).ToList(),
+                                ContentHash = Convert.ToBase64String(
+                                    System.Security.Cryptography.MD5.HashData(
+                                        System.Text.Encoding.UTF8.GetBytes(title + quadrant)))[..16],
+                            };
+                            await _db.PaTasks.InsertOneAsync(task);
+                            autoTaskJson = JsonSerializer.Serialize(new
+                            {
+                                action = "save_task",
+                                confidence = PaTaskConfidence.Auto,
+                                autoSaved = true,
+                                taskId = task.Id,
+                                title = task.Title,
+                                quadrant = task.Quadrant,
+                            });
+                        }
+                        else if (!string.IsNullOrWhiteSpace(title) && confidence == PaTaskConfidence.Suggest)
+                        {
+                            autoTaskJson = JsonSerializer.Serialize(new
+                            {
+                                action = "save_task",
+                                confidence = PaTaskConfidence.Suggest,
+                                autoSaved = false,
+                                title,
+                                quadrant,
+                                reasoning,
+                                subTasks,
+                            });
+                        }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "[pa-agent] Failed to parse task JSON");
+                }
+            }
+
+            // ── Update session metadata ───────────────────────────────
+            var msgCount = await _db.PaMessages.CountDocumentsAsync(
+                m => m.SessionId == sessionId);
+            var preview = req.Message.Length > 40
+                ? req.Message[..40] + "…"
+                : req.Message;
+            var sessionUpdate = Builders<PaSession>.Update
+                .Set(s => s.UpdatedAt, DateTime.UtcNow)
+                .Set(s => s.MessageCount, (int)msgCount)
+                .Set(s => s.LastMessagePreview, preview);
+
+            // Only set title on first user message (msgCount ~= 2 means user+assistant)
+            if (!string.IsNullOrWhiteSpace(sessionTitleFromLLM) && msgCount <= 2)
+                sessionUpdate = sessionUpdate.Set(s => s.Title, sessionTitleFromLLM);
+
+            await _db.PaSessions.UpdateOneAsync(s => s.Id == sessionId, sessionUpdate);
+
+            // Push task metadata event so frontend knows what happened
+            if (autoTaskJson != null)
+            {
+                var taskEvent = JsonSerializer.Serialize(new { type = "task", data = autoTaskJson });
+                await Response.WriteAsync($"data: {taskEvent}\n\n", CancellationToken.None);
+                await Response.Body.FlushAsync(CancellationToken.None);
+            }
         }
     }
 

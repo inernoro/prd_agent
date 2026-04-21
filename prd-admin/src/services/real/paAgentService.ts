@@ -52,7 +52,37 @@ export interface UpdateTaskRequest {
   subTasks?: PaSubTask[];
 }
 
-// ── Session ────────────────────────────────────────────────────────────────
+// ── Session types ──────────────────────────────────────────────────────────
+
+export interface PaSessionInfo {
+  id: string;
+  userId: string;
+  title: string;
+  lastMessagePreview?: string;
+  messageCount: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+// ── Sessions API ──────────────────────────────────────────────────────────
+
+export async function getPaSessions(): Promise<ApiResponse<PaSessionInfo[]>> {
+  return apiRequest<PaSessionInfo[]>('/api/pa-agent/sessions');
+}
+
+export async function createPaSession(): Promise<ApiResponse<PaSessionInfo>> {
+  return apiRequest<PaSessionInfo>('/api/pa-agent/sessions', { method: 'POST' });
+}
+
+export async function renamePaSession(id: string, title: string): Promise<ApiResponse<PaSessionInfo>> {
+  return apiRequest<PaSessionInfo>(`/api/pa-agent/sessions/${id}`, { method: 'PATCH', body: { title } });
+}
+
+export async function deletePaSession(id: string): Promise<ApiResponse<void>> {
+  return apiRequest<void>(`/api/pa-agent/sessions/${id}`, { method: 'DELETE' });
+}
+
+// ── Legacy single-session ─────────────────────────────────────────────────
 
 export async function getPaSession(): Promise<ApiResponse<{ sessionId: string }>> {
   return apiRequest<{ sessionId: string }>('/api/pa-agent/session');
@@ -132,6 +162,16 @@ export interface PaChatChunk {
   message?: string;
 }
 
+export interface PaTaskEvent {
+  autoSaved: boolean;
+  confidence: 'auto' | 'suggest';
+  taskId?: string;
+  title: string;
+  quadrant: 'Q1' | 'Q2' | 'Q3' | 'Q4';
+  reasoning?: string;
+  subTasks?: string[];
+}
+
 export interface StreamPaChatOptions {
   sessionId: string;
   message: string;
@@ -140,6 +180,7 @@ export interface StreamPaChatOptions {
   onChunk: (chunk: PaChatChunk) => void;
   onDone: () => void;
   onError: (err: string) => void;
+  onTask?: (event: PaTaskEvent) => void;
 }
 
 export async function streamPaChat(opts: StreamPaChatOptions): Promise<() => void> {
@@ -199,6 +240,11 @@ export async function streamPaChat(opts: StreamPaChatOptions): Promise<() => voi
               opts.onError(friendly);
             } else if ((chunk as { type: string }).type === 'retry') {
               opts.onChunk({ type: 'delta', content: '\u200B' });
+            } else if ((chunk as { type: string }).type === 'task') {
+              try {
+                const taskData = JSON.parse((chunk as { type: string; data: string }).data) as PaTaskEvent;
+                opts.onTask?.(taskData);
+              } catch { /* ignore */ }
             } else {
               opts.onChunk(chunk);
             }
