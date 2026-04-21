@@ -47,6 +47,14 @@ public sealed class AppCallerRegistrySyncService : IHostedService
             .GroupBy(x => x.AppCode, StringComparer.OrdinalIgnoreCase)
             .ToDictionary(g => g.Key, g => g.First(), StringComparer.OrdinalIgnoreCase);
 
+        // 预加载可用模型组，用于新 AppCaller 的自动绑定（避免手动操作）
+        var allModelGroups = await db.ModelGroups.Find(_ => true).ToListAsync(ct);
+        var defaultChatGroupId = allModelGroups
+            .Where(g => !string.Equals(g.Name, "videogen-default", StringComparison.OrdinalIgnoreCase))
+            .Where(g => g.Name?.Contains("video", StringComparison.OrdinalIgnoreCase) != true)
+            .Select(g => g.Id)
+            .FirstOrDefault();
+
         var createdCount = 0;
         var updatedCount = 0;
         var unchangedCount = 0;
@@ -55,13 +63,24 @@ public sealed class AppCallerRegistrySyncService : IHostedService
         {
             if (!existingByCode.TryGetValue(def.AppCode, out var existing))
             {
+                var requirements = BuildDefaultRequirements(def);
+                // 新注册的 AppCaller 若需要 chat 模型，自动绑定环境中第一个可用模型组
+                if (defaultChatGroupId != null)
+                {
+                    foreach (var req in requirements.Where(r => r.ModelType == "chat"))
+                    {
+                        if (req.ModelGroupIds.Count == 0)
+                            req.ModelGroupIds.Add(defaultChatGroupId);
+                    }
+                }
+
                 var app = new LLMAppCaller
                 {
                     Id = Guid.NewGuid().ToString("N"),
                     AppCode = def.AppCode,
                     DisplayName = def.DisplayName,
                     Description = def.Description,
-                    ModelRequirements = BuildDefaultRequirements(def),
+                    ModelRequirements = requirements,
                     IsSystemDefault = true,
                     IsAutoRegistered = false,
                     TotalCalls = 0,
