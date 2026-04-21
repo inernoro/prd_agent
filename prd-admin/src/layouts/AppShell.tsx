@@ -40,6 +40,7 @@ import {
   BarChart3,
   type LucideIcon,
 } from 'lucide-react';
+import * as LucideIcons from 'lucide-react';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { cn } from '@/lib/cn';
@@ -318,9 +319,14 @@ export default function AppShell() {
           continue;
         }
         // Fallback：来自 launcher 目录的条目（agent:/toolbox:/utility: 前缀）
+        // launcher 的 icon 名是前端自定义枚举，静态 iconMap 覆盖不全（如 Library/Sparkle/Video/Palette/PenTool/FileBarChart）
+        // 走动态 lucide-react 命名空间查找，与 SettingsPage 的 getIcon 保持一致
         const li = launcherById.get(token);
         if (li) {
-          const IconComp = iconMap[li.icon] ?? Cpu;
+          const IconComp =
+            iconMap[li.icon] ??
+            ((LucideIcons as unknown as Record<string, LucideIcon | undefined>)[li.icon]) ??
+            Cpu;
           current.push({
             key: li.route,
             appKey: li.id,
