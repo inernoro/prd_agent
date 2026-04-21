@@ -81,4 +81,44 @@ public class DailyTip
 
     /// <summary>更新时间</summary>
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
+
+    /// <summary>
+    /// 定向推送投递记录(奥卡姆剃刀:直接内嵌,不开新集合)。
+    /// 非空时该 tip 仅对 Deliveries 中 Status != "dismissed" 且 ViewCount < MaxViews 的用户可见,
+    /// 其他用户(包括 TargetUserId)不受影响——Deliveries 为高优先级定向通道。
+    /// 空集合表示没有推送过,走 TargetUserId / 全局可见逻辑。
+    /// </summary>
+    public List<DailyTipDelivery> Deliveries { get; set; } = new();
+}
+
+/// <summary>
+/// 单个用户的投递状态记录。内嵌在 DailyTip.Deliveries 列表中。
+/// </summary>
+public class DailyTipDelivery
+{
+    /// <summary>被推送用户 UserId</summary>
+    public string UserId { get; set; } = string.Empty;
+
+    /// <summary>
+    /// 状态:pending(已推送,待查看) / seen(已看到) / clicked(点过 CTA) / dismissed(用户关闭)。
+    /// </summary>
+    public string Status { get; set; } = "pending";
+
+    /// <summary>被看到次数(首次加载 + 每次出现计数)</summary>
+    public int ViewCount { get; set; } = 0;
+
+    /// <summary>最多展示次数(达到后自动不再可见),-1 = 无限</summary>
+    public int MaxViews { get; set; } = 3;
+
+    /// <summary>推送时间</summary>
+    public DateTime PushedAt { get; set; } = DateTime.UtcNow;
+
+    /// <summary>最后被看到时间</summary>
+    public DateTime? LastSeenAt { get; set; }
+
+    /// <summary>点击 CTA 时间</summary>
+    public DateTime? ClickedAt { get; set; }
+
+    /// <summary>用户主动关闭时间</summary>
+    public DateTime? DismissedAt { get; set; }
 }

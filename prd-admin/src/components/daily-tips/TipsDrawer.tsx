@@ -1,9 +1,10 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useNavigate } from 'react-router-dom';
 import { Sparkles, X, ChevronRight, Bell } from 'lucide-react';
 import { useDailyTipsStore } from '@/stores/dailyTipsStore';
 import { SPOTLIGHT_TARGET_KEY } from './TipsRotator';
+import { trackTip } from '@/services/real/dailyTips';
 
 /**
  * 右上角「引导抽屉」。
@@ -57,7 +58,19 @@ export function TipsDrawer() {
 
   const badgeCount = tips.filter((t) => t.isTargeted).length || tips.length;
 
+  // 记录 seen:抽屉打开且 tip 真正被渲染到画面时,每条只上报一次(本 session 内)
+  const seenReportedRef = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    if (!open) return;
+    for (const t of tips) {
+      if (seenReportedRef.current.has(t.id)) continue;
+      seenReportedRef.current.add(t.id);
+      void trackTip(t.id, 'seen');
+    }
+  }, [open, tips]);
+
   const handleOpenTip = (tip: (typeof tips)[number]) => {
+    void trackTip(tip.id, 'clicked');
     if (tip.targetSelector) {
       try {
         sessionStorage.setItem(SPOTLIGHT_TARGET_KEY, tip.targetSelector);
@@ -67,6 +80,11 @@ export function TipsDrawer() {
     }
     setOpen(false);
     navigate(tip.actionUrl || '/');
+  };
+
+  const handleDismissTip = (tipId: string) => {
+    void trackTip(tipId, 'dismissed');
+    dismiss(tipId);
   };
 
   if (tips.length === 0) return null;
@@ -211,7 +229,7 @@ export function TipsDrawer() {
           >
             <button
               type="button"
-              onClick={() => dismiss(t.id)}
+              onClick={() => handleDismissTip(t.id)}
               title="本次会话不再显示"
               style={{
                 position: 'absolute',

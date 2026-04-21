@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Sparkles } from 'lucide-react';
 import { useDailyTipsStore } from '@/stores/dailyTipsStore';
+import { trackTip } from '@/services/real/dailyTips';
 
 const ROTATE_MS = 5500;
 
@@ -55,6 +56,7 @@ export function TipsRotator({ fallback, className, style }: Props) {
   }
 
   const handleClick = () => {
+    void trackTip(current.id, 'clicked');
     if (current.targetSelector) {
       try {
         sessionStorage.setItem(SPOTLIGHT_TARGET_KEY, current.targetSelector);

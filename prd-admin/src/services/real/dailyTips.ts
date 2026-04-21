@@ -18,6 +18,32 @@ export interface DailyTip {
   isTargeted?: boolean;
   sourceType?: string | null;
   createdAt?: string;
+  /** 当前用户在该 tip 上的投递状态(pending/seen/clicked/dismissed),无投递记录时为 null */
+  deliveryStatus?: string | null;
+  deliveryViewCount?: number | null;
+  deliveryMaxViews?: number | null;
+}
+
+export type TrackAction = 'seen' | 'clicked' | 'dismissed';
+
+export interface DailyTipDelivery {
+  userId: string;
+  userDisplayName?: string | null;
+  status: 'pending' | 'seen' | 'clicked' | 'dismissed';
+  viewCount: number;
+  maxViews: number;
+  pushedAt: string;
+  lastSeenAt?: string | null;
+  clickedAt?: string | null;
+  dismissedAt?: string | null;
+}
+
+export interface DailyTipStatsSummary {
+  total: number;
+  pending: number;
+  seen: number;
+  clicked: number;
+  dismissed: number;
 }
 
 export interface DailyTipAdmin extends DailyTip {
@@ -83,4 +109,37 @@ export async function deleteTip(id: string): Promise<ApiResponse<{ deleted: bool
   return await apiRequest<{ deleted: boolean }>(api.dailyTips.admin.delete(id), {
     method: 'DELETE',
   });
+}
+
+/** 推送 tip 给指定用户。reset=true 时重置已有记录为 pending。 */
+export async function pushTip(
+  id: string,
+  body: { userIds: string[]; maxViews?: number; reset?: boolean },
+): Promise<ApiResponse<{ pushedCount: number; totalDeliveries: number; deliveries: DailyTipDelivery[] }>> {
+  return await apiRequest<{ pushedCount: number; totalDeliveries: number; deliveries: DailyTipDelivery[] }>(
+    api.dailyTips.admin.push(id),
+    { method: 'POST', body },
+  );
+}
+
+/** 查看 tip 的推送统计(每用户状态 + 汇总)。 */
+export async function getTipStats(
+  id: string,
+): Promise<ApiResponse<{ summary: DailyTipStatsSummary; items: DailyTipDelivery[] }>> {
+  return await apiRequest<{ summary: DailyTipStatsSummary; items: DailyTipDelivery[] }>(
+    api.dailyTips.admin.stats(id),
+    { method: 'GET' },
+  );
+}
+
+/** 记录当前用户对 tip 的交互动作:seen / clicked / dismissed。静默失败(不阻塞 UI)。 */
+export async function trackTip(id: string, action: TrackAction): Promise<void> {
+  try {
+    await apiRequest<unknown>(api.dailyTips.track(id), {
+      method: 'POST',
+      body: { action },
+    });
+  } catch {
+    /* tracking 失败不影响用户操作 */
+  }
 }
