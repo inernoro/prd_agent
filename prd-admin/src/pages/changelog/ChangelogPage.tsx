@@ -171,52 +171,45 @@ export default function ChangelogPage() {
 
   useEffect(() => {
     if (activeTab !== 'update_center' || historySubtab !== 'github_logs' || loadingGitHubLogs || githubLogs) return;
-    let alive = true;
     setLoadingGitHubLogs(true);
     setGitHubLogsError(null);
     void getChangelogGitHubLogs(GITHUB_LOGS_FETCH_LIMIT).then((res) => {
-      if (!alive) return;
       if (res.success) {
         setGitHubLogs(res.data);
         writeGitHubLogsCache(res.data);
       } else {
         setGitHubLogsError(res.error?.message || '加载 GitHub 日志失败');
       }
+    }).catch((error: unknown) => {
+      setGitHubLogsError(error instanceof Error ? error.message : '加载 GitHub 日志失败');
     }).finally(() => {
-      if (alive) setLoadingGitHubLogs(false);
+      setLoadingGitHubLogs(false);
     });
-    return () => { alive = false; };
   }, [activeTab, historySubtab, loadingGitHubLogs, githubLogs]);
 
   useEffect(() => {
     if (activeTab !== 'update_center' || historySubtab === 'github_logs' || loadingGitHubLogs || githubLogs) return;
-    let alive = true;
     const run = () => {
       setLoadingGitHubLogs(true);
       void getChangelogGitHubLogs(GITHUB_LOGS_FETCH_LIMIT).then((res) => {
-        if (!alive) return;
         if (res.success) {
           setGitHubLogs(res.data);
           writeGitHubLogsCache(res.data);
         }
+      }).catch(() => {
+        // 预取失败不打断当前页，用户切到 GitHub 日志时会显式重试
       }).finally(() => {
-        if (alive) setLoadingGitHubLogs(false);
+        setLoadingGitHubLogs(false);
       });
     };
 
     if ('requestIdleCallback' in window) {
       const idleId = window.requestIdleCallback(run, { timeout: 1500 });
-      return () => {
-        alive = false;
-        window.cancelIdleCallback(idleId);
-      };
+      return () => window.cancelIdleCallback(idleId);
     }
 
     const timer = window.setTimeout(run, 800);
-    return () => {
-      alive = false;
-      window.clearTimeout(timer);
-    };
+    return () => window.clearTimeout(timer);
   }, [activeTab, historySubtab, loadingGitHubLogs, githubLogs]);
 
   const handleRefresh = () => {
