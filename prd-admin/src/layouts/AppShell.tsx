@@ -49,6 +49,7 @@ import { useAgentSwitcherStore } from '@/stores/agentSwitcherStore';
 import { useThemeStore } from '@/stores/themeStore';
 import { useLayoutStore } from '@/stores/layoutStore';
 import { useNavOrderStore } from '@/stores/navOrderStore';
+import { getLauncherCatalog } from '@/lib/launcherCatalog';
 import { useBreakpoint } from '@/hooks/useBreakpoint';
 import { SystemDialogHost } from '@/components/ui/SystemDialogHost';
 import { InlinePageLoader } from '@/components/ui/VideoLoader';
@@ -210,6 +211,8 @@ export default function AppShell() {
   const patchUser = useAuthStore((s) => s.patchUser);
   const menuCatalog = useAuthStore((s) => s.menuCatalog);
   const menuCatalogLoaded = useAuthStore((s) => s.menuCatalogLoaded);
+  const permissions = useAuthStore((s) => s.permissions);
+  const isRoot = useAuthStore((s) => s.isRoot);
   const collapsed = useLayoutStore((s) => s.navCollapsed);
   const fullBleedMain = useLayoutStore((s) => s.fullBleedMain);
   const mobileDrawerOpen = useLayoutStore((s) => s.mobileDrawerOpen);
@@ -329,6 +332,11 @@ export default function AppShell() {
     // 用户自定义模式：按 navOrder 展开 + "---" 切段，不再显示分组标签（纯视觉横杆）
     if (navOrder.length > 0) {
       const byAppKey = new Map(NON_HOME.map((it) => [it.appKey, it]));
+      // 从 launcher catalog 回退解析：支持用户从候选池拖进来的 toolbox/agent/utility 项
+      // 这些 token 形如 "agent:xxx" / "toolbox:xxx" / "utility:xxx"
+      const launcherById = new Map(
+        getLauncherCatalog({ permissions, isRoot }).map((li) => [li.id, li])
+      );
       const appeared = new Set<string>();
       const segments: { key: string; label?: string; items: NavItem[] }[] = [];
       let current: NavItem[] = [];
@@ -342,13 +350,30 @@ export default function AppShell() {
           }
           continue;
         }
+        if (appeared.has(token)) continue;
         const item = byAppKey.get(token);
-        if (item && !appeared.has(token)) {
+        if (item) {
           current.push(item);
+          appeared.add(token);
+          continue;
+        }
+        // Fallback：来自 launcher 目录的条目（agent:/toolbox:/utility: 前缀）
+        const li = launcherById.get(token);
+        if (li) {
+          const IconComp = iconMap[li.icon] ?? Cpu;
+          current.push({
+            key: li.route,
+            appKey: li.id,
+            label: li.name,
+            shortLabel: getShortLabel(li.agentKey ?? li.id, li.name),
+            icon: <IconComp size={18} />,
+            description: li.description,
+            group: null,
+          });
           appeared.add(token);
         }
       }
-      // 追加未出现过的 item（新功能上线兜底）
+      // 追加未出现过的 menuCatalog item（新功能上线兜底）
       for (const it of NON_HOME) {
         if (!appeared.has(it.appKey)) {
           current.push(it);
@@ -369,7 +394,7 @@ export default function AppShell() {
         items: NON_HOME.filter((it) => it.group === g.key),
       }))
       .filter((g) => g.items.length > 0);
-  }, [visibleItems, navOrder]);
+  }, [visibleItems, navOrder, permissions, isRoot]);
   
   // 首页为 Agent Launcher 沉浸页，不自动跳转，让用户自主选择 Agent
   const isHomePage = location.pathname === '/';

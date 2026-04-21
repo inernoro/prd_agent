@@ -6,6 +6,7 @@ import type { TabBarItem } from '@/components/design/TabBar';
 import { Button } from '@/components/design/Button';
 import { useNavOrderStore, NAV_DIVIDER_KEY } from '@/stores/navOrderStore';
 import { useAuthStore } from '@/stores/authStore';
+import { getLauncherCatalog, LAUNCHER_GROUP_LABELS } from '@/lib/launcherCatalog';
 import { Palette, RotateCcw, Image, UserCog, UserCircle2, Database, ListOrdered, Zap, Sparkles, Plus, X, Minus } from 'lucide-react';
 import { MapSpinner } from '@/components/ui/VideoLoader';
 import * as LucideIcons from 'lucide-react';
@@ -17,11 +18,22 @@ import { UpdateAccelerationSettings } from '@/pages/settings/UpdateAccelerationS
 import { UserSpaceSettings } from '@/pages/settings/UserSpaceSettings';
 import { AccountSettings } from '@/pages/settings/AccountSettings';
 
+/** 导航候选项元数据（key 可以是菜单 appKey 或 launcher id，如 "agent:prd-agent"） */
 interface NavMetaItem {
-  appKey: string;
+  navKey: string;
   label: string;
   icon: string;
+  /** 分组（用于候选池分组展示，以及默认顺序生成分隔符）
+   *  - 'tools' | 'personal' | 'admin' : 来自后端 menuCatalog
+   *  - 'agent' | 'toolbox' | 'utility' : 来自 launcherCatalog
+   */
+  group: string;
+  /** 来源：menu（后端菜单） / launcher（Cmd+K 目录） */
+  source: 'menu' | 'launcher';
 }
+
+/** 后端默认导航分组顺序（与 AppShell NAV_GROUPS 对齐） */
+const DEFAULT_NAV_GROUPS_ORDER: string[] = ['tools', 'personal', 'admin'];
 
 // 动态获取 Lucide 图标
 function getIcon(name: string, size = 16) {
@@ -58,7 +70,7 @@ function SkinSettings() {
 type DragSource =
   | { type: 'nav-item'; index: number }
   | { type: 'nav-divider'; index: number }
-  | { type: 'pool-item'; appKey: string };
+  | { type: 'pool-item'; navKey: string };
 
 function NavOrderSettings() {
   const {
@@ -71,47 +83,106 @@ function NavOrderSettings() {
     restoreDefault,
   } = useNavOrderStore();
   const menuCatalog = useAuthStore((s) => s.menuCatalog);
+  const permissions = useAuthStore((s) => s.permissions);
+  const isRoot = useAuthStore((s) => s.isRoot);
 
-  // 候选元数据：后端菜单目录 → appKey → {label, icon}
-  const metaByAppKey = useMemo(() => {
+  /**
+   * 统一元数据查询表：
+   * - 后端菜单目录（按 appKey 入表，权威来源）
+   * - launcher catalog（按 launcher id 入表，路由已被 menuCatalog 覆盖的条目跳过避免重复）
+   */
+  const metaByKey = useMemo(() => {
     const m = new Map<string, NavMetaItem>();
+    const routesUsed = new Set<string>();
+
+    // 1) 后端菜单目录：仅带 group 的条目（含 'home'，首页由候选池隐藏）
     (menuCatalog ?? []).forEach((entry) => {
-      // 仅包含属于侧边栏分组的条目（group 为 'home' 也保留在 meta 里，但不用于候选池）
       if (!entry.group) return;
-      m.set(entry.appKey, { appKey: entry.appKey, label: entry.label, icon: entry.icon });
+      m.set(entry.appKey, {
+        navKey: entry.appKey,
+        label: entry.label,
+        icon: entry.icon,
+        group: entry.group,
+        source: 'menu',
+      });
+      routesUsed.add(entry.path);
     });
+
+    // 2) launcher catalog：按 id 入表，已被 menuCatalog 路由覆盖的跳过；
+    //    「设置」本页自己不作为候选，避免循环导航
+    const launcher = getLauncherCatalog({ permissions, isRoot });
+    launcher.forEach((li) => {
+      if (routesUsed.has(li.route)) return;
+      if (li.id === 'utility:settings') return;
+      m.set(li.id, {
+        navKey: li.id,
+        label: li.name,
+        icon: li.icon,
+        group: li.group,
+        source: 'launcher',
+      });
+    });
+
     return m;
-  }, [menuCatalog]);
+  }, [menuCatalog, permissions, isRoot]);
 
   // 首次加载
   useEffect(() => {
     if (!loaded) void loadFromServer();
   }, [loaded, loadFromServer]);
 
-  // 规范化的"当前导航"：以 navOrder 为主；若为空，用系统默认顺序 + 过滤隐藏
-  //  - 结果数组元素：appKey 或 NAV_DIVIDER_KEY
+  /**
+   * 规范化的"当前导航"：以 navOrder 为主；若为空，按后端 group 字段生成默认顺序，
+   * 并在分组切换处插入 NAV_DIVIDER_KEY，视觉上与 AppShell 默认分段一致。
+   * 这样用户第一次进入设置页看到的就是"现成的默认布局"（带横杆），
+   * 点"恢复如初"对用户来说是"原地不动"，不会突然把横杆还回去。
+   */
   const currentOrder = useMemo<string[]>(() => {
     if (navOrder.length > 0) {
       return navOrder;
     }
-    // 默认顺序：按菜单目录（后端顺序，已经按 group 分组排好）
-    const list = (menuCatalog ?? [])
-      .filter((m) => m.group && m.group !== 'home')
-      .map((m) => m.appKey);
-    return list;
+    // 默认顺序：按 menuCatalog 的 group 字段分段 + 段间分隔符
+    const byGroup: Record<string, string[]> = {};
+    (menuCatalog ?? []).forEach((item) => {
+      if (!item.group || item.group === 'home') return;
+      (byGroup[item.group] ??= []).push(item.appKey);
+    });
+    const result: string[] = [];
+    DEFAULT_NAV_GROUPS_ORDER.forEach((g) => {
+      const items = byGroup[g] ?? [];
+      if (items.length === 0) return;
+      if (result.length > 0) result.push(NAV_DIVIDER_KEY);
+      result.push(...items);
+    });
+    return result;
   }, [navOrder, menuCatalog]);
 
-  // 候选池：所有已知非 home 菜单项 - 已在 currentOrder 中的项
-  const poolItems = useMemo<NavMetaItem[]>(() => {
+  /**
+   * 候选池：metaByKey 中"不在 currentOrder 里"的条目。
+   * 按 launcher group（agent / toolbox / utility）分段展示；后端菜单项归入 "menu" 段。
+   */
+  const poolGroups = useMemo<{ key: string; label: string; items: NavMetaItem[] }[]>(() => {
     const inNav = new Set(currentOrder.filter((k) => k !== NAV_DIVIDER_KEY));
-    const result: NavMetaItem[] = [];
-    for (const meta of metaByAppKey.values()) {
-      if (!inNav.has(meta.appKey)) {
-        result.push(meta);
-      }
+    const bucket: Record<string, NavMetaItem[]> = {};
+    for (const meta of metaByKey.values()) {
+      if (inNav.has(meta.navKey)) continue;
+      // 后端菜单项（首页等）统一放在 "menu" 桶
+      const bucketKey = meta.source === 'launcher' ? meta.group : 'menu';
+      (bucket[bucketKey] ??= []).push(meta);
     }
-    return result;
-  }, [currentOrder, metaByAppKey]);
+    // 稳定顺序：菜单兜底项 → Agent → 百宝箱 → 实用工具
+    const order: { key: string; label: string }[] = [
+      { key: 'menu', label: '其他菜单' },
+      { key: 'agent', label: LAUNCHER_GROUP_LABELS.agent },
+      { key: 'toolbox', label: LAUNCHER_GROUP_LABELS.toolbox },
+      { key: 'utility', label: LAUNCHER_GROUP_LABELS.utility },
+    ];
+    return order
+      .map(({ key, label }) => ({ key, label, items: bucket[key] ?? [] }))
+      .filter((g) => g.items.length > 0);
+  }, [currentOrder, metaByKey]);
+
+  const poolIsEmpty = poolGroups.length === 0;
 
   // 是否自定义过（用于"恢复如初"按钮的 disabled 判断）
   const customized = navOrder.length > 0 || navHidden.length > 0;
@@ -139,7 +210,7 @@ function NavOrderSettings() {
         nextOrder.splice(adjusted, 0, removed);
       } else {
         // pool-item
-        nextOrder.splice(targetIndex, 0, source.appKey);
+        nextOrder.splice(targetIndex, 0, source.navKey);
       }
 
       // 规范化：折叠首尾和连续的分隔符
@@ -172,9 +243,9 @@ function NavOrderSettings() {
 
   // 把 pool 中的项追加到 nav 末尾
   const appendFromPool = useCallback(
-    (appKey: string) => {
-      const nextOrder = collapseDividers([...currentOrder, appKey]);
-      const nextHidden = navHidden.filter((k) => k !== appKey);
+    (navKey: string) => {
+      const nextOrder = collapseDividers([...currentOrder, navKey]);
+      const nextHidden = navHidden.filter((k) => k !== navKey);
       setNavLayout({ navOrder: nextOrder, navHidden: nextHidden });
     },
     [currentOrder, navHidden, setNavLayout]
@@ -199,10 +270,10 @@ function NavOrderSettings() {
     e.dataTransfer.setData('text/plain', 'nav-drag');
     setDragSource(isDivider ? { type: 'nav-divider', index } : { type: 'nav-item', index });
   };
-  const handleDragStartPool = (appKey: string) => (e: React.DragEvent) => {
+  const handleDragStartPool = (navKey: string) => (e: React.DragEvent) => {
     e.dataTransfer.effectAllowed = 'move';
     e.dataTransfer.setData('text/plain', 'pool-drag');
-    setDragSource({ type: 'pool-item', appKey });
+    setDragSource({ type: 'pool-item', navKey });
   };
   const handleDragOverNavSlot = (index: number) => (e: React.DragEvent) => {
     if (!dragSource) return;
@@ -302,7 +373,7 @@ function NavOrderSettings() {
           {/* 条目列表 */}
           {currentOrder.map((token, idx) => {
             const isDivider = token === NAV_DIVIDER_KEY;
-            const meta = isDivider ? null : metaByAppKey.get(token);
+            const meta = isDivider ? null : metaByKey.get(token);
             return (
               <Fragment key={`nav-${idx}-${token}`}>
                 {/* 拖放槽（在每一项之前） */}
@@ -354,11 +425,11 @@ function NavOrderSettings() {
             可添加
           </div>
           <span className="text-[10px]" style={{ color: 'var(--text-muted)' }}>
-            拖到上方，或点 + 直接追加到末尾
+            拖到上方，或点 + 直接追加到末尾 · 数据来源与 Cmd+K 一致
           </span>
         </div>
         <div
-          className="rounded-[12px] p-3 flex flex-wrap gap-2 min-h-[90px] flex-1 overflow-y-auto content-start"
+          className="rounded-[12px] p-3 min-h-[90px] flex-1 overflow-y-auto"
           style={{
             background: dragOverPool ? 'rgba(99,102,241,0.08)' : 'var(--nested-block-bg)',
             border: `1px ${dragOverPool ? 'dashed rgba(99,102,241,0.5)' : 'solid var(--nested-block-border)'}`,
@@ -367,19 +438,31 @@ function NavOrderSettings() {
           onDragLeave={() => setDragOverPool(false)}
           onDrop={handleDropPool}
         >
-          {poolItems.length === 0 && (
+          {poolIsEmpty && (
             <div className="w-full text-center py-6 text-[12px]" style={{ color: 'var(--text-muted)' }}>
               {loaded ? '所有可用条目都已在导航中 —— 拖一个下来就回到这里' : '加载中...'}
             </div>
           )}
-          {poolItems.map((meta) => (
-            <PoolItemChip
-              key={meta.appKey}
-              meta={meta}
-              getIcon={getIcon}
-              onDragStart={handleDragStartPool(meta.appKey)}
-              onAppend={() => appendFromPool(meta.appKey)}
-            />
+          {poolGroups.map((g) => (
+            <div key={g.key} className="mb-3 last:mb-0">
+              <div
+                className="text-[10px] font-mono uppercase tracking-wider mb-1.5"
+                style={{ color: 'var(--text-muted)' }}
+              >
+                {g.label} · {g.items.length}
+              </div>
+              <div className="flex flex-wrap gap-2">
+                {g.items.map((meta) => (
+                  <PoolItemChip
+                    key={meta.navKey}
+                    meta={meta}
+                    getIcon={getIcon}
+                    onDragStart={handleDragStartPool(meta.navKey)}
+                    onAppend={() => appendFromPool(meta.navKey)}
+                  />
+                ))}
+              </div>
+            </div>
           ))}
         </div>
       </GlassCard>
