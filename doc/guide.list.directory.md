@@ -377,6 +377,9 @@
 - [Design 文档优化项目进度](plan.design-doc-optimization) `plan.design-doc-optimization`
   > 37 篇设计文档补全管理摘要的实施进度追踪
 
+- [每日小贴士功能 — 剩余工作交接文档](plan.daily-tips-remaining-work) `plan.daily-tips-remaining-work`
+  > Issue 1/2/3 现状 + 方案选项 + 新 Agent 接手 checklist
+
 ### 六、周报
 
 - [周报 2026-W16 (04-13 ~ 04-19)](report.2026-W16) `report.2026-W16`
@@ -433,6 +436,7 @@
 
 | 日期 | 操作 | 文件名 | 中文标题 |
 | :--- | :--- | :--- | :--- |
+| 2026-04-21 | 🟢 新增 | `plan.daily-tips-remaining-work` | 每日小贴士功能 — 剩余工作交接文档 |
 | 2026-04-20 | 🟢 新增 | `report.2026-W16` | 周报 2026-W16 (04-13 ~ 04-19) |
 | 2026-04-20 | 🟢 新增 | `report.2026-W15` | 周报 2026-W15 (04-06 ~ 04-12) |
 | 2026-04-20 | 🟢 新增 | `report.2026-W14` | 周报 2026-W14 (03-30 ~ 04-05) |
