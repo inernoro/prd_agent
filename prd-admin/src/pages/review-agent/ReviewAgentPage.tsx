@@ -78,7 +78,7 @@ export function ReviewAgentPage() {
             <ClipboardCheck className="w-5 h-5 text-indigo-400" />
           </div>
           <div>
-            <h1 className="text-xl font-semibold text-white">产品评审员</h1>
+            <h1 className="text-xl font-semibold text-white">产品评审智能体</h1>
             <p className="text-sm text-white/40 mt-0.5">上传产品方案，AI 多维度评审打分</p>
           </div>
         </div>

@@ -130,7 +130,7 @@ export function PrReviewPage() {
               <GitPullRequest size={20} className="text-violet-300" />
             </div>
             <div>
-              <div className="text-xl font-bold">PR 审查工作台</div>
+              <div className="text-xl font-bold">PR 审查智能体</div>
               <div className="text-xs text-white/50">
                 用你自己的 GitHub 账号审查任意有权访问的 PR
               </div>

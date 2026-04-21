@@ -59,7 +59,7 @@ export const AGENT_DEFINITIONS: AgentDefinition[] = [
   {
     key: 'prd-agent',
     appKey: 'prd-agent',
-    name: 'PRD Agent',
+    name: 'PRD 解读智能体',
     icon: 'MessagesSquare',
     color: {
       bg: 'rgba(59, 130, 246, 0.08)',
@@ -73,7 +73,7 @@ export const AGENT_DEFINITIONS: AgentDefinition[] = [
   {
     key: 'visual-agent',
     appKey: 'visual-agent',
-    name: '视觉 Agent',
+    name: '视觉创作智能体',
     icon: 'Image',
     color: {
       bg: 'rgba(139, 92, 246, 0.08)',
@@ -87,7 +87,7 @@ export const AGENT_DEFINITIONS: AgentDefinition[] = [
   {
     key: 'literary-agent',
     appKey: 'literary-agent',
-    name: '文学 Agent',
+    name: '文学创作智能体',
     icon: 'PenLine',
     color: {
       bg: 'rgba(34, 197, 94, 0.08)',
@@ -101,7 +101,7 @@ export const AGENT_DEFINITIONS: AgentDefinition[] = [
   {
     key: 'defect-agent',
     appKey: 'defect-agent',
-    name: '缺陷 Agent',
+    name: '缺陷管理智能体',
     icon: 'Bug',
     color: {
       bg: 'rgba(249, 115, 22, 0.08)',
@@ -115,7 +115,7 @@ export const AGENT_DEFINITIONS: AgentDefinition[] = [
   {
     key: 'video-agent',
     appKey: 'video-agent',
-    name: '视频 Agent',
+    name: '视频创作智能体',
     icon: 'Video',
     color: {
       bg: 'rgba(236, 72, 153, 0.08)',

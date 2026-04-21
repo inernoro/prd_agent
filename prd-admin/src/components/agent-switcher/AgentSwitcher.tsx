@@ -26,7 +26,7 @@ import {
 } from '@/lib/launcherCatalog';
 
 interface Section {
-  key: 'pinned' | 'recent' | 'agent' | 'toolbox' | 'utility';
+  key: 'pinned' | 'recent' | 'agent' | 'toolbox' | 'utility' | 'infra';
   title: string;
   subtitle?: string;
   icon: React.ReactNode;
@@ -222,6 +222,7 @@ export function AgentSwitcher() {
     const agents = byGroup('agent');
     const toolbox = byGroup('toolbox');
     const utility = byGroup('utility');
+    const infra = byGroup('infra');
 
     const out: Section[] = [];
     if (pinned.length)
@@ -243,8 +244,8 @@ export function AgentSwitcher() {
     if (agents.length)
       out.push({
         key: 'agent',
-        title: 'Agent',
-        subtitle: '专属场景助手',
+        title: '智能体',
+        subtitle: 'AI + 完备生命周期 + 存储',
         icon: <Star size={12} />,
         items: agents,
       });
@@ -252,7 +253,7 @@ export function AgentSwitcher() {
       out.push({
         key: 'toolbox',
         title: '百宝箱',
-        subtitle: '内置工具与定制 Agent',
+        subtitle: '官方与社区共建的工具',
         icon: <Hammer size={12} />,
         items: toolbox,
       });
@@ -263,6 +264,14 @@ export function AgentSwitcher() {
         subtitle: '日常高频入口',
         icon: <Sparkles size={12} />,
         items: utility,
+      });
+    if (infra.length)
+      out.push({
+        key: 'infra',
+        title: '基础设施',
+        subtitle: '平台级能力（知识库/市场/模型/团队等）',
+        icon: <Hammer size={12} />,
+        items: infra,
       });
 
     return out;

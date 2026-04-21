@@ -1158,7 +1158,7 @@ public class AiToolboxController : ControllerBase
         else
         {
             // 通用对话
-            systemPrompt = "你是 AI 百宝箱的智能助手，能够帮助用户完成各种任务。请根据用户的需求提供专业、准确的回答。";
+            systemPrompt = "你是 AI 百宝箱的智能体，能够帮助用户完成各种任务。请根据用户的需求提供专业、准确的回答。";
         }
 
         // 构建消息列表
@@ -1514,7 +1514,7 @@ public class AiToolboxController : ControllerBase
         "visual-agent" => "你是一位视觉设计专家，帮助用户描述和规划视觉创作需求，提供设计建议和创意方向。",
         "literary-agent" => "你是一位文学创作专家，擅长各类文体的创作和润色。可以帮助用户创作文章、故事、诗歌等文学作品，也可以对已有内容进行润色和改进。",
         "defect-agent" => "你是一位质量保证专家，擅长缺陷分析和管理。帮助用户从描述中提取结构化的缺陷信息，包括标题、描述、复现步骤、严重程度等。",
-        _ => "你是 AI 百宝箱的智能助手，能够帮助用户完成各种任务。请根据用户的需求提供专业、准确的回答。"
+        _ => "你是 AI 百宝箱的智能体，能够帮助用户完成各种任务。请根据用户的需求提供专业、准确的回答。"
     };
 
     private static string GetAgentAppCallerCode(string agentKey) => agentKey switch

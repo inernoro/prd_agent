@@ -674,7 +674,7 @@ export const VideoAgentPage: React.FC = () => {
         <div className="flex items-center gap-2">
           <Video size={14} style={{ color: 'var(--text-muted)' }} />
           <span className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
-            视频 Agent
+            视频创作智能体
           </span>
         </div>
         <div className="flex items-center gap-2">
