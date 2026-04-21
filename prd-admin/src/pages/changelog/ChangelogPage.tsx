@@ -449,7 +449,7 @@ export default function ChangelogPage() {
             </h2>
             {([
               { key: 'releases', label: 'CHANGELOG', icon: <Calendar size={13} /> },
-              { key: 'fragments', label: '碎片补充', icon: <FileText size={13} /> },
+              { key: 'fragments', label: '待发布功能', icon: <FileText size={13} /> },
               { key: 'github_logs', label: 'GitHub 日志', icon: <Github size={13} /> },
             ] as const).map((tab) => {
               const active = historySubtab === tab.key;
@@ -474,7 +474,7 @@ export default function ChangelogPage() {
           </div>
           <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
             {historySubtab === 'releases' && '来自 CHANGELOG.md'}
-            {historySubtab === 'fragments' && '来自 changelogs/*.md（当前周碎片）'}
+            {historySubtab === 'fragments' && '来自 changelogs/*.md（待合入 CHANGELOG）'}
             {historySubtab === 'github_logs' && (
               githubLogs?.source === 'local' ? '来自本地 git log' : '来自 GitHub commits API'
             )}
@@ -621,7 +621,7 @@ export default function ChangelogPage() {
 
         {historySubtab === 'fragments' && (
           <>
-            {!currentWeek && <MapSectionLoader text="正在加载碎片补充…" />}
+            {!currentWeek && <MapSectionLoader text="正在加载待发布功能…" />}
 
             {currentWeek && currentWeek.fragments.length === 0 && (
               <div
@@ -632,7 +632,7 @@ export default function ChangelogPage() {
                   color: 'var(--text-muted)',
                 }}
               >
-                当前周暂无碎片日志
+                当前周暂无待发布功能
               </div>
             )}
 
@@ -645,18 +645,35 @@ export default function ChangelogPage() {
                   color: 'var(--text-muted)',
                 }}
               >
-                当前筛选条件下暂无碎片条目
+                当前筛选条件下暂无待发布条目
               </div>
             )}
 
             {currentWeek && currentWeek.fragments.filter((f) => f.entries.some(matchFilter)).length > 0 && (
               <div className="flex flex-col gap-4">
-                {currentWeek.fragments.map((fragment) => {
-                  const visibleEntries = fragment.entries.filter(matchFilter);
-                  if (visibleEntries.length === 0) return null;
-                  return (
+                {(() => {
+                  const grouped = currentWeek.fragments.reduce<Array<{
+                    date: string;
+                    rows: Array<FlatEntry & { fileName: string }>;
+                  }>>((acc, fragment) => {
+                    const visibleEntries = fragment.entries.filter(matchFilter);
+                    if (visibleEntries.length === 0) return acc;
+                    const bucket = acc.find((item) => item.date === fragment.date);
+                    const rows = visibleEntries.map((entry) => ({
+                      ...entry,
+                      date: fragment.date,
+                      commitTimeUtc: null,
+                      source: 'fragment' as const,
+                      fileName: fragment.fileName,
+                    }));
+                    if (bucket) bucket.rows.push(...rows);
+                    else acc.push({ date: fragment.date, rows });
+                    return acc;
+                  }, []);
+
+                  return grouped.map((group) => (
                     <div
-                      key={fragment.fileName}
+                      key={group.date}
                       className="rounded-xl px-4 py-3"
                       style={{
                         background: 'rgba(255, 255, 255, 0.025)',
@@ -676,32 +693,24 @@ export default function ChangelogPage() {
                           }}
                         >
                           <Calendar size={13} />
-                          {fragment.date}
+                          {group.date}
                         </div>
-                        <span className="text-[12px]" style={{ color: 'var(--text-muted)' }}>
-                          {fragment.fileName}
-                        </span>
                         <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
-                          · {visibleEntries.length} 条
+                          · {group.rows.length} 条
                         </span>
                       </div>
                       <div className="flex flex-col gap-1.5">
-                        {visibleEntries.map((entry, idx) => (
+                        {group.rows.map((entry, idx) => (
                           <EntryRow
-                            key={`${fragment.fileName}-${idx}`}
-                            entry={{
-                              ...entry,
-                              date: fragment.date,
-                              commitTimeUtc: null,
-                              source: 'fragment',
-                            }}
+                            key={`${group.date}-${entry.fileName}-${idx}`}
+                            entry={entry}
                             newCutoff={newBadgeCutoff}
                           />
                         ))}
                       </div>
                     </div>
-                  );
-                })}
+                  ));
+                })()}
               </div>
             )}
           </>
