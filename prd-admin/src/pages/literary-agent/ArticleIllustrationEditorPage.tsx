@@ -612,6 +612,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
   const knownMarkerIndicesRef = useRef<Set<number>>(new Set()); // 已知的 marker 索引（用于检测新增）
   const [imageDisplaySize, setImageDisplaySize] = useState(50); // 文章内图片显示尺寸百分比
   const [rawMarkerOutput, setRawMarkerOutput] = useState(''); // Anchor 模式下 LLM 原始输出（用于视觉反馈）
+  const [articleEditMode, setArticleEditMode] = useState<'edit' | 'preview'>('preview'); // 正文编辑 / 预览模式切换
 
   // 当新 marker 卡片出现时，触发入场发光动画
   useEffect(() => {
@@ -1130,7 +1131,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
   const isBusy = generating || markerStreaming;
 
   useEffect(() => {
-    if (debouncedArticleContent && workspaceId && phase === 1 && !isBusy) { // Editing
+    if (debouncedArticleContent && workspaceId && (phase === 1 || phase === 2) && !isBusy) {
       void saveArticleContent();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1550,6 +1551,40 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
       rebuildMergedMarkdown(markerRunItems);
     }
   }, [markerRunItems, phase, rebuildMergedMarkdown]);
+
+  // 用户在编辑模式直接改 articleWithMarkers 时：同步提取新标记 + 更新 markerRunItems 的 draftText
+  // 保留现有 runItem 的图片和状态，仅在文本变化时更新 draftText 并清空 planItem（迫使重新 plan）
+  const handleArticleWithMarkersChange = useCallback((next: string) => {
+    setArticleWithMarkers(next);
+    // 派生出无 marker 的 articleContent，用于现有自动保存链路（updateVisualAgentWorkspace.articleContent）
+    const stripped = next.replace(/^\s*\[插图\]\s*:\s*[^\n]+\n?/gm, '');
+    setArticleContent(stripped);
+    const extracted = extractMarkers(next);
+    setMarkers(extracted);
+    setMarkerRunItems((prev) => {
+      return extracted.map((m) => {
+        const existing = prev.find((x) => x.markerIndex === m.index);
+        if (existing) {
+          if (existing.draftText === m.text && existing.markerText === m.text) {
+            return existing;
+          }
+          return {
+            ...existing,
+            markerText: m.text,
+            draftText: m.text,
+            planItem: null,
+          };
+        }
+        return {
+          markerIndex: m.index,
+          markerText: m.text,
+          draftText: m.text,
+          status: 'parsed' as MarkerRunStatus,
+          planItem: { prompt: m.text, count: 1, size: '1024x1024' },
+        };
+      });
+    });
+  }, []);
 
   const runSingleMarker = async (markerIndex: number) => {
     if (!imageGenModel) {
@@ -2681,6 +2716,42 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
             {/* 预览阶段：按段落渲染，左侧 gutter 可打锚点，右键菜单可在上/下方插入配图 */}
             {phase === 1 && ( // Editing
               <div className="p-4 relative">
+                {/* 编辑/预览切换 —— 编辑模式允许直接修改上传的正文 */}
+                <div className="mb-3 flex items-center gap-1.5">
+                  <Button
+                    size="xs"
+                    variant={articleEditMode === 'edit' ? 'primary' : 'secondary'}
+                    onClick={() => setArticleEditMode('edit')}
+                    title="直接编辑正文（可改字、增删段落、自定义位置）"
+                  >
+                    <Pencil size={12} />
+                    编辑正文
+                  </Button>
+                  <Button
+                    size="xs"
+                    variant={articleEditMode === 'preview' ? 'primary' : 'secondary'}
+                    onClick={() => setArticleEditMode('preview')}
+                    title="切到预览以打锚点 / 右键插入配图位置"
+                  >
+                    <FileText size={12} />
+                    预览
+                  </Button>
+                  <div className="ml-2 text-[11px]" style={{ color: 'var(--text-muted)' }}>
+                    {articleEditMode === 'edit' ? '正在编辑正文，切到预览可以打锚点' : '预览模式：悬停段落左侧 + 可加锚点'}
+                  </div>
+                </div>
+
+                {articleEditMode === 'edit' && (
+                  <textarea
+                    value={articleContent}
+                    onChange={(e) => setArticleContent(e.target.value)}
+                    className="w-full rounded-[14px] px-4 py-3 text-[13px] leading-6 outline-none resize-none font-mono prd-field"
+                    style={{ minHeight: 480 }}
+                    placeholder="在此直接编辑正文…"
+                  />
+                )}
+
+                {articleEditMode === 'preview' && (<>
                 {/* 策略引导横幅：user-anchor 但还没锚点时提示用户怎么打 */}
                 {positionStrategy === 'user-anchor' &&
                   !splitParagraphs(articleContent).some(isAnchorParagraph) &&
@@ -2900,6 +2971,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                     请先上传文章
                   </div>
                 )}
+                </>)}
               </div>
             )}
 
@@ -2989,8 +3061,8 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
             {/* 标记生成完成：文章预览视图 */}
             {phase === 2 && !markerStreaming && (
               <div className="p-4 relative" style={{ '--img-display-size': `${imageDisplaySize}%` } as React.CSSProperties}>
-                {/* 图片显示尺寸控制 - 右上角浮动 */}
-                {markerRunItems.some(x => x.assetUrl || x.url || x.base64) && (
+                {/* 图片显示尺寸控制 - 右上角浮动（仅预览模式显示） */}
+                {articleEditMode === 'preview' && markerRunItems.some(x => x.assetUrl || x.url || x.base64) && (
                   <div
                     className="sticky top-2 float-right z-10 flex items-center gap-0.5 rounded-lg px-1.5 py-1"
                     style={{
@@ -3018,6 +3090,45 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                     ))}
                   </div>
                 )}
+
+                {/* 编辑/预览切换 —— 编辑模式可直接改正文和每条 [插图]: 的提示词 */}
+                <div className="mb-3 flex items-center gap-1.5">
+                  <Button
+                    size="xs"
+                    variant={articleEditMode === 'edit' ? 'primary' : 'secondary'}
+                    onClick={() => setArticleEditMode('edit')}
+                    title="直接编辑正文与 [插图]: 后面的提示词文字"
+                  >
+                    <Pencil size={12} />
+                    编辑正文 &amp; 提示词
+                  </Button>
+                  <Button
+                    size="xs"
+                    variant={articleEditMode === 'preview' ? 'primary' : 'secondary'}
+                    onClick={() => setArticleEditMode('preview')}
+                    title="查看生成效果"
+                  >
+                    <FileText size={12} />
+                    预览
+                  </Button>
+                  <div className="ml-2 text-[11px]" style={{ color: 'var(--text-muted)' }}>
+                    {articleEditMode === 'edit'
+                      ? '改 [插图]: 后面的文字即改提示词；改完切回预览点"重新生成"即可'
+                      : '预览模式：查看当前正文 + 配图效果'}
+                  </div>
+                </div>
+
+                {articleEditMode === 'edit' && (
+                  <textarea
+                    value={articleWithMarkers || articleContent}
+                    onChange={(e) => handleArticleWithMarkersChange(e.target.value)}
+                    className="w-full rounded-[14px] px-4 py-3 text-[13px] leading-6 outline-none resize-none font-mono prd-field"
+                    style={{ minHeight: 520 }}
+                    placeholder="在此直接编辑正文和 [插图]: 提示词…"
+                  />
+                )}
+
+                {articleEditMode === 'preview' && (<>
 
                 {/* 折叠的思考面板 */}
                 {thinkingContent && (
@@ -3062,11 +3173,43 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                       h1: ({ node: _node, children, ...props }) => <h1 {...props}>{highlightChildren(children)}</h1>,
                       h2: ({ node: _node, children, ...props }) => <h2 {...props}>{highlightChildren(children)}</h2>,
                       h3: ({ node: _node, children, ...props }) => <h3 {...props}>{highlightChildren(children)}</h3>,
+                      img: ({ node: _node, ...props }) => {
+                        const markerIdxAttr = (props as Record<string, unknown>)['data-marker-idx'];
+                        const markerIdx = markerIdxAttr != null ? Number(markerIdxAttr) : NaN;
+                        const hasIdx = Number.isFinite(markerIdx);
+                        const runItem = hasIdx ? markerRunItems.find((x) => x.markerIndex === markerIdx) : null;
+                        const isBusy = runItem?.status === 'running' || runItem?.status === 'parsing';
+                        return (
+                          <span style={{ position: 'relative', display: 'inline-block', maxWidth: '100%' }} className="group/img">
+                            <img {...props} />
+                            {hasIdx && !!imageGenModel && (
+                              <button
+                                type="button"
+                                disabled={isBusy}
+                                onClick={() => !isBusy && void handleRegenerateOne(markerIdx)}
+                                className="absolute top-2 right-2 opacity-0 group-hover/img:opacity-100 transition-opacity flex items-center gap-1 text-[11px] px-2 py-1 rounded-lg"
+                                style={{
+                                  background: 'rgba(0,0,0,0.7)',
+                                  color: 'rgba(255,255,255,0.92)',
+                                  border: '1px solid rgba(255,255,255,0.18)',
+                                  backdropFilter: 'blur(8px)',
+                                  cursor: isBusy ? 'not-allowed' : 'pointer',
+                                }}
+                                title="用正文里当前 [插图]: 的提示词重新生成此图"
+                              >
+                                <Sparkles size={11} />
+                                {isBusy ? '生成中…' : '用当前提示词重生'}
+                              </button>
+                            )}
+                          </span>
+                        );
+                      },
                     }}
                   >
                     {leftPreviewMarkdown}
                   </ReactMarkdown>
                 </div>
+                </>)}
               </div>
             )}
           </div>
@@ -3737,7 +3880,6 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                   className="w-full rounded-[14px] px-3 py-2.5 text-[13px] leading-6 outline-none resize-none font-mono prd-field"
                   style={{ minHeight: 180 }}
                   placeholder="描述配图内容、风格、构图…"
-                  disabled={editItem.status === 'running' || editItem.status === 'parsing'}
                 />
                 <div className="flex items-center justify-between gap-2">
                   <Button size="sm" variant="secondary" onClick={() => setEditingMarkerIdx(null)}>
