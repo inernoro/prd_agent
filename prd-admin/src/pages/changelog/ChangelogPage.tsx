@@ -235,9 +235,9 @@ export default function ChangelogPage() {
     }).finally(() => {
       setLoadingGitHubLogs(false);
     });
-    // 不依赖 loadingGitHubLogs：避免失败后 false 再次触发 effect 形成请求风暴；失败由 gitHubLogsError 挡住直至离开子 tab 或刷新
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeTab, historySubtab, githubLogs, gitHubLogsError]);
+    // 依赖 loadingGitHubLogs：后台预取进行中用户切到「GitHub 日志」时先被 guard 挡住，预取结束 loading→false 后需再跑一次以发起正式拉取。
+    // 失败风暴仍由 gitHubLogsError 挡住（成功则 githubLogs 有值），不会与仅因 loading 翻转形成死循环。
+  }, [activeTab, historySubtab, githubLogs, gitHubLogsError, loadingGitHubLogs]);
 
   useEffect(() => {
     if (activeTab !== 'update_center' || historySubtab === 'github_logs' || loadingGitHubLogs || githubLogs) {
