@@ -56,6 +56,15 @@ interface FlatEntry extends ChangelogEntry {
 
 type HistorySubtab = 'releases' | 'fragments' | 'github_logs';
 
+const GITHUB_LOGS_CACHE_KEY = 'changelog:github-logs:v1';
+const GITHUB_LOGS_CACHE_TTL_MS = 5 * 60 * 1000;
+const GITHUB_LOGS_FETCH_LIMIT = 30;
+
+interface GitHubLogsCachePayload {
+  cachedAt: number;
+  data: GitHubLogsView;
+}
+
 function formatLocalDateValue(d: Date): string {
   const pad = (n: number) => n.toString().padStart(2, '0');
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
@@ -93,6 +102,33 @@ function getReleaseDisplayDate(releaseDate: string | null, days: Array<{ date: s
   return releaseDate;
 }
 
+function readGitHubLogsCache(): GitHubLogsView | null {
+  if (typeof window === 'undefined') return null;
+  try {
+    const raw = sessionStorage.getItem(GITHUB_LOGS_CACHE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as GitHubLogsCachePayload;
+    if (!parsed || typeof parsed.cachedAt !== 'number' || !parsed.data) return null;
+    if (Date.now() - parsed.cachedAt > GITHUB_LOGS_CACHE_TTL_MS) {
+      sessionStorage.removeItem(GITHUB_LOGS_CACHE_KEY);
+      return null;
+    }
+    return parsed.data;
+  } catch {
+    return null;
+  }
+}
+
+function writeGitHubLogsCache(data: GitHubLogsView) {
+  if (typeof window === 'undefined') return;
+  try {
+    const payload: GitHubLogsCachePayload = { cachedAt: Date.now(), data };
+    sessionStorage.setItem(GITHUB_LOGS_CACHE_KEY, JSON.stringify(payload));
+  } catch {
+    // ignore cache write failures
+  }
+}
+
 export default function ChangelogPage() {
   const currentWeek = useChangelogStore((s) => s.currentWeek);
   const releases = useChangelogStore((s) => s.releases);
@@ -105,7 +141,7 @@ export default function ChangelogPage() {
   const [typeFilter, setTypeFilter] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<string>('update_center');
   const [historySubtab, setHistorySubtab] = useState<HistorySubtab>('releases');
-  const [githubLogs, setGitHubLogs] = useState<GitHubLogsView | null>(null);
+  const [githubLogs, setGitHubLogs] = useState<GitHubLogsView | null>(() => readGitHubLogsCache());
   const [loadingGitHubLogs, setLoadingGitHubLogs] = useState(false);
   const [gitHubLogsError, setGitHubLogsError] = useState<string | null>(null);
 
@@ -138,10 +174,11 @@ export default function ChangelogPage() {
     let alive = true;
     setLoadingGitHubLogs(true);
     setGitHubLogsError(null);
-    void getChangelogGitHubLogs(40).then((res) => {
+    void getChangelogGitHubLogs(GITHUB_LOGS_FETCH_LIMIT).then((res) => {
       if (!alive) return;
       if (res.success) {
         setGitHubLogs(res.data);
+        writeGitHubLogsCache(res.data);
       } else {
         setGitHubLogsError(res.error?.message || '加载 GitHub 日志失败');
       }
@@ -151,15 +188,47 @@ export default function ChangelogPage() {
     return () => { alive = false; };
   }, [activeTab, historySubtab, loadingGitHubLogs, githubLogs]);
 
+  useEffect(() => {
+    if (activeTab !== 'update_center' || historySubtab === 'github_logs' || loadingGitHubLogs || githubLogs) return;
+    let alive = true;
+    const run = () => {
+      setLoadingGitHubLogs(true);
+      void getChangelogGitHubLogs(GITHUB_LOGS_FETCH_LIMIT).then((res) => {
+        if (!alive) return;
+        if (res.success) {
+          setGitHubLogs(res.data);
+          writeGitHubLogsCache(res.data);
+        }
+      }).finally(() => {
+        if (alive) setLoadingGitHubLogs(false);
+      });
+    };
+
+    if ('requestIdleCallback' in window) {
+      const idleId = window.requestIdleCallback(run, { timeout: 1500 });
+      return () => {
+        alive = false;
+        window.cancelIdleCallback(idleId);
+      };
+    }
+
+    const timer = window.setTimeout(run, 800);
+    return () => {
+      alive = false;
+      window.clearTimeout(timer);
+    };
+  }, [activeTab, historySubtab, loadingGitHubLogs, githubLogs]);
+
   const handleRefresh = () => {
     void loadCurrentWeek(true);
     void loadReleases(20, true);
     if (historySubtab === 'github_logs' || githubLogs) {
       setLoadingGitHubLogs(true);
       setGitHubLogsError(null);
-      void getChangelogGitHubLogs(40, true).then((res) => {
+      void getChangelogGitHubLogs(GITHUB_LOGS_FETCH_LIMIT, true).then((res) => {
         if (res.success) {
           setGitHubLogs(res.data);
+          writeGitHubLogsCache(res.data);
         } else {
           setGitHubLogsError(res.error?.message || '加载 GitHub 日志失败');
         }
@@ -458,7 +527,7 @@ export default function ChangelogPage() {
 
                   return (
                     <div key={`${release.version}-${release.releaseDate ?? ''}`}>
-                      <div className="flex items-center gap-2 mb-3">
+                        <div className="flex items-center gap-2 mb-3">
                         <div
                           className="px-2.5 py-0.5 rounded-md text-[12px] font-semibold font-mono"
                           style={{
@@ -506,27 +575,38 @@ export default function ChangelogPage() {
                       {visibleDays.length > 0 && (
                         <div className="flex flex-col gap-3">
                           {visibleDays.map((day, dayIdx) => {
-                            const dayDisplayDate = formatDisplayDate(day.date, day.commitTimeUtc);
-                            const dayTitle = day.commitTimeUtc && dayDisplayDate !== day.date
-                              ? `CHANGELOG 日期：${day.date}\nGitHub 本地日期：${dayDisplayDate}`
+                            const dayCommitDisplayDate = formatDisplayDate(day.date, day.commitTimeUtc);
+                            const dayTitle = day.commitTimeUtc && dayCommitDisplayDate !== day.date
+                              ? `CHANGELOG 日期：${day.date}\nGitHub commit 本地日期：${dayCommitDisplayDate}`
                               : undefined;
                             return (
                               <div key={`${day.date}-${dayIdx}`}>
-                                <div
-                                  className="inline-flex items-center gap-2 mb-2.5 px-2.5 py-1 rounded-md"
-                                  style={{
-                                    background: 'rgba(255, 255, 255, 0.04)',
-                                    border: '1px solid rgba(255, 255, 255, 0.08)',
-                                    color: 'var(--text-secondary)',
-                                    fontSize: '13px',
-                                    fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',
-                                    fontWeight: 600,
-                                    letterSpacing: '0.02em',
-                                  }}
-                                  title={dayTitle}
-                                >
-                                  <Calendar size={13} />
-                                  {dayDisplayDate}
+                                <div className="flex items-center gap-2 mb-2.5 flex-wrap">
+                                  <div
+                                    className="inline-flex items-center gap-2 px-2.5 py-1 rounded-md"
+                                    style={{
+                                      background: 'rgba(255, 255, 255, 0.04)',
+                                      border: '1px solid rgba(255, 255, 255, 0.08)',
+                                      color: 'var(--text-secondary)',
+                                      fontSize: '13px',
+                                      fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',
+                                      fontWeight: 600,
+                                      letterSpacing: '0.02em',
+                                    }}
+                                    title={dayTitle}
+                                  >
+                                    <Calendar size={13} />
+                                    {day.date}
+                                  </div>
+                                  {day.commitTimeUtc && dayCommitDisplayDate !== day.date && (
+                                    <span
+                                      className="text-[11px] font-mono"
+                                      style={{ color: 'var(--text-muted)' }}
+                                      title={`GitHub commit 本地日期：${dayCommitDisplayDate}`}
+                                    >
+                                      提交落地 {dayCommitDisplayDate}
+                                    </span>
+                                  )}
                                 </div>
                                 <div className="flex flex-col gap-1.5">
                                   {day.entries.map((e, idx) => (

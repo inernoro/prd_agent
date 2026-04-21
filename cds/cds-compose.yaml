@@ -28,6 +28,7 @@ services:
     working_dir: /app
     volumes:
       - ./prd-api:/app
+      - .:/repo:ro
     ports:
       - "5000"
     command: >-
@@ -39,6 +40,7 @@ services:
       redis: { condition: service_healthy }
     environment:
       ASPNETCORE_ENVIRONMENT: Development
+      Changelog__RootPath: /repo
       MongoDB__ConnectionString: "mongodb://${CDS_HOST}:${CDS_MONGODB_PORT}"
       MongoDB__DatabaseName: prdagent
       Redis__ConnectionString: "${CDS_HOST}:${CDS_REDIS_PORT}"
