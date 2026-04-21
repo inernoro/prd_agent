@@ -6,7 +6,6 @@ import type {
   UserPreferences,
   GetUserPreferencesContract,
   UpdateNavOrderContract,
-  UpdateNavHiddenContract,
   UpdateNavLayoutContract,
   UpdateThemeConfigContract,
   UpdateVisualAgentPreferencesContract,
@@ -50,15 +49,6 @@ export const updateNavOrderReal: UpdateNavOrderContract = async (navOrder: strin
   const res = await apiRequest<void>(api.dashboard.userPreferences.navOrder(), {
     method: 'PUT',
     body: { navOrder },
-  });
-  if (!res.success) return res;
-  return ok(undefined);
-};
-
-export const updateNavHiddenReal: UpdateNavHiddenContract = async (navHidden: string[]): Promise<ApiResponse<void>> => {
-  const res = await apiRequest<void>(api.dashboard.userPreferences.navHidden(), {
-    method: 'PUT',
-    body: { navHidden },
   });
   if (!res.success) return res;
   return ok(undefined);
