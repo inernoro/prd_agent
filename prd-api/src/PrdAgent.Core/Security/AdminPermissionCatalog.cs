@@ -120,6 +120,16 @@ public static class AdminPermissionCatalog
     public const string TutorialEmailWrite = "tutorial-email.write";
 
     /// <summary>
+    /// 小技巧管理权限（读）：查看首页副标题轮播及右上角抽屉的 tips 列表（管理视图）
+    /// </summary>
+    public const string DailyTipsRead = "daily-tips.read";
+
+    /// <summary>
+    /// 小技巧管理权限（写）：新建 / 编辑 / 删除 / 排序首页小技巧与引导卡片
+    /// </summary>
+    public const string DailyTipsWrite = "daily-tips.write";
+
+    /// <summary>
     /// 工作流引擎权限：使用工作流（创建、执行、查看自己的）
     /// </summary>
     public const string WorkflowAgentUse = "workflow-agent.use";
@@ -233,17 +243,17 @@ public static class AdminPermissionCatalog
     {
         new(Access, "后台访问", "允许进入管理后台"),
         new(AuthzManage, "权限管理", "管理系统角色/用户权限"),
-        new(PrdAgentUse, "PRD Agent", "PRD 智能解读与问答"),
-        new(VisualAgentUse, "视觉创作 Agent", "高级视觉创作工作区"),
-        new(LiteraryAgentUse, "文学创作 Agent", "文章配图智能生成"),
-        new(DefectAgentUse, "缺陷管理 Agent", "提交和查看缺陷"),
-        new(DefectAgentManage, "缺陷管理 Agent-管理", "设置模板、指派、项目/Webhook管理"),
-        new(VideoAgentUse, "视频 Agent", "文章转视频教程生成"),
-        new(ArenaAgentUse, "竞技场 Agent", "模型盲评对战"),
+        new(PrdAgentUse, "PRD 解读智能体", "PRD 智能解读与问答"),
+        new(VisualAgentUse, "视觉创作智能体", "高级视觉创作工作区"),
+        new(LiteraryAgentUse, "文学创作智能体", "文章配图智能生成"),
+        new(DefectAgentUse, "缺陷管理智能体", "提交和查看缺陷"),
+        new(DefectAgentManage, "缺陷管理智能体-管理", "设置模板、指派、项目/Webhook管理"),
+        new(VideoAgentUse, "视频创作智能体", "文章转视频教程生成"),
+        new(ArenaAgentUse, "AI 竞技场智能体", "模型盲评对战"),
         new(AiToolboxUse, "AI 百宝箱", "使用 AI 百宝箱功能"),
         new(AiToolboxManage, "AI 百宝箱-管理", "管理工作流、配置等"),
-        new(DataMigrationAgentUse, "数据迁移 Agent-读", "查看实体与集合映射、数据预览"),
-        new(DataMigrationAgentWrite, "数据迁移 Agent-写", "删除集合、删除文档、修复数据"),
+        new(DataMigrationAgentUse, "数据迁移智能体-读", "查看实体与集合映射、数据预览"),
+        new(DataMigrationAgentWrite, "数据迁移智能体-写", "删除集合、删除文档、修复数据"),
 
         new(UsersRead, "用户管理-读", "查看用户列表/详情"),
         new(UsersWrite, "用户管理-写", "创建/编辑/禁用/重置密码等"),
@@ -285,21 +295,21 @@ public static class AdminPermissionCatalog
 
         new(WorkflowAgentUse, "工作流引擎", "创建和执行自动化工作流"),
 
-        new(ReportAgentUse, "周报 Agent", "基础使用周报功能"),
+        new(ReportAgentUse, "周报智能体", "基础使用周报功能"),
         new(ReportAgentTemplateManage, "周报-模板管理", "创建/编辑周报模板"),
         new(ReportAgentTeamManage, "周报-团队管理", "管理周报团队与成员"),
         new(ReportAgentViewAll, "周报-查看全部", "查看所有团队周报"),
         new(ReportAgentDataSourceManage, "周报-数据源管理", "配置 Git/SVN 仓库连接"),
 
-        new(TranscriptAgentUse, "转录 Agent", "音视频转录与文案生成"),
+        new(TranscriptAgentUse, "转录智能体", "音视频转录与文案生成"),
 
         new(WorkflowAgentManage, "工作流引擎-管理", "管理所有工作流与执行记录"),
 
-        new(ReviewAgentUse, "产品评审员", "提交方案并查看自己的评审结果"),
-        new(ReviewAgentViewAll, "产品评审员-查看全部", "查看所有提交记录和评审结果"),
-        new(ReviewAgentManage, "产品评审员-管理", "自定义评审维度配置"),
+        new(ReviewAgentUse, "产品评审智能体", "提交方案并查看自己的评审结果"),
+        new(ReviewAgentViewAll, "产品评审智能体-查看全部", "查看所有提交记录和评审结果"),
+        new(ReviewAgentManage, "产品评审智能体-管理", "自定义评审维度配置"),
 
-        new(PrReviewUse, "PR 审查工作台", "基于每用户 GitHub OAuth 的 PR 审查（任意团队）"),
+        new(PrReviewUse, "PR 审查智能体", "基于每用户 GitHub OAuth 的 PR 审查（任意团队）"),
 
         new(WebPagesRead, "网页托管-读", "查看托管站点列表与详情"),
         new(WebPagesWrite, "网页托管-写", "上传/编辑/删除/分享托管站点"),
@@ -313,7 +323,10 @@ public static class AdminPermissionCatalog
         new(WorkspacesRead, "工作空间-读", "查看工作空间列表与详情"),
         new(WorkspacesWrite, "工作空间-写", "创建/编辑/删除工作空间、发送指令"),
 
-        new(SkillAgentUse, "技能引导 Agent", "AI 引导创建技能、导出技能包"),
+        new(SkillAgentUse, "技能引导智能体", "AI 引导创建技能、导出技能包"),
+
+        new(DailyTipsRead, "小技巧-读", "查看小技巧列表（管理视图）"),
+        new(DailyTipsWrite, "小技巧-写", "新建/编辑/删除首页小技巧与引导卡片"),
 
         new(Super, "超级权限", "兜底放行：建议仅给 root/超级管理员"),
     };

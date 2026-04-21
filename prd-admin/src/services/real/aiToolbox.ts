@@ -43,6 +43,11 @@ export interface ToolboxItem {
   updatedAt?: string;
   /** 未正式发布：卡片左下角显示"施工中"徽章 */
   wip?: boolean;
+  /**
+   * 分类：智能体（AI + 生命周期 + 存储）/ 工具（缺一即为工具）/ 基础设施（平台级能力）。
+   * 未指定时在 UI 上按 builtin/custom 兜底显示。
+   */
+  kind?: 'agent' | 'tool' | 'infra';
 }
 
 export interface ToolboxItemRun {

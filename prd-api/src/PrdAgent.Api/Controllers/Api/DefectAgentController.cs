@@ -2152,10 +2152,57 @@ public class DefectAgentController : ControllerBase
                 await _db.DefectReports.ReplaceOneAsync(x => x.Id == defectId, defect, cancellationToken: ct);
 
                 _ = _webhookService.NotifyAsync(defect, DefectEventType.Resolved);
+
+                // 为原始报告人生成一条定向小贴士：让用户下次登录能感知「我提的缺陷被修了」
+                await CreateDefectFixTipAsync(defect, item, ct);
             }
         }
 
         return Ok(ApiResponse<object>.Ok(new { item, defect }));
+    }
+
+    /// <summary>
+    /// 缺陷被验收通过后，为原始报告人生成一条定向 DailyTip（置顶显示于首页副标题轮播及右上角抽屉）。
+    /// 幂等：同一个 defect 只生成一次，避免多条 fix report item 重复推送。
+    /// </summary>
+    private async Task CreateDefectFixTipAsync(DefectReport defect, DefectFixReportItem item, CancellationToken ct)
+    {
+        // 报告人和解决人是同一人（例如管理员自测）时不推送
+        if (string.IsNullOrWhiteSpace(defect.ReporterId) || defect.ReporterId == defect.ResolvedById)
+            return;
+
+        // 幂等：同一 defect 已有 tip 则跳过
+        var existing = await _db.DailyTips
+            .Find(x => x.SourceType == "defect-fix" && x.SourceId == defect.Id)
+            .FirstOrDefaultAsync(ct);
+        if (existing != null) return;
+
+        var defectNo = string.IsNullOrWhiteSpace(defect.DefectNo) ? "你反馈的缺陷" : defect.DefectNo;
+        var title = $"🎉 你反馈的「{(string.IsNullOrWhiteSpace(defect.Title) ? defectNo : defect.Title)}」已修复";
+        var body = string.IsNullOrWhiteSpace(item.FixSuggestion)
+            ? "感谢你的反馈！我们已经完成修复，欢迎点开看看。"
+            : $"**修复说明**\n\n{item.FixSuggestion}";
+
+        var now = DateTime.UtcNow;
+        var tip = new DailyTip
+        {
+            Kind = "card",
+            Title = title,
+            Body = body,
+            ActionUrl = $"/defect-agent?id={defect.Id}",
+            CtaText = "去看看",
+            TargetUserId = defect.ReporterId,
+            SourceType = "defect-fix",
+            SourceId = defect.Id,
+            DisplayOrder = -100, // 定向推送默认置顶
+            IsActive = true,
+            StartAt = now,
+            EndAt = now.AddDays(14), // 两周后自动过期，避免首页堆积
+            CreatedBy = "system:defect-fix",
+            CreatedAt = now,
+            UpdatedAt = now
+        };
+        await _db.DailyTips.InsertOneAsync(tip, cancellationToken: ct);
     }
 
     /// <summary>

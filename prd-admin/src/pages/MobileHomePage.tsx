@@ -41,7 +41,7 @@ const QUICK_AGENTS_BASE: QuickAgent[] = [
 
 const QUICK_AGENT_PR_REVIEW: QuickAgent = {
   key: 'pr-review',
-  label: 'PR 审查工作台',
+  label: 'PR 审查智能体',
   icon: ClipboardCheck,
   path: '/pr-review',
   color: '#A5B4FC',

@@ -209,7 +209,7 @@ export function ProjectDialog({ onClose }: ProjectDialogProps) {
                   type="text"
                   value={name}
                   onChange={(e) => setName(e.target.value)}
-                  placeholder="项目名称，如：智能助手"
+                  placeholder="项目名称，如：智能体"
                   className="w-full px-3 py-2 rounded-lg text-[13px] outline-none"
                   style={{
                     background: 'var(--bg-input-hover)',

@@ -27,6 +27,10 @@ import {
   Wand2,
   FlaskConical,
   ScrollText,
+  FolderHeart,
+  Cpu,
+  Users,
+  Hammer,
   type LucideIcon,
 } from 'lucide-react';
 import { MapSpinner } from '@/components/ui/VideoLoader';
@@ -42,6 +46,7 @@ import { DesktopDownloadDialog } from '@/components/ui/DesktopDownloadDialog';
 import { ReviewAgentCardArt } from '@/pages/ai-toolbox/components/ReviewAgentCardArt';
 import { HomeAmbientBackdrop } from '@/components/effects/HomeAmbientBackdrop';
 import { Reveal } from '@/pages/home/components/Reveal';
+import { TipsRotator } from '@/components/daily-tips/TipsRotator';
 
 /**
  * 进场动效节奏 —— 与 /home LandingPage 同款 Reveal 组件，duration 减半（1000ms）让整体速度翻倍。
@@ -67,7 +72,10 @@ const REVEAL = {
   utilitiesHeader: 400,
   utilitiesCardBase: 420,
   utilitiesCardStep: 15,
-  showcaseHeader: 550, // 仅当首屏即可见时生效；滚动触发走 IntersectionObserver
+  infraHeader: 560,
+  infraCardBase: 580,
+  infraCardStep: 15,
+  showcaseHeader: 720, // 仅当首屏即可见时生效；滚动触发走 IntersectionObserver
 };
 
 // ── Icon & Color mapping (self-contained, doesn't touch ToolCard) ──
@@ -76,6 +84,8 @@ const ICON_MAP: Record<string, LucideIcon> = {
   FileText, Palette, PenTool, Bug, Video, Swords, FileBarChart, Code2, Languages, FileSearch, BarChart3, Bot, Workflow, Zap, Globe, ClipboardCheck, ScanSearch, Wand2,
   // 迁移自用户菜单的管理工具
   FlaskConical, ScrollText, Sparkle, Sparkles, Library, Store,
+  // 基础设施
+  FolderHeart, Cpu, Users, Hammer,
 };
 
 // Agent 封面图/视频默认 CDN 路径由 `lib/homepageAssetSlots.ts` 统一维护
@@ -107,6 +117,10 @@ const ACCENT: Record<string, { from: string; to: string }> = {
   Sparkles:  { from: '#FBBF24', to: '#FCD34D' },
   Library:   { from: '#3B82F6', to: '#60A5FA' },
   Store:     { from: '#F59E0B', to: '#FB923C' },
+  FolderHeart: { from: '#EC4899', to: '#F9A8D4' },
+  Cpu:       { from: '#6366F1', to: '#A5B4FC' },
+  Users:     { from: '#22D3EE', to: '#67E8F9' },
+  Hammer:    { from: '#64748B', to: '#94A3B8' },
 };
 
 function getAccent(icon: string) {
@@ -451,6 +465,9 @@ export default function AgentLauncherPage() {
   const canReadLab = permissions.includes('lab.read') || permissions.includes('lab.write');
   const canManageAutomations = permissions.includes('automations.manage');
   const canReadLogs = permissions.includes('logs.read');
+  // 基础设施权限门
+  const canReadModels = permissions.includes('mds.read') || permissions.includes('mds.write');
+  const canReadUsers = permissions.includes('users.read') || permissions.includes('users.write');
 
   // 更新中心未读数（用于首页快捷卡的红点徽章）
   const changelogUnread = useChangelogStore(selectUnreadCount);
@@ -474,34 +491,28 @@ export default function AgentLauncherPage() {
   }, [loadItems, loadChangelogCurrentWeek, loadHomepageAssets]);
 
   // 静态实用工具入口（不来自后端 toolbox）
-  // 原用户菜单中的工具类条目（知识库/涌现/网页托管 + 提示词/实验室/自动化/请求日志）
-  // 已全部迁移至此区，用户菜单只保留账户/系统通知/更新中心/数据分享/退出。
-  const staticUtilities: ToolboxItem[] = useMemo(() => {
-    const items: ToolboxItem[] = [
-      {
-        id: '__document-store__',
-        name: '知识库',
-        description: '文档存储与知识管理，支持文件夹、GitHub 同步',
-        icon: 'Library',
-        tags: ['文档', '知识', '知识库', 'docs'],
-        routePath: '/document-store',
-      } as ToolboxItem,
+  //
+  // 分类原则（严格）：
+  //   - 智能体（featured）：AI + 完备生命周期 + 存储，三者缺一不可
+  //   - 实用工具（utilities）：工具型，缺 AI / 生命周期 / 存储 三要素之一
+  //   - 基础设施（infra）：平台级底座（知识库/市场/模型/团队/工作流/更新中心等），
+  //     即使用户自定义导航把它们隐藏了，首页仍然显示这一段，避免"找不到入口"。
+  const staticAgents: ToolboxItem[] = useMemo(() => {
+    // 涌现探索 = 智能体（AI 辅助 + 种子→探索→涌现完整生命周期 + emergence_trees 存储）
+    return [
       {
         id: '__emergence__',
-        name: '涌现探索',
+        name: '涌现探索智能体',
         description: '从文档出发，AI 辅助发现功能创意与交叉价值',
         icon: 'Sparkle',
-        tags: ['涌现', '探索', 'AI', '创意'],
+        tags: ['涌现', '探索', 'AI', '创意', '智能体'],
         routePath: '/emergence',
       } as ToolboxItem,
-      {
-        id: '__web-pages__',
-        name: '网页托管',
-        description: '上传 HTML 或 ZIP，托管并分享你的网页',
-        icon: 'Globe',
-        tags: ['托管', '网页', 'hosting'],
-        routePath: '/web-pages',
-      } as ToolboxItem,
+    ];
+  }, []);
+
+  const staticUtilities: ToolboxItem[] = useMemo(() => {
+    const items: ToolboxItem[] = [
       {
         id: '__skill-agent__',
         name: '技能创建助手',
@@ -557,8 +568,85 @@ export default function AgentLauncherPage() {
     return items;
   }, [canReadPrompts, canReadLab, canManageAutomations, canReadLogs]);
 
-  // Split into featured (customized agents with routePath) and compact (utility agents)
-  const { featured, utilities, filtered } = useMemo(() => {
+  /** 基础设施：平台级能力，用户即使隐藏了侧边栏也必须在首页稳定出现 */
+  const staticInfra: ToolboxItem[] = useMemo(() => {
+    const items: ToolboxItem[] = [
+      {
+        id: '__document-store__',
+        name: '知识库',
+        description: '文档存储与知识管理，支持文件夹、GitHub 同步',
+        icon: 'Library',
+        tags: ['文档', '知识', '知识库', 'docs'],
+        routePath: '/document-store',
+      } as ToolboxItem,
+      {
+        id: '__my-assets__',
+        name: '我的资源',
+        description: '图片、附件、素材等个人资源统一管理',
+        icon: 'FolderHeart',
+        tags: ['资源', '素材', '附件'],
+        routePath: '/visual-agent?tab=assets',
+      } as ToolboxItem,
+      {
+        id: '__marketplace__',
+        name: '海鲜市场',
+        description: '社区共享的提示词、水印、参考图、工具',
+        icon: 'Store',
+        tags: ['市场', 'marketplace', '分享', '社区'],
+        routePath: '/marketplace',
+      } as ToolboxItem,
+      {
+        id: '__workflow-agent__',
+        name: '工作流引擎',
+        description: '可视化工作流编排，自动化多步骤任务串联',
+        icon: 'Workflow',
+        tags: ['工作流', '自动化', '编排'],
+        routePath: '/workflow-agent',
+      } as ToolboxItem,
+      {
+        id: '__web-pages__',
+        name: '网页托管',
+        description: '上传 HTML 或 ZIP，托管并分享你的网页',
+        icon: 'Globe',
+        tags: ['托管', '网页', 'hosting'],
+        routePath: '/web-pages',
+      } as ToolboxItem,
+      {
+        id: '__changelog__',
+        name: '更新中心',
+        description: '代码级周报：自动汇总仓库内的变更',
+        icon: 'Sparkles',
+        tags: ['更新', '周报', 'changelog', 'release'],
+        routePath: '/changelog',
+      } as ToolboxItem,
+    ];
+
+    if (canReadModels) {
+      items.push({
+        id: '__models__',
+        name: '模型中心',
+        description: '大模型与模型池配置、健康监控',
+        icon: 'Cpu',
+        tags: ['模型', 'LLM', '模型池', '调度'],
+        routePath: '/mds',
+      } as ToolboxItem);
+    }
+    if (canReadUsers) {
+      items.push({
+        id: '__teams__',
+        name: '团队协作',
+        description: '团队成员、用户组、分享与协作',
+        icon: 'Users',
+        tags: ['团队', '用户', '协作', '权限'],
+        routePath: '/users',
+      } as ToolboxItem);
+    }
+
+    return items;
+  }, [canReadModels, canReadUsers]);
+
+  // Split into featured (智能体) / utilities (工具) / infra (基础设施) three buckets
+  const { featured, utilities, infra, filtered } = useMemo(() => {
     const filterByPerm = (list: ToolboxItem[]) =>
       list.filter((i) => {
         if (i.agentKey === 'review-agent' && !canUseReviewAgent) return false;
@@ -566,7 +654,9 @@ export default function AgentLauncherPage() {
         return true;
       });
 
-    const allItems = dedupeToolboxItems(filterByPerm([...items, ...staticUtilities]));
+    const allItems = dedupeToolboxItems(
+      filterByPerm([...items, ...staticAgents, ...staticUtilities, ...staticInfra])
+    );
     const query = searchQuery.trim().toLowerCase();
     if (query) {
       const matched = allItems.filter(
@@ -575,7 +665,7 @@ export default function AgentLauncherPage() {
           item.description.toLowerCase().includes(query) ||
           item.tags.some((tag) => tag.toLowerCase().includes(query))
       );
-      return { featured: [], utilities: [], filtered: matched };
+      return { featured: [], utilities: [], infra: [], filtered: matched };
     }
     const feat: ToolboxItem[] = [];
     const util: ToolboxItem[] = [];
@@ -583,12 +673,21 @@ export default function AgentLauncherPage() {
     for (const item of dedupedItems) {
       if (item.agentKey === 'review-agent' && !canUseReviewAgent) continue;
       if (item.agentKey === 'pr-review' && !canUsePrReview) continue;
-      if (item.routePath) feat.push(item);
-      else util.push(item);
+      // kind === 'agent' (或默认有 routePath 的内置条目) 进 featured
+      // kind === 'tool' 进 util；不在此显示 infra（infra 不再经由 BUILTIN_TOOLS）
+      if (item.kind === 'tool') {
+        util.push(item);
+      } else if (item.kind === 'agent' || item.routePath) {
+        feat.push(item);
+      } else {
+        util.push(item);
+      }
     }
+    // 涌现探索属于智能体
+    feat.push(...staticAgents);
     util.push(...staticUtilities);
-    return { featured: feat, utilities: util, filtered: [] };
-  }, [items, staticUtilities, searchQuery, canUseReviewAgent, canUsePrReview]);
+    return { featured: feat, utilities: util, infra: staticInfra, filtered: [] };
+  }, [items, staticAgents, staticUtilities, staticInfra, searchQuery, canUseReviewAgent, canUsePrReview]);
 
   const handleClick = (item: ToolboxItem) => {
     if (item.agentKey === 'prd-agent') {
@@ -616,7 +715,6 @@ export default function AgentLauncherPage() {
 
   return (
     <div className="h-full min-h-0 flex flex-col relative" style={{ background: 'var(--bg-base)' }}>
-      
       {/* ── 页面背景大画幅层 (Page Hero Backing) ── */}
       <div 
         className="absolute inset-x-0 top-0 pointer-events-none" 
@@ -730,7 +828,8 @@ export default function AgentLauncherPage() {
                     </h1>
                   </Reveal>
                   <Reveal delay={REVEAL.heroSubtitle} duration={REVEAL_DURATION}>
-                    <p
+                    <div
+                      data-tour-id="home-subtitle"
                       className={`mt-2 ${isMobile ? 'text-sm' : 'text-[15px]'}`}
                       style={{
                         color: 'var(--text-muted, rgba(255,255,255,0.6))',
@@ -738,8 +837,8 @@ export default function AgentLauncherPage() {
                         maxWidth: 520,
                       }}
                     >
-                      选一个智能助手开始创作，或在下方的实用工具里探索平台能力
-                    </p>
+                      <TipsRotator fallback="选一个智能体开始创作，或在下方的实用工具里探索平台能力" />
+                    </div>
                   </Reveal>
                 </div>
 
@@ -752,6 +851,7 @@ export default function AgentLauncherPage() {
                       style={{ color: 'var(--text-muted, rgba(255,255,255,0.3))' }}
                     />
                     <input
+                      data-tour-id="home-search"
                       type="text"
                       placeholder="搜索 Agent..."
                       value={searchQuery}
@@ -786,7 +886,9 @@ export default function AgentLauncherPage() {
                   className="grid"
                   style={{
                     gap: isMobile ? 10 : 14,
-                    gridTemplateColumns: `repeat(auto-fit, minmax(${isMobile ? 160 : 220}px, 1fr))`,
+                    gridTemplateColumns: isMobile
+                      ? `repeat(auto-fit, minmax(160px, 1fr))`
+                      : `repeat(auto-fit, minmax(260px, 1fr))`,
                   }}
                 >
               {quickLinks.map((link, idx) => {
@@ -802,6 +904,7 @@ export default function AgentLauncherPage() {
                   >
                   <button
                     type="button"
+                    data-tour-id={`quicklink-${link.id}`}
                     onClick={() => navigate(link.path)}
                     className="group relative text-left rounded-2xl overflow-hidden transition-all duration-300 hover:-translate-y-0.5 w-full"
                     style={{
@@ -809,7 +912,8 @@ export default function AgentLauncherPage() {
                       border: '1px solid rgba(255,255,255,0.08)',
                       padding: isMobile ? '14px 14px 16px' : '20px',
                       minHeight: isMobile ? 96 : 140,
-                      aspectRatio: isMobile ? 'auto' : '16/10',
+                      // 更扁的卡片比例，避免带鱼屏上拉伸过高
+                      aspectRatio: isMobile ? 'auto' : '21/9',
                     }}
                   >
                     {/* 管理员上传的背景图（如有）：铺满卡片，底部渐变压暗保证文字可读 */}
@@ -927,7 +1031,7 @@ export default function AgentLauncherPage() {
               <div className="flex flex-col items-center justify-center h-40 gap-2">
                 <Search size={24} style={{ color: 'var(--text-muted, rgba(255,255,255,0.2))' }} />
                 <span className="text-sm" style={{ color: 'var(--text-muted)' }}>
-                  没有找到匹配的 Agent
+                  没有找到匹配的智能体
                 </span>
               </div>
             ) : (
@@ -944,14 +1048,14 @@ export default function AgentLauncherPage() {
           ) : (
             /* ── Default layout: featured + utilities ── */
             <>
-              {/* Featured Agents */}
+              {/* 智能体：AI + 完备生命周期 + 存储 */}
               {featured.length > 0 && (
                 <section className={isMobile ? 'mb-8' : 'mb-10'}>
                   <Reveal delay={REVEAL.agentsHeader} duration={REVEAL_DURATION}>
                     <SectionHeader
                       eyebrow="AGENTS"
-                      title="智能助手"
-                      subtitle={`${featured.length} 个专属 Agent，覆盖 PRD / 视觉 / 文学 / 视频 / 缺陷 / 周报 / 审查`}
+                      title="智能体"
+                      subtitle={`${featured.length} 个专属智能体，覆盖 PRD / 视觉 / 文学 / 视频 / 缺陷 / 周报 / 审查 / 竞技场 / 涌现`}
                       accent="#818CF8"
                     />
                   </Reveal>
@@ -969,14 +1073,14 @@ export default function AgentLauncherPage() {
                 </section>
               )}
 
-              {/* Utility Agents */}
+              {/* 实用工具：缺 AI / 生命周期 / 存储 三要素之一 */}
               {utilities.length > 0 && (
                 <section className={isMobile ? 'mb-8' : 'mb-10'}>
                   <Reveal delay={REVEAL.utilitiesHeader} duration={REVEAL_DURATION}>
                     <SectionHeader
                       eyebrow="UTILITIES"
                       title="实用工具"
-                      subtitle="知识库 · 涌现探索 · 网页托管 · 管理工具 — 按需展开使用"
+                      subtitle="快捷指令 · 转录 · 翻译 · 摘要 · 代码审查 · 管理工具 — 按需展开使用"
                       accent="#22D3EE"
                     />
                   </Reveal>
@@ -985,6 +1089,31 @@ export default function AgentLauncherPage() {
                       <Reveal
                         key={item.id}
                         delay={REVEAL.utilitiesCardBase + i * REVEAL.utilitiesCardStep}
+                        duration={REVEAL_DURATION}
+                      >
+                        <CompactCard item={item} onClick={() => handleClick(item)} />
+                      </Reveal>
+                    ))}
+                  </div>
+                </section>
+              )}
+
+              {/* 基础设施：平台级底座，即使用户隐藏了侧边栏仍在此稳定出现 */}
+              {infra.length > 0 && (
+                <section className={isMobile ? 'mb-8' : 'mb-10'}>
+                  <Reveal delay={REVEAL.infraHeader} duration={REVEAL_DURATION}>
+                    <SectionHeader
+                      eyebrow="INFRASTRUCTURE"
+                      title="基础设施"
+                      subtitle="知识库 · 我的资源 · 市场 · 模型 · 团队 · 工作流 — 平台级能力，所有智能体共享"
+                      accent="#F59E0B"
+                    />
+                  </Reveal>
+                  <div style={AUTO_GRID_COMPACT}>
+                    {infra.map((item, i) => (
+                      <Reveal
+                        key={item.id}
+                        delay={REVEAL.infraCardBase + i * REVEAL.infraCardStep}
                         duration={REVEAL_DURATION}
                       >
                         <CompactCard item={item} onClick={() => handleClick(item)} />
