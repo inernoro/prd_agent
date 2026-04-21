@@ -9,10 +9,6 @@ import { getUserPreferences, updateNavLayout } from '@/services';
  */
 export const NAV_DIVIDER_KEY = '---';
 
-export function isDivider(key: string): boolean {
-  return key === NAV_DIVIDER_KEY;
-}
-
 type NavOrderState = {
   /** 用户自定义的导航顺序（key 列表，可能包含 NAV_DIVIDER_KEY 作为分隔符） */
   navOrder: string[];

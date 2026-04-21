@@ -413,6 +413,7 @@ function NavOrderSettings() {
                 {isDivider ? (
                   <DividerChip
                     onDragStart={handleDragStartNav(idx, true)}
+                    onDragEnd={clearDragState}
                     onRemove={() => {
                       const next = collapseDividers(currentOrder.filter((_, i) => i !== idx));
                       setNavLayout({ navOrder: next, navHidden });
@@ -423,6 +424,7 @@ function NavOrderSettings() {
                     meta={meta}
                     getIcon={getIcon}
                     onDragStart={handleDragStartNav(idx, false)}
+                    onDragEnd={clearDragState}
                     onRemove={() => removeFromNav(idx)}
                   />
                 ) : null}
@@ -486,6 +488,7 @@ function NavOrderSettings() {
                     meta={meta}
                     getIcon={getIcon}
                     onDragStart={handleDragStartPool(meta.navKey)}
+                    onDragEnd={clearDragState}
                     onAppend={() => appendFromPool(meta.navKey)}
                   />
                 ))}
@@ -536,17 +539,20 @@ function NavItemChip({
   meta,
   getIcon,
   onDragStart,
+  onDragEnd,
   onRemove,
 }: {
   meta: NavMetaItem;
   getIcon: (name: string, size?: number) => React.ReactNode;
   onDragStart: (e: React.DragEvent) => void;
+  onDragEnd: () => void;
   onRemove: () => void;
 }) {
   return (
     <div
       draggable
       onDragStart={onDragStart}
+      onDragEnd={onDragEnd}
       className="group relative shrink-0 flex flex-col items-center justify-center gap-0 rounded-[10px] cursor-grab active:cursor-grabbing"
       style={{
         width: 56,
@@ -619,15 +625,18 @@ function FixedHomeChip({
 // ── 子组件：分隔横杆 Chip ──────────────────────────────────────
 function DividerChip({
   onDragStart,
+  onDragEnd,
   onRemove,
 }: {
   onDragStart: (e: React.DragEvent) => void;
+  onDragEnd: () => void;
   onRemove: () => void;
 }) {
   return (
     <div
       draggable
       onDragStart={onDragStart}
+      onDragEnd={onDragEnd}
       className="group shrink-0 relative flex items-center justify-center cursor-grab active:cursor-grabbing"
       style={{ width: 34, height: 48 }}
       title="分隔横杆（拖动移动 / 点 × 删除）"
@@ -685,17 +694,20 @@ function PoolItemChip({
   meta,
   getIcon,
   onDragStart,
+  onDragEnd,
   onAppend,
 }: {
   meta: NavMetaItem;
   getIcon: (name: string, size?: number) => React.ReactNode;
   onDragStart: (e: React.DragEvent) => void;
+  onDragEnd: () => void;
   onAppend: () => void;
 }) {
   return (
     <div
       draggable
       onDragStart={onDragStart}
+      onDragEnd={onDragEnd}
       className="group relative shrink-0 flex flex-col items-center justify-center gap-0 rounded-[10px] cursor-grab active:cursor-grabbing"
       style={{
         width: 56,
