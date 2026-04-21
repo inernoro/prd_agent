@@ -61,6 +61,20 @@ const INITIAL_STATE = {
   permFingerprint: '',
 };
 
+// logout 时需要同步清理的 user-scoped store 回调；由各 store 在模块装载阶段自行注册。
+// 用注册表避免 authStore 直接 import navOrderStore/agentSwitcherStore 造成
+// authStore → navOrderStore → @/services → authStore 的循环引用。
+const logoutResetCallbacks: Array<() => void> = [];
+
+/** 注册一个 user-scoped 的重置回调，logout 时会同步执行。返回反注册函数。 */
+export function registerLogoutReset(fn: () => void): () => void {
+  logoutResetCallbacks.push(fn);
+  return () => {
+    const idx = logoutResetCallbacks.indexOf(fn);
+    if (idx >= 0) logoutResetCallbacks.splice(idx, 1);
+  };
+}
+
 export const useAuthStore = create<AuthState>()(
   persist(
     (set) => ({
@@ -77,21 +91,17 @@ export const useAuthStore = create<AuthState>()(
       patchUser: (patch) =>
         set((s) => (s.user ? { user: { ...s.user, ...patch } } : ({} as Partial<AuthState>))),
       logout: () => {
-        // 重置 user-scoped stores 的内存态，防止切换账号后旧用户数据残留。
-        // 用动态 import 是为了切开与 @/services 之间的循环引用（services 会 import authStore）。
-        void (async () => {
+        // 同步执行所有已注册的 user-scoped 重置回调，确保 sessionStorage.clear 之前
+        // navOrderStore.loaded / agentSwitcherStore.serverLoaded 等标志位已复位；
+        // 否则同一浏览器切换账号时，下个用户的 loadFromServer() 会被 stale 标志 early-return，
+        // 导致旧用户的自定义导航残留。
+        for (const fn of logoutResetCallbacks) {
           try {
-            const [{ useNavOrderStore }, { useAgentSwitcherStore }] = await Promise.all([
-              import('@/stores/navOrderStore'),
-              import('@/stores/agentSwitcherStore'),
-            ]);
-            useNavOrderStore.getState().reset();
-            useAgentSwitcherStore.getState().resetServerSync();
-            useAgentSwitcherStore.setState({ recentVisits: [], usageCounts: {}, pinnedIds: [] });
-          } catch {
-            // 动态 import 失败：退回到仅清 sessionStorage
+            fn();
+          } catch (err) {
+            console.error('[authStore] logout reset callback 异常:', err);
           }
-        })();
+        }
         sessionStorage.clear();
         set({ ...INITIAL_STATE });
       },

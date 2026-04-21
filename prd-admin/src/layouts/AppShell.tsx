@@ -49,7 +49,7 @@ import { useAuthStore } from '@/stores/authStore';
 import { useAgentSwitcherStore } from '@/stores/agentSwitcherStore';
 import { useThemeStore } from '@/stores/themeStore';
 import { useLayoutStore } from '@/stores/layoutStore';
-import { useNavOrderStore } from '@/stores/navOrderStore';
+import { useNavOrderStore, NAV_DIVIDER_KEY } from '@/stores/navOrderStore';
 import { getLauncherCatalog } from '@/lib/launcherCatalog';
 import { getShortLabel } from '@/lib/shortLabel';
 import { useBreakpoint } from '@/hooks/useBreakpoint';
@@ -303,7 +303,7 @@ export default function AppShell() {
       let segIdx = 0;
 
       for (const token of navOrder) {
-        if (token === '---') {
+        if (token === NAV_DIVIDER_KEY) {
           if (current.length > 0) {
             segments.push({ key: `custom-${segIdx++}`, items: current });
             current = [];

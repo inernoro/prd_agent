@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
 import { getUserPreferences, updateNavLayout } from '@/services';
+import { registerLogoutReset } from '@/stores/authStore';
 
 /**
  * 导航排序中的分隔横杆哨兵值。
@@ -126,4 +127,9 @@ export const useNavOrderStore = create<NavOrderState>()(
     }
   )
 );
+
+// 登出时同步清空，避免同一浏览器切换账号后下个用户的 loadFromServer 被 stale `loaded` 标志 early-return。
+registerLogoutReset(() => {
+  useNavOrderStore.getState().reset();
+});
 
