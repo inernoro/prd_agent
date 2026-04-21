@@ -256,6 +256,22 @@ export const BUILTIN_TOOLS: ToolboxItem[] = [
     usageCount: 0,
     createdAt: new Date().toISOString(),
   },
+  // ========== 周报海报编辑器 · wip（满足规则 #9 完成标准前保持施工中徽章） ==========
+  {
+    id: 'builtin-weekly-poster-editor',
+    name: '周报海报编辑器',
+    description: '把本周更新做成主页弹窗轮播海报,末页 CTA 跳转完整周报',
+    icon: 'Sparkles',
+    category: 'builtin',
+    type: 'builtin',
+    kind: 'tool',
+    agentKey: 'report-agent',
+    routePath: '/weekly-poster',
+    tags: ['周报', '海报', '主页', '轮播', 'wip'],
+    wip: true,
+    usageCount: 0,
+    createdAt: new Date().toISOString(),
+  },
   // ========== 工具（缺 AI / 生命周期 / 存储 三要素之一）==========
   {
     id: 'builtin-shortcuts-agent',

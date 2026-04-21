@@ -135,6 +135,9 @@ public class MongoDbContext
     public IMongoCollection<PersonalSource> PersonalSources => _database.GetCollection<PersonalSource>("report_personal_sources");
     public IMongoCollection<ReportShareLink> ReportShareLinks => _database.GetCollection<ReportShareLink>("report_share_links");
 
+    // 周报海报：登录后主页轮播弹窗
+    public IMongoCollection<WeeklyPosterAnnouncement> WeeklyPosters => _database.GetCollection<WeeklyPosterAnnouncement>("weekly_posters");
+
     // 更新中心「周报来源」配置（绑定知识库 + 文件名关键词，全员共享）
     public IMongoCollection<ChangelogReportSource> ChangelogReportSources => _database.GetCollection<ChangelogReportSource>("changelog_report_sources");
 

@@ -1372,6 +1372,25 @@ export type {
   ChangelogReportSourceUpsert,
 } from '@/services/real/changelog';
 
+// Weekly Poster 周报海报（登录后主页轮播弹窗）
+export {
+  getCurrentWeeklyPoster,
+  listWeeklyPosters,
+  getWeeklyPoster,
+  createWeeklyPoster,
+  updateWeeklyPoster,
+  deleteWeeklyPoster,
+  publishWeeklyPoster,
+  unpublishWeeklyPoster,
+} from '@/services/real/weeklyPoster';
+export type {
+  WeeklyPoster,
+  WeeklyPosterPage,
+  WeeklyPosterStatus,
+  WeeklyPosterListView,
+  WeeklyPosterUpsertInput,
+} from '@/services/real/weeklyPoster';
+
 // AI Toolbox 百宝箱
 export {
   // 新版工具集合 API
