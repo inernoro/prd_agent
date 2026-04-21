@@ -285,7 +285,11 @@ export default function ChangelogPage() {
         } else {
           setGitHubLogsError(res.error?.message || '加载 GitHub 日志失败');
         }
-      }).finally(() => setLoadingGitHubLogs(false));
+      }).catch((error: unknown) => {
+        setGitHubLogsError(error instanceof Error ? error.message : '加载 GitHub 日志失败');
+      }).finally(() => {
+        setLoadingGitHubLogs(false);
+      });
     }
   };
 
