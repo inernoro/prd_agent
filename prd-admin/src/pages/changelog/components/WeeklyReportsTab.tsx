@@ -21,7 +21,6 @@ import type {
 } from '@/services/real/changelog';
 import { MarkdownContent } from '@/components/ui/MarkdownContent';
 import { MapSectionLoader, MapSpinner } from '@/components/ui/VideoLoader';
-import { glassPanel } from '@/lib/glassStyles';
 import { toast } from '@/lib/toast';
 import { useChangelogStore } from '@/stores/changelogStore';
 import { useWeeklyReportSources } from './weeklyReportSourcesContext';
@@ -234,37 +233,30 @@ export function WeeklyReportsTab() {
     <div className="flex flex-col flex-1 min-h-0" style={{ minHeight: '560px' }}>
       {/* ── 主体：左右独立滚动 ── */}
       <div
-        className="flex gap-3 rounded-2xl"
+        className="surface-raised text-crisp relative flex gap-3 rounded-2xl overflow-hidden"
         style={{
-          ...glassPanel,
           flex: 1,
           minHeight: 0,
           padding: '12px',
-          overflow: 'hidden',
         }}
       >
         {/* 左：文件列表 */}
         <aside
-          className="flex flex-col rounded-xl"
+          className="surface-reading text-crisp flex flex-col rounded-xl"
           style={{
-            width: '300px',
+            width: '308px',
             flexShrink: 0,
             minHeight: 0,
-            background: 'rgba(255,255,255,0.05)',
-            border: '1px solid rgba(255,255,255,0.10)',
             overflow: 'hidden',
           }}
         >
           <div
-            className="px-3 py-2 flex items-center justify-between gap-2"
-            style={{
-              borderBottom: '1px solid rgba(255,255,255,0.04)',
-              flexShrink: 0,
-            }}
+            className="surface-reading-header px-4 py-3 flex items-center justify-between gap-2"
+            style={{ flexShrink: 0 }}
           >
             <div className="flex items-center gap-2 min-w-0">
               <span
-                className="text-[11px] font-semibold uppercase tracking-wider truncate"
+                className="text-[12px] font-semibold truncate"
                 style={{ color: 'var(--text-muted)' }}
                 title={currentStore ? `知识库：${currentStore.name}${activeSource?.prefix ? ' · 关键词：' + activeSource.prefix : ''}` : undefined}
               >
@@ -272,7 +264,7 @@ export function WeeklyReportsTab() {
               </span>
             </div>
             <span
-              className="text-[10.5px] px-1.5 py-0.5 rounded shrink-0"
+              className="text-[11px] px-2 py-0.5 rounded-md shrink-0"
               style={{
                 background: 'rgba(168,85,247,0.14)',
                 color: '#d8b4fe',
@@ -302,7 +294,7 @@ export function WeeklyReportsTab() {
                     : '暂无文件'}
               </div>
             ) : (
-              <ul className="py-1">
+              <ul className="py-2">
                 {filtered.map(e => {
                   const active = selectedId === e.id;
                   const time = getEntryTime(e);
@@ -310,28 +302,27 @@ export function WeeklyReportsTab() {
                   const isGit = !!e.metadata?.github_last_commit_at;
                   const fresh = isAfterCutoff(time, cutoff);
                   return (
-                    <li key={e.id}>
+                    <li key={e.id} className="px-2 py-0.5">
                       <button
                         onClick={() => setSelectedId(e.id)}
-                        className="w-full text-left px-3 py-2 transition-colors"
+                        className="surface-row w-full rounded-[12px] text-left px-3.5 py-3 transition-colors"
+                        data-active={active ? 'true' : 'false'}
                         style={{
-                          background: active ? 'rgba(168,85,247,0.12)' : 'transparent',
-                          color: active ? '#e9d5ff' : 'var(--text-secondary)',
-                          borderLeft: `2px solid ${active ? 'rgba(168,85,247,0.6)' : 'transparent'}`,
+                          color: active ? '#f3e8ff' : 'var(--text-secondary)',
                           cursor: 'pointer',
                         }}
                       >
                         <div className="flex items-center gap-2 min-w-0">
-                          <FileText size={12} style={{ flexShrink: 0, opacity: 0.7 }} />
+                          <FileText size={13} style={{ flexShrink: 0, opacity: 0.72 }} />
                           <span
-                            className="text-[12px] truncate flex-1"
+                            className="text-[13px] font-medium truncate flex-1"
                             title={`${e.title}${titlePreviews[e.id] ? '\n\n' + titlePreviews[e.id] : ''}`}
                           >
                             {titlePreviews[e.id] || e.title}
                           </span>
                           {fresh && (
                             <span
-                              className="text-[9px] font-bold tracking-wider px-1.5 py-[1px] rounded"
+                              className="text-[9.5px] font-bold tracking-wider px-1.5 py-[1px] rounded"
                               style={{
                                 background: 'rgba(34, 197, 94, 0.18)',
                                 color: '#86efac',
@@ -347,8 +338,8 @@ export function WeeklyReportsTab() {
                         </div>
                         {date && (
                           <div
-                            className="text-[10px] mt-0.5 flex items-center gap-1"
-                            style={{ paddingLeft: 20, color: 'var(--text-muted)' }}
+                            className="text-[11px] mt-1 flex items-center gap-1.5"
+                            style={{ paddingLeft: 21, color: 'var(--text-muted)' }}
                             title={isGit ? '最近 git 提交时间' : '同步入库时间'}
                           >
                             <span>{date}</span>
@@ -370,23 +361,17 @@ export function WeeklyReportsTab() {
 
         {/* 右：内容 */}
         <section
-          className="flex flex-col rounded-xl"
+          className="surface-reading text-crisp flex flex-col rounded-xl"
           style={{
             flex: 1,
             minWidth: 0,
             minHeight: 0,
-            background: 'rgba(255,255,255,0.05)',
-            border: '1px solid rgba(255,255,255,0.10)',
             overflow: 'hidden',
           }}
         >
           <div
-            className="px-4 py-2.5 text-[13px] font-semibold truncate"
-            style={{
-              borderBottom: '1px solid rgba(255,255,255,0.04)',
-              color: 'var(--text-primary)',
-              flexShrink: 0,
-            }}
+            className="surface-reading-header px-5 py-3.5 text-[15px] font-semibold truncate"
+            style={{ color: 'var(--text-primary)', flexShrink: 0 }}
           >
             {filtered.find(e => e.id === selectedId)?.title || '（未选中文件）'}
           </div>
@@ -396,7 +381,7 @@ export function WeeklyReportsTab() {
               minHeight: 0,
               overflowY: 'auto',
               overscrollBehavior: 'contain',
-              padding: '20px 28px',
+              padding: '24px 32px',
             }}
           >
             {loadingContent ? (
@@ -406,7 +391,7 @@ export function WeeklyReportsTab() {
                 左侧点击一篇周报查看内容
               </div>
             ) : (
-              <MarkdownContent content={content} />
+              <MarkdownContent content={content} className="text-crisp text-[14px] leading-[1.8]" />
             )}
           </div>
         </section>

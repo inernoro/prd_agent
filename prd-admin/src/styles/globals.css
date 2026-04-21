@@ -1352,6 +1352,31 @@ select optgroup {
   box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.12);
 }
 
+/*
+ * ── .surface-reading / .text-crisp — 高密度阅读区 ──
+ *
+ * 深色玻璃面板里如果 blur 太强、背景太透，正文会出现“发软 / 毛边”的观感。
+ * 阅读区改用更实的暗色表面，文字单独做字体平滑，避免正文直接压在大面积 blur 上。
+ */
+.surface-reading {
+  background: linear-gradient(180deg, rgba(24, 24, 30, 0.84) 0%, rgba(18, 18, 24, 0.92) 100%);
+  border: 1px solid var(--border-subtle, rgba(255, 255, 255, 0.08));
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.05),
+    0 12px 28px rgba(0, 0, 0, 0.18);
+}
+
+.surface-reading-header {
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.035) 0%, rgba(255, 255, 255, 0.015) 100%);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.text-crisp {
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+}
+
 /* ── .surface-row — 列表/表格行悬停 ── */
 .surface-row {
   transition: background 0.2s ease,

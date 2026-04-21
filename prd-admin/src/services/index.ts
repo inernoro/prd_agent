@@ -1349,6 +1349,8 @@ export const channelService: IChannelService = new ChannelService();
 export {
   getCurrentWeekChangelog,
   getChangelogReleases,
+  getChangelogGitHubLogs,
+  postChangelogAiSummary,
   listChangelogReportSources,
   createChangelogReportSource,
   updateChangelogReportSource,
@@ -1362,6 +1364,10 @@ export type {
   ChangelogDay,
   ChangelogRelease,
   ReleasesView,
+  GitHubLogEntry,
+  GitHubLogsView,
+  ChangelogAiSummarySubtab,
+  ChangelogAiSummaryDto,
   ChangelogReportSource,
   ChangelogReportSourceUpsert,
 } from '@/services/real/changelog';

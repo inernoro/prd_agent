@@ -57,6 +57,22 @@ export interface ReleasesView {
   releases: ChangelogRelease[];
 }
 
+export interface GitHubLogEntry {
+  sha: string;
+  shortSha: string;
+  message: string;
+  authorName: string;
+  commitTimeUtc: string;
+  htmlUrl: string;
+}
+
+export interface GitHubLogsView {
+  dataSourceAvailable: boolean;
+  source: 'local' | 'github' | 'none';
+  fetchedAt: string;
+  logs: GitHubLogEntry[];
+}
+
 // ============ API Calls ============
 
 /**
@@ -73,6 +89,43 @@ export async function getCurrentWeekChangelog(force = false): Promise<ApiRespons
  */
 export async function getChangelogReleases(limit = 20, force = false): Promise<ApiResponse<ReleasesView>> {
   return await apiRequest<ReleasesView>(api.changelog.releases(limit, force), { method: 'GET' });
+}
+
+/**
+ * 获取 GitHub 日志（优先本地 git log，失败时回退 GitHub commits API）
+ * @param force 绕过服务端缓存
+ */
+export async function getChangelogGitHubLogs(limit = 30, force = false): Promise<ApiResponse<GitHubLogsView>> {
+  return await apiRequest<GitHubLogsView>(api.changelog.githubLogs(limit, force), { method: 'GET' });
+}
+
+export type ChangelogAiSummarySubtab = 'releases' | 'fragments' | 'github_logs';
+
+export interface ChangelogAiSummaryDto {
+  title: string;
+  headline: string;
+  bullets: string[];
+  stats: string[];
+  insight: string;
+  /** 网关溯源（AppCallerCode） */
+  thinkingTrace: string;
+  generatedAt: number;
+}
+
+/**
+ * 更新中心「AI 总结」：服务端经 ILlmGateway 调用，AppCallerCode 为 prd-admin.changelog.aiSummary::chat
+ */
+export async function postChangelogAiSummary(body: {
+  subtab: ChangelogAiSummarySubtab;
+  typeFilter?: string | null;
+}): Promise<ApiResponse<ChangelogAiSummaryDto>> {
+  return await apiRequest<ChangelogAiSummaryDto>(api.changelog.aiSummary(), {
+    method: 'POST',
+    body: {
+      subtab: body.subtab,
+      typeFilter: body.typeFilter ?? null,
+    },
+  });
 }
 
 // ============ Report Sources（周报来源配置，全员共享） ============
