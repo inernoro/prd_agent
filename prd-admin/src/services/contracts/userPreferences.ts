@@ -79,8 +79,6 @@ export type UserPreferences = {
 
 export type GetUserPreferencesContract = () => Promise<ApiResponse<UserPreferences>>;
 
-export type UpdateNavOrderContract = (navOrder: string[]) => Promise<ApiResponse<void>>;
-
 export type UpdateNavLayoutContract = (payload: {
   navOrder: string[];
   navHidden: string[];

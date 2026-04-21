@@ -247,7 +247,7 @@ import type { IAutomationsService } from '@/services/contracts/automations';
 import type { IModelGroupsService } from '@/services/contracts/modelGroups';
 import type { IAppCallersService } from '@/services/contracts/appCallers';
 import type { ISchedulerConfigService } from '@/services/contracts/schedulerConfig';
-import type { GetUserPreferencesContract, UpdateNavOrderContract, UpdateNavLayoutContract, UpdateThemeConfigContract, UpdateVisualAgentPreferencesContract, UpdateLiteraryAgentPreferencesContract } from '@/services/contracts/userPreferences';
+import type { GetUserPreferencesContract, UpdateNavLayoutContract, UpdateThemeConfigContract, UpdateVisualAgentPreferencesContract, UpdateLiteraryAgentPreferencesContract } from '@/services/contracts/userPreferences';
 import type {
   GetModelSizesContract,
   GetWatermarksContract,
@@ -536,7 +536,7 @@ import { AutomationsService } from '@/services/real/automations';
 import { ModelGroupsService } from '@/services/real/modelGroups';
 import { AppCallersService } from '@/services/real/appCallers';
 import { SchedulerConfigService } from '@/services/real/schedulerConfig';
-import { getUserPreferencesReal, updateNavOrderReal, updateNavLayoutReal, updateThemeConfigReal, updateVisualAgentPreferencesReal, updateLiteraryAgentPreferencesReal, updateAgentSwitcherPreferencesReal } from '@/services/real/userPreferences';
+import { getUserPreferencesReal, updateNavLayoutReal, updateThemeConfigReal, updateVisualAgentPreferencesReal, updateLiteraryAgentPreferencesReal, updateAgentSwitcherPreferencesReal } from '@/services/real/userPreferences';
 import {
   getAdminNotificationsReal,
   handleAdminNotificationReal,
@@ -1260,7 +1260,6 @@ export const getSchedulerConfig = async () => {
 export const updateSchedulerConfig = (config: Parameters<ISchedulerConfigService['updateSchedulerConfig']>[0]) => schedulerConfigService.updateSchedulerConfig(config);
 
 export const getUserPreferences: GetUserPreferencesContract = withAuth(getUserPreferencesReal);
-export const updateNavOrder: UpdateNavOrderContract = withAuth(updateNavOrderReal);
 export const updateNavLayout: UpdateNavLayoutContract = withAuth(updateNavLayoutReal);
 export const updateThemeConfig: UpdateThemeConfigContract = withAuth(updateThemeConfigReal);
 export const updateVisualAgentPreferences: UpdateVisualAgentPreferencesContract = withAuth(updateVisualAgentPreferencesReal);

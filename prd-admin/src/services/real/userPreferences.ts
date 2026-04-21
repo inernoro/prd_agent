@@ -5,7 +5,6 @@ import type { ThemeConfig } from '@/types/theme';
 import type {
   UserPreferences,
   GetUserPreferencesContract,
-  UpdateNavOrderContract,
   UpdateNavLayoutContract,
   UpdateThemeConfigContract,
   UpdateVisualAgentPreferencesContract,
@@ -44,15 +43,6 @@ async function doGetUserPreferences(): Promise<ApiResponse<UserPreferences>> {
     agentSwitcherPreferences: res.data.agentSwitcherPreferences,
   });
 }
-
-export const updateNavOrderReal: UpdateNavOrderContract = async (navOrder: string[]): Promise<ApiResponse<void>> => {
-  const res = await apiRequest<void>(api.dashboard.userPreferences.navOrder(), {
-    method: 'PUT',
-    body: { navOrder },
-  });
-  if (!res.success) return res;
-  return ok(undefined);
-};
 
 export const updateNavLayoutReal: UpdateNavLayoutContract = async (payload): Promise<ApiResponse<void>> => {
   const res = await apiRequest<void>(api.dashboard.userPreferences.navLayout(), {
