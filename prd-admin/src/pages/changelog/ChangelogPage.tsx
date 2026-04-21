@@ -177,7 +177,14 @@ export default function ChangelogPage() {
     fragments: null,
     github_logs: null,
   });
-  const summaryRunRef = useRef(0);
+  /** 各子 tab 独立世代，避免切 tab 后先发起的请求被后一次全局 runId 误判为过期而永久卡在 loading */
+  const summaryRunByTab = useRef<Record<HistorySubtab, number>>({
+    releases: 0,
+    fragments: 0,
+    github_logs: 0,
+  });
+  /** 后台预取 GitHub 日志只调度一次，避免失败时 idle/timeout 反复触发 */
+  const githubLogsPrefetchScheduledRef = useRef(false);
 
   /**
    * NEW 徽章 cutoff：用户上次打开更新中心那天的 23:59:59.999。
@@ -203,8 +210,17 @@ export default function ChangelogPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // 离开 GitHub 日志子 tab 或离开更新中心主 tab 时清错误，返回时可重新拉取
   useEffect(() => {
-    if (activeTab !== 'update_center' || historySubtab !== 'github_logs' || loadingGitHubLogs || githubLogs) return;
+    if (activeTab !== 'update_center' || historySubtab !== 'github_logs') {
+      setGitHubLogsError(null);
+    }
+  }, [activeTab, historySubtab]);
+
+  useEffect(() => {
+    if (activeTab !== 'update_center' || historySubtab !== 'github_logs' || loadingGitHubLogs || githubLogs || gitHubLogsError) {
+      return;
+    }
     setLoadingGitHubLogs(true);
     setGitHubLogsError(null);
     void getChangelogGitHubLogs(GITHUB_LOGS_FETCH_LIMIT).then((res) => {
@@ -219,10 +235,19 @@ export default function ChangelogPage() {
     }).finally(() => {
       setLoadingGitHubLogs(false);
     });
-  }, [activeTab, historySubtab, loadingGitHubLogs, githubLogs]);
+    // 不依赖 loadingGitHubLogs：避免失败后 false 再次触发 effect 形成请求风暴；失败由 gitHubLogsError 挡住直至离开子 tab 或刷新
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTab, historySubtab, githubLogs, gitHubLogsError]);
 
   useEffect(() => {
-    if (activeTab !== 'update_center' || historySubtab === 'github_logs' || loadingGitHubLogs || githubLogs) return;
+    if (activeTab !== 'update_center' || historySubtab === 'github_logs' || loadingGitHubLogs || githubLogs) {
+      return;
+    }
+    if (githubLogsPrefetchScheduledRef.current) {
+      return;
+    }
+    githubLogsPrefetchScheduledRef.current = true;
+
     const run = () => {
       setLoadingGitHubLogs(true);
       void getChangelogGitHubLogs(GITHUB_LOGS_FETCH_LIMIT).then((res) => {
@@ -244,7 +269,8 @@ export default function ChangelogPage() {
 
     const timer = globalThis.setTimeout(run, 800);
     return () => globalThis.clearTimeout(timer);
-  }, [activeTab, historySubtab, loadingGitHubLogs, githubLogs]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTab, historySubtab, githubLogs]);
 
   const handleRefresh = () => {
     void loadCurrentWeek(true);
@@ -265,7 +291,8 @@ export default function ChangelogPage() {
 
   const summarizeCurrentTab = async () => {
     const tab = historySubtab;
-    const runId = ++summaryRunRef.current;
+    summaryRunByTab.current[tab] += 1;
+    const runId = summaryRunByTab.current[tab];
     setSummaryError((prev) => ({ ...prev, [tab]: null }));
     setSummaryStatus((prev) => ({ ...prev, [tab]: 'loading' }));
     setSummaryThinking((prev) => ({
@@ -278,7 +305,7 @@ export default function ChangelogPage() {
         subtab: tab,
         typeFilter: typeFilter ?? undefined,
       });
-      if (summaryRunRef.current !== runId) return;
+      if (summaryRunByTab.current[tab] !== runId) return;
       if (!res.success || !res.data) {
         throw new Error(res.error?.message || 'AI 总结失败');
       }
@@ -296,7 +323,7 @@ export default function ChangelogPage() {
       setSummaryThinking((prev) => ({ ...prev, [tab]: data.thinkingTrace || '' }));
       setSummaryStatus((prev) => ({ ...prev, [tab]: 'ready' }));
     } catch (error) {
-      if (summaryRunRef.current !== runId) return;
+      if (summaryRunByTab.current[tab] !== runId) return;
       setSummaryStatus((prev) => ({ ...prev, [tab]: 'error' }));
       setSummaryError((prev) => ({
         ...prev,

@@ -582,7 +582,8 @@ public sealed class ChangelogReader : IChangelogReader
             }
             startInfo.ArgumentList.Add($"-n{limit}");
             startInfo.ArgumentList.Add("--date=iso-strict");
-            startInfo.ArgumentList.Add("--pretty=format:%H%x1f%aI%x1f%an%x1f%s%x1e");
+            // %cI：提交者时间，与 GitHub commits API 的 committer.date 对齐（%aI 为作者时间，rebase 后易不一致）
+            startInfo.ArgumentList.Add("--pretty=format:%H%x1f%cI%x1f%an%x1f%s%x1e");
 
             using var process = new Process { StartInfo = startInfo };
             if (!process.Start())
