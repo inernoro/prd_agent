@@ -166,12 +166,21 @@ function NavOrderSettings() {
    * 候选池：metaByKey 中"不在 currentOrder 里"的条目。
    * 按 launcher group（agent / toolbox / utility）分段展示；后端菜单项归入 "menu" 段。
    */
+  // 首页在侧栏固定展示，不参与自定义排序，不进候选池
+  const homeMeta = useMemo<NavMetaItem | null>(() => {
+    for (const meta of metaByKey.values()) {
+      if (meta.group === 'home') return meta;
+    }
+    return null;
+  }, [metaByKey]);
+
   const poolGroups = useMemo<{ key: string; label: string; items: NavMetaItem[] }[]>(() => {
     const inNav = new Set(currentOrder.filter((k) => k !== NAV_DIVIDER_KEY));
     const bucket: Record<string, NavMetaItem[]> = {};
     for (const meta of metaByKey.values()) {
       if (inNav.has(meta.navKey)) continue;
-      // 后端菜单项（首页等）统一放在 "menu" 桶
+      if (meta.group === 'home') continue; // 首页在"我的导航"开头固定展示，不进候选池
+      // 后端菜单项统一放在 "menu" 桶
       const bucketKey = meta.source === 'launcher' ? meta.group : 'menu';
       (bucket[bucketKey] ??= []).push(meta);
     }
@@ -386,6 +395,9 @@ function NavOrderSettings() {
             顶部
           </span>
 
+          {/* 固定首页（侧栏恒常显示，不可移动） */}
+          {homeMeta && <FixedHomeChip meta={homeMeta} getIcon={getIcon} />}
+
           {/* 条目列表 */}
           {currentOrder.map((token, idx) => {
             const isDivider = token === NAV_DIVIDER_KEY;
@@ -519,7 +531,7 @@ function NavOrderSettings() {
   );
 }
 
-// ── 子组件：导航项 Chip ────────────────────────────────────────
+// ── 子组件：导航项 Chip（紧凑竖排，与侧栏折叠态一致） ───────────
 function NavItemChip({
   meta,
   getIcon,
@@ -535,15 +547,23 @@ function NavItemChip({
     <div
       draggable
       onDragStart={onDragStart}
-      className="group shrink-0 flex items-center gap-2 px-2.5 py-1.5 rounded-[10px] cursor-grab active:cursor-grabbing"
+      className="group relative shrink-0 flex flex-col items-center justify-center gap-0 rounded-[10px] cursor-grab active:cursor-grabbing"
       style={{
+        width: 56,
+        padding: '6px 0 4px',
         background: 'var(--bg-card-hover)',
         border: '1px solid var(--border-subtle)',
+        color: 'var(--text-secondary)',
       }}
       title={`${meta.label}（拖动重排 / 点 × 移除）`}
     >
-      <span style={{ color: 'var(--text-secondary)' }}>{getIcon(meta.icon, 14)}</span>
-      <span className="text-[12px] font-medium" style={{ color: 'var(--text-primary)' }}>
+      <span className="inline-flex items-center justify-center" style={{ width: 28, height: 28 }}>
+        {getIcon(meta.icon, 18)}
+      </span>
+      <span
+        className="text-[10px] leading-tight text-center mt-0.5 px-1"
+        style={{ color: 'var(--text-muted)' }}
+      >
         {meta.shortLabel}
       </span>
       <button
@@ -552,12 +572,46 @@ function NavItemChip({
           e.stopPropagation();
           onRemove();
         }}
-        className="opacity-0 group-hover:opacity-100 transition-opacity shrink-0 w-4 h-4 flex items-center justify-center rounded"
-        style={{ color: 'var(--text-muted)' }}
+        className="opacity-0 group-hover:opacity-100 transition-opacity absolute top-0.5 right-0.5 w-4 h-4 flex items-center justify-center rounded"
+        style={{ color: 'var(--text-muted)', background: 'rgba(0,0,0,0.25)' }}
         title="从导航中移除"
       >
-        <X size={12} />
+        <X size={10} />
       </button>
+    </div>
+  );
+}
+
+// ── 子组件：固定首页 Chip（不可拖动不可移除） ───────────────────
+function FixedHomeChip({
+  meta,
+  getIcon,
+}: {
+  meta: NavMetaItem;
+  getIcon: (name: string, size?: number) => React.ReactNode;
+}) {
+  return (
+    <div
+      className="shrink-0 flex flex-col items-center justify-center gap-0 rounded-[10px]"
+      style={{
+        width: 56,
+        padding: '6px 0 4px',
+        background: 'var(--bg-card-hover)',
+        border: '1px dashed var(--border-subtle)',
+        color: 'var(--text-secondary)',
+        opacity: 0.85,
+      }}
+      title={`${meta.label}（固定在侧栏顶部，不可移除）`}
+    >
+      <span className="inline-flex items-center justify-center" style={{ width: 28, height: 28 }}>
+        {getIcon(meta.icon, 18)}
+      </span>
+      <span
+        className="text-[10px] leading-tight text-center mt-0.5 px-1"
+        style={{ color: 'var(--text-muted)' }}
+      >
+        {meta.shortLabel}
+      </span>
     </div>
   );
 }
@@ -575,7 +629,7 @@ function DividerChip({
       draggable
       onDragStart={onDragStart}
       className="group shrink-0 relative flex items-center justify-center cursor-grab active:cursor-grabbing"
-      style={{ width: 34, height: 32 }}
+      style={{ width: 34, height: 48 }}
       title="分隔横杆（拖动移动 / 点 × 删除）"
     >
       <div
@@ -642,15 +696,23 @@ function PoolItemChip({
     <div
       draggable
       onDragStart={onDragStart}
-      className="group shrink-0 flex items-center gap-2 px-2.5 py-1.5 rounded-[10px] cursor-grab active:cursor-grabbing"
+      className="group relative shrink-0 flex flex-col items-center justify-center gap-0 rounded-[10px] cursor-grab active:cursor-grabbing"
       style={{
+        width: 56,
+        padding: '6px 0 4px',
         background: 'var(--bg-card-hover)',
         border: '1px dashed var(--border-subtle)',
+        color: 'var(--text-secondary)',
       }}
       title={`${meta.label}（拖到我的导航，或点 + 追加到末尾）`}
     >
-      <span style={{ color: 'var(--text-muted)' }}>{getIcon(meta.icon, 14)}</span>
-      <span className="text-[12px]" style={{ color: 'var(--text-secondary)' }}>
+      <span className="inline-flex items-center justify-center" style={{ width: 28, height: 28 }}>
+        {getIcon(meta.icon, 18)}
+      </span>
+      <span
+        className="text-[10px] leading-tight text-center mt-0.5 px-1"
+        style={{ color: 'var(--text-muted)' }}
+      >
         {meta.shortLabel}
       </span>
       <button
@@ -659,11 +721,11 @@ function PoolItemChip({
           e.stopPropagation();
           onAppend();
         }}
-        className="shrink-0 w-4 h-4 flex items-center justify-center rounded opacity-60 group-hover:opacity-100 transition-opacity"
-        style={{ color: 'var(--text-secondary)' }}
+        className="absolute top-0.5 right-0.5 w-4 h-4 flex items-center justify-center rounded opacity-60 group-hover:opacity-100 transition-opacity"
+        style={{ color: 'var(--text-secondary)', background: 'rgba(0,0,0,0.25)' }}
         title="追加到我的导航末尾"
       >
-        <Plus size={12} />
+        <Plus size={10} />
       </button>
     </div>
   );
