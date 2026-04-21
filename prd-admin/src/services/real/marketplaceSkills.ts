@@ -57,6 +57,10 @@ export const uploadMarketplaceSkillReal: UploadMarketplaceSkillContract = async 
   if (input.tags && input.tags.length > 0) {
     fd.append('tagsJson', JSON.stringify(input.tags));
   }
+  if (input.coverImage) fd.append('coverImage', input.coverImage);
+  if (input.previewSource) fd.append('previewSource', input.previewSource);
+  if (input.previewUrl) fd.append('previewUrl', input.previewUrl);
+  if (input.previewHostedSiteId) fd.append('previewHostedSiteId', input.previewHostedSiteId);
 
   const rawBase = ((import.meta.env.VITE_API_BASE_URL as string | undefined) ?? '').trim().replace(/\/+$/, '');
   const url = rawBase ? `${rawBase}${api.marketplaceSkills.upload()}` : api.marketplaceSkills.upload();

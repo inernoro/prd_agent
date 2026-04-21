@@ -26,6 +26,14 @@ export interface MarketplaceSkillDto {
   title: string;
   description: string;
   iconEmoji: string;
+  /** 封面图 CDN URL，空则走 iconEmoji 兜底 */
+  coverImageUrl?: string | null;
+  /** 预览地址：作者设置的展示 URL（托管站点或外部 URL） */
+  previewUrl?: string | null;
+  /** 预览地址来源：external | hosted_site */
+  previewSource?: 'external' | 'hosted_site' | null;
+  /** 若 previewSource=hosted_site，对应的 HostedSite.id */
+  previewHostedSiteId?: string | null;
   tags: string[];
   zipUrl: string;
   zipSizeBytes: number;
@@ -62,10 +70,18 @@ export type UploadMarketplaceSkillContract = (input: {
   file: File;
   /** 为空则使用文件名（去扩展名）兜底 */
   title?: string;
-  /** 为空则尝试从 SKILL.md 用 LLM 提取 30 字摘要；都失败回退到标题 */
+  /** 为空则先规则提取 SKILL.md → 失败兜底 LLM 30 字摘要 → 回退到标题 */
   description?: string;
   iconEmoji?: string;
   tags?: string[];
+  /** 封面图（可选）— 上传后落对象存储，卡片展示用 */
+  coverImage?: File;
+  /** 预览地址 URL；external 时必填，hosted_site 时可传空由后端解析 */
+  previewUrl?: string;
+  /** 预览地址来源：external（自填 URL）/ hosted_site（选 HostedSite） */
+  previewSource?: 'external' | 'hosted_site';
+  /** previewSource === 'hosted_site' 时必填 */
+  previewHostedSiteId?: string;
 }) => Promise<ApiResponse<{ item: MarketplaceSkillDto }>>;
 
 export type ForkMarketplaceSkillContract = (input: {

@@ -28,7 +28,7 @@ import React, { useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import remarkBreaks from 'remark-breaks';
-import { FileText, Heart, Image as ImageIcon, Package, Sparkles, Tag as TagIcon, type LucideIcon } from 'lucide-react';
+import { ExternalLink, FileText, Globe, Heart, Image as ImageIcon, Package, Sparkles, Tag as TagIcon, type LucideIcon } from 'lucide-react';
 import { WatermarkDescriptionGrid } from '@/components/watermark/WatermarkDescriptionGrid';
 import {
   listLiteraryPromptsMarketplace,
@@ -270,8 +270,17 @@ const WatermarkPreviewRenderer: React.FC<{ item: MarketplaceWatermark }> = ({ it
 );
 
 /**
- * 技能预览：海报式大图，展示 emoji 图标 + 描述 + 标签 + 收藏按钮。
- * 文件大小 / 下载次数 / 作者名 由外层通用 MarketplaceCard 的底栏展示，这里不重复。
+ * 技能预览（重设计）：封面图为主视觉，支持预览地址快捷访问。
+ *
+ * 布局：
+ *   ┌──────────┬─────────────────────────┐
+ *   │ 封面     │ 描述                    │
+ *   │ 96×96    │ 标签…                   │
+ *   │ (emoji兜底)│ 预览 ↗ · 收藏 ♥        │
+ *   └──────────┴─────────────────────────┘
+ *
+ * - 有封面图 → 覆盖填充；无封面图 → 水波纹渐变 + 大 emoji
+ * - 预览地址存在时显示可点击的「预览 ↗」标签（在封面角标 + 右侧行内各一处）
  */
 const SkillPreviewRenderer: React.FC<{ item: MarketplaceSkill }> = ({ item }) => {
   const [favorited, setFavorited] = useState(item.isFavoritedByCurrentUser);
@@ -283,7 +292,6 @@ const SkillPreviewRenderer: React.FC<{ item: MarketplaceSkill }> = ({ item }) =>
     e.preventDefault();
     if (pending) return;
     setPending(true);
-    // 乐观更新
     const next = !favorited;
     setFavorited(next);
     setFavoriteCount((c) => (next ? c + 1 : Math.max(0, c - 1)));
@@ -292,7 +300,6 @@ const SkillPreviewRenderer: React.FC<{ item: MarketplaceSkill }> = ({ item }) =>
         ? await favoriteMarketplaceSkill({ id: item.id })
         : await unfavoriteMarketplaceSkill({ id: item.id });
       if (!res.success) {
-        // 回滚
         setFavorited(!next);
         setFavoriteCount((c) => (next ? Math.max(0, c - 1) : c + 1));
       }
@@ -305,93 +312,166 @@ const SkillPreviewRenderer: React.FC<{ item: MarketplaceSkill }> = ({ item }) =>
   };
 
   const tags = item.tags || [];
+  const hasCover = !!item.coverImageUrl;
+  const hasPreview = !!item.previewUrl;
+  const previewHostLabel = (() => {
+    if (!item.previewUrl) return '';
+    if (item.previewSource === 'hosted_site') return '托管站点';
+    try {
+      return new URL(item.previewUrl).hostname;
+    } catch {
+      return '预览';
+    }
+  })();
+
+  const stopAndOpen = (e: React.MouseEvent, url?: string | null) => {
+    e.stopPropagation();
+    e.preventDefault();
+    if (!url) return;
+    window.open(url, '_blank', 'noopener,noreferrer');
+  };
+
   return (
     <div
-      className="relative overflow-hidden rounded-[6px] flex flex-col"
+      className="relative overflow-hidden rounded-[6px] flex"
       style={{
         height: PREVIEW_HEIGHT,
-        background:
-          'linear-gradient(135deg, rgba(37, 99, 235, 0.22) 0%, rgba(14, 165, 233, 0.18) 40%, rgba(6, 182, 212, 0.15) 100%)',
-        border: '1px solid rgba(56, 189, 248, 0.28)',
+        background: 'rgba(255, 255, 255, 0.02)',
+        border: '1px solid rgba(56, 189, 248, 0.22)',
       }}
     >
-      {/* 背景水波纹装饰 */}
+      {/* 左：封面图 / 兜底 emoji */}
       <div
-        className="absolute inset-0 pointer-events-none opacity-30"
+        className="relative flex items-center justify-center overflow-hidden flex-shrink-0"
         style={{
-          backgroundImage:
-            'radial-gradient(circle at 85% 18%, rgba(125, 211, 252, 0.38), transparent 40%), radial-gradient(circle at 15% 85%, rgba(56, 189, 248, 0.28), transparent 45%)',
-        }}
-      />
-      {/* 内容 */}
-      <div className="relative flex gap-2 p-2 flex-1 min-h-0">
-        {/* 左侧：大 emoji 图标 */}
-        <div
-          className="flex-shrink-0 flex items-center justify-center rounded-[6px]"
-          style={{
-            width: 52,
-            height: 52,
-            fontSize: 32,
-            lineHeight: 1,
-            background: 'rgba(255, 255, 255, 0.08)',
-            border: '1px solid rgba(255, 255, 255, 0.12)',
-          }}
-        >
-          <span>{item.iconEmoji || '🧩'}</span>
-        </div>
-        {/* 右侧：描述 + 标签 */}
-        <div className="flex-1 min-w-0 flex flex-col gap-1">
-          <div
-            className="text-[11px] leading-[1.35] line-clamp-2"
-            style={{ color: 'rgba(241, 245, 249, 0.92)' }}
-            title={item.description}
-          >
-            {item.description || '（暂无详情）'}
-          </div>
-          {tags.length > 0 && (
-            <div className="flex items-center gap-1 flex-wrap overflow-hidden" style={{ maxHeight: 18 }}>
-              {tags.slice(0, 4).map((t) => (
-                <span
-                  key={t}
-                  className="inline-flex items-center gap-0.5 px-1.5 rounded-full text-[9px]"
-                  style={{
-                    background: 'rgba(255, 255, 255, 0.10)',
-                    border: '1px solid rgba(255, 255, 255, 0.15)',
-                    color: 'rgba(224, 242, 254, 0.92)',
-                    height: 16,
-                  }}
-                >
-                  <TagIcon size={8} />
-                  {t}
-                </span>
-              ))}
-              {tags.length > 4 && (
-                <span className="text-[9px]" style={{ color: 'rgba(224, 242, 254, 0.6)' }}>
-                  +{tags.length - 4}
-                </span>
-              )}
-            </div>
-          )}
-        </div>
-      </div>
-      {/* 右上角：收藏按钮 + 计数（计数单独显示，即使未点击也展示） */}
-      <button
-        type="button"
-        onClick={toggleFavorite}
-        disabled={pending}
-        title={favorited ? '取消收藏' : '收藏'}
-        className="absolute top-1 right-1 flex items-center gap-1 px-1.5 rounded-full text-[10px] transition-all"
-        style={{
-          height: 20,
-          background: favorited ? 'rgba(244, 63, 94, 0.22)' : 'rgba(15, 23, 42, 0.5)',
-          border: `1px solid ${favorited ? 'rgba(244, 63, 94, 0.6)' : 'rgba(255, 255, 255, 0.15)'}`,
-          color: favorited ? 'rgba(251, 113, 133, 0.98)' : 'rgba(226, 232, 240, 0.9)',
-          cursor: pending ? 'wait' : 'pointer',
+          width: 96,
+          height: '100%',
+          background: hasCover
+            ? `#0b1220 url(${item.coverImageUrl}) center/cover no-repeat`
+            : 'linear-gradient(135deg, rgba(37, 99, 235, 0.24) 0%, rgba(14, 165, 233, 0.18) 50%, rgba(6, 182, 212, 0.18) 100%)',
+          borderRight: '1px solid rgba(255, 255, 255, 0.06)',
         }}
       >
-        <Heart size={10} fill={favorited ? 'currentColor' : 'none'} />
-        <span>{favoriteCount}</span>
-      </button>
+        {!hasCover && (
+          <>
+            <div
+              className="absolute inset-0 pointer-events-none opacity-40"
+              style={{
+                backgroundImage:
+                  'radial-gradient(circle at 85% 18%, rgba(125, 211, 252, 0.42), transparent 45%), radial-gradient(circle at 15% 85%, rgba(56, 189, 248, 0.32), transparent 50%)',
+              }}
+            />
+            <span
+              className="relative"
+              style={{ fontSize: 40, lineHeight: 1, filter: 'drop-shadow(0 2px 4px rgba(0,0,0,0.3))' }}
+            >
+              {item.iconEmoji || '🧩'}
+            </span>
+          </>
+        )}
+        {/* 封面角标：预览地址存在时的快捷入口 */}
+        {hasPreview && (
+          <button
+            type="button"
+            onClick={(e) => stopAndOpen(e, item.previewUrl)}
+            title={`打开预览：${item.previewUrl}`}
+            className="absolute bottom-1 left-1 inline-flex items-center gap-0.5 px-1.5 rounded-full text-[9px] transition-all hover:scale-105"
+            style={{
+              height: 16,
+              background: 'rgba(15, 23, 42, 0.78)',
+              border: '1px solid rgba(125, 211, 252, 0.55)',
+              color: 'rgba(186, 230, 253, 0.98)',
+              backdropFilter: 'blur(4px)',
+            }}
+          >
+            {item.previewSource === 'hosted_site' ? <Globe size={8} /> : <ExternalLink size={8} />}
+            预览
+          </button>
+        )}
+      </div>
+
+      {/* 右：描述 + 标签 + 行内预览链 + 收藏计数 */}
+      <div className="relative flex-1 min-w-0 flex flex-col p-2 gap-1">
+        <div
+          className="text-[11px] leading-[1.35] line-clamp-2"
+          style={{ color: 'rgba(241, 245, 249, 0.94)' }}
+          title={item.description}
+        >
+          {item.description || '（暂无详情）'}
+        </div>
+
+        {tags.length > 0 && (
+          <div
+            className="flex items-center gap-1 flex-wrap overflow-hidden"
+            style={{ maxHeight: 18 }}
+          >
+            {tags.slice(0, 3).map((t) => (
+              <span
+                key={t}
+                className="inline-flex items-center gap-0.5 px-1.5 rounded-full text-[9px]"
+                style={{
+                  background: 'rgba(56, 189, 248, 0.12)',
+                  border: '1px solid rgba(56, 189, 248, 0.28)',
+                  color: 'rgba(186, 230, 253, 0.95)',
+                  height: 16,
+                }}
+              >
+                <TagIcon size={8} />
+                {t}
+              </span>
+            ))}
+            {tags.length > 3 && (
+              <span className="text-[9px]" style={{ color: 'rgba(186, 230, 253, 0.7)' }}>
+                +{tags.length - 3}
+              </span>
+            )}
+          </div>
+        )}
+
+        {/* 底部：预览地址 + 收藏 */}
+        <div className="mt-auto flex items-center justify-between gap-2">
+          {hasPreview ? (
+            <button
+              type="button"
+              onClick={(e) => stopAndOpen(e, item.previewUrl)}
+              title={item.previewUrl!}
+              className="inline-flex items-center gap-1 px-1.5 rounded-[4px] text-[10px] transition-colors hover:bg-white/5 min-w-0"
+              style={{
+                height: 18,
+                color: 'rgba(125, 211, 252, 0.92)',
+                maxWidth: '70%',
+              }}
+            >
+              {item.previewSource === 'hosted_site' ? (
+                <Globe size={9} className="flex-shrink-0" />
+              ) : (
+                <ExternalLink size={9} className="flex-shrink-0" />
+              )}
+              <span className="truncate">{previewHostLabel}</span>
+            </button>
+          ) : (
+            <span className="text-[10px]" style={{ color: 'var(--text-muted)' }} />
+          )}
+
+          <button
+            type="button"
+            onClick={toggleFavorite}
+            disabled={pending}
+            title={favorited ? '取消收藏' : '收藏'}
+            className="flex items-center gap-1 px-1.5 rounded-full text-[10px] transition-all flex-shrink-0"
+            style={{
+              height: 18,
+              background: favorited ? 'rgba(244, 63, 94, 0.22)' : 'rgba(255, 255, 255, 0.05)',
+              border: `1px solid ${favorited ? 'rgba(244, 63, 94, 0.5)' : 'rgba(255, 255, 255, 0.12)'}`,
+              color: favorited ? 'rgba(251, 113, 133, 0.98)' : 'rgba(226, 232, 240, 0.9)',
+              cursor: pending ? 'wait' : 'pointer',
+            }}
+          >
+            <Heart size={10} fill={favorited ? 'currentColor' : 'none'} />
+            <span>{favoriteCount}</span>
+          </button>
+        </div>
+      </div>
     </div>
   );
 };

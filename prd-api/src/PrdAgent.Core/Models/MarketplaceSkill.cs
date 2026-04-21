@@ -19,8 +19,23 @@ public class MarketplaceSkill : IMarketplaceItem
     /// <summary>技能详情（用户填写 或 SKILL.md 自动提取 30 字摘要）</summary>
     public string Description { get; set; } = string.Empty;
 
-    /// <summary>图标（emoji）</summary>
+    /// <summary>图标（emoji）— 无封面图时作为卡片兜底视觉</summary>
     public string IconEmoji { get; set; } = "🧩";
+
+    /// <summary>封面图 CDN URL（上传后落 COS 拿到），空则卡片 fallback 到 IconEmoji</summary>
+    public string? CoverImageUrl { get; set; }
+
+    /// <summary>封面图 COS key（便于删除技能时回收）</summary>
+    public string? CoverImageKey { get; set; }
+
+    /// <summary>预览地址 — 用户对外展示技能效果的网页 URL（可为托管站点或外部 URL）</summary>
+    public string? PreviewUrl { get; set; }
+
+    /// <summary>预览地址来源：external | hosted_site；null 表示未提供</summary>
+    public string? PreviewSource { get; set; }
+
+    /// <summary>若 PreviewSource == hosted_site，关联的 HostedSite.Id（留存便于以后同步）</summary>
+    public string? PreviewHostedSiteId { get; set; }
 
     /// <summary>用户自定义标签（任意字符串）</summary>
     public List<string> Tags { get; set; } = new();

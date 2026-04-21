@@ -26,11 +26,18 @@ namespace PrdAgent.Api.Controllers.Api;
 public class MarketplaceSkillsController : ControllerBase
 {
     private const long MaxZipBytes = 20L * 1024 * 1024;
+    private const long MaxCoverBytes = 5L * 1024 * 1024;
     private const int SummaryMaxChars = 30;
     private const int DescriptionMaxChars = 200;
     private const int TitleMaxChars = 80;
     private const int MaxTagsPerItem = 10;
     private const int MaxTagLength = 20;
+    private const int PreviewUrlMaxLen = 512;
+
+    private static readonly HashSet<string> AllowedCoverExts = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ".png", ".jpg", ".jpeg", ".webp", ".gif"
+    };
 
     private readonly MongoDbContext _db;
     private readonly ILlmGateway _gateway;
@@ -143,13 +150,17 @@ public class MarketplaceSkillsController : ControllerBase
     /// - 标签来自用户自定义（JSON 数组字符串），最多 10 个
     /// </summary>
     [HttpPost("upload")]
-    [RequestSizeLimit(MaxZipBytes)]
+    [RequestSizeLimit(MaxZipBytes + MaxCoverBytes + 1024 * 1024)]
     public async Task<IActionResult> Upload(
         [FromForm] IFormFile file,
         [FromForm] string? title,
         [FromForm] string? description,
         [FromForm] string? iconEmoji,
         [FromForm] string? tagsJson,
+        [FromForm] IFormFile? coverImage,
+        [FromForm] string? previewUrl,
+        [FromForm] string? previewSource,
+        [FromForm] string? previewHostedSiteId,
         CancellationToken ct)
     {
         var userId = this.GetRequiredUserId();
@@ -163,6 +174,25 @@ public class MarketplaceSkillsController : ControllerBase
         if (ext != ".zip")
             return BadRequest(ApiResponse<object>.Fail("INVALID_FILE", "仅支持 .zip 格式的技能包"));
 
+        // 校验封面图（可选）
+        if (coverImage != null && coverImage.Length > 0)
+        {
+            if (coverImage.Length > MaxCoverBytes)
+                return BadRequest(ApiResponse<object>.Fail("COVER_TOO_LARGE", $"封面图不能超过 {MaxCoverBytes / 1024 / 1024}MB"));
+            var coverExt = Path.GetExtension(coverImage.FileName).ToLowerInvariant();
+            if (!AllowedCoverExts.Contains(coverExt))
+                return BadRequest(ApiResponse<object>.Fail("INVALID_COVER", "封面图仅支持 png/jpg/jpeg/webp/gif"));
+            if (!string.IsNullOrWhiteSpace(coverImage.ContentType) &&
+                !coverImage.ContentType.StartsWith("image/", StringComparison.OrdinalIgnoreCase))
+                return BadRequest(ApiResponse<object>.Fail("INVALID_COVER", "封面图必须是图片类型"));
+        }
+
+        // 校验预览地址（可选）
+        var (resolvedPreviewUrl, resolvedPreviewSource, resolvedPreviewHostedSiteId, previewError) =
+            await ResolvePreviewAsync(userId, previewUrl, previewSource, previewHostedSiteId, ct);
+        if (previewError != null)
+            return BadRequest(ApiResponse<object>.Fail("INVALID_PREVIEW", previewError));
+
         // 读 zip 到内存（上限 20MB 可接受）
         using var ms = new MemoryStream();
         await file.CopyToAsync(ms, ct);
@@ -173,7 +203,7 @@ public class MarketplaceSkillsController : ControllerBase
         if (!string.IsNullOrEmpty(meta.Error))
             return BadRequest(ApiResponse<object>.Fail("INVALID_FILE", $"压缩包解析失败: {meta.Error}"));
 
-        // 生成 ID、上传到 COS / R2
+        // 生成 ID、上传 zip 到 COS / R2
         var id = Guid.NewGuid().ToString("N");
         var safeName = SanitizeFileName(file.FileName);
         var key = $"marketplace-skills/{id}/{safeName}";
@@ -188,23 +218,54 @@ public class MarketplaceSkillsController : ControllerBase
         }
         var zipUrl = _assetStorage.BuildUrlForKey(key);
 
-        // 字段兜底
+        // 上传封面图（若有）
+        string? coverUrl = null;
+        string? coverKey = null;
+        if (coverImage != null && coverImage.Length > 0)
+        {
+            try
+            {
+                using var coverMs = new MemoryStream();
+                await coverImage.CopyToAsync(coverMs, ct);
+                var coverBytes = coverMs.ToArray();
+                var coverExt = Path.GetExtension(coverImage.FileName).ToLowerInvariant();
+                coverKey = $"marketplace-skills/{id}/cover{coverExt}";
+                var coverMime = string.IsNullOrWhiteSpace(coverImage.ContentType)
+                    ? GuessImageMime(coverExt)
+                    : coverImage.ContentType;
+                await _assetStorage.UploadToKeyAsync(coverKey, coverBytes, coverMime, ct);
+                coverUrl = _assetStorage.BuildUrlForKey(coverKey);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "MarketplaceSkill 封面图上传失败 userId={UserId} id={Id}", userId, id);
+                coverUrl = null;
+                coverKey = null;
+            }
+        }
+
+        // 字段兜底：标题
         var finalTitle = TrimChars(
             string.IsNullOrWhiteSpace(title) ? Path.GetFileNameWithoutExtension(file.FileName) : title.Trim(),
             TitleMaxChars);
         if (string.IsNullOrWhiteSpace(finalTitle))
             finalTitle = "未命名技能";
 
+        // 字段兜底：描述 — 先用户输入 → 规则提取 SKILL.md → LLM 摘要 → 标题
         var finalDescription = (description ?? "").Trim();
         if (string.IsNullOrEmpty(finalDescription) && meta.HasSkillMd && !string.IsNullOrWhiteSpace(meta.SkillMdContent))
         {
-            try
+            finalDescription = ExtractDescriptionByRule(meta.SkillMdContent!);
+            if (string.IsNullOrWhiteSpace(finalDescription))
             {
-                finalDescription = await GenerateSummaryAsync(userId, meta.SkillMdContent!, ct);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogWarning(ex, "MarketplaceSkill 自动摘要失败 userId={UserId} id={Id}", userId, id);
+                try
+                {
+                    finalDescription = await GenerateSummaryAsync(userId, meta.SkillMdContent!, ct);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "MarketplaceSkill 自动摘要失败 userId={UserId} id={Id}", userId, id);
+                }
             }
         }
         if (string.IsNullOrWhiteSpace(finalDescription))
@@ -226,6 +287,11 @@ public class MarketplaceSkillsController : ControllerBase
             Title = finalTitle,
             Description = finalDescription,
             IconEmoji = finalIcon,
+            CoverImageUrl = coverUrl,
+            CoverImageKey = coverKey,
+            PreviewUrl = resolvedPreviewUrl,
+            PreviewSource = resolvedPreviewSource,
+            PreviewHostedSiteId = resolvedPreviewHostedSiteId,
             Tags = tags,
             OwnerUserId = userId,
             AuthorName = authorName,
@@ -338,6 +404,18 @@ public class MarketplaceSkillsController : ControllerBase
             _logger.LogWarning(ex, "MarketplaceSkill 删除对象失败 key={Key}", skill.ZipKey);
         }
 
+        if (!string.IsNullOrWhiteSpace(skill.CoverImageKey))
+        {
+            try
+            {
+                await _assetStorage.DeleteByKeyAsync(skill.CoverImageKey!, ct);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "MarketplaceSkill 删除封面图失败 key={Key}", skill.CoverImageKey);
+            }
+        }
+
         await _db.MarketplaceSkills.DeleteOneAsync(x => x.Id == id, ct);
         return Ok(ApiResponse<object>.Ok(new { deleted = true }));
     }
@@ -401,6 +479,110 @@ public class MarketplaceSkillsController : ControllerBase
         return TrimChars(summary, SummaryMaxChars);
     }
 
+    /// <summary>
+    /// 校验并解析"预览地址"三元组。返回 (url, source, hostedSiteId, error)。
+    /// - external: 必须是 http/https，长度 ≤ 512
+    /// - hosted_site: 查 HostedSite 归属当前用户，实际落的 url 以 SiteUrl 为准
+    /// - 空 / null：四个字段全 null
+    /// </summary>
+    private async Task<(string? Url, string? Source, string? HostedSiteId, string? Error)> ResolvePreviewAsync(
+        string userId,
+        string? previewUrl,
+        string? previewSource,
+        string? previewHostedSiteId,
+        CancellationToken ct)
+    {
+        var source = (previewSource ?? "").Trim().ToLowerInvariant();
+        var urlInput = (previewUrl ?? "").Trim();
+        var siteIdInput = (previewHostedSiteId ?? "").Trim();
+
+        // 三者皆空 → 未提供
+        if (string.IsNullOrEmpty(source) && string.IsNullOrEmpty(urlInput) && string.IsNullOrEmpty(siteIdInput))
+            return (null, null, null, null);
+
+        if (source == "hosted_site")
+        {
+            if (string.IsNullOrEmpty(siteIdInput))
+                return (null, null, null, "选择托管页面时 previewHostedSiteId 不能为空");
+
+            var site = await _db.HostedSites
+                .Find(s => s.Id == siteIdInput && s.OwnerUserId == userId)
+                .FirstOrDefaultAsync(ct);
+            if (site == null)
+                return (null, null, null, "所选托管页面不存在或无权访问");
+            if (string.IsNullOrWhiteSpace(site.SiteUrl))
+                return (null, null, null, "所选托管页面尚未生成可访问 URL");
+
+            var resolved = TrimChars(site.SiteUrl, PreviewUrlMaxLen);
+            return (resolved, "hosted_site", site.Id, null);
+        }
+
+        if (source == "external" || (string.IsNullOrEmpty(source) && !string.IsNullOrEmpty(urlInput)))
+        {
+            if (string.IsNullOrEmpty(urlInput))
+                return (null, null, null, "预览地址不能为空");
+            if (urlInput.Length > PreviewUrlMaxLen)
+                return (null, null, null, $"预览地址过长（不超过 {PreviewUrlMaxLen} 字符）");
+            if (!Uri.TryCreate(urlInput, UriKind.Absolute, out var parsed) ||
+                (parsed.Scheme != Uri.UriSchemeHttp && parsed.Scheme != Uri.UriSchemeHttps))
+                return (null, null, null, "预览地址必须是 http:// 或 https:// 开头的完整 URL");
+
+            return (urlInput, "external", null, null);
+        }
+
+        return (null, null, null, $"未知的 previewSource: {previewSource}");
+    }
+
+    /// <summary>
+    /// 规则提取 SKILL.md 摘要：按 description frontmatter → 首段 → 返回。不涉及 LLM。
+    /// 提取不到时返回空串，交由上层走 LLM 兜底。
+    /// </summary>
+    private static string ExtractDescriptionByRule(string skillMd)
+    {
+        if (string.IsNullOrWhiteSpace(skillMd)) return string.Empty;
+
+        // 1. 尝试 YAML frontmatter 的 description 字段
+        var fmMatch = Regex.Match(skillMd, @"^---\s*\r?\n([\s\S]*?)\r?\n---", RegexOptions.Multiline);
+        if (fmMatch.Success)
+        {
+            var fm = fmMatch.Groups[1].Value;
+            var descMatch = Regex.Match(fm, @"^\s*description\s*:\s*[""']?([^""'\r\n]+)[""']?", RegexOptions.Multiline | RegexOptions.IgnoreCase);
+            if (descMatch.Success)
+            {
+                var d = descMatch.Groups[1].Value.Trim();
+                if (!string.IsNullOrWhiteSpace(d))
+                    return TrimChars(d, SummaryMaxChars);
+            }
+        }
+
+        // 2. 去掉 frontmatter，找首个非标题、非空行
+        var body = Regex.Replace(skillMd, @"^---\s*\r?\n[\s\S]*?\r?\n---\s*\r?\n?", "");
+        foreach (var rawLine in body.Split('\n'))
+        {
+            var line = rawLine.Trim();
+            if (string.IsNullOrEmpty(line)) continue;
+            if (line.StartsWith("#")) continue; // Markdown 标题跳过
+            if (line.StartsWith(">")) continue; // 引用跳过
+            if (line.StartsWith("```")) continue;
+            // 去掉 Markdown 链接、粗体、斜体等常见干扰符
+            var cleaned = Regex.Replace(line, @"\[([^\]]+)\]\([^)]+\)", "$1");
+            cleaned = Regex.Replace(cleaned, @"[*_`]+", "");
+            cleaned = cleaned.Trim();
+            if (cleaned.Length >= 6)
+                return TrimChars(cleaned, SummaryMaxChars);
+        }
+        return string.Empty;
+    }
+
+    private static string GuessImageMime(string ext) => ext switch
+    {
+        ".png" => "image/png",
+        ".jpg" or ".jpeg" => "image/jpeg",
+        ".webp" => "image/webp",
+        ".gif" => "image/gif",
+        _ => "application/octet-stream"
+    };
+
     private static List<string> ParseTags(string? tagsJson)
     {
         if (string.IsNullOrWhiteSpace(tagsJson))
@@ -445,6 +627,10 @@ public class MarketplaceSkillsController : ControllerBase
             s.Title,
             s.Description,
             iconEmoji = s.IconEmoji,
+            coverImageUrl = s.CoverImageUrl,
+            previewUrl = s.PreviewUrl,
+            previewSource = s.PreviewSource,
+            previewHostedSiteId = s.PreviewHostedSiteId,
             tags = s.Tags ?? new List<string>(),
             zipUrl = s.ZipUrl,
             zipSizeBytes = s.ZipSizeBytes,
