@@ -5,7 +5,7 @@ import type { ThemeConfig } from '@/types/theme';
 import type {
   UserPreferences,
   GetUserPreferencesContract,
-  UpdateNavOrderContract,
+  UpdateNavLayoutContract,
   UpdateThemeConfigContract,
   UpdateVisualAgentPreferencesContract,
   UpdateLiteraryAgentPreferencesContract,
@@ -30,12 +30,13 @@ export const getUserPreferencesReal: GetUserPreferencesContract = async (): Prom
 };
 
 async function doGetUserPreferences(): Promise<ApiResponse<UserPreferences>> {
-  const res = await apiRequest<{ navOrder: string[]; themeConfig?: ThemeConfigResponse; visualAgentPreferences?: VisualAgentPreferences; literaryAgentPreferences?: LiteraryAgentPreferences; agentSwitcherPreferences?: AgentSwitcherPreferences }>(
+  const res = await apiRequest<{ navOrder: string[]; navHidden: string[]; themeConfig?: ThemeConfigResponse; visualAgentPreferences?: VisualAgentPreferences; literaryAgentPreferences?: LiteraryAgentPreferences; agentSwitcherPreferences?: AgentSwitcherPreferences }>(
     api.dashboard.userPreferences.get()
   );
   if (!res.success) return res as unknown as ApiResponse<UserPreferences>;
   return ok({
     navOrder: res.data.navOrder ?? [],
+    navHidden: res.data.navHidden ?? [],
     themeConfig: res.data.themeConfig,
     visualAgentPreferences: res.data.visualAgentPreferences,
     literaryAgentPreferences: res.data.literaryAgentPreferences,
@@ -43,10 +44,10 @@ async function doGetUserPreferences(): Promise<ApiResponse<UserPreferences>> {
   });
 }
 
-export const updateNavOrderReal: UpdateNavOrderContract = async (navOrder: string[]): Promise<ApiResponse<void>> => {
-  const res = await apiRequest<void>(api.dashboard.userPreferences.navOrder(), {
+export const updateNavLayoutReal: UpdateNavLayoutContract = async (payload): Promise<ApiResponse<void>> => {
+  const res = await apiRequest<void>(api.dashboard.userPreferences.navLayout(), {
     method: 'PUT',
-    body: { navOrder },
+    body: { navOrder: payload.navOrder, navHidden: payload.navHidden },
   });
   if (!res.success) return res;
   return ok(undefined);

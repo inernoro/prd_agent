@@ -19,6 +19,7 @@ import {
   getUserPreferences,
   updateAgentSwitcherPreferences,
 } from '@/services';
+import { registerLogoutReset } from '@/stores/authStore';
 
 /** Agent 定义 */
 export interface AgentDefinition {
@@ -368,6 +369,13 @@ export const useAgentSwitcherStore = create<AgentSwitcherState>()(
     }
   )
 );
+
+// 登出时同步清空最近访问/使用/置顶 + 重置 serverLoaded 标志，
+// 避免切换账号后下个用户看到旧用户的命令面板数据
+registerLogoutReset(() => {
+  useAgentSwitcherStore.getState().resetServerSync();
+  useAgentSwitcherStore.setState({ recentVisits: [], usageCounts: {}, pinnedIds: [] });
+});
 
 /** 工具函数：获取相对时间描述 */
 export function getRelativeTime(timestamp: number): string {

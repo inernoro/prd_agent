@@ -70,6 +70,7 @@ export type LiteraryAgentPreferences = {
 
 export type UserPreferences = {
   navOrder: string[];
+  navHidden: string[];
   themeConfig?: ThemeConfigResponse;
   visualAgentPreferences?: VisualAgentPreferences;
   literaryAgentPreferences?: LiteraryAgentPreferences;
@@ -78,7 +79,10 @@ export type UserPreferences = {
 
 export type GetUserPreferencesContract = () => Promise<ApiResponse<UserPreferences>>;
 
-export type UpdateNavOrderContract = (navOrder: string[]) => Promise<ApiResponse<void>>;
+export type UpdateNavLayoutContract = (payload: {
+  navOrder: string[];
+  navHidden: string[];
+}) => Promise<ApiResponse<void>>;
 
 export type UpdateThemeConfigContract = (themeConfig: ThemeConfig) => Promise<ApiResponse<void>>;
 
