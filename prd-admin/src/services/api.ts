@@ -1088,6 +1088,8 @@ export const api = {
       if (force) params.push('force=true');
       return `/api/changelog/github-logs${params.length ? `?${params.join('&')}` : ''}`;
     },
+    /** AI 总结（走 ILlmGateway + prd-admin.changelog.aiSummary::chat） */
+    aiSummary: () => '/api/changelog/ai-summary',
     sources: {
       list: () => '/api/changelog/sources',
       create: () => '/api/changelog/sources',

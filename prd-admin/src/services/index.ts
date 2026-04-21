@@ -1350,6 +1350,7 @@ export {
   getCurrentWeekChangelog,
   getChangelogReleases,
   getChangelogGitHubLogs,
+  postChangelogAiSummary,
   listChangelogReportSources,
   createChangelogReportSource,
   updateChangelogReportSource,
@@ -1365,6 +1366,8 @@ export type {
   ReleasesView,
   GitHubLogEntry,
   GitHubLogsView,
+  ChangelogAiSummarySubtab,
+  ChangelogAiSummaryDto,
   ChangelogReportSource,
   ChangelogReportSourceUpsert,
 } from '@/services/real/changelog';
