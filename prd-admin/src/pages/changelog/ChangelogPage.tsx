@@ -752,7 +752,7 @@ export default function ChangelogPage() {
 
             {releases && releases.releases.length > 0 && (
               <div className="flex flex-col gap-6">
-                {releases.releases.map((release) => {
+                {releases.releases.map((release, releaseIdx) => {
                   const visibleDays = release.days
                     .map((d) => ({
                       ...d,
@@ -772,7 +772,10 @@ export default function ChangelogPage() {
                     : undefined;
 
                   return (
-                    <div key={`${release.version}-${release.releaseDate ?? ''}`}>
+                    <div
+                      key={`${release.version}-${release.releaseDate ?? ''}`}
+                      {...(releaseIdx === 0 ? { 'data-tour-id': 'changelog-latest' } : {})}
+                    >
                         <div className="flex items-center gap-2 mb-3">
                         <div
                           className="px-2.5 py-0.5 rounded-md text-[12px] font-semibold font-mono"

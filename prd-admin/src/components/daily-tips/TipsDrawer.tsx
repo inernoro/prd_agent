@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom';
 import { useNavigate } from 'react-router-dom';
 import { Sparkles, X, ChevronRight, Bell } from 'lucide-react';
 import { useDailyTipsStore } from '@/stores/dailyTipsStore';
-import { SPOTLIGHT_TARGET_KEY } from './TipsRotator';
+import { writeSpotlightPayload } from './TipsRotator';
 import { trackTip } from '@/services/real/dailyTips';
 
 /**
@@ -71,13 +71,7 @@ export function TipsDrawer() {
 
   const handleOpenTip = (tip: (typeof tips)[number]) => {
     void trackTip(tip.id, 'clicked');
-    if (tip.targetSelector) {
-      try {
-        sessionStorage.setItem(SPOTLIGHT_TARGET_KEY, tip.targetSelector);
-      } catch {
-        /* noop */
-      }
-    }
+    writeSpotlightPayload(tip);
     setOpen(false);
     navigate(tip.actionUrl || '/');
   };

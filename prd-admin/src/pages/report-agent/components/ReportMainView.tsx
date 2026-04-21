@@ -272,7 +272,13 @@ export function ReportMainView() {
               <CalendarCheck size={13} /> 日常记录
             </Button>
             {hasTeam && hasTemplate && (
-              <Button variant="primary" size="sm" onClick={handleCreateReport} className="whitespace-nowrap">
+              <Button
+                variant="primary"
+                size="sm"
+                data-tour-id="report-template-picker"
+                onClick={handleCreateReport}
+                className="whitespace-nowrap"
+              >
                 <Plus size={14} /> 写周报
               </Button>
             )}

@@ -102,6 +102,7 @@ public sealed class DailyTipsController : ControllerBase
                     x.ActionUrl,
                     x.CtaText,
                     x.TargetSelector,
+                    x.AutoAction,
                     isTargeted = x.TargetUserId == userId || mine != null,
                     x.SourceType,
                     x.CreatedAt,
@@ -199,7 +200,11 @@ public sealed class DailyTipsController : ControllerBase
     /// </summary>
     private static List<DailyTip> BuildDefaultTips(DateTime now)
     {
-        DailyTip T(string id, string kind, string title, string? body, string actionUrl, string ctaText, string? targetSelector, int order)
+        DailyTip T(
+            string id, string kind, string title, string? body,
+            string actionUrl, string ctaText,
+            string? targetSelector, int order,
+            DailyTipAutoAction? autoAction = null)
             => new()
             {
                 Id = $"seed-{id}",
@@ -209,6 +214,7 @@ public sealed class DailyTipsController : ControllerBase
                 ActionUrl = actionUrl,
                 CtaText = ctaText,
                 TargetSelector = targetSelector,
+                AutoAction = autoAction,
                 TargetUserId = null,
                 SourceType = "seed",
                 SourceId = id,
@@ -227,56 +233,94 @@ public sealed class DailyTipsController : ControllerBase
                 "/",
                 "打开搜索",
                 "[data-tour-id=home-search]",
-                10),
+                10,
+                new DailyTipAutoAction { Scroll = "center" }),
             T("marketplace", "text",
                 "海鲜市场上线了提示词 / 参考图 / 水印,一键 Fork 到本地可编辑",
                 null,
                 "/marketplace",
                 "去逛逛",
-                "[data-tour-id=quicklink-marketplace]",
-                20),
+                "[data-tour-id=marketplace-category-tabs]",
+                20,
+                new DailyTipAutoAction { Scroll = "center" }),
             T("library", "text",
                 "智识殿堂:团队共享的知识库已开放,可上传文档自动同步订阅源",
                 null,
                 "/library",
                 "进入智识殿堂",
-                "[data-tour-id=quicklink-library]",
-                30),
+                "[data-tour-id=library-create]",
+                30,
+                new DailyTipAutoAction { Scroll = "center" }),
             T("toolbox", "card",
                 "百宝箱:所有 Agent 和工具的统一入口",
                 "新增的智能体默认注册到百宝箱,左侧导航只收录已毕业的常用项。",
                 "/ai-toolbox",
                 "打开百宝箱",
-                null,
-                40),
+                "[data-tour-id=toolbox-search]",
+                40,
+                new DailyTipAutoAction
+                {
+                    Scroll = "center",
+                    Prefill = new DailyTipPrefill
+                    {
+                        Selector = "[data-tour-id=toolbox-search]",
+                        Value = "周报",
+                    },
+                }),
             T("defect-feedback", "card",
                 "发现 bug?一键反馈并跟踪修复",
                 "缺陷管理 Agent 支持截图 + 描述,开发完成后你会收到「已修复」推送。",
                 "/defect-agent",
                 "去反馈",
-                null,
-                50),
+                "[data-tour-id=defect-create]",
+                50,
+                new DailyTipAutoAction
+                {
+                    Scroll = "center",
+                    AutoClick = "[data-tour-id=defect-create]",
+                    AutoClickDelayMs = 1500,
+                }),
             T("updates", "text",
                 "更新中心:本周平台新增了什么?代码级周报自动生成",
                 null,
                 "/changelog",
                 "查看更新",
-                "[data-tour-id=quicklink-updates]",
-                60),
+                "[data-tour-id=changelog-latest]",
+                60,
+                new DailyTipAutoAction { Scroll = "center" }),
             T("report-agent", "card",
                 "周报管理 Agent:自动汇总 git 提交,生成团队周报",
                 "支持数据源自动采集、多模板、飞书 / 邮件分发,周五一键出稿。",
                 "/report-agent",
                 "试试周报",
-                null,
-                70),
+                "[data-tour-id=report-template-picker]",
+                70,
+                new DailyTipAutoAction
+                {
+                    Scroll = "center",
+                    Steps = new List<DailyTipTourStep>
+                    {
+                        new()
+                        {
+                            Selector = "[data-tour-id=report-template-picker]",
+                            Title = "第 1 步:写周报",
+                            Body = "点开后选模板、勾数据源,系统会自动汇总本周 git 提交。",
+                        },
+                    },
+                }),
             T("emergence", "text",
                 "涌现探索器:从种子 → 探索 → 涌现,让 AI 帮你发散新功能",
                 null,
                 "/emergence",
                 "开始涌现",
-                null,
-                80),
+                "[data-tour-id=emergence-seed-input]",
+                80,
+                new DailyTipAutoAction
+                {
+                    Scroll = "center",
+                    AutoClick = "[data-tour-id=emergence-seed-input]",
+                    AutoClickDelayMs = 1800,
+                }),
         };
     }
 }

@@ -6,6 +6,22 @@ import type { ApiResponse } from '@/types/api';
 
 export type DailyTipKind = 'text' | 'card' | 'spotlight';
 
+/** Tip 落地页后的自动引导动作(由 SpotlightOverlay 按序执行)。 */
+export interface DailyTipAutoAction {
+  /** 滚动模式:center / top / none。空=center */
+  scroll?: 'center' | 'top' | 'none' | null;
+  /** 需要先展开的折叠面板 selector(点击一次触发 React state)。 */
+  expand?: string | null;
+  /** 预填充输入框 */
+  prefill?: { selector: string; value: string } | null;
+  /** 延迟后自动点击的 selector(如 CTA 按钮)。 */
+  autoClick?: string | null;
+  /** autoClick 之前的延迟,毫秒。默认 1200。 */
+  autoClickDelayMs?: number | null;
+  /** 多步 Tour:有多少 step 就画多少圈,用户点"下一步" */
+  steps?: Array<{ selector: string; title: string; body?: string | null }> | null;
+}
+
 export interface DailyTip {
   id: string;
   kind: DailyTipKind;
@@ -15,6 +31,7 @@ export interface DailyTip {
   actionUrl: string;
   ctaText?: string | null;
   targetSelector?: string | null;
+  autoAction?: DailyTipAutoAction | null;
   isTargeted?: boolean;
   sourceType?: string | null;
   createdAt?: string;
@@ -66,6 +83,7 @@ export interface DailyTipUpsert {
   actionUrl: string;
   ctaText?: string | null;
   targetSelector?: string | null;
+  autoAction?: DailyTipAutoAction | null;
   targetUserId?: string | null;
   targetRoles?: string[] | null;
   displayOrder?: number;

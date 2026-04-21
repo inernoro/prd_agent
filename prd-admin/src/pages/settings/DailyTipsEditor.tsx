@@ -17,6 +17,7 @@ import {
   type DailyTipUpsert,
   type DailyTipDelivery,
   type DailyTipStatsSummary,
+  type DailyTipAutoAction,
 } from '@/services/real/dailyTips';
 
 const KIND_OPTIONS: Array<{ value: DailyTipKind; label: string; desc: string }> = [
@@ -37,6 +38,39 @@ function emptyDraft(): DailyTipUpsert {
     targetUserId: '',
     displayOrder: 0,
     isActive: true,
+    autoAction: null,
+  };
+}
+
+/** 把 UI 草稿上的 autoAction 规整一次:空字符串视为 null,全空字段整体返回 null。 */
+function normalizeAutoAction(a: DailyTipAutoAction | null | undefined): DailyTipAutoAction | null {
+  if (!a) return null;
+  const scroll = a.scroll && a.scroll !== 'center' ? a.scroll : a.scroll === 'center' ? 'center' : null;
+  const expand = a.expand?.trim() ? a.expand.trim() : null;
+  const prefill =
+    a.prefill?.selector?.trim() && a.prefill?.value !== undefined
+      ? { selector: a.prefill.selector.trim(), value: a.prefill.value ?? '' }
+      : null;
+  const autoClick = a.autoClick?.trim() ? a.autoClick.trim() : null;
+  const autoClickDelayMs = autoClick ? (a.autoClickDelayMs ?? 1200) : null;
+  const steps = (a.steps ?? [])
+    .map((s) => ({
+      selector: s.selector?.trim() ?? '',
+      title: s.title?.trim() ?? '',
+      body: s.body?.trim() ? s.body.trim() : null,
+    }))
+    .filter((s) => s.selector && s.title);
+
+  if (!scroll && !expand && !prefill && !autoClick && steps.length === 0) {
+    return null;
+  }
+  return {
+    scroll,
+    expand,
+    prefill,
+    autoClick,
+    autoClickDelayMs,
+    steps: steps.length > 0 ? steps : null,
   };
 }
 
@@ -92,6 +126,7 @@ export function DailyTipsEditor() {
       isActive: tip.isActive ?? true,
       startAt: tip.startAt ?? null,
       endAt: tip.endAt ?? null,
+      autoAction: tip.autoAction ?? null,
     });
     setShowForm(true);
   };
@@ -123,6 +158,7 @@ export function DailyTipsEditor() {
         ctaText: draft.ctaText?.trim() ? draft.ctaText.trim() : '去看看',
         targetSelector: draft.targetSelector?.trim() ? draft.targetSelector.trim() : null,
         targetUserId: draft.targetUserId?.trim() ? draft.targetUserId.trim() : null,
+        autoAction: normalizeAutoAction(draft.autoAction),
       };
       const res = editingId
         ? await updateTip(editingId, payload)
@@ -159,7 +195,10 @@ export function DailyTipsEditor() {
   );
 
   return (
-    <div className="h-full min-h-0 flex flex-col gap-4 overflow-y-auto">
+    <div
+      className="h-full min-h-0 flex flex-col gap-4 overflow-y-auto mx-auto w-full"
+      style={{ maxWidth: 1180, padding: '0 4px' }}
+    >
       <div className="flex items-center justify-between gap-2 shrink-0">
         <div>
           <h2
@@ -346,6 +385,11 @@ export function DailyTipsEditor() {
                 style={inputStyle}
               />
             </Field>
+
+            <AutoActionEditor
+              value={draft.autoAction ?? null}
+              onChange={(next) => setDraft((d) => ({ ...d, autoAction: next }))}
+            />
           </div>
         </GlassCard>
       )}
@@ -601,8 +645,8 @@ function PushDialog({
         onClick={(e) => e.stopPropagation()}
         className="flex flex-col"
         style={{
-          width: 'min(640px, 100%)',
-          height: 'min(640px, 100%)',
+          width: 'min(960px, 100%)',
+          height: 'min(720px, 100%)',
           maxHeight: '88vh',
           background: 'linear-gradient(180deg, rgba(22,22,28,0.98), rgba(15,16,20,0.98))',
           border: '1px solid rgba(255,255,255,0.12)',
@@ -643,86 +687,108 @@ function PushDialog({
         </div>
 
         <div
-          className="flex-1"
+          className="flex-1 flex"
           style={{
             minHeight: 0,
-            overflowY: 'auto',
-            overscrollBehavior: 'contain',
-            padding: '14px 18px',
           }}
         >
+          {/* ── 左栏:tip 信息 + 推送表单 ── */}
           <div
-            className="p-3 rounded-xl mb-4"
+            className="flex flex-col"
             style={{
-              background: 'rgba(129,140,248,0.08)',
-              border: '1px solid rgba(129,140,248,0.18)',
+              flex: '0 0 46%',
+              minHeight: 0,
+              overflowY: 'auto',
+              overscrollBehavior: 'contain',
+              padding: '14px 18px',
+              borderRight: '1px solid rgba(255,255,255,0.06)',
             }}
           >
-            <div className="text-[11px] font-mono" style={{ color: 'var(--text-muted)' }}>
-              tip #{tip.id.slice(0, 8)} · {tip.kind}
-            </div>
-            <div className="text-[13px] font-semibold mt-1" style={{ color: 'var(--text-primary)' }}>
-              {tip.title}
-            </div>
-            {tip.body && (
-              <div className="text-[12px] mt-1 line-clamp-2" style={{ color: 'var(--text-secondary)' }}>
-                {tip.body}
-              </div>
-            )}
-            <div className="text-[11px] font-mono mt-1" style={{ color: 'var(--text-muted)' }}>
-              → {tip.actionUrl}
-            </div>
-          </div>
-
-          <Field label="推送给用户">
-            <UserSearchSelect
-              value={selectedUser}
-              onChange={setSelectedUser}
-              placeholder="搜索用户名或昵称..."
-            />
-          </Field>
-
-          <div className="grid gap-3 mt-3" style={{ gridTemplateColumns: '1fr 1fr' }}>
-            <Field label="最大展示次数(-1 无限)" hint="达到后该用户不再看到">
-              <input
-                type="number"
-                value={maxViews}
-                onChange={(e) => setMaxViews(Number(e.target.value) || 1)}
-                className="w-full px-2 py-1.5 rounded-lg text-[13px] outline-none"
-                style={inputStyle}
-                min={-1}
-              />
-            </Field>
-            <Field label="重置已有记录" hint="勾选后若已推送过则把状态重置为 pending">
-              <label className="inline-flex items-center gap-2 text-[13px] mt-1.5" style={{ color: 'var(--text-primary)' }}>
-                <input type="checkbox" checked={reset} onChange={(e) => setReset(e.target.checked)} />
-                再推一次(重置)
-              </label>
-            </Field>
-          </div>
-
-          {pushErr && (
             <div
-              className="mt-3 px-3 py-2 text-[12px] rounded-lg"
+              className="p-3 rounded-xl mb-4"
               style={{
-                background: 'rgba(239,68,68,0.12)',
-                border: '1px solid rgba(239,68,68,0.35)',
-                color: '#fca5a5',
+                background: 'rgba(129,140,248,0.08)',
+                border: '1px solid rgba(129,140,248,0.18)',
               }}
             >
-              {pushErr}
+              <div className="text-[11px] font-mono" style={{ color: 'var(--text-muted)' }}>
+                tip #{tip.id.slice(0, 8)} · {tip.kind}
+              </div>
+              <div className="text-[13px] font-semibold mt-1" style={{ color: 'var(--text-primary)' }}>
+                {tip.title}
+              </div>
+              {tip.body && (
+                <div className="text-[12px] mt-1 line-clamp-2" style={{ color: 'var(--text-secondary)' }}>
+                  {tip.body}
+                </div>
+              )}
+              <div className="text-[11px] font-mono mt-1" style={{ color: 'var(--text-muted)' }}>
+                → {tip.actionUrl}
+              </div>
             </div>
-          )}
 
-          <div className="flex items-center justify-end mt-3">
-            <Button variant="primary" size="sm" onClick={() => void handlePush()} disabled={pushing || !selectedUser}>
-              {pushing ? <MapSpinner size={14} /> : <Send size={14} />}
-              推送
-            </Button>
+            <Field label="推送给用户">
+              <UserSearchSelect
+                value={selectedUser}
+                onChange={setSelectedUser}
+                placeholder="搜索用户名或昵称..."
+              />
+            </Field>
+
+            <div className="grid gap-3 mt-3" style={{ gridTemplateColumns: '1fr 1fr' }}>
+              <Field label="最大展示次数(-1 无限)" hint="达到后该用户不再看到">
+                <input
+                  type="number"
+                  value={maxViews}
+                  onChange={(e) => setMaxViews(Number(e.target.value) || 1)}
+                  className="w-full px-2 py-1.5 rounded-lg text-[13px] outline-none"
+                  style={inputStyle}
+                  min={-1}
+                />
+              </Field>
+              <Field label="重置已有记录" hint="勾选后若已推送过则把状态重置为 pending">
+                <label className="inline-flex items-center gap-2 text-[13px] mt-1.5" style={{ color: 'var(--text-primary)' }}>
+                  <input type="checkbox" checked={reset} onChange={(e) => setReset(e.target.checked)} />
+                  再推一次(重置)
+                </label>
+              </Field>
+            </div>
+
+            {pushErr && (
+              <div
+                className="mt-3 px-3 py-2 text-[12px] rounded-lg"
+                style={{
+                  background: 'rgba(239,68,68,0.12)',
+                  border: '1px solid rgba(239,68,68,0.35)',
+                  color: '#fca5a5',
+                }}
+              >
+                {pushErr}
+              </div>
+            )}
+
+            <div className="flex items-center justify-end mt-3">
+              <Button variant="primary" size="sm" onClick={() => void handlePush()} disabled={pushing || !selectedUser}>
+                {pushing ? <MapSpinner size={14} /> : <Send size={14} />}
+                推送
+              </Button>
+            </div>
           </div>
 
-          <div className="mt-5 pt-4" style={{ borderTop: '1px solid rgba(255,255,255,0.06)' }}>
-            <div className="flex items-center justify-between mb-2">
+          {/* ── 右栏:已推送统计 + 用户列表 ── */}
+          <div
+            className="flex-1 flex flex-col"
+            style={{
+              minHeight: 0,
+              minWidth: 0,
+            }}
+          >
+            <div
+              className="shrink-0 flex items-center justify-between"
+              style={{
+                padding: '14px 18px 8px',
+              }}
+            >
               <div className="flex items-center gap-2">
                 <Users size={13} style={{ color: 'var(--text-muted)' }} />
                 <div className="text-[13px] font-semibold" style={{ color: 'var(--text-primary)' }}>
@@ -736,7 +802,10 @@ function PushDialog({
             </div>
 
             {summary && (
-              <div className="flex items-center gap-2 mb-3 flex-wrap">
+              <div
+                className="shrink-0 flex items-center gap-2 flex-wrap"
+                style={{ padding: '0 18px 8px' }}
+              >
                 <StatChip label="总计" value={summary.total} color="#cbd5e1" bg="rgba(148,163,184,0.12)" />
                 <StatChip label="待查看" value={summary.pending} color="#fcd34d" bg="rgba(251,191,36,0.12)" />
                 <StatChip label="已看到" value={summary.seen} color="#86efac" bg="rgba(34,197,94,0.12)" />
@@ -745,52 +814,62 @@ function PushDialog({
               </div>
             )}
 
-            {deliveries.length === 0 ? (
-              <div
-                className="p-5 text-center text-[12px] rounded-xl"
-                style={{
-                  border: '1px dashed var(--border-subtle)',
-                  color: 'var(--text-muted)',
-                }}
-              >
-                尚未推送给任何用户。选择用户后点击「推送」即可。
-              </div>
-            ) : (
-              <div className="flex flex-col gap-2">
-                {deliveries.map((d) => {
-                  const meta = STATUS_META[d.status] ?? STATUS_META.pending;
-                  return (
-                    <div
-                      key={d.userId}
-                      className="flex items-center gap-3 p-2.5 rounded-lg"
-                      style={{
-                        background: 'var(--nested-block-bg)',
-                        border: '1px solid var(--nested-block-border)',
-                      }}
-                    >
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-2">
-                          <span className="text-[12px] font-semibold truncate" style={{ color: 'var(--text-primary)' }}>
-                            {d.userDisplayName ?? d.userId.slice(0, 8) + '…'}
-                          </span>
-                          <span
-                            className="text-[10px] font-mono px-1.5 py-0.5 rounded"
-                            style={{ background: meta.bg, color: meta.color }}
-                          >
-                            {meta.label}
-                          </span>
-                        </div>
-                        <div className="text-[10px] font-mono mt-0.5" style={{ color: 'var(--text-muted)' }}>
-                          展示 {d.viewCount}/{d.maxViews === -1 ? '∞' : d.maxViews}
-                          {d.lastSeenAt ? ` · 上次 ${new Date(d.lastSeenAt).toLocaleString()}` : ''}
-                          {d.clickedAt ? ` · 已点击 ${new Date(d.clickedAt).toLocaleString()}` : ''}
+            <div
+              className="flex-1"
+              style={{
+                minHeight: 0,
+                overflowY: 'auto',
+                overscrollBehavior: 'contain',
+                padding: '4px 18px 14px',
+              }}
+            >
+              {deliveries.length === 0 ? (
+                <div
+                  className="p-5 text-center text-[12px] rounded-xl"
+                  style={{
+                    border: '1px dashed var(--border-subtle)',
+                    color: 'var(--text-muted)',
+                  }}
+                >
+                  尚未推送给任何用户。选择用户后点击「推送」即可。
+                </div>
+              ) : (
+                <div className="flex flex-col gap-2">
+                  {deliveries.map((d) => {
+                    const meta = STATUS_META[d.status] ?? STATUS_META.pending;
+                    return (
+                      <div
+                        key={d.userId}
+                        className="flex items-center gap-3 p-2.5 rounded-lg"
+                        style={{
+                          background: 'var(--nested-block-bg)',
+                          border: '1px solid var(--nested-block-border)',
+                        }}
+                      >
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2">
+                            <span className="text-[12px] font-semibold truncate" style={{ color: 'var(--text-primary)' }}>
+                              {d.userDisplayName ?? d.userId.slice(0, 8) + '…'}
+                            </span>
+                            <span
+                              className="text-[10px] font-mono px-1.5 py-0.5 rounded"
+                              style={{ background: meta.bg, color: meta.color }}
+                            >
+                              {meta.label}
+                            </span>
+                          </div>
+                          <div className="text-[10px] font-mono mt-0.5" style={{ color: 'var(--text-muted)' }}>
+                            展示 {d.viewCount}/{d.maxViews === -1 ? '∞' : d.maxViews}
+                            {d.lastSeenAt ? ` · 上次 ${new Date(d.lastSeenAt).toLocaleString()}` : ''}
+                            {d.clickedAt ? ` · 已点击 ${new Date(d.clickedAt).toLocaleString()}` : ''}
+                          </div>
                         </div>
                       </div>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
+                    );
+                  })}
+                </div>
+              )}
+            </div>
           </div>
         </div>
       </div>
@@ -798,6 +877,257 @@ function PushDialog({
   );
 
   return createPortal(modal, document.body);
+}
+
+/**
+ * 高级自动引导编辑器(AutoAction):配合 SpotlightOverlay 在落地页执行
+ * scroll → expand 点击 → prefill 预填 → 脉冲高亮 → autoClick / 多步 Steps。
+ * 所有字段都可选,空字段整体提交时会被 normalizeAutoAction 规整为 null。
+ */
+function AutoActionEditor({
+  value,
+  onChange,
+}: {
+  value: DailyTipAutoAction | null;
+  onChange: (next: DailyTipAutoAction | null) => void;
+}) {
+  const enabled = !!value;
+  const a: DailyTipAutoAction = value ?? {};
+
+  const patch = (partial: Partial<DailyTipAutoAction>) => {
+    onChange({ ...a, ...partial });
+  };
+
+  const steps = a.steps ?? [];
+
+  const updateStep = (i: number, patchStep: Partial<{ selector: string; title: string; body: string | null }>) => {
+    const next = steps.slice();
+    next[i] = { ...next[i], ...patchStep };
+    patch({ steps: next });
+  };
+
+  const addStep = () => {
+    patch({
+      steps: [...steps, { selector: '', title: '', body: null }],
+    });
+  };
+
+  const removeStep = (i: number) => {
+    patch({ steps: steps.filter((_, idx) => idx !== i) });
+  };
+
+  return (
+    <div
+      className="rounded-xl p-3 flex flex-col gap-3"
+      style={{
+        background: 'rgba(168,85,247,0.05)',
+        border: '1px dashed rgba(168,85,247,0.25)',
+      }}
+    >
+      <div className="flex items-center justify-between">
+        <div>
+          <div
+            className="text-[12px] font-semibold inline-flex items-center gap-1.5"
+            style={{ color: 'var(--text-primary)' }}
+          >
+            <Sparkles size={12} style={{ color: '#c4b5fd' }} />
+            高级自动引导 (AutoAction)
+          </div>
+          <div className="text-[10px] mt-0.5" style={{ color: 'var(--text-muted)' }}>
+            跳转后自动滚动 / 展开折叠 / 预填输入 / 模拟点击,或开启多步 Tour
+          </div>
+        </div>
+        <label className="inline-flex items-center gap-2 text-[12px]" style={{ color: 'var(--text-primary)' }}>
+          <input
+            type="checkbox"
+            checked={enabled}
+            onChange={(e) => {
+              if (e.target.checked) {
+                onChange({ scroll: 'center' });
+              } else {
+                onChange(null);
+              }
+            }}
+          />
+          启用
+        </label>
+      </div>
+
+      {enabled && (
+        <>
+          <div className="grid gap-3" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))' }}>
+            <Field label="滚动模式">
+              <select
+                value={a.scroll ?? 'center'}
+                onChange={(e) => patch({ scroll: e.target.value as DailyTipAutoAction['scroll'] })}
+                className="w-full px-2 py-1.5 rounded-lg text-[13px] outline-none"
+                style={inputStyle}
+              >
+                <option value="center">center(居中)</option>
+                <option value="top">top(顶部对齐)</option>
+                <option value="none">none(不滚动)</option>
+              </select>
+            </Field>
+            <Field
+              label="展开折叠面板 (Expand,可选)"
+              hint="点击一次触发 React state;适用于需要先展开的 Accordion"
+            >
+              <input
+                type="text"
+                value={a.expand ?? ''}
+                onChange={(e) => patch({ expand: e.target.value || null })}
+                placeholder="[data-tour-id=xxx-expand]"
+                className="w-full px-2 py-1.5 rounded-lg text-[13px] outline-none"
+                style={inputStyle}
+              />
+            </Field>
+          </div>
+
+          <div className="grid gap-3" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))' }}>
+            <Field label="预填输入框 Selector (Prefill,可选)">
+              <input
+                type="text"
+                value={a.prefill?.selector ?? ''}
+                onChange={(e) =>
+                  patch({
+                    prefill: e.target.value
+                      ? { selector: e.target.value, value: a.prefill?.value ?? '' }
+                      : null,
+                  })
+                }
+                placeholder="[data-tour-id=xxx-search]"
+                className="w-full px-2 py-1.5 rounded-lg text-[13px] outline-none"
+                style={inputStyle}
+              />
+            </Field>
+            <Field label="预填内容">
+              <input
+                type="text"
+                value={a.prefill?.value ?? ''}
+                onChange={(e) =>
+                  patch({
+                    prefill: a.prefill?.selector
+                      ? { selector: a.prefill.selector, value: e.target.value }
+                      : null,
+                  })
+                }
+                placeholder="周报"
+                className="w-full px-2 py-1.5 rounded-lg text-[13px] outline-none"
+                style={inputStyle}
+                disabled={!a.prefill?.selector}
+              />
+            </Field>
+          </div>
+
+          <div className="grid gap-3" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))' }}>
+            <Field
+              label="自动点击 Selector (AutoClick,可选)"
+              hint="延迟后自动点击目标按钮;与多步 Tour 二选一"
+            >
+              <input
+                type="text"
+                value={a.autoClick ?? ''}
+                onChange={(e) => patch({ autoClick: e.target.value || null })}
+                placeholder="[data-tour-id=xxx-submit]"
+                className="w-full px-2 py-1.5 rounded-lg text-[13px] outline-none"
+                style={inputStyle}
+              />
+            </Field>
+            <Field label="自动点击延迟 (毫秒)" hint="默认 1200">
+              <input
+                type="number"
+                value={a.autoClickDelayMs ?? 1200}
+                onChange={(e) => patch({ autoClickDelayMs: Number(e.target.value) || 0 })}
+                className="w-full px-2 py-1.5 rounded-lg text-[13px] outline-none"
+                style={inputStyle}
+                min={0}
+                disabled={!a.autoClick}
+              />
+            </Field>
+          </div>
+
+          <div className="pt-2 border-t" style={{ borderColor: 'rgba(168,85,247,0.15)' }}>
+            <div className="flex items-center justify-between mb-2">
+              <div>
+                <div className="text-[12px] font-semibold" style={{ color: 'var(--text-primary)' }}>
+                  多步 Tour (Steps,可选)
+                </div>
+                <div className="text-[10px] mt-0.5" style={{ color: 'var(--text-muted)' }}>
+                  每一步画一个脉冲圈 + 气泡卡,用户点「下一步」前进。启用后 AutoClick 会被忽略
+                </div>
+              </div>
+              <Button variant="secondary" size="sm" onClick={addStep}>
+                <Plus size={12} /> 新增步骤
+              </Button>
+            </div>
+
+            {steps.length === 0 ? (
+              <div
+                className="p-3 text-center text-[11px] rounded-lg"
+                style={{
+                  border: '1px dashed var(--border-subtle)',
+                  color: 'var(--text-muted)',
+                }}
+              >
+                未添加步骤 — 不使用多步 Tour,只用单次脉冲 + 可选 AutoClick。
+              </div>
+            ) : (
+              <div className="flex flex-col gap-2">
+                {steps.map((step, i) => (
+                  <div
+                    key={i}
+                    className="p-2.5 rounded-lg flex flex-col gap-2"
+                    style={{
+                      background: 'var(--nested-block-bg)',
+                      border: '1px solid var(--nested-block-border)',
+                    }}
+                  >
+                    <div className="flex items-center justify-between">
+                      <div
+                        className="text-[11px] font-mono"
+                        style={{ color: 'var(--text-muted)' }}
+                      >
+                        Step {i + 1} / {steps.length}
+                      </div>
+                      <Button variant="ghost" size="sm" onClick={() => removeStep(i)}>
+                        <Trash2 size={12} />
+                      </Button>
+                    </div>
+                    <div className="grid gap-2" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))' }}>
+                      <input
+                        type="text"
+                        value={step.selector}
+                        onChange={(e) => updateStep(i, { selector: e.target.value })}
+                        placeholder="[data-tour-id=xxx]"
+                        className="w-full px-2 py-1.5 rounded-lg text-[12px] outline-none font-mono"
+                        style={inputStyle}
+                      />
+                      <input
+                        type="text"
+                        value={step.title}
+                        onChange={(e) => updateStep(i, { title: e.target.value })}
+                        placeholder="步骤标题,例:第 1 步:选模板"
+                        className="w-full px-2 py-1.5 rounded-lg text-[12px] outline-none"
+                        style={inputStyle}
+                      />
+                    </div>
+                    <textarea
+                      value={step.body ?? ''}
+                      onChange={(e) => updateStep(i, { body: e.target.value || null })}
+                      placeholder="步骤说明(可选)"
+                      rows={2}
+                      className="w-full px-2 py-1.5 rounded-lg text-[12px] outline-none resize-y"
+                      style={inputStyle}
+                    />
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </>
+      )}
+    </div>
+  );
 }
 
 function StatChip({ label, value, color, bg }: { label: string; value: number; color: string; bg: string }) {

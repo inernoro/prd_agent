@@ -357,7 +357,7 @@ export const MarketplacePage: React.FC = () => {
           }}
         >
           {/* 类型筛选标签 */}
-          <div className="flex items-center gap-2 flex-wrap">
+          <div data-tour-id="marketplace-category-tabs" className="flex items-center gap-2 flex-wrap">
             {filterOptions.map(({ key, label, icon: Icon }) => (
               <button
                 key={key}

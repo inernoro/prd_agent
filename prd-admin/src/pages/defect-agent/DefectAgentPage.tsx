@@ -216,6 +216,7 @@ export default function DefectAgentPage() {
             <Button
               variant="primary"
               size="sm"
+              data-tour-id="defect-create"
               onClick={() => setShowSubmitPanel(true)}
             >
               <Plus size={14} />

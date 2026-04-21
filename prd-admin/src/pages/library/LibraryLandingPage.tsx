@@ -185,9 +185,11 @@ export function LibraryLandingPage() {
                 >
                   开始探索 <ArrowRight size={18} strokeWidth={3} />
                 </ClayButton>
-                <ClayButton size="lg" variant="secondary" onClick={() => navigate('/document-store')}>
-                  发布我的知识
-                </ClayButton>
+                <span data-tour-id="library-create" className="inline-block">
+                  <ClayButton size="lg" variant="secondary" onClick={() => navigate('/document-store')}>
+                    发布我的知识
+                  </ClayButton>
+                </span>
               </div>
 
               {/* 统计数据（横向 like LearnHub） */}

@@ -34,6 +34,7 @@ public sealed class AdminDailyTipsController : ControllerBase
         public string ActionUrl { get; set; } = "/";
         public string? CtaText { get; set; }
         public string? TargetSelector { get; set; }
+        public DailyTipAutoAction? AutoAction { get; set; }
         public string? TargetUserId { get; set; }
         public List<string>? TargetRoles { get; set; }
         public int DisplayOrder { get; set; } = 0;
@@ -75,6 +76,7 @@ public sealed class AdminDailyTipsController : ControllerBase
             ActionUrl = req.ActionUrl.Trim(),
             CtaText = string.IsNullOrWhiteSpace(req.CtaText) ? "去看看" : req.CtaText.Trim(),
             TargetSelector = req.TargetSelector,
+            AutoAction = NormalizeAutoAction(req.AutoAction),
             TargetUserId = req.TargetUserId,
             TargetRoles = req.TargetRoles,
             DisplayOrder = req.DisplayOrder,
@@ -109,6 +111,7 @@ public sealed class AdminDailyTipsController : ControllerBase
             .Set(x => x.ActionUrl, req.ActionUrl?.Trim() ?? "/")
             .Set(x => x.CtaText, string.IsNullOrWhiteSpace(req.CtaText) ? "去看看" : req.CtaText!.Trim())
             .Set(x => x.TargetSelector, req.TargetSelector)
+            .Set(x => x.AutoAction, NormalizeAutoAction(req.AutoAction))
             .Set(x => x.TargetUserId, req.TargetUserId)
             .Set(x => x.TargetRoles, req.TargetRoles)
             .Set(x => x.DisplayOrder, req.DisplayOrder)
@@ -272,4 +275,53 @@ public sealed class AdminDailyTipsController : ControllerBase
 
     private static bool IsValidKind(string? kind)
         => kind is "text" or "card" or "spotlight";
+
+    /// <summary>
+    /// 归一化 AutoAction：全字段为空则返回 null（存成 null 比空对象好查询）；
+    /// 否则修剪字符串、过滤无效 Step，给 Scroll 一个默认值。
+    /// </summary>
+    private static DailyTipAutoAction? NormalizeAutoAction(DailyTipAutoAction? a)
+    {
+        if (a == null) return null;
+        var scroll = string.IsNullOrWhiteSpace(a.Scroll) ? null : a.Scroll.Trim();
+        var expand = string.IsNullOrWhiteSpace(a.Expand) ? null : a.Expand.Trim();
+        var autoClick = string.IsNullOrWhiteSpace(a.AutoClick) ? null : a.AutoClick.Trim();
+        DailyTipPrefill? prefill = null;
+        if (a.Prefill != null
+            && !string.IsNullOrWhiteSpace(a.Prefill.Selector)
+            && a.Prefill.Value != null)
+        {
+            prefill = new DailyTipPrefill
+            {
+                Selector = a.Prefill.Selector.Trim(),
+                Value = a.Prefill.Value,
+            };
+        }
+        var steps = a.Steps?
+            .Where(s => s != null
+                        && !string.IsNullOrWhiteSpace(s.Selector)
+                        && !string.IsNullOrWhiteSpace(s.Title))
+            .Select(s => new DailyTipTourStep
+            {
+                Selector = s.Selector.Trim(),
+                Title = s.Title.Trim(),
+                Body = string.IsNullOrWhiteSpace(s.Body) ? null : s.Body!.Trim(),
+            })
+            .ToList();
+        if (steps != null && steps.Count == 0) steps = null;
+
+        var allEmpty = scroll == null && expand == null && autoClick == null
+                       && prefill == null && (steps == null || steps.Count == 0);
+        if (allEmpty) return null;
+
+        return new DailyTipAutoAction
+        {
+            Scroll = scroll,
+            Expand = expand,
+            AutoClick = autoClick,
+            AutoClickDelayMs = a.AutoClickDelayMs is > 0 ? a.AutoClickDelayMs : null,
+            Prefill = prefill,
+            Steps = steps,
+        };
+    }
 }

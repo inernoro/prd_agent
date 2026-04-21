@@ -41,6 +41,13 @@ public class DailyTip
     public string? TargetSelector { get; set; }
 
     /// <summary>
+    /// 可选：跳转后自动执行的动作（Scroll/Expand/Prefill/AutoClick/Steps），
+    /// 由前端 SpotlightOverlay 在 DOM 就绪后按序执行，真正"替用户做一步"。
+    /// 为空时仅画脉冲光圈（等价于旧行为）。
+    /// </summary>
+    public DailyTipAutoAction? AutoAction { get; set; }
+
+    /// <summary>
     /// 定向推送对象：
     /// - null = 所有登录用户可见
     /// - 非空 = 仅该用户可见（用于缺陷修复等个性化场景，置顶显示）
@@ -89,6 +96,49 @@ public class DailyTip
     /// 空集合表示没有推送过,走 TargetUserId / 全局可见逻辑。
     /// </summary>
     public List<DailyTipDelivery> Deliveries { get; set; } = new();
+}
+
+/// <summary>
+/// 小贴士的自动引导动作。SpotlightOverlay 按以下顺序执行：
+///   1) Scroll 到 TargetSelector（block：默认 center）
+///   2) Expand（若指定）尝试点击"折叠按钮/header"展开区域
+///   3) Prefill：在输入框 / textarea 里填入示例值（用原生 setter 触发 React onChange）
+///   4) 脉冲光圈 + Steps 多步引导（若有 Steps，渲染"下一步/完成"控件）
+///   5) AutoClick：延迟 AutoClickDelayMs 后自动点击目标
+/// 每一项都是可选，全部空 = 仅画光圈。
+/// </summary>
+public class DailyTipAutoAction
+{
+    /// <summary>滚动模式：center / top / none，默认 center</summary>
+    public string? Scroll { get; set; }
+
+    /// <summary>要展开的折叠区域 selector（点击一次以触发展开）。</summary>
+    public string? Expand { get; set; }
+
+    /// <summary>预填充动作：目标 input/textarea selector + 值</summary>
+    public DailyTipPrefill? Prefill { get; set; }
+
+    /// <summary>自动点击的 selector（如"开始生成"按钮）。</summary>
+    public string? AutoClick { get; set; }
+
+    /// <summary>AutoClick 之前的延迟（毫秒），默认 1200，给用户看清光圈的机会。</summary>
+    public int? AutoClickDelayMs { get; set; }
+
+    /// <summary>多步 Tour：渲染"下一步"按钮依次高亮 Steps。非空时覆盖单一高亮行为。</summary>
+    public List<DailyTipTourStep>? Steps { get; set; }
+}
+
+public class DailyTipPrefill
+{
+    public string Selector { get; set; } = string.Empty;
+    public string Value { get; set; } = string.Empty;
+}
+
+public class DailyTipTourStep
+{
+    public string Selector { get; set; } = string.Empty;
+    public string Title { get; set; } = string.Empty;
+    public string? Body { get; set; }
 }
 
 /// <summary>
