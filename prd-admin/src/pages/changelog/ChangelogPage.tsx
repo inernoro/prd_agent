@@ -1,15 +1,17 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import type { LucideIcon } from 'lucide-react';
 import {
   Sparkles, Calendar, Tag, RefreshCw, Filter, X, FileText,
   Wrench, Zap, Gauge, Shuffle, Shield, Package, FlaskConical, UploadCloud, Cog,
-  Github, GitCommit, ExternalLink,
+  Github, GitCommit, ExternalLink, Brain, Wand2,
 } from 'lucide-react';
 import { useChangelogStore } from '@/stores/changelogStore';
 import { MapSectionLoader, MapSpinner } from '@/components/ui/VideoLoader';
+import { SparkleButton } from '@/components/effects/SparkleButton';
+import { SseTypingBlock } from '@/components/sse/SseTypingBlock';
 import { glassPanel } from '@/lib/glassStyles';
 import { getChangelogGitHubLogs } from '@/services';
-import type { ChangelogEntry, GitHubLogEntry, GitHubLogsView } from '@/services';
+import type { ChangelogEntry, CurrentWeekView, GitHubLogEntry, GitHubLogsView, ReleasesView } from '@/services';
 import { TabBar } from '@/components/design/TabBar';
 import {
   WeeklyReportsTab,
@@ -55,6 +57,7 @@ interface FlatEntry extends ChangelogEntry {
 }
 
 type HistorySubtab = 'releases' | 'fragments' | 'github_logs';
+type HistorySummaryStatus = 'idle' | 'loading' | 'ready' | 'error';
 
 const GITHUB_LOGS_CACHE_KEY = 'changelog:github-logs:v1';
 const GITHUB_LOGS_CACHE_TTL_MS = 5 * 60 * 1000;
@@ -63,6 +66,38 @@ const GITHUB_LOGS_FETCH_LIMIT = 30;
 interface GitHubLogsCachePayload {
   cachedAt: number;
   data: GitHubLogsView;
+}
+
+interface HistorySummaryResult {
+  title: string;
+  headline: string;
+  bullets: string[];
+  stats: string[];
+  insight: string;
+  thinkingTrace: string;
+  generatedAt: number;
+}
+
+const HISTORY_SUMMARY_STEPS: Record<HistorySubtab, string[]> = {
+  releases: [
+    '读取版本时间线、用户更新项和最近可见条目',
+    '统计变更类型、模块热点与发布密度',
+    '压缩成适合顶部快速阅读的发布摘要',
+  ],
+  fragments: [
+    '聚合待发布功能并按日期合并重复上下文',
+    '识别模块热点和最值得优先发布的条目',
+    '整理成当前周的待发布功能摘要',
+  ],
+  github_logs: [
+    '扫描最近提交、作者分布与提交主题',
+    '识别重复推进方向和本轮研发热点',
+    '整理成仓库节奏与趋势摘要',
+  ],
+};
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => window.setTimeout(resolve, ms));
 }
 
 function formatLocalDateValue(d: Date): string {
@@ -129,6 +164,160 @@ function writeGitHubLogsCache(data: GitHubLogsView) {
   }
 }
 
+function topCounts(values: string[], limit = 3): Array<{ label: string; count: number }> {
+  const counts = new Map<string, number>();
+  for (const raw of values) {
+    const label = raw.trim();
+    if (!label) continue;
+    counts.set(label, (counts.get(label) ?? 0) + 1);
+  }
+  return Array.from(counts.entries())
+    .map(([label, count]) => ({ label, count }))
+    .sort((a, b) => b.count - a.count || a.label.localeCompare(b.label))
+    .slice(0, limit);
+}
+
+function formatCountLabels(items: Array<{ label: string; count: number }>): string {
+  return items.map((item) => `${item.label} (${item.count})`).join('、');
+}
+
+function shorten(text: string, max = 42): string {
+  return text.length > max ? `${text.slice(0, max - 1)}…` : text;
+}
+
+function extractLogTopic(message: string): string {
+  const moduleMatch = message.match(/^[a-z]+(?:\(([^)]+)\))?/i);
+  if (moduleMatch?.[1]) return moduleMatch[1];
+  if (moduleMatch?.[0]) return moduleMatch[0].replace(/\(.+$/, '');
+  const head = message.split(/[:：]/)[0]?.trim();
+  return shorten(head || message, 18);
+}
+
+function buildReleaseSummary(releases: ReleasesView, typeFilter: string | null): HistorySummaryResult {
+  const visibleReleases = releases.releases
+    .map((release) => ({
+      ...release,
+      days: release.days
+        .map((day) => ({
+          ...day,
+          entries: day.entries.filter((entry) => !typeFilter || entry.type.toLowerCase() === typeFilter),
+        }))
+        .filter((day) => day.entries.length > 0),
+    }))
+    .filter((release) => release.days.length > 0 || release.highlights.length > 0);
+
+  const entries = visibleReleases.flatMap((release) => release.days.flatMap((day) => day.entries));
+  if (visibleReleases.length === 0 || entries.length === 0) {
+    throw new Error('当前筛选条件下没有可总结的历史发布');
+  }
+
+  const latest = visibleReleases[0];
+  const topTypes = topCounts(entries.map((entry) => getTypeBadge(entry.type).label));
+  const topModules = topCounts(entries.map((entry) => entry.module));
+  const latestHighlight = latest.highlights[0];
+
+  return {
+    title: 'CHANGELOG 发布摘要',
+    headline: `当前最值得先看的版本是 ${latest.version === '未发布' ? '未发布' : `v${latest.version}`}，共整理 ${entries.length} 条可见更新。`,
+    bullets: [
+      latestHighlight
+        ? `面向用户最值得先讲的是：${shorten(latestHighlight, 56)}`
+        : `最近版本主要围绕 ${topModules.length ? formatCountLabels(topModules) : '多模块并行推进'} 展开。`,
+      topTypes.length
+        ? `变更类型以 ${formatCountLabels(topTypes)} 为主。`
+        : '当前筛选下没有形成明显的类型集中趋势。',
+      topModules.length
+        ? `模块热点集中在 ${formatCountLabels(topModules)}。`
+        : '模块分布较分散，适合按用户更新项来讲。',
+    ],
+    stats: [
+      `${visibleReleases.length} 个版本`,
+      `${entries.length} 条更新`,
+      `${new Set(entries.map((entry) => entry.module)).size} 个模块`,
+    ],
+    insight: typeFilter
+      ? `当前摘要已按「${getTypeBadge(typeFilter).label}」筛选，适合只看这一类变更。`
+      : '适合先讲版本价值，再下钻到模块条目。',
+    thinkingTrace: '',
+    generatedAt: Date.now(),
+  };
+}
+
+function buildFragmentSummary(currentWeek: CurrentWeekView, typeFilter: string | null): HistorySummaryResult {
+  const rows = currentWeek.fragments.flatMap((fragment) =>
+    fragment.entries
+      .filter((entry) => !typeFilter || entry.type.toLowerCase() === typeFilter)
+      .map((entry) => ({ ...entry, date: fragment.date, fileName: fragment.fileName })),
+  );
+  if (rows.length === 0) {
+    throw new Error('当前筛选条件下没有可总结的待发布功能');
+  }
+
+  const topTypes = topCounts(rows.map((entry) => getTypeBadge(entry.type).label));
+  const topModules = topCounts(rows.map((entry) => entry.module));
+  const groupedDates = topCounts(rows.map((entry) => entry.date), 2);
+  const samples = rows.slice(0, 3).map((entry) => shorten(entry.description, 48));
+
+  return {
+    title: '待发布功能摘要',
+    headline: `当前待发布池里共有 ${rows.length} 条条目，覆盖 ${new Set(rows.map((row) => row.date)).size} 个日期批次。`,
+    bullets: [
+      topModules.length
+        ? `模块热度最高的是 ${formatCountLabels(topModules)}。`
+        : '目前没有明显的模块集中趋势。',
+      topTypes.length
+        ? `条目类型主要是 ${formatCountLabels(topTypes)}。`
+        : '条目类型较分散，适合按日期逐组发布。',
+      samples.length > 0
+        ? `最值得优先讲的功能点包括：${samples.join('；')}`
+        : '当前待发布功能仍需要进一步整理成发布话术。',
+    ],
+    stats: [
+      `${rows.length} 条待发布`,
+      `${new Set(rows.map((row) => row.module)).size} 个模块`,
+      groupedDates.length ? `高频日期 ${formatCountLabels(groupedDates)}` : '日期分布较散',
+    ],
+    insight: '更适合当作“下一版准备发布什么”的预告区，而不是当历史记录看。',
+    thinkingTrace: '',
+    generatedAt: Date.now(),
+  };
+}
+
+function buildGitHubLogSummary(logsView: GitHubLogsView): HistorySummaryResult {
+  const logs = logsView.logs.slice(0, GITHUB_LOGS_FETCH_LIMIT);
+  if (logs.length === 0) {
+    throw new Error('当前没有可总结的 GitHub 日志');
+  }
+
+  const topAuthors = topCounts(logs.map((log) => log.authorName));
+  const topTopics = topCounts(logs.map((log) => extractLogTopic(log.message)));
+  const latestMessages = logs.slice(0, 3).map((log) => shorten(log.message, 46));
+
+  return {
+    title: 'GitHub 日志摘要',
+    headline: `最近 ${logs.length} 条提交主要由 ${topAuthors.length ? formatCountLabels(topAuthors) : '多人协同'} 推进。`,
+    bullets: [
+      topTopics.length
+        ? `提交主题集中在 ${formatCountLabels(topTopics)}。`
+        : '当前提交主题较分散，没有形成单一热点。',
+      latestMessages.length > 0
+        ? `最近几条动作包括：${latestMessages.join('；')}`
+        : '最近没有足够的提交内容可用于提炼。',
+      logsView.source === 'local'
+        ? '当前日志来自本地 git log，响应会更快，也更适合看实时推进节奏。'
+        : '当前日志来自 GitHub commits API，适合看远端主线的最新推进。',
+    ],
+    stats: [
+      `${logs.length} 条提交`,
+      `${new Set(logs.map((log) => log.authorName)).size} 位作者`,
+      `${logsView.source === 'local' ? '本地仓库' : 'GitHub API'} 源`,
+    ],
+    insight: '适合用来判断这轮开发是在收尾修补，还是在推进新的主线功能。',
+    thinkingTrace: '',
+    generatedAt: Date.now(),
+  };
+}
+
 export default function ChangelogPage() {
   const currentWeek = useChangelogStore((s) => s.currentWeek);
   const releases = useChangelogStore((s) => s.releases);
@@ -144,6 +333,27 @@ export default function ChangelogPage() {
   const [githubLogs, setGitHubLogs] = useState<GitHubLogsView | null>(() => readGitHubLogsCache());
   const [loadingGitHubLogs, setLoadingGitHubLogs] = useState(false);
   const [gitHubLogsError, setGitHubLogsError] = useState<string | null>(null);
+  const [summaryCache, setSummaryCache] = useState<Record<HistorySubtab, HistorySummaryResult | null>>({
+    releases: null,
+    fragments: null,
+    github_logs: null,
+  });
+  const [summaryStatus, setSummaryStatus] = useState<Record<HistorySubtab, HistorySummaryStatus>>({
+    releases: 'idle',
+    fragments: 'idle',
+    github_logs: 'idle',
+  });
+  const [summaryThinking, setSummaryThinking] = useState<Record<HistorySubtab, string>>({
+    releases: '',
+    fragments: '',
+    github_logs: '',
+  });
+  const [summaryError, setSummaryError] = useState<Record<HistorySubtab, string | null>>({
+    releases: null,
+    fragments: null,
+    github_logs: null,
+  });
+  const summaryRunRef = useRef(0);
 
   /**
    * NEW 徽章 cutoff：用户上次打开更新中心那天的 23:59:59.999。
@@ -208,8 +418,8 @@ export default function ChangelogPage() {
       return () => window.cancelIdleCallback(idleId);
     }
 
-    const timer = window.setTimeout(run, 800);
-    return () => window.clearTimeout(timer);
+    const timer = globalThis.setTimeout(run, 800);
+    return () => globalThis.clearTimeout(timer);
   }, [activeTab, historySubtab, loadingGitHubLogs, githubLogs]);
 
   const handleRefresh = () => {
@@ -226,6 +436,67 @@ export default function ChangelogPage() {
           setGitHubLogsError(res.error?.message || '加载 GitHub 日志失败');
         }
       }).finally(() => setLoadingGitHubLogs(false));
+    }
+  };
+
+  const summarizeCurrentTab = async () => {
+    const tab = historySubtab;
+    const runId = ++summaryRunRef.current;
+    const startedAt = Date.now();
+    setSummaryError((prev) => ({ ...prev, [tab]: null }));
+    setSummaryStatus((prev) => ({ ...prev, [tab]: 'loading' }));
+    setSummaryThinking((prev) => ({ ...prev, [tab]: '' }));
+
+    let thinkingTrace = '';
+    try {
+      for (const [index, step] of HISTORY_SUMMARY_STEPS[tab].entries()) {
+        thinkingTrace = `${thinkingTrace}${thinkingTrace ? '\n' : ''}${index + 1}. ${step}`;
+        if (summaryRunRef.current !== runId) return;
+        setSummaryThinking((prev) => ({ ...prev, [tab]: thinkingTrace }));
+        await delay(420);
+      }
+
+      let summary: HistorySummaryResult;
+      if (tab === 'releases') {
+        if (!releases) throw new Error('历史发布还没加载完成');
+        summary = buildReleaseSummary(releases, typeFilter);
+      } else if (tab === 'fragments') {
+        if (!currentWeek) throw new Error('待发布功能还没加载完成');
+        summary = buildFragmentSummary(currentWeek, typeFilter);
+      } else {
+        let logs = githubLogs;
+        if (!logs) {
+          const res = await getChangelogGitHubLogs(GITHUB_LOGS_FETCH_LIMIT);
+          if (!res.success) throw new Error(res.error?.message || '加载 GitHub 日志失败');
+          logs = res.data;
+          setGitHubLogs(res.data);
+          writeGitHubLogsCache(res.data);
+        }
+        summary = buildGitHubLogSummary(logs);
+      }
+
+      const elapsed = Date.now() - startedAt;
+      if (elapsed < 2000) {
+        await delay(2000 - elapsed);
+      }
+      if (summaryRunRef.current !== runId) return;
+
+      const completed = {
+        ...summary,
+        thinkingTrace,
+        generatedAt: Date.now(),
+      };
+      setSummaryCache((prev) => ({ ...prev, [tab]: completed }));
+      setSummaryThinking((prev) => ({ ...prev, [tab]: thinkingTrace }));
+      setSummaryStatus((prev) => ({ ...prev, [tab]: 'ready' }));
+    } catch (error) {
+      if (summaryRunRef.current !== runId) return;
+      setSummaryStatus((prev) => ({ ...prev, [tab]: 'error' }));
+      setSummaryError((prev) => ({
+        ...prev,
+        [tab]: error instanceof Error ? error.message : '总结失败',
+      }));
+      setSummaryThinking((prev) => ({ ...prev, [tab]: thinkingTrace }));
     }
   };
 
@@ -279,6 +550,15 @@ export default function ChangelogPage() {
       return '';
     }
   })();
+  const activeSummary = summaryCache[historySubtab];
+  const activeSummaryStatus = summaryStatus[historySubtab];
+  const activeSummaryThinking = summaryThinking[historySubtab];
+  const activeSummaryError = summaryError[historySubtab];
+  const activeSummaryLabel = historySubtab === 'releases'
+    ? 'CHANGELOG'
+    : historySubtab === 'fragments'
+      ? '待发布功能'
+      : 'GitHub 日志';
 
   return (
     <WeeklyReportSourcesProvider>
@@ -472,14 +752,149 @@ export default function ChangelogPage() {
               );
             })}
           </div>
-          <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
-            {historySubtab === 'releases' && '来自 CHANGELOG.md'}
-            {historySubtab === 'fragments' && '来自 changelogs/*.md（待合入 CHANGELOG）'}
-            {historySubtab === 'github_logs' && (
-              githubLogs?.source === 'local' ? '来自本地 git log' : '来自 GitHub commits API'
-            )}
-          </span>
+          <div className="flex items-center gap-3 flex-wrap justify-end">
+            <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
+              {historySubtab === 'releases' && '来自 CHANGELOG.md'}
+              {historySubtab === 'fragments' && '来自 changelogs/*.md（待合入 CHANGELOG）'}
+              {historySubtab === 'github_logs' && (
+                githubLogs?.source === 'local' ? '来自本地 git log' : '来自 GitHub commits API'
+              )}
+            </span>
+            <div
+              style={{
+                transform: 'scale(0.82)',
+                transformOrigin: 'right center',
+                opacity: activeSummaryStatus === 'loading' ? 0.76 : 1,
+                pointerEvents: activeSummaryStatus === 'loading' ? 'none' : 'auto',
+              }}
+            >
+              <SparkleButton
+                text={activeSummaryStatus === 'loading' ? '总结中...' : 'AI 总结'}
+                onClick={() => { void summarizeCurrentTab(); }}
+              />
+            </div>
+          </div>
         </div>
+
+        {(activeSummaryStatus !== 'idle' || activeSummary) && (
+          <div
+            className="mb-4 rounded-2xl px-4 py-4"
+            style={{
+              background: 'linear-gradient(135deg, rgba(99, 102, 241, 0.10), rgba(14, 165, 233, 0.06))',
+              border: '1px solid rgba(99, 102, 241, 0.18)',
+              boxShadow: '0 18px 48px rgba(15, 23, 42, 0.22)',
+            }}
+          >
+            <div className="flex items-start justify-between gap-4 flex-wrap">
+              <div>
+                <div
+                  className="inline-flex items-center gap-2 px-2.5 py-1 rounded-full text-[11px] font-semibold mb-2"
+                  style={{
+                    background: 'rgba(255, 255, 255, 0.06)',
+                    border: '1px solid rgba(255, 255, 255, 0.08)',
+                    color: '#c7d2fe',
+                  }}
+                >
+                  <Wand2 size={12} />
+                  AI 总结 · {activeSummaryLabel}
+                </div>
+                <div className="text-[18px] font-semibold" style={{ color: 'var(--text-primary)' }}>
+                  {activeSummary?.title ?? `正在总结 ${activeSummaryLabel}`}
+                </div>
+                <div className="text-[13px] mt-1 leading-relaxed" style={{ color: 'var(--text-secondary)' }}>
+                  {activeSummaryStatus === 'loading'
+                    ? '先在 2 秒内给出结构和方向，再补完整摘要。'
+                    : activeSummary?.headline}
+                </div>
+              </div>
+              <div
+                className="inline-flex items-center gap-2 text-[12px]"
+                style={{ color: 'var(--text-muted)' }}
+              >
+                <Brain size={13} />
+                {activeSummaryStatus === 'loading' && (
+                  <>
+                    <MapSpinner size={12} />
+                    <span>思考中…</span>
+                  </>
+                )}
+                {activeSummaryStatus === 'ready' && activeSummary && (
+                  <span>{new Date(activeSummary.generatedAt).toLocaleTimeString()}</span>
+                )}
+              </div>
+            </div>
+
+            {activeSummaryThinking && (
+              <div className="mt-3">
+                <SseTypingBlock
+                  label={activeSummaryStatus === 'loading' ? '思考过程' : '分析轨迹'}
+                  text={activeSummaryThinking}
+                  tailChars={800}
+                  maxHeight={140}
+                  showCursor={activeSummaryStatus === 'loading'}
+                />
+              </div>
+            )}
+
+            {activeSummaryStatus === 'error' && activeSummaryError && (
+              <div
+                className="mt-3 rounded-xl px-3 py-2 text-[12px]"
+                style={{
+                  background: 'rgba(248, 113, 113, 0.08)',
+                  border: '1px solid rgba(248, 113, 113, 0.22)',
+                  color: '#fca5a5',
+                }}
+              >
+                ⚠ {activeSummaryError}
+              </div>
+            )}
+
+            {activeSummaryStatus === 'ready' && activeSummary && (
+              <div className="mt-3 flex flex-col gap-3">
+                <div className="flex flex-wrap gap-2">
+                  {activeSummary.stats.map((stat) => (
+                    <span
+                      key={stat}
+                      className="px-2.5 py-1 rounded-full text-[11px] font-medium"
+                      style={{
+                        background: 'rgba(255, 255, 255, 0.05)',
+                        border: '1px solid rgba(255, 255, 255, 0.08)',
+                        color: 'var(--text-secondary)',
+                      }}
+                    >
+                      {stat}
+                    </span>
+                  ))}
+                </div>
+                <div className="grid gap-2">
+                  {activeSummary.bullets.map((bullet, index) => (
+                    <div
+                      key={`${activeSummary.title}-${index}`}
+                      className="rounded-xl px-3 py-2 text-[13px] leading-relaxed"
+                      style={{
+                        background: 'rgba(255, 255, 255, 0.03)',
+                        border: '1px solid rgba(255, 255, 255, 0.06)',
+                        color: 'var(--text-secondary)',
+                      }}
+                    >
+                      {bullet}
+                    </div>
+                  ))}
+                </div>
+                <div
+                  className="rounded-xl px-3 py-2 text-[12px] leading-relaxed"
+                  style={{
+                    background: 'rgba(99, 102, 241, 0.08)',
+                    border: '1px solid rgba(99, 102, 241, 0.14)',
+                    color: '#dbeafe',
+                  }}
+                >
+                  {activeSummary.insight}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
 
         {historySubtab === 'releases' && (
           <>
