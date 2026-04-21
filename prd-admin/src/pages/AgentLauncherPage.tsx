@@ -883,15 +883,12 @@ export default function AgentLauncherPage() {
             {!searchQuery.trim() && (
               <div className={`relative z-10 ${isMobile ? 'px-5 pb-6' : 'px-8 pb-10'}`}>
                 <div
-                  className="grid mx-auto"
+                  className="grid"
                   style={{
                     gap: isMobile ? 10 : 14,
-                    // 带鱼屏收束：整体最大 1440px 居中；单卡上限 320px，避免在 2560+ 屏上被拉伸
-                    maxWidth: isMobile ? '100%' : 1440,
                     gridTemplateColumns: isMobile
                       ? `repeat(auto-fit, minmax(160px, 1fr))`
-                      : `repeat(auto-fit, minmax(220px, 320px))`,
-                    justifyContent: 'center',
+                      : `repeat(auto-fit, minmax(260px, 1fr))`,
                   }}
                 >
               {quickLinks.map((link, idx) => {
