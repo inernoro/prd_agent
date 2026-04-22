@@ -914,12 +914,18 @@ public class ImageGenRunWorker : BackgroundService
     }
 
     /// <summary>
-    /// 剥离前端追加的生图意图前缀，该前缀仅用于 LLM 调用，不应存入展示字段。
+    /// 剥离前端追加的生图意图前缀（支持循环剥除历史积累的多重前缀），
+    /// 该前缀仅用于 LLM 调用，不应存入展示字段。
     /// </summary>
     private static string StripImageGenPrefix(string prompt)
     {
         const string prefix = "Generate an image based on the following description:\n";
-        return prompt.StartsWith(prefix, StringComparison.Ordinal) ? prompt[prefix.Length..].Trim() : prompt;
+        var result = prompt;
+        while (result.StartsWith(prefix, StringComparison.Ordinal))
+        {
+            result = result[prefix.Length..].TrimStart('\n');
+        }
+        return result.Trim();
     }
 
     private static bool TryParseWxH(string? raw, out int w, out int h)
