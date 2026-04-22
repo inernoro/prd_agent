@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useNavigate } from 'react-router-dom';
-import { Sparkles, X, ChevronRight, BookOpen, Pin, PinOff } from 'lucide-react';
+import { Sparkles, X, BookOpen, Pin, PinOff, MapPin, EyeOff } from 'lucide-react';
 import { useDailyTipsStore } from '@/stores/dailyTipsStore';
 import { writeSpotlightPayload } from './TipsRotator';
 import { trackTip } from '@/services/real/dailyTips';
+import { TipCard } from './TipCard';
 
 /**
  * 右下角「教程小书」悬浮球。
@@ -26,6 +27,10 @@ const PIN_KEY = 'tipsBookPinned';
 const HIDDEN_KEY = 'tipsBookHidden';
 /** 本 session 已自动弹过的 tip id 集合(按 id 记忆,新推送的 tip 还能再弹) */
 const AUTO_OPENED_IDS_KEY = 'tipsBookAutoOpenedIds';
+/** 首次访问自动弹过一次的标志(全域 session 级,只兜底提示新用户) */
+const FIRST_VISIT_SHOWN_KEY = 'tipsBookFirstVisitShown';
+/** 悬浮组整体折叠(书 + AppShell toast 铃铛联动):由 TipsDrawer 写,AppShell 读 */
+export const FLOATING_DOCK_COLLAPSED_KEY = 'floatingDockCollapsed';
 const AUTO_COLLAPSE_MS = 5000;
 const EDGE_PEEK_ZONE = 140; // 右下角触发区域大小(px)
 
@@ -95,16 +100,42 @@ export function TipsDrawer() {
 
   useEffect(() => {
     try {
-      if (hiddenByUser) sessionStorage.setItem(HIDDEN_KEY, '1');
-      else sessionStorage.removeItem(HIDDEN_KEY);
+      if (hiddenByUser) {
+        sessionStorage.setItem(HIDDEN_KEY, '1');
+        sessionStorage.setItem(FLOATING_DOCK_COLLAPSED_KEY, '1');
+      } else {
+        sessionStorage.removeItem(HIDDEN_KEY);
+        sessionStorage.removeItem(FLOATING_DOCK_COLLAPSED_KEY);
+      }
+      window.dispatchEvent(new CustomEvent('floating-dock-collapsed-changed', {
+        detail: { collapsed: hiddenByUser },
+      }));
     } catch {
       /* noop */
     }
   }, [hiddenByUser]);
 
-  // ── expanded / edge-peek 临时状态 ────────────────────────
+  // ── expanded / edge-peek / hover 临时状态 ────────────────────────
   const [expanded, setExpanded] = useState<boolean>(false);
   const [edgeHover, setEdgeHover] = useState<boolean>(false);
+  const [bookHover, setBookHover] = useState<boolean>(false);
+
+  // ── 悬浮组整体折叠(书 + 铃铛一起贴边) ───────────────────────
+  // 这个状态通过 sessionStorage 广播,AppShell 的 toast 按钮订阅同样的 key
+  // 实现「两个一起收」的效果。hiddenByUser 是其别名(键名兼容)。
+  const setDockCollapsed = useCallback((collapsed: boolean) => {
+    try {
+      if (collapsed) sessionStorage.setItem(FLOATING_DOCK_COLLAPSED_KEY, '1');
+      else sessionStorage.removeItem(FLOATING_DOCK_COLLAPSED_KEY);
+      // 用自定义事件通知 AppShell(同 tab 内 storage 事件不会触发)
+      window.dispatchEvent(new CustomEvent('floating-dock-collapsed-changed', {
+        detail: { collapsed },
+      }));
+    } catch {
+      /* noop */
+    }
+    setHiddenByUser(collapsed);
+  }, []);
 
   // ── 当前最终模式 ─────────────────────────────────────
   const mode: Mode = (() => {
@@ -133,6 +164,21 @@ export function TipsDrawer() {
     setExpanded(true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [loaded, tips]);
+
+  // ── 新用户兜底:本 session 第一次访问、有任意 tip 时自动弹一次 ──
+  // 让用户第一次看到书时就知道它是做什么的(管理员没推送也能看到 seed 内容)
+  useEffect(() => {
+    if (!loaded) return;
+    if (tips.length === 0) return;
+    try {
+      if (sessionStorage.getItem(FIRST_VISIT_SHOWN_KEY)) return;
+      sessionStorage.setItem(FIRST_VISIT_SHOWN_KEY, '1');
+    } catch {
+      return;
+    }
+    setExpanded(true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loaded, tips.length > 0]);
 
   // ── 自动收起:expanded 5s 内无 hover / 点击就 collapsed ──────
   const drawerHoveredRef = useRef(false);
@@ -207,11 +253,23 @@ export function TipsDrawer() {
       onClick={() => {
         if (hiddenByUser) {
           // 从 hidden 点击 → 取消 hidden(用户主动召回)
-          setHiddenByUser(false);
+          setDockCollapsed(false);
           setExpanded(true);
           return;
         }
         setExpanded((v) => !v);
+      }}
+      onMouseEnter={(e) => {
+        setBookHover(true);
+        e.currentTarget.style.transform = 'translateY(-2px)';
+        e.currentTarget.style.boxShadow =
+          '0 14px 36px -8px rgba(139,92,246,0.65), 0 0 0 1px rgba(255,255,255,0.08) inset';
+      }}
+      onMouseLeave={(e) => {
+        setBookHover(false);
+        e.currentTarget.style.transform = 'translateY(0)';
+        e.currentTarget.style.boxShadow =
+          '0 10px 30px -8px rgba(139,92,246,0.45), 0 0 0 1px rgba(255,255,255,0.06) inset, 0 1px 0 rgba(255,255,255,0.14) inset';
       }}
       title={tips.length === 0 ? '教程(暂无)' : `教程 (${badgeCount})`}
       style={{
@@ -237,16 +295,6 @@ export function TipsDrawer() {
           '0 10px 30px -8px rgba(139,92,246,0.45), 0 0 0 1px rgba(255,255,255,0.06) inset, 0 1px 0 rgba(255,255,255,0.14) inset',
         transition:
           'right 240ms cubic-bezier(.2,.8,.2,1), opacity 240ms ease-out, transform 180ms ease-out, box-shadow 180ms ease-out',
-      }}
-      onMouseEnter={(e) => {
-        e.currentTarget.style.transform = 'translateY(-2px)';
-        e.currentTarget.style.boxShadow =
-          '0 14px 36px -8px rgba(139,92,246,0.65), 0 0 0 1px rgba(255,255,255,0.08) inset';
-      }}
-      onMouseLeave={(e) => {
-        e.currentTarget.style.transform = 'translateY(0)';
-        e.currentTarget.style.boxShadow =
-          '0 10px 30px -8px rgba(139,92,246,0.45), 0 0 0 1px rgba(255,255,255,0.06) inset, 0 1px 0 rgba(255,255,255,0.14) inset';
       }}
     >
       <BookOpen
@@ -415,103 +463,22 @@ export function TipsDrawer() {
             </div>
           ) : (
             tips.map((t) => (
-              <div
+              <TipCard
                 key={t.id}
-                style={{
-                  borderRadius: 14,
-                  border: t.isTargeted
-                    ? '1px solid rgba(244,63,94,0.45)'
-                    : '1px solid rgba(255,255,255,0.06)',
-                  background: t.isTargeted
-                    ? 'linear-gradient(135deg, rgba(244,63,94,0.14), rgba(168,85,247,0.10))'
-                    : 'linear-gradient(135deg, rgba(255,255,255,0.035), rgba(255,255,255,0.015))',
-                  padding: '13px 14px',
-                  position: 'relative',
-                  boxShadow: t.isTargeted
-                    ? '0 6px 20px -10px rgba(244,63,94,0.35)'
-                    : '0 2px 8px -4px rgba(0,0,0,0.3)',
-                }}
-              >
-                <button
-                  type="button"
-                  onClick={() => handleDismissTip(t.id)}
-                  title="本次会话不再显示"
-                  style={{
-                    position: 'absolute',
-                    top: 6,
-                    right: 6,
-                    border: 'none',
-                    background: 'transparent',
-                    color: 'rgba(255,255,255,0.35)',
-                    cursor: 'pointer',
-                    padding: 2,
-                    display: 'inline-flex',
-                  }}
-                >
-                  <X size={12} />
-                </button>
-                {t.isTargeted && (
-                  <div
-                    style={{
-                      display: 'inline-block',
-                      fontSize: 10,
-                      fontWeight: 600,
-                      color: '#fff',
-                      background: 'linear-gradient(135deg, #f43f5e, #a855f7)',
-                      borderRadius: 999,
-                      padding: '1px 7px',
-                      marginBottom: 6,
-                      letterSpacing: '0.04em',
-                    }}
-                  >
-                    为你
-                  </div>
-                )}
-                <div
-                  style={{
-                    fontSize: 13,
-                    fontWeight: 600,
-                    color: 'var(--text-primary, #fff)',
-                    marginBottom: t.body ? 4 : 8,
-                    paddingRight: 18,
-                    lineHeight: 1.35,
-                  }}
-                >
-                  {t.title}
-                </div>
-                {t.body && (
-                  <div
-                    style={{
-                      fontSize: 12,
-                      color: 'rgba(255,255,255,0.62)',
-                      lineHeight: 1.55,
-                      marginBottom: 8,
-                      whiteSpace: 'pre-wrap',
-                    }}
-                  >
-                    {t.body}
-                  </div>
-                )}
-                <button
-                  type="button"
-                  onClick={() => handleOpenTip(t)}
-                  style={{
-                    display: 'inline-flex',
-                    alignItems: 'center',
-                    gap: 4,
-                    fontSize: 12,
-                    fontWeight: 600,
-                    border: 'none',
-                    background: 'transparent',
-                    color: 'var(--accent-primary, #818CF8)',
-                    cursor: 'pointer',
-                    padding: 0,
-                  }}
-                >
-                  {t.ctaText || '去看看'}
-                  <ChevronRight size={12} />
-                </button>
-              </div>
+                icon={<MapPin size={14} />}
+                accent={
+                  t.isTargeted
+                    ? 'rgba(244,63,94,0.95)'
+                    : 'rgba(52,211,153,0.95)'
+                }
+                title={t.title}
+                body={t.body ?? undefined}
+                targeted={t.isTargeted}
+                ctaText={t.ctaText ?? '去看看'}
+                onCta={() => handleOpenTip(t)}
+                onClose={() => handleDismissTip(t.id)}
+                variant="card"
+              />
             ))
           )}
         </div>
@@ -524,9 +491,52 @@ export function TipsDrawer() {
       </div>
     ) : null;
 
+  // ── 悬浮组整体折叠把手 ──
+  // 书 hover 时左侧露出一个小按钮,点一下把整组(书 + 铃铛)收到边缘
+  const collapseHandle =
+    bookHover && !hiddenByUser && !pinned ? (
+      <button
+        type="button"
+        onClick={(e) => {
+          e.stopPropagation();
+          setExpanded(false);
+          setDockCollapsed(true);
+        }}
+        title="收起悬浮组(书 + 通知一起贴边)"
+        onMouseEnter={() => setBookHover(true)}
+        style={{
+          position: 'fixed',
+          bottom: BOOK_BOTTOM + 14,
+          right: 74,
+          width: 22,
+          height: 22,
+          borderRadius: 999,
+          background: 'rgba(15,16,20,0.92)',
+          border: '1px solid rgba(255,255,255,0.15)',
+          color: 'rgba(255,255,255,0.7)',
+          display: 'inline-flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          cursor: 'pointer',
+          zIndex: 52,
+          boxShadow: '0 4px 14px -4px rgba(0,0,0,0.5)',
+          animation: 'tipsHandleFade 160ms ease-out',
+        }}
+      >
+        <EyeOff size={11} />
+        <style>{`
+          @keyframes tipsHandleFade {
+            from { opacity: 0; transform: translateX(4px); }
+            to { opacity: 1; transform: translateX(0); }
+          }
+        `}</style>
+      </button>
+    ) : null;
+
   return createPortal(
     <>
       {bookBtn}
+      {collapseHandle}
       {drawer}
     </>,
     document.body,

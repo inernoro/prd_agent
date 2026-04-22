@@ -202,6 +202,40 @@ export default function AppShell() {
   const [toastCollapsed, setToastCollapsed] = useState(false);
   const [toastHovering, setToastHovering] = useState(false);
 
+  // ── 悬浮组整体折叠(联动 TipsDrawer 的「收起书 + 铃铛」把手) ──
+  // TipsDrawer 通过 sessionStorage('floatingDockCollapsed') + 'floating-dock-collapsed-changed'
+  // 自定义事件广播状态;AppShell 订阅后把通知铃铛移到右边缘(只露半个,鼠标 hover 时滑回)
+  const [dockCollapsed, setDockCollapsed] = useState<boolean>(() => {
+    try {
+      return sessionStorage.getItem('floatingDockCollapsed') === '1';
+    } catch {
+      return false;
+    }
+  });
+  const [dockEdgeHover, setDockEdgeHover] = useState(false);
+  useEffect(() => {
+    const onChange = (e: Event) => {
+      const detail = (e as CustomEvent<{ collapsed: boolean }>).detail;
+      setDockCollapsed(!!detail?.collapsed);
+    };
+    window.addEventListener('floating-dock-collapsed-changed', onChange);
+    return () => window.removeEventListener('floating-dock-collapsed-changed', onChange);
+  }, []);
+  useEffect(() => {
+    if (!dockCollapsed) {
+      setDockEdgeHover(false);
+      return;
+    }
+    const onMove = (e: MouseEvent) => {
+      const inZone =
+        window.innerWidth - e.clientX < 140 &&
+        window.innerHeight - e.clientY < 200;
+      setDockEdgeHover(inZone);
+    };
+    window.addEventListener('mousemove', onMove);
+    return () => window.removeEventListener('mousemove', onMove);
+  }, [dockCollapsed]);
+
 
   // 导航滚动状态：用于显示渐变阴影指示器
   const navRef = useRef<HTMLElement>(null);
@@ -479,16 +513,33 @@ export default function AppShell() {
       <CommandPalette />
       {toastNotification && (
         toastCollapsed ? (
-          // 收缩状态：浮动按钮
+          // 收缩状态：浮动按钮;如果悬浮组整体折叠了,这个按钮会跟着贴到屏幕右边缘
           <button
             type="button"
-            className="fixed bottom-5 right-5 z-[120] h-12 w-12 rounded-full flex items-center justify-center transition-all duration-200 hover:scale-105"
+            className="fixed bottom-5 z-[120] h-12 w-12 rounded-full flex items-center justify-center transition-all duration-200 hover:scale-105"
             style={{
               ...glassFloatingButton,
+              right: dockCollapsed ? (dockEdgeHover ? 12 : -20) : 20,
+              opacity: dockCollapsed && !dockEdgeHover ? 0.6 : 1,
               background: 'var(--panel-solid, rgba(18, 18, 22, 0.92))',
               border: `1px solid ${getNotificationTone(toastNotification.level).border}`,
+              transition: 'right 240ms cubic-bezier(.2,.8,.2,1), opacity 240ms ease-out, transform 180ms ease-out',
             }}
-            onClick={() => setToastCollapsed(false)}
+            onClick={() => {
+              if (dockCollapsed) {
+                // 用户点到贴边的铃铛 → 把整组召回
+                try {
+                  sessionStorage.removeItem('floatingDockCollapsed');
+                  sessionStorage.removeItem('tipsBookHidden');
+                } catch {
+                  /* noop */
+                }
+                window.dispatchEvent(new CustomEvent('floating-dock-collapsed-changed', {
+                  detail: { collapsed: false },
+                }));
+              }
+              setToastCollapsed(false);
+            }}
             onMouseEnter={() => setToastHovering(true)}
             onMouseLeave={() => setToastHovering(false)}
             aria-label="展开通知"

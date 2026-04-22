@@ -2,6 +2,7 @@ import { glassBadge, glassFloatingButton, glassPanel } from '@/lib/glassStyles';
 import { GlassCard } from '@/components/design/GlassCard';
 import { Button } from '@/components/design/Button';
 import { Dialog } from '@/components/ui/Dialog';
+import { TipCard } from '@/components/daily-tips/TipCard';
 import { ImagePreviewDialog } from '@/components/ui/ImagePreviewDialog';
 import { WatermarkSettingsPanel, type WatermarkSettingsPanelHandle } from '@/components/watermark/WatermarkSettingsPanel';
 import { WorkflowProgressBar } from '@/components/ui/WorkflowProgressBar';
@@ -4835,34 +4836,36 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
         </div>
       )}
 
-      {/* Phase 1: 首次进入的锚点教程气泡（每个用户一次，点"知道啦"后永不再弹） */}
+      {/* Phase 1: 首次进入的锚点教程气泡 —— 复用全局 TipCard 组件,跟右下角「教程小书」
+          抽屉卡片视觉统一(MapPin + 绿色 accent + 知道啦) */}
       {anchorTutorialSeen === false && phase !== 0 && (
         <div
-          className="fixed z-[1000] rounded-xl p-4 max-w-[340px] shadow-2xl"
-          style={{
-            right: 24,
-            bottom: 24,
-            ...glassPanel,
-            border: '1px solid rgba(52, 211, 153, 0.3)',
-          }}
+          className="fixed z-[1000]"
+          style={{ right: 24, bottom: 24, maxWidth: 340 }}
         >
-          <div className="flex items-start gap-2 mb-2">
-            <MapPin size={14} style={{ color: 'rgba(52, 211, 153, 0.95)', marginTop: 2, flexShrink: 0 }} />
-            <div className="text-[13px] font-semibold" style={{ color: 'var(--text-primary)' }}>
-              新功能：手动指定配图位置
-            </div>
-          </div>
-          <div className="text-[12px] mb-3" style={{ color: 'var(--text-secondary)', lineHeight: 1.6 }}>
-            <div className="mb-1.5">· 右上角「📍 位置策略」可切换 4 种生成策略</div>
-            <div className="mb-1.5">· 鼠标悬停段落左侧 → 点 <span style={{ color: 'rgba(52, 211, 153, 0.95)' }}>+</span> 在上方打锚点</div>
-            <div>· 段落上<span style={{ color: 'rgba(52, 211, 153, 0.95)' }}>右键</span> → 选择"在上方/下方插入配图"</div>
-          </div>
-          <div className="flex justify-end">
-            <Button size="sm" variant="primary" onClick={dismissAnchorTutorial}>
-              <Check size={13} />
-              知道啦
-            </Button>
-          </div>
+          <TipCard
+            icon={<MapPin size={14} />}
+            accent="rgba(52, 211, 153, 0.95)"
+            title="新功能:手动指定配图位置"
+            body={
+              <div>
+                <div style={{ marginBottom: 6 }}>· 右上角「📍 位置策略」可切换 4 种生成策略</div>
+                <div style={{ marginBottom: 6 }}>
+                  · 鼠标悬停段落左侧 → 点{' '}
+                  <span style={{ color: 'rgba(52, 211, 153, 0.95)' }}>+</span> 在上方打锚点
+                </div>
+                <div>
+                  · 段落上
+                  <span style={{ color: 'rgba(52, 211, 153, 0.95)' }}>右键</span> →
+                  选择"在上方/下方插入配图"
+                </div>
+              </div>
+            }
+            ctaText="知道啦"
+            ack
+            onCta={dismissAnchorTutorial}
+            variant="bubble"
+          />
         </div>
       )}
     </div>
