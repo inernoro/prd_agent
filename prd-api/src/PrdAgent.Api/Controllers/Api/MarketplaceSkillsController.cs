@@ -103,11 +103,15 @@ public class MarketplaceSkillsController : ControllerBase
             _ => query.SortByDescending(x => x.DownloadCount).ThenByDescending(x => x.CreatedAt)
         };
 
-        var items = await query.Limit(200).ToListAsync(ct);
+        // 官方条目要占 1 格 → 从 DB 少查 1 条，保证总长严格 <= 200 硬上限
+        var willInject = OfficialMarketplaceSkillInjector.ShouldInject(keyword, tag);
+        var dbLimit = willInject ? 199 : 200;
+
+        var items = await query.Limit(dbLimit).ToListAsync(ct);
         var dtos = items.Select(s => ToDto(s, userId)).Cast<object>().ToList();
 
         // 虚拟注入官方 findmapskills 到首位（筛选条件命中时）
-        if (OfficialMarketplaceSkillInjector.ShouldInject(keyword, tag))
+        if (willInject)
         {
             dtos.Insert(0, OfficialMarketplaceSkillInjector.BuildFindMapSkillsDto(Request, _config, userId));
         }

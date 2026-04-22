@@ -93,11 +93,18 @@ public class MarketplaceSkillsOpenApiController : ControllerBase
         };
 
         var resolvedLimit = limit is > 0 and <= 200 ? limit : 50;
-        var items = await query.Limit(resolvedLimit).ToListAsync(ct);
+
+        // 官方条目要占 1 格 → 从 DB 少查 1 条，保证总长严格 <= limit，尊重 AI 分页契约
+        var willInject = OfficialMarketplaceSkillInjector.ShouldInject(keyword, tag);
+        var dbLimit = willInject ? Math.Max(resolvedLimit - 1, 0) : resolvedLimit;
+
+        var items = dbLimit > 0
+            ? await query.Limit(dbLimit).ToListAsync(ct)
+            : new List<MarketplaceSkill>();
         var dtos = items.Select(s => ToDto(s, userId)).Cast<object>().ToList();
 
         // 虚拟注入官方 findmapskills 到首位 —— AI 搜 `findmapskills` / `海鲜市场` 就能直接发现
-        if (OfficialMarketplaceSkillInjector.ShouldInject(keyword, tag))
+        if (willInject)
         {
             dtos.Insert(0, OfficialMarketplaceSkillInjector.BuildFindMapSkillsDto(Request, _config, userId));
         }
