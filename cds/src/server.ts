@@ -198,7 +198,6 @@ function resolveApiLabel(method: string, path: string): string {
     'POST /global-agent-keys': '创建全局 Agent Key',
     'POST /self-update-dry-run': '自更新预检',
     'POST /self-force-sync': '自更新强制同步',
-    'GET /self-branches': '获取自更新分支',
     'POST /accept-invite': '接受邀请',
     // 数据迁移
     'GET /data-migrations': '列出数据迁移',
