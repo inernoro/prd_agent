@@ -234,25 +234,16 @@ function buildInfraItems(): LauncherItem[] {
 }
 
 /**
- * 按当前用户权限与 isRoot 过滤出完整目录。
- * - isRoot = true：绕过所有权限校验
- * - permission 为字符串：必须拥有该权限
- * - permission 为数组：任一命中即可
+ * 返回完整目录。命令面板作为"发现入口"工具展示全部条目，
+ * 实际访问权限由目标页面自行校验（每个 Controller / 页面都有各自的 authz 门控）。
+ * 这样用户不会因为"某项没权限"就整条看不到，产生"功能丢失"的错觉。
+ *
+ * opts 保留签名以便调用方日后按需过滤，当前实现忽略。
  */
-export function getLauncherCatalog(opts: {
+export function getLauncherCatalog(_opts: {
   permissions: string[];
   isRoot: boolean;
 }): LauncherItem[] {
-  const { permissions, isRoot } = opts;
-  const perms = new Set(permissions);
-  const hasPerm = (p: string) => isRoot || perms.has(p) || perms.has('super');
-
-  const match = (item: LauncherItem) => {
-    if (!item.permission) return true;
-    if (Array.isArray(item.permission)) return item.permission.some(hasPerm);
-    return hasPerm(item.permission);
-  };
-
   const all = [
     ...buildAgentItems(),
     ...buildToolboxItems(),
@@ -269,7 +260,7 @@ export function getLauncherCatalog(opts: {
     dedup.push(it);
   }
 
-  return dedup.filter(match);
+  return dedup;
 }
 
 /** 按 id 查找 LauncherItem */
