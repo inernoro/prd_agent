@@ -10,6 +10,13 @@
   --bg-input: #1E1F20;
   --bg-hover: rgba(63, 63, 70, 0.4);
 
+  /* 2026-04-22 一劳永逸：终端/代码块/输入框的深色/浅色主题值统一定义，
+   * 不允许 JS 里再写 var(--bg-base, #xxx) 硬编码兜底 —— 缺失就缺失，
+   * 让 bug 立刻可见而不是永远走到暗色 fallback。 */
+  --bg-base: #0b0b10;          /* 最深底色（配合亮字的 terminal/code 视觉） */
+  --bg-terminal: #0f1419;      /* 终端/代码块专用（略暖于 bg-base） */
+  --bg-code-block: rgba(255, 255, 255, 0.06);  /* inline code */
+
   /* Borders */
   --border: rgba(255, 255, 255, 0.08);
   --border-light: rgba(255, 255, 255, 0.04);
@@ -81,6 +88,14 @@
   --bg-elevated: #f1eae4;     /* H27 S30 L92 */
   --bg-input: #ffffff;
   --bg-hover: #2a1f1910;      /* ~6% warm dark */
+
+  /* 2026-04-22 与 :root 同步定义 —— 缺一个组件白天模式就破。
+   * --bg-base 走偏淡的 elevated 色（白天的"输入/最深底"是 light gray）；
+   * --bg-terminal 仍保留稍深的 dark 色，让代码块的"终端感"在白天也成立
+   * 但避免纯黑 #0b0b10 砸眼。 */
+  --bg-base: #efe7df;          /* 最深底色（白天 = 比卡片更深的 elevated） */
+  --bg-terminal: #1f1d2b;      /* 终端/代码块（白天用稍亮的深色，不刺眼） */
+  --bg-code-block: #2a1f190f;  /* inline code（warm dark 6% alpha） */
 
   /* Borders — warm alpha-based */
   --border: #2a1f1924;        /* ~14% warm dark */
@@ -3570,6 +3585,13 @@ a.branch-name:hover { color: var(--accent); }
   padding: 48px 0 20px;
   position: relative;
   user-select: none;
+  /* 2026-04-22 fix: 父 .branch-list 是 CSS Grid (auto-fill 340px)，
+   * loader 落在第一格导致显示在左上（用户图 4 红框）。
+   * 用 grid-column: 1 / -1 跨满所有列，再让 flex 内部居中起作用。
+   * 同时给最小高度，避免视觉过于挤在 header 下方。 */
+  grid-column: 1 / -1;
+  min-height: 50vh;
+  width: 100%;
 }
 
 .cds-loading-glow {
@@ -5124,7 +5146,10 @@ a.branch-name:hover { color: var(--accent); }
 .cds-restart-overlay {
   position: fixed;
   inset: 0;
-  z-index: 9000;
+  /* 2026-04-22 fix: 原 z-index 9000 比 self-update modal backdrop (10000) 还低，
+   * 重启过程中 overlay 被 modal 遮挡（用户图 3）。提到 10050 高于
+   * self-update modal (10000) + 它的 dropdown (10010)。 */
+  z-index: 10050;
   display: flex;
   align-items: center;
   justify-content: center;

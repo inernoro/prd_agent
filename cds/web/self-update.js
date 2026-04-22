@@ -119,7 +119,7 @@
       '    <div style="position:relative">',
       '      <input id="_suBranch" type="text" autocomplete="off" spellcheck="false" ',
       '        value="' + escHtml(current) + '" placeholder="输入分支名 / 粘贴 Ctrl+V / 点击下拉选择" ',
-      '        style="width:100%;box-sizing:border-box;padding:8px 38px 8px 10px;border-radius:6px;border:1px solid var(--card-border,rgba(255,255,255,0.08));background:var(--bg-base,#0b0b10);color:var(--text-primary);font-family:var(--font-mono,monospace);font-size:12px">',
+      '        style="width:100%;box-sizing:border-box;padding:8px 38px 8px 10px;border-radius:6px;border:1px solid var(--card-border,rgba(255,255,255,0.08));background:var(--bg-base);color:var(--text-primary);font-family:var(--font-mono,monospace);font-size:12px">',
       '      <button id="_suToggle" type="button" tabindex="-1" style="position:absolute;right:1px;top:1px;bottom:1px;width:34px;display:flex;align-items:center;justify-content:center;border:none;background:transparent;color:var(--text-muted);cursor:pointer">',
       '        <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 6 8 10 12 6"/></svg>',
       '      </button>',
@@ -131,7 +131,8 @@
       // 重算,保证永远贴在输入框正下方。
       '  </div>',
       // Progress area (initially hidden)
-      '  <div id="_suProgress" style="display:none;margin-top:16px;border:1px solid var(--card-border,rgba(255,255,255,0.08));border-radius:6px;padding:10px 12px;background:var(--bg-base,#0b0b10);font-family:var(--font-mono,monospace);font-size:11px;max-height:260px;overflow-y:auto;line-height:1.6"></div>',
+      // 进度日志走 --bg-terminal（白天/黑夜都偏暗，保留终端感）；输入框走 --bg-base（白天淡灰）
+      '  <div id="_suProgress" style="display:none;margin-top:16px;border:1px solid var(--card-border,rgba(255,255,255,0.08));border-radius:6px;padding:10px 12px;background:var(--bg-terminal);color:#e8e8ec;font-family:var(--font-mono,monospace);font-size:11px;max-height:260px;overflow-y:auto;line-height:1.6"></div>',
       '  <div id="_suStatus" style="margin-top:8px;font-size:12px;color:var(--text-muted);min-height:14px"></div>',
       '</div>',
       // Sticky footer — 关键改进: 按钮永远在可视区域,不会被长内容推出屏幕
@@ -221,7 +222,14 @@
       }
     }
 
-    input.addEventListener('focus', () => openDropdown());
+    // 2026-04-22 fix: 选中分支后 input.focus() 会触发 'focus' 监听重新 openDropdown,
+    // 用户感觉"点了下拉框关不掉"。引入 _suppressFocusOpen 标志：programmatic
+    // focus 时跳过自动展开。
+    let _suppressFocusOpen = false;
+    input.addEventListener('focus', () => {
+      if (_suppressFocusOpen) { _suppressFocusOpen = false; return; }
+      openDropdown();
+    });
     input.addEventListener('input', (e) => filter(e.target.value));
     // 粘贴走浏览器默认,再触发 filter 以展开匹配项
     input.addEventListener('paste', () => {
@@ -238,6 +246,8 @@
       if (!item) return;
       input.value = item.getAttribute('data-value') || '';
       closeDropdown();
+      // 选中后让 focus 留在 input（方便继续编辑），但不让 focus 触发 openDropdown
+      _suppressFocusOpen = true;
       input.focus();
     });
     // 点击 modal 其它地方关闭下拉(但保留 modal). Dropdown 是 portal
