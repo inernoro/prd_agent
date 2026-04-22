@@ -23,6 +23,18 @@ public class WeeklyPosterAnnouncement
     /// <summary>状态:draft / published / archived</summary>
     public string Status { get; set; } = WeeklyPosterStatus.Draft;
 
+    /// <summary>模板 key(release / hotfix / promo / sale),决定 AI 生成的语调与色板</summary>
+    public string TemplateKey { get; set; } = "release";
+
+    /// <summary>展示形态(static / fullscreen / interactive),当前仅 static 可用</summary>
+    public string PresentationMode { get; set; } = "static";
+
+    /// <summary>数据源类型(changelog-current-week / freeform 等)</summary>
+    public string? SourceType { get; set; }
+
+    /// <summary>数据源引用(如知识库 entryId 或 freeform 内容指纹)</summary>
+    public string? SourceRef { get; set; }
+
     /// <summary>轮播页(顺序按 Order 升序)</summary>
     public List<WeeklyPosterPage> Pages { get; set; } = new();
 

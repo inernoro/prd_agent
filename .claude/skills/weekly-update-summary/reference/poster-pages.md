@@ -80,10 +80,13 @@
 
 ## 写完之后
 
-调用 `POST /api/weekly-posters` 创建草稿(状态 = draft),然后指导用户:
+正常路径(推荐):引导用户去「百宝箱 → AI 周报海报工坊」点一次「一键生成」即可
+(工坊内部已封装了本文档规则,不需要技能再手工调 API)。
 
-1. 去「百宝箱 → 周报海报编辑器」选中草稿
-2. 每页点右上角紫色「生成图片」按钮(编辑器会直接调 `/api/visual-agent/image-gen/generate`,
-   约 10-30 秒返回图片并自动填回)
-3. 不满意就原地改 `imagePrompt` 后重新点「生成图片」
-4. 4-6 页都生成完 → 点右上角「保存草稿」→「发布到主页」
+特殊路径(用户明确要求 AI 代劳):调用 `POST /api/weekly-posters/autopilot`:
+```
+{ "templateKey": "release", "sourceType": "freeform",
+  "freeformContent": "<刚写好的周报 markdown>" }
+```
+返回 `{ poster: { id, pages, ... } }`。然后告知用户:
+「草稿已建好,去百宝箱 → AI 周报海报工坊,刷新一下,选择这张草稿生成配图 → 发布」

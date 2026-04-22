@@ -146,6 +146,8 @@ builder.Services.AddMemoryCache();
 builder.Services.AddSingleton<PrdAgent.Core.Interfaces.IAppSettingsService, PrdAgent.Infrastructure.Services.AppSettingsService>();
 // 更新中心：从仓库 changelogs/ 与 CHANGELOG.md 解析代码级周报
 builder.Services.AddSingleton<PrdAgent.Infrastructure.Services.Changelog.IChangelogReader, PrdAgent.Infrastructure.Services.Changelog.ChangelogReader>();
+// 周报海报 AI 向导:读取数据源 + 调 LLM 生成结构化页面
+builder.Services.AddScoped<PrdAgent.Infrastructure.Services.Poster.IPosterAutopilotService, PrdAgent.Infrastructure.Services.Poster.PosterAutopilotService>();
 builder.Services.AddSingleton<PrdAgent.Core.Interfaces.ISystemPromptService, PrdAgent.Infrastructure.Services.SystemPromptService>();
 builder.Services.AddSingleton<PrdAgent.Core.Interfaces.ISkillService, PrdAgent.Infrastructure.Services.SkillService>();
 

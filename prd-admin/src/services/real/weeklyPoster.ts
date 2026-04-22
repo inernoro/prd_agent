@@ -4,6 +4,35 @@ import { apiRequest } from '@/services/real/apiClient';
 
 export type WeeklyPosterStatus = 'draft' | 'published' | 'archived';
 
+export type WeeklyPosterTemplateKey = 'release' | 'hotfix' | 'promo' | 'sale';
+export type WeeklyPosterPresentationMode = 'static' | 'fullscreen' | 'interactive';
+export type WeeklyPosterSourceType = 'changelog-current-week' | 'freeform';
+
+export interface WeeklyPosterTemplateMeta {
+  key: WeeklyPosterTemplateKey;
+  label: string;
+  description: string;
+  emoji: string;
+  defaultPages: number;
+  accentPalette: string[];
+}
+
+export interface WeeklyPosterAutopilotResult {
+  poster: WeeklyPoster;
+  model?: string | null;
+  platform?: string | null;
+  sourceSummary?: string | null;
+}
+
+export interface WeeklyPosterAutopilotInput {
+  templateKey?: WeeklyPosterTemplateKey;
+  sourceType?: WeeklyPosterSourceType;
+  freeformContent?: string;
+  weekKey?: string;
+  pageCount?: number;
+  ctaUrl?: string;
+}
+
 export interface WeeklyPosterPage {
   /** 页码,从 0 开始 */
   order: number;
@@ -25,6 +54,10 @@ export interface WeeklyPoster {
   title: string;
   subtitle?: string | null;
   status: WeeklyPosterStatus;
+  templateKey: WeeklyPosterTemplateKey;
+  presentationMode: WeeklyPosterPresentationMode;
+  sourceType?: string | null;
+  sourceRef?: string | null;
   pages: WeeklyPosterPage[];
   ctaText: string;
   ctaUrl: string;
@@ -43,6 +76,10 @@ export interface WeeklyPosterUpsertInput {
   weekKey?: string;
   title?: string;
   subtitle?: string | null;
+  templateKey?: WeeklyPosterTemplateKey;
+  presentationMode?: WeeklyPosterPresentationMode;
+  sourceType?: string | null;
+  sourceRef?: string | null;
   pages?: WeeklyPosterPage[];
   ctaText?: string;
   ctaUrl?: string;
@@ -106,5 +143,33 @@ export async function unpublishWeeklyPoster(id: string) {
   return await apiRequest<{ unpublished: boolean }>(
     `/api/weekly-posters/${encodeURIComponent(id)}/unpublish`,
     { method: 'POST' }
+  );
+}
+
+// ───── AI 向导 ─────
+
+export async function listWeeklyPosterTemplates() {
+  return await apiRequest<{ items: WeeklyPosterTemplateMeta[] }>(
+    '/api/weekly-posters/templates'
+  );
+}
+
+/** 一键生成海报草稿(读数据源 + LLM 结构化) */
+export async function autopilotWeeklyPoster(input: WeeklyPosterAutopilotInput) {
+  return await apiRequest<WeeklyPosterAutopilotResult>(
+    '/api/weekly-posters/autopilot',
+    { method: 'POST', body: input }
+  );
+}
+
+/** 为指定页生成/重生图片(同步,约 10-30 秒) */
+export async function generateWeeklyPosterPageImage(
+  posterId: string,
+  order: number,
+  overridePrompt?: string,
+) {
+  return await apiRequest<WeeklyPoster>(
+    `/api/weekly-posters/${encodeURIComponent(posterId)}/pages/${order}/generate-image`,
+    { method: 'POST', body: overridePrompt ? { overridePrompt } : {} }
   );
 }
