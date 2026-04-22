@@ -5,6 +5,7 @@ import { useNavigate } from 'react-router-dom';
 import { DesktopDownloadDialog } from '@/components/ui/DesktopDownloadDialog';
 import { useAuthStore } from '@/stores/authStore';
 import { toast } from '@/lib/toast';
+import { systemDialog } from '@/lib/systemDialog';
 import { resolveAvatarUrl } from '@/lib/avatar';
 import {
   ArrowUpRight,
@@ -186,10 +187,14 @@ export function ToolCard({ item, source = 'mine' }: ToolCardProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
 
   const isMarketplaceCard = source === 'marketplace';
-  // 双重判定：有 createdByUserId/createdBy 也视为用户自建（兼容后端旧数据未返回 type 字段）
+  const isBuiltin = item.type === 'builtin';
+  // "我自建的"严格判定：必须不是 BUILTIN，且满足 custom/或有后端返回的创建者 id 字段。
+  // 不能再用 createdByName 兜底 —— BUILTIN普通版（如代码审查员）硬编码 createdByName='官方'，
+  // 如果走 createdByName 兜底就会被误判成"自建草稿"，进而错挂「施工中」徽章给所有用户看。
   const isOwnCustomCard =
     source === 'mine' &&
-    (item.type === 'custom' || !!item.createdByUserId || !!item.createdBy || !!item.createdByName);
+    !isBuiltin &&
+    (item.type === 'custom' || !!item.createdByUserId || !!item.createdBy);
   /** 新创建但还没公开发布的工具 — 脉动高亮「公开发布」按钮，引导用户完成发布动作 */
   const needsPublishHint = isOwnCustomCard && !item.isPublic && newUnpublishedIds.has(item.id);
   /** 内置但非"定制版"（无独立路由页），可以被克隆为我的副本 */
@@ -206,31 +211,32 @@ export function ToolCard({ item, source = 'mine' }: ToolCardProps) {
     Date.now() - new Date(item.createdAt).getTime() < NEW_BADGE_WINDOW_MS;
 
   // 作者名 fallback 策略：
-  // 1) 后端返回的 createdByName 优先
-  // 2) 用户自建 + 未返回 name（GetUserName() 依赖 JWT "name" claim，可能为空）→ 用当前登录用户的 displayName
-  // 3) marketplace 卡片：后端必然返回 createdByName，兜底"匿名用户"
-  // 4) 其它（内置等）：兜底"官方"
+  // 1) 后端返回的 createdByName 优先（后端已在 /marketplace + GetItem 上按 User 表回填）
+  // 2) 我自己创建的 → 用当前登录用户的 displayName/username（JWT name claim 兜底）
+  // 3) BUILTIN → "官方"
+  // 4) 其它（公开条目但后端也查不到作者）→ 根据 createdByUserId 末 6 位生成"用户 #xxxxxx"，而不是误导性的"匿名用户"
   const currentUser = useAuthStore((s) => s.user);
   const authorName =
     item.createdByName ||
-    (isOwnCustomCard
+    (isBuiltin
+      ? '官方'
+      : isOwnCustomCard
       ? currentUser?.displayName || currentUser?.username || '我'
-      : isMarketplaceCard
-      ? '匿名用户'
+      : (item.createdByUserId || item.createdBy)
+      ? `用户 #${(item.createdByUserId || item.createdBy || '').slice(-6)}`
       : '官方');
 
-  // 头像 URL — 优先级：
-  // 1) 后端返回的 createdByAvatarFileName → resolveAvatarUrl 拼 CDN（公开市场里别人也能显示真头像）
-  // 2) 当作者就是当前登录用户时 → authStore.avatarUrl（后端还没回写头像字段的老数据兜底）
-  // 3) 首字母圆形块（内置"官方"/旧数据等）
-  // 后端返回的字段是 createdByUserId（从 CreatedByUserId 驼峰化），历史代码里的 createdBy 是
-  // 未被后端填充过的残留字段。两个都对比，确保与当前用户对照能正确判断 isMe。
+  // 后端返回的字段是 createdByUserId（PascalCase→camelCase），历史代码里的 createdBy 是未被后端填充过的残留字段。
+  // 两个都对比，确保与当前用户对照能正确判断 isMe。
   const isMe =
     !!currentUser?.userId &&
     (item.createdByUserId === currentUser.userId ||
       item.createdBy === currentUser.userId ||
       (isOwnCustomCard && !item.createdByUserId && !item.createdBy));
-  const authorAvatarUrl = item.createdByAvatarFileName
+  // 头像 URL — BUILTIN官方 走 MAP 品牌徽标（下方 JSX 专门渲染），不走 img 通道
+  const authorAvatarUrl = isBuiltin
+    ? null
+    : item.createdByAvatarFileName
     ? resolveAvatarUrl({ avatarFileName: item.createdByAvatarFileName })
     : isMe
     ? currentUser?.avatarUrl || null
@@ -239,12 +245,14 @@ export function ToolCard({ item, source = 'mine' }: ToolCardProps) {
   const handleFork = async () => {
     if (forking) return;
     // 显式二次确认 —— 避免用户误点"拿来吧"后反复创建副本（反人类设计的历史教训）
-    const ok = window.confirm(
-      `确定要把「${item.name}」复制一份到你的百宝箱吗？\n\n` +
-        `复制后你将拥有独立的副本，可以自由修改提示词、模型等参数；` +
-        `原作者的更新不会再同步给你。\n\n` +
-        `如果只是想使用原版，直接在详情里对话即可，不需要创建副本。`
-    );
+    const ok = await systemDialog.confirm({
+      title: `创建「${item.name}」的副本？`,
+      message:
+        '复制后你将拥有独立的副本，可以自由修改提示词、模型等参数；原作者的更新不会再同步给你。\n\n' +
+        '如果只是想使用原版，直接在详情里对话即可，不需要创建副本。',
+      confirmText: '创建副本',
+      cancelText: '取消',
+    });
     if (!ok) return;
     setForking(true);
     try {
@@ -303,12 +311,15 @@ export function ToolCard({ item, source = 'mine' }: ToolCardProps) {
     if (togglingPublish) return;
     const newValue = !item.isPublic;
     if (newValue) {
-      const ok = window.confirm(
-        '公开发布后，其他用户会在百宝箱首页的「全部 / 别人的」里看到这个智能体' +
+      const ok = await systemDialog.confirm({
+        title: '确认公开发布',
+        message:
+          '公开发布后，其他用户会在百宝箱首页的「全部 / 别人的」里看到这个智能体' +
           '（包含名称、描述、提示词、标签；7 天内带 NEW 徽章）。\n\n' +
-          '其他用户默认使用原版（数据存自己名下）；显式「创建副本」才会复制一份。\n\n' +
-          '确定要公开发布吗？'
-      );
+          '其他用户默认使用原版（数据存自己名下）；显式「创建副本」才会复制一份。',
+        confirmText: '公开发布',
+        cancelText: '取消',
+      });
       if (!ok) return;
     }
     setTogglingPublish(true);
@@ -323,7 +334,13 @@ export function ToolCard({ item, source = 'mine' }: ToolCardProps) {
 
   const handleDelete = async (e: React.MouseEvent) => {
     e.stopPropagation();
-    const ok = window.confirm(`确定删除「${item.name}」吗？此操作不可恢复。`);
+    const ok = await systemDialog.confirm({
+      title: `删除「${item.name}」？`,
+      message: '此操作不可恢复。该智能体下你自己的所有会话与消息也会失去入口（数据会短暂保留但无法继续对话）。',
+      tone: 'danger',
+      confirmText: '删除',
+      cancelText: '取消',
+    });
     if (!ok) return;
     const success = await deleteItem(item.id);
     if (success) toast.success('已删除');
@@ -660,7 +677,29 @@ export function ToolCard({ item, source = 'mine' }: ToolCardProps) {
                     已公开
                   </span>
                 )}
-                {authorAvatarUrl ? (
+                {isBuiltin ? (
+                  // BUILTIN官方 工具 → MAP 品牌徽标（与 VideoLoader 一致的 M/A/P 三色缩写），
+                  // 不再用首字母圆形块误导成"某用户头像"
+                  <div
+                    className="shrink-0 flex items-center justify-center rounded-md font-bold tracking-wide"
+                    style={{
+                      width: 22,
+                      height: 14,
+                      background:
+                        'linear-gradient(135deg, rgba(192,192,204,0.18), rgba(106,106,122,0.08))',
+                      border: '1px solid rgba(192,192,204,0.35)',
+                      color: '#e0e0ec',
+                      fontSize: 8,
+                      letterSpacing: '0.08em',
+                      lineHeight: 1,
+                      fontFamily:
+                        "'Inter', 'SF Pro Display', -apple-system, system-ui, sans-serif",
+                    }}
+                    title="MAP 平台官方工具"
+                  >
+                    MAP
+                  </div>
+                ) : authorAvatarUrl ? (
                   <img
                     src={authorAvatarUrl}
                     alt={authorName}

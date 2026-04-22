@@ -75,6 +75,38 @@ public class AiToolboxController : ControllerBase
     }
 
     /// <summary>
+    /// 对一批 item 就地回填 CreatedByName / CreatedByAvatarFileName（只填充缺失字段，不覆盖已有值）。
+    /// 老数据可能没落盘作者信息，前端上会显示成"匿名用户"，这个 helper 让读路径统一按 Users 集合补齐。
+    /// </summary>
+    private async Task EnrichCreatorInfoAsync(IEnumerable<ToolboxItem> items, CancellationToken ct)
+    {
+        var needLookup = items
+            .Where(x => !string.IsNullOrWhiteSpace(x.CreatedByUserId) &&
+                        (string.IsNullOrWhiteSpace(x.CreatedByName) || string.IsNullOrWhiteSpace(x.CreatedByAvatarFileName)))
+            .Select(x => x.CreatedByUserId)
+            .Distinct()
+            .ToList();
+        if (needLookup.Count == 0) return;
+
+        var users = await _db.Users
+            .Find(Builders<User>.Filter.In(u => u.UserId, needLookup))
+            .ToListAsync(ct);
+        var userMap = users.ToDictionary(u => u.UserId);
+
+        foreach (var it in items)
+        {
+            if (string.IsNullOrWhiteSpace(it.CreatedByUserId)) continue;
+            if (!userMap.TryGetValue(it.CreatedByUserId, out var u)) continue;
+            if (string.IsNullOrWhiteSpace(it.CreatedByName))
+            {
+                it.CreatedByName = !string.IsNullOrWhiteSpace(u.DisplayName) ? u.DisplayName : u.Username;
+            }
+            if (string.IsNullOrWhiteSpace(it.CreatedByAvatarFileName))
+                it.CreatedByAvatarFileName = u.AvatarFileName;
+        }
+    }
+
+    /// <summary>
     /// 发送消息到百宝箱
     /// 自动识别意图并路由到合适的 Agent
     /// </summary>
@@ -460,6 +492,8 @@ public class AiToolboxController : ControllerBase
             .Limit(200)
             .ToListAsync(ct);
 
+        // 老数据 CreatedByName / CreatedByAvatarFileName 可能为空，按 Users 集合批量回填
+        await EnrichCreatorInfoAsync(items, ct);
         return Ok(ApiResponse<object>.Ok(new { items }));
     }
 
@@ -475,6 +509,8 @@ public class AiToolboxController : ControllerBase
         if (item == null)
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "工具不存在或未公开"));
 
+        // 老数据可能作者字段为空，按 Users 集合回填，避免前端显示"匿名用户"
+        await EnrichCreatorInfoAsync(new[] { item }, ct);
         return Ok(ApiResponse<ToolboxItem>.Ok(item));
     }
 
@@ -595,6 +631,8 @@ public class AiToolboxController : ControllerBase
             .Limit(pageSize)
             .ToListAsync(ct);
 
+        // 市场列表必须显示真实作者名 / 头像 —— 老数据没落盘时按 Users 集合批量补齐，避免前端显示"匿名用户"
+        await EnrichCreatorInfoAsync(items, ct);
         return Ok(ApiResponse<object>.Ok(new { items, total, page, pageSize }));
     }
 
