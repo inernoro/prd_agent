@@ -1,4 +1,4 @@
-import { glassBadge, glassFloatingButton, glassPanel } from '@/lib/glassStyles';
+import { glassBadge, glassPanel } from '@/lib/glassStyles';
 import { GlassCard } from '@/components/design/GlassCard';
 import { Button } from '@/components/design/Button';
 import { Dialog } from '@/components/ui/Dialog';
@@ -605,7 +605,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
   const genAbortRef = useRef<AbortController | null>(null);
   const markerListRef = useRef<HTMLDivElement>(null); // 配图列表容器的 ref
   const articlePreviewRef = useRef<HTMLDivElement>(null); // 文章预览区域的 ref
-  const phase2EditTextareaRef = useRef<HTMLTextAreaElement | null>(null); // phase 2 编辑模式 textarea 的 ref（用于在光标处插入配图位）
+  const articleEditTextareaRef = useRef<HTMLTextAreaElement | null>(null); // 编辑模式 textarea 的 ref（Phase 1 / 2 共用，同时只会挂载一个）
   const thinkingPanelRef = useRef<HTMLDivElement>(null); // 思考面板的 ref（自动滚动到底部）
   const isStreamingRef = useRef<boolean>(false); // 标记是否正在流式输出
   const [glowingMarkers, setGlowingMarkers] = useState<Set<number>>(new Set()); // 正在播放入场动画的 marker 卡片
@@ -1607,11 +1607,11 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
     });
   }, []);
 
-  // 在 phase 2 编辑模式 textarea 的光标位置插入一行 [插图]: 占位符并选中占位文字
+  // 在编辑模式 textarea 的光标位置插入一行 [插图]: 占位符并选中占位文字（Phase 1 / Phase 2 通用）
   const INSERT_MARKER_PLACEHOLDER = '在此描述要生成的图片…';
   const handleInsertMarkerAtCursor = useCallback(() => {
-    const ta = phase2EditTextareaRef.current;
-    const base = ta?.value ?? articleWithMarkers ?? articleContent ?? '';
+    const ta = articleEditTextareaRef.current;
+    const base = ta?.value ?? (phase === 2 ? articleWithMarkers : articleContent) ?? '';
     const start = ta?.selectionStart ?? base.length;
     const end = ta?.selectionEnd ?? start;
     const before = base.slice(0, start);
@@ -1621,17 +1621,47 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
     const markerLine = `[插图]: ${INSERT_MARKER_PLACEHOLDER}`;
     const suffix = after.startsWith('\n') ? '\n' : '\n\n';
     const next = before + prefix + markerLine + suffix + after;
-    handleArticleWithMarkersChange(next);
-    // 选中占位文字，方便用户直接覆盖
+    if (phase === 2) {
+      handleArticleWithMarkersChange(next);
+    } else {
+      setArticleContent(next);
+    }
     requestAnimationFrame(() => {
-      const el = phase2EditTextareaRef.current;
+      const el = articleEditTextareaRef.current;
       if (!el) return;
       const placeholderStart = before.length + prefix.length + '[插图]: '.length;
       const placeholderEnd = placeholderStart + INSERT_MARKER_PLACEHOLDER.length;
       el.focus();
       el.setSelectionRange(placeholderStart, placeholderEnd);
     });
-  }, [articleWithMarkers, articleContent, handleArticleWithMarkersChange]);
+  }, [phase, articleWithMarkers, articleContent, handleArticleWithMarkersChange]);
+
+  // 编辑模式 textarea 接收右侧卡片拖拽：在光标处插入 [插图]: prompt 行
+  const handleEditorDragOver = useCallback((e: React.DragEvent<HTMLTextAreaElement>) => {
+    if (e.dataTransfer.types.includes('application/x-literary-marker-prompt')) {
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'copy';
+    }
+  }, []);
+  const handleEditorDrop = useCallback((e: React.DragEvent<HTMLTextAreaElement>) => {
+    const payload = e.dataTransfer.getData('application/x-literary-marker-prompt');
+    if (!payload) return;
+    e.preventDefault();
+    const ta = articleEditTextareaRef.current;
+    const base = ta?.value ?? '';
+    const pos = ta?.selectionStart ?? base.length;
+    const before = base.slice(0, pos);
+    const after = base.slice(pos);
+    const needsLeadingNewline = before.length > 0 && !before.endsWith('\n');
+    const prefix = needsLeadingNewline ? '\n\n' : '';
+    const suffix = after.startsWith('\n') ? '\n' : '\n\n';
+    const next = before + prefix + `[插图]: ${payload}` + suffix + after;
+    if (phase === 2) {
+      handleArticleWithMarkersChange(next);
+    } else {
+      setArticleContent(next);
+    }
+  }, [phase, handleArticleWithMarkersChange]);
 
   const runSingleMarker = async (markerIndex: number) => {
     if (!imageGenModel) {
@@ -2762,43 +2792,72 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
 
             {/* 预览阶段：按段落渲染，左侧 gutter 可打锚点，右键菜单可在上/下方插入配图 */}
             {phase === 1 && ( // Editing
-              <div className="p-4 relative">
-                {/* 编辑/预览切换 —— 编辑模式允许直接修改上传的正文 */}
-                <div className="mb-3 flex items-center gap-1.5">
-                  <Button
-                    size="xs"
-                    variant={articleEditMode === 'edit' ? 'primary' : 'secondary'}
-                    onClick={() => setArticleEditMode('edit')}
-                    title="直接编辑正文（可改字、增删段落、自定义位置）"
-                  >
-                    <Pencil size={12} />
-                    编辑正文
-                  </Button>
-                  <Button
-                    size="xs"
-                    variant={articleEditMode === 'preview' ? 'primary' : 'secondary'}
-                    onClick={() => setArticleEditMode('preview')}
-                    title="切到预览以打锚点 / 右键插入配图位置"
-                  >
-                    <FileText size={12} />
-                    预览
-                  </Button>
-                  <div className="ml-2 text-[11px]" style={{ color: 'var(--text-muted)' }}>
-                    {articleEditMode === 'edit' ? '正在编辑正文，切到预览可以打锚点' : '预览模式：悬停段落左侧 + 可加锚点'}
+              <div className="relative h-full flex flex-col">
+                {/* 编辑/预览工具条 */}
+                <div
+                  className="flex items-center gap-2 flex-wrap px-4 pt-3 pb-2 shrink-0 sticky top-0 z-10"
+                  style={{ background: 'var(--bg-panel, rgba(0,0,0,0.4))', backdropFilter: 'blur(8px)' }}
+                >
+                  <div className="inline-flex items-center rounded-[10px] overflow-hidden" style={{ border: '1px solid var(--border-subtle)' }}>
+                    <button
+                      type="button"
+                      onClick={() => setArticleEditMode('edit')}
+                      className="px-3 py-1.5 text-[12px] flex items-center gap-1 transition-colors"
+                      style={{
+                        background: articleEditMode === 'edit' ? 'rgba(147, 197, 253, 0.18)' : 'transparent',
+                        color: articleEditMode === 'edit' ? '#93C5FD' : 'var(--text-muted)',
+                      }}
+                    >
+                      <Pencil size={12} />
+                      编辑正文
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setArticleEditMode('preview')}
+                      className="px-3 py-1.5 text-[12px] flex items-center gap-1 transition-colors"
+                      style={{
+                        background: articleEditMode === 'preview' ? 'rgba(147, 197, 253, 0.18)' : 'transparent',
+                        color: articleEditMode === 'preview' ? '#93C5FD' : 'var(--text-muted)',
+                        borderLeft: '1px solid var(--border-subtle)',
+                      }}
+                    >
+                      <FileText size={12} />
+                      预览
+                    </button>
+                  </div>
+                  {articleEditMode === 'edit' && (
+                    <Button
+                      size="xs"
+                      variant="secondary"
+                      onClick={handleInsertMarkerAtCursor}
+                      title="光标位置插入一行 [插图]: 占位符，占位文字自动选中方便覆盖"
+                    >
+                      <Plus size={12} />
+                      在光标处插入配图位
+                    </Button>
+                  )}
+                  <div className="ml-auto text-[11px]" style={{ color: 'var(--text-muted)' }}>
+                    {articleEditMode === 'edit'
+                      ? '直接改字 / 加段落 / 手写 [插图]: 描述 即可'
+                      : '悬停段落左侧绿色 + 按钮打锚点；切"编辑正文"可直接改字'}
                   </div>
                 </div>
 
                 {articleEditMode === 'edit' && (
-                  <textarea
-                    value={articleContent}
-                    onChange={(e) => setArticleContent(e.target.value)}
-                    className="w-full rounded-[14px] px-4 py-3 text-[13px] leading-6 outline-none resize-none font-mono prd-field"
-                    style={{ minHeight: 480 }}
-                    placeholder="在此直接编辑正文…"
-                  />
+                  <div className="flex-1 min-h-0 px-4 pb-4">
+                    <textarea
+                      ref={articleEditTextareaRef}
+                      value={articleContent}
+                      onChange={(e) => setArticleContent(e.target.value)}
+                      onDragOver={handleEditorDragOver}
+                      onDrop={handleEditorDrop}
+                      className="w-full h-full rounded-[14px] px-4 py-3 text-[14px] leading-7 outline-none resize-none font-mono prd-field"
+                      placeholder="在此直接编辑正文；写 [插图]: 描述… 就是一个配图位（也可用顶部按钮快速插入）"
+                    />
+                  </div>
                 )}
 
-                {articleEditMode === 'preview' && (<>
+                {articleEditMode === 'preview' && (<div className="flex-1 min-h-0 overflow-auto px-4 pb-4 pt-1">
                 {/* 策略引导横幅：user-anchor 但还没锚点时提示用户怎么打 */}
                 {positionStrategy === 'user-anchor' &&
                   !splitParagraphs(articleContent).some(isAnchorParagraph) &&
@@ -3018,7 +3077,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                     请先上传文章
                   </div>
                 )}
-                </>)}
+                </div>)}
               </div>
             )}
 
@@ -3107,114 +3166,94 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
 
             {/* 标记生成完成：文章预览视图 */}
             {phase === 2 && !markerStreaming && (
-              <div className="p-4 relative" style={{ '--img-display-size': `${imageDisplaySize}%` } as React.CSSProperties}>
-                {/* 图片显示尺寸控制 - 右上角浮动（仅预览模式显示） */}
-                {articleEditMode === 'preview' && markerRunItems.some(x => x.assetUrl || x.url || x.base64) && (
-                  <div
-                    className="sticky top-2 float-right z-10 flex items-center gap-0.5 rounded-lg px-1.5 py-1"
-                    style={{
-                      ...glassFloatingButton,
-                      background: 'rgba(0,0,0,0.55)',
-                      border: '1px solid rgba(255,255,255,0.1)',
-                    }}
-                  >
-                    <ImageIcon size={11} style={{ color: 'var(--text-muted)', marginRight: 2 }} />
-                    {[30, 50, 75, 100].map(size => (
-                      <button
-                        key={size}
-                        type="button"
-                        onClick={() => setImageDisplaySize(size)}
-                        className="px-1.5 py-0.5 text-[10px] rounded transition-colors"
-                        style={{
-                          background: imageDisplaySize === size ? 'rgba(147, 197, 253, 0.2)' : 'transparent',
-                          color: imageDisplaySize === size ? '#93C5FD' : 'rgba(255,255,255,0.45)',
-                          border: imageDisplaySize === size ? '1px solid rgba(147, 197, 253, 0.3)' : '1px solid transparent',
-                          fontVariantNumeric: 'tabular-nums',
-                        }}
-                      >
-                        {size}%
-                      </button>
-                    ))}
+              <div className="relative h-full flex flex-col" style={{ '--img-display-size': `${imageDisplaySize}%` } as React.CSSProperties}>
+                {/* 编辑/预览工具条 */}
+                <div
+                  className="flex items-center gap-2 flex-wrap px-4 pt-3 pb-2 shrink-0 sticky top-0 z-10"
+                  style={{ background: 'var(--bg-panel, rgba(0,0,0,0.4))', backdropFilter: 'blur(8px)' }}
+                >
+                  <div className="inline-flex items-center rounded-[10px] overflow-hidden" style={{ border: '1px solid var(--border-subtle)' }}>
+                    <button
+                      type="button"
+                      onClick={() => setArticleEditMode('edit')}
+                      className="px-3 py-1.5 text-[12px] flex items-center gap-1 transition-colors"
+                      style={{
+                        background: articleEditMode === 'edit' ? 'rgba(147, 197, 253, 0.18)' : 'transparent',
+                        color: articleEditMode === 'edit' ? '#93C5FD' : 'var(--text-muted)',
+                      }}
+                    >
+                      <Pencil size={12} />
+                      编辑正文 &amp; 提示词
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setArticleEditMode('preview')}
+                      className="px-3 py-1.5 text-[12px] flex items-center gap-1 transition-colors"
+                      style={{
+                        background: articleEditMode === 'preview' ? 'rgba(147, 197, 253, 0.18)' : 'transparent',
+                        color: articleEditMode === 'preview' ? '#93C5FD' : 'var(--text-muted)',
+                        borderLeft: '1px solid var(--border-subtle)',
+                      }}
+                    >
+                      <FileText size={12} />
+                      预览
+                    </button>
                   </div>
-                )}
-
-                {/* 编辑/预览切换 —— 编辑模式可直接改正文和每条 [插图]: 的提示词 */}
-                <div className="mb-3 flex items-center gap-1.5">
-                  <Button
-                    size="xs"
-                    variant={articleEditMode === 'edit' ? 'primary' : 'secondary'}
-                    onClick={() => setArticleEditMode('edit')}
-                    title="直接编辑正文与 [插图]: 后面的提示词文字"
-                  >
-                    <Pencil size={12} />
-                    编辑正文 &amp; 提示词
-                  </Button>
-                  <Button
-                    size="xs"
-                    variant={articleEditMode === 'preview' ? 'primary' : 'secondary'}
-                    onClick={() => setArticleEditMode('preview')}
-                    title="查看生成效果"
-                  >
-                    <FileText size={12} />
-                    预览
-                  </Button>
-                  <div className="ml-2 text-[11px]" style={{ color: 'var(--text-muted)' }}>
+                  {articleEditMode === 'edit' && (
+                    <Button
+                      size="xs"
+                      variant="secondary"
+                      onClick={handleInsertMarkerAtCursor}
+                      title="在光标位置插入一行 [插图]: 占位符，占位文字会被预选中方便覆盖"
+                    >
+                      <Plus size={12} />
+                      在光标处插入配图位
+                    </Button>
+                  )}
+                  {/* 预览模式：图片尺寸控制 */}
+                  {articleEditMode === 'preview' && markerRunItems.some(x => x.assetUrl || x.url || x.base64) && (
+                    <div className="inline-flex items-center gap-0.5 rounded-lg px-1.5 py-1" style={{ border: '1px solid var(--border-subtle)' }}>
+                      <ImageIcon size={11} style={{ color: 'var(--text-muted)', marginRight: 2 }} />
+                      {[30, 50, 75, 100].map(size => (
+                        <button
+                          key={size}
+                          type="button"
+                          onClick={() => setImageDisplaySize(size)}
+                          className="px-1.5 py-0.5 text-[10px] rounded transition-colors"
+                          style={{
+                            background: imageDisplaySize === size ? 'rgba(147, 197, 253, 0.2)' : 'transparent',
+                            color: imageDisplaySize === size ? '#93C5FD' : 'rgba(255,255,255,0.45)',
+                            border: imageDisplaySize === size ? '1px solid rgba(147, 197, 253, 0.3)' : '1px solid transparent',
+                            fontVariantNumeric: 'tabular-nums',
+                          }}
+                        >
+                          {size}%
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                  <div className="ml-auto text-[11px]" style={{ color: 'var(--text-muted)' }}>
                     {articleEditMode === 'edit'
-                      ? '改 [插图]: 后面的文字即改提示词；改完切回预览点"重新生成"即可'
-                      : '预览模式：查看当前正文 + 配图效果'}
+                      ? '改 [插图]: 的文字 = 改提示词；可从右侧卡片拖到此处插入'
+                      : '每张图下面有 prompt + 重新生成按钮'}
                   </div>
                 </div>
 
                 {articleEditMode === 'edit' && (
-                  <div className="flex flex-col gap-2">
-                    {/* 编辑模式工具条：插入配图位 + 拖拽提示 */}
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <Button
-                        size="xs"
-                        variant="secondary"
-                        onClick={handleInsertMarkerAtCursor}
-                        title="在光标位置插入一行 [插图]: 占位符，占位文字会被预选中方便覆盖"
-                      >
-                        <Plus size={12} />
-                        在光标处插入配图位
-                      </Button>
-                      <div className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
-                        或从右侧「配图列表」拖拽卡片到下方 textarea ↓
-                      </div>
-                    </div>
+                  <div className="flex-1 min-h-0 px-4 pb-4">
                     <textarea
-                      ref={phase2EditTextareaRef}
+                      ref={articleEditTextareaRef}
                       value={articleWithMarkers || articleContent}
                       onChange={(e) => handleArticleWithMarkersChange(e.target.value)}
-                      onDragOver={(e) => {
-                        if (e.dataTransfer.types.includes('application/x-literary-marker-prompt')) {
-                          e.preventDefault();
-                          e.dataTransfer.dropEffect = 'copy';
-                        }
-                      }}
-                      onDrop={(e) => {
-                        const payload = e.dataTransfer.getData('application/x-literary-marker-prompt');
-                        if (!payload) return;
-                        e.preventDefault();
-                        const ta = phase2EditTextareaRef.current;
-                        const base = ta?.value ?? '';
-                        const pos = ta?.selectionStart ?? base.length;
-                        const before = base.slice(0, pos);
-                        const after = base.slice(pos);
-                        const needsLeadingNewline = before.length > 0 && !before.endsWith('\n');
-                        const prefix = needsLeadingNewline ? '\n\n' : '';
-                        const suffix = after.startsWith('\n') ? '\n' : '\n\n';
-                        const next = before + prefix + `[插图]: ${payload}` + suffix + after;
-                        handleArticleWithMarkersChange(next);
-                      }}
-                      className="w-full rounded-[14px] px-4 py-3 text-[13px] leading-6 outline-none resize-none font-mono prd-field"
-                      style={{ minHeight: 520 }}
+                      onDragOver={handleEditorDragOver}
+                      onDrop={handleEditorDrop}
+                      className="w-full h-full rounded-[14px] px-4 py-3 text-[14px] leading-7 outline-none resize-none font-mono prd-field"
                       placeholder="在此直接编辑正文和 [插图]: 提示词…"
                     />
                   </div>
                 )}
 
-                {articleEditMode === 'preview' && (<>
+                {articleEditMode === 'preview' && (<div className="flex-1 min-h-0 overflow-auto px-4 pb-4 pt-1">
 
                 {/* 折叠的思考面板 */}
                 {thinkingContent && (
@@ -3365,7 +3404,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                     {leftPreviewMarkdown}
                   </ReactMarkdown>
                 </div>
-                </>)}
+                </div>)}
               </div>
             )}
           </div>
