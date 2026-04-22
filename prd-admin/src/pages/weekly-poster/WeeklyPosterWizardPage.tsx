@@ -1,5 +1,40 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
+
+/**
+ * 服务器权威性: wizard 本地 state 只是后端 poster 的一个视图。
+ * 刷新页面后通过 sessionStorage 中的 posterId 向后端重新拉取,不丢用户的生成结果。
+ * (规则 .claude/rules/server-authority.md — 客户端被动、服务器权威)
+ */
+const DRAFT_ID_STORAGE_KEY = 'weekly-poster-wizard-draft-id';
+const WIZARD_PREFS_STORAGE_KEY = 'weekly-poster-wizard-prefs';
+
+function loadDraftId(): string | null {
+  try { return sessionStorage.getItem(DRAFT_ID_STORAGE_KEY); } catch { return null; }
+}
+function saveDraftId(id: string | null) {
+  try {
+    if (id) sessionStorage.setItem(DRAFT_ID_STORAGE_KEY, id);
+    else sessionStorage.removeItem(DRAFT_ID_STORAGE_KEY);
+  } catch { /* ignore */ }
+}
+
+interface WizardPrefs {
+  templateKey?: WeeklyPosterTemplateKey;
+  sourceType?: WeeklyPosterSourceType;
+  kbEntryId?: string;
+  freeformContent?: string;
+}
+function loadPrefs(): WizardPrefs {
+  try {
+    const raw = sessionStorage.getItem(WIZARD_PREFS_STORAGE_KEY);
+    if (raw) return JSON.parse(raw) as WizardPrefs;
+  } catch { /* ignore */ }
+  return {};
+}
+function savePrefs(p: WizardPrefs) {
+  try { sessionStorage.setItem(WIZARD_PREFS_STORAGE_KEY, JSON.stringify(p)); } catch { /* ignore */ }
+}
 import {
   SlidersHorizontal,
   Play,
@@ -10,6 +45,7 @@ import {
 } from 'lucide-react';
 import {
   generateWeeklyPosterPageImage,
+  getWeeklyPoster,
   publishWeeklyPoster,
   listWeeklyPosterTemplates,
   listWeeklyPosterKnowledgeEntries,
@@ -41,10 +77,12 @@ type PageProgress = 'pending' | 'generating-image' | 'done' | 'failed';
  * 不再塞超饱和紫色渐变,避免「AI 生成仪表盘」的套路观感。
  */
 export default function WeeklyPosterWizardPage() {
+  const [searchParams] = useSearchParams();
+  const initialPrefs = useMemo(() => loadPrefs(), []);
   const [templates, setTemplates] = useState<WeeklyPosterTemplateMeta[]>(POSTER_TEMPLATES_SEED);
-  const [templateKey, setTemplateKey] = useState<WeeklyPosterTemplateKey>('release');
-  const [sourceType, setSourceType] = useState<WeeklyPosterSourceType>('changelog-current-week');
-  const [freeformContent, setFreeformContent] = useState('');
+  const [templateKey, setTemplateKey] = useState<WeeklyPosterTemplateKey>(initialPrefs.templateKey ?? 'release');
+  const [sourceType, setSourceType] = useState<WeeklyPosterSourceType>(initialPrefs.sourceType ?? 'changelog-current-week');
+  const [freeformContent, setFreeformContent] = useState(initialPrefs.freeformContent ?? '');
   const [presentationMode] = useState<'static'>('static');
 
   const [phase, setPhase] = useState<'idle' | 'llm' | 'images' | 'ready'>('idle');
@@ -53,7 +91,7 @@ export default function WeeklyPosterWizardPage() {
   const [poster, setPoster] = useState<WeeklyPoster | null>(null);
   const [modelInfo, setModelInfo] = useState<{ model?: string; platform?: string } | null>(null);
   const [kbEntries, setKbEntries] = useState<WeeklyPosterKnowledgeEntryMeta[]>([]);
-  const [kbEntryId, setKbEntryId] = useState<string>('');
+  const [kbEntryId, setKbEntryId] = useState<string>(initialPrefs.kbEntryId ?? '');
   const [kbLoading, setKbLoading] = useState(false);
   const [sourceSummary, setSourceSummary] = useState<string | null>(null);
   const [pageProgress, setPageProgress] = useState<Record<number, PageProgress>>({});
@@ -68,6 +106,34 @@ export default function WeeklyPosterWizardPage() {
       if (res.success && res.data?.items?.length) setTemplates(res.data.items);
     });
   }, []);
+
+  // 刷新恢复:优先看 URL ?id,退而用 sessionStorage 里最近一次草稿 id,
+  // 向后端拉最新 poster(服务器权威),重新建立 pageProgress。
+  useEffect(() => {
+    const urlId = searchParams.get('id');
+    const draftId = urlId || loadDraftId();
+    if (!draftId) return;
+    void getWeeklyPoster(draftId).then((res) => {
+      if (!res.success || !res.data) {
+        // 可能已被删除 → 清 session
+        if (!urlId) saveDraftId(null);
+        return;
+      }
+      const p = res.data;
+      setPoster(p);
+      const pg: Record<number, PageProgress> = {};
+      p.pages.forEach((pg0) => { pg[pg0.order] = pg0.imageUrl ? 'done' : 'pending'; });
+      setPageProgress(pg);
+      setPhase('ready');
+      saveDraftId(p.id);
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // 用户选择持久化(刷新后仍保留 templateKey/sourceType/freeformContent/kbEntryId)
+  useEffect(() => {
+    savePrefs({ templateKey, sourceType, kbEntryId, freeformContent });
+  }, [templateKey, sourceType, kbEntryId, freeformContent]);
 
   // 切到知识库数据源时懒加载条目列表
   useEffect(() => {
@@ -161,6 +227,7 @@ export default function WeeklyPosterWizardPage() {
         return;
       }
       setPoster(data.poster);
+      saveDraftId(data.poster.id); // 落库持久化锚点,刷新后可恢复
       const orders = data.poster.pages.map((p) => p.order);
       void runImageGenPipeline(data.poster.id, orders);
     },
@@ -224,6 +291,7 @@ export default function WeeklyPosterWizardPage() {
       return;
     }
     setPoster(res.data);
+    saveDraftId(null); // 发布成功,清锚点,下次进入是新空白
     toast.success('已发布,登录用户下次访问主页即可看到');
     await useWeeklyPosterStore.getState().loadCurrent();
   }, [poster]);
@@ -258,17 +326,41 @@ export default function WeeklyPosterWizardPage() {
               把更新 / 公告 / 活动一键做成主页弹窗海报 — AI 写文字,自动配图
             </p>
           </div>
-          <Link
-            to="/weekly-poster/advanced"
-            className="inline-flex items-center gap-1.5 px-3 h-8 rounded-md text-[12px] transition-colors"
-            style={{
-              color: 'rgba(255,255,255,0.7)',
-              background: 'rgba(255,255,255,0.04)',
-              border: '1px solid rgba(255,255,255,0.1)',
-            }}
-          >
-            <SlidersHorizontal size={12} /> 高级编辑
-          </Link>
+          <div className="flex items-center gap-2">
+            {poster && (
+              <button
+                type="button"
+                onClick={() => {
+                  setPoster(null);
+                  setPageProgress({});
+                  setTypingText('');
+                  setModelInfo(null);
+                  setSourceSummary(null);
+                  setPhase('idle');
+                  saveDraftId(null);
+                }}
+                className="inline-flex items-center gap-1.5 px-3 h-8 rounded-md text-[12px] transition-colors"
+                style={{
+                  color: 'rgba(255,255,255,0.7)',
+                  background: 'rgba(255,255,255,0.04)',
+                  border: '1px solid rgba(255,255,255,0.1)',
+                }}
+              >
+                新建空白
+              </button>
+            )}
+            <Link
+              to="/weekly-poster/advanced"
+              className="inline-flex items-center gap-1.5 px-3 h-8 rounded-md text-[12px] transition-colors"
+              style={{
+                color: 'rgba(255,255,255,0.7)',
+                background: 'rgba(255,255,255,0.04)',
+                border: '1px solid rgba(255,255,255,0.1)',
+              }}
+            >
+              <SlidersHorizontal size={12} /> 高级编辑
+            </Link>
+          </div>
         </div>
 
         {/* 主面板 —— 液态玻璃容器 */}

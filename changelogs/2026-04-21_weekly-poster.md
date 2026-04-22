@@ -17,3 +17,5 @@
 | refactor | prd-api | 海报 LLM 输出改 Markdown 分段（`## Page N · 标题 · #色` + 正文 + `[IMG] prompt`）替代 JSON，对 LLM 更友好 + 可流式增量解析 + 支持 markdown 预览；ExtractClosedPagesSoFar 在每次 chunk 到达后提取新闭合 page 立即 emit，卡片逐张冒出不再等整坨完成 |
 | feat | prd-admin | 预览弹窗 body 改用 MarkdownContent 组件渲染（支持 **加粗**/列表/表格/代码块），正文视觉效果升级 |
 | fix | prd-admin | 向导结果区 poster.pages 访问加 `?? []` 守卫 + ResultPageCard key 降级 fallback，修复「Cannot read properties of undefined (reading 'length')」运行时错误与 React key 警告 |
+| feat | prd-admin | 海报工坊服务器权威化:用户选择(templateKey/sourceType/kbEntryId/freeformContent) + 当前草稿 posterId 都写 sessionStorage,刷新页面自动从后端 getWeeklyPoster 恢复,草稿不再丢 |
+| refactor | prd-admin | 海报工坊从「百宝箱」移除,改挂到「我的资源 → 海报设计」tab(资源产物的归属更合理);资源管理页新增 PosterDesignSection 列出所有海报,卡片点击回工坊继续编辑,支持撤回/删除 |

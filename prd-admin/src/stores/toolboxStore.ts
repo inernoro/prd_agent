@@ -256,22 +256,7 @@ export const BUILTIN_TOOLS: ToolboxItem[] = [
     usageCount: 0,
     createdAt: new Date().toISOString(),
   },
-  // ========== AI 海报工坊 · wip（满足规则 #9 完成标准前保持施工中徽章） ==========
-  {
-    id: 'builtin-weekly-poster-wizard',
-    name: 'AI 海报工坊',
-    description: '把更新 / 公告 / 活动一键做成主页弹窗海报,AI 写文字自动配图',
-    icon: 'Sparkles',
-    category: 'builtin',
-    type: 'builtin',
-    kind: 'tool',
-    agentKey: 'report-agent',
-    routePath: '/weekly-poster',
-    tags: ['海报', '弹窗', '主页', '发布', 'wip'],
-    wip: true,
-    usageCount: 0,
-    createdAt: new Date().toISOString(),
-  },
+  // (海报工坊不再注册到百宝箱,改挂到资源管理 → 海报设计 tab 下 — 用户视角它是"资源产物"而非"智能体")
   // ========== 工具（缺 AI / 生命周期 / 存储 三要素之一）==========
   {
     id: 'builtin-shortcuts-agent',
