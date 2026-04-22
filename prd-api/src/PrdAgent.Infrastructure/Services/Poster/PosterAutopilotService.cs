@@ -54,7 +54,7 @@ public sealed class PosterAutopilotPage
 
 public sealed class PosterAutopilotService : IPosterAutopilotService
 {
-    private const string AppCallerCode = "report-agent.weekly-poster.autopilot::chat";
+    private static readonly string AppCallerCode = AppCallerRegistry.ReportAgent.WeeklyPoster.Autopilot;
 
     private readonly ILlmGateway _gateway;
     private readonly ILLMRequestContextAccessor _llmRequestContext;

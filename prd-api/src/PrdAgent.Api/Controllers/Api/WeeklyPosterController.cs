@@ -25,7 +25,7 @@ namespace PrdAgent.Api.Controllers.Api;
     WritePermission = AdminPermissionCatalog.ReportAgentTemplateManage)]
 public sealed class WeeklyPosterController : ControllerBase
 {
-    private const string ImageGenAppCallerCode = "report-agent.weekly-poster.image::generation";
+    private static readonly string ImageGenAppCallerCode = AppCallerRegistry.ReportAgent.WeeklyPoster.Image;
 
     private readonly MongoDbContext _db;
     private readonly ILogger<WeeklyPosterController> _logger;

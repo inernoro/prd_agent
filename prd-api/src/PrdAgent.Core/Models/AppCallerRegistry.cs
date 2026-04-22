@@ -740,6 +740,28 @@ public static class ReportAgent
         )]
         public const string ItemRefine = "report-agent.daily-log.polish::chat";
     }
+
+    /// <summary>
+    /// 周报海报工坊 —— 登录后主页弹窗轮播海报的 AI 向导
+    /// </summary>
+    public static class WeeklyPoster
+    {
+        [AppCallerMetadata(
+            "周报海报-自动拆页",
+            "把周报 / changelog 拆成 4-6 页海报（标题/正文/imagePrompt/accentColor）",
+            ModelTypes = new[] { ModelTypes.Chat },
+            Category = "Report"
+        )]
+        public const string Autopilot = "report-agent.weekly-poster.autopilot::chat";
+
+        [AppCallerMetadata(
+            "周报海报-配图生成",
+            "为海报某一页根据 imagePrompt 生成配图（文生图）",
+            ModelTypes = new[] { ModelTypes.Generation },
+            Category = "Report"
+        )]
+        public const string Image = "report-agent.weekly-poster.image::generation";
+    }
 }
 
 /// <summary>

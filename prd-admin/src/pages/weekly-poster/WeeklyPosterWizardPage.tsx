@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import {
-  Settings2,
-  Wand2,
+  SlidersHorizontal,
+  Play,
   Eye,
   Send,
   RotateCcw,
@@ -33,19 +33,17 @@ import { toast } from '@/lib/toast';
 type PageProgress = 'pending' | 'generating-image' | 'done' | 'failed';
 
 /**
- * AI 周报海报工坊 —— 选三下,点一次,4-5 张配图海报自动生成。
+ * AI 周报海报工坊 —— 选三下 + 一键生成。
  *
- * 路径最短:模板 → 数据源 → 大按钮 → 生成结果卡片边出现边填充,
- * 最后点「发布到主页」即可在登录用户首次进主页时弹出。
- *
- * 非静态形态(fullscreen/interactive)暂为「敬请期待」徽章。
+ * 视觉:全面走系统 Surface System(.surface / .surface-inset / .surface-interactive),
+ * 不再塞超饱和紫色渐变,避免「AI 生成仪表盘」的套路观感。
  */
 export default function WeeklyPosterWizardPage() {
   const [templates, setTemplates] = useState<WeeklyPosterTemplateMeta[]>(POSTER_TEMPLATES_SEED);
   const [templateKey, setTemplateKey] = useState<WeeklyPosterTemplateKey>('release');
   const [sourceType, setSourceType] = useState<WeeklyPosterSourceType>('changelog-current-week');
   const [freeformContent, setFreeformContent] = useState('');
-  const [presentationMode, setPresentationMode] = useState<'static'>('static');
+  const [presentationMode] = useState<'static'>('static');
 
   const [phase, setPhase] = useState<'idle' | 'llm' | 'images' | 'ready'>('idle');
   const [poster, setPoster] = useState<WeeklyPoster | null>(null);
@@ -56,6 +54,7 @@ export default function WeeklyPosterWizardPage() {
   const [publishing, setPublishing] = useState(false);
 
   const selectedTemplate = useMemo(() => findTemplate(templates, templateKey), [templates, templateKey]);
+  const busy = phase === 'llm' || phase === 'images';
 
   useEffect(() => {
     void listWeeklyPosterTemplates().then((res) => {
@@ -63,9 +62,6 @@ export default function WeeklyPosterWizardPage() {
     });
   }, []);
 
-  const busy = phase === 'llm' || phase === 'images';
-
-  // ── 一键生成:先 autopilot 拿文字草稿,再并发调 generate-image(max 3) ──
   const handleAutopilot = useCallback(async () => {
     if (busy) return;
     if (sourceType === 'freeform' && freeformContent.trim().length < 40) {
@@ -92,14 +88,11 @@ export default function WeeklyPosterWizardPage() {
     setPoster(draft);
     setModelInfo({ model: res.data.model ?? undefined, platform: res.data.platform ?? undefined });
     setSourceSummary(res.data.sourceSummary ?? null);
-    const initialProgress: Record<number, PageProgress> = {};
-    draft.pages.forEach((p) => {
-      initialProgress[p.order] = 'pending';
-    });
-    setPageProgress(initialProgress);
+    const initial: Record<number, PageProgress> = {};
+    draft.pages.forEach((p) => { initial[p.order] = 'pending'; });
+    setPageProgress(initial);
     setPhase('images');
 
-    // 并发生图(每次最多 3 个)
     await runWithConcurrency(
       draft.pages.map((p) => p.order),
       3,
@@ -110,7 +103,6 @@ export default function WeeklyPosterWizardPage() {
           setPageProgress((prev) => ({ ...prev, [order]: 'failed' }));
           return;
         }
-        // 后端每次返回整张 poster,取最新
         setPoster(gen.data);
         setPageProgress((prev) => ({ ...prev, [order]: 'done' }));
       },
@@ -119,21 +111,18 @@ export default function WeeklyPosterWizardPage() {
     toast.success('生成完毕,点「预览」看看效果');
   }, [busy, templateKey, sourceType, freeformContent]);
 
-  const handleRegenerateImage = useCallback(
-    async (order: number) => {
-      if (!poster || busy) return;
-      setPageProgress((prev) => ({ ...prev, [order]: 'generating-image' }));
-      const gen = await generateWeeklyPosterPageImage(poster.id, order);
-      if (!gen.success || !gen.data) {
-        setPageProgress((prev) => ({ ...prev, [order]: 'failed' }));
-        toast.error(gen.error?.message || '重新生图失败');
-        return;
-      }
-      setPoster(gen.data);
-      setPageProgress((prev) => ({ ...prev, [order]: 'done' }));
-    },
-    [poster, busy],
-  );
+  const handleRegenerateImage = useCallback(async (order: number) => {
+    if (!poster || busy) return;
+    setPageProgress((prev) => ({ ...prev, [order]: 'generating-image' }));
+    const gen = await generateWeeklyPosterPageImage(poster.id, order);
+    if (!gen.success || !gen.data) {
+      setPageProgress((prev) => ({ ...prev, [order]: 'failed' }));
+      toast.error(gen.error?.message || '重新生图失败');
+      return;
+    }
+    setPoster(gen.data);
+    setPageProgress((prev) => ({ ...prev, [order]: 'done' }));
+  }, [poster, busy]);
 
   const handlePublish = useCallback(async () => {
     if (!poster) return;
@@ -146,7 +135,6 @@ export default function WeeklyPosterWizardPage() {
     }
     setPoster(res.data);
     toast.success('已发布,登录用户下次访问主页即可看到');
-    // 让当前会话也能立刻看到:清 dismissed,load 后会自动弹
     await useWeeklyPosterStore.getState().loadCurrent();
   }, [poster]);
 
@@ -156,215 +144,198 @@ export default function WeeklyPosterWizardPage() {
       style={{ background: 'var(--bg-base)', overscrollBehavior: 'contain' }}
     >
       <div className="max-w-[1080px] mx-auto px-8 py-8 pb-24">
-        {/* Hero */}
-        <div className="flex items-start justify-between gap-4 mb-8">
+        {/* 顶栏 */}
+        <div className="flex items-start justify-between gap-4 mb-6">
           <div>
-            <div className="text-[10px] font-semibold tracking-[0.14em] uppercase text-indigo-300/70 mb-1">
-              REPORT · POSTER · AI 向导
+            <div className="text-[10px] font-semibold tracking-[0.14em] uppercase mb-1"
+              style={{ color: 'rgba(255,255,255,0.4)' }}>
+              Report · Poster
             </div>
-            <h1
-              className="text-[28px] font-semibold tracking-tight"
-              style={{
-                background: 'linear-gradient(135deg, #00f0ff 0%, #7c3aed 50%, #f43f5e 100%)',
-                WebkitBackgroundClip: 'text',
-                WebkitTextFillColor: 'transparent',
-                backgroundClip: 'text',
-              }}
-            >
-              AI 周报海报工坊
+            <h1 className="text-[22px] font-semibold tracking-tight text-white">
+              周报海报工坊
             </h1>
-            <p className="text-[13px] text-white/60 mt-1">
-              选模板 · 选数据源 · 点一次 — 4-5 张配图海报自动生成
+            <p className="text-[13px] mt-1" style={{ color: 'rgba(255,255,255,0.55)' }}>
+              选模板 · 选数据源 · 一键生成 — 文字由 AI 写,图片自动配
             </p>
           </div>
           <Link
             to="/weekly-poster/advanced"
-            className="inline-flex items-center gap-1.5 px-3 h-8 rounded-md text-[12px] transition-colors hover:bg-white/10"
+            className="inline-flex items-center gap-1.5 px-3 h-8 rounded-md text-[12px] transition-colors"
             style={{
-              color: 'rgba(255,255,255,0.65)',
-              border: '1px solid rgba(255,255,255,0.12)',
+              color: 'rgba(255,255,255,0.7)',
+              background: 'rgba(255,255,255,0.04)',
+              border: '1px solid rgba(255,255,255,0.1)',
             }}
           >
-            <Settings2 size={12} /> 高级模式(手动编辑)
+            <SlidersHorizontal size={12} /> 高级编辑
           </Link>
         </div>
 
-        {/* ① 模板 */}
-        <Section index="①" title="选一个模板">
-          <div className="grid grid-cols-4 gap-3" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))' }}>
-            {templates.map((t) => {
-              const active = t.key === templateKey;
-              return (
-                <button
-                  key={t.key}
-                  type="button"
-                  onClick={() => setTemplateKey(t.key)}
-                  disabled={busy}
-                  className="relative rounded-xl text-left transition-all disabled:opacity-60 disabled:cursor-not-allowed enabled:hover:-translate-y-0.5"
-                  style={{
-                    padding: 14,
-                    background: active
-                      ? 'linear-gradient(180deg, rgba(124,58,237,0.18) 0%, rgba(124,58,237,0.06) 100%)'
-                      : 'rgba(255,255,255,0.03)',
-                    border: active ? '1px solid rgba(124,58,237,0.55)' : '1px solid rgba(255,255,255,0.08)',
-                    boxShadow: active ? '0 0 20px rgba(124,58,237,0.18)' : 'none',
-                  }}
-                >
-                  <div className="text-[22px] mb-1.5">{t.emoji}</div>
-                  <div className="text-[13px] font-semibold text-white">{t.label}</div>
-                  <div className="text-[11px] text-white/55 mt-0.5 leading-relaxed line-clamp-2">
-                    {t.description}
-                  </div>
-                  <div className="mt-2 flex items-center gap-1">
-                    {t.accentPalette.slice(0, 5).map((c) => (
-                      <span
-                        key={c}
-                        className="inline-block rounded-full"
-                        style={{ width: 10, height: 10, background: c, boxShadow: `0 0 6px ${c}80` }}
-                      />
-                    ))}
-                  </div>
-                </button>
-              );
-            })}
-          </div>
-        </Section>
+        {/* 主面板 —— 液态玻璃容器 */}
+        <div className="surface rounded-2xl p-6 space-y-6">
+          {/* ① 模板 */}
+          <Section title="模板">
+            <div className="grid gap-2.5" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))' }}>
+              {templates.map((t) => {
+                const active = t.key === templateKey;
+                return (
+                  <button
+                    key={t.key}
+                    type="button"
+                    onClick={() => setTemplateKey(t.key)}
+                    disabled={busy}
+                    className="relative rounded-lg text-left transition-all disabled:opacity-50 disabled:cursor-not-allowed enabled:hover:-translate-y-px"
+                    style={{
+                      padding: 12,
+                      background: active ? 'rgba(255,255,255,0.07)' : 'rgba(255,255,255,0.025)',
+                      border: active
+                        ? '1px solid rgba(255,255,255,0.24)'
+                        : '1px solid rgba(255,255,255,0.08)',
+                      boxShadow: active
+                        ? 'inset 0 1px 0 rgba(255,255,255,0.08)'
+                        : 'none',
+                    }}
+                  >
+                    <div className="flex items-center gap-2 mb-1.5">
+                      <span className="text-[16px]">{t.emoji}</span>
+                      <span className="text-[13px] font-medium text-white">{t.label}</span>
+                    </div>
+                    <div className="text-[11px] leading-relaxed line-clamp-2"
+                      style={{ color: 'rgba(255,255,255,0.55)' }}>
+                      {t.description}
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          </Section>
 
-        {/* ② 数据源 */}
-        <Section index="②" title="选数据源">
-          <div className="flex gap-2 mb-2">
-            {SOURCE_TYPES.map((s) => {
-              const active = s.key === sourceType;
-              return (
-                <button
-                  key={s.key}
-                  type="button"
-                  onClick={() => setSourceType(s.key)}
-                  disabled={busy}
-                  className="rounded-lg text-left transition-colors px-3 py-2 disabled:opacity-60"
-                  style={{
-                    flex: 1,
-                    background: active ? 'rgba(124,58,237,0.15)' : 'rgba(255,255,255,0.03)',
-                    border: active ? '1px solid rgba(124,58,237,0.5)' : '1px solid rgba(255,255,255,0.1)',
-                  }}
-                >
-                  <div className="text-[12px] font-medium text-white">{s.label}</div>
-                  <div className="text-[10px] text-white/55 mt-0.5">{s.description}</div>
-                </button>
-              );
-            })}
-          </div>
-          {sourceType === 'freeform' && (
-            <textarea
-              value={freeformContent}
-              onChange={(e) => setFreeformContent(e.target.value)}
-              disabled={busy}
-              rows={6}
-              placeholder={
-                '在此粘贴任何 markdown 内容 —— 周报原文、发布说明、活动介绍… AI 会自动拆成 4-5 页海报。'
-              }
-              className="w-full mt-2 px-3 py-2 rounded-md text-[12px] outline-none transition-colors font-mono"
-              style={{
-                background: 'rgba(0,0,0,0.3)',
-                border: '1px solid rgba(255,255,255,0.12)',
-                color: 'rgba(255,255,255,0.9)',
-                minHeight: 120,
-              }}
-              onFocus={(e) => (e.currentTarget.style.borderColor = 'rgba(124,58,237,0.6)')}
-              onBlur={(e) => (e.currentTarget.style.borderColor = 'rgba(255,255,255,0.12)')}
-            />
-          )}
-        </Section>
-
-        {/* ③ 形态 */}
-        <Section index="③" title="展示形态">
-          <div className="grid gap-2" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))' }}>
-            {PRESENTATION_MODES.map((m) => {
-              const active = m.key === presentationMode;
-              return (
-                <button
-                  key={m.key}
-                  type="button"
-                  onClick={() => m.enabled && setPresentationMode('static')}
-                  disabled={!m.enabled || busy}
-                  className="relative rounded-lg text-left px-3 py-2.5 transition-colors disabled:cursor-not-allowed"
-                  style={{
-                    background: active ? 'rgba(124,58,237,0.15)' : 'rgba(255,255,255,0.03)',
-                    border: active ? '1px solid rgba(124,58,237,0.5)' : '1px solid rgba(255,255,255,0.1)',
-                    opacity: m.enabled ? 1 : 0.55,
-                  }}
-                >
-                  <div className="flex items-center gap-1.5">
-                    <div className="text-[12px] font-medium text-white">{m.label}</div>
-                    {!m.enabled && (
-                      <span
-                        className="text-[9px] px-1.5 py-0.5 rounded font-semibold"
-                        style={{
-                          background: 'rgba(251,191,36,0.18)',
-                          color: '#fcd34d',
-                        }}
-                      >
-                        WIP
-                      </span>
-                    )}
-                  </div>
-                  <div className="text-[10px] text-white/55 mt-0.5">{m.description}</div>
-                </button>
-              );
-            })}
-          </div>
-        </Section>
-
-        {/* ④ 大按钮 */}
-        <div className="mt-10 flex justify-center">
-          <button
-            type="button"
-            onClick={handleAutopilot}
-            disabled={busy}
-            className="inline-flex items-center gap-2 px-8 h-14 rounded-full text-[16px] font-semibold text-white transition-all disabled:cursor-not-allowed enabled:hover:scale-[1.03]"
-            style={{
-              background: busy
-                ? 'linear-gradient(135deg, rgba(124,58,237,0.5), rgba(244,63,94,0.5))'
-                : 'linear-gradient(135deg, #00f0ff 0%, #7c3aed 50%, #f43f5e 100%)',
-              boxShadow: '0 10px 30px -6px rgba(124,58,237,0.55)',
-              minWidth: 320,
-              justifyContent: 'center',
-            }}
-          >
-            {phase === 'llm' ? (
-              <>
-                <MapSpinner size={18} /> AI 正在写文案...
-              </>
-            ) : phase === 'images' ? (
-              <>
-                <MapSpinner size={18} /> 配图生成中({countDone(pageProgress)}/{Object.keys(pageProgress).length})
-              </>
-            ) : phase === 'ready' ? (
-              <>
-                <RefreshCw size={18} /> 换个模板 / 数据源 再生成一张
-              </>
-            ) : (
-              <>
-                <Wand2 size={18} /> 一键生成本周海报 · {selectedTemplate.emoji} {selectedTemplate.label}
-              </>
+          {/* ② 数据源 */}
+          <Section title="数据源">
+            <div className="grid gap-2" style={{ gridTemplateColumns: '1fr 1fr' }}>
+              {SOURCE_TYPES.map((s) => {
+                const active = s.key === sourceType;
+                return (
+                  <button
+                    key={s.key}
+                    type="button"
+                    onClick={() => setSourceType(s.key)}
+                    disabled={busy}
+                    className="rounded-lg text-left transition-all px-3 py-2.5 disabled:opacity-50"
+                    style={{
+                      background: active ? 'rgba(255,255,255,0.07)' : 'rgba(255,255,255,0.025)',
+                      border: active
+                        ? '1px solid rgba(255,255,255,0.24)'
+                        : '1px solid rgba(255,255,255,0.08)',
+                    }}
+                  >
+                    <div className="text-[12px] font-medium text-white">{s.label}</div>
+                    <div className="text-[10.5px] mt-0.5" style={{ color: 'rgba(255,255,255,0.5)' }}>
+                      {s.description}
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+            {sourceType === 'freeform' && (
+              <textarea
+                value={freeformContent}
+                onChange={(e) => setFreeformContent(e.target.value)}
+                disabled={busy}
+                rows={6}
+                placeholder="粘贴任何 markdown —— 周报原文、发布说明、活动介绍…"
+                className="w-full mt-2.5 px-3 py-2 rounded-md text-[12px] outline-none font-mono"
+                style={{
+                  background: 'rgba(0,0,0,0.25)',
+                  border: '1px solid rgba(255,255,255,0.1)',
+                  color: 'rgba(255,255,255,0.9)',
+                  minHeight: 120,
+                }}
+              />
             )}
-          </button>
+          </Section>
+
+          {/* ③ 展示形态 */}
+          <Section title="展示形态">
+            <div className="grid gap-2" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))' }}>
+              {PRESENTATION_MODES.map((m) => {
+                const active = m.key === presentationMode;
+                return (
+                  <div
+                    key={m.key}
+                    className="rounded-lg px-3 py-2.5 transition-colors"
+                    style={{
+                      background: active ? 'rgba(255,255,255,0.07)' : 'rgba(255,255,255,0.025)',
+                      border: active
+                        ? '1px solid rgba(255,255,255,0.24)'
+                        : '1px solid rgba(255,255,255,0.08)',
+                      opacity: m.enabled ? 1 : 0.55,
+                      cursor: m.enabled ? 'default' : 'not-allowed',
+                    }}
+                  >
+                    <div className="flex items-center gap-1.5">
+                      <div className="text-[12px] font-medium text-white">{m.label}</div>
+                      {!m.enabled && (
+                        <span className="text-[9px] px-1.5 py-0.5 rounded font-medium"
+                          style={{ background: 'rgba(255,255,255,0.06)', color: 'rgba(255,255,255,0.55)' }}>
+                          敬请期待
+                        </span>
+                      )}
+                    </div>
+                    <div className="text-[10.5px] mt-0.5" style={{ color: 'rgba(255,255,255,0.5)' }}>
+                      {m.description}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </Section>
+
+          {/* 生成按钮 */}
+          <div className="pt-2 flex justify-center">
+            <button
+              type="button"
+              onClick={handleAutopilot}
+              disabled={busy}
+              className="inline-flex items-center gap-2 px-6 h-11 rounded-lg text-[14px] font-medium transition-all disabled:cursor-not-allowed"
+              style={{
+                background: busy
+                  ? 'rgba(255,255,255,0.06)'
+                  : 'rgba(255,255,255,0.1)',
+                color: '#fff',
+                border: '1px solid rgba(255,255,255,0.2)',
+                boxShadow: busy ? 'none' : 'inset 0 1px 0 rgba(255,255,255,0.12)',
+                minWidth: 280,
+                justifyContent: 'center',
+              }}
+            >
+              {phase === 'llm' ? (
+                <><MapSpinner size={14} /> 正在写文案…</>
+              ) : phase === 'images' ? (
+                <><MapSpinner size={14} /> 配图生成中({countDone(pageProgress)}/{Object.keys(pageProgress).length})</>
+              ) : phase === 'ready' ? (
+                <><RefreshCw size={14} /> 换参数再生成一张</>
+              ) : (
+                <><Play size={14} /> 一键生成 · {selectedTemplate.emoji} {selectedTemplate.label}</>
+              )}
+            </button>
+          </div>
+
+          {modelInfo?.model && (
+            <div className="text-center text-[10.5px] font-mono"
+              style={{ color: 'rgba(255,255,255,0.35)' }}>
+              ● {modelInfo.model}
+              {modelInfo.platform ? ` · ${modelInfo.platform}` : ''}
+              {sourceSummary ? `   |   ${sourceSummary}` : ''}
+            </div>
+          )}
         </div>
 
-        {/* 模型可见性(规则 ai-model-visibility) */}
-        {modelInfo?.model && (
-          <div className="mt-3 text-center text-[11px] text-white/40 font-mono">
-            ● 文案模型: {modelInfo.model}
-            {modelInfo.platform ? ` · ${modelInfo.platform}` : ''}
-            {sourceSummary ? ` · 数据源: ${sourceSummary}` : ''}
-          </div>
-        )}
-
-        {/* ⑤ 结果卡片 */}
+        {/* 结果区 */}
         {poster && (
-          <div className="mt-10">
+          <div className="mt-6">
             <div className="flex items-center justify-between mb-3">
-              <h2 className="text-[14px] font-semibold text-white/85">
+              <h2 className="text-[13px] font-semibold text-white/85">
                 生成结果 · {poster.pages.length} 页
               </h2>
               <div className="flex items-center gap-2">
@@ -373,30 +344,32 @@ export default function WeeklyPosterWizardPage() {
                   onClick={() => setPreviewOpen(true)}
                   className="inline-flex items-center gap-1 px-3 h-8 rounded-md text-[12px] transition-colors hover:bg-white/10"
                   style={{
-                    color: 'rgba(255,255,255,0.85)',
-                    border: '1px solid rgba(255,255,255,0.18)',
+                    color: 'rgba(255,255,255,0.8)',
+                    background: 'rgba(255,255,255,0.04)',
+                    border: '1px solid rgba(255,255,255,0.12)',
                   }}
                 >
-                  <Eye size={12} /> 预览轮播
+                  <Eye size={12} /> 预览
                 </button>
                 <Link
                   to="/weekly-poster/advanced"
                   className="inline-flex items-center gap-1 px-3 h-8 rounded-md text-[12px] transition-colors hover:bg-white/10"
                   style={{
                     color: 'rgba(255,255,255,0.7)',
-                    border: '1px solid rgba(255,255,255,0.15)',
+                    background: 'rgba(255,255,255,0.04)',
+                    border: '1px solid rgba(255,255,255,0.12)',
                   }}
                 >
-                  <Settings2 size={12} /> 去高级编辑
+                  <SlidersHorizontal size={12} /> 微调
                 </Link>
                 <button
                   type="button"
                   onClick={handlePublish}
                   disabled={publishing || phase !== 'ready'}
-                  className="inline-flex items-center gap-1 px-4 h-8 rounded-md text-[12px] font-medium text-white transition-all disabled:opacity-60 enabled:hover:scale-[1.03]"
+                  className="inline-flex items-center gap-1 px-3 h-8 rounded-md text-[12px] font-medium text-white transition-colors disabled:opacity-50 disabled:cursor-not-allowed enabled:hover:bg-white/20"
                   style={{
-                    background: 'linear-gradient(135deg, #00f0ff 0%, #7c3aed 50%, #f43f5e 100%)',
-                    boxShadow: '0 4px 16px rgba(124,58,237,0.3)',
+                    background: 'rgba(255,255,255,0.12)',
+                    border: '1px solid rgba(255,255,255,0.22)',
                   }}
                 >
                   {publishing ? <MapSpinner size={12} /> : <Send size={12} />}
@@ -405,10 +378,7 @@ export default function WeeklyPosterWizardPage() {
               </div>
             </div>
 
-            <div
-              className="grid gap-3"
-              style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))' }}
-            >
+            <div className="grid gap-3" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))' }}>
               {poster.pages.map((p) => (
                 <ResultPageCard
                   key={p.order}
@@ -423,7 +393,6 @@ export default function WeeklyPosterWizardPage() {
         )}
       </div>
 
-      {/* 预览:复用主页弹窗组件,但把 currentPoster 临时 override */}
       {previewOpen && poster && (
         <PreviewPortal poster={poster} onClose={() => setPreviewOpen(false)} />
       )}
@@ -432,33 +401,14 @@ export default function WeeklyPosterWizardPage() {
 }
 
 // ────────────────────────────────────────────────────────────
-// 小组件
-// ────────────────────────────────────────────────────────────
 
-function Section({
-  index,
-  title,
-  children,
-}: {
-  index: string;
-  title: string;
-  children: React.ReactNode;
-}) {
+function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
-    <section className="mt-6">
-      <div className="flex items-center gap-2 mb-3">
-        <span
-          className="inline-flex items-center justify-center w-6 h-6 rounded-full text-[11px] font-semibold"
-          style={{
-            background: 'linear-gradient(135deg, rgba(124,58,237,0.3), rgba(0,240,255,0.3))',
-            color: '#e0e7ff',
-            border: '1px solid rgba(124,58,237,0.3)',
-          }}
-        >
-          {index}
-        </span>
-        <h2 className="text-[14px] font-semibold text-white/85">{title}</h2>
-      </div>
+    <section>
+      <h2 className="text-[11px] font-semibold tracking-[0.12em] uppercase mb-2.5"
+        style={{ color: 'rgba(255,255,255,0.45)' }}>
+        {title}
+      </h2>
       {children}
     </section>
   );
@@ -475,22 +425,20 @@ function ResultPageCard({
   onRegenerate: () => void;
   disabled: boolean;
 }) {
-  const accent = page.accentColor || '#7c3aed';
+  const accent = page.accentColor || 'rgba(255,255,255,0.15)';
   const showImage = !!page.imageUrl && progress !== 'generating-image';
   return (
     <div
-      className="rounded-xl overflow-hidden flex flex-col"
-      style={{
-        background: 'rgba(255,255,255,0.03)',
-        border: '1px solid rgba(255,255,255,0.08)',
-      }}
+      className="surface rounded-xl overflow-hidden flex flex-col"
     >
       {/* 图片区 */}
       <div
         className="relative"
         style={{
           aspectRatio: '16/10',
-          background: `linear-gradient(135deg, ${accent}, #0a0a12)`,
+          background: page.imageUrl
+            ? '#0a0a12'
+            : `linear-gradient(135deg, ${accent} 0%, rgba(10,10,18,0.9) 100%)`,
         }}
       >
         {showImage && (
@@ -501,21 +449,21 @@ function ResultPageCard({
             draggable={false}
           />
         )}
-        {/* 占位 + 状态徽章 */}
         {progress === 'generating-image' && (
           <div className="absolute inset-0 flex items-center justify-center">
-            <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-medium"
+            <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px]"
               style={{
-                background: 'rgba(0,0,0,0.6)',
-                color: '#fff',
-                border: '1px solid rgba(255,255,255,0.2)',
+                background: 'rgba(0,0,0,0.55)',
+                color: 'rgba(255,255,255,0.9)',
+                border: '1px solid rgba(255,255,255,0.15)',
               }}>
               <MapSpinner size={10} /> 配图生成中
             </div>
           </div>
         )}
         {progress === 'pending' && !page.imageUrl && (
-          <div className="absolute inset-0 flex items-center justify-center text-[10px] text-white/65 tracking-wider">
+          <div className="absolute inset-0 flex items-center justify-center text-[10px] tracking-wider"
+            style={{ color: 'rgba(255,255,255,0.5)' }}>
             等待中
           </div>
         )}
@@ -524,7 +472,8 @@ function ResultPageCard({
             type="button"
             onClick={onRegenerate}
             disabled={disabled}
-            className="absolute inset-0 flex items-center justify-center text-[11px] text-rose-200 transition-colors hover:bg-rose-500/15"
+            className="absolute inset-0 flex items-center justify-center text-[11px] transition-colors hover:bg-white/5"
+            style={{ color: 'rgba(255,255,255,0.7)' }}
           >
             <RotateCcw size={12} className="mr-1" /> 生图失败,点这里重试
           </button>
@@ -536,7 +485,11 @@ function ResultPageCard({
             disabled={disabled}
             aria-label="重新生成"
             className="absolute top-2 right-2 w-7 h-7 rounded-full flex items-center justify-center transition-colors hover:bg-black/70"
-            style={{ background: 'rgba(0,0,0,0.5)', color: '#fff', border: '1px solid rgba(255,255,255,0.2)' }}
+            style={{
+              background: 'rgba(0,0,0,0.4)',
+              color: 'rgba(255,255,255,0.85)',
+              border: '1px solid rgba(255,255,255,0.15)',
+            }}
           >
             <RotateCcw size={12} />
           </button>
@@ -545,13 +498,15 @@ function ResultPageCard({
       {/* 文字区 */}
       <div className="p-3">
         <div className="text-[9px] font-semibold tracking-[0.15em] uppercase mb-1"
-          style={{ color: accent }}>
+          style={{ color: 'rgba(255,255,255,0.4)' }}>
           Page {page.order + 1}
         </div>
-        <div className="text-[13px] font-semibold text-white line-clamp-1 mb-1">
+        <div className="text-[13px] font-semibold line-clamp-1 mb-1"
+          style={{ color: 'rgba(255,255,255,0.92)' }}>
           {page.title}
         </div>
-        <div className="text-[11px] leading-relaxed text-white/65 line-clamp-3">
+        <div className="text-[11px] leading-relaxed line-clamp-3"
+          style={{ color: 'rgba(255,255,255,0.6)' }}>
           {page.body}
         </div>
       </div>
@@ -560,10 +515,8 @@ function ResultPageCard({
 }
 
 function PreviewPortal({ poster, onClose }: { poster: WeeklyPoster; onClose: () => void }) {
-  // 重用主页弹窗组件:把 store 的 currentPoster 临时替换,dismiss 映射为关闭
-  const state = useWeeklyPosterStore();
   useEffect(() => {
-    const prev = state.currentPoster;
+    const prev = useWeeklyPosterStore.getState().currentPoster;
     useWeeklyPosterStore.setState({ currentPoster: poster, dismissedIds: new Set() });
     return () => {
       useWeeklyPosterStore.setState({
@@ -571,10 +524,8 @@ function PreviewPortal({ poster, onClose }: { poster: WeeklyPoster; onClose: () 
         dismissedIds: prev ? new Set() : new Set([poster.id]),
       });
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [poster.id]);
+  }, [poster]);
 
-  // 监听 store.dismissedIds 含当前 id 时即关闭
   useEffect(() => {
     const unsub = useWeeklyPosterStore.subscribe((s) => {
       if (s.dismissedIds.has(poster.id)) onClose();
@@ -586,14 +537,11 @@ function PreviewPortal({ poster, onClose }: { poster: WeeklyPoster; onClose: () 
 }
 
 // ────────────────────────────────────────────────────────────
-// 工具
-// ────────────────────────────────────────────────────────────
 
 function countDone(progress: Record<number, PageProgress>): number {
   return Object.values(progress).filter((p) => p === 'done').length;
 }
 
-/** 并发池:同时最多 N 个 task 在跑 */
 async function runWithConcurrency<T>(
   items: T[],
   maxConcurrent: number,
