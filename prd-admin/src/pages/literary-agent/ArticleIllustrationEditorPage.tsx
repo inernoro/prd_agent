@@ -605,6 +605,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
   const genAbortRef = useRef<AbortController | null>(null);
   const markerListRef = useRef<HTMLDivElement>(null); // 配图列表容器的 ref
   const articlePreviewRef = useRef<HTMLDivElement>(null); // 文章预览区域的 ref
+  const phase2EditTextareaRef = useRef<HTMLTextAreaElement | null>(null); // phase 2 编辑模式 textarea 的 ref（用于在光标处插入配图位）
   const thinkingPanelRef = useRef<HTMLDivElement>(null); // 思考面板的 ref（自动滚动到底部）
   const isStreamingRef = useRef<boolean>(false); // 标记是否正在流式输出
   const [glowingMarkers, setGlowingMarkers] = useState<Set<number>>(new Set()); // 正在播放入场动画的 marker 卡片
@@ -1414,6 +1415,8 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
     } finally {
       setMarkerStreaming(false);
       isStreamingRef.current = false; // 标记流式输出结束
+      // 生成完标记后自动切到编辑模式，用户立刻能看到每条 [插图]: 的提示词并改写
+      setArticleEditMode('edit');
     }
   };
 
@@ -1585,6 +1588,50 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
       });
     });
   }, []);
+
+  // 预览模式下，在内嵌的 prompt 编辑器里直接改某条配图的提示词：同步 runItem + articleWithMarkers
+  const handleMarkerPromptEdit = useCallback((markerIndex: number, newText: string) => {
+    setMarkerRunItems((prev) => prev.map((x) =>
+      x.markerIndex === markerIndex
+        ? { ...x, draftText: newText, markerText: newText, planItem: null }
+        : x
+    ));
+    setArticleWithMarkers((prev) => {
+      const currentMarkers = extractMarkers(prev);
+      const target = currentMarkers.find((m) => m.index === markerIndex);
+      if (!target) return prev;
+      const next = prev.slice(0, target.startPos) + `[插图]: ${newText}` + prev.slice(target.endPos);
+      // 位置会移动，下一拍由 rebuildMergedMarkdown 链路消费 articleWithMarkers 即可
+      setMarkers(extractMarkers(next));
+      return next;
+    });
+  }, []);
+
+  // 在 phase 2 编辑模式 textarea 的光标位置插入一行 [插图]: 占位符并选中占位文字
+  const INSERT_MARKER_PLACEHOLDER = '在此描述要生成的图片…';
+  const handleInsertMarkerAtCursor = useCallback(() => {
+    const ta = phase2EditTextareaRef.current;
+    const base = ta?.value ?? articleWithMarkers ?? articleContent ?? '';
+    const start = ta?.selectionStart ?? base.length;
+    const end = ta?.selectionEnd ?? start;
+    const before = base.slice(0, start);
+    const after = base.slice(end);
+    const needsLeadingNewline = before.length > 0 && !before.endsWith('\n');
+    const prefix = needsLeadingNewline ? '\n\n' : '';
+    const markerLine = `[插图]: ${INSERT_MARKER_PLACEHOLDER}`;
+    const suffix = after.startsWith('\n') ? '\n' : '\n\n';
+    const next = before + prefix + markerLine + suffix + after;
+    handleArticleWithMarkersChange(next);
+    // 选中占位文字，方便用户直接覆盖
+    requestAnimationFrame(() => {
+      const el = phase2EditTextareaRef.current;
+      if (!el) return;
+      const placeholderStart = before.length + prefix.length + '[插图]: '.length;
+      const placeholderEnd = placeholderStart + INSERT_MARKER_PLACEHOLDER.length;
+      el.focus();
+      el.setSelectionRange(placeholderStart, placeholderEnd);
+    });
+  }, [articleWithMarkers, articleContent, handleArticleWithMarkersChange]);
 
   const runSingleMarker = async (markerIndex: number) => {
     if (!imageGenModel) {
@@ -3119,13 +3166,52 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                 </div>
 
                 {articleEditMode === 'edit' && (
-                  <textarea
-                    value={articleWithMarkers || articleContent}
-                    onChange={(e) => handleArticleWithMarkersChange(e.target.value)}
-                    className="w-full rounded-[14px] px-4 py-3 text-[13px] leading-6 outline-none resize-none font-mono prd-field"
-                    style={{ minHeight: 520 }}
-                    placeholder="在此直接编辑正文和 [插图]: 提示词…"
-                  />
+                  <div className="flex flex-col gap-2">
+                    {/* 编辑模式工具条：插入配图位 + 拖拽提示 */}
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <Button
+                        size="xs"
+                        variant="secondary"
+                        onClick={handleInsertMarkerAtCursor}
+                        title="在光标位置插入一行 [插图]: 占位符，占位文字会被预选中方便覆盖"
+                      >
+                        <Plus size={12} />
+                        在光标处插入配图位
+                      </Button>
+                      <div className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
+                        或从右侧「配图列表」拖拽卡片到下方 textarea ↓
+                      </div>
+                    </div>
+                    <textarea
+                      ref={phase2EditTextareaRef}
+                      value={articleWithMarkers || articleContent}
+                      onChange={(e) => handleArticleWithMarkersChange(e.target.value)}
+                      onDragOver={(e) => {
+                        if (e.dataTransfer.types.includes('application/x-literary-marker-prompt')) {
+                          e.preventDefault();
+                          e.dataTransfer.dropEffect = 'copy';
+                        }
+                      }}
+                      onDrop={(e) => {
+                        const payload = e.dataTransfer.getData('application/x-literary-marker-prompt');
+                        if (!payload) return;
+                        e.preventDefault();
+                        const ta = phase2EditTextareaRef.current;
+                        const base = ta?.value ?? '';
+                        const pos = ta?.selectionStart ?? base.length;
+                        const before = base.slice(0, pos);
+                        const after = base.slice(pos);
+                        const needsLeadingNewline = before.length > 0 && !before.endsWith('\n');
+                        const prefix = needsLeadingNewline ? '\n\n' : '';
+                        const suffix = after.startsWith('\n') ? '\n' : '\n\n';
+                        const next = before + prefix + `[插图]: ${payload}` + suffix + after;
+                        handleArticleWithMarkersChange(next);
+                      }}
+                      className="w-full rounded-[14px] px-4 py-3 text-[13px] leading-6 outline-none resize-none font-mono prd-field"
+                      style={{ minHeight: 520 }}
+                      placeholder="在此直接编辑正文和 [插图]: 提示词…"
+                    />
+                  </div>
                 )}
 
                 {articleEditMode === 'preview' && (<>
@@ -3179,29 +3265,99 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                         const hasIdx = Number.isFinite(markerIdx);
                         const runItem = hasIdx ? markerRunItems.find((x) => x.markerIndex === markerIdx) : null;
                         const isBusy = runItem?.status === 'running' || runItem?.status === 'parsing';
+                        if (!hasIdx || !runItem) {
+                          return <img {...props} />;
+                        }
                         return (
-                          <span style={{ position: 'relative', display: 'inline-block', maxWidth: '100%' }} className="group/img">
-                            <img {...props} />
-                            {hasIdx && !!imageGenModel && (
-                              <button
-                                type="button"
-                                disabled={isBusy}
-                                onClick={() => !isBusy && void handleRegenerateOne(markerIdx)}
-                                className="absolute top-2 right-2 opacity-0 group-hover/img:opacity-100 transition-opacity flex items-center gap-1 text-[11px] px-2 py-1 rounded-lg"
-                                style={{
-                                  background: 'rgba(0,0,0,0.7)',
-                                  color: 'rgba(255,255,255,0.92)',
-                                  border: '1px solid rgba(255,255,255,0.18)',
-                                  backdropFilter: 'blur(8px)',
-                                  cursor: isBusy ? 'not-allowed' : 'pointer',
-                                }}
-                                title="用正文里当前 [插图]: 的提示词重新生成此图"
-                              >
-                                <Sparkles size={11} />
-                                {isBusy ? '生成中…' : '用当前提示词重生'}
-                              </button>
-                            )}
-                          </span>
+                          <figure
+                            className="group/img"
+                            style={{
+                              position: 'relative',
+                              display: 'block',
+                              margin: '12px 0',
+                              padding: 0,
+                              borderRadius: 12,
+                              border: '1px solid var(--border-subtle)',
+                              background: 'var(--panel)',
+                              overflow: 'hidden',
+                            }}
+                          >
+                            <div style={{ position: 'relative' }}>
+                              <img {...props} style={{ ...(props as { style?: React.CSSProperties }).style, margin: 0, display: 'block', borderRadius: 0 }} />
+                              {!!imageGenModel && (
+                                <button
+                                  type="button"
+                                  disabled={isBusy}
+                                  onClick={() => !isBusy && void handleRegenerateOne(markerIdx)}
+                                  className="absolute top-2 right-2 opacity-0 group-hover/img:opacity-100 transition-opacity flex items-center gap-1 text-[11px] px-2 py-1 rounded-lg"
+                                  style={{
+                                    background: 'rgba(0,0,0,0.7)',
+                                    color: 'rgba(255,255,255,0.92)',
+                                    border: '1px solid rgba(255,255,255,0.18)',
+                                    backdropFilter: 'blur(8px)',
+                                    cursor: isBusy ? 'not-allowed' : 'pointer',
+                                  }}
+                                  title="用下方提示词重新生成此图"
+                                >
+                                  <Sparkles size={11} />
+                                  {isBusy ? '生成中…' : '用当前提示词重生'}
+                                </button>
+                              )}
+                            </div>
+                            <figcaption
+                              className="flex flex-col gap-1.5 px-3 py-2"
+                              style={{ background: 'var(--nested-block-bg)', borderTop: '1px solid var(--border-subtle)' }}
+                            >
+                              <div className="flex items-center justify-between gap-2">
+                                <span className="text-[11px] font-medium" style={{ color: 'var(--text-muted)' }}>
+                                  配图 {markerIdx + 1} 的提示词（改完点右侧按钮）
+                                </span>
+                                <div className="flex items-center gap-1.5">
+                                  <button
+                                    type="button"
+                                    disabled={isBusy || !imageGenModel}
+                                    onClick={() => !isBusy && void handleRegenerateOne(markerIdx)}
+                                    className="text-[11px] px-2 py-1 rounded-md flex items-center gap-1"
+                                    style={{
+                                      background: 'rgba(147, 197, 253, 0.15)',
+                                      color: '#93C5FD',
+                                      border: '1px solid rgba(147, 197, 253, 0.3)',
+                                      cursor: isBusy || !imageGenModel ? 'not-allowed' : 'pointer',
+                                      opacity: isBusy || !imageGenModel ? 0.5 : 1,
+                                    }}
+                                    title="用下方文字重新生成此图"
+                                  >
+                                    <Sparkles size={11} />
+                                    {isBusy ? '生成中…' : '重新生成'}
+                                  </button>
+                                  <button
+                                    type="button"
+                                    disabled={isBusy}
+                                    onClick={() => void handleDeleteMarker(markerIdx)}
+                                    className="text-[11px] px-2 py-1 rounded-md flex items-center gap-1"
+                                    style={{
+                                      background: 'rgba(239, 68, 68, 0.1)',
+                                      color: '#F87171',
+                                      border: '1px solid rgba(239, 68, 68, 0.25)',
+                                      cursor: isBusy ? 'not-allowed' : 'pointer',
+                                      opacity: isBusy ? 0.5 : 1,
+                                    }}
+                                    title="删除此配图占位，同时移除正文里的 [插图] 行"
+                                  >
+                                    <Trash2 size={11} />
+                                    删除
+                                  </button>
+                                </div>
+                              </div>
+                              <textarea
+                                value={runItem.draftText ?? ''}
+                                onChange={(e) => handleMarkerPromptEdit(markerIdx, e.target.value)}
+                                className="w-full rounded-lg px-2 py-1.5 text-[12px] leading-5 outline-none resize-y font-mono prd-field"
+                                style={{ minHeight: 56 }}
+                                placeholder="描述要生成的图片…"
+                              />
+                            </figcaption>
+                          </figure>
                         );
                       },
                     }}
@@ -3583,7 +3739,16 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                   <div
                     key={it.markerIndex}
                     className="surface-inset rounded-xl overflow-hidden"
-                    style={{ position: 'relative' }}
+                    style={{ position: 'relative', cursor: 'grab' }}
+                    draggable
+                    onDragStart={(e) => {
+                      const text = String(it.draftText || it.markerText || '').trim();
+                      if (!text) return;
+                      e.dataTransfer.setData('application/x-literary-marker-prompt', text);
+                      e.dataTransfer.setData('text/plain', `[插图]: ${text}`);
+                      e.dataTransfer.effectAllowed = 'copy';
+                    }}
+                    title="可拖到左侧编辑区的 textarea 里，自动插入 [插图]: 行"
                   >
                     {/* 入场发光边框动画 */}
                     {isGlowing && (
