@@ -11,7 +11,7 @@
  * 存储：复用 agentSwitcherStore 的 pinnedIds / usageCounts / recentVisits（sessionStorage 持久化）
  */
 
-import { useCallback, useEffect, useMemo, useRef } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { createPortal } from 'react-dom';
 import * as LucideIcons from 'lucide-react';
@@ -58,11 +58,18 @@ function LauncherCard({
   badge?: string;
 }) {
   const accent = item.accentColor ?? '#818CF8';
+  // 本地 hover 状态：鼠标离开时立即清除，避免 selectedId 被键盘/上次 hover 卡住后"持续高亮"
+  const [isHovered, setIsHovered] = useState(false);
+  const isActive = isSelected || isHovered;
   return (
     <button
       type="button"
       onClick={onClick}
-      onMouseEnter={onMouseEnter}
+      onMouseEnter={() => {
+        setIsHovered(true);
+        onMouseEnter();
+      }}
+      onMouseLeave={() => setIsHovered(false)}
       className="group relative text-left outline-none focus:outline-none flex"
       style={{ width: '100%' }}
       title={item.description}
@@ -71,14 +78,14 @@ function LauncherCard({
         className="relative w-full rounded-[12px] p-2.5 flex flex-col items-start gap-1.5 transition-all duration-200 cursor-pointer"
         style={{
           minHeight: 96,
-          background: isSelected
+          background: isActive
             ? `linear-gradient(135deg, ${accent}22 0%, rgba(255,255,255,0.03) 100%)`
             : 'rgba(255, 255, 255, 0.025)',
-          border: `1px solid ${isSelected ? `${accent}55` : 'rgba(255,255,255,0.06)'}`,
-          boxShadow: isSelected
+          border: `1px solid ${isActive ? `${accent}55` : 'rgba(255,255,255,0.06)'}`,
+          boxShadow: isActive
             ? `0 0 0 1px ${accent}40 inset, 0 6px 20px -8px ${accent}55`
             : '0 1px 4px rgba(0,0,0,0.2)',
-          transform: isSelected ? 'translateY(-1px)' : 'translateY(0)',
+          transform: isActive ? 'translateY(-1px)' : 'translateY(0)',
         }}
       >
         {/* 顶部：图标 + 徽标 */}
@@ -86,9 +93,9 @@ function LauncherCard({
           <div
             className="shrink-0 w-8 h-8 rounded-[8px] flex items-center justify-center"
             style={{
-              background: isSelected ? `${accent}20` : 'rgba(255,255,255,0.04)',
-              color: isSelected ? accent : 'rgba(255,255,255,0.75)',
-              border: `1px solid ${isSelected ? `${accent}40` : 'rgba(255,255,255,0.06)'}`,
+              background: isActive ? `${accent}20` : 'rgba(255,255,255,0.04)',
+              color: isActive ? accent : 'rgba(255,255,255,0.75)',
+              border: `1px solid ${isActive ? `${accent}40` : 'rgba(255,255,255,0.06)'}`,
             }}
           >
             {getIcon(item.icon, 15)}
@@ -116,7 +123,7 @@ function LauncherCard({
         {/* 名称（长名也换行显示，不截断） */}
         <div
           className="text-[12.5px] font-semibold leading-tight w-full break-words"
-          style={{ color: isSelected ? '#fff' : 'rgba(255,255,255,0.92)' }}
+          style={{ color: isActive ? '#fff' : 'rgba(255,255,255,0.92)' }}
         >
           {item.name}
         </div>
@@ -125,7 +132,7 @@ function LauncherCard({
         <div
           className="text-[10.5px] leading-snug w-full break-words"
           style={{
-            color: isSelected ? 'rgba(255,255,255,0.72)' : 'rgba(255,255,255,0.44)',
+            color: isActive ? 'rgba(255,255,255,0.72)' : 'rgba(255,255,255,0.44)',
           }}
         >
           {item.description}
@@ -137,7 +144,7 @@ function LauncherCard({
           onClick={onTogglePin}
           className="absolute top-1.5 right-1.5 w-5 h-5 rounded-[5px] flex items-center justify-center transition-opacity"
           style={{
-            opacity: isPinned ? 1 : isSelected ? 0.85 : 0,
+            opacity: isPinned ? 1 : isActive ? 0.85 : 0,
             background: isPinned ? `${accent}30` : 'rgba(255,255,255,0.05)',
             color: isPinned ? accent : 'rgba(255,255,255,0.6)',
             border: `1px solid ${isPinned ? `${accent}60` : 'rgba(255,255,255,0.08)'}`,
@@ -418,26 +425,40 @@ export function AgentSwitcher() {
             className="shrink-0 flex items-center gap-3 px-5 h-[60px]"
             style={{ borderBottom: '1px solid rgba(255,255,255,0.06)' }}
           >
-            <Search size={18} style={{ color: 'rgba(255,255,255,0.4)' }} />
-            <input
-              ref={inputRef}
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="搜索 Agent、工具或页面..."
-              className="flex-1 bg-transparent outline-none text-[15px]"
-              style={{ color: '#fff' }}
-            />
-            {searchQuery && (
-              <button
-                type="button"
-                onClick={() => setSearchQuery('')}
-                className="w-6 h-6 rounded-md flex items-center justify-center"
-                style={{ background: 'rgba(255,255,255,0.06)', color: 'rgba(255,255,255,0.6)' }}
-                aria-label="清空搜索"
-              >
-                <X size={12} />
-              </button>
-            )}
+            {/* 内嵌搜索容器：focus-within 时展示圆角矩形 ring —
+                 全局 :focus-visible 的矩形 outline 会在纯 input 上表现为直角，
+                 用 no-focus-ring 压掉后由本容器承担视觉反馈。 */}
+            <label
+              className="flex-1 flex items-center gap-2 h-10 px-3 rounded-xl transition-colors cursor-text agent-switcher-search"
+              style={{
+                background: 'rgba(255,255,255,0.04)',
+                border: '1px solid rgba(255,255,255,0.08)',
+              }}
+            >
+              <Search size={16} style={{ color: 'rgba(255,255,255,0.4)' }} />
+              <input
+                ref={inputRef}
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                placeholder="搜索 Agent、工具或页面..."
+                className="flex-1 bg-transparent outline-none text-[15px] no-focus-ring"
+                style={{ color: '#fff' }}
+              />
+              {searchQuery && (
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.preventDefault();
+                    setSearchQuery('');
+                  }}
+                  className="w-5 h-5 rounded-md flex items-center justify-center"
+                  style={{ background: 'rgba(255,255,255,0.08)', color: 'rgba(255,255,255,0.6)' }}
+                  aria-label="清空搜索"
+                >
+                  <X size={11} />
+                </button>
+              )}
+            </label>
             <div
               className="text-[11px] px-2 py-1 rounded"
               style={{
@@ -575,6 +596,11 @@ export function AgentSwitcher() {
             opacity: 1;
             transform: translateY(0) scale(1);
           }
+        }
+        .agent-switcher-search:focus-within {
+          background: rgba(255,255,255,0.06);
+          border-color: rgba(129,140,248,0.6);
+          box-shadow: 0 0 0 2px rgba(99,102,241,0.35);
         }
       `}</style>
     </div>,
