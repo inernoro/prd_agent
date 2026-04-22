@@ -19,6 +19,11 @@ namespace PrdAgent.Api.Services;
 /// </summary>
 public class ExpectedModelRespectingResolver : IModelResolver
 {
+    // 同一请求链内缓存 expectedModel —— 解决 LlmGateway.SendRawAsync 内部二次调用 ResolveAsync
+    // 时 expectedModel 被硬编码成 null 的问题。AsyncLocal 随 ExecutionContext 在 await
+    // 链中自然传递，不会跨 HTTP 请求污染。
+    private static readonly AsyncLocal<string?> _pendingExpectedModel = new();
+
     private readonly ModelResolver _inner;
     private readonly MongoDbContext _db;
     private readonly IConfiguration _config;
@@ -43,17 +48,39 @@ public class ExpectedModelRespectingResolver : IModelResolver
         CancellationToken ct = default)
     {
         var traceId = Guid.NewGuid().ToString("N")[..8];
-        _logger.LogInformation(
-            "[Resolver-Decorator:{Trace}] ENTRY appCallerCode={Code} modelType={Type} expectedModel='{Expected}'",
-            traceId, appCallerCode, modelType, expectedModel ?? "(null)");
 
-        if (string.IsNullOrWhiteSpace(expectedModel))
+        // ===== 关键：expectedModel 从 AsyncLocal 回放 =====
+        // 背景：LlmGateway.SendRawAsync 内部再次调用 ResolveAsync 时 expectedModel 硬编码 null
+        // （Infrastructure.dll 代码，改了部署不生效）。我们在第一次调用时把 expectedModel 存入
+        // AsyncLocal，第二次调用 null 时从 AsyncLocal 读回。
+        var effectiveExpected = expectedModel;
+        if (string.IsNullOrWhiteSpace(effectiveExpected) && !string.IsNullOrWhiteSpace(_pendingExpectedModel.Value))
+        {
+            effectiveExpected = _pendingExpectedModel.Value;
+            _logger.LogInformation(
+                "[Resolver-Decorator:{Trace}] expectedModel=null，从 AsyncLocal 恢复 '{Recovered}'（来自同请求链前一次 ResolveAsync）",
+                traceId, effectiveExpected);
+        }
+        else if (!string.IsNullOrWhiteSpace(expectedModel))
+        {
+            // 存入 AsyncLocal，供同请求链后续调用读取
+            _pendingExpectedModel.Value = expectedModel;
+        }
+
+        _logger.LogInformation(
+            "[Resolver-Decorator:{Trace}] ENTRY appCallerCode={Code} modelType={Type} expectedModel='{Raw}' effective='{Effective}'",
+            traceId, appCallerCode, modelType, expectedModel ?? "(null)", effectiveExpected ?? "(null)");
+
+        if (string.IsNullOrWhiteSpace(effectiveExpected))
         {
             _logger.LogInformation(
-                "[Resolver-Decorator:{Trace}] 未指定 expectedModel → 委派内部 resolver",
+                "[Resolver-Decorator:{Trace}] 无 effectiveExpected → 委派内部 resolver",
                 traceId);
             return await _inner.ResolveAsync(appCallerCode, modelType, expectedModel, ct);
         }
+
+        // 后续匹配逻辑用 effectiveExpected 代替 expectedModel
+        expectedModel = effectiveExpected;
 
         // 查 AppCaller 绑定的候选池
         var appCaller = await _db.LLMAppCallers
