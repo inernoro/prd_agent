@@ -1066,9 +1066,12 @@
         display: inline-flex;
         align-items: center;
         justify-content: center;
-        width: 34px;
-        height: 34px;
-        border-radius: 8px;
+        /* 2026-04-22：按钮尺寸和图标尺寸必须成比例（≥55%），否则按钮显得"空"。
+         * 40px 按钮配 22px 图标 = 55%，满足触控 44px 友好度和视觉权重。
+         * 见 cds/CLAUDE.md「按钮图标尺寸」规则。 */
+        width: 40px;
+        height: 40px;
+        border-radius: 10px;
         border: 1px solid var(--card-border);
         background: var(--bg-card);
         color: var(--text-secondary);
@@ -1076,12 +1079,17 @@
         flex-shrink: 0;
         transition: background 120ms ease, border-color 120ms ease;
       }
+      .cds-mobile-menu-btn svg { width: 22px; height: 22px; }
       .cds-mobile-menu-btn:hover {
         background: var(--bg-elevated);
         border-color: var(--accent-border);
       }
       .cds-sidebar-collapsible {
         max-height: 0;
+        /* 2026-04-22 fix 顶部大片空白：父 .cds-sidebar 是 flex column，
+         * 弹性子默认 min-height:auto，会阻止 max-height:0 真正收缩。
+         * 必须显式 min-height:0 —— 见 .claude/rules/frontend-modal.md 第 3 条。 */
+        min-height: 0;
         overflow: hidden;
         transition: max-height 260ms cubic-bezier(0.4, 0, 0.2, 1);
         display: flex;

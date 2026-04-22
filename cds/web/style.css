@@ -2641,11 +2641,16 @@ a.branch-name:hover { color: var(--accent); }
   #selfUpdateBtn {
     display: none !important;
   }
-  /* ☰ 专用按钮：只有在手机端显示，桌面端已经在主样式 display:none */
+  /* ☰ 专用按钮：只有在手机端显示，桌面端已经在主样式 display:none
+   * 2026-04-22：按钮/图标比例 55% ≥ 触控友好 40×40 + 22×22 svg */
   .cds-header-menu-btn {
     display: inline-flex !important;
-    width: 36px; height: 36px;
+    width: 40px; height: 40px;
+    border: 1px solid var(--card-border);
+    background: var(--bg-card);
+    border-radius: 10px;
   }
+  .cds-header-menu-btn svg { width: 22px !important; height: 22px !important; }
   .icon-btn { width: 32px; height: 32px; }
   /* 返回项目按钮缩小文字 */
   .projects-back-link {
