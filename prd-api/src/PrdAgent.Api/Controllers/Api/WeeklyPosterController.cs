@@ -461,13 +461,38 @@ public sealed class WeeklyPosterController : ControllerBase
             }
 
             await Emit("source", new { summary = src.summary });
-            await Emit("phase", new { phase = "writing", label = "AI 正在编排 4-6 页文案…" });
+            await Emit("phase", new { phase = "writing", label = "AI 正在写文案…" });
 
-            PosterAutopilotResult result;
+            // ── 真·流式:Gateway StreamAsync,逐 chunk 透传到前端 ─────
+            var accumulator = new StringBuilder();
+            string? model = null;
+            string? platform = null;
             try
             {
-                result = await _autopilot.InvokeLlmAsync(
-                    templateKey, req.PageCount, src.markdown, src.summary, userId, ct);
+                await foreach (var chunk in _autopilot.StreamLlmChunksAsync(
+                    templateKey, req.PageCount, src.markdown, src.summary, userId, ct))
+                {
+                    if (chunk.Type == GatewayChunkType.Start && chunk.Resolution != null)
+                    {
+                        model = chunk.Resolution.ActualModel;
+                        platform = chunk.Resolution.ActualPlatformName;
+                        await Emit("model", new { model, platform });
+                    }
+                    else if (chunk.Type == GatewayChunkType.Thinking && !string.IsNullOrEmpty(chunk.Content))
+                    {
+                        await Emit("thinking", new { delta = chunk.Content });
+                    }
+                    else if (chunk.Type == GatewayChunkType.Text && !string.IsNullOrEmpty(chunk.Content))
+                    {
+                        accumulator.Append(chunk.Content);
+                        await Emit("chunk", new { delta = chunk.Content, length = accumulator.Length });
+                    }
+                    else if (chunk.Type == GatewayChunkType.Error)
+                    {
+                        await EmitError(chunk.Error ?? "模型流式调用失败");
+                        return;
+                    }
+                }
             }
             catch (InvalidOperationException ex)
             {
@@ -475,9 +500,14 @@ public sealed class WeeklyPosterController : ControllerBase
                 return;
             }
 
-            if (!string.IsNullOrWhiteSpace(result.Model))
+            await Emit("phase", new { phase = "parsing", label = "解析页面 JSON…" });
+            var result = _autopilot.ParseAccumulatedContent(
+                accumulator.ToString(), templateKey, req.PageCount, src.summary, model, platform);
+            if (result == null)
             {
-                await Emit("model", new { model = result.Model, platform = result.Platform });
+                _logger.LogWarning("AutopilotStream: failed to parse accumulated LLM output ({Len} chars)", accumulator.Length);
+                await EmitError("模型输出无法解析为页面 JSON,换个数据源或重试");
+                return;
             }
 
             // 落库成 draft

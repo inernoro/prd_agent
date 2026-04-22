@@ -12,3 +12,5 @@
 | feat | prd-admin | AI 海报工坊改名去「周报」绑定；向导页接入 useSseStream，生成过程实时滚动阶段文案 + 模型 chip + 页面卡逐张 fade-in 材质化，彻底消除 10s 空白等待；新增 GitHub 最近提交与知识库文档两个数据源入口 |
 | fix | prd-admin | 向导预览弹窗一闪而过 bug — 重构 WeeklyPosterModal 为无状态 PosterCarousel 组件（props 驱动），去掉 store.subscribe 副作用导致的立即关闭；主页用 WeeklyPosterModal 薄封装复用 |
 | fix | prd-admin | 高级编辑器页顶部加「← 返回工坊」按钮，解决从工坊跳过来回不去的问题 |
+| feat | prd-api | 海报工坊真·LLM 流式：PosterAutopilotService 暴露 StreamLlmChunksAsync(IAsyncEnumerable) + ParseAccumulatedContent；Controller 在 /autopilot/stream 内逐 chunk 透传 model/chunk/thinking 事件给前端 |
+| feat | prd-admin | 向导页打字机面板：订阅 chunk SSE 事件实时拼接 typingText，按钮下方渲染终端风滚动输出（mono + 字数 ticker + 闪烁光标），LLM 写文案 5-15s 期间用户能看到 AI 一字一字吐出来，彻底履行 CLAUDE.md #6「禁止空白等待」 |

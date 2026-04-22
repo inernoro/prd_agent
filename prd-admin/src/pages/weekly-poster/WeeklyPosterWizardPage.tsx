@@ -49,6 +49,7 @@ export default function WeeklyPosterWizardPage() {
 
   const [phase, setPhase] = useState<'idle' | 'llm' | 'images' | 'ready'>('idle');
   const [phaseLabel, setPhaseLabel] = useState<string>('');
+  const [typingText, setTypingText] = useState<string>('');
   const [poster, setPoster] = useState<WeeklyPoster | null>(null);
   const [modelInfo, setModelInfo] = useState<{ model?: string; platform?: string } | null>(null);
   const [kbEntries, setKbEntries] = useState<WeeklyPosterKnowledgeEntryMeta[]>([]);
@@ -115,6 +116,15 @@ export default function WeeklyPosterWizardPage() {
         const d = data as { model?: string; platform?: string };
         setModelInfo({ model: d.model, platform: d.platform });
       },
+      chunk: (data) => {
+        const d = data as { delta?: string };
+        if (d.delta) setTypingText((prev) => prev + d.delta);
+      },
+      thinking: (data) => {
+        const d = data as { delta?: string };
+        // 思考内容也一起显示在 typing 区,前缀加灰度提示
+        if (d.delta) setTypingText((prev) => prev + d.delta);
+      },
       page: (data) => {
         const d = data as { page: WeeklyPosterPage };
         setPoster((prev) => {
@@ -175,6 +185,7 @@ export default function WeeklyPosterWizardPage() {
     // 重置
     setPhase('llm');
     setPhaseLabel('连接 AI 模型…');
+    setTypingText('');
     setPoster(null);
     setModelInfo(null);
     setSourceSummary(null);
@@ -226,6 +237,10 @@ export default function WeeklyPosterWizardPage() {
         @keyframes posterPageIn {
           from { opacity: 0; transform: translateY(8px); }
           to   { opacity: 1; transform: translateY(0); }
+        }
+        @keyframes posterCaretBlink {
+          0%, 49%   { opacity: 1; }
+          50%, 100% { opacity: 0; }
         }
       `}</style>
       <div className="max-w-[1080px] mx-auto px-8 py-8 pb-24">
@@ -446,6 +461,9 @@ export default function WeeklyPosterWizardPage() {
               {sourceSummary ? `   |   ${sourceSummary}` : ''}
             </div>
           )}
+
+          {/* 打字机面板:LLM 流式输出实时滚动,满足规则 #6 禁止空白等待 */}
+          {(phase === 'llm' && typingText.length > 0) && <TypingPanel text={typingText} />}
         </div>
 
         {/* 结果区 */}
@@ -522,6 +540,50 @@ export default function WeeklyPosterWizardPage() {
 }
 
 // ────────────────────────────────────────────────────────────
+
+/**
+ * 打字机面板 — 把 LLM 流式 chunk 实时显示成滚动文字,
+ * 满足 CLAUDE.md #6「LLM 等待时屏幕必须有持续变化的内容」。
+ */
+function TypingPanel({ text }: { text: string }) {
+  // 取尾部 4 行,模拟终端输出
+  const tailLines = text.split('\n').slice(-4).join('\n');
+  return (
+    <div
+      className="mt-3 mx-auto rounded-md p-3 font-mono"
+      style={{
+        maxWidth: 540,
+        background: 'rgba(0,0,0,0.4)',
+        border: '1px solid rgba(255,255,255,0.08)',
+        color: 'rgba(180,210,255,0.7)',
+        fontSize: 11,
+        lineHeight: 1.55,
+        whiteSpace: 'pre-wrap',
+        wordBreak: 'break-all',
+        minHeight: 70,
+      }}
+    >
+      <div className="flex items-center justify-between mb-1">
+        <span className="text-[9px] uppercase tracking-[0.14em]" style={{ color: 'rgba(255,255,255,0.35)' }}>
+          AI · 实时输出
+        </span>
+        <span className="text-[10px]" style={{ color: 'rgba(255,255,255,0.35)' }}>
+          {text.length} 字
+        </span>
+      </div>
+      {tailLines}
+      <span
+        className="inline-block ml-0.5 align-middle"
+        style={{
+          width: 6,
+          height: 11,
+          background: 'rgba(180,210,255,0.7)',
+          animation: 'posterCaretBlink 1s steps(2) infinite',
+        }}
+      />
+    </div>
+  );
+}
 
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (

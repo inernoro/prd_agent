@@ -29,7 +29,7 @@ public interface IPosterAutopilotService
         PosterAutopilotInput input,
         CancellationToken ct);
 
-    /// <summary>根据已装载的数据源调 LLM 生成页面。</summary>
+    /// <summary>根据已装载的数据源调 LLM 生成页面(非流式)。</summary>
     Task<PosterAutopilotResult> InvokeLlmAsync(
         string templateKey,
         int? forcePageCount,
@@ -37,6 +37,28 @@ public interface IPosterAutopilotService
         string sourceSummary,
         string userId,
         CancellationToken ct);
+
+    /// <summary>
+    /// 流式调 LLM,逐 chunk 返回。控制器直接 await foreach + 转发 SSE 即可。
+    /// 首个 Start chunk 带 Resolution(模型名/平台);Text chunk 是增量文本;
+    /// Done chunk 表示流结束。
+    /// </summary>
+    IAsyncEnumerable<GatewayStreamChunk> StreamLlmChunksAsync(
+        string templateKey,
+        int? forcePageCount,
+        string sourceMarkdown,
+        string sourceSummary,
+        string userId,
+        CancellationToken ct);
+
+    /// <summary>流式跑完后,把累积的原始文本解析为 pages(给控制器在 Done 之后调)。</summary>
+    PosterAutopilotResult? ParseAccumulatedContent(
+        string accumulatedRawText,
+        string templateKey,
+        int? forcePageCount,
+        string sourceSummary,
+        string? model,
+        string? platform);
 }
 
 public sealed class PosterAutopilotInput
@@ -175,6 +197,81 @@ public sealed class PosterAutopilotService : IPosterAutopilotService
         parsed.SourceSummary = sourceSummary;
         parsed.Model = resp.Resolution?.ActualModel;
         parsed.Platform = resp.Resolution?.ActualPlatformName;
+        return parsed;
+    }
+
+    public async IAsyncEnumerable<GatewayStreamChunk> StreamLlmChunksAsync(
+        string templateKey,
+        int? forcePageCount,
+        string sourceMarkdown,
+        string sourceSummary,
+        string userId,
+        [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(sourceMarkdown))
+        {
+            throw new InvalidOperationException("数据源为空,请换一个数据源或粘贴 markdown 再试");
+        }
+
+        var template = PosterTemplateRegistry.FindOrDefault(templateKey);
+        var pageCount = Math.Clamp(forcePageCount ?? template.DefaultPages, 3, 7);
+        var systemPrompt = BuildSystemPrompt(template, pageCount);
+        var userContent = $"【数据源:{sourceSummary}】\n\n{Truncate(sourceMarkdown, 12_000)}";
+
+        using var _ = _llmRequestContext.BeginScope(new LlmRequestContext(
+            RequestId: Guid.NewGuid().ToString("N"),
+            GroupId: null,
+            SessionId: null,
+            UserId: userId,
+            ViewRole: null,
+            DocumentChars: userContent.Length,
+            DocumentHash: null,
+            SystemPromptRedacted: $"weekly-poster-autopilot-stream/{template.Key}",
+            RequestType: "chat",
+            AppCallerCode: AppCallerCode));
+
+        var body = new JsonObject
+        {
+            ["messages"] = new JsonArray
+            {
+                new JsonObject { ["role"] = "system", ["content"] = systemPrompt },
+                new JsonObject { ["role"] = "user", ["content"] = userContent },
+            },
+            ["temperature"] = 0.5,
+            ["max_tokens"] = 2400,
+            ["response_format"] = new JsonObject { ["type"] = "json_object" },
+            ["stream"] = true,
+        };
+
+        var req = new GatewayRequest
+        {
+            AppCallerCode = AppCallerCode,
+            ModelType = "chat",
+            RequestBody = body,
+            Stream = true,
+        };
+
+        await foreach (var chunk in _gateway.StreamAsync(req, ct).ConfigureAwait(false))
+        {
+            yield return chunk;
+        }
+    }
+
+    public PosterAutopilotResult? ParseAccumulatedContent(
+        string accumulatedRawText,
+        string templateKey,
+        int? forcePageCount,
+        string sourceSummary,
+        string? model,
+        string? platform)
+    {
+        var template = PosterTemplateRegistry.FindOrDefault(templateKey);
+        var pageCount = Math.Clamp(forcePageCount ?? template.DefaultPages, 3, 7);
+        var parsed = TryParseAutopilotJson(accumulatedRawText, template, pageCount);
+        if (parsed == null) return null;
+        parsed.SourceSummary = sourceSummary;
+        parsed.Model = model;
+        parsed.Platform = platform;
         return parsed;
     }
 
