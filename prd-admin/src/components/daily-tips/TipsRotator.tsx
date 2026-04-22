@@ -23,6 +23,8 @@ export const SPOTLIGHT_ACTION_KEY = 'spotlightAction';
 export const SPOTLIGHT_PAYLOAD_UPDATED_EVENT = 'spotlight-payload-updated';
 
 export interface SpotlightActionPayload {
+  /** tip.id —— Tour 全部完成时用于永久 dismiss(配合撒花) */
+  id?: string;
   selector: string;
   title?: string;
   body?: string | null;
@@ -47,6 +49,7 @@ export function writeSpotlightPayload(tip: DailyTip) {
 
   if (!selector) return;
   const payload: SpotlightActionPayload = {
+    id: tip.id,
     selector,
     title: tip.title,
     body: tip.body ?? null,

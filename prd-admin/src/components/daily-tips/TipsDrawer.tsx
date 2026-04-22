@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { Sparkles, X, BookOpen, Pin, PinOff, MapPin, EyeOff, ChevronLeft, ChevronRight } from 'lucide-react';
 import { useDailyTipsStore } from '@/stores/dailyTipsStore';
 import { writeSpotlightPayload } from './TipsRotator';
@@ -57,6 +57,7 @@ type Mode = 'collapsed' | 'expanded' | 'hidden' | 'edge-peek';
 
 export function TipsDrawer() {
   const navigate = useNavigate();
+  const location = useLocation();
   const loaded = useDailyTipsStore((s) => s.loaded);
   const load = useDailyTipsStore((s) => s.load);
   const cardTips = useDailyTipsStore((s) => s.cardTips);
@@ -191,6 +192,32 @@ export function TipsDrawer() {
     }
   }, [tips.length, carouselIndex]);
 
+  // 抽屉每次「打开」时随机选一条 tip,避免用户每次都看到同一条;
+  // 优先级:当前页面有匹配 actionUrl 的 tip → 选它(让用户在正确位置看到「这页有教程」);
+  // 否则随机。本次打开持续到下次重开。
+  const pageMatchedIndex = useMemo(() => {
+    if (tips.length === 0) return -1;
+    return tips.findIndex((t) => {
+      if (!t.actionUrl) return false;
+      // 完整匹配 / 路径前缀匹配(/defect-agent 匹配 /defect-agent/123)
+      return location.pathname === t.actionUrl
+        || location.pathname.startsWith(t.actionUrl + '/');
+    });
+  }, [tips, location.pathname]);
+
+  const lastExpandedRef = useRef(false);
+  useEffect(() => {
+    if (expanded && !lastExpandedRef.current) {
+      // 上次未打开 → 这次打开 → 重新选 index
+      if (pageMatchedIndex >= 0) {
+        setCarouselIndex(pageMatchedIndex);
+      } else if (tips.length > 0) {
+        setCarouselIndex(Math.floor(Math.random() * tips.length));
+      }
+    }
+    lastExpandedRef.current = expanded;
+  }, [expanded, pageMatchedIndex, tips.length]);
+
   // ── 自动收起:expanded 5s 内无 hover / 点击就 collapsed ──────
   const drawerHoveredRef = useRef(false);
   useEffect(() => {
@@ -320,8 +347,19 @@ export function TipsDrawer() {
       <BookOpen
         size={20}
         strokeWidth={2.1}
-        style={{ filter: 'drop-shadow(0 0 6px rgba(196,181,253,0.6))' }}
+        style={{
+          filter: pageMatchedIndex >= 0
+            ? 'drop-shadow(0 0 10px rgba(244,63,94,0.85))'
+            : 'drop-shadow(0 0 6px rgba(196,181,253,0.6))',
+          animation: pageMatchedIndex >= 0 && !expanded ? 'tipsBookPulse 2s ease-in-out infinite' : undefined,
+        }}
       />
+      <style>{`
+        @keyframes tipsBookPulse {
+          0%, 100% { transform: scale(1); }
+          50% { transform: scale(1.1); }
+        }
+      `}</style>
       {badgeCount > 0 && (
         <span
           style={{

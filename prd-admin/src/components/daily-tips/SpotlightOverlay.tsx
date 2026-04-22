@@ -8,6 +8,8 @@ import {
   type SpotlightActionPayload,
 } from './TipsRotator';
 import type { DailyTipAutoAction } from '@/services/real/dailyTips';
+import { dismissTipForever } from '@/services/real/dailyTips';
+import { fireConfetti } from './fireConfetti';
 
 /**
  * JetBrains-style 功能高亮 + 自动引导。
@@ -463,7 +465,18 @@ export function SpotlightOverlay() {
             {(!steps || isLastStep) && (
               <button
                 type="button"
-                onClick={() => setDismissed(true)}
+                onClick={() => {
+                  // 多步 Tour 走到最后:撒花庆祝 + 永久 dismiss(用户已学完,不再骚扰)
+                  // 单步模式也走同样逻辑,但效果只是"关闭引导"
+                  if (steps && steps.length > 0) {
+                    fireConfetti();
+                    if (payload.id && !payload.id.startsWith('seed-')) {
+                      // seed-* 是兜底虚拟 id,后端会忽略;只对真实入库 tip 永久 dismiss
+                      void dismissTipForever(payload.id);
+                    }
+                  }
+                  setDismissed(true);
+                }}
                 style={{
                   fontSize: 12,
                   fontWeight: 600,
@@ -475,7 +488,7 @@ export function SpotlightOverlay() {
                   cursor: 'pointer',
                 }}
               >
-                知道了
+                {steps && steps.length > 0 ? '完成 🎉' : '知道了'}
               </button>
             )}
           </div>
