@@ -256,6 +256,7 @@ export const BUILTIN_TOOLS: ToolboxItem[] = [
     usageCount: 0,
     createdAt: new Date().toISOString(),
   },
+  // (海报工坊不再注册到百宝箱,改挂到资源管理 → 海报设计 tab 下 — 用户视角它是"资源产物"而非"智能体")
   // ========== 工具（缺 AI / 生命周期 / 存储 三要素之一）==========
   {
     id: 'builtin-skill-marketplace-openapi',

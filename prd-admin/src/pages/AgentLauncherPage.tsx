@@ -37,6 +37,8 @@ import { MapSpinner } from '@/components/ui/VideoLoader';
 import { useToolboxStore } from '@/stores/toolboxStore';
 import { useAuthStore } from '@/stores/authStore';
 import { useChangelogStore, selectUnreadCount } from '@/stores/changelogStore';
+import { useWeeklyPosterStore } from '@/stores/weeklyPosterStore';
+import { WeeklyPosterModal } from '@/components/weekly-poster/WeeklyPosterModal';
 import { useHomepageAssetsStore, useAgentImageUrl, useAgentVideoUrl, useHeroBgUrl } from '@/stores/homepageAssetsStore';
 import { buildDefaultCoverUrl, buildDefaultVideoUrl, buildDefaultHeroUrl } from '@/lib/homepageAssetSlots';
 import { useBreakpoint } from '@/hooks/useBreakpoint';
@@ -473,6 +475,9 @@ export default function AgentLauncherPage() {
   const changelogUnread = useChangelogStore(selectUnreadCount);
   const loadChangelogCurrentWeek = useChangelogStore((s) => s.loadCurrentWeek);
 
+  // 周报海报(主页弹窗)
+  const loadWeeklyPoster = useWeeklyPosterStore((s) => s.loadCurrent);
+
   // 首页资源（卡片背景 + Agent 封面）—— 上传后覆盖默认素材
   const homepageAssets = useHomepageAssetsStore((s) => s.assets);
   const loadHomepageAssets = useHomepageAssetsStore((s) => s.load);
@@ -488,7 +493,8 @@ export default function AgentLauncherPage() {
     loadItems();
     void loadChangelogCurrentWeek();
     void loadHomepageAssets();
-  }, [loadItems, loadChangelogCurrentWeek, loadHomepageAssets]);
+    void loadWeeklyPoster();
+  }, [loadItems, loadChangelogCurrentWeek, loadHomepageAssets, loadWeeklyPoster]);
 
   // 静态实用工具入口（不来自后端 toolbox）
   //
@@ -1141,6 +1147,9 @@ export default function AgentLauncherPage() {
       </div>
 
       <DesktopDownloadDialog open={downloadDialogOpen} onOpenChange={setDownloadDialogOpen} />
+
+      {/* 周报海报弹窗:登录后首屏挂载时自动拉取并展示(本会话已关闭则不再弹) */}
+      <WeeklyPosterModal />
     </div>
   );
 }
