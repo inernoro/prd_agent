@@ -33,6 +33,8 @@ export function SpotlightOverlay() {
   /** 6 秒还没找到 selector 就置 true,显示「找不到元素」友好卡片 */
   const [seekTimedOut, setSeekTimedOut] = useState(false);
   const autoClickTimerRef = useRef<number | null>(null);
+  /** 每个 payload 只允许 autoClick 触发一次,避免多步 Tour 里每切一步都自动点击 */
+  const autoClickFiredForPayloadRef = useRef<SpotlightActionPayload | null>(null);
 
   // ---- 启动 + 同路由事件:读 sessionStorage 解析 payload ----
   // 初次 mount 读一次;TipsRotator 写完 payload 会广播 SPOTLIGHT_PAYLOAD_UPDATED_EVENT,
@@ -155,8 +157,11 @@ export function SpotlightOverlay() {
         const el = document.querySelector(currentSelector);
         if (el) {
           if (scroll !== 'none') {
+            // 用 behavior: 'auto' 同步滚动,避免 smooth 动画期间 rect 读到
+            // 还没滚过去的 stale 位置导致光圈闪到屏外再滑回来。
+            // 淡入动画已足够自然,不需要 smooth scroll 效果。
             el.scrollIntoView({
-              behavior: 'smooth',
+              behavior: 'auto',
               block: scroll === 'top' ? 'start' : 'center',
             });
           }
@@ -194,7 +199,12 @@ export function SpotlightOverlay() {
     }
 
     // autoClick:延迟后自动点击目标(光圈已显示一段时间,让用户看清)
-    if (autoAction?.autoClick) {
+    // ★ 语义上 autoClick 是"单次自动操作",跟多步 Tour 的"用户手动推进"天然冲突:
+    //   如果 tour 里每找到一步的 rect 就启动新 timer,1.2s 后会自动 click +
+    //   dismiss,导致整个 Tour 被打断。所以多步 Tour 时直接忽略 autoClick;
+    //   单步模式下再用 setupRanForPayloadRef 确保同一 payload 只触发一次。
+    if (autoAction?.autoClick && !hasSteps && autoClickFiredForPayloadRef.current !== payload) {
+      autoClickFiredForPayloadRef.current = payload;
       const delay = autoAction.autoClickDelayMs ?? 1200;
       autoClickTimerRef.current = window.setTimeout(() => {
         try {

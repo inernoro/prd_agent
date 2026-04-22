@@ -126,17 +126,10 @@ export function TipsDrawer() {
   // ── 悬浮组整体折叠(书 + 铃铛一起贴边) ───────────────────────
   // 这个状态通过 sessionStorage 广播,AppShell 的 toast 按钮订阅同样的 key
   // 实现「两个一起收」的效果。hiddenByUser 是其别名(键名兼容)。
+  //
+  // ★ 实际 sessionStorage 写入 + 事件 dispatch 由上面的 hiddenByUser useEffect
+  //   统一处理,这里只负责 setState;避免双重写入导致 AppShell 收到两次事件。
   const setDockCollapsed = useCallback((collapsed: boolean) => {
-    try {
-      if (collapsed) sessionStorage.setItem(FLOATING_DOCK_COLLAPSED_KEY, '1');
-      else sessionStorage.removeItem(FLOATING_DOCK_COLLAPSED_KEY);
-      // 用自定义事件通知 AppShell(同 tab 内 storage 事件不会触发)
-      window.dispatchEvent(new CustomEvent('floating-dock-collapsed-changed', {
-        detail: { collapsed },
-      }));
-    } catch {
-      /* noop */
-    }
     setHiddenByUser(collapsed);
   }, []);
 
