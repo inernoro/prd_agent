@@ -376,7 +376,8 @@ export function ToolCard({ item, source = 'mine' }: ToolCardProps) {
         backdropFilter: 'blur(12px)',
         WebkitBackdropFilter: 'blur(12px)',
         border: '1px solid rgba(255, 255, 255, 0.08)',
-        aspectRatio: '3 / 4',
+        // 横板 4:3 — 对齐首页 AgentGrid 的视觉语言，比原来的 3:4 竖板更紧凑
+        aspectRatio: '4 / 3',
       }}
     >
       {/* 噪点纹理涂层 */}
@@ -635,19 +636,20 @@ export function ToolCard({ item, source = 'mine' }: ToolCardProps) {
         )}
 
         {/* Footer —
-         * 定制版（有独立路由页）：显示「定制版」徽章，不显示作者
-         * 其它所有：显示作者头像/名字 + 状态徽章
-         *   - 用户自建 && !isPublic → 橙色「施工中」
-         *   - isPublic              → 绿色「已公开」
-         *   - 对话型内置             → 无状态徽章（官方默认公开）
+         * 规则：只有"用户创建的通用智能体"（我的 + 别人公开的）才显示作者头像。
+         * BUILTIN（含定制版 + 普通版）一律按"默认智能体样子"处理，不加特殊标记 —
+         * 不再有「定制版」/「官方」/「MAP」徽标，保持卡片整洁。
+         *   - 我的未公开 → 橙色「施工中」
+         *   - 我的已公开 → 绿色「已公开」
+         *   - 别人公开   → 右侧 Fork 数 +「创建副本」按钮（NEW 徽章在顶部独立渲染）
          */}
         <div
           className="flex items-center justify-between gap-1 pt-1.5"
           style={{ borderTop: '1px solid rgba(255, 255, 255, 0.08)' }}
         >
-          {!isCustomized ? (
+          {(isOwnCustomCard || isMarketplaceCard) ? (
             <>
-              {/* 作者头像 + 名字 + 状态徽章 */}
+              {/* 用户创建的智能体：左侧 头像 + 名字 + 状态徽章 */}
               <div className="flex items-center gap-1 min-w-0">
                 {isOwnCustomCard && !item.isPublic && (
                   <span
@@ -671,35 +673,13 @@ export function ToolCard({ item, source = 'mine' }: ToolCardProps) {
                       color: '#6ee7b7',
                       border: '1px solid rgba(16, 185, 129, 0.45)',
                     }}
-                    title="已公开到市场，他人可 Fork"
+                    title="已公开到市场，他人可使用或 Fork"
                   >
                     <Globe2 size={10} />
                     已公开
                   </span>
                 )}
-                {isBuiltin ? (
-                  // BUILTIN官方 工具 → MAP 品牌徽标（与 VideoLoader 一致的 M/A/P 三色缩写），
-                  // 不再用首字母圆形块误导成"某用户头像"
-                  <div
-                    className="shrink-0 flex items-center justify-center rounded-md font-bold tracking-wide"
-                    style={{
-                      width: 22,
-                      height: 14,
-                      background:
-                        'linear-gradient(135deg, rgba(192,192,204,0.18), rgba(106,106,122,0.08))',
-                      border: '1px solid rgba(192,192,204,0.35)',
-                      color: '#e0e0ec',
-                      fontSize: 8,
-                      letterSpacing: '0.08em',
-                      lineHeight: 1,
-                      fontFamily:
-                        "'Inter', 'SF Pro Display', -apple-system, system-ui, sans-serif",
-                    }}
-                    title="MAP 平台官方工具"
-                  >
-                    MAP
-                  </div>
-                ) : authorAvatarUrl ? (
+                {authorAvatarUrl ? (
                   <img
                     src={authorAvatarUrl}
                     alt={authorName}
@@ -727,7 +707,7 @@ export function ToolCard({ item, source = 'mine' }: ToolCardProps) {
                   {authorName}
                 </span>
               </div>
-              {/* 右侧：别人公开的（marketplace）显示 Fork 数 +「我要创建副本」按钮；自有卡片显示使用次数 + 快捷编辑 + 收藏 */}
+              {/* 右侧：别人公开的 → Fork 数 +「创建副本」按钮；自己的 → 使用次数 + 收藏 */}
               <div className="flex items-center gap-1.5 shrink-0">
                 {isMarketplaceCard ? (
                   <>
@@ -790,34 +770,18 @@ export function ToolCard({ item, source = 'mine' }: ToolCardProps) {
               </div>
             </>
           ) : (
+            // BUILTIN（定制版或普通版）：默认智能体样子，仅使用次数 + 收藏，无作者无徽章
             <>
-              {/* 定制版：徽章 + 收藏（定制版是官方独立页面，不需要作者信息） */}
               <div className="flex items-center gap-1 min-w-0">
-                {item.wip && (
+                {item.usageCount > 0 && (
                   <span
-                    className="shrink-0 text-[10px] px-1.5 py-0.5 rounded font-medium inline-flex items-center gap-1"
-                    style={{
-                      background: 'rgba(245, 158, 11, 0.18)',
-                      color: '#fcd34d',
-                      border: '1px solid rgba(245, 158, 11, 0.45)',
-                    }}
-                    title="未正式发布"
+                    className="flex items-center gap-0.5 text-[10px]"
+                    style={{ color: 'rgba(255, 255, 255, 0.45)' }}
                   >
-                    <HardHat size={10} />
-                    施工中
+                    <Zap size={10} style={{ color: palette.soft }} />
+                    {item.usageCount >= 1000 ? `${(item.usageCount / 1000).toFixed(1)}k` : item.usageCount}
                   </span>
                 )}
-                <span
-                  className="text-[10px] px-1.5 py-0.5 rounded font-medium inline-flex items-center gap-1"
-                  style={{
-                    background: `${palette.from}25`,
-                    color: palette.soft,
-                    border: `1px solid ${palette.from}40`,
-                  }}
-                >
-                  <Sparkles size={10} />
-                  定制版
-                </span>
               </div>
               <button
                 onClick={handleToggleFavorite}

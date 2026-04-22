@@ -215,7 +215,7 @@ export default function AiToolboxPage() {
             )}
           </GlassCard>
         ) : (
-          <div className="grid gap-3" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))' }}>
+          <div className="grid gap-4" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(240px, 1fr))' }}>
             {filteredItems.map((item) => (
               // source 走 item.ownership：别人公开的 = 'marketplace' 分支（显示 Fork 数/NEW 徽章；点击打开详情抽屉而非直接 Fork）；
               // 自己或 BUILTIN = 'mine' 分支
