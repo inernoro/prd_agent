@@ -761,11 +761,16 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
   // ── Remote branches ──
 
-  router.get('/remote-branches', async (_req, res) => {
+  router.get('/remote-branches', async (req, res) => {
     try {
+      const projectId = typeof req.query.project === 'string' ? req.query.project : null;
+      const repoRoot = projectId
+        ? stateService.getProjectRepoRoot(projectId, config.repoRoot)
+        : config.repoRoot;
+
       await shell.exec(
         'GIT_TERMINAL_PROMPT=0 git fetch origin --prune',
-        { cwd: config.repoRoot, timeout: 30_000 },
+        { cwd: repoRoot, timeout: 30_000 },
       );
 
       const SEP = '<SEP>';
@@ -776,7 +781,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
       const result = await shell.exec(
         `git for-each-ref --sort=-committerdate --format="${format}" refs/remotes/origin`,
-        { cwd: config.repoRoot },
+        { cwd: repoRoot },
       );
 
       const branches = result.stdout
@@ -929,10 +934,14 @@ export function createBranchRouter(deps: RouterDeps): Router {
     });
 
     // Compute container capacity: (memoryGB - 1) * 2
+    // maxContainers is the global server limit, so runningContainers must also
+    // count ALL projects — not just the project-filtered `branches` above.
+    // Otherwise a multi-project setup shows "181/186" for project A even when
+    // project B has 10 additional containers running (actual free = 171/186).
     const totalMemGB = Math.round(os.totalmem() / (1024 * 1024 * 1024));
     const maxContainers = Math.max(2, (totalMemGB - 1) * 2);
     let runningContainers = 0;
-    for (const b of branches) {
+    for (const b of Object.values(state.branches)) {
       for (const svc of Object.values(b.services)) {
         if (svc.status === 'running' || svc.status === 'building' || svc.status === 'starting') {
           runningContainers++;
@@ -1003,6 +1012,18 @@ export function createBranchRouter(deps: RouterDeps): Router {
           error: 'project_not_ready',
           cloneStatus: targetProject.cloneStatus,
           message: statusMsg[targetProject.cloneStatus] || `项目克隆状态异常: ${targetProject.cloneStatus}`,
+        });
+        return;
+      }
+      // G1.5 补充: 项目配置了独立 gitRepoUrl 但从未克隆（cloneStatus 为
+      // undefined 说明 reposBase 未设置，willClone=false）。如果放行，
+      // getProjectRepoRoot 会静默回退到 config.repoRoot，创建出错误仓库的
+      // worktree。这里主动拦截，提示用户先配置 CDS_REPOS_BASE 再克隆。
+      if (targetProject.gitRepoUrl && !targetProject.repoPath && !targetProject.cloneStatus) {
+        res.status(409).json({
+          error: 'project_repo_not_cloned',
+          message: `项目配置了独立仓库（${targetProject.gitRepoUrl}），但尚未克隆。` +
+            `请确保服务器已设置 CDS_REPOS_BASE 环境变量，然后通过项目设置触发克隆（POST /api/projects/${effectiveProjectId}/clone）。`,
         });
         return;
       }
@@ -3079,13 +3100,21 @@ export function createBranchRouter(deps: RouterDeps): Router {
     // while hex UUIDs look like random noise in the topology view.
     const idSuffix = projectId === 'default' ? '' : `-${projectSlug}`;
 
-    // Task 1: prefer the project's own cds-compose.yaml over the
-    // hardcoded template. This fixes the Redis-connect crash on forked
-    // projects — the template was missing MongoDB/Redis/JWT env vars,
-    // while cds-compose.yaml carries the full runtime contract.
+    // Task 1: prefer a cds-compose file over the hardcoded template.
+    // Only search inside the project's own git repo (projectRepoRoot).
+    // Never search config.repoRoot — that is the CDS host directory shared
+    // across all projects, so reading from it would let one project's compose
+    // file silently contaminate a different project's build profiles.
     let composeYaml: string | null = null;
-    for (const filename of ['cds-compose.yaml', 'cds-compose.yml']) {
-      const composePath = path.join(projectRepoRoot, filename);
+    const composeCandidates: string[] = [
+      path.join(projectRepoRoot, 'cds-compose.yaml'),
+      path.join(projectRepoRoot, 'cds-compose.yml'),
+    ];
+    // De-duplicate paths (projectRepoRoot may equal config.repoRoot for legacy)
+    const seen = new Set<string>();
+    for (const composePath of composeCandidates) {
+      if (seen.has(composePath)) continue;
+      seen.add(composePath);
       if (fs.existsSync(composePath)) {
         try {
           composeYaml = fs.readFileSync(composePath, 'utf8');
@@ -3137,11 +3166,19 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
         stateService.save();
 
+        // Report env vars that still have TODO placeholder values so the
+        // frontend can open the env editor immediately after quickstart.
+        const allProjectEnv = stateService.getCustomEnv(projectId);
+        const pendingEnvVars = Object.entries(allProjectEnv)
+          .filter(([, v]) => typeof v === 'string' && v.startsWith('TODO:'))
+          .map(([k]) => k);
+
         res.status(201).json({
           message: `快速启动: 已从 cds-compose.yaml 创建 ${seeded.length} 个构建配置`,
           profiles: seeded,
           detectedPackageManager: pm,
           source: 'cds-compose',
+          pendingEnvVars,
         });
         return;
       }
@@ -3875,17 +3912,24 @@ export function createBranchRouter(deps: RouterDeps): Router {
     res.json({ services });
   });
 
-  // Discover infrastructure services from compose files in the repo
-  router.get('/infra/discover', (_req, res) => {
+  // Discover infrastructure services from compose files in the project repo
+  router.get('/infra/discover', (req, res) => {
     try {
-      const composeFiles = discoverComposeFiles(config.repoRoot);
+      // Scope discovery to the current project's own repo root only.
+      // Using config.repoRoot (the CDS host directory) would expose compose
+      // files belonging to other projects.
+      const queryProject = typeof req.query.project === 'string' ? req.query.project : null;
+      const effectiveProjectId = queryProject || 'default';
+      const scanRoot = stateService.getProjectRepoRoot(effectiveProjectId, config.repoRoot);
+
+      const composeFiles = discoverComposeFiles(scanRoot);
       const discovered: { file: string; services: ComposeServiceDef[] }[] = [];
 
       for (const file of composeFiles) {
         try {
           const services = parseComposeFile(file);
           if (services.length > 0) {
-            discovered.push({ file: path.relative(config.repoRoot, file), services });
+            discovered.push({ file: path.relative(scanRoot, file), services });
           }
         } catch { /* skip unparseable files */ }
       }
@@ -4123,7 +4167,14 @@ export function createBranchRouter(deps: RouterDeps): Router {
     if (composeYaml) {
       defs = parseComposeString(composeYaml);
     } else {
-      const composeFiles = discoverComposeFiles(config.repoRoot);
+      // Scope discovery to the current project's repo root only.
+      // Using config.repoRoot (the shared CDS host dir) would expose compose
+      // files from other projects — same isolation fix as /infra/discover.
+      const queryProject = typeof req.query.project === 'string' ? req.query.project : null;
+      const bodyProject = typeof req.body.projectId === 'string' ? req.body.projectId : null;
+      const effectiveProjectId = queryProject || bodyProject || 'default';
+      const scanRoot = stateService.getProjectRepoRoot(effectiveProjectId, config.repoRoot);
+      const composeFiles = discoverComposeFiles(scanRoot);
       const seenIds = new Set<string>();
       for (const file of composeFiles) {
         try {
@@ -4523,33 +4574,33 @@ export function createBranchRouter(deps: RouterDeps): Router {
     res.json({ version });
   });
 
-  // GET /api/export-skill — export unified cds skill as tar.gz
+  // GET /api/export-skill — export all CDS skills as a single tar.gz bundle
   //
-  // 2026-04-18 重构：合并 cds-project-scan + cds-deploy-pipeline + smoke-test
-  // 为单一 cds 技能，带 cli/ Python CLI + reference/ 按需文档 + SKILL.md 入口。
-  // 旧入参 `?legacy=1` 仍能导出 cds-project-scan 单独的文档（向后兼容）。
+  // 打包内容（全量，不分 legacy / unified）：
+  //   .claude/skills/cds/                — 统一技能（主入口 + CLI + reference）
+  //   .claude/skills/cds-deploy-pipeline/ — 部署流水线技能
+  //   .claude/skills/cds-project-scan/   — 扫描技能（向后兼容旧工作流）
+  //
+  // 旧入参 `?legacy=1` 保留：仍能仅导出 cds-project-scan（向后兼容）。
   router.get('/export-skill', (req, res) => {
     try {
       const useLegacy = req.query.legacy === '1';
-      const skillName = useLegacy ? 'cds-project-scan' : 'cds';
-      const skillDir = path.join(config.repoRoot, '.claude', 'skills', skillName);
-      if (!fs.existsSync(skillDir)) {
-        res.status(404).json({ error: `未找到 ${skillName} 技能目录` });
-        return;
-      }
+
+      // 解析 skills 根目录：优先 config.repoRoot，兜底父目录（CDS 部署为子目录时）
+      const skillsRoot = ((): string => {
+        const primary = path.join(config.repoRoot, '.claude', 'skills');
+        if (fs.existsSync(primary)) return primary;
+        const parent = path.join(config.repoRoot, '..', '.claude', 'skills');
+        if (fs.existsSync(parent)) return parent;
+        return primary; // 返回原路径，后续报错
+      })();
 
       // Build pack in a temp directory
       const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
-      const packName = `${skillName}-skill-${timestamp}`;
+      const packName = useLegacy ? `cds-project-scan-skill-${timestamp}` : `cds-skills-${timestamp}`;
       const tmpDir = path.join(config.repoRoot, '.cds', 'tmp');
       const packDir = path.join(tmpDir, packName);
 
-      // Recursively copy the whole skill directory (captures cli/ and
-      // reference/ subdirs without per-file enumeration). This mirrors
-      // whatever layout the skill author uses so the drop-in on the
-      // consumer side stays identical to the source.
-      const targetSkillDir = path.join(packDir, '.claude', 'skills', skillName);
-      fs.mkdirSync(targetSkillDir, { recursive: true });
       const copyRecursive = (src: string, dst: string) => {
         const stat = fs.statSync(src);
         if (stat.isDirectory()) {
@@ -4561,19 +4612,39 @@ export function createBranchRouter(deps: RouterDeps): Router {
           fs.copyFileSync(src, dst);
         }
       };
-      copyRecursive(skillDir, targetSkillDir);
+
+      // 要打包的技能列表
+      const skillsToCopy: string[] = useLegacy
+        ? ['cds-project-scan']
+        : ['cds', 'cds-deploy-pipeline', 'cds-project-scan'];
+
+      let copiedCount = 0;
+      for (const skillName of skillsToCopy) {
+        const skillDir = path.join(skillsRoot, skillName);
+        if (!fs.existsSync(skillDir)) continue;
+        const targetSkillDir = path.join(packDir, '.claude', 'skills', skillName);
+        fs.mkdirSync(targetSkillDir, { recursive: true });
+        copyRecursive(skillDir, targetSkillDir);
+        copiedCount++;
+      }
+
+      if (copiedCount === 0) {
+        res.status(404).json({ error: `未找到 CDS 技能目录（已查找：${skillsRoot}）` });
+        return;
+      }
 
       // README tailored to the new unified skill
       const readme = useLegacy
         ? `# CDS 部署技能包 (legacy: cds-project-scan)\n\n将 \`.claude/skills/cds-project-scan/\` 复制到目标项目的对应路径。\n`
-        : `# CDS 技能包 (统一版)
+        : `# CDS 技能包（全套，共 ${copiedCount} 个技能）
 
+包含：cds（主技能）、cds-deploy-pipeline（部署流水线）、cds-project-scan（扫描）。
 覆盖 CDS 全生命周期：扫描项目 → Agent 鉴权 → 部署 → 就绪检测 → 分层冒烟 → 故障诊断。
 
 ## 三分钟安装
 
 \`\`\`bash
-# 1. 解压到你项目的根目录（保留 .claude/skills/cds/ 结构）
+# 1. 解压到你项目的根目录（会在 .claude/skills/ 下放置所有 cds 技能）
 tar -xzf ${packName}.tar.gz --strip-components=1
 
 # 2. 加 alias（推荐）

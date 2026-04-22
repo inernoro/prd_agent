@@ -753,6 +753,9 @@ h2{font-size:18px;color:#f0f6fc;margin-bottom:8px}
     // Non-HTML resources (JS/CSS/images) keep compression intact.
 
     // Track web access for activity monitor
+    // accessLogged prevents double-emitting when the error handler fires first
+    // and then clientRes.on('finish') also fires for the synthetic response.
+    let accessLogged = false;
     if (branchCtx?.trackAccess && this.onAccess) {
       const onAccessCb = this.onAccess;
       const method = clientReq.method || 'GET';
@@ -760,7 +763,10 @@ h2{font-size:18px;color:#f0f6fc;margin-bottom:8px}
       const branchId = branchCtx.branchId;
       const profileId = branchCtx.profileId;
       clientRes.on('finish', () => {
-        onAccessCb(branchId, method, reqPath, clientRes.statusCode, Date.now() - proxyStart, profileId);
+        if (!accessLogged) {
+          accessLogged = true;
+          onAccessCb(branchId, method, reqPath, clientRes.statusCode, Date.now() - proxyStart, profileId);
+        }
       });
     }
 
@@ -829,6 +835,21 @@ h2{font-size:18px;color:#f0f6fc;margin-bottom:8px}
 
     proxyReq.on('error', (err: NodeJS.ErrnoException) => {
       console.error(`[proxy] upstream error: ${err.message} → ${upstream}`);
+      // Emit activity event immediately so the failure appears in Activity Monitor.
+      // We do this here rather than relying on clientRes.on('finish') because the
+      // synthetic response we send (loading page or 502) would show status 200/502
+      // from the finish event — emitting 502 here better reflects what happened.
+      if (branchCtx?.trackAccess && this.onAccess && !accessLogged) {
+        accessLogged = true;
+        this.onAccess(
+          branchCtx.branchId,
+          clientReq.method || 'GET',
+          clientReq.url || '/',
+          502,
+          Date.now() - proxyStart,
+          branchCtx.profileId,
+        );
+      }
       if (clientRes.headersSent) return;
 
       // Connection-level errors to the upstream container (not yet listening,

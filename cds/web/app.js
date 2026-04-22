@@ -510,6 +510,11 @@ async function bootstrapCurrentProjectLabel() {
   if (body && body.name) {
     label.textContent = body.name;
     label.title = '项目：' + body.name + '（点击返回列表）';
+    // Cache for other UI elements (e.g. quickstart banner hint).
+    window._currentProjectName = body.name;
+    // Re-render profiles now that we have the name, so the banner hint
+    // shows the actual project name instead of the ID.
+    renderProfiles();
   }
 }
 
@@ -595,10 +600,16 @@ function initStateStream() {
     try {
       const data = JSON.parse(e.data);
       if (data.branches) {
+        // broadcastState() sends ALL branches across all projects. Scope to the
+        // current project here so a dashboard opened on project B doesn't absorb
+        // project A's branches. This mirrors the ?project= filter on GET /branches.
+        const projectBranches = data.branches.filter(
+          b => (b.projectId || 'default') === CURRENT_PROJECT_ID
+        );
         // Merge commit info: state-stream has no git data, so preserve existing subject/commitSha
         // Only update status and service states from server push
         const branchMap = new Map(branches.map(b => [b.id, b]));
-        for (const pushed of data.branches) {
+        for (const pushed of projectBranches) {
           const existing = branchMap.get(pushed.id);
           if (existing) {
             // Preserve git info, update status/services/executorId
@@ -620,8 +631,8 @@ function initStateStream() {
             branches.push(pushed);
           }
         }
-        // Remove branches that no longer exist
-        const pushedIds = new Set(data.branches.map(b => b.id));
+        // Remove branches that no longer exist in this project's scope
+        const pushedIds = new Set(projectBranches.map(b => b.id));
         const removedIds = branches.filter(b => !pushedIds.has(b.id)).map(b => b.id);
         branches = branches.filter(b => pushedIds.has(b.id));
         for (const rid of removedIds) freshlyArrived.delete(rid);
@@ -643,6 +654,23 @@ function initStateStream() {
       }
       if (data.capacity) {
         clusterCapacity = data.capacity;
+      }
+      // In single-node mode data.capacity is null, but data.branches carries
+      // ALL branches across ALL projects. Recompute global runningContainers
+      // so the capacity badge stays accurate without waiting for the next
+      // loadBranches() poll (5 s). maxContainers / totalMemGB are unchanged.
+      if (!data.capacity && Array.isArray(data.branches)) {
+        var globalRunning = 0;
+        for (var _gb of data.branches) {
+          if (_gb.services) {
+            for (var _svc of Object.values(_gb.services)) {
+              if (_svc.status === 'running' || _svc.status === 'building' || _svc.status === 'starting') {
+                globalRunning++;
+              }
+            }
+          }
+        }
+        containerCapacity = Object.assign({}, containerCapacity, { runningContainers: globalRunning });
       }
       if (typeof data.schedulerEnabled === 'boolean') {
         schedulerEnabled = data.schedulerEnabled;
@@ -4085,6 +4113,12 @@ function renderProfiles() {
   // Profiles are now rendered inside modal, this just controls the quickstart banner
   const banner = document.getElementById('quickstartBanner');
   if (buildProfiles.length === 0) {
+    // Dynamically update the hint text to show the actual project name
+    const hint = document.getElementById('quickstartBannerHint');
+    if (hint) {
+        const projName = window._currentProjectName || CURRENT_PROJECT_ID || '当前项目';
+      hint.innerHTML = `优先读取 <strong>${esc(projName)}</strong> 项目仓库下的 <code>cds-compose.yaml</code>；否则使用内置 api/admin 模板`;
+    }
     banner.classList.remove('hidden');
   } else {
     banner.classList.add('hidden');
@@ -4128,6 +4162,15 @@ async function runQuickstart() {
     const data = await api('POST', '/quickstart', { projectId: CURRENT_PROJECT_ID });
     showToast(data.message, 'success');
     await loadProfiles();
+    // When compose file was found and some vars still have TODO placeholders,
+    // automatically open the env editor so the user can fill them in before
+    // starting branches.
+    if (data.source === 'cds-compose' && data.pendingEnvVars && data.pendingEnvVars.length > 0) {
+      await loadEnvVars(CURRENT_PROJECT_ID);
+      envScope = CURRENT_PROJECT_ID;
+      showToast(`已导入配置，请填写 ${data.pendingEnvVars.length} 个待填写的环境变量`, 'info');
+      openEnvModal();
+    }
   } catch (e) { showToast(e.message, 'error'); }
 }
 
