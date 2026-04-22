@@ -10,7 +10,7 @@ import {
   resolveOpenApiBase,
 } from './codeSnippets';
 import {
-  OFFICIAL_SKILL_MARKETPLACE_OPENAPI,
+  OFFICIAL_SKILL_FINDMAPSKILLS,
   downloadOfficialSkill,
   markOfficialSkillDownloaded,
 } from './downloadOfficialSkill';
@@ -34,9 +34,9 @@ export function GuideTab() {
   const handleDownloadSkill = async () => {
     setDownloading(true);
     try {
-      await downloadOfficialSkill(OFFICIAL_SKILL_MARKETPLACE_OPENAPI);
+      await downloadOfficialSkill(OFFICIAL_SKILL_FINDMAPSKILLS);
       markOfficialSkillDownloaded();
-      toast.success('已下载 marketplace-openapi.zip，解压到 ~/.claude/skills/ 即可使用');
+      toast.success('已下载 findmapskills.zip，解压到 ~/.claude/skills/ 即可使用');
     } catch (err) {
       toast.error(err instanceof Error ? err.message : '下载失败');
     } finally {
@@ -115,7 +115,7 @@ export function GuideTab() {
               }}
             >
               <Download size={13} />
-              {downloading ? '下载中…' : '下载 marketplace-openapi.zip'}
+              {downloading ? '下载中…' : '下载 findmapskills.zip'}
             </button>
           </div>
         </div>

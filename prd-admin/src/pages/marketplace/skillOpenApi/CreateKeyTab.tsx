@@ -4,9 +4,10 @@ import { Button } from '@/components/design/Button';
 import { toast } from '@/lib/toast';
 import { createAgentApiKey } from '@/services';
 import {
-  OFFICIAL_SKILL_MARKETPLACE_OPENAPI,
+  OFFICIAL_SKILL_FINDMAPSKILLS,
   downloadOfficialSkill,
   markOfficialSkillDownloaded,
+  resolveOfficialSkillDownloadUrl,
 } from './downloadOfficialSkill';
 
 interface Props {
@@ -53,41 +54,33 @@ export function CreateKeyTab({ allowedScopes, onCreated, onBackToList, agentMode
   const [copiedPrompt, setCopiedPrompt] = useState(false);
   const [downloadingSkill, setDownloadingSkill] = useState(false);
 
-  // 构造"复制给智能体"的提示词 —— 让 AI 自己导入环境变量 + 安装技能包
+  /**
+   * 「复制给智能体使用」提示词 —— 最小化 + 安全：
+   *  1. 只告诉 AI 两件事：把 Key 存进 shell init 文件（不入仓库），下载 findmapskills 技能
+   *  2. 剩下的操作全写在 SKILL.md 里，AI 装完读一下就会
+   *
+   * 安全考量：
+   *  - 明确要求"不要把 Key 写进仓库代码或 git 追踪的文件"
+   *  - 推荐用 ~/.zshrc / ~/.bashrc（gitignore 安全区）或 macOS Keychain / pass
+   *  - 不使用 ~/.env 之类容易被 git commit 的文件
+   */
   const buildAgentPrompt = (key: string) => {
-    const base = typeof window !== 'undefined' ? window.location.origin : 'https://your-platform.example.com';
-    const skillUrl = `${base}/api/official-skills/marketplace-openapi/download`;
-    return `我刚在 PrdAgent 海鲜市场生成了一个开放接口 API Key，请帮我把它配置好，之后你就能浏览/下载/上传这个平台的技能包。
+    const skillUrl = resolveOfficialSkillDownloadUrl(OFFICIAL_SKILL_FINDMAPSKILLS);
+    const base = typeof window !== 'undefined' ? window.location.origin : '';
+    return `请帮我接入 PrdAgent 海鲜市场（技能市场）。
 
---- 步骤 1：设置环境变量 ---
-请在当前 shell 里执行：
+① 把下面这对 Key 存到 ~/.zshrc 或 ~/.bashrc（或其他不会被 git 追踪的安全位置），然后 source 生效。不要写进仓库里任何文件：
 
 export PRD_AGENT_API_KEY="${key}"
 export PRD_AGENT_BASE="${base}"
 
-并把这两行写进 ~/.zshrc 或 ~/.bashrc，让后续 session 也能用。
+② 下载官方操作技能 findmapskills 到 ~/.claude/skills/：
 
---- 步骤 2：安装官方客户端技能包 ---
-下载并解压官方技能包到 ~/.claude/skills/：
+curl -L "${skillUrl}" -o /tmp/findmapskills.zip \\
+ && mkdir -p ~/.claude/skills && unzip -o /tmp/findmapskills.zip -d ~/.claude/skills/ \\
+ && rm /tmp/findmapskills.zip
 
-curl -L -o /tmp/marketplace-openapi.zip "${skillUrl}"
-mkdir -p ~/.claude/skills
-unzip -o /tmp/marketplace-openapi.zip -d ~/.claude/skills/
-rm /tmp/marketplace-openapi.zip
-
---- 步骤 3：验证接通 ---
-执行这条命令看看是否能拿到技能列表：
-
-curl -sS "$PRD_AGENT_BASE/api/open/marketplace/skills?sort=hot&limit=5" \\
-  -H "Authorization: Bearer $PRD_AGENT_API_KEY" | head -c 500
-
-如果返回 JSON 里有 success:true 就接好了。
-
---- 注意事项 ---
-- 这个 Key 默认 1 年有效期，到期前 30 天响应头会提示续期，
-  请记得去 ${base}/marketplace 页面 → 右上角「接入 AI」→ 点"续期一年"。
-- Key 明文只有这一次机会保存，不要发到公开仓库 / 截图里。
-- 所有调用方式见下载的 SKILL.md，直接读它即可。
+③ 读一下 ~/.claude/skills/findmapskills/SKILL.md —— 里面有海鲜市场全部操作（搜索 / 下载 / 上传 / 订阅 / Key 过期处理），后续我说"找个做 X 的技能"或"把这个上传到市场"都按那份文档操作即可。
 `;
   };
 
@@ -153,9 +146,9 @@ curl -sS "$PRD_AGENT_BASE/api/open/marketplace/skills?sort=hot&limit=5" \\
   const handleDownloadSkillHere = async () => {
     setDownloadingSkill(true);
     try {
-      await downloadOfficialSkill(OFFICIAL_SKILL_MARKETPLACE_OPENAPI);
+      await downloadOfficialSkill(OFFICIAL_SKILL_FINDMAPSKILLS);
       markOfficialSkillDownloaded();
-      toast.success('已下载 marketplace-openapi.zip');
+      toast.success('已下载 findmapskills.zip');
     } catch (err) {
       toast.error(err instanceof Error ? err.message : '下载失败');
     } finally {

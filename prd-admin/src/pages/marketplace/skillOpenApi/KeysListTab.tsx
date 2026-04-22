@@ -12,7 +12,7 @@ import type { AgentApiKeyDto } from '@/services/contracts/agentApiKeys';
 import { StatusBadge, formatDateTime, formatDaysLeft } from './statusBadge';
 import { CreateKeyTab } from './CreateKeyTab';
 import {
-  OFFICIAL_SKILL_MARKETPLACE_OPENAPI,
+  OFFICIAL_SKILL_FINDMAPSKILLS,
   downloadOfficialSkill,
   markOfficialSkillDownloaded,
 } from './downloadOfficialSkill';
@@ -43,9 +43,9 @@ export function KeysListTab({ keys, loading, allowedScopes, onRefresh, openCreat
   const handleDownloadSkill = async () => {
     setDownloading(true);
     try {
-      await downloadOfficialSkill(OFFICIAL_SKILL_MARKETPLACE_OPENAPI);
+      await downloadOfficialSkill(OFFICIAL_SKILL_FINDMAPSKILLS);
       markOfficialSkillDownloaded();
-      toast.success('已下载 marketplace-openapi.zip');
+      toast.success('已下载 findmapskills.zip');
     } catch (err) {
       toast.error(err instanceof Error ? err.message : '下载失败');
     } finally {

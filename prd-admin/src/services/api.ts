@@ -745,7 +745,7 @@ export const api = {
     byId: (id: string) => `/api/agent-api-keys/${id}`,
   },
 
-  // ============ Official Skills 平台官方技能包（marketplace-openapi 等） ============
+  // ============ Official Skills 平台官方技能包（findmapskills：海鲜市场全操作） ============
   officialSkills: {
     download: (skillKey: string) => `/api/official-skills/${skillKey}/download`,
   },

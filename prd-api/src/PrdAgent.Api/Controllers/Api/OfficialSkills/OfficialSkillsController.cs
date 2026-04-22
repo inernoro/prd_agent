@@ -34,12 +34,12 @@ public class OfficialSkillsController : ControllerBase
     [HttpGet("{skillKey}/download")]
     public IActionResult Download(string skillKey)
     {
-        if (skillKey != OfficialSkillTemplates.MarketplaceOpenApiSkillKey)
+        if (skillKey != OfficialSkillTemplates.FindMapSkillsKey)
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, $"未找到官方技能: {skillKey}"));
 
         var baseUrl = ResolveBaseUrl();
-        var skillMd = OfficialSkillTemplates.MarketplaceOpenApiSkillMd.Replace("{{BASE_URL}}", baseUrl);
-        var readme = OfficialSkillTemplates.MarketplaceOpenApiReadme.Replace("{{BASE_URL}}", baseUrl);
+        var skillMd = OfficialSkillTemplates.FindMapSkillsSkillMd.Replace("{{BASE_URL}}", baseUrl);
+        var readme = OfficialSkillTemplates.FindMapSkillsReadme.Replace("{{BASE_URL}}", baseUrl);
 
         using var ms = new MemoryStream();
         using (var zip = new ZipArchive(ms, ZipArchiveMode.Create, leaveOpen: true))
