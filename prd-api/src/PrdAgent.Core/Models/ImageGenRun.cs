@@ -157,6 +157,11 @@ public class ImageGenRunPlanItem
     public string Prompt { get; set; } = string.Empty;
     public int Count { get; set; } = 1;
     public string? Size { get; set; }
+    /// <summary>
+    /// 用户可见的原始 prompt（不含系统前缀/风格提示词）。
+    /// 保存到消息时使用此字段，避免系统提示泄漏给用户。
+    /// </summary>
+    public string? DisplayPrompt { get; set; }
 }
 
 

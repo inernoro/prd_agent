@@ -236,11 +236,14 @@ public class ImageGenRunWorker : BackgroundService
             }
 
             var count = Math.Clamp(items[itemIndex].Count <= 0 ? 1 : items[itemIndex].Count, 1, 5);
+            // 用户可见的 prompt（不含系统前缀/风格提示词），用于消息记录和重试
+            var displayPrompt = items[itemIndex].DisplayPrompt?.Trim();
             for (var k = 0; k < count; k++)
             {
                 var curItemIndex = itemIndex;
                 var imageIndex = k;
                 var curPrompt = prompt;
+                var curDisplayPrompt = displayPrompt;
                 var reqSize = ResolveSize(run, items[itemIndex]);
 
                 tasks.Add(Task.Run(async () =>
@@ -433,7 +436,7 @@ public class ImageGenRunWorker : BackgroundService
                             await _db.ImageGenRuns.UpdateOneAsync(x => x.Id == run.Id, Builders<ImageGenRun>.Update.Inc(x => x.Failed, 1), cancellationToken: ct);
 
                             var guardGenType = "unresolved";
-                            var guardPayload = JsonSerializer.Serialize(new { msg = guardMsg, prompt = curPrompt, runId = run.Id, modelPool = run.ModelGroupName, genType = guardGenType }, JsonOptions);
+                            var guardPayload = JsonSerializer.Serialize(new { msg = guardMsg, prompt = curDisplayPrompt ?? StripImageGenPrefix(curPrompt), runId = run.Id, modelPool = run.ModelGroupName, genType = guardGenType }, JsonOptions);
                             var errMsgContent = $"[GEN_ERROR]{guardPayload}";
                             var errMsgId = await SaveWorkspaceMessageAsync(run.WorkspaceId ?? string.Empty, run.OwnerAdminId, "Assistant", errMsgContent, ct);
 
@@ -553,7 +556,7 @@ public class ImageGenRunWorker : BackgroundService
                             var errRefSrc = loadedImageRefs.FirstOrDefault()?.CosUrl;
                             var errImageRefShas = loadedImageRefs.Count > 0 ? loadedImageRefs.Select(r => r.Sha256).Where(s => !string.IsNullOrEmpty(s)).ToList() : null;
                             var errGenType = loadedImageRefs.Count > 1 ? "vision" : (loadedImageRefs.Count == 1 ? "img2img" : "text2img");
-                            var errMsgContent = $"[GEN_ERROR]{JsonSerializer.Serialize(new { msg, refSrc = errRefSrc, prompt = curPrompt, runId = run.Id, modelPool = run.ModelGroupName, genType = errGenType, imageRefShas = errImageRefShas }, JsonOptions)}";
+                            var errMsgContent = $"[GEN_ERROR]{JsonSerializer.Serialize(new { msg, refSrc = errRefSrc, prompt = curDisplayPrompt ?? StripImageGenPrefix(curPrompt), runId = run.Id, modelPool = run.ModelGroupName, genType = errGenType, imageRefShas = errImageRefShas }, JsonOptions)}";
 
                             // 失败时也记录 input images（方便日志排查参考图问题）
                             await PatchLogImagesAsync(run, curItemIndex, imageIndex, loadedImageRefs, null, ct);
@@ -612,7 +615,7 @@ public class ImageGenRunWorker : BackgroundService
                         var doneRefSrc = loadedImageRefs.FirstOrDefault()?.CosUrl;
                         var doneImageRefShas = loadedImageRefs.Count > 0 ? loadedImageRefs.Select(r => r.Sha256).Where(s => !string.IsNullOrEmpty(s)).ToList() : null;
                         var doneGenType = loadedImageRefs.Count > 1 ? "vision" : (loadedImageRefs.Count == 1 ? "img2img" : "text2img");
-                        var doneMsgContent = $"[GEN_DONE]{JsonSerializer.Serialize(new { src = url ?? string.Empty, refSrc = doneRefSrc, prompt = curPrompt, runId = run.Id, modelPool = run.ModelGroupName, genType = doneGenType, imageRefShas = doneImageRefShas }, JsonOptions)}";
+                        var doneMsgContent = $"[GEN_DONE]{JsonSerializer.Serialize(new { src = url ?? string.Empty, refSrc = doneRefSrc, prompt = curDisplayPrompt ?? StripImageGenPrefix(curPrompt), runId = run.Id, modelPool = run.ModelGroupName, genType = doneGenType, imageRefShas = doneImageRefShas }, JsonOptions)}";
                         var doneMsgId = await SaveWorkspaceMessageAsync(run.WorkspaceId ?? string.Empty, run.OwnerAdminId, "Assistant", doneMsgContent, ct);
 
                         // ===== 日志图片填充：input 来自前端 COS URL，output 来自生成结果 =====
