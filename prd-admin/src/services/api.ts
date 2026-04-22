@@ -192,6 +192,7 @@ export const api = {
     byKey: (skillKey: string) => `/api/skills/${encodeURIComponent(skillKey)}`,
   },
 
+
   // ============ Skill Agent 技能引导创建 ============
   skillAgent: {
     createSession: () => '/api/skill-agent/sessions',
@@ -783,6 +784,8 @@ export const api = {
 
   // ============ Settings 系统设置 ============
   settings: {
+    defaultNav: () => '/api/settings/default-nav',
+    applyDefaultNavToAllUsers: () => '/api/settings/default-nav/apply-to-all-users',
     init: {
       defaultGroups: () => '/api/settings/init/default-groups',
       migrateModels: () => '/api/settings/init/migrate-models',

@@ -71,6 +71,8 @@ export type LiteraryAgentPreferences = {
 export type UserPreferences = {
   navOrder: string[];
   navHidden: string[];
+  defaultNavOrder: string[];
+  defaultNavHidden: string[];
   themeConfig?: ThemeConfigResponse;
   visualAgentPreferences?: VisualAgentPreferences;
   literaryAgentPreferences?: LiteraryAgentPreferences;
@@ -91,3 +93,23 @@ export type UpdateVisualAgentPreferencesContract = (prefs: VisualAgentPreference
 export type UpdateLiteraryAgentPreferencesContract = (prefs: LiteraryAgentPreferences) => Promise<ApiResponse<void>>;
 
 export type UpdateAgentSwitcherPreferencesContract = (prefs: AgentSwitcherPreferences) => Promise<ApiResponse<void>>;
+
+export type DefaultNavLayout = {
+  navOrder: string[];
+  navHidden: string[];
+  updatedAt?: string;
+};
+
+export type ApplyDefaultNavToAllUsersResult = {
+  matchedCount: number;
+  modifiedCount: number;
+};
+
+export type GetDefaultNavLayoutContract = () => Promise<ApiResponse<DefaultNavLayout>>;
+
+export type UpdateDefaultNavLayoutContract = (payload: {
+  navOrder: string[];
+  navHidden: string[];
+}) => Promise<ApiResponse<DefaultNavLayout>>;
+
+export type ApplyDefaultNavToAllUsersContract = () => Promise<ApiResponse<ApplyDefaultNavToAllUsersResult>>;

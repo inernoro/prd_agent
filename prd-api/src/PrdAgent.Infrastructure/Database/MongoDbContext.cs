@@ -89,6 +89,7 @@ public class MongoDbContext
     public IMongoCollection<ModelGroup> ModelGroups => _database.GetCollection<ModelGroup>("model_groups");
     public IMongoCollection<LLMAppCaller> LLMAppCallers => _database.GetCollection<LLMAppCaller>("llm_app_callers");
     public IMongoCollection<ModelSchedulerConfig> ModelSchedulerConfigs => _database.GetCollection<ModelSchedulerConfig>("model_scheduler_config");
+    public IMongoCollection<DefaultNavConfig> DefaultNavConfigs => _database.GetCollection<DefaultNavConfig>("default_nav_config");
     public IMongoCollection<ModelTestStub> ModelTestStubs => _database.GetCollection<ModelTestStub>("model_test_stubs");
     public IMongoCollection<SystemRole> SystemRoles => _database.GetCollection<SystemRole>("system_roles");
     public IMongoCollection<UserPreferences> UserPreferences => _database.GetCollection<UserPreferences>("user_preferences");
