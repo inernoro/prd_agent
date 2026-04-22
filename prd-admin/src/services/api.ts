@@ -745,6 +745,11 @@ export const api = {
     byId: (id: string) => `/api/agent-api-keys/${id}`,
   },
 
+  // ============ Official Skills 平台官方技能包（marketplace-openapi 等） ============
+  officialSkills: {
+    download: (skillKey: string) => `/api/official-skills/${skillKey}/download`,
+  },
+
   // ============ Model Sizes ============
   modelSizes: (modelKey: string) => `/api/model/${modelKey}/sizes`,
 

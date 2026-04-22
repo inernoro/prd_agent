@@ -1,8 +1,13 @@
 import { useState } from 'react';
-import { AlertTriangle, Check, Copy, EyeOff, KeyRound, Sparkles } from 'lucide-react';
+import { AlertTriangle, Bot, Check, Copy, Download, EyeOff, KeyRound, Sparkles } from 'lucide-react';
 import { Button } from '@/components/design/Button';
 import { toast } from '@/lib/toast';
 import { createAgentApiKey } from '@/services';
+import {
+  OFFICIAL_SKILL_MARKETPLACE_OPENAPI,
+  downloadOfficialSkill,
+  markOfficialSkillDownloaded,
+} from './downloadOfficialSkill';
 
 interface Props {
   /** 平台支持的 scope 白名单，来自 /api/agent-api-keys 的 allowedScopes */
@@ -39,6 +44,46 @@ export function CreateKeyTab({ allowedScopes, onCreated, onBackToList }: Props) 
   const [creating, setCreating] = useState(false);
   const [plaintext, setPlaintext] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
+  const [copiedPrompt, setCopiedPrompt] = useState(false);
+  const [downloadingSkill, setDownloadingSkill] = useState(false);
+
+  // 构造"复制给智能体"的提示词 —— 让 AI 自己导入环境变量 + 安装技能包
+  const buildAgentPrompt = (key: string) => {
+    const base = typeof window !== 'undefined' ? window.location.origin : 'https://your-platform.example.com';
+    const skillUrl = `${base}/api/official-skills/marketplace-openapi/download`;
+    return `我刚在 PrdAgent 海鲜市场生成了一个开放接口 API Key，请帮我把它配置好，之后你就能浏览/下载/上传这个平台的技能包。
+
+--- 步骤 1：设置环境变量 ---
+请在当前 shell 里执行：
+
+export PRD_AGENT_API_KEY="${key}"
+export PRD_AGENT_BASE="${base}"
+
+并把这两行写进 ~/.zshrc 或 ~/.bashrc，让后续 session 也能用。
+
+--- 步骤 2：安装官方客户端技能包 ---
+下载并解压官方技能包到 ~/.claude/skills/：
+
+curl -L -o /tmp/marketplace-openapi.zip "${skillUrl}"
+mkdir -p ~/.claude/skills
+unzip -o /tmp/marketplace-openapi.zip -d ~/.claude/skills/
+rm /tmp/marketplace-openapi.zip
+
+--- 步骤 3：验证接通 ---
+执行这条命令看看是否能拿到技能列表：
+
+curl -sS "$PRD_AGENT_BASE/api/open/marketplace/skills?sort=hot&limit=5" \\
+  -H "Authorization: Bearer $PRD_AGENT_API_KEY" | head -c 500
+
+如果返回 JSON 里有 success:true 就接好了。
+
+--- 注意事项 ---
+- 这个 Key 默认 1 年有效期，到期前 30 天响应头会提示续期，
+  请记得去 ${base}/marketplace 页面 → 右上角「接入 AI」→ 点"续期一年"。
+- Key 明文只有这一次机会保存，不要发到公开仓库 / 截图里。
+- 所有调用方式见下载的 SKILL.md，直接读它即可。
+`;
+  };
 
   const toggleScope = (scope: string) => {
     setSelectedScopes((prev) =>
@@ -87,6 +132,31 @@ export function CreateKeyTab({ allowedScopes, onCreated, onBackToList }: Props) 
     }
   };
 
+  const handleCopyAgentPrompt = async () => {
+    if (!plaintext) return;
+    try {
+      await navigator.clipboard.writeText(buildAgentPrompt(plaintext));
+      setCopiedPrompt(true);
+      toast.success('已复制智能体指令 —— 粘贴到 Claude Code / Cursor 让它自动配置');
+      setTimeout(() => setCopiedPrompt(false), 2500);
+    } catch {
+      toast.error('复制失败，请手动选中');
+    }
+  };
+
+  const handleDownloadSkillHere = async () => {
+    setDownloadingSkill(true);
+    try {
+      await downloadOfficialSkill(OFFICIAL_SKILL_MARKETPLACE_OPENAPI);
+      markOfficialSkillDownloaded();
+      toast.success('已下载 marketplace-openapi.zip');
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : '下载失败');
+    } finally {
+      setDownloadingSkill(false);
+    }
+  };
+
   // ==== 明文展示态（创建成功后仅此一次） ====
   if (plaintext) {
     return (
@@ -125,6 +195,34 @@ export function CreateKeyTab({ allowedScopes, onCreated, onBackToList }: Props) 
           </Button>
           <button
             type="button"
+            onClick={handleCopyAgentPrompt}
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-all"
+            style={{
+              background: 'rgba(129, 140, 248, 0.18)',
+              border: '1px solid rgba(129, 140, 248, 0.45)',
+              color: 'rgba(221, 214, 254, 1)',
+            }}
+            title="复制一段提示词，粘贴给 Claude Code / Cursor，AI 会自己 export 环境变量 + 下载技能包"
+          >
+            {copiedPrompt ? <Check size={12} /> : <Bot size={12} />}
+            {copiedPrompt ? '已复制指令' : '复制给智能体使用'}
+          </button>
+          <button
+            type="button"
+            onClick={handleDownloadSkillHere}
+            disabled={downloadingSkill}
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs transition-all"
+            style={{
+              background: 'rgba(56, 189, 248, 0.14)',
+              border: '1px solid rgba(56, 189, 248, 0.35)',
+              color: 'rgba(186, 230, 253, 1)',
+            }}
+          >
+            <Download size={12} />
+            {downloadingSkill ? '下载中…' : '下载技能包'}
+          </button>
+          <button
+            type="button"
             onClick={() => {
               setPlaintext(null);
               setName('');
@@ -139,8 +237,10 @@ export function CreateKeyTab({ allowedScopes, onCreated, onBackToList }: Props) 
           </button>
         </div>
 
-        <div className="text-xs mt-2" style={{ color: 'var(--text-muted)' }}>
-          在"使用指南" Tab 可以看到如何把这个 Key 喂给 AI / curl / TS / Python 调用方。
+        <div className="text-xs mt-2 leading-relaxed" style={{ color: 'var(--text-muted)' }}>
+          建议直接点<strong>「复制给智能体使用」</strong>，把一整段指令粘贴给 Claude Code / Cursor —— AI 会自己
+          <code className="font-mono mx-0.5">export</code> 环境变量、下载并解压官方技能包，
+          然后立刻就能帮你调用海鲜市场的开放接口。
         </div>
       </div>
     );

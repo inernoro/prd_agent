@@ -83,6 +83,9 @@ public class MongoDbContext
 
     // Agent 开放接口 API Key（海鲜市场开放接口 / Agent 开放入口 M2M 鉴权）
     public IMongoCollection<AgentApiKey> AgentApiKeys => _database.GetCollection<AgentApiKey>("agent_api_keys");
+
+    // Agent 开放接口登记（P3 基础设施）—— 每个 Agent 可登记多条 HTTP 入口让外部 AI 调用
+    public IMongoCollection<AgentOpenEndpoint> AgentOpenEndpoints => _database.GetCollection<AgentOpenEndpoint>("agent_open_endpoints");
     public IMongoCollection<ModelGroup> ModelGroups => _database.GetCollection<ModelGroup>("model_groups");
     public IMongoCollection<LLMAppCaller> LLMAppCallers => _database.GetCollection<LLMAppCaller>("llm_app_callers");
     public IMongoCollection<ModelSchedulerConfig> ModelSchedulerConfigs => _database.GetCollection<ModelSchedulerConfig>("model_scheduler_config");

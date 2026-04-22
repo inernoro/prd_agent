@@ -7,6 +7,12 @@ import { toast } from '@/lib/toast';
 import { CreateKeyTab } from './skillOpenApi/CreateKeyTab';
 import { GuideTab } from './skillOpenApi/GuideTab';
 import { KeysListTab } from './skillOpenApi/KeysListTab';
+import {
+  OFFICIAL_SKILL_MARKETPLACE_OPENAPI,
+  downloadOfficialSkill,
+  hasDownloadedOfficialSkill,
+  markOfficialSkillDownloaded,
+} from './skillOpenApi/downloadOfficialSkill';
 
 /**
  * 「接入 AI」弹窗 —— 海鲜市场右上角按钮触发。
@@ -63,6 +69,27 @@ export function SkillOpenApiDialog({ onClose }: Props) {
     void refresh();
   }, [refresh]);
 
+  // 首次打开 Dialog 自动下载官方技能包 —— 消除"怎么用"的认知缺口。
+  // 只在同一 session 触发一次（sessionStorage flag）；用户清缓存会再触发一次，
+  // 但这可以接受——重要的是对新用户零摩擦，老用户感知到就够了。
+  useEffect(() => {
+    if (hasDownloadedOfficialSkill()) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        await downloadOfficialSkill(OFFICIAL_SKILL_MARKETPLACE_OPENAPI);
+        if (cancelled) return;
+        markOfficialSkillDownloaded();
+        toast.success('已自动下载官方技能包 marketplace-openapi.zip，解压到 ~/.claude/skills/ 即可使用');
+      } catch {
+        // 静默失败 —— 用户仍然能在 Guide / Keys Tab 手动点下载按钮
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') onClose();
@@ -74,18 +101,23 @@ export function SkillOpenApiDialog({ onClose }: Props) {
   const modal = (
     <div
       className="fixed inset-0 z-[100] flex items-center justify-center px-4 py-6"
-      style={{ background: 'rgba(0, 0, 0, 0.55)', backdropFilter: 'blur(6px)' }}
+      style={{ background: 'rgba(0, 0, 0, 0.55)', backdropFilter: 'blur(8px)' }}
       onClick={onClose}
     >
       <div
-        className="w-full flex flex-col rounded-2xl overflow-hidden"
+        className="w-full flex flex-col rounded-[20px] overflow-hidden"
         style={{
-          width: 'min(720px, 100vw - 32px)',
-          height: '86vh',
-          maxHeight: '86vh',
-          background: '#0f1014',
-          border: '1px solid rgba(255, 255, 255, 0.1)',
-          boxShadow: '0 30px 60px -20px rgba(0, 0, 0, 0.8)',
+          width: 'min(760px, 100vw - 32px)',
+          height: '88vh',
+          maxHeight: '88vh',
+          background:
+            'linear-gradient(180deg, rgba(15, 23, 42, 0.82) 0%, rgba(2, 6, 23, 0.9) 100%)',
+          border: '1px solid rgba(56, 189, 248, 0.28)',
+          backdropFilter: 'blur(40px) saturate(180%)',
+          WebkitBackdropFilter: 'blur(40px) saturate(180%)',
+          boxShadow:
+            '0 30px 64px -18px rgba(0, 0, 0, 0.7), 0 0 40px -12px rgba(56, 189, 248, 0.25), inset 0 1px 1px rgba(255, 255, 255, 0.08)',
+          color: 'var(--text-primary)',
         }}
         onClick={(e) => e.stopPropagation()}
       >

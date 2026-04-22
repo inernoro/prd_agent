@@ -1,8 +1,11 @@
+using System.Text.RegularExpressions;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using MongoDB.Driver;
 using PrdAgent.Api.Extensions;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
+using PrdAgent.Infrastructure.Database;
 
 namespace PrdAgent.Api.Controllers.Api;
 
@@ -17,12 +20,18 @@ namespace PrdAgent.Api.Controllers.Api;
 [Authorize]
 public class AgentApiKeysController : ControllerBase
 {
-    // 允许的 scope 白名单 —— 防止用户创建任意 scope，只能勾选平台支持的范围
-    private static readonly HashSet<string> AllowedScopes = new(StringComparer.OrdinalIgnoreCase)
+    // 固定 scope 白名单（市场开放接口核心 scope）
+    private static readonly HashSet<string> FixedAllowedScopes = new(StringComparer.OrdinalIgnoreCase)
     {
         MarketplaceSkillsOpenApiController.ScopeRead,
         MarketplaceSkillsOpenApiController.ScopeWrite,
     };
+
+    // P3 动态 scope 模式：`agent.{kebab-case}:{action}`
+    // 用于 AgentOpenEndpoint 声明的每个 Agent 开放接口所需 scope，
+    // 例如 `agent.report-agent:call` / `agent.defect-agent:publish`
+    private static readonly Regex DynamicAgentScopePattern =
+        new(@"^agent\.[a-z0-9][a-z0-9\-]{0,63}:[a-z0-9][a-z0-9\-_]{0,31}$", RegexOptions.Compiled);
 
     // 默认 TTL：365 天（符合需求"授权时间尽可能长"）
     private const int DefaultTtlDays = 365;
@@ -32,19 +41,67 @@ public class AgentApiKeysController : ControllerBase
     private const int MaxTtlDays = 1095;
 
     private readonly IAgentApiKeyService _keyService;
+    private readonly MongoDbContext _db;
 
-    public AgentApiKeysController(IAgentApiKeyService keyService)
+    public AgentApiKeysController(IAgentApiKeyService keyService, MongoDbContext db)
     {
         _keyService = keyService;
+        _db = db;
     }
 
-    /// <summary>列出当前用户的所有 Key</summary>
+    /// <summary>
+    /// 判断 scope 字符串是否被允许。两类：
+    /// 1. FixedAllowedScopes 硬编码的核心 scope
+    /// 2. DynamicAgentScopePattern 匹配的 agent.* scope，且该 scope 必须
+    ///    已经被某条 AgentOpenEndpoint 登记过（防止用户创建"空头"scope）
+    /// </summary>
+    private async Task<(bool ok, string? reason)> ValidateScopeAsync(string scope, CancellationToken ct)
+    {
+        if (FixedAllowedScopes.Contains(scope)) return (true, null);
+        if (!DynamicAgentScopePattern.IsMatch(scope))
+            return (false, $"scope 格式无效: {scope}（允许 {string.Join(" / ", FixedAllowedScopes)} 或 `agent.{{agent-key}}:{{action}}`）");
+
+        var exists = await _db.AgentOpenEndpoints
+            .Find(e => e.IsActive && e.RequiredScopes.Contains(scope))
+            .AnyAsync(ct);
+        return exists
+            ? (true, null)
+            : (false, $"scope `{scope}` 未被任何已登记的 Agent 开放接口引用，无法授予");
+    }
+
+    /// <summary>列出当前用户的所有 Key + 当前平台支持的 scope（含动态登记的 Agent scope）</summary>
     [HttpGet]
     public async Task<IActionResult> List(CancellationToken ct)
     {
         var userId = this.GetRequiredUserId();
         var keys = await _keyService.ListByOwnerAsync(userId, ct);
-        return Ok(ApiResponse<object>.Ok(new { items = keys.Select(ToDto), allowedScopes = AllowedScopes.ToArray() }));
+
+        // 汇总 scope：固定 + AgentOpenEndpoint 登记的所有 agent.* scope
+        var endpoints = await _db.AgentOpenEndpoints
+            .Find(e => e.IsActive)
+            .Project(e => new { e.AgentKey, e.Title, e.RequiredScopes })
+            .ToListAsync(ct);
+
+        var dynamicScopes = endpoints
+            .SelectMany(e => e.RequiredScopes ?? new List<string>())
+            .Where(s => !string.IsNullOrWhiteSpace(s) && DynamicAgentScopePattern.IsMatch(s))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .OrderBy(s => s)
+            .ToList();
+
+        var allowed = FixedAllowedScopes.Concat(dynamicScopes).ToArray();
+
+        return Ok(ApiResponse<object>.Ok(new
+        {
+            items = keys.Select(ToDto),
+            allowedScopes = allowed,
+            agentEndpoints = endpoints.Select(e => new
+            {
+                e.AgentKey,
+                e.Title,
+                scopes = e.RequiredScopes ?? new List<string>(),
+            })
+        }));
     }
 
     public class CreateRequest
@@ -71,9 +128,11 @@ public class AgentApiKeysController : ControllerBase
             .ToList();
         if (scopes.Count == 0)
             return BadRequest(ApiResponse<object>.Fail("INVALID_SCOPES", "至少选择一个 scope（如 marketplace.skills:read）"));
-        var invalid = scopes.Where(s => !AllowedScopes.Contains(s)).ToList();
-        if (invalid.Count > 0)
-            return BadRequest(ApiResponse<object>.Fail("INVALID_SCOPES", $"不支持的 scope: {string.Join(", ", invalid)}"));
+        foreach (var s in scopes)
+        {
+            var (ok, reason) = await ValidateScopeAsync(s, ct);
+            if (!ok) return BadRequest(ApiResponse<object>.Fail("INVALID_SCOPES", reason!));
+        }
 
         var ttl = req.TtlDays is > 0 and <= MaxTtlDays ? req.TtlDays.Value : DefaultTtlDays;
         var (entity, plaintext) = await _keyService.CreateAsync(userId, req.Name, req.Description, scopes, ttl, ct);
@@ -101,9 +160,11 @@ public class AgentApiKeysController : ControllerBase
         if (req.Scopes != null)
         {
             var scopes = req.Scopes.Where(s => !string.IsNullOrWhiteSpace(s)).Select(s => s.Trim()).ToList();
-            var invalid = scopes.Where(s => !AllowedScopes.Contains(s)).ToList();
-            if (invalid.Count > 0)
-                return BadRequest(ApiResponse<object>.Fail("INVALID_SCOPES", $"不支持的 scope: {string.Join(", ", invalid)}"));
+            foreach (var s in scopes)
+            {
+                var (ok, reason) = await ValidateScopeAsync(s, ct);
+                if (!ok) return BadRequest(ApiResponse<object>.Fail("INVALID_SCOPES", reason!));
+            }
             req.Scopes = scopes;
         }
 

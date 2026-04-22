@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Copy, KeyRound, RefreshCw, Trash2, XCircle } from 'lucide-react';
+import { Copy, Download, KeyRound, Package, RefreshCw, Trash2, XCircle } from 'lucide-react';
 import { Button } from '@/components/design/Button';
 import { MapSpinner } from '@/components/ui/VideoLoader';
 import { toast } from '@/lib/toast';
@@ -10,6 +10,11 @@ import {
 } from '@/services';
 import type { AgentApiKeyDto } from '@/services/contracts/agentApiKeys';
 import { StatusBadge, formatDateTime, formatDaysLeft } from './statusBadge';
+import {
+  OFFICIAL_SKILL_MARKETPLACE_OPENAPI,
+  downloadOfficialSkill,
+  markOfficialSkillDownloaded,
+} from './downloadOfficialSkill';
 
 interface Props {
   keys: AgentApiKeyDto[];
@@ -20,6 +25,20 @@ interface Props {
 
 export function KeysListTab({ keys, loading, onRefresh, onGotoCreate }: Props) {
   const [busyId, setBusyId] = useState<string | null>(null);
+  const [downloading, setDownloading] = useState(false);
+
+  const handleDownloadSkill = async () => {
+    setDownloading(true);
+    try {
+      await downloadOfficialSkill(OFFICIAL_SKILL_MARKETPLACE_OPENAPI);
+      markOfficialSkillDownloaded();
+      toast.success('已下载 marketplace-openapi.zip');
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : '下载失败');
+    } finally {
+      setDownloading(false);
+    }
+  };
 
   const copyPrefix = async (prefix: string) => {
     try {
@@ -89,7 +108,7 @@ export function KeysListTab({ keys, loading, onRefresh, onGotoCreate }: Props) {
 
   if (keys.length === 0) {
     return (
-      <div className="flex flex-col items-center justify-center py-16 gap-4">
+      <div className="flex flex-col items-center justify-center py-12 gap-4">
         <KeyRound size={40} style={{ color: 'var(--text-muted)', opacity: 0.5 }} />
         <div className="text-sm" style={{ color: 'var(--text-muted)' }}>
           你还没有创建任何 API Key
@@ -97,16 +116,63 @@ export function KeysListTab({ keys, loading, onRefresh, onGotoCreate }: Props) {
         <div className="text-xs max-w-md text-center" style={{ color: 'var(--text-muted)', opacity: 0.7 }}>
           创建一个 Key，让 Cursor / Claude Code / 任意 AI Agent 能授权浏览和下载海鲜市场的技能包。
         </div>
-        <Button variant="primary" size="sm" onClick={onGotoCreate}>
-          <KeyRound size={13} />
-          创建第一个 Key
-        </Button>
+        <div className="flex items-center gap-2 flex-wrap justify-center">
+          <Button variant="primary" size="sm" onClick={onGotoCreate}>
+            <KeyRound size={13} />
+            创建第一个 Key
+          </Button>
+          <button
+            type="button"
+            onClick={handleDownloadSkill}
+            disabled={downloading}
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs transition-all"
+            style={{
+              background: 'rgba(56, 189, 248, 0.14)',
+              border: '1px solid rgba(56, 189, 248, 0.35)',
+              color: 'rgba(186, 230, 253, 1)',
+            }}
+          >
+            <Download size={12} />
+            {downloading ? '下载中…' : '下载技能包'}
+          </button>
+        </div>
       </div>
     );
   }
 
   return (
     <div className="flex flex-col gap-3">
+      {/* 持久 CTA：无论什么时候都能下载技能包 */}
+      <div
+        className="rounded-xl px-3 py-2.5 flex items-center gap-3"
+        style={{
+          background: 'rgba(56, 189, 248, 0.08)',
+          border: '1px solid rgba(56, 189, 248, 0.22)',
+        }}
+      >
+        <Package size={14} style={{ color: 'rgba(186, 230, 253, 1)' }} className="shrink-0" />
+        <div className="flex-1 min-w-0 text-[11px] leading-tight" style={{ color: 'rgba(224, 242, 254, 0.85)' }}>
+          <div style={{ color: 'var(--text-primary)' }} className="font-medium text-xs mb-0.5">
+            忘了怎么用？下载「海鲜市场开放接口」官方技能包
+          </div>
+          解压到 <code className="font-mono">~/.claude/skills/</code>，AI 就自动知道怎么调这些接口。
+        </div>
+        <button
+          type="button"
+          onClick={handleDownloadSkill}
+          disabled={downloading}
+          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-all shrink-0"
+          style={{
+            background: 'rgba(56, 189, 248, 0.22)',
+            border: '1px solid rgba(56, 189, 248, 0.5)',
+            color: 'rgba(224, 242, 254, 1)',
+          }}
+        >
+          <Download size={12} />
+          {downloading ? '下载中…' : '下载技能包'}
+        </button>
+      </div>
+
       {keys.map((k) => {
         const disabled = busyId === k.id;
         const canRenew = k.status !== 'revoked';

@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { Book, Check, Copy, Terminal } from 'lucide-react';
+import { Book, Check, Copy, Download, Package, Terminal } from 'lucide-react';
 import { toast } from '@/lib/toast';
 import {
   buildCurlForkSnippet,
@@ -9,6 +9,11 @@ import {
   buildTypeScriptSnippet,
   resolveOpenApiBase,
 } from './codeSnippets';
+import {
+  OFFICIAL_SKILL_MARKETPLACE_OPENAPI,
+  downloadOfficialSkill,
+  markOfficialSkillDownloaded,
+} from './downloadOfficialSkill';
 
 type SnippetLang = 'curl-list' | 'curl-fork' | 'curl-upload' | 'ts' | 'python';
 
@@ -23,7 +28,21 @@ const LANG_TABS: Array<{ key: SnippetLang; label: string }> = [
 export function GuideTab() {
   const [lang, setLang] = useState<SnippetLang>('curl-list');
   const [copied, setCopied] = useState(false);
+  const [downloading, setDownloading] = useState(false);
   const baseUrl = useMemo(() => resolveOpenApiBase(), []);
+
+  const handleDownloadSkill = async () => {
+    setDownloading(true);
+    try {
+      await downloadOfficialSkill(OFFICIAL_SKILL_MARKETPLACE_OPENAPI);
+      markOfficialSkillDownloaded();
+      toast.success('已下载 marketplace-openapi.zip，解压到 ~/.claude/skills/ 即可使用');
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : '下载失败');
+    } finally {
+      setDownloading(false);
+    }
+  };
 
   const snippet = useMemo(() => {
     const PLACEHOLDER = 'YOUR_API_KEY';
@@ -54,12 +73,61 @@ export function GuideTab() {
 
   return (
     <div className="flex flex-col gap-4">
+      {/* 第 0 步 —— 下载官方技能包（CTA 居首） */}
+      <section
+        className="rounded-xl px-4 py-3.5"
+        style={{
+          background:
+            'linear-gradient(135deg, rgba(56, 189, 248, 0.14) 0%, rgba(129, 140, 248, 0.1) 100%)',
+          border: '1px solid rgba(56, 189, 248, 0.4)',
+          boxShadow: 'inset 0 1px 1px rgba(255, 255, 255, 0.06)',
+        }}
+      >
+        <div className="flex items-start gap-3">
+          <div
+            className="w-9 h-9 rounded-xl flex items-center justify-center shrink-0"
+            style={{
+              background: 'rgba(56, 189, 248, 0.2)',
+              border: '1px solid rgba(56, 189, 248, 0.4)',
+            }}
+          >
+            <Package size={16} style={{ color: 'rgba(186, 230, 253, 1)' }} />
+          </div>
+          <div className="flex-1 min-w-0">
+            <div className="text-sm font-medium mb-0.5" style={{ color: 'var(--text-primary)' }}>
+              第 0 步：下载「海鲜市场开放接口」官方技能包
+            </div>
+            <div className="text-[11px] leading-relaxed mb-2.5" style={{ color: 'rgba(224, 242, 254, 0.78)' }}>
+              没有这个技能包，AI 不知道怎么调用本平台的开放接口。
+              下载后解压到 <code className="font-mono">~/.claude/skills/</code>，
+              之后和 Key 一起喂给 AI 即可。
+            </div>
+            <button
+              type="button"
+              onClick={handleDownloadSkill}
+              disabled={downloading}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-all"
+              style={{
+                background: 'rgba(56, 189, 248, 0.22)',
+                border: '1px solid rgba(56, 189, 248, 0.5)',
+                color: 'rgba(224, 242, 254, 1)',
+                cursor: downloading ? 'wait' : 'pointer',
+              }}
+            >
+              <Download size={13} />
+              {downloading ? '下载中…' : '下载 marketplace-openapi.zip'}
+            </button>
+          </div>
+        </div>
+      </section>
+
       {/* 快速上手 */}
       <section
         className="rounded-xl px-4 py-3"
         style={{
-          background: 'rgba(56, 189, 248, 0.08)',
-          border: '1px solid rgba(56, 189, 248, 0.25)',
+          background: 'rgba(255, 255, 255, 0.03)',
+          border: '1px solid rgba(255, 255, 255, 0.08)',
+          backdropFilter: 'blur(16px)',
         }}
       >
         <div className="flex items-start gap-2">
