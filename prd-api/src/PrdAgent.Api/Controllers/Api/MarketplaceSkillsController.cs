@@ -45,6 +45,7 @@ public class MarketplaceSkillsController : ControllerBase
     private readonly ILLMRequestContextAccessor _llmRequestContext;
     private readonly IAssetStorage _assetStorage;
     private readonly SkillZipMetadataExtractor _zipExtractor;
+    private readonly IConfiguration _config;
     private readonly ILogger<MarketplaceSkillsController> _logger;
 
     public MarketplaceSkillsController(
@@ -53,6 +54,7 @@ public class MarketplaceSkillsController : ControllerBase
         ILLMRequestContextAccessor llmRequestContext,
         IAssetStorage assetStorage,
         SkillZipMetadataExtractor zipExtractor,
+        IConfiguration config,
         ILogger<MarketplaceSkillsController> logger)
     {
         _db = db;
@@ -60,6 +62,7 @@ public class MarketplaceSkillsController : ControllerBase
         _llmRequestContext = llmRequestContext;
         _assetStorage = assetStorage;
         _zipExtractor = zipExtractor;
+        _config = config;
         _logger = logger;
     }
 
@@ -106,8 +109,7 @@ public class MarketplaceSkillsController : ControllerBase
         // 虚拟注入官方 findmapskills 到首位（筛选条件命中时）
         if (OfficialMarketplaceSkillInjector.ShouldInject(keyword, tag))
         {
-            var baseUrl = OfficialMarketplaceSkillInjector.ResolveBaseUrl(Request);
-            dtos.Insert(0, OfficialMarketplaceSkillInjector.BuildFindMapSkillsDto(baseUrl, userId));
+            dtos.Insert(0, OfficialMarketplaceSkillInjector.BuildFindMapSkillsDto(Request, _config, userId));
         }
 
         return Ok(ApiResponse<object>.Ok(new { items = dtos }));
@@ -335,8 +337,7 @@ public class MarketplaceSkillsController : ControllerBase
         // 官方虚拟条目特判：不查 DB、不 +1 count，直接返回官方下载 URL
         if (OfficialMarketplaceSkillInjector.IsOfficialId(id))
         {
-            var baseUrl = OfficialMarketplaceSkillInjector.ResolveBaseUrl(Request);
-            return Ok(ApiResponse<object>.Ok(OfficialMarketplaceSkillInjector.BuildForkResponse(baseUrl, userId)));
+            return Ok(ApiResponse<object>.Ok(OfficialMarketplaceSkillInjector.BuildForkResponse(Request, _config, userId)));
         }
 
         var skill = await _db.MarketplaceSkills.Find(x => x.Id == id && x.IsPublic).FirstOrDefaultAsync(ct);
@@ -369,6 +370,11 @@ public class MarketplaceSkillsController : ControllerBase
     public async Task<IActionResult> Favorite(string id, CancellationToken ct)
     {
         var userId = this.GetRequiredUserId();
+
+        // 官方虚拟条目：幂等 no-op，返回未变化的虚拟 DTO（与 Fork 分支保持对称）
+        if (OfficialMarketplaceSkillInjector.IsOfficialId(id))
+            return Ok(ApiResponse<object>.Ok(new { item = OfficialMarketplaceSkillInjector.BuildFindMapSkillsDto(Request, _config, userId) }));
+
         var result = await _db.MarketplaceSkills.UpdateOneAsync(
             x => x.Id == id && x.IsPublic,
             Builders<MarketplaceSkill>.Update
@@ -386,6 +392,11 @@ public class MarketplaceSkillsController : ControllerBase
     public async Task<IActionResult> Unfavorite(string id, CancellationToken ct)
     {
         var userId = this.GetRequiredUserId();
+
+        // 官方虚拟条目：同上幂等 no-op
+        if (OfficialMarketplaceSkillInjector.IsOfficialId(id))
+            return Ok(ApiResponse<object>.Ok(new { item = OfficialMarketplaceSkillInjector.BuildFindMapSkillsDto(Request, _config, userId) }));
+
         var result = await _db.MarketplaceSkills.UpdateOneAsync(
             x => x.Id == id,
             Builders<MarketplaceSkill>.Update

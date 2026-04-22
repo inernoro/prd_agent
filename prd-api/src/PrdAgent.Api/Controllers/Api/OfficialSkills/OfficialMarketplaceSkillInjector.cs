@@ -1,4 +1,6 @@
 using System.Text.RegularExpressions;
+using Microsoft.Extensions.Configuration;
+using PrdAgent.Api.Extensions;
 
 namespace PrdAgent.Api.Controllers.Api.OfficialSkills;
 
@@ -29,6 +31,13 @@ public static class OfficialMarketplaceSkillInjector
     /// <summary>
     /// 构造一条虚拟 findmapskills DTO（与 ToDto 形状对齐），prepend 到列表首位。
     /// </summary>
+    /// <summary>
+    /// 从 HttpRequest 解析外部可见 base URL，并构造虚拟 DTO。
+    /// 统一走 <see cref="HttpRequestExtensions.ResolveServerUrl"/>，全站同一套优先级规则。
+    /// </summary>
+    public static object BuildFindMapSkillsDto(Microsoft.AspNetCore.Http.HttpRequest request, IConfiguration config, string currentUserId)
+        => BuildFindMapSkillsDto(request.ResolveServerUrl(config), currentUserId);
+
     public static object BuildFindMapSkillsDto(string baseUrl, string currentUserId)
     {
         var zipUrl = $"{baseUrl.TrimEnd('/')}/api/official-skills/{OfficialSkillTemplates.FindMapSkillsKey}/download";
@@ -90,6 +99,9 @@ public static class OfficialMarketplaceSkillInjector
     /// <summary>
     /// Fork 特判：返回官方技能的下载响应（不 +1 count、不查 DB）。
     /// </summary>
+    public static object BuildForkResponse(Microsoft.AspNetCore.Http.HttpRequest request, IConfiguration config, string currentUserId)
+        => BuildForkResponse(request.ResolveServerUrl(config), currentUserId);
+
     public static object BuildForkResponse(string baseUrl, string currentUserId)
     {
         var dto = BuildFindMapSkillsDto(baseUrl, currentUserId);
@@ -100,40 +112,5 @@ public static class OfficialMarketplaceSkillInjector
             fileName = "findmapskills.zip",
             item = dto,
         };
-    }
-
-    /// <summary>
-    /// 从请求头解析"用户可见的 base URL"。
-    ///
-    /// 优先级：
-    ///   1. `X-Client-Base-Url`（admin 前端显式注入，永远准）
-    ///   2. `Origin`（浏览器 fetch 自带）
-    ///   3. `X-Forwarded-Host` + `X-Forwarded-Proto`（CDS / Cloudflare / K8s Ingress
-    ///      反代层注入的外部 host；给 AI 的 curl 裸调用兜底）
-    ///   4. `Request.Scheme + Request.Host`（容器内部地址，仅最后兜底）
-    ///
-    /// 容器里 Request.Host 常常是 `127.0.0.1:PORT`，不能直接嵌到给用户的 SKILL.md /
-    /// 下载 URL 里。所以必须让反代头优先于内部 Host。
-    /// </summary>
-    public static string ResolveBaseUrl(Microsoft.AspNetCore.Http.HttpRequest request)
-    {
-        string? baseUrl = request.Headers["X-Client-Base-Url"].ToString();
-        if (string.IsNullOrWhiteSpace(baseUrl)) baseUrl = request.Headers["Origin"].ToString();
-
-        if (string.IsNullOrWhiteSpace(baseUrl))
-        {
-            // 反代注入的外部 host（CDS 预览 / Cloudflare / Ingress 都会给）
-            // X-Forwarded-Host 可能是逗号分隔的链（多层反代），取第一个
-            var fwdHost = request.Headers["X-Forwarded-Host"].ToString().Split(',')[0].Trim();
-            if (!string.IsNullOrWhiteSpace(fwdHost))
-            {
-                var fwdProto = request.Headers["X-Forwarded-Proto"].ToString().Split(',')[0].Trim();
-                var proto = string.IsNullOrWhiteSpace(fwdProto) ? request.Scheme : fwdProto;
-                baseUrl = $"{proto}://{fwdHost}";
-            }
-        }
-
-        if (string.IsNullOrWhiteSpace(baseUrl)) baseUrl = $"{request.Scheme}://{request.Host}";
-        return baseUrl.TrimEnd('/');
     }
 }

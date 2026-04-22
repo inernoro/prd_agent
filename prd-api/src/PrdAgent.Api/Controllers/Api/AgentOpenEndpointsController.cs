@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using MongoDB.Driver;
 using PrdAgent.Api.Extensions;
+using PrdAgent.Core.Helpers;
 using PrdAgent.Core.Models;
 using PrdAgent.Core.Security;
 using PrdAgent.Infrastructure.Database;
@@ -32,8 +33,8 @@ public class AgentOpenEndpointsController : ControllerBase
     private static readonly Regex AgentKeyPattern =
         new(@"^[a-z0-9][a-z0-9\-]{0,63}$", RegexOptions.Compiled);
 
-    private static readonly Regex ScopePattern =
-        new(@"^agent\.[a-z0-9][a-z0-9\-]{0,63}:[a-z0-9][a-z0-9\-_]{0,31}$", RegexOptions.Compiled);
+    // scope 格式走全站共享的 AgentScopeFormat，别在这里再自己写一遍
+    // 否则 Endpoint 登记能过但 Key 创建过不了、或反过来的 hidden schema drift
 
     private readonly MongoDbContext _db;
 
@@ -164,7 +165,7 @@ public class AgentOpenEndpointsController : ControllerBase
         var scopes = NormalizeList(req.RequiredScopes);
         if (scopes.Count == 0)
             return (false, "至少声明一个 scope");
-        var invalid = scopes.Where(s => !ScopePattern.IsMatch(s)).ToList();
+        var invalid = scopes.Where(s => !AgentScopeFormat.Pattern.IsMatch(s)).ToList();
         if (invalid.Count > 0)
             return (false, $"scope 格式非法: {string.Join(", ", invalid)}（应为 `agent.{{agent-key}}:{{action}}`）");
 
