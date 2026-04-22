@@ -934,10 +934,14 @@ export function createBranchRouter(deps: RouterDeps): Router {
     });
 
     // Compute container capacity: (memoryGB - 1) * 2
+    // maxContainers is the global server limit, so runningContainers must also
+    // count ALL projects — not just the project-filtered `branches` above.
+    // Otherwise a multi-project setup shows "181/186" for project A even when
+    // project B has 10 additional containers running (actual free = 171/186).
     const totalMemGB = Math.round(os.totalmem() / (1024 * 1024 * 1024));
     const maxContainers = Math.max(2, (totalMemGB - 1) * 2);
     let runningContainers = 0;
-    for (const b of branches) {
+    for (const b of Object.values(state.branches)) {
       for (const svc of Object.values(b.services)) {
         if (svc.status === 'running' || svc.status === 'building' || svc.status === 'starting') {
           runningContainers++;

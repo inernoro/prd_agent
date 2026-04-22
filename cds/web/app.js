@@ -650,6 +650,23 @@ function initStateStream() {
       if (data.capacity) {
         clusterCapacity = data.capacity;
       }
+      // In single-node mode data.capacity is null, but data.branches carries
+      // ALL branches across ALL projects. Recompute global runningContainers
+      // so the capacity badge stays accurate without waiting for the next
+      // loadBranches() poll (5 s). maxContainers / totalMemGB are unchanged.
+      if (!data.capacity && Array.isArray(data.branches)) {
+        var globalRunning = 0;
+        for (var _gb of data.branches) {
+          if (_gb.services) {
+            for (var _svc of Object.values(_gb.services)) {
+              if (_svc.status === 'running' || _svc.status === 'building' || _svc.status === 'starting') {
+                globalRunning++;
+              }
+            }
+          }
+        }
+        containerCapacity = Object.assign({}, containerCapacity, { runningContainers: globalRunning });
+      }
       if (typeof data.schedulerEnabled === 'boolean') {
         schedulerEnabled = data.schedulerEnabled;
       }
