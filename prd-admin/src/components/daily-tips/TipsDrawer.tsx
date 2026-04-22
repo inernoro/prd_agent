@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useNavigate } from 'react-router-dom';
-import { Sparkles, X, BookOpen, Pin, PinOff, MapPin, EyeOff } from 'lucide-react';
+import { Sparkles, X, BookOpen, Pin, PinOff, MapPin, EyeOff, ChevronLeft, ChevronRight } from 'lucide-react';
 import { useDailyTipsStore } from '@/stores/dailyTipsStore';
 import { writeSpotlightPayload } from './TipsRotator';
 import { trackTip, dismissTipForever } from '@/services/real/dailyTips';
@@ -119,6 +119,8 @@ export function TipsDrawer() {
   const [expanded, setExpanded] = useState<boolean>(false);
   const [edgeHover, setEdgeHover] = useState<boolean>(false);
   const [bookHover, setBookHover] = useState<boolean>(false);
+  // 轮播索引(抽屉当前展示第几条 tip)
+  const [carouselIndex, setCarouselIndex] = useState<number>(0);
 
   // ── 悬浮组整体折叠(书 + 铃铛一起贴边) ───────────────────────
   // 这个状态通过 sessionStorage 广播,AppShell 的 toast 按钮订阅同样的 key
@@ -180,6 +182,15 @@ export function TipsDrawer() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [loaded, tips.length > 0]);
 
+  // tips 变化时把轮播索引收敛到有效范围
+  useEffect(() => {
+    if (tips.length === 0) {
+      setCarouselIndex(0);
+    } else if (carouselIndex >= tips.length) {
+      setCarouselIndex(tips.length - 1);
+    }
+  }, [tips.length, carouselIndex]);
+
   // ── 自动收起:expanded 5s 内无 hover / 点击就 collapsed ──────
   const drawerHoveredRef = useRef(false);
   useEffect(() => {
@@ -211,16 +222,15 @@ export function TipsDrawer() {
   // ── 徽章计数 ────────────────────────────────────────
   const badgeCount = tips.filter((t) => t.isTargeted).length || tips.length;
 
-  // ── 上报 seen ────────────────────────────────────────
+  // ── 上报 seen(轮播模式下只上报当前展示的那一条,减少一次性打 4-5 条 API 的负载)──
   const seenReportedRef = useRef<Set<string>>(new Set());
   useEffect(() => {
-    if (!expanded) return;
-    for (const t of tips) {
-      if (seenReportedRef.current.has(t.id)) continue;
-      seenReportedRef.current.add(t.id);
-      void trackTip(t.id, 'seen');
-    }
-  }, [expanded, tips]);
+    if (!expanded || tips.length === 0) return;
+    const current = tips[Math.min(carouselIndex, tips.length - 1)];
+    if (!current || seenReportedRef.current.has(current.id)) return;
+    seenReportedRef.current.add(current.id);
+    void trackTip(current.id, 'seen');
+  }, [expanded, tips, carouselIndex]);
 
   const handleOpenTip = useCallback(
     (tip: (typeof tips)[number]) => {
@@ -353,7 +363,7 @@ export function TipsDrawer() {
           bottom: BOOK_BOTTOM + 56, // 小书上方 (80 + 48 + 8)
           right: 20,
           width: 360,
-          maxHeight: 'calc(100vh - 180px)',
+          maxHeight: 'min(360px, calc(100vh - 180px))',
           borderRadius: 18,
           background:
             'linear-gradient(180deg, rgba(24,22,34,0.96), rgba(16,16,22,0.97))',
@@ -390,6 +400,62 @@ export function TipsDrawer() {
           >
             <Sparkles size={14} style={{ color: '#c4b5fd' }} />
             教程
+            {tips.length > 1 && (
+              <div
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: 2,
+                  marginLeft: 4,
+                }}
+              >
+                <button
+                  type="button"
+                  onClick={() =>
+                    setCarouselIndex((i) => (i - 1 + tips.length) % tips.length)
+                  }
+                  title="上一条"
+                  style={{
+                    border: 'none',
+                    background: 'rgba(255,255,255,0.04)',
+                    color: 'rgba(255,255,255,0.65)',
+                    cursor: 'pointer',
+                    padding: '3px 4px',
+                    display: 'inline-flex',
+                    borderRadius: 6,
+                  }}
+                >
+                  <ChevronLeft size={12} />
+                </button>
+                <span
+                  style={{
+                    fontSize: 11,
+                    color: 'rgba(255,255,255,0.55)',
+                    fontFamily: 'ui-monospace, Menlo, monospace',
+                    minWidth: 32,
+                    textAlign: 'center',
+                  }}
+                >
+                  {Math.min(carouselIndex, tips.length - 1) + 1} / {tips.length}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setCarouselIndex((i) => (i + 1) % tips.length)}
+                  title="下一条"
+                  style={{
+                    border: 'none',
+                    background: 'rgba(255,255,255,0.04)',
+                    color: 'rgba(255,255,255,0.65)',
+                    cursor: 'pointer',
+                    padding: '3px 4px',
+                    display: 'inline-flex',
+                    borderRadius: 6,
+                  }}
+                >
+                  <ChevronRight size={12} />
+                </button>
+              </div>
+            )}
             {pinned && (
               <span
                 style={{
@@ -471,8 +537,15 @@ export function TipsDrawer() {
                 有新教程时这里会自动弹出
               </span>
             </div>
-          ) : (
-            tips.map((t) => (
+          ) : (() => {
+            // 轮播模式:只渲染当前索引的 tip;分页器在上面 header 里
+            const t = tips[Math.min(carouselIndex, tips.length - 1)];
+            const stepCount = t.autoAction?.steps?.length ?? 0;
+            const stepsPreview =
+              stepCount > 0
+                ? `📍 ${stepCount} 步 · 跳转 → 高亮 → 点击`
+                : null;
+            return (
               <TipCard
                 key={t.id}
                 icon={<MapPin size={14} />}
@@ -482,7 +555,25 @@ export function TipsDrawer() {
                     : 'rgba(52,211,153,0.95)'
                 }
                 title={t.title}
-                body={t.body ?? undefined}
+                body={
+                  <>
+                    {stepsPreview && (
+                      <div
+                        style={{
+                          fontSize: 11,
+                          color: 'rgba(196,181,253,0.85)',
+                          marginBottom: 6,
+                          fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
+                        }}
+                      >
+                        {stepsPreview}
+                      </div>
+                    )}
+                    {t.body && (
+                      <span style={{ whiteSpace: 'pre-wrap' }}>{t.body}</span>
+                    )}
+                  </>
+                }
                 targeted={t.isTargeted}
                 ctaText={t.ctaText ?? '去看看'}
                 onCta={() => handleOpenTip(t)}
@@ -490,8 +581,8 @@ export function TipsDrawer() {
                 onDismissForever={() => handleDismissForever(t.id)}
                 variant="card"
               />
-            ))
-          )}
+            );
+          })()}
         </div>
         <style>{`
           @keyframes tipsDrawerSlide {

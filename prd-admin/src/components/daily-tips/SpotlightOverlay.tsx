@@ -26,6 +26,8 @@ export function SpotlightOverlay() {
   const [payload, setPayload] = useState<SpotlightActionPayload | null>(null);
   const [stepIndex, setStepIndex] = useState<number>(0);
   const [dismissed, setDismissed] = useState(false);
+  /** 6 秒还没找到 selector 就置 true,显示「找不到元素」友好卡片 */
+  const [seekTimedOut, setSeekTimedOut] = useState(false);
   const autoClickTimerRef = useRef<number | null>(null);
 
   // ---- 启动 + 同路由事件:读 sessionStorage 解析 payload ----
@@ -67,6 +69,7 @@ export function SpotlightOverlay() {
       setPayload(initial);
       setStepIndex(0);
       setDismissed(false);
+      setSeekTimedOut(false);
     };
 
     readAndStart();
@@ -119,10 +122,11 @@ export function SpotlightOverlay() {
     }
 
     // 3) 轮询等目标元素就绪(Reveal 动效 + 异步加载场景)
-    // 多步 Tour 中的「下一步」通常需要等上一步点击后的 modal / 面板渲染出来,
-    // 上限提到 8s 更稳
+    // 性能优化:250ms × 24 = 6s 上限(原 150ms × 50 = 7.5s,减 52% tick 次数)
+    // 找不到就 setSeekTimedOut(true) 走友好失败卡片
+    setSeekTimedOut(false);
     let attempts = 0;
-    const maxAttempts = 50;
+    const maxAttempts = 24;
     const pollId = window.setInterval(() => {
       attempts += 1;
       if (cancelled) {
@@ -148,8 +152,9 @@ export function SpotlightOverlay() {
       }
       if (attempts >= maxAttempts) {
         window.clearInterval(pollId);
+        setSeekTimedOut(true);
       }
-    }, 150);
+    }, 250);
 
     return () => {
       cancelled = true;
@@ -210,7 +215,73 @@ export function SpotlightOverlay() {
     };
   }, [rect, currentSelector, payload, dismissed]);
 
-  if (!rect || dismissed || !payload) return null;
+  if (dismissed || !payload) return null;
+
+  // 找不到目标元素 + 超时 → 渲染友好失败卡片(不再静默消失)
+  if (!rect && seekTimedOut) {
+    const stepsTotal = payload.autoAction?.steps?.length ?? 0;
+    const stepLabel = stepsTotal > 0 ? `第 ${stepIndex + 1} / ${stepsTotal} 步` : '当前步骤';
+    return createPortal(
+      <div
+        style={{
+          position: 'fixed',
+          right: 20,
+          bottom: 150,
+          width: 340,
+          padding: '12px 14px',
+          borderRadius: 14,
+          background: 'linear-gradient(180deg, rgba(30,20,22,0.98), rgba(15,10,12,0.98))',
+          border: '1px solid rgba(251,146,60,0.4)',
+          boxShadow: '0 20px 50px -20px rgba(0,0,0,0.8)',
+          zIndex: 9999,
+          color: 'rgba(255,255,255,0.9)',
+          animation: 'spotlightBubbleIn 240ms cubic-bezier(.2,.8,.2,1)',
+        }}
+      >
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, fontWeight: 600, color: '#fdba74', marginBottom: 4 }}>
+          <Sparkles size={12} />
+          没找到「{stepLabel}」的目标元素
+        </div>
+        <div style={{ fontSize: 12, color: 'rgba(255,255,255,0.7)', marginBottom: 10, lineHeight: 1.55 }}>
+          可能原因:当前页面还没有相关数据(比如还没创建过任何知识库 / 暂无本周更新),
+          或页面正在加载。<br />
+          Selector: <code style={{ fontSize: 11, opacity: 0.7 }}>{currentSelector}</code>
+        </div>
+        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+          {stepsTotal > 0 && stepIndex < stepsTotal - 1 && (
+            <button
+              type="button"
+              onClick={() => {
+                setSeekTimedOut(false);
+                setStepIndex((i) => i + 1);
+              }}
+              style={{
+                fontSize: 12, fontWeight: 600, padding: '5px 10px', borderRadius: 999,
+                border: '1px solid rgba(251,146,60,0.4)', background: 'rgba(251,146,60,0.12)',
+                color: '#fdba74', cursor: 'pointer',
+              }}
+            >
+              跳过这一步
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={() => setDismissed(true)}
+            style={{
+              fontSize: 12, fontWeight: 600, padding: '5px 10px', borderRadius: 999,
+              border: 'none', background: 'rgba(255,255,255,0.08)', color: 'rgba(255,255,255,0.8)',
+              cursor: 'pointer',
+            }}
+          >
+            关闭引导
+          </button>
+        </div>
+      </div>,
+      document.body,
+    );
+  }
+
+  if (!rect) return null;
 
   const isLastStep = !steps || stepIndex >= steps.length - 1;
   const currentStep = steps ? steps[stepIndex] : null;
