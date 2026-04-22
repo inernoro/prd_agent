@@ -2402,16 +2402,24 @@ a.branch-name:hover { color: var(--accent); }
 
 /* ════════════════ Deploy Progress Bar ════════════════ */
 
-.deploy-progress-bar {
-  position: absolute; top: 0; left: 0; right: 0; height: 2px;
-  background: rgba(255, 255, 255, 0.05); overflow: hidden;
-  border-radius: var(--radius) var(--radius) 0 0;
-}
+/* 2026-04-22 改版：
+ * 旧版是顶端 2px 横条 + top-right 胶囊计时器，体验问题：
+ *   1) 计时器压在右上角工具栏上，挡住灯泡/AI 标记按钮（用户反馈图 1）
+ *   2) 顶部横条只在一条边动，视觉呼应弱
+ * 新版：
+ *   - 计时器移到右下角（空闲区域），pointer-events 保持不传递
+ *   - 顶部横条删除，改为"理发店灯柱"式沿卡片边框环绕旋转的高光
+ *     （conic-gradient + @property --building-angle + mask-composite）
+ *     技术栈与 .is-ai-occupied 一致（style.css:1114+），复用方案
+ */
+.deploy-progress-bar { display: none; }  /* 旧条形进度条保留结构兜底，视觉已移至环绕边 */
+
 /* P4 Part 15 — Initializing timer that ticks while branch is building/starting */
 .branch-deploy-timer {
   position: absolute;
-  top: 8px;
+  bottom: 10px;
   right: 12px;
+  top: auto;
   display: inline-flex;
   align-items: center;
   gap: 6px;
@@ -2423,10 +2431,11 @@ a.branch-name:hover { color: var(--accent); }
   font-weight: 700;
   color: var(--accent, #10b981);
   font-family: var(--font-mono, monospace);
-  z-index: 2;
+  z-index: 3;
   pointer-events: none;
   letter-spacing: 0.2px;
   animation: branch-timer-pulse 1.6s ease-in-out infinite;
+  backdrop-filter: blur(6px);
 }
 .branch-deploy-timer-label {
   font-size: 9.5px;
@@ -2444,30 +2453,71 @@ a.branch-name:hover { color: var(--accent); }
   0%, 100% { box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.0); }
   50% { box-shadow: 0 0 0 4px rgba(16, 185, 129, 0.18); }
 }
-.deploy-progress-bar-fill {
-  height: 100%; width: 30%;
-  background: linear-gradient(90deg, var(--accent), var(--accent-dim), var(--accent));
-  border-radius: 2px;
-  animation: progress-slide 1.5s ease-in-out infinite;
-}
-@keyframes progress-slide {
-  0% { transform: translateX(-100%); width: 30%; }
-  50% { width: 50%; }
-  100% { transform: translateX(400%); width: 30%; }
+
+/* ── Barber-pole border chase ──
+ * 一条高光头 + 尾迹沿卡片边缘环绕旋转，像理发店灯柱。
+ * 实现：conic-gradient 按 --building-angle 旋转，mask-composite: exclude
+ * 把中间挖空只留边框 4px 的圆环；@property 让角度可被 keyframes 驱动。
+ */
+@property --building-angle {
+  syntax: '<angle>';
+  initial-value: 0deg;
+  inherits: false;
 }
 
-/* Card deploying state */
 .branch-card.is-deploying {
   border-color: var(--accent-border);
-  animation: deploying-glow 2s ease-in-out infinite;
+  animation: deploying-glow 2.4s ease-in-out infinite;
+}
+.branch-card.is-deploying::before {
+  content: '';
+  position: absolute;
+  /* 卡片 .branch-card 有 overflow:hidden，ring 必须放在内部（inset:0）
+   * 否则会被裁掉；padding 决定 ring 厚度。 */
+  inset: 0;
+  border-radius: inherit;
+  padding: 3px;
+  background: conic-gradient(
+    from var(--building-angle, 0deg),
+    transparent 0deg,
+    transparent 200deg,
+    rgba(16, 185, 129, 0.25) 260deg,
+    rgba(16, 185, 129, 0.85) 330deg,
+    rgba(255, 255, 255, 0.95) 355deg,
+    rgba(16, 185, 129, 0.85) 360deg
+  );
+  -webkit-mask:
+    linear-gradient(#000 0 0) content-box,
+    linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+          mask:
+    linear-gradient(#000 0 0) content-box,
+    linear-gradient(#000 0 0);
+          mask-composite: exclude;
+  animation: building-border-chase 1.8s linear infinite;
+  pointer-events: none;
+  z-index: 1;
+  filter: drop-shadow(0 0 4px rgba(16, 185, 129, 0.4));
+}
+@keyframes building-border-chase {
+  to { --building-angle: 360deg; }
+}
+/* AI occupied + deploying 时让 AI 的彩虹边继续主导，避免两层边框打架 */
+.branch-card.is-ai-occupied.is-deploying::before {
+  display: none;
 }
 @keyframes deploying-glow {
   0%, 100% {
     box-shadow: 0 0 0 0 rgba(16, 185, 129, 0), 0 1px 3px rgba(0, 0, 0, 0.2);
   }
   50% {
-    box-shadow: 0 0 10px 1px rgba(16, 185, 129, 0.15), 0 0 20px 3px rgba(16, 185, 129, 0.06);
+    box-shadow: 0 0 10px 1px rgba(16, 185, 129, 0.18), 0 0 22px 4px rgba(16, 185, 129, 0.08);
   }
+}
+/* prefers-reduced-motion：关掉环绕 + 外晕，但保留静态高亮边框 */
+@media (prefers-reduced-motion: reduce) {
+  .branch-card.is-deploying::before { animation: none; background: none; }
+  .branch-card.is-deploying { animation: none; box-shadow: 0 0 0 1px var(--accent-border); }
 }
 
 /* Hammer icon blink during deploy */
@@ -2584,6 +2634,16 @@ a.branch-name:hover { color: var(--accent); }
   .branch-tag-remove { width: 18px; height: 18px; font-size: 14px; }
 
   /* Busy spinner removed — see main styles */
+
+  /* Deploy timer: shrink a tad on mobile so it doesn't fight the dropdown button */
+  .branch-deploy-timer {
+    bottom: 8px;
+    right: 8px;
+    padding: 2px 8px;
+    font-size: 9.5px;
+  }
+  .branch-deploy-timer-label { font-size: 8.5px; }
+  .branch-deploy-timer-value { font-size: 10px; }
 
   /* Modal: slight margin on mobile */
   .modal-dialog { max-height: 90vh; margin: 0 12px; }
