@@ -174,9 +174,11 @@ public class AgentApiKeyService : IAgentApiKeyService
     private static string GenerateApiKey()
     {
         // sk-ak-{32 hex} — 38 字符
-        var guid1 = Guid.NewGuid().ToString("N");
-        var guid2 = Guid.NewGuid().ToString("N");
-        var body = (guid1 + guid2)[..KeyBodyLength];
+        // 用 RandomNumberGenerator (CSPRNG)，不要用 Guid.NewGuid()
+        // —— 后者是 UUIDv4，规范上不保证密码学随机性。
+        // 32 hex char = 16 bytes = 128 bit 熵，足以抗暴力枚举。
+        var randomBytes = RandomNumberGenerator.GetBytes(KeyBodyLength / 2);
+        var body = Convert.ToHexString(randomBytes).ToLowerInvariant();
         return $"{KeyPrefix}{body}";
     }
 

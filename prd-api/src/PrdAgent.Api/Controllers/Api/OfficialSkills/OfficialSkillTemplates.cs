@@ -32,9 +32,17 @@ public static class OfficialSkillTemplates
     public const string FindMapSkillsVersion = "1.0.0";
 
     /// <summary>
-    /// 发版日期（ISO 8601）—— 用户判断"要不要重装"的关键信号。
+    /// 发版日期（ISO 8601 字符串）—— 用户判断"要不要重装"的关键信号。
     /// </summary>
     public const string FindMapSkillsReleaseDate = "2026-04-21";
+
+    /// <summary>
+    /// 发版日期（强类型 UTC）—— 给 createdAt/updatedAt 等需要 DateTime 字段的地方用，
+    /// 避免在请求路径上反复 DateTime.Parse 引入文化敏感性 + 性能损耗。
+    /// 改版本时连同 FindMapSkillsReleaseDate 一起改。
+    /// </summary>
+    public static readonly DateTime FindMapSkillsReleaseDateUtc =
+        new(2026, 4, 21, 0, 0, 0, DateTimeKind.Utc);
 
     /// <summary>
     /// findmapskills SKILL.md：海鲜市场全操作手册。

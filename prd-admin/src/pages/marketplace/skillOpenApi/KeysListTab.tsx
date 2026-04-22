@@ -13,7 +13,6 @@ import { CreateKeyTab } from './CreateKeyTab';
 import {
   OFFICIAL_SKILL_FINDMAPSKILLS,
   downloadOfficialSkill,
-  markOfficialSkillDownloaded,
 } from './downloadOfficialSkill';
 
 interface Props {
@@ -43,7 +42,6 @@ export function KeysListTab({ keys, loading, allowedScopes, onRefresh, openCreat
     setDownloading(true);
     try {
       await downloadOfficialSkill(OFFICIAL_SKILL_FINDMAPSKILLS);
-      markOfficialSkillDownloaded();
       toast.success('已下载 findmapskills.zip');
     } catch (err) {
       toast.error(err instanceof Error ? err.message : '下载失败');

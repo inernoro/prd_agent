@@ -54,8 +54,8 @@ public static class OfficialMarketplaceSkillInjector
             ownerUserId = "official",
             ownerUserName = "PrdAgent 官方",
             ownerUserAvatar = (string?)null,
-            createdAt = DateTime.Parse(OfficialSkillTemplates.FindMapSkillsReleaseDate + "T00:00:00Z"),
-            updatedAt = DateTime.Parse(OfficialSkillTemplates.FindMapSkillsReleaseDate + "T00:00:00Z"),
+            createdAt = OfficialSkillTemplates.FindMapSkillsReleaseDateUtc,
+            updatedAt = OfficialSkillTemplates.FindMapSkillsReleaseDateUtc,
         };
     }
 

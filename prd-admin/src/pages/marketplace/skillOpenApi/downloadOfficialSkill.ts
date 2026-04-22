@@ -58,21 +58,3 @@ export async function downloadOfficialSkill(skillKey: string = OFFICIAL_SKILL_FI
   }
 }
 
-/** 首次下载标记 —— sessionStorage；用户清缓存或换标签页会重置 */
-const FIRST_DOWNLOAD_KEY = 'skill-openapi-first-downloaded';
-
-export function hasDownloadedOfficialSkill(): boolean {
-  try {
-    return sessionStorage.getItem(FIRST_DOWNLOAD_KEY) === '1';
-  } catch {
-    return false;
-  }
-}
-
-export function markOfficialSkillDownloaded(): void {
-  try {
-    sessionStorage.setItem(FIRST_DOWNLOAD_KEY, '1');
-  } catch {
-    /* ignore quota errors */
-  }
-}
