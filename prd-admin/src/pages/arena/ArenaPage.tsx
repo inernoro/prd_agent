@@ -1328,7 +1328,7 @@ export function ArenaPage() {
                   className="text-[11px] px-2 py-1.5 uppercase"
                   style={{
                     color: 'rgba(255, 255, 255, 0.45)',
-                    fontFamily: 'var(--font-mono)',
+                    fontFamily: 'var(--font-terminal)',
                     letterSpacing: '0.2em',
                   }}
                 >
@@ -1418,7 +1418,7 @@ export function ArenaPage() {
               <div
                 className="hidden md:inline-flex items-center gap-2 ml-1 px-2.5 py-1 rounded-md"
                 style={{
-                  fontFamily: 'var(--font-mono)',
+                  fontFamily: 'var(--font-terminal)',
                   background: 'rgba(16, 185, 129, 0.06)',
                   border: '1px solid rgba(16, 185, 129, 0.28)',
                   boxShadow: '0 0 16px rgba(16, 185, 129, 0.16), inset 0 0 8px rgba(16, 185, 129, 0.04)',
@@ -1671,7 +1671,7 @@ export function ArenaPage() {
                   <div
                     className="inline-flex items-center gap-2 mb-6 px-3.5 py-1.5 rounded-md"
                     style={{
-                      fontFamily: 'var(--font-mono)',
+                      fontFamily: 'var(--font-terminal)',
                       background: 'rgba(148, 163, 184, 0.06)',
                       border: '1px solid rgba(148, 163, 184, 0.30)',
                       boxShadow:
@@ -1875,7 +1875,7 @@ export function ArenaPage() {
                       <div className="flex items-center gap-3">
                         <span
                           className="text-[11px] text-white/50"
-                          style={{ fontFamily: 'var(--font-mono)', letterSpacing: '0.08em' }}
+                          style={{ fontFamily: 'var(--font-terminal)', letterSpacing: '0.08em' }}
                         >
                           {slots.length > 0
                             ? `${selectedGroup?.name?.toUpperCase()} · ${slots.length} 个模型`
@@ -1907,7 +1907,7 @@ export function ArenaPage() {
                 <div className="text-center mt-3">
                   <span
                     className="text-[11px] text-white/45"
-                    style={{ fontFamily: 'var(--font-mono)', letterSpacing: '0.1em' }}
+                    style={{ fontFamily: 'var(--font-terminal)', letterSpacing: '0.1em' }}
                   >
                     DRAG · PASTE · FILES · ENTER 发送 · SHIFT+ENTER 换行
                   </span>
@@ -1950,7 +1950,7 @@ export function ArenaPage() {
                     className="flex items-center gap-1.5 px-3 h-7 rounded-full text-[11px] transition-colors hover:bg-white/8 flex-shrink-0 text-white/65"
                     style={{
                       border: '1px solid rgba(255, 255, 255, 0.16)',
-                      fontFamily: 'var(--font-mono)',
+                      fontFamily: 'var(--font-terminal)',
                       letterSpacing: '0.14em',
                     }}
                     title="使用相同问题重新对战"
@@ -2346,7 +2346,7 @@ export function ArenaPage() {
                       <span
                         className="text-[11px] ml-1"
                         style={{
-                          fontFamily: 'var(--font-mono)',
+                          fontFamily: 'var(--font-terminal)',
                           letterSpacing: '0.12em',
                           color: completedCount === totalCount ? '#34d399' : 'rgba(255,255,255,0.5)',
                           textShadow: completedCount === totalCount ? '0 0 8px rgba(52, 211, 153, 0.5)' : 'none',

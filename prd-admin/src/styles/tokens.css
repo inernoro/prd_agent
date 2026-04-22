@@ -56,8 +56,10 @@
   /* ── 首页品牌字体（与 index.html Google Fonts 对应） ── */
   --font-display: 'Space Grotesk', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB', sans-serif;
   --font-body: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB', sans-serif;
-  /* 终端 / HUD mono，用于 retro-futurism 标签与小文本 */
-  --font-mono: 'VT323', 'Share Tech Mono', ui-monospace, 'SFMono-Regular', Menlo, Consolas, monospace;
+  /* 终端 / HUD mono，仅用于 retro-futurism 标签与小文本（landing / hero / arena）。
+     注意：不要命名为 --font-mono，否则会被 Tailwind v4 的 `font-mono` 工具类通过 CSS 变量级联劫持，
+     让全局所有 .font-mono 元素都渲染成 VT323 像素字体，小字号尤其会显得字距异常、字形拉伸。 */
+  --font-terminal: 'VT323', 'Share Tech Mono', ui-monospace, 'SFMono-Regular', Menlo, Consolas, monospace;
 
   /* ── 移动端适配 Token ── */
   --mobile-padding: 16px;

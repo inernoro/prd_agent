@@ -342,7 +342,7 @@ function HudChip({ label, sublabel }: { label: string; sublabel?: string }) {
         border: '1px solid rgba(203, 213, 225, 0.22)',
         boxShadow:
           '0 0 28px rgba(148, 163, 184, 0.18), inset 0 0 14px rgba(148, 163, 184, 0.05)',
-        fontFamily: 'var(--font-mono)',
+        fontFamily: 'var(--font-terminal)',
         animation: 'login-hud-pulse 4s ease-in-out infinite',
       }}
     >
@@ -430,7 +430,7 @@ function Field({ label, value, onChange, onEnter, type = 'text', placeholder, au
     <label className="block">
       <span
         className="block mb-2 text-[11px] uppercase text-white/55"
-        style={{ fontFamily: 'var(--font-mono)', letterSpacing: '0.2em' }}
+        style={{ fontFamily: 'var(--font-terminal)', letterSpacing: '0.2em' }}
       >
         {label}
       </span>
@@ -673,7 +673,7 @@ function LoginCard({
         <Reveal delay={440}>
           <div
             className="mt-1 inline-flex items-center gap-2 text-[11.5px] text-white/45"
-            style={{ fontFamily: 'var(--font-mono)', letterSpacing: '0.1em' }}
+            style={{ fontFamily: 'var(--font-terminal)', letterSpacing: '0.1em' }}
           >
             <Terminal className="w-3 h-3" />
             <span>DEFAULT · admin / admin · 首次登录后请修改密码</span>
@@ -780,7 +780,7 @@ function ResetCard({
                   key={rule.key}
                   className="flex items-center gap-2 text-[12px]"
                   style={{
-                    fontFamily: 'var(--font-mono)',
+                    fontFamily: 'var(--font-terminal)',
                     letterSpacing: '0.08em',
                     color: pass
                       ? 'rgba(52, 211, 153, 0.95)'
@@ -816,7 +816,7 @@ function ResetCard({
             type="button"
             onClick={onBack}
             className="self-start text-[12px] text-white/55 hover:text-white transition-colors"
-            style={{ fontFamily: 'var(--font-mono)', letterSpacing: '0.14em' }}
+            style={{ fontFamily: 'var(--font-terminal)', letterSpacing: '0.14em' }}
           >
             ← BACK TO LOGIN
           </button>

@@ -35,7 +35,7 @@ export function SectionHeader({
         <div
           className="inline-flex items-center gap-2 mb-7 px-3.5 py-1.5 rounded-md"
           style={{
-            fontFamily: 'var(--font-mono)',
+            fontFamily: 'var(--font-terminal)',
             background: `${accent}0a`,
             border: `1px solid ${accent}3d`,
             boxShadow: `0 0 20px ${accent}33, inset 0 0 10px ${accent}0a`,

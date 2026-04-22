@@ -16,7 +16,7 @@ export function TechLogoBar() {
       <div
         className="text-center text-[10px] uppercase text-white/35 mb-5"
         style={{
-          fontFamily: 'var(--font-mono)',
+          fontFamily: 'var(--font-terminal)',
           letterSpacing: '0.28em',
         }}
       >

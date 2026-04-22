@@ -167,7 +167,7 @@ function AgentCard({
               background: `${accent}15`,
               border: `1px solid ${accent}33`,
               color: accent,
-              fontFamily: 'var(--font-mono)',
+              fontFamily: 'var(--font-terminal)',
               letterSpacing: '0.08em',
               textShadow: `0 0 6px ${accent}99`,
             }}

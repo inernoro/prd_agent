@@ -121,7 +121,7 @@ function StatCell({
         className="text-[10px] uppercase mb-3"
         style={{
           color: `${accent}cc`,
-          fontFamily: 'var(--font-mono)',
+          fontFamily: 'var(--font-terminal)',
           letterSpacing: '0.18em',
         }}
       >
@@ -143,7 +143,7 @@ function StatCell({
         className="mt-3 text-[11px]"
         style={{
           color: accent,
-          fontFamily: 'var(--font-mono)',
+          fontFamily: 'var(--font-terminal)',
           letterSpacing: '0.1em',
         }}
       >
@@ -181,7 +181,7 @@ function LeaderboardCard({
         <Trophy className="w-4 h-4 text-purple-300" />
         <div
           className="text-[11px] text-purple-200 uppercase"
-          style={{ fontFamily: 'var(--font-mono)', letterSpacing: '0.18em' }}
+          style={{ fontFamily: 'var(--font-terminal)', letterSpacing: '0.18em' }}
         >
           {title}
         </div>
@@ -228,7 +228,7 @@ function LeaderboardRowItem({
           background: isTop ? `${accent}22` : 'rgba(255, 255, 255, 0.04)',
           border: isTop ? `1px solid ${accent}55` : '1px solid rgba(255, 255, 255, 0.08)',
           color: isTop ? accent : 'rgba(255, 255, 255, 0.5)',
-          fontFamily: 'var(--font-mono)',
+          fontFamily: 'var(--font-terminal)',
           textShadow: isTop ? `0 0 8px ${accent}88` : undefined,
         }}
       >
@@ -243,7 +243,7 @@ function LeaderboardRowItem({
         </span>
         <span
           className="text-[10px] text-white/40"
-          style={{ fontFamily: 'var(--font-mono)' }}
+          style={{ fontFamily: 'var(--font-terminal)' }}
         >
           · {usage}
         </span>
@@ -252,7 +252,7 @@ function LeaderboardRowItem({
         className="text-[11px] shrink-0"
         style={{
           color: accent,
-          fontFamily: 'var(--font-mono)',
+          fontFamily: 'var(--font-terminal)',
           letterSpacing: '0.05em',
           textShadow: `0 0 6px ${accent}66`,
         }}

@@ -47,7 +47,7 @@ export function WorkflowCanvas() {
             <Reveal offset={14}>
               <div
                 className="inline-flex items-center gap-2 mb-5"
-                style={{ fontFamily: 'var(--font-mono)' }}
+                style={{ fontFamily: 'var(--font-terminal)' }}
               >
                 <span
                   className="inline-block w-1.5 h-1.5 rounded-full"
@@ -95,7 +95,7 @@ export function WorkflowCanvas() {
               <div
                 className="text-[11px] text-white/35 mt-4"
                 style={{
-                  fontFamily: 'var(--font-mono)',
+                  fontFamily: 'var(--font-terminal)',
                   letterSpacing: '0.18em',
                 }}
               >
@@ -141,7 +141,7 @@ function WorkflowMockup() {
       <div className="flex items-center justify-between px-6 py-4 border-b border-white/[0.06]">
         <div
           className="flex items-center gap-2 text-[12px] text-white/70"
-          style={{ fontFamily: 'var(--font-mono)' }}
+          style={{ fontFamily: 'var(--font-terminal)' }}
         >
           <Workflow className="w-3.5 h-3.5 text-emerald-400" />
           <span>{t.workflow.canvasTitle}</span>
@@ -206,7 +206,7 @@ function WorkflowMockup() {
         {/* status footer */}
         <div
           className="relative z-10 mt-10 flex flex-wrap items-center gap-x-6 gap-y-1 text-[10.5px] text-white/45"
-          style={{ fontFamily: 'var(--font-mono)', letterSpacing: '0.04em' }}
+          style={{ fontFamily: 'var(--font-terminal)', letterSpacing: '0.04em' }}
         >
           <span className="flex items-center gap-1.5">
             <span
@@ -333,7 +333,7 @@ function Node({
       </div>
       <div
         className="text-[9.5px] md:text-[10px] text-white/35 mt-0.5 truncate max-w-full"
-        style={{ fontFamily: 'var(--font-mono)' }}
+        style={{ fontFamily: 'var(--font-terminal)' }}
       >
         {subtitle}
       </div>
