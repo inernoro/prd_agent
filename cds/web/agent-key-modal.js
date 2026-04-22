@@ -80,12 +80,25 @@
         h('button', {
           type: 'button',
           title: '关闭',
+          /* 2026-04-22 fix: 原先有明显 border 在白天模式下显得格格不入（图 1）
+           * 改为无边框 + 仅 hover 时 bg 变化，和其他 icon-btn 风格统一。 */
+          className: 'agent-key-modal-close',
           style: {
-            width: '26px', height: '26px', borderRadius: '6px',
-            border: '1px solid var(--card-border, #2a2a33)',
+            width: '28px', height: '28px', borderRadius: '8px',
+            border: 'none',
             background: 'transparent', color: 'var(--text-muted, #78788a)',
             cursor: 'pointer', display: 'inline-flex',
-            alignItems: 'center', justifyContent: 'center', fontSize: '14px',
+            alignItems: 'center', justifyContent: 'center', fontSize: '18px',
+            lineHeight: '1',
+            transition: 'background 120ms ease, color 120ms ease',
+          },
+          onmouseover: function () {
+            this.style.background = 'var(--bg-hover, rgba(63,63,70,0.4))';
+            this.style.color = 'var(--text-primary)';
+          },
+          onmouseout: function () {
+            this.style.background = 'transparent';
+            this.style.color = 'var(--text-muted, #78788a)';
           },
           onclick: function () { closeModal(backdrop); },
         }, ['×']),
@@ -251,7 +264,9 @@
       var reminder = h('div', {
         style: {
           fontSize: '11px', color: 'var(--text-muted, #78788a)',
-          borderTop: '1px dashed var(--card-border, #2a2a33)',
+          /* 2026-04-22 fix: 原 1px dashed 在白天模式几乎看不见，改为 solid border + 用 border-light token 轻量 */
+          borderTop: '1px solid var(--border-light, rgba(255,255,255,0.04))',
+          marginTop: '4px',
           paddingTop: '12px', lineHeight: '1.6',
         },
       }, [

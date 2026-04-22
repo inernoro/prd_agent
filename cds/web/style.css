@@ -3110,6 +3110,15 @@ a.branch-name:hover { color: var(--accent); }
 .activity-monitor.collapsed {
   height: 40px !important;
   min-height: 40px;
+  /* 2026-04-22：collapsed 状态下缩短宽度（从 480px → 自适应），
+   * 展开时仍是 480px。resize 手柄用户反馈图 3 的"长条太长"。 */
+  width: auto !important;
+  min-width: 0 !important;
+  max-width: 480px;
+}
+/* collapsed 模式下各子区保持紧凑：count 胶囊 + roller 水平挤在 header 行 */
+.activity-monitor.collapsed .activity-header {
+  padding: 8px 12px;
 }
 
 .activity-header {

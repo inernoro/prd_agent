@@ -3401,6 +3401,12 @@ function toggleSettingsMenu(event) {
       <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M8 2.5a5.487 5.487 0 00-4.131 1.869l1.204 1.204A.25.25 0 014.896 6H1.25A.25.25 0 011 5.75V2.104a.25.25 0 01.427-.177l1.38 1.38A7.002 7.002 0 0115 8a.75.75 0 01-1.5 0A5.5 5.5 0 008 2.5zM2.5 8a.75.75 0 00-1.5 0 7.002 7.002 0 0012.023 4.87l1.38 1.38a.25.25 0 00.427-.177V10.5a.25.25 0 00-.25-.25h-3.646a.25.25 0 00-.177.427l1.204 1.204A5.5 5.5 0 012.5 8z"/></svg>
       CDS 自动更新
     </div>
+    <!-- 2026-04-22: 视图切换从 header segmented toggle 迁移到 ⚙ 菜单 -->
+    <div class="settings-menu-item settings-menu-switch" onclick="closeSettingsMenu(); setViewMode(_viewMode === 'topology' ? 'list' : 'topology')">
+      <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M5 2.75a2.25 2.25 0 114.5 0 2.25 2.25 0 01-4.5 0zM7.25 0a2.75 2.75 0 00-.75 5.397V7H2.75A1.75 1.75 0 001 8.75v1.603a2.75 2.75 0 101.5 0V8.75a.25.25 0 01.25-.25H6.5v1.397a2.75 2.75 0 101.5 0V8.5h3.75a.25.25 0 01.25.25v1.603a2.75 2.75 0 101.5 0V8.75A1.75 1.75 0 0011.75 7H8V5.397A2.75 2.75 0 007.25 0zM2.5 13a1.25 1.25 0 112.5 0 1.25 1.25 0 01-2.5 0zM8.5 13a1.25 1.25 0 112.5 0 1.25 1.25 0 01-2.5 0zm4.75-1.25a1.25 1.25 0 100 2.5 1.25 1.25 0 000-2.5z"/></svg>
+      <span class="settings-menu-switch-label">视图模式</span>
+      <span style="margin-left:auto;font-size:11px;color:var(--text-muted);font-weight:500">${_viewMode === 'topology' ? '拓扑' : '列表'}</span>
+    </div>
     <div class="settings-menu-divider"></div>
     <div class="settings-menu-item danger" onclick="closeSettingsMenu(); openCleanupModal()">
       <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M6.5 1.75a.25.25 0 01.25-.25h2.5a.25.25 0 01.25.25V3h-3V1.75zM11 3V1.75A1.75 1.75 0 009.25 0h-2.5A1.75 1.75 0 005 1.75V3H2.75a.75.75 0 000 1.5h.3l.8 8.2A1.75 1.75 0 005.6 14.5h4.8a1.75 1.75 0 001.75-1.8l.8-8.2h.3a.75.75 0 000-1.5H11z"/></svg>
@@ -8325,9 +8331,13 @@ window._resetSubdomainAliases = _resetSubdomainAliases;
 // ════════════════════════════════════════════════════════════════════
 
 let _viewMode = (function () {
-  // /branch-panel path → start in topology; otherwise honour session storage
+  // 2026-04-22：默认改为拓扑视图（用户反馈"显示拓扑即可"），不再默认 list
   if (location.pathname === '/branch-panel') return 'topology';
-  return sessionStorage.getItem('cds_view_mode') === 'topology' ? 'topology' : 'list';
+  if (location.pathname === '/branch-list') return 'list';
+  // 其他情况：honour session storage，未设置时默认拓扑
+  var saved = sessionStorage.getItem('cds_view_mode');
+  if (saved === 'list') return 'list';
+  return 'topology';
 })();
 let _topologySelectedBranchId = null; // currently highlighted branch for override overlay
 let _topologyKeepSharedView = false;   // true = stay in aggregated canvas even with a branchId set (panel context only)
