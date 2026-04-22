@@ -1,9 +1,14 @@
 FROM mcr.microsoft.com/dotnet/aspnet:8.0 AS base
-# 安装 Node.js 20 + pnpm，供 Remotion 分镜预览渲染（VideoGenRunWorker 调用 npx）
+# 安装 Node.js 20 + pnpm + 系统 Chromium（供 Remotion 分镜预览渲染用）
+# 系统 Chromium 可避免 Remotion 在 read-only 容器内自行下载 Chromium 时因写不进
+# node_modules/.remotion 而崩溃；wrapper 脚本注入 Docker headless 必需的 Chrome 标志
 RUN apt-get update && apt-get install -y curl ca-certificates && \
     curl -fsSL https://deb.nodesource.com/setup_20.x | bash - && \
-    apt-get install -y nodejs && \
+    apt-get install -y nodejs chromium fonts-noto && \
     npm install -g pnpm && \
+    printf '#!/bin/sh\nexec /usr/bin/chromium --no-sandbox --disable-setuid-sandbox --disable-dev-shm-usage "$@"\n' \
+        > /usr/local/bin/chromium-docker && \
+    chmod +x /usr/local/bin/chromium-docker && \
     rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 EXPOSE 80
