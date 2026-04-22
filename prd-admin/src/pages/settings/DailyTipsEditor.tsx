@@ -445,6 +445,7 @@ export function DailyTipsEditor() {
             <AutoActionEditor
               value={draft.autoAction ?? null}
               onChange={(next) => setDraft((d) => ({ ...d, autoAction: next }))}
+              fallbackSelector={draft.targetSelector ?? undefined}
             />
           </div>
         </GlassCard>
@@ -960,19 +961,84 @@ function PushDialog({
 }
 
 /**
- * 高级自动引导编辑器(AutoAction):配合 SpotlightOverlay 在落地页执行
- * scroll → expand 点击 → prefill 预填 → 脉冲高亮 → autoClick / 多步 Steps。
- * 所有字段都可选,空字段整体提交时会被 normalizeAutoAction 规整为 null。
+ * 自动引导编辑器 — 模板模式简化版。
+ *
+ * 用户先选「引导模板」(none / highlight / autoclick / prefill / tour),
+ * 然后只填该模板需要的字段;不再面对一片散开的 5+ 字段。
+ * 「显示高级配置」开关为硬核场景兜底,展开完整字段(scroll / expand 等)。
  */
+type GuideTemplate = 'none' | 'highlight' | 'autoclick' | 'prefill' | 'tour';
+
+function detectTemplate(a: DailyTipAutoAction | null): GuideTemplate {
+  if (!a) return 'none';
+  if (a.steps && a.steps.length > 0) return 'tour';
+  if (a.prefill?.selector) return 'prefill';
+  if (a.autoClick) return 'autoclick';
+  // scroll-only / 啥都没有 → highlight(默认行为)
+  return 'highlight';
+}
+
+const TEMPLATE_META: Record<GuideTemplate, { label: string; desc: string }> = {
+  none: { label: '不引导', desc: '只跳转,不画高亮' },
+  highlight: { label: '跳转后高亮元素', desc: '在落地页画一个脉冲圈,最常用' },
+  autoclick: { label: '高亮 + 自动点击', desc: '延迟若干毫秒后自动点击目标按钮' },
+  prefill: { label: '高亮 + 预填输入', desc: '把输入框 / 搜索框预填好' },
+  tour: { label: '多步 Tour', desc: '逐步引导,用户点「下一步」前进' },
+};
+
 function AutoActionEditor({
   value,
   onChange,
+  fallbackSelector,
 }: {
   value: DailyTipAutoAction | null;
   onChange: (next: DailyTipAutoAction | null) => void;
+  /** 父级的 targetSelector,用作 selector 字段的占位提示 */
+  fallbackSelector?: string;
 }) {
-  const enabled = !!value;
+  const [template, setTemplate] = useState<GuideTemplate>(() => detectTemplate(value));
+  const [showAdvanced, setShowAdvanced] = useState(false);
+
+  // value 从外面被替换(如切换编辑对象时),把模板状态同步刷一下
+  useEffect(() => {
+    setTemplate(detectTemplate(value));
+  }, [value]);
+
   const a: DailyTipAutoAction = value ?? {};
+
+  const switchTemplate = (next: GuideTemplate) => {
+    setTemplate(next);
+    if (next === 'none') {
+      onChange(null);
+      return;
+    }
+    if (next === 'highlight') {
+      onChange({ scroll: 'center' });
+      return;
+    }
+    if (next === 'autoclick') {
+      onChange({
+        scroll: 'center',
+        autoClick: a.autoClick ?? '',
+        autoClickDelayMs: a.autoClickDelayMs ?? 1200,
+      });
+      return;
+    }
+    if (next === 'prefill') {
+      onChange({
+        scroll: 'center',
+        prefill: a.prefill ?? { selector: '', value: '' },
+      });
+      return;
+    }
+    // tour
+    onChange({
+      scroll: 'center',
+      steps: a.steps && a.steps.length > 0
+        ? a.steps
+        : [{ selector: '', title: '', body: null }],
+    });
+  };
 
   const patch = (partial: Partial<DailyTipAutoAction>) => {
     onChange({ ...a, ...partial });
@@ -980,16 +1046,17 @@ function AutoActionEditor({
 
   const steps = a.steps ?? [];
 
-  const updateStep = (i: number, patchStep: Partial<{ selector: string; title: string; body: string | null }>) => {
+  const updateStep = (
+    i: number,
+    patchStep: Partial<{ selector: string; title: string; body: string | null }>,
+  ) => {
     const next = steps.slice();
     next[i] = { ...next[i], ...patchStep };
     patch({ steps: next });
   };
 
   const addStep = () => {
-    patch({
-      steps: [...steps, { selector: '', title: '', body: null }],
-    });
+    patch({ steps: [...steps, { selector: '', title: '', body: null }] });
   };
 
   const removeStep = (i: number) => {
@@ -1004,207 +1071,271 @@ function AutoActionEditor({
         border: '1px dashed rgba(168,85,247,0.25)',
       }}
     >
-      <div className="flex items-center justify-between">
-        <div>
-          <div
-            className="text-[12px] font-semibold inline-flex items-center gap-1.5"
-            style={{ color: 'var(--text-primary)' }}
-          >
-            <Sparkles size={12} style={{ color: '#c4b5fd' }} />
-            高级自动引导 (AutoAction)
-          </div>
-          <div className="text-[10px] mt-0.5" style={{ color: 'var(--text-muted)' }}>
-            跳转后自动滚动 / 展开折叠 / 预填输入 / 模拟点击,或开启多步 Tour
-          </div>
+      <div>
+        <div
+          className="text-[12px] font-semibold inline-flex items-center gap-1.5"
+          style={{ color: 'var(--text-primary)' }}
+        >
+          <Sparkles size={12} style={{ color: '#c4b5fd' }} />
+          落地页引导
         </div>
-        <label className="inline-flex items-center gap-2 text-[12px]" style={{ color: 'var(--text-primary)' }}>
-          <input
-            type="checkbox"
-            checked={enabled}
-            onChange={(e) => {
-              if (e.target.checked) {
-                onChange({ scroll: 'center' });
-              } else {
-                onChange(null);
-              }
-            }}
-          />
-          启用
-        </label>
+        <div className="text-[10px] mt-0.5" style={{ color: 'var(--text-muted)' }}>
+          先选模板,再只填该模板需要的字段。复杂场景可打开「高级配置」
+        </div>
       </div>
 
-      {enabled && (
-        <>
-          <div className="grid gap-3" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))' }}>
-            <Field label="滚动模式">
-              <select
-                value={a.scroll ?? 'center'}
-                onChange={(e) => patch({ scroll: e.target.value as DailyTipAutoAction['scroll'] })}
-                className="w-full px-2 py-1.5 rounded-lg text-[13px] outline-none"
-                style={inputStyle}
-              >
-                <option value="center">center(居中)</option>
-                <option value="top">top(顶部对齐)</option>
-                <option value="none">none(不滚动)</option>
-              </select>
-            </Field>
-            <Field
-              label="展开折叠面板 (Expand,可选)"
-              hint="点击一次触发 React state;适用于需要先展开的 Accordion"
+      {/* ── 模板选择(分段控件) ── */}
+      <div
+        className="flex items-center gap-1 p-1 rounded-lg flex-wrap"
+        style={{ background: 'rgba(255,255,255,0.03)' }}
+      >
+        {(Object.keys(TEMPLATE_META) as GuideTemplate[]).map((key) => {
+          const meta = TEMPLATE_META[key];
+          const active = template === key;
+          return (
+            <button
+              key={key}
+              type="button"
+              onClick={() => switchTemplate(key)}
+              title={meta.desc}
+              className="px-2.5 py-1 rounded-md text-[12px] transition-all"
+              style={{
+                background: active ? 'rgba(168,85,247,0.22)' : 'transparent',
+                color: active ? '#e9d5ff' : 'var(--text-muted)',
+                border: active
+                  ? '1px solid rgba(168,85,247,0.4)'
+                  : '1px solid transparent',
+                cursor: 'pointer',
+                fontWeight: active ? 600 : 500,
+              }}
             >
-              <input
-                type="text"
-                value={a.expand ?? ''}
-                onChange={(e) => patch({ expand: e.target.value || null })}
-                placeholder="[data-tour-id=xxx-expand]"
-                className="w-full px-2 py-1.5 rounded-lg text-[13px] outline-none"
-                style={inputStyle}
-              />
-            </Field>
-          </div>
+              {meta.label}
+            </button>
+          );
+        })}
+      </div>
 
-          <div className="grid gap-3" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))' }}>
-            <Field label="预填输入框 Selector (Prefill,可选)">
-              <input
-                type="text"
-                value={a.prefill?.selector ?? ''}
-                onChange={(e) =>
-                  patch({
-                    prefill: e.target.value
-                      ? { selector: e.target.value, value: a.prefill?.value ?? '' }
-                      : null,
-                  })
-                }
-                placeholder="[data-tour-id=xxx-search]"
-                className="w-full px-2 py-1.5 rounded-lg text-[13px] outline-none"
-                style={inputStyle}
-              />
-            </Field>
-            <Field label="预填内容">
-              <input
-                type="text"
-                value={a.prefill?.value ?? ''}
-                onChange={(e) =>
-                  patch({
-                    prefill: a.prefill?.selector
-                      ? { selector: a.prefill.selector, value: e.target.value }
-                      : null,
-                  })
-                }
-                placeholder="周报"
-                className="w-full px-2 py-1.5 rounded-lg text-[13px] outline-none"
-                style={inputStyle}
-                disabled={!a.prefill?.selector}
-              />
-            </Field>
-          </div>
+      <div className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
+        {TEMPLATE_META[template].desc}
+      </div>
 
-          <div className="grid gap-3" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))' }}>
-            <Field
-              label="自动点击 Selector (AutoClick,可选)"
-              hint="延迟后自动点击目标按钮;与多步 Tour 二选一"
+      {/* ── 模板专属字段 ── */}
+      {template === 'autoclick' && (
+        <div
+          className="grid gap-3"
+          style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))' }}
+        >
+          <Field label="自动点击的元素 Selector">
+            <input
+              type="text"
+              value={a.autoClick ?? ''}
+              onChange={(e) => patch({ autoClick: e.target.value || null })}
+              placeholder={fallbackSelector || '[data-tour-id=xxx-submit]'}
+              className="w-full px-2 py-1.5 rounded-lg text-[13px] outline-none font-mono"
+              style={inputStyle}
+            />
+          </Field>
+          <Field label="点击延迟 (毫秒)" hint="留空则用默认 1200ms">
+            <input
+              type="number"
+              value={a.autoClickDelayMs ?? 1200}
+              onChange={(e) =>
+                patch({ autoClickDelayMs: Number(e.target.value) || 0 })
+              }
+              className="w-full px-2 py-1.5 rounded-lg text-[13px] outline-none"
+              style={inputStyle}
+              min={0}
+            />
+          </Field>
+        </div>
+      )}
+
+      {template === 'prefill' && (
+        <div
+          className="grid gap-3"
+          style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))' }}
+        >
+          <Field label="预填的输入框 Selector">
+            <input
+              type="text"
+              value={a.prefill?.selector ?? ''}
+              onChange={(e) =>
+                patch({
+                  prefill: e.target.value
+                    ? { selector: e.target.value, value: a.prefill?.value ?? '' }
+                    : null,
+                })
+              }
+              placeholder={fallbackSelector || '[data-tour-id=xxx-search]'}
+              className="w-full px-2 py-1.5 rounded-lg text-[13px] outline-none font-mono"
+              style={inputStyle}
+            />
+          </Field>
+          <Field label="预填内容">
+            <input
+              type="text"
+              value={a.prefill?.value ?? ''}
+              onChange={(e) =>
+                patch({
+                  prefill: a.prefill?.selector
+                    ? { selector: a.prefill.selector, value: e.target.value }
+                    : null,
+                })
+              }
+              placeholder="周报"
+              className="w-full px-2 py-1.5 rounded-lg text-[13px] outline-none"
+              style={inputStyle}
+              disabled={!a.prefill?.selector}
+            />
+          </Field>
+        </div>
+      )}
+
+      {template === 'tour' && (
+        <div className="flex flex-col gap-2">
+          <div className="flex items-center justify-between">
+            <div
+              className="text-[11px]"
+              style={{ color: 'var(--text-muted)' }}
             >
-              <input
-                type="text"
-                value={a.autoClick ?? ''}
-                onChange={(e) => patch({ autoClick: e.target.value || null })}
-                placeholder="[data-tour-id=xxx-submit]"
-                className="w-full px-2 py-1.5 rounded-lg text-[13px] outline-none"
-                style={inputStyle}
-              />
-            </Field>
-            <Field label="自动点击延迟 (毫秒)" hint="默认 1200">
-              <input
-                type="number"
-                value={a.autoClickDelayMs ?? 1200}
-                onChange={(e) => patch({ autoClickDelayMs: Number(e.target.value) || 0 })}
-                className="w-full px-2 py-1.5 rounded-lg text-[13px] outline-none"
-                style={inputStyle}
-                min={0}
-                disabled={!a.autoClick}
-              />
-            </Field>
-          </div>
-
-          <div className="pt-2 border-t" style={{ borderColor: 'rgba(168,85,247,0.15)' }}>
-            <div className="flex items-center justify-between mb-2">
-              <div>
-                <div className="text-[12px] font-semibold" style={{ color: 'var(--text-primary)' }}>
-                  多步 Tour (Steps,可选)
-                </div>
-                <div className="text-[10px] mt-0.5" style={{ color: 'var(--text-muted)' }}>
-                  每一步画一个脉冲圈 + 气泡卡,用户点「下一步」前进。启用后 AutoClick 会被忽略
-                </div>
-              </div>
-              <Button variant="secondary" size="sm" onClick={addStep}>
-                <Plus size={12} /> 新增步骤
-              </Button>
+              逐步引导,每一步画一个脉冲圈 + 气泡卡,用户点「下一步」前进
             </div>
-
-            {steps.length === 0 ? (
+            <Button variant="secondary" size="sm" onClick={addStep}>
+              <Plus size={12} /> 新增步骤
+            </Button>
+          </div>
+          {steps.length === 0 ? (
+            <div
+              className="p-3 text-center text-[11px] rounded-lg"
+              style={{
+                border: '1px dashed var(--border-subtle)',
+                color: 'var(--text-muted)',
+              }}
+            >
+              还没有步骤,点「新增步骤」开始
+            </div>
+          ) : (
+            steps.map((step, i) => (
               <div
-                className="p-3 text-center text-[11px] rounded-lg"
+                key={i}
+                className="p-2.5 rounded-lg flex flex-col gap-2"
                 style={{
-                  border: '1px dashed var(--border-subtle)',
-                  color: 'var(--text-muted)',
+                  background: 'var(--nested-block-bg)',
+                  border: '1px solid var(--nested-block-border)',
                 }}
               >
-                未添加步骤 — 不使用多步 Tour,只用单次脉冲 + 可选 AutoClick。
-              </div>
-            ) : (
-              <div className="flex flex-col gap-2">
-                {steps.map((step, i) => (
+                <div className="flex items-center justify-between">
                   <div
-                    key={i}
-                    className="p-2.5 rounded-lg flex flex-col gap-2"
-                    style={{
-                      background: 'var(--nested-block-bg)',
-                      border: '1px solid var(--nested-block-border)',
-                    }}
+                    className="text-[11px] font-mono"
+                    style={{ color: 'var(--text-muted)' }}
                   >
-                    <div className="flex items-center justify-between">
-                      <div
-                        className="text-[11px] font-mono"
-                        style={{ color: 'var(--text-muted)' }}
-                      >
-                        Step {i + 1} / {steps.length}
-                      </div>
-                      <Button variant="ghost" size="sm" onClick={() => removeStep(i)}>
-                        <Trash2 size={12} />
-                      </Button>
-                    </div>
-                    <div className="grid gap-2" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))' }}>
-                      <input
-                        type="text"
-                        value={step.selector}
-                        onChange={(e) => updateStep(i, { selector: e.target.value })}
-                        placeholder="[data-tour-id=xxx]"
-                        className="w-full px-2 py-1.5 rounded-lg text-[12px] outline-none font-mono"
-                        style={inputStyle}
-                      />
-                      <input
-                        type="text"
-                        value={step.title}
-                        onChange={(e) => updateStep(i, { title: e.target.value })}
-                        placeholder="步骤标题,例:第 1 步:选模板"
-                        className="w-full px-2 py-1.5 rounded-lg text-[12px] outline-none"
-                        style={inputStyle}
-                      />
-                    </div>
-                    <textarea
-                      value={step.body ?? ''}
-                      onChange={(e) => updateStep(i, { body: e.target.value || null })}
-                      placeholder="步骤说明(可选)"
-                      rows={2}
-                      className="w-full px-2 py-1.5 rounded-lg text-[12px] outline-none resize-y"
-                      style={inputStyle}
-                    />
+                    Step {i + 1} / {steps.length}
                   </div>
-                ))}
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => removeStep(i)}
+                  >
+                    <Trash2 size={12} />
+                  </Button>
+                </div>
+                <div
+                  className="grid gap-2"
+                  style={{
+                    gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))',
+                  }}
+                >
+                  <input
+                    type="text"
+                    value={step.selector}
+                    onChange={(e) =>
+                      updateStep(i, { selector: e.target.value })
+                    }
+                    placeholder="[data-tour-id=xxx]"
+                    className="w-full px-2 py-1.5 rounded-lg text-[12px] outline-none font-mono"
+                    style={inputStyle}
+                  />
+                  <input
+                    type="text"
+                    value={step.title}
+                    onChange={(e) => updateStep(i, { title: e.target.value })}
+                    placeholder="步骤标题,例:第 1 步:选模板"
+                    className="w-full px-2 py-1.5 rounded-lg text-[12px] outline-none"
+                    style={inputStyle}
+                  />
+                </div>
+                <textarea
+                  value={step.body ?? ''}
+                  onChange={(e) =>
+                    updateStep(i, { body: e.target.value || null })
+                  }
+                  placeholder="步骤说明(可选)"
+                  rows={2}
+                  className="w-full px-2 py-1.5 rounded-lg text-[12px] outline-none resize-y"
+                  style={inputStyle}
+                />
               </div>
-            )}
-          </div>
-        </>
+            ))
+          )}
+        </div>
+      )}
+
+      {/* ── 高级配置开关 ── */}
+      {template !== 'none' && (
+        <div className="pt-1">
+          <button
+            type="button"
+            onClick={() => setShowAdvanced((v) => !v)}
+            className="text-[11px] inline-flex items-center gap-1"
+            style={{
+              background: 'transparent',
+              border: 'none',
+              color: 'var(--text-muted)',
+              cursor: 'pointer',
+              padding: 0,
+            }}
+          >
+            {showAdvanced ? '▾' : '▸'} 高级配置(滚动模式 / 展开折叠面板)
+          </button>
+          {showAdvanced && (
+            <div
+              className="mt-2 grid gap-3"
+              style={{
+                gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))',
+              }}
+            >
+              <Field label="滚动模式" hint="目标元素如何滚到视口">
+                <select
+                  value={a.scroll ?? 'center'}
+                  onChange={(e) =>
+                    patch({
+                      scroll: e.target.value as DailyTipAutoAction['scroll'],
+                    })
+                  }
+                  className="w-full px-2 py-1.5 rounded-lg text-[13px] outline-none"
+                  style={inputStyle}
+                >
+                  <option value="center">center(居中)</option>
+                  <option value="top">top(顶部对齐)</option>
+                  <option value="none">none(不滚动)</option>
+                </select>
+              </Field>
+              <Field
+                label="先点击展开 (Expand)"
+                hint="目标在折叠面板里时,先点这个 selector 把面板打开"
+              >
+                <input
+                  type="text"
+                  value={a.expand ?? ''}
+                  onChange={(e) => patch({ expand: e.target.value || null })}
+                  placeholder="[data-tour-id=xxx-expand]"
+                  className="w-full px-2 py-1.5 rounded-lg text-[13px] outline-none font-mono"
+                  style={inputStyle}
+                />
+              </Field>
+            </div>
+          )}
+        </div>
       )}
     </div>
   );
