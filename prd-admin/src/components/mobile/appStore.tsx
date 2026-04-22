@@ -1,6 +1,7 @@
 import { ChevronRight } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import type { CSSProperties, ReactNode } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { AS_COLOR, AS_TYPE, AS_SPACE, AS_SIZE, AS_FONT_FAMILY } from '@/lib/appStoreTokens';
 
 /**
@@ -16,60 +17,31 @@ import { AS_COLOR, AS_TYPE, AS_SPACE, AS_SIZE, AS_FONT_FAMILY } from '@/lib/appS
 /* ─────────────────────── Hero：页面主标题 ─────────────────────── */
 
 interface HeroProps {
-  /** 上眉日期/分组标签：`星期二 · 4 月 22 日` */
-  eyebrow?: string;
-  /** 大标题：`下午好，蒋云峰` */
+  /** 单词大标题（"今日" / "游戏" / "App"），苹果 Today 范式 */
   title: string;
-  /** 副标：`看看今天能帮你做什么` */
-  subtitle?: string;
-  /** 右上头像区 */
-  trailing?: ReactNode;
 }
 
-export function AppStoreHero({ eyebrow, title, subtitle, trailing }: HeroProps) {
+/**
+ * Apple Today 的页面大标题 —— **只有一个词**。
+ * 右上角头像由 AppShell header 承担，不放在这里。
+ */
+export function AppStoreHero({ title }: HeroProps) {
   return (
     <div
-      className="flex items-start justify-between gap-4"
       style={{
         fontFamily: AS_FONT_FAMILY,
-        padding: `${AS_SPACE.sectionGap}px ${AS_SPACE.gutter}px 0 ${AS_SPACE.gutter}px`,
+        padding: `8px ${AS_SPACE.gutter}px 0 ${AS_SPACE.gutter}px`,
       }}
     >
-      <div className="min-w-0 flex-1">
-        {eyebrow && (
-          <div
-            style={{
-              ...AS_TYPE.eyebrow,
-              color: AS_COLOR.labelSecondary,
-              marginBottom: 6,
-            }}
-          >
-            {eyebrow}
-          </div>
-        )}
-        <h1
-          style={{
-            ...AS_TYPE.heroTitle,
-            color: AS_COLOR.label,
-            margin: 0,
-            wordBreak: 'break-word',
-          }}
-        >
-          {title}
-        </h1>
-        {subtitle && (
-          <div
-            style={{
-              ...AS_TYPE.heroSubtitle,
-              color: AS_COLOR.labelSecondary,
-              marginTop: 6,
-            }}
-          >
-            {subtitle}
-          </div>
-        )}
-      </div>
-      {trailing && <div className="shrink-0">{trailing}</div>}
+      <h1
+        style={{
+          ...AS_TYPE.heroTitle,
+          color: AS_COLOR.label,
+          margin: 0,
+        }}
+      >
+        {title}
+      </h1>
     </div>
   );
 }
@@ -186,18 +158,21 @@ export function AppStoreAppIcon({ Icon, accent, size = AS_SIZE.appIconSize, onIm
   );
 }
 
-/* ─────────────────────── Featured：Today 大卡 ─────────────────────── */
+/* ─────────────────────── Featured：Today 海报级大卡（单张） ─────────────────────── */
 
-interface FeaturedProps {
+export interface FeaturedItem {
+  key: string;
   /** 上眉小标签：NOW AVAILABLE / MEET THE AGENT 等 */
   eyebrow: string;
   /** 上眉颜色（iOS System Color） */
   eyebrowColor?: string;
-  /** 主标 */
+  /** 主标（超大） */
   title: string;
-  /** 副标（一两行） */
+  /** 副标（可选，一行内） */
   subtitle?: string;
-  /** 背景图 URL；不提供则用 accent 渐变兜底 */
+  /** 视频 URL（优先，自动播放） */
+  videoUrl?: string | null;
+  /** 封面图 URL（fallback 或 video poster） */
   imageUrl?: string | null;
   /** 渐变 fallback + mesh 的主题色 */
   accent: { from: string; to: string };
@@ -210,119 +185,243 @@ interface FeaturedProps {
   onClick: () => void;
   /** 底部按钮文字，默认"打开" */
   pillLabel?: string;
-  /** 底部按钮下方说明 */
-  pillCaption?: string;
 }
 
-export function AppStoreFeatured({
-  eyebrow,
-  eyebrowColor,
-  title,
-  subtitle,
-  imageUrl,
-  accent,
-  footer,
-  onClick,
-  pillLabel = '打开',
-  pillCaption,
-}: FeaturedProps) {
+/**
+ * 单张海报级 Featured 大卡 —— 3:4 纵向占屏，视频/图片/渐变三级 fallback。
+ * Apple Today 的单张大海报范式。
+ */
+export function AppStoreFeatured(props: Omit<FeaturedItem, 'key'>) {
+  return <FeaturedSlide item={{ ...props, key: 'single' }} isActive />;
+}
+
+/**
+ * Featured 轮播 —— 横滑多张海报级大卡（Apple Today 风的推荐位）。
+ *
+ * 特点：
+ *  - 每张卡宽 calc(100vw - gutter*2)，3:4 纵向海报
+ *  - snap-x snap-mandatory，片片 snap-start
+ *  - 第二张从右侧探出 ~16px 提示可滑（通过负 padding + gutter 实现）
+ *  - 底部 dot indicator（苹果小点）
+ *  - 只有"视觉中的活跃张"播放视频，节省带宽
+ */
+export function AppStoreFeaturedCarousel({ items }: { items: FeaturedItem[] }) {
+  const scrollerRef = useRef<HTMLDivElement | null>(null);
+  const [activeIdx, setActiveIdx] = useState(0);
+
+  useEffect(() => {
+    const el = scrollerRef.current;
+    if (!el) return;
+    let rafId = 0;
+    const update = () => {
+      if (!el) return;
+      const slideWidth = el.firstElementChild?.getBoundingClientRect().width ?? 0;
+      const gap = AS_SIZE.shelfGap;
+      const idx = Math.round(el.scrollLeft / (slideWidth + gap));
+      setActiveIdx(Math.max(0, Math.min(items.length - 1, idx)));
+    };
+    const onScroll = () => {
+      cancelAnimationFrame(rafId);
+      rafId = requestAnimationFrame(update);
+    };
+    el.addEventListener('scroll', onScroll, { passive: true });
+    update();
+    return () => {
+      el.removeEventListener('scroll', onScroll);
+      cancelAnimationFrame(rafId);
+    };
+  }, [items.length]);
+
+  if (items.length === 0) return null;
+  if (items.length === 1) {
+    return (
+      <div style={{ padding: `0 ${AS_SPACE.gutter}px` }}>
+        <FeaturedSlide item={items[0]} isActive />
+      </div>
+    );
+  }
+
+  return (
+    <div>
+      <div
+        ref={scrollerRef}
+        className="flex overflow-x-auto snap-x snap-mandatory"
+        style={{
+          gap: AS_SIZE.shelfGap,
+          paddingLeft: AS_SPACE.gutter,
+          paddingRight: AS_SPACE.gutter,
+          scrollbarWidth: 'none',
+          WebkitOverflowScrolling: 'touch',
+          overscrollBehaviorX: 'contain',
+        }}
+      >
+        {items.map((item, i) => (
+          <FeaturedSlide key={item.key} item={item} isActive={i === activeIdx} />
+        ))}
+      </div>
+      {/* 页指示小点 */}
+      <div className="flex items-center justify-center" style={{ gap: 6, marginTop: 14 }}>
+        {items.map((_, i) => (
+          <span
+            key={i}
+            style={{
+              width: i === activeIdx ? 16 : 6,
+              height: 6,
+              borderRadius: 999,
+              background: i === activeIdx ? AS_COLOR.label : AS_COLOR.labelTertiary,
+              transition: 'all 220ms ease',
+            }}
+          />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function FeaturedSlide({ item, isActive }: { item: FeaturedItem; isActive: boolean }) {
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+  const [videoFailed, setVideoFailed] = useState(false);
+
+  // 只在 active 时播放，切走时暂停，节省带宽与性能
+  useEffect(() => {
+    const v = videoRef.current;
+    if (!v) return;
+    if (isActive) {
+      v.play().catch(() => {/* iOS 低电量/省流可能拒绝 —— 静默兜底到 poster */});
+    } else {
+      v.pause();
+    }
+  }, [isActive]);
+
+  const hasMedia = (item.videoUrl && !videoFailed) || item.imageUrl;
+
   return (
     <button
       type="button"
-      onClick={onClick}
-      className="relative overflow-hidden block w-full text-left transition-transform active:scale-[0.985]"
+      onClick={item.onClick}
+      className="relative snap-start shrink-0 overflow-hidden text-left transition-transform active:scale-[0.985]"
       style={{
-        margin: `0 ${AS_SPACE.gutter}px`,
-        width: `calc(100% - ${AS_SPACE.gutter * 2}px)`,
-        aspectRatio: AS_SIZE.featuredAspect,
+        width: `calc(100vw - ${AS_SPACE.gutter * 2}px)`,
+        aspectRatio: '3 / 4',
         borderRadius: AS_SPACE.featuredRadius,
-        background: imageUrl ? '#000' : buildMeshGradient(accent),
+        background: hasMedia ? '#000' : buildMeshGradient(item.accent),
         fontFamily: AS_FONT_FAMILY,
         border: `1px solid ${AS_COLOR.hairline}`,
       }}
     >
-      {/* 背景图层 */}
-      {imageUrl && (
-        <img
-          src={imageUrl}
-          alt=""
-          aria-hidden
+      {/* 视频优先 */}
+      {item.videoUrl && !videoFailed && (
+        <video
+          ref={videoRef}
+          src={item.videoUrl}
+          poster={item.imageUrl ?? undefined}
+          muted
+          loop
+          playsInline
+          preload="metadata"
+          autoPlay={isActive}
           className="absolute inset-0 w-full h-full object-cover"
-          onError={(e) => {
-            (e.currentTarget.style.display = 'none');
-          }}
+          onError={() => setVideoFailed(true)}
         />
       )}
 
-      {/* 底部渐变蒙版，保证文字可读（苹果的标配） */}
+      {/* 图片 fallback */}
+      {(!item.videoUrl || videoFailed) && item.imageUrl && (
+        <img
+          src={item.imageUrl}
+          alt=""
+          aria-hidden
+          className="absolute inset-0 w-full h-full object-cover"
+        />
+      )}
+
+      {/* 顶部渐变（保证 eyebrow/title 可读） */}
       <div
         aria-hidden
-        className="absolute inset-x-0 bottom-0"
+        className="absolute left-0 right-0 top-0"
         style={{
-          top: '40%',
-          background: 'linear-gradient(180deg, rgba(0,0,0,0) 0%, rgba(0,0,0,0.55) 55%, rgba(0,0,0,0.85) 100%)',
+          height: '50%',
+          background: 'linear-gradient(180deg, rgba(0,0,0,0.55) 0%, rgba(0,0,0,0.15) 60%, rgba(0,0,0,0) 100%)',
+        }}
+      />
+      {/* 底部渐变（保证底部玻璃条可读） */}
+      <div
+        aria-hidden
+        className="absolute left-0 right-0 bottom-0"
+        style={{
+          height: '45%',
+          background: 'linear-gradient(180deg, rgba(0,0,0,0) 0%, rgba(0,0,0,0.55) 55%, rgba(0,0,0,0.88) 100%)',
         }}
       />
 
-      {/* 顶部 eyebrow + 标题 + 副标 */}
+      {/* 顶部 eyebrow + 标题 */}
       <div
         className="absolute left-0 right-0 top-0 flex flex-col"
-        style={{ padding: 20, gap: 6 }}
+        style={{ padding: 22, gap: 6 }}
       >
         <div
           style={{
             ...AS_TYPE.eyebrow,
-            color: eyebrowColor ?? AS_COLOR.blue,
-            textShadow: '0 1px 2px rgba(0,0,0,0.4)',
+            color: item.eyebrowColor ?? AS_COLOR.blue,
+            textShadow: '0 1px 3px rgba(0,0,0,0.5)',
           }}
         >
-          {eyebrow}
+          {item.eyebrow}
         </div>
         <div
           style={{
-            ...AS_TYPE.featuredTitle,
+            fontSize: 30,
+            fontWeight: 700,
+            letterSpacing: '-0.02em',
+            lineHeight: 1.1,
             color: AS_COLOR.label,
-            textShadow: '0 2px 8px rgba(0,0,0,0.4)',
-            maxWidth: '90%',
+            textShadow: '0 2px 10px rgba(0,0,0,0.55)',
+            maxWidth: '92%',
           }}
         >
-          {title}
+          {item.title}
         </div>
-        {subtitle && (
+        {item.subtitle && (
           <div
+            className="line-clamp-1"
             style={{
-              ...AS_TYPE.featuredSubtitle,
-              color: 'rgba(255,255,255,0.85)',
-              textShadow: '0 1px 4px rgba(0,0,0,0.4)',
-              maxWidth: '90%',
+              fontSize: 14,
+              fontWeight: 400,
+              color: 'rgba(255,255,255,0.82)',
+              textShadow: '0 1px 4px rgba(0,0,0,0.5)',
+              marginTop: 2,
             }}
           >
-            {subtitle}
+            {item.subtitle}
           </div>
         )}
       </div>
 
-      {/* 底部玻璃条：icon + 名字 + 一句话 + Pill */}
+      {/* 底部玻璃条：icon + name + tagline + Pill */}
       <div
         className="absolute left-0 right-0 bottom-0 flex items-center gap-3"
-        style={{ padding: 14 }}
+        style={{ padding: 16 }}
       >
-        <AppStoreAppIcon Icon={footer.Icon} accent={accent} size={48} onImage />
+        <AppStoreAppIcon Icon={item.footer.Icon} accent={item.accent} size={48} onImage />
         <div className="min-w-0 flex-1">
           <div
             className="truncate"
             style={{ ...AS_TYPE.itemTitle, color: AS_COLOR.label }}
           >
-            {footer.name}
+            {item.footer.name}
           </div>
           <div
             className="truncate"
-            style={{ ...AS_TYPE.itemSubtitle, color: 'rgba(255,255,255,0.75)' }}
+            style={{ ...AS_TYPE.itemSubtitle, color: 'rgba(255,255,255,0.78)' }}
           >
-            {footer.tagline}
+            {item.footer.tagline}
           </div>
         </div>
-        <AppStorePill label={pillLabel} caption={pillCaption} variant="onImage" />
+        <AppStorePill
+          label={item.pillLabel ?? '打开'}
+          variant="onImage"
+          onClick={(e) => { e.stopPropagation(); item.onClick(); }}
+        />
       </div>
     </button>
   );

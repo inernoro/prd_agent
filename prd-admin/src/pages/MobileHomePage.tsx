@@ -16,15 +16,15 @@ import type { ToolboxItem } from '@/services/real/aiToolbox';
 import { getAdminNotifications, getMobileFeed, getMobileStats } from '@/services';
 import type { AdminNotificationItem } from '@/services/contracts/notifications';
 import type { FeedItem, MobileStats } from '@/services/contracts/mobile';
-import { resolveAvatarUrl } from '@/lib/avatar';
 import { resolveMobileCompat } from '@/lib/mobileCompatibility';
-import { buildDefaultCoverUrl } from '@/lib/homepageAssetSlots';
+import { buildDefaultCoverUrl, buildDefaultVideoUrl } from '@/lib/homepageAssetSlots';
 import {
   AppStoreHero,
-  AppStoreFeatured,
+  AppStoreFeaturedCarousel,
   AppStoreSection,
   AppStoreShelf,
   AppStoreRankedList,
+  type FeaturedItem,
 } from '@/components/mobile/appStore';
 import { AS_COLOR, AS_SPACE, AS_FONT_FAMILY, AS_TYPE } from '@/lib/appStoreTokens';
 
@@ -67,9 +67,22 @@ const FEED_ICON: Record<string, { icon: LucideIcon; accent: { from: string; to: 
 
 /* ─────────── 页面 ─────────── */
 
+/** 每个 Agent 的上眉 eyebrow 标签（苹果 NOW AVAILABLE / MEET THE DEVELOPER 风，极简） */
+const AGENT_EYEBROW: Record<string, { label: string; color: string }> = {
+  'prd-agent':       { label: '产品神器',     color: '#0A84FF' },
+  'visual-agent':    { label: '创作之眼',     color: '#BF5AF2' },
+  'literary-agent':  { label: '写作新搭档',   color: '#30D158' },
+  'defect-agent':    { label: '缺陷追踪',     color: '#FF9F0A' },
+  'video-agent':     { label: '文字生视频',   color: '#FF375F' },
+  'report-agent':    { label: '周报自动化',   color: '#5E5CE6' },
+  'review-agent':    { label: '产品评审员',   color: '#FFD60A' },
+  'pr-review':       { label: 'PR 智能审查',  color: '#64D2FF' },
+  'shortcuts-agent': { label: '快捷指令',     color: '#FFD60A' },
+  'transcript-agent':{ label: '音视频转录',   color: '#FF375F' },
+};
+
 export default function MobileHomePage() {
   const navigate = useNavigate();
-  const user = useAuthStore((s) => s.user);
   const cdnBase = useAuthStore((s) => s.cdnBaseUrl ?? '');
   const [notifications, setNotifications] = useState<AdminNotificationItem[]>([]);
   const [feed, setFeed] = useState<FeedItem[]>([]);
@@ -94,43 +107,46 @@ export default function MobileHomePage() {
     })();
   }, []);
 
-  /* ── 今日问候 + 日期 ── */
-  // 在组件挂载时锁定时间，避免 useMemo 依赖不稳定（页面开着几小时后再切问候语不是关键需求）
-  const now = useMemo(() => new Date(), []);
-  const greeting = useMemo(() => {
-    const h = now.getHours();
-    if (h < 6) return '夜深了';
-    if (h < 12) return '早上好';
-    if (h < 14) return '中午好';
-    if (h < 18) return '下午好';
-    return '晚上好';
-  }, [now]);
-
-  const dateEyebrow = useMemo(() => {
-    const weekday = ['星期日','星期一','星期二','星期三','星期四','星期五','星期六'][now.getDay()];
-    return `${weekday} · ${now.getMonth() + 1} 月 ${now.getDate()} 日`;
-  }, [now]);
-
-  const displayName = user?.displayName || user?.username || '';
-  const avatarUrl = user ? resolveAvatarUrl(user) : null;
-
   /* ── 数据分类 ── */
   const agents = useMemo(() => BUILTIN_TOOLS.filter((t) => t.kind === 'agent'), []);
   const tools = useMemo(() => BUILTIN_TOOLS.filter((t) => t.kind === 'tool'), []);
 
-  /* ── 今日精选（基于日期 rotate） ── */
-  const featured = useMemo(() => {
-    if (agents.length === 0) return null;
+  /* ── 推荐 Carousel 项（有视频资产优先，无资产不上榜） ── */
+  const featuredItems: FeaturedItem[] = useMemo(() => {
+    // 只取有视频或图片资产的 agent，才能撑起海报级大卡
+    const withMedia = agents.filter((a) => {
+      if (!a.agentKey) return false;
+      return Boolean(buildDefaultVideoUrl(cdnBase, a.agentKey) || buildDefaultCoverUrl(cdnBase, a.agentKey));
+    });
+    // 按日期 rotate 起始位置，让每天首卡不同
+    const now = new Date();
     const dayOfYear = Math.floor(
       (now.getTime() - new Date(now.getFullYear(), 0, 0).getTime()) / 86400000,
     );
-    return agents[dayOfYear % agents.length];
-  }, [agents, now]);
+    const offset = withMedia.length > 0 ? dayOfYear % withMedia.length : 0;
+    const rotated = [...withMedia.slice(offset), ...withMedia.slice(0, offset)];
 
-  const featuredImage = useMemo(() => {
-    if (!featured?.agentKey) return null;
-    return buildDefaultCoverUrl(cdnBase, featured.agentKey);
-  }, [featured, cdnBase]);
+    return rotated.slice(0, 5).map((a) => {
+      const eyebrowMeta = AGENT_EYEBROW[a.agentKey ?? ''] ?? { label: '今日推荐', color: '#0A84FF' };
+      return {
+        key: a.id,
+        eyebrow: eyebrowMeta.label,
+        eyebrowColor: eyebrowMeta.color,
+        title: a.name,
+        subtitle: undefined, // 刻意不放副标 —— 苹果 Today 大卡主标下一行极少，大多只有 1 句足够
+        videoUrl: buildDefaultVideoUrl(cdnBase, a.agentKey),
+        imageUrl: buildDefaultCoverUrl(cdnBase, a.agentKey),
+        accent: accentFor(a.agentKey),
+        footer: {
+          Icon: iconFor(a.icon),
+          name: a.name,
+          tagline: a.description,
+        },
+        onClick: () => navigate(a.routePath ?? `/ai-toolbox?item=${a.id}`),
+        pillLabel: '打开',
+      };
+    });
+  }, [agents, cdnBase, navigate]);
 
   const handleItemClick = (item: ToolboxItem) => {
     navigate(item.routePath ?? `/ai-toolbox?item=${item.id}`);
@@ -141,9 +157,6 @@ export default function MobileHomePage() {
     const c = resolveMobileCompat(item.routePath);
     if (c?.level === 'pc-only') {
       return { label: 'PC', color: '#FCA5A5', bg: 'rgba(255, 69, 58, 0.22)' };
-    }
-    if (c?.level === 'limited') {
-      return { label: '部分', color: '#FFD60A', bg: 'rgba(255, 214, 10, 0.18)' };
     }
     return undefined;
   };
@@ -157,49 +170,19 @@ export default function MobileHomePage() {
       }}
     >
       <div style={{ paddingBottom: 120 }}>
-        {/* ── Hero ── */}
-        <AppStoreHero
-          eyebrow={dateEyebrow}
-          title={`${greeting}${displayName ? '，' + displayName : ''}`}
-          subtitle="看看今天能帮你做什么"
-          trailing={
-            <AvatarBadge
-              avatarUrl={avatarUrl}
-              fallback={displayName[0]}
-              notifCount={notifications.length}
-              onClick={() => navigate('/profile')}
-            />
-          }
-        />
+        {/* ── Hero：一个词，和苹果 Today 对齐 ── */}
+        <AppStoreHero title="今日" />
 
-        {/* ── Featured 大卡（今日推荐 Agent） ── */}
-        {featured && (
-          <section style={{ marginTop: AS_SPACE.sectionGap }}>
-            <AppStoreFeatured
-              eyebrow="今日推荐"
-              eyebrowColor="#FFD60A"
-              title={featured.name}
-              subtitle={featured.description}
-              imageUrl={featuredImage}
-              accent={accentFor(featured.agentKey)}
-              footer={{
-                Icon: iconFor(featured.icon),
-                name: featured.name,
-                tagline: (featured.tags ?? []).slice(0, 3).join(' · '),
-              }}
-              onClick={() => handleItemClick(featured)}
-              pillLabel="打开"
-            />
+        {/* ── Featured 海报级轮播 ── */}
+        {featuredItems.length > 0 && (
+          <section style={{ marginTop: 20 }}>
+            <AppStoreFeaturedCarousel items={featuredItems} />
           </section>
         )}
 
-        {/* ── 智能体（横滑） ── */}
+        {/* ── 智能体横滑 ── */}
         {agents.length > 0 && (
-          <AppStoreSection
-            title="智能体"
-            caption="AI 全生命周期 · 有专属存储与界面"
-            onShowAll={() => navigate('/ai-toolbox')}
-          >
+          <AppStoreSection title="智能体" onShowAll={() => navigate('/ai-toolbox')}>
             <AppStoreShelf
               items={agents.map((a) => ({
                 key: a.id,
@@ -216,11 +199,7 @@ export default function MobileHomePage() {
 
         {/* ── 工具（Top 榜单） ── */}
         {tools.length > 0 && (
-          <AppStoreSection
-            title="工具"
-            caption="专项能力 · 即开即用"
-            onShowAll={() => navigate('/ai-toolbox')}
-          >
+          <AppStoreSection title="工具" onShowAll={() => navigate('/ai-toolbox')}>
             <AppStoreRankedList
               numbered
               items={tools.map((t) => ({
@@ -230,7 +209,6 @@ export default function MobileHomePage() {
                 title: t.name,
                 subtitle: t.description,
                 pillLabel: '打开',
-                pillCaption: compatTagFor(t)?.label === 'PC' ? '建议 PC 使用' : undefined,
                 onClick: () => handleItemClick(t),
               }))}
             />
@@ -242,90 +220,19 @@ export default function MobileHomePage() {
 
         {/* ── 通知（榜单风） ── */}
         {notifications.length > 0 && (
-          <AppStoreSection
-            title="通知"
-            caption={`${notifications.length} 条待处理`}
-            onShowAll={() => navigate('/notifications')}
-          >
+          <AppStoreSection title="通知" onShowAll={() => navigate('/notifications')}>
             <NotificationsList notifications={notifications.slice(0, 4)} />
           </AppStoreSection>
         )}
 
         {/* ── 最近活动 ── */}
         {feed.length > 0 && (
-          <AppStoreSection
-            title="最近活动"
-          >
+          <AppStoreSection title="最近活动">
             <FeedList feed={feed.slice(0, 6)} onNavigate={(to) => navigate(to)} />
           </AppStoreSection>
         )}
       </div>
     </div>
-  );
-}
-
-/* ─────────────── 顶部头像 + 通知红点 ─────────────── */
-
-function AvatarBadge({ avatarUrl, fallback, notifCount, onClick }: {
-  avatarUrl: string | null;
-  fallback: string;
-  notifCount: number;
-  onClick?: () => void;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className="relative transition-opacity active:opacity-60"
-      style={{ border: 'none', background: 'transparent', padding: 0 }}
-      aria-label="个人中心"
-    >
-      <div
-        style={{
-          width: 40,
-          height: 40,
-          borderRadius: 999,
-          overflow: 'hidden',
-          background: AS_COLOR.surface,
-          border: `1px solid ${AS_COLOR.hairline}`,
-        }}
-      >
-        {avatarUrl ? (
-          <img src={avatarUrl} alt="" className="w-full h-full object-cover" />
-        ) : (
-          <div
-            className="w-full h-full flex items-center justify-center"
-            style={{ ...AS_TYPE.itemTitle, color: AS_COLOR.label }}
-          >
-            {fallback || '?'}
-          </div>
-        )}
-      </div>
-      {notifCount > 0 && (
-        <span
-          className="absolute"
-          style={{
-            top: -2,
-            right: -2,
-            minWidth: 18,
-            height: 18,
-            padding: '0 5px',
-            borderRadius: 999,
-            background: AS_COLOR.red,
-            color: AS_COLOR.label,
-            fontSize: 10,
-            fontWeight: 700,
-            display: 'inline-flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            border: `2px solid ${AS_COLOR.bg}`,
-            lineHeight: 1,
-          }}
-        >
-          {notifCount > 99 ? '99+' : notifCount}
-        </span>
-      )}
-    </button>
   );
 }
 
@@ -425,15 +332,11 @@ function NotificationsList({ notifications }: { notifications: AdminNotification
             </div>
             {n.message && (
               <div
-                className="line-clamp-2"
+                className="truncate"
                 style={{
                   ...AS_TYPE.itemSubtitle,
                   color: AS_COLOR.labelSecondary,
                   marginTop: 2,
-                  display: '-webkit-box',
-                  WebkitLineClamp: 2,
-                  WebkitBoxOrient: 'vertical',
-                  overflow: 'hidden',
                 }}
               >
                 {n.message}

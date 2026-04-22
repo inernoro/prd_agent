@@ -630,7 +630,11 @@ export default function AppShell() {
         )
       )}
       {/* ── 移动端: 顶部导航栏 ── */}
-      {/* 首页 (isHomePage) 做 Apple Today 式透明顶栏：隐藏中间 title + 右侧铃铛，让页面内 Hero 承担标题职责 */}
+      {/* 首页 (isHomePage) 做 Apple Today 式透明顶栏：
+       *   - 左: menu 按钮
+       *   - 中: 空
+       *   - 右: 头像按钮（带通知红点）—— 点击 → /profile
+       *   文字标题职责交给页面内 Hero */}
       {isMobile && (
         <header
           className="fixed top-0 left-0 right-0 z-100 flex items-center gap-3 px-4"
@@ -674,6 +678,58 @@ export default function AppShell() {
                 <span
                   className="absolute top-1 right-1 h-4 w-4 rounded-full flex items-center justify-center text-[9px] font-bold"
                   style={{ background: 'var(--accent-gold)', color: '#1a1a1a' }}
+                >
+                  {notificationCount > 9 ? '9+' : notificationCount}
+                </span>
+              )}
+            </button>
+          )}
+          {/* 首页右上角头像按钮 —— Apple Today 范式 */}
+          {isHomePage && (
+            <button
+              type="button"
+              onClick={() => navigate('/profile')}
+              className="relative h-9 w-9 inline-flex items-center justify-center rounded-full overflow-hidden transition-opacity active:opacity-60"
+              style={{ border: '1px solid rgba(255,255,255,0.12)', background: 'rgba(255,255,255,0.05)', padding: 0 }}
+              aria-label="个人中心"
+            >
+              {user?.avatarUrl || user?.avatarFileName ? (
+                <UserAvatar
+                  src={resolveAvatarUrl({
+                    username: user?.username,
+                    userType: user?.userType,
+                    botKind: user?.botKind,
+                    avatarFileName: user?.avatarFileName ?? null,
+                    avatarUrl: user?.avatarUrl,
+                  })}
+                  alt="avatar"
+                  className="h-full w-full object-cover"
+                />
+              ) : (
+                <span className="text-[13px] font-semibold" style={{ color: 'var(--text-primary)' }}>
+                  {(user?.displayName || user?.username || '?')[0]}
+                </span>
+              )}
+              {notificationCount > 0 && (
+                <span
+                  className="absolute"
+                  style={{
+                    top: -2,
+                    right: -2,
+                    minWidth: 16,
+                    height: 16,
+                    padding: '0 4px',
+                    borderRadius: 999,
+                    background: '#FF453A',
+                    color: '#fff',
+                    fontSize: 9,
+                    fontWeight: 700,
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    border: '2px solid #000',
+                    lineHeight: 1,
+                  }}
                 >
                   {notificationCount > 9 ? '9+' : notificationCount}
                 </span>
