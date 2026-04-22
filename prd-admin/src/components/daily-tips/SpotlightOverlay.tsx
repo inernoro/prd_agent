@@ -498,11 +498,16 @@ export function SpotlightOverlay() {
             {(!steps || isLastStep) && (
               <button
                 type="button"
-                onClick={() => {
+                onClick={(e) => {
                   // 多步 Tour 走到最后:撒花庆祝 + 永久 dismiss(用户已学完,不再骚扰)
                   // 单步模式也走同样逻辑,但效果只是"关闭引导"
                   if (steps && steps.length > 0) {
-                    fireConfetti();
+                    // 从按钮 DOM 取中心坐标,让撒花从用户刚点的按钮位置喷出
+                    const btn = e.currentTarget.getBoundingClientRect();
+                    fireConfetti({
+                      originX: btn.left + btn.width / 2,
+                      originY: btn.top + btn.height / 2,
+                    });
                     if (payload.id && !payload.id.startsWith('seed-')) {
                       // seed-* 是兜底虚拟 id,后端会忽略;只对真实入库 tip 永久 dismiss
                       void dismissTipForever(payload.id);

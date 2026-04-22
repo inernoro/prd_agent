@@ -367,7 +367,48 @@ public sealed class DailyTipsController : ControllerBase
                     },
                 }),
 
-            // 3. 知识库发布 —— 2 步 Tour(都在列表页,不依赖空间详情页的动态 URL)
+            // 3. 大全套演示 —— 测试用,展示 autoAction 所有能力(scroll + prefill + 多步 Tour)
+            // 起点百宝箱:预填搜索框 → 高亮搜索框 → 高亮海鲜市场入口 → 高亮侧边栏
+            T("showcase-all-features", "card",
+                "大全套:一条 tip 跑通所有交互形态",
+                "这是一条测试用演示,展示「预填输入 → 滚动定位 → 多步高亮」三件套。\n开发教程时用来验证组件行为。",
+                "/ai-toolbox",
+                "跑完看效果",
+                "[data-tour-id=toolbox-search]",
+                5,
+                new DailyTipAutoAction
+                {
+                    Scroll = "center",
+                    // autoAction 级别的「预填」—— 跳转到落地页时搜索框自动填好"周报"
+                    Prefill = new DailyTipPrefill
+                    {
+                        Selector = "[data-tour-id=toolbox-search]",
+                        Value = "周报",
+                    },
+                    Steps = new List<DailyTipTourStep>
+                    {
+                        new()
+                        {
+                            Selector = "[data-tour-id=toolbox-search]",
+                            Title = "第 1 步:搜索框已预填「周报」",
+                            Body = "跳转的瞬间 Prefill 能力自动触发了 React onChange,列表已按「周报」过滤。",
+                        },
+                        new()
+                        {
+                            Selector = "[data-tour-id=home-search]",
+                            Title = "第 2 步:⌘+K 全站搜索",
+                            Body = "点「下一步」会自动替你点击这个搜索入口,触发命令面板。",
+                        },
+                        new()
+                        {
+                            Selector = "[data-tour-id=command-palette-input]",
+                            Title = "第 3 步:命令面板 input",
+                            Body = "多步 Tour 的最后一步,点「完成 🎉」会从这个按钮位置撒花 + 永久 dismiss。",
+                        },
+                    },
+                }),
+
+            // 4. 知识库发布 —— 2 步 Tour(都在列表页,不依赖空间详情页的动态 URL)
             // 空间详情 URL 带 space id,演示无法直接导航过去,所以只能指导用户自己
             // 从列表进详情;详情页内的上传 / 发布按钮用户看得见的时候就自然能用。
             T("library-publish", "card",
