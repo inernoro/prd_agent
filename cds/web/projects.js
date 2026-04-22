@@ -24,6 +24,17 @@
 // (::view-transition-new(root), --ripple-x/y/radius vars, vt-snapshotting
 // class) already live in style.css (around line 2670+); we just need
 // to wire the same origin calc + view-transition call here.
+// 2026-04-22 手机端 ☰ 菜单开关：切换 .cds-sidebar 的 .mobile-open 类
+function _toggleCdsSidebar(event) {
+  if (event) event.stopPropagation();
+  var sidebar = document.getElementById('cdsSidebar');
+  var btn = document.getElementById('cdsMobileMenuBtn');
+  if (!sidebar) return;
+  var wasOpen = sidebar.classList.toggle('mobile-open');
+  if (btn) btn.setAttribute('aria-expanded', wasOpen ? 'true' : 'false');
+}
+window._toggleCdsSidebar = _toggleCdsSidebar;
+
 function _projectsToggleTheme(btn) {
   var isLight = document.documentElement.dataset.theme === 'light';
   var next = isLight ? 'dark' : 'light';

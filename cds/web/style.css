@@ -709,6 +709,8 @@ h2 { font-size: 14px; font-weight: 600; margin-bottom: 8px; letter-spacing: -0.0
   color: var(--text-muted); cursor: pointer;
   transition: all var(--transition); flex-shrink: 0;
 }
+/* 2026-04-22：☰ 移动端菜单按钮，桌面端默认隐藏（媒体查询里才 display:inline-flex） */
+.cds-header-menu-btn { display: none; }
 .icon-btn svg { width: 20px; height: 20px; flex-shrink: 0; }
 .icon-btn.xs svg { width: 16px; height: 16px; }
 .icon-btn:hover {
@@ -2611,32 +2613,42 @@ a.branch-name:hover { color: var(--accent); }
     gap: 8px;
   }
   .header-left {
-    width: 100%;
-    flex-wrap: wrap;
-    row-gap: 4px;
-  }
-  .header-actions {
-    width: 100%;
+    /* 2026-04-22：不再 width:100%，让 header-actions 能在同一行右侧出现 ☰
+     * flex:1 + min-width:0 保证标题被挤时能省略而不是溢出。 */
+    flex: 1;
+    min-width: 0;
     flex-wrap: nowrap;
-    overflow-x: auto;
-    overflow-y: hidden;
-    scrollbar-width: none;
-    -ms-overflow-style: none;
-    padding-bottom: 2px; /* 给潜在 scrollbar 留白 */
+    overflow: hidden;
   }
-  .header-actions::-webkit-scrollbar { display: none; }
+  /* 2026-04-22 手机端 header 简化：
+   * - 全部次要按钮隐藏（🔑 / 🌙 / ⚙ / 自动更新入口 / AI 指示灯 / auth widget）
+   * - 只留一个 ☰ 按钮右靠，点开 settings 菜单（成为"菜单导航"）
+   * - header-actions 不再拉全宽占一行 —— 用 margin-left:auto 推到 header-left 右侧 */
+  .header-actions {
+    margin-left: auto;
+    gap: 3px;
+    width: auto;
+    justify-content: flex-end;
+  }
   /* 小屏下次要元数据隐藏 */
   #cdsCommitHash { display: none !important; }
   .capacity-badge { display: none !important; }
 
-  /* Header actions */
-  .header-actions { gap: 3px; }
+  /* 隐藏所有非 ☰ 的 header 按钮，功能收到 settings 菜单里 */
+  .ai-pairing-indicator,
+  .cds-auth-widget,
+  #agentKeyBtn,
+  #themeToggleBtn,
+  #settingsBtn,
+  #selfUpdateBtn {
+    display: none !important;
+  }
+  /* ☰ 专用按钮：只有在手机端显示，桌面端已经在主样式 display:none */
+  .cds-header-menu-btn {
+    display: inline-flex !important;
+    width: 36px; height: 36px;
+  }
   .icon-btn { width: 32px; height: 32px; }
-  .ai-pairing-indicator { padding: 3px 8px; height: 26px; gap: 4px; }
-  .ai-label { font-size: 11px; }
-  /* 视图切换与 auth widget 不允许被压缩 */
-  .view-mode-toggle { flex-shrink: 0; }
-  .cds-auth-widget { flex-shrink: 0; }
   /* 返回项目按钮缩小文字 */
   .projects-back-link {
     padding: 3px 8px !important;
