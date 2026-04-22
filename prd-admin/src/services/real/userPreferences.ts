@@ -10,7 +10,6 @@ import type {
   UpdateVisualAgentPreferencesContract,
   UpdateLiteraryAgentPreferencesContract,
   UpdateAgentSwitcherPreferencesContract,
-  GetDefaultNavLayoutContract,
   UpdateDefaultNavLayoutContract,
   ApplyDefaultNavToAllUsersContract,
   ThemeConfigResponse,
@@ -102,16 +101,6 @@ export const updateAgentSwitcherPreferencesReal: UpdateAgentSwitcherPreferencesC
   });
   if (!res.success) return res;
   return ok(undefined);
-};
-
-export const getDefaultNavLayoutReal: GetDefaultNavLayoutContract = async (): Promise<ApiResponse<DefaultNavLayout>> => {
-  const res = await apiRequest<DefaultNavLayout>(api.settings.defaultNav());
-  if (!res.success) return res;
-  return ok({
-    navOrder: res.data.navOrder ?? [],
-    navHidden: res.data.navHidden ?? [],
-    updatedAt: res.data.updatedAt,
-  });
 };
 
 export const updateDefaultNavLayoutReal: UpdateDefaultNavLayoutContract = async (

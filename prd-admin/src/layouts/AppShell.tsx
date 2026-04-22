@@ -189,8 +189,10 @@ export default function AppShell() {
     loaded: navOrderLoaded,
     loadFromServer: loadNavOrder,
   } = useNavOrderStore();
-  const hasCustomNav = navOrder.length > 0 || navHidden.length > 0;
-  const effectiveNavOrder = hasCustomNav ? navOrder : defaultNavOrder;
+  // 判断用户是否有自定义导航顺序（只看 navOrder，不看 navHidden）
+  // 这样当用户只有隐藏项但没有自定义顺序时，仍然使用管理员默认顺序
+  const hasCustomNavOrder = navOrder.length > 0;
+  const effectiveNavOrder = hasCustomNavOrder ? navOrder : defaultNavOrder;
   // 合并用户隐藏和管理员默认隐藏，但排除用户显式添加到 navOrder 的项目
   // 这样用户可以通过显式添加来覆盖管理员的隐藏设置
   const effectiveNavHidden = useMemo(() => {
