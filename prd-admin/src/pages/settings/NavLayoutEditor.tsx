@@ -27,6 +27,7 @@ type NavLayoutEditorProps = {
   navOrder: string[];
   navHidden: string[];
   fallbackNavOrder?: string[];
+  fallbackNavHidden?: string[];
   loaded: boolean;
   saving: boolean;
   saveLabel?: string;
@@ -68,6 +69,7 @@ export function NavLayoutEditor({
   navOrder,
   navHidden,
   fallbackNavOrder = [],
+  fallbackNavHidden = [],
   loaded,
   saving,
   saveLabel = '保存中...',
@@ -196,13 +198,17 @@ export function NavLayoutEditor({
     (index: number) => {
       const removed = currentOrder[index];
       const nextOrder = collapseDividers(currentOrder.filter((_, i) => i !== index));
-      const nextHidden = [...navHidden];
-      if (removed !== NAV_DIVIDER_KEY && !nextHidden.includes(removed)) {
-        nextHidden.push(removed);
+      // 合并 fallbackNavHidden 和当前 navHidden，确保管理员隐藏的项目不会丢失
+      const baseHidden = new Set([...fallbackNavHidden, ...navHidden]);
+      if (removed !== NAV_DIVIDER_KEY) {
+        baseHidden.add(removed);
       }
+      // 过滤掉已经在 nextOrder 中的项目（用户显式添加回来的）
+      const navSet = new Set(nextOrder.filter((key) => key !== NAV_DIVIDER_KEY));
+      const nextHidden = Array.from(baseHidden).filter((key) => !navSet.has(key));
       onChange({ navOrder: nextOrder, navHidden: nextHidden });
     },
-    [currentOrder, navHidden, onChange]
+    [currentOrder, fallbackNavHidden, navHidden, onChange]
   );
 
   const appendFromPool = useCallback(

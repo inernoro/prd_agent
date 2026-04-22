@@ -191,7 +191,12 @@ export default function AppShell() {
   } = useNavOrderStore();
   const hasCustomNav = navOrder.length > 0 || navHidden.length > 0;
   const effectiveNavOrder = hasCustomNav ? navOrder : defaultNavOrder;
-  const effectiveNavHidden = hasCustomNav ? navHidden : defaultNavHidden;
+  // 合并用户隐藏和管理员默认隐藏：管理员隐藏的项目始终不可见（除非用户显式添加到 navOrder）
+  const effectiveNavHidden = useMemo(() => {
+    const merged = new Set(defaultNavHidden);
+    navHidden.forEach((key) => merged.add(key));
+    return Array.from(merged);
+  }, [defaultNavHidden, navHidden]);
   const [avatarOpen, setAvatarOpen] = useState(false);
   const [notificationDialogOpen, setNotificationDialogOpen] = useState(false);
   const [notifications, setNotifications] = useState<AdminNotificationItem[]>([]);

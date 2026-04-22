@@ -194,6 +194,7 @@ function NavOrderSettings() {
             navOrder={navOrder}
             navHidden={navHidden}
             fallbackNavOrder={defaultNavOrder}
+            fallbackNavHidden={defaultNavHidden}
             loaded={loaded}
             saving={saving}
             onChange={setNavLayout}
