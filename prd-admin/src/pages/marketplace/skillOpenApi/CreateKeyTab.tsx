@@ -14,6 +14,12 @@ interface Props {
   allowedScopes: string[];
   onCreated: () => Promise<void>;
   onBackToList: () => void;
+  /**
+   * 智能体接入模式 —— 由 StartTab 的「智能体接入」路径触发。开启后：
+   * - 创建成功页的主 CTA 从「复制明文」变为「复制给智能体使用」
+   * - 顶部用醒目说明引导用户粘贴给 AI
+   */
+  agentMode?: boolean;
 }
 
 const SCOPE_META: Record<string, { title: string; desc: string }> = {
@@ -34,7 +40,7 @@ const TTL_OPTIONS = [
   { days: 1095, label: '3 年（最长）' },
 ];
 
-export function CreateKeyTab({ allowedScopes, onCreated, onBackToList }: Props) {
+export function CreateKeyTab({ allowedScopes, onCreated, onBackToList, agentMode = false }: Props) {
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
   const [selectedScopes, setSelectedScopes] = useState<string[]>(() => [
@@ -161,6 +167,30 @@ curl -sS "$PRD_AGENT_BASE/api/open/marketplace/skills?sort=hot&limit=5" \\
   if (plaintext) {
     return (
       <div className="flex flex-col gap-4">
+        {/* 智能体模式：顶部引导用户直接复制给 AI */}
+        {agentMode && (
+          <div
+            className="rounded-xl px-4 py-3 flex items-start gap-3"
+            style={{
+              background:
+                'linear-gradient(135deg, rgba(129, 140, 248, 0.18) 0%, rgba(56, 189, 248, 0.1) 100%)',
+              border: '1px solid rgba(129, 140, 248, 0.45)',
+            }}
+          >
+            <Bot size={18} style={{ color: 'rgba(221, 214, 254, 1)' }} className="mt-0.5 shrink-0" />
+            <div className="text-xs leading-relaxed" style={{ color: 'rgba(224, 231, 255, 0.95)' }}>
+              <div className="font-medium mb-0.5" style={{ color: 'var(--text-primary)' }}>
+                Key 已生成 —— 下一步：复制给智能体使用
+              </div>
+              <div className="opacity-90">
+                点下方紫色按钮复制完整指令，粘贴到 Claude Code / Cursor 即可。AI 会自己
+                <code className="font-mono mx-0.5">export</code>
+                环境变量、下载解压技能包、跑一次验证 curl。
+              </div>
+            </div>
+          </div>
+        )}
+
         <div
           className="rounded-xl px-4 py-3 flex items-start gap-3"
           style={{
@@ -188,25 +218,51 @@ curl -sS "$PRD_AGENT_BASE/api/open/marketplace/skills?sort=hot&limit=5" \\
           {plaintext}
         </div>
 
+        {/* 按钮顺序 —— 智能体模式下「复制给智能体」提前为主 CTA；
+            手动模式下保持原来的「复制明文」为主 */}
         <div className="flex items-center gap-2 flex-wrap">
-          <Button variant="primary" size="sm" onClick={handleCopy}>
-            {copied ? <Check size={13} /> : <Copy size={13} />}
-            {copied ? '已复制' : '复制明文'}
-          </Button>
-          <button
-            type="button"
-            onClick={handleCopyAgentPrompt}
-            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-all"
-            style={{
-              background: 'rgba(129, 140, 248, 0.18)',
-              border: '1px solid rgba(129, 140, 248, 0.45)',
-              color: 'rgba(221, 214, 254, 1)',
-            }}
-            title="复制一段提示词，粘贴给 Claude Code / Cursor，AI 会自己 export 环境变量 + 下载技能包"
-          >
-            {copiedPrompt ? <Check size={12} /> : <Bot size={12} />}
-            {copiedPrompt ? '已复制指令' : '复制给智能体使用'}
-          </button>
+          {agentMode ? (
+            <>
+              <Button variant="primary" size="sm" onClick={handleCopyAgentPrompt}>
+                {copiedPrompt ? <Check size={13} /> : <Bot size={13} />}
+                {copiedPrompt ? '已复制指令' : '复制给智能体使用'}
+              </Button>
+              <button
+                type="button"
+                onClick={handleCopy}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs transition-all hover:bg-white/5"
+                style={{
+                  background: 'rgba(255, 255, 255, 0.04)',
+                  border: '1px solid rgba(255, 255, 255, 0.12)',
+                  color: 'var(--text-secondary)',
+                }}
+              >
+                {copied ? <Check size={12} /> : <Copy size={12} />}
+                {copied ? '已复制' : '只复制明文'}
+              </button>
+            </>
+          ) : (
+            <>
+              <Button variant="primary" size="sm" onClick={handleCopy}>
+                {copied ? <Check size={13} /> : <Copy size={13} />}
+                {copied ? '已复制' : '复制明文'}
+              </Button>
+              <button
+                type="button"
+                onClick={handleCopyAgentPrompt}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-all"
+                style={{
+                  background: 'rgba(129, 140, 248, 0.18)',
+                  border: '1px solid rgba(129, 140, 248, 0.45)',
+                  color: 'rgba(221, 214, 254, 1)',
+                }}
+                title="复制一段提示词，粘贴给 Claude Code / Cursor，AI 会自己 export 环境变量 + 下载技能包"
+              >
+                {copiedPrompt ? <Check size={12} /> : <Bot size={12} />}
+                {copiedPrompt ? '已复制指令' : '复制给智能体使用'}
+              </button>
+            </>
+          )}
           <button
             type="button"
             onClick={handleDownloadSkillHere}
@@ -238,9 +294,16 @@ curl -sS "$PRD_AGENT_BASE/api/open/marketplace/skills?sort=hot&limit=5" \\
         </div>
 
         <div className="text-xs mt-2 leading-relaxed" style={{ color: 'var(--text-muted)' }}>
-          建议直接点<strong>「复制给智能体使用」</strong>，把一整段指令粘贴给 Claude Code / Cursor —— AI 会自己
-          <code className="font-mono mx-0.5">export</code> 环境变量、下载并解压官方技能包，
-          然后立刻就能帮你调用海鲜市场的开放接口。
+          {agentMode ? (
+            <>
+              建议点<strong>「复制给智能体使用」</strong>，把整段指令粘贴给 Claude Code / Cursor —— AI 会自己配置环境变量、下载解压官方技能包，立即接通。
+            </>
+          ) : (
+            <>
+              想让 AI 一键配置？点<strong>「复制给智能体使用」</strong>即可，AI 会自己
+              <code className="font-mono mx-0.5">export</code> 环境变量 + 下载解压技能包。
+            </>
+          )}
         </div>
       </div>
     );

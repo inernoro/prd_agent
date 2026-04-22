@@ -1,5 +1,5 @@
-import { useState } from 'react';
-import { Copy, Download, KeyRound, Package, RefreshCw, Trash2, XCircle } from 'lucide-react';
+import { useEffect, useState } from 'react';
+import { Copy, Download, KeyRound, Plus, RefreshCw, Trash2, XCircle } from 'lucide-react';
 import { Button } from '@/components/design/Button';
 import { MapSpinner } from '@/components/ui/VideoLoader';
 import { toast } from '@/lib/toast';
@@ -10,6 +10,7 @@ import {
 } from '@/services';
 import type { AgentApiKeyDto } from '@/services/contracts/agentApiKeys';
 import { StatusBadge, formatDateTime, formatDaysLeft } from './statusBadge';
+import { CreateKeyTab } from './CreateKeyTab';
 import {
   OFFICIAL_SKILL_MARKETPLACE_OPENAPI,
   downloadOfficialSkill,
@@ -19,13 +20,25 @@ import {
 interface Props {
   keys: AgentApiKeyDto[];
   loading: boolean;
+  allowedScopes: string[];
   onRefresh: () => Promise<void>;
-  onGotoCreate: () => void;
+  /** 从外部强制进入新建表单态（如 StartTab「智能体接入」跳转时）。变 true 时切换状态 */
+  openCreateSignal?: number;
+  /** 智能体模式：显示时优先推荐「复制给智能体」CTA + 自动勾选 read scope */
+  agentMode?: boolean;
 }
 
-export function KeysListTab({ keys, loading, onRefresh, onGotoCreate }: Props) {
+export function KeysListTab({ keys, loading, allowedScopes, onRefresh, openCreateSignal, agentMode }: Props) {
   const [busyId, setBusyId] = useState<string | null>(null);
   const [downloading, setDownloading] = useState(false);
+  const [showCreate, setShowCreate] = useState(false);
+
+  // 外部切换到本 Tab 并且要求开启新建表单（智能体接入流程）
+  useEffect(() => {
+    if (openCreateSignal !== undefined && openCreateSignal > 0) {
+      setShowCreate(true);
+    }
+  }, [openCreateSignal]);
 
   const handleDownloadSkill = async () => {
     setDownloading(true);
@@ -97,6 +110,18 @@ export function KeysListTab({ keys, loading, onRefresh, onGotoCreate }: Props) {
     }
   };
 
+  // 内联新建表单态：CreateKeyTab 嵌在同一 Tab 里渲染，不再单独开一个 Tab
+  if (showCreate) {
+    return (
+      <CreateKeyTab
+        allowedScopes={allowedScopes}
+        onCreated={onRefresh}
+        onBackToList={() => setShowCreate(false)}
+        agentMode={agentMode}
+      />
+    );
+  }
+
   if (loading) {
     return (
       <div className="flex items-center justify-center py-16 gap-3 text-sm" style={{ color: 'var(--text-muted)' }}>
@@ -117,7 +142,7 @@ export function KeysListTab({ keys, loading, onRefresh, onGotoCreate }: Props) {
           创建一个 Key，让 Cursor / Claude Code / 任意 AI Agent 能授权浏览和下载海鲜市场的技能包。
         </div>
         <div className="flex items-center gap-2 flex-wrap justify-center">
-          <Button variant="primary" size="sm" onClick={onGotoCreate}>
+          <Button variant="primary" size="sm" onClick={() => setShowCreate(true)}>
             <KeyRound size={13} />
             创建第一个 Key
           </Button>
@@ -142,35 +167,30 @@ export function KeysListTab({ keys, loading, onRefresh, onGotoCreate }: Props) {
 
   return (
     <div className="flex flex-col gap-3">
-      {/* 持久 CTA：无论什么时候都能下载技能包 */}
-      <div
-        className="rounded-xl px-3 py-2.5 flex items-center gap-3"
-        style={{
-          background: 'rgba(56, 189, 248, 0.08)',
-          border: '1px solid rgba(56, 189, 248, 0.22)',
-        }}
-      >
-        <Package size={14} style={{ color: 'rgba(186, 230, 253, 1)' }} className="shrink-0" />
-        <div className="flex-1 min-w-0 text-[11px] leading-tight" style={{ color: 'rgba(224, 242, 254, 0.85)' }}>
-          <div style={{ color: 'var(--text-primary)' }} className="font-medium text-xs mb-0.5">
-            忘了怎么用？下载「海鲜市场开放接口」官方技能包
-          </div>
-          解压到 <code className="font-mono">~/.claude/skills/</code>，AI 就自动知道怎么调这些接口。
-        </div>
+      {/* 顶部行动栏：新建 Key（主要） + 下载技能包（次要） */}
+      <div className="flex items-center gap-2 flex-wrap">
+        <Button variant="primary" size="sm" onClick={() => setShowCreate(true)}>
+          <Plus size={13} />
+          新建 Key
+        </Button>
         <button
           type="button"
           onClick={handleDownloadSkill}
           disabled={downloading}
-          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-all shrink-0"
+          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs transition-all"
           style={{
-            background: 'rgba(56, 189, 248, 0.22)',
-            border: '1px solid rgba(56, 189, 248, 0.5)',
-            color: 'rgba(224, 242, 254, 1)',
+            background: 'rgba(56, 189, 248, 0.14)',
+            border: '1px solid rgba(56, 189, 248, 0.35)',
+            color: 'rgba(186, 230, 253, 1)',
           }}
+          title="下载官方客户端技能包，解压到 ~/.claude/skills/ 后 AI 就知道怎么调开放接口"
         >
           <Download size={12} />
           {downloading ? '下载中…' : '下载技能包'}
         </button>
+        <div className="ml-auto text-[11px]" style={{ color: 'var(--text-muted)' }}>
+          共 {keys.length} 个 Key
+        </div>
       </div>
 
       {keys.map((k) => {

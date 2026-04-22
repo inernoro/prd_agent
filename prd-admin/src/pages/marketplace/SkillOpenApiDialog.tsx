@@ -1,26 +1,25 @@
 import { useCallback, useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { Book, KeyRound, Plus, X, Zap, type LucideIcon } from 'lucide-react';
+import { Book, KeyRound, Sparkles, X, Zap, type LucideIcon } from 'lucide-react';
 import { listAgentApiKeys } from '@/services';
 import type { AgentApiKeyDto } from '@/services/contracts/agentApiKeys';
 import { toast } from '@/lib/toast';
-import { CreateKeyTab } from './skillOpenApi/CreateKeyTab';
 import { GuideTab } from './skillOpenApi/GuideTab';
 import { KeysListTab } from './skillOpenApi/KeysListTab';
-import {
-  OFFICIAL_SKILL_MARKETPLACE_OPENAPI,
-  downloadOfficialSkill,
-  hasDownloadedOfficialSkill,
-  markOfficialSkillDownloaded,
-} from './skillOpenApi/downloadOfficialSkill';
+import { StartTab } from './skillOpenApi/StartTab';
 
 /**
  * 「接入 AI」弹窗 —— 海鲜市场右上角按钮触发。
  *
  * 三个 Tab：
- *  1. 我的 Key：列出用户已有的 AgentApiKey + 续期/撤销/删除
- *  2. 新建 Key：scope 勾选 + TTL + 明文一次性展示
+ *  1. 新建接入（落地页）：两个大卡片 —— 手动接入 / 智能体接入
+ *  2. 我的 Key：列表 + 内联新建表单（不再是独立 Tab）
  *  3. 使用指南：curl / TypeScript / Python 代码样本 + 订阅/修改/续期说明
+ *
+ * 流程：
+ *  - 手动接入 → 切 Tab 3 「使用指南」，用户自己照着抄代码
+ *  - 智能体接入 → 切 Tab 2 「我的 Key」，自动进入新建表单 agent 模式，
+ *    创建完给用户「复制给智能体使用」按钮一键复制完整 prompt
  *
  * 遵守 `.claude/rules/frontend-modal.md`：
  *  - createPortal 挂到 document.body
@@ -31,22 +30,26 @@ interface Props {
   onClose: () => void;
 }
 
-type TabKey = 'keys' | 'create' | 'guide';
+type TabKey = 'start' | 'keys' | 'guide';
 
 const TABS: Array<{ key: TabKey; label: string; icon: LucideIcon }> = [
+  { key: 'start', label: '新建接入', icon: Sparkles },
   { key: 'keys', label: '我的 Key', icon: KeyRound },
-  { key: 'create', label: '新建 Key', icon: Plus },
   { key: 'guide', label: '使用指南', icon: Book },
 ];
 
 export function SkillOpenApiDialog({ onClose }: Props) {
-  const [activeTab, setActiveTab] = useState<TabKey>('keys');
+  const [activeTab, setActiveTab] = useState<TabKey>('start');
   const [keys, setKeys] = useState<AgentApiKeyDto[]>([]);
   const [allowedScopes, setAllowedScopes] = useState<string[]>([
     'marketplace.skills:read',
     'marketplace.skills:write',
   ]);
   const [loading, setLoading] = useState(true);
+  /** 单调递增的"新建信号"：StartTab 点智能体接入时 ++，KeysListTab 监听到就打开创建表单 */
+  const [openCreateSignal, setOpenCreateSignal] = useState(0);
+  /** 当前走的是不是智能体接入流程 —— 影响 CreateKeyTab 的 agent CTA 高亮 */
+  const [agentMode, setAgentMode] = useState(false);
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -69,27 +72,6 @@ export function SkillOpenApiDialog({ onClose }: Props) {
     void refresh();
   }, [refresh]);
 
-  // 首次打开 Dialog 自动下载官方技能包 —— 消除"怎么用"的认知缺口。
-  // 只在同一 session 触发一次（sessionStorage flag）；用户清缓存会再触发一次，
-  // 但这可以接受——重要的是对新用户零摩擦，老用户感知到就够了。
-  useEffect(() => {
-    if (hasDownloadedOfficialSkill()) return;
-    let cancelled = false;
-    (async () => {
-      try {
-        await downloadOfficialSkill(OFFICIAL_SKILL_MARKETPLACE_OPENAPI);
-        if (cancelled) return;
-        markOfficialSkillDownloaded();
-        toast.success('已自动下载官方技能包 marketplace-openapi.zip，解压到 ~/.claude/skills/ 即可使用');
-      } catch {
-        // 静默失败 —— 用户仍然能在 Guide / Keys Tab 手动点下载按钮
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') onClose();
@@ -97,6 +79,18 @@ export function SkillOpenApiDialog({ onClose }: Props) {
     document.addEventListener('keydown', onKey);
     return () => document.removeEventListener('keydown', onKey);
   }, [onClose]);
+
+  const handleChooseManual = () => {
+    setAgentMode(false);
+    setActiveTab('guide');
+  };
+
+  const handleChooseAgent = () => {
+    setAgentMode(true);
+    setActiveTab('keys');
+    // 用递增信号通知 KeysListTab 立即切进新建表单（和 agentMode 一起喂进去）
+    setOpenCreateSignal((n) => n + 1);
+  };
 
   const modal = (
     <div
@@ -203,19 +197,17 @@ export function SkillOpenApiDialog({ onClose }: Props) {
             overscrollBehavior: 'contain',
           }}
         >
+          {activeTab === 'start' && (
+            <StartTab onChooseManual={handleChooseManual} onChooseAgent={handleChooseAgent} />
+          )}
           {activeTab === 'keys' && (
             <KeysListTab
               keys={keys}
               loading={loading}
-              onRefresh={refresh}
-              onGotoCreate={() => setActiveTab('create')}
-            />
-          )}
-          {activeTab === 'create' && (
-            <CreateKeyTab
               allowedScopes={allowedScopes}
-              onCreated={refresh}
-              onBackToList={() => setActiveTab('keys')}
+              onRefresh={refresh}
+              openCreateSignal={openCreateSignal}
+              agentMode={agentMode}
             />
           )}
           {activeTab === 'guide' && <GuideTab />}
