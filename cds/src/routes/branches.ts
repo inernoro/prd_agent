@@ -4540,33 +4540,33 @@ export function createBranchRouter(deps: RouterDeps): Router {
     res.json({ version });
   });
 
-  // GET /api/export-skill — export unified cds skill as tar.gz
+  // GET /api/export-skill — export all CDS skills as a single tar.gz bundle
   //
-  // 2026-04-18 重构：合并 cds-project-scan + cds-deploy-pipeline + smoke-test
-  // 为单一 cds 技能，带 cli/ Python CLI + reference/ 按需文档 + SKILL.md 入口。
-  // 旧入参 `?legacy=1` 仍能导出 cds-project-scan 单独的文档（向后兼容）。
+  // 打包内容（全量，不分 legacy / unified）：
+  //   .claude/skills/cds/                — 统一技能（主入口 + CLI + reference）
+  //   .claude/skills/cds-deploy-pipeline/ — 部署流水线技能
+  //   .claude/skills/cds-project-scan/   — 扫描技能（向后兼容旧工作流）
+  //
+  // 旧入参 `?legacy=1` 保留：仍能仅导出 cds-project-scan（向后兼容）。
   router.get('/export-skill', (req, res) => {
     try {
       const useLegacy = req.query.legacy === '1';
-      const skillName = useLegacy ? 'cds-project-scan' : 'cds';
-      const skillDir = path.join(config.repoRoot, '.claude', 'skills', skillName);
-      if (!fs.existsSync(skillDir)) {
-        res.status(404).json({ error: `未找到 ${skillName} 技能目录` });
-        return;
-      }
+
+      // 解析 skills 根目录：优先 config.repoRoot，兜底父目录（CDS 部署为子目录时）
+      const skillsRoot = ((): string => {
+        const primary = path.join(config.repoRoot, '.claude', 'skills');
+        if (fs.existsSync(primary)) return primary;
+        const parent = path.join(config.repoRoot, '..', '.claude', 'skills');
+        if (fs.existsSync(parent)) return parent;
+        return primary; // 返回原路径，后续报错
+      })();
 
       // Build pack in a temp directory
       const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
-      const packName = `${skillName}-skill-${timestamp}`;
+      const packName = useLegacy ? `cds-project-scan-skill-${timestamp}` : `cds-skills-${timestamp}`;
       const tmpDir = path.join(config.repoRoot, '.cds', 'tmp');
       const packDir = path.join(tmpDir, packName);
 
-      // Recursively copy the whole skill directory (captures cli/ and
-      // reference/ subdirs without per-file enumeration). This mirrors
-      // whatever layout the skill author uses so the drop-in on the
-      // consumer side stays identical to the source.
-      const targetSkillDir = path.join(packDir, '.claude', 'skills', skillName);
-      fs.mkdirSync(targetSkillDir, { recursive: true });
       const copyRecursive = (src: string, dst: string) => {
         const stat = fs.statSync(src);
         if (stat.isDirectory()) {
@@ -4578,19 +4578,39 @@ export function createBranchRouter(deps: RouterDeps): Router {
           fs.copyFileSync(src, dst);
         }
       };
-      copyRecursive(skillDir, targetSkillDir);
+
+      // 要打包的技能列表
+      const skillsToCopy: string[] = useLegacy
+        ? ['cds-project-scan']
+        : ['cds', 'cds-deploy-pipeline', 'cds-project-scan'];
+
+      let copiedCount = 0;
+      for (const skillName of skillsToCopy) {
+        const skillDir = path.join(skillsRoot, skillName);
+        if (!fs.existsSync(skillDir)) continue;
+        const targetSkillDir = path.join(packDir, '.claude', 'skills', skillName);
+        fs.mkdirSync(targetSkillDir, { recursive: true });
+        copyRecursive(skillDir, targetSkillDir);
+        copiedCount++;
+      }
+
+      if (copiedCount === 0) {
+        res.status(404).json({ error: `未找到 CDS 技能目录（已查找：${skillsRoot}）` });
+        return;
+      }
 
       // README tailored to the new unified skill
       const readme = useLegacy
         ? `# CDS 部署技能包 (legacy: cds-project-scan)\n\n将 \`.claude/skills/cds-project-scan/\` 复制到目标项目的对应路径。\n`
-        : `# CDS 技能包 (统一版)
+        : `# CDS 技能包（全套，共 ${copiedCount} 个技能）
 
+包含：cds（主技能）、cds-deploy-pipeline（部署流水线）、cds-project-scan（扫描）。
 覆盖 CDS 全生命周期：扫描项目 → Agent 鉴权 → 部署 → 就绪检测 → 分层冒烟 → 故障诊断。
 
 ## 三分钟安装
 
 \`\`\`bash
-# 1. 解压到你项目的根目录（保留 .claude/skills/cds/ 结构）
+# 1. 解压到你项目的根目录（会在 .claude/skills/ 下放置所有 cds 技能）
 tar -xzf ${packName}.tar.gz --strip-components=1
 
 # 2. 加 alias（推荐）

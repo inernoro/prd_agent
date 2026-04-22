@@ -1025,7 +1025,7 @@ window.cdsDoLogout = cdsDoLogout;
     a.click();
     document.body.removeChild(a);
     if (typeof showToast === 'function') {
-      showToast('正在下载 cds 技能包…解压到你项目的 .claude/skills/ 即可', 'info', 4000);
+      showToast('正在下载 CDS 技能包（cds + cds-deploy-pipeline + cds-project-scan）…解压到项目根目录即可', 'info', 5000);
     }
   };
 
