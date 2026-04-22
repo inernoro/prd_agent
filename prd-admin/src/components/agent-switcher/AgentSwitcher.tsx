@@ -176,9 +176,12 @@ export function AgentSwitcher() {
     togglePin,
   } = useAgentSwitcherStore();
 
-  // 鼠标 hover 用独立 state，与键盘的 selectedId 正交；
-  // 视觉高亮 activeId = hoveredId ?? selectedId（hover 优先，离开立即让位给键盘态）。
+  // 鼠标 hover 用独立 state，与键盘的 selectedId 正交。
   const [hoveredId, setHoveredId] = useState<string | null>(null);
+  // 是否已启用键盘导航——避免刚打开面板、用户还没按任何方向键时，
+  // selectedId（默认指向第一项，用于 Enter 的目标）就把高亮画在"最近使用"第一张上，
+  // 让用户误以为鼠标一离开就跳转到某项。仅键盘真正启动后才渲染键盘态高亮。
+  const [keyboardEngaged, setKeyboardEngaged] = useState(false);
 
   // 目录（按权限过滤）
   const catalog = useMemo(
@@ -299,12 +302,14 @@ export function AgentSwitcher() {
     }
   }, [isOpen, flatList, selectedId, setSelectedId]);
 
-  // 输入框聚焦
+  // 输入框聚焦 + 面板关闭时复位键盘态 / hover
   useEffect(() => {
     if (isOpen) {
       const t = setTimeout(() => inputRef.current?.focus(), 60);
       return () => clearTimeout(t);
     }
+    setKeyboardEngaged(false);
+    setHoveredId(null);
   }, [isOpen]);
 
   const launchItem = useCallback(
@@ -344,7 +349,8 @@ export function AgentSwitcher() {
         e.preventDefault();
         const next = (curIdx + delta + flatList.length) % flatList.length;
         setSelectedId(flatList[next].id);
-        // 用户切回键盘态：强制清除 hover，避免 hoveredId 压住键盘高亮
+        // 用户切回键盘态：启用键盘高亮 + 强制清除 hover
+        setKeyboardEngaged(true);
         setHoveredId(null);
       };
 
@@ -518,7 +524,10 @@ export function AgentSwitcher() {
                       onMouseLeave={() => setHoveredId(null)}
                     >
                       {section.items.map((item) => {
-                        const activeId = hoveredId ?? selectedId;
+                        // 搜索时也视为"键盘态"——用户一按 Enter 就会发射 selectedId
+                        // 所以必须提前让他看到下一次 Enter 会打开哪张卡。
+                        const showKeyboardHighlight = keyboardEngaged || searchQuery.trim().length > 0;
+                        const activeId = hoveredId ?? (showKeyboardHighlight ? selectedId : null);
                         return (
                         <LauncherCard
                           key={`${section.key}:${item.id}`}
