@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useNavigate } from 'react-router-dom';
-import { Sparkles, X, ChevronRight, Bell } from 'lucide-react';
+import { Sparkles, X, ChevronRight, Lightbulb } from 'lucide-react';
 import { useDailyTipsStore } from '@/stores/dailyTipsStore';
 import { writeSpotlightPayload } from './TipsRotator';
 import { trackTip } from '@/services/real/dailyTips';
@@ -90,42 +90,55 @@ export function TipsDrawer() {
       title="小贴士"
       style={{
         position: 'fixed',
-        top: 72,
+        bottom: 20,
         right: 20,
-        width: 40,
-        height: 40,
+        width: 48,
+        height: 48,
         borderRadius: 999,
-        background: 'rgba(255,255,255,0.08)',
-        border: '1px solid rgba(255,255,255,0.14)',
-        backdropFilter: 'blur(12px)',
-        WebkitBackdropFilter: 'blur(12px)',
+        background:
+          'linear-gradient(135deg, rgba(168,85,247,0.22), rgba(129,140,248,0.18))',
+        border: '1px solid rgba(196,181,253,0.35)',
+        backdropFilter: 'blur(14px)',
+        WebkitBackdropFilter: 'blur(14px)',
         display: 'inline-flex',
         alignItems: 'center',
         justifyContent: 'center',
         cursor: 'pointer',
         zIndex: 50,
-        color: 'var(--text-primary, #fff)',
-        boxShadow: '0 4px 18px -6px rgba(0,0,0,0.4), inset 0 1px 0 rgba(255,255,255,0.08)',
+        color: '#e9d5ff',
+        boxShadow:
+          '0 10px 30px -8px rgba(139,92,246,0.45), 0 0 0 1px rgba(255,255,255,0.05) inset, 0 1px 0 rgba(255,255,255,0.12) inset',
+        transition: 'transform 180ms ease-out, box-shadow 180ms ease-out',
+      }}
+      onMouseEnter={(e) => {
+        e.currentTarget.style.transform = 'translateY(-2px)';
+        e.currentTarget.style.boxShadow =
+          '0 14px 36px -8px rgba(139,92,246,0.6), 0 0 0 1px rgba(255,255,255,0.06) inset';
+      }}
+      onMouseLeave={(e) => {
+        e.currentTarget.style.transform = 'translateY(0)';
+        e.currentTarget.style.boxShadow =
+          '0 10px 30px -8px rgba(139,92,246,0.45), 0 0 0 1px rgba(255,255,255,0.05) inset, 0 1px 0 rgba(255,255,255,0.12) inset';
       }}
     >
-      <Bell size={15} />
+      <Lightbulb size={18} strokeWidth={2.2} style={{ filter: 'drop-shadow(0 0 6px rgba(196,181,253,0.55))' }} />
       {badgeCount > 0 && (
         <span
           style={{
             position: 'absolute',
-            top: 4,
-            right: 4,
-            minWidth: 14,
-            height: 14,
-            padding: '0 3px',
+            top: -2,
+            right: -2,
+            minWidth: 18,
+            height: 18,
+            padding: '0 5px',
             borderRadius: 999,
             background: 'linear-gradient(135deg, #f43f5e, #a855f7)',
             color: '#fff',
-            fontSize: 9,
-            fontWeight: 600,
-            lineHeight: '14px',
+            fontSize: 10,
+            fontWeight: 700,
+            lineHeight: '18px',
             textAlign: 'center',
-            boxShadow: '0 0 8px rgba(244,63,94,0.5)',
+            boxShadow: '0 0 10px rgba(244,63,94,0.55), 0 0 0 2px rgba(15,16,20,0.9)',
           }}
         >
           {badgeCount}
@@ -138,21 +151,23 @@ export function TipsDrawer() {
     <div
       style={{
         position: 'fixed',
-        top: 70,
+        bottom: 80,
         right: 20,
-        width: 340,
+        width: 360,
         maxHeight: 'calc(100vh - 120px)',
-        borderRadius: 16,
-        background: 'linear-gradient(180deg, rgba(22,22,28,0.96), rgba(15,16,20,0.96))',
-        border: '1px solid rgba(255,255,255,0.1)',
-        backdropFilter: 'blur(22px)',
-        WebkitBackdropFilter: 'blur(22px)',
+        borderRadius: 18,
+        background:
+          'linear-gradient(180deg, rgba(24,22,34,0.96), rgba(16,16,22,0.97))',
+        border: '1px solid rgba(196,181,253,0.18)',
+        backdropFilter: 'blur(22px) saturate(140%)',
+        WebkitBackdropFilter: 'blur(22px) saturate(140%)',
         zIndex: 51,
         display: 'flex',
         flexDirection: 'column',
         overflow: 'hidden',
-        boxShadow: '0 30px 80px -20px rgba(0,0,0,0.8), 0 0 0 1px rgba(255,255,255,0.03)',
-        animation: 'tipsDrawerSlide 240ms cubic-bezier(.2,.8,.2,1)',
+        boxShadow:
+          '0 30px 80px -20px rgba(76,29,149,0.45), 0 0 0 1px rgba(255,255,255,0.03), 0 1px 0 rgba(255,255,255,0.06) inset',
+        animation: 'tipsDrawerSlide 260ms cubic-bezier(.2,.8,.2,1)',
       }}
     >
       <div
@@ -210,15 +225,18 @@ export function TipsDrawer() {
           <div
             key={t.id}
             style={{
-              borderRadius: 12,
+              borderRadius: 14,
               border: t.isTargeted
-                ? '1px solid rgba(244,63,94,0.5)'
-                : '1px solid rgba(255,255,255,0.08)',
+                ? '1px solid rgba(244,63,94,0.45)'
+                : '1px solid rgba(255,255,255,0.06)',
               background: t.isTargeted
-                ? 'linear-gradient(135deg, rgba(244,63,94,0.12), rgba(168,85,247,0.08))'
-                : 'rgba(255,255,255,0.03)',
-              padding: 12,
+                ? 'linear-gradient(135deg, rgba(244,63,94,0.14), rgba(168,85,247,0.10))'
+                : 'linear-gradient(135deg, rgba(255,255,255,0.035), rgba(255,255,255,0.015))',
+              padding: '13px 14px',
               position: 'relative',
+              boxShadow: t.isTargeted
+                ? '0 6px 20px -10px rgba(244,63,94,0.35)'
+                : '0 2px 8px -4px rgba(0,0,0,0.3)',
             }}
           >
             <button
@@ -305,8 +323,8 @@ export function TipsDrawer() {
       </div>
       <style>{`
         @keyframes tipsDrawerSlide {
-          from { opacity: 0; transform: translateY(-6px); }
-          to   { opacity: 1; transform: translateY(0); }
+          from { opacity: 0; transform: translateY(10px) scale(0.98); }
+          to   { opacity: 1; transform: translateY(0) scale(1); }
         }
       `}</style>
     </div>

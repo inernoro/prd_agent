@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom';
 import { GlassCard } from '@/components/design/GlassCard';
 import { Button } from '@/components/design/Button';
 import { MapSpinner } from '@/components/ui/VideoLoader';
-import { Plus, Pencil, Trash2, Sparkles, RefreshCw, Send, X, Users } from 'lucide-react';
+import { Plus, Pencil, Trash2, Sparkles, RefreshCw, Send, X, Users, Wand2 } from 'lucide-react';
 import { UserSearchSelect } from '@/components/UserSearchSelect';
 import {
   listTipsAdmin,
@@ -12,6 +12,7 @@ import {
   deleteTip,
   pushTip,
   getTipStats,
+  seedDefaultTips,
   type DailyTipAdmin,
   type DailyTipKind,
   type DailyTipUpsert,
@@ -84,6 +85,8 @@ export function DailyTipsEditor() {
   const [draft, setDraft] = useState<DailyTipUpsert>(emptyDraft());
   const [showForm, setShowForm] = useState(false);
   const [pushingTip, setPushingTip] = useState<DailyTipAdmin | null>(null);
+  const [seeding, setSeeding] = useState(false);
+  const [seedMsg, setSeedMsg] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -184,6 +187,28 @@ export function DailyTipsEditor() {
     }
   };
 
+  const handleSeed = async () => {
+    setSeeding(true);
+    setSeedMsg(null);
+    setError(null);
+    try {
+      const res = await seedDefaultTips();
+      if (res.success && res.data) {
+        const { insertedCount, skippedCount, totalDefaults } = res.data;
+        setSeedMsg(
+          insertedCount > 0
+            ? `已植入 ${insertedCount} 条内置小贴士${skippedCount > 0 ? `(跳过 ${skippedCount} 条已存在)` : ''}`
+            : `全部 ${totalDefaults} 条内置小贴士均已存在,未新增`,
+        );
+        await load();
+      } else {
+        setError(res.error?.message ?? '植入失败');
+      }
+    } finally {
+      setSeeding(false);
+    }
+  };
+
   const sorted = useMemo(
     () =>
       [...items].sort(
@@ -213,6 +238,16 @@ export function DailyTipsEditor() {
           </p>
         </div>
         <div className="flex items-center gap-2">
+          <Button
+            variant="secondary"
+            size="sm"
+            onClick={() => void handleSeed()}
+            disabled={seeding}
+            title="按 SourceId 幂等植入 8 条内置默认小贴士;已存在的会跳过"
+          >
+            {seeding ? <MapSpinner size={14} /> : <Wand2 size={14} />}
+            一键植入默认
+          </Button>
           <Button variant="secondary" size="sm" onClick={() => void load()} disabled={loading}>
             {loading ? <MapSpinner size={14} /> : <RefreshCw size={14} />}
             刷新
@@ -223,6 +258,27 @@ export function DailyTipsEditor() {
           </Button>
         </div>
       </div>
+
+      {seedMsg && (
+        <div
+          className="px-3 py-2 text-[12px] rounded-lg shrink-0 flex items-center justify-between gap-2"
+          style={{
+            background: 'rgba(34,197,94,0.12)',
+            border: '1px solid rgba(34,197,94,0.35)',
+            color: '#86efac',
+          }}
+        >
+          <span>{seedMsg}</span>
+          <button
+            type="button"
+            onClick={() => setSeedMsg(null)}
+            style={{ background: 'transparent', border: 'none', color: 'inherit', cursor: 'pointer' }}
+            aria-label="关闭"
+          >
+            <X size={12} />
+          </button>
+        </div>
+      )}
 
       {error && (
         <div
@@ -397,15 +453,39 @@ export function DailyTipsEditor() {
       <div className="flex flex-col gap-2">
         {sorted.length === 0 && !loading && (
           <div
-            className="p-8 text-center text-[13px] rounded-xl"
+            className="p-8 rounded-xl flex flex-col items-center gap-4 text-center"
             style={{
               border: '1px dashed var(--border-subtle)',
               color: 'var(--text-muted)',
+              background:
+                'linear-gradient(180deg, rgba(168,85,247,0.04), rgba(129,140,248,0.02))',
             }}
           >
-            还没有小贴士 — 创建第一条,新用户登录首页就能看到。
-            <br />
-            清空后首页会自动回退到一组内置默认 tip。
+            <Sparkles size={32} style={{ color: '#c4b5fd', opacity: 0.75 }} />
+            <div className="flex flex-col gap-1.5">
+              <div className="text-[14px] font-semibold" style={{ color: 'var(--text-primary)' }}>
+                还没有小贴士
+              </div>
+              <div className="text-[12px]" style={{ color: 'var(--text-muted)' }}>
+                可以「一键植入默认」把 8 条内置 seed 灌进数据库,之后随便改 / 加 / 删;
+                <br />
+                也可以直接「新建」从零写一条自己的。
+              </div>
+            </div>
+            <div className="flex items-center gap-2">
+              <Button
+                variant="primary"
+                size="sm"
+                onClick={() => void handleSeed()}
+                disabled={seeding}
+              >
+                {seeding ? <MapSpinner size={14} /> : <Wand2 size={14} />}
+                一键植入默认
+              </Button>
+              <Button variant="secondary" size="sm" onClick={startCreate}>
+                <Plus size={14} /> 从零新建
+              </Button>
+            </div>
           </div>
         )}
         {sorted.map((tip) => (

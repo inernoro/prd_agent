@@ -140,6 +140,19 @@ export async function pushTip(
   );
 }
 
+/**
+ * 一键植入 8 条内置默认 tip。幂等:按 SourceId 判重,已存在的不动。
+ * 用于新环境或清空后让管理员一次性把 seed 变成真实数据,之后可再编辑。
+ */
+export async function seedDefaultTips(): Promise<
+  ApiResponse<{ insertedCount: number; skippedCount: number; totalDefaults: number }>
+> {
+  return await apiRequest<{ insertedCount: number; skippedCount: number; totalDefaults: number }>(
+    api.dailyTips.admin.seed(),
+    { method: 'POST', body: {} },
+  );
+}
+
 /** 查看 tip 的推送统计(每用户状态 + 汇总)。 */
 export async function getTipStats(
   id: string,

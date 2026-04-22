@@ -1111,6 +1111,7 @@ export const api = {
       delete: (id: string) => `/api/admin/daily-tips/${id}`,
       push: (id: string) => `/api/admin/daily-tips/${id}/push`,
       stats: (id: string) => `/api/admin/daily-tips/${id}/stats`,
+      seed: () => '/api/admin/daily-tips/seed',
     },
   },
 

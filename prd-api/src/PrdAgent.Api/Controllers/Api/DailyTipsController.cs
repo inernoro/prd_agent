@@ -197,8 +197,9 @@ public sealed class DailyTipsController : ControllerBase
     /// <summary>
     /// 内置默认 tip 集合。新环境 / 清空数据库后兜底展示,管理员创建首条 tip 后即不再返回。
     /// 全部为「text / card」类,带 ActionUrl 可跳转。DisplayOrder 预留 10-90,方便管理员插入。
+    /// AdminDailyTipsController 的 /seed 端点复用此列表批量写库。
     /// </summary>
-    private static List<DailyTip> BuildDefaultTips(DateTime now)
+    internal static List<DailyTip> BuildDefaultTips(DateTime now)
     {
         DailyTip T(
             string id, string kind, string title, string? body,

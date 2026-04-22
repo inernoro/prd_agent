@@ -273,6 +273,66 @@ public sealed class AdminDailyTipsController : ControllerBase
         return Ok(ApiResponse<object>.Ok(new { summary, items }));
     }
 
+    /// <summary>
+    /// 一键植入内置默认 tip。幂等:按 SourceId 去重,已存在的不动。
+    /// 用于 DailyTips 集合为空时让管理员一次性把 seed 变成真实数据,之后可以随便编辑 / 删除。
+    /// </summary>
+    [HttpPost("seed")]
+    [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status200OK)]
+    public async Task<IActionResult> Seed(CancellationToken ct = default)
+    {
+        var now = DateTime.UtcNow;
+        var defaults = DailyTipsController.BuildDefaultTips(now);
+
+        // 已有记录(按 SourceId 判重,SourceId 非空)
+        var existingSourceIds = await _db.DailyTips
+            .Find(Builders<DailyTip>.Filter.Ne<string?>(x => x.SourceId, null))
+            .Project(x => x.SourceId)
+            .ToListAsync(ct);
+        var skip = existingSourceIds.Where(x => !string.IsNullOrEmpty(x)).ToHashSet();
+
+        var toInsert = new List<DailyTip>();
+        foreach (var seed in defaults)
+        {
+            if (!string.IsNullOrEmpty(seed.SourceId) && skip.Contains(seed.SourceId))
+                continue;
+
+            // 从 seed 克隆出真正入库用的记录:新 Id、CreatedBy 记录当前管理员、SourceType 仍保留 seed 便于后续识别
+            toInsert.Add(new DailyTip
+            {
+                Kind = seed.Kind,
+                Title = seed.Title,
+                Body = seed.Body,
+                CoverImageUrl = seed.CoverImageUrl,
+                ActionUrl = seed.ActionUrl,
+                CtaText = seed.CtaText,
+                TargetSelector = seed.TargetSelector,
+                AutoAction = seed.AutoAction,
+                TargetUserId = null,
+                TargetRoles = null,
+                DisplayOrder = seed.DisplayOrder,
+                IsActive = true,
+                SourceType = "seed",
+                SourceId = seed.SourceId,
+                CreatedBy = this.GetRequiredUserId(),
+                CreatedAt = now,
+                UpdatedAt = now,
+            });
+        }
+
+        if (toInsert.Count > 0)
+        {
+            await _db.DailyTips.InsertManyAsync(toInsert, cancellationToken: ct);
+        }
+
+        return Ok(ApiResponse<object>.Ok(new
+        {
+            insertedCount = toInsert.Count,
+            skippedCount = defaults.Count - toInsert.Count,
+            totalDefaults = defaults.Count,
+        }));
+    }
+
     private static bool IsValidKind(string? kind)
         => kind is "text" or "card" or "spotlight";
 
