@@ -119,6 +119,7 @@ public class MongoDbContext
     public IMongoCollection<ReportTeam> ReportTeams => _database.GetCollection<ReportTeam>("report_teams");
     public IMongoCollection<ReportTeamMember> ReportTeamMembers => _database.GetCollection<ReportTeamMember>("report_team_members");
     public IMongoCollection<ReportTemplate> ReportTemplates => _database.GetCollection<ReportTemplate>("report_templates");
+    public IMongoCollection<UserReportTemplatePreference> UserReportTemplatePreferences => _database.GetCollection<UserReportTemplatePreference>("user_report_template_preferences");
     public IMongoCollection<WeeklyReport> WeeklyReports => _database.GetCollection<WeeklyReport>("report_weekly_reports");
     public IMongoCollection<ReportDailyLog> ReportDailyLogs => _database.GetCollection<ReportDailyLog>("report_daily_logs");
     public IMongoCollection<ReportDataSource> ReportDataSources => _database.GetCollection<ReportDataSource>("report_data_sources");

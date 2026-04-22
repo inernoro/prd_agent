@@ -18,6 +18,7 @@ import {
   uploadReportRichTextImage,
   listMyAiSources,
   listPersonalSources,
+  getMyDefaultTemplate,
 } from '@/services';
 import type { WeeklyReport, ReportAiSource, PersonalSource } from '@/services/contracts/reportAgent';
 import { WeeklyReportStatus, ReportInputType, WeeklyReportCreationMode } from '@/services/contracts/reportAgent';
@@ -74,7 +75,21 @@ export function ReportEditor({ reportId, weekYear, weekNumber, onClose }: Props)
   const [pastingImageKey, setPastingImageKey] = useState<string | null>(null);
   const [selectedTeamId, setSelectedTeamId] = useState(teams[0]?.id || '');
   const [selectedTemplateId, setSelectedTemplateId] = useState(templates[0]?.id || '');
+  const [myDefaultTemplateId, setMyDefaultTemplateId] = useState<string | null>(null);
   const [isNew, setIsNew] = useState(!reportId);
+
+  // 当为新建时，预填用户个人默认模板偏好（后端 my-default 接口）
+  useEffect(() => {
+    if (!isNew) return;
+    let cancelled = false;
+    (async () => {
+      const res = await getMyDefaultTemplate();
+      if (cancelled || !res.success || !res.data?.template?.id) return;
+      setMyDefaultTemplateId(res.data.template.id);
+      setSelectedTemplateId((prev) => prev || res.data!.template!.id);
+    })();
+    return () => { cancelled = true; };
+  }, [isNew]);
   const [sourceLabelMap, setSourceLabelMap] = useState<Record<string, string>>(DEFAULT_SOURCE_LABELS);
 
   const isEditableStatus = !report
@@ -524,9 +539,16 @@ export function ReportEditor({ reportId, weekYear, weekNumber, onClose }: Props)
                   onChange={(e) => setSelectedTemplateId(e.target.value)}
                 >
                   <option value="">请选择模板</option>
-                  {templates.map((t) => (
-                    <option key={t.id} value={t.id}>{t.name}{t.isDefault ? ' (默认)' : ''}</option>
-                  ))}
+                  {templates.map((t) => {
+                    const suffix = myDefaultTemplateId === t.id
+                      ? ' (我的默认)'
+                      : t.isDefault && t.isSystem
+                        ? ' (系统默认)'
+                        : '';
+                    return (
+                      <option key={t.id} value={t.id}>{t.name}{suffix}</option>
+                    );
+                  })}
                 </select>
               </div>
               <div className="grid grid-cols-2 gap-2 mt-1">

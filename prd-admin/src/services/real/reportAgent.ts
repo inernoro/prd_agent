@@ -19,6 +19,9 @@ import type {
   CreateReportTemplateContract,
   UpdateReportTemplateContract,
   DeleteReportTemplateContract,
+  GetMyDefaultTemplateContract,
+  SetMyDefaultTemplateContract,
+  ClearMyDefaultTemplateContract,
   ListWeeklyReportsContract,
   GetWeeklyReportContract,
   CreateWeeklyReportContract,
@@ -282,6 +285,27 @@ export const updateReportTemplateReal: UpdateReportTemplateContract = async (inp
 export const deleteReportTemplateReal: DeleteReportTemplateContract = async (input) => {
   return await apiRequest<object>(
     api.reportAgent.templates.byId(encodeURIComponent(input.id)),
+    { method: 'DELETE' }
+  );
+};
+
+export const getMyDefaultTemplateReal: GetMyDefaultTemplateContract = async () => {
+  return await apiRequest<{ template: ReportTemplate | null; source: 'user' | 'system' | 'migrated' }>(
+    api.reportAgent.templates.myDefault(),
+    { method: 'GET' }
+  );
+};
+
+export const setMyDefaultTemplateReal: SetMyDefaultTemplateContract = async (input) => {
+  return await apiRequest<{ defaultTemplateId: string }>(
+    api.reportAgent.templates.setMyDefault(encodeURIComponent(input.id)),
+    { method: 'PUT' }
+  );
+};
+
+export const clearMyDefaultTemplateReal: ClearMyDefaultTemplateContract = async () => {
+  return await apiRequest<object>(
+    api.reportAgent.templates.myDefault(),
     { method: 'DELETE' }
   );
 };

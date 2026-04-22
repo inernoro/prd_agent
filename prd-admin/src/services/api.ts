@@ -579,6 +579,8 @@ export const api = {
     templates: {
       list: () => '/api/report-agent/templates',
       byId: (id: string) => `/api/report-agent/templates/${id}`,
+      myDefault: () => '/api/report-agent/templates/my-default',
+      setMyDefault: (id: string) => `/api/report-agent/templates/${id}/set-my-default`,
     },
     reports: {
       list: () => '/api/report-agent/reports',

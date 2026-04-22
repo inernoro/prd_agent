@@ -569,6 +569,9 @@ import type {
   CreateReportTemplateContract,
   UpdateReportTemplateContract,
   DeleteReportTemplateContract,
+  GetMyDefaultTemplateContract,
+  SetMyDefaultTemplateContract,
+  ClearMyDefaultTemplateContract,
   ListWeeklyReportsContract,
   GetWeeklyReportContract,
   CreateWeeklyReportContract,
@@ -655,6 +658,9 @@ import {
   createReportTemplateReal,
   updateReportTemplateReal,
   deleteReportTemplateReal,
+  getMyDefaultTemplateReal,
+  setMyDefaultTemplateReal,
+  clearMyDefaultTemplateReal,
   listWeeklyReportsReal,
   getWeeklyReportReal,
   createWeeklyReportReal,
@@ -1083,6 +1089,9 @@ export const getReportTemplate: GetReportTemplateContract = withAuth(getReportTe
 export const createReportTemplate: CreateReportTemplateContract = withAuth(createReportTemplateReal);
 export const updateReportTemplate: UpdateReportTemplateContract = withAuth(updateReportTemplateReal);
 export const deleteReportTemplate: DeleteReportTemplateContract = withAuth(deleteReportTemplateReal);
+export const getMyDefaultTemplate: GetMyDefaultTemplateContract = withAuth(getMyDefaultTemplateReal);
+export const setMyDefaultTemplate: SetMyDefaultTemplateContract = withAuth(setMyDefaultTemplateReal);
+export const clearMyDefaultTemplate: ClearMyDefaultTemplateContract = withAuth(clearMyDefaultTemplateReal);
 export const listWeeklyReports: ListWeeklyReportsContract = withAuth(listWeeklyReportsReal);
 export const getWeeklyReport: GetWeeklyReportContract = withAuth(getWeeklyReportReal);
 export const createWeeklyReport: CreateWeeklyReportContract = withAuth(createWeeklyReportReal);

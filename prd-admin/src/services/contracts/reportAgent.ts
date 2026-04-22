@@ -412,6 +412,16 @@ export type UpdateReportTemplateContract = (input: {
 
 export type DeleteReportTemplateContract = (input: { id: string }) => Promise<ApiResponse<object>>;
 
+export type GetMyDefaultTemplateContract = () => Promise<
+  ApiResponse<{ template: ReportTemplate | null; source: 'user' | 'system' | 'migrated' }>
+>;
+
+export type SetMyDefaultTemplateContract = (input: { id: string }) => Promise<
+  ApiResponse<{ defaultTemplateId: string }>
+>;
+
+export type ClearMyDefaultTemplateContract = () => Promise<ApiResponse<object>>;
+
 // --- Reports ---
 export type ListWeeklyReportsContract = (input?: {
   scope?: 'my' | 'team';

@@ -917,12 +917,33 @@ public class ReportAgentController : ControllerBase
     #region Template Management
 
     /// <summary>
-    /// 列出模板
+    /// 列出模板（按当前用户可见性过滤：系统模板 ∪ 自己创建 ∪ 所在团队）
     /// </summary>
     [HttpGet("templates")]
     public async Task<IActionResult> ListTemplates()
     {
-        var templates = await _db.ReportTemplates.Find(_ => true)
+        var userId = GetUserId();
+        var canViewAll = HasPermission(AdminPermissionCatalog.ReportAgentViewAll);
+
+        FilterDefinition<ReportTemplate> filter;
+        if (canViewAll)
+        {
+            filter = Builders<ReportTemplate>.Filter.Empty;
+        }
+        else
+        {
+            var myTeamIds = await _db.ReportTeamMembers
+                .Find(m => m.UserId == userId)
+                .Project(m => m.TeamId)
+                .ToListAsync();
+            filter = Builders<ReportTemplate>.Filter.Or(
+                Builders<ReportTemplate>.Filter.Eq(t => t.IsSystem, true),
+                Builders<ReportTemplate>.Filter.Eq(t => t.CreatedBy, userId),
+                Builders<ReportTemplate>.Filter.In(t => t.TeamId, myTeamIds)
+            );
+        }
+
+        var templates = await _db.ReportTemplates.Find(filter)
             .SortByDescending(t => t.IsDefault)
             .ThenByDescending(t => t.CreatedAt)
             .ToListAsync();
@@ -930,7 +951,7 @@ public class ReportAgentController : ControllerBase
     }
 
     /// <summary>
-    /// 获取模板详情
+    /// 获取模板详情（仅可见模板：系统 ∪ 自己 ∪ 所在团队 ∪ ReportAgentViewAll）
     /// </summary>
     [HttpGet("templates/{id}")]
     public async Task<IActionResult> GetTemplate(string id)
@@ -938,11 +959,13 @@ public class ReportAgentController : ControllerBase
         var template = await _db.ReportTemplates.Find(t => t.Id == id).FirstOrDefaultAsync();
         if (template == null)
             return NotFound(ApiResponse<object>.Fail("NOT_FOUND", "模板不存在"));
+        if (!await CanViewTemplate(template))
+            return StatusCode(403, ApiResponse<object>.Fail("PERMISSION_DENIED", "无权查看此模板"));
         return Ok(ApiResponse<object>.Ok(new { template }));
     }
 
     /// <summary>
-    /// 创建模板
+    /// 创建模板（仍需 ReportAgentTemplateManage 权限；IsDefault 在非管理员请求上落成个人偏好而非全局标记）
     /// </summary>
     [HttpPost("templates")]
     public async Task<IActionResult> CreateTemplate([FromBody] CreateTemplateRequest req)
@@ -956,6 +979,10 @@ public class ReportAgentController : ControllerBase
         if (req.Sections == null || req.Sections.Count == 0)
             return BadRequest(ApiResponse<object>.Fail("INVALID_FORMAT", "模板至少需要一个章节"));
 
+        var userId = GetUserId();
+        var canSetGlobalDefault = HasPermission(AdminPermissionCatalog.ReportAgentViewAll);
+        var wantsDefault = req.IsDefault ?? false;
+
         var template = new ReportTemplate
         {
             Name = req.Name.Trim(),
@@ -963,16 +990,21 @@ public class ReportAgentController : ControllerBase
             Sections = req.Sections.Select((s, i) => MapSection(s, i)).ToList(),
             TeamId = req.TeamId,
             JobTitle = req.JobTitle,
-            IsDefault = req.IsDefault ?? false,
-            CreatedBy = GetUserId()
+            IsDefault = wantsDefault && canSetGlobalDefault, // 非超管不得设全局默认
+            CreatedBy = userId
         };
 
         await _db.ReportTemplates.InsertOneAsync(template);
+
+        // 普通用户勾"设为默认"：写入个人偏好
+        if (wantsDefault && !canSetGlobalDefault)
+            await UpsertMyDefaultAsync(userId, template.Id);
+
         return Ok(ApiResponse<object>.Ok(new { template }));
     }
 
     /// <summary>
-    /// 更新模板
+    /// 更新模板（仅作者或 ReportAgentViewAll，系统模板不可修改；IsDefault 同 Create 语义）
     /// </summary>
     [HttpPut("templates/{id}")]
     public async Task<IActionResult> UpdateTemplate(string id, [FromBody] UpdateTemplateRequest req)
@@ -980,9 +1012,16 @@ public class ReportAgentController : ControllerBase
         if (!HasPermission(AdminPermissionCatalog.ReportAgentTemplateManage))
             return StatusCode(403, ApiResponse<object>.Fail("PERMISSION_DENIED", "缺少模板管理权限"));
 
+        var userId = GetUserId();
+        var canViewAll = HasPermission(AdminPermissionCatalog.ReportAgentViewAll);
+
         var template = await _db.ReportTemplates.Find(t => t.Id == id).FirstOrDefaultAsync();
         if (template == null)
             return NotFound(ApiResponse<object>.Fail("NOT_FOUND", "模板不存在"));
+        if (template.IsSystem)
+            return BadRequest(ApiResponse<object>.Fail("SYSTEM_TEMPLATE", "系统预置模板不可修改"));
+        if (template.CreatedBy != userId && !canViewAll)
+            return StatusCode(403, ApiResponse<object>.Fail("PERMISSION_DENIED", "只能修改自己创建的模板"));
 
         var update = Builders<ReportTemplate>.Update
             .Set(t => t.UpdatedAt, DateTime.UtcNow);
@@ -999,17 +1038,21 @@ public class ReportAgentController : ControllerBase
             update = update.Set(t => t.TeamId, req.TeamId);
         if (req.JobTitle != null)
             update = update.Set(t => t.JobTitle, req.JobTitle);
-        if (req.IsDefault.HasValue)
+        if (req.IsDefault.HasValue && canViewAll)
             update = update.Set(t => t.IsDefault, req.IsDefault.Value);
 
         await _db.ReportTemplates.UpdateOneAsync(t => t.Id == id, update);
+
+        // 普通用户勾"设为默认"：落到个人偏好而非全局
+        if (req.IsDefault == true && !canViewAll)
+            await UpsertMyDefaultAsync(userId, id);
 
         var updated = await _db.ReportTemplates.Find(t => t.Id == id).FirstOrDefaultAsync();
         return Ok(ApiResponse<object>.Ok(new { template = updated }));
     }
 
     /// <summary>
-    /// 删除模板
+    /// 删除模板（仅作者或 ReportAgentViewAll；清理相关个人默认偏好）
     /// </summary>
     [HttpDelete("templates/{id}")]
     public async Task<IActionResult> DeleteTemplate(string id)
@@ -1017,18 +1060,119 @@ public class ReportAgentController : ControllerBase
         if (!HasPermission(AdminPermissionCatalog.ReportAgentTemplateManage))
             return StatusCode(403, ApiResponse<object>.Fail("PERMISSION_DENIED", "缺少模板管理权限"));
 
+        var userId = GetUserId();
+        var canViewAll = HasPermission(AdminPermissionCatalog.ReportAgentViewAll);
+
         var template = await _db.ReportTemplates.Find(t => t.Id == id).FirstOrDefaultAsync();
         if (template == null)
             return NotFound(ApiResponse<object>.Fail("NOT_FOUND", "模板不存在"));
         if (template.IsSystem)
             return BadRequest(ApiResponse<object>.Fail("SYSTEM_TEMPLATE", "系统预置模板不可删除"));
+        if (template.CreatedBy != userId && !canViewAll)
+            return StatusCode(403, ApiResponse<object>.Fail("PERMISSION_DENIED", "只能删除自己创建的模板"));
 
         await _db.ReportTemplates.DeleteOneAsync(t => t.Id == id);
+        await _db.UserReportTemplatePreferences.DeleteManyAsync(p => p.DefaultTemplateId == id);
         return Ok(ApiResponse<object>.Ok(new { }));
     }
 
     /// <summary>
-    /// 初始化系统预置模板（幂等：已存在的 TemplateKey 跳过）
+    /// 获取当前用户的默认模板（偏好优先；否则回退到系统默认）
+    /// </summary>
+    [HttpGet("templates/my-default")]
+    public async Task<IActionResult> GetMyDefaultTemplate()
+    {
+        var userId = GetUserId();
+        var pref = await _db.UserReportTemplatePreferences.Find(p => p.UserId == userId).FirstOrDefaultAsync();
+        if (pref != null)
+        {
+            var t = await _db.ReportTemplates.Find(x => x.Id == pref.DefaultTemplateId).FirstOrDefaultAsync();
+            if (t != null && await CanViewTemplate(t))
+                return Ok(ApiResponse<object>.Ok(new { template = t, source = "user" }));
+            // 偏好指向的模板被删或不可见：静默清理
+            await _db.UserReportTemplatePreferences.DeleteOneAsync(p => p.Id == pref.Id);
+        }
+
+        // 兼容迁移：若该用户过去在自己模板上勾过 IsDefault=true，视为初始偏好
+        var legacyOwn = await _db.ReportTemplates
+            .Find(t => !t.IsSystem && t.IsDefault && t.CreatedBy == userId)
+            .FirstOrDefaultAsync();
+        if (legacyOwn != null)
+        {
+            await UpsertMyDefaultAsync(userId, legacyOwn.Id);
+            await _db.ReportTemplates.UpdateOneAsync(
+                t => t.Id == legacyOwn.Id,
+                Builders<ReportTemplate>.Update.Set(t => t.IsDefault, false));
+            return Ok(ApiResponse<object>.Ok(new { template = legacyOwn, source = "migrated" }));
+        }
+
+        var systemDefault = await _db.ReportTemplates
+            .Find(t => t.IsSystem && t.IsDefault)
+            .FirstOrDefaultAsync();
+        return Ok(ApiResponse<object>.Ok(new { template = systemDefault, source = "system" }));
+    }
+
+    /// <summary>
+    /// 把某个模板设为当前用户的默认（需对该模板有查看权限）
+    /// </summary>
+    [HttpPut("templates/{id}/set-my-default")]
+    public async Task<IActionResult> SetMyDefaultTemplate(string id)
+    {
+        var template = await _db.ReportTemplates.Find(t => t.Id == id).FirstOrDefaultAsync();
+        if (template == null)
+            return NotFound(ApiResponse<object>.Fail("NOT_FOUND", "模板不存在"));
+        if (!await CanViewTemplate(template))
+            return StatusCode(403, ApiResponse<object>.Fail("PERMISSION_DENIED", "无权使用此模板"));
+
+        await UpsertMyDefaultAsync(GetUserId(), id);
+        return Ok(ApiResponse<object>.Ok(new { defaultTemplateId = id }));
+    }
+
+    /// <summary>
+    /// 清除当前用户的默认模板偏好（回退到系统默认）
+    /// </summary>
+    [HttpDelete("templates/my-default")]
+    public async Task<IActionResult> ClearMyDefaultTemplate()
+    {
+        await _db.UserReportTemplatePreferences.DeleteOneAsync(p => p.UserId == GetUserId());
+        return Ok(ApiResponse<object>.Ok(new { }));
+    }
+
+    // ---- helpers ----
+
+    private async Task<bool> CanViewTemplate(ReportTemplate template)
+    {
+        var userId = GetUserId();
+        if (template.IsSystem) return true;
+        if (template.CreatedBy == userId) return true;
+        if (HasPermission(AdminPermissionCatalog.ReportAgentViewAll)) return true;
+        if (!string.IsNullOrEmpty(template.TeamId))
+        {
+            var isMember = await _db.ReportTeamMembers
+                .Find(m => m.TeamId == template.TeamId && m.UserId == userId)
+                .AnyAsync();
+            if (isMember) return true;
+        }
+        return false;
+    }
+
+    private async Task UpsertMyDefaultAsync(string userId, string templateId)
+    {
+        var now = DateTime.UtcNow;
+        var update = Builders<UserReportTemplatePreference>.Update
+            .Set(p => p.UserId, userId)
+            .Set(p => p.DefaultTemplateId, templateId)
+            .Set(p => p.UpdatedAt, now)
+            .SetOnInsert(p => p.Id, Guid.NewGuid().ToString("N"))
+            .SetOnInsert(p => p.CreatedAt, now);
+        await _db.UserReportTemplatePreferences.UpdateOneAsync(
+            p => p.UserId == userId,
+            update,
+            new UpdateOptions { IsUpsert = true });
+    }
+
+    /// <summary>
+    /// 初始化系统预置模板（幂等）+ 迁移历史 IsDefault=true 的个人模板为用户偏好
     /// </summary>
     [HttpPost("templates/seed")]
     public async Task<IActionResult> SeedSystemTemplates()
@@ -1051,7 +1195,29 @@ public class ReportAgentController : ControllerBase
             inserted.Add(tpl.TemplateKey!);
         }
 
-        return Ok(ApiResponse<object>.Ok(new { inserted, skipped = existingKeys.Count }));
+        // 迁移：非系统模板的 IsDefault=true 转为对应用户的默认偏好，然后清零 IsDefault
+        var legacyDefaults = await _db.ReportTemplates
+            .Find(t => !t.IsSystem && t.IsDefault)
+            .ToListAsync();
+        var migrated = 0;
+        foreach (var legacy in legacyDefaults)
+        {
+            if (!string.IsNullOrEmpty(legacy.CreatedBy) && legacy.CreatedBy != "system")
+            {
+                var hasPref = await _db.UserReportTemplatePreferences
+                    .Find(p => p.UserId == legacy.CreatedBy).AnyAsync();
+                if (!hasPref)
+                {
+                    await UpsertMyDefaultAsync(legacy.CreatedBy, legacy.Id);
+                    migrated++;
+                }
+            }
+            await _db.ReportTemplates.UpdateOneAsync(
+                t => t.Id == legacy.Id,
+                Builders<ReportTemplate>.Update.Set(t => t.IsDefault, false));
+        }
+
+        return Ok(ApiResponse<object>.Ok(new { inserted, skipped = existingKeys.Count, migratedPreferences = migrated }));
     }
 
     #endregion
