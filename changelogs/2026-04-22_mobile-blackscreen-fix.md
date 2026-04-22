@@ -3,3 +3,6 @@
 | fix | prd-admin | 修复 ChangelogBell 窄屏下无限 re-render + 请求风暴：selectRecentEntries 每次返回新数组触发 useSyncExternalStore 循环，改为组件侧 useMemo 派生 |
 | feat | prd-admin | 全局 window.error / unhandledrejection 自动捕获到 sessionStorage 环形缓冲，/_dev/mobile-audit 新增诊断视图（自动扫所有路由黑屏/JS 报错，客户端错误面板实时刷新） |
 | feat | prd-admin | 新增 mobileCompatibility 注册表 + MobileCompatGate：limited 页顶部黄色 banner 提示受限，pc-only 页中央门槛卡（继续/复制链接），full 页无感知 |
+| fix | prd-admin | 修复系统通知弹窗按钮被挤成竖排单字：卡片窄屏改竖排，按钮列 shrink-0，按钮文字 whitespace-nowrap |
+| fix | prd-admin | 移动端隐藏 AppShell 右下通知浮球（顶栏已有 Bell，避免与 MobileTabBar "+" 重叠） |
+| feat | prd-admin | MobileHomePage 重构首页：快捷入口 → 智能体 + 工具两个横滑卡片区（苹果 App Store 风），数据来自 BUILTIN_TOOLS；卡片右上角自动标记 pc-only/limited 徽章，首页即可触达所有内置 Agent |

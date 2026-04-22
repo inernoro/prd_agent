@@ -1,9 +1,9 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import * as LucideIcons from 'lucide-react';
 import {
   MessageSquare,
   Image,
-  PenLine,
   Bug,
   Bell,
   ChevronRight,
@@ -12,41 +12,20 @@ import {
   Sparkles,
   Download,
   Paperclip,
-  ClipboardCheck,
+  Bot,
+  Monitor,
+  Dot,
   type LucideIcon,
 } from 'lucide-react';
 import { useAuthStore } from '@/stores/authStore';
+import { BUILTIN_TOOLS } from '@/stores/toolboxStore';
+import type { ToolboxItem } from '@/services/real/aiToolbox';
 import { getAdminNotifications, getMobileFeed, getMobileStats } from '@/services';
 import type { AdminNotificationItem } from '@/services/contracts/notifications';
 import type { FeedItem, MobileStats } from '@/services/contracts/mobile';
 import { resolveAvatarUrl } from '@/lib/avatar';
 import { UserAvatar } from '@/components/ui/UserAvatar';
-
-/* ── 快捷 Agent 入口 ── */
-interface QuickAgent {
-  key: string;
-  label: string;
-  icon: LucideIcon;
-  path: string;
-  color: string;
-  bg: string;
-}
-
-const QUICK_AGENTS_BASE: QuickAgent[] = [
-  { key: 'prd',      label: 'PRD',    icon: MessageSquare, path: '/prd-agent',      color: '#818CF8', bg: 'rgba(129,140,248,0.15)' },
-  { key: 'visual',   label: '视觉',   icon: Image,         path: '/visual-agent',   color: '#FB923C', bg: 'rgba(251,146,60,0.15)' },
-  { key: 'literary', label: '文学',   icon: PenLine,       path: '/literary-agent', color: '#34D399', bg: 'rgba(52,211,153,0.15)' },
-  { key: 'showcase', label: '广场',   icon: Sparkles,      path: '/showcase',       color: '#A78BFA', bg: 'rgba(167,139,250,0.15)' },
-];
-
-const QUICK_AGENT_PR_REVIEW: QuickAgent = {
-  key: 'pr-review',
-  label: 'PR 审查智能体',
-  icon: ClipboardCheck,
-  path: '/pr-review',
-  color: '#A5B4FC',
-  bg: 'rgba(99,102,241,0.18)',
-};
+import { resolveMobileCompat, type MobileCompatLevel } from '@/lib/mobileCompatibility';
 
 /* ── Feed 项类型图标 ── */
 const FEED_ICON: Record<string, { icon: LucideIcon; color: string }> = {
@@ -72,20 +51,54 @@ const STAT_CARDS: StatCard[] = [
   { key: 'tokens',   label: 'Token', icon: Zap,            color: '#60A5FA', getValue: (s) => s.totalTokens, format: (v) => v >= 10000 ? `${(v / 1000).toFixed(1)}k` : String(v) },
 ];
 
+/* ── 卡片主题色（按图标名）—— 与桌面 AgentLauncher 对齐 ── */
+const ACCENT: Record<string, { from: string; to: string }> = {
+  FileText:  { from: '#3B82F6', to: '#60A5FA' },
+  Palette:   { from: '#A855F7', to: '#C084FC' },
+  PenTool:   { from: '#10B981', to: '#34D399' },
+  Bug:       { from: '#F97316', to: '#FB923C' },
+  Video:     { from: '#F43F5E', to: '#FB7185' },
+  Swords:    { from: '#F59E0B', to: '#FBBF24' },
+  Code2:     { from: '#10B981', to: '#6EE7B7' },
+  Languages: { from: '#06B6D4', to: '#67E8F9' },
+  FileSearch:{ from: '#EAB308', to: '#FDE68A' },
+  BarChart3: { from: '#8B5CF6', to: '#C4B5FD' },
+  Bot:       { from: '#6366F1', to: '#A5B4FC' },
+  FileBarChart: { from: '#6366F1', to: '#818CF8' },
+  Workflow:  { from: '#14B8A6', to: '#5EEAD4' },
+  Zap:       { from: '#F59E0B', to: '#FCD34D' },
+  Globe:     { from: '#0EA5E9', to: '#38BDF8' },
+  ClipboardCheck: { from: '#6366F1', to: '#A5B4FC' },
+  ScanSearch: { from: '#8B5CF6', to: '#C4B5FD' },
+  Wand2:     { from: '#8B5CF6', to: '#C4B5FD' },
+  AudioLines: { from: '#EC4899', to: '#F9A8D4' },
+};
+
+function getAccent(iconName: string) {
+  return ACCENT[iconName] ?? { from: '#6366F1', to: '#A5B4FC' };
+}
+
+function getIcon(iconName: string): LucideIcon {
+  const icons = LucideIcons as unknown as Record<string, LucideIcon>;
+  return icons[iconName] ?? Bot;
+}
+
 /**
- * 移动端首页 — 快捷入口 + 统计 + Feed + 通知。
+ * 移动端首页 — 问候 + 苹果 App Store 风智能体/工具横滑区 + 统计 + Feed + 通知。
+ *
+ * 横滑区块布局：
+ *  - 每张卡片 132×140，overflow-x-auto + snap-x + snap-mandatory
+ *  - 超出当前视口左右滑动查看更多（参考 iOS App Store "今日" tab）
+ *  - 右上角兼容性徽章：pc-only 显示灰色"PC"、limited 显示黄色圆点
  */
 export default function MobileHomePage() {
   const navigate = useNavigate();
   const user = useAuthStore((s) => s.user);
-  const permissions = useAuthStore((s) => s.permissions ?? []);
   const [notifications, setNotifications] = useState<AdminNotificationItem[]>([]);
   const [feed, setFeed] = useState<FeedItem[]>([]);
   const [stats, setStats] = useState<MobileStats | null>(null);
 
   useEffect(() => {
-    // 并行拉取 feed + stats + notifications
-    // 每个请求单独 catch —— 一个失败不影响其他渲染，也不会把整个首页拖成黑屏
     (async () => {
       const [feedRes, statsRes, notifRes] = await Promise.allSettled([
         getMobileFeed({ limit: 10 }),
@@ -115,13 +128,14 @@ export default function MobileHomePage() {
 
   const avatarUrl = user ? resolveAvatarUrl(user) : null;
 
-  const quickAgents = useMemo(() => {
-    const list = [...QUICK_AGENTS_BASE];
-    if (permissions.includes('pr-review.use')) {
-      list.unshift(QUICK_AGENT_PR_REVIEW);
-    }
-    return list;
-  }, [permissions]);
+  const agents = useMemo(
+    () => BUILTIN_TOOLS.filter((t) => t.kind === 'agent'),
+    [],
+  );
+  const tools = useMemo(
+    () => BUILTIN_TOOLS.filter((t) => t.kind === 'tool'),
+    [],
+  );
 
   return (
     <div className="h-full min-h-0 overflow-auto" style={{ background: 'var(--bg-base)' }}>
@@ -155,40 +169,23 @@ export default function MobileHomePage() {
           </div>
         </div>
 
-        {/* ── 快捷 Agent 入口 ── */}
-        <div className="mb-5">
-          <div
-            className="text-xs font-medium mb-3 px-2.5 py-1 rounded-md inline-block bg-black/20 backdrop-blur-md shadow-sm border border-white/5"
-            style={{ color: 'var(--text-primary)' }}
-          >
-            快捷入口
-          </div>
-          <div className={`grid gap-3 ${quickAgents.length > 4 ? 'grid-cols-5' : 'grid-cols-4'}`}>
-            {quickAgents.map((agent) => {
-              const AgentIcon = agent.icon;
-              return (
-                <button
-                  key={agent.key}
-                  onClick={() => navigate(agent.path)}
-                  className="surface-inset flex flex-col items-center gap-2 py-3 rounded-2xl transition-all active:scale-95"
-                >
-                  <div
-                    className="w-10 h-10 rounded-xl flex items-center justify-center"
-                    style={{ background: agent.bg }}
-                  >
-                    <AgentIcon size={20} style={{ color: agent.color }} />
-                  </div>
-                  <span
-                    className="text-[10px] font-medium text-center leading-tight px-1.5 py-0.5 mt-0.5 rounded bg-black/20 backdrop-blur-md shadow-sm border border-white/5 line-clamp-2"
-                    style={{ color: 'var(--text-primary)' }}
-                  >
-                    {agent.label}
-                  </span>
-                </button>
-              );
-            })}
-          </div>
-        </div>
+        {/* ── 智能体横滑 ── */}
+        <Shelf
+          title="智能体"
+          subtitle={`${agents.length} 个`}
+          items={agents}
+          onItemClick={(item) => navigate(item.routePath ?? `/ai-toolbox?item=${item.id}`)}
+          onMoreClick={() => navigate('/ai-toolbox')}
+        />
+
+        {/* ── 工具横滑 ── */}
+        <Shelf
+          title="工具"
+          subtitle={`${tools.length} 个`}
+          items={tools}
+          onItemClick={(item) => navigate(item.routePath ?? `/ai-toolbox?item=${item.id}`)}
+          onMoreClick={() => navigate('/ai-toolbox')}
+        />
 
         {/* ── 统计卡片 (近 7 日) ── */}
         {stats && (
@@ -346,5 +343,144 @@ export default function MobileHomePage() {
         )}
       </div>
     </div>
+  );
+}
+
+/* ============ 横滑卡片区块（App Store 风）============ */
+
+interface ShelfProps {
+  title: string;
+  subtitle?: string;
+  items: ToolboxItem[];
+  onItemClick: (item: ToolboxItem) => void;
+  onMoreClick?: () => void;
+}
+
+function Shelf({ title, subtitle, items, onItemClick, onMoreClick }: ShelfProps) {
+  if (items.length === 0) return null;
+  return (
+    <div className="mb-5 -mx-5">
+      {/* 标题行 —— 不滑动，保留左右内边距 */}
+      <div className="px-5 mb-3 flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <div
+            className="text-xs font-semibold px-2.5 py-1 rounded-md bg-black/20 backdrop-blur-md shadow-sm border border-white/5"
+            style={{ color: 'var(--text-primary)' }}
+          >
+            {title}
+          </div>
+          {subtitle && (
+            <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
+              {subtitle}
+            </span>
+          )}
+        </div>
+        {onMoreClick && (
+          <button
+            type="button"
+            onClick={onMoreClick}
+            className="inline-flex items-center gap-0.5 text-[11px] px-2 py-0.5 rounded transition-colors active:scale-95"
+            style={{ color: 'var(--text-muted)' }}
+          >
+            全部
+            <ChevronRight size={12} />
+          </button>
+        )}
+      </div>
+
+      {/* 横滑容器 */}
+      <div
+        className="flex gap-3 overflow-x-auto snap-x snap-mandatory px-5 pb-1"
+        style={{
+          scrollbarWidth: 'none',
+          WebkitOverflowScrolling: 'touch',
+          overscrollBehaviorX: 'contain',
+        }}
+      >
+        {items.map((item) => (
+          <ShelfCard key={item.id} item={item} onClick={() => onItemClick(item)} />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function ShelfCard({ item, onClick }: { item: ToolboxItem; onClick: () => void }) {
+  const Icon = getIcon(item.icon);
+  const accent = getAccent(item.icon);
+  // 兼容性徽章：根据 routePath 查注册表
+  const compat = item.routePath ? resolveMobileCompat(item.routePath) : null;
+  const level: MobileCompatLevel | null = compat?.level ?? null;
+
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="relative shrink-0 snap-start rounded-2xl p-3 flex flex-col items-start text-left transition-all active:scale-95"
+      style={{
+        width: 140,
+        minHeight: 148,
+        background: 'rgba(255, 255, 255, 0.04)',
+        border: '1px solid rgba(255, 255, 255, 0.06)',
+      }}
+    >
+      {/* 右上角兼容性徽章 */}
+      {level === 'pc-only' && (
+        <span
+          className="absolute top-2 right-2 inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[9px] font-semibold"
+          style={{
+            background: 'rgba(248, 113, 113, 0.18)',
+            color: '#fca5a5',
+          }}
+          aria-label="建议在 PC 上使用"
+        >
+          <Monitor size={9} /> PC
+        </span>
+      )}
+      {level === 'limited' && (
+        <span
+          className="absolute top-2 right-2 inline-flex items-center justify-center"
+          style={{ color: '#fbbf24' }}
+          aria-label="移动端体验受限"
+        >
+          <Dot size={18} />
+        </span>
+      )}
+
+      {/* WIP 施工中角标 */}
+      {item.wip && (
+        <span
+          className="absolute top-2 left-2 inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-semibold"
+          style={{ background: 'rgba(251, 146, 60, 0.18)', color: '#fdba74' }}
+        >
+          施工中
+        </span>
+      )}
+
+      {/* 图标 */}
+      <div
+        className="w-11 h-11 rounded-2xl flex items-center justify-center mb-2 mt-1"
+        style={{
+          background: `linear-gradient(135deg, ${accent.from}33, ${accent.to}22)`,
+          border: `1px solid ${accent.from}44`,
+        }}
+      >
+        <Icon size={22} style={{ color: accent.from }} />
+      </div>
+
+      {/* 名称 + 描述 */}
+      <div
+        className="text-[13px] font-semibold leading-tight line-clamp-1 w-full"
+        style={{ color: 'var(--text-primary)' }}
+      >
+        {item.name}
+      </div>
+      <div
+        className="text-[11px] leading-snug mt-1 line-clamp-2 w-full"
+        style={{ color: 'var(--text-muted)' }}
+      >
+        {item.description}
+      </div>
+    </button>
   );
 }

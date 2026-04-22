@@ -488,7 +488,8 @@ export default function AppShell() {
       <GlobalDefectSubmitDialog />
       <TipsDrawer />
       <CommandPalette />
-      {toastNotification && (
+      {/* 移动端顶栏已有 Bell 按钮，隐藏右下浮球避免和 MobileTabBar "+" 重叠 */}
+      {!isMobile && toastNotification && (
         toastCollapsed ? (
           // 收缩状态：浮动按钮
           <button
@@ -1250,8 +1251,9 @@ export default function AppShell() {
                         className="rounded-[16px] border px-4 py-3"
                         style={{ borderColor: tone.border, background: tone.bg }}
                       >
-                        <div className="flex items-start justify-between gap-3">
-                          <div className="min-w-0">
+                        {/* 窄屏竖排（移动端 / 窄浏览器），宽屏水平分栏；按钮列 shrink-0 + 按钮文字 whitespace-nowrap，防止被挤成竖排单字 */}
+                        <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
+                          <div className="min-w-0 flex-1">
                             <div className="text-[13px] font-semibold" style={{ color: 'var(--text-primary)' }}>
                               {item.title}
                             </div>
@@ -1312,11 +1314,11 @@ export default function AppShell() {
                               {new Date(item.createdAt).toLocaleString()}
                             </div>
                           </div>
-                          <div className="flex flex-col items-end gap-2">
+                          <div className="shrink-0 flex flex-row sm:flex-col items-stretch sm:items-end gap-2">
                             {item.actionUrl && (
                               <button
                                 type="button"
-                                className="rounded-full px-3 py-1.5 text-[12px] transition-all hover:bg-white/20 active:scale-[0.97]"
+                                className="rounded-full px-3 py-1.5 text-[12px] whitespace-nowrap transition-all hover:bg-white/20 active:scale-[0.97]"
                                 style={{ background: 'rgba(255, 255, 255, 0.15)', color: 'var(--text-primary)' }}
                                 onClick={() => handleNotification(item.id, item.actionUrl)}
                               >
@@ -1325,7 +1327,7 @@ export default function AppShell() {
                             )}
                             <button
                               type="button"
-                              className="rounded-full px-3 py-1.5 text-[12px] transition-all hover:brightness-110 active:scale-[0.97]"
+                              className="rounded-full px-3 py-1.5 text-[12px] whitespace-nowrap transition-all hover:brightness-110 active:scale-[0.97]"
                               style={{ background: 'var(--accent-gold)', color: '#1a1a1a' }}
                               onClick={() => handleNotification(item.id)}
                             >
