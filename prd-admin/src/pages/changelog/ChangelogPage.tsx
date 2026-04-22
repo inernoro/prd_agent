@@ -750,9 +750,16 @@ export default function ChangelogPage() {
               </div>
             )}
 
-            {releases && releases.releases.length > 0 && (
+            {releases && releases.releases.length > 0 && (() => {
+              // 锚点 changelog-latest 必须落在「第一个**实际渲染**的 release」上:
+              // 原实现 `releaseIdx === 0 ? {anchor} : {}` 的 bug 是第一个 release 如果
+              // 被 matchFilter 过滤掉(totalCount=0 && highlights=0 → return null),
+              // 锚点会跟着一起消失,教程小书演示就找不到元素超时。
+              // 用闭包变量 firstVisibleAssigned 记录"是否已经分配过",保证稳定命中。
+              let firstVisibleAssigned = false;
+              return (
               <div className="flex flex-col gap-6">
-                {releases.releases.map((release, releaseIdx) => {
+                {releases.releases.map((release) => {
                   const visibleDays = release.days
                     .map((d) => ({
                       ...d,
@@ -771,10 +778,13 @@ export default function ChangelogPage() {
                     ? `CHANGELOG 版本日期：${release.releaseDate ?? '未发布'}\n最近一次 CHANGELOG 合并提交：${releaseCommitDateTime}`
                     : undefined;
 
+                  const isFirstVisible = !firstVisibleAssigned;
+                  if (isFirstVisible) firstVisibleAssigned = true;
+
                   return (
                     <div
                       key={`${release.version}-${release.releaseDate ?? ''}`}
-                      {...(releaseIdx === 0 ? { 'data-tour-id': 'changelog-latest' } : {})}
+                      {...(isFirstVisible ? { 'data-tour-id': 'changelog-latest' } : {})}
                     >
                         <div className="flex items-center gap-2 mb-3">
                         <div
@@ -870,7 +880,8 @@ export default function ChangelogPage() {
                   );
                 })}
               </div>
-            )}
+              );
+            })()}
           </>
         )}
 

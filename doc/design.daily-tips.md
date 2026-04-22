@@ -244,6 +244,22 @@ Tour 无法模拟复杂 UI 操作(如 dropdown 选择)。应对:
 | 60s 轮询延迟 | 点书立即 `load({ force })`;visibilitychange 重拉 |
 | 大数据 User.DismissedTipIds 膨胀 | 百万级时改成独立集合 + 索引,目前数组足够 |
 | 多步 Tour 的 dropdown / 异步加载步骤无法自动化 | 保留用户手动完成,body 提示到位 |
+| 键盘快捷键(Ctrl+B/K)不适合走 tour | 改用静态 key-hint(首页 UI 显眼位置挂 `⌘+K`),不属于教程小书范畴 |
+| 管理员「清空并重建」后 Id 变化,用户已 dismiss 的 seed 重新推 | dismiss 时同时存 `SourceId` 和 `Id`(包括 `seed-{x}` 自动 extract x),`/visible` 按双维度过滤;即使 `/reset` 重建过,用户点过完成的还是不推 |
+
+---
+
+## 12. 跨版本更新通知策略(待实现,见交接文档)
+
+当 tip 内容**破坏性更新**(新增步骤、重写文案等)时,需要**再推一次**给已 dismiss
+的用户。当前未实现,设计方案见 `doc/plan.daily-tips-scenarios-and-staleness.md`:
+
+- `DailyTip.Version: int`(默认 1),内容大改时 bump
+- `User.DismissedTipIds` 升级为 `DismissedTipKeys: List<{key, version}>`
+- `/visible` 过滤:如 `dismissed.version < tip.Version` 则**重新显示**
+- 非破坏性更新(如改图标)不 bump,保持沉默
+
+这个机制同时解决「清空重建不打扰已完成的用户」和「新功能上线时全员再收到一次」。
 
 ---
 

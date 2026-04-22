@@ -82,20 +82,27 @@ public sealed class DailyTipsController : ControllerBase
             return true;
         }).ToList();
 
-        // 过滤用户永久 dismiss 的(真实 tip id)
+        // 过滤用户永久 dismiss 的(双维度:tip.Id 或 tip.SourceId 命中都算)
+        // 管理员「清空并重建」后 tip.Id 会变,但 SourceId 是 seed 标识不变,
+        // 这样用户点完过的 seed 重建后也不会再次骚扰
         if (foreverDismissed.Count > 0)
         {
-            items = items.Where(t => !foreverDismissed.Contains(t.Id)).ToList();
+            items = items.Where(t =>
+                !foreverDismissed.Contains(t.Id)
+                && !(t.SourceId != null && foreverDismissed.Contains(t.SourceId))
+            ).ToList();
         }
 
         // 数据库没有任何 tip 时,兜底返回内置默认集,避免新环境出现空白
         if (items.Count == 0)
         {
             items = BuildDefaultTips(now);
-            // seed-* id 的永久 dismiss 也要兑现
             if (foreverDismissed.Count > 0)
             {
-                items = items.Where(t => !foreverDismissed.Contains(t.Id)).ToList();
+                items = items.Where(t =>
+                    !foreverDismissed.Contains(t.Id)
+                    && !(t.SourceId != null && foreverDismissed.Contains(t.SourceId))
+                ).ToList();
             }
         }
 
@@ -211,8 +218,10 @@ public sealed class DailyTipsController : ControllerBase
     }
 
     /// <summary>
-    /// 用户「永久不再提示」某条 tip:把 tip.Id 追加到 User.DismissedTipIds,
-    /// 以后 /visible 端点会把它过滤掉(包括 seed-* 兜底)。幂等。
+    /// 用户「永久不再提示」某条 tip:把 tip.Id 和 tip.SourceId(若有)都追加到
+    /// User.DismissedTipIds。以后 /visible 端点按双维度过滤(Id 或 SourceId 命中),
+    /// 这样管理员「清空并重建」后 tip.Id 变了,SourceId 不变,用户点完过的 seed
+    /// 重建后也不会再次骚扰。幂等。
     /// </summary>
     [HttpPost("{id}/dismiss-forever")]
     [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status200OK)]
@@ -222,12 +231,25 @@ public sealed class DailyTipsController : ControllerBase
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "id 不能为空"));
 
         var userId = this.GetRequiredUserId();
+
+        // 尝试从 DailyTips 找这条 tip 拿到 SourceId;找不到就只存 Id
+        var tip = await _db.DailyTips.Find(t => t.Id == id).FirstOrDefaultAsync(ct);
+        var keys = new List<string> { id };
+        if (tip?.SourceId != null && !keys.Contains(tip.SourceId))
+            keys.Add(tip.SourceId);
+        // seed-* id 本身就是 "seed-{SourceId}",也同时存进去方便 seed 重建后匹配
+        if (id.StartsWith("seed-"))
+        {
+            var extractedSourceId = id.Substring("seed-".Length);
+            if (!keys.Contains(extractedSourceId)) keys.Add(extractedSourceId);
+        }
+
         await _db.Users.UpdateOneAsync(
             u => u.UserId == userId,
-            Builders<User>.Update.AddToSet(u => u.DismissedTipIds, id),
+            Builders<User>.Update.AddToSetEach(u => u.DismissedTipIds, keys),
             cancellationToken: ct);
 
-        return Ok(ApiResponse<object>.Ok(new { dismissedForever = id }));
+        return Ok(ApiResponse<object>.Ok(new { dismissedForever = keys }));
     }
 
     /// <summary>
@@ -310,63 +332,14 @@ public sealed class DailyTipsController : ControllerBase
             // 违反用户规则「人类不是智障,一步不需要教」,全部删除。
             // 新 seed 必须 steps.Count >= 2,管理员可用 /create-tour-demo 按需扩展。
 
-            // 2. Ctrl+K 搜索演示 —— 2 步 Tour
-            T("shortcut-cmd-k", "card",
-                "⌘/Ctrl+K 一键搜 Agent",
-                "任何页面按 ⌘+K / Ctrl+K 弹出全站搜索,敲几个字就能跳转。",
-                "/",
-                "体验一下",
-                "[data-tour-id=home-search]",
-                20,
-                new DailyTipAutoAction
-                {
-                    Scroll = "none",
-                    Steps = new List<DailyTipTourStep>
-                    {
-                        new()
-                        {
-                            Selector = "[data-tour-id=home-search]",
-                            Title = "第 1 步:打开搜索",
-                            Body = "按 ⌘+K / Ctrl+K 或点这里唤起命令面板。下一步会帮你打开。",
-                        },
-                        new()
-                        {
-                            Selector = "[data-tour-id=command-palette-input]",
-                            Title = "第 2 步:输入关键词",
-                            Body = "Agent 名、菜单、文档都在里面;↑↓ 选中,Enter 跳转。",
-                        },
-                    },
-                }),
+            // 键盘快捷键(Ctrl+B / Ctrl+K 等)**不适合**用多步 Tour 教学:
+            //   - 它们是"任意页面都能用"的全局能力,但 tour 必须指向某个 URL
+            //     强制跳到首页演示反而反直觉(用户抱怨"跳到奇怪地方")
+            //   - Figma/VSCode 的做法是在 UI 显眼位置挂一个 key hint,让用户
+            //     自己按键体验。这类静态提示不属于教程小书
+            // 所以 shortcut-cmd-k / shortcut-cmd-b 两条 seed 已删除。
 
-            // 3. Ctrl+B 全局缺陷提交 —— 2 步 Tour(起点任意页面都可,默认从首页)
-            T("shortcut-cmd-b", "card",
-                "⌘/Ctrl+B 任何页面一键提 bug",
-                "不用跳缺陷页,直接按 ⌘+B / Ctrl+B 就弹出提交面板,填完秒走。",
-                "/",
-                "体验一下",
-                "[data-tour-id=home-subtitle]",
-                30,
-                new DailyTipAutoAction
-                {
-                    Scroll = "none",
-                    Steps = new List<DailyTipTourStep>
-                    {
-                        new()
-                        {
-                            Selector = "[data-tour-id=home-subtitle]",
-                            Title = "第 1 步:按 ⌘+B / Ctrl+B",
-                            Body = "现在就试试:键盘按一下快捷键,全局缺陷对话框会弹出。",
-                        },
-                        new()
-                        {
-                            Selector = "[data-tour-id=defect-description]",
-                            Title = "第 2 步:填完标题和描述就能提交",
-                            Body = "第一行是标题;描述支持粘贴截图。对话框是全局的,任意页面都能唤起。",
-                        },
-                    },
-                }),
-
-            // 4. 更新中心周报 —— 2 步 Tour
+            // 2. 更新中心周报 —— 2 步 Tour
             T("changelog-weekly", "card",
                 "看本周平台更新了什么",
                 "更新中心按周汇总所有 commit + PR,还能按模块筛选关心的变更。",
@@ -394,7 +367,7 @@ public sealed class DailyTipsController : ControllerBase
                     },
                 }),
 
-            // 5. 知识库发布 —— 2 步 Tour(都在列表页,不依赖空间详情页的动态 URL)
+            // 3. 知识库发布 —— 2 步 Tour(都在列表页,不依赖空间详情页的动态 URL)
             // 空间详情 URL 带 space id,演示无法直接导航过去,所以只能指导用户自己
             // 从列表进详情;详情页内的上传 / 发布按钮用户看得见的时候就自然能用。
             T("library-publish", "card",

@@ -124,11 +124,11 @@ export function SpotlightOverlay() {
     }
 
     // 3) 轮询等目标元素就绪(Reveal 动效 + 异步加载场景)
-    // 性能优化:250ms × 24 = 6s 上限(原 150ms × 50 = 7.5s,减 52% tick 次数)
+    // 250ms × 40 = 10s 上限,给慢服务器 + 慢网络 + React 渲染余地
     // 找不到就 setSeekTimedOut(true) 走友好失败卡片
     setSeekTimedOut(false);
     let attempts = 0;
-    const maxAttempts = 24;
+    const maxAttempts = 40;
     const pollId = window.setInterval(() => {
       attempts += 1;
       if (cancelled) {

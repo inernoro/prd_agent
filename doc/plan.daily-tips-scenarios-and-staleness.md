@@ -138,13 +138,70 @@ DailyTip {
 
 ## 4. 验收清单
 
-完成上述阶段 A + B 后,管理员能做:
+完成上述阶段 A + B + C 后,管理员能做:
 
 - [ ] 新建 tip 时选场景(onboarding / feature-release / bug-fix / manual)
 - [ ] 列表按场景过滤,清晰看到哪些是新功能教程 / 哪些是缺陷反馈
 - [ ] 缺陷修复后,反馈人下次登录看到「你提的 xx 已修复」card
 - [ ] 每天自动扫描过时 tip,管理员看到红色 ⚠ 提示
 - [ ] 一键删除选中的过时 tip(批量)
+- [ ] 编辑 tip 时勾「破坏性更新」会 bump Version,**已 dismiss 的用户下次也能收到**
+- [ ] 非破坏性修改(如改图标)不 bump 版本,不骚扰已完成用户
+
+---
+
+### 阶段 C:破坏性更新 → 通知所有人(预计 0.5 人天)
+
+当 tip 内容**破坏性**修改(改步骤、改文案),需要让**已 dismiss 的用户也收到一次**。
+
+#### C.1 数据模型扩展
+
+```csharp
+DailyTip {
+  ...existing...,
+  Version: int = 1  // 内容大改时 admin 在后台 bump
+}
+
+User {
+  ...existing...,
+  // 旧:DismissedTipIds: List<string>
+  // 新:结构化,记版本号
+  DismissedTipKeys: List<DismissedKey>
+}
+class DismissedKey {
+  public string Key;    // tip.Id 或 tip.SourceId
+  public int Version;   // dismiss 时的 tip.Version
+}
+```
+
+迁移策略:`DismissedTipIds` 不删,后端读取时做 union(老数据当 `version=0`);
+新增 dismiss 全部写 `DismissedTipKeys`。
+
+#### C.2 过滤逻辑
+
+`/visible` 端点:
+```
+for tip in items:
+  matched = user.DismissedTipKeys.FirstOrDefault(k =>
+      k.Key == tip.Id || k.Key == tip.SourceId)
+  if matched == null:          // 从没 dismiss 过 → 显示
+    show
+  elif matched.Version < tip.Version:    // 版本更新了 → 重新显示
+    show
+  else:                        // 同版本已 dismiss → 跳过
+    skip
+```
+
+#### C.3 管理员操作
+
+DailyTipsEditor 编辑表单加「这是破坏性更新,bump 版本再推一次」复选框;
+勾选后 save 时 `Version += 1`。
+
+#### C.4 角色推荐(结合 createzzdemo 技能)
+
+`createzzdemo` 技能已在 SKILL.md 里定义了每个角色的推荐清单
+(PM / DEV / QA / ADMIN),批量创建时可用 `targetRoles` 字段定向。
+这部分**已落地**,不需要再做。
 
 ---
 
@@ -183,4 +240,23 @@ animation 实现,~80 行,无第三方依赖,尊重 `prefers-reduced-motion`。
 4. 两次 commit 都跟 changelog 碎片
 5. push 后 CDS auto-deploy,在预览域名上点「清空并重建」+ 跑 createzzdemo 技能验证
 
-预计总工时:1.5 人天。
+预计总工时:2 人天(阶段 A 0.5 + 阶段 B 1 + 阶段 C 0.5)。
+
+---
+
+## 9. 当前已落地状态(供接手 agent 对齐)
+
+本会话已经完成(见 design 文档 §11 文件索引):
+
+- ✅ 单例 SpotlightOverlay + `spotlight-payload-updated` 事件
+- ✅ 轮播式 TipsDrawer(右下角 1 张卡 + 分页)+ 页面匹配红色脉冲 + 随机抽
+- ✅ 「下一步」先 click 再 advance + 等待期定位 toast + 10s 超时友好卡片
+- ✅ 真 canvas 撒花 + 多步完成永久 dismiss(按 SourceId 跨重建保留)
+- ✅ PushDialog 批量推送(all / role:XX)+ 推给我自己
+- ✅ 管理后台清空+重建按钮 + Play 试播按钮
+- ✅ createzzdemo 技能:两阶段流程 + 角色智能推荐 + 打断风险分析
+
+**本次未完成,留给接手 agent**:
+- ⏳ 阶段 A:SourceType 规范化 + 缺陷修复闭环 + 分类筛选
+- ⏳ 阶段 B:过时检测(锚点扫描 + 90 天低参与度 + 定时任务)
+- ⏳ 阶段 C:Version 机制(破坏性更新时通知已 dismiss 用户)
