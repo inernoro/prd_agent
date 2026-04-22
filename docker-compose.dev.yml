@@ -40,8 +40,10 @@ services:
 
   api:
     build:
-      context: .
-      dockerfile: prd-api/Dockerfile
+      context: ./prd-api
+      dockerfile: Dockerfile
+      additional_contexts:
+        video: ./prd-video
     image: prdagent-api:dev
     container_name: prdagent-api
     ports:
