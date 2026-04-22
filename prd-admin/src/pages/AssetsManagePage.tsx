@@ -43,6 +43,8 @@ import {
   HOMEPAGE_AGENT_SLOTS,
   HOMEPAGE_HERO_SLOTS,
   MARKETPLACE_BG_SLOTS,
+  DEMO_VIDEO_SLOTS,
+  type DemoVideoSlot,
   buildDefaultCoverUrl,
   buildDefaultVideoUrl,
   buildDefaultHeroUrl,
@@ -1234,7 +1236,7 @@ function HomepageAssetsSection({
           登录后首页最上方的大图。建议宽屏 1920×640 左右，文字主要在左侧，右侧留白区域会作为主体显示。
           上传直接覆盖老路径 <code className="font-mono text-[10px] px-1 py-0.5 rounded" style={{ background: 'var(--bg-input)' }}>icon/title/home.png</code>。
         </p>
-        <div className="grid grid-cols-1 gap-3">
+        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3">
           {HOMEPAGE_HERO_SLOTS.map((hero: HomepageHeroSlot) => (
             <HomepageSlotTile
               key={hero.slot}
@@ -1268,7 +1270,7 @@ function HomepageAssetsSection({
         <div
           className="grid gap-3"
           style={{
-            gridTemplateColumns: isMobile ? '1fr 1fr' : 'repeat(4, 1fr)',
+            gridTemplateColumns: isMobile ? '1fr 1fr' : 'repeat(auto-fill, minmax(200px, 1fr))',
           }}
         >
           {HOMEPAGE_CARD_SLOTS.map((card: HomepageCardSlot) => (
@@ -1302,7 +1304,7 @@ function HomepageAssetsSection({
         <div
           className="grid gap-3"
           style={{
-            gridTemplateColumns: isMobile ? '1fr' : 'repeat(auto-fill, minmax(260px, 1fr))',
+            gridTemplateColumns: isMobile ? '1fr 1fr' : 'repeat(auto-fill, minmax(200px, 1fr))',
           }}
         >
           {agentSlots.map((agent: HomepageAgentSlot) => {
@@ -1406,7 +1408,7 @@ function MarketplaceAssetsSection({
           海鲜市场整页的大气海报背景。建议 1920×1080 以上、深色海洋主题（深蓝 / 青绿 / 暗夜色），图片会叠一层半透明暗色保证卡片可读性。
           未上传时使用内置深海蓝渐变。
         </p>
-        <div className="grid grid-cols-1 gap-3">
+        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3">
           {MARKETPLACE_BG_SLOTS.map((bg: MarketplaceBgSlot) => (
             <HomepageSlotTile
               key={bg.slot}
@@ -1420,6 +1422,42 @@ function MarketplaceAssetsSection({
               previewAspect="16 / 9"
               onUpload={() => onUpload(bg.slot, 'image/*')}
               onDelete={() => onDelete(bg.slot)}
+            />
+          ))}
+        </div>
+      </GlassCard>
+
+      {/* 演示视频：通用基础设施分区，所有功能都可以往 DEMO_VIDEO_SLOTS 登记 */}
+      <GlassCard animated glow className="overflow-hidden">
+        <div className="flex items-center justify-between gap-3 mb-4">
+          <SectionTitle
+            icon={<VideoIcon size={16} />}
+            title="演示视频"
+            badge={`${DEMO_VIDEO_SLOTS.length} 条`}
+          />
+          <Button variant="ghost" size="xs" onClick={onReload} disabled={loading}>
+            {loading ? '加载中…' : '刷新'}
+          </Button>
+        </div>
+        <p className="text-[12px] mb-4" style={{ color: 'var(--text-muted)' }}>
+          通用「演示视频」槽位 —— 各功能在流程关键步骤上方嵌入一段实操录屏，消除
+          用户"点下一步会发生什么"的困惑。支持 MP4 / WebM，推荐 16:9、≤ 20 MB。
+          未上传时前端显示静态占位卡，不影响功能可用性。
+        </p>
+        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3">
+          {DEMO_VIDEO_SLOTS.map((demo: DemoVideoSlot) => (
+            <HomepageSlotTile
+              key={demo.slot}
+              slot={demo.slot}
+              label={demo.label}
+              hint={demo.hint}
+              asset={assets[demo.slot]}
+              cacheBust={cacheBust}
+              uploading={uploadingId === `homepage::${demo.slot}`}
+              accept="video/*"
+              previewAspect="16 / 9"
+              onUpload={() => onUpload(demo.slot, 'video/*')}
+              onDelete={() => onDelete(demo.slot)}
             />
           ))}
         </div>

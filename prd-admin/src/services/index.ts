@@ -1316,6 +1316,30 @@ export const favoriteMarketplaceSkill: FavoriteMarketplaceSkillContract = withAu
 export const unfavoriteMarketplaceSkill: UnfavoriteMarketplaceSkillContract = withAuth(unfavoriteMarketplaceSkillReal);
 export const deleteMarketplaceSkill: DeleteMarketplaceSkillContract = withAuth(deleteMarketplaceSkillReal);
 
+// Agent 开放接口 API Key 管理（"接入 AI" Dialog）
+import type {
+  CreateAgentApiKeyContract,
+  DeleteAgentApiKeyContract,
+  ListAgentApiKeysContract,
+  RenewAgentApiKeyContract,
+  RevokeAgentApiKeyContract,
+  UpdateAgentApiKeyContract,
+} from '@/services/contracts/agentApiKeys';
+import {
+  createAgentApiKeyReal,
+  deleteAgentApiKeyReal,
+  listAgentApiKeysReal,
+  renewAgentApiKeyReal,
+  revokeAgentApiKeyReal,
+  updateAgentApiKeyReal,
+} from '@/services/real/agentApiKeys';
+export const listAgentApiKeys: ListAgentApiKeysContract = withAuth(listAgentApiKeysReal);
+export const createAgentApiKey: CreateAgentApiKeyContract = withAuth(createAgentApiKeyReal);
+export const updateAgentApiKey: UpdateAgentApiKeyContract = withAuth(updateAgentApiKeyReal);
+export const renewAgentApiKey: RenewAgentApiKeyContract = withAuth(renewAgentApiKeyReal);
+export const revokeAgentApiKey: RevokeAgentApiKeyContract = withAuth(revokeAgentApiKeyReal);
+export const deleteAgentApiKey: DeleteAgentApiKeyContract = withAuth(deleteAgentApiKeyReal);
+
 // 限流配置服务
 import type {
   GetGlobalRateLimitContract,

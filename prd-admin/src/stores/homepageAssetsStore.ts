@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 import { getHomepageAssetsPublic } from '@/services';
 import type { HomepageAssetDto, HomepageAssetsMap } from '@/services/contracts/homepageAssets';
-import { agentImageSlot, agentVideoSlot, cardSlot, heroSlot, marketplaceBgSlot, type HomepageCardSlot, type HomepageHeroSlot, type MarketplaceBgSlot } from '@/lib/homepageAssetSlots';
+import { agentImageSlot, agentVideoSlot, cardSlot, demoVideoSlot, heroSlot, marketplaceBgSlot, type HomepageCardSlot, type HomepageHeroSlot, type MarketplaceBgSlot } from '@/lib/homepageAssetSlots';
 
 interface HomepageAssetsState {
   loaded: boolean;
@@ -93,5 +93,24 @@ export function useHeroBgUrl(id: HomepageHeroSlot['id']): string | null {
  */
 export function useMarketplaceBgUrl(id: MarketplaceBgSlot['id'] = 'hero'): string | null {
   const asset = useHomepageAssetsStore((s) => s.assets[marketplaceBgSlot(id)]);
+  return asset ? appendCacheBust(asset.url, asset.updatedAt) : null;
+}
+
+/**
+ * 演示视频通用 hook。
+ *
+ * @param id 演示视频 slot id（来自 `DEMO_VIDEO_SLOTS`，语义命名如
+ *           `skill-openapi.agent-paste`）
+ * @returns 视频 CDN URL（含缓存爆破时间戳）或 null（未上传）
+ *
+ * 任何需要演示视频的模块都只需：
+ *   1. 在 `homepageAssetSlots.ts` 的 `DEMO_VIDEO_SLOTS` 加一条登记
+ *   2. 在 UI 里调 `useDemoVideoUrl('your-key')`，为 null 时渲染静态 placeholder
+ *
+ * 管理员在「资源管理 → 演示视频」分区能直接上传对应 slot 的 mp4/webm。
+ */
+export function useDemoVideoUrl(id: string): string | null {
+  const slot = id ? demoVideoSlot(id) : '';
+  const asset = useHomepageAssetsStore((s) => (slot ? s.assets[slot] : undefined));
   return asset ? appendCacheBust(asset.url, asset.updatedAt) : null;
 }

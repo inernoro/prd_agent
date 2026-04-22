@@ -4,6 +4,7 @@ using System.Text.RegularExpressions;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using MongoDB.Bson;
+using PrdAgent.Api.Controllers.Api.OfficialSkills;
 using MongoDB.Driver;
 using PrdAgent.Api.Extensions;
 using PrdAgent.Core.Interfaces;
@@ -44,6 +45,7 @@ public class MarketplaceSkillsController : ControllerBase
     private readonly ILLMRequestContextAccessor _llmRequestContext;
     private readonly IAssetStorage _assetStorage;
     private readonly SkillZipMetadataExtractor _zipExtractor;
+    private readonly IConfiguration _config;
     private readonly ILogger<MarketplaceSkillsController> _logger;
 
     public MarketplaceSkillsController(
@@ -52,6 +54,7 @@ public class MarketplaceSkillsController : ControllerBase
         ILLMRequestContextAccessor llmRequestContext,
         IAssetStorage assetStorage,
         SkillZipMetadataExtractor zipExtractor,
+        IConfiguration config,
         ILogger<MarketplaceSkillsController> logger)
     {
         _db = db;
@@ -59,6 +62,7 @@ public class MarketplaceSkillsController : ControllerBase
         _llmRequestContext = llmRequestContext;
         _assetStorage = assetStorage;
         _zipExtractor = zipExtractor;
+        _config = config;
         _logger = logger;
     }
 
@@ -99,8 +103,20 @@ public class MarketplaceSkillsController : ControllerBase
             _ => query.SortByDescending(x => x.DownloadCount).ThenByDescending(x => x.CreatedAt)
         };
 
-        var items = await query.Limit(200).ToListAsync(ct);
-        return Ok(ApiResponse<object>.Ok(new { items = items.Select(s => ToDto(s, userId)) }));
+        // 官方条目要占 1 格 → 从 DB 少查 1 条，保证总长严格 <= 200 硬上限
+        var willInject = OfficialMarketplaceSkillInjector.ShouldInject(keyword, tag);
+        var dbLimit = willInject ? 199 : 200;
+
+        var items = await query.Limit(dbLimit).ToListAsync(ct);
+        var dtos = items.Select(s => ToDto(s, userId)).Cast<object>().ToList();
+
+        // 虚拟注入官方 findmapskills 到首位（筛选条件命中时）
+        if (willInject)
+        {
+            dtos.Insert(0, OfficialMarketplaceSkillInjector.BuildFindMapSkillsDto(Request, _config, userId));
+        }
+
+        return Ok(ApiResponse<object>.Ok(new { items = dtos }));
     }
 
     /// <summary>
@@ -321,6 +337,13 @@ public class MarketplaceSkillsController : ControllerBase
     public async Task<IActionResult> Fork(string id, CancellationToken ct)
     {
         var userId = this.GetRequiredUserId();
+
+        // 官方虚拟条目特判：不查 DB、不 +1 count，直接返回官方下载 URL
+        if (OfficialMarketplaceSkillInjector.IsOfficialId(id))
+        {
+            return Ok(ApiResponse<object>.Ok(OfficialMarketplaceSkillInjector.BuildForkResponse(Request, _config, userId)));
+        }
+
         var skill = await _db.MarketplaceSkills.Find(x => x.Id == id && x.IsPublic).FirstOrDefaultAsync(ct);
         if (skill == null)
             return NotFound(ApiResponse<object>.Fail("DOCUMENT_NOT_FOUND", "技能不存在或已下架"));
@@ -351,6 +374,11 @@ public class MarketplaceSkillsController : ControllerBase
     public async Task<IActionResult> Favorite(string id, CancellationToken ct)
     {
         var userId = this.GetRequiredUserId();
+
+        // 官方虚拟条目：幂等 no-op，返回未变化的虚拟 DTO（与 Fork 分支保持对称）
+        if (OfficialMarketplaceSkillInjector.IsOfficialId(id))
+            return Ok(ApiResponse<object>.Ok(new { item = OfficialMarketplaceSkillInjector.BuildFindMapSkillsDto(Request, _config, userId) }));
+
         var result = await _db.MarketplaceSkills.UpdateOneAsync(
             x => x.Id == id && x.IsPublic,
             Builders<MarketplaceSkill>.Update
@@ -368,6 +396,11 @@ public class MarketplaceSkillsController : ControllerBase
     public async Task<IActionResult> Unfavorite(string id, CancellationToken ct)
     {
         var userId = this.GetRequiredUserId();
+
+        // 官方虚拟条目：同上幂等 no-op
+        if (OfficialMarketplaceSkillInjector.IsOfficialId(id))
+            return Ok(ApiResponse<object>.Ok(new { item = OfficialMarketplaceSkillInjector.BuildFindMapSkillsDto(Request, _config, userId) }));
+
         var result = await _db.MarketplaceSkills.UpdateOneAsync(
             x => x.Id == id,
             Builders<MarketplaceSkill>.Update

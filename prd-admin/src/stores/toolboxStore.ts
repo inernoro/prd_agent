@@ -258,6 +258,21 @@ export const BUILTIN_TOOLS: ToolboxItem[] = [
   },
   // ========== 工具（缺 AI / 生命周期 / 存储 三要素之一）==========
   {
+    id: 'builtin-skill-marketplace-openapi',
+    name: '技能市场开放接口',
+    description: '给外部 AI / Agent 生成长效 API Key（默认 1 年可续期），让它们授权式浏览、下载、上传海鲜市场的技能',
+    icon: 'Zap',
+    category: 'builtin',
+    type: 'builtin',
+    kind: 'tool',
+    agentKey: 'marketplace-openapi',
+    routePath: '/marketplace',
+    tags: ['开放接口', 'API Key', 'AI 接入', '海鲜市场'],
+    usageCount: 0,
+    createdAt: new Date().toISOString(),
+    wip: true,
+  },
+  {
     id: 'builtin-shortcuts-agent',
     name: '快捷指令',
     description: '一键执行常用操作，支持自定义和分享指令',

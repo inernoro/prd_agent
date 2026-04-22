@@ -1013,6 +1013,10 @@ builder.Services.AddScoped<IOpenPlatformService>(sp =>
     return new PrdAgent.Infrastructure.Services.OpenPlatformServiceImpl(db, idGenerator);
 });
 
+// 注册 Agent 开放接口 API Key 服务（海鲜市场开放接口 / Agent 开放入口 M2M 鉴权）
+builder.Services.AddScoped<PrdAgent.Core.Interfaces.IAgentApiKeyService,
+    PrdAgent.Infrastructure.Services.AgentApiKeyService>();
+
 // 注册 Webhook 通知服务
 builder.Services.AddHttpClient("WebhookClient");
 builder.Services.AddHttpClient("GitHubApi", client =>
