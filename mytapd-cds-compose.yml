@@ -1,0 +1,168 @@
+# CDS Compose 配置 — myTapd 项目
+# 由 /cds-scan 自动生成 (2026-04-22)
+#
+# 导入方式：CDS Dashboard → 设置 → 一键导入 → 粘贴此内容
+#
+# ⚠ Nacos 旁路说明：
+#   CDS 开发环境不连接 Nacos，所有原本由 ticket-platform-secrets.yaml
+#   提供的配置项改为 env var 直接注入。Spring Boot 的松散绑定规则保证
+#   SPRING_DATASOURCE_URL 等变量能覆盖 Nacos 里的同名 key。
+
+x-cds-project:
+  name: myTapd
+  description: "myTapd 项目协作平台 (Spring Boot 2.7 + Vue 3 + MySQL 8 + Redis + MinIO)"
+  repo: https://github.com/midoutech/mytapd.git
+
+# 全局共享环境变量 — CDS 自动注入所有容器，services.*.environment 中禁止重复声明
+x-cds-env:
+  # ── 数据库凭证 ──
+  SPRING_DATASOURCE_USERNAME: "TODO: 请填写实际值"
+  SPRING_DATASOURCE_PASSWORD: "TODO: 请填写实际值"
+
+  # ── Redis ──
+  SPRING_REDIS_PASSWORD: "TODO: 请填写实际值（无密码则留空字符串）"
+
+  # ── JWT ──
+  JWT_SECRET: "TODO: 请填写实际值"
+
+  # ── 邮件（可选，不配置则邮件功能不可用）──
+  SPRING_MAIL_HOST: "TODO: 请填写实际值"
+  SPRING_MAIL_PORT: "465"
+  SPRING_MAIL_USERNAME: "TODO: 请填写实际值"
+  SPRING_MAIL_PASSWORD: "TODO: 请填写实际值"
+
+  # ── MinIO（本地存储，CDS 自动启动）──
+  MINIO_ACCESS_KEY: "minioadmin"
+  MINIO_SECRET_KEY: "minioadmin123"
+
+  # ── 七牛云（可选，替代 MinIO 用于生产文件存储）──
+  QINIU_ACCESS_KEY: "TODO: 请填写实际值（不使用七牛云可留空）"
+  QINIU_SECRET_KEY: "TODO: 请填写实际值"
+  QINIU_BUCKET: "TODO: 请填写实际值"
+  QINIU_DOMAIN: "TODO: 请填写实际值"
+
+  # ── 企业微信（可选）──
+  WECOM_CORP_ID: "TODO: 请填写实际值（不使用企业微信可留空）"
+  WECOM_AGENT_ID: "TODO: 请填写实际值"
+  WECOM_SECRET: "TODO: 请填写实际值"
+
+  # ── Miduo SSO（可选，CDS 开发环境可关闭）──
+  MIDUO_SSO_KEY: "TODO: 请填写实际值（不需要 SSO 可留空）"
+  MIDUO_SSO_VERIFY_URL: "TODO: 请填写实际值"
+
+  # ── 开发登录快捷（dev 环境专用）──
+  DEV_LOGIN_ENABLE: "true"
+  DEV_LOGIN_USER_ID: "TODO: 请填写测试用户 ID"
+
+services:
+  # ── App Services (有相对路径 volume mount) ──
+
+  api:
+    image: maven:3.9-eclipse-temurin-8
+    working_dir: /app
+    volumes:
+      - ./ticket-platform:/app
+    ports:
+      - "8080"
+    command: >-
+      mvn -Dmaven.test.skip=true
+      spring-boot:run
+      -pl ticket-bootstrap
+    depends_on:
+      mysql: { condition: service_healthy }
+      redis: { condition: service_healthy }
+    environment:
+      # Spring 配置
+      SPRING_PROFILES_ACTIVE: dev
+      # 禁用 Nacos — secrets 改由上方 x-cds-env 直接注入
+      SPRING_CLOUD_NACOS_CONFIG_ENABLED: "false"
+      SPRING_CLOUD_NACOS_DISCOVERY_ENABLED: "false"
+      # MySQL 连接串（用 CDS 注入的 infra 地址）
+      SPRING_DATASOURCE_URL: "jdbc:mysql://${CDS_HOST}:${CDS_MYSQL_PORT}/ticket_platform?useUnicode=true&characterEncoding=utf8mb4&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true&useSSL=false"
+      SPRING_DATASOURCE_USERNAME: "${SPRING_DATASOURCE_USERNAME}"
+      SPRING_DATASOURCE_PASSWORD: "${SPRING_DATASOURCE_PASSWORD}"
+      # Redis
+      SPRING_REDIS_HOST: "${CDS_HOST}"
+      SPRING_REDIS_PORT: "${CDS_REDIS_PORT}"
+      SPRING_REDIS_PASSWORD: "${SPRING_REDIS_PASSWORD}"
+      # MinIO 本地端点（使用 x-cds-env 里的凭证）
+      MINIO_ENDPOINT: "http://${CDS_HOST}:${CDS_MINIO_PORT}"
+      MINIO_ACCESS_KEY: "${MINIO_ACCESS_KEY}"
+      MINIO_SECRET_KEY: "${MINIO_SECRET_KEY}"
+      # JWT
+      JWT_SECRET: "${JWT_SECRET}"
+      # 前端预览地址（供后端生成邮件链接等）
+      TICKET_SPA_DETAIL_BASE_URL: "http://${CDS_HOST}"
+      # Maven 本地仓库缓存（加速 mvn 首次 build）
+      MAVEN_OPTS: "-Dmaven.repo.local=/root/.m2/repository"
+    labels:
+      cds.path-prefix: "/api/"
+
+  web:
+    image: node:20-slim
+    working_dir: /app
+    volumes:
+      - ./miduo-frontend:/app
+    ports:
+      - "5173"
+    command: >-
+      npm install &&
+      npm run dev
+    environment:
+      # Vite 代理：将 /api/* 转发到后端容器
+      VITE_USE_PROXY: "true"
+      VITE_API_PROXY_TARGET: "http://api:8080"
+      VITE_API_BASE_URL: "/api"
+    labels:
+      cds.path-prefix: "/"
+
+  # ── Infrastructure Services (无相对路径 mount) ──
+
+  mysql:
+    image: mysql:8.0
+    ports:
+      - "3306"
+    volumes:
+      - mysql-data:/var/lib/mysql
+    environment:
+      MYSQL_ROOT_PASSWORD: "${SPRING_DATASOURCE_PASSWORD}"
+      MYSQL_DATABASE: ticket_platform
+      MYSQL_CHARACTER_SET_SERVER: utf8mb4
+      MYSQL_COLLATION_SERVER: utf8mb4_unicode_ci
+    healthcheck:
+      test: mysqladmin ping -h localhost -u root -p$$MYSQL_ROOT_PASSWORD
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379"
+    volumes:
+      - redis-data:/data
+    command: >-
+      sh -c 'if [ -n "$$SPRING_REDIS_PASSWORD" ];
+      then redis-server --requirepass "$$SPRING_REDIS_PASSWORD";
+      else redis-server; fi'
+    healthcheck:
+      test: redis-cli ping
+      interval: 10s
+      retries: 3
+
+  minio:
+    image: minio/minio:latest
+    ports:
+      - "9000"
+      - "9001"
+    volumes:
+      - minio-data:/data
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: "${MINIO_ACCESS_KEY}"
+      MINIO_ROOT_PASSWORD: "${MINIO_SECRET_KEY}"
+
+volumes:
+  mysql-data:
+  redis-data:
+  minio-data:
