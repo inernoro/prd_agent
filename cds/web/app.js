@@ -1422,6 +1422,9 @@ async function addBranch(name) {
 function renderCapacityBadge() {
   const el = document.getElementById('capacityBadge');
   if (!el) return;
+  // 2026-04-22：合并胶囊的外层容器显示逻辑
+  const combinedEl = document.getElementById('hostCombinedBadge');
+  if (combinedEl) combinedEl.classList.remove('hidden');
 
   // ── Cluster-aware display ──
   //
@@ -1875,6 +1878,9 @@ function renderHostStats(data) {
   // 2026-04-22：原右下角浮窗已合并到 header 的 .host-pulse-badge。
   // .host-stats 元素还在 DOM 里（display:none 兜底），但不再更新。
   const headerEl = document.getElementById('hostPulseBadge');
+  // 2026-04-22：合并胶囊的外层容器显示逻辑
+  const combinedEl = document.getElementById('hostCombinedBadge');
+  if (combinedEl) combinedEl.classList.remove('hidden');
   if (headerEl) {
     headerEl.classList.remove('hidden');
     headerEl.innerHTML = `
@@ -3336,13 +3342,11 @@ function toggleSettingsMenu(event) {
   const needsQuickstart = !buildProfiles || buildProfiles.length === 0;
 
   menu.innerHTML = `
+    <!-- 2026-04-22：合并一键导入/导出入口 —— 导入弹窗底部本就有「导出配置」
+         「导出技能」两个按钮，保留一个入口更干净。 -->
     <div class="settings-menu-item" onclick="closeSettingsMenu(); openImportModal()" style="color:#58a6ff">
       <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M8 2.004a.75.75 0 01.75.75v5.689l1.97-1.97a.749.749 0 111.06 1.06l-3.25 3.25a.749.749 0 01-1.06 0L4.22 7.533a.749.749 0 111.06-1.06l1.97 1.97V2.754a.75.75 0 01.75-.75zM2.75 12.5h10.5a.75.75 0 010 1.5H2.75a.75.75 0 010-1.5z"/></svg>
-      一键导入配置
-    </div>
-    <div class="settings-menu-item" onclick="closeSettingsMenu(); openExportModal()">
-      <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M8.75 1.75a.75.75 0 00-1.5 0v6.69L4.78 5.97a.75.75 0 10-1.06 1.06l4.25 4.25a.75.75 0 001.06 0l4.25-4.25a.75.75 0 00-1.06-1.06L8.75 8.44V1.75zM2.75 13a.75.75 0 000 1.5h10.5a.75.75 0 000-1.5H2.75z" transform="rotate(180 8 8)"/></svg>
-      一键导出配置
+      一键导入 / 导出配置
     </div>
     ${needsQuickstart ? `
       <div class="settings-menu-item" onclick="closeSettingsMenu(); runQuickstart()" style="color:#3fb950">
@@ -3360,10 +3364,8 @@ function toggleSettingsMenu(event) {
       <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M2.5 2a.5.5 0 00-.5.5v11a.5.5 0 00.5.5h11a.5.5 0 00.5-.5v-11a.5.5 0 00-.5-.5h-11zM1 2.5A1.5 1.5 0 012.5 1h11A1.5 1.5 0 0115 2.5v11a1.5 1.5 0 01-1.5 1.5h-11A1.5 1.5 0 011 13.5v-11zM4 5h2v1H4V5zm3 0h5v1H7V5zM4 8h2v1H4V8zm3 0h5v1H7V8zM4 11h2v1H4v-1zm3 0h5v1H7v-1z"/></svg>
       环境变量
     </div>
-    <div class="settings-menu-item" onclick="closeSettingsMenu(); openBulkEnvModal()">
-      <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M0 1.75C0 .784.784 0 1.75 0h12.5C15.216 0 16 .784 16 1.75v12.5A1.75 1.75 0 0114.25 16H1.75A1.75 1.75 0 010 14.25V1.75zm1.75-.25a.25.25 0 00-.25.25v12.5c0 .138.112.25.25.25h12.5a.25.25 0 00.25-.25V1.75a.25.25 0 00-.25-.25H1.75zM11.75 3a.75.75 0 01.75.75v7.5a.75.75 0 01-1.5 0v-7.5a.75.75 0 01.75-.75zm-8.25.75a.75.75 0 00-1.5 0v7.5a.75.75 0 001.5 0v-7.5zM8 3a.75.75 0 01.75.75v7.5a.75.75 0 01-1.5 0v-7.5A.75.75 0 018 3z"/></svg>
-      批量编辑环境变量
-    </div>
+    <!-- 2026-04-22：批量编辑入口已从 ⚙ 菜单移除 —— 环境变量弹窗里本就有该入口
+         (openEnvModal → 批量编辑 按钮)，避免两处入口混淆。 -->
     <div class="settings-menu-item" onclick="closeSettingsMenu(); openInfraModal()">
       <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M2 2a2 2 0 012-2h8a2 2 0 012 2v2a2 2 0 01-2 2H4a2 2 0 01-2-2V2zm2-.5a.5.5 0 00-.5.5v2a.5.5 0 00.5.5h8a.5.5 0 00.5-.5V2a.5.5 0 00-.5-.5H4zM2 9.5A1.5 1.5 0 013.5 8h9A1.5 1.5 0 0114 9.5v3a1.5 1.5 0 01-1.5 1.5h-9A1.5 1.5 0 012 12.5v-3zm1.5 0v3h9v-3h-9zM4 10.5a.5.5 0 01.5-.5h1a.5.5 0 010 1h-1a.5.5 0 01-.5-.5z"/></svg>
       基础设施

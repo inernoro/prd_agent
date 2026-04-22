@@ -425,24 +425,22 @@ h1 {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  margin-left: 12px;
-  padding: 3px 8px 3px 6px;
-  border-radius: 6px;
+  /* 2026-04-22：进了 .host-combined-badge 里，不再需要自己的 margin/border/bg */
+  padding: 0 2px 0 0;
+  border-radius: 0;
   font-size: 11px;
   font-weight: 500;
   font-family: ui-monospace, SFMono-Regular, "SF Mono", Consolas, monospace;
   cursor: pointer;
   user-select: none;
-  transition: transform 0.15s ease, box-shadow 0.15s ease;
+  transition: transform 0.15s ease;
   line-height: 1;
-  background: var(--bg-card, #161b22);
-  border: 1px solid var(--border, #30363d);
+  background: transparent;
+  border: none;
   color: var(--text-muted, #8b949e);
-  overflow: hidden;  /* clip the pill-fill into the rounded corners */
 }
 .capacity-badge:hover {
   transform: translateY(-1px);
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25);
 }
 .capacity-badge.hidden { display: none; }
 
@@ -3026,13 +3024,13 @@ a.branch-name:hover { color: var(--accent); }
   display: none !important;
 }
 
-/* ── Header host-pulse 胶囊 —— 和 .capacity-badge 并排 ── */
-.host-pulse-badge {
+/* ── 合并 host 状态胶囊（capacity + host-pulse 同容器） ── */
+.host-combined-badge {
   display: inline-flex;
   align-items: center;
-  gap: 8px;
-  padding: 3px 10px;
-  margin-left: 8px;
+  gap: 10px;
+  margin-left: 12px;
+  padding: 3px 10px 3px 6px;
   background: var(--bg-card);
   border: 1px solid var(--card-border);
   border-radius: 999px;
@@ -3040,15 +3038,48 @@ a.branch-name:hover { color: var(--accent); }
   font-size: 11px;
   line-height: 1;
   color: var(--text-secondary);
-  cursor: pointer;
   user-select: none;
-  transition: background 120ms ease, border-color 120ms ease;
+  transition: background 120ms ease, border-color 120ms ease, transform 120ms ease, box-shadow 120ms ease;
+  overflow: hidden;
 }
-.host-pulse-badge.hidden { display: none !important; }
-.host-pulse-badge:hover {
+.host-combined-badge.hidden { display: none !important; }
+.host-combined-badge:hover {
   background: var(--bg-elevated);
   border-color: var(--accent-border);
+  transform: translateY(-1px);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
 }
+.host-combined-divider {
+  width: 1px;
+  height: 14px;
+  background: var(--border);
+  opacity: 0.8;
+  flex-shrink: 0;
+}
+/* 其中一侧 hidden 时，隐藏 divider 避免空悬 */
+.capacity-badge.hidden + .host-combined-divider,
+.host-combined-badge:has(.host-pulse-badge.hidden) .host-combined-divider {
+  display: none;
+}
+
+/* Host-pulse 放入合并容器内后去掉自身 border/bg/margin */
+.host-pulse-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0;
+  margin-left: 0;
+  background: transparent;
+  border: none;
+  border-radius: 0;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 1;
+  color: var(--text-secondary);
+  cursor: pointer;
+  user-select: none;
+}
+.host-pulse-badge.hidden { display: none !important; }
 .host-pulse-metric {
   display: inline-flex;
   align-items: center;
