@@ -80,6 +80,9 @@ public class MongoDbContext
     public IMongoCollection<LiteraryPrompt> LiteraryPrompts => _database.GetCollection<LiteraryPrompt>("literary_prompts");
     public IMongoCollection<OpenPlatformApp> OpenPlatformApps => _database.GetCollection<OpenPlatformApp>("openplatformapps");
     public IMongoCollection<OpenPlatformRequestLog> OpenPlatformRequestLogs => _database.GetCollection<OpenPlatformRequestLog>("openplatformrequestlogs");
+
+    // Agent 开放接口 API Key（海鲜市场开放接口 / Agent 开放入口 M2M 鉴权）
+    public IMongoCollection<AgentApiKey> AgentApiKeys => _database.GetCollection<AgentApiKey>("agent_api_keys");
     public IMongoCollection<ModelGroup> ModelGroups => _database.GetCollection<ModelGroup>("model_groups");
     public IMongoCollection<LLMAppCaller> LLMAppCallers => _database.GetCollection<LLMAppCaller>("llm_app_callers");
     public IMongoCollection<ModelSchedulerConfig> ModelSchedulerConfigs => _database.GetCollection<ModelSchedulerConfig>("model_scheduler_config");
