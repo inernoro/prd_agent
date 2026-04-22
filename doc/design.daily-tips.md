@@ -211,7 +211,7 @@ if Deliveries 非空:
 
 ### 8.1 零代码:用 skill
 
-对 Claude Code 说 **"创建 XX 演示"** / **"增加教程"** → `create-tour-demo` 技能:
+对 Claude Code 说 **"创建 XX 演示"** / **"增加教程"** → `createzzdemo` 技能:
 1. 匹配内置模板(缺陷 / Ctrl+K / Ctrl+B / 更新中心 / 知识库)
 2. 产出「步骤清单 + 打断风险分析」
 3. 输出 JSON + curl,一键 POST 到 `/api/admin/daily-tips`
@@ -249,7 +249,7 @@ Tour 无法模拟复杂 UI 操作(如 dropdown 选择)。应对:
 
 ## 10. 关联设计文档
 
-- `.claude/skills/create-tour-demo/SKILL.md` — 自动化创建演示的技能
+- `.claude/skills/createzzdemo/SKILL.md` — 自动化创建演示的技能
 - `.claude/rules/navigation-registry.md` — data-tour-id 命名规范
 - `.claude/rules/frontend-modal.md` — TipCard 浮层约束
 

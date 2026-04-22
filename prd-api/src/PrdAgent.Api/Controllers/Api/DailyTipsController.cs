@@ -337,6 +337,96 @@ public sealed class DailyTipsController : ControllerBase
                         },
                     },
                 }),
+
+            // 3. Ctrl+B 全局缺陷提交 —— 2 步 Tour(起点任意页面都可,默认从首页)
+            T("shortcut-cmd-b", "card",
+                "⌘/Ctrl+B 任何页面一键提 bug",
+                "不用跳缺陷页,直接按 ⌘+B / Ctrl+B 就弹出提交面板,填完秒走。",
+                "/",
+                "体验一下",
+                "[data-tour-id=home-subtitle]",
+                30,
+                new DailyTipAutoAction
+                {
+                    Scroll = "none",
+                    Steps = new List<DailyTipTourStep>
+                    {
+                        new()
+                        {
+                            Selector = "[data-tour-id=home-subtitle]",
+                            Title = "第 1 步:按 ⌘+B / Ctrl+B",
+                            Body = "现在就试试:键盘按一下快捷键,全局缺陷对话框会弹出。",
+                        },
+                        new()
+                        {
+                            Selector = "[data-tour-id=defect-description]",
+                            Title = "第 2 步:填完标题和描述就能提交",
+                            Body = "第一行是标题;描述支持粘贴截图。对话框是全局的,任意页面都能唤起。",
+                        },
+                    },
+                }),
+
+            // 4. 更新中心周报 —— 2 步 Tour
+            T("changelog-weekly", "card",
+                "看本周平台更新了什么",
+                "更新中心按周汇总所有 commit + PR,还能按模块筛选关心的变更。",
+                "/changelog",
+                "看更新",
+                "[data-tour-id=changelog-latest]",
+                40,
+                new DailyTipAutoAction
+                {
+                    Scroll = "center",
+                    Steps = new List<DailyTipTourStep>
+                    {
+                        new()
+                        {
+                            Selector = "[data-tour-id=changelog-latest]",
+                            Title = "第 1 步:最新一版在这",
+                            Body = "默认展开;每个 feat/fix 都对应到具体的代码改动。",
+                        },
+                        new()
+                        {
+                            Selector = "[data-tour-id=changelog-filter]",
+                            Title = "第 2 步:按模块筛选",
+                            Body = "只关心 admin?勾上;只看 bug 修复?勾 fix。一键过滤。",
+                        },
+                    },
+                }),
+
+            // 5. 知识库发布 —— 3 步 Tour
+            T("library-publish", "card",
+                "把你的知识发布到智识殿堂",
+                "上传文档 → 发布到社区 → 其他团队能搜到。3 分钟搞定。",
+                "/document-store",
+                "开始发布",
+                "[data-tour-id=document-upload]",
+                50,
+                new DailyTipAutoAction
+                {
+                    Scroll = "center",
+                    Steps = new List<DailyTipTourStep>
+                    {
+                        new()
+                        {
+                            Selector = "[data-tour-id=document-upload]",
+                            Title = "第 1 步:上传文档",
+                            Body = "点「上传文档」选文件,或直接拖到页面上。支持 PDF/Markdown/Word。",
+                        },
+                        new()
+                        {
+                            Selector = "[data-tour-id=document-store-publish]",
+                            Title = "第 2 步:发布到智识殿堂",
+                            Body = "勾选后,这个知识库会出现在 /library 的公开排行榜。",
+                        },
+                        new()
+                        {
+                            Selector = "[data-tour-id=document-store-publish]",
+                            Title = "第 3 步:搞定!",
+                            Body = "发布后你的知识库可以被全平台用户看到和搜索。可以随时取消发布。",
+                        },
+                    },
+                }),
         };
     }
 }

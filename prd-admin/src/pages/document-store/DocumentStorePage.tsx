@@ -858,6 +858,7 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary }: {
                   color: 'var(--text-muted)',
                 }}
                 title="发布到智识殿堂，让更多人看到"
+                data-tour-id="document-store-publish"
               >
                 {publishing ? <MapSpinner size={11} /> : <GlobeLock size={11} />}
                 发布到智识殿堂
@@ -872,7 +873,13 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary }: {
             <Button variant="secondary" size="xs" onClick={() => setShowSubscribe(true)}>
               <Rss size={13} /> 添加订阅
             </Button>
-            <Button variant="primary" size="xs" onClick={() => fileInputRef.current?.click()} disabled={uploading}>
+            <Button
+              variant="primary"
+              size="xs"
+              data-tour-id="document-upload"
+              onClick={() => fileInputRef.current?.click()}
+              disabled={uploading}
+            >
               {uploading ? <MapSpinner size={14} /> : <Upload size={13} />}
               {uploading ? '上传中…' : '上传文档'}
             </Button>

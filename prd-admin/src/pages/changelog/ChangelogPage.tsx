@@ -479,7 +479,7 @@ export default function ChangelogPage() {
 
         {/* 筛选器 */}
         {availableTypes.length > 0 && (
-          <div className="flex flex-wrap items-center gap-2 pt-1">
+          <div data-tour-id="changelog-filter" className="flex flex-wrap items-center gap-2 pt-1">
             <div className="inline-flex items-center gap-1.5 text-[13px] font-medium" style={{ color: 'var(--text-secondary)' }}>
               <Filter size={14} />
               筛选
