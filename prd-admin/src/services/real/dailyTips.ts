@@ -129,10 +129,11 @@ export async function deleteTip(id: string): Promise<ApiResponse<{ deleted: bool
   });
 }
 
-/** 推送 tip 给指定用户。reset=true 时重置已有记录为 pending。 */
+/** 推送 tip 给指定用户 / 按角色 / 全体。reset=true 时重置已有记录为 pending。
+ *  scope: "all" / "role:PM" / "role:DEV" / "role:QA" / "role:ADMIN",与 userIds 取并集。 */
 export async function pushTip(
   id: string,
-  body: { userIds: string[]; maxViews?: number; reset?: boolean },
+  body: { userIds?: string[]; scope?: string; maxViews?: number; reset?: boolean },
 ): Promise<ApiResponse<{ pushedCount: number; totalDeliveries: number; deliveries: DailyTipDelivery[] }>> {
   return await apiRequest<{ pushedCount: number; totalDeliveries: number; deliveries: DailyTipDelivery[] }>(
     api.dailyTips.admin.push(id),

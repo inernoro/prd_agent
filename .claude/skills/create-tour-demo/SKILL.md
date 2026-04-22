@@ -1,6 +1,6 @@
 ---
 name: create-tour-demo
-description: 批量创建「教程小书」的路径式引导演示（DailyTip + 多步 Tour）。用户说"创建 XX 演示" / "做一个 XX 教程" / "/create-tour-demo 缺陷管理" 时触发。支持缺陷管理、Ctrl+B、Ctrl+K 搜索、更新中心周报、知识库发布 5 种内置模板,也支持自然语言描述任意页面路径。输出可直接 POST 到 /api/admin/daily-tips 的 JSON,或生成 curl 脚本让用户一键植入。
+description: 批量创建「教程小书」的路径式引导演示(DailyTip + 多步 Tour)。用户说"创建 XX 演示" / "做一个 XX 教程" / "增加教程" / "增加引导" / "/create-tour-demo 缺陷管理" 时触发。支持缺陷管理、Ctrl+B、Ctrl+K 搜索、更新中心周报、知识库发布 5 种内置模板,也支持自然语言描述任意页面路径。**会主动产出「步骤清单 + 打断风险分析」**,输出可直接 POST 到 /api/admin/daily-tips 的 JSON。
 ---
 
 # 创建教程演示
@@ -231,7 +231,28 @@ description: 批量创建「教程小书」的路径式引导演示（DailyTip +
 1. **识别模板** — 匹配上表的关键词;没匹配就按 B 流程自定义
 2. **前置校验** — 对模板里用到的每个 `data-tour-id`,grep 核对存在性;缺失
    的写在警告里,列给用户,让他决定"先补锚点"还是"先跳过这一步"
-3. **输出 JSON + curl** — 打印完整的 DailyTipUpsert payload,并给出两种执行方式:
+3. **打断风险分析(必产)** — 在输出 JSON 前,**先**列出这份教程的:
+   - 一共几步(≥ 2,否则不接受)
+   - 每步的「打断风险」分类(见下表),以及应对方案
+   - 前置锚点清单及存在性
+
+   ```
+   【教程清单】  缺陷管理全链路 / 4 步 / 起点 /
+   【步骤】
+     1. defect-create        [data-tour-id=defect-create] ✓ 存在
+     2. defect-description   [data-tour-id=defect-description] ✓ 存在
+     3. defect-assignee-picker ✓ 存在
+     4. defect-submit        ✓ 存在
+   【打断风险】
+     - Step 1 → 2:跳转到 /defect-agent 后需先点击「+ 提交缺陷」打开
+       面板,description 才会渲染。缓解:Step 1 用按钮 selector,让
+       SpotlightOverlay 的「下一步」自动点一下
+     - Step 3:UserSearchSelect 是 dropdown,Tour 无法模拟选人,
+       保留用户手动操作;Body 提示「可用默认负责人」
+     - Step 4:提交成功后 SubmitPanel 会关闭,Tour 结束;不用再跳下一步
+   ```
+
+4. **输出 JSON + curl** — 打印完整的 DailyTipUpsert payload,并给出两种执行方式:
 
    ```bash
    # 方式 A:你自己贴到 terminal 执行(需要先 login 拿 token)

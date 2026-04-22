@@ -144,6 +144,12 @@ public sealed class AdminDailyTipsController : ControllerBase
         public int MaxViews { get; set; } = 3;
         /// <summary>true 时覆盖重置已有投递的状态(count 归 0 / status -> pending)</summary>
         public bool Reset { get; set; } = false;
+
+        /// <summary>
+        /// 批量推送的范围:"all" = 全部活跃用户;"role:PM" / "role:DEV" / "role:QA" / "role:ADMIN"
+        /// = 按 UserRole 批量。非空时与 UserIds 合并(并集)推送。
+        /// </summary>
+        public string? Scope { get; set; }
     }
 
     /// <summary>
@@ -162,8 +168,33 @@ public sealed class AdminDailyTipsController : ControllerBase
             .Select(x => x.Trim())
             .Distinct()
             .ToList();
+
+        // 按 Scope 展开批量用户集合(与手动 userIds 取并集)
+        var scope = req.Scope?.Trim();
+        if (!string.IsNullOrWhiteSpace(scope))
+        {
+            var filter = Builders<User>.Filter.Eq(u => u.Status, UserStatus.Active);
+            if (scope == "all")
+            {
+                // 不再加额外过滤
+            }
+            else if (scope.StartsWith("role:") && Enum.TryParse<UserRole>(scope[5..], true, out var role))
+            {
+                filter &= Builders<User>.Filter.Eq(u => u.Role, role);
+            }
+            else
+            {
+                return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT,
+                    "scope 必须为 all / role:PM / role:DEV / role:QA / role:ADMIN"));
+            }
+            var scopedIds = await _db.Users.Find(filter)
+                .Project(u => u.UserId)
+                .ToListAsync(ct);
+            userIds = userIds.Concat(scopedIds).Distinct().ToList();
+        }
+
         if (userIds.Count == 0)
-            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "userIds 不能为空"));
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "userIds 与 scope 都为空,没人可推"));
 
         var maxViews = req.MaxViews <= 0 && req.MaxViews != -1 ? 3 : req.MaxViews;
 

@@ -795,6 +795,24 @@ function PushDialog({
     }
   };
 
+  // 按 scope 批量推送(all / role:DEV 等)
+  const handlePushByScope = async (scope: string, label: string) => {
+    if (!window.confirm(`确认推送给 ${label}?此操作可能涉及很多用户。`)) return;
+    setPushErr(null);
+    setPushing(true);
+    try {
+      const res = await pushTip(tip.id, { scope, maxViews, reset });
+      if (res.success && res.data) {
+        await loadStats();
+        onPushed();
+      } else {
+        setPushErr(res.error?.message ?? '批量推送失败');
+      }
+    } finally {
+      setPushing(false);
+    }
+  };
+
   const modal = (
     <div
       onClick={onClose}
@@ -936,7 +954,7 @@ function PushDialog({
               </div>
             )}
 
-            <div className="flex items-center justify-between mt-3 gap-2">
+            <div className="flex items-center justify-between mt-3 gap-2 flex-wrap">
               <Button
                 variant="secondary"
                 size="sm"
@@ -951,6 +969,37 @@ function PushDialog({
                 {pushing ? <MapSpinner size={14} /> : <Send size={14} />}
                 推送
               </Button>
+            </div>
+
+            {/* 按角色批量推送 —— 会在后端按 UserRole 展开所有活跃用户 */}
+            <div
+              className="mt-4 pt-3"
+              style={{ borderTop: '1px dashed rgba(255,255,255,0.08)' }}
+            >
+              <Field
+                label="批量推送(按范围)"
+                hint="一键推给某个角色或全体,会在后端按 UserStatus=Active 过滤"
+              >
+                <div className="flex items-center gap-2 flex-wrap">
+                  {(['all', 'role:PM', 'role:DEV', 'role:QA', 'role:ADMIN'] as const).map((scope) => (
+                    <Button
+                      key={scope}
+                      variant="secondary"
+                      size="sm"
+                      onClick={() =>
+                        void handlePushByScope(
+                          scope,
+                          scope === 'all' ? '全体活跃用户' : scope.replace('role:', ''),
+                        )
+                      }
+                      disabled={pushing}
+                    >
+                      <Users size={12} />
+                      {scope === 'all' ? '全体' : scope.replace('role:', '')}
+                    </Button>
+                  ))}
+                </div>
+              </Field>
             </div>
           </div>
 

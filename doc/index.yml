@@ -37,6 +37,7 @@ docs:
 
   # ── 二、设计文档 ──
   # 先看核心架构，再看各模块设计
+  design.daily-tips: 每日小贴士 / 路径式教程系统设计
   design.server-authority: 服务器权威性设计
   design.unified-skill-system: 技能系统统一设计
   design.llm-gateway: LLM Gateway 统一调用架构设计

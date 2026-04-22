@@ -270,6 +270,7 @@ export function CommandPalette() {
           <Search size={16} style={{ color: 'rgba(255,255,255,0.5)' }} />
           <input
             ref={inputRef}
+            data-tour-id="command-palette-input"
             value={query}
             onChange={(e) => {
               setQuery(e.target.value);

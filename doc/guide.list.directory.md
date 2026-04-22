@@ -56,6 +56,9 @@
 
 ### 二、设计文档
 
+- [每日小贴士 / 路径式教程系统设计](design.daily-tips) `design.daily-tips`
+  > 右下角悬浮教程书 + SpotlightOverlay 多步 Tour + 推送/批量/dismiss 闭环
+
 - [服务器权威性设计](design.server-authority) `design.server-authority`
   > 客户端断开不取消服务器任务的架构设计
 

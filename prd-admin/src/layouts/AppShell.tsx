@@ -1402,8 +1402,11 @@ export default function AppShell() {
               <Suspense fallback={<InlinePageLoader />}>
                 <Outlet />
               </Suspense>
-              {/* 每日小贴士跳转后的 DOM 脉冲光圈。key=pathname 保证每次路由切换都重新读取 sessionStorage */}
-              <SpotlightOverlay key={location.pathname} />
+              {/* 每日小贴士跳转后的 DOM 脉冲光圈 —— 单例,不用 key 绑 pathname。
+                  路由切换时 SpotlightOverlay 自己在 readAndStart() 里重置 state;
+                  保持单实例才能让 Play 按钮(写 sessionStorage → navigate)
+                  的 payload 在 mount 周期里稳定地被消费。 */}
+              <SpotlightOverlay />
             </div>
           </div>
         </main>

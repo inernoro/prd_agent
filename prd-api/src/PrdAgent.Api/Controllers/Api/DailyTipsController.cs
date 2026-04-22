@@ -308,7 +308,35 @@ public sealed class DailyTipsController : ControllerBase
 
             // 只保留多步真流程。单步/零步 tip(如「试试周报」、「看演示」)
             // 违反用户规则「人类不是智障,一步不需要教」,全部删除。
-            // 管理员后续需要其他多步 Tour 时,用 /create-tour-demo 技能生成。
+            // 新 seed 必须 steps.Count >= 2,管理员可用 /create-tour-demo 按需扩展。
+
+            // 2. Ctrl+K 搜索演示 —— 2 步 Tour
+            T("shortcut-cmd-k", "card",
+                "⌘/Ctrl+K 一键搜 Agent",
+                "任何页面按 ⌘+K / Ctrl+K 弹出全站搜索,敲几个字就能跳转。",
+                "/",
+                "体验一下",
+                "[data-tour-id=home-search]",
+                20,
+                new DailyTipAutoAction
+                {
+                    Scroll = "none",
+                    Steps = new List<DailyTipTourStep>
+                    {
+                        new()
+                        {
+                            Selector = "[data-tour-id=home-search]",
+                            Title = "第 1 步:打开搜索",
+                            Body = "按 ⌘+K / Ctrl+K 或点这里唤起命令面板。下一步会帮你打开。",
+                        },
+                        new()
+                        {
+                            Selector = "[data-tour-id=command-palette-input]",
+                            Title = "第 2 步:输入关键词",
+                            Body = "Agent 名、菜单、文档都在里面;↑↓ 选中,Enter 跳转。",
+                        },
+                    },
+                }),
         };
     }
 }
