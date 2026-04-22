@@ -68,11 +68,14 @@ public class WeeklyPosterPage
     /// <summary>页面正文(markdown,纯文本都可,换行自动 break)</summary>
     public string Body { get; set; } = string.Empty;
 
-    /// <summary>配图生成提示词 — 管理员复制去视觉创作生成,也可直接粘贴 URL</summary>
+    /// <summary>配图生成提示词 — 管理员复制去生图工具,也可直接粘贴 URL</summary>
     public string ImagePrompt { get; set; } = string.Empty;
 
-    /// <summary>配图 URL(空值时前端走渐变色兜底)</summary>
+    /// <summary>主配图 URL(空值时前端走渐变色兜底)</summary>
     public string? ImageUrl { get; set; }
+
+    /// <summary>副图 URL(可选 · 用在「图文叠加」版式里做小卡或插图)</summary>
+    public string? SecondaryImageUrl { get; set; }
 
     /// <summary>卡片主色调十六进制(如 "#7c3aed"),空值走默认紫</summary>
     public string? AccentColor { get; set; }

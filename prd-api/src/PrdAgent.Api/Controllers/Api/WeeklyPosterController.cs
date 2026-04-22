@@ -713,6 +713,7 @@ public sealed class WeeklyPosterController : ControllerBase
                 Body = (p.Body ?? string.Empty).Trim(),
                 ImagePrompt = (p.ImagePrompt ?? string.Empty).Trim(),
                 ImageUrl = string.IsNullOrWhiteSpace(p.ImageUrl) ? null : p.ImageUrl!.Trim(),
+                SecondaryImageUrl = string.IsNullOrWhiteSpace(p.SecondaryImageUrl) ? null : p.SecondaryImageUrl!.Trim(),
                 AccentColor = string.IsNullOrWhiteSpace(p.AccentColor) ? null : p.AccentColor!.Trim(),
             });
         }
@@ -739,6 +740,7 @@ public sealed class WeeklyPosterController : ControllerBase
                 Body = p.Body,
                 ImagePrompt = p.ImagePrompt,
                 ImageUrl = p.ImageUrl,
+                SecondaryImageUrl = p.SecondaryImageUrl,
                 AccentColor = p.AccentColor,
             }).ToList() ?? new List<WeeklyPosterPageDto>(),
         CtaText = poster.CtaText,
@@ -768,6 +770,7 @@ public sealed class WeeklyPosterController : ControllerBase
         public string? Body { get; set; }
         public string? ImagePrompt { get; set; }
         public string? ImageUrl { get; set; }
+        public string? SecondaryImageUrl { get; set; }
         public string? AccentColor { get; set; }
     }
 
@@ -796,6 +799,7 @@ public sealed class WeeklyPosterController : ControllerBase
         public string Body { get; set; } = string.Empty;
         public string ImagePrompt { get; set; } = string.Empty;
         public string? ImageUrl { get; set; }
+        public string? SecondaryImageUrl { get; set; }
         public string? AccentColor { get; set; }
     }
 }

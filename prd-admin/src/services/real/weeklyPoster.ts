@@ -54,8 +54,10 @@ export interface WeeklyPosterPage {
   body: string;
   /** 配图提示词 */
   imagePrompt: string;
-  /** 配图 URL,空值走渐变兜底 */
+  /** 主图 URL(AI 生成 / 用户上传),空值走渐变兜底 */
   imageUrl?: string | null;
+  /** 副图 URL(可选:用于图文叠加版式的小插图) */
+  secondaryImageUrl?: string | null;
   /** 卡片主色调,空值走默认紫 */
   accentColor?: string | null;
 }
