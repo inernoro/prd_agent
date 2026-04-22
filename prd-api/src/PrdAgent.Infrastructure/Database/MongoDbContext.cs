@@ -80,6 +80,12 @@ public class MongoDbContext
     public IMongoCollection<LiteraryPrompt> LiteraryPrompts => _database.GetCollection<LiteraryPrompt>("literary_prompts");
     public IMongoCollection<OpenPlatformApp> OpenPlatformApps => _database.GetCollection<OpenPlatformApp>("openplatformapps");
     public IMongoCollection<OpenPlatformRequestLog> OpenPlatformRequestLogs => _database.GetCollection<OpenPlatformRequestLog>("openplatformrequestlogs");
+
+    // Agent 开放接口 API Key（海鲜市场开放接口 / Agent 开放入口 M2M 鉴权）
+    public IMongoCollection<AgentApiKey> AgentApiKeys => _database.GetCollection<AgentApiKey>("agent_api_keys");
+
+    // Agent 开放接口登记（P3 基础设施）—— 每个 Agent 可登记多条 HTTP 入口让外部 AI 调用
+    public IMongoCollection<AgentOpenEndpoint> AgentOpenEndpoints => _database.GetCollection<AgentOpenEndpoint>("agent_open_endpoints");
     public IMongoCollection<ModelGroup> ModelGroups => _database.GetCollection<ModelGroup>("model_groups");
     public IMongoCollection<LLMAppCaller> LLMAppCallers => _database.GetCollection<LLMAppCaller>("llm_app_callers");
     public IMongoCollection<ModelSchedulerConfig> ModelSchedulerConfigs => _database.GetCollection<ModelSchedulerConfig>("model_scheduler_config");
@@ -134,6 +140,9 @@ public class MongoDbContext
     public IMongoCollection<ReportWebhookConfig> ReportWebhookConfigs => _database.GetCollection<ReportWebhookConfig>("report_webhook_configs");
     public IMongoCollection<PersonalSource> PersonalSources => _database.GetCollection<PersonalSource>("report_personal_sources");
     public IMongoCollection<ReportShareLink> ReportShareLinks => _database.GetCollection<ReportShareLink>("report_share_links");
+
+    // 周报海报：登录后主页轮播弹窗
+    public IMongoCollection<WeeklyPosterAnnouncement> WeeklyPosters => _database.GetCollection<WeeklyPosterAnnouncement>("weekly_posters");
 
     // 更新中心「周报来源」配置（绑定知识库 + 文件名关键词，全员共享）
     public IMongoCollection<ChangelogReportSource> ChangelogReportSources => _database.GetCollection<ChangelogReportSource>("changelog_report_sources");

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Sparkles, ArrowRight, Calendar } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
@@ -50,11 +50,20 @@ export function ChangelogBell({ size = 18, compact = false }: ChangelogBellProps
   const [popoverPos, setPopoverPos] = useState<{ top: number; left: number } | null>(null);
 
   const currentWeek = useChangelogStore((s) => s.currentWeek);
+  const lastSeenAt = useChangelogStore((s) => s.lastSeenAt);
   const loadingCurrent = useChangelogStore((s) => s.loadingCurrent);
   const loadCurrentWeek = useChangelogStore((s) => s.loadCurrentWeek);
   const markAsSeen = useChangelogStore((s) => s.markAsSeen);
-  const unread = useChangelogStore(selectUnreadCount);
-  const recent = useChangelogStore((s) => selectRecentEntries(s, 5));
+  // 通过 useMemo 在组件侧派生，避免 selector 每次返回新数组
+  // 触发 zustand useSyncExternalStore 的无限 re-render（getSnapshot should be cached）
+  const unread = useMemo(
+    () => selectUnreadCount({ currentWeek, lastSeenAt } as Parameters<typeof selectUnreadCount>[0]),
+    [currentWeek, lastSeenAt],
+  );
+  const recent = useMemo(
+    () => selectRecentEntries({ currentWeek } as Parameters<typeof selectRecentEntries>[0], 5),
+    [currentWeek],
+  );
 
   // 首次挂载：拉取本周更新（让红点提前出现）
   useEffect(() => {

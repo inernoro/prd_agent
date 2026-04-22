@@ -116,6 +116,44 @@ export function marketplaceBgSlot(id: MarketplaceBgSlot['id']): string {
   return `marketplace.bg.${id}`;
 }
 
+/**
+ * 演示视频槽位 —— 通用基础设施，用于在 UI 的关键步骤上方嵌入一段
+ * 管理员上传的实拍/录屏演示视频（比如"粘贴 API Key 给智能体"的流程）。
+ *
+ * 设计原则：
+ *   - slot 格式：`demo.{demo-key}.video`，语义命名而非功能命名
+ *   - 未上传时消费方回退到静态 placeholder，不阻断业务
+ *   - 任何模块都可以声明一个 `DemoVideoSlot`，在 AssetsManagePage 自动出现上传卡
+ *   - 不建立独立的 collection —— 复用 HomepageAsset 这一通用 slot 系统，
+ *     管理员一套上传 UI 即可搞定所有演示视频
+ *
+ * 随着功能增加，往 DEMO_VIDEO_SLOTS 追加新条目即可。
+ */
+export type DemoVideoSlot = {
+  /** 稳定 key，前端消费时用此字段匹配（比如 'skill-openapi.agent-paste'） */
+  id: string;
+  /** 后端 slot 字符串（自动等于 `demo.{id}.video`） */
+  slot: string;
+  /** 管理后台展示用标签（中文） */
+  label: string;
+  /** 解释这个演示视频在哪里会被用到、建议怎么拍 */
+  hint: string;
+};
+
+export const DEMO_VIDEO_SLOTS: DemoVideoSlot[] = [
+  {
+    id: 'skill-openapi.agent-paste',
+    slot: 'demo.skill-openapi.agent-paste.video',
+    label: '接入 AI · 粘贴密钥给智能体',
+    hint:
+      '录一段 10-30 秒的流程：在海鲜市场创建 Key → 点「复制给智能体使用」→ 切到 Claude Code / Cursor 粘贴 → AI 自动 export 环境变量 + 下载 findmapskills 技能的全过程。建议 16:9、MP4 或 WebM、≤ 20 MB。未上传时前端会显示静态占位卡。',
+  },
+];
+
+export function demoVideoSlot(id: string): string {
+  return `demo.${id}.video`;
+}
+
 export const HERO_DEFAULTS: Record<string, string> = {
   home: 'icon/title/home.png',
 };

@@ -106,7 +106,7 @@ function FeatureBlock({
           <Reveal offset={14}>
             <div
               className="flex items-center gap-3 mb-5"
-              style={{ fontFamily: 'var(--font-mono)' }}
+              style={{ fontFamily: 'var(--font-terminal)' }}
             >
               <span
                 className="text-[11px] uppercase text-white/35"

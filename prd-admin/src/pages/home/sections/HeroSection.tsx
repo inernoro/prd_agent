@@ -131,7 +131,7 @@ export function HeroSection({ className, onGetStarted, onWatchDemo }: HeroSectio
               border: '1px solid rgba(203, 213, 225, 0.22)',
               boxShadow:
                 '0 0 28px rgba(148, 163, 184, 0.18), inset 0 0 14px rgba(148, 163, 184, 0.05)',
-              fontFamily: 'var(--font-mono)',
+              fontFamily: 'var(--font-terminal)',
               animation: 'hud-pulse 4s ease-in-out infinite',
             }}
           >

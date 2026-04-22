@@ -173,6 +173,9 @@
 - [配置市场（海鲜市场）技术设计](design.marketplace) `design.marketplace`
   > CONFIG_TYPE_REGISTRY + IForkable 白名单复制的市场架构
 
+- [海鲜市场技能开放接口](design.skill-marketplace-open-api) `design.skill-marketplace-open-api`
+  > AgentApiKey 长效 M2M 鉴权 + scope 白名单 + findmapskills 官方技能同步到海鲜市场 + P3 Agent 开放接口铺路
+
 - [RBAC 权限系统设计](design.rbac-permission) `design.rbac-permission`
   > SystemRole + AdminPermissionCatalog 60+ 权限的 RBAC 体系
 
@@ -332,6 +335,9 @@
 - [网页托管与分享实现计划](plan.web-hosting) `plan.web-hosting`
   > 网页托管功能的分阶段实现计划
 
+- [海报工坊设计器重构交接](plan.weekly-poster-designer-handoff) `plan.weekly-poster-designer-handoff`
+  > 海报工坊从「向导一键生成」升级为「Canva 式设计器」(左列表+中页面tabs+右图文编辑)交接文档
+
 - [移动端适配功能规划](plan.mobile-adaptation) `plan.mobile-adaptation`
   > 移动端响应式适配的功能规划
 
@@ -364,6 +370,9 @@
 
 - [Claude Code Skill 安装计划](plan.skill-installation) `plan.skill-installation`
   > Claude Code Skill 的安装与配置计划
+
+- [海鲜市场技能开放接口 — 下一程交接](plan.skill-marketplace-open-api-next) `plan.skill-marketplace-open-api-next`
+  > P2/P3/P4 待办清单 + UAT 10 条 + 环境准备 + 代码约定，接力 Agent 一份就懂
 
 - [CDS 部署规划](plan.cds-deployment) `plan.cds-deployment`
   > CDS 云开发套件的部署规划

@@ -2,7 +2,9 @@
 <html lang="zh-CN">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <!-- 2026-04-22：移除 maximum-scale/user-scalable，允许用户双指缩放（可访问性）。
+       iOS Safari focus input 时的自动放大已在 CSS 里用 font-size:16px 规避。 -->
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
   <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
   <meta http-equiv="Pragma" content="no-cache">
   <meta http-equiv="Expires" content="0">
@@ -26,7 +28,7 @@
           <svg width="11" height="11" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M7.78 12.53a.75.75 0 01-1.06 0L2.47 8.28a.75.75 0 010-1.06l4.25-4.25a.751.751 0 011.154.114.75.75 0 01-.094.946L4.81 7h7.44a.75.75 0 010 1.5H4.81l2.97 2.97a.75.75 0 010 1.06z"/></svg>
           <span id="cdsCurrentProjectLabel">项目</span>
         </a>
-        <h1><span class="title-static">Cloud Dev Suite</span><span class="title-rotating" id="titleRotating"></span><code id="cdsCommitHash" style="font-size:12px;margin-left:8px;opacity:0.5;font-weight:normal"></code><span id="capacityBadge" class="capacity-badge hidden" title="宿主机剩余容量 — 点击查看调度器状态" onclick="showCapacityDetails(event)"></span></h1>
+        <h1><span class="title-static">Cloud Dev Suite</span><span class="title-rotating" id="titleRotating"></span><code id="cdsCommitHash" style="font-size:12px;margin-left:8px;opacity:0.5;font-weight:normal"></code><!-- 2026-04-22：合并 capacity + host-pulse 为一个胶囊容器 --><span class="host-combined-badge hidden" id="hostCombinedBadge"><span id="capacityBadge" class="capacity-badge" title="宿主机剩余容量 — 点击查看调度器状态" onclick="showCapacityDetails(event)"></span><span class="host-combined-divider" aria-hidden="true"></span><span id="hostPulseBadge" class="host-pulse-badge" title="宿主机实时 MEM/CPU — 点击查看详情" onclick="showHostStatsDetails(event)"></span></span></h1>
       </div>
       <div class="header-actions">
         <!-- AI Pairing Indicator (inline, before buttons) -->
@@ -34,16 +36,12 @@
           <span class="ai-pulse"></span>
           <span class="ai-label">AI</span>
         </div>
-        <!-- View mode toggle (列表 / 拓扑) — lives in the header next to theme/settings -->
-        <div id="viewModeToggle" class="view-mode-toggle" role="tablist" aria-label="视图模式">
-          <button type="button" class="view-mode-btn active" data-view-mode="list" role="tab" aria-selected="true" onclick="setViewMode('list')" title="列表视图">
-            <svg width="13" height="13" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M2.5 3.75a.75.75 0 01.75-.75h10.5a.75.75 0 010 1.5H3.25a.75.75 0 01-.75-.75zm0 4.25A.75.75 0 013.25 7.25h10.5a.75.75 0 010 1.5H3.25A.75.75 0 012.5 8zm.75 3.5a.75.75 0 000 1.5h10.5a.75.75 0 000-1.5H3.25z"/></svg>
-            列表
-          </button>
-          <button type="button" class="view-mode-btn" data-view-mode="topology" role="tab" aria-selected="false" onclick="setViewMode('topology')" title="拓扑视图">
-            <svg width="13" height="13" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M5 2.75a2.25 2.25 0 114.5 0 2.25 2.25 0 01-4.5 0zM7.25 0a2.75 2.75 0 00-.75 5.397V7H2.75A1.75 1.75 0 001 8.75v1.603a2.75 2.75 0 101.5 0V8.75a.25.25 0 01.25-.25H6.5v1.397a2.75 2.75 0 101.5 0V8.5h3.75a.25.25 0 01.25.25v1.603a2.75 2.75 0 101.5 0V8.75A1.75 1.75 0 0011.75 7H8V5.397A2.75 2.75 0 007.25 0zM2.5 13a1.25 1.25 0 112.5 0 1.25 1.25 0 01-2.5 0zM8.5 13a1.25 1.25 0 112.5 0 1.25 1.25 0 01-2.5 0zm4.75-1.25a1.25 1.25 0 100 2.5 1.25 1.25 0 000-2.5z"/></svg>
-            拓扑
-          </button>
+        <!-- View mode toggle — 2026-04-22 用户反馈：列表/拓扑的 segmented toggle
+             在 header 里太抢眼、和整体风格不协调。隐藏 UI 但保留 DOM（setViewMode
+             仍可被 settings 菜单或 URL 路径 /branch-panel 触发）。默认视图已改为拓扑。 -->
+        <div id="viewModeToggle" class="view-mode-toggle" role="tablist" aria-label="视图模式" style="display:none">
+          <button type="button" class="view-mode-btn" data-view-mode="list" role="tab" aria-selected="false" onclick="setViewMode('list')" title="列表视图">列表</button>
+          <button type="button" class="view-mode-btn active" data-view-mode="topology" role="tab" aria-selected="true" onclick="setViewMode('topology')" title="拓扑视图">拓扑</button>
         </div>
         <!-- P2.5 GitHub auth widget (populated by bootstrapAuthWidget in app.js) -->
         <div id="cdsAuthWidget" class="cds-auth-widget hidden" style="display:none;align-items:center;gap:8px;padding:3px 4px 3px 10px;background:var(--bg-card);border:1px solid var(--card-border);border-radius:999px;margin-right:6px">
@@ -53,23 +51,24 @@
             <svg width="13" height="13" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M2 2.75C2 1.784 2.784 1 3.75 1h2.5a.75.75 0 010 1.5h-2.5a.25.25 0 00-.25.25v10.5c0 .138.112.25.25.25h2.5a.75.75 0 010 1.5h-2.5A1.75 1.75 0 012 13.25V2.75zm10.44 4.5L10.97 5.78a.75.75 0 111.06-1.06l2.75 2.75a.75.75 0 010 1.06l-2.75 2.75a.75.75 0 11-1.06-1.06l1.47-1.47H6.75a.75.75 0 010-1.5h5.69z"/></svg>
           </button>
         </div>
-        <!-- Quick-access config shortcuts removed: settings menu (⚙) has them all.
-             User feedback 2026-04-18: 4 icons 冗余；留一把齿轮够用。
-             Exception: 2026-04-19 用户反馈「CDS 自动更新」是高频操作,
-             单独拉回一个 🔄 按钮在 header,点开走统一的
-             window.openSelfUpdateModal(),不再藏在齿轮下拉里(同样的
-             入口在 ⚙ 菜单也保留,兼容肌肉记忆)。 -->
-        <button class="icon-btn" id="selfUpdateBtn" onclick="if(window.openSelfUpdateModal)window.openSelfUpdateModal();" title="CDS 自动更新 (拉取最新代码并重启)">
-          <svg width="18" height="18" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 2.5a5.487 5.487 0 00-4.131 1.869l1.204 1.204A.25.25 0 014.896 6H1.25A.25.25 0 011 5.75V2.104a.25.25 0 01.427-.177l1.38 1.38A7.002 7.002 0 0115 8a.75.75 0 01-1.5 0A5.5 5.5 0 008 2.5zM2.5 8a.75.75 0 00-1.5 0 7.002 7.002 0 0012.023 4.87l1.38 1.38a.25.25 0 00.427-.177V10.5a.25.25 0 00-.25-.25h-3.646a.25.25 0 00-.177.427l1.204 1.204A5.5 5.5 0 012.5 8z"/></svg>
-        </button>
+        <!-- 2026-04-22：
+             - 移除 selfUpdateBtn（自动更新入口已在 ⚙ 菜单，不再单独占位）。
+             - Agent Key 按钮从 🔑 emoji 换为 stroke SVG，和其他 icon-btn 一致。 -->
         <button class="icon-btn" id="agentKeyBtn" onclick="window.cdsOpenAgentKeyModal(typeof CURRENT_PROJECT_ID !== 'undefined' ? CURRENT_PROJECT_ID : 'default')" title="授权 Agent 操作本项目">
-          <span style="font-size:16px">🔑</span>
+          <svg width="18" height="18" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M10.5 0a5.499 5.499 0 1 1-1.288 10.848l-.932.932a.749.749 0 0 1-.53.22H7v.75a.749.749 0 0 1-.22.53l-.5.5a.749.749 0 0 1-.53.22H5v.75a.749.749 0 0 1-.22.53l-.5.5a.749.749 0 0 1-.53.22h-2A1.75 1.75 0 0 1 0 14.25v-2c0-.199.079-.389.22-.53l4.932-4.932A5.5 5.5 0 0 1 10.5 0Zm0 1.5a4.002 4.002 0 0 0-3.923 4.802.75.75 0 0 1-.206.701L1.5 12.561v1.689c0 .138.112.25.25.25h1.689l.31-.31V13a.75.75 0 0 1 .75-.75h1.19l.31-.31V11a.75.75 0 0 1 .75-.75h1.19l1.371-1.371a.751.751 0 0 1 .701-.206A4 4 0 1 0 10.5 1.5Zm1 2.5a1 1 0 1 1 0 2 1 1 0 0 1 0-2Z"/></svg>
         </button>
         <button id="themeToggleBtn" class="icon-btn" onclick="toggleTheme(event)" title="切换主题">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="4.22" x2="19.78" y2="5.64"/></svg>
         </button>
         <button class="icon-btn" id="settingsBtn" onclick="toggleSettingsMenu(event)" title="项目设置">
           <svg width="20" height="20" viewBox="0 0 16 16" fill="currentColor"><path d="M7.429 1.525a3.5 3.5 0 011.142 0 .75.75 0 01.57.63l.185 1.29a.25.25 0 00.35.193l1.178-.592a.75.75 0 01.808.098 3.5 3.5 0 01.571.571.75.75 0 01.098.808l-.592 1.178a.25.25 0 00.193.35l1.29.185a.75.75 0 01.63.57 3.5 3.5 0 010 1.142.75.75 0 01-.63.57l-1.29.185a.25.25 0 00-.193.35l.592 1.178a.75.75 0 01-.098.808 3.5 3.5 0 01-.571.571.75.75 0 01-.808.098l-1.178-.592a.25.25 0 00-.35.193l-.185 1.29a.75.75 0 01-.57.63 3.5 3.5 0 01-1.142 0 .75.75 0 01-.57-.63l-.185-1.29a.25.25 0 00-.35-.193l-1.178.592a.75.75 0 01-.808-.098 3.5 3.5 0 01-.571-.571.75.75 0 01-.098-.808l.592-1.178a.25.25 0 00-.193-.35l-1.29-.185a.75.75 0 01-.63-.57 3.5 3.5 0 010-1.142.75.75 0 01.63-.57l1.29-.185a.25.25 0 00.193-.35l-.592-1.178a.75.75 0 01.098-.808 3.5 3.5 0 01.571-.571.75.75 0 01.808-.098l1.178.592a.25.25 0 00.35-.193l.185-1.29a.75.75 0 01.57-.63zM8 6a2 2 0 100 4 2 2 0 000-4z"/></svg>
+        </button>
+        <!-- 2026-04-22 手机端 ☰ 菜单（只在 ≤640px 显示）：打开 settings menu 做次要操作入口。
+             桌面端默认 display:none（见 @media），不占位。 -->
+        <button class="icon-btn cds-header-menu-btn" id="cdsHeaderMenuBtn" onclick="toggleSettingsMenu(event)" title="菜单">
+          <svg width="20" height="20" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
+            <path d="M1 2.75A.75.75 0 011.75 2h12.5a.75.75 0 010 1.5H1.75A.75.75 0 011 2.75zm0 5A.75.75 0 011.75 7h12.5a.75.75 0 010 1.5H1.75A.75.75 0 011 7.75zM1.75 12a.75.75 0 000 1.5h12.5a.75.75 0 000-1.5H1.75z"/>
+          </svg>
         </button>
       </div>
     </header>
@@ -221,9 +220,9 @@
   <!-- API Activity Monitor (floating bottom-right) -->
   <div id="activityMonitor" class="activity-monitor collapsed">
     <div class="activity-header" onclick="toggleActivityMonitor()">
+      <!-- 2026-04-22：删除 "Activity" 文字（冗余），只留指示灯 + 计数 -->
       <div class="activity-title">
         <span class="activity-dot"></span>
-        <span>Activity</span>
         <span class="activity-count" id="activityCount">0</span>
       </div>
       <div class="activity-roller" id="activityRoller"></div>

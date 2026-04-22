@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { Link, useNavigate } from 'react-router-dom';
 import { useBreakpoint } from '@/hooks/useBreakpoint';
 import {
   createDesktopAssetKey,
@@ -13,6 +14,10 @@ import {
   listHomepageAssets,
   uploadHomepageAsset,
   deleteHomepageAsset,
+  listWeeklyPosters,
+  deleteWeeklyPoster,
+  unpublishWeeklyPoster,
+  type WeeklyPoster,
 } from '@/services';
 import type { AdminDesktopAssetMatrixRow, DesktopAssetSkin } from '@/services/contracts/desktopAssets';
 import type { HomepageAssetDto } from '@/services/contracts/homepageAssets';
@@ -43,6 +48,8 @@ import {
   HOMEPAGE_AGENT_SLOTS,
   HOMEPAGE_HERO_SLOTS,
   MARKETPLACE_BG_SLOTS,
+  DEMO_VIDEO_SLOTS,
+  type DemoVideoSlot,
   buildDefaultCoverUrl,
   buildDefaultVideoUrl,
   buildDefaultHeroUrl,
@@ -236,7 +243,7 @@ type HomepageAssetsMap = Record<string, HomepageAssetDto>;
 
 export default function AssetsManagePage() {
   const { isMobile } = useBreakpoint();
-  const [activeTab, setActiveTab] = useState<'desktop' | 'single' | 'homepage' | 'marketplace'>('homepage'); // 默认落到新的首页资源 Tab，便于用户直接看到新功能
+  const [activeTab, setActiveTab] = useState<'desktop' | 'single' | 'homepage' | 'marketplace' | 'poster'>('homepage');
   const [skins, setSkins] = useState<DesktopAssetSkin[]>([]);
   const [matrixData, setMatrixData] = useState<AdminDesktopAssetMatrixRow[]>([]);
   const [loading, setLoading] = useState(false);
@@ -689,13 +696,16 @@ export default function AssetsManagePage() {
         variant="gold"
         items={[
           { key: 'homepage', label: '首页资源', icon: <Home size={14} /> },
+          { key: 'poster', label: '海报设计', icon: <Sparkles size={14} /> },
           { key: 'marketplace', label: '海鲜市场背景', icon: <Store size={14} /> },
           { key: 'desktop', label: 'Desktop 皮肤资源', icon: <Monitor size={14} /> },
           { key: 'single', label: '全局资源', icon: <Layers size={14} /> },
         ]}
         activeKey={activeTab}
-        onChange={(key) => setActiveTab(key as 'desktop' | 'single' | 'homepage' | 'marketplace')}
+        onChange={(key) => setActiveTab(key as 'desktop' | 'single' | 'homepage' | 'marketplace' | 'poster')}
       />
+
+      {activeTab === 'poster' && <PosterDesignSection />}
 
       <input
         ref={homepageFileRef}
@@ -1234,7 +1244,7 @@ function HomepageAssetsSection({
           登录后首页最上方的大图。建议宽屏 1920×640 左右，文字主要在左侧，右侧留白区域会作为主体显示。
           上传直接覆盖老路径 <code className="font-mono text-[10px] px-1 py-0.5 rounded" style={{ background: 'var(--bg-input)' }}>icon/title/home.png</code>。
         </p>
-        <div className="grid grid-cols-1 gap-3">
+        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3">
           {HOMEPAGE_HERO_SLOTS.map((hero: HomepageHeroSlot) => (
             <HomepageSlotTile
               key={hero.slot}
@@ -1268,7 +1278,7 @@ function HomepageAssetsSection({
         <div
           className="grid gap-3"
           style={{
-            gridTemplateColumns: isMobile ? '1fr 1fr' : 'repeat(4, 1fr)',
+            gridTemplateColumns: isMobile ? '1fr 1fr' : 'repeat(auto-fill, minmax(200px, 1fr))',
           }}
         >
           {HOMEPAGE_CARD_SLOTS.map((card: HomepageCardSlot) => (
@@ -1302,7 +1312,7 @@ function HomepageAssetsSection({
         <div
           className="grid gap-3"
           style={{
-            gridTemplateColumns: isMobile ? '1fr' : 'repeat(auto-fill, minmax(260px, 1fr))',
+            gridTemplateColumns: isMobile ? '1fr 1fr' : 'repeat(auto-fill, minmax(200px, 1fr))',
           }}
         >
           {agentSlots.map((agent: HomepageAgentSlot) => {
@@ -1406,7 +1416,7 @@ function MarketplaceAssetsSection({
           海鲜市场整页的大气海报背景。建议 1920×1080 以上、深色海洋主题（深蓝 / 青绿 / 暗夜色），图片会叠一层半透明暗色保证卡片可读性。
           未上传时使用内置深海蓝渐变。
         </p>
-        <div className="grid grid-cols-1 gap-3">
+        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3">
           {MARKETPLACE_BG_SLOTS.map((bg: MarketplaceBgSlot) => (
             <HomepageSlotTile
               key={bg.slot}
@@ -1420,6 +1430,42 @@ function MarketplaceAssetsSection({
               previewAspect="16 / 9"
               onUpload={() => onUpload(bg.slot, 'image/*')}
               onDelete={() => onDelete(bg.slot)}
+            />
+          ))}
+        </div>
+      </GlassCard>
+
+      {/* 演示视频：通用基础设施分区，所有功能都可以往 DEMO_VIDEO_SLOTS 登记 */}
+      <GlassCard animated glow className="overflow-hidden">
+        <div className="flex items-center justify-between gap-3 mb-4">
+          <SectionTitle
+            icon={<VideoIcon size={16} />}
+            title="演示视频"
+            badge={`${DEMO_VIDEO_SLOTS.length} 条`}
+          />
+          <Button variant="ghost" size="xs" onClick={onReload} disabled={loading}>
+            {loading ? '加载中…' : '刷新'}
+          </Button>
+        </div>
+        <p className="text-[12px] mb-4" style={{ color: 'var(--text-muted)' }}>
+          通用「演示视频」槽位 —— 各功能在流程关键步骤上方嵌入一段实操录屏，消除
+          用户"点下一步会发生什么"的困惑。支持 MP4 / WebM，推荐 16:9、≤ 20 MB。
+          未上传时前端显示静态占位卡，不影响功能可用性。
+        </p>
+        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3">
+          {DEMO_VIDEO_SLOTS.map((demo: DemoVideoSlot) => (
+            <HomepageSlotTile
+              key={demo.slot}
+              slot={demo.slot}
+              label={demo.label}
+              hint={demo.hint}
+              asset={assets[demo.slot]}
+              cacheBust={cacheBust}
+              uploading={uploadingId === `homepage::${demo.slot}`}
+              accept="video/*"
+              previewAspect="16 / 9"
+              onUpload={() => onUpload(demo.slot, 'video/*')}
+              onDelete={() => onDelete(demo.slot)}
             />
           ))}
         </div>
@@ -1587,5 +1633,209 @@ function HomepageSlotTile({
         </div>
       </div>
     </div>
+  );
+}
+
+// ==================== 海报设计 Section ====================
+// 用户视角:海报是"资源产物"(图文集 + 主页弹窗),不是智能体。
+// 这里做极简:列出所有草稿 / 已发布海报,点卡片回到 AI 工坊继续编辑,或直接点「新建」。
+
+function PosterDesignSection() {
+  const navigate = useNavigate();
+  const [items, setItems] = useState<WeeklyPoster[]>([]);
+  const [loading, setLoading] = useState(false);
+
+  const refresh = async () => {
+    setLoading(true);
+    const res = await listWeeklyPosters({ pageSize: 50 });
+    setLoading(false);
+    if (res.success && res.data) setItems(res.data.items);
+  };
+  useEffect(() => { void refresh(); }, []);
+
+  const openWizard = (id?: string) => {
+    navigate(id ? `/weekly-poster?id=${encodeURIComponent(id)}` : '/weekly-poster');
+  };
+
+  const onDelete = async (id: string) => {
+    if (!window.confirm('确定删除这张海报?此操作不可撤销。')) return;
+    const res = await deleteWeeklyPoster(id);
+    if (res.success) void refresh();
+  };
+  const onUnpublish = async (id: string) => {
+    const res = await unpublishWeeklyPoster(id);
+    if (res.success) void refresh();
+  };
+
+  return (
+    <GlassCard>
+      <div className="p-5">
+        <div className="flex items-center justify-between mb-4">
+          <SectionTitle icon={<Sparkles size={16} />} title="海报设计" badge={`${items.length} 张`} />
+          <div className="flex items-center gap-2">
+            <Link
+              to="/weekly-poster/advanced"
+              className="inline-flex items-center gap-1 px-3 h-8 rounded-md text-[12px] transition-colors hover:bg-white/10"
+              style={{
+                color: 'rgba(255,255,255,0.7)',
+                background: 'rgba(255,255,255,0.04)',
+                border: '1px solid rgba(255,255,255,0.12)',
+              }}
+            >
+              高级编辑
+            </Link>
+            <button
+              type="button"
+              onClick={() => openWizard()}
+              className="inline-flex items-center gap-1 px-3 h-8 rounded-md text-[12px] font-medium text-white transition-colors"
+              style={{
+                background: 'rgba(255,255,255,0.12)',
+                border: '1px solid rgba(255,255,255,0.22)',
+              }}
+            >
+              <Plus size={12} /> 新建海报
+            </button>
+          </div>
+        </div>
+
+        <div className="text-[12px] mb-4" style={{ color: 'var(--text-muted)' }}>
+          海报是主页弹窗使用的图文集 — AI 工坊选模板 + 数据源一键生成,末页 CTA 可跳转任意链接(周报 / 公告 / 活动页)。
+          点击列表里的草稿可以回到工坊继续完善配图;已发布的可以撤回为草稿重新编辑。
+        </div>
+
+        {loading ? (
+          <div className="text-center py-8 text-[12px]" style={{ color: 'var(--text-muted)' }}>加载中…</div>
+        ) : items.length === 0 ? (
+          <div
+            className="text-center py-10 rounded-xl"
+            style={{
+              background: 'rgba(255,255,255,0.02)',
+              border: '1px dashed rgba(255,255,255,0.12)',
+              color: 'rgba(255,255,255,0.55)',
+            }}
+          >
+            <div className="text-[14px] mb-2">还没有海报</div>
+            <button
+              type="button"
+              onClick={() => openWizard()}
+              className="inline-flex items-center gap-1 px-4 h-9 rounded-md text-[13px] font-medium text-white"
+              style={{
+                background: 'rgba(255,255,255,0.12)',
+                border: '1px solid rgba(255,255,255,0.22)',
+              }}
+            >
+              <Plus size={13} /> 去 AI 工坊建第一张
+            </button>
+          </div>
+        ) : (
+          <div
+            className="grid gap-3"
+            style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))' }}
+          >
+            {items.map((item) => {
+              const cover = item.pages?.find((p) => !!p.imageUrl)?.imageUrl;
+              const accent = item.pages?.[0]?.accentColor || '#7c3aed';
+              const statusLabel =
+                item.status === 'published' ? '已发布'
+                : item.status === 'archived' ? '已归档'
+                : '草稿';
+              const statusColor =
+                item.status === 'published' ? '#86efac'
+                : item.status === 'archived' ? '#94a3b8'
+                : '#fde68a';
+              return (
+                <div
+                  key={item.id}
+                  className="rounded-xl overflow-hidden flex flex-col transition-all hover:-translate-y-0.5"
+                  style={{
+                    background: 'rgba(255,255,255,0.03)',
+                    border: '1px solid rgba(255,255,255,0.08)',
+                  }}
+                >
+                  <button
+                    type="button"
+                    onClick={() => openWizard(item.id)}
+                    className="relative text-left"
+                    style={{
+                      aspectRatio: '16/10',
+                      background: cover ? '#0a0a12' : `linear-gradient(135deg, ${accent} 0%, #0a0a12 100%)`,
+                    }}
+                  >
+                    {cover && (
+                      <img src={cover} alt="" className="absolute inset-0 w-full h-full object-cover" draggable={false} />
+                    )}
+                    <span
+                      className="absolute top-2 left-2 text-[9px] px-1.5 py-0.5 rounded font-semibold tracking-wide uppercase"
+                      style={{
+                        background: 'rgba(0,0,0,0.5)',
+                        color: statusColor,
+                        border: `1px solid ${statusColor}40`,
+                      }}
+                    >
+                      {statusLabel}
+                    </span>
+                    <span
+                      className="absolute top-2 right-2 text-[10px] px-1.5 py-0.5 rounded"
+                      style={{ background: 'rgba(0,0,0,0.5)', color: 'rgba(255,255,255,0.7)' }}
+                    >
+                      {item.pages?.length ?? 0} 页
+                    </span>
+                  </button>
+                  <div className="p-3 flex flex-col gap-1">
+                    <div className="text-[13px] font-semibold text-white truncate">
+                      {item.title || '未命名海报'}
+                    </div>
+                    <div className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
+                      {item.weekKey} · {new Date(item.updatedAt).toLocaleDateString('zh-CN')}
+                    </div>
+                    <div className="flex items-center gap-1.5 mt-2">
+                      <button
+                        type="button"
+                        onClick={() => openWizard(item.id)}
+                        className="flex-1 inline-flex items-center justify-center gap-1 h-7 rounded text-[11px] transition-colors hover:bg-white/10"
+                        style={{
+                          color: 'rgba(255,255,255,0.85)',
+                          background: 'rgba(255,255,255,0.04)',
+                          border: '1px solid rgba(255,255,255,0.12)',
+                        }}
+                      >
+                        打开
+                      </button>
+                      {item.status === 'published' && (
+                        <button
+                          type="button"
+                          onClick={() => void onUnpublish(item.id)}
+                          className="inline-flex items-center justify-center px-2 h-7 rounded text-[11px] transition-colors hover:bg-white/10"
+                          style={{
+                            color: 'rgba(255,255,255,0.7)',
+                            background: 'rgba(255,255,255,0.04)',
+                            border: '1px solid rgba(255,255,255,0.12)',
+                          }}
+                        >
+                          撤回
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        onClick={() => void onDelete(item.id)}
+                        aria-label="删除"
+                        className="inline-flex items-center justify-center w-7 h-7 rounded text-[11px] transition-colors hover:bg-rose-500/15"
+                        style={{
+                          color: '#fda4af',
+                          background: 'rgba(244,63,94,0.08)',
+                          border: '1px solid rgba(244,63,94,0.25)',
+                        }}
+                      >
+                        <Trash2 size={11} />
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+    </GlassCard>
   );
 }

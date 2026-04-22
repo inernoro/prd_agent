@@ -68,7 +68,7 @@ export function SignatureCinema({ className, src, poster, caption }: SignatureCi
           <Reveal>
             <div
               className="inline-block text-[11px] uppercase text-cyan-300/80 mb-4"
-              style={{ letterSpacing: '0.32em', fontFamily: 'var(--font-mono)' }}
+              style={{ letterSpacing: '0.32em', fontFamily: 'var(--font-terminal)' }}
             >
               {t.cinema.eyebrow}
             </div>
@@ -136,7 +136,7 @@ export function SignatureCinema({ className, src, poster, caption }: SignatureCi
           {/* 右下署名 */}
           <div
             className="absolute bottom-5 right-6 text-[10px] text-white/50 uppercase"
-            style={{ letterSpacing: '0.24em', fontFamily: 'var(--font-mono)' }}
+            style={{ letterSpacing: '0.24em', fontFamily: 'var(--font-terminal)' }}
           >
             {caption ?? t.cinema.caption}
           </div>
@@ -186,7 +186,7 @@ function PosterFallback({ poster, comingSoon }: { poster?: string; comingSoon: s
         </div>
         <div
           className="text-[11px] uppercase text-white/60"
-          style={{ letterSpacing: '0.32em', fontFamily: 'var(--font-mono)' }}
+          style={{ letterSpacing: '0.32em', fontFamily: 'var(--font-terminal)' }}
         >
           {comingSoon}
         </div>

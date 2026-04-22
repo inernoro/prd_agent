@@ -2,7 +2,8 @@
 <html lang="zh-CN">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <!-- 2026-04-22：移除 maximum-scale/user-scalable，允许用户双指缩放（可访问性）。 -->
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
   <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
   <meta http-equiv="Pragma" content="no-cache">
   <meta http-equiv="Expires" content="0">
@@ -529,13 +530,14 @@
       flex: 1;
       min-height: 0;
       overflow-y: auto;
-      background: #0a0a0f;
+      /* 2026-04-22：bg+color 走 token，白天/黑夜自动翻转。不再 hardcoded #0a0a0f */
+      background: var(--bg-terminal);
       border: 1px solid var(--card-border);
       border-radius: 8px;
       padding: 10px 12px;
       font-family: var(--font-mono, monospace);
       font-size: 11px;
-      color: #9ca3af;
+      color: var(--text-secondary);
       line-height: 1.55;
       white-space: pre-wrap;
       word-break: break-word;
@@ -958,13 +960,178 @@
       }
       .cds-main { padding: 24px 20px 40px; }
     }
+
+    /* 2026-04-22：≤640px 小屏专属布局
+     * 问题：
+     *   - sidebar 展开时占一屏（logo/工作区卡/导航/用户卡 四段纵向）
+     *   - 主标题行「+ 新建项目」按钮被挤出视口
+     * 方案（不影响 PC/≤900px 中屏）：
+     *   - sidebar 挤成紧凑顶部条：logo + 工作区名 + 用户头像 一行
+     *   - 导航压成一排 chip
+     *   - 用户卡折叠成右侧小头像，popover 保留
+     *   - 主标题行 flex-wrap，CTA 独占第二行 */
+    @media (max-width: 640px) {
+      .cds-sidebar {
+        padding: 10px 12px;
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+      }
+      /* logo 行：logo + theme + 工作区名 + 用户头像 挤一行 */
+      .cds-logo-row {
+        padding: 0 0 8px;
+        margin-bottom: 0;
+        gap: 8px;
+      }
+      .cds-logo span { font-size: 12px; }
+      /* 工作区卡 → 内联小胶囊（降低视觉权重） */
+      .cds-workspace {
+        padding: 6px 10px;
+        background: transparent;
+        border: 1px solid var(--border-light, rgba(255,255,255,0.06));
+      }
+      .cds-workspace-avatar { width: 22px; height: 22px; font-size: 11px; }
+      .cds-workspace-name { font-size: 11px; }
+      .cds-workspace-sub { display: none; }
+      /* 导航 chip 化：水平排列 */
+      .cds-nav {
+        flex-direction: row;
+        flex-wrap: wrap;
+        gap: 6px;
+        margin-top: 0;
+      }
+      .cds-nav-item {
+        padding: 6px 12px;
+        font-size: 12px;
+        border-radius: 999px;
+        background: var(--bg-card);
+        border: 1px solid var(--card-border);
+      }
+      /* 用户卡收紧高度，保留 popover 触发 */
+      .cds-user-card {
+        margin-top: 0;
+        padding: 6px 10px;
+        padding-top: 6px;
+        border-top: none;
+        border: 1px solid var(--border-light, rgba(255,255,255,0.06));
+        border-radius: 8px;
+      }
+      .cds-user-avatar { width: 24px; height: 24px; font-size: 11px; }
+      .cds-user-name { font-size: 11px; }
+
+      /* 主内容区 */
+      .cds-main { padding: 16px 14px 32px; }
+      /* 标题行换行：标题独占第一行，工具栏换到第二行 */
+      .cds-main-header {
+        flex-wrap: wrap;
+        gap: 10px;
+        margin-bottom: 8px;
+      }
+      .cds-main-title { font-size: 20px; width: 100%; }
+      .cds-main-actions {
+        width: 100%;
+        gap: 6px;
+        flex-wrap: wrap;
+      }
+      /* 主 CTA 保持显眼但缩短 padding，不再被裁掉 */
+      button.btn-primary-solid {
+        padding: 8px 14px;
+        font-size: 12px;
+        flex-shrink: 0;
+      }
+      /* 工具栏折行 */
+      .cds-toolbar {
+        flex-wrap: wrap;
+        gap: 8px;
+        padding: 10px 0;
+      }
+
+      /* 项目卡技术栈图标压扁：120px → 64px，释放元信息/操作区垂直空间 */
+      .cds-service-strip {
+        height: 64px;
+        gap: 8px;
+        border-radius: 8px;
+      }
+      .cds-service-tile {
+        width: 34px;
+        height: 34px;
+        border-radius: 7px;
+      }
+      .cds-service-tile svg { width: 16px; height: 16px; }
+      .cds-service-tile.more { font-size: 10px; }
+
+      /* ══ 2026-04-22 ☰ 菜单折叠：手机端默认收起 sidebar 内容 ══
+       * 用户反馈：首屏一半被 logo/workspace/nav/user 占满。
+       * 改为：默认只露 logo 行，点 ☰ 展开。桌面端 (>640px) 永远展开。 */
+      .cds-mobile-menu-btn {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        /* 2026-04-22：按钮尺寸和图标尺寸必须成比例（≥55%），否则按钮显得"空"。
+         * 40px 按钮配 22px 图标 = 55%，满足触控 44px 友好度和视觉权重。
+         * 见 cds/CLAUDE.md「按钮图标尺寸」规则。 */
+        width: 40px;
+        height: 40px;
+        border-radius: 10px;
+        border: 1px solid var(--card-border);
+        background: var(--bg-card);
+        color: var(--text-secondary);
+        cursor: pointer;
+        flex-shrink: 0;
+        transition: background 120ms ease, border-color 120ms ease;
+      }
+      .cds-mobile-menu-btn svg { width: 22px; height: 22px; }
+      .cds-mobile-menu-btn:hover {
+        background: var(--bg-elevated);
+        border-color: var(--accent-border);
+      }
+      .cds-sidebar-collapsible {
+        max-height: 0;
+        /* 2026-04-22 fix 顶部大片空白：父 .cds-sidebar 是 flex column，
+         * 弹性子默认 min-height:auto，会阻止 max-height:0 真正收缩。
+         * 必须显式 min-height:0 —— 见 .claude/rules/frontend-modal.md 第 3 条。 */
+        min-height: 0;
+        overflow: hidden;
+        transition: max-height 260ms cubic-bezier(0.4, 0, 0.2, 1);
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+      }
+      .cds-sidebar.mobile-open .cds-sidebar-collapsible {
+        max-height: 480px;  /* 足够容纳 workspace + nav + user 卡三段 */
+      }
+      .cds-sidebar.mobile-open .cds-mobile-menu-btn {
+        background: var(--bg-elevated);
+        border-color: var(--accent);
+        color: var(--accent);
+      }
+    }
+
+    /* 桌面端 (>640px)：隐藏 ☰ 按钮，sidebar 内容永远展开 */
+    @media (min-width: 641px) {
+      .cds-mobile-menu-btn { display: none !important; }
+      .cds-sidebar-collapsible {
+        /* 重置 max-height 防止被手机端规则残留 */
+        max-height: none;
+        display: contents;  /* 透明化：直接 hoist 子元素到 .cds-sidebar 的 flex column */
+      }
+    }
   </style>
 </head>
 <body>
   <div class="cds-shell">
     <!-- ───── Sidebar ───── -->
-    <aside class="cds-sidebar">
+    <aside class="cds-sidebar" id="cdsSidebar">
       <div class="cds-logo-row">
+        <!-- 2026-04-22 手机端 ☰：点击展开/收起底下的 workspace/nav/user 区。
+             桌面端默认 display:none（在 .cds-mobile-menu-btn 里定义）。 -->
+        <button class="cds-mobile-menu-btn" id="cdsMobileMenuBtn"
+          type="button" title="菜单" aria-label="菜单" aria-expanded="false"
+          onclick="_toggleCdsSidebar(event)">
+          <svg width="18" height="18" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
+            <path d="M1 2.75A.75.75 0 011.75 2h12.5a.75.75 0 010 1.5H1.75A.75.75 0 011 2.75zm0 5A.75.75 0 011.75 7h12.5a.75.75 0 010 1.5H1.75A.75.75 0 011 7.75zM1.75 12a.75.75 0 000 1.5h12.5a.75.75 0 000-1.5H1.75z"/>
+          </svg>
+        </button>
         <div class="cds-logo">
           <div class="cds-logo-mark">C</div>
           <span>Cloud Dev Suite</span>
@@ -977,6 +1144,8 @@
         </button>
       </div>
 
+      <!-- 2026-04-22：手机端默认收起，点 ☰ 展开。桌面端永远展开（CSS 里重置）。 -->
+      <div class="cds-sidebar-collapsible">
       <div class="cds-workspace">
         <div class="cds-workspace-avatar" id="wsAvatar">S</div>
         <div class="cds-workspace-meta">
@@ -1027,6 +1196,7 @@
           </button>
         </div>
       </div>
+      </div><!-- /.cds-sidebar-collapsible -->
     </aside>
 
     <!-- ───── Main content ───── -->

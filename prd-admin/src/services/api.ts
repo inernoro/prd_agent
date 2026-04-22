@@ -735,6 +735,21 @@ export const api = {
     byId: (id: string) => `/api/marketplace/skills/${id}`,
   },
 
+  // ============ Agent API Keys 开放接口凭据（供 AI / Agent 调用本平台开放接口） ============
+  agentApiKeys: {
+    list: () => '/api/agent-api-keys',
+    create: () => '/api/agent-api-keys',
+    update: (id: string) => `/api/agent-api-keys/${id}`,
+    renew: (id: string) => `/api/agent-api-keys/${id}/renew`,
+    revoke: (id: string) => `/api/agent-api-keys/${id}/revoke`,
+    byId: (id: string) => `/api/agent-api-keys/${id}`,
+  },
+
+  // ============ Official Skills 平台官方技能包（findmapskills：海鲜市场全操作） ============
+  officialSkills: {
+    download: (skillKey: string) => `/api/official-skills/${skillKey}/download`,
+  },
+
   // ============ Model Sizes ============
   modelSizes: (modelKey: string) => `/api/model/${modelKey}/sizes`,
 

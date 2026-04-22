@@ -83,6 +83,23 @@ public class MarketplaceSkill : IMarketplaceItem
     /// <summary>收藏者 userId 列表</summary>
     public List<string> FavoritedByUserIds { get; set; } = new();
 
+    // === P3 基础设施：Agent 开放接口引用 ===
+
+    /// <summary>
+    /// 条目类型：
+    /// - `zip`（默认）：用户上传的技能 zip 包，ZipUrl / ZipKey 必填
+    /// - `open-api-reference`：由 <see cref="AgentOpenEndpoint"/> 自动桥接出的"引用条目"。
+    ///   Fork 不下载 zip，而是返回 Agent 开放接口调用示例 —— 这样用户在海鲜市场
+    ///   也能发现 Agent 开放能力，而不是只有 zip 技能。
+    /// </summary>
+    public string ReferenceType { get; set; } = "zip";
+
+    /// <summary>
+    /// 当 ReferenceType == `open-api-reference` 时，指向关联的 AgentOpenEndpoint.Id。
+    /// 该条目失效（Endpoint 删除 / 停用）时由桥接服务负责清理这条技能。
+    /// </summary>
+    public string? ReferenceEndpointId { get; set; }
+
     // === IMarketplaceItem 契约 ===
 
     public bool IsPublic { get; set; } = true;

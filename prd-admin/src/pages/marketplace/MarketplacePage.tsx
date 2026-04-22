@@ -13,7 +13,7 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { MapSectionLoader } from '@/components/ui/VideoLoader';
 import { useSearchParams, useNavigate } from 'react-router-dom';
-import { ArrowLeft, Clock, Hash, Search, Store, TrendingUp, UploadCloud } from 'lucide-react';
+import { ArrowLeft, Clock, Hash, Search, Store, TrendingUp, UploadCloud, Zap } from 'lucide-react';
 import { MarketplaceCard } from '@/components/marketplace/MarketplaceCard';
 import { Button } from '@/components/design/Button';
 import {
@@ -28,6 +28,7 @@ import { toast } from '@/lib/toast';
 import { getMarketplaceSkillTags } from '@/services';
 import { useHomepageAssetsStore, useMarketplaceBgUrl } from '@/stores/homepageAssetsStore';
 import { SkillUploadDialog } from './SkillUploadDialog';
+import { SkillOpenApiDialog } from './SkillOpenApiDialog';
 
 type SortMode = 'hot' | 'new';
 
@@ -49,6 +50,7 @@ export const MarketplacePage: React.FC = () => {
   const [tagFilter, setTagFilter] = useState<string>('');
   const [skillTags, setSkillTags] = useState<Array<{ tag: string; count: number }>>([]);
   const [uploadOpen, setUploadOpen] = useState(false);
+  const [openApiOpen, setOpenApiOpen] = useState(false);
 
   // 海报背景：资源管理里上传的 `marketplace.bg.hero`，未上传走内置深海蓝渐变
   const loadHomepageAssets = useHomepageAssetsStore((s) => s.load);
@@ -333,6 +335,22 @@ export const MarketplacePage: React.FC = () => {
               </button>
             </div>
 
+            {/* 接入 AI（开放接口凭据管理）：让外部 AI / Agent 可授权式调用海鲜市场 */}
+            <button
+              type="button"
+              onClick={() => setOpenApiOpen(true)}
+              className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-medium transition-all"
+              style={{
+                background: 'rgba(56, 189, 248, 0.12)',
+                border: '1px solid rgba(56, 189, 248, 0.3)',
+                color: 'rgba(186, 230, 253, 1)',
+              }}
+              title="为 AI / Agent 生成长效 API Key，让它们可以浏览、下载、上传本市场的技能"
+            >
+              <Zap size={13} />
+              接入 AI
+            </button>
+
             {/* 上传技能按钮（常驻）：点亮 Skill Tab 场景最核心的 CTA */}
             <Button variant="primary" size="sm" onClick={() => setUploadOpen(true)}>
               <UploadCloud size={13} />
@@ -476,6 +494,8 @@ export const MarketplacePage: React.FC = () => {
           }}
         />
       )}
+
+      {openApiOpen && <SkillOpenApiDialog onClose={() => setOpenApiOpen(false)} />}
     </div>
   );
 };

@@ -1,0 +1,3 @@
+| feat | prd-admin | 移动端首页页面级复刻苹果 App Store Today：新增 appStoreTokens 设计体系（字号 9 档 + 间距阶梯 + iOS Dark Mode 系统色 + SF Pro 字体栈），新增 mobile/appStore 组件集（Hero / Featured / Shelf / RankedList / SectionHeader / Pill / AppIcon / Section） |
+| feat | prd-admin | MobileHomePage 重写：Hero 大标题（日期 eyebrow + 34px 粗体问候 + 头像带通知红点）、Featured 大卡（今日推荐 Agent，复用 AGENT_COVER_DEFAULTS 封面图）、智能体横滑卡片（iOS Dark Mode 系统色 Accent 搭配每个 Agent）、工具 Top 榜单（编号 + 细分隔线）、极简 4 卡近 7 日统计、通知 / Feed 榜单风 |
+| refactor | prd-admin | AppShell 移动端首页 header 透明化：隐藏中间标题与右侧铃铛（已由 Hero 头像红点承担），避免和页面内 Hero 标题视觉冲突 |

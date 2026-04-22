@@ -111,6 +111,8 @@
 | `document_store_agent_runs` | `DocumentStoreAgentRun` | 知识库 Agent 任务（`Kind`: subtitle 字幕生成 / reprocess 文档再加工）。含 Run 状态机、流式产物、模板 key、自定义提示词 | （按 `SourceEntryId`、`Kind`、`Status` 查询；事件流走 `IRunEventStore`） |
 | `document_store_view_events` | `DocumentStoreViewEvent` | 知识库浏览事件（谁访问了哪篇文档、停留多久）。含匿名访客 `AnonSessionToken`、`EnteredAt`、`LeftAt`、`DurationMs`、`UserAgent`、`Referer` | （按 `StoreId`、`EnteredAt desc` 查询） |
 | `document_inline_comments` | `DocumentInlineComment` | 文档划词评论（按 `SelectedText + ContextBefore/After` 锚定，非整章评论）。`Status`: active/orphaned；正文更新时由 `InlineCommentRebinder.TryRebind` 重锚定 | （按 `EntryId`、`CreatedAt` 查询） |
+| `agent_api_keys` | `AgentApiKey` | 海鲜市场开放接口 / Agent 开放入口的 M2M 长效 API Key。关键字段：`ApiKeyHash`（SHA256，不存明文）+ `KeyPrefix`（明文前 12 字符仅用于 UI 识别）+ `Scopes: List<string>`（`marketplace.skills:read/write` 或动态 `agent.{key}:{action}`）+ `ExpiresAt`（可为 null；默认 365 天；过期后有 7 天 `GracePeriodDays` 宽限期仍放行）+ `RevokedAt`（非空即失效）+ `LastRenewedAt/LastUsedAt`（审计）+ `OwnerUserId`（调用时以该用户身份执行） | 按 `ApiKeyHash` 查询（鉴权）；按 `OwnerUserId` 查询（用户管理） |
+| `agent_open_endpoints` | `AgentOpenEndpoint` | P3 Agent 开放接口登记。每条描述"某个 Agent 在路径 Y 开放 HTTP 接口，需 scope Z 调用"。关键字段：`AgentKey`（kebab-case，对齐 `toolboxStore.BUILTIN_TOOLS`）+ `HttpMethod` + `Path`（绝对路径）+ `RequiredScopes: List<string>`（正则 `agent.{key}:{action}`）+ `AllowedCallerUserIds`（反向白名单，空=公开给所有持 scope 的 Key）+ `RequestExampleJson/ResponseExampleJson`（给前端渲染调用示例）+ `LinkedMarketplaceSkillId`（P3 桥接目标，已占位、自动桥接逻辑待后续实现） | 按 `AgentKey` 查询；按 `RequiredScopes` 反查（用于 scope 白名单校验） |
 
 ---
 

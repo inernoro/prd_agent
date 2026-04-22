@@ -102,7 +102,21 @@ export const MarketplaceCard: React.FC<MarketplaceCardProps> = ({
                 {displayName}
               </div>
             </div>
-            {/* 类型标签 */}
+            {/* 官方徽章（ownerUserId === 'official' 时，替代类型标签更显眼） */}
+            {item.data.ownerUserId === 'official' ? (
+              <span
+                className="text-[9px] px-1.5 py-0.5 rounded-full font-medium flex-shrink-0 inline-flex items-center gap-0.5"
+                style={{
+                  background: 'rgba(56, 189, 248, 0.18)',
+                  color: 'rgba(186, 230, 253, 1)',
+                  border: '1px solid rgba(56, 189, 248, 0.4)',
+                }}
+                title="PrdAgent 官方内置技能，随平台版本滚动更新"
+              >
+                🛡️ 官方
+              </span>
+            ) : (
+            /* 类型标签 */
             <span
               className="text-[9px] px-1.5 py-0.5 rounded-full font-medium flex-shrink-0"
               style={{
@@ -113,6 +127,7 @@ export const MarketplaceCard: React.FC<MarketplaceCardProps> = ({
             >
               {typeDef.label}
             </span>
+            )}
           </div>
         </div>
 

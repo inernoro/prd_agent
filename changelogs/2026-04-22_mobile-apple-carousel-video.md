@@ -1,0 +1,1 @@
+| feat | prd-admin | 移动端首页第二轮苹果 Today 复刻对标：Hero 只保留"今日"单词（扔问候/姓名/日期/副标）；头像挪回 AppShell 右上角 header；Featured 改 3:4 海报级全屏轮播（5 张 snap-x）；视频背景（AGENT_VIDEO_DEFAULTS） + poster 图兜底 + mesh 渐变三级 fallback；只激活张自动播放省带宽；底部小点 page indicator；卡片副标限 1 行，Section caption 全部删除 |

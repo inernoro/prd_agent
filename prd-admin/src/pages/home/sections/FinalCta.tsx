@@ -35,7 +35,7 @@ export function FinalCta({ onGetStarted, onContact }: FinalCtaProps) {
           <div
             className="inline-flex items-center gap-2 mb-7 px-3.5 py-1.5 rounded-md"
             style={{
-              fontFamily: 'var(--font-mono)',
+              fontFamily: 'var(--font-terminal)',
               background: 'rgba(244, 63, 94, 0.06)',
               border: '1px solid rgba(244, 63, 94, 0.32)',
               boxShadow: '0 0 22px rgba(244, 63, 94, 0.25)',
