@@ -61,6 +61,20 @@ public class AiToolboxController : ControllerBase
         User.FindFirst("name")?.Value;
 
     /// <summary>
+    /// 查找"对当前用户可见"的智能体：自己创建的，或被创建者公开过的。
+    /// 读取/运行/开新会话都走这个可见性口径；编辑/删除/发布仍走 CreatedByUserId == userId 严格闸。
+    /// </summary>
+    private async Task<ToolboxItem?> FindVisibleItemAsync(string id, string userId, CancellationToken ct)
+    {
+        var filter = Builders<ToolboxItem>.Filter.And(
+            Builders<ToolboxItem>.Filter.Eq(x => x.Id, id),
+            Builders<ToolboxItem>.Filter.Or(
+                Builders<ToolboxItem>.Filter.Eq(x => x.CreatedByUserId, userId),
+                Builders<ToolboxItem>.Filter.Eq(x => x.IsPublic, true)));
+        return await _db.ToolboxItems.Find(filter).FirstOrDefaultAsync(ct);
+    }
+
+    /// <summary>
     /// 发送消息到百宝箱
     /// 自动识别意图并路由到合适的 Agent
     /// </summary>
@@ -456,9 +470,10 @@ public class AiToolboxController : ControllerBase
     public async Task<IActionResult> GetItem(string id, CancellationToken ct)
     {
         var userId = GetUserId();
-        var item = await _db.ToolboxItems.Find(x => x.Id == id && x.CreatedByUserId == userId).FirstOrDefaultAsync(ct);
+        // 读取口径：自己的 + 他人公开的都能看到详情（否则"公开"毫无意义）
+        var item = await FindVisibleItemAsync(id, userId, ct);
         if (item == null)
-            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "工具不存在"));
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "工具不存在或未公开"));
 
         return Ok(ApiResponse<ToolboxItem>.Ok(item));
     }
@@ -653,9 +668,10 @@ public class AiToolboxController : ControllerBase
     public async Task<IActionResult> RunItem(string id, [FromBody] RunToolboxItemRequest request, CancellationToken ct)
     {
         var userId = GetUserId();
-        var item = await _db.ToolboxItems.Find(x => x.Id == id && x.CreatedByUserId == userId).FirstOrDefaultAsync(ct);
+        // 运行口径：自己的 + 他人公开的都能运行；使用次数落在 item 上，与 run 的 UserId 分离
+        var item = await FindVisibleItemAsync(id, userId, ct);
         if (item == null)
-            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "工具不存在"));
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "工具不存在或未公开"));
 
         // 增加使用次数
         await _db.ToolboxItems.UpdateOneAsync(
@@ -725,13 +741,13 @@ public class AiToolboxController : ControllerBase
     {
         var userId = GetUserId();
 
-        // 验证智能体存在
-        var item = await _db.ToolboxItems.Find(x => x.Id == itemId && x.CreatedByUserId == userId).FirstOrDefaultAsync(ct);
+        // 验证智能体存在（自己的 + 他人公开的都允许开会话；会话本身按 (UserId, ItemId) 落库，数据边界不受影响）
+        var item = await FindVisibleItemAsync(itemId, userId, ct);
         if (item == null)
         {
             // 也允许内置 Agent 创建会话（itemId 以 builtin- 开头）
             if (!itemId.StartsWith("builtin-", StringComparison.Ordinal))
-                return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "智能体不存在"));
+                return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "智能体不存在或未公开"));
         }
 
         var session = new ToolboxSession
@@ -1031,9 +1047,10 @@ public class AiToolboxController : ControllerBase
         CancellationToken ct)
     {
         var userId = GetUserId();
-        var item = await _db.ToolboxItems.Find(x => x.Id == id && x.CreatedByUserId == userId).FirstOrDefaultAsync(ct);
+        // 触发口径与运行一致：自己的 + 他人公开的都可以触发（工作流执行记录 UserId=当前用户，与创建者隔离）
+        var item = await FindVisibleItemAsync(id, userId, ct);
         if (item == null)
-            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "智能体不存在"));
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "智能体不存在或未公开"));
 
         if (!item.EnabledTools.Contains("workflowTrigger") || string.IsNullOrWhiteSpace(item.WorkflowId))
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "该智能体未启用工作流能力或未绑定工作流"));
@@ -1112,11 +1129,11 @@ public class AiToolboxController : ControllerBase
         if (!string.IsNullOrWhiteSpace(request.ItemId))
         {
             // 自定义智能体：从 DB 加载配置
-            var item = await _db.ToolboxItems.Find(x => x.Id == request.ItemId && x.CreatedByUserId == userId)
-                .FirstOrDefaultAsync(CancellationToken.None);
+            // 可见性口径：自己创建的 + 他人公开的都允许对话（否则"公开发布"对消费者毫无意义）
+            var item = await FindVisibleItemAsync(request.ItemId, userId, CancellationToken.None);
             if (item == null)
             {
-                await WriteSseEventAsync("error", new { code = "NOT_FOUND", message = "智能体不存在" });
+                await WriteSseEventAsync("error", new { code = "NOT_FOUND", message = "智能体不存在或未公开" });
                 return;
             }
             systemPrompt = item.SystemPrompt;

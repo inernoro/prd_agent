@@ -1,6 +1,6 @@
 import { useRef, useState } from 'react';
 import type { ToolboxItem } from '@/services';
-import { useToolboxStore } from '@/stores/toolboxStore';
+import { useToolboxStore, NEW_BADGE_WINDOW_MS } from '@/stores/toolboxStore';
 import { useNavigate } from 'react-router-dom';
 import { DesktopDownloadDialog } from '@/components/ui/DesktopDownloadDialog';
 import { useAuthStore } from '@/stores/authStore';
@@ -54,8 +54,9 @@ interface ToolCardProps {
   item: ToolboxItem;
   /**
    * 卡片来源：
-   * - 'mine'（默认）：用户自己的工具列表，点击进入详情；自定义工具支持快捷"编辑"
-   * - 'marketplace'：他人公开的工具，点击 = Fork 到自己列表
+   * - 'mine'（默认）：BUILTIN 或用户自己的条目，点击进入详情；自定义工具支持快捷"编辑"
+   * - 'marketplace'：他人公开的条目，点击**打开详情抽屉**（不直接 Fork！）
+   *   用户必须在详情里显式点【创建副本】才会生成 Fork；平时只是"使用别人公开的原件"。
    */
   source?: 'mine' | 'marketplace';
 }
@@ -185,9 +186,10 @@ export function ToolCard({ item, source = 'mine' }: ToolCardProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
 
   const isMarketplaceCard = source === 'marketplace';
-  // 双重判定：有 createdByUserId 也视为用户自建（兼容后端旧数据未返回 type 字段）
+  // 双重判定：有 createdByUserId/createdBy 也视为用户自建（兼容后端旧数据未返回 type 字段）
   const isOwnCustomCard =
-    source === 'mine' && (item.type === 'custom' || !!item.createdBy || !!item.createdByName);
+    source === 'mine' &&
+    (item.type === 'custom' || !!item.createdByUserId || !!item.createdBy || !!item.createdByName);
   /** 新创建但还没公开发布的工具 — 脉动高亮「公开发布」按钮，引导用户完成发布动作 */
   const needsPublishHint = isOwnCustomCard && !item.isPublic && newUnpublishedIds.has(item.id);
   /** 内置但非"定制版"（无独立路由页），可以被克隆为我的副本 */
@@ -197,6 +199,11 @@ export function ToolCard({ item, source = 'mine' }: ToolCardProps) {
     !isOwnCustomCard &&
     !item.routePath &&
     item.agentKey !== 'prd-agent';
+  /** 别人公开 ≤ 7 天内 → 卡片右上角红底 NEW 徽章，帮助用户发现新发布 */
+  const isNewByOthers =
+    isMarketplaceCard &&
+    !!item.createdAt &&
+    Date.now() - new Date(item.createdAt).getTime() < NEW_BADGE_WINDOW_MS;
 
   // 作者名 fallback 策略：
   // 1) 后端返回的 createdByName 优先
@@ -216,10 +223,13 @@ export function ToolCard({ item, source = 'mine' }: ToolCardProps) {
   // 1) 后端返回的 createdByAvatarFileName → resolveAvatarUrl 拼 CDN（公开市场里别人也能显示真头像）
   // 2) 当作者就是当前登录用户时 → authStore.avatarUrl（后端还没回写头像字段的老数据兜底）
   // 3) 首字母圆形块（内置"官方"/旧数据等）
+  // 后端返回的字段是 createdByUserId（从 CreatedByUserId 驼峰化），历史代码里的 createdBy 是
+  // 未被后端填充过的残留字段。两个都对比，确保与当前用户对照能正确判断 isMe。
   const isMe =
     !!currentUser?.userId &&
-    (item.createdBy === currentUser.userId ||
-      (isOwnCustomCard && !item.createdBy));
+    (item.createdByUserId === currentUser.userId ||
+      item.createdBy === currentUser.userId ||
+      (isOwnCustomCard && !item.createdByUserId && !item.createdBy));
   const authorAvatarUrl = item.createdByAvatarFileName
     ? resolveAvatarUrl({ avatarFileName: item.createdByAvatarFileName })
     : isMe
@@ -228,12 +238,23 @@ export function ToolCard({ item, source = 'mine' }: ToolCardProps) {
 
   const handleFork = async () => {
     if (forking) return;
+    // 显式二次确认 —— 避免用户误点"拿来吧"后反复创建副本（反人类设计的历史教训）
+    const ok = window.confirm(
+      `确定要把「${item.name}」复制一份到你的百宝箱吗？\n\n` +
+        `复制后你将拥有独立的副本，可以自由修改提示词、模型等参数；` +
+        `原作者的更新不会再同步给你。\n\n` +
+        `如果只是想使用原版，直接在详情里对话即可，不需要创建副本。`
+    );
+    if (!ok) return;
     setForking(true);
     try {
       const forked = await forkItem(item.id);
       if (forked) {
-        // 跳到「我创建的」让用户立刻看到 Fork 出来的副本
-        setCategory('custom');
+        // 跳到「我的」让用户立刻看到 Fork 出来的副本
+        setCategory('mine');
+        toast.success('已创建副本', '你的副本已出现在「我的」筛选里');
+      } else {
+        toast.error('创建副本失败');
       }
     } finally {
       setForking(false);
@@ -241,11 +262,8 @@ export function ToolCard({ item, source = 'mine' }: ToolCardProps) {
   };
 
   const handleClick = () => {
-    if (isMarketplaceCard) {
-      // 市场卡片：直接 Fork，避免再多一步进详情
-      void handleFork();
-      return;
-    }
+    // 不管卡片是"我的"还是"别人公开的"，点击一律打开详情抽屉 —— 不再偷偷 Fork。
+    // 「创建副本」只能通过详情里或 Fork 按钮显式二次确认后才触发。
     if (item.agentKey === 'prd-agent') {
       setDownloadDialogOpen(true);
       return;
@@ -286,8 +304,10 @@ export function ToolCard({ item, source = 'mine' }: ToolCardProps) {
     const newValue = !item.isPublic;
     if (newValue) {
       const ok = window.confirm(
-        '公开发布后，所有用户都能在百宝箱「公开市场」Tab 看到并 Fork 这个智能体' +
-          '（包含名称、描述、提示词、标签）。\n\n确定要公开发布吗？'
+        '公开发布后，其他用户会在百宝箱首页的「全部 / 别人的」里看到这个智能体' +
+          '（包含名称、描述、提示词、标签；7 天内带 NEW 徽章）。\n\n' +
+          '其他用户默认使用原版（数据存自己名下）；显式「创建副本」才会复制一份。\n\n' +
+          '确定要公开发布吗？'
       );
       if (!ok) return;
     }
@@ -426,6 +446,26 @@ export function ToolCard({ item, source = 'mine' }: ToolCardProps) {
           background: `linear-gradient(180deg, rgba(0,0,0,0) 0%, rgba(0,0,0,0) 40%, rgba(0,0,0,0.85) 75%, rgba(0,0,0,0.95) 100%)`,
         }}
       />
+
+      {/* NEW 徽章 — 别人 7 天内发布的公开条目，左上角红底脉动，帮助用户一眼看到新发布 */}
+      {isNewByOthers && (
+        <div
+          className="absolute top-1.5 left-1.5 z-30 text-[10px] font-bold px-1.5 py-0.5 rounded-md inline-flex items-center gap-0.5 animate-pulse"
+          style={{
+            background: 'linear-gradient(135deg, #ef4444, #dc2626)',
+            color: '#fff',
+            letterSpacing: '0.05em',
+            boxShadow: '0 2px 8px rgba(239, 68, 68, 0.55), 0 0 0 1px rgba(255,255,255,0.2) inset',
+          }}
+          title={`这是一个 ${Math.max(
+            1,
+            Math.round((Date.now() - new Date(item.createdAt).getTime()) / 86400000)
+          )} 天内新发布的公开智能体`}
+        >
+          <Sparkles size={9} />
+          NEW
+        </div>
+      )}
 
       {/* Hover 时顶部边框流光高光边缘 */}
       <div
@@ -648,7 +688,7 @@ export function ToolCard({ item, source = 'mine' }: ToolCardProps) {
                   {authorName}
                 </span>
               </div>
-              {/* 右侧：marketplace 模式显示 Fork 数 + Fork 按钮；自有卡片显示使用次数 + 快捷编辑 + 收藏 */}
+              {/* 右侧：别人公开的（marketplace）显示 Fork 数 +「我要创建副本」按钮；自有卡片显示使用次数 + 快捷编辑 + 收藏 */}
               <div className="flex items-center gap-1.5 shrink-0">
                 {isMarketplaceCard ? (
                   <>
@@ -656,7 +696,7 @@ export function ToolCard({ item, source = 'mine' }: ToolCardProps) {
                       <span
                         className="flex items-center gap-0.5 text-[10px]"
                         style={{ color: 'rgba(255, 255, 255, 0.5)' }}
-                        title="被 Fork 次数"
+                        title="被复制成副本的次数"
                       >
                         <GitFork size={10} style={{ color: palette.soft }} />
                         {item.forkCount}
@@ -664,6 +704,7 @@ export function ToolCard({ item, source = 'mine' }: ToolCardProps) {
                     )}
                     <button
                       onClick={(e) => {
+                        // 显式按钮 + handleFork 自带二次 confirm —— 避免"点一下就偷偷复制"的反人类流程
                         e.stopPropagation();
                         void handleFork();
                       }}
@@ -674,10 +715,10 @@ export function ToolCard({ item, source = 'mine' }: ToolCardProps) {
                         color: palette.soft,
                         border: `1px solid ${palette.from}40`,
                       }}
-                      title="复制到我的百宝箱"
+                      title="显式创建副本到我的百宝箱（会弹窗确认）；只想使用原版的话直接点卡片主体即可"
                     >
                       <GitFork size={11} />
-                      {forking ? 'Fork 中…' : 'Fork'}
+                      {forking ? '复制中…' : '创建副本'}
                     </button>
                   </>
                 ) : (

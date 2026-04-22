@@ -2,7 +2,7 @@ import { useEffect, useMemo } from 'react';
 import { GlassCard } from '@/components/design/GlassCard';
 import { TabBar, type TabBarItem } from '@/components/design/TabBar';
 import { useToolboxStore, type ToolboxCategory, type ToolboxPageTab } from '@/stores/toolboxStore';
-import { Package, Search, Plus, Sparkles, Boxes, User, Wrench, Star, Globe2 } from 'lucide-react';
+import { Package, Search, Plus, Boxes, User, Wrench, Star, Globe2 } from 'lucide-react';
 import { MapSectionLoader } from '@/components/ui/VideoLoader';
 import { Button } from '@/components/design/Button';
 import { useBreakpoint } from '@/hooks/useBreakpoint';
@@ -18,12 +18,16 @@ const PAGE_TABS: TabBarItem[] = [
   { key: 'capabilities', label: '基础能力', icon: <Wrench size={14} /> },
 ];
 
+// 三张筛选卡片（+ 收藏），按"权属"维度组织：
+//   全部   = BUILTIN + 我的 + 别人公开的
+//   我的   = 我自己创建/Fork 的（不含 BUILTIN，BUILTIN 永远可用于所有人）
+//   别人的 = 别人创建并公开的
+// 这样"公开发布"就是让自己的条目出现在其他用户的「全部/别人的」里。
 const CATEGORY_TABS: TabBarItem[] = [
   { key: 'all', label: '全部', icon: <Boxes size={14} /> },
+  { key: 'mine', label: '我的', icon: <User size={14} /> },
+  { key: 'others', label: '别人的', icon: <Globe2 size={14} /> },
   { key: 'favorite', label: '收藏', icon: <Star size={14} /> },
-  { key: 'builtin', label: '内置工具', icon: <Sparkles size={14} /> },
-  { key: 'custom', label: '我创建的', icon: <User size={14} /> },
-  { key: 'marketplace', label: '公开市场', icon: <Globe2 size={14} /> },
 ];
 
 // 页面容器样式 — 页面级不使用 surface 类，保持透明让卡片自身表达玻璃质感
@@ -41,13 +45,10 @@ export default function AiToolboxPage() {
     itemsLoading,
     selectedItem,
     favoriteIds,
-    marketplaceItems,
-    marketplaceLoading,
     setPageTab,
     setCategory,
     setSearchQuery,
     loadItems,
-    loadMarketplaceItems,
     startCreate,
   } = useToolboxStore();
 
@@ -55,37 +56,19 @@ export default function AiToolboxPage() {
     loadItems();
   }, [loadItems]);
 
-  // Lazy-load marketplace when user switches to it; refetch on keyword change.
-  useEffect(() => {
-    if (category !== 'marketplace') return;
-    const handle = window.setTimeout(() => {
-      loadMarketplaceItems(searchQuery.trim() || undefined);
-    }, 250);
-    return () => window.clearTimeout(handle);
-  }, [category, searchQuery, loadMarketplaceItems]);
-
-  const isMarketplace = category === 'marketplace';
-
-  // Filter items based on category and search
+  // Filter items based on ownership category + search
+  // items 已经由 loadItems 预先合并成 BUILTIN + 我的(ownership='mine') + 别人公开的(ownership='others')
   const filteredItems = useMemo(() => {
-    if (isMarketplace) {
-      // Server-side keyword filtering already applied; show as-is.
-      return marketplaceItems;
-    }
-
     let result = items;
 
-    // Filter by category
-    // 注：后端 ToolboxItem 可能没有 type 字段，用 createdBy/createdByName 作为兜底判定
-    const isUserCreated = (it: (typeof items)[number]) =>
-      it.type === 'custom' || !!it.createdBy || !!it.createdByName;
-    if (category === 'builtin') {
-      result = result.filter((item) => item.type === 'builtin' && !isUserCreated(item));
-    } else if (category === 'custom') {
-      result = result.filter(isUserCreated);
+    if (category === 'mine') {
+      result = result.filter((item) => item.ownership === 'mine');
+    } else if (category === 'others') {
+      result = result.filter((item) => item.ownership === 'others');
     } else if (category === 'favorite') {
       result = result.filter((item) => favoriteIds.has(item.id));
     }
+    // category === 'all' 不过滤，展示 BUILTIN + 我的 + 别人公开的
 
     // Filter by search
     if (searchQuery.trim()) {
@@ -99,9 +82,10 @@ export default function AiToolboxPage() {
     }
 
     return result;
-  }, [isMarketplace, marketplaceItems, items, category, searchQuery, favoriteIds]);
+  }, [items, category, searchQuery, favoriteIds]);
 
-  const gridLoading = isMarketplace ? marketplaceLoading : itemsLoading;
+  const gridLoading = itemsLoading;
+  const isOthersCategory = category === 'others';
 
   // Render based on current view
   if (view === 'detail' && selectedItem) {
@@ -209,19 +193,21 @@ export default function AiToolboxPage() {
               <div className="text-sm font-medium mb-0.5" style={{ color: 'rgba(255, 255, 255, 0.8)' }}>
                 {searchQuery
                   ? '没有找到匹配的工具'
-                  : isMarketplace
-                  ? '市场还没有公开的智能体'
+                  : isOthersCategory
+                  ? '还没有其他人公开发布智能体'
+                  : category === 'mine'
+                  ? '你还没有创建过智能体'
                   : '暂无工具'}
               </div>
               <div className="text-xs" style={{ color: 'rgba(255, 255, 255, 0.45)' }}>
                 {searchQuery
                   ? '尝试其他关键词'
-                  : isMarketplace
-                  ? '在「我创建的」里把工具发布到市场，让大家都能 Fork'
+                  : isOthersCategory
+                  ? '等待其他用户把工具发布到市场，公开后会带 NEW 徽章出现在这里'
                   : '点击右上角创建你的第一个智能体'}
               </div>
             </div>
-            {category === 'custom' && !searchQuery && (
+            {category === 'mine' && !searchQuery && (
               <Button variant="primary" size="sm" onClick={startCreate}>
                 <Plus size={13} />
                 创建智能体
@@ -231,7 +217,13 @@ export default function AiToolboxPage() {
         ) : (
           <div className="grid gap-3" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))' }}>
             {filteredItems.map((item) => (
-              <ToolCard key={item.id} item={item} source={isMarketplace ? 'marketplace' : 'mine'} />
+              // source 走 item.ownership：别人公开的 = 'marketplace' 分支（显示 Fork 数/NEW 徽章；点击打开详情抽屉而非直接 Fork）；
+              // 自己或 BUILTIN = 'mine' 分支
+              <ToolCard
+                key={item.id}
+                item={item}
+                source={item.ownership === 'others' ? 'marketplace' : 'mine'}
+              />
             ))}
           </div>
         )}

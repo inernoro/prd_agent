@@ -120,7 +120,8 @@ function validateFile(file: File): string | null {
 }
 
 export function ToolDetail() {
-  const { selectedItem, backToGrid, startEdit, deleteItem, togglePublish } = useToolboxStore();
+  const { selectedItem, backToGrid, startEdit, deleteItem, togglePublish, forkItem, setCategory } = useToolboxStore();
+  const currentUser = useAuthStore((s) => s.user);
   const [input, setInput] = useState('');
   const [isDeleting, setIsDeleting] = useState(false);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -155,6 +156,9 @@ export function ToolDetail() {
 
   // Share state (Agent C)
   const [isSharing, setIsSharing] = useState(false);
+
+  // Fork（创建副本）正在执行 — 需要放在所有 early return 之前，避免违反 Rules of Hooks
+  const [isForking, setIsForking] = useState(false);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -352,8 +356,10 @@ export function ToolDetail() {
     // 公开是面向全体用户的动作，加一次确认避免误点
     if (newValue) {
       const ok = window.confirm(
-        '公开发布后，所有用户都能在百宝箱「公开市场」Tab 看到并 Fork 这个智能体' +
-          '（包含名称、描述、提示词、标签）。\n\n确定要公开发布吗？'
+        '公开发布后，其他用户会在百宝箱首页的「全部 / 别人的」筛选里看到这个智能体' +
+          '（包含名称、描述、提示词、标签；对话 7 天内会带 NEW 徽章）。\n\n' +
+          '其他用户默认使用的是你的原版（数据存在他们自己名下）；只有显式点「创建副本」才会复制一份独立修改。\n\n' +
+          '确定要公开发布吗？'
       );
       if (!ok) return;
     }
@@ -396,9 +402,22 @@ export function ToolDetail() {
 
   const IconComponent = getIconComponent(selectedItem.icon);
   const accentHue = getAccentHue(selectedItem.icon);
-  // 后端 ToolboxItem 可能未返回 type 字段，回退用 createdBy/createdByName 判定是否为用户自建
+  // 后端 ToolboxItem 可能未返回 type 字段，回退用 createdByUserId/createdBy/createdByName 判定是否为用户自建
   const isCustom =
-    selectedItem.type === 'custom' || !!selectedItem.createdBy || !!selectedItem.createdByName;
+    selectedItem.type === 'custom' ||
+    !!selectedItem.createdByUserId ||
+    !!selectedItem.createdBy ||
+    !!selectedItem.createdByName;
+  // 严格"我创建的"判定：用 createdByUserId 对比当前登录用户 — 只有这种情况才能编辑/删除/发布
+  const isMineAuthored =
+    isCustom &&
+    !!currentUser?.userId &&
+    ((selectedItem.createdByUserId && selectedItem.createdByUserId === currentUser.userId) ||
+      (selectedItem.createdBy && selectedItem.createdBy === currentUser.userId) ||
+      // 前端 store 标记兜底：ownership='mine' 时一律视为我的（BUILTIN 没有 ownership，fall through 到下面的分支）
+      selectedItem.ownership === 'mine');
+  // "别人的公开条目"：自定义条目 + 非 BUILTIN + 不是我创建的
+  const isOthersPublic = isCustom && !isMineAuthored;
 
   // Get welcome message and starters from item (custom) or defaults (builtin)
   const welcomeMessage = selectedItem.welcomeMessage || getWelcomeText(selectedItem.agentKey);
@@ -628,6 +647,30 @@ export function ToolDetail() {
     setIsDeleting(false);
   };
 
+  // 消费者显式点击「创建副本」才触发 Fork —— 不再由卡片点击隐式触发，防止反复误操作
+  const handleCreateFork = async () => {
+    if (isForking) return;
+    const ok = window.confirm(
+      `确定要把「${selectedItem.name}」复制一份到你的百宝箱吗？\n\n` +
+        `复制后你将拥有独立的副本，可自由修改提示词、模型等参数；原作者的更新不会再同步给你。\n\n` +
+        `只是想使用原版的话，直接在右侧对话即可，不需要创建副本。`
+    );
+    if (!ok) return;
+    setIsForking(true);
+    try {
+      const forked = await forkItem(selectedItem.id);
+      if (forked) {
+        toast.success('已创建副本', '已切换到「我的」筛选；打开副本即可编辑');
+        setCategory('mine');
+        backToGrid();
+      } else {
+        toast.error('创建副本失败，请稍后重试');
+      }
+    } finally {
+      setIsForking(false);
+    }
+  };
+
   const handleRegenerate = (assistantMsgId: string) => {
     if (isLoading) return;
     const idx = messages.findIndex(m => m.id === assistantMsgId);
@@ -715,7 +758,8 @@ export function ToolDetail() {
                 分享对话
               </Button>
             )}
-            {isCustom ? (
+            {isMineAuthored ? (
+              // 我创建的：可以发布/取消发布、编辑、删除
               <>
                 <Button
                   variant="secondary"
@@ -723,8 +767,8 @@ export function ToolDetail() {
                   onClick={handleTogglePublish}
                   title={
                     isPublic
-                      ? '已公开 — 他人可在「公开市场」Tab 中找到并 Fork 此智能体；点击取消公开'
-                      : '公开到「公开市场」Tab，让其他用户都能看到并 Fork 此智能体'
+                      ? '已公开 — 其他用户在首页的「全部/别人的」筛选里能看到并使用；点击取消公开'
+                      : '公开后其他用户能在首页的「全部/别人的」里看到并直接使用；想复制修改要显式点「创建副本」'
                   }
                   style={isPublic ? { color: '#6ee7b7', borderColor: 'rgba(16, 185, 129, 0.45)' } : undefined}
                 >
@@ -740,7 +784,20 @@ export function ToolDetail() {
                   删除
                 </Button>
               </>
+            ) : isOthersPublic ? (
+              // 别人公开的：不能编辑 / 删除 / 再次发布；只能「使用原版（右侧对话）」或「显式创建副本」
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={handleCreateFork}
+                disabled={isForking}
+                title="把这个公开条目复制成我的副本，复制后可独立修改；只想使用原版直接在右侧对话即可（数据存在我自己名下）"
+              >
+                <Copy size={14} />
+                {isForking ? '复制中…' : '创建副本'}
+              </Button>
             ) : !selectedItem.routePath && (
+              // BUILTIN 非定制版：保留原有"复制并编辑为我的新智能体"能力
               <Button
                 variant="secondary"
                 size="sm"
@@ -785,11 +842,24 @@ export function ToolDetail() {
                 <span
                   className="text-[10px] px-1.5 py-0.5 rounded-full"
                   style={{
-                    background: isCustom ? 'rgba(34, 197, 94, 0.15)' : `hsla(${accentHue}, 60%, 50%, 0.15)`,
-                    color: isCustom ? 'rgb(74, 222, 128)' : `hsla(${accentHue}, 70%, 70%, 1)`,
+                    background: isOthersPublic
+                      ? 'rgba(59, 130, 246, 0.18)'
+                      : isCustom
+                      ? 'rgba(34, 197, 94, 0.15)'
+                      : `hsla(${accentHue}, 60%, 50%, 0.15)`,
+                    color: isOthersPublic
+                      ? '#93c5fd'
+                      : isCustom
+                      ? 'rgb(74, 222, 128)'
+                      : `hsla(${accentHue}, 70%, 70%, 1)`,
                   }}
+                  title={
+                    isOthersPublic
+                      ? '这是其他用户公开的智能体。你可以直接使用（你的对话记录会单独存在自己名下），或创建副本后自由修改。'
+                      : undefined
+                  }
                 >
-                  {isCustom ? '自定义' : '内置工具'}
+                  {isOthersPublic ? '来自社区' : isCustom ? '自定义' : '内置工具'}
                 </span>
               </div>
             </div>

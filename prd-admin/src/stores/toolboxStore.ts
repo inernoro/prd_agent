@@ -17,11 +17,22 @@ import type {
   ToolboxRunEvent,
   AgentInfo,
 } from '@/services';
+import { useAuthStore } from '@/stores/authStore';
 import { toast } from '@/lib/toast';
 
 export type ToolboxView = 'grid' | 'detail' | 'create' | 'edit' | 'running' | 'quick-create';
-export type ToolboxCategory = 'all' | 'builtin' | 'custom' | 'favorite' | 'marketplace';
+/**
+ * 首页三类筛选卡片：
+ * - 'all'    : 全部（BUILTIN + 我的 + 别人公开的，去重后合并）
+ * - 'mine'   : 我的（BUILTIN + 我自己创建/Fork 的，含私有与已公开）
+ * - 'others' : 别人的（仅别人创建并公开的；不含 BUILTIN）
+ * - 'favorite': 收藏（保留独立 chip，兼容原有行为）
+ */
+export type ToolboxCategory = 'all' | 'mine' | 'others' | 'favorite';
 export type ToolboxPageTab = 'toolbox' | 'capabilities';
+
+/** NEW 徽章的窗口期：别人公开 ≤ 7 天内的条目会在卡片上亮红色 NEW 徽章 */
+export const NEW_BADGE_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
 
 const FAVORITES_STORAGE_KEY = 'toolbox-favorites';
 /** 新创建但未公开的智能体 ID 集合 — 用来给「🌍 公开发布」按钮加脉动高亮，解决用户"发布入口找不到"的问题 */
@@ -391,41 +402,78 @@ export const useToolboxStore = create<ToolboxState>((set, get) => ({
 
   editingItem: null,
 
-  // Load all items (builtin + custom)
+  // Load all items (BUILTIN + 我的 + 别人公开的，一次性合并供首页三卡片筛选)
+  //
+  // 先前设计把"别人公开的"藏在独立的「公开市场」Tab 里，首页只显示 BUILTIN + 自己的，
+  // 导致用户反映"我公开发布了别人却看不到"。现在直接把两路数据合并进 items，
+  // 由 ownership 字段区分归属：
+  //   BUILTIN      → ownership 留空（只显示在"全部"）
+  //   我的自建/Fork → ownership = 'mine'
+  //   别人公开的    → ownership = 'others'
   loadItems: async () => {
     if (get().itemsLoading) return; // 防止并发重复加载
     set({ itemsLoading: true });
     try {
-      const res = await listToolboxItems();
-      const raw = res.success && res.data ? res.data.items : [];
-      // 后端 ToolboxItem 模型没有 type/category 字段，前端需要归一化
-      // 否则会被误判为"系统内置"，导致作者头像、编辑按钮等 custom-only UI 失效
-      const customItems = raw.map((it) => ({
+      const currentUserId = useAuthStore.getState().user?.userId ?? null;
+
+      // /items → 自己创建（含公开和未公开）；/marketplace → 所有公开项（含自己和别人的）
+      const [minesRes, publicRes] = await Promise.all([
+        listToolboxItems().catch(() => null),
+        listMarketplaceItems({ page: 1, pageSize: 100 }).catch(() => null),
+      ]);
+
+      const minesRaw = minesRes?.success && minesRes.data ? minesRes.data.items : [];
+      const publicRaw = publicRes?.success && publicRes.data ? publicRes.data.items : [];
+
+      // 后端 ToolboxItem 没有 type/category 字段，前端归一化，避免被 ToolCard 误判为"系统内置"
+      const mineItems: ToolboxItem[] = minesRaw.map((it) => ({
         ...it,
         type: 'custom' as const,
         category: 'custom' as const,
+        ownership: 'mine' as const,
       }));
-      set({ items: [...BUILTIN_TOOLS, ...customItems] });
+
+      // 从 /marketplace 里剔除自己的（已经在 mineItems 里了），剩下的标为 'others'
+      const mineIds = new Set(mineItems.map((it) => it.id));
+      const othersItems: ToolboxItem[] = publicRaw
+        .filter((it) => !mineIds.has(it.id))
+        .filter((it) => !currentUserId || it.createdByUserId !== currentUserId)
+        .map((it) => ({
+          ...it,
+          type: 'custom' as const,
+          category: 'custom' as const,
+          ownership: 'others' as const,
+        }));
+
+      set({
+        items: [...BUILTIN_TOOLS, ...mineItems, ...othersItems],
+        // marketplaceItems 保留以兼容旧调用方，但首页不再单独用它过滤
+        marketplaceItems: othersItems,
+      });
     } catch {
-      // 即使API失败，也显示内置工具
+      // 即使 API 失败，也显示内置工具
       set({ items: BUILTIN_TOOLS });
     } finally {
       set({ itemsLoading: false });
     }
   },
 
-  // Load marketplace (publicly shared) items
+  // 独立加载公开市场（遗留入口：旧「公开市场」Tab / 外部搜索场景仍可用）
   loadMarketplaceItems: async (keyword?: string) => {
     if (get().marketplaceLoading) return;
     set({ marketplaceLoading: true });
     try {
       const res = await listMarketplaceItems({ keyword, page: 1, pageSize: 50 });
       const items = res.success && res.data ? res.data.items : [];
-      // 后端返回的字段是裸 ToolboxItem，需要补全 type/category 让 ToolCard 渲染
+      const currentUserId = useAuthStore.getState().user?.userId ?? null;
       const normalized = items.map((it) => ({
         ...it,
         type: 'custom' as const,
         category: 'custom' as const,
+        ownership:
+          currentUserId && it.createdByUserId === currentUserId
+            ? ('mine' as const)
+            : ('others' as const),
       }));
       set({ marketplaceItems: normalized });
     } catch {
