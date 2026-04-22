@@ -131,8 +131,8 @@
       // 重算,保证永远贴在输入框正下方。
       '  </div>',
       // Progress area (initially hidden)
-      // 进度日志走 --bg-terminal（白天/黑夜都偏暗，保留终端感）；输入框走 --bg-base（白天淡灰）
-      '  <div id="_suProgress" style="display:none;margin-top:16px;border:1px solid var(--card-border,rgba(255,255,255,0.08));border-radius:6px;padding:10px 12px;background:var(--bg-terminal);color:#e8e8ec;font-family:var(--font-mono,monospace);font-size:11px;max-height:260px;overflow-y:auto;line-height:1.6"></div>',
+      // 进度日志：bg + color 都走 token，白天浅底深字，黑夜深底浅字。禁止 hardcoded 颜色。
+      '  <div id="_suProgress" style="display:none;margin-top:16px;border:1px solid var(--card-border,rgba(255,255,255,0.08));border-radius:6px;padding:10px 12px;background:var(--bg-terminal);color:var(--text-primary);font-family:var(--font-mono,monospace);font-size:11px;max-height:260px;overflow-y:auto;line-height:1.6"></div>',
       '  <div id="_suStatus" style="margin-top:8px;font-size:12px;color:var(--text-muted);min-height:14px"></div>',
       '</div>',
       // Sticky footer — 关键改进: 按钮永远在可视区域,不会被长内容推出屏幕

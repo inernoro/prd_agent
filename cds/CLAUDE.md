@@ -20,6 +20,25 @@ cd cds && pnpm tsc --noEmit        # 类型检查
 
 ## 强制规则
 
+### 0. 🚨 白天主题禁止出现任何暗色背景（最高优先级）
+
+**反复被用户指出 10+ 次的问题**，不管写"终端风""代码感""某某大厂也这么做"都不是借口。
+
+任何 modal、代码块、YAML 预览、SSE 日志、进度面板——**白天主题下**一律：
+
+```
+bg = 浅色 (如 var(--bg-terminal) = #efe7df in light)
+color = 深色 (如 var(--text-primary) = 深棕)
+```
+
+硬性禁止（违反直接 reject）：
+
+- `background: #0a0a0f` / `#0b0b10` / `#1f1d2b` 之类的字面量
+- `color: #e8e8ec` / `#cbd5e1` / `#fff` 之类的字面量
+- 在 `[data-theme="light"]` 块里把 `--bg-*` 定义成暗色
+
+提交前检查清单见 `.claude/rules/cds-theme-tokens.md` 顶部。
+
 ### 1. 按钮图标尺寸（icon-to-button ratio ≥ 55%）
 
 **这是 CDS 里反复出现的视觉 bug**：

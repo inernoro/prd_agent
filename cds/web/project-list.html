@@ -530,13 +530,14 @@
       flex: 1;
       min-height: 0;
       overflow-y: auto;
-      background: #0a0a0f;
+      /* 2026-04-22：bg+color 走 token，白天/黑夜自动翻转。不再 hardcoded #0a0a0f */
+      background: var(--bg-terminal);
       border: 1px solid var(--card-border);
       border-radius: 8px;
       padding: 10px 12px;
       font-family: var(--font-mono, monospace);
       font-size: 11px;
-      color: #9ca3af;
+      color: var(--text-secondary);
       line-height: 1.55;
       white-space: pre-wrap;
       word-break: break-word;

@@ -200,9 +200,8 @@
 
       var pre = h('pre', {
         style: {
-          /* 2026-04-22：用 --bg-terminal 而不是 --bg-base —— 终端代码块在
-           * 白天/黑夜都需要"暗色但不刺眼"的视觉，硬编码 #0b0b10 fallback
-           * 在白天纯白卡上太砸眼。tokens 已在 :root + [data-theme=light] 同步定义。 */
+          /* 2026-04-22：bg 和 color 都走主题 token。白天/黑夜都自动对齐 —— 白天
+           * 浅底深字、黑夜深底浅字。禁止 hardcoded #e8e8ec 这种只适配黑夜的色。 */
           background: 'var(--bg-terminal)',
           border: '1px solid var(--card-border)',
           borderRadius: '7px',
@@ -210,7 +209,7 @@
           fontFamily: 'JetBrains Mono, SFMono-Regular, Menlo, monospace',
           fontSize: '12px',
           lineHeight: '1.55',
-          color: '#e8e8ec',
+          color: 'var(--text-primary)',
           whiteSpace: 'pre',
           overflowX: 'auto',
           margin: '0 0 14px',

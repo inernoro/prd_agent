@@ -2437,7 +2437,8 @@ window.cdsDoLogout = cdsDoLogout;
       } else if (yamlText === null) {
         content = '<div style="padding:12px;color:#fca5a5;font-size:11px">YAML 加载失败</div>';
       } else {
-        content = '<pre style="margin:0;padding:10px 12px;font-family:var(--font-mono,monospace);font-size:10.5px;line-height:1.55;color:#cbd5e1;background:#0a0a0f;border-radius:6px;max-height:280px;overflow:auto;white-space:pre;">' + escapeHtml(yamlText) + '</pre>';
+        // 2026-04-22：bg+color 走主题 token，白天浅底深字，黑夜深底浅字。禁止 hardcoded 颜色。
+        content = '<pre style="margin:0;padding:10px 12px;font-family:var(--font-mono,monospace);font-size:10.5px;line-height:1.55;color:var(--text-primary);background:var(--bg-terminal);border-radius:6px;max-height:280px;overflow:auto;white-space:pre;">' + escapeHtml(yamlText) + '</pre>';
       }
       yamlSection = (
         '<div style="margin-top:10px">' +

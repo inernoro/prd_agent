@@ -115,11 +115,11 @@
   --bg-hover: #2a1f1910;      /* ~6% warm dark */
 
   /* 2026-04-22 与 :root 同步定义 —— 缺一个组件白天模式就破。
-   * --bg-base 走偏淡的 elevated 色（白天的"输入/最深底"是 light gray）；
-   * --bg-terminal 仍保留稍深的 dark 色，让代码块的"终端感"在白天也成立
-   * 但避免纯黑 #0b0b10 砸眼。 */
+   * 核心原则：【白天主题禁止任何暗色背景】。不要为了"终端感/代码感/玄色风"
+   * 强行留暗色 —— 白天就是白天，代码块白底深字同样专业。
+   * 违反此条会直接被用户指出（反复发生 10+ 次），禁止再犯。 */
   --bg-base: #efe7df;          /* 最深底色（白天 = 比卡片更深的 elevated） */
-  --bg-terminal: #1f1d2b;      /* 终端/代码块（白天用稍亮的深色，不刺眼） */
+  --bg-terminal: #efe7df;      /* 终端/代码块：白天也走浅色！不再 #1f1d2b */
   --bg-code-block: #2a1f190f;  /* inline code（warm dark 6% alpha） */
 
   /* Borders — warm alpha-based */
