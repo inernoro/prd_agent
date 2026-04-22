@@ -128,6 +128,7 @@ export default function MobileHomePage() {
 
     return rotated.slice(0, 5).map((a) => {
       const eyebrowMeta = AGENT_EYEBROW[a.agentKey ?? ''] ?? { label: '今日推荐', color: '#0A84FF' };
+      const coverUrl = buildDefaultCoverUrl(cdnBase, a.agentKey);
       return {
         key: a.id,
         eyebrow: eyebrowMeta.label,
@@ -135,10 +136,11 @@ export default function MobileHomePage() {
         title: a.name,
         subtitle: undefined, // 刻意不放副标 —— 苹果 Today 大卡主标下一行极少，大多只有 1 句足够
         videoUrl: buildDefaultVideoUrl(cdnBase, a.agentKey),
-        imageUrl: buildDefaultCoverUrl(cdnBase, a.agentKey),
+        imageUrl: coverUrl,
         accent: accentFor(a.agentKey),
         footer: {
           Icon: iconFor(a.icon),
+          iconImageUrl: coverUrl, // 底部小 icon 用同一张封面图，iOS app icon 质感
           name: a.name,
           tagline: a.description,
         },
@@ -180,13 +182,14 @@ export default function MobileHomePage() {
           </section>
         )}
 
-        {/* ── 智能体横滑 ── */}
+        {/* ── 智能体横滑（封面图作为 iOS app icon） ── */}
         {agents.length > 0 && (
           <AppStoreSection title="智能体" onShowAll={() => navigate('/ai-toolbox')}>
             <AppStoreShelf
               items={agents.map((a) => ({
                 key: a.id,
                 Icon: iconFor(a.icon),
+                iconImageUrl: buildDefaultCoverUrl(cdnBase, a.agentKey),
                 accent: accentFor(a.agentKey),
                 title: a.name,
                 subtitle: a.description,

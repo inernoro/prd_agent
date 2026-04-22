@@ -128,14 +128,60 @@ export function AppStorePill({ label, onClick, caption, variant = 'default' }: P
 
 interface AppIconProps {
   Icon: LucideIcon;
-  /** 渐变主题色（from / to），用于图标底色 */
+  /** 渐变主题色（from / to），Lucide fallback 时的图标底色 */
   accent: { from: string; to: string };
+  /** 静态封面图（优先使用，iOS app icon 级质感） */
+  imageUrl?: string | null;
   size?: number;
-  /** 叠在图片上时的特殊模式（白磨砂底） */
+  /** 叠在图片上时的特殊模式（白磨砂底，仅 Lucide fallback 用） */
   onImage?: boolean;
 }
 
-export function AppStoreAppIcon({ Icon, accent, size = AS_SIZE.appIconSize, onImage = false }: AppIconProps) {
+export function AppStoreAppIcon({
+  Icon,
+  accent,
+  imageUrl,
+  size = AS_SIZE.appIconSize,
+  onImage = false,
+}: AppIconProps) {
+  // 有封面图 —— 直接铺图（iOS app icon 的"品牌级"视觉）
+  if (imageUrl) {
+    return (
+      <div
+        className="shrink-0 overflow-hidden relative"
+        style={{
+          width: size,
+          height: size,
+          borderRadius: AS_SPACE.iconRadius,
+          background: '#1c1c1e',
+          boxShadow: onImage
+            ? '0 1px 3px rgba(0, 0, 0, 0.12)'
+            : '0 2px 6px rgba(0, 0, 0, 0.35)',
+        }}
+      >
+        <img
+          src={imageUrl}
+          alt=""
+          aria-hidden
+          className="w-full h-full object-cover"
+          onError={(e) => {
+            // img 加载失败 → 隐藏 img，露出下面的渐变兜底
+            e.currentTarget.style.display = 'none';
+          }}
+        />
+        {/* 图片之下的渐变兜底层（img 失败后可见） */}
+        <div
+          aria-hidden
+          className="absolute inset-0 -z-10 flex items-center justify-center"
+          style={{ background: `linear-gradient(135deg, ${accent.from}, ${accent.to})` }}
+        >
+          <Icon size={Math.round(size * 0.55)} strokeWidth={2} style={{ color: '#fff' }} />
+        </div>
+      </div>
+    );
+  }
+
+  // 无封面图 —— Lucide + 渐变底（原方案）
   const background = onImage
     ? 'rgba(255, 255, 255, 0.95)'
     : `linear-gradient(135deg, ${accent.from}, ${accent.to})`;
@@ -179,6 +225,8 @@ export interface FeaturedItem {
   /** 底部玻璃条的 app 信息 */
   footer: {
     Icon: LucideIcon;
+    /** 静态封面图 URL（iOS app icon 式），没有才 fallback 到 Icon */
+    iconImageUrl?: string | null;
     name: string;
     tagline: string;
   };
@@ -207,6 +255,7 @@ export function AppStoreFeatured(props: Omit<FeaturedItem, 'key'>) {
  */
 export function AppStoreFeaturedCarousel({ items }: { items: FeaturedItem[] }) {
   const scrollerRef = useRef<HTMLDivElement | null>(null);
+  const surfaceRef = useRef<HTMLDivElement | null>(null);
   const [activeIdx, setActiveIdx] = useState(0);
 
   useEffect(() => {
@@ -232,6 +281,47 @@ export function AppStoreFeaturedCarousel({ items }: { items: FeaturedItem[] }) {
     };
   }, [items.length]);
 
+  /**
+   * 点击小点切换 —— 走 View Transition API 的 clip-path 水波纹扩散。
+   * 手指滑动 carousel 走原生 snap（不拦截，保留跟手手感）。
+   * 不支持 View Transition 的浏览器降级为 scroll smooth。
+   */
+  const switchTo = (target: number, origin: { clientX: number; clientY: number }) => {
+    if (target === activeIdx) return;
+    const scroller = scrollerRef.current;
+    const surface = surfaceRef.current;
+    if (!scroller) return;
+
+    const slideWidth = scroller.firstElementChild?.getBoundingClientRect().width ?? 0;
+    const gap = AS_SIZE.shelfGap;
+    const targetLeft = target * (slideWidth + gap);
+
+    // 水波纹起点：相对 surface 容器的坐标（百分比更稳，避免受滚动影响）
+    if (surface) {
+      const rect = surface.getBoundingClientRect();
+      const xPct = Math.max(0, Math.min(100, ((origin.clientX - rect.left) / rect.width) * 100));
+      const yPct = Math.max(0, Math.min(100, ((origin.clientY - rect.top) / rect.height) * 100));
+      surface.style.setProperty('--as-ripple-x', `${xPct.toFixed(2)}%`);
+      surface.style.setProperty('--as-ripple-y', `${yPct.toFixed(2)}%`);
+    }
+
+    const doc = document as Document & {
+      startViewTransition?: (cb: () => void) => { finished: Promise<void> };
+    };
+
+    const apply = () => {
+      scroller.scrollTo({ left: targetLeft, behavior: 'instant' as ScrollBehavior });
+      setActiveIdx(target);
+    };
+
+    if (typeof doc.startViewTransition === 'function') {
+      doc.startViewTransition(apply);
+    } else {
+      scroller.scrollTo({ left: targetLeft, behavior: 'smooth' });
+      setActiveIdx(target);
+    }
+  };
+
   if (items.length === 0) return null;
   if (items.length === 1) {
     return (
@@ -242,7 +332,7 @@ export function AppStoreFeaturedCarousel({ items }: { items: FeaturedItem[] }) {
   }
 
   return (
-    <div>
+    <div ref={surfaceRef} data-ripple-transition>
       <div
         ref={scrollerRef}
         className="flex overflow-x-auto snap-x snap-mandatory"
@@ -259,20 +349,37 @@ export function AppStoreFeaturedCarousel({ items }: { items: FeaturedItem[] }) {
           <FeaturedSlide key={item.key} item={item} isActive={i === activeIdx} />
         ))}
       </div>
-      {/* 页指示小点 */}
-      <div className="flex items-center justify-center" style={{ gap: 6, marginTop: 14 }}>
-        {items.map((_, i) => (
-          <span
-            key={i}
-            style={{
-              width: i === activeIdx ? 16 : 6,
-              height: 6,
-              borderRadius: 999,
-              background: i === activeIdx ? AS_COLOR.label : AS_COLOR.labelTertiary,
-              transition: 'all 220ms ease',
-            }}
-          />
-        ))}
+
+      {/* 页指示小点 —— 可点击，触发水波纹切换 */}
+      <div
+        className="flex items-center justify-center"
+        style={{ gap: 8, marginTop: 14 }}
+        role="tablist"
+        aria-label="推荐内容"
+      >
+        {items.map((_, i) => {
+          const active = i === activeIdx;
+          return (
+            <button
+              key={i}
+              type="button"
+              role="tab"
+              aria-selected={active}
+              aria-label={`第 ${i + 1} 个推荐`}
+              onClick={(e) => switchTo(i, { clientX: e.clientX, clientY: e.clientY })}
+              className="transition-all"
+              style={{
+                width: active ? 22 : 7,
+                height: 7,
+                borderRadius: 999,
+                background: active ? AS_COLOR.label : AS_COLOR.labelTertiary,
+                border: 'none',
+                padding: 0,
+                cursor: 'pointer',
+              }}
+            />
+          );
+        })}
       </div>
     </div>
   );
@@ -402,7 +509,13 @@ function FeaturedSlide({ item, isActive }: { item: FeaturedItem; isActive: boole
         className="absolute left-0 right-0 bottom-0 flex items-center gap-3"
         style={{ padding: 16 }}
       >
-        <AppStoreAppIcon Icon={item.footer.Icon} accent={item.accent} size={48} onImage />
+        <AppStoreAppIcon
+          Icon={item.footer.Icon}
+          accent={item.accent}
+          imageUrl={item.footer.iconImageUrl}
+          size={52}
+          onImage
+        />
         <div className="min-w-0 flex-1">
           <div
             className="truncate"
@@ -432,6 +545,8 @@ function FeaturedSlide({ item, isActive }: { item: FeaturedItem; isActive: boole
 interface ShelfItem {
   key: string;
   Icon: LucideIcon;
+  /** 静态封面图（Agent 有，Tool 通常没有）—— 有图时用 iOS app icon 式封面 */
+  iconImageUrl?: string | null;
   accent: { from: string; to: string };
   title: string;
   subtitle: string;
@@ -483,7 +598,7 @@ function ShelfCard({ item }: { item: ShelfItem }) {
         border: `1px solid ${AS_COLOR.hairline}`,
       }}
     >
-      <AppStoreAppIcon Icon={item.Icon} accent={item.accent} size={56} />
+      <AppStoreAppIcon Icon={item.Icon} accent={item.accent} imageUrl={item.iconImageUrl} size={56} />
       <div className="min-w-0 flex-1">
         <div
           className="truncate"

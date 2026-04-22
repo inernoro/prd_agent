@@ -1856,3 +1856,52 @@ html[data-perf-mode="performance"] .btn-primary-anim {
   background: var(--gold-gradient);
   background-size: 100% 100%;
 }
+
+/* ═══════════════════════════════════════════════════════════════════
+   App Store 式水波纹切换（View Transition API + clip-path circle 扩散）
+   仅作用于 [data-ripple-transition] 容器，不影响整页
+   ═══════════════════════════════════════════════════════════════════ */
+
+/* 没用 View Transition 的浏览器（Safari < 18.2）静默降级为普通切换 */
+@supports (view-transition-name: x) {
+  [data-ripple-transition] {
+    view-transition-name: as-ripple-surface;
+  }
+
+  ::view-transition-old(as-ripple-surface),
+  ::view-transition-new(as-ripple-surface) {
+    animation: none;
+    mix-blend-mode: normal;
+  }
+
+  ::view-transition-new(as-ripple-surface) {
+    animation: as-ripple-reveal 520ms cubic-bezier(0.22, 0.61, 0.36, 1);
+  }
+
+  ::view-transition-old(as-ripple-surface) {
+    animation: as-ripple-fade 360ms ease-out;
+  }
+}
+
+/* 水波纹扩散：从 CSS 变量指定的坐标向外扩散 */
+@keyframes as-ripple-reveal {
+  from {
+    clip-path: circle(0% at var(--as-ripple-x, 50%) var(--as-ripple-y, 50%));
+  }
+  to {
+    clip-path: circle(140% at var(--as-ripple-x, 50%) var(--as-ripple-y, 50%));
+  }
+}
+
+/* 旧内容淡出（被水波纹盖住） */
+@keyframes as-ripple-fade {
+  from { opacity: 1; }
+  to   { opacity: 0; }
+}
+
+/* 降级：浏览器不支持 view-transition 时，给 snap scroll 一点平滑 */
+@supports not (view-transition-name: x) {
+  [data-ripple-transition] {
+    scroll-behavior: smooth;
+  }
+}
