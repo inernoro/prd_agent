@@ -3101,24 +3101,12 @@ export function createBranchRouter(deps: RouterDeps): Router {
     const idSuffix = projectId === 'default' ? '' : `-${projectSlug}`;
 
     // Task 1: prefer a cds-compose file over the hardcoded template.
-    // Search order (first match wins):
-    //   1. CDS host dir (config.repoRoot) with project-slug prefix —
-    //      e.g. mytapd-cds-compose.yaml next to the CDS installation.
-    //      This is the "independent" mode: the file lives outside the
-    //      project's git repo so it never gets committed there.
-    //   2. CDS host dir (config.repoRoot) with generic name —
-    //      cds-compose.yaml next to CDS itself (default/single-project).
-    //   3. Project repo root — backward compat for repos that already
-    //      committed the file (or where projectRepoRoot == config.repoRoot).
+    // Only search inside the project's own git repo (projectRepoRoot).
+    // Never search config.repoRoot — that is the CDS host directory shared
+    // across all projects, so reading from it would let one project's compose
+    // file silently contaminate a different project's build profiles.
     let composeYaml: string | null = null;
     const composeCandidates: string[] = [
-      // CDS host dir, project-prefixed (future "independent" mode)
-      path.join(config.repoRoot, `${projectSlug}-cds-compose.yaml`),
-      path.join(config.repoRoot, `${projectSlug}-cds-compose.yml`),
-      // CDS host dir, generic name
-      path.join(config.repoRoot, 'cds-compose.yaml'),
-      path.join(config.repoRoot, 'cds-compose.yml'),
-      // Project repo root (backward compat / committed file)
       path.join(projectRepoRoot, 'cds-compose.yaml'),
       path.join(projectRepoRoot, 'cds-compose.yml'),
     ];
@@ -3178,11 +3166,19 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
         stateService.save();
 
+        // Report env vars that still have TODO placeholder values so the
+        // frontend can open the env editor immediately after quickstart.
+        const allProjectEnv = stateService.getCustomEnv(projectId);
+        const pendingEnvVars = Object.entries(allProjectEnv)
+          .filter(([, v]) => typeof v === 'string' && v.startsWith('TODO:'))
+          .map(([k]) => k);
+
         res.status(201).json({
           message: `快速启动: 已从 cds-compose.yaml 创建 ${seeded.length} 个构建配置`,
           profiles: seeded,
           detectedPackageManager: pm,
           source: 'cds-compose',
+          pendingEnvVars,
         });
         return;
       }
