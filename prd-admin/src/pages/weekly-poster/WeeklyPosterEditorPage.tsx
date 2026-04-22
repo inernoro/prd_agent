@@ -5,8 +5,7 @@ import {
   Save,
   Send,
   Image as ImageIcon,
-  Copy,
-  ExternalLink,
+  Wand2,
   Clock,
   CheckCircle2,
   FileText,
@@ -21,6 +20,7 @@ import {
   type WeeklyPoster,
   type WeeklyPosterPage,
 } from '@/services';
+import { apiRequest } from '@/services/real/apiClient';
 import { MapSectionLoader, MapSpinner } from '@/components/ui/VideoLoader';
 import { toast } from '@/lib/toast';
 
@@ -475,8 +475,8 @@ export default function WeeklyPosterEditorPage() {
                 >
                   <CheckCircle2 size={14} className="mt-0.5 shrink-0 text-indigo-300" />
                   <div>
-                    配图由你本人完成:每页都有「配图提示词」,点击「复制 & 去生成」会在新标签打开
-                    视觉创作,粘贴提示词生成图片后,把图片 URL(或附件地址)填回上方「图片 URL」即可。
+                    每页「配图提示词」由 AI 帮你写好,点击紫色「生成图片」按钮就会直接调用平台
+                    默认文生图模型出图(大约 10-30 秒),生成后图片会自动填回。不满意可以改提示词后重新生成。
                   </div>
                 </div>
               </div>
@@ -524,6 +524,10 @@ function LabeledInput({
   );
 }
 
+interface GenerateImageApiResult {
+  images: Array<{ url?: string | null; base64?: string | null }>;
+}
+
 function PageEditor({
   page,
   onChange,
@@ -535,25 +539,55 @@ function PageEditor({
   onRemove: () => void;
   canRemove: boolean;
 }) {
-  const [copied, setCopied] = useState(false);
+  const [generating, setGenerating] = useState(false);
 
-  const handleCopyPrompt = async () => {
-    if (!page.imagePrompt.trim()) {
+  const handleGenerate = async () => {
+    const prompt = page.imagePrompt.trim();
+    if (!prompt) {
       toast.error('先填写配图提示词');
       return;
     }
+    setGenerating(true);
     try {
-      await navigator.clipboard.writeText(page.imagePrompt);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
-    } catch {
-      /* ignore */
+      // 调用平台默认文生图:/api/visual-agent/image-gen/generate
+      // responseFormat=url 优先拿直链;失败兜底到 base64 data URI(多数模型都支持 url)
+      const res = await apiRequest<GenerateImageApiResult>(
+        '/api/visual-agent/image-gen/generate',
+        {
+          method: 'POST',
+          body: {
+            prompt,
+            n: 1,
+            size: '1024x1024',
+            responseFormat: 'url',
+          },
+        }
+      );
+      if (!res.success || !res.data) {
+        toast.error(res.error?.message || '生图失败,请检查提示词或稍后重试');
+        return;
+      }
+      const first = res.data.images?.[0];
+      if (!first) {
+        toast.error('生图模型未返回图片');
+        return;
+      }
+      const url = first.url
+        ? first.url
+        : first.base64
+          ? `data:image/png;base64,${first.base64}`
+          : null;
+      if (!url) {
+        toast.error('生图结果无法解析');
+        return;
+      }
+      onChange({ imageUrl: url });
+      toast.success('已生成,记得点右上角「保存草稿」');
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : '生图失败');
+    } finally {
+      setGenerating(false);
     }
-  };
-
-  const handleGoGenerate = async () => {
-    await handleCopyPrompt();
-    window.open('/visual-agent', '_blank', 'noopener,noreferrer');
   };
 
   return (
@@ -606,32 +640,31 @@ function PageEditor({
         <div className="flex items-center justify-between mb-1">
           <div className="text-[11px] font-medium text-white/55 inline-flex items-center gap-1">
             <ImageIcon size={11} />
-            配图提示词(给生图模型用)
+            配图提示词(AI 自动生成,可直接编辑)
           </div>
-          <div className="flex items-center gap-1.5">
-            <button
-              type="button"
-              onClick={handleCopyPrompt}
-              className="inline-flex items-center gap-1 px-2 h-6 rounded text-[10px] transition-colors hover:bg-white/10"
-              style={{
-                color: 'rgba(255,255,255,0.7)',
-                border: '1px solid rgba(255,255,255,0.15)',
-              }}
-            >
-              <Copy size={10} /> {copied ? '已复制' : '复制'}
-            </button>
-            <button
-              type="button"
-              onClick={handleGoGenerate}
-              className="inline-flex items-center gap-1 px-2 h-6 rounded text-[10px] transition-colors hover:bg-indigo-500/15"
-              style={{
-                color: '#c4b5fd',
-                border: '1px solid rgba(124,58,237,0.4)',
-              }}
-            >
-              <ExternalLink size={10} /> 去生成
-            </button>
-          </div>
+          <button
+            type="button"
+            onClick={handleGenerate}
+            disabled={generating}
+            className="inline-flex items-center gap-1.5 px-3 h-7 rounded-md text-[11px] font-medium transition-all disabled:opacity-50 disabled:cursor-not-allowed enabled:hover:scale-[1.03]"
+            style={{
+              background: generating
+                ? 'rgba(124,58,237,0.35)'
+                : 'linear-gradient(135deg, #00f0ff 0%, #7c3aed 50%, #f43f5e 100%)',
+              color: '#fff',
+              boxShadow: generating ? 'none' : '0 3px 12px rgba(124,58,237,0.4)',
+            }}
+          >
+            {generating ? (
+              <>
+                <MapSpinner size={11} /> 生成中,约 10-30 秒
+              </>
+            ) : (
+              <>
+                <Wand2 size={11} /> {page.imageUrl ? '重新生成' : '生成图片'}
+              </>
+            )}
+          </button>
         </div>
         <textarea
           value={page.imagePrompt}
@@ -649,15 +682,50 @@ function PageEditor({
           onBlur={(e) => (e.currentTarget.style.borderColor = 'rgba(255,255,255,0.12)')}
         />
       </label>
-      <div className="grid grid-cols-[1fr_auto] gap-2 items-end">
-        <LabeledInput
-          label="图片 URL(生成好的配图地址,留空走渐变兜底)"
-          value={page.imageUrl ?? ''}
-          onChange={(v) => onChange({ imageUrl: v || null })}
-          placeholder="https://..."
-        />
-        <label className="block w-[120px]">
-          <div className="text-[11px] font-medium text-white/55 mb-1">主色调</div>
+
+      {/* 配图预览 + 主色调 */}
+      <div className="flex items-start gap-3">
+        <div
+          className="shrink-0 rounded-md overflow-hidden relative"
+          style={{
+            width: 140,
+            height: 88,
+            background: page.imageUrl
+              ? undefined
+              : `linear-gradient(135deg, ${page.accentColor || DEFAULT_ACCENT}, #0a0a12)`,
+            border: '1px solid rgba(255,255,255,0.12)',
+          }}
+        >
+          {page.imageUrl ? (
+            <img
+              src={page.imageUrl}
+              alt=""
+              className="absolute inset-0 w-full h-full object-cover"
+              draggable={false}
+            />
+          ) : (
+            <div className="absolute inset-0 flex items-center justify-center text-[10px] text-white/50">
+              未生成
+            </div>
+          )}
+          {page.imageUrl && (
+            <button
+              type="button"
+              onClick={() => onChange({ imageUrl: null })}
+              className="absolute top-1 right-1 w-5 h-5 rounded-full flex items-center justify-center text-[10px] transition-colors hover:bg-rose-500/40"
+              style={{
+                background: 'rgba(0,0,0,0.6)',
+                color: '#fda4af',
+              }}
+              aria-label="清除图片"
+              title="清除"
+            >
+              ×
+            </button>
+          )}
+        </div>
+        <label className="block flex-1 min-w-0">
+          <div className="text-[11px] font-medium text-white/55 mb-1">主色调(无图时的兜底渐变)</div>
           <input
             type="color"
             value={page.accentColor || DEFAULT_ACCENT}
