@@ -646,7 +646,7 @@ public class ModelResolver : IModelResolver
 
         var key = expectedModel.Trim();
 
-        // ⚠ 诊断：MongoDB 记录 FindPreferredModel 的输入
+        // ⚠ 诊断：MongoDB 记录 FindPreferredModel 的输入（同步 InsertOne，因为本方法不是 async）
         try
         {
             var coll = _db.Database.GetCollection<MongoDB.Bson.BsonDocument>("_diag_resolver");
@@ -662,7 +662,7 @@ public class ModelResolver : IModelResolver
                     { "firstModelHealth", g.Models?.FirstOrDefault()?.HealthStatus.ToString() ?? "" }
                 });
             }
-            await coll.InsertOneAsync(new MongoDB.Bson.BsonDocument
+            coll.InsertOne(new MongoDB.Bson.BsonDocument
             {
                 { "_id", Guid.NewGuid().ToString("N") },
                 { "phase", "FindPreferredModel_ENTRY" },
