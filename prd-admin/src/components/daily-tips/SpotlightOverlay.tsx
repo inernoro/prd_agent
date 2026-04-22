@@ -219,6 +219,39 @@ export function SpotlightOverlay() {
 
   if (dismissed || !payload) return null;
 
+  // 「等待中」阶段:payload 有但 rect 还没到 & 未超时 → 显示蓝色「正在定位…」小卡片
+  // 避免用户点跳转后 6s 内啥都看不到,以为没反应
+  if (!rect && !seekTimedOut) {
+    const stepsTotal = payload.autoAction?.steps?.length ?? 0;
+    const stepLabel = stepsTotal > 0 ? `第 ${stepIndex + 1} / ${stepsTotal} 步` : '目标';
+    return createPortal(
+      <div
+        style={{
+          position: 'fixed',
+          right: 20,
+          bottom: 150,
+          padding: '8px 12px',
+          borderRadius: 999,
+          background: 'linear-gradient(180deg, rgba(24,28,40,0.95), rgba(16,18,28,0.98))',
+          border: '1px solid rgba(129,140,248,0.35)',
+          boxShadow: '0 6px 20px -8px rgba(76,29,149,0.45)',
+          zIndex: 9999,
+          color: 'rgba(196,181,253,0.85)',
+          fontSize: 12,
+          display: 'inline-flex',
+          alignItems: 'center',
+          gap: 6,
+          animation: 'spotlightBubbleIn 160ms ease-out',
+        }}
+      >
+        <Sparkles size={12} style={{ animation: 'spin 1.5s linear infinite' }} />
+        正在定位「{stepLabel}」…
+        <style>{`@keyframes spin { 0% { transform: rotate(0) } 100% { transform: rotate(360deg) } }`}</style>
+      </div>,
+      document.body,
+    );
+  }
+
   // 找不到目标元素 + 超时 → 渲染友好失败卡片(不再静默消失)
   if (!rect && seekTimedOut) {
     const stepsTotal = payload.autoAction?.steps?.length ?? 0;

@@ -394,13 +394,15 @@ public sealed class DailyTipsController : ControllerBase
                     },
                 }),
 
-            // 5. 知识库发布 —— 3 步 Tour
+            // 5. 知识库发布 —— 2 步 Tour(都在列表页,不依赖空间详情页的动态 URL)
+            // 空间详情 URL 带 space id,演示无法直接导航过去,所以只能指导用户自己
+            // 从列表进详情;详情页内的上传 / 发布按钮用户看得见的时候就自然能用。
             T("library-publish", "card",
                 "把你的知识发布到智识殿堂",
-                "上传文档 → 发布到社区 → 其他团队能搜到。3 分钟搞定。",
+                "列表 → 新建空间 → 上传文档 → 发布到社区。3 分钟搞定。",
                 "/document-store",
                 "开始发布",
-                "[data-tour-id=document-upload]",
+                "[data-tour-id=document-store-create]",
                 50,
                 new DailyTipAutoAction
                 {
@@ -409,21 +411,15 @@ public sealed class DailyTipsController : ControllerBase
                     {
                         new()
                         {
-                            Selector = "[data-tour-id=document-upload]",
-                            Title = "第 1 步:上传文档",
-                            Body = "点「上传文档」选文件,或直接拖到页面上。支持 PDF/Markdown/Word。",
+                            Selector = "[data-tour-id=document-store-create]",
+                            Title = "第 1 步:新建一个空间",
+                            Body = "点右上角「+ 新建空间」,取个名字,这是你的第一个知识库。",
                         },
                         new()
                         {
-                            Selector = "[data-tour-id=document-store-publish]",
-                            Title = "第 2 步:发布到智识殿堂",
-                            Body = "勾选后,这个知识库会出现在 /library 的公开排行榜。",
-                        },
-                        new()
-                        {
-                            Selector = "[data-tour-id=document-store-publish]",
-                            Title = "第 3 步:搞定!",
-                            Body = "发布后你的知识库可以被全平台用户看到和搜索。可以随时取消发布。",
+                            Selector = "[data-tour-id=document-store-create]",
+                            Title = "第 2 步:打开空间后的操作",
+                            Body = "在列表点「打开」进入空间;右上角会出现「上传文档」和「发布到智识殿堂」两个按钮,拖文件进去 + 勾发布,就能被全平台搜到。",
                         },
                     },
                 }),

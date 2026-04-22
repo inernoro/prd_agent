@@ -1266,7 +1266,12 @@ export function DocumentStorePage() {
         icon={<Library size={14} />}
         actions={
           tab === 'mine' ? (
-            <Button variant="primary" size="xs" onClick={() => setShowCreate(true)}>
+            <Button
+              variant="primary"
+              size="xs"
+              data-tour-id="document-store-create"
+              onClick={() => setShowCreate(true)}
+            >
               <Plus size={13} /> 新建空间
             </Button>
           ) : null
