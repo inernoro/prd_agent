@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import { useNavigate } from 'react-router-dom';
 import { ChevronLeft, ChevronRight, X, ArrowRight, Sparkles } from 'lucide-react';
 import { useWeeklyPosterStore } from '@/stores/weeklyPosterStore';
+import { MarkdownContent } from '@/components/ui/MarkdownContent';
 import type { WeeklyPoster, WeeklyPosterPage } from '@/services';
 
 /**
@@ -266,6 +267,7 @@ function PosterPageView({ page }: { page: WeeklyPosterPage | undefined }) {
           minHeight: 0,
           overflowY: 'auto',
           overscrollBehavior: 'contain',
+          color: 'rgba(255,255,255,0.85)',
         }}
       >
         <h2
@@ -274,12 +276,12 @@ function PosterPageView({ page }: { page: WeeklyPosterPage | undefined }) {
         >
           {page.title}
         </h2>
-        <div
-          className="text-[14px] leading-relaxed whitespace-pre-wrap"
-          style={{ color: 'rgba(255,255,255,0.8)' }}
-        >
-          {page.body}
-        </div>
+        {page.body ? (
+          <MarkdownContent
+            content={page.body}
+            className="text-[14px] leading-relaxed poster-body-markdown"
+          />
+        ) : null}
       </div>
     </div>
   );

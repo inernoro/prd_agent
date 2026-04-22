@@ -59,6 +59,9 @@ public interface IPosterAutopilotService
         string sourceSummary,
         string? model,
         string? platform);
+
+    /// <summary>增量提取已闭合的 page(给控制器每个 chunk 后调,新 page 立即 emit)。</summary>
+    List<PosterAutopilotPage> ExtractClosedPagesSoFar(string accumulatedRawText, string templateKey);
 }
 
 public sealed class PosterAutopilotInput
@@ -171,7 +174,7 @@ public sealed class PosterAutopilotService : IPosterAutopilotService
             },
             ["temperature"] = 0.5,
             ["max_tokens"] = 2400,
-            ["response_format"] = new JsonObject { ["type"] = "json_object" },
+            // response_format 改 markdown 分段,不用 json_object 约束
         };
 
         var resp = await _gateway.SendAsync(new GatewayRequest
@@ -239,7 +242,7 @@ public sealed class PosterAutopilotService : IPosterAutopilotService
             },
             ["temperature"] = 0.5,
             ["max_tokens"] = 2400,
-            ["response_format"] = new JsonObject { ["type"] = "json_object" },
+            // response_format 改 markdown 分段,不用 json_object 约束
             ["stream"] = true,
         };
 
@@ -267,12 +270,132 @@ public sealed class PosterAutopilotService : IPosterAutopilotService
     {
         var template = PosterTemplateRegistry.FindOrDefault(templateKey);
         var pageCount = Math.Clamp(forcePageCount ?? template.DefaultPages, 3, 7);
+
+        // 首选:Markdown 分段格式(新设计,流式友好 + 人类可读 + markdown 预览)
+        var md = TryParseMarkdownSections(accumulatedRawText, template, pageCount, includeOpen: true);
+        if (md != null && md.Pages.Count > 0)
+        {
+            md.SourceSummary = sourceSummary;
+            md.Model = model;
+            md.Platform = platform;
+            return md;
+        }
+
+        // 兜底:旧 JSON 格式(模型偶尔抽风回退到 JSON 时不至于全失败)
         var parsed = TryParseAutopilotJson(accumulatedRawText, template, pageCount);
         if (parsed == null) return null;
         parsed.SourceSummary = sourceSummary;
         parsed.Model = model;
         parsed.Platform = platform;
         return parsed;
+    }
+
+    /// <summary>
+    /// 流式增量提取已"闭合"的 page:供 SSE 控制器每次 chunk 后扫一遍,
+    /// 新出现的 page 立即 emit,实现「卡片一张张冒出来」的视觉。
+    /// 「闭合」 = 不是最后一页(后面已有新 header),或最后一页里已经出现 `[IMG] ...`。
+    /// </summary>
+    public List<PosterAutopilotPage> ExtractClosedPagesSoFar(string accumulatedRawText, string templateKey)
+    {
+        var template = PosterTemplateRegistry.FindOrDefault(templateKey);
+        var res = TryParseMarkdownSections(accumulatedRawText, template, expectedCount: 0, includeOpen: false);
+        return res?.Pages ?? new List<PosterAutopilotPage>();
+    }
+
+    // ────────────────────────────────────────────────────────────
+    // Markdown 分段解析
+    // ────────────────────────────────────────────────────────────
+
+    private static readonly Regex PageHeaderPattern = new(
+        @"^##\s*Page\s*(?<order>\d+)\s*[·・]\s*(?<title>.+?)\s*[·・]\s*(?<accent>#[0-9A-Fa-f]{3,8})\s*$",
+        RegexOptions.Compiled | RegexOptions.Multiline);
+
+    private static readonly Regex ImgLinePattern = new(
+        @"^\s*\[IMG\][:：]?\s*(?<prompt>.+?)\s*$",
+        RegexOptions.Compiled | RegexOptions.Multiline);
+
+    private static readonly Regex TopTitlePattern = new(
+        @"^#\s+(?<title>[^\n]+)\s*$",
+        RegexOptions.Compiled | RegexOptions.Multiline);
+
+    private static readonly Regex TopSubtitlePattern = new(
+        @"^>\s+(?<sub>[^\n]+)\s*$",
+        RegexOptions.Compiled | RegexOptions.Multiline);
+
+    private static PosterAutopilotResult? TryParseMarkdownSections(
+        string raw, PosterTemplate template, int expectedCount, bool includeOpen)
+    {
+        var cleaned = StripCodeFence(raw.Trim());
+        if (string.IsNullOrWhiteSpace(cleaned)) return null;
+
+        var headers = PageHeaderPattern.Matches(cleaned);
+        if (headers.Count == 0) return null;
+
+        string? posterTitle = null;
+        string? posterSubtitle = null;
+        var headZone = cleaned[..headers[0].Index];
+        var tm = TopTitlePattern.Match(headZone);
+        if (tm.Success) posterTitle = tm.Groups["title"].Value.Trim();
+        var sm = TopSubtitlePattern.Match(headZone);
+        if (sm.Success) posterSubtitle = sm.Groups["sub"].Value.Trim();
+
+        var pages = new List<PosterAutopilotPage>();
+        for (int i = 0; i < headers.Count; i++)
+        {
+            var h = headers[i];
+            int bodyStart = h.Index + h.Length;
+            int bodyEnd = (i + 1 < headers.Count) ? headers[i + 1].Index : cleaned.Length;
+            bool isLast = (i == headers.Count - 1);
+
+            var section = cleaned[bodyStart..bodyEnd];
+
+            var imgMatch = ImgLinePattern.Match(section);
+            string imagePrompt = imgMatch.Success ? imgMatch.Groups["prompt"].Value.Trim() : string.Empty;
+
+            // 最后一页没有 [IMG] 行且调用方不要求 includeOpen → 视为"未闭合",跳过
+            if (isLast && !imgMatch.Success && !includeOpen) continue;
+
+            string body = imgMatch.Success
+                ? (section[..imgMatch.Index].TrimEnd() + "\n" + section[(imgMatch.Index + imgMatch.Length)..].TrimStart()).Trim()
+                : section.Trim();
+
+            int order = int.TryParse(h.Groups["order"].Value, out var o) ? o : pages.Count;
+            string title = h.Groups["title"].Value.Trim();
+            string accent = h.Groups["accent"].Value.Trim();
+            if (string.IsNullOrWhiteSpace(accent))
+            {
+                accent = template.AccentPalette[order % template.AccentPalette.Length];
+            }
+
+            if (!string.IsNullOrWhiteSpace(imagePrompt)
+                && !imagePrompt.Contains("no people", StringComparison.OrdinalIgnoreCase))
+            {
+                imagePrompt = $"{imagePrompt}, {template.ImageStyleKeywords}";
+            }
+
+            pages.Add(new PosterAutopilotPage
+            {
+                Order = order,
+                Title = title,
+                Body = body,
+                ImagePrompt = imagePrompt,
+                AccentColor = accent,
+            });
+        }
+
+        if (pages.Count == 0) return null;
+
+        if (expectedCount > 0 && pages.Count > expectedCount + 2)
+        {
+            pages = pages.Take(expectedCount + 2).ToList();
+        }
+
+        return new PosterAutopilotResult
+        {
+            Title = !string.IsNullOrWhiteSpace(posterTitle) ? posterTitle! : $"{template.Label} · 更新海报",
+            Subtitle = posterSubtitle,
+            Pages = pages,
+        };
     }
 
     // ────────────────────────────────────────────────────────────
@@ -373,25 +496,25 @@ public sealed class PosterAutopilotService : IPosterAutopilotService
     {
         var palette = string.Join(", ", template.AccentPalette);
         return
-            $"你是 MAP 周报海报的文案设计师。用户会给你一段 markdown 数据源,你要把它加工成 {pageCount} 页主页弹窗轮播海报。\n\n" +
+            $"你是 MAP 主页弹窗海报的文案设计师。用户给你一段 markdown 数据源,你把它加工成 {pageCount} 页海报。\n\n" +
             $"语调:{template.Tone}\n\n" +
-            $"**严格只输出一个 JSON 对象**,不要 markdown 代码块,不要解释。UTF-8。结构:\n" +
-            "{\n" +
-            "  \"title\": string,             // 海报总标题,≤16 个汉字\n" +
-            "  \"subtitle\": string,          // 副标题,≤30 个汉字,一句话概括\n" +
-            "  \"pages\": [\n" +
-            "    {\n" +
-            "      \"order\": number,         // 从 0 开始\n" +
-            "      \"title\": string,         // 10-14 个汉字的短语,禁止「新增/修复/优化」开头\n" +
-            "      \"body\": string,          // 80-120 字,用户视角,能做什么,解决什么痛点\n" +
-            "      \"imagePrompt\": string,   // 英文,80-160 字,文生图用 prompt\n" +
-            $"      \"accentColor\": string   // 十六进制,从 [{palette}] 中选,每页不同\n" +
-            "    }\n" +
-            "  ]\n" +
-            "}\n\n" +
-            $"imagePrompt 规则:英文,风格追加 \"{template.ImageStyleKeywords}\",不含人脸。\n" +
-            $"必须恰好 {pageCount} 页,order 从 0 连续到 {pageCount - 1}。\n" +
-            "最后一页负责「承接 CTA」(引导用户去看完整周报),不要在 JSON 里写 CTA 文案,只写引导性的 body。";
+            "# 输出格式(极其重要!只输出下面这种 Markdown 分段,不要 JSON,不要任何代码围栏,不要额外解释)\n\n" +
+            "首行:\n" +
+            "`# <海报总标题,≤16 汉字>`\n\n" +
+            "第二行(可选):\n" +
+            "`> <副标题,≤30 汉字>`\n\n" +
+            "然后是恰好 " + pageCount + " 页,每页一个段落,严格遵守下面 5 行格式:\n\n" +
+            "```\n" +
+            "## Page <从 0 开始> · <10-14 汉字短语标题> · <#十六进制色>\n" +
+            "<80-120 字正文,用户视角,可以用 markdown:**加粗**、列表、换行。可以多行。>\n" +
+            "\n" +
+            "[IMG] <英文 80-160 字的生图 prompt,不含人脸>\n" +
+            "```\n\n" +
+            $"色板候选:[{palette}],每页不重复。\n" +
+            $"imagePrompt 风格关键词:追加 \"{template.ImageStyleKeywords}\"。\n" +
+            $"共 {pageCount} 页,order 从 0 连续到 {pageCount - 1}。\n" +
+            "末页正文要承接 CTA(引导用户去看完整内容),但不要写 CTA 按钮文字本身。\n\n" +
+            "反例(禁止):JSON、```markdown 代码围栏、缺失 `[IMG]` 行、Page 编号跳号、色值重复。";
     }
 
     // ────────────────────────────────────────────────────────────

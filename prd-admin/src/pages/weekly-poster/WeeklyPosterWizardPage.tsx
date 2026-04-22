@@ -471,13 +471,14 @@ export default function WeeklyPosterWizardPage() {
           <div className="mt-6">
             <div className="flex items-center justify-between mb-3">
               <h2 className="text-[13px] font-semibold text-white/85">
-                生成结果 · {poster.pages.length} 页
+                生成结果 · {(poster.pages ?? []).length} 页
               </h2>
               <div className="flex items-center gap-2">
                 <button
                   type="button"
                   onClick={() => setPreviewOpen(true)}
-                  className="inline-flex items-center gap-1 px-3 h-8 rounded-md text-[12px] transition-colors hover:bg-white/10"
+                  disabled={(poster.pages ?? []).length === 0}
+                  className="inline-flex items-center gap-1 px-3 h-8 rounded-md text-[12px] transition-colors hover:bg-white/10 disabled:opacity-40 disabled:cursor-not-allowed"
                   style={{
                     color: 'rgba(255,255,255,0.8)',
                     background: 'rgba(255,255,255,0.04)',
@@ -514,9 +515,9 @@ export default function WeeklyPosterWizardPage() {
             </div>
 
             <div className="grid gap-3" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))' }}>
-              {poster.pages.map((p) => (
+              {(poster.pages ?? []).map((p, i) => (
                 <ResultPageCard
-                  key={p.order}
+                  key={`${p.order ?? `idx-${i}`}`}
                   page={p}
                   progress={pageProgress[p.order] ?? 'pending'}
                   onRegenerate={() => handleRegenerateImage(p.order)}

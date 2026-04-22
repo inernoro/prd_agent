@@ -463,10 +463,13 @@ public sealed class WeeklyPosterController : ControllerBase
             await Emit("source", new { summary = src.summary });
             await Emit("phase", new { phase = "writing", label = "AI 正在写文案…" });
 
-            // ── 真·流式:Gateway StreamAsync,逐 chunk 透传到前端 ─────
+            // ── 真·流式:Gateway StreamAsync + Markdown 分段增量解析 ─────
+            // 每个 text chunk 到达后,尝试提取闭合的 page,新出现的立即 emit,
+            // 用户看到卡片一张张冒出来(不再等整坨 JSON 才出第一页)
             var accumulator = new StringBuilder();
             string? model = null;
             string? platform = null;
+            var emittedOrders = new HashSet<int>();
             try
             {
                 await foreach (var chunk in _autopilot.StreamLlmChunksAsync(
@@ -486,6 +489,24 @@ public sealed class WeeklyPosterController : ControllerBase
                     {
                         accumulator.Append(chunk.Content);
                         await Emit("chunk", new { delta = chunk.Content, length = accumulator.Length });
+
+                        // 增量提取:新闭合的 page 立即 emit
+                        var closedNow = _autopilot.ExtractClosedPagesSoFar(accumulator.ToString(), templateKey);
+                        foreach (var p in closedNow)
+                        {
+                            if (emittedOrders.Contains(p.Order)) continue;
+                            emittedOrders.Add(p.Order);
+                            var earlyDto = new WeeklyPosterPageDto
+                            {
+                                Order = p.Order,
+                                Title = p.Title,
+                                Body = p.Body,
+                                ImagePrompt = p.ImagePrompt,
+                                ImageUrl = null,
+                                AccentColor = p.AccentColor,
+                            };
+                            await Emit("page", new { page = earlyDto, total = 0 });
+                        }
                     }
                     else if (chunk.Type == GatewayChunkType.Error)
                     {
@@ -500,13 +521,15 @@ public sealed class WeeklyPosterController : ControllerBase
                 return;
             }
 
-            await Emit("phase", new { phase = "parsing", label = "解析页面 JSON…" });
+            await Emit("phase", new { phase = "finalize", label = "收尾…" });
             var result = _autopilot.ParseAccumulatedContent(
                 accumulator.ToString(), templateKey, req.PageCount, src.summary, model, platform);
             if (result == null)
             {
-                _logger.LogWarning("AutopilotStream: failed to parse accumulated LLM output ({Len} chars)", accumulator.Length);
-                await EmitError("模型输出无法解析为页面 JSON,换个数据源或重试");
+                _logger.LogWarning("AutopilotStream: failed to parse accumulated LLM output ({Len} chars): {Head}",
+                    accumulator.Length,
+                    accumulator.Length > 400 ? accumulator.ToString()[..400] : accumulator.ToString());
+                await EmitError("模型输出无法解析为海报,换个数据源或重试一次");
                 return;
             }
 
@@ -548,13 +571,14 @@ public sealed class WeeklyPosterController : ControllerBase
             };
             await _db.WeeklyPosters.InsertOneAsync(poster, cancellationToken: ct);
 
-            // 交错推送每一页 — 用户视觉上看到卡片一张张冒出来
             var dto = ToDto(poster);
-            await Emit("phase", new { phase = "emitting-pages", label = "页面材质化…" });
+
+            // 补推流式中尚未 emit 的 page(例如最后一页在流结束后才闭合)
             foreach (var pageDto in dto.Pages)
             {
+                if (emittedOrders.Contains(pageDto.Order)) continue;
+                emittedOrders.Add(pageDto.Order);
                 await Emit("page", new { page = pageDto, total = dto.Pages.Count });
-                await Task.Delay(120, ct);
             }
 
             await Emit("done", new { poster = dto });
