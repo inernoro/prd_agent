@@ -170,6 +170,9 @@
 - [配置市场（海鲜市场）技术设计](design.marketplace) `design.marketplace`
   > CONFIG_TYPE_REGISTRY + IForkable 白名单复制的市场架构
 
+- [海鲜市场技能开放接口](design.skill-marketplace-open-api) `design.skill-marketplace-open-api`
+  > AgentApiKey 长效 M2M 鉴权 + scope 白名单 + findmapskills 官方技能同步到海鲜市场 + P3 Agent 开放接口铺路
+
 - [RBAC 权限系统设计](design.rbac-permission) `design.rbac-permission`
   > SystemRole + AdminPermissionCatalog 60+ 权限的 RBAC 体系
 

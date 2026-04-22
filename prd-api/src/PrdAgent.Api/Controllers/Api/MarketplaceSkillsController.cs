@@ -4,6 +4,7 @@ using System.Text.RegularExpressions;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using MongoDB.Bson;
+using PrdAgent.Api.Controllers.Api.OfficialSkills;
 using MongoDB.Driver;
 using PrdAgent.Api.Extensions;
 using PrdAgent.Core.Interfaces;
@@ -100,7 +101,16 @@ public class MarketplaceSkillsController : ControllerBase
         };
 
         var items = await query.Limit(200).ToListAsync(ct);
-        return Ok(ApiResponse<object>.Ok(new { items = items.Select(s => ToDto(s, userId)) }));
+        var dtos = items.Select(s => ToDto(s, userId)).Cast<object>().ToList();
+
+        // 虚拟注入官方 findmapskills 到首位（筛选条件命中时）
+        if (OfficialMarketplaceSkillInjector.ShouldInject(keyword, tag))
+        {
+            var baseUrl = OfficialMarketplaceSkillInjector.ResolveBaseUrl(Request);
+            dtos.Insert(0, OfficialMarketplaceSkillInjector.BuildFindMapSkillsDto(baseUrl, userId));
+        }
+
+        return Ok(ApiResponse<object>.Ok(new { items = dtos }));
     }
 
     /// <summary>
@@ -321,6 +331,14 @@ public class MarketplaceSkillsController : ControllerBase
     public async Task<IActionResult> Fork(string id, CancellationToken ct)
     {
         var userId = this.GetRequiredUserId();
+
+        // 官方虚拟条目特判：不查 DB、不 +1 count，直接返回官方下载 URL
+        if (OfficialMarketplaceSkillInjector.IsOfficialId(id))
+        {
+            var baseUrl = OfficialMarketplaceSkillInjector.ResolveBaseUrl(Request);
+            return Ok(ApiResponse<object>.Ok(OfficialMarketplaceSkillInjector.BuildForkResponse(baseUrl, userId)));
+        }
+
         var skill = await _db.MarketplaceSkills.Find(x => x.Id == id && x.IsPublic).FirstOrDefaultAsync(ct);
         if (skill == null)
             return NotFound(ApiResponse<object>.Fail("DOCUMENT_NOT_FOUND", "技能不存在或已下架"));

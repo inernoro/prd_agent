@@ -38,8 +38,12 @@ public class OfficialSkillsController : ControllerBase
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, $"未找到官方技能: {skillKey}"));
 
         var baseUrl = ResolveBaseUrl();
-        var skillMd = OfficialSkillTemplates.FindMapSkillsSkillMd.Replace("{{BASE_URL}}", baseUrl);
-        var readme = OfficialSkillTemplates.FindMapSkillsReadme.Replace("{{BASE_URL}}", baseUrl);
+        string Subst(string template) => template
+            .Replace("{{BASE_URL}}", baseUrl)
+            .Replace("{{VERSION}}", OfficialSkillTemplates.FindMapSkillsVersion)
+            .Replace("{{RELEASE_DATE}}", OfficialSkillTemplates.FindMapSkillsReleaseDate);
+        var skillMd = Subst(OfficialSkillTemplates.FindMapSkillsSkillMd);
+        var readme = Subst(OfficialSkillTemplates.FindMapSkillsReadme);
 
         using var ms = new MemoryStream();
         using (var zip = new ZipArchive(ms, ZipArchiveMode.Create, leaveOpen: true))

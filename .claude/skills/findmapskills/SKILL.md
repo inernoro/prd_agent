@@ -1,181 +1,62 @@
 ---
 name: findmapskills
-description: Discovers and downloads skills from the PrdAgent 海鲜市场 (skill marketplace). Use when the user asks "有没有现成的技能能做 X", "找个本平台的技能", "从海鲜市场装个技能", "marketplace 有啥新技能" or similar requests for internal-platform skills. Complements `find-skills` (which searches the external skills.sh ecosystem) by searching the user's own PrdAgent skill marketplace over its Open API.
+description: PrdAgent 海鲜市场（skill marketplace）操作技能。通过长效 API Key 搜索、下载、上传、订阅本平台的技能包。当用户说"找个海鲜市场的技能做 X"、"从市场装个技能"、"把这个技能发布到市场"、"订阅新技能"时触发。
 ---
 
-# findmapskills（海鲜市场技能发现）
+# findmapskills（海鲜市场全操作）
 
-This skill helps the user discover and install skills from **their PrdAgent 海鲜市场** (the internal skill marketplace), as opposed to the public `skills.sh` ecosystem that `find-skills` covers.
+> **版本**：1.0.0（2026-04-21）
+> **来源**：PrdAgent 官方内置技能，持续跟随后端 API 契约更新
+> **最新版下载**：`curl -sSLo findmapskills.zip $PRD_AGENT_BASE/api/official-skills/findmapskills/download`
 
-## When to Use This Skill
+装上这个技能后，你可以通过 PrdAgent 的开放接口操作海鲜市场。
 
-Trigger on intents like:
+> **注意**：此文件是**仓库内本地版**，供 Claude Code 直接识别。
+> 真正对用户下发的技能包由后端动态生成，内容参见 `prd-api/src/PrdAgent.Api/Controllers/Api/OfficialSkills/OfficialSkillTemplates.cs` 中的 `FindMapSkillsSkillMd` 常量。
+> 两份内容应保持一致 —— 下次修改时两边都要改。
 
-- "有没有现成的技能能做 X" / "find a marketplace skill for X"
-- "我们平台海鲜市场里有啥技能"
-- "装一个 海鲜市场 的技能" / "install a skill from the marketplace"
-- "marketplace 有啥新技能" / "最新发布的技能"
-- User references `/marketplace`, 海鲜市场, or the in-platform skill library
-- User says "订阅技能更新" / "subscribe to new marketplace skills"
-
-**Do not** use this skill for the public `skills.sh` ecosystem — that's what `find-skills` is for. The two are complementary.
-
-## What is the 海鲜市场 Open API?
-
-The PrdAgent admin ships a skill marketplace where users upload zip skill packages (with `SKILL.md` inside). A matching HTTP Open API lets external AI / agents browse, download, and upload skills over a long-lived API Key (`sk-ak-xxxx`).
-
-Endpoints (all require `Authorization: Bearer $PRD_AGENT_API_KEY`):
-
-| Method | Path | Scope | Purpose |
-|---|---|---|---|
-| `GET`  | `/api/open/marketplace/skills?keyword=&sort=hot|new&tag=&limit=` | `marketplace.skills:read`  | List public skills |
-| `GET`  | `/api/open/marketplace/skills/{id}` | `marketplace.skills:read` | Get one skill |
-| `GET`  | `/api/open/marketplace/skills/tags`  | `marketplace.skills:read` | List all tags (with counts) |
-| `POST` | `/api/open/marketplace/skills/{id}/fork` | `marketplace.skills:read` | Download zip (counts +1, returns `downloadUrl` + `fileName`) |
-| `POST` | `/api/open/marketplace/skills/upload` (multipart) | `marketplace.skills:write` | Upload new zip skill package |
-| `POST` | `/api/open/marketplace/skills/{id}/favorite` | `marketplace.skills:read` | Favorite |
-| `POST` | `/api/open/marketplace/skills/{id}/unfavorite` | `marketplace.skills:read` | Unfavorite |
-
-**Response envelope**: all endpoints return `{ success: boolean, data: ..., error: { code, message } | null }`.
-
-## Prerequisites
-
-Before using this skill, the user must have:
-
-1. **An API Key** — created via the Web UI button "接入 AI" on `/marketplace` (top-right). The plaintext key is shown **once** during creation.
-2. **The key exposed as `PRD_AGENT_API_KEY`** in the current shell / process env.
-3. **The platform's origin URL** (e.g. `https://prd-agent.example.com`). If unknown, ask the user or read from a project config.
-
-If any of these are missing, tell the user what they need to do rather than guessing.
-
-## Step 1: Verify the Environment
-
-Before searching, run:
+## 前置
 
 ```bash
-: "${PRD_AGENT_API_KEY:?set PRD_AGENT_API_KEY (see 海鲜市场 → 接入 AI)}"
-: "${PRD_AGENT_BASE:=https://your-platform.example.com}"  # replace with the user's actual origin
-echo "Using $PRD_AGENT_BASE with key prefix ${PRD_AGENT_API_KEY:0:12}..."
+: "${PRD_AGENT_API_KEY:?缺 API Key。在 海鲜市场 → 右上角「接入 AI」新建。}"
+: "${PRD_AGENT_BASE:?缺 base URL。导出 PRD_AGENT_BASE=https://your-platform}"
+AUTH=(-H "Authorization: Bearer $PRD_AGENT_API_KEY" -H "Accept: application/json")
 ```
 
-If `PRD_AGENT_API_KEY` is not set, stop and ask the user:
+如果用户没设 `PRD_AGENT_API_KEY`，引导去 `$PRD_AGENT_BASE/marketplace` 的「接入 AI」按钮新建。
 
-> 你还没设置 `PRD_AGENT_API_KEY`。请在 **海鲜市场 → 右上角"接入 AI"** 创建一个带
-> `marketplace.skills:read` 权限的 Key，把明文 `export PRD_AGENT_API_KEY=sk-ak-xxxx` 之后我再继续。
-
-## Step 2: Understand the User's Need
-
-Identify:
-
-1. **Domain / task**: e.g. "PR 审查", "水印配置", "视频脚本"
-2. **Sort preference**: hot (popular) vs new (latest)
-3. **Tag hints**: if the user mentioned specific tags
-
-## Step 3: Search the Marketplace
-
-Use `curl` to query — prefer keyword or tag search, with `sort=hot` for quality-biased results.
+## 搜索技能
 
 ```bash
-# Keyword search
-curl -sS "$PRD_AGENT_BASE/api/open/marketplace/skills?keyword=PR%20%E5%AE%A1%E6%9F%A5&sort=hot&limit=20" \
-  -H "Authorization: Bearer $PRD_AGENT_API_KEY" \
-  -H "Accept: application/json" | jq '.data.items[] | {id, title, description, downloadCount, tags}'
+# 关键字 + 热度
+curl -sS "$PRD_AGENT_BASE/api/open/marketplace/skills?keyword=PR&sort=hot&limit=20" "${AUTH[@]}" \
+  | jq '.data.items[] | {id,title,description,downloadCount,tags}'
 
-# Tag search (run `/api/open/marketplace/skills/tags` first if unsure what tags exist)
-curl -sS "$PRD_AGENT_BASE/api/open/marketplace/skills?tag=AI&sort=hot&limit=20" \
-  -H "Authorization: Bearer $PRD_AGENT_API_KEY" | jq '.data.items[] | {id, title, downloadCount}'
+# 列出所有 tag
+curl -sS "$PRD_AGENT_BASE/api/open/marketplace/skills/tags" "${AUTH[@]}" | jq '.data.tags'
+
+# 按 tag 过滤
+curl -sS "$PRD_AGENT_BASE/api/open/marketplace/skills?tag=AI&sort=new&limit=20" "${AUTH[@]}"
 ```
 
-## Step 4: Verify Quality Before Recommending
-
-**Do not recommend a skill based solely on the first search hit.** Check:
-
-1. **Download count** (`downloadCount`) — higher is more battle-tested
-2. **Author** (`ownerUserName`) — if the user knows the author, that's a positive signal
-3. **Description alignment** — does the 30-char summary actually match the user's intent?
-4. **`hasSkillMd: true`** — skills missing a `SKILL.md` are lower quality
-
-If the top result looks weak, widen the keyword or try a different tag.
-
-## Step 5: Present Options to the User
-
-Show 3-5 candidates as a list. Include:
-
-- Title (emoji prefix if `iconEmoji` exists)
-- 1-line description
-- Download count + tags
-- The fork command
-
-Example rendering:
-
-```
-找到 3 个候选：
-
-1. 🐟 PR 审查助手 — "扫描 PR diff，高亮风险与建议"
-   120 次下载 · tags: PR, 代码审查, AI
-   → curl -X POST "$PRD_AGENT_BASE/api/open/marketplace/skills/abc123/fork" ...
-
-2. 🧪 测试用例生成器 — "从 SKILL.md 产出 xunit 测试"
-   35 次下载 · tags: 测试, AI
-   → ...
-```
-
-## Step 6: Fork (Download) the Selected Skill
-
-On user confirmation, run fork and save the zip locally:
+## 下载（fork）
 
 ```bash
-SKILL_ID="abc123"  # from step 5
-RESP=$(curl -sS -X POST "$PRD_AGENT_BASE/api/open/marketplace/skills/$SKILL_ID/fork" \
-  -H "Authorization: Bearer $PRD_AGENT_API_KEY" \
+SKILL_ID="<从搜索结果拿到的 id>"
+RESP=$(curl -sS -X POST "$PRD_AGENT_BASE/api/open/marketplace/skills/$SKILL_ID/fork" "${AUTH[@]}" \
   -H "Content-Type: application/json" -d '{}')
 URL=$(echo "$RESP"  | jq -r '.data.downloadUrl')
 NAME=$(echo "$RESP" | jq -r '.data.fileName // "skill.zip"')
 curl -sSL -o "$NAME" "$URL"
-unzip -l "$NAME"  # 让用户看一下结构，确认是合法 SKILL 包
+unzip -o "$NAME" -d ~/.claude/skills/   # 安装到 Claude Code 技能目录
 ```
 
-Then tell the user where the zip landed and suggest where to install it (e.g. `~/.claude/skills/<skill-name>/`).
+## 上传（要 `marketplace.skills:write` scope）
 
-## Step 7: Handle Expiry Gracefully
-
-The API responds with these headers:
-
-- `X-AgentApiKey-ExpiringSoon: true` / `X-AgentApiKey-DaysLeft: 29` — 30 天内过期，提醒用户在 UI 续期
-- `X-AgentApiKey-Expiring: true` + `X-AgentApiKey-ExpiredAt: ...` — 已过期但在宽限期内，强烈建议续期
-- HTTP `401 UNAUTHORIZED` with `Invalid, expired or revoked AgentApiKey` — key 已超过宽限期或被撤销
-
-On `ExpiringSoon` / `Expiring` just surface a warning — the request still succeeded. On 401, tell the user exactly which Web UI button to click:
-
-> 你的 API Key 过期了（超过 7 天宽限期）。请打开 **海鲜市场 → 接入 AI → 我的 Key**，点"续期一年"，
-> 或者直接撤销重建一个新的。
-
-## Subscribing to New Skills
-
-There's no push-based subscription yet. For polling-based "subscribe to new skills":
+zip 内必须含 `SKILL.md`，≤ 20 MB，上传后默认公开。
 
 ```bash
-# 把本地游标存在 ~/.prd-agent/last_marketplace_cursor
-CURSOR=$(cat ~/.prd-agent/last_marketplace_cursor 2>/dev/null || echo "1970-01-01T00:00:00Z")
-NEW_ITEMS=$(curl -sS "$PRD_AGENT_BASE/api/open/marketplace/skills?sort=new&limit=50" \
-  -H "Authorization: Bearer $PRD_AGENT_API_KEY" \
-  | jq --arg since "$CURSOR" '.data.items | map(select(.createdAt > $since))')
-if [ "$(echo "$NEW_ITEMS" | jq 'length')" -gt 0 ]; then
-  echo "有新技能："
-  echo "$NEW_ITEMS" | jq '.[] | {title, description, createdAt}'
-  echo "$NEW_ITEMS" | jq -r '.[0].createdAt' > ~/.prd-agent/last_marketplace_cursor
-fi
-```
-
-Drop that into a cron / daily job if the user wants unattended subscriptions.
-
-## Uploading Skills (requires `marketplace.skills:write`)
-
-If the user wants to publish a skill they built:
-
-```bash
-curl -sS -X POST "$PRD_AGENT_BASE/api/open/marketplace/skills/upload" \
-  -H "Authorization: Bearer $PRD_AGENT_API_KEY" \
+curl -sS -X POST "$PRD_AGENT_BASE/api/open/marketplace/skills/upload" "${AUTH[@]}" \
   -F "file=@./my-skill.zip" \
   -F "title=我的新技能" \
   -F "description=30 字以内概述这个技能做什么" \
@@ -183,16 +64,59 @@ curl -sS -X POST "$PRD_AGENT_BASE/api/open/marketplace/skills/upload" \
   -F 'tagsJson=["AI","效率"]'
 ```
 
-Before uploading, remind the user that:
+## 收藏
 
-- The zip must contain a `SKILL.md` at the top level (or in a single subdir)
-- Max 20 MB
-- Content becomes public by default — don't upload anything with secrets
-- Their Key must have `marketplace.skills:write` scope (check on the "我的 Key" tab)
+```bash
+curl -sS -X POST "$PRD_AGENT_BASE/api/open/marketplace/skills/$SKILL_ID/favorite" "${AUTH[@]}" -d '{}'
+curl -sS -X POST "$PRD_AGENT_BASE/api/open/marketplace/skills/$SKILL_ID/unfavorite" "${AUTH[@]}" -d '{}'
+```
 
-## Relationship to `find-skills`
+## 订阅新技能（轮询）
 
-- **`find-skills`** → searches the public `skills.sh` ecosystem (use for general, well-known skills)
-- **`findmapskills`** → searches the user's own PrdAgent 海鲜市场 (use for team-internal / domain-specific skills)
+```bash
+CURSOR=$(cat ~/.prd-agent/last_cursor 2>/dev/null || echo "1970-01-01T00:00:00Z")
+curl -sS "$PRD_AGENT_BASE/api/open/marketplace/skills?sort=new&limit=50" "${AUTH[@]}" \
+  | jq --arg since "$CURSOR" '.data.items | map(select(.createdAt > $since))'
+```
 
-When the user asks an open-ended "找个技能能做 X" question, consider running both in parallel and presenting combined results — public skills often have more installs, but marketplace skills are often more tailored to the team's workflow.
+把结果里最新一条 `createdAt` 写回 `~/.prd-agent/last_cursor` 即可。
+
+## Key 过期处理
+
+响应头会携带：
+- `X-AgentApiKey-ExpiringSoon: true` + `X-AgentApiKey-DaysLeft: N` —— 30 天内过期
+- `X-AgentApiKey-Expiring: true` —— 已过期但在 7 天宽限期内
+- HTTP `401` —— 超过宽限期或被撤销
+
+检测到前两种情况就提示用户：打开 `$PRD_AGENT_BASE/marketplace` → 右上角「接入 AI」→ 我的 Key → 点「续期一年」。
+
+## 响应契约
+
+所有接口统一结构：`{ success: bool, data: {...}, error: { code, message } | null }`。
+永远先判 `success`，不要看 HTTP 码。
+
+## 如何更新此技能
+
+这个技能包的内容随 PrdAgent 后端版本一起滚动更新。判断需不需要重装的 3 个信号：
+
+1. **被调用接口返回 `UNKNOWN_FIELD` / 404** —— 后端已改契约，立即重装
+2. **UI 海鲜市场卡片显示新的版本号**（在 `$PRD_AGENT_BASE/marketplace` 搜 `findmapskills`，比较卡片上的版本号与本文件 header 的版本）
+3. **AI Agent 定期（每月）主动轮询**
+
+```bash
+REMOTE_VERSION=$(curl -sSLo - "$PRD_AGENT_BASE/api/official-skills/findmapskills/download" \
+  | unzip -p - findmapskills/SKILL.md | grep -oE '\*\*版本\*\*：[^（]+' | head -1)
+echo "远端版本: $REMOTE_VERSION"
+echo "本地版本: 1.0.0"
+```
+
+不一样就告诉用户：
+
+> 你装的 findmapskills 版本是 **1.0.0**（2026-04-21），平台上已经有更新。跑这条命令重装：
+>
+> ```bash
+> curl -sSLo /tmp/findmapskills.zip "$PRD_AGENT_BASE/api/official-skills/findmapskills/download" \
+>   && unzip -o /tmp/findmapskills.zip -d ~/.claude/skills/
+> ```
+
+后端 `OfficialSkillTemplates.cs` 的 `FindMapSkillsVersion` 常量是本技能版本的权威源。
