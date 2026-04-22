@@ -24,9 +24,29 @@ import { trackTip } from '@/services/real/dailyTips';
 
 const PIN_KEY = 'tipsBookPinned';
 const HIDDEN_KEY = 'tipsBookHidden';
-const AUTO_OPENED_KEY = 'tipsDrawerAutoOpened';
+/** 本 session 已自动弹过的 tip id 集合(按 id 记忆,新推送的 tip 还能再弹) */
+const AUTO_OPENED_IDS_KEY = 'tipsBookAutoOpenedIds';
 const AUTO_COLLAPSE_MS = 5000;
 const EDGE_PEEK_ZONE = 140; // 右下角触发区域大小(px)
+
+function readAutoOpenedIds(): Set<string> {
+  try {
+    const raw = sessionStorage.getItem(AUTO_OPENED_IDS_KEY);
+    if (!raw) return new Set();
+    const arr = JSON.parse(raw);
+    return new Set(Array.isArray(arr) ? arr : []);
+  } catch {
+    return new Set();
+  }
+}
+
+function writeAutoOpenedIds(ids: Set<string>) {
+  try {
+    sessionStorage.setItem(AUTO_OPENED_IDS_KEY, JSON.stringify(Array.from(ids)));
+  } catch {
+    /* noop */
+  }
+}
 
 type Mode = 'collapsed' | 'expanded' | 'hidden' | 'edge-peek';
 
@@ -94,24 +114,25 @@ export function TipsDrawer() {
     return 'collapsed';
   })();
 
-  // ── 推送自动展开:首次出现定向 tip 时弹一次 ─────────────────
+  // ── 推送自动展开:按 tip.id 记忆,每条定向 tip 本 session 只弹一次 ──
+  // 轮询时如果管理员新推了一条,tips 里会多出一个 isTargeted 的新 id,它不在
+  // 已弹过集合里 → 再自动弹一次。解决「session 第二条推送不弹」的坑。
   useEffect(() => {
     if (!loaded) return;
-    const hasTargeted = tips.some((t) => t.isTargeted);
-    if (!hasTargeted) return;
-    try {
-      if (sessionStorage.getItem(AUTO_OPENED_KEY)) return;
-      sessionStorage.setItem(AUTO_OPENED_KEY, '1');
-    } catch {
-      /* noop */
-    }
-    // hidden 状态时不要强弹,只把书显出来
+    const opened = readAutoOpenedIds();
+    const newTargeted = tips.find((t) => t.isTargeted && !opened.has(t.id));
+    if (!newTargeted) return;
+
+    opened.add(newTargeted.id);
+    writeAutoOpenedIds(opened);
+
+    // hidden 状态时先把书拉回来
     if (hiddenByUser) {
       setHiddenByUser(false);
     }
     setExpanded(true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [loaded, tips.length]);
+  }, [loaded, tips]);
 
   // ── 自动收起:expanded 5s 内无 hover / 点击就 collapsed ──────
   const drawerHoveredRef = useRef(false);
@@ -125,6 +146,7 @@ export function TipsDrawer() {
   }, [expanded]);
 
   // ── 鼠标贴右下角触发 edge-peek ──────────────────────────
+  // 触发区域覆盖书的位置(右下 200px),hidden 时鼠标靠近就把书拉回来
   useEffect(() => {
     if (!hiddenByUser) {
       setEdgeHover(false);
@@ -133,7 +155,7 @@ export function TipsDrawer() {
     const onMove = (e: MouseEvent) => {
       const inZone =
         window.innerWidth - e.clientX < EDGE_PEEK_ZONE &&
-        window.innerHeight - e.clientY < EDGE_PEEK_ZONE;
+        window.innerHeight - e.clientY < EDGE_PEEK_ZONE + 60;
       setEdgeHover(inZone);
     };
     window.addEventListener('mousemove', onMove);
@@ -169,14 +191,15 @@ export function TipsDrawer() {
     dismiss(tipId);
   };
 
-  // 没有任何 tip 且未锁定 → 完全不渲染(避免占据右下角)
-  if (tips.length === 0 && !pinned) return null;
+  // 小书「永远存在」:即使 tips 为空、也没 pinned,依然在右下角悬浮,
+  // 保证用户随时能点进来看有什么教程。没有 tip 时点开会显示空状态。
 
   // ── 视觉:书图标本体 ──────────────────────────────────
-  // hidden 模式时挪到右边缘只露 18px 书脊;edge-peek 时滑回正常位置
-  const bookRight =
-    mode === 'hidden' ? -32 : mode === 'edge-peek' ? 12 : 20;
-  const bookOpacity = mode === 'hidden' ? 0.55 : 1;
+  // AppShell 的通知铃铛在 bottom:20 right:20(48x48),所以书放在它正上方,
+  // 间距 12px,bottom = 20 + 48 + 12 = 80。hidden 时挪到右边缘只露书脊。
+  const BOOK_BOTTOM = 80;
+  const bookRight = mode === 'hidden' ? -20 : mode === 'edge-peek' ? 12 : 20;
+  const bookOpacity = mode === 'hidden' ? 0.6 : 1;
 
   const bookBtn = (
     <button
@@ -190,10 +213,10 @@ export function TipsDrawer() {
         }
         setExpanded((v) => !v);
       }}
-      title={tips.length === 0 ? '教程' : `教程 (${badgeCount})`}
+      title={tips.length === 0 ? '教程(暂无)' : `教程 (${badgeCount})`}
       style={{
         position: 'fixed',
-        bottom: 20,
+        bottom: BOOK_BOTTOM,
         right: bookRight,
         width: 48,
         height: 48,
@@ -269,10 +292,10 @@ export function TipsDrawer() {
         }}
         style={{
           position: 'fixed',
-          bottom: 80,
+          bottom: BOOK_BOTTOM + 56, // 小书上方 (80 + 48 + 8)
           right: 20,
           width: 360,
-          maxHeight: 'calc(100vh - 120px)',
+          maxHeight: 'calc(100vh - 180px)',
           borderRadius: 18,
           background:
             'linear-gradient(180deg, rgba(24,22,34,0.96), rgba(16,16,22,0.97))',
