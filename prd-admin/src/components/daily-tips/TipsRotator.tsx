@@ -34,20 +34,18 @@ export interface SpotlightActionPayload {
 
 /**
  * 将点击中的 tip 信息写入 sessionStorage，给下一页的 SpotlightOverlay 消费。
- * tip 只要有 targetSelector 或 autoAction(哪怕一个 step)就写。
+ * 需要至少一个 selector(targetSelector 或 steps[0].selector)才能显示脉冲光圈;
+ * 纯 autoAction(只有 autoClick/prefill,没有 selector)无法被 overlay 定位,直接跳过。
  */
 export function writeSpotlightPayload(tip: DailyTip) {
   const selector = tip.targetSelector
     ?? tip.autoAction?.steps?.[0]?.selector
     ?? null;
-  if (!selector && !tip.autoAction) return;
+  if (!selector) return;
 
   // 旧版 key：只有一个 selector 字符串，保留以便向前兼容
-  if (selector) {
-    try { sessionStorage.setItem(SPOTLIGHT_TARGET_KEY, selector); } catch { /* noop */ }
-  }
+  try { sessionStorage.setItem(SPOTLIGHT_TARGET_KEY, selector); } catch { /* noop */ }
 
-  if (!selector) return;
   const payload: SpotlightActionPayload = {
     id: tip.id,
     selector,

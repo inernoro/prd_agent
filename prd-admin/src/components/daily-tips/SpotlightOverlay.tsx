@@ -88,16 +88,21 @@ export function SpotlightOverlay() {
   const currentSelector =
     steps && steps[stepIndex] ? steps[stepIndex].selector : payload?.selector ?? null;
 
-  // ---- 找到元素 + scroll + expand + prefill,然后画光圈 ----
+  // ---- expand / prefill 一次性 setup:只在 payload 初次设置时执行 ----
+  // ★ 不能放在下面依赖 stepIndex 的 effect 里,否则每次「下一步」都会:
+  //   - 重新 click 折叠面板(可能把已展开的折叠回去)
+  //   - 重新 prefill + focus 输入框(覆盖用户已输入内容)
+  const setupRanForPayloadRef = useRef<SpotlightActionPayload | null>(null);
   useEffect(() => {
-    if (!payload || !currentSelector || dismissed) return;
+    if (!payload || dismissed) return;
+    if (setupRanForPayloadRef.current === payload) return;
+    setupRanForPayloadRef.current = payload;
 
-    let cancelled = false;
-    const autoAction: DailyTipAutoAction | null = payload.autoAction ?? null;
-    const scroll = (autoAction?.scroll as 'center' | 'top' | 'none' | null) ?? 'center';
+    const autoAction = payload.autoAction ?? null;
+    if (!autoAction) return;
 
     // 1) expand:若有,先点击一次折叠触发器(常见:summary / role=button)
-    if (autoAction?.expand) {
+    if (autoAction.expand) {
       try {
         const trigger = document.querySelector(autoAction.expand);
         if (trigger instanceof HTMLElement) trigger.click();
@@ -107,7 +112,7 @@ export function SpotlightOverlay() {
     }
 
     // 2) prefill:用原生 setter 触发 React onChange
-    if (autoAction?.prefill) {
+    if (autoAction.prefill) {
       try {
         const el = document.querySelector(autoAction.prefill.selector);
         if (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement) {
@@ -124,8 +129,17 @@ export function SpotlightOverlay() {
         /* noop */
       }
     }
+  }, [payload, dismissed]);
 
-    // 3) 轮询等目标元素就绪(Reveal 动效 + 异步加载场景)
+  // ---- 每步 scroll + poll selector + 画光圈 ----
+  useEffect(() => {
+    if (!payload || !currentSelector || dismissed) return;
+
+    let cancelled = false;
+    const autoAction: DailyTipAutoAction | null = payload.autoAction ?? null;
+    const scroll = (autoAction?.scroll as 'center' | 'top' | 'none' | null) ?? 'center';
+
+    // 轮询等目标元素就绪(Reveal 动效 + 异步加载场景)
     // 250ms × 40 = 10s 上限,给慢服务器 + 慢网络 + React 渲染余地
     // 找不到就 setSeekTimedOut(true) 走友好失败卡片
     setSeekTimedOut(false);

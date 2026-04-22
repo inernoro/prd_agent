@@ -79,6 +79,7 @@ function normalizeAutoAction(a: DailyTipAutoAction | null | undefined): DailyTip
       selector: s.selector?.trim() ?? '',
       title: s.title?.trim() ?? '',
       body: s.body?.trim() ? s.body.trim() : null,
+      navigateTo: s.navigateTo?.trim() ? s.navigateTo.trim() : null,
     }))
     .filter((s) => s.selector && s.title);
 
