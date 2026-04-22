@@ -1236,7 +1236,7 @@ function HomepageAssetsSection({
           登录后首页最上方的大图。建议宽屏 1920×640 左右，文字主要在左侧，右侧留白区域会作为主体显示。
           上传直接覆盖老路径 <code className="font-mono text-[10px] px-1 py-0.5 rounded" style={{ background: 'var(--bg-input)' }}>icon/title/home.png</code>。
         </p>
-        <div className="grid grid-cols-1 gap-3">
+        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3">
           {HOMEPAGE_HERO_SLOTS.map((hero: HomepageHeroSlot) => (
             <HomepageSlotTile
               key={hero.slot}
@@ -1270,7 +1270,7 @@ function HomepageAssetsSection({
         <div
           className="grid gap-3"
           style={{
-            gridTemplateColumns: isMobile ? '1fr 1fr' : 'repeat(4, 1fr)',
+            gridTemplateColumns: isMobile ? '1fr 1fr' : 'repeat(auto-fill, minmax(200px, 1fr))',
           }}
         >
           {HOMEPAGE_CARD_SLOTS.map((card: HomepageCardSlot) => (
@@ -1304,7 +1304,7 @@ function HomepageAssetsSection({
         <div
           className="grid gap-3"
           style={{
-            gridTemplateColumns: isMobile ? '1fr' : 'repeat(auto-fill, minmax(260px, 1fr))',
+            gridTemplateColumns: isMobile ? '1fr 1fr' : 'repeat(auto-fill, minmax(200px, 1fr))',
           }}
         >
           {agentSlots.map((agent: HomepageAgentSlot) => {
@@ -1408,7 +1408,7 @@ function MarketplaceAssetsSection({
           海鲜市场整页的大气海报背景。建议 1920×1080 以上、深色海洋主题（深蓝 / 青绿 / 暗夜色），图片会叠一层半透明暗色保证卡片可读性。
           未上传时使用内置深海蓝渐变。
         </p>
-        <div className="grid grid-cols-1 gap-3">
+        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3">
           {MARKETPLACE_BG_SLOTS.map((bg: MarketplaceBgSlot) => (
             <HomepageSlotTile
               key={bg.slot}
