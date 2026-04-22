@@ -68,7 +68,7 @@ import { useGlobalDefectStore } from '@/stores/globalDefectStore';
 import { ChangelogBell } from '@/components/changelog/ChangelogBell';
 import { useChangelogStore, selectUnreadCount } from '@/stores/changelogStore';
 import { SpotlightOverlay } from '@/components/daily-tips/SpotlightOverlay';
-import { TipsDrawer } from '@/components/daily-tips/TipsDrawer';
+import { TipsDrawer, FLOATING_DOCK_COLLAPSED_KEY, FLOATING_DOCK_EVENT } from '@/components/daily-tips/TipsDrawer';
 import { CommandPalette } from '@/components/command-palette/CommandPalette';
 
 type NavItem = { key: string; appKey: string; label: string; shortLabel: string; icon: React.ReactNode; description?: string; group?: string | null };
@@ -203,11 +203,12 @@ export default function AppShell() {
   const [toastHovering, setToastHovering] = useState(false);
 
   // ── 悬浮组整体折叠(联动 TipsDrawer 的「收起书 + 铃铛」把手) ──
-  // TipsDrawer 通过 sessionStorage('floatingDockCollapsed') + 'floating-dock-collapsed-changed'
-  // 自定义事件广播状态;AppShell 订阅后把通知铃铛移到右边缘(只露半个,鼠标 hover 时滑回)
+  // TipsDrawer 通过 sessionStorage(FLOATING_DOCK_COLLAPSED_KEY) + FLOATING_DOCK_EVENT
+  // 自定义事件广播状态;AppShell 订阅后把通知铃铛移到右边缘(只露半个,鼠标 hover 时滑回)。
+  // 常量从 TipsDrawer 导入,避免两边字符串字面量漂移。
   const [dockCollapsed, setDockCollapsed] = useState<boolean>(() => {
     try {
-      return sessionStorage.getItem('floatingDockCollapsed') === '1';
+      return sessionStorage.getItem(FLOATING_DOCK_COLLAPSED_KEY) === '1';
     } catch {
       return false;
     }
@@ -218,8 +219,8 @@ export default function AppShell() {
       const detail = (e as CustomEvent<{ collapsed: boolean }>).detail;
       setDockCollapsed(!!detail?.collapsed);
     };
-    window.addEventListener('floating-dock-collapsed-changed', onChange);
-    return () => window.removeEventListener('floating-dock-collapsed-changed', onChange);
+    window.addEventListener(FLOATING_DOCK_EVENT, onChange);
+    return () => window.removeEventListener(FLOATING_DOCK_EVENT, onChange);
   }, []);
   useEffect(() => {
     if (!dockCollapsed) {
@@ -527,14 +528,9 @@ export default function AppShell() {
             }}
             onClick={() => {
               if (dockCollapsed) {
-                // 用户点到贴边的铃铛 → 把整组召回
-                try {
-                  sessionStorage.removeItem('floatingDockCollapsed');
-                  sessionStorage.removeItem('tipsBookHidden');
-                } catch {
-                  /* noop */
-                }
-                window.dispatchEvent(new CustomEvent('floating-dock-collapsed-changed', {
+                // 用户点到贴边的铃铛 → 把整组召回(TipsDrawer 订阅该事件后会把
+                // hiddenByUser 置 false,对应的 useEffect 会清理 sessionStorage)
+                window.dispatchEvent(new CustomEvent(FLOATING_DOCK_EVENT, {
                   detail: { collapsed: false },
                 }));
               }

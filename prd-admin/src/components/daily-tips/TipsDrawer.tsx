@@ -29,8 +29,11 @@ const HIDDEN_KEY = 'tipsBookHidden';
 const AUTO_OPENED_IDS_KEY = 'tipsBookAutoOpenedIds';
 /** 首次访问自动弹过一次的标志(全域 session 级,只兜底提示新用户) */
 const FIRST_VISIT_SHOWN_KEY = 'tipsBookFirstVisitShown';
-/** 悬浮组整体折叠(书 + AppShell toast 铃铛联动):由 TipsDrawer 写,AppShell 读 */
+/** 悬浮组整体折叠(书 + AppShell toast 铃铛联动):由任一端写,另一端订阅事件。
+ *  AppShell 通过 import 这个常量读同一 key,避免字符串字面量漂移。 */
 export const FLOATING_DOCK_COLLAPSED_KEY = 'floatingDockCollapsed';
+/** 折叠状态变更事件名(同 tab 内 storage 事件不触发,必须用 CustomEvent) */
+export const FLOATING_DOCK_EVENT = 'floating-dock-collapsed-changed';
 const AUTO_COLLAPSE_MS = 5000;
 const EDGE_PEEK_ZONE = 140; // 右下角触发区域大小(px)
 
@@ -108,13 +111,27 @@ export function TipsDrawer() {
         sessionStorage.removeItem(HIDDEN_KEY);
         sessionStorage.removeItem(FLOATING_DOCK_COLLAPSED_KEY);
       }
-      window.dispatchEvent(new CustomEvent('floating-dock-collapsed-changed', {
+      window.dispatchEvent(new CustomEvent(FLOATING_DOCK_EVENT, {
         detail: { collapsed: hiddenByUser },
       }));
     } catch {
       /* noop */
     }
   }, [hiddenByUser]);
+
+  // ── 订阅 dock 事件:AppShell 的铃铛召回时通知 TipsDrawer 同步 hidden state ──
+  // 避免只单向广播(书 → 铃铛)导致铃铛召回后书仍然贴边,两个元素失步
+  useEffect(() => {
+    const onDockChange = (e: Event) => {
+      const detail = (e as CustomEvent<{ collapsed: boolean }>).detail;
+      if (detail == null) return;
+      // 只处理外部发起的变更(值不同 = 别人广播的),避免自己 useEffect dispatch
+      // 触发自己的监听器形成循环
+      setHiddenByUser((prev) => (prev === detail.collapsed ? prev : detail.collapsed));
+    };
+    window.addEventListener(FLOATING_DOCK_EVENT, onDockChange);
+    return () => window.removeEventListener(FLOATING_DOCK_EVENT, onDockChange);
+  }, []);
 
   // ── expanded / edge-peek / hover 临时状态 ────────────────────────
   const [expanded, setExpanded] = useState<boolean>(false);

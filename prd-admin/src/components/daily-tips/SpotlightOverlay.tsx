@@ -279,7 +279,9 @@ export function SpotlightOverlay() {
   }
 
   // 找不到目标元素 + 超时 → 渲染友好失败卡片(不再静默消失)
-  if (!rect && seekTimedOut) {
+  // 多步 Tour 切步时故意保留旧 rect 防闪烁,所以不能用 `!rect` 判断超时;
+  // seekTimedOut 置 true 就必须显示失败卡,不管此时 rect 是旧值还是 null
+  if (seekTimedOut) {
     const stepsTotal = payload.autoAction?.steps?.length ?? 0;
     const stepLabel = stepsTotal > 0 ? `第 ${stepIndex + 1} / ${stepsTotal} 步` : '当前步骤';
     return createPortal(
