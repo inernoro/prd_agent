@@ -454,6 +454,16 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
       });
       return;
     }
+    // 2026-04-22 规则：禁止再用 'default' 作为项目 id，避免和遗留迁移项目冲突，
+    // 也避免「default」被当成兜底值到处蔓延（就是用户在抱怨的老问题）。
+    if (baseSlug === LEGACY_PROJECT_ID) {
+      res.status(400).json({
+        error: 'validation',
+        field: 'slug',
+        message: 'slug 不能为 "default"（保留给遗留迁移占位）。请用项目真实名称的派生 slug，例如 my-app。',
+      });
+      return;
+    }
 
     // P4 Part 18 (Phase E audit fix #9): redact embedded userinfo
     // before persisting. Users who paste tokens in the URL by mistake

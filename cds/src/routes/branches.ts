@@ -2965,6 +2965,53 @@ export function createBranchRouter(deps: RouterDeps): Router {
     }
   });
 
+  // ── 热更新开关（2026-04-22 新增）──
+  // POST /api/build-profiles/:id/hot-reload  { enabled: boolean, mode?, command?, usePolling? }
+  // 关掉热更新：只传 enabled=false，其他字段保留以便下次启用
+  router.post('/build-profiles/:id/hot-reload', (req, res) => {
+    try {
+      const { id } = req.params;
+      const { enabled, mode, command, usePolling } = req.body as {
+        enabled?: boolean;
+        mode?: 'dotnet-watch' | 'pnpm-dev' | 'vite' | 'next-dev' | 'custom';
+        command?: string;
+        usePolling?: boolean;
+      };
+      const profile = stateService.getBuildProfile(id);
+      if (!profile) {
+        res.status(404).json({ error: `构建配置 "${id}" 不存在` });
+        return;
+      }
+      if (enabled === undefined) {
+        res.status(400).json({ error: '必须传 enabled (true/false)' });
+        return;
+      }
+      const current = profile.hotReload || { enabled: false, mode: 'dotnet-watch' as const };
+      const next = {
+        enabled,
+        mode: mode ?? current.mode,
+        command: command ?? current.command,
+        usePolling: usePolling ?? current.usePolling,
+      };
+      // mode=custom 时必须有 command
+      if (next.enabled && next.mode === 'custom' && !next.command) {
+        res.status(400).json({ error: 'mode=custom 时必须提供 command' });
+        return;
+      }
+      stateService.updateBuildProfile(id, { hotReload: next });
+      stateService.save();
+      res.json({
+        hotReload: next,
+        message: next.enabled
+          ? `已启用热更新（${next.mode}）。重启该服务让变更生效。`
+          : '已关闭热更新。重启该服务回到标准编译命令。',
+        requiresRestart: true,
+      });
+    } catch (err) {
+      res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
   // ── Docker images (for dropdown selection) ──
 
   router.get('/docker-images', async (_req, res) => {
@@ -4406,18 +4453,46 @@ export function createBranchRouter(deps: RouterDeps): Router {
   }
 
   // POST /api/import-config — validate, preview, and optionally apply
-  // Accepts { config: <JSON object | YAML string>, dryRun? }
-  // Auto-detects format: YAML string → CDS compose, JSON object → direct config
+  //
+  // 2026-04-22 升级：
+  //   - 每次 apply 前自动拍 ConfigSnapshot（trigger='pre-import'）
+  //   - 新增 cleanMode: 'merge' | 'replace-all'
+  //       merge      = 原行为（新增/更新，不删除存量）
+  //       replace-all = 清空 buildProfiles/envVars/infra/routingRules 后再 apply
+  //   - 新增 branchPolicy: 'keep' | 'restart-all' | 'clean'
+  //       keep        = 不动运行中的分支（默认）
+  //       restart-all = apply 后调度重启所有分支容器（让新 env 生效）
+  //       clean       = 额外清掉所有分支的运行状态（容器 + worktree），只留配置
+  //
+  // 数据库永不在清理范围内。想清数据库走 /api/infra/:id/purge。
   router.post('/import-config', async (req, res) => {
     try {
-      const { config: configBlob, dryRun } = req.body as { config: unknown; dryRun?: boolean };
+      const {
+        config: configBlob,
+        dryRun,
+        cleanMode = 'merge',
+        branchPolicy = 'keep',
+      } = req.body as {
+        config: unknown;
+        dryRun?: boolean;
+        cleanMode?: 'merge' | 'replace-all';
+        branchPolicy?: 'keep' | 'restart-all' | 'clean';
+      };
+
+      if (cleanMode !== 'merge' && cleanMode !== 'replace-all') {
+        res.status(400).json({ error: `非法的 cleanMode: ${cleanMode}（允许 merge / replace-all）` });
+        return;
+      }
+      if (!['keep', 'restart-all', 'clean'].includes(branchPolicy)) {
+        res.status(400).json({ error: `非法的 branchPolicy: ${branchPolicy}（允许 keep / restart-all / clean）` });
+        return;
+      }
 
       // Auto-detect format: string → try CDS compose YAML, object → JSON config
       let cfg: Record<string, unknown>;
       if (typeof configBlob === 'string') {
         const cdsConfig = parseCdsCompose(configBlob);
         if (cdsConfig) {
-          // Convert CDS compose to internal format (reuse existing validate/apply pipeline)
           cfg = {
             $schema: 'cds-config',
             buildProfiles: cdsConfig.buildProfiles,
@@ -4426,7 +4501,6 @@ export function createBranchRouter(deps: RouterDeps): Router {
             routingRules: cdsConfig.routingRules.length > 0 ? cdsConfig.routingRules : undefined,
           };
         } else {
-          // Not a CDS compose — try parsing as JSON string
           try {
             cfg = JSON.parse(configBlob);
           } catch {
@@ -4442,7 +4516,6 @@ export function createBranchRouter(deps: RouterDeps): Router {
         cfg = configBlob as Record<string, unknown>;
       }
 
-      // Validate
       const validation = validateConfigBlob(cfg);
       if (!validation.valid) {
         res.status(400).json({ valid: false, errors: validation.errors, warnings: validation.warnings });
@@ -4450,13 +4523,47 @@ export function createBranchRouter(deps: RouterDeps): Router {
       }
       const preview = previewImport(cfg);
 
-      // If dry run, return preview only (include warnings)
       if (dryRun) {
-        res.json({ valid: true, preview, applied: false, warnings: validation.warnings });
+        res.json({
+          valid: true,
+          preview,
+          applied: false,
+          warnings: validation.warnings,
+          cleanMode,
+          branchPolicy,
+        });
         return;
       }
 
-      // Apply: build profiles (add or replace)
+      // 1) 拍快照（replace-all 必须拍；merge 也默认拍，成本很低）
+      const snapshotLabel = cleanMode === 'replace-all'
+        ? `导入前（replace-all）· ${new Date().toLocaleString('zh-CN')}`
+        : `导入前（merge）· ${new Date().toLocaleString('zh-CN')}`;
+      const snapshot = stateService.createConfigSnapshot({
+        trigger: 'pre-import',
+        label: snapshotLabel,
+      });
+
+      // 2) replace-all 模式：清空四件套
+      //    用「全部删除 + 逐个添加」方式，避免状态字段漂移
+      if (cleanMode === 'replace-all') {
+        // 清 buildProfiles
+        for (const p of [...stateService.getBuildProfiles()]) {
+          stateService.removeBuildProfile(p.id);
+        }
+        // 清 customEnv（所有 scope）
+        stateService.clearAllCustomEnv();
+        // 清 infraServices（但保留已创建的容器数据 —— 只是从 state 删记录）
+        for (const svc of [...stateService.getInfraServices()]) {
+          stateService.removeInfraService(svc.id);
+        }
+        // 清 routingRules
+        for (const rule of [...stateService.getRoutingRules()]) {
+          stateService.removeRoutingRule(rule.id);
+        }
+      }
+
+      // 3) apply buildProfiles
       if (Array.isArray(cfg.buildProfiles)) {
         for (const p of cfg.buildProfiles as BuildProfile[]) {
           const existing = stateService.getBuildProfile(p.id);
@@ -4470,7 +4577,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
         }
       }
 
-      // Apply: env vars (merge, new wins)
+      // 4) apply envVars
       if (cfg.envVars && typeof cfg.envVars === 'object') {
         const newVars = cfg.envVars as Record<string, string>;
         for (const [key, value] of Object.entries(newVars)) {
@@ -4478,7 +4585,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
         }
       }
 
-      // Apply: infra services (add if not exists, skip existing)
+      // 5) apply infraServices
       const infraResults: { id: string; status: string }[] = [];
       const infraDefs = resolveInfraDefs(cfg);
       for (const def of infraDefs) {
@@ -4486,7 +4593,6 @@ export function createBranchRouter(deps: RouterDeps): Router {
           infraResults.push({ id: def.id, status: 'exists' });
           continue;
         }
-
         if (def.id && def.dockerImage && def.containerPort) {
           const service = composeDefToInfraService(def);
           stateService.addInfraService(service);
@@ -4494,7 +4600,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
         }
       }
 
-      // Apply: routing rules (add or replace)
+      // 6) apply routingRules
       if (Array.isArray(cfg.routingRules)) {
         for (const r of cfg.routingRules as RoutingRule[]) {
           const existing = stateService.getRoutingRules().find(x => x.id === r.id);
@@ -4508,17 +4614,41 @@ export function createBranchRouter(deps: RouterDeps): Router {
         }
       }
 
-      // Sync CDS config (domains etc.)
       syncCdsConfig();
       stateService.save();
+
+      // 7) branchPolicy: 只做调度侧的标记，真实 restart/clean 由调用方按返回提示触发（避免同步阻塞）
+      const branchActions: string[] = [];
+      if (branchPolicy !== 'keep') {
+        const branches = stateService.getAllBranches();
+        for (const b of branches) {
+          branchActions.push(`${b.id}: ${branchPolicy === 'restart-all' ? '待重启' : '待清理'}`);
+        }
+      }
+
+      // 8) replace-all 视为破坏性操作，记审计日志 + 关联 snapshotId
+      if (cleanMode === 'replace-all') {
+        stateService.recordDestructiveOp({
+          type: 'import-replace-all',
+          snapshotId: snapshot.id,
+          summary: `replace-all 导入配置：清空 4 件套并重新导入（${(cfg.buildProfiles as BuildProfile[] | undefined)?.length ?? 0} 个 profile / ${infraDefs.length} 个 infra）`,
+        });
+      }
 
       res.json({
         valid: true,
         preview,
         applied: true,
+        cleanMode,
+        branchPolicy,
         infraResults,
+        snapshotId: snapshot.id,
+        snapshotLabel: snapshot.label,
+        branchActions,
         warnings: validation.warnings,
-        message: '配置已成功导入',
+        message: cleanMode === 'replace-all'
+          ? '配置已清空并重新导入（快照已保存，可在「历史版本」一键回滚）'
+          : '配置已合并导入（快照已保存，可在「历史版本」回滚）',
       });
     } catch (err) {
       res.status(500).json({ error: (err as Error).message });

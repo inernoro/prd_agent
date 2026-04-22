@@ -1,0 +1,201 @@
+/**
+ * 遗留「default」项目清理路由
+ *
+ * 用户诉求：「不要使用？project 这种，而是使用真正的项目名或项目id」
+ *          「default 我早就说要去掉，始终去不掉」
+ *
+ * 现实：历史上 CDS 从单项目升级到多项目时，所有旧数据都被归到 `default`
+ * 项目名下做向前兼容。直接删 default 会让旧 branches/profiles/infra 全部
+ * 孤立 → 生产事故。本路由提供 **可控迁移**：
+ *
+ *   GET  /api/legacy-cleanup/status         —— 看看 default 还有多少数据
+ *   POST /api/legacy-cleanup/rename-default —— 把 default 改成用户给的 id/name
+ *
+ * 用户在顶部 banner 点「迁移 →」弹对话框输入新 id，一键改名。
+ * 之后：
+ *   - 所有 branches.projectId='default' → 新 id
+ *   - 所有 buildProfiles.projectId='default' → 新 id
+ *   - 所有 infraServices.projectId='default' → 新 id
+ *   - Project.id='default' → 新 id，Project.legacyFlag 清掉
+ *   - customEnv['default'] scope → 新 id scope
+ *   - worktree 目录物理改名 `<base>/default/` → `<base>/<newId>/`
+ */
+import { Router } from 'express';
+import fs from 'node:fs';
+import path from 'node:path';
+import type { StateService } from '../services/state.js';
+import type { IShellExecutor } from '../types.js';
+import { combinedOutput } from '../types.js';
+
+const LEGACY_PROJECT_ID = 'default';
+const SLUG_REGEX = /^[a-z][a-z0-9-]*[a-z0-9]$|^[a-z]$/;
+
+export interface LegacyCleanupRouterDeps {
+  stateService: StateService;
+  shell: IShellExecutor;
+  worktreeBase: string;
+}
+
+export function createLegacyCleanupRouter(deps: LegacyCleanupRouterDeps): Router {
+  const { stateService, shell, worktreeBase } = deps;
+  const router = Router();
+
+  router.get('/legacy-cleanup/status', (_req, res) => {
+    const allBranches = stateService.getAllBranches();
+    const branches = allBranches.filter(b => (b.projectId || LEGACY_PROJECT_ID) === LEGACY_PROJECT_ID);
+    const profiles = stateService.getBuildProfiles().filter(p => (p.projectId || LEGACY_PROJECT_ID) === LEGACY_PROJECT_ID);
+    const infra = stateService.getInfraServices().filter(s => (s.projectId || LEGACY_PROJECT_ID) === LEGACY_PROJECT_ID);
+    const hasLegacyProject = (stateService.getProjects?.() || []).some(p => p.id === LEGACY_PROJECT_ID);
+    const legacyWorktreeExists = fs.existsSync(path.posix.join(worktreeBase, LEGACY_PROJECT_ID));
+    const rawEnv = stateService.getCustomEnvRaw?.() || {};
+    const customEnvScopeExists = Boolean(rawEnv[LEGACY_PROJECT_ID] && Object.keys(rawEnv[LEGACY_PROJECT_ID]).length > 0);
+
+    const hasResources = branches.length > 0 || profiles.length > 0 || infra.length > 0;
+    res.json({
+      legacyInUse: hasLegacyProject || hasResources || legacyWorktreeExists,
+      counts: {
+        branches: branches.length,
+        buildProfiles: profiles.length,
+        infraServices: infra.length,
+        hasLegacyProject,
+        legacyWorktreeExists,
+        customEnvScopeExists,
+      },
+      recommendation: hasResources
+        ? '建议点「迁移 →」为 default 项目改个真实名字。'
+        : '无需操作，default 项目已空。',
+    });
+  });
+
+  router.post('/legacy-cleanup/rename-default', async (req, res) => {
+    const { newId, newName } = (req.body || {}) as { newId?: string; newName?: string };
+    const normalizedId = String(newId || '').trim().toLowerCase();
+    if (!normalizedId) {
+      res.status(400).json({ error: '必须提供 newId' });
+      return;
+    }
+    if (normalizedId === LEGACY_PROJECT_ID) {
+      res.status(400).json({ error: 'newId 不能还是 default' });
+      return;
+    }
+    if (!SLUG_REGEX.test(normalizedId)) {
+      res.status(400).json({ error: 'newId 只能包含小写字母、数字、短横线，且不能以短横线开头/结尾' });
+      return;
+    }
+    if ((stateService.getProjects?.() || []).some(p => p.id === normalizedId)) {
+      res.status(409).json({ error: `项目 id "${normalizedId}" 已存在` });
+      return;
+    }
+
+    // 先自动拍一份快照（破坏性操作前）
+    const snapshot = stateService.createConfigSnapshot({
+      trigger: 'pre-destructive',
+      label: `迁移遗留 default → ${normalizedId} 前`,
+      projectId: LEGACY_PROJECT_ID,
+    });
+
+    const stats: Record<string, number> = { branches: 0, profiles: 0, infra: 0, envScopes: 0 };
+
+    // 1) branches
+    for (const b of stateService.getAllBranches()) {
+      if ((b.projectId || LEGACY_PROJECT_ID) === LEGACY_PROJECT_ID) {
+        b.projectId = normalizedId;
+        stats.branches++;
+      }
+    }
+
+    // 2) profiles
+    for (const p of stateService.getBuildProfiles()) {
+      if ((p.projectId || LEGACY_PROJECT_ID) === LEGACY_PROJECT_ID) {
+        p.projectId = normalizedId;
+        stats.profiles++;
+      }
+    }
+
+    // 3) infra
+    for (const s of stateService.getInfraServices()) {
+      if ((s.projectId || LEGACY_PROJECT_ID) === LEGACY_PROJECT_ID) {
+        s.projectId = normalizedId;
+        stats.infra++;
+      }
+    }
+
+    // 4) projects
+    const projects = stateService.getProjects?.() || [];
+    const defaultProj = projects.find(p => p.id === LEGACY_PROJECT_ID);
+    if (defaultProj) {
+      defaultProj.id = normalizedId;
+      if (newName && typeof newName === 'string') defaultProj.name = newName.trim();
+      // 清 legacyFlag —— 迁移后不再是 legacy
+      defaultProj.legacyFlag = false;
+    } else {
+      // 没有 Project 记录但有资源（pre-P4），直接新建一个最小记录
+      stateService.addProject?.({
+        id: normalizedId,
+        name: newName?.trim() || normalizedId,
+        slug: normalizedId,
+        kind: 'manual',
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      });
+    }
+
+    // 5) customEnv scope —— 只迁移"default" scope 本身的变量，不含 global
+    const rawEnv = stateService.getCustomEnvRaw?.() || {};
+    const legacyScope = rawEnv[LEGACY_PROJECT_ID] || {};
+    for (const [k, v] of Object.entries(legacyScope)) {
+      stateService.setCustomEnvVar(k, v, normalizedId);
+      stats.envScopes++;
+    }
+    stateService.dropCustomEnvScope?.(LEGACY_PROJECT_ID);
+
+    stateService.save();
+
+    // 6) worktree 物理目录迁移（symlink 最快 + reversible）
+    const oldDir = path.posix.join(worktreeBase, LEGACY_PROJECT_ID);
+    const newDir = path.posix.join(worktreeBase, normalizedId);
+    let worktreeMoveResult = 'skipped (目录不存在)';
+    if (fs.existsSync(oldDir) && !fs.existsSync(newDir)) {
+      try {
+        // 先尝试重命名（同文件系统原子）
+        fs.renameSync(oldDir, newDir);
+        worktreeMoveResult = 'renamed';
+        // 同时重写 state 里的 branch.worktreePath
+        for (const b of stateService.getAllBranches()) {
+          if (b.worktreePath && b.worktreePath.startsWith(oldDir + '/')) {
+            b.worktreePath = b.worktreePath.replace(oldDir + '/', newDir + '/');
+          }
+        }
+        stateService.save();
+      } catch (err) {
+        // 跨文件系统或权限问题：退化到 symlink（不阻断迁移）
+        try {
+          fs.symlinkSync(oldDir, newDir, 'dir');
+          worktreeMoveResult = 'symlinked (rename failed: ' + (err as Error).message + ')';
+        } catch (err2) {
+          worktreeMoveResult = 'failed: ' + (err2 as Error).message;
+        }
+      }
+    } else if (fs.existsSync(newDir)) {
+      worktreeMoveResult = 'skipped (目标已存在)';
+    }
+
+    stateService.recordDestructiveOp({
+      type: 'other',
+      snapshotId: snapshot.id,
+      summary: `遗留 default 项目迁移为 "${normalizedId}"（${stats.branches} 分支 / ${stats.profiles} profile / ${stats.infra} infra）`,
+    });
+
+    res.json({
+      migrated: true,
+      from: LEGACY_PROJECT_ID,
+      to: normalizedId,
+      stats,
+      worktreeMove: worktreeMoveResult,
+      snapshotId: snapshot.id,
+      message: `已将 default 项目迁移为「${normalizedId}」。如有异常可在「历史版本」里回滚。`,
+    });
+  });
+
+  return router;
+}

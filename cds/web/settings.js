@@ -96,6 +96,8 @@
       renderGithubTab();
     } else if (currentTab === 'comment-template') {
       renderCommentTemplateTab();
+    } else if (currentTab === 'cache') {
+      renderCacheTab();
     } else {
       // P4 Part 18 cleanup: unknown tab → fall back to General,
       // not a stale "coming soon" placeholder. Dead subnav items
@@ -1509,6 +1511,160 @@
   if (topologyLink) topologyLink.href = '/branch-panel?project=' + encodeURIComponent(CURRENT_PROJECT_ID);
   var logsLink = document.getElementById('leftnavLogs');
   if (logsLink) logsLink.href = '/branch-list?project=' + encodeURIComponent(CURRENT_PROJECT_ID);
+
+  // ── Cache diagnostic tab ──
+  function humanBytes(n) {
+    if (n == null) return '—';
+    if (n < 1024) return n + ' B';
+    if (n < 1024 * 1024) return (n / 1024).toFixed(1) + ' KB';
+    if (n < 1024 * 1024 * 1024) return (n / 1024 / 1024).toFixed(1) + ' MB';
+    return (n / 1024 / 1024 / 1024).toFixed(2) + ' GB';
+  }
+
+  function renderCacheTab() {
+    contentEl.innerHTML =
+      '<div class="settings-section">' +
+        '<div class="settings-section-title">缓存诊断</div>' +
+        '<div class="settings-section-desc">' +
+          '展示所有 BuildProfile 的 cacheMount 目录状态，诊断「挂载失效」「缓存被清」等导致 <code>dotnet restore</code> / <code>pnpm install</code> 重复下载的问题。' +
+          '<br>若发现 <strong>目录空</strong> 或 <strong>引用不存在</strong> 的告警，点「修复挂载」一键补齐。' +
+        '</div>' +
+        '<div id="cacheDiagBody" class="settings-placeholder">加载缓存状态…</div>' +
+      '</div>';
+
+    fetch('/api/cache/status', { credentials: 'same-origin' })
+      .then(function (res) { return res.json().then(function (b) { return { ok: res.ok, body: b }; }); })
+      .then(function (r) {
+        if (!r.ok) throw new Error((r.body && r.body.error) || '加载失败');
+        var body = r.body;
+        var html = '';
+
+        html += '<div style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:16px;padding:12px;background:var(--bg-card);border:1px solid var(--border-subtle);border-radius:8px">' +
+          '<div><div style="color:var(--text-muted);font-size:11px">项目 slug</div><div class="mono" style="font-weight:600">' + escapeHtml(body.projectSlug) + '</div></div>' +
+          '<div><div style="color:var(--text-muted);font-size:11px">缓存根目录</div><div class="mono" style="font-weight:600">' + escapeHtml(body.cacheBase) + '</div></div>' +
+          '<div><div style="color:var(--text-muted);font-size:11px">总占用</div><div style="font-weight:600">' + escapeHtml(body.totalBytesHuman) + '</div></div>' +
+        '</div>';
+
+        if (body.warnings && body.warnings.length) {
+          html += '<div style="margin-bottom:16px;padding:12px;border:1px solid #f59e0b;background:rgba(245,158,11,0.08);border-radius:8px">' +
+            '<div style="font-weight:600;margin-bottom:6px;color:#f59e0b">⚠ 发现 ' + body.warnings.length + ' 条告警</div>' +
+            '<ul style="margin:0;padding-left:20px;font-size:13px">' +
+              body.warnings.map(function (w) { return '<li style="margin:2px 0">' + escapeHtml(w) + '</li>'; }).join('') +
+            '</ul>' +
+          '</div>';
+        }
+
+        html += '<div style="display:flex;gap:8px;margin-bottom:12px">' +
+          '<button id="cacheRepairBtn" class="settings-btn settings-btn-primary">🔧 修复缓存挂载</button>' +
+          '<button id="cacheRefreshBtn" class="settings-btn">🔄 刷新</button>' +
+        '</div>';
+
+        html += '<table style="width:100%;border-collapse:collapse;font-size:13px">' +
+          '<thead><tr style="border-bottom:1px solid var(--border-subtle);color:var(--text-muted);font-size:11px">' +
+            '<th style="text-align:left;padding:8px 6px">名称</th>' +
+            '<th style="text-align:left;padding:8px 6px">宿主机路径</th>' +
+            '<th style="text-align:left;padding:8px 6px">容器内</th>' +
+            '<th style="text-align:right;padding:8px 6px">大小</th>' +
+            '<th style="text-align:right;padding:8px 6px">文件数</th>' +
+            '<th style="text-align:left;padding:8px 6px">最近写入</th>' +
+            '<th style="text-align:left;padding:8px 6px">使用者</th>' +
+            '<th style="text-align:right;padding:8px 6px">操作</th>' +
+          '</tr></thead><tbody>';
+        var allCaches = (body.caches || []).concat((body.orphans || []).map(function (o) { o._orphan = true; return o; }));
+        if (allCaches.length === 0) {
+          html += '<tr><td colspan="8" style="text-align:center;padding:24px;color:var(--text-muted)">暂无缓存挂载</td></tr>';
+        } else {
+          allCaches.forEach(function (c) {
+            var statusDot = c.exists
+              ? (c.sizeBytes === 0 ? '<span style="color:#f59e0b">●</span>' : '<span style="color:#22c55e">●</span>')
+              : '<span style="color:#ef4444">●</span>';
+            html += '<tr style="border-bottom:1px solid var(--border-subtle)' + (c._orphan ? ';opacity:0.7' : '') + '">' +
+              '<td style="padding:8px 6px">' + statusDot + ' <strong>' + escapeHtml(c.name) + '</strong>' + (c._orphan ? ' <span style="color:var(--text-muted);font-size:11px">(孤儿)</span>' : '') + '</td>' +
+              '<td style="padding:8px 6px" class="mono" title="' + escapeHtml(c.hostPath) + '">' + escapeHtml(c.hostPath) + '</td>' +
+              '<td style="padding:8px 6px" class="mono">' + escapeHtml(c.containerPath) + '</td>' +
+              '<td style="padding:8px 6px;text-align:right">' + escapeHtml(c.sizeBytes != null ? humanBytes(c.sizeBytes) : '—') + '</td>' +
+              '<td style="padding:8px 6px;text-align:right">' + (c.fileCount != null ? c.fileCount.toLocaleString() : '—') + '</td>' +
+              '<td style="padding:8px 6px">' + (c.lastModified ? escapeHtml(new Date(c.lastModified).toLocaleString()) : '—') + '</td>' +
+              '<td style="padding:8px 6px">' + escapeHtml((c.usedByProfiles || []).join(', ') || '—') + '</td>' +
+              '<td style="padding:8px 6px;text-align:right;white-space:nowrap">' +
+                '<button class="settings-btn settings-btn-sm" onclick="window._cacheExport(\'' + escapeHtml(c.name) + '\')">导出</button> ' +
+                '<button class="settings-btn settings-btn-sm" onclick="window._cachePurge(\'' + escapeHtml(c.name) + '\')">清空</button>' +
+              '</td>' +
+            '</tr>';
+          });
+        }
+        html += '</tbody></table>';
+
+        html += '<div style="margin-top:20px;padding:12px;background:var(--bg-card);border:1px solid var(--border-subtle);border-radius:8px">' +
+          '<div style="font-weight:600;margin-bottom:6px">从其他 CDS 服务器导入缓存</div>' +
+          '<div style="color:var(--text-muted);font-size:12px;margin-bottom:8px">' +
+            '迁移服务器时：在老机器点「导出」下载 tar.gz，在新机器这里上传，可跳过首次冷下载的 35 秒等待。' +
+          '</div>' +
+          '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">' +
+            '<label style="font-size:12px;color:var(--text-muted)">名称：</label>' +
+            '<input id="cacheImportName" type="text" placeholder="如 nuget / pnpm" class="settings-input mono" style="width:150px">' +
+            '<input id="cacheImportFile" type="file" accept=".tar.gz,.tgz,application/gzip">' +
+            '<button id="cacheImportBtn" class="settings-btn">⬆ 导入</button>' +
+          '</div>' +
+          '<div id="cacheImportStatus" style="margin-top:8px;font-size:12px"></div>' +
+        '</div>';
+
+        document.getElementById('cacheDiagBody').outerHTML = html;
+        document.getElementById('cacheRefreshBtn').onclick = renderCacheTab;
+        document.getElementById('cacheRepairBtn').onclick = function () {
+          if (!confirm('这会按镜像类型补齐所有 BuildProfile 缺失的 cacheMount（幂等操作，不会删数据）。继续？')) return;
+          fetch('/api/cache/repair', { method: 'POST', credentials: 'same-origin' })
+            .then(function (r) { return r.json().then(function (b) { return { ok: r.ok, body: b }; }); })
+            .then(function (r) {
+              if (!r.ok) throw new Error(r.body.error || '修复失败');
+              showToast(r.body.message || '修复完成');
+              setTimeout(renderCacheTab, 400);
+            })
+            .catch(function (err) { showToast('修复失败：' + err.message); });
+        };
+        document.getElementById('cacheImportBtn').onclick = function () {
+          var nameEl = document.getElementById('cacheImportName');
+          var fileEl = document.getElementById('cacheImportFile');
+          var statusEl = document.getElementById('cacheImportStatus');
+          var name = (nameEl.value || '').trim();
+          if (!name) { showToast('请先填缓存名称'); return; }
+          if (!fileEl.files[0]) { showToast('请选 tar.gz 文件'); return; }
+          statusEl.textContent = '上传中…';
+          fetch('/api/cache/import?name=' + encodeURIComponent(name), {
+            method: 'POST',
+            credentials: 'same-origin',
+            headers: { 'Content-Type': 'application/gzip' },
+            body: fileEl.files[0],
+          })
+            .then(function (r) { return r.json().then(function (b) { return { ok: r.ok, body: b }; }); })
+            .then(function (r) {
+              if (!r.ok) throw new Error(r.body.error || '导入失败');
+              statusEl.textContent = '✓ ' + r.body.message + '（' + r.body.sizeBytesHuman + ', ' + r.body.fileCount + ' 文件）';
+              setTimeout(renderCacheTab, 600);
+            })
+            .catch(function (err) { statusEl.textContent = '✗ ' + err.message; });
+        };
+      })
+      .catch(function (err) {
+        var el = document.getElementById('cacheDiagBody');
+        if (el) el.innerHTML = '<div style="color:var(--red)">加载失败：' + escapeHtml(err.message) + '</div>';
+      });
+  }
+
+  window._cacheExport = function (name) {
+    window.location.href = '/api/cache/export?name=' + encodeURIComponent(name);
+  };
+  window._cachePurge = function (name) {
+    if (!confirm('清空缓存 "' + name + '"？下次 restore / install 会从头下载。此操作不可撤销。')) return;
+    fetch('/api/cache/purge?name=' + encodeURIComponent(name), { method: 'POST', credentials: 'same-origin' })
+      .then(function (r) { return r.json().then(function (b) { return { ok: r.ok, body: b }; }); })
+      .then(function (r) {
+        if (!r.ok) throw new Error(r.body.error || '清空失败');
+        showToast(r.body.message || '已清空');
+        setTimeout(renderCacheTab, 400);
+      })
+      .catch(function (err) { showToast('清空失败：' + err.message); });
+  };
 
   // ── Init ──
   loadProject()

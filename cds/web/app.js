@@ -4836,6 +4836,8 @@ function openInfraModal() {
                    <button class="icon-btn xs" onclick="infraAction('${esc(svc.id)}','restart')" title="重启">⟳</button>`
                 : `<button class="icon-btn xs" onclick="infraAction('${esc(svc.id)}','start')" title="启动">▶</button>`}
               <button class="icon-btn xs" onclick="infraShowLogs('${esc(svc.id)}')" title="日志"><svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor"><path d="M2 1.75C2 .784 2.784 0 3.75 0h6.586c.464 0 .909.184 1.237.513l2.914 2.914c.329.328.513.773.513 1.237v9.586A1.75 1.75 0 0112.25 16h-8.5A1.75 1.75 0 012 14.25V1.75zm1.75-.25a.25.25 0 00-.25.25v12.5c0 .138.112.25.25.25h8.5a.25.25 0 00.25-.25V6h-2.75A1.75 1.75 0 018 4.25V1.5H3.75zm6.75.062V4.25c0 .138.112.25.25.25h2.688a.252.252 0 00-.011-.013l-2.914-2.914a.272.272 0 00-.013-.011z"/></svg></button>
+              ${svc.status === 'running' ? `<button class="icon-btn xs" onclick="infraBackup('${esc(svc.id)}')" title="下载数据库备份">⇩</button>` : ''}
+              ${svc.status === 'running' ? `<button class="icon-btn xs" onclick="infraRestoreDialog('${esc(svc.id)}')" title="上传恢复数据库">⇧</button>` : ''}
               <button class="icon-btn xs danger-icon" onclick="infraDelete('${esc(svc.id)}')" title="删除">&times;</button>
             </span>
           </div>
@@ -4881,6 +4883,40 @@ async function infraDelete(id) {
     openInfraModal();
   } catch (e) { showToast(e.message, 'error'); }
 }
+
+// ── 数据库备份/恢复（2026-04-22 新增）──
+// infraBackup: 直接触发浏览器下载，走 /api/infra/:id/backup（mongodump 流）
+// infraRestoreDialog: 弹文件选择器 → 上传 → /api/infra/:id/restore
+window.infraBackup = function (id) {
+  showToast(`准备下载 ${id} 备份…`, 'info');
+  window.location.href = `/api/infra/${encodeURIComponent(id)}/backup`;
+};
+
+window.infraRestoreDialog = function (id) {
+  if (!confirm(`恢复 ${id} 数据库？\n\n⚠ 这会用你上传的备份覆盖当前数据。\n恢复前 CDS 会自动保存当前状态到 /data/cds/<slug>/backups/，便于撤销。`)) return;
+  const input = document.createElement('input');
+  input.type = 'file';
+  input.accept = '.gz,.archive,.rdb,application/octet-stream,application/gzip';
+  input.onchange = async function () {
+    const file = input.files && input.files[0];
+    if (!file) return;
+    showToast(`正在上传 ${Math.round(file.size / 1024 / 1024)} MB 到 ${id}…`, 'info');
+    try {
+      const resp = await fetch(`/api/infra/${encodeURIComponent(id)}/restore`, {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/octet-stream' },
+        body: file,
+      });
+      const body = await resp.json();
+      if (!resp.ok) throw new Error(body.error || '恢复失败');
+      showToast(body.message || '已恢复', 'success');
+    } catch (err) {
+      showToast(`恢复失败：${err.message}`, 'error');
+    }
+  };
+  input.click();
+};
 
 async function infraShowLogs(id) {
   openConfigModal('基础设施日志', '<div class="config-empty"><span class="btn-spinner"></span> 加载中...</div>');
@@ -5135,15 +5171,34 @@ function openProfileModal() {
               </select>
             </div>`
           : '';
+        const hr = p.hotReload || {};
+        const hrOn = !!hr.enabled;
+        const hrMode = hr.mode || 'dotnet-watch';
+        const hrModeOptions = ['dotnet-watch', 'pnpm-dev', 'vite', 'next-dev', 'custom']
+          .map(m => `<option value="${m}"${hrMode === m ? ' selected' : ''}>${m}</option>`).join('');
+        const hotReloadHtml = `
+          <div style="margin-top:4px;display:flex;align-items:center;gap:6px;padding:4px 6px;background:${hrOn ? 'rgba(239,68,68,0.08)' : 'transparent'};border-radius:4px">
+            <label style="display:inline-flex;align-items:center;gap:4px;font-size:11px;cursor:pointer;color:${hrOn ? '#ef4444' : 'var(--text-muted)'}">
+              <input type="checkbox" ${hrOn ? 'checked' : ''} onchange="toggleHotReload('${esc(p.id)}', this.checked)" style="margin:0">
+              <span>🔥 热更新</span>
+            </label>
+            ${hrOn ? `
+              <select style="font-size:11px;padding:1px 4px;border-radius:3px;border:1px solid var(--border);background:var(--bg-secondary);color:var(--text-primary)" onchange="setHotReloadMode('${esc(p.id)}', this.value)">
+                ${hrModeOptions}
+              </select>
+              <span style="font-size:10px;color:var(--text-muted)">容器跑 watcher，改代码自动重编译，不重启</span>
+            ` : `<span style="font-size:10px;color:var(--text-muted)">开发时启用，无需重建镜像</span>`}
+          </div>`;
         return `
         <div class="config-item">
           <div class="config-item-main">
             <span style="opacity:0.7">${getPortIcon(p.id, p)}</span>
-            <strong>${esc(p.name)}</strong>
+            <strong>${esc(p.name)}</strong>${hrOn ? ' <span title="热更新已启用" style="color:#ef4444">🔥</span>' : ''}
             <code class="config-item-match">${esc(p.dockerImage)}</code>
             <span class="config-item-detail">${esc(p.workDir || '.')} :${p.containerPort}${p.pathPrefixes?.length ? ' → ' + p.pathPrefixes.join(', ') : ''}</span>
             <code class="config-item-cmd" title="${esc(p.runCommand)}">${esc(p.runCommand)}</code>
             ${modeHtml}
+            ${hotReloadHtml}
           </div>
           <div class="config-item-actions">
             <button class="icon-btn xs danger-icon" onclick="deleteProfileAndRefresh('${esc(p.id)}')" title="删除">&times;</button>
@@ -5494,6 +5549,29 @@ async function switchDeployMode(profileId, mode) {
     await loadProfiles();
   } catch (e) { showToast(e.message, 'error'); }
 }
+
+// 热更新开关（2026-04-22）
+// 启用后容器会跑 `dotnet watch` / `pnpm dev` 之类监听源码的命令，
+// 源码是 rw 绑挂的，改代码自动重编译，不用重建镜像也不用重启容器。
+async function toggleHotReload(profileId, enabled) {
+  try {
+    const resp = await api('POST', `/build-profiles/${encodeURIComponent(profileId)}/hot-reload`, { enabled });
+    showToast(resp.message || (enabled ? '已启用热更新' : '已关闭热更新'), 'success');
+    await loadProfiles();
+    openProfileModal();
+  } catch (e) { showToast(e.message, 'error'); }
+}
+window.toggleHotReload = toggleHotReload;
+
+async function setHotReloadMode(profileId, mode) {
+  try {
+    const resp = await api('POST', `/build-profiles/${encodeURIComponent(profileId)}/hot-reload`, { enabled: true, mode });
+    showToast(resp.message || `热更新模式切换为 ${mode}`, 'success');
+    await loadProfiles();
+    openProfileModal();
+  } catch (e) { showToast(e.message, 'error'); }
+}
+window.setHotReloadMode = setHotReloadMode;
 
 async function switchModeAndDeploy(branchId, profileId, modeId) {
   try {
