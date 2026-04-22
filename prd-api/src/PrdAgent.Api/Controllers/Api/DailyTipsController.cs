@@ -34,6 +34,11 @@ public sealed class DailyTipsController : ControllerBase
         var userId = this.GetRequiredUserId();
         var now = DateTime.UtcNow;
 
+        // 用户永久「不再提示」的 tip id:从 User.DismissedTipIds 读,包括真实 id 和
+        // seed-* id(seed 内置兜底时也按这个过滤,否则永远弹同一组 seed 干扰用户)
+        var me = await _db.Users.Find(u => u.UserId == userId).FirstOrDefaultAsync(ct);
+        var foreverDismissed = me?.DismissedTipIds?.ToHashSet() ?? new HashSet<string>();
+
         var filter = Builders<DailyTip>.Filter.Eq(x => x.IsActive, true);
 
         // 发布窗口过滤:StartAt <= now(或为空)且 EndAt > now(或为空)
@@ -77,10 +82,21 @@ public sealed class DailyTipsController : ControllerBase
             return true;
         }).ToList();
 
+        // 过滤用户永久 dismiss 的(真实 tip id)
+        if (foreverDismissed.Count > 0)
+        {
+            items = items.Where(t => !foreverDismissed.Contains(t.Id)).ToList();
+        }
+
         // 数据库没有任何 tip 时,兜底返回内置默认集,避免新环境出现空白
         if (items.Count == 0)
         {
             items = BuildDefaultTips(now);
+            // seed-* id 的永久 dismiss 也要兑现
+            if (foreverDismissed.Count > 0)
+            {
+                items = items.Where(t => !foreverDismissed.Contains(t.Id)).ToList();
+            }
         }
 
         // 定向 tip / 被投递 tip 永远置顶,保证「为你修复」类消息被最先看到
@@ -192,6 +208,26 @@ public sealed class DailyTipsController : ControllerBase
             viewCount = mine.ViewCount,
             maxViews = mine.MaxViews,
         }));
+    }
+
+    /// <summary>
+    /// 用户「永久不再提示」某条 tip:把 tip.Id 追加到 User.DismissedTipIds,
+    /// 以后 /visible 端点会把它过滤掉(包括 seed-* 兜底)。幂等。
+    /// </summary>
+    [HttpPost("{id}/dismiss-forever")]
+    [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status200OK)]
+    public async Task<IActionResult> DismissForever([FromRoute] string id, CancellationToken ct = default)
+    {
+        if (string.IsNullOrWhiteSpace(id))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "id 不能为空"));
+
+        var userId = this.GetRequiredUserId();
+        await _db.Users.UpdateOneAsync(
+            u => u.UserId == userId,
+            Builders<User>.Update.AddToSet(u => u.DismissedTipIds, id),
+            cancellationToken: ct);
+
+        return Ok(ApiResponse<object>.Ok(new { dismissedForever = id }));
     }
 
     /// <summary>

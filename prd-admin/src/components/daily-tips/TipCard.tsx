@@ -1,11 +1,19 @@
 import type { ReactNode } from 'react';
-import { X, ChevronRight, Check } from 'lucide-react';
+import { X, ChevronRight, Check, BellOff } from 'lucide-react';
 
 /**
  * 通用教程卡片组件 —— 给「每日小贴士抽屉」和「文学创作锚点教程气泡」共用。
  *
- * 样式参考文学创作页面原有的锚点教程气泡:玻璃面板 + 左侧图标 accent,
- * 正文支持「条目式说明」(被 renderBody 外部构造),底部 CTA + 可选关闭。
+ * 布局:
+ *   [icon] [title] [tag(为你)]
+ *   [body……]
+ *                     [CTA]
+ *
+ * 右上角:
+ *   [X](session dismiss) [🔕](永久 dismiss,可选)
+ *
+ * 样式参考文学创作页面原有的锚点教程气泡:玻璃面板 + 图标 accent,
+ * 底部 CTA 可选「知道啦」模式。
  */
 export interface TipCardProps {
   /** 左上角图标(如 MapPin / Sparkles / BookOpen) */
@@ -22,8 +30,10 @@ export interface TipCardProps {
   ctaText?: string;
   /** CTA 点击 */
   onCta?: () => void;
-  /** 右上角关闭按钮点击(dismiss 等);不传则不显示 */
+  /** 右上角 X:本 session 不再显示;不传则不显示 */
   onClose?: () => void;
+  /** 右上角 🔕:永久「不再提示」;不传则不显示 */
+  onDismissForever?: () => void;
   /** 变体:'bubble' = 独立浮动气泡(绝对定位的外壳);'card' = 列表里的卡片 */
   variant?: 'bubble' | 'card';
   /** 「知道啦」图标模式(CTA 带 Check 图标,而不是默认的 ChevronRight) */
@@ -45,6 +55,7 @@ export function TipCard({
   ctaText,
   onCta,
   onClose,
+  onDismissForever,
   variant = 'card',
   ack = false,
   style,
@@ -78,36 +89,70 @@ export function TipCard({
             : '0 2px 8px -4px rgba(0,0,0,0.3)',
         };
 
+  const cornerBtnCount =
+    (onClose ? 1 : 0) + (onDismissForever ? 1 : 0);
+
   return (
     <div className={className} style={{ ...baseStyle, ...style, position: 'relative' }}>
-      {onClose && (
-        <button
-          type="button"
-          onClick={onClose}
-          title="关闭"
+      {/* 右上角按钮组(🔕 永久 / X 本次 session) */}
+      {cornerBtnCount > 0 && (
+        <div
           style={{
             position: 'absolute',
             top: 6,
             right: 6,
-            border: 'none',
-            background: 'transparent',
-            color: 'rgba(255,255,255,0.35)',
-            cursor: 'pointer',
-            padding: 2,
             display: 'inline-flex',
-            borderRadius: 4,
+            alignItems: 'center',
+            gap: 2,
           }}
         >
-          <X size={12} />
-        </button>
+          {onDismissForever && (
+            <button
+              type="button"
+              onClick={onDismissForever}
+              title="不再提示(永久关闭这条)"
+              style={{
+                border: 'none',
+                background: 'transparent',
+                color: 'rgba(255,255,255,0.35)',
+                cursor: 'pointer',
+                padding: 3,
+                display: 'inline-flex',
+                borderRadius: 4,
+              }}
+            >
+              <BellOff size={12} />
+            </button>
+          )}
+          {onClose && (
+            <button
+              type="button"
+              onClick={onClose}
+              title="关闭(本次会话不再显示)"
+              style={{
+                border: 'none',
+                background: 'transparent',
+                color: 'rgba(255,255,255,0.35)',
+                cursor: 'pointer',
+                padding: 3,
+                display: 'inline-flex',
+                borderRadius: 4,
+              }}
+            >
+              <X size={12} />
+            </button>
+          )}
+        </div>
       )}
 
+      {/* 一行:icon + title + tag */}
       <div
         style={{
           display: 'flex',
-          alignItems: 'flex-start',
+          alignItems: 'center',
           gap: 8,
-          marginBottom: body ? 6 : 8,
+          marginBottom: body ? 6 : 10,
+          paddingRight: cornerBtnCount * 22 + 4,
         }}
       >
         {icon && (
@@ -115,44 +160,47 @@ export function TipCard({
             style={{
               color: accent,
               flexShrink: 0,
-              marginTop: 2,
               display: 'inline-flex',
             }}
           >
             {icon}
           </span>
         )}
-        <div style={{ flex: 1, minWidth: 0, paddingRight: onClose ? 18 : 0 }}>
-          {targeted && (
-            <div
-              style={{
-                display: 'inline-block',
-                fontSize: 10,
-                fontWeight: 600,
-                color: '#fff',
-                background: 'linear-gradient(135deg, #f43f5e, #a855f7)',
-                borderRadius: 999,
-                padding: '1px 7px',
-                marginBottom: 6,
-                letterSpacing: '0.04em',
-              }}
-            >
-              为你
-            </div>
-          )}
-          <div
+        <div
+          style={{
+            fontSize: 13,
+            fontWeight: 600,
+            color: 'var(--text-primary, #fff)',
+            lineHeight: 1.35,
+            flex: 1,
+            minWidth: 0,
+            overflow: 'hidden',
+            textOverflow: 'ellipsis',
+            whiteSpace: 'nowrap',
+          }}
+        >
+          {title}
+        </div>
+        {targeted && (
+          <span
             style={{
-              fontSize: 13,
+              display: 'inline-block',
+              fontSize: 10,
               fontWeight: 600,
-              color: 'var(--text-primary, #fff)',
-              lineHeight: 1.35,
+              color: '#fff',
+              background: 'linear-gradient(135deg, #f43f5e, #a855f7)',
+              borderRadius: 999,
+              padding: '1px 7px',
+              letterSpacing: '0.04em',
+              flexShrink: 0,
             }}
           >
-            {title}
-          </div>
-        </div>
+            为你
+          </span>
+        )}
       </div>
 
+      {/* 正文 */}
       {body && (
         <div
           style={{
@@ -167,6 +215,7 @@ export function TipCard({
         </div>
       )}
 
+      {/* CTA */}
       {ctaText && onCta && (
         <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
           <button

@@ -174,3 +174,13 @@ export async function trackTip(id: string, action: TrackAction): Promise<void> {
     /* tracking 失败不影响用户操作 */
   }
 }
+
+/** 永久关闭某条 tip:把 id 追加到 User.DismissedTipIds,/visible 端点以后都不再返回。 */
+export async function dismissTipForever(
+  id: string,
+): Promise<ApiResponse<{ dismissedForever: string }>> {
+  return await apiRequest<{ dismissedForever: string }>(
+    api.dailyTips.dismissForever(id),
+    { method: 'POST', body: {} },
+  );
+}

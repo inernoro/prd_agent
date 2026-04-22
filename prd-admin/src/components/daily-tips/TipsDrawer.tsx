@@ -4,7 +4,7 @@ import { useNavigate } from 'react-router-dom';
 import { Sparkles, X, BookOpen, Pin, PinOff, MapPin, EyeOff } from 'lucide-react';
 import { useDailyTipsStore } from '@/stores/dailyTipsStore';
 import { writeSpotlightPayload } from './TipsRotator';
-import { trackTip } from '@/services/real/dailyTips';
+import { trackTip, dismissTipForever } from '@/services/real/dailyTips';
 import { TipCard } from './TipCard';
 
 /**
@@ -226,7 +226,9 @@ export function TipsDrawer() {
     (tip: (typeof tips)[number]) => {
       void trackTip(tip.id, 'clicked');
       writeSpotlightPayload(tip);
-      setExpanded(false);
+      // 抽屉故意保留打开,让用户边跟着 Spotlight 引导,边对照教程步骤 /
+      // 决定点「不再提示」;不再像以前那样 setExpanded(false) 把引导面板秒关。
+      // 跳转后如果 5s 没 hover 抽屉,自动 collapse 的定时器会把它收起。
       navigate(tip.actionUrl || '/');
     },
     [navigate],
@@ -234,6 +236,12 @@ export function TipsDrawer() {
 
   const handleDismissTip = (tipId: string) => {
     void trackTip(tipId, 'dismissed');
+    dismiss(tipId);
+  };
+
+  // 永久「不再提示」:写 User.DismissedTipIds,同时本 session 也不再展示
+  const handleDismissForever = (tipId: string) => {
+    void dismissTipForever(tipId);
     dismiss(tipId);
   };
 
@@ -477,6 +485,7 @@ export function TipsDrawer() {
                 ctaText={t.ctaText ?? '去看看'}
                 onCta={() => handleOpenTip(t)}
                 onClose={() => handleDismissTip(t.id)}
+                onDismissForever={() => handleDismissForever(t.id)}
                 variant="card"
               />
             ))
