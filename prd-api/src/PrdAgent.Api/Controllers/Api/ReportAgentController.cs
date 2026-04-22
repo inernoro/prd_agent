@@ -917,29 +917,32 @@ public class ReportAgentController : ControllerBase
     #region Template Management
 
     /// <summary>
-    /// 列出模板（按当前用户可见性过滤：系统模板 ∪ 自己创建 ∪ 所在团队）
+    /// 列出模板（入口收窄：仅"任一团队的 Leader/Deputy"可见非系统模板；可见集 = 系统 ∪ 我创建 ∪ 我管团队关联）
     /// </summary>
     [HttpGet("templates")]
     public async Task<IActionResult> ListTemplates()
     {
         var userId = GetUserId();
-        var canViewAll = HasPermission(AdminPermissionCatalog.ReportAgentViewAll);
+        var myLeaderTeamIds = await GetLeaderOrDeputyTeamIdsAsync(userId);
+        var isManager = myLeaderTeamIds.Count > 0;
 
         FilterDefinition<ReportTemplate> filter;
-        if (canViewAll)
+        if (!isManager)
         {
-            filter = Builders<ReportTemplate>.Filter.Empty;
+            // 非 Leader/Deputy：只能看到系统模板 + 自己创建（兜底场景：刚被撤职还有遗留模板）
+            filter = Builders<ReportTemplate>.Filter.Or(
+                Builders<ReportTemplate>.Filter.Eq(t => t.IsSystem, true),
+                Builders<ReportTemplate>.Filter.Eq(t => t.CreatedBy, userId)
+            );
         }
         else
         {
-            var myTeamIds = await _db.ReportTeamMembers
-                .Find(m => m.UserId == userId)
-                .Project(m => m.TeamId)
-                .ToListAsync();
             filter = Builders<ReportTemplate>.Filter.Or(
                 Builders<ReportTemplate>.Filter.Eq(t => t.IsSystem, true),
                 Builders<ReportTemplate>.Filter.Eq(t => t.CreatedBy, userId),
-                Builders<ReportTemplate>.Filter.In(t => t.TeamId, myTeamIds)
+                Builders<ReportTemplate>.Filter.AnyIn(t => t.TeamIds, myLeaderTeamIds),
+                // 兼容旧字段 TeamId
+                Builders<ReportTemplate>.Filter.In(t => t.TeamId, myLeaderTeamIds)
             );
         }
 
@@ -951,7 +954,7 @@ public class ReportAgentController : ControllerBase
     }
 
     /// <summary>
-    /// 获取模板详情（仅可见模板：系统 ∪ 自己 ∪ 所在团队 ∪ ReportAgentViewAll）
+    /// 获取模板详情
     /// </summary>
     [HttpGet("templates/{id}")]
     public async Task<IActionResult> GetTemplate(string id)
@@ -965,62 +968,80 @@ public class ReportAgentController : ControllerBase
     }
 
     /// <summary>
-    /// 创建模板（仍需 ReportAgentTemplateManage 权限；IsDefault 在非管理员请求上落成个人偏好而非全局标记）
+    /// 创建模板（仅"任一团队 Leader/Deputy"；关联团队必须是自己管的；关联 = 默认，支持多团队）
     /// </summary>
     [HttpPost("templates")]
     public async Task<IActionResult> CreateTemplate([FromBody] CreateTemplateRequest req)
     {
-        if (!HasPermission(AdminPermissionCatalog.ReportAgentTemplateManage))
-            return StatusCode(403, ApiResponse<object>.Fail("PERMISSION_DENIED", "缺少模板管理权限"));
+        var userId = GetUserId();
+        var myLeaderTeamIds = await GetLeaderOrDeputyTeamIdsAsync(userId);
+        if (myLeaderTeamIds.Count == 0)
+            return StatusCode(403, ApiResponse<object>.Fail("PERMISSION_DENIED", "仅团队管理员/副管理员可创建模板"));
 
         if (string.IsNullOrWhiteSpace(req.Name))
             return BadRequest(ApiResponse<object>.Fail("INVALID_FORMAT", "模板名称不能为空"));
-
         if (req.Sections == null || req.Sections.Count == 0)
             return BadRequest(ApiResponse<object>.Fail("INVALID_FORMAT", "模板至少需要一个章节"));
 
-        var userId = GetUserId();
-        var canSetGlobalDefault = HasPermission(AdminPermissionCatalog.ReportAgentViewAll);
-        var wantsDefault = req.IsDefault ?? false;
+        var requestedTeamIds = NormalizeTeamIds(req.TeamIds, req.TeamId);
+        var requestedDefaults = (req.DefaultForTeamIds ?? new List<string>()).Distinct().ToList();
+
+        // 校验：关联团队必须是自己管的
+        var leaderSet = myLeaderTeamIds.ToHashSet();
+        var invalidTeams = requestedTeamIds.Where(tid => !leaderSet.Contains(tid)).ToList();
+        if (invalidTeams.Count > 0)
+            return StatusCode(403, ApiResponse<object>.Fail("PERMISSION_DENIED", "只能关联自己管理的团队"));
+
+        // 校验：默认团队集合 ⊆ 关联团队集合
+        if (requestedDefaults.Any(tid => !requestedTeamIds.Contains(tid)))
+            return BadRequest(ApiResponse<object>.Fail("INVALID_FORMAT", "默认团队必须先关联该团队"));
 
         var template = new ReportTemplate
         {
             Name = req.Name.Trim(),
             Description = req.Description,
             Sections = req.Sections.Select((s, i) => MapSection(s, i)).ToList(),
-            TeamId = req.TeamId,
+            TeamId = null, // 新数据一律走 TeamIds
+            TeamIds = requestedTeamIds,
+            DefaultForTeamIds = requestedDefaults,
             JobTitle = req.JobTitle,
-            IsDefault = wantsDefault && canSetGlobalDefault, // 非超管不得设全局默认
+            IsDefault = false, // 非系统模板不再使用此字段
             CreatedBy = userId
         };
 
         await _db.ReportTemplates.InsertOneAsync(template);
 
-        // 普通用户勾"设为默认"：写入个人偏好
-        if (wantsDefault && !canSetGlobalDefault)
-            await UpsertMyDefaultAsync(userId, template.Id);
+        // 团队唯一归属：把这些 teamId 从其他任何模板的 TeamIds / DefaultForTeamIds 中原子移除
+        if (requestedTeamIds.Count > 0)
+        {
+            await _db.ReportTemplates.UpdateManyAsync(
+                t => t.Id != template.Id,
+                Builders<ReportTemplate>.Update
+                    .PullFilter(t => t.TeamIds, tid => requestedTeamIds.Contains(tid))
+                    .PullFilter(t => t.DefaultForTeamIds, tid => requestedTeamIds.Contains(tid)));
+        }
 
-        return Ok(ApiResponse<object>.Ok(new { template }));
+        var saved = await _db.ReportTemplates.Find(t => t.Id == template.Id).FirstOrDefaultAsync();
+        return Ok(ApiResponse<object>.Ok(new { template = saved }));
     }
 
     /// <summary>
-    /// 更新模板（仅作者或 ReportAgentViewAll，系统模板不可修改；IsDefault 同 Create 语义）
+    /// 更新模板（仅作者本人；系统模板不可修改）
     /// </summary>
     [HttpPut("templates/{id}")]
     public async Task<IActionResult> UpdateTemplate(string id, [FromBody] UpdateTemplateRequest req)
     {
-        if (!HasPermission(AdminPermissionCatalog.ReportAgentTemplateManage))
-            return StatusCode(403, ApiResponse<object>.Fail("PERMISSION_DENIED", "缺少模板管理权限"));
-
         var userId = GetUserId();
-        var canViewAll = HasPermission(AdminPermissionCatalog.ReportAgentViewAll);
+        var myLeaderTeamIds = await GetLeaderOrDeputyTeamIdsAsync(userId);
+        if (myLeaderTeamIds.Count == 0)
+            return StatusCode(403, ApiResponse<object>.Fail("PERMISSION_DENIED", "仅团队管理员/副管理员可修改模板"));
 
         var template = await _db.ReportTemplates.Find(t => t.Id == id).FirstOrDefaultAsync();
         if (template == null)
             return NotFound(ApiResponse<object>.Fail("NOT_FOUND", "模板不存在"));
         if (template.IsSystem)
             return BadRequest(ApiResponse<object>.Fail("SYSTEM_TEMPLATE", "系统预置模板不可修改"));
-        if (template.CreatedBy != userId && !canViewAll)
+        if (template.CreatedBy != userId)
             return StatusCode(403, ApiResponse<object>.Fail("PERMISSION_DENIED", "只能修改自己创建的模板"));
 
         var update = Builders<ReportTemplate>.Update
@@ -1031,44 +1052,66 @@ public class ReportAgentController : ControllerBase
         if (req.Description != null)
             update = update.Set(t => t.Description, req.Description);
         if (req.Sections != null)
-        {
             update = update.Set(t => t.Sections, req.Sections.Select((s, i) => MapSection(s, i)).ToList());
-        }
-        if (req.TeamId != null)
-            update = update.Set(t => t.TeamId, req.TeamId);
         if (req.JobTitle != null)
             update = update.Set(t => t.JobTitle, req.JobTitle);
-        if (req.IsDefault.HasValue && canViewAll)
-            update = update.Set(t => t.IsDefault, req.IsDefault.Value);
+
+        // 多团队关联 + 团队默认（两者耦合处理）
+        List<string>? nextTeamIds = null;
+        List<string>? nextDefaults = null;
+        if (req.TeamIds != null)
+        {
+            nextTeamIds = req.TeamIds.Distinct().ToList();
+            var existingTeamIds = (template.TeamIds ?? new List<string>()).Concat(
+                string.IsNullOrEmpty(template.TeamId) ? Array.Empty<string>() : new[] { template.TeamId }).ToHashSet();
+            var added = nextTeamIds.Where(tid => !existingTeamIds.Contains(tid)).ToList();
+            if (added.Any(tid => !myLeaderTeamIds.Contains(tid)))
+                return StatusCode(403, ApiResponse<object>.Fail("PERMISSION_DENIED", "只能关联自己管理的团队"));
+            update = update.Set(t => t.TeamIds, nextTeamIds).Set(t => t.TeamId, (string?)null);
+        }
+        if (req.DefaultForTeamIds != null)
+        {
+            nextDefaults = req.DefaultForTeamIds.Distinct().ToList();
+            var scope = (nextTeamIds ?? template.TeamIds ?? new List<string>()).ToHashSet();
+            if (nextDefaults.Any(tid => !scope.Contains(tid)))
+                return BadRequest(ApiResponse<object>.Fail("INVALID_FORMAT", "默认团队必须先关联该团队"));
+            update = update.Set(t => t.DefaultForTeamIds, nextDefaults);
+        }
 
         await _db.ReportTemplates.UpdateOneAsync(t => t.Id == id, update);
 
-        // 普通用户勾"设为默认"：落到个人偏好而非全局
-        if (req.IsDefault == true && !canViewAll)
-            await UpsertMyDefaultAsync(userId, id);
+        // 团队唯一归属：静默接管
+        var owned = (nextTeamIds ?? template.TeamIds ?? new List<string>()).Concat(nextDefaults ?? new List<string>()).Distinct().ToList();
+        if (owned.Count > 0)
+        {
+            await _db.ReportTemplates.UpdateManyAsync(
+                t => t.Id != id,
+                Builders<ReportTemplate>.Update
+                    .PullFilter(t => t.TeamIds, tid => owned.Contains(tid))
+                    .PullFilter(t => t.DefaultForTeamIds, tid => owned.Contains(tid)));
+        }
 
         var updated = await _db.ReportTemplates.Find(t => t.Id == id).FirstOrDefaultAsync();
         return Ok(ApiResponse<object>.Ok(new { template = updated }));
     }
 
     /// <summary>
-    /// 删除模板（仅作者或 ReportAgentViewAll；清理相关个人默认偏好）
+    /// 删除模板（仅作者本人，系统模板不可删）
     /// </summary>
     [HttpDelete("templates/{id}")]
     public async Task<IActionResult> DeleteTemplate(string id)
     {
-        if (!HasPermission(AdminPermissionCatalog.ReportAgentTemplateManage))
-            return StatusCode(403, ApiResponse<object>.Fail("PERMISSION_DENIED", "缺少模板管理权限"));
-
         var userId = GetUserId();
-        var canViewAll = HasPermission(AdminPermissionCatalog.ReportAgentViewAll);
+        var myLeaderTeamIds = await GetLeaderOrDeputyTeamIdsAsync(userId);
+        if (myLeaderTeamIds.Count == 0)
+            return StatusCode(403, ApiResponse<object>.Fail("PERMISSION_DENIED", "仅团队管理员/副管理员可删除模板"));
 
         var template = await _db.ReportTemplates.Find(t => t.Id == id).FirstOrDefaultAsync();
         if (template == null)
             return NotFound(ApiResponse<object>.Fail("NOT_FOUND", "模板不存在"));
         if (template.IsSystem)
             return BadRequest(ApiResponse<object>.Fail("SYSTEM_TEMPLATE", "系统预置模板不可删除"));
-        if (template.CreatedBy != userId && !canViewAll)
+        if (template.CreatedBy != userId)
             return StatusCode(403, ApiResponse<object>.Fail("PERMISSION_DENIED", "只能删除自己创建的模板"));
 
         await _db.ReportTemplates.DeleteOneAsync(t => t.Id == id);
@@ -1077,35 +1120,38 @@ public class ReportAgentController : ControllerBase
     }
 
     /// <summary>
-    /// 获取当前用户的默认模板（偏好优先；否则回退到系统默认）
+    /// 获取当前用户的默认模板（三级：个人偏好 → 所在团队的团队默认 → 系统默认）
     /// </summary>
     [HttpGet("templates/my-default")]
     public async Task<IActionResult> GetMyDefaultTemplate()
     {
         var userId = GetUserId();
+
+        // 1) 个人偏好
         var pref = await _db.UserReportTemplatePreferences.Find(p => p.UserId == userId).FirstOrDefaultAsync();
         if (pref != null)
         {
             var t = await _db.ReportTemplates.Find(x => x.Id == pref.DefaultTemplateId).FirstOrDefaultAsync();
             if (t != null && await CanViewTemplate(t))
                 return Ok(ApiResponse<object>.Ok(new { template = t, source = "user" }));
-            // 偏好指向的模板被删或不可见：静默清理
             await _db.UserReportTemplatePreferences.DeleteOneAsync(p => p.Id == pref.Id);
         }
 
-        // 兼容迁移：若该用户过去在自己模板上勾过 IsDefault=true，视为初始偏好
-        var legacyOwn = await _db.ReportTemplates
-            .Find(t => !t.IsSystem && t.IsDefault && t.CreatedBy == userId)
-            .FirstOrDefaultAsync();
-        if (legacyOwn != null)
+        // 2) 所在任一团队的团队默认
+        var myTeamIds = await _db.ReportTeamMembers
+            .Find(m => m.UserId == userId)
+            .Project(m => m.TeamId)
+            .ToListAsync();
+        if (myTeamIds.Count > 0)
         {
-            await UpsertMyDefaultAsync(userId, legacyOwn.Id);
-            await _db.ReportTemplates.UpdateOneAsync(
-                t => t.Id == legacyOwn.Id,
-                Builders<ReportTemplate>.Update.Set(t => t.IsDefault, false));
-            return Ok(ApiResponse<object>.Ok(new { template = legacyOwn, source = "migrated" }));
+            var teamDefault = await _db.ReportTemplates
+                .Find(Builders<ReportTemplate>.Filter.AnyIn(t => t.DefaultForTeamIds, myTeamIds))
+                .FirstOrDefaultAsync();
+            if (teamDefault != null)
+                return Ok(ApiResponse<object>.Ok(new { template = teamDefault, source = "team" }));
         }
 
+        // 3) 系统默认
         var systemDefault = await _db.ReportTemplates
             .Find(t => t.IsSystem && t.IsDefault)
             .FirstOrDefaultAsync();
@@ -1113,7 +1159,29 @@ public class ReportAgentController : ControllerBase
     }
 
     /// <summary>
-    /// 把某个模板设为当前用户的默认（需对该模板有查看权限）
+    /// 获取指定团队的默认模板（供 ReportEditor 选团队后联动）
+    /// </summary>
+    [HttpGet("templates/team-default")]
+    public async Task<IActionResult> GetTeamDefaultTemplate([FromQuery] string teamId)
+    {
+        if (string.IsNullOrEmpty(teamId))
+            return BadRequest(ApiResponse<object>.Fail("INVALID_FORMAT", "缺少 teamId"));
+
+        var userId = GetUserId();
+        var isMember = await _db.ReportTeamMembers
+            .Find(m => m.TeamId == teamId && m.UserId == userId)
+            .AnyAsync();
+        if (!isMember)
+            return StatusCode(403, ApiResponse<object>.Fail("PERMISSION_DENIED", "不是该团队成员"));
+
+        var template = await _db.ReportTemplates
+            .Find(Builders<ReportTemplate>.Filter.AnyEq(t => t.DefaultForTeamIds, teamId))
+            .FirstOrDefaultAsync();
+        return Ok(ApiResponse<object>.Ok(new { template }));
+    }
+
+    /// <summary>
+    /// 把某个模板设为当前用户的默认
     /// </summary>
     [HttpPut("templates/{id}/set-my-default")]
     public async Task<IActionResult> SetMyDefaultTemplate(string id)
@@ -1129,7 +1197,7 @@ public class ReportAgentController : ControllerBase
     }
 
     /// <summary>
-    /// 清除当前用户的默认模板偏好（回退到系统默认）
+    /// 清除当前用户的默认模板偏好（回退到团队/系统默认）
     /// </summary>
     [HttpDelete("templates/my-default")]
     public async Task<IActionResult> ClearMyDefaultTemplate()
@@ -1140,19 +1208,39 @@ public class ReportAgentController : ControllerBase
 
     // ---- helpers ----
 
+    private async Task<List<string>> GetLeaderOrDeputyTeamIdsAsync(string userId)
+    {
+        return await _db.ReportTeamMembers
+            .Find(m => m.UserId == userId && (m.Role == ReportTeamRole.Leader || m.Role == ReportTeamRole.Deputy))
+            .Project(m => m.TeamId)
+            .ToListAsync();
+    }
+
+    private static List<string> NormalizeTeamIds(List<string>? teamIds, string? legacyTeamId)
+    {
+        var set = new HashSet<string>();
+        if (teamIds != null)
+            foreach (var tid in teamIds)
+                if (!string.IsNullOrEmpty(tid)) set.Add(tid);
+        if (!string.IsNullOrEmpty(legacyTeamId)) set.Add(legacyTeamId);
+        return set.ToList();
+    }
+
     private async Task<bool> CanViewTemplate(ReportTemplate template)
     {
         var userId = GetUserId();
         if (template.IsSystem) return true;
         if (template.CreatedBy == userId) return true;
-        if (HasPermission(AdminPermissionCatalog.ReportAgentViewAll)) return true;
-        if (!string.IsNullOrEmpty(template.TeamId))
-        {
-            var isMember = await _db.ReportTeamMembers
-                .Find(m => m.TeamId == template.TeamId && m.UserId == userId)
-                .AnyAsync();
-            if (isMember) return true;
-        }
+
+        // 团队成员：模板关联到该成员所在团队即可查看（用于 report editor 取团队默认）
+        var myMemberTeamIds = await _db.ReportTeamMembers
+            .Find(m => m.UserId == userId)
+            .Project(m => m.TeamId)
+            .ToListAsync();
+        var memberSet = myMemberTeamIds.ToHashSet();
+        if (!string.IsNullOrEmpty(template.TeamId) && memberSet.Contains(template.TeamId)) return true;
+        if (template.TeamIds != null && template.TeamIds.Any(tid => memberSet.Contains(tid))) return true;
+
         return false;
     }
 
@@ -1195,7 +1283,7 @@ public class ReportAgentController : ControllerBase
             inserted.Add(tpl.TemplateKey!);
         }
 
-        // 迁移：非系统模板的 IsDefault=true 转为对应用户的默认偏好，然后清零 IsDefault
+        // 迁移 A：非系统模板的 IsDefault=true 转为对应用户的默认偏好，然后清零 IsDefault
         var legacyDefaults = await _db.ReportTemplates
             .Find(t => !t.IsSystem && t.IsDefault)
             .ToListAsync();
@@ -1217,7 +1305,30 @@ public class ReportAgentController : ControllerBase
                 Builders<ReportTemplate>.Update.Set(t => t.IsDefault, false));
         }
 
-        return Ok(ApiResponse<object>.Ok(new { inserted, skipped = existingKeys.Count, migratedPreferences = migrated }));
+        // 迁移 B：把单字段 TeamId 搬到多字段 TeamIds + DefaultForTeamIds（历史语义：该团队的绑定即默认）
+        var legacyTeamBound = await _db.ReportTemplates
+            .Find(t => !t.IsSystem && t.TeamId != null && t.TeamId != ""
+                       && (t.TeamIds == null || t.TeamIds.Count == 0))
+            .ToListAsync();
+        var migratedTeams = 0;
+        foreach (var legacy in legacyTeamBound)
+        {
+            var tid = legacy.TeamId!;
+            await _db.ReportTemplates.UpdateOneAsync(
+                t => t.Id == legacy.Id,
+                Builders<ReportTemplate>.Update
+                    .Set(t => t.TeamIds, new List<string> { tid })
+                    .AddToSet(t => t.DefaultForTeamIds, tid));
+            // 其他模板如果也把这个 teamId 带着（不太可能但防一手），从其他模板中移除
+            await _db.ReportTemplates.UpdateManyAsync(
+                t => t.Id != legacy.Id,
+                Builders<ReportTemplate>.Update
+                    .PullFilter(t => t.TeamIds, x => x == tid)
+                    .PullFilter(t => t.DefaultForTeamIds, x => x == tid));
+            migratedTeams++;
+        }
+
+        return Ok(ApiResponse<object>.Ok(new { inserted, skipped = existingKeys.Count, migratedPreferences = migrated, migratedTeamBindings = migratedTeams }));
     }
 
     #endregion
@@ -1844,8 +1955,14 @@ public class ReportAgentController : ControllerBase
         public string Name { get; set; } = string.Empty;
         public string? Description { get; set; }
         public List<TemplateSectionInput> Sections { get; set; } = new();
+        /// <summary>[已废弃] 旧单团队字段，仍接受以保持向下兼容</summary>
         public string? TeamId { get; set; }
+        /// <summary>关联团队 ID 列表（一个团队同时只能被一个模板关联，后端会静默接管）</summary>
+        public List<string>? TeamIds { get; set; }
+        /// <summary>作为默认模板的团队 ID 列表，必须是 TeamIds 的子集</summary>
+        public List<string>? DefaultForTeamIds { get; set; }
         public string? JobTitle { get; set; }
+        /// <summary>[系统模板字段，普通用户忽略]</summary>
         public bool? IsDefault { get; set; }
     }
 
@@ -1854,7 +1971,10 @@ public class ReportAgentController : ControllerBase
         public string? Name { get; set; }
         public string? Description { get; set; }
         public List<TemplateSectionInput>? Sections { get; set; }
+        /// <summary>[已废弃] 旧单团队字段</summary>
         public string? TeamId { get; set; }
+        public List<string>? TeamIds { get; set; }
+        public List<string>? DefaultForTeamIds { get; set; }
         public string? JobTitle { get; set; }
         public bool? IsDefault { get; set; }
     }

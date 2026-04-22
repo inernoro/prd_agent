@@ -1,7 +1,9 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Link2, FileBarChart, Building2, Sparkles, Bell, ChevronRight } from 'lucide-react';
 import { GlassCard } from '@/components/design/GlassCard';
 import { useAuthStore } from '@/stores/authStore';
+import { useReportAgentStore } from '@/stores/reportAgentStore';
+import { ReportTeamRole } from '@/services/contracts/reportAgent';
 import { PersonalSourcesPanel } from './PersonalSourcesPanel';
 import { AiPromptSettingsPanel } from './AiPromptSettingsPanel';
 import { TeamAiPromptSettingsPanel } from './TeamAiPromptSettingsPanel';
@@ -18,6 +20,8 @@ interface SectionDef {
   icon: React.ElementType;
   color: string;
   requirePerm?: string;
+  /** 自定义可见性函数，若存在则优先生效；返回 true 表示可见 */
+  customGate?: (ctx: { isLeaderOrDeputyOfAny: boolean; permissions: string[]; isSuper: boolean }) => boolean;
   isPersonal?: boolean;
 }
 
@@ -41,10 +45,11 @@ const SECTIONS: SectionDef[] = [
   {
     key: 'templates',
     label: '模板管理',
-    desc: '设置周报模板结构和填写指引',
+    desc: '设置周报模板结构与团队默认',
     icon: FileBarChart,
     color: 'rgba(168, 85, 247, 0.85)',
-    requirePerm: 'report-agent.template.manage',
+    // 入口收窄：只有任一团队的管理员/副管理员可见
+    customGate: ({ isLeaderOrDeputyOfAny }) => isLeaderOrDeputyOfAny,
   },
   {
     key: 'team-ai-prompt',
@@ -76,9 +81,24 @@ export function SettingsPanel() {
   const [activeSection, setActiveSection] = useState<SettingsSection>('overview');
   const permissions = useAuthStore((s) => s.permissions);
   const isSuper = permissions.includes('super');
+  const userId = useAuthStore((s) => s.user?.userId);
+  const teams = useReportAgentStore((s) => s.teams);
+  const loadTeams = useReportAgentStore((s) => s.loadTeams);
+
+  useEffect(() => {
+    if (teams.length === 0) void loadTeams();
+  }, [teams.length, loadTeams]);
+
+  const isLeaderOrDeputyOfAny = teams.some((t) => {
+    const role = t.myRole ?? (t.leaderUserId === userId ? ReportTeamRole.Leader : undefined);
+    return role === ReportTeamRole.Leader || role === ReportTeamRole.Deputy;
+  });
+
+  const gateCtx = { isLeaderOrDeputyOfAny, permissions, isSuper };
 
   const visibleSections = SECTIONS.filter((s) => {
     if (s.isPersonal) return true;
+    if (s.customGate) return s.customGate(gateCtx);
     if (!s.requirePerm) return true;
     return isSuper || permissions.includes(s.requirePerm);
   });
