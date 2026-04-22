@@ -3,7 +3,10 @@ import { createPortal } from 'react-dom';
 import { GlassCard } from '@/components/design/GlassCard';
 import { Button } from '@/components/design/Button';
 import { MapSpinner } from '@/components/ui/VideoLoader';
-import { Plus, Pencil, Trash2, Sparkles, RefreshCw, Send, X, Users, Wand2 } from 'lucide-react';
+import { Plus, Pencil, Trash2, Sparkles, RefreshCw, Send, X, Users, Wand2, Play } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
+import { writeSpotlightPayload } from '@/components/daily-tips/TipsRotator';
+import { useAuthStore } from '@/stores/authStore';
 import { UserSearchSelect } from '@/components/UserSearchSelect';
 import {
   listTipsAdmin,
@@ -77,6 +80,7 @@ function normalizeAutoAction(a: DailyTipAutoAction | null | undefined): DailyTip
 
 /** 小技巧管理 — 系统设置页 Tab。 */
 export function DailyTipsEditor() {
+  const navigate = useNavigate();
   const [items, setItems] = useState<DailyTipAdmin[]>([]);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -185,6 +189,22 @@ export function DailyTipsEditor() {
     } else {
       setError(res.error?.message ?? '删除失败');
     }
+  };
+
+  // 不走推送,直接在当前账号试播一次完整引导(跳转 + SpotlightOverlay autoAction)。
+  // 管理员在保存后不需要推给自己或真人用户,点这个按钮就能立刻看效果。
+  const handleTest = (tip: DailyTipAdmin) => {
+    writeSpotlightPayload({
+      id: tip.id,
+      kind: tip.kind,
+      title: tip.title,
+      body: tip.body ?? null,
+      actionUrl: tip.actionUrl,
+      ctaText: tip.ctaText ?? null,
+      targetSelector: tip.targetSelector ?? null,
+      autoAction: tip.autoAction ?? null,
+    });
+    navigate(tip.actionUrl || '/');
   };
 
   const handleSeed = async () => {
@@ -568,6 +588,14 @@ export function DailyTipsEditor() {
               </div>
             </div>
             <div className="flex items-center gap-1 shrink-0">
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => handleTest(tip)}
+                title="试播一次(当前账号、不走推送)"
+              >
+                <Play size={12} />
+              </Button>
               <Button variant="ghost" size="sm" onClick={() => setPushingTip(tip)} title="推送给指定用户">
                 <Send size={12} />
               </Button>
@@ -697,6 +725,32 @@ function PushDialog({
       });
       if (res.success) {
         setSelectedUser('');
+        await loadStats();
+        onPushed();
+      } else {
+        setPushErr(res.error?.message ?? '推送失败');
+      }
+    } finally {
+      setPushing(false);
+    }
+  };
+
+  // 「推给我自己」:管理员一键推给当前账号,方便端到端自测
+  const myUserId = useAuthStore((s) => s.user?.userId);
+  const handlePushToMe = async () => {
+    if (!myUserId) {
+      setPushErr('未登录,无法推给自己');
+      return;
+    }
+    setPushErr(null);
+    setPushing(true);
+    try {
+      const res = await pushTip(tip.id, {
+        userIds: [myUserId],
+        maxViews,
+        reset: true, // 每次推给自己都重置,方便反复测
+      });
+      if (res.success) {
         await loadStats();
         onPushed();
       } else {
@@ -848,7 +902,17 @@ function PushDialog({
               </div>
             )}
 
-            <div className="flex items-center justify-end mt-3">
+            <div className="flex items-center justify-between mt-3 gap-2">
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={() => void handlePushToMe()}
+                disabled={pushing || !myUserId}
+                title="一键推给当前账号,方便端到端自测(每次推送会重置 delivery 状态)"
+              >
+                {pushing ? <MapSpinner size={14} /> : <Send size={14} />}
+                推给我自己
+              </Button>
               <Button variant="primary" size="sm" onClick={() => void handlePush()} disabled={pushing || !selectedUser}>
                 {pushing ? <MapSpinner size={14} /> : <Send size={14} />}
                 推送

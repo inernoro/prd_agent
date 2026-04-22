@@ -263,6 +263,46 @@ description: 批量创建「教程小书」的路径式引导演示（DailyTip +
 4. **写 title(第 N 步:XX)+ 简短 body(一句话说清怎么做)**
 5. **输出 JSON + curl**,跟 A 流程一致
 
+## 和 CDS Bridge 联动(借鉴,不复制)
+
+CDS 的 `bridge` 技能做的是**让 AI 通过原子动作操作预览页面**(snapshot /
+click / type / spa-navigate);我们这里做的是**让用户照着演示操作页面**。
+两者是同一抽象的两个方向。
+
+### 借鉴要点
+
+1. **动作词表对齐**:bridge 的 `click / type / scroll / spa-navigate` 和我们
+   autoAction 的 `autoClick / prefill / scroll / steps` 是同一批动词,命名
+   意图一致,未来可以跨技能迁移。
+
+2. **录制 → 演示**:用 bridge 做 tour 录制的工作流(人工或半自动):
+   - 管理员用 `bridge` 技能手动走一遍目标流程(`snapshot` 读 DOM,
+     `click index:N` 操作元素)
+   - 记录 bridge 每条命令对应的元素的 `data-tour-id`(从 snapshot 返回里提取)
+   - 输出成我们的 `autoAction.steps`,交给 `create-tour-demo` 技能落库
+
+   示例:
+   ```bash
+   # 1. 管理员在 CDS 预览页开 bridge session
+   curl -X POST "$CDS/api/bridge/start-session" -d '{"branchId":"xxx"}'
+   # 2. snapshot 读当前页面
+   curl "$CDS/api/bridge/state/$BRANCH_ID"   # 得到 {elements: [{index, tag, attrs{data-tour-id}}]}
+   # 3. click index:N,记下它的 data-tour-id
+   curl -X POST "$CDS/api/bridge/command/$BRANCH_ID" -d '{"action":"click","params":{"index":7},"description":"点 +提交缺陷"}'
+   # 4. 录完每一步后,用它们的 selector + title 构造 autoAction.steps
+   ```
+
+3. **跨项目复用**:因为 CDS bridge 针对**任意**预览项目,如果将来要把这套
+   演示机制搬到其他项目,**先**把目标项目的关键按钮加上 `data-tour-id`,
+   **再**用本技能按项目 URL 重新生成一组 DailyTip 配置即可。不需要改动
+   前端组件。
+
+### 不合并的理由
+
+- CDS bridge 是**操作时代理**(AI 代人操作),DailyTip 是**演示时指引**
+  (给人看怎么操作)。观众不同、时机不同。
+- 合并会让一侧的改动牵连另一侧。**借鉴复用动词表,保持数据结构独立**。
+
 ## 不要做
 
 - **不要直接改数据库** — 必须走 POST /api/admin/daily-tips

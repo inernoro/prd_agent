@@ -262,76 +262,58 @@ public sealed class DailyTipsController : ControllerBase
                 UpdatedAt = now
             };
 
+        // 精简原则:只保留真的有「完整流程」价值的演示,单步 scroll / 单链接
+        // 的短 tip 全部删掉;用户说「短短的流程一条流程的给删掉」。
         return new List<DailyTip>
         {
-            T("search-agent", "text",
-                "试试 ⌘ / Ctrl + K:一键搜索所有 Agent、文档与知识库",
-                null,
-                "/",
-                "打开搜索",
-                "[data-tour-id=home-search]",
+            // 1. 缺陷管理全链路 —— 4 步真流程
+            T("defect-full-flow", "card",
+                "发现 bug?跟着做,2 分钟学会提交缺陷",
+                "从打开面板到提交,4 步走完完整流程。点「从头开始」即可。",
+                "/defect-agent",
+                "从头开始",
+                "[data-tour-id=defect-create]",
                 10,
-                new DailyTipAutoAction { Scroll = "center" }),
-            T("marketplace", "text",
-                "海鲜市场上线了提示词 / 参考图 / 水印,一键 Fork 到本地可编辑",
-                null,
-                "/marketplace",
-                "去逛逛",
-                "[data-tour-id=marketplace-category-tabs]",
-                20,
-                new DailyTipAutoAction { Scroll = "center" }),
-            T("library", "text",
-                "智识殿堂:团队共享的知识库已开放,可上传文档自动同步订阅源",
-                null,
-                "/library",
-                "进入智识殿堂",
-                "[data-tour-id=library-create]",
-                30,
-                new DailyTipAutoAction { Scroll = "center" }),
-            T("toolbox", "card",
-                "百宝箱:所有 Agent 和工具的统一入口",
-                "新增的智能体默认注册到百宝箱,左侧导航只收录已毕业的常用项。",
-                "/ai-toolbox",
-                "打开百宝箱",
-                "[data-tour-id=toolbox-search]",
-                40,
                 new DailyTipAutoAction
                 {
                     Scroll = "center",
-                    Prefill = new DailyTipPrefill
+                    Steps = new List<DailyTipTourStep>
                     {
-                        Selector = "[data-tour-id=toolbox-search]",
-                        Value = "周报",
+                        new()
+                        {
+                            Selector = "[data-tour-id=defect-create]",
+                            Title = "第 1 步:打开提交面板",
+                            Body = "点右上角「+ 提交缺陷」展开表单。",
+                        },
+                        new()
+                        {
+                            Selector = "[data-tour-id=defect-description]",
+                            Title = "第 2 步:第一行写标题 + 下方写描述",
+                            Body = "第一行作为标题(一句话);下方可粘贴截图或拖文件。",
+                        },
+                        new()
+                        {
+                            Selector = "[data-tour-id=defect-assignee-picker]",
+                            Title = "第 3 步:选负责人",
+                            Body = "搜用户名或默认负责人,对方会立刻收到通知。",
+                        },
+                        new()
+                        {
+                            Selector = "[data-tour-id=defect-submit]",
+                            Title = "第 4 步:点「提交」完成",
+                            Body = "提交后收到「已创建」通知;开发修好后再收「已修复」。",
+                        },
                     },
                 }),
-            T("defect-feedback", "card",
-                "发现 bug?一键反馈并跟踪修复",
-                "缺陷管理 Agent 支持截图 + 描述,开发完成后你会收到「已修复」推送。",
-                "/defect-agent",
-                "去反馈",
-                "[data-tour-id=defect-create]",
-                50,
-                new DailyTipAutoAction
-                {
-                    Scroll = "center",
-                    AutoClick = "[data-tour-id=defect-create]",
-                    AutoClickDelayMs = 1500,
-                }),
-            T("updates", "text",
-                "更新中心:本周平台新增了什么?代码级周报自动生成",
-                null,
-                "/changelog",
-                "查看更新",
-                "[data-tour-id=changelog-latest]",
-                60,
-                new DailyTipAutoAction { Scroll = "center" }),
+
+            // 2. 周报管理 —— 保留并扩展为 2 步
             T("report-agent", "card",
-                "周报管理 Agent:自动汇总 git 提交,生成团队周报",
-                "支持数据源自动采集、多模板、飞书 / 邮件分发,周五一键出稿。",
+                "周报管理 Agent:自动汇总 git 提交",
+                "支持数据源采集、多模板、飞书 / 邮件分发,周五一键出稿。",
                 "/report-agent",
                 "试试周报",
                 "[data-tour-id=report-template-picker]",
-                70,
+                20,
                 new DailyTipAutoAction
                 {
                     Scroll = "center",
@@ -340,23 +322,28 @@ public sealed class DailyTipsController : ControllerBase
                         new()
                         {
                             Selector = "[data-tour-id=report-template-picker]",
-                            Title = "第 1 步:写周报",
-                            Body = "点开后选模板、勾数据源,系统会自动汇总本周 git 提交。",
+                            Title = "第 1 步:点「写周报」",
+                            Body = "选模板、勾数据源,系统自动汇总本周 git 提交。",
                         },
                     },
                 }),
-            T("emergence", "text",
-                "涌现探索器:从种子 → 探索 → 涌现,让 AI 帮你发散新功能",
-                null,
-                "/emergence",
-                "开始涌现",
-                "[data-tour-id=emergence-seed-input]",
-                80,
+
+            // 3. 百宝箱 —— prefill 演示:跳过去就自动填好「周报」搜索词
+            T("toolbox", "card",
+                "百宝箱:所有 Agent 的统一入口",
+                "点「去看看」会自动跳过去 + 搜索框预填「周报」。",
+                "/ai-toolbox",
+                "看演示",
+                "[data-tour-id=toolbox-search]",
+                30,
                 new DailyTipAutoAction
                 {
                     Scroll = "center",
-                    AutoClick = "[data-tour-id=emergence-seed-input]",
-                    AutoClickDelayMs = 1800,
+                    Prefill = new DailyTipPrefill
+                    {
+                        Selector = "[data-tour-id=toolbox-search]",
+                        Value = "周报",
+                    },
                 }),
         };
     }

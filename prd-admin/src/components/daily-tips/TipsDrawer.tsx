@@ -259,6 +259,8 @@ export function TipsDrawer() {
     <button
       type="button"
       onClick={() => {
+        // 任何打开动作都强制刷新一次,避免管理员刚推送但用户还在等 60s 轮询
+        void load({ force: true });
         if (hiddenByUser) {
           // 从 hidden 点击 → 取消 hidden(用户主动召回)
           setDockCollapsed(false);
