@@ -85,15 +85,22 @@ export default function MobileHomePage() {
 
   useEffect(() => {
     // 并行拉取 feed + stats + notifications
+    // 每个请求单独 catch —— 一个失败不影响其他渲染，也不会把整个首页拖成黑屏
     (async () => {
-      const [feedRes, statsRes, notifRes] = await Promise.all([
+      const [feedRes, statsRes, notifRes] = await Promise.allSettled([
         getMobileFeed({ limit: 10 }),
         getMobileStats({ days: 7 }),
         getAdminNotifications(),
       ]);
-      if (feedRes.success) setFeed(feedRes.data.items ?? []);
-      if (statsRes.success) setStats(statsRes.data);
-      if (notifRes.success) setNotifications(notifRes.data.items?.filter((n) => n.status === 'open') ?? []);
+      if (feedRes.status === 'fulfilled' && feedRes.value.success) {
+        setFeed(feedRes.value.data.items ?? []);
+      }
+      if (statsRes.status === 'fulfilled' && statsRes.value.success) {
+        setStats(statsRes.value.data);
+      }
+      if (notifRes.status === 'fulfilled' && notifRes.value.success) {
+        setNotifications(notifRes.value.data.items?.filter((n) => n.status === 'open') ?? []);
+      }
     })();
   }, []);
 

@@ -59,6 +59,8 @@ import { AvatarEditDialog } from '@/components/ui/AvatarEditDialog';
 import { Dialog } from '@/components/ui/Dialog';
 import { MobileDrawer } from '@/components/ui/MobileDrawer';
 import { MobileTabBar } from '@/components/ui/MobileTabBar';
+import { MobileSafeBoundary } from '@/components/MobileSafeBoundary';
+import { MobileCompatGate } from '@/components/MobileCompatGate';
 import { resolveAvatarUrl } from '@/lib/avatar';
 import { UserAvatar } from '@/components/ui/UserAvatar';
 import { getAdminNotifications, handleAdminNotification, handleAllAdminNotifications, updateMyAvatar, uploadMyAvatar } from '@/services';
@@ -472,7 +474,16 @@ export default function AppShell() {
   }, [loadNotifications, user?.userId]);
 
   return (
-    <div className="h-full w-full relative overflow-hidden" style={{ background: 'var(--bg-base)' }}>
+    <div
+      className="w-full relative overflow-hidden"
+      style={{
+        background: 'var(--bg-base)',
+        // 移动端：用 dvh 跟随视口（修 iOS Safari 地址栏收缩导致的高度抖动 / 黑带）
+        // 桌面端：保持 h:100% 依赖 #root，避免破坏现有侧栏/浮层布局
+        minHeight: '100dvh',
+        height: '100%',
+      }}
+    >
       <SystemDialogHost />
       <GlobalDefectSubmitDialog />
       <TipsDrawer />
@@ -1348,9 +1359,14 @@ export default function AppShell() {
             )}
           >
             <div className="flex-1 min-h-0 relative">
-              <Suspense fallback={<InlinePageLoader />}>
-                <Outlet />
-              </Suspense>
+              {/* 移动端兼容门槛：根据路由显示 banner / 模态，非阻断式 */}
+              {isMobile && <MobileCompatGate pathname={location.pathname} />}
+              {/* ErrorBoundary：渲染异常时显示友好错误 + 重试，避免整棵树卸载成纯黑 */}
+              <MobileSafeBoundary resetKey={location.pathname}>
+                <Suspense fallback={<InlinePageLoader />}>
+                  <Outlet />
+                </Suspense>
+              </MobileSafeBoundary>
               {/* 每日小贴士跳转后的 DOM 脉冲光圈。key=pathname 保证每次路由切换都重新读取 sessionStorage */}
               <SpotlightOverlay key={location.pathname} />
             </div>
