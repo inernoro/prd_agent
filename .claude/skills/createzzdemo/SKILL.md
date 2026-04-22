@@ -234,17 +234,21 @@ description: 创建「教程小书」的路径式引导演示(DailyTip + 多步 
 当用户说"创建 XX 演示"时,**不要直接生成完整 JSON**,先按下面这张表列出可用步骤:
 
 ```
-【候选步骤清单 — XX 演示】(人类挑 2-5 步组合)
+【候选步骤清单 — XX 演示】(人类挑 2-N 步组合)
 
  A. 高亮一个元素        → selector 任意稳定 data-tour-id
  B. 高亮 + 自动点击     → 自动 click 目标按钮
  C. 高亮 + 预填输入     → 在 input 里预填关键词
- D. 跨页跳转后高亮      → navigate + wait + highlight
+ D. 跨页跳转后高亮      → step.navigateTo 切路由 + wait + highlight
  E. 纯文字说明          → 同 selector 不同 body(文案指导用户下一步)
  F. 提示输入数据        → "打开空间后会看到 XX"(当下一步不可预测时)
 
 人类回复:"A + D + B + E"
 ```
+
+**场景分类(SourceType)同时必问**:`feature-release`(新功能)/ `tip`(技巧)/
+`bug-fix`(缺陷修复回执)/ `onboarding`(新手教程)/ `manual`(兜底手建)。
+后台列表按场景 chip 高亮,默认按"技巧"分类。
 
 **阶段 2 · 按选中组合输出**
 

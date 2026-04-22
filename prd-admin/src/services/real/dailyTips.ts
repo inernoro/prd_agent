@@ -18,8 +18,14 @@ export interface DailyTipAutoAction {
   autoClick?: string | null;
   /** autoClick 之前的延迟,毫秒。默认 1200。 */
   autoClickDelayMs?: number | null;
-  /** 多步 Tour:有多少 step 就画多少圈,用户点"下一步" */
-  steps?: Array<{ selector: string; title: string; body?: string | null }> | null;
+  /** 多步 Tour:有多少 step 就画多少圈,用户点"下一步"
+   *  navigateTo 非空时,切到这一步时先 navigate 过去再 poll selector(跨页 Tour) */
+  steps?: Array<{
+    selector: string;
+    title: string;
+    body?: string | null;
+    navigateTo?: string | null;
+  }> | null;
 }
 
 export interface DailyTip {
@@ -90,6 +96,8 @@ export interface DailyTipUpsert {
   isActive?: boolean;
   startAt?: string | null;
   endAt?: string | null;
+  /** 场景分类:feature-release / tip / bug-fix / onboarding / manual(默认) */
+  sourceType?: string | null;
 }
 
 // ============ 公共读取 ============

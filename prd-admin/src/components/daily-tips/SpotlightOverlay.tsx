@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
+import { useNavigate } from 'react-router-dom';
 import { X, ChevronRight, Sparkles } from 'lucide-react';
 import {
   SPOTLIGHT_ACTION_KEY,
@@ -24,6 +25,7 @@ import { fireConfetti } from './fireConfetti';
  * 设计:fixed 定位,createPortal 到 body 避免父 transform 干扰。
  */
 export function SpotlightOverlay() {
+  const navigate = useNavigate();
   const [rect, setRect] = useState<DOMRect | null>(null);
   const [payload, setPayload] = useState<SpotlightActionPayload | null>(null);
   const [stepIndex, setStepIndex] = useState<number>(0);
@@ -288,6 +290,8 @@ export function SpotlightOverlay() {
               type="button"
               onClick={() => {
                 setSeekTimedOut(false);
+                const nextStep = payload.autoAction?.steps?.[stepIndex + 1];
+                if (nextStep?.navigateTo) navigate(nextStep.navigateTo);
                 setStepIndex((i) => i + 1);
               }}
               style={{
@@ -473,6 +477,9 @@ export function SpotlightOverlay() {
                   } catch {
                     /* noop */
                   }
+                  // 下一步如果配置了 navigateTo,先切路由,新页面元素会在 poll 里被找到
+                  const nextStep = payload.autoAction?.steps?.[stepIndex + 1];
+                  if (nextStep?.navigateTo) navigate(nextStep.navigateTo);
                   // 不清 rect,保留旧光圈直到下一步元素找到再更新位置,
                   // 避免「点下一步面板消失、等 3s 再出现」的闪烁
                   setStepIndex((i) => i + 1);

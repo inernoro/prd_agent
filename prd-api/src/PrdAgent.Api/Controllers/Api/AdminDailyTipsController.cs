@@ -41,6 +41,8 @@ public sealed class AdminDailyTipsController : ControllerBase
         public bool IsActive { get; set; } = true;
         public DateTime? StartAt { get; set; }
         public DateTime? EndAt { get; set; }
+        /// <summary>场景分类:feature-release / tip / bug-fix / onboarding / manual(默认)</summary>
+        public string? SourceType { get; set; }
     }
 
     [HttpGet]
@@ -83,7 +85,7 @@ public sealed class AdminDailyTipsController : ControllerBase
             IsActive = req.IsActive,
             StartAt = req.StartAt,
             EndAt = req.EndAt,
-            SourceType = "manual",
+            SourceType = string.IsNullOrWhiteSpace(req.SourceType) ? "manual" : req.SourceType.Trim(),
             CreatedBy = this.GetRequiredUserId(),
             CreatedAt = now,
             UpdatedAt = now
@@ -118,6 +120,7 @@ public sealed class AdminDailyTipsController : ControllerBase
             .Set(x => x.IsActive, req.IsActive)
             .Set(x => x.StartAt, req.StartAt)
             .Set(x => x.EndAt, req.EndAt)
+            .Set(x => x.SourceType, string.IsNullOrWhiteSpace(req.SourceType) ? "manual" : req.SourceType!.Trim())
             .Set(x => x.UpdatedAt, DateTime.UtcNow);
 
         var result = await _db.DailyTips.UpdateOneAsync(x => x.Id == id, update, cancellationToken: ct);
@@ -443,6 +446,7 @@ public sealed class AdminDailyTipsController : ControllerBase
                 Selector = s.Selector.Trim(),
                 Title = s.Title.Trim(),
                 Body = string.IsNullOrWhiteSpace(s.Body) ? null : s.Body!.Trim(),
+                NavigateTo = string.IsNullOrWhiteSpace(s.NavigateTo) ? null : s.NavigateTo!.Trim(),
             })
             .ToList();
         if (steps != null && steps.Count == 0) steps = null;

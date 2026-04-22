@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom';
 import { GlassCard } from '@/components/design/GlassCard';
 import { Button } from '@/components/design/Button';
 import { MapSpinner } from '@/components/ui/VideoLoader';
-import { Plus, Pencil, Trash2, Sparkles, RefreshCw, Send, X, Users, Wand2, Play, RotateCcw } from 'lucide-react';
+import { Plus, Pencil, Trash2, Sparkles, RefreshCw, Send, X, Users, Wand2, Play, RotateCcw, Rocket, Wrench, Lightbulb, Check } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { writeSpotlightPayload } from '@/components/daily-tips/TipsRotator';
 import { useAuthStore } from '@/stores/authStore';
@@ -31,7 +31,22 @@ const KIND_OPTIONS: Array<{ value: DailyTipKind; label: string; desc: string }> 
   { value: 'spotlight', label: '高亮', desc: '卡片 + 跳转后高亮目标元素' },
 ];
 
-function emptyDraft(): DailyTipUpsert {
+/** sourceType 注册表 —— 禁止 switch,按 `frontend-architecture.md` 规则用 registry */
+type SourceKind = 'feature-release' | 'tip' | 'bug-fix' | 'onboarding' | 'manual' | 'seed';
+const SOURCE_REGISTRY: Record<SourceKind, { label: string; color: string; bg: string; border: string; icon: typeof Rocket }> = {
+  'feature-release': { label: '新功能', color: '#a78bfa', bg: 'rgba(167,139,250,0.14)', border: 'rgba(167,139,250,0.35)', icon: Rocket },
+  'tip':             { label: '技巧',   color: '#86efac', bg: 'rgba(134,239,172,0.14)', border: 'rgba(134,239,172,0.35)', icon: Lightbulb },
+  'bug-fix':         { label: '缺陷修复', color: '#fbbf24', bg: 'rgba(251,191,36,0.14)', border: 'rgba(251,191,36,0.35)', icon: Wrench },
+  'onboarding':      { label: '新手教程', color: '#67e8f9', bg: 'rgba(103,232,249,0.14)', border: 'rgba(103,232,249,0.35)', icon: Sparkles },
+  'manual':          { label: '手建',   color: '#cbd5e1', bg: 'rgba(203,213,225,0.10)', border: 'rgba(203,213,225,0.25)', icon: Pencil },
+  'seed':            { label: '内置',   color: '#fdba74', bg: 'rgba(253,186,116,0.14)', border: 'rgba(253,186,116,0.35)', icon: Sparkles },
+};
+const SOURCE_OPTIONS: SourceKind[] = ['feature-release', 'tip', 'bug-fix', 'onboarding', 'manual'];
+function sourceMeta(s: string | null | undefined) {
+  return SOURCE_REGISTRY[(s as SourceKind) ?? 'manual'] ?? SOURCE_REGISTRY.manual;
+}
+
+function emptyDraft(): DailyTipUpsert & { sourceType?: string } {
   return {
     kind: 'text',
     title: '',
@@ -44,6 +59,7 @@ function emptyDraft(): DailyTipUpsert {
     displayOrder: 0,
     isActive: true,
     autoAction: null,
+    sourceType: 'manual',
   };
 }
 
@@ -92,6 +108,11 @@ export function DailyTipsEditor() {
   const [pushingTip, setPushingTip] = useState<DailyTipAdmin | null>(null);
   const [seeding, setSeeding] = useState(false);
   const [seedMsg, setSeedMsg] = useState<string | null>(null);
+  // 多选 + 批量推送
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [bulkTargetUser, setBulkTargetUser] = useState<string>('');
+  const [bulkPushing, setBulkPushing] = useState(false);
+  const [bulkMsg, setBulkMsg] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -135,6 +156,7 @@ export function DailyTipsEditor() {
       startAt: tip.startAt ?? null,
       endAt: tip.endAt ?? null,
       autoAction: tip.autoAction ?? null,
+      sourceType: tip.sourceType ?? 'manual',
     });
     setShowForm(true);
   };
@@ -167,6 +189,7 @@ export function DailyTipsEditor() {
         targetSelector: draft.targetSelector?.trim() ? draft.targetSelector.trim() : null,
         targetUserId: draft.targetUserId?.trim() ? draft.targetUserId.trim() : null,
         autoAction: normalizeAutoAction(draft.autoAction),
+        sourceType: draft.sourceType ?? 'manual',
       };
       const res = editingId
         ? await updateTip(editingId, payload)
@@ -232,6 +255,44 @@ export function DailyTipsEditor() {
 
   /** 清空所有 DailyTip 然后用最新 seed 重新植入。跟 handleSeed 的区别:
    *  handleSeed 按 SourceId 跳过已存在的,resetAll 会删全部再重建。 */
+  // 多选 / 全选 / 批量推送
+  const toggleSelect = (id: string) => {
+    const next = new Set(selectedIds);
+    if (next.has(id)) next.delete(id);
+    else next.add(id);
+    setSelectedIds(next);
+  };
+  const toggleSelectAll = () => {
+    if (selectedIds.size === sorted.length) setSelectedIds(new Set());
+    else setSelectedIds(new Set(sorted.map((t) => t.id)));
+  };
+  const handleBulkPush = async (scope?: string) => {
+    const tipIds = Array.from(selectedIds);
+    if (tipIds.length === 0) return;
+    if (!scope && !bulkTargetUser) {
+      setBulkMsg('选择一个目标用户或按角色批量');
+      return;
+    }
+    if (!window.confirm(`确认把选中的 ${tipIds.length} 条推给 ${scope ?? bulkTargetUser}?`)) return;
+    setBulkPushing(true);
+    setBulkMsg(null);
+    try {
+      let ok = 0;
+      for (const tipId of tipIds) {
+        const res = scope
+          ? await pushTip(tipId, { scope, maxViews: 3, reset: true })
+          : await pushTip(tipId, { userIds: [bulkTargetUser], maxViews: 3, reset: true });
+        if (res.success) ok++;
+      }
+      setBulkMsg(`已推送 ${ok}/${tipIds.length} 条成功(用户下次轮询立刻收到)`);
+      setSelectedIds(new Set());
+      setBulkTargetUser('');
+      await load();
+    } finally {
+      setBulkPushing(false);
+    }
+  };
+
   const handleResetAll = async () => {
     if (!window.confirm('将删除所有现有小贴士(含管理员自建的)并重新植入内置 seed。确认吗?')) {
       return;
@@ -395,6 +456,21 @@ export function DailyTipsEditor() {
                 />
               </Field>
 
+              <Field label="场景分类">
+                <select
+                  value={draft.sourceType ?? 'manual'}
+                  onChange={(e) => setDraft((d) => ({ ...d, sourceType: e.target.value }))}
+                  className="w-full px-2 py-1.5 rounded-lg text-[13px] outline-none"
+                  style={inputStyle}
+                >
+                  {SOURCE_OPTIONS.map((s) => (
+                    <option key={s} value={s}>
+                      {SOURCE_REGISTRY[s].label}
+                    </option>
+                  ))}
+                </select>
+              </Field>
+
               <Field label="启用" full={false}>
                 <label className="inline-flex items-center gap-2 text-[13px]" style={{ color: 'var(--text-primary)' }}>
                   <input
@@ -505,6 +581,114 @@ export function DailyTipsEditor() {
         </GlassCard>
       )}
 
+      {/* 批量操作条 —— 选中一条及以上时浮现,苹果风 */}
+      {selectedIds.size > 0 && (
+        <div
+          className="flex items-center gap-3 rounded-2xl shrink-0"
+          style={{
+            padding: '12px 14px',
+            background: 'linear-gradient(135deg, rgba(129,140,248,0.12), rgba(167,139,250,0.08))',
+            border: '1px solid rgba(129,140,248,0.35)',
+            boxShadow: '0 8px 24px -10px rgba(129,140,248,0.35)',
+          }}
+        >
+          <div className="inline-flex items-center gap-2 shrink-0">
+            <span
+              className="inline-flex items-center justify-center rounded-full"
+              style={{
+                width: 24, height: 24,
+                background: 'linear-gradient(135deg, rgba(129,140,248,0.95), rgba(167,139,250,0.95))',
+                color: '#fff',
+                fontSize: 12, fontWeight: 700,
+              }}
+            >
+              {selectedIds.size}
+            </span>
+            <span className="text-[13px] font-medium" style={{ color: 'var(--text-primary)' }}>
+              已选 {selectedIds.size} 条
+            </span>
+          </div>
+          <div className="flex-1 min-w-0">
+            <UserSearchSelect
+              value={bulkTargetUser}
+              onChange={setBulkTargetUser}
+              placeholder="搜索目标用户(立即推送,用户下次轮询就收到)"
+            />
+          </div>
+          <Button
+            variant="primary"
+            size="sm"
+            onClick={() => void handleBulkPush()}
+            disabled={bulkPushing || !bulkTargetUser}
+          >
+            {bulkPushing ? <MapSpinner size={14} /> : <Send size={14} />}
+            推送给选中用户
+          </Button>
+          <div className="flex items-center gap-1 shrink-0">
+            {(['all', 'role:PM', 'role:DEV', 'role:QA'] as const).map((scope) => (
+              <Button
+                key={scope}
+                variant="secondary"
+                size="sm"
+                onClick={() => void handleBulkPush(scope)}
+                disabled={bulkPushing}
+                title={scope === 'all' ? '推给全部活跃用户' : `推给所有 ${scope.replace('role:', '')}`}
+              >
+                <Users size={11} />
+                {scope === 'all' ? '全体' : scope.replace('role:', '')}
+              </Button>
+            ))}
+          </div>
+          <Button variant="ghost" size="sm" onClick={() => setSelectedIds(new Set())} title="取消选择">
+            <X size={12} />
+          </Button>
+        </div>
+      )}
+      {bulkMsg && (
+        <div
+          className="px-3 py-2 text-[12px] rounded-lg shrink-0"
+          style={{
+            background: 'rgba(34,197,94,0.12)',
+            border: '1px solid rgba(34,197,94,0.35)',
+            color: '#86efac',
+          }}
+        >
+          {bulkMsg}
+        </div>
+      )}
+
+      {/* 列表头 —— 全选 chip */}
+      {sorted.length > 0 && (
+        <div
+          className="flex items-center gap-2 px-1 shrink-0"
+          style={{ color: 'var(--text-muted)' }}
+        >
+          <button
+            type="button"
+            onClick={toggleSelectAll}
+            className="inline-flex items-center gap-1.5 text-[12px] transition-colors hover:text-[color:var(--text-secondary)]"
+            style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}
+          >
+            <div
+              className="inline-flex items-center justify-center rounded-full"
+              style={{
+                width: 18,
+                height: 18,
+                border: selectedIds.size === sorted.length
+                  ? '1px solid rgba(129,140,248,0.8)'
+                  : '1.5px solid rgba(255,255,255,0.2)',
+                background: selectedIds.size === sorted.length
+                  ? 'rgba(129,140,248,0.85)'
+                  : 'transparent',
+              }}
+            >
+              {selectedIds.size === sorted.length && <Check size={11} strokeWidth={3} color="#fff" />}
+            </div>
+            {selectedIds.size === sorted.length ? '取消全选' : `全选(共 ${sorted.length} 条)`}
+          </button>
+        </div>
+      )}
+
       <div className="flex flex-col gap-2">
         {sorted.length === 0 && !loading && (
           <div
@@ -543,105 +727,162 @@ export function DailyTipsEditor() {
             </div>
           </div>
         )}
-        {sorted.map((tip) => (
-          <div
-            key={tip.id}
-            className="flex items-start gap-3 p-3 rounded-xl"
-            style={{
-              background: 'var(--nested-block-bg)',
-              border: '1px solid var(--nested-block-border)',
-            }}
-          >
+        {sorted.map((tip) => {
+          const selected = selectedIds.has(tip.id);
+          const source = sourceMeta(tip.sourceType);
+          const SourceIcon = source.icon;
+          const stepCount = tip.autoAction?.steps?.length ?? 0;
+          return (
             <div
-              className="shrink-0 text-[10px] font-mono px-1.5 py-0.5 rounded"
+              key={tip.id}
+              onClick={() => toggleSelect(tip.id)}
+              className="group relative flex items-center gap-3 rounded-2xl cursor-pointer transition-all duration-200"
               style={{
-                background: tip.isActive ? 'rgba(34,197,94,0.15)' : 'rgba(148,163,184,0.15)',
-                color: tip.isActive ? '#86efac' : '#94a3b8',
-                marginTop: 2,
+                background: selected
+                  ? 'linear-gradient(135deg, rgba(129,140,248,0.10), rgba(167,139,250,0.06))'
+                  : 'rgba(255,255,255,0.025)',
+                border: selected
+                  ? '1px solid rgba(129,140,248,0.45)'
+                  : '1px solid rgba(255,255,255,0.06)',
+                padding: '14px 16px',
+                boxShadow: selected
+                  ? '0 4px 20px -6px rgba(129,140,248,0.35)'
+                  : 'none',
+              }}
+              onMouseEnter={(e) => {
+                if (!selected) {
+                  e.currentTarget.style.background = 'rgba(255,255,255,0.04)';
+                  e.currentTarget.style.transform = 'translateY(-1px)';
+                }
+              }}
+              onMouseLeave={(e) => {
+                if (!selected) {
+                  e.currentTarget.style.background = 'rgba(255,255,255,0.025)';
+                  e.currentTarget.style.transform = 'translateY(0)';
+                }
               }}
             >
-              {tip.isActive ? '启用' : '关闭'}
-            </div>
-            <div className="flex-1 min-w-0">
-              <div className="flex items-center gap-2 flex-wrap">
-                <span
-                  className="text-[10px] font-mono px-1.5 py-0.5 rounded"
-                  style={{
-                    background: 'rgba(129,140,248,0.12)',
-                    color: '#c4b5fd',
-                  }}
-                >
-                  {tip.kind}
-                </span>
-                {tip.targetUserId && (
+              {/* 左侧 checkbox */}
+              <div
+                className="shrink-0 flex items-center justify-center rounded-full transition-colors"
+                style={{
+                  width: 22,
+                  height: 22,
+                  border: selected
+                    ? '1px solid rgba(129,140,248,0.85)'
+                    : '1.5px solid rgba(255,255,255,0.22)',
+                  background: selected
+                    ? 'linear-gradient(135deg, rgba(129,140,248,0.95), rgba(167,139,250,0.95))'
+                    : 'transparent',
+                }}
+              >
+                {selected && <Check size={13} strokeWidth={3} color="#fff" />}
+              </div>
+
+              {/* 主体 */}
+              <div className="flex-1 min-w-0" onClick={(e) => e.stopPropagation()}>
+                {/* 第一行:场景 chip + kind + 步数 + order */}
+                <div className="flex items-center gap-1.5 flex-wrap mb-1.5">
                   <span
-                    className="text-[10px] px-1.5 py-0.5 rounded"
+                    className="inline-flex items-center gap-1 text-[10px] font-semibold px-2 py-0.5 rounded-full"
                     style={{
-                      background: 'linear-gradient(135deg, rgba(244,63,94,0.15), rgba(168,85,247,0.12))',
-                      color: '#fca5a5',
+                      background: source.bg,
+                      color: source.color,
+                      border: `1px solid ${source.border}`,
                     }}
                   >
-                    定向 {tip.targetUserId.slice(0, 8)}…
+                    <SourceIcon size={10} />
+                    {source.label}
                   </span>
+                  {!tip.isActive && (
+                    <span
+                      className="text-[10px] px-1.5 py-0.5 rounded-full"
+                      style={{ background: 'rgba(148,163,184,0.15)', color: '#94a3b8' }}
+                    >
+                      已关闭
+                    </span>
+                  )}
+                  <span
+                    className="text-[10px] px-1.5 py-0.5 rounded-full"
+                    style={{ background: 'rgba(255,255,255,0.04)', color: 'rgba(255,255,255,0.55)' }}
+                  >
+                    {tip.kind}
+                  </span>
+                  {stepCount > 0 && (
+                    <span
+                      className="text-[10px] px-1.5 py-0.5 rounded-full"
+                      style={{ background: 'rgba(196,181,253,0.10)', color: '#c4b5fd' }}
+                    >
+                      {stepCount} 步 Tour
+                    </span>
+                  )}
+                  {tip.targetUserId && (
+                    <span
+                      className="text-[10px] px-1.5 py-0.5 rounded-full"
+                      style={{
+                        background: 'linear-gradient(135deg, rgba(244,63,94,0.15), rgba(168,85,247,0.12))',
+                        color: '#fca5a5',
+                      }}
+                    >
+                      为你 {tip.targetUserId.slice(0, 6)}…
+                    </span>
+                  )}
+                  <span
+                    className="text-[10px] font-mono ml-auto"
+                    style={{ color: 'var(--text-muted)' }}
+                  >
+                    #{tip.displayOrder}
+                  </span>
+                </div>
+
+                {/* 标题 */}
+                <div
+                  className="text-[14px] font-semibold mb-0.5 truncate"
+                  style={{ color: 'var(--text-primary)' }}
+                >
+                  {tip.title}
+                </div>
+
+                {/* 正文 */}
+                {tip.body && (
+                  <div
+                    className="text-[12px] line-clamp-2"
+                    style={{ color: 'var(--text-secondary)', lineHeight: 1.55 }}
+                  >
+                    {tip.body}
+                  </div>
                 )}
-                <span
-                  className="text-[10px] font-mono"
+
+                {/* 落地页 meta */}
+                <div
+                  className="mt-1.5 text-[11px] font-mono truncate"
                   style={{ color: 'var(--text-muted)' }}
                 >
-                  order={tip.displayOrder}
-                </span>
-                {tip.sourceType && tip.sourceType !== 'manual' && (
-                  <span
-                    className="text-[10px] font-mono px-1.5 py-0.5 rounded"
-                    style={{
-                      background: 'rgba(245,158,11,0.12)',
-                      color: '#fbbf24',
-                    }}
-                  >
-                    {tip.sourceType}
-                  </span>
-                )}
-              </div>
-              <div
-                className="mt-1 text-[13px] font-semibold"
-                style={{ color: 'var(--text-primary)' }}
-              >
-                {tip.title}
-              </div>
-              {tip.body && (
-                <div
-                  className="mt-0.5 text-[12px] line-clamp-2"
-                  style={{ color: 'var(--text-secondary)' }}
-                >
-                  {tip.body}
+                  → {tip.actionUrl}
                 </div>
-              )}
-              <div className="mt-1 text-[11px] font-mono" style={{ color: 'var(--text-muted)' }}>
-                → {tip.actionUrl}
-                {tip.targetSelector ? ` (${tip.targetSelector})` : ''}
+              </div>
+
+              {/* 右侧操作按钮 */}
+              <div
+                className="flex items-center gap-1 shrink-0 opacity-60 group-hover:opacity-100 transition-opacity"
+                onClick={(e) => e.stopPropagation()}
+              >
+                <Button variant="ghost" size="sm" onClick={() => handleTest(tip)} title="试播">
+                  <Play size={12} />
+                </Button>
+                <Button variant="ghost" size="sm" onClick={() => setPushingTip(tip)} title="推送">
+                  <Send size={12} />
+                </Button>
+                <Button variant="ghost" size="sm" onClick={() => startEdit(tip)} title="编辑">
+                  <Pencil size={12} />
+                </Button>
+                <Button variant="ghost" size="sm" onClick={() => void handleDelete(tip.id)} title="删除">
+                  <Trash2 size={12} />
+                </Button>
               </div>
             </div>
-            <div className="flex items-center gap-1 shrink-0">
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => handleTest(tip)}
-                title="试播一次(当前账号、不走推送)"
-              >
-                <Play size={12} />
-              </Button>
-              <Button variant="ghost" size="sm" onClick={() => setPushingTip(tip)} title="推送给指定用户">
-                <Send size={12} />
-              </Button>
-              <Button variant="ghost" size="sm" onClick={() => startEdit(tip)}>
-                <Pencil size={12} />
-              </Button>
-              <Button variant="ghost" size="sm" onClick={() => void handleDelete(tip.id)}>
-                <Trash2 size={12} />
-              </Button>
-            </div>
-          </div>
-        ))}
+          );
+        })}
       </div>
       {pushingTip && (
         <PushDialog

@@ -139,6 +139,14 @@ public class DailyTipTourStep
     public string Selector { get; set; } = string.Empty;
     public string Title { get; set; } = string.Empty;
     public string? Body { get; set; }
+
+    /// <summary>
+    /// 切到这一步时先导航到某个 URL(可选)。用于跨页面的多步 Tour —— 例如
+    /// 大全套演示走遍多个 Agent 入口,每步在不同路由下的元素。
+    /// 为空时保持当前路由;非空时 SpotlightOverlay 调 useNavigate 切过去后
+    /// 再 poll 找 selector。
+    /// </summary>
+    public string? NavigateTo { get; set; }
 }
 
 /// <summary>

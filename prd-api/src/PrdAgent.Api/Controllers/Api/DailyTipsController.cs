@@ -367,19 +367,19 @@ public sealed class DailyTipsController : ControllerBase
                     },
                 }),
 
-            // 3. 大全套演示 —— 测试用,展示 autoAction 所有能力(scroll + prefill + 多步 Tour)
-            // 起点百宝箱:预填搜索框 → 高亮搜索框 → 高亮海鲜市场入口 → 高亮侧边栏
+            // 3. 大全套演示 —— 11 步跨页面 Tour,回归测试用
+            // 覆盖能力:scroll + prefill + 跨路由 navigateTo + 多步 tour + 按钮位撒花
+            // 走遍全站所有主 Agent 入口,每步带 navigateTo 切路由
             T("showcase-all-features", "card",
-                "大全套:一条 tip 跑通所有交互形态",
-                "这是一条测试用演示,展示「预填输入 → 滚动定位 → 多步高亮」三件套。\n开发教程时用来验证组件行为。",
+                "大全套:11 步跑遍全站主入口",
+                "回归测试用演示。预填输入 → 跨 11 页导览 → 最后从按钮位置撒花,一次验证所有交互形态。",
                 "/ai-toolbox",
-                "跑完看效果",
+                "开始全站导览",
                 "[data-tour-id=toolbox-search]",
                 5,
                 new DailyTipAutoAction
                 {
                     Scroll = "center",
-                    // autoAction 级别的「预填」—— 跳转到落地页时搜索框自动填好"周报"
                     Prefill = new DailyTipPrefill
                     {
                         Selector = "[data-tour-id=toolbox-search]",
@@ -390,20 +390,77 @@ public sealed class DailyTipsController : ControllerBase
                         new()
                         {
                             Selector = "[data-tour-id=toolbox-search]",
-                            Title = "第 1 步:搜索框已预填「周报」",
-                            Body = "跳转的瞬间 Prefill 能力自动触发了 React onChange,列表已按「周报」过滤。",
+                            Title = "第 1 步 / 11 · 百宝箱",
+                            Body = "搜索框已被 Prefill 自动填「周报」,列表已过滤。验证 prefill 能力。",
                         },
                         new()
                         {
                             Selector = "[data-tour-id=home-search]",
-                            Title = "第 2 步:⌘+K 全站搜索",
-                            Body = "点「下一步」会自动替你点击这个搜索入口,触发命令面板。",
+                            Title = "第 2 步 / 11 · 首页 ⌘+K 搜索",
+                            Body = "回到首页,高亮全局搜索入口。",
+                            NavigateTo = "/",
                         },
                         new()
                         {
-                            Selector = "[data-tour-id=command-palette-input]",
-                            Title = "第 3 步:命令面板 input",
-                            Body = "多步 Tour 的最后一步,点「完成 🎉」会从这个按钮位置撒花 + 永久 dismiss。",
+                            Selector = "[data-tour-id=marketplace-category-tabs]",
+                            Title = "第 3 步 / 11 · 海鲜市场",
+                            Body = "跳去海鲜市场,高亮类型筛选栏。",
+                            NavigateTo = "/marketplace",
+                        },
+                        new()
+                        {
+                            Selector = "[data-tour-id=library-create]",
+                            Title = "第 4 步 / 11 · 智识殿堂",
+                            Body = "跳去知识库广场,高亮「发布我的知识」按钮。",
+                            NavigateTo = "/library",
+                        },
+                        new()
+                        {
+                            Selector = "[data-tour-id=document-store-create]",
+                            Title = "第 5 步 / 11 · 我的知识库",
+                            Body = "跳到个人知识库,高亮新建空间按钮。",
+                            NavigateTo = "/document-store",
+                        },
+                        new()
+                        {
+                            Selector = "[data-tour-id=changelog-latest]",
+                            Title = "第 6 步 / 11 · 更新中心",
+                            Body = "跳去 changelog,高亮最新版本。",
+                            NavigateTo = "/changelog",
+                        },
+                        new()
+                        {
+                            Selector = "[data-tour-id=changelog-filter]",
+                            Title = "第 7 步 / 11 · 更新中心筛选",
+                            Body = "同页面高亮类型筛选栏(feat/fix/perf)。",
+                        },
+                        new()
+                        {
+                            Selector = "[data-tour-id=report-template-picker]",
+                            Title = "第 8 步 / 11 · 周报管理",
+                            Body = "跳去周报 Agent,高亮「写周报」按钮。",
+                            NavigateTo = "/report-agent",
+                        },
+                        new()
+                        {
+                            Selector = "[data-tour-id=defect-create]",
+                            Title = "第 9 步 / 11 · 缺陷管理",
+                            Body = "跳去缺陷反馈页,高亮「+ 提交缺陷」。",
+                            NavigateTo = "/defect-agent",
+                        },
+                        new()
+                        {
+                            Selector = "[data-tour-id=emergence-seed-input]",
+                            Title = "第 10 步 / 11 · 涌现探索器",
+                            Body = "跳去涌现 Agent,高亮「种下第一颗种子」按钮。",
+                            NavigateTo = "/emergence",
+                        },
+                        new()
+                        {
+                            Selector = "[data-tour-id=home-search]",
+                            Title = "第 11 步 / 11 · 回到首页完成",
+                            Body = "全站 9 个 Agent 全看过!点「完成 🎉」会从这个按钮位置撒花。",
+                            NavigateTo = "/",
                         },
                     },
                 }),
