@@ -3,29 +3,19 @@ import { persist, createJSONStorage } from 'zustand/middleware';
 import { getUserPreferences, updateNavLayout } from '@/services';
 import { registerLogoutReset } from '@/stores/authStore';
 
-/**
- * 导航排序中的分隔横杆哨兵值。
- * 该字符串出现在 NavOrder 数组中代表一根"---"分隔线；
- * 可以出现多次，连续的分隔符在渲染时合并为一根。
- */
 export const NAV_DIVIDER_KEY = '---';
 
 type NavOrderState = {
-  /** 用户自定义的导航顺序（key 列表，可能包含 NAV_DIVIDER_KEY 作为分隔符） */
   navOrder: string[];
-  /** 用户隐藏的 appKey 列表（不在左侧导航展示，但保留访问权） */
   navHidden: string[];
-  /** 是否已从后端加载过 */
+  defaultNavOrder: string[];
+  defaultNavHidden: string[];
   loaded: boolean;
-  /** 是否正在保存 */
   saving: boolean;
-  /** 加载用户偏好 */
   loadFromServer: () => Promise<void>;
-  /** 同时设置顺序 + 隐藏（本地 + 防抖保存到后端，仅一次网络往返） */
   setNavLayout: (payload: { navOrder: string[]; navHidden: string[] }) => void;
-  /** 恢复默认（清空自定义顺序与隐藏 → 回退到系统默认） */
+  setDefaultNavLayoutLocal: (payload: { navOrder: string[]; navHidden: string[] }) => void;
   restoreDefault: () => Promise<void>;
-  /** 重置状态（登出时调用） */
   reset: () => void;
 };
 
@@ -57,6 +47,8 @@ export const useNavOrderStore = create<NavOrderState>()(
     (set, get) => ({
       navOrder: [],
       navHidden: [],
+      defaultNavOrder: [],
+      defaultNavHidden: [],
       loaded: false,
       saving: false,
 
@@ -67,21 +59,27 @@ export const useNavOrderStore = create<NavOrderState>()(
           if (res.success && res.data) {
             const serverOrder = res.data.navOrder ?? [];
             const serverHidden = res.data.navHidden ?? [];
+            const defaultNavOrder = res.data.defaultNavOrder ?? [];
+            const defaultNavHidden = res.data.defaultNavHidden ?? [];
             const localOrder = get().navOrder;
             const localHidden = get().navHidden;
 
-            // 服务端有任何自定义数据 → 以服务端为准
             if (serverOrder.length > 0 || serverHidden.length > 0) {
-              set({ navOrder: serverOrder, navHidden: serverHidden, loaded: true });
+              set({
+                navOrder: serverOrder,
+                navHidden: serverHidden,
+                defaultNavOrder,
+                defaultNavHidden,
+                loaded: true,
+              });
             } else if (localOrder.length > 0 || localHidden.length > 0) {
-              // 服务端为空但本地有缓存：保留本地并异步同步到后端
               console.info('[navOrderStore] 后端无自定义导航，使用本地缓存并同步到后端');
-              set({ loaded: true });
+              set({ defaultNavOrder, defaultNavHidden, loaded: true });
               updateNavLayout({ navOrder: localOrder, navHidden: localHidden }).catch((err) => {
                 console.error('[navOrderStore] 同步本地布局到后端失败:', err);
               });
             } else {
-              set({ loaded: true });
+              set({ defaultNavOrder, defaultNavHidden, loaded: true });
             }
           } else {
             set({ loaded: true });
@@ -95,6 +93,10 @@ export const useNavOrderStore = create<NavOrderState>()(
       setNavLayout: (payload) => {
         set({ navOrder: payload.navOrder, navHidden: payload.navHidden });
         scheduleSave(get, set);
+      },
+
+      setDefaultNavLayoutLocal: (payload) => {
+        set({ defaultNavOrder: payload.navOrder, defaultNavHidden: payload.navHidden });
       },
 
       restoreDefault: async () => {
@@ -114,22 +116,26 @@ export const useNavOrderStore = create<NavOrderState>()(
         try {
           sessionStorage.removeItem(STORAGE_KEY);
         } catch {
-          // sessionStorage 可能不可用（SSR / 隐私模式）
+          // ignore sessionStorage failures
         }
-        set({ navOrder: [], navHidden: [], loaded: false, saving: false });
+        set({
+          navOrder: [],
+          navHidden: [],
+          defaultNavOrder: [],
+          defaultNavHidden: [],
+          loaded: false,
+          saving: false,
+        });
       },
     }),
     {
       name: STORAGE_KEY,
       storage: createJSONStorage(() => sessionStorage),
-      // 本地缓存顺序和隐藏列表，避免每次刷新都等后端
       partialize: (s) => ({ navOrder: s.navOrder, navHidden: s.navHidden }),
     }
   )
 );
 
-// 登出时同步清空，避免同一浏览器切换账号后下个用户的 loadFromServer 被 stale `loaded` 标志 early-return。
 registerLogoutReset(() => {
   useNavOrderStore.getState().reset();
 });
-

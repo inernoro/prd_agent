@@ -10,10 +10,15 @@ import type {
   UpdateVisualAgentPreferencesContract,
   UpdateLiteraryAgentPreferencesContract,
   UpdateAgentSwitcherPreferencesContract,
+  GetDefaultNavLayoutContract,
+  UpdateDefaultNavLayoutContract,
+  ApplyDefaultNavToAllUsersContract,
   ThemeConfigResponse,
   VisualAgentPreferences,
   LiteraryAgentPreferences,
   AgentSwitcherPreferences,
+  DefaultNavLayout,
+  ApplyDefaultNavToAllUsersResult,
 } from '@/services/contracts/userPreferences';
 
 // 去重：navOrderStore + themeStore + VisualAgentTab 可能同时调用，共享一个 in-flight 请求
@@ -30,13 +35,15 @@ export const getUserPreferencesReal: GetUserPreferencesContract = async (): Prom
 };
 
 async function doGetUserPreferences(): Promise<ApiResponse<UserPreferences>> {
-  const res = await apiRequest<{ navOrder: string[]; navHidden: string[]; themeConfig?: ThemeConfigResponse; visualAgentPreferences?: VisualAgentPreferences; literaryAgentPreferences?: LiteraryAgentPreferences; agentSwitcherPreferences?: AgentSwitcherPreferences }>(
+  const res = await apiRequest<{ navOrder: string[]; navHidden: string[]; defaultNavOrder?: string[]; defaultNavHidden?: string[]; themeConfig?: ThemeConfigResponse; visualAgentPreferences?: VisualAgentPreferences; literaryAgentPreferences?: LiteraryAgentPreferences; agentSwitcherPreferences?: AgentSwitcherPreferences }>(
     api.dashboard.userPreferences.get()
   );
   if (!res.success) return res as unknown as ApiResponse<UserPreferences>;
   return ok({
     navOrder: res.data.navOrder ?? [],
     navHidden: res.data.navHidden ?? [],
+    defaultNavOrder: res.data.defaultNavOrder ?? [],
+    defaultNavHidden: res.data.defaultNavHidden ?? [],
     themeConfig: res.data.themeConfig,
     visualAgentPreferences: res.data.visualAgentPreferences,
     literaryAgentPreferences: res.data.literaryAgentPreferences,
@@ -95,4 +102,40 @@ export const updateAgentSwitcherPreferencesReal: UpdateAgentSwitcherPreferencesC
   });
   if (!res.success) return res;
   return ok(undefined);
+};
+
+export const getDefaultNavLayoutReal: GetDefaultNavLayoutContract = async (): Promise<ApiResponse<DefaultNavLayout>> => {
+  const res = await apiRequest<DefaultNavLayout>(api.settings.defaultNav());
+  if (!res.success) return res;
+  return ok({
+    navOrder: res.data.navOrder ?? [],
+    navHidden: res.data.navHidden ?? [],
+    updatedAt: res.data.updatedAt,
+  });
+};
+
+export const updateDefaultNavLayoutReal: UpdateDefaultNavLayoutContract = async (
+  payload
+): Promise<ApiResponse<DefaultNavLayout>> => {
+  const res = await apiRequest<DefaultNavLayout>(api.settings.defaultNav(), {
+    method: 'PUT',
+    body: { navOrder: payload.navOrder, navHidden: payload.navHidden },
+  });
+  if (!res.success) return res;
+  return ok({
+    navOrder: res.data.navOrder ?? [],
+    navHidden: res.data.navHidden ?? [],
+    updatedAt: res.data.updatedAt,
+  });
+};
+
+export const applyDefaultNavToAllUsersReal: ApplyDefaultNavToAllUsersContract = async (): Promise<ApiResponse<ApplyDefaultNavToAllUsersResult>> => {
+  const res = await apiRequest<ApplyDefaultNavToAllUsersResult>(api.settings.applyDefaultNavToAllUsers(), {
+    method: 'POST',
+  });
+  if (!res.success) return res;
+  return ok({
+    matchedCount: res.data.matchedCount ?? 0,
+    modifiedCount: res.data.modifiedCount ?? 0,
+  });
 };

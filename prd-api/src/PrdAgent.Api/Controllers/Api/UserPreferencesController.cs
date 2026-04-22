@@ -43,11 +43,16 @@ public class UserPreferencesController : ControllerBase
         var prefs = await _db.UserPreferences
             .Find(x => x.UserId == userId)
             .FirstOrDefaultAsync();
+        var defaultNav = await _db.DefaultNavConfigs
+            .Find(x => x.Id == "singleton")
+            .FirstOrDefaultAsync();
 
         return Ok(ApiResponse<object>.Ok(new
         {
             navOrder = prefs?.NavOrder ?? new List<string>(),
             navHidden = prefs?.NavHidden ?? new List<string>(),
+            defaultNavOrder = defaultNav?.NavOrder ?? new List<string>(),
+            defaultNavHidden = defaultNav?.NavHidden ?? new List<string>(),
             themeConfig = prefs?.ThemeConfig,
             visualAgentPreferences = prefs?.VisualAgentPreferences,
             literaryAgentPreferences = prefs?.LiteraryAgentPreferences,

@@ -181,7 +181,17 @@ export default function AppShell() {
   const mobileDrawerOpen = useLayoutStore((s) => s.mobileDrawerOpen);
   const setMobileDrawerOpen = useLayoutStore((s) => s.setMobileDrawerOpen);
   const { isMobile } = useBreakpoint();
-  const { navOrder, navHidden, loaded: navOrderLoaded, loadFromServer: loadNavOrder } = useNavOrderStore();
+  const {
+    navOrder,
+    navHidden,
+    defaultNavOrder,
+    defaultNavHidden,
+    loaded: navOrderLoaded,
+    loadFromServer: loadNavOrder,
+  } = useNavOrderStore();
+  const hasCustomNav = navOrder.length > 0 || navHidden.length > 0;
+  const effectiveNavOrder = hasCustomNav ? navOrder : defaultNavOrder;
+  const effectiveNavHidden = hasCustomNav ? navHidden : defaultNavHidden;
   const [avatarOpen, setAvatarOpen] = useState(false);
   const [notificationDialogOpen, setNotificationDialogOpen] = useState(false);
   const [notifications, setNotifications] = useState<AdminNotificationItem[]>([]);
@@ -316,9 +326,9 @@ export default function AppShell() {
 
   // 过滤掉用户隐藏的项（隐藏 = 不在导航展示，但保留页面访问权）
   const visibleItems: NavItem[] = useMemo(() => {
-    const hiddenSet = new Set(navHidden);
+    const hiddenSet = new Set(effectiveNavHidden);
     return allCatalogItems.filter((it) => !hiddenSet.has(it.appKey));
-  }, [allCatalogItems, navHidden]);
+  }, [allCatalogItems, effectiveNavHidden]);
 
   // 首页独立项（不归属任何分组，始终可见，不参与用户自定义）
   const homeItem = useMemo(
@@ -336,7 +346,7 @@ export default function AppShell() {
     const NON_HOME = visibleItems.filter((it) => it.group !== 'home');
 
     // 用户自定义模式：按 navOrder 展开 + "---" 切段，不再显示分组标签（纯视觉横杆）
-    if (navOrder.length > 0) {
+    if (effectiveNavOrder.length > 0) {
       const byAppKey = new Map(NON_HOME.map((it) => [it.appKey, it]));
       // 从 launcher catalog 回退解析：支持用户从候选池拖进来的 toolbox/agent/utility 项
       // 这些 token 形如 "agent:xxx" / "toolbox:xxx" / "utility:xxx"
@@ -344,13 +354,13 @@ export default function AppShell() {
         getLauncherCatalog({ permissions, isRoot }).map((li) => [li.id, li])
       );
       // launcher 分支也要受 navHidden 约束，避免 "既在 navOrder 又在 navHidden" 的 launcher 条目穿透
-      const hiddenSet = new Set(navHidden);
+      const hiddenSet = new Set(effectiveNavHidden);
       const appeared = new Set<string>();
       const segments: { key: string; label?: string; items: NavItem[] }[] = [];
       let current: NavItem[] = [];
       let segIdx = 0;
 
-      for (const token of navOrder) {
+      for (const token of effectiveNavOrder) {
         if (token === NAV_DIVIDER_KEY) {
           if (current.length > 0) {
             segments.push({ key: `custom-${segIdx++}`, items: current });
@@ -408,7 +418,7 @@ export default function AppShell() {
         items: NON_HOME.filter((it) => it.group === g.key),
       }))
       .filter((g) => g.items.length > 0);
-  }, [visibleItems, navOrder, navHidden, permissions, isRoot]);
+  }, [visibleItems, effectiveNavOrder, effectiveNavHidden, permissions, isRoot]);
   
   // 首页为 Agent Launcher 沉浸页，不自动跳转，让用户自主选择 Agent
   const isHomePage = location.pathname === '/';
