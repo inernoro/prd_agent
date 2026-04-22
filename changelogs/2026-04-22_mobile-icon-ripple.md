@@ -1,0 +1,2 @@
+| feat | prd-admin | 移动端首页：静态封面图作为 iOS app icon（AGENT_COVER_DEFAULTS），Featured 底部 glass bar + 智能体 Shelf 卡片全部改走封面图，无图 agent fallback Lucide + 渐变底 |
+| feat | prd-admin | 移动端 Featured Carousel 切换水波纹动效：点击底部小点触发 View Transition API，clip-path circle 从点击坐标扩散（520ms），复用系统皮肤切换同款技术栈；手指滑动保持原生 snap 手感；Safari < 18.2 降级为 scroll-behavior smooth |

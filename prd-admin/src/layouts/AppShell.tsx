@@ -59,6 +59,8 @@ import { AvatarEditDialog } from '@/components/ui/AvatarEditDialog';
 import { Dialog } from '@/components/ui/Dialog';
 import { MobileDrawer } from '@/components/ui/MobileDrawer';
 import { MobileTabBar } from '@/components/ui/MobileTabBar';
+import { MobileSafeBoundary } from '@/components/MobileSafeBoundary';
+import { MobileCompatGate } from '@/components/MobileCompatGate';
 import { resolveAvatarUrl } from '@/lib/avatar';
 import { UserAvatar } from '@/components/ui/UserAvatar';
 import { getAdminNotifications, handleAdminNotification, handleAllAdminNotifications, updateMyAvatar, uploadMyAvatar } from '@/services';
@@ -472,12 +474,22 @@ export default function AppShell() {
   }, [loadNotifications, user?.userId]);
 
   return (
-    <div className="h-full w-full relative overflow-hidden" style={{ background: 'var(--bg-base)' }}>
+    <div
+      className="w-full relative overflow-hidden"
+      style={{
+        background: 'var(--bg-base)',
+        // 移动端：用 dvh 跟随视口（修 iOS Safari 地址栏收缩导致的高度抖动 / 黑带）
+        // 桌面端：保持 h:100% 依赖 #root，避免破坏现有侧栏/浮层布局
+        minHeight: '100dvh',
+        height: '100%',
+      }}
+    >
       <SystemDialogHost />
       <GlobalDefectSubmitDialog />
       <TipsDrawer />
       <CommandPalette />
-      {toastNotification && (
+      {/* 移动端顶栏已有 Bell 按钮，隐藏右下浮球避免和 MobileTabBar "+" 重叠 */}
+      {!isMobile && toastNotification && (
         toastCollapsed ? (
           // 收缩状态：浮动按钮
           <button
@@ -618,11 +630,16 @@ export default function AppShell() {
         )
       )}
       {/* ── 移动端: 顶部导航栏 ── */}
+      {/* 首页 (isHomePage) 做 Apple Today 式透明顶栏：
+       *   - 左: menu 按钮
+       *   - 中: 空
+       *   - 右: 头像按钮（带通知红点）—— 点击 → /profile
+       *   文字标题职责交给页面内 Hero */}
       {isMobile && (
         <header
           className="fixed top-0 left-0 right-0 z-100 flex items-center gap-3 px-4"
           style={{
-            ...glassMobileHeader,
+            ...(isHomePage ? { background: 'transparent' } : glassMobileHeader),
             height: 'calc(var(--mobile-header-height, 48px) + env(safe-area-inset-top, 0px))',
             paddingTop: 'env(safe-area-inset-top, 0px)',
           }}
@@ -636,32 +653,89 @@ export default function AppShell() {
           >
             <Menu size={20} />
           </button>
-          <div className="flex-1 min-w-0 text-center">
-            <span className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
-              {visibleItems.find((it) => it.key === activeKey)?.label || 'PRD Agent'}
-            </span>
-          </div>
-          <ChangelogBell size={18} compact />
-          <button
-            type="button"
-            onClick={() => {
-              setNotificationDialogOpen(true);
-              void loadNotifications({ silent: true });
-            }}
-            className="relative h-9 w-9 inline-flex items-center justify-center rounded-xl"
-            style={{ color: 'var(--text-secondary)' }}
-            aria-label="通知"
-          >
-            <Bell size={18} />
-            {notificationCount > 0 && (
-              <span
-                className="absolute top-1 right-1 h-4 w-4 rounded-full flex items-center justify-center text-[9px] font-bold"
-                style={{ background: 'var(--accent-gold)', color: '#1a1a1a' }}
-              >
-                {notificationCount > 9 ? '9+' : notificationCount}
+          {!isHomePage && (
+            <div className="flex-1 min-w-0 text-center">
+              <span className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
+                {visibleItems.find((it) => it.key === activeKey)?.label || 'PRD Agent'}
               </span>
-            )}
-          </button>
+            </div>
+          )}
+          {isHomePage && <div className="flex-1" />}
+          {!isHomePage && <ChangelogBell size={18} compact />}
+          {!isHomePage && (
+            <button
+              type="button"
+              onClick={() => {
+                setNotificationDialogOpen(true);
+                void loadNotifications({ silent: true });
+              }}
+              className="relative h-9 w-9 inline-flex items-center justify-center rounded-xl"
+              style={{ color: 'var(--text-secondary)' }}
+              aria-label="通知"
+            >
+              <Bell size={18} />
+              {notificationCount > 0 && (
+                <span
+                  className="absolute top-1 right-1 h-4 w-4 rounded-full flex items-center justify-center text-[9px] font-bold"
+                  style={{ background: 'var(--accent-gold)', color: '#1a1a1a' }}
+                >
+                  {notificationCount > 9 ? '9+' : notificationCount}
+                </span>
+              )}
+            </button>
+          )}
+          {/* 首页右上角头像按钮 —— Apple Today 范式 */}
+          {isHomePage && (
+            <button
+              type="button"
+              onClick={() => navigate('/profile')}
+              className="relative h-9 w-9 inline-flex items-center justify-center rounded-full overflow-hidden transition-opacity active:opacity-60"
+              style={{ border: '1px solid rgba(255,255,255,0.12)', background: 'rgba(255,255,255,0.05)', padding: 0 }}
+              aria-label="个人中心"
+            >
+              {user?.avatarUrl || user?.avatarFileName ? (
+                <UserAvatar
+                  src={resolveAvatarUrl({
+                    username: user?.username,
+                    userType: user?.userType,
+                    botKind: user?.botKind,
+                    avatarFileName: user?.avatarFileName ?? null,
+                    avatarUrl: user?.avatarUrl,
+                  })}
+                  alt="avatar"
+                  className="h-full w-full object-cover"
+                />
+              ) : (
+                <span className="text-[13px] font-semibold" style={{ color: 'var(--text-primary)' }}>
+                  {(user?.displayName || user?.username || '?')[0]}
+                </span>
+              )}
+              {notificationCount > 0 && (
+                <span
+                  className="absolute"
+                  style={{
+                    top: -2,
+                    right: -2,
+                    minWidth: 16,
+                    height: 16,
+                    padding: '0 4px',
+                    borderRadius: 999,
+                    background: '#FF453A',
+                    color: '#fff',
+                    fontSize: 9,
+                    fontWeight: 700,
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    border: '2px solid #000',
+                    lineHeight: 1,
+                  }}
+                >
+                  {notificationCount > 9 ? '9+' : notificationCount}
+                </span>
+              )}
+            </button>
+          )}
         </header>
       )}
 
@@ -1239,8 +1313,9 @@ export default function AppShell() {
                         className="rounded-[16px] border px-4 py-3"
                         style={{ borderColor: tone.border, background: tone.bg }}
                       >
-                        <div className="flex items-start justify-between gap-3">
-                          <div className="min-w-0">
+                        {/* 窄屏竖排（移动端 / 窄浏览器），宽屏水平分栏；按钮列 shrink-0 + 按钮文字 whitespace-nowrap，防止被挤成竖排单字 */}
+                        <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
+                          <div className="min-w-0 flex-1">
                             <div className="text-[13px] font-semibold" style={{ color: 'var(--text-primary)' }}>
                               {item.title}
                             </div>
@@ -1301,11 +1376,11 @@ export default function AppShell() {
                               {new Date(item.createdAt).toLocaleString()}
                             </div>
                           </div>
-                          <div className="flex flex-col items-end gap-2">
+                          <div className="shrink-0 flex flex-row sm:flex-col items-stretch sm:items-end gap-2">
                             {item.actionUrl && (
                               <button
                                 type="button"
-                                className="rounded-full px-3 py-1.5 text-[12px] transition-all hover:bg-white/20 active:scale-[0.97]"
+                                className="rounded-full px-3 py-1.5 text-[12px] whitespace-nowrap transition-all hover:bg-white/20 active:scale-[0.97]"
                                 style={{ background: 'rgba(255, 255, 255, 0.15)', color: 'var(--text-primary)' }}
                                 onClick={() => handleNotification(item.id, item.actionUrl)}
                               >
@@ -1314,7 +1389,7 @@ export default function AppShell() {
                             )}
                             <button
                               type="button"
-                              className="rounded-full px-3 py-1.5 text-[12px] transition-all hover:brightness-110 active:scale-[0.97]"
+                              className="rounded-full px-3 py-1.5 text-[12px] whitespace-nowrap transition-all hover:brightness-110 active:scale-[0.97]"
                               style={{ background: 'var(--accent-gold)', color: '#1a1a1a' }}
                               onClick={() => handleNotification(item.id)}
                             >
@@ -1348,9 +1423,14 @@ export default function AppShell() {
             )}
           >
             <div className="flex-1 min-h-0 relative">
-              <Suspense fallback={<InlinePageLoader />}>
-                <Outlet />
-              </Suspense>
+              {/* 移动端兼容门槛：根据路由显示 banner / 模态，非阻断式 */}
+              {isMobile && <MobileCompatGate pathname={location.pathname} />}
+              {/* ErrorBoundary：渲染异常时显示友好错误 + 重试，避免整棵树卸载成纯黑 */}
+              <MobileSafeBoundary resetKey={location.pathname}>
+                <Suspense fallback={<InlinePageLoader />}>
+                  <Outlet />
+                </Suspense>
+              </MobileSafeBoundary>
               {/* 每日小贴士跳转后的 DOM 脉冲光圈。key=pathname 保证每次路由切换都重新读取 sessionStorage */}
               <SpotlightOverlay key={location.pathname} />
             </div>
