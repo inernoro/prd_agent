@@ -43,6 +43,8 @@ import {
   HOMEPAGE_AGENT_SLOTS,
   HOMEPAGE_HERO_SLOTS,
   MARKETPLACE_BG_SLOTS,
+  DEMO_VIDEO_SLOTS,
+  type DemoVideoSlot,
   buildDefaultCoverUrl,
   buildDefaultVideoUrl,
   buildDefaultHeroUrl,
@@ -1420,6 +1422,42 @@ function MarketplaceAssetsSection({
               previewAspect="16 / 9"
               onUpload={() => onUpload(bg.slot, 'image/*')}
               onDelete={() => onDelete(bg.slot)}
+            />
+          ))}
+        </div>
+      </GlassCard>
+
+      {/* 演示视频：通用基础设施分区，所有功能都可以往 DEMO_VIDEO_SLOTS 登记 */}
+      <GlassCard animated glow className="overflow-hidden">
+        <div className="flex items-center justify-between gap-3 mb-4">
+          <SectionTitle
+            icon={<VideoIcon size={16} />}
+            title="演示视频"
+            badge={`${DEMO_VIDEO_SLOTS.length} 条`}
+          />
+          <Button variant="ghost" size="xs" onClick={onReload} disabled={loading}>
+            {loading ? '加载中…' : '刷新'}
+          </Button>
+        </div>
+        <p className="text-[12px] mb-4" style={{ color: 'var(--text-muted)' }}>
+          通用「演示视频」槽位 —— 各功能在流程关键步骤上方嵌入一段实操录屏，消除
+          用户"点下一步会发生什么"的困惑。支持 MP4 / WebM，推荐 16:9、≤ 20 MB。
+          未上传时前端显示静态占位卡，不影响功能可用性。
+        </p>
+        <div className="grid grid-cols-1 gap-3">
+          {DEMO_VIDEO_SLOTS.map((demo: DemoVideoSlot) => (
+            <HomepageSlotTile
+              key={demo.slot}
+              slot={demo.slot}
+              label={demo.label}
+              hint={demo.hint}
+              asset={assets[demo.slot]}
+              cacheBust={cacheBust}
+              uploading={uploadingId === `homepage::${demo.slot}`}
+              accept="video/*"
+              previewAspect="16 / 9"
+              onUpload={() => onUpload(demo.slot, 'video/*')}
+              onDelete={() => onDelete(demo.slot)}
             />
           ))}
         </div>

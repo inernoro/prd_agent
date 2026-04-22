@@ -4,6 +4,7 @@ import { Book, KeyRound, Sparkles, X, Zap, type LucideIcon } from 'lucide-react'
 import { listAgentApiKeys } from '@/services';
 import type { AgentApiKeyDto } from '@/services/contracts/agentApiKeys';
 import { toast } from '@/lib/toast';
+import { useHomepageAssetsStore } from '@/stores/homepageAssetsStore';
 import { GuideTab } from './skillOpenApi/GuideTab';
 import { KeysListTab } from './skillOpenApi/KeysListTab';
 import { StartTab } from './skillOpenApi/StartTab';
@@ -71,6 +72,11 @@ export function SkillOpenApiDialog({ onClose }: Props) {
   useEffect(() => {
     void refresh();
   }, [refresh]);
+
+  // 首次打开加载首页资源（含演示视频），useDemoVideoUrl 才能拿到值
+  useEffect(() => {
+    void useHomepageAssetsStore.getState().load();
+  }, []);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {

@@ -1,13 +1,17 @@
 import { useState } from 'react';
-import { AlertTriangle, Bot, Check, Copy, Download, EyeOff, Sparkles } from 'lucide-react';
+import { AlertTriangle, Bot, Check, Copy, Download, EyeOff, Play, Sparkles, Video } from 'lucide-react';
 import { toast } from '@/lib/toast';
 import { createAgentApiKey } from '@/services';
+import { useDemoVideoUrl } from '@/stores/homepageAssetsStore';
 import {
   OFFICIAL_SKILL_FINDMAPSKILLS,
   downloadOfficialSkill,
   markOfficialSkillDownloaded,
   resolveOfficialSkillDownloadUrl,
 } from './downloadOfficialSkill';
+
+/** 演示视频 slot id —— 必须与 homepageAssetSlots.ts 中的 DEMO_VIDEO_SLOTS 登记一致 */
+const DEMO_VIDEO_ID = 'skill-openapi.agent-paste';
 
 interface Props {
   /** 平台支持的 scope 白名单，来自 /api/agent-api-keys 的 allowedScopes */
@@ -22,14 +26,16 @@ interface Props {
   agentMode?: boolean;
 }
 
-const SCOPE_META: Record<string, { title: string; desc: string }> = {
+const SCOPE_META: Record<string, { title: string; desc: string; icon: string }> = {
   'marketplace.skills:read': {
     title: '浏览 & 下载技能',
-    desc: '允许 AI 查询海鲜市场技能列表、拉取详情、触发 fork 下载 zip（等价于"拿来吧"）。',
+    desc: '查询市场、拉详情、fork 下载 zip',
+    icon: '📥',
   },
   'marketplace.skills:write': {
     title: '上传技能',
-    desc: '允许 AI 以你的身份向海鲜市场上传新的 zip 技能包。上传的技能会默认公开，作者归属你。',
+    desc: '以你的身份发布 zip 技能包',
+    icon: '📤',
   },
 };
 
@@ -40,9 +46,24 @@ const TTL_OPTIONS = [
   { days: 1095, label: '3 年（最长）' },
 ];
 
+/**
+ * 生成一个可读的随机 Key 名称：
+ *   「接入 2026-04-21 14:32 · a1b2」
+ * 用本地时间（用户能认得出来"哪天建的"）+ 4 位随机后缀（同分钟多个不重名）。
+ */
+function generateDefaultKeyName(): string {
+  const d = new Date();
+  const yyyy = d.getFullYear();
+  const mm = String(d.getMonth() + 1).padStart(2, '0');
+  const dd = String(d.getDate()).padStart(2, '0');
+  const hh = String(d.getHours()).padStart(2, '0');
+  const mi = String(d.getMinutes()).padStart(2, '0');
+  const suffix = Math.random().toString(36).slice(2, 6);
+  return `接入 ${yyyy}-${mm}-${dd} ${hh}:${mi} · ${suffix}`;
+}
+
 export function CreateKeyTab({ allowedScopes, onCreated, onBackToList, agentMode = false }: Props) {
-  const [name, setName] = useState('');
-  const [description, setDescription] = useState('');
+  const [name, setName] = useState(() => generateDefaultKeyName());
   const [selectedScopes, setSelectedScopes] = useState<string[]>(() => [
     ...allowedScopes.filter((s) => s === 'marketplace.skills:read'),
   ]);
@@ -52,6 +73,7 @@ export function CreateKeyTab({ allowedScopes, onCreated, onBackToList, agentMode
   const [copied, setCopied] = useState(false);
   const [copiedPrompt, setCopiedPrompt] = useState(false);
   const [downloadingSkill, setDownloadingSkill] = useState(false);
+  const demoVideoUrl = useDemoVideoUrl(DEMO_VIDEO_ID);
 
   /**
    * 「复制给智能体使用」提示词 —— 最小化 + 安全：
@@ -102,7 +124,6 @@ curl -L "${skillUrl}" -o /tmp/findmapskills.zip \\
     try {
       const res = await createAgentApiKey({
         name: name.trim(),
-        description: description.trim() || undefined,
         scopes: selectedScopes,
         ttlDays,
       });
@@ -168,8 +189,7 @@ curl -L "${skillUrl}" -o /tmp/findmapskills.zip \\
 
     const handleBackToList = () => {
       setPlaintext(null);
-      setName('');
-      setDescription('');
+      setName(generateDefaultKeyName());
       onBackToList();
     };
 
@@ -223,6 +243,66 @@ curl -L "${skillUrl}" -o /tmp/findmapskills.zip \\
         >
           {plaintext}
         </div>
+
+        {/* 演示视频 —— 在 Key 与主 CTA 之间给用户一个"接下来会发生什么"的可视化预览。
+            已上传：embed 实际视频（autoplay muted loop）；
+            未上传：显示简洁占位卡，提示管理员可以上传。不阻断流程。 */}
+        {demoVideoUrl ? (
+          <div
+            className="rounded-xl overflow-hidden relative"
+            style={{
+              background: 'rgba(0, 0, 0, 0.35)',
+              border: '1px solid rgba(56, 189, 248, 0.22)',
+              boxShadow: '0 8px 24px -16px rgba(0, 0, 0, 0.5)',
+            }}
+          >
+            <video
+              src={demoVideoUrl}
+              autoPlay
+              muted
+              loop
+              playsInline
+              controls={false}
+              className="w-full block"
+              style={{ aspectRatio: '16 / 9', objectFit: 'cover' }}
+            />
+            <div
+              className="absolute top-2 left-2 inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[9.5px] font-medium backdrop-blur-md"
+              style={{
+                background: 'rgba(0, 0, 0, 0.4)',
+                color: 'rgba(186, 230, 253, 0.95)',
+                border: '1px solid rgba(56, 189, 248, 0.25)',
+              }}
+            >
+              <Play size={9} fill="currentColor" />
+              演示：复制密钥粘贴给智能体
+            </div>
+          </div>
+        ) : (
+          <div
+            className="rounded-xl px-4 py-3.5 flex items-center gap-3"
+            style={{
+              background: 'rgba(255, 255, 255, 0.025)',
+              border: '1px dashed rgba(255, 255, 255, 0.14)',
+            }}
+          >
+            <div
+              className="w-9 h-9 rounded-lg flex items-center justify-center shrink-0"
+              style={{
+                background: 'rgba(148, 163, 184, 0.1)',
+                border: '1px solid rgba(148, 163, 184, 0.22)',
+              }}
+            >
+              <Video size={16} style={{ color: 'rgba(203, 213, 225, 0.9)' }} />
+            </div>
+            <div className="text-[10.5px] leading-relaxed" style={{ color: 'var(--text-muted)' }}>
+              <div className="text-[11.5px] mb-0.5" style={{ color: 'var(--text-secondary)' }}>
+                演示视频待上传
+              </div>
+              管理员可前往「资源管理 → 演示视频 → 接入 AI · 粘贴密钥给智能体」上传录屏，之后这里会自动播放流程动画。
+            </div>
+          </div>
+        )}
 
         {/* 主 CTA —— 整行唯一焦点，放大 + 高对比 */}
         <button
@@ -311,32 +391,25 @@ curl -L "${skillUrl}" -o /tmp/findmapskills.zip \\
   return (
     <div className="flex flex-col gap-4">
       <div>
-        <label className="text-xs font-medium mb-1 block" style={{ color: 'var(--text-secondary)' }}>
-          Key 名称
-        </label>
+        <div className="flex items-center justify-between mb-1">
+          <label className="text-xs font-medium" style={{ color: 'var(--text-secondary)' }}>
+            Key 名称
+          </label>
+          <button
+            type="button"
+            onClick={() => setName(generateDefaultKeyName())}
+            className="text-[10px] hover:opacity-80 transition-opacity"
+            style={{ color: 'var(--text-muted)' }}
+            title="换一个随机名称"
+          >
+            🎲 换一个
+          </button>
+        </div>
         <input
           type="text"
           value={name}
           onChange={(e) => setName(e.target.value.slice(0, 60))}
           placeholder="例：Cursor 工作站 / 我的 Claude Code"
-          className="w-full h-9 px-3 rounded-lg text-sm"
-          style={{
-            background: 'var(--input-bg)',
-            border: '1px solid var(--border-default)',
-            color: 'var(--text-primary)',
-          }}
-        />
-      </div>
-
-      <div>
-        <label className="text-xs font-medium mb-1 block" style={{ color: 'var(--text-secondary)' }}>
-          备注（可选）
-        </label>
-        <input
-          type="text"
-          value={description}
-          onChange={(e) => setDescription(e.target.value.slice(0, 120))}
-          placeholder="用途、调用方来源等"
           className="w-full h-9 px-3 rounded-lg text-sm"
           style={{
             background: 'var(--input-bg)',
@@ -355,46 +428,46 @@ curl -L "${skillUrl}" -o /tmp/findmapskills.zip \\
             * 必选
           </span>
         </div>
-        <div className="flex flex-col gap-2">
+        {/* 2 列卡片选择器：紧凑可视、主次分明 */}
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5">
           {allowedScopes.map((scope) => {
-            const meta = SCOPE_META[scope] ?? { title: scope, desc: '' };
+            const meta = SCOPE_META[scope] ?? { title: scope, desc: '', icon: '🔑' };
             const checked = selectedScopes.includes(scope);
             return (
               <button
                 key={scope}
                 type="button"
                 onClick={() => toggleScope(scope)}
-                className="text-left rounded-xl px-3 py-2.5 transition-all"
+                className="text-left rounded-xl p-3 transition-all relative"
                 style={{
-                  background: checked ? 'rgba(56, 189, 248, 0.1)' : 'rgba(255, 255, 255, 0.03)',
-                  border: `1px solid ${checked ? 'rgba(56, 189, 248, 0.45)' : 'rgba(255, 255, 255, 0.08)'}`,
+                  background: checked
+                    ? 'linear-gradient(135deg, rgba(56, 189, 248, 0.12) 0%, rgba(14, 165, 233, 0.06) 100%)'
+                    : 'rgba(255, 255, 255, 0.03)',
+                  border: `1px solid ${checked ? 'rgba(56, 189, 248, 0.5)' : 'rgba(255, 255, 255, 0.08)'}`,
+                  boxShadow: checked ? 'inset 0 1px 1px rgba(255, 255, 255, 0.05)' : 'none',
                 }}
               >
-                <div className="flex items-start gap-2.5">
-                  <div
-                    className="mt-0.5 w-4 h-4 rounded flex items-center justify-center shrink-0"
-                    style={{
-                      background: checked ? 'rgba(56, 189, 248, 0.8)' : 'transparent',
-                      border: `1px solid ${checked ? 'rgba(56, 189, 248, 1)' : 'rgba(255, 255, 255, 0.3)'}`,
-                    }}
-                  >
-                    {checked && <Check size={11} color="white" />}
-                  </div>
-                  <div className="min-w-0 flex-1">
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <span className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>
-                        {meta.title}
-                      </span>
-                      <span className="text-[10px] font-mono" style={{ color: 'var(--text-muted)' }}>
-                        {scope}
-                      </span>
-                    </div>
-                    {meta.desc && (
-                      <div className="text-xs mt-0.5" style={{ color: 'var(--text-muted)' }}>
-                        {meta.desc}
-                      </div>
-                    )}
-                  </div>
+                {/* 右上勾选指示器 */}
+                <div
+                  className="absolute top-2.5 right-2.5 w-4 h-4 rounded-full flex items-center justify-center transition-all"
+                  style={{
+                    background: checked ? 'rgba(56, 189, 248, 0.9)' : 'transparent',
+                    border: `1px solid ${checked ? 'rgba(56, 189, 248, 1)' : 'rgba(255, 255, 255, 0.28)'}`,
+                  }}
+                >
+                  {checked && <Check size={10} color="white" strokeWidth={3} />}
+                </div>
+                <div className="text-[18px] mb-1.5" aria-hidden>
+                  {meta.icon}
+                </div>
+                <div className="text-[12.5px] font-semibold mb-0.5 pr-6" style={{ color: 'var(--text-primary)' }}>
+                  {meta.title}
+                </div>
+                <div className="text-[10.5px] mb-1.5 leading-snug" style={{ color: 'var(--text-muted)' }}>
+                  {meta.desc}
+                </div>
+                <div className="text-[10px] font-mono opacity-70" style={{ color: 'var(--text-muted)' }}>
+                  {scope}
                 </div>
               </button>
             );

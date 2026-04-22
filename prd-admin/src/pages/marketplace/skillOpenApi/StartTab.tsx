@@ -1,4 +1,4 @@
-import { ArrowRight, Bot, Wrench } from 'lucide-react';
+import { ArrowRight, Bot, Copy, Download, KeyRound, Wrench } from 'lucide-react';
 
 interface Props {
   /** 用户点了"手动接入"：切到使用指南 Tab */
@@ -8,28 +8,28 @@ interface Props {
 }
 
 /**
- * 「接入 AI」弹窗落地页 —— 日式极简广告风：
+ * 「接入 AI」弹窗落地页 —— 顶/中/底三段式：
+ *  - 顶部：标题（左对齐、不抢戏）
+ *  - 中部：两张选择卡（主视觉）
+ *  - 底部：横向 3 步流程条（把"点了之后会发生什么"视觉化，顺便撑满下方空间）
  *
- *   - 一屏一个焦点：两张分支选择卡 = 唯一行动入口，其他一律退让
- *   - 卡片自己就是按钮（整张可点），不再塞内嵌的「开始 →」小按钮
- *     （避免"卡片+按钮"的焦点重复）
- *   - 辅助信息压缩为一行灰字足注，不再用彩色徽章 / 时间线分散注意力
- *   - 上下由 flex + justify-center 撑开，让留白成为构图的一部分
+ * 原则仍遵循"一屏一焦点"：推荐卡用青蓝渐变弱提示，底部流程条用透明 ghost
+ * 不和主卡片抢注意力。
  */
 export function StartTab({ onChooseManual, onChooseAgent }: Props) {
   return (
-    <div className="flex flex-col gap-8 h-full min-h-0 justify-center">
-      {/* 标题 */}
-      <div className="px-0.5 text-center">
+    <div className="flex flex-col gap-5 h-full min-h-0">
+      {/* 顶部：标题（左对齐，不居中） */}
+      <div className="px-0.5">
         <div className="text-[15px] font-semibold mb-1" style={{ color: 'var(--text-primary)' }}>
           选一条接入方式开始
         </div>
         <div className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
-          你想让 AI 帮你一键接通，还是手动抄代码自己写 —— 看口味
+          想让 AI 一键接通 / 手动抄代码自己写 —— 看口味
         </div>
       </div>
 
-      {/* 两个大卡片：整张卡片 = 按钮 */}
+      {/* 中部：两张选择卡（主视觉焦点） */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         <button
           type="button"
@@ -49,7 +49,6 @@ export function StartTab({ onChooseManual, onChooseAgent }: Props) {
           >
             ⭐ 推荐
           </div>
-
           <div
             className="w-11 h-11 rounded-xl flex items-center justify-center mb-4"
             style={{
@@ -59,7 +58,6 @@ export function StartTab({ onChooseManual, onChooseAgent }: Props) {
           >
             <Bot size={20} style={{ color: 'rgba(186, 230, 253, 1)' }} />
           </div>
-
           <div className="text-[14px] font-semibold mb-1.5" style={{ color: 'var(--text-primary)' }}>
             智能体接入
           </div>
@@ -68,7 +66,6 @@ export function StartTab({ onChooseManual, onChooseAgent }: Props) {
             <br className="hidden md:inline" />
             AI 自己装 findmapskills 技能，立即接通。
           </div>
-
           <div
             className="mt-4 inline-flex items-center gap-1.5 text-[11px] font-medium"
             style={{ color: 'rgba(186, 230, 253, 0.95)' }}
@@ -101,7 +98,6 @@ export function StartTab({ onChooseManual, onChooseAgent }: Props) {
           >
             <Wrench size={20} style={{ color: 'rgba(203, 213, 225, 1)' }} />
           </div>
-
           <div className="text-[14px] font-semibold mb-1.5" style={{ color: 'var(--text-primary)' }}>
             手动接入
           </div>
@@ -110,7 +106,6 @@ export function StartTab({ onChooseManual, onChooseAgent }: Props) {
             <br className="hidden md:inline" />
             适合想理解接口细节或集成到 CI / 工具链的开发者。
           </div>
-
           <div
             className="mt-4 inline-flex items-center gap-1.5 text-[11px] font-medium"
             style={{ color: 'var(--text-secondary)' }}
@@ -125,14 +120,66 @@ export function StartTab({ onChooseManual, onChooseAgent }: Props) {
         </button>
       </div>
 
-      {/* 一行足注：替代之前的双栏信息框，降到最弱 */}
+      {/* 底部：横向 3 步流程条 —— 撑满下方空间，给"智能体接入"做 30 秒可预览的路径 */}
       <div
-        className="text-[10.5px] text-center"
-        style={{ color: 'var(--text-muted)', opacity: 0.65, letterSpacing: '0.01em' }}
+        className="mt-auto rounded-2xl px-5 py-4"
+        style={{
+          background:
+            'linear-gradient(180deg, rgba(255, 255, 255, 0.03) 0%, rgba(255, 255, 255, 0.015) 100%)',
+          border: '1px solid rgba(255, 255, 255, 0.07)',
+        }}
       >
-        两种方式底层一致：默认 1 年有效期 + 7 天宽限期 + UI 随时续期，不会动不动就 403。
-        <span className="mx-1.5 opacity-50">·</span>
-        明文只显示一次，后端只存 SHA256 哈希。
+        <div className="text-[10.5px] mb-3 uppercase tracking-wider" style={{ color: 'var(--text-muted)', letterSpacing: '0.08em' }}>
+          智能体接入 · 30 秒跑通
+        </div>
+        <div className="grid grid-cols-1 md:grid-cols-5 gap-2 items-center">
+          {[
+            { icon: KeyRound, label: '生成 Key', hint: '勾选权限范围' },
+            { icon: Copy, label: '复制指令', hint: '一段提示词' },
+            { icon: Download, label: 'AI 自己接通', hint: '装 findmapskills' },
+          ].map((step, idx, arr) => {
+            const Icon = step.icon;
+            return (
+              <div key={step.label} className="contents md:contents">
+                <div className="flex items-center gap-2.5 md:flex-col md:items-start">
+                  <div
+                    className="w-8 h-8 rounded-lg flex items-center justify-center shrink-0 relative"
+                    style={{
+                      background: 'rgba(56, 189, 248, 0.1)',
+                      border: '1px solid rgba(56, 189, 248, 0.22)',
+                    }}
+                  >
+                    <Icon size={14} style={{ color: 'rgba(186, 230, 253, 1)' }} />
+                    <span
+                      className="absolute -top-1 -right-1 w-3.5 h-3.5 rounded-full text-[9px] flex items-center justify-center font-medium"
+                      style={{ background: 'rgba(56, 189, 248, 0.8)', color: '#ffffff' }}
+                    >
+                      {idx + 1}
+                    </span>
+                  </div>
+                  <div className="min-w-0">
+                    <div className="text-[11.5px] font-medium leading-tight" style={{ color: 'var(--text-primary)' }}>
+                      {step.label}
+                    </div>
+                    <div className="text-[10.5px] leading-tight" style={{ color: 'var(--text-muted)' }}>
+                      {step.hint}
+                    </div>
+                  </div>
+                </div>
+                {idx < arr.length - 1 && (
+                  <ArrowRight
+                    size={14}
+                    className="hidden md:block justify-self-center"
+                    style={{ color: 'var(--text-muted)', opacity: 0.4 }}
+                  />
+                )}
+              </div>
+            );
+          })}
+        </div>
+        <div className="mt-3 pt-3 text-[10.5px]" style={{ color: 'var(--text-muted)', opacity: 0.7, borderTop: '1px solid rgba(255, 255, 255, 0.05)' }}>
+          默认 1 年有效期 + 7 天宽限期 + UI 随时续期，不会动不动就 403。明文仅显示一次，后端只存 SHA256 哈希。
+        </div>
       </div>
     </div>
   );
