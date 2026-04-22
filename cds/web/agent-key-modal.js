@@ -266,8 +266,9 @@
       var reminder = h('div', {
         style: {
           fontSize: '11px', color: 'var(--text-muted, #78788a)',
-          /* 2026-04-22 fix: 原 1px dashed 在白天模式几乎看不见，改为 solid border + 用 border-light token 轻量 */
-          borderTop: '1px solid var(--border-light, rgba(255,255,255,0.04))',
+          /* 2026-04-22 fix: 原 1px dashed 在白天模式几乎看不见，改为 solid border + 用 border-light token 轻量
+             注：不写 fallback — 按规则 cds-theme-tokens.md #1 禁止主题特定 fallback；--border-light 在两主题均定义，缺 token 时直接不显示边线即可 */
+          borderTop: '1px solid var(--border-light)',
           marginTop: '4px',
           paddingTop: '12px', lineHeight: '1.6',
         },

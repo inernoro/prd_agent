@@ -39,6 +39,19 @@ color = 深色 (如 var(--text-primary) = 深棕)
 
 提交前检查清单见 `.claude/rules/cds-theme-tokens.md` 顶部。
 
+### 0.1. API label 全量覆盖（Activity Monitor 必须可读）
+
+CDS Dashboard 左上角 Activity Monitor 展示 AI/用户每一次 `/api/*` 调用。**每条 `/api/*` 路由必须在 `cds/src/server.ts` 的 `resolveApiLabel()` 里有中文 label**（通过 staticMap 精确命中，或 patterns 正则命中）。没有 label 的路由在面板上只显示裸 URL（如 `api/me`），用户看不懂 AI 在干啥。
+
+**硬性要求**：
+- 新增 `router.get/post/put/delete/patch('/xxx', ...)` 时，同步在 `resolveApiLabel()` 里加条目
+- 启动时 `auditApiLabels(app)` 会扫遍 Express 路由表，对缺失 label 的路由打 `[api-label]` warning。CI / 本地开发时看到这个 warning 必须立刻补上
+- `:param` 动态路由走 `patterns: Array<[RegExp, string]>`；纯静态路径走 `staticMap`
+
+**命名风格**：中文动词开头，6 字以内最佳：
+- ✅ `获取构建配置` / `列出远程分支` / `批准导入` / `停止分支服务`
+- ❌ `build-profiles 查询` / `get remote branches` / `branches stop API`
+
 ### 1. 按钮图标尺寸（icon-to-button ratio ≥ 55%）
 
 **这是 CDS 里反复出现的视觉 bug**：

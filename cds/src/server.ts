@@ -148,8 +148,75 @@ function resolveApiLabel(method: string, path: string): string {
     'POST /bridge/start-session': 'AI 开始操作页面',
     'POST /bridge/end-session': 'AI 操作完成',
     'POST /github/webhook': 'GitHub 推送 Webhook',
+    'POST /github/webhook/self-test': 'GitHub Webhook 自测',
     'GET /github/app': '查询 GitHub App 配置',
     'GET /github/installations': '列出 GitHub App 安装',
+    'GET /github/oauth/status': '查询 GitHub OAuth 状态',
+    'DELETE /github/oauth': '解除 GitHub OAuth',
+    'GET /github/repos': '列出 GitHub 仓库',
+    'POST /github/oauth/device-start': 'GitHub 设备授权发起',
+    'POST /github/oauth/device-poll': 'GitHub 设备授权轮询',
+    'GET /auth/github/login': 'GitHub 登录跳转',
+    'GET /auth/github/callback': 'GitHub 登录回调',
+    'POST /auth/logout': '退出登录',
+    // 用户 / 系统基础信息
+    'GET /me': '获取当前用户',
+    'GET /status': '获取系统状态',
+    'GET /healthz': '健康检查',
+    'GET /cli-version': '获取 CLI 版本',
+    'GET /preview-mode': '获取预览模式',
+    'PUT /preview-mode': '设置预览模式',
+    'GET /tab-title': '获取标签页标题',
+    'PUT /tab-title': '更新标签页标题',
+    'GET /comment-template': '获取 PR 评论模板',
+    'PUT /comment-template': '更新 PR 评论模板',
+    'POST /comment-template/preview': '预览 PR 评论模板',
+    // 项目
+    'GET /projects': '列出项目',
+    'POST /projects': '创建项目',
+    'GET /pending-imports': '列出待导入项目',
+    'POST /projects/:id/pending-import': '提交待导入配置',
+    // 调度 / 集群
+    'GET /scheduler/state': '获取调度器状态',
+    'PUT /scheduler/enabled': '启停调度器',
+    'GET /strategy': '获取调度策略',
+    'PUT /strategy': '更新调度策略',
+    'GET /connections': '查看集群连接',
+    'POST /heartbeat': '集群心跳',
+    'POST /join': '加入集群',
+    'POST /leave': '离开集群',
+    'POST /issue-token': '签发集群令牌',
+    'POST /result': '上报任务结果',
+    'POST /detect-stack': '探测技术栈',
+    // 存储模式
+    'GET /storage-mode': '获取存储模式',
+    'POST /storage-mode/switch-to-json': '切换到 JSON 存储',
+    'POST /storage-mode/switch-to-mongo': '切换到 Mongo 存储',
+    'POST /storage-mode/test-mongo': '测试 Mongo 连接',
+    // Global / 自更新 / 其他
+    'GET /global-agent-keys': '列出全局 Agent Keys',
+    'POST /global-agent-keys': '创建全局 Agent Key',
+    'POST /self-update-dry-run': '自更新预检',
+    'POST /self-force-sync': '自更新强制同步',
+    'GET /self-branches': '获取自更新分支',
+    'POST /accept-invite': '接受邀请',
+    // 数据迁移
+    'GET /data-migrations': '列出数据迁移',
+    'POST /data-migrations': '创建数据迁移',
+    'GET /data-migrations/my-key': '获取迁移密钥',
+    'GET /data-migrations/peers': '列出迁移伙伴',
+    'POST /data-migrations/peers': '创建迁移伙伴',
+    'POST /data-migrations/check-tools': '检查迁移工具',
+    'POST /data-migrations/install-tools': '安装迁移工具',
+    'POST /data-migrations/list-collections': '列出集合',
+    'POST /data-migrations/list-databases': '列出数据库',
+    'POST /data-migrations/local-dump': '本地导出',
+    'POST /data-migrations/local-restore': '本地导入',
+    'POST /data-migrations/test-connection': '测试 Mongo 连接',
+    'POST /data-migrations/test-tunnel': '测试 SSH 隧道',
+    // 工作空间
+    'GET /workspaces': '列出工作空间',
+    'POST /workspaces': '创建工作空间',
   };
 
   const key = `${method} ${p}`;
@@ -189,6 +256,66 @@ function resolveApiLabel(method: string, path: string): string {
     [/^GET \/bridge\/state\/(.+)$/, '读取页面状态'],
     [/^POST \/bridge\/command\/(.+)$/, 'AI 操作页面'],
     [/^GET \/bridge\/navigate-requests\/(.+)$/, '查看导航请求'],
+    // 项目 (CRUD)
+    [/^GET \/projects\/(.+)\/agent-keys$/, '列出项目 Agent Keys'],
+    [/^POST \/projects\/(.+)\/agent-keys$/, '创建项目 Agent Key'],
+    [/^DELETE \/projects\/(.+)\/agent-keys\/(.+)$/, '删除项目 Agent Key'],
+    [/^POST \/projects\/(.+)\/github\/link$/, '关联 GitHub 仓库'],
+    [/^DELETE \/projects\/(.+)\/github\/link$/, '解除 GitHub 关联'],
+    [/^POST \/projects\/(.+)\/clone$/, '克隆代码'],
+    [/^GET \/projects\/(.+)$/, '查询项目'],
+    [/^PUT \/projects\/(.+)$/, '更新项目'],
+    [/^DELETE \/projects\/(.+)$/, '删除项目'],
+    // 待导入项目
+    [/^GET \/pending-imports\/(.+)$/, '查询待导入项目'],
+    [/^POST \/pending-imports\/(.+)\/approve$/, '批准导入'],
+    [/^POST \/pending-imports\/(.+)\/reject$/, '拒绝导入'],
+    // 分支扩展
+    [/^POST \/branches\/(.+)\/checkout\/(.+)$/, '检出 Commit'],
+    [/^POST \/branches\/(.+)\/preview-port$/, '设置预览端口'],
+    [/^POST \/branches\/(.+)\/unpin$/, '取消分支置顶'],
+    [/^POST \/branches\/(.+)\/smoke$/, '分支冒烟测试'],
+    [/^GET \/branches\/(.+)\/subdomain-aliases$/, '列出分支域名别名'],
+    [/^PUT \/branches\/(.+)\/subdomain-aliases$/, '设置分支域名别名'],
+    [/^GET \/branches\/(.+)\/profile-overrides$/, '获取构建覆写'],
+    [/^PUT \/branches\/(.+)\/profile-overrides\/(.+)$/, '更新构建覆写'],
+    [/^DELETE \/branches\/(.+)\/profile-overrides\/(.+)$/, '删除构建覆写'],
+    [/^GET \/branches\/(.+)\/container-logs-stream\/(.+)$/, '流式查看容器日志'],
+    // 构建 Profile 扩展
+    [/^PUT \/build-profiles\/(.+)\/deploy-mode$/, '切换部署模式'],
+    // 调度器操作
+    [/^POST \/scheduler\/pin\/(.+)$/, '固定节点'],
+    [/^POST \/scheduler\/unpin\/(.+)$/, '取消固定节点'],
+    [/^POST \/scheduler\/cool\/(.+)$/, '冷却节点'],
+    // 全局 Agent Key
+    [/^DELETE \/global-agent-keys\/(.+)$/, '删除全局 Agent Key'],
+    // 数据迁移
+    [/^GET \/data-migrations\/(.+)\/log$/, '查看迁移日志'],
+    [/^PUT \/data-migrations\/(.+)$/, '更新数据迁移'],
+    [/^POST \/data-migrations\/(.+)\/execute$/, '执行数据迁移'],
+    [/^DELETE \/data-migrations\/(.+)$/, '删除数据迁移'],
+    [/^PUT \/data-migrations\/peers\/(.+)$/, '更新迁移伙伴'],
+    [/^DELETE \/data-migrations\/peers\/(.+)$/, '删除迁移伙伴'],
+    [/^POST \/data-migrations\/peers\/(.+)\/list-databases$/, '列出伙伴数据库'],
+    [/^POST \/data-migrations\/peers\/(.+)\/list-collections$/, '列出伙伴集合'],
+    [/^POST \/data-migrations\/peers\/(.+)\/test$/, '测试伙伴连接'],
+    // 握手
+    [/^POST \/handshake-requests\/(.+)\/approve$/, '批准握手请求'],
+    [/^POST \/handshake-requests\/(.+)\/reject$/, '拒绝握手请求'],
+    [/^POST \/navigate-requests\/(.+)\/dismiss$/, '忽略导航请求'],
+    // GitHub
+    [/^GET \/github\/installations\/(.+)\/repos$/, '列出安装下的仓库'],
+    // 包管理器探测
+    [/^GET \/detect-pm\/(.+)$/, '探测包管理器'],
+    // 工作空间
+    [/^GET \/workspaces\/(.+)\/members$/, '列出工作空间成员'],
+    [/^POST \/workspaces\/(.+)\/members$/, '添加工作空间成员'],
+    [/^PATCH \/workspaces\/(.+)\/members\/(.+)$/, '更新成员角色'],
+    [/^DELETE \/workspaces\/(.+)\/members\/(.+)$/, '移除工作空间成员'],
+    [/^GET \/workspaces\/(.+)\/invites$/, '列出工作空间邀请'],
+    [/^POST \/workspaces\/(.+)\/invites$/, '创建工作空间邀请'],
+    [/^DELETE \/workspaces\/(.+)\/invites\/(.+)$/, '撤销工作空间邀请'],
+    [/^GET \/workspaces\/(.+)$/, '查询工作空间'],
   ];
 
   for (const [regex, label] of patterns) {
@@ -1076,8 +1203,89 @@ export function createServer(deps: ServerDeps): express.Express {
  * See commit that moved this out of `createServer()` for the regression
  * details.
  */
+/**
+ * 审计所有已挂载的 /api/* 路由是否都有中文 label。
+ *
+ * 背景：Activity Monitor 左侧要展示"中文动作名 + URL"帮助用户看懂 AI 在干啥，
+ * 而 label 由 `resolveApiLabel()` 的 staticMap + patterns 数组集中维护。
+ * 新增路由如果漏改这里，用户端就只能看到裸 URL（如 `api/me`），
+ * 规则 #cds-api-label-coverage 明确要求每条 /api/* 必须有 label。
+ *
+ * 做法：启动后扫一遍 `app._router.stack`，把 express 注册的每条 layer 展开成
+ * `METHOD /path`，塞进 `resolveApiLabel()`，返回空串就打警告。开发环境立刻可见，
+ * 生产环境通过日志暴露。
+ *
+ * 不做的事：
+ *  - 不阻断启动（避免小问题把整个服务弄挂）
+ *  - 不覆盖 :param 的具体值（因为 staticMap 和 patterns 就是按参数模式匹配的）
+ *  - 忽略 /api 以外的路由（SPA、静态资源）
+ */
+export function auditApiLabels(app: express.Express): string[] {
+  const missing: string[] = [];
+  // express 的路由表结构：app._router.stack -> [layer, layer ...]
+  // 一条 route layer 长这样：{ route: { path, methods: {get:true,...} } }
+  // 一条子 router layer：{ name: 'router', handle: { stack: [...] }, regexp }
+  //   regexp 来自 app.use('/api', router) 的前缀，需要把 /api/... 还原
+  type Layer = {
+    route?: { path: string | string[]; methods: Record<string, boolean> };
+    name?: string;
+    handle?: { stack?: Layer[] };
+    regexp?: RegExp;
+  };
+  const router = (app as unknown as { _router?: { stack: Layer[] } })._router;
+  if (!router?.stack) return missing;
+
+  const extractPrefix = (re: RegExp): string => {
+    // express mount prefix 的 regexp 例如 /^\/api\/?(?=\/|$)/i — 抠出字符串段
+    const src = re.source
+      .replace(/^\^/, '')
+      .replace(/\\\//g, '/')
+      .replace(/\?\(\?=.*$/, '')
+      .replace(/\$$/, '')
+      .replace(/\/\?$/, '');
+    return src.startsWith('/') ? src : '';
+  };
+
+  const walk = (layers: Layer[], prefix: string) => {
+    for (const layer of layers) {
+      if (layer.route) {
+        const paths = Array.isArray(layer.route.path) ? layer.route.path : [layer.route.path];
+        for (const p of paths) {
+          // 只关心 /api/* 下的业务路由，不审计 SPA、/healthz 等
+          const full = (prefix + p).replace(/\/+/g, '/');
+          if (!full.startsWith('/api/') && full !== '/api') continue;
+          for (const m of Object.keys(layer.route.methods)) {
+            const method = m.toUpperCase();
+            const label = resolveApiLabel(method, full);
+            if (!label) missing.push(`${method} ${full}`);
+          }
+        }
+      } else if (layer.name === 'router' && layer.handle?.stack && layer.regexp) {
+        const sub = extractPrefix(layer.regexp);
+        walk(layer.handle.stack, prefix + sub);
+      }
+    }
+  };
+
+  walk(router.stack, '');
+
+  if (missing.length > 0) {
+    console.warn(
+      `[api-label] ${missing.length} 个 /api/* 路由没有中文 label（在 resolveApiLabel 的 staticMap/patterns 补上即可）:`,
+    );
+    for (const m of missing) console.warn(`  · ${m}`);
+    console.warn(
+      '[api-label] 详见 cds/CLAUDE.md「API label 全量覆盖」规则。',
+    );
+  }
+  return missing;
+}
+
 export function installSpaFallback(app: express.Express, webDir?: string): void {
   const dir = webDir || path.resolve(__dirname, '..', 'web');
+  // 在 SPA 兜底挂载前做一次 label 覆盖审计。SPA 的 `app.get('*')` 会吃掉
+  // 后续所有路由，所以必须在这里做扫描。缺 label 的路由打 warning，但不阻断启动。
+  auditApiLabels(app);
 
   // Semantic URL routes (preferred, human-readable paths)
   app.get('/project-list', (_req, res) => {

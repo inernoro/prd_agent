@@ -1883,19 +1883,39 @@ function renderHostStats(data) {
   if (combinedEl) combinedEl.classList.remove('hidden');
   if (headerEl) {
     headerEl.classList.remove('hidden');
-    headerEl.innerHTML = `
-      <span class="host-pulse-metric" title="内存 ${memPct}%">
-        <span class="host-pulse-dot" data-tier="${memTier}"></span>
-        <span class="host-pulse-label">MEM</span>
-        <span class="host-pulse-value">${memPct}%</span>
-      </span>
-      <span class="host-pulse-sep">·</span>
-      <span class="host-pulse-metric" title="CPU 负载 ${cpuPct}%">
-        <span class="host-pulse-dot" data-tier="${cpuTier}"></span>
-        <span class="host-pulse-label">CPU</span>
-        <span class="host-pulse-value">${cpuPct}%</span>
-      </span>
-    `;
+    // 2026-04-22 fix(Bugbot): 不要每 5 秒 innerHTML 重建 —— 6 个节点的 DOM churn + screen reader 重读。
+    // 首次建结构，后续只更新动态字段（data-tier + textContent + title）。
+    let memMetric = headerEl.querySelector('.host-pulse-metric[data-role="mem"]');
+    let cpuMetric = headerEl.querySelector('.host-pulse-metric[data-role="cpu"]');
+    if (!memMetric || !cpuMetric) {
+      headerEl.innerHTML = `
+        <span class="host-pulse-metric" data-role="mem">
+          <span class="host-pulse-dot"></span>
+          <span class="host-pulse-label">MEM</span>
+          <span class="host-pulse-value"></span>
+        </span>
+        <span class="host-pulse-sep">·</span>
+        <span class="host-pulse-metric" data-role="cpu">
+          <span class="host-pulse-dot"></span>
+          <span class="host-pulse-label">CPU</span>
+          <span class="host-pulse-value"></span>
+        </span>
+      `;
+      memMetric = headerEl.querySelector('.host-pulse-metric[data-role="mem"]');
+      cpuMetric = headerEl.querySelector('.host-pulse-metric[data-role="cpu"]');
+    }
+    const memDot = memMetric.querySelector('.host-pulse-dot');
+    const memVal = memMetric.querySelector('.host-pulse-value');
+    const cpuDot = cpuMetric.querySelector('.host-pulse-dot');
+    const cpuVal = cpuMetric.querySelector('.host-pulse-value');
+    if (memDot.dataset.tier !== memTier) memDot.dataset.tier = memTier;
+    if (cpuDot.dataset.tier !== cpuTier) cpuDot.dataset.tier = cpuTier;
+    const memText = `${memPct}%`;
+    const cpuText = `${cpuPct}%`;
+    if (memVal.textContent !== memText) memVal.textContent = memText;
+    if (cpuVal.textContent !== cpuText) cpuVal.textContent = cpuText;
+    memMetric.title = `内存 ${memPct}%`;
+    cpuMetric.title = `CPU 负载 ${cpuPct}%`;
     headerEl.dataset.stress = (memPct >= 90 || cpuPct >= 90) ? '1' : '0';
   }
 
