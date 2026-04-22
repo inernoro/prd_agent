@@ -595,10 +595,16 @@ function initStateStream() {
     try {
       const data = JSON.parse(e.data);
       if (data.branches) {
+        // broadcastState() sends ALL branches across all projects. Scope to the
+        // current project here so a dashboard opened on project B doesn't absorb
+        // project A's branches. This mirrors the ?project= filter on GET /branches.
+        const projectBranches = data.branches.filter(
+          b => (b.projectId || 'default') === CURRENT_PROJECT_ID
+        );
         // Merge commit info: state-stream has no git data, so preserve existing subject/commitSha
         // Only update status and service states from server push
         const branchMap = new Map(branches.map(b => [b.id, b]));
-        for (const pushed of data.branches) {
+        for (const pushed of projectBranches) {
           const existing = branchMap.get(pushed.id);
           if (existing) {
             // Preserve git info, update status/services/executorId
@@ -620,8 +626,8 @@ function initStateStream() {
             branches.push(pushed);
           }
         }
-        // Remove branches that no longer exist
-        const pushedIds = new Set(data.branches.map(b => b.id));
+        // Remove branches that no longer exist in this project's scope
+        const pushedIds = new Set(projectBranches.map(b => b.id));
         const removedIds = branches.filter(b => !pushedIds.has(b.id)).map(b => b.id);
         branches = branches.filter(b => pushedIds.has(b.id));
         for (const rid of removedIds) freshlyArrived.delete(rid);

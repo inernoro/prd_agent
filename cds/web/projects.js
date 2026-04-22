@@ -935,7 +935,9 @@ window.cdsDoLogout = cdsDoLogout;
       'style="position:absolute;top:10px;right:' + keyRight + 'px;' +
       'width:26px;height:26px;border-radius:6px;border:1px solid var(--card-border);' +
       'background:var(--bg-card);cursor:pointer;display:inline-flex;align-items:center;' +
-      'justify-content:center;font-size:13px;color:var(--text-secondary);padding:0">🔑</button>';
+      'justify-content:center;color:var(--text-secondary);padding:0">' +
+      '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="7.5" cy="15.5" r="5.5"/><path d="m21 2-9.6 9.6"/><path d="m15.5 7.5 3 3L22 7l-3-3"/></svg>' +
+      '</button>';
     var downloadSkillBtn =
       '<button class="cds-project-card-download-skill" ' +
       'title="下载 cds 技能包 (tar.gz) — 解压到项目 .claude/skills/ 即可在 Claude Code 里调用 cdscli" ' +
@@ -943,7 +945,9 @@ window.cdsDoLogout = cdsDoLogout;
       'style="position:absolute;top:10px;right:' + dlRight + 'px;' +
       'width:26px;height:26px;border-radius:6px;border:1px solid var(--card-border);' +
       'background:var(--bg-card);cursor:pointer;display:inline-flex;align-items:center;' +
-      'justify-content:center;font-size:13px;color:var(--text-secondary);padding:0">📦</button>';
+      'justify-content:center;color:var(--text-secondary);padding:0">' +
+      '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" x2="12" y1="15" y2="3"/></svg>' +
+      '</button>';
 
     var totalServices =
       ((services && services.profiles && services.profiles.length) || 0) +

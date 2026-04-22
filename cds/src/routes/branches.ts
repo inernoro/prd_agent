@@ -761,11 +761,16 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
   // ── Remote branches ──
 
-  router.get('/remote-branches', async (_req, res) => {
+  router.get('/remote-branches', async (req, res) => {
     try {
+      const projectId = typeof req.query.project === 'string' ? req.query.project : null;
+      const repoRoot = projectId
+        ? stateService.getProjectRepoRoot(projectId, config.repoRoot)
+        : config.repoRoot;
+
       await shell.exec(
         'GIT_TERMINAL_PROMPT=0 git fetch origin --prune',
-        { cwd: config.repoRoot, timeout: 30_000 },
+        { cwd: repoRoot, timeout: 30_000 },
       );
 
       const SEP = '<SEP>';
@@ -776,7 +781,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
       const result = await shell.exec(
         `git for-each-ref --sort=-committerdate --format="${format}" refs/remotes/origin`,
-        { cwd: config.repoRoot },
+        { cwd: repoRoot },
       );
 
       const branches = result.stdout
@@ -1003,6 +1008,18 @@ export function createBranchRouter(deps: RouterDeps): Router {
           error: 'project_not_ready',
           cloneStatus: targetProject.cloneStatus,
           message: statusMsg[targetProject.cloneStatus] || `项目克隆状态异常: ${targetProject.cloneStatus}`,
+        });
+        return;
+      }
+      // G1.5 补充: 项目配置了独立 gitRepoUrl 但从未克隆（cloneStatus 为
+      // undefined 说明 reposBase 未设置，willClone=false）。如果放行，
+      // getProjectRepoRoot 会静默回退到 config.repoRoot，创建出错误仓库的
+      // worktree。这里主动拦截，提示用户先配置 CDS_REPOS_BASE 再克隆。
+      if (targetProject.gitRepoUrl && !targetProject.repoPath && !targetProject.cloneStatus) {
+        res.status(409).json({
+          error: 'project_repo_not_cloned',
+          message: `项目配置了独立仓库（${targetProject.gitRepoUrl}），但尚未克隆。` +
+            `请确保服务器已设置 CDS_REPOS_BASE 环境变量，然后通过项目设置触发克隆（POST /api/projects/${effectiveProjectId}/clone）。`,
         });
         return;
       }
