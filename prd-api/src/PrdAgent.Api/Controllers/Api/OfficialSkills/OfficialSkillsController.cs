@@ -61,15 +61,18 @@ public class OfficialSkillsController : ControllerBase
 
     /// <summary>
     /// 读取请求源头的 origin，作为 SKILL.md 内嵌示例的默认 base URL。
-    /// 优先级：X-Client-Base-Url（admin 前端注入）&gt; Origin 头 &gt; Scheme+Host 兜底。
+    ///
+    /// 优先级：
+    ///   1. `X-Client-Base-Url`（admin 前端显式注入，永远用户可见 origin）
+    ///   2. `Origin` 头（浏览器 CORS 请求自动带）
+    ///   3. `X-Forwarded-Host` + `X-Forwarded-Proto`（CDS / Cloudflare / K8s Ingress
+    ///      反代层注入的外部 host —— 给 curl 裸调用时兜底）
+    ///   4. Scheme + Host（容器内部地址；只有前三个都没有时才会走到这里）
+    ///
+    /// 为什么不直接 `Scheme + Host`：CDS 容器里 Host 被反代重写为内部 `127.0.0.1:PORT`，
+    /// 把它嵌到 SKILL.md 发给用户是灾难（用户的 curl 根本连不上）。
     /// </summary>
-    private string ResolveBaseUrl()
-    {
-        string? baseUrl = Request.Headers["X-Client-Base-Url"].ToString();
-        if (string.IsNullOrWhiteSpace(baseUrl)) baseUrl = Request.Headers["Origin"].ToString();
-        if (string.IsNullOrWhiteSpace(baseUrl)) baseUrl = $"{Request.Scheme}://{Request.Host}";
-        return baseUrl.TrimEnd('/');
-    }
+    private string ResolveBaseUrl() => OfficialMarketplaceSkillInjector.ResolveBaseUrl(Request);
 
     private static void WriteEntry(ZipArchive zip, string path, string content)
     {

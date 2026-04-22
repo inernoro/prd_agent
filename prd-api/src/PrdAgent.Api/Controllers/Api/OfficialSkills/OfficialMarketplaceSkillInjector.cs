@@ -103,13 +103,36 @@ public static class OfficialMarketplaceSkillInjector
     }
 
     /// <summary>
-    /// 从请求头解析 base URL（X-Client-Base-Url &gt; Origin &gt; Scheme+Host）。
-    /// 给 Controller 用，省得每个 Controller 重写一遍。
+    /// 从请求头解析"用户可见的 base URL"。
+    ///
+    /// 优先级：
+    ///   1. `X-Client-Base-Url`（admin 前端显式注入，永远准）
+    ///   2. `Origin`（浏览器 fetch 自带）
+    ///   3. `X-Forwarded-Host` + `X-Forwarded-Proto`（CDS / Cloudflare / K8s Ingress
+    ///      反代层注入的外部 host；给 AI 的 curl 裸调用兜底）
+    ///   4. `Request.Scheme + Request.Host`（容器内部地址，仅最后兜底）
+    ///
+    /// 容器里 Request.Host 常常是 `127.0.0.1:PORT`，不能直接嵌到给用户的 SKILL.md /
+    /// 下载 URL 里。所以必须让反代头优先于内部 Host。
     /// </summary>
     public static string ResolveBaseUrl(Microsoft.AspNetCore.Http.HttpRequest request)
     {
         string? baseUrl = request.Headers["X-Client-Base-Url"].ToString();
         if (string.IsNullOrWhiteSpace(baseUrl)) baseUrl = request.Headers["Origin"].ToString();
+
+        if (string.IsNullOrWhiteSpace(baseUrl))
+        {
+            // 反代注入的外部 host（CDS 预览 / Cloudflare / Ingress 都会给）
+            // X-Forwarded-Host 可能是逗号分隔的链（多层反代），取第一个
+            var fwdHost = request.Headers["X-Forwarded-Host"].ToString().Split(',')[0].Trim();
+            if (!string.IsNullOrWhiteSpace(fwdHost))
+            {
+                var fwdProto = request.Headers["X-Forwarded-Proto"].ToString().Split(',')[0].Trim();
+                var proto = string.IsNullOrWhiteSpace(fwdProto) ? request.Scheme : fwdProto;
+                baseUrl = $"{proto}://{fwdHost}";
+            }
+        }
+
         if (string.IsNullOrWhiteSpace(baseUrl)) baseUrl = $"{request.Scheme}://{request.Host}";
         return baseUrl.TrimEnd('/');
     }
