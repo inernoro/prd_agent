@@ -410,6 +410,9 @@ export const ChatMessageItem = memo(function ChatMessageItem({
   const MSG_COLLAPSE_THRESHOLD = 100;
   const isLongMsg = msgBody.length > MSG_COLLAPSE_THRESHOLD;
 
+  // 用户消息气泡下方的"用户期望：xxx 模型"标签：从 @model:xxx token 解析
+  const expectedModelForUser = isUser ? String(modeledMsg.model ?? '').trim() : '';
+
   return (
     <div className={`flex flex-col gap-0.5 ${isUser ? 'items-end' : 'items-start'}`}>
       <div
@@ -440,6 +443,26 @@ export const ChatMessageItem = memo(function ChatMessageItem({
           </button>
         ) : null}
       </div>
+      {/* 用户期望模型徽标（仅用户消息 + 有 @model token 时显示），让用户发送后明确知道自己期望的模型 */}
+      {isUser && expectedModelForUser ? (
+        <div className="flex items-center gap-1 pr-1" title={`用户期望使用：${expectedModelForUser}`}>
+          <span
+            className="inline-flex items-center gap-1 rounded-full px-1.5"
+            style={{
+              height: 16,
+              fontSize: 9,
+              lineHeight: '14px',
+              fontWeight: 600,
+              border: '1px solid rgba(129,140,248,0.25)',
+              background: 'rgba(99,102,241,0.08)',
+              color: 'rgba(165,180,252,0.85)',
+            }}
+          >
+            <span style={{ opacity: 0.7 }}>用户期望</span>
+            <span style={{ whiteSpace: 'nowrap' }}>{expectedModelForUser}</span>
+          </span>
+        </div>
+      ) : null}
       <span
         className={`text-[9px] tabular-nums select-none ${isUser ? 'pr-1' : 'pl-1'}`}
         style={{ color: 'var(--text-muted, rgba(255,255,255,0.38))' }}

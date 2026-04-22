@@ -608,14 +608,14 @@ public class ModelResolver : IModelResolver
     /// <summary>
     /// 在候选池列表中寻找用户期望的模型。
     /// 匹配规则（按优先级）：
-    ///   1. 池中某个 ModelId 完全匹配 expectedModel
+    ///   1. 池中某个 ModelId 完全匹配 expectedModel（健康模型优先）
     ///   2. 池中某个 ModelId 是 expectedModel 的前缀（容差：带版本号）
-    ///   3. 池名 / 池 Code 匹配 expectedModel（前端发的是池 Code，例如 "gpt-image-1-5"）
-    ///   4. 归一化匹配（去掉点/横线/下划线后比较，兜住"gpt-image-1.5" vs "gpt-image-1-5" 这类命名不一致）
+    ///   3. 池名 / 池 Code 匹配 expectedModel（前端 picker 发的就是池 Code）
     ///
-    /// 健康状态处理：遵守"能选就代表能用"原则 —— 前端 picker 是后端给出的可用清单，
-    /// 用户选了就必须尊重。即便池里所有模型都被临时标 Unavailable，也先返回"最不差的那个"
-    /// 并写一条 warning 日志，让调用方在真实请求失败时再走降级。
+    /// 健康约束：只返回非 Unavailable 的模型。用户选的池若全部不可用，
+    /// 返回 (null, null) 让上层走"询问用户是否切换"路径（前端发起请求前已做预检）。
+    /// 这里不做命名归一化（如 "1.5" ↔ "1-5"）——池 Code 是系统自动填充的，
+    /// 不会出现用户手填造成的命名漂移。
     /// </summary>
     private (ModelGroup? group, ModelGroupItem? item) FindPreferredModel(
         List<ModelGroup> groups, string expectedModel)
@@ -624,24 +624,23 @@ public class ModelResolver : IModelResolver
             return (null, null);
 
         var key = expectedModel.Trim();
-        var keyNorm = Normalize(key);
 
         _logger.LogInformation(
-            "[ModelResolver] FindPreferredModel 开始: key='{Key}' (归一化='{Norm}'), 候选池={Count} [{Names}]",
-            key, keyNorm, groups.Count,
+            "[ModelResolver] FindPreferredModel 开始: key='{Key}', 候选池={Count} [{Names}]",
+            key, groups.Count,
             string.Join(", ", groups.Select(g => $"{g.Name}(code={g.Code})")));
 
-        // 优先级 1：ModelId 精确匹配（健康优先，缺省容忍非健康）
+        // 优先级 1：ModelId 精确匹配
         foreach (var g in groups)
         {
             if (g.Models == null) continue;
-            var exactHealthy = g.Models.FirstOrDefault(m =>
+            var exact = g.Models.FirstOrDefault(m =>
                 m.HealthStatus != ModelHealthStatus.Unavailable &&
                 string.Equals(m.ModelId, key, StringComparison.OrdinalIgnoreCase));
-            if (exactHealthy != null)
+            if (exact != null)
             {
-                _logger.LogInformation("[ModelResolver] Tier1 命中: pool={Pool}, modelId={ModelId}", g.Name, exactHealthy.ModelId);
-                return (g, exactHealthy);
+                _logger.LogInformation("[ModelResolver] Tier1 命中: pool={Pool}, modelId={ModelId}", g.Name, exact.ModelId);
+                return (g, exact);
             }
         }
 
@@ -655,67 +654,41 @@ public class ModelResolver : IModelResolver
                 m.ModelId.StartsWith(key, StringComparison.OrdinalIgnoreCase));
             if (prefix != null)
             {
-                _logger.LogInformation("[ModelResolver] Tier2 命中: pool={Pool}, modelId={ModelId} (前缀匹配 key='{Key}')", g.Name, prefix.ModelId, key);
+                _logger.LogInformation("[ModelResolver] Tier2 命中: pool={Pool}, modelId={ModelId}", g.Name, prefix.ModelId);
                 return (g, prefix);
             }
         }
 
-        // 优先级 3 + 4：池名/Code 匹配 + 归一化匹配（合并一次扫描，避免重复遍历）
-        // 用户的原则"能选就代表能用"：picker 展示了池就意味着可用；健康状态只作挑选顺序，不作拒绝理由
+        // 优先级 3：池名/池 Code 精确匹配（picker 发的 modelId 实际是池 Code）
         foreach (var g in groups)
         {
             if (g.Models == null || g.Models.Count == 0) continue;
-
-            var matchExact =
+            var matchByPool =
                 string.Equals(g.Name, key, StringComparison.OrdinalIgnoreCase) ||
                 string.Equals(g.Code, key, StringComparison.OrdinalIgnoreCase);
-            var matchNorm = !matchExact && (
-                string.Equals(Normalize(g.Name), keyNorm, StringComparison.OrdinalIgnoreCase) ||
-                string.Equals(Normalize(g.Code), keyNorm, StringComparison.OrdinalIgnoreCase));
+            if (!matchByPool) continue;
 
-            if (!matchExact && !matchNorm) continue;
-
-            // 取最佳：Healthy > Degraded > 其他（含 Unavailable 也不排除）
+            // Healthy > Degraded；Unavailable 不选（交给前端走"询问切换"）
             var picked =
                 g.Models.FirstOrDefault(m => m.HealthStatus == ModelHealthStatus.Healthy)
-                ?? g.Models.FirstOrDefault(m => m.HealthStatus == ModelHealthStatus.Degraded)
-                ?? g.Models.First();
-
-            var tier = matchExact ? "Tier3(池名/Code 精确)" : "Tier4(池名归一化)";
-            if (picked.HealthStatus == ModelHealthStatus.Unavailable)
-            {
-                _logger.LogWarning(
-                    "[ModelResolver] {Tier} 命中但模型被标为 Unavailable，仍尊重用户选择返回: pool={Pool}, modelId={ModelId}。如真实请求失败将走降级。",
-                    tier, g.Name, picked.ModelId);
-            }
-            else
+                ?? g.Models.FirstOrDefault(m => m.HealthStatus == ModelHealthStatus.Degraded);
+            if (picked != null)
             {
                 _logger.LogInformation(
-                    "[ModelResolver] {Tier} 命中: pool={Pool}, modelId={ModelId}, health={Health}",
-                    tier, g.Name, picked.ModelId, picked.HealthStatus);
+                    "[ModelResolver] Tier3 命中: pool={Pool}, modelId={ModelId}, health={Health}",
+                    g.Name, picked.ModelId, picked.HealthStatus);
+                return (g, picked);
             }
-            return (g, picked);
+
+            _logger.LogInformation(
+                "[ModelResolver] Tier3 池名/Code 匹配但池内无可用模型: pool={Pool} (共{Count}个, 全部 Unavailable)",
+                g.Name, g.Models.Count);
         }
 
         _logger.LogInformation(
-            "[ModelResolver] FindPreferredModel 所有档位未命中: key='{Key}'。候选池 Code=[{Codes}]",
-            key, string.Join(", ", groups.Select(g => g.Code ?? "(无code)")));
+            "[ModelResolver] FindPreferredModel 所有档位未命中: key='{Key}'",
+            key);
         return (null, null);
-    }
-
-    /// <summary>
-    /// 归一化字符串：转小写 + 去掉所有非字母数字字符（点/横线/下划线/空格）。
-    /// 用于兜住 "gpt-image-1.5" vs "gpt-image-1-5" vs "gpt_image_15" 这类命名不一致。
-    /// </summary>
-    private static string Normalize(string? s)
-    {
-        if (string.IsNullOrEmpty(s)) return string.Empty;
-        var sb = new System.Text.StringBuilder(s.Length);
-        foreach (var ch in s)
-        {
-            if (char.IsLetterOrDigit(ch)) sb.Append(char.ToLowerInvariant(ch));
-        }
-        return sb.ToString();
     }
 
     private ModelGroupItem? SelectBestModel(ModelGroup group)

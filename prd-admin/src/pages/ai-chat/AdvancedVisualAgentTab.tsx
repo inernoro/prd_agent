@@ -106,6 +106,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, typ
 import { useAuthStore } from '@/stores/authStore';
 import { useLayoutStore } from '@/stores/layoutStore';
 import { useGlobalDefectStore } from '@/stores/globalDefectStore';
+import { useVisualAgentPrefsStore } from '@/stores/visualAgentPrefsStore';
 
 import { MessageContentRenderer } from './components/MessageContentRenderer';
 import { ChatMessageItem } from './components/ChatMessageItem';
@@ -1102,6 +1103,16 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
   const [modelPrefAuto, setModelPrefAuto] = useState(true);
   const [modelPrefModelId, setModelPrefModelId] = useState<string>('');
   const [modelPrefReady, setModelPrefReady] = useState(false);
+  // 用户偏好：智能切换（遇到不可用模型时是否弹窗询问）；默认 true，关闭则进入严格模式
+  const smartModelFallback = useVisualAgentPrefsStore((s) => s.smartModelFallback);
+  const setSmartModelFallback = useVisualAgentPrefsStore((s) => s.setSmartModelFallback);
+  // 模型切换确认对话框
+  type FallbackPrompt = {
+    original: { id: string; label: string };
+    suggestion: { id: string; label: string } | null;
+    resolve: (choice: 'switch' | 'keep' | 'cancel') => void;
+  };
+  const [fallbackPrompt, setFallbackPrompt] = useState<FallbackPrompt | null>(null);
   const modelPrefSaveRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [sizeSelectorOpen, setSizeSelectorOpen] = useState(false);
   const sizeSelectorRef = useRef<HTMLDivElement>(null);
@@ -3445,12 +3456,36 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
     const forcedPick = extractForcedImageModel(directPrompt ? displayText : requestText);
     const reqText = String(forcedPick.clean ?? '').trim();
     if (!reqText) return;
-    const pickedModel = forcedPick.forced ?? effectiveModel;
+    let pickedModel = forcedPick.forced ?? effectiveModel;
     if (!pickedModel) {
       const msg = modelsLoading ? '模型加载中' : '暂无可用生图模型（请配置 image-gen 模型池或启用 isImageGen 模型）';
       setError(msg);
       pushMsg('Assistant', '暂无可用生图模型（请配置 image-gen 模型池或启用 isImageGen 模型）');
       return;
+    }
+
+    // ===== 发送前健康预检（非严格模式才检查）=====
+    // 原则："picker 能选就代表可用"被 healthStatus 动态打破时，由前端明确询问用户，
+    // 避免后端静默切换造成"选 A 给 B"的黑盒体验。严格模式下跳过该预检。
+    if (smartModelFallback && !pickedModel.enabled) {
+      const suggestion = allImageGenModels.find((x) => x.enabled && x.id !== pickedModel!.id) ?? null;
+      const originalLabel = pickedModel.name || pickedModel.modelName || '当前模型';
+      const suggestionLabel = suggestion ? (suggestion.name || suggestion.modelName || '') : '';
+      const choice = await new Promise<'switch' | 'keep' | 'cancel'>((resolve) => {
+        setFallbackPrompt({
+          original: { id: pickedModel!.id, label: originalLabel },
+          suggestion: suggestion ? { id: suggestion.id, label: suggestionLabel } : null,
+          resolve,
+        });
+      });
+      setFallbackPrompt(null);
+      if (choice === 'cancel') return;
+      if (choice === 'switch' && suggestion) {
+        pickedModel = suggestion;
+        setModelPrefAuto(false);
+        setModelPrefModelId(suggestion.id);
+      }
+      // 'keep' → 保留原选择继续
     }
 
     setError('');
@@ -6732,6 +6767,48 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                               return '绘图模型';
                             })()}
                           </div>
+
+                          {/* 智能切换开关：遇到不可用模型时，默认会弹窗询问是否切换；关闭后进入严格模式，直接按用户选择发送 */}
+                          <div
+                            className="flex items-center justify-between gap-2 px-2 py-1.5 mx-1 mb-1 rounded-[10px]"
+                            style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)' }}
+                          >
+                            <div className="min-w-0 flex-1">
+                              <div className="text-[11px] font-medium" style={{ color: 'var(--text-primary)' }}>
+                                智能切换
+                              </div>
+                              <div className="text-[10px] mt-0.5" style={{ color: 'var(--text-muted, rgba(255,255,255,0.45))' }}>
+                                {smartModelFallback
+                                  ? '发送前若当前模型不可用，会询问是否切换到其他可用模型'
+                                  : '严格模式：直接使用你选的模型，不做任何切换/提示'}
+                              </div>
+                            </div>
+                            <button
+                              type="button"
+                              role="switch"
+                              aria-checked={smartModelFallback}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setSmartModelFallback(!smartModelFallback);
+                              }}
+                              className="shrink-0 relative inline-flex items-center rounded-full transition-colors"
+                              style={{
+                                width: 32,
+                                height: 18,
+                                background: smartModelFallback ? 'rgba(129, 140, 248, 0.7)' : 'rgba(255,255,255,0.15)',
+                              }}
+                              title={smartModelFallback ? '关闭后进入严格模式' : '打开后遇到不可用模型会询问切换'}
+                            >
+                              <span
+                                className="absolute top-0.5 rounded-full bg-white transition-transform"
+                                style={{
+                                  width: 14,
+                                  height: 14,
+                                  transform: smartModelFallback ? 'translateX(15px)' : 'translateX(2px)',
+                                }}
+                              />
+                            </button>
+                          </div>
                           <div className="max-h-[320px] overflow-auto p-1">
                             {allImageGenModels
                               .slice()
@@ -8597,6 +8674,49 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
           </div>
         </div>
       ) : null}
+
+      {/* 模型不可用 · 切换确认对话框（智能切换开启时出现；严格模式下不会到这里） */}
+      <Dialog
+        open={fallbackPrompt !== null}
+        onOpenChange={(open) => {
+          if (!open && fallbackPrompt) {
+            // 对话框被关闭（蒙版/ESC）→ 视为取消
+            fallbackPrompt.resolve('cancel');
+          }
+        }}
+        title="当前模型不可用"
+        maxWidth={460}
+        content={
+          fallbackPrompt ? (
+            <div className="flex flex-col gap-3">
+              <div className="text-[13px]" style={{ color: 'var(--text-primary)' }}>
+                你选择的 <span className="font-semibold" style={{ color: 'rgba(165,180,252,0.95)' }}>{fallbackPrompt.original.label}</span> 当前被标记为不可用。
+                {fallbackPrompt.suggestion ? (
+                  <> 是否改用 <span className="font-semibold" style={{ color: 'rgba(74,222,128,0.95)' }}>{fallbackPrompt.suggestion.label}</span>？</>
+                ) : (
+                  <> 暂时没有其他可用模型可切换。</>
+                )}
+              </div>
+              <div className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
+                在模型面板中可关闭「智能切换」进入严格模式，遇到不可用模型时直接按你选的发送、不再提示。
+              </div>
+              <div className="flex items-center justify-end gap-2 mt-1">
+                <Button variant="secondary" size="sm" onClick={() => fallbackPrompt.resolve('cancel')}>
+                  取消
+                </Button>
+                <Button variant="secondary" size="sm" onClick={() => fallbackPrompt.resolve('keep')}>
+                  仍使用 {fallbackPrompt.original.label}
+                </Button>
+                {fallbackPrompt.suggestion ? (
+                  <Button variant="primary" size="sm" onClick={() => fallbackPrompt.resolve('switch')}>
+                    切换到 {fallbackPrompt.suggestion.label}
+                  </Button>
+                ) : null}
+              </div>
+            </div>
+          ) : null
+        }
+      />
 
       <Dialog
         open={preview.open}
