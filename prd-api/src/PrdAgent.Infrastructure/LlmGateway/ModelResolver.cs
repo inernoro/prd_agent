@@ -33,27 +33,6 @@ public class ModelResolver : IModelResolver
         string? expectedModel = null,
         CancellationToken ct = default)
     {
-        // ⚠ 诊断：直接写 MongoDB 集合 _diag_resolver（绕过 stdout 不可靠问题）
-        var diagId = Guid.NewGuid().ToString("N");
-        try
-        {
-            var coll = _db.Database.GetCollection<MongoDB.Bson.BsonDocument>("_diag_resolver");
-            await coll.InsertOneAsync(new MongoDB.Bson.BsonDocument
-            {
-                { "_id", diagId },
-                { "phase", "ENTRY" },
-                { "ts", DateTime.UtcNow },
-                { "appCallerCode", appCallerCode ?? "(null)" },
-                { "modelType", modelType ?? "(null)" },
-                { "expectedModel", expectedModel ?? "(null)" }
-            }, cancellationToken: ct);
-        }
-        catch { /* swallow */ }
-
-        _logger.LogError(
-            "[DIAG-ResolveAsync] ENTRY appCallerCode={Code}, modelType={Type}, expectedModel='{Expected}'",
-            appCallerCode, modelType, expectedModel ?? "(null)");
-
         var plan = new ModelResolutionPlan
         {
             AppCallerCode = appCallerCode,
@@ -646,38 +625,10 @@ public class ModelResolver : IModelResolver
 
         var key = expectedModel.Trim();
 
-        // ⚠ 诊断：MongoDB 记录 FindPreferredModel 的输入（同步 InsertOne，因为本方法不是 async）
-        try
-        {
-            var coll = _db.Database.GetCollection<MongoDB.Bson.BsonDocument>("_diag_resolver");
-            var poolsArr = new MongoDB.Bson.BsonArray();
-            foreach (var g in groups)
-            {
-                poolsArr.Add(new MongoDB.Bson.BsonDocument
-                {
-                    { "name", g.Name ?? "" },
-                    { "code", g.Code ?? "" },
-                    { "modelsCount", g.Models?.Count ?? 0 },
-                    { "firstModelId", g.Models?.FirstOrDefault()?.ModelId ?? "" },
-                    { "firstModelHealth", g.Models?.FirstOrDefault()?.HealthStatus.ToString() ?? "" }
-                });
-            }
-            coll.InsertOne(new MongoDB.Bson.BsonDocument
-            {
-                { "_id", Guid.NewGuid().ToString("N") },
-                { "phase", "FindPreferredModel_ENTRY" },
-                { "ts", DateTime.UtcNow },
-                { "key", key },
-                { "groupCount", groups.Count },
-                { "pools", poolsArr }
-            });
-        }
-        catch { }
-
-        _logger.LogError(
-            "[DIAG-FindPreferredModel] 开始 key='{Key}' 候选池共{Count}: [{Pools}]",
+        _logger.LogInformation(
+            "[ModelResolver] FindPreferredModel 开始: key='{Key}', 候选池={Count} [{Pools}]",
             key, groups.Count,
-            string.Join(" | ", groups.Select(g => $"Name='{g.Name}' Code='{g.Code}' ModelCount={g.Models?.Count ?? 0} FirstModelId='{g.Models?.FirstOrDefault()?.ModelId ?? "(none)"}'")));
+            string.Join(", ", groups.Select(g => $"{g.Name}(code={g.Code})")));
 
         // 优先级 1：ModelId 精确匹配
         foreach (var g in groups)
@@ -712,16 +663,10 @@ public class ModelResolver : IModelResolver
         foreach (var g in groups)
         {
             if (g.Models == null || g.Models.Count == 0) continue;
-            var nameMatch = string.Equals(g.Name, key, StringComparison.OrdinalIgnoreCase);
-            var codeMatch = string.Equals(g.Code, key, StringComparison.OrdinalIgnoreCase);
-
-            // ⚠ 诊断：每个候选池的比较结果都 LogError
-            _logger.LogError(
-                "[DIAG-Tier3] 检查池 Name='{Name}' (len={NLen}) vs key='{Key}' (len={KLen}) nameMatch={NM}; Code='{Code}' (len={CLen}) codeMatch={CM}",
-                g.Name ?? "(null)", g.Name?.Length ?? -1, key, key.Length, nameMatch,
-                g.Code ?? "(null)", g.Code?.Length ?? -1, codeMatch);
-
-            if (!nameMatch && !codeMatch) continue;
+            var matchByPool =
+                string.Equals(g.Name, key, StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(g.Code, key, StringComparison.OrdinalIgnoreCase);
+            if (!matchByPool) continue;
 
             // Healthy > Degraded；Unavailable 不选（交给前端走"询问切换"）
             var picked =
@@ -729,47 +674,19 @@ public class ModelResolver : IModelResolver
                 ?? g.Models.FirstOrDefault(m => m.HealthStatus == ModelHealthStatus.Degraded);
             if (picked != null)
             {
-                try
-                {
-                    var coll = _db.Database.GetCollection<MongoDB.Bson.BsonDocument>("_diag_resolver");
-                    coll.InsertOne(new MongoDB.Bson.BsonDocument
-                    {
-                        { "_id", Guid.NewGuid().ToString("N") },
-                        { "phase", "Tier3_HIT" },
-                        { "ts", DateTime.UtcNow },
-                        { "key", key },
-                        { "poolName", g.Name ?? "" },
-                        { "poolCode", g.Code ?? "" },
-                        { "modelId", picked.ModelId ?? "" }
-                    });
-                }
-                catch { }
-
-                _logger.LogError(
-                    "[DIAG-Tier3] ✓ 命中: pool={Pool}, modelId={ModelId}, health={Health}",
+                _logger.LogInformation(
+                    "[ModelResolver] Tier3 命中: pool={Pool}, modelId={ModelId}, health={Health}",
                     g.Name, picked.ModelId, picked.HealthStatus);
                 return (g, picked);
             }
 
-            _logger.LogError(
-                "[DIAG-Tier3] 池名/Code 匹配但池内无可用模型: pool={Pool} (共{Count}个, 全部 Unavailable)",
+            _logger.LogInformation(
+                "[ModelResolver] Tier3 池名/Code 匹配但池内无可用模型: pool={Pool} (共{Count}个)",
                 g.Name, g.Models.Count);
         }
 
-        try
-        {
-            var coll = _db.Database.GetCollection<MongoDB.Bson.BsonDocument>("_diag_resolver");
-            coll.InsertOne(new MongoDB.Bson.BsonDocument
-            {
-                { "_id", Guid.NewGuid().ToString("N") },
-                { "phase", "ALL_TIERS_MISS" },
-                { "ts", DateTime.UtcNow },
-                { "key", key }
-            });
-        }
-        catch { }
-        _logger.LogError(
-            "[DIAG-FindPreferredModel] ✗ 所有档位未命中: key='{Key}'",
+        _logger.LogInformation(
+            "[ModelResolver] FindPreferredModel 所有档位未命中: key='{Key}'",
             key);
         return (null, null);
     }

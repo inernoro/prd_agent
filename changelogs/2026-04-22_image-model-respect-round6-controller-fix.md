@@ -1,0 +1,2 @@
+| fix | prd-api | ImageMasterController / ImageGenController 创建 run 时立即标 ModelResolutionType=DirectModel，让 Worker.ResolveModelGroupAsync 走早返回分支，不再调用 scheduler 覆盖用户显式选择的 modelId。这是 round1-5 的最终落脚点：Controller 层尊重用户选择，彻底断绝 DedicatedPool scheduler 把 picker 选择换成 candidateGroups[0] 的行为（即之前用户看到的"选 gpt-image-1.5 给 gpt-image-2-all"问题） |
+| chore | prd-api | ModelResolver.cs 撤回诊断代码（_diag_resolver 集合写入 + DIAG-* LogError），恢复 round5 的干净实现 |
