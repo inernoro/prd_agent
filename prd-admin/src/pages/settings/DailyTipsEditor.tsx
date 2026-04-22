@@ -736,137 +736,154 @@ export function DailyTipsEditor() {
             <div
               key={tip.id}
               onClick={() => toggleSelect(tip.id)}
-              className="group relative flex items-center gap-3 rounded-2xl cursor-pointer transition-all duration-200"
+              className="group relative flex items-center gap-3 cursor-pointer transition-colors"
               style={{
-                background: selected
-                  ? 'linear-gradient(135deg, rgba(129,140,248,0.10), rgba(167,139,250,0.06))'
-                  : 'rgba(255,255,255,0.025)',
+                background: selected ? 'rgba(129,140,248,0.08)' : 'transparent',
                 border: selected
-                  ? '1px solid rgba(129,140,248,0.45)'
-                  : '1px solid rgba(255,255,255,0.06)',
-                padding: '14px 16px',
-                boxShadow: selected
-                  ? '0 4px 20px -6px rgba(129,140,248,0.35)'
-                  : 'none',
+                  ? '1px solid rgba(129,140,248,0.4)'
+                  : '1px solid rgba(255,255,255,0.05)',
+                borderRadius: 14,
+                padding: '12px 14px',
+                transition: 'background 180ms ease-out, border-color 180ms ease-out',
               }}
               onMouseEnter={(e) => {
                 if (!selected) {
-                  e.currentTarget.style.background = 'rgba(255,255,255,0.04)';
-                  e.currentTarget.style.transform = 'translateY(-1px)';
+                  e.currentTarget.style.background = 'rgba(255,255,255,0.03)';
+                  e.currentTarget.style.borderColor = 'rgba(255,255,255,0.08)';
                 }
               }}
               onMouseLeave={(e) => {
                 if (!selected) {
-                  e.currentTarget.style.background = 'rgba(255,255,255,0.025)';
-                  e.currentTarget.style.transform = 'translateY(0)';
+                  e.currentTarget.style.background = 'transparent';
+                  e.currentTarget.style.borderColor = 'rgba(255,255,255,0.05)';
                 }
               }}
             >
-              {/* 左侧 checkbox */}
+              {/* 1. checkbox */}
               <div
-                className="shrink-0 flex items-center justify-center rounded-full transition-colors"
+                className="shrink-0 flex items-center justify-center rounded-full"
                 style={{
-                  width: 22,
-                  height: 22,
+                  width: 20,
+                  height: 20,
                   border: selected
-                    ? '1px solid rgba(129,140,248,0.85)'
+                    ? 'none'
                     : '1.5px solid rgba(255,255,255,0.22)',
                   background: selected
-                    ? 'linear-gradient(135deg, rgba(129,140,248,0.95), rgba(167,139,250,0.95))'
+                    ? 'linear-gradient(135deg, #818cf8, #a78bfa)'
                     : 'transparent',
+                  transition: 'all 150ms ease-out',
                 }}
               >
-                {selected && <Check size={13} strokeWidth={3} color="#fff" />}
+                {selected && <Check size={12} strokeWidth={3} color="#fff" />}
               </div>
 
-              {/* 主体 */}
+              {/* 2. 源色小圆圈 —— 代替之前的 chip 文字,视觉更简洁 */}
+              <div
+                className="shrink-0 flex items-center justify-center rounded-xl"
+                style={{
+                  width: 34,
+                  height: 34,
+                  background: source.bg,
+                  border: `1px solid ${source.border}`,
+                  color: source.color,
+                }}
+                title={source.label}
+              >
+                <SourceIcon size={16} />
+              </div>
+
+              {/* 3. 主体:标题行 + meta 行,flex-1 自然填满 */}
               <div className="flex-1 min-w-0" onClick={(e) => e.stopPropagation()}>
-                {/* 第一行:场景 chip + kind + 步数 + order */}
-                <div className="flex items-center gap-1.5 flex-wrap mb-1.5">
+                <div className="flex items-baseline gap-2 min-w-0">
                   <span
-                    className="inline-flex items-center gap-1 text-[10px] font-semibold px-2 py-0.5 rounded-full"
                     style={{
-                      background: source.bg,
-                      color: source.color,
-                      border: `1px solid ${source.border}`,
+                      fontSize: 14,
+                      fontWeight: 600,
+                      color: 'var(--text-primary)',
+                      whiteSpace: 'nowrap',
+                      overflow: 'hidden',
+                      textOverflow: 'ellipsis',
+                      flex: '0 1 auto',
+                      maxWidth: '60%',
                     }}
                   >
-                    <SourceIcon size={10} />
-                    {source.label}
+                    {tip.title}
                   </span>
-                  {!tip.isActive && (
-                    <span
-                      className="text-[10px] px-1.5 py-0.5 rounded-full"
-                      style={{ background: 'rgba(148,163,184,0.15)', color: '#94a3b8' }}
-                    >
-                      已关闭
-                    </span>
-                  )}
+                  {/* 小型内嵌 meta:步数 · kind · 定向 */}
                   <span
-                    className="text-[10px] px-1.5 py-0.5 rounded-full"
-                    style={{ background: 'rgba(255,255,255,0.04)', color: 'rgba(255,255,255,0.55)' }}
+                    style={{
+                      fontSize: 11,
+                      color: 'var(--text-muted)',
+                      fontFamily: 'ui-monospace, Menlo, monospace',
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: 8,
+                      flexShrink: 0,
+                    }}
                   >
-                    {tip.kind}
-                  </span>
-                  {stepCount > 0 && (
-                    <span
-                      className="text-[10px] px-1.5 py-0.5 rounded-full"
-                      style={{ background: 'rgba(196,181,253,0.10)', color: '#c4b5fd' }}
-                    >
-                      {stepCount} 步 Tour
-                    </span>
-                  )}
-                  {tip.targetUserId && (
-                    <span
-                      className="text-[10px] px-1.5 py-0.5 rounded-full"
-                      style={{
-                        background: 'linear-gradient(135deg, rgba(244,63,94,0.15), rgba(168,85,247,0.12))',
-                        color: '#fca5a5',
-                      }}
-                    >
-                      为你 {tip.targetUserId.slice(0, 6)}…
-                    </span>
-                  )}
-                  <span
-                    className="text-[10px] font-mono ml-auto"
-                    style={{ color: 'var(--text-muted)' }}
-                  >
-                    #{tip.displayOrder}
+                    {stepCount > 0 && (
+                      <span style={{ color: '#c4b5fd' }}>{stepCount} Tour</span>
+                    )}
+                    <span style={{ opacity: 0.6 }}>·</span>
+                    <span>{tip.kind}</span>
+                    {!tip.isActive && (
+                      <>
+                        <span style={{ opacity: 0.6 }}>·</span>
+                        <span style={{ color: '#94a3b8' }}>已关闭</span>
+                      </>
+                    )}
+                    {tip.targetUserId && (
+                      <>
+                        <span style={{ opacity: 0.6 }}>·</span>
+                        <span style={{ color: '#fca5a5' }}>为你</span>
+                      </>
+                    )}
                   </span>
                 </div>
-
-                {/* 标题 */}
+                {/* 第二行:body(如有)或 actionUrl */}
                 <div
-                  className="text-[14px] font-semibold mb-0.5 truncate"
-                  style={{ color: 'var(--text-primary)' }}
+                  style={{
+                    fontSize: 12,
+                    color: 'var(--text-muted)',
+                    marginTop: 3,
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis',
+                    whiteSpace: 'nowrap',
+                    lineHeight: 1.4,
+                  }}
                 >
-                  {tip.title}
-                </div>
-
-                {/* 正文 */}
-                {tip.body && (
-                  <div
-                    className="text-[12px] line-clamp-2"
-                    style={{ color: 'var(--text-secondary)', lineHeight: 1.55 }}
+                  {tip.body ? (
+                    <>
+                      <span style={{ color: 'var(--text-secondary)' }}>{tip.body}</span>
+                      <span style={{ margin: '0 8px', opacity: 0.4 }}>·</span>
+                    </>
+                  ) : null}
+                  <span
+                    style={{
+                      fontFamily: 'ui-monospace, Menlo, monospace',
+                      fontSize: 11,
+                      opacity: 0.75,
+                    }}
                   >
-                    {tip.body}
-                  </div>
-                )}
-
-                {/* 落地页 meta */}
-                <div
-                  className="mt-1.5 text-[11px] font-mono truncate"
-                  style={{ color: 'var(--text-muted)' }}
-                >
-                  → {tip.actionUrl}
+                    → {tip.actionUrl}
+                  </span>
                 </div>
               </div>
 
-              {/* 右侧操作按钮 */}
-              <div
-                className="flex items-center gap-1 shrink-0 opacity-60 group-hover:opacity-100 transition-opacity"
-                onClick={(e) => e.stopPropagation()}
-              >
+              {/* 4. 右列:#N + 操作按钮,紧贴不留空 */}
+              <div className="flex items-center gap-1 shrink-0" onClick={(e) => e.stopPropagation()}>
+                <span
+                  style={{
+                    fontFamily: 'ui-monospace, Menlo, monospace',
+                    fontSize: 11,
+                    color: 'rgba(255,255,255,0.35)',
+                    marginRight: 4,
+                    minWidth: 24,
+                    textAlign: 'right',
+                  }}
+                >
+                  #{tip.displayOrder}
+                </span>
                 <Button variant="ghost" size="sm" onClick={() => handleTest(tip)} title="试播">
                   <Play size={12} />
                 </Button>
