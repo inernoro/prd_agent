@@ -1307,11 +1307,58 @@ public class ImageGenRunWorker : BackgroundService
         if (run.ModelResolutionType.HasValue)
         {
             _logger.LogInformation(
-                "[视觉创作-专属模型匹配] 跳过匹配（已有解析信息）: resolutionType={ResolutionType}, 使用模型={ModelId}", 
+                "[视觉创作-专属模型匹配] 跳过匹配（已有解析信息）: resolutionType={ResolutionType}, 使用模型={ModelId}",
                 run.ModelResolutionType, run.ModelId ?? "(null)");
             return;
         }
 
+        // ========== 用户显式选择优先原则 ==========
+        // Controller 在 CreateRun 阶段已校验：必须提供 configModelId 或 (platformId + modelId)。
+        // 因此到了 Worker 时 run.ModelId + run.PlatformId 一定都已写入（配置模型 ID 也被翻译成 ModelName）。
+        // 这两个值代表"用户从 picker 里亲手选的模型"——picker 只展示可用模型，能选就必然能用。
+        // 在此前提下不应再调用 scheduler 去"尝试匹配池"，否则会出现"选 A 给 B"的体验缺陷。
+        // 这里仅做一件额外的事：为了日志/UI 展示，尝试把该模型归属到它所在的池（纯旁路，不覆盖选择）。
+        if (!string.IsNullOrWhiteSpace(frontendExpectedModelId) && !string.IsNullOrWhiteSpace(frontendExpectedPlatformId))
+        {
+            // 旁路查询该模型在哪个池（用于 runStart 事件里的 modelGroupName，不影响实际调用）
+            string? poolIdSidecar = null;
+            string? poolNameSidecar = null;
+            try
+            {
+                var hostingGroup = await _db.ModelGroups
+                    .Find(g => g.Models != null && g.Models.Any(m =>
+                        m.ModelId == frontendExpectedModelId &&
+                        m.PlatformId == frontendExpectedPlatformId))
+                    .FirstOrDefaultAsync(ct);
+                if (hostingGroup != null)
+                {
+                    poolIdSidecar = hostingGroup.Id;
+                    poolNameSidecar = hostingGroup.Name;
+                }
+            }
+            catch (Exception sideEx)
+            {
+                _logger.LogDebug(sideEx, "[生图模型匹配] 旁路池名查询失败（忽略，不影响主流程）");
+            }
+
+            _logger.LogInformation(
+                "[生图模型匹配] 尊重用户显式选择 → 跳过 scheduler: modelId={ModelId}, platformId={PlatformId}, 归属池={Pool}",
+                frontendExpectedModelId, frontendExpectedPlatformId, poolNameSidecar ?? "(不在任何池)");
+
+            var directUpdate = Builders<ImageGenRun>.Update
+                .Set(x => x.ModelResolutionType, ModelResolutionType.DirectModel)
+                .Set(x => x.ModelGroupId, poolIdSidecar)
+                .Set(x => x.ModelGroupName, poolNameSidecar);
+
+            run.ModelResolutionType = ModelResolutionType.DirectModel;
+            run.ModelGroupId = poolIdSidecar;
+            run.ModelGroupName = poolNameSidecar;
+
+            await _db.ImageGenRuns.UpdateOneAsync(x => x.Id == run.Id, directUpdate, cancellationToken: ct);
+            return;
+        }
+
+        // 走到这里说明 Controller 的校验被绕过或字段丢失——降级到 scheduler
         ModelResolutionType resolutionType = ModelResolutionType.DirectModel; // 默认为直连单模型
         string? modelGroupId = null;
         string? modelGroupName = null;
