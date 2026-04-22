@@ -3912,17 +3912,24 @@ export function createBranchRouter(deps: RouterDeps): Router {
     res.json({ services });
   });
 
-  // Discover infrastructure services from compose files in the repo
-  router.get('/infra/discover', (_req, res) => {
+  // Discover infrastructure services from compose files in the project repo
+  router.get('/infra/discover', (req, res) => {
     try {
-      const composeFiles = discoverComposeFiles(config.repoRoot);
+      // Scope discovery to the current project's own repo root only.
+      // Using config.repoRoot (the CDS host directory) would expose compose
+      // files belonging to other projects.
+      const queryProject = typeof req.query.project === 'string' ? req.query.project : null;
+      const effectiveProjectId = queryProject || 'default';
+      const scanRoot = stateService.getProjectRepoRoot(effectiveProjectId, config.repoRoot);
+
+      const composeFiles = discoverComposeFiles(scanRoot);
       const discovered: { file: string; services: ComposeServiceDef[] }[] = [];
 
       for (const file of composeFiles) {
         try {
           const services = parseComposeFile(file);
           if (services.length > 0) {
-            discovered.push({ file: path.relative(config.repoRoot, file), services });
+            discovered.push({ file: path.relative(scanRoot, file), services });
           }
         } catch { /* skip unparseable files */ }
       }
@@ -4160,7 +4167,14 @@ export function createBranchRouter(deps: RouterDeps): Router {
     if (composeYaml) {
       defs = parseComposeString(composeYaml);
     } else {
-      const composeFiles = discoverComposeFiles(config.repoRoot);
+      // Scope discovery to the current project's repo root only.
+      // Using config.repoRoot (the shared CDS host dir) would expose compose
+      // files from other projects — same isolation fix as /infra/discover.
+      const queryProject = typeof req.query.project === 'string' ? req.query.project : null;
+      const bodyProject = typeof req.body.projectId === 'string' ? req.body.projectId : null;
+      const effectiveProjectId = queryProject || bodyProject || 'default';
+      const scanRoot = stateService.getProjectRepoRoot(effectiveProjectId, config.repoRoot);
+      const composeFiles = discoverComposeFiles(scanRoot);
       const seenIds = new Set<string>();
       for (const file of composeFiles) {
         try {
