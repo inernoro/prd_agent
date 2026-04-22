@@ -157,25 +157,75 @@ public class ModelResolver : IModelResolver
         }
 
         // ========== 第 5.5 步：若调用方指定了 expectedModel，优先尊重 ==========
-        // 在所有候选池中寻找匹配 expectedModel（按 ModelId / 池名 模糊匹配）的可用条目
+        // 搜索顺序（广度递增）：
+        //   1. 候选池（AppCaller 绑定的池）
+        //   2. 该 ModelType 下的所有池（AppCaller 未绑定但平台有配置的池）
+        //   3. LLMModels 直连（既不在任何池也可以按 ModelName 查到的单模型）
+        // 前两档命中都会把匹配到的池加入 candidateGroups 头部；第三档直接返回 Legacy 结果。
         ModelGroup? preferredGroup = null;
         ModelGroupItem? preferredItem = null;
         if (!string.IsNullOrWhiteSpace(expectedModel))
         {
+            // 档 1：候选池
             var (g, m) = FindPreferredModel(candidateGroups, expectedModel);
             if (g != null && m != null)
             {
                 preferredGroup = g;
                 preferredItem = m;
                 _logger.LogInformation(
-                    "[ModelResolver] 命中 expectedModel: {Expected} → 池 {PoolName} 中的模型 {ModelId}",
+                    "[ModelResolver] 命中 expectedModel（候选池）: {Expected} → 池 {PoolName} 中的模型 {ModelId}",
                     expectedModel, g.Name, m.ModelId);
             }
             else
             {
-                _logger.LogInformation(
-                    "[ModelResolver] expectedModel '{Expected}' 在候选池中未找到匹配（池：[{Pools}]），将走默认调度",
-                    expectedModel, string.Join(", ", candidateGroups.Select(x => x.Name)));
+                // 档 2：该 ModelType 下的所有池（包括未绑定到 AppCaller 的）
+                var allTypeGroups = await _db.ModelGroups
+                    .Find(x => x.ModelType == modelType)
+                    .ToListAsync(ct);
+                var knownIds = candidateGroups.Select(x => x.Id).ToHashSet();
+                var extraGroups = allTypeGroups.Where(x => !knownIds.Contains(x.Id)).ToList();
+                if (extraGroups.Count > 0)
+                {
+                    var (g2, m2) = FindPreferredModel(extraGroups, expectedModel);
+                    if (g2 != null && m2 != null)
+                    {
+                        preferredGroup = g2;
+                        preferredItem = m2;
+                        candidateGroups.Insert(0, g2); // 纳入主循环以便走统一的 Exchange / Platform 解析路径
+                        resolutionType = "DirectModel"; // 越出 AppCaller 绑定范围 → 直连语义
+                        _logger.LogInformation(
+                            "[ModelResolver] 命中 expectedModel（全量池兜底）: {Expected} → 池 {PoolName} 中的模型 {ModelId}",
+                            expectedModel, g2.Name, m2.ModelId);
+                    }
+                }
+
+                // 档 3：LLMModels 直连（按 ModelName 查）
+                if (preferredGroup == null)
+                {
+                    var direct = await _db.LLMModels
+                        .Find(x => x.Enabled && x.ModelName == expectedModel.Trim())
+                        .FirstOrDefaultAsync(ct);
+                    if (direct != null)
+                    {
+                        var platform = await _db.LLMPlatforms
+                            .Find(p => p.Id == direct.PlatformId && p.Enabled)
+                            .FirstOrDefaultAsync(ct);
+                        if (platform != null)
+                        {
+                            var apiKey = string.IsNullOrEmpty(platform.ApiKeyEncrypted)
+                                ? null
+                                : ApiKeyCrypto.Decrypt(platform.ApiKeyEncrypted, jwtSecret);
+                            _logger.LogInformation(
+                                "[ModelResolver] 命中 expectedModel（LLMModels 直连）: {Expected} → platform={Platform}",
+                                expectedModel, platform.Name);
+                            return ModelResolutionResult.FromLegacy(expectedModel, direct, platform, apiKey);
+                        }
+                    }
+
+                    _logger.LogInformation(
+                        "[ModelResolver] expectedModel '{Expected}' 在所有池和 LLMModels 都未找到匹配，将走默认调度（候选池：[{Pools}]）",
+                        expectedModel, string.Join(", ", candidateGroups.Select(x => x.Name)));
+                }
             }
         }
 

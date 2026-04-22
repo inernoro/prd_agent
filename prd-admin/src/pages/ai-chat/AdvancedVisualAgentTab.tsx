@@ -6519,6 +6519,20 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
 
                   <div className="mt-2 flex items-center justify-between gap-2">
                     {/* 尺寸选择器 */}
+                    {/* 自适应模型：渲染一个非交互的静态 chip，避免打开一个仅用于迷惑的尺寸面板 */}
+                    {currentModelIsAdaptive ? (
+                      <span
+                        className="inline-flex items-center gap-1 rounded-full px-2.5 h-6 text-[11px] font-medium"
+                        style={{
+                          background: 'rgba(34, 197, 94, 0.08)',
+                          border: '1px solid rgba(34, 197, 94, 0.25)',
+                          color: 'rgba(74, 222, 128, 0.75)',
+                        }}
+                        title="该模型为自适应尺寸，具体尺寸由 prompt 描述决定（可在 prompt 中写「横版 16:9」等）"
+                      >
+                        <span style={{ whiteSpace: 'nowrap' }}>自适应</span>
+                      </span>
+                    ) : (
                     <Popover.Root open={quickSizeOpen} onOpenChange={(open) => {
                       setQuickSizeOpen(open);
                       // 打开时检查并自动修正不支持的尺寸
@@ -6560,10 +6574,6 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                           onClick={(e) => e.stopPropagation()}
                         >
                           {(() => {
-                            // 自适应模型：尺寸由 prompt 决定，不展示具体 WxH，直接标"自适应"
-                            if (currentModelIsAdaptive) {
-                              return <span style={{ whiteSpace: 'nowrap' }}>自适应</span>;
-                            }
                             const size = composerSize ?? autoSizeForSelectedImage ?? imageGenSize;
                             const tier = detectTierFromSize(size);
                             const aspect = sizeToAspectMap.get(size.toLowerCase()) || detectAspectFromSize(size);
@@ -6679,6 +6689,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                         </Popover.Content>
                       </Popover.Portal>
                     </Popover.Root>
+                    )}
 
                     {/* 模型选择器 */}
                     <DropdownMenu.Root open={quickModelOpen} onOpenChange={setQuickModelOpen}>
@@ -7915,10 +7926,13 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                       color: 'var(--text-secondary)',
                       fontSize: 11,
                       fontWeight: 600,
+                      cursor: currentModelIsAdaptive ? 'default' : 'pointer',
+                      opacity: currentModelIsAdaptive ? 0.7 : 1,
                     }}
                     aria-label="尺寸比例"
-                    title="选择分辨率和比例"
-                    onClick={() => setSizeSelectorOpen((v) => !v)}
+                    title={currentModelIsAdaptive ? '该模型为自适应尺寸，具体尺寸由 prompt 描述决定' : '选择分辨率和比例'}
+                    disabled={currentModelIsAdaptive}
+                    onClick={() => { if (!currentModelIsAdaptive) setSizeSelectorOpen((v) => !v); }}
                   >
                     {(() => {
                       // 自适应模型：尺寸由 prompt 决定，标"自适应"
@@ -7934,7 +7948,9 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                         <span style={{ whiteSpace: 'nowrap' }}>{tierLabel} · {aspect || '1:1'}</span>
                       );
                     })()}
-                    <span className="text-[9px]" style={{ color: 'rgba(255,255,255,0.55)' }}>▾</span>
+                    {currentModelIsAdaptive ? null : (
+                      <span className="text-[9px]" style={{ color: 'rgba(255,255,255,0.55)' }}>▾</span>
+                    )}
                   </button>
 
                   {/* 尺寸/比例 Popover */}
