@@ -2561,11 +2561,47 @@ a.branch-name:hover { color: var(--accent); }
   .header-subtitle { font-size: 10px; padding: 2px 8px; }
   header { margin-bottom: 16px; padding-bottom: 12px; }
 
+  /* 2026-04-22：小屏 header 换行布局
+   * PC 端仍是左右两列；小屏下把 header-actions 挤爆（图 4：列表/拓扑 toggle 盖住 Cloud Dev Suite 标题）。
+   * 方案：flex-wrap，让 header-left 独占第一行，header-actions 换到第二行并允许横向 scroll。
+   * commit hash / capacity badge 是"次要信息"，小屏隐藏给标题让位。
+   */
+  header {
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+  .header-left {
+    width: 100%;
+    flex-wrap: wrap;
+    row-gap: 4px;
+  }
+  .header-actions {
+    width: 100%;
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    overflow-y: hidden;
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+    padding-bottom: 2px; /* 给潜在 scrollbar 留白 */
+  }
+  .header-actions::-webkit-scrollbar { display: none; }
+  /* 小屏下次要元数据隐藏 */
+  #cdsCommitHash { display: none !important; }
+  .capacity-badge { display: none !important; }
+
   /* Header actions */
   .header-actions { gap: 3px; }
   .icon-btn { width: 32px; height: 32px; }
   .ai-pairing-indicator { padding: 3px 8px; height: 26px; gap: 4px; }
   .ai-label { font-size: 11px; }
+  /* 视图切换与 auth widget 不允许被压缩 */
+  .view-mode-toggle { flex-shrink: 0; }
+  .cds-auth-widget { flex-shrink: 0; }
+  /* 返回项目按钮缩小文字 */
+  .projects-back-link {
+    padding: 3px 8px !important;
+    font-size: 11px !important;
+  }
 
   /* Cards — slightly stronger borders for mobile */
   .branch-card {
@@ -2664,6 +2700,28 @@ a.branch-name:hover { color: var(--accent); }
 
   /* Fav toggle: bigger */
   .fav-toggle svg.inline-icon { width: 16px; height: 16px; }
+}
+
+/* 2026-04-22 极小屏（iPhone SE / Android 入门机 ≤380px）再收一层
+ * 只处理真的会横向溢出/字号过大的场景，不要把 ≤640px 已经 OK 的规则再覆盖一遍。 */
+@media (max-width: 380px) {
+  .container { padding: 8px; }
+  .modal-dialog {
+    margin: 0 6px;
+    border-radius: 12px;
+  }
+  .modal-header { padding: 10px 12px; }
+  .modal-header h2 { font-size: 14px; }
+  /* 避免 iOS focus input 时自动放大（需 ≥16px）+ 窄视口 padding */
+  .form-input, input[type="text"], input[type="search"], input[type="email"], textarea, select {
+    font-size: 16px;
+  }
+  /* 分支卡内边距再收紧 */
+  .branch-card { padding: 10px 10px; }
+  .branch-card-header { padding-right: 44px; }
+  .branch-card-toolbar { right: 8px; }
+  /* 标题更紧 */
+  h1 { font-size: 14px; }
 }
 
 @media (min-width: 641px) {
@@ -3004,6 +3062,27 @@ a.branch-name:hover { color: var(--accent); }
 /* On small screens, hide to avoid crowding */
 @media (max-width: 640px) {
   .host-stats { display: none; }
+  /* 2026-04-22 小屏 Activity Monitor：
+   * 默认已 collapsed（40px 高），但 min-width:320px 在 375px 屏幕上仍偏大。
+   * 改为贴满底部横条，展开时限高 60vh 避免盖住整个屏幕。 */
+  .activity-monitor {
+    left: 8px !important;
+    right: 8px !important;
+    bottom: 8px !important;
+    width: auto !important;
+    min-width: 0 !important;
+    max-width: none !important;
+    max-height: 60vh !important;
+  }
+  .activity-monitor.collapsed {
+    height: 36px !important;
+    min-height: 36px !important;
+  }
+  .activity-monitor:not(.collapsed) {
+    height: 50vh !important;
+  }
+  /* 拖动 resize 手柄在小屏上没意义，关闭 */
+  .activity-resize-handle { display: none !important; }
 }
 
 .activity-monitor {

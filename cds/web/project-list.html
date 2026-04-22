@@ -2,7 +2,8 @@
 <html lang="zh-CN">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <!-- 2026-04-22：移除 maximum-scale/user-scalable，允许用户双指缩放（可访问性）。 -->
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
   <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
   <meta http-equiv="Pragma" content="no-cache">
   <meta http-equiv="Expires" content="0">
@@ -957,6 +958,106 @@
         border-bottom: 1px solid var(--border);
       }
       .cds-main { padding: 24px 20px 40px; }
+    }
+
+    /* 2026-04-22：≤640px 小屏专属布局
+     * 问题：
+     *   - sidebar 展开时占一屏（logo/工作区卡/导航/用户卡 四段纵向）
+     *   - 主标题行「+ 新建项目」按钮被挤出视口
+     * 方案（不影响 PC/≤900px 中屏）：
+     *   - sidebar 挤成紧凑顶部条：logo + 工作区名 + 用户头像 一行
+     *   - 导航压成一排 chip
+     *   - 用户卡折叠成右侧小头像，popover 保留
+     *   - 主标题行 flex-wrap，CTA 独占第二行 */
+    @media (max-width: 640px) {
+      .cds-sidebar {
+        padding: 10px 12px;
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+      }
+      /* logo 行：logo + theme + 工作区名 + 用户头像 挤一行 */
+      .cds-logo-row {
+        padding: 0 0 8px;
+        margin-bottom: 0;
+        gap: 8px;
+      }
+      .cds-logo span { font-size: 12px; }
+      /* 工作区卡 → 内联小胶囊（降低视觉权重） */
+      .cds-workspace {
+        padding: 6px 10px;
+        background: transparent;
+        border: 1px solid var(--border-light, rgba(255,255,255,0.06));
+      }
+      .cds-workspace-avatar { width: 22px; height: 22px; font-size: 11px; }
+      .cds-workspace-name { font-size: 11px; }
+      .cds-workspace-sub { display: none; }
+      /* 导航 chip 化：水平排列 */
+      .cds-nav {
+        flex-direction: row;
+        flex-wrap: wrap;
+        gap: 6px;
+        margin-top: 0;
+      }
+      .cds-nav-item {
+        padding: 6px 12px;
+        font-size: 12px;
+        border-radius: 999px;
+        background: var(--bg-card);
+        border: 1px solid var(--card-border);
+      }
+      /* 用户卡收紧高度，保留 popover 触发 */
+      .cds-user-card {
+        margin-top: 0;
+        padding: 6px 10px;
+        padding-top: 6px;
+        border-top: none;
+        border: 1px solid var(--border-light, rgba(255,255,255,0.06));
+        border-radius: 8px;
+      }
+      .cds-user-avatar { width: 24px; height: 24px; font-size: 11px; }
+      .cds-user-name { font-size: 11px; }
+
+      /* 主内容区 */
+      .cds-main { padding: 16px 14px 32px; }
+      /* 标题行换行：标题独占第一行，工具栏换到第二行 */
+      .cds-main-header {
+        flex-wrap: wrap;
+        gap: 10px;
+        margin-bottom: 8px;
+      }
+      .cds-main-title { font-size: 20px; width: 100%; }
+      .cds-main-actions {
+        width: 100%;
+        gap: 6px;
+        flex-wrap: wrap;
+      }
+      /* 主 CTA 保持显眼但缩短 padding，不再被裁掉 */
+      button.btn-primary-solid {
+        padding: 8px 14px;
+        font-size: 12px;
+        flex-shrink: 0;
+      }
+      /* 工具栏折行 */
+      .cds-toolbar {
+        flex-wrap: wrap;
+        gap: 8px;
+        padding: 10px 0;
+      }
+
+      /* 项目卡技术栈图标压扁：120px → 64px，释放元信息/操作区垂直空间 */
+      .cds-service-strip {
+        height: 64px;
+        gap: 8px;
+        border-radius: 8px;
+      }
+      .cds-service-tile {
+        width: 34px;
+        height: 34px;
+        border-radius: 7px;
+      }
+      .cds-service-tile svg { width: 16px; height: 16px; }
+      .cds-service-tile.more { font-size: 10px; }
     }
   </style>
 </head>
