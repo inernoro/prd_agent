@@ -147,6 +147,7 @@ docs:
   plan.doc-update: 文档长周期更新计划
   plan.merge-image-ref-resolver: 合并计划书：三入口守门员统一
   plan.skill-installation: Claude Code Skill 安装计划
+  plan.skill-marketplace-open-api-next: 海鲜市场技能开放接口 — 下一程交接（P2/P3/P4 待办 + UAT 清单 + 环境准备）
   plan.cds-deployment: CDS 部署规划
   plan.cds-roadmap: CDS 产品路线图
   plan.report-agent-v3: Report Agent v3.0 升级方案 — 采集优先架构

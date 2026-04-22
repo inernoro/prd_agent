@@ -365,6 +365,9 @@
 - [Claude Code Skill 安装计划](plan.skill-installation) `plan.skill-installation`
   > Claude Code Skill 的安装与配置计划
 
+- [海鲜市场技能开放接口 — 下一程交接](plan.skill-marketplace-open-api-next) `plan.skill-marketplace-open-api-next`
+  > P2/P3/P4 待办清单 + UAT 10 条 + 环境准备 + 代码约定，接力 Agent 一份就懂
+
 - [CDS 部署规划](plan.cds-deployment) `plan.cds-deployment`
   > CDS 云开发套件的部署规划
 
