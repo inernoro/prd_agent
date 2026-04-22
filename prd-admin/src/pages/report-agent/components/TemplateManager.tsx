@@ -125,14 +125,17 @@ export function TemplateManager() {
 
   const canEditTemplate = (tpl: ReportTemplate): boolean => {
     if (tpl.isSystem) return false;
-    return !!currentUserId && tpl.createdBy === currentUserId;
+    if (currentUserId && tpl.createdBy === currentUserId) return true;
+    // 任一关联团队的 Leader/Deputy 也能编辑/删除
+    const tplTeamIds = getTemplateTeamIds(tpl);
+    return tplTeamIds.some((tid) => manageableTeamIdSet.has(tid));
   };
 
   const handleEdit = (id: string) => {
     const t = templates.find((tpl) => tpl.id === id);
     if (!t) return;
     if (!canEditTemplate(t)) {
-      toast.error('只能编辑自己创建的模板');
+      toast.error('仅作者或关联团队的管理员/副管理员可编辑');
       return;
     }
     setEditingId(id);
@@ -204,7 +207,7 @@ export function TemplateManager() {
   const handleDelete = async (id: string) => {
     const t = templates.find((tpl) => tpl.id === id);
     if (t && !canEditTemplate(t)) {
-      toast.error('只能删除自己创建的模板');
+      toast.error('仅作者或关联团队的管理员/副管理员可删除');
       return;
     }
     if (!window.confirm('确认删除该模板？')) return;

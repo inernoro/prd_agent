@@ -1026,7 +1026,7 @@ public class ReportAgentController : ControllerBase
     }
 
     /// <summary>
-    /// 更新模板（仅作者本人；系统模板不可修改）
+    /// 更新模板（作者本人 或 任一关联团队的 Leader/Deputy；系统模板不可改）
     /// </summary>
     [HttpPut("templates/{id}")]
     public async Task<IActionResult> UpdateTemplate(string id, [FromBody] UpdateTemplateRequest req)
@@ -1041,8 +1041,8 @@ public class ReportAgentController : ControllerBase
             return NotFound(ApiResponse<object>.Fail("NOT_FOUND", "模板不存在"));
         if (template.IsSystem)
             return BadRequest(ApiResponse<object>.Fail("SYSTEM_TEMPLATE", "系统预置模板不可修改"));
-        if (template.CreatedBy != userId)
-            return StatusCode(403, ApiResponse<object>.Fail("PERMISSION_DENIED", "只能修改自己创建的模板"));
+        if (!CanManageTemplate(template, userId, myLeaderTeamIds))
+            return StatusCode(403, ApiResponse<object>.Fail("PERMISSION_DENIED", "仅作者本人或关联团队的管理员/副管理员可修改此模板"));
 
         var update = Builders<ReportTemplate>.Update
             .Set(t => t.UpdatedAt, DateTime.UtcNow);
@@ -1096,7 +1096,7 @@ public class ReportAgentController : ControllerBase
     }
 
     /// <summary>
-    /// 删除模板（仅作者本人，系统模板不可删）
+    /// 删除模板（作者本人 或 任一关联团队的 Leader/Deputy；系统模板不可删）
     /// </summary>
     [HttpDelete("templates/{id}")]
     public async Task<IActionResult> DeleteTemplate(string id)
@@ -1111,8 +1111,8 @@ public class ReportAgentController : ControllerBase
             return NotFound(ApiResponse<object>.Fail("NOT_FOUND", "模板不存在"));
         if (template.IsSystem)
             return BadRequest(ApiResponse<object>.Fail("SYSTEM_TEMPLATE", "系统预置模板不可删除"));
-        if (template.CreatedBy != userId)
-            return StatusCode(403, ApiResponse<object>.Fail("PERMISSION_DENIED", "只能删除自己创建的模板"));
+        if (!CanManageTemplate(template, userId, myLeaderTeamIds))
+            return StatusCode(403, ApiResponse<object>.Fail("PERMISSION_DENIED", "仅作者本人或关联团队的管理员/副管理员可删除此模板"));
 
         await _db.ReportTemplates.DeleteOneAsync(t => t.Id == id);
         await _db.UserReportTemplatePreferences.DeleteManyAsync(p => p.DefaultTemplateId == id);
@@ -1214,6 +1214,19 @@ public class ReportAgentController : ControllerBase
             .Find(m => m.UserId == userId && (m.Role == ReportTeamRole.Leader || m.Role == ReportTeamRole.Deputy))
             .Project(m => m.TeamId)
             .ToListAsync();
+    }
+
+    /// <summary>
+    /// 管理权限：作者本人 或 模板关联团队中任一团队的 Leader/Deputy
+    /// </summary>
+    private static bool CanManageTemplate(ReportTemplate template, string userId, List<string> myLeaderTeamIds)
+    {
+        if (template.IsSystem) return false;
+        if (template.CreatedBy == userId) return true;
+        var leaderSet = myLeaderTeamIds.ToHashSet();
+        if (!string.IsNullOrEmpty(template.TeamId) && leaderSet.Contains(template.TeamId)) return true;
+        if (template.TeamIds != null && template.TeamIds.Any(tid => leaderSet.Contains(tid))) return true;
+        return false;
     }
 
     private static List<string> NormalizeTeamIds(List<string>? teamIds, string? legacyTeamId)
