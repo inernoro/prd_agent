@@ -191,12 +191,19 @@ export default function AppShell() {
   } = useNavOrderStore();
   const hasCustomNav = navOrder.length > 0 || navHidden.length > 0;
   const effectiveNavOrder = hasCustomNav ? navOrder : defaultNavOrder;
-  // 合并用户隐藏和管理员默认隐藏：管理员隐藏的项目始终不可见（除非用户显式添加到 navOrder）
+  // 合并用户隐藏和管理员默认隐藏，但排除用户显式添加到 navOrder 的项目
+  // 这样用户可以通过显式添加来覆盖管理员的隐藏设置
   const effectiveNavHidden = useMemo(() => {
-    const merged = new Set(defaultNavHidden);
+    const userNavSet = new Set(navOrder.filter((key) => key !== NAV_DIVIDER_KEY));
+    const merged = new Set<string>();
+    // 添加管理员默认隐藏项（除非用户显式添加到 navOrder）
+    defaultNavHidden.forEach((key) => {
+      if (!userNavSet.has(key)) merged.add(key);
+    });
+    // 添加用户自己隐藏的项
     navHidden.forEach((key) => merged.add(key));
     return Array.from(merged);
-  }, [defaultNavHidden, navHidden]);
+  }, [defaultNavHidden, navHidden, navOrder]);
   const [avatarOpen, setAvatarOpen] = useState(false);
   const [notificationDialogOpen, setNotificationDialogOpen] = useState(false);
   const [notifications, setNotifications] = useState<AdminNotificationItem[]>([]);

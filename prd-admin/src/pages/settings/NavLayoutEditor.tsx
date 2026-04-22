@@ -198,14 +198,16 @@ export function NavLayoutEditor({
     (index: number) => {
       const removed = currentOrder[index];
       const nextOrder = collapseDividers(currentOrder.filter((_, i) => i !== index));
-      // 合并 fallbackNavHidden 和当前 navHidden，确保管理员隐藏的项目不会丢失
-      const baseHidden = new Set([...fallbackNavHidden, ...navHidden]);
-      if (removed !== NAV_DIVIDER_KEY) {
-        baseHidden.add(removed);
+      // 只操作用户自己的 navHidden，不复制 fallbackNavHidden（管理员默认隐藏项）
+      // AppShell 会在渲染时合并 defaultNavHidden，这里不需要重复
+      const nextHidden = [...navHidden];
+      if (removed !== NAV_DIVIDER_KEY && !nextHidden.includes(removed)) {
+        // 只有当被移除的项不在管理员默认隐藏列表中时，才添加到用户隐藏列表
+        // 如果项目本来就是管理员隐藏的，移除后它会自动被 AppShell 的 effectiveNavHidden 隐藏
+        if (!fallbackNavHidden.includes(removed)) {
+          nextHidden.push(removed);
+        }
       }
-      // 过滤掉已经在 nextOrder 中的项目（用户显式添加回来的）
-      const navSet = new Set(nextOrder.filter((key) => key !== NAV_DIVIDER_KEY));
-      const nextHidden = Array.from(baseHidden).filter((key) => !navSet.has(key));
       onChange({ navOrder: nextOrder, navHidden: nextHidden });
     },
     [currentOrder, fallbackNavHidden, navHidden, onChange]
