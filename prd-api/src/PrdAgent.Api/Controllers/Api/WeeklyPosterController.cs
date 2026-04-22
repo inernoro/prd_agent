@@ -1,3 +1,5 @@
+using System.Text;
+using System.Text.Json;
 using Microsoft.AspNetCore.Mvc;
 using MongoDB.Driver;
 using PrdAgent.Api.Extensions;
@@ -279,9 +281,44 @@ public sealed class WeeklyPosterController : ControllerBase
         public string? TemplateKey { get; set; }
         public string? SourceType { get; set; }
         public string? FreeformContent { get; set; }
+        public string? SourceRef { get; set; }
         public string? WeekKey { get; set; }
         public int? PageCount { get; set; }
         public string? CtaUrl { get; set; }
+    }
+
+    // ────────────────────────────────────────────────────────────
+    // 知识库:列出可选的文档条目(给向导页的 knowledge-base 选择器用)
+    // ────────────────────────────────────────────────────────────
+    [HttpGet("knowledge-entries")]
+    public async Task<IActionResult> ListKnowledgeEntries(
+        [FromQuery] string? keyword,
+        [FromQuery] int limit = 50,
+        CancellationToken ct = default)
+    {
+        if (limit < 1 || limit > 100) limit = 50;
+        var filter = Builders<DocumentEntry>.Filter.Eq(x => x.IsFolder, false);
+        if (!string.IsNullOrWhiteSpace(keyword))
+        {
+            var kw = keyword.Trim();
+            filter &= Builders<DocumentEntry>.Filter.Or(
+                Builders<DocumentEntry>.Filter.Regex(x => x.Title, new MongoDB.Bson.BsonRegularExpression(kw, "i")),
+                Builders<DocumentEntry>.Filter.Regex(x => x.ContentIndex, new MongoDB.Bson.BsonRegularExpression(kw, "i")));
+        }
+        var items = await _db.DocumentEntries
+            .Find(filter)
+            .SortByDescending(x => x.UpdatedBy)
+            .Limit(limit)
+            .Project(x => new
+            {
+                id = x.Id,
+                title = x.Title,
+                summary = x.Summary,
+                contentChars = (x.ContentIndex ?? string.Empty).Length,
+                storeId = x.StoreId,
+            })
+            .ToListAsync(ct);
+        return Ok(ApiResponse<object>.Ok(new { items }));
     }
 
     /// <summary>
@@ -306,6 +343,7 @@ public sealed class WeeklyPosterController : ControllerBase
                     TemplateKey = templateKey,
                     SourceType = sourceType,
                     FreeformContent = req.FreeformContent,
+                    SourceRef = req.SourceRef,
                     ForcePageCount = req.PageCount,
                 },
                 userId,
@@ -364,6 +402,142 @@ public sealed class WeeklyPosterController : ControllerBase
             platform = pages.Platform,
             sourceSummary = pages.SourceSummary,
         }));
+    }
+
+    // ────────────────────────────────────────────────────────────
+    // AI 向导 · SSE 流式(满足 CLAUDE.md #6 禁止空白等待)
+    // 事件序列:phase(reading-source) → source → phase(writing) → model
+    //         → page × N(交错推送) → done
+    // ────────────────────────────────────────────────────────────
+    [HttpPost("autopilot/stream")]
+    [Produces("text/event-stream")]
+    public async Task AutopilotStream([FromBody] AutopilotRequest? req, CancellationToken ct)
+    {
+        Response.ContentType = "text/event-stream; charset=utf-8";
+        Response.Headers.CacheControl = "no-cache";
+        Response.Headers.Connection = "keep-alive";
+        Response.Headers["X-Accel-Buffering"] = "no"; // 关闭 nginx 缓冲
+
+        async Task Emit(string evt, object data)
+        {
+            var json = JsonSerializer.Serialize(data);
+            var frame = $"event: {evt}\ndata: {json}\n\n";
+            await Response.WriteAsync(frame, Encoding.UTF8, ct);
+            await Response.Body.FlushAsync(ct);
+        }
+
+        async Task EmitError(string message)
+        {
+            try { await Emit("error", new { message }); } catch { /* ignore */ }
+        }
+
+        try
+        {
+            req ??= new AutopilotRequest();
+            var userId = this.GetRequiredUserId();
+            var templateKey = string.IsNullOrWhiteSpace(req.TemplateKey) ? "release" : req.TemplateKey!.Trim();
+            var sourceType = string.IsNullOrWhiteSpace(req.SourceType) ? "changelog-current-week" : req.SourceType!.Trim();
+            var weekKey = string.IsNullOrWhiteSpace(req.WeekKey) ? IsoWeekKey(DateTime.UtcNow) : req.WeekKey!.Trim();
+
+            await Emit("phase", new { phase = "reading-source", label = "正在读取数据源…" });
+
+            (string markdown, string summary) src;
+            try
+            {
+                src = await _autopilot.LoadSourceAsync(
+                    new PosterAutopilotInput
+                    {
+                        TemplateKey = templateKey,
+                        SourceType = sourceType,
+                        FreeformContent = req.FreeformContent,
+                        SourceRef = req.SourceRef,
+                        ForcePageCount = req.PageCount,
+                    }, ct);
+            }
+            catch (InvalidOperationException ex)
+            {
+                await EmitError(ex.Message);
+                return;
+            }
+
+            await Emit("source", new { summary = src.summary });
+            await Emit("phase", new { phase = "writing", label = "AI 正在编排 4-6 页文案…" });
+
+            PosterAutopilotResult result;
+            try
+            {
+                result = await _autopilot.InvokeLlmAsync(
+                    templateKey, req.PageCount, src.markdown, src.summary, userId, ct);
+            }
+            catch (InvalidOperationException ex)
+            {
+                await EmitError(ex.Message);
+                return;
+            }
+
+            if (!string.IsNullOrWhiteSpace(result.Model))
+            {
+                await Emit("model", new { model = result.Model, platform = result.Platform });
+            }
+
+            // 落库成 draft
+            var template = PosterTemplateRegistry.FindOrDefault(templateKey);
+            var now = DateTime.UtcNow;
+            var poster = new WeeklyPosterAnnouncement
+            {
+                WeekKey = weekKey,
+                Title = string.IsNullOrWhiteSpace(result.Title)
+                    ? $"{template.Emoji} {template.Label} · {weekKey}"
+                    : result.Title,
+                Subtitle = result.Subtitle,
+                Status = WeeklyPosterStatus.Draft,
+                TemplateKey = template.Key,
+                PresentationMode = "static",
+                SourceType = sourceType,
+                SourceRef = result.SourceSummary,
+                Pages = result.Pages.Select(p => new WeeklyPosterPage
+                {
+                    Order = p.Order,
+                    Title = p.Title,
+                    Body = p.Body,
+                    ImagePrompt = p.ImagePrompt,
+                    AccentColor = p.AccentColor,
+                    ImageUrl = null,
+                }).ToList(),
+                CtaText = template.Key switch
+                {
+                    "hotfix" => "查看完整修复清单",
+                    "promo" => "立即体验",
+                    "sale" => "马上参与",
+                    _ => "阅读完整周报",
+                },
+                CtaUrl = string.IsNullOrWhiteSpace(req.CtaUrl) ? "/changelog" : req.CtaUrl!.Trim(),
+                CreatedBy = userId,
+                CreatedAt = now,
+                UpdatedAt = now,
+            };
+            await _db.WeeklyPosters.InsertOneAsync(poster, cancellationToken: ct);
+
+            // 交错推送每一页 — 用户视觉上看到卡片一张张冒出来
+            var dto = ToDto(poster);
+            await Emit("phase", new { phase = "emitting-pages", label = "页面材质化…" });
+            foreach (var pageDto in dto.Pages)
+            {
+                await Emit("page", new { page = pageDto, total = dto.Pages.Count });
+                await Task.Delay(120, ct);
+            }
+
+            await Emit("done", new { poster = dto });
+        }
+        catch (OperationCanceledException)
+        {
+            // 客户端断开,静默
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "AutopilotStream crashed");
+            await EmitError(ex.Message);
+        }
     }
 
     // ────────────────────────────────────────────────────────────

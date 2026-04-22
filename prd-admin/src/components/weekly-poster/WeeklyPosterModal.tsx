@@ -6,54 +6,45 @@ import { useWeeklyPosterStore } from '@/stores/weeklyPosterStore';
 import type { WeeklyPoster, WeeklyPosterPage } from '@/services';
 
 /**
- * 周报海报轮播弹窗(主页挂载)。
+ * 海报轮播弹窗 - 单一职责,props 驱动,不访问 store。
  *
  * 遵守 .claude/rules/frontend-modal.md 的三条硬约束:
- *   1) createPortal(modal, document.body) 脱离祖先 overflow/transform 影响
- *   2) 关键尺寸 inline style(非 Tailwind arbitrary value)
- *   3) flex 滚动容器 minHeight: 0 + overflowY: auto + overscrollBehavior: contain
- *
- * 操作:
- *   - 左右箭头 / 键盘 ← → 翻页
- *   - 点击蒙版 / ESC / 右上角 X 关闭
- *   - 关闭后本会话不再自动弹出(dismissedIds 存 sessionStorage)
- *   - 末页显示 CTA 跳转按钮
+ *   1) createPortal(modal, document.body)
+ *   2) 关键尺寸 inline style
+ *   3) flex 滚动容器 minHeight: 0 + overflowY: auto
  */
-export function WeeklyPosterModal() {
-  const currentPoster = useWeeklyPosterStore((s) => s.currentPoster);
-  const shouldShow = useWeeklyPosterStore((s) => s.shouldShowCurrent());
-  const dismiss = useWeeklyPosterStore((s) => s.dismiss);
-
-  if (!shouldShow || !currentPoster) return null;
-  return <PosterModalInner poster={currentPoster} onDismiss={() => dismiss(currentPoster.id)} />;
-}
-
-function PosterModalInner({ poster, onDismiss }: { poster: WeeklyPoster; onDismiss: () => void }) {
+export function PosterCarousel({
+  poster,
+  onDismiss,
+  navigateOnCta = true,
+}: {
+  poster: WeeklyPoster;
+  onDismiss: () => void;
+  /** 点末页 CTA 是否走路由跳转(预览模式可设 false,只关闭弹窗) */
+  navigateOnCta?: boolean;
+}) {
   const navigate = useNavigate();
   const [pageIndex, setPageIndex] = useState(0);
   const touchStartX = useRef<number | null>(null);
 
-  const pages = useMemo(() => [...poster.pages].sort((a, b) => a.order - b.order), [poster.pages]);
+  const pages = useMemo(
+    () => [...poster.pages].sort((a, b) => a.order - b.order),
+    [poster.pages],
+  );
   const totalPages = pages.length;
   const isLastPage = pageIndex === totalPages - 1;
-  const currentPage = pages[pageIndex];
+  const currentPage = pages[Math.min(pageIndex, totalPages - 1)];
 
-  // 键盘操作:← → 翻页、ESC 关闭
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
-        onDismiss();
-      } else if (e.key === 'ArrowLeft') {
-        setPageIndex((i) => Math.max(0, i - 1));
-      } else if (e.key === 'ArrowRight') {
-        setPageIndex((i) => Math.min(totalPages - 1, i + 1));
-      }
+      if (e.key === 'Escape') onDismiss();
+      else if (e.key === 'ArrowLeft') setPageIndex((i) => Math.max(0, i - 1));
+      else if (e.key === 'ArrowRight') setPageIndex((i) => Math.min(totalPages - 1, i + 1));
     };
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
   }, [totalPages, onDismiss]);
 
-  // 阻止背后 body 滚动(弹窗打开期间)
   useEffect(() => {
     const prev = document.body.style.overflow;
     document.body.style.overflow = 'hidden';
@@ -63,16 +54,17 @@ function PosterModalInner({ poster, onDismiss }: { poster: WeeklyPoster; onDismi
   }, []);
 
   const handleCta = () => {
-    const url = poster.ctaUrl || '/changelog';
-    if (url.startsWith('http://') || url.startsWith('https://')) {
-      window.open(url, '_blank', 'noopener,noreferrer');
-    } else {
-      navigate(url);
+    if (navigateOnCta) {
+      const url = poster.ctaUrl || '/changelog';
+      if (url.startsWith('http://') || url.startsWith('https://')) {
+        window.open(url, '_blank', 'noopener,noreferrer');
+      } else {
+        navigate(url);
+      }
     }
     onDismiss();
   };
 
-  // 触摸手势翻页(移动端友好)
   const handleTouchStart = (e: React.TouchEvent) => {
     touchStartX.current = e.touches[0]?.clientX ?? null;
   };
@@ -112,7 +104,6 @@ function PosterModalInner({ poster, onDismiss }: { poster: WeeklyPoster; onDismi
             '0 40px 80px -20px rgba(0,0,0,0.6), 0 0 120px rgba(124,58,237,0.18), inset 0 1px 0 rgba(255,255,255,0.08)',
         }}
       >
-        {/* 关闭按钮 */}
         <button
           type="button"
           onClick={onDismiss}
@@ -127,20 +118,18 @@ function PosterModalInner({ poster, onDismiss }: { poster: WeeklyPoster; onDismi
           <X size={16} />
         </button>
 
-        {/* 品牌标识 — 左上角 */}
         <div
           className="absolute top-4 left-4 z-20 inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-medium tracking-[0.08em] uppercase"
           style={{
-            background: 'rgba(124,58,237,0.18)',
-            border: '1px solid rgba(124,58,237,0.3)',
-            color: '#c4b5fd',
+            background: 'rgba(255,255,255,0.08)',
+            border: '1px solid rgba(255,255,255,0.12)',
+            color: 'rgba(255,255,255,0.75)',
           }}
         >
           <Sparkles size={10} />
-          <span>本周更新 · {poster.weekKey}</span>
+          <span>{poster.weekKey}</span>
         </div>
 
-        {/* 海报页(flex-1 min-h-0 配合 overflow) */}
         <div
           className="flex-1 flex flex-col relative"
           style={{ minHeight: 0, overflow: 'hidden' }}
@@ -149,7 +138,6 @@ function PosterModalInner({ poster, onDismiss }: { poster: WeeklyPoster; onDismi
           <PosterPageView page={currentPage} />
         </div>
 
-        {/* 翻页控件 + 指示器 + CTA */}
         <div
           className="shrink-0 flex items-center justify-between gap-4 px-6 py-4"
           style={{
@@ -157,7 +145,6 @@ function PosterModalInner({ poster, onDismiss }: { poster: WeeklyPoster; onDismi
             borderTop: '1px solid rgba(255,255,255,0.08)',
           }}
         >
-          {/* 上一页 */}
           <button
             type="button"
             onClick={() => setPageIndex((i) => Math.max(0, i - 1))}
@@ -173,7 +160,6 @@ function PosterModalInner({ poster, onDismiss }: { poster: WeeklyPoster; onDismi
             <ChevronLeft size={18} />
           </button>
 
-          {/* 指示器 */}
           <div className="flex items-center gap-1.5">
             {pages.map((_, i) => (
               <button
@@ -187,25 +173,22 @@ function PosterModalInner({ poster, onDismiss }: { poster: WeeklyPoster; onDismi
                   height: 6,
                   background:
                     i === pageIndex
-                      ? 'linear-gradient(90deg, #00f0ff, #7c3aed)'
+                      ? 'rgba(255,255,255,0.85)'
                       : 'rgba(255,255,255,0.25)',
-                  boxShadow:
-                    i === pageIndex ? '0 0 10px rgba(124,58,237,0.5)' : 'none',
                 }}
               />
             ))}
           </div>
 
-          {/* 下一页 / CTA */}
           {isLastPage ? (
             <button
               type="button"
               onClick={handleCta}
-              className="shrink-0 inline-flex items-center gap-1.5 px-4 h-9 rounded-full text-[13px] font-medium transition-all hover:scale-[1.03]"
+              className="shrink-0 inline-flex items-center gap-1.5 px-4 h-9 rounded-full text-[13px] font-medium transition-all hover:bg-white/20"
               style={{
-                background: 'linear-gradient(135deg, #00f0ff 0%, #7c3aed 50%, #f43f5e 100%)',
+                background: 'rgba(255,255,255,0.12)',
                 color: '#fff',
-                boxShadow: '0 4px 16px rgba(124,58,237,0.4)',
+                border: '1px solid rgba(255,255,255,0.2)',
               }}
             >
               {poster.ctaText || '阅读完整周报'}
@@ -241,7 +224,6 @@ function PosterPageView({ page }: { page: WeeklyPosterPage | undefined }) {
 
   return (
     <div className="flex-1 flex flex-col" style={{ minHeight: 0 }}>
-      {/* 上半部分:配图或渐变占位 */}
       <div
         className="relative shrink-0"
         style={{
@@ -259,17 +241,15 @@ function PosterPageView({ page }: { page: WeeklyPosterPage | undefined }) {
             draggable={false}
           />
         ) : (
-          // 无图兜底:abstract 纹理 + 大字编号
           <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
             <div
               className="text-[96px] font-black opacity-20 tracking-tight"
-              style={{ color: '#fff', fontFamily: 'var(--font-display, inherit)' }}
+              style={{ color: '#fff' }}
             >
               {(page.order + 1).toString().padStart(2, '0')}
             </div>
           </div>
         )}
-        {/* 底部渐变压暗,保证底部文字在渐变图上也清晰 */}
         <div
           className="absolute inset-x-0 bottom-0 pointer-events-none"
           style={{
@@ -280,7 +260,6 @@ function PosterPageView({ page }: { page: WeeklyPosterPage | undefined }) {
         />
       </div>
 
-      {/* 下半部分:文本(滚动) */}
       <div
         className="flex-1 px-8 pt-6 pb-8"
         style={{
@@ -303,5 +282,23 @@ function PosterPageView({ page }: { page: WeeklyPosterPage | undefined }) {
         </div>
       </div>
     </div>
+  );
+}
+
+/**
+ * 主页弹窗包装 - 从 store 读取当前海报 + 已读状态。
+ * 登录后主页挂载这个组件,有未读就弹。
+ */
+export function WeeklyPosterModal() {
+  const currentPoster = useWeeklyPosterStore((s) => s.currentPoster);
+  const shouldShow = useWeeklyPosterStore((s) => s.shouldShowCurrent());
+  const dismiss = useWeeklyPosterStore((s) => s.dismiss);
+
+  if (!shouldShow || !currentPoster) return null;
+  return (
+    <PosterCarousel
+      poster={currentPoster}
+      onDismiss={() => dismiss(currentPoster.id)}
+    />
   );
 }

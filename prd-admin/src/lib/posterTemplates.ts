@@ -59,8 +59,18 @@ export const SOURCE_TYPES = [
     description: '读取 changelogs/ 的本周碎片(推荐)',
   },
   {
+    key: 'github-commits' as const,
+    label: 'GitHub 最近提交',
+    description: '最近 30 条 commit(跨周,覆盖面最广)',
+  },
+  {
+    key: 'knowledge-base' as const,
+    label: '知识库文档',
+    description: '从文档空间选一篇文章作为海报脚本',
+  },
+  {
     key: 'freeform' as const,
     label: '自定义 markdown',
-    description: '粘贴任何文本(周报原文 / 公告 / 活动说明)',
+    description: '粘贴任何文本(发布公告 / 活动说明)',
   },
 ];

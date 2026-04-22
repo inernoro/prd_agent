@@ -6,7 +6,19 @@ export type WeeklyPosterStatus = 'draft' | 'published' | 'archived';
 
 export type WeeklyPosterTemplateKey = 'release' | 'hotfix' | 'promo' | 'sale';
 export type WeeklyPosterPresentationMode = 'static' | 'fullscreen' | 'interactive';
-export type WeeklyPosterSourceType = 'changelog-current-week' | 'freeform';
+export type WeeklyPosterSourceType =
+  | 'changelog-current-week'
+  | 'github-commits'
+  | 'knowledge-base'
+  | 'freeform';
+
+export interface WeeklyPosterKnowledgeEntryMeta {
+  id: string;
+  title: string;
+  summary?: string | null;
+  contentChars: number;
+  storeId: string;
+}
 
 export interface WeeklyPosterTemplateMeta {
   key: WeeklyPosterTemplateKey;
@@ -28,6 +40,7 @@ export interface WeeklyPosterAutopilotInput {
   templateKey?: WeeklyPosterTemplateKey;
   sourceType?: WeeklyPosterSourceType;
   freeformContent?: string;
+  sourceRef?: string;
   weekKey?: string;
   pageCount?: number;
   ctaUrl?: string;
@@ -159,6 +172,16 @@ export async function autopilotWeeklyPoster(input: WeeklyPosterAutopilotInput) {
   return await apiRequest<WeeklyPosterAutopilotResult>(
     '/api/weekly-posters/autopilot',
     { method: 'POST', body: input }
+  );
+}
+
+/** 知识库文档列表(供向导页选择器使用) */
+export async function listWeeklyPosterKnowledgeEntries(keyword?: string, limit = 50) {
+  const params = new URLSearchParams();
+  if (keyword) params.set('keyword', keyword);
+  params.set('limit', String(limit));
+  return await apiRequest<{ items: WeeklyPosterKnowledgeEntryMeta[] }>(
+    `/api/weekly-posters/knowledge-entries?${params.toString()}`
   );
 }
 

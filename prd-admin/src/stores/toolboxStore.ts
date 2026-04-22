@@ -256,18 +256,18 @@ export const BUILTIN_TOOLS: ToolboxItem[] = [
     usageCount: 0,
     createdAt: new Date().toISOString(),
   },
-  // ========== AI 周报海报工坊 · wip（满足规则 #9 完成标准前保持施工中徽章） ==========
+  // ========== AI 海报工坊 · wip（满足规则 #9 完成标准前保持施工中徽章） ==========
   {
     id: 'builtin-weekly-poster-wizard',
-    name: 'AI 周报海报工坊',
-    description: '选模板+数据源,一键生成 4-5 页带图海报到主页弹窗',
+    name: 'AI 海报工坊',
+    description: '把更新 / 公告 / 活动一键做成主页弹窗海报,AI 写文字自动配图',
     icon: 'Sparkles',
     category: 'builtin',
     type: 'builtin',
     kind: 'tool',
     agentKey: 'report-agent',
     routePath: '/weekly-poster',
-    tags: ['周报', '海报', '向导', 'AI 生成', '主页', 'wip'],
+    tags: ['海报', '弹窗', '主页', '发布', 'wip'],
     wip: true,
     usageCount: 0,
     createdAt: new Date().toISOString(),

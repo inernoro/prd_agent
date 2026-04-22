@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
+import { Link } from 'react-router-dom';
 import {
   Plus,
   Trash2,
@@ -9,6 +10,7 @@ import {
   Clock,
   CheckCircle2,
   FileText,
+  ArrowLeft,
 } from 'lucide-react';
 import {
   listWeeklyPosters,
@@ -191,13 +193,27 @@ export default function WeeklyPosterEditorPage() {
         className="shrink-0 px-6 py-4 flex items-center justify-between"
         style={{ borderBottom: '1px solid rgba(255,255,255,0.08)' }}
       >
-        <div>
-          <div className="text-[10px] font-semibold tracking-[0.14em] uppercase text-indigo-300/70 mb-0.5">
-            REPORT · POSTER
-          </div>
-          <h1 className="text-[18px] font-semibold text-white">周报海报编辑器</h1>
-          <div className="text-[12px] mt-0.5" style={{ color: 'rgba(255,255,255,0.5)' }}>
-            登录用户首次访问主页会弹出当前已发布的海报;末页 CTA 跳转到完整周报。
+        <div className="flex items-center gap-3">
+          <Link
+            to="/weekly-poster"
+            aria-label="返回工坊"
+            className="inline-flex items-center gap-1 px-2.5 h-8 rounded-md text-[12px] transition-colors"
+            style={{
+              color: 'rgba(255,255,255,0.75)',
+              background: 'rgba(255,255,255,0.04)',
+              border: '1px solid rgba(255,255,255,0.12)',
+            }}
+          >
+            <ArrowLeft size={12} /> 返回工坊
+          </Link>
+          <div>
+            <div className="text-[10px] font-semibold tracking-[0.14em] uppercase text-white/45 mb-0.5">
+              Homepage · Poster
+            </div>
+            <h1 className="text-[18px] font-semibold text-white">海报编辑器 · 高级模式</h1>
+            <div className="text-[12px] mt-0.5" style={{ color: 'rgba(255,255,255,0.5)' }}>
+              对已有海报做手动微调;新建走 <Link to="/weekly-poster" className="underline hover:text-white">AI 工坊</Link> 更顺手。
+            </div>
           </div>
         </div>
         <button

@@ -3,8 +3,10 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
 using Microsoft.Extensions.Logging;
+using MongoDB.Driver;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
+using PrdAgent.Infrastructure.Database;
 using PrdAgent.Infrastructure.LlmGateway;
 using PrdAgent.Infrastructure.Services.Changelog;
 
@@ -16,8 +18,23 @@ namespace PrdAgent.Infrastructure.Services.Poster;
 /// </summary>
 public interface IPosterAutopilotService
 {
+    /// <summary>一键生成(非流式):内部合并 LoadSource + InvokeLlm。</summary>
     Task<PosterAutopilotResult> GeneratePagesAsync(
         PosterAutopilotInput input,
+        string userId,
+        CancellationToken ct);
+
+    /// <summary>装载数据源(对外暴露给 SSE 控制器做阶段事件推送)。</summary>
+    Task<(string markdown, string summary)> LoadSourceAsync(
+        PosterAutopilotInput input,
+        CancellationToken ct);
+
+    /// <summary>根据已装载的数据源调 LLM 生成页面。</summary>
+    Task<PosterAutopilotResult> InvokeLlmAsync(
+        string templateKey,
+        int? forcePageCount,
+        string sourceMarkdown,
+        string sourceSummary,
         string userId,
         CancellationToken ct);
 }
@@ -25,10 +42,12 @@ public interface IPosterAutopilotService
 public sealed class PosterAutopilotInput
 {
     public string TemplateKey { get; set; } = "release";
-    /// <summary>数据源类型:changelog-current-week / freeform</summary>
+    /// <summary>数据源类型:changelog-current-week / github-commits / knowledge-base / freeform</summary>
     public string SourceType { get; set; } = "changelog-current-week";
-    /// <summary>当 SourceType = freeform 时,调用方直接塞 markdown 文本</summary>
+    /// <summary>当 SourceType = freeform 时直接塞 markdown</summary>
     public string? FreeformContent { get; set; }
+    /// <summary>当 SourceType = knowledge-base 时为 DocumentEntry 的 Id</summary>
+    public string? SourceRef { get; set; }
     /// <summary>可选:强制页数</summary>
     public int? ForcePageCount { get; set; }
 }
@@ -59,17 +78,20 @@ public sealed class PosterAutopilotService : IPosterAutopilotService
     private readonly ILlmGateway _gateway;
     private readonly ILLMRequestContextAccessor _llmRequestContext;
     private readonly IChangelogReader _changelogReader;
+    private readonly MongoDbContext _db;
     private readonly ILogger<PosterAutopilotService> _logger;
 
     public PosterAutopilotService(
         ILlmGateway gateway,
         ILLMRequestContextAccessor llmRequestContext,
         IChangelogReader changelogReader,
+        MongoDbContext db,
         ILogger<PosterAutopilotService> logger)
     {
         _gateway = gateway;
         _llmRequestContext = llmRequestContext;
         _changelogReader = changelogReader;
+        _db = db;
         _logger = logger;
     }
 
@@ -78,21 +100,34 @@ public sealed class PosterAutopilotService : IPosterAutopilotService
         string userId,
         CancellationToken ct)
     {
-        var template = PosterTemplateRegistry.FindOrDefault(input.TemplateKey);
-        var pageCount = Math.Clamp(input.ForcePageCount ?? template.DefaultPages, 3, 7);
-
-        // ── 1. 装载数据源 ───────────────────────────────
         var (sourceMarkdown, sourceSummary) = await LoadSourceAsync(input, ct);
+        return await InvokeLlmAsync(
+            input.TemplateKey ?? "release",
+            input.ForcePageCount,
+            sourceMarkdown,
+            sourceSummary,
+            userId,
+            ct);
+    }
+
+    public async Task<PosterAutopilotResult> InvokeLlmAsync(
+        string templateKey,
+        int? forcePageCount,
+        string sourceMarkdown,
+        string sourceSummary,
+        string userId,
+        CancellationToken ct)
+    {
         if (string.IsNullOrWhiteSpace(sourceMarkdown))
         {
             throw new InvalidOperationException("数据源为空,请换一个数据源或粘贴 markdown 再试");
         }
 
-        // ── 2. 组 system prompt + user payload ──────────
+        var template = PosterTemplateRegistry.FindOrDefault(templateKey);
+        var pageCount = Math.Clamp(forcePageCount ?? template.DefaultPages, 3, 7);
         var systemPrompt = BuildSystemPrompt(template, pageCount);
         var userContent = $"【数据源:{sourceSummary}】\n\n{Truncate(sourceMarkdown, 12_000)}";
 
-        // ── 3. 调用 Gateway ────────────────────────────
         using var _ = _llmRequestContext.BeginScope(new LlmRequestContext(
             RequestId: Guid.NewGuid().ToString("N"),
             GroupId: null,
@@ -129,7 +164,6 @@ public sealed class PosterAutopilotService : IPosterAutopilotService
             throw new InvalidOperationException(resp.ErrorMessage ?? "模型未返回有效内容");
         }
 
-        // ── 4. 解析 JSON ────────────────────────────────
         var parsed = TryParseAutopilotJson(resp.Content, template, pageCount);
         if (parsed == null)
         {
@@ -148,19 +182,69 @@ public sealed class PosterAutopilotService : IPosterAutopilotService
     // 数据源装载
     // ────────────────────────────────────────────────────────────
 
-    private async Task<(string markdown, string summary)> LoadSourceAsync(PosterAutopilotInput input, CancellationToken ct)
+    public async Task<(string markdown, string summary)> LoadSourceAsync(PosterAutopilotInput input, CancellationToken ct)
     {
         var sourceType = (input.SourceType ?? "changelog-current-week").Trim().ToLowerInvariant();
+        _ = ct;
         switch (sourceType)
         {
             case "freeform":
+            {
                 var freeform = (input.FreeformContent ?? string.Empty).Trim();
                 return (freeform, $"自定义 markdown ({freeform.Length} 字符)");
+            }
+
+            case "github-commits":
+            {
+                var view = await _changelogReader.GetGitHubLogsAsync(30, false).ConfigureAwait(false);
+                if (!view.DataSourceAvailable || view.Logs.Count == 0)
+                {
+                    throw new InvalidOperationException("GitHub 最近提交为空,换一个数据源试试");
+                }
+                var sb = new StringBuilder();
+                sb.Append("# 最近 GitHub 提交\n\n");
+                foreach (var log in view.Logs)
+                {
+                    sb.Append($"- [{log.ShortSha}] {log.Message.Split('\n')[0]} — {log.AuthorName} · {log.CommitTimeUtc:yyyy-MM-dd}\n");
+                }
+                return (sb.ToString(), $"GitHub · 最近 {view.Logs.Count} 条提交");
+            }
+
+            case "knowledge-base":
+            {
+                var entryId = (input.SourceRef ?? string.Empty).Trim();
+                if (string.IsNullOrWhiteSpace(entryId))
+                {
+                    throw new InvalidOperationException("知识库数据源缺少 entryId(sourceRef)");
+                }
+                var entry = await _db.DocumentEntries.Find(x => x.Id == entryId).FirstOrDefaultAsync(ct).ConfigureAwait(false);
+                if (entry == null)
+                {
+                    throw new InvalidOperationException("知识库条目不存在");
+                }
+                if (entry.IsFolder)
+                {
+                    throw new InvalidOperationException("不能选文件夹作为数据源,请选一个具体文档");
+                }
+                var body = (entry.ContentIndex ?? string.Empty).Trim();
+                if (string.IsNullOrWhiteSpace(body))
+                {
+                    body = (entry.Summary ?? string.Empty).Trim();
+                }
+                if (string.IsNullOrWhiteSpace(body))
+                {
+                    throw new InvalidOperationException("该文档没有索引内容,换一个文档试试");
+                }
+                var sb = new StringBuilder();
+                sb.Append($"# {entry.Title}\n\n");
+                if (!string.IsNullOrWhiteSpace(entry.Summary)) sb.Append($"> {entry.Summary}\n\n");
+                sb.Append(body);
+                return (sb.ToString(), $"知识库 · {entry.Title} ({body.Length} 字符)");
+            }
 
             case "changelog-current-week":
             default:
             {
-                _ = ct; // 数据源读取内部自带超时;这里仅声明为未使用
                 var view = await _changelogReader.GetCurrentWeekAsync(false).ConfigureAwait(false);
                 if (!view.DataSourceAvailable || view.Fragments.Count == 0)
                 {

@@ -9,15 +9,16 @@ import {
   RefreshCw,
 } from 'lucide-react';
 import {
-  autopilotWeeklyPoster,
   generateWeeklyPosterPageImage,
   publishWeeklyPoster,
   listWeeklyPosterTemplates,
+  listWeeklyPosterKnowledgeEntries,
   type WeeklyPoster,
   type WeeklyPosterPage,
   type WeeklyPosterTemplateKey,
   type WeeklyPosterTemplateMeta,
   type WeeklyPosterSourceType,
+  type WeeklyPosterKnowledgeEntryMeta,
 } from '@/services';
 import {
   POSTER_TEMPLATES_SEED,
@@ -25,9 +26,10 @@ import {
   PRESENTATION_MODES,
   SOURCE_TYPES,
 } from '@/lib/posterTemplates';
-import { WeeklyPosterModal } from '@/components/weekly-poster/WeeklyPosterModal';
+import { PosterCarousel } from '@/components/weekly-poster/WeeklyPosterModal';
 import { useWeeklyPosterStore } from '@/stores/weeklyPosterStore';
 import { MapSpinner } from '@/components/ui/VideoLoader';
+import { useSseStream } from '@/lib/useSseStream';
 import { toast } from '@/lib/toast';
 
 type PageProgress = 'pending' | 'generating-image' | 'done' | 'failed';
@@ -46,8 +48,12 @@ export default function WeeklyPosterWizardPage() {
   const [presentationMode] = useState<'static'>('static');
 
   const [phase, setPhase] = useState<'idle' | 'llm' | 'images' | 'ready'>('idle');
+  const [phaseLabel, setPhaseLabel] = useState<string>('');
   const [poster, setPoster] = useState<WeeklyPoster | null>(null);
   const [modelInfo, setModelInfo] = useState<{ model?: string; platform?: string } | null>(null);
+  const [kbEntries, setKbEntries] = useState<WeeklyPosterKnowledgeEntryMeta[]>([]);
+  const [kbEntryId, setKbEntryId] = useState<string>('');
+  const [kbLoading, setKbLoading] = useState(false);
   const [sourceSummary, setSourceSummary] = useState<string | null>(null);
   const [pageProgress, setPageProgress] = useState<Record<number, PageProgress>>({});
   const [previewOpen, setPreviewOpen] = useState(false);
@@ -62,54 +68,127 @@ export default function WeeklyPosterWizardPage() {
     });
   }, []);
 
-  const handleAutopilot = useCallback(async () => {
-    if (busy) return;
-    if (sourceType === 'freeform' && freeformContent.trim().length < 40) {
-      toast.error('自定义 markdown 至少 40 个字符');
-      return;
-    }
-    setPhase('llm');
-    setPoster(null);
-    setModelInfo(null);
-    setPageProgress({});
-
-    const res = await autopilotWeeklyPoster({
-      templateKey,
-      sourceType,
-      freeformContent: sourceType === 'freeform' ? freeformContent : undefined,
+  // 切到知识库数据源时懒加载条目列表
+  useEffect(() => {
+    if (sourceType !== 'knowledge-base' || kbEntries.length > 0 || kbLoading) return;
+    setKbLoading(true);
+    void listWeeklyPosterKnowledgeEntries().then((res) => {
+      setKbLoading(false);
+      if (res.success && res.data) setKbEntries(res.data.items);
     });
-    if (!res.success || !res.data) {
-      setPhase('idle');
-      toast.error(res.error?.message || '生成失败,换个数据源或稍后再试');
-      return;
-    }
+  }, [sourceType, kbEntries.length, kbLoading]);
 
-    const draft = res.data.poster;
-    setPoster(draft);
-    setModelInfo({ model: res.data.model ?? undefined, platform: res.data.platform ?? undefined });
-    setSourceSummary(res.data.sourceSummary ?? null);
-    const initial: Record<number, PageProgress> = {};
-    draft.pages.forEach((p) => { initial[p.order] = 'pending'; });
-    setPageProgress(initial);
-    setPhase('images');
-
-    await runWithConcurrency(
-      draft.pages.map((p) => p.order),
-      3,
-      async (order) => {
+  // ── 图片生成流水线(SSE done 后调用;单页重生也复用) ──
+  const runImageGenPipeline = useCallback(
+    async (posterId: string, orders: number[]) => {
+      setPhase('images');
+      await runWithConcurrency(orders, 3, async (order) => {
         setPageProgress((prev) => ({ ...prev, [order]: 'generating-image' }));
-        const gen = await generateWeeklyPosterPageImage(draft.id, order);
+        const gen = await generateWeeklyPosterPageImage(posterId, order);
         if (!gen.success || !gen.data) {
           setPageProgress((prev) => ({ ...prev, [order]: 'failed' }));
           return;
         }
         setPoster(gen.data);
         setPageProgress((prev) => ({ ...prev, [order]: 'done' }));
+      });
+      setPhase('ready');
+      toast.success('生成完毕,点「预览」看看效果');
+    },
+    [],
+  );
+
+  // ── SSE 流:阶段 / 数据源 / 模型 / 逐页 / 完成 / 错误 ──
+  const sse = useSseStream<unknown>({
+    url: '/api/weekly-posters/autopilot/stream',
+    method: 'POST',
+    onEvent: {
+      phase: (data) => {
+        const d = data as { label?: string; phase?: string };
+        setPhaseLabel(d.label || d.phase || '');
       },
-    );
-    setPhase('ready');
-    toast.success('生成完毕,点「预览」看看效果');
-  }, [busy, templateKey, sourceType, freeformContent]);
+      source: (data) => {
+        const d = data as { summary?: string };
+        setSourceSummary(d.summary ?? null);
+      },
+      model: (data) => {
+        const d = data as { model?: string; platform?: string };
+        setModelInfo({ model: d.model, platform: d.platform });
+      },
+      page: (data) => {
+        const d = data as { page: WeeklyPosterPage };
+        setPoster((prev) => {
+          if (!prev) {
+            // 未出现过的海报 stub:用当前模板兜底,done 事件会覆盖为完整对象
+            return {
+              id: '',
+              weekKey: '',
+              title: '',
+              subtitle: null,
+              status: 'draft',
+              templateKey,
+              presentationMode: 'static',
+              sourceType,
+              sourceRef: null,
+              pages: [d.page],
+              ctaText: '',
+              ctaUrl: '/changelog',
+              publishedAt: null,
+              updatedAt: new Date().toISOString(),
+            };
+          }
+          if (prev.pages.some((p) => p.order === d.page.order)) return prev;
+          return { ...prev, pages: [...prev.pages, d.page].sort((a, b) => a.order - b.order) };
+        });
+        setPageProgress((prev) => ({ ...prev, [d.page.order]: 'pending' }));
+      },
+    },
+    onDone: (raw) => {
+      const data = raw as { poster?: WeeklyPoster };
+      if (!data.poster) {
+        toast.error('生成响应缺少 poster 字段');
+        setPhase('idle');
+        return;
+      }
+      setPoster(data.poster);
+      const orders = data.poster.pages.map((p) => p.order);
+      void runImageGenPipeline(data.poster.id, orders);
+    },
+    onError: (msg) => {
+      setPhase('idle');
+      setPhaseLabel('');
+      toast.error(msg || '生成失败,换个数据源或稍后再试');
+    },
+  });
+
+  const handleAutopilot = useCallback(async () => {
+    if (busy) return;
+    if (sourceType === 'freeform' && freeformContent.trim().length < 40) {
+      toast.error('自定义 markdown 至少 40 个字符');
+      return;
+    }
+    if (sourceType === 'knowledge-base' && !kbEntryId) {
+      toast.error('请先选一篇知识库文档作为数据源');
+      return;
+    }
+
+    // 重置
+    setPhase('llm');
+    setPhaseLabel('连接 AI 模型…');
+    setPoster(null);
+    setModelInfo(null);
+    setSourceSummary(null);
+    setPageProgress({});
+
+    await sse.start({
+      body: {
+        templateKey,
+        sourceType,
+        freeformContent: sourceType === 'freeform' ? freeformContent : undefined,
+        sourceRef: sourceType === 'knowledge-base' ? kbEntryId : undefined,
+      },
+    });
+  }, [busy, templateKey, sourceType, freeformContent, kbEntryId, sse]);
 
   const handleRegenerateImage = useCallback(async (order: number) => {
     if (!poster || busy) return;
@@ -143,19 +222,25 @@ export default function WeeklyPosterWizardPage() {
       className="h-full min-h-0 overflow-y-auto"
       style={{ background: 'var(--bg-base)', overscrollBehavior: 'contain' }}
     >
+      <style>{`
+        @keyframes posterPageIn {
+          from { opacity: 0; transform: translateY(8px); }
+          to   { opacity: 1; transform: translateY(0); }
+        }
+      `}</style>
       <div className="max-w-[1080px] mx-auto px-8 py-8 pb-24">
         {/* 顶栏 */}
         <div className="flex items-start justify-between gap-4 mb-6">
           <div>
             <div className="text-[10px] font-semibold tracking-[0.14em] uppercase mb-1"
               style={{ color: 'rgba(255,255,255,0.4)' }}>
-              Report · Poster
+              Homepage · Poster
             </div>
             <h1 className="text-[22px] font-semibold tracking-tight text-white">
-              周报海报工坊
+              海报工坊
             </h1>
             <p className="text-[13px] mt-1" style={{ color: 'rgba(255,255,255,0.55)' }}>
-              选模板 · 选数据源 · 一键生成 — 文字由 AI 写,图片自动配
+              把更新 / 公告 / 活动一键做成主页弹窗海报 — AI 写文字,自动配图
             </p>
           </div>
           <Link
@@ -253,6 +338,38 @@ export default function WeeklyPosterWizardPage() {
                 }}
               />
             )}
+            {sourceType === 'knowledge-base' && (
+              <div className="mt-2.5">
+                {kbLoading ? (
+                  <div className="flex items-center gap-2 text-[12px] text-white/50 px-3 py-2">
+                    <MapSpinner size={12} /> 加载知识库列表…
+                  </div>
+                ) : kbEntries.length === 0 ? (
+                  <div className="text-[12px] text-white/50 px-3 py-2">
+                    知识库里还没有可用文档,去「百宝箱 → 知识库」上传一份再来。
+                  </div>
+                ) : (
+                  <select
+                    value={kbEntryId}
+                    onChange={(e) => setKbEntryId(e.target.value)}
+                    disabled={busy}
+                    className="w-full px-3 py-2 rounded-md text-[12px] outline-none"
+                    style={{
+                      background: 'rgba(0,0,0,0.25)',
+                      border: '1px solid rgba(255,255,255,0.12)',
+                      color: 'rgba(255,255,255,0.9)',
+                    }}
+                  >
+                    <option value="">— 选一篇文档 —</option>
+                    {kbEntries.map((entry) => (
+                      <option key={entry.id} value={entry.id} style={{ background: '#111' }}>
+                        {entry.title} ({entry.contentChars} 字)
+                      </option>
+                    ))}
+                  </select>
+                )}
+              </div>
+            )}
           </Section>
 
           {/* ③ 展示形态 */}
@@ -310,7 +427,7 @@ export default function WeeklyPosterWizardPage() {
               }}
             >
               {phase === 'llm' ? (
-                <><MapSpinner size={14} /> 正在写文案…</>
+                <><MapSpinner size={14} /> {phaseLabel || '启动中…'}</>
               ) : phase === 'images' ? (
                 <><MapSpinner size={14} /> 配图生成中({countDone(pageProgress)}/{Object.keys(pageProgress).length})</>
               ) : phase === 'ready' ? (
@@ -394,7 +511,11 @@ export default function WeeklyPosterWizardPage() {
       </div>
 
       {previewOpen && poster && (
-        <PreviewPortal poster={poster} onClose={() => setPreviewOpen(false)} />
+        <PosterCarousel
+          poster={poster}
+          onDismiss={() => setPreviewOpen(false)}
+          navigateOnCta={false}
+        />
       )}
     </div>
   );
@@ -430,6 +551,9 @@ function ResultPageCard({
   return (
     <div
       className="surface rounded-xl overflow-hidden flex flex-col"
+      style={{
+        animation: 'posterPageIn 320ms ease-out both',
+      }}
     >
       {/* 图片区 */}
       <div
@@ -512,28 +636,6 @@ function ResultPageCard({
       </div>
     </div>
   );
-}
-
-function PreviewPortal({ poster, onClose }: { poster: WeeklyPoster; onClose: () => void }) {
-  useEffect(() => {
-    const prev = useWeeklyPosterStore.getState().currentPoster;
-    useWeeklyPosterStore.setState({ currentPoster: poster, dismissedIds: new Set() });
-    return () => {
-      useWeeklyPosterStore.setState({
-        currentPoster: prev,
-        dismissedIds: prev ? new Set() : new Set([poster.id]),
-      });
-    };
-  }, [poster]);
-
-  useEffect(() => {
-    const unsub = useWeeklyPosterStore.subscribe((s) => {
-      if (s.dismissedIds.has(poster.id)) onClose();
-    });
-    return () => unsub();
-  }, [poster.id, onClose]);
-
-  return <WeeklyPosterModal />;
 }
 
 // ────────────────────────────────────────────────────────────

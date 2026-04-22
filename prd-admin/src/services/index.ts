@@ -1385,6 +1385,7 @@ export {
   listWeeklyPosterTemplates,
   autopilotWeeklyPoster,
   generateWeeklyPosterPageImage,
+  listWeeklyPosterKnowledgeEntries,
 } from '@/services/real/weeklyPoster';
 export type {
   WeeklyPoster,
@@ -1398,6 +1399,7 @@ export type {
   WeeklyPosterTemplateMeta,
   WeeklyPosterAutopilotResult,
   WeeklyPosterAutopilotInput,
+  WeeklyPosterKnowledgeEntryMeta,
 } from '@/services/real/weeklyPoster';
 
 // AI Toolbox 百宝箱
