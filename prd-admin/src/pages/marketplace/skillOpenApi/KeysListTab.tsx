@@ -1,6 +1,5 @@
 import { useEffect, useState } from 'react';
 import { Copy, Download, KeyRound, Plus, RefreshCw, Trash2, XCircle } from 'lucide-react';
-import { Button } from '@/components/design/Button';
 import { MapSpinner } from '@/components/ui/VideoLoader';
 import { toast } from '@/lib/toast';
 import {
@@ -133,57 +132,75 @@ export function KeysListTab({ keys, loading, allowedScopes, onRefresh, openCreat
 
   if (keys.length === 0) {
     return (
-      <div className="flex flex-col items-center justify-center py-12 gap-4">
-        <KeyRound size={40} style={{ color: 'var(--text-muted)', opacity: 0.5 }} />
+      <div className="flex flex-col items-center justify-center py-14 gap-4 h-full">
+        <KeyRound size={40} style={{ color: 'var(--text-muted)', opacity: 0.45 }} />
         <div className="text-sm" style={{ color: 'var(--text-muted)' }}>
           你还没有创建任何 API Key
         </div>
-        <div className="text-xs max-w-md text-center" style={{ color: 'var(--text-muted)', opacity: 0.7 }}>
+        <div className="text-xs max-w-md text-center leading-relaxed" style={{ color: 'var(--text-muted)', opacity: 0.7 }}>
           创建一个 Key，让 Cursor / Claude Code / 任意 AI Agent 能授权浏览和下载海鲜市场的技能包。
         </div>
-        <div className="flex items-center gap-2 flex-wrap justify-center">
-          <Button variant="primary" size="sm" onClick={() => setShowCreate(true)}>
-            <KeyRound size={13} />
-            创建第一个 Key
-          </Button>
-          <button
-            type="button"
-            onClick={handleDownloadSkill}
-            disabled={downloading}
-            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs transition-all"
-            style={{
-              background: 'rgba(56, 189, 248, 0.14)',
-              border: '1px solid rgba(56, 189, 248, 0.35)',
-              color: 'rgba(186, 230, 253, 1)',
-            }}
-          >
-            <Download size={12} />
-            {downloading ? '下载中…' : '下载技能包'}
-          </button>
-        </div>
+        <button
+          type="button"
+          onClick={() => setShowCreate(true)}
+          className="mt-1 inline-flex items-center gap-1.5 px-4 py-2.5 rounded-xl text-[12px] font-semibold transition-all"
+          style={{
+            background:
+              'linear-gradient(135deg, rgba(56, 189, 248, 0.85) 0%, rgba(14, 165, 233, 0.85) 100%)',
+            color: '#ffffff',
+            border: '1px solid rgba(186, 230, 253, 0.35)',
+            boxShadow:
+              '0 10px 24px -14px rgba(56, 189, 248, 0.55), inset 0 1px 1px rgba(255, 255, 255, 0.18)',
+          }}
+        >
+          <KeyRound size={13} />
+          创建第一个 Key
+        </button>
+        <button
+          type="button"
+          onClick={handleDownloadSkill}
+          disabled={downloading}
+          className="text-[11px] inline-flex items-center gap-1 hover:opacity-80 transition-opacity"
+          style={{ color: 'var(--text-muted)' }}
+        >
+          <Download size={11} />
+          {downloading ? '下载中…' : '或先下载官方技能包'}
+        </button>
       </div>
     );
   }
 
   return (
     <div className="flex flex-col gap-3">
-      {/* 顶部行动栏：新建 Key（主要） + 下载技能包（次要） */}
+      {/* 顶部行动栏：新建 Key（主 —— 彩色） + 下载技能包（次 —— 幽灵描边） + Key 计数（弱） */}
       <div className="flex items-center gap-2 flex-wrap">
-        <Button variant="primary" size="sm" onClick={() => setShowCreate(true)}>
+        <button
+          type="button"
+          onClick={() => setShowCreate(true)}
+          className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-semibold transition-all"
+          style={{
+            background:
+              'linear-gradient(135deg, rgba(56, 189, 248, 0.85) 0%, rgba(14, 165, 233, 0.85) 100%)',
+            color: '#ffffff',
+            border: '1px solid rgba(186, 230, 253, 0.35)',
+            boxShadow:
+              '0 8px 20px -12px rgba(56, 189, 248, 0.55), inset 0 1px 1px rgba(255, 255, 255, 0.16)',
+          }}
+        >
           <Plus size={13} />
           新建 Key
-        </Button>
+        </button>
         <button
           type="button"
           onClick={handleDownloadSkill}
           disabled={downloading}
-          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs transition-all"
+          className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs transition-all hover:bg-white/5"
           style={{
-            background: 'rgba(56, 189, 248, 0.14)',
-            border: '1px solid rgba(56, 189, 248, 0.35)',
-            color: 'rgba(186, 230, 253, 1)',
+            background: 'transparent',
+            border: '1px solid rgba(255, 255, 255, 0.14)',
+            color: 'var(--text-secondary)',
           }}
-          title="下载官方客户端技能包，解压到 ~/.claude/skills/ 后 AI 就知道怎么调开放接口"
+          title="下载 findmapskills 官方技能包，解压到 ~/.claude/skills/ 后 AI 就知道怎么调开放接口"
         >
           <Download size={12} />
           {downloading ? '下载中…' : '下载技能包'}

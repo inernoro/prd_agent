@@ -1,4 +1,4 @@
-import { ArrowRight, Bot, BookOpen, Clock, Download, KeyRound, Shield, Wrench } from 'lucide-react';
+import { ArrowRight, Bot, Wrench } from 'lucide-react';
 
 interface Props {
   /** 用户点了"手动接入"：切到使用指南 Tab */
@@ -8,20 +8,20 @@ interface Props {
 }
 
 /**
- * 「接入 AI」弹窗落地页 —— 只给用户两个选择 + 三步时间线 + 安全提示，
- * 让面板不再有"下半部分空着"的黑洞。
+ * 「接入 AI」弹窗落地页 —— 日式极简广告风：
  *
- * 视觉对齐：
- *  - 不使用高饱和紫色单色，而是用和外层液态玻璃同家的半透明面板
- *  - 「智能体接入」用青蓝色调（和整体 Key 状态色统一），仅以 ⭐ 徽章标记推荐
- *  - 流程时间线沿用 `frontend-architecture.md` 的注册表风格
+ *   - 一屏一个焦点：两张分支选择卡 = 唯一行动入口，其他一律退让
+ *   - 卡片自己就是按钮（整张可点），不再塞内嵌的「开始 →」小按钮
+ *     （避免"卡片+按钮"的焦点重复）
+ *   - 辅助信息压缩为一行灰字足注，不再用彩色徽章 / 时间线分散注意力
+ *   - 上下由 flex + justify-center 撑开，让留白成为构图的一部分
  */
 export function StartTab({ onChooseManual, onChooseAgent }: Props) {
   return (
-    <div className="flex flex-col gap-5 h-full min-h-0">
-      {/* 大标题 + 副标题 */}
-      <div className="px-0.5">
-        <div className="text-base font-semibold mb-0.5" style={{ color: 'var(--text-primary)' }}>
+    <div className="flex flex-col gap-8 h-full min-h-0 justify-center">
+      {/* 标题 */}
+      <div className="px-0.5 text-center">
+        <div className="text-[15px] font-semibold mb-1" style={{ color: 'var(--text-primary)' }}>
           选一条接入方式开始
         </div>
         <div className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
@@ -29,209 +29,110 @@ export function StartTab({ onChooseManual, onChooseAgent }: Props) {
         </div>
       </div>
 
-      {/* 两个大卡片 */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-        {/* 智能体接入（推荐）—— 青蓝色调，和外壳玻璃融在一起 */}
+      {/* 两个大卡片：整张卡片 = 按钮 */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         <button
           type="button"
           onClick={onChooseAgent}
-          className="group text-left rounded-2xl p-4 transition-all relative overflow-hidden"
+          className="group text-left rounded-2xl p-5 transition-all relative overflow-hidden"
           style={{
             background:
-              'linear-gradient(135deg, rgba(56, 189, 248, 0.14) 0%, rgba(79, 70, 229, 0.08) 100%)',
+              'linear-gradient(135deg, rgba(56, 189, 248, 0.12) 0%, rgba(99, 102, 241, 0.06) 100%)',
             border: '1px solid rgba(56, 189, 248, 0.32)',
             boxShadow:
-              '0 10px 30px -18px rgba(56, 189, 248, 0.35), inset 0 1px 1px rgba(255, 255, 255, 0.06)',
+              '0 12px 36px -20px rgba(56, 189, 248, 0.38), inset 0 1px 1px rgba(255, 255, 255, 0.06)',
           }}
         >
           <div
-            className="absolute top-3 right-3 inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[10px] font-medium"
-            style={{
-              background: 'rgba(56, 189, 248, 0.2)',
-              color: 'rgba(186, 230, 253, 0.98)',
-              border: '1px solid rgba(56, 189, 248, 0.4)',
-            }}
+            className="absolute top-4 right-4 text-[10px] font-medium"
+            style={{ color: 'rgba(186, 230, 253, 0.85)', letterSpacing: '0.04em' }}
           >
             ⭐ 推荐
           </div>
 
           <div
-            className="w-10 h-10 rounded-xl flex items-center justify-center mb-3"
+            className="w-11 h-11 rounded-xl flex items-center justify-center mb-4"
             style={{
-              background: 'rgba(56, 189, 248, 0.18)',
-              border: '1px solid rgba(56, 189, 248, 0.35)',
+              background: 'rgba(56, 189, 248, 0.16)',
+              border: '1px solid rgba(56, 189, 248, 0.32)',
             }}
           >
-            <Bot size={18} style={{ color: 'rgba(186, 230, 253, 1)' }} />
+            <Bot size={20} style={{ color: 'rgba(186, 230, 253, 1)' }} />
           </div>
-          <div className="text-[13px] font-semibold mb-1" style={{ color: 'var(--text-primary)' }}>
+
+          <div className="text-[14px] font-semibold mb-1.5" style={{ color: 'var(--text-primary)' }}>
             智能体接入
           </div>
-          <div className="text-[11px] leading-relaxed mb-3" style={{ color: 'rgba(224, 242, 254, 0.78)' }}>
-            一键生成 Key + 复制提示词粘贴给 Claude Code / Cursor —— AI 会自己配置环境变量、下载 findmapskills 技能，立即接通。
+          <div className="text-[11.5px] leading-relaxed" style={{ color: 'rgba(224, 242, 254, 0.72)' }}>
+            一键生成 Key + 复制提示词粘贴给 Claude Code / Cursor ——
+            <br className="hidden md:inline" />
+            AI 自己装 findmapskills 技能，立即接通。
           </div>
+
           <div
-            className="inline-flex items-center gap-1 text-[11px] font-medium px-2.5 py-1 rounded-lg group-hover:gap-1.5 transition-all"
-            style={{
-              background: 'rgba(56, 189, 248, 0.2)',
-              color: 'rgba(186, 230, 253, 1)',
-              border: '1px solid rgba(56, 189, 248, 0.42)',
-            }}
+            className="mt-4 inline-flex items-center gap-1.5 text-[11px] font-medium"
+            style={{ color: 'rgba(186, 230, 253, 0.95)' }}
           >
             开始
-            <ArrowRight size={11} />
+            <ArrowRight
+              size={12}
+              className="transition-transform group-hover:translate-x-0.5"
+              style={{ opacity: 0.85 }}
+            />
           </div>
         </button>
 
-        {/* 手动接入 */}
         <button
           type="button"
           onClick={onChooseManual}
-          className="group text-left rounded-2xl p-4 transition-all relative"
+          className="group text-left rounded-2xl p-5 transition-all"
           style={{
-            background: 'rgba(255, 255, 255, 0.035)',
+            background: 'rgba(255, 255, 255, 0.03)',
             border: '1px solid rgba(255, 255, 255, 0.1)',
             boxShadow: 'inset 0 1px 1px rgba(255, 255, 255, 0.04)',
           }}
         >
           <div
-            className="w-10 h-10 rounded-xl flex items-center justify-center mb-3"
+            className="w-11 h-11 rounded-xl flex items-center justify-center mb-4"
             style={{
-              background: 'rgba(148, 163, 184, 0.14)',
-              border: '1px solid rgba(148, 163, 184, 0.28)',
+              background: 'rgba(148, 163, 184, 0.12)',
+              border: '1px solid rgba(148, 163, 184, 0.24)',
             }}
           >
-            <Wrench size={18} style={{ color: 'rgba(203, 213, 225, 1)' }} />
+            <Wrench size={20} style={{ color: 'rgba(203, 213, 225, 1)' }} />
           </div>
-          <div className="text-[13px] font-semibold mb-1" style={{ color: 'var(--text-primary)' }}>
+
+          <div className="text-[14px] font-semibold mb-1.5" style={{ color: 'var(--text-primary)' }}>
             手动接入
           </div>
-          <div className="text-[11px] leading-relaxed mb-3" style={{ color: 'var(--text-muted)' }}>
-            看文档、抄 curl / TypeScript / Python 代码自己写 —— 适合想理解接口细节、或要把调用集成到现有 CI / 工具链的开发者。
+          <div className="text-[11.5px] leading-relaxed" style={{ color: 'var(--text-muted)' }}>
+            看文档、抄 curl / TypeScript / Python 代码自己写 ——
+            <br className="hidden md:inline" />
+            适合想理解接口细节或集成到 CI / 工具链的开发者。
           </div>
+
           <div
-            className="inline-flex items-center gap-1 text-[11px] font-medium px-2.5 py-1 rounded-lg group-hover:gap-1.5 transition-all"
-            style={{
-              background: 'rgba(255, 255, 255, 0.05)',
-              color: 'var(--text-secondary)',
-              border: '1px solid rgba(255, 255, 255, 0.14)',
-            }}
+            className="mt-4 inline-flex items-center gap-1.5 text-[11px] font-medium"
+            style={{ color: 'var(--text-secondary)' }}
           >
-            <BookOpen size={11} />
             查看使用指南
+            <ArrowRight
+              size={12}
+              className="transition-transform group-hover:translate-x-0.5"
+              style={{ opacity: 0.7 }}
+            />
           </div>
         </button>
       </div>
 
-      {/* 智能体接入 3 步时间线 —— 给用户"我点了会发生什么"的确定感 */}
+      {/* 一行足注：替代之前的双栏信息框，降到最弱 */}
       <div
-        className="rounded-2xl p-4"
-        style={{
-          background: 'rgba(255, 255, 255, 0.025)',
-          border: '1px solid rgba(255, 255, 255, 0.08)',
-        }}
+        className="text-[10.5px] text-center"
+        style={{ color: 'var(--text-muted)', opacity: 0.65, letterSpacing: '0.01em' }}
       >
-        <div className="text-[11px] font-medium mb-3 inline-flex items-center gap-1.5" style={{ color: 'var(--text-secondary)' }}>
-          <Clock size={12} />
-          智能体接入 3 步，30 秒跑通
-        </div>
-        <ol className="grid grid-cols-1 md:grid-cols-3 gap-3">
-          {[
-            { icon: KeyRound, title: '生成 Key', desc: '点「开始」→ 勾选权限 → 一键创建' },
-            { icon: Bot, title: '复制指令', desc: '创建完点「复制给智能体使用」' },
-            { icon: Download, title: '粘给 AI', desc: 'AI 自己装 findmapskills 技能' },
-          ].map((step, idx) => {
-            const Icon = step.icon;
-            return (
-              <li key={step.title} className="flex items-start gap-2.5">
-                <div
-                  className="w-7 h-7 rounded-lg flex items-center justify-center shrink-0 text-[10px] font-mono relative"
-                  style={{
-                    background: 'rgba(56, 189, 248, 0.12)',
-                    border: '1px solid rgba(56, 189, 248, 0.28)',
-                    color: 'rgba(186, 230, 253, 1)',
-                  }}
-                >
-                  <Icon size={13} />
-                  <span
-                    className="absolute -top-1 -right-1 w-3.5 h-3.5 rounded-full text-[9px] flex items-center justify-center font-medium"
-                    style={{
-                      background: 'rgba(56, 189, 248, 0.8)',
-                      color: 'white',
-                    }}
-                  >
-                    {idx + 1}
-                  </span>
-                </div>
-                <div className="min-w-0">
-                  <div className="text-[12px] font-medium" style={{ color: 'var(--text-primary)' }}>
-                    {step.title}
-                  </div>
-                  <div className="text-[10.5px] leading-snug" style={{ color: 'var(--text-muted)' }}>
-                    {step.desc}
-                  </div>
-                </div>
-              </li>
-            );
-          })}
-        </ol>
-      </div>
-
-      {/* 安全 + 生命周期要点 —— 把底部撑起来，同时承接用户对"安全/过期"的预期 */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-        <div
-          className="rounded-2xl p-3.5 flex items-start gap-2.5"
-          style={{
-            background: 'rgba(255, 255, 255, 0.025)',
-            border: '1px solid rgba(255, 255, 255, 0.08)',
-          }}
-        >
-          <div
-            className="w-8 h-8 rounded-lg flex items-center justify-center shrink-0"
-            style={{
-              background: 'rgba(34, 197, 94, 0.14)',
-              border: '1px solid rgba(34, 197, 94, 0.3)',
-            }}
-          >
-            <Shield size={15} style={{ color: 'rgba(134, 239, 172, 1)' }} />
-          </div>
-          <div className="min-w-0">
-            <div className="text-[12px] font-medium mb-0.5" style={{ color: 'var(--text-primary)' }}>
-              密钥只会保存在你自己的环境变量里
-            </div>
-            <div className="text-[10.5px] leading-snug" style={{ color: 'var(--text-muted)' }}>
-              智能体接入提示词会指引 AI 把 Key 写进
-              <code className="font-mono mx-0.5">~/.zshrc</code>
-              或 <code className="font-mono mx-0.5">~/.bashrc</code>，不会入 git 仓库。明文只显示一次，后端只存 SHA256 哈希。
-            </div>
-          </div>
-        </div>
-        <div
-          className="rounded-2xl p-3.5 flex items-start gap-2.5"
-          style={{
-            background: 'rgba(255, 255, 255, 0.025)',
-            border: '1px solid rgba(255, 255, 255, 0.08)',
-          }}
-        >
-          <div
-            className="w-8 h-8 rounded-lg flex items-center justify-center shrink-0"
-            style={{
-              background: 'rgba(234, 179, 8, 0.14)',
-              border: '1px solid rgba(234, 179, 8, 0.3)',
-            }}
-          >
-            <Clock size={15} style={{ color: 'rgba(253, 224, 71, 1)' }} />
-          </div>
-          <div className="min-w-0">
-            <div className="text-[12px] font-medium mb-0.5" style={{ color: 'var(--text-primary)' }}>
-              默认 1 年 + 7 天宽限期，UI 随时续期
-            </div>
-            <div className="text-[10.5px] leading-snug" style={{ color: 'var(--text-muted)' }}>
-              到期前 30 天响应头会提示
-              <code className="font-mono mx-0.5">X-AgentApiKey-ExpiringSoon</code>，到期后仍有 7 天宽限期放行。去「我的 Key」点「续期一年」即可。
-            </div>
-          </div>
-        </div>
+        两种方式底层一致：默认 1 年有效期 + 7 天宽限期 + UI 随时续期，不会动不动就 403。
+        <span className="mx-1.5 opacity-50">·</span>
+        明文只显示一次，后端只存 SHA256 哈希。
       </div>
     </div>
   );

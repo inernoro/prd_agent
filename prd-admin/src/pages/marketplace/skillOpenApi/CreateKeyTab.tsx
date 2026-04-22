@@ -1,6 +1,5 @@
 import { useState } from 'react';
-import { AlertTriangle, Bot, Check, Copy, Download, EyeOff, KeyRound, Sparkles } from 'lucide-react';
-import { Button } from '@/components/design/Button';
+import { AlertTriangle, Bot, Check, Copy, Download, EyeOff, Sparkles } from 'lucide-react';
 import { toast } from '@/lib/toast';
 import { createAgentApiKey } from '@/services';
 import {
@@ -158,146 +157,152 @@ curl -L "${skillUrl}" -o /tmp/findmapskills.zip \\
 
   // ==== 明文展示态（创建成功后仅此一次） ====
   if (plaintext) {
+    const primaryLabel = agentMode
+      ? (copiedPrompt ? '已复制指令' : '复制给智能体使用')
+      : (copied ? '已复制' : '复制明文');
+    const primaryIcon = agentMode
+      ? (copiedPrompt ? <Check size={14} /> : <Bot size={14} />)
+      : (copied ? <Check size={14} /> : <Copy size={14} />);
+    const primaryHandler = agentMode ? handleCopyAgentPrompt : handleCopy;
+    const primaryActive = agentMode ? copiedPrompt : copied;
+
+    const handleBackToList = () => {
+      setPlaintext(null);
+      setName('');
+      setDescription('');
+      onBackToList();
+    };
+
     return (
       <div className="flex flex-col gap-4">
-        {/* 智能体模式：顶部引导用户直接复制给 AI */}
-        {agentMode && (
-          <div
-            className="rounded-xl px-4 py-3 flex items-start gap-3"
-            style={{
-              background:
-                'linear-gradient(135deg, rgba(129, 140, 248, 0.18) 0%, rgba(56, 189, 248, 0.1) 100%)',
-              border: '1px solid rgba(129, 140, 248, 0.45)',
-            }}
-          >
-            <Bot size={18} style={{ color: 'rgba(221, 214, 254, 1)' }} className="mt-0.5 shrink-0" />
-            <div className="text-xs leading-relaxed" style={{ color: 'rgba(224, 231, 255, 0.95)' }}>
-              <div className="font-medium mb-0.5" style={{ color: 'var(--text-primary)' }}>
-                Key 已生成 —— 下一步：复制给智能体使用
-              </div>
-              <div className="opacity-90">
-                点下方紫色按钮复制完整指令，粘贴到 Claude Code / Cursor 即可。AI 会自己
-                <code className="font-mono mx-0.5">export</code>
-                环境变量、下载解压技能包、跑一次验证 curl。
-              </div>
-            </div>
-          </div>
-        )}
-
-        <div
-          className="rounded-xl px-4 py-3 flex items-start gap-3"
-          style={{
-            background: 'rgba(234, 179, 8, 0.12)',
-            border: '1px solid rgba(234, 179, 8, 0.4)',
-          }}
-        >
-          <AlertTriangle size={18} style={{ color: 'rgba(253, 224, 71, 1)' }} className="mt-0.5 shrink-0" />
-          <div className="text-xs leading-relaxed" style={{ color: 'rgba(254, 240, 138, 0.95)' }}>
-            <div className="font-medium mb-0.5">请立即保存明文 Key</div>
-            <div className="opacity-90">
-              这是此 Key 唯一一次完整显示。离开此页面后只能看到前缀。丢了就得撤销重建（调用方也要更新）。
-            </div>
+        {/* 一行标题 —— 替代原来紫色大说明框，降到最弱 */}
+        <div className="flex items-start gap-2 px-0.5">
+          <Check
+            size={14}
+            style={{ color: 'rgba(134, 239, 172, 1)' }}
+            className="mt-0.5 shrink-0"
+          />
+          <div className="text-[12px] leading-snug" style={{ color: 'var(--text-primary)' }}>
+            Key 已生成
+            {agentMode && (
+              <span style={{ color: 'var(--text-muted)' }}>
+                ，下一步：<span style={{ color: 'rgba(186, 230, 253, 1)' }}>复制给智能体使用</span>
+              </span>
+            )}
           </div>
         </div>
 
+        {/* 警告：保持，但字号 / 透明度更克制 */}
         <div
-          className="rounded-xl px-4 py-4 font-mono text-sm break-all select-all"
+          className="rounded-xl px-3.5 py-2.5 flex items-start gap-2.5"
           style={{
-            background: 'rgba(0, 0, 0, 0.4)',
-            border: '1px solid rgba(56, 189, 248, 0.3)',
+            background: 'rgba(234, 179, 8, 0.08)',
+            border: '1px solid rgba(234, 179, 8, 0.28)',
+          }}
+        >
+          <AlertTriangle
+            size={14}
+            style={{ color: 'rgba(253, 224, 71, 0.9)' }}
+            className="mt-0.5 shrink-0"
+          />
+          <div className="text-[11px] leading-relaxed" style={{ color: 'rgba(254, 240, 138, 0.85)' }}>
+            <strong className="font-medium">请立即保存明文 Key。</strong>
+            这是唯一一次完整显示，离开此页面后只看得到前缀。
+          </div>
+        </div>
+
+        {/* Key 明文 */}
+        <div
+          className="rounded-xl px-4 py-3.5 font-mono text-[13px] break-all select-all text-center"
+          style={{
+            background: 'rgba(0, 0, 0, 0.35)',
+            border: '1px solid rgba(56, 189, 248, 0.22)',
             color: 'rgba(186, 230, 253, 1)',
+            letterSpacing: '0.02em',
           }}
         >
           {plaintext}
         </div>
 
-        {/* 按钮顺序 —— 智能体模式下「复制给智能体」提前为主 CTA；
-            手动模式下保持原来的「复制明文」为主 */}
-        <div className="flex items-center gap-2 flex-wrap">
-          {agentMode ? (
-            <>
-              <Button variant="primary" size="sm" onClick={handleCopyAgentPrompt}>
-                {copiedPrompt ? <Check size={13} /> : <Bot size={13} />}
-                {copiedPrompt ? '已复制指令' : '复制给智能体使用'}
-              </Button>
-              <button
-                type="button"
-                onClick={handleCopy}
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs transition-all hover:bg-white/5"
-                style={{
-                  background: 'rgba(255, 255, 255, 0.04)',
-                  border: '1px solid rgba(255, 255, 255, 0.12)',
-                  color: 'var(--text-secondary)',
-                }}
-              >
-                {copied ? <Check size={12} /> : <Copy size={12} />}
-                {copied ? '已复制' : '只复制明文'}
-              </button>
-            </>
-          ) : (
-            <>
-              <Button variant="primary" size="sm" onClick={handleCopy}>
-                {copied ? <Check size={13} /> : <Copy size={13} />}
-                {copied ? '已复制' : '复制明文'}
-              </Button>
-              <button
-                type="button"
-                onClick={handleCopyAgentPrompt}
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-all"
-                style={{
-                  background: 'rgba(129, 140, 248, 0.18)',
-                  border: '1px solid rgba(129, 140, 248, 0.45)',
-                  color: 'rgba(221, 214, 254, 1)',
-                }}
-                title="复制一段提示词，粘贴给 Claude Code / Cursor，AI 会自己 export 环境变量 + 下载技能包"
-              >
-                {copiedPrompt ? <Check size={12} /> : <Bot size={12} />}
-                {copiedPrompt ? '已复制指令' : '复制给智能体使用'}
-              </button>
-            </>
-          )}
+        {/* 主 CTA —— 整行唯一焦点，放大 + 高对比 */}
+        <button
+          type="button"
+          onClick={primaryHandler}
+          className="w-full inline-flex items-center justify-center gap-2 py-3 rounded-xl text-[13px] font-semibold transition-all"
+          style={{
+            background: agentMode
+              ? 'linear-gradient(135deg, rgba(56, 189, 248, 0.85) 0%, rgba(99, 102, 241, 0.85) 100%)'
+              : 'linear-gradient(135deg, rgba(56, 189, 248, 0.85) 0%, rgba(14, 165, 233, 0.85) 100%)',
+            color: '#ffffff',
+            border: '1px solid rgba(186, 230, 253, 0.35)',
+            boxShadow:
+              '0 10px 28px -14px rgba(56, 189, 248, 0.6), inset 0 1px 1px rgba(255, 255, 255, 0.18)',
+            letterSpacing: '0.01em',
+          }}
+        >
+          {primaryIcon}
+          {primaryLabel}
+        </button>
+
+        {/* 次要操作一行 —— 文字链 + 小幽灵按钮，全部低调 */}
+        <div
+          className="flex items-center justify-center gap-4 text-[11px]"
+          style={{ color: 'var(--text-muted)' }}
+        >
+          {/* 另一个复制选项（次要文字链） */}
+          <button
+            type="button"
+            onClick={agentMode ? handleCopy : handleCopyAgentPrompt}
+            className="inline-flex items-center gap-1 hover:opacity-80 transition-opacity"
+          >
+            {agentMode ? (
+              <>
+                {copied ? <Check size={11} /> : <Copy size={11} />}
+                {copied ? '已复制明文' : '只复制明文'}
+              </>
+            ) : (
+              <>
+                {copiedPrompt ? <Check size={11} /> : <Bot size={11} />}
+                {copiedPrompt ? '已复制指令' : '复制给智能体'}
+              </>
+            )}
+          </button>
+
+          <span aria-hidden style={{ opacity: 0.3 }}>·</span>
+
           <button
             type="button"
             onClick={handleDownloadSkillHere}
             disabled={downloadingSkill}
-            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs transition-all"
-            style={{
-              background: 'rgba(56, 189, 248, 0.14)',
-              border: '1px solid rgba(56, 189, 248, 0.35)',
-              color: 'rgba(186, 230, 253, 1)',
-            }}
+            className="inline-flex items-center gap-1 hover:opacity-80 transition-opacity"
           >
-            <Download size={12} />
-            {downloadingSkill ? '下载中…' : '下载技能包'}
+            <Download size={11} />
+            {downloadingSkill ? '下载中…' : '下载 findmapskills 技能包'}
           </button>
+
+          <span aria-hidden style={{ opacity: 0.3 }}>·</span>
+
           <button
             type="button"
-            onClick={() => {
-              setPlaintext(null);
-              setName('');
-              setDescription('');
-              onBackToList();
-            }}
-            className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs transition-all hover:bg-white/5"
-            style={{ color: 'var(--text-muted)' }}
+            onClick={handleBackToList}
+            className="inline-flex items-center gap-1 hover:opacity-80 transition-opacity"
           >
-            <EyeOff size={12} />
-            我已保存，返回列表
+            <EyeOff size={11} />
+            我已保存
           </button>
         </div>
 
-        <div className="text-xs mt-2 leading-relaxed" style={{ color: 'var(--text-muted)' }}>
-          {agentMode ? (
-            <>
-              建议点<strong>「复制给智能体使用」</strong>，把整段指令粘贴给 Claude Code / Cursor —— AI 会自己配置环境变量、下载解压官方技能包，立即接通。
-            </>
-          ) : (
-            <>
-              想让 AI 一键配置？点<strong>「复制给智能体使用」</strong>即可，AI 会自己
-              <code className="font-mono mx-0.5">export</code> 环境变量 + 下载解压技能包。
-            </>
-          )}
-        </div>
+        {/* 作用主 CTA 时才保留的指引脚注 —— 其他情况静默 */}
+        {!primaryActive && (
+          <div
+            className="text-[10.5px] text-center mt-1"
+            style={{ color: 'var(--text-muted)', opacity: 0.7 }}
+          >
+            {agentMode
+              ? '点上方按钮后，粘贴到 Claude Code / Cursor，AI 会自己配置 + 下载技能包'
+              : '想让 AI 一键配置？旁边的「复制给智能体」即可'}
+          </div>
+        )}
       </div>
     );
   }
@@ -424,18 +429,33 @@ curl -L "${skillUrl}" -o /tmp/findmapskills.zip \\
         </div>
       </div>
 
-      <div className="flex items-center gap-2 pt-2">
-        <Button variant="primary" size="sm" onClick={handleCreate} disabled={creating}>
-          <Sparkles size={13} />
+      <div className="flex flex-col items-stretch gap-2.5 pt-3">
+        <button
+          type="button"
+          onClick={handleCreate}
+          disabled={creating}
+          className="w-full inline-flex items-center justify-center gap-2 py-3 rounded-xl text-[13px] font-semibold transition-all"
+          style={{
+            background: creating
+              ? 'rgba(56, 189, 248, 0.3)'
+              : 'linear-gradient(135deg, rgba(56, 189, 248, 0.85) 0%, rgba(14, 165, 233, 0.85) 100%)',
+            color: '#ffffff',
+            border: '1px solid rgba(186, 230, 253, 0.35)',
+            boxShadow:
+              '0 10px 28px -14px rgba(56, 189, 248, 0.6), inset 0 1px 1px rgba(255, 255, 255, 0.18)',
+            cursor: creating ? 'wait' : 'pointer',
+            letterSpacing: '0.01em',
+          }}
+        >
+          <Sparkles size={14} />
           {creating ? '正在创建…' : '创建 Key'}
-        </Button>
+        </button>
         <button
           type="button"
           onClick={onBackToList}
-          className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs transition-all hover:bg-white/5"
+          className="text-[11px] text-center hover:opacity-80 transition-opacity"
           style={{ color: 'var(--text-muted)' }}
         >
-          <KeyRound size={12} />
           返回列表
         </button>
       </div>
