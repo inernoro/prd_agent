@@ -42,34 +42,30 @@ function getIcon(name: string, size = 18) {
 /** 单张卡片（紧凑方形，可放 5 列） */
 function LauncherCard({
   item,
-  isSelected,
+  isActive,
   isPinned,
   onClick,
   onMouseEnter,
+  onMouseLeave,
   onTogglePin,
   badge,
 }: {
   item: LauncherItem;
-  isSelected: boolean;
+  isActive: boolean;
   isPinned: boolean;
   onClick: () => void;
   onMouseEnter: () => void;
+  onMouseLeave: () => void;
   onTogglePin: (e: React.MouseEvent) => void;
   badge?: string;
 }) {
   const accent = item.accentColor ?? '#818CF8';
-  // 本地 hover 状态：鼠标离开时立即清除，避免 selectedId 被键盘/上次 hover 卡住后"持续高亮"
-  const [isHovered, setIsHovered] = useState(false);
-  const isActive = isSelected || isHovered;
   return (
     <button
       type="button"
       onClick={onClick}
-      onMouseEnter={() => {
-        setIsHovered(true);
-        onMouseEnter();
-      }}
-      onMouseLeave={() => setIsHovered(false)}
+      onMouseEnter={onMouseEnter}
+      onMouseLeave={onMouseLeave}
       className="group relative text-left outline-none focus:outline-none flex"
       style={{ width: '100%' }}
       title={item.description}
@@ -179,6 +175,10 @@ export function AgentSwitcher() {
     addRecentVisit,
     togglePin,
   } = useAgentSwitcherStore();
+
+  // 鼠标 hover 用独立 state，与键盘的 selectedId 正交；
+  // 视觉高亮 activeId = hoveredId ?? selectedId（hover 优先，离开立即让位给键盘态）。
+  const [hoveredId, setHoveredId] = useState<string | null>(null);
 
   // 目录（按权限过滤）
   const catalog = useMemo(
@@ -344,6 +344,8 @@ export function AgentSwitcher() {
         e.preventDefault();
         const next = (curIdx + delta + flatList.length) % flatList.length;
         setSelectedId(flatList[next].id);
+        // 用户切回键盘态：强制清除 hover，避免 hoveredId 压住键盘高亮
+        setHoveredId(null);
       };
 
       switch (e.key) {
@@ -511,15 +513,21 @@ export function AgentSwitcher() {
                         {section.items.length}
                       </span>
                     </div>
-                    <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 gap-2 items-stretch">
-                      {section.items.map((item) => (
+                    <div
+                      className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 gap-2 items-stretch"
+                      onMouseLeave={() => setHoveredId(null)}
+                    >
+                      {section.items.map((item) => {
+                        const activeId = hoveredId ?? selectedId;
+                        return (
                         <LauncherCard
                           key={`${section.key}:${item.id}`}
                           item={item}
-                          isSelected={selectedId === item.id}
+                          isActive={activeId === item.id}
                           isPinned={pinnedIds.includes(item.id)}
                           onClick={() => launchItem(item)}
-                          onMouseEnter={() => setSelectedId(item.id)}
+                          onMouseEnter={() => setHoveredId(item.id)}
+                          onMouseLeave={() => setHoveredId(null)}
                           onTogglePin={(e) => {
                             e.stopPropagation();
                             togglePin(item.id);
@@ -534,7 +542,8 @@ export function AgentSwitcher() {
                               : undefined
                           }
                         />
-                      ))}
+                        );
+                      })}
                     </div>
                   </div>
                 ))}
