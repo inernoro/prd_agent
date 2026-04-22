@@ -1444,7 +1444,7 @@ function MarketplaceAssetsSection({
           用户"点下一步会发生什么"的困惑。支持 MP4 / WebM，推荐 16:9、≤ 20 MB。
           未上传时前端显示静态占位卡，不影响功能可用性。
         </p>
-        <div className="grid grid-cols-1 gap-3">
+        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3">
           {DEMO_VIDEO_SLOTS.map((demo: DemoVideoSlot) => (
             <HomepageSlotTile
               key={demo.slot}
