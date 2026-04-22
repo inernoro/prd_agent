@@ -757,7 +757,7 @@ public static class ReportAgent
         [AppCallerMetadata(
             "周报海报-配图生成",
             "为海报某一页根据 imagePrompt 生成配图（文生图）",
-            ModelTypes = new[] { ModelTypes.Generation },
+            ModelTypes = new[] { ModelTypes.ImageGen },
             Category = "Report"
         )]
         public const string Image = "report-agent.weekly-poster.image::generation";
