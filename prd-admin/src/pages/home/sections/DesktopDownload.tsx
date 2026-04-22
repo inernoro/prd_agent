@@ -30,7 +30,7 @@ export function DesktopDownload() {
               <div
                 className="inline-flex items-center gap-2 px-3.5 py-1.5 mb-7 rounded-md"
                 style={{
-                  fontFamily: 'var(--font-mono)',
+                  fontFamily: 'var(--font-terminal)',
                   background: 'rgba(0, 240, 255, 0.06)',
                   border: '1px solid rgba(0, 240, 255, 0.3)',
                   boxShadow: '0 0 20px rgba(0, 240, 255, 0.22)',
@@ -228,7 +228,7 @@ function PlatformCard({
             className="text-[11px]"
             style={{
               color: accent,
-              fontFamily: 'var(--font-mono)',
+              fontFamily: 'var(--font-terminal)',
               letterSpacing: '0.08em',
               textShadow: `0 0 6px ${accent}99`,
             }}
@@ -238,7 +238,7 @@ function PlatformCard({
         </div>
         <div
           className="text-[11px] text-white/45"
-          style={{ fontFamily: 'var(--font-mono)', letterSpacing: '0.06em' }}
+          style={{ fontFamily: 'var(--font-terminal)', letterSpacing: '0.06em' }}
         >
           {arch} · {size}
         </div>

@@ -34,7 +34,7 @@ export function StatsStrip() {
                 </div>
                 <div
                   className="mt-5 text-[10.5px] text-white/40 uppercase"
-                  style={{ fontFamily: 'var(--font-mono)', letterSpacing: '0.28em' }}
+                  style={{ fontFamily: 'var(--font-terminal)', letterSpacing: '0.28em' }}
                 >
                   {s.label}
                 </div>
