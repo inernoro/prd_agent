@@ -630,11 +630,12 @@ export default function AppShell() {
         )
       )}
       {/* ── 移动端: 顶部导航栏 ── */}
+      {/* 首页 (isHomePage) 做 Apple Today 式透明顶栏：隐藏中间 title + 右侧铃铛，让页面内 Hero 承担标题职责 */}
       {isMobile && (
         <header
           className="fixed top-0 left-0 right-0 z-100 flex items-center gap-3 px-4"
           style={{
-            ...glassMobileHeader,
+            ...(isHomePage ? { background: 'transparent' } : glassMobileHeader),
             height: 'calc(var(--mobile-header-height, 48px) + env(safe-area-inset-top, 0px))',
             paddingTop: 'env(safe-area-inset-top, 0px)',
           }}
@@ -648,32 +649,37 @@ export default function AppShell() {
           >
             <Menu size={20} />
           </button>
-          <div className="flex-1 min-w-0 text-center">
-            <span className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
-              {visibleItems.find((it) => it.key === activeKey)?.label || 'PRD Agent'}
-            </span>
-          </div>
-          <ChangelogBell size={18} compact />
-          <button
-            type="button"
-            onClick={() => {
-              setNotificationDialogOpen(true);
-              void loadNotifications({ silent: true });
-            }}
-            className="relative h-9 w-9 inline-flex items-center justify-center rounded-xl"
-            style={{ color: 'var(--text-secondary)' }}
-            aria-label="通知"
-          >
-            <Bell size={18} />
-            {notificationCount > 0 && (
-              <span
-                className="absolute top-1 right-1 h-4 w-4 rounded-full flex items-center justify-center text-[9px] font-bold"
-                style={{ background: 'var(--accent-gold)', color: '#1a1a1a' }}
-              >
-                {notificationCount > 9 ? '9+' : notificationCount}
+          {!isHomePage && (
+            <div className="flex-1 min-w-0 text-center">
+              <span className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
+                {visibleItems.find((it) => it.key === activeKey)?.label || 'PRD Agent'}
               </span>
-            )}
-          </button>
+            </div>
+          )}
+          {isHomePage && <div className="flex-1" />}
+          {!isHomePage && <ChangelogBell size={18} compact />}
+          {!isHomePage && (
+            <button
+              type="button"
+              onClick={() => {
+                setNotificationDialogOpen(true);
+                void loadNotifications({ silent: true });
+              }}
+              className="relative h-9 w-9 inline-flex items-center justify-center rounded-xl"
+              style={{ color: 'var(--text-secondary)' }}
+              aria-label="通知"
+            >
+              <Bell size={18} />
+              {notificationCount > 0 && (
+                <span
+                  className="absolute top-1 right-1 h-4 w-4 rounded-full flex items-center justify-center text-[9px] font-bold"
+                  style={{ background: 'var(--accent-gold)', color: '#1a1a1a' }}
+                >
+                  {notificationCount > 9 ? '9+' : notificationCount}
+                </span>
+              )}
+            </button>
+          )}
         </header>
       )}
 
