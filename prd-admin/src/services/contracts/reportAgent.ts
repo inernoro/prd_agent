@@ -54,7 +54,12 @@ export interface ReportTemplate {
   name: string;
   description?: string;
   sections: ReportTemplateSection[];
+  /** @deprecated 历史单团队字段，新代码使用 teamIds */
   teamId?: string;
+  /** 关联团队 ID 列表（一个团队全局只能被一个模板关联） */
+  teamIds?: string[];
+  /** 作为默认模板的团队 ID 列表（teamIds 的子集；关联即默认） */
+  defaultForTeamIds?: string[];
   jobTitle?: string;
   isDefault: boolean;
   /** v2.0 系统预置模板不可删除 */
@@ -395,7 +400,10 @@ export type CreateReportTemplateContract = (input: {
   name: string;
   description?: string;
   sections: Partial<ReportTemplateSection>[];
+  /** @deprecated 用 teamIds */
   teamId?: string;
+  teamIds?: string[];
+  defaultForTeamIds?: string[];
   jobTitle?: string;
   isDefault?: boolean;
 }) => Promise<ApiResponse<{ template: ReportTemplate }>>;
@@ -405,12 +413,29 @@ export type UpdateReportTemplateContract = (input: {
   name?: string;
   description?: string;
   sections?: Partial<ReportTemplateSection>[];
+  /** @deprecated 用 teamIds */
   teamId?: string;
+  teamIds?: string[];
+  defaultForTeamIds?: string[];
   jobTitle?: string;
   isDefault?: boolean;
 }) => Promise<ApiResponse<{ template: ReportTemplate }>>;
 
 export type DeleteReportTemplateContract = (input: { id: string }) => Promise<ApiResponse<object>>;
+
+export type GetTeamDefaultTemplateContract = (input: { teamId: string }) => Promise<
+  ApiResponse<{ template: ReportTemplate | null }>
+>;
+
+export type GetMyDefaultTemplateContract = () => Promise<
+  ApiResponse<{ template: ReportTemplate | null; source: 'user' | 'team' | 'system' | 'migrated' }>
+>;
+
+export type SetMyDefaultTemplateContract = (input: { id: string }) => Promise<
+  ApiResponse<{ defaultTemplateId: string }>
+>;
+
+export type ClearMyDefaultTemplateContract = () => Promise<ApiResponse<object>>;
 
 // --- Reports ---
 export type ListWeeklyReportsContract = (input?: {
@@ -609,6 +634,12 @@ export type CreateCommentContract = (input: {
   sectionIndex: number;
   content: string;
   parentCommentId?: string;
+}) => Promise<ApiResponse<{ comment: ReportComment }>>;
+
+export type UpdateCommentContract = (input: {
+  reportId: string;
+  commentId: string;
+  content: string;
 }) => Promise<ApiResponse<{ comment: ReportComment }>>;
 
 export type DeleteCommentContract = (input: {

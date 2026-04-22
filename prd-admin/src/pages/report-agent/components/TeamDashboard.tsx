@@ -16,7 +16,7 @@ import {
   Users,
   X,
 } from 'lucide-react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { MapSpinner } from '@/components/ui/VideoLoader';
 import { GlassCard } from '@/components/design/GlassCard';
 import { Button } from '@/components/design/Button';
@@ -79,18 +79,56 @@ export function TeamDashboard() {
   const { teams, loadTeams } = useReportAgentStore();
   const userId = useAuthStore((s) => s.user?.userId);
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
 
-  const [teamScope, setTeamScope] = useState<'managed' | 'joined'>('managed');
-  const [selectedTeamId, setSelectedTeamId] = useState('');
+  const now = useMemo(() => getISOWeek(new Date()), []);
+  const teamScope: 'managed' | 'joined' = searchParams.get('scope') === 'joined' ? 'joined' : 'managed';
+  const selectedTeamId = searchParams.get('teamId') ?? '';
+  const weekYear = (() => {
+    const v = Number.parseInt(searchParams.get('weekYear') ?? '', 10);
+    return Number.isFinite(v) && v >= 2000 && v <= 2100 ? v : now.weekYear;
+  })();
+  const weekNumber = (() => {
+    const v = Number.parseInt(searchParams.get('weekNumber') ?? '', 10);
+    return Number.isFinite(v) && v >= 1 && v <= 53 ? v : now.weekNumber;
+  })();
+
+  const updateParams = useCallback(
+    (patch: Record<string, string | number | null | undefined>) => {
+      setSearchParams(
+        (prev) => {
+          const next = new URLSearchParams(prev);
+          for (const [k, v] of Object.entries(patch)) {
+            if (v === null || v === undefined || v === '') next.delete(k);
+            else next.set(k, String(v));
+          }
+          return next;
+        },
+        { replace: true }
+      );
+    },
+    [setSearchParams]
+  );
+
+  const setTeamScope = useCallback(
+    (scope: 'managed' | 'joined') => {
+      updateParams({ scope: scope === 'managed' ? null : scope, teamId: null });
+    },
+    [updateParams]
+  );
+
+  const setSelectedTeamId = useCallback(
+    (id: string) => {
+      updateParams({ teamId: id || null });
+    },
+    [updateParams]
+  );
+
   const [viewMode, setViewMode] = useState<ViewMode>('report_list');
 
   const [memberDrawerVisible, setMemberDrawerVisible] = useState(false);
   const [memberDrawerOpen, setMemberDrawerOpen] = useState(false);
   const drawerCloseTimerRef = useRef<number | null>(null);
-
-  const now = useMemo(() => getISOWeek(new Date()), []);
-  const [weekYear, setWeekYear] = useState(now.weekYear);
-  const [weekNumber, setWeekNumber] = useState(now.weekNumber);
 
   const [reportsView, setReportsView] = useState<TeamReportsViewData | null>(null);
   const [reportsLoading, setReportsLoading] = useState(false);
@@ -201,7 +239,7 @@ export function TeamDashboard() {
 
   useEffect(() => {
     if (!hasScopedTeams) {
-      setSelectedTeamId('');
+      if (selectedTeamId) setSelectedTeamId('');
       setReportsView(null);
       setSummaryView(null);
       closeMemberDrawer(true);
@@ -210,7 +248,7 @@ export function TeamDashboard() {
     if (!scopedTeams.some((team) => team.id === selectedTeamId)) {
       setSelectedTeamId(scopedTeams[0].id);
     }
-  }, [closeMemberDrawer, hasScopedTeams, scopedTeams, selectedTeamId]);
+  }, [closeMemberDrawer, hasScopedTeams, scopedTeams, selectedTeamId, setSelectedTeamId]);
 
   useEffect(() => {
     setViewMode('report_list');
@@ -264,20 +302,18 @@ export function TeamDashboard() {
 
   const handlePrevWeek = () => {
     if (weekNumber <= 1) {
-      setWeekYear((v) => v - 1);
-      setWeekNumber(52);
+      updateParams({ weekYear: weekYear - 1, weekNumber: 52 });
       return;
     }
-    setWeekNumber((v) => v - 1);
+    updateParams({ weekNumber: weekNumber - 1 });
   };
 
   const handleNextWeek = () => {
     if (weekNumber >= 52) {
-      setWeekYear((v) => v + 1);
-      setWeekNumber(1);
+      updateParams({ weekYear: weekYear + 1, weekNumber: 1 });
       return;
     }
-    setWeekNumber((v) => v + 1);
+    updateParams({ weekNumber: weekNumber + 1 });
   };
 
   const handleEnterSummary = async () => {
@@ -365,7 +401,19 @@ export function TeamDashboard() {
     await reloadListAndSummaryIfNeeded();
   };
 
-  const openReportDetail = (reportId: string) => navigate(`/report-agent/report/${reportId}`);
+  const openReportDetail = (reportId: string) => {
+    if (!selectedTeamId) {
+      navigate(`/report-agent/report/${reportId}`);
+      return;
+    }
+    const params = new URLSearchParams({
+      teamId: selectedTeamId,
+      weekYear: String(weekYear),
+      weekNumber: String(weekNumber),
+      scope: teamScope,
+    });
+    navigate(`/report-agent/report/${reportId}?${params.toString()}`);
+  };
 
   return (
     <div className="mx-auto w-full max-w-[1180px] flex flex-col gap-4">

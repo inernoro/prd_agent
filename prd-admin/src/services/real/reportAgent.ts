@@ -19,6 +19,10 @@ import type {
   CreateReportTemplateContract,
   UpdateReportTemplateContract,
   DeleteReportTemplateContract,
+  GetMyDefaultTemplateContract,
+  GetTeamDefaultTemplateContract,
+  SetMyDefaultTemplateContract,
+  ClearMyDefaultTemplateContract,
   ListWeeklyReportsContract,
   GetWeeklyReportContract,
   CreateWeeklyReportContract,
@@ -45,6 +49,7 @@ import type {
   GetCollectedActivityContract,
   ListCommentsContract,
   CreateCommentContract,
+  UpdateCommentContract,
   DeleteCommentContract,
   ListReportLikesContract,
   LikeReportContract,
@@ -281,6 +286,35 @@ export const updateReportTemplateReal: UpdateReportTemplateContract = async (inp
 export const deleteReportTemplateReal: DeleteReportTemplateContract = async (input) => {
   return await apiRequest<object>(
     api.reportAgent.templates.byId(encodeURIComponent(input.id)),
+    { method: 'DELETE' }
+  );
+};
+
+export const getMyDefaultTemplateReal: GetMyDefaultTemplateContract = async () => {
+  return await apiRequest<{ template: ReportTemplate | null; source: 'user' | 'team' | 'system' | 'migrated' }>(
+    api.reportAgent.templates.myDefault(),
+    { method: 'GET' }
+  );
+};
+
+export const getTeamDefaultTemplateReal: GetTeamDefaultTemplateContract = async (input) => {
+  const qs = new URLSearchParams({ teamId: input.teamId });
+  return await apiRequest<{ template: ReportTemplate | null }>(
+    `${api.reportAgent.templates.teamDefault()}?${qs.toString()}`,
+    { method: 'GET' }
+  );
+};
+
+export const setMyDefaultTemplateReal: SetMyDefaultTemplateContract = async (input) => {
+  return await apiRequest<{ defaultTemplateId: string }>(
+    api.reportAgent.templates.setMyDefault(encodeURIComponent(input.id)),
+    { method: 'PUT' }
+  );
+};
+
+export const clearMyDefaultTemplateReal: ClearMyDefaultTemplateContract = async () => {
+  return await apiRequest<object>(
+    api.reportAgent.templates.myDefault(),
     { method: 'DELETE' }
   );
 };
@@ -605,6 +639,13 @@ export const createCommentReal: CreateCommentContract = async (input) => {
   return await apiRequest<{ comment: ReportComment }>(
     api.reportAgent.reports.comments(encodeURIComponent(reportId)),
     { method: 'POST', body }
+  );
+};
+
+export const updateCommentReal: UpdateCommentContract = async (input) => {
+  return await apiRequest<{ comment: ReportComment }>(
+    api.reportAgent.reports.comment(encodeURIComponent(input.reportId), encodeURIComponent(input.commentId)),
+    { method: 'PUT', body: { content: input.content } }
   );
 };
 

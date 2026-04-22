@@ -1,11 +1,19 @@
-import { useState } from 'react';
-import { Plus, Pencil, Trash2, ChevronUp, ChevronDown, FileBarChart, CheckSquare, ListChecks } from 'lucide-react';
+import { useEffect, useMemo, useState } from 'react';
+import { Plus, Pencil, Trash2, ChevronUp, ChevronDown, FileBarChart, CheckSquare, ListChecks, Star, Users as UsersIcon, Shield, X } from 'lucide-react';
 import { GlassCard } from '@/components/design/GlassCard';
 import { Button } from '@/components/design/Button';
 import { toast } from '@/lib/toast';
 import { useReportAgentStore } from '@/stores/reportAgentStore';
-import { createReportTemplate, updateReportTemplate, deleteReportTemplate } from '@/services';
-import { ReportInputType } from '@/services/contracts/reportAgent';
+import { useAuthStore } from '@/stores/authStore';
+import {
+  createReportTemplate,
+  updateReportTemplate,
+  deleteReportTemplate,
+  getMyDefaultTemplate,
+  setMyDefaultTemplate,
+  clearMyDefaultTemplate,
+} from '@/services';
+import { ReportInputType, ReportTeamRole, type ReportTemplate } from '@/services/contracts/reportAgent';
 
 const inputTypeLabels: Record<string, string> = {
   [ReportInputType.BulletList]: '列表',
@@ -22,34 +30,120 @@ interface SectionInput {
   sortOrder: number;
 }
 
+type Scope = 'system' | 'mine' | 'team' | 'other';
+
+function resolveScope(tpl: ReportTemplate, currentUserId: string | undefined): Scope {
+  if (tpl.isSystem) return 'system';
+  if (currentUserId && tpl.createdBy === currentUserId) return 'mine';
+  const anyTeam = (tpl.teamIds && tpl.teamIds.length > 0) || !!tpl.teamId;
+  if (anyTeam) return 'team';
+  return 'other';
+}
+
+const scopeMeta: Record<Scope, { label: string; color: string; bg: string; Icon: typeof Shield }> = {
+  system: { label: '系统', color: 'rgba(148, 163, 184, 0.95)', bg: 'rgba(148, 163, 184, 0.1)', Icon: Shield },
+  mine: { label: '我创建', color: 'rgba(34, 197, 94, 0.95)', bg: 'rgba(34, 197, 94, 0.1)', Icon: Pencil },
+  team: { label: '团队', color: 'rgba(168, 85, 247, 0.95)', bg: 'rgba(168, 85, 247, 0.1)', Icon: UsersIcon },
+  other: { label: '其他成员', color: 'rgba(148, 163, 184, 0.8)', bg: 'rgba(148, 163, 184, 0.08)', Icon: UsersIcon },
+};
+
+/** 归一化：把 teamId 单字段和 teamIds 多字段合并为一个数组 */
+function getTemplateTeamIds(tpl: ReportTemplate): string[] {
+  const set = new Set<string>();
+  if (tpl.teamIds) tpl.teamIds.forEach((tid) => tid && set.add(tid));
+  if (tpl.teamId) set.add(tpl.teamId);
+  return Array.from(set);
+}
+
 export function TemplateManager() {
-  const { templates, teams, loadTemplates } = useReportAgentStore();
+  const { templates, teams, users, loadTemplates, loadUsers } = useReportAgentStore();
+  const currentUserId = useAuthStore((s) => s.user?.userId);
+
+  // 当前用户可管的团队（Leader / Deputy）
+  const manageableTeams = useMemo(
+    () => teams.filter((t) => {
+      const role = t.myRole ?? (t.leaderUserId === currentUserId ? ReportTeamRole.Leader : undefined);
+      return role === ReportTeamRole.Leader || role === ReportTeamRole.Deputy;
+    }),
+    [teams, currentUserId]
+  );
+  const manageableTeamIdSet = useMemo(() => new Set(manageableTeams.map((t) => t.id)), [manageableTeams]);
+
+  const [myDefaultId, setMyDefaultId] = useState<string | null>(null);
+  const [myDefaultLoading, setMyDefaultLoading] = useState(false);
+
   const [showDialog, setShowDialog] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
-  const [teamId, setTeamId] = useState('');
-  const [isDefault, setIsDefault] = useState(false);
+  const [selectedTeamIds, setSelectedTeamIds] = useState<string[]>([]);
+  const [defaultForTeamIds, setDefaultForTeamIds] = useState<string[]>([]);
+  const [teamPickerOpen, setTeamPickerOpen] = useState(false);
   const [sections, setSections] = useState<SectionInput[]>([]);
   const [saving, setSaving] = useState(false);
+
+  const userLookup = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const u of users) {
+      map.set(u.id, u.displayName || u.username || u.id);
+    }
+    return map;
+  }, [users]);
+
+  const teamLookup = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const t of teams) map.set(t.id, t.name);
+    return map;
+  }, [teams]);
+
+  useEffect(() => {
+    if (users.length === 0) void loadUsers();
+  }, [users.length, loadUsers]);
+
+  useEffect(() => {
+    void refreshMyDefault();
+  }, []);
+
+  const refreshMyDefault = async () => {
+    setMyDefaultLoading(true);
+    const res = await getMyDefaultTemplate();
+    if (res.success && res.data) {
+      setMyDefaultId(res.data.template?.id ?? null);
+    }
+    setMyDefaultLoading(false);
+  };
 
   const resetForm = () => {
     setName('');
     setDescription('');
-    setTeamId('');
-    setIsDefault(false);
+    setSelectedTeamIds([]);
+    setDefaultForTeamIds([]);
+    setTeamPickerOpen(false);
     setSections([{ title: '', description: '', inputType: ReportInputType.BulletList, isRequired: true, sortOrder: 0 }]);
     setEditingId(null);
+  };
+
+  const canEditTemplate = (tpl: ReportTemplate): boolean => {
+    if (tpl.isSystem) return false;
+    if (currentUserId && tpl.createdBy === currentUserId) return true;
+    // 任一关联团队的 Leader/Deputy 也能编辑/删除
+    const tplTeamIds = getTemplateTeamIds(tpl);
+    return tplTeamIds.some((tid) => manageableTeamIdSet.has(tid));
   };
 
   const handleEdit = (id: string) => {
     const t = templates.find((tpl) => tpl.id === id);
     if (!t) return;
+    if (!canEditTemplate(t)) {
+      toast.error('仅作者或关联团队的管理员/副管理员可编辑');
+      return;
+    }
     setEditingId(id);
     setName(t.name);
     setDescription(t.description || '');
-    setTeamId(t.teamId || '');
-    setIsDefault(t.isDefault);
+    setSelectedTeamIds(getTemplateTeamIds(t));
+    setDefaultForTeamIds(t.defaultForTeamIds || []);
+    setTeamPickerOpen(false);
     setSections(t.sections.map((s) => ({
       title: s.title,
       description: s.description || '',
@@ -70,13 +164,29 @@ export function TemplateManager() {
     if (sections.length === 0) { toast.error('至少需要一个章节'); return; }
     if (sections.some((s) => !s.title.trim())) { toast.error('章节标题不能为空'); return; }
 
+    // 默认团队必须是已关联团队的子集
+    const invalidDefaults = defaultForTeamIds.filter((tid) => !selectedTeamIds.includes(tid));
+    if (invalidDefaults.length > 0) {
+      toast.error('默认团队必须先被关联');
+      return;
+    }
+
+    // 新建必须自己管得着；编辑时只要新增的团队是自己管的即可（后端同样会校验）
+    if (!editingId) {
+      const outsideMyScope = selectedTeamIds.filter((tid) => !manageableTeamIdSet.has(tid));
+      if (outsideMyScope.length > 0) {
+        toast.error('只能关联自己管理的团队');
+        return;
+      }
+    }
+
     setSaving(true);
     const payload = {
       name: name.trim(),
       description: description.trim() || undefined,
       sections: sections.map((s, i) => ({ ...s, sortOrder: i })),
-      teamId: teamId || undefined,
-      isDefault,
+      teamIds: selectedTeamIds,
+      defaultForTeamIds,
     };
 
     const res = editingId
@@ -88,20 +198,65 @@ export function TemplateManager() {
       toast.success(editingId ? '模板已更新' : '模板已创建');
       setShowDialog(false);
       void loadTemplates();
+      void refreshMyDefault();
     } else {
       toast.error(res.error?.message || '操作失败');
     }
   };
 
   const handleDelete = async (id: string) => {
+    const t = templates.find((tpl) => tpl.id === id);
+    if (t && !canEditTemplate(t)) {
+      toast.error('仅作者或关联团队的管理员/副管理员可删除');
+      return;
+    }
     if (!window.confirm('确认删除该模板？')) return;
     const res = await deleteReportTemplate({ id });
     if (res.success) {
       toast.success('模板已删除');
       void loadTemplates();
+      if (myDefaultId === id) void refreshMyDefault();
     } else {
       toast.error(res.error?.message || '删除失败');
     }
+  };
+
+  const handleSetMyDefault = async (id: string) => {
+    const res = await setMyDefaultTemplate({ id });
+    if (res.success) {
+      setMyDefaultId(id);
+      toast.success('已设为你的默认模板');
+    } else {
+      toast.error(res.error?.message || '设置失败');
+    }
+  };
+
+  const handleClearMyDefault = async () => {
+    const res = await clearMyDefaultTemplate();
+    if (res.success) {
+      void refreshMyDefault();
+      toast.success('已清除默认模板偏好');
+    } else {
+      toast.error(res.error?.message || '操作失败');
+    }
+  };
+
+  const toggleSelectedTeam = (tid: string) => {
+    setSelectedTeamIds((prev) => {
+      if (prev.includes(tid)) {
+        // 移除关联时同时从默认列表剔除
+        setDefaultForTeamIds((d) => d.filter((x) => x !== tid));
+        return prev.filter((x) => x !== tid);
+      }
+      return [...prev, tid];
+    });
+  };
+
+  const toggleDefaultForTeam = (tid: string) => {
+    if (!selectedTeamIds.includes(tid)) return;
+    setDefaultForTeamIds((prev) =>
+      prev.includes(tid) ? prev.filter((x) => x !== tid) : [...prev, tid]
+    );
   };
 
   const addSection = () => {
@@ -132,6 +287,19 @@ export function TemplateManager() {
     setSections((prev) => prev.map((s, i) => i === idx ? { ...s, [field]: value } : s));
   };
 
+  const sortedTemplates = useMemo(() => {
+    const withScope = templates.map((tpl) => ({ tpl, scope: resolveScope(tpl, currentUserId) }));
+    const priority: Record<Scope, number> = { mine: 0, team: 1, system: 2, other: 3 };
+    return withScope.sort((a, b) => {
+      if (myDefaultId && a.tpl.id === myDefaultId) return -1;
+      if (myDefaultId && b.tpl.id === myDefaultId) return 1;
+      const pa = priority[a.scope];
+      const pb = priority[b.scope];
+      if (pa !== pb) return pa - pb;
+      return new Date(b.tpl.updatedAt).getTime() - new Date(a.tpl.updatedAt).getTime();
+    });
+  }, [templates, currentUserId, myDefaultId]);
+
   return (
     <div className="flex flex-col gap-5">
       {/* Header — card-wrapped */}
@@ -151,11 +319,27 @@ export function TemplateManager() {
               >
                 {templates.length} 个模板
               </span>
+              <span className="text-[11px] ml-2" style={{ color: 'var(--text-muted)' }}>
+                · 仅团队管理员/副管理员可见与操作
+              </span>
             </div>
           </div>
-          <Button variant="primary" size="sm" onClick={handleCreate}>
-            <Plus size={14} /> 新建模板
-          </Button>
+          <div className="flex items-center gap-2">
+            {myDefaultId && (
+              <Button variant="secondary" size="sm" onClick={handleClearMyDefault} disabled={myDefaultLoading}>
+                清除我的默认
+              </Button>
+            )}
+            <Button
+              variant="primary"
+              size="sm"
+              onClick={handleCreate}
+              disabled={manageableTeams.length === 0}
+              title={manageableTeams.length === 0 ? '需至少是一个团队的管理员/副管理员' : undefined}
+            >
+              <Plus size={14} /> 新建模板
+            </Button>
+          </div>
         </div>
       </GlassCard>
 
@@ -165,90 +349,151 @@ export function TemplateManager() {
           <div className="text-center">
             <ListChecks size={32} style={{ color: 'var(--text-muted)', opacity: 0.4, margin: '0 auto' }} />
             <div className="text-[13px] mt-3" style={{ color: 'var(--text-muted)' }}>暂无模板</div>
-            <Button variant="primary" size="sm" className="mt-3" onClick={handleCreate}>
+            <Button variant="primary" size="sm" className="mt-3" onClick={handleCreate} disabled={manageableTeams.length === 0}>
               <Plus size={12} /> 创建模板
             </Button>
           </div>
         </div>
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-          {templates.map((tpl) => (
-            <div
-              key={tpl.id}
-              className="group rounded-xl transition-all duration-200 hover:translate-y-[-1px]"
-              style={{
-                background: 'var(--surface-glass)',
-                backdropFilter: 'blur(12px)',
-                WebkitBackdropFilter: 'blur(12px)',
-                border: '1px solid var(--border-primary)',
-                boxShadow: '0 1px 3px rgba(0,0,0,0.06)',
-              }}
-            >
-              <div className="p-5">
-                {/* Header */}
-                <div className="flex items-start justify-between mb-3">
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2">
-                      <span className="text-[15px] font-semibold truncate" style={{ color: 'var(--text-primary)' }}>
-                        {tpl.name}
-                      </span>
-                      {tpl.isDefault && (
-                        <span
-                          className="text-[10px] px-1.5 py-0.5 rounded-full flex-shrink-0"
-                          style={{ color: 'rgba(59, 130, 246, 0.9)', background: 'rgba(59, 130, 246, 0.1)' }}
-                        >
-                          默认
+          {sortedTemplates.map(({ tpl, scope }) => {
+            const meta = scopeMeta[scope];
+            const isMyDefault = myDefaultId === tpl.id;
+            const editable = canEditTemplate(tpl);
+            const templateTeamIds = getTemplateTeamIds(tpl);
+            const defaultTeamNames = (tpl.defaultForTeamIds || []).map((tid) => teamLookup.get(tid)).filter(Boolean) as string[];
+            const creatorLabel = userLookup.get(tpl.createdBy) || (tpl.createdBy === 'system' ? '系统' : tpl.createdBy);
+            return (
+              <div
+                key={tpl.id}
+                className="group rounded-xl transition-all duration-200 hover:translate-y-[-1px]"
+                style={{
+                  background: 'var(--surface-glass)',
+                  backdropFilter: 'blur(12px)',
+                  WebkitBackdropFilter: 'blur(12px)',
+                  border: isMyDefault ? '1px solid rgba(59,130,246,0.5)' : '1px solid var(--border-primary)',
+                  boxShadow: '0 1px 3px rgba(0,0,0,0.06)',
+                }}
+              >
+                <div className="p-5">
+                  {/* Header */}
+                  <div className="flex items-start justify-between mb-3">
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="text-[15px] font-semibold truncate" style={{ color: 'var(--text-primary)' }}>
+                          {tpl.name}
                         </span>
+                        <span
+                          className="flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded-full flex-shrink-0"
+                          style={{ color: meta.color, background: meta.bg }}
+                        >
+                          <meta.Icon size={9} />
+                          {meta.label}
+                        </span>
+                        {isMyDefault && (
+                          <span
+                            className="flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded-full flex-shrink-0"
+                            style={{ color: 'rgba(59, 130, 246, 0.95)', background: 'rgba(59, 130, 246, 0.12)' }}
+                          >
+                            <Star size={9} />
+                            我的默认
+                          </span>
+                        )}
+                      </div>
+                      <div className="text-[11px] mt-0.5" style={{ color: 'var(--text-muted)' }}>
+                        创建人：{creatorLabel}
+                      </div>
+                      {templateTeamIds.length > 0 && (
+                        <div className="text-[11px] mt-1 flex items-start gap-1 flex-wrap">
+                          <span style={{ color: 'var(--text-muted)' }}>关联团队：</span>
+                          {templateTeamIds.map((tid) => {
+                            const isTeamDefault = (tpl.defaultForTeamIds || []).includes(tid);
+                            return (
+                              <span
+                                key={tid}
+                                className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[10px]"
+                                style={
+                                  isTeamDefault
+                                    ? { color: 'rgba(59, 130, 246, 0.95)', background: 'rgba(59, 130, 246, 0.12)' }
+                                    : { color: 'rgba(168, 85, 247, 0.9)', background: 'rgba(168, 85, 247, 0.08)' }
+                                }
+                              >
+                                {isTeamDefault && <Star size={8} />}
+                                {teamLookup.get(tid) || tid}
+                              </span>
+                            );
+                          })}
+                        </div>
+                      )}
+                      {defaultTeamNames.length > 0 && templateTeamIds.length === 0 && (
+                        <div className="text-[11px] mt-1" style={{ color: 'var(--text-muted)' }}>
+                          团队默认：{defaultTeamNames.join('、')}
+                        </div>
+                      )}
+                      {tpl.description && (
+                        <div className="text-[12px] mt-1 line-clamp-2" style={{ color: 'var(--text-muted)' }}>
+                          {tpl.description}
+                        </div>
                       )}
                     </div>
-                    {tpl.description && (
-                      <div className="text-[12px] mt-1 line-clamp-2" style={{ color: 'var(--text-muted)' }}>
-                        {tpl.description}
-                      </div>
-                    )}
+                    <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity ml-2">
+                      {!isMyDefault && (
+                        <button
+                          className="p-1.5 rounded-lg hover:bg-[var(--bg-tertiary)] transition-colors"
+                          onClick={() => handleSetMyDefault(tpl.id)}
+                          title="设为我的默认"
+                        >
+                          <Star size={12} style={{ color: 'var(--text-muted)' }} />
+                        </button>
+                      )}
+                      {editable && (
+                        <>
+                          <button
+                            className="p-1.5 rounded-lg hover:bg-[var(--bg-tertiary)] transition-colors"
+                            onClick={() => handleEdit(tpl.id)}
+                            title="编辑"
+                          >
+                            <Pencil size={12} style={{ color: 'var(--text-muted)' }} />
+                          </button>
+                          <button
+                            className="p-1.5 rounded-lg hover:bg-[rgba(239,68,68,0.08)] transition-colors"
+                            onClick={() => handleDelete(tpl.id)}
+                            title="删除"
+                          >
+                            <Trash2 size={12} style={{ color: 'var(--text-muted)' }} />
+                          </button>
+                        </>
+                      )}
+                    </div>
                   </div>
-                  <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity ml-2">
-                    <button
-                      className="p-1.5 rounded-lg hover:bg-[var(--bg-tertiary)] transition-colors"
-                      onClick={() => handleEdit(tpl.id)}
-                    >
-                      <Pencil size={12} style={{ color: 'var(--text-muted)' }} />
-                    </button>
-                    <button
-                      className="p-1.5 rounded-lg hover:bg-[rgba(239,68,68,0.08)] transition-colors"
-                      onClick={() => handleDelete(tpl.id)}
-                    >
-                      <Trash2 size={12} style={{ color: 'var(--text-muted)' }} />
-                    </button>
-                  </div>
-                </div>
 
-                {/* Section tags with accent colors */}
-                <div className="flex flex-wrap gap-1.5">
-                  {tpl.sections.map((s, i) => {
-                    const tagColors = [
-                      { color: 'rgba(59, 130, 246, 0.85)', bg: 'rgba(59, 130, 246, 0.08)' },
-                      { color: 'rgba(34, 197, 94, 0.85)', bg: 'rgba(34, 197, 94, 0.08)' },
-                      { color: 'rgba(168, 85, 247, 0.85)', bg: 'rgba(168, 85, 247, 0.08)' },
-                      { color: 'rgba(249, 115, 22, 0.85)', bg: 'rgba(249, 115, 22, 0.08)' },
-                      { color: 'rgba(236, 72, 153, 0.85)', bg: 'rgba(236, 72, 153, 0.08)' },
-                    ];
-                    const tc = tagColors[i % tagColors.length];
-                    return (
-                      <span
-                        key={i}
-                        className="flex items-center gap-1 text-[10px] px-2 py-1 rounded-full font-medium"
-                        style={{ color: tc.color, background: tc.bg }}
-                      >
-                        {s.isRequired && <CheckSquare size={8} />}
-                        {s.title}
-                      </span>
-                    );
-                  })}
+                  {/* Section tags with accent colors */}
+                  <div className="flex flex-wrap gap-1.5">
+                    {tpl.sections.map((s, i) => {
+                      const tagColors = [
+                        { color: 'rgba(59, 130, 246, 0.85)', bg: 'rgba(59, 130, 246, 0.08)' },
+                        { color: 'rgba(34, 197, 94, 0.85)', bg: 'rgba(34, 197, 94, 0.08)' },
+                        { color: 'rgba(168, 85, 247, 0.85)', bg: 'rgba(168, 85, 247, 0.08)' },
+                        { color: 'rgba(249, 115, 22, 0.85)', bg: 'rgba(249, 115, 22, 0.08)' },
+                        { color: 'rgba(236, 72, 153, 0.85)', bg: 'rgba(236, 72, 153, 0.08)' },
+                      ];
+                      const tc = tagColors[i % tagColors.length];
+                      return (
+                        <span
+                          key={i}
+                          className="flex items-center gap-1 text-[10px] px-2 py-1 rounded-full font-medium"
+                          style={{ color: tc.color, background: tc.bg }}
+                        >
+                          {s.isRequired && <CheckSquare size={8} />}
+                          {s.title}
+                        </span>
+                      );
+                    })}
+                  </div>
                 </div>
               </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       )}
 
@@ -274,20 +519,101 @@ export function TemplateManager() {
                 value={description}
                 onChange={(e) => setDescription(e.target.value)}
               />
-              <div className="flex items-center gap-3">
-                <select
-                  className="flex-1 px-3 py-2.5 rounded-xl text-[13px]"
-                  style={{ background: 'var(--bg-secondary)', color: 'var(--text-primary)', border: '1px solid var(--border-primary)' }}
-                  value={teamId}
-                  onChange={(e) => setTeamId(e.target.value)}
-                >
-                  <option value="">不绑定团队</option>
-                  {teams.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
-                </select>
-                <label className="flex items-center gap-1.5 text-[12px] cursor-pointer" style={{ color: 'var(--text-secondary)' }}>
-                  <input type="checkbox" checked={isDefault} onChange={(e) => setIsDefault(e.target.checked)} />
-                  默认模板
-                </label>
+
+              {/* 多团队关联 */}
+              <div className="flex flex-col gap-2">
+                <div className="flex items-center justify-between">
+                  <span className="text-[12px] font-medium" style={{ color: 'var(--text-secondary)' }}>
+                    关联团队（可多选；关联后即为该团队的默认模板候选）
+                  </span>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => setTeamPickerOpen((v) => !v)}
+                    disabled={manageableTeams.length === 0}
+                  >
+                    {teamPickerOpen ? '收起' : '选择团队'}
+                  </Button>
+                </div>
+
+                {/* 已选 chips */}
+                <div className="flex flex-wrap gap-1.5 min-h-[28px]">
+                  {selectedTeamIds.length === 0 && (
+                    <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
+                      {manageableTeams.length === 0 ? '你尚未管理任何团队，无法关联' : '未关联任何团队'}
+                    </span>
+                  )}
+                  {selectedTeamIds.map((tid) => {
+                    const isDefault = defaultForTeamIds.includes(tid);
+                    return (
+                      <span
+                        key={tid}
+                        className="inline-flex items-center gap-1.5 px-2 py-1 rounded-full text-[11px]"
+                        style={
+                          isDefault
+                            ? { color: 'rgba(59, 130, 246, 0.95)', background: 'rgba(59, 130, 246, 0.12)', border: '1px solid rgba(59,130,246,0.25)' }
+                            : { color: 'var(--text-secondary)', background: 'var(--bg-tertiary)', border: '1px solid var(--border-primary)' }
+                        }
+                      >
+                        {teamLookup.get(tid) || tid}
+                        <button
+                          type="button"
+                          className="p-0.5 hover:opacity-80"
+                          onClick={() => toggleDefaultForTeam(tid)}
+                          title={isDefault ? '取消团队默认' : '设为该团队默认'}
+                        >
+                          <Star size={10} style={{ fill: isDefault ? 'rgba(59,130,246,0.9)' : 'none' }} />
+                        </button>
+                        <button
+                          type="button"
+                          className="p-0.5 hover:opacity-80"
+                          onClick={() => toggleSelectedTeam(tid)}
+                          title="移除关联"
+                        >
+                          <X size={10} />
+                        </button>
+                      </span>
+                    );
+                  })}
+                </div>
+
+                {/* 可选团队列表（只列自己管得着的） */}
+                {teamPickerOpen && (
+                  <div
+                    className="flex flex-wrap gap-1.5 p-2 rounded-xl"
+                    style={{ background: 'var(--bg-tertiary)', border: '1px solid var(--border-secondary)' }}
+                  >
+                    {manageableTeams.length === 0 ? (
+                      <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>无可选团队</span>
+                    ) : (
+                      manageableTeams.map((t) => {
+                        const selected = selectedTeamIds.includes(t.id);
+                        return (
+                          <button
+                            key={t.id}
+                            type="button"
+                            className="px-2 py-1 rounded-full text-[11px] transition-colors"
+                            style={
+                              selected
+                                ? { color: 'rgba(34, 197, 94, 0.95)', background: 'rgba(34, 197, 94, 0.12)' }
+                                : { color: 'var(--text-secondary)', background: 'var(--bg-secondary)' }
+                            }
+                            onClick={() => toggleSelectedTeam(t.id)}
+                          >
+                            {selected && <CheckSquare size={10} className="inline mr-1" />}
+                            {t.name}
+                          </button>
+                        );
+                      })
+                    )}
+                  </div>
+                )}
+
+                {selectedTeamIds.length > 0 && (
+                  <div className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
+                    提示：给某团队切换模板时，该团队在旧模板上的关联会被自动移除。
+                  </div>
+                )}
               </div>
 
               <div className="text-[13px] font-medium mt-1" style={{ color: 'var(--text-secondary)' }}>章节配置</div>

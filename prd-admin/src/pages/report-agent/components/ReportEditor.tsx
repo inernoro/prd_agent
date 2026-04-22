@@ -18,6 +18,8 @@ import {
   uploadReportRichTextImage,
   listMyAiSources,
   listPersonalSources,
+  getMyDefaultTemplate,
+  getTeamDefaultTemplate,
 } from '@/services';
 import type { WeeklyReport, ReportAiSource, PersonalSource } from '@/services/contracts/reportAgent';
 import { WeeklyReportStatus, ReportInputType, WeeklyReportCreationMode } from '@/services/contracts/reportAgent';
@@ -74,7 +76,42 @@ export function ReportEditor({ reportId, weekYear, weekNumber, onClose }: Props)
   const [pastingImageKey, setPastingImageKey] = useState<string | null>(null);
   const [selectedTeamId, setSelectedTeamId] = useState(teams[0]?.id || '');
   const [selectedTemplateId, setSelectedTemplateId] = useState(templates[0]?.id || '');
+  const [myDefaultTemplateId, setMyDefaultTemplateId] = useState<string | null>(null);
+  const [teamDefaultTemplateId, setTeamDefaultTemplateId] = useState<string | null>(null);
   const [isNew, setIsNew] = useState(!reportId);
+
+  // 当为新建时，预填用户个人默认模板偏好（后端 my-default 接口）
+  useEffect(() => {
+    if (!isNew) return;
+    let cancelled = false;
+    (async () => {
+      const res = await getMyDefaultTemplate();
+      if (cancelled || !res.success || !res.data?.template?.id) return;
+      setMyDefaultTemplateId(res.data.template.id);
+      setSelectedTemplateId((prev) => prev || res.data!.template!.id);
+    })();
+    return () => { cancelled = true; };
+  }, [isNew]);
+
+  // 团队改变时，拉取该团队的默认模板，若用户尚未自主选过则联动设置
+  useEffect(() => {
+    if (!isNew || !selectedTeamId) {
+      setTeamDefaultTemplateId(null);
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      const res = await getTeamDefaultTemplate({ teamId: selectedTeamId });
+      if (cancelled || !res.success) return;
+      const tplId = res.data?.template?.id ?? null;
+      setTeamDefaultTemplateId(tplId);
+      if (tplId) {
+        // 团队默认优先级高于个人偏好（因为用户明确选了这个团队的周报）
+        setSelectedTemplateId(tplId);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [isNew, selectedTeamId]);
   const [sourceLabelMap, setSourceLabelMap] = useState<Record<string, string>>(DEFAULT_SOURCE_LABELS);
 
   const isEditableStatus = !report
@@ -524,9 +561,18 @@ export function ReportEditor({ reportId, weekYear, weekNumber, onClose }: Props)
                   onChange={(e) => setSelectedTemplateId(e.target.value)}
                 >
                   <option value="">请选择模板</option>
-                  {templates.map((t) => (
-                    <option key={t.id} value={t.id}>{t.name}{t.isDefault ? ' (默认)' : ''}</option>
-                  ))}
+                  {templates.map((t) => {
+                    const suffix = teamDefaultTemplateId === t.id
+                      ? ' (团队默认)'
+                      : myDefaultTemplateId === t.id
+                        ? ' (我的默认)'
+                        : t.isDefault && t.isSystem
+                          ? ' (系统默认)'
+                          : '';
+                    return (
+                      <option key={t.id} value={t.id}>{t.name}{suffix}</option>
+                    );
+                  })}
                 </select>
               </div>
               <div className="grid grid-cols-2 gap-2 mt-1">

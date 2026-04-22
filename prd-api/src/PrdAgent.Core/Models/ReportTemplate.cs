@@ -20,13 +20,19 @@ public class ReportTemplate
     /// <summary>模板章节定义</summary>
     public List<ReportTemplateSection> Sections { get; set; } = new();
 
-    /// <summary>绑定团队 ID（null 表示通用模板）</summary>
+    /// <summary>[已废弃] 绑定团队 ID（历史字段，读时兼容）—— 新代码请使用 TeamIds</summary>
     public string? TeamId { get; set; }
+
+    /// <summary>该模板关联的团队 ID 集合（多团队）。不变量：一个团队 ID 全局只能出现在一个模板的 TeamIds 中</summary>
+    public List<string> TeamIds { get; set; } = new();
+
+    /// <summary>该模板作为默认模板的团队 ID 集合（关联 = 默认，与 TeamIds 等价；冗余为显式字段以便演化）</summary>
+    public List<string> DefaultForTeamIds { get; set; } = new();
 
     /// <summary>绑定岗位名称（null 表示不限岗位）</summary>
     public string? JobTitle { get; set; }
 
-    /// <summary>是否为默认模板</summary>
+    /// <summary>[系统模板专用] 是否为系统全局默认模板</summary>
     public bool IsDefault { get; set; }
 
     /// <summary>是否为系统预置模板（不可删除/修改核心结构）</summary>

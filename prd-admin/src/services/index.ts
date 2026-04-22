@@ -569,6 +569,10 @@ import type {
   CreateReportTemplateContract,
   UpdateReportTemplateContract,
   DeleteReportTemplateContract,
+  GetMyDefaultTemplateContract,
+  GetTeamDefaultTemplateContract,
+  SetMyDefaultTemplateContract,
+  ClearMyDefaultTemplateContract,
   ListWeeklyReportsContract,
   GetWeeklyReportContract,
   CreateWeeklyReportContract,
@@ -595,6 +599,7 @@ import type {
   GetCollectedActivityContract,
   ListCommentsContract,
   CreateCommentContract,
+  UpdateCommentContract,
   DeleteCommentContract,
   ListReportLikesContract,
   LikeReportContract,
@@ -654,6 +659,10 @@ import {
   createReportTemplateReal,
   updateReportTemplateReal,
   deleteReportTemplateReal,
+  getMyDefaultTemplateReal,
+  getTeamDefaultTemplateReal,
+  setMyDefaultTemplateReal,
+  clearMyDefaultTemplateReal,
   listWeeklyReportsReal,
   getWeeklyReportReal,
   createWeeklyReportReal,
@@ -680,6 +689,7 @@ import {
   getCollectedActivityReal,
   listCommentsReal,
   createCommentReal,
+  updateCommentReal,
   deleteCommentReal,
   listReportLikesReal,
   likeReportReal,
@@ -1081,6 +1091,10 @@ export const getReportTemplate: GetReportTemplateContract = withAuth(getReportTe
 export const createReportTemplate: CreateReportTemplateContract = withAuth(createReportTemplateReal);
 export const updateReportTemplate: UpdateReportTemplateContract = withAuth(updateReportTemplateReal);
 export const deleteReportTemplate: DeleteReportTemplateContract = withAuth(deleteReportTemplateReal);
+export const getMyDefaultTemplate: GetMyDefaultTemplateContract = withAuth(getMyDefaultTemplateReal);
+export const getTeamDefaultTemplate: GetTeamDefaultTemplateContract = withAuth(getTeamDefaultTemplateReal);
+export const setMyDefaultTemplate: SetMyDefaultTemplateContract = withAuth(setMyDefaultTemplateReal);
+export const clearMyDefaultTemplate: ClearMyDefaultTemplateContract = withAuth(clearMyDefaultTemplateReal);
 export const listWeeklyReports: ListWeeklyReportsContract = withAuth(listWeeklyReportsReal);
 export const getWeeklyReport: GetWeeklyReportContract = withAuth(getWeeklyReportReal);
 export const createWeeklyReport: CreateWeeklyReportContract = withAuth(createWeeklyReportReal);
@@ -1109,6 +1123,7 @@ export const getCollectedActivity: GetCollectedActivityContract = withAuth(getCo
 // Report Agent Phase 3: Comments + Plan Comparison + Team Summary
 export const listComments: ListCommentsContract = withAuth(listCommentsReal);
 export const createComment: CreateCommentContract = withAuth(createCommentReal);
+export const updateComment: UpdateCommentContract = withAuth(updateCommentReal);
 export const deleteComment: DeleteCommentContract = withAuth(deleteCommentReal);
 export const listReportLikes: ListReportLikesContract = withAuth(listReportLikesReal);
 export const likeReport: LikeReportContract = withAuth(likeReportReal);
