@@ -29,6 +29,12 @@ type GenDoneMeta = {
   prompt?: string;
   runId?: string;
   modelPool?: string;
+  /** 后端实际调度使用的模型（来自 SSE runStart / imageDone 的 modelId），优先于 modelPool 展示 */
+  actualModel?: string;
+  /** 后端实际命中的模型池名 */
+  actualModelPool?: string;
+  /** 后端判断此次调用使用的是自适应模型：前端应显示"自适应"而不是具体 WxH */
+  isAdaptive?: boolean;
   genType?: 'text2img' | 'img2img' | 'vision';
   imageRefShas?: string[];
 };
@@ -100,10 +106,16 @@ function MessageMetadataInline({
   sizeToAspectMap?: Map<string, string>;
 }) {
   if (!size && !model) return null;
-  const tier = detectTierFromSize(size || '');
-  const aspect = size ? (sizeToAspectMap?.get(size.toLowerCase()) || detectAspectFromSize(size)) : '';
+  // 自适应模型：不走 tier/aspect 解析，直接显示"自适应"
+  const isAdaptiveSize = size === '自适应' || size === 'adaptive' || size === 'auto';
+  const tier = isAdaptiveSize ? '' : detectTierFromSize(size || '');
+  const aspect = isAdaptiveSize || !size
+    ? ''
+    : (sizeToAspectMap?.get(size.toLowerCase()) || detectAspectFromSize(size));
   const tierLabel = tier === '4k' ? '4K' : tier === '2k' ? '2K' : '1K';
-  const sizeLabel = aspect ? `${tierLabel} · ${aspect}` : size;
+  const sizeLabel = isAdaptiveSize
+    ? '自适应'
+    : (aspect ? `${tierLabel} · ${aspect}` : size);
   return (
     <div className="flex flex-wrap items-center justify-between w-full gap-1.5 !mt-0">
       {size ? (
@@ -286,15 +298,25 @@ export const ChatMessageItem = memo(function ChatMessageItem({
       msgModel = String(modeledMsg.model ?? '').trim();
     }
 
-    if (originalUserMsg && !msgSize) {
+    // ── 服务端权威覆盖 ──
+    // actualModel / isAdaptive 由后端 SSE 写入 GEN_DONE meta，优先级高于
+    // 用户消息里的 @model:xxx token（那个只是前端 picker 的选择，可能与后台调度不一致）
+    const meta = parseGenDone(m.content);
+    if (meta?.actualModel) {
+      msgModel = String(meta.actualModel).trim();
+    } else if (meta?.actualModelPool) {
+      msgModel = String(meta.actualModelPool).trim();
+    }
+
+    // 自适应模型：尺寸由 prompt 决定，不应显示具体 WxH
+    if (meta?.isAdaptive) {
+      msgSize = '自适应';
+    } else if (originalUserMsg && !msgSize) {
       msgSize = '1024x1024';
     }
 
-    if (!msgModel) {
-      const meta = parseGenDone(m.content);
-      if (meta && meta.modelPool) {
-        msgModel = meta.modelPool;
-      }
+    if (!msgModel && meta?.modelPool) {
+      msgModel = meta.modelPool;
     }
 
     return (

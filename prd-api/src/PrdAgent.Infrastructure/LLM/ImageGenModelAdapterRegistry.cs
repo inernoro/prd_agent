@@ -36,6 +36,22 @@ public static class ImageGenModelAdapterRegistry
     /// </summary>
     public static SizeAdaptationResult NormalizeSize(ImageGenModelAdapterConfig config, string? requestedSize)
     {
+        // 自适应：不做尺寸归一化，输出尺寸由 prompt 决定
+        if (config.SizeConstraintType == SizeConstraintTypes.Adaptive)
+        {
+            TryParseSize(requestedSize, out var aw, out var ah);
+            return new SizeAdaptationResult
+            {
+                Size = string.IsNullOrWhiteSpace(requestedSize) ? string.Empty : requestedSize.Trim(),
+                Width = aw,
+                Height = ah,
+                AspectRatio = aw > 0 && ah > 0 ? FindClosestRatio((double)aw / ah, GetAllRatiosFromConfig(config)) : null,
+                IsAdaptive = true,
+                SizeAdjusted = false,
+                RatioAdjusted = false,
+            };
+        }
+
         var result = new SizeAdaptationResult();
         var allSizes = GetAllSizesFromConfig(config);
         var allRatios = GetAllRatiosFromConfig(config);
@@ -276,6 +292,15 @@ public static class ImageGenModelAdapterRegistry
                     targetParams["resolution"] = sizeResult.Resolution;
                 }
                 break;
+
+            case SizeParamFormats.None:
+                // 自适应模型：不注入任何尺寸参数，并清掉调用方可能误传的 size/width/height/aspect_ratio
+                targetParams.Remove("size");
+                targetParams.Remove("width");
+                targetParams.Remove("height");
+                targetParams.Remove("aspect_ratio");
+                targetParams.Remove("resolution");
+                break;
         }
     }
 
@@ -309,6 +334,7 @@ public static class ImageGenModelAdapterRegistry
             Notes = config.Notes,
             SupportsImageToImage = config.SupportsImageToImage,
             SupportsInpainting = config.SupportsInpainting,
+            IsAdaptive = config.SizeConstraintType == SizeConstraintTypes.Adaptive,
         };
     }
 
@@ -384,13 +410,20 @@ public static class ImageGenModelAdapterRegistry
         result.HasAdapter = true;
         result.AdapterName = config.ModelIdPattern;
         result.SizeParamFormat = config.SizeParamFormat;
+        result.IsAdaptive = config.SizeConstraintType == SizeConstraintTypes.Adaptive;
 
         // 1. 尺寸归一化
         var sizeResult = NormalizeSize(config, requestedSize);
         result.Adaptation = sizeResult;
 
-        // 2. 应用尺寸参数格式（WxH / width+height / aspect_ratio）
+        // 2. 应用尺寸参数格式（WxH / width+height / aspect_ratio / none）
         ApplySizeParams(config, sizeResult, result.SizeParams);
+
+        // 2.1 ParamRenames 同样作用到 SizeParams（如 aspect_ratio → aspectRatio for nano-banana-2）
+        if (config.ParamRenames.Count > 0 && result.SizeParams.Count > 0)
+        {
+            result.SizeParams = TransformParams(config, result.SizeParams);
+        }
 
         // 3. 参数重命名（如 model -> model_name）
         if (extraParams != null)
@@ -527,4 +560,7 @@ public class ImageGenAdapterInfo
     public List<string> Notes { get; set; } = new();
     public bool SupportsImageToImage { get; set; }
     public bool SupportsInpainting { get; set; }
+
+    /// <summary>是否为自适应模型：true 表示前端不应展示尺寸选择器，应展示"自适应"徽标</summary>
+    public bool IsAdaptive { get; set; }
 }

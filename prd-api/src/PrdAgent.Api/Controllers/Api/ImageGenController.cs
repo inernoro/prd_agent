@@ -199,6 +199,7 @@ public class ImageGenController : ControllerBase
             },
             supportsImageToImage = adapterInfo.SupportsImageToImage,
             supportsInpainting = adapterInfo.SupportsInpainting,
+            isAdaptive = adapterInfo.IsAdaptive,
         }));
     }
 

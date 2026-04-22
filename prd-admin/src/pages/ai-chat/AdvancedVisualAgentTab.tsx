@@ -515,6 +515,12 @@ type GenDoneMeta = {
   prompt?: string;
   runId?: string;
   modelPool?: string;
+  /** 后端实际调度后使用的模型（覆盖前端选择的 modelPool 展示） */
+  actualModel?: string;
+  /** 后端实际调度命中的模型池名 */
+  actualModelPool?: string;
+  /** 后端判断此次调用使用的是自适应模型（前端应显示"自适应"而不是具体 WxH） */
+  isAdaptive?: boolean;
   genType?: 'text2img' | 'img2img' | 'vision';
   imageRefShas?: string[];
 };
@@ -976,6 +982,13 @@ type ImageGenRunStreamPayload = {
   url?: unknown;
   originalUrl?: unknown;
   originalSha256?: unknown;
+  // 后端 runStart / imageDone 推送的实际调度结果（用于"展示实际使用的模型"）
+  modelId?: unknown;
+  modelGroupName?: unknown;
+  platformId?: unknown;
+  isAdaptive?: unknown;
+  adapterDisplayName?: unknown;
+  resolutionType?: unknown;
 };
 
 function buildTemplate(name: string) {
@@ -1151,12 +1164,15 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
   type SizeOption = { size: string; aspectRatio: string };
   type SizesByResolutionType = Record<'1k' | '2k' | '4k', SizeOption[]>;
   const [sizesByResolution, setSizesByResolution] = useState<SizesByResolutionType>({ '1k': [], '2k': [], '4k': [] });
+  // 当前模型是否为自适应模型（gpt-image-2-all 等）：true 时尺寸选择器应展示"自适应"
+  const [currentModelIsAdaptive, setCurrentModelIsAdaptive] = useState(false);
 
   useEffect(() => {
     // 使用模型池 code（对于 visual-agent 就是 modelName）获取尺寸配置
     const modelCode = effectiveModel?.modelName;
     if (!modelCode) {
       setSizesByResolution({ '1k': [], '2k': [], '4k': [] });
+      setCurrentModelIsAdaptive(false);
       return;
     }
 
@@ -1169,11 +1185,16 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
             '2k': Array.isArray(data['2k']) ? data['2k'] : [],
             '4k': Array.isArray(data['4k']) ? data['4k'] : [],
           });
+          setCurrentModelIsAdaptive(res.data.isAdaptive === true);
         } else {
           setSizesByResolution({ '1k': [], '2k': [], '4k': [] });
+          setCurrentModelIsAdaptive(false);
         }
       })
-      .catch(() => setSizesByResolution({ '1k': [], '2k': [], '4k': [] }));
+      .catch(() => {
+        setSizesByResolution({ '1k': [], '2k': [], '4k': [] });
+        setCurrentModelIsAdaptive(false);
+      });
   }, [effectiveModel]);
 
   // 按比例分组，每个比例只保留一个尺寸
@@ -3881,7 +3902,21 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
               )
             );
             const modelPoolName = pickedModel?.name || pickedModel?.modelName || '';
-            pushMsg('Assistant', buildGenDoneContent({ src: u, refSrc: refSrc || undefined, prompt: displayPrompt || undefined, runId, modelPool: modelPoolName, imageRefShas }));
+            // 优先用后端 imageDone 事件携带的实际调度结果（actualModel + isAdaptive）
+            const actualModelFromSse = String(o.modelId ?? '').trim() || undefined;
+            const actualPoolFromSse = String(o.modelGroupName ?? '').trim() || undefined;
+            const isAdaptiveFromSse = o.isAdaptive === true;
+            pushMsg('Assistant', buildGenDoneContent({
+              src: u,
+              refSrc: refSrc || undefined,
+              prompt: displayPrompt || undefined,
+              runId,
+              modelPool: modelPoolName,
+              actualModel: actualModelFromSse,
+              actualModelPool: actualPoolFromSse,
+              isAdaptive: isAdaptiveFromSse,
+              imageRefShas,
+            }));
             // 自动投稿：生图完成后自动提交到作品广场（受开关控制）
             if (asset?.id && autoSubmitEnabledRef.current) {
               autoSubmitImages([asset.id]).catch(() => {});
@@ -4105,7 +4140,16 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                     : x
                 )
               );
-              pushMsg('Assistant', buildGenDoneContent({ src: u, refSrc: refSrc || undefined, prompt, runId, modelPool: modelPoolName }));
+              pushMsg('Assistant', buildGenDoneContent({
+                src: u,
+                refSrc: refSrc || undefined,
+                prompt,
+                runId,
+                modelPool: modelPoolName,
+                actualModel: String(o.modelId ?? '').trim() || undefined,
+                actualModelPool: String(o.modelGroupName ?? '').trim() || undefined,
+                isAdaptive: o.isAdaptive === true,
+              }));
             } else if (t === 'imageError' || t === 'error') {
               const msg = String(o.errorMessage ?? '快捷操作失败');
               setCanvas((prev) => prev.map((x) => (x.key === key ? { ...x, status: 'error', errorMessage: msg } : x)));
@@ -6516,6 +6560,10 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                           onClick={(e) => e.stopPropagation()}
                         >
                           {(() => {
+                            // 自适应模型：尺寸由 prompt 决定，不展示具体 WxH，直接标"自适应"
+                            if (currentModelIsAdaptive) {
+                              return <span style={{ whiteSpace: 'nowrap' }}>自适应</span>;
+                            }
                             const size = composerSize ?? autoSizeForSelectedImage ?? imageGenSize;
                             const tier = detectTierFromSize(size);
                             const aspect = sizeToAspectMap.get(size.toLowerCase()) || detectAspectFromSize(size);
@@ -7873,6 +7921,10 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                     onClick={() => setSizeSelectorOpen((v) => !v)}
                   >
                     {(() => {
+                      // 自适应模型：尺寸由 prompt 决定，标"自适应"
+                      if (currentModelIsAdaptive) {
+                        return <span style={{ whiteSpace: 'nowrap' }}>自适应</span>;
+                      }
                       const size = composerSize ?? autoSizeForSelectedImage ?? imageGenSize;
                       const tier = detectTierFromSize(size);
                       // 优先使用后端返回的 aspectRatio，避免 GCD 计算偏差（如 1344x768 应该是 16:9 而不是 7:4）
@@ -8975,7 +9027,16 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                       ? { ...x, kind: 'image' as const, status: 'done' as const, src: u, originalSrc: originalU, assetId: (asset?.id || '').trim() || x.assetId, sha256: (asset?.sha256 || '').trim() || x.sha256, originalSha256: originalSha.trim() || x.originalSha256, syncStatus: 'synced' as const, syncError: null }
                       : x
                   ));
-                  pushMsg('Assistant', buildGenDoneContent({ src: u, refSrc, prompt: desc.trim(), runId, modelPool: modelPoolName }));
+                  pushMsg('Assistant', buildGenDoneContent({
+                    src: u,
+                    refSrc,
+                    prompt: desc.trim(),
+                    runId,
+                    modelPool: modelPoolName,
+                    actualModel: String(o.modelId ?? '').trim() || undefined,
+                    actualModelPool: String(o.modelGroupName ?? '').trim() || undefined,
+                    isAdaptive: o.isAdaptive === true,
+                  }));
                 } else if (t === 'imageError' || t === 'error') {
                   const msg = String(o.errorMessage ?? '草图生图失败');
                   setCanvas(prev => prev.map(x => x.key === genKey ? { ...x, status: 'error' as const, errorMessage: msg } : x));

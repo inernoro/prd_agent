@@ -156,8 +156,36 @@ public class ModelResolver : IModelResolver
                 $"未找到可用模型: AppCallerCode={appCallerCode}, ModelType={modelType}");
         }
 
+        // ========== 第 5.5 步：若调用方指定了 expectedModel，优先尊重 ==========
+        // 在所有候选池中寻找匹配 expectedModel（按 ModelId / 池名 模糊匹配）的可用条目
+        ModelGroup? preferredGroup = null;
+        ModelGroupItem? preferredItem = null;
+        if (!string.IsNullOrWhiteSpace(expectedModel))
+        {
+            var (g, m) = FindPreferredModel(candidateGroups, expectedModel);
+            if (g != null && m != null)
+            {
+                preferredGroup = g;
+                preferredItem = m;
+                _logger.LogInformation(
+                    "[ModelResolver] 命中 expectedModel: {Expected} → 池 {PoolName} 中的模型 {ModelId}",
+                    expectedModel, g.Name, m.ModelId);
+            }
+            else
+            {
+                _logger.LogInformation(
+                    "[ModelResolver] expectedModel '{Expected}' 在候选池中未找到匹配（池：[{Pools}]），将走默认调度",
+                    expectedModel, string.Join(", ", candidateGroups.Select(x => x.Name)));
+            }
+        }
+
         // ========== 第六步：从模型池中选择最佳模型 ==========
-        foreach (var group in candidateGroups)
+        // 若上一步命中 expectedModel，将该池放在最前面优先尝试
+        var orderedGroups = preferredGroup != null
+            ? new[] { preferredGroup }.Concat(candidateGroups.Where(g => g.Id != preferredGroup.Id)).ToList()
+            : candidateGroups;
+
+        foreach (var group in orderedGroups)
         {
             // 诊断：模型池内容
             _logger.LogInformation(
@@ -167,7 +195,10 @@ public class ModelResolver : IModelResolver
                 string.Join(", ", group.Models?.Select(m =>
                     $"{m.ModelId}(Health={m.HealthStatus}, Platform={m.PlatformId})") ?? Array.Empty<string>()));
 
-            var selectedModel = SelectBestModel(group);
+            // expectedModel 命中的池：直接用命中的具体条目；否则按健康度选最优
+            var selectedModel = (preferredGroup != null && group.Id == preferredGroup.Id)
+                ? preferredItem
+                : SelectBestModel(group);
             if (selectedModel == null)
             {
                 _logger.LogWarning(
@@ -522,6 +553,58 @@ public class ModelResolver : IModelResolver
             return null;
         }
         return exchange;
+    }
+
+    /// <summary>
+    /// 在候选池列表中寻找用户期望的模型。
+    /// 匹配规则（按优先级）：
+    ///   1. 池中某个 ModelId 完全匹配 expectedModel（忽略大小写）
+    ///   2. 池中某个 ModelId 是 expectedModel 的前缀（用于带版本号的容差）
+    ///   3. 池名（ModelGroup.Name / Code）匹配 expectedModel
+    /// 返回的条目必须不是 Unavailable 状态。
+    /// </summary>
+    private static (ModelGroup? group, ModelGroupItem? item) FindPreferredModel(
+        List<ModelGroup> groups, string expectedModel)
+    {
+        if (groups.Count == 0 || string.IsNullOrWhiteSpace(expectedModel))
+            return (null, null);
+
+        var key = expectedModel.Trim();
+
+        // 优先级 1：ModelId 精确匹配
+        foreach (var g in groups)
+        {
+            if (g.Models == null) continue;
+            var exact = g.Models.FirstOrDefault(m =>
+                m.HealthStatus != ModelHealthStatus.Unavailable &&
+                string.Equals(m.ModelId, key, StringComparison.OrdinalIgnoreCase));
+            if (exact != null) return (g, exact);
+        }
+
+        // 优先级 2：ModelId 前缀匹配（如 expected="gemini-3-pro" 命中 "gemini-3-pro-image-preview"）
+        foreach (var g in groups)
+        {
+            if (g.Models == null) continue;
+            var prefix = g.Models.FirstOrDefault(m =>
+                m.HealthStatus != ModelHealthStatus.Unavailable &&
+                m.ModelId != null &&
+                m.ModelId.StartsWith(key, StringComparison.OrdinalIgnoreCase));
+            if (prefix != null) return (g, prefix);
+        }
+
+        // 优先级 3：池名/池 Code 匹配
+        foreach (var g in groups)
+        {
+            var matchByPool =
+                string.Equals(g.Name, key, StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(g.Code, key, StringComparison.OrdinalIgnoreCase);
+            if (!matchByPool || g.Models == null) continue;
+
+            var any = g.Models.FirstOrDefault(m => m.HealthStatus != ModelHealthStatus.Unavailable);
+            if (any != null) return (g, any);
+        }
+
+        return (null, null);
     }
 
     private ModelGroupItem? SelectBestModel(ModelGroup group)
