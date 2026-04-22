@@ -66,6 +66,31 @@
   --bg-glow-1: transparent;
   --bg-glow-2: transparent;
 
+  /* ════════════════════════════════════════════════════════════════
+   * 2026-04-22 一劳永逸：Legacy/alias tokens
+   * ════════════════════════════════════════════════════════════════
+   * 过去几轮迭代里有些 CSS 规则用了"不存在"的 token（--bg-card-2 /
+   * --fg / --text / --surface / --bg-secondary …），fallback 全部写
+   * 的是暗色 hex。dark 主题看不出问题，light 主题永远是黑底。
+   *
+   * 根治：把这些僵尸 token 定义成规范 token 的 alias。CSS var 是运行
+   * 时解析的 —— alias 指向的规范 token 在 [data-theme="light"] 下
+   * 会自动切换到 light 值，alias 不需要再在 light 块重复定义。
+   *
+   * 禁止：未来新增 token 不得再起新名字 alias，查这张表用规范的。
+   */
+  --bg-card-2:     var(--bg-elevated);
+  --bg-secondary:  var(--bg-elevated);
+  --bg-tertiary:   var(--bg-elevated);
+  --border-subtle: var(--border-light);
+  --surface:       var(--bg-card);
+  --surface-hover: var(--bg-hover);
+  --text:          var(--text-primary);
+  --fg:            var(--text-primary);
+  --fg-primary:    var(--text-primary);
+  --fg-secondary:  var(--text-secondary);
+  --fg-muted:      var(--text-muted);
+
   /* Metrics */
   --radius: 14px;
   --radius-sm: 10px;
@@ -2982,30 +3007,76 @@ a.branch-name:hover { color: var(--accent); }
 /* ════════════════ API Activity Monitor ════════════════ */
 
 /* ── Host stats pulse widget (bottom-right, above Activity Monitor) ── */
-/* Real-time mem + cpu bars. Complements the header's container capacity badge */
-/* See doc/design.cds-resilience.md §八 */
+/* 2026-04-22：原右下角 `.host-stats` 浮窗已废弃（用户反馈"右下角希望干净一些"）。
+ * MEM/CPU 合并到 header 的 .host-pulse-badge。.host-stats 保留 display:none
+ * 做 DOM 兜底，避免 renderHostStats 里的 getElementById 报 null。 */
 .host-stats {
-  position: fixed;
-  /* Stack above the collapsed Activity Monitor (40px) + margin */
-  bottom: 66px;
-  right: 16px;
-  z-index: 9997;
-  padding: 8px 12px;
-  border-radius: 8px;
+  display: none !important;
+}
+
+/* ── Header host-pulse 胶囊 —— 和 .capacity-badge 并排 ── */
+.host-pulse-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 3px 10px;
+  margin-left: 8px;
   background: var(--bg-card);
   border: 1px solid var(--card-border);
-  box-shadow: var(--shadow-lg);
-  backdrop-filter: blur(16px);
-  cursor: pointer;
-  user-select: none;
-  transition: opacity 0.25s ease, transform 0.2s ease, box-shadow 0.2s ease;
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  min-width: 190px;
-  font-family: ui-monospace, SFMono-Regular, "SF Mono", Consolas, monospace;
+  border-radius: 999px;
+  font-family: var(--font-mono);
   font-size: 11px;
   line-height: 1;
+  color: var(--text-secondary);
+  cursor: pointer;
+  user-select: none;
+  transition: background 120ms ease, border-color 120ms ease;
+}
+.host-pulse-badge.hidden { display: none !important; }
+.host-pulse-badge:hover {
+  background: var(--bg-elevated);
+  border-color: var(--accent-border);
+}
+.host-pulse-metric {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.host-pulse-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--green);
+  box-shadow: 0 0 4px currentColor;
+}
+.host-pulse-dot[data-tier="green"]  { color: #3fb950; background: #3fb950; }
+.host-pulse-dot[data-tier="blue"]   { color: #58a6ff; background: #58a6ff; }
+.host-pulse-dot[data-tier="orange"] { color: #f0883e; background: #f0883e; }
+.host-pulse-dot[data-tier="red"]    { color: #f85149; background: #f85149; animation: host-pulse-red 1.2s ease-in-out infinite; }
+@keyframes host-pulse-red {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50%      { opacity: 0.6; transform: scale(0.85); }
+}
+.host-pulse-label {
+  color: var(--text-muted);
+  font-weight: 600;
+  letter-spacing: 0.3px;
+  font-size: 10px;
+}
+.host-pulse-value {
+  color: var(--text-primary);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  min-width: 30px;
+  text-align: right;
+}
+.host-pulse-sep {
+  color: var(--text-muted);
+  opacity: 0.4;
+}
+/* 小屏下隐藏 host-pulse，和 capacity-badge 保持一致（规则里本就隐藏 capacity） */
+@media (max-width: 640px) {
+  .host-pulse-badge { display: none !important; }
 }
 .host-stats.hidden {
   opacity: 0;

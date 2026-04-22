@@ -1860,8 +1860,8 @@ async function pollHostStats() {
     _hostStatsFailCount++;
     // Hide widget after 3 consecutive failures (probably CDS restart in progress)
     if (_hostStatsFailCount >= 3) {
-      const el = document.getElementById('hostStatsWidget');
-      if (el) el.classList.add('hidden');
+      const headerEl = document.getElementById('hostPulseBadge');
+      if (headerEl) headerEl.classList.add('hidden');
     }
   }
 }
@@ -1872,19 +1872,25 @@ function renderHostStats(data) {
   const memTier = tierForPercent(memPct);
   const cpuTier = tierForPercent(cpuPct);
 
-  // Floating bottom-right widget (non-FS mode)
-  const el = document.getElementById('hostStatsWidget');
-  if (el) {
-    el.classList.remove('hidden');
-    const memFill = document.getElementById('hsMemFill');
-    const memValue = document.getElementById('hsMemValue');
-    if (memFill) { memFill.style.width = `${Math.min(memPct, 100)}%`; memFill.dataset.tier = memTier; }
-    if (memValue) memValue.textContent = `${memPct}%`;
-    const cpuFill = document.getElementById('hsCpuFill');
-    const cpuValue = document.getElementById('hsCpuValue');
-    if (cpuFill) { cpuFill.style.width = `${Math.min(cpuPct, 100)}%`; cpuFill.dataset.tier = cpuTier; }
-    if (cpuValue) cpuValue.textContent = `${cpuPct}%`;
-    el.dataset.stress = (memPct >= 90 || cpuPct >= 90) ? '1' : '0';
+  // 2026-04-22：原右下角浮窗已合并到 header 的 .host-pulse-badge。
+  // .host-stats 元素还在 DOM 里（display:none 兜底），但不再更新。
+  const headerEl = document.getElementById('hostPulseBadge');
+  if (headerEl) {
+    headerEl.classList.remove('hidden');
+    headerEl.innerHTML = `
+      <span class="host-pulse-metric" title="内存 ${memPct}%">
+        <span class="host-pulse-dot" data-tier="${memTier}"></span>
+        <span class="host-pulse-label">MEM</span>
+        <span class="host-pulse-value">${memPct}%</span>
+      </span>
+      <span class="host-pulse-sep">·</span>
+      <span class="host-pulse-metric" title="CPU 负载 ${cpuPct}%">
+        <span class="host-pulse-dot" data-tier="${cpuTier}"></span>
+        <span class="host-pulse-label">CPU</span>
+        <span class="host-pulse-value">${cpuPct}%</span>
+      </span>
+    `;
+    headerEl.dataset.stress = (memPct >= 90 || cpuPct >= 90) ? '1' : '0';
   }
 
   // Inline topbar pill (FS mode) — same data, different elements
@@ -3642,7 +3648,29 @@ function renderBranches() {
     return;
   }
 
-  el.innerHTML = filteredBranches.map(b => {
+  // 2026-04-22 分支排序规则（用户反馈）：
+  //   1) 收藏（isFavorite）优先，作为独立序列置顶
+  //   2) 两个序列内部都按"最近使用"倒序（lastAccessedAt 降序，缺失则 createdAt）
+  // 默认分支（defaultBranch）单独 pin 到整组最前 —— 用户打开 CDS 第一个看到
+  // 的永远是 production 环境分支，不会被其他最近部署的分支淹没。
+  const _sortKey = (b) => {
+    const t = b.lastAccessedAt || b.createdAt || 0;
+    return typeof t === 'string' ? new Date(t).getTime() : t;
+  };
+  const sortedBranches = [...filteredBranches].sort((a, b) => {
+    // 默认分支永远最前
+    const aDef = a.id === defaultBranch ? 0 : 1;
+    const bDef = b.id === defaultBranch ? 0 : 1;
+    if (aDef !== bDef) return aDef - bDef;
+    // 收藏序列优先
+    const aFav = a.isFavorite ? 0 : 1;
+    const bFav = b.isFavorite ? 0 : 1;
+    if (aFav !== bFav) return aFav - bFav;
+    // 同序列内按时间倒序（新的靠前）
+    return _sortKey(b) - _sortKey(a);
+  });
+
+  el.innerHTML = sortedBranches.map(b => {
     const isBusy = busyBranches.has(b.id) || globalBusy;
     const isDefault = b.id === defaultBranch;
     // Defensive filter against orphan/cross-project service entries.
