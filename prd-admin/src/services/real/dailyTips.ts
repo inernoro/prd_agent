@@ -6,6 +6,28 @@ import type { ApiResponse } from '@/types/api';
 
 export type DailyTipKind = 'text' | 'card' | 'spotlight';
 
+/** Tip 落地页后的自动引导动作(由 SpotlightOverlay 按序执行)。 */
+export interface DailyTipAutoAction {
+  /** 滚动模式:center / top / none。空=center */
+  scroll?: 'center' | 'top' | 'none' | null;
+  /** 需要先展开的折叠面板 selector(点击一次触发 React state)。 */
+  expand?: string | null;
+  /** 预填充输入框 */
+  prefill?: { selector: string; value: string } | null;
+  /** 延迟后自动点击的 selector(如 CTA 按钮)。 */
+  autoClick?: string | null;
+  /** autoClick 之前的延迟,毫秒。默认 1200。 */
+  autoClickDelayMs?: number | null;
+  /** 多步 Tour:有多少 step 就画多少圈,用户点"下一步"
+   *  navigateTo 非空时,切到这一步时先 navigate 过去再 poll selector(跨页 Tour) */
+  steps?: Array<{
+    selector: string;
+    title: string;
+    body?: string | null;
+    navigateTo?: string | null;
+  }> | null;
+}
+
 export interface DailyTip {
   id: string;
   kind: DailyTipKind;
@@ -15,6 +37,7 @@ export interface DailyTip {
   actionUrl: string;
   ctaText?: string | null;
   targetSelector?: string | null;
+  autoAction?: DailyTipAutoAction | null;
   isTargeted?: boolean;
   sourceType?: string | null;
   createdAt?: string;
@@ -66,12 +89,15 @@ export interface DailyTipUpsert {
   actionUrl: string;
   ctaText?: string | null;
   targetSelector?: string | null;
+  autoAction?: DailyTipAutoAction | null;
   targetUserId?: string | null;
   targetRoles?: string[] | null;
   displayOrder?: number;
   isActive?: boolean;
   startAt?: string | null;
   endAt?: string | null;
+  /** 场景分类:feature-release / tip / bug-fix / onboarding / manual(默认) */
+  sourceType?: string | null;
 }
 
 // ============ 公共读取 ============
@@ -111,14 +137,38 @@ export async function deleteTip(id: string): Promise<ApiResponse<{ deleted: bool
   });
 }
 
-/** 推送 tip 给指定用户。reset=true 时重置已有记录为 pending。 */
+/** 推送 tip 给指定用户 / 按角色 / 全体。reset=true 时重置已有记录为 pending。
+ *  scope: "all" / "role:PM" / "role:DEV" / "role:QA" / "role:ADMIN",与 userIds 取并集。 */
 export async function pushTip(
   id: string,
-  body: { userIds: string[]; maxViews?: number; reset?: boolean },
+  body: { userIds?: string[]; scope?: string; maxViews?: number; reset?: boolean },
 ): Promise<ApiResponse<{ pushedCount: number; totalDeliveries: number; deliveries: DailyTipDelivery[] }>> {
   return await apiRequest<{ pushedCount: number; totalDeliveries: number; deliveries: DailyTipDelivery[] }>(
     api.dailyTips.admin.push(id),
     { method: 'POST', body },
+  );
+}
+
+/**
+ * 一键植入 8 条内置默认 tip。幂等:按 SourceId 判重,已存在的不动。
+ * 用于新环境或清空后让管理员一次性把 seed 变成真实数据,之后可再编辑。
+ */
+export async function seedDefaultTips(): Promise<
+  ApiResponse<{ insertedCount: number; skippedCount: number; totalDefaults: number }>
+> {
+  return await apiRequest<{ insertedCount: number; skippedCount: number; totalDefaults: number }>(
+    api.dailyTips.admin.seed(),
+    { method: 'POST', body: {} },
+  );
+}
+
+/** 清空所有 DailyTip 并重新植入 seed。危险操作,调用方应先二次确认。 */
+export async function resetDefaultTips(): Promise<
+  ApiResponse<{ deletedCount: number; insertedCount: number }>
+> {
+  return await apiRequest<{ deletedCount: number; insertedCount: number }>(
+    api.dailyTips.admin.reset(),
+    { method: 'POST', body: {} },
   );
 }
 
@@ -142,4 +192,14 @@ export async function trackTip(id: string, action: TrackAction): Promise<void> {
   } catch {
     /* tracking 失败不影响用户操作 */
   }
+}
+
+/** 永久关闭某条 tip:把 id 追加到 User.DismissedTipIds,/visible 端点以后都不再返回。 */
+export async function dismissTipForever(
+  id: string,
+): Promise<ApiResponse<{ dismissedForever: string }>> {
+  return await apiRequest<{ dismissedForever: string }>(
+    api.dailyTips.dismissForever(id),
+    { method: 'POST', body: {} },
+  );
 }

@@ -70,7 +70,7 @@ import { useGlobalDefectStore } from '@/stores/globalDefectStore';
 import { ChangelogBell } from '@/components/changelog/ChangelogBell';
 import { useChangelogStore, selectUnreadCount } from '@/stores/changelogStore';
 import { SpotlightOverlay } from '@/components/daily-tips/SpotlightOverlay';
-import { TipsDrawer } from '@/components/daily-tips/TipsDrawer';
+import { TipsDrawer, FLOATING_DOCK_COLLAPSED_KEY, FLOATING_DOCK_EVENT } from '@/components/daily-tips/TipsDrawer';
 import { CommandPalette } from '@/components/command-palette/CommandPalette';
 
 type NavItem = { key: string; appKey: string; label: string; shortLabel: string; icon: React.ReactNode; description?: string; group?: string | null };
@@ -203,6 +203,41 @@ export default function AppShell() {
   });
   const [toastCollapsed, setToastCollapsed] = useState(false);
   const [toastHovering, setToastHovering] = useState(false);
+
+  // ── 悬浮组整体折叠(联动 TipsDrawer 的「收起书 + 铃铛」把手) ──
+  // TipsDrawer 通过 sessionStorage(FLOATING_DOCK_COLLAPSED_KEY) + FLOATING_DOCK_EVENT
+  // 自定义事件广播状态;AppShell 订阅后把通知铃铛移到右边缘(只露半个,鼠标 hover 时滑回)。
+  // 常量从 TipsDrawer 导入,避免两边字符串字面量漂移。
+  const [dockCollapsed, setDockCollapsed] = useState<boolean>(() => {
+    try {
+      return sessionStorage.getItem(FLOATING_DOCK_COLLAPSED_KEY) === '1';
+    } catch {
+      return false;
+    }
+  });
+  const [dockEdgeHover, setDockEdgeHover] = useState(false);
+  useEffect(() => {
+    const onChange = (e: Event) => {
+      const detail = (e as CustomEvent<{ collapsed: boolean }>).detail;
+      setDockCollapsed(!!detail?.collapsed);
+    };
+    window.addEventListener(FLOATING_DOCK_EVENT, onChange);
+    return () => window.removeEventListener(FLOATING_DOCK_EVENT, onChange);
+  }, []);
+  useEffect(() => {
+    if (!dockCollapsed) {
+      setDockEdgeHover(false);
+      return;
+    }
+    const onMove = (e: MouseEvent) => {
+      const inZone =
+        window.innerWidth - e.clientX < 140 &&
+        window.innerHeight - e.clientY < 200;
+      setDockEdgeHover(inZone);
+    };
+    window.addEventListener('mousemove', onMove);
+    return () => window.removeEventListener('mousemove', onMove);
+  }, [dockCollapsed]);
 
 
   // 导航滚动状态：用于显示渐变阴影指示器
@@ -491,16 +526,28 @@ export default function AppShell() {
       {/* 移动端顶栏已有 Bell 按钮，隐藏右下浮球避免和 MobileTabBar "+" 重叠 */}
       {!isMobile && toastNotification && (
         toastCollapsed ? (
-          // 收缩状态：浮动按钮
+          // 收缩状态：浮动按钮;如果悬浮组整体折叠了,这个按钮会跟着贴到屏幕右边缘
           <button
             type="button"
-            className="fixed bottom-5 right-5 z-[120] h-12 w-12 rounded-full flex items-center justify-center transition-all duration-200 hover:scale-105"
+            className="fixed bottom-5 z-[120] h-12 w-12 rounded-full flex items-center justify-center transition-all duration-200 hover:scale-105"
             style={{
               ...glassFloatingButton,
+              right: dockCollapsed ? (dockEdgeHover ? 12 : -20) : 20,
+              opacity: dockCollapsed && !dockEdgeHover ? 0.6 : 1,
               background: 'var(--panel-solid, rgba(18, 18, 22, 0.92))',
               border: `1px solid ${getNotificationTone(toastNotification.level).border}`,
+              transition: 'right 240ms cubic-bezier(.2,.8,.2,1), opacity 240ms ease-out, transform 180ms ease-out',
             }}
-            onClick={() => setToastCollapsed(false)}
+            onClick={() => {
+              if (dockCollapsed) {
+                // 用户点到贴边的铃铛 → 把整组召回(TipsDrawer 订阅该事件后会把
+                // hiddenByUser 置 false,对应的 useEffect 会清理 sessionStorage)
+                window.dispatchEvent(new CustomEvent(FLOATING_DOCK_EVENT, {
+                  detail: { collapsed: false },
+                }));
+              }
+              setToastCollapsed(false);
+            }}
             onMouseEnter={() => setToastHovering(true)}
             onMouseLeave={() => setToastHovering(false)}
             aria-label="展开通知"
@@ -1431,8 +1478,12 @@ export default function AppShell() {
                   <Outlet />
                 </Suspense>
               </MobileSafeBoundary>
-              {/* 每日小贴士跳转后的 DOM 脉冲光圈。key=pathname 保证每次路由切换都重新读取 sessionStorage */}
-              <SpotlightOverlay key={location.pathname} />
+              {/* 每日小贴士跳转后的 DOM 脉冲光圈 —— 单例,不用 key 绑 pathname。
+                  路由切换时 SpotlightOverlay 自己在 readAndStart() 里重置 state;
+                  保持单实例才能让 Play 按钮(写 sessionStorage → navigate)的
+                  payload 在 mount 周期里稳定地被消费(历史 key={pathname}
+                  导致路由切换时 overlay unmount 丢 state,Play 按钮失效)。 */}
+              <SpotlightOverlay />
             </div>
           </div>
         </main>

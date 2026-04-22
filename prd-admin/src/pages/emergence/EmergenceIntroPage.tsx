@@ -294,7 +294,12 @@ export function EmergenceIntroPage({ onStart, onCreateFirst, hasTrees }: Props) 
 
           {/* CTA */}
           <div className="mt-7 flex flex-col gap-3 sm:flex-row">
-            <Button variant="primary" size="md" onClick={onCreateFirst}>
+            <Button
+              variant="primary"
+              size="md"
+              data-tour-id="emergence-seed-input"
+              onClick={onCreateFirst}
+            >
               <TreePine size={14} /> 种下第一颗种子
             </Button>
             {hasTrees && (

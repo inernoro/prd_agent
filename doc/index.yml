@@ -37,6 +37,7 @@ docs:
 
   # ── 二、设计文档 ──
   # 先看核心架构，再看各模块设计
+  design.daily-tips: 每日小贴士 / 路径式教程系统设计
   design.server-authority: 服务器权威性设计
   design.unified-skill-system: 技能系统统一设计
   design.llm-gateway: LLM Gateway 统一调用架构设计
@@ -130,6 +131,7 @@ docs:
   rule.audit-prd-desktop-codebase: PRD Agent 全面代码审计报告
 
   # ── 五、计划与方案 ──
+  plan.daily-tips-scenarios-and-staleness: 教程小书三场景统一 + 过时检测自动化(交接)
   plan.report-agent-impl: 周报 Agent 实施进度追踪
   plan.unified-defect-management: 统一缺陷管理平台实施计划
   plan.multi-document: PRD Agent 多文档系统设计方案

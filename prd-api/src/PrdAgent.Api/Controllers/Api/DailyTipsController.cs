@@ -34,6 +34,11 @@ public sealed class DailyTipsController : ControllerBase
         var userId = this.GetRequiredUserId();
         var now = DateTime.UtcNow;
 
+        // 用户永久「不再提示」的 tip id:从 User.DismissedTipIds 读,包括真实 id 和
+        // seed-* id(seed 内置兜底时也按这个过滤,否则永远弹同一组 seed 干扰用户)
+        var me = await _db.Users.Find(u => u.UserId == userId).FirstOrDefaultAsync(ct);
+        var foreverDismissed = me?.DismissedTipIds?.ToHashSet() ?? new HashSet<string>();
+
         var filter = Builders<DailyTip>.Filter.Eq(x => x.IsActive, true);
 
         // 发布窗口过滤:StartAt <= now(或为空)且 EndAt > now(或为空)
@@ -77,10 +82,28 @@ public sealed class DailyTipsController : ControllerBase
             return true;
         }).ToList();
 
+        // 过滤用户永久 dismiss 的(双维度:tip.Id 或 tip.SourceId 命中都算)
+        // 管理员「清空并重建」后 tip.Id 会变,但 SourceId 是 seed 标识不变,
+        // 这样用户点完过的 seed 重建后也不会再次骚扰
+        if (foreverDismissed.Count > 0)
+        {
+            items = items.Where(t =>
+                !foreverDismissed.Contains(t.Id)
+                && !(t.SourceId != null && foreverDismissed.Contains(t.SourceId))
+            ).ToList();
+        }
+
         // 数据库没有任何 tip 时,兜底返回内置默认集,避免新环境出现空白
         if (items.Count == 0)
         {
             items = BuildDefaultTips(now);
+            if (foreverDismissed.Count > 0)
+            {
+                items = items.Where(t =>
+                    !foreverDismissed.Contains(t.Id)
+                    && !(t.SourceId != null && foreverDismissed.Contains(t.SourceId))
+                ).ToList();
+            }
         }
 
         // 定向 tip / 被投递 tip 永远置顶,保证「为你修复」类消息被最先看到
@@ -102,6 +125,7 @@ public sealed class DailyTipsController : ControllerBase
                     x.ActionUrl,
                     x.CtaText,
                     x.TargetSelector,
+                    x.AutoAction,
                     isTargeted = x.TargetUserId == userId || mine != null,
                     x.SourceType,
                     x.CreatedAt,
@@ -194,12 +218,52 @@ public sealed class DailyTipsController : ControllerBase
     }
 
     /// <summary>
+    /// 用户「永久不再提示」某条 tip:把 tip.Id 和 tip.SourceId(若有)都追加到
+    /// User.DismissedTipIds。以后 /visible 端点按双维度过滤(Id 或 SourceId 命中),
+    /// 这样管理员「清空并重建」后 tip.Id 变了,SourceId 不变,用户点完过的 seed
+    /// 重建后也不会再次骚扰。幂等。
+    /// </summary>
+    [HttpPost("{id}/dismiss-forever")]
+    [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status200OK)]
+    public async Task<IActionResult> DismissForever([FromRoute] string id, CancellationToken ct = default)
+    {
+        if (string.IsNullOrWhiteSpace(id))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "id 不能为空"));
+
+        var userId = this.GetRequiredUserId();
+
+        // 尝试从 DailyTips 找这条 tip 拿到 SourceId;找不到就只存 Id
+        var tip = await _db.DailyTips.Find(t => t.Id == id).FirstOrDefaultAsync(ct);
+        var keys = new List<string> { id };
+        if (tip?.SourceId != null && !keys.Contains(tip.SourceId))
+            keys.Add(tip.SourceId);
+        // seed-* id 本身就是 "seed-{SourceId}",也同时存进去方便 seed 重建后匹配
+        if (id.StartsWith("seed-"))
+        {
+            var extractedSourceId = id.Substring("seed-".Length);
+            if (!keys.Contains(extractedSourceId)) keys.Add(extractedSourceId);
+        }
+
+        await _db.Users.UpdateOneAsync(
+            u => u.UserId == userId,
+            Builders<User>.Update.AddToSetEach(u => u.DismissedTipIds, keys),
+            cancellationToken: ct);
+
+        return Ok(ApiResponse<object>.Ok(new { dismissedForever = keys }));
+    }
+
+    /// <summary>
     /// 内置默认 tip 集合。新环境 / 清空数据库后兜底展示,管理员创建首条 tip 后即不再返回。
     /// 全部为「text / card」类,带 ActionUrl 可跳转。DisplayOrder 预留 10-90,方便管理员插入。
+    /// AdminDailyTipsController 的 /seed 端点复用此列表批量写库。
     /// </summary>
-    private static List<DailyTip> BuildDefaultTips(DateTime now)
+    internal static List<DailyTip> BuildDefaultTips(DateTime now)
     {
-        DailyTip T(string id, string kind, string title, string? body, string actionUrl, string ctaText, string? targetSelector, int order)
+        DailyTip T(
+            string id, string kind, string title, string? body,
+            string actionUrl, string ctaText,
+            string? targetSelector, int order,
+            DailyTipAutoAction? autoAction = null)
             => new()
             {
                 Id = $"seed-{id}",
@@ -209,6 +273,7 @@ public sealed class DailyTipsController : ControllerBase
                 ActionUrl = actionUrl,
                 CtaText = ctaText,
                 TargetSelector = targetSelector,
+                AutoAction = autoAction,
                 TargetUserId = null,
                 SourceType = "seed",
                 SourceId = id,
@@ -219,64 +284,216 @@ public sealed class DailyTipsController : ControllerBase
                 UpdatedAt = now
             };
 
+        // 精简原则:只保留真的有「完整流程」价值的演示,单步 scroll / 单链接
+        // 的短 tip 全部删掉;用户说「短短的流程一条流程的给删掉」。
         return new List<DailyTip>
         {
-            T("search-agent", "text",
-                "试试 ⌘ / Ctrl + K:一键搜索所有 Agent、文档与知识库",
-                null,
-                "/",
-                "打开搜索",
-                "[data-tour-id=home-search]",
-                10),
-            T("marketplace", "text",
-                "海鲜市场上线了提示词 / 参考图 / 水印,一键 Fork 到本地可编辑",
-                null,
-                "/marketplace",
-                "去逛逛",
-                "[data-tour-id=quicklink-marketplace]",
-                20),
-            T("library", "text",
-                "智识殿堂:团队共享的知识库已开放,可上传文档自动同步订阅源",
-                null,
-                "/library",
-                "进入智识殿堂",
-                "[data-tour-id=quicklink-library]",
-                30),
-            T("toolbox", "card",
-                "百宝箱:所有 Agent 和工具的统一入口",
-                "新增的智能体默认注册到百宝箱,左侧导航只收录已毕业的常用项。",
-                "/ai-toolbox",
-                "打开百宝箱",
-                null,
-                40),
-            T("defect-feedback", "card",
-                "发现 bug?一键反馈并跟踪修复",
-                "缺陷管理 Agent 支持截图 + 描述,开发完成后你会收到「已修复」推送。",
+            // 1. 缺陷管理全链路 —— 4 步真流程
+            T("defect-full-flow", "card",
+                "发现 bug?跟着做,2 分钟学会提交缺陷",
+                "从打开面板到提交,4 步走完完整流程。点「从头开始」即可。",
                 "/defect-agent",
-                "去反馈",
-                null,
-                50),
-            T("updates", "text",
-                "更新中心:本周平台新增了什么?代码级周报自动生成",
-                null,
+                "从头开始",
+                "[data-tour-id=defect-create]",
+                10,
+                new DailyTipAutoAction
+                {
+                    Scroll = "center",
+                    Steps = new List<DailyTipTourStep>
+                    {
+                        new()
+                        {
+                            Selector = "[data-tour-id=defect-create]",
+                            Title = "第 1 步:打开提交面板",
+                            Body = "点右上角「+ 提交缺陷」展开表单。",
+                        },
+                        new()
+                        {
+                            Selector = "[data-tour-id=defect-description]",
+                            Title = "第 2 步:第一行写标题 + 下方写描述",
+                            Body = "第一行作为标题(一句话);下方可粘贴截图或拖文件。",
+                        },
+                        new()
+                        {
+                            Selector = "[data-tour-id=defect-assignee-picker]",
+                            Title = "第 3 步:选负责人",
+                            Body = "搜用户名或默认负责人,对方会立刻收到通知。",
+                        },
+                        new()
+                        {
+                            Selector = "[data-tour-id=defect-submit]",
+                            Title = "第 4 步:点「提交」完成",
+                            Body = "提交后收到「已创建」通知;开发修好后再收「已修复」。",
+                        },
+                    },
+                }),
+
+            // 只保留多步真流程。单步/零步 tip(如「试试周报」、「看演示」)
+            // 违反用户规则「人类不是智障,一步不需要教」,全部删除。
+            // 新 seed 必须 steps.Count >= 2,管理员可用 /create-tour-demo 按需扩展。
+
+            // 键盘快捷键(Ctrl+B / Ctrl+K 等)**不适合**用多步 Tour 教学:
+            //   - 它们是"任意页面都能用"的全局能力,但 tour 必须指向某个 URL
+            //     强制跳到首页演示反而反直觉(用户抱怨"跳到奇怪地方")
+            //   - Figma/VSCode 的做法是在 UI 显眼位置挂一个 key hint,让用户
+            //     自己按键体验。这类静态提示不属于教程小书
+            // 所以 shortcut-cmd-k / shortcut-cmd-b 两条 seed 已删除。
+
+            // 2. 更新中心周报 —— 2 步 Tour
+            T("changelog-weekly", "card",
+                "看本周平台更新了什么",
+                "更新中心按周汇总所有 commit + PR,还能按模块筛选关心的变更。",
                 "/changelog",
-                "查看更新",
-                "[data-tour-id=quicklink-updates]",
-                60),
-            T("report-agent", "card",
-                "周报管理 Agent:自动汇总 git 提交,生成团队周报",
-                "支持数据源自动采集、多模板、飞书 / 邮件分发,周五一键出稿。",
-                "/report-agent",
-                "试试周报",
-                null,
-                70),
-            T("emergence", "text",
-                "涌现探索器:从种子 → 探索 → 涌现,让 AI 帮你发散新功能",
-                null,
-                "/emergence",
-                "开始涌现",
-                null,
-                80),
+                "看更新",
+                "[data-tour-id=changelog-latest]",
+                40,
+                new DailyTipAutoAction
+                {
+                    Scroll = "center",
+                    Steps = new List<DailyTipTourStep>
+                    {
+                        new()
+                        {
+                            Selector = "[data-tour-id=changelog-latest]",
+                            Title = "第 1 步:最新一版在这",
+                            Body = "默认展开;每个 feat/fix 都对应到具体的代码改动。",
+                        },
+                        new()
+                        {
+                            Selector = "[data-tour-id=changelog-filter]",
+                            Title = "第 2 步:按模块筛选",
+                            Body = "只关心 admin?勾上;只看 bug 修复?勾 fix。一键过滤。",
+                        },
+                    },
+                }),
+
+            // 3. 大全套演示 —— 11 步跨页面 Tour,回归测试用
+            // 覆盖能力:scroll + prefill + 跨路由 navigateTo + 多步 tour + 按钮位撒花
+            // 走遍全站所有主 Agent 入口,每步带 navigateTo 切路由
+            T("showcase-all-features", "card",
+                "大全套:11 步跑遍全站主入口",
+                "回归测试用演示。预填输入 → 跨 11 页导览 → 最后从按钮位置撒花,一次验证所有交互形态。",
+                "/ai-toolbox",
+                "开始全站导览",
+                "[data-tour-id=toolbox-search]",
+                5,
+                new DailyTipAutoAction
+                {
+                    Scroll = "center",
+                    Prefill = new DailyTipPrefill
+                    {
+                        Selector = "[data-tour-id=toolbox-search]",
+                        Value = "周报",
+                    },
+                    Steps = new List<DailyTipTourStep>
+                    {
+                        new()
+                        {
+                            Selector = "[data-tour-id=toolbox-search]",
+                            Title = "第 1 步 / 11 · 百宝箱",
+                            Body = "搜索框已被 Prefill 自动填「周报」,列表已过滤。验证 prefill 能力。",
+                        },
+                        new()
+                        {
+                            Selector = "[data-tour-id=home-search]",
+                            Title = "第 2 步 / 11 · 首页 ⌘+K 搜索",
+                            Body = "回到首页,高亮全局搜索入口。",
+                            NavigateTo = "/",
+                        },
+                        new()
+                        {
+                            Selector = "[data-tour-id=marketplace-category-tabs]",
+                            Title = "第 3 步 / 11 · 海鲜市场",
+                            Body = "跳去海鲜市场,高亮类型筛选栏。",
+                            NavigateTo = "/marketplace",
+                        },
+                        new()
+                        {
+                            Selector = "[data-tour-id=library-create]",
+                            Title = "第 4 步 / 11 · 智识殿堂",
+                            Body = "跳去知识库广场,高亮「发布我的知识」按钮。",
+                            NavigateTo = "/library",
+                        },
+                        new()
+                        {
+                            Selector = "[data-tour-id=document-store-create]",
+                            Title = "第 5 步 / 11 · 我的知识库",
+                            Body = "跳到个人知识库,高亮新建空间按钮。",
+                            NavigateTo = "/document-store",
+                        },
+                        new()
+                        {
+                            Selector = "[data-tour-id=changelog-latest]",
+                            Title = "第 6 步 / 11 · 更新中心",
+                            Body = "跳去 changelog,高亮最新版本。",
+                            NavigateTo = "/changelog",
+                        },
+                        new()
+                        {
+                            Selector = "[data-tour-id=changelog-filter]",
+                            Title = "第 7 步 / 11 · 更新中心筛选",
+                            Body = "同页面高亮类型筛选栏(feat/fix/perf)。",
+                        },
+                        new()
+                        {
+                            Selector = "[data-tour-id=report-template-picker]",
+                            Title = "第 8 步 / 11 · 周报管理",
+                            Body = "跳去周报 Agent,高亮「写周报」按钮。",
+                            NavigateTo = "/report-agent",
+                        },
+                        new()
+                        {
+                            Selector = "[data-tour-id=defect-create]",
+                            Title = "第 9 步 / 11 · 缺陷管理",
+                            Body = "跳去缺陷反馈页,高亮「+ 提交缺陷」。",
+                            NavigateTo = "/defect-agent",
+                        },
+                        new()
+                        {
+                            Selector = "[data-tour-id=emergence-seed-input]",
+                            Title = "第 10 步 / 11 · 涌现探索器",
+                            Body = "跳去涌现 Agent,高亮「种下第一颗种子」按钮。",
+                            NavigateTo = "/emergence",
+                        },
+                        new()
+                        {
+                            Selector = "[data-tour-id=home-search]",
+                            Title = "第 11 步 / 11 · 回到首页完成",
+                            Body = "全站 9 个 Agent 全看过!点「完成 🎉」会从这个按钮位置撒花。",
+                            NavigateTo = "/",
+                        },
+                    },
+                }),
+
+            // 4. 知识库发布 —— 2 步 Tour(都在列表页,不依赖空间详情页的动态 URL)
+            // 空间详情 URL 带 space id,演示无法直接导航过去,所以只能指导用户自己
+            // 从列表进详情;详情页内的上传 / 发布按钮用户看得见的时候就自然能用。
+            T("library-publish", "card",
+                "把你的知识发布到智识殿堂",
+                "列表 → 新建空间 → 上传文档 → 发布到社区。3 分钟搞定。",
+                "/document-store",
+                "开始发布",
+                "[data-tour-id=document-store-create]",
+                50,
+                new DailyTipAutoAction
+                {
+                    Scroll = "center",
+                    Steps = new List<DailyTipTourStep>
+                    {
+                        new()
+                        {
+                            Selector = "[data-tour-id=document-store-create]",
+                            Title = "第 1 步:新建一个空间",
+                            Body = "点右上角「+ 新建空间」,取个名字,这是你的第一个知识库。",
+                        },
+                        new()
+                        {
+                            Selector = "[data-tour-id=document-store-create]",
+                            Title = "第 2 步:打开空间后的操作",
+                            Body = "在列表点「打开」进入空间;右上角会出现「上传文档」和「发布到智识殿堂」两个按钮,拖文件进去 + 勾发布,就能被全平台搜到。",
+                        },
+                    },
+                }),
         };
     }
 }

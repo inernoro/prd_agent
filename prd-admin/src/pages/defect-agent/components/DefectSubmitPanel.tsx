@@ -377,7 +377,7 @@ export function DefectSubmitPanel() {
               >
                 提交给
               </label>
-              <div className="flex-1 relative">
+              <div data-tour-id="defect-assignee-picker" className="flex-1 relative">
                 <UserSearchSelect
                   value={assigneeUserId}
                   onChange={setAssigneeUserId}
@@ -525,6 +525,7 @@ export function DefectSubmitPanel() {
             {/* Textarea - 无内部边框，第一行即为标题 */}
             <textarea
               ref={textareaRef}
+              data-tour-id="defect-description"
               value={content}
               onChange={(e) => setContent(e.target.value)}
               onPaste={handlePaste}
@@ -749,6 +750,7 @@ export function DefectSubmitPanel() {
               <Button
                 variant="primary"
                 size="sm"
+                data-tour-id="defect-submit"
                 onClick={handleSubmit}
                 disabled={submitting || !content.trim()}
               >

@@ -172,6 +172,7 @@ export default function AiToolboxPage() {
                 />
                 <input
                   type="text"
+                  data-tour-id="toolbox-search"
                   placeholder={isMobile ? '搜索...' : '搜索工具名称、描述或标签...'}
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}

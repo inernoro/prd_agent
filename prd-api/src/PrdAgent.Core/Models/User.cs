@@ -45,6 +45,12 @@ public class User
     public List<string>? PermDeny { get; set; }
 
     /// <summary>
+    /// 用户永久「不再提示」的小贴士 id 列表。
+    /// 用户在教程卡片上点「🔕 不再提示」时追加;DailyTips/visible 过滤时排除。
+    /// </summary>
+    public List<string>? DismissedTipIds { get; set; }
+
+    /// <summary>
     /// 用户类型：人类/机器人账号（默认人类）。
     /// 说明：机器人账号不允许通过 /auth/login 登录，仅作为群内“可见成员主体”与审计主体存在。
     /// </summary>

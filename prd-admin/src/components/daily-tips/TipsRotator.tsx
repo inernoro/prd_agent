@@ -2,12 +2,72 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Sparkles } from 'lucide-react';
 import { useDailyTipsStore } from '@/stores/dailyTipsStore';
-import { trackTip } from '@/services/real/dailyTips';
+import { trackTip, type DailyTip } from '@/services/real/dailyTips';
 
 const ROTATE_MS = 5500;
 
-/** 下一页跳转后,SpotlightOverlay 会读取此 key 并对目标元素加脉冲光圈。 */
+/** 下一页跳转后,SpotlightOverlay 会读取此 key 并对目标元素加脉冲光圈(仅向后兼容)。 */
 export const SPOTLIGHT_TARGET_KEY = 'spotlightTargetSelector';
+
+/**
+ * 下一页跳转后 SpotlightOverlay 读取的完整动作包:
+ * { selector, title?, body?, ctaText?, autoAction? }。
+ * 存 JSON 字符串;与 SPOTLIGHT_TARGET_KEY 至少有一个命中即触发。
+ */
+export const SPOTLIGHT_ACTION_KEY = 'spotlightAction';
+
+/** sessionStorage 写入后广播的自定义事件,供同路由 SpotlightOverlay 立即重读。
+ * 场景:用户在 /defect-agent 页点「从头开始」,tip.actionUrl 也是 /defect-agent,
+ * React Router 不 re-mount → SpotlightOverlay 的 mount effect 不会再跑。
+ * 用这个事件通知它手动重读一次。 */
+export const SPOTLIGHT_PAYLOAD_UPDATED_EVENT = 'spotlight-payload-updated';
+
+export interface SpotlightActionPayload {
+  /** tip.id —— Tour 全部完成时用于永久 dismiss(配合撒花) */
+  id?: string;
+  selector: string;
+  title?: string;
+  body?: string | null;
+  ctaText?: string | null;
+  autoAction?: import('@/services/real/dailyTips').DailyTipAutoAction | null;
+}
+
+/**
+ * 将点击中的 tip 信息写入 sessionStorage，给下一页的 SpotlightOverlay 消费。
+ * 需要至少一个 selector(targetSelector 或 steps[0].selector)才能显示脉冲光圈;
+ * 纯 autoAction(只有 autoClick/prefill,没有 selector)无法被 overlay 定位,直接跳过。
+ */
+export function writeSpotlightPayload(tip: DailyTip) {
+  const selector = tip.targetSelector
+    ?? tip.autoAction?.steps?.[0]?.selector
+    ?? null;
+  if (!selector) return;
+
+  // 旧版 key：只有一个 selector 字符串，保留以便向前兼容
+  try { sessionStorage.setItem(SPOTLIGHT_TARGET_KEY, selector); } catch { /* noop */ }
+
+  const payload: SpotlightActionPayload = {
+    id: tip.id,
+    selector,
+    title: tip.title,
+    body: tip.body ?? null,
+    ctaText: tip.ctaText ?? null,
+    autoAction: tip.autoAction ?? null,
+  };
+  try {
+    sessionStorage.setItem(SPOTLIGHT_ACTION_KEY, JSON.stringify(payload));
+  } catch {
+    /* noop */
+  }
+
+  // 广播:如果目标 URL 就是当前 URL,同一 SpotlightOverlay 实例不会 re-mount,
+  // 必须通过事件让它手动重读 sessionStorage
+  try {
+    window.dispatchEvent(new CustomEvent(SPOTLIGHT_PAYLOAD_UPDATED_EVENT));
+  } catch {
+    /* noop */
+  }
+}
 
 interface Props {
   /** tip 为空时展示的兜底文字(例如原来的 hero subtitle) */
@@ -57,13 +117,7 @@ export function TipsRotator({ fallback, className, style }: Props) {
 
   const handleClick = () => {
     void trackTip(current.id, 'clicked');
-    if (current.targetSelector) {
-      try {
-        sessionStorage.setItem(SPOTLIGHT_TARGET_KEY, current.targetSelector);
-      } catch {
-        /* 忽略存储失败 */
-      }
-    }
+    writeSpotlightPayload(current);
     navigate(current.actionUrl || '/');
   };
 

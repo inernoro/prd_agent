@@ -1119,6 +1119,7 @@ export const api = {
   dailyTips: {
     visible: () => '/api/daily-tips/visible',
     track: (id: string) => `/api/daily-tips/${id}/track`,
+    dismissForever: (id: string) => `/api/daily-tips/${id}/dismiss-forever`,
     admin: {
       list: () => '/api/admin/daily-tips',
       create: () => '/api/admin/daily-tips',
@@ -1126,6 +1127,8 @@ export const api = {
       delete: (id: string) => `/api/admin/daily-tips/${id}`,
       push: (id: string) => `/api/admin/daily-tips/${id}/push`,
       stats: (id: string) => `/api/admin/daily-tips/${id}/stats`,
+      seed: () => '/api/admin/daily-tips/seed',
+      reset: () => '/api/admin/daily-tips/reset',
     },
   },
 
