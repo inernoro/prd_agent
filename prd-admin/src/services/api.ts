@@ -1113,6 +1113,7 @@ export const api = {
       push: (id: string) => `/api/admin/daily-tips/${id}/push`,
       stats: (id: string) => `/api/admin/daily-tips/${id}/stats`,
       seed: () => '/api/admin/daily-tips/seed',
+      reset: () => '/api/admin/daily-tips/reset',
     },
   },
 

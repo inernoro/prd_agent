@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom';
 import { GlassCard } from '@/components/design/GlassCard';
 import { Button } from '@/components/design/Button';
 import { MapSpinner } from '@/components/ui/VideoLoader';
-import { Plus, Pencil, Trash2, Sparkles, RefreshCw, Send, X, Users, Wand2, Play } from 'lucide-react';
+import { Plus, Pencil, Trash2, Sparkles, RefreshCw, Send, X, Users, Wand2, Play, RotateCcw } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { writeSpotlightPayload } from '@/components/daily-tips/TipsRotator';
 import { useAuthStore } from '@/stores/authStore';
@@ -16,6 +16,7 @@ import {
   pushTip,
   getTipStats,
   seedDefaultTips,
+  resetDefaultTips,
   type DailyTipAdmin,
   type DailyTipKind,
   type DailyTipUpsert,
@@ -229,6 +230,29 @@ export function DailyTipsEditor() {
     }
   };
 
+  /** 清空所有 DailyTip 然后用最新 seed 重新植入。跟 handleSeed 的区别:
+   *  handleSeed 按 SourceId 跳过已存在的,resetAll 会删全部再重建。 */
+  const handleResetAll = async () => {
+    if (!window.confirm('将删除所有现有小贴士(含管理员自建的)并重新植入内置 seed。确认吗?')) {
+      return;
+    }
+    setSeeding(true);
+    setSeedMsg(null);
+    setError(null);
+    try {
+      const res = await resetDefaultTips();
+      if (res.success && res.data) {
+        const { deletedCount, insertedCount } = res.data;
+        setSeedMsg(`已删除 ${deletedCount} 条,重新植入 ${insertedCount} 条`);
+        await load();
+      } else {
+        setError(res.error?.message ?? '重置失败');
+      }
+    } finally {
+      setSeeding(false);
+    }
+  };
+
   const sorted = useMemo(
     () =>
       [...items].sort(
@@ -263,10 +287,20 @@ export function DailyTipsEditor() {
             size="sm"
             onClick={() => void handleSeed()}
             disabled={seeding}
-            title="按 SourceId 幂等植入 8 条内置默认小贴士;已存在的会跳过"
+            title="按 SourceId 幂等植入默认小贴士;已存在的会跳过"
           >
             {seeding ? <MapSpinner size={14} /> : <Wand2 size={14} />}
             一键植入默认
+          </Button>
+          <Button
+            variant="secondary"
+            size="sm"
+            onClick={() => void handleResetAll()}
+            disabled={seeding}
+            title="清空所有小贴士(含自建的)并重新植入最新 seed —— 危险,会二次确认"
+          >
+            {seeding ? <MapSpinner size={14} /> : <RotateCcw size={14} />}
+            清空并重建
           </Button>
           <Button variant="secondary" size="sm" onClick={() => void load()} disabled={loading}>
             {loading ? <MapSpinner size={14} /> : <RefreshCw size={14} />}

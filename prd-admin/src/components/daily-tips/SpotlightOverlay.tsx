@@ -4,6 +4,7 @@ import { X, ChevronRight, Sparkles } from 'lucide-react';
 import {
   SPOTLIGHT_ACTION_KEY,
   SPOTLIGHT_TARGET_KEY,
+  SPOTLIGHT_PAYLOAD_UPDATED_EVENT,
   type SpotlightActionPayload,
 } from './TipsRotator';
 import type { DailyTipAutoAction } from '@/services/real/dailyTips';
@@ -27,41 +28,52 @@ export function SpotlightOverlay() {
   const [dismissed, setDismissed] = useState(false);
   const autoClickTimerRef = useRef<number | null>(null);
 
-  // ---- 启动:读 sessionStorage 并解析 payload ----
+  // ---- 启动 + 同路由事件:读 sessionStorage 解析 payload ----
+  // 初次 mount 读一次;TipsRotator 写完 payload 会广播 SPOTLIGHT_PAYLOAD_UPDATED_EVENT,
+  // 解决「同页面点 CTA 时 React Router 不 re-mount」导致 overlay 不启动的 bug。
   useEffect(() => {
-    let initial: SpotlightActionPayload | null = null;
-    try {
-      const raw = sessionStorage.getItem(SPOTLIGHT_ACTION_KEY);
-      if (raw) {
-        initial = JSON.parse(raw) as SpotlightActionPayload;
-      }
-    } catch {
-      /* JSON 坏了就走旧路径 */
-    }
-    if (!initial) {
-      let legacy: string | null = null;
+    const readAndStart = () => {
+      let initial: SpotlightActionPayload | null = null;
       try {
-        legacy = sessionStorage.getItem(SPOTLIGHT_TARGET_KEY);
+        const raw = sessionStorage.getItem(SPOTLIGHT_ACTION_KEY);
+        if (raw) {
+          initial = JSON.parse(raw) as SpotlightActionPayload;
+        }
+      } catch {
+        /* JSON 坏了就走旧路径 */
+      }
+      if (!initial) {
+        let legacy: string | null = null;
+        try {
+          legacy = sessionStorage.getItem(SPOTLIGHT_TARGET_KEY);
+        } catch {
+          /* noop */
+        }
+        if (legacy) {
+          initial = { selector: legacy };
+        }
+      }
+
+      // 消费一次就清理,防止同路由反复弹
+      try {
+        sessionStorage.removeItem(SPOTLIGHT_ACTION_KEY);
+        sessionStorage.removeItem(SPOTLIGHT_TARGET_KEY);
       } catch {
         /* noop */
       }
-      if (legacy) {
-        initial = { selector: legacy };
-      }
-    }
 
-    // 消费一次就清理,防止同路由反复弹
-    try {
-      sessionStorage.removeItem(SPOTLIGHT_ACTION_KEY);
-      sessionStorage.removeItem(SPOTLIGHT_TARGET_KEY);
-    } catch {
-      /* noop */
-    }
+      if (!initial) return;
+      setRect(null);
+      setPayload(initial);
+      setStepIndex(0);
+      setDismissed(false);
+    };
 
-    if (!initial) return;
-    setPayload(initial);
-    setStepIndex(0);
-    setDismissed(false);
+    readAndStart();
+    window.addEventListener(SPOTLIGHT_PAYLOAD_UPDATED_EVENT, readAndStart);
+    return () => {
+      window.removeEventListener(SPOTLIGHT_PAYLOAD_UPDATED_EVENT, readAndStart);
+    };
   }, []);
 
   // ---- 当前 step 的 selector(Steps 优先,否则用 payload.selector)----
@@ -107,8 +119,10 @@ export function SpotlightOverlay() {
     }
 
     // 3) 轮询等目标元素就绪(Reveal 动效 + 异步加载场景)
+    // 多步 Tour 中的「下一步」通常需要等上一步点击后的 modal / 面板渲染出来,
+    // 上限提到 8s 更稳
     let attempts = 0;
-    const maxAttempts = 20; // 3s 上限
+    const maxAttempts = 50;
     const pollId = window.setInterval(() => {
       attempts += 1;
       if (cancelled) {
@@ -335,7 +349,26 @@ export function SpotlightOverlay() {
               <button
                 type="button"
                 onClick={() => {
-                  setRect(null);
+                  // 先把当前 step 的元素「点」一下,再前进:解决「下一步后面板消失」的 bug
+                  // —— 很多步骤的下一个 selector 依赖当前这步被点击后才出现
+                  // (如 defect-full-flow:点「+ 提交缺陷」后 description 才存在)。
+                  // 可交互元素(按钮/input)直接 click;不是则跳过,让用户自己操作。
+                  try {
+                    if (currentSelector) {
+                      const el = document.querySelector(currentSelector);
+                      if (
+                        el instanceof HTMLButtonElement ||
+                        el instanceof HTMLAnchorElement ||
+                        (el instanceof HTMLElement && el.getAttribute('role') === 'button')
+                      ) {
+                        el.click();
+                      }
+                    }
+                  } catch {
+                    /* noop */
+                  }
+                  // 不清 rect,保留旧光圈直到下一步元素找到再更新位置,
+                  // 避免「点下一步面板消失、等 3s 再出现」的闪烁
                   setStepIndex((i) => i + 1);
                 }}
                 style={{

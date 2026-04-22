@@ -153,6 +153,16 @@ export async function seedDefaultTips(): Promise<
   );
 }
 
+/** 清空所有 DailyTip 并重新植入 seed。危险操作,调用方应先二次确认。 */
+export async function resetDefaultTips(): Promise<
+  ApiResponse<{ deletedCount: number; insertedCount: number }>
+> {
+  return await apiRequest<{ deletedCount: number; insertedCount: number }>(
+    api.dailyTips.admin.reset(),
+    { method: 'POST', body: {} },
+  );
+}
+
 /** 查看 tip 的推送统计(每用户状态 + 汇总)。 */
 export async function getTipStats(
   id: string,

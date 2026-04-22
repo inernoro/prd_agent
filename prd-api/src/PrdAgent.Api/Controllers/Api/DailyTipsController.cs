@@ -306,45 +306,9 @@ public sealed class DailyTipsController : ControllerBase
                     },
                 }),
 
-            // 2. 周报管理 —— 保留并扩展为 2 步
-            T("report-agent", "card",
-                "周报管理 Agent:自动汇总 git 提交",
-                "支持数据源采集、多模板、飞书 / 邮件分发,周五一键出稿。",
-                "/report-agent",
-                "试试周报",
-                "[data-tour-id=report-template-picker]",
-                20,
-                new DailyTipAutoAction
-                {
-                    Scroll = "center",
-                    Steps = new List<DailyTipTourStep>
-                    {
-                        new()
-                        {
-                            Selector = "[data-tour-id=report-template-picker]",
-                            Title = "第 1 步:点「写周报」",
-                            Body = "选模板、勾数据源,系统自动汇总本周 git 提交。",
-                        },
-                    },
-                }),
-
-            // 3. 百宝箱 —— prefill 演示:跳过去就自动填好「周报」搜索词
-            T("toolbox", "card",
-                "百宝箱:所有 Agent 的统一入口",
-                "点「去看看」会自动跳过去 + 搜索框预填「周报」。",
-                "/ai-toolbox",
-                "看演示",
-                "[data-tour-id=toolbox-search]",
-                30,
-                new DailyTipAutoAction
-                {
-                    Scroll = "center",
-                    Prefill = new DailyTipPrefill
-                    {
-                        Selector = "[data-tour-id=toolbox-search]",
-                        Value = "周报",
-                    },
-                }),
+            // 只保留多步真流程。单步/零步 tip(如「试试周报」、「看演示」)
+            // 违反用户规则「人类不是智障,一步不需要教」,全部删除。
+            // 管理员后续需要其他多步 Tour 时,用 /create-tour-demo 技能生成。
         };
     }
 }

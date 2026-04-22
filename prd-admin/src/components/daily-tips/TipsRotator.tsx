@@ -16,6 +16,12 @@ export const SPOTLIGHT_TARGET_KEY = 'spotlightTargetSelector';
  */
 export const SPOTLIGHT_ACTION_KEY = 'spotlightAction';
 
+/** sessionStorage 写入后广播的自定义事件,供同路由 SpotlightOverlay 立即重读。
+ * 场景:用户在 /defect-agent 页点「从头开始」,tip.actionUrl 也是 /defect-agent,
+ * React Router 不 re-mount → SpotlightOverlay 的 mount effect 不会再跑。
+ * 用这个事件通知它手动重读一次。 */
+export const SPOTLIGHT_PAYLOAD_UPDATED_EVENT = 'spotlight-payload-updated';
+
 export interface SpotlightActionPayload {
   selector: string;
   title?: string;
@@ -49,6 +55,14 @@ export function writeSpotlightPayload(tip: DailyTip) {
   };
   try {
     sessionStorage.setItem(SPOTLIGHT_ACTION_KEY, JSON.stringify(payload));
+  } catch {
+    /* noop */
+  }
+
+  // 广播:如果目标 URL 就是当前 URL,同一 SpotlightOverlay 实例不会 re-mount,
+  // 必须通过事件让它手动重读 sessionStorage
+  try {
+    window.dispatchEvent(new CustomEvent(SPOTLIGHT_PAYLOAD_UPDATED_EVENT));
   } catch {
     /* noop */
   }

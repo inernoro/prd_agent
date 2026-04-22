@@ -333,6 +333,52 @@ public sealed class AdminDailyTipsController : ControllerBase
         }));
     }
 
+    /// <summary>
+    /// 「清空并重新植入」:删除所有 DailyTip + 用 BuildDefaultTips 重新写入。
+    /// 用于用户迭代规则后(例如「一步 tip 全部删掉」)一次性同步所有环境的 seed。
+    /// 危险操作,前端点击时需二次确认。
+    /// </summary>
+    [HttpPost("reset")]
+    [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status200OK)]
+    public async Task<IActionResult> Reset(CancellationToken ct = default)
+    {
+        var deleted = await _db.DailyTips.DeleteManyAsync(Builders<DailyTip>.Filter.Empty, ct);
+
+        var now = DateTime.UtcNow;
+        var defaults = DailyTipsController.BuildDefaultTips(now);
+        var toInsert = defaults.Select(seed => new DailyTip
+        {
+            Kind = seed.Kind,
+            Title = seed.Title,
+            Body = seed.Body,
+            CoverImageUrl = seed.CoverImageUrl,
+            ActionUrl = seed.ActionUrl,
+            CtaText = seed.CtaText,
+            TargetSelector = seed.TargetSelector,
+            AutoAction = seed.AutoAction,
+            TargetUserId = null,
+            TargetRoles = null,
+            DisplayOrder = seed.DisplayOrder,
+            IsActive = true,
+            SourceType = "seed",
+            SourceId = seed.SourceId,
+            CreatedBy = this.GetRequiredUserId(),
+            CreatedAt = now,
+            UpdatedAt = now,
+        }).ToList();
+
+        if (toInsert.Count > 0)
+        {
+            await _db.DailyTips.InsertManyAsync(toInsert, cancellationToken: ct);
+        }
+
+        return Ok(ApiResponse<object>.Ok(new
+        {
+            deletedCount = deleted.DeletedCount,
+            insertedCount = toInsert.Count,
+        }));
+    }
+
     private static bool IsValidKind(string? kind)
         => kind is "text" or "card" or "spotlight";
 
