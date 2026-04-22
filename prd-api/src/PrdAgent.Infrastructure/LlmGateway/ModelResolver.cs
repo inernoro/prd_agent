@@ -33,6 +33,11 @@ public class ModelResolver : IModelResolver
         string? expectedModel = null,
         CancellationToken ct = default)
     {
+        // ⚠ 诊断用：Error 级别确保任何 logging filter 下都出现在 stdout
+        _logger.LogError(
+            "[DIAG-ResolveAsync] ENTRY appCallerCode={Code}, modelType={Type}, expectedModel='{Expected}'",
+            appCallerCode, modelType, expectedModel ?? "(null)");
+
         var plan = new ModelResolutionPlan
         {
             AppCallerCode = appCallerCode,
@@ -625,10 +630,11 @@ public class ModelResolver : IModelResolver
 
         var key = expectedModel.Trim();
 
-        _logger.LogInformation(
-            "[ModelResolver] FindPreferredModel 开始: key='{Key}', 候选池={Count} [{Names}]",
+        // ⚠ 诊断 LogError
+        _logger.LogError(
+            "[DIAG-FindPreferredModel] 开始 key='{Key}' 候选池共{Count}: [{Pools}]",
             key, groups.Count,
-            string.Join(", ", groups.Select(g => $"{g.Name}(code={g.Code})")));
+            string.Join(" | ", groups.Select(g => $"Name='{g.Name}' Code='{g.Code}' ModelCount={g.Models?.Count ?? 0} FirstModelId='{g.Models?.FirstOrDefault()?.ModelId ?? "(none)"}'")));
 
         // 优先级 1：ModelId 精确匹配
         foreach (var g in groups)
@@ -663,10 +669,16 @@ public class ModelResolver : IModelResolver
         foreach (var g in groups)
         {
             if (g.Models == null || g.Models.Count == 0) continue;
-            var matchByPool =
-                string.Equals(g.Name, key, StringComparison.OrdinalIgnoreCase) ||
-                string.Equals(g.Code, key, StringComparison.OrdinalIgnoreCase);
-            if (!matchByPool) continue;
+            var nameMatch = string.Equals(g.Name, key, StringComparison.OrdinalIgnoreCase);
+            var codeMatch = string.Equals(g.Code, key, StringComparison.OrdinalIgnoreCase);
+
+            // ⚠ 诊断：每个候选池的比较结果都 LogError
+            _logger.LogError(
+                "[DIAG-Tier3] 检查池 Name='{Name}' (len={NLen}) vs key='{Key}' (len={KLen}) nameMatch={NM}; Code='{Code}' (len={CLen}) codeMatch={CM}",
+                g.Name ?? "(null)", g.Name?.Length ?? -1, key, key.Length, nameMatch,
+                g.Code ?? "(null)", g.Code?.Length ?? -1, codeMatch);
+
+            if (!nameMatch && !codeMatch) continue;
 
             // Healthy > Degraded；Unavailable 不选（交给前端走"询问切换"）
             var picked =
@@ -674,19 +686,19 @@ public class ModelResolver : IModelResolver
                 ?? g.Models.FirstOrDefault(m => m.HealthStatus == ModelHealthStatus.Degraded);
             if (picked != null)
             {
-                _logger.LogInformation(
-                    "[ModelResolver] Tier3 命中: pool={Pool}, modelId={ModelId}, health={Health}",
+                _logger.LogError(
+                    "[DIAG-Tier3] ✓ 命中: pool={Pool}, modelId={ModelId}, health={Health}",
                     g.Name, picked.ModelId, picked.HealthStatus);
                 return (g, picked);
             }
 
-            _logger.LogInformation(
-                "[ModelResolver] Tier3 池名/Code 匹配但池内无可用模型: pool={Pool} (共{Count}个, 全部 Unavailable)",
+            _logger.LogError(
+                "[DIAG-Tier3] 池名/Code 匹配但池内无可用模型: pool={Pool} (共{Count}个, 全部 Unavailable)",
                 g.Name, g.Models.Count);
         }
 
-        _logger.LogInformation(
-            "[ModelResolver] FindPreferredModel 所有档位未命中: key='{Key}'",
+        _logger.LogError(
+            "[DIAG-FindPreferredModel] ✗ 所有档位未命中: key='{Key}'",
             key);
         return (null, null);
     }
