@@ -139,34 +139,61 @@ function toggleProjectListSettingsMenu(event) {
   var menu = document.createElement('div');
   menu.className = 'settings-menu';
   menu.id = 'pl-settings-menu';
-  menu.style.position = 'fixed';
-  menu.style.background = 'var(--bg-card)';
-  menu.style.border = '1px solid var(--card-border)';
-  menu.style.borderRadius = '10px';
-  menu.style.boxShadow = '0 14px 40px rgba(0,0,0,0.45)';
-  menu.style.padding = '6px';
-  menu.style.zIndex = '9999';
   menu.onclick = function (e) { e.stopPropagation(); };
+  // 2026-04-22：改用 settings-menu-item class + SVG 图标（GitHub Octicons），
+  // 不再用 emoji + 内联样式。和分支列表页 ⚙ 菜单风格完全一致
+  // （见 app.js toggleSettingsMenu 的 innerHTML）。
   menu.innerHTML = [
-    '<div class="settings-menu-item" style="display:flex;align-items:center;gap:8px;padding:8px 10px;font-size:12px;color:var(--text-primary);border-radius:6px;cursor:pointer" onclick="closeProjectListSettingsMenu(); cdsOpenSelfUpdate()">🔄 自动更新</div>',
-    // Bootstrap-equivalent Agent Key (cdsg_*): unlike the per-card
-    // project key, this one can create new projects. Put it next to
-    // self-update so it's discoverable but not front-and-center — we
-    // want users to think twice before handing out a global token.
-    '<div class="settings-menu-item" style="display:flex;align-items:center;gap:8px;padding:8px 10px;font-size:12px;color:var(--text-primary);border-radius:6px;cursor:pointer" onclick="closeProjectListSettingsMenu(); cdsOpenGlobalAgentKeyManager()">🔑 Agent 全局通行证</div>',
-    '<div class="settings-menu-item" style="display:flex;align-items:center;gap:8px;padding:8px 10px;font-size:12px;color:var(--text-primary);border-radius:6px;cursor:pointer" onclick="closeProjectListSettingsMenu(); cdsOpenClusterModal()">🧩 集群</div>',
-    '<div class="settings-menu-item settings-menu-switch" style="display:flex;align-items:center;gap:8px;padding:8px 10px;font-size:12px;color:var(--text-primary);border-radius:6px;cursor:pointer" onclick="cdsCyclePreviewMode()">预览模式<span id="pl-preview-mode-label" style="margin-left:auto;font-size:11px;color:#58a6ff"></span></div>',
-    '<div class="settings-menu-item settings-menu-switch" style="display:flex;align-items:center;gap:8px;padding:8px 10px;font-size:12px;color:var(--text-primary);border-radius:6px;cursor:pointer" onclick="cdsToggleMirror()">镜像加速<span id="pl-mirror-label" style="margin-left:auto;font-size:11px"></span></div>',
-    '<div class="settings-menu-item settings-menu-switch" style="display:flex;align-items:center;gap:8px;padding:8px 10px;font-size:12px;color:var(--text-primary);border-radius:6px;cursor:pointer" onclick="cdsToggleTabTitle()">标签页标题<span id="pl-tabtitle-label" style="margin-left:auto;font-size:11px"></span></div>',
-    '<div class="settings-menu-divider" style="height:1px;background:var(--card-border);margin:4px 0"></div>',
-    '<div class="settings-menu-item danger" style="display:flex;align-items:center;gap:8px;padding:8px 10px;font-size:12px;color:#f43f5e;border-radius:6px;cursor:pointer" onclick="closeProjectListSettingsMenu(); cdsFactoryReset()">⚠ 恢复出厂设置</div>',
-    '<div class="settings-menu-item" style="display:flex;align-items:center;gap:8px;padding:8px 10px;font-size:12px;color:var(--text-primary);border-radius:6px;cursor:pointer" onclick="closeProjectListSettingsMenu(); cdsDoLogout()">退出登录</div>',
+    '<div class="settings-menu-item" onclick="closeProjectListSettingsMenu(); cdsOpenSelfUpdate()">',
+    '  <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M8 2.5a5.487 5.487 0 00-4.131 1.869l1.204 1.204A.25.25 0 014.896 6H1.25A.25.25 0 011 5.75V2.104a.25.25 0 01.427-.177l1.38 1.38A7.002 7.002 0 0115 8a.75.75 0 01-1.5 0A5.5 5.5 0 008 2.5zM2.5 8a.75.75 0 00-1.5 0 7.002 7.002 0 0012.023 4.87l1.38 1.38a.25.25 0 00.427-.177V10.5a.25.25 0 00-.25-.25h-3.646a.25.25 0 00-.177.427l1.204 1.204A5.5 5.5 0 012.5 8z"/></svg>',
+    '  CDS 自动更新',
+    '</div>',
+    // Bootstrap-equivalent Agent Key (cdsg_*)：比 per-card 的项目 key 更高权限，
+    // 放在 self-update 旁边但不突出视觉。
+    '<div class="settings-menu-item" onclick="closeProjectListSettingsMenu(); cdsOpenGlobalAgentKeyManager()">',
+    '  <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M10.5 0a5.499 5.499 0 1 1-1.288 10.848l-.932.932a.749.749 0 0 1-.53.22H7v.75a.749.749 0 0 1-.22.53l-.5.5a.749.749 0 0 1-.53.22H5v.75a.749.749 0 0 1-.22.53l-.5.5a.749.749 0 0 1-.53.22h-2A1.75 1.75 0 0 1 0 14.25v-2c0-.199.079-.389.22-.53l4.932-4.932A5.5 5.5 0 0 1 10.5 0Zm0 1.5a4.002 4.002 0 0 0-3.923 4.802.75.75 0 0 1-.206.701L1.5 12.561v1.689c0 .138.112.25.25.25h1.689l.31-.31V13a.75.75 0 0 1 .75-.75h1.19l.31-.31V11a.75.75 0 0 1 .75-.75h1.19l1.371-1.371a.751.751 0 0 1 .701-.206A4 4 0 1 0 10.5 1.5Zm1 2.5a1 1 0 1 1 0 2 1 1 0 0 1 0-2Z"/></svg>',
+    '  Agent 全局通行证',
+    '</div>',
+    '<div class="settings-menu-item" onclick="closeProjectListSettingsMenu(); cdsOpenClusterModal()">',
+    '  <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M5 2.75a2.25 2.25 0 114.5 0 2.25 2.25 0 01-4.5 0zM7.25 0a2.75 2.75 0 00-.75 5.397V7H2.75A1.75 1.75 0 001 8.75v1.603a2.75 2.75 0 101.5 0V8.75a.25.25 0 01.25-.25H6.5v1.397a2.75 2.75 0 101.5 0V8.5h3.75a.25.25 0 01.25.25v1.603a2.75 2.75 0 101.5 0V8.75A1.75 1.75 0 0011.75 7H8V5.397A2.75 2.75 0 007.25 0zM2.5 13a1.25 1.25 0 112.5 0 1.25 1.25 0 01-2.5 0zM8.5 13a1.25 1.25 0 112.5 0 1.25 1.25 0 01-2.5 0zm4.75-1.25a1.25 1.25 0 100 2.5 1.25 1.25 0 000-2.5z"/></svg>',
+    '  集群',
+    '</div>',
+    '<div class="settings-menu-divider"></div>',
+    '<div class="settings-menu-group-label">快捷 · CDS 全局开关</div>',
+    '<div class="settings-menu-item settings-menu-switch" onclick="cdsCyclePreviewMode()">',
+    '  <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M1.679 7.932c.412-.621 1.242-1.75 2.366-2.717C5.175 4.242 6.527 3.5 8 3.5c1.473 0 2.824.742 3.955 1.715 1.124.967 1.954 2.096 2.366 2.717a.119.119 0 010 .136c-.412.621-1.242 1.75-2.366 2.717C10.825 11.758 9.473 12.5 8 12.5c-1.473 0-2.824-.742-3.955-1.715C2.92 9.818 2.09 8.689 1.679 8.068a.119.119 0 010-.136zM8 2c-1.981 0-3.67.992-4.933 2.078C1.797 5.169.88 6.423.43 7.1a1.619 1.619 0 000 1.798c.45.678 1.367 1.932 2.637 3.024C4.329 13.008 6.019 14 8 14c1.981 0 3.67-.992 4.933-2.078 1.27-1.091 2.187-2.345 2.637-3.023a1.619 1.619 0 000-1.798c-.45-.678-1.367-1.932-2.637-3.024C11.671 2.992 9.981 2 8 2z"/><path d="M8 10a2 2 0 100-4 2 2 0 000 4z"/></svg>',
+    '  <span class="settings-menu-switch-label">预览模式</span>',
+    '  <span id="pl-preview-mode-label" style="font-size:11px;color:var(--blue);font-weight:500"></span>',
+    '</div>',
+    '<div class="settings-menu-item settings-menu-switch" onclick="cdsToggleMirror()">',
+    '  <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M13 2.5a.5.5 0 01.5.5v8a.5.5 0 01-.5.5h-2.086a1 1 0 00-.707.293l-1.5 1.5a.5.5 0 01-.707 0l-1.5-1.5A1 1 0 005.793 11.5H3.5a.5.5 0 01-.5-.5V3a.5.5 0 01.5-.5h9.5zM3.5 1A1.5 1.5 0 002 2.5v9A1.5 1.5 0 003.5 13h2.293l1.5 1.5a1.5 1.5 0 002.121 0l1.5-1.5h2.086A1.5 1.5 0 0014.5 11.5v-9A1.5 1.5 0 0013 1H3.5z"/></svg>',
+    '  <span class="settings-menu-switch-label">镜像加速</span>',
+    '  <span class="settings-switch" id="pl-mirror-switch">',
+    '    <span class="settings-switch-track"><span class="settings-switch-thumb"></span></span>',
+    '  </span>',
+    '</div>',
+    '<div class="settings-menu-item settings-menu-switch" onclick="cdsToggleTabTitle()">',
+    '  <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M0 4.75C0 3.784.784 3 1.75 3h12.5c.966 0 1.75.784 1.75 1.75v6.5A1.75 1.75 0 0114.25 13H1.75A1.75 1.75 0 010 11.25v-6.5zm1.75-.25a.25.25 0 00-.25.25v6.5c0 .138.112.25.25.25h12.5a.25.25 0 00.25-.25v-6.5a.25.25 0 00-.25-.25H1.75z"/></svg>',
+    '  <span class="settings-menu-switch-label">浏览器标签名</span>',
+    '  <span class="settings-switch" id="pl-tabtitle-switch">',
+    '    <span class="settings-switch-track"><span class="settings-switch-thumb"></span></span>',
+    '  </span>',
+    '</div>',
+    '<div class="settings-menu-divider"></div>',
+    '<div class="settings-menu-item danger" onclick="closeProjectListSettingsMenu(); cdsFactoryReset()">',
+    '  <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M8.982 1.566a1.13 1.13 0 00-1.96 0L.165 13.233c-.457.778.091 1.767.98 1.767h13.713c.889 0 1.438-.99.98-1.767L8.982 1.566zM8 5c.535 0 .954.462.9.995l-.35 3.507a.552.552 0 01-1.1 0L7.1 5.995A.905.905 0 018 5zm.002 6a1 1 0 110 2 1 1 0 010-2z"/></svg>',
+    '  恢复出厂设置',
+    '</div>',
+    '<div class="settings-menu-item" onclick="closeProjectListSettingsMenu(); cdsDoLogout()">',
+    '  <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M2 2.75C2 1.784 2.784 1 3.75 1h2.5a.75.75 0 010 1.5h-2.5a.25.25 0 00-.25.25v10.5c0 .138.112.25.25.25h2.5a.75.75 0 010 1.5h-2.5A1.75 1.75 0 012 13.25V2.75zm10.44 4.5L10.97 5.78a.75.75 0 111.06-1.06l2.75 2.75a.75.75 0 010 1.06l-2.75 2.75a.75.75 0 11-1.06-1.06l1.47-1.47H6.75a.75.75 0 010-1.5h5.69z"/></svg>',
+    '  退出登录',
+    '</div>',
   ].join('');
   document.body.appendChild(menu);
   var rect = event.currentTarget.getBoundingClientRect();
   menu.style.top = (rect.bottom + 6) + 'px';
   menu.style.right = (window.innerWidth - rect.right) + 'px';
-  menu.style.minWidth = '200px';
+  menu.style.minWidth = '220px';
   setTimeout(function () {
     document.addEventListener('click', closeProjectListSettingsMenu, { once: true });
   }, 0);
@@ -197,16 +224,17 @@ function _refreshPlSettingsLabels() {
     .then(function (r) { return r.ok ? r.json() : null; })
     .then(function (d) {
       if (!d) return;
-      var el = document.getElementById('pl-mirror-label');
-      if (el) { el.textContent = d.enabled ? '✓ 开启' : '关闭'; el.style.color = d.enabled ? '#10b981' : '#71717a'; }
+      // 2026-04-22：改走 .settings-switch 开关（和分支列表一致），不是文字
+      var sw = document.getElementById('pl-mirror-switch');
+      if (sw) sw.classList.toggle('on', !!d.enabled);
     })
     .catch(function () {});
   fetch('/api/tab-title', { credentials: 'same-origin' })
     .then(function (r) { return r.ok ? r.json() : null; })
     .then(function (d) {
       if (!d) return;
-      var el = document.getElementById('pl-tabtitle-label');
-      if (el) { el.textContent = d.enabled ? '✓ 开启' : '关闭'; el.style.color = d.enabled ? '#10b981' : '#71717a'; }
+      var sw = document.getElementById('pl-tabtitle-switch');
+      if (sw) sw.classList.toggle('on', !!d.enabled);
     })
     .catch(function () {});
 }
