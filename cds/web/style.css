@@ -10,6 +10,13 @@
   --bg-input: #1E1F20;
   --bg-hover: rgba(63, 63, 70, 0.4);
 
+  /* 2026-04-22 一劳永逸：终端/代码块/输入框的深色/浅色主题值统一定义，
+   * 不允许 JS 里再写 var(--bg-base, #xxx) 硬编码兜底 —— 缺失就缺失，
+   * 让 bug 立刻可见而不是永远走到暗色 fallback。 */
+  --bg-base: #0b0b10;          /* 最深底色（配合亮字的 terminal/code 视觉） */
+  --bg-terminal: #0f1419;      /* 终端/代码块专用（略暖于 bg-base） */
+  --bg-code-block: rgba(255, 255, 255, 0.06);  /* inline code */
+
   /* Borders */
   --border: rgba(255, 255, 255, 0.08);
   --border-light: rgba(255, 255, 255, 0.04);
@@ -59,6 +66,31 @@
   --bg-glow-1: transparent;
   --bg-glow-2: transparent;
 
+  /* ════════════════════════════════════════════════════════════════
+   * 2026-04-22 一劳永逸：Legacy/alias tokens
+   * ════════════════════════════════════════════════════════════════
+   * 过去几轮迭代里有些 CSS 规则用了"不存在"的 token（--bg-card-2 /
+   * --fg / --text / --surface / --bg-secondary …），fallback 全部写
+   * 的是暗色 hex。dark 主题看不出问题，light 主题永远是黑底。
+   *
+   * 根治：把这些僵尸 token 定义成规范 token 的 alias。CSS var 是运行
+   * 时解析的 —— alias 指向的规范 token 在 [data-theme="light"] 下
+   * 会自动切换到 light 值，alias 不需要再在 light 块重复定义。
+   *
+   * 禁止：未来新增 token 不得再起新名字 alias，查这张表用规范的。
+   */
+  --bg-card-2:     var(--bg-elevated);
+  --bg-secondary:  var(--bg-elevated);
+  --bg-tertiary:   var(--bg-elevated);
+  --border-subtle: var(--border-light);
+  --surface:       var(--bg-card);
+  --surface-hover: var(--bg-hover);
+  --text:          var(--text-primary);
+  --fg:            var(--text-primary);
+  --fg-primary:    var(--text-primary);
+  --fg-secondary:  var(--text-secondary);
+  --fg-muted:      var(--text-muted);
+
   /* Metrics */
   --radius: 14px;
   --radius-sm: 10px;
@@ -81,6 +113,14 @@
   --bg-elevated: #f1eae4;     /* H27 S30 L92 */
   --bg-input: #ffffff;
   --bg-hover: #2a1f1910;      /* ~6% warm dark */
+
+  /* 2026-04-22 与 :root 同步定义 —— 缺一个组件白天模式就破。
+   * 核心原则：【白天主题禁止任何暗色背景】。不要为了"终端感/代码感/玄色风"
+   * 强行留暗色 —— 白天就是白天，代码块白底深字同样专业。
+   * 违反此条会直接被用户指出（反复发生 10+ 次），禁止再犯。 */
+  --bg-base: #efe7df;          /* 最深底色（白天 = 比卡片更深的 elevated） */
+  --bg-terminal: #efe7df;      /* 终端/代码块：白天也走浅色！不再 #1f1d2b */
+  --bg-code-block: #2a1f190f;  /* inline code（warm dark 6% alpha） */
 
   /* Borders — warm alpha-based */
   --border: #2a1f1924;        /* ~14% warm dark */
@@ -385,24 +425,22 @@ h1 {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  margin-left: 12px;
-  padding: 3px 8px 3px 6px;
-  border-radius: 6px;
+  /* 2026-04-22：进了 .host-combined-badge 里，不再需要自己的 margin/border/bg */
+  padding: 0 2px 0 0;
+  border-radius: 0;
   font-size: 11px;
   font-weight: 500;
   font-family: ui-monospace, SFMono-Regular, "SF Mono", Consolas, monospace;
   cursor: pointer;
   user-select: none;
-  transition: transform 0.15s ease, box-shadow 0.15s ease;
+  transition: transform 0.15s ease;
   line-height: 1;
-  background: var(--bg-card, #161b22);
-  border: 1px solid var(--border, #30363d);
+  background: transparent;
+  border: none;
   color: var(--text-muted, #8b949e);
-  overflow: hidden;  /* clip the pill-fill into the rounded corners */
 }
 .capacity-badge:hover {
   transform: translateY(-1px);
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25);
 }
 .capacity-badge.hidden { display: none; }
 
@@ -669,6 +707,8 @@ h2 { font-size: 14px; font-weight: 600; margin-bottom: 8px; letter-spacing: -0.0
   color: var(--text-muted); cursor: pointer;
   transition: all var(--transition); flex-shrink: 0;
 }
+/* 2026-04-22：☰ 移动端菜单按钮，桌面端默认隐藏（媒体查询里才 display:inline-flex） */
+.cds-header-menu-btn { display: none; }
 .icon-btn svg { width: 20px; height: 20px; flex-shrink: 0; }
 .icon-btn.xs svg { width: 16px; height: 16px; }
 .icon-btn:hover {
@@ -2402,16 +2442,24 @@ a.branch-name:hover { color: var(--accent); }
 
 /* ════════════════ Deploy Progress Bar ════════════════ */
 
-.deploy-progress-bar {
-  position: absolute; top: 0; left: 0; right: 0; height: 2px;
-  background: rgba(255, 255, 255, 0.05); overflow: hidden;
-  border-radius: var(--radius) var(--radius) 0 0;
-}
+/* 2026-04-22 改版：
+ * 旧版是顶端 2px 横条 + top-right 胶囊计时器，体验问题：
+ *   1) 计时器压在右上角工具栏上，挡住灯泡/AI 标记按钮（用户反馈图 1）
+ *   2) 顶部横条只在一条边动，视觉呼应弱
+ * 新版：
+ *   - 计时器移到右下角（空闲区域），pointer-events 保持不传递
+ *   - 顶部横条删除，改为"理发店灯柱"式沿卡片边框环绕旋转的高光
+ *     （conic-gradient + @property --building-angle + mask-composite）
+ *     技术栈与 .is-ai-occupied 一致（style.css:1114+），复用方案
+ */
+.deploy-progress-bar { display: none; }  /* 旧条形进度条保留结构兜底，视觉已移至环绕边 */
+
 /* P4 Part 15 — Initializing timer that ticks while branch is building/starting */
 .branch-deploy-timer {
   position: absolute;
-  top: 8px;
+  bottom: 10px;
   right: 12px;
+  top: auto;
   display: inline-flex;
   align-items: center;
   gap: 6px;
@@ -2423,10 +2471,11 @@ a.branch-name:hover { color: var(--accent); }
   font-weight: 700;
   color: var(--accent, #10b981);
   font-family: var(--font-mono, monospace);
-  z-index: 2;
+  z-index: 3;
   pointer-events: none;
   letter-spacing: 0.2px;
   animation: branch-timer-pulse 1.6s ease-in-out infinite;
+  backdrop-filter: blur(6px);
 }
 .branch-deploy-timer-label {
   font-size: 9.5px;
@@ -2444,30 +2493,71 @@ a.branch-name:hover { color: var(--accent); }
   0%, 100% { box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.0); }
   50% { box-shadow: 0 0 0 4px rgba(16, 185, 129, 0.18); }
 }
-.deploy-progress-bar-fill {
-  height: 100%; width: 30%;
-  background: linear-gradient(90deg, var(--accent), var(--accent-dim), var(--accent));
-  border-radius: 2px;
-  animation: progress-slide 1.5s ease-in-out infinite;
-}
-@keyframes progress-slide {
-  0% { transform: translateX(-100%); width: 30%; }
-  50% { width: 50%; }
-  100% { transform: translateX(400%); width: 30%; }
+
+/* ── Barber-pole border chase ──
+ * 一条高光头 + 尾迹沿卡片边缘环绕旋转，像理发店灯柱。
+ * 实现：conic-gradient 按 --building-angle 旋转，mask-composite: exclude
+ * 把中间挖空只留边框 4px 的圆环；@property 让角度可被 keyframes 驱动。
+ */
+@property --building-angle {
+  syntax: '<angle>';
+  initial-value: 0deg;
+  inherits: false;
 }
 
-/* Card deploying state */
 .branch-card.is-deploying {
   border-color: var(--accent-border);
-  animation: deploying-glow 2s ease-in-out infinite;
+  animation: deploying-glow 2.4s ease-in-out infinite;
+}
+.branch-card.is-deploying::before {
+  content: '';
+  position: absolute;
+  /* 卡片 .branch-card 有 overflow:hidden，ring 必须放在内部（inset:0）
+   * 否则会被裁掉；padding 决定 ring 厚度。 */
+  inset: 0;
+  border-radius: inherit;
+  padding: 3px;
+  background: conic-gradient(
+    from var(--building-angle, 0deg),
+    transparent 0deg,
+    transparent 200deg,
+    rgba(16, 185, 129, 0.25) 260deg,
+    rgba(16, 185, 129, 0.85) 330deg,
+    rgba(255, 255, 255, 0.95) 355deg,
+    rgba(16, 185, 129, 0.85) 360deg
+  );
+  -webkit-mask:
+    linear-gradient(#000 0 0) content-box,
+    linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+          mask:
+    linear-gradient(#000 0 0) content-box,
+    linear-gradient(#000 0 0);
+          mask-composite: exclude;
+  animation: building-border-chase 1.8s linear infinite;
+  pointer-events: none;
+  z-index: 1;
+  filter: drop-shadow(0 0 4px rgba(16, 185, 129, 0.4));
+}
+@keyframes building-border-chase {
+  to { --building-angle: 360deg; }
+}
+/* AI occupied + deploying 时让 AI 的彩虹边继续主导，避免两层边框打架 */
+.branch-card.is-ai-occupied.is-deploying::before {
+  display: none;
 }
 @keyframes deploying-glow {
   0%, 100% {
     box-shadow: 0 0 0 0 rgba(16, 185, 129, 0), 0 1px 3px rgba(0, 0, 0, 0.2);
   }
   50% {
-    box-shadow: 0 0 10px 1px rgba(16, 185, 129, 0.15), 0 0 20px 3px rgba(16, 185, 129, 0.06);
+    box-shadow: 0 0 10px 1px rgba(16, 185, 129, 0.18), 0 0 22px 4px rgba(16, 185, 129, 0.08);
   }
+}
+/* prefers-reduced-motion：关掉环绕 + 外晕，但保留静态高亮边框 */
+@media (prefers-reduced-motion: reduce) {
+  .branch-card.is-deploying::before { animation: none; background: none; }
+  .branch-card.is-deploying { animation: none; box-shadow: 0 0 0 1px var(--accent-border); }
 }
 
 /* Hammer icon blink during deploy */
@@ -2511,11 +2601,62 @@ a.branch-name:hover { color: var(--accent); }
   .header-subtitle { font-size: 10px; padding: 2px 8px; }
   header { margin-bottom: 16px; padding-bottom: 12px; }
 
-  /* Header actions */
-  .header-actions { gap: 3px; }
+  /* 2026-04-22：小屏 header 换行布局
+   * PC 端仍是左右两列；小屏下把 header-actions 挤爆（图 4：列表/拓扑 toggle 盖住 Cloud Dev Suite 标题）。
+   * 方案：flex-wrap，让 header-left 独占第一行，header-actions 换到第二行并允许横向 scroll。
+   * commit hash / capacity badge 是"次要信息"，小屏隐藏给标题让位。
+   */
+  header {
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+  .header-left {
+    /* 2026-04-22：不再 width:100%，让 header-actions 能在同一行右侧出现 ☰
+     * flex:1 + min-width:0 保证标题被挤时能省略而不是溢出。 */
+    flex: 1;
+    min-width: 0;
+    flex-wrap: nowrap;
+    overflow: hidden;
+  }
+  /* 2026-04-22 手机端 header 简化：
+   * - 全部次要按钮隐藏（🔑 / 🌙 / ⚙ / 自动更新入口 / AI 指示灯 / auth widget）
+   * - 只留一个 ☰ 按钮右靠，点开 settings 菜单（成为"菜单导航"）
+   * - header-actions 不再拉全宽占一行 —— 用 margin-left:auto 推到 header-left 右侧 */
+  .header-actions {
+    margin-left: auto;
+    gap: 3px;
+    width: auto;
+    justify-content: flex-end;
+  }
+  /* 小屏下次要元数据隐藏 */
+  #cdsCommitHash { display: none !important; }
+  .capacity-badge { display: none !important; }
+
+  /* 隐藏所有非 ☰ 的 header 按钮，功能收到 settings 菜单里 */
+  .ai-pairing-indicator,
+  .cds-auth-widget,
+  #agentKeyBtn,
+  #themeToggleBtn,
+  #settingsBtn,
+  #selfUpdateBtn {
+    display: none !important;
+  }
+  /* ☰ 专用按钮：只有在手机端显示，桌面端已经在主样式 display:none
+   * 2026-04-22：按钮/图标比例 55% ≥ 触控友好 40×40 + 22×22 svg */
+  .cds-header-menu-btn {
+    display: inline-flex !important;
+    width: 40px; height: 40px;
+    border: 1px solid var(--card-border);
+    background: var(--bg-card);
+    border-radius: 10px;
+  }
+  .cds-header-menu-btn svg { width: 22px !important; height: 22px !important; }
   .icon-btn { width: 32px; height: 32px; }
-  .ai-pairing-indicator { padding: 3px 8px; height: 26px; gap: 4px; }
-  .ai-label { font-size: 11px; }
+  /* 返回项目按钮缩小文字 */
+  .projects-back-link {
+    padding: 3px 8px !important;
+    font-size: 11px !important;
+  }
 
   /* Cards — slightly stronger borders for mobile */
   .branch-card {
@@ -2585,6 +2726,16 @@ a.branch-name:hover { color: var(--accent); }
 
   /* Busy spinner removed — see main styles */
 
+  /* Deploy timer: shrink a tad on mobile so it doesn't fight the dropdown button */
+  .branch-deploy-timer {
+    bottom: 8px;
+    right: 8px;
+    padding: 2px 8px;
+    font-size: 9.5px;
+  }
+  .branch-deploy-timer-label { font-size: 8.5px; }
+  .branch-deploy-timer-value { font-size: 10px; }
+
   /* Modal: slight margin on mobile */
   .modal-dialog { max-height: 90vh; margin: 0 12px; }
 
@@ -2604,6 +2755,28 @@ a.branch-name:hover { color: var(--accent); }
 
   /* Fav toggle: bigger */
   .fav-toggle svg.inline-icon { width: 16px; height: 16px; }
+}
+
+/* 2026-04-22 极小屏（iPhone SE / Android 入门机 ≤380px）再收一层
+ * 只处理真的会横向溢出/字号过大的场景，不要把 ≤640px 已经 OK 的规则再覆盖一遍。 */
+@media (max-width: 380px) {
+  .container { padding: 8px; }
+  .modal-dialog {
+    margin: 0 6px;
+    border-radius: 12px;
+  }
+  .modal-header { padding: 10px 12px; }
+  .modal-header h2 { font-size: 14px; }
+  /* 避免 iOS focus input 时自动放大（需 ≥16px）+ 窄视口 padding */
+  .form-input, input[type="text"], input[type="search"], input[type="email"], textarea, select {
+    font-size: 16px;
+  }
+  /* 分支卡内边距再收紧 */
+  .branch-card { padding: 10px 10px; }
+  .branch-card-header { padding-right: 44px; }
+  .branch-card-toolbar { right: 8px; }
+  /* 标题更紧 */
+  h1 { font-size: 14px; }
 }
 
 @media (min-width: 641px) {
@@ -2849,30 +3022,109 @@ a.branch-name:hover { color: var(--accent); }
 /* ════════════════ API Activity Monitor ════════════════ */
 
 /* ── Host stats pulse widget (bottom-right, above Activity Monitor) ── */
-/* Real-time mem + cpu bars. Complements the header's container capacity badge */
-/* See doc/design.cds-resilience.md §八 */
+/* 2026-04-22：原右下角 `.host-stats` 浮窗已废弃（用户反馈"右下角希望干净一些"）。
+ * MEM/CPU 合并到 header 的 .host-pulse-badge。.host-stats 保留 display:none
+ * 做 DOM 兜底，避免 renderHostStats 里的 getElementById 报 null。 */
 .host-stats {
-  position: fixed;
-  /* Stack above the collapsed Activity Monitor (40px) + margin */
-  bottom: 66px;
-  right: 16px;
-  z-index: 9997;
-  padding: 8px 12px;
-  border-radius: 8px;
+  display: none !important;
+}
+
+/* ── 合并 host 状态胶囊（capacity + host-pulse 同容器） ── */
+.host-combined-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  margin-left: 12px;
+  padding: 3px 10px 3px 6px;
   background: var(--bg-card);
   border: 1px solid var(--card-border);
-  box-shadow: var(--shadow-lg);
-  backdrop-filter: blur(16px);
-  cursor: pointer;
-  user-select: none;
-  transition: opacity 0.25s ease, transform 0.2s ease, box-shadow 0.2s ease;
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  min-width: 190px;
-  font-family: ui-monospace, SFMono-Regular, "SF Mono", Consolas, monospace;
+  border-radius: 999px;
+  font-family: var(--font-mono);
   font-size: 11px;
   line-height: 1;
+  color: var(--text-secondary);
+  user-select: none;
+  transition: background 120ms ease, border-color 120ms ease, transform 120ms ease, box-shadow 120ms ease;
+  overflow: hidden;
+}
+.host-combined-badge.hidden { display: none !important; }
+.host-combined-badge:hover {
+  background: var(--bg-elevated);
+  border-color: var(--accent-border);
+  transform: translateY(-1px);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+}
+.host-combined-divider {
+  width: 1px;
+  height: 14px;
+  background: var(--border);
+  opacity: 0.8;
+  flex-shrink: 0;
+}
+/* 其中一侧 hidden 时，隐藏 divider 避免空悬 */
+.capacity-badge.hidden + .host-combined-divider,
+.host-combined-badge:has(.host-pulse-badge.hidden) .host-combined-divider {
+  display: none;
+}
+
+/* Host-pulse 放入合并容器内后去掉自身 border/bg/margin */
+.host-pulse-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0;
+  margin-left: 0;
+  background: transparent;
+  border: none;
+  border-radius: 0;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 1;
+  color: var(--text-secondary);
+  cursor: pointer;
+  user-select: none;
+}
+.host-pulse-badge.hidden { display: none !important; }
+.host-pulse-metric {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.host-pulse-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--green);
+  box-shadow: 0 0 4px currentColor;
+}
+.host-pulse-dot[data-tier="green"]  { color: #3fb950; background: #3fb950; }
+.host-pulse-dot[data-tier="blue"]   { color: #58a6ff; background: #58a6ff; }
+.host-pulse-dot[data-tier="orange"] { color: #f0883e; background: #f0883e; }
+.host-pulse-dot[data-tier="red"]    { color: #f85149; background: #f85149; animation: host-pulse-red 1.2s ease-in-out infinite; }
+@keyframes host-pulse-red {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50%      { opacity: 0.6; transform: scale(0.85); }
+}
+.host-pulse-label {
+  color: var(--text-muted);
+  font-weight: 600;
+  letter-spacing: 0.3px;
+  font-size: 10px;
+}
+.host-pulse-value {
+  color: var(--text-primary);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  min-width: 30px;
+  text-align: right;
+}
+.host-pulse-sep {
+  color: var(--text-muted);
+  opacity: 0.4;
+}
+/* 小屏下隐藏 host-pulse，和 capacity-badge 保持一致（规则里本就隐藏 capacity） */
+@media (max-width: 640px) {
+  .host-pulse-badge { display: none !important; }
 }
 .host-stats.hidden {
   opacity: 0;
@@ -2944,6 +3196,27 @@ a.branch-name:hover { color: var(--accent); }
 /* On small screens, hide to avoid crowding */
 @media (max-width: 640px) {
   .host-stats { display: none; }
+  /* 2026-04-22 小屏 Activity Monitor：
+   * 默认已 collapsed（40px 高），但 min-width:320px 在 375px 屏幕上仍偏大。
+   * 改为贴满底部横条，展开时限高 60vh 避免盖住整个屏幕。 */
+  .activity-monitor {
+    left: 8px !important;
+    right: 8px !important;
+    bottom: 8px !important;
+    width: auto !important;
+    min-width: 0 !important;
+    max-width: none !important;
+    max-height: 60vh !important;
+  }
+  .activity-monitor.collapsed {
+    height: 36px !important;
+    min-height: 36px !important;
+  }
+  .activity-monitor:not(.collapsed) {
+    height: 50vh !important;
+  }
+  /* 拖动 resize 手柄在小屏上没意义，关闭 */
+  .activity-resize-handle { display: none !important; }
 }
 
 .activity-monitor {
@@ -2971,6 +3244,15 @@ a.branch-name:hover { color: var(--accent); }
 .activity-monitor.collapsed {
   height: 40px !important;
   min-height: 40px;
+  /* 2026-04-22：collapsed 状态下缩短宽度（从 480px → 自适应），
+   * 展开时仍是 480px。resize 手柄用户反馈图 3 的"长条太长"。 */
+  width: auto !important;
+  min-width: 0 !important;
+  max-width: 480px;
+}
+/* collapsed 模式下各子区保持紧凑：count 胶囊 + roller 水平挤在 header 行 */
+.activity-monitor.collapsed .activity-header {
+  padding: 8px 12px;
 }
 
 .activity-header {
@@ -3422,6 +3704,13 @@ a.branch-name:hover { color: var(--accent); }
   padding: 48px 0 20px;
   position: relative;
   user-select: none;
+  /* 2026-04-22 fix: 父 .branch-list 是 CSS Grid (auto-fill 340px)，
+   * loader 落在第一格导致显示在左上（用户图 4 红框）。
+   * 用 grid-column: 1 / -1 跨满所有列，再让 flex 内部居中起作用。
+   * 同时给最小高度，避免视觉过于挤在 header 下方。 */
+  grid-column: 1 / -1;
+  min-height: 50vh;
+  width: 100%;
 }
 
 .cds-loading-glow {
@@ -4976,7 +5265,10 @@ a.branch-name:hover { color: var(--accent); }
 .cds-restart-overlay {
   position: fixed;
   inset: 0;
-  z-index: 9000;
+  /* 2026-04-22 fix: 原 z-index 9000 比 self-update modal backdrop (10000) 还低，
+   * 重启过程中 overlay 被 modal 遮挡（用户图 3）。提到 10050 高于
+   * self-update modal (10000) + 它的 dropdown (10010)。 */
+  z-index: 10050;
   display: flex;
   align-items: center;
   justify-content: center;
