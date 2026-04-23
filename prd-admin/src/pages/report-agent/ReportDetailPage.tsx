@@ -12,6 +12,7 @@ import { WeeklyReportStatus, ReportInputType } from '@/services/contracts/report
 import { PlanComparisonPanel } from './components/PlanComparisonPanel';
 import { RichTextMarkdownContent } from './components/RichTextMarkdownContent';
 import { RightRailPanel } from './components/RightRailPanel';
+import { useDataTheme } from './hooks/useDataTheme';
 
 type TabKey = 'content' | 'plan-comparison';
 
@@ -37,6 +38,8 @@ export interface ReportDetailPageProps {
 export default function ReportDetailPage(props: ReportDetailPageProps = {}) {
   const { reportId: paramsReportId } = useParams<{ reportId: string }>();
   const reportId = props.reportIdOverride ?? paramsReportId;
+  const dataTheme = useDataTheme();
+  const isLight = dataTheme === 'light';
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const ctxTeamId = props.teamIdOverride ?? (searchParams.get('teamId') ?? '');
@@ -229,7 +232,7 @@ export default function ReportDetailPage(props: ReportDetailPageProps = {}) {
     <div className="h-full min-h-0 flex flex-col gap-4">
       {/* Return Dialog */}
       {showReturnDialog && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center" style={{ background: 'rgba(0,0,0,0.5)', backdropFilter: 'blur(4px)', WebkitBackdropFilter: 'blur(4px)' }}>
+        <div className="fixed inset-0 z-50 flex items-center justify-center" style={{ background: isLight ? 'rgba(15, 23, 42, 0.18)' : 'rgba(0,0,0,0.5)', backdropFilter: 'blur(4px)', WebkitBackdropFilter: 'blur(4px)' }}>
           <GlassCard className="p-6 w-[440px]">
             <div className="text-[16px] font-semibold mb-4" style={{ color: 'var(--text-primary)' }}>退回周报</div>
             <textarea
@@ -281,7 +284,7 @@ export default function ReportDetailPage(props: ReportDetailPageProps = {}) {
 
       {/* Return banner — 横跨三栏容器上方 */}
       {report.status === WeeklyReportStatus.Returned && report.returnReason && (
-        <div className="px-5 py-2.5 rounded-xl" style={{ background: 'rgba(239, 68, 68, 0.06)', border: '1px solid rgba(239, 68, 68, 0.1)' }}>
+        <div className="px-5 py-2.5 rounded-xl" style={{ background: isLight ? 'rgba(239, 68, 68, 0.05)' : 'rgba(239, 68, 68, 0.06)', border: `1px solid ${isLight ? 'rgba(239, 68, 68, 0.20)' : 'rgba(239, 68, 68, 0.1)'}` }}>
           <div className="text-[11px]" style={{ color: 'rgba(239, 68, 68, 0.85)' }}>
             <span className="font-medium">{report.returnedByName || '审阅人'}</span> 退回了此周报
             {report.returnedAt && <span> · {new Date(report.returnedAt).toLocaleDateString()}</span>}
@@ -320,7 +323,7 @@ export default function ReportDetailPage(props: ReportDetailPageProps = {}) {
             {tab.key === 'content' && comments.length > 0 && (
               <span
                 className="ml-2 text-[10px] px-2 py-0.5 rounded-full font-medium"
-                style={{ background: 'rgba(59, 130, 246, 0.08)', color: 'rgba(59, 130, 246, 0.9)' }}
+                style={{ background: isLight ? 'rgba(59, 130, 246, 0.10)' : 'rgba(59, 130, 246, 0.08)', color: 'rgba(59, 130, 246, 0.9)', border: isLight ? '1px solid rgba(59, 130, 246, 0.18)' : 'none' }}
               >
                 {comments.length}
               </span>
