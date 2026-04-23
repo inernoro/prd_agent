@@ -25,16 +25,27 @@ const sectionColors = [
   'rgba(20, 184, 166, 0.9)',
 ];
 
-export default function ReportDetailPage() {
-  const { reportId } = useParams<{ reportId: string }>();
+export interface ReportDetailPageProps {
+  reportIdOverride?: string;
+  teamIdOverride?: string;
+  weekYearOverride?: number;
+  weekNumberOverride?: number;
+  onBack?: () => void;
+  onSelectSibling?: (reportId: string, userId: string) => void;
+  hideSiblings?: boolean;
+}
+
+export default function ReportDetailPage(props: ReportDetailPageProps = {}) {
+  const { reportId: paramsReportId } = useParams<{ reportId: string }>();
+  const reportId = props.reportIdOverride ?? paramsReportId;
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
-  const ctxTeamId = searchParams.get('teamId') ?? '';
-  const ctxWeekYearRaw = Number.parseInt(searchParams.get('weekYear') ?? '', 10);
-  const ctxWeekNumberRaw = Number.parseInt(searchParams.get('weekNumber') ?? '', 10);
+  const ctxTeamId = props.teamIdOverride ?? (searchParams.get('teamId') ?? '');
+  const ctxWeekYearRaw = props.weekYearOverride ?? Number.parseInt(searchParams.get('weekYear') ?? '', 10);
+  const ctxWeekNumberRaw = props.weekNumberOverride ?? Number.parseInt(searchParams.get('weekNumber') ?? '', 10);
   const ctxWeekYear = Number.isFinite(ctxWeekYearRaw) ? ctxWeekYearRaw : null;
   const ctxWeekNumber = Number.isFinite(ctxWeekNumberRaw) ? ctxWeekNumberRaw : null;
-  const hasSiblingCtx = !!ctxTeamId && ctxWeekYear !== null && ctxWeekNumber !== null;
+  const hasSiblingCtx = !props.hideSiblings && !!ctxTeamId && ctxWeekYear !== null && ctxWeekNumber !== null;
 
   const [siblings, setSiblings] = useState<TeamReportListItem[]>([]);
   const siblingsKeyRef = useRef<string>('');
@@ -124,12 +135,18 @@ export default function ReportDetailPage() {
     })();
   }, [hasSiblingCtx, ctxTeamId, ctxWeekYear, ctxWeekNumber]);
 
+  const { onSelectSibling: onSelectSiblingProp } = props;
   const handleSelectSibling = useCallback(
     (id: string) => {
       if (id === reportId) return;
+      if (onSelectSiblingProp) {
+        const target = siblings.find((s) => s.reportId === id);
+        onSelectSiblingProp(id, target?.userId ?? '');
+        return;
+      }
       navigate(`/report-agent/report/${id}?${searchParams.toString()}`, { replace: true });
     },
-    [navigate, reportId, searchParams]
+    [navigate, onSelectSiblingProp, reportId, searchParams, siblings]
   );
 
   const handleCreateComment = async () => {
@@ -259,7 +276,7 @@ export default function ReportDetailPage() {
       <GlassCard variant="subtle" className="px-5 py-4">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <Button variant="ghost" size="sm" onClick={() => navigate(-1)}>
+            <Button variant="ghost" size="sm" onClick={props.onBack ?? (() => navigate(-1))}>
               <ArrowLeft size={16} />
             </Button>
             <div>
