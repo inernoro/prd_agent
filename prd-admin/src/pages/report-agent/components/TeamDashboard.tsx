@@ -50,16 +50,26 @@ const DRAWER_CLOSE_MS = 220;
 const DRAWER_ENTER_EASING = 'cubic-bezier(0.22, 1, 0.36, 1)';
 
 function buildStatusConfig(isLight: boolean): Record<string, { label: string; color: string; bg: string; icon: typeof CheckCircle2 }> {
-  // 浅色模式 chip 底色 alpha 0.08 → 0.12,在浅米底上对比度更可读
-  const a = isLight ? 0.12 : 0.08;
+  // 浅色模式:文字色升级到 600/700 色阶 alpha 1.0 (WCAG 4.5:1+),底色 alpha 0.10
+  if (isLight) {
+    return {
+      [WeeklyReportStatus.NotStarted]: { label: '未开始', color: 'rgba(71,85,105,1)',  bg: 'rgba(71,85,105,.10)',  icon: Clock },
+      [WeeklyReportStatus.Draft]:      { label: '草稿',   color: 'rgba(71,85,105,1)',  bg: 'rgba(71,85,105,.10)',  icon: Clock },
+      [WeeklyReportStatus.Submitted]:  { label: '待审阅', color: 'rgba(29,78,216,1)',  bg: 'rgba(29,78,216,.10)',  icon: AlertCircle },
+      [WeeklyReportStatus.Reviewed]:   { label: '已审阅', color: 'rgba(21,128,61,1)',  bg: 'rgba(21,128,61,.10)',  icon: CheckCircle2 },
+      [WeeklyReportStatus.Returned]:   { label: '已打回', color: 'rgba(185,28,28,1)',  bg: 'rgba(185,28,28,.10)',  icon: AlertCircle },
+      [WeeklyReportStatus.Overdue]:    { label: '逾期',   color: 'rgba(185,28,28,1)',  bg: 'rgba(185,28,28,.10)',  icon: AlertCircle },
+      [WeeklyReportStatus.Viewed]:     { label: '已查看', color: 'rgba(3,105,161,1)',  bg: 'rgba(3,105,161,.10)',  icon: CheckCircle2 },
+    };
+  }
   return {
-    [WeeklyReportStatus.NotStarted]: { label: '未开始', color: 'rgba(156,163,175,.82)', bg: `rgba(156,163,175,${a})`, icon: Clock },
-    [WeeklyReportStatus.Draft]: { label: '草稿', color: 'rgba(156,163,175,.92)', bg: `rgba(156,163,175,${a})`, icon: Clock },
-    [WeeklyReportStatus.Submitted]: { label: '待审阅', color: 'rgba(59,130,246,.9)', bg: `rgba(59,130,246,${a})`, icon: AlertCircle },
-    [WeeklyReportStatus.Reviewed]: { label: '已审阅', color: 'rgba(34,197,94,.9)', bg: `rgba(34,197,94,${a})`, icon: CheckCircle2 },
-    [WeeklyReportStatus.Returned]: { label: '已打回', color: 'rgba(239,68,68,.9)', bg: `rgba(239,68,68,${a})`, icon: AlertCircle },
-    [WeeklyReportStatus.Overdue]: { label: '逾期', color: 'rgba(239,68,68,.9)', bg: `rgba(239,68,68,${a})`, icon: AlertCircle },
-    [WeeklyReportStatus.Viewed]: { label: '已查看', color: 'rgba(14,165,233,.9)', bg: `rgba(14,165,233,${a})`, icon: CheckCircle2 },
+    [WeeklyReportStatus.NotStarted]: { label: '未开始', color: 'rgba(156,163,175,.82)', bg: 'rgba(156,163,175,.08)', icon: Clock },
+    [WeeklyReportStatus.Draft]:      { label: '草稿',   color: 'rgba(156,163,175,.92)', bg: 'rgba(156,163,175,.08)', icon: Clock },
+    [WeeklyReportStatus.Submitted]:  { label: '待审阅', color: 'rgba(59,130,246,.9)',   bg: 'rgba(59,130,246,.08)',  icon: AlertCircle },
+    [WeeklyReportStatus.Reviewed]:   { label: '已审阅', color: 'rgba(34,197,94,.9)',    bg: 'rgba(34,197,94,.08)',   icon: CheckCircle2 },
+    [WeeklyReportStatus.Returned]:   { label: '已打回', color: 'rgba(239,68,68,.9)',    bg: 'rgba(239,68,68,.08)',   icon: AlertCircle },
+    [WeeklyReportStatus.Overdue]:    { label: '逾期',   color: 'rgba(239,68,68,.9)',    bg: 'rgba(239,68,68,.08)',   icon: AlertCircle },
+    [WeeklyReportStatus.Viewed]:     { label: '已查看', color: 'rgba(14,165,233,.9)',   bg: 'rgba(14,165,233,.08)',  icon: CheckCircle2 },
   };
 }
 

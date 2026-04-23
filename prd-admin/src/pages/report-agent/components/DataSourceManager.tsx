@@ -311,7 +311,7 @@ export function DataSourceManager() {
 
       {/* Create/Edit Dialog */}
       {showDialog && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center" style={{ background: 'rgba(0,0,0,0.3)' }}>
+        <div className="fixed inset-0 z-50 flex items-center justify-center" style={{ background: 'var(--modal-overlay)' }}>
           <GlassCard className="p-0 w-[560px] max-h-[80vh] flex flex-col">
             <div className="px-4 py-3 font-medium text-[14px]" style={{ color: 'var(--text-primary)', borderBottom: '1px solid var(--border-primary)' }}>
               {editingId ? '编辑数据源' : '添加数据源'}

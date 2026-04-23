@@ -7,6 +7,7 @@ import {
 } from 'lucide-react';
 import { GlassCard } from '@/components/design/GlassCard';
 import { Button } from '@/components/design/Button';
+import { useDataTheme } from '../hooks/useDataTheme';
 import { toast } from '@/lib/toast';
 import {
   saveDailyLog,
@@ -96,16 +97,29 @@ function truncateCommitMsg(msg: string): string {
   return firstLine.length > 60 ? firstLine.slice(0, 57) + '...' : firstLine;
 }
 
-// Category config with colors and icons
-const CATEGORY_CONFIG: Record<string, { label: string; color: string; bg: string; icon: React.ElementType }> = {
-  development:   { label: '开发', color: 'rgba(59, 130, 246, 0.95)',  bg: 'rgba(59, 130, 246, 0.12)',  icon: Code2 },
-  meeting:       { label: '会议', color: 'rgba(168, 85, 247, 0.95)',  bg: 'rgba(168, 85, 247, 0.12)',  icon: Users },
-  communication: { label: '沟通', color: 'rgba(249, 115, 22, 0.95)',  bg: 'rgba(249, 115, 22, 0.12)',  icon: MessageCircle },
-  documentation: { label: '文档', color: 'rgba(34, 197, 94, 0.95)',   bg: 'rgba(34, 197, 94, 0.12)',   icon: FileText },
-  testing:       { label: '测试', color: 'rgba(236, 72, 153, 0.95)',  bg: 'rgba(236, 72, 153, 0.12)',  icon: TestTube },
-  todo:          { label: 'Todo', color: 'rgba(16, 185, 129, 0.95)',  bg: 'rgba(16, 185, 129, 0.12)',  icon: Check },
-  other:         { label: '其他', color: 'rgba(148, 163, 184, 0.95)', bg: 'rgba(148, 163, 184, 0.12)', icon: MoreHorizontal },
-};
+// Category config with colors and icons (浅色 / 暗色 主题感知)
+function buildCategoryConfig(isLight: boolean): Record<string, { label: string; color: string; bg: string; icon: React.ElementType }> {
+  if (isLight) {
+    return {
+      development:   { label: '开发', color: 'rgba(29, 78, 216, 1)',   bg: 'rgba(29, 78, 216, 0.10)',   icon: Code2 },
+      meeting:       { label: '会议', color: 'rgba(126, 34, 206, 1)',  bg: 'rgba(126, 34, 206, 0.10)',  icon: Users },
+      communication: { label: '沟通', color: 'rgba(194, 65, 12, 1)',   bg: 'rgba(194, 65, 12, 0.10)',   icon: MessageCircle },
+      documentation: { label: '文档', color: 'rgba(21, 128, 61, 1)',   bg: 'rgba(21, 128, 61, 0.10)',   icon: FileText },
+      testing:       { label: '测试', color: 'rgba(190, 24, 93, 1)',   bg: 'rgba(190, 24, 93, 0.10)',   icon: TestTube },
+      todo:          { label: 'Todo', color: 'rgba(4, 120, 87, 1)',    bg: 'rgba(4, 120, 87, 0.10)',    icon: Check },
+      other:         { label: '其他', color: 'rgba(71, 85, 105, 1)',   bg: 'rgba(71, 85, 105, 0.10)',   icon: MoreHorizontal },
+    };
+  }
+  return {
+    development:   { label: '开发', color: 'rgba(59, 130, 246, 0.95)',  bg: 'rgba(59, 130, 246, 0.12)',  icon: Code2 },
+    meeting:       { label: '会议', color: 'rgba(168, 85, 247, 0.95)',  bg: 'rgba(168, 85, 247, 0.12)',  icon: Users },
+    communication: { label: '沟通', color: 'rgba(249, 115, 22, 0.95)',  bg: 'rgba(249, 115, 22, 0.12)',  icon: MessageCircle },
+    documentation: { label: '文档', color: 'rgba(34, 197, 94, 0.95)',   bg: 'rgba(34, 197, 94, 0.12)',   icon: FileText },
+    testing:       { label: '测试', color: 'rgba(236, 72, 153, 0.95)',  bg: 'rgba(236, 72, 153, 0.12)',  icon: TestTube },
+    todo:          { label: 'Todo', color: 'rgba(16, 185, 129, 0.95)',  bg: 'rgba(16, 185, 129, 0.12)',  icon: Check },
+    other:         { label: '其他', color: 'rgba(148, 163, 184, 0.95)', bg: 'rgba(148, 163, 184, 0.12)', icon: MoreHorizontal },
+  };
+}
 
 const MAX_CUSTOM_TAG_COUNT = 20;
 const MAX_CUSTOM_TAG_LENGTH = 16;
@@ -152,6 +166,9 @@ function dedupePreserveOrder(tags: string[]): string[] {
 // ── Main Component ─────────────────────────────────────
 
 export function DailyLogPanel() {
+  const dataTheme = useDataTheme();
+  const isLight = dataTheme === 'light';
+  const CATEGORY_CONFIG = useMemo(() => buildCategoryConfig(isLight), [isLight]);
   const [selectedDate, setSelectedDate] = useState(formatDate(new Date()));
   const [items, setItems] = useState<LogItemInput[]>([]);
   const [saving, setSaving] = useState(false);

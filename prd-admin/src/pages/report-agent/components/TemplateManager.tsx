@@ -499,7 +499,7 @@ export function TemplateManager() {
 
       {/* Dialog */}
       {showDialog && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center" style={{ background: 'rgba(0,0,0,0.4)' }}>
+        <div className="fixed inset-0 z-50 flex items-center justify-center" style={{ background: 'var(--modal-overlay)' }}>
           <GlassCard className="p-0 w-[600px] max-h-[80vh] flex flex-col">
             <div className="px-5 py-4 font-semibold text-[15px]" style={{ color: 'var(--text-primary)', borderBottom: '1px solid var(--border-primary)' }}>
               {editingId ? '编辑模板' : '新建模板'}

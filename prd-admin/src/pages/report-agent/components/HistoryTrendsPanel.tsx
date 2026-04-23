@@ -7,18 +7,34 @@ import { getPersonalTrends, getTeamTrends } from '@/services';
 import { useReportAgentStore } from '@/stores/reportAgentStore';
 import { useAuthStore } from '@/stores/authStore';
 import type { PersonalTrendItem, TeamTrendItem } from '@/services/contracts/reportAgent';
+import { useDataTheme } from '../hooks/useDataTheme';
 
-const STATUS_LABELS: Record<string, { label: string; color: string }> = {
-  'not-started': { label: '未开始', color: 'rgba(156, 163, 175, 0.7)' },
-  draft:         { label: '草稿',   color: 'rgba(251, 191, 36, 0.9)' },
-  submitted:     { label: '已提交', color: 'rgba(59, 130, 246, 0.9)' },
-  reviewed:      { label: '已审阅', color: 'rgba(34, 197, 94, 0.9)' },
-  returned:      { label: '已退回', color: 'rgba(239, 68, 68, 0.9)' },
-  overdue:       { label: '逾期',   color: 'rgba(239, 68, 68, 0.9)' },
-  vacation:      { label: '请假',   color: 'rgba(139, 92, 246, 0.9)' },
-};
+function buildStatusLabels(isLight: boolean): Record<string, { label: string; color: string }> {
+  if (isLight) {
+    return {
+      'not-started': { label: '未开始', color: 'rgba(71, 85, 105, 1)' },     // slate-600
+      draft:         { label: '草稿',   color: 'rgba(180, 83, 9, 1)' },      // amber-700
+      submitted:     { label: '已提交', color: 'rgba(29, 78, 216, 1)' },     // blue-700
+      reviewed:      { label: '已审阅', color: 'rgba(21, 128, 61, 1)' },     // green-700
+      returned:      { label: '已退回', color: 'rgba(185, 28, 28, 1)' },     // red-700
+      overdue:       { label: '逾期',   color: 'rgba(185, 28, 28, 1)' },
+      vacation:      { label: '请假',   color: 'rgba(109, 40, 217, 1)' },    // violet-700
+    };
+  }
+  return {
+    'not-started': { label: '未开始', color: 'rgba(156, 163, 175, 0.7)' },
+    draft:         { label: '草稿',   color: 'rgba(251, 191, 36, 0.9)' },
+    submitted:     { label: '已提交', color: 'rgba(59, 130, 246, 0.9)' },
+    reviewed:      { label: '已审阅', color: 'rgba(34, 197, 94, 0.9)' },
+    returned:      { label: '已退回', color: 'rgba(239, 68, 68, 0.9)' },
+    overdue:       { label: '逾期',   color: 'rgba(239, 68, 68, 0.9)' },
+    vacation:      { label: '请假',   color: 'rgba(139, 92, 246, 0.9)' },
+  };
+}
 
 export function HistoryTrendsPanel() {
+  const dataTheme = useDataTheme();
+  const STATUS_LABELS = useMemo(() => buildStatusLabels(dataTheme === 'light'), [dataTheme]);
   const [mode, setMode] = useState<'personal' | 'team'>('personal');
   const [weeks, setWeeks] = useState(12);
   const [personalData, setPersonalData] = useState<PersonalTrendItem[]>([]);

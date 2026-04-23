@@ -12,3 +12,4 @@
 | fix | prd-admin | 修复从团队列表"查看"进入周报详情独立路由后浅色模式失效：ReportDetailPage 在独立路由模式（无 reportIdOverride）下也读 sessionStorage 的 color-scheme，主动同步 data-theme 到 documentElement |
 | refactor | prd-admin | 周报 Agent 头部移除"使用指引"按钮 + UsageGuideOverlay 关联代码，控件区精简为 ZoomControl + ThemeControl 两个右对齐控件 |
 | fix | prd-admin | TeamDashboard 浅色精修：statusConfig 改为 buildStatusConfig(isLight) 函数，浅色 chip 底色 alpha 0.08→0.12；scope tab 选中态文字采用更深的蓝/绿确保对比度（rgba(29,78,216) / rgba(21,128,61)）；统计 chip 已提交/待提交文字色浅色下加深；成员抽屉 overlay 浅色下从 black/50 改为 slate-900/20 |
+| feat | prd-admin | 周报 Agent 浅色模式第三波系统精修——卡片层次 + 对比度 + 一致性：(1) tokens.css 浅色 GlassCard 提亮到接近纯白 + 阴影加强，让卡片层次清晰浮在米色底上;(2) 新增 lightModeColors.ts 单一数据源,定义 9 种语义色 600/700 色阶;(3) 新增 --modal-overlay CSS 变量,8 处 modal portal 蒙层一改全改;(4) HistoryTrendsPanel/WeekNavRail/MyReportsList/DailyLogPanel/TeamDashboard 的 status/category config 全面改为 buildXxxConfig(isLight) 函数化,浅色统一用 600/700 色阶 alpha 1.0,WCAG AA 对比度全员达标 |

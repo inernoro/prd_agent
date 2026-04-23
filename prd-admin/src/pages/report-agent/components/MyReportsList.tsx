@@ -5,6 +5,7 @@ import { Button } from '@/components/design/Button';
 import { useReportAgentStore } from '@/stores/reportAgentStore';
 import { WeeklyReportStatus } from '@/services/contracts/reportAgent';
 import { ReportEditor } from './ReportEditor';
+import { useDataTheme } from '../hooks/useDataTheme';
 
 function getISOWeek(date: Date): { weekYear: number; weekNumber: number } {
   const d = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()));
@@ -15,15 +16,28 @@ function getISOWeek(date: Date): { weekYear: number; weekNumber: number } {
   return { weekYear: d.getUTCFullYear(), weekNumber };
 }
 
-const statusConfig: Record<string, { label: string; color: string; bg: string; borderColor: string; icon: React.ElementType }> = {
-  [WeeklyReportStatus.Draft]:      { label: '草稿',   color: 'rgba(156, 163, 175, 0.9)', bg: 'rgba(156, 163, 175, 0.08)', borderColor: 'rgba(156, 163, 175, 0.4)',  icon: Pencil },
-  [WeeklyReportStatus.Submitted]:  { label: '已提交', color: 'rgba(59, 130, 246, 0.9)',  bg: 'rgba(59, 130, 246, 0.08)',  borderColor: 'rgba(59, 130, 246, 0.5)',   icon: Send },
-  [WeeklyReportStatus.Reviewed]:   { label: '已审阅', color: 'rgba(34, 197, 94, 0.9)',   bg: 'rgba(34, 197, 94, 0.08)',   borderColor: 'rgba(34, 197, 94, 0.5)',    icon: CheckCircle2 },
-  [WeeklyReportStatus.Returned]:   { label: '已退回', color: 'rgba(239, 68, 68, 0.9)',   bg: 'rgba(239, 68, 68, 0.08)',   borderColor: 'rgba(239, 68, 68, 0.5)',    icon: AlertCircle },
-  [WeeklyReportStatus.NotStarted]: { label: '未开始', color: 'rgba(156, 163, 175, 0.5)', bg: 'rgba(156, 163, 175, 0.05)', borderColor: 'rgba(156, 163, 175, 0.2)',  icon: Clock },
-};
+function buildStatusConfig(isLight: boolean): Record<string, { label: string; color: string; bg: string; borderColor: string; icon: React.ElementType }> {
+  if (isLight) {
+    return {
+      [WeeklyReportStatus.Draft]:      { label: '草稿',   color: 'rgba(71, 85, 105, 1)',  bg: 'rgba(71, 85, 105, 0.10)', borderColor: 'rgba(71, 85, 105, 0.30)',  icon: Pencil },
+      [WeeklyReportStatus.Submitted]:  { label: '已提交', color: 'rgba(29, 78, 216, 1)',  bg: 'rgba(29, 78, 216, 0.10)', borderColor: 'rgba(29, 78, 216, 0.30)',  icon: Send },
+      [WeeklyReportStatus.Reviewed]:   { label: '已审阅', color: 'rgba(21, 128, 61, 1)',  bg: 'rgba(21, 128, 61, 0.10)', borderColor: 'rgba(21, 128, 61, 0.30)',  icon: CheckCircle2 },
+      [WeeklyReportStatus.Returned]:   { label: '已退回', color: 'rgba(185, 28, 28, 1)',  bg: 'rgba(185, 28, 28, 0.10)', borderColor: 'rgba(185, 28, 28, 0.30)',  icon: AlertCircle },
+      [WeeklyReportStatus.NotStarted]: { label: '未开始', color: 'rgba(71, 85, 105, 0.85)', bg: 'rgba(71, 85, 105, 0.06)', borderColor: 'rgba(71, 85, 105, 0.18)', icon: Clock },
+    };
+  }
+  return {
+    [WeeklyReportStatus.Draft]:      { label: '草稿',   color: 'rgba(156, 163, 175, 0.9)', bg: 'rgba(156, 163, 175, 0.08)', borderColor: 'rgba(156, 163, 175, 0.4)',  icon: Pencil },
+    [WeeklyReportStatus.Submitted]:  { label: '已提交', color: 'rgba(59, 130, 246, 0.9)',  bg: 'rgba(59, 130, 246, 0.08)',  borderColor: 'rgba(59, 130, 246, 0.5)',   icon: Send },
+    [WeeklyReportStatus.Reviewed]:   { label: '已审阅', color: 'rgba(34, 197, 94, 0.9)',   bg: 'rgba(34, 197, 94, 0.08)',   borderColor: 'rgba(34, 197, 94, 0.5)',    icon: CheckCircle2 },
+    [WeeklyReportStatus.Returned]:   { label: '已退回', color: 'rgba(239, 68, 68, 0.9)',   bg: 'rgba(239, 68, 68, 0.08)',   borderColor: 'rgba(239, 68, 68, 0.5)',    icon: AlertCircle },
+    [WeeklyReportStatus.NotStarted]: { label: '未开始', color: 'rgba(156, 163, 175, 0.5)', bg: 'rgba(156, 163, 175, 0.05)', borderColor: 'rgba(156, 163, 175, 0.2)',  icon: Clock },
+  };
+}
 
 export function MyReportsList() {
+  const dataTheme = useDataTheme();
+  const statusConfig = useMemo(() => buildStatusConfig(dataTheme === 'light'), [dataTheme]);
   const { reports, showReportEditor, setShowReportEditor, setSelectedReportId, loadReports } = useReportAgentStore();
 
   const now = useMemo(() => getISOWeek(new Date()), []);

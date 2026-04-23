@@ -88,7 +88,7 @@ export function DailyLogPolishPopover({ open, text, onClose, onApply }: Props) {
   const overlay = (
     <div
       className="fixed inset-0 z-[100] flex items-center justify-center"
-      style={{ background: 'rgba(0,0,0,0.55)', backdropFilter: 'blur(4px)' }}
+      style={{ background: 'var(--modal-overlay)', backdropFilter: 'blur(4px)' }}
       onClick={handleAbort}
     >
       <div

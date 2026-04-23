@@ -51,6 +51,9 @@
   /* 更"薄"的层级：以描边为主，阴影更克制 */
   --shadow-card: 0 2px 14px rgba(0, 0, 0, 0.35);
   --shadow-card-hover: 0 6px 20px rgba(0, 0, 0, 0.45);
+
+  /* 模态弹窗蒙层:暗色 / 浅色统一变量,modal portal 直接消费即可主题感知 */
+  --modal-overlay: rgba(0, 0, 0, 0.5);
   --shadow-gold: 0 10px 22px rgba(99, 102, 241, 0.20);
 
   /* ── 首页品牌字体（与 index.html Google Fonts 对应） ── */
@@ -123,30 +126,30 @@
 [data-theme="light"] {
   color-scheme: light;
 
-  --bg-base: #f8f2ed !important;
-  --bg-elevated: #f1eae4 !important;
-  --bg-card: rgba(26, 26, 31, 0.04) !important;
-  --bg-card-hover: rgba(26, 26, 31, 0.08) !important;
+  --bg-base: #f1ece5 !important;          /* 略微加深米底色,让上层白卡片对比更鲜明 */
+  --bg-elevated: #e8e1d8 !important;
+  --bg-card: rgba(26, 26, 31, 0.05) !important;
+  --bg-card-hover: rgba(26, 26, 31, 0.09) !important;
   --bg-input: #ffffff !important;
-  --bg-input-hover: #f5f5f5 !important;
+  --bg-input-hover: #fafafa !important;
 
-  --panel: linear-gradient(180deg, rgba(255, 255, 255, 0.92) 0%, rgba(255, 255, 255, 0.78) 100%) !important;
-  --panel-solid: rgba(255, 255, 255, 0.92) !important;
+  --panel: linear-gradient(180deg, rgba(255, 255, 255, 1) 0%, rgba(255, 255, 255, 0.96) 100%) !important;
+  --panel-solid: #ffffff !important;
 
-  --border-faint: rgba(26, 26, 31, 0.06) !important;
-  --border-subtle: rgba(26, 26, 31, 0.10) !important;
-  --border-default: rgba(26, 26, 31, 0.16) !important;
-  --border-hover: rgba(26, 26, 31, 0.24) !important;
+  --border-faint: rgba(26, 26, 31, 0.08) !important;
+  --border-subtle: rgba(26, 26, 31, 0.12) !important;
+  --border-default: rgba(26, 26, 31, 0.18) !important;
+  --border-hover: rgba(26, 26, 31, 0.28) !important;
 
-  /* 玻璃效果:浅底上用"白色玻璃"叠加形成卡片层次 */
-  --glass-bg-start: rgba(255, 255, 255, 0.85) !important;
-  --glass-bg-end: rgba(255, 255, 255, 0.62) !important;
-  --glass-border: rgba(26, 26, 31, 0.12) !important;
+  /* 玻璃效果:浅底上用"近纯白卡片"叠加形成清晰层次 */
+  --glass-bg-start: rgba(255, 255, 255, 1) !important;
+  --glass-bg-end: rgba(255, 255, 255, 0.96) !important;
+  --glass-border: rgba(26, 26, 31, 0.14) !important;
 
-  --glass-bg: rgba(255, 255, 255, 0.75) !important;
-  --glass-bg-strong: rgba(255, 255, 255, 0.92) !important;
-  --glass-ring: rgba(26, 26, 31, 0.08) !important;
-  --glass-shadow: 0 12px 36px rgba(26, 26, 31, 0.12) !important;
+  --glass-bg: rgba(255, 255, 255, 0.98) !important;
+  --glass-bg-strong: #ffffff !important;
+  --glass-ring: rgba(26, 26, 31, 0.10) !important;
+  --glass-shadow: 0 4px 16px rgba(15, 23, 42, 0.08), 0 1px 4px rgba(15, 23, 42, 0.04) !important;
 
   /* 同 themeApplier 管理：嵌套块/列表/表格 —— 浅色下也需覆盖避免白底白字 */
   --nested-block-bg: rgba(26, 26, 31, 0.04) !important;
@@ -163,8 +166,11 @@
   --text-muted: rgba(26, 26, 31, 0.55) !important;
 
   /* 阴影:浅底要更克制,避免"黑框"感 */
-  --shadow-card: 0 2px 10px rgba(26, 26, 31, 0.08) !important;
-  --shadow-card-hover: 0 6px 18px rgba(26, 26, 31, 0.12) !important;
+  --shadow-card: 0 2px 12px rgba(15, 23, 42, 0.10), 0 1px 3px rgba(15, 23, 42, 0.06) !important;
+  --shadow-card-hover: 0 8px 24px rgba(15, 23, 42, 0.12), 0 2px 6px rgba(15, 23, 42, 0.08) !important;
+
+  /* 第三波新增:统一 modal overlay,8 处弹窗一改全改 */
+  --modal-overlay: rgba(15, 23, 42, 0.18) !important;
 }
 
 html, body {

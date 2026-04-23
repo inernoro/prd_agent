@@ -2,6 +2,7 @@ import { useMemo, useState, useEffect } from 'react';
 import { ChevronDown, ChevronRight, CalendarDays, CheckCircle2, Clock, AlertCircle } from 'lucide-react';
 import { MapSpinner } from '@/components/ui/VideoLoader';
 import type { TeamDashboardMember } from '@/services/contracts/reportAgent';
+import { useDataTheme } from '../hooks/useDataTheme';
 import { WeeklyReportStatus, ReportTeamRole } from '@/services/contracts/reportAgent';
 
 const ISO_WEEK_MS = 7 * 24 * 60 * 60 * 1000;
@@ -101,15 +102,17 @@ function groupWeeksByYear(weeks: WeekEntry[]): YearGroup[] {
     }));
 }
 
-const memberStatusConfig: Record<string, { label: string; color: string; icon: typeof CheckCircle2 }> = {
-  [WeeklyReportStatus.Submitted]: { label: '待审阅', color: 'rgba(59,130,246,.9)', icon: AlertCircle },
-  [WeeklyReportStatus.Reviewed]: { label: '已审阅', color: 'rgba(34,197,94,.9)', icon: CheckCircle2 },
-  [WeeklyReportStatus.Viewed]: { label: '已查看', color: 'rgba(14,165,233,.9)', icon: CheckCircle2 },
-  [WeeklyReportStatus.Returned]: { label: '已打回', color: 'rgba(239,68,68,.9)', icon: AlertCircle },
-  [WeeklyReportStatus.Overdue]: { label: '逾期', color: 'rgba(239,68,68,.9)', icon: AlertCircle },
-  [WeeklyReportStatus.Draft]: { label: '草稿', color: 'rgba(156,163,175,.92)', icon: Clock },
-  [WeeklyReportStatus.NotStarted]: { label: '未开始', color: 'rgba(156,163,175,.82)', icon: Clock },
-};
+function buildMemberStatusConfig(isLight: boolean): Record<string, { label: string; color: string; icon: typeof CheckCircle2 }> {
+  return {
+    [WeeklyReportStatus.Submitted]: { label: '待审阅', color: isLight ? 'rgba(29,78,216,1)' : 'rgba(59,130,246,.9)', icon: AlertCircle },
+    [WeeklyReportStatus.Reviewed]:  { label: '已审阅', color: isLight ? 'rgba(21,128,61,1)' : 'rgba(34,197,94,.9)', icon: CheckCircle2 },
+    [WeeklyReportStatus.Viewed]:    { label: '已查看', color: isLight ? 'rgba(3,105,161,1)' : 'rgba(14,165,233,.9)', icon: CheckCircle2 },
+    [WeeklyReportStatus.Returned]:  { label: '已打回', color: isLight ? 'rgba(185,28,28,1)' : 'rgba(239,68,68,.9)', icon: AlertCircle },
+    [WeeklyReportStatus.Overdue]:   { label: '逾期',   color: isLight ? 'rgba(185,28,28,1)' : 'rgba(239,68,68,.9)', icon: AlertCircle },
+    [WeeklyReportStatus.Draft]:     { label: '草稿',   color: isLight ? 'rgba(71,85,105,1)' : 'rgba(156,163,175,.92)', icon: Clock },
+    [WeeklyReportStatus.NotStarted]:{ label: '未开始', color: isLight ? 'rgba(71,85,105,1)' : 'rgba(156,163,175,.82)', icon: Clock },
+  };
+}
 
 const SUBMITTED_STATUSES = new Set<string>([
   WeeklyReportStatus.Submitted,
@@ -146,6 +149,9 @@ export function WeekNavRail({
   onSelectWeek,
   onSelectMember,
 }: WeekNavRailProps) {
+  const dataTheme = useDataTheme();
+  const isLight = dataTheme === 'light';
+  const memberStatusConfig = useMemo(() => buildMemberStatusConfig(isLight), [isLight]);
   const nowIso = useMemo(() => getISOWeek(new Date()), []);
   const [visibleCount, setVisibleCount] = useState(INITIAL_VISIBLE);
 
@@ -369,25 +375,25 @@ export function WeekNavRail({
                           onClick={() => handleWeekClick(week.weekYear, week.weekNumber)}
                           className="w-full flex items-center gap-1.5 py-2 px-2 rounded-lg text-left transition-all hover:opacity-90"
                           style={{
-                            background: isSelected ? 'rgba(59,130,246,.12)' : 'transparent',
+                            background: isSelected ? (isLight ? 'rgba(29,78,216,.12)' : 'rgba(59,130,246,.12)') : 'transparent',
                             border: isSelected ? '1px solid rgba(59,130,246,.35)' : '1px solid transparent',
                           }}
                         >
                           {isExpanded ? (
-                            <ChevronDown size={12} style={{ color: isSelected ? 'rgba(59,130,246,.95)' : 'var(--text-muted)', flexShrink: 0 }} />
+                            <ChevronDown size={12} style={{ color: isSelected ? (isLight ? 'rgba(29,78,216,1)' : 'rgba(59,130,246,.95)') : 'var(--text-muted)', flexShrink: 0 }} />
                           ) : (
                             <ChevronRight size={12} style={{ color: 'var(--text-muted)', flexShrink: 0 }} />
                           )}
                           <div className="flex-1 min-w-0">
                             <div
                               className="text-[12px] font-medium flex items-center gap-1.5"
-                              style={{ color: isSelected ? 'rgba(59,130,246,.95)' : 'var(--text-primary)' }}
+                              style={{ color: isSelected ? (isLight ? 'rgba(29,78,216,1)' : 'rgba(59,130,246,.95)') : 'var(--text-primary)' }}
                             >
                               <span className="truncate">{week.chineseName}</span>
                               {week.isCurrent && (
                                 <span
                                   className="shrink-0 text-[10px] px-1.5 py-0.5 rounded-full"
-                                  style={{ color: 'rgba(34,197,94,.95)', background: 'rgba(34,197,94,.12)' }}
+                                  style={{ color: isLight ? 'rgba(21,128,61,1)' : 'rgba(34,197,94,.95)', background: isLight ? 'rgba(21,128,61,.14)' : 'rgba(34,197,94,.12)' }}
                                 >
                                   本周
                                 </span>
@@ -429,7 +435,7 @@ export function WeekNavRail({
                                     onClick={() => onSelectMember(member)}
                                     className="w-full flex items-start gap-1.5 px-2 py-1.5 rounded-lg text-left transition-all hover:opacity-95"
                                     style={{
-                                      background: isMemberSelected ? 'rgba(168,85,247,.14)' : 'transparent',
+                                      background: isMemberSelected ? (isLight ? 'rgba(126,34,206,.14)' : 'rgba(168,85,247,.14)') : 'transparent',
                                       border: isMemberSelected ? '1px solid rgba(168,85,247,.35)' : '1px solid transparent',
                                     }}
                                   >
@@ -437,7 +443,7 @@ export function WeekNavRail({
                                     <div className="flex-1 min-w-0">
                                       <div
                                         className="text-[11.5px] font-medium truncate"
-                                        style={{ color: isMemberSelected ? 'rgba(168,85,247,.95)' : 'var(--text-primary)' }}
+                                        style={{ color: isMemberSelected ? (isLight ? 'rgba(126,34,206,1)' : 'rgba(168,85,247,.95)') : 'var(--text-primary)' }}
                                       >
                                         {member.userName || member.userId}
                                       </div>
