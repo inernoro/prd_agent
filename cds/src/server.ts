@@ -137,6 +137,7 @@ function resolveApiLabel(method: string, path: string): string {
     'GET /mirror': '获取镜像配置',
     'PUT /mirror': '更新镜像配置',
     'POST /import-config': '导入配置',
+    'POST /build-profiles/bulk-set-modes': '批量设置部署命令',
     'GET /export-config': '导出配置',
     'GET /cache/status': '查看缓存状态',
     'POST /cache/repair': '修复缓存挂载',

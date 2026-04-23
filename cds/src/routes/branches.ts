@@ -2941,6 +2941,103 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
   // ── Deploy mode switching ──
 
+  // ── 全局批量改命令 (2026-04-22) ──
+  //
+  // 用户故事：「我的所有 .NET profile 都用同一套热/冷部署命令，能不能一次性改完？」
+  //
+  // POST /api/build-profiles/bulk-set-modes
+  // body: {
+  //   filter: 'all' | 'dotnet' | 'node' | 'python' | { dockerImageMatch: string },
+  //   modes: { [modeId]: { label, command } },     // 要写入的所有 mode（覆盖该 profile 的全套）
+  //   strategy: 'replace' | 'merge',                // replace: 清空后覆盖；merge: 同 modeId 替换、其他保留
+  //   profileIds?: string[],                        // 可选：精准白名单，优先于 filter
+  // }
+  //
+  // 自动在执行前拍 ConfigSnapshot，可在「历史版本」一键回滚。
+  router.post('/build-profiles/bulk-set-modes', (req, res) => {
+    try {
+      const {
+        filter = 'all',
+        modes,
+        strategy = 'merge',
+        profileIds,
+      } = req.body as {
+        filter?: 'all' | 'dotnet' | 'node' | 'python' | { dockerImageMatch?: string };
+        modes?: Record<string, { label: string; command: string }>;
+        strategy?: 'replace' | 'merge';
+        profileIds?: string[];
+      };
+
+      if (!modes || typeof modes !== 'object' || Object.keys(modes).length === 0) {
+        res.status(400).json({ error: '必须提供 modes（{ modeId: { label, command } }）' });
+        return;
+      }
+      for (const [k, v] of Object.entries(modes)) {
+        if (!v || typeof v !== 'object' || !v.label || !v.command) {
+          res.status(400).json({ error: `mode "${k}" 缺少 label 或 command` });
+          return;
+        }
+      }
+
+      const matchPattern: ((img: string) => boolean) = (() => {
+        if (Array.isArray(profileIds)) return () => false;
+        if (filter === 'all') return () => true;
+        if (filter === 'dotnet') return img => /dotnet|mcr\.microsoft\.com\/dotnet/i.test(img);
+        if (filter === 'node') return img => /node|node:|nodejs/i.test(img);
+        if (filter === 'python') return img => /python/i.test(img);
+        if (typeof filter === 'object' && filter.dockerImageMatch) {
+          const re = new RegExp(filter.dockerImageMatch, 'i');
+          return img => re.test(img);
+        }
+        return () => true;
+      })();
+
+      const allProfiles = stateService.getBuildProfiles();
+      const targets = Array.isArray(profileIds) && profileIds.length > 0
+        ? allProfiles.filter(p => profileIds.includes(p.id))
+        : allProfiles.filter(p => matchPattern(p.dockerImage || ''));
+
+      if (targets.length === 0) {
+        res.status(400).json({ error: '没有匹配的 profile，请检查 filter / profileIds' });
+        return;
+      }
+
+      // 自动快照（这是批量破坏性写入）
+      const snapshot = stateService.createConfigSnapshot({
+        trigger: 'pre-destructive',
+        label: `批量设置 ${targets.length} 个 profile 的部署命令（${strategy}）`,
+      });
+
+      const updates: Array<{ id: string; modesBefore: number; modesAfter: number }> = [];
+      for (const profile of targets) {
+        const before = Object.keys(profile.deployModes || {}).length;
+        const baseModes = strategy === 'replace' ? {} : { ...(profile.deployModes || {}) };
+        for (const [mid, m] of Object.entries(modes)) {
+          baseModes[mid] = { label: m.label, command: m.command };
+        }
+        stateService.updateBuildProfile(profile.id, { deployModes: baseModes });
+        updates.push({ id: profile.id, modesBefore: before, modesAfter: Object.keys(baseModes).length });
+      }
+      stateService.save();
+
+      stateService.recordDestructiveOp({
+        type: 'other',
+        snapshotId: snapshot.id,
+        summary: `批量改 ${targets.length} 个 profile 的部署命令（filter=${typeof filter === 'string' ? filter : 'custom'}, strategy=${strategy}）`,
+      });
+
+      res.json({
+        applied: true,
+        targetCount: targets.length,
+        targets: updates,
+        snapshotId: snapshot.id,
+        message: `已为 ${targets.length} 个 profile 应用新命令。如有问题在「历史版本」回滚。`,
+      });
+    } catch (err) {
+      res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
   router.put('/build-profiles/:id/deploy-mode', (req, res) => {
     try {
       const { id } = req.params;

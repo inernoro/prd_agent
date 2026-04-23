@@ -31,7 +31,10 @@ export function buildWidgetScript(branchId: string, branchName: string): string 
     @keyframes cds-step-in{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:translateY(0)}}
     @keyframes cds-scroll-bounce{0%{opacity:0;transform:translateY(-8px) scale(0.8)}40%{opacity:1;transform:translateY(0) scale(1.1)}100%{opacity:1;transform:translateY(12px) scale(1)}}
     .cds-ai-active{position:fixed;inset:0;z-index:99998;pointer-events:none;border:none;background:none;animation:cds-ai-border-glow 2.5s ease-in-out infinite}
-    .cds-ai-badge{position:fixed;top:10px;left:50%;transform:translateX(-50%);z-index:99999;display:flex;align-items:center;gap:6px;padding:4px 12px;border-radius:20px;background:rgba(22,27,34,0.9);backdrop-filter:blur(8px);border:1px solid rgba(96,165,250,0.4);box-shadow:0 2px 12px rgba(96,165,250,0.3);font-family:ui-monospace,SFMono-Regular,"SF Mono",Menlo,monospace;font-size:11px;color:#e2e8f0;white-space:nowrap;pointer-events:none}
+    .cds-ai-badge{position:fixed;top:10px;left:50%;transform:translateX(-50%);z-index:99999;display:flex;align-items:center;gap:8px;padding:4px 6px 4px 12px;border-radius:20px;background:rgba(22,27,34,0.9);backdrop-filter:blur(8px);border:1px solid rgba(96,165,250,0.4);box-shadow:0 2px 12px rgba(96,165,250,0.3);font-family:ui-monospace,SFMono-Regular,"SF Mono",Menlo,monospace;font-size:11px;color:#e2e8f0;white-space:nowrap;pointer-events:auto}
+    .cds-ai-badge-stop{display:inline-flex;align-items:center;gap:3px;padding:2px 8px;border-radius:14px;border:1px solid rgba(248,81,73,0.5);background:rgba(248,81,73,0.15);color:#ff8888;cursor:pointer;font:inherit;font-size:10px;line-height:1;transition:all 0.15s}
+    .cds-ai-badge-stop:hover{background:rgba(248,81,73,0.3);border-color:#f85149;color:#fff}
+    .cds-ai-badge-stop:disabled{opacity:0.5;cursor:wait}
     .cds-ai-badge-dot{width:6px;height:6px;border-radius:50%;background:#60a5fa;box-shadow:0 0 6px #60a5fa;animation:cds-blink 1.5s ease-in-out infinite}
     #cds-widget{position:fixed;left:12px;bottom:12px;z-index:99999;font-family:ui-monospace,SFMono-Regular,"SF Mono",Menlo,monospace;color:#e2e8f0;user-select:none;font-size:12px}
     #cds-widget *{box-sizing:border-box}
@@ -144,6 +147,24 @@ export function buildWidgetScript(branchId: string, branchName: string): string 
   var aiOverlay=null;
   var aiBadgeEl=null;
 
+  function endAiSession(){
+    var btn=aiBadgeEl&&aiBadgeEl.querySelector('.cds-ai-badge-stop');
+    if(btn){btn.disabled=true;btn.textContent='结束中…';}
+    fetch(API+'/bridge/end-session',{
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      credentials:'same-origin',
+      body:JSON.stringify({branchId:BRANCH_ID,summary:'用户在预览页手动结束 AI 操控'}),
+    }).then(function(){
+      // 立刻隐藏，不等 SSE 推送 ttl 过期
+      aiLastSeen=0;aiOccupant=null;
+      updateAiOverlay();
+    }).catch(function(err){
+      if(btn){btn.disabled=false;btn.textContent='✕ 结束';}
+      console.error('[cds-widget] end-session failed:',err);
+    });
+  }
+
   function updateAiOverlay(){
     var isActive=aiOccupant&&(Date.now()-aiLastSeen<AI_TTL);
     if(isActive){
@@ -156,8 +177,19 @@ export function buildWidgetScript(branchId: string, branchName: string): string 
         aiBadgeEl=document.createElement('div');
         aiBadgeEl.className='cds-ai-badge';
         document.body.appendChild(aiBadgeEl);
+        // 用 addEventListener 委托给 stop 按钮（badge.innerHTML 会被刷新但这里只挂一次）
+        aiBadgeEl.addEventListener('click',function(e){
+          var t=e.target;
+          if(t&&t.classList&&t.classList.contains('cds-ai-badge-stop')){
+            e.preventDefault();e.stopPropagation();
+            if(confirm('确定要结束 AI 操控？\\n\\n这会立刻关闭 Bridge session，正在执行的 AI 命令将无法再操作本页。')){
+              endAiSession();
+            }
+          }
+        });
       }
-      aiBadgeEl.innerHTML='<span class="cds-ai-badge-dot"></span> AI 操控中'+(aiOccupant!=='AI'?' · '+aiOccupant:'');
+      var label='AI 操控中'+(aiOccupant!=='AI'?' · '+aiOccupant:'');
+      aiBadgeEl.innerHTML='<span class="cds-ai-badge-dot"></span><span>'+label+'</span><button class="cds-ai-badge-stop" title="结束 AI 对本页的操控">✕ 结束</button>';
     }else{
       if(aiOverlay){aiOverlay.remove();aiOverlay=null;}
       if(aiBadgeEl){aiBadgeEl.remove();aiBadgeEl=null;}

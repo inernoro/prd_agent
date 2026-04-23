@@ -62,6 +62,10 @@
         <button class="icon-btn" id="historyBtn" onclick="window.openHistoryModal && window.openHistoryModal()" title="历史版本 & 紧急还原（配置快照 + 破坏性操作撤销）">
           <svg width="20" height="20" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M1.643 3.143 .427 1.927A.25.25 0 0 0 0 2.104V5.75a.25.25 0 0 0 .25.25h3.646a.25.25 0 0 0 .177-.427L2.715 4.215a6.5 6.5 0 1 1-1.18 4.458.75.75 0 1 0-1.493.154 8.001 8.001 0 1 0 1.6-5.684zM7.75 4a.75.75 0 0 1 .75.75v2.992l2.028.812a.75.75 0 0 1-.557 1.392l-2.5-1A.751.751 0 0 1 7 8.25v-3.5A.75.75 0 0 1 7.75 4z"/></svg>
         </button>
+        <!-- 🔧 全局构建命令：一次定义，按镜像类型批量覆盖所有 profile -->
+        <button class="icon-btn" id="globalCmdBtn" onclick="window.openGlobalBuildCommandPanel && window.openGlobalBuildCommandPanel()" title="全局构建命令（按镜像类型一键改所有服务）">
+          <svg width="20" height="20" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M9.06 2.358a4.5 4.5 0 0 1 5.852 5.852L9.06 14.06l-1.06-1.06 5.66-5.66a3 3 0 1 0-4.24-4.24L3.76 8.762l-1.06-1.06 5.36-5.343zM6.06 4.94l4.95 4.95-1.06 1.06-4.95-4.95L6.06 4.94zM3.5 8.5l4.95 4.95-1.06 1.06L2.44 9.56 3.5 8.5z"/></svg>
+        </button>
         <button class="icon-btn" id="agentKeyBtn" onclick="window.cdsOpenAgentKeyModal(typeof CURRENT_PROJECT_ID !== 'undefined' ? CURRENT_PROJECT_ID : 'default')" title="授权 Agent 操作本项目">
           <svg width="18" height="18" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M10.5 0a5.499 5.499 0 1 1-1.288 10.848l-.932.932a.749.749 0 0 1-.53.22H7v.75a.749.749 0 0 1-.22.53l-.5.5a.749.749 0 0 1-.53.22H5v.75a.749.749 0 0 1-.22.53l-.5.5a.749.749 0 0 1-.53.22h-2A1.75 1.75 0 0 1 0 14.25v-2c0-.199.079-.389.22-.53l4.932-4.932A5.5 5.5 0 0 1 10.5 0Zm0 1.5a4.002 4.002 0 0 0-3.923 4.802.75.75 0 0 1-.206.701L1.5 12.561v1.689c0 .138.112.25.25.25h1.689l.31-.31V13a.75.75 0 0 1 .75-.75h1.19l.31-.31V11a.75.75 0 0 1 .75-.75h1.19l1.371-1.371a.751.751 0 0 1 .701-.206A4 4 0 1 0 10.5 1.5Zm1 2.5a1 1 0 1 1 0 2 1 1 0 0 1 0-2Z"/></svg>
         </button>
@@ -278,6 +282,7 @@
   <script>document.write('<scr'+'ipt src="self-update.js?t='+Date.now()+'"></scr'+'ipt>');</script>
   <script>document.write('<scr'+'ipt src="proxy-log-modal.js?t='+Date.now()+'"></scr'+'ipt>');</script>
   <script>document.write('<scr'+'ipt src="snapshot-modal.js?t='+Date.now()+'"></scr'+'ipt>');</script>
+  <script>document.write('<scr'+'ipt src="global-cmd-modal.js?t='+Date.now()+'"></scr'+'ipt>');</script>
   <script>document.write('<scr'+'ipt src="app.js?t='+Date.now()+'"></scr'+'ipt>');</script>
 </body>
 </html>
