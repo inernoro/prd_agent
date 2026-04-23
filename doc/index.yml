@@ -41,6 +41,7 @@ docs:
   design.server-authority: 服务器权威性设计
   design.unified-skill-system: 技能系统统一设计
   design.llm-gateway: LLM Gateway 统一调用架构设计
+  design.llm-gateway-refactor: LLM Gateway 图片生成重构（compute-then-send）
   design.model-pool: 大模型池设计（三级调度/三级链路）
   design.open-platform: 开放平台功能概要
   design.workflow-engine: 工作流引擎设计方案
