@@ -1475,10 +1475,12 @@ public class ImageGenController : ControllerBase
         }
 
         // 如果有参考图风格提示词，追加到每个 plan item 的 prompt 中
+        // DisplayPrompt 在追加前保存原始用户 prompt，避免系统提示词泄漏到消息记录
         if (!string.IsNullOrWhiteSpace(referenceImagePrompt) && initImageAssetSha256 != null)
         {
             for (var i = 0; i < plan.Count; i++)
             {
+                plan[i].DisplayPrompt = plan[i].Prompt;
                 plan[i].Prompt = $"{referenceImagePrompt}\n\n{plan[i].Prompt}";
             }
         }

@@ -212,7 +212,12 @@ export default function App() {
     (async () => {
       const res = await getAdminAuthzMe();
       if (!res.success) {
-        logout();
+        // 仅 UNAUTHORIZED 才注销；网络中断/服务不可用不应导致注销
+        // apiClient 已在 401 响应时处理了 logout+跳转，这里只作兜底
+        const code = res.error?.code;
+        if (!code || code === 'UNAUTHORIZED') {
+          logout();
+        }
         return;
       }
       if (!permissionsLoaded) {
