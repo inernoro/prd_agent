@@ -67,6 +67,7 @@ type WorkspaceTab = 'content' | 'assets' | 'layout';
 type DevicePreview = 'desktop' | 'mobile';
 type CanvasOrientation = 'landscape' | 'portrait';
 type CreateMode = 'guided' | 'manual';
+type AgentStatus = 'done' | 'working' | 'waiting';
 
 interface PosterDesignerPageProps {
   embedded?: boolean;
@@ -794,9 +795,9 @@ export default function PosterDesignerPage({ embedded = false }: PosterDesignerP
                     </div>
                   </div>
 
-                  <div className="mt-4 flex-1 min-h-0 rounded-[24px] p-4 flex flex-col" style={{ background: 'rgba(3,8,18,0.72)', border: '1px solid rgba(255,255,255,0.06)' }}>
-                    <div className="flex-1 min-h-0 overflow-auto">
-                      <div className="flex h-full min-h-[540px] items-center justify-center">
+                  <div className="mt-4 flex-1 min-h-0 rounded-[24px] p-4" style={{ background: 'rgba(3,8,18,0.72)', border: '1px solid rgba(255,255,255,0.06)' }}>
+                    <div className="h-full min-h-[420px] overflow-auto">
+                      <div className="flex min-h-full items-center justify-center">
                         <WorkspacePosterStage
                           poster={poster}
                           page={currentPage}
@@ -809,7 +810,7 @@ export default function PosterDesignerPage({ embedded = false }: PosterDesignerP
                       </div>
                     </div>
 
-                    <div className="mt-4 border-t pt-3" style={{ borderColor: 'rgba(255,255,255,0.08)' }}>
+                    <div className="hidden">
                       <div className="flex gap-2 overflow-x-auto">
                         {pages.map((page) => (
                           <button
@@ -871,12 +872,6 @@ export default function PosterDesignerPage({ embedded = false }: PosterDesignerP
                       <Sparkles size={14} />
                       AI 重生当前页
                     </button>
-                  </div>
-
-                  <div className="mt-4 grid gap-2 xl:grid-cols-2">
-                    {realAgentStatuses.slice(0, 4).map((item) => (
-                      <AgentStatusRow key={item.label} label={item.label} detail={item.detail} status={item.status} />
-                    ))}
                   </div>
 
                   <div className="mt-4 grid grid-cols-3 gap-1 rounded-xl p-1" style={{ background: 'rgba(255,255,255,0.035)', border: '1px solid rgba(255,255,255,0.08)' }}>
@@ -1080,15 +1075,18 @@ export default function PosterDesignerPage({ embedded = false }: PosterDesignerP
                   <div className="mt-1 text-[11px] text-white/42">保留官网发布，其余渠道暂时只读。</div>
 
                   <div className="mt-4 flex flex-wrap gap-2">
-                    {PUBLISH_CHANNELS.map((channel) => (
-                      <CheckboxChip
-                        key={channel.key}
-                        label={channel.label}
-                        checked={channel.enabled}
-                        disabled={!channel.enabled}
-                        onToggle={() => undefined}
-                      />
-                    ))}
+                    <span
+                      className="rounded-full px-3 py-1.5 text-[11px] font-medium text-white"
+                      style={{ background: 'rgba(84,122,255,0.18)', border: '1px solid rgba(116,149,255,0.3)' }}
+                    >
+                      官网
+                    </span>
+                    <span
+                      className="rounded-full px-3 py-1.5 text-[11px] font-medium text-white/36"
+                      style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)' }}
+                    >
+                      其他渠道待开放
+                    </span>
                   </div>
 
                   <div className="mt-4 space-y-2">
@@ -1753,34 +1751,6 @@ function ToggleRow({
           style={{ left: checked ? 22 : 2 }}
         />
       </span>
-    </button>
-  );
-}
-
-function CheckboxChip({
-  label,
-  checked,
-  disabled = false,
-  onToggle,
-}: {
-  label: string;
-  checked: boolean;
-  disabled?: boolean;
-  onToggle: () => void;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onToggle}
-      disabled={disabled}
-      className="rounded-full px-3 py-1.5 text-[11px] font-medium disabled:cursor-not-allowed disabled:opacity-55"
-      style={{
-        background: checked ? 'rgba(84,122,255,0.18)' : 'rgba(255,255,255,0.04)',
-        border: checked ? '1px solid rgba(116,149,255,0.3)' : '1px solid rgba(255,255,255,0.08)',
-        color: checked ? '#fff' : 'rgba(255,255,255,0.54)',
-      }}
-    >
-      {label}
     </button>
   );
 }
