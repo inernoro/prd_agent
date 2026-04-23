@@ -761,26 +761,6 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
 
       if (imgPoolsRes.success && imgPoolsRes.data) {
         setImageGenPools(imgPoolsRes.data);
-        if (imgPoolsRes.data.length === 0) {
-          // 无可用模型池时，预解析 Gateway 将实际调度到的模型，用于显示和解锁一键生图
-          try {
-            const resolveRes = await getLiteraryAgentImageGenResolvedModel(false);
-            if (resolveRes.resolved && resolveRes.model) {
-              const displayName = resolveRes.poolName || resolveRes.model;
-              setAutoResolvedModel({
-                id: 'auto-resolved',
-                name: displayName,
-                modelName: resolveRes.model,
-                actualModelId: resolveRes.model,
-                platformId: resolveRes.platform || '',
-              });
-            } else {
-              setImageGenModelError('未找到可用的生图模型（请绑定专属模型池或配置默认模型）');
-            }
-          } catch {
-            setImageGenModelError('未找到启用的生图模型（请绑定专属模型池）');
-          }
-        }
       } else {
         setImageGenModelError('加载模型池失败');
       }
@@ -828,6 +808,37 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
       setChatModelPrefId('');
     }
   }, [enabledImageModels, enabledChatModels, imageModelPrefId, chatModelPrefId, modelsLoading]);
+
+  // 无可选模型池（含全部模型不健康的情况）时，预解析 Gateway 将使用的模型
+  useEffect(() => {
+    if (modelsLoading) return;
+    if (enabledImageModels.length > 0) {
+      setAutoResolvedModel(null);
+      return;
+    }
+    let cancelled = false;
+    void (async () => {
+      try {
+        const res = await getLiteraryAgentImageGenResolvedModel(false);
+        if (!cancelled) {
+          if (res.resolved && res.model) {
+            setAutoResolvedModel({
+              id: 'auto-resolved',
+              name: res.poolName || res.model,
+              modelName: res.model,
+              actualModelId: res.model,
+              platformId: res.platform || '',
+            });
+          } else {
+            setImageGenModelError('未找到可用的生图模型（请绑定专属模型池或配置默认模型）');
+          }
+        }
+      } catch {
+        if (!cancelled) setImageGenModelError('未找到启用的生图模型（请绑定专属模型池）');
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [enabledImageModels.length, modelsLoading]);
 
   // 从 ASPECT_OPTIONS 构建默认尺寸选项（当适配器未返回尺寸时作为 fallback）
   const defaultSizesByResolution: SizesByResolution = React.useMemo(() => ({
