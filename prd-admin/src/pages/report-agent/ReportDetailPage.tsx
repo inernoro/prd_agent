@@ -1,6 +1,5 @@
 import { MapSectionLoader } from '@/components/ui/VideoLoader';
 import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
-import { createPortal } from 'react-dom';
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import { ArrowLeft, MessageSquare, CornerDownRight, Trash2, Send, GitCompare, X, CheckCircle2, AlertCircle, Clock, Pencil } from 'lucide-react';
 import { GlassCard } from '@/components/design/GlassCard';
@@ -12,7 +11,8 @@ import type { WeeklyReport, ReportComment, ReportViewSummary, TeamReportListItem
 import { WeeklyReportStatus, ReportInputType } from '@/services/contracts/reportAgent';
 import { PlanComparisonPanel } from './components/PlanComparisonPanel';
 import { RichTextMarkdownContent } from './components/RichTextMarkdownContent';
-import { ReportLikeBar } from './components/ReportLikeBar';
+import { RightRailPanel } from './components/RightRailPanel';
+import { useDataTheme } from './hooks/useDataTheme';
 
 type TabKey = 'content' | 'plan-comparison';
 
@@ -25,16 +25,49 @@ const sectionColors = [
   'rgba(20, 184, 166, 0.9)',
 ];
 
-export default function ReportDetailPage() {
-  const { reportId } = useParams<{ reportId: string }>();
+export interface ReportDetailPageProps {
+  reportIdOverride?: string;
+  teamIdOverride?: string;
+  weekYearOverride?: number;
+  weekNumberOverride?: number;
+  onBack?: () => void;
+  onSelectSibling?: (reportId: string, userId: string) => void;
+  hideSiblings?: boolean;
+}
+
+const COLOR_SCHEME_STORAGE_KEY = 'report-agent:color-scheme';
+
+export default function ReportDetailPage(props: ReportDetailPageProps = {}) {
+  const { reportId: paramsReportId } = useParams<{ reportId: string }>();
+  const reportId = props.reportIdOverride ?? paramsReportId;
+  const isStandaloneRoute = !props.reportIdOverride;
+
+  // 独立路由模式下,ReportAgentPage 没有挂载,需要自己把 sessionStorage 里的
+  // 偏好同步到 documentElement,保证从列表点"查看"进入后浅色不丢失
+  useEffect(() => {
+    if (!isStandaloneRoute || typeof document === 'undefined') return;
+    const root = document.documentElement;
+    const raw = window.sessionStorage.getItem(COLOR_SCHEME_STORAGE_KEY);
+    if (raw === 'light') {
+      root.setAttribute('data-theme', 'light');
+    } else {
+      root.removeAttribute('data-theme');
+    }
+    return () => {
+      root.removeAttribute('data-theme');
+    };
+  }, [isStandaloneRoute]);
+
+  const dataTheme = useDataTheme();
+  const isLight = dataTheme === 'light';
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
-  const ctxTeamId = searchParams.get('teamId') ?? '';
-  const ctxWeekYearRaw = Number.parseInt(searchParams.get('weekYear') ?? '', 10);
-  const ctxWeekNumberRaw = Number.parseInt(searchParams.get('weekNumber') ?? '', 10);
+  const ctxTeamId = props.teamIdOverride ?? (searchParams.get('teamId') ?? '');
+  const ctxWeekYearRaw = props.weekYearOverride ?? Number.parseInt(searchParams.get('weekYear') ?? '', 10);
+  const ctxWeekNumberRaw = props.weekNumberOverride ?? Number.parseInt(searchParams.get('weekNumber') ?? '', 10);
   const ctxWeekYear = Number.isFinite(ctxWeekYearRaw) ? ctxWeekYearRaw : null;
   const ctxWeekNumber = Number.isFinite(ctxWeekNumberRaw) ? ctxWeekNumberRaw : null;
-  const hasSiblingCtx = !!ctxTeamId && ctxWeekYear !== null && ctxWeekNumber !== null;
+  const hasSiblingCtx = !props.hideSiblings && !!ctxTeamId && ctxWeekYear !== null && ctxWeekNumber !== null;
 
   const [siblings, setSiblings] = useState<TeamReportListItem[]>([]);
   const siblingsKeyRef = useRef<string>('');
@@ -46,29 +79,6 @@ export default function ReportDetailPage() {
   const [commentText, setCommentText] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [viewSummary, setViewSummary] = useState<ReportViewSummary>({ count: 0, totalViewCount: 0, users: [] });
-  const [showViewPopover, setShowViewPopover] = useState(false);
-  const [viewPopoverAnchor, setViewPopoverAnchor] = useState<{ top: number; right: number } | null>(null);
-  const viewButtonRef = useRef<HTMLButtonElement | null>(null);
-
-  const handleToggleViewPopover = useCallback(() => {
-    setShowViewPopover((prev) => {
-      const next = !prev;
-      if (next && viewButtonRef.current) {
-        const rect = viewButtonRef.current.getBoundingClientRect();
-        setViewPopoverAnchor({ top: rect.bottom + 6, right: window.innerWidth - rect.right });
-      }
-      return next;
-    });
-  }, []);
-
-  useEffect(() => {
-    if (!showViewPopover) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setShowViewPopover(false);
-    };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [showViewPopover]);
   const currentUserId = useAuthStore((s) => s.user?.userId);
 
   // Return dialog state
@@ -124,12 +134,18 @@ export default function ReportDetailPage() {
     })();
   }, [hasSiblingCtx, ctxTeamId, ctxWeekYear, ctxWeekNumber]);
 
+  const { onSelectSibling: onSelectSiblingProp } = props;
   const handleSelectSibling = useCallback(
     (id: string) => {
       if (id === reportId) return;
+      if (onSelectSiblingProp) {
+        const target = siblings.find((s) => s.reportId === id);
+        onSelectSiblingProp(id, target?.userId ?? '');
+        return;
+      }
       navigate(`/report-agent/report/${id}?${searchParams.toString()}`, { replace: true });
     },
-    [navigate, reportId, searchParams]
+    [navigate, onSelectSiblingProp, reportId, searchParams, siblings]
   );
 
   const handleCreateComment = async () => {
@@ -236,7 +252,7 @@ export default function ReportDetailPage() {
     <div className="h-full min-h-0 flex flex-col gap-4">
       {/* Return Dialog */}
       {showReturnDialog && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center" style={{ background: 'rgba(0,0,0,0.5)', backdropFilter: 'blur(4px)', WebkitBackdropFilter: 'blur(4px)' }}>
+        <div className="fixed inset-0 z-50 flex items-center justify-center" style={{ background: 'var(--modal-overlay)', backdropFilter: 'blur(4px)', WebkitBackdropFilter: 'blur(4px)' }}>
           <GlassCard className="p-6 w-[440px]">
             <div className="text-[16px] font-semibold mb-4" style={{ color: 'var(--text-primary)' }}>退回周报</div>
             <textarea
@@ -259,7 +275,7 @@ export default function ReportDetailPage() {
       <GlassCard variant="subtle" className="px-5 py-4">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <Button variant="ghost" size="sm" onClick={() => navigate(-1)}>
+            <Button variant="ghost" size="sm" onClick={props.onBack ?? (() => navigate(-1))}>
               <ArrowLeft size={16} />
             </Button>
             <div>
@@ -272,140 +288,6 @@ export default function ReportDetailPage() {
             </div>
           </div>
           <div className="flex items-center gap-2">
-            <button
-              ref={viewButtonRef}
-              className="text-[11px] px-2.5 py-1 rounded-full transition-opacity hover:opacity-85"
-              style={{
-                color: 'rgba(220, 38, 38, 0.88)',
-                background: 'rgba(220, 38, 38, 0.08)',
-                border: '1px solid rgba(220, 38, 38, 0.2)',
-              }}
-              onClick={handleToggleViewPopover}
-              title="查看浏览记录"
-            >
-              已阅 {viewSummary.count}
-            </button>
-            {showViewPopover && viewPopoverAnchor && createPortal(
-              <>
-                <div
-                  className="fixed inset-0"
-                  style={{ zIndex: 100, background: 'rgba(0, 0, 0, 0.28)', backdropFilter: 'blur(2px)' }}
-                  onClick={() => setShowViewPopover(false)}
-                />
-                <div
-                  style={{
-                    position: 'fixed',
-                    top: viewPopoverAnchor.top,
-                    right: Math.max(8, viewPopoverAnchor.right),
-                    width: 320,
-                    minWidth: 320,
-                    maxWidth: 320,
-                    maxHeight: 360,
-                    minHeight: 0,
-                    zIndex: 101,
-                    display: 'flex',
-                    flexDirection: 'column',
-                    background: '#1a1b1f',
-                    backgroundImage: 'linear-gradient(180deg, rgba(255,255,255,0.04) 0%, rgba(255,255,255,0) 100%)',
-                    border: '1px solid rgba(255, 255, 255, 0.12)',
-                    borderRadius: 12,
-                    boxShadow: '0 12px 32px rgba(0, 0, 0, 0.55), 0 0 0 1px rgba(0, 0, 0, 0.4)',
-                    padding: 12,
-                    backdropFilter: 'blur(20px) saturate(140%)',
-                  }}
-                  onClick={(e) => e.stopPropagation()}
-                  role="dialog"
-                  aria-label="浏览记录"
-                >
-                  <div
-                    className="flex items-center justify-between mb-2 shrink-0"
-                    style={{ paddingBottom: 8, borderBottom: '1px solid rgba(255, 255, 255, 0.08)' }}
-                  >
-                    <span className="text-[12px] font-medium" style={{ color: 'rgba(255, 255, 255, 0.92)' }}>浏览记录</span>
-                    <span className="text-[11px]" style={{ color: 'rgba(255, 255, 255, 0.5)' }}>
-                      去重 {viewSummary.count} · 总计 {viewSummary.totalViewCount}
-                    </span>
-                  </div>
-                  {viewSummary.users.length === 0 ? (
-                    <div
-                      className="text-[12px] shrink-0"
-                      style={{ color: 'rgba(255, 255, 255, 0.5)', padding: '12px 4px' }}
-                    >
-                      暂无浏览记录
-                    </div>
-                  ) : (
-                    <div
-                      className="pr-1"
-                      style={{
-                        flex: 1,
-                        minHeight: 0,
-                        overflowY: 'auto',
-                        overscrollBehavior: 'contain',
-                        marginTop: 8,
-                        display: 'flex',
-                        flexDirection: 'column',
-                        gap: 4,
-                      }}
-                    >
-                      {viewSummary.users.map((user) => (
-                        <div
-                          key={user.userId}
-                          className="flex items-center justify-between transition-colors"
-                          style={{
-                            background: 'rgba(255, 255, 255, 0.04)',
-                            border: '1px solid rgba(255, 255, 255, 0.06)',
-                            borderRadius: 8,
-                            padding: '8px 10px',
-                          }}
-                          onMouseEnter={(e) => {
-                            e.currentTarget.style.background = 'rgba(255, 255, 255, 0.08)';
-                          }}
-                          onMouseLeave={(e) => {
-                            e.currentTarget.style.background = 'rgba(255, 255, 255, 0.04)';
-                          }}
-                        >
-                          <div className="min-w-0">
-                            <div className="flex items-center gap-1.5">
-                              <span
-                                className="text-[12px] truncate"
-                                style={{ color: 'rgba(255, 255, 255, 0.92)' }}
-                              >
-                                {user.userName}
-                              </span>
-                              {user.isFrequent && (
-                                <span
-                                  className="text-[10px] px-1.5 py-0.5 rounded-md"
-                                  style={{ color: 'rgba(16, 185, 129, 0.95)', background: 'rgba(16, 185, 129, 0.14)' }}
-                                >
-                                  常来
-                                </span>
-                              )}
-                            </div>
-                            <div
-                              className="text-[10px] mt-0.5"
-                              style={{ color: 'rgba(255, 255, 255, 0.42)' }}
-                            >
-                              {new Date(user.lastViewedAt).toLocaleString('zh-CN', {
-                                year: 'numeric',
-                                month: '2-digit',
-                                day: '2-digit',
-                                hour: '2-digit',
-                                minute: '2-digit',
-                                second: '2-digit',
-                              })}
-                            </div>
-                          </div>
-                          <span className="text-[11px]" style={{ color: 'rgba(255, 255, 255, 0.7)' }}>
-                            {user.viewCount} 次
-                          </span>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              </>,
-              document.body,
-            )}
             {(report.status === WeeklyReportStatus.Submitted || report.status === WeeklyReportStatus.Reviewed) && (
               <>
                 <Button variant="secondary" size="sm" onClick={() => setShowReturnDialog(true)}>退回</Button>
@@ -420,6 +302,17 @@ export default function ReportDetailPage() {
         </div>
       </GlassCard>
 
+      {/* Return banner — 横跨三栏容器上方 */}
+      {report.status === WeeklyReportStatus.Returned && report.returnReason && (
+        <div className="px-5 py-2.5 rounded-xl" style={{ background: isLight ? 'rgba(239, 68, 68, 0.05)' : 'rgba(239, 68, 68, 0.06)', border: `1px solid ${isLight ? 'rgba(239, 68, 68, 0.20)' : 'rgba(239, 68, 68, 0.1)'}` }}>
+          <div className="text-[11px]" style={{ color: 'rgba(239, 68, 68, 0.85)' }}>
+            <span className="font-medium">{report.returnedByName || '审阅人'}</span> 退回了此周报
+            {report.returnedAt && <span> · {new Date(report.returnedAt).toLocaleDateString()}</span>}
+            <div className="mt-0.5">原因：{report.returnReason}</div>
+          </div>
+        </div>
+      )}
+
       <div className="flex-1 min-h-0 flex gap-4">
         {hasSiblingCtx && siblings.length > 0 && (
           <SiblingReportsSidebar
@@ -431,17 +324,6 @@ export default function ReportDetailPage() {
           />
         )}
         <div className="flex-1 min-w-0 min-h-0 flex flex-col gap-4">
-      {/* Return banner */}
-      {report.status === WeeklyReportStatus.Returned && report.returnReason && (
-        <div className="px-5 py-2.5 rounded-xl" style={{ background: 'rgba(239, 68, 68, 0.06)', border: '1px solid rgba(239, 68, 68, 0.1)' }}>
-          <div className="text-[11px]" style={{ color: 'rgba(239, 68, 68, 0.85)' }}>
-            <span className="font-medium">{report.returnedByName || '审阅人'}</span> 退回了此周报
-            {report.returnedAt && <span> · {new Date(report.returnedAt).toLocaleDateString()}</span>}
-            <div className="mt-0.5">原因：{report.returnReason}</div>
-          </div>
-        </div>
-      )}
-
       {/* Tabs */}
       <div className="flex items-center gap-1 px-1" style={{ borderBottom: '1px solid var(--border-primary)' }}>
         {tabs.map((tab) => (
@@ -461,7 +343,7 @@ export default function ReportDetailPage() {
             {tab.key === 'content' && comments.length > 0 && (
               <span
                 className="ml-2 text-[10px] px-2 py-0.5 rounded-full font-medium"
-                style={{ background: 'rgba(59, 130, 246, 0.08)', color: 'rgba(59, 130, 246, 0.9)' }}
+                style={{ background: isLight ? 'rgba(59, 130, 246, 0.10)' : 'rgba(59, 130, 246, 0.08)', color: 'rgba(59, 130, 246, 0.9)', border: isLight ? '1px solid rgba(59, 130, 246, 0.18)' : 'none' }}
               >
                 {comments.length}
               </span>
@@ -593,10 +475,28 @@ export default function ReportDetailPage() {
           </GlassCard>
         )}
       </div>
-
-      <GlassCard variant="subtle" className="px-5 py-3">
-        <ReportLikeBar reportId={report.id} />
-      </GlassCard>
+        </div>
+        <div className="flex-none flex flex-col gap-4 min-h-0">
+          {/* 不可见占位：高度 = 主列 Tabs 栏高度，让右栏顶部对齐正文 */}
+          <div
+            aria-hidden="true"
+            className="flex items-center gap-1 px-1"
+            style={{
+              borderBottom: '1px solid var(--border-primary)',
+              visibility: 'hidden',
+              pointerEvents: 'none',
+            }}
+          >
+            <button
+              type="button"
+              tabIndex={-1}
+              className="px-4 py-2.5 text-[13px] rounded-t-lg"
+              style={{ fontWeight: 600 }}
+            >
+              占位
+            </button>
+          </div>
+          <RightRailPanel reportId={report.id} viewSummary={viewSummary} />
         </div>
       </div>
     </div>

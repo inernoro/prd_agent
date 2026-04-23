@@ -57,7 +57,7 @@ export function IdentityMappingEditor({ teamId, member, onClose, onSaved }: Iden
   };
 
   return (
-    <div className="fixed inset-0 flex items-center justify-center z-50" style={{ background: 'rgba(0,0,0,0.5)' }}>
+    <div className="fixed inset-0 flex items-center justify-center z-50" style={{ background: 'var(--modal-overlay)' }}>
       <GlassCard className="w-[420px] p-4 space-y-3">
         <div className="flex items-center justify-between">
           <div>

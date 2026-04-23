@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { FileText, Users, Settings, RefreshCw, HelpCircle } from 'lucide-react';
+import { FileText, Users, Settings, RefreshCw } from 'lucide-react';
 import { MapSpinner } from '@/components/ui/VideoLoader';
 import { GlassCard } from '@/components/design/GlassCard';
 import { TabBar } from '@/components/design/TabBar';
@@ -9,7 +9,24 @@ import { useAuthStore } from '@/stores/authStore';
 import { ReportMainView } from './components/ReportMainView';
 import { TeamDashboard } from './components/TeamDashboard';
 import { SettingsPanel } from './components/SettingsPanel';
-import { UsageGuideOverlay } from './components/UsageGuideOverlay';
+import { ZoomControl, ZOOM_SCALE, type ZoomLevel } from './components/ZoomControl';
+import { ThemeControl, type ColorScheme } from './components/ThemeControl';
+
+const ZOOM_STORAGE_KEY = 'report-agent:zoom';
+const COLOR_SCHEME_STORAGE_KEY = 'report-agent:color-scheme';
+
+function readZoomFromStorage(): ZoomLevel {
+  if (typeof window === 'undefined') return 'normal';
+  const raw = window.sessionStorage.getItem(ZOOM_STORAGE_KEY);
+  if (raw === 'large' || raw === 'extra') return raw;
+  return 'normal';
+}
+
+function readColorSchemeFromStorage(): ColorScheme {
+  if (typeof window === 'undefined') return 'dark';
+  const raw = window.sessionStorage.getItem(COLOR_SCHEME_STORAGE_KEY);
+  return raw === 'light' ? 'light' : 'dark';
+}
 
 /**
  * v3.0 周报系统 — 奥卡姆剃刀重设计
@@ -33,12 +50,31 @@ export default function ReportAgentPage() {
   } = useReportAgentStore();
 
   const userId = useAuthStore((s) => s.user?.userId);
-  const [showUsageGuide, setShowUsageGuide] = useState(false);
-  const [guideRole, setGuideRole] = useState<'manager' | 'member'>(() => {
-    if (typeof window === 'undefined') return 'member';
-    const cached = window.localStorage.getItem('report-agent.guide-role');
-    return cached === 'manager' ? 'manager' : 'member';
-  });
+  const [zoom, setZoom] = useState<ZoomLevel>(readZoomFromStorage);
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    window.sessionStorage.setItem(ZOOM_STORAGE_KEY, zoom);
+  }, [zoom]);
+  const [colorScheme, setColorScheme] = useState<ColorScheme>(readColorSchemeFromStorage);
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    window.sessionStorage.setItem(COLOR_SCHEME_STORAGE_KEY, colorScheme);
+  }, [colorScheme]);
+
+  // 把 data-theme 同步到 <html>,让 AppShell 的 <main>/body 也进入 scope;
+  // 组件卸载或切回暗色时清除,避免污染其他 Agent 页面。
+  useEffect(() => {
+    if (typeof document === 'undefined') return;
+    const root = document.documentElement;
+    if (colorScheme === 'light') {
+      root.setAttribute('data-theme', 'light');
+    } else {
+      root.removeAttribute('data-theme');
+    }
+    return () => {
+      root.removeAttribute('data-theme');
+    };
+  }, [colorScheme]);
 
   const hasTeamWorkspace = useMemo(() => {
     if (!userId) return false;
@@ -51,11 +87,6 @@ export default function ReportAgentPage() {
   useEffect(() => {
     void loadAll();
   }, [loadAll]);
-
-  useEffect(() => {
-    if (typeof window === 'undefined') return;
-    window.localStorage.setItem('report-agent.guide-role', guideRole);
-  }, [guideRole]);
 
   // 兼容旧 tab key —— 如果用户通过外部导航到旧 tab, 映射到新 tab
   useEffect(() => {
@@ -93,24 +124,21 @@ export default function ReportAgentPage() {
   }, [hasTeamWorkspace]);
 
   const usageGuideActions = (
-    <Button
-      variant="secondary"
-      size="sm"
-      onClick={() => {
-        setShowUsageGuide((prev) => !prev);
-      }}
-      className="whitespace-nowrap"
-    >
-      <HelpCircle size={13} />
-      使用指引
-    </Button>
+    <div className="flex items-center gap-2 ml-auto">
+      <ZoomControl value={zoom} onChange={setZoom} />
+      <ThemeControl value={colorScheme} onChange={setColorScheme} />
+    </div>
   );
 
   // Resolve current tab — default to 'report' if current tab not in items
   const currentTab = tabItems.find((t) => t.key === activeTab) ? activeTab : 'report';
 
   return (
-    <div className="h-full min-h-0 flex flex-col gap-4">
+    <div
+      className="h-full min-h-0 flex flex-col gap-4"
+      data-theme={colorScheme === 'light' ? 'light' : undefined}
+      style={{ background: colorScheme === 'light' ? 'var(--bg-base)' : undefined }}
+    >
       <TabBar
         items={tabItems}
         activeKey={currentTab}
@@ -140,28 +168,14 @@ export default function ReportAgentPage() {
         </GlassCard>
       )}
 
-      <div className="flex-1 min-h-0">
+      <div
+        className="flex-1 min-h-0"
+        style={{ zoom: ZOOM_SCALE[zoom] }}
+      >
         {currentTab === 'report' && <ReportMainView />}
         {currentTab === 'team' && <TeamDashboard />}
         {currentTab === 'settings' && <SettingsPanel />}
       </div>
-      <UsageGuideOverlay
-        open={showUsageGuide}
-        moduleKey={currentTab as 'report' | 'team' | 'settings'}
-        role={guideRole}
-        onRoleChange={setGuideRole}
-        onClose={() => setShowUsageGuide(false)}
-        onSwitchTab={(tab) => setActiveTab(tab)}
-        onOpenDailyLog={() => {
-          setActiveTab('report');
-          window.dispatchEvent(new CustomEvent('report-agent:open-daily-log'));
-        }}
-        onCreateReport={() => {
-          setActiveTab('report');
-          setSelectedReportId(null);
-          setShowReportEditor(true);
-        }}
-      />
     </div>
   );
 }

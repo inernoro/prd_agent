@@ -271,7 +271,7 @@ export function TeamManager() {
 
       {/* Team Dialog */}
       {showTeamDialog && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center" style={{ background: 'rgba(0,0,0,0.3)' }}>
+        <div className="fixed inset-0 z-50 flex items-center justify-center" style={{ background: 'var(--modal-overlay)' }}>
           <GlassCard className="p-0 w-[400px]">
             <div className="px-4 py-3 font-medium text-[14px]" style={{ color: 'var(--text-primary)', borderBottom: '1px solid var(--border-primary)' }}>
               {editingTeamId ? '编辑团队' : '新建团队'}
@@ -351,7 +351,7 @@ export function TeamManager() {
 
       {/* Member Dialog */}
       {showMemberDialog && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center" style={{ background: 'rgba(0,0,0,0.3)' }}>
+        <div className="fixed inset-0 z-50 flex items-center justify-center" style={{ background: 'var(--modal-overlay)' }}>
           <GlassCard className="p-0 w-[400px]">
             <div className="px-4 py-3 font-medium text-[14px]" style={{ color: 'var(--text-primary)', borderBottom: '1px solid var(--border-primary)' }}>
               添加成员

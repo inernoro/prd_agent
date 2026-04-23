@@ -1,10 +1,7 @@
 import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import {
   AlertCircle,
-  Calendar,
   CheckCircle2,
-  ChevronLeft,
-  ChevronRight,
   Clock,
   ExternalLink,
   FileText,
@@ -32,9 +29,12 @@ import {
   removeReportTeamMember,
 } from '@/services';
 import { ReportTeamRole, WeeklyReportStatus } from '@/services/contracts/reportAgent';
-import type { TeamReportsViewData, TeamSummaryViewData } from '@/services/contracts/reportAgent';
+import type { TeamDashboardMember, TeamReportsViewData, TeamSummaryViewData } from '@/services/contracts/reportAgent';
 import { UserMultiSearchSelect } from '@/components/UserMultiSearchSelect';
 import { ShareTeamWeekDialog } from './ShareTeamWeekDialog';
+import { WeekNavRail } from './WeekNavRail';
+import { MemberReportInlineView } from './MemberReportInlineView';
+import { useDataTheme } from '../hooks/useDataTheme';
 
 function getISOWeek(date: Date): { weekYear: number; weekNumber: number } {
   const d = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()));
@@ -49,15 +49,29 @@ const summaryColors = ['rgba(59,130,246,.9)', 'rgba(34,197,94,.9)', 'rgba(168,85
 const DRAWER_CLOSE_MS = 220;
 const DRAWER_ENTER_EASING = 'cubic-bezier(0.22, 1, 0.36, 1)';
 
-const statusConfig: Record<string, { label: string; color: string; bg: string; icon: typeof CheckCircle2 }> = {
-  [WeeklyReportStatus.NotStarted]: { label: '未开始', color: 'rgba(156,163,175,.82)', bg: 'rgba(156,163,175,.08)', icon: Clock },
-  [WeeklyReportStatus.Draft]: { label: '草稿', color: 'rgba(156,163,175,.92)', bg: 'rgba(156,163,175,.08)', icon: Clock },
-  [WeeklyReportStatus.Submitted]: { label: '待审阅', color: 'rgba(59,130,246,.9)', bg: 'rgba(59,130,246,.08)', icon: AlertCircle },
-  [WeeklyReportStatus.Reviewed]: { label: '已审阅', color: 'rgba(34,197,94,.9)', bg: 'rgba(34,197,94,.08)', icon: CheckCircle2 },
-  [WeeklyReportStatus.Returned]: { label: '已打回', color: 'rgba(239,68,68,.9)', bg: 'rgba(239,68,68,.08)', icon: AlertCircle },
-  [WeeklyReportStatus.Overdue]: { label: '逾期', color: 'rgba(239,68,68,.9)', bg: 'rgba(239,68,68,.08)', icon: AlertCircle },
-  [WeeklyReportStatus.Viewed]: { label: '已查看', color: 'rgba(14,165,233,.9)', bg: 'rgba(14,165,233,.08)', icon: CheckCircle2 },
-};
+function buildStatusConfig(isLight: boolean): Record<string, { label: string; color: string; bg: string; icon: typeof CheckCircle2 }> {
+  // 浅色模式:文字色升级到 600/700 色阶 alpha 1.0 (WCAG 4.5:1+),底色 alpha 0.10
+  if (isLight) {
+    return {
+      [WeeklyReportStatus.NotStarted]: { label: '未开始', color: 'rgba(71,85,105,1)',  bg: 'rgba(71,85,105,.10)',  icon: Clock },
+      [WeeklyReportStatus.Draft]:      { label: '草稿',   color: 'rgba(71,85,105,1)',  bg: 'rgba(71,85,105,.10)',  icon: Clock },
+      [WeeklyReportStatus.Submitted]:  { label: '待审阅', color: 'rgba(29,78,216,1)',  bg: 'rgba(29,78,216,.10)',  icon: AlertCircle },
+      [WeeklyReportStatus.Reviewed]:   { label: '已审阅', color: 'rgba(21,128,61,1)',  bg: 'rgba(21,128,61,.10)',  icon: CheckCircle2 },
+      [WeeklyReportStatus.Returned]:   { label: '已打回', color: 'rgba(185,28,28,1)',  bg: 'rgba(185,28,28,.10)',  icon: AlertCircle },
+      [WeeklyReportStatus.Overdue]:    { label: '逾期',   color: 'rgba(185,28,28,1)',  bg: 'rgba(185,28,28,.10)',  icon: AlertCircle },
+      [WeeklyReportStatus.Viewed]:     { label: '已查看', color: 'rgba(3,105,161,1)',  bg: 'rgba(3,105,161,.10)',  icon: CheckCircle2 },
+    };
+  }
+  return {
+    [WeeklyReportStatus.NotStarted]: { label: '未开始', color: 'rgba(156,163,175,.82)', bg: 'rgba(156,163,175,.08)', icon: Clock },
+    [WeeklyReportStatus.Draft]:      { label: '草稿',   color: 'rgba(156,163,175,.92)', bg: 'rgba(156,163,175,.08)', icon: Clock },
+    [WeeklyReportStatus.Submitted]:  { label: '待审阅', color: 'rgba(59,130,246,.9)',   bg: 'rgba(59,130,246,.08)',  icon: AlertCircle },
+    [WeeklyReportStatus.Reviewed]:   { label: '已审阅', color: 'rgba(34,197,94,.9)',    bg: 'rgba(34,197,94,.08)',   icon: CheckCircle2 },
+    [WeeklyReportStatus.Returned]:   { label: '已打回', color: 'rgba(239,68,68,.9)',    bg: 'rgba(239,68,68,.08)',   icon: AlertCircle },
+    [WeeklyReportStatus.Overdue]:    { label: '逾期',   color: 'rgba(239,68,68,.9)',    bg: 'rgba(239,68,68,.08)',   icon: AlertCircle },
+    [WeeklyReportStatus.Viewed]:     { label: '已查看', color: 'rgba(14,165,233,.9)',   bg: 'rgba(14,165,233,.08)',  icon: CheckCircle2 },
+  };
+}
 
 function getMemberRoleLabel(role?: string | null): string {
   if (role === ReportTeamRole.Leader) return '负责人';
@@ -80,6 +94,9 @@ export function TeamDashboard() {
   const userId = useAuthStore((s) => s.user?.userId);
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
+  const dataTheme = useDataTheme();
+  const isLight = dataTheme === 'light';
+  const statusConfig = useMemo(() => buildStatusConfig(isLight), [isLight]);
 
   const now = useMemo(() => getISOWeek(new Date()), []);
   const teamScope: 'managed' | 'joined' = searchParams.get('scope') === 'joined' ? 'joined' : 'managed';
@@ -92,6 +109,7 @@ export function TeamDashboard() {
     const v = Number.parseInt(searchParams.get('weekNumber') ?? '', 10);
     return Number.isFinite(v) && v >= 1 && v <= 53 ? v : now.weekNumber;
   })();
+  const selectedMemberUserId = searchParams.get('memberUserId') || null;
 
   const updateParams = useCallback(
     (patch: Record<string, string | number | null | undefined>) => {
@@ -112,14 +130,28 @@ export function TeamDashboard() {
 
   const setTeamScope = useCallback(
     (scope: 'managed' | 'joined') => {
-      updateParams({ scope: scope === 'managed' ? null : scope, teamId: null });
+      updateParams({ scope: scope === 'managed' ? null : scope, teamId: null, memberUserId: null });
     },
     [updateParams]
   );
 
   const setSelectedTeamId = useCallback(
     (id: string) => {
-      updateParams({ teamId: id || null });
+      updateParams({ teamId: id || null, memberUserId: null });
+    },
+    [updateParams]
+  );
+
+  const setSelectedMemberUserId = useCallback(
+    (userId: string | null) => {
+      updateParams({ memberUserId: userId || null });
+    },
+    [updateParams]
+  );
+
+  const jumpToWeek = useCallback(
+    (y: number, w: number) => {
+      updateParams({ weekYear: y, weekNumber: w, memberUserId: null });
     },
     [updateParams]
   );
@@ -135,6 +167,11 @@ export function TeamDashboard() {
   const [summaryView, setSummaryView] = useState<TeamSummaryViewData | null>(null);
   const [summaryLoading, setSummaryLoading] = useState(false);
   const [generatingSummary, setGeneratingSummary] = useState(false);
+
+  // Per-week cache: 键 "teamId|year|week" → { members, fetchedAt }
+  type WeekCacheEntry = { members: TeamDashboardMember[]; fetchedAt: number };
+  const weekCacheRef = useRef<Map<string, WeekCacheEntry>>(new Map());
+  const [cacheTick, setCacheTick] = useState(0); // 用于触发 currentWeekMembers 重新 memoize
 
   const [memberFormOpen, setMemberFormOpen] = useState(false);
   const [memberUserIds, setMemberUserIds] = useState<string[]>([]);
@@ -207,12 +244,31 @@ export function TeamDashboard() {
     const res = await getTeamReportsView({ teamId: selectedTeamId, weekYear, weekNumber });
     if (res.success && res.data) {
       setReportsView(res.data);
+      const key = `${selectedTeamId}|${weekYear}|${weekNumber}`;
+      weekCacheRef.current.set(key, { members: res.data.members, fetchedAt: Date.now() });
+      setCacheTick((t) => t + 1);
     } else {
       setReportsView(null);
       if (res.error?.message) toast.error(res.error.message);
     }
     setReportsLoading(false);
   }, [selectedTeamId, weekYear, weekNumber]);
+
+  // 切换团队时清空 per-week 缓存
+  useEffect(() => {
+    weekCacheRef.current.clear();
+    setCacheTick((t) => t + 1);
+  }, [selectedTeamId]);
+
+  const currentWeekMembers = useMemo<TeamDashboardMember[]>(() => {
+    if (!selectedTeamId) return [];
+    const key = `${selectedTeamId}|${weekYear}|${weekNumber}`;
+    const cached = weekCacheRef.current.get(key);
+    if (cached) return cached.members;
+    return reportsView?.members ?? [];
+    // 读 cacheTick 触发重新计算，即使 ref.current 自身变化
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedTeamId, weekYear, weekNumber, reportsView, cacheTick]);
 
   const loadSummaryView = useCallback(async () => {
     if (!selectedTeamId) {
@@ -300,21 +356,28 @@ export function TeamDashboard() {
     });
   }, [reportsView]);
 
-  const handlePrevWeek = () => {
-    if (weekNumber <= 1) {
-      updateParams({ weekYear: weekYear - 1, weekNumber: 52 });
-      return;
-    }
-    updateParams({ weekNumber: weekNumber - 1 });
-  };
+  const selectedMember = useMemo<TeamDashboardMember | null>(() => {
+    if (!selectedMemberUserId) return null;
+    return currentWeekMembers.find((m) => m.userId === selectedMemberUserId) ?? null;
+  }, [selectedMemberUserId, currentWeekMembers]);
 
-  const handleNextWeek = () => {
-    if (weekNumber >= 52) {
-      updateParams({ weekYear: weekYear + 1, weekNumber: 1 });
-      return;
-    }
-    updateParams({ weekNumber: weekNumber + 1 });
-  };
+  const handleSelectMember = useCallback(
+    (member: TeamDashboardMember) => {
+      setSelectedMemberUserId(member.userId);
+    },
+    [setSelectedMemberUserId]
+  );
+
+  const handleBackFromMember = useCallback(() => {
+    setSelectedMemberUserId(null);
+  }, [setSelectedMemberUserId]);
+
+  const handleSelectSiblingFromDetail = useCallback(
+    (_reportId: string, userId: string) => {
+      if (userId) setSelectedMemberUserId(userId);
+    },
+    [setSelectedMemberUserId]
+  );
 
   const handleEnterSummary = async () => {
     if (!canAccessTeamAiSummary) {
@@ -416,11 +479,26 @@ export function TeamDashboard() {
   };
 
   return (
-    <div className="mx-auto w-full max-w-[1180px] flex flex-col gap-4">
+    <div className="h-full min-h-0 flex gap-4">
+      <WeekNavRail
+        selectedYear={weekYear}
+        selectedWeek={weekNumber}
+        selectedMemberUserId={selectedMemberUserId}
+        currentWeekMembers={currentWeekMembers}
+        currentWeekLoading={reportsLoading}
+        hasTeam={!!selectedTeamId}
+        teamName={selectedTeam?.name}
+        onSelectWeek={jumpToWeek}
+        onSelectMember={handleSelectMember}
+      />
+      <div
+        className="flex-1 min-w-0 min-h-0 flex flex-col gap-4 overflow-y-auto pr-1"
+        style={{ overscrollBehavior: 'contain' }}
+      >
       {memberDrawerVisible && selectedTeam && (
         <div className="fixed inset-0 z-50 flex justify-end" onClick={() => closeMemberDrawer()}>
           <div
-            className="absolute inset-0 bg-black/50 backdrop-blur-sm transition-opacity duration-200"
+            className={`absolute inset-0 backdrop-blur-sm transition-opacity duration-200 ${isLight ? 'bg-slate-900/20' : 'bg-black/50'}`}
             style={{ opacity: memberDrawerOpen ? 1 : 0 }}
           />
           <div
@@ -541,14 +619,27 @@ export function TeamDashboard() {
         </div>
       )}
 
+      {selectedMemberUserId && selectedTeamId ? (
+        <MemberReportInlineView
+          reportId={selectedMember?.reportId}
+          teamId={selectedTeamId}
+          weekYear={weekYear}
+          weekNumber={weekNumber}
+          memberName={selectedMember?.userName}
+          memberUserId={selectedMemberUserId}
+          onBack={handleBackFromMember}
+          onSelectSibling={handleSelectSiblingFromDetail}
+        />
+      ) : (
+      <>
       <GlassCard variant="subtle" className="px-5 py-3">
         <div className="flex items-center justify-between gap-3 flex-wrap">
           <div className="surface-inset rounded-xl p-1 flex items-center gap-1">
             <button
               className="px-3 py-1.5 rounded-lg text-[12px] font-medium transition-all duration-200"
               style={{
-                background: teamScope === 'managed' ? 'rgba(59,130,246,.15)' : 'transparent',
-                color: teamScope === 'managed' ? 'rgba(59,130,246,.95)' : 'var(--text-secondary)',
+                background: teamScope === 'managed' ? (isLight ? 'rgba(59,130,246,.18)' : 'rgba(59,130,246,.15)') : 'transparent',
+                color: teamScope === 'managed' ? (isLight ? 'rgba(29,78,216,1)' : 'rgba(59,130,246,.95)') : 'var(--text-secondary)',
               }}
               onClick={() => setTeamScope('managed')}
             >
@@ -557,8 +648,8 @@ export function TeamDashboard() {
             <button
               className="px-3 py-1.5 rounded-lg text-[12px] font-medium transition-all duration-200"
               style={{
-                background: teamScope === 'joined' ? 'rgba(34,197,94,.15)' : 'transparent',
-                color: teamScope === 'joined' ? 'rgba(34,197,94,.95)' : 'var(--text-secondary)',
+                background: teamScope === 'joined' ? (isLight ? 'rgba(34,197,94,.18)' : 'rgba(34,197,94,.15)') : 'transparent',
+                color: teamScope === 'joined' ? (isLight ? 'rgba(21,128,61,1)' : 'rgba(34,197,94,.95)') : 'var(--text-secondary)',
               }}
               onClick={() => setTeamScope('joined')}
             >
@@ -577,10 +668,9 @@ export function TeamDashboard() {
                 ? scopedTeams.map((team) => <option key={team.id} value={team.id}>{team.name}</option>)
                 : <option value="">暂无团队</option>}
             </select>
-            <Calendar size={16} style={{ color: 'var(--text-muted)' }} />
-            <Button variant="ghost" size="sm" onClick={handlePrevWeek}><ChevronLeft size={15} /></Button>
-            <span className="text-[14px] font-semibold whitespace-nowrap">{weekYear} 年第 {weekNumber} 周</span>
-            <Button variant="ghost" size="sm" onClick={handleNextWeek}><ChevronRight size={15} /></Button>
+            <span className="text-[13px] font-semibold whitespace-nowrap" style={{ color: 'var(--text-secondary)' }}>
+              {weekYear} 年第 {weekNumber} 周
+            </span>
             {selectedTeamId && (
               <Button variant="secondary" size="sm" onClick={openMemberDrawer}>
                 <Users size={13} />
@@ -648,10 +738,10 @@ export function TeamDashboard() {
                 <span className="surface-inset rounded-full px-2 py-0.5" style={{ color: 'var(--text-secondary)' }}>
                   团队人数 {reportsView?.stats.totalMembers ?? 0}
                 </span>
-                <span className="surface-inset rounded-full px-2 py-0.5" style={{ color: 'rgba(34,197,94,.95)' }}>
+                <span className="surface-inset rounded-full px-2 py-0.5" style={{ color: isLight ? 'rgba(21,128,61,1)' : 'rgba(34,197,94,.95)' }}>
                   已提交 {reportsView?.stats.submittedCount ?? 0}
                 </span>
-                <span className="surface-inset rounded-full px-2 py-0.5" style={{ color: 'rgba(249,115,22,.95)' }}>
+                <span className="surface-inset rounded-full px-2 py-0.5" style={{ color: isLight ? 'rgba(194,65,12,1)' : 'rgba(249,115,22,.95)' }}>
                   待提交 {reportsView?.stats.pendingCount ?? 0}
                 </span>
               </div>
@@ -785,6 +875,9 @@ export function TeamDashboard() {
           </div>
         </GlassCard>
       )}
+      </>
+      )}
+      </div>
     </div>
   );
 }
