@@ -25,18 +25,15 @@ public class ResolverDebugController : ControllerBase
 {
     private readonly MongoDbContext _db;
     private readonly IModelResolver _resolver;
-    private readonly PrdAgent.Infrastructure.LlmGateway.ILlmGateway _gateway;
     private readonly ILogger<ResolverDebugController> _logger;
 
     public ResolverDebugController(
         MongoDbContext db,
         IModelResolver resolver,
-        PrdAgent.Infrastructure.LlmGateway.ILlmGateway gateway,
         ILogger<ResolverDebugController> logger)
     {
         _db = db;
         _resolver = resolver;
-        _gateway = gateway;
         _logger = logger;
     }
 
