@@ -235,12 +235,23 @@ function PosterPageView({ page }: { page: WeeklyPosterPage | undefined }) {
         }}
       >
         {hasImage ? (
-          <img
-            src={page.imageUrl ?? ''}
-            alt=""
-            className="absolute inset-0 w-full h-full object-cover"
-            draggable={false}
-          />
+          isVideoUrl(page.imageUrl ?? '') ? (
+            <video
+              src={page.imageUrl ?? ''}
+              className="absolute inset-0 w-full h-full object-cover"
+              muted
+              playsInline
+              autoPlay
+              loop
+            />
+          ) : (
+            <img
+              src={page.imageUrl ?? ''}
+              alt=""
+              className="absolute inset-0 w-full h-full object-cover"
+              draggable={false}
+            />
+          )
         ) : (
           <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
             <div
@@ -285,6 +296,10 @@ function PosterPageView({ page }: { page: WeeklyPosterPage | undefined }) {
       </div>
     </div>
   );
+}
+
+function isVideoUrl(url: string) {
+  return /^data:video\//i.test(url) || /\.(mp4|webm|mov|m4v)(\?|#|$)/i.test(url);
 }
 
 /**
