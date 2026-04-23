@@ -1,7 +1,6 @@
-import { useMemo, useState, useEffect, useRef } from 'react';
+import { useMemo, useState, useEffect } from 'react';
 import { ChevronDown, ChevronRight, CalendarDays, CornerUpLeft, CheckCircle2, Clock, AlertCircle } from 'lucide-react';
 import { MapSpinner } from '@/components/ui/VideoLoader';
-import { Button } from '@/components/design/Button';
 import type { TeamDashboardMember } from '@/services/contracts/reportAgent';
 import { WeeklyReportStatus, ReportTeamRole } from '@/services/contracts/reportAgent';
 
@@ -150,12 +149,13 @@ export function WeekNavRail({
   const nowIso = useMemo(() => getISOWeek(new Date()), []);
   const [visibleCount, setVisibleCount] = useState(INITIAL_VISIBLE);
 
-  // 折叠状态：Set 缺席 = 展开，有则折叠
-  const [collapsedYears, setCollapsedYears] = useState<Set<number>>(
-    () => new Set() // 初始化时在 effect 里填充为"非当前年"
+  // 展开状态：Set 缺席 = 折叠，有则展开（allow-list 语义，保证新加载的年/周默认折叠）
+  const [expandedYears, setExpandedYears] = useState<Set<number>>(
+    () => new Set([getISOWeek(new Date()).weekYear])
   );
-  const [collapsedWeeks, setCollapsedWeeks] = useState<Set<string>>(() => new Set());
-  const initializedRef = useRef(false);
+  const [expandedWeeks, setExpandedWeeks] = useState<Set<string>>(
+    () => new Set([`${selectedYear}-${selectedWeek}`])
+  );
 
   // 跳转选择器状态
   const [jumpYear, setJumpYear] = useState<number>(selectedYear);
@@ -175,27 +175,6 @@ export function WeekNavRail({
 
   const yearGroups = useMemo(() => groupWeeksByYear(weeks), [weeks]);
 
-  // 初次 mount：把"非当前年"的年折叠，把"非选中周"的周折叠
-  useEffect(() => {
-    if (initializedRef.current) return;
-    initializedRef.current = true;
-    const allYears = new Set(weeks.map((w) => w.weekYear));
-    const collapsedY = new Set<number>();
-    for (const y of allYears) {
-      if (y !== nowIso.weekYear) collapsedY.add(y);
-    }
-    setCollapsedYears(collapsedY);
-    const collapsedW = new Set<string>();
-    for (const w of weeks) {
-      const key = `${w.weekYear}-${w.weekNumber}`;
-      if (!(w.weekYear === selectedYear && w.weekNumber === selectedWeek)) {
-        collapsedW.add(key);
-      }
-    }
-    setCollapsedWeeks(collapsedW);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
   // 保证已选中周在可见范围内
   useEffect(() => {
     const inList = weeks.some((w) => w.weekYear === selectedYear && w.weekNumber === selectedWeek);
@@ -207,20 +186,16 @@ export function WeekNavRail({
     }
   }, [weeks, selectedYear, selectedWeek, anchor]);
 
-  // 当选中周变化时：确保它所在年+周展开（跳转后自动露出）
+  // 选中周变化时：自动把该年 + 该周加入 expanded Set，保证跳转后立刻可见
   useEffect(() => {
-    setCollapsedYears((prev) => {
-      if (!prev.has(selectedYear)) return prev;
-      const next = new Set(prev);
-      next.delete(selectedYear);
-      return next;
+    setExpandedYears((prev) => {
+      if (prev.has(selectedYear)) return prev;
+      return new Set(prev).add(selectedYear);
     });
     const weekKey = `${selectedYear}-${selectedWeek}`;
-    setCollapsedWeeks((prev) => {
-      if (!prev.has(weekKey)) return prev;
-      const next = new Set(prev);
-      next.delete(weekKey);
-      return next;
+    setExpandedWeeks((prev) => {
+      if (prev.has(weekKey)) return prev;
+      return new Set(prev).add(weekKey);
     });
   }, [selectedYear, selectedWeek]);
 
@@ -252,7 +227,7 @@ export function WeekNavRail({
     return Array.from(years).sort((a, b) => b - a);
   }, [weeks, nowIso]);
 
-  // 周下拉候选：取决于 jumpYear（该年全部周）
+  // 周下拉候选:取决于 jumpYear（该年全部周）
   const weekOptions = useMemo(() => {
     const maxWeek = getISOWeeksInYear(jumpYear);
     const list: { weekNumber: number; label: string }[] = [];
@@ -260,7 +235,7 @@ export function WeekNavRail({
       const monday = getISOWeekMonday(jumpYear, w);
       list.push({
         weekNumber: w,
-        label: `W${w} · ${formatChineseWeekName(monday)}`,
+        label: formatChineseWeekName(monday),
       });
     }
     return list;
@@ -273,16 +248,12 @@ export function WeekNavRail({
     if (jumpWeek < 1) setJumpWeek(1);
   }, [jumpYear, jumpWeek]);
 
-  const handleJump = () => {
-    onSelectWeek(jumpYear, jumpWeek);
-  };
-
   const handleBackToCurrent = () => {
     onSelectWeek(nowIso.weekYear, nowIso.weekNumber);
   };
 
-  const toggleYearCollapsed = (year: number) => {
-    setCollapsedYears((prev) => {
+  const toggleYearExpanded = (year: number) => {
+    setExpandedYears((prev) => {
       const next = new Set(prev);
       if (next.has(year)) next.delete(year);
       else next.add(year);
@@ -290,22 +261,30 @@ export function WeekNavRail({
     });
   };
 
-  const toggleWeekCollapsed = (year: number, week: number) => {
+  // 整条周点击 = toggle 展开 + 同步选中
+  // - 已选中且已展开 → 收起（selectedWeek 保持）
+  // - 否则 → 切到该周 + 加入 expanded
+  const handleWeekClick = (year: number, week: number) => {
     const key = `${year}-${week}`;
-    setCollapsedWeeks((prev) => {
-      const next = new Set(prev);
-      if (next.has(key)) next.delete(key);
-      else next.add(key);
-      return next;
-    });
-  };
+    const isSelectedNow = year === selectedYear && week === selectedWeek;
+    const isExpandedNow = expandedWeeks.has(key);
 
-  const handleWeekHeaderClick = (year: number, week: number) => {
-    // 点周头部 = 切换展开 + 设为当前周（同步右侧）
-    toggleWeekCollapsed(year, week);
-    if (year !== selectedYear || week !== selectedWeek) {
+    if (isSelectedNow && isExpandedNow) {
+      setExpandedWeeks((prev) => {
+        const next = new Set(prev);
+        next.delete(key);
+        return next;
+      });
+      return;
+    }
+
+    if (!isSelectedNow) {
       onSelectWeek(year, week);
     }
+    setExpandedWeeks((prev) => {
+      if (prev.has(key)) return prev;
+      return new Set(prev).add(key);
+    });
   };
 
   return (
@@ -327,7 +306,7 @@ export function WeekNavRail({
             value={jumpYear}
             onChange={(e) => setJumpYear(Number.parseInt(e.target.value, 10))}
             className="shrink-0 rounded-lg px-2 py-1.5 text-[12px] surface-inset"
-            style={{ border: '1px solid var(--border-primary)', width: 72 }}
+            style={{ border: '1px solid var(--border-primary)', width: 84 }}
           >
             {yearOptions.map((y) => (
               <option key={y} value={y}>{y}</option>
@@ -335,7 +314,11 @@ export function WeekNavRail({
           </select>
           <select
             value={jumpWeek}
-            onChange={(e) => setJumpWeek(Number.parseInt(e.target.value, 10))}
+            onChange={(e) => {
+              const newWeek = Number.parseInt(e.target.value, 10);
+              setJumpWeek(newWeek);
+              onSelectWeek(jumpYear, newWeek);
+            }}
             className="flex-1 min-w-0 rounded-lg px-2 py-1.5 text-[12px] surface-inset"
             style={{ border: '1px solid var(--border-primary)' }}
           >
@@ -343,7 +326,6 @@ export function WeekNavRail({
               <option key={opt.weekNumber} value={opt.weekNumber}>{opt.label}</option>
             ))}
           </select>
-          <Button variant="secondary" size="sm" onClick={handleJump}>跳转</Button>
         </div>
         <button
           type="button"
@@ -362,20 +344,20 @@ export function WeekNavRail({
         style={{ overscrollBehavior: 'contain' }}
       >
         {yearGroups.map((group) => {
-          const yearCollapsed = collapsedYears.has(group.year);
+          const isYearExpanded = expandedYears.has(group.year);
           return (
             <div key={group.year} className="mb-2">
               {/* 年标题 */}
               <button
                 type="button"
-                onClick={() => toggleYearCollapsed(group.year)}
+                onClick={() => toggleYearExpanded(group.year)}
                 className="w-full flex items-center gap-1.5 px-2 py-2 rounded-lg text-left hover:opacity-90 transition-all"
                 style={{ background: 'transparent' }}
               >
-                {yearCollapsed ? (
-                  <ChevronRight size={14} style={{ color: 'var(--text-muted)' }} />
-                ) : (
+                {isYearExpanded ? (
                   <ChevronDown size={14} style={{ color: 'var(--text-muted)' }} />
+                ) : (
+                  <ChevronRight size={14} style={{ color: 'var(--text-muted)' }} />
                 )}
                 <span
                   className="text-[13px] font-semibold"
@@ -386,41 +368,30 @@ export function WeekNavRail({
               </button>
 
               {/* 周列表 */}
-              {!yearCollapsed && (
+              {isYearExpanded && (
                 <div className="mt-0.5">
                   {group.weeks.map((week) => {
                     const weekKey = `${week.weekYear}-${week.weekNumber}`;
                     const isSelected = week.weekYear === selectedYear && week.weekNumber === selectedWeek;
-                    const isExpanded = !collapsedWeeks.has(weekKey);
+                    const isExpanded = expandedWeeks.has(weekKey);
                     return (
                       <div key={weekKey} className="mb-1 ml-4">
-                        {/* 周头部（单行：箭头独立，点头部=展开+选中）*/}
-                        <div
-                          className="w-full flex items-stretch rounded-lg transition-all"
+                        {/* 周头部：整条点击 = toggle 展开 + 同步选中 */}
+                        <button
+                          type="button"
+                          onClick={() => handleWeekClick(week.weekYear, week.weekNumber)}
+                          className="w-full flex items-center gap-1.5 py-2 px-2 rounded-lg text-left transition-all hover:opacity-90"
                           style={{
                             background: isSelected ? 'rgba(59,130,246,.12)' : 'transparent',
                             border: isSelected ? '1px solid rgba(59,130,246,.35)' : '1px solid transparent',
                           }}
                         >
-                          {/* 展开箭头（单独按钮，只切 UI 折叠） */}
-                          <button
-                            type="button"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              toggleWeekCollapsed(week.weekYear, week.weekNumber);
-                            }}
-                            className="shrink-0 px-1.5 py-2 hover:opacity-80"
-                            style={{ color: 'var(--text-muted)' }}
-                            title={isExpanded ? '收起' : '展开'}
-                          >
-                            {isExpanded ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
-                          </button>
-                          {/* 周头部主体（切换右侧 + 展开） */}
-                          <button
-                            type="button"
-                            onClick={() => handleWeekHeaderClick(week.weekYear, week.weekNumber)}
-                            className="flex-1 min-w-0 py-2 pr-2 text-left hover:opacity-90"
-                          >
+                          {isExpanded ? (
+                            <ChevronDown size={12} style={{ color: isSelected ? 'rgba(59,130,246,.95)' : 'var(--text-muted)', flexShrink: 0 }} />
+                          ) : (
+                            <ChevronRight size={12} style={{ color: 'var(--text-muted)', flexShrink: 0 }} />
+                          )}
+                          <div className="flex-1 min-w-0">
                             <div
                               className="text-[12px] font-medium flex items-center gap-1.5"
                               style={{ color: isSelected ? 'rgba(59,130,246,.95)' : 'var(--text-primary)' }}
@@ -438,10 +409,10 @@ export function WeekNavRail({
                             <div className="text-[10px] mt-0.5" style={{ color: 'var(--text-muted)' }}>
                               {formatDateShort(week.periodStart)} - {formatDateShort(week.periodEnd)}
                             </div>
-                          </button>
-                        </div>
+                          </div>
+                        </button>
 
-                        {/* 已提交成员列表（仅当前选中周会拉数据，其他周展开只显示"点击查看"提示） */}
+                        {/* 已提交成员列表（仅选中周会拉数据） */}
                         {isExpanded && (
                           <div className="mt-1 ml-6 pl-2" style={{ borderLeft: '1px solid var(--border-primary)' }}>
                             {!isSelected ? (
