@@ -31,6 +31,7 @@ import {
   X,
 } from 'lucide-react';
 import {
+  createWeeklyPoster,
   generateWeeklyPosterPageImage,
   getWeeklyPoster,
   listWeeklyPosterKnowledgeEntries,
@@ -67,6 +68,7 @@ type WorkspaceMenuKey = 'project' | 'template' | 'assets' | 'agent' | 'pages' | 
 type WorkspaceTab = 'content' | 'assets' | 'layout' | 'agent';
 type DevicePreview = 'desktop' | 'mobile';
 type CanvasOrientation = 'landscape' | 'portrait';
+type CreateMode = 'guided' | 'manual';
 type AgentTarget = 'prompt' | 'body';
 type AgentStatus = 'done' | 'working' | 'waiting';
 
@@ -79,6 +81,8 @@ interface CreatePosterInitialConfig {
   sourceType?: WeeklyPosterSourceType;
   pageCount?: number;
   ctaUrl?: string;
+  mode?: CreateMode;
+  orientation?: CanvasOrientation;
 }
 
 interface BatchConfig {
@@ -89,14 +93,6 @@ interface BatchConfig {
   unifyTheme: boolean;
   autoCopy: boolean;
   smartImage: boolean;
-}
-
-interface PublishChannels {
-  wechat: boolean;
-  miniProgram: boolean;
-  douyin: boolean;
-  store: boolean;
-  other: boolean;
 }
 
 interface AgentLogEntry {
@@ -114,15 +110,19 @@ const WORKSPACE_MENU: Array<{ key: WorkspaceMenuKey; label: string; icon: React.
   { key: 'publish', label: '发布记录', icon: <History size={16} /> },
 ];
 
-const FLOW_STEPS = ['模板上传', '生成方案', '预览', '发布'];
-const WORKFLOW_GUIDE = [
-  '用户提案',
-  '内容撰写 / 素材上传',
-  '选择生成方案',
-  'AI Agent 生成与优化',
-  '预览与确认',
-  '发布上线',
-];
+const PRODUCT_FLOW_STEPS = ['导入文案', '生成分页', '完善页面', '预览确认', '官网发布'];
+const PRODUCT_WORKFLOW_GUIDE = ['上传文案', '生成分页草稿', '补充图片/视频', '手动微调', '预览确认', '发布到官网'];
+const COMING_SOON_FEATURES = [
+  { label: '统一主题与配色', detail: '待接入整套风格约束' },
+  { label: '自动生成文案', detail: '待支持整套文案重写' },
+  { label: '智能配图', detail: '待支持批量补图' },
+] as const;
+const PUBLISH_CHANNELS = [
+  { key: 'website', label: '官网', enabled: true },
+  { key: 'wechat', label: '微信公众号', enabled: false },
+  { key: 'miniProgram', label: '小程序', enabled: false },
+  { key: 'douyin', label: '抖音号', enabled: false },
+] as const;
 
 export default function PosterDesignerPage({ embedded = false }: PosterDesignerPageProps) {
   const [searchParams, setSearchParams] = useSearchParams();
@@ -142,7 +142,7 @@ export default function PosterDesignerPage({ embedded = false }: PosterDesignerP
   const [lastSavedAt, setLastSavedAt] = useState<Date | null>(null);
   const [imageProgress, setImageProgress] = useState<Record<number, PageProgress>>({});
   const [activeMenu, setActiveMenu] = useState<WorkspaceMenuKey>('project');
-  const [workspaceTab, setWorkspaceTab] = useState<WorkspaceTab>('agent');
+  const [workspaceTab, setWorkspaceTab] = useState<WorkspaceTab>('content');
   const [devicePreview, setDevicePreview] = useState<DevicePreview>('desktop');
   const [previewScale, setPreviewScale] = useState(76);
   const [batchConfig, setBatchConfig] = useState<BatchConfig>({
@@ -153,13 +153,6 @@ export default function PosterDesignerPage({ embedded = false }: PosterDesignerP
     unifyTheme: true,
     autoCopy: true,
     smartImage: true,
-  });
-  const [publishChannels, setPublishChannels] = useState<PublishChannels>({
-    wechat: true,
-    miniProgram: true,
-    douyin: true,
-    store: false,
-    other: false,
   });
   const [publishNote, setPublishNote] = useState('');
   const [agentTarget, setAgentTarget] = useState<AgentTarget>('prompt');
@@ -310,6 +303,21 @@ export default function PosterDesignerPage({ embedded = false }: PosterDesignerP
     }
   }, [pages.length, poster, selectedTemplate.defaultPages]);
 
+  useEffect(() => {
+    if (!poster?.id) return;
+    const storedOrientation = loadCanvasOrientation(poster.id);
+    setBatchConfig((prev) => (
+      prev.orientation === storedOrientation
+        ? prev
+        : { ...prev, orientation: storedOrientation }
+    ));
+  }, [poster?.id]);
+
+  useEffect(() => {
+    if (!poster?.id) return;
+    saveCanvasOrientation(poster.id, batchConfig.orientation);
+  }, [batchConfig.orientation, poster?.id]);
+
   const updateDraft = useCallback((updater: (draft: WeeklyPoster) => WeeklyPoster) => {
     setPoster((prev) => (prev ? updater(prev) : prev));
   }, []);
@@ -388,7 +396,7 @@ export default function PosterDesignerPage({ embedded = false }: PosterDesignerP
     setLastSavedAt(new Date());
     saveDraftId(null);
     await useWeeklyPosterStore.getState().loadCurrent();
-    toast.success('已发布到主页弹窗');
+    toast.success('已发布到官网海报位');
   };
 
   const handleCreated = async (created: WeeklyPoster) => {
@@ -418,6 +426,28 @@ export default function PosterDesignerPage({ embedded = false }: PosterDesignerP
     setCreateOpen(true);
   }, []);
 
+  const openGuidedCreator = useCallback(() => {
+    openCreateModal({
+      mode: 'guided',
+      templateKey: batchConfig.templateKey,
+      sourceType: batchConfig.sourceType,
+      pageCount: batchConfig.pageCount,
+      ctaUrl: poster?.ctaUrl,
+      orientation: batchConfig.orientation,
+    });
+  }, [batchConfig.orientation, batchConfig.pageCount, batchConfig.sourceType, batchConfig.templateKey, openCreateModal, poster?.ctaUrl]);
+
+  const openManualCreator = useCallback(() => {
+    openCreateModal({
+      mode: 'manual',
+      templateKey: batchConfig.templateKey,
+      sourceType: 'freeform',
+      pageCount: batchConfig.pageCount,
+      ctaUrl: poster?.ctaUrl,
+      orientation: batchConfig.orientation,
+    });
+  }, [batchConfig.orientation, batchConfig.pageCount, batchConfig.templateKey, openCreateModal, poster?.ctaUrl]);
+
   const handleMenuSelect = (key: WorkspaceMenuKey) => {
     setActiveMenu(key);
     if (key === 'template') setWorkspaceTab('layout');
@@ -427,24 +457,7 @@ export default function PosterDesignerPage({ embedded = false }: PosterDesignerP
   };
 
   const handleOpenBatchGenerator = () => {
-    openCreateModal({
-      templateKey: batchConfig.templateKey,
-      sourceType: batchConfig.sourceType,
-      pageCount: batchConfig.pageCount,
-      ctaUrl: poster?.ctaUrl,
-    });
-  };
-
-  const handleResetBatchConfig = () => {
-    setBatchConfig({
-      pageCount: clampPageCount(pages.length || selectedTemplate.defaultPages),
-      templateKey: poster?.templateKey ?? selectedTemplate.key,
-      sourceType: coerceSourceType(poster?.sourceType),
-      orientation: 'landscape',
-      unifyTheme: true,
-      autoCopy: true,
-      smartImage: true,
-    });
+    openGuidedCreator();
   };
 
   const handleAgentSubmit = () => {
@@ -475,59 +488,56 @@ export default function PosterDesignerPage({ embedded = false }: PosterDesignerP
     setAgentInput('');
   };
 
-  const agentStatuses = useMemo(() => {
-    const completedImages = pages.filter((page) => !!page.imageUrl).length;
+  const realAgentStatuses = useMemo(() => {
+    const pagesWithMedia = pages.filter((page) => !!page.imageUrl || !!page.secondaryImageUrl).length;
     return [
       {
-        label: '理解需求',
-        detail: selectedSourceType ? `数据源：${selectedSourceType.label}` : '等待选择数据源',
+        label: '文案来源',
+        detail: selectedSourceType ? `当前数据源：${selectedSourceType.label}` : '等待导入文案或选择数据源',
         status: poster ? 'done' : 'waiting',
       },
       {
-        label: '优化文案',
-        detail: currentPage?.body ? '当前页正文已生成，可继续润色' : '当前页正文仍为空',
+        label: '分页草稿',
+        detail: pages.length > 0 ? `已生成 ${pages.length} 页草稿` : '等待生成分页内容',
+        status: pages.length > 0 ? 'done' : 'waiting',
+      },
+      {
+        label: '当前页文案',
+        detail: currentPage?.body ? '当前页文案已可编辑' : '当前页还没有正文',
         status: currentPage?.body ? 'done' : 'waiting',
       },
       {
-        label: '推荐版式',
-        detail: `模板：${selectedTemplate.label}`,
-        status: poster ? 'done' : 'waiting',
+        label: '图片 / 视频素材',
+        detail: `${pagesWithMedia}/${Math.max(pages.length, 1)} 页已补充素材`,
+        status: pagesWithMedia > 0 ? (pagesWithMedia === pages.length ? 'done' : 'working') : 'waiting',
       },
       {
-        label: '批量生成',
-        detail: `${completedImages}/${pages.length || batchConfig.pageCount} 页已有主图`,
-        status:
-          completedImages > 0 && completedImages < Math.max(pages.length, 1)
-            ? 'working'
-            : completedImages === pages.length && pages.length > 0
-              ? 'done'
-              : 'waiting',
+        label: '画布方向',
+        detail: batchConfig.orientation === 'portrait' ? '当前为竖版 1080 × 1350' : '当前为横版 1200 × 628',
+        status: 'done',
       },
       {
-        label: '统一风格输出',
-        detail: currentPage?.accentColor ? `主色：${normalizeColor(currentPage.accentColor)}` : '等待设置主题色',
-        status: currentPage?.accentColor ? 'done' : 'waiting',
-      },
-      {
-        label: '智能校验',
-        detail: poster?.ctaUrl ? `CTA 已绑定 ${poster.ctaUrl}` : '等待绑定地址',
-        status: poster?.ctaUrl ? 'done' : 'waiting',
+        label: '官网发布',
+        detail: poster?.status === 'published' ? '已发布到官网入口' : '发布后会同步到官网展示位',
+        status: poster?.status === 'published' ? 'done' : 'waiting',
       },
     ] satisfies Array<{ label: string; detail: string; status: AgentStatus }>;
-  }, [batchConfig.pageCount, currentPage?.accentColor, currentPage?.body, pages, poster, selectedSourceType, selectedTemplate.label]);
+  }, [batchConfig.orientation, currentPage?.body, pages, poster, selectedSourceType]);
 
-  const workflowStates = useMemo(() => {
-    const hasPoster = !!poster;
+  const productWorkflowStates = useMemo(() => {
+    const hasSource = !!poster && (!!poster.sourceType || pages.some((page) => !!page.body?.trim()));
     const hasPages = pages.length > 0;
-    const hasPreview = pages.some((page) => !!page.imageUrl || !!page.body);
-    return FLOW_STEPS.map((label, index) => {
-      const done =
-        index === 0 ? hasPoster :
+    const hasEditedPages = pages.some((page) => !!page.body?.trim() || !!page.imageUrl || !!page.secondaryImageUrl);
+    const hasPreviewContent = pages.some((page) => !!page.body?.trim() || !!page.imageUrl);
+    return PRODUCT_FLOW_STEPS.map((label, index) => ({
+      label,
+      done:
+        index === 0 ? hasSource :
         index === 1 ? hasPages :
-        index === 2 ? hasPreview :
-        poster?.status === 'published';
-      return { label, done };
-    });
+        index === 2 ? hasEditedPages :
+        index === 3 ? hasPreviewContent :
+        poster?.status === 'published',
+    }));
   }, [pages, poster]);
 
   const rootClass = embedded
@@ -538,9 +548,8 @@ export default function PosterDesignerPage({ embedded = false }: PosterDesignerP
     <div
       className={`${rootClass} relative overflow-hidden ${embedded ? 'rounded-2xl' : ''}`}
       style={{
-        background:
-          'radial-gradient(circle at 14% 0%, rgba(65,150,255,0.18), transparent 28%), radial-gradient(circle at 82% 0%, rgba(145,71,255,0.18), transparent 26%), linear-gradient(180deg, #07101f 0%, #050811 58%, #06070d 100%)',
-        border: embedded ? '1px solid rgba(255,255,255,0.08)' : undefined,
+        background: 'var(--bg-page, #131319)',
+        border: embedded ? '1px solid var(--border-subtle, rgba(255,255,255,0.08))' : undefined,
       }}
     >
       <style>{`
@@ -553,11 +562,11 @@ export default function PosterDesignerPage({ embedded = false }: PosterDesignerP
       <div className="pointer-events-none absolute inset-0">
         <div
           className="absolute inset-x-0 top-0 h-24"
-          style={{ background: 'linear-gradient(180deg, rgba(71,130,255,0.12), transparent)' }}
+          style={{ background: 'linear-gradient(180deg, rgba(255,255,255,0.04), transparent)' }}
         />
         <div
           className="absolute inset-y-0 left-[84px] w-px"
-          style={{ background: 'linear-gradient(180deg, transparent, rgba(255,255,255,0.08), transparent)' }}
+          style={{ background: 'linear-gradient(180deg, transparent, var(--border-subtle, rgba(255,255,255,0.08)), transparent)' }}
         />
       </div>
 
@@ -576,14 +585,14 @@ export default function PosterDesignerPage({ embedded = false }: PosterDesignerP
       <div className="relative flex h-full min-h-0 flex-col">
         <header
           className="shrink-0 border-b px-4 py-3 xl:px-5"
-          style={{ borderColor: 'rgba(255,255,255,0.08)', background: 'rgba(6,12,24,0.72)' }}
+          style={{ borderColor: 'var(--border-subtle, rgba(255,255,255,0.08))', background: 'var(--bg-panel, rgba(18,18,24,0.88))' }}
         >
           <div className="flex flex-wrap items-center gap-3 xl:gap-4">
             <div className="min-w-0 xl:min-w-[220px]">
-              <div className="text-[28px] leading-none font-black tracking-tight" style={{ color: '#4ecbff' }}>
+              <div className="text-[24px] leading-none font-black tracking-tight" style={{ color: 'var(--text-primary, #fff)' }}>
                 海报设计工作台
               </div>
-              <div className="mt-1 text-[12px] text-white/45">AI 协作驱动的海报设计与批量生成平台</div>
+              <div className="mt-1 text-[12px]" style={{ color: 'var(--text-secondary, rgba(255,255,255,0.55))' }}>用于导入文案、生成分页、手动完善并发布官网海报。</div>
             </div>
 
             <div className="flex min-w-0 flex-1 flex-wrap items-center gap-3">
@@ -612,7 +621,7 @@ export default function PosterDesignerPage({ embedded = false }: PosterDesignerP
               <SaveIndicator status={saveStatus} lastSavedAt={lastSavedAt} />
 
               <div className="flex min-w-0 flex-1 items-center gap-2 overflow-x-auto">
-                {workflowStates.map((step, index) => (
+                {productWorkflowStates.map((step, index) => (
                   <div key={step.label} className="flex items-center gap-2 shrink-0">
                     <div
                       className="h-9 min-w-[90px] rounded-xl px-3 inline-flex items-center justify-center text-[12px] font-medium"
@@ -624,7 +633,7 @@ export default function PosterDesignerPage({ embedded = false }: PosterDesignerP
                     >
                       {step.label}
                     </div>
-                    {index < workflowStates.length - 1 && <ChevronRight size={14} className="text-white/28" />}
+                    {index < productWorkflowStates.length - 1 && <ChevronRight size={14} className="text-white/28" />}
                   </div>
                 ))}
               </div>
@@ -651,13 +660,12 @@ export default function PosterDesignerPage({ embedded = false }: PosterDesignerP
                 className="h-9 rounded-xl px-4 inline-flex items-center gap-1.5 text-[12px] font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-40"
                 style={{
                   color: '#fff',
-                  background: 'linear-gradient(90deg, rgba(79,93,255,0.74), rgba(170,72,255,0.84))',
-                  border: '1px solid rgba(171,113,255,0.36)',
-                  boxShadow: '0 0 24px rgba(123,92,255,0.24)',
+                  background: 'linear-gradient(90deg, rgba(92,109,255,0.74), rgba(140,95,255,0.78))',
+                  border: '1px solid rgba(171,113,255,0.24)',
                 }}
               >
                 {publishing ? <Loader2 size={14} className="animate-spin" /> : <Send size={14} />}
-                发布
+                发布官网
               </button>
               <button
                 type="button"
@@ -713,20 +721,29 @@ export default function PosterDesignerPage({ embedded = false }: PosterDesignerP
               <div className="mt-auto rounded-2xl p-3" style={{ background: 'rgba(96,66,255,0.1)', border: '1px solid rgba(126,106,255,0.26)' }}>
                 <div className="flex items-center gap-2 text-[12px] font-semibold text-white">
                   <Bot size={15} />
-                  AI 智能生成
+                  创建引导
                 </div>
-                <div className="mt-1 text-[10.5px] text-white/48">海报方案建议与协作指令</div>
+                <div className="mt-1 text-[10.5px] text-white/48">先导入文案生成整套分页，不满意再切到手动编辑。</div>
                 <button
                   type="button"
-                  onClick={focusAgent}
+                  onClick={openGuidedCreator}
                   className="mt-3 w-full h-9 rounded-xl inline-flex items-center justify-center gap-1.5 text-[12px] font-medium text-white"
                   style={{
-                    background: 'linear-gradient(90deg, rgba(96,66,255,0.88), rgba(89,186,255,0.72))',
-                    border: '1px solid rgba(145,137,255,0.3)',
+                    background: 'linear-gradient(90deg, rgba(92,109,255,0.74), rgba(140,95,255,0.78))',
+                    border: '1px solid rgba(145,137,255,0.22)',
                   }}
                 >
                   <Sparkles size={14} />
-                  开始对话
+                  引导创建
+                </button>
+                <button
+                  type="button"
+                  onClick={openManualCreator}
+                  className="mt-2 w-full h-9 rounded-xl inline-flex items-center justify-center gap-1.5 text-[12px] font-medium text-white/82"
+                  style={glassButtonStyle}
+                >
+                  <Plus size={14} />
+                  空白创建
                 </button>
               </div>
             </aside>
@@ -760,17 +777,17 @@ export default function PosterDesignerPage({ embedded = false }: PosterDesignerP
                   }}
                 >
                   <Sparkles size={14} />
-                  批量生成
+                  引导创建
                 </button>
                 <button
                   type="button"
-                  onClick={handleAddPage}
-                  disabled={!poster}
+                  onClick={openManualCreator}
+                  disabled={createOpen}
                   className="h-9 rounded-xl inline-flex items-center justify-center gap-1.5 text-[12px] font-medium text-white disabled:opacity-40"
                   style={glassButtonStyle}
                 >
                   <Plus size={14} />
-                  新增单页
+                  空白海报
                 </button>
               </div>
 
@@ -811,7 +828,7 @@ export default function PosterDesignerPage({ embedded = false }: PosterDesignerP
                 style={glassButtonStyle}
               >
                 <Plus size={14} />
-                添加页面
+                新增页面
               </button>
             </section>
 
@@ -924,12 +941,7 @@ export default function PosterDesignerPage({ embedded = false }: PosterDesignerP
                 <section className="min-h-0 flex-1 rounded-2xl p-4" style={glassCardStyle}>
                   <EmptyDesignerState
                     loading={loadingPoster}
-                    onCreate={() => openCreateModal({
-                      templateKey: batchConfig.templateKey,
-                      sourceType: batchConfig.sourceType,
-                      pageCount: batchConfig.pageCount,
-                      ctaUrl: poster?.ctaUrl,
-                    })}
+                    onCreate={openGuidedCreator}
                   />
                 </section>
               )}
@@ -962,14 +974,14 @@ export default function PosterDesignerPage({ embedded = false }: PosterDesignerP
 
                 <section className="rounded-2xl p-4" style={glassCardStyle}>
                   <div className="flex items-center justify-between">
-                    <div className="text-[13px] font-semibold text-white">Agent 生成中 / 结果确认</div>
+                    <div className="text-[13px] font-semibold text-white">生成结果 / 页面状态</div>
                     <Wand2 size={14} className="text-white/42" />
                   </div>
                   <div className="mt-1 text-[11px] text-white/42">
                     当前页状态：{currentPage ? pageProgressLabel(imageProgress[currentPage.order] ?? pageQualityState(currentPage)) : '待开始'}
                   </div>
                   <div className="mt-4 space-y-2">
-                    {agentStatuses.slice(0, 4).map((item) => (
+                    {realAgentStatuses.slice(0, 4).map((item) => (
                       <AgentStatusRow key={item.label} label={item.label} detail={item.detail} status={item.status} />
                     ))}
                   </div>
@@ -990,20 +1002,15 @@ export default function PosterDesignerPage({ embedded = false }: PosterDesignerP
                     <div className="text-[13px] font-semibold text-white">发布确认</div>
                     <Send size={14} className="text-white/42" />
                   </div>
-                  <div className="mt-1 text-[11px] text-white/42">发布后同步更新主页海报弹窗</div>
+                  <div className="mt-1 text-[11px] text-white/42">当前仅支持发布到官网，其余渠道先保留为只读状态。</div>
                   <div className="mt-4 flex flex-wrap gap-2">
-                    {[
-                      ['wechat', '微信公众号'],
-                      ['miniProgram', '小程序'],
-                      ['douyin', '抖音号'],
-                      ['store', '官网'],
-                      ['other', '其他'],
-                    ].map(([key, label]) => (
+                    {PUBLISH_CHANNELS.map((channel) => (
                       <CheckboxChip
-                        key={key}
-                        label={label}
-                        checked={publishChannels[key as keyof PublishChannels]}
-                        onToggle={() => setPublishChannels((prev) => ({ ...prev, [key]: !prev[key as keyof PublishChannels] }))}
+                        key={channel.key}
+                        label={channel.label}
+                        checked={channel.enabled}
+                        disabled={!channel.enabled}
+                        onToggle={() => undefined}
                       />
                     ))}
                   </div>
@@ -1029,7 +1036,7 @@ export default function PosterDesignerPage({ embedded = false }: PosterDesignerP
                     }}
                   >
                     {publishing ? <Loader2 size={14} className="animate-spin" /> : <Send size={14} />}
-                    确认发布
+                    发布到官网
                   </button>
                 </section>
               </div>
@@ -1039,8 +1046,8 @@ export default function PosterDesignerPage({ embedded = false }: PosterDesignerP
               <section className="rounded-2xl p-4" style={glassCardStyle}>
                 <div className="flex items-center justify-between">
                   <div>
-                    <div className="text-[13px] font-semibold text-white">批量生成设置</div>
-                    <div className="mt-1 text-[11px] text-white/42">基于当前模板快速拉起一轮新海报生成</div>
+                    <div className="text-[13px] font-semibold text-white">创建引导</div>
+                    <div className="mt-1 text-[11px] text-white/42">支持导入文案生成分页，也支持直接创建空白海报。</div>
                   </div>
                   <div className="w-7 h-7 rounded-full inline-flex items-center justify-center text-[11px] font-semibold text-white" style={{ background: 'rgba(96,84,255,0.28)', border: '1px solid rgba(126,112,255,0.38)' }}>
                     1
@@ -1113,43 +1120,48 @@ export default function PosterDesignerPage({ embedded = false }: PosterDesignerP
                   </div>
                 </div>
 
+                <div className="mt-4 rounded-xl p-3" style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.08)' }}>
+                  <div className="text-[12px] font-medium text-white/82">当前已支持</div>
+                  <div className="mt-2 space-y-1 text-[11px] text-white/58">
+                    <div>1. 导入文案生成分页草稿</div>
+                    <div>2. 横版 / 竖版画布切换</div>
+                    <div>3. 手动补图、补视频、粘贴截图</div>
+                    <div>4. 发布到官网</div>
+                  </div>
+                </div>
+
                 <div className="mt-4 space-y-2">
-                  <ToggleRow
-                    label="统一主题与配色"
-                    checked={batchConfig.unifyTheme}
-                    onToggle={() => setBatchConfig((prev) => ({ ...prev, unifyTheme: !prev.unifyTheme }))}
-                  />
-                  <ToggleRow
-                    label="自动生成文案"
-                    checked={batchConfig.autoCopy}
-                    onToggle={() => setBatchConfig((prev) => ({ ...prev, autoCopy: !prev.autoCopy }))}
-                  />
-                  <ToggleRow
-                    label="智能配图"
-                    checked={batchConfig.smartImage}
-                    onToggle={() => setBatchConfig((prev) => ({ ...prev, smartImage: !prev.smartImage }))}
-                  />
+                  {COMING_SOON_FEATURES.map((feature) => (
+                    <ToggleRow
+                      key={feature.label}
+                      label={feature.label}
+                      checked={false}
+                      disabled
+                      hint={feature.detail}
+                      onToggle={() => undefined}
+                    />
+                  ))}
                 </div>
 
                 <div className="mt-4 flex gap-2">
                   <button
                     type="button"
-                    onClick={handleResetBatchConfig}
+                    onClick={openManualCreator}
                     className="flex-1 h-9 rounded-xl text-[12px] font-medium text-white/72"
                     style={glassButtonStyle}
                   >
-                    取消
+                    空白海报
                   </button>
                   <button
                     type="button"
-                    onClick={handleOpenBatchGenerator}
+                    onClick={openGuidedCreator}
                     className="flex-1 h-9 rounded-xl text-[12px] font-semibold text-white"
                     style={{
                       background: 'linear-gradient(90deg, rgba(90,108,255,0.82), rgba(179,82,255,0.82))',
                       border: '1px solid rgba(160,119,255,0.34)',
                     }}
                   >
-                    确定生成
+                    开始引导
                   </button>
                 </div>
               </section>
@@ -1351,7 +1363,7 @@ export default function PosterDesignerPage({ embedded = false }: PosterDesignerP
                     {workspaceTab === 'agent' && (
                       <div className="mt-4 flex-1 min-h-0 flex flex-col">
                         <div className="space-y-2">
-                          {agentStatuses.map((item) => (
+                          {realAgentStatuses.map((item) => (
                             <AgentStatusRow key={item.label} label={item.label} detail={item.detail} status={item.status} />
                           ))}
                         </div>
@@ -1449,7 +1461,7 @@ export default function PosterDesignerPage({ embedded = false }: PosterDesignerP
           style={{ borderColor: 'rgba(255,255,255,0.08)', background: 'rgba(5,9,18,0.68)' }}
         >
           <div className="flex items-center gap-2 overflow-x-auto">
-            {WORKFLOW_GUIDE.map((label, index) => (
+            {PRODUCT_WORKFLOW_GUIDE.map((label, index) => (
               <div key={label} className="flex shrink-0 items-center gap-2">
                 <div
                   className="rounded-xl px-3 py-2 text-[11px] font-medium text-white/78"
@@ -1457,7 +1469,7 @@ export default function PosterDesignerPage({ embedded = false }: PosterDesignerP
                 >
                   {label}
                 </div>
-                {index < WORKFLOW_GUIDE.length - 1 && <ChevronRight size={14} className="text-white/24" />}
+                {index < PRODUCT_WORKFLOW_GUIDE.length - 1 && <ChevronRight size={14} className="text-white/24" />}
               </div>
             ))}
           </div>
@@ -1712,20 +1724,28 @@ function AgentStatusRow({
 function ToggleRow({
   label,
   checked,
+  disabled = false,
+  hint,
   onToggle,
 }: {
   label: string;
   checked: boolean;
+  disabled?: boolean;
+  hint?: string;
   onToggle: () => void;
 }) {
   return (
     <button
       type="button"
       onClick={onToggle}
-      className="w-full rounded-xl px-3 py-2.5 flex items-center justify-between"
+      disabled={disabled}
+      className="w-full rounded-xl px-3 py-2.5 flex items-center justify-between disabled:cursor-not-allowed disabled:opacity-60"
       style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.08)' }}
     >
-      <span className="text-[12px] text-white/72">{label}</span>
+      <span className="text-left">
+        <span className="block text-[12px] text-white/72">{label}</span>
+        {hint && <span className="mt-0.5 block text-[10px] text-white/40">{hint}</span>}
+      </span>
       <span
         className="relative inline-flex h-6 w-11 rounded-full transition-all"
         style={{ background: checked ? 'linear-gradient(90deg, rgba(88,109,255,0.95), rgba(118,209,255,0.85))' : 'rgba(255,255,255,0.12)' }}
@@ -1742,17 +1762,20 @@ function ToggleRow({
 function CheckboxChip({
   label,
   checked,
+  disabled = false,
   onToggle,
 }: {
   label: string;
   checked: boolean;
+  disabled?: boolean;
   onToggle: () => void;
 }) {
   return (
     <button
       type="button"
       onClick={onToggle}
-      className="rounded-full px-3 py-1.5 text-[11px] font-medium"
+      disabled={disabled}
+      className="rounded-full px-3 py-1.5 text-[11px] font-medium disabled:cursor-not-allowed disabled:opacity-55"
       style={{
         background: checked ? 'rgba(84,122,255,0.18)' : 'rgba(255,255,255,0.04)',
         border: checked ? '1px solid rgba(116,149,255,0.3)' : '1px solid rgba(255,255,255,0.08)',
@@ -1872,10 +1895,14 @@ function CreatePosterModal({
   onClose: () => void;
   onCreated: (poster: WeeklyPoster) => void;
 }) {
+  const [mode, setMode] = useState<CreateMode>(initialConfig?.mode ?? 'guided');
   const [templateKey, setTemplateKey] = useState<WeeklyPosterTemplateKey>(initialConfig?.templateKey ?? 'release');
-  const [sourceType, setSourceType] = useState<WeeklyPosterSourceType>(initialConfig?.sourceType ?? 'changelog-current-week');
+  const [sourceType, setSourceType] = useState<WeeklyPosterSourceType>(initialConfig?.sourceType ?? 'freeform');
   const [pageCount, setPageCount] = useState(clampPageCount(initialConfig?.pageCount ?? 8));
+  const [orientation, setOrientation] = useState<CanvasOrientation>(initialConfig?.orientation ?? 'landscape');
   const [freeformContent, setFreeformContent] = useState('');
+  const [manualTitle, setManualTitle] = useState(() => defaultPosterTitle());
+  const [textFileName, setTextFileName] = useState('');
   const [kbEntryId, setKbEntryId] = useState('');
   const [kbEntries, setKbEntries] = useState<WeeklyPosterKnowledgeEntryMeta[]>([]);
   const [kbLoading, setKbLoading] = useState(false);
@@ -1885,6 +1912,7 @@ function CreatePosterModal({
   const [generatedPoster, setGeneratedPoster] = useState<WeeklyPoster | null>(null);
   const [pageProgress, setPageProgress] = useState<Record<number, PageProgress>>({});
   const [modelInfo, setModelInfo] = useState<{ model?: string; platform?: string } | null>(null);
+  const textFileInputRef = useRef<HTMLInputElement | null>(null);
   const busy = phase !== 'idle';
   const selectedTemplate = useMemo(() => findTemplate(templates, templateKey), [templateKey, templates]);
 
@@ -1988,6 +2016,7 @@ function CreatePosterModal({
         return;
       }
       setGeneratedPoster(data.poster);
+      saveCanvasOrientation(data.poster.id, orientation);
       saveDraftId(data.poster.id);
       void runImageGenPipeline(data.poster);
     },
@@ -1997,8 +2026,49 @@ function CreatePosterModal({
     },
   });
 
+  const handleImportTextFile = async (file: File) => {
+    if (!file) return;
+    const text = await file.text();
+    if (!text.trim()) {
+      toast.error('文案文件为空');
+      return;
+    }
+    setSourceType('freeform');
+    setFreeformContent(text);
+    setTextFileName(file.name);
+  };
+
+  const createBlankPosterDraft = async () => {
+    if (busy) return;
+    setPhase('llm');
+    setPhaseLabel('创建空白海报');
+    const res = await createWeeklyPoster({
+      weekKey: defaultWeekKey(),
+      title: manualTitle.trim() || defaultPosterTitle(),
+      templateKey,
+      presentationMode: 'static',
+      sourceType: 'freeform',
+      pages: Array.from({ length: pageCount }, (_, index) => buildBlankPage(index, selectedTemplate.accentPalette[0] || DEFAULT_ACCENT)),
+      ctaText: '查看详情',
+      ctaUrl: initialConfig?.ctaUrl || '/changelog',
+    });
+    setPhase('idle');
+    if (!res.success || !res.data) {
+      toast.error(res.error?.message || '创建空白海报失败');
+      return;
+    }
+    saveCanvasOrientation(res.data.id, orientation);
+    toast.success('空白海报已创建');
+    onCreated(res.data);
+    onClose();
+  };
+
   const startGenerate = async () => {
     if (busy) return;
+    if (mode === 'manual') {
+      await createBlankPosterDraft();
+      return;
+    }
     if (sourceType === 'freeform' && freeformContent.trim().length < 40) {
       toast.error('自定义 markdown 至少 40 个字符');
       return;
@@ -2046,10 +2116,22 @@ function CreatePosterModal({
         }}
         onClick={(e) => e.stopPropagation()}
       >
+        <input
+          ref={textFileInputRef}
+          type="file"
+          accept=".txt,.md,.markdown,text/plain,text/markdown"
+          className="hidden"
+          onChange={(e) => {
+            const file = e.target.files?.[0] ?? null;
+            e.currentTarget.value = '';
+            if (file) void handleImportTextFile(file);
+          }}
+        />
+
         <div className="shrink-0 h-14 px-5 border-b flex items-center justify-between" style={{ borderColor: 'rgba(255,255,255,0.08)' }}>
           <div>
-            <div className="text-[14px] font-semibold text-white">批量生成海报</div>
-            <div className="text-[11px] text-white/42">{busy ? phaseLabel || '生成中' : '根据当前设置创建新的海报项目'}</div>
+            <div className="text-[14px] font-semibold text-white">{mode === 'manual' ? '创建空白海报' : '引导创建海报'}</div>
+            <div className="text-[11px] text-white/42">{busy ? phaseLabel || '生成中' : mode === 'manual' ? '直接生成可编辑的空白分页草稿' : '导入文案后生成整套分页与文案草稿'}</div>
           </div>
           <button
             type="button"
@@ -2064,6 +2146,30 @@ function CreatePosterModal({
 
         <div className="flex-1 min-h-0 grid grid-cols-1 lg:grid-cols-[400px_1fr]">
           <div className="min-h-0 overflow-y-auto p-5 space-y-5 border-r" style={{ borderColor: 'rgba(255,255,255,0.08)' }}>
+            <ModalSection title="创建方式">
+              <div className="grid grid-cols-2 gap-2">
+                {([
+                  ['guided', '导入文案'],
+                  ['manual', '空白海报'],
+                ] as const).map(([value, label]) => (
+                  <button
+                    key={value}
+                    type="button"
+                    onClick={() => setMode(value)}
+                    disabled={busy}
+                    className="h-10 rounded-xl text-[12px] font-medium disabled:opacity-50"
+                    style={{
+                      background: mode === value ? 'rgba(88,108,255,0.16)' : 'rgba(255,255,255,0.035)',
+                      border: mode === value ? '1px solid rgba(116,149,255,0.28)' : '1px solid rgba(255,255,255,0.08)',
+                      color: mode === value ? '#fff' : 'rgba(255,255,255,0.72)',
+                    }}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+            </ModalSection>
+
             <ModalSection title="模板风格">
               <div className="grid grid-cols-2 gap-2">
                 {templates.map((template) => (
@@ -2080,6 +2186,30 @@ function CreatePosterModal({
                   >
                     <div className="text-[13px] font-medium text-white">{template.emoji} {template.label}</div>
                     <div className="text-[10.5px] text-white/45 mt-1 line-clamp-2">{template.description}</div>
+                  </button>
+                ))}
+              </div>
+            </ModalSection>
+
+            <ModalSection title="画布方向">
+              <div className="grid grid-cols-2 gap-2">
+                {([
+                  ['landscape', '横版'],
+                  ['portrait', '竖版'],
+                ] as const).map(([value, label]) => (
+                  <button
+                    key={value}
+                    type="button"
+                    onClick={() => setOrientation(value)}
+                    disabled={busy}
+                    className="h-10 rounded-xl text-[12px] font-medium disabled:opacity-50"
+                    style={{
+                      background: orientation === value ? 'rgba(88,108,255,0.16)' : 'rgba(255,255,255,0.035)',
+                      border: orientation === value ? '1px solid rgba(116,149,255,0.28)' : '1px solid rgba(255,255,255,0.08)',
+                      color: orientation === value ? '#fff' : 'rgba(255,255,255,0.72)',
+                    }}
+                  >
+                    {label} ({value === 'landscape' ? '1200 × 628' : '1080 × 1350'})
                   </button>
                 ))}
               </div>
@@ -2104,53 +2234,85 @@ function CreatePosterModal({
               </div>
             </ModalSection>
 
-            <ModalSection title="数据源">
-              <div className="space-y-2">
-                {SOURCE_TYPES.map((source) => (
-                  <button
-                    key={source.key}
-                    type="button"
-                    onClick={() => setSourceType(source.key)}
-                    disabled={busy}
-                    className="w-full rounded-xl px-3 py-2.5 text-left disabled:opacity-50"
-                    style={{
-                      background: source.key === sourceType ? 'rgba(255,255,255,0.09)' : 'rgba(255,255,255,0.035)',
-                      border: source.key === sourceType ? '1px solid rgba(255,255,255,0.24)' : '1px solid rgba(255,255,255,0.08)',
-                    }}
-                  >
-                    <div className="text-[12px] font-medium text-white">{source.label}</div>
-                    <div className="text-[10.5px] text-white/45 mt-0.5">{source.description}</div>
-                  </button>
-                ))}
-              </div>
-              {sourceType === 'freeform' && (
-                <textarea
-                  value={freeformContent}
-                  onChange={(e) => setFreeformContent(e.target.value)}
-                  disabled={busy}
-                  rows={6}
-                  className="mt-3 w-full rounded-xl px-3 py-2 text-[12px] outline-none resize-none"
-                  placeholder="粘贴发布公告、活动说明或周报原文"
-                  style={fieldStyle}
-                />
-              )}
-              {sourceType === 'knowledge-base' && (
-                <select
-                  value={kbEntryId}
-                  onChange={(e) => setKbEntryId(e.target.value)}
-                  disabled={busy || kbLoading}
-                  className="mt-3 w-full h-10 rounded-xl px-3 text-[12px] outline-none"
-                  style={fieldStyle}
-                >
-                  <option value="" style={{ background: '#111' }}>{kbLoading ? '加载中...' : '选择知识库文档'}</option>
-                  {kbEntries.map((entry) => (
-                    <option key={entry.id} value={entry.id} style={{ background: '#111' }}>
-                      {entry.title}
-                    </option>
+            {mode === 'guided' ? (
+              <ModalSection title="数据源">
+                <div className="space-y-2">
+                  {SOURCE_TYPES.map((source) => (
+                    <button
+                      key={source.key}
+                      type="button"
+                      onClick={() => setSourceType(source.key)}
+                      disabled={busy}
+                      className="w-full rounded-xl px-3 py-2.5 text-left disabled:opacity-50"
+                      style={{
+                        background: source.key === sourceType ? 'rgba(255,255,255,0.09)' : 'rgba(255,255,255,0.035)',
+                        border: source.key === sourceType ? '1px solid rgba(255,255,255,0.24)' : '1px solid rgba(255,255,255,0.08)',
+                      }}
+                    >
+                      <div className="text-[12px] font-medium text-white">{source.label}</div>
+                      <div className="text-[10.5px] text-white/45 mt-0.5">{source.description}</div>
+                    </button>
                   ))}
-                </select>
-              )}
-            </ModalSection>
+                </div>
+                {sourceType === 'freeform' && (
+                  <>
+                    <div className="mt-3 flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => textFileInputRef.current?.click()}
+                        disabled={busy}
+                        className="h-9 rounded-xl px-3 inline-flex items-center gap-1.5 text-[12px] font-medium text-white/82 disabled:opacity-50"
+                        style={glassButtonStyle}
+                      >
+                        <Upload size={13} />
+                        上传文案文件
+                      </button>
+                      {textFileName && <span className="min-w-0 truncate text-[11px] text-white/45">{textFileName}</span>}
+                    </div>
+                    <textarea
+                      value={freeformContent}
+                      onChange={(e) => setFreeformContent(e.target.value)}
+                      disabled={busy}
+                      rows={8}
+                      className="mt-3 w-full rounded-xl px-3 py-2 text-[12px] outline-none resize-none"
+                      placeholder="粘贴发布公告、活动说明或周报原文"
+                      style={fieldStyle}
+                    />
+                  </>
+                )}
+                {sourceType === 'knowledge-base' && (
+                  <select
+                    value={kbEntryId}
+                    onChange={(e) => setKbEntryId(e.target.value)}
+                    disabled={busy || kbLoading}
+                    className="mt-3 w-full h-10 rounded-xl px-3 text-[12px] outline-none"
+                    style={fieldStyle}
+                  >
+                    <option value="" style={{ background: '#111' }}>{kbLoading ? '加载中...' : '选择知识库文档'}</option>
+                    {kbEntries.map((entry) => (
+                      <option key={entry.id} value={entry.id} style={{ background: '#111' }}>
+                        {entry.title}
+                      </option>
+                    ))}
+                  </select>
+                )}
+              </ModalSection>
+            ) : (
+              <ModalSection title="空白海报">
+                <Field label="海报标题">
+                  <input
+                    value={manualTitle}
+                    onChange={(e) => setManualTitle(e.target.value)}
+                    disabled={busy}
+                    className="w-full h-10 rounded-xl px-3 text-[13px] outline-none"
+                    style={fieldStyle}
+                  />
+                </Field>
+                <div className="mt-3 rounded-xl p-3 text-[11px] text-white/54" style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.08)' }}>
+                  会创建 {pageCount} 个可直接编辑的空白页面。创建后可手动填写文案、上传图片或视频，也可以再逐页生成配图。
+                </div>
+              </ModalSection>
+            )}
 
             <button
               type="button"
@@ -2161,16 +2323,18 @@ function CreatePosterModal({
             >
               {phase === 'llm' ? <MapSpinner size={14} /> : phase === 'images' ? <Loader2 size={14} className="animate-spin" /> : <Sparkles size={14} />}
               {phase === 'llm'
-                ? phaseLabel || '写文案中'
+                ? phaseLabel || (mode === 'manual' ? '创建中' : '写文案中')
                 : phase === 'images'
                   ? `配图中 ${countDone(pageProgress)}/${Object.keys(pageProgress).length}`
-                  : `生成 · ${selectedTemplate.label}`}
+                  : mode === 'manual'
+                    ? `创建空白海报 · ${selectedTemplate.label}`
+                    : `生成分页 · ${selectedTemplate.label}`}
             </button>
           </div>
 
           <div className="min-h-0 flex flex-col">
             <div className="shrink-0 px-5 py-3 border-b flex items-center justify-between" style={{ borderColor: 'rgba(255,255,255,0.08)' }}>
-              <div className="text-[12px] font-medium text-white/72">生成进度</div>
+              <div className="text-[12px] font-medium text-white/72">{mode === 'manual' ? '创建说明' : '生成进度'}</div>
               {modelInfo?.model && <div className="text-[10px] font-mono text-white/34">{modelInfo.model}</div>}
             </div>
             <div className="flex-1 min-h-0 overflow-y-auto p-5">
@@ -2189,7 +2353,7 @@ function CreatePosterModal({
                 <div className="h-full min-h-[260px] flex items-center justify-center text-center text-[12px] text-white/42">
                   <div>
                     <Sparkles size={26} className="mx-auto mb-3 text-white/28" />
-                    点击生成后，这里会显示 AI 实时输出和页面卡片
+                    {mode === 'manual' ? '空白海报创建完成后，会直接进入编辑工作台。' : '点击生成后，这里会显示 AI 实时输出和页面卡片'}
                   </div>
                 </div>
               )}
@@ -2352,6 +2516,26 @@ function saveDraftId(id: string | null) {
   }
 }
 
+function canvasOrientationStorageKey(id: string) {
+  return `weekly-poster-orientation:${id}`;
+}
+
+function loadCanvasOrientation(id: string): CanvasOrientation {
+  try {
+    return localStorage.getItem(canvasOrientationStorageKey(id)) === 'portrait' ? 'portrait' : 'landscape';
+  } catch {
+    return 'landscape';
+  }
+}
+
+function saveCanvasOrientation(id: string, orientation: CanvasOrientation) {
+  try {
+    localStorage.setItem(canvasOrientationStorageKey(id), orientation);
+  } catch {
+    /* ignore */
+  }
+}
+
 function fileToDataUri(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -2394,6 +2578,15 @@ function countDone(progress: Record<number, PageProgress>) {
   return Object.values(progress).filter((item) => item === 'done').length;
 }
 
+function defaultPosterTitle() {
+  const { weekKey } = getCurrentWeekInfo();
+  return `本周更新 · ${weekKey}`;
+}
+
+function defaultWeekKey() {
+  return getCurrentWeekInfo().weekKey;
+}
+
 function buildBlankPage(order: number, accent?: string | null): WeeklyPosterPage {
   return {
     order,
@@ -2428,6 +2621,17 @@ function mergeInstruction(base: string | null | undefined, next: string) {
 
 function clamp(value: number, min: number, max: number) {
   return Math.min(max, Math.max(min, value));
+}
+
+function getCurrentWeekInfo(date = new Date()) {
+  const target = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()));
+  const day = target.getUTCDay() || 7;
+  target.setUTCDate(target.getUTCDate() + 4 - day);
+  const yearStart = new Date(Date.UTC(target.getUTCFullYear(), 0, 1));
+  const week = Math.ceil((((target.getTime() - yearStart.getTime()) / 86400000) + 1) / 7);
+  return {
+    weekKey: `${target.getUTCFullYear()}-W${String(week).padStart(2, '0')}`,
+  };
 }
 
 function agentStatusLabel(status: AgentStatus) {
@@ -2483,20 +2687,20 @@ async function runWithConcurrency<T>(
 }
 
 const fieldStyle: React.CSSProperties = {
-  background: 'rgba(0,0,0,0.26)',
-  border: '1px solid rgba(255,255,255,0.1)',
-  color: 'rgba(255,255,255,0.9)',
+  background: 'var(--bg-input, rgba(0,0,0,0.22))',
+  border: '1px solid var(--border-subtle, rgba(255,255,255,0.1))',
+  color: 'var(--text-primary, rgba(255,255,255,0.9))',
 };
 
 const glassCardStyle: React.CSSProperties = {
-  background: 'linear-gradient(180deg, rgba(10,16,30,0.84), rgba(6,10,18,0.78))',
-  border: '1px solid rgba(255,255,255,0.08)',
-  boxShadow: '0 18px 42px rgba(0,0,0,0.22), inset 0 1px 0 rgba(255,255,255,0.04)',
-  backdropFilter: 'blur(18px)',
-  WebkitBackdropFilter: 'blur(18px)',
+  background: 'linear-gradient(180deg, var(--glass-bg-start, rgba(255,255,255,0.06)) 0%, var(--glass-bg-end, rgba(255,255,255,0.03)) 100%)',
+  border: '1px solid var(--glass-border, rgba(255,255,255,0.1))',
+  boxShadow: '0 12px 28px rgba(0,0,0,0.16), inset 0 1px 0 rgba(255,255,255,0.04)',
+  backdropFilter: 'blur(20px) saturate(160%)',
+  WebkitBackdropFilter: 'blur(20px) saturate(160%)',
 };
 
 const glassButtonStyle: React.CSSProperties = {
-  background: 'rgba(255,255,255,0.05)',
-  border: '1px solid rgba(255,255,255,0.1)',
+  background: 'rgba(255,255,255,0.04)',
+  border: '1px solid var(--border-subtle, rgba(255,255,255,0.1))',
 };
