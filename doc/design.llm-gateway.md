@@ -189,8 +189,46 @@
 | `design.model-pool-failover.md` | 故障转移与自动探活的详细设计 |
 | `design.system-emergence.md` | Gateway 作为基础层支撑所有 Agent 的涌现能力 |
 | `.claude/rules/llm-gateway.md` | Gateway 使用规则（AppCallerCode 命名规范、调度优先级） |
+| `design.llm-gateway-refactor.md` | Compute-then-Send 重构详细设计 |
 
-## 九、影响范围与风险
+## 九、Compute-then-Send 原则（外部调用两阶段）
+
+> 详见 `.claude/rules/compute-then-send.md` 和 `doc/design.llm-gateway-refactor.md`
+
+外部调用（LLM / 图片生成 / 视频生成）必须把**计算阶段**和**发送阶段**严格拆分：
+
+| 阶段 | 职责 | 关键方法 |
+|------|------|---------|
+| 计算（Compute） | 调用 `IModelResolver.ResolveAsync` 决定模型、平台、API URL | `ResolveModelAsync` |
+| 发送（Send） | 接收已解析结果，发 HTTP，解析响应 | `SendRawWithResolutionAsync` |
+
+**核心规则**：发送阶段不得在内部再调用 `ResolveAsync`——发送函数只接收参数，不做选择。
+
+### 标准调用模式
+
+```csharp
+// ✅ 正确：先算后发
+var resolution = await _gateway.ResolveModelAsync(appCallerCode, ModelType, expectedModel, ct);
+if (!resolution.Success) { /* 返回错误 */ }
+
+var response = await _gateway.SendRawWithResolutionAsync(new GatewayRawRequest
+{
+    AppCallerCode = appCallerCode,
+    ModelType     = ModelType,
+    EndpointPath  = "/chat/completions",
+    RequestBody   = body,
+    HttpMethod    = "POST",
+}, resolution, ct);
+```
+
+### 已落地的实现（2026-04-23）
+
+- `LlmGateway.SendRawWithResolutionAsync` — 新标准发送方法，接收 `GatewayModelResolution`
+- `OpenAIImageClient.GenerateAsync` — 已迁移，单次 Resolve
+- `OpenRouterVideoClient` — `GetStatusAsync` 复用 `SubmitAsync` 阶段缓存，不重复 Resolve
+- `ExpectedModelRespectingResolver.cs` — 已删除（旧补丁）
+
+## 十、影响范围与风险
 
 ### 影响范围
 

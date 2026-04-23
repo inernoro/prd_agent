@@ -53,12 +53,13 @@ public static class ImageGenModelConfigs
             Notes = new List<string>
             {
                 "尺寸/比例请写进 prompt 最前面（推荐：'横版 16:9 电影画幅，...' / '竖版 9:16 海报，...'）",
-                "不传 size / n / quality / aspect_ratio，否则会触发参数校验错误",
+                "不传 size / n / quality / aspect_ratio / response_format，否则会触发参数校验错误",
                 "b64_json 已含 data:image/png;base64, 前缀，无需手动拼接",
                 "兼容 /v1/images/generations、/v1/images/edits、/v1/chat/completions 三端点",
             },
             SupportsImageToImage = true,
             SupportsInpainting = false,
+            SupportsResponseFormat = false,
         },
 
         // ===== gpt-image-1.5（标准 size 参数）=====
@@ -90,9 +91,15 @@ public static class ImageGenModelConfigs
             MaxHeight = 1792,
             MinWidth = 1024,
             MinHeight = 1024,
-            Notes = new List<string> { "文字渲染能力强（5 星）", "通过标准 size 参数控制尺寸" },
+            Notes = new List<string>
+            {
+                "文字渲染能力强（5 星）",
+                "通过标准 size 参数控制尺寸",
+                "不传 response_format（apiyi 平台不支持该参数，传入会触发 unknown_parameter 错误）",
+            },
             SupportsImageToImage = true,
             SupportsInpainting = true,
+            SupportsResponseFormat = false,
         },
 
         // ===== Nano Banana 2（aspectRatio 参数）=====

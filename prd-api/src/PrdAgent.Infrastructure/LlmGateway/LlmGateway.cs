@@ -544,29 +544,76 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
     }
 
     /// <inheritdoc />
-    public async Task<GatewayRawResponse> SendRawAsync(GatewayRawRequest request, CancellationToken ct = default)
+    public async Task<GatewayRawResponse> SendRawWithResolutionAsync(
+        GatewayRawRequest request,
+        GatewayModelResolution resolution,
+        CancellationToken ct = default)
     {
         if (!TryValidateAppCaller(request.AppCallerCode, request.ModelType, out var error))
-        {
             return GatewayRawResponse.Fail(InvalidAppCallerErrorCode, error, 400);
-        }
+
+        if (!resolution.Success || string.IsNullOrWhiteSpace(resolution.ActualModel))
+            return GatewayRawResponse.Fail("MODEL_NOT_FOUND",
+                resolution.ErrorMessage ?? "未找到可用模型", 404);
+
+        // 将 GatewayModelResolution 转回 ModelResolutionResult 以复用内部执行逻辑
+        // GatewayModelResolution 已包含 ApiKey / ExchangeAuthScheme / ExchangeTransformerConfig
+        var internalResolution = new ModelResolutionResult
+        {
+            Success = resolution.Success,
+            ResolutionType = resolution.ResolutionType,
+            ExpectedModel = resolution.ExpectedModel,
+            ActualModel = resolution.ActualModel,
+            ActualPlatformId = resolution.ActualPlatformId,
+            ActualPlatformName = resolution.ActualPlatformName,
+            PlatformType = resolution.PlatformType,
+            ApiUrl = resolution.ApiUrl,
+            ApiKey = resolution.ApiKey,
+            ModelGroupId = resolution.ModelGroupId,
+            ModelGroupName = resolution.ModelGroupName,
+            ModelGroupCode = resolution.ModelGroupCode,
+            ModelPriority = resolution.ModelPriority,
+            HealthStatus = resolution.HealthStatus,
+            IsFallback = resolution.IsFallback,
+            FallbackReason = resolution.FallbackReason,
+            OriginalPoolId = resolution.OriginalPoolId,
+            OriginalPoolName = resolution.OriginalPoolName,
+            OriginalModels = resolution.OriginalModels?.Select(m => new OriginalModelInfo
+            {
+                ModelId = m.ModelId,
+                PlatformId = m.PlatformId,
+                HealthStatus = m.HealthStatus,
+                IsAvailable = m.IsAvailable,
+                ConsecutiveFailures = m.ConsecutiveFailures
+            }).ToList(),
+            IsExchange = resolution.IsExchange,
+            ExchangeId = resolution.ExchangeId,
+            ExchangeName = resolution.ExchangeName,
+            ExchangeTransformerType = resolution.ExchangeTransformerType,
+            ExchangeAuthScheme = resolution.ExchangeAuthScheme,
+            ExchangeTransformerConfig = resolution.ExchangeTransformerConfig
+        };
 
         var startedAt = DateTime.UtcNow;
+        return await ExecuteRawWithResolutionAsync(request, internalResolution, startedAt, ct);
+    }
+
+    /// <summary>
+    /// 发送阶段的核心实现：接收已解析的 <see cref="ModelResolutionResult"/>，
+    /// 执行 HTTP 请求、日志写入、健康状态回写等所有"发送后"逻辑。
+    /// 遵循 compute-then-send 原则（见 .claude/rules/compute-then-send.md）：
+    /// 调用此方法时模型已确定，内部不再调用 _modelResolver.ResolveAsync。
+    /// </summary>
+    private async Task<GatewayRawResponse> ExecuteRawWithResolutionAsync(
+        GatewayRawRequest request,
+        ModelResolutionResult resolution,
+        DateTime startedAt,
+        CancellationToken ct)
+    {
         string? logId = null;
-        ModelResolutionResult? resolution = null;
 
         try
         {
-            // 1. 模型调度
-            resolution = await _modelResolver.ResolveAsync(
-                request.AppCallerCode, request.ModelType, null, ct);
-
-            if (!resolution.Success || string.IsNullOrWhiteSpace(resolution.ActualModel))
-            {
-                return GatewayRawResponse.Fail("MODEL_NOT_FOUND",
-                    resolution.ErrorMessage ?? "未找到可用模型", 404);
-            }
-
             var gatewayResolution = resolution.ToGatewayResolution();
 
             // 2. 选择适配器并构建 endpoint

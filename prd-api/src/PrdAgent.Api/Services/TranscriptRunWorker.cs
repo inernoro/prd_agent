@@ -173,10 +173,9 @@ public class TranscriptRunWorker : BackgroundService
             }
             else if (resolution.ExchangeTransformerType == "doubao-asr")
             {
-                // 异步 submit+query ASR：Gateway 的 SendRawAsync 支持 IAsyncExchangeTransformer 轮询
-                // Gateway 内部会再次 ResolveAsync，但同一模型池内只有 doubao-asr Exchange，不会误选 WebSocket 模型
+                // 异步 submit+query ASR：Gateway 的 SendRawWithResolutionAsync 支持 IAsyncExchangeTransformer 轮询
                 _logger.LogInformation("[transcript-agent] 使用异步 ASR 路径: Exchange={ExchangeName}", resolution.ExchangeName);
-                await ProcessAsrViaGatewayAsync(db, gateway, run, item);
+                await ProcessAsrViaGatewayAsync(db, gateway, run, item, resolution.ToGatewayResolution());
             }
             else
             {
@@ -189,7 +188,7 @@ public class TranscriptRunWorker : BackgroundService
         else
         {
             // 非 Exchange 模型（Whisper 等）：走 Gateway HTTP 路径
-            await ProcessAsrViaGatewayAsync(db, gateway, run, item);
+            await ProcessAsrViaGatewayAsync(db, gateway, run, item, resolution.ToGatewayResolution());
         }
     }
 
@@ -320,7 +319,8 @@ public class TranscriptRunWorker : BackgroundService
     /// 通过 LLM Gateway（Whisper 兼容 / HTTP Exchange）处理 ASR
     /// </summary>
     private async Task ProcessAsrViaGatewayAsync(
-        MongoDbContext db, ILlmGateway gateway, TranscriptRun run, TranscriptItem item)
+        MongoDbContext db, ILlmGateway gateway, TranscriptRun run, TranscriptItem item,
+        GatewayModelResolution resolution)
     {
         // 下载音频文件
         using var httpClient = new HttpClient();
@@ -328,7 +328,7 @@ public class TranscriptRunWorker : BackgroundService
 
         await UpdateProgress(db, run.Id, 30);
 
-        // 调用 ASR 模型池
+        // 调用 ASR 模型池（使用已解析的 resolution，遵循 compute-then-send 原则）
         var rawRequest = new GatewayRawRequest
         {
             AppCallerCode = AppCallerRegistry.TranscriptAgent.Transcribe.Audio,
@@ -352,7 +352,7 @@ public class TranscriptRunWorker : BackgroundService
 
         await UpdateProgress(db, run.Id, 50);
 
-        var rawResp = await gateway.SendRawAsync(rawRequest, CancellationToken.None);
+        var rawResp = await gateway.SendRawWithResolutionAsync(rawRequest, resolution, CancellationToken.None);
 
         if (rawResp?.Success != true || rawResp.Content == null)
         {

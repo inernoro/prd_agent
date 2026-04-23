@@ -161,10 +161,8 @@ builder.Services.AddScoped<IModelPoolQueryService, ModelPoolQueryService>();
 builder.Services.AddScoped<PrdAgent.Infrastructure.ModelPool.IPoolFailoverNotifier, PrdAgent.Infrastructure.ModelPool.PoolFailoverNotifier>();
 builder.Services.AddHostedService<PrdAgent.Infrastructure.ModelPool.ModelPoolHealthProbeService>();
 
-// 模型调度执行器（支持单元测试 Mock）
-// 先注册具体的 ModelResolver，再用装饰器包裹（Api 层拦截，绕过 Infrastructure.dll 部署 bug）
-builder.Services.AddScoped<PrdAgent.Infrastructure.LlmGateway.ModelResolver>();
-builder.Services.AddScoped<PrdAgent.Infrastructure.LlmGateway.IModelResolver, PrdAgent.Api.Services.ExpectedModelRespectingResolver>();
+// 模型调度执行器
+builder.Services.AddScoped<PrdAgent.Infrastructure.LlmGateway.IModelResolver, PrdAgent.Infrastructure.LlmGateway.ModelResolver>();
 
 // LLM Gateway 统一守门员（所有大模型调用必须通过此接口）
 builder.Services.AddScoped<PrdAgent.Infrastructure.LlmGateway.ILlmGateway, PrdAgent.Infrastructure.LlmGateway.LlmGateway>();
@@ -175,6 +173,8 @@ builder.Services.AddScoped<PrdAgent.Core.Interfaces.LlmGateway.ILlmGateway>(sp =
 
 // OpenAI 兼容 Images API（用于"生图模型"）
 builder.Services.AddScoped<OpenAIImageClient>();
+builder.Services.AddScoped<PrdAgent.Infrastructure.LlmGateway.ImageGen.IImageGenGateway,
+    PrdAgent.Infrastructure.LlmGateway.ImageGen.ImageGenGateway>();
 builder.Services.AddSingleton<WatermarkFontRegistry>();
 builder.Services.AddSingleton<WatermarkRenderer>();
 
@@ -182,7 +182,7 @@ builder.Services.AddSingleton<WatermarkRenderer>();
 builder.Services.AddScoped<PrdAgent.Core.Interfaces.IVideoGenService, PrdAgent.Infrastructure.Services.VideoGenService>();
 
 // OpenRouter 视频生成客户端（Seedance / Wan / Veo / Sora 统一入口，异步 submit + poll）
-// 走 ILlmGateway.SendRawAsync，API Key 由平台管理提供，不依赖环境变量
+// 走 ILlmGateway.SendRawWithResolutionAsync，API Key 由平台管理提供，不依赖环境变量
 builder.Services.AddScoped<PrdAgent.Core.Interfaces.IOpenRouterVideoClient, PrdAgent.Infrastructure.Services.OpenRouterVideoClient>();
 
 // Account Data Transfer 数据分享

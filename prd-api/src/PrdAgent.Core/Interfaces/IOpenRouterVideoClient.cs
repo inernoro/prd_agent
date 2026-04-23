@@ -1,7 +1,7 @@
 namespace PrdAgent.Core.Interfaces;
 
 /// <summary>
-/// OpenRouter 视频生成 API 封装（走 ILlmGateway.SendRawAsync）
+/// OpenRouter 视频生成 API 封装（走 ILlmGateway.SendRawWithResolutionAsync）
 /// 文档：https://openrouter.ai/docs/guides/overview/multimodal/video-generation
 /// 端点：
 ///   - POST /videos          提交任务

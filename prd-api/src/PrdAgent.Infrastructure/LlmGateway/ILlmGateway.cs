@@ -43,11 +43,14 @@ public interface ILlmGateway
     IAsyncEnumerable<GatewayStreamChunk> StreamAsync(GatewayRequest request, CancellationToken ct = default);
 
     /// <summary>
-    /// 发送原始 HTTP 请求（用于图片生成等复杂场景）
-    /// Gateway 负责：模型调度 + model 字段替换 + HTTP 发送 + 日志 + 健康管理
-    /// 调用方负责：构建请求体（业务逻辑如尺寸适配、水印等）
+    /// 发送原始 HTTP 请求（使用调用方已解析的模型 Resolution，跳过内部 Resolve 步骤）。
+    /// 遵循 compute-then-send 原则：当调用方已通过 ResolveModelAsync 完成模型调度，
+    /// 再调用此方法可避免 Gateway 内部的第二次 ResolveAsync，保证 "选什么用什么"。
     /// </summary>
-    Task<GatewayRawResponse> SendRawAsync(GatewayRawRequest request, CancellationToken ct = default);
+    Task<GatewayRawResponse> SendRawWithResolutionAsync(
+        GatewayRawRequest request,
+        GatewayModelResolution resolution,
+        CancellationToken ct = default);
 
     /// <summary>
     /// 预解析模型调度结果（不发送请求）
@@ -71,7 +74,7 @@ public interface ILlmGateway
     /// 创建 LLM 客户端（用于流式对话等场景）
     /// 这是一个简单的工厂方法，返回的客户端内部通过 Gateway 发送所有请求
     /// </summary>
-    /// <param name="appCallerCode">应用调用标识（如 "prd-agent.chat::chat"）</param>
+    /// <param name="appCallerCode">应用调用标识（如 "prd-agent.skill-gen::chat"）</param>
     /// <param name="modelType">模型类型（chat/vision/intent/generation）</param>
     /// <param name="maxTokens">最大 Token 数（默认 4096）</param>
     /// <param name="temperature">温度参数（默认 0.2）</param>

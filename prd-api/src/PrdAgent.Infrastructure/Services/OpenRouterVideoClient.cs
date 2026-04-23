@@ -8,13 +8,16 @@ namespace PrdAgent.Infrastructure.Services;
 
 /// <summary>
 /// OpenRouter 视频生成 API 客户端
-/// 走 ILlmGateway.SendRawAsync，利用平台管理中配好的 ApiKey + BaseUrl，
+/// 走 ILlmGateway.SendRawWithResolutionAsync，利用平台管理中配好的 ApiKey + BaseUrl，
 /// 不依赖 IConfiguration / 环境变量。
 /// </summary>
 public class OpenRouterVideoClient : IOpenRouterVideoClient
 {
     private readonly ILlmGateway _gateway;
     private readonly ILogger<OpenRouterVideoClient> _logger;
+    // 缓存 SubmitAsync 阶段的解析结果，供同一 Scoped 实例的轮询调用复用（避免每次 poll 都查一次 DB）
+    private GatewayModelResolution? _submitResolution;
+    private string? _submitAppCallerCode;
 
     public OpenRouterVideoClient(ILlmGateway gateway, ILogger<OpenRouterVideoClient> logger)
     {
@@ -52,7 +55,7 @@ public class OpenRouterVideoClient : IOpenRouterVideoClient
         if (request.GenerateAudio.HasValue) body["generate_audio"] = request.GenerateAudio.Value;
         if (request.Seed.HasValue) body["seed"] = request.Seed.Value;
 
-        var rawResp = await _gateway.SendRawAsync(new GatewayRawRequest
+        var rawResp = await _gateway.SendRawWithResolutionAsync(new GatewayRawRequest
         {
             AppCallerCode = request.AppCallerCode,
             ModelType = ModelTypes.VideoGen,
@@ -66,7 +69,7 @@ public class OpenRouterVideoClient : IOpenRouterVideoClient
                 UserId = request.UserId,
                 QuestionText = request.Prompt
             }
-        }, ct);
+        }, resolution, ct);
 
         if (!rawResp.Success || string.IsNullOrWhiteSpace(rawResp.Content))
         {
@@ -93,6 +96,10 @@ public class OpenRouterVideoClient : IOpenRouterVideoClient
 
         double? cost = ReadCost(doc);
 
+        // 缓存解析结果供后续轮询复用（同一 Scoped 实例负责 submit + N 次 poll）
+        _submitResolution = resolution;
+        _submitAppCallerCode = request.AppCallerCode;
+
         return new OpenRouterVideoSubmitResult
         {
             Success = true,
@@ -109,14 +116,22 @@ public class OpenRouterVideoClient : IOpenRouterVideoClient
             return new OpenRouterVideoStatus { Status = "failed", ErrorMessage = "jobId 不能为空" };
         }
 
-        var rawResp = await _gateway.SendRawAsync(new GatewayRawRequest
+        // 优先复用 SubmitAsync 已算好的解析结果，避免每次轮询都查一次 DB
+        // 仅在 appCallerCode 匹配时复用缓存，防止跨上下文重用错误的解析结果
+        var statusResolution = (_submitResolution?.Success == true && _submitAppCallerCode == appCallerCode)
+            ? _submitResolution
+            : await _gateway.ResolveModelAsync(appCallerCode, ModelTypes.VideoGen, null, ct);
+        if (!statusResolution.Success)
+            return new OpenRouterVideoStatus { Status = "failed", ErrorMessage = statusResolution.ErrorMessage };
+
+        var rawResp = await _gateway.SendRawWithResolutionAsync(new GatewayRawRequest
         {
             AppCallerCode = appCallerCode,
             ModelType = ModelTypes.VideoGen,
             EndpointPath = $"/videos/{Uri.EscapeDataString(jobId)}",
             HttpMethod = "GET",
             TimeoutSeconds = 30
-        }, ct);
+        }, statusResolution, ct);
 
         if (!rawResp.Success || string.IsNullOrWhiteSpace(rawResp.Content))
         {

@@ -294,9 +294,12 @@ public class OpenAIImageClient
 
         var providerForLog = platformAdapter.ProviderNameForLog;
         
-        // 确定实际使用的响应格式（某些平台强制 url）
+        // 确定实际使用的响应格式（某些平台强制 url，某些平台不支持该参数）
         var effectiveResponseFormat = platformAdapter.ForceUrlResponseFormat ? "url" : responseFormat;
-        
+        // 不支持 response_format 的模型（如 apiyi 平台的 gpt-image-1.5/gpt-image-2-all）
+        if (adapterConfig?.SupportsResponseFormat == false)
+            effectiveResponseFormat = null;
+
         // 归一化尺寸（某些平台有最小尺寸要求）
         var normalizedSize = platformAdapter.NormalizeSize(size);
         
@@ -394,10 +397,11 @@ public class OpenAIImageClient
                         "[OpenAIImageClient] Exchange 统一请求: AppCallerCode={AppCallerCode}, HasImage={HasImage}, Size={Size}",
                         appCallerCode, initImageBase64 != null, requestedSizeNorm);
 
-                    return await _gateway.SendRawAsync(new GatewayRawRequest
+                    return await _gateway.SendRawWithResolutionAsync(new GatewayRawRequest
                     {
                         AppCallerCode = appCallerCode,
                         ModelType = "generation",
+                        ExpectedModel = effectiveModelName,
                         RequestBody = exchangeBody,
                         IsMultipart = false,
                         TimeoutSeconds = imageGenTimeoutSeconds,
@@ -410,7 +414,7 @@ public class OpenAIImageClient
                             ViewRole = ctx?.ViewRole,
                             QuestionText = prompt.Trim()
                         }
-                    }, token);
+                    }, resolution, token);
                 }
                 // Google 原生路径：文生图/图生图/局部重绘统一用 generateContent 格式
                 else if (platformType == "google" || platformType == "gemini")
@@ -426,10 +430,11 @@ public class OpenAIImageClient
                         "AspectRatio={AspectRatio}, ImageSize={ImageSize}, Endpoint={Endpoint}",
                         appCallerCode, initImageBase64 != null, maskBase64 != null, googleAspectRatio, googleImageSize, googleEndpointPath);
 
-                    return await _gateway.SendRawAsync(new GatewayRawRequest
+                    return await _gateway.SendRawWithResolutionAsync(new GatewayRawRequest
                     {
                         AppCallerCode = appCallerCode,
                         ModelType = "generation",
+                        ExpectedModel = effectiveModelName,
                         EndpointPath = googleEndpointPath,
                         RequestBody = googleBody,
                         IsMultipart = false,
@@ -443,7 +448,7 @@ public class OpenAIImageClient
                             ViewRole = ctx?.ViewRole,
                             QuestionText = prompt.Trim()
                         }
-                    }, token);
+                    }, resolution, token);
                 }
                 else if (initImageBase64 == null)
                 {
@@ -479,6 +484,7 @@ public class OpenAIImageClient
                     {
                         AppCallerCode = appCallerCode,
                         ModelType = "generation",
+                        ExpectedModel = effectiveModelName,
                         EndpointPath = endpointPath,
                         RequestBody = requestBody,
                         IsMultipart = false,
@@ -494,7 +500,7 @@ public class OpenAIImageClient
                         }
                     };
 
-                    return await _gateway.SendRawAsync(gatewayRequest, token);
+                    return await _gateway.SendRawWithResolutionAsync(gatewayRequest, resolution, token);
                 }
                 else
                 {
@@ -565,6 +571,7 @@ public class OpenAIImageClient
                     {
                         AppCallerCode = appCallerCode,
                         ModelType = "generation",
+                        ExpectedModel = effectiveModelName,
                         EndpointPath = endpointPath,
                         IsMultipart = true,
                         MultipartFields = multipartFields,
@@ -581,7 +588,7 @@ public class OpenAIImageClient
                         }
                     };
 
-                    return await _gateway.SendRawAsync(gatewayRequest, token);
+                    return await _gateway.SendRawWithResolutionAsync(gatewayRequest, resolution, token);
                 }
             }
 
@@ -1035,10 +1042,11 @@ public class OpenAIImageClient
 
             try
             {
-                var gatewayResp = await _gateway.SendRawAsync(new GatewayRawRequest
+                var gatewayResp = await _gateway.SendRawWithResolutionAsync(new GatewayRawRequest
                 {
                     AppCallerCode = appCallerCode,
                     ModelType = "generation",
+                    ExpectedModel = effectiveModelName,
                     RequestBody = exchangeBody,
                     IsMultipart = false,
                     TimeoutSeconds = exchangeTimeout,
@@ -1058,7 +1066,7 @@ public class OpenAIImageClient
                             MimeType = r.MimeType
                         }).ToList()
                     }
-                }, ct);
+                }, resolution, ct);
 
                 var respBody = gatewayResp.Content ?? string.Empty;
                 if (!gatewayResp.Success)
@@ -1201,10 +1209,11 @@ public class OpenAIImageClient
                 var googleTimeout = _config.GetValue<int?>("LLM:ImageGenTimeoutSeconds") ?? 600;
                 googleTimeout = Math.Clamp(googleTimeout, 60, 3600);
 
-                var gatewayResp = await _gateway.SendRawAsync(new GatewayRawRequest
+                var gatewayResp = await _gateway.SendRawWithResolutionAsync(new GatewayRawRequest
                 {
                     AppCallerCode = appCallerCode,
                     ModelType = "generation",
+                    ExpectedModel = effectiveModelName,
                     EndpointPath = googleEndpointPath,
                     RequestBody = googleBody,
                     IsMultipart = false,
@@ -1225,7 +1234,7 @@ public class OpenAIImageClient
                             MimeType = r.MimeType
                         }).ToList()
                     }
-                }, ct);
+                }, resolution, ct);
 
                 var respBody = gatewayResp.Content ?? string.Empty;
                 if (!gatewayResp.Success)
@@ -1403,12 +1412,13 @@ public class OpenAIImageClient
 
         try
         {
-            // 构建 Gateway 请求 - 使用 SendRawAsync 发送到 chat/completions
+            // 构建 Gateway 请求 - 使用 SendRawWithResolutionAsync 发送到 chat/completions
             var requestBody = JsonNode.Parse(requestJson)?.AsObject() ?? new JsonObject();
             var gatewayRequest = new GatewayRawRequest
             {
                 AppCallerCode = appCallerCode,
                 ModelType = "generation",
+                ExpectedModel = effectiveModelName,
                 EndpointPath = "/v1/chat/completions",
                 RequestBody = requestBody,
                 IsMultipart = false,
@@ -1431,7 +1441,7 @@ public class OpenAIImageClient
                 }
             };
 
-            var gatewayResp = await _gateway.SendRawAsync(gatewayRequest, ct);
+            var gatewayResp = await _gateway.SendRawWithResolutionAsync(gatewayRequest, resolution, ct);
             var respBody = gatewayResp.Content ?? string.Empty;
 
             _logger.LogInformation(

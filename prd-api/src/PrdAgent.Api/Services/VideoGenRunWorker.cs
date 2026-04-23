@@ -515,7 +515,12 @@ public class VideoGenRunWorker : BackgroundService
                 TimeoutSeconds = 120
             };
 
-            var ttsResponse = await gateway.SendRawAsync(ttsRequest, CancellationToken.None);
+            var ttsResolution = await gateway.ResolveModelAsync(
+                AppCallerRegistry.VideoAgent.Audio.Tts, ModelTypes.Tts, null, CancellationToken.None);
+            if (!ttsResolution.Success)
+                throw new InvalidOperationException($"TTS 模型调度失败: {ttsResolution.ErrorMessage}");
+
+            var ttsResponse = await gateway.SendRawWithResolutionAsync(ttsRequest, ttsResolution, CancellationToken.None);
 
             if (!ttsResponse.Success || ttsResponse.BinaryContent == null || ttsResponse.BinaryContent.Length == 0)
             {
@@ -2180,7 +2185,7 @@ document.addEventListener('keydown',e=>{if(e.key==='ArrowRight'||e.key==='ArrowD
     /// videogen 模式：提交 → 轮询 → 写回 VideoAssetUrl → Completed
     /// 使用 CancellationToken.None（服务器权威原则）
     ///
-    /// 走 ILlmGateway.SendRawAsync（由 Client 内部使用），
+    /// 走 ILlmGateway.SendRawWithResolutionAsync（由 Client 内部使用），
     /// AppCallerCode = "video-agent.videogen::video-gen" 决定模型池，
     /// 平台 ApiKey 从平台管理中配置的凭据自动取用，不依赖环境变量。
     /// </summary>
