@@ -26,153 +26,18 @@ public class ResolverDebugController : ControllerBase
     private readonly MongoDbContext _db;
     private readonly IModelResolver _resolver;
     private readonly PrdAgent.Infrastructure.LlmGateway.ILlmGateway _gateway;
-    private readonly IServiceScopeFactory _scopeFactory;
     private readonly ILogger<ResolverDebugController> _logger;
 
     public ResolverDebugController(
         MongoDbContext db,
         IModelResolver resolver,
         PrdAgent.Infrastructure.LlmGateway.ILlmGateway gateway,
-        IServiceScopeFactory scopeFactory,
         ILogger<ResolverDebugController> logger)
     {
         _db = db;
         _resolver = resolver;
         _gateway = gateway;
-        _scopeFactory = scopeFactory;
         _logger = logger;
-    }
-
-    /// <summary>
-    /// 触发真实 OpenAIImageClient.GenerateUnifiedAsync（走完整 Worker 链路），然后返回
-    /// `_diag_resolver_calls` 集合里相关的装饰器调用记录，查明为何 LLM 日志里 model 被换。
-    /// </summary>
-    [HttpPost("trigger-real-gen")]
-    public async Task<IActionResult> TriggerRealGen(
-        [FromBody] ResolverTestRequest body,
-        CancellationToken ct)
-    {
-        var code = (body?.AppCallerCode ?? "visual-agent.image.text2img::generation").Trim();
-        var expected = string.IsNullOrWhiteSpace(body?.ExpectedModel) ? "stub-image" : body.ExpectedModel.Trim();
-
-        // 清空诊断集合
-        var diagColl = _db.Database.GetCollection<MongoDB.Bson.BsonDocument>("_diag_resolver_calls");
-        diagColl.DeleteMany(new MongoDB.Bson.BsonDocument());
-
-        var runStartTs = DateTime.UtcNow;
-        _logger.LogWarning("[TriggerRealGen] === START === code={Code} expected={Expected}", code, expected);
-
-        // 按 ImageGenRunWorker Line 224 的方式新建 scope
-        using var scope = _scopeFactory.CreateScope();
-        var imageClient = scope.ServiceProvider.GetRequiredService<PrdAgent.Infrastructure.LLM.OpenAIImageClient>();
-
-        string? err = null;
-        bool success = false;
-        string? returnedModel = null;
-        try
-        {
-            var res = await imageClient.GenerateUnifiedAsync(
-                prompt: "test prompt (trigger-real-gen debug)",
-                n: 1,
-                size: "1024x1024",
-                responseFormat: "url",
-                ct: ct,
-                appCallerCode: code,
-                images: null,
-                modelId: expected,       // stub-image 池 code
-                platformId: "platform4", // stub 平台
-                modelName: expected);    // = modelId
-            success = res.Success;
-            err = res.Error?.Message;
-            returnedModel = res.Data?.Images?.FirstOrDefault()?.Url ?? "(no url)";
-        }
-        catch (Exception ex)
-        {
-            err = ex.Message + " | " + ex.GetType().Name;
-        }
-
-        // 读 _diag_resolver_calls 里本次触发的记录
-        var diagRecords = diagColl.Find(new MongoDB.Bson.BsonDocument("ts",
-                new MongoDB.Bson.BsonDocument("$gte", runStartTs)))
-            .Sort(new MongoDB.Bson.BsonDocument("ts", 1))
-            .ToList();
-
-        return Ok(new
-        {
-            input = new { appCallerCode = code, expectedModel = expected },
-            gen = new { success, error = err, returnedUrl = returnedModel },
-            decoratorCalls = diagRecords.Select(r => new
-            {
-                ts = r.GetValue("ts", "").ToString(),
-                instanceHash = r.GetValue("instanceHash", "").AsString,
-                rawExpected = r.GetValue("rawExpected", "").AsString,
-                pendingBefore = r.GetValue("pendingBefore", "").AsString,
-                pendingAfter = r.GetValue("pendingAfter", "").AsString,
-                effective = r.GetValue("effective", "").AsString,
-                branch = r.GetValue("branch", "").AsString,
-                returnedModel = r.GetValue("returnedModel", "").AsString,
-                returnedPool = r.GetValue("returnedPool", "").AsString,
-                stack = r.GetValue("stack", "").AsString,
-            }).ToList(),
-            totalDecoratorCalls = diagRecords.Count
-        });
-    }
-
-    /// <summary>
-    /// 模拟 Worker 真实路径：用 _scopeFactory.CreateScope() 创建新 scope（而不是当前 HTTP 请求 scope），
-    /// 在新 scope 里解析 ILlmGateway，调用两次 ResolveModelAsync，对比 instance hash 和结果。
-    /// 目的：验证 test-chain 在 HTTP scope 里正常但真实 Worker 路径里的 LLM 日志仍然错误之谜。
-    /// </summary>
-    [HttpPost("simulate-worker")]
-    public async Task<IActionResult> SimulateWorker(
-        [FromBody] ResolverTestRequest body,
-        CancellationToken ct)
-    {
-        var code = (body?.AppCallerCode ?? string.Empty).Trim();
-        var type = string.IsNullOrWhiteSpace(body?.ModelType) ? "generation" : body.ModelType.Trim();
-        var expected = string.IsNullOrWhiteSpace(body?.ExpectedModel) ? null : body.ExpectedModel.Trim();
-
-        _logger.LogWarning("[SimulateWorker] === Creating new scope via _scopeFactory.CreateScope() ===");
-
-        // 和 ImageGenRunWorker Line 224 一样的调用方式
-        using var scope = _scopeFactory.CreateScope();
-        var gatewayInScope = scope.ServiceProvider.GetRequiredService<PrdAgent.Infrastructure.LlmGateway.ILlmGateway>();
-        var resolverInScope = scope.ServiceProvider.GetRequiredService<IModelResolver>();
-
-        var resolverHash = resolverInScope.GetHashCode().ToString("X");
-        var gatewayHash = gatewayInScope.GetHashCode().ToString("X");
-
-        _logger.LogWarning("[SimulateWorker] resolver hash in new scope: {RH}, gateway hash: {GH}", resolverHash, gatewayHash);
-
-        // 第 1 次：通过 gateway.ResolveModelAsync（和 OpenAIImageClient line 165 一样）
-        var r1 = await gatewayInScope.ResolveModelAsync(code, type, expected, ct);
-
-        // 第 2 次：通过 IModelResolver 直接（和 LlmGateway.SendRawAsync line 561 一样传 null）
-        var r2 = await resolverInScope.ResolveAsync(code, type, null, ct);
-
-        return Ok(new
-        {
-            note = "模拟 Worker 使用 _scopeFactory.CreateScope() 新建 scope",
-            resolverInstanceHashInNewScope = resolverHash,
-            gatewayInstanceHashInNewScope = gatewayHash,
-            call1_via_gateway = new
-            {
-                actualModel = r1.ActualModel,
-                modelGroupName = r1.ModelGroupName,
-                success = r1.Success,
-            },
-            call2_via_resolver_null = new
-            {
-                actualModel = r2.ActualModel,
-                modelGroupName = r2.ModelGroupName,
-                resolutionType = r2.ResolutionType,
-                success = r2.Success,
-            },
-            sameModelBothCalls = r1.ActualModel == r2.ActualModel,
-            verdict = r1.ActualModel == r2.ActualModel
-                ? "在 _scopeFactory 新建的 scope 里也正常"
-                : $"在 _scopeFactory 新建的 scope 里失效！call1={r1.ActualModel} call2={r2.ActualModel} — 这就是 Worker 实际路径的问题"
-        });
     }
 
     /// <summary>
@@ -261,71 +126,6 @@ public class ResolverDebugController : ControllerBase
                 errorMessage = actual.ErrorMessage
             },
             liveResolverError = actualError,
-        });
-    }
-
-    /// <summary>
-    /// 双调用测试：在**同一 async 链中**依次调用 IModelResolver.ResolveAsync 两次 —
-    /// 第 1 次带 expectedModel（模拟 OpenAIImageClient 入口），第 2 次传 null
-    /// （模拟 LlmGateway.SendRawAsync 内部的硬编码 null 调用）。
-    /// 如果装饰器的 AsyncLocal 生效，第 2 次应该自动恢复 expectedModel 并返回同样的 actualModel。
-    /// </summary>
-    [HttpPost("test-chain")]
-    public async Task<IActionResult> TestChain(
-        [FromBody] ResolverTestRequest body,
-        CancellationToken ct)
-    {
-        var code = (body?.AppCallerCode ?? string.Empty).Trim();
-        var type = string.IsNullOrWhiteSpace(body?.ModelType) ? "generation" : body.ModelType.Trim();
-        var expected = string.IsNullOrWhiteSpace(body?.ExpectedModel) ? null : body.ExpectedModel.Trim();
-        if (string.IsNullOrWhiteSpace(code)) return BadRequest(new { error = "appCallerCode 不能为空" });
-
-        _logger.LogWarning("[TestChain] === START === code={Code} expected='{Expected}'", code, expected ?? "(null)");
-
-        // 第 1 次：带 expectedModel（模拟 OpenAIImageClient.GenerateAsync 入口）
-        ModelResolutionResult? r1 = null;
-        string? err1 = null;
-        try { r1 = await _resolver.ResolveAsync(code, type, expected, ct); }
-        catch (Exception ex) { err1 = ex.Message; }
-
-        // 第 2 次：expectedModel=null（模拟 LlmGateway.SendRawAsync 内部）
-        // 重要：同一 async method 内，AsyncLocal 应该保留第 1 次的值
-        ModelResolutionResult? r2 = null;
-        string? err2 = null;
-        try { r2 = await _resolver.ResolveAsync(code, type, null, ct); }
-        catch (Exception ex) { err2 = ex.Message; }
-
-        _logger.LogWarning(
-            "[TestChain] === END === call1(expected={E1}) → actual={A1} pool={P1} | call2(null) → actual={A2} pool={P2}",
-            expected ?? "(null)",
-            r1?.ActualModel ?? "(null)",
-            r1?.ModelGroupName ?? "(null)",
-            r2?.ActualModel ?? "(null)",
-            r2?.ModelGroupName ?? "(null)");
-
-        return Ok(new
-        {
-            input = new { appCallerCode = code, modelType = type, expectedModel = expected },
-            call1_with_expected = new
-            {
-                error = err1,
-                actualModel = r1?.ActualModel,
-                modelGroupName = r1?.ModelGroupName,
-                resolutionType = r1?.ResolutionType,
-                success = r1?.Success,
-            },
-            call2_with_null = new
-            {
-                error = err2,
-                actualModel = r2?.ActualModel,
-                modelGroupName = r2?.ModelGroupName,
-                resolutionType = r2?.ResolutionType,
-                success = r2?.Success,
-            },
-            asyncLocalWorks = r1?.ActualModel == r2?.ActualModel,
-            verdict = r1?.ActualModel == r2?.ActualModel
-                ? "AsyncLocal WORKS — SendRawAsync 内部 null 调用会得到正确 model"
-                : $"AsyncLocal BROKEN — call1={r1?.ActualModel} call2={r2?.ActualModel}（这就是实际生图时 SendRawAsync 覆盖上游 model 的原因）"
         });
     }
 
