@@ -11,14 +11,22 @@ import { TeamDashboard } from './components/TeamDashboard';
 import { SettingsPanel } from './components/SettingsPanel';
 import { UsageGuideOverlay } from './components/UsageGuideOverlay';
 import { ZoomControl, ZOOM_SCALE, type ZoomLevel } from './components/ZoomControl';
+import { ThemeControl, type ColorScheme } from './components/ThemeControl';
 
 const ZOOM_STORAGE_KEY = 'report-agent:zoom';
+const COLOR_SCHEME_STORAGE_KEY = 'report-agent:color-scheme';
 
 function readZoomFromStorage(): ZoomLevel {
   if (typeof window === 'undefined') return 'normal';
   const raw = window.sessionStorage.getItem(ZOOM_STORAGE_KEY);
   if (raw === 'large' || raw === 'extra') return raw;
   return 'normal';
+}
+
+function readColorSchemeFromStorage(): ColorScheme {
+  if (typeof window === 'undefined') return 'dark';
+  const raw = window.sessionStorage.getItem(COLOR_SCHEME_STORAGE_KEY);
+  return raw === 'light' ? 'light' : 'dark';
 }
 
 /**
@@ -49,6 +57,11 @@ export default function ReportAgentPage() {
     if (typeof window === 'undefined') return;
     window.sessionStorage.setItem(ZOOM_STORAGE_KEY, zoom);
   }, [zoom]);
+  const [colorScheme, setColorScheme] = useState<ColorScheme>(readColorSchemeFromStorage);
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    window.sessionStorage.setItem(COLOR_SCHEME_STORAGE_KEY, colorScheme);
+  }, [colorScheme]);
   const [guideRole, setGuideRole] = useState<'manager' | 'member'>(() => {
     if (typeof window === 'undefined') return 'member';
     const cached = window.localStorage.getItem('report-agent.guide-role');
@@ -110,6 +123,7 @@ export default function ReportAgentPage() {
   const usageGuideActions = (
     <div className="flex items-center gap-2">
       <ZoomControl value={zoom} onChange={setZoom} />
+      <ThemeControl value={colorScheme} onChange={setColorScheme} />
       <Button
         variant="secondary"
         size="sm"
@@ -128,7 +142,11 @@ export default function ReportAgentPage() {
   const currentTab = tabItems.find((t) => t.key === activeTab) ? activeTab : 'report';
 
   return (
-    <div className="h-full min-h-0 flex flex-col gap-4">
+    <div
+      className="h-full min-h-0 flex flex-col gap-4"
+      data-theme={colorScheme === 'light' ? 'light' : undefined}
+      style={{ background: colorScheme === 'light' ? 'var(--bg-base)' : undefined }}
+    >
       <TabBar
         items={tabItems}
         activeKey={currentTab}

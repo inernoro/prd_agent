@@ -111,6 +111,49 @@
   }
 }
 
+/* ── 浅色模式（scope 化，仅在挂 data-theme="light" 的元素子树内生效）──
+   用途：周报 Agent 内浅色切换（挂在 ReportAgentPage 根容器）。
+   其他页面仍按 :root 的暗色默认值渲染，互不干扰。
+   设计：沿用所有暗色 token 的 key，仅覆盖值；保持 GlassCard/surface-*
+   等已全变量化组件零改动即可响应。                                     */
+[data-theme="light"] {
+  color-scheme: light;
+
+  --bg-base: #f8f2ed;
+  --bg-elevated: #f1eae4;
+  --bg-card: rgba(26, 26, 31, 0.04);
+  --bg-card-hover: rgba(26, 26, 31, 0.08);
+  --bg-input: #ffffff;
+  --bg-input-hover: #f5f5f5;
+
+  --panel: linear-gradient(180deg, rgba(255, 255, 255, 0.92) 0%, rgba(255, 255, 255, 0.78) 100%);
+  --panel-solid: rgba(255, 255, 255, 0.92);
+
+  --border-faint: rgba(26, 26, 31, 0.06);
+  --border-subtle: rgba(26, 26, 31, 0.10);
+  --border-default: rgba(26, 26, 31, 0.16);
+  --border-hover: rgba(26, 26, 31, 0.24);
+  /* border-focus 沿用 indigo，浅底上仍有明显聚焦识别度 */
+
+  /* 玻璃效果：浅底上用"白色玻璃"叠加形成卡片层次 */
+  --glass-bg-start: rgba(255, 255, 255, 0.85);
+  --glass-bg-end: rgba(255, 255, 255, 0.62);
+  --glass-border: rgba(26, 26, 31, 0.12);
+
+  --glass-bg: rgba(255, 255, 255, 0.75);
+  --glass-bg-strong: rgba(255, 255, 255, 0.92);
+  --glass-ring: rgba(26, 26, 31, 0.08);
+  --glass-shadow: 0 12px 36px rgba(26, 26, 31, 0.12);
+
+  --text-primary: #1a1a1f;
+  --text-secondary: rgba(26, 26, 31, 0.78);
+  --text-muted: rgba(26, 26, 31, 0.55);
+
+  /* 阴影：浅底要更克制，避免"黑框"感 */
+  --shadow-card: 0 2px 10px rgba(26, 26, 31, 0.08);
+  --shadow-card-hover: 0 6px 18px rgba(26, 26, 31, 0.12);
+}
+
 html, body {
   height: 100%;
   width: 100%;
