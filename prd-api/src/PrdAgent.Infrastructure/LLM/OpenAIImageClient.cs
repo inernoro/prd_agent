@@ -394,7 +394,7 @@ public class OpenAIImageClient
                         "[OpenAIImageClient] Exchange 统一请求: AppCallerCode={AppCallerCode}, HasImage={HasImage}, Size={Size}",
                         appCallerCode, initImageBase64 != null, requestedSizeNorm);
 
-                    return await _gateway.SendRawAsync(new GatewayRawRequest
+                    return await _gateway.SendRawWithResolutionAsync(new GatewayRawRequest
                     {
                         AppCallerCode = appCallerCode,
                         ModelType = "generation",
@@ -411,7 +411,7 @@ public class OpenAIImageClient
                             ViewRole = ctx?.ViewRole,
                             QuestionText = prompt.Trim()
                         }
-                    }, token);
+                    }, resolution, token);
                 }
                 // Google 原生路径：文生图/图生图/局部重绘统一用 generateContent 格式
                 else if (platformType == "google" || platformType == "gemini")
@@ -427,7 +427,7 @@ public class OpenAIImageClient
                         "AspectRatio={AspectRatio}, ImageSize={ImageSize}, Endpoint={Endpoint}",
                         appCallerCode, initImageBase64 != null, maskBase64 != null, googleAspectRatio, googleImageSize, googleEndpointPath);
 
-                    return await _gateway.SendRawAsync(new GatewayRawRequest
+                    return await _gateway.SendRawWithResolutionAsync(new GatewayRawRequest
                     {
                         AppCallerCode = appCallerCode,
                         ModelType = "generation",
@@ -445,7 +445,7 @@ public class OpenAIImageClient
                             ViewRole = ctx?.ViewRole,
                             QuestionText = prompt.Trim()
                         }
-                    }, token);
+                    }, resolution, token);
                 }
                 else if (initImageBase64 == null)
                 {
@@ -497,7 +497,7 @@ public class OpenAIImageClient
                         }
                     };
 
-                    return await _gateway.SendRawAsync(gatewayRequest, token);
+                    return await _gateway.SendRawWithResolutionAsync(gatewayRequest, resolution, token);
                 }
                 else
                 {
@@ -585,7 +585,7 @@ public class OpenAIImageClient
                         }
                     };
 
-                    return await _gateway.SendRawAsync(gatewayRequest, token);
+                    return await _gateway.SendRawWithResolutionAsync(gatewayRequest, resolution, token);
                 }
             }
 
@@ -1039,7 +1039,7 @@ public class OpenAIImageClient
 
             try
             {
-                var gatewayResp = await _gateway.SendRawAsync(new GatewayRawRequest
+                var gatewayResp = await _gateway.SendRawWithResolutionAsync(new GatewayRawRequest
                 {
                     AppCallerCode = appCallerCode,
                     ModelType = "generation",
@@ -1063,7 +1063,7 @@ public class OpenAIImageClient
                             MimeType = r.MimeType
                         }).ToList()
                     }
-                }, ct);
+                }, resolution, ct);
 
                 var respBody = gatewayResp.Content ?? string.Empty;
                 if (!gatewayResp.Success)
@@ -1206,7 +1206,7 @@ public class OpenAIImageClient
                 var googleTimeout = _config.GetValue<int?>("LLM:ImageGenTimeoutSeconds") ?? 600;
                 googleTimeout = Math.Clamp(googleTimeout, 60, 3600);
 
-                var gatewayResp = await _gateway.SendRawAsync(new GatewayRawRequest
+                var gatewayResp = await _gateway.SendRawWithResolutionAsync(new GatewayRawRequest
                 {
                     AppCallerCode = appCallerCode,
                     ModelType = "generation",
@@ -1231,7 +1231,7 @@ public class OpenAIImageClient
                             MimeType = r.MimeType
                         }).ToList()
                     }
-                }, ct);
+                }, resolution, ct);
 
                 var respBody = gatewayResp.Content ?? string.Empty;
                 if (!gatewayResp.Success)
@@ -1438,7 +1438,7 @@ public class OpenAIImageClient
                 }
             };
 
-            var gatewayResp = await _gateway.SendRawAsync(gatewayRequest, ct);
+            var gatewayResp = await _gateway.SendRawWithResolutionAsync(gatewayRequest, resolution, ct);
             var respBody = gatewayResp.Content ?? string.Empty;
 
             _logger.LogInformation(
