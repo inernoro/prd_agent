@@ -50,6 +50,16 @@ public interface ILlmGateway
     Task<GatewayRawResponse> SendRawAsync(GatewayRawRequest request, CancellationToken ct = default);
 
     /// <summary>
+    /// 发送原始 HTTP 请求（使用调用方已解析的模型 Resolution，跳过内部 Resolve 步骤）。
+    /// 遵循 compute-then-send 原则：当调用方已通过 ResolveModelAsync 完成模型调度，
+    /// 再调用此方法可避免 Gateway 内部的第二次 ResolveAsync，保证 "选什么用什么"。
+    /// </summary>
+    Task<GatewayRawResponse> SendRawWithResolutionAsync(
+        GatewayRawRequest request,
+        GatewayModelResolution resolution,
+        CancellationToken ct = default);
+
+    /// <summary>
     /// 预解析模型调度结果（不发送请求）
     /// 用于前端展示可用模型池信息
     /// </summary>

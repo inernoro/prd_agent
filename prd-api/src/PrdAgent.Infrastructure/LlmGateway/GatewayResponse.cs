@@ -217,6 +217,20 @@ public class GatewayModelResolution
 
     /// <summary>Exchange 转换器类型</summary>
     public string? ExchangeTransformerType { get; init; }
+
+    // ========== 发送阶段所需字段（compute-then-send 原则）==========
+    // 调用 SendRawWithResolutionAsync 时需要这些字段，避免在发送阶段二次 Resolve
+
+    /// <summary>
+    /// API Key（已解密）。SendRawWithResolutionAsync 需要此字段以直接发送 HTTP 请求。
+    /// </summary>
+    public string? ApiKey { get; init; }
+
+    /// <summary>Exchange 认证方案（如 "Bearer", "Key", "XApiKey"）</summary>
+    public string? ExchangeAuthScheme { get; init; }
+
+    /// <summary>Exchange 转换器配置</summary>
+    public Dictionary<string, object>? ExchangeTransformerConfig { get; init; }
 }
 
 /// <summary>
