@@ -1,5 +1,5 @@
 import { useMemo, useState, useEffect } from 'react';
-import { ChevronDown, ChevronRight, CalendarDays, CornerUpLeft, CheckCircle2, Clock, AlertCircle } from 'lucide-react';
+import { ChevronDown, ChevronRight, CalendarDays, CheckCircle2, Clock, AlertCircle } from 'lucide-react';
 import { MapSpinner } from '@/components/ui/VideoLoader';
 import type { TeamDashboardMember } from '@/services/contracts/reportAgent';
 import { WeeklyReportStatus, ReportTeamRole } from '@/services/contracts/reportAgent';
@@ -248,10 +248,6 @@ export function WeekNavRail({
     if (jumpWeek < 1) setJumpWeek(1);
   }, [jumpYear, jumpWeek]);
 
-  const handleBackToCurrent = () => {
-    onSelectWeek(nowIso.weekYear, nowIso.weekNumber);
-  };
-
   const toggleYearExpanded = (year: number) => {
     setExpandedYears((prev) => {
       const next = new Set(prev);
@@ -327,15 +323,6 @@ export function WeekNavRail({
             ))}
           </select>
         </div>
-        <button
-          type="button"
-          onClick={handleBackToCurrent}
-          className="flex items-center justify-center gap-1 rounded-lg py-1.5 text-[11px] transition-all surface-inset hover:opacity-85"
-          style={{ color: 'var(--text-secondary)' }}
-        >
-          <CornerUpLeft size={11} />
-          跳回本周（{nowIso.weekYear} W{nowIso.weekNumber}）
-        </button>
       </div>
 
       {/* 年/周两级列表 */}
