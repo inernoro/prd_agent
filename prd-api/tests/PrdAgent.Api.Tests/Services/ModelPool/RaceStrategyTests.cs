@@ -137,8 +137,8 @@ public class RaceStrategyTests
         var request = TestDataHelper.CreateRequest();
         var healthTracker = new PoolHealthTracker();
         var dispatcher = new MockPoolHttpDispatcher()
-            .WithEndpoint("plat-1:fail-model", new EndpointBehavior { ShouldFail = true, LatencyMs = 10 })
-            .WithEndpoint("plat-2:ok-model", new EndpointBehavior { LatencyMs = 50, ResponseBody = "{}" });
+            .WithEndpoint("plat-1:fail-model", new EndpointBehavior { ShouldFail = true, LatencyMs = 0 })
+            .WithEndpoint("plat-2:ok-model", new EndpointBehavior { LatencyMs = 100, ResponseBody = "{}" });
 
         await _strategy.ExecuteAsync(endpoints, request, healthTracker, dispatcher);
 

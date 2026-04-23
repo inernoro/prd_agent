@@ -17,6 +17,7 @@ public class OpenRouterVideoClient : IOpenRouterVideoClient
     private readonly ILogger<OpenRouterVideoClient> _logger;
     // 缓存 SubmitAsync 阶段的解析结果，供同一 Scoped 实例的轮询调用复用（避免每次 poll 都查一次 DB）
     private GatewayModelResolution? _submitResolution;
+    private string? _submitAppCallerCode;
 
     public OpenRouterVideoClient(ILlmGateway gateway, ILogger<OpenRouterVideoClient> logger)
     {
@@ -97,6 +98,7 @@ public class OpenRouterVideoClient : IOpenRouterVideoClient
 
         // 缓存解析结果供后续轮询复用（同一 Scoped 实例负责 submit + N 次 poll）
         _submitResolution = resolution;
+        _submitAppCallerCode = request.AppCallerCode;
 
         return new OpenRouterVideoSubmitResult
         {
@@ -115,7 +117,8 @@ public class OpenRouterVideoClient : IOpenRouterVideoClient
         }
 
         // 优先复用 SubmitAsync 已算好的解析结果，避免每次轮询都查一次 DB
-        var statusResolution = (_submitResolution?.Success == true)
+        // 仅在 appCallerCode 匹配时复用缓存，防止跨上下文重用错误的解析结果
+        var statusResolution = (_submitResolution?.Success == true && _submitAppCallerCode == appCallerCode)
             ? _submitResolution
             : await _gateway.ResolveModelAsync(appCallerCode, ModelTypes.VideoGen, null, ct);
         if (!statusResolution.Success)
