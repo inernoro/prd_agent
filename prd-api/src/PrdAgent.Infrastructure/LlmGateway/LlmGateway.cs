@@ -557,9 +557,9 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
 
         try
         {
-            // 1. 模型调度
+            // 1. 模型调度（传入调用方预置的 ExpectedModel，避免二次 Resolve 选出不同模型）
             resolution = await _modelResolver.ResolveAsync(
-                request.AppCallerCode, request.ModelType, null, ct);
+                request.AppCallerCode, request.ModelType, request.ExpectedModel, ct);
 
             if (!resolution.Success || string.IsNullOrWhiteSpace(resolution.ActualModel))
             {

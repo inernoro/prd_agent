@@ -398,6 +398,7 @@ public class OpenAIImageClient
                     {
                         AppCallerCode = appCallerCode,
                         ModelType = "generation",
+                        ExpectedModel = effectiveModelName,
                         RequestBody = exchangeBody,
                         IsMultipart = false,
                         TimeoutSeconds = imageGenTimeoutSeconds,
@@ -430,6 +431,7 @@ public class OpenAIImageClient
                     {
                         AppCallerCode = appCallerCode,
                         ModelType = "generation",
+                        ExpectedModel = effectiveModelName,
                         EndpointPath = googleEndpointPath,
                         RequestBody = googleBody,
                         IsMultipart = false,
@@ -479,6 +481,7 @@ public class OpenAIImageClient
                     {
                         AppCallerCode = appCallerCode,
                         ModelType = "generation",
+                        ExpectedModel = effectiveModelName,
                         EndpointPath = endpointPath,
                         RequestBody = requestBody,
                         IsMultipart = false,
@@ -565,6 +568,7 @@ public class OpenAIImageClient
                     {
                         AppCallerCode = appCallerCode,
                         ModelType = "generation",
+                        ExpectedModel = effectiveModelName,
                         EndpointPath = endpointPath,
                         IsMultipart = true,
                         MultipartFields = multipartFields,
@@ -1039,6 +1043,7 @@ public class OpenAIImageClient
                 {
                     AppCallerCode = appCallerCode,
                     ModelType = "generation",
+                    ExpectedModel = effectiveModelName,
                     RequestBody = exchangeBody,
                     IsMultipart = false,
                     TimeoutSeconds = exchangeTimeout,
@@ -1205,6 +1210,7 @@ public class OpenAIImageClient
                 {
                     AppCallerCode = appCallerCode,
                     ModelType = "generation",
+                    ExpectedModel = effectiveModelName,
                     EndpointPath = googleEndpointPath,
                     RequestBody = googleBody,
                     IsMultipart = false,
@@ -1409,6 +1415,7 @@ public class OpenAIImageClient
             {
                 AppCallerCode = appCallerCode,
                 ModelType = "generation",
+                ExpectedModel = effectiveModelName,
                 EndpointPath = "/v1/chat/completions",
                 RequestBody = requestBody,
                 IsMultipart = false,
