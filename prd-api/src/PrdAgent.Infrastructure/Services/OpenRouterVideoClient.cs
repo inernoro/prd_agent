@@ -15,6 +15,8 @@ public class OpenRouterVideoClient : IOpenRouterVideoClient
 {
     private readonly ILlmGateway _gateway;
     private readonly ILogger<OpenRouterVideoClient> _logger;
+    // 缓存 SubmitAsync 阶段的解析结果，供同一 Scoped 实例的轮询调用复用（避免每次 poll 都查一次 DB）
+    private GatewayModelResolution? _submitResolution;
 
     public OpenRouterVideoClient(ILlmGateway gateway, ILogger<OpenRouterVideoClient> logger)
     {
@@ -93,6 +95,9 @@ public class OpenRouterVideoClient : IOpenRouterVideoClient
 
         double? cost = ReadCost(doc);
 
+        // 缓存解析结果供后续轮询复用（同一 Scoped 实例负责 submit + N 次 poll）
+        _submitResolution = resolution;
+
         return new OpenRouterVideoSubmitResult
         {
             Success = true,
@@ -109,7 +114,10 @@ public class OpenRouterVideoClient : IOpenRouterVideoClient
             return new OpenRouterVideoStatus { Status = "failed", ErrorMessage = "jobId 不能为空" };
         }
 
-        var statusResolution = await _gateway.ResolveModelAsync(appCallerCode, ModelTypes.VideoGen, null, ct);
+        // 优先复用 SubmitAsync 已算好的解析结果，避免每次轮询都查一次 DB
+        var statusResolution = (_submitResolution?.Success == true)
+            ? _submitResolution
+            : await _gateway.ResolveModelAsync(appCallerCode, ModelTypes.VideoGen, null, ct);
         if (!statusResolution.Success)
             return new OpenRouterVideoStatus { Status = "failed", ErrorMessage = statusResolution.ErrorMessage };
 
