@@ -469,6 +469,7 @@ export function TeamDashboard() {
         currentWeekMembers={currentWeekMembers}
         currentWeekLoading={reportsLoading}
         hasTeam={!!selectedTeamId}
+        teamName={selectedTeam?.name}
         onSelectWeek={jumpToWeek}
         onSelectMember={handleSelectMember}
       />
