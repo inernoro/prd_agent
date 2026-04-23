@@ -3,7 +3,6 @@ import { createPortal } from 'react-dom';
 import { useSearchParams } from 'react-router-dom';
 import {
   Bell,
-  Bot,
   Check,
   ChevronDown,
   ChevronRight,
@@ -64,12 +63,11 @@ const DEFAULT_ACCENT = '#7c3aed';
 type SaveStatus = 'idle' | 'saving' | 'saved' | 'failed';
 type PageProgress = 'pending' | 'generating-image' | 'done' | 'failed';
 type MediaSlot = 'primary' | 'secondary';
-type WorkspaceMenuKey = 'project' | 'template' | 'assets' | 'agent' | 'pages' | 'publish';
-type WorkspaceTab = 'content' | 'assets' | 'layout' | 'agent';
+type WorkspaceMenuKey = 'project' | 'template' | 'assets' | 'pages' | 'publish';
+type WorkspaceTab = 'content' | 'assets' | 'layout';
 type DevicePreview = 'desktop' | 'mobile';
 type CanvasOrientation = 'landscape' | 'portrait';
 type CreateMode = 'guided' | 'manual';
-type AgentTarget = 'prompt' | 'body';
 type AgentStatus = 'done' | 'working' | 'waiting';
 
 interface PosterDesignerPageProps {
@@ -95,17 +93,10 @@ interface BatchConfig {
   smartImage: boolean;
 }
 
-interface AgentLogEntry {
-  id: number;
-  role: 'user' | 'system';
-  text: string;
-}
-
 const WORKSPACE_MENU: Array<{ key: WorkspaceMenuKey; label: string; icon: React.ReactNode }> = [
   { key: 'project', label: '项目', icon: <FolderOpen size={16} /> },
-  { key: 'template', label: '模板', icon: <Layers size={16} /> },
+  { key: 'template', label: '版式', icon: <Layers size={16} /> },
   { key: 'assets', label: '素材库', icon: <ImagePlus size={16} /> },
-  { key: 'agent', label: 'AI Agent', icon: <Sparkles size={16} /> },
   { key: 'pages', label: '页面管理', icon: <FileText size={16} /> },
   { key: 'publish', label: '发布记录', icon: <History size={16} /> },
 ];
@@ -155,14 +146,10 @@ export default function PosterDesignerPage({ embedded = false }: PosterDesignerP
     smartImage: true,
   });
   const [publishNote, setPublishNote] = useState('');
-  const [agentTarget, setAgentTarget] = useState<AgentTarget>('prompt');
-  const [agentInput, setAgentInput] = useState('');
-  const [agentLogs, setAgentLogs] = useState<AgentLogEntry[]>([]);
   const lastSavedSignatureRef = useRef('');
   const saveTimerRef = useRef<number | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const uploadSlotRef = useRef<MediaSlot>('primary');
-  const agentInputRef = useRef<HTMLTextAreaElement | null>(null);
 
   const pages = useMemo(
     () => [...(poster?.pages ?? [])].sort((a, b) => a.order - b.order),
@@ -415,12 +402,6 @@ export default function PosterDesignerPage({ embedded = false }: PosterDesignerP
     toast.success('已添加新页面');
   }, [currentPage?.accentColor, pages.length, poster, selectedTemplate.accentPalette, updateDraft]);
 
-  const focusAgent = useCallback(() => {
-    setActiveMenu('agent');
-    setWorkspaceTab('agent');
-    window.requestAnimationFrame(() => agentInputRef.current?.focus());
-  }, []);
-
   const openCreateModal = useCallback((preset?: CreatePosterInitialConfig) => {
     setCreateConfig(preset);
     setCreateOpen(true);
@@ -452,40 +433,11 @@ export default function PosterDesignerPage({ embedded = false }: PosterDesignerP
     setActiveMenu(key);
     if (key === 'template') setWorkspaceTab('layout');
     if (key === 'assets') setWorkspaceTab('assets');
-    if (key === 'agent') focusAgent();
     if (key === 'project' || key === 'pages' || key === 'publish') setWorkspaceTab('content');
   };
 
   const handleOpenBatchGenerator = () => {
     openGuidedCreator();
-  };
-
-  const handleAgentSubmit = () => {
-    const text = agentInput.trim();
-    if (!text || !currentPage) return;
-
-    if (agentTarget === 'prompt') {
-      updateCurrentPage({ imagePrompt: mergeInstruction(currentPage.imagePrompt, text) });
-      toast.success('已写入当前页配图提示词');
-      setAgentLogs((prev) => [
-        ...prev.slice(-5),
-        { id: Date.now(), role: 'user', text },
-        { id: Date.now() + 1, role: 'system', text: '已同步到当前页配图提示词，可继续点击 AI 生图。' },
-      ]);
-    } else {
-      const nextBody = currentPage.body?.trim()
-        ? `${currentPage.body.trim()}\n\n- ${text}`
-        : `- ${text}`;
-      updateCurrentPage({ body: nextBody });
-      toast.success('已追加到当前页正文草稿');
-      setAgentLogs((prev) => [
-        ...prev.slice(-5),
-        { id: Date.now(), role: 'user', text },
-        { id: Date.now() + 1, role: 'system', text: '已追加到当前页正文草稿，右侧内容助手可继续微调。' },
-      ]);
-    }
-
-    setAgentInput('');
   };
 
   const realAgentStatuses = useMemo(() => {
@@ -716,35 +668,6 @@ export default function PosterDesignerPage({ embedded = false }: PosterDesignerP
                     </button>
                   );
                 })}
-              </div>
-
-              <div className="mt-auto rounded-2xl p-3" style={{ background: 'rgba(96,66,255,0.1)', border: '1px solid rgba(126,106,255,0.26)' }}>
-                <div className="flex items-center gap-2 text-[12px] font-semibold text-white">
-                  <Bot size={15} />
-                  创建引导
-                </div>
-                <div className="mt-1 text-[10.5px] text-white/48">先导入文案生成整套分页，不满意再切到手动编辑。</div>
-                <button
-                  type="button"
-                  onClick={openGuidedCreator}
-                  className="mt-3 w-full h-9 rounded-xl inline-flex items-center justify-center gap-1.5 text-[12px] font-medium text-white"
-                  style={{
-                    background: 'linear-gradient(90deg, rgba(92,109,255,0.74), rgba(140,95,255,0.78))',
-                    border: '1px solid rgba(145,137,255,0.22)',
-                  }}
-                >
-                  <Sparkles size={14} />
-                  引导创建
-                </button>
-                <button
-                  type="button"
-                  onClick={openManualCreator}
-                  className="mt-2 w-full h-9 rounded-xl inline-flex items-center justify-center gap-1.5 text-[12px] font-medium text-white/82"
-                  style={glassButtonStyle}
-                >
-                  <Plus size={14} />
-                  空白创建
-                </button>
               </div>
             </aside>
 
@@ -1169,20 +1092,19 @@ export default function PosterDesignerPage({ embedded = false }: PosterDesignerP
               <section className="min-h-0 flex-1 rounded-2xl p-4 flex flex-col" style={glassCardStyle}>
                 <div className="flex items-center justify-between">
                   <div>
-                    <div className="text-[13px] font-semibold text-white">协作面板</div>
-                    <div className="mt-1 text-[11px] text-white/42">内容、素材、版式和 Agent 协作都收敛在这里</div>
+                    <div className="text-[13px] font-semibold text-white">编辑面板</div>
+                    <div className="mt-1 text-[11px] text-white/42">这里只保留正文、素材和版式三个核心编辑能力。</div>
                   </div>
                   <div className="w-7 h-7 rounded-full inline-flex items-center justify-center text-[11px] font-semibold text-white" style={{ background: 'rgba(56,139,255,0.22)', border: '1px solid rgba(105,159,255,0.26)' }}>
                     2
                   </div>
                 </div>
 
-                <div className="mt-4 grid grid-cols-4 gap-1 rounded-xl p-1" style={{ background: 'rgba(255,255,255,0.035)', border: '1px solid rgba(255,255,255,0.08)' }}>
+                <div className="mt-4 grid grid-cols-3 gap-1 rounded-xl p-1" style={{ background: 'rgba(255,255,255,0.035)', border: '1px solid rgba(255,255,255,0.08)' }}>
                   {([
-                    ['content', '内容助手', <MessageSquare size={13} />],
+                    ['content', '正文编辑', <MessageSquare size={13} />],
                     ['assets', '素材上传', <ImagePlus size={13} />],
                     ['layout', '版式设置', <SlidersHorizontal size={13} />],
-                    ['agent', 'AI Agent 协作', <Bot size={13} />],
                   ] as const).map(([value, label, icon]) => (
                     <button
                       key={value}
@@ -1359,96 +1281,10 @@ export default function PosterDesignerPage({ embedded = false }: PosterDesignerP
                         </div>
                       </div>
                     )}
-
-                    {workspaceTab === 'agent' && (
-                      <div className="mt-4 flex-1 min-h-0 flex flex-col">
-                        <div className="space-y-2">
-                          {realAgentStatuses.map((item) => (
-                            <AgentStatusRow key={item.label} label={item.label} detail={item.detail} status={item.status} />
-                          ))}
-                        </div>
-
-                        <div className="mt-4 flex-1 min-h-0 rounded-2xl p-3 flex flex-col" style={{ background: 'rgba(4,10,20,0.7)', border: '1px solid rgba(255,255,255,0.08)' }}>
-                          <div className="text-[11px] font-semibold tracking-[0.12em] uppercase text-white/34">协作记录</div>
-                          <div className="mt-3 flex-1 min-h-0 overflow-y-auto space-y-2 pr-1">
-                            {agentLogs.length > 0 ? (
-                              agentLogs.map((log) => (
-                                <div
-                                  key={log.id}
-                                  className="rounded-xl px-3 py-2 text-[12px]"
-                                  style={{
-                                    background: log.role === 'user' ? 'rgba(86,106,255,0.16)' : 'rgba(255,255,255,0.04)',
-                                    border: log.role === 'user' ? '1px solid rgba(117,153,255,0.24)' : '1px solid rgba(255,255,255,0.08)',
-                                    color: log.role === 'user' ? '#dfe7ff' : 'rgba(255,255,255,0.72)',
-                                  }}
-                                >
-                                  {log.text}
-                                </div>
-                              ))
-                            ) : (
-                              <div className="h-full min-h-[120px] flex items-center justify-center text-center text-[12px] text-white/38">
-                                Agent 指令会记录在这里，方便继续协作和回看。
-                              </div>
-                            )}
-                          </div>
-
-                          <div className="mt-3 flex items-center gap-2">
-                            <button
-                              type="button"
-                              onClick={() => setAgentTarget('prompt')}
-                              className="h-8 rounded-lg px-3 text-[11px] font-medium"
-                              style={{
-                                background: agentTarget === 'prompt' ? 'rgba(90,109,255,0.16)' : 'rgba(255,255,255,0.04)',
-                                border: agentTarget === 'prompt' ? '1px solid rgba(117,153,255,0.24)' : '1px solid rgba(255,255,255,0.08)',
-                                color: agentTarget === 'prompt' ? '#fff' : 'rgba(255,255,255,0.58)',
-                              }}
-                            >
-                              写入配图提示词
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => setAgentTarget('body')}
-                              className="h-8 rounded-lg px-3 text-[11px] font-medium"
-                              style={{
-                                background: agentTarget === 'body' ? 'rgba(90,109,255,0.16)' : 'rgba(255,255,255,0.04)',
-                                border: agentTarget === 'body' ? '1px solid rgba(117,153,255,0.24)' : '1px solid rgba(255,255,255,0.08)',
-                                color: agentTarget === 'body' ? '#fff' : 'rgba(255,255,255,0.58)',
-                              }}
-                            >
-                              追加正文草稿
-                            </button>
-                          </div>
-
-                          <div className="mt-2 flex items-end gap-2">
-                            <textarea
-                              ref={agentInputRef}
-                              value={agentInput}
-                              onChange={(e) => setAgentInput(e.target.value)}
-                              rows={3}
-                              className="flex-1 rounded-xl px-3 py-2 text-[12px] outline-none resize-none"
-                              style={fieldStyle}
-                              placeholder="例如：强调优惠力度、更突出主图主体、把卖点压缩成三行"
-                            />
-                            <button
-                              type="button"
-                              onClick={handleAgentSubmit}
-                              disabled={!currentPage || !agentInput.trim()}
-                              className="w-11 h-11 rounded-xl inline-flex items-center justify-center text-white disabled:opacity-40"
-                              style={{
-                                background: 'linear-gradient(90deg, rgba(90,109,255,0.8), rgba(179,82,255,0.8))',
-                                border: '1px solid rgba(160,119,255,0.34)',
-                              }}
-                            >
-                              <Send size={16} />
-                            </button>
-                          </div>
-                        </div>
-                      </div>
-                    )}
                   </>
                 ) : (
                   <div className="mt-4 flex-1 min-h-[240px] flex items-center justify-center text-[12px] text-white/38 text-center">
-                    选择海报后，这里会展开内容、素材、版式和 Agent 协作面板
+                    选择海报后，这里会展开正文、素材和版式编辑面板
                   </div>
                 )}
               </section>
@@ -2611,12 +2447,6 @@ function clampPageCount(value: number) {
 
 function dimensionLabel(orientation: CanvasOrientation) {
   return orientation === 'portrait' ? '1080 × 1350' : '1200 × 628';
-}
-
-function mergeInstruction(base: string | null | undefined, next: string) {
-  const left = (base ?? '').trim();
-  if (!left) return next;
-  return `${left}\n${next}`;
 }
 
 function clamp(value: number, min: number, max: number) {
