@@ -56,34 +56,72 @@ public class ExpectedModelRespectingResolver : IModelResolver
     {
         var traceId = Guid.NewGuid().ToString("N")[..8];
 
-        // ===== 关键：expectedModel 从 AsyncLocal 回放 =====
-        // 背景：LlmGateway.SendRawAsync 内部再次调用 ResolveAsync 时 expectedModel 硬编码 null
-        // （Infrastructure.dll 代码，改了部署不生效）。我们在第一次调用时把 expectedModel 存入
-        // AsyncLocal，第二次调用 null 时从 AsyncLocal 读回。
+        // ===== 全链路诊断：每次调用写 MongoDB _diag_resolver_calls =====
+        var instanceHash = this.GetHashCode().ToString("X");
+        var pendingBefore = _pendingExpected;
+        var stackFrames = new System.Diagnostics.StackTrace(1, false).GetFrames()
+            ?.Take(8)
+            .Select(f => $"{f.GetMethod()?.DeclaringType?.Name}.{f.GetMethod()?.Name}")
+            .ToList() ?? new List<string>();
+
+        // ===== 关键：expectedModel 从 instance field 回放 =====
         var effectiveExpected = expectedModel;
         if (string.IsNullOrWhiteSpace(effectiveExpected) && !string.IsNullOrWhiteSpace(_pendingExpected))
         {
             effectiveExpected = _pendingExpected;
             _logger.LogInformation(
-                "[Resolver-Decorator:{Trace}] expectedModel=null，从 scope 实例字段恢复 '{Recovered}'（同 DI scope 前一次 ResolveAsync）",
+                "[Resolver-Decorator:{Trace}] expectedModel=null，从 scope 实例字段恢复 '{Recovered}'",
                 traceId, effectiveExpected);
         }
         else if (!string.IsNullOrWhiteSpace(expectedModel))
         {
-            // 存入实例字段，供同 DI scope 后续调用读取
             _pendingExpected = expectedModel;
         }
 
+        // 写诊断（同步，避免与下游 await 交叉）
+        try
+        {
+            _db.Database.GetCollection<MongoDB.Bson.BsonDocument>("_diag_resolver_calls").InsertOne(
+                new MongoDB.Bson.BsonDocument
+                {
+                    { "_id", traceId },
+                    { "ts", DateTime.UtcNow },
+                    { "instanceHash", instanceHash },
+                    { "appCallerCode", appCallerCode ?? "" },
+                    { "modelType", modelType ?? "" },
+                    { "rawExpected", expectedModel ?? "(null)" },
+                    { "pendingBefore", pendingBefore ?? "(null)" },
+                    { "pendingAfter", _pendingExpected ?? "(null)" },
+                    { "effective", effectiveExpected ?? "(null)" },
+                    { "stack", string.Join(" <- ", stackFrames) }
+                });
+        }
+        catch (Exception dex) { _logger.LogWarning(dex, "[Resolver-Decorator:{Trace}] diag write failed", traceId); }
+
         _logger.LogInformation(
-            "[Resolver-Decorator:{Trace}] ENTRY appCallerCode={Code} modelType={Type} expectedModel='{Raw}' effective='{Effective}'",
-            traceId, appCallerCode, modelType, expectedModel ?? "(null)", effectiveExpected ?? "(null)");
+            "[Resolver-Decorator:{Trace}] ENTRY hash={Hash} appCallerCode={Code} raw='{Raw}' pendingBefore='{PB}' effective='{Effective}'",
+            traceId, instanceHash, appCallerCode,
+            expectedModel ?? "(null)", pendingBefore ?? "(null)", effectiveExpected ?? "(null)");
 
         if (string.IsNullOrWhiteSpace(effectiveExpected))
         {
             _logger.LogInformation(
                 "[Resolver-Decorator:{Trace}] 无 effectiveExpected → 委派内部 resolver",
                 traceId);
-            return await _inner.ResolveAsync(appCallerCode, modelType, expectedModel, ct);
+            var delegated = await _inner.ResolveAsync(appCallerCode, modelType, expectedModel, ct);
+            try
+            {
+                _db.Database.GetCollection<MongoDB.Bson.BsonDocument>("_diag_resolver_calls").UpdateOne(
+                    new MongoDB.Bson.BsonDocument { { "_id", traceId } },
+                    new MongoDB.Bson.BsonDocument { { "$set", new MongoDB.Bson.BsonDocument
+                    {
+                        { "branch", "DELEGATED" },
+                        { "returnedModel", delegated.ActualModel ?? "(null)" },
+                        { "returnedPool", delegated.ModelGroupName ?? "(null)" }
+                    }}});
+            }
+            catch { }
+            return delegated;
         }
 
         // 后续匹配逻辑用 effectiveExpected 代替 expectedModel
@@ -212,6 +250,21 @@ public class ExpectedModelRespectingResolver : IModelResolver
         _logger.LogInformation(
             "[Resolver-Decorator:{Trace}] 返回 FromPool: pool={Pool} model={Model} platform={Platform}",
             traceId, group.Name, selectedModel.ModelId, platform.Name);
+
+        // 诊断回写
+        try
+        {
+            _db.Database.GetCollection<MongoDB.Bson.BsonDocument>("_diag_resolver_calls").UpdateOne(
+                new MongoDB.Bson.BsonDocument { { "_id", traceId } },
+                new MongoDB.Bson.BsonDocument { { "$set", new MongoDB.Bson.BsonDocument
+                {
+                    { "branch", "HIT_FROM_POOL" },
+                    { "returnedModel", selectedModel.ModelId ?? "(null)" },
+                    { "returnedPool", group.Name ?? "(null)" },
+                    { "returnedPlatform", platform.Name ?? "(null)" }
+                }}});
+        }
+        catch { }
 
         return ModelResolutionResult.FromPool(
             resolutionType, expectedModel, selectedModel, group, platform, apiKey);
