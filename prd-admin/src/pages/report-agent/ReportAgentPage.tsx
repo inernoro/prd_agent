@@ -62,6 +62,21 @@ export default function ReportAgentPage() {
     if (typeof window === 'undefined') return;
     window.sessionStorage.setItem(COLOR_SCHEME_STORAGE_KEY, colorScheme);
   }, [colorScheme]);
+
+  // 把 data-theme 同步到 <html>,让 AppShell 的 <main>/body 也进入 scope;
+  // 组件卸载或切回暗色时清除,避免污染其他 Agent 页面。
+  useEffect(() => {
+    if (typeof document === 'undefined') return;
+    const root = document.documentElement;
+    if (colorScheme === 'light') {
+      root.setAttribute('data-theme', 'light');
+    } else {
+      root.removeAttribute('data-theme');
+    }
+    return () => {
+      root.removeAttribute('data-theme');
+    };
+  }, [colorScheme]);
   const [guideRole, setGuideRole] = useState<'manager' | 'member'>(() => {
     if (typeof window === 'undefined') return 'member';
     const cached = window.localStorage.getItem('report-agent.guide-role');
