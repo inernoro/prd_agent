@@ -175,7 +175,7 @@ public class TranscriptRunWorker : BackgroundService
             {
                 // 异步 submit+query ASR：Gateway 的 SendRawWithResolutionAsync 支持 IAsyncExchangeTransformer 轮询
                 _logger.LogInformation("[transcript-agent] 使用异步 ASR 路径: Exchange={ExchangeName}", resolution.ExchangeName);
-                await ProcessAsrViaGatewayAsync(db, gateway, run, item, resolution);
+                await ProcessAsrViaGatewayAsync(db, gateway, run, item, resolution.ToGatewayResolution());
             }
             else
             {
@@ -188,7 +188,7 @@ public class TranscriptRunWorker : BackgroundService
         else
         {
             // 非 Exchange 模型（Whisper 等）：走 Gateway HTTP 路径
-            await ProcessAsrViaGatewayAsync(db, gateway, run, item, resolution);
+            await ProcessAsrViaGatewayAsync(db, gateway, run, item, resolution.ToGatewayResolution());
         }
     }
 
