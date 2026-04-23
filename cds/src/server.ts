@@ -264,6 +264,8 @@ function resolveApiLabel(method: string, path: string): string {
     [/^DELETE \/build-profiles\/(.+)$/, '删除构建配置'],
     [/^PUT \/build-profiles\/(.+)\/deploy-mode$/, '切换部署模式'],
     [/^POST \/build-profiles\/(.+)\/hot-reload$/, '切换热更新'],
+    [/^POST \/branches\/(.+)\/force-rebuild\/(.+)$/, '强制干净重建'],
+    [/^POST \/branches\/(.+)\/verify-runtime\/(.+)$/, '运行时字节码核验'],
     [/^POST \/infra\/(.+)\/start$/, '启动基础设施'],
     [/^POST \/infra\/(.+)\/stop$/, '停止基础设施'],
     [/^POST \/infra\/(.+)\/restart$/, '重启基础设施'],

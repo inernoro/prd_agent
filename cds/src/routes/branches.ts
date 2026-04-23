@@ -2986,12 +2986,18 @@ export function createBranchRouter(deps: RouterDeps): Router {
         res.status(400).json({ error: '必须传 enabled (true/false)' });
         return;
       }
-      const current = profile.hotReload || { enabled: false, mode: 'dotnet-watch' as const };
+      // 2026-04-22 —— 默认改成 dotnet-restart（原来 dotnet-watch 有 MSBuild
+      // 增量编译误判的已知坑，见 types.ts HotReloadConfig 注释）。用户可以
+      // 显式指定 mode 回到 watch，但新启用默认用最可靠的那个。
+      const isDotnet = /dotnet|mcr\.microsoft\.com\/dotnet/i.test(profile.dockerImage || '');
+      const defaultMode = isDotnet ? ('dotnet-restart' as const) : ('pnpm-dev' as const);
+      const current = profile.hotReload || { enabled: false, mode: defaultMode };
       const next = {
         enabled,
         mode: mode ?? current.mode,
         command: command ?? current.command,
         usePolling: usePolling ?? current.usePolling,
+        cleanBeforeBuild: (req.body as { cleanBeforeBuild?: boolean })?.cleanBeforeBuild ?? (current as { cleanBeforeBuild?: boolean }).cleanBeforeBuild ?? true,
       };
       // mode=custom 时必须有 command
       if (next.enabled && next.mode === 'custom' && !next.command) {
@@ -3010,6 +3016,159 @@ export function createBranchRouter(deps: RouterDeps): Router {
     } catch (err) {
       res.status(500).json({ error: (err as Error).message });
     }
+  });
+
+  // ── 强制干净重建（2026-04-22，对付 MSBuild 增量编译撒谎）──
+  //
+  // 场景：改了 .cs 文件 5 轮都没生效，DLL 里 grep 得到新字符串，运行进程日志却看不到。
+  // 根因：MSBuild 增量编译误判「项目引用未变」跳过 compile，或 dotnet watch 只更新内存
+  //       没重启进程 → 进程加载的字节码和磁盘 DLL 对不上。
+  //
+  // 本接口：停该 profile 的容器 → rm -rf bin/obj → 重启（重启后会 clean build）。
+  // 对用 dotnet-restart 热更新模式的 profile 也适用，因为它的 cleanBeforeBuild 只在
+  // 下次文件变更触发时清理，强制按钮让用户即时清理而不等变更。
+  //
+  // POST /api/branches/:branchSlug/force-rebuild/:profileId
+  router.post('/branches/:branchSlug/force-rebuild/:profileId', async (req, res) => {
+    const branchSlug = decodeURIComponent(req.params.branchSlug);
+    const profileId = req.params.profileId;
+    const branch = stateService.getBranch(branchSlug);
+    const profile = stateService.getBuildProfile(profileId);
+    if (!branch) { res.status(404).json({ error: `分支 "${branchSlug}" 不存在` }); return; }
+    if (!profile) { res.status(404).json({ error: `构建配置 "${profileId}" 不存在` }); return; }
+
+    const svc = branch.services?.[profileId];
+    const containerName = svc?.containerName;
+    const worktree = branch.worktreePath;
+    if (!worktree) { res.status(400).json({ error: '分支无 worktreePath' }); return; }
+
+    const steps: Array<{ step: string; ok: boolean; detail?: string }> = [];
+
+    // 1) 停容器
+    if (containerName) {
+      try {
+        await containerService.stop(containerName);
+        steps.push({ step: `停止 ${containerName}`, ok: true });
+      } catch (err) {
+        steps.push({ step: `停止 ${containerName}`, ok: false, detail: (err as Error).message });
+      }
+    } else {
+      steps.push({ step: '停止容器', ok: true, detail: '容器未运行，跳过' });
+    }
+
+    // 2) 物理删除 worktree 下目标 profile workDir 里的 bin / obj —— 绕过 MSBuild 增量
+    const workDir = profile.workDir ? `${worktree}/${profile.workDir}` : worktree;
+    const wipeCmd = `find ${shq(workDir)} -type d \\( -name bin -o -name obj \\) -prune -exec rm -rf {} + 2>/dev/null; echo done`;
+    try {
+      const result = await shell.exec(wipeCmd);
+      if (result.exitCode !== 0) {
+        steps.push({ step: 'rm -rf bin/obj', ok: false, detail: combinedOutput(result) });
+      } else {
+        steps.push({ step: 'rm -rf bin/obj', ok: true, detail: workDir });
+      }
+    } catch (err) {
+      steps.push({ step: 'rm -rf bin/obj', ok: false, detail: (err as Error).message });
+    }
+
+    // 3) 触发部署（异步；响应立即返回，不堵 HTTP）
+    // 部署接口是现成的，这里直接告诉用户去点"部署"；自动触发留给下一版
+    steps.push({
+      step: '触发重新部署',
+      ok: true,
+      detail: `已清理。请在分支卡片上点「部署」或等待 autoBuild 重启该服务。`,
+    });
+
+    stateService.recordDestructiveOp({
+      type: 'other',
+      projectId: branch.projectId || null,
+      summary: `强制干净重建 ${branchSlug}:${profileId}（清 bin/obj）`,
+    });
+
+    res.json({
+      branch: branchSlug,
+      profile: profileId,
+      workDir,
+      steps,
+      message: '已强制清理构建缓存。下次部署会从源码完整重编译。',
+    });
+  });
+
+  // ── 运行时字节码一致性核验（2026-04-22 诊断工具）──
+  //
+  // 帮用户回答："我改的 .cs 到底生效了没有？"
+  //
+  // 三项对比：
+  //   - 容器里 DLL 文件 mtime：echo $(stat /app/.../bin/.../*.dll | grep Modify)
+  //   - 容器里 dotnet 进程 PID 启动时间：ps -o lstart -p $PID
+  //   - 最近 50 行容器 stdout：看请求/日志是不是按新代码应有的行为走
+  //
+  // 如果 DLL mtime > 进程启动时间 → 进程加载的还是老字节码，需要重启。
+  //
+  // POST /api/branches/:branchSlug/verify-runtime/:profileId
+  router.post('/branches/:branchSlug/verify-runtime/:profileId', async (req, res) => {
+    const branchSlug = decodeURIComponent(req.params.branchSlug);
+    const profileId = req.params.profileId;
+    const branch = stateService.getBranch(branchSlug);
+    if (!branch) { res.status(404).json({ error: `分支 "${branchSlug}" 不存在` }); return; }
+    const svc = branch.services?.[profileId];
+    const containerName = svc?.containerName;
+    if (!containerName) {
+      res.status(400).json({ error: `服务 "${profileId}" 未运行，无法诊断` });
+      return;
+    }
+
+    // 1) 进程启动时间
+    const psCmd = `docker exec ${shq(containerName)} sh -c "ps -o lstart= -p 1 2>/dev/null || ps -o lstart= -p \\$(pgrep -f 'dotnet run' | head -1) 2>/dev/null || echo unknown"`;
+    const ps = await shell.exec(psCmd).catch(err => ({ exitCode: 1, stdout: '', stderr: (err as Error).message }));
+
+    // 2) DLL 时间戳（遍历 bin/ 下所有 .dll 取最新）
+    const dllCmd = `docker exec ${shq(containerName)} sh -c "find . -name '*.dll' -path '*/bin/*' -printf '%T@ %p\\n' 2>/dev/null | sort -nr | head -5"`;
+    const dll = await shell.exec(dllCmd).catch(err => ({ exitCode: 1, stdout: '', stderr: (err as Error).message }));
+
+    // 3) 源码 .cs 最新改动时间
+    const srcCmd = `docker exec ${shq(containerName)} sh -c "find . -name '*.cs' -not -path '*/bin/*' -not -path '*/obj/*' -printf '%T@ %p\\n' 2>/dev/null | sort -nr | head -1"`;
+    const src = await shell.exec(srcCmd).catch(err => ({ exitCode: 1, stdout: '', stderr: (err as Error).message }));
+
+    // 4) 最近 50 行日志
+    const logs = await containerService.getLogs(containerName, 50).catch(() => '');
+
+    // 解析和诊断
+    const parseTop = (s: string) => {
+      const first = s.split('\n').filter(Boolean)[0] || '';
+      const [tsStr, ...pathParts] = first.split(/\s+/);
+      const ts = parseFloat(tsStr);
+      return { ts: Number.isFinite(ts) ? ts : null, path: pathParts.join(' ') };
+    };
+
+    const topDll = parseTop(dll.stdout || '');
+    const topSrc = parseTop(src.stdout || '');
+
+    const warnings: string[] = [];
+    if (topSrc.ts && topDll.ts && topSrc.ts > topDll.ts) {
+      warnings.push('⚠ 源码比 DLL 新：最新的 .cs 还没被编译进 DLL。说明容器内没跑重编译（watch 没触发或热更新没起）。');
+    }
+    // DLL 晚于进程启动时间 → 进程跑的还是老字节码
+    const processStartStr = (ps.stdout || '').trim();
+    if (topDll.ts && processStartStr && processStartStr !== 'unknown') {
+      const procTs = Date.parse(processStartStr) / 1000;
+      if (Number.isFinite(procTs) && topDll.ts > procTs + 5) {
+        warnings.push(`⚠ DLL 比进程启动时间新 (Δ=${Math.round(topDll.ts - procTs)}s)：进程还在跑老字节码。重启服务或点「💥 强制干净重建」。`);
+      }
+    }
+    if (warnings.length === 0) {
+      warnings.push('✓ 未检测到明显不一致。如仍看不到预期日志，排查：日志级别过滤、LogError 是否真走到那个代码路径、Infrastructure.dll 是不是被引用/注入。');
+    }
+
+    res.json({
+      branch: branchSlug,
+      profile: profileId,
+      container: containerName,
+      processStart: processStartStr,
+      latestDll: topDll,
+      latestSource: topSrc,
+      recentLogs: logs.split('\n').slice(-30).join('\n'),
+      warnings,
+    });
   });
 
   // ── Docker images (for dropdown selection) ──

@@ -116,23 +116,48 @@ export interface BuildProfile {
 /**
  * 热更新配置。mode 决定用哪种 watcher 命令，enabled=true 时 CDS 启动容器时
  * 用 `hotReload.command` 代替 `profile.command`。
+ *
+ * 2026-04-22 补丁：从踩过的坑里总结出来的防御措施——
+ *
+ *   ⚠ MSBuild 的 incremental compile 和 dotnet watch 的 hot reload 在我们这个
+ *     绑挂 worktree + 长驻容器的场景下有已知 bug：
+ *
+ *     现象：改代码 → publish/build 成功 → DLL 时间戳更新 → DLL 里 grep 得到新字符串
+ *          → 但运行进程加载的还是旧字节码 → 日志里看不到新日志。
+ *     根因：MSBuild 判定"项目引用未变"跳过 compile；或 dotnet watch hot reload
+ *          只应用到内存没重启进程，导致 Infrastructure.dll 反复 5 轮不生效。
+ *
+ *   解决：默认改成 `dotnet-restart` —— 明确 kill 进程 + clean + no-incremental +
+ *        重跑。放弃 hot reload 的"秒级生效"，换"每次生效"。
+ *        原来的 `dotnet-watch` 保留为可选，但不再是 .NET 项目的推荐默认。
+ *
+ *   如果还不生效：点 Profile 卡片的「💥 强制干净重建」—— 额外物理删掉 bin/obj，
+ *   避免文件系统缓存干扰。
  */
 export interface HotReloadConfig {
   /** 是否启用。即使配置了 mode/command，也要 enabled=true 才生效。 */
   enabled: boolean;
   /**
    * 热更新模式预设。选了模式，CDS 会用对应的默认命令；选 'custom' 则必须填 command。
-   *   dotnet-watch — .NET 8 的 `dotnet watch run --project ... --urls ...`
-   *   pnpm-dev    — `pnpm dev`（Next/Vite/SvelteKit 等）
-   *   vite        — `vite --host 0.0.0.0 --port <port>`
-   *   next-dev    — `pnpm next dev -p <port>`
-   *   custom      — 用户自填命令
+   *   dotnet-restart — ★ 推荐：文件变更时 kill 进程 + clean + no-incremental + 重跑
+   *                    牺牲秒级生效换可靠性，绕过 MSBuild 增量误判和 watch hot-reload
+   *                    不重启的坑
+   *   dotnet-watch   — .NET 8 的 `dotnet watch run`。**不推荐**：有已知漏判
+   *   pnpm-dev       — `pnpm dev`（Next/Vite/SvelteKit 等）
+   *   vite           — `vite --host 0.0.0.0 --port <port>`
+   *   next-dev       — `pnpm next dev -p <port>`
+   *   custom         — 用户自填命令
    */
-  mode: 'dotnet-watch' | 'pnpm-dev' | 'vite' | 'next-dev' | 'custom';
+  mode: 'dotnet-restart' | 'dotnet-watch' | 'pnpm-dev' | 'vite' | 'next-dev' | 'custom';
   /** 仅在 mode='custom' 时使用；其他 mode 下忽略。 */
   command?: string;
   /** 是否开启 polling（NFS / docker-on-mac 场景 inotify 不生效时）。默认 false。 */
   usePolling?: boolean;
+  /**
+   * dotnet-restart 模式下每次 rebuild 前是否先 `dotnet clean` + `rm -rf bin obj`。
+   * 默认 true —— 就是为了根治"DLL 看起来更新了但没真重建"的 MSBuild 增量误判。
+   */
+  cleanBeforeBuild?: boolean;
 }
 
 /** Readiness probe configuration for app services */

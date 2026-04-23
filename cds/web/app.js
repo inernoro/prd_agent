@@ -5173,9 +5173,17 @@ function openProfileModal() {
           : '';
         const hr = p.hotReload || {};
         const hrOn = !!hr.enabled;
-        const hrMode = hr.mode || 'dotnet-watch';
-        const hrModeOptions = ['dotnet-watch', 'pnpm-dev', 'vite', 'next-dev', 'custom']
-          .map(m => `<option value="${m}"${hrMode === m ? ' selected' : ''}>${m}</option>`).join('');
+        // 2026-04-22：.NET 默认 dotnet-restart；dotnet-watch 标红「不推荐」
+        const isDotnetImg = /dotnet|mcr\.microsoft\.com\/dotnet/i.test(p.dockerImage || '');
+        const hrMode = hr.mode || (isDotnetImg ? 'dotnet-restart' : 'pnpm-dev');
+        const hrModeOptions = [
+          ['dotnet-restart', 'dotnet-restart ★ 推荐'],
+          ['dotnet-watch', 'dotnet-watch ⚠ 有增量编译误判风险'],
+          ['pnpm-dev', 'pnpm-dev'],
+          ['vite', 'vite'],
+          ['next-dev', 'next-dev'],
+          ['custom', 'custom'],
+        ].map(([m, label]) => `<option value="${m}"${hrMode === m ? ' selected' : ''}>${label}</option>`).join('');
         const hotReloadHtml = `
           <div style="margin-top:4px;display:flex;align-items:center;gap:6px;padding:4px 6px;background:${hrOn ? 'rgba(239,68,68,0.08)' : 'transparent'};border-radius:4px">
             <label style="display:inline-flex;align-items:center;gap:4px;font-size:11px;cursor:pointer;color:${hrOn ? '#ef4444' : 'var(--text-muted)'}">
@@ -5201,6 +5209,8 @@ function openProfileModal() {
             ${hotReloadHtml}
           </div>
           <div class="config-item-actions">
+            <button class="icon-btn xs" onclick="_askBranchAndRun('${esc(p.id)}', 'verify')" title="核验运行时字节码是否是最新代码">🔍</button>
+            <button class="icon-btn xs" onclick="_askBranchAndRun('${esc(p.id)}', 'rebuild')" title="强制清 bin/obj + 重建（对付 MSBuild 增量撒谎）">💥</button>
             <button class="icon-btn xs danger-icon" onclick="deleteProfileAndRefresh('${esc(p.id)}')" title="删除">&times;</button>
           </div>
         </div>
@@ -5572,6 +5582,75 @@ async function setHotReloadMode(profileId, mode) {
   } catch (e) { showToast(e.message, 'error'); }
 }
 window.setHotReloadMode = setHotReloadMode;
+
+// 💥 强制干净重建（对付 MSBuild 增量编译撒谎）
+// 场景：改了 .cs 但运行时死活不生效，DLL 里 grep 得到新字符串、日志里看不到。
+// 本操作：停容器 → rm -rf bin/obj → 提示重新部署。
+async function forceRebuild(branchId, profileId) {
+  if (!confirm(
+    `强制干净重建 ${branchId} / ${profileId}？\n\n` +
+    `会执行：\n` +
+    `  1. 停止该服务容器\n` +
+    `  2. 物理删除 worktree 下的 bin/ 和 obj/ 目录\n` +
+    `  3. 提示手动点"部署"重新构建（下次构建会从源码完整重编译）\n\n` +
+    `用途：当 MSBuild 增量编译撒谎 / dotnet watch 卡住时破除缓存。数据库和代码不受影响。`
+  )) return;
+  try {
+    const resp = await api('POST', `/branches/${encodeURIComponent(branchId)}/force-rebuild/${encodeURIComponent(profileId)}`);
+    const details = (resp.steps || []).map(s => `${s.ok ? '✓' : '✗'} ${s.step}${s.detail ? ' — ' + s.detail : ''}`).join('\n');
+    alert((resp.message || '已清理') + '\n\n执行步骤：\n' + details);
+  } catch (e) { showToast(`强制重建失败：${e.message}`, 'error'); }
+}
+window.forceRebuild = forceRebuild;
+
+// 🔍 运行时字节码核验 —— 比对源码/DLL/进程启动时间
+// 用于回答："我改的 .cs 到底生效了没有"
+async function verifyRuntime(branchId, profileId) {
+  try {
+    const resp = await api('POST', `/branches/${encodeURIComponent(branchId)}/verify-runtime/${encodeURIComponent(profileId)}`);
+    const msg = [
+      `容器：${resp.container}`,
+      `进程启动：${resp.processStart}`,
+      `最新 DLL：${resp.latestDll?.path || '无'} (ts=${resp.latestDll?.ts || 'n/a'})`,
+      `最新源码：${resp.latestSource?.path || '无'} (ts=${resp.latestSource?.ts || 'n/a'})`,
+      '',
+      '诊断：',
+      ...(resp.warnings || []),
+      '',
+      '最近日志（末尾 30 行，复制贴到别处检查）：',
+      '```',
+      resp.recentLogs || '(空)',
+      '```',
+    ].join('\n');
+    alert(msg);
+  } catch (e) { showToast(`核验失败：${e.message}`, 'error'); }
+}
+window.verifyRuntime = verifyRuntime;
+
+// Profile 卡片按钮的 branch 选择器 —— 提示用户选哪个分支执行诊断/重建
+window._askBranchAndRun = function (profileId, action) {
+  // 全局 branches（line 388 的 module 变量）—— 已经按本项目过滤
+  const candidates = (typeof branches !== 'undefined' && Array.isArray(branches))
+    ? branches.filter(b => b && b.services && b.services[profileId])
+    : [];
+  if (candidates.length === 0) {
+    showToast(`没有找到正在运行 profile "${profileId}" 的分支`, 'info');
+    return;
+  }
+  let branchId;
+  if (candidates.length === 1) {
+    branchId = candidates[0].id;
+  } else {
+    const list = candidates.map((b, i) => `${i + 1}) ${b.id}`).join('\n');
+    const input = prompt(`选择分支（输入编号）：\n${list}`, '1');
+    if (!input) return;
+    const idx = parseInt(input, 10) - 1;
+    if (!(idx >= 0 && idx < candidates.length)) { showToast('编号无效', 'error'); return; }
+    branchId = candidates[idx].id;
+  }
+  if (action === 'verify') verifyRuntime(branchId, profileId);
+  else if (action === 'rebuild') forceRebuild(branchId, profileId);
+};
 
 async function switchModeAndDeploy(branchId, profileId, modeId) {
   try {
