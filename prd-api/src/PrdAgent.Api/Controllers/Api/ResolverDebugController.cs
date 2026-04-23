@@ -25,16 +25,79 @@ public class ResolverDebugController : ControllerBase
 {
     private readonly MongoDbContext _db;
     private readonly IModelResolver _resolver;
+    private readonly PrdAgent.Infrastructure.LlmGateway.ILlmGateway _gateway;
+    private readonly IServiceScopeFactory _scopeFactory;
     private readonly ILogger<ResolverDebugController> _logger;
 
     public ResolverDebugController(
         MongoDbContext db,
         IModelResolver resolver,
+        PrdAgent.Infrastructure.LlmGateway.ILlmGateway gateway,
+        IServiceScopeFactory scopeFactory,
         ILogger<ResolverDebugController> logger)
     {
         _db = db;
         _resolver = resolver;
+        _gateway = gateway;
+        _scopeFactory = scopeFactory;
         _logger = logger;
+    }
+
+    /// <summary>
+    /// 模拟 Worker 真实路径：用 _scopeFactory.CreateScope() 创建新 scope（而不是当前 HTTP 请求 scope），
+    /// 在新 scope 里解析 ILlmGateway，调用两次 ResolveModelAsync，对比 instance hash 和结果。
+    /// 目的：验证 test-chain 在 HTTP scope 里正常但真实 Worker 路径里的 LLM 日志仍然错误之谜。
+    /// </summary>
+    [HttpPost("simulate-worker")]
+    public async Task<IActionResult> SimulateWorker(
+        [FromBody] ResolverTestRequest body,
+        CancellationToken ct)
+    {
+        var code = (body?.AppCallerCode ?? string.Empty).Trim();
+        var type = string.IsNullOrWhiteSpace(body?.ModelType) ? "generation" : body.ModelType.Trim();
+        var expected = string.IsNullOrWhiteSpace(body?.ExpectedModel) ? null : body.ExpectedModel.Trim();
+
+        _logger.LogWarning("[SimulateWorker] === Creating new scope via _scopeFactory.CreateScope() ===");
+
+        // 和 ImageGenRunWorker Line 224 一样的调用方式
+        using var scope = _scopeFactory.CreateScope();
+        var gatewayInScope = scope.ServiceProvider.GetRequiredService<PrdAgent.Infrastructure.LlmGateway.ILlmGateway>();
+        var resolverInScope = scope.ServiceProvider.GetRequiredService<IModelResolver>();
+
+        var resolverHash = resolverInScope.GetHashCode().ToString("X");
+        var gatewayHash = gatewayInScope.GetHashCode().ToString("X");
+
+        _logger.LogWarning("[SimulateWorker] resolver hash in new scope: {RH}, gateway hash: {GH}", resolverHash, gatewayHash);
+
+        // 第 1 次：通过 gateway.ResolveModelAsync（和 OpenAIImageClient line 165 一样）
+        var r1 = await gatewayInScope.ResolveModelAsync(code, type, expected, ct);
+
+        // 第 2 次：通过 IModelResolver 直接（和 LlmGateway.SendRawAsync line 561 一样传 null）
+        var r2 = await resolverInScope.ResolveAsync(code, type, null, ct);
+
+        return Ok(new
+        {
+            note = "模拟 Worker 使用 _scopeFactory.CreateScope() 新建 scope",
+            resolverInstanceHashInNewScope = resolverHash,
+            gatewayInstanceHashInNewScope = gatewayHash,
+            call1_via_gateway = new
+            {
+                actualModel = r1.ActualModel,
+                modelGroupName = r1.ModelGroupName,
+                success = r1.Success,
+            },
+            call2_via_resolver_null = new
+            {
+                actualModel = r2.ActualModel,
+                modelGroupName = r2.ModelGroupName,
+                resolutionType = r2.ResolutionType,
+                success = r2.Success,
+            },
+            sameModelBothCalls = r1.ActualModel == r2.ActualModel,
+            verdict = r1.ActualModel == r2.ActualModel
+                ? "在 _scopeFactory 新建的 scope 里也正常"
+                : $"在 _scopeFactory 新建的 scope 里失效！call1={r1.ActualModel} call2={r2.ActualModel} — 这就是 Worker 实际路径的问题"
+        });
     }
 
     /// <summary>
