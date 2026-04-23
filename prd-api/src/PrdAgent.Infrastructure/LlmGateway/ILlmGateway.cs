@@ -43,13 +43,6 @@ public interface ILlmGateway
     IAsyncEnumerable<GatewayStreamChunk> StreamAsync(GatewayRequest request, CancellationToken ct = default);
 
     /// <summary>
-    /// 发送原始 HTTP 请求（用于图片生成等复杂场景）
-    /// Gateway 负责：模型调度 + model 字段替换 + HTTP 发送 + 日志 + 健康管理
-    /// 调用方负责：构建请求体（业务逻辑如尺寸适配、水印等）
-    /// </summary>
-    Task<GatewayRawResponse> SendRawAsync(GatewayRawRequest request, CancellationToken ct = default);
-
-    /// <summary>
     /// 发送原始 HTTP 请求（使用调用方已解析的模型 Resolution，跳过内部 Resolve 步骤）。
     /// 遵循 compute-then-send 原则：当调用方已通过 ResolveModelAsync 完成模型调度，
     /// 再调用此方法可避免 Gateway 内部的第二次 ResolveAsync，保证 "选什么用什么"。

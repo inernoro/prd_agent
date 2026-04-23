@@ -544,29 +544,6 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
     }
 
     /// <inheritdoc />
-    public async Task<GatewayRawResponse> SendRawAsync(GatewayRawRequest request, CancellationToken ct = default)
-    {
-        if (!TryValidateAppCaller(request.AppCallerCode, request.ModelType, out var error))
-        {
-            return GatewayRawResponse.Fail(InvalidAppCallerErrorCode, error, 400);
-        }
-
-        var startedAt = DateTime.UtcNow;
-
-        // 1. 模型调度（传入调用方预置的 ExpectedModel，避免二次 Resolve 选出不同模型）
-        var resolution = await _modelResolver.ResolveAsync(
-            request.AppCallerCode, request.ModelType, request.ExpectedModel, ct);
-
-        if (!resolution.Success || string.IsNullOrWhiteSpace(resolution.ActualModel))
-        {
-            return GatewayRawResponse.Fail("MODEL_NOT_FOUND",
-                resolution.ErrorMessage ?? "未找到可用模型", 404);
-        }
-
-        return await ExecuteRawWithResolutionAsync(request, resolution, startedAt, ct);
-    }
-
-    /// <inheritdoc />
     public async Task<GatewayRawResponse> SendRawWithResolutionAsync(
         GatewayRawRequest request,
         GatewayModelResolution resolution,

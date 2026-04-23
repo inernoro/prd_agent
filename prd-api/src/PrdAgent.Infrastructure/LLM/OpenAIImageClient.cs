@@ -1409,7 +1409,7 @@ public class OpenAIImageClient
 
         try
         {
-            // 构建 Gateway 请求 - 使用 SendRawAsync 发送到 chat/completions
+            // 构建 Gateway 请求 - 使用 SendRawWithResolutionAsync 发送到 chat/completions
             var requestBody = JsonNode.Parse(requestJson)?.AsObject() ?? new JsonObject();
             var gatewayRequest = new GatewayRawRequest
             {

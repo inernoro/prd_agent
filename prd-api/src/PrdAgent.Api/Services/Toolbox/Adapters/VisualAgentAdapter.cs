@@ -127,7 +127,15 @@ public class VisualAgentAdapter : IAgentAdapter
             TimeoutSeconds = 120
         };
 
-        var response = await _gateway.SendRawAsync(request, ct);
+        var resolution = await _gateway.ResolveModelAsync(
+            AppCallerRegistry.AiToolbox.Agents.VisualGeneration, ModelTypes.ImageGen, null, ct);
+        if (!resolution.Success)
+        {
+            yield return AgentStreamChunk.Error($"图片生成模型调度失败: {resolution.ErrorMessage}");
+            yield break;
+        }
+
+        var response = await _gateway.SendRawWithResolutionAsync(request, resolution, ct);
 
         if (!response.Success)
         {
