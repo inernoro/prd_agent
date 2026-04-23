@@ -127,6 +127,71 @@ public class ResolverDebugController : ControllerBase
     }
 
     /// <summary>
+    /// 双调用测试：在**同一 async 链中**依次调用 IModelResolver.ResolveAsync 两次 —
+    /// 第 1 次带 expectedModel（模拟 OpenAIImageClient 入口），第 2 次传 null
+    /// （模拟 LlmGateway.SendRawAsync 内部的硬编码 null 调用）。
+    /// 如果装饰器的 AsyncLocal 生效，第 2 次应该自动恢复 expectedModel 并返回同样的 actualModel。
+    /// </summary>
+    [HttpPost("test-chain")]
+    public async Task<IActionResult> TestChain(
+        [FromBody] ResolverTestRequest body,
+        CancellationToken ct)
+    {
+        var code = (body?.AppCallerCode ?? string.Empty).Trim();
+        var type = string.IsNullOrWhiteSpace(body?.ModelType) ? "generation" : body.ModelType.Trim();
+        var expected = string.IsNullOrWhiteSpace(body?.ExpectedModel) ? null : body.ExpectedModel.Trim();
+        if (string.IsNullOrWhiteSpace(code)) return BadRequest(new { error = "appCallerCode 不能为空" });
+
+        _logger.LogWarning("[TestChain] === START === code={Code} expected='{Expected}'", code, expected ?? "(null)");
+
+        // 第 1 次：带 expectedModel（模拟 OpenAIImageClient.GenerateAsync 入口）
+        ModelResolutionResult? r1 = null;
+        string? err1 = null;
+        try { r1 = await _resolver.ResolveAsync(code, type, expected, ct); }
+        catch (Exception ex) { err1 = ex.Message; }
+
+        // 第 2 次：expectedModel=null（模拟 LlmGateway.SendRawAsync 内部）
+        // 重要：同一 async method 内，AsyncLocal 应该保留第 1 次的值
+        ModelResolutionResult? r2 = null;
+        string? err2 = null;
+        try { r2 = await _resolver.ResolveAsync(code, type, null, ct); }
+        catch (Exception ex) { err2 = ex.Message; }
+
+        _logger.LogWarning(
+            "[TestChain] === END === call1(expected={E1}) → actual={A1} pool={P1} | call2(null) → actual={A2} pool={P2}",
+            expected ?? "(null)",
+            r1?.ActualModel ?? "(null)",
+            r1?.ModelGroupName ?? "(null)",
+            r2?.ActualModel ?? "(null)",
+            r2?.ModelGroupName ?? "(null)");
+
+        return Ok(new
+        {
+            input = new { appCallerCode = code, modelType = type, expectedModel = expected },
+            call1_with_expected = new
+            {
+                error = err1,
+                actualModel = r1?.ActualModel,
+                modelGroupName = r1?.ModelGroupName,
+                resolutionType = r1?.ResolutionType,
+                success = r1?.Success,
+            },
+            call2_with_null = new
+            {
+                error = err2,
+                actualModel = r2?.ActualModel,
+                modelGroupName = r2?.ModelGroupName,
+                resolutionType = r2?.ResolutionType,
+                success = r2?.Success,
+            },
+            asyncLocalWorks = r1?.ActualModel == r2?.ActualModel,
+            verdict = r1?.ActualModel == r2?.ActualModel
+                ? "AsyncLocal WORKS — SendRawAsync 内部 null 调用会得到正确 model"
+                : $"AsyncLocal BROKEN — call1={r1?.ActualModel} call2={r2?.ActualModel}（这就是实际生图时 SendRawAsync 覆盖上游 model 的原因）"
+        });
+    }
+
+    /// <summary>
     /// 只读探查：列出 AppCaller 及其绑定池的完整信息（供前端 debug 面板查看）。
     /// </summary>
     [HttpGet("inspect")]
