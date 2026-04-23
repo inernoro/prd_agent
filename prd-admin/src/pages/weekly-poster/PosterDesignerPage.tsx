@@ -737,9 +737,9 @@ export default function PosterDesignerPage({ embedded = false }: PosterDesignerP
               </button>
             </section>
 
-            <div className="min-h-0 grid gap-3 xl:grid-cols-[minmax(0,1fr)_320px] xl:grid-rows-[minmax(360px,46vh)_minmax(0,1fr)]">
+            <div className="min-h-0 grid gap-3 xl:grid-cols-[minmax(0,1fr)_320px]">
               {poster && currentPage ? (
-                <section className="min-h-0 flex-1 rounded-2xl p-4 flex flex-col xl:col-start-1 xl:row-start-1" style={{ ...glassCardStyle, animation: 'posterDesignerIn 180ms ease-out both' }}>
+                <section className="min-h-0 rounded-2xl p-4 flex flex-col xl:col-start-1" style={{ ...glassCardStyle, animation: 'posterDesignerIn 180ms ease-out both' }}>
                   <div className="flex flex-wrap items-center justify-between gap-3">
                     <div>
                       <div className="text-[12px] font-semibold text-white/78">
@@ -795,8 +795,8 @@ export default function PosterDesignerPage({ embedded = false }: PosterDesignerP
                     </div>
                   </div>
 
-                  <div className="mt-4 flex-1 min-h-0 rounded-[24px] p-4" style={{ background: 'rgba(3,8,18,0.72)', border: '1px solid rgba(255,255,255,0.06)' }}>
-                    <div className="h-full min-h-[420px] overflow-auto">
+                  <div className="mt-4 rounded-[24px] p-4" style={{ background: 'rgba(3,8,18,0.72)', border: '1px solid rgba(255,255,255,0.06)' }}>
+                    <div className="h-[360px] xl:h-[420px] overflow-auto">
                       <div className="flex min-h-full items-center justify-center">
                         <WorkspacePosterStage
                           poster={poster}
@@ -841,6 +841,205 @@ export default function PosterDesignerPage({ embedded = false }: PosterDesignerP
                       </div>
                     </div>
                   </div>
+
+                  <div ref={(node) => { editorPanelRef.current = node; }} className="mt-4 border-t pt-4" style={{ borderColor: 'rgba(255,255,255,0.08)' }}>
+                    <div className="flex items-start justify-between gap-3">
+                      <div>
+                        <div className="text-[13px] font-semibold text-white">编辑当前页</div>
+                        <div className="mt-1 text-[11px] text-white/42">预览和编辑放在同一张主卡里，减少切换。</div>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => void regenerateImage()}
+                        disabled={!poster || !currentPage}
+                        className="h-9 rounded-xl px-3 inline-flex items-center justify-center gap-1.5 text-[12px] font-medium text-white disabled:opacity-40"
+                        style={glassButtonStyle}
+                      >
+                        <Sparkles size={14} />
+                        AI 重生当前页
+                      </button>
+                    </div>
+
+                    <div className="mt-4 grid grid-cols-3 gap-1 rounded-xl p-1" style={{ background: 'rgba(255,255,255,0.035)', border: '1px solid rgba(255,255,255,0.08)' }}>
+                      {([
+                        ['content', '正文编辑', <MessageSquare size={13} />],
+                        ['assets', '素材上传', <ImagePlus size={13} />],
+                        ['layout', '版式设置', <SlidersHorizontal size={13} />],
+                      ] as const).map(([value, label, icon]) => (
+                        <button
+                          key={value}
+                          type="button"
+                          onClick={() => setWorkspaceTab(value)}
+                          className="h-10 rounded-lg inline-flex items-center justify-center gap-1 text-[11px] font-medium"
+                          style={{
+                            background: workspaceTab === value ? 'rgba(94,118,255,0.18)' : 'transparent',
+                            color: workspaceTab === value ? '#fff' : 'rgba(255,255,255,0.55)',
+                          }}
+                        >
+                          {icon}
+                          <span className="hidden 2xl:inline">{label}</span>
+                        </button>
+                      ))}
+                    </div>
+
+                    {workspaceTab === 'content' && (
+                      <div className="mt-4 space-y-4">
+                        <div className="grid grid-cols-2 gap-3">
+                          <Field label="海报标题">
+                            <input
+                              value={poster.title ?? ''}
+                              onChange={(e) => updatePosterFields({ title: e.target.value })}
+                              className="w-full h-10 rounded-xl px-3 text-[13px] outline-none"
+                              style={fieldStyle}
+                            />
+                          </Field>
+                          <Field label="副标题">
+                            <input
+                              value={poster.subtitle ?? ''}
+                              onChange={(e) => updatePosterFields({ subtitle: e.target.value })}
+                              className="w-full h-10 rounded-xl px-3 text-[13px] outline-none"
+                              style={fieldStyle}
+                            />
+                          </Field>
+                        </div>
+
+                        <div className="grid grid-cols-2 gap-3">
+                          <Field label="CTA 文案">
+                            <input
+                              value={poster.ctaText ?? ''}
+                              onChange={(e) => updatePosterFields({ ctaText: e.target.value })}
+                              className="w-full h-10 rounded-xl px-3 text-[13px] outline-none"
+                              style={fieldStyle}
+                            />
+                          </Field>
+                          <Field label="绑定地址">
+                            <div className="relative">
+                              <LinkIcon size={12} className="absolute left-3 top-1/2 -translate-y-1/2 text-white/35" />
+                              <input
+                                value={poster.ctaUrl ?? ''}
+                                onChange={(e) => updatePosterFields({ ctaUrl: e.target.value })}
+                                className="w-full h-10 rounded-xl pl-8 pr-3 text-[13px] outline-none"
+                                style={fieldStyle}
+                              />
+                            </div>
+                          </Field>
+                        </div>
+
+                        <Field label="当前页标题">
+                          <input
+                            value={currentPage.title ?? ''}
+                            onChange={(e) => updateCurrentPage({ title: e.target.value })}
+                            className="w-full h-10 rounded-xl px-3 text-[13px] outline-none"
+                            style={fieldStyle}
+                          />
+                        </Field>
+
+                        <Field label="正文编辑">
+                          <textarea
+                            value={currentPage.body ?? ''}
+                            onChange={(e) => updateCurrentPage({ body: e.target.value })}
+                            rows={8}
+                            className="w-full rounded-xl px-3 py-3 text-[13px] outline-none resize-y"
+                            style={{ ...fieldStyle, lineHeight: 1.65 }}
+                          />
+                        </Field>
+
+                        <Field label="Markdown 预览">
+                          <div className="rounded-xl p-3 min-h-[180px]" style={{ background: 'rgba(0,0,0,0.24)', border: '1px solid rgba(255,255,255,0.08)' }}>
+                            <MarkdownContent content={currentPage.body || ' '} className="text-[13px] leading-relaxed" />
+                          </div>
+                        </Field>
+                      </div>
+                    )}
+
+                    {workspaceTab === 'assets' && (
+                      <div className="mt-4 space-y-4">
+                        <MediaSlotPanel
+                          label="主图"
+                          url={currentPage.imageUrl}
+                          accent={currentPage.accentColor}
+                          progress={imageProgress[currentPage.order]}
+                          onUpload={() => openFilePicker('primary')}
+                          onGenerate={() => void regenerateImage()}
+                          onClear={() => updateCurrentPage({ imageUrl: null })}
+                        />
+                        <MediaSlotPanel
+                          label="副图 / 素材补充"
+                          hint="可选，用于双图版式或商品展示区域。"
+                          url={currentPage.secondaryImageUrl}
+                          accent={currentPage.accentColor}
+                          onUpload={() => openFilePicker('secondary')}
+                          onClear={() => updateCurrentPage({ secondaryImageUrl: null })}
+                        />
+                        <Field label="配图提示词">
+                          <textarea
+                            value={currentPage.imagePrompt ?? ''}
+                            onChange={(e) => updateCurrentPage({ imagePrompt: e.target.value })}
+                            rows={5}
+                            className="w-full rounded-xl px-3 py-2 text-[12px] outline-none resize-none"
+                            style={fieldStyle}
+                          />
+                        </Field>
+                      </div>
+                    )}
+
+                    {workspaceTab === 'layout' && (
+                      <div className="mt-4 space-y-4">
+                        <div className="grid grid-cols-[1fr_auto] gap-3">
+                          <Field label="主题色">
+                            <input
+                              value={currentPage.accentColor ?? DEFAULT_ACCENT}
+                              onChange={(e) => updateCurrentPage({ accentColor: e.target.value })}
+                              className="w-full h-10 rounded-xl px-3 text-[13px] outline-none font-mono"
+                              style={fieldStyle}
+                            />
+                          </Field>
+                          <label className="block">
+                            <span className="block text-[11px] font-medium text-white/50 mb-1.5">色板</span>
+                            <input
+                              type="color"
+                              value={normalizeColor(currentPage.accentColor)}
+                              onChange={(e) => updateCurrentPage({ accentColor: e.target.value })}
+                              className="h-10 w-16 rounded-xl cursor-pointer"
+                              style={{ background: 'transparent', border: '1px solid rgba(255,255,255,0.12)' }}
+                            />
+                          </label>
+                        </div>
+
+                        <div className="rounded-2xl p-3" style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.08)' }}>
+                          <div className="flex items-center justify-between">
+                            <div className="text-[12px] font-medium text-white/78">模板与版式</div>
+                            <Palette size={14} className="text-white/40" />
+                          </div>
+                          <div className="mt-3 flex flex-wrap gap-2">
+                            {selectedTemplate.accentPalette.map((color) => (
+                              <button
+                                key={color}
+                                type="button"
+                                onClick={() => updateCurrentPage({ accentColor: color })}
+                                className="w-9 h-9 rounded-full"
+                                style={{
+                                  background: color,
+                                  border: normalizeColor(currentPage.accentColor) === color ? '2px solid #fff' : '2px solid rgba(255,255,255,0.16)',
+                                  boxShadow: `0 0 18px ${color}40`,
+                                }}
+                              />
+                            ))}
+                          </div>
+                          <div className="mt-3 text-[11px] text-white/44">
+                            当前模板：{selectedTemplate.label} · 数据源：{selectedSourceType?.label || '未设置'}
+                          </div>
+                        </div>
+
+                        <div className="grid grid-cols-2 gap-3">
+                          <MetricTile label="页面尺寸" value={dimensionLabel(batchConfig.orientation)} />
+                          <MetricTile label="展示模式" value={devicePreview === 'desktop' ? '桌面预览' : '移动预览'} />
+                          <MetricTile label="当前页码" value={`第 ${currentPage.order + 1} 页`} />
+                          <MetricTile label="项目状态" value={statusLabel(poster.status)} />
+                        </div>
+                      </div>
+                    )}
+                  </div>
                 </section>
               ) : (
                 <section className="min-h-0 flex-1 rounded-2xl p-4" style={glassCardStyle}>
@@ -852,11 +1051,7 @@ export default function PosterDesignerPage({ embedded = false }: PosterDesignerP
               )}
 
               <div className="contents">
-                <section
-                  ref={editorPanelRef}
-                  className="min-h-0 rounded-2xl p-4 flex flex-col xl:col-start-1 xl:row-start-2"
-                  style={glassCardStyle}
-                >
+                <section className="hidden">
                   <div className="flex items-start justify-between gap-3">
                     <div>
                       <div className="text-[13px] font-semibold text-white">编辑当前页</div>
@@ -1065,7 +1260,7 @@ export default function PosterDesignerPage({ embedded = false }: PosterDesignerP
 
                 <section
                   ref={publishPanelRef}
-                  className="min-h-0 rounded-2xl p-4 flex flex-col xl:col-start-2 xl:row-[1/span_2]"
+                  className="min-h-0 rounded-2xl p-4 flex flex-col xl:col-start-2"
                   style={glassCardStyle}
                 >
                   <div className="flex items-center justify-between">
