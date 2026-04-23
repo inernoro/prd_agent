@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { useBreakpoint } from '@/hooks/useBreakpoint';
 import {
   createDesktopAssetKey,
@@ -56,7 +57,6 @@ import {
 import { useToolboxStore, BUILTIN_TOOLS } from '@/stores/toolboxStore';
 import { useHomepageAssetsStore } from '@/stores/homepageAssetsStore';
 import { useAuthStore } from '@/stores/authStore';
-import PosterDesignerPage from '@/pages/weekly-poster/PosterDesignerPage';
 
 function cn(...xs: Array<string | false | null | undefined>) {
   return xs.filter(Boolean).join(' ');
@@ -1633,5 +1633,66 @@ function HomepageSlotTile({
 }
 
 function PosterDesignSection() {
-  return <PosterDesignerPage embedded />;
+  return (
+    <div className="space-y-4">
+      <GlassCard animated glow accentHue={248}>
+        <div className="flex flex-wrap items-start justify-between gap-4">
+          <div className="min-w-0">
+            <div className="text-[16px] font-bold" style={{ color: 'var(--text-primary)' }}>
+              海报设计工作台
+            </div>
+            <div className="mt-1 text-[12px]" style={{ color: 'var(--text-muted)' }}>
+              已升级为独立工作台，建议从左侧导航直接进入；也可以在「导航顺序」里把“海报设计”拖到常用位置。
+            </div>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <Link to="/weekly-poster">
+              <Button variant="primary" size="sm">
+                <Sparkles size={14} />
+                打开工作台
+              </Button>
+            </Link>
+            <Link to="/weekly-poster/advanced">
+              <Button variant="secondary" size="sm">
+                <Layers size={14} />
+                高级编辑
+              </Button>
+            </Link>
+          </div>
+        </div>
+      </GlassCard>
+
+      <div className="grid gap-4 lg:grid-cols-3">
+        <GlassCard accentHue={220}>
+          <div className="flex items-center gap-2 text-[13px] font-semibold" style={{ color: 'var(--text-primary)' }}>
+            <PanelTop size={16} />
+            独立入口
+          </div>
+          <div className="mt-2 text-[12px]" style={{ color: 'var(--text-muted)' }}>
+            海报设计不再建议内嵌在资源管理页里使用，独立工作台会占满主内容区，布局更接近真实设计器。
+          </div>
+        </GlassCard>
+
+        <GlassCard accentHue={255}>
+          <div className="flex items-center gap-2 text-[13px] font-semibold" style={{ color: 'var(--text-primary)' }}>
+            <Sparkles size={16} />
+            导航顺序可配置
+          </div>
+          <div className="mt-2 text-[12px]" style={{ color: 'var(--text-muted)' }}>
+            拥有 `report-agent.template.manage` 权限的管理员，现在可以在导航顺序里把“海报设计”加入左侧导航。
+          </div>
+        </GlassCard>
+
+        <GlassCard accentHue={188}>
+          <div className="flex items-center gap-2 text-[13px] font-semibold" style={{ color: 'var(--text-primary)' }}>
+            <Home size={16} />
+            现有能力保留
+          </div>
+          <div className="mt-2 text-[12px]" style={{ color: 'var(--text-muted)' }}>
+            自动保存、AI 生图、上传、粘贴截图、预览和发布都还在，只是入口位置更明确。
+          </div>
+        </GlassCard>
+      </div>
+    </div>
+  );
 }
