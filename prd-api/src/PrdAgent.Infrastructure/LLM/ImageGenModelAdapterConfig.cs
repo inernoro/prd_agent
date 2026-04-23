@@ -132,6 +132,12 @@ public class ImageGenModelAdapterConfig
 
     /// <summary>是否支持局部重绘</summary>
     public bool SupportsInpainting { get; set; } = false;
+
+    /// <summary>
+    /// 是否支持 response_format 参数（默认 true）。
+    /// 设为 false 时请求体不会携带 response_format，适用于 apiyi 等不接受该字段的平台。
+    /// </summary>
+    public bool SupportsResponseFormat { get; set; } = true;
 }
 
 /// <summary>

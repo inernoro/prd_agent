@@ -294,9 +294,12 @@ public class OpenAIImageClient
 
         var providerForLog = platformAdapter.ProviderNameForLog;
         
-        // 确定实际使用的响应格式（某些平台强制 url）
+        // 确定实际使用的响应格式（某些平台强制 url，某些平台不支持该参数）
         var effectiveResponseFormat = platformAdapter.ForceUrlResponseFormat ? "url" : responseFormat;
-        
+        // 不支持 response_format 的模型（如 apiyi 平台的 gpt-image-1.5/gpt-image-2-all）
+        if (adapterConfig?.SupportsResponseFormat == false)
+            effectiveResponseFormat = null;
+
         // 归一化尺寸（某些平台有最小尺寸要求）
         var normalizedSize = platformAdapter.NormalizeSize(size);
         

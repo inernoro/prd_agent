@@ -78,6 +78,17 @@ public static class Desktop
         public const string SectionChat = "prd-agent-desktop.preview-ask.section::chat";
     }
 
+    public static class Guide
+    {
+        [AppCallerMetadata(
+            "引导技能-对话",
+            "引导用户完成操作或回答问题的技能模板执行",
+            ModelTypes = new[] { ModelTypes.Chat },
+            Category = "Guide"
+        )]
+        public const string Chat = "prd-agent.guide::chat";
+    }
+
     public static class Skill
     {
         [AppCallerMetadata(
