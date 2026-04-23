@@ -7,6 +7,10 @@ import { createBranchRouter } from './routes/branches.js';
 import { createBridgeRouter } from './routes/bridge.js';
 import { createProjectsRouter } from './routes/projects.js';
 import { createPendingImportRouter } from './routes/pending-import.js';
+import { createCacheRouter } from './routes/cache.js';
+import { createSnapshotsRouter } from './routes/snapshots.js';
+import { createInfraBackupRouter } from './routes/infra-backup.js';
+import { createLegacyCleanupRouter } from './routes/legacy-cleanup.js';
 import { createStorageModeRouter, type StorageModeContext } from './routes/storage-mode.js';
 import { createCommentTemplateRouter } from './routes/comment-template.js';
 import { createGithubOAuthRouter } from './routes/github-oauth.js';
@@ -133,7 +137,20 @@ function resolveApiLabel(method: string, path: string): string {
     'GET /mirror': '获取镜像配置',
     'PUT /mirror': '更新镜像配置',
     'POST /import-config': '导入配置',
+    'POST /build-profiles/bulk-set-modes': '批量设置部署命令',
     'GET /export-config': '导出配置',
+    'GET /cache/status': '查看缓存状态',
+    'POST /cache/repair': '修复缓存挂载',
+    'GET /cache/export': '导出缓存包',
+    'POST /cache/import': '导入缓存包',
+    'POST /cache/purge': '清空缓存目录',
+    'GET /proxy-log': '查看转发日志',
+    'GET /proxy-log/stream': '订阅转发日志流',
+    'GET /config-snapshots': '列出配置快照',
+    'POST /config-snapshots': '手动保存配置快照',
+    'GET /destructive-ops': '列出破坏性操作',
+    'GET /legacy-cleanup/status': '查看 default 遗留状态',
+    'POST /legacy-cleanup/rename-default': '迁移 default 项目',
     'GET /export-skill': '导出技能配置',
     'POST /import-and-init': '导入并初始化',
     'GET /self-branches': '获取自身分支',
@@ -223,6 +240,10 @@ function resolveApiLabel(method: string, path: string): string {
 
   // Dynamic pattern matches (with :id params)
   const patterns: Array<[RegExp, string]> = [
+    [/^GET \/config-snapshots\/(.+)$/, '查看配置快照详情'],
+    [/^POST \/config-snapshots\/(.+)\/rollback$/, '回滚到配置快照'],
+    [/^DELETE \/config-snapshots\/(.+)$/, '删除配置快照'],
+    [/^POST \/destructive-ops\/(.+)\/undo$/, '撤销破坏性操作'],
     [/^DELETE \/branches\/(.+)$/, '删除分支'],
     [/^PATCH \/branches\/(.+)$/, '更新分支信息'],
     [/^POST \/branches\/(.+)\/pull$/, '拉取分支代码'],
@@ -242,6 +263,10 @@ function resolveApiLabel(method: string, path: string): string {
     [/^DELETE \/routing-rules\/(.+)$/, '删除路由规则'],
     [/^PUT \/build-profiles\/(.+)$/, '更新构建配置'],
     [/^DELETE \/build-profiles\/(.+)$/, '删除构建配置'],
+    [/^PUT \/build-profiles\/(.+)\/deploy-mode$/, '切换部署模式'],
+    [/^POST \/build-profiles\/(.+)\/hot-reload$/, '切换热更新'],
+    [/^POST \/branches\/(.+)\/force-rebuild\/(.+)$/, '强制干净重建'],
+    [/^POST \/branches\/(.+)\/verify-runtime\/(.+)$/, '运行时字节码核验'],
     [/^POST \/infra\/(.+)\/start$/, '启动基础设施'],
     [/^POST \/infra\/(.+)\/stop$/, '停止基础设施'],
     [/^POST \/infra\/(.+)\/restart$/, '重启基础设施'],
@@ -249,6 +274,9 @@ function resolveApiLabel(method: string, path: string): string {
     [/^GET \/infra\/(.+)\/health$/, '基础设施健康检查'],
     [/^PUT \/infra\/(.+)$/, '更新基础设施'],
     [/^DELETE \/infra\/(.+)$/, '删除基础设施'],
+    [/^GET \/infra\/(.+)\/backup$/, '下载数据库备份'],
+    [/^POST \/infra\/(.+)\/restore$/, '恢复数据库'],
+    [/^GET \/infra\/(.+)\/backup-history$/, '查看备份历史'],
     [/^DELETE \/ai\/sessions\/(.+)$/, '撤销 AI 会话'],
     [/^POST \/ai\/approve\/(.+)$/, '批准 AI 连接'],
     [/^POST \/ai\/reject\/(.+)$/, '拒绝 AI 连接'],
@@ -963,6 +991,41 @@ export function createServer(deps: ServerDeps): express.Express {
     req.on('close', () => { activityClients.delete(res); clearInterval(heartbeat); });
   });
 
+  // ── Proxy log (全局转发日志) ──
+  //
+  // 顶部 🔍 面板用。排查「页面正常但 API 502 没日志」时：
+  //   GET /api/proxy-log        一次性拿最近 500 条环形缓冲
+  //   GET /api/proxy-log/stream SSE 实时订阅
+  //
+  // 为什么独立于 activity-stream：activity 只记 CDS 自己的 /api/* 调用，
+  // 转发层（worker port）的 502 / upstream-error / no-branch-match 不在里面，
+  // 这些才是「服务器日志为空」时用户最需要看到的。
+  const proxyLogClients = new Set<express.Response>();
+  deps.proxyService.setOnProxyLog((evt) => {
+    const payload = `data: ${JSON.stringify(evt)}\n\n`;
+    for (const client of proxyLogClients) {
+      try { client.write(payload); } catch { proxyLogClients.delete(client); }
+    }
+  });
+  app.get('/api/proxy-log', (req, res) => {
+    const all = deps.proxyService.getProxyLog();
+    const afterSeq = parseInt(req.query.afterSeq as string) || 0;
+    const events = afterSeq > 0 ? all.filter(e => e.id > afterSeq) : all;
+    res.json({ events, total: all.length, maxId: all.length > 0 ? all[all.length - 1].id : 0 });
+  });
+  app.get('/api/proxy-log/stream', (req, res) => {
+    res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', Connection: 'keep-alive' });
+    proxyLogClients.add(res);
+    const afterSeq = parseInt(req.query.afterSeq as string) || 0;
+    for (const evt of deps.proxyService.getProxyLog()) {
+      if (evt.id > afterSeq) res.write(`data: ${JSON.stringify(evt)}\n\n`);
+    }
+    const heartbeat = setInterval(() => {
+      try { res.write(': keepalive\n\n'); } catch { clearInterval(heartbeat); }
+    }, 30_000);
+    req.on('close', () => { proxyLogClients.delete(res); clearInterval(heartbeat); });
+  });
+
   // ── API activity tracking middleware (before routes, after auth) ──
   app.use('/api', (req, res, next) => {
     // Skip SSE streams and static
@@ -1057,6 +1120,20 @@ export function createServer(deps: ServerDeps): express.Express {
   // Mounted at /api so the nested /projects/:id/pending-import path works
   // alongside the rest of the projects router.
   app.use('/api', createPendingImportRouter({ stateService: deps.stateService }));
+  // Cache diagnostics / repair / cross-server migration.
+  // See routes/cache.ts for why this exists (挂载失效诊断 + 换机器预热).
+  app.use('/api', createCacheRouter({ stateService: deps.stateService, shell: deps.shell }));
+  // ConfigSnapshot (导入/破坏性操作前自动备份) + DestructiveOperationLog (紧急撤销).
+  // 见 routes/snapshots.ts 头部注释。
+  app.use('/api', createSnapshotsRouter({ stateService: deps.stateService }));
+  // 基础设施数据备份/恢复（mongodump/mongorestore/redis dump.rdb/tar）
+  app.use('/api', createInfraBackupRouter({ stateService: deps.stateService, shell: deps.shell }));
+  // 遗留 default 项目迁移（见 legacy-cleanup.ts 头部注释）
+  app.use('/api', createLegacyCleanupRouter({
+    stateService: deps.stateService,
+    shell: deps.shell,
+    worktreeBase: deps.config.worktreeBase,
+  }));
   // ── GitHub App client (optional) ──
   //
   // Instantiate once and share between the webhook router and the branch

@@ -1099,6 +1099,48 @@ window.cdsDoLogout = cdsDoLogout;
         var projects = (data && data.projects) || [];
         if (projectCountEl) projectCountEl.textContent = projects.length;
 
+        // 2026-04-22 遗留 default 项目迁移提醒
+        fetch('/api/legacy-cleanup/status', { credentials: 'same-origin' })
+          .then(function (r) { return r.json(); })
+          .then(function (st) {
+            var banner = document.getElementById('legacyBanner');
+            if (!st.legacyInUse) { if (banner) banner.remove(); return; }
+            if (banner) return;
+            var el = document.createElement('div');
+            el.id = 'legacyBanner';
+            el.style.cssText = 'margin:16px 0;padding:12px 16px;background:rgba(245,158,11,0.08);border:1px solid rgba(245,158,11,0.45);border-radius:8px;display:flex;gap:12px;align-items:center;font-size:13px';
+            el.innerHTML =
+              '<div style="font-size:20px">⚠</div>' +
+              '<div style="flex:1"><strong>检测到遗留 "default" 项目</strong><br>' +
+                '<span style="color:var(--text-muted);font-size:12px">' +
+                  st.counts.branches + ' 分支 / ' + st.counts.buildProfiles + ' profile / ' + st.counts.infraServices + ' infra。' +
+                  'default 是升级兼容占位，建议给它改成真实项目名以获得完整权限隔离。' +
+                '</span>' +
+              '</div>' +
+              '<button id="legacyMigrateBtn" class="btn-primary-solid">迁移 →</button>';
+            var container = document.querySelector('.project-list-container') || document.body;
+            container.prepend(el);
+            document.getElementById('legacyMigrateBtn').onclick = function () {
+              var newId = prompt('为 "default" 项目起个新 id（小写字母、数字、短横线，如 prd-agent）：');
+              if (!newId) return;
+              var newName = prompt('为项目起个中文显示名（可选）：') || undefined;
+              fetch('/api/legacy-cleanup/rename-default', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                credentials: 'same-origin',
+                body: JSON.stringify({ newId: newId.trim(), newName: newName }),
+              })
+                .then(function (r) { return r.json().then(function (b) { return { ok: r.ok, body: b }; }); })
+                .then(function (r) {
+                  if (!r.ok) throw new Error(r.body.error || '迁移失败');
+                  alert(r.body.message || '迁移完成');
+                  location.reload();
+                })
+                .catch(function (err) { alert('迁移失败：' + err.message); });
+            };
+          })
+          .catch(function () { /* legacy-cleanup 接口缺失就静默 */ });
+
         // Cache by id so the pending-import drawer can look up the
         // human-readable project name without its own /api/projects
         // round trip. Refreshed on every loadProjects() call.

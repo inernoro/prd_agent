@@ -1,6 +1,6 @@
 import path from 'node:path';
 import crypto from 'node:crypto';
-import type { CdsState, BranchEntry, BuildProfile, BuildProfileOverride, RoutingRule, OperationLog, InfraService, ExecutorNode, DataMigration, CdsPeer, Project, AgentKey, GlobalAgentKey, CustomEnvStore } from '../types.js';
+import type { CdsState, BranchEntry, BuildProfile, BuildProfileOverride, RoutingRule, OperationLog, InfraService, ExecutorNode, DataMigration, CdsPeer, Project, AgentKey, GlobalAgentKey, CustomEnvStore, ConfigSnapshot, DestructiveOperationLog } from '../types.js';
 import { GLOBAL_ENV_SCOPE } from '../types.js';
 import type { StateBackingStore } from '../infra/state-store/backing-store.js';
 import { JsonStateBackingStore, MAX_STATE_BACKUPS as JSON_MAX_BACKUPS } from '../infra/state-store/json-backing-store.js';
@@ -175,6 +175,12 @@ export class StateService {
   /**
    * Backfill cacheMounts for profiles that were created before cache support.
    * Uses dockerImage to detect the correct cache type.
+   *
+   * 2026-04-22: 改为「合并语义」——即使 profile 已有部分 cacheMounts，
+   * 也会按 dockerImage 对比标准模板，缺失哪类（nuget/pnpm）就补哪类。
+   * 原先 `if (profile.cacheMounts.length > 0) continue` 会导致：
+   * 混合镜像 profile（含 pnpm 但 dotnet SDK）永远拿不到 nuget 挂载 →
+   * 每次 dotnet restore 都从 nuget.org 冷下载。
    */
   private migrateCacheMounts(): void {
     const CACHE_BASE = `/data/cds/${this.projectSlug}/cache`;
@@ -185,29 +191,29 @@ export class StateService {
 
     let changed = false;
     for (const profile of this.state.buildProfiles) {
-      // Migrate old paths (hostPath slug + containerPath for pnpm)
-      if (profile.cacheMounts) {
-        for (const cm of profile.cacheMounts) {
-          const updated = cm.hostPath.replace(/\/data\/cds\/[^/]+\/cache/, `${CACHE_BASE}`);
-          if (updated !== cm.hostPath) {
-            cm.hostPath = updated;
-            changed = true;
-          }
-          // Fix pnpm containerPath: CDS injects npm_config_store_dir=/pnpm/store,
-          // so the cache must mount there, not /root/.local/share/pnpm/store
-          if (cm.containerPath === '/root/.local/share/pnpm/store') {
-            cm.containerPath = '/pnpm/store';
-            changed = true;
-          }
+      if (!profile.cacheMounts) profile.cacheMounts = [];
+
+      for (const cm of profile.cacheMounts) {
+        const updated = cm.hostPath.replace(/\/data\/cds\/[^/]+\/cache/, `${CACHE_BASE}`);
+        if (updated !== cm.hostPath) {
+          cm.hostPath = updated;
+          changed = true;
         }
-        if (profile.cacheMounts.length > 0) continue;
+        if (cm.containerPath === '/root/.local/share/pnpm/store') {
+          cm.containerPath = '/pnpm/store';
+          changed = true;
+        }
       }
+
       const image = profile.dockerImage || '';
       for (const [key, mounts] of Object.entries(IMAGE_CACHE_MAP)) {
-        if (image.includes(key)) {
-          profile.cacheMounts = mounts;
-          changed = true;
-          break;
+        if (!image.includes(key)) continue;
+        for (const mount of mounts) {
+          const alreadyMounted = profile.cacheMounts.some(cm => cm.containerPath === mount.containerPath);
+          if (!alreadyMounted) {
+            profile.cacheMounts.push({ ...mount });
+            changed = true;
+          }
         }
       }
     }
@@ -1254,6 +1260,14 @@ export class StateService {
     delete this.state.customEnv[scope];
   }
 
+  /**
+   * 清空所有 scope 下的自定义环境变量。给 replace-all 导入用 —— 导入前
+   * 要把所有旧变量扫掉，防止 replace 其实只是"名字没冲突就混在一起"。
+   */
+  clearAllCustomEnv(): void {
+    this.state.customEnv = { [GLOBAL_ENV_SCOPE]: {} } as CustomEnvStore;
+  }
+
   // ── Infrastructure services ──
 
   getInfraServices(): InfraService[] {
@@ -1469,6 +1483,138 @@ export class StateService {
    *
    * These can be referenced in app service environments as ${CDS_MONGODB_PORT} etc.
    */
+  // ── ConfigSnapshot / DestructiveOperationLog (2026-04-22) ──
+  //
+  // See types.ts ConfigSnapshot + DestructiveOperationLog docs. These helpers
+  // are the single entry point for all snapshot operations — callers never
+  // touch `state.configSnapshots` directly.
+
+  /** 保留最近多少条配置快照。越多越占 state.json，30 够常规回滚用。 */
+  static readonly CONFIG_SNAPSHOT_LIMIT = 30;
+
+  getConfigSnapshots(projectId?: string | null): ConfigSnapshot[] {
+    const all = this.state.configSnapshots || [];
+    if (projectId === undefined) return all.slice();
+    // null 表示查"全局"快照（projectId 为空的），undefined 表示全部
+    return all.filter(s => (s.projectId ?? null) === (projectId ?? null));
+  }
+
+  getConfigSnapshot(id: string): ConfigSnapshot | undefined {
+    return (this.state.configSnapshots || []).find(s => s.id === id);
+  }
+
+  /**
+   * 拍一份当前配置的快照。默认抓取全局（四件套）。
+   * trigger 必须是已定义的枚举；label 是人类可读描述。
+   * 返回快照对象（便于 caller 记录 snapshotId 到 DestructiveOperationLog）。
+   */
+  createConfigSnapshot(params: {
+    trigger: ConfigSnapshot['trigger'];
+    label: string;
+    projectId?: string | null;
+    triggeredBy?: string;
+  }): ConfigSnapshot {
+    const payload = {
+      buildProfiles: JSON.parse(JSON.stringify(this.state.buildProfiles)),
+      customEnv: JSON.parse(JSON.stringify(this.state.customEnv)),
+      infraServices: JSON.parse(JSON.stringify(this.state.infraServices)),
+      routingRules: JSON.parse(JSON.stringify(this.state.routingRules)),
+    };
+    const serialized = JSON.stringify(payload);
+    const snapshot: ConfigSnapshot = {
+      id: crypto.randomUUID(),
+      createdAt: new Date().toISOString(),
+      projectId: params.projectId ?? null,
+      trigger: params.trigger,
+      label: params.label,
+      triggeredBy: params.triggeredBy,
+      payload,
+      sizeBytes: Buffer.byteLength(serialized, 'utf-8'),
+    };
+    if (!this.state.configSnapshots) this.state.configSnapshots = [];
+    this.state.configSnapshots.push(snapshot);
+    // LRU 淘汰
+    if (this.state.configSnapshots.length > StateService.CONFIG_SNAPSHOT_LIMIT) {
+      this.state.configSnapshots = this.state.configSnapshots.slice(-StateService.CONFIG_SNAPSHOT_LIMIT);
+    }
+    this.save();
+    return snapshot;
+  }
+
+  /**
+   * 回滚：从快照恢复四件套。不会触碰 branches / logs / projects / runtime 字段。
+   * 回滚前先自拍一份当前状态（trigger='pre-destructive'），以防回滚本身也是误操作。
+   */
+  rollbackToConfigSnapshot(id: string, triggeredBy?: string): ConfigSnapshot {
+    const target = this.getConfigSnapshot(id);
+    if (!target) throw new Error(`ConfigSnapshot not found: ${id}`);
+
+    this.createConfigSnapshot({
+      trigger: 'pre-destructive',
+      label: `回滚到「${target.label}」前的自动备份`,
+      projectId: target.projectId,
+      triggeredBy,
+    });
+
+    this.state.buildProfiles = JSON.parse(JSON.stringify(target.payload.buildProfiles));
+    this.state.customEnv = JSON.parse(JSON.stringify(target.payload.customEnv));
+    this.state.infraServices = JSON.parse(JSON.stringify(target.payload.infraServices));
+    this.state.routingRules = JSON.parse(JSON.stringify(target.payload.routingRules));
+    this.save();
+    return target;
+  }
+
+  deleteConfigSnapshot(id: string): boolean {
+    if (!this.state.configSnapshots) return false;
+    const before = this.state.configSnapshots.length;
+    this.state.configSnapshots = this.state.configSnapshots.filter(s => s.id !== id);
+    const changed = this.state.configSnapshots.length !== before;
+    if (changed) this.save();
+    return changed;
+  }
+
+  // 破坏性操作日志 —— 紧急还原抽屉从这里取数据
+
+  /** UNDO_WINDOW_MS —— 超过这个时间窗不再显示「撤销」按钮（防止太老的操作误恢复）。 */
+  static readonly UNDO_WINDOW_MS = 30 * 60 * 1000;
+
+  getDestructiveOps(): DestructiveOperationLog[] {
+    return (this.state.destructiveOps || []).slice();
+  }
+
+  recordDestructiveOp(partial: Omit<DestructiveOperationLog, 'id' | 'at' | 'undoable' | 'undoneAt'>): DestructiveOperationLog {
+    const entry: DestructiveOperationLog = {
+      id: crypto.randomUUID(),
+      at: new Date().toISOString(),
+      undoable: true,
+      ...partial,
+    };
+    if (!this.state.destructiveOps) this.state.destructiveOps = [];
+    this.state.destructiveOps.push(entry);
+    // 保留最近 100 条
+    if (this.state.destructiveOps.length > 100) {
+      this.state.destructiveOps = this.state.destructiveOps.slice(-100);
+    }
+    this.save();
+    return entry;
+  }
+
+  markDestructiveOpUndone(id: string): DestructiveOperationLog | null {
+    const entry = (this.state.destructiveOps || []).find(op => op.id === id);
+    if (!entry) return null;
+    entry.undoable = false;
+    entry.undoneAt = new Date().toISOString();
+    this.save();
+    return entry;
+  }
+
+  /** 计算当前还在撤销窗口内的操作，用于 UI 判定是否显示「撤销」按钮。 */
+  isDestructiveOpUndoable(op: DestructiveOperationLog): boolean {
+    if (!op.undoable) return false;
+    const age = Date.now() - new Date(op.at).getTime();
+    return age <= StateService.UNDO_WINDOW_MS;
+  }
+
   getCdsEnvVars(): Record<string, string> {
     const dockerHost = this.resolveDockerHost();
     const result: Record<string, string> = {

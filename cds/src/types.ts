@@ -99,6 +99,66 @@ export interface BuildProfile {
    * Derived from compose `deploy.resources.limits` or `x-cds-resources`.
    */
   resources?: ResourceLimits;
+  /**
+   * 2026-04-22 新增 —— 热更新（Hot Reload）配置。
+   *
+   * 启用后 CDS 不再每次改代码都重建镜像 + 重启容器；而是：
+   *   - 容器里跑 `dotnet watch run` / `pnpm dev` / `vite --host` 等「监听源码」的命令
+   *   - 源码目录以 rw 绑挂到 /app（正常启动时也是这样挂，但 hotReload 会用 watch 命令）
+   *   - 代码变更 → inotify 触发热编译 → 无需重启容器，秒生效
+   *
+   * 仅适合开发环境。生产环境永远用编译好的镜像运行。
+   * UI 上带 🔥 标识提醒用户。
+   */
+  hotReload?: HotReloadConfig;
+}
+
+/**
+ * 热更新配置。mode 决定用哪种 watcher 命令，enabled=true 时 CDS 启动容器时
+ * 用 `hotReload.command` 代替 `profile.command`。
+ *
+ * 2026-04-22 补丁：从踩过的坑里总结出来的防御措施——
+ *
+ *   ⚠ MSBuild 的 incremental compile 和 dotnet watch 的 hot reload 在我们这个
+ *     绑挂 worktree + 长驻容器的场景下有已知 bug：
+ *
+ *     现象：改代码 → publish/build 成功 → DLL 时间戳更新 → DLL 里 grep 得到新字符串
+ *          → 但运行进程加载的还是旧字节码 → 日志里看不到新日志。
+ *     根因：MSBuild 判定"项目引用未变"跳过 compile；或 dotnet watch hot reload
+ *          只应用到内存没重启进程，导致 Infrastructure.dll 反复 5 轮不生效。
+ *
+ *   解决：默认改成 `dotnet-restart` —— 明确 kill 进程 + clean + no-incremental +
+ *        重跑。放弃 hot reload 的"秒级生效"，换"每次生效"。
+ *        原来的 `dotnet-watch` 保留为可选，但不再是 .NET 项目的推荐默认。
+ *
+ *   如果还不生效：点 Profile 卡片的「💥 强制干净重建」—— 额外物理删掉 bin/obj，
+ *   避免文件系统缓存干扰。
+ */
+export interface HotReloadConfig {
+  /** 是否启用。即使配置了 mode/command，也要 enabled=true 才生效。 */
+  enabled: boolean;
+  /**
+   * 热更新模式预设。
+   *   dotnet-run     — ★ 推荐默认（快）：纯 `dotnet run` 走 MSBuild 增量编译，文件变 → kill + 重跑。
+   *                    相信 MSBuild 增量；绝大多数场景最快。如偶尔撒谎点 🧹 清理按钮即可。
+   *   dotnet-restart — 疑难兜底（慢）：每次 `dotnet clean` + `rm -rf bin/obj` + `--no-incremental`。
+   *                    当 dotnet-run 稳定撒谎时才切过来；大多数人不需要。
+   *   dotnet-watch   — `dotnet watch run`。**不推荐**：hot-reload 偶尔只改内存不重启进程
+   *   pnpm-dev       — `pnpm dev`
+   *   vite           — `vite --host 0.0.0.0 --port <port>`
+   *   next-dev       — `pnpm next dev -p <port>`
+   *   custom         — 用户自填命令
+   */
+  mode: 'dotnet-run' | 'dotnet-restart' | 'dotnet-watch' | 'pnpm-dev' | 'vite' | 'next-dev' | 'custom';
+  /** 仅在 mode='custom' 时使用；其他 mode 下忽略。 */
+  command?: string;
+  /** 是否开启 polling（NFS / docker-on-mac 场景 inotify 不生效时）。默认 false。 */
+  usePolling?: boolean;
+  /**
+   * dotnet-restart 模式下每次 rebuild 前是否先 `dotnet clean` + `rm -rf bin obj`。
+   * 默认 true —— 就是为了根治"DLL 看起来更新了但没真重建"的 MSBuild 增量误判。
+   */
+  cleanBeforeBuild?: boolean;
 }
 
 /** Readiness probe configuration for app services */
@@ -496,6 +556,79 @@ export interface CdsState {
    * built-in default template (services/comment-template.ts).
    */
   commentTemplate?: CommentTemplateSettings;
+  /**
+   * 2026-04-22 新增 —— 配置快照（导入/破坏性操作前自动备份，供一键回滚）。
+   *
+   * 每次下列动作会自动创建一条快照：
+   *   - POST /api/import-config   (trigger='pre-import')
+   *   - 破坏性操作（清项目、factory-reset 等）  (trigger='pre-destructive')
+   *   - 用户在 Settings「历史版本」页手动「保存当前配置」 (trigger='manual')
+   *
+   * 保留策略：全局最近 30 条，满了淘汰最旧。
+   * 不做 per-project 独立保留，因为导入/破坏性操作通常跨项目影响。
+   *
+   * 只快照「配置」，不快照「分支/容器/数据库」—— 这些属于运行时状态，
+   * 由 DestructiveOperationLog 单独追踪（见 undoable 字段）。
+   */
+  configSnapshots?: ConfigSnapshot[];
+  /**
+   * 2026-04-22 新增 —— 破坏性操作审计 + 撤销。
+   *
+   * 记录每次「删项目/清容器/清数据库/replace-all 导入」等高风险操作，
+   * 关联到一条 ConfigSnapshot（如适用）和可选的 mongoDumpPath。
+   * 顶部「最近操作」抽屉让用户在 30 分钟内撤销。
+   */
+  destructiveOps?: DestructiveOperationLog[];
+}
+
+/**
+ * 配置快照。拍下 buildProfiles/envVars/infra/routingRules 四件套当前状态，
+ * 供一键回滚。不包含 branches/logs/运行时字段 —— 那些不算「配置」。
+ */
+export interface ConfigSnapshot {
+  id: string;
+  createdAt: string;
+  /** 关联项目（如果是项目级操作触发）。全局导入为 null。 */
+  projectId?: string | null;
+  /** 触发来源 */
+  trigger: 'pre-import' | 'pre-destructive' | 'manual' | 'scheduled';
+  /** 人类可读的标签（如 "导入 prd-agent.yaml 前" / "factory-reset 前"） */
+  label: string;
+  /** 谁触发的（agent key id / user id / 'system'） */
+  triggeredBy?: string;
+  /** 快照内容（JSON） */
+  payload: {
+    buildProfiles: BuildProfile[];
+    customEnv: CustomEnvStore;
+    infraServices: InfraService[];
+    routingRules: RoutingRule[];
+  };
+  /** 快照字节数（存 state.json 时粗略统计，用于 UI 展示） */
+  sizeBytes?: number;
+}
+
+/**
+ * 破坏性操作审计日志。用户「撤销」时，从关联的 ConfigSnapshot 回放配置，
+ * 并从 mongoDumpPath（如存在）恢复数据库。
+ */
+export interface DestructiveOperationLog {
+  id: string;
+  at: string;
+  type: 'import-replace-all' | 'factory-reset' | 'delete-project' | 'purge-branch' | 'purge-database' | 'other';
+  /** 项目范围，全局为 null */
+  projectId?: string | null;
+  /** 关联 ConfigSnapshot.id（可选） */
+  snapshotId?: string | null;
+  /** 数据库 dump 文件路径（可选） */
+  mongoDumpPath?: string | null;
+  /** 操作的 summary（UI 显示） */
+  summary: string;
+  /** 谁触发的 */
+  triggeredBy?: string;
+  /** 是否可撤销（时间窗：at + 30min；已撤销为 false） */
+  undoable: boolean;
+  /** 已撤销时间（undone 后前端显示为灰色） */
+  undoneAt?: string;
 }
 
 /**

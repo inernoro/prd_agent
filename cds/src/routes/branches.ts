@@ -2941,6 +2941,103 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
   // ── Deploy mode switching ──
 
+  // ── 全局批量改命令 (2026-04-22) ──
+  //
+  // 用户故事：「我的所有 .NET profile 都用同一套热/冷部署命令，能不能一次性改完？」
+  //
+  // POST /api/build-profiles/bulk-set-modes
+  // body: {
+  //   filter: 'all' | 'dotnet' | 'node' | 'python' | { dockerImageMatch: string },
+  //   modes: { [modeId]: { label, command } },     // 要写入的所有 mode（覆盖该 profile 的全套）
+  //   strategy: 'replace' | 'merge',                // replace: 清空后覆盖；merge: 同 modeId 替换、其他保留
+  //   profileIds?: string[],                        // 可选：精准白名单，优先于 filter
+  // }
+  //
+  // 自动在执行前拍 ConfigSnapshot，可在「历史版本」一键回滚。
+  router.post('/build-profiles/bulk-set-modes', (req, res) => {
+    try {
+      const {
+        filter = 'all',
+        modes,
+        strategy = 'merge',
+        profileIds,
+      } = req.body as {
+        filter?: 'all' | 'dotnet' | 'node' | 'python' | { dockerImageMatch?: string };
+        modes?: Record<string, { label: string; command: string }>;
+        strategy?: 'replace' | 'merge';
+        profileIds?: string[];
+      };
+
+      if (!modes || typeof modes !== 'object' || Object.keys(modes).length === 0) {
+        res.status(400).json({ error: '必须提供 modes（{ modeId: { label, command } }）' });
+        return;
+      }
+      for (const [k, v] of Object.entries(modes)) {
+        if (!v || typeof v !== 'object' || !v.label || !v.command) {
+          res.status(400).json({ error: `mode "${k}" 缺少 label 或 command` });
+          return;
+        }
+      }
+
+      const matchPattern: ((img: string) => boolean) = (() => {
+        if (Array.isArray(profileIds)) return () => false;
+        if (filter === 'all') return () => true;
+        if (filter === 'dotnet') return img => /dotnet|mcr\.microsoft\.com\/dotnet/i.test(img);
+        if (filter === 'node') return img => /node|node:|nodejs/i.test(img);
+        if (filter === 'python') return img => /python/i.test(img);
+        if (typeof filter === 'object' && filter.dockerImageMatch) {
+          const re = new RegExp(filter.dockerImageMatch, 'i');
+          return img => re.test(img);
+        }
+        return () => true;
+      })();
+
+      const allProfiles = stateService.getBuildProfiles();
+      const targets = Array.isArray(profileIds) && profileIds.length > 0
+        ? allProfiles.filter(p => profileIds.includes(p.id))
+        : allProfiles.filter(p => matchPattern(p.dockerImage || ''));
+
+      if (targets.length === 0) {
+        res.status(400).json({ error: '没有匹配的 profile，请检查 filter / profileIds' });
+        return;
+      }
+
+      // 自动快照（这是批量破坏性写入）
+      const snapshot = stateService.createConfigSnapshot({
+        trigger: 'pre-destructive',
+        label: `批量设置 ${targets.length} 个 profile 的部署命令（${strategy}）`,
+      });
+
+      const updates: Array<{ id: string; modesBefore: number; modesAfter: number }> = [];
+      for (const profile of targets) {
+        const before = Object.keys(profile.deployModes || {}).length;
+        const baseModes = strategy === 'replace' ? {} : { ...(profile.deployModes || {}) };
+        for (const [mid, m] of Object.entries(modes)) {
+          baseModes[mid] = { label: m.label, command: m.command };
+        }
+        stateService.updateBuildProfile(profile.id, { deployModes: baseModes });
+        updates.push({ id: profile.id, modesBefore: before, modesAfter: Object.keys(baseModes).length });
+      }
+      stateService.save();
+
+      stateService.recordDestructiveOp({
+        type: 'other',
+        snapshotId: snapshot.id,
+        summary: `批量改 ${targets.length} 个 profile 的部署命令（filter=${typeof filter === 'string' ? filter : 'custom'}, strategy=${strategy}）`,
+      });
+
+      res.json({
+        applied: true,
+        targetCount: targets.length,
+        targets: updates,
+        snapshotId: snapshot.id,
+        message: `已为 ${targets.length} 个 profile 应用新命令。如有问题在「历史版本」回滚。`,
+      });
+    } catch (err) {
+      res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
   router.put('/build-profiles/:id/deploy-mode', (req, res) => {
     try {
       const { id } = req.params;
@@ -2963,6 +3060,212 @@ export function createBranchRouter(deps: RouterDeps): Router {
     } catch (err) {
       res.status(500).json({ error: (err as Error).message });
     }
+  });
+
+  // ── 热更新开关（2026-04-22 新增）──
+  // POST /api/build-profiles/:id/hot-reload  { enabled: boolean, mode?, command?, usePolling? }
+  // 关掉热更新：只传 enabled=false，其他字段保留以便下次启用
+  router.post('/build-profiles/:id/hot-reload', (req, res) => {
+    try {
+      const { id } = req.params;
+      const { enabled, mode, command, usePolling } = req.body as {
+        enabled?: boolean;
+        mode?: 'dotnet-watch' | 'pnpm-dev' | 'vite' | 'next-dev' | 'custom';
+        command?: string;
+        usePolling?: boolean;
+      };
+      const profile = stateService.getBuildProfile(id);
+      if (!profile) {
+        res.status(404).json({ error: `构建配置 "${id}" 不存在` });
+        return;
+      }
+      if (enabled === undefined) {
+        res.status(400).json({ error: '必须传 enabled (true/false)' });
+        return;
+      }
+      // 2026-04-22 —— .NET 默认 dotnet-run（快路径：MSBuild 增量 + kill/restart）。
+      // MSBuild 增量绝大多数情况正确；极少数撒谎场景走 🧹 清理按钮 (force-rebuild)
+      // 破缓存即可。dotnet-restart 保留但仅作疑难兜底，不是默认。
+      const isDotnet = /dotnet|mcr\.microsoft\.com\/dotnet/i.test(profile.dockerImage || '');
+      const defaultMode = isDotnet ? ('dotnet-run' as const) : ('pnpm-dev' as const);
+      const current = profile.hotReload || { enabled: false, mode: defaultMode };
+      const next = {
+        enabled,
+        mode: mode ?? current.mode,
+        command: command ?? current.command,
+        usePolling: usePolling ?? current.usePolling,
+        cleanBeforeBuild: (req.body as { cleanBeforeBuild?: boolean })?.cleanBeforeBuild ?? (current as { cleanBeforeBuild?: boolean }).cleanBeforeBuild ?? true,
+      };
+      // mode=custom 时必须有 command
+      if (next.enabled && next.mode === 'custom' && !next.command) {
+        res.status(400).json({ error: 'mode=custom 时必须提供 command' });
+        return;
+      }
+      stateService.updateBuildProfile(id, { hotReload: next });
+      stateService.save();
+      res.json({
+        hotReload: next,
+        message: next.enabled
+          ? `已启用热更新（${next.mode}）。重启该服务让变更生效。`
+          : '已关闭热更新。重启该服务回到标准编译命令。',
+        requiresRestart: true,
+      });
+    } catch (err) {
+      res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  // ── 强制干净重建（2026-04-22，对付 MSBuild 增量编译撒谎）──
+  //
+  // 场景：改了 .cs 文件 5 轮都没生效，DLL 里 grep 得到新字符串，运行进程日志却看不到。
+  // 根因：MSBuild 增量编译误判「项目引用未变」跳过 compile，或 dotnet watch 只更新内存
+  //       没重启进程 → 进程加载的字节码和磁盘 DLL 对不上。
+  //
+  // 本接口：停该 profile 的容器 → rm -rf bin/obj → 重启（重启后会 clean build）。
+  // 对用 dotnet-restart 热更新模式的 profile 也适用，因为它的 cleanBeforeBuild 只在
+  // 下次文件变更触发时清理，强制按钮让用户即时清理而不等变更。
+  //
+  // POST /api/branches/:branchSlug/force-rebuild/:profileId
+  router.post('/branches/:branchSlug/force-rebuild/:profileId', async (req, res) => {
+    const branchSlug = decodeURIComponent(req.params.branchSlug);
+    const profileId = req.params.profileId;
+    const branch = stateService.getBranch(branchSlug);
+    const profile = stateService.getBuildProfile(profileId);
+    if (!branch) { res.status(404).json({ error: `分支 "${branchSlug}" 不存在` }); return; }
+    if (!profile) { res.status(404).json({ error: `构建配置 "${profileId}" 不存在` }); return; }
+
+    const svc = branch.services?.[profileId];
+    const containerName = svc?.containerName;
+    const worktree = branch.worktreePath;
+    if (!worktree) { res.status(400).json({ error: '分支无 worktreePath' }); return; }
+
+    const steps: Array<{ step: string; ok: boolean; detail?: string }> = [];
+
+    // 1) 停容器
+    if (containerName) {
+      try {
+        await containerService.stop(containerName);
+        steps.push({ step: `停止 ${containerName}`, ok: true });
+      } catch (err) {
+        steps.push({ step: `停止 ${containerName}`, ok: false, detail: (err as Error).message });
+      }
+    } else {
+      steps.push({ step: '停止容器', ok: true, detail: '容器未运行，跳过' });
+    }
+
+    // 2) 物理删除 worktree 下目标 profile workDir 里的 bin / obj —— 绕过 MSBuild 增量
+    const workDir = profile.workDir ? `${worktree}/${profile.workDir}` : worktree;
+    const wipeCmd = `find ${shq(workDir)} -type d \\( -name bin -o -name obj \\) -prune -exec rm -rf {} + 2>/dev/null; echo done`;
+    try {
+      const result = await shell.exec(wipeCmd);
+      if (result.exitCode !== 0) {
+        steps.push({ step: 'rm -rf bin/obj', ok: false, detail: combinedOutput(result) });
+      } else {
+        steps.push({ step: 'rm -rf bin/obj', ok: true, detail: workDir });
+      }
+    } catch (err) {
+      steps.push({ step: 'rm -rf bin/obj', ok: false, detail: (err as Error).message });
+    }
+
+    // 3) 触发部署（异步；响应立即返回，不堵 HTTP）
+    // 部署接口是现成的，这里直接告诉用户去点"部署"；自动触发留给下一版
+    steps.push({
+      step: '触发重新部署',
+      ok: true,
+      detail: `已清理。请在分支卡片上点「部署」或等待 autoBuild 重启该服务。`,
+    });
+
+    stateService.recordDestructiveOp({
+      type: 'other',
+      projectId: branch.projectId || null,
+      summary: `强制干净重建 ${branchSlug}:${profileId}（清 bin/obj）`,
+    });
+
+    res.json({
+      branch: branchSlug,
+      profile: profileId,
+      workDir,
+      steps,
+      message: '已强制清理构建缓存。下次部署会从源码完整重编译。',
+    });
+  });
+
+  // ── 运行时字节码一致性核验（2026-04-22 诊断工具）──
+  //
+  // 帮用户回答："我改的 .cs 到底生效了没有？"
+  //
+  // 三项对比：
+  //   - 容器里 DLL 文件 mtime：echo $(stat /app/.../bin/.../*.dll | grep Modify)
+  //   - 容器里 dotnet 进程 PID 启动时间：ps -o lstart -p $PID
+  //   - 最近 50 行容器 stdout：看请求/日志是不是按新代码应有的行为走
+  //
+  // 如果 DLL mtime > 进程启动时间 → 进程加载的还是老字节码，需要重启。
+  //
+  // POST /api/branches/:branchSlug/verify-runtime/:profileId
+  router.post('/branches/:branchSlug/verify-runtime/:profileId', async (req, res) => {
+    const branchSlug = decodeURIComponent(req.params.branchSlug);
+    const profileId = req.params.profileId;
+    const branch = stateService.getBranch(branchSlug);
+    if (!branch) { res.status(404).json({ error: `分支 "${branchSlug}" 不存在` }); return; }
+    const svc = branch.services?.[profileId];
+    const containerName = svc?.containerName;
+    if (!containerName) {
+      res.status(400).json({ error: `服务 "${profileId}" 未运行，无法诊断` });
+      return;
+    }
+
+    // 1) 进程启动时间
+    const psCmd = `docker exec ${shq(containerName)} sh -c "ps -o lstart= -p 1 2>/dev/null || ps -o lstart= -p \\$(pgrep -f 'dotnet run' | head -1) 2>/dev/null || echo unknown"`;
+    const ps = await shell.exec(psCmd).catch(err => ({ exitCode: 1, stdout: '', stderr: (err as Error).message }));
+
+    // 2) DLL 时间戳（遍历 bin/ 下所有 .dll 取最新）
+    const dllCmd = `docker exec ${shq(containerName)} sh -c "find . -name '*.dll' -path '*/bin/*' -printf '%T@ %p\\n' 2>/dev/null | sort -nr | head -5"`;
+    const dll = await shell.exec(dllCmd).catch(err => ({ exitCode: 1, stdout: '', stderr: (err as Error).message }));
+
+    // 3) 源码 .cs 最新改动时间
+    const srcCmd = `docker exec ${shq(containerName)} sh -c "find . -name '*.cs' -not -path '*/bin/*' -not -path '*/obj/*' -printf '%T@ %p\\n' 2>/dev/null | sort -nr | head -1"`;
+    const src = await shell.exec(srcCmd).catch(err => ({ exitCode: 1, stdout: '', stderr: (err as Error).message }));
+
+    // 4) 最近 50 行日志
+    const logs = await containerService.getLogs(containerName, 50).catch(() => '');
+
+    // 解析和诊断
+    const parseTop = (s: string) => {
+      const first = s.split('\n').filter(Boolean)[0] || '';
+      const [tsStr, ...pathParts] = first.split(/\s+/);
+      const ts = parseFloat(tsStr);
+      return { ts: Number.isFinite(ts) ? ts : null, path: pathParts.join(' ') };
+    };
+
+    const topDll = parseTop(dll.stdout || '');
+    const topSrc = parseTop(src.stdout || '');
+
+    const warnings: string[] = [];
+    if (topSrc.ts && topDll.ts && topSrc.ts > topDll.ts) {
+      warnings.push('⚠ 源码比 DLL 新：最新的 .cs 还没被编译进 DLL。说明容器内没跑重编译（watch 没触发或热更新没起）。');
+    }
+    // DLL 晚于进程启动时间 → 进程跑的还是老字节码
+    const processStartStr = (ps.stdout || '').trim();
+    if (topDll.ts && processStartStr && processStartStr !== 'unknown') {
+      const procTs = Date.parse(processStartStr) / 1000;
+      if (Number.isFinite(procTs) && topDll.ts > procTs + 5) {
+        warnings.push(`⚠ DLL 比进程启动时间新 (Δ=${Math.round(topDll.ts - procTs)}s)：进程还在跑老字节码。重启服务或点「💥 强制干净重建」。`);
+      }
+    }
+    if (warnings.length === 0) {
+      warnings.push('✓ 未检测到明显不一致。如仍看不到预期日志，排查：日志级别过滤、LogError 是否真走到那个代码路径、Infrastructure.dll 是不是被引用/注入。');
+    }
+
+    res.json({
+      branch: branchSlug,
+      profile: profileId,
+      container: containerName,
+      processStart: processStartStr,
+      latestDll: topDll,
+      latestSource: topSrc,
+      recentLogs: logs.split('\n').slice(-30).join('\n'),
+      warnings,
+    });
   });
 
   // ── Docker images (for dropdown selection) ──
@@ -4406,18 +4709,46 @@ export function createBranchRouter(deps: RouterDeps): Router {
   }
 
   // POST /api/import-config — validate, preview, and optionally apply
-  // Accepts { config: <JSON object | YAML string>, dryRun? }
-  // Auto-detects format: YAML string → CDS compose, JSON object → direct config
+  //
+  // 2026-04-22 升级：
+  //   - 每次 apply 前自动拍 ConfigSnapshot（trigger='pre-import'）
+  //   - 新增 cleanMode: 'merge' | 'replace-all'
+  //       merge      = 原行为（新增/更新，不删除存量）
+  //       replace-all = 清空 buildProfiles/envVars/infra/routingRules 后再 apply
+  //   - 新增 branchPolicy: 'keep' | 'restart-all' | 'clean'
+  //       keep        = 不动运行中的分支（默认）
+  //       restart-all = apply 后调度重启所有分支容器（让新 env 生效）
+  //       clean       = 额外清掉所有分支的运行状态（容器 + worktree），只留配置
+  //
+  // 数据库永不在清理范围内。想清数据库走 /api/infra/:id/purge。
   router.post('/import-config', async (req, res) => {
     try {
-      const { config: configBlob, dryRun } = req.body as { config: unknown; dryRun?: boolean };
+      const {
+        config: configBlob,
+        dryRun,
+        cleanMode = 'merge',
+        branchPolicy = 'keep',
+      } = req.body as {
+        config: unknown;
+        dryRun?: boolean;
+        cleanMode?: 'merge' | 'replace-all';
+        branchPolicy?: 'keep' | 'restart-all' | 'clean';
+      };
+
+      if (cleanMode !== 'merge' && cleanMode !== 'replace-all') {
+        res.status(400).json({ error: `非法的 cleanMode: ${cleanMode}（允许 merge / replace-all）` });
+        return;
+      }
+      if (!['keep', 'restart-all', 'clean'].includes(branchPolicy)) {
+        res.status(400).json({ error: `非法的 branchPolicy: ${branchPolicy}（允许 keep / restart-all / clean）` });
+        return;
+      }
 
       // Auto-detect format: string → try CDS compose YAML, object → JSON config
       let cfg: Record<string, unknown>;
       if (typeof configBlob === 'string') {
         const cdsConfig = parseCdsCompose(configBlob);
         if (cdsConfig) {
-          // Convert CDS compose to internal format (reuse existing validate/apply pipeline)
           cfg = {
             $schema: 'cds-config',
             buildProfiles: cdsConfig.buildProfiles,
@@ -4426,7 +4757,6 @@ export function createBranchRouter(deps: RouterDeps): Router {
             routingRules: cdsConfig.routingRules.length > 0 ? cdsConfig.routingRules : undefined,
           };
         } else {
-          // Not a CDS compose — try parsing as JSON string
           try {
             cfg = JSON.parse(configBlob);
           } catch {
@@ -4442,7 +4772,6 @@ export function createBranchRouter(deps: RouterDeps): Router {
         cfg = configBlob as Record<string, unknown>;
       }
 
-      // Validate
       const validation = validateConfigBlob(cfg);
       if (!validation.valid) {
         res.status(400).json({ valid: false, errors: validation.errors, warnings: validation.warnings });
@@ -4450,13 +4779,47 @@ export function createBranchRouter(deps: RouterDeps): Router {
       }
       const preview = previewImport(cfg);
 
-      // If dry run, return preview only (include warnings)
       if (dryRun) {
-        res.json({ valid: true, preview, applied: false, warnings: validation.warnings });
+        res.json({
+          valid: true,
+          preview,
+          applied: false,
+          warnings: validation.warnings,
+          cleanMode,
+          branchPolicy,
+        });
         return;
       }
 
-      // Apply: build profiles (add or replace)
+      // 1) 拍快照（replace-all 必须拍；merge 也默认拍，成本很低）
+      const snapshotLabel = cleanMode === 'replace-all'
+        ? `导入前（replace-all）· ${new Date().toLocaleString('zh-CN')}`
+        : `导入前（merge）· ${new Date().toLocaleString('zh-CN')}`;
+      const snapshot = stateService.createConfigSnapshot({
+        trigger: 'pre-import',
+        label: snapshotLabel,
+      });
+
+      // 2) replace-all 模式：清空四件套
+      //    用「全部删除 + 逐个添加」方式，避免状态字段漂移
+      if (cleanMode === 'replace-all') {
+        // 清 buildProfiles
+        for (const p of [...stateService.getBuildProfiles()]) {
+          stateService.removeBuildProfile(p.id);
+        }
+        // 清 customEnv（所有 scope）
+        stateService.clearAllCustomEnv();
+        // 清 infraServices（但保留已创建的容器数据 —— 只是从 state 删记录）
+        for (const svc of [...stateService.getInfraServices()]) {
+          stateService.removeInfraService(svc.id);
+        }
+        // 清 routingRules
+        for (const rule of [...stateService.getRoutingRules()]) {
+          stateService.removeRoutingRule(rule.id);
+        }
+      }
+
+      // 3) apply buildProfiles
       if (Array.isArray(cfg.buildProfiles)) {
         for (const p of cfg.buildProfiles as BuildProfile[]) {
           const existing = stateService.getBuildProfile(p.id);
@@ -4470,7 +4833,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
         }
       }
 
-      // Apply: env vars (merge, new wins)
+      // 4) apply envVars
       if (cfg.envVars && typeof cfg.envVars === 'object') {
         const newVars = cfg.envVars as Record<string, string>;
         for (const [key, value] of Object.entries(newVars)) {
@@ -4478,7 +4841,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
         }
       }
 
-      // Apply: infra services (add if not exists, skip existing)
+      // 5) apply infraServices
       const infraResults: { id: string; status: string }[] = [];
       const infraDefs = resolveInfraDefs(cfg);
       for (const def of infraDefs) {
@@ -4486,7 +4849,6 @@ export function createBranchRouter(deps: RouterDeps): Router {
           infraResults.push({ id: def.id, status: 'exists' });
           continue;
         }
-
         if (def.id && def.dockerImage && def.containerPort) {
           const service = composeDefToInfraService(def);
           stateService.addInfraService(service);
@@ -4494,7 +4856,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
         }
       }
 
-      // Apply: routing rules (add or replace)
+      // 6) apply routingRules
       if (Array.isArray(cfg.routingRules)) {
         for (const r of cfg.routingRules as RoutingRule[]) {
           const existing = stateService.getRoutingRules().find(x => x.id === r.id);
@@ -4508,17 +4870,41 @@ export function createBranchRouter(deps: RouterDeps): Router {
         }
       }
 
-      // Sync CDS config (domains etc.)
       syncCdsConfig();
       stateService.save();
+
+      // 7) branchPolicy: 只做调度侧的标记，真实 restart/clean 由调用方按返回提示触发（避免同步阻塞）
+      const branchActions: string[] = [];
+      if (branchPolicy !== 'keep') {
+        const branches = stateService.getAllBranches();
+        for (const b of branches) {
+          branchActions.push(`${b.id}: ${branchPolicy === 'restart-all' ? '待重启' : '待清理'}`);
+        }
+      }
+
+      // 8) replace-all 视为破坏性操作，记审计日志 + 关联 snapshotId
+      if (cleanMode === 'replace-all') {
+        stateService.recordDestructiveOp({
+          type: 'import-replace-all',
+          snapshotId: snapshot.id,
+          summary: `replace-all 导入配置：清空 4 件套并重新导入（${(cfg.buildProfiles as BuildProfile[] | undefined)?.length ?? 0} 个 profile / ${infraDefs.length} 个 infra）`,
+        });
+      }
 
       res.json({
         valid: true,
         preview,
         applied: true,
+        cleanMode,
+        branchPolicy,
         infraResults,
+        snapshotId: snapshot.id,
+        snapshotLabel: snapshot.label,
+        branchActions,
         warnings: validation.warnings,
-        message: '配置已成功导入',
+        message: cleanMode === 'replace-all'
+          ? '配置已清空并重新导入（快照已保存，可在「历史版本」一键回滚）'
+          : '配置已合并导入（快照已保存，可在「历史版本」回滚）',
       });
     } catch (err) {
       res.status(500).json({ error: (err as Error).message });

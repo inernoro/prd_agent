@@ -7,6 +7,48 @@ import type { SchedulerService } from './scheduler.js';
 import { buildWidgetScript } from '../widget-script.js';
 
 /**
+ * 代理转发事件 —— 每一次经过 worker port 的请求都会生成一条。
+ * 用户通过顶部「🔍 转发日志」面板查看，专门用于排查：
+ *   - 502 但服务器日志为空 → outcome=upstream-error + code=ECONNREFUSED
+ *   - 接口无法启动报 502 但页面正常 → branchSlug/profileId 帮定位是哪个服务
+ *   - 路由未命中（某个域名没配 routing rule）→ outcome=no-branch-match
+ */
+export interface ProxyLogEvent {
+  id: number;
+  ts: string;
+  method: string;
+  host: string;
+  url: string;
+  /** 匹配到的 branch slug；未命中时为 null */
+  branchSlug: string | null;
+  /** 匹配到的 profile id；未识别时为 null */
+  profileId: string | null;
+  /** 解析出的上游 URL；未解析到为 null */
+  upstream: string | null;
+  /** 返回给客户端的最终状态码 */
+  status: number;
+  /** ProxyService 处理全过程耗时（ms） */
+  durationMs: number;
+  /**
+   * 结果分类，供前端染色 / 过滤：
+   *   ok — 转发成功 (2xx/3xx)
+   *   client-error — 客户端错误 (4xx)
+   *   upstream-error — 上游连接/超时类错误 (触发 502)
+   *   no-branch-match — 请求进来但 routing rule / 默认分支都没命中
+   *   branch-not-running — 分支存在但容器没跑，已降级到 loading/起始页
+   *   timeout — 上游长时间无响应
+   */
+  outcome: 'ok' | 'client-error' | 'upstream-error' | 'no-branch-match' | 'branch-not-running' | 'timeout';
+  /** 上游错误码（ECONNREFUSED / ETIMEDOUT 等），便于一眼定位 */
+  errorCode?: string;
+  errorMessage?: string;
+  /** 人类可读的一句诊断（前端直接显示） */
+  hint?: string;
+}
+
+const PROXY_LOG_BUFFER_MAX = 500;
+
+/**
  * ProxyService — the core of CDS worker port.
  * Routes incoming HTTP requests to the correct branch service
  * based on routing rules (header, domain, pattern matching).
@@ -22,6 +64,10 @@ export class ProxyService {
   private worktreeService: WorktreeService | null = null;
   /** Optional scheduler for warm-pool touch tracking */
   private scheduler: SchedulerService | null = null;
+  /** Ring buffer of recent proxy events for the global log panel (顶部 🔍). */
+  private proxyLogBuffer: ProxyLogEvent[] = [];
+  private proxyLogSeq = 0;
+  private onProxyLog: ((evt: ProxyLogEvent) => void) | null = null;
 
   constructor(
     private readonly stateService: StateService,
@@ -51,6 +97,36 @@ export class ProxyService {
 
   setWorktreeService(wt: WorktreeService): void {
     this.worktreeService = wt;
+  }
+
+  /** Subscribe to live proxy events (for the SSE endpoint). */
+  setOnProxyLog(fn: ((evt: ProxyLogEvent) => void) | null): void {
+    this.onProxyLog = fn;
+  }
+
+  /** Snapshot of the ring buffer — used by `GET /api/proxy-log`. */
+  getProxyLog(): ProxyLogEvent[] {
+    return this.proxyLogBuffer.slice();
+  }
+
+  /**
+   * Record a single proxy event. Call at each decision point that ends the
+   * request's lifecycle (no-branch-match, branch-not-running, upstream-error,
+   * normal-finish). Emits to `onProxyLog` callback for SSE fan-out.
+   */
+  private recordProxyEvent(partial: Omit<ProxyLogEvent, 'id' | 'ts'>): void {
+    const evt: ProxyLogEvent = {
+      id: ++this.proxyLogSeq,
+      ts: new Date().toISOString(),
+      ...partial,
+    };
+    this.proxyLogBuffer.push(evt);
+    if (this.proxyLogBuffer.length > PROXY_LOG_BUFFER_MAX) {
+      this.proxyLogBuffer.shift();
+    }
+    if (this.onProxyLog) {
+      try { this.onProxyLog(evt); } catch { /* listener errors must not crash proxy */ }
+    }
   }
 
   /**
@@ -227,6 +303,7 @@ export class ProxyService {
   handleRequest(req: http.IncomingMessage, res: http.ServerResponse): void {
     const host = req.headers.host || '';
     const url = req.url || '/';
+    const handleStart = Date.now();
 
     // ── /_cds/api/* — passthrough to CDS Dashboard API (master port) ──
     // Allows widgets embedded in proxied apps to call CDS API without CORS issues.
@@ -287,6 +364,13 @@ export class ProxyService {
       // 502 JSON which rendered as Chrome's raw "HTTP ERROR" page for browsers.
       // Prefer a 404 HTML for browser requests so the tab isn't blank.
       const acceptsHtml = (req.headers.accept || '').toLowerCase().includes('text/html');
+      this.recordProxyEvent({
+        method: req.method || 'GET', host, url,
+        branchSlug: null, profileId: null, upstream: null,
+        status: 404, durationMs: Date.now() - handleStart,
+        outcome: 'no-branch-match',
+        hint: 'Host 头未命中任何 routing rule，也没配默认分支。检查「路由规则」或 cds_branch cookie。',
+      });
       if (acceptsHtml) {
         // Truncate host so a client sending a 4KB Host header can't bloat the
         // HTML body. DNS labels cap at 253 chars total; we allow 120 for safety.
@@ -770,6 +854,33 @@ h2{font-size:18px;color:#f0f6fc;margin-bottom:8px}
       });
     }
 
+    // 代理日志：请求完结时记一条，outcome 基于 status 分类
+    // proxyLogRecorded 防止 upstream-error 分支手动记录后，finish 又记一条重复的
+    //
+    // 有些测试 double 不带 .on；用 typeof 兜住，避免生产代码被测试 mock 拖垮。
+    let proxyLogRecorded = false;
+    if (typeof clientRes.on === 'function') {
+      clientRes.on('finish', () => {
+        if (proxyLogRecorded) return;
+        proxyLogRecorded = true;
+        const status = clientRes.statusCode;
+        let outcome: ProxyLogEvent['outcome'] = 'ok';
+        if (status >= 500) outcome = 'upstream-error';
+        else if (status >= 400) outcome = 'client-error';
+        this.recordProxyEvent({
+          method: clientReq.method || 'GET',
+          host: clientReq.headers.host || '',
+          url: clientReq.url || '/',
+          branchSlug: branchCtx?.branchId ?? null,
+          profileId: branchCtx?.profileId ?? null,
+          upstream,
+          status,
+          durationMs: Date.now() - proxyStart,
+          outcome,
+        });
+      });
+    }
+
     const proxyReq = http.request(options, (proxyRes) => {
       const headers = { ...proxyRes.headers };
       // When routing via cookie (same URL serves different branches), prevent
@@ -835,6 +946,31 @@ h2{font-size:18px;color:#f0f6fc;margin-bottom:8px}
 
     proxyReq.on('error', (err: NodeJS.ErrnoException) => {
       console.error(`[proxy] upstream error: ${err.message} → ${upstream}`);
+      // 转发日志：明确记录上游错误类型，方便用户看到"502 但服务器无日志"时的真实原因
+      const codeHintMap: Record<string, string> = {
+        ECONNREFUSED: '上游端口未监听 — 容器可能还没启动完，或服务崩溃了。查 container logs。',
+        ECONNRESET: '上游主动断开 — 服务启动到一半挂了，或进程 OOM 被杀。查容器 dmesg / crash dump。',
+        ETIMEDOUT: '上游不响应 — 可能卡在启动（例如 restore 还没跑完），或进程 hang 住。',
+        EHOSTUNREACH: 'Docker 网络不通 — 容器 IP 失效或跨 network 没配好。',
+        ENOTFOUND: 'DNS 无法解析 upstream host — 检查 routing rule 里的 host 是否拼错。',
+      };
+      if (!proxyLogRecorded) {
+        proxyLogRecorded = true;
+        this.recordProxyEvent({
+          method: clientReq.method || 'GET',
+          host: clientReq.headers.host || '',
+          url: clientReq.url || '/',
+          branchSlug: branchCtx?.branchId ?? null,
+          profileId: branchCtx?.profileId ?? null,
+          upstream,
+          status: 502,
+          durationMs: Date.now() - proxyStart,
+          outcome: 'upstream-error',
+          errorCode: err.code || 'UNKNOWN',
+          errorMessage: err.message,
+          hint: codeHintMap[err.code || ''] || '上游异常，查 container logs 看具体原因。',
+        });
+      }
       // Emit activity event immediately so the failure appears in Activity Monitor.
       // We do this here rather than relying on clientRes.on('finish') because the
       // synthetic response we send (loading page or 502) would show status 200/502

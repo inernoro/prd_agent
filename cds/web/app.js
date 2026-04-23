@@ -3745,30 +3745,51 @@ function renderBranches() {
     const btnDisabled = (action) => (isBusy || isLoading(b.id, action)) ? 'disabled' : '';
     const btnLabel = (action, label) => isLoading(b.id, action) ? `<span class="btn-spinner"></span>${label}` : label;
 
-    // Build deploy dropdown items for single-service redeploy
-    const deployMenuItems = buildProfiles.map(p => {
-      const modeTag = p.activeDeployMode && p.deployModes?.[p.activeDeployMode]
-        ? ` <span style="font-size:10px;opacity:0.6">(${esc(p.deployModes[p.activeDeployMode].label)})</span>`
-        : '';
-      return `<div class="deploy-menu-item" onclick="deploySingleService('${esc(b.id)}', '${esc(p.id)}')">${esc(p.name)}${modeTag}</div>`;
-    }).join('');
-
-    // Build deploy mode menu items for the left deploy button
-    const allModes = [];
-    for (const p of buildProfiles) {
-      if (p.deployModes && Object.keys(p.deployModes).length > 0) {
-        for (const [modeId, mode] of Object.entries(p.deployModes)) {
-          allModes.push({ profileId: p.id, profileName: p.name, modeId, label: mode.label || modeId, active: p.activeDeployMode === modeId });
-        }
-      }
+    // 2026-04-22 —— 二级菜单结构：
+    //   一级：按服务分组（每个 profile 一个 hover 触发的子菜单条目）+ 分支级动作
+    //   二级：每个服务的 deployModes（快/慢/用户自定义）+ 🧹 清理 + 🔍 核验
+    //
+    // 若 profile.deployModes 为空（用户没配任何模式），fallback 到"默认部署"单项，
+    // 同时底部提示用户可在 ⚙ 构建命令面板自定义。这样比以前扁平的"选择服务 + 部署模式"
+    // 平行两组清爽得多：一级每服务一行，鼠标 hover 出二级，单击直接下发命令。
+    function buildProfileSubmenu(p) {
+      const modes = p.deployModes && Object.keys(p.deployModes).length > 0
+        ? Object.entries(p.deployModes).map(([modeId, mode]) => ({
+            modeId,
+            label: mode.label || modeId,
+            active: p.activeDeployMode === modeId,
+          }))
+        : null;
+      const modeRows = modes
+        ? modes.map(m => `
+            <div class="deploy-submenu-item" onclick="event.stopPropagation(); closeDeployMenu('${esc(b.id)}'); switchModeAndDeploy('${esc(b.id)}', '${esc(p.id)}', '${esc(m.modeId)}')">
+              <span style="display:inline-block;width:14px">${m.active ? '✓' : ''}</span>${esc(m.label)}
+            </div>`).join('')
+        : `<div class="deploy-submenu-item" onclick="event.stopPropagation(); closeDeployMenu('${esc(b.id)}'); deploySingleService('${esc(b.id)}', '${esc(p.id)}')">
+             <span style="display:inline-block;width:14px">▶</span>部署 (使用当前命令)
+           </div>`;
+      return `
+        <div class="deploy-menu-item deploy-submenu-anchor">
+          <span>${esc(p.name)}</span>
+          <span style="margin-left:auto;color:var(--text-muted)">▸</span>
+          <div class="deploy-submenu">
+            <div class="deploy-submenu-header">${esc(p.name)} — 部署命令</div>
+            ${modeRows}
+            <div class="deploy-submenu-divider"></div>
+            <div class="deploy-submenu-item" onclick="event.stopPropagation(); closeDeployMenu('${esc(b.id)}'); _askBranchAndRunForBranch('${esc(b.id)}', '${esc(p.id)}', 'rebuild')" title="停容器 + 物理删 bin/obj + 等待重新部署（破 MSBuild 撒谎用）">
+              <span style="display:inline-block;width:14px">🧹</span>清理 bin/obj 并重建
+            </div>
+            <div class="deploy-submenu-item" onclick="event.stopPropagation(); closeDeployMenu('${esc(b.id)}'); _askBranchAndRunForBranch('${esc(b.id)}', '${esc(p.id)}', 'verify')" title="比对源码/DLL/进程启动时间诊断是否跑老字节码">
+              <span style="display:inline-block;width:14px">🔍</span>核验字节码
+            </div>
+            <div class="deploy-submenu-divider"></div>
+            <div class="deploy-submenu-item" onclick="event.stopPropagation(); closeDeployMenu('${esc(b.id)}'); openBuildCommandPanel('${esc(p.id)}')" title="编辑这个服务的所有命令模式（热/冷/自定义）">
+              <span style="display:inline-block;width:14px">⚙</span>编辑命令…
+            </div>
+          </div>
+        </div>`;
     }
-    const hasDeployModes = allModes.length > 0;
-    const deployModeMenuItems = hasDeployModes
-      ? allModes.map(m => {
-          const check = m.active ? '✓ ' : '';
-          return `<div class="deploy-menu-item" onclick="event.stopPropagation(); closeDeployMenu(); switchModeAndDeploy('${esc(b.id)}', '${esc(m.profileId)}', '${esc(m.modeId)}')">${check}${esc(m.profileName)}: ${esc(m.label)}</div>`;
-        }).join('')
-      : '';
+    const deployMenuItems = buildProfiles.map(buildProfileSubmenu).join('');
 
     // Build stop menu item for deploy dropdown
     const stopMenuItem = isRunning ? `<div class="deploy-menu-divider"></div><div class="deploy-menu-item deploy-menu-item-danger" onclick="event.stopPropagation(); closeDeployMenu('${esc(b.id)}'); stopBranch('${esc(b.id)}')">停止所有服务</div>` : '';
@@ -3863,8 +3884,7 @@ function renderBranches() {
     // Unified deploy menu template (shared across states)
     const deployMenuTpl = `
       <template id="deploy-menu-tpl-${esc(b.id)}">
-        ${hasMultipleProfiles ? `<div class="deploy-menu-header">选择服务</div>${deployMenuItems}` : ''}
-        ${hasDeployModes ? `${hasMultipleProfiles ? '<div class="deploy-menu-divider"></div>' : ''}<div class="deploy-menu-header">部署模式</div>${deployModeMenuItems}` : ''}
+        <div class="deploy-menu-header">服务</div>${deployMenuItems}
         ${targetMenuItems}
         ${isRunning ? `<div class="deploy-menu-divider"></div>
         <div class="deploy-menu-item" onclick="event.stopPropagation(); closeDeployMenu('${esc(b.id)}'); viewBranchLogs('${esc(b.id)}')"><svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor" style="vertical-align:-1px;margin-right:4px"><path d="M1 2.75C1 1.784 1.784 1 2.75 1h10.5c.966 0 1.75.784 1.75 1.75v7.5A1.75 1.75 0 0113.25 12H9.06l-2.573 2.573A1.458 1.458 0 014 13.543V12H2.75A1.75 1.75 0 011 10.25v-7.5zm1.5 0a.25.25 0 01.25-.25h10.5a.25.25 0 01.25.25v7.5a.25.25 0 01-.25.25h-4.5a.75.75 0 00-.75.75v2.19l-2.72-2.72a.75.75 0 00-.53-.22H2.75a.25.25 0 01-.25-.25v-7.5z"/></svg>部署日志</div>
@@ -4836,6 +4856,8 @@ function openInfraModal() {
                    <button class="icon-btn xs" onclick="infraAction('${esc(svc.id)}','restart')" title="重启">⟳</button>`
                 : `<button class="icon-btn xs" onclick="infraAction('${esc(svc.id)}','start')" title="启动">▶</button>`}
               <button class="icon-btn xs" onclick="infraShowLogs('${esc(svc.id)}')" title="日志"><svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor"><path d="M2 1.75C2 .784 2.784 0 3.75 0h6.586c.464 0 .909.184 1.237.513l2.914 2.914c.329.328.513.773.513 1.237v9.586A1.75 1.75 0 0112.25 16h-8.5A1.75 1.75 0 012 14.25V1.75zm1.75-.25a.25.25 0 00-.25.25v12.5c0 .138.112.25.25.25h8.5a.25.25 0 00.25-.25V6h-2.75A1.75 1.75 0 018 4.25V1.5H3.75zm6.75.062V4.25c0 .138.112.25.25.25h2.688a.252.252 0 00-.011-.013l-2.914-2.914a.272.272 0 00-.013-.011z"/></svg></button>
+              ${svc.status === 'running' ? `<button class="icon-btn xs" onclick="infraBackup('${esc(svc.id)}')" title="下载数据库备份">⇩</button>` : ''}
+              ${svc.status === 'running' ? `<button class="icon-btn xs" onclick="infraRestoreDialog('${esc(svc.id)}')" title="上传恢复数据库">⇧</button>` : ''}
               <button class="icon-btn xs danger-icon" onclick="infraDelete('${esc(svc.id)}')" title="删除">&times;</button>
             </span>
           </div>
@@ -4881,6 +4903,40 @@ async function infraDelete(id) {
     openInfraModal();
   } catch (e) { showToast(e.message, 'error'); }
 }
+
+// ── 数据库备份/恢复（2026-04-22 新增）──
+// infraBackup: 直接触发浏览器下载，走 /api/infra/:id/backup（mongodump 流）
+// infraRestoreDialog: 弹文件选择器 → 上传 → /api/infra/:id/restore
+window.infraBackup = function (id) {
+  showToast(`准备下载 ${id} 备份…`, 'info');
+  window.location.href = `/api/infra/${encodeURIComponent(id)}/backup`;
+};
+
+window.infraRestoreDialog = function (id) {
+  if (!confirm(`恢复 ${id} 数据库？\n\n⚠ 这会用你上传的备份覆盖当前数据。\n恢复前 CDS 会自动保存当前状态到 /data/cds/<slug>/backups/，便于撤销。`)) return;
+  const input = document.createElement('input');
+  input.type = 'file';
+  input.accept = '.gz,.archive,.rdb,application/octet-stream,application/gzip';
+  input.onchange = async function () {
+    const file = input.files && input.files[0];
+    if (!file) return;
+    showToast(`正在上传 ${Math.round(file.size / 1024 / 1024)} MB 到 ${id}…`, 'info');
+    try {
+      const resp = await fetch(`/api/infra/${encodeURIComponent(id)}/restore`, {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/octet-stream' },
+        body: file,
+      });
+      const body = await resp.json();
+      if (!resp.ok) throw new Error(body.error || '恢复失败');
+      showToast(body.message || '已恢复', 'success');
+    } catch (err) {
+      showToast(`恢复失败：${err.message}`, 'error');
+    }
+  };
+  input.click();
+};
 
 async function infraShowLogs(id) {
   openConfigModal('基础设施日志', '<div class="config-empty"><span class="btn-spinner"></span> 加载中...</div>');
@@ -5135,17 +5191,47 @@ function openProfileModal() {
               </select>
             </div>`
           : '';
+        const hr = p.hotReload || {};
+        const hrOn = !!hr.enabled;
+        // 2026-04-22：.NET 默认 dotnet-run（快）；疑难撒谎场景才切 dotnet-restart
+        const isDotnetImg = /dotnet|mcr\.microsoft\.com\/dotnet/i.test(p.dockerImage || '');
+        const hrMode = hr.mode || (isDotnetImg ? 'dotnet-run' : 'pnpm-dev');
+        const hrModeOptions = [
+          ['dotnet-run', 'dotnet-run ★ 增量(快)'],
+          ['dotnet-restart', 'dotnet-restart — 清理+no-incremental(慢·疑难用)'],
+          ['dotnet-watch', 'dotnet-watch ⚠ 有 hot-reload 坑'],
+          ['pnpm-dev', 'pnpm-dev'],
+          ['vite', 'vite'],
+          ['next-dev', 'next-dev'],
+          ['custom', 'custom'],
+        ].map(([m, label]) => `<option value="${m}"${hrMode === m ? ' selected' : ''}>${label}</option>`).join('');
+        const hotReloadHtml = `
+          <div style="margin-top:4px;display:flex;align-items:center;gap:6px;padding:4px 6px;background:${hrOn ? 'rgba(239,68,68,0.08)' : 'transparent'};border-radius:4px">
+            <label style="display:inline-flex;align-items:center;gap:4px;font-size:11px;cursor:pointer;color:${hrOn ? '#ef4444' : 'var(--text-muted)'}">
+              <input type="checkbox" ${hrOn ? 'checked' : ''} onchange="toggleHotReload('${esc(p.id)}', this.checked)" style="margin:0">
+              <span>🔥 热更新</span>
+            </label>
+            ${hrOn ? `
+              <select style="font-size:11px;padding:1px 4px;border-radius:3px;border:1px solid var(--border);background:var(--bg-secondary);color:var(--text-primary)" onchange="setHotReloadMode('${esc(p.id)}', this.value)">
+                ${hrModeOptions}
+              </select>
+              <span style="font-size:10px;color:var(--text-muted)">容器跑 watcher，改代码自动重编译，不重启</span>
+            ` : `<span style="font-size:10px;color:var(--text-muted)">开发时启用，无需重建镜像</span>`}
+          </div>`;
         return `
         <div class="config-item">
           <div class="config-item-main">
             <span style="opacity:0.7">${getPortIcon(p.id, p)}</span>
-            <strong>${esc(p.name)}</strong>
+            <strong>${esc(p.name)}</strong>${hrOn ? ' <span title="热更新已启用" style="color:#ef4444">🔥</span>' : ''}
             <code class="config-item-match">${esc(p.dockerImage)}</code>
             <span class="config-item-detail">${esc(p.workDir || '.')} :${p.containerPort}${p.pathPrefixes?.length ? ' → ' + p.pathPrefixes.join(', ') : ''}</span>
             <code class="config-item-cmd" title="${esc(p.runCommand)}">${esc(p.runCommand)}</code>
             ${modeHtml}
+            ${hotReloadHtml}
           </div>
           <div class="config-item-actions">
+            <button class="icon-btn xs" onclick="_askBranchAndRun('${esc(p.id)}', 'verify')" title="核验运行时字节码是否是最新代码">🔍</button>
+            <button class="icon-btn xs" onclick="_askBranchAndRun('${esc(p.id)}', 'rebuild')" title="强制清 bin/obj + 重建（对付 MSBuild 增量撒谎）">💥</button>
             <button class="icon-btn xs danger-icon" onclick="deleteProfileAndRefresh('${esc(p.id)}')" title="删除">&times;</button>
           </div>
         </div>
@@ -5494,6 +5580,209 @@ async function switchDeployMode(profileId, mode) {
     await loadProfiles();
   } catch (e) { showToast(e.message, 'error'); }
 }
+
+// 热更新开关（2026-04-22）
+// 启用后容器会跑 `dotnet watch` / `pnpm dev` 之类监听源码的命令，
+// 源码是 rw 绑挂的，改代码自动重编译，不用重建镜像也不用重启容器。
+async function toggleHotReload(profileId, enabled) {
+  try {
+    const resp = await api('POST', `/build-profiles/${encodeURIComponent(profileId)}/hot-reload`, { enabled });
+    showToast(resp.message || (enabled ? '已启用热更新' : '已关闭热更新'), 'success');
+    await loadProfiles();
+    openProfileModal();
+  } catch (e) { showToast(e.message, 'error'); }
+}
+window.toggleHotReload = toggleHotReload;
+
+async function setHotReloadMode(profileId, mode) {
+  try {
+    const resp = await api('POST', `/build-profiles/${encodeURIComponent(profileId)}/hot-reload`, { enabled: true, mode });
+    showToast(resp.message || `热更新模式切换为 ${mode}`, 'success');
+    await loadProfiles();
+    openProfileModal();
+  } catch (e) { showToast(e.message, 'error'); }
+}
+window.setHotReloadMode = setHotReloadMode;
+
+// 💥 强制干净重建（对付 MSBuild 增量编译撒谎）
+// 场景：改了 .cs 但运行时死活不生效，DLL 里 grep 得到新字符串、日志里看不到。
+// 本操作：停容器 → rm -rf bin/obj → 提示重新部署。
+async function forceRebuild(branchId, profileId) {
+  if (!confirm(
+    `强制干净重建 ${branchId} / ${profileId}？\n\n` +
+    `会执行：\n` +
+    `  1. 停止该服务容器\n` +
+    `  2. 物理删除 worktree 下的 bin/ 和 obj/ 目录\n` +
+    `  3. 提示手动点"部署"重新构建（下次构建会从源码完整重编译）\n\n` +
+    `用途：当 MSBuild 增量编译撒谎 / dotnet watch 卡住时破除缓存。数据库和代码不受影响。`
+  )) return;
+  try {
+    const resp = await api('POST', `/branches/${encodeURIComponent(branchId)}/force-rebuild/${encodeURIComponent(profileId)}`);
+    const details = (resp.steps || []).map(s => `${s.ok ? '✓' : '✗'} ${s.step}${s.detail ? ' — ' + s.detail : ''}`).join('\n');
+    alert((resp.message || '已清理') + '\n\n执行步骤：\n' + details);
+  } catch (e) { showToast(`强制重建失败：${e.message}`, 'error'); }
+}
+window.forceRebuild = forceRebuild;
+
+// 🔍 运行时字节码核验 —— 比对源码/DLL/进程启动时间
+// 用于回答："我改的 .cs 到底生效了没有"
+async function verifyRuntime(branchId, profileId) {
+  try {
+    const resp = await api('POST', `/branches/${encodeURIComponent(branchId)}/verify-runtime/${encodeURIComponent(profileId)}`);
+    const msg = [
+      `容器：${resp.container}`,
+      `进程启动：${resp.processStart}`,
+      `最新 DLL：${resp.latestDll?.path || '无'} (ts=${resp.latestDll?.ts || 'n/a'})`,
+      `最新源码：${resp.latestSource?.path || '无'} (ts=${resp.latestSource?.ts || 'n/a'})`,
+      '',
+      '诊断：',
+      ...(resp.warnings || []),
+      '',
+      '最近日志（末尾 30 行，复制贴到别处检查）：',
+      '```',
+      resp.recentLogs || '(空)',
+      '```',
+    ].join('\n');
+    alert(msg);
+  } catch (e) { showToast(`核验失败：${e.message}`, 'error'); }
+}
+window.verifyRuntime = verifyRuntime;
+
+// Profile 卡片按钮的 branch 选择器 —— 提示用户选哪个分支执行诊断/重建
+window._askBranchAndRun = function (profileId, action) {
+  // 全局 branches（line 388 的 module 变量）—— 已经按本项目过滤
+  const candidates = (typeof branches !== 'undefined' && Array.isArray(branches))
+    ? branches.filter(b => b && b.services && b.services[profileId])
+    : [];
+  if (candidates.length === 0) {
+    showToast(`没有找到正在运行 profile "${profileId}" 的分支`, 'info');
+    return;
+  }
+  let branchId;
+  if (candidates.length === 1) {
+    branchId = candidates[0].id;
+  } else {
+    const list = candidates.map((b, i) => `${i + 1}) ${b.id}`).join('\n');
+    const input = prompt(`选择分支（输入编号）：\n${list}`, '1');
+    if (!input) return;
+    const idx = parseInt(input, 10) - 1;
+    if (!(idx >= 0 && idx < candidates.length)) { showToast('编号无效', 'error'); return; }
+    branchId = candidates[idx].id;
+  }
+  if (action === 'verify') verifyRuntime(branchId, profileId);
+  else if (action === 'rebuild') forceRebuild(branchId, profileId);
+};
+
+// 分支上下文已知时的快捷变体（二级菜单调用）
+window._askBranchAndRunForBranch = function (branchId, profileId, action) {
+  if (action === 'verify') verifyRuntime(branchId, profileId);
+  else if (action === 'rebuild') forceRebuild(branchId, profileId);
+};
+
+// ⚙ 构建命令编辑面板（用户自定义每个 profile 的 deployModes 命令）
+// 背景：用户想要"点某个菜单项跑自己定义的命令"。已有 profile.deployModes 支持这个
+// 数据模型（每个 mode 一个 command），但一直没 UI。本面板集中编辑。
+window.openBuildCommandPanel = async function (profileId) {
+  const profile = buildProfiles.find(p => p.id === profileId);
+  if (!profile) { showToast(`未找到构建配置 ${profileId}`, 'error'); return; }
+
+  const modes = profile.deployModes || {};
+  const modeEntries = Object.entries(modes);
+
+  const rowsHtml = modeEntries.length > 0
+    ? modeEntries.map(([modeId, m]) => `
+        <div data-mode-id="${esc(modeId)}" style="border:1px solid var(--border);border-radius:6px;padding:10px;margin-bottom:8px">
+          <div style="display:flex;gap:8px;align-items:center;margin-bottom:6px">
+            <input class="bc-label" type="text" value="${esc(m.label || modeId)}" placeholder="显示名（如 开发模式 / 冷部署）" style="flex:1;padding:4px 6px;border:1px solid var(--border);border-radius:4px;background:var(--bg-input);color:var(--text-primary);font-size:12px">
+            <code style="font-size:10px;color:var(--text-muted)">${esc(modeId)}</code>
+            <button class="icon-btn xs danger-icon" onclick="event.target.closest('[data-mode-id]').remove()" title="删除此模式">×</button>
+          </div>
+          <textarea class="bc-cmd" rows="2" placeholder="完整 shell 命令，如: dotnet run --urls http://0.0.0.0:8080" style="width:100%;padding:6px 8px;border:1px solid var(--border);border-radius:4px;background:var(--bg-input);color:var(--text-primary);font-size:11px;font-family:var(--font-mono,monospace);resize:vertical">${esc(m.command || '')}</textarea>
+        </div>
+      `).join('')
+    : '<div style="padding:12px;background:var(--bg-card);border:1px dashed var(--border);border-radius:6px;color:var(--text-muted);font-size:12px;margin-bottom:8px">当前没有任何模式。下面加一个即可。</div>';
+
+  const html = `
+    <div style="font-size:12px;color:var(--text-muted);margin-bottom:10px">
+      为 <strong>${esc(profile.name)}</strong> (${esc(profile.id)}) 定义多个"一键跑的命令"。
+      二级菜单会把它们列出来，点一下就用对应命令部署。
+      <br>典型建议：「开发（热加载）」= <code>dotnet run</code>，「冷部署」= <code>dotnet publish -c Release && dotnet bin/Release/net8.0/publish/App.dll</code>。
+    </div>
+    <div id="bcRows">${rowsHtml}</div>
+    <div style="display:flex;gap:6px;margin-bottom:14px">
+      <button class="sm" onclick="_bcAddMode()">+ 新增模式</button>
+      <button class="sm" onclick="_bcInsertTemplate('dev')">预设: 开发(dotnet run)</button>
+      <button class="sm" onclick="_bcInsertTemplate('cold')">预设: 冷部署(publish)</button>
+      <button class="sm" onclick="_bcInsertTemplate('dev-node')">预设: pnpm dev</button>
+    </div>
+    <div style="display:flex;gap:8px;justify-content:flex-end;border-top:1px solid var(--border);padding-top:10px">
+      <button class="sm" onclick="closeConfigModal()">取消</button>
+      <button class="sm primary" onclick="_bcSave('${esc(profileId)}')">保存</button>
+    </div>
+  `;
+  openConfigModal(`构建命令 — ${profile.name}`, html);
+};
+
+window._bcAddMode = function () {
+  const id = 'mode-' + Math.random().toString(36).slice(2, 7);
+  const row = document.createElement('div');
+  row.setAttribute('data-mode-id', id);
+  row.style.cssText = 'border:1px solid var(--border);border-radius:6px;padding:10px;margin-bottom:8px';
+  row.innerHTML = `
+    <div style="display:flex;gap:8px;align-items:center;margin-bottom:6px">
+      <input class="bc-label" type="text" placeholder="显示名" style="flex:1;padding:4px 6px;border:1px solid var(--border);border-radius:4px;background:var(--bg-input);color:var(--text-primary);font-size:12px">
+      <code style="font-size:10px;color:var(--text-muted)">${id}</code>
+      <button class="icon-btn xs danger-icon" onclick="this.closest('[data-mode-id]').remove()">×</button>
+    </div>
+    <textarea class="bc-cmd" rows="2" placeholder="完整 shell 命令" style="width:100%;padding:6px 8px;border:1px solid var(--border);border-radius:4px;background:var(--bg-input);color:var(--text-primary);font-size:11px;font-family:var(--font-mono,monospace);resize:vertical"></textarea>
+  `;
+  document.getElementById('bcRows').appendChild(row);
+};
+
+window._bcInsertTemplate = function (kind) {
+  const templates = {
+    'dev': { label: '开发（热加载）', command: 'dotnet run --urls http://0.0.0.0:$PORT' },
+    'cold': { label: '冷部署（publish）', command: 'dotnet publish -c Release -o /tmp/publish && cd /tmp/publish && exec dotnet *.dll --urls http://0.0.0.0:$PORT' },
+    'dev-node': { label: '开发（Vite HMR）', command: 'pnpm install --prefer-frozen-lockfile && pnpm dev --host 0.0.0.0 --port $PORT' },
+  };
+  const tpl = templates[kind];
+  const id = 'mode-' + Math.random().toString(36).slice(2, 7);
+  const row = document.createElement('div');
+  row.setAttribute('data-mode-id', id);
+  row.style.cssText = 'border:1px solid var(--border);border-radius:6px;padding:10px;margin-bottom:8px';
+  row.innerHTML = `
+    <div style="display:flex;gap:8px;align-items:center;margin-bottom:6px">
+      <input class="bc-label" type="text" value="${tpl.label}" style="flex:1;padding:4px 6px;border:1px solid var(--border);border-radius:4px;background:var(--bg-input);color:var(--text-primary);font-size:12px">
+      <code style="font-size:10px;color:var(--text-muted)">${id}</code>
+      <button class="icon-btn xs danger-icon" onclick="this.closest('[data-mode-id]').remove()">×</button>
+    </div>
+    <textarea class="bc-cmd" rows="2" style="width:100%;padding:6px 8px;border:1px solid var(--border);border-radius:4px;background:var(--bg-input);color:var(--text-primary);font-size:11px;font-family:var(--font-mono,monospace);resize:vertical">${tpl.command}</textarea>
+  `;
+  document.getElementById('bcRows').appendChild(row);
+};
+
+window._bcSave = async function (profileId) {
+  const profile = buildProfiles.find(p => p.id === profileId);
+  if (!profile) return;
+  const rows = document.querySelectorAll('#bcRows [data-mode-id]');
+  const newModes = {};
+  rows.forEach(row => {
+    const modeId = row.getAttribute('data-mode-id');
+    const label = row.querySelector('.bc-label').value.trim();
+    const command = row.querySelector('.bc-cmd').value.trim();
+    if (!label || !command) return;
+    newModes[modeId] = { label, command };
+  });
+  try {
+    await api('PUT', `/build-profiles/${encodeURIComponent(profileId)}`, {
+      ...profile,
+      deployModes: newModes,
+    });
+    showToast('已保存构建命令', 'success');
+    closeConfigModal();
+    await loadProfiles();
+  } catch (e) { showToast(`保存失败：${e.message}`, 'error'); }
+};
 
 async function switchModeAndDeploy(branchId, profileId, modeId) {
   try {

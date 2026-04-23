@@ -9,22 +9,129 @@ import { combinedOutput } from '../types.js';
 import { resolveEnvTemplates } from './compose-parser.js';
 
 /**
+ * 2026-04-22 —— 热更新命令模板。enabled 时由 resolveProfileWithMode 优先应用。
+ * 依据 hotReload.mode 生成 watcher 命令；mode='custom' 时用 hotReload.command。
+ *
+ * 为什么 dotnet-restart 比 dotnet-watch 可靠（见 types.ts HotReloadConfig 注释）：
+ *   watch 的 hot-reload 偶尔只更新内存不重启进程，加上 MSBuild 增量编译有概率
+ *   误判"项目引用未变"跳过 compile，会出现 DLL 里有新字符串、源码和 DLL 都对
+ *   但运行进程加载的还是老字节码。dotnet-restart 的轮询脚本强制：
+ *     1) 每次循环先 `dotnet clean` + `rm -rf bin obj`（cleanBeforeBuild=true）
+ *     2) `dotnet build --no-incremental` 禁用增量编译
+ *     3) kill 旧 PID + 等 wait 再起新进程，保证字节码一定重新加载
+ */
+export function resolveHotReloadCommand(profile: BuildProfile): string | null {
+  const hr = profile.hotReload;
+  if (!hr || !hr.enabled) return null;
+  const port = profile.containerPort;
+  const watchEnv = hr.usePolling ? 'DOTNET_USE_POLLING_FILE_WATCHER=1 CHOKIDAR_USEPOLLING=1 ' : '';
+  switch (hr.mode) {
+    case 'dotnet-run': {
+      // 快路径：相信 MSBuild 增量 + dotnet run，文件变 → kill + 再跑。
+      // 不 clean，不 --no-incremental；如需破缓存走 🧹 清理按钮（force-rebuild）。
+      const lines = [
+        `set +e`,
+        `STAMP=/tmp/cds-hr-${profile.id}-stamp`,
+        `touch "$STAMP"`,
+        `while true; do`,
+        `echo "[hot-reload/${profile.id}] dotnet run (增量) at $(date +%T)"`,
+        `touch "$STAMP"`,
+        `dotnet run --urls http://0.0.0.0:${port} &`,
+        `DOTNET_PID=$!`,
+        `echo "[hot-reload/${profile.id}] pid=$DOTNET_PID"`,
+        `while kill -0 $DOTNET_PID 2>/dev/null; do`,
+        `  sleep 2`,
+        `  CHANGED=$(find . -type f \\( -name "*.cs" -o -name "*.csproj" -o -name "*.json" \\) -not -path "*/bin/*" -not -path "*/obj/*" -newer "$STAMP" 2>/dev/null | head -1)`,
+        `  if [ -n "$CHANGED" ]; then echo "[hot-reload/${profile.id}] change detected: $CHANGED"; break; fi`,
+        `done`,
+        `kill -TERM $DOTNET_PID 2>/dev/null || true; sleep 1; kill -KILL $DOTNET_PID 2>/dev/null || true`,
+        `wait $DOTNET_PID 2>/dev/null || true`,
+        `done`,
+      ];
+      return `${watchEnv}sh -c ${JSON.stringify(lines.join('; '))}`;
+    }
+    case 'dotnet-restart': {
+      const clean = hr.cleanBeforeBuild !== false;
+      const cleanStep = clean
+        ? 'dotnet clean -v q >/dev/null 2>&1 || true; find . -type d \\( -name bin -o -name obj \\) -prune -exec rm -rf {} +;'
+        : '';
+      // 单行 shell 脚本（容器 command 一行串）：
+      //   1) STAMP 文件记录上次 build 完成时间；用于 find -newer 判断是否有源码变更
+      //   2) build 失败：sleep 10 重试（避免无限占 CPU）
+      //   3) 启动 dotnet run 作为子进程，捕获 PID
+      //   4) 每 2 秒 poll 一次：源码比 STAMP 新 → break 循环进入 kill+rebuild；
+      //      或进程意外死亡 → break 进入重启
+      //   5) SIGTERM + 1s 宽限 + SIGKILL，保证 dotnet 真死（不然端口会占着）
+      const lines = [
+        `set +e`,
+        `STAMP=/tmp/cds-hr-${profile.id}-stamp`,
+        `touch "$STAMP"`,
+        `while true; do`,
+        cleanStep,
+        `echo "[hot-reload/${profile.id}] build start $(date +%T)"`,
+        `dotnet build -c Debug --no-incremental -v m`,
+        `BUILD_RC=$?`,
+        `if [ $BUILD_RC -ne 0 ]; then echo "[hot-reload/${profile.id}] build failed rc=$BUILD_RC, retry in 10s"; sleep 10; continue; fi`,
+        `touch "$STAMP"`,
+        `dotnet run --no-build --urls http://0.0.0.0:${port} &`,
+        `DOTNET_PID=$!`,
+        `echo "[hot-reload/${profile.id}] started pid=$DOTNET_PID at $(date +%T)"`,
+        `while kill -0 $DOTNET_PID 2>/dev/null; do`,
+        `  sleep 2`,
+        `  CHANGED=$(find . -type f \\( -name "*.cs" -o -name "*.csproj" -o -name "*.json" \\) -newer "$STAMP" 2>/dev/null | head -1)`,
+        `  if [ -n "$CHANGED" ]; then echo "[hot-reload/${profile.id}] change detected: $CHANGED, restarting"; break; fi`,
+        `done`,
+        `kill -TERM $DOTNET_PID 2>/dev/null || true`,
+        `sleep 1`,
+        `kill -KILL $DOTNET_PID 2>/dev/null || true`,
+        `wait $DOTNET_PID 2>/dev/null || true`,
+        `done`,
+      ];
+      return `${watchEnv}sh -c ${JSON.stringify(lines.join('; '))}`;
+    }
+    case 'dotnet-watch':
+      // 保留但不推荐。UI 上标红提示用户有 MSBuild 增量误判的风险。
+      return `${watchEnv}dotnet watch run --non-interactive --urls http://0.0.0.0:${port}`;
+    case 'pnpm-dev':
+      return `${watchEnv}pnpm install --prefer-frozen-lockfile && pnpm dev --host 0.0.0.0 --port ${port}`;
+    case 'vite':
+      return `${watchEnv}pnpm install --prefer-frozen-lockfile && pnpm vite --host 0.0.0.0 --port ${port}`;
+    case 'next-dev':
+      return `${watchEnv}pnpm install --prefer-frozen-lockfile && pnpm next dev -p ${port}`;
+    case 'custom':
+      return hr.command ? `${watchEnv}${hr.command}` : null;
+    default:
+      return null;
+  }
+}
+
+/**
  * Resolve a BuildProfile with active deploy mode overrides applied.
  * Returns a new profile object with command/dockerImage/env merged from the mode.
+ *
+ * 2026-04-22 —— hotReload 在最后叠加；enabled 时直接覆盖 command，
+ * 让容器跑 watcher 命令而非一次性构建。
  */
 export function resolveProfileWithMode(profile: BuildProfile): BuildProfile {
   const mode = profile.activeDeployMode;
-  if (!mode || !profile.deployModes?.[mode]) return profile;
-
-  const override = profile.deployModes[mode];
-  return {
-    ...profile,
-    command: override.command ?? profile.command,
-    dockerImage: override.dockerImage ?? profile.dockerImage,
-    env: override.env
-      ? { ...profile.env, ...override.env }
-      : profile.env,
-  };
+  let resolved: BuildProfile = profile;
+  if (mode && profile.deployModes?.[mode]) {
+    const override = profile.deployModes[mode];
+    resolved = {
+      ...profile,
+      command: override.command ?? profile.command,
+      dockerImage: override.dockerImage ?? profile.dockerImage,
+      env: override.env
+        ? { ...profile.env, ...override.env }
+        : profile.env,
+    };
+  }
+  // Hot reload 优先级最高
+  const hrCmd = resolveHotReloadCommand(resolved);
+  if (hrCmd) {
+    return { ...resolved, command: hrCmd };
+  }
+  return resolved;
 }
 
 /**

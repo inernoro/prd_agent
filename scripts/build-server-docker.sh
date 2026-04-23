@@ -17,8 +17,8 @@ echo "Output directory: $OUTPUT_DIR"
 # 清理旧的输出目录
 rm -rf "$OUTPUT_DIR"
 
-# 使用 Docker 构建并输出产物
-docker build \
+# 使用 Docker 构建并输出产物（BuildKit 必须启用，否则 Dockerfile 里的 cache mount 不生效 → NuGet 每次重下）
+DOCKER_BUILDKIT=1 docker build \
   -f Dockerfile.build \
   -t prdagent-build:local \
   --target build \
