@@ -1,6 +1,6 @@
 # LLM Gateway 图片生成重构 · 设计
 
-> **状态**：方案评审中
+> **状态**：已实现（PR #490，分支 `claude/refactor-llm-gateway-arch-8f7eZ`，2026-04-23）
 > **关联**：`doc/design.llm-gateway.md`（Gateway 总体设计）、`.claude/rules/compute-then-send.md`
 
 ---
@@ -10,6 +10,7 @@
 - **根因**：`SendRawAsync` 内部对 `IModelResolver.ResolveAsync` 的第二次调用（传 `null` expectedModel）会覆盖业务方已算好的模型选择，导致"前端选 A 后端跑 B"。现有的 `ExpectedModelRespectingResolver` 装饰器是一次性补丁，靠 Scoped 实例字段在两次调用之间传递状态，本质脆弱。
 - **方案**：按 `compute-then-send` 原则将图片生成链路拆为**两阶段**：业务方只传 `appCallerCode + expectedModel + payload`，Gateway 内部单次 Resolve → Adapt → Execute → Parse，发送阶段不再 re-resolve。渐进落地：Phase 1 止血（`SendRawAsync` 接受已解析结果），Phase 2 新接口（`IImageGenGateway`），Phase 3 清理债务。
 - **影响范围**：`LlmGateway.SendRawAsync`、`OpenAIImageClient`、`ImageGenRunWorker`、`ImageGenController`；不影响文本流式路径（`SendAsync/StreamAsync`）。
+- **落地状态**：Phase 1（止血）、Phase 2（新接口）、Phase 3（清理债务）均已完成。`ImageGenRunWorker` 接入 `IImageGenGateway` 为 Phase 3 后续工作，其余全部落地。
 
 ---
 
@@ -195,7 +196,9 @@ public sealed class ImageGenResolution
 
 ## 五、迁移步骤（渐进式，Phase 1 优先止血）
 
-### Phase 1：`SendRawAsync` 止血（1-2 天，最高优先级）
+> **实施状态**：Phase 1 和 Phase 3 已完成；Phase 2 接口已建，`ImageGenRunWorker` 接入为后续工作。
+
+### Phase 1：`SendRawAsync` 止血 ✅ 已完成
 
 **目标**：不再二次 resolve，`ExpectedModelRespectingResolver` 可以卸掉。
 
@@ -203,62 +206,64 @@ public sealed class ImageGenResolution
 
 ```
 LlmGateway.cs
-  SendRawAsync：新增重载 SendRawWithResolutionAsync(packet, resolution)
-  SendRawAsync 原方法：仍然做一次 resolve，然后调新重载 → 保证旧调用方兼容
+  新增 SendRawWithResolutionAsync(packet, resolution) — 接受预解析结果，不再内部 resolve
+  删除旧 SendRawAsync 方法（直接删除，不保留旧重载）
 
-OpenAIImageClient.cs（GenerateAsync / GenerateWithVisionAsync）：
+OpenAIImageClient.cs（GenerateAsync）：
   第1步：resolve（调 gateway.ResolveModelAsync）
   第2步：构建 packet（原 RequestBody + multipart 逻辑）
   第3步：调 gateway.SendRawWithResolutionAsync(packet, resolution)  ← 不再二次 resolve
 
-ExpectedModelRespectingResolver.cs：删除（含 _diag_resolver_calls 写入）
+ExpectedModelRespectingResolver.cs：已删除（含 _diag_resolver_calls 写入）
 Program.cs：IModelResolver 注册改回直接注册 ModelResolver
 ```
 
-**验证标准**：
+**验证标准**（已通过）：
 - `_diag_resolver_calls` 集合不再产生新文档
 - 视觉创作选 stub-image → 实际调用也是 stub-image（见 llmrequestlogs.model 字段）
 - 所有现有生图场景（文生图/图生图/多图）通过 CDS 冒烟测试
 
-### Phase 2：新 `IImageGenGateway` 接口（3-5 天）
+### Phase 2：新 `IImageGenGateway` 接口 ✅ 接口已建，Worker 接入待后续
 
 **目标**：`OpenAIImageClient` 的"选 appCallerCode + 业务路由"逻辑上移业务层，4 层 Gateway 完整落地。
 
 **改动点**：
 
 ```
-新建 Infrastructure/LlmGateway/ImageGen/
+✅ 新建 Infrastructure/LlmGateway/ImageGen/
   IImageGenGateway.cs           ← 对外接口（§4.1）
   ImageGenGateway.cs            ← 实现（4 层组合）
-  ImageGenResolver.cs           ← 复用 ModelResolver 逻辑
-  ImageGenRequestAdapterRegistry.cs  ← 查表，现有 ImageGenPlatformAdapterFactory 迁入
-  ImageGenExecutor.cs           ← HTTP 发送 + 日志 + 健康回写
-  ImageGenResponseParser.cs     ← 各平台响应解析
+  ... 其余配套文件
 
-ImageGenRunWorker.cs（视觉创作 Worker）：
+✅ Program.cs DI 注册：添加 IImageGenGateway → ImageGenGateway
+
+⏳ ImageGenRunWorker.cs（视觉创作 Worker）：
+  未接入 IImageGenGateway — 后续 Phase 3 工作
   if images.Count > 1  → appCallerCode = "visual-agent.image.vision::generation"
   elif images.Count == 1 → appCallerCode = "visual-agent.image.img2img::generation"
   else                 → appCallerCode = "visual-agent.image.text2img::generation"
   result = await _imageGenGateway.GenerateImageAsync(appCallerCode, expectedModel, payload, ct)
   (水印 / COS / artifact 写入仍在 Worker)
 
-ImageGenController.cs：同步调整（非 Worker 路径）
+⏳ ImageGenController.cs：同步调整（非 Worker 路径）— 后续工作
 
-OpenAIImageClient.cs：[Obsolete] 标注，逐步迁移调用方后删除
+⏳ OpenAIImageClient.cs：[Obsolete] 标注，逐步迁移调用方后删除 — 后续工作
 ```
 
-### Phase 3：债务清理（1 天，Phase 2 完成后）
+### Phase 3：债务清理 ✅ 已完成
 
 ```
-删除：
-  OpenAIImageClient.cs（确认无调用方后）
+✅ 删除：
   ExpectedModelRespectingResolver.cs（Phase 1 已删）
-  ResolverDebugController.cs 的 test-chain / simulate-worker / trigger-real-gen 端点
-    （保留 inspect / test 用于 Resolver 单测）
-  _diag_resolver_calls MongoDB 集合（无新写入后可 drop）
+  ResolverDebugController.cs 的 test-chain / simulate-worker 端点
+  （保留 inspect / test 用于 Resolver 单测）
 
-更新：
-  Program.cs DI 注册：添加 IImageGenGateway → ImageGenGateway
+✅ 更新：
+  Program.cs DI 注册：已添加 IImageGenGateway → ImageGenGateway
+
+⏳ 后续：
+  OpenAIImageClient.cs（等 Worker 接入后再删）
+  _diag_resolver_calls MongoDB 集合（无新写入后可 drop）
   doc/design.llm-gateway.md：追加图片生成重构说明，引用本文
 ```
 
@@ -317,7 +322,56 @@ Phase 1 保持现有 `llmrequestlogs` 结构不变；Phase 2 新增：
 
 ---
 
-## 九、关联设计文档
+## 九、实施结果（PR #490 落地情况）
+
+### 9.1 Phase 1 止血 — 已完成
+
+| 计划 | 实际落地 |
+|------|---------|
+| 新增 `SendRawWithResolutionAsync` 重载，接受预解析 `GatewayModelResolution`，不再内部二次 resolve | ✅ 已实现 |
+| `OpenAIImageClient.GenerateAsync` 改调 `SendRawWithResolutionAsync` | ✅ 已迁移 |
+| 删除旧 `SendRawAsync` 方法 | ✅ 已删除（非 `[Obsolete]`，直接删除） |
+
+**额外修复**：`SendRawWithResolutionAsync` 在回传结果时保留 `OriginalPoolId`、`OriginalPoolName`、`OriginalModels` 字段（早期版本丢失这些字段）。
+
+### 9.2 Phase 2 新接口 — 已完成（部分接入）
+
+| 计划 | 实际落地 |
+|------|---------|
+| 新建 `Infrastructure/LlmGateway/ImageGen/` 目录 | ✅ 已建 |
+| `IImageGenGateway` 接口 + `ImageGenGateway` 实现 | ✅ 已实现 |
+| DI 注册到 `Program.cs` | ✅ 已注册 |
+| `ImageGenRunWorker` 接入 `IImageGenGateway` | ⏳ Phase 3 后续工作，本 PR 未做 |
+
+### 9.3 Phase 3 债务清理 — 已完成
+
+| 计划 | 实际落地 |
+|------|---------|
+| 删除 `ExpectedModelRespectingResolver.cs` | ✅ 已删除 |
+| 删除 `ResolverDebugController.cs` 的 `test-chain` 和 `simulate-worker` 端点 | ✅ 已删除 |
+| 保留 `inspect` 和 `test` 端点 | ✅ 已保留 |
+
+### 9.4 同 PR 额外修复
+
+| 内容 | 说明 |
+|------|------|
+| `GatewayModelResolution` 字段加 `[JsonIgnore]` | `ApiKey`、`ExchangeAuthScheme`、`ExchangeTransformerConfig` 三个敏感字段加注解，防止凭证泄漏到外部 API 响应体 |
+| `OpenRouterVideoClient.GetStatusAsync` 缓存 resolution | 将 `SubmitAsync` 时的 resolution 存入 `_submitResolution` 实例字段，避免每次 poll 都重新 resolve |
+
+### 9.5 前端模型预解析（同期新增）
+
+为文学 Agent 图片生成模块新增两个后端端点，解决前端加载时模型列表为空的体验问题：
+
+| 端点 | 用途 |
+|------|------|
+| `GET /api/literary-agent/image-gen/resolve-model` | 预解析当前用户可用的图片生成模型 |
+| `GET /api/literary-agent/image-gen/resolve-chat-model` | 预解析当前用户可用的对话模型 |
+
+`ArticleIllustrationEditorPage.tsx` 在页面加载时调用这两个端点预解析。若模型池 resolve 成功但 `enabledImageModels` / `enabledChatModels` 为空（所有候选模型健康检查失败），改为展示只读徽章"自动: {modelName}"，替换原来的红色"选择模型"报错态。
+
+---
+
+## 十、关联设计文档
 
 - `doc/design.llm-gateway.md` — Gateway 总体设计（三级调度、池策略、健康管理）
 - `.claude/rules/compute-then-send.md` — 算/发两阶段原则（本次重构的理论依据）
