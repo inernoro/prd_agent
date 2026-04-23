@@ -156,8 +156,86 @@ public class ModelResolver : IModelResolver
                 $"未找到可用模型: AppCallerCode={appCallerCode}, ModelType={modelType}");
         }
 
+        // ========== 第 5.5 步：若调用方指定了 expectedModel，优先尊重 ==========
+        // 搜索顺序（广度递增）：
+        //   1. 候选池（AppCaller 绑定的池）
+        //   2. 该 ModelType 下的所有池（AppCaller 未绑定但平台有配置的池）
+        //   3. LLMModels 直连（既不在任何池也可以按 ModelName 查到的单模型）
+        // 前两档命中都会把匹配到的池加入 candidateGroups 头部；第三档直接返回 Legacy 结果。
+        ModelGroup? preferredGroup = null;
+        ModelGroupItem? preferredItem = null;
+        if (!string.IsNullOrWhiteSpace(expectedModel))
+        {
+            // 档 1：候选池
+            var (g, m) = FindPreferredModel(candidateGroups, expectedModel);
+            if (g != null && m != null)
+            {
+                preferredGroup = g;
+                preferredItem = m;
+                _logger.LogInformation(
+                    "[ModelResolver] 命中 expectedModel（候选池）: {Expected} → 池 {PoolName} 中的模型 {ModelId}",
+                    expectedModel, g.Name, m.ModelId);
+            }
+            else
+            {
+                // 档 2：该 ModelType 下的所有池（包括未绑定到 AppCaller 的）
+                var allTypeGroups = await _db.ModelGroups
+                    .Find(x => x.ModelType == modelType)
+                    .ToListAsync(ct);
+                var knownIds = candidateGroups.Select(x => x.Id).ToHashSet();
+                var extraGroups = allTypeGroups.Where(x => !knownIds.Contains(x.Id)).ToList();
+                if (extraGroups.Count > 0)
+                {
+                    var (g2, m2) = FindPreferredModel(extraGroups, expectedModel);
+                    if (g2 != null && m2 != null)
+                    {
+                        preferredGroup = g2;
+                        preferredItem = m2;
+                        candidateGroups.Insert(0, g2); // 纳入主循环以便走统一的 Exchange / Platform 解析路径
+                        resolutionType = "DirectModel"; // 越出 AppCaller 绑定范围 → 直连语义
+                        _logger.LogInformation(
+                            "[ModelResolver] 命中 expectedModel（全量池兜底）: {Expected} → 池 {PoolName} 中的模型 {ModelId}",
+                            expectedModel, g2.Name, m2.ModelId);
+                    }
+                }
+
+                // 档 3：LLMModels 直连（按 ModelName 查）
+                if (preferredGroup == null)
+                {
+                    var direct = await _db.LLMModels
+                        .Find(x => x.Enabled && x.ModelName == expectedModel.Trim())
+                        .FirstOrDefaultAsync(ct);
+                    if (direct != null)
+                    {
+                        var platform = await _db.LLMPlatforms
+                            .Find(p => p.Id == direct.PlatformId && p.Enabled)
+                            .FirstOrDefaultAsync(ct);
+                        if (platform != null)
+                        {
+                            var apiKey = string.IsNullOrEmpty(platform.ApiKeyEncrypted)
+                                ? null
+                                : ApiKeyCrypto.Decrypt(platform.ApiKeyEncrypted, jwtSecret);
+                            _logger.LogInformation(
+                                "[ModelResolver] 命中 expectedModel（LLMModels 直连）: {Expected} → platform={Platform}",
+                                expectedModel, platform.Name);
+                            return ModelResolutionResult.FromLegacy(expectedModel, direct, platform, apiKey);
+                        }
+                    }
+
+                    _logger.LogInformation(
+                        "[ModelResolver] expectedModel '{Expected}' 在所有池和 LLMModels 都未找到匹配，将走默认调度（候选池：[{Pools}]）",
+                        expectedModel, string.Join(", ", candidateGroups.Select(x => x.Name)));
+                }
+            }
+        }
+
         // ========== 第六步：从模型池中选择最佳模型 ==========
-        foreach (var group in candidateGroups)
+        // 若上一步命中 expectedModel，将该池放在最前面优先尝试
+        var orderedGroups = preferredGroup != null
+            ? new[] { preferredGroup }.Concat(candidateGroups.Where(g => g.Id != preferredGroup.Id)).ToList()
+            : candidateGroups;
+
+        foreach (var group in orderedGroups)
         {
             // 诊断：模型池内容
             _logger.LogInformation(
@@ -167,7 +245,10 @@ public class ModelResolver : IModelResolver
                 string.Join(", ", group.Models?.Select(m =>
                     $"{m.ModelId}(Health={m.HealthStatus}, Platform={m.PlatformId})") ?? Array.Empty<string>()));
 
-            var selectedModel = SelectBestModel(group);
+            // expectedModel 命中的池：直接用命中的具体条目；否则按健康度选最优
+            var selectedModel = (preferredGroup != null && group.Id == preferredGroup.Id)
+                ? preferredItem
+                : SelectBestModel(group);
             if (selectedModel == null)
             {
                 _logger.LogWarning(
@@ -522,6 +603,92 @@ public class ModelResolver : IModelResolver
             return null;
         }
         return exchange;
+    }
+
+    /// <summary>
+    /// 在候选池列表中寻找用户期望的模型。
+    /// 匹配规则（按优先级）：
+    ///   1. 池中某个 ModelId 完全匹配 expectedModel（健康模型优先）
+    ///   2. 池中某个 ModelId 是 expectedModel 的前缀（容差：带版本号）
+    ///   3. 池名 / 池 Code 匹配 expectedModel（前端 picker 发的就是池 Code）
+    ///
+    /// 健康约束：只返回非 Unavailable 的模型。用户选的池若全部不可用，
+    /// 返回 (null, null) 让上层走"询问用户是否切换"路径（前端发起请求前已做预检）。
+    /// 这里不做命名归一化（如 "1.5" ↔ "1-5"）——池 Code 是系统自动填充的，
+    /// 不会出现用户手填造成的命名漂移。
+    /// </summary>
+    private (ModelGroup? group, ModelGroupItem? item) FindPreferredModel(
+        List<ModelGroup> groups, string expectedModel)
+    {
+        if (groups.Count == 0 || string.IsNullOrWhiteSpace(expectedModel))
+            return (null, null);
+
+        var key = expectedModel.Trim();
+
+        _logger.LogInformation(
+            "[ModelResolver] FindPreferredModel 开始: key='{Key}', 候选池={Count} [{Pools}]",
+            key, groups.Count,
+            string.Join(", ", groups.Select(g => $"{g.Name}(code={g.Code})")));
+
+        // 优先级 1：ModelId 精确匹配
+        foreach (var g in groups)
+        {
+            if (g.Models == null) continue;
+            var exact = g.Models.FirstOrDefault(m =>
+                m.HealthStatus != ModelHealthStatus.Unavailable &&
+                string.Equals(m.ModelId, key, StringComparison.OrdinalIgnoreCase));
+            if (exact != null)
+            {
+                _logger.LogInformation("[ModelResolver] Tier1 命中: pool={Pool}, modelId={ModelId}", g.Name, exact.ModelId);
+                return (g, exact);
+            }
+        }
+
+        // 优先级 2：ModelId 前缀匹配
+        foreach (var g in groups)
+        {
+            if (g.Models == null) continue;
+            var prefix = g.Models.FirstOrDefault(m =>
+                m.HealthStatus != ModelHealthStatus.Unavailable &&
+                !string.IsNullOrEmpty(m.ModelId) &&
+                m.ModelId.StartsWith(key, StringComparison.OrdinalIgnoreCase));
+            if (prefix != null)
+            {
+                _logger.LogInformation("[ModelResolver] Tier2 命中: pool={Pool}, modelId={ModelId}", g.Name, prefix.ModelId);
+                return (g, prefix);
+            }
+        }
+
+        // 优先级 3：池名/池 Code 精确匹配（picker 发的 modelId 实际是池 Code）
+        foreach (var g in groups)
+        {
+            if (g.Models == null || g.Models.Count == 0) continue;
+            var matchByPool =
+                string.Equals(g.Name, key, StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(g.Code, key, StringComparison.OrdinalIgnoreCase);
+            if (!matchByPool) continue;
+
+            // Healthy > Degraded；Unavailable 不选（交给前端走"询问切换"）
+            var picked =
+                g.Models.FirstOrDefault(m => m.HealthStatus == ModelHealthStatus.Healthy)
+                ?? g.Models.FirstOrDefault(m => m.HealthStatus == ModelHealthStatus.Degraded);
+            if (picked != null)
+            {
+                _logger.LogInformation(
+                    "[ModelResolver] Tier3 命中: pool={Pool}, modelId={ModelId}, health={Health}",
+                    g.Name, picked.ModelId, picked.HealthStatus);
+                return (g, picked);
+            }
+
+            _logger.LogInformation(
+                "[ModelResolver] Tier3 池名/Code 匹配但池内无可用模型: pool={Pool} (共{Count}个)",
+                g.Name, g.Models.Count);
+        }
+
+        _logger.LogInformation(
+            "[ModelResolver] FindPreferredModel 所有档位未命中: key='{Key}'",
+            key);
+        return (null, null);
     }
 
     private ModelGroupItem? SelectBestModel(ModelGroup group)

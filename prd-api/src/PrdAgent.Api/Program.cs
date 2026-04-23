@@ -162,7 +162,9 @@ builder.Services.AddScoped<PrdAgent.Infrastructure.ModelPool.IPoolFailoverNotifi
 builder.Services.AddHostedService<PrdAgent.Infrastructure.ModelPool.ModelPoolHealthProbeService>();
 
 // 模型调度执行器（支持单元测试 Mock）
-builder.Services.AddScoped<PrdAgent.Infrastructure.LlmGateway.IModelResolver, PrdAgent.Infrastructure.LlmGateway.ModelResolver>();
+// 先注册具体的 ModelResolver，再用装饰器包裹（Api 层拦截，绕过 Infrastructure.dll 部署 bug）
+builder.Services.AddScoped<PrdAgent.Infrastructure.LlmGateway.ModelResolver>();
+builder.Services.AddScoped<PrdAgent.Infrastructure.LlmGateway.IModelResolver, PrdAgent.Api.Services.ExpectedModelRespectingResolver>();
 
 // LLM Gateway 统一守门员（所有大模型调用必须通过此接口）
 builder.Services.AddScoped<PrdAgent.Infrastructure.LlmGateway.ILlmGateway, PrdAgent.Infrastructure.LlmGateway.LlmGateway>();

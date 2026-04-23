@@ -756,6 +756,7 @@ public class ModelsController : ControllerBase
             },
             supportsImageToImage = adapterInfo.SupportsImageToImage,
             supportsInpainting = adapterInfo.SupportsInpainting,
+            isAdaptive = adapterInfo.IsAdaptive,
         }));
     }
 
@@ -815,6 +816,7 @@ public class ModelsController : ControllerBase
             },
             supportsImageToImage = adapterInfo.SupportsImageToImage,
             supportsInpainting = adapterInfo.SupportsInpainting,
+            isAdaptive = adapterInfo.IsAdaptive,
         }));
     }
 
@@ -853,6 +855,7 @@ public class ModelsController : ControllerBase
                     sizesCount = totalSizesCount,
                     sizesByResolution = adapterInfo.SizesByResolution,
                     notes = adapterInfo.Notes,
+                    isAdaptive = adapterInfo.IsAdaptive,
                 };
             }
             else

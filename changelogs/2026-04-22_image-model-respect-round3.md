@@ -1,0 +1,1 @@
+| fix | prd-api | ImageGenRunWorker.ResolveModelGroupAsync 新增"用户显式选择优先"短路：当 run.ModelId + run.PlatformId 都有值（Controller 已强校验必须提供），直接标 DirectModel 并跳过 scheduler，仅旁路查出该模型所属池名用于展示。彻底根治"picker 选了 gpt-image-1.5，后台被 scheduler 换成 gpt-image-2-all"的问题——前端 picker 里能选的必然能用，能用就不该再"尝试匹配" |

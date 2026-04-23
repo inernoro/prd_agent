@@ -226,7 +226,11 @@ public class OpenAIImageClient
         {
             adapterConfig = ImageGenModelAdapterRegistry.TryMatch(effectiveModelName);
             adapterSizeResult = reqParams.Adaptation;
-            size = adapterSizeResult.Size;
+            // 自适应模型不覆盖 size（保留 null/空），避免后续注入到请求体
+            if (!reqParams.IsAdaptive)
+            {
+                size = adapterSizeResult.Size;
+            }
 
             if (adapterConfig != null)
             {
@@ -235,6 +239,13 @@ public class OpenAIImageClient
                     ? allSizes.Take(64).ToList()
                     : null;
             }
+        }
+
+        // 自适应模型：标准化 size 为 null，避免后续路径错误注入
+        var isAdaptiveModel = reqParams.HasAdapter && reqParams.IsAdaptive;
+        if (isAdaptiveModel)
+        {
+            size = null;
         }
 
         // 非 Volces 且无适配器：尝试命中"允许尺寸白名单"缓存，避免先 400 再重试
@@ -361,10 +372,14 @@ public class OpenAIImageClient
                     var exchangeBody = new JsonObject
                     {
                         ["prompt"] = prompt,
-                        ["n"] = n,
                     };
-                    if (!string.IsNullOrWhiteSpace(requestedSizeNorm))
-                        exchangeBody["size"] = requestedSizeNorm;
+                    // 自适应模型不带 n / size（上游会因未知字段 400）
+                    if (!isAdaptiveModel)
+                    {
+                        exchangeBody["n"] = n;
+                        if (!string.IsNullOrWhiteSpace(requestedSizeNorm))
+                            exchangeBody["size"] = requestedSizeNorm;
+                    }
 
                     // 图生图：将参考图转为 data URI 放入 image_urls
                     if (initImageBase64 != null)
@@ -573,7 +588,8 @@ public class OpenAIImageClient
             gatewayResp = await SendViaGatewayAsync(ct);
 
             // 平台特定的尺寸错误处理：使用适配器自动修正
-            if (initImageBase64 == null && gatewayResp.StatusCode == 400)
+            // 自适应模型完全不发尺寸字段，跳过此分支以免 reqObj 不存在 size 属性时 NRE
+            if (initImageBase64 == null && gatewayResp.StatusCode == 400 && !isAdaptiveModel)
             {
                 var firstBody = gatewayResp.Content ?? string.Empty;
                 if (TryExtractUpstreamErrorMessage(firstBody, out var errMsg))
@@ -590,7 +606,8 @@ public class OpenAIImageClient
             }
 
             // 非 Volces：某些 OpenAI 兼容网关会对 size 采用"白名单尺寸"校验
-            if (!isVolces && gatewayResp.StatusCode == 400)
+            // 自适应模型不发 size，无需走此分支
+            if (!isVolces && gatewayResp.StatusCode == 400 && !isAdaptiveModel)
             {
                 var firstBody = gatewayResp.Content ?? string.Empty;
                 if (TryExtractUpstreamErrorMessage(firstBody, out var errMsg2) &&

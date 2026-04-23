@@ -27,6 +27,8 @@ public static class SizeConstraintTypes
     public const string Range = "range";
     /// <summary>仅支持比例枚举（具体像素由模型决定）</summary>
     public const string AspectRatio = "aspect_ratio";
+    /// <summary>自适应：模型不接受 size/aspect_ratio 字段，尺寸由 prompt 描述决定</summary>
+    public const string Adaptive = "adaptive";
 }
 
 /// <summary>
@@ -40,6 +42,8 @@ public static class SizeParamFormats
     public const string WidthHeight = "{width,height}";
     /// <summary>aspect_ratio 比例格式（如 1:1）</summary>
     public const string AspectRatio = "aspect_ratio";
+    /// <summary>不传任何尺寸参数（由 prompt 决定）</summary>
+    public const string None = "none";
 }
 
 /// <summary>
@@ -155,6 +159,12 @@ public class SizeAdaptationResult
 
     /// <summary>是否进行了比例调整</summary>
     public bool RatioAdjusted { get; set; }
+
+    /// <summary>
+    /// 是否为自适应模型：true 表示模型不接受任何 size/aspect_ratio 字段，
+    /// 调用方必须跳过尺寸参数注入，最终输出尺寸由 prompt 内容决定。
+    /// </summary>
+    public bool IsAdaptive { get; set; }
 }
 
 /// <summary>
@@ -183,6 +193,9 @@ public class ImageGenRequestParams
     /// <summary>匹配到的适配器名称（如 doubao-seedream-4-5*）</summary>
     public string? AdapterName { get; set; }
 
-    /// <summary>参数格式类型（WxH / {width,height} / aspect_ratio）</summary>
+    /// <summary>参数格式类型（WxH / {width,height} / aspect_ratio / none）</summary>
     public string SizeParamFormat { get; set; } = SizeParamFormats.WxH;
+
+    /// <summary>是否为自适应模型：true 表示请求体不应包含任何尺寸字段</summary>
+    public bool IsAdaptive { get; set; }
 }

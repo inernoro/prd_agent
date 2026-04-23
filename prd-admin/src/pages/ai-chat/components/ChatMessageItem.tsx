@@ -29,6 +29,12 @@ type GenDoneMeta = {
   prompt?: string;
   runId?: string;
   modelPool?: string;
+  /** 后端实际调度使用的模型（来自 SSE runStart / imageDone 的 modelId），优先于 modelPool 展示 */
+  actualModel?: string;
+  /** 后端实际命中的模型池名 */
+  actualModelPool?: string;
+  /** 后端判断此次调用使用的是自适应模型：前端应显示"自适应"而不是具体 WxH */
+  isAdaptive?: boolean;
   genType?: 'text2img' | 'img2img' | 'vision';
   imageRefShas?: string[];
 };
@@ -100,10 +106,16 @@ function MessageMetadataInline({
   sizeToAspectMap?: Map<string, string>;
 }) {
   if (!size && !model) return null;
-  const tier = detectTierFromSize(size || '');
-  const aspect = size ? (sizeToAspectMap?.get(size.toLowerCase()) || detectAspectFromSize(size)) : '';
+  // 自适应模型：不走 tier/aspect 解析，直接显示"自适应"
+  const isAdaptiveSize = size === '自适应' || size === 'adaptive' || size === 'auto';
+  const tier = isAdaptiveSize ? '' : detectTierFromSize(size || '');
+  const aspect = isAdaptiveSize || !size
+    ? ''
+    : (sizeToAspectMap?.get(size.toLowerCase()) || detectAspectFromSize(size));
   const tierLabel = tier === '4k' ? '4K' : tier === '2k' ? '2K' : '1K';
-  const sizeLabel = aspect ? `${tierLabel} · ${aspect}` : size;
+  const sizeLabel = isAdaptiveSize
+    ? '自适应'
+    : (aspect ? `${tierLabel} · ${aspect}` : size);
   return (
     <div className="flex flex-wrap items-center justify-between w-full gap-1.5 !mt-0">
       {size ? (
@@ -286,15 +298,25 @@ export const ChatMessageItem = memo(function ChatMessageItem({
       msgModel = String(modeledMsg.model ?? '').trim();
     }
 
-    if (originalUserMsg && !msgSize) {
+    // ── 服务端权威覆盖 ──
+    // actualModel / isAdaptive 由后端 SSE 写入 GEN_DONE meta，优先级高于
+    // 用户消息里的 @model:xxx token（那个只是前端 picker 的选择，可能与后台调度不一致）
+    const meta = parseGenDone(m.content);
+    if (meta?.actualModel) {
+      msgModel = String(meta.actualModel).trim();
+    } else if (meta?.actualModelPool) {
+      msgModel = String(meta.actualModelPool).trim();
+    }
+
+    // 自适应模型：尺寸由 prompt 决定，不应显示具体 WxH
+    if (meta?.isAdaptive) {
+      msgSize = '自适应';
+    } else if (originalUserMsg && !msgSize) {
       msgSize = '1024x1024';
     }
 
-    if (!msgModel) {
-      const meta = parseGenDone(m.content);
-      if (meta && meta.modelPool) {
-        msgModel = meta.modelPool;
-      }
+    if (!msgModel && meta?.modelPool) {
+      msgModel = meta.modelPool;
     }
 
     return (
@@ -388,6 +410,9 @@ export const ChatMessageItem = memo(function ChatMessageItem({
   const MSG_COLLAPSE_THRESHOLD = 100;
   const isLongMsg = msgBody.length > MSG_COLLAPSE_THRESHOLD;
 
+  // 用户消息气泡下方的"用户期望：xxx 模型"标签：从 @model:xxx token 解析
+  const expectedModelForUser = isUser ? String(modeledMsg.model ?? '').trim() : '';
+
   return (
     <div className={`flex flex-col gap-0.5 ${isUser ? 'items-end' : 'items-start'}`}>
       <div
@@ -418,6 +443,26 @@ export const ChatMessageItem = memo(function ChatMessageItem({
           </button>
         ) : null}
       </div>
+      {/* 用户期望模型徽标（仅用户消息 + 有 @model token 时显示），让用户发送后明确知道自己期望的模型 */}
+      {isUser && expectedModelForUser ? (
+        <div className="flex items-center gap-1 pr-1" title={`用户期望使用：${expectedModelForUser}`}>
+          <span
+            className="inline-flex items-center gap-1 rounded-full px-1.5"
+            style={{
+              height: 16,
+              fontSize: 9,
+              lineHeight: '14px',
+              fontWeight: 600,
+              border: '1px solid rgba(129,140,248,0.25)',
+              background: 'rgba(99,102,241,0.08)',
+              color: 'rgba(165,180,252,0.85)',
+            }}
+          >
+            <span style={{ opacity: 0.7 }}>用户期望</span>
+            <span style={{ whiteSpace: 'nowrap' }}>{expectedModelForUser}</span>
+          </span>
+        </div>
+      ) : null}
       <span
         className={`text-[9px] tabular-nums select-none ${isUser ? 'pr-1' : 'pl-1'}`}
         style={{ color: 'var(--text-muted, rgba(255,255,255,0.38))' }}

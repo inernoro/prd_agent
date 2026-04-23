@@ -76,6 +76,8 @@ export type ModelAdapterInfo = {
   limitations?: ModelAdapterLimitations;
   supportsImageToImage?: boolean;
   supportsInpainting?: boolean;
+  /** 自适应模型：true 表示尺寸由 prompt 决定，前端不应展示尺寸选择器 */
+  isAdaptive?: boolean;
 };
 
 export type ModelAdapterInfoBrief = {
@@ -87,6 +89,8 @@ export type ModelAdapterInfoBrief = {
   sizesCount?: number;
   sizesByResolution?: Record<string, SizeOptionFromBackend[]>;
   notes?: string[];
+  /** 自适应模型标识 */
+  isAdaptive?: boolean;
 };
 
 export type GetModelAdapterInfoContract = (modelId: string) => Promise<ApiResponse<ModelAdapterInfo>>;

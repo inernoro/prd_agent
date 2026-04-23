@@ -1477,6 +1477,11 @@ public class ImageMasterController : ControllerBase
                 ConfigModelId = cfgModelId,
                 PlatformId = platformId,
                 ModelId = modelId,
+                // ⚠ 用户显式选择优先：前端 picker 发来的 (platformId, modelId) 已是用户可见的可用模型。
+                // 提前标 ModelResolutionType=DirectModel，使 Worker 的 ResolveModelGroupAsync 走早返回分支，
+                // 避免 scheduler 把用户选择覆盖成"第一个池的第一个模型"（gpt-image-2-all）。
+                // 这是所有 Round 修复的最终落脚点：Controller 层直接尊重用户选择。
+                ModelResolutionType = PrdAgent.Core.Models.ModelResolutionType.DirectModel,
                 Size = size,
                 ResponseFormat = responseFormat,
                 MaxConcurrency = 1,

@@ -198,6 +198,8 @@ public class ImageGenRunWorker : BackgroundService
             await _db.ImageGenRuns.UpdateOneAsync(x => x.Id == run.Id, Builders<ImageGenRun>.Update.Set(x => x.Total, total), cancellationToken: ct);
         }
 
+        // 推送实际使用的模型信息（前端用此覆盖原本"前端选中的模型"展示）
+        var startAdapter = ImageGenModelAdapterRegistry.TryMatch(run.ModelId);
         await AppendEventAsync(run, "run", new
         {
             type = "runStart",
@@ -206,6 +208,11 @@ public class ImageGenRunWorker : BackgroundService
             modelId = run.ModelId,
             platformId = run.PlatformId,
             configModelId = run.ConfigModelId,
+            modelGroupName = run.ModelGroupName,
+            modelGroupId = run.ModelGroupId,
+            resolutionType = run.ModelResolutionType?.ToString(),
+            isAdaptive = startAdapter?.SizeConstraintType == SizeConstraintTypes.Adaptive,
+            adapterDisplayName = startAdapter?.DisplayName,
             size = run.Size,
             responseFormat = run.ResponseFormat
         }, ct);
@@ -618,6 +625,7 @@ public class ImageGenRunWorker : BackgroundService
                         // ===== 日志图片填充：input 来自前端 COS URL，output 来自生成结果 =====
                         await PatchLogImagesAsync(run, curItemIndex, imageIndex, loadedImageRefs, res.Data.Images, ct);
 
+                        var doneAdapter = ImageGenModelAdapterRegistry.TryMatch(run.ModelId);
                         await AppendEventAsync(run, "image", new
                         {
                             type = "imageDone",
@@ -630,6 +638,8 @@ public class ImageGenRunWorker : BackgroundService
                             sizeAdjusted,
                             ratioAdjusted,
                             modelId = run.ModelId,
+                            modelGroupName = run.ModelGroupName,
+                            isAdaptive = doneAdapter?.SizeConstraintType == SizeConstraintTypes.Adaptive,
                             platformId = run.PlatformId,
                             base64,
                             url,
@@ -1297,7 +1307,7 @@ public class ImageGenRunWorker : BackgroundService
         if (run.ModelResolutionType.HasValue)
         {
             _logger.LogInformation(
-                "[视觉创作-专属模型匹配] 跳过匹配（已有解析信息）: resolutionType={ResolutionType}, 使用模型={ModelId}", 
+                "[视觉创作-专属模型匹配] 跳过匹配（已有解析信息）: resolutionType={ResolutionType}, 使用模型={ModelId}",
                 run.ModelResolutionType, run.ModelId ?? "(null)");
             return;
         }
