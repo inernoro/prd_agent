@@ -7,7 +7,7 @@ namespace PrdAgent.Infrastructure.LlmGateway.ImageGen;
 /// Phase 2 过渡实现：对外暴露统一接口，内部委托 OpenAIImageClient.GenerateUnifiedAsync。
 /// Phase 3 将在此层直接实现 resolve + send 两阶段，彻底脱离对 OpenAIImageClient 的依赖。
 /// </summary>
-internal sealed class ImageGenGateway : IImageGenGateway
+public sealed class ImageGenGateway : IImageGenGateway
 {
     private readonly OpenAIImageClient _imageClient;
 
