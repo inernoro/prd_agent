@@ -576,6 +576,16 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             HealthStatus = resolution.HealthStatus,
             IsFallback = resolution.IsFallback,
             FallbackReason = resolution.FallbackReason,
+            OriginalPoolId = resolution.OriginalPoolId,
+            OriginalPoolName = resolution.OriginalPoolName,
+            OriginalModels = resolution.OriginalModels?.Select(m => new OriginalModelInfo
+            {
+                ModelId = m.ModelId,
+                PlatformId = m.PlatformId,
+                HealthStatus = m.HealthStatus,
+                IsAvailable = m.IsAvailable,
+                ConsecutiveFailures = m.ConsecutiveFailures
+            }).ToList(),
             IsExchange = resolution.IsExchange,
             ExchangeId = resolution.ExchangeId,
             ExchangeName = resolution.ExchangeName,
