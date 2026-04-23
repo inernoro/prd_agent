@@ -487,6 +487,7 @@ export const api = {
     },
     /** 文学创作图片生成（应用身份隔离） */
     imageGen: {
+      resolveModel: () => '/api/literary-agent/image-gen/resolve-model',
       runs: {
         create: () => '/api/literary-agent/image-gen/runs',
         byId: (runId: string) => `/api/literary-agent/image-gen/runs/${runId}`,

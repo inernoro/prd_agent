@@ -36,6 +36,7 @@ import {
   activateReferenceImageConfig,
   deactivateReferenceImageConfig,
   getLiteraryAgentModels,
+  getLiteraryAgentImageGenResolvedModel,
   getUserPreferences,
   updateLiteraryAgentPreferences,
   optimizeLiteraryPrompt,
@@ -537,6 +538,8 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
   const [chatPools, setChatPools] = useState<LiteraryAgentModelPool[]>([]);
   const [modelsLoading, setModelsLoading] = useState(true);
   const [imageGenModelError, setImageGenModelError] = useState<string | null>(null);
+  // 无专属模型池时，通过预解析得到的自动调度模型（仅供显示，生成时由 Worker 自行 resolve）
+  const [autoResolvedModel, setAutoResolvedModel] = useState<{ id: string; name: string; modelName: string; actualModelId: string; platformId: string } | null>(null);
 
   // 模型偏好（按账号持久化到数据库）
   const userId = useAuthStore((s) => s.user?.userId ?? '');
@@ -547,7 +550,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
   const [modelPrefReady, setModelPrefReady] = useState(false);
 
   // 生图模型池 → 可选择列表
-  type PoolModel = { poolId: string; id: string; name: string; modelName: string; actualModelId: string; platformId: string; enabled: boolean; isDedicated: boolean; isDefault: boolean };
+  type PoolModel = { poolId: string; id: string; name: string; modelName: string; actualModelId: string; platformId: string; enabled: boolean; isDedicated: boolean; isDefault: boolean; isAutoResolved?: boolean };
   const toPoolModels = useCallback((pools: LiteraryAgentModelPool[]): PoolModel[] => {
     return pools
       .filter((g) => g.models && g.models.length > 0)
@@ -571,11 +574,15 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
   const enabledImageModels = useMemo(() => toPoolModels(imageGenPools), [imageGenPools, toPoolModels]);
   const enabledChatModels = useMemo(() => toPoolModels(chatPools), [chatPools, toPoolModels]);
 
-  // 有效选中模型（无 auto 概念，默认选第一个）
-  const effectiveModel = useMemo(() => {
+  // 有效选中模型（无 auto 概念，默认选第一个；无可选池时回退到预解析的自动模型）
+  const effectiveModel = useMemo<PoolModel | null>(() => {
     const byId = imageModelPrefId ? enabledImageModels.find((m) => m.id === imageModelPrefId) : null;
-    return byId ?? enabledImageModels[0] ?? null;
-  }, [enabledImageModels, imageModelPrefId]);
+    const fromPool = byId ?? enabledImageModels[0] ?? null;
+    if (fromPool) return fromPool;
+    // 无可选池时，显示预解析的自动调度模型（isAutoResolved=true 标记，生成时不传 platformId/modelId）
+    if (autoResolvedModel) return { ...autoResolvedModel, poolId: 'auto', enabled: true, isDedicated: false, isDefault: true, isAutoResolved: true };
+    return null;
+  }, [enabledImageModels, imageModelPrefId, autoResolvedModel]);
 
   const effectiveChatModel = useMemo(() => {
     const byId = chatModelPrefId ? enabledChatModels.find((m) => m.id === chatModelPrefId) : null;
@@ -755,7 +762,24 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
       if (imgPoolsRes.success && imgPoolsRes.data) {
         setImageGenPools(imgPoolsRes.data);
         if (imgPoolsRes.data.length === 0) {
-          setImageGenModelError('未找到启用的生图模型（请绑定专属模型池）');
+          // 无可用模型池时，预解析 Gateway 将实际调度到的模型，用于显示和解锁一键生图
+          try {
+            const resolveRes = await getLiteraryAgentImageGenResolvedModel(false);
+            if (resolveRes.resolved && resolveRes.model) {
+              const displayName = resolveRes.poolName || resolveRes.model;
+              setAutoResolvedModel({
+                id: 'auto-resolved',
+                name: displayName,
+                modelName: resolveRes.model,
+                actualModelId: resolveRes.model,
+                platformId: resolveRes.platform || '',
+              });
+            } else {
+              setImageGenModelError('未找到可用的生图模型（请绑定专属模型池或配置默认模型）');
+            }
+          } catch {
+            setImageGenModelError('未找到启用的生图模型（请绑定专属模型池）');
+          }
         }
       } else {
         setImageGenModelError('加载模型池失败');
@@ -1638,7 +1662,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
       )
     );
     const idem = `article_img_${workspaceId}_${markerIndex}_${Date.now()}_${Math.random().toString(16).slice(2)}`;
-    // 如果用户选择了特定模型，传入 platformId 和 modelId 供后端使用
+    // 如果用户选择了特定模型池，传入 platformId 和 modelId；自动解析模型（isAutoResolved）不传，Worker 自行 resolve
     const runInput: CreateImageGenRunInput = {
       items: [{ prompt: plannedPrompt, count: 1, size: plannedSize }],
       size: plannedSize,
@@ -1647,7 +1671,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
       workspaceId,
       appKey: 'literary-agent',
       articleMarkerIndex: markerIndex,
-      ...(effectiveModel ? { platformId: effectiveModel.platformId, modelId: effectiveModel.actualModelId } : {}),
+      ...(effectiveModel && !effectiveModel.isAutoResolved ? { platformId: effectiveModel.platformId, modelId: effectiveModel.actualModelId } : {}),
     };
     const created = await createLiteraryAgentImageGenRun({
       input: runInput,
@@ -2474,7 +2498,22 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                   </DropdownMenu.Portal>
                 </DropdownMenu.Root>
 
-                {/* 生图模型切换器 */}
+                {/* 生图模型切换器：有可选模型池时显示下拉；无池但有自动解析模型时显示只读标签 */}
+                {effectiveModel?.isAutoResolved ? (
+                  // 自动解析模型：只读显示，无下拉（Worker 自行 resolve，不需用户选择）
+                  <div
+                    className="inline-flex items-center gap-1 rounded-full px-2 h-6 text-[10px] font-medium truncate max-w-[180px]"
+                    style={{
+                      background: 'rgba(34, 197, 94, 0.08)',
+                      border: '1px solid rgba(34, 197, 94, 0.25)',
+                      color: 'rgba(74, 222, 128, 0.8)',
+                    }}
+                    title={`自动调度: ${effectiveModel.name}（无专属模型池时 Gateway 自动选择）`}
+                  >
+                    <Sparkles size={10} className="shrink-0" />
+                    <span className="truncate">自动: {effectiveModel.name}</span>
+                  </div>
+                ) : (
                 <DropdownMenu.Root open={imageModelPrefOpen} onOpenChange={setImageModelPrefOpen}>
                   <DropdownMenu.Trigger asChild>
                     <button
@@ -2538,9 +2577,10 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                     </DropdownMenu.Content>
                   </DropdownMenu.Portal>
                 </DropdownMenu.Root>
+                )}
 
-                {/* 生图错误提示 */}
-                {imageGenModelError && enabledImageModels.length === 0 && (
+                {/* 生图错误提示（无池且未能预解析时才显示） */}
+                {imageGenModelError && enabledImageModels.length === 0 && !autoResolvedModel && (
                   <div className="text-[10px] px-1.5 py-0.5 rounded text-red-400 bg-red-500/10">
                     生图不可用
                   </div>

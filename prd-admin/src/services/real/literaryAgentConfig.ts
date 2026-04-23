@@ -259,6 +259,33 @@ import { fail, ok } from '@/types/api';
 import { connectSse } from '@/lib/useSseStream';
 
 /**
+ * 预查询文学创作生图将使用的模型（不发送图片请求）
+ * 用于前端在生成前展示调度到的模型名称
+ */
+export const getLiteraryAgentImageGenResolvedModelReal = async (hasInitImage = false): Promise<{
+  resolved: boolean;
+  model?: string;
+  platform?: string;
+  poolId?: string;
+  poolName?: string;
+  resolutionType?: string;
+}> => {
+  const res = await apiRequest<{
+    resolved: boolean;
+    model?: string;
+    platform?: string;
+    poolId?: string;
+    poolName?: string;
+    resolutionType?: string;
+  }>(
+    `${api.literaryAgent.imageGen.resolveModel()}?hasInitImage=${hasInitImage}`,
+    { method: 'GET' }
+  );
+  if (res.success && res.data) return res.data;
+  return { resolved: false };
+};
+
+/**
  * 创建文学创作图片生成任务
  * 使用 /api/literary-agent/image-gen/runs 接口
  */
