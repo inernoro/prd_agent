@@ -1016,7 +1016,10 @@ export const getLiteraryAgentChatModels: GetLiteraryAgentChatModelsContract = wi
 export const getLiteraryAgentImageGenModels: GetLiteraryAgentImageGenModelsContract = withAuth(getLiteraryAgentImageGenModelsReal);
 export const getLiteraryAgentAllModels: GetLiteraryAgentAllModelsContract = withAuth(getLiteraryAgentAllModelsReal);
 export const getLiteraryAgentMainModel: GetLiteraryAgentMainModelContract = withAuth(getLiteraryAgentMainModelReal);
-// 直接导出（不需要 withAuth，页面已鉴权，apiRequest 内部携带 token）
+// 预解析函数直接导出（不走 withAuth）：
+// 1. 返回类型为裸对象（非 ApiResponse<T>），与 withAuth 签名不兼容
+// 2. 失败时静默降级为 { resolved: false }，不暴露鉴权错误
+// 3. 页面已受路由守卫保护，apiRequest 内部自动携带 token，服务端会拒绝未认证请求
 export const getLiteraryAgentImageGenResolvedModel = getLiteraryAgentImageGenResolvedModelReal;
 export const getLiteraryAgentChatResolvedModel = getLiteraryAgentChatResolvedModelReal;
 export const createLiteraryAgentImageGenRun: CreateLiteraryAgentImageGenRunContract = withAuth(createLiteraryAgentImageGenRunReal);
