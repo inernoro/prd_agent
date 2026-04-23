@@ -5,6 +5,31 @@ import type { ApiResponse } from '@/types/api';
 // 类型定义
 // ──────────────────────────────────────────────
 
+export interface DimensionCheckItem {
+  id: string;
+  category: string;
+  text: string;
+  note?: string;
+}
+
+/** 用户在表格中的勾选状态：'yes' 勾选了"是" / 'no' 勾选了"否" / 'none' 未勾选或未填表 */
+export type CheckboxState = 'yes' | 'no' | 'none';
+
+export interface DimensionCheckItemResult {
+  id: string;
+  category: string;
+  text: string;
+  /** 用户在「是否涉及」列的实际勾选 */
+  involvedChecked: CheckboxState;
+  /** 用户在「方案是否包含」列的实际勾选 */
+  coverageChecked: CheckboxState;
+  /** 反作弊核查：仅当 involvedChecked='yes' 且 coverageChecked='yes' 时才有意义 */
+  solutionFound?: boolean | null;
+  /** 系统按 truth table 派生的最终通过状态 */
+  passed: boolean;
+  evidence?: string;
+}
+
 export interface ReviewDimensionConfig {
   id: string;
   key: string;
@@ -13,6 +38,8 @@ export interface ReviewDimensionConfig {
   description: string;
   orderIndex: number;
   isActive: boolean;
+  /** 子检查项（清单类维度使用，普通维度为 null/undefined） */
+  items?: DimensionCheckItem[] | null;
   updatedAt: string;
   updatedBy?: string;
 }
@@ -23,6 +50,8 @@ export interface ReviewDimensionScore {
   score: number;
   maxScore: number;
   comment: string;
+  /** 子检查项判断结果（清单类维度使用） */
+  items?: DimensionCheckItemResult[] | null;
 }
 
 export interface ReviewSubmission {

@@ -48,4 +48,38 @@ public class ReviewDimensionScore
 
     /// <summary>AI 评语（该维度的具体评价）</summary>
     public string Comment { get; set; } = string.Empty;
+
+    /// <summary>子检查项判断结果（清单类维度使用，普通维度为 null）</summary>
+    public List<DimensionCheckItemResult>? Items { get; set; }
+}
+
+/// <summary>单条检查项的 LLM 判断结果</summary>
+public class DimensionCheckItemResult
+{
+    /// <summary>对应 DimensionCheckItem.Id</summary>
+    public string Id { get; set; } = string.Empty;
+
+    /// <summary>分类快照</summary>
+    public string Category { get; set; } = string.Empty;
+
+    /// <summary>检查项名称快照</summary>
+    public string Text { get; set; } = string.Empty;
+
+    /// <summary>用户在「是否涉及」列的勾选状态："yes" / "no" / "none"（未勾或未填表）</summary>
+    public string InvolvedChecked { get; set; } = "none";
+
+    /// <summary>用户在「方案是否包含」列的勾选状态："yes" / "no" / "none"</summary>
+    public string CoverageChecked { get; set; } = "none";
+
+    /// <summary>
+    /// 反作弊核查：仅当 InvolvedChecked=yes 且 CoverageChecked=yes 时才填。
+    /// LLM 检索方案正文，确认是否真的写出了对应解决方案，true=找到，false=找不到，null=未触发核查。
+    /// </summary>
+    public bool? SolutionFound { get; set; }
+
+    /// <summary>系统按 truth table 派生的最终通过状态（不让 LLM 自己算）</summary>
+    public bool Passed { get; set; }
+
+    /// <summary>判定依据/原文证据/失败原因（≤80 字）</summary>
+    public string? Evidence { get; set; }
 }
