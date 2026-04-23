@@ -37,6 +37,7 @@ import {
   deactivateReferenceImageConfig,
   getLiteraryAgentModels,
   getLiteraryAgentImageGenResolvedModel,
+  getLiteraryAgentChatResolvedModel,
   getUserPreferences,
   updateLiteraryAgentPreferences,
   optimizeLiteraryPrompt,
@@ -540,6 +541,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
   const [imageGenModelError, setImageGenModelError] = useState<string | null>(null);
   // 无专属模型池时，通过预解析得到的自动调度模型（仅供显示，生成时由 Worker 自行 resolve）
   const [autoResolvedModel, setAutoResolvedModel] = useState<{ id: string; name: string; modelName: string; actualModelId: string; platformId: string } | null>(null);
+  const [autoResolvedChatModel, setAutoResolvedChatModel] = useState<{ id: string; name: string; modelName: string; actualModelId: string; platformId: string } | null>(null);
 
   // 模型偏好（按账号持久化到数据库）
   const userId = useAuthStore((s) => s.user?.userId ?? '');
@@ -584,10 +586,13 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
     return null;
   }, [enabledImageModels, imageModelPrefId, autoResolvedModel]);
 
-  const effectiveChatModel = useMemo(() => {
+  const effectiveChatModel = useMemo<PoolModel | null>(() => {
     const byId = chatModelPrefId ? enabledChatModels.find((m) => m.id === chatModelPrefId) : null;
-    return byId ?? enabledChatModels[0] ?? null;
-  }, [enabledChatModels, chatModelPrefId]);
+    const fromPool = byId ?? enabledChatModels[0] ?? null;
+    if (fromPool) return fromPool;
+    if (autoResolvedChatModel) return { ...autoResolvedChatModel, poolId: 'auto', enabled: true, isDedicated: false, isDefault: true, isAutoResolved: true };
+    return null;
+  }, [enabledChatModels, chatModelPrefId, autoResolvedChatModel]);
 
   // 兼容旧代码：imageGenModel 由 effectiveModel 驱动
   const imageGenModel = useMemo<Model | null>(() => {
@@ -839,6 +844,37 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
     })();
     return () => { cancelled = true; };
   }, [enabledImageModels.length, modelsLoading]);
+
+  // 无可选提示词模型池时，预解析 Gateway 将使用的 Chat 模型
+  useEffect(() => {
+    if (modelsLoading) return;
+    if (enabledChatModels.length > 0) {
+      setAutoResolvedChatModel(null);
+      return;
+    }
+    let cancelled = false;
+    void (async () => {
+      try {
+        const res = await getLiteraryAgentChatResolvedModel();
+        if (!cancelled) {
+          if (res.resolved && res.model) {
+            setAutoResolvedChatModel({
+              id: 'auto-resolved-chat',
+              name: res.poolName || res.model,
+              modelName: res.model,
+              actualModelId: res.model,
+              platformId: res.platform || '',
+            });
+          } else {
+            setAutoResolvedChatModel(null);
+          }
+        }
+      } catch {
+        if (!cancelled) setAutoResolvedChatModel(null);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [enabledChatModels.length, modelsLoading]);
 
   // 从 ASPECT_OPTIONS 构建默认尺寸选项（当适配器未返回尺寸时作为 fallback）
   const defaultSizesByResolution: SizesByResolution = React.useMemo(() => ({
@@ -2445,6 +2481,20 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
               {/* 模型切换器：提示词模型 + 生图模型 */}
               <div className="flex items-center gap-1.5">
                 {/* 提示词/标记生成模型切换器 */}
+                {effectiveChatModel?.isAutoResolved ? (
+                  <span
+                    className="inline-flex items-center gap-1 rounded-full px-2 h-6 text-[10px] font-medium truncate max-w-[180px]"
+                    style={{
+                      background: 'rgba(99, 102, 241, 0.08)',
+                      border: '1px solid rgba(99, 102, 241, 0.25)',
+                      color: 'rgba(129, 140, 248, 0.75)',
+                    }}
+                    title={`自动调度: ${effectiveChatModel.name}`}
+                  >
+                    <Sparkles size={10} className="shrink-0" />
+                    <span className="truncate">自动: {effectiveChatModel.name}</span>
+                  </span>
+                ) : (
                 <DropdownMenu.Root open={chatModelPrefOpen} onOpenChange={setChatModelPrefOpen}>
                   <DropdownMenu.Trigger asChild>
                     <button
@@ -2508,6 +2558,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                     </DropdownMenu.Content>
                   </DropdownMenu.Portal>
                 </DropdownMenu.Root>
+                )}
 
                 {/* 生图模型切换器：有可选模型池时显示下拉；无池但有自动解析模型时显示只读标签 */}
                 {effectiveModel?.isAutoResolved ? (

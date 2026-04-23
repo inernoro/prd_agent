@@ -474,6 +474,7 @@ import {
   getLiteraryAgentAllModelsReal,
   getLiteraryAgentMainModelReal,
   getLiteraryAgentImageGenResolvedModelReal,
+  getLiteraryAgentChatResolvedModelReal,
   createLiteraryAgentImageGenRunReal,
   cancelLiteraryAgentImageGenRunReal,
   streamLiteraryAgentImageGenRunWithRetryReal,
@@ -1017,6 +1018,7 @@ export const getLiteraryAgentAllModels: GetLiteraryAgentAllModelsContract = with
 export const getLiteraryAgentMainModel: GetLiteraryAgentMainModelContract = withAuth(getLiteraryAgentMainModelReal);
 // 直接导出（不需要 withAuth，页面已鉴权，apiRequest 内部携带 token）
 export const getLiteraryAgentImageGenResolvedModel = getLiteraryAgentImageGenResolvedModelReal;
+export const getLiteraryAgentChatResolvedModel = getLiteraryAgentChatResolvedModelReal;
 export const createLiteraryAgentImageGenRun: CreateLiteraryAgentImageGenRunContract = withAuth(createLiteraryAgentImageGenRunReal);
 export const cancelLiteraryAgentImageGenRun: CancelLiteraryAgentImageGenRunContract = withAuth(cancelLiteraryAgentImageGenRunReal);
 export const streamLiteraryAgentImageGenRunWithRetry: StreamLiteraryAgentImageGenRunWithRetryContract = withAuth(streamLiteraryAgentImageGenRunWithRetryReal);

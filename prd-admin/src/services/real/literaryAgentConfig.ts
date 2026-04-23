@@ -285,6 +285,29 @@ export const getLiteraryAgentImageGenResolvedModelReal = async (hasInitImage = f
   return { resolved: false };
 };
 
+export const getLiteraryAgentChatResolvedModelReal = async (): Promise<{
+  resolved: boolean;
+  model?: string;
+  platform?: string;
+  poolId?: string;
+  poolName?: string;
+  resolutionType?: string;
+}> => {
+  const res = await apiRequest<{
+    resolved: boolean;
+    model?: string;
+    platform?: string;
+    poolId?: string;
+    poolName?: string;
+    resolutionType?: string;
+  }>(
+    api.literaryAgent.imageGen.resolveChatModel(),
+    { method: 'GET' }
+  );
+  if (res.success && res.data) return res.data;
+  return { resolved: false };
+};
+
 /**
  * 创建文学创作图片生成任务
  * 使用 /api/literary-agent/image-gen/runs 接口

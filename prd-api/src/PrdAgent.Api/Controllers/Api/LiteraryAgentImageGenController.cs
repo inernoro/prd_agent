@@ -90,6 +90,40 @@ public class LiteraryAgentImageGenController : ControllerBase
     }
 
     /// <summary>
+    /// 预查询文生提示词（Chat）调度模型，无专属模型池时显示自动调度模型名称
+    /// </summary>
+    [HttpGet("resolve-chat-model")]
+    public async Task<IActionResult> ResolveChatModel(CancellationToken ct)
+    {
+        var appCallerCode = LiteraryAgent.Content.Chat;
+
+        try
+        {
+            var resolution = await _gateway.ResolveModelAsync(appCallerCode, "chat", null, ct);
+
+            if (resolution == null || !resolution.Success || string.IsNullOrWhiteSpace(resolution.ActualModel))
+            {
+                return Ok(ApiResponse<object>.Ok(new { resolved = false }));
+            }
+
+            return Ok(ApiResponse<object>.Ok(new
+            {
+                resolved = true,
+                model = resolution.ActualModel,
+                platform = resolution.ActualPlatformName ?? resolution.ActualPlatformId,
+                poolId = resolution.ModelGroupId,
+                poolName = resolution.ModelGroupName,
+                resolutionType = resolution.ResolutionType,
+            }));
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "[LiteraryAgent] 预解析提示词模型失败: {AppCallerCode}", appCallerCode);
+            return Ok(ApiResponse<object>.Ok(new { resolved = false }));
+        }
+    }
+
+    /// <summary>
     /// 创建生图任务（runId）：用于断线可恢复的批量/单张生图
     /// 内部硬编码 appKey = "literary-agent"
     /// </summary>
