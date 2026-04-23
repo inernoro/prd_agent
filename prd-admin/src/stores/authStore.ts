@@ -3,6 +3,8 @@ import { persist, createJSONStorage } from 'zustand/middleware';
 import type { AdminMenuItem } from '@/services/contracts/authz';
 import type { UserRole } from '@/types/admin';
 
+const AUTH_STORAGE_KEY = 'prd-admin-auth';
+
 export type AuthUser = {
   userId: string;
   username: string;
@@ -61,6 +63,18 @@ const INITIAL_STATE = {
   permFingerprint: '',
 };
 
+function migrateLegacyAuthToLocalStorage() {
+  try {
+    const existing = localStorage.getItem(AUTH_STORAGE_KEY);
+    if (existing) return;
+    const legacy = sessionStorage.getItem(AUTH_STORAGE_KEY);
+    if (!legacy) return;
+    localStorage.setItem(AUTH_STORAGE_KEY, legacy);
+  } catch {
+    /* ignore storage migration errors */
+  }
+}
+
 // logout 时需要同步清理的 user-scoped store 回调；由各 store 在模块装载阶段自行注册。
 // 用注册表避免 authStore 直接 import navOrderStore/agentSwitcherStore 造成
 // authStore → navOrderStore → @/services → authStore 的循环引用。
@@ -107,8 +121,11 @@ export const useAuthStore = create<AuthState>()(
       },
     }),
     {
-      name: 'prd-admin-auth',
-      storage: createJSONStorage(() => sessionStorage),
+      name: AUTH_STORAGE_KEY,
+      storage: createJSONStorage(() => {
+        migrateLegacyAuthToLocalStorage();
+        return localStorage;
+      }),
     }
   )
 );
