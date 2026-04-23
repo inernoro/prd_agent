@@ -9,3 +9,6 @@
 | fix | prd-admin | 修复周报 Agent 浅色模式整体视觉未切换：AppShell 的 <main> 在 ReportAgentPage scope 外，背景 var(--bg-base) 取到仍是暗色。改为进入周报 Agent 时把 data-theme 同步挂到 documentElement，组件卸载/切回暗色时清除，保证整个视口跟随切换且不污染其他页面 |
 | fix | prd-admin | 再次修复浅色模式：根因是 src/lib/themeApplier.ts 把 17 个 CSS 变量作为 inline style 写到 <html> 上（特异性 1,0,0,0），完全压制 [data-theme="light"] 规则。给 tokens.css 里浅色块所有变量加 !important（作者 !important 高于无 !important 的 inline style），并补齐 --nested-block-*、--list-item-*、--table-* 等 themeApplier 管理但之前漏覆盖的变量 |
 | feat | prd-admin | 周报 Agent 浅色模式视觉精修：新增 useDataTheme hook（MutationObserver 监听 documentElement.dataset.theme），让 inline style 能感知主题；ReportEditor 的 sectionThemes 整宽色条、AI banner、退回 banner、已提交 banner、必填徽章、source badge（AI/MAP 等）在浅色模式下 alpha 调低 + border 加深，避免大色块喧宾夺主；ReportDetailPage 的 Return Dialog overlay、退回 banner、评论 chip 同步浅色化 |
+| fix | prd-admin | 修复从团队列表"查看"进入周报详情独立路由后浅色模式失效：ReportDetailPage 在独立路由模式（无 reportIdOverride）下也读 sessionStorage 的 color-scheme，主动同步 data-theme 到 documentElement |
+| refactor | prd-admin | 周报 Agent 头部移除"使用指引"按钮 + UsageGuideOverlay 关联代码，控件区精简为 ZoomControl + ThemeControl 两个右对齐控件 |
+| fix | prd-admin | TeamDashboard 浅色精修：statusConfig 改为 buildStatusConfig(isLight) 函数，浅色 chip 底色 alpha 0.08→0.12；scope tab 选中态文字采用更深的蓝/绿确保对比度（rgba(29,78,216) / rgba(21,128,61)）；统计 chip 已提交/待提交文字色浅色下加深；成员抽屉 overlay 浅色下从 black/50 改为 slate-900/20 |

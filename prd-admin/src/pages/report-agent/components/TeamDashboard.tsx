@@ -34,6 +34,7 @@ import { UserMultiSearchSelect } from '@/components/UserMultiSearchSelect';
 import { ShareTeamWeekDialog } from './ShareTeamWeekDialog';
 import { WeekNavRail } from './WeekNavRail';
 import { MemberReportInlineView } from './MemberReportInlineView';
+import { useDataTheme } from '../hooks/useDataTheme';
 
 function getISOWeek(date: Date): { weekYear: number; weekNumber: number } {
   const d = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()));
@@ -48,15 +49,19 @@ const summaryColors = ['rgba(59,130,246,.9)', 'rgba(34,197,94,.9)', 'rgba(168,85
 const DRAWER_CLOSE_MS = 220;
 const DRAWER_ENTER_EASING = 'cubic-bezier(0.22, 1, 0.36, 1)';
 
-const statusConfig: Record<string, { label: string; color: string; bg: string; icon: typeof CheckCircle2 }> = {
-  [WeeklyReportStatus.NotStarted]: { label: '未开始', color: 'rgba(156,163,175,.82)', bg: 'rgba(156,163,175,.08)', icon: Clock },
-  [WeeklyReportStatus.Draft]: { label: '草稿', color: 'rgba(156,163,175,.92)', bg: 'rgba(156,163,175,.08)', icon: Clock },
-  [WeeklyReportStatus.Submitted]: { label: '待审阅', color: 'rgba(59,130,246,.9)', bg: 'rgba(59,130,246,.08)', icon: AlertCircle },
-  [WeeklyReportStatus.Reviewed]: { label: '已审阅', color: 'rgba(34,197,94,.9)', bg: 'rgba(34,197,94,.08)', icon: CheckCircle2 },
-  [WeeklyReportStatus.Returned]: { label: '已打回', color: 'rgba(239,68,68,.9)', bg: 'rgba(239,68,68,.08)', icon: AlertCircle },
-  [WeeklyReportStatus.Overdue]: { label: '逾期', color: 'rgba(239,68,68,.9)', bg: 'rgba(239,68,68,.08)', icon: AlertCircle },
-  [WeeklyReportStatus.Viewed]: { label: '已查看', color: 'rgba(14,165,233,.9)', bg: 'rgba(14,165,233,.08)', icon: CheckCircle2 },
-};
+function buildStatusConfig(isLight: boolean): Record<string, { label: string; color: string; bg: string; icon: typeof CheckCircle2 }> {
+  // 浅色模式 chip 底色 alpha 0.08 → 0.12,在浅米底上对比度更可读
+  const a = isLight ? 0.12 : 0.08;
+  return {
+    [WeeklyReportStatus.NotStarted]: { label: '未开始', color: 'rgba(156,163,175,.82)', bg: `rgba(156,163,175,${a})`, icon: Clock },
+    [WeeklyReportStatus.Draft]: { label: '草稿', color: 'rgba(156,163,175,.92)', bg: `rgba(156,163,175,${a})`, icon: Clock },
+    [WeeklyReportStatus.Submitted]: { label: '待审阅', color: 'rgba(59,130,246,.9)', bg: `rgba(59,130,246,${a})`, icon: AlertCircle },
+    [WeeklyReportStatus.Reviewed]: { label: '已审阅', color: 'rgba(34,197,94,.9)', bg: `rgba(34,197,94,${a})`, icon: CheckCircle2 },
+    [WeeklyReportStatus.Returned]: { label: '已打回', color: 'rgba(239,68,68,.9)', bg: `rgba(239,68,68,${a})`, icon: AlertCircle },
+    [WeeklyReportStatus.Overdue]: { label: '逾期', color: 'rgba(239,68,68,.9)', bg: `rgba(239,68,68,${a})`, icon: AlertCircle },
+    [WeeklyReportStatus.Viewed]: { label: '已查看', color: 'rgba(14,165,233,.9)', bg: `rgba(14,165,233,${a})`, icon: CheckCircle2 },
+  };
+}
 
 function getMemberRoleLabel(role?: string | null): string {
   if (role === ReportTeamRole.Leader) return '负责人';
@@ -79,6 +84,9 @@ export function TeamDashboard() {
   const userId = useAuthStore((s) => s.user?.userId);
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
+  const dataTheme = useDataTheme();
+  const isLight = dataTheme === 'light';
+  const statusConfig = useMemo(() => buildStatusConfig(isLight), [isLight]);
 
   const now = useMemo(() => getISOWeek(new Date()), []);
   const teamScope: 'managed' | 'joined' = searchParams.get('scope') === 'joined' ? 'joined' : 'managed';
@@ -480,7 +488,7 @@ export function TeamDashboard() {
       {memberDrawerVisible && selectedTeam && (
         <div className="fixed inset-0 z-50 flex justify-end" onClick={() => closeMemberDrawer()}>
           <div
-            className="absolute inset-0 bg-black/50 backdrop-blur-sm transition-opacity duration-200"
+            className={`absolute inset-0 backdrop-blur-sm transition-opacity duration-200 ${isLight ? 'bg-slate-900/20' : 'bg-black/50'}`}
             style={{ opacity: memberDrawerOpen ? 1 : 0 }}
           />
           <div
@@ -620,8 +628,8 @@ export function TeamDashboard() {
             <button
               className="px-3 py-1.5 rounded-lg text-[12px] font-medium transition-all duration-200"
               style={{
-                background: teamScope === 'managed' ? 'rgba(59,130,246,.15)' : 'transparent',
-                color: teamScope === 'managed' ? 'rgba(59,130,246,.95)' : 'var(--text-secondary)',
+                background: teamScope === 'managed' ? (isLight ? 'rgba(59,130,246,.18)' : 'rgba(59,130,246,.15)') : 'transparent',
+                color: teamScope === 'managed' ? (isLight ? 'rgba(29,78,216,1)' : 'rgba(59,130,246,.95)') : 'var(--text-secondary)',
               }}
               onClick={() => setTeamScope('managed')}
             >
@@ -630,8 +638,8 @@ export function TeamDashboard() {
             <button
               className="px-3 py-1.5 rounded-lg text-[12px] font-medium transition-all duration-200"
               style={{
-                background: teamScope === 'joined' ? 'rgba(34,197,94,.15)' : 'transparent',
-                color: teamScope === 'joined' ? 'rgba(34,197,94,.95)' : 'var(--text-secondary)',
+                background: teamScope === 'joined' ? (isLight ? 'rgba(34,197,94,.18)' : 'rgba(34,197,94,.15)') : 'transparent',
+                color: teamScope === 'joined' ? (isLight ? 'rgba(21,128,61,1)' : 'rgba(34,197,94,.95)') : 'var(--text-secondary)',
               }}
               onClick={() => setTeamScope('joined')}
             >
@@ -720,10 +728,10 @@ export function TeamDashboard() {
                 <span className="surface-inset rounded-full px-2 py-0.5" style={{ color: 'var(--text-secondary)' }}>
                   团队人数 {reportsView?.stats.totalMembers ?? 0}
                 </span>
-                <span className="surface-inset rounded-full px-2 py-0.5" style={{ color: 'rgba(34,197,94,.95)' }}>
+                <span className="surface-inset rounded-full px-2 py-0.5" style={{ color: isLight ? 'rgba(21,128,61,1)' : 'rgba(34,197,94,.95)' }}>
                   已提交 {reportsView?.stats.submittedCount ?? 0}
                 </span>
-                <span className="surface-inset rounded-full px-2 py-0.5" style={{ color: 'rgba(249,115,22,.95)' }}>
+                <span className="surface-inset rounded-full px-2 py-0.5" style={{ color: isLight ? 'rgba(194,65,12,1)' : 'rgba(249,115,22,.95)' }}>
                   待提交 {reportsView?.stats.pendingCount ?? 0}
                 </span>
               </div>

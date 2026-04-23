@@ -35,9 +35,29 @@ export interface ReportDetailPageProps {
   hideSiblings?: boolean;
 }
 
+const COLOR_SCHEME_STORAGE_KEY = 'report-agent:color-scheme';
+
 export default function ReportDetailPage(props: ReportDetailPageProps = {}) {
   const { reportId: paramsReportId } = useParams<{ reportId: string }>();
   const reportId = props.reportIdOverride ?? paramsReportId;
+  const isStandaloneRoute = !props.reportIdOverride;
+
+  // 独立路由模式下,ReportAgentPage 没有挂载,需要自己把 sessionStorage 里的
+  // 偏好同步到 documentElement,保证从列表点"查看"进入后浅色不丢失
+  useEffect(() => {
+    if (!isStandaloneRoute || typeof document === 'undefined') return;
+    const root = document.documentElement;
+    const raw = window.sessionStorage.getItem(COLOR_SCHEME_STORAGE_KEY);
+    if (raw === 'light') {
+      root.setAttribute('data-theme', 'light');
+    } else {
+      root.removeAttribute('data-theme');
+    }
+    return () => {
+      root.removeAttribute('data-theme');
+    };
+  }, [isStandaloneRoute]);
+
   const dataTheme = useDataTheme();
   const isLight = dataTheme === 'light';
   const navigate = useNavigate();

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { FileText, Users, Settings, RefreshCw, HelpCircle } from 'lucide-react';
+import { FileText, Users, Settings, RefreshCw } from 'lucide-react';
 import { MapSpinner } from '@/components/ui/VideoLoader';
 import { GlassCard } from '@/components/design/GlassCard';
 import { TabBar } from '@/components/design/TabBar';
@@ -9,7 +9,6 @@ import { useAuthStore } from '@/stores/authStore';
 import { ReportMainView } from './components/ReportMainView';
 import { TeamDashboard } from './components/TeamDashboard';
 import { SettingsPanel } from './components/SettingsPanel';
-import { UsageGuideOverlay } from './components/UsageGuideOverlay';
 import { ZoomControl, ZOOM_SCALE, type ZoomLevel } from './components/ZoomControl';
 import { ThemeControl, type ColorScheme } from './components/ThemeControl';
 
@@ -51,7 +50,6 @@ export default function ReportAgentPage() {
   } = useReportAgentStore();
 
   const userId = useAuthStore((s) => s.user?.userId);
-  const [showUsageGuide, setShowUsageGuide] = useState(false);
   const [zoom, setZoom] = useState<ZoomLevel>(readZoomFromStorage);
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -77,11 +75,6 @@ export default function ReportAgentPage() {
       root.removeAttribute('data-theme');
     };
   }, [colorScheme]);
-  const [guideRole, setGuideRole] = useState<'manager' | 'member'>(() => {
-    if (typeof window === 'undefined') return 'member';
-    const cached = window.localStorage.getItem('report-agent.guide-role');
-    return cached === 'manager' ? 'manager' : 'member';
-  });
 
   const hasTeamWorkspace = useMemo(() => {
     if (!userId) return false;
@@ -94,11 +87,6 @@ export default function ReportAgentPage() {
   useEffect(() => {
     void loadAll();
   }, [loadAll]);
-
-  useEffect(() => {
-    if (typeof window === 'undefined') return;
-    window.localStorage.setItem('report-agent.guide-role', guideRole);
-  }, [guideRole]);
 
   // 兼容旧 tab key —— 如果用户通过外部导航到旧 tab, 映射到新 tab
   useEffect(() => {
@@ -136,20 +124,9 @@ export default function ReportAgentPage() {
   }, [hasTeamWorkspace]);
 
   const usageGuideActions = (
-    <div className="flex items-center gap-2">
+    <div className="flex items-center gap-2 ml-auto">
       <ZoomControl value={zoom} onChange={setZoom} />
       <ThemeControl value={colorScheme} onChange={setColorScheme} />
-      <Button
-        variant="secondary"
-        size="sm"
-        onClick={() => {
-          setShowUsageGuide((prev) => !prev);
-        }}
-        className="whitespace-nowrap"
-      >
-        <HelpCircle size={13} />
-        使用指引
-      </Button>
     </div>
   );
 
@@ -199,23 +176,6 @@ export default function ReportAgentPage() {
         {currentTab === 'team' && <TeamDashboard />}
         {currentTab === 'settings' && <SettingsPanel />}
       </div>
-      <UsageGuideOverlay
-        open={showUsageGuide}
-        moduleKey={currentTab as 'report' | 'team' | 'settings'}
-        role={guideRole}
-        onRoleChange={setGuideRole}
-        onClose={() => setShowUsageGuide(false)}
-        onSwitchTab={(tab) => setActiveTab(tab)}
-        onOpenDailyLog={() => {
-          setActiveTab('report');
-          window.dispatchEvent(new CustomEvent('report-agent:open-daily-log'));
-        }}
-        onCreateReport={() => {
-          setActiveTab('report');
-          setSelectedReportId(null);
-          setShowReportEditor(true);
-        }}
-      />
     </div>
   );
 }
