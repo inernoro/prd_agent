@@ -10,6 +10,16 @@ import { ReportMainView } from './components/ReportMainView';
 import { TeamDashboard } from './components/TeamDashboard';
 import { SettingsPanel } from './components/SettingsPanel';
 import { UsageGuideOverlay } from './components/UsageGuideOverlay';
+import { ZoomControl, ZOOM_SCALE, type ZoomLevel } from './components/ZoomControl';
+
+const ZOOM_STORAGE_KEY = 'report-agent:zoom';
+
+function readZoomFromStorage(): ZoomLevel {
+  if (typeof window === 'undefined') return 'normal';
+  const raw = window.sessionStorage.getItem(ZOOM_STORAGE_KEY);
+  if (raw === 'large' || raw === 'extra') return raw;
+  return 'normal';
+}
 
 /**
  * v3.0 周报系统 — 奥卡姆剃刀重设计
@@ -34,6 +44,11 @@ export default function ReportAgentPage() {
 
   const userId = useAuthStore((s) => s.user?.userId);
   const [showUsageGuide, setShowUsageGuide] = useState(false);
+  const [zoom, setZoom] = useState<ZoomLevel>(readZoomFromStorage);
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    window.sessionStorage.setItem(ZOOM_STORAGE_KEY, zoom);
+  }, [zoom]);
   const [guideRole, setGuideRole] = useState<'manager' | 'member'>(() => {
     if (typeof window === 'undefined') return 'member';
     const cached = window.localStorage.getItem('report-agent.guide-role');
@@ -93,17 +108,20 @@ export default function ReportAgentPage() {
   }, [hasTeamWorkspace]);
 
   const usageGuideActions = (
-    <Button
-      variant="secondary"
-      size="sm"
-      onClick={() => {
-        setShowUsageGuide((prev) => !prev);
-      }}
-      className="whitespace-nowrap"
-    >
-      <HelpCircle size={13} />
-      使用指引
-    </Button>
+    <div className="flex items-center gap-2">
+      <ZoomControl value={zoom} onChange={setZoom} />
+      <Button
+        variant="secondary"
+        size="sm"
+        onClick={() => {
+          setShowUsageGuide((prev) => !prev);
+        }}
+        className="whitespace-nowrap"
+      >
+        <HelpCircle size={13} />
+        使用指引
+      </Button>
+    </div>
   );
 
   // Resolve current tab — default to 'report' if current tab not in items
@@ -140,7 +158,10 @@ export default function ReportAgentPage() {
         </GlassCard>
       )}
 
-      <div className="flex-1 min-h-0">
+      <div
+        className="flex-1 min-h-0"
+        style={{ zoom: ZOOM_SCALE[zoom] }}
+      >
         {currentTab === 'report' && <ReportMainView />}
         {currentTab === 'team' && <TeamDashboard />}
         {currentTab === 'settings' && <SettingsPanel />}
