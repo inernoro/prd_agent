@@ -26,14 +26,14 @@ prd_agent/
 | **Platform + Model** | `(platformId, modelId)` 替代原 Provider |
 | **App Identity** | Controller 硬编码 `appKey` |
 | **RBAC** | `SystemRole` + `AdminPermissionCatalog` (60+) + Middleware |
-| **LLM Gateway** | `ILlmGateway` + `ModelResolver` + 三级调度 + 健康管理 |
+| **LLM Gateway** | `ILlmGateway` + `ModelResolver` + 三级调度 + 健康管理 + `SendRawWithResolutionAsync`（compute-then-send，发送阶段不得二次 Resolve） |
 | **ModelPool** | 6 种策略引擎 (`Infrastructure/ModelPool/`) |
 | **Marketplace** | `CONFIG_TYPE_REGISTRY` + `IForkable` 白名单复制 |
 | **CLI Agent Executor** | `executorType` 分发 + `CliAgentContext` 共享上下文 + 多轮迭代 |
 
 ## 功能状态速查
 
-**已完成**：对话 Run/Worker, 提示词阶段, 权限矩阵, 水印系统, VisualAgent, 文学代理, 速率限制, 液态玻璃主题, Open Platform, 模型组/Gateway, 模型池策略引擎+UI, 桌面自动更新, PRD 评论, 内容缺失检测, 会话归档, 数据管理, 管理通知, 缺陷管理 Agent, 缺陷分享(外部Agent分析+修复报告+验收), 视频 Agent, 视觉创作视频生成, 视频工作流胶囊, 配置市场, 周报管理 Agent (Phase 1-4), PR 审查工作台 V2（每用户 OAuth Device Flow + PR 快照 + 笔记）, 附件上传, 技能系统, 网页托管, 文档空间 (文件上传存盘+内容预览+订阅源定期同步), 涌现探索器 (种子→探索→涌现三维度+SSE流式+ReactFlow画布), CLI Agent 执行器(多执行器分发: builtin-llm/docker/api/script/lobster, 多轮迭代), **海鲜市场技能开放接口** (AgentApiKey `sk-ak-*` 长效 M2M + scope 白名单 [marketplace.skills:read/write + 动态 agent.{key}:{action}] + 「接入 AI」弹窗三 Tab + findmapskills 官方技能虚拟注入到海鲜市场 + 演示视频通用 slot 基础设施 `demo.{id}.video` + P3 AgentOpenEndpoint 铺路 + MarketplaceSkill.ReferenceType 预留桥接)
+**已完成**：对话 Run/Worker, 提示词阶段, 权限矩阵, 水印系统, VisualAgent, 文学代理, 速率限制, 液态玻璃主题, Open Platform, 模型组/Gateway, 模型池策略引擎+UI, 桌面自动更新, PRD 评论, 内容缺失检测, 会话归档, 数据管理, 管理通知, 缺陷管理 Agent, 缺陷分享(外部Agent分析+修复报告+验收), 视频 Agent, 视觉创作视频生成, 视频工作流胶囊, 配置市场, 周报管理 Agent (Phase 1-4), PR 审查工作台 V2（每用户 OAuth Device Flow + PR 快照 + 笔记）, 附件上传, 技能系统, 网页托管, 文档空间 (文件上传存盘+内容预览+订阅源定期同步), 涌现探索器 (种子→探索→涌现三维度+SSE流式+ReactFlow画布), CLI Agent 执行器(多执行器分发: builtin-llm/docker/api/script/lobster, 多轮迭代), **海鲜市场技能开放接口** (AgentApiKey `sk-ak-*` 长效 M2M + scope 白名单 [marketplace.skills:read/write + 动态 agent.{key}:{action}] + 「接入 AI」弹窗三 Tab + findmapskills 官方技能虚拟注入到海鲜市场 + 演示视频通用 slot 基础设施 `demo.{id}.video` + P3 AgentOpenEndpoint 铺路 + MarketplaceSkill.ReferenceType 预留桥接), **LLM Gateway compute-then-send 重构 (PR #490)** (`ExpectedModelRespectingResolver` 已删除 + `SendRawWithResolutionAsync` 单次 Resolve 路径已落地 + 生图预解析 UI badge 已实现)
 
 **CDS (P4 Part 18, 2026-04-14)**: 多项目隔离 (Project model + dockerNetwork) + **多仓库 git clone (G1 — Project.repoPath + 无状态 WorktreeService + POST /projects/:id/clone SSE)** + Topology 视图 Deploy 按钮 + Public URL 卡片 + Infra 连接串 + **MongoDB 存储后端 (D.1-D.3, JSON ↔ Mongo 运行时切换 + auto-fallback + seed-from-json)** + **GitHub Device Flow 仓库选择器 (E.1-E.3, /api/github/oauth/device-start + repos picker + Settings tab)** + **Stack auto-detect (G10, 8 种栈 nodejs/python/go/rust/java/ruby/php/dockerfile)** + **Self-update pre-check 防护 (validateBuildReadiness + /api/self-update-dry-run + module-load smoke test)** + 空模板 → 创建 → clone → detect → 自动 build profile 端到端 zero-friction 流程
 
