@@ -19,10 +19,17 @@ namespace PrdAgent.Api.Services;
 /// </summary>
 public class ExpectedModelRespectingResolver : IModelResolver
 {
-    // 同一请求链内缓存 expectedModel —— 解决 LlmGateway.SendRawAsync 内部二次调用 ResolveAsync
-    // 时 expectedModel 被硬编码成 null 的问题。AsyncLocal 随 ExecutionContext 在 await
-    // 链中自然传递，不会跨 HTTP 请求污染。
-    private static readonly AsyncLocal<string?> _pendingExpectedModel = new();
+    // 同一 DI scope 内缓存 expectedModel —— 解决 LlmGateway.SendRawAsync 内部二次调用
+    // ResolveAsync 时 expectedModel 被硬编码成 null 的问题。
+    //
+    // 为什么是 instance field 而不是 AsyncLocal：
+    //   - AsyncLocal 从"被调用方"写入，值不会 flow 回"调用方"后续调用（ExecutionContext capture 是
+    //     在 await 之前拍快照的）。实测 test-chain 里 call1 写入的值 call2 读不到。
+    //   - 装饰器注册为 Scoped，同一个 scope（同一次 HTTP 请求 / 同一次 Worker run）里 DI 给出的
+    //     是同一个实例。所以实例字段能跨 OpenAIImageClient.GenerateAsync 和 LlmGateway.SendRawAsync
+    //     两次 ResolveAsync 调用自然传递。
+    //   - 并发安全：Scoped 每个请求独立实例，没有跨请求污染。
+    private string? _pendingExpected;
 
     private readonly ModelResolver _inner;
     private readonly MongoDbContext _db;
@@ -54,17 +61,17 @@ public class ExpectedModelRespectingResolver : IModelResolver
         // （Infrastructure.dll 代码，改了部署不生效）。我们在第一次调用时把 expectedModel 存入
         // AsyncLocal，第二次调用 null 时从 AsyncLocal 读回。
         var effectiveExpected = expectedModel;
-        if (string.IsNullOrWhiteSpace(effectiveExpected) && !string.IsNullOrWhiteSpace(_pendingExpectedModel.Value))
+        if (string.IsNullOrWhiteSpace(effectiveExpected) && !string.IsNullOrWhiteSpace(_pendingExpected))
         {
-            effectiveExpected = _pendingExpectedModel.Value;
+            effectiveExpected = _pendingExpected;
             _logger.LogInformation(
-                "[Resolver-Decorator:{Trace}] expectedModel=null，从 AsyncLocal 恢复 '{Recovered}'（来自同请求链前一次 ResolveAsync）",
+                "[Resolver-Decorator:{Trace}] expectedModel=null，从 scope 实例字段恢复 '{Recovered}'（同 DI scope 前一次 ResolveAsync）",
                 traceId, effectiveExpected);
         }
         else if (!string.IsNullOrWhiteSpace(expectedModel))
         {
-            // 存入 AsyncLocal，供同请求链后续调用读取
-            _pendingExpectedModel.Value = expectedModel;
+            // 存入实例字段，供同 DI scope 后续调用读取
+            _pendingExpected = expectedModel;
         }
 
         _logger.LogInformation(
