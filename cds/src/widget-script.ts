@@ -30,6 +30,7 @@ export function buildWidgetScript(branchId: string, branchName: string): string 
     @keyframes cds-highlight-pulse{0%,100%{box-shadow:0 0 0 3px rgba(96,165,250,0.6),0 0 12px 4px rgba(96,165,250,0.3)}50%{box-shadow:0 0 0 5px rgba(96,165,250,0.8),0 0 20px 8px rgba(96,165,250,0.4)}}
     @keyframes cds-step-in{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:translateY(0)}}
     @keyframes cds-scroll-bounce{0%{opacity:0;transform:translateY(-8px) scale(0.8)}40%{opacity:1;transform:translateY(0) scale(1.1)}100%{opacity:1;transform:translateY(12px) scale(1)}}
+    @keyframes cds-sync-sweep{0%{transform:translateX(-130%);opacity:0}25%{opacity:0.55}100%{transform:translateX(220%);opacity:0}}
     .cds-ai-active{position:fixed;inset:0;z-index:99998;pointer-events:none;border:none;background:none;animation:cds-ai-border-glow 2.5s ease-in-out infinite}
     .cds-ai-badge{position:fixed;top:10px;left:50%;transform:translateX(-50%);z-index:99999;display:flex;align-items:center;gap:8px;padding:4px 6px 4px 12px;border-radius:20px;background:rgba(22,27,34,0.9);backdrop-filter:blur(8px);border:1px solid rgba(96,165,250,0.4);box-shadow:0 2px 12px rgba(96,165,250,0.3);font-family:ui-monospace,SFMono-Regular,"SF Mono",Menlo,monospace;font-size:11px;color:#e2e8f0;white-space:nowrap;pointer-events:auto}
     .cds-ai-badge-stop{display:inline-flex;align-items:center;gap:3px;padding:2px 8px;border-radius:14px;border:1px solid rgba(248,81,73,0.5);background:rgba(248,81,73,0.15);color:#ff8888;cursor:pointer;font:inherit;font-size:10px;line-height:1;transition:all 0.15s}
@@ -38,11 +39,26 @@ export function buildWidgetScript(branchId: string, branchName: string): string 
     .cds-ai-badge-dot{width:6px;height:6px;border-radius:50%;background:#60a5fa;box-shadow:0 0 6px #60a5fa;animation:cds-blink 1.5s ease-in-out infinite}
     #cds-widget{position:fixed;left:12px;bottom:12px;z-index:99999;font-family:ui-monospace,SFMono-Regular,"SF Mono",Menlo,monospace;color:#e2e8f0;user-select:none;font-size:12px}
     #cds-widget *{box-sizing:border-box}
-    #cds-widget .cds-badge{display:flex;align-items:center;gap:6px;padding:5px 10px;border-radius:8px;background:rgba(35,134,54,0.85);backdrop-filter:blur(8px);border:1px solid rgba(63,185,80,0.3);box-shadow:0 2px 8px rgba(0,0,0,0.25);cursor:grab;line-height:1}
+    #cds-widget .cds-badge{position:relative;display:inline-flex;flex-direction:column;align-items:stretch;padding:5px 10px;border-radius:8px;background:rgba(35,134,54,0.85);backdrop-filter:blur(8px);border:1px solid rgba(63,185,80,0.3);box-shadow:0 2px 8px rgba(0,0,0,0.25);cursor:grab;line-height:1;overflow:hidden;transition:background .22s ease,border-color .22s ease,box-shadow .22s ease}
     #cds-widget .cds-badge:active{cursor:grabbing}
+    #cds-widget .cds-badge::before{content:'';position:absolute;inset:0;pointer-events:none;opacity:0}
+    #cds-widget .cds-badge.is-syncing{background:rgba(17,24,39,0.94);border-color:rgba(148,163,184,0.4);box-shadow:0 8px 24px rgba(15,23,42,0.35),inset 0 1px 0 rgba(255,255,255,0.05)}
+    #cds-widget .cds-badge.is-syncing::before{opacity:1;background:linear-gradient(120deg,transparent 0%,rgba(255,255,255,0.1) 42%,transparent 72%);animation:cds-sync-sweep 1.7s ease-in-out infinite}
+    #cds-widget .cds-badge.is-sync-success{background:rgba(19,41,28,0.95);border-color:rgba(63,185,80,0.45)}
+    #cds-widget .cds-badge.is-sync-error{background:rgba(52,23,27,0.95);border-color:rgba(248,81,73,0.45)}
+    #cds-widget .cds-badge-main{position:relative;z-index:1;display:flex;align-items:center;gap:6px}
+    #cds-widget .cds-badge-icon{display:inline-flex;align-items:center;justify-content:center;flex-shrink:0}
+    #cds-widget .cds-badge.is-syncing .cds-badge-icon svg{animation:cds-spin .95s linear infinite}
     #cds-widget .cds-branch{max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
     #cds-widget .cds-tag{font-size:10px;padding:1px 5px;border-radius:4px;background:rgba(255,255,255,0.15);margin-left:2px}
     #cds-widget .cds-sha{font-size:9px;padding:1px 5px;border-radius:4px;background:rgba(255,255,255,0.1);color:rgba(255,255,255,0.6);font-family:ui-monospace,SFMono-Regular,monospace;letter-spacing:0.3px}
+    #cds-widget .cds-sync-chip{display:inline-flex;align-items:center;gap:5px;padding:1px 7px;border-radius:999px;border:1px solid rgba(255,255,255,0.12);background:rgba(255,255,255,0.12);font-size:9px;color:#f8fafc;letter-spacing:0.2px}
+    #cds-widget .cds-sync-chip.done{background:rgba(63,185,80,0.16);border-color:rgba(63,185,80,0.34);color:#bef3c0}
+    #cds-widget .cds-sync-chip.error{background:rgba(248,81,73,0.18);border-color:rgba(248,81,73,0.34);color:#ffb4ae}
+    #cds-widget .cds-sync-chip .cds-spinner{width:8px;height:8px;border-width:1.5px}
+    #cds-widget .cds-sync-rail{position:absolute;left:0;right:0;bottom:0;height:2px;background:rgba(255,255,255,0.08);overflow:hidden}
+    #cds-widget .cds-sync-rail span{display:block;height:100%;width:0;background:linear-gradient(90deg,#e5e7eb 0%,#93c5fd 45%,#3fb950 100%);box-shadow:0 0 10px rgba(147,197,253,0.5);transition:width .24s ease}
+    #cds-widget .cds-badge.is-sync-error .cds-sync-rail span{background:linear-gradient(90deg,#fecaca 0%,#f87171 100%);box-shadow:0 0 10px rgba(248,81,73,0.45)}
     #cds-widget .cds-status-row{display:flex;align-items:center;gap:6px;margin-bottom:4px}
     #cds-widget .cds-status-dot{width:7px;height:7px;border-radius:50%;flex-shrink:0}
     #cds-widget .cds-status-dot.cds-status-blink{animation:cds-blink 1.5s ease-in-out infinite;box-shadow:0 0 6px currentColor}
@@ -52,6 +68,14 @@ export function buildWidgetScript(branchId: string, branchName: string): string 
     #cds-widget button{display:flex;align-items:center;justify-content:center;padding:2px;border-radius:4px;border:none;background:transparent;color:inherit;cursor:pointer;opacity:0.6}
     #cds-widget button:hover{opacity:1}
     #cds-widget .cds-panel{margin-bottom:4px;padding:10px 12px;border-radius:8px;background:rgba(22,27,34,0.95);backdrop-filter:blur(12px);border:1px solid rgba(63,185,80,0.3);box-shadow:0 4px 16px rgba(0,0,0,0.4);min-width:260px;width:max-content;max-width:min(480px,calc(100vw - 40px));overflow:hidden}
+    #cds-widget .cds-sync-panel{margin-bottom:8px;padding:7px 8px 8px;border-radius:7px;background:rgba(255,255,255,0.03);border:1px solid rgba(148,163,184,0.16)}
+    #cds-widget .cds-sync-panel.done{background:rgba(63,185,80,0.06);border-color:rgba(63,185,80,0.26)}
+    #cds-widget .cds-sync-panel.error{background:rgba(248,81,73,0.06);border-color:rgba(248,81,73,0.26)}
+    #cds-widget .cds-sync-panel-head{display:flex;align-items:center;gap:6px;margin-bottom:6px;font-size:10px;color:#cbd5e1}
+    #cds-widget .cds-sync-panel-head strong{color:#f8fafc;font-weight:600}
+    #cds-widget .cds-sync-percent{margin-left:auto;color:#e2e8f0}
+    #cds-widget .cds-sync-panel .cds-sync-rail{position:static;height:4px;border-radius:999px;background:rgba(255,255,255,0.06)}
+    #cds-widget .cds-sync-panel .cds-sync-rail span{border-radius:999px}
     #cds-widget .cds-deploy-btn{display:flex;align-items:center;gap:6px;padding:5px 8px;border-radius:6px;border:1px solid #30363d;background:#21262d;color:#c9d1d9;font-size:11px;cursor:pointer;flex:1;min-width:0;opacity:1;white-space:nowrap}
     #cds-widget .cds-deploy-btn:hover{border-color:#58a6ff}
     #cds-widget .cds-deploy-btn:disabled{cursor:wait;opacity:0.5}
@@ -139,6 +163,18 @@ export function buildWidgetScript(branchId: string, branchName: string): string 
   var logModalContent='';
   var titlePrefix='';
   var titleObserver=null;
+  var branchEventSource=null;
+  var branchInfoFetchTimer=null;
+  var syncClearTimer=null;
+  var syncState={
+    visible:false,
+    phase:'idle',
+    progress:0,
+    label:'',
+    targetSha:'',
+    stepCount:0,
+    stepsSeen:{},
+  };
 
   // ── AI occupation state ──
   var aiOccupant=null;
@@ -236,6 +272,202 @@ export function buildWidgetScript(branchId: string, branchName: string): string 
   },5000);
 
   // ── Widget root ──
+  function shortSha(sha){
+    if(!sha)return '';
+    return String(sha).trim().slice(0,7);
+  }
+
+  function syncLabelText(){
+    var base=syncState.label||'预览刷新中';
+    if(syncState.targetSha&&syncState.phase==='syncing')return base+' · '+syncState.targetSha;
+    return base;
+  }
+
+  function clearSyncResetTimer(){
+    if(syncClearTimer){
+      clearTimeout(syncClearTimer);
+      syncClearTimer=null;
+    }
+  }
+
+  function scheduleSyncReset(delay){
+    clearSyncResetTimer();
+    syncClearTimer=setTimeout(function(){
+      syncState.visible=false;
+      syncState.phase='idle';
+      syncState.progress=0;
+      syncState.label='';
+      syncState.targetSha='';
+      syncState.stepCount=0;
+      syncState.stepsSeen={};
+      render();
+    },delay);
+  }
+
+  function queueBranchInfoRefresh(delay){
+    if(branchInfoFetchTimer)clearTimeout(branchInfoFetchTimer);
+    branchInfoFetchTimer=setTimeout(function(){
+      branchInfoFetchTimer=null;
+      fetchBranchInfo();
+    },Math.max(0,delay||0));
+  }
+
+  function activateSync(progress,label,targetSha){
+    clearSyncResetTimer();
+    if(syncState.phase!=='syncing'){
+      syncState.stepCount=0;
+      syncState.stepsSeen={};
+    }
+    syncState.visible=true;
+    syncState.phase='syncing';
+    syncState.progress=Math.max(syncState.progress||0,Math.min(progress||12,99));
+    if(label)syncState.label=label;
+    if(targetSha)syncState.targetSha=shortSha(targetSha);
+    render();
+  }
+
+  function advanceSync(progress,label){
+    activateSync(progress,label);
+  }
+
+  function finishSync(ok,label){
+    clearSyncResetTimer();
+    syncState.visible=true;
+    syncState.phase=ok?'done':'error';
+    syncState.progress=100;
+    syncState.label=label||(ok?'预览已同步':'预览刷新失败');
+    syncState.stepCount=0;
+    syncState.stepsSeen={};
+    render();
+    queueBranchInfoRefresh(ok?220:0);
+    scheduleSyncReset(ok?1600:3200);
+  }
+
+  function syncFromBranchStatus(status,previousStatus){
+    branchStatus=status||branchStatus;
+    if(status==='building'){
+      advanceSync(34,'正在构建最新预览');
+      return;
+    }
+    if(status==='starting'||status==='restarting'){
+      advanceSync(72,'服务启动中，等待预览就绪');
+      return;
+    }
+    if(status==='running'){
+      if(syncState.visible&&syncState.phase==='syncing'){
+        finishSync(true,'预览已同步');
+      }else{
+        render();
+      }
+      return;
+    }
+    if(status==='error'){
+      if(syncState.visible||previousStatus==='building'||previousStatus==='starting'||previousStatus==='restarting'){
+        finishSync(false,'预览刷新失败');
+      }else{
+        render();
+      }
+      return;
+    }
+    if(status==='stopped'){
+      if(syncState.visible){
+        finishSync(false,'预览已停止');
+      }else{
+        render();
+      }
+      return;
+    }
+    render();
+  }
+
+  function syncFromDeployStep(stepId,status,title){
+    var label=title||'预览刷新中';
+    if(status==='error'){
+      finishSync(false,label);
+      return;
+    }
+    if(!syncState.visible||syncState.phase!=='syncing'){
+      activateSync(22,label);
+    }
+    var key=(stepId||label||'step')+'::'+status;
+    if(!syncState.stepsSeen[key]){
+      syncState.stepsSeen[key]=1;
+      syncState.stepCount++;
+      syncState.progress=Math.max(syncState.progress,Math.min(92,22+syncState.stepCount*11+(status==='done'?4:0)));
+    }else if(status==='done'){
+      syncState.progress=Math.min(96,Math.max(syncState.progress,syncState.progress+2));
+    }
+    syncState.label=label;
+    render();
+  }
+
+  function initBranchStream(){
+    try{branchEventSource=new EventSource(API+'/branches/stream');}catch(e){return;}
+
+    branchEventSource.addEventListener('branch.created',function(msg){
+      try{
+        var evt=JSON.parse(msg.data);
+        var branch=evt&&evt.branch;
+        if(!branch||branch.id!==BRANCH_ID)return;
+        branchStatus=branch.status||branchStatus;
+        branchTags=branch.tags||branchTags;
+        if(evt.source==='github-webhook'){
+          activateSync(14,'收到 GitHub 更新，正在刷新预览',branch.githubCommitSha||'');
+          queueBranchInfoRefresh(900);
+        }else{
+          render();
+        }
+      }catch(e){}
+    });
+
+    branchEventSource.addEventListener('branch.updated',function(msg){
+      try{
+        var evt=JSON.parse(msg.data);
+        if(!evt||evt.branchId!==BRANCH_ID)return;
+        var patch=evt.patch||{};
+        if(patch.tags)branchTags=patch.tags;
+        if(patch.githubCommitSha||patch.githubRepoFullName){
+          activateSync(16,'收到 GitHub 更新，正在刷新预览',patch.githubCommitSha||'');
+          queueBranchInfoRefresh(900);
+        }else{
+          render();
+        }
+      }catch(e){}
+    });
+
+    branchEventSource.addEventListener('branch.status',function(msg){
+      try{
+        var evt=JSON.parse(msg.data);
+        if(!evt||evt.branchId!==BRANCH_ID)return;
+        syncFromBranchStatus(evt.status,evt.previousStatus||'');
+        if(evt.status==='running'||evt.status==='error'||evt.status==='starting'||evt.status==='building'){
+          queueBranchInfoRefresh(evt.status==='running'?180:700);
+        }
+      }catch(e){}
+    });
+
+    branchEventSource.addEventListener('branch.deploy-step',function(msg){
+      try{
+        var evt=JSON.parse(msg.data);
+        if(!evt||evt.branchId!==BRANCH_ID)return;
+        syncFromDeployStep(evt.step||'',evt.status||'info',evt.title||'预览刷新中');
+      }catch(e){}
+    });
+
+    branchEventSource.addEventListener('branch.removed',function(msg){
+      try{
+        var evt=JSON.parse(msg.data);
+        if(!evt||evt.branchId!==BRANCH_ID)return;
+        finishSync(false,'分支已被移除');
+      }catch(e){}
+    });
+
+    branchEventSource.onerror=function(){
+      if(branchEventSource)branchEventSource.close();
+      setTimeout(initBranchStream,3000);
+    };
+  }
+
   var root=document.createElement('div');
   root.id='cds-widget';
   root.setAttribute('data-cds-widget-root','');
@@ -271,6 +503,19 @@ export function buildWidgetScript(branchId: string, branchName: string): string 
       }else if(!branchStatus){
         h+='<div style="color:#8b949e;font-size:11px;padding:4px 0">分支 "'+BRANCH_ID+'" 未在 CDS 中注册</div>';
       }else{
+        if(syncState.visible){
+          var syncPanelClass='cds-sync-panel'+(syncState.phase==='done'?' done':syncState.phase==='error'?' error':'');
+          h+='<div class="'+syncPanelClass+'" title="'+syncLabelText().replace(/"/g,'&quot;')+'">';
+          h+='<div class="cds-sync-panel-head">';
+          if(syncState.phase==='syncing')h+='<span class="cds-spinner" style="width:9px;height:9px;border-width:1.5px"></span>';
+          else if(syncState.phase==='done')h+='<span style="color:#3fb950">OK</span>';
+          else h+='<span style="color:#f85149">!</span>';
+          h+='<strong>'+syncLabelText()+'</strong>';
+          h+='<span class="cds-sync-percent">'+Math.round(syncState.progress)+'%</span>';
+          h+='</div>';
+          h+='<span class="cds-sync-rail"><span style="width:'+Math.max(0,Math.min(100,Math.round(syncState.progress)))+'%"></span></span>';
+          h+='</div>';
+        }
         var statusColor=branchStatus==='running'?'#3fb950':branchStatus==='error'||branchStatus==='stopped'?'#f85149':'#f0883e';
         var statusBlink=branchStatus==='running'?' cds-status-blink':'';
         h+='<div class="cds-status-row">';
@@ -354,14 +599,32 @@ export function buildWidgetScript(branchId: string, branchName: string): string 
     }
 
     // Badge
-    h+='<div class="cds-badge" onmousedown="return false">';
-    h+=ICON_BRANCH;
+    var badgeClass='cds-badge';
+    if(syncState.visible){
+      if(syncState.phase==='syncing')badgeClass+=' is-syncing';
+      else if(syncState.phase==='done')badgeClass+=' is-sync-success';
+      else if(syncState.phase==='error')badgeClass+=' is-sync-error';
+    }
+    h+='<div class="'+badgeClass+'" onmousedown="return false">';
+    h+='<div class="cds-badge-main">';
+    h+='<span class="cds-badge-icon">'+(syncState.visible&&syncState.phase==='syncing'?ICON_REFRESH:ICON_BRANCH)+'</span>';
     h+='<span class="cds-branch">'+BRANCH_NAME+'</span>';
     if(commitSha)h+='<span class="cds-sha" title="'+commitSha+'">'+commitSha+'</span>';
+    if(syncState.visible){
+      var syncChipClass='cds-sync-chip'+(syncState.phase==='done'?' done':syncState.phase==='error'?' error':'');
+      h+='<span class="'+syncChipClass+'" title="'+syncLabelText().replace(/"/g,'&quot;')+'">';
+      if(syncState.phase==='syncing')h+='<span class="cds-spinner"></span>';
+      else if(syncState.phase==='done')h+='OK';
+      else h+='!';
+      h+='<span>'+(syncState.phase==='done'?'完成':syncState.phase==='error'?'失败':'刷新')+' '+Math.round(syncState.progress)+'%</span>';
+      h+='</span>';
+    }
     if(branchTags.length){for(var ti=0;ti<branchTags.length;ti++){h+='<span class="cds-tag">'+branchTags[ti]+'</span>';}}
     else{h+='<span class="cds-tag">CDS</span>';}
     h+='<button data-action="toggle" title="'+(expanded?'收起':'展开更新面板')+'">'+(expanded?ICON_DOWN:ICON_UP)+'</button>';
     h+='<button data-action="dismiss">'+ICON_X+'</button>';
+    h+='</div>';
+    if(syncState.visible)h+='<span class="cds-sync-rail"><span style="width:'+Math.max(0,Math.min(100,Math.round(syncState.progress)))+'%"></span></span>';
     h+='</div>';
 
     root.innerHTML=h;
@@ -515,7 +778,15 @@ export function buildWidgetScript(branchId: string, branchName: string): string 
         unwatchTitle();
       }
 
-      render();
+      if(found&&(branchStatus==='building'||branchStatus==='starting'||branchStatus==='restarting')){
+        syncFromBranchStatus(branchStatus,'');
+      }else if(syncState.visible&&syncState.phase==='syncing'&&branchStatus==='running'){
+        finishSync(true,'预览已同步');
+      }else if(syncState.visible&&syncState.phase==='syncing'&&branchStatus==='error'){
+        finishSync(false,'预览刷新失败');
+      }else{
+        render();
+      }
     }).catch(function(){
       branchStatus='';
       profiles=[];
@@ -550,6 +821,7 @@ export function buildWidgetScript(branchId: string, branchName: string): string 
     deployProfileId=profileId||null;
     steps=[];
     resultMsg='';
+    activateSync(18,'正在刷新预览');
     render();
 
     var url=profileId
@@ -561,6 +833,7 @@ export function buildWidgetScript(branchId: string, branchName: string): string 
         deploying=false;
         resultMsg='HTTP '+res.status;
         resultOk=false;
+        finishSync(false,'预览刷新失败');
         render();
         return;
       }
@@ -590,17 +863,20 @@ export function buildWidgetScript(branchId: string, branchName: string): string 
                     if(steps[j].step===d.step){steps[j]=d;found=true;break;}
                   }
                   if(!found)steps.push(d);
+                  syncFromDeployStep(d.step||'',d.status||'running',d.title||'预览刷新中');
                   render();
                 }else if(evt==='complete'){
                   deploying=false;
                   resultMsg=d.message||'完成';
                   resultOk=true;
+                  finishSync(true,d.message||'预览已同步');
                   render();
                   setTimeout(function(){resultMsg='';render();},3000);
                 }else if(evt==='error'){
                   deploying=false;
                   resultMsg=d.message||'错误';
                   resultOk=false;
+                  finishSync(false,d.message||'预览刷新失败');
                   render();
                 }
               }catch(ex){}
@@ -611,6 +887,7 @@ export function buildWidgetScript(branchId: string, branchName: string): string 
           deploying=false;
           resultMsg=err.message||'流读取错误';
           resultOk=false;
+          finishSync(false,err.message||'预览刷新失败');
           render();
         });
       }
@@ -619,6 +896,7 @@ export function buildWidgetScript(branchId: string, branchName: string): string 
       deploying=false;
       resultMsg=err.message;
       resultOk=false;
+      finishSync(false,err.message||'预览刷新失败');
       render();
     });
   }
@@ -1461,6 +1739,7 @@ export function buildWidgetScript(branchId: string, branchName: string): string 
   // ── Initial: render badge + fetch branch info to update tab title immediately ──
   render();
   fetchBranchInfo();
+  initBranchStream();
   initAiStream();
 })();
 </script>`;

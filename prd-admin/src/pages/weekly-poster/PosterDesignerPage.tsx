@@ -67,7 +67,6 @@ type WorkspaceTab = 'content' | 'assets' | 'layout';
 type DevicePreview = 'desktop' | 'mobile';
 type CanvasOrientation = 'landscape' | 'portrait';
 type CreateMode = 'guided' | 'manual';
-type AgentStatus = 'done' | 'working' | 'waiting';
 
 interface PosterDesignerPageProps {
   embedded?: boolean;
@@ -107,13 +106,6 @@ const COMING_SOON_FEATURES = [
   { label: '自动生成文案', detail: '待支持整套文案重写' },
   { label: '智能配图', detail: '待支持批量补图' },
 ] as const;
-const PUBLISH_CHANNELS = [
-  { key: 'website', label: '官网', enabled: true },
-  { key: 'wechat', label: '微信公众号', enabled: false },
-  { key: 'miniProgram', label: '小程序', enabled: false },
-  { key: 'douyin', label: '抖音号', enabled: false },
-] as const;
-
 export default function PosterDesignerPage({ embedded = false }: PosterDesignerPageProps) {
   const [searchParams, setSearchParams] = useSearchParams();
   const currentUser = useAuthStore((s) => s.user);
@@ -465,42 +457,6 @@ export default function PosterDesignerPage({ embedded = false }: PosterDesignerP
     openGuidedCreator();
   };
 
-  const realAgentStatuses = useMemo(() => {
-    const pagesWithMedia = pages.filter((page) => !!page.imageUrl || !!page.secondaryImageUrl).length;
-    return [
-      {
-        label: '文案来源',
-        detail: selectedSourceType ? `当前数据源：${selectedSourceType.label}` : '等待导入文案或选择数据源',
-        status: poster ? 'done' : 'waiting',
-      },
-      {
-        label: '分页草稿',
-        detail: pages.length > 0 ? `已生成 ${pages.length} 页草稿` : '等待生成分页内容',
-        status: pages.length > 0 ? 'done' : 'waiting',
-      },
-      {
-        label: '当前页文案',
-        detail: currentPage?.body ? '当前页文案已可编辑' : '当前页还没有正文',
-        status: currentPage?.body ? 'done' : 'waiting',
-      },
-      {
-        label: '图片 / 视频素材',
-        detail: `${pagesWithMedia}/${Math.max(pages.length, 1)} 页已补充素材`,
-        status: pagesWithMedia > 0 ? (pagesWithMedia === pages.length ? 'done' : 'working') : 'waiting',
-      },
-      {
-        label: '画布方向',
-        detail: batchConfig.orientation === 'portrait' ? '当前为竖版 1080 × 1350' : '当前为横版 1200 × 628',
-        status: 'done',
-      },
-      {
-        label: '官网发布',
-        detail: poster?.status === 'published' ? '已发布到官网入口' : '发布后会同步到官网展示位',
-        status: poster?.status === 'published' ? 'done' : 'waiting',
-      },
-    ] satisfies Array<{ label: string; detail: string; status: AgentStatus }>;
-  }, [batchConfig.orientation, currentPage?.body, pages, poster, selectedSourceType]);
-
   const productWorkflowStates = useMemo(() => {
     const hasSource = !!poster && (!!poster.sourceType || pages.some((page) => !!page.body?.trim()));
     const hasPages = pages.length > 0;
@@ -780,7 +736,7 @@ export default function PosterDesignerPage({ embedded = false }: PosterDesignerP
               </button>
             </section>
 
-            <div className="min-h-0 flex flex-col gap-3">
+            <div className="min-h-0 grid gap-3 xl:grid-rows-[minmax(420px,52vh)_minmax(0,1fr)]">
               {poster && currentPage ? (
                 <section className="min-h-0 flex-1 rounded-2xl p-4 flex flex-col" style={{ ...glassCardStyle, animation: 'posterDesignerIn 180ms ease-out both' }}>
                   <div className="flex flex-wrap items-center justify-between gap-3">
