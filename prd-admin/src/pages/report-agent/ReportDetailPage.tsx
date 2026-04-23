@@ -1,6 +1,5 @@
 import { MapSectionLoader } from '@/components/ui/VideoLoader';
 import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
-import { createPortal } from 'react-dom';
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import { ArrowLeft, MessageSquare, CornerDownRight, Trash2, Send, GitCompare, X, CheckCircle2, AlertCircle, Clock, Pencil } from 'lucide-react';
 import { GlassCard } from '@/components/design/GlassCard';
@@ -12,7 +11,7 @@ import type { WeeklyReport, ReportComment, ReportViewSummary, TeamReportListItem
 import { WeeklyReportStatus, ReportInputType } from '@/services/contracts/reportAgent';
 import { PlanComparisonPanel } from './components/PlanComparisonPanel';
 import { RichTextMarkdownContent } from './components/RichTextMarkdownContent';
-import { ReportLikeBar } from './components/ReportLikeBar';
+import { RightRailPanel } from './components/RightRailPanel';
 
 type TabKey = 'content' | 'plan-comparison';
 
@@ -57,29 +56,6 @@ export default function ReportDetailPage(props: ReportDetailPageProps = {}) {
   const [commentText, setCommentText] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [viewSummary, setViewSummary] = useState<ReportViewSummary>({ count: 0, totalViewCount: 0, users: [] });
-  const [showViewPopover, setShowViewPopover] = useState(false);
-  const [viewPopoverAnchor, setViewPopoverAnchor] = useState<{ top: number; right: number } | null>(null);
-  const viewButtonRef = useRef<HTMLButtonElement | null>(null);
-
-  const handleToggleViewPopover = useCallback(() => {
-    setShowViewPopover((prev) => {
-      const next = !prev;
-      if (next && viewButtonRef.current) {
-        const rect = viewButtonRef.current.getBoundingClientRect();
-        setViewPopoverAnchor({ top: rect.bottom + 6, right: window.innerWidth - rect.right });
-      }
-      return next;
-    });
-  }, []);
-
-  useEffect(() => {
-    if (!showViewPopover) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setShowViewPopover(false);
-    };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [showViewPopover]);
   const currentUserId = useAuthStore((s) => s.user?.userId);
 
   // Return dialog state
@@ -289,140 +265,6 @@ export default function ReportDetailPage(props: ReportDetailPageProps = {}) {
             </div>
           </div>
           <div className="flex items-center gap-2">
-            <button
-              ref={viewButtonRef}
-              className="text-[11px] px-2.5 py-1 rounded-full transition-opacity hover:opacity-85"
-              style={{
-                color: 'rgba(220, 38, 38, 0.88)',
-                background: 'rgba(220, 38, 38, 0.08)',
-                border: '1px solid rgba(220, 38, 38, 0.2)',
-              }}
-              onClick={handleToggleViewPopover}
-              title="查看浏览记录"
-            >
-              已阅 {viewSummary.count}
-            </button>
-            {showViewPopover && viewPopoverAnchor && createPortal(
-              <>
-                <div
-                  className="fixed inset-0"
-                  style={{ zIndex: 100, background: 'rgba(0, 0, 0, 0.28)', backdropFilter: 'blur(2px)' }}
-                  onClick={() => setShowViewPopover(false)}
-                />
-                <div
-                  style={{
-                    position: 'fixed',
-                    top: viewPopoverAnchor.top,
-                    right: Math.max(8, viewPopoverAnchor.right),
-                    width: 320,
-                    minWidth: 320,
-                    maxWidth: 320,
-                    maxHeight: 360,
-                    minHeight: 0,
-                    zIndex: 101,
-                    display: 'flex',
-                    flexDirection: 'column',
-                    background: '#1a1b1f',
-                    backgroundImage: 'linear-gradient(180deg, rgba(255,255,255,0.04) 0%, rgba(255,255,255,0) 100%)',
-                    border: '1px solid rgba(255, 255, 255, 0.12)',
-                    borderRadius: 12,
-                    boxShadow: '0 12px 32px rgba(0, 0, 0, 0.55), 0 0 0 1px rgba(0, 0, 0, 0.4)',
-                    padding: 12,
-                    backdropFilter: 'blur(20px) saturate(140%)',
-                  }}
-                  onClick={(e) => e.stopPropagation()}
-                  role="dialog"
-                  aria-label="浏览记录"
-                >
-                  <div
-                    className="flex items-center justify-between mb-2 shrink-0"
-                    style={{ paddingBottom: 8, borderBottom: '1px solid rgba(255, 255, 255, 0.08)' }}
-                  >
-                    <span className="text-[12px] font-medium" style={{ color: 'rgba(255, 255, 255, 0.92)' }}>浏览记录</span>
-                    <span className="text-[11px]" style={{ color: 'rgba(255, 255, 255, 0.5)' }}>
-                      去重 {viewSummary.count} · 总计 {viewSummary.totalViewCount}
-                    </span>
-                  </div>
-                  {viewSummary.users.length === 0 ? (
-                    <div
-                      className="text-[12px] shrink-0"
-                      style={{ color: 'rgba(255, 255, 255, 0.5)', padding: '12px 4px' }}
-                    >
-                      暂无浏览记录
-                    </div>
-                  ) : (
-                    <div
-                      className="pr-1"
-                      style={{
-                        flex: 1,
-                        minHeight: 0,
-                        overflowY: 'auto',
-                        overscrollBehavior: 'contain',
-                        marginTop: 8,
-                        display: 'flex',
-                        flexDirection: 'column',
-                        gap: 4,
-                      }}
-                    >
-                      {viewSummary.users.map((user) => (
-                        <div
-                          key={user.userId}
-                          className="flex items-center justify-between transition-colors"
-                          style={{
-                            background: 'rgba(255, 255, 255, 0.04)',
-                            border: '1px solid rgba(255, 255, 255, 0.06)',
-                            borderRadius: 8,
-                            padding: '8px 10px',
-                          }}
-                          onMouseEnter={(e) => {
-                            e.currentTarget.style.background = 'rgba(255, 255, 255, 0.08)';
-                          }}
-                          onMouseLeave={(e) => {
-                            e.currentTarget.style.background = 'rgba(255, 255, 255, 0.04)';
-                          }}
-                        >
-                          <div className="min-w-0">
-                            <div className="flex items-center gap-1.5">
-                              <span
-                                className="text-[12px] truncate"
-                                style={{ color: 'rgba(255, 255, 255, 0.92)' }}
-                              >
-                                {user.userName}
-                              </span>
-                              {user.isFrequent && (
-                                <span
-                                  className="text-[10px] px-1.5 py-0.5 rounded-md"
-                                  style={{ color: 'rgba(16, 185, 129, 0.95)', background: 'rgba(16, 185, 129, 0.14)' }}
-                                >
-                                  常来
-                                </span>
-                              )}
-                            </div>
-                            <div
-                              className="text-[10px] mt-0.5"
-                              style={{ color: 'rgba(255, 255, 255, 0.42)' }}
-                            >
-                              {new Date(user.lastViewedAt).toLocaleString('zh-CN', {
-                                year: 'numeric',
-                                month: '2-digit',
-                                day: '2-digit',
-                                hour: '2-digit',
-                                minute: '2-digit',
-                                second: '2-digit',
-                              })}
-                            </div>
-                          </div>
-                          <span className="text-[11px]" style={{ color: 'rgba(255, 255, 255, 0.7)' }}>
-                            {user.viewCount} 次
-                          </span>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              </>,
-              document.body,
-            )}
             {(report.status === WeeklyReportStatus.Submitted || report.status === WeeklyReportStatus.Reviewed) && (
               <>
                 <Button variant="secondary" size="sm" onClick={() => setShowReturnDialog(true)}>退回</Button>
@@ -610,11 +452,8 @@ export default function ReportDetailPage(props: ReportDetailPageProps = {}) {
           </GlassCard>
         )}
       </div>
-
-      <GlassCard variant="subtle" className="px-5 py-3">
-        <ReportLikeBar reportId={report.id} />
-      </GlassCard>
         </div>
+        <RightRailPanel reportId={report.id} viewSummary={viewSummary} />
       </div>
     </div>
   );
