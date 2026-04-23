@@ -2986,11 +2986,11 @@ export function createBranchRouter(deps: RouterDeps): Router {
         res.status(400).json({ error: '必须传 enabled (true/false)' });
         return;
       }
-      // 2026-04-22 —— 默认改成 dotnet-restart（原来 dotnet-watch 有 MSBuild
-      // 增量编译误判的已知坑，见 types.ts HotReloadConfig 注释）。用户可以
-      // 显式指定 mode 回到 watch，但新启用默认用最可靠的那个。
+      // 2026-04-22 —— .NET 默认 dotnet-run（快路径：MSBuild 增量 + kill/restart）。
+      // MSBuild 增量绝大多数情况正确；极少数撒谎场景走 🧹 清理按钮 (force-rebuild)
+      // 破缓存即可。dotnet-restart 保留但仅作疑难兜底，不是默认。
       const isDotnet = /dotnet|mcr\.microsoft\.com\/dotnet/i.test(profile.dockerImage || '');
-      const defaultMode = isDotnet ? ('dotnet-restart' as const) : ('pnpm-dev' as const);
+      const defaultMode = isDotnet ? ('dotnet-run' as const) : ('pnpm-dev' as const);
       const current = profile.hotReload || { enabled: false, mode: defaultMode };
       const next = {
         enabled,

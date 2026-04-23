@@ -138,17 +138,18 @@ export interface HotReloadConfig {
   /** 是否启用。即使配置了 mode/command，也要 enabled=true 才生效。 */
   enabled: boolean;
   /**
-   * 热更新模式预设。选了模式，CDS 会用对应的默认命令；选 'custom' 则必须填 command。
-   *   dotnet-restart — ★ 推荐：文件变更时 kill 进程 + clean + no-incremental + 重跑
-   *                    牺牲秒级生效换可靠性，绕过 MSBuild 增量误判和 watch hot-reload
-   *                    不重启的坑
-   *   dotnet-watch   — .NET 8 的 `dotnet watch run`。**不推荐**：有已知漏判
-   *   pnpm-dev       — `pnpm dev`（Next/Vite/SvelteKit 等）
+   * 热更新模式预设。
+   *   dotnet-run     — ★ 推荐默认（快）：纯 `dotnet run` 走 MSBuild 增量编译，文件变 → kill + 重跑。
+   *                    相信 MSBuild 增量；绝大多数场景最快。如偶尔撒谎点 🧹 清理按钮即可。
+   *   dotnet-restart — 疑难兜底（慢）：每次 `dotnet clean` + `rm -rf bin/obj` + `--no-incremental`。
+   *                    当 dotnet-run 稳定撒谎时才切过来；大多数人不需要。
+   *   dotnet-watch   — `dotnet watch run`。**不推荐**：hot-reload 偶尔只改内存不重启进程
+   *   pnpm-dev       — `pnpm dev`
    *   vite           — `vite --host 0.0.0.0 --port <port>`
    *   next-dev       — `pnpm next dev -p <port>`
    *   custom         — 用户自填命令
    */
-  mode: 'dotnet-restart' | 'dotnet-watch' | 'pnpm-dev' | 'vite' | 'next-dev' | 'custom';
+  mode: 'dotnet-run' | 'dotnet-restart' | 'dotnet-watch' | 'pnpm-dev' | 'vite' | 'next-dev' | 'custom';
   /** 仅在 mode='custom' 时使用；其他 mode 下忽略。 */
   command?: string;
   /** 是否开启 polling（NFS / docker-on-mac 场景 inotify 不生效时）。默认 false。 */

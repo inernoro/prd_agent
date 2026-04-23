@@ -2132,6 +2132,47 @@ a.branch-name:hover { color: var(--accent); }
 .deploy-menu-item-danger { color: var(--red); }
 .deploy-menu-item-danger:hover { background: var(--red-bg); }
 
+/* 2026-04-22 二级菜单（某服务 hover 展开部署/清理/核验/编辑命令） */
+.deploy-submenu-anchor {
+  display: flex; align-items: center; gap: 6px; position: relative;
+}
+.deploy-submenu {
+  position: absolute;
+  left: 100%; top: -6px;
+  min-width: 240px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 8px 30px rgba(0,0,0,0.35);
+  padding: 4px 0;
+  display: none;
+  z-index: 10001;
+  margin-left: 4px;
+}
+.deploy-submenu-anchor:hover > .deploy-submenu,
+.deploy-submenu-anchor:focus-within > .deploy-submenu { display: block; }
+.deploy-submenu-header {
+  padding: 6px 10px; font-size: 10px; color: var(--text-muted);
+  font-weight: 600; letter-spacing: 0.04em;
+}
+.deploy-submenu-item {
+  padding: 8px 10px; font-size: 12px; cursor: pointer;
+  color: var(--text-primary);
+  display: flex; align-items: center; gap: 6px;
+  transition: background var(--transition);
+}
+.deploy-submenu-item:hover { background: var(--bg-hover); }
+.deploy-submenu-divider { height: 1px; background: var(--border); margin: 4px 0; }
+/* 屏幕太窄时降级：子菜单翻到左侧（避免右侧被裁） */
+@media (max-width: 820px) {
+  .deploy-submenu { left: auto; right: 100%; margin-left: 0; margin-right: 4px; }
+}
+/* 触屏：没 hover → 改用 .open 类（由 JS tap 触发） */
+@media (hover: none) {
+  .deploy-submenu-anchor:hover > .deploy-submenu { display: none; }
+  .deploy-submenu-anchor.open > .deploy-submenu { display: block; }
+}
+
 /* ── Settings dropdown menu ── */
 .settings-menu {
   position: fixed;

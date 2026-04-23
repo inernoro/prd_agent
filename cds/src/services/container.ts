@@ -26,6 +26,30 @@ export function resolveHotReloadCommand(profile: BuildProfile): string | null {
   const port = profile.containerPort;
   const watchEnv = hr.usePolling ? 'DOTNET_USE_POLLING_FILE_WATCHER=1 CHOKIDAR_USEPOLLING=1 ' : '';
   switch (hr.mode) {
+    case 'dotnet-run': {
+      // 快路径：相信 MSBuild 增量 + dotnet run，文件变 → kill + 再跑。
+      // 不 clean，不 --no-incremental；如需破缓存走 🧹 清理按钮（force-rebuild）。
+      const lines = [
+        `set +e`,
+        `STAMP=/tmp/cds-hr-${profile.id}-stamp`,
+        `touch "$STAMP"`,
+        `while true; do`,
+        `echo "[hot-reload/${profile.id}] dotnet run (增量) at $(date +%T)"`,
+        `touch "$STAMP"`,
+        `dotnet run --urls http://0.0.0.0:${port} &`,
+        `DOTNET_PID=$!`,
+        `echo "[hot-reload/${profile.id}] pid=$DOTNET_PID"`,
+        `while kill -0 $DOTNET_PID 2>/dev/null; do`,
+        `  sleep 2`,
+        `  CHANGED=$(find . -type f \\( -name "*.cs" -o -name "*.csproj" -o -name "*.json" \\) -not -path "*/bin/*" -not -path "*/obj/*" -newer "$STAMP" 2>/dev/null | head -1)`,
+        `  if [ -n "$CHANGED" ]; then echo "[hot-reload/${profile.id}] change detected: $CHANGED"; break; fi`,
+        `done`,
+        `kill -TERM $DOTNET_PID 2>/dev/null || true; sleep 1; kill -KILL $DOTNET_PID 2>/dev/null || true`,
+        `wait $DOTNET_PID 2>/dev/null || true`,
+        `done`,
+      ];
+      return `${watchEnv}sh -c ${JSON.stringify(lines.join('; '))}`;
+    }
     case 'dotnet-restart': {
       const clean = hr.cleanBeforeBuild !== false;
       const cleanStep = clean
