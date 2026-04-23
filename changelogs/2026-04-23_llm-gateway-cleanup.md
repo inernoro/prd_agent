@@ -12,3 +12,7 @@
 | fix | prd-api | ImageGenModelAdapterConfig 新增 SupportsResponseFormat 标志，gpt-image-1.5/gpt-image-2-all 设为 false 修复 apiyi 平台 unknown_parameter 错误 |
 | fix | prd-api | AppCallerRegistry 注册 prd-agent.guide::chat，修复 AppCallerCodeRegistryGuardTests 14 处失败 |
 | fix | prd-api | ILlmGateway XML 注释示例改为已注册 code（prd-agent.skill-gen::chat），消除 guard test 扫描告警 |
+| fix | prd-api | GatewayModelResolution 三个凭据字段加 [JsonIgnore]，阻止 ApiKey 序列化到外部 API 响应（P1 安全修复） |
+| fix | prd-api | SendRawWithResolutionAsync round-trip 补全 OriginalPoolId / OriginalPoolName / OriginalModels，修复 llmrequestlogs 降级溯源丢失 |
+| fix | prd-api | OpenRouterVideoClient.GetStatusAsync 缓存 SubmitAsync 解析结果，消除每次轮询重复查 DB |
+| docs | prd-api | 新增 design.llm-gateway-refactor.md（compute-then-send 完整设计），更新 design.llm-gateway.md 补充两阶段调用规范，更新 codebase-snapshot 架构模式 |

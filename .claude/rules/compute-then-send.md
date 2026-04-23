@@ -133,14 +133,14 @@ var resp = await sender.SendAsync(resolved, body, ct);
 
 ---
 
-## 当前仓库的债务（待偿还）
+## 当前仓库的债务（✅ 全部偿还，2026-04-23）
 
-| 文件 | 债务 | 偿还方向 |
-|------|------|----------|
-| `prd-api/src/PrdAgent.Infrastructure/LlmGateway/LlmGateway.cs` SendRawAsync / SendStreamAsync | 内部二次 `_modelResolver.ResolveAsync(..., null)` 覆盖 body.model | 增加 `SendWithResolvedAsync(Resolution resolved, body)` 重载，旧方法 `[Obsolete]` |
-| `prd-api/src/PrdAgent.Infrastructure/LLM/OpenAIImageClient.cs` GenerateAsync | Line 165 先 resolve，随后调 SendRawAsync 再被 resolve 一次 | 改为调 `SendWithResolvedAsync`，传入已 resolve 的结果 |
-| `prd-api/src/PrdAgent.Api/Services/ExpectedModelRespectingResolver.cs` | 整个类都是"二次 resolve"反模式的补丁 | 重构完成后删除整个文件 |
-| `prd-api/src/PrdAgent.Api/Controllers/Api/ResolverDebugController.cs` 的 test-chain / simulate-worker | 这两个端点存在意义就是因为反模式的存在 | 可保留 inspect / test，删除 test-chain / simulate-worker |
+| 文件 | 债务 | 状态 |
+|------|------|------|
+| `LlmGateway.cs` SendRawAsync | 内部二次 `ResolveAsync(..., null)` 覆盖 body.model | ✅ 已删除旧方法，新增 `SendRawWithResolutionAsync` |
+| `OpenAIImageClient.cs` GenerateAsync | 先 resolve 再调 SendRawAsync 被二次 resolve | ✅ 改用 `SendRawWithResolutionAsync`，单次 resolve |
+| `ExpectedModelRespectingResolver.cs` | 整个文件是二次 resolve 反模式的补丁 | ✅ 文件已删除 |
+| `ResolverDebugController.cs` test-chain / simulate-worker | 这两个端点因反模式而存在 | ✅ 端点已删除，仅保留 inspect / test |
 
 ---
 
