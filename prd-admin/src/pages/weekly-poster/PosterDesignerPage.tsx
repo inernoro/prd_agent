@@ -5,6 +5,7 @@ import {
   Bell,
   Check,
   ChevronDown,
+  ChevronLeft,
   ChevronRight,
   Eye,
   FileText,
@@ -44,7 +45,6 @@ import {
   type WeeklyPosterTemplateKey,
   type WeeklyPosterTemplateMeta,
 } from '@/services';
-import { PosterCarousel } from '@/components/weekly-poster/WeeklyPosterModal';
 import { MarkdownContent } from '@/components/ui/MarkdownContent';
 import { MapSpinner } from '@/components/ui/VideoLoader';
 import { resolveAvatarUrl } from '@/lib/avatar';
@@ -737,9 +737,9 @@ export default function PosterDesignerPage({ embedded = false }: PosterDesignerP
               </button>
             </section>
 
-            <div className="min-h-0 grid gap-3 xl:grid-rows-[minmax(420px,52vh)_minmax(0,1fr)]">
+            <div className="min-h-0 grid gap-3 xl:grid-cols-[minmax(0,1fr)_320px] xl:grid-rows-[minmax(360px,46vh)_minmax(0,1fr)]">
               {poster && currentPage ? (
-                <section className="min-h-0 flex-1 rounded-2xl p-4 flex flex-col" style={{ ...glassCardStyle, animation: 'posterDesignerIn 180ms ease-out both' }}>
+                <section className="min-h-0 flex-1 rounded-2xl p-4 flex flex-col xl:col-start-1 xl:row-start-1" style={{ ...glassCardStyle, animation: 'posterDesignerIn 180ms ease-out both' }}>
                   <div className="flex flex-wrap items-center justify-between gap-3">
                     <div>
                       <div className="text-[12px] font-semibold text-white/78">
@@ -851,10 +851,10 @@ export default function PosterDesignerPage({ embedded = false }: PosterDesignerP
                 </section>
               )}
 
-              <div className="grid gap-3 xl:grid-cols-[minmax(0,1fr)_340px]">
+              <div className="contents">
                 <section
                   ref={editorPanelRef}
-                  className="min-h-0 rounded-2xl p-4 flex flex-col"
+                  className="min-h-0 rounded-2xl p-4 flex flex-col xl:col-start-1 xl:row-start-2"
                   style={glassCardStyle}
                 >
                   <div className="flex items-start justify-between gap-3">
@@ -1065,7 +1065,7 @@ export default function PosterDesignerPage({ embedded = false }: PosterDesignerP
 
                 <section
                   ref={publishPanelRef}
-                  className="rounded-2xl p-4 flex flex-col"
+                  className="min-h-0 rounded-2xl p-4 flex flex-col xl:col-start-2 xl:row-[1/span_2]"
                   style={glassCardStyle}
                 >
                   <div className="flex items-center justify-between">
@@ -1513,11 +1513,16 @@ export default function PosterDesignerPage({ embedded = false }: PosterDesignerP
           onCreated={(created) => void handleCreated(created)}
         />
       )}
-      {previewOpen && poster && (
-        <PosterCarousel
+      {previewOpen && poster && currentPage && (
+        <PosterPreviewModal
           poster={poster}
+          pages={pages}
+          currentOrder={currentOrder}
+          onSelectOrder={setCurrentOrder}
+          orientation={batchConfig.orientation}
+          template={selectedTemplate}
+          progressMap={imageProgress}
           onDismiss={() => setPreviewOpen(false)}
-          navigateOnCta={false}
         />
       )}
     </div>
@@ -1542,9 +1547,9 @@ function WorkspacePosterStage({
   progress?: PageProgress;
 }) {
   const accent = page.accentColor || template.accentPalette[0] || DEFAULT_ACCENT;
-  const baseWidth = devicePreview === 'mobile' ? 360 : orientation === 'portrait' ? 720 : 1180;
+  const baseWidth = devicePreview === 'mobile' ? 360 : orientation === 'portrait' ? 720 : 920;
   const width = Math.round(baseWidth * (scale / 100));
-  const ratio = devicePreview === 'mobile' || orientation === 'portrait' ? '4 / 5' : '16 / 9';
+  const ratio = devicePreview === 'mobile' || orientation === 'portrait' ? '4 / 5' : '4 / 3';
   const previewBody = page.body?.trim() || '当前页正文将在这里展示，你可以在右侧内容助手继续编辑。';
 
   return (
@@ -1628,6 +1633,140 @@ function WorkspacePosterStage({
         )}
       </div>
     </div>
+  );
+}
+
+function PosterPreviewModal({
+  poster,
+  pages,
+  currentOrder,
+  onSelectOrder,
+  orientation,
+  template,
+  progressMap,
+  onDismiss,
+}: {
+  poster: WeeklyPoster;
+  pages: WeeklyPosterPage[];
+  currentOrder: number;
+  onSelectOrder: (order: number) => void;
+  orientation: CanvasOrientation;
+  template: WeeklyPosterTemplateMeta;
+  progressMap: Record<number, PageProgress>;
+  onDismiss: () => void;
+}) {
+  const currentIndex = Math.max(0, pages.findIndex((page) => page.order === currentOrder));
+  const currentPage = pages[currentIndex] ?? pages[0] ?? null;
+
+  useEffect(() => {
+    const handler = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') onDismiss();
+      if (event.key === 'ArrowLeft' && currentIndex > 0) onSelectOrder(pages[currentIndex - 1].order);
+      if (event.key === 'ArrowRight' && currentIndex < pages.length - 1) onSelectOrder(pages[currentIndex + 1].order);
+    };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, [currentIndex, onDismiss, onSelectOrder, pages]);
+
+  useEffect(() => {
+    const previous = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    return () => {
+      document.body.style.overflow = previous;
+    };
+  }, []);
+
+  if (!currentPage) return null;
+
+  return createPortal(
+    <div
+      className="fixed inset-0 z-[9999] flex items-center justify-center p-4"
+      style={{
+        background: 'rgba(3,4,10,0.82)',
+        backdropFilter: 'blur(10px)',
+        WebkitBackdropFilter: 'blur(10px)',
+      }}
+      onClick={onDismiss}
+    >
+      <div
+        className="relative flex min-h-0 flex-col rounded-[24px] p-4"
+        style={{
+          width: 'min(1160px, 96vw)',
+          height: 'min(90vh, 980px)',
+          background: 'linear-gradient(180deg, rgba(22,24,34,0.96) 0%, rgba(10,12,20,0.98) 100%)',
+          border: '1px solid rgba(255,255,255,0.1)',
+          boxShadow: '0 40px 100px rgba(0,0,0,0.48)',
+        }}
+        onClick={(event) => event.stopPropagation()}
+      >
+        <button
+          type="button"
+          onClick={onDismiss}
+          aria-label="关闭预览"
+          className="absolute right-4 top-4 z-10 inline-flex h-10 w-10 items-center justify-center rounded-full text-white/80"
+          style={{ background: 'rgba(0,0,0,0.34)', border: '1px solid rgba(255,255,255,0.14)' }}
+        >
+          <X size={16} />
+        </button>
+
+        <div
+          className="min-h-0 flex-1 rounded-[20px] p-4"
+          style={{ background: 'rgba(4,8,18,0.78)', border: '1px solid rgba(255,255,255,0.06)' }}
+        >
+          <div className="flex h-full min-h-0 items-center justify-center overflow-auto">
+            <WorkspacePosterStage
+              poster={poster}
+              page={currentPage}
+              template={template}
+              devicePreview="desktop"
+              scale={100}
+              orientation={orientation}
+              progress={progressMap[currentPage.order]}
+            />
+          </div>
+        </div>
+
+        <div className="mt-4 flex items-center justify-between gap-4">
+          <button
+            type="button"
+            onClick={() => currentIndex > 0 && onSelectOrder(pages[currentIndex - 1].order)}
+            disabled={currentIndex === 0}
+            className="inline-flex h-10 w-10 items-center justify-center rounded-full text-white disabled:opacity-30"
+            style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)' }}
+          >
+            <ChevronLeft size={18} />
+          </button>
+
+          <div className="flex items-center gap-1.5">
+            {pages.map((page, index) => (
+              <button
+                key={page.order}
+                type="button"
+                onClick={() => onSelectOrder(page.order)}
+                aria-label={`切换到第 ${index + 1} 页`}
+                className="rounded-full transition-all"
+                style={{
+                  width: index === currentIndex ? 22 : 6,
+                  height: 6,
+                  background: index === currentIndex ? 'rgba(255,255,255,0.9)' : 'rgba(255,255,255,0.24)',
+                }}
+              />
+            ))}
+          </div>
+
+          <button
+            type="button"
+            onClick={() => currentIndex < pages.length - 1 && onSelectOrder(pages[currentIndex + 1].order)}
+            disabled={currentIndex === pages.length - 1}
+            className="inline-flex h-10 w-10 items-center justify-center rounded-full text-white disabled:opacity-30"
+            style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)' }}
+          >
+            <ChevronRight size={18} />
+          </button>
+        </div>
+      </div>
+    </div>,
+    document.body,
   );
 }
 
