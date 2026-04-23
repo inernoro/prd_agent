@@ -279,6 +279,17 @@ export default function ReportDetailPage(props: ReportDetailPageProps = {}) {
         </div>
       </GlassCard>
 
+      {/* Return banner — 横跨三栏容器上方 */}
+      {report.status === WeeklyReportStatus.Returned && report.returnReason && (
+        <div className="px-5 py-2.5 rounded-xl" style={{ background: 'rgba(239, 68, 68, 0.06)', border: '1px solid rgba(239, 68, 68, 0.1)' }}>
+          <div className="text-[11px]" style={{ color: 'rgba(239, 68, 68, 0.85)' }}>
+            <span className="font-medium">{report.returnedByName || '审阅人'}</span> 退回了此周报
+            {report.returnedAt && <span> · {new Date(report.returnedAt).toLocaleDateString()}</span>}
+            <div className="mt-0.5">原因：{report.returnReason}</div>
+          </div>
+        </div>
+      )}
+
       <div className="flex-1 min-h-0 flex gap-4">
         {hasSiblingCtx && siblings.length > 0 && (
           <SiblingReportsSidebar
@@ -290,17 +301,6 @@ export default function ReportDetailPage(props: ReportDetailPageProps = {}) {
           />
         )}
         <div className="flex-1 min-w-0 min-h-0 flex flex-col gap-4">
-      {/* Return banner */}
-      {report.status === WeeklyReportStatus.Returned && report.returnReason && (
-        <div className="px-5 py-2.5 rounded-xl" style={{ background: 'rgba(239, 68, 68, 0.06)', border: '1px solid rgba(239, 68, 68, 0.1)' }}>
-          <div className="text-[11px]" style={{ color: 'rgba(239, 68, 68, 0.85)' }}>
-            <span className="font-medium">{report.returnedByName || '审阅人'}</span> 退回了此周报
-            {report.returnedAt && <span> · {new Date(report.returnedAt).toLocaleDateString()}</span>}
-            <div className="mt-0.5">原因：{report.returnReason}</div>
-          </div>
-        </div>
-      )}
-
       {/* Tabs */}
       <div className="flex items-center gap-1 px-1" style={{ borderBottom: '1px solid var(--border-primary)' }}>
         {tabs.map((tab) => (
@@ -453,7 +453,28 @@ export default function ReportDetailPage(props: ReportDetailPageProps = {}) {
         )}
       </div>
         </div>
-        <RightRailPanel reportId={report.id} viewSummary={viewSummary} />
+        <div className="flex-none flex flex-col gap-4 min-h-0">
+          {/* 不可见占位：高度 = 主列 Tabs 栏高度，让右栏顶部对齐正文 */}
+          <div
+            aria-hidden="true"
+            className="flex items-center gap-1 px-1"
+            style={{
+              borderBottom: '1px solid var(--border-primary)',
+              visibility: 'hidden',
+              pointerEvents: 'none',
+            }}
+          >
+            <button
+              type="button"
+              tabIndex={-1}
+              className="px-4 py-2.5 text-[13px] rounded-t-lg"
+              style={{ fontWeight: 600 }}
+            >
+              占位
+            </button>
+          </div>
+          <RightRailPanel reportId={report.id} viewSummary={viewSummary} />
+        </div>
       </div>
     </div>
   );
