@@ -173,6 +173,8 @@ builder.Services.AddScoped<PrdAgent.Core.Interfaces.LlmGateway.ILlmGateway>(sp =
 
 // OpenAI 兼容 Images API（用于"生图模型"）
 builder.Services.AddScoped<OpenAIImageClient>();
+builder.Services.AddScoped<PrdAgent.Infrastructure.LlmGateway.ImageGen.IImageGenGateway,
+    PrdAgent.Infrastructure.LlmGateway.ImageGen.ImageGenGateway>();
 builder.Services.AddSingleton<WatermarkFontRegistry>();
 builder.Services.AddSingleton<WatermarkRenderer>();
 
