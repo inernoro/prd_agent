@@ -123,10 +123,15 @@ public class ExternalAuthorizationService : IExternalAuthorizationService
             var validation = await handler.ValidateAsync(merged, ct);
 
             updates.Add(Builders<ExternalAuthorization>.Update.Set(a => a.CredentialsEncrypted, EncryptCredentials(merged)));
-            updates.Add(Builders<ExternalAuthorization>.Update.Set(a => a.Metadata, validation.Metadata ?? new Dictionary<string, object>()));
             updates.Add(Builders<ExternalAuthorization>.Update.Set(a => a.Status, validation.Ok ? "active" : "expired"));
             updates.Add(Builders<ExternalAuthorization>.Update.Set(a => a.LastValidatedAt, DateTime.UtcNow));
-            updates.Add(Builders<ExternalAuthorization>.Update.Set(a => a.ExpiresAt, validation.ExpiresAt));
+            // 验证成功才覆盖元数据和过期时间；失败时保留原值，避免坏凭证擦掉已有信息
+            if (validation.Ok)
+            {
+                if (validation.Metadata != null)
+                    updates.Add(Builders<ExternalAuthorization>.Update.Set(a => a.Metadata, validation.Metadata));
+                updates.Add(Builders<ExternalAuthorization>.Update.Set(a => a.ExpiresAt, validation.ExpiresAt));
+            }
         }
 
         await _db.ExternalAuthorizations.UpdateOneAsync(
