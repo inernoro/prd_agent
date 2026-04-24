@@ -27,7 +27,7 @@ import AuthorizationsPanel from './open-platform/AuthorizationsPanel';
  */
 export default function OpenPlatformTabsPage() {
   const [searchParams, setSearchParams] = useSearchParams();
-  const tabFromUrl = searchParams.get('tab') || 'email';
+  const tabFromUrl = searchParams.get('tab') || 'auth';
   const [activeTab, setActiveTab] = useState(tabFromUrl);
 
   // 子页面传递的 actions

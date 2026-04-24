@@ -4325,13 +4325,6 @@ function safeChart(canvasId, config) {
         return null;
     }
 
-    /// <summary>
-    /// 运行时往节点 config 里回填字段（用于 stored authMode 解析出的凭证注入）。
-    /// </summary>
-    public static void SetConfigValue(WorkflowNode node, string key, object value)
-    {
-        node.Config[key] = value;
-    }
 
     public static string ReplaceVariables(string template, Dictionary<string, string> variables)
     {
