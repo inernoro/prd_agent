@@ -576,6 +576,7 @@ export const api = {
       member: (id: string, userId: string) => `/api/report-agent/teams/${id}/members/${userId}`,
       dashboard: (id: string) => `/api/report-agent/teams/${id}/dashboard`,
       reportsView: (id: string) => `/api/report-agent/teams/${id}/reports/view`,
+      issuesView: (id: string) => `/api/report-agent/teams/${id}/issues`,
       summary: (id: string) => `/api/report-agent/teams/${id}/summary`,
       summaryView: (id: string) => `/api/report-agent/teams/${id}/summary/view`,
       summaryGenerate: (id: string) => `/api/report-agent/teams/${id}/summary/generate`,

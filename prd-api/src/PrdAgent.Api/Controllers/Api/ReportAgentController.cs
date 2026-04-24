@@ -335,7 +335,22 @@ public class ReportAgentController : ControllerBase
         MaxItems = s.MaxItems,
         SectionType = s.SectionType != null && ReportSectionType.All.Contains(s.SectionType) ? s.SectionType : null,
         DataSources = s.DataSources,
+        IssueCategories = s.IssueCategories?.Select(MapIssueOption).Where(o => o != null).Select(o => o!).ToList(),
+        IssueStatuses = s.IssueStatuses?.Select(MapIssueOption).Where(o => o != null).Select(o => o!).ToList(),
     };
+
+    private static IssueOption? MapIssueOption(IssueOptionInput i)
+    {
+        var key = i.Key?.Trim();
+        var label = i.Label?.Trim();
+        if (string.IsNullOrWhiteSpace(key) || string.IsNullOrWhiteSpace(label)) return null;
+        return new IssueOption
+        {
+            Key = key,
+            Label = label,
+            Color = string.IsNullOrWhiteSpace(i.Color) ? null : i.Color!.Trim(),
+        };
+    }
 
     #endregion
 
@@ -923,28 +938,27 @@ public class ReportAgentController : ControllerBase
     public async Task<IActionResult> ListTemplates()
     {
         var userId = GetUserId();
-        var myLeaderTeamIds = await GetLeaderOrDeputyTeamIdsAsync(userId);
-        var isManager = myLeaderTeamIds.Count > 0;
+        // 所有"我所在"团队(含 Member + Leader + Deputy),用于让普通成员也能看到团队模板——否则写不出周报
+        var myMemberTeamIds = await _db.ReportTeamMembers
+            .Find(m => m.UserId == userId)
+            .Project(m => m.TeamId)
+            .ToListAsync();
+        // Leader 可能通过 team.LeaderUserId 绑定但无 TeamMember 记录的场景,也一并纳入
+        var myLedTeamIds = await _db.ReportTeams
+            .Find(t => t.LeaderUserId == userId)
+            .Project(t => t.Id)
+            .ToListAsync();
+        var myAllTeamIds = myMemberTeamIds.Concat(myLedTeamIds).Distinct().ToList();
 
-        FilterDefinition<ReportTemplate> filter;
-        if (!isManager)
-        {
-            // 非 Leader/Deputy：只能看到系统模板 + 自己创建（兜底场景：刚被撤职还有遗留模板）
-            filter = Builders<ReportTemplate>.Filter.Or(
-                Builders<ReportTemplate>.Filter.Eq(t => t.IsSystem, true),
-                Builders<ReportTemplate>.Filter.Eq(t => t.CreatedBy, userId)
-            );
-        }
-        else
-        {
-            filter = Builders<ReportTemplate>.Filter.Or(
-                Builders<ReportTemplate>.Filter.Eq(t => t.IsSystem, true),
-                Builders<ReportTemplate>.Filter.Eq(t => t.CreatedBy, userId),
-                Builders<ReportTemplate>.Filter.AnyIn(t => t.TeamIds, myLeaderTeamIds),
-                // 兼容旧字段 TeamId
-                Builders<ReportTemplate>.Filter.In(t => t.TeamId, myLeaderTeamIds)
-            );
-        }
+        // 可见集 = 系统 ∪ 我创建 ∪ 我所在任何团队关联的模板
+        // (编辑/删除权限仍由 CanManageTemplate 守卫,这里只放宽"查看",让成员能用团队模板写周报)
+        var filter = Builders<ReportTemplate>.Filter.Or(
+            Builders<ReportTemplate>.Filter.Eq(t => t.IsSystem, true),
+            Builders<ReportTemplate>.Filter.Eq(t => t.CreatedBy, userId),
+            Builders<ReportTemplate>.Filter.AnyIn(t => t.TeamIds, myAllTeamIds),
+            // 兼容旧字段 TeamId
+            Builders<ReportTemplate>.Filter.In(t => t.TeamId, myAllTeamIds)
+        );
 
         var templates = await _db.ReportTemplates.Find(filter)
             .SortByDescending(t => t.IsDefault)
@@ -1420,7 +1434,11 @@ public class ReportAgentController : ControllerBase
             }
         }
 
-        return Ok(ApiResponse<object>.Ok(new { report }));
+        // 计算当前用户对这份周报的审阅权限(给前端守卫按钮显示),权威判断仍在 Review/Return 端点
+        var canReview = (await IsTeamLeaderOrDeputy(report.TeamId, userId))
+            || HasPermission(AdminPermissionCatalog.ReportAgentViewAll);
+
+        return Ok(ApiResponse<object>.Ok(new { report, canReview }));
     }
 
     /// <summary>
@@ -1638,7 +1656,10 @@ public class ReportAgentController : ControllerBase
                 {
                     Content = item.Content ?? string.Empty,
                     Source = item.Source ?? "manual",
-                    SourceRef = item.SourceRef
+                    SourceRef = item.SourceRef,
+                    IssueCategoryKey = item.IssueCategoryKey,
+                    IssueStatusKey = item.IssueStatusKey,
+                    ImageUrls = item.ImageUrls != null && item.ImageUrls.Count > 0 ? item.ImageUrls : null,
                 }).ToList() ?? new List<WeeklyReportItem>()
             });
         }
@@ -2005,6 +2026,17 @@ public class ReportAgentController : ControllerBase
         public string? SectionType { get; set; }
         /// <summary>v2.0 关联的数据源类型（如 ["github", "tapd"]）</summary>
         public List<string>? DataSources { get; set; }
+        /// <summary>IssueList 专用：问题分类预设</summary>
+        public List<IssueOptionInput>? IssueCategories { get; set; }
+        /// <summary>IssueList 专用：问题状态预设</summary>
+        public List<IssueOptionInput>? IssueStatuses { get; set; }
+    }
+
+    public class IssueOptionInput
+    {
+        public string? Key { get; set; }
+        public string? Label { get; set; }
+        public string? Color { get; set; }
     }
 
     public class CreateReportRequest
@@ -2044,6 +2076,12 @@ public class ReportAgentController : ControllerBase
         public string? Content { get; set; }
         public string? Source { get; set; }
         public string? SourceRef { get; set; }
+        /// <summary>IssueList 专用：分类 key</summary>
+        public string? IssueCategoryKey { get; set; }
+        /// <summary>IssueList 专用：状态 key</summary>
+        public string? IssueStatusKey { get; set; }
+        /// <summary>IssueList 专用：图片 URL 列表</summary>
+        public List<string>? ImageUrls { get; set; }
     }
 
     public class ReturnReportRequest
@@ -3859,6 +3897,112 @@ public class ReportAgentController : ControllerBase
             canGenerateSummary,
             canManageMembers,
             canViewAllMembers = canViewAllReports
+        }));
+    }
+
+    /// <summary>
+    /// 团队问题视图：按周聚合所有成员 IssueList 章节的条目，可按分类/状态筛选。
+    /// 权限规则对齐 GetTeamReportsView: 有全局 ViewAll / Leader/Deputy / (成员且 ReportVisibility=AllMembers) → 看全员;
+    /// 否则仅看自己本周已提交周报里的 issue 条目。
+    /// </summary>
+    [HttpGet("teams/{id}/issues")]
+    public async Task<IActionResult> GetTeamIssuesView(string id,
+        [FromQuery] int? weekYear, [FromQuery] int? weekNumber,
+        [FromQuery] string? categoryKey, [FromQuery] string? statusKey)
+    {
+        var userId = GetUserId();
+        var team = await _db.ReportTeams.Find(t => t.Id == id).FirstOrDefaultAsync();
+        if (team == null)
+            return NotFound(ApiResponse<object>.Fail("NOT_FOUND", "团队不存在"));
+
+        var membership = await _db.ReportTeamMembers.Find(
+            m => m.TeamId == id && m.UserId == userId).FirstOrDefaultAsync();
+
+        var hasViewAll = HasPermission(AdminPermissionCatalog.ReportAgentViewAll);
+        var isLeaderOrDeputy = team.LeaderUserId == userId ||
+            (membership != null && (membership.Role == ReportTeamRole.Leader || membership.Role == ReportTeamRole.Deputy));
+        var isMember = membership != null || team.LeaderUserId == userId;
+
+        if (!isMember && !hasViewAll)
+            return StatusCode(403, ApiResponse<object>.Fail("PERMISSION_DENIED", "无权查看团队问题"));
+
+        var canViewAllReports = hasViewAll
+            || isLeaderOrDeputy
+            || (isMember && team.ReportVisibility == ReportVisibilityMode.AllMembers);
+
+        var now = DateTime.UtcNow;
+        var wy = weekYear ?? ISOWeek.GetYear(now);
+        var wn = weekNumber ?? ISOWeek.GetWeekOfYear(now);
+
+        var submittedStatuses = new[] { WeeklyReportStatus.Submitted, WeeklyReportStatus.Reviewed, WeeklyReportStatus.Viewed };
+        var allWeekReports = await _db.WeeklyReports.Find(
+            r => r.TeamId == id && r.WeekYear == wy && r.WeekNumber == wn
+        ).ToListAsync();
+
+        // 非全员可见权限时,仅允许看自己已提交的
+        var visibleReports = canViewAllReports
+            ? allWeekReports.Where(r => submittedStatuses.Contains(r.Status)).ToList()
+            : allWeekReports.Where(r => r.UserId == userId && submittedStatuses.Contains(r.Status)).ToList();
+
+        // 收集所有 IssueList 章节的分类/状态集合（用于前端筛选器）
+        var allCategories = new Dictionary<string, IssueOption>();
+        var allStatuses = new Dictionary<string, IssueOption>();
+        var issueItems = new List<object>();
+
+        foreach (var report in visibleReports)
+        {
+            for (int sIdx = 0; sIdx < report.Sections.Count; sIdx++)
+            {
+                var section = report.Sections[sIdx];
+                if (section.TemplateSection.InputType != ReportInputType.IssueList) continue;
+
+                if (section.TemplateSection.IssueCategories != null)
+                    foreach (var c in section.TemplateSection.IssueCategories)
+                        if (!string.IsNullOrEmpty(c.Key)) allCategories.TryAdd(c.Key, c);
+
+                if (section.TemplateSection.IssueStatuses != null)
+                    foreach (var s in section.TemplateSection.IssueStatuses)
+                        if (!string.IsNullOrEmpty(s.Key)) allStatuses.TryAdd(s.Key, s);
+
+                for (int iIdx = 0; iIdx < section.Items.Count; iIdx++)
+                {
+                    var item = section.Items[iIdx];
+                    if (string.IsNullOrWhiteSpace(item.Content)) continue;
+
+                    // 筛选
+                    if (!string.IsNullOrEmpty(categoryKey) && item.IssueCategoryKey != categoryKey) continue;
+                    if (!string.IsNullOrEmpty(statusKey) && item.IssueStatusKey != statusKey) continue;
+
+                    issueItems.Add(new
+                    {
+                        reportId = report.Id,
+                        userId = report.UserId,
+                        userName = report.UserName,
+                        avatarFileName = report.AvatarFileName,
+                        sectionIndex = sIdx,
+                        sectionTitle = section.TemplateSection.Title,
+                        itemIndex = iIdx,
+                        content = item.Content,
+                        categoryKey = item.IssueCategoryKey,
+                        statusKey = item.IssueStatusKey,
+                        imageUrls = item.ImageUrls ?? new List<string>(),
+                        submittedAt = report.SubmittedAt,
+                        updatedAt = report.UpdatedAt,
+                    });
+                }
+            }
+        }
+
+        return Ok(ApiResponse<object>.Ok(new
+        {
+            team = new { team.Id, team.Name },
+            weekYear = wy,
+            weekNumber = wn,
+            visibilityScope = canViewAllReports ? "full_team" : "self_only",
+            categories = allCategories.Values.ToList(),
+            statuses = allStatuses.Values.ToList(),
+            items = issueItems,
+            totalCount = issueItems.Count,
         }));
     }
 

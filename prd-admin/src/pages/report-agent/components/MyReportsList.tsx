@@ -6,6 +6,7 @@ import { useReportAgentStore } from '@/stores/reportAgentStore';
 import { WeeklyReportStatus } from '@/services/contracts/reportAgent';
 import { ReportEditor } from './ReportEditor';
 import { useDataTheme } from '../hooks/useDataTheme';
+import { getSemantic, LIGHT_SEMANTIC } from '../hooks/lightModeColors';
 
 function getISOWeek(date: Date): { weekYear: number; weekNumber: number } {
   const d = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()));
@@ -18,12 +19,17 @@ function getISOWeek(date: Date): { weekYear: number; weekNumber: number } {
 
 function buildStatusConfig(isLight: boolean): Record<string, { label: string; color: string; bg: string; borderColor: string; icon: React.ElementType }> {
   if (isLight) {
+    const slate = getSemantic(true, 'slate');
+    const blue  = getSemantic(true, 'blue');
+    const green = getSemantic(true, 'green');
+    const red   = getSemantic(true, 'red');
     return {
-      [WeeklyReportStatus.Draft]:      { label: '草稿',   color: 'rgba(71, 85, 105, 1)',  bg: 'rgba(71, 85, 105, 0.10)', borderColor: 'rgba(71, 85, 105, 0.30)',  icon: Pencil },
-      [WeeklyReportStatus.Submitted]:  { label: '已提交', color: 'rgba(29, 78, 216, 1)',  bg: 'rgba(29, 78, 216, 0.10)', borderColor: 'rgba(29, 78, 216, 0.30)',  icon: Send },
-      [WeeklyReportStatus.Reviewed]:   { label: '已审阅', color: 'rgba(21, 128, 61, 1)',  bg: 'rgba(21, 128, 61, 0.10)', borderColor: 'rgba(21, 128, 61, 0.30)',  icon: CheckCircle2 },
-      [WeeklyReportStatus.Returned]:   { label: '已退回', color: 'rgba(185, 28, 28, 1)',  bg: 'rgba(185, 28, 28, 0.10)', borderColor: 'rgba(185, 28, 28, 0.30)',  icon: AlertCircle },
-      [WeeklyReportStatus.NotStarted]: { label: '未开始', color: 'rgba(71, 85, 105, 0.85)', bg: 'rgba(71, 85, 105, 0.06)', borderColor: 'rgba(71, 85, 105, 0.18)', icon: Clock },
+      [WeeklyReportStatus.Draft]:      { label: '草稿',   color: slate.color, bg: slate.bg, borderColor: slate.border, icon: Pencil },
+      [WeeklyReportStatus.Submitted]:  { label: '已提交', color: blue.color,  bg: blue.bg,  borderColor: blue.border,  icon: Send },
+      [WeeklyReportStatus.Reviewed]:   { label: '已审阅', color: green.color, bg: green.bg, borderColor: green.border, icon: CheckCircle2 },
+      [WeeklyReportStatus.Returned]:   { label: '已退回', color: red.color,   bg: red.bg,   borderColor: red.border,   icon: AlertCircle },
+      // 「未开始」用 slate alpha 1.0 +稍浅背景,避免"发虚"但仍与草稿区分
+      [WeeklyReportStatus.NotStarted]: { label: '未开始', color: LIGHT_SEMANTIC.slate, bg: 'rgba(51, 65, 85, 0.06)', borderColor: 'rgba(51, 65, 85, 0.18)', icon: Clock },
     };
   }
   return {
@@ -106,13 +112,23 @@ export function MyReportsList() {
               <ChevronLeft size={15} />
             </Button>
             <div className="flex items-center gap-2">
-              <span className="text-[15px] font-semibold" style={{ color: 'var(--text-primary)' }}>
+              <span
+                className="text-[17px] font-semibold"
+                style={{
+                  color: 'var(--text-primary)',
+                  fontFamily: dataTheme === 'light' ? 'var(--font-serif)' : undefined,
+                  letterSpacing: dataTheme === 'light' ? '-0.01em' : undefined,
+                }}
+              >
                 {weekYear} 年第 {weekNumber} 周
               </span>
               {isCurrentWeek && (
                 <span
                   className="text-[10px] px-2 py-0.5 rounded-full font-medium"
-                  style={{ color: 'rgba(59, 130, 246, 0.9)', background: 'rgba(59, 130, 246, 0.1)' }}
+                  style={{
+                    color: dataTheme === 'light' ? 'var(--accent-claude)' : 'rgba(59, 130, 246, 0.9)',
+                    background: dataTheme === 'light' ? 'var(--accent-claude-soft)' : 'rgba(59, 130, 246, 0.1)',
+                  }}
                 >
                   本周
                 </span>

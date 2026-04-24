@@ -61,6 +61,7 @@ import type {
   GetTeamSummaryContract,
   GetTeamSummaryViewContract,
   GetTeamReportsViewContract,
+  GetTeamIssuesViewContract,
   GetPersonalTrendsContract,
   GetTeamTrendsContract,
   MarkVacationContract,
@@ -107,6 +108,7 @@ import type {
   TeamSummary,
   TeamSummaryViewData,
   TeamReportsViewData,
+  TeamIssuesViewData,
   ReportAiSource,
   PersonalSource,
   PersonalStats,
@@ -742,6 +744,19 @@ export const getTeamReportsViewReal: GetTeamReportsViewContract = async (input) 
   const q = qs.toString();
   return await apiRequest<TeamReportsViewData>(
     `${api.reportAgent.teams.reportsView(encodeURIComponent(input.teamId))}${q ? `?${q}` : ''}`,
+    { method: 'GET' }
+  );
+};
+
+export const getTeamIssuesViewReal: GetTeamIssuesViewContract = async (input) => {
+  const qs = new URLSearchParams();
+  if (input.weekYear != null) qs.set('weekYear', String(input.weekYear));
+  if (input.weekNumber != null) qs.set('weekNumber', String(input.weekNumber));
+  if (input.categoryKey) qs.set('categoryKey', input.categoryKey);
+  if (input.statusKey) qs.set('statusKey', input.statusKey);
+  const q = qs.toString();
+  return await apiRequest<TeamIssuesViewData>(
+    `${api.reportAgent.teams.issuesView(encodeURIComponent(input.teamId))}${q ? `?${q}` : ''}`,
     { method: 'GET' }
   );
 };

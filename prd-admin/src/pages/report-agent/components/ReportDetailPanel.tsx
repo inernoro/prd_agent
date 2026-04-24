@@ -10,6 +10,7 @@ import { WeeklyReportStatus, ReportInputType } from '@/services/contracts/report
 import { PlanComparisonPanel } from './PlanComparisonPanel';
 import { RichTextMarkdownContent } from './RichTextMarkdownContent';
 import { ReportLikeBar } from './ReportLikeBar';
+import { useDataTheme } from '../hooks/useDataTheme';
 
 interface Props {
   reportId: string;
@@ -31,6 +32,8 @@ const sectionColors = [
 ];
 
 export function ReportDetailPanel({ reportId, onClose, onReview, onReturn }: Props) {
+  const dataTheme = useDataTheme();
+  const isLight = dataTheme === 'light';
   const [report, setReport] = useState<WeeklyReport | null>(null);
   const [comments, setComments] = useState<ReportComment[]>([]);
   const [activeTab, setActiveTab] = useState<TabKey>('content');
@@ -118,10 +121,18 @@ export function ReportDetailPanel({ reportId, onClose, onReview, onReturn }: Pro
         {/* Header */}
         <div className="flex items-center justify-between px-6 py-4" style={{ borderBottom: '1px solid var(--border-primary)' }}>
           <div>
-            <div className="text-[16px] font-semibold" style={{ color: 'var(--text-primary)' }}>
+            <div
+              className="text-[19px] font-semibold"
+              style={{
+                color: 'var(--text-primary)',
+                fontFamily: isLight ? 'var(--font-serif)' : undefined,
+                letterSpacing: isLight ? '-0.01em' : undefined,
+                lineHeight: 1.2,
+              }}
+            >
               {report.userName} 的周报
             </div>
-            <div className="text-[12px] mt-0.5" style={{ color: 'var(--text-muted)' }}>
+            <div className="text-[12px] mt-1" style={{ color: 'var(--text-muted)' }}>
               {report.teamName} · {report.weekYear} 年第 {report.weekNumber} 周
             </div>
           </div>
@@ -143,32 +154,37 @@ export function ReportDetailPanel({ reportId, onClose, onReview, onReturn }: Pro
           </div>
         )}
 
-        {/* Tabs */}
+        {/* Tabs — 浅色下选中态走 Claude 橙 */}
         <div className="flex items-center gap-1 px-6 pt-3" style={{ borderBottom: '1px solid var(--border-primary)' }}>
-          {tabs.map((tab) => (
-            <button
-              key={tab.key}
-              className="px-4 py-2.5 text-[13px] rounded-t-lg transition-all duration-200"
-              style={{
-                color: activeTab === tab.key ? 'var(--text-primary)' : 'var(--text-muted)',
-                background: activeTab === tab.key ? 'var(--bg-secondary)' : 'transparent',
-                fontWeight: activeTab === tab.key ? 600 : 400,
-                borderBottom: activeTab === tab.key ? '2px solid rgba(59, 130, 246, 0.8)' : '2px solid transparent',
-              }}
-              onClick={() => setActiveTab(tab.key)}
-            >
-              {tab.key === 'plan-comparison' && <GitCompare size={12} className="inline mr-1.5" />}
-              {tab.label}
-              {tab.key === 'content' && comments.length > 0 && (
-                <span
-                  className="ml-2 text-[10px] px-2 py-0.5 rounded-full font-medium"
-                  style={{ background: 'rgba(59, 130, 246, 0.08)', color: 'rgba(59, 130, 246, 0.9)' }}
-                >
-                  {comments.length}
-                </span>
-              )}
-            </button>
-          ))}
+          {tabs.map((tab) => {
+            const activeUnderline = isLight ? 'var(--accent-claude)' : 'rgba(59, 130, 246, 0.8)';
+            const countBg = isLight ? 'var(--accent-claude-soft)' : 'rgba(59, 130, 246, 0.08)';
+            const countColor = isLight ? 'var(--accent-claude)' : 'rgba(59, 130, 246, 0.9)';
+            return (
+              <button
+                key={tab.key}
+                className="px-4 py-2.5 text-[13px] rounded-t-lg transition-all duration-200"
+                style={{
+                  color: activeTab === tab.key ? 'var(--text-primary)' : 'var(--text-muted)',
+                  background: activeTab === tab.key ? 'var(--bg-secondary)' : 'transparent',
+                  fontWeight: activeTab === tab.key ? 600 : 400,
+                  borderBottom: activeTab === tab.key ? `2px solid ${activeUnderline}` : '2px solid transparent',
+                }}
+                onClick={() => setActiveTab(tab.key)}
+              >
+                {tab.key === 'plan-comparison' && <GitCompare size={12} className="inline mr-1.5" />}
+                {tab.label}
+                {tab.key === 'content' && comments.length > 0 && (
+                  <span
+                    className="ml-2 text-[10px] px-2 py-0.5 rounded-full font-medium"
+                    style={{ background: countBg, color: countColor }}
+                  >
+                    {comments.length}
+                  </span>
+                )}
+              </button>
+            );
+          })}
         </div>
 
         {/* Content */}
@@ -189,12 +205,66 @@ export function ReportDetailPanel({ reportId, onClose, onReview, onReturn }: Pro
                       >
                         {idx + 1}
                       </div>
-                      <span className="text-[14px] font-semibold" style={{ color: 'var(--text-primary)' }}>
+                      <span
+                        className="text-[15px] font-semibold"
+                        style={{
+                          color: 'var(--text-primary)',
+                          fontFamily: isLight ? 'var(--font-serif)' : undefined,
+                          letterSpacing: isLight ? '-0.005em' : undefined,
+                        }}
+                      >
                         {section.templateSection.title}
                       </span>
                     </div>
                     {section.items.length === 0 ? (
                       <div className="text-[12px] ml-7" style={{ color: 'var(--text-muted)' }}>（未填写）</div>
+                    ) : section.templateSection.inputType === ReportInputType.IssueList ? (
+                      <div className="space-y-2.5 ml-7">
+                        {section.items.map((item, iIdx) => {
+                          const cat = section.templateSection.issueCategories?.find((c) => c.key === item.issueCategoryKey);
+                          const st  = section.templateSection.issueStatuses?.find((s) => s.key === item.issueStatusKey);
+                          return (
+                            <div
+                              key={iIdx}
+                              className="rounded-lg p-3"
+                              style={{
+                                background: isLight ? '#FFFFFF' : 'var(--bg-secondary)',
+                                border: '1px solid var(--hairline)',
+                              }}
+                            >
+                              {(cat || st) && (
+                                <div className="flex items-center gap-2 mb-2">
+                                  {cat && (
+                                    <span
+                                      className="text-[10px] px-1.5 py-0.5 rounded-full font-medium"
+                                      style={{
+                                        color: cat.color || 'var(--text-secondary)',
+                                        background: 'rgba(51,65,85,0.08)',
+                                        border: '1px solid rgba(51,65,85,0.18)',
+                                      }}
+                                    >
+                                      {cat.label}
+                                    </span>
+                                  )}
+                                  {st && (
+                                    <span
+                                      className="text-[10px] px-1.5 py-0.5 rounded-full font-medium"
+                                      style={{
+                                        color: st.color || 'var(--accent-claude)',
+                                        background: 'var(--accent-claude-soft)',
+                                        border: '1px solid var(--accent-claude-border)',
+                                      }}
+                                    >
+                                      {st.label}
+                                    </span>
+                                  )}
+                                </div>
+                              )}
+                              <RichTextMarkdownContent content={item.content} imageMaxHeight={220} />
+                            </div>
+                          );
+                        })}
+                      </div>
                     ) : section.templateSection.inputType === ReportInputType.RichText ? (
                       <div className="space-y-2 ml-7">
                         {section.items.map((item, iIdx) => (
