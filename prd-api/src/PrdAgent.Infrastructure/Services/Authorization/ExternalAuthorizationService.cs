@@ -1,7 +1,6 @@
-using Microsoft.Extensions.Configuration;
+using Microsoft.AspNetCore.DataProtection;
 using Microsoft.Extensions.Logging;
 using MongoDB.Driver;
-using PrdAgent.Core.Helpers;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Database;
@@ -11,25 +10,25 @@ namespace PrdAgent.Infrastructure.Services.Authorization;
 
 public class ExternalAuthorizationService : IExternalAuthorizationService
 {
+    // Purpose 字符串：与 Jwt:Secret 完全隔离，即使 JWT 签名密钥泄露也不会影响凭证解密
+    private const string ProtectorPurpose = "PrdAgent.ExternalAuthorization.Credentials.v1";
+
     private readonly MongoDbContext _db;
     private readonly IEnumerable<IAuthTypeHandler> _handlers;
-    private readonly IConfiguration _configuration;
+    private readonly IDataProtector _protector;
     private readonly ILogger<ExternalAuthorizationService> _logger;
 
     public ExternalAuthorizationService(
         MongoDbContext db,
         IEnumerable<IAuthTypeHandler> handlers,
-        IConfiguration configuration,
+        IDataProtectionProvider dataProtectionProvider,
         ILogger<ExternalAuthorizationService> logger)
     {
         _db = db;
         _handlers = handlers;
-        _configuration = configuration;
+        _protector = dataProtectionProvider.CreateProtector(ProtectorPurpose);
         _logger = logger;
     }
-
-    private string EncryptionKey =>
-        _configuration["Jwt:Secret"] ?? throw new InvalidOperationException("Jwt:Secret 未配置，无法加密凭证");
 
     private IAuthTypeHandler GetHandler(string type)
     {
@@ -109,9 +108,21 @@ public class ExternalAuthorizationService : IExternalAuthorizationService
         if (credentials != null && credentials.Count > 0)
         {
             var handler = GetHandler(entity.Type);
-            var validation = await handler.ValidateAsync(credentials, ct);
 
-            updates.Add(Builders<ExternalAuthorization>.Update.Set(a => a.CredentialsEncrypted, EncryptCredentials(credentials)));
+            // ⚠ 合并：前端编辑对话框允许用户只填要改的字段（其他留空保持原值）。
+            // 必须把客户端发来的 partial patch 与已存储的凭证合并，
+            // 否则部分更新会把未填写的字段（如 cookie）清空，授权直接失效。
+            var existing = DecryptCredentials(entity.CredentialsEncrypted);
+            var merged = new Dictionary<string, string>(existing);
+            foreach (var kv in credentials)
+            {
+                // 空值视为"保持原值"，不覆盖；非空值替换
+                if (!string.IsNullOrWhiteSpace(kv.Value)) merged[kv.Key] = kv.Value;
+            }
+
+            var validation = await handler.ValidateAsync(merged, ct);
+
+            updates.Add(Builders<ExternalAuthorization>.Update.Set(a => a.CredentialsEncrypted, EncryptCredentials(merged)));
             updates.Add(Builders<ExternalAuthorization>.Update.Set(a => a.Metadata, validation.Metadata ?? new Dictionary<string, object>()));
             updates.Add(Builders<ExternalAuthorization>.Update.Set(a => a.Status, validation.Ok ? "active" : "expired"));
             updates.Add(Builders<ExternalAuthorization>.Update.Set(a => a.LastValidatedAt, DateTime.UtcNow));
@@ -197,13 +208,13 @@ public class ExternalAuthorizationService : IExternalAuthorizationService
     private string EncryptCredentials(Dictionary<string, string> credentials)
     {
         var json = JsonSerializer.Serialize(credentials);
-        return ApiKeyCrypto.Encrypt(json, EncryptionKey);
+        return _protector.Protect(json);
     }
 
     private Dictionary<string, string> DecryptCredentials(string encrypted)
     {
         if (string.IsNullOrEmpty(encrypted)) return new();
-        var json = ApiKeyCrypto.Decrypt(encrypted, EncryptionKey);
+        var json = _protector.Unprotect(encrypted);
         return JsonSerializer.Deserialize<Dictionary<string, string>>(json) ?? new();
     }
 }

@@ -1022,6 +1022,15 @@ builder.Services.AddScoped<PrdAgent.Core.Interfaces.IAgentApiKeyService,
     PrdAgent.Infrastructure.Services.AgentApiKeyService>();
 
 // 注册外部授权中心（TAPD / 语雀 / GitHub 凭证聚合，见 doc/design.external-authorization.md）
+// Data Protection：凭证字段加密（独立于 Jwt:Secret，避免单点密钥泄露）
+// 密钥环持久化到 /data/dataprotection-keys（Docker 挂载 volume 后重启不丢失）
+{
+    var keyRingPath = builder.Configuration["DataProtection:KeyRingPath"] ?? "/data/dataprotection-keys";
+    try { System.IO.Directory.CreateDirectory(keyRingPath); } catch { /* best effort */ }
+    builder.Services.AddDataProtection()
+        .PersistKeysToFileSystem(new System.IO.DirectoryInfo(keyRingPath))
+        .SetApplicationName("PrdAgent");
+}
 builder.Services.AddScoped<PrdAgent.Core.Interfaces.IExternalAuthorizationService,
     PrdAgent.Infrastructure.Services.Authorization.ExternalAuthorizationService>();
 builder.Services.AddScoped<PrdAgent.Core.Interfaces.IAuthTypeHandler,

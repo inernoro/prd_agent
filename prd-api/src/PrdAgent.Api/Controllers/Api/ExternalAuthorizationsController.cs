@@ -145,9 +145,8 @@ public class ExternalAuthorizationsController : ControllerBase
         });
     }
 
-    /// <summary>获取类型元信息（供前端动态渲染表单）</summary>
+    /// <summary>获取类型元信息（供前端动态渲染表单）。需登录——字段定义虽非敏感但泄露系统集成细节</summary>
     [HttpGet("types")]
-    [AllowAnonymous]
     public IActionResult GetTypes()
     {
         var types = _handlers.Select(h => new

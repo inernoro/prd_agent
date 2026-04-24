@@ -154,8 +154,9 @@ public interface IAuthTypeHandler
 
 ### 加密存储
 
-- 使用 ASP.NET Core 内置的 `IDataProtector` + Persistent Key Ring
-- 每个字段独立加密（支持部分更新）
+- 使用 ASP.NET Core `IDataProtector`，Purpose = `PrdAgent.ExternalAuthorization.Credentials.v1`
+- 密钥环持久化路径：`/data/dataprotection-keys`（Docker 容器需挂载 volume）
+- **独立于 `Jwt:Secret`**：即使 JWT 签名密钥泄露，不影响凭证解密（purpose 派生独立子密钥）
 - DB 只存密文，API 返回时**绝不下发**明文（除非用户点击"查看"二次确认）
 
 ---

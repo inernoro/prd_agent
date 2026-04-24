@@ -1650,13 +1650,26 @@ result = {items:items};`;
     const rectificationParseCode = `var raw = ${JSON.stringify(inputs.rectificationData || '')};
 var lines = raw.split("\\n").map(function(l){return l.trim();}).filter(function(l){return l;});
 var items = [];
-var headerSkipped = false;
+// Header 识别：更宽松的特征检测，适应用户从语雀 / Excel 复制的各种列名风格
+// 判定为 header 的信号：首行不含日期格式 + 含至少一个表头关键词（问题/归因/责任人/进度/办结/备注...）
+function looksLikeHeader(parts) {
+  var joined = parts.join(" ");
+  // 含任一典型日期格式 → 视为数据行
+  if (/\\d{4}[-\\/\\.]\\d{1,2}/.test(joined)) return false;
+  var keywords = ["问题","简要说明","归因","责任","责任人","计划","进度","办结","备注","提出时间","提交时间"];
+  var hits = 0;
+  for (var i = 0; i < keywords.length; i++) {
+    if (joined.indexOf(keywords[i]) >= 0) hits++;
+  }
+  return hits >= 2; // 至少命中 2 个关键词才认为是 header
+}
+var headerChecked = false;
 lines.forEach(function(line) {
   var sep = line.indexOf("\\t") >= 0 ? "\\t" : ",";
   var parts = line.split(sep).map(function(s){return s.trim();});
-  if (!headerSkipped) {
-    if (parts[0] === "问题" || parts[0].indexOf("简要说明") >= 0) { headerSkipped = true; return; }
-    headerSkipped = true;
+  if (!headerChecked) {
+    headerChecked = true;
+    if (looksLikeHeader(parts)) return; // 跳过 header
   }
   if (parts.length >= 7) {
     items.push({
