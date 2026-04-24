@@ -160,7 +160,7 @@ public class ExternalAuthorizationService : IExternalAuthorizationService
         var result = await handler.ValidateAsync(credentials, ct);
 
         await _db.ExternalAuthorizations.UpdateOneAsync(
-            a => a.Id == id,
+            a => a.Id == id && a.UserId == userId,
             Builders<ExternalAuthorization>.Update
                 .Set(a => a.LastValidatedAt, DateTime.UtcNow)
                 .Set(a => a.Status, result.Ok ? "active" : "expired")
@@ -198,7 +198,7 @@ public class ExternalAuthorizationService : IExternalAuthorizationService
         }
 
         await _db.ExternalAuthorizations.UpdateOneAsync(
-            a => a.Id == id,
+            a => a.Id == id && a.UserId == userId,
             Builders<ExternalAuthorization>.Update.Set(a => a.LastUsedAt, DateTime.UtcNow),
             cancellationToken: ct);
 

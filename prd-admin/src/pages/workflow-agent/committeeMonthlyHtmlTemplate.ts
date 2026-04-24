@@ -18,6 +18,9 @@ function escUrl(u) {
   if (s.indexOf("http://") !== 0 && s.indexOf("https://") !== 0) return "#";
   return esc(String(u).trim());
 }
+// JSON.stringify 输出在 <script> 块中使用时，必须转义 < 为 \\u003c，
+// 否则用户数据含 </script> 会跳出脚本上下文注入 HTML/JS。
+function safeJson(v) { return JSON.stringify(v).replace(/</g, "\\\\u003c"); }
 // merge-final 输出的 key 是 artifact Name: "报告"(LLM文本) 和 "合并结果"(统计数据)
 // 兼容 input1/input2 和中文 key 两种情况
 var analysis = "";
@@ -342,47 +345,47 @@ var stStatusD = [];
 var stColors = ["#1E6FD9","#27C97F","#E84040","#F5A623","#4ECDC4","#8B5CF6","#FF6B35","#7D8590"];
 var stStatusKeys = Object.keys(story.statusDistribution || {});
 stStatusKeys.forEach(function(k,i){ stStatusD.push({name:k,value:story.statusDistribution[k]}); });
-H.push('pie("ch-st-status",' + JSON.stringify(stStatusD) + ',' + JSON.stringify(stColors) + ');');
+H.push('pie("ch-st-status",' + safeJson(stStatusD) + ',' + safeJson(stColors) + ');');
 
 var stPrD = [];
 var prColors = ["#E84040","#F5A623","#1E6FD9","#4ECDC4","#7D8590"];
 var stPrKeys = Object.keys(story.priorityDistribution || {});
 stPrKeys.forEach(function(k,i){ stPrD.push({name:k,value:story.priorityDistribution[k]}); });
-H.push('pie("ch-st-priority",' + JSON.stringify(stPrD) + ',' + JSON.stringify(prColors) + ');');
+H.push('pie("ch-st-priority",' + safeJson(stPrD) + ',' + safeJson(prColors) + ');');
 
 var hdKeys = Object.keys(story.handlerDistribution || {}).sort(function(a,b){return story.handlerDistribution[a]-story.handlerDistribution[b];});
 var hdVals = hdKeys.map(function(k){return story.handlerDistribution[k];});
-H.push('hbar("ch-st-handler",' + JSON.stringify(hdKeys) + ',' + JSON.stringify(hdVals) + ',"#1E6FD9");');
+H.push('hbar("ch-st-handler",' + safeJson(hdKeys) + ',' + safeJson(hdVals) + ',"#1E6FD9");');
 
 var custTop = (story.customerAnalysis || []).slice(0,10);
 var custNames = custTop.map(function(c){return c.name;}).reverse();
 var custVals = custTop.map(function(c){return c.count;}).reverse();
-H.push('hbar("ch-st-customer",' + JSON.stringify(custNames) + ',' + JSON.stringify(custVals) + ',"#4ECDC4");');
+H.push('hbar("ch-st-customer",' + safeJson(custNames) + ',' + safeJson(custVals) + ',"#4ECDC4");');
 
 // ── Chapter 2 charts ──
 var dfCatD = [];
 var dfCatKeys = Object.keys(defect.categoryDistribution || {});
 dfCatKeys.forEach(function(k){ dfCatD.push({name:k,value:defect.categoryDistribution[k]}); });
-H.push('pie("ch-df-category",' + JSON.stringify(dfCatD) + ',' + JSON.stringify(stColors) + ');');
+H.push('pie("ch-df-category",' + safeJson(dfCatD) + ',' + safeJson(stColors) + ');');
 
 var dfStD = [];
 var dfStKeys = Object.keys(defect.statusDistribution || {});
 dfStKeys.forEach(function(k){ dfStD.push({name:k,value:defect.statusDistribution[k]}); });
-H.push('pie("ch-df-status",' + JSON.stringify(dfStD) + ',' + JSON.stringify(stColors) + ');');
+H.push('pie("ch-df-status",' + safeJson(dfStD) + ',' + safeJson(stColors) + ');');
 
 var dfPrD = [];
 var dfPrKeys = Object.keys(defect.priorityDistribution || {});
 dfPrKeys.forEach(function(k){ dfPrD.push({name:k,value:defect.priorityDistribution[k]}); });
-H.push('pie("ch-df-priority",' + JSON.stringify(dfPrD) + ',' + JSON.stringify(["#E84040","#FF6B35","#27C97F","#1E6FD9","#7D8590"]) + ');');
+H.push('pie("ch-df-priority",' + safeJson(dfPrD) + ',' + safeJson(["#E84040","#FF6B35","#27C97F","#1E6FD9","#7D8590"]) + ');');
 
 var dfSvD = [];
 var dfSvKeys = Object.keys(defect.severityDistribution || {});
 dfSvKeys.forEach(function(k){ dfSvD.push({name:k,value:defect.severityDistribution[k]}); });
-H.push('pie("ch-df-severity",' + JSON.stringify(dfSvD) + ',' + JSON.stringify(["#E84040","#F5A623","#FF6B35","#1E6FD9","#4ECDC4"]) + ');');
+H.push('pie("ch-df-severity",' + safeJson(dfSvD) + ',' + safeJson(["#E84040","#F5A623","#FF6B35","#1E6FD9","#4ECDC4"]) + ');');
 
 var dfHdKeys = Object.keys(defect.handlerDistribution || {}).sort(function(a,b){return defect.handlerDistribution[a]-defect.handlerDistribution[b];});
 var dfHdVals = dfHdKeys.map(function(k){return defect.handlerDistribution[k];});
-H.push('hbar("ch-df-handler",' + JSON.stringify(dfHdKeys) + ',' + JSON.stringify(dfHdVals) + ',"#F5A623");');
+H.push('hbar("ch-df-handler",' + safeJson(dfHdKeys) + ',' + safeJson(dfHdVals) + ',"#F5A623");');
 
 // ── Chapter 3 charts ──
 var insNames = insItems.map(function(it){return it.name||"";});
@@ -391,10 +394,10 @@ var insTimely = insItems.map(function(it){return it.timely||0;});
 var insUntimely = insItems.map(function(it){return (it.total||0)-(it.timely||0);});
 
 // Rate bar chart
-H.push('(function(){var dom=document.getElementById("ch-ins-rate");if(!dom)return;var ch=echarts.init(dom);ch.setOption({tooltip:Object.assign({trigger:"axis",formatter:function(p){return p[0].name+"<br/>及时率: "+p[0].value+"%";}},tt),grid:{top:20,bottom:30,left:10,right:30,containLabel:true},xAxis:{type:"category",data:'+JSON.stringify(insNames)+',axisLabel:{fontSize:10,color:"#7D8590",rotate:15}},yAxis:{type:"value",max:100,axisLabel:{color:"#7D8590",formatter:"{value}%"},splitLine:{lineStyle:{color:"rgba(48,54,61,0.5)"}}},series:[{type:"bar",data:'+JSON.stringify(insRates)+',itemStyle:{color:function(p){return p.value>=90?"#27C97F":p.value>=80?"#F5A623":"#E84040";},borderRadius:[4,4,0,0]},barMaxWidth:36,label:{show:true,position:"top",formatter:"{c}%",fontSize:10,color:"#7D8590"}}]});window.addEventListener("resize",function(){ch.resize()});})();');
+H.push('(function(){var dom=document.getElementById("ch-ins-rate");if(!dom)return;var ch=echarts.init(dom);ch.setOption({tooltip:Object.assign({trigger:"axis",formatter:function(p){return p[0].name+"<br/>及时率: "+p[0].value+"%";}},tt),grid:{top:20,bottom:30,left:10,right:30,containLabel:true},xAxis:{type:"category",data:'+safeJson(insNames)+',axisLabel:{fontSize:10,color:"#7D8590",rotate:15}},yAxis:{type:"value",max:100,axisLabel:{color:"#7D8590",formatter:"{value}%"},splitLine:{lineStyle:{color:"rgba(48,54,61,0.5)"}}},series:[{type:"bar",data:'+safeJson(insRates)+',itemStyle:{color:function(p){return p.value>=90?"#27C97F":p.value>=80?"#F5A623":"#E84040";},borderRadius:[4,4,0,0]},barMaxWidth:36,label:{show:true,position:"top",formatter:"{c}%",fontSize:10,color:"#7D8590"}}]});window.addEventListener("resize",function(){ch.resize()});})();');
 
 // Stacked bar
-H.push('(function(){var dom=document.getElementById("ch-ins-bar");if(!dom)return;var ch=echarts.init(dom);ch.setOption({tooltip:Object.assign({trigger:"axis"},tt),legend:{textStyle:{color:"#7D8590"},bottom:0},grid:{top:20,bottom:40,left:10,right:20,containLabel:true},xAxis:{type:"category",data:'+JSON.stringify(insNames)+',axisLabel:{fontSize:10,color:"#7D8590",rotate:15}},yAxis:{type:"value",axisLabel:{color:"#7D8590"},splitLine:{lineStyle:{color:"rgba(48,54,61,0.5)"}}},series:[{name:"及时",type:"bar",stack:"t",data:'+JSON.stringify(insTimely)+',itemStyle:{color:"#27C97F"},barMaxWidth:36},{name:"不及时",type:"bar",stack:"t",data:'+JSON.stringify(insUntimely)+',itemStyle:{color:"#E84040"},barMaxWidth:36}]});window.addEventListener("resize",function(){ch.resize()});})();');
+H.push('(function(){var dom=document.getElementById("ch-ins-bar");if(!dom)return;var ch=echarts.init(dom);ch.setOption({tooltip:Object.assign({trigger:"axis"},tt),legend:{textStyle:{color:"#7D8590"},bottom:0},grid:{top:20,bottom:40,left:10,right:20,containLabel:true},xAxis:{type:"category",data:'+safeJson(insNames)+',axisLabel:{fontSize:10,color:"#7D8590",rotate:15}},yAxis:{type:"value",axisLabel:{color:"#7D8590"},splitLine:{lineStyle:{color:"rgba(48,54,61,0.5)"}}},series:[{name:"及时",type:"bar",stack:"t",data:'+safeJson(insTimely)+',itemStyle:{color:"#27C97F"},barMaxWidth:36},{name:"不及时",type:"bar",stack:"t",data:'+safeJson(insUntimely)+',itemStyle:{color:"#E84040"},barMaxWidth:36}]});window.addEventListener("resize",function(){ch.resize()});})();');
 
 H.push('});');
 H.push(SE);
