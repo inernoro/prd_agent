@@ -25,12 +25,14 @@ export interface WorkflowTemplate {
 export interface TemplateInput {
   key: string;
   label: string;
-  type: 'text' | 'password' | 'select' | 'textarea' | 'month';
+  type: 'text' | 'password' | 'select' | 'textarea' | 'month' | 'auth-picker';
   placeholder?: string;
   helpTip?: string;
   required: boolean;
   defaultValue?: string;
   options?: { value: string; label: string }[];
+  /** auth-picker 专用：限定可选的授权类型 key（tapd / yuque / github） */
+  authType?: string;
 }
 
 // ── 辅助函数 ─────────────────────────────────────────────────
@@ -1470,11 +1472,11 @@ const committeeMonthlyTemplate: WorkflowTemplate = {
   tags: ['quality', 'monthly', 'tapd', 'committee', 'report'],
   requiredInputs: [
     {
-      key: 'cookie',
-      label: 'TAPD Cookie',
-      type: 'textarea',
-      placeholder: 'tapdsession=xxx; t_u=xxx; ...',
-      helpTip: '浏览器登录 TAPD → F12 → Network → 任意请求 → Headers → Cookie → 复制整段',
+      key: 'tapdAuthId',
+      label: 'TAPD 授权',
+      type: 'auth-picker',
+      authType: 'tapd',
+      helpTip: '选择在「开放平台 → 外部授权」中已添加的 TAPD 账号',
       required: true,
     },
     {
@@ -1715,9 +1717,9 @@ result = {total:items.length, closed:closed, open:items.length-closed, items:ite
         name: 'TAPD 需求采集',
         nodeType: 'tapd-collector',
         config: {
-          authMode: 'cookie',
+          authMode: 'stored',
+          authId: inputs.tapdAuthId || '',
           workspaceId: inputs.storyWorkspaceId || '64054517',
-          cookie: inputs.cookie || '',
           dataType: 'stories',
           dateRange: inputs.dateRange || '',
           maxPages: '50',
@@ -1745,9 +1747,9 @@ result = {total:items.length, closed:closed, open:items.length-closed, items:ite
         name: 'TAPD 缺陷采集',
         nodeType: 'tapd-collector',
         config: {
-          authMode: 'cookie',
+          authMode: 'stored',
+          authId: inputs.tapdAuthId || '',
           workspaceId: inputs.bugWorkspaceId || '66590626',
-          cookie: inputs.cookie || '',
           dataType: 'bugs',
           dateRange: inputs.dateRange || '',
           maxPages: '50',
