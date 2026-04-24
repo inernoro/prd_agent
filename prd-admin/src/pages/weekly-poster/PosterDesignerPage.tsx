@@ -4,7 +4,6 @@ import { useSearchParams } from 'react-router-dom';
 import {
   Check,
   ChevronDown,
-  ChevronLeft,
   ChevronRight,
   Eye,
   FileText,
@@ -46,11 +45,10 @@ import {
 } from '@/services';
 import { MarkdownContent } from '@/components/ui/MarkdownContent';
 import { MapSpinner } from '@/components/ui/VideoLoader';
-import { resolveAvatarUrl } from '@/lib/avatar';
+import { PosterCarousel, WeeklyPosterPageView } from '@/components/weekly-poster/WeeklyPosterModal';
 import { findTemplate, POSTER_TEMPLATES_SEED, SOURCE_TYPES } from '@/lib/posterTemplates';
 import { toast } from '@/lib/toast';
 import { useSseStream } from '@/lib/useSseStream';
-import { useAuthStore } from '@/stores/authStore';
 import { useLayoutStore } from '@/stores/layoutStore';
 import { useWeeklyPosterStore } from '@/stores/weeklyPosterStore';
 
@@ -99,7 +97,6 @@ const WORKSPACE_MENU: Array<{ key: WorkspaceMenuKey; label: string; icon: React.
 ];
 
 const PRODUCT_FLOW_STEPS = ['导入文案', '生成分页', '完善页面', '预览确认', '官网发布'];
-const PRODUCT_WORKFLOW_GUIDE = ['上传文案', '生成分页草稿', '补充图片/视频', '手动微调', '预览确认', '发布到官网'];
 const COMING_SOON_FEATURES = [
   { label: '统一主题与配色', detail: '待接入整套风格约束' },
   { label: '自动生成文案', detail: '待支持整套文案重写' },
@@ -107,7 +104,6 @@ const COMING_SOON_FEATURES = [
 ] as const;
 export default function PosterDesignerPage({ embedded = false }: PosterDesignerPageProps) {
   const [searchParams, setSearchParams] = useSearchParams();
-  const currentUser = useAuthStore((s) => s.user);
   const setFullBleedMain = useLayoutStore((s) => s.setFullBleedMain);
   const [posters, setPosters] = useState<WeeklyPoster[]>([]);
   const [poster, setPoster] = useState<WeeklyPoster | null>(null);
@@ -157,14 +153,6 @@ export default function PosterDesignerPage({ embedded = false }: PosterDesignerP
     () => SOURCE_TYPES.find((item) => item.key === coerceSourceType(poster?.sourceType)),
     [poster?.sourceType],
   );
-  const userAvatarUrl = useMemo(
-    () => resolveAvatarUrl({
-      avatarFileName: currentUser?.avatarFileName ?? null,
-      avatarUrl: currentUser?.avatarUrl ?? null,
-    }),
-    [currentUser?.avatarFileName, currentUser?.avatarUrl],
-  );
-
   const refreshList = useCallback(async (preferredId?: string | null) => {
     setLoadingList(true);
     const res = await listWeeklyPosters({ pageSize: 50 });
@@ -213,7 +201,7 @@ export default function PosterDesignerPage({ embedded = false }: PosterDesignerP
 
   useEffect(() => {
     if (embedded) return undefined;
-    setFullBleedMain(true);
+    setFullBleedMain(false);
     return () => setFullBleedMain(false);
   }, [embedded, setFullBleedMain]);
 
@@ -497,7 +485,7 @@ export default function PosterDesignerPage({ embedded = false }: PosterDesignerP
           style={{ background: 'linear-gradient(180deg, rgba(255,255,255,0.04), transparent)' }}
         />
         <div
-          className="absolute inset-y-0 left-[72px] w-px"
+          className="absolute inset-y-0 left-0 w-px"
           style={{ background: 'linear-gradient(180deg, transparent, var(--border-subtle, rgba(255,255,255,0.08)), transparent)' }}
         />
       </div>
@@ -515,106 +503,8 @@ export default function PosterDesignerPage({ embedded = false }: PosterDesignerP
       />
 
       <div className="relative flex h-full min-h-0 flex-col">
-        <header
-          className="shrink-0 border-b px-4 py-3 xl:px-5"
-          style={{ borderColor: 'var(--border-subtle, rgba(255,255,255,0.08))', background: 'var(--bg-panel, rgba(18,18,24,0.88))' }}
-        >
-          <div className="flex flex-wrap items-center gap-3 xl:gap-4">
-            <div className="min-w-0 xl:min-w-[220px]">
-              <div className="text-[24px] leading-none font-black tracking-tight" style={{ color: 'var(--text-primary, #fff)' }}>
-                海报设计工作台
-              </div>
-              <div className="mt-1 text-[12px]" style={{ color: 'var(--text-secondary, rgba(255,255,255,0.55))' }}>用于导入文案、生成分页、手动完善并发布官网海报。</div>
-            </div>
-
-            <div className="flex min-w-0 flex-1 flex-wrap items-center gap-3">
-              <div
-                className="relative flex min-w-[240px] flex-1 items-center gap-3 rounded-xl px-3 py-2"
-                style={glassCardStyle}
-              >
-                <div className="text-[11px] font-semibold tracking-[0.14em] uppercase text-white/38">项目</div>
-                <select
-                  value={poster?.id ?? ''}
-                  onChange={(e) => {
-                    if (e.target.value) void selectPoster(e.target.value);
-                  }}
-                  className="min-w-0 flex-1 bg-transparent pr-6 text-[13px] font-medium text-white outline-none"
-                >
-                  {!poster && <option value="" style={{ background: '#0b1120' }}>选择海报项目</option>}
-                  {posters.map((item) => (
-                    <option key={item.id} value={item.id} style={{ background: '#0b1120' }}>
-                      {item.title || '未命名海报'}
-                    </option>
-                  ))}
-                </select>
-                <ChevronDown size={14} className="pointer-events-none absolute right-3 text-white/35" />
-              </div>
-
-              <SaveIndicator status={saveStatus} lastSavedAt={lastSavedAt} />
-
-              <div className="hidden min-w-0 flex-1 items-center gap-2 overflow-x-auto 2xl:flex">
-                {productWorkflowStates.map((step, index) => (
-                  <div key={step.label} className="flex items-center gap-2 shrink-0">
-                    <div
-                      className="h-9 min-w-[90px] rounded-xl px-3 inline-flex items-center justify-center text-[12px] font-medium"
-                      style={{
-                        background: step.done ? 'rgba(91,196,123,0.16)' : 'rgba(255,255,255,0.05)',
-                        border: step.done ? '1px solid rgba(91,196,123,0.35)' : '1px solid rgba(255,255,255,0.08)',
-                        color: step.done ? '#9af3b1' : 'rgba(255,255,255,0.68)',
-                      }}
-                    >
-                      {step.label}
-                    </div>
-                    {index < productWorkflowStates.length - 1 && <ChevronRight size={14} className="text-white/28" />}
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            <div className="flex shrink-0 items-center gap-2">
-              <button
-                type="button"
-                onClick={() => setPreviewOpen(true)}
-                disabled={!poster || pages.length === 0}
-                className="h-9 rounded-xl px-4 inline-flex items-center gap-1.5 text-[12px] transition-colors disabled:cursor-not-allowed disabled:opacity-40"
-                style={{
-                  color: 'rgba(255,255,255,0.82)',
-                  background: 'rgba(58,125,255,0.12)',
-                  border: '1px solid rgba(78,161,255,0.28)',
-                }}
-              >
-                <Eye size={14} /> 预览
-              </button>
-              <button
-                type="button"
-                onClick={handlePublish}
-                disabled={!poster || publishing || pages.length === 0}
-                className="h-9 rounded-xl px-4 inline-flex items-center gap-1.5 text-[12px] font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-40"
-                style={{
-                  color: '#fff',
-                  background: 'linear-gradient(90deg, rgba(92,109,255,0.74), rgba(140,95,255,0.78))',
-                  border: '1px solid rgba(171,113,255,0.24)',
-                }}
-              >
-                {publishing ? <Loader2 size={14} className="animate-spin" /> : <Send size={14} />}
-                发布官网
-              </button>
-              <div
-                className="w-9 h-9 rounded-full overflow-hidden inline-flex items-center justify-center text-[12px] font-semibold text-white"
-                style={{ ...glassButtonStyle, background: 'rgba(255,255,255,0.06)' }}
-              >
-                {userAvatarUrl ? (
-                  <img src={userAvatarUrl} alt="" className="w-full h-full object-cover" />
-                ) : (
-                  <span>{(currentUser?.displayName || currentUser?.username || 'A').slice(0, 1)}</span>
-                )}
-              </div>
-            </div>
-          </div>
-        </header>
-
-        <div className="flex-1 min-h-0 p-3 xl:p-4">
-          <div className="grid h-full min-h-0 gap-3 xl:grid-cols-[280px_minmax(0,1fr)_380px]">
+        <div className="flex-1 min-h-0">
+          <div className="grid h-full min-h-0 gap-3 xl:grid-cols-[280px_minmax(0,1fr)_360px]">
             <aside
               className="hidden"
               style={glassCardStyle}
@@ -730,6 +620,78 @@ export default function PosterDesignerPage({ embedded = false }: PosterDesignerP
             <div className="contents">
               {poster && currentPage ? (
                 <section className="min-h-0 h-full rounded-2xl p-4 flex flex-col" style={{ ...glassCardStyle, animation: 'posterDesignerIn 180ms ease-out both' }}>
+                  <div className="mb-4 flex flex-wrap items-center gap-3">
+                    <div
+                      className="relative flex min-w-[260px] flex-1 items-center gap-3 rounded-xl px-3 py-2"
+                      style={glassButtonStyle}
+                    >
+                      <div className="text-[11px] font-semibold tracking-[0.14em] uppercase text-white/38">项目</div>
+                      <select
+                        value={poster?.id ?? ''}
+                        onChange={(e) => {
+                          if (e.target.value) void selectPoster(e.target.value);
+                        }}
+                        className="min-w-0 flex-1 bg-transparent pr-6 text-[13px] font-medium text-white outline-none"
+                      >
+                        {!poster && <option value="" style={{ background: '#0b1120' }}>选择海报项目</option>}
+                        {posters.map((item) => (
+                          <option key={item.id} value={item.id} style={{ background: '#0b1120' }}>
+                            {item.title || '未命名海报'}
+                          </option>
+                        ))}
+                      </select>
+                      <ChevronDown size={14} className="pointer-events-none absolute right-3 text-white/35" />
+                    </div>
+
+                    <SaveIndicator status={saveStatus} lastSavedAt={lastSavedAt} />
+
+                    <div className="hidden min-w-0 flex-1 items-center gap-2 overflow-x-auto 2xl:flex">
+                      {productWorkflowStates.map((step, index) => (
+                        <div key={step.label} className="flex shrink-0 items-center gap-2">
+                          <div
+                            className="h-8 min-w-[82px] rounded-xl px-3 inline-flex items-center justify-center text-[11px] font-medium"
+                            style={{
+                              background: step.done ? 'rgba(91,196,123,0.16)' : 'rgba(255,255,255,0.05)',
+                              border: step.done ? '1px solid rgba(91,196,123,0.35)' : '1px solid rgba(255,255,255,0.08)',
+                              color: step.done ? '#9af3b1' : 'rgba(255,255,255,0.68)',
+                            }}
+                          >
+                            {step.label}
+                          </div>
+                          {index < productWorkflowStates.length - 1 && <ChevronRight size={14} className="text-white/28" />}
+                        </div>
+                      ))}
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={() => setPreviewOpen(true)}
+                      disabled={!poster || pages.length === 0}
+                      className="h-9 rounded-xl px-4 inline-flex items-center gap-1.5 text-[12px] transition-colors disabled:cursor-not-allowed disabled:opacity-40"
+                      style={{
+                        color: 'rgba(255,255,255,0.82)',
+                        background: 'rgba(58,125,255,0.12)',
+                        border: '1px solid rgba(78,161,255,0.28)',
+                      }}
+                    >
+                      <Eye size={14} /> 预览
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handlePublish}
+                      disabled={!poster || publishing || pages.length === 0}
+                      className="h-9 rounded-xl px-4 inline-flex items-center gap-1.5 text-[12px] font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-40"
+                      style={{
+                        color: '#fff',
+                        background: 'linear-gradient(90deg, rgba(92,109,255,0.74), rgba(140,95,255,0.78))',
+                        border: '1px solid rgba(171,113,255,0.24)',
+                      }}
+                    >
+                      {publishing ? <Loader2 size={14} className="animate-spin" /> : <Send size={14} />}
+                      发布官网
+                    </button>
+                  </div>
+
                   <div className="flex flex-wrap items-center justify-between gap-3">
                     <div>
                       <div className="text-[12px] font-semibold text-white/78">
@@ -1615,24 +1577,6 @@ export default function PosterDesignerPage({ embedded = false }: PosterDesignerP
           </div>
         </div>
 
-        <footer
-          className="hidden"
-          style={{ borderColor: 'rgba(255,255,255,0.08)', background: 'rgba(5,9,18,0.68)' }}
-        >
-          <div className="flex items-center gap-2 overflow-x-auto">
-            {PRODUCT_WORKFLOW_GUIDE.map((label, index) => (
-              <div key={label} className="flex shrink-0 items-center gap-2">
-                <div
-                  className="rounded-xl px-3 py-2 text-[11px] font-medium text-white/78"
-                  style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)' }}
-                >
-                  {label}
-                </div>
-                {index < PRODUCT_WORKFLOW_GUIDE.length - 1 && <ChevronRight size={14} className="text-white/24" />}
-              </div>
-            ))}
-          </div>
-        </footer>
       </div>
 
       {createOpen && (
@@ -1647,15 +1591,10 @@ export default function PosterDesignerPage({ embedded = false }: PosterDesignerP
         />
       )}
       {previewOpen && poster && currentPage && (
-        <PosterPreviewModal
+        <PosterCarousel
           poster={poster}
-          pages={pages}
-          currentOrder={currentOrder}
-          onSelectOrder={setCurrentOrder}
-          orientation={batchConfig.orientation}
-          template={selectedTemplate}
-          progressMap={imageProgress}
           onDismiss={() => setPreviewOpen(false)}
+          navigateOnCta={false}
         />
       )}
     </div>
@@ -1682,8 +1621,7 @@ function WorkspacePosterStage({
   const accent = page.accentColor || template.accentPalette[0] || DEFAULT_ACCENT;
   const baseWidth = devicePreview === 'mobile' ? 360 : orientation === 'portrait' ? 720 : 920;
   const width = Math.round(baseWidth * (scale / 100));
-  const ratio = devicePreview === 'mobile' || orientation === 'portrait' ? '4 / 5' : '4 / 3';
-  const previewBody = page.body?.trim() || '当前页正文将在这里展示，你可以在右侧内容助手继续编辑。';
+  const ratio = devicePreview === 'mobile' || orientation === 'portrait' ? '4 / 5' : '16 / 10';
 
   return (
     <div style={{ width, maxWidth: '100%' }}>
@@ -1696,64 +1634,13 @@ function WorkspacePosterStage({
           boxShadow: '0 28px 70px rgba(0,0,0,0.36), 0 0 48px rgba(90,109,255,0.18)',
         }}
       >
-        {page.imageUrl && renderMedia(page.imageUrl, 'absolute inset-0 w-full h-full object-cover')}
-        <div className="absolute inset-0" style={{ background: 'linear-gradient(120deg, rgba(4,8,18,0.74) 18%, rgba(4,8,18,0.24) 56%, rgba(4,8,18,0.68) 100%)' }} />
-        <div className="absolute inset-x-0 top-0 h-32" style={{ background: 'linear-gradient(180deg, rgba(5,8,16,0.58), transparent)' }} />
-
-        <div className="absolute left-5 top-5 inline-flex items-center gap-2 rounded-full px-3 py-1.5 text-[10px] font-semibold uppercase tracking-[0.14em]" style={{ background: 'rgba(255,255,255,0.08)', border: '1px solid rgba(255,255,255,0.14)', color: 'rgba(255,255,255,0.72)' }}>
+        <WeeklyPosterPageView page={page} />
+        <div className="absolute left-5 top-5 z-10 inline-flex items-center gap-2 rounded-full px-3 py-1.5 text-[10px] font-semibold uppercase tracking-[0.14em]" style={{ background: 'rgba(255,255,255,0.08)', border: '1px solid rgba(255,255,255,0.14)', color: 'rgba(255,255,255,0.72)' }}>
           <Sparkles size={10} />
           {poster.weekKey}
         </div>
-
-        {page.secondaryImageUrl && (
-          <div
-            className="absolute overflow-hidden rounded-2xl"
-            style={{
-              right: '5%',
-              top: devicePreview === 'mobile' ? '14%' : '16%',
-              width: devicePreview === 'mobile' ? '38%' : '26%',
-              aspectRatio: '4 / 5',
-              border: '1px solid rgba(255,255,255,0.16)',
-              boxShadow: '0 18px 42px rgba(0,0,0,0.28)',
-              background: 'rgba(7,12,22,0.8)',
-            }}
-          >
-            {renderMedia(page.secondaryImageUrl, 'absolute inset-0 w-full h-full object-cover')}
-          </div>
-        )}
-
-        <div className="absolute inset-x-0 bottom-0 p-6 xl:p-8">
-          <div className="flex items-end justify-between gap-5">
-            <div className="max-w-[72%]">
-              <div className="text-[11px] font-semibold uppercase tracking-[0.24em] text-white/48">{template.label}</div>
-              <h2 className="mt-3 text-[28px] font-black leading-[1.08] tracking-tight text-white">
-                {page.title || poster.title || '未命名页面'}
-              </h2>
-              {poster.subtitle && <div className="mt-2 text-[13px] text-white/76">{poster.subtitle}</div>}
-              <div
-                className="mt-4 max-w-[520px] rounded-2xl p-4"
-                style={{ background: 'rgba(7,12,22,0.54)', border: '1px solid rgba(255,255,255,0.1)', backdropFilter: 'blur(12px)' }}
-              >
-                <div style={{ maxHeight: 112, overflow: 'hidden' }}>
-                  <MarkdownContent content={previewBody} className="text-[12px] leading-6 text-white/82" />
-                </div>
-              </div>
-            </div>
-
-            <div className="shrink-0 flex flex-col items-end gap-3">
-              <div className="rounded-full px-3 py-1.5 text-[10px] font-semibold text-white/72" style={{ background: 'rgba(255,255,255,0.08)', border: '1px solid rgba(255,255,255,0.12)' }}>
-                {dimensionLabel(orientation)}
-              </div>
-              <button
-                type="button"
-                className="h-10 rounded-full px-5 inline-flex items-center gap-1.5 text-[13px] font-semibold text-white"
-                style={{ background: 'linear-gradient(90deg, rgba(75,126,255,0.96), rgba(88,206,255,0.76))', boxShadow: '0 0 24px rgba(78,134,255,0.26)' }}
-              >
-                {poster.ctaText || '查看详情'}
-                <ChevronRight size={15} />
-              </button>
-            </div>
-          </div>
+        <div className="absolute right-5 bottom-5 z-10 rounded-full px-3 py-1.5 text-[10px] font-semibold text-white/72" style={{ background: 'rgba(255,255,255,0.08)', border: '1px solid rgba(255,255,255,0.12)' }}>
+          {dimensionLabel(orientation)} · {template.label}
         </div>
 
         {progress === 'generating-image' && (
@@ -1766,140 +1653,6 @@ function WorkspacePosterStage({
         )}
       </div>
     </div>
-  );
-}
-
-function PosterPreviewModal({
-  poster,
-  pages,
-  currentOrder,
-  onSelectOrder,
-  orientation,
-  template,
-  progressMap,
-  onDismiss,
-}: {
-  poster: WeeklyPoster;
-  pages: WeeklyPosterPage[];
-  currentOrder: number;
-  onSelectOrder: (order: number) => void;
-  orientation: CanvasOrientation;
-  template: WeeklyPosterTemplateMeta;
-  progressMap: Record<number, PageProgress>;
-  onDismiss: () => void;
-}) {
-  const currentIndex = Math.max(0, pages.findIndex((page) => page.order === currentOrder));
-  const currentPage = pages[currentIndex] ?? pages[0] ?? null;
-
-  useEffect(() => {
-    const handler = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') onDismiss();
-      if (event.key === 'ArrowLeft' && currentIndex > 0) onSelectOrder(pages[currentIndex - 1].order);
-      if (event.key === 'ArrowRight' && currentIndex < pages.length - 1) onSelectOrder(pages[currentIndex + 1].order);
-    };
-    window.addEventListener('keydown', handler);
-    return () => window.removeEventListener('keydown', handler);
-  }, [currentIndex, onDismiss, onSelectOrder, pages]);
-
-  useEffect(() => {
-    const previous = document.body.style.overflow;
-    document.body.style.overflow = 'hidden';
-    return () => {
-      document.body.style.overflow = previous;
-    };
-  }, []);
-
-  if (!currentPage) return null;
-
-  return createPortal(
-    <div
-      className="fixed inset-0 z-[9999] flex items-center justify-center p-4"
-      style={{
-        background: 'rgba(3,4,10,0.82)',
-        backdropFilter: 'blur(10px)',
-        WebkitBackdropFilter: 'blur(10px)',
-      }}
-      onClick={onDismiss}
-    >
-      <div
-        className="relative flex min-h-0 flex-col rounded-[24px] p-4"
-        style={{
-          width: 'min(1160px, 96vw)',
-          height: 'min(90vh, 980px)',
-          background: 'linear-gradient(180deg, rgba(22,24,34,0.96) 0%, rgba(10,12,20,0.98) 100%)',
-          border: '1px solid rgba(255,255,255,0.1)',
-          boxShadow: '0 40px 100px rgba(0,0,0,0.48)',
-        }}
-        onClick={(event) => event.stopPropagation()}
-      >
-        <button
-          type="button"
-          onClick={onDismiss}
-          aria-label="关闭预览"
-          className="absolute right-4 top-4 z-10 inline-flex h-10 w-10 items-center justify-center rounded-full text-white/80"
-          style={{ background: 'rgba(0,0,0,0.34)', border: '1px solid rgba(255,255,255,0.14)' }}
-        >
-          <X size={16} />
-        </button>
-
-        <div
-          className="min-h-0 flex-1 rounded-[20px] p-4"
-          style={{ background: 'rgba(4,8,18,0.78)', border: '1px solid rgba(255,255,255,0.06)' }}
-        >
-          <div className="flex h-full min-h-0 items-center justify-center overflow-auto">
-            <WorkspacePosterStage
-              poster={poster}
-              page={currentPage}
-              template={template}
-              devicePreview="desktop"
-              scale={100}
-              orientation={orientation}
-              progress={progressMap[currentPage.order]}
-            />
-          </div>
-        </div>
-
-        <div className="mt-4 flex items-center justify-between gap-4">
-          <button
-            type="button"
-            onClick={() => currentIndex > 0 && onSelectOrder(pages[currentIndex - 1].order)}
-            disabled={currentIndex === 0}
-            className="inline-flex h-10 w-10 items-center justify-center rounded-full text-white disabled:opacity-30"
-            style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)' }}
-          >
-            <ChevronLeft size={18} />
-          </button>
-
-          <div className="flex items-center gap-1.5">
-            {pages.map((page, index) => (
-              <button
-                key={page.order}
-                type="button"
-                onClick={() => onSelectOrder(page.order)}
-                aria-label={`切换到第 ${index + 1} 页`}
-                className="rounded-full transition-all"
-                style={{
-                  width: index === currentIndex ? 22 : 6,
-                  height: 6,
-                  background: index === currentIndex ? 'rgba(255,255,255,0.9)' : 'rgba(255,255,255,0.24)',
-                }}
-              />
-            ))}
-          </div>
-
-          <button
-            type="button"
-            onClick={() => currentIndex < pages.length - 1 && onSelectOrder(pages[currentIndex + 1].order)}
-            disabled={currentIndex === pages.length - 1}
-            className="inline-flex h-10 w-10 items-center justify-center rounded-full text-white disabled:opacity-30"
-            style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)' }}
-          >
-            <ChevronRight size={18} />
-          </button>
-        </div>
-      </div>
-    </div>,
-    document.body,
   );
 }
 

@@ -136,7 +136,7 @@ export function PosterCarousel({
           style={{ minHeight: 0, overflow: 'hidden' }}
           key={`page-${pageIndex}`}
         >
-          <PosterPageView page={currentPage} />
+          <WeeklyPosterPageView page={currentPage} />
         </div>
 
         <div
@@ -218,13 +218,13 @@ export function PosterCarousel({
   return createPortal(modal, document.body);
 }
 
-function PosterPageView({ page }: { page: WeeklyPosterPage | undefined }) {
+export function WeeklyPosterPageView({ page }: { page: WeeklyPosterPage | undefined }) {
   if (!page) return null;
   const accent = page.accentColor || '#7c3aed';
   const hasImage = !!page.imageUrl;
 
   return (
-    <div className="flex-1 flex flex-col" style={{ minHeight: 0 }}>
+    <div className="h-full flex-1 flex flex-col" style={{ minHeight: 0 }}>
       <div
         className="relative shrink-0"
         style={{
