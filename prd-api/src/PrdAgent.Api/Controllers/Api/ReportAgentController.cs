@@ -938,28 +938,27 @@ public class ReportAgentController : ControllerBase
     public async Task<IActionResult> ListTemplates()
     {
         var userId = GetUserId();
-        var myLeaderTeamIds = await GetLeaderOrDeputyTeamIdsAsync(userId);
-        var isManager = myLeaderTeamIds.Count > 0;
+        // 所有"我所在"团队(含 Member + Leader + Deputy),用于让普通成员也能看到团队模板——否则写不出周报
+        var myMemberTeamIds = await _db.ReportTeamMembers
+            .Find(m => m.UserId == userId)
+            .Project(m => m.TeamId)
+            .ToListAsync();
+        // Leader 可能通过 team.LeaderUserId 绑定但无 TeamMember 记录的场景,也一并纳入
+        var myLedTeamIds = await _db.ReportTeams
+            .Find(t => t.LeaderUserId == userId)
+            .Project(t => t.Id)
+            .ToListAsync();
+        var myAllTeamIds = myMemberTeamIds.Concat(myLedTeamIds).Distinct().ToList();
 
-        FilterDefinition<ReportTemplate> filter;
-        if (!isManager)
-        {
-            // 非 Leader/Deputy：只能看到系统模板 + 自己创建（兜底场景：刚被撤职还有遗留模板）
-            filter = Builders<ReportTemplate>.Filter.Or(
-                Builders<ReportTemplate>.Filter.Eq(t => t.IsSystem, true),
-                Builders<ReportTemplate>.Filter.Eq(t => t.CreatedBy, userId)
-            );
-        }
-        else
-        {
-            filter = Builders<ReportTemplate>.Filter.Or(
-                Builders<ReportTemplate>.Filter.Eq(t => t.IsSystem, true),
-                Builders<ReportTemplate>.Filter.Eq(t => t.CreatedBy, userId),
-                Builders<ReportTemplate>.Filter.AnyIn(t => t.TeamIds, myLeaderTeamIds),
-                // 兼容旧字段 TeamId
-                Builders<ReportTemplate>.Filter.In(t => t.TeamId, myLeaderTeamIds)
-            );
-        }
+        // 可见集 = 系统 ∪ 我创建 ∪ 我所在任何团队关联的模板
+        // (编辑/删除权限仍由 CanManageTemplate 守卫,这里只放宽"查看",让成员能用团队模板写周报)
+        var filter = Builders<ReportTemplate>.Filter.Or(
+            Builders<ReportTemplate>.Filter.Eq(t => t.IsSystem, true),
+            Builders<ReportTemplate>.Filter.Eq(t => t.CreatedBy, userId),
+            Builders<ReportTemplate>.Filter.AnyIn(t => t.TeamIds, myAllTeamIds),
+            // 兼容旧字段 TeamId
+            Builders<ReportTemplate>.Filter.In(t => t.TeamId, myAllTeamIds)
+        );
 
         var templates = await _db.ReportTemplates.Find(filter)
             .SortByDescending(t => t.IsDefault)
@@ -1435,7 +1434,11 @@ public class ReportAgentController : ControllerBase
             }
         }
 
-        return Ok(ApiResponse<object>.Ok(new { report }));
+        // 计算当前用户对这份周报的审阅权限(给前端守卫按钮显示),权威判断仍在 Review/Return 端点
+        var canReview = (await IsTeamLeaderOrDeputy(report.TeamId, userId))
+            || HasPermission(AdminPermissionCatalog.ReportAgentViewAll);
+
+        return Ok(ApiResponse<object>.Ok(new { report, canReview }));
     }
 
     /// <summary>

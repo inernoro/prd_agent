@@ -321,13 +321,16 @@ export function ReportMainView() {
             >
               <CalendarCheck size={13} /> 日常记录
             </Button>
-            {hasTeam && hasTemplate && (
+            {/* "写周报" 常驻显示,无模板时禁用 + tooltip,避免普通成员看不到入口 */}
+            {hasTeam && (
               <Button
                 variant="primary"
                 size="sm"
                 data-tour-id="report-template-picker"
                 onClick={handleCreateReport}
+                disabled={!hasTemplate}
                 className="whitespace-nowrap"
+                title={hasTemplate ? undefined : '当前团队还未配置周报模板，请联系团队负责人在"设置"中绑定模板'}
               >
                 <Plus size={14} /> 写周报
               </Button>

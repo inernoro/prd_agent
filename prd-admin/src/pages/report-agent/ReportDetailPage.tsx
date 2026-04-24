@@ -73,6 +73,8 @@ export default function ReportDetailPage(props: ReportDetailPageProps = {}) {
   const siblingsKeyRef = useRef<string>('');
 
   const [report, setReport] = useState<WeeklyReport | null>(null);
+  /** 后端授权:当前用户对该周报是否有审阅权限(Leader/Deputy 或全局 ReportAgentViewAll) */
+  const [canReview, setCanReview] = useState(false);
   const [comments, setComments] = useState<ReportComment[]>([]);
   const [activeTab, setActiveTab] = useState<TabKey>('content');
   const [replyTo, setReplyTo] = useState<{ sectionIndex: number; parentId?: string } | null>(null);
@@ -109,7 +111,10 @@ export default function ReportDetailPage(props: ReportDetailPageProps = {}) {
     if (!reportId) return;
     (async () => {
       const res = await getWeeklyReport({ id: reportId });
-      if (res.success && res.data) setReport(res.data.report);
+      if (res.success && res.data) {
+        setReport(res.data.report);
+        setCanReview(!!res.data.canReview);
+      }
     })();
     void loadComments();
     void loadViewSummaryAndTrack();
@@ -296,7 +301,11 @@ export default function ReportDetailPage(props: ReportDetailPageProps = {}) {
             </div>
           </div>
           <div className="flex items-center gap-2">
-            {(report.status === WeeklyReportStatus.Submitted || report.status === WeeklyReportStatus.Reviewed) && (
+            {/* 审阅/退回按钮权限守卫:
+                1. canReview 由后端授权(Leader/Deputy/ReportAgentViewAll)
+                2. 不能审自己的周报(防自审) */}
+            {canReview && report.userId !== currentUserId
+              && (report.status === WeeklyReportStatus.Submitted || report.status === WeeklyReportStatus.Reviewed) && (
               <>
                 <Button variant="secondary" size="sm" onClick={() => setShowReturnDialog(true)}>退回</Button>
                 {report.status === WeeklyReportStatus.Submitted && (

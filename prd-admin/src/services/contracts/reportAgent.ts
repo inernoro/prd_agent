@@ -464,7 +464,11 @@ export type ListWeeklyReportsContract = (input?: {
 }) => Promise<ApiResponse<{ items: WeeklyReport[] }>>;
 
 export type GetWeeklyReportContract = (input: { id: string }) => Promise<
-  ApiResponse<{ report: WeeklyReport }>
+  ApiResponse<{
+    report: WeeklyReport;
+    /** 当前用户对该周报是否有审阅权限(Leader/Deputy 或全局 ReportAgentViewAll) */
+    canReview?: boolean;
+  }>
 >;
 
 export type CreateWeeklyReportContract = (input: {
