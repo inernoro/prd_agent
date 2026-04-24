@@ -1524,18 +1524,35 @@ const committeeMonthlyTemplate: WorkflowTemplate = {
   build: (inputs) => {
     _edgeIdx = 0;
 
-    // ── 需求统计 JS ──
+    // 需求 TAPD URL 前缀（用于字段缺失时手动拼接）
+    const storyWsId = inputs.storyWorkspaceId || '64054517';
+    const bugWsId = inputs.bugWorkspaceId || '66590626';
+
+    // ── 需求统计 JS（兼容中文 mapper + TAPD 原始英文字段） ──
     const storyStatsCode = `var items = Array.isArray(data) ? data : [];
+var wsId = ${JSON.stringify(storyWsId)};
 var total = items.length;
+// 字段获取兼容层：中文 mapper → TAPD 原始字段
+function F(i, cn, en1, en2) { return i[cn] || i[en1] || (en2?i[en2]:"") || ""; }
+function getTitle(i) { return F(i, "标题", "name", "title"); }
+function getHandler(i) { return F(i, "处理人", "current_owner", "owner"); }
+function getStatus(i) { return F(i, "状态", "status_label", "status"); }
+function getPriority(i) { return F(i, "优先级", "priority_label", "priority"); }
+function getCreatedAt(i) { return F(i, "创建时间", "created"); }
+function getUrl(i) {
+  var u = i["URL链接"] || i.url || "";
+  if (!u && wsId && (i.id || i.ID)) u = "https://www.tapd.cn/tapd_fe/"+wsId+"/story/detail/"+(i.id||i.ID);
+  return u;
+}
 var statusMap = {};
-items.forEach(function(i) { var s = (i["状态"] || "未知").trim(); statusMap[s] = (statusMap[s]||0)+1; });
+items.forEach(function(i) { var s = (getStatus(i) || "未知").toString().trim(); statusMap[s] = (statusMap[s]||0)+1; });
 var handlerMap = {};
-items.forEach(function(i) { var h = (i["处理人"] || "未分配").trim(); handlerMap[h] = (handlerMap[h]||0)+1; });
+items.forEach(function(i) { var h = (getHandler(i) || "未分配").toString().trim(); handlerMap[h] = (handlerMap[h]||0)+1; });
 var priorityMap = {};
-items.forEach(function(i) { var p = (i["优先级"] || "未设置").trim(); priorityMap[p] = (priorityMap[p]||0)+1; });
+items.forEach(function(i) { var p = (getPriority(i) || "未设置").toString().trim(); priorityMap[p] = (priorityMap[p]||0)+1; });
 var customerMap = {};
 items.forEach(function(i) {
-  var title = i["标题"] || i.title || "";
+  var title = getTitle(i);
   var m = title.match(/\\[([^\\]]+)\\]/);
   if (m) {
     var name = m[1];
@@ -1548,30 +1565,51 @@ var customers = Object.keys(customerMap).map(function(k) {
   return {name:k, count:customerMap[k].count, titles:customerMap[k].titles};
 }).sort(function(a,b){return b.count-a.count;});
 var details = items.map(function(i) {
-  return {title:i["标题"]||"", handler:i["处理人"]||"", status:i["状态"]||"", priority:i["优先级"]||"", createdAt:i["创建时间"]||"", url:i["URL链接"]||""};
+  return {title:getTitle(i), handler:getHandler(i), status:getStatus(i), priority:getPriority(i), createdAt:getCreatedAt(i), url:getUrl(i)};
 });
 result = {total:total, statusDistribution:statusMap, handlerDistribution:handlerMap, priorityDistribution:priorityMap, customerAnalysis:customers, details:details};`;
 
-    // ── 缺陷统计 JS ──
+    // ── 缺陷统计 JS（兼容中文 mapper + TAPD 原始英文字段） ──
     const defectStatsCode = `var items = Array.isArray(data) ? data : [];
+var wsId = ${JSON.stringify(bugWsId)};
 var total = items.length;
+function F(i, cn, en1, en2) { return i[cn] || i[en1] || (en2?i[en2]:"") || ""; }
+function getTitle(i) { return F(i, "标题", "title"); }
+function getHandler(i) { return F(i, "处理人", "current_owner", "owner"); }
+function getCreator(i) { return F(i, "创建人", "reporter", "creator"); }
+function getStatus(i) { return F(i, "状态", "status_label", "status"); }
+// 产品线分类：优先读取 TAPD 原始 module 字段（产品线：智能营销/PDA/DCRM等），
+// 然后尝试自定义分类字段，最后退回到"缺陷划分"（技术/产品/非缺陷，维度不同但可用于兜底）
+function getCategory(i) {
+  return F(i, "分类", "module") || i["所属产品"] || i.custom_field_14 || i.custom_field_15 ||
+         i.custom_field_16 || i.custom_field_17 || i.custom_field_18 || i["缺陷划分"] || i.custom_field_7 || "";
+}
+// 优先级：TAPD bug 原始 priority_label / priority
+function getPriority(i) { return F(i, "优先级", "priority_label", "priority"); }
+// 严重程度
+function getSeverity(i) { return F(i, "严重程度", "severity_label", "severity"); }
+function getCreatedAt(i) { return F(i, "创建时间", "created"); }
+function getUrl(i) {
+  var u = i["URL链接"] || i.url || "";
+  if (!u && wsId && (i.id || i.ID || i.bug_id)) u = "https://www.tapd.cn/tapd_fe/"+wsId+"/bug/detail/"+(i.id||i.ID||i.bug_id);
+  return u;
+}
 var statusMap = {};
-items.forEach(function(i) { var s = (i["状态"] || "未知").trim(); statusMap[s] = (statusMap[s]||0)+1; });
+items.forEach(function(i) { var s = (getStatus(i) || "未知").toString().trim(); statusMap[s] = (statusMap[s]||0)+1; });
 var categoryMap = {};
-items.forEach(function(i) { var c = (i["分类"] || i["所属产品"] || "未分类").trim(); categoryMap[c] = (categoryMap[c]||0)+1; });
+items.forEach(function(i) { var c = (getCategory(i) || "未分类").toString().trim(); categoryMap[c] = (categoryMap[c]||0)+1; });
 var handlerMap = {};
-items.forEach(function(i) { var h = (i["处理人"] || "未分配").trim(); handlerMap[h] = (handlerMap[h]||0)+1; });
+items.forEach(function(i) { var h = (getHandler(i) || "未分配").toString().trim(); handlerMap[h] = (handlerMap[h]||0)+1; });
 var priorityMap = {};
-items.forEach(function(i) { var p = (i["优先级"] || "未设置").trim(); priorityMap[p] = (priorityMap[p]||0)+1; });
+items.forEach(function(i) { var p = (getPriority(i) || "未设置").toString().trim(); priorityMap[p] = (priorityMap[p]||0)+1; });
 var severityMap = {};
-items.forEach(function(i) { var s = (i["严重程度"] || "未设置").trim(); severityMap[s] = (severityMap[s]||0)+1; });
+items.forEach(function(i) { var s = (getSeverity(i) || "未设置").toString().trim(); severityMap[s] = (severityMap[s]||0)+1; });
 var details = items.map(function(i) {
-  return {title:i["标题"]||"", handler:i["处理人"]||"", creator:i["创建人"]||"", status:i["状态"]||"", priority:i["优先级"]||"", severity:i["严重程度"]||"", category:i["分类"]||i["所属产品"]||"", createdAt:i["创建时间"]||"", url:i["URL链接"]||""};
+  return {title:getTitle(i), handler:getHandler(i), creator:getCreator(i), status:getStatus(i), priority:getPriority(i), severity:getSeverity(i), category:getCategory(i), createdAt:getCreatedAt(i), url:getUrl(i)};
 });
 result = {total:total, statusDistribution:statusMap, categoryDistribution:categoryMap, handlerDistribution:handlerMap, priorityDistribution:priorityMap, severityDistribution:severityMap, details:details};`;
 
     // ── 巡检解析 JS ──
-    const inspectionText = (inputs.inspectionData || '').replace(/\\/g, '\\\\').replace(/`/g, '\\`').replace(/\$/g, '\\$');
     const inspectionParseCode = `var raw = ${JSON.stringify(inputs.inspectionData || '')};
 var items = [];
 var curName = "";
