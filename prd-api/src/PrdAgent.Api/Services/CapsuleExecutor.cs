@@ -1019,10 +1019,9 @@ public static class CapsuleExecutor
             var credentials = await authService.ResolveCredentialsAsync(userId, authId, "tapd-collector", CancellationToken.None)
                 ?? throw new InvalidOperationException($"授权 {authId} 不存在或已撤销");
 
-            // 把解析出的凭证注入到 node.Config 里，后续逻辑按 cookie 模式处理
+            // 通过 variables 传递凭证（仅内存，不写入 node.Config 避免明文持久化）
             if (credentials.TryGetValue("cookie", out var cookie))
-                SetConfigValue(node, "cookie", cookie);
-            // workspaceId 仍以用户在模板表单里填的为准（元数据里的只是参考）
+                variables["__resolved_tapd_cookie"] = cookie;
             authMode = "cookie";
         }
 
@@ -1052,6 +1051,9 @@ public static class CapsuleExecutor
     {
         var trendMonths = int.TryParse(GetConfigString(node, "trendMonths"), out var tm) ? Math.Clamp(tm, 1, 24) : 6;
         var cookieStr = ReplaceVariables(GetConfigString(node, "cookie") ?? "", variables);
+        // stored authMode 通过 variables 传递凭证，避免明文写入 node.Config
+        if (string.IsNullOrWhiteSpace(cookieStr) && variables.TryGetValue("__resolved_tapd_cookie", out var resolvedCookie))
+            cookieStr = resolvedCookie;
         var dscToken = GetConfigString(node, "dscToken") ?? GetConfigString(node, "dsc_token") ?? "";
 
         if (string.IsNullOrWhiteSpace(cookieStr))
@@ -1217,6 +1219,8 @@ public static class CapsuleExecutor
 
         var cookieStr = ReplaceVariables(
             GetConfigString(node, "cookie") ?? "", variables);
+        if (string.IsNullOrWhiteSpace(cookieStr) && variables.TryGetValue("__resolved_tapd_cookie", out var resolvedCookie2))
+            cookieStr = resolvedCookie2;
         var dscToken = GetConfigString(node, "dscToken") ?? GetConfigString(node, "dsc_token") ?? "";
         var maxPages = int.TryParse(GetConfigString(node, "maxPages") ?? GetConfigString(node, "max_pages"), out var mp) ? Math.Clamp(mp, 1, 200) : 50;
 
