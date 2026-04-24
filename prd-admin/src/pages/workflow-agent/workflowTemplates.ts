@@ -1630,7 +1630,7 @@ raw.split("\\n").forEach(function(line) {
   } else {
     var sep = line.indexOf("\\t") >= 0 ? "\\t" : ",";
     var parts = line.split(sep).map(function(s){return s.trim();});
-    if (parts.length >= 3 && parts[0] !== "责任人") {
+    if (parts.length >= 3 && !/^(责任人|负责人|人员|name|person)/i.test(parts[0]) && !isNaN(parseInt(parts[1]))) {
       var person = parts[0];
       var total = parseInt(parts[1]) || 0;
       var timely = parseInt(parts[2]) || 0;
