@@ -344,51 +344,53 @@ H.push('function hbar(id,names,vals,color){var dom=document.getElementById(id);i
 var stStatusD = [];
 var stColors = ["#1E6FD9","#27C97F","#E84040","#F5A623","#4ECDC4","#8B5CF6","#FF6B35","#7D8590"];
 var stStatusKeys = Object.keys(story.statusDistribution || {});
-stStatusKeys.forEach(function(k,i){ stStatusD.push({name:k,value:story.statusDistribution[k]}); });
+stStatusKeys.forEach(function(k,i){ stStatusD.push({name:esc(k),value:story.statusDistribution[k]}); });
 H.push('pie("ch-st-status",' + safeJson(stStatusD) + ',' + safeJson(stColors) + ');');
 
 var stPrD = [];
 var prColors = ["#E84040","#F5A623","#1E6FD9","#4ECDC4","#7D8590"];
 var stPrKeys = Object.keys(story.priorityDistribution || {});
-stPrKeys.forEach(function(k,i){ stPrD.push({name:k,value:story.priorityDistribution[k]}); });
+stPrKeys.forEach(function(k,i){ stPrD.push({name:esc(k),value:story.priorityDistribution[k]}); });
 H.push('pie("ch-st-priority",' + safeJson(stPrD) + ',' + safeJson(prColors) + ');');
 
-var hdKeys = Object.keys(story.handlerDistribution || {}).sort(function(a,b){return story.handlerDistribution[a]-story.handlerDistribution[b];});
-var hdVals = hdKeys.map(function(k){return story.handlerDistribution[k];});
+var hdRawKeys = Object.keys(story.handlerDistribution || {}).sort(function(a,b){return story.handlerDistribution[a]-story.handlerDistribution[b];});
+var hdKeys = hdRawKeys.map(esc);
+var hdVals = hdRawKeys.map(function(k){return story.handlerDistribution[k];});
 H.push('hbar("ch-st-handler",' + safeJson(hdKeys) + ',' + safeJson(hdVals) + ',"#1E6FD9");');
 
 var custTop = (story.customerAnalysis || []).slice(0,10);
-var custNames = custTop.map(function(c){return c.name;}).reverse();
+var custNames = custTop.map(function(c){return esc(c.name);}).reverse();
 var custVals = custTop.map(function(c){return c.count;}).reverse();
 H.push('hbar("ch-st-customer",' + safeJson(custNames) + ',' + safeJson(custVals) + ',"#4ECDC4");');
 
 // ── Chapter 2 charts ──
 var dfCatD = [];
 var dfCatKeys = Object.keys(defect.categoryDistribution || {});
-dfCatKeys.forEach(function(k){ dfCatD.push({name:k,value:defect.categoryDistribution[k]}); });
+dfCatKeys.forEach(function(k){ dfCatD.push({name:esc(k),value:defect.categoryDistribution[k]}); });
 H.push('pie("ch-df-category",' + safeJson(dfCatD) + ',' + safeJson(stColors) + ');');
 
 var dfStD = [];
 var dfStKeys = Object.keys(defect.statusDistribution || {});
-dfStKeys.forEach(function(k){ dfStD.push({name:k,value:defect.statusDistribution[k]}); });
+dfStKeys.forEach(function(k){ dfStD.push({name:esc(k),value:defect.statusDistribution[k]}); });
 H.push('pie("ch-df-status",' + safeJson(dfStD) + ',' + safeJson(stColors) + ');');
 
 var dfPrD = [];
 var dfPrKeys = Object.keys(defect.priorityDistribution || {});
-dfPrKeys.forEach(function(k){ dfPrD.push({name:k,value:defect.priorityDistribution[k]}); });
+dfPrKeys.forEach(function(k){ dfPrD.push({name:esc(k),value:defect.priorityDistribution[k]}); });
 H.push('pie("ch-df-priority",' + safeJson(dfPrD) + ',' + safeJson(["#E84040","#FF6B35","#27C97F","#1E6FD9","#7D8590"]) + ');');
 
 var dfSvD = [];
 var dfSvKeys = Object.keys(defect.severityDistribution || {});
-dfSvKeys.forEach(function(k){ dfSvD.push({name:k,value:defect.severityDistribution[k]}); });
+dfSvKeys.forEach(function(k){ dfSvD.push({name:esc(k),value:defect.severityDistribution[k]}); });
 H.push('pie("ch-df-severity",' + safeJson(dfSvD) + ',' + safeJson(["#E84040","#F5A623","#FF6B35","#1E6FD9","#4ECDC4"]) + ');');
 
-var dfHdKeys = Object.keys(defect.handlerDistribution || {}).sort(function(a,b){return defect.handlerDistribution[a]-defect.handlerDistribution[b];});
-var dfHdVals = dfHdKeys.map(function(k){return defect.handlerDistribution[k];});
+var dfHdRawKeys = Object.keys(defect.handlerDistribution || {}).sort(function(a,b){return defect.handlerDistribution[a]-defect.handlerDistribution[b];});
+var dfHdKeys = dfHdRawKeys.map(esc);
+var dfHdVals = dfHdRawKeys.map(function(k){return defect.handlerDistribution[k];});
 H.push('hbar("ch-df-handler",' + safeJson(dfHdKeys) + ',' + safeJson(dfHdVals) + ',"#F5A623");');
 
 // ── Chapter 3 charts ──
-var insNames = insItems.map(function(it){return it.name||"";});
+var insNames = insItems.map(function(it){return esc(it.name||"");});
 var insRates = insItems.map(function(it){return it.total>0?parseFloat((it.timely/it.total*100).toFixed(1)):0;});
 var insTimely = insItems.map(function(it){return it.timely||0;});
 var insUntimely = insItems.map(function(it){return (it.total||0)-(it.timely||0);});
