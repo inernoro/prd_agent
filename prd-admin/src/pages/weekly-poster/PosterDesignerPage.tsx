@@ -2,7 +2,6 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useSearchParams } from 'react-router-dom';
 import {
-  Bell,
   Check,
   ChevronDown,
   ChevronLeft,
@@ -67,7 +66,6 @@ type WorkspaceTab = 'content' | 'assets' | 'layout';
 type DevicePreview = 'desktop' | 'mobile';
 type CanvasOrientation = 'landscape' | 'portrait';
 type CreateMode = 'guided' | 'manual';
-type AgentStatus = 'done' | 'working' | 'waiting';
 
 interface PosterDesignerPageProps {
   embedded?: boolean;
@@ -554,7 +552,7 @@ export default function PosterDesignerPage({ embedded = false }: PosterDesignerP
 
               <SaveIndicator status={saveStatus} lastSavedAt={lastSavedAt} />
 
-              <div className="flex min-w-0 flex-1 items-center gap-2 overflow-x-auto">
+              <div className="hidden min-w-0 flex-1 items-center gap-2 overflow-x-auto 2xl:flex">
                 {productWorkflowStates.map((step, index) => (
                   <div key={step.label} className="flex items-center gap-2 shrink-0">
                     <div
@@ -601,14 +599,6 @@ export default function PosterDesignerPage({ embedded = false }: PosterDesignerP
                 {publishing ? <Loader2 size={14} className="animate-spin" /> : <Send size={14} />}
                 发布官网
               </button>
-              <button
-                type="button"
-                aria-label="通知"
-                className="w-9 h-9 rounded-xl inline-flex items-center justify-center text-white/72 hover:bg-white/10"
-                style={glassButtonStyle}
-              >
-                <Bell size={15} />
-              </button>
               <div
                 className="w-9 h-9 rounded-full overflow-hidden inline-flex items-center justify-center text-[12px] font-semibold text-white"
                 style={{ ...glassButtonStyle, background: 'rgba(255,255,255,0.06)' }}
@@ -624,9 +614,9 @@ export default function PosterDesignerPage({ embedded = false }: PosterDesignerP
         </header>
 
         <div className="flex-1 min-h-0 p-3 xl:p-4">
-          <div className="grid h-full min-h-0 gap-3 xl:grid-cols-[72px_260px_minmax(0,1fr)]">
+          <div className="grid h-full min-h-0 gap-3 xl:grid-cols-[280px_minmax(0,1fr)_380px]">
             <aside
-              className="min-h-0 rounded-2xl p-2 flex flex-col"
+              className="hidden"
               style={glassCardStyle}
             >
               <div className="space-y-1">
@@ -737,9 +727,9 @@ export default function PosterDesignerPage({ embedded = false }: PosterDesignerP
               </button>
             </section>
 
-            <div className="min-h-0 grid gap-3 xl:grid-cols-[minmax(0,1fr)_320px]">
+            <div className="min-h-0">
               {poster && currentPage ? (
-                <section className="min-h-0 rounded-2xl p-4 flex flex-col xl:col-start-1" style={{ ...glassCardStyle, animation: 'posterDesignerIn 180ms ease-out both' }}>
+                <section className="min-h-0 h-full rounded-2xl p-4 flex flex-col" style={{ ...glassCardStyle, animation: 'posterDesignerIn 180ms ease-out both' }}>
                   <div className="flex flex-wrap items-center justify-between gap-3">
                     <div>
                       <div className="text-[12px] font-semibold text-white/78">
@@ -795,8 +785,8 @@ export default function PosterDesignerPage({ embedded = false }: PosterDesignerP
                     </div>
                   </div>
 
-                  <div className="mt-4 rounded-[24px] p-4" style={{ background: 'rgba(3,8,18,0.72)', border: '1px solid rgba(255,255,255,0.06)' }}>
-                    <div className="h-[360px] xl:h-[420px] overflow-auto">
+                  <div className="mt-4 min-h-0 flex-1 rounded-[24px] p-4" style={{ background: 'rgba(3,8,18,0.72)', border: '1px solid rgba(255,255,255,0.06)' }}>
+                    <div className="h-full min-h-[420px] overflow-auto">
                       <div className="flex min-h-full items-center justify-center">
                         <WorkspacePosterStage
                           poster={poster}
@@ -842,7 +832,7 @@ export default function PosterDesignerPage({ embedded = false }: PosterDesignerP
                     </div>
                   </div>
 
-                  <div ref={(node) => { editorPanelRef.current = node; }} className="mt-4 border-t pt-4" style={{ borderColor: 'rgba(255,255,255,0.08)' }}>
+                  <div ref={(node) => { editorPanelRef.current = node; }} className="hidden" style={{ borderColor: 'rgba(255,255,255,0.08)' }}>
                     <div className="flex items-start justify-between gap-3">
                       <div>
                         <div className="text-[13px] font-semibold text-white">编辑当前页</div>
@@ -1260,92 +1250,30 @@ export default function PosterDesignerPage({ embedded = false }: PosterDesignerP
 
                 <section
                   ref={publishPanelRef}
-                  className="min-h-0 rounded-2xl p-4 flex flex-col xl:col-start-2"
+                  className="min-h-0 rounded-2xl p-4 flex flex-col"
                   style={glassCardStyle}
                 >
-                  <div className="flex items-center justify-between">
-                    <div className="text-[13px] font-semibold text-white">发布确认</div>
-                    <Send size={14} className="text-white/42" />
-                  </div>
-                  <div className="mt-1 text-[11px] text-white/42">保留官网发布，其余渠道暂时只读。</div>
-
-                  <div className="mt-4 flex flex-wrap gap-2">
-                    <span
-                      className="rounded-full px-3 py-1.5 text-[11px] font-medium text-white"
-                      style={{ background: 'rgba(84,122,255,0.18)', border: '1px solid rgba(116,149,255,0.3)' }}
-                    >
-                      官网
-                    </span>
-                    <span
-                      className="rounded-full px-3 py-1.5 text-[11px] font-medium text-white/36"
-                      style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)' }}
-                    >
-                      其他渠道待开放
-                    </span>
-                  </div>
-
-                  <div className="mt-4 space-y-2">
-                    <AgentStatusRow
-                      label="当前页状态"
-                      detail={currentPage ? pageProgressLabel(imageProgress[currentPage.order] ?? pageQualityState(currentPage)) : '待开始'}
-                      status={currentPage ? ((imageProgress[currentPage.order] ?? pageQualityState(currentPage)) === 'done' ? 'done' : 'working') : 'waiting'}
-                    />
-                    <AgentStatusRow label="画布方向" detail={dimensionLabel(batchConfig.orientation)} status="done" />
-                    <AgentStatusRow
-                      label="官网发布"
-                      detail={poster?.status === 'published' ? '已发布到官网入口' : '确认文案和图片后即可发布'}
-                      status={poster?.status === 'published' ? 'done' : 'waiting'}
-                    />
-                  </div>
-
-                  <div className="mt-4 rounded-xl p-3 text-[11px] text-white/58" style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.08)' }}>
-                    跳转地址：{poster?.ctaUrl || '/changelog'}
-                  </div>
-
-                  <textarea
-                    value={publishNote}
-                    onChange={(e) => setPublishNote(e.target.value)}
-                    rows={4}
-                    className="mt-3 w-full rounded-xl px-3 py-2 text-[12px] outline-none resize-none"
-                    style={fieldStyle}
-                    placeholder="发布备注"
+                  <RightEditPanel
+                    poster={poster!}
+                    page={currentPage!}
+                    pagesCount={pages.length}
+                    workspaceTab={workspaceTab}
+                    setWorkspaceTab={setWorkspaceTab}
+                    selectedTemplate={selectedTemplate}
+                    selectedSourceLabel={selectedSourceType?.label || '未设置'}
+                    imageProgress={imageProgress[currentPage.order]}
+                    orientation={batchConfig.orientation}
+                    devicePreview={devicePreview}
+                    publishing={publishing}
+                    publishNote={publishNote}
+                    setPublishNote={setPublishNote}
+                    updatePosterFields={updatePosterFields}
+                    updateCurrentPage={updateCurrentPage}
+                    openFilePicker={openFilePicker}
+                    regenerateImage={() => void regenerateImage()}
+                    handlePublish={handlePublish}
+                    openPreview={() => setPreviewOpen(true)}
                   />
-
-                  <div className="mt-3 grid grid-cols-2 gap-2">
-                    <button
-                      type="button"
-                      onClick={() => setPreviewOpen(true)}
-                      disabled={!poster || pages.length === 0}
-                      className="h-9 rounded-xl inline-flex items-center justify-center gap-1.5 text-[12px] text-white disabled:opacity-40"
-                      style={glassButtonStyle}
-                    >
-                      <Eye size={14} />
-                      预览海报
-                    </button>
-                    <button
-                      type="button"
-                      onClick={handlePublish}
-                      disabled={!poster || publishing || pages.length === 0}
-                      className="h-9 rounded-xl inline-flex items-center justify-center gap-1.5 text-[12px] font-semibold text-white disabled:opacity-40"
-                      style={{
-                        background: 'linear-gradient(90deg, rgba(90,108,255,0.8), rgba(179,82,255,0.8))',
-                        border: '1px solid rgba(160,119,255,0.34)',
-                      }}
-                    >
-                      {publishing ? <Loader2 size={14} className="animate-spin" /> : <Send size={14} />}
-                      发布到官网
-                    </button>
-                  </div>
-
-                  <div className="mt-4 rounded-xl p-3 text-[11px] text-white/58" style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.08)' }}>
-                    <div className="font-medium text-white/78">当前可用流程</div>
-                    <div className="mt-2 space-y-1">
-                      <div>1. 导入文案生成分页，或创建空白海报。</div>
-                      <div>2. 手动编辑标题、正文、CTA 和页面顺序。</div>
-                      <div>3. 上传图片 / 视频，支持粘贴截图。</div>
-                      <div>4. 预览后发布到官网。</div>
-                    </div>
-                  </div>
                 </section>
               </div>
             </div>
@@ -2028,26 +1956,264 @@ function PageListItem({
   );
 }
 
-function AgentStatusRow({
-  label,
-  detail,
-  status,
+function RightEditPanel({
+  poster,
+  page,
+  pagesCount,
+  workspaceTab,
+  setWorkspaceTab,
+  selectedTemplate,
+  selectedSourceLabel,
+  imageProgress,
+  orientation,
+  devicePreview,
+  publishing,
+  publishNote,
+  setPublishNote,
+  updatePosterFields,
+  updateCurrentPage,
+  openFilePicker,
+  regenerateImage,
+  handlePublish,
+  openPreview,
 }: {
-  label: string;
-  detail: string;
-  status: AgentStatus;
+  poster: WeeklyPoster;
+  page: WeeklyPosterPage;
+  pagesCount: number;
+  workspaceTab: WorkspaceTab;
+  setWorkspaceTab: (tab: WorkspaceTab) => void;
+  selectedTemplate: WeeklyPosterTemplateMeta;
+  selectedSourceLabel: string;
+  imageProgress?: PageProgress;
+  orientation: CanvasOrientation;
+  devicePreview: DevicePreview;
+  publishing: boolean;
+  publishNote: string;
+  setPublishNote: (value: string) => void;
+  updatePosterFields: (patch: Partial<WeeklyPoster>) => void;
+  updateCurrentPage: (patch: Partial<WeeklyPosterPage>) => void;
+  openFilePicker: (slot: MediaSlot) => void;
+  regenerateImage: () => void;
+  handlePublish: () => void;
+  openPreview: () => void;
 }) {
   return (
-    <div className="rounded-xl p-3 flex items-center justify-between gap-3" style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.08)' }}>
-      <div className="min-w-0">
-        <div className="text-[12px] font-medium text-white/80">{label}</div>
-        <div className="mt-1 text-[10.5px] text-white/42 truncate">{detail}</div>
+    <>
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <div className="text-[13px] font-semibold text-white">当前页编辑</div>
+          <div className="mt-1 text-[11px] text-white/42">
+            第 {page.order + 1} / {pagesCount} 页 · {dimensionLabel(orientation)}
+          </div>
+        </div>
+        <button
+          type="button"
+          onClick={regenerateImage}
+          className="h-8 rounded-lg px-2.5 inline-flex items-center justify-center gap-1 text-[11px] font-medium text-white/80 hover:bg-white/10"
+          style={{ border: '1px solid rgba(255,255,255,0.1)' }}
+        >
+          <Sparkles size={12} />
+          生图
+        </button>
       </div>
-      <span className="shrink-0 inline-flex items-center gap-1.5 text-[10.5px] font-medium" style={{ color: agentStatusColor(status) }}>
-        {status === 'working' ? <Loader2 size={12} className="animate-spin" /> : status === 'done' ? <Check size={12} /> : <span className="w-2 h-2 rounded-full" style={{ background: 'rgba(255,255,255,0.24)' }} />}
-        {agentStatusLabel(status)}
-      </span>
-    </div>
+
+      <div className="mt-4 grid grid-cols-3 gap-1 rounded-xl p-1" style={{ background: 'rgba(255,255,255,0.035)', border: '1px solid rgba(255,255,255,0.08)' }}>
+        {([
+          ['content', '文案', <MessageSquare size={13} />],
+          ['assets', '素材', <ImagePlus size={13} />],
+          ['layout', '版式', <SlidersHorizontal size={13} />],
+        ] as const).map(([value, label, icon]) => (
+          <button
+            key={value}
+            type="button"
+            onClick={() => setWorkspaceTab(value)}
+            className="h-9 rounded-lg inline-flex items-center justify-center gap-1 text-[11px] font-medium"
+            style={{
+              background: workspaceTab === value ? 'rgba(94,118,255,0.18)' : 'transparent',
+              color: workspaceTab === value ? '#fff' : 'rgba(255,255,255,0.58)',
+            }}
+          >
+            {icon}
+            {label}
+          </button>
+        ))}
+      </div>
+
+      <div className="mt-4 flex-1 min-h-0 overflow-y-auto pr-1">
+        {workspaceTab === 'content' && (
+          <div className="space-y-4">
+            <Field label="海报标题">
+              <input
+                value={poster.title ?? ''}
+                onChange={(e) => updatePosterFields({ title: e.target.value })}
+                className="w-full h-10 rounded-xl px-3 text-[13px] outline-none"
+                style={fieldStyle}
+              />
+            </Field>
+            <div className="grid grid-cols-2 gap-3">
+              <Field label="CTA 文案">
+                <input
+                  value={poster.ctaText ?? ''}
+                  onChange={(e) => updatePosterFields({ ctaText: e.target.value })}
+                  className="w-full h-10 rounded-xl px-3 text-[13px] outline-none"
+                  style={fieldStyle}
+                />
+              </Field>
+              <Field label="跳转地址">
+                <input
+                  value={poster.ctaUrl ?? ''}
+                  onChange={(e) => updatePosterFields({ ctaUrl: e.target.value })}
+                  className="w-full h-10 rounded-xl px-3 text-[13px] outline-none"
+                  style={fieldStyle}
+                />
+              </Field>
+            </div>
+            <Field label="当前页标题">
+              <input
+                value={page.title ?? ''}
+                onChange={(e) => updateCurrentPage({ title: e.target.value })}
+                className="w-full h-10 rounded-xl px-3 text-[13px] outline-none"
+                style={fieldStyle}
+              />
+            </Field>
+            <Field label="正文">
+              <textarea
+                value={page.body ?? ''}
+                onChange={(e) => updateCurrentPage({ body: e.target.value })}
+                rows={12}
+                className="w-full rounded-xl px-3 py-3 text-[13px] outline-none resize-y"
+                style={{ ...fieldStyle, lineHeight: 1.65 }}
+              />
+            </Field>
+            <Field label="Markdown 预览">
+              <div className="rounded-xl p-3 min-h-[140px]" style={{ background: 'rgba(0,0,0,0.24)', border: '1px solid rgba(255,255,255,0.08)' }}>
+                <MarkdownContent content={page.body || ' '} className="text-[13px] leading-relaxed" />
+              </div>
+            </Field>
+          </div>
+        )}
+
+        {workspaceTab === 'assets' && (
+          <div className="space-y-4">
+            <MediaSlotPanel
+              label="主图"
+              url={page.imageUrl}
+              accent={page.accentColor}
+              progress={imageProgress}
+              onUpload={() => openFilePicker('primary')}
+              onGenerate={regenerateImage}
+              onClear={() => updateCurrentPage({ imageUrl: null })}
+            />
+            <MediaSlotPanel
+              label="副图 / 视频"
+              hint="可选，适合补充截图、商品图或视频素材"
+              url={page.secondaryImageUrl}
+              accent={page.accentColor}
+              onUpload={() => openFilePicker('secondary')}
+              onClear={() => updateCurrentPage({ secondaryImageUrl: null })}
+            />
+            <Field label="配图提示词">
+              <textarea
+                value={page.imagePrompt ?? ''}
+                onChange={(e) => updateCurrentPage({ imagePrompt: e.target.value })}
+                rows={5}
+                className="w-full rounded-xl px-3 py-2 text-[12px] outline-none resize-none"
+                style={fieldStyle}
+              />
+            </Field>
+          </div>
+        )}
+
+        {workspaceTab === 'layout' && (
+          <div className="space-y-4">
+            <div className="grid grid-cols-[1fr_auto] gap-3">
+              <Field label="主题色">
+                <input
+                  value={page.accentColor ?? DEFAULT_ACCENT}
+                  onChange={(e) => updateCurrentPage({ accentColor: e.target.value })}
+                  className="w-full h-10 rounded-xl px-3 text-[13px] outline-none font-mono"
+                  style={fieldStyle}
+                />
+              </Field>
+              <label className="block">
+                <span className="block text-[11px] font-medium text-white/50 mb-1.5">色板</span>
+                <input
+                  type="color"
+                  value={normalizeColor(page.accentColor)}
+                  onChange={(e) => updateCurrentPage({ accentColor: e.target.value })}
+                  className="h-10 w-16 rounded-xl cursor-pointer"
+                  style={{ background: 'transparent', border: '1px solid rgba(255,255,255,0.12)' }}
+                />
+              </label>
+            </div>
+            <div className="rounded-2xl p-3" style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.08)' }}>
+              <div className="text-[12px] font-medium text-white/78">模板色板</div>
+              <div className="mt-3 flex flex-wrap gap-2">
+                {selectedTemplate.accentPalette.map((color) => (
+                  <button
+                    key={color}
+                    type="button"
+                    onClick={() => updateCurrentPage({ accentColor: color })}
+                    className="w-9 h-9 rounded-full"
+                    style={{
+                      background: color,
+                      border: normalizeColor(page.accentColor) === color ? '2px solid #fff' : '2px solid rgba(255,255,255,0.16)',
+                    }}
+                  />
+                ))}
+              </div>
+              <div className="mt-3 text-[11px] text-white/44">
+                {selectedTemplate.label} · {selectedSourceLabel}
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <MetricTile label="页面尺寸" value={dimensionLabel(orientation)} />
+              <MetricTile label="预览设备" value={devicePreview === 'desktop' ? '桌面' : '移动'} />
+              <MetricTile label="当前页码" value={`第 ${page.order + 1} 页`} />
+              <MetricTile label="项目状态" value={statusLabel(poster.status)} />
+            </div>
+          </div>
+        )}
+      </div>
+
+      <div className="mt-4 border-t pt-4" style={{ borderColor: 'rgba(255,255,255,0.08)' }}>
+        <div className="rounded-xl p-3 text-[11px] text-white/58" style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.08)' }}>
+          发布到官网首页海报位。其他渠道和高级交互先隐藏，避免误操作。
+        </div>
+        <textarea
+          value={publishNote}
+          onChange={(e) => setPublishNote(e.target.value)}
+          rows={2}
+          className="mt-3 w-full rounded-xl px-3 py-2 text-[12px] outline-none resize-none"
+          style={fieldStyle}
+          placeholder="发布备注"
+        />
+        <div className="mt-3 grid grid-cols-2 gap-2">
+          <button
+            type="button"
+            onClick={openPreview}
+            className="h-9 rounded-xl inline-flex items-center justify-center gap-1.5 text-[12px] text-white"
+            style={glassButtonStyle}
+          >
+            <Eye size={14} />
+            预览
+          </button>
+          <button
+            type="button"
+            onClick={handlePublish}
+            disabled={publishing}
+            className="h-9 rounded-xl inline-flex items-center justify-center gap-1.5 text-[12px] font-semibold text-white disabled:opacity-40"
+            style={{
+              background: 'linear-gradient(90deg, rgba(90,108,255,0.8), rgba(179,82,255,0.8))',
+              border: '1px solid rgba(160,119,255,0.34)',
+            }}
+          >
+            {publishing ? <Loader2 size={14} className="animate-spin" /> : <Send size={14} />}
+            发布官网
+          </button>
+        </div>
+      </div>
+    </>
   );
 }
 
@@ -2928,18 +3094,6 @@ function getCurrentWeekInfo(date = new Date()) {
   return {
     weekKey: `${target.getUTCFullYear()}-W${String(week).padStart(2, '0')}`,
   };
-}
-
-function agentStatusLabel(status: AgentStatus) {
-  if (status === 'done') return '已完成';
-  if (status === 'working') return '进行中';
-  return '等待中';
-}
-
-function agentStatusColor(status: AgentStatus) {
-  if (status === 'done') return '#89f0a5';
-  if (status === 'working') return '#89b6ff';
-  return 'rgba(255,255,255,0.42)';
 }
 
 function pageQualityState(page: WeeklyPosterPage): PageProgress {
