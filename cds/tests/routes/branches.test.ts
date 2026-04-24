@@ -138,6 +138,41 @@ describe('Branch Routes', () => {
       const res = await request(server, 'POST', '/api/branches', { branch: 'feature/test' });
       expect(res.status).toBe(409);
     });
+
+    it('returns 409 when a branch with the same git name exists under the legacy id after legacyFlag flipped', async () => {
+      // Regression for the "two main branches" phantom duplicate bug:
+      // simulate a project whose `legacyFlag` was flipped from true to
+      // false while an existing entry was still stored under the bare
+      // slug id. A subsequent POST must refuse to spawn a phantom
+      // twin — not succeed with a different id.
+      const now = new Date().toISOString();
+      stateService.addProject({
+        id: 'flipped',
+        slug: 'flipped',
+        name: 'Flipped',
+        kind: 'git',
+        createdAt: now,
+        updatedAt: now,
+        legacyFlag: false,
+      });
+      // Seed a pre-existing branch under the *legacy* id shape.
+      stateService.addBranch({
+        id: 'main',
+        projectId: 'flipped',
+        branch: 'main',
+        worktreePath: '/tmp/wt/flipped/main',
+        services: {},
+        status: 'idle',
+        createdAt: now,
+      });
+      const res = await request(server, 'POST', '/api/branches', {
+        branch: 'main',
+        projectId: 'flipped',
+      });
+      expect(res.status).toBe(409);
+      // Error must reference the *existing* id, not the new-formula one.
+      expect((res.body as any).error).toContain('"main"');
+    });
   });
 
   describe('GET /api/branches', () => {

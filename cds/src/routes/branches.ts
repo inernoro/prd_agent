@@ -992,8 +992,19 @@ export function createBranchRouter(deps: RouterDeps): Router {
       const id = targetProject.legacyFlag
         ? slugified
         : `${targetProject.slug}-${slugified}`;
-      if (stateService.getBranch(id)) {
-        res.status(409).json({ error: `分支 "${id}" 已存在` });
+      // Collide on the computed id (same-project same-name in the current
+      // formula) OR on the (projectId, branch) tuple — the latter catches
+      // projects whose `legacyFlag` flipped after an existing branch was
+      // stored under the previous formula, so we don't spawn a phantom
+      // duplicate (e.g. legacy `main` + new-format `prd-agent-main` for
+      // the same git branch). See .claude/rules/snapshot-fallback.md.
+      const existingById = stateService.getBranch(id);
+      const existingByTuple = existingById
+        ? undefined
+        : stateService.findBranchByProjectAndName(effectiveProjectId, branch);
+      if (existingById || existingByTuple) {
+        const collidingId = existingById?.id ?? existingByTuple!.id;
+        res.status(409).json({ error: `分支 "${collidingId}" 已存在` });
         return;
       }
 

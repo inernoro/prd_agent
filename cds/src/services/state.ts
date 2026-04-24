@@ -370,6 +370,24 @@ export class StateService {
     return Object.values(this.state.branches);
   }
 
+  /**
+   * Lookup by the (projectId, git branch name) tuple. Useful when the id
+   * formula depends on `project.legacyFlag` and that flag may have been
+   * toggled after the branch was first created — in which case the stored
+   * id won't match a freshly-computed one for the same logical branch.
+   * Callers should prefer this over `getBranch(id)` when guarding against
+   * duplicate creation or resolving a push/delete webhook to its existing
+   * entry.
+   */
+  findBranchByProjectAndName(
+    projectId: string,
+    branchName: string,
+  ): BranchEntry | undefined {
+    return Object.values(this.state.branches || {}).find(
+      (b) => (b.projectId || 'default') === projectId && b.branch === branchName,
+    );
+  }
+
   addBranch(entry: BranchEntry): void {
     if (this.state.branches[entry.id]) {
       throw new Error(`分支 "${entry.id}" 已存在`);
