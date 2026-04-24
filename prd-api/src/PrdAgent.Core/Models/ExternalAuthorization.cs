@@ -1,5 +1,3 @@
-using MongoDB.Bson;
-
 namespace PrdAgent.Core.Models;
 
 /// <summary>
@@ -38,7 +36,7 @@ public class ExternalAuthorization
     /// 展示用的元数据（非敏感）。
     /// 例如 TAPD 的工作空间 ID 列表、语雀的 namespace、GitHub 的 login 等。
     /// </summary>
-    public BsonDocument Metadata { get; set; } = new();
+    public Dictionary<string, object> Metadata { get; set; } = new();
 
     /// <summary>状态：active / expired / revoked</summary>
     public string Status { get; set; } = "active";

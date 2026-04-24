@@ -165,7 +165,7 @@ public class ExternalAuthorizationsController : ControllerBase
         type = a.Type,
         name = a.Name,
         status = a.Status,
-        metadata = a.Metadata.ToDictionary(),
+        metadata = a.Metadata,
         lastUsedAt = a.LastUsedAt,
         lastValidatedAt = a.LastValidatedAt,
         expiresAt = a.ExpiresAt,

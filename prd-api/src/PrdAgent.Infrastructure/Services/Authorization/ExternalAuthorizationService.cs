@@ -1,6 +1,5 @@
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
-using MongoDB.Bson;
 using MongoDB.Driver;
 using PrdAgent.Core.Helpers;
 using PrdAgent.Core.Interfaces;
@@ -74,7 +73,7 @@ public class ExternalAuthorizationService : IExternalAuthorizationService
             Type = type,
             Name = name,
             CredentialsEncrypted = EncryptCredentials(credentials),
-            Metadata = ToBsonDocument(validation.Metadata),
+            Metadata = validation.Metadata ?? new Dictionary<string, object>(),
             Status = validation.Ok ? "active" : "expired",
             LastValidatedAt = DateTime.UtcNow,
             ExpiresAt = validation.ExpiresAt,
@@ -113,7 +112,7 @@ public class ExternalAuthorizationService : IExternalAuthorizationService
             var validation = await handler.ValidateAsync(credentials, ct);
 
             updates.Add(Builders<ExternalAuthorization>.Update.Set(a => a.CredentialsEncrypted, EncryptCredentials(credentials)));
-            updates.Add(Builders<ExternalAuthorization>.Update.Set(a => a.Metadata, ToBsonDocument(validation.Metadata)));
+            updates.Add(Builders<ExternalAuthorization>.Update.Set(a => a.Metadata, validation.Metadata ?? new Dictionary<string, object>()));
             updates.Add(Builders<ExternalAuthorization>.Update.Set(a => a.Status, validation.Ok ? "active" : "expired"));
             updates.Add(Builders<ExternalAuthorization>.Update.Set(a => a.LastValidatedAt, DateTime.UtcNow));
             updates.Add(Builders<ExternalAuthorization>.Update.Set(a => a.ExpiresAt, validation.ExpiresAt));
@@ -206,16 +205,5 @@ public class ExternalAuthorizationService : IExternalAuthorizationService
         if (string.IsNullOrEmpty(encrypted)) return new();
         var json = ApiKeyCrypto.Decrypt(encrypted, EncryptionKey);
         return JsonSerializer.Deserialize<Dictionary<string, string>>(json) ?? new();
-    }
-
-    private static BsonDocument ToBsonDocument(Dictionary<string, object>? dict)
-    {
-        if (dict == null) return new BsonDocument();
-        var bson = new BsonDocument();
-        foreach (var kv in dict)
-        {
-            bson[kv.Key] = BsonValue.Create(kv.Value);
-        }
-        return bson;
     }
 }
