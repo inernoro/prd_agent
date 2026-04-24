@@ -7,6 +7,7 @@ using System.Text.Json.Serialization;
 using System.Security.Cryptography;
 using MongoDB.Driver;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.AspNetCore.DataProtection;
 using Microsoft.IdentityModel.Tokens;
 using PrdAgent.Api.Services;
 using PrdAgent.Api.Json;
