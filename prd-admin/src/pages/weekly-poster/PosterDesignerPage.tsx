@@ -727,7 +727,7 @@ export default function PosterDesignerPage({ embedded = false }: PosterDesignerP
               </button>
             </section>
 
-            <div className="min-h-0">
+            <div className="contents">
               {poster && currentPage ? (
                 <section className="min-h-0 h-full rounded-2xl p-4 flex flex-col" style={{ ...glassCardStyle, animation: 'posterDesignerIn 180ms ease-out both' }}>
                   <div className="flex flex-wrap items-center justify-between gap-3">
