@@ -51,8 +51,36 @@ export function createLegacyCleanupRouter(deps: LegacyCleanupRouterDeps): Router
     const customEnvScopeExists = Boolean(rawEnv[LEGACY_PROJECT_ID] && Object.keys(rawEnv[LEGACY_PROJECT_ID]).length > 0);
 
     const hasResources = branches.length > 0 || profiles.length > 0 || infra.length > 0;
+    // Two distinct user-facing states:
+    //
+    //   needsMigration — the default project still owns real data
+    //     (project record itself, branches, profiles, infra). Requires
+    //     the rename flow so entries don't get orphaned.
+    //
+    //   residualOnly — rename already happened, but empty fixtures
+    //     (an empty worktreeBase/default directory, possibly an empty
+    //     customEnv scope) are left behind. Safe to delete with no
+    //     migration needed. Historically the banner showed the same
+    //     "迁移" copy for both states, which confused users post-
+    //     rename ("我已经迁移了, 怎么还需要迁移呢?").
+    const needsMigration = hasLegacyProject || hasResources;
+    const residualOnly = !needsMigration && (legacyWorktreeExists || customEnvScopeExists);
+
+    let recommendation: string;
+    if (needsMigration) {
+      recommendation = '建议点「迁移 →」为 default 项目改个真实名字。';
+    } else if (residualOnly) {
+      recommendation = 'default 已迁移,只剩残留目录/环境变量。点「清理残留」即可彻底消除横幅。';
+    } else {
+      recommendation = '无需操作,default 项目已空。';
+    }
+
     res.json({
-      legacyInUse: hasLegacyProject || hasResources || legacyWorktreeExists,
+      // `legacyInUse` retained for back-compat; the banner-visibility
+      // gate is now this OR residualOnly.
+      legacyInUse: needsMigration || residualOnly,
+      needsMigration,
+      residualOnly,
       counts: {
         branches: branches.length,
         buildProfiles: profiles.length,
@@ -61,9 +89,82 @@ export function createLegacyCleanupRouter(deps: LegacyCleanupRouterDeps): Router
         legacyWorktreeExists,
         customEnvScopeExists,
       },
-      recommendation: hasResources
-        ? '建议点「迁移 →」为 default 项目改个真实名字。'
-        : '无需操作，default 项目已空。',
+      recommendation,
+    });
+  });
+
+  router.post('/legacy-cleanup/cleanup-residual', (_req, res) => {
+    // Safe-by-construction cleanup for the residualOnly state: refuses
+    // when any real data (project record, branches, profiles, infra,
+    // non-empty env scope) is still attributed to `default`. Only
+    // removes truly stale filesystem + state fixtures left over after
+    // a successful rename-default migration.
+    const allBranches = stateService.getAllBranches();
+    const hasLegacyProject = (stateService.getProjects?.() || []).some(p => p.id === LEGACY_PROJECT_ID);
+    const branchesOnLegacy = allBranches.filter(b => (b.projectId || LEGACY_PROJECT_ID) === LEGACY_PROJECT_ID);
+    const profilesOnLegacy = stateService.getBuildProfiles().filter(p => (p.projectId || LEGACY_PROJECT_ID) === LEGACY_PROJECT_ID);
+    const infraOnLegacy = stateService.getInfraServices().filter(s => (s.projectId || LEGACY_PROJECT_ID) === LEGACY_PROJECT_ID);
+
+    if (hasLegacyProject || branchesOnLegacy.length > 0 || profilesOnLegacy.length > 0 || infraOnLegacy.length > 0) {
+      res.status(409).json({
+        error: 'not_residual',
+        message: 'default 项目仍有真实数据,请先走「迁移 →」,不要使用本接口。',
+        counts: {
+          hasLegacyProject,
+          branches: branchesOnLegacy.length,
+          buildProfiles: profilesOnLegacy.length,
+          infraServices: infraOnLegacy.length,
+        },
+      });
+      return;
+    }
+
+    const actions: string[] = [];
+
+    // 1) Filesystem: remove the empty `<base>/default/` directory. If
+    // it somehow isn't empty (future bug), bail out — do NOT recurse
+    // through user data silently.
+    const legacyDir = path.posix.join(worktreeBase, LEGACY_PROJECT_ID);
+    if (fs.existsSync(legacyDir)) {
+      try {
+        const entries = fs.readdirSync(legacyDir);
+        if (entries.length === 0) {
+          fs.rmdirSync(legacyDir);
+          actions.push(`removed empty dir ${legacyDir}`);
+        } else {
+          res.status(409).json({
+            error: 'dir_not_empty',
+            message: `残留目录 ${legacyDir} 非空 (${entries.length} 项),拒绝自动删除。请手动检查。`,
+            entries: entries.slice(0, 20),
+          });
+          return;
+        }
+      } catch (err) {
+        res.status(500).json({
+          error: 'rmdir_failed',
+          message: `删除 ${legacyDir} 失败: ${(err as Error).message}`,
+        });
+        return;
+      }
+    }
+
+    // 2) State: drop any lingering `default` customEnv scope. The
+    // rename-default flow already migrates its contents; anything left
+    // here is empty placeholder noise.
+    const rawEnv = stateService.getCustomEnvRaw?.() || {};
+    if (rawEnv[LEGACY_PROJECT_ID]) {
+      stateService.dropCustomEnvScope?.(LEGACY_PROJECT_ID);
+      actions.push(`dropped customEnv scope "${LEGACY_PROJECT_ID}"`);
+    }
+
+    stateService.save();
+
+    res.json({
+      cleaned: true,
+      actions,
+      message: actions.length > 0
+        ? `已清理 ${actions.length} 项残留。`
+        : '已经是干净状态,无需清理。',
     });
   });
 
