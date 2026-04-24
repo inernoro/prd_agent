@@ -340,6 +340,7 @@ export const ReportSectionType = {
 export const WeeklyReportCreationMode = {
   Manual: 'manual',
   AiDraft: 'ai-draft',
+  ImportMarkdown: 'import-markdown',
 } as const;
 
 // ========== Contract Types ==========
@@ -478,6 +479,32 @@ export type CreateWeeklyReportContract = (input: {
   weekNumber?: number;
   creationMode?: (typeof WeeklyReportCreationMode)[keyof typeof WeeklyReportCreationMode];
 }) => Promise<ApiResponse<{ report: WeeklyReport; aiGenerationError?: string }>>;
+
+/**
+ * 从 Markdown 文件导入周报。
+ * - 首次调用不带 confirmOverwrite；若本周已有 draft，后端返回 needsOverwriteConfirmation=true + report:null
+ * - 前端弹确认后带 confirmOverwrite=true 重试覆盖
+ * - submitted+ 状态会被后端拒绝（400）
+ */
+export type ImportReportFromMarkdownContract = (input: {
+  teamId: string;
+  templateId: string;
+  weekYear?: number;
+  weekNumber?: number;
+  markdownContent: string;
+  confirmOverwrite?: boolean;
+}) => Promise<
+  ApiResponse<{
+    /** 导入成功时返回完整周报；需要覆盖确认时为 null */
+    report: WeeklyReport | null;
+    /** LLM 失败降级到规则兜底时的原因 */
+    importError?: string;
+    /** 是否走了规则兜底（前端据此提示用户检查章节） */
+    usedRuleFallback: boolean;
+    /** 本周已有 draft，需要用户确认是否覆盖 */
+    needsOverwriteConfirmation: boolean;
+  }>
+>;
 
 export type UpdateWeeklyReportContract = (input: {
   id: string;

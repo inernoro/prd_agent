@@ -592,6 +592,7 @@ export const api = {
     },
     reports: {
       list: () => '/api/report-agent/reports',
+      importMarkdown: () => '/api/report-agent/reports/import-markdown',
       byId: (id: string) => `/api/report-agent/reports/${id}`,
       richTextImages: (id: string) => `/api/report-agent/reports/${id}/rich-text/images`,
       submit: (id: string) => `/api/report-agent/reports/${id}/submit`,

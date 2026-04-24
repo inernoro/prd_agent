@@ -596,6 +596,7 @@ import type {
   ListWeeklyReportsContract,
   GetWeeklyReportContract,
   CreateWeeklyReportContract,
+  ImportReportFromMarkdownContract,
   UpdateWeeklyReportContract,
   UploadReportRichTextImageContract,
   UploadDailyLogImageContract,
@@ -687,6 +688,7 @@ import {
   listWeeklyReportsReal,
   getWeeklyReportReal,
   createWeeklyReportReal,
+  importReportFromMarkdownReal,
   updateWeeklyReportReal,
   uploadReportRichTextImageReal,
   uploadDailyLogImageReal,
@@ -1126,6 +1128,7 @@ export const clearMyDefaultTemplate: ClearMyDefaultTemplateContract = withAuth(c
 export const listWeeklyReports: ListWeeklyReportsContract = withAuth(listWeeklyReportsReal);
 export const getWeeklyReport: GetWeeklyReportContract = withAuth(getWeeklyReportReal);
 export const createWeeklyReport: CreateWeeklyReportContract = withAuth(createWeeklyReportReal);
+export const importReportFromMarkdown: ImportReportFromMarkdownContract = withAuth(importReportFromMarkdownReal);
 export const updateWeeklyReport: UpdateWeeklyReportContract = withAuth(updateWeeklyReportReal);
 export const uploadReportRichTextImage: UploadReportRichTextImageContract = withAuth(uploadReportRichTextImageReal);
 export const uploadDailyLogImage: UploadDailyLogImageContract = withAuth(uploadDailyLogImageReal);

@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef, type ClipboardEvent } from 'react';
-import { ArrowLeft, Save, Send, Plus, Trash2, Sparkles, FileText, Check, AlertCircle } from 'lucide-react';
+import { ArrowLeft, Save, Send, Plus, Trash2, Sparkles, FileText, Check, AlertCircle, Upload } from 'lucide-react';
 import { MapSpinner } from '@/components/ui/VideoLoader';
 import { GlassCard } from '@/components/design/GlassCard';
 import { Button } from '@/components/design/Button';
@@ -24,6 +24,7 @@ import {
 import type { WeeklyReport, ReportAiSource, PersonalSource } from '@/services/contracts/reportAgent';
 import { WeeklyReportStatus, ReportInputType, WeeklyReportCreationMode } from '@/services/contracts/reportAgent';
 import { RichTextMarkdownContent } from './RichTextMarkdownContent';
+import { MarkdownImportModal } from './MarkdownImportModal';
 import { useDataTheme, type DataTheme } from '../hooks/useDataTheme';
 
 // 节号配色:暗色模式保留多彩,浅色下压成克制的 editorial 单色 + 左侧色条 hint
@@ -230,6 +231,7 @@ export function ReportEditor({ reportId, weekYear, weekNumber, onClose }: Props)
   const [myDefaultTemplateId, setMyDefaultTemplateId] = useState<string | null>(null);
   const [teamDefaultTemplateId, setTeamDefaultTemplateId] = useState<string | null>(null);
   const [isNew, setIsNew] = useState(!reportId);
+  const [showMarkdownImport, setShowMarkdownImport] = useState(false);
 
   // 浅色 / 暗色模式感知,供下文所有 inline style 使用
   const dataTheme = useDataTheme();
@@ -774,9 +776,57 @@ export function ReportEditor({ reportId, weekYear, weekNumber, onClose }: Props)
                   )}
                 </Button>
               </div>
+              {/* 次级入口：从 Markdown 文件导入 —— 不分散主推的 AI 草稿 */}
+              <button
+                type="button"
+                onClick={() => {
+                  if (!selectedTeamId || !selectedTemplateId) {
+                    toast.error('请先选择团队和模板');
+                    return;
+                  }
+                  setShowMarkdownImport(true);
+                }}
+                disabled={!!createModeLoading || !selectedTeamId || !selectedTemplateId}
+                className="text-[12px] mt-2 inline-flex items-center gap-1.5 self-center opacity-80 hover:opacity-100 disabled:opacity-40 disabled:cursor-not-allowed transition"
+                style={{ color: 'var(--text-secondary)' }}
+              >
+                <Upload size={12} />
+                或 从 Markdown 文件导入
+              </button>
             </div>
           </GlassCard>
         </div>
+
+        {/* Markdown 导入弹窗 */}
+        {showMarkdownImport && selectedTeamId && selectedTemplateId && (() => {
+          const team = teams.find((t) => t.id === selectedTeamId);
+          const template = templates.find((t) => t.id === selectedTemplateId);
+          if (!team || !template) return null;
+          return (
+            <MarkdownImportModal
+              teamId={team.id}
+              teamName={team.name}
+              templateId={template.id}
+              templateName={template.name}
+              template={template}
+              weekYear={weekYear}
+              weekNumber={weekNumber}
+              onImported={(imported) => {
+                setReport(imported);
+                setSections(
+                  imported.sections.map((s) => ({
+                    items: s.items.length > 0
+                      ? s.items.map(toItemDraft)
+                      : [{ content: '', source: 'manual' }],
+                  }))
+                );
+                setIsNew(false);
+                addReportToList(imported);
+              }}
+              onClose={() => setShowMarkdownImport(false)}
+            />
+          );
+        })()}
       </div>
     );
   }
