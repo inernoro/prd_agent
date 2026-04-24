@@ -361,6 +361,11 @@ export function createBranchRouter(deps: RouterDeps): Router {
     const payload = {
       branchId: entry.id,
       branchName: entry.branch,
+      // 2026-04-24: thread the master's project attribution so the
+      // executor stamps it on its local entry instead of falling back
+      // to a hardcoded 'default'. Older executors that ignore this
+      // field still resolve via resolveProjectForAutoBuild on their side.
+      projectId: entry.projectId || 'default',
       profiles,
       env,
     };
@@ -5261,14 +5266,25 @@ cdscli project list --human
         send('worktree', 'running', `正在为 ${mainBranch} 创建工作树...`);
         // Ensure worktreeBase directory exists (first-time setup).
         // P4 Part 18 (G1.2): the initialize flow bootstraps the legacy
-        // default project's main branch, so it always uses config.repoRoot.
-        // FU-04: bootstrap lives under the default project bucket.
-        const worktreePath = WorktreeService.worktreePathFor(config.worktreeBase, 'default', mainSlug);
+        // default project's main branch.
+        // FU-04 follow-up (2026-04-24): resolve the actual owner
+        // project rather than hardcoding 'default'. On a fresh install
+        // this is the legacy default project (legacyFlag=true, id='default')
+        // — same outcome as before. Post-rename this picks up the new
+        // id (e.g. 'prd-agent') instead of orphaning the bootstrap branch.
+        const owner = stateService.resolveProjectForAutoBuild(config.repoRoot);
+        if (!owner) {
+          send('worktree', 'error', '无法定位项目所属（state 中无可识别的默认项目）');
+          res.end();
+          return;
+        }
+        const worktreePath = WorktreeService.worktreePathFor(config.worktreeBase, owner.id, mainSlug);
         await shell.exec(`mkdir -p "${path.posix.dirname(worktreePath)}"`);
         await worktreeService.create(config.repoRoot, mainBranch, worktreePath);
 
         entry = {
           id: mainSlug,
+          projectId: owner.id,
           branch: mainBranch,
           worktreePath,
           services: {},

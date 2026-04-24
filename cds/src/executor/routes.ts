@@ -52,9 +52,15 @@ export function createExecutorRouter(deps: ExecutorRouterDeps): Router {
 
   // ── POST /exec/deploy — deploy a branch (create worktree + build + run) ──
   router.post('/deploy', async (req, res) => {
-    const { branchId, branchName, profiles: profilesData, env: envOverrides } = req.body as {
+    const { branchId, branchName, projectId, profiles: profilesData, env: envOverrides } = req.body as {
       branchId: string;
       branchName: string;
+      // P4 follow-up (2026-04-24): master now passes projectId so the
+      // executor stamps the right scope onto its local entry. Older
+      // masters that omit this field still work via the
+      // `resolveProjectForAutoBuild` fallback below — same shape as the
+      // subdomain auto-build path in index.ts.
+      projectId?: string;
       profiles: Array<{ id: string; name: string; dockerImage: string; workDir: string; command: string; containerPort: number; env?: Record<string, string>; cacheMounts?: Array<{ hostPath: string; containerPath: string }>; dependsOn?: string[]; readinessProbe?: { path?: string; intervalSeconds?: number; timeoutSeconds?: number }; pathPrefixes?: string[]; containerWorkDir?: string; buildTimeout?: number }>;
       env?: Record<string, string>;
     };
@@ -77,18 +83,40 @@ export function createExecutorRouter(deps: ExecutorRouterDeps): Router {
       // config.repoRoot. A remote executor is a separately-hosted
       // node pinned to a single bind-mounted repo; per-project clone
       // lives on the master and is not replicated to executors yet.
+      //
+      // FU-04 follow-up (2026-04-24): the worktree directory + entry
+      // projectId must reflect the *real* project, not a hardcoded
+      // 'default'. Otherwise renaming the legacy project on master
+      // turns every executor-created entry into an orphan (project id
+      // points at nothing → settings page 404 + "遗留 default" banner
+      // re-appears). Resolution order:
+      //   1. projectId in request body (master >= 2026-04-24)
+      //   2. resolveProjectForAutoBuild against config.repoRoot
+      //      (legacyFlag → repoPath match → no-repoPath → only project)
+      // If none unambiguously matches, refuse rather than orphan.
+      let resolvedProjectId = projectId;
+      if (!resolvedProjectId) {
+        const owner = stateService.resolveProjectForAutoBuild(config.repoRoot);
+        if (!owner) {
+          sendEvent('error', {
+            message: `无法为分支 ${branchName} 定位所属项目（master 未传 projectId 且本地项目状态无法唯一识别）`,
+          });
+          res.end();
+          return;
+        }
+        resolvedProjectId = owner.id;
+      }
+
       let entry = stateService.getBranch(branchId);
       if (!entry) {
         sendEvent('step', { step: 'worktree', status: 'running', title: `正在为 ${branchName} 创建工作树...` });
-        // FU-04: executor routes are pinned to the single
-        // config.repoRoot, so every worktree belongs to the 'default'
-        // project bucket in the nested layout.
-        await shell.exec(`mkdir -p "${config.worktreeBase}/default"`);
-        const worktreePath = WorktreeService.worktreePathFor(config.worktreeBase, 'default', branchId);
+        await shell.exec(`mkdir -p "${config.worktreeBase}/${resolvedProjectId}"`);
+        const worktreePath = WorktreeService.worktreePathFor(config.worktreeBase, resolvedProjectId, branchId);
         await worktreeService.create(config.repoRoot, branchName, worktreePath);
 
         entry = {
           id: branchId,
+          projectId: resolvedProjectId,
           branch: branchName,
           worktreePath,
           services: {},

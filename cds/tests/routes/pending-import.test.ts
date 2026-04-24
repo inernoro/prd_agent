@@ -251,7 +251,14 @@ describe('Pending-import router', () => {
       expect(profile?.projectId).toBe(projectId);
 
       const infra = stateService.getInfraServicesForProject(projectId);
-      expect(infra.find((s) => s.id === 'mongodb')).toBeDefined();
+      const mongo = infra.find((s) => s.id === 'mongodb');
+      expect(mongo).toBeDefined();
+      // Regression for the P1 isolation gap: importing infra into a
+      // non-legacy project must scope the container name with the
+      // project's slug (matches the manual create path at
+      // branches.ts:4300-4302). Otherwise two projects each importing
+      // "mongodb" both get `cds-infra-mongodb` and collide on docker run.
+      expect(mongo!.containerName).toBe('cds-infra-sample-mongodb');
 
       // 2026-04-18: pending-import writes into the target project's
       // scope so env keys don't leak cross-project. Passing projectId
@@ -263,6 +270,25 @@ describe('Pending-import router', () => {
       const updated = stateService.getPendingImport(importId)!;
       expect(updated.status).toBe('approved');
       expect(updated.decidedAt).toBeDefined();
+    });
+
+    it('imported infra into the legacy default project keeps the bare cds-infra-<id> name', async () => {
+      // Legacy projects (legacyFlag=true) keep the historical bare
+      // container name for back-compat with already-running containers.
+      // This mirrors branches.ts:4300-4302 which uses the same
+      // legacyFlag-conditioned formula.
+      const create = await request(server, 'POST', `/api/projects/default/pending-import`, {
+        agentName: 'A', composeYaml: SAMPLE_YAML,
+      });
+      // The default project from migration is legacy; clone status is
+      // absent so the not-ready guard doesn't fire.
+      const importId = create.body.importId;
+      const res = await request(server, 'POST', `/api/pending-imports/${importId}/approve`);
+      expect(res.status).toBe(200);
+      const infra = stateService.getInfraServicesForProject('default');
+      const mongo = infra.find((s) => s.id === 'mongodb');
+      expect(mongo).toBeDefined();
+      expect(mongo!.containerName).toBe('cds-infra-mongodb');
     });
 
     it('refuses to approve twice', async () => {
