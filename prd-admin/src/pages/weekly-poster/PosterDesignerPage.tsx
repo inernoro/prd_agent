@@ -1248,33 +1248,43 @@ export default function PosterDesignerPage({ embedded = false }: PosterDesignerP
                   )}
                 </section>
 
-                <section
-                  ref={publishPanelRef}
-                  className="min-h-0 rounded-2xl p-4 flex flex-col"
-                  style={glassCardStyle}
-                >
-                  <RightEditPanel
-                    poster={poster!}
-                    page={currentPage!}
-                    pagesCount={pages.length}
-                    workspaceTab={workspaceTab}
-                    setWorkspaceTab={setWorkspaceTab}
-                    selectedTemplate={selectedTemplate}
-                    selectedSourceLabel={selectedSourceType?.label || '未设置'}
-                    imageProgress={imageProgress[currentPage.order]}
-                    orientation={batchConfig.orientation}
-                    devicePreview={devicePreview}
-                    publishing={publishing}
-                    publishNote={publishNote}
-                    setPublishNote={setPublishNote}
-                    updatePosterFields={updatePosterFields}
-                    updateCurrentPage={updateCurrentPage}
-                    openFilePicker={openFilePicker}
-                    regenerateImage={() => void regenerateImage()}
-                    handlePublish={handlePublish}
-                    openPreview={() => setPreviewOpen(true)}
-                  />
-                </section>
+                {poster && currentPage ? (
+                  <section
+                    ref={publishPanelRef}
+                    className="min-h-0 rounded-2xl p-4 flex flex-col"
+                    style={glassCardStyle}
+                  >
+                    <RightEditPanel
+                      poster={poster}
+                      page={currentPage}
+                      pagesCount={pages.length}
+                      workspaceTab={workspaceTab}
+                      setWorkspaceTab={setWorkspaceTab}
+                      selectedTemplate={selectedTemplate}
+                      selectedSourceLabel={selectedSourceType?.label || '未设置'}
+                      imageProgress={imageProgress[currentPage.order]}
+                      orientation={batchConfig.orientation}
+                      devicePreview={devicePreview}
+                      publishing={publishing}
+                      publishNote={publishNote}
+                      setPublishNote={setPublishNote}
+                      updatePosterFields={updatePosterFields}
+                      updateCurrentPage={updateCurrentPage}
+                      openFilePicker={openFilePicker}
+                      regenerateImage={() => void regenerateImage()}
+                      handlePublish={handlePublish}
+                      openPreview={() => setPreviewOpen(true)}
+                    />
+                  </section>
+                ) : (
+                  <section
+                    ref={publishPanelRef}
+                    className="min-h-0 rounded-2xl p-4 flex items-center justify-center text-center text-[12px] text-white/38"
+                    style={glassCardStyle}
+                  >
+                    选择或创建海报后，这里会显示编辑与发布操作。
+                  </section>
+                )}
               </div>
             </div>
 
