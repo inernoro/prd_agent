@@ -1021,6 +1021,16 @@ builder.Services.AddScoped<IOpenPlatformService>(sp =>
 builder.Services.AddScoped<PrdAgent.Core.Interfaces.IAgentApiKeyService,
     PrdAgent.Infrastructure.Services.AgentApiKeyService>();
 
+// 注册外部授权中心（TAPD / 语雀 / GitHub 凭证聚合，见 doc/design.external-authorization.md）
+builder.Services.AddScoped<PrdAgent.Core.Interfaces.IExternalAuthorizationService,
+    PrdAgent.Infrastructure.Services.Authorization.ExternalAuthorizationService>();
+builder.Services.AddScoped<PrdAgent.Core.Interfaces.IAuthTypeHandler,
+    PrdAgent.Infrastructure.Services.Authorization.TapdAuthHandler>();
+builder.Services.AddScoped<PrdAgent.Core.Interfaces.IAuthTypeHandler,
+    PrdAgent.Infrastructure.Services.Authorization.YuqueAuthHandler>();
+builder.Services.AddScoped<PrdAgent.Core.Interfaces.IAuthTypeHandler,
+    PrdAgent.Infrastructure.Services.Authorization.GitHubAuthHandler>();
+
 // 注册 Webhook 通知服务
 builder.Services.AddHttpClient("WebhookClient");
 builder.Services.AddHttpClient("GitHubApi", client =>

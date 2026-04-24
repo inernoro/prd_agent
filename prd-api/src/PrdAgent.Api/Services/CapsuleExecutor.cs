@@ -1007,6 +1007,25 @@ public static class CapsuleExecutor
         var dataType = GetConfigString(node, "data_type") ?? GetConfigString(node, "dataType") ?? "bugs";
         var dateRange = GetConfigString(node, "dateRange") ?? GetConfigString(node, "date_range") ?? "";
 
+        // ── stored 模式：从外部授权中心解析凭证 ──
+        if (authMode == "stored")
+        {
+            var authId = GetConfigString(node, "authId") ?? throw new InvalidOperationException("authMode=stored 需要配置 authId");
+            variables.TryGetValue("__triggeredBy", out var userId);
+            if (string.IsNullOrWhiteSpace(userId))
+                throw new InvalidOperationException("无法确定工作流发起人，无法解析授权凭证");
+
+            var authService = sp.GetRequiredService<PrdAgent.Core.Interfaces.IExternalAuthorizationService>();
+            var credentials = await authService.ResolveCredentialsAsync(userId, authId, "tapd-collector", CancellationToken.None)
+                ?? throw new InvalidOperationException($"授权 {authId} 不存在或已撤销");
+
+            // 把解析出的凭证注入到 node.Config 里，后续逻辑按 cookie 模式处理
+            if (credentials.TryGetValue("cookie", out var cookie))
+                SetConfigValue(node, "cookie", cookie);
+            // workspaceId 仍以用户在模板表单里填的为准（元数据里的只是参考）
+            authMode = "cookie";
+        }
+
         if (string.IsNullOrWhiteSpace(workspaceId))
             throw new InvalidOperationException("TAPD 工作空间 ID 未配置");
 
@@ -4300,6 +4319,14 @@ function safeChart(canvasId, config) {
             return string.IsNullOrWhiteSpace(s) ? null : s;
         }
         return null;
+    }
+
+    /// <summary>
+    /// 运行时往节点 config 里回填字段（用于 stored authMode 解析出的凭证注入）。
+    /// </summary>
+    public static void SetConfigValue(WorkflowNode node, string key, object value)
+    {
+        node.Config[key] = value;
     }
 
     public static string ReplaceVariables(string template, Dictionary<string, string> variables)
