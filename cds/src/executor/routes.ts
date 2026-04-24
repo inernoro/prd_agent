@@ -33,10 +33,20 @@ export function createExecutorRouter(deps: ExecutorRouterDeps): Router {
     next();
   });
 
-  function getMergedEnv(): Record<string, string> {
+  // FU-04 isolation sweep (2026-04-24): customEnv MUST be scoped by
+  // the deploying project. Calling getCustomEnv() with no scope only
+  // returns the _global baseline and silently drops every per-project
+  // override — so a deploy for project B would never see B's secrets
+  // unless master happened to ship them in envOverrides. Master does
+  // ship the merged env today so this isn't actively exploitable, but
+  // any future code path that calls getMergedEnv without overrides
+  // would skip the project layer. Cleanly threading projectId here
+  // makes the executor self-sufficient and matches master's
+  // branches.ts:357 behaviour.
+  function getMergedEnv(projectId: string): Record<string, string> {
     const cdsEnv = stateService.getCdsEnvVars();
     const mirrorEnv = stateService.getMirrorEnvVars();
-    const customEnv = stateService.getCustomEnv();
+    const customEnv = stateService.getCustomEnv(projectId);
     return { ...cdsEnv, ...mirrorEnv, ...customEnv };
   }
 
@@ -151,7 +161,7 @@ export function createExecutorRouter(deps: ExecutorRouterDeps): Router {
       stateService.save();
 
       // Build and run each profile
-      const mergedEnv = { ...getMergedEnv(), ...(envOverrides || {}) };
+      const mergedEnv = { ...getMergedEnv(resolvedProjectId), ...(envOverrides || {}) };
 
       for (const profile of profilesData) {
         sendEvent('step', { step: `build-${profile.id}`, status: 'running', title: `正在构建 ${profile.name}...` });

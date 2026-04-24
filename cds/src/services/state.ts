@@ -553,6 +553,11 @@ export class StateService {
     return this.state.routingRules;
   }
 
+  /** Look up a single routing rule by id. Used by mutate-routes for project-scope auth. */
+  getRoutingRule(id: string): RoutingRule | undefined {
+    return this.state.routingRules.find(r => r.id === id);
+  }
+
   addRoutingRule(rule: RoutingRule): void {
     // P4 Part 3a: default projectId for the legacy path.
     if (!rule.projectId) rule.projectId = 'default';

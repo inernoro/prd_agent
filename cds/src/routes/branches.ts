@@ -2863,6 +2863,21 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
   router.put('/routing-rules/:id', (req, res) => {
     try {
+      // Project-key scope check (FU-04 isolation sweep): a project-
+      // scoped Agent Key may only mutate routing rules in its own
+      // project. Bootstrap key / cookie auth are unaffected.
+      const existing = stateService.getRoutingRule(req.params.id);
+      if (!existing) { res.status(404).json({ error: `路由规则 "${req.params.id}" 不存在` }); return; }
+      const m = assertProjectAccess(req as any, existing.projectId || 'default');
+      if (m) { res.status(m.status).json(m.body); return; }
+      // Refuse cross-project re-attribution via the body — auth check
+      // above already verified the *current* owner; silently moving the
+      // rule to another project would bypass that.
+      if (req.body && typeof req.body === 'object' && 'projectId' in req.body
+          && req.body.projectId !== (existing.projectId || 'default')) {
+        res.status(403).json({ error: 'projectId 不可通过 PUT 修改' });
+        return;
+      }
       stateService.updateRoutingRule(req.params.id, req.body);
       stateService.save();
       res.json({ message: '已更新' });
@@ -2873,6 +2888,10 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
   router.delete('/routing-rules/:id', (req, res) => {
     try {
+      const existing = stateService.getRoutingRule(req.params.id);
+      if (!existing) { res.status(404).json({ error: `路由规则 "${req.params.id}" 不存在` }); return; }
+      const m = assertProjectAccess(req as any, existing.projectId || 'default');
+      if (m) { res.status(m.status).json(m.body); return; }
       stateService.removeRoutingRule(req.params.id);
       stateService.save();
       res.json({ message: '已删除' });
@@ -2937,6 +2956,17 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
   router.put('/build-profiles/:id', (req, res) => {
     try {
+      // Project-key scope check (FU-04 isolation sweep): see analogous
+      // guard on /routing-rules/:id above.
+      const existing = stateService.getBuildProfile(req.params.id);
+      if (!existing) { res.status(404).json({ error: `构建配置 "${req.params.id}" 不存在` }); return; }
+      const m = assertProjectAccess(req as any, existing.projectId || 'default');
+      if (m) { res.status(m.status).json(m.body); return; }
+      if (req.body && typeof req.body === 'object' && 'projectId' in req.body
+          && req.body.projectId !== (existing.projectId || 'default')) {
+        res.status(403).json({ error: 'projectId 不可通过 PUT 修改' });
+        return;
+      }
       stateService.updateBuildProfile(req.params.id, req.body);
       stateService.save();
       res.json({ message: '已更新' });
@@ -2947,6 +2977,10 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
   router.delete('/build-profiles/:id', (req, res) => {
     try {
+      const existing = stateService.getBuildProfile(req.params.id);
+      if (!existing) { res.status(404).json({ error: `构建配置 "${req.params.id}" 不存在` }); return; }
+      const m = assertProjectAccess(req as any, existing.projectId || 'default');
+      if (m) { res.status(m.status).json(m.body); return; }
       stateService.removeBuildProfile(req.params.id);
       stateService.save();
       res.json({ message: '已删除' });
@@ -4927,13 +4961,26 @@ export function createBranchRouter(deps: RouterDeps): Router {
     }
   });
 
-  // GET /api/export-config — export current config as CDS Compose YAML (default) or JSON
-  // Export current CDS config as Compose YAML
-  router.get('/export-config', (_req, res) => {
-    const profiles = stateService.getBuildProfiles();
-    const envVars = stateService.getCustomEnv();
-    const infra = stateService.getInfraServices();
-    const rules = stateService.getRoutingRules();
+  // GET /api/export-config[?project=<id>] — export config as CDS Compose YAML.
+  // FU-04 isolation sweep (2026-04-24): scope by ?project= so the YAML
+  // only contains the requested project's profiles/infra/rules + that
+  // project's env (_global baseline + project overrides). Without the
+  // query param we keep legacy behaviour (everything globally) for
+  // back-compat with existing tooling that calls it bare.
+  router.get('/export-config', (req, res) => {
+    const projectFilter = typeof req.query.project === 'string' ? req.query.project : null;
+    const profiles = projectFilter
+      ? stateService.getBuildProfilesForProject(projectFilter)
+      : stateService.getBuildProfiles();
+    const envVars = projectFilter
+      ? stateService.getCustomEnv(projectFilter)
+      : stateService.getCustomEnv();
+    const infra = projectFilter
+      ? stateService.getInfraServicesForProject(projectFilter)
+      : stateService.getInfraServices();
+    const rules = projectFilter
+      ? stateService.getRoutingRulesForProject(projectFilter)
+      : stateService.getRoutingRules();
 
     const yamlContent = toCdsCompose(profiles, envVars, infra, rules);
     res.type('text/yaml').send(yamlContent);
