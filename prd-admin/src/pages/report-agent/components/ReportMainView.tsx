@@ -11,6 +11,8 @@ import type { WeeklyReport } from '@/services/contracts/reportAgent';
 import { WeeklyReportStatus } from '@/services/contracts/reportAgent';
 import { ReportEditor } from './ReportEditor';
 import { DailyLogInline } from './DailyLogInline';
+import { useDataTheme } from '../hooks/useDataTheme';
+import { getSemantic, LIGHT_SEMANTIC } from '../hooks/lightModeColors';
 
 // ────── helpers ──────
 
@@ -51,13 +53,40 @@ function formatWeekLabel(week: WeekRef): string {
   return `${week.weekYear} 年第 ${week.weekNumber} 周`;
 }
 
-const statusConfig: Record<string, { label: string; color: string; bg: string; borderColor: string; icon: React.ElementType }> = {
-  [WeeklyReportStatus.Draft]:      { label: '草稿',   color: 'rgba(156, 163, 175, 0.9)', bg: 'rgba(156, 163, 175, 0.08)', borderColor: 'rgba(156, 163, 175, 0.4)',  icon: Pencil },
-  [WeeklyReportStatus.Submitted]:  { label: '已提交', color: 'rgba(59, 130, 246, 0.9)',  bg: 'rgba(59, 130, 246, 0.08)',  borderColor: 'rgba(59, 130, 246, 0.5)',   icon: Send },
-  [WeeklyReportStatus.Reviewed]:   { label: '已审阅', color: 'rgba(34, 197, 94, 0.9)',   bg: 'rgba(34, 197, 94, 0.08)',   borderColor: 'rgba(34, 197, 94, 0.5)',    icon: CheckCircle2 },
-  [WeeklyReportStatus.Returned]:   { label: '已退回', color: 'rgba(239, 68, 68, 0.9)',   bg: 'rgba(239, 68, 68, 0.08)',   borderColor: 'rgba(239, 68, 68, 0.5)',    icon: AlertCircle },
-  [WeeklyReportStatus.NotStarted]: { label: '未开始', color: 'rgba(156, 163, 175, 0.5)', bg: 'rgba(156, 163, 175, 0.05)', borderColor: 'rgba(156, 163, 175, 0.2)',  icon: Clock },
-};
+interface StatusConfig {
+  label: string;
+  color: string;
+  bg: string;
+  borderColor: string;
+  icon: React.ElementType;
+}
+
+/**
+ * 周报状态 chip 配置 — 按主题返回语义色,浅色下走 getSemantic() 保证 WCAG AA 对比度。
+ * 暗色下保持原视觉,避免回归破坏。
+ */
+function buildStatusConfig(isLight: boolean): Record<string, StatusConfig> {
+  if (isLight) {
+    const slate  = getSemantic(true, 'slate');
+    const blue   = getSemantic(true, 'blue');
+    const green  = getSemantic(true, 'green');
+    const red    = getSemantic(true, 'red');
+    return {
+      [WeeklyReportStatus.Draft]:      { label: '草稿',   color: slate.color, bg: slate.bg, borderColor: slate.border, icon: Pencil },
+      [WeeklyReportStatus.Submitted]:  { label: '已提交', color: blue.color,  bg: blue.bg,  borderColor: blue.border,  icon: Send },
+      [WeeklyReportStatus.Reviewed]:   { label: '已审阅', color: green.color, bg: green.bg, borderColor: green.border, icon: CheckCircle2 },
+      [WeeklyReportStatus.Returned]:   { label: '已退回', color: red.color,   bg: red.bg,   borderColor: red.border,   icon: AlertCircle },
+      [WeeklyReportStatus.NotStarted]: { label: '未开始', color: LIGHT_SEMANTIC.slate, bg: LIGHT_SEMANTIC.bgSlate, borderColor: LIGHT_SEMANTIC.borderSlate, icon: Clock },
+    };
+  }
+  return {
+    [WeeklyReportStatus.Draft]:      { label: '草稿',   color: 'rgba(156, 163, 175, 0.9)', bg: 'rgba(156, 163, 175, 0.08)', borderColor: 'rgba(156, 163, 175, 0.4)',  icon: Pencil },
+    [WeeklyReportStatus.Submitted]:  { label: '已提交', color: 'rgba(59, 130, 246, 0.9)',  bg: 'rgba(59, 130, 246, 0.08)',  borderColor: 'rgba(59, 130, 246, 0.5)',   icon: Send },
+    [WeeklyReportStatus.Reviewed]:   { label: '已审阅', color: 'rgba(34, 197, 94, 0.9)',   bg: 'rgba(34, 197, 94, 0.08)',   borderColor: 'rgba(34, 197, 94, 0.5)',    icon: CheckCircle2 },
+    [WeeklyReportStatus.Returned]:   { label: '已退回', color: 'rgba(239, 68, 68, 0.9)',   bg: 'rgba(239, 68, 68, 0.08)',   borderColor: 'rgba(239, 68, 68, 0.5)',    icon: AlertCircle },
+    [WeeklyReportStatus.NotStarted]: { label: '未开始', color: 'rgba(156, 163, 175, 0.7)', bg: 'rgba(156, 163, 175, 0.05)', borderColor: 'rgba(156, 163, 175, 0.2)',  icon: Clock },
+  };
+}
 
 // ────── component ──────
 
@@ -67,6 +96,12 @@ export function ReportMainView() {
     showReportEditor, setShowReportEditor,
     setSelectedReportId, loadReports,
   } = useReportAgentStore();
+
+  const dataTheme = useDataTheme();
+  const isLight = dataTheme === 'light';
+  const accentColor  = isLight ? 'var(--accent-claude)'         : 'rgba(59, 130, 246, 0.95)';
+  const accentBg     = isLight ? 'var(--accent-claude-soft)'    : 'rgba(59, 130, 246, 0.1)';
+  const accentBorder = isLight ? 'var(--accent-claude-border)'  : 'rgba(59, 130, 246, 0.2)';
 
   const now = useMemo(() => getISOWeek(new Date()), []);
   const prevWeek = useMemo(() => getPreviousWeek(now), [now]);
@@ -174,7 +209,15 @@ export function ReportMainView() {
         <div className="flex items-start justify-between flex-wrap gap-3">
           <div className="flex flex-col gap-3">
             <div>
-              <div className="text-[16px] font-semibold" style={{ color: 'var(--text-primary)' }}>
+              <div
+                className="text-[20px] font-semibold"
+                style={{
+                  color: 'var(--text-primary)',
+                  fontFamily: isLight ? 'var(--font-serif)' : undefined,
+                  letterSpacing: isLight ? '-0.01em' : undefined,
+                  lineHeight: 1.2,
+                }}
+              >
                 我的周报
               </div>
               <div className="text-[12px] mt-1" style={{ color: 'var(--text-muted)' }}>
@@ -185,9 +228,9 @@ export function ReportMainView() {
               <button
                 className="whitespace-nowrap px-3 py-1.5 rounded-lg text-[12px] font-medium transition-colors"
                 style={{
-                  color: weekFilterMode === 'all' ? 'rgba(59, 130, 246, 0.95)' : 'var(--text-secondary)',
-                  background: weekFilterMode === 'all' ? 'rgba(59, 130, 246, 0.1)' : 'var(--bg-secondary)',
-                  border: `1px solid ${weekFilterMode === 'all' ? 'rgba(59, 130, 246, 0.2)' : 'var(--border-primary)'}`,
+                  color: weekFilterMode === 'all' ? accentColor : 'var(--text-secondary)',
+                  background: weekFilterMode === 'all' ? accentBg : 'var(--bg-secondary)',
+                  border: `1px solid ${weekFilterMode === 'all' ? accentBorder : 'var(--border-primary)'}`,
                 }}
                 onClick={() => setWeekFilterMode('all')}
               >
@@ -198,15 +241,15 @@ export function ReportMainView() {
                 style={{
                   color:
                     weekFilterMode === 'specific' && selectedWeekKey === getWeekKey(now)
-                      ? 'rgba(59, 130, 246, 0.95)'
+                      ? accentColor
                       : 'var(--text-secondary)',
                   background:
                     weekFilterMode === 'specific' && selectedWeekKey === getWeekKey(now)
-                      ? 'rgba(59, 130, 246, 0.1)'
+                      ? accentBg
                       : 'var(--bg-secondary)',
                   border:
                     weekFilterMode === 'specific' && selectedWeekKey === getWeekKey(now)
-                      ? '1px solid rgba(59, 130, 246, 0.2)'
+                      ? `1px solid ${accentBorder}`
                       : '1px solid var(--border-primary)',
                 }}
                 onClick={() => {
@@ -221,15 +264,15 @@ export function ReportMainView() {
                 style={{
                   color:
                     weekFilterMode === 'specific' && selectedWeekKey === getWeekKey(prevWeek)
-                      ? 'rgba(59, 130, 246, 0.95)'
+                      ? accentColor
                       : 'var(--text-secondary)',
                   background:
                     weekFilterMode === 'specific' && selectedWeekKey === getWeekKey(prevWeek)
-                      ? 'rgba(59, 130, 246, 0.1)'
+                      ? accentBg
                       : 'var(--bg-secondary)',
                   border:
                     weekFilterMode === 'specific' && selectedWeekKey === getWeekKey(prevWeek)
-                      ? '1px solid rgba(59, 130, 246, 0.2)'
+                      ? `1px solid ${accentBorder}`
                       : '1px solid var(--border-primary)',
                 }}
                 onClick={() => {
@@ -360,6 +403,9 @@ function ReportCard({ report, onClick }: {
   };
   onClick: () => void;
 }) {
+  const dataTheme = useDataTheme();
+  const isLight = dataTheme === 'light';
+  const statusConfig = useMemo(() => buildStatusConfig(isLight), [isLight]);
   const cfg = statusConfig[report.status] || statusConfig[WeeklyReportStatus.Draft];
   const StatusIcon = cfg.icon;
   const totalItems = report.sections.reduce((sum, s) => sum + s.items.length, 0);
@@ -405,18 +451,23 @@ function ReportCard({ report, onClick }: {
           {report.sections.map((s, i) => {
             const filled = s.items.filter(it => it.content.trim()).length;
             const total = s.items.length;
+            const isComplete = filled === total && total > 0;
+            const filledDot = isLight ? getSemantic(true, 'green').color : 'rgba(34, 197, 94, 0.6)';
+            const emptyDot  = isLight ? 'var(--border-default)' : 'rgba(156, 163, 175, 0.3)';
+            const completeBg = isLight ? getSemantic(true, 'green').bg : 'rgba(34, 197, 94, 0.06)';
+            const completeText = isLight ? getSemantic(true, 'green').color : 'rgba(34, 197, 94, 0.8)';
             return (
               <div
                 key={i}
                 className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[11px]"
                 style={{
-                  background: filled === total && total > 0 ? 'rgba(34, 197, 94, 0.06)' : 'var(--bg-tertiary)',
-                  color: filled === total && total > 0 ? 'rgba(34, 197, 94, 0.8)' : 'var(--text-muted)',
+                  background: isComplete ? completeBg : 'var(--bg-tertiary)',
+                  color: isComplete ? completeText : 'var(--text-muted)',
                 }}
               >
                 <div
                   className="w-1.5 h-1.5 rounded-full"
-                  style={{ background: filled > 0 ? 'rgba(34, 197, 94, 0.6)' : 'rgba(156, 163, 175, 0.3)' }}
+                  style={{ background: filled > 0 ? filledDot : emptyDot }}
                 />
                 {s.templateSection?.title || `章节 ${i + 1}`}
                 <span style={{ opacity: 0.6 }}>{filled}/{total}</span>
@@ -425,17 +476,22 @@ function ReportCard({ report, onClick }: {
           })}
         </div>
 
-        {/* Progress bar */}
+        {/* Progress bar — 浅色下走 Claude 橙 accent,暗色保持原色 */}
         {totalItems > 0 && (
           <div className="flex items-center gap-3">
-            <div className="flex-1 h-1.5 rounded-full overflow-hidden" style={{ background: 'var(--bg-tertiary)' }}>
+            <div
+              className="flex-1 h-1.5 rounded-full overflow-hidden"
+              style={{ background: isLight ? 'var(--border-faint)' : 'var(--bg-tertiary)' }}
+            >
               <div
                 className="h-full rounded-full transition-all duration-500"
                 style={{
                   width: `${progress}%`,
                   background: progress === 100
-                    ? 'rgba(34, 197, 94, 0.7)'
-                    : `linear-gradient(90deg, ${cfg.borderColor}, ${cfg.borderColor.replace(/[\d.]+\)$/, '0.3)')})`,
+                    ? (isLight ? getSemantic(true, 'green').color : 'rgba(34, 197, 94, 0.7)')
+                    : (isLight
+                        ? `linear-gradient(90deg, var(--accent-claude), var(--accent-claude-soft))`
+                        : `linear-gradient(90deg, ${cfg.borderColor}, ${cfg.borderColor.replace(/[\d.]+\)$/, '0.3)')})`),
                 }}
               />
             </div>
@@ -466,6 +522,8 @@ function ReportCard({ report, onClick }: {
 
 function OnboardingGuide({ hasTeam, hasTemplate }: { hasTeam: boolean; hasTemplate: boolean }) {
   const { setActiveTab } = useReportAgentStore();
+  const dataTheme = useDataTheme();
+  const isLight = dataTheme === 'light';
 
   const steps = [
     {
@@ -491,8 +549,19 @@ function OnboardingGuide({ hasTeam, hasTemplate }: { hasTeam: boolean; hasTempla
   return (
     <GlassCard variant="subtle" className="p-6">
       <div className="flex flex-col items-center text-center mb-6">
-        <FileText size={32} style={{ color: 'rgba(59, 130, 246, 0.6)' }} className="mb-3" />
-        <div className="text-[16px] font-semibold mb-1" style={{ color: 'var(--text-primary)' }}>
+        <FileText
+          size={32}
+          style={{ color: isLight ? 'var(--accent-claude)' : 'rgba(59, 130, 246, 0.6)' }}
+          className="mb-3"
+        />
+        <div
+          className="text-[18px] font-semibold mb-1"
+          style={{
+            color: 'var(--text-primary)',
+            fontFamily: isLight ? 'var(--font-serif)' : undefined,
+            letterSpacing: isLight ? '-0.01em' : undefined,
+          }}
+        >
           快速开始
         </div>
         <div className="text-[13px]" style={{ color: 'var(--text-muted)' }}>

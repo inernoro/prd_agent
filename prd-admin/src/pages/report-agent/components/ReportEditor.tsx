@@ -539,10 +539,18 @@ export function ReportEditor({ reportId, weekYear, weekNumber, onClose }: Props)
             <ArrowLeft size={16} />
           </Button>
           <div>
-            <div className="text-[16px] font-semibold" style={{ color: 'var(--text-primary)' }}>
+            <div
+              className="text-[20px] font-semibold"
+              style={{
+                color: 'var(--text-primary)',
+                fontFamily: isLight ? 'var(--font-serif)' : undefined,
+                letterSpacing: isLight ? '-0.01em' : undefined,
+                lineHeight: 1.2,
+              }}
+            >
               创建周报
             </div>
-            <div className="text-[12px] mt-0.5" style={{ color: 'var(--text-muted)' }}>
+            <div className="text-[12px] mt-1" style={{ color: 'var(--text-muted)' }}>
               {weekYear} 年第 {weekNumber} 周
             </div>
           </div>
@@ -554,9 +562,9 @@ export function ReportEditor({ reportId, weekYear, weekNumber, onClose }: Props)
             <div className="flex items-center gap-3 mb-5">
               <div
                 className="w-10 h-10 rounded-xl flex items-center justify-center"
-                style={{ background: 'rgba(59, 130, 246, 0.08)' }}
+                style={{ background: isLight ? 'var(--accent-claude-soft)' : 'rgba(59, 130, 246, 0.08)' }}
               >
-                <FileText size={18} style={{ color: 'rgba(59, 130, 246, 0.9)' }} />
+                <FileText size={18} style={{ color: isLight ? 'var(--accent-claude)' : 'rgba(59, 130, 246, 0.9)' }} />
               </div>
               <div>
                 <div className="text-[14px] font-medium" style={{ color: 'var(--text-primary)' }}>选择团队和模板</div>
@@ -653,7 +661,14 @@ export function ReportEditor({ reportId, weekYear, weekNumber, onClose }: Props)
             </Button>
             <div>
               <div className="flex items-center gap-2">
-                <span className="text-[15px] font-semibold" style={{ color: 'var(--text-primary)' }}>
+                <span
+                  className="text-[17px] font-semibold"
+                  style={{
+                    color: 'var(--text-primary)',
+                    fontFamily: isLight ? 'var(--font-serif)' : undefined,
+                    letterSpacing: isLight ? '-0.01em' : undefined,
+                  }}
+                >
                   {report.teamName}
                 </span>
                 <span
@@ -663,17 +678,20 @@ export function ReportEditor({ reportId, weekYear, weekNumber, onClose }: Props)
                   {report.weekYear} 年第 {report.weekNumber} 周
                 </span>
               </div>
-              {/* Mini progress bar */}
+              {/* Mini progress bar — 浅色下走 Claude 橙 */}
               {canEdit && totalItems > 0 && (
                 <div className="flex items-center gap-2 mt-1.5">
-                  <div className="w-24 h-1.5 rounded-full overflow-hidden" style={{ background: 'var(--bg-tertiary)' }}>
+                  <div
+                    className="w-24 h-1.5 rounded-full overflow-hidden"
+                    style={{ background: isLight ? 'var(--border-faint)' : 'var(--bg-tertiary)' }}
+                  >
                     <div
                       className="h-full rounded-full transition-all duration-500"
                       style={{
                         width: `${progress}%`,
                         background: progress === 100
-                          ? 'rgba(34, 197, 94, 0.7)'
-                          : 'rgba(59, 130, 246, 0.6)',
+                          ? (isLight ? 'rgba(21, 128, 61, 1)' : 'rgba(34, 197, 94, 0.7)')
+                          : (isLight ? 'var(--accent-claude)' : 'rgba(59, 130, 246, 0.6)'),
                       }}
                     />
                   </div>
@@ -758,9 +776,9 @@ export function ReportEditor({ reportId, weekYear, weekNumber, onClose }: Props)
         <div
           className="flex items-center gap-2.5 text-[12px] px-5 py-3 rounded-xl"
           style={{
-            color: 'rgba(59, 130, 246, 0.9)',
-            background: isLight ? 'rgba(59, 130, 246, 0.04)' : 'rgba(59, 130, 246, 0.06)',
-            border: `1px solid ${isLight ? 'rgba(59, 130, 246, 0.20)' : 'rgba(59, 130, 246, 0.12)'}`,
+            color: isLight ? 'rgba(29, 78, 216, 1)' : 'rgba(59, 130, 246, 0.9)',
+            background: isLight ? 'rgba(29, 78, 216, 0.08)' : 'rgba(59, 130, 246, 0.06)',
+            border: `1px solid ${isLight ? 'rgba(29, 78, 216, 0.22)' : 'rgba(59, 130, 246, 0.12)'}`,
           }}
         >
           已提交周报在“已审阅”前仍可编辑或删除，变更会即时生效。
@@ -799,7 +817,14 @@ export function ReportEditor({ reportId, weekYear, weekNumber, onClose }: Props)
                   </div>
                   <div className="flex-1">
                     <div className="flex items-center gap-1.5">
-                      <span className="text-[14px] font-semibold" style={{ color: 'var(--text-primary)' }}>
+                      <span
+                        className="text-[15px] font-semibold"
+                        style={{
+                          color: 'var(--text-primary)',
+                          fontFamily: isLight ? 'var(--font-serif)' : undefined,
+                          letterSpacing: isLight ? '-0.005em' : undefined,
+                        }}
+                      >
                         {section.templateSection.title}
                       </span>
                       {section.templateSection.isRequired && (

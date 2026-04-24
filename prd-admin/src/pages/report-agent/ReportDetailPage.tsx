@@ -279,10 +279,18 @@ export default function ReportDetailPage(props: ReportDetailPageProps = {}) {
               <ArrowLeft size={16} />
             </Button>
             <div>
-              <div className="text-[16px] font-semibold" style={{ color: 'var(--text-primary)' }}>
+              <div
+                className="text-[20px] font-semibold"
+                style={{
+                  color: 'var(--text-primary)',
+                  fontFamily: isLight ? 'var(--font-serif)' : undefined,
+                  letterSpacing: isLight ? '-0.01em' : undefined,
+                  lineHeight: 1.2,
+                }}
+              >
                 {report.userName} 的周报
               </div>
-              <div className="text-[12px] mt-0.5" style={{ color: 'var(--text-muted)' }}>
+              <div className="text-[12px] mt-1" style={{ color: 'var(--text-muted)' }}>
                 {report.teamName} · {report.weekYear} 年第 {report.weekNumber} 周
               </div>
             </div>
@@ -324,32 +332,38 @@ export default function ReportDetailPage(props: ReportDetailPageProps = {}) {
           />
         )}
         <div className="flex-1 min-w-0 min-h-0 flex flex-col gap-4">
-      {/* Tabs */}
+      {/* Tabs — 浅色下选中态走 Claude 橙下划线 */}
       <div className="flex items-center gap-1 px-1" style={{ borderBottom: '1px solid var(--border-primary)' }}>
-        {tabs.map((tab) => (
-          <button
-            key={tab.key}
-            className="px-4 py-2.5 text-[13px] rounded-t-lg transition-all duration-200"
-            style={{
-              color: activeTab === tab.key ? 'var(--text-primary)' : 'var(--text-muted)',
-              background: activeTab === tab.key ? 'var(--bg-secondary)' : 'transparent',
-              fontWeight: activeTab === tab.key ? 600 : 400,
-              borderBottom: activeTab === tab.key ? '2px solid rgba(59, 130, 246, 0.8)' : '2px solid transparent',
-            }}
-            onClick={() => setActiveTab(tab.key)}
-          >
-            {tab.key === 'plan-comparison' && <GitCompare size={12} className="inline mr-1.5" />}
-            {tab.label}
-            {tab.key === 'content' && comments.length > 0 && (
-              <span
-                className="ml-2 text-[10px] px-2 py-0.5 rounded-full font-medium"
-                style={{ background: isLight ? 'rgba(59, 130, 246, 0.10)' : 'rgba(59, 130, 246, 0.08)', color: 'rgba(59, 130, 246, 0.9)', border: isLight ? '1px solid rgba(59, 130, 246, 0.18)' : 'none' }}
-              >
-                {comments.length}
-              </span>
-            )}
-          </button>
-        ))}
+        {tabs.map((tab) => {
+          const activeUnderline = isLight ? 'var(--accent-claude)' : 'rgba(59, 130, 246, 0.8)';
+          const countBg = isLight ? 'var(--accent-claude-soft)' : 'rgba(59, 130, 246, 0.08)';
+          const countColor = isLight ? 'var(--accent-claude)' : 'rgba(59, 130, 246, 0.9)';
+          const countBorder = isLight ? '1px solid var(--accent-claude-border)' : 'none';
+          return (
+            <button
+              key={tab.key}
+              className="px-4 py-2.5 text-[13px] rounded-t-lg transition-all duration-200"
+              style={{
+                color: activeTab === tab.key ? 'var(--text-primary)' : 'var(--text-muted)',
+                background: activeTab === tab.key ? 'var(--bg-secondary)' : 'transparent',
+                fontWeight: activeTab === tab.key ? 600 : 400,
+                borderBottom: activeTab === tab.key ? `2px solid ${activeUnderline}` : '2px solid transparent',
+              }}
+              onClick={() => setActiveTab(tab.key)}
+            >
+              {tab.key === 'plan-comparison' && <GitCompare size={12} className="inline mr-1.5" />}
+              {tab.label}
+              {tab.key === 'content' && comments.length > 0 && (
+                <span
+                  className="ml-2 text-[10px] px-2 py-0.5 rounded-full font-medium"
+                  style={{ background: countBg, color: countColor, border: countBorder }}
+                >
+                  {comments.length}
+                </span>
+              )}
+            </button>
+          );
+        })}
       </div>
 
       {/* Content */}
@@ -370,7 +384,14 @@ export default function ReportDetailPage(props: ReportDetailPageProps = {}) {
                     >
                       {idx + 1}
                     </div>
-                    <span className="text-[14px] font-semibold" style={{ color: 'var(--text-primary)' }}>
+                    <span
+                      className="text-[15px] font-semibold"
+                      style={{
+                        color: 'var(--text-primary)',
+                        fontFamily: isLight ? 'var(--font-serif)' : undefined,
+                        letterSpacing: isLight ? '-0.005em' : undefined,
+                      }}
+                    >
                       {section.templateSection.title}
                     </span>
                   </div>
