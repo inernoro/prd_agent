@@ -99,9 +99,6 @@ export function ReportMainView() {
 
   const dataTheme = useDataTheme();
   const isLight = dataTheme === 'light';
-  const accentColor  = isLight ? 'var(--accent-claude)'         : 'rgba(59, 130, 246, 0.95)';
-  const accentBg     = isLight ? 'var(--accent-claude-soft)'    : 'rgba(59, 130, 246, 0.1)';
-  const accentBorder = isLight ? 'var(--accent-claude-border)'  : 'rgba(59, 130, 246, 0.2)';
 
   const now = useMemo(() => getISOWeek(new Date()), []);
   const prevWeek = useMemo(() => getPreviousWeek(now), [now]);
@@ -224,64 +221,36 @@ export function ReportMainView() {
                 共 {reports.length} 份 · 默认展示全部周报
               </div>
             </div>
+            {/* Segmented control — 一个 track 内嵌 3 个 seg,选中为白 thumb */}
             <div className="flex items-center gap-2 flex-wrap">
-              <button
-                className="whitespace-nowrap px-3 py-1.5 rounded-lg text-[12px] font-medium transition-colors"
+              <div
+                className="inline-flex items-center p-0.5 rounded-lg"
                 style={{
-                  color: weekFilterMode === 'all' ? accentColor : 'var(--text-secondary)',
-                  background: weekFilterMode === 'all' ? accentBg : 'var(--bg-secondary)',
-                  border: `1px solid ${weekFilterMode === 'all' ? accentBorder : 'var(--border-primary)'}`,
-                }}
-                onClick={() => setWeekFilterMode('all')}
-              >
-                全部
-              </button>
-              <button
-                className="whitespace-nowrap px-3 py-1.5 rounded-lg text-[12px] font-medium transition-colors"
-                style={{
-                  color:
-                    weekFilterMode === 'specific' && selectedWeekKey === getWeekKey(now)
-                      ? accentColor
-                      : 'var(--text-secondary)',
-                  background:
-                    weekFilterMode === 'specific' && selectedWeekKey === getWeekKey(now)
-                      ? accentBg
-                      : 'var(--bg-secondary)',
-                  border:
-                    weekFilterMode === 'specific' && selectedWeekKey === getWeekKey(now)
-                      ? `1px solid ${accentBorder}`
-                      : '1px solid var(--border-primary)',
-                }}
-                onClick={() => {
-                  setWeekFilterMode('specific');
-                  setSelectedWeekKey(getWeekKey(now));
+                  background: isLight ? 'rgba(15, 23, 42, 0.05)' : 'var(--bg-tertiary)',
+                  border: isLight ? '1px solid var(--hairline)' : '1px solid var(--border-primary)',
                 }}
               >
-                本周
-              </button>
-              <button
-                className="whitespace-nowrap px-3 py-1.5 rounded-lg text-[12px] font-medium transition-colors"
-                style={{
-                  color:
-                    weekFilterMode === 'specific' && selectedWeekKey === getWeekKey(prevWeek)
-                      ? accentColor
-                      : 'var(--text-secondary)',
-                  background:
-                    weekFilterMode === 'specific' && selectedWeekKey === getWeekKey(prevWeek)
-                      ? accentBg
-                      : 'var(--bg-secondary)',
-                  border:
-                    weekFilterMode === 'specific' && selectedWeekKey === getWeekKey(prevWeek)
-                      ? `1px solid ${accentBorder}`
-                      : '1px solid var(--border-primary)',
-                }}
-                onClick={() => {
-                  setWeekFilterMode('specific');
-                  setSelectedWeekKey(getWeekKey(prevWeek));
-                }}
-              >
-                上周
-              </button>
+                {([
+                  { key: 'all', label: '全部', active: weekFilterMode === 'all', onClick: () => setWeekFilterMode('all') },
+                  { key: 'now', label: '本周', active: weekFilterMode === 'specific' && selectedWeekKey === getWeekKey(now), onClick: () => { setWeekFilterMode('specific'); setSelectedWeekKey(getWeekKey(now)); } },
+                  { key: 'prev', label: '上周', active: weekFilterMode === 'specific' && selectedWeekKey === getWeekKey(prevWeek), onClick: () => { setWeekFilterMode('specific'); setSelectedWeekKey(getWeekKey(prevWeek)); } },
+                ] as const).map((seg) => (
+                  <button
+                    key={seg.key}
+                    className="whitespace-nowrap px-3 py-1 rounded-md text-[12px] font-medium transition-all duration-200"
+                    style={{
+                      color: seg.active ? 'var(--text-primary)' : 'var(--text-muted)',
+                      background: seg.active
+                        ? (isLight ? '#FFFFFF' : 'rgba(255, 255, 255, 0.08)')
+                        : 'transparent',
+                      boxShadow: seg.active && isLight ? '0 1px 2px rgba(15, 23, 42, 0.06), 0 0 0 1px rgba(15, 23, 42, 0.08)' : 'none',
+                    }}
+                    onClick={seg.onClick}
+                  >
+                    {seg.label}
+                  </button>
+                ))}
+              </div>
               <div
                 className="flex items-center gap-2 px-2.5 py-1.5 rounded-lg"
                 style={{ background: 'var(--bg-secondary)', border: '1px solid var(--border-primary)' }}
@@ -418,84 +387,128 @@ function ReportCard({ report, onClick }: {
     <div
       className="group rounded-xl transition-all duration-200 cursor-pointer hover:translate-y-[-1px]"
       style={{
-        background: 'var(--surface-glass)',
-        backdropFilter: 'blur(12px)',
-        WebkitBackdropFilter: 'blur(12px)',
-        border: `1px solid var(--border-primary)`,
+        background: isLight ? '#FFFFFF' : 'var(--surface-glass)',
+        backdropFilter: isLight ? undefined : 'blur(12px)',
+        WebkitBackdropFilter: isLight ? undefined : 'blur(12px)',
+        border: isLight ? '1px solid var(--hairline)' : '1px solid var(--border-primary)',
         borderLeft: `3px solid ${cfg.borderColor}`,
-        boxShadow: '0 2px 8px rgba(0,0,0,0.04)',
+        boxShadow: isLight ? '0 1px 2px rgba(15,23,42,0.04)' : '0 2px 8px rgba(0,0,0,0.04)',
       }}
       onClick={onClick}
     >
       <div className="p-5">
-        {/* Header */}
-        <div className="flex items-start justify-between mb-3">
-          <div className="flex-1 min-w-0">
-            <div className="text-[15px] font-semibold truncate" style={{ color: 'var(--text-primary)' }}>
-              {report.teamName || '未知团队'}
-            </div>
-          </div>
-          <div className="flex items-center gap-2 ml-2">
+        {/* Header — editorial 风: eyebrow status + 大字号 serif 团队名 */}
+        <div className="mb-3">
+          {/* Eyebrow status tag — small caps 风 */}
+          <div className="flex items-center gap-2 mb-1.5">
             <span
-              className="flex items-center gap-1 text-[11px] px-2.5 py-1 rounded-full flex-shrink-0 font-medium"
-              style={{ color: cfg.color, backgroundColor: cfg.bg }}
+              className="inline-flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-full font-medium uppercase"
+              style={{
+                color: cfg.color,
+                backgroundColor: cfg.bg,
+                border: isLight ? `1px solid ${cfg.borderColor}` : 'none',
+                letterSpacing: '0.04em',
+              }}
             >
-              <StatusIcon size={11} />
+              <StatusIcon size={10} />
               {cfg.label}
             </span>
           </div>
+          <div
+            className="text-[20px] font-semibold leading-tight truncate"
+            style={{
+              color: 'var(--text-primary)',
+              fontFamily: isLight ? 'var(--font-serif)' : undefined,
+              letterSpacing: isLight ? '-0.015em' : undefined,
+            }}
+          >
+            {report.teamName || '未知团队'}
+          </div>
         </div>
 
-        {/* Section previews — horizontal layout for compactness */}
+        {/* Section previews — 按完成率三色分级: 完成=moss / 进行=amber / 未填=slate */}
         <div className="flex flex-wrap gap-2 mb-3">
           {report.sections.map((s, i) => {
             const filled = s.items.filter(it => it.content.trim()).length;
             const total = s.items.length;
             const isComplete = filled === total && total > 0;
-            const filledDot = isLight ? getSemantic(true, 'green').color : 'rgba(34, 197, 94, 0.6)';
-            const emptyDot  = isLight ? 'var(--border-default)' : 'rgba(156, 163, 175, 0.3)';
-            const completeBg = isLight ? getSemantic(true, 'green').bg : 'rgba(34, 197, 94, 0.06)';
-            const completeText = isLight ? getSemantic(true, 'green').color : 'rgba(34, 197, 94, 0.8)';
+            const isGoing = filled > 0 && !isComplete;
+
+            // 浅色下三色分级
+            const chipColor = isLight
+              ? (isComplete ? 'var(--status-done)' : isGoing ? 'var(--status-going)' : 'var(--status-idle)')
+              : 'var(--text-muted)';
+            const chipBg = isLight
+              ? (isComplete ? 'var(--status-done-soft)' : isGoing ? 'var(--status-going-soft)' : 'var(--status-idle-soft)')
+              : 'var(--bg-tertiary)';
+            const chipBorder = isLight
+              ? (isComplete ? 'var(--status-done-border)' : isGoing ? 'var(--status-going-border)' : 'var(--status-idle-border)')
+              : 'transparent';
+            // 暗色保持原来逻辑
+            if (!isLight) {
+              const filledDot = 'rgba(34, 197, 94, 0.6)';
+              const emptyDot  = 'rgba(156, 163, 175, 0.3)';
+              const completeBg = 'rgba(34, 197, 94, 0.06)';
+              const completeText = 'rgba(34, 197, 94, 0.8)';
+              return (
+                <div
+                  key={i}
+                  className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[11px]"
+                  style={{
+                    background: isComplete ? completeBg : 'var(--bg-tertiary)',
+                    color: isComplete ? completeText : 'var(--text-muted)',
+                  }}
+                >
+                  <div
+                    className="w-1.5 h-1.5 rounded-full"
+                    style={{ background: filled > 0 ? filledDot : emptyDot }}
+                  />
+                  {s.templateSection?.title || `章节 ${i + 1}`}
+                  <span style={{ opacity: 0.6 }}>{filled}/{total}</span>
+                </div>
+              );
+            }
             return (
               <div
                 key={i}
-                className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[11px]"
+                className="flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-medium"
                 style={{
-                  background: isComplete ? completeBg : 'var(--bg-tertiary)',
-                  color: isComplete ? completeText : 'var(--text-muted)',
+                  background: chipBg,
+                  color: chipColor,
+                  border: `1px solid ${chipBorder}`,
                 }}
               >
                 <div
                   className="w-1.5 h-1.5 rounded-full"
-                  style={{ background: filled > 0 ? filledDot : emptyDot }}
+                  style={{ background: chipColor }}
                 />
                 {s.templateSection?.title || `章节 ${i + 1}`}
-                <span style={{ opacity: 0.6 }}>{filled}/{total}</span>
+                <span className="font-mono" style={{ opacity: 0.7 }}>{filled}/{total}</span>
               </div>
             );
           })}
         </div>
 
-        {/* Progress bar — 浅色下走 Claude 橙 accent,暗色保持原色 */}
+        {/* Progress bar — 浅色下 100% 柔和墨绿, 进行中走 Claude 橙;暗色保持原色 */}
         {totalItems > 0 && (
           <div className="flex items-center gap-3">
             <div
-              className="flex-1 h-1.5 rounded-full overflow-hidden"
-              style={{ background: isLight ? 'var(--border-faint)' : 'var(--bg-tertiary)' }}
+              className="flex-1 h-1 rounded-full overflow-hidden"
+              style={{ background: isLight ? 'var(--hairline)' : 'var(--bg-tertiary)' }}
             >
               <div
                 className="h-full rounded-full transition-all duration-500"
                 style={{
                   width: `${progress}%`,
                   background: progress === 100
-                    ? (isLight ? getSemantic(true, 'green').color : 'rgba(34, 197, 94, 0.7)')
+                    ? (isLight ? 'var(--status-done)' : 'rgba(34, 197, 94, 0.7)')
                     : (isLight
-                        ? `linear-gradient(90deg, var(--accent-claude), var(--accent-claude-soft))`
+                        ? 'var(--accent-claude)'
                         : `linear-gradient(90deg, ${cfg.borderColor}, ${cfg.borderColor.replace(/[\d.]+\)$/, '0.3)')})`),
                 }}
               />
             </div>
-            <span className="text-[10px] font-medium flex-shrink-0" style={{ color: 'var(--text-muted)' }}>
+            <span className="text-[10px] font-mono flex-shrink-0" style={{ color: 'var(--text-muted)' }}>
               {progress}%
             </span>
           </div>

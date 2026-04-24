@@ -374,18 +374,30 @@ export default function ReportDetailPage(props: ReportDetailPageProps = {}) {
               const sectionComments = commentsBySection[idx] || [];
               const topLevel = sectionComments.filter((c) => !c.parentCommentId);
               const accentColor = sectionColors[idx % sectionColors.length];
+              // Editorial 风:浅色下数字徽章改为深色单色 + 左侧 hairline 分层,不用饱和背景
+              const badgeBg    = isLight ? '#0F172A' : accentColor;
+              const badgeGlow  = isLight ? 'none' : `0 1px 4px ${accentColor.replace('0.9', '0.25')}`;
+              const bulletClr  = isLight ? 'rgba(15, 23, 42, 0.7)' : accentColor;
 
               return (
-                <div key={idx} className="mb-5">
-                  <div className="flex items-center gap-2.5 mb-3">
+                <div key={idx} className="mb-6">
+                  <div
+                    className="flex items-center gap-3 mb-3 pb-2"
+                    style={{ borderBottom: isLight ? '1px solid var(--hairline)' : undefined }}
+                  >
                     <div
-                      className="w-6 h-6 rounded-md flex items-center justify-center text-[11px] font-bold text-white flex-shrink-0"
-                      style={{ background: accentColor, boxShadow: `0 1px 4px ${accentColor.replace('0.9', '0.25')}` }}
+                      className="w-7 h-7 rounded-md flex items-center justify-center text-[12px] font-semibold flex-shrink-0"
+                      style={{
+                        background: badgeBg,
+                        color: '#FFFFFF',
+                        boxShadow: badgeGlow,
+                        fontFamily: isLight ? 'var(--font-serif)' : undefined,
+                      }}
                     >
                       {idx + 1}
                     </div>
                     <span
-                      className="text-[15px] font-semibold"
+                      className="text-[16px] font-semibold"
                       style={{
                         color: 'var(--text-primary)',
                         fontFamily: isLight ? 'var(--font-serif)' : undefined,
@@ -394,11 +406,19 @@ export default function ReportDetailPage(props: ReportDetailPageProps = {}) {
                     >
                       {section.templateSection.title}
                     </span>
+                    {/* 浅色下左侧 3px accent 色条作为章节色 hint */}
+                    {isLight && (
+                      <div
+                        className="ml-auto w-8 h-0.5 rounded-full"
+                        style={{ background: accentColor }}
+                        aria-hidden
+                      />
+                    )}
                   </div>
                   {section.items.length === 0 ? (
-                    <div className="text-[12px] ml-7" style={{ color: 'var(--text-muted)' }}>（未填写）</div>
+                    <div className="text-[12px] ml-10" style={{ color: 'var(--text-muted)' }}>（未填写）</div>
                   ) : section.templateSection.inputType === ReportInputType.RichText ? (
-                    <div className="space-y-2 ml-7">
+                    <div className="space-y-2 ml-10">
                       {section.items.map((item, iIdx) => (
                         <RichTextMarkdownContent
                           key={iIdx}
@@ -408,11 +428,16 @@ export default function ReportDetailPage(props: ReportDetailPageProps = {}) {
                       ))}
                     </div>
                   ) : (
-                    <ul className="space-y-1.5 ml-7">
+                    <ul className="space-y-1.5 ml-10">
                       {section.items.map((item, iIdx) => (
-                        <li key={iIdx} className="flex items-start gap-2">
-                          <span className="text-[13px] mt-0.5 font-medium" style={{ color: accentColor }}>•</span>
-                          <span className="text-[12px] leading-relaxed" style={{ color: 'var(--text-secondary)' }}>
+                        <li key={iIdx} className="flex items-start gap-2.5">
+                          <span
+                            className="text-[13px] mt-1 flex-shrink-0"
+                            style={{ color: bulletClr, fontWeight: 600 }}
+                          >
+                            ·
+                          </span>
+                          <span className="text-[13px] leading-relaxed" style={{ color: 'var(--text-secondary)' }}>
                             {item.content || '（空）'}
                           </span>
                         </li>
@@ -422,7 +447,10 @@ export default function ReportDetailPage(props: ReportDetailPageProps = {}) {
 
                   {/* Section comments */}
                   {topLevel.length > 0 && (
-                    <div className="mt-2 ml-7 pl-3" style={{ borderLeft: `2px solid ${accentColor}30` }}>
+                    <div
+                      className="mt-2 ml-10 pl-3"
+                      style={{ borderLeft: `2px solid ${isLight ? 'var(--hairline-strong)' : `${accentColor}30`}` }}
+                    >
                       {topLevel.map((comment) => {
                         const replies = sectionComments.filter((c) => c.parentCommentId === comment.id);
                         return (

@@ -180,6 +180,24 @@
   --accent-claude-hover:  #B8684C !important;
   --accent-claude-soft:   rgba(204, 120, 92, 0.10) !important;
   --accent-claude-border: rgba(204, 120, 92, 0.28) !important;
+
+  /* ── Editorial 状态语义（精修：柔化饱和度，配合米底）──
+     moss-green: 完成态,替代过饱和的 green-700
+     amber: 进行中态,米底上自然的"待办"色感
+     hairline: 真正 1px 可见的深描边 (不是 4% alpha 的透明线) */
+  --status-done:          #5A8F5E !important;               /* 柔和墨绿,用于 100% 完成 */
+  --status-done-soft:     rgba(90, 143, 94, 0.12) !important;
+  --status-done-border:   rgba(90, 143, 94, 0.32) !important;
+  --status-going:         #B8784C !important;               /* 琥珀暖橙,用于进行中 */
+  --status-going-soft:    rgba(184, 120, 76, 0.10) !important;
+  --status-going-border:  rgba(184, 120, 76, 0.28) !important;
+  --status-idle:          rgba(71, 85, 105, 0.75) !important;
+  --status-idle-soft:     rgba(71, 85, 105, 0.06) !important;
+  --status-idle-border:   rgba(71, 85, 105, 0.18) !important;
+
+  /* Hairline — 真正看得见的细线,用于卡片边框替代 --border-faint 4% 透明线 */
+  --hairline:             rgba(15, 23, 42, 0.09) !important;
+  --hairline-strong:      rgba(15, 23, 42, 0.15) !important;
 }
 
 html, body {

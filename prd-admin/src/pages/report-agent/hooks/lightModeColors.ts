@@ -22,6 +22,8 @@ export const LIGHT_SEMANTIC = {
   sky:         'rgba(2, 132, 199, 1)',       // source(MAP/平台)
   emerald:     'rgba(4, 120, 87, 1)',        // "常来" 标签
   claude:      'rgba(204, 120, 92, 1)',      // Anthropic Claude 橙,主 accent (#CC785C)
+  moss:        'rgba(90, 143, 94, 1)',       // 柔和墨绿,完成态 (#5A8F5E)
+  amber:       'rgba(184, 120, 76, 1)',      // 琥珀暖橙,进行中态 (#B8784C)
 
   // ── 半透明背景 (alpha 0.10-0.15)
   bgSlate:     'rgba(51, 65, 85, 0.10)',
@@ -35,6 +37,8 @@ export const LIGHT_SEMANTIC = {
   bgSky:       'rgba(2, 132, 199, 0.10)',
   bgEmerald:   'rgba(4, 120, 87, 0.12)',
   bgClaude:    'rgba(204, 120, 92, 0.10)',
+  bgMoss:      'rgba(90, 143, 94, 0.12)',
+  bgAmber:     'rgba(184, 120, 76, 0.10)',
 
   // ── 边框 (alpha 0.20-0.28)
   borderSlate:   'rgba(51, 65, 85, 0.22)',
@@ -47,6 +51,8 @@ export const LIGHT_SEMANTIC = {
   borderTeal:    'rgba(15, 118, 110, 0.22)',
   borderSky:     'rgba(2, 132, 199, 0.22)',
   borderClaude:  'rgba(204, 120, 92, 0.28)',
+  borderMoss:    'rgba(90, 143, 94, 0.32)',
+  borderAmber:   'rgba(184, 120, 76, 0.28)',
 } as const;
 
 /** 一站式三元组:文字色 + 背景色 + 边框色,常用于 status chip / category chip */
@@ -56,7 +62,7 @@ export interface SemanticTriplet {
   border: string;
 }
 
-export type SemanticHue = 'slate' | 'blue' | 'green' | 'red' | 'purple' | 'orange' | 'pink' | 'teal' | 'sky' | 'emerald' | 'claude';
+export type SemanticHue = 'slate' | 'blue' | 'green' | 'red' | 'purple' | 'orange' | 'pink' | 'teal' | 'sky' | 'emerald' | 'claude' | 'moss' | 'amber';
 
 const HUE_TO_RGB: Record<SemanticHue, string> = {
   slate:   '156, 163, 175',
@@ -70,6 +76,8 @@ const HUE_TO_RGB: Record<SemanticHue, string> = {
   sky:     '56, 189, 248',
   emerald: '16, 185, 129',
   claude:  '204, 120, 92',
+  moss:    '90, 143, 94',
+  amber:   '184, 120, 76',
 };
 
 /**
