@@ -24,8 +24,8 @@ public class DesktopUpdateAccelerator
     private const string GitHubManifestUrlTemplate =
         "https://github.com/inernoro/prd_agent/releases/latest/download/latest-{0}.json";
 
-    private const string CosAssetDomain = "desktop";
-    private const string CosAssetType = "bin";
+    private const string CosAssetDomain = PrdAgent.Infrastructure.Services.AssetStorage.AppDomainPaths.DomainDesktop;
+    private const string CosAssetType = PrdAgent.Infrastructure.Services.AssetStorage.AppDomainPaths.TypeBin;
 
     public DesktopUpdateAccelerator(
         MongoDbContext db,
