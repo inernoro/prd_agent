@@ -39,13 +39,6 @@ export async function listAuthorizationTypes() {
   return apiRequest<AuthTypeInfo[]>(api.authorizations.types(), { method: 'GET' });
 }
 
-export async function getAuthorization(id: string) {
-  return apiRequest<{ summary: AuthorizationSummary; credentials: Record<string, string> }>(
-    api.authorizations.byId(encodeURIComponent(id)),
-    { method: 'GET' }
-  );
-}
-
 export async function createAuthorization(input: {
   type: string;
   name: string;

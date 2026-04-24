@@ -48,13 +48,23 @@ function statusBadge(status: string, readOnly?: boolean) {
 function formatTime(iso: string | null | undefined) {
   if (!iso) return '-';
   const d = new Date(iso);
-  const now = Date.now();
-  const diffMin = Math.floor((now - d.getTime()) / 60000);
+  const diffMin = Math.floor((Date.now() - d.getTime()) / 60000);
+  // 未来时间走未来格式，避免负值被误判为"刚刚"
+  if (diffMin < 0) return formatFutureTime(d);
   if (diffMin < 1) return '刚刚';
   if (diffMin < 60) return `${diffMin} 分钟前`;
   if (diffMin < 1440) return `${Math.floor(diffMin / 60)} 小时前`;
   const days = Math.floor(diffMin / 1440);
   if (days < 30) return `${days} 天前`;
+  return d.toLocaleDateString('zh-CN');
+}
+
+function formatFutureTime(d: Date) {
+  const diffMin = Math.floor((d.getTime() - Date.now()) / 60000);
+  if (diffMin < 60) return `${diffMin} 分钟后`;
+  if (diffMin < 1440) return `${Math.floor(diffMin / 60)} 小时后`;
+  const days = Math.floor(diffMin / 1440);
+  if (days < 30) return `${days} 天后`;
   return d.toLocaleDateString('zh-CN');
 }
 
