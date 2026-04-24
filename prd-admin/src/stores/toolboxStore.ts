@@ -141,20 +141,7 @@ interface ToolboxState {
 //   - 'infra' = 平台级基础设施（工作流引擎、更新中心、市场、模型、团队等），不进百宝箱
 export const BUILTIN_TOOLS: ToolboxItem[] = [
   // ========== 智能体（定制版，有专门页面 + 完备生命周期 + 存储）==========
-  {
-    id: 'builtin-prd-agent',
-    name: 'PRD 解读智能体',
-    description: '智能解读PRD文档，识别需求缺口，回答产品问题',
-    icon: 'FileText',
-    category: 'builtin',
-    type: 'builtin',
-    kind: 'agent',
-    agentKey: 'prd-agent',
-    routePath: '/prd-agent',
-    tags: ['PRD', '需求分析', '产品'],
-    usageCount: 0,
-    createdAt: new Date().toISOString(),
-  },
+  // 注：PRD 解读智能体 Web 端已下线，统一改为下载桌面端体验，不再注册到百宝箱
   {
     id: 'builtin-visual-agent',
     name: '视觉创作智能体',

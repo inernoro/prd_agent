@@ -232,8 +232,9 @@ export function SystemPromptsPanel() {
     }
   };
 
+  // PRD 解读智能体 Web 端已下线，"测试"按钮跳转到 AI 百宝箱继续体验
   const goTest = useCallback((role: RoleEnum) => {
-    navigate('/prd-agent', { state: { testMode: true, role, promptKey: '' } });
+    navigate('/ai-toolbox', { state: { testMode: true, role, promptKey: '' } });
   }, [navigate]);
 
   // Auto-dismiss messages

@@ -16,8 +16,7 @@ namespace PrdAgent.Api.Controllers.Api;
 [ApiController]
 [Route("api/emergence")]
 [Authorize]
-[AdminController("emergence", AdminPermissionCatalog.EmergenceRead,
-    WritePermission = AdminPermissionCatalog.EmergenceWrite)]
+[AdminController("emergence-agent", AdminPermissionCatalog.EmergenceAgentUse)]
 public class EmergenceController : ControllerBase
 {
     private readonly MongoDbContext _db;

@@ -69,9 +69,20 @@ public static class AdminMenuCatalog
         foreach (var menu in All)
         {
             // 基础功能：只需要基础访问权限
-            if (menu.AppKey is "home" or "ai-toolbox" or "my-assets" or "settings" or "arena" or "shortcuts-agent" or "marketplace" or "web-pages" or "document-store" or "emergence")
+            if (menu.AppKey is "home" or "ai-toolbox" or "my-assets" or "settings" or "arena" or "shortcuts-agent" or "marketplace" or "web-pages" or "document-store")
             {
                 if (permSet.Contains(AdminPermissionCatalog.Access))
+                {
+                    result.Add(menu);
+                }
+                continue;
+            }
+
+            // 涌现探索智能体：需要 emergence-agent.use（菜单不能给"看得到点不动"的用户）
+            if (menu.AppKey is "emergence")
+            {
+                if (permSet.Contains(AdminPermissionCatalog.EmergenceAgentUse) ||
+                    permSet.Contains(AdminPermissionCatalog.Super))
                 {
                     result.Add(menu);
                 }

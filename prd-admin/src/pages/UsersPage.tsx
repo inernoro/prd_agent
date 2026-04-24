@@ -37,6 +37,8 @@ type UserRow = {
   lastActiveAt?: string;
   isLocked?: boolean;
   lockoutRemainingSeconds?: number;
+  /** 系统角色 key（决定后台权限），与业务 role 解耦 */
+  systemRoleKey?: string | null;
   // 统计信息
   groupCount?: number;
   totalRunCount?: number;
@@ -899,6 +901,9 @@ export default function UsersPage() {
                     </th>
                     <th className="text-left py-2 px-2 font-medium" style={{ color: 'var(--text-tertiary)' }}>用户</th>
                     <th className="text-center py-2 px-2 font-medium" style={{ color: 'var(--text-tertiary)' }}>角色</th>
+                    <th className="text-center py-2 px-2 font-medium" style={{ color: 'var(--text-tertiary)' }}>
+                      <span title="系统角色 key（决定后台权限）。空值表示走业务角色兜底：ADMIN→admin / 其它→none">权限</span>
+                    </th>
                     <th className="text-center py-2 px-2 font-medium" style={{ color: 'var(--text-tertiary)' }}>状态</th>
                     <th className="text-center py-2 px-2 font-medium" style={{ color: 'var(--text-tertiary)' }}>
                       <span title="加入的群组数">群组</span>
@@ -1005,6 +1010,27 @@ export default function UsersPage() {
                             <rm.icon size={10} />
                             {rm.label}
                           </span>
+                        </td>
+
+                        {/* 权限（systemRoleKey）*/}
+                        <td className="py-2 px-2 text-center whitespace-nowrap">
+                          {u.systemRoleKey ? (
+                            <span
+                              className="inline-block text-[10px] font-mono px-1.5 py-0.5 rounded-[4px]"
+                              style={{ background: 'var(--bg-elevated)', border: '1px solid var(--border-default)', color: 'var(--text-primary)' }}
+                              title="系统角色 key"
+                            >
+                              {u.systemRoleKey}
+                            </span>
+                          ) : (
+                            <span
+                              className="inline-block text-[10px] font-mono px-1.5 py-0.5 rounded-[4px]"
+                              style={{ background: 'rgba(156,163,175,0.1)', color: 'var(--text-muted)' }}
+                              title={u.role === 'ADMIN' ? '未显式设置；按业务角色兜底为 admin' : '未显式设置；按业务角色兜底为 none（无后台权限）'}
+                            >
+                              {u.role === 'ADMIN' ? '(admin*)' : '(none*)'}
+                            </span>
+                          )}
                         </td>
 
                         {/* 状态 */}

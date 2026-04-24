@@ -56,21 +56,8 @@ export interface RecentVisit {
 }
 
 /** Agent 列表定义 */
+// 注：PRD 解读智能体 Web 端已下线，不在此处注册（命令面板/导航自定义不再展示）
 export const AGENT_DEFINITIONS: AgentDefinition[] = [
-  {
-    key: 'prd-agent',
-    appKey: 'prd-agent',
-    name: 'PRD 解读智能体',
-    icon: 'MessagesSquare',
-    color: {
-      bg: 'rgba(59, 130, 246, 0.08)',
-      border: 'rgba(59, 130, 246, 0.2)',
-      iconBg: 'rgba(59, 130, 246, 0.15)',
-      text: '#60A5FA',
-    },
-    route: '/prd-agent',
-    statLabel: '会话',
-  },
   {
     key: 'visual-agent',
     appKey: 'visual-agent',

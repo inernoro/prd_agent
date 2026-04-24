@@ -50,6 +50,7 @@ function buildAgentItems(): LauncherItem[] {
     tags: [a.name, '智能体', a.appKey],
     accentColor: a.color.text,
     agentKey: a.appKey,
+    permission: `${a.appKey}.use`,
   }));
 }
 
@@ -65,6 +66,8 @@ function buildToolboxItems(): LauncherItem[] {
     tags: [t.name, ...(t.tags ?? [])],
     agentKey: t.agentKey,
     wip: t.wip,
+    // 带 agentKey 的内置工具 = 智能体卡片入口，按 {agentKey}.use 门控
+    permission: t.agentKey ? `${t.agentKey}.use` : undefined,
   }));
 }
 
@@ -86,6 +89,7 @@ function buildUtilityItems(): LauncherItem[] {
       group: 'agent',
       route: '/emergence',
       tags: ['涌现', '探索', 'AI', '创意', '智能体'],
+      permission: 'emergence-agent.use',
     },
     {
       id: 'utility:skill-agent',
@@ -234,13 +238,15 @@ function buildInfraItems(): LauncherItem[] {
 }
 
 /**
- * 返回完整目录。命令面板作为"发现入口"工具展示全部条目，
- * 实际访问权限由目标页面自行校验（每个 Controller / 页面都有各自的 authz 门控）。
- * 这样用户不会因为"某项没权限"就整条看不到，产生"功能丢失"的错觉。
+ * 返回用户可见的目录。
  *
- * opts 保留签名以便调用方日后按需过滤，当前实现忽略。
+ * 权限过滤原则（2026-04-24 规则 #navigation-registry 强化）：
+ *   - 没有权限的条目一律不展示，禁止"看得到加得进点开 403"的体验缺陷
+ *   - root / super 用户全开
+ *   - 没有 permission 字段的条目视为"人人可用"（如本就开放给全员的 Agent）
+ *   - permission 为字符串数组时，命中任意一项即可见
  */
-export function getLauncherCatalog(_opts: {
+export function getLauncherCatalog(opts: {
   permissions: string[];
   isRoot: boolean;
 }): LauncherItem[] {
@@ -251,12 +257,20 @@ export function getLauncherCatalog(_opts: {
     ...buildInfraItems(),
   ];
 
+  const permSet = new Set(opts.permissions);
+  const isSuper = opts.isRoot || permSet.has('super');
+
   // 根据 id 去重（toolbox 中的 Agent 已在 agent: 前缀下独立呈现）
   const seen = new Set<string>();
   const dedup: LauncherItem[] = [];
   for (const it of all) {
     if (seen.has(it.id)) continue;
     seen.add(it.id);
+    if (!isSuper && it.permission) {
+      const required = Array.isArray(it.permission) ? it.permission : [it.permission];
+      const hit = required.some((p) => permSet.has(p));
+      if (!hit) continue;
+    }
     dedup.push(it);
   }
 
