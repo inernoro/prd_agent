@@ -1589,7 +1589,7 @@ function WorkspacePosterStage({
   const accent = page.accentColor || template.accentPalette[0] || DEFAULT_ACCENT;
   const baseWidth = devicePreview === 'mobile' ? 360 : orientation === 'portrait' ? 720 : 920;
   const width = Math.round(baseWidth * (scale / 100));
-  const ratio = devicePreview === 'mobile' || orientation === 'portrait' ? '4 / 5' : '16 / 10';
+  const ratio = devicePreview === 'mobile' || orientation === 'portrait' ? '4 / 5' : '1200 / 628';
 
   return (
     <div style={{ width, maxWidth: '100%' }}>
@@ -1602,14 +1602,11 @@ function WorkspacePosterStage({
           boxShadow: '0 28px 70px rgba(0,0,0,0.36), 0 0 48px rgba(90,109,255,0.18)',
         }}
       >
-        <WeeklyPosterPageView page={page} />
-        <div className="absolute left-5 top-5 z-10 inline-flex items-center gap-2 rounded-full px-3 py-1.5 text-[10px] font-semibold uppercase tracking-[0.14em]" style={{ background: 'rgba(255,255,255,0.08)', border: '1px solid rgba(255,255,255,0.14)', color: 'rgba(255,255,255,0.72)' }}>
-          <Sparkles size={10} />
-          {poster.weekKey}
-        </div>
-        <div className="absolute right-5 bottom-5 z-10 rounded-full px-3 py-1.5 text-[10px] font-semibold text-white/72" style={{ background: 'rgba(255,255,255,0.08)', border: '1px solid rgba(255,255,255,0.12)' }}>
-          {dimensionLabel(orientation)} · {template.label}
-        </div>
+        <WeeklyPosterPageView
+          page={page}
+          weekKey={poster.weekKey}
+          metaLabel={`${dimensionLabel(orientation)} · ${template.label}`}
+        />
 
         {progress === 'generating-image' && (
           <div className="absolute inset-0 flex items-center justify-center" style={{ background: 'rgba(0,0,0,0.34)' }}>
