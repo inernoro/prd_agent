@@ -664,6 +664,39 @@ export class StateService {
   }
 
   /**
+   * Pick the project that logically owns `autoRepoRoot` (the CDS
+   * `config.repoRoot` used by the subdomain proxy auto-build path).
+   *
+   * This resolver is the SSOT for "which project should a bare branch
+   * slug be attributed to". Hard-coding `projectId='default'` bit us
+   * after `legacy-cleanup/rename-default` flipped the default project
+   * over to a real id — subsequent auto-build hits would mint orphan
+   * entries pointing at the now-missing `default` project, surfacing as
+   * "加载项目失败 HTTP 404" on the settings page and a permanent
+   * "检测到遗留 default" banner. Priority:
+   *
+   *   1. A project flagged `legacyFlag=true` (pre-rename state).
+   *   2. A project whose explicit `repoPath` equals `autoRepoRoot`.
+   *   3. A project with no `repoPath` at all (implicit single-repo
+   *      default — this is the shape a migrated-but-not-linked
+   *      project takes post-rename).
+   *   4. The only project in existence.
+   *
+   * Returns `undefined` when the choice is ambiguous (multiple projects
+   * all with explicit, non-matching repoPaths). Callers MUST refuse to
+   * auto-create an entry in that case rather than orphaning it.
+   */
+  resolveProjectForAutoBuild(autoRepoRoot: string): Project | undefined {
+    const all = this.getProjects();
+    return (
+      this.getLegacyProject() ??
+      all.find((p) => p.repoPath === autoRepoRoot) ??
+      all.find((p) => !p.repoPath) ??
+      (all.length === 1 ? all[0] : undefined)
+    );
+  }
+
+  /**
    * Add a new project. Will be used by P4 Part 2 when the real
    * `POST /api/projects` endpoint is wired up. Part 1 only ships the
    * method (no HTTP surface) so tests can exercise the storage layer

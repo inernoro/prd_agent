@@ -1032,24 +1032,47 @@ proxyService.setOnAutoBuild(async (branchSlug, _req, res) => {
   }
 
   try {
-    // Create worktree if branch doesn't exist locally
-    let entry = stateService.getBranch(finalSlug);
+    // FU-04 follow-up (2026-04-24): resolve the real project that owns
+    // `autoRepoRoot` before creating any entry. The original code hard-
+    // coded projectId='default', which broke after the legacy-cleanup
+    // rename flow: once 'default' → 'prd-agent', new subdomain hits
+    // would mint an orphan branch pointing at a project id that no
+    // longer exists ("加载项目失败 HTTP 404" + permanent "检测到遗留
+    // default" banner). Resolution is centralised in StateService to
+    // keep this decision testable.
+    const ownerProject = stateService.resolveProjectForAutoBuild(autoRepoRoot);
+    if (!ownerProject) {
+      sendEvent('error', {
+        message: `无法为分支 "${resolvedBranch}" 定位所属项目（存在多个项目且都设置了 repoPath）。请在 Dashboard 里显式创建分支。`,
+      });
+      res.end();
+      return;
+    }
+
+    // Align the id formula + lookup with branches.ts / webhook dispatcher.
+    const slugPrefix = ownerProject.legacyFlag ? '' : `${ownerProject.slug}-`;
+    const canonicalId = `${slugPrefix}${finalSlug}`;
+    let entry =
+      stateService.getBranch(canonicalId) ??
+      stateService.findBranchByProjectAndName(ownerProject.id, resolvedBranch);
+    if (entry) {
+      // The slug-only getBranch lookup further up used `finalSlug` and
+      // may have missed an entry stored under the scoped id; re-register
+      // the build lock under the entry's canonical id so concurrent hits
+      // still share the lock.
+      if (!buildLocks.has(entry.id)) {
+        buildLocks.set(entry.id, { promise: lockPromise, listeners });
+      }
+    }
     if (!entry) {
       sendEvent('step', { step: 'worktree', status: 'running', title: `正在为 ${resolvedBranch} 创建工作树...` });
-      // FU-04: proxy auto-build predates multi-project and always
-      // runs against the legacy repoRoot, so we attribute the new
-      // worktree to the 'default' project bucket.
-      await shell.exec(`mkdir -p "${config.worktreeBase}/default"`);
-      const worktreePath = WorktreeService.worktreePathFor(config.worktreeBase, 'default', finalSlug);
+      await shell.exec(`mkdir -p "${config.worktreeBase}/${ownerProject.id}"`);
+      const worktreePath = WorktreeService.worktreePathFor(config.worktreeBase, ownerProject.id, canonicalId);
       await worktreeService.create(autoRepoRoot, resolvedBranch, worktreePath);
 
       entry = {
-        id: finalSlug,
-        // Auto-build is the legacy single-project proxy path (see the
-        // FU-04 comment above) — always stamp 'default' so this branch
-        // is classified under the legacy project and downstream
-        // cleanup/isolation logic treats it consistently.
-        projectId: 'default',
+        id: canonicalId,
+        projectId: ownerProject.id,
         branch: resolvedBranch,
         worktreePath,
         services: {},
@@ -1079,7 +1102,7 @@ proxyService.setOnAutoBuild(async (branchSlug, _req, res) => {
         const hostPort = stateService.allocatePort(config.portStart);
         entry.services[profile.id] = {
           profileId: profile.id,
-          containerName: `cds-${finalSlug}-${profile.id}`,
+          containerName: `cds-${entry.id}-${profile.id}`,
           hostPort,
           status: 'building',
         };
