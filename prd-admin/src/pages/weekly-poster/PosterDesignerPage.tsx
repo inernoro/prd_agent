@@ -4,7 +4,6 @@ import { useSearchParams } from 'react-router-dom';
 import {
   Check,
   ChevronDown,
-  ChevronRight,
   Eye,
   FileText,
   FolderOpen,
@@ -96,7 +95,6 @@ const WORKSPACE_MENU: Array<{ key: WorkspaceMenuKey; label: string; icon: React.
   { key: 'publish', label: '发布记录', icon: <History size={16} /> },
 ];
 
-const PRODUCT_FLOW_STEPS = ['导入文案', '生成分页', '完善页面', '预览确认', '官网发布'];
 const COMING_SOON_FEATURES = [
   { label: '统一主题与配色', detail: '待接入整套风格约束' },
   { label: '自动生成文案', detail: '待支持整套文案重写' },
@@ -444,22 +442,6 @@ export default function PosterDesignerPage({ embedded = false }: PosterDesignerP
     openGuidedCreator();
   };
 
-  const productWorkflowStates = useMemo(() => {
-    const hasSource = !!poster && (!!poster.sourceType || pages.some((page) => !!page.body?.trim()));
-    const hasPages = pages.length > 0;
-    const hasEditedPages = pages.some((page) => !!page.body?.trim() || !!page.imageUrl || !!page.secondaryImageUrl);
-    const hasPreviewContent = pages.some((page) => !!page.body?.trim() || !!page.imageUrl);
-    return PRODUCT_FLOW_STEPS.map((label, index) => ({
-      label,
-      done:
-        index === 0 ? hasSource :
-        index === 1 ? hasPages :
-        index === 2 ? hasEditedPages :
-        index === 3 ? hasPreviewContent :
-        poster?.status === 'published',
-    }));
-  }, [pages, poster]);
-
   const rootClass = embedded
     ? 'min-h-[780px] h-[calc(100vh-220px)]'
     : 'h-full min-h-0';
@@ -620,76 +602,62 @@ export default function PosterDesignerPage({ embedded = false }: PosterDesignerP
             <div className="contents">
               {poster && currentPage ? (
                 <section className="min-h-0 h-full rounded-2xl p-4 flex flex-col" style={{ ...glassCardStyle, animation: 'posterDesignerIn 180ms ease-out both' }}>
-                  <div className="mb-4 flex flex-wrap items-center gap-3">
-                    <div
-                      className="relative flex min-w-[260px] flex-1 items-center gap-3 rounded-xl px-3 py-2"
-                      style={glassButtonStyle}
-                    >
-                      <div className="text-[11px] font-semibold tracking-[0.14em] uppercase text-white/38">项目</div>
-                      <select
-                        value={poster?.id ?? ''}
-                        onChange={(e) => {
-                          if (e.target.value) void selectPoster(e.target.value);
-                        }}
-                        className="min-w-0 flex-1 bg-transparent pr-6 text-[13px] font-medium text-white outline-none"
+                  <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+                    <div className="flex min-w-[320px] flex-1 items-center gap-3">
+                      <div
+                        className="relative flex min-w-[260px] flex-1 items-center gap-3 rounded-xl px-3 py-2"
+                        style={glassButtonStyle}
                       >
-                        {!poster && <option value="" style={{ background: '#0b1120' }}>选择海报项目</option>}
-                        {posters.map((item) => (
-                          <option key={item.id} value={item.id} style={{ background: '#0b1120' }}>
-                            {item.title || '未命名海报'}
-                          </option>
-                        ))}
-                      </select>
-                      <ChevronDown size={14} className="pointer-events-none absolute right-3 text-white/35" />
+                        <div className="text-[11px] font-semibold tracking-[0.14em] uppercase text-white/38">项目</div>
+                        <select
+                          value={poster?.id ?? ''}
+                          onChange={(e) => {
+                            if (e.target.value) void selectPoster(e.target.value);
+                          }}
+                          className="min-w-0 flex-1 bg-transparent pr-6 text-[13px] font-medium text-white outline-none"
+                        >
+                          {!poster && <option value="" style={{ background: '#0b1120' }}>选择海报项目</option>}
+                          {posters.map((item) => (
+                            <option key={item.id} value={item.id} style={{ background: '#0b1120' }}>
+                              {item.title || '未命名海报'}
+                            </option>
+                          ))}
+                        </select>
+                        <ChevronDown size={14} className="pointer-events-none absolute right-3 text-white/35" />
+                      </div>
+
+                      <SaveIndicator status={saveStatus} lastSavedAt={lastSavedAt} />
                     </div>
 
-                    <SaveIndicator status={saveStatus} lastSavedAt={lastSavedAt} />
-
-                    <div className="hidden min-w-0 flex-1 items-center gap-2 overflow-x-auto 2xl:flex">
-                      {productWorkflowStates.map((step, index) => (
-                        <div key={step.label} className="flex shrink-0 items-center gap-2">
-                          <div
-                            className="h-8 min-w-[82px] rounded-xl px-3 inline-flex items-center justify-center text-[11px] font-medium"
-                            style={{
-                              background: step.done ? 'rgba(91,196,123,0.16)' : 'rgba(255,255,255,0.05)',
-                              border: step.done ? '1px solid rgba(91,196,123,0.35)' : '1px solid rgba(255,255,255,0.08)',
-                              color: step.done ? '#9af3b1' : 'rgba(255,255,255,0.68)',
-                            }}
-                          >
-                            {step.label}
-                          </div>
-                          {index < productWorkflowStates.length - 1 && <ChevronRight size={14} className="text-white/28" />}
-                        </div>
-                      ))}
+                    <div className="flex shrink-0 items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setPreviewOpen(true)}
+                        disabled={!poster || pages.length === 0}
+                        className="h-9 rounded-xl px-4 inline-flex items-center gap-1.5 text-[12px] transition-colors disabled:cursor-not-allowed disabled:opacity-40"
+                        style={{
+                          color: 'rgba(255,255,255,0.82)',
+                          background: 'rgba(58,125,255,0.12)',
+                          border: '1px solid rgba(78,161,255,0.28)',
+                        }}
+                      >
+                        <Eye size={14} /> 预览
+                      </button>
+                      <button
+                        type="button"
+                        onClick={handlePublish}
+                        disabled={!poster || publishing || pages.length === 0}
+                        className="h-9 rounded-xl px-4 inline-flex items-center gap-1.5 text-[12px] font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-40"
+                        style={{
+                          color: '#fff',
+                          background: 'linear-gradient(90deg, rgba(92,109,255,0.74), rgba(140,95,255,0.78))',
+                          border: '1px solid rgba(171,113,255,0.24)',
+                        }}
+                      >
+                        {publishing ? <Loader2 size={14} className="animate-spin" /> : <Send size={14} />}
+                        发布官网
+                      </button>
                     </div>
-
-                    <button
-                      type="button"
-                      onClick={() => setPreviewOpen(true)}
-                      disabled={!poster || pages.length === 0}
-                      className="h-9 rounded-xl px-4 inline-flex items-center gap-1.5 text-[12px] transition-colors disabled:cursor-not-allowed disabled:opacity-40"
-                      style={{
-                        color: 'rgba(255,255,255,0.82)',
-                        background: 'rgba(58,125,255,0.12)',
-                        border: '1px solid rgba(78,161,255,0.28)',
-                      }}
-                    >
-                      <Eye size={14} /> 预览
-                    </button>
-                    <button
-                      type="button"
-                      onClick={handlePublish}
-                      disabled={!poster || publishing || pages.length === 0}
-                      className="h-9 rounded-xl px-4 inline-flex items-center gap-1.5 text-[12px] font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-40"
-                      style={{
-                        color: '#fff',
-                        background: 'linear-gradient(90deg, rgba(92,109,255,0.74), rgba(140,95,255,0.78))',
-                        border: '1px solid rgba(171,113,255,0.24)',
-                      }}
-                    >
-                      {publishing ? <Loader2 size={14} className="animate-spin" /> : <Send size={14} />}
-                      发布官网
-                    </button>
                   </div>
 
                   <div className="flex flex-wrap items-center justify-between gap-3">
