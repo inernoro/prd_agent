@@ -417,6 +417,53 @@ export default function ReportDetailPage(props: ReportDetailPageProps = {}) {
                   </div>
                   {section.items.length === 0 ? (
                     <div className="text-[12px] ml-10" style={{ color: 'var(--text-muted)' }}>（未填写）</div>
+                  ) : section.templateSection.inputType === ReportInputType.IssueList ? (
+                    <div className="space-y-3 ml-10">
+                      {section.items.map((item, iIdx) => {
+                        const cat = section.templateSection.issueCategories?.find((c) => c.key === item.issueCategoryKey);
+                        const st  = section.templateSection.issueStatuses?.find((s) => s.key === item.issueStatusKey);
+                        return (
+                          <div
+                            key={iIdx}
+                            className="rounded-lg p-3"
+                            style={{
+                              background: isLight ? '#FFFFFF' : 'var(--bg-secondary)',
+                              border: '1px solid var(--hairline)',
+                            }}
+                          >
+                            {(cat || st) && (
+                              <div className="flex items-center gap-2 mb-2">
+                                {cat && (
+                                  <span
+                                    className="inline-flex items-center text-[11px] px-2 py-0.5 rounded-full font-medium"
+                                    style={{
+                                      color: cat.color || (isLight ? 'rgba(51,65,85,1)' : 'rgba(203,213,225,0.9)'),
+                                      background: isLight ? 'rgba(51,65,85,0.08)' : 'rgba(148,163,184,0.08)',
+                                      border: `1px solid ${isLight ? 'rgba(51,65,85,0.18)' : 'rgba(148,163,184,0.2)'}`,
+                                    }}
+                                  >
+                                    {cat.label}
+                                  </span>
+                                )}
+                                {st && (
+                                  <span
+                                    className="inline-flex items-center text-[11px] px-2 py-0.5 rounded-full font-medium"
+                                    style={{
+                                      color: st.color || 'var(--accent-claude)',
+                                      background: 'var(--accent-claude-soft)',
+                                      border: '1px solid var(--accent-claude-border)',
+                                    }}
+                                  >
+                                    {st.label}
+                                  </span>
+                                )}
+                              </div>
+                            )}
+                            <RichTextMarkdownContent content={item.content} imageMaxHeight={240} />
+                          </div>
+                        );
+                      })}
+                    </div>
                   ) : section.templateSection.inputType === ReportInputType.RichText ? (
                     <div className="space-y-2 ml-10">
                       {section.items.map((item, iIdx) => (

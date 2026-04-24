@@ -60,7 +60,7 @@ public class ReportTemplateSection
     /// <summary>章节描述/填写提示</summary>
     public string? Description { get; set; }
 
-    /// <summary>输入类型：bullet-list / rich-text / key-value / progress-table</summary>
+    /// <summary>输入类型：bullet-list / rich-text / key-value / progress-table / issue-list</summary>
     public string InputType { get; set; } = ReportInputType.BulletList;
 
     /// <summary>是否必填</summary>
@@ -80,6 +80,27 @@ public class ReportTemplateSection
 
     /// <summary>v2.0 关联的数据源类型（如 ["github", "tapd", "yuque"]）</summary>
     public List<string>? DataSources { get; set; }
+
+    /// <summary>IssueList 专用：问题分类预设（仅 InputType = issue-list 时生效）</summary>
+    public List<IssueOption>? IssueCategories { get; set; }
+
+    /// <summary>IssueList 专用：问题状态预设（仅 InputType = issue-list 时生效）</summary>
+    public List<IssueOption>? IssueStatuses { get; set; }
+}
+
+/// <summary>
+/// 问题分类/状态预设项（IssueList 章节用）
+/// </summary>
+public class IssueOption
+{
+    /// <summary>唯一 key（稳定标识,用于筛选）</summary>
+    public string Key { get; set; } = string.Empty;
+
+    /// <summary>显示标签（中文）</summary>
+    public string Label { get; set; } = string.Empty;
+
+    /// <summary>可选色值 (hex / rgba)</summary>
+    public string? Color { get; set; }
 }
 
 /// <summary>
@@ -91,8 +112,9 @@ public static class ReportInputType
     public const string RichText = "rich-text";
     public const string KeyValue = "key-value";
     public const string ProgressTable = "progress-table";
+    public const string IssueList = "issue-list";
 
-    public static readonly string[] All = { BulletList, RichText, KeyValue, ProgressTable };
+    public static readonly string[] All = { BulletList, RichText, KeyValue, ProgressTable, IssueList };
 }
 
 /// <summary>

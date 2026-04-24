@@ -11,6 +11,7 @@ import type { WeeklyReport } from '@/services/contracts/reportAgent';
 import { WeeklyReportStatus } from '@/services/contracts/reportAgent';
 import { ReportEditor } from './ReportEditor';
 import { DailyLogInline } from './DailyLogInline';
+import { TeamIssuesView } from './TeamIssuesView';
 import { useDataTheme } from '../hooks/useDataTheme';
 import { getSemantic, LIGHT_SEMANTIC } from '../hooks/lightModeColors';
 
@@ -106,6 +107,8 @@ export function ReportMainView() {
   const [selectedWeekKey, setSelectedWeekKey] = useState(getWeekKey(now));
   const [editingReportId, setEditingReportId] = useState<string | null>(null);
   const [showDailyLog, setShowDailyLog] = useState(false);
+  /** 顶层视图切换: 我的周报 vs 团队问题 */
+  const [viewMode, setViewMode] = useState<'mine' | 'issues'>('mine');
 
   const hasTeam = teams.length > 0;
   const hasTemplate = templates.length > 0;
@@ -202,6 +205,41 @@ export function ReportMainView() {
   // ── Main workspace ──
   return (
     <div className="flex flex-col gap-4 h-full overflow-y-auto pb-6" style={{ scrollbarWidth: 'thin' }}>
+      {/* 顶层视图切换:我的周报 / 团队问题 */}
+      <div className="flex items-center gap-2">
+        <div
+          className="inline-flex items-center p-0.5 rounded-lg"
+          style={{
+            background: isLight ? 'rgba(15, 23, 42, 0.05)' : 'var(--bg-tertiary)',
+            border: isLight ? '1px solid var(--hairline)' : '1px solid var(--border-primary)',
+          }}
+        >
+          {([
+            { key: 'mine', label: '我的周报' },
+            { key: 'issues', label: '团队问题' },
+          ] as const).map((opt) => {
+            const active = viewMode === opt.key;
+            return (
+              <button
+                key={opt.key}
+                type="button"
+                className="whitespace-nowrap px-3 py-1 rounded-md text-[12px] font-medium transition-all duration-200"
+                style={{
+                  color: active ? 'var(--text-primary)' : 'var(--text-muted)',
+                  background: active ? (isLight ? '#FFFFFF' : 'rgba(255, 255, 255, 0.08)') : 'transparent',
+                  boxShadow: active && isLight ? '0 1px 2px rgba(15, 23, 42, 0.06), 0 0 0 1px rgba(15, 23, 42, 0.08)' : 'none',
+                }}
+                onClick={() => setViewMode(opt.key)}
+              >
+                {opt.label}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      {viewMode === 'issues' ? <TeamIssuesView /> : (
+      <>
       <GlassCard variant="subtle" className="px-5 py-4">
         <div className="flex items-start justify-between flex-wrap gap-3">
           <div className="flex flex-col gap-3">
@@ -353,6 +391,8 @@ export function ReportMainView() {
           </div>
         </div>
       ) : null}
+      </>
+      )}
     </div>
   );
 }
