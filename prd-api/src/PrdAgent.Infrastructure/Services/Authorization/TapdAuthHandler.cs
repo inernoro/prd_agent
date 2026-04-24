@@ -1,5 +1,4 @@
 using System.Text.Json;
-using MongoDB.Bson;
 using PrdAgent.Core.Interfaces;
 
 namespace PrdAgent.Infrastructure.Services.Authorization;
@@ -66,7 +65,7 @@ public class TapdAuthHandler : IAuthTypeHandler
             if (!doc.RootElement.TryGetProperty("status", out var status) || status.GetInt32() != 1)
                 return AuthValidationResult.Fail("TAPD 认证失败：" + body.Substring(0, Math.Min(200, body.Length)));
 
-            var metadata = new BsonDocument();
+            var metadata = new Dictionary<string, object>();
             if (doc.RootElement.TryGetProperty("data", out var data))
             {
                 if (data.TryGetProperty("user", out var user) && user.TryGetProperty("name", out var name))
@@ -78,7 +77,7 @@ public class TapdAuthHandler : IAuthTypeHandler
             if (credentials.TryGetValue("workspaceIds", out var wsIds) && !string.IsNullOrWhiteSpace(wsIds))
             {
                 var ids = wsIds.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-                metadata["workspaceIds"] = new BsonArray(ids);
+                metadata["workspaceIds"] = ids;
             }
 
             // TAPD Cookie 没有明确过期时间，按经验给 30 天
@@ -90,10 +89,10 @@ public class TapdAuthHandler : IAuthTypeHandler
         }
     }
 
-    public async Task<BsonDocument> ExtractMetadataAsync(Dictionary<string, string> credentials, CancellationToken ct)
+    public async Task<Dictionary<string, object>> ExtractMetadataAsync(Dictionary<string, string> credentials, CancellationToken ct)
     {
         var result = await ValidateAsync(credentials, ct);
-        return result.Metadata ?? new BsonDocument();
+        return result.Metadata ?? new Dictionary<string, object>();
     }
 
     public Dictionary<string, string> MaskCredentials(Dictionary<string, string> credentials)

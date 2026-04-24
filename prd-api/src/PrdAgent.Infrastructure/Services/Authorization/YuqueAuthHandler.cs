@@ -1,5 +1,4 @@
 using System.Text.Json;
-using MongoDB.Bson;
 using PrdAgent.Core.Interfaces;
 
 namespace PrdAgent.Infrastructure.Services.Authorization;
@@ -54,7 +53,7 @@ public class YuqueAuthHandler : IAuthTypeHandler
             var body = await resp.Content.ReadAsStringAsync(ct);
             using var doc = JsonDocument.Parse(body);
 
-            var metadata = new BsonDocument();
+            var metadata = new Dictionary<string, object>();
             if (doc.RootElement.TryGetProperty("data", out var data))
             {
                 if (data.TryGetProperty("login", out var login))
@@ -73,10 +72,10 @@ public class YuqueAuthHandler : IAuthTypeHandler
         }
     }
 
-    public async Task<BsonDocument> ExtractMetadataAsync(Dictionary<string, string> credentials, CancellationToken ct)
+    public async Task<Dictionary<string, object>> ExtractMetadataAsync(Dictionary<string, string> credentials, CancellationToken ct)
     {
         var result = await ValidateAsync(credentials, ct);
-        return result.Metadata ?? new BsonDocument();
+        return result.Metadata ?? new Dictionary<string, object>();
     }
 
     public Dictionary<string, string> MaskCredentials(Dictionary<string, string> credentials)

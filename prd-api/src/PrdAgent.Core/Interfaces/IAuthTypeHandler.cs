@@ -1,5 +1,3 @@
-using MongoDB.Bson;
-
 namespace PrdAgent.Core.Interfaces;
 
 /// <summary>
@@ -29,7 +27,7 @@ public interface IAuthTypeHandler
     /// 从凭证中提取展示用的元数据（非敏感）。
     /// 例如从 TAPD Cookie 提取登录用户名和工作空间列表。
     /// </summary>
-    Task<BsonDocument> ExtractMetadataAsync(Dictionary<string, string> credentials, CancellationToken ct);
+    Task<Dictionary<string, object>> ExtractMetadataAsync(Dictionary<string, string> credentials, CancellationToken ct);
 
     /// <summary>
     /// 对凭证进行脱敏处理（用于 API 返回给前端）。
@@ -53,9 +51,9 @@ public class AuthValidationResult
     public bool Ok { get; set; }
     public string? ErrorMessage { get; set; }
     public DateTime? ExpiresAt { get; set; }
-    public BsonDocument? Metadata { get; set; }
+    public Dictionary<string, object>? Metadata { get; set; }
 
-    public static AuthValidationResult Success(BsonDocument? metadata = null, DateTime? expiresAt = null)
+    public static AuthValidationResult Success(Dictionary<string, object>? metadata = null, DateTime? expiresAt = null)
         => new() { Ok = true, Metadata = metadata, ExpiresAt = expiresAt };
 
     public static AuthValidationResult Fail(string reason)

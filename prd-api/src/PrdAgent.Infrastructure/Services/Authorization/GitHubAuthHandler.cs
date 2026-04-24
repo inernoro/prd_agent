@@ -1,4 +1,3 @@
-using MongoDB.Bson;
 using PrdAgent.Core.Interfaces;
 
 namespace PrdAgent.Infrastructure.Services.Authorization;
@@ -37,9 +36,9 @@ public class GitHubAuthHandler : IAuthTypeHandler
         return Task.FromResult(AuthValidationResult.Success());
     }
 
-    public Task<BsonDocument> ExtractMetadataAsync(Dictionary<string, string> credentials, CancellationToken ct)
+    public Task<Dictionary<string, object>> ExtractMetadataAsync(Dictionary<string, string> credentials, CancellationToken ct)
     {
-        return Task.FromResult(new BsonDocument());
+        return Task.FromResult(new Dictionary<string, object>());
     }
 
     public Dictionary<string, string> MaskCredentials(Dictionary<string, string> credentials)
